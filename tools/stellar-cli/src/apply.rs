@@ -20,10 +20,17 @@
 //! | `set-frame-transform` | `node`, `a`, `b`, `c`, `d`, `tx`, `ty`(유한 f32 JSON 숫자) |
 //! | `delete-subtree` | `root` |
 //! | `move-node` | `node`, `new_parent`, `order_key`(OrderKey bytes 16진수) |
+//! | `insert-component-instance` | `parent`, `component`, `source_hash`(정의 원본 파일 hash), `x`, `y`(유한 f32 JSON 숫자) |
 //! | 그 밖의 closed enum 종류 이름(`insert-node` 등, VII.1.2) | `canonical`(commands canonical bytes 16진수) |
 //!
 //! 모든 object는 표에 있는 key만 가질 수 있습니다. 등록되지 않은 `kind`는 `unknown-command`(65)로
 //! 거부하고 아무것도 쓰지 않습니다. `--dry-run`은 파일을 쓰지 않고 semantic diff만 출력합니다.
+//!
+//! `insert-component-instance`는 프로젝트 `design/components`의 정의 `component`를 참조하는 인스턴스를
+//! `parent`의 마지막 자식으로 넣고 위치 `(x, y)`를 Transform modifier 하나로 저장합니다. `source_hash`는
+//! `stellar query . components`가 보고한 그 정의 원본 파일의 hash이며, 적용할 때 원본이 없거나 hash가
+//! 다르면 `component-source-changed`(65)로 거부하고 아무것도 쓰지 않습니다. 다른 command와 같은
+//! transaction에 들어가 함께 적용되거나 함께 거부됩니다.
 //!
 //! 쓰기는 OS 사용자 데이터의 프로젝트별 저장 잠금을 잡은 뒤에 generation을 비교하고 교체합니다
 //! (XXIV.4.5, `stellar_ops::lock`). 잠금이 사용 중이면 `save-lock-busy`(75, 재시도 가능)로 끝나고
@@ -32,9 +39,11 @@
 use std::io::Read;
 use std::path::Path;
 
-use stellar_ops::apply::{apply, ApplyError, ApplyMode, ApplyRequest, CommandInput, MAX_COMMANDS};
+use stellar_ops::apply::{
+    apply, ApplyError, ApplyMode, ApplyRequest, CommandInput, ComponentInstanceInsert, MAX_COMMANDS,
+};
 use stellar_ops::core_types::ids::StableId;
-use stellar_ops::core_types::value::{FiniteF32, Size2, Transform2D};
+use stellar_ops::core_types::value::{FiniteF32, Size2, Transform2D, Vec2};
 use stellar_ops::lock::{default_lock_dir, LockPolicy};
 use stellar_ops::revision::ProjectRevision;
 
@@ -299,6 +308,37 @@ fn command_input(value: &JsonValue, index: usize) -> Result<CommandInput, CliErr
                 order_key: hex_field(value, "order_key", &at)?,
             }
         }
+        "insert-component-instance" => {
+            only_keys(
+                value,
+                &["kind", "parent", "component", "source_hash", "x", "y"],
+                &at,
+            )?;
+            let source_hash = text_field(value, "source_hash", &at)?
+                .parse()
+                .map_err(|_| {
+                    invalid(
+                        "invalid-transaction",
+                        format!("{at}.source_hash는 sha256:<64자리 소문자 16진수>여야 합니다"),
+                    )
+                })?;
+            let position = Vec2::new(
+                f32_field(value, "x", &at)?.get(),
+                f32_field(value, "y", &at)?.get(),
+            )
+            .map_err(|_| {
+                invalid(
+                    "invalid-transaction",
+                    format!("{at}: 위치는 유한해야 합니다"),
+                )
+            })?;
+            CommandInput::InsertComponentInstance(ComponentInstanceInsert {
+                component: id_field(value, "component", &at)?,
+                source_hash,
+                parent: id_field(value, "parent", &at)?,
+                position,
+            })
+        }
         other => {
             if value.get("canonical").is_none() {
                 return Err(CliError::new(
@@ -401,6 +441,11 @@ pub(crate) fn apply_error(error: &ApplyError) -> CliError {
             CliError::new(ExitStatus::Failure, "invalid-result", message)
         }
         ApplyError::Projection(_) => CliError::new(ExitStatus::Software, "projection", message),
+        // 원본을 다시 읽고(`query . components`) 새 source_hash로 재시도할 데이터 오류입니다.
+        ApplyError::ComponentSourceChanged { .. } => {
+            CliError::new(ExitStatus::DataErr, "component-source-changed", message)
+        }
+        ApplyError::ComponentSource(e) => crate::text_source::operation_error(e),
         ApplyError::Lock(lock) => crate::project_cmds::lock_error(lock),
         ApplyError::Save(_) => CliError::new(ExitStatus::CantCreate, "save", "저장 실패")
             .with_diagnostic(Diagnostic {
@@ -530,5 +575,53 @@ mod tests {
             }
             .to_string()
         );
+    }
+
+    #[test]
+    fn insert_component_instance_input_is_parsed_with_its_source_hash() {
+        let id = StableId::from_bytes([7; 16]);
+        let hash = format!("sha256:{}", "ab".repeat(32));
+        let parse = |command: String| {
+            parse_request(
+                format!(
+                    r#"{{"format":"{FORMAT}","format_version":{FORMAT_VERSION},"base_revision":"g0","document":"{id}","commands":[{command}]}}"#
+                )
+                .as_bytes(),
+            )
+        };
+        let request = parse(format!(
+            r#"{{"kind":"insert-component-instance","parent":"{id}","component":"{id}","source_hash":"{hash}","x":2.5,"y":-3}}"#
+        ))
+        .unwrap();
+        assert_eq!(
+            request.commands,
+            [CommandInput::InsertComponentInstance(
+                ComponentInstanceInsert {
+                    component: id,
+                    source_hash: hash.parse().unwrap(),
+                    parent: id,
+                    position: Vec2::new(2.5, -3.).unwrap(),
+                }
+            )]
+        );
+        for bad in [
+            format!(
+                r#"{{"kind":"insert-component-instance","parent":"{id}","component":"{id}","source_hash":"ab","x":0,"y":0}}"#
+            ),
+            format!(
+                r#"{{"kind":"insert-component-instance","parent":"{id}","component":"{id}","source_hash":"{hash}","x":0}}"#
+            ),
+            format!(
+                r#"{{"kind":"insert-component-instance","parent":"{id}","component":"{id}","source_hash":"{hash}","x":0,"y":0,"name":"Card"}}"#
+            ),
+        ] {
+            assert_eq!(parse(bad).unwrap_err().code, "invalid-transaction");
+        }
+        let changed = apply_error(&ApplyError::ComponentSourceChanged {
+            index: 0,
+            component: id,
+        });
+        assert_eq!(changed.status, ExitStatus::DataErr);
+        assert_eq!(changed.code, "component-source-changed");
     }
 }

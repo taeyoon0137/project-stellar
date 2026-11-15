@@ -84,6 +84,10 @@ cargo run -q -p stellar-cli -- --help
 `(x, y)`를 `(a*x + c*y + tx, b*x + d*y + ty)`로 보냅니다. Frame이 아닌 node에 적용하면 transaction 전체를 거부합니다.
 Text 레이어 본문은 `replace-text`(`node`, Unicode scalar 정수 `start`와 `end`, 문자열 `text`)로 교체합니다.
 같은 위치의 `start`·`end`는 삽입, 빈 `text`는 삭제이고, 잘못된 범위나 node 종류는 transaction 전체를 거부합니다.
+프로젝트 컴포넌트는 `insert-component-instance`(`parent`, `component`, `source_hash`, `x`, `y`)로 배치합니다.
+`component`와 `source_hash`는 `stellar query . components`가 보고한 정의 ID와 그 원본 파일의 hash입니다.
+인스턴스는 `parent`의 마지막 자식이 되고, 위치 `(x, y)`는 부모 좌표계의 평행이동으로 저장됩니다.
+적용할 때 정의가 없거나 원본 hash가 다르면 `component-source-changed`(65)로 거부하고 아무것도 쓰지 않습니다.
 
 ### `help`
 

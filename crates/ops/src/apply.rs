@@ -6,6 +6,9 @@
 //!    읽거나 쓰지 않고 [`ApplyError::BaseRevisionMismatch`]입니다.
 //! 2. 요청의 command 입력([`CommandInput`])을 commands crate의 **닫힌 enum** [`Command`]로만
 //!    바꿉니다. 등록되지 않은 종류는 [`ApplyError::UnknownCommand`]로 거부합니다(raw patch·script 없음).
+//!    컴포넌트 인스턴스 삽입([`CommandInput::InsertComponentInstance`])은 이때 프로젝트
+//!    `design/components` 원본에서 정의를 찾고, 원본 파일 hash가 요청과 같을 때만 같은 transaction의
+//!    InsertNode 하나가 됩니다. 다르면 [`ApplyError::ComponentSourceChanged`]입니다.
 //! 3. 대상 문서를 읽어 [`DocumentState::execute_transaction`]으로 전부 적용하거나 전부 롤백합니다.
 //!    validator가 거부하면 [`ApplyError::Rejected`]입니다.
 //! 4. 적용 전후 문서 레코드의 semantic diff(XIV.3)를 계산합니다. dry-run은 여기서 끝나며 파일을
@@ -30,12 +33,18 @@ use stellar_commands::codec::{decode_command, CommandCodecError};
 use stellar_commands::command::Command;
 use stellar_commands::id::{CommandId, CommandOrigin};
 use stellar_commands::kind::CommandKind;
-use stellar_commands::node_ops::{DeleteSubtree, MoveNode};
+use stellar_commands::node_ops::{DeleteSubtree, InsertNode, MoveNode};
 use stellar_commands::property::{PropertyValue, SetProperty};
 use stellar_commands::request::CommandRequest;
 use stellar_commands::state::DocumentState;
 use stellar_commands::transaction::CommandTransaction;
+use stellar_document::component::instance::ComponentInstancePayload;
 use stellar_document::frame::keys as frame_keys;
+use stellar_document::model::DocumentModel;
+use stellar_document::modifier::{
+    ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack,
+};
+use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_project::document_io::serialize::serialize_document;
 use stellar_project::identity::parse_project_id;
 use stellar_storage::chunk::kinds::{KIND_DOCUMENT_MANIFEST, KIND_VIEW_TREE};
@@ -50,13 +59,15 @@ use stellar_storage::save::plan::build_save_plan;
 
 use crate::core_types::ids::StableId;
 use crate::core_types::order_key::OrderKey;
+use crate::core_types::reference::ComponentRef;
 use crate::core_types::revision::DocumentRevision;
-use crate::core_types::value::{FiniteF32, Size2, Transform2D};
+use crate::core_types::value::{FiniteF32, Size2, Transform2D, Vec2};
 use crate::diff::{diff_records, DiffReport};
 use crate::error::{DocumentReadError, OpenError};
 use crate::lock::{LockError, LockPolicy, SaveLock};
 use crate::revision::ProjectRevision;
-use crate::snapshot::{open_snapshot, probe};
+use crate::snapshot::{open_snapshot, probe, ProjectSnapshot};
+use crate::text_source::TextSourceOperationError;
 
 /// 요청 하나에 담을 수 있는 command 수 상한.
 pub const MAX_COMMANDS: usize = 10_000;
@@ -132,6 +143,9 @@ pub enum CommandInput {
         /// 새 OrderKey bytes.
         order_key: Vec<u8>,
     },
+    /// 프로젝트 컴포넌트 원본의 정의 하나를 참조하는 인스턴스 삽입. 적용할 때 정의와 원본 hash를
+    /// 확인한 뒤 InsertNode 하나가 됩니다([`apply`]).
+    InsertComponentInstance(ComponentInstanceInsert),
     /// 종류 이름 + canonical bytes(`encode_command`, VII.1.2).
     Canonical {
         /// 선언한 종류 이름([`CommandKind::name`]).
@@ -141,8 +155,21 @@ pub enum CommandInput {
     },
 }
 
+/// 프로젝트 `design/components` 원본의 정의 하나를 참조하는 인스턴스 삽입 입력.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComponentInstanceInsert {
+    /// 배치할 컴포넌트 정의 ID.
+    pub component: StableId,
+    /// 요청자가 읽은 정의 원본 파일 bytes hash(`stellar query . components`의 `source_hash`).
+    pub source_hash: ContentHash,
+    /// 인스턴스를 마지막 자식으로 넣을 부모 node.
+    pub parent: StableId,
+    /// 부모 좌표계 위치. 인스턴스의 Transform modifier 하나에 평행이동으로 저장합니다.
+    pub position: Vec2,
+}
+
 /// 필드 형식으로 받는 종류 이름.
-pub const FIELD_KINDS: [&str; 10] = [
+pub const FIELD_KINDS: [&str; 11] = [
     "set-visible",
     "set-locked",
     "rename",
@@ -153,13 +180,19 @@ pub const FIELD_KINDS: [&str; 10] = [
     "set-frame-transform",
     "delete-subtree",
     "move-node",
+    "insert-component-instance",
 ];
 
 impl CommandInput {
     /// 단일 canonical command로 나타냅니다. 이전 size 묶음 bytes도 이 형식으로 유지합니다.
     /// 새 편집 transaction은 [`decode_commands`]를 통해 width·height로 펼칩니다.
+    /// 컴포넌트 인스턴스 삽입은 프로젝트 원본이 있어야 command가 되므로 [`apply`]만 바꿉니다.
     pub fn to_command(&self) -> Result<Command, CommandInputError> {
         match self {
+            CommandInput::InsertComponentInstance(_) => Err(CommandInputError::Invalid(
+                "insert-component-instance는 프로젝트 컴포넌트 원본을 읽은 뒤에만 command가 됩니다"
+                    .into(),
+            )),
             CommandInput::SetVisible { node, visible } => Ok(Command::SetProperty(
                 SetProperty::visibility(*node, *visible),
             )),
@@ -319,6 +352,16 @@ pub enum ApplyError {
     InvalidResult(String),
     /// semantic diff를 계산할 수 없습니다.
     Projection(String),
+    /// 컴포넌트 인스턴스 삽입의 정의가 프로젝트 원본에 없거나 원본 파일 hash가 요청과 다릅니다.
+    /// 원본을 다시 읽고 재시도할 데이터 오류입니다.
+    ComponentSourceChanged {
+        /// 요청 index.
+        index: usize,
+        /// 요청한 정의.
+        component: StableId,
+    },
+    /// 프로젝트 컴포넌트 원본(`design/components`)을 읽을 수 없습니다.
+    ComponentSource(Box<TextSourceOperationError>),
     /// 계획 뒤 다른 writer가 current generation을 바꿨습니다(쓰기 시작 전 거부).
     ConcurrentWrite,
     /// 저장 잠금을 잡지 못했습니다(사용 중이면 일시적 실패, XXIV.4.5).
@@ -351,6 +394,11 @@ impl fmt::Display for ApplyError {
             }
             ApplyError::InvalidResult(e) => write!(f, "적용 결과가 문서 불변식을 위반합니다: {e}"),
             ApplyError::Projection(e) => write!(f, "{e}"),
+            ApplyError::ComponentSourceChanged { index, component } => write!(
+                f,
+                "command #{index}: 컴포넌트 {component}의 원본이 없거나 source_hash가 다릅니다"
+            ),
+            ApplyError::ComponentSource(e) => write!(f, "컴포넌트 원본을 읽을 수 없습니다: {e}"),
             ApplyError::ConcurrentWrite => f.write_str(
                 "계획 뒤 다른 writer가 current generation을 바꿨습니다(아무것도 쓰지 않음)",
             ),
@@ -381,8 +429,17 @@ pub struct ApplyOutcome {
     pub written_chunks: usize,
 }
 
-/// 요청 command를 closed enum으로 바꿉니다.
-pub fn decode_commands(inputs: &[CommandInput]) -> Result<Vec<Command>, ApplyError> {
+/// 요청 command 하나가 만드는 command. 컴포넌트 인스턴스 삽입만 프로젝트 원본을 읽은 뒤 정합니다.
+enum Planned {
+    Ready(Command),
+    Instance {
+        index: usize,
+        insert: ComponentInstanceInsert,
+    },
+}
+
+/// 프로젝트를 열기 전에 command 수와 형식을 검사합니다.
+fn plan_commands(inputs: &[CommandInput]) -> Result<Vec<Planned>, ApplyError> {
     if inputs.is_empty() {
         return Err(ApplyError::EmptyTransaction);
     }
@@ -391,18 +448,129 @@ pub fn decode_commands(inputs: &[CommandInput]) -> Result<Vec<Command>, ApplyErr
             count: inputs.len(),
         });
     }
-    let mut commands = Vec::with_capacity(inputs.len());
+    let mut planned = Vec::with_capacity(inputs.len());
     for (index, input) in inputs.iter().enumerate() {
-        if let CommandInput::SetFrameSize { node, size } = input {
-            commands.extend(SetProperty::frame_dimensions(*node, *size).map(Command::SetProperty));
-        } else {
-            commands.push(input.to_command().map_err(|e| match e {
+        match input {
+            CommandInput::SetFrameSize { node, size } => planned.extend(
+                SetProperty::frame_dimensions(*node, *size)
+                    .map(|set| Planned::Ready(Command::SetProperty(set))),
+            ),
+            CommandInput::InsertComponentInstance(insert) => planned.push(Planned::Instance {
+                index,
+                insert: insert.clone(),
+            }),
+            _ => planned.push(Planned::Ready(input.to_command().map_err(|e| match e {
                 CommandInputError::UnknownKind(kind) => ApplyError::UnknownCommand { index, kind },
                 CommandInputError::Invalid(reason) => ApplyError::InvalidCommand { index, reason },
-            })?);
+            })?)),
         }
     }
+    Ok(planned)
+}
+
+/// 요청 command를 closed enum으로 바꿉니다. 컴포넌트 인스턴스 삽입은 프로젝트 원본이 필요하므로
+/// 거부합니다([`apply`]가 원본을 확인해 바꿉니다).
+pub fn decode_commands(inputs: &[CommandInput]) -> Result<Vec<Command>, ApplyError> {
+    plan_commands(inputs)?
+        .into_iter()
+        .map(|planned| match planned {
+            Planned::Ready(command) => Ok(command),
+            Planned::Instance { index, .. } => Err(ApplyError::InvalidCommand {
+                index,
+                reason: "insert-component-instance는 프로젝트 컴포넌트 원본이 필요합니다".into(),
+            }),
+        })
+        .collect()
+}
+
+/// 계획의 컴포넌트 인스턴스 삽입을 프로젝트 원본으로 확인해 InsertNode로 바꿉니다. 원본은 인스턴스
+/// 삽입이 있을 때만 한 번 읽습니다. 같은 부모에 여러 개를 넣으면 요청 순서대로 뒤에 놓입니다.
+fn resolve_commands(
+    planned: Vec<Planned>,
+    snapshot: &ProjectSnapshot,
+    model: &DocumentModel,
+) -> Result<Vec<Command>, ApplyError> {
+    let mut library = None;
+    let mut last_keys = std::collections::BTreeMap::<StableId, OrderKey>::new();
+    let mut commands = Vec::with_capacity(planned.len());
+    for planned in planned {
+        let (index, insert) = match planned {
+            Planned::Ready(command) => {
+                commands.push(command);
+                continue;
+            }
+            Planned::Instance { index, insert } => (index, insert),
+        };
+        if library.is_none() {
+            library = Some(
+                crate::component_source::project_library(snapshot)
+                    .map_err(|e| ApplyError::ComponentSource(Box::new(e)))?,
+            );
+        }
+        let (library, files) = library.as_ref().expect("원본을 읽었음");
+        let entry = library
+            .get(ComponentRef::new(insert.component))
+            .filter(|_| {
+                files
+                    .get(&insert.component)
+                    .is_some_and(|(_, hash)| *hash == insert.source_hash)
+            })
+            .ok_or(ApplyError::ComponentSourceChanged {
+                index,
+                component: insert.component,
+            })?;
+        let order_key = match last_keys.get(&insert.parent) {
+            Some(last) => OrderKey::between(Some(last), None),
+            None => model.next_child_order_key(insert.parent),
+        };
+        last_keys.insert(insert.parent, order_key.clone());
+        let ids = stellar_project::new_ids::new_ids()
+            .map_err(|e| ApplyError::Save(format!("새 node ID를 만들 수 없습니다: {e}")))?;
+        commands.push(Command::InsertNode(instance_node(
+            index,
+            &insert,
+            entry.definition().display_name().into(),
+            order_key,
+            ids,
+        )?));
+    }
     Ok(commands)
+}
+
+/// 정의를 참조하는 인스턴스 node와 위치 Transform modifier 하나.
+fn instance_node(
+    index: usize,
+    insert: &ComponentInstanceInsert,
+    name: String,
+    order_key: OrderKey,
+    [node, transform_id]: [StableId; 2],
+) -> Result<InsertNode, ApplyError> {
+    let invalid = |reason: String| ApplyError::InvalidCommand { index, reason };
+    let mut command = InsertNode::single(NodeRecord {
+        id: node,
+        parent: Some(insert.parent),
+        order_key,
+        visible: true,
+        locked: false,
+        display_name: name,
+        payload: NodePayload::ComponentInstance(ComponentInstancePayload::new(ComponentRef::new(
+            insert.component,
+        ))),
+    });
+    let transform = Transform2D::new(1., 0., 0., 1., insert.position.x(), insert.position.y())
+        .map_err(|e| invalid(format!("위치: {e:?}")))?;
+    let mut stack = ModifierStack::new(node);
+    stack
+        .insert(ModifierEntry {
+            id: ModifierId::new(transform_id),
+            order: OrderKey::between(None, None),
+            kind: ModifierKind::Transform,
+            enabled: true,
+            payload: ModifierPayload::Transform(transform),
+        })
+        .map_err(|e| invalid(format!("위치 modifier: {e:?}")))?;
+    command.modifier_stacks.push(stack);
+    Ok(command)
 }
 
 /// SetFrameSize가 두 요청으로 펼쳐져도 오류 위치는 호출자가 보낸 입력 배열 기준입니다.
@@ -452,7 +620,7 @@ pub fn apply(
     mode: ApplyMode,
     lock: &LockPolicy,
 ) -> Result<ApplyOutcome, ApplyError> {
-    let commands = decode_commands(&request.commands)?;
+    let planned = plan_commands(&request.commands)?;
     let locked_root = match (mode, lock) {
         (ApplyMode::Write, LockPolicy::Required { dir }) => {
             // 잠금과 저장 모두 같은 실제 경로를 사용합니다.
@@ -487,6 +655,7 @@ pub fn apply(
         .to_records()
         .map_err(|e| ApplyError::Document(DocumentReadError::Records(e.to_string())))?;
     before.sort_canonical();
+    let commands = resolve_commands(planned, &snapshot, &model)?;
 
     let mut state = DocumentState::new(model);
     let base = DocumentRevision(0);
@@ -1001,5 +1170,150 @@ mod tests {
             .to_command(),
             Err(CommandInputError::Invalid(_))
         ));
+    }
+
+    /// View root Frame 하나짜리 문서와 `design/components`의 정의 하나를 가진 프로젝트.
+    fn project_with_component() -> (
+        ProjectDir,
+        crate::test_support::FixtureDocument,
+        StableId,
+        ContentHash,
+    ) {
+        use stellar_project::document_io::component_source::{self, ComponentSource};
+        let tmp = TempDir::new("apply-instance");
+        let dir = ProjectDir {
+            path: tmp.path.join("project"),
+            locks: tmp.path.join("user-data").join("locks"),
+            _tmp: tmp,
+        };
+        scaffold_project(&dir.path);
+        let model = crate::test_support::large_document(3);
+        save_documents(&dir.path, &[&model]);
+        let folder = dir.path.join("design/components");
+        std::fs::create_dir(&folder).unwrap();
+        let source = ComponentSource::new(
+            StableId::new_v7(30, 0, 1),
+            "Card".into(),
+            StableId::new_v7(30, 0, 2),
+        )
+        .unwrap();
+        let (_, hash) = component_source::create(&folder, &source).unwrap();
+        (dir, model, StableId::new_v7(30, 0, 1), hash)
+    }
+
+    fn view_root(model: &crate::test_support::FixtureDocument) -> StableId {
+        model.definition().pages[0].views[0].root_frame
+    }
+
+    #[test]
+    fn component_instances_insert_in_one_transaction_and_check_the_source_hash() {
+        let (dir, model, component, hash) = project_with_component();
+        let root = view_root(&model);
+        let base = open_snapshot(&dir.path).unwrap().revision();
+        let insert = |x: f32, y: f32| {
+            CommandInput::InsertComponentInstance(ComponentInstanceInsert {
+                component,
+                source_hash: hash,
+                parent: root,
+                position: Vec2::new(x, y).unwrap(),
+            })
+        };
+        let request = |commands| ApplyRequest {
+            base_revision: base,
+            document: model.document_id(),
+            commands,
+        };
+
+        // 원본이 없거나 hash가 다르면 아무것도 쓰지 않습니다.
+        let before = file_digest(&dir.path);
+        let mut stale = insert(0., 0.);
+        if let CommandInput::InsertComponentInstance(edit) = &mut stale {
+            edit.source_hash = ContentHash::compute(b"other");
+        }
+        let mut missing = insert(0., 0.);
+        if let CommandInput::InsertComponentInstance(edit) = &mut missing {
+            edit.component = StableId::new_v7(31, 0, 1);
+        }
+        for (commands, failed) in [(vec![insert(1., 1.), stale], 1), (vec![missing], 0)] {
+            for mode in [ApplyMode::DryRun, ApplyMode::Write] {
+                assert!(matches!(
+                    apply(&dir.path, &request(commands.clone()), mode, &locks(&dir)),
+                    Err(ApplyError::ComponentSourceChanged { index, component: c })
+                        if index == failed && (c == component || failed == 0)
+                ));
+            }
+        }
+        // 뒤 command가 거부되면 앞의 인스턴스 삽입도 적용되지 않습니다.
+        assert!(matches!(
+            apply(
+                &dir.path,
+                &request(vec![
+                    insert(1., 1.),
+                    CommandInput::DeleteSubtree {
+                        root: StableId::new_v7(1, 1, 1),
+                    },
+                ]),
+                ApplyMode::Write,
+                &locks(&dir),
+            ),
+            Err(ApplyError::Rejected { index: 1, .. })
+        ));
+        assert_eq!(file_digest(&dir.path), before);
+        assert!(decode_commands(&[insert(0., 0.)]).is_err());
+
+        // 같은 부모에 두 개와 이름 변경을 한 transaction(한 generation)으로 씁니다.
+        let outcome = apply(
+            &dir.path,
+            &request(vec![
+                insert(230.5, -10.),
+                CommandInput::Rename {
+                    node: root,
+                    name: "Placed".into(),
+                },
+                insert(30., 20.),
+            ]),
+            ApplyMode::Write,
+            &locks(&dir),
+        )
+        .unwrap();
+        assert_eq!(outcome.revision.generation(), base.generation() + 1);
+        assert_eq!(outcome.command_count, 3);
+        let reopened = open_snapshot(&dir.path)
+            .unwrap()
+            .document_model(model.document_id())
+            .unwrap();
+        let placed = reopened.references().inbound(component);
+        assert_eq!(placed.len(), 2);
+        let records = reopened.to_records().unwrap();
+        let mut found = Vec::new();
+        for node in &placed {
+            let record = records.nodes.iter().find(|n| n.id == *node).unwrap();
+            assert_eq!(record.parent, Some(root));
+            assert_eq!(record.display_name, "Card");
+            assert_eq!(
+                record.payload,
+                NodePayload::ComponentInstance(ComponentInstancePayload::new(ComponentRef::new(
+                    component
+                )))
+            );
+            let [entry] = reopened.modifier_stack(*node).unwrap().entries() else {
+                panic!("위치 modifier 하나");
+            };
+            let ModifierPayload::Transform(transform) = entry.payload else {
+                panic!("Transform modifier");
+            };
+            found.push((record.order_key.clone(), transform));
+        }
+        found.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            found.iter().map(|(_, t)| *t).collect::<Vec<_>>(),
+            [
+                Transform2D::new(1., 0., 0., 1., 230.5, -10.).unwrap(),
+                Transform2D::new(1., 0., 0., 1., 30., 20.).unwrap(),
+            ],
+            "요청 순서대로 마지막 자식 뒤에 놓임"
+        );
+        let renamed = records.nodes.iter().find(|n| n.id == root).unwrap();
+        assert_eq!(renamed.display_name, "Placed");
     }
 }
