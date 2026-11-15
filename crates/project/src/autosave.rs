@@ -19,7 +19,8 @@
 //!   키는 거부합니다.
 //! - 앱 비활성화·창 닫기 flush는 아키텍처가 요구하는 동작이라 끌 수 없고, 제한 시간만 설정합니다.
 //!
-//! 무엇이 저장 대상(dirty)인지는 [`dirty`](XIII.1.2)가 정합니다.
+//! 무엇이 저장 대상(dirty)인지는 [`dirty`](XIII.1.2)가, 언제 저장할지는 [`schedule`]이 정합니다. 제품 값은
+//! `config/performance-budgets.yaml`의 `autosave` 절(ADR-0072)에 있습니다.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -29,6 +30,8 @@ use crate::yaml::{load_restricted, scalar, LoaderError, YamlValue};
 
 /// 완료된 document transaction만 만드는 자동 저장 dirty 상태 (XIII.1.2).
 pub mod dirty;
+/// debounce·최대 지연·제스처·실패를 반영한 창별 자동 저장 시점 (XIII.1.3·XIII.1.5).
+pub mod schedule;
 
 /// `performance-budgets.yaml`에서 자동 저장 값을 담는 절 이름.
 pub const AUTOSAVE_SECTION: &str = "autosave";
@@ -366,8 +369,7 @@ autosave:
 
     #[test]
     fn repository_budget_file_is_well_formed() {
-        // 저장소 config는 값이 들어 있으면 유효해야 하고, 아직 없으면 MissingSection이어야 합니다
-        // (다른 오류·기본값 대체 없음). 값은 벤치마크로 확정해 ADR과 함께 기록합니다.
+        // 앱 runtime이 이 절을 읽어 자동 저장을 켜므로(ADR-0072) 저장소 config는 유효해야 합니다.
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..")
@@ -375,7 +377,6 @@ autosave:
             .join("performance-budgets.yaml");
         match AutosavePolicy::load(&path) {
             Ok(policy) => assert!(policy.max_delay >= policy.debounce),
-            Err(AutosaveConfigError::MissingSection) => {}
             Err(other) => panic!("performance-budgets.yaml 자동 저장 절 오류: {other}"),
         }
     }

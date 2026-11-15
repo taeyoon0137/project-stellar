@@ -20,6 +20,13 @@ final class RuntimeHost {
         return CoreRuntime.version(handle: handle)
     }
 
+    /// 앱 비활성화 flush(ADR-0072): 저장되지 않은 완료 편집을 debounce 없이 저장하도록 코어에 알립니다.
+    /// 기다리지 않습니다. 저장 시점·대상 판단은 코어 runtime이 합니다.
+    func flushAutosave() {
+        guard created, !destroyed else { return }
+        _ = stellar_runtime_flush_autosave(handle)
+    }
+
     /// runtime을 파괴합니다(중복 호출 무시 — destroy는 정확히 1회).
     func shutdown() {
         guard created, !destroyed else { return }

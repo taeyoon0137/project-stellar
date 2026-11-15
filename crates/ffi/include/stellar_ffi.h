@@ -324,6 +324,10 @@ StellarStatus stellar_document_close(uint64_t handle, uint64_t document, uint64_
 /* 최신 상태 snapshot 요약을 씁니다(document thread를 기다리지 않음). */
 StellarStatus stellar_runtime_state(uint64_t handle, StellarRuntimeState *out_state);
 
+/* 앱 비활성화 flush: 저장되지 않은 완료 편집을 debounce 없이 저장하도록 접수합니다(기다리지 않음, 완료 event 없음).
+   앱 runtime이 아직 없으면 STELLAR_OK, 대기열이 차면 STELLAR_QUEUE_FULL(다음 자동 저장이 씀). ADR-0072. */
+StellarStatus stellar_runtime_flush_autosave(uint64_t handle);
+
 /* 열린 문서 session의 최신 snapshot 정보를 씁니다(없는 문서는 STELLAR_INVALID_ARGUMENT). */
 StellarStatus stellar_document_info(uint64_t handle, uint64_t document, StellarDocumentInfo *out_info);
 

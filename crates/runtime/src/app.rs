@@ -127,6 +127,7 @@ use stellar_project::root::{classify_project_open, OpenError, RootError};
 use stellar_project::trust::TrustStatus;
 use stellar_project::trust_store::{os_user_data_base, FileTrustStore};
 
+mod autosave;
 mod canvas_gesture;
 mod components;
 mod create;
@@ -1036,6 +1037,7 @@ pub(crate) struct WindowEntry {
     checkpoint: recovery::WindowCheckpoint,
     inspector: inspector::InspectorCache,
     selection_caps: selection_menu::SelectionCapsCache,
+    autosave: autosave::WindowAutosave,
 }
 
 #[derive(Debug)]
@@ -1059,6 +1061,8 @@ pub(crate) struct AppSessions {
     window_ids: WindowIdSource,
     /// 저장본 그대로인 창들이 함께 쓰는 캔버스 표시 목록.
     shared_scenes: crate::canvas::SharedScenes,
+    /// 자동 저장을 켠 runtime의 정책과 시계(UX.2.11).
+    autosave: Option<autosave::AutosaveSetup>,
 }
 
 /// 창 편집 session id 공급기: UUIDv7(현재 Unix ms + 시각·프로세스·순번에서 섞은 난수 bit).
@@ -1395,6 +1399,7 @@ fn open_window_session_on_thread(
             gesture: Default::default(),
             inspector: Default::default(),
             selection_caps: Default::default(),
+            autosave: Default::default(),
         },
     );
     if let Some(owner) = sessions.projects.get_mut(&project) {
@@ -1604,6 +1609,7 @@ fn build_state(ctx: &mut DocumentContext) -> RuntimeState {
         .iter_mut()
         .map(|(handle, entry)| window_summary(*handle, entry, &mut sessions.shared_scenes))
         .collect();
+    autosave::observe(ctx);
     RuntimeState {
         generation,
         projects,
@@ -1765,6 +1771,8 @@ pub struct AppRuntime {
     event_capacity: usize,
     /// drop이 document thread 종료를 기다리는 최대 시간.
     drop_timeout: Duration,
+    /// 자동 저장 시계(켠 경우, UX.2.11).
+    autosave: Option<autosave::AutosaveClock>,
     document: DocumentThread,
 }
 
@@ -1779,6 +1787,7 @@ impl Drop for AppRuntime {
         {
             token.cancel();
         }
+        self.stop_autosave();
         // shutdown·shutdown_timeout으로 이미 종료했으면 아무것도 하지 않습니다.
         let _ = self.document.stop_within(Some(self.drop_timeout));
         // 닫은 창의 복구본 삭제(폐기·저장 뒤 정리)가 프로세스 종료 전에 끝나도록 잠시 기다립니다.
@@ -1867,6 +1876,7 @@ impl AppRuntime {
             recovery_workers: Default::default(),
             event_capacity: event_capacity.max(1),
             drop_timeout: AppRuntime::SHUTDOWN_TIMEOUT,
+            autosave: None,
             document,
         })
     }
@@ -2312,6 +2322,7 @@ impl AppRuntime {
 
     /// document thread를 종료합니다. 이미 접수한 요청은 실행하고, 끝날 때까지 기다립니다.
     pub fn shutdown(mut self) -> Result<DocumentLoopStats, DocumentThreadError> {
+        self.stop_autosave();
         self.document.stop_within(None)
     }
 
@@ -2321,6 +2332,7 @@ impl AppRuntime {
         mut self,
         timeout: Duration,
     ) -> Result<DocumentLoopStats, DocumentThreadError> {
+        self.stop_autosave();
         self.document.stop_within(Some(timeout))
     }
 }

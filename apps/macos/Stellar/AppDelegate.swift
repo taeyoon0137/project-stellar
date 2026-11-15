@@ -62,6 +62,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// 다른 앱으로 전환하면 대기 중인 자동 저장을 바로 저장합니다(기술 아키텍처 22.1).
+    func applicationDidResignActive(_ notification: Notification) {
+        runtimeHost.flushAutosave()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }

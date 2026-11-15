@@ -12,6 +12,8 @@
 //! 경계를 넘지 않고 정수 handle·고정 POD 구조체·버전형 바이트만 씁니다. `AppRuntime`(document
 //! thread)은 handle의 첫 프로젝트·문서 요청에서 시작합니다.
 
+/// 자동 저장 flush (UX.2.11).
+mod autosave;
 pub mod canvas;
 mod canvas_gesture;
 mod canvas_text;
@@ -137,6 +139,10 @@ impl Runtime {
             match AppRuntime::start() {
                 Ok(mut app) => {
                     app.enable_recovery();
+                    // 앱 runtime은 지연 자동 저장을 켭니다(ADR-0072). 예산 값이 잘못되면 Save Now로만 저장합니다.
+                    if let Err(error) = app.enable_autosave() {
+                        eprintln!("Stellar autosave: {error}");
+                    }
                     self.app = Some(app)
                 }
                 Err(error) => {
