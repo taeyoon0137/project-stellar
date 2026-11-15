@@ -17,10 +17,6 @@ enum SidebarSymbols {
     static let image = "photo"
     static let componentInstance = "diamond"
 
-    // 페이지·View
-    static let page = "doc"
-    static let view = "rectangle.on.rectangle"
-
     // 행 토글
     static let visible = "eye"
     static let hidden = "eye.slash"
@@ -56,7 +52,7 @@ enum SidebarSymbols {
     static var allNames: [String] {
         [
             frame, fragment, shape, rectangle, ellipse, line, polygon, path, text, image, componentInstance,
-            page, view, visible, hidden, locked, unlocked, noResults, failed, noView,
+            visible, hidden, locked, unlocked, noResults, failed, noView,
         ]
     }
 
@@ -68,7 +64,6 @@ enum SidebarSymbols {
 
 /// 사이드바 UI 문자열. 개발 지역은 en이며 지역화 대상입니다(SWIFT_EMIT_LOC_STRINGS).
 enum SidebarStrings {
-    static let pages = String(localized: "Pages", comment: "사이드바 페이지 구획 제목")
     static let layers = String(localized: "Layers", comment: "사이드바 레이어 구획 제목")
     static let filterPlaceholder = String(localized: "Filter", comment: "레이어 필터 필드 placeholder")
     static let filterLabel = String(localized: "Filter Layers", comment: "레이어 필터 필드 접근성 레이블")
@@ -107,7 +102,7 @@ enum SidebarStrings {
         localized: "Contains matches",
         comment: "필터에 직접 일치하지 않고 일치한 자손을 담은 행(접근성)"
     )
-    static let pagesOutline = String(localized: "Pages", comment: "페이지 목록 접근성 레이블")
+    static let pagePath = String(localized: "Page and View", comment: "사이드바 머리 줄 Page › View 팝업 접근성 레이블")
     static let layersOutline = String(localized: "Layers", comment: "레이어 트리 접근성 레이블")
 
     static func showLayer(_ name: String) -> String {

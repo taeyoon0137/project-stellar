@@ -148,3 +148,56 @@ final class SidebarOutlineView: NSOutlineView {
         return super.validateUserInterfaceItem(item)
     }
 }
+
+/// outline 항목 객체.
+///
+/// NSOutlineView는 항목을 객체 동일성으로 추적하므로(펼침·선택 유지) id마다 같은 객체를 재사용합니다.
+final class SidebarOutlineItem: NSObject {
+    enum Role {
+        case header
+        case layer
+        case more
+    }
+
+    let role: Role
+    let id: SidebarStableID?
+
+    init(role: Role, id: SidebarStableID?) {
+        self.role = role
+        self.id = id
+    }
+
+    var layerID: SidebarStableID? { role == .layer ? id : nil }
+}
+
+/// 사이드바 outline 공통 구성.
+enum SidebarOutlineFactory {
+    /// source list(사이드바) 스타일 outline과 그것을 담은 scroll view를 만듭니다(HIG Sidebars, 디자인 가이드 6.2).
+    @MainActor
+    static func make(accessibilityLabel: String, allowsMultipleSelection: Bool) -> (NSScrollView, SidebarOutlineView) {
+        let outline = SidebarOutlineView()
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SidebarColumn"))
+        column.isEditable = true
+        column.resizingMask = .autoresizingMask
+        outline.addTableColumn(column)
+        outline.outlineTableColumn = column
+        outline.headerView = nil
+        outline.style = .sourceList
+        // 행 높이·글꼴은 시스템 사이드바 크기 설정을 따릅니다(디자인 가이드 4.4).
+        outline.rowSizeStyle = .default
+        outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+        outline.floatsGroupRows = true
+        outline.allowsMultipleSelection = allowsMultipleSelection
+        outline.allowsEmptySelection = true
+        outline.allowsTypeSelect = true
+        outline.setAccessibilityLabel(accessibilityLabel)
+
+        let scrollView = NSScrollView()
+        scrollView.documentView = outline
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        // 사이드바 재질은 split view item이 그립니다. 목록 배경을 따로 칠하지 않습니다(디자인 가이드 3.2).
+        scrollView.drawsBackground = false
+        return (scrollView, outline)
+    }
+}

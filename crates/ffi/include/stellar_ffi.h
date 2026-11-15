@@ -495,6 +495,12 @@ StellarStatus stellar_window_layer_page(uint64_t handle, uint64_t session, const
 #define STELLAR_LAYER_FLAG_LOCKED 2
 /* 표시한 레이어 행들의 flag를 value(0·1)로 한 transaction에 바꿉니다. 잠금 규칙은 STELLAR_SELECTION_TOGGLE_*와 같습니다. */
 StellarStatus stellar_window_layer_set_flag(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, const uint8_t *nodes, size_t count, uint32_t flag, uint32_t value, uint64_t *out_request);
+/* Worker-only. 창 작업 문서의 Page·View를 정의 순서로 View마다 한 행(View 없는 Page는 view 0) 씁니다.
+ * text는 행 순서로 Page 이름(그 Page의 첫 행만)과 View 이름입니다. 부족하면 BUFFER_TOO_SMALL과 필요한 행 수·길이를 씁니다. */
+typedef struct StellarViewOutlineRow { uint8_t page[16], view[16]; size_t page_name_len, view_name_len; } StellarViewOutlineRow;
+StellarStatus stellar_window_view_outline(uint64_t handle, uint64_t session, StellarViewOutlineRow *rows, size_t row_capacity, uint8_t *text, size_t text_capacity, size_t *out_rows, size_t *out_text_len);
+/* 작업 문서의 View 탭을 열고 active로 만듭니다(이미 열려 있으면 active만). 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED. */
+StellarStatus stellar_window_session_open_view(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t *out_request);
 
 /* 열린 창 session의 view state(탭 수, active view, viewport)를 씁니다(없는 창 session은 STELLAR_INVALID_ARGUMENT). */
 StellarStatus stellar_window_view_info(uint64_t handle, uint64_t session, StellarWindowViewInfo *out_info);

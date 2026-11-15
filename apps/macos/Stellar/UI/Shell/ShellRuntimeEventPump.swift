@@ -221,6 +221,11 @@ final class ShellRuntimeEventPump {
                                           nodes: nodes, flag: flag, value: value), completion)
     }
 
+    func openView(session: UInt64, view: UUID, completion: @escaping (CoreRuntimeEvent) -> Void)
+        -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.openView(handle: runtimeHandle, session: session, view: view), completion)
+    }
+
     func reloadComponentCanvas(_ session: UInt64, completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.reloadComponentCanvas(handle: runtimeHandle, session: session), completion)
     }

@@ -42,6 +42,55 @@ extension CoreRuntime {
         return .success(request)
     }
 
+    /// 창 작업 문서의 Page·View 목록(정의 순서). document thread를 기다리므로 worker에서만 부릅니다.
+    static func viewOutline(handle: UInt64, session: UInt64) -> [SidebarPageRow]? {
+        precondition(!Thread.isMainThread)
+        var rows = [StellarViewOutlineRow](repeating: StellarViewOutlineRow(), count: 16)
+        var text = [UInt8](repeating: 0, count: 1024)
+        var rowCount = 0, textLength = 0
+        func read() -> StellarStatus {
+            rows.withUnsafeMutableBufferPointer { rowBuffer in
+                text.withUnsafeMutableBufferPointer { textBuffer in
+                    stellar_window_view_outline(handle, session, rowBuffer.baseAddress, rowBuffer.count,
+                                                textBuffer.baseAddress, textBuffer.count, &rowCount, &textLength)
+                }
+            }
+        }
+        var status = read()
+        if status == STELLAR_BUFFER_TOO_SMALL {
+            rows = [StellarViewOutlineRow](repeating: StellarViewOutlineRow(), count: max(rowCount, 1))
+            text = [UInt8](repeating: 0, count: max(textLength, 1))
+            status = read()
+        }
+        guard status == STELLAR_OK, rowCount <= rows.count, textLength <= text.count else { return nil }
+        var offset = 0
+        func take(_ count: Int) -> String? {
+            guard count <= textLength - offset else { return nil }
+            defer { offset += count }
+            return String(decoding: text[offset..<(offset + count)], as: UTF8.self)
+        }
+        var pages: [(id: SidebarStableID, name: String, views: [SidebarViewRow])] = []
+        for row in rows.prefix(rowCount) {
+            guard let pageName = take(row.page_name_len), let viewName = take(row.view_name_len) else { return nil }
+            let page = SidebarStableID(UUID(uuid: row.page))
+            if pages.last?.id != page { pages.append((page, pageName, [])) }
+            if withUnsafeBytes(of: row.view, { $0.contains { $0 != 0 } }) {
+                pages[pages.count - 1].views.append(SidebarViewRow(id: SidebarStableID(UUID(uuid: row.view)), name: viewName))
+            }
+        }
+        return pages.map { SidebarPageRow(id: $0.id, name: $0.name, views: $0.views) }
+    }
+
+    /// 창 session에서 작업 문서의 View 탭을 열고 active로 만드는 요청을 접수합니다.
+    static func openView(handle: UInt64, session: UInt64, view: UUID) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { bytes in
+            stellar_window_session_open_view(handle, session, bytes.bindMemory(to: UInt8.self).baseAddress, &request)
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     static func layerOrderFlags(handle: UInt64, target: StellarSelectionTarget) -> UInt32 {
         var target = target
         return stellar_window_layer_order_flags(handle, &target)

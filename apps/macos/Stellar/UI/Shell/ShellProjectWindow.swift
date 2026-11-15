@@ -629,6 +629,7 @@ final class ShellProjectWindow {
         connectFrameInteractions()
         connectLayerFlags()
         connectCanvasContextMenu()
+        connectPagePath()
         if let window = windowController.window {
             // 응답자 체인: content view → router → split controller → 창. 텍스트 편집 중에는 field editor가 먼저 받습니다.
             router.install(in: window)

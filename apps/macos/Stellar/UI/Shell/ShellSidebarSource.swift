@@ -39,6 +39,11 @@ final class ShellSidebarSource: SidebarDataProvider {
     var setFlag: ((_ view: UUID, _ revision: UInt64, _ ids: [UUID], _ flag: ShellLayerFlag, _ value: Bool) -> Void)?
     /// 게시할 때마다 부릅니다. 창은 선택 행의 표시·잠금 상태로 Hide·Lock 메뉴를 갱신합니다.
     var selectionStateDidChange: (() -> Void)?
+    /// 머리 줄 팝업에서 고른 View로 전환합니다.
+    var openView: ((UUID) -> Void)?
+    /// 창 작업 문서의 Page·View 목록과 그것을 읽은 창. 머리 줄 팝업이 씁니다.
+    private var outline: (session: UInt64, pages: [SidebarPageRow])?
+    private var outlineRequest: UInt64?
     var trusted = false {
         didSet { if oldValue != trusted { publish() } }
     }
@@ -71,6 +76,7 @@ final class ShellSidebarSource: SidebarDataProvider {
         let previous = display
         let selectionOnly = display?.session == next.session && display?.view == next.view && display?.revision == next.revision
         display = next
+        loadOutline()
         if selectionOnly && !loaded.isEmpty {
             // 선택 변경은 사용자가 열어 둔 형제 페이지와 disclosure를 유지합니다.
             epoch &+= 1
@@ -85,6 +91,26 @@ final class ShellSidebarSource: SidebarDataProvider {
             reset()
             restorePages = pages
             enqueue(Request(parent: nil, after: nil))
+        }
+    }
+
+    /// 창마다 한 번 Page·View 목록을 읽습니다. Page·View를 바꾸는 코어 Command가 아직 없어 창이 바뀔 때만 다시 읽습니다.
+    private func loadOutline() {
+        guard let display, let runtime, outline?.session != display.session, outlineRequest != display.session else { return }
+        let session = display.session
+        outlineRequest = session
+        queue.async { [weak self] in
+            let pages = CoreRuntime.viewOutline(handle: runtime, session: session)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.outlineRequest == session else { return }
+                self.outlineRequest = nil
+                guard let pages, self.display?.session == session else { return }
+                self.outline = (session, pages)
+                if let active = self.snapshot.activePageID, pages.contains(where: { $0.id == active }) {
+                    self.snapshot.pages = pages
+                    self.publish(structureChanged: false)
+                }
+            }
         }
     }
 
@@ -144,6 +170,9 @@ final class ShellSidebarSource: SidebarDataProvider {
             return canSetFlag(ids, blockedBySelf: true) ? .allowed : .denied(.unsupported)
         case .setLocked(let ids, _):
             return canSetFlag(ids, blockedBySelf: false) ? .allowed : .denied(.unsupported)
+        case .activateView(let id):
+            return display != nil && window?.isClosing == false && id != snapshot.activeViewID
+                && snapshot.pages.contains { $0.views.contains { $0.id == id } } ? .allowed : .denied(.unknownNode)
         case .renameNode(let id, _):
             guard window?.isClosing == false else { return .denied(.unsupported) }
             var current: SidebarStableID? = id
@@ -182,6 +211,8 @@ final class ShellSidebarSource: SidebarDataProvider {
             if let display { setFlag?(display.view, display.revision, ids.map(\.uuid), .visible, value) }
         case .setLocked(let ids, let value):
             if let display { setFlag?(display.view, display.revision, ids.map(\.uuid), .locked, value) }
+        case .activateView(let id):
+            openView?(id.uuid)
         case .loadChildren(let id):
             if snapshot.layers.childIDs[id] == nil { enqueue(Request(parent: id, after: nil)) }
         case .renameNode(let id, let name):
@@ -243,7 +274,11 @@ final class ShellSidebarSource: SidebarDataProvider {
         var ids = request.parent.map { snapshot.layers.childIDs[$0] ?? [] } ?? snapshot.layers.topLevelIDs
         // 삭제·이동 또는 같은 페이지의 중복 요청 결과를 현재 목록에 이어 붙이지 않습니다.
         guard refreshing || request.after == nil || ids.last == request.after else { return }
-        snapshot.pages = [page.page]
+        if let outline, outline.session == display?.session, outline.pages.contains(where: { $0.id == page.page.id }) {
+            snapshot.pages = outline.pages
+        } else {
+            snapshot.pages = [page.page]
+        }
         snapshot.activePageID = page.page.id
         snapshot.activeViewID = page.page.views.first?.id
         if !refreshing {

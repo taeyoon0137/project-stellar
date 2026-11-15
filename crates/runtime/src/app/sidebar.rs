@@ -48,6 +48,17 @@ pub struct LayerPage {
     pub rows: Vec<LayerRow>,
 }
 
+/// 작업 문서의 Page 하나와 그 View들(정의 순서). 사이드바 머리 줄 Page › View 팝업이 읽습니다.
+#[derive(Debug, PartialEq, Eq)]
+pub struct OutlinePage {
+    /// Page ID.
+    pub id: StableId,
+    /// Page 표시 이름.
+    pub name: String,
+    /// View ID와 표시 이름.
+    pub views: Vec<(StableId, String)>,
+}
+
 /// 레이어 행에서 켜고 끄는 노드 속성(`SetProperty::visibility`·`SetProperty::locked`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayerFlag {
@@ -88,6 +99,17 @@ impl AppRuntime {
             let window = super::frame_move::canvas_window(ctx, session)?;
             rename(window, request, view, revision, node, name)?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
+        })
+    }
+
+    /// 창의 작업 문서에 있는 Page·View 목록 읽기를 접수합니다. UI는 이 ticket을 기다리지 않습니다.
+    pub fn view_outline(
+        &self,
+        window: WindowSessionHandle,
+    ) -> Result<JobTicket<Option<Vec<OutlinePage>>>, SubmitError> {
+        self.sender.submit(move |ctx| {
+            let entry = ctx.app_sessions().windows.get(&window)?;
+            Some(outline(entry.session.document()?.model()))
         })
     }
 
@@ -262,6 +284,23 @@ pub(super) fn set_flags(
         window.apply(&tx).map_err(view_failure)?;
     }
     Ok(())
+}
+
+fn outline(model: &stellar_document::model::DocumentModel) -> Vec<OutlinePage> {
+    model
+        .definition()
+        .pages
+        .iter()
+        .map(|page| OutlinePage {
+            id: page.id,
+            name: page.display_name().to_owned(),
+            views: page
+                .views
+                .iter()
+                .map(|view| (view.id, view.display_name().to_owned()))
+                .collect(),
+        })
+        .collect()
 }
 
 fn read_page(
@@ -455,6 +494,20 @@ mod tests {
         assert!(!flags(&session, 11).1 && !flags(&session, 30).1);
         assert!(set(&mut session, &[11], LayerFlag::Visible, None).is_ok());
         assert_eq!(flags(&session, 11), (false, false));
+    }
+
+    #[test]
+    fn outline_lists_every_page_and_view_in_definition_order() {
+        let dir = saved_project("view-outline");
+        let session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        assert_eq!(
+            outline(session.document().unwrap().model()),
+            [OutlinePage {
+                id: sid(2),
+                name: "페이지".into(),
+                views: vec![(sid(3), "첫 화면".into()), (sid(4), "둘째 화면".into())],
+            }]
+        );
     }
 
     #[test]

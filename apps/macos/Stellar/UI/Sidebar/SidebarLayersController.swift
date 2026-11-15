@@ -226,7 +226,7 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
         switch item.role {
         case .header: return snapshot.layers.topLevelIDs
         case .layer: return item.id.flatMap { snapshot.layers.childIDs[$0] } ?? []
-        case .page, .view, .more: return []
+        case .more: return []
         }
     }
 
@@ -616,7 +616,7 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
             guard let item = proposedItem, let id = item.id else { return nil }
             let index = max(0, childIndex)
             candidate = (SidebarDropTarget(parentID: id, index: index), item, index)
-        case .page?, .view?, .more?:
+        case .more?:
             return nil
         }
         if provider.validate(.move(ids, to: candidate.0)).isAllowed {

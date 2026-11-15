@@ -1712,6 +1712,8 @@ mod tests {
             "stellar_window_session_select",
             "stellar_window_layer_rename",
             "stellar_window_layer_set_flag",
+            "stellar_window_view_outline",
+            "stellar_window_session_open_view",
             "stellar_window_session_set_frame_property",
             "stellar_window_selected_node",
             "stellar_window_session_insert_frame",
@@ -1757,6 +1759,7 @@ mod tests {
         assert_eq!(offset_of!(StellarRuntimeState, document_count), 24);
         assert_eq!(offset_of!(StellarRuntimeState, outstanding), 32);
         assert_eq!(size_of::<StellarDocumentInfo>(), 56);
+        assert_eq!(size_of::<sidebar::StellarViewOutlineRow>(), 48);
         assert_eq!(offset_of!(StellarDocumentInfo, version), 0);
         assert_eq!(offset_of!(StellarDocumentInfo, reserved), 4);
         assert_eq!(offset_of!(StellarDocumentInfo, document), 8);

@@ -247,3 +247,140 @@ pub unsafe extern "C" fn stellar_window_layer_set_flag(
         unsafe { rt.finish_request(result, out_request) }
     })
 }
+
+/// 머리 줄 Page › View 팝업의 한 행. View마다 하나이고, View 없는 Page는 `view`가 0입니다.
+#[repr(C)]
+pub struct StellarViewOutlineRow {
+    page: [u8; 16],
+    view: [u8; 16],
+    page_name_len: usize,
+    view_name_len: usize,
+}
+
+/// 셸 worker 전용. 창 작업 문서의 Page·View를 정의 순서로 씁니다. text는 행 순서로 Page 이름(그 Page의 첫 행만)과
+/// View 이름입니다. 공간이 부족하면 `BufferTooSmall`과 함께 필요한 행 수·text 길이를 씁니다.
+/// # Safety
+/// `rows`는 null 또는 `row_capacity`개, `text`는 null 또는 `text_capacity`바이트를 쓸 수 있어야 하며 서로 겹치지 않아야
+/// 합니다. `out_rows`·`out_text_len`은 각각 usize 하나를 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_view_outline(
+    handle: u64,
+    session: u64,
+    rows: *mut StellarViewOutlineRow,
+    row_capacity: usize,
+    text: *mut u8,
+    text_capacity: usize,
+    out_rows: *mut usize,
+    out_text_len: *mut usize,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out_rows.is_null() || out_text_len.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe {
+            out_rows.write(0);
+            out_text_len.write(0);
+        }
+        let ticket = {
+            let Ok(reg) = registry().lock() else {
+                return StellarStatus::Internal;
+            };
+            let Some(app) = reg.live.get(&handle).and_then(|rt| rt.app.as_ref()) else {
+                return StellarStatus::InvalidHandle;
+            };
+            match app.view_outline(WindowSessionHandle(session)) {
+                Ok(ticket) => ticket,
+                Err(SubmitError::QueueFull { .. }) => return StellarStatus::QueueFull,
+                Err(SubmitError::Stopped) => return StellarStatus::InvalidHandle,
+            }
+        };
+        let pages = match ticket.wait() {
+            Ok(Some(pages)) => pages,
+            Ok(None) => return StellarStatus::NoError,
+            Err(_) => return StellarStatus::Internal,
+        };
+        let mut items = Vec::new();
+        let mut names: Vec<&str> = Vec::new();
+        for page in &pages {
+            if page.views.is_empty() {
+                items.push((page.id, StableId::NIL, page.name.len(), 0));
+                names.push(&page.name);
+            }
+            for (index, (view, name)) in page.views.iter().enumerate() {
+                let page_name = if index == 0 { page.name.as_str() } else { "" };
+                items.push((page.id, *view, page_name.len(), name.len()));
+                names.push(page_name);
+                names.push(name);
+            }
+        }
+        let Some(total) = names
+            .iter()
+            .try_fold(0usize, |sum, name| sum.checked_add(name.len()))
+        else {
+            return StellarStatus::Internal;
+        };
+        unsafe {
+            out_rows.write(items.len());
+            out_text_len.write(total);
+        }
+        if items.len() > row_capacity
+            || total > text_capacity
+            || (!items.is_empty() && rows.is_null())
+            || (total > 0 && text.is_null())
+        {
+            return StellarStatus::BufferTooSmall;
+        }
+        for (i, (page, view, page_name_len, view_name_len)) in items.into_iter().enumerate() {
+            unsafe {
+                rows.add(i).write(StellarViewOutlineRow {
+                    page: page.to_bytes(),
+                    view: view.to_bytes(),
+                    page_name_len,
+                    view_name_len,
+                })
+            };
+        }
+        let mut offset = 0;
+        for name in names {
+            if !name.is_empty() {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(name.as_ptr(), text.add(offset), name.len())
+                };
+                offset += name.len();
+            }
+        }
+        StellarStatus::Ok
+    })
+}
+
+/// 창 session에서 작업 문서의 View 탭을 열고 active로 만듭니다(이미 열려 있으면 active만).
+/// # Safety
+/// view는 16바이트를 읽을 수 있어야 하고, out_request는 null이거나 u64 하나를 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_open_view(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let view = StableId::from_bytes(unsafe { *view });
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.open_view_tab(WindowSessionHandle(session), view),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}

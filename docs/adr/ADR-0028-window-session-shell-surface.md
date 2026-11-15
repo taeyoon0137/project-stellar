@@ -363,6 +363,18 @@ Frame ABI와 같이 document thread가 표시 revision·편집 가능한 부모�
   hit 대상에서 뺍니다.
 - 기존 구조체·입력 encoding·저장 포맷은 바꾸지 않습니다. 거부는 `REQUEST_FAILED`(`UNKNOWN_VIEW`)로 옵니다.
 
+### 사이드바 머리 줄 Page › View — UX.3.5
+
+- `stellar_window_view_outline(handle, session, rows, row_capacity, text, text_capacity, out_rows, out_text_len)`는
+  셸 worker에서 창 작업 문서의 Page·View를 정의 순서로 읽습니다. 행(`StellarViewOutlineRow`, 48 byte)은 View마다
+  하나이고 View 없는 Page는 `view`가 0입니다. UTF-8 text는 행 순서로 Page 이름(그 Page의 첫 행만)과 View 이름이며,
+  공간이 부족하면 `BUFFER_TOO_SMALL`과 필요한 행 수·길이를 씁니다. 창이 없거나 작업 문서가 없으면 `NO_ERROR`입니다.
+  registry 잠금은 읽기 접수까지만 유지하고 UI thread는 기다리지 않습니다.
+- `stellar_window_session_open_view(handle, session, view, out_request)`는 기존 runtime `open_view_tab`을 호출해
+  작업 문서의 View 탭을 열고 active로 만듭니다(이미 열려 있으면 active만). 문서 history에 기록하지 않으며 완료는
+  `WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`입니다.
+- Page·View 이름 변경과 추가는 코어 Command가 없어 이 ABI에 넣지 않습니다(UX.12.1에서 Command와 함께 정합니다).
+
 ### Frame Inspector의 개별 모서리 반경
 
 이 절의 `stellar_window_selected_frame_corners`·`stellar_window_session_set_frame_corner`는 2026-11-15 검토에서

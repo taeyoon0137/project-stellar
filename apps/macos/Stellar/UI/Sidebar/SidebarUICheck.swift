@@ -77,7 +77,7 @@ enum SidebarUICheck {
         static let sidebarWidth: CGFloat = 240
 
         var layers: SidebarLayersController { sidebar.layersController }
-        var pages: SidebarPagesController { sidebar.pagesController }
+        var pagePopup: SidebarPagePopup { sidebar.pagePopup }
 
         /// 최신 snapshot 반영과 layout.
         func refresh() {
@@ -153,7 +153,6 @@ enum SidebarUICheck {
         let harness = Harness(provider: SidebarStubDataProvider())
         defer { harness.close() }
         let layers = harness.layers
-        let pages = harness.pages
         let sidebar = harness.sidebar
 
         try checkStructure(harness)
@@ -188,12 +187,10 @@ enum SidebarUICheck {
         try checkDrop(harness)
         try checkFilter(harness)
 
-        // 빈 View: 페이지 목록에서 View를 고르면 .activateView, 레이어가 없으면 빈 상태.
+        // 빈 View: 머리 줄 팝업에서 View를 고르면 .activateView, 레이어가 없으면 빈 상태.
         guard let generalID = harness.provider.viewID(named: "General") else { throw Failure(message: "예시 View 없음") }
         mark = harness.provider.performedCommands.count
-        let generalRow = harness.row(of: generalID, in: pages.outline)
-        try require(generalRow >= 0, "페이지 목록에 View 행 없음")
-        pages.outline.selectRowIndexes(IndexSet(integer: generalRow), byExtendingSelection: false)
+        try chooseView(generalID, in: harness)
         try require(harness.commands(since: mark) == [.activateView(generalID)], "View 활성화 command 불일치")
         harness.refresh()
         try require(sidebar.stateView.content == .empty && !sidebar.stateView.isHidden, "빈 레이어 상태가 보이지 않음")
@@ -219,15 +216,15 @@ enum SidebarUICheck {
         harness.refresh()
         try require(sidebar.stateView.content == .empty, "다시 시도 후 상태 불일치")
 
-        try checkPageSelection(harness)
+        try checkPagePopup(harness)
         try checkLayout(harness, label: "Dark", appearance: .darkAqua)
         try checkRowSizeStyles(harness)
         try checkLazyChildren()
         try checkAvailableRows()
         try checkCoalescing()
 
-        return "symbols \(SidebarSymbols.allNames.count), pages+layers outline, AX rows/cells/custom actions, "
-            + "rename/toggle/menu/keyboard/drop/filter/empty/loading/failed/page selection/page arrow keys/lazy/offscreen rows/"
+        return "symbols \(SidebarSymbols.allNames.count), page popup+layers outline, AX rows/cells/custom actions, "
+            + "rename/toggle/menu/keyboard/drop/filter/empty/loading/failed/page popup/lazy/offscreen rows/"
             + "coalescing, no ambiguous layout (Light, Dark, small/medium/large rows), toggle hit test"
     }
 
@@ -241,112 +238,49 @@ enum SidebarUICheck {
         try require(node.descendants(role: .image).isEmpty, "\(label) 장식 아이콘이 AXImage로 노출됨")
     }
 
-    /// 페이지 목록: 선택 = active 페이지·View. 페이지 행을 고르면 코어가 고른 active View 행으로 선택이 옮겨 갑니다.
+    /// 머리 줄 팝업에서 `id` View 항목을 고릅니다(메뉴 항목 action과 같은 경로).
     @MainActor
-    private static func checkPageSelection(_ harness: Harness) throws {
-        let pages = harness.pages
-        let outline = pages.outline
-        guard let onboarding = harness.provider.snapshot.pages.first(where: { $0.name == "Onboarding" }),
-              let welcomeID = harness.provider.viewID(named: "Welcome") else {
-            throw Failure(message: "예시 페이지 없음")
+    private static func chooseView(_ id: SidebarStableID, in harness: Harness) throws {
+        guard let item = harness.pagePopup.button.menu?.items.first(where: { ($0.representedObject as? UUID) == id.uuid }) else {
+            throw Failure(message: "머리 줄 팝업에 View 항목 없음")
         }
-        // 다른 페이지(Settings)가 active인 상태에서 Onboarding 페이지 행을 고름 → .activatePage → 첫 View 행 선택.
-        var mark = harness.provider.performedCommands.count
-        outline.selectRowIndexes(IndexSet(integer: harness.row(of: onboarding.id, in: outline)), byExtendingSelection: false)
-        try require(harness.commands(since: mark) == [.activatePage(onboarding.id)], "페이지 활성화 command 불일치: \(harness.commands(since: mark))")
-        harness.refresh()
-        try require(harness.provider.snapshot.activeViewID == welcomeID, "예시 active View 불일치")
-        try require(outline.selectedRow == harness.row(of: welcomeID, in: outline),
-                    "페이지 활성화 후 active View 행이 선택되지 않음(선택 행 \(outline.selectedRow))")
-
-        // 이미 active인 페이지 행을 다시 고름 → command 없음, 선택은 그 페이지 행에 머묾(되돌리면 키보드 함정).
-        mark = harness.provider.performedCommands.count
-        outline.selectRowIndexes(IndexSet(integer: harness.row(of: onboarding.id, in: outline)), byExtendingSelection: false)
-        harness.refresh()
-        try require(harness.commands(since: mark).isEmpty, "active 페이지 재선택이 command를 만듦: \(harness.commands(since: mark))")
-        try require(outline.selectedRow == harness.row(of: onboarding.id, in: outline),
-                    "active 페이지 재선택 후 선택이 페이지 행에 머물지 않음(선택 행 \(outline.selectedRow))")
-
-        // View 행이 선택된 채로 페이지를 접으면 페이지 행, 다시 펼쳐도 선택을 옮기지 않아 페이지 행.
-        outline.selectRowIndexes(IndexSet(integer: harness.row(of: welcomeID, in: outline)), byExtendingSelection: false)
-        guard let pageItem = outline.item(atRow: harness.row(of: onboarding.id, in: outline)) else {
-            throw Failure(message: "페이지 행 없음")
-        }
-        outline.collapseItem(pageItem)
-        try require(outline.selectedRow == harness.row(of: onboarding.id, in: outline), "접은 active 페이지 행이 선택되지 않음")
-        outline.expandItem(pageItem)
-        harness.refresh()
-        try require(outline.selectedRow == harness.row(of: onboarding.id, in: outline), "다시 펼친 뒤 선택이 페이지 행에 머물지 않음")
-        try require(harness.commands(since: mark).isEmpty, "접기·펼치기가 command를 만듦: \(harness.commands(since: mark))")
-        try require(harness.layers.outline.numberOfRows == 9, "Welcome 레이어가 다시 보이지 않음: \(harness.layers.outline.numberOfRows)")
-
-        // active View 행을 다시 고름 → command 없음.
-        outline.selectRowIndexes(IndexSet(integer: harness.row(of: welcomeID, in: outline)), byExtendingSelection: false)
-        try require(harness.commands(since: mark).isEmpty, "active View 재선택이 command를 만듦: \(harness.commands(since: mark))")
-
-        try checkPageKeyboard(harness)
+        harness.pagePopup.chooseView(item)
     }
 
-    /// 페이지 목록 키보드 이동: 화살표로 active 페이지 행을 지나 위아래로 움직이고, ←로 부모 페이지 행에 닿아 접을 수
-    /// 있어야 합니다(키보드 함정 없음, HIG Keyboard). active 페이지 행에 선택이 닿아도 View 행으로 되돌리지 않습니다.
+    /// 머리 줄 팝업: 제목은 활성 `Page › View`, Page마다 머리 항목과 그 View 항목이 있고 활성 View에 체크가 있습니다.
+    /// 다른 View를 고르면 .activateView, 활성 View를 다시 고르면 command가 없습니다. 동작 없는 항목은 없습니다.
     @MainActor
-    private static func checkPageKeyboard(_ harness: Harness) throws {
-        let outline = harness.pages.outline
-        guard let onboarding = harness.provider.snapshot.pages.first(where: { $0.name == "Onboarding" }),
-              let settings = harness.provider.snapshot.pages.first(where: { $0.name == "Settings" }),
-              let welcomeID = harness.provider.viewID(named: "Welcome"),
-              let signInID = harness.provider.viewID(named: "Sign In"),
-              let generalID = harness.provider.viewID(named: "General") else {
-            throw Failure(message: "예시 페이지·View 없음")
+    private static func checkPagePopup(_ harness: Harness) throws {
+        let popup = harness.pagePopup
+        guard let welcomeID = harness.provider.viewID(named: "Welcome"),
+              let signInID = harness.provider.viewID(named: "Sign In") else {
+            throw Failure(message: "예시 View 없음")
         }
-        try require(harness.window.makeFirstResponder(outline), "페이지 목록 first responder 실패")
-        try require(outline.selectedRow == harness.row(of: welcomeID, in: outline), "키보드 검사 시작 행이 Welcome이 아님")
+        var mark = harness.provider.performedCommands.count
+        try chooseView(welcomeID, in: harness)
+        harness.refresh()
+        try require(harness.commands(since: mark) == [.activateView(welcomeID)], "다른 Page의 View 활성화 command 불일치")
+        try require(!popup.button.isHidden && popup.title == "Onboarding › Welcome", "머리 줄 제목 불일치: \(popup.title)")
+        guard let menu = popup.button.menu else { throw Failure(message: "머리 줄 팝업 메뉴 없음") }
+        let headers = menu.items.filter(\.isSectionHeader).map(\.title)
+        try require(headers == harness.provider.snapshot.pages.map(\.name), "Page 머리 항목 불일치: \(headers)")
+        let choices = menu.items.dropFirst().filter { !$0.isSectionHeader }
+        try require(choices.count == harness.provider.snapshot.pages.flatMap(\.views).count
+                    && choices.allSatisfy { $0.isEnabled && $0.action != nil && $0.target === popup },
+                    "동작하지 않는 팝업 항목이 있음")
+        let checked = choices.filter { $0.state == .on }.compactMap { $0.representedObject as? UUID }
+        try require(checked == [welcomeID.uuid], "활성 View 체크 불일치: \(checked)")
 
-        // 화살표 키 하나를 보내고 snapshot을 반영한 뒤, 선택 행과 그동안 만든 command를 확인합니다.
-        func press(_ arrow: Int, keyCode: UInt16, expect id: SidebarStableID, commands expected: [SidebarCommand],
-                   _ step: String) throws {
-            let mark = harness.provider.performedCommands.count
-            let characters = String(Character(UnicodeScalar(UInt16(arrow))!))
-            outline.keyDown(with: harness.key(characters, keyCode: keyCode, modifiers: [.numericPad, .function]))
-            harness.refresh()
-            let selected = (outline.item(atRow: outline.selectedRow) as? SidebarOutlineItem)?.id
-            try require(selected == id && outline.selectedRowIndexes.count == 1,
-                        "[\(step)] 선택 행 불일치: \(outline.selectedRow) != \(harness.row(of: id, in: outline))")
-            try require(harness.commands(since: mark) == expected, "[\(step)] command 불일치: \(harness.commands(since: mark))")
-        }
-        let up = (NSUpArrowFunctionKey, UInt16(126))
-        let down = (NSDownArrowFunctionKey, UInt16(125))
-        let left = (NSLeftArrowFunctionKey, UInt16(123))
-        let right = (NSRightArrowFunctionKey, UInt16(124))
-
-        // Welcome → ↑ active 페이지 행(command 없음, 그대로 머묾) → ↑ 맨 위(제목 행은 선택되지 않음) → ↓ Welcome.
-        try press(up.0, keyCode: up.1, expect: onboarding.id, commands: [], "↑ active 페이지 행")
-        try press(up.0, keyCode: up.1, expect: onboarding.id, commands: [], "↑ 맨 위 페이지 행")
-        try press(down.0, keyCode: down.1, expect: welcomeID, commands: [], "↓ active View 행")
-        // ↓ Sign In(.activateView) → ↓ Settings 페이지 행(.activatePage, 코어가 고른 General 행으로 선택이 옮겨 감).
-        try press(down.0, keyCode: down.1, expect: signInID, commands: [.activateView(signInID)], "↓ 다른 View")
-        try press(down.0, keyCode: down.1, expect: generalID, commands: [.activatePage(settings.id)], "↓ 다른 페이지")
-        // ↑ active 페이지(Settings) 행에 머묾 → ↑ 위 페이지의 Sign In(.activateView). 함정이면 General로 되돌아감.
-        try press(up.0, keyCode: up.1, expect: settings.id, commands: [], "↑ active 페이지 행(함정 없음)")
-        try press(up.0, keyCode: up.1, expect: signInID, commands: [.activateView(signInID)], "↑ 위 페이지의 View")
-        // ← 부모 페이지 행(active, command 없음) → ← 접기 → → 펼치기(선택은 페이지 행 유지) → ↓ Welcome.
-        try press(left.0, keyCode: left.1, expect: onboarding.id, commands: [], "← 부모 페이지 행")
-        try press(left.0, keyCode: left.1, expect: onboarding.id, commands: [], "← 접기")
-        try require(!outline.isItemExpanded(outline.item(atRow: outline.selectedRow)), "←로 active 페이지가 접히지 않음")
-        try press(right.0, keyCode: right.1, expect: onboarding.id, commands: [], "→ 펼치기")
-        try require(outline.isItemExpanded(outline.item(atRow: outline.selectedRow)), "→로 active 페이지가 펼쳐지지 않음")
-        try press(down.0, keyCode: down.1, expect: welcomeID, commands: [.activateView(welcomeID)], "↓ 첫 View")
-
-        // active 페이지 행이 선택된 채로 active가 바뀌지 않는 snapshot(다른 페이지 이름 변경 → 목록 reload)이 와도
-        // 선택을 View 행으로 옮기지 않습니다.
-        try press(up.0, keyCode: up.1, expect: onboarding.id, commands: [], "↑ active 페이지 행(재확인)")
-        for name in ["Preferences", settings.name] {
-            harness.provider.perform(.renamePage(settings.id, name: name))
-            harness.refresh()
-            try require(outline.selectedRow == harness.row(of: onboarding.id, in: outline),
-                        "active가 그대로인 snapshot 뒤 선택이 페이지 행에서 옮겨 감(선택 행 \(outline.selectedRow))")
-        }
-        try press(down.0, keyCode: down.1, expect: welcomeID, commands: [], "↓ active View 행(복귀)")
+        mark = harness.provider.performedCommands.count
+        try chooseView(welcomeID, in: harness)
+        try require(harness.commands(since: mark).isEmpty, "활성 View 재선택이 command를 만듦: \(harness.commands(since: mark))")
+        try chooseView(signInID, in: harness)
+        harness.refresh()
+        try require(harness.commands(since: mark) == [.activateView(signInID)], "같은 Page의 View 활성화 command 불일치")
+        try require(popup.title == "Onboarding › Sign In", "전환 뒤 머리 줄 제목 불일치: \(popup.title)")
+        try chooseView(welcomeID, in: harness)
+        harness.refresh()
+        try require(harness.layers.outline.numberOfRows == 9, "Welcome 레이어가 다시 보이지 않음: \(harness.layers.outline.numberOfRows)")
     }
 
     // MARK: 구조·layout·접근성
@@ -354,9 +288,8 @@ enum SidebarUICheck {
     @MainActor
     private static func checkStructure(_ harness: Harness) throws {
         let layers = harness.layers
-        let pages = harness.pages
         let sidebar = harness.sidebar
-        try require(layers.outline.style == .sourceList && pages.outline.style == .sourceList, "outline이 source list 스타일이 아님")
+        try require(layers.outline.style == .sourceList, "outline이 source list 스타일이 아님")
         try require(type(of: sidebar.filterAccessory.searchField) == NSSearchField.self, "필터 필드가 NSSearchField가 아님")
         let item = harness.splitController.splitViewItems.first
         try require(item?.behavior == .sidebar, "사이드바 split view item이 아님")
@@ -370,29 +303,26 @@ enum SidebarUICheck {
             .filter { !$0.contains("NSTableRowView > NSVisualEffectView") }
         try require(effectViews.isEmpty, "사이드바에 NSVisualEffectView가 있음: \(effectViews)")
 
-        // 예시: 페이지 2개(View 2 + 1, 모두 펼침) + 제목 행, 레이어 최상위 8개 + 제목 행.
-        try require(pages.outline.numberOfRows == 6, "페이지 행 수 불일치: \(pages.outline.numberOfRows)")
+        // 예시: 머리 줄은 활성 경로 한 줄(Pages 구획 없음), 레이어 최상위 8개 + 제목 행.
+        try require(!harness.pagePopup.button.isHidden && harness.pagePopup.title == "Onboarding › Welcome",
+                    "머리 줄 제목 불일치: \(harness.pagePopup.title)")
+        try require(paths(of: NSOutlineView.self, in: sidebar.view).count == 1, "사이드바에 레이어 밖의 목록이 남음")
         try require(layers.outline.numberOfRows == 9, "레이어 행 수 불일치: \(layers.outline.numberOfRows)")
-        guard let pagesHeader = pages.outline.item(atRow: 0), let layersHeader = layers.outline.item(atRow: 0) else {
-            throw Failure(message: "구획 제목 행 없음")
-        }
-        try require(pages.outlineView(pages.outline, isGroupItem: pagesHeader) && layers.outlineView(layers.outline, isGroupItem: layersHeader),
-                    "구획 제목 행이 group row가 아님")
-        guard let welcomeID = harness.provider.viewID(named: "Welcome") else { throw Failure(message: "예시 View 없음") }
-        try require(pages.outline.selectedRow == harness.row(of: welcomeID, in: pages.outline), "active View가 선택되지 않음")
+        guard let layersHeader = layers.outline.item(atRow: 0) else { throw Failure(message: "구획 제목 행 없음") }
+        try require(layers.outlineView(layers.outline, isGroupItem: layersHeader), "구획 제목 행이 group row가 아님")
         try require(sidebar.stateView.isHidden, "레이어가 있는데 상태 화면이 보임")
 
-        // 키보드 탐색 순서: 필터 → 페이지 → 레이어.
-        try require(sidebar.filterAccessory.searchField.nextKeyView === pages.outline, "필터 다음 key view가 페이지 목록이 아님")
-        try require(pages.outline.nextKeyView === layers.outline, "페이지 다음 key view가 레이어 목록이 아님")
-        try require(layers.outline.acceptsFirstResponder && pages.outline.acceptsFirstResponder, "목록이 first responder를 받지 않음")
+        // 키보드 탐색 순서: 필터 → 머리 줄 팝업 → 레이어.
+        try require(sidebar.filterAccessory.searchField.nextKeyView === harness.pagePopup.button, "필터 다음 key view가 머리 줄이 아님")
+        try require(harness.pagePopup.button.nextKeyView === layers.outline, "머리 줄 다음 key view가 레이어 목록이 아님")
+        try require(layers.outline.acceptsFirstResponder, "목록이 first responder를 받지 않음")
     }
 
     /// 시스템 사이드바 크기 설정(작게·중간·크게)마다 layout 검사를 다시 합니다. 검사 시스템의 현재 설정과 무관하게
     /// 목록의 row size style을 직접 지정해 각 크기의 행 높이·글꼴로 만들고, 끝나면 시스템 설정(.default)으로 되돌립니다.
     @MainActor
     private static func checkRowSizeStyles(_ harness: Harness) throws {
-        let outlines: [NSOutlineView] = [harness.pages.outline, harness.layers.outline]
+        let outlines: [NSOutlineView] = [harness.layers.outline]
         defer {
             for outline in outlines { outline.rowSizeStyle = .default }
             harness.refresh()
@@ -450,7 +380,7 @@ enum SidebarUICheck {
         harness.window.contentView?.needsLayout = true
         harness.refresh()
         // 보이는 행의 셀을 모두 만들게 합니다.
-        for outline in [harness.pages.outline, harness.layers.outline] as [NSOutlineView] {
+        for outline in [harness.layers.outline] as [NSOutlineView] {
             for row in 0..<outline.numberOfRows { _ = harness.cell(at: row, in: outline) }
         }
         harness.window.contentView?.layoutSubtreeIfNeeded()
@@ -514,16 +444,16 @@ enum SidebarUICheck {
     @MainActor
     private static func checkAccessibility(_ harness: Harness) throws {
         let layers = harness.layers
-        let pages = harness.pages
         try require(AXNode(layers.outline)?.label == SidebarStrings.layersOutline, "레이어 목록 접근성 레이블 불일치")
-        try require(AXNode(pages.outline)?.label == SidebarStrings.pagesOutline, "페이지 목록 접근성 레이블 불일치")
+        try require(AXNode(NSAccessibility.unignoredDescendant(of: harness.pagePopup.button))?.label == SidebarStrings.pagePath,
+                    "머리 줄 팝업 접근성 레이블이 접근성 요소에 없음")
         // 필터 필드: 접근성 요소는 검색 필드 cell입니다.
         let searchField = harness.sidebar.filterAccessory.searchField
         try require(AXNode(NSAccessibility.unignoredDescendant(of: searchField))?.label == SidebarStrings.filterLabel,
                     "필터 필드 접근성 레이블이 접근성 요소에 없음")
 
         // 행: 목록 → AXRow → AXCell 하나. 행 레이블과 custom action은 AXCell에 있고, 장식 아이콘은 노출되지 않습니다.
-        for (outline, title) in [(pages.outline, SidebarStrings.pages), (layers.outline, SidebarStrings.layers)] {
+        for (outline, title) in [(layers.outline, SidebarStrings.layers)] {
             let rows = AXNode.rows(of: outline)
             try require(rows.count == outline.numberOfRows, "[\(title)] AXRow 수 불일치: \(rows.count) != \(outline.numberOfRows)")
             for (index, row) in rows.enumerated() {
@@ -689,17 +619,6 @@ enum SidebarUICheck {
                     "취소한 Rename custom action이 command를 만듦")
         harness.refresh()
 
-        // 페이지·View 행의 Rename custom action.
-        guard let welcomeID = harness.provider.viewID(named: "Welcome"),
-              let welcomeAX = harness.axCell(welcomeID, in: harness.pages.outline) else {
-            throw Failure(message: "Welcome AXCell 없음")
-        }
-        try require(welcomeAX.performCustomAction(named: SidebarStrings.rename) && SidebarInlineRename.isEditing(in: harness.pages.outline),
-                    "View 행 Rename custom action이 편집을 시작하지 않음")
-        guard let pageEditor = harness.window.firstResponder as? NSTextView else { throw Failure(message: "field editor 없음") }
-        pageEditor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
-        try require(!SidebarInlineRename.isEditing(in: harness.pages.outline), "View 행 Rename 편집이 취소되지 않음")
-        harness.refresh()
     }
 
     @MainActor
@@ -1064,14 +983,6 @@ enum SidebarUICheck {
         case .more: return nil
         case .header:
             return (headerTitle, [])
-        case .page:
-            guard let page = snapshot.pages.first(where: { $0.id == item.id }) else { return nil }
-            let name = page.name.isEmpty ? SidebarStrings.pageKind : page.name
-            return ("\(name), \(SidebarStrings.pageKind)", [SidebarStrings.rename])
-        case .view:
-            guard let view = snapshot.pages.flatMap(\.views).first(where: { $0.id == item.id }) else { return nil }
-            let name = view.name.isEmpty ? SidebarStrings.viewKind : view.name
-            return ("\(name), \(SidebarStrings.viewKind)", [SidebarStrings.rename])
         case .layer:
             guard let id = item.layerID, let row = snapshot.layers.rows[id] else { return nil }
             let kind = SidebarStrings.kindName(row.kind, shapeKind: row.shapeKind)
