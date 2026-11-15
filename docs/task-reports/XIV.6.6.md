@@ -54,7 +54,20 @@
 
 ## 남은 위험
 
-- 실제 적용은 macOS에서 자식 Git의 잠금 소유와 현재 인덱스를 확인하며, 적용·복원 양방향 입력 예산은 512 bytes입니다. 초과 입력, 선택 경로의 flags, split/sparse 인덱스, 확인할 수 없는 잠금은 진단합니다. 통합 검증에서 Apple Git 2.54.0과 Fork에 포함된 Git 2.50.1 각각 22개의 실제 인덱스 테스트가 통과했습니다. macOS 외 플랫폼에는 이 적용 경로가 없습니다. [실행 파일별 검증](XIV.6.2.md)
+- 실제 적용은 macOS에서 자식 Git의 잠금 소유와 현재 인덱스를 확인하며, 적용·복원 양방향 입력 예산은 512 bytes입니다. 초과 입력, 선택 경로의 flags, split/sparse 인덱스, 확인할 수 없는 잠금은 진단합니다. 검증된 Git 2.54.0만 받고 다른 버전은 index 갱신 전에 거부합니다. macOS 외 플랫폼에는 이 적용 경로가 없습니다. [실행 파일별 검증](XIV.6.2.md)
 - 입력 승인 뒤 취소/timeout 또는 외부 writer 때문에 결과가 미확정이면 자동 역쓰기하지 않습니다. 정리 불명 lock도 직접 삭제하지 않습니다. 조건부 복원은 tree/mode/flags/REUC 기준이며 과거 stat cache bytes 복제는 아닙니다.
 - 기존 delta/blob 준비의 취소는 단계 사이에서 관찰합니다. 전체 operation deadline·준비 중 즉시 취소·전원 장애 복구는 보장하지 않습니다.
 - 다음 별도 단위는 XIV.7.3의 선택 unstage 적용 연결과 XIV.13.2 UI/FFI 진입점입니다. 이번 완료는 실제 stage API와 fixture 검증 범위입니다.
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U047 조치(XIV.6.5에 따라 다시 검토).
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+
+- 검증 기준(전후 hash/revision 동일): `staging::tests::rejected_cancelled_and_restored_stage_preserve_working_tree_and_document_revision`, `actual_partial_stage_reopens_index_and_preserves_working_bytes_and_memory_revision` 통과.
+- 판정: `[x]` 유지.

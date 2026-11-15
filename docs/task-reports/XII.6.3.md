@@ -3,7 +3,7 @@
 ## WBS
 
 - WBS: XII.6.3
-- 상태: `[~]` 로컬 구현과 검증을 보고했습니다. 커밋은 대기 중입니다.
+- 상태: `[~]` — 구현은 커밋됐지만(`c1779e5a`, `7530f8a6`) `Task(XII.6.3)` 커밋이 없습니다. 아래 "2026-11-15 재검증" 절을 참고합니다.
 - 선행: IV.6.4
 
 ## 변경 파일
@@ -43,3 +43,17 @@ Git 복제는 별도 worker에서 실행합니다. 전송 속도는 측정하지
 ## 남은 위험
 
 이번 검사는 로컬 파일 원격에 한정했습니다. HTTPS·SSH 인증과 전송은 시스템 Git 설정에 따르며 기존 runner의 30초 제한이 적용됩니다.
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U136n 수용. 겹친 복제 거절과 ABI 기록은 B7(`7530f8a6`)에서 고쳤습니다.
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+| `Stellar.app --project-clone-check <HOME>` (`scripts/macos/smoke.sh`와 같은 인자로 개별 실행) | 0 — `project-clone ok: native sheet, cancelled input and in-flight Git, identical HEAD, clean restricted document, existing target preserved, non-Stellar checkout retained` |
+
+- 검증 기준(local fixture remote clone): 위 앱 검사(smoke.sh 실행 중 통과) 통과.
+- 판정: `[~]` 유지. 구현은 보존 커밋 `c1779e5a`와 `7530f8a6`에 있고 `Task(XII.6.3)` 커밋이 없습니다.

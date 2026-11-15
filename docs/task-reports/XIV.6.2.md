@@ -65,3 +65,16 @@ Cargo 명령은 모두 `CARGO_TARGET_DIR="$PWD/target/semantic-index-publish"`�
 - 후속 입력 보강은 XIV.6.4 보고서에 기록했습니다. 현재 적용·복원 양방향의 보수적 index-info 길이가 512 bytes를 넘으면 입력 전에 거부합니다.
 - 직접 index/lock을 강제 조작하는 writer 및 SIGKILL 뒤 잔류 lock을 자동 삭제하지 않습니다. FD 조회 권한·형식이 불확실하면 입력을 보내지 않습니다.
 - 동기 filesystem 읽기 자체는 OS에서 막힐 수 있습니다. Git 자식 실행/승인 대기에는 deadline·취소가 적용됩니다. 실제 앱 QA·CI·REF·release는 실행하지 않았습니다.
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U047·U048 수정. B3에서 격리 작업 트리와 hook 차단을 지우고(`dd1a871f`) Git 2.54.0 게이트를 되살렸습니다(`f5ffbc5d`).
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+
+- 검증 기준(partial same-file stage fixture): `staging::tests::actual_partial_stage_reopens_index_and_preserves_working_bytes_and_memory_revision`과 `index_publish::tests` 24개(`unverified_git_version_is_rejected_before_index_update` 포함) 통과.
+- 판정: `[x]` 유지.

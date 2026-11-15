@@ -67,3 +67,16 @@
 - 실패 전에 기록한 미참조 object는 남을 수 있습니다. 다른 사용자의 object와 구분 없이 삭제하지 않으며 Git GC에 맡깁니다. 부분 WrittenCandidate는 반환하지 않습니다.
 - `WrittenCandidate`는 index 설치 성공이나 승인을 나타내지 않습니다. 실제 index 비교·적용·복원과 stage 이후 semantic 검증은 XIV.6.2~XIV.6.6에 남습니다.
 - 준비 이후 index 경합과 index flags/확장 metadata의 보존이 해결되지 않았으므로 실제 사용자 index 적용을 이 API에 연결하지 않았습니다.
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U044 조치(직접 다시 실행해 통과할 때만 `[x]` 유지).
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+
+- 검증 기준(`git cat-file blob` bytes 동일): `blob_write::tests::real_git_writes_once_and_preserves_binary_bytes_and_index`, `blob_write::candidate_tests::real_sha256_repository_returns_sha256_oid_and_exact_blob_bytes` 통과.
+- 판정: `[x]` 유지.

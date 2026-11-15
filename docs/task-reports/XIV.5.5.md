@@ -83,3 +83,16 @@
 - API는 후보 준비까지만 합니다. file-level delta(XIV.5.6), blob 기록·실제 index 갱신(XIV.6), GUI·FFI 연결은 미구현입니다.
 - 준비 전후 index snapshot을 비교해 관찰한 변경은 거부하지만 이후 index 설치의 원자성·동시 writer 충돌 처리는 XIV.6의 책임입니다. 같은 상태로 되돌아오는 ABA나 동일 사용자의 임시 디렉터리 변조 전체를 잠금으로 막는 구현은 아닙니다.
 - 전체 workspace·실제 앱 UI·Windows·CI·REF 성능 검증은 실행하지 않았습니다.
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U041 수정. storage 공개 API의 ADR 기록은 B3(`ecf2225d`)에서 보완했습니다.
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+
+- 검증 기준(write 전후 working tree file hash 동일): `staging::tests::selected_property_round_trips_without_changing_working_bytes_or_real_index` 통과.
+- 판정: `[x]` 유지.

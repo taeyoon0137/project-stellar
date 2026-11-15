@@ -24,9 +24,9 @@
 - `crates/ffi/src/window_session.rs`, `crates/ffi/src/lib.rs`, `tools/xtask/src/ffi_header.rs`, `crates/ffi/include/stellar_ffi.h`
   (수정·재생성) — `stellar_window_view_info`, `StellarWindowViewInfo`(56 byte), 줌 명령 코드·실패 코드, C ABI 테스트.
 - `docs/adr/ADR-0028-window-session-shell-surface.md` (수정) — XII.4.3 절.
-- `apps/macos/StellarMac/CoreRuntime.swift`, `UI/Shell/ShellProjectWindow.swift` (수정) — view 정보 조회, 줌 명령 활성 상태
+- `apps/macos/Stellar/CoreRuntime.swift`, `UI/Shell/ShellProjectWindow.swift` (수정) — view 정보 조회, 줌 명령 활성 상태
   (active view·배율 경계)와 툴바 배율 표시.
-- `apps/macos/StellarMac/UI/Shell/ShellSessionCommandsCheck.swift`, `ShellKeyMappingCheck.swift`, `ShellIntegrationCheck.swift`
+- `apps/macos/Stellar/UI/Shell/ShellSessionCommandsCheck.swift`, `ShellKeyMappingCheck.swift`, `ShellIntegrationCheck.swift`
   (수정) — 메뉴 줌·배율 표시·창 격리·줌 뒤 저장 bytes 검사, ⌘+·⌘0·⌘- 대응, 비활성 설명.
 - `docs/design/ui/tools_menus.md` (수정) — 줌 남은 일 갱신.
 - `docs/task-reports/XII.4.3.md`(신규), 계획서(XII.4.3 `[ ]`→`[~]`)
@@ -85,3 +85,16 @@
 - 큰 문서에서는 revision이 바뀔 때마다 active View의 표시 목록을 다시 평가하고, hit 후보를 painter 역순으로 확인하는 비용이
   남습니다.
 - viewport는 저장하지 않으므로 창을 닫으면 사라집니다(복구 snapshot 연결은 V.9 범위).
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U037 판정의 결함은 `--native-menus` 검사 모드뿐입니다. 스크롤 해석은 B8(`d98d583b`)에서 코어로 옮겼습니다.
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+
+- 검증 기준(pan/zoom 후 save bytes 동일): `window_session::tests::pan_and_zoom_move_the_scene_camera_without_changing_saved_bytes` 통과.
+- 판정: `[~]` 유지. scene camera를 실제 캔버스 렌더가 소비하지 않습니다(XII.4.1).

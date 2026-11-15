@@ -64,3 +64,17 @@
 원장 재생성 후 비교에서 XII.1.4·XII.1.5 두 record만 달라졌고 WBS 설명·선행은 원문과 동일합니다. XIII.1.2 완료 record·보고서·project 구현 및 기존 runtime 배선·의존성은 branch base와 동일합니다.
 
 종료 전 `git ls-remote origin refs/heads/main` 재확인 결과 원격은 `218a671cbd636aad0e8b997ef67ef80295e13f49`였습니다. base 이후 추가된 커밋은 수동 CI 검사 설정이며, 이 작업의 runtime·tessellation 파일·WBS 행·원장에는 변화가 없습니다. 해당 설정은 이 lane에 가져오지 않았고 현재 브랜치의 선별 패치만 통합 대상으로 제공합니다.
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U034 수용.
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+| `tests/worker_rapid_edit.rs` (workspace 실행에 포함) | 0 — 4 통과 |
+
+- 검증 기준(rapid edit fixture에서 stale apply 0): `worker_rapid_edit` 4개 통과.
+- 판정: `[x]` 유지.

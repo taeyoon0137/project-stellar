@@ -9,15 +9,17 @@
 
 ## 통합 결과와 범위
 
+아래 "현재 상태" 열은 2026-11-15 검토로 고친 값입니다. "실행한 검증" 절의 결과는 2026-11-14 통합 때의 보고이며 다시 확인하지 않았습니다. 재검증 결과는 각 작업 보고서의 "2026-11-15 재검증" 절에 있습니다.
+
 | 범위 | 결과 | 현재 상태 |
 |---|---|---|
 | XII.2.1 | 프로젝트 identity·독립 문서·history·loaded generation을 소유하는 창 session | `[x]` |
 | XII.2.2 | macOS 창 controller의 session 소유·비동기 열기·닫기, 두 창 lifecycle | `[x]` |
 | XII.2.5 | 창별 탭·active view·viewport·selection 격리 | `[x]` |
-| XII.6.4 | Undo·Redo·Save Now를 창 session에 전달, stale 저장 거부, 창별 fixture 통과 | `[~]` |
+| XII.6.4 | Undo·Redo·Save Now를 창 session에 전달, stale 저장 거부, 창별 fixture 통과 | `[x]`: 2026-11-15 재검증 |
 | XII.6.5 | 공유 command ID와 macOS 메뉴·단축키, 캔버스 응답자 체인 전달 | `[~]`: Windows 미완료 |
 | XII.4.3 | 코어 camera 변환·pan/zoom·줌 메뉴, 문서·저장 bytes 불변 | `[~]`: 실제 캔버스 renderer 연결 미완료 |
-| XII.4.4 | 별도 selection overlay scene·hit-test layer, project snapshot 비포함 | `[~]`: 실제 화면 렌더링 미완료 |
+| XII.4.4 | 별도 selection overlay scene·hit-test layer, project snapshot 비포함 | `[!]`: 선행 XII.4.3 `[~]`, 실제 화면 렌더링 미완료 |
 | XII.4.1 / XI.8.2 | CanvasHost 연결과 실제 최소화·가림 검증의 선행 순환 | 현행 `[ ]` / `[~]` 유지; 이 lane에서 미통합 |
 
 WBS 설명·검증 열·선행은 변경하지 않았습니다. 기준에 이미 완료된 다른 행도 그대로입니다. 원본 패치의 XII.4.3·XII.4.4 완료 표시는 채택하지 않았고, 원본 원장 커밋 `2636e8ce`도 복사하지 않았습니다. 현행 계획과 이 브랜치의 WBS별 커밋으로 원장을 재생성했습니다.

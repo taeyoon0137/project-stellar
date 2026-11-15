@@ -66,3 +66,16 @@
 - 456-byte/8-path 적용·복원 성공, 513-byte/9-path 거부, 정방향 삭제는 512 미만이지만 inverse가 초과하는 후보의 무변경 거부를 검증했습니다.
 - `core.splitIndex=true`, worktree 설정의 `index.sparse=true`도 입력 전에 진단하고 bytes/config를 보존합니다. 최초 성공 예상 probe는 각각 Unsupported 진단으로 실패했고, 기대를 무변경 거부로 고친 회귀 테스트가 통과했습니다.
 - 전용 target의 `cargo test -p stellar-git-porcelain index_publish::`: Apple와 임시 upstream Git 2.54.0 각각 종료 0, 21개 통과. `cargo test -p stellar-runtime staging::tests --no-default-features`: 종료 0, 7개 통과. runtime 실제 적용 테스트는 지원 환경인 macOS로 한정합니다.
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U047과 사용자 결정 D5(②, 원래 기준 충족). B3(`4e26f64c`)에서 결과를 확인하지 못한 적용을 다시 읽어 되돌리게 고쳤습니다.
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+
+- 검증 기준(fault injection 후 original index 동일): `index_publish::tests::timeout_and_cancel_after_git_commit_roll_back_to_the_original_index`, `withheld_input_timeout_cancel_and_rejection_leave_index_exactly_unchanged`, `receipt_restores_multiple_paths_modes_and_deletions_as_one_operation` 통과.
+- 판정: `[x]` 유지.

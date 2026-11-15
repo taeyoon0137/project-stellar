@@ -66,3 +66,17 @@
 - 캐시는 항상 원본을 다시 해석해 검증합니다. 빠른 열기·부분 로딩·GC는 미구현입니다.
 - UI 기본 열기·자동 저장, 다중 파일 journal, 전체 의미 변환은 후속 범위입니다. 비협조적 외부 writer의 완전한 직렬화는 보장하지 않습니다.
 - 기본 병렬 Rust 검증의 기존 IPC 타이밍 실패는 별도 한계입니다. 시간 상한을 완화하거나 검사를 제외하지 않았습니다.
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U039 수정. B2에서 Frame을 longhand 한 줄 문법으로 바꾸고 쓰기 버전을 2 하나로 재정의했습니다(`3b0e6392`, `fa9cf642`). 형식 결정은 ADR-0059 본문에서 [ADR-0061](../adr/ADR-0061-text-source-format-and-layout.md)로 옮겼습니다.
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+| `target/debug/stellar text-source check <docs/spec/text-view-source-v1.md "전체 예시" 블록>` | 0 — `ok: true`, node 2 |
+
+- 검증 기준: `crates/project/tests/text_source.rs` 13개(실제 모델 편집→저장→재열기→Git diff `actual_model_edit_save_reopen_and_readable_git_diff`, 미지원·외부 필드 보존 `unsupported_input_or_external_fields_never_overwrite_source`, cache 없음·손상·쓰기 불가 `missing_corrupt_and_unwritable_cache_never_own_document_data` 포함) 통과, 문서 예시는 위 check로 확인.
+- 판정: `[x]` 유지.

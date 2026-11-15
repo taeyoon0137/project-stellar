@@ -28,6 +28,7 @@
 - **2026-11-14 — 내장 터미널 사용자 셸 환경(ADR-0023 Accepted):** 제품 소유자 결정에 따라 대화형 내장 터미널은 계정 기본 로그인 셸을 사용자의 전체 로그인 환경과 설정(rc 파일, `PATH`, prompt, alias, plugin)으로 실행합니다. Stellar는 터미널 식별 변수(`TERM`, `COLORTERM`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`)와 기본 셸 profile의 셸 경로 `SHELL`만 설정하고, 셸 설정을 바꾸지 않은 채 terminal view에 Stellar 테마(색, 글꼴, cursor, Light·Dark·대비 높이기)를 적용합니다. 신뢰된 프로젝트 게이트는 유지하고, 앱이 시작하는 agent CLI 하위 프로세스는 ADR-0023 결정 9의 허용 목록 환경(launch profile에 적은 이름만 전달)으로 따로 실행합니다. 완료 행 XVIII.1.1은 고치지 않았고, 바뀐 요구사항은 새 행 XVIII.2.5(로그인 환경 상속)와 XVIII.4.7(terminal view 테마)이 맡습니다. XXIX.2.4와 XXIX.2.6에 허용 목록 환경 지시와 검증을 더했고, 미착수 행 XVIII.4.1에는 `TERM`·`COLORTERM` 값을 정하는 지시와 검증을 그 자리에서 더했습니다.
 - **2026-11-14 — 새 macOS 행의 Windows `[!]` 선행 사슬 기록:** 위 네 개정에서 추가한 macOS 행 중 다음 행은 기존 행의 선행을 따라 Windows `[!]` 행에 닿아 ADR-0006 아래에서는 착수할 수 없습니다. XII.10.16과 XVIII.4.7은 XII.9.3→XII.9.2, XVIII.4.7은 XVIII.4.3→XVIII.4.2→XVIII.4.1→XVIII.3.1에도 닿습니다. XII.10.33은 XII.5.6→XII.5.5, XII.10.43은 XII.10.16과 XVI.4.2→XVI.4.1→XVI.1.3→XVI.1.2→XI.9.5, XXX.6.2는 XVI.4.6→XVI.2.5→XVI.2.4입니다. 사슬 중간의 XII.9.3, XII.5.6, XVI.1.2, XVI.2.5, XVIII.4.1은 이 개정 전부터 있던 행이라 선행을 바꾸지 않았습니다. 이 행들을 macOS 전용 선행으로 다시 잇는 일은 ADR-0006의 판정 규칙과 함께 별도 계획 개정에서 합니다.
 - **2026-11-15 — Codex 작업 검토 반영(행 정의):** 2026-11-14 오후부터 11-15 새벽까지 Codex가 진척 메모나 다른 완료 기준을 넣어 고친 행 정의를 원문으로 되돌렸습니다. V.10.4·V.10.6·XVI.4.7은 처음 정의와 `[ ]`로, XIV.7.3은 처음 지시·검증 열로 복원했습니다. V.10.7에는 새 프로젝트를 만들 때의 첫 저장도 함께 전환한다는 범위를 더했습니다. 사용자 지시로 Pen 도구를 없앤 데 따른 XII.10.1(도구 10종), XII.10.29(기존 Path의 벡터 편집 모드), XII.10.43(Path point 드래그) 문구는 유지합니다. Codex가 XVI.4.7\~XVI.4.9 행을 복원하면서 빠뜨린 "검증 경로 증분 index backlog 행 추가" 개정 기록도 원래 위치에 다시 넣었습니다.
+- **2026-11-15 — Codex 작업 검토 반영(상태):** 같은 기간에 Codex 실행만을 근거로 바뀐 상태를 다시 정했습니다. `[x]`는 이 검토에서 논리 판정과 검증 기준 실행(DEV-MAC의 `cargo test --workspace`와 해당 앱 검사)을 다시 한 행만 남겼습니다. 반려한 작업인 XII.10.26·XII.10.37·XXII.4.2는 `[ ]`로 되돌렸습니다. 선행이 `[x]`가 아닌데 진척이 올라간 V.10.3·XII.4.4·XII.6.1·XIX.9.1·XIX.9.3·XXII.1.1은 이미 들어온 코드를 유지하되 `[!]`과 차단 보고서로 바꿨습니다. XII.6.4는 처음 구현의 `[x]`가 근거 없이 `[~]`로 낮아졌던 것을 검증 기준을 다시 실행한 뒤 `[x]`로 되돌렸습니다. 작업 행의 정의·선행은 이 개정에서 바꾸지 않았습니다.
 
 ---
 
@@ -1275,7 +1276,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XII.6.1 | `[!]` | New Project native command가 ProjectCreateRequest를 호출하고 폴더 선택+이름 입력 결과만 core에 전달합니다. 상세 UX는 구현하지 않습니다. | create integration test 통과. | IV.4.7, XII.2.2, XII.2.3 |
 | XII.6.2 | `[x]` | Open Project command가 folder를 선택하고 ProjectProbe 후 session을 엽니다. | invalid repo 안내 error mapping 통과. | IV.5.3 |
 | XII.6.3 | `[~]` | Clone Project command가 URL과 target folder를 받아 clone-open pipeline을 호출합니다. | local fixture remote clone 통과. | IV.6.4 |
-| XII.6.4 | `[~]` | Undo/Redo/Save Now command를 active WindowSession에 연결합니다. | 창별 history와 save 호출 fixture 통과. | VII.5.3, V.5.4 |
+| XII.6.4 | `[x]` | Undo/Redo/Save Now command를 active WindowSession에 연결합니다. | 창별 history와 save 호출 fixture 통과. | VII.5.3, V.5.4 |
 | XII.6.5 | `[~]` | 앱 메뉴 단축키를 macOS·Windows native convention으로 연결하되 command ID는 core에서 공유합니다. | key mapping smoke test. | XII.6.4 |
 
 ### XII.7 동일 프로젝트 다중 창 저장 충돌

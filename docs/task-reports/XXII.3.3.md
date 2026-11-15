@@ -85,3 +85,16 @@
   컴파일되지 않습니다(`cfg(target_os = "macos")`).
 - 상태 변수 이름의 Swift 식별자 변환은 ASCII 정리·예약어 접미사 수준입니다(한글 이름은 `state`, `state_2` …). escape
   규칙 고정은 XXII.5.1 범위입니다.
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U024·U030 수정. B1에서 Fragment를 투명하게 다루고(`b4e1ec10`) 생성 코드가 참조하는 type 이름을 예약했습니다(`92d5c6a3`).
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+
+- 검증 기준(compile/static fixture): `apple::tests::generated_swift_typechecks_against_apple_sdks`(`xcrun swiftc -typecheck`, profile 최소 OS와 이름 충돌 fixture 포함), `apple::tests::fragment_is_transparent_for_hidden_subtrees` 통과.
+- 판정: `[x]` 유지(계획의 실제 typecheck 뒤 `[x]` 조건을 충족).

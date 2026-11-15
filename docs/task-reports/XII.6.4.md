@@ -7,7 +7,7 @@
 
 - WBS: XII.6.4
 - 작업명: Undo/Redo/Save Now command를 active WindowSession에 연결합니다.
-- 상태: 부분 완료 (`[~]`) — 창별 명령 fixture 통과.
+- 상태: 완료 (`[x]`) — 창별 명령 fixture 통과. 근거는 아래 "2026-11-15 재검증" 절입니다.
 - 선행: VII.5.3 (`[x]`), V.5.4 (`[x]`)
 
 ## 변경 파일
@@ -23,12 +23,12 @@
 - `crates/ffi/src/lib.rs`, `tools/xtask/src/ffi_header.rs`, `crates/ffi/include/stellar_ffi.h` (수정·재생성) — `STELLAR_COMMAND_*`,
   새 event·실패 코드·함수 노출과 헤더 일치 테스트.
 - `docs/adr/ADR-0028-window-session-shell-surface.md` (수정) — XII.6.4 절.
-- `apps/macos/StellarMac/CoreRuntime.swift`, `UI/Shell/ShellRuntimeEventPump.swift` (수정) — 명령·선택 호출, event 해석.
-- `apps/macos/StellarMac/UI/Shell/ShellProjectWindow.swift` (수정) — `ShellWindowSessionCommand`(코어 명령 코드),
+- `apps/macos/Stellar/CoreRuntime.swift`, `UI/Shell/ShellRuntimeEventPump.swift` (수정) — 명령·선택 호출, event 해석.
+- `apps/macos/Stellar/UI/Shell/ShellProjectWindow.swift` (수정) — `ShellWindowSessionCommand`(코어 명령 코드),
   `performSessionCommand`(이 창 session으로), 명령 활성 상태(`setSessionCommands`), 저장 실패 alert, `selectNodes`.
-- `apps/macos/StellarMac/UI/Shell/ShellAppCoordinator.swift` (수정) — 창 도구 모델 명령을 창 session으로, alert 경로 연결.
-- `apps/macos/StellarMac/UI/Shell/ShellIntegrationCheck.swift` (수정) — 비활성 명령 설명 갱신(문서·history 없는 창).
-- `apps/macos/StellarMac/UI/Shell/ShellSessionCommandsCheck.swift` (신규), `apps/macos/StellarMac/main.swift`,
+- `apps/macos/Stellar/UI/Shell/ShellAppCoordinator.swift` (수정) — 창 도구 모델 명령을 창 session으로, alert 경로 연결.
+- `apps/macos/Stellar/UI/Shell/ShellIntegrationCheck.swift` (수정) — 비활성 명령 설명 갱신(문서·history 없는 창).
+- `apps/macos/Stellar/UI/Shell/ShellSessionCommandsCheck.swift` (신규), `apps/macos/Stellar/main.swift`,
   `scripts/macos/smoke.sh` (수정) — `--session-commands-check <fixture>`.
 - `docs/design/ui/tools_menus.md`, `docs/design/ui/shell_frame.md` (수정) — 남은 일·Stub 설명 갱신.
 - `docs/task-reports/XII.6.4.md`(신규), 계획서(XII.6.4 `[ ]`→`[~]`)
@@ -85,3 +85,18 @@
 - Save Now는 document thread에서 동기로 직렬화·기록하므로 큰 문서에서는 그동안 다른 요청이 기다립니다(worker 직렬화 XIII.1.4).
 - 자동 저장(XIII.1)과 앱 종료·비활성화 flush는 아직 연결하지 않았습니다. 정상 macOS 창 닫기의 편집 폐기는
   [ADR-0028 정상 창 닫기 저장 보존](../adr/ADR-0028-window-session-shell-surface.md)의 좁은 저장 확인 경로로 보완했습니다. XIII.1.6 전체 완료는 아닙니다.
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U037 판정의 결함은 `--native-menus` 검사 모드뿐이며 B7(`e452f760`)에서 삭제했습니다.
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+| `Stellar.app --session-commands-check <fixture>` (`scripts/macos/smoke.sh`와 같은 인자로 개별 실행) | 0 — `session-commands ok: 56 checks (undo/redo/save now per window session via menu items)` |
+
+- 검증 기준(창별 history와 save 호출 fixture): `window_session::tests::undo_and_redo_replay_only_their_own_window_history`, `save_now_writes_this_windows_document_as_a_new_generation`, `save_now_keeps_other_documents_of_the_generation`, `app_window_tests::undo_redo_and_save_now_reach_only_the_target_window`, `window_session::tests::undo_redo_and_save_now_go_to_the_given_window_session`과 위 앱 검사 통과.
+- `scripts/macos/smoke.sh` 전체는 종료 1입니다. 뒤 단계의 `--frame-insert-check`가 새 프로젝트 첫 커밋 전 Git 패널 상태에서 실패했고(두 번 재현), 그 뒤 검사는 위처럼 같은 인자로 따로 실행했습니다. 이 행의 범위 밖 실패입니다.
+- 판정: `[~]` → `[x]`. 처음 구현(`64153be6`)은 `[x]`였고 2026-11-14 통합에서 사유 없이 `[~]`로 낮아졌습니다. 검증 기준을 모두 다시 실행해 통과했고 구현 커밋 `101bcd1d`가 있습니다.

@@ -46,3 +46,16 @@ DEV-MAC에서 시스템 Git과 임시 저장소를 사용했습니다. 두 속�
 - 실제 index 쓰기는 기존 macOS 적용 범위와 512바이트 입력 한도를 따릅니다. 지원 범위 밖의 문서·필수 의존성·Git 형식에는 기존 거부 정책을 적용합니다.
 - 새 generation의 의미 상태를 기준으로 복원합니다. 기존 Git에 남은 immutable object·manifest를 보존하므로, 의미 변경이 사라진 뒤에도 일반 Git diff에 generation 파일이 남을 수 있습니다. 파일 단위 전체 Unstage는 별도 동작입니다.
 - HEAD와 index는 서로 다른 Git 자원입니다. 적용 전후의 HEAD 관찰과 기존 index 소유 확인·조건부 복원을 사용합니다. 외부 writer와의 원자적 다중 ref 트랜잭션은 보장하지 않습니다.
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 명령 표는 B3 수정 뒤의 재실행 결과이고, 아래는 이 검토에서 다시 실행한 결과입니다.
+- 논리 검토: 계획 U057·U058. 행의 지시·검증 열을 처음 문구로 되돌렸고, 이름 전용 앱 경로는 B3(`ed6bd994`)에서 삭제했습니다.
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+
+- 검증 기준(WorkingTree 변경 없음, index semantic 결과 정확): `staging::tests::unstage_only_the_selected_name_from_index_even_when_working_is_different` 통과.
+- 판정: `[x]` 유지.

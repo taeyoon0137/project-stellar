@@ -26,16 +26,16 @@
 - `crates/ffi/src/lib.rs` (수정) — 모듈 연결, `StellarRuntimeState` version 2(`window_session_count`, 48 byte), 헤더 일치 테스트 갱신.
 - `tools/xtask/src/ffi_header.rs`, `crates/ffi/include/stellar_ffi.h` (수정·재생성) — 새 함수·구조체·event·실패 코드.
 - `docs/adr/ADR-0028-window-session-shell-surface.md` (신규) — C ABI 확장 기록(ADR 보호 경로 `crates/ffi/`).
-- `apps/macos/StellarMac/CoreRuntime.swift` (수정) — 창 session 호출·정보 조회, event 해석.
-- `apps/macos/StellarMac/UI/Shell/ShellRuntimeEventPump.swift` (수정) — 창 session 요청 등록.
-- `apps/macos/StellarMac/UI/Shell/ShellProjectWindow.swift` (수정) — `ShellWindowSessionHandle`, 창 open 시 창 controller에 handle
+- `apps/macos/Stellar/CoreRuntime.swift` (수정) — 창 session 호출·정보 조회, event 해석.
+- `apps/macos/Stellar/UI/Shell/ShellRuntimeEventPump.swift` (수정) — 창 session 요청 등록.
+- `apps/macos/Stellar/UI/Shell/ShellProjectWindow.swift` (수정) — `ShellWindowSessionHandle`, 창 open 시 창 controller에 handle
   지정, 닫기 순서(`closeSessions`).
-- `apps/macos/StellarMac/UI/Shell/ShellWindowController.swift` (수정) — `windowSession` 소유 property.
-- `apps/macos/StellarMac/UI/Shell/ShellAppCoordinator.swift` (수정) — 프로젝트 열기 → 창 session 열기 → 창 표시(첫 열기·복원·다시
+- `apps/macos/Stellar/UI/Shell/ShellWindowController.swift` (수정) — `windowSession` 소유 property.
+- `apps/macos/Stellar/UI/Shell/ShellAppCoordinator.swift` (수정) — 프로젝트 열기 → 창 session 열기 → 창 표시(첫 열기·복원·다시
   열기), 창 session 실패 시 프로젝트 session 닫기·안내, 창 닫기 시 두 session 닫기.
-- `apps/macos/StellarMac/UI/Shell/ShellProjectOpenFailure.swift`, `ShellProjectOpenCheck.swift` (수정) — `designUnavailable`
+- `apps/macos/Stellar/UI/Shell/ShellProjectOpenFailure.swift`, `ShellProjectOpenCheck.swift` (수정) — `designUnavailable`
   안내(`WINDOW_SESSION_LOAD_FAILED`)와 대응표 검사.
-- `apps/macos/StellarMac/UI/Shell/ShellWindowSessionCheck.swift` (신규), `apps/macos/StellarMac/main.swift`,
+- `apps/macos/Stellar/UI/Shell/ShellWindowSessionCheck.swift` (신규), `apps/macos/Stellar/main.swift`,
   `scripts/macos/smoke.sh` (수정) — `--window-session-check <fixture>`.
 - `docs/design/ui/shell_frame.md` (수정) — 13장 남은 일에서 창 session 연결을 끝난 일로 갱신.
 - `docs/task-reports/XII.2.2.md`(신규), 계획서(XII.2.2 `[ ]`→`[x]`)
@@ -87,3 +87,18 @@
 - 같은 폴더를 두 창에서 여는 셸 정책은 그대로(같은 폴더면 기존 창을 앞으로)입니다. 같은 프로젝트 다중 창은 XII.2.4 범위입니다.
 - 창 session은 작업 문서 하나(generation의 첫 root 문서)만 로드합니다.
 - 캔버스는 아직 창 session의 문서를 그리지 않습니다(Metal 연결 XII.4.1).
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U037 판정의 결함은 `--native-menus` 검사 모드뿐이며 B7(`e452f760`)에서 삭제했습니다.
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+| `Stellar.app --window-session-check <fixture>` (`scripts/macos/smoke.sh`와 같은 인자로 개별 실행) | 0 — `window-session ok: 68 checks (2 windows × 2 cycles open/close, one session handle per window controller)` |
+
+- 검증 기준(창 2개 open/close lifecycle): 위 앱 검사와 `app_window_tests::two_windows_open_and_close_with_one_session_each`, `window_session::tests::two_window_sessions_open_and_close_through_the_c_abi` 통과.
+- `scripts/macos/smoke.sh` 전체는 종료 1입니다. 뒤 단계의 `--frame-insert-check`가 새 프로젝트 첫 커밋 전 Git 패널 상태에서 실패했고(두 번 재현), 그 뒤 검사는 위처럼 같은 인자로 따로 실행했습니다. 이 행의 범위 밖 실패입니다.
+- 판정: `[x]` 유지.

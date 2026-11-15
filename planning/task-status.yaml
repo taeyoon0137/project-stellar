@@ -6829,13 +6829,18 @@ tasks:
     report: "docs/task-reports/XII.6.3.md"
   - id: "XII.6.4"
     title: "Undo/Redo/Save Now command를 active WindowSession에 연결합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "VII.5.3"
       - "V.5.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.6.4.md"
+    commit: "101bcd1d618591021c321e2138a0d9294df5d880"
     report: "docs/task-reports/XII.6.4.md"
+    verified_at: "2026-11-14T16:50:56+09:00"
   - id: "XII.6.5"
     title: "앱 메뉴 단축키를 macOS·Windows native convention으로 연결하되 command ID는 core에서 공유합니다."
     status: reported_done

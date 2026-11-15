@@ -75,3 +75,16 @@ XII.10.1·XII.10.2, node별 크기 제약·CSS longhand 적용은 XII.10.9·XII.
   node별 제약은 적용하지 않습니다. 최소 축 길이 기준은 없으며 극단 좌표는 오류로 거부될 수 있습니다.
 - `atan2`·`sin_cos`·`exp2` 등 결과는 허용 오차 1e-4로 검증했습니다. Windows 동등성이나
   기준 장비의 입력→Present 성능을 주장하지 않습니다. 전용 benchmark와 전체 workspace 검증은 통합 담당 범위입니다.
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U035 수용.
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+
+- 검증 기준(cancel/complete fixture): `interaction::tests` 16개 통과.
+- 판정: `[x]` 유지.

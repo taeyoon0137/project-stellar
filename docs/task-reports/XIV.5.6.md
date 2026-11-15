@@ -67,3 +67,16 @@
 - index 전후 snapshot 비교는 path/mode/OID/stage 기준입니다. ABA나 index flags/확장 metadata 변경까지 잠그거나 판별하지 않습니다.
 - 동일 사용자의 candidate 디렉터리 동시 변조를 잠금으로 배제하지 않습니다. 파일 읽기는 기존 안전 helper와 상한을 사용합니다.
 - 저장 의미 지원 범위는 XIV.5.5와 같습니다. 무손실이 입증되지 않은 문서·chunk·opaque 필드는 계속 Unsupported입니다.
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U043(A) 수정. 같은 index blob에서 만든 후보 파일을 읽지 않도록 B3(`3925448d`)에서 고쳤습니다.
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+
+- 검증 기준(unchanged path update 0): `candidate_delta::tests::unchanged_candidate_emits_zero_updates_and_preserves_all_gitlinks`, `unchanged_index_blob_copies_are_neither_read_nor_staged`, `only_changed_paths_are_returned_with_exact_bytes_modes_and_deletions` 통과.
+- 판정: `[x]` 유지.

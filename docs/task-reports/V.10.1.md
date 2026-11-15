@@ -63,3 +63,16 @@
 - 기존 파일의 마지막 hash 검사와 rename 사이에 비협조적 writer 경쟁이 남습니다. 앱 연결 전 프로젝트 저장 잠금·외부 변경 경로 검증이 필요합니다.
 - 새 파일은 hard link 미지원 파일 시스템에서 오류로 거부합니다. 게시 후 temp unlink·부모 fsync 오류이면 실제 원본을 다시 읽어야 합니다.
 - 기본 병렬 Rust 검증의 기존 IPC 타이밍 실패는 별도 한계입니다. 시간 상한을 완화하거나 검사를 제외하지 않았습니다.
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U039 수정(B2). storage 원자 저장 부분에는 결함 지적이 없습니다.
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+
+- 검증 기준: `source_file::tests`의 생성 충돌·외부 변경(`creates_new_source_and_refuses_existing_or_changed_content`, `rechecks_external_edits_and_new_files_before_rename`), 권한 보존(`replacement_preserves_existing_permission_bits`), 쓰기 실패 보존(`write_failures_keep_complete_content_and_clean_temporary_files`) 5개와 전체 Rust 검증 통과. 위 처음 기록의 `check-core` 65(IPC 타이밍)는 이번 workspace 실행에서 재현되지 않았습니다.
+- 판정: `[x]` 유지.

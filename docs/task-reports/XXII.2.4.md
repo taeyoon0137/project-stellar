@@ -85,3 +85,16 @@
 - 정적 검사 규칙은 생성기가 쓰는 element·role 집합 중심이라 WAI-ARIA 전체를 검사하지 않습니다(예: `aria-describedby`
   내용, 색 대비, focus 순서의 시각 일치).
 - 이름 계산은 aria-labelledby·aria-label·alt·내용만 보는 단순화입니다(CSS 생성 내용·`title` 미포함).
+
+## 2026-11-15 재검증
+
+- Codex 작업 검토(계획 B9)에서 이 행의 상태를 다시 정했습니다. 위 기록은 Codex 작업 시간에 작성·통합되어 상태의 근거로 쓰지 않고, 아래 실행 결과를 근거로 씁니다.
+- 논리 검토: 계획 U023 수정. B1(`8e7ac57b`)에서 open dialog의 `aria-modal`을 빼고 목록 계산을 선형으로 고쳤습니다.
+- 환경: `DEV-MAC`(Apple M3 Max, macOS 27.2, rustc 1.96.0, Apple Git 2.54.0). 코드 기준은 `3463761b`이며 이 검토의 문서 커밋은 코드를 바꾸지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace --no-fail-fast` | 0 — 4,039 통과, 0 실패, 10 ignored(수동 측정·장기 fuzz) |
+
+- 검증 기준(정적 접근성 검사 fixture): `web::tests::static_check_detects_each_rule_violation`, `site_profile_maps_to_golden_html_and_passes_static_check`, `every_profile_ir_passes_static_check_and_is_deterministic`, `fragment_is_transparent_for_hidden_subtrees` 통과.
+- 판정: `[x]` 유지(계획의 `[~]` 뒤 검증 조건을 충족).

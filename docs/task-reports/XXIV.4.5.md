@@ -55,12 +55,12 @@
 
 ### 앱 Save Now와의 상호 운용 후속 검증
 
-- `cargo test --locked -p stellar-runtime -p stellar-ops -p stellar-cli`에서 단위·통합·doctest 234개가 통과했습니다.
-  `cargo clippy --locked -p stellar-runtime -p stellar-ops -p stellar-cli --all-targets -- -D warnings`와 `cargo fmt --all -- --check`도 통과했습니다.
+- 2026-11-15 검토에서 `DEV-MAC`의 `cargo test --workspace --no-fail-fast`(종료 0, 4,039 통과·0 실패)로 아래 두 runtime 테스트가
+  통과하는 것을 다시 확인했습니다. 처음 적은 crate별 통과 수는 다시 확인하지 않아 지웠습니다.
 - runtime의 `cli_generation_lock_and_window_save_share_one_identity`는 임시 사용자 데이터와 별도 프로세스로
   동일 경로·symlink의 경합, 잠금 해제 후 저장, HOME이 없어도 가능한 무변경 저장과 undo로 원상 복원한 저장을 검사합니다.
   `saving_after_a_symlink_is_repointed_updates_the_opened_project`는 열린 target에만 기록되는지 검사합니다.
-- 저장된 창 fixture를 복사해 실제 `stellar apply`와 Rust 창 session을 별도 프로세스로 실행했습니다.
+- (2026-11-14 통합 때의 보고이며 이 검토에서 다시 실행하지 않았습니다.) 저장된 창 fixture를 복사해 실제 `stellar apply`와 Rust 창 session을 별도 프로세스로 실행했습니다.
   앱 측에서 프로젝트 잠금을 보유한 동안 CLI는 75를 반환했고, 해제 후 2세대를 기록했습니다. 먼저 열었던
   앱의 저장은 stale로 실패하고 편집을 유지했습니다. 새 앱 session은 다른 프로세스가 잠금을 보유하면
   dirty 상태를 유지했고, 해제 후 같은 session에서 재시도하여 이름 변경을 3세대로 저장했습니다.
