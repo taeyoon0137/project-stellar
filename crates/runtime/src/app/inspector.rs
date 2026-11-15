@@ -15,7 +15,7 @@
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
-use super::frame_move::{command_id, fresh_generator, now_clock};
+use super::frame_move::{command_id, FreshIds};
 use super::*;
 use stellar_commands::id::CommandOrigin;
 use stellar_commands::inspector::{edit_commands, inspector_rows, InspectorSnapshot, NodeClass};
@@ -186,17 +186,17 @@ fn edit_property(
             .map_err(history_failure)?;
     }
     let selection = window.history.view().selection().ids().to_vec();
-    // 새 modifier ID는 OS 난수 seed의 UUIDv7입니다(ADR-0028 "새 영속 ID"). command ID에서 파생하지 않습니다.
-    let mut generator = fresh_generator()?;
-    let clock = now_clock()?;
+    // 새 modifier ID는 ID마다 new_ids로 만든 UUIDv7입니다(ADR-0028 "새 영속 ID"). command ID에서 파생하지 않습니다.
+    let mut ids = FreshIds::default();
     let commands = edit_commands(
         document.state.model(),
         &selection,
         property,
         input,
-        &mut || generator.next_id(&clock),
-    )
-    .map_err(|error| Failure::new(RequestFailure::UnknownView, error.0))?;
+        &mut || ids.next(),
+    );
+    ids.finish()?;
+    let commands = commands.map_err(|error| Failure::new(RequestFailure::UnknownView, error.0))?;
     if commands.is_empty() {
         return Ok(());
     }

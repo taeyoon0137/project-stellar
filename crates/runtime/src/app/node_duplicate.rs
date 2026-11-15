@@ -1,12 +1,11 @@
 //! 단일 선택 subtree를 같은 부모 아래에 복제하고 한 history 항목으로 선택합니다.
-use super::frame_move::{command_id, fresh_generator};
+use super::frame_move::{command_id, FreshIds};
 use super::node_delete::editable_selected_roots;
 use super::*;
 use stellar_commands::{
     command::Command, duplicate::DuplicateSubtree, id::CommandOrigin,
     transaction::CommandTransaction,
 };
-use stellar_core_types::clock::ManualClock;
 
 pub(super) fn duplicate_selected(
     window: &mut ProjectWindowSession,
@@ -26,23 +25,12 @@ pub(super) fn duplicate_selected(
         .and_then(|r| r.parent)
         .ok_or_else(invalid)?;
     let id = command_id(window.window(), request);
-    let mut generator = fresh_generator()?;
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .and_then(|d| u64::try_from(d.as_nanos()).ok())
-        .ok_or_else(invalid)?;
+    let mut ids = FreshIds::default();
     // 복제본은 원본 바로 위에 놓습니다. 흐름 컨테이너에서도 원본 다음 자리가 됩니다.
     let order = model.order_key_above(parent, source).ok_or_else(invalid)?;
-    let command = DuplicateSubtree::plan(
-        model,
-        source,
-        parent,
-        order,
-        &mut generator,
-        &ManualClock::new(nanos),
-    )
-    .map_err(|_| invalid())?;
+    let command = DuplicateSubtree::plan_with(model, source, parent, order, &mut || ids.next());
+    ids.finish()?;
+    let command = command.map_err(|_| invalid())?;
     let copy = command.copy_root().ok_or_else(invalid)?;
     let tx = CommandTransaction::new(id, CommandOrigin::User)
         .with_command(revision, Command::DuplicateSubtree(command));

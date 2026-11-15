@@ -66,8 +66,7 @@ impl ClipboardSubtree {
         Ok(Self { document, snapshot })
     }
 
-    /// 모든 영속 ID를 재발급하고 목적 부모·순서를 지정합니다. 반환 command는 일반 history로 실행합니다.
-    /// 창의 신뢰·선택·잠금 및 View 경계 정책은 호출자가 검사해야 합니다.
+    /// 결정적 id 생성기로 [`ClipboardSubtree::plan_with`]를 부릅니다(테스트·fuzz용).
     pub fn plan<C: MonotonicClock>(
         &self,
         model: &DocumentModel,
@@ -75,6 +74,19 @@ impl ClipboardSubtree {
         order: OrderKey,
         generator: &mut StableIdGenerator,
         clock: &C,
+    ) -> Result<InsertNode, CommandError> {
+        self.plan_with(model, parent, order, &mut || generator.next_id(clock))
+    }
+
+    /// 모든 영속 ID를 `new_id`에서 받아 재발급하고 목적 부모·순서를 지정합니다. 제품 경로는 UUIDv7 생성기를
+    /// 넘깁니다. 반환 command는 일반 history로 실행합니다. 창의 선택·잠금 및 View 경계 정책은 호출자가
+    /// 검사해야 합니다.
+    pub fn plan_with(
+        &self,
+        model: &DocumentModel,
+        parent: StableId,
+        order: OrderKey,
+        new_id: &mut dyn FnMut() -> StableId,
     ) -> Result<InsertNode, CommandError> {
         if self.document != model.document_id() {
             return Err(CommandError::InvalidRequest {
@@ -102,7 +114,10 @@ impl ClipboardSubtree {
                 claim(entry.id.stable_id())?;
             }
         }
-        let table = IdRemapTable::clone_ids(&ids.into_iter().collect::<Vec<_>>(), generator, clock);
+        let mut table = IdRemapTable::new();
+        for old in ids {
+            table.insert(old, new_id());
+        }
         let mut insert = self.snapshot.clone();
         for (index, node) in insert.nodes.iter_mut().enumerate() {
             node.id = table.remap(node.id);

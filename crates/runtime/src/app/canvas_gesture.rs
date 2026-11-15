@@ -793,9 +793,8 @@ fn move_selection(
     }
     let rows = row_index(scene);
     let id = super::frame_move::command_id(window.window(), request);
-    // 복제본과 처음 넣는 Transform modifier의 ID는 OS 난수 seed의 UUIDv7입니다(ADR-0028 "새 영속 ID").
-    let mut generator = super::frame_move::fresh_generator()?;
-    let clock = super::frame_move::now_clock()?;
+    // 복제본과 처음 넣는 Transform modifier의 ID는 ID마다 new_ids로 만든 UUIDv7입니다(ADR-0028 "새 영속 ID").
+    let mut ids = super::frame_move::FreshIds::default();
     let revision = window.revision();
     let mut transaction = CommandTransaction::new(id, CommandOrigin::User);
     let mut commands = 0;
@@ -814,8 +813,9 @@ fn move_selection(
             }
             let parent = parent_of(model, node).ok_or_else(stale_view)?;
             let order = order_above(model, parent, node).ok_or_else(stale_view)?;
-            let plan = DuplicateSubtree::plan(model, node, parent, order, &mut generator, &clock)
-                .map_err(|_| stale_view())?;
+            let plan =
+                DuplicateSubtree::plan_with(model, node, parent, order, &mut || ids.next())
+                    .map_err(|_| stale_view())?;
             let copy = plan.copy_root().ok_or_else(stale_view)?;
             let remap: std::collections::BTreeMap<_, _> = plan.remap.iter().copied().collect();
             transaction = transaction.with_command(revision, Command::DuplicateSubtree(plan));
@@ -831,12 +831,13 @@ fn move_selection(
             target,
             local,
             remap.as_ref(),
-            generator.next_id(&clock),
+            ids.next(),
         )? {
             transaction = transaction.with_command(revision, command);
             commands += 1;
         }
     }
+    ids.finish()?;
     if commands == 0 {
         return Ok(());
     }

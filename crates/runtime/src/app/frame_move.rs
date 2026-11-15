@@ -73,25 +73,28 @@ pub(super) fn fresh_ids<const N: usize>() -> Result<[StableId; N], Failure> {
     })
 }
 
-/// 복제·붙여넣기 계획 API는 ID 생성기를 받습니다. seed를 OS 난수로 채워 요청마다 독립 ID를 만듭니다.
-pub(super) fn fresh_generator() -> Result<stellar_core_types::ids::StableIdGenerator, Failure> {
-    let [seed] = fresh_ids()?;
-    let bytes = seed.to_bytes();
-    Ok(stellar_core_types::ids::StableIdGenerator::new(
-        u64::from_le_bytes(bytes[8..].try_into().expect("eight bytes")),
-    ))
+/// 복제·붙여넣기·Option 드래그 복제·이동·속성 탭이 계획에 넘기는 새 ID 원천입니다. ID마다 [`fresh_ids`](UUIDv7, OS 난수)를 부르고, 실패하면
+/// NIL을 돌려준 뒤 [`FreshIds::finish`]에서 실패로 바꿉니다(NIL ID는 command validator도 거부합니다).
+/// 테스트용 결정적 생성기(`StableIdGenerator`)는 제품 경로에서 쓰지 않습니다.
+#[derive(Default)]
+pub(super) struct FreshIds {
+    failure: Option<Failure>,
 }
 
-/// 새 ID 생성기에 넘기는 지금 시각(UUIDv7 timestamp).
-pub(super) fn now_clock() -> Result<stellar_core_types::clock::ManualClock, Failure> {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .and_then(|d| u64::try_from(d.as_nanos()).ok())
-        .ok_or_else(|| {
-            Failure::new(RequestFailure::UnknownView, "시스템 시각을 읽지 못했습니다")
-        })?;
-    Ok(stellar_core_types::clock::ManualClock::new(nanos))
+impl FreshIds {
+    pub(super) fn next(&mut self) -> StableId {
+        match fresh_ids() {
+            Ok([id]) => id,
+            Err(failure) => {
+                self.failure.get_or_insert(failure);
+                StableId::NIL
+            }
+        }
+    }
+
+    pub(super) fn finish(self) -> Result<(), Failure> {
+        self.failure.map_or(Ok(()), Err)
+    }
 }
 
 /// 요청 순번은 runtime 안에서만 유일하므로 창의 영속 ID와 함께 식별합니다.

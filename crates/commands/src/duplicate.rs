@@ -148,7 +148,7 @@ pub(crate) fn remap_modifier_payload(
 }
 
 impl DuplicateSubtree {
-    /// 결정적 id 생성기로 재매핑 쌍을 만들어 command를 계획합니다.
+    /// 결정적 id 생성기로 재매핑 쌍을 만들어 command를 계획합니다(테스트·fuzz용).
     pub fn plan<C: MonotonicClock>(
         model: &DocumentModel,
         source: StableId,
@@ -157,13 +157,25 @@ impl DuplicateSubtree {
         generator: &mut StableIdGenerator,
         clock: &C,
     ) -> Result<DuplicateSubtree, CommandError> {
+        Self::plan_with(model, source, new_parent, order_key, &mut || {
+            generator.next_id(clock)
+        })
+    }
+
+    /// 새 영속 id를 `new_id`에서 하나씩 받아 command를 계획합니다. 제품 경로는 UUIDv7 생성기를 넘깁니다.
+    pub fn plan_with(
+        model: &DocumentModel,
+        source: StableId,
+        new_parent: StableId,
+        order_key: OrderKey,
+        new_id: &mut dyn FnMut() -> StableId,
+    ) -> Result<DuplicateSubtree, CommandError> {
         if !model.contains(source) {
             return Err(CommandError::UnknownNode { id: source });
         }
         let nodes = subtree_nodes(model, source);
         let olds = subtree_ids(model, &nodes);
-        let table = IdRemapTable::clone_ids(&olds, generator, clock);
-        let remap = olds.iter().map(|old| (*old, table.remap(*old))).collect();
+        let remap = olds.iter().map(|old| (*old, new_id())).collect();
         Ok(DuplicateSubtree {
             source,
             new_parent,

@@ -1,10 +1,9 @@
 //! Platform clipboard bytes enter the owning window's ordinary document history.
-use super::frame_move::{command_id, fresh_generator};
+use super::frame_move::{command_id, FreshIds};
 use super::*;
 use stellar_commands::{
     command::Command, id::CommandOrigin, paste::ClipboardSubtree, transaction::CommandTransaction,
 };
-use stellar_core_types::clock::ManualClock;
 
 impl AppRuntime {
     /// 요청한 창이 표시한 선택만 복사합니다. 셸 worker 전용이며 UI thread에서 ticket을 기다리지 않습니다.
@@ -83,22 +82,12 @@ fn paste_into(
     let parent = paste_parent(model, root, window.view().selection().ids()).ok_or_else(invalid)?;
     let clipboard = ClipboardSubtree::decode(bytes).map_err(|_| invalid())?;
     let id = command_id(window.window(), request);
-    let mut generator = fresh_generator()?;
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .and_then(|duration| u64::try_from(duration.as_nanos()).ok())
-        .ok_or_else(invalid)?;
+    let mut ids = FreshIds::default();
     let order = model.next_child_order_key(parent);
-    let insert = clipboard
-        .plan(
-            model,
-            parent,
-            order,
-            &mut generator,
-            &ManualClock::new(nanos),
-        )
-        .map_err(|error| Failure::new(RequestFailure::UnknownView, error.to_string()))?;
+    let insert = clipboard.plan_with(model, parent, order, &mut || ids.next());
+    ids.finish()?;
+    let insert =
+        insert.map_err(|error| Failure::new(RequestFailure::UnknownView, error.to_string()))?;
     let inserted = insert.nodes[0].id;
     let transaction = CommandTransaction::new(id, CommandOrigin::User)
         .with_command(revision, Command::InsertNode(insert));
