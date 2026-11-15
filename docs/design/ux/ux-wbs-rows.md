@@ -40,7 +40,7 @@ lane(병렬 단위, crate가 겹치지 않게 나눔)
 | UX.1.2 | 영구 비활성 UI를 삭제합니다. 툴바 뒤로·앞으로·프로젝트 검색, 메뉴의 영구 비활성 항목(Deselect All, Find 계열, Zoom to Selection, Rulers, Align·Distribute·Flip, Group, Lock, Hide, Stellar Help 등). 구현된 명령만 남깁니다. Cut·Select All은 텍스트 편집 중 field editor가 처리하므로 남깁니다 | 메뉴 막대와 툴바를 모두 열어 비활성 항목이 "선택 없음" 같은 일시 조건뿐임을 확인. 단축키 감사(`ShortcutPolicy.swift`)가 지운 항목을 가리키지 않음 | UX.0.1 | `UI/Shell/ShellToolbarController.swift`, `UI/Tools/MainMenuBuilder.swift`, `UI/Tools/ShortcutPolicy.swift`, `UI/Shell/ShellProjectWindow.swift`(활성 명령 집합) | S |
 | UX.1.3 | Polygon에 단일 키 P를 주고, 도구 막대를 그룹 간격(선택·컨테이너·도형·내용·시점)으로 나눕니다. 접근성 도움말의 키 안내를 실제 배정과 맞춥니다 | 캔버스 포커스에서 P가 Polygon을 고름. 텍스트 입력 중 P는 글자. 도움말·툴팁·메뉴의 키 표시가 `CanvasTool.singleKey`와 같음 | UX.0.1, U6 | `UI/Tools/CanvasTool.swift`, `UI/Shell/ShellToolBarView.swift`, `UI/Shell/ShellProjectWindow.swift`(접근성 도움말) | S |
 | UX.1.4 | 툴바 "…" 메뉴 항목을 제목 문서 메뉴로 옮기고 "프로젝트 신뢰…"를 늘 둡니다. 신뢰 alert 문구를 "Git·hook·터미널·에이전트 실행만 막는다"로 바꿉니다 | 제한 모드 창에서 제목을 눌러 신뢰를 부여할 수 있음. 신뢰 문구에 "edit" 의미 없음. 신뢰 전에도 편집·저장·이미지 표시가 됨 | UX.0.1 | `UI/Shell/ShellProjectWindow.swift`, `UI/Shell/ShellToolbarController.swift` | S |
-| UX.1.5 | (조건부) 정리 통합 뒤에도 반응하지 않는 도구가 있으면 그 생성 경로를 연결합니다. 작성 기준 main의 runtime `CanvasItem`은 Frame·Rectangle·Text뿐이었고, 기준선 `02397601`에는 Shape(Rectangle·Ellipse·Line·Polygon) 생성 경로가 있습니다. 반응하지 않는 도구와 빠진 D7 스타일 입력만 연결합니다 | 10종 도구 각각 클릭·드래그 생성이 되고 Undo 한 번. 생성 스타일이 Settings 값과 같음(코어 하드코딩 없음) | UX.0.1, XII.10.26 | `crates/runtime/src/app/frame_insert.rs`, `crates/ffi/src/window_session.rs`, `UI/Shell/ShellCanvasFrameInsert.swift` | C·S |
+| UX.1.5 | (조건부) 정리 통합 뒤에도 반응하지 않는 도구가 있으면 그 생성 경로를 연결합니다. 작성 기준 main의 runtime `CanvasItem`은 Frame·Rectangle·Text뿐이었고, 기준선 `02397601`에는 Shape(Rectangle·Ellipse·Line·Polygon) 생성 경로가 있습니다. 반응하지 않는 도구와 빠진 D7 스타일 입력만 연결합니다. 통합 검토(2026-11-15) 기준 남은 것: Text 드래그로 고정 폭 Text 만들기(지금은 클릭 생성만), Image 드래그로 크기 정하기와 도구를 고르는 즉시 파일 선택(지금은 도구를 고른 뒤 Frame을 클릭해야 선택이 열림, U11) | 10종 도구 각각 클릭·드래그 생성이 되고 Undo 한 번. 생성 스타일이 Settings 값과 같음(코어 하드코딩 없음) | UX.0.1, XII.10.26, XII.10.33(Text 드래그), UX.3.3(Image 드래그·파일 선택) | `crates/runtime/src/app/frame_insert.rs`, `crates/ffi/src/window_session.rs`, `UI/Shell/ShellCanvasFrameInsert.swift` | C·S |
 | UX.1.6 | 레이어 빈 상태를 키 안내 한 줄로 바꿉니다("F로 Frame, R로 사각형, T로 텍스트를 그립니다") | 새 프로젝트의 레이어 탭에 안내가 보이고 버튼이 없음. VoiceOver가 안내를 읽음 | UX.1.3 | `UI/Sidebar/SidebarSymbols.swift`, `UI/Sidebar/SidebarLayersController.swift` | S |
 
 완료 기준(흐름 1): 새 프로젝트를 만든 뒤 첫 드래그까지 대화상자 0개. 눌러서 반응 없는 UI 0개.
@@ -60,6 +60,7 @@ lane(병렬 단위, crate가 겹치지 않게 나눔)
 | UX.2.9 | 크기 조절 핸들 8개와 크기 라벨(`320 × 200`, 고정이 아니면 CSS 값)을 연결합니다 | 7종 노드 크기 조절, Shift 비율 유지, Option 중심 기준. 드래그 한 번이 Undo 한 번 | UX.2.2, XII.10.8, XII.10.9 | `crates/runtime/src/app/`, `UI/Shell/ShellCanvasFrameMove.swift` | R·S |
 | UX.2.10 | 모서리 반경 핸들(Frame·Rectangle·Polygon, Option은 한 모서리)을 연결합니다 | 핸들 드래그가 `border-*-radius`를 바꾸고 속성 탭 값과 같음 | UX.2.9, XII.10.11 | `crates/runtime/src/app/`, `UI/Shell/` | R·S |
 | UX.2.11 | 자동 저장 트리거를 runtime에 연결합니다(debounce, 최대 지연, 비활성화·닫기 flush). Save Now는 대기 저장을 합칩니다 | 편집 뒤 정해진 지연 안에 저장되고 연속 드래그 중 쓰기 반복 0. Save Now 이중 쓰기 0. 대형 문서에서 document thread 점유를 Release로 측정해 기록 | 정리, XIII.1.3, XIII.1.4, XIII.1.5 | `crates/runtime/src/`, `crates/project/src/autosave.rs` | R |
+| UX.2.13 | `border`를 변별 longhand로 나눕니다. 저장 key 0x0105를 `border-{top,right,bottom,left}-{width,style,color}` 12개 key로 나누고(속성 모델 5장 `border` 행, IX.11.22), 속성 탭 `border` 묶음 행을 펼치면 변별 longhand 행이 되게 합니다. 그 전까지 `border` 행은 펼쳐지지 않는 한 행입니다 | 변 하나의 두께·색을 바꾸면 그 longhand만 저장되고 Undo 한 번. 묶음 행 도움말이 코어가 넘긴 longhand 이름 목록과 같음 | UX.2.5, IX.11.22, IX.11.10 | `crates/commands/src/inspector.rs`, `crates/document/src/frame_metadata.rs`, `UI/Inspector/` | C·S |
 | UX.2.12 | 드래그·크기 조절·scrub 중 속성 탭 섹션 구성을 고정하고 값만 갱신합니다. 텍스트 편집에 들어가면 Typography 섹션을 펼칩니다 | 제스처 중 섹션 추가·삭제·스크롤 0. 입력→Present 10ms 계약 측정 유지 | UX.2.4 | `UI/Inspector/`, `UI/Shell/ShellFrameInspectorSource.swift` | S |
 
 완료 기준(흐름 2): 새 프로젝트 → 사각형 → 크기·색·반경 변경이 대화상자 없이 되고 모두 Undo가 된다. 7종 노드 모두 속성 탭에 나온다.
@@ -75,8 +76,12 @@ lane(병렬 단위, crate가 겹치지 않게 나눔)
 | UX.3.5 | 사이드바 Pages 구획을 머리 줄 `Page › View ▾` 팝업 한 줄로 바꿉니다. 지금은 전환·이름 변경만 두고 새 Page·View는 UX.12에서 | 사이드바 높이에서 Pages 구획 0. 팝업 항목이 모두 동작 | UX.1.6 | `UI/Shell/ShellSidebarSource.swift`, `UI/Sidebar/` | S |
 | UX.3.6 | Shift-클릭 추가·제거, ⌘-클릭 깊은 선택, 영역 선택(Option은 완전 포함)을 연결합니다 | 다중 선택 뒤 속성 탭 "혼합" 표시. 레이어와 캔버스 선택이 같음 | UX.2.3, XII.10.3, XII.10.4, XII.10.6 | `crates/runtime/src/app/frame_move.rs`, `UI/Shell/ShellCanvasFrameMove.swift` | R·S |
 | UX.3.7 | Text·Image를 포함한 모든 노드를 드래그로 이동하고, Option 드래그 복제, 화살표 이동을 연결합니다 | 7종 노드 이동, 복제본이 원본 바로 위, 화살표 단위가 XII.10.2 ADR과 같음 | UX.3.6, XII.10.2, XII.10.13, XII.10.14 | `crates/runtime/src/app/frame_move.rs`, `UI/Shell/ShellCanvasFrameMove.swift` | R·S |
-| UX.3.8 | 스냅 엔진과 스마트 가이드·측정 overlay, View 메뉴 스냅 토글을 연결합니다. 가이드 거리는 CSS 단위로 | 부모·형제 가장자리·중심 스냅, ⌘로 일시 해제. 가이드가 렌더 결과·내보내기에 없음 | UX.3.7, XII.10.15, XII.10.16, XII.10.17 | `crates/runtime/src/`, `UI/Shell/` | R·S |
+| UX.3.8 | 스냅 엔진과 스마트 가이드·측정 overlay, View 메뉴 스냅 토글을 연결합니다. 가이드 거리는 CSS 단위로. 스냅이 같은 입력을 보므로 이 행에서 셸이 해석하는 편집 의미를 코어로 옮깁니다(핸들·생성 해석 코어 이전): 크기 핸들 Shift 비율 유지·Option 중심 기준·최소 1px, Line 끝점 Shift 45° 단위, 반경 핸들 포인터→값과 반올림, 화살표 이동 단위(1·10px), 클릭 생성 기본 크기(100)와 생성 Shift 정비례·Option 중심, root Frame을 끌 수 있는지. 셸은 핸들 index, local 포인터, 수식키 flag(생성은 click·drag 구분)만 보내고, 현재 도구도 코어 창 view state에 둡니다(XII.10.1) | 부모·형제 가장자리·중심 스냅, ⌘로 일시 해제. 가이드가 렌더 결과·내보내기에 없음. 위 해석마다 코어 단위 테스트가 같은 입력으로 같은 상자·반경·끝점을 재현하고, 미리보기와 확정 값이 같은 코어 계산. Swift에 비율·각도·반올림·기본 크기 계산 0건 | UX.3.7, XII.10.1, XII.10.15, XII.10.16, XII.10.17 | `crates/runtime/src/`, `UI/Shell/` | R·S |
 | UX.3.9 | 레이어 드래그로 순서·부모 바꾸기를 기존 형제 순서 편집 Command에 연결합니다. 묶기·풀기는 Command가 연결된 뒤 | 드래그 결과가 메뉴 순서 편집과 같고 Undo 한 번. 사이드바 validate 기본 거부가 연결된 동작에서는 사라짐 | UX.3.5, XII.10.23 | `UI/Shell/ShellSidebarSource.swift`, `UI/Sidebar/SidebarLayersController.swift` | S |
+| UX.3.11 | 편집 가능 판정을 코어 하나로 모읍니다((model, view, node, key) → 편집 가능 여부). 속성 탭, 캔버스 선택 항목 flag, 선택 능력 mask, Layers 표시·잠금·이름, CLI `stellar apply`가 모두 이 판정을 씁니다. root Frame과 흐름 부모 규칙을 속성 탭에도 적용합니다 | 같은 node·key가 캔버스·속성 탭·Layers·CLI에서 같은 결과(root의 `left`·`top`·`visible`·`locked`, flex 부모 아래 자식의 `left`·`top`, 숨긴 조상 아래 node). `commands::lock` 주석과 ADR-0070 결정 5가 실제와 같음 | UX.3.4, UX.3.7 | `crates/commands/src/lock.rs`, `crates/commands/src/inspector.rs`, `crates/runtime/src/app/{frame_move,sidebar}.rs`, `crates/ops/src/apply.rs` | C·R |
+| UX.3.12 | 레이어 표시·잠금 토글 ABI를 "ids와 flag, value 없음" 하나로 합쳐 방향을 늘 코어가 정하게 합니다. 순서 bit(`ORDER_*`)는 선택 능력 mask에 합칩니다 | Swift에 토글 방향 계산 0건. 선택과 같은 행·다른 행 토글 결과가 같은 규칙. ADR-0028 갱신 | UX.3.4 | `crates/ffi/src/sidebar.rs`, `crates/runtime/src/app/sidebar.rs`, `UI/Sidebar/SidebarLayersController.swift`, `UI/Shell/ShellSidebarSource.swift` | C·S |
+| UX.3.13 | Select All을 코어 요청으로 옮깁니다(영역 선택과 같은 filter: root 직계 자식 중 보이고 잠기지 않은 노드). Swift의 레이어 페이지 순회를 지웁니다. 1만 개 선택의 속성 행 snapshot과 편집 비용 상한을 ADR-0070에 기록합니다 | 셸이 레이어 페이지를 읽지 않고 ⌘A 한 요청. 영역 선택과 같은 노드 집합. 1만 개 선택 측정 기록 | UX.3.6 | `crates/runtime/src/app/canvas_gesture.rs`, `crates/ffi/src/`, `UI/Shell/ShellCanvasSelectAll.swift` | R·S |
+| UX.3.14 | 캔버스 크기·반경·끝점 ABI가 누른 시점의 revision과 history 위치를 받고, 다르면 stale로 거부합니다(이동·속성 탭 ABI와 같은 규칙) | 누른 뒤 다른 창·CLI가 바꾸면 놓아도 덮어쓰지 않음. ADR-0071 C ABI 표 갱신 | UX.2.9 | `crates/ffi/src/canvas_gesture.rs`, `crates/runtime/src/app/canvas_gesture.rs`, `UI/Shell/ShellCanvasFrameMove.swift` | C·S |
 | UX.3.10 | 캔버스를 사이드바·오른쪽 영역 아래로 확장하는 비용을 측정하고, 계약 안이면 켭니다(셸 가이드 O2). 가운데 항목 `automaticallyAdjustsSafeAreaInsets`와 `NSBackgroundExtensionView`로 확장하고, 패널 아래 영역의 drawable 크기·hit test·렌더 비용을 Release로 잽니다 | 측정 기록(drawable 크기, 프레임 시간, 입력→Present 예약 10ms, UI 스레드 단일 점유 2ms, 아키텍처 §6). 계약 밖이면 켜지 않고 결과만 기록하며 O2는 열린 채 둠. 켜면 패널을 여닫아도 캔버스 내용이 밀리지 않고, 패널 위 클릭이 캔버스 입력으로 가지 않으며, O2를 닫음 | UX.1.1, U2 | `UI/Shell/ShellSplitViewController.swift`, `UI/Shell/ShellCanvasHostViewController.swift`, `CanvasView.swift` | S |
 
 ## UX.4 앱 밖 변경 반영(흐름 3)
@@ -202,3 +207,14 @@ lane(병렬 단위, crate가 겹치지 않게 나눔)
 - `UI/`는 `apps/macos/Stellar/UI/`입니다.
 - 정식 등록 때 기존 행과 내용이 겹치는 UX 행(예: UX.3.1과 XII.10.37)은 새 행을 만들지 않고 기존 행에 셸 연결을 맡기거나, 기존 행을 선행으로 두고 UX 행을 "셸 노출" 행으로만 남깁니다.
 - 16장 결정이 모두 확정되어 결정 대기로 막힌 행은 없습니다. U7(여러 View 렌더)과 U18(브랜치)은 확정안이 "별도 ADR·재검토"라서 UX.12.3과 UX.13은 그 결정 뒤에 시작합니다.
+
+## UX.0.1 기준선 기록(2026-11-15 통합 검토)
+
+UX.0.1을 시작하기 전에 통합 검토가 확인한 미충족 항목입니다. UX.0.1 결과 기록은 이 목록에서 시작합니다.
+
+- 도구: Text 드래그 고정 폭 생성과 Image 드래그 크기·즉시 파일 선택이 없습니다(UX.1.5, XII.10.33, UX.3.3).
+- 셸 해석: 도구 상태와 핸들·생성 해석이 셸에 있습니다(UX.3.8). 반경 미리보기는 확정과 같은 반올림 값을 씁니다.
+- 자동 저장: 실패·stale을 부제목으로만 알립니다. stale 두 선택지 sheet는 runtime 다시 불러오기 경로가 없어 UX.4.3입니다.
+- 속성 탭: `border`는 펼쳐지지 않는 한 행입니다(UX.2.13).
+- 판정·ABI: 편집 가능 판정 네 곳(UX.3.11), 레이어 토글 ABI 둘(UX.3.12), Swift의 Select All(UX.3.13), 캔버스 편집 ABI의 revision 검사(UX.3.14).
+- 제한 모드: 편집·저장·컴포넌트 인스턴스 표시는 신뢰와 무관하게 됩니다. design/components 안의 파일 하나라도 프로젝트 밖을 가리키면 제한 모드에서는 원본 읽기 전체가 실패해 인스턴스가 모두 그려지지 않습니다(외부 target 내용을 읽지 않는 정책의 현재 동작).

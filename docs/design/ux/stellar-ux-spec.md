@@ -250,7 +250,7 @@
 
 ### 흐름 2. 만들고 다듬기
 
-1. R을 누르고 Frame 안에서 드래그하면 사각형이 생기고 선택됩니다. 도구는 Move로 돌아갑니다. 채우기와 선은 Settings ▸ 캔버스의 기본값(처음 `#D9D9D9`, `#000000` 1px)을 씁니다(D7). 선택 아래에 `200 × 120`이 보입니다.
+1. R을 누르고 Frame 안에서 드래그하면 사각형이 생기고 선택됩니다. 도구는 Move로 돌아갑니다. 채우기는 Settings ▸ 캔버스의 도형 기본 채우기(처음 `#D9D9D9`)를 쓰고, 기본 선은 넣지 않습니다. 선 기본 색(처음 `#000000` 1px)은 Line 도구로 만든 선에 씁니다(D7, ADR-0071 UX.1.5 5항). 선택 아래에 `200 × 120`이 보입니다.
 2. 핸들 8개로 크기를 바꿉니다. Shift는 비율 유지, Option은 중심 기준입니다. 부모 가장자리·중심·형제에 스냅하고 가이드에 거리를 `16px`처럼 보여 줍니다.
 3. 속성 탭의 `fill` 행에서 견본을 누르면 popover가 열리고 시스템 색 패널로 이어집니다. `#3366FF`를 입력하거나 붙여 넣어도 됩니다. Return은 적용, Escape는 취소 후 캔버스로 돌아갑니다.
 4. 모서리 안쪽 반경 핸들을 끌거나 `border-radius`에 `12`를 입력합니다.
@@ -503,6 +503,7 @@
 확정안: 행 레이블은 CSS 속성 이름입니다.
 - 소문자 CSS 이름(`width`, `background-color`)을 시스템 글꼴로 씁니다. 고정폭 글꼴은 쓰지 않습니다. IDE처럼 보이는 것을 피하기 위해서입니다.
 - longhand가 여럿인 값은 shorthand 이름 한 행(`padding`, `border-radius`, `border`)으로 묶고, 펼치면 longhand 행이 됩니다. 값 필드 안의 작은 위치 글리프로 변·모서리를 구분해 폭 압박을 줄입니다.
+- 남은 범위: 지금 `border`는 저장 key 하나(0x0105)라 펼쳐지지 않는 한 행입니다. 12개 longhand key로 나누고 펼침을 연결하는 일은 UX.2.13입니다. 묶음 행 도움말은 코어가 그 행 뒤에 넘긴 longhand 행 이름으로 만듭니다.
 - 툴팁에는 쉬운 설명("요소의 가로 크기"), longhand 이름, Target 진단을 둡니다.
 - 채택하지 않은 대안: property_model 12장의 이전 문구(사람이 읽는 레이블 + CSS 이름은 툴팁·복사·접근성 도움말). "CSS 이름으로 보기" 같은 전환 토글은 새 UI라 두지 않습니다.
 
@@ -736,7 +737,7 @@
 | `UI/Shell/ShellAppCoordinator.swift`, `UI/Agent/` | `DisconnectedAgentPanelSource`, 동작 없는 Agent 탭 | 실행 경로 전까지 탭 없음 | 9.1절 | UX.1.1 |
 | `UI/Shell/ShellComponentLibrary.swift`, `UI/Shell/ShellNewComponent.swift` | 별도 창, alert 연쇄 | 삭제 | D3·D4 | 정리 |
 | `UI/Shell/ShellDocumentFont.swift` | "Face index" 입력 파일 패널 | 삭제. Typography `font-family`로 대체 | 사용자 미정의 UI | 정리 |
-| `SettingsPlaceholderView.swift` | "Stellar Settings" 문자열뿐 | Settings ▸ 캔버스(기본 채우기·선) | D7 | 정리 |
+| `SettingsView.swift`(이전 `SettingsPlaceholderView.swift`) | "Stellar Settings" 문자열뿐 | Settings ▸ 캔버스(기본 채우기·선) | D7 | 정리 |
 | `UI/Shell/ShellFrameInspectorSource.swift`, `CanvasFrameScene.swift` | Frame 하나 선택일 때만 인스펙터 값 생성 | 모든 노드 종류 snapshot | 흐름 2 | UX.2.1–2.3 |
 | `UI/Inspector/InspectorPropertyCatalog.swift`, `UI/Inspector/InspectorSectionView.swift` | Frame/Appearance/Modifiers 섹션, 선택 중 "No Selection" 문구 | CSS 범주 섹션(6.2절), 선택 없음 화면 교체 | IX.11.17, 6.1절 | UX.2.4–2.6 |
 | `UI/Sidebar/SidebarLayersController.swift`, `UI/Shell/ShellSidebarSource.swift` | 표시·잠금 토글 항상 비활성, validate 기본 거부, Pages 30% 구획 | 표시·잠금 연결, Pages를 머리 줄 팝업으로 | 7.1·7.2절 | UX.3.4, UX.3.5 |
