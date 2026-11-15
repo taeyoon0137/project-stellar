@@ -30,6 +30,10 @@
 - 2026-11-15 검토에서 프로젝트 ID 선택을 절대 루트 인자로 바꿨습니다(`314709b3`). 처음 보고서는 ID 선택과 Codex 실행 결과를
   근거로 썼으므로 남기지 않았습니다.
 - 다른 Git revision 비교, dry-run tool, 카탈로그 이동, 앱 UI·외부 클라이언트 연결은 하지 않았습니다.
+- CLI에는 HEAD 비교를 따로 노출하지 않았습니다. CLI `semantic-diff <base> <target>`은 두 작업 트리 경로를 받으므로
+  HEAD를 checkout한 작업 트리(`git worktree add`)를 base로 넘기면 되고, headless MCP는 실행 인자로 고정한 프로젝트
+  루트 하나만 읽으므로 같은 비교 규칙의 HEAD blob 비교를 tool로 둡니다.
+- `document.semantic_diff`의 HEAD 비교 결과와 수치는 Codex 실행 결과였고, 이 보고서에서 다시 검증하지 않았습니다.
 
 ## 재개 조건
 
