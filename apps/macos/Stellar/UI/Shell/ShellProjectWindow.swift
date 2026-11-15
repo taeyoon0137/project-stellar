@@ -215,8 +215,8 @@ enum ShellProjectCommandID {
 
 /// 프로젝트 창의 셸 프레임 data source.
 ///
-/// 제목은 프로젝트 이름, 부제목은 신뢰 상태(코어가 모든 프로젝트를 신뢰되지 않음으로 열므로 "Restricted Mode",
-/// 가이드 7.2)입니다. 상태는 열기 중(loading) → ready, 또는 실패(failed, 복구 동작 포함)입니다. 도구 목록과 현재 도구는 창 도구 모델에서 받아
+/// 제목은 프로젝트 이름, 부제목은 자동 저장 경고(저장 실패·stale, UX 명세 3.3)와 신뢰 상태(코어가 모든 프로젝트를
+/// 신뢰되지 않음으로 열므로 "Restricted Mode", 가이드 7.2)입니다. 상태는 열기 중(loading) → ready, 또는 실패(failed, 복구 동작 포함)입니다. 도구 목록과 현재 도구는 창 도구 모델에서 받아
 /// 하단 도구 막대에 보내고(`setTools`), 도구 막대 선택은 `toolSelectionHandler`로 창 도구 모델에 넘깁니다.
 @MainActor
 final class ShellProjectFrameDataSource: ShellFrameDataSource {
@@ -274,7 +274,9 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
         rootPath = session.rootPath
         var next = currentSnapshot
         next.title = session.name
-        next.subtitle = String(localized: "Restricted Mode", comment: "Window subtitle: the project isn't trusted yet")
+        trusted = false
+        saveIssue = nil
+        next.subtitle = composedSubtitle()
         next.status = .ready
         next.moreActions = [
             ShellActionDescriptor(
@@ -315,10 +317,42 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
         publish(next)
     }
 
+    /// 부제목에 쓰는 신뢰 상태와 자동 저장 경고.
+    private var trusted = false
+    private(set) var saveIssue: ShellSaveIssue?
+
+    /// 부제목: 저장 경고(있을 때) 다음 신뢰 상태. 둘 다 없으면 빈 문자열입니다.
+    private func composedSubtitle() -> String {
+        var parts: [String] = []
+        switch saveIssue {
+        case .failed?:
+            parts.append(String(localized: "⚠︎ Not Saved", comment: "Window subtitle: the last autosave failed"))
+        case .stale?:
+            parts.append(String(localized: "⚠︎ Not Saved — Changed Elsewhere",
+                                comment: "Window subtitle: another window or app saved the project first, autosave stopped"))
+        case nil:
+            break
+        }
+        if !trusted {
+            parts.append(String(localized: "Restricted Mode", comment: "Window subtitle: the project isn't trusted yet"))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// 자동 저장 경고를 바꿉니다(ADR-0072 7절).
+    func updateSaveIssue(_ issue: ShellSaveIssue?) {
+        guard session != nil, issue != saveIssue else { return }
+        saveIssue = issue
+        var next = currentSnapshot
+        next.subtitle = composedSubtitle()
+        publish(next)
+    }
+
     func updateTrust(_ trusted: Bool) {
         guard session != nil else { return }
+        self.trusted = trusted
         var next = currentSnapshot
-        next.subtitle = trusted ? "" : String(localized: "Restricted Mode")
+        next.subtitle = composedSubtitle()
         if let index = next.moreActions.firstIndex(where: {
             $0.id == ShellProjectCommandID.trustProject || $0.id == ShellProjectCommandID.revokeTrust
         }) {
@@ -541,6 +575,8 @@ final class ShellProjectWindow {
 
     var closeConfirmationPending = false
     var agentCloseConfirmed = false
+    /// 자동 저장 상태 관찰(`ShellAutosaveStatus.swift`).
+    var autosaveObservation: (pump: ShellRuntimeEventPump, token: UUID)?
     private var closeAttempt: UUID?
     private var closeTimer: Timer?
     private var quitSaveCompletion: ((Bool) -> Void)?
@@ -722,6 +758,7 @@ final class ShellProjectWindow {
         dataSource.didOpen(session)
         gitSource.attach(session)
         toolsModel.setProjectReady(true)
+        observeAutosave()
         refreshSessionCommands()
         offerDocumentRecovery()
         window?.invalidateRestorableState()
@@ -801,6 +838,7 @@ final class ShellProjectWindow {
         }
         toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil })
         refreshLayerFlagCommands()
+        refreshAutosaveStatus()
     }
 
     /// 코어 command ID 표(XII.6.5). 코어가 공유 이름으로 알려 준 ID로만 명령을 보냅니다.
@@ -1085,6 +1123,7 @@ final class ShellProjectWindow {
         displayedSelectionFlags = 0
         sidebarSource.refresh(runtime: nil, session: nil, target: nil)
         cancelPendingClose()
+        stopObservingAutosave()
         windowController.windowSession?.close()
         windowController.windowSession = nil
         dataSource.didFail(title: failure.title, message: failure.message(path: path))
@@ -1102,6 +1141,7 @@ final class ShellProjectWindow {
         displayedSelectionFlags = 0
         sidebarSource.refresh(runtime: nil, session: nil, target: nil)
         cancelPendingClose()
+        stopObservingAutosave()
         windowController.windowSession?.close()
         dataSource.session?.close()
     }
