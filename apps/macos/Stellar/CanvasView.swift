@@ -25,14 +25,6 @@ final class CanvasView: NSView {
         set { frameScene.textEditOverlay = newValue; needsDisplay = true }
     }
     func textHit(id: UUID? = nil) -> CanvasFrameHit? { frameScene.textHit(id: id) }
-    var allowsImageContent = false {
-        didSet {
-            guard oldValue != allowsImageContent else { return }
-            frameScene.png.reset()
-            frameScene.allowsImageContent = allowsImageContent
-            needsDisplay = true
-        }
-    }
     var frameSession: UInt64? { didSet { refreshFrames() } }
 
     func invalidateComponentFrames() { frameScene.clear(); refreshFrames() }

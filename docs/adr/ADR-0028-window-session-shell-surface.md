@@ -603,3 +603,30 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
   XIII.2 `FsEventsWatcher`를 우회하고, 같은 프로젝트를 연 창 수만큼 stream이 생겼습니다. 이 ABI와 project
   `ComponentFileWatch`, runtime 창 entry의 감시 필드, Swift 감시 객체를 함께 삭제했습니다.
 
+### PNG 배치와 표시 — `stellar_window_place_png`, `stellar_window_canvas_png`, flags bit5
+
+- `stellar_window_place_png(handle, target, parent[16], x, y, path, path_len, digest[32], out_request)`: 셸이 고르고
+  디코드한 PNG(절대 경로, UTF-8 4096 byte 이하, SHA-256 `digest`)를 `target`(창·View·revision·선택 이력, 48 byte
+  `StellarSelectionTarget`)에서 누른 부모 Frame의 local 좌표 `(x, y)`에 이미지 node 하나로 배치합니다. worker가
+  파일을 다시 읽어 digest·크기(32 MiB, 16 megapixel 이하)·PNG 형식을 확인하고 에셋 저장소에 가져온 뒤, document
+  thread에서 대상을 다시 확인하고 InsertNode와 선택을 한 history 항목으로 기록합니다. 동시에 하나만 받으며 둘째 요청은
+  `STELLAR_QUEUE_FULL`입니다. 완료는 `WINDOW_VIEW_CHANGED`, 실패 코드는 표시 대상이 바뀌었거나 편집할 수 없으면
+  `UNKNOWN_VIEW`, 프로젝트 generation이 바뀌었으면 `SAVE_STALE`, 열린 폴더·ID가 바뀌었으면 `PATH_UNRESOLVED`·
+  `INVALID_PROJECT_ID`, 파일 읽기·형식·가져오기 실패는 `SAVE_FAILED`, 창이 닫혔으면 `UNKNOWN_WINDOW_SESSION`입니다.
+- `stellar_window_canvas_png(handle, session, revision, row, node[16], digest[32], buf, capacity, out_len)`: 셸 worker
+  전용입니다. 같은 revision·행·node의 표시 목록 이미지 행이 참조하는 PNG의 내용 hash와 길이를 쓰고, `buf`가 있으면
+  bytes도 복사합니다. 행이 맞지 않거나 읽을 수 없으면 `STELLAR_NO_ERROR`(길이 0), 용량이 모자라면
+  `STELLAR_BUFFER_TOO_SMALL`입니다. 셸은 node별 마지막 내용 hash를 revision이 바뀌어도 유지하고 다시 확인하는 동안
+  이전 픽셀을 그립니다. 내용 hash가 바뀐 node만 새로 디코드합니다.
+- flags bit5는 이미지 행입니다(픽셀은 위 함수로 worker에서 읽음).
+- 배치와 표시는 사용자 결정 D1에 따라 프로젝트 신뢰와 무관합니다. 신뢰 저장소 대신 열린 폴더의 실경로와 매니페스트
+  프로젝트 ID만 확인합니다. 에셋 저장소는 symlink를 따르지 않으므로 제한 모드에서도 프로젝트 밖 내용을 쓰거나
+  읽지 않습니다.
+- 도구 흐름(tools_menus): Image 도구를 고른 뒤 캔버스를 누르면 선택 패널을 열고, 고른 이미지를 누른 위치에
+  배치합니다. 취소하거나 열 수 없는 파일이면 이전 도구로 돌아갑니다.
+- 남은 일(사용자 결정 D2): 에셋 레코드는 아직 창 session(저장 전)과 generation의 `asset-metadata` chunk(저장 뒤)에
+  있습니다. D2는 글꼴·이미지 레코드를 텍스트 asset catalog 한 곳에 두고 문서는 참조만 하도록 정했으며 migration
+  경로(IX.11.21)를 먼저 정합니다. 그 catalog가 생기면 레코드를 그 한 곳으로 옮기고, 저장 전 레코드가 복구와 다른
+  창에서 빠지는 한계도 함께 없앱니다. 이번 검토에서는 `crates/storage` `ChunkStore::read_chunk_limited`를 다시
+  비공개로 되돌리고(U127이 이 ADR 없이 공개함) 공개 `read_chunk` 뒤 길이를 확인합니다.
+

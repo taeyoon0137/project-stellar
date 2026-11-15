@@ -163,7 +163,6 @@ private struct ProjectedFrame {
 final class CanvasFrameScene {
     private var frames: [ProjectedFrame] = []
     let png = CanvasPNGCache()
-    var allowsImageContent = false
     private var runtimeHandle: UInt64?
     var redrawImage: ((CGRect) -> Void)?
     private var documentTexts: [UUID: CanvasDocumentText] = [:]
@@ -226,7 +225,6 @@ final class CanvasFrameScene {
                 clear()
                 return
             }
-            png.reset()
             var projected: [ProjectedFrame] = []
             var nextTexts: [UUID: CanvasDocumentText] = [:]
             projected.reserveCapacity(Int(info.count))
@@ -248,6 +246,8 @@ final class CanvasFrameScene {
                 projected.append(ProjectedFrame(row, index: index, text: text, shape: shape))
             }
             frames = projected
+            // revision이 바뀌어도 남은 이미지 행은 다시 확인할 때까지 이전 픽셀을 그립니다(깜박임 없음).
+            png.retain(Set(frames.lazy.filter(\.isImage).map(\.id)))
             documentTexts = nextTexts
             for i in frames.indices.reversed() {
                 if let parent = frames[i].parent {
@@ -327,7 +327,7 @@ final class CanvasFrameScene {
     }
 
     private func imageReady(at index: Int) {
-        guard allowsImageContent, frames.indices.contains(index) else { return }
+        guard frames.indices.contains(index) else { return }
         var damage = frames[index].worldBounds
         if previewRange?.contains(index) == true {
             damage = damage.offsetBy(dx: previewOffset.dx, dy: previewOffset.dy)
@@ -368,7 +368,11 @@ final class CanvasFrameScene {
             if visible && (frame.isImage || frame.fill != nil || frame.border != nil) {
                 context.saveGState()
                 context.concatenate(frame.world)
-                if frame.isImage, allowsImageContent, let recordSession = session, let handle = runtimeHandle {
+                if frame.isImage, let recordSession = session, let handle = runtimeHandle {
+                    let row = index
+                    png.request(handle: handle, session: recordSession, revision: revision, row: row, node: frame.id) { [weak self] in
+                        self?.imageReady(at: row)
+                    }
                     if let image = png.image(frame.id) {
                         context.saveGState()
                         context.translateBy(x: 0, y: frame.localBounds.height)
@@ -377,11 +381,6 @@ final class CanvasFrameScene {
                         let w = CGFloat(image.width) * scale, h = CGFloat(image.height) * scale
                         context.draw(image, in: CGRect(x: (frame.localBounds.width - w)/2, y: (frame.localBounds.height - h)/2, width: w, height: h))
                         context.restoreGState()
-                    } else {
-                        let row = index
-                        png.request(handle: handle, session: recordSession, revision: revision, row: row, node: frame.id) { [weak self] in
-                            self?.imageReady(at: row)
-                        }
                     }
                 }
                 if let fill = frame.fill {

@@ -364,7 +364,7 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
 /// - 도구 선택은 코어로 보내지 않습니다. 다른 명령은 `commandHandler`(프로젝트 창)로 넘깁니다.
 final class ShellWindowToolsModelStub: ToolsMenuModel {
     /// ready 상태에서 항상 실행할 수 있는 명령(창 session 상태와 무관).
-    static let readyCommands: Set<ShellCommand> = Set(CanvasTool.allCases.map(\.command)).subtracting([.selectImageTool]).union([.closeProject])
+    static let readyCommands: Set<ShellCommand> = Set(CanvasTool.allCases.map(\.command)).union([.closeProject])
     /// ready가 아닐 때(열기 중·실패) 실행할 수 있는 명령.
     static let notReadyCommands: Set<ShellCommand> = [.closeProject]
 
@@ -480,7 +480,8 @@ final class ShellProjectWindow {
     var choosePNG: (NSOpenPanel, NSWindow, @escaping (URL?) -> Void) -> Void = { panel, owner, selected in
         panel.beginSheetModal(for: owner) { selected($0 == .OK ? panel.url : nil) }
     }
-    var pickedPNG: PickedPNG?
+    /// Image 도구를 취소하면 돌아갈 도구(마지막으로 고른 Image 밖 도구).
+    var imageReturnTool: CanvasTool = .move
     var imagePickGeneration: UInt64 = 0
     var recoveryPrompt: NSAlert?
     let sidebarSource = ShellSidebarSource()
@@ -546,8 +547,6 @@ final class ShellProjectWindow {
         }
         gitSource.trustDidChange = { [weak self] trusted in
             self?.dataSource.updateTrust(trusted)
-            self?.canvasHost.canvasView.allowsImageContent = trusted
-            if !trusted { self?.pickedPNG = nil; self?.imagePickGeneration &+= 1 }
             self?.reloadComponentCanvas()
             self?.refreshSessionCommands()
         }
@@ -706,7 +705,6 @@ final class ShellProjectWindow {
         var commands = ShellWindowToolsModelStub.sessionCommands(info: info, view: view)
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
         if view?.has_view == 1 { commands.insert(.zoomToFit) }
-        if gitSource.trusted, session != nil { commands.insert(.selectImageTool) }
         for command: ShellCommand in [.bringForward, .bringToFront, .sendBackward, .sendToBack] {
             if let flag = command.layerOrderFlag, displayedOrderFlags & flag != 0 { commands.insert(command) }
         }

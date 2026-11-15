@@ -73,7 +73,7 @@ extension ShellProjectWindow {
                 return self.beginCanvasText(at: point, canvas: canvas)
             }
             if self.toolsModel.snapshot.activeTool == .image {
-                if event.type == .leftMouseDown { return self.placePickedImage(at: point, canvas: canvas) }
+                if event.type == .leftMouseDown { return self.placeImage(at: point, canvas: canvas) }
                 return true
             }
             if self.frameDrag?.tool.insertsBounds == true || (event.type == .leftMouseDown && self.toolsModel.snapshot.activeTool.insertsBounds) {

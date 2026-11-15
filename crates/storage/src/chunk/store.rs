@@ -285,7 +285,7 @@ impl ChunkStore {
 
     /// [`ChunkStore::read_chunk`] 본체. `limit`는 파일 크기 상한입니다(테스트가 작은 상한을 주는
     /// 지점이며, 실제 경로는 [`MAX_CHUNK_FILE_BYTES`]).
-    pub fn read_chunk_limited(
+    fn read_chunk_limited(
         &self,
         hash: &ContentHash,
         expected_kind: ChunkKindCode,

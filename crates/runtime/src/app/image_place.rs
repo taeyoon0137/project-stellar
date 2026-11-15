@@ -1,4 +1,7 @@
 //! 이미지 선택 시 디코드한 PNG와 같은 bytes만 프로젝트로 가져오고 한 번의 문서 편집으로 배치합니다.
+//!
+//! 사용자 결정 D1에 따라 배치와 표시는 프로젝트 신뢰와 무관합니다. 에셋 저장소는 symlink를 따르지 않고
+//! 쓰고 읽으므로(`stellar_assets::fs_guard`) 제한 모드에서도 프로젝트 밖 내용을 노출하지 않습니다.
 use super::*;
 use stellar_assets::{
     media_type::MediaType, policy::AssetImportPolicy, record::AssetRecord, store::AssetStore,
@@ -22,6 +25,9 @@ use stellar_storage::{
     source_file::read_resolved,
 };
 
+/// 에셋 metadata chunk 하나의 읽기 상한.
+const MAX_ASSET_RECORD_BYTES: u64 = 64 * 1024;
+
 const MAX_PNG_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_PNG_PIXELS: u64 = 16 * 1024 * 1024;
 
@@ -39,8 +45,33 @@ pub struct ImagePlacement {
     pub digest: [u8; 32],
 }
 
+/// 원본 파일 읽기·형식·가져오기·기록 실패.
 fn invalid(message: impl Into<String>) -> Failure {
     Failure::new(RequestFailure::SaveFailed, message)
+}
+
+/// 표시한 View·revision·선택 이력이나 배치 대상이 요청 뒤 바뀌었거나 편집할 수 없습니다.
+fn stale(message: impl Into<String>) -> Failure {
+    Failure::new(RequestFailure::UnknownView, message)
+}
+
+/// 열린 프로젝트 폴더가 같은 프로젝트인지 확인합니다(신뢰 저장소는 보지 않음, D1).
+fn verify_identity(project: &ProjectSummary) -> Result<(), Failure> {
+    let root = &project.canonical_root;
+    if project.root.canonicalize().ok().as_deref() != Some(root) {
+        return Err(Failure::new(
+            RequestFailure::PathUnresolved,
+            "열린 프로젝트 폴더가 바뀌었습니다",
+        ));
+    }
+    let probe = safe_probe(root, TrustStatus::NotTrusted).map_err(|e| invalid(e.to_string()))?;
+    if parse_project_id(&probe.manifest.project.id) != Some(project.project_id) {
+        return Err(Failure::new(
+            RequestFailure::InvalidProjectId,
+            "열린 프로젝트 ID가 바뀌었습니다",
+        ));
+    }
+    Ok(())
 }
 
 fn png_size(bytes: &[u8]) -> Option<Size2> {
@@ -79,21 +110,18 @@ impl AppRuntime {
                     let owner = state
                         .project(window.project)
                         .ok_or_else(|| unknown_window(session))?;
-                    owner.verify_trust().map_err(invalid)?;
-                    if owner.trust != TrustStatus::Trusted {
-                        return Err(invalid("프로젝트 신뢰가 필요합니다"));
-                    }
+                    verify_identity(owner)?;
                     if window.active_view != Some(input.target.view)
                         || window.revision != input.target.revision
                         || window.history_sequence != input.target.history_sequence
                     {
-                        return Err(invalid("배치할 문서가 바뀌었습니다"));
+                        return Err(stale("배치할 문서가 바뀌었습니다"));
                     }
                     let root = &owner.canonical_root;
                     let generation = window.image_generation;
                     let current = || {
                         stellar_storage::save::optimistic::check_base_manifest(root, generation)
-                            .map_err(|e| invalid(e.to_string()))
+                            .map_err(|e| Failure::new(RequestFailure::SaveStale, e.to_string()))
                     };
                     current()?;
                     if !input.source.is_absolute() {
@@ -131,7 +159,7 @@ impl AppRuntime {
                         .without_source_metadata()
                         .with_expected_content(hash, len)
                         .map_err(|e| invalid(e.to_string()))?;
-                    owner.verify_trust().map_err(invalid)?;
+                    verify_identity(owner)?;
                     let record = AssetStore::new(root)
                         .import_file(&import)
                         .map_err(|e| invalid(e.to_string()))?
@@ -139,14 +167,17 @@ impl AppRuntime {
                     let ids =
                         stellar_project::new_ids::new_ids().map_err(|e| invalid(e.to_string()))?;
                     current()?;
-                    owner.verify_trust().map_err(invalid)?;
+                    verify_identity(owner)?;
                     let publish = shared.clone();
                     sender
                         .submit(move |ctx| {
                             let window = super::frame_move::canvas_window(ctx, session)?;
                             input.target.verify(window)?;
                             if window.loaded_generation().map(|g| g.manifest_hash) != generation {
-                                return Err(invalid("열린 이미지 배치 세대가 바뀌었습니다"));
+                                return Err(Failure::new(
+                                    RequestFailure::SaveStale,
+                                    "열린 이미지 배치 세대가 바뀌었습니다",
+                                ));
                             }
                             insert(window, request, &input, ids, size, record)?;
                             publish.publish_state(build_state(ctx));
@@ -189,7 +220,7 @@ fn insert(
         .ok_or_else(|| invalid("문서가 닫혔습니다"))?
         .model();
     super::frame_move::editable_frame(model, input.target.view, input.parent)
-        .ok_or_else(|| invalid("편집 가능한 Frame이 필요합니다"))?;
+        .ok_or_else(|| stale("편집 가능한 Frame이 필요합니다"))?;
     let mut command = InsertNode::single(NodeRecord {
         id: node,
         parent: Some(input.parent),
@@ -229,7 +260,7 @@ fn insert(
 }
 
 impl RuntimeState {
-    /// Worker 전용. 현재 캔버스 행이 실제로 참조하는 메타데이터와 내용 hash를 확인합니다.
+    /// Worker 전용. 현재 캔버스 행이 실제로 참조하는 메타데이터와 내용 hash를 확인합니다. 신뢰와 무관합니다(D1).
     pub fn canvas_png(
         &self,
         session: WindowSessionHandle,
@@ -248,18 +279,18 @@ impl RuntimeState {
         }
         let asset = frame.image_asset?;
         let project = self.project(window.project)?;
-        if project.trust != TrustStatus::Trusted {
-            return None;
-        }
-        project.verify_trust().ok()?;
+        verify_identity(project).ok()?;
         let root = &project.canonical_root;
         let record = if let Some(record) = window.image_records.get(&asset) {
             record.clone()
         } else {
             let hash = window.asset_chunks.get(&asset)?;
             let bytes = ChunkStore::new(root)
-                .read_chunk_limited(hash, KIND_ASSET_METADATA, 64 * 1024)
+                .read_chunk(hash, KIND_ASSET_METADATA)
                 .ok()?;
+            if bytes.len() as u64 > MAX_ASSET_RECORD_BYTES {
+                return None;
+            }
             AssetRecord::decode(&bytes).ok()?
         };
         if record.media_type.as_str() != "image/png" || record.size > MAX_PNG_BYTES {
