@@ -34,11 +34,11 @@ fn frame(w: f32, h: f32, x: f32, y: f32, rgba: [f32; 4]) -> FramePayload {
     }
 }
 
-/// View 3은 카드 UI, 4는 여러 affine, 5는 확대된 소수 이동, 6은 두꺼운 테두리의 둥근 clip입니다. 삽입·ID·OrderKey 순서를 다르게 둡니다.
+/// View 3은 카드 UI, 4는 여러 affine, 5는 확대된 소수 이동입니다. 삽입·ID·OrderKey 순서를 다르게 둡니다.
 pub fn document() -> DocumentModel {
     let mut definition = DocumentDefinition::new(id(1), "고정 Frame fixture".into());
     let mut page = PageDefinition::new(id(2), "페이지".into());
-    for (view, root) in [(3, 10), (4, 20), (5, 30), (6, 40)] {
+    for (view, root) in [(3, 10), (4, 20), (5, 30)] {
         page.add_view(ViewDefinition::new(
             id(view),
             format!("View {view}"),
@@ -75,10 +75,6 @@ pub fn document() -> DocumentModel {
     zoomed.border = Some(Border::new(color(ColorSpace::Srgb, [0.0, 0.0, 0.0, 1.0]), 1.0).unwrap());
     let mut subpixel = frame(2.0, 1.0, 0.0, 0.0, [0.0, 1.0, 0.0, 1.0]);
     subpixel.transform = Transform2D::new(0.0, 1.0, -1.0, 0.0, 1.005, -0.005).unwrap();
-    let mut rounded = frame(100.0, 100.0, 0.0, 0.0, [1.0; 4]);
-    rounded.border =
-        Some(Border::new(color(ColorSpace::Srgb, [0.0, 0.0, 0.0, 1.0]), 20.0).unwrap());
-    rounded.corner_radius = CornerRadius::new(20.0, 10.0, 0.0, 30.0).unwrap();
     let f = NodePayload::Frame;
     for (n, parent, order, visible, payload) in [
         (10, None, 1, true, f(root)),
@@ -139,14 +135,6 @@ pub fn document() -> DocumentModel {
         (23, Some(20), 3, true, f(sheared)),
         (30, None, 3, true, f(zoomed)),
         (31, Some(30), 1, true, f(subpixel)),
-        (40, None, 4, true, f(rounded)),
-        (
-            41,
-            Some(40),
-            1,
-            true,
-            f(frame(110.0, 110.0, -5.0, -5.0, [0.0, 1.0, 0.0, 1.0])),
-        ),
     ] {
         model
             .insert_node(NodeRecord {

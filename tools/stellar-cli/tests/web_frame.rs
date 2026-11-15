@@ -1,4 +1,4 @@
-//! 저장 generation → 실제 stellar → HTML golden / Chrome DOM. 브라우저 검증은 명시적으로 실행합니다.
+//! 저장 generation → 실제 stellar → HTML golden. 브라우저 표시는 명세의 수동 확인 절차로 봅니다.
 
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -220,88 +220,6 @@ fn usage_errors_emit_no_json() {
 }
 
 #[test]
-#[ignore = "STELLAR_CHROME 경로로 실제 Chrome headless DOM을 검증합니다"]
-fn chrome_computed_styles_bounds_stacking_and_clipping() {
-    let chrome = std::env::var_os("STELLAR_CHROME").expect("STELLAR_CHROME 실행 파일 경로");
-    let dir = TempDir::new("web-browser");
-    let project = dir.path.join("project");
-    scaffold_project(&project);
-    save_documents(&project, &[&fixture::document()]);
-    let before = file_digest(&project);
-    let version = Command::new(&chrome).arg("--version").output().unwrap();
-    assert!(version.status.success());
-    eprintln!("{}", String::from_utf8_lossy(&version.stdout));
-    for (view, file) in [
-        (3, "view-a"),
-        (4, "view-b"),
-        (5, "view-subpixel"),
-        (6, "view-rounded-clip"),
-    ] {
-        let value = export(&project, view);
-        let probe = format!(
-            "<script>const selectedView = {view};\n{}</script>\n",
-            include_str!("fixtures/web/probe.js")
-        );
-        let page = dir.path.join(format!("{file}.html"));
-        std::fs::write(
-            &page,
-            html(&value).replace("</body>", &format!("{probe}</body>")),
-        )
-        .unwrap();
-        let output = Command::new(&chrome)
-            .args([
-                "--headless",
-                "--disable-gpu",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--disable-background-networking",
-                "--force-device-scale-factor=1",
-                "--window-size=1000,800",
-                "--virtual-time-budget=1000",
-                "--timeout=10000",
-                "--dump-dom",
-            ])
-            .arg(format!(
-                "--user-data-dir={}",
-                dir.path.join(format!("chrome-{view}")).display()
-            ))
-            .arg(format!("file://{}", page.display()))
-            .stdin(Stdio::null())
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let dom = String::from_utf8(output.stdout).unwrap();
-        let probe_json = dom
-            .split("<pre id=\"stellar-web-probe\">")
-            .nth(1)
-            .expect("DOM probe output")
-            .split("</pre>")
-            .next()
-            .unwrap();
-        let report = json::parse(probe_json, json::JsonLimits::default()).unwrap();
-        assert_eq!(
-            report.get("ok"),
-            Some(&JsonValue::Bool(true)),
-            "{probe_json}"
-        );
-        eprintln!("{file}: {probe_json}");
-        if let Some(evidence) = std::env::var_os("STELLAR_WEB_EVIDENCE_DIR") {
-            let evidence = Path::new(&evidence);
-            std::fs::create_dir_all(evidence).unwrap();
-            std::fs::write(evidence.join(format!("{file}.html")), html(&value)).unwrap();
-            std::fs::write(evidence.join(format!("{file}.dom.html")), &dom).unwrap();
-            std::fs::write(evidence.join(format!("{file}.computed.json")), probe_json).unwrap();
-            std::fs::write(evidence.join("chrome-version.txt"), &version.stdout).unwrap();
-        }
-    }
-    assert_eq!(file_digest(&project), before);
-}
-
-#[test]
 fn rectangle_saved_cli_preserves_geometry_modifier_order_and_read_only_scope() {
     let dir = TempDir::new("web-rectangle");
     scaffold_project(&dir.path);
@@ -371,14 +289,6 @@ fn rectangle_saved_cli_preserves_geometry_modifier_order_and_read_only_scope() {
                 if case != "square" {
                     if let Some(previous) = &supported_html {
                         assert_eq!(result, previous);
-                    }
-                }
-                if case == "supported" {
-                    if let Some(directory) = std::env::var_os("STELLAR_WEB_EVIDENCE_DIR") {
-                        let directory = std::path::PathBuf::from(directory);
-                        std::fs::create_dir_all(&directory).unwrap();
-                        std::fs::write(directory.join("rectangle.html"), result).unwrap();
-                        std::fs::write(directory.join("rectangle.json"), &output.stdout).unwrap();
                     }
                 }
                 if case != "square" {

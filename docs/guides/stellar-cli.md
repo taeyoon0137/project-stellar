@@ -266,8 +266,7 @@ Text·layout 참조·modifier·Path clip·해석할 수 없는 record/profile·�
 별도 경고를 냅니다. `result.format`은 `fixed-free-frame-html`입니다. 다른 출력·오류 계약은
 [명세](../spec/web-frame-export.md)에 있습니다. 일반 render/export와 전체 코드 생성 완료는 아닙니다.
 
-실제 Chrome headless 검증은 명세의 명령으로 별도 실행합니다. 일반 테스트의 ignored 결과만으로
-브라우저 적합성을 보고하지 않습니다.
+브라우저 표시는 자동 검사하지 않습니다. 명세의 수동 확인 절차로 봅니다.
 
 ## 출력 계약
 

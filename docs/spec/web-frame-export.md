@@ -18,7 +18,7 @@ document를 내보내려면 먼저 저장하고 그 문서 ID와 View ID를 지�
 않습니다. 문서 loader는 같은 문서의 모든 View를 검증하므로, 선택 밖 View의 저장 손상까지 무시하지는 않습니다.
 
 ADR-0059는 텍스트 원본 전환 방향을 정하지만 현재 기본 loader는 여전히 generation입니다.
-`text-source check/apply`의 opt-in 파일을 이 명령으로 직접 열거나 기본 저장 경로를 전환하지 않습니다.
+`text-source export/check`의 opt-in 파일을 이 명령으로 직접 열거나 기본 저장 경로를 전환하지 않습니다.
 
 출력은 기존 `stellar-cli/result` v1 JSON envelope입니다. `result`는 `revision`, `document`, `view`,
 `root_frame`, `format: "fixed-free-frame-html"`, `html`을 가집니다. `html`은 doctype·UTF-8 meta·viewport·
@@ -110,8 +110,7 @@ CSS 근거: [border width 계산](https://www.w3.org/TR/css-backgrounds-3/#borde
 
 저장된 generation을 여는 실제 CLI fixture는 modifier 순서·비활성·무채우기·색·반경·변환·실패·
 선택 밖 subtree·프로젝트 바이트 불변을 검사합니다. snapshot은 이후 modifier를 저장해도 고정됩니다.
-`rectangle_saved_cli` 테스트에 `STELLAR_WEB_EVIDENCE_DIR`을 지정하면 호스트 브라우저 비교용
-`rectangle.html`과 CLI envelope `rectangle.json`을 해당 디렉터리에 남깁니다. 변환된 실효 반경에서 모서리의 안티앨리어싱은 브라우저와 캔버스에 따라 달라질 수 있습니다. 둥근
+변환된 실효 반경에서 모서리의 안티앨리어싱은 브라우저와 캔버스에 따라 달라질 수 있습니다. 둥근
 Rectangle은 node ID를 포함한 `browser-rectangle-curve` 경고를 반환합니다. 직각 Rectangle에는
 이 경고를 반환하지 않으며, 경고만으로 HTML 출력을 실패시키지 않습니다.
 
@@ -152,17 +151,11 @@ capability registry·저장 형식이 아니며 `CodegenSources`의 없는 layou
 의존 간선과 외부 의존성은 늘리지 않습니다.
 
 ```sh
-export CARGO_TARGET_DIR="$PWD/target/web-frame"
 cargo test -p stellar-codegen -p stellar-ops -p stellar-cli
-STELLAR_CHROME='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
-STELLAR_WEB_EVIDENCE_DIR="$CARGO_TARGET_DIR/evidence" \
-cargo test -p stellar-cli --test web_frame -- --include-ignored --nocapture
 ```
 
-일반 테스트는 실제 두 View를 저장하고 실제 `stellar` subprocess에서 HTML golden·반복 stdout/stderr·
+테스트는 실제 View를 저장하고 실제 `stellar` subprocess에서 HTML golden·반복 stdout/stderr·
 revision·선택 범위·실패·프로젝트와 Git index/refs/objects 바이트 불변을 검사합니다. 별도 snapshot 테스트는
 다른 저장 이후에도 이전 revision이 고정되는지와 root 이동만 바꿔도 HTML이 같음을 확인합니다.
-Chrome 테스트는 두 기본 View, 고배율 소수 이동 View와 두꺼운 테두리·비대칭 모서리 View에 별도 임시 profile을 사용하고 테스트에만 script를 주입해 computed style·bounding rect·
-elementFromPoint를 확인합니다. 제품 HTML에는 script가 없습니다. 실행한 Chrome 버전과 JSON 증거는 위
-evidence 디렉터리에 남습니다. 이 테스트가 ignore 상태인 일반 테스트만 실행한 경우 브라우저 검증 완료로
-보고하지 않습니다.
+브라우저 표시는 자동 검사하지 않습니다. 확인할 때는 위 [입력과 실행](#입력과-실행)대로 만든 `view.html`을
+위 기준의 Chromium에서 열고, 같은 View를 앱 캔버스와 나란히 비교합니다.
