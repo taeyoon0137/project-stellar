@@ -381,7 +381,7 @@ private final class ShellIntegrationCheckRunner {
         let zoom = min(1, (size.width - 2 * margin) / 800, (size.height - 2 * margin) / 600)
         expect(initial.center_x == 400 && initial.center_y == 300 && abs(initial.zoom - zoom) < 0.00001,
                "실제 canvas에 Frame 전체가 맞지 않음: \(size), \(initial.zoom)")
-        guard let image = ShellVisibleFramesCheck.bitmap(canvas, in: window),
+        guard let image = CanvasBitmapCapture.bitmap(canvas, in: window),
               let hit = canvas.frameHit(at: CGPoint(x: size.width / 2, y: size.height / 2)) else {
             expect(false, "새 창 Frame의 bitmap 또는 hit 없음")
             return
