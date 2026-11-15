@@ -140,7 +140,7 @@ python3 "$REPO_ROOT/scripts/macos/canvas-move-check.py" "$APP" "$cli_target/debu
 "$APP" --session-commands-check "$WINDOW_SESSION_FIXTURE"
 
 # 정상 창 닫기와 앱 종료(⌘Q)가 레이어 이름 변경을 Save Now로 저장하는지 확인합니다.
-# 신뢰 기록과 복구 체크포인트를 쓰므로 검사 전용 HOME에서 실행합니다.
+# 복구 체크포인트를 쓰므로 검사 전용 HOME에서 실행합니다(신뢰는 부여하지 않고 제한 모드로 편집, D1).
 (
   close_home="$(mktemp -d)"
   trap 'rm -rf "$close_home"' EXIT

@@ -214,8 +214,9 @@ enum ShellCanvasMoveCheck {
               reopened.windowController.windowSession?.info?.generation == saved.generation,
               at(30, in: reopened.canvasHost.canvasView) == node, at(-30, in: reopened.canvasHost.canvasView) != node
         else { return fail("저장된 원본 재열기 좌표") }
-        // 기존 일반 창 경로에서 Delete/Backspace → Undo/Redo → 저장·재열기를 검사합니다.
-        reopened.gitSource.updateTrust(true)
+        // 기존 일반 창 경로에서 Delete/Backspace → Undo/Redo → 저장·재열기를 검사합니다. 신뢰를 부여하지 않은
+        // 제한 모드 그대로 삭제·복사·붙여넣기·복제가 되어야 합니다(D1).
+        guard !reopened.gitSource.trusted else { return fail("제한 모드가 아닌 재열기 창") }
         guard pump.waitForPendingRequests(timeout: 10), let deleteSession = reopened.windowController.windowSession,
               reopened.selectNodes([node]), pump.waitForPendingRequests(timeout: 10) else { return fail("삭제 선택") }
         let deleteCanvas = reopened.canvasHost.canvasView

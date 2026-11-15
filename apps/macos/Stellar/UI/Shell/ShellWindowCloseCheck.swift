@@ -60,10 +60,8 @@ private final class ShellWindowCloseCheckRunner {
             return window
         }
         func rename(_ window: ShellProjectWindow, _ name: String) {
-            if !window.gitSource.trusted {
-                window.gitSource.updateTrust(true)
-                wait()
-            }
+            // D1: 신뢰를 부여하지 않은 제한 모드 그대로 편집·닫기 저장을 확인합니다.
+            expect(!window.gitSource.trusted, "제한 모드가 아닌 창에서 편집 검사")
             guard let session = window.windowController.windowSession, let view = session.viewInfo,
                   view.has_view == 1, let info = session.info else {
                 expect(false, "이름 변경 대상 창 상태 없음")
