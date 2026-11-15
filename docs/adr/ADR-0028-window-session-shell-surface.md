@@ -352,9 +352,12 @@ Frame ABI와 같이 document thread가 표시 revision·편집 가능한 부모�
 
 - `stellar_window_layer_set_flag(handle, session, view, revision, nodes, count, flag, value, out_request)`는
   레이어 행에서 고른 노드들의 `node.visible`(`STELLAR_LAYER_FLAG_VISIBLE`) 또는 `node.locked`
-  (`STELLAR_LAYER_FLAG_LOCKED`)을 `value`(0·1)로 바꿉니다. document thread가 창 확인(이름 변경과 같은 경로),
-  표시 revision, 활성 View 소속, 중복을 확인하고 기존 `SetProperty::visibility`·`SetProperty::locked`를 창의
-  문서 transaction 하나로 기록합니다. 값이 이미 같은 노드는 건너뛰고, 바뀌는 노드가 없으면 기록하지 않습니다.
+  (`STELLAR_LAYER_FLAG_LOCKED`)을 `value`(0·1)로 바꿉니다. document thread가 창, 표시 revision, 활성 View 소속,
+  중복을 확인하고 기존 `SetProperty::visibility`·`SetProperty::locked`를 창의 문서 transaction 하나로 기록합니다.
+  값이 이미 같은 노드는 건너뛰고, 바뀌는 노드가 없으면 기록하지 않습니다.
+- 표시·잠금은 문서 편집이므로 프로젝트 신뢰를 요구하지 않습니다(D1). `stellar_window_layer_set_flag`와
+  `STELLAR_SELECTION_TOGGLE_*`는 신뢰하지 않은 프로젝트에서도 실행됩니다. 다른 선택 편집도 정리 통합(편집 경로
+  신뢰 게이트 제거)으로 신뢰와 무관합니다.
 - `stellar_window_edit_selection`의 `STELLAR_SELECTION_TOGGLE_VISIBILITY`(7)·`STELLAR_SELECTION_TOGGLE_LOCK`(8)은
   메뉴 막대와 캔버스 문맥 메뉴의 Hide·Lock 명령입니다. 표시한 선택 전체가 켜져 있으면 끄고, 하나라도 꺼져
   있으면 모두 켭니다. 값은 실행 시점 문서에서 코어가 정하므로 셸이 선택 행을 모두 읽어 둘 필요가 없습니다.

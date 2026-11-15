@@ -44,9 +44,6 @@ final class ShellSidebarSource: SidebarDataProvider {
     /// 창 작업 문서의 Page·View 목록과 그것을 읽은 창. 머리 줄 팝업이 씁니다.
     private var outline: (session: UInt64, pages: [SidebarPageRow])?
     private var outlineRequest: UInt64?
-    var trusted = false {
-        didSet { if oldValue != trusted { publish() } }
-    }
 
     /// 빈 레이어 목록 안내 한 줄: 다음 행동을 캔버스 단일 키로 알립니다(UX 명세 흐름 1의 6번, 7.2절). 키는
     /// `CanvasTool.singleKey`에서 읽어 실제 배정과 같습니다. 버튼은 두지 않습니다.
