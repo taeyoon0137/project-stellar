@@ -52,6 +52,6 @@ mod tests {
         assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
         let header = include_str!("../include/stellar_ffi.h");
         assert!(header.contains("int32_t stellar_runtime_event_ready_fd(uint64_t handle);"));
-        assert!(!header.contains("component_watch_fd"));
+        assert!(!header.contains("watch_fd"), "창별 원본 감시 fd는 삭제됨");
     }
 }

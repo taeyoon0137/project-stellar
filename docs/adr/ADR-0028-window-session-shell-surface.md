@@ -642,4 +642,3 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
   `rows`가 null이면 `count`만 쓰고, `capacity`가 모자라면 `STELLAR_BUFFER_TOO_SMALL`입니다.
 - 경로는 코어 SceneBuilder가 확정한 값이며 셸은 그대로 그립니다. 이 함수와 bit6은 위 임시 CG 경로의 일부라 Metal 이관 때
   다시 정합니다.
-
