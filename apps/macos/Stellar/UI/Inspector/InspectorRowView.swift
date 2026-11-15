@@ -22,6 +22,10 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
     let label = InspectorScrubLabel(labelWithString: "")
     let field = NSTextField()
     private var popup: NSPopUpButton?
+    /// 색 행의 견본: 누르면 popover, 그 안에서 시스템 색 패널로 이어집니다(UX 명세 6.4).
+    private var swatch: NSColorWell?
+    private var colorTimer: Timer?
+    private var lastColorText: String?
     private var checkbox: NSButton?
     private let diagnostic = NSTextField(wrappingLabelWithString: "")
     private let line = NSStackView()
@@ -128,6 +132,22 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
             field.isHidden = true
             return
         }
+        if row.flags.contains(.color) {
+            let well = NSColorWell(style: .minimal)
+            well.controlSize = InspectorMetrics.controlSize
+            well.supportsAlpha = true
+            well.target = self
+            well.action = #selector(pickColor)
+            well.setAccessibilityLabel(String(localized: "\(row.name) color"))
+            well.setAccessibilityHelp(String(localized: "Opens colors; Show Colors opens the system color panel."))
+            well.translatesAutoresizingMaskIntoConstraints = false
+            line.addArrangedSubview(well)
+            NSLayoutConstraint.activate([
+                well.widthAnchor.constraint(equalToConstant: 28),
+                well.heightAnchor.constraint(equalToConstant: 18),
+            ])
+            swatch = well
+        }
         field.font = InspectorFonts.value
         field.controlSize = InspectorMetrics.controlSize
         field.delegate = self
@@ -171,6 +191,12 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
             if !mixed { popup.selectItem(withTitle: next.value) }
             popup.isEnabled = editable
         }
+        if let swatch, colorTimer == nil {
+            // 견본은 코어가 정규화한 값을 표시만 합니다. none·Mixed는 투명.
+            swatch.color = mixed ? .clear : (InspectorColor(css: next.value)?.nsColor ?? .clear)
+            swatch.isEnabled = editable
+            swatch.toolTip = mixed ? String(localized: "Mixed") : next.value
+        }
         if let checkbox {
             checkbox.allowsMixedState = mixed
             checkbox.state = mixed ? .mixed : (next.value == "true" ? .on : .off)
@@ -205,6 +231,28 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
 
     @objc private func toggleGroup() {
         onToggleGroup?(disclosure?.state == .on)
+    }
+
+    /// 색 견본·색 패널 변경. 끄는 동안은 연속 조작이고, 0.4초 쉬면 끝냅니다(Undo 한 번).
+    @objc private func pickColor() {
+        guard let swatch, let color = InspectorColor(swatch.color) else { return }
+        let text = color.cssText
+        guard text != lastColorText else { return }
+        if colorTimer == nil { onGesture?(true) }
+        lastColorText = text
+        send(.text(text), .continuous)
+        colorTimer?.invalidate()
+        colorTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.endColor() }
+        }
+    }
+
+    private func endColor() {
+        colorTimer?.invalidate()
+        colorTimer = nil
+        if let text = lastColorText { send(.text(text), .ended) }
+        lastColorText = nil
+        onGesture?(false)
     }
 
     @objc private func toggleBool() {
