@@ -1,6 +1,6 @@
 import AppKit
 
-/// 실제 프로젝트 창의 신뢰 버튼과 OS 사용자별 저장소를 연결하는 검사입니다.
+/// 실제 프로젝트 창의 제목 문서 메뉴 신뢰 항목과 OS 사용자별 저장소를 연결하는 검사입니다.
 enum ShellProjectTrustCheck {
     static func run() -> Bool {
         guard let flag = CommandLine.arguments.firstIndex(of: "--project-trust-check"),
@@ -31,15 +31,19 @@ enum ShellProjectTrustCheck {
             guard pump.waitForPendingRequests(timeout: 10) else { return nil }
             return coordinator.projectWindow(forPath: path)
         }
+        // 제목 문서 메뉴(상단 바 제목을 누르면 열림)의 항목을 고릅니다(UX 명세 3.3).
+        func chooseTitleMenuItem(_ window: ShellProjectWindow, _ id: ShellCommandID) -> Bool {
+            window.windowController.flushPendingSnapshot()
+            guard let menu = window.windowController.toolbarController.titleView.titleButton.menu,
+                  let index = menu.items.firstIndex(where: { ($0.representedObject as? String) == id.rawValue }),
+                  menu.items[index].isEnabled else { return false }
+            menu.performActionForItem(at: index)
+            return true
+        }
         func trustButton(_ window: ShellProjectWindow, approving: Bool) -> Bool {
-            let panel = window.panelsSlot.gitPanel
-            panel.loadViewIfNeeded()
-            panel.drainEvents()
-            guard panel.status?.availability == .restricted,
-                  panel.changesOverlay.actionButton.title == GitPanelStrings.trustProject,
-                  let owner = window.window else { return failed("restricted 패널 버튼") }
+            guard let owner = window.window else { return failed("창 없음") }
             owner.orderFront(nil)
-            panel.changesOverlay.actionButton.performClick(nil)
+            guard chooseTitleMenuItem(window, ShellProjectCommandID.trustProject) else { return failed("제목 메뉴 신뢰 항목") }
             return respondToTrustSheet(in: owner, approving: approving) && pump.waitForPendingRequests(timeout: 10)
         }
         func failed(_ step: String) -> Bool {
@@ -53,7 +57,7 @@ enum ShellProjectTrustCheck {
         first.window?.close()
         guard pump.waitForPendingRequests(timeout: 10), let reopened = openWindow(),
               reopened !== first, reopened.dataSource.currentSnapshot.subtitle.isEmpty else { return failed("신뢰 등록 후 재열기") }
-        reopened.dataSource.commandHandler?(ShellProjectCommandID.revokeTrust)
+        guard chooseTitleMenuItem(reopened, ShellProjectCommandID.revokeTrust) else { return failed("제목 메뉴 신뢰 철회 항목") }
         guard pump.waitForPendingRequests(timeout: 10),
               !reopened.dataSource.currentSnapshot.subtitle.isEmpty else { return failed("신뢰 철회") }
         reopened.window?.close()

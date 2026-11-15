@@ -31,7 +31,7 @@ struct ShellToolDescriptor: Equatable, Sendable {
     var symbolName: String
 }
 
-/// 더 보기 메뉴, 빈 상태, 오류 복구 버튼이 실행하는 동작 하나.
+/// 제목 문서 메뉴, 빈 상태, 오류 복구 버튼이 실행하는 동작 하나.
 struct ShellActionDescriptor: Equatable, Sendable {
     var id: ShellCommandID
     /// 메뉴·버튼 제목. 추가 입력이 필요한 명령은 말줄임표(…)로 끝냅니다(가이드 8.1).
@@ -65,7 +65,7 @@ struct ShellFrameSnapshot: Equatable, Sendable {
     /// 하단 도구 막대 항목. 상호작용 상태 기계 자체는 XII.3.6 범위입니다.
     var tools: [ShellToolDescriptor]
     var activeToolID: ShellCommandID?
-    /// 툴바 뒤쪽 끝 더 보기 메뉴 항목.
+    /// 상단 바 제목을 누르면 열리는 문서 메뉴 항목(UX 명세 3.3).
     var moreActions: [ShellActionDescriptor]
 }
 
@@ -75,7 +75,7 @@ struct ShellFrameSnapshot: Equatable, Sendable {
 /// AppKit split view 자동 저장이 맡습니다(가이드 2.6).
 enum ShellFrameCommand: Equatable, Sendable {
     case selectTool(ShellCommandID)
-    /// 더 보기 메뉴, 빈 상태, 오류 복구 동작.
+    /// 제목 문서 메뉴, 빈 상태, 오류 복구 동작.
     case perform(ShellCommandID)
 }
 

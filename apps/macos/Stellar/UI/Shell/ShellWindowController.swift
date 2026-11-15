@@ -58,7 +58,9 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         )
         // unified와 unified compact 중 선택은 열린 결정 O1이므로 기본값에서 시작합니다(가이드 2.1).
         window.toolbarStyle = .automatic
-        window.titleVisibility = .visible
+        // 제목·부제목은 툴바 제목 항목이 그리고, 누르면 제목 문서 메뉴가 열립니다(UX 명세 3.3). 창 제목 값은 창 메뉴와
+        // 접근성을 위해 그대로 둡니다.
+        window.titleVisibility = .hidden
         window.contentMinSize = ShellFrameMetrics.minimumContentSize
         // Tab·Shift-Tab이 사이드바 → 캔버스 → 인스펙터 순서로 이동하도록 시스템이 key view loop를
         // 계산하게 합니다(가이드 8.2).
@@ -82,6 +84,7 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             self?.dataSource.send(command)
         }
         window.toolbar = toolbarController.toolbar
+        toolbarController.ensureTitleItem()
         // 상단 바: 구분선 없이 블러 배경만 둡니다.
         window.titlebarSeparatorStyle = .none
         for item in splitController.splitViewItems {
@@ -184,7 +187,7 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     // 동작 메서드의 guard는 활성화 검사(`validate(_:)`)와 같은 조건을 씁니다. 메뉴·툴바 밖의
     // `sendAction`이나 직접 호출도 ready가 아닌 창에서 명령을 보내지 않습니다.
 
-    /// 더 보기 메뉴 동작의 메뉴 막대 항목(`ShellFrameMenuItems.makeFrameActionItem`). sender의 명령 ID를 보냅니다.
+    /// 제목 문서 메뉴 동작의 메뉴 막대 항목(`ShellFrameMenuItems.makeFrameActionItem`). sender의 명령 ID를 보냅니다.
     @objc func performFrameAction(_ sender: Any?) {
         guard let id = Self.frameActionID(from: sender), isFrameActionEnabled(id) else { return }
         dataSource.send(.perform(id))

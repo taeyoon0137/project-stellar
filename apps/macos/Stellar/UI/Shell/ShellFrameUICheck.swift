@@ -6,9 +6,9 @@ import AppKit
 /// - 창 크롬: full-size content, 툴바 스타일, 시스템 툴바 항목, 가운데 도구 영역
 /// - 분할 구조: 사이드바·인스펙터 behavior, 폭 범위, 창 폭 변경 시 캔버스만 변함, 캔버스가 safe area 안
 /// - Auto Layout 모호성 없음(빈·로딩·오류 상태 포함)
-/// - 접근성 레이블: pane, 캔버스, 툴바 항목, 도구, 검색, 상태 화면 / SF Symbol 이름 유효
+/// - 접근성 레이블: pane, 캔버스, 제목 문서 메뉴, 도구, 상태 화면 / SF Symbol 이름 유효
 /// - 명령: 응답자 체인으로 사이드바·인스펙터·보조 패널 전환(동작 줄이기·애니메이션 경로), 메뉴 제목
-/// - snapshot: 다음 런 루프 병합, 오래된 세대 폐기, 내비게이션·도구·검색·더 보기 명령 전달
+/// - snapshot: 다음 런 루프 병합, 오래된 세대 폐기, 도구·제목 문서 메뉴 명령 전달
 /// - AppKit 상태 저장: frame·split autosave 왕복, 창 복원 설정
 /// 을 확인합니다. 검사용 autosave 이름은 실행마다 새로 만들고, 시작과 끝에 검사용 기록을 user defaults에서 지웁니다.
 enum ShellFrameUICheck {
@@ -266,11 +266,12 @@ private final class ShellFrameUICheckRunner {
                     && button.image?.accessibilityDescription?.isEmpty == false,
                 "도구 항목 레이블·도움말 없음")
         }
-        if let more = toolbarController.moreToolbarItem {
-            expect(!more.label.isEmpty && more.image?.accessibilityDescription?.isEmpty == false, "더 보기 레이블 없음")
-        } else {
-            expect(false, "더 보기 툴바 항목 없음")
-        }
+        let titleView = toolbarController.titleView
+        expect(titleView.titleButton.titleOfSelectedItem == "Sample Project" || titleView.titleButton.title == "Sample Project",
+               "제목 문서 메뉴 단추 제목 불일치: \(titleView.titleButton.title)")
+        expect(titleView.titleButton.accessibilityLabel() == "Sample Project" && titleView.titleButton.pullsDown,
+               "제목 단추가 접근성 이름을 가진 pull-down이 아님")
+        expect(titleView.subtitleField.stringValue == "Page 2" && !titleView.subtitleField.isHidden, "부제목이 제목 아래에 없음")
     }
 
     /// 사용자 구성 palette 경로: AppKit은 palette에 보일 사본을 `willBeInsertedIntoToolbar: false`로 만들고
@@ -281,11 +282,11 @@ private final class ShellFrameUICheckRunner {
         toolbar: NSToolbar
     ) {
         let toolbarController = controller.toolbarController
-        let identifiers = [ShellToolbarController.moreItem]
+        let identifiers = [ShellToolbarController.titleItem]
         func realItem(_ identifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
             toolbar.items.first { $0.itemIdentifier == identifier }
         }
-        expect(toolbarController.moreToolbarItem === realItem(ShellToolbarController.moreItem), "더 보기 참조가 실제 항목이 아님")
+        expect(realItem(ShellToolbarController.titleItem)?.view === toolbarController.titleView, "제목 항목이 실제 제목 뷰를 담지 않음")
 
         // palette 사본을 만들고(palette 열림) 해제합니다(palette 닫힘).
         autoreleasepool {
@@ -299,8 +300,9 @@ private final class ShellFrameUICheckRunner {
             }
             expect(copies.count == identifiers.count, "palette 사본 수 불일치: \(copies.count)")
             expect(copies.allSatisfy { copy in !toolbar.items.contains { $0 === copy } }, "palette 사본이 실제 항목과 같음")
+            expect(copies.allSatisfy { $0.view !== toolbarController.titleView }, "palette 사본이 실제 제목 뷰를 가져감")
         }
-        expect(toolbarController.moreToolbarItem === realItem(ShellToolbarController.moreItem), "palette 뒤 더 보기 참조가 사본으로 바뀜")
+        expect(realItem(ShellToolbarController.titleItem)?.view === toolbarController.titleView, "palette 뒤 제목 뷰가 사본으로 바뀜")
 
         // palette 뒤에도 snapshot이 도구 막대에 닿습니다.
         // 도구 막대는 툴바 항목이 아니라 controller가 직접 가지므로 palette 사본과 관계없습니다.
@@ -407,15 +409,19 @@ private final class ShellFrameUICheckRunner {
             expect(false, "도구 막대 항목 부족")
         }
 
-        // 더 보기 메뉴.
-        if let menu = toolbarController.moreToolbarItem?.menu {
-            expect(menu.items.count == ShellFrameDataSourceStub.sampleMoreActions.count, "더 보기 항목 수 불일치")
-            expect(menu.items.last?.isEnabled == false, "비활성 더 보기 항목이 활성")
-            menu.performActionForItem(at: 0)
+        // 제목 문서 메뉴: 첫 항목은 pull-down 단추 제목이고, 그 뒤가 동작입니다. 제목 snapshot도 따라 바뀝니다.
+        let titleView = toolbarController.titleView
+        expect(titleView.titleButton.title == "C", "제목 문서 메뉴 단추가 마지막 제목을 보이지 않음: \(titleView.titleButton.title)")
+        if let menu = titleView.titleButton.menu {
+            expect(menu.items.count == ShellFrameDataSourceStub.sampleMoreActions.count + 1, "제목 문서 메뉴 항목 수 불일치")
+            expect(menu.items.last?.isEnabled == false, "비활성 제목 문서 메뉴 항목이 활성")
+            menu.performActionForItem(at: 1)
             expect(
                 stub.sentCommands.last == .perform(ShellFrameDataSourceStub.sampleMoreActions[0].id),
-                "더 보기 명령 미전달"
+                "제목 문서 메뉴 명령 미전달"
             )
+        } else {
+            expect(false, "제목 문서 메뉴 없음")
         }
     }
 

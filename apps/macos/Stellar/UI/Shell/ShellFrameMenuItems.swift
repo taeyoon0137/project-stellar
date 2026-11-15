@@ -24,9 +24,9 @@ enum ShellFrameMenuItems {
         return items
     }
 
-    /// 더 보기 메뉴 동작의 메뉴 막대 항목(가이드 6.1 "툴바의 모든 명령은 메뉴 막대에도").
+    /// 제목 문서 메뉴 동작의 메뉴 막대 항목(가이드 6.1 "툴바의 모든 명령은 메뉴 막대에도").
     ///
-    /// `representedObject`의 명령 ID를 활성 창의 `performFrameAction(_:)`으로 보냅니다. 활성 창 snapshot의 더 보기
+    /// `representedObject`의 명령 ID를 활성 창의 `performFrameAction(_:)`으로 보냅니다. 활성 창 snapshot의 제목 문서
     /// 동작에 그 ID가 없거나 비활성이면 숨기지 않고 비활성화합니다.
     static func makeFrameActionItem(title: String, id: ShellCommandID) -> NSMenuItem {
         let item = makeItem(title, #selector(ShellWindowController.performFrameAction(_:)), "", [])

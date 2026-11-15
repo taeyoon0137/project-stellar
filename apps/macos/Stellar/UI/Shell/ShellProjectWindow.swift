@@ -199,8 +199,9 @@ extension ShellCommandCoreIDs {
     }
 }
 
-/// 프로젝트 창의 셸 프레임 명령 ID(더 보기 메뉴·상태 화면 버튼).
+/// 프로젝트 창의 셸 프레임 명령 ID(제목 문서 메뉴·상태 화면 버튼).
 enum ShellProjectCommandID {
+    static let trustProject = ShellCommandID("project.trust")
     static let revokeTrust = ShellCommandID("project.revokeTrust")
     static let revealInFinder = ShellCommandID("project.revealInFinder")
     static let closeProject = ShellCommandID("project.close")
@@ -274,24 +275,33 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
         next.moreActions = [
             ShellActionDescriptor(
                 id: ShellProjectCommandID.revealInFinder,
-                title: String(localized: "Show in Finder", comment: "More menu item")
+                title: String(localized: "Show in Finder", comment: "Title document menu item")
             ),
+            Self.trustAction(trusted: false),
             ShellActionDescriptor(
                 id: ShellProjectCommandID.closeProject,
-                title: String(localized: "Close Project", comment: "More menu item")
+                title: String(localized: "Close Project", comment: "Title document menu item")
             ),
         ]
         publish(next)
+    }
+
+    /// 제목 문서 메뉴의 신뢰 항목. 제한 모드면 신뢰 부여, 신뢰했으면 신뢰 철회입니다(UX 명세 3.3). 늘 한 항목이 있습니다.
+    static func trustAction(trusted: Bool) -> ShellActionDescriptor {
+        trusted
+            ? ShellActionDescriptor(id: ShellProjectCommandID.revokeTrust, title: String(localized: "Revoke Project Trust"))
+            : ShellActionDescriptor(id: ShellProjectCommandID.trustProject,
+                                    title: String(localized: "Trust Project…", comment: "Title document menu item"))
     }
 
     func updateTrust(_ trusted: Bool) {
         guard session != nil else { return }
         var next = currentSnapshot
         next.subtitle = trusted ? "" : String(localized: "Restricted Mode")
-        next.moreActions.removeAll { $0.id == ShellProjectCommandID.revokeTrust }
-        if trusted {
-            next.moreActions.append(ShellActionDescriptor(id: ShellProjectCommandID.revokeTrust,
-                title: String(localized: "Revoke Project Trust")))
+        if let index = next.moreActions.firstIndex(where: {
+            $0.id == ShellProjectCommandID.trustProject || $0.id == ShellProjectCommandID.revokeTrust
+        }) {
+            next.moreActions[index] = Self.trustAction(trusted: trusted)
         }
         publish(next)
     }
@@ -1036,7 +1046,11 @@ extension ShellProjectWindow: GitPanelHostActions {
               !gitSource.trusted, !gitSource.isCheckingTrust else { return }
         let alert = NSAlert()
         alert.messageText = String(localized: "Trust This Project?")
-        alert.informativeText = String(localized: "Trusting this folder allows Stellar to run Git commands, hooks, and the terminal for it.") + "\n" + session.rootPath
+        // 신뢰는 실행만 엽니다. 편집·저장은 신뢰와 관계없이 됩니다(D1, UX 명세 8.7).
+        alert.informativeText = String(
+            localized: "Restricted Mode only stops Git, Git hooks, the terminal, and agents from running in this folder. Trust it only if you know where it came from. Editing and saving work either way.",
+            comment: "Trust alert message; the project folder path follows on the next line"
+        ) + "\n" + session.rootPath
         alert.addButton(withTitle: String(localized: "Cancel"))
         alert.addButton(withTitle: String(localized: "Trust Project"))
         alert.beginSheetModal(for: window) { [weak self, weak session] response in

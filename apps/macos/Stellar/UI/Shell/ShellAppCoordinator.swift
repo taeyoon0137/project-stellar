@@ -570,6 +570,8 @@ final class ShellAppCoordinator: NSObject {
             projectWindow.window?.performClose(nil)
         case ShellProjectCommandID.retryOpen:
             reopen(projectWindow, atPath: projectWindow.dataSource.rootPath)
+        case ShellProjectCommandID.trustProject:
+            projectWindow.requestProjectTrust()
         case ShellProjectCommandID.revokeTrust:
             projectWindow.gitSource.updateTrust(false)
         case ShellProjectCommandID.locateFolder:
@@ -785,7 +787,7 @@ final class ShellWelcomeDataSource: WelcomeDataSource {
 /// `MainMenuBuilder` 메뉴에 셸 프레임 명령 항목을 끼웁니다(가이드 6.1 "툴바의 모든 명령은 메뉴 막대에도").
 ///
 /// - View: 사이드바·인스펙터 묶음 뒤에 보조 패널(Show/Hide Panels)
-/// - File: Save Now 뒤에 Show in Finder(더 보기 메뉴와 같은 동작)
+/// - File: Save Now 뒤에 Show in Finder(제목 문서 메뉴와 같은 동작)
 @MainActor
 enum ShellMainMenuInstaller {
     /// 보조 패널 이름(`ShellPanelTabsSlot.paneTitle`과 같은 값).

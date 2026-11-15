@@ -600,7 +600,7 @@ private final class ShellIntegrationCheckRunner {
         let drawable = projectWindow.canvasHost.canvasView.currentDrawable()
         expect(drawable.width > 0 && drawable.height > 0, "캔버스 drawable 크기가 0")
 
-        // 툴바: 줌을 셸 툴바(더 보기 앞)에 조합합니다. 캔버스 도구는 상단 툴바가 아니라 캔버스 하단 가운데 도구 막대에
+        // 툴바: 줌을 셸 툴바(인스펙터 경계 앞)에 조합합니다. 캔버스 도구는 상단 툴바가 아니라 캔버스 하단 가운데 도구 막대에
         // 있습니다(2026-11-14 사용자 결정).
         guard let toolbar = window.toolbar else {
             expect(false, "툴바 없음")
@@ -618,8 +618,17 @@ private final class ShellIntegrationCheckRunner {
         expect(toolBar.selectedIndex == CanvasTool.allCases.firstIndex(of: projectWindow.toolsModel.snapshot.activeTool),
                "도구 막대 선택이 창 도구 모델의 현재 도구가 아님")
         expect(identifiers.firstIndex(of: ToolsToolbarController.zoomItemIdentifier).map { zoom in
-            identifiers.firstIndex(of: ShellToolbarController.moreItem).map { zoom < $0 } ?? false
-        } ?? false, "줌 항목이 더 보기 앞에 있지 않음")
+            identifiers.firstIndex(of: .inspectorTrackingSeparator).map { zoom < $0 } ?? false
+        } ?? false, "줌 항목이 인스펙터 경계 앞에 있지 않음")
+        // 제목 문서 메뉴: 제한 모드에서도 신뢰 부여 항목이 늘 있습니다(UX 명세 3.3).
+        let titleMenu = controller.toolbarController.titleView.titleButton.menu?.items ?? []
+        expect(identifiers.contains(ShellToolbarController.titleItem) && window.titleVisibility == .hidden,
+               "상단 바 제목 항목이 없거나 시스템 제목이 겹쳐 보임")
+        expect(titleMenu.first?.title == Self.projectName
+               && titleMenu.dropFirst().map { $0.representedObject as? String } == [
+                   ShellProjectCommandID.revealInFinder.rawValue, ShellProjectCommandID.trustProject.rawValue,
+                   ShellProjectCommandID.closeProject.rawValue,
+               ], "제한 모드 제목 문서 메뉴 항목 불일치: \(titleMenu.map(\.title))")
 
         // 응답자 체인: content view → split controller → router → 창(순환 없음).
         expect(window.contentView?.nextResponder === split, "content view 다음이 split controller가 아님")

@@ -7,7 +7,10 @@ import Foundation
 /// 현지화 표는 아직 없으므로 지금은 영문 키가 그대로 보입니다.
 enum ShellFrameStrings {
     static var tools: String { String(localized: "Tools", comment: "Accessibility label for the tool bar at the bottom of the canvas") }
-    static var more: String { String(localized: "More", comment: "Toolbar label for the More menu") }
+    static var title: String { String(localized: "Title", comment: "Toolbar customization label of the window title") }
+    static var documentMenu: String {
+        String(localized: "Project Menu", comment: "Help tag and menu title of the menu that opens from the window title")
+    }
     static var canvas: String { String(localized: "Canvas", comment: "Accessibility name of the canvas area") }
     static var showSidebar: String { String(localized: "Show Sidebar", comment: "View menu item") }
     static var showInspector: String { String(localized: "Show Inspector", comment: "View menu item") }

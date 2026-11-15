@@ -95,14 +95,15 @@ enum ShellFrameMetrics {
     static let statusTextMaxWidth: CGFloat = 320
     /// 상태 화면 요소 사이 간격.
     static let statusStackSpacing: CGFloat = 8
+    /// 상단 바 제목·부제목 최대 폭. 넘으면 끝을 줄입니다.
+    static let titleMaxWidth: CGFloat = 320
 }
 
 /// 셸 프레임이 쓰는 SF Symbol 이름(가이드 5.4). 이미지 asset은 쓰지 않습니다.
 enum ShellFrameSymbols {
-    static let moreMenu = "ellipsis"
     static let emptyStatus = "square.dashed"
     static let failedStatus = "exclamationmark.triangle"
 
     /// 셸 프레임 자체가 쓰는 이름 전체(검사용).
-    static let all = [moreMenu, emptyStatus, failedStatus]
+    static let all = [emptyStatus, failedStatus]
 }
