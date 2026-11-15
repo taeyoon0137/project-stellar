@@ -1087,6 +1087,236 @@ mod tests {
         .unwrap();
     }
 
+    /// 잠금 판정 fixture: View root R 아래 잠긴 P → C → G, 잠기지 않은 U, 잠기지 않은 Q → 잠긴 L.
+    struct LockTree {
+        dir: ProjectDir,
+        model: crate::test_support::FixtureDocument,
+        root: StableId,
+        p: StableId,
+        c: StableId,
+        g: StableId,
+        u: StableId,
+        q: StableId,
+    }
+
+    fn lock_tree() -> LockTree {
+        use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
+        use stellar_document::frame::FramePayload;
+        let id = |n: u64| StableId::new_v7(1_950_000_000_000 + n, 0x0D8, n);
+        let mut definition = DocumentDefinition::new(id(1), "잠금".into());
+        let mut page = PageDefinition::new(id(2), "Page".into());
+        page.add_view(ViewDefinition::new(id(3), "View".into(), id(10)))
+            .unwrap();
+        definition.add_page(page).unwrap();
+        let mut model = DocumentModel::new(definition);
+        for (n, parent, locked) in [
+            (10, None, false),
+            (11, Some(10), true),
+            (12, Some(11), false),
+            (13, Some(12), false),
+            (14, Some(10), false),
+            (15, Some(10), false),
+            (16, Some(15), true),
+        ] {
+            let parent = parent.map(id);
+            let order_key = parent.map_or(OrderKey::between(None, None), |p| {
+                model.next_child_order_key(p)
+            });
+            model
+                .insert_node(NodeRecord {
+                    id: id(n),
+                    parent,
+                    order_key,
+                    visible: true,
+                    locked,
+                    display_name: format!("n{n}"),
+                    payload: NodePayload::Frame(FramePayload::default()),
+                })
+                .unwrap();
+        }
+        let tmp = TempDir::new("apply-lock");
+        let dir = ProjectDir {
+            path: tmp.path.join("project"),
+            locks: tmp.path.join("user-data").join("locks"),
+            _tmp: tmp,
+        };
+        scaffold_project(&dir.path);
+        save_documents(&dir.path, &[&model]);
+        LockTree {
+            dir,
+            model,
+            root: id(10),
+            p: id(11),
+            c: id(12),
+            g: id(13),
+            u: id(14),
+            q: id(15),
+        }
+    }
+
+    fn canonical(command: Command) -> CommandInput {
+        CommandInput::Canonical {
+            kind: command.kind().name().to_string(),
+            bytes: stellar_commands::codec::encode_command(&command),
+        }
+    }
+
+    /// D8: 잠긴 node·잠긴 조상 아래 node의 변경·삭제, 잠긴 부모 아래 삽입·이동, 잠긴 부모 밖 이동, 같은 요청 안의
+    /// 해제 뒤 편집, 잠긴 자손을 가진 삭제는 transaction 전체를 거부하고(dry-run 포함) 파일을 바꾸지 않습니다.
+    /// 거부 index는 처음 어긴 command입니다. 조상이 잠기지 않은 node의 `locked` 토글만 허용합니다.
+    #[test]
+    fn lock_rules_reject_whole_transactions_at_the_first_violation() {
+        let t = lock_tree();
+        let run = |commands: Vec<CommandInput>, mode| {
+            let snapshot = open_snapshot(&t.dir.path).unwrap();
+            let request = ApplyRequest {
+                base_revision: snapshot.revision(),
+                document: t.model.document_id(),
+                commands,
+            };
+            apply(&t.dir.path, &request, mode, &locks(&t.dir))
+        };
+        let order = |parent| t.model.next_child_order_key(parent).as_bytes().to_vec();
+        let mut fresh = 0u64;
+        let mut new_id = || {
+            fresh += 1;
+            StableId::new_v7(1_960_000_000_000 + fresh, 0x0D8, fresh)
+        };
+        let new_frame = |id, parent| NodeRecord {
+            id,
+            parent: Some(parent),
+            order_key: t.model.next_child_order_key(parent),
+            visible: true,
+            locked: false,
+            display_name: "new".into(),
+            payload: NodePayload::Frame(stellar_document::frame::FramePayload::default()),
+        };
+        let rename = |node| CommandInput::Rename {
+            node,
+            name: "바뀜".into(),
+        };
+        let unlock_p = CommandInput::SetLocked {
+            node: t.p,
+            locked: false,
+        };
+        let duplicate_into_p = stellar_commands::duplicate::DuplicateSubtree::plan_with(
+            &t.model,
+            t.u,
+            t.p,
+            t.model.next_child_order_key(t.p),
+            &mut new_id,
+        )
+        .unwrap();
+        let cases: Vec<(&str, Vec<CommandInput>, usize)> = vec![
+            ("잠긴 node 이름", vec![rename(t.p)], 0),
+            (
+                "잠긴 조상 아래 손자 이름",
+                vec![rename(t.g), rename(t.u)],
+                0,
+            ),
+            (
+                "잠긴 조상 아래 손자 잠금",
+                vec![CommandInput::SetLocked {
+                    node: t.g,
+                    locked: true,
+                }],
+                0,
+            ),
+            (
+                "같은 요청 안의 해제 뒤 편집",
+                vec![unlock_p.clone(), rename(t.p)],
+                1,
+            ),
+            (
+                "잠긴 자손을 가진 삭제",
+                vec![rename(t.u), CommandInput::DeleteSubtree { root: t.q }],
+                1,
+            ),
+            (
+                "잠긴 부모 아래로 이동",
+                vec![CommandInput::MoveNode {
+                    node: t.u,
+                    new_parent: t.p,
+                    order_key: order(t.p),
+                }],
+                0,
+            ),
+            (
+                "잠긴 부모 밖으로 이동",
+                vec![CommandInput::MoveNode {
+                    node: t.c,
+                    new_parent: t.root,
+                    order_key: order(t.root),
+                }],
+                0,
+            ),
+            (
+                "잠긴 부모 아래 InsertNode",
+                vec![canonical(Command::InsertNode(InsertNode::single(
+                    new_frame(new_id(), t.p),
+                )))],
+                0,
+            ),
+            (
+                "잠긴 부모 아래 DuplicateSubtree",
+                vec![canonical(Command::DuplicateSubtree(duplicate_into_p))],
+                0,
+            ),
+        ];
+        let before = file_digest(&t.dir.path);
+        for (name, commands, index) in cases {
+            for mode in [ApplyMode::DryRun, ApplyMode::Write] {
+                match run(commands.clone(), mode) {
+                    Err(ApplyError::Rejected { index: got, reason }) => {
+                        assert_eq!(got, index, "{name}: {reason}");
+                        assert!(reason.contains("잠긴 노드"), "{name}: {reason}");
+                    }
+                    other => panic!("{name}: 거부가 아님: {other:?}"),
+                }
+            }
+        }
+        assert_eq!(
+            file_digest(&t.dir.path),
+            before,
+            "거부는 파일을 바꾸지 않습니다"
+        );
+        // 조상이 잠기지 않은 node의 잠금 토글은 허용하고, 해제한 뒤에는 그 아래도 편집됩니다.
+        run(vec![unlock_p], ApplyMode::Write).unwrap();
+        run(vec![rename(t.p), rename(t.g)], ApplyMode::Write).unwrap();
+    }
+
+    /// D8: 잠긴 부모 아래 컴포넌트 인스턴스 삽입도 거부합니다(정의·원본 hash가 맞아도).
+    #[test]
+    fn component_instance_insert_under_a_locked_parent_is_rejected() {
+        let (dir, model, component, hash) = project_with_component();
+        let root = view_root(&model);
+        let run = |commands: Vec<CommandInput>| {
+            let request = ApplyRequest {
+                base_revision: open_snapshot(&dir.path).unwrap().revision(),
+                document: model.document_id(),
+                commands,
+            };
+            apply(&dir.path, &request, ApplyMode::Write, &locks(&dir))
+        };
+        run(vec![CommandInput::SetLocked {
+            node: root,
+            locked: true,
+        }])
+        .unwrap();
+        let before = file_digest(&dir.path);
+        let insert = CommandInput::InsertComponentInstance(ComponentInstanceInsert {
+            component,
+            source_hash: hash,
+            parent: root,
+            position: Vec2::new(4., 8.).unwrap(),
+        });
+        assert!(matches!(
+            run(vec![insert]),
+            Err(ApplyError::Rejected { index: 0, reason }) if reason.contains("잠긴 노드")
+        ));
+        assert_eq!(file_digest(&dir.path), before);
+    }
+
     #[test]
     fn lock_policy_none_never_creates_the_lock_dir() {
         // merge driver 모드(LockPolicy::None)는 잠금을 쓰지 않습니다.
