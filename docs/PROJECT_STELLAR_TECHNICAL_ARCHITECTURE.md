@@ -966,7 +966,7 @@ ProjectName/
 │   └── objects/
 │       └── <prefix>/sha256-<content-hash>.starchunk
 ├── assets/
-│   └── sha256/<prefix>/<content-hash>.<ext>
+│   └── <prefix>/sha256-<content-hash>.<ext>
 └── .stellar/
     └── cache/                 # Git 제외
 ```
