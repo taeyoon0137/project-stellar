@@ -1,10 +1,10 @@
 //! Platform clipboard bytes enter the owning window's ordinary document history.
-use super::frame_move::{canvas_window, command_id};
+use super::frame_move::{canvas_window, command_id, fresh_generator};
 use super::*;
 use stellar_commands::{
     command::Command, id::CommandOrigin, paste::ClipboardSubtree, transaction::CommandTransaction,
 };
-use stellar_core_types::{clock::ManualClock, ids::StableIdGenerator};
+use stellar_core_types::clock::ManualClock;
 
 impl AppRuntime {
     /// Shell worker query; never wait for this ticket on the UI thread.
@@ -154,8 +154,7 @@ fn paste_into(
     }
     let clipboard = ClipboardSubtree::decode(bytes).map_err(|_| invalid())?;
     let id = command_id(window.window(), request);
-    let mut generator =
-        StableIdGenerator::new(u64::from_le_bytes(id.to_bytes()[..8].try_into().unwrap()));
+    let mut generator = fresh_generator()?;
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()

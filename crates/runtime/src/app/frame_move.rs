@@ -185,10 +185,11 @@ fn edit_selected(
                     None,
                     stack.and_then(|s| s.entries().first()).map(|e| &e.order),
                 );
+                let [id] = fresh_ids()?;
                 Command::InsertModifier(InsertModifier {
                     node,
                     entry: ModifierEntry {
-                        id: ModifierId::new(StableId::from_bytes(command_id.to_bytes())),
+                        id: ModifierId::new(id),
                         order,
                         kind: ModifierKind::Transform,
                         enabled: true,
@@ -306,6 +307,25 @@ fn editable_ancestry(
         current = fields.parent.and_then(|id| model.stable_id(id))?;
     }
     Some(())
+}
+
+/// 새 node·modifier의 영속 ID(UUIDv7, OS 난수)를 만듭니다. 요청 순번이나 command ID에서 파생하지 않습니다.
+pub(super) fn fresh_ids<const N: usize>() -> Result<[StableId; N], Failure> {
+    stellar_project::new_ids::new_ids().map_err(|error| {
+        Failure::new(
+            RequestFailure::UnknownView,
+            format!("새 식별자를 만들지 못했습니다: {error}"),
+        )
+    })
+}
+
+/// 복제·붙여넣기 계획 API는 ID 생성기를 받습니다. seed를 OS 난수로 채워 요청마다 독립 ID를 만듭니다.
+pub(super) fn fresh_generator() -> Result<stellar_core_types::ids::StableIdGenerator, Failure> {
+    let [seed] = fresh_ids()?;
+    let bytes = seed.to_bytes();
+    Ok(stellar_core_types::ids::StableIdGenerator::new(
+        u64::from_le_bytes(bytes[8..].try_into().expect("eight bytes")),
+    ))
 }
 
 /// 요청 순번은 runtime 안에서만 유일하므로 창의 영속 ID와 함께 식별합니다.
@@ -582,6 +602,13 @@ mod tests {
                     .unwrap();
             } else {
                 let inserted = &changed.entries()[0];
+                // 새 Transform modifier는 command ID에서 파생하지 않은 독립 UUIDv7입니다.
+                let fresh = inserted.id.stable_id();
+                assert_eq!((fresh.version(), fresh.variant()), (7, 2));
+                assert_ne!(
+                    fresh.to_bytes(),
+                    command_id(session.window(), RequestId(11)).to_bytes()
+                );
                 assert_eq!(
                     inserted.payload,
                     ModifierPayload::Transform(translated(Transform2D::identity(), delta).unwrap())

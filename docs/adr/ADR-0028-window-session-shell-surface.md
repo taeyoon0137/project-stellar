@@ -329,3 +329,13 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 - 이미지 배치(`stellar_window_place_png`)는 asset 가져오기 단계의 신뢰 확인을 아직 유지합니다. 이미지 레코드
   위치 결정(D2)과 함께 캔버스 렌더·입력·감시 묶음(B8)에서 같은 규칙으로 맞춥니다.
 
+
+### 새 영속 ID와 셸 제스처 해석의 임시 구조
+
+- 캔버스에서 만드는 새 node(Frame·Shape)와 그 modifier, Move가 처음 넣는 Transform modifier는
+  `stellar_project::new_ids`(UUIDv7, OS 난수)로 ID를 받습니다. 이전 구현은 창 ID와 요청 순번의 해시나
+  node ID의 마지막 byte를 바꾼 값에서 ID를 파생했습니다. 복제·붙여넣기는 계획 API가 ID 생성기를 받으므로
+  생성기 seed를 같은 OS 난수에서 채웁니다.
+- 이동·생성 도구의 제스처(드래그 임계값, 수식키, 클릭 생성 크기)는 지금 셸이 해석해 결과 좌표만 위
+  ABI로 보냅니다. canvas_editing 원칙 2("셸은 해석하지 않고 전달")와 다른 임시 구조입니다. hit test와 렌더를
+  코어로 옮기는 후속(XI.8.2 → XII.4.1)에서 코어 도구 상태 기계로 옮깁니다.

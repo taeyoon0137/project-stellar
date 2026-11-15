@@ -1,6 +1,6 @@
 //! 자유 배치 Frame에 새 Frame, Shape 또는 본문이 있는 Text를 삽입하고 선택합니다.
 
-use super::frame_move::{canvas_window, command_id, editable_frame};
+use super::frame_move::{canvas_window, command_id, editable_frame, fresh_ids};
 use super::*;
 use stellar_commands::{
     command::Command, id::CommandOrigin, node_ops::InsertNode, transaction::CommandTransaction,
@@ -186,20 +186,12 @@ fn insert_item(
     let model = window.document().ok_or_else(invalid)?.model();
     editable_frame(model, view, parent).ok_or_else(invalid)?;
     let id = command_id(window.window(), request);
+    // 새 node와 modifier는 독립 UUIDv7을 씁니다. Text는 호출자에게 돌려준 ID를 그대로 씁니다.
+    let [fresh_node, first_modifier, second_modifier] = fresh_ids()?;
     let node = if let CanvasItem::Text { id, .. } = &item {
         *id
     } else {
-        // 새 node 식별자는 창 ID와 요청 순번으로부터 얻고 UUIDv7의 variant·version을 유지합니다.
-        let bytes = id.to_bytes();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| invalid())?;
-        let ms = u64::try_from(now.as_millis()).map_err(|_| invalid())?;
-        StableId::new_v7(
-            ms,
-            u16::from_le_bytes([bytes[0], bytes[1]]),
-            u64::from_le_bytes(bytes[2..10].try_into().expect("eight bytes")),
-        )
+        fresh_node
     };
     let origin = match &item {
         CanvasItem::Frame(bounds) if !bounds.is_empty() => bounds.origin(),
@@ -265,13 +257,15 @@ fn insert_item(
         payload,
     });
     let mut stack = ModifierStack::new(node);
-    for (slot, payload) in modifiers.into_iter().flatten().enumerate() {
-        let mut raw = node.to_bytes();
-        raw[15] ^= slot as u8 + 1;
+    for (modifier, payload) in [first_modifier, second_modifier]
+        .into_iter()
+        .zip(modifiers)
+        .filter_map(|(id, payload)| Some((id, payload?)))
+    {
         let order = OrderKey::between(stack.entries().last().map(|entry| &entry.order), None);
         stack
             .insert(ModifierEntry {
-                id: ModifierId::new(StableId::from_bytes(raw)),
+                id: ModifierId::new(modifier),
                 order,
                 kind: payload.kind(),
                 enabled: true,
@@ -391,6 +385,10 @@ mod tests {
         let model = session.document().unwrap().model();
         let stack = model.modifier_stack(node).unwrap().clone();
         let entries = stack.entries();
+        // node와 modifier는 서로 독립인 UUIDv7입니다(command ID·node ID에서 파생하지 않음).
+        let ids = [node, entries[0].id.stable_id(), entries[1].id.stable_id()];
+        assert!(ids.iter().all(|id| (id.version(), id.variant()) == (7, 2)));
+        assert!(ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2]);
         assert!(
             matches!(entries[0].payload, ModifierPayload::Transform(t) if t.components() == (1.,0.,0.,1.,14.,22.))
         );

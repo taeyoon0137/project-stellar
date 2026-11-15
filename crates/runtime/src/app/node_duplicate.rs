@@ -1,12 +1,12 @@
 //! 단일 선택 subtree를 같은 부모 아래에 복제하고 한 history 항목으로 선택합니다.
-use super::frame_move::command_id;
+use super::frame_move::{command_id, fresh_generator};
 use super::node_delete::editable_selected_roots;
 use super::*;
 use stellar_commands::{
     command::Command, duplicate::DuplicateSubtree, id::CommandOrigin,
     transaction::CommandTransaction,
 };
-use stellar_core_types::{clock::ManualClock, ids::StableIdGenerator};
+use stellar_core_types::clock::ManualClock;
 
 pub(super) fn duplicate_selected(
     window: &mut ProjectWindowSession,
@@ -26,9 +26,7 @@ pub(super) fn duplicate_selected(
         .and_then(|r| r.parent)
         .ok_or_else(invalid)?;
     let id = command_id(window.window(), request);
-    let mut generator = StableIdGenerator::new(u64::from_le_bytes(
-        id.to_bytes()[..8].try_into().expect("eight bytes"),
-    ));
+    let mut generator = fresh_generator()?;
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
