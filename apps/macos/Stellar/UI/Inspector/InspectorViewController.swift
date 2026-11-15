@@ -121,6 +121,7 @@ final class InspectorViewController: NSViewController {
             rowView.onEdit = { [weak self] name, input, phase, completion in
                 self?.dataSource.edit(name, input, phase: phase, completion: completion)
             }
+            rowView.onEscape = { [weak self] in self?.focusCanvas?() }
             if row.flags.contains(.group) {
                 currentGroup = row.name
                 let name = row.name
