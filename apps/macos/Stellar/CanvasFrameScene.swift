@@ -49,9 +49,8 @@ struct CanvasGesturePreview {
     var rect: CGRect
     var lineStart: CGPoint?
     var lineEnd: CGPoint?
-    /// 반경 핸들 드래그 중의 반경(tl, tr, br, bl)과 라벨.
+    /// 반경 핸들 드래그 중의 반경(tl, tr, br, bl).
     var radii: [CGFloat]?
-    var label: String?
 }
 
 extension CGRect {
@@ -463,7 +462,7 @@ final class CanvasFrameScene {
         return rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%g", Double(rounded))
     }
 
-    /// 외곽선, 핸들, 선택 아래 크기 라벨(`320 × 200`, 고정 크기가 아니면 `fit-content`).
+    /// 외곽선, 핸들, 선택 아래 크기 라벨(`320 × 200`, 자동 크기 축은 CSS 값 `max-content`·`auto`).
     private func drawSelection(in context: CGContext) {
         guard !selection.isEmpty else { return }
         context.saveGState()
@@ -504,14 +503,13 @@ final class CanvasFrameScene {
         }
         context.restoreGState()
         let label: String
-        if let override = gesturePreview?.label {
-            label = override
-        } else if selection.count == 1, let box = selection.first {
+        if selection.count == 1, let box = selection.first {
             let size = displayedRect(box).size
             let line = box.lineStart.flatMap { start in box.lineEnd.map { CGSize(width: abs($0.x - start.x), height: abs($0.y - start.y)) } }
             let shown = line ?? size
-            let width = box.has(STELLAR_CANVAS_ITEM_FIXED_WIDTH) ? Self.cssNumber(shown.width) : "fit-content"
-            let height = box.has(STELLAR_CANVAS_ITEM_FIXED_HEIGHT) ? Self.cssNumber(shown.height) : "fit-content"
+            // 고정 크기가 아닌 축은 자동 크기 Text의 CSS 값입니다(canvas_editing.md: `width: max-content`, `height: auto`).
+            let width = box.has(STELLAR_CANVAS_ITEM_FIXED_WIDTH) ? Self.cssNumber(shown.width) : "max-content"
+            let height = box.has(STELLAR_CANVAS_ITEM_FIXED_HEIGHT) ? Self.cssNumber(shown.height) : "auto"
             label = "\(width) × \(height)"
         } else {
             label = "\(Self.cssNumber(world.width)) × \(Self.cssNumber(world.height))"

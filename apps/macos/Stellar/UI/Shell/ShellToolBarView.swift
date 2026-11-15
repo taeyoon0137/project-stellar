@@ -165,6 +165,9 @@ final class ShellCanvasHintView: NSView {
     private let label = NSTextField(labelWithString: "")
     private var hideWork: DispatchWorkItem?
 
+    /// 안내는 캔버스 위에 떠 있는 표시일 뿐이라 그 자리의 클릭·드래그를 캔버스로 넘깁니다.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         background.material = .hudWindow

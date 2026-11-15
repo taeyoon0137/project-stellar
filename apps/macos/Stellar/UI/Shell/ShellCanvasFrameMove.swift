@@ -270,10 +270,6 @@ extension ShellProjectWindow {
                     let value = CanvasFrameScene.radius(handle: index, in: drag.box.rect, at: local)
                     let single = index >= 0 && modifiers.contains(.option)
                     preview.radii = drag.box.radii.enumerated().map { !single || $0.offset == index ? value : $0.element }
-                    let names = ["border-top-left-radius", "border-top-right-radius",
-                                 "border-bottom-right-radius", "border-bottom-left-radius"]
-                    let name = index < 0 ? "radius" : single ? names[index] : "border-radius"
-                    preview.label = "\(name): \(Int(value.rounded()))px"
                 }
                 if event.type == .leftMouseDragged {
                     if hypot(point.x - drag.start.x, point.y - drag.start.y) >= 1 { canvas.gesturePreview = preview }
@@ -358,7 +354,8 @@ extension ShellProjectWindow {
                 }
                 guard session.info?.revision == hit.revision, view == hit.viewID else { return false }
                 // 무엇을 고를지(직계 자식, Shift 넣고 빼기, ⌘ 깊은 선택, 더블클릭 한 단계 들어가기)는 코어가 정합니다.
-                var flags: UInt32 = 0
+                // 누름(PRESS): 이미 고른 node를 누르면 코어가 선택을 그대로 둬서 여러 개를 함께 끌 수 있습니다.
+                var flags = UInt32(STELLAR_PICK_PRESS)
                 if event.modifierFlags.contains(.shift) { flags |= UInt32(STELLAR_PICK_TOGGLE) }
                 if event.modifierFlags.contains(.command) { flags |= UInt32(STELLAR_PICK_DEEP) }
                 if event.clickCount >= 2 { flags |= UInt32(STELLAR_PICK_ENTER) }
@@ -398,7 +395,14 @@ extension ShellProjectWindow {
             case .leftMouseUp:
                 guard let drag = self.frameDrag else { return false }
                 _ = canvas.cancelFrameGesture?()
-                guard drag.moved, self.toolsModel.snapshot.activeTool == .move,
+                if !drag.moved {
+                    // 끌지 않고 놓으면 누를 때 미룬 선택 변경(하나로 줄이기, Shift 빼기)을 코어가 적용합니다.
+                    if let session = self.windowController.windowSession, session.session == drag.session {
+                        self.pickCanvas(view: drag.hit.viewID, leaf: drag.hit.id, flags: UInt32(STELLAR_PICK_RELEASE))
+                    }
+                    return true
+                }
+                guard self.toolsModel.snapshot.activeTool == .move,
                       canvas.bounds.size == drag.size, let session = self.windowController.windowSession,
                       session.session == drag.session, let camera = session.viewInfo,
                       camera.center_x == drag.viewport.center_x, camera.center_y == drag.viewport.center_y,
