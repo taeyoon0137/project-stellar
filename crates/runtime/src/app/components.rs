@@ -244,7 +244,7 @@ impl ProjectSummary {
 #[cfg(test)]
 mod watch_tests {
     use super::*;
-    use crate::app_window_tests::{close_window, next_event, open_project, open_window};
+    use crate::app_window_tests::{next_event, open_project, open_window};
     use crate::window_session::test_fixtures::{
         sample_document, saved_project, saved_project_with, sid,
     };
@@ -256,6 +256,29 @@ mod watch_tests {
     /// 문서가 끝날 때까지 기다립니다(앞서 접수한 document thread 작업이 모두 끝남).
     fn drain(app: &AppRuntime) {
         app.sender.submit(|_| {}).unwrap().wait().unwrap();
+    }
+
+    /// 감시가 켜진 뒤의 다음 완료 event. 감시 thread가 원본 변경을 보고 보낸 요청 없는 view 변경(request 0)은
+    /// 테스트 요청과 순서가 정해지지 않으므로 건너뜁니다.
+    fn next_requested_event(app: &AppRuntime) -> RuntimeEvent {
+        loop {
+            match next_event(app) {
+                RuntimeEvent::WindowViewChanged {
+                    request: RequestId(0),
+                    ..
+                } => {}
+                event => return event,
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn close_watched(app: &AppRuntime, session: WindowSessionHandle) {
+        let request = app.close_window_session(session).unwrap();
+        assert_eq!(
+            next_requested_event(app),
+            RuntimeEvent::WindowSessionClosed { request, session }
+        );
     }
 
     #[test]
@@ -317,7 +340,7 @@ mod watch_tests {
             let (a, _, _) = open_window(&app, project);
             let request = app.reload_canvas_components(a).unwrap();
             assert_eq!(
-                next_event(&app),
+                next_requested_event(&app),
                 RuntimeEvent::WindowViewChanged {
                     request,
                     session: a
@@ -371,8 +394,8 @@ mod watch_tests {
             Arc::ptr_eq(&first[&owner], &second[&owner]),
             "프로젝트당 하나"
         );
-        close_window(&app, a);
-        close_window(&app, b);
+        close_watched(&app, a);
+        close_watched(&app, b);
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !watches().is_empty() {
             assert!(

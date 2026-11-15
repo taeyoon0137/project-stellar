@@ -2743,12 +2743,20 @@ mod tests {
             Err(DocumentThreadError::ShutdownTimedOut { timeout })
         );
         drop(release);
-        // 시간 안에 끝나는 종료는 shutdown과 같습니다.
+        // 시간 안에 끝나는 종료는 shutdown과 같습니다(접수한 요청을 모두 실행).
         let app = AppRuntime::start().unwrap();
-        app.open_project(Path::new("/stellar-runtime-test-no-such-project"))
+        let shared = Arc::clone(&app.shared);
+        let request = app
+            .open_project(Path::new("/stellar-runtime-test-no-such-project"))
             .unwrap();
         let stats = app.shutdown_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(stats.jobs_run, 1);
+        // 글꼴 loader는 시작할 때 기본 face를 다 읽으면 다시 게시 job을 한 번 넣습니다. 다른 테스트가 기본 face를
+        // 이미 읽었으면 곧바로 들어와 종료 전에 실행될 수 있으므로, 수는 1 또는 2이고 요청 완료로 실행을 확인합니다.
+        assert!(matches!(stats.jobs_run, 1 | 2), "{stats:?}");
+        assert!(shared.outbox().iter().any(|event| matches!(
+            event,
+            RuntimeEvent::RequestFailed { request: got, .. } if *got == request
+        )));
     }
 
     #[test]
