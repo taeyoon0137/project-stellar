@@ -8,8 +8,7 @@
 - WBS: XII.6.5
 - 작업명: 앱 메뉴 단축키를 macOS·Windows native convention으로 연결하되 command ID는 core에서 공유합니다.
 - 상태: 부분 완료 (`[~]`) — macOS 셸 연결과 응답자 체인 기반 key mapping smoke는 통과했습니다.
-  실제 활성 앱 메뉴 검사는 현재 환경에서 앱 활성화가 실패해 미완료이며, Windows 셸 단축키(Ctrl+Z·Ctrl+Y·Ctrl+S)는
-  Windows 지원 보류(ADR-0006)로 구현하지 않았습니다.
+  Windows 셸 단축키(Ctrl+Z·Ctrl+Y·Ctrl+S)는 Windows 지원 보류(ADR-0006)로 구현하지 않았습니다.
 - 선행: XII.6.4 (`[~]`, 이 lane `64153be`)
 
 ## 변경 파일

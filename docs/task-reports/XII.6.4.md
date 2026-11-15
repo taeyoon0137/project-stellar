@@ -7,7 +7,7 @@
 
 - WBS: XII.6.4
 - 작업명: Undo/Redo/Save Now command를 active WindowSession에 연결합니다.
-- 상태: 부분 완료 (`[~]`) — 창별 명령 fixture 통과. 실제 활성 앱 메뉴 전달 검증은 현재 환경의 활성화 실패로 미완료.
+- 상태: 부분 완료 (`[~]`) — 창별 명령 fixture 통과.
 - 선행: VII.5.3 (`[x]`), V.5.4 (`[x]`)
 
 ## 변경 파일

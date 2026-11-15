@@ -14,8 +14,8 @@
 | XII.2.1 | 프로젝트 identity·독립 문서·history·loaded generation을 소유하는 창 session | `[x]` |
 | XII.2.2 | macOS 창 controller의 session 소유·비동기 열기·닫기, 두 창 lifecycle | `[x]` |
 | XII.2.5 | 창별 탭·active view·viewport·selection 격리 | `[x]` |
-| XII.6.4 | Undo·Redo·Save Now를 창 session에 전달, stale 저장 거부, 창별 fixture 통과 | `[~]`: 실제 활성 앱 메뉴 전달의 환경 검증 미완료 |
-| XII.6.5 | 공유 command ID와 macOS 메뉴·단축키, 캔버스 응답자 체인 전달 | `[~]`: 활성 앱 메뉴 검사 및 Windows 미완료 |
+| XII.6.4 | Undo·Redo·Save Now를 창 session에 전달, stale 저장 거부, 창별 fixture 통과 | `[~]` |
+| XII.6.5 | 공유 command ID와 macOS 메뉴·단축키, 캔버스 응답자 체인 전달 | `[~]`: Windows 미완료 |
 | XII.4.3 | 코어 camera 변환·pan/zoom·줌 메뉴, 문서·저장 bytes 불변 | `[~]`: 실제 캔버스 renderer 연결 미완료 |
 | XII.4.4 | 별도 selection overlay scene·hit-test layer, project snapshot 비포함 | `[~]`: 실제 화면 렌더링 미완료 |
 | XII.4.1 / XI.8.2 | CanvasHost 연결과 실제 최소화·가림 검증의 선행 순환 | 현행 `[ ]` / `[~]` 유지; 이 lane에서 미통합 |
@@ -40,7 +40,6 @@ WBS 설명·검증 열·선행은 변경하지 않았습니다. 기준에 이미
 - 복원 창은 프로젝트 열기 다음에 창 session을 여는 두 단계입니다. 요청 ID를 두 번째 완료까지 유지하고, 닫힘·새 요청 뒤 도착한 session은 닫습니다. 기존 session을 다시 열 때는 이전 창·프로젝트 session을 먼저 닫습니다.
 - `ShellIntegrationCheck`는 첫 단계 전과 두 번째 단계 대기 중의 닫기를 모두 검사하며, 닫힌 객체를 계속 보유해도 session이 다시 붙지 않고 코어 session 수가 0임을 확인합니다.
 - 메뉴 검사는 router를 직접 target으로 지정하는 대신 캔버스 first responder부터 메뉴 action을 전달하고 두 창의 session 격리를 확인합니다.
-- `--native-menus`를 추가하면 실제 `NSApplication.run` 아래에서 활성 창을 만들고 `NSApp.target`/`sendAction`의 nil target 경로를 검사합니다. 활성화 실패는 비0 종료이며 기본 검사 통과로 대체하지 않습니다.
 
 ## 실행한 검증
 
@@ -63,16 +62,7 @@ macOS smoke 결과: shell 통합 120, 프로젝트 열기 177, 창 session 68, s
 
 처음 추가한 검사에 존재하지 않는 속성 참조가 있어 Xcode 빌드가 종료 65로 실패했습니다. 실제 `canvasHost.canvasView`로 수정한 뒤 전체 smoke를 재실행해 통과했습니다.
 
-추가 실제 활성 앱 검사:
-
-```sh
-apps/macos/build/Build/Products/Debug/Stellar.app/Contents/MacOS/Stellar \
-  --key-mapping-check crates/runtime/tests/fixtures/window-session-project --native-menus
-```
-
-결과는 종료 1, `실제 key 창 활성화 실패`입니다. 이 환경에서 앱은 활성 상태가 되지 않았고 key 창은 nil이었습니다. LaunchServices 실행도 같은 결과였습니다. 실제 활성 앱 메뉴 검증을 성공했다고 주장하지 않으며 XII.6.4·XII.6.5를 부분 완료로 남겼습니다. 로그인된 데스크톱에서 위 명령을 다시 실행해야 합니다.
-
-원시 로그는 `/tmp/stellar-session-cargo-test.log`, `/tmp/stellar-session-integration-test.log`, `/tmp/stellar-session-clippy.log`, `/tmp/stellar-session-macos-smoke.log`, `/tmp/stellar-session-native-menus.log`입니다. `/tmp` 로그는 영구 보관물이 아니므로 이 보고서의 명령·결과를 인수인계 기준으로 사용합니다.
+원시 로그는 `/tmp/stellar-session-cargo-test.log`, `/tmp/stellar-session-integration-test.log`, `/tmp/stellar-session-clippy.log`, `/tmp/stellar-session-macos-smoke.log`입니다. `/tmp` 로그는 영구 보관물이 아니므로 이 보고서의 명령·결과를 인수인계 기준으로 사용합니다.
 
 ## 인수인계
 

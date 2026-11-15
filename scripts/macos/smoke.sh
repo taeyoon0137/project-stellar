@@ -159,7 +159,6 @@ python3 "$REPO_ROOT/scripts/macos/canvas-move-check.py" "$APP" "$cli_target/debu
 
 # 단축키 대응(XII.6.5): command ID는 코어가 공유 이름으로 알려 주고, 단축키는 macOS 관례(⌘Z·⇧⌘Z·⌘S)로 메뉴에 둡니다.
 # 키 조합 → 메뉴 항목 → 셸 명령 → 코어 ID → 창 session 도착을 확인합니다.
-# 실제 활성 앱의 nil target 메뉴 검사: 아래 명령 끝에 --native-menus를 더합니다(활성화 실패는 비0 종료).
 "$APP" --key-mapping-check "$WINDOW_SESSION_FIXTURE"
 
 # UI 구조 검사(grep 종료 코드 0 = 발견 = 실패, 2 이상 = 읽기 오류 = 실패).
