@@ -46,10 +46,11 @@ extension ShellProjectWindow {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.imagePickGeneration == generation, self.toolsModel.snapshot.activeTool == .image else { return }
                 guard let digest else {
-                    if let win = self.window {
-                        self.alertPresenter?(String(localized: "Couldn’t open image"),
-                                             String(localized: "Choose a valid PNG within 32 MiB and 16 megapixels."), win)
-                    }
+                    // 받지 않는 파일은 막다른 alert 대신 도구 막대 위 한 줄 안내로 알립니다(UX 명세 3.2·3.5).
+                    self.windowController.toolbarController.hintView.show(String(
+                        localized: "Couldn’t open the image. Choose a PNG within 32 MiB and 16 megapixels.",
+                        comment: "Canvas hint when the picked image file isn't accepted"
+                    ))
                     return self.leaveImageTool()
                 }
                 self.submitImage(PickedPNG(url: url, digest: digest, target: target), parent: parent, at: position)
@@ -65,8 +66,11 @@ extension ShellProjectWindow {
             project.pump.placePNG(chosen, parent: parent, at: position, completion: done)
         }, completion: { [weak self] event in
             guard let self else { return }
-            if case .requestFailed(_, _, let message) = event, let win = self.window {
-                self.alertPresenter?(String(localized: "Couldn’t place image"), message, win)
+            if case .requestFailed(_, _, let message) = event {
+                self.windowController.toolbarController.hintView.show(String(
+                    localized: "Couldn’t place the image: \(message)",
+                    comment: "Canvas hint when placing an image fails; the argument is the reason"
+                ))
             }
             _ = self.router.dispatch(.selectMoveTool)
             self.refreshSessionCommands()

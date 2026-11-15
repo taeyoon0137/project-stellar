@@ -302,7 +302,11 @@ final class ShellCanvasTextEditing {
         running = false
         stop()
         if let shell, shell.canvasTextEditing === self { shell.canvasTextEditing = nil }
-        shell?.alertPresenter?(String(localized: "Couldn’t Edit Text"), message, shell?.window)
+        // 막다른 alert 대신 도구 막대 위 한 줄 안내로 알립니다(UX 명세 3.5).
+        shell?.windowController.toolbarController.hintView.show(String(
+            localized: "Couldn’t edit the text: \(message)",
+            comment: "Canvas hint when a text edit fails; the argument is the reason"
+        ))
     }
 }
 

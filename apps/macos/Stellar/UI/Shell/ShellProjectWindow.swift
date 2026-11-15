@@ -671,7 +671,12 @@ final class ShellProjectWindow {
                 guard let self, let session, self.windowController.windowSession === session else { return }
                 self.refreshSessionCommands()
                 if case .requestFailed(_, _, let message) = event {
-                    self.alertPresenter?(String(localized: "Couldn’t Rename Layer"), message, self.window)
+                    // 막다른 alert 대신 한 줄 안내로 이유를 보이고, 그 행의 이름 편집으로 되돌립니다(UX 명세 3.5).
+                    self.windowController.toolbarController.hintView.show(String(
+                        localized: "Couldn’t rename the layer: \(message)",
+                        comment: "Hint when renaming a layer fails; the argument is the reason"
+                    ))
+                    self.sidebarSlot.sidebar.layersController.beginRename(SidebarStableID(id))
                 }
             }
         }
