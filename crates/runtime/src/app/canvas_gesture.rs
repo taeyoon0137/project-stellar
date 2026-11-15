@@ -95,6 +95,41 @@ pub struct CanvasSelectionItem {
     pub fixed: [bool; 2],
 }
 
+/// 캔버스 제스처가 만드는 문서 편집. 한 요청이 history 항목 하나입니다(UX 명세 5.7).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CanvasEdit {
+    /// 선택한 node 전부(다른 선택의 자손은 빼고)를 옮깁니다.
+    Move {
+        /// 드래그를 시작한 행. 선택이 이 행을 덮지 않으면(Shift로 빠졌으면) 옮기지 않습니다. 키 이동은 `None`.
+        anchor: Option<StableId>,
+        /// 이동량. `parent_space`가 false이면 world, true이면 각 node의 부모 공간(CSS `left`·`top` px)입니다.
+        delta: Vec2,
+        /// 화살표 키 이동처럼 부모 공간 단위인지.
+        parent_space: bool,
+        /// Option 드래그: 복제본을 원본 바로 위에 만들어 옮기고 복제본을 선택합니다.
+        duplicate: bool,
+    },
+}
+
+/// 창 entry와 지금 표시 목록(Text 조합 미리보기 포함, 저장본 그대로인 창끼리는 공유 목록)을 함께 얻습니다.
+fn window_scene(
+    sessions: &mut AppSessions,
+    session: WindowSessionHandle,
+) -> Result<(&mut WindowEntry, Option<Arc<crate::canvas::CanvasScene>>), Failure> {
+    let entry = sessions
+        .windows
+        .get_mut(&session)
+        .ok_or_else(|| unknown_window(session))?;
+    let preview = entry
+        .text
+        .as_ref()
+        .and_then(|c| c.preview_at(entry.session.revision()));
+    let scene = entry
+        .canvas
+        .current(&entry.session, preview, &mut sessions.shared_scenes);
+    Ok((entry, scene))
+}
+
 impl AppRuntime {
     /// 셸이 그린 행에서 고른 선택을 코어 규칙(직계 자식, Shift 넣고 빼기, ⌘ 깊은 선택, 영역)으로 정해 기록합니다.
     pub fn canvas_pick(
@@ -104,21 +139,25 @@ impl AppRuntime {
         pick: CanvasPick,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            let sessions = ctx.app_sessions_mut();
-            let entry = sessions
-                .windows
-                .get_mut(&session)
-                .ok_or_else(|| unknown_window(session))?;
-            let preview = entry
-                .text
-                .as_ref()
-                .and_then(|c| c.preview_at(entry.session.revision()));
-            let scene = entry
-                .canvas
-                .current(&entry.session, preview, &mut sessions.shared_scenes);
+            let (entry, scene) = window_scene(ctx.app_sessions_mut(), session)?;
             let window = &mut entry.session;
             let selection = resolve_pick(window, scene.as_deref(), view, pick)?;
             window.select(selection).map_err(view_failure)?;
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
+        })
+    }
+
+    /// 캔버스 제스처 하나를 문서 편집 하나(Undo 한 번)로 기록합니다.
+    pub fn canvas_edit(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+        edit: CanvasEdit,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            let (entry, scene) = window_scene(ctx.app_sessions_mut(), session)?;
+            let scene = scene.ok_or_else(stale_view)?;
+            apply_edit(&mut entry.session, &scene, request, view, edit)?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
     }
@@ -138,6 +177,307 @@ impl AppRuntime {
             })
         })
     }
+}
+
+fn apply_edit(
+    window: &mut ProjectWindowSession,
+    scene: &CanvasScene,
+    request: RequestId,
+    view: StableId,
+    edit: CanvasEdit,
+) -> Result<(), Failure> {
+    if window.tabs().active_view() != Some(view) {
+        return Err(stale_view());
+    }
+    match edit {
+        CanvasEdit::Move {
+            anchor,
+            delta,
+            parent_space,
+            duplicate,
+        } => move_selection(
+            window,
+            scene,
+            request,
+            view,
+            anchor,
+            delta,
+            parent_space,
+            duplicate,
+        ),
+    }
+}
+
+/// 선택에서 다른 선택의 자손을 뺀 node(선택 순서).
+fn selection_roots(
+    model: &DocumentModel,
+    root: StableId,
+    selected: &[StableId],
+) -> Option<Vec<StableId>> {
+    let mut roots = Vec::with_capacity(selected.len());
+    for &node in selected {
+        let chain = ancestry(model, node, root)?;
+        if !chain[1..].iter().any(|a| selected.contains(a)) {
+            roots.push(node);
+        }
+    }
+    Some(roots)
+}
+
+/// 문서 node별 첫 캔버스 행 번호.
+fn row_index(scene: &CanvasScene) -> std::collections::BTreeMap<StableId, usize> {
+    let mut rows = std::collections::BTreeMap::new();
+    for (index, row) in scene.frames.iter().enumerate() {
+        rows.entry(row.id).or_insert(index);
+    }
+    rows
+}
+
+/// world 벡터를 `node` 부모 공간 벡터로 바꿉니다(부모 행 world의 선형부 역변환). root는 world 그대로입니다.
+fn parent_vector(
+    scene: &CanvasScene,
+    rows: &std::collections::BTreeMap<StableId, usize>,
+    node: StableId,
+    vector: Vec2,
+) -> Option<Vec2> {
+    let row = &scene.frames[*rows.get(&node)?];
+    let parent = row
+        .parent
+        .map_or(Transform2D::identity(), |p| scene.frames[p as usize].world);
+    let inverse = parent.inverse()?;
+    let (a, b, c, d, _, _) = inverse.components();
+    Vec2::new(
+        a * vector.x() + c * vector.y(),
+        b * vector.x() + d * vector.y(),
+    )
+    .ok()
+}
+
+fn translated(current: Transform2D, delta: Vec2) -> Option<Transform2D> {
+    let (a, b, c, d, x, y) = current.components();
+    Transform2D::new(a, b, c, d, x + delta.x(), y + delta.y()).ok()
+}
+
+/// 같은 요청 안에서 node마다 다른 영속 id(새 Transform modifier).
+fn derived_id(command: stellar_commands::id::CommandId, node: StableId) -> StableId {
+    let mut key = [0; 32];
+    key[..16].copy_from_slice(&command.to_bytes());
+    key[16..].copy_from_slice(&node.to_bytes());
+    let digest = stellar_storage::hash::ContentHash::compute(&key);
+    let mut raw = [0; 16];
+    raw.copy_from_slice(&digest.digest()[..16]);
+    StableId::from_bytes(raw)
+}
+
+/// `source`를 `delta`(부모 공간)만큼 옮기는 command를 `target`(복제본이면 remap 적용)에 대해 만듭니다.
+/// Frame은 `transform`, 그 밖의 node는 마지막 Transform modifier(없으면 맨 앞에 새로)를 바꿉니다.
+fn move_command(
+    model: &DocumentModel,
+    source: StableId,
+    target: StableId,
+    delta: Vec2,
+    remap: Option<&std::collections::BTreeMap<StableId, StableId>>,
+    new_modifier: StableId,
+) -> Result<Option<stellar_commands::command::Command>, Failure> {
+    use stellar_commands::command::Command;
+    use stellar_commands::document::frame::keys;
+    use stellar_commands::modifier_ops::{InsertModifier, SetModifierProperty};
+    use stellar_commands::property::{PropertyValue, SetProperty};
+    use stellar_core_types::order_key::OrderKey;
+    use stellar_document::modifier::{ModifierEntry, ModifierKind};
+    use stellar_document::modifier_metadata::keys::TRANSFORM_MATRIX;
+    let modifier_of = |id: ModifierId| -> Result<ModifierId, Failure> {
+        match remap {
+            None => Ok(id),
+            Some(map) => map
+                .get(&id.stable_id())
+                .map(|&copy| ModifierId::new(copy))
+                .ok_or_else(stale_view),
+        }
+    };
+    let stack = model.modifier_stack(source);
+    let last = match model.payload(source).ok_or_else(stale_view)? {
+        NodePayload::Frame(frame) => {
+            let next = translated(frame.transform, delta).ok_or_else(stale_view)?;
+            if next == frame.transform {
+                return Ok(None);
+            }
+            return Ok(Some(Command::SetProperty(SetProperty {
+                node: target,
+                key: keys::TRANSFORM,
+                value: PropertyValue::Transform(next),
+            })));
+        }
+        NodePayload::ComponentInstance(instance) => {
+            // 배치가 기록한 이동 하나만 바꿉니다. 별도 변환·override에는 손대지 않습니다.
+            let [entry] = stack.ok_or_else(stale_view)?.entries() else {
+                return Err(stale_view());
+            };
+            let ModifierPayload::Transform(matrix) = entry.payload else {
+                return Err(stale_view());
+            };
+            let (a, b, c, d, _, _) = matrix.components();
+            if !instance.has_no_overrides() || !entry.enabled || (a, b, c, d) != (1., 0., 0., 1.) {
+                return Err(stale_view());
+            }
+            Some((entry.id, matrix))
+        }
+        NodePayload::Shape(_) | NodePayload::Text(_) | NodePayload::Image(_) => {
+            crate::canvas::shape::shape_style(stack)
+                .ok_or_else(stale_view)?
+                .last_transform
+        }
+        _ => return Err(stale_view()),
+    };
+    Ok(Some(match last {
+        Some((modifier, current)) => {
+            let next = translated(current, delta).ok_or_else(stale_view)?;
+            if next == current {
+                return Ok(None);
+            }
+            Command::SetModifierProperty(SetModifierProperty {
+                node: target,
+                modifier: modifier_of(modifier)?,
+                key: TRANSFORM_MATRIX,
+                value: PropertyValue::Transform(next),
+            })
+        }
+        None => {
+            let order = OrderKey::between(
+                None,
+                stack.and_then(|s| s.entries().first()).map(|e| &e.order),
+            );
+            Command::InsertModifier(InsertModifier {
+                node: target,
+                entry: ModifierEntry {
+                    id: ModifierId::new(new_modifier),
+                    order,
+                    kind: ModifierKind::Transform,
+                    enabled: true,
+                    payload: ModifierPayload::Transform(
+                        translated(Transform2D::identity(), delta).ok_or_else(stale_view)?,
+                    ),
+                },
+            })
+        }
+    }))
+}
+
+/// 형제 순서에서 `node` 바로 위(다음 형제 앞) 자리.
+fn order_above(
+    model: &DocumentModel,
+    parent: StableId,
+    node: StableId,
+) -> Option<stellar_core_types::order_key::OrderKey> {
+    let siblings = model.children_in_order(parent);
+    let index = siblings.iter().position(|&s| s == node)?;
+    let own = model.record(node)?.order_key;
+    let next = siblings
+        .get(index + 1)
+        .and_then(|&n| model.record(n))
+        .map(|r| r.order_key);
+    Some(stellar_core_types::order_key::OrderKey::between(
+        Some(&own),
+        next.as_ref(),
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn move_selection(
+    window: &mut ProjectWindowSession,
+    scene: &CanvasScene,
+    request: RequestId,
+    view: StableId,
+    anchor: Option<StableId>,
+    delta: Vec2,
+    parent_space: bool,
+    duplicate: bool,
+) -> Result<(), Failure> {
+    use stellar_commands::command::Command;
+    use stellar_commands::duplicate::DuplicateSubtree;
+    use stellar_commands::id::CommandOrigin;
+    use stellar_commands::transaction::CommandTransaction;
+    use stellar_core_types::{clock::ManualClock, ids::StableIdGenerator};
+    let model = window.document().ok_or_else(stale_view)?.model();
+    let root = view_root(model, view).ok_or_else(stale_view)?;
+    let selected = window.view().selection().ids().to_vec();
+    let roots = selection_roots(model, root, &selected).ok_or_else(stale_view)?;
+    if roots.is_empty() {
+        return Err(stale_view());
+    }
+    if let Some(anchor) = anchor {
+        // 드래그를 시작한 행을 지금 선택이 덮어야 합니다(Shift로 뺀 node를 끌면 옮기지 않음).
+        let chain = ancestry(model, anchor, root).ok_or_else(stale_view)?;
+        if !chain.iter().any(|n| selected.contains(n)) {
+            return Err(stale_view());
+        }
+    }
+    if delta == Vec2::ZERO && !duplicate {
+        return Ok(());
+    }
+    let rows = row_index(scene);
+    let id = super::frame_move::command_id(window.window(), request);
+    let mut generator = StableIdGenerator::new(u64::from_le_bytes(
+        id.to_bytes()[..8].try_into().expect("eight bytes"),
+    ));
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| u64::try_from(d.as_nanos()).ok())
+        .ok_or_else(stale_view)?;
+    let clock = ManualClock::new(nanos);
+    let revision = window.revision();
+    let mut transaction = CommandTransaction::new(id, CommandOrigin::User);
+    let mut commands = 0;
+    let mut copies = Vec::new();
+    for &node in &roots {
+        let frame = matches!(model.payload(node), Some(NodePayload::Frame(_)));
+        editable_ancestry(model, view, node, !frame).ok_or_else(stale_view)?;
+        let local = if parent_space {
+            delta
+        } else {
+            parent_vector(scene, &rows, node, delta).ok_or_else(stale_view)?
+        };
+        let (target, remap) = if duplicate {
+            if node == root {
+                return Err(stale_view());
+            }
+            let parent = parent_of(model, node).ok_or_else(stale_view)?;
+            let order = order_above(model, parent, node).ok_or_else(stale_view)?;
+            let plan = DuplicateSubtree::plan(model, node, parent, order, &mut generator, &clock)
+                .map_err(|_| stale_view())?;
+            let copy = plan.copy_root().ok_or_else(stale_view)?;
+            let remap: std::collections::BTreeMap<_, _> = plan.remap.iter().copied().collect();
+            transaction = transaction.with_command(revision, Command::DuplicateSubtree(plan));
+            commands += 1;
+            copies.push(copy);
+            (copy, Some(remap))
+        } else {
+            (node, None)
+        };
+        if let Some(command) = move_command(
+            model,
+            node,
+            target,
+            local,
+            remap.as_ref(),
+            derived_id(id, target),
+        )? {
+            transaction = transaction.with_command(revision, command);
+            commands += 1;
+        }
+    }
+    if commands == 0 {
+        return Ok(());
+    }
+    if duplicate {
+        let primary = copies.last().copied();
+        window.apply_and_select(&transaction, Selection::new(copies, primary))
+    } else {
+        window.apply(&transaction)
+    }
+    .map_err(view_failure)?;
+    Ok(())
 }
 
 fn stale_view() -> Failure {
@@ -563,6 +903,188 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// nested_document에 root 아래 Rectangle 14(300,200 40×30, Transform·Fill)를 더하고 11을 2배로 키웁니다.
+    fn shape_document() -> DocumentModel {
+        use stellar_core_types::color::{Color, ColorSpace};
+        use stellar_core_types::order_key::OrderKey;
+        use stellar_document::modifier::{ModifierEntry, ModifierStack};
+        use stellar_document::shape::RectangleParams;
+        let mut model = nested_document();
+        model
+            .set_payload(
+                sid(11),
+                NodePayload::Frame(FramePayload {
+                    size: Size2::new(100., 100.).unwrap(),
+                    transform: Transform2D::new(2., 0., 0., 2., 10., 10.).unwrap(),
+                    ..FramePayload::default()
+                }),
+            )
+            .unwrap();
+        let mut record = model.record(sid(12)).unwrap();
+        record.id = sid(14);
+        record.order_key = OrderKey::between(Some(&record.order_key), None);
+        record.display_name = "n14".into();
+        record.payload = NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
+            size: Size2::new(40., 30.).unwrap(),
+            corner_radius: CornerRadius::ZERO,
+        }));
+        model.insert_node(record).unwrap();
+        let mut stack = ModifierStack::new(sid(14));
+        let gray = Color::new(ColorSpace::Srgb, 0.85, 0.85, 0.85, 1.).unwrap();
+        for (n, payload) in [
+            ModifierPayload::Transform(Transform2D::new(1., 0., 0., 1., 300., 200.).unwrap()),
+            ModifierPayload::Fill { color: gray },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let order = OrderKey::between(stack.entries().last().map(|e| &e.order), None);
+            stack
+                .insert(ModifierEntry {
+                    id: ModifierId::new(sid(140 + n as u64)),
+                    order,
+                    kind: payload.kind(),
+                    enabled: true,
+                    payload,
+                })
+                .unwrap();
+        }
+        model.set_modifier_stack(stack).unwrap();
+        model
+    }
+
+    fn frame_transform(window: &ProjectWindowSession, node: u64) -> (f32, f32, f32, f32, f32, f32) {
+        match window
+            .document()
+            .unwrap()
+            .model()
+            .payload(sid(node))
+            .unwrap()
+        {
+            NodePayload::Frame(frame) => frame.transform.components(),
+            _ => panic!("Frame"),
+        }
+    }
+
+    fn shape_translation(window: &ProjectWindowSession, node: StableId) -> (f32, f32) {
+        let stack = window
+            .document()
+            .unwrap()
+            .model()
+            .modifier_stack(node)
+            .unwrap();
+        match stack.entries()[0].payload {
+            ModifierPayload::Transform(t) => {
+                let (_, _, _, _, x, y) = t.components();
+                (x, y)
+            }
+            _ => panic!("Transform"),
+        }
+    }
+
+    fn drag(
+        window: &mut ProjectWindowSession,
+        request: u64,
+        anchor: Option<u64>,
+        delta: (f32, f32),
+        parent_space: bool,
+        duplicate: bool,
+    ) -> bool {
+        let scene = CanvasCache::default().current(window, None, &mut Default::default()).unwrap();
+        apply_edit(
+            window,
+            &scene,
+            RequestId(request),
+            sid(3),
+            CanvasEdit::Move {
+                anchor: anchor.map(sid),
+                delta: Vec2::new(delta.0, delta.1).unwrap(),
+                parent_space,
+                duplicate,
+            },
+        )
+        .is_ok()
+    }
+
+    #[test]
+    fn moving_a_selection_moves_every_root_once_in_parent_space_and_undoes_once() {
+        let dir = saved_project_with("canvas-move-many", &[&shape_document()]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        // 부모(11)와 그 자식(13)을 함께 골라도 자식은 부모와 함께 한 번만 움직입니다.
+        session
+            .select(Selection::new([sid(11), sid(13), sid(14)], Some(sid(14))))
+            .unwrap();
+        let undo = session.history().history().len();
+        assert!(drag(&mut session, 1, Some(13), (10., 5.), false, false));
+        assert_eq!(frame_transform(&session, 11), (2., 0., 0., 2., 20., 15.));
+        assert_eq!(frame_transform(&session, 13), (1., 0., 0., 1., 5., 5.));
+        assert_eq!(shape_translation(&session, sid(14)), (310., 205.));
+        assert_eq!(session.history().history().len(), undo + 1);
+        assert!(session.undo().unwrap());
+        assert_eq!(frame_transform(&session, 11), (2., 0., 0., 2., 10., 10.));
+        assert_eq!(shape_translation(&session, sid(14)), (300., 200.));
+        // 2배 부모 안의 자식은 world 10px이 부모 공간 5px입니다. 화살표 이동은 부모 공간 그대로입니다.
+        session
+            .select(Selection::new([sid(13)], Some(sid(13))))
+            .unwrap();
+        assert!(drag(&mut session, 2, Some(13), (10., 0.), false, false));
+        assert_eq!(frame_transform(&session, 13), (1., 0., 0., 1., 10., 5.));
+        assert!(drag(&mut session, 3, None, (0., -10.), true, false));
+        assert_eq!(frame_transform(&session, 13), (1., 0., 0., 1., 10., -5.));
+        // 선택이 드래그를 시작한 행을 덮지 않으면 옮기지 않습니다.
+        session
+            .select(Selection::new([sid(12)], Some(sid(12))))
+            .unwrap();
+        let revision = session.revision();
+        assert!(!drag(&mut session, 4, Some(13), (10., 0.), false, false));
+        assert_eq!(session.revision(), revision);
+        session.save_now().unwrap();
+        let reopened = ProjectWindowSession::load(identity(dir.path()), window(2)).unwrap();
+        assert_eq!(frame_transform(&reopened, 13), (1., 0., 0., 1., 10., -5.));
+    }
+
+    #[test]
+    fn option_drag_duplicates_right_above_each_source_and_selects_the_copies() {
+        let dir = saved_project_with("canvas-move-duplicate", &[&shape_document()]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        session
+            .select(Selection::new([sid(11), sid(14)], Some(sid(14))))
+            .unwrap();
+        let before = session
+            .document()
+            .unwrap()
+            .model()
+            .children_in_order(sid(10));
+        assert!(drag(&mut session, 7, Some(14), (20., 0.), false, true));
+        let model = session.document().unwrap().model();
+        let after = model.children_in_order(sid(10));
+        assert_eq!(after.len(), before.len() + 2);
+        let copies = session.view().selection().ids().to_vec();
+        assert_eq!(copies.len(), 2);
+        // 복제본은 각 원본 바로 위(다음 형제 앞)에 있고, 원본은 그대로입니다.
+        let at = |id: StableId| after.iter().position(|&n| n == id).unwrap();
+        assert_eq!(at(copies[0]), at(sid(11)) + 1);
+        assert_eq!(at(copies[1]), at(sid(14)) + 1);
+        assert_eq!(frame_transform(&session, 11), (2., 0., 0., 2., 10., 10.));
+        assert_eq!(shape_translation(&session, sid(14)), (300., 200.));
+        let NodePayload::Frame(copy) = model.payload(copies[0]).unwrap() else {
+            panic!("Frame copy");
+        };
+        assert_eq!(copy.transform.components(), (2., 0., 0., 2., 30., 10.));
+        assert_eq!(model.children_in_order(copies[0]).len(), 1);
+        assert_eq!(shape_translation(&session, copies[1]), (320., 200.));
+        // 복제·이동·선택은 Undo 한 번입니다.
+        assert!(session.undo().unwrap());
+        let model = session.document().unwrap().model();
+        assert_eq!(model.children_in_order(sid(10)), before);
+        assert_eq!(session.view().selection().ids(), [sid(11), sid(14)]);
+        // root는 복제할 수 없습니다.
+        session
+            .select(Selection::new([sid(10)], Some(sid(10))))
+            .unwrap();
+        assert!(!drag(&mut session, 8, Some(10), (5., 0.), false, true));
     }
 
     #[test]

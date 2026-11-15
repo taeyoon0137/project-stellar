@@ -59,6 +59,21 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
    셸은 이 값으로 외곽선·핸들·크기 라벨만 그립니다. runtime `WindowSessionSummary`에 `canvas_selection`을 더합니다.
 4. 선택은 기존과 같이 그 창 history의 선택 항목으로 기록하고 문서·저장 상태는 바꾸지 않습니다.
 
+### UX.3.7 — 이동·복제·화살표
+
+1. `stellar_window_canvas_move(handle, session, view, anchor, dx, dy, flags, out_request)`: 지금 선택에서 다른 선택의
+   자손을 뺀 node 전부를 한 transaction(Undo 한 번)으로 옮깁니다. Frame·Rectangle·Ellipse·Line·Polygon·Text·Image·
+   배치한 인스턴스가 대상입니다. Frame은 `transform`, 그 밖의 node는 마지막 Transform modifier(없으면 맨 앞에 새로)를
+   바꿉니다.
+2. 기본 단위는 world이며 코어가 각 node의 부모 행 world 선형부 역변환으로 부모 공간 이동량을 구합니다.
+   `STELLAR_MOVE_PARENT_SPACE`는 부모 공간 단위(화살표 1px, Shift+화살표 10px)입니다. 화살표 단위는 XII.10.2 ADR이
+   정해지면 그 값을 따릅니다.
+3. `anchor`는 드래그를 시작한 행입니다. 지금 선택이 그 행을 덮지 않으면(Shift로 뺀 node를 끌면) 거부합니다. document
+   thread가 요청을 차례로 처리하므로 누를 때 보낸 선택 요청이 먼저 적용됩니다.
+4. `STELLAR_MOVE_DUPLICATE`(Option 드래그)는 각 node의 복제본을 원본 바로 위(다음 형제 앞) 순서로 만들고 복제본을
+   옮긴 뒤 복제본을 선택합니다. 복제·이동·선택이 history 항목 하나입니다. root Frame은 복제하지 않습니다.
+5. 셸은 이 경로만 쓰고 `stellar_window_session_move_frame`(단일 Frame·Shape 이동)을 더는 부르지 않습니다.
+
 ## Alternatives
 
 - 코어에 기본 색 표를 두고 셸이 덮어쓰기: D7("코어 하드코딩 없음")에 어긋나 채택하지 않았습니다.

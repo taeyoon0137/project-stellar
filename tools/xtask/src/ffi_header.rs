@@ -473,6 +473,11 @@ StellarStatus stellar_window_layer_rename(uint64_t handle, uint64_t session, con
 StellarStatus stellar_window_canvas_pick(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t *leaf, uint32_t flags, uint64_t *out_request);
 /* world 영역의 두 꼭짓점. root의 직계 자식 가운데 겹치는(CONTAIN이면 완전히 포함된) node를 고릅니다. */
 StellarStatus stellar_window_canvas_pick_area(uint64_t handle, uint64_t session, const uint8_t view[16], float x0, float y0, float x1, float y1, uint32_t flags, uint64_t *out_request);
+#define STELLAR_MOVE_DUPLICATE 1
+#define STELLAR_MOVE_PARENT_SPACE 2
+/* 선택 전부를 (dx, dy)만큼 옮깁니다(기본 world, PARENT_SPACE는 부모 공간). anchor는 드래그를 시작한 행(키 이동은 NULL).
+ * DUPLICATE는 복제본을 원본 바로 위에 만들어 옮기고 선택합니다. 한 호출이 Undo 한 번입니다. */
+StellarStatus stellar_window_canvas_move(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t *anchor, float dx, float dy, uint32_t flags, uint64_t *out_request);
 #define STELLAR_CANVAS_ITEM_MOVABLE 1
 #define STELLAR_CANVAS_ITEM_RESIZABLE 2
 #define STELLAR_CANVAS_ITEM_RADIUS 4

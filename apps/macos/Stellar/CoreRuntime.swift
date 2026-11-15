@@ -360,13 +360,19 @@ enum CoreRuntime {
         return (Array(items.prefix(count)), revision)
     }
 
-    static func moveFrame(handle: UInt64, session: UInt64, view: UUID, node: UUID,
-                          revision: UInt64, delta: CGVector) -> Result<UInt64, CoreRuntimeCallError> {
+    /// 선택 전부를 `delta`만큼 옮깁니다(ADR-0071). anchor는 드래그를 시작한 행(키 이동은 nil)입니다.
+    static func canvasMove(handle: UInt64, session: UInt64, view: UUID, anchor: UUID?, delta: CGVector,
+                           flags: UInt32) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
         let status = withUnsafeBytes(of: view.uuid) { viewBytes in
-            withUnsafeBytes(of: node.uuid) { nodeBytes in
-                stellar_window_session_move_frame(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
-                    nodeBytes.bindMemory(to: UInt8.self).baseAddress, revision, Float(delta.dx), Float(delta.dy), &request)
+            let viewPointer = viewBytes.bindMemory(to: UInt8.self).baseAddress
+            guard let anchor else {
+                return stellar_window_canvas_move(handle, session, viewPointer, nil, Float(delta.dx), Float(delta.dy),
+                                                  flags, &request)
+            }
+            return withUnsafeBytes(of: anchor.uuid) { anchorBytes in
+                stellar_window_canvas_move(handle, session, viewPointer, anchorBytes.bindMemory(to: UInt8.self).baseAddress,
+                                           Float(delta.dx), Float(delta.dy), flags, &request)
             }
         }
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }

@@ -550,6 +550,25 @@ impl ProjectWindowSession {
             .map_err(WindowSessionEditError::History)
     }
 
+    /// transaction과 새 선택을 한 history 항목으로 기록합니다(복제 드래그처럼 여러 node를 만들고 고를 때).
+    pub(crate) fn apply_and_select(
+        &mut self,
+        transaction: &CommandTransaction,
+        selection: Selection,
+    ) -> Result<ChangeSet, WindowSessionEditError> {
+        let document = self
+            .document
+            .as_mut()
+            .ok_or(WindowSessionEditError::NoDocument)?;
+        self.history
+            .record_document_and_select(
+                &mut document.state,
+                transaction,
+                &SetSelection::new(selection),
+            )
+            .map_err(WindowSessionEditError::History)
+    }
+
     /// 이 창 history의 마지막 항목을 되돌립니다. 되돌릴 항목이 없거나 작업 문서가 없으면 `Ok(false)`.
     pub fn undo(&mut self) -> Result<bool, WindowSessionEditError> {
         let Some(document) = self.document.as_mut() else {

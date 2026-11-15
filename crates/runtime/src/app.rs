@@ -145,7 +145,9 @@ pub mod sidebar;
 /// 캔버스의 미확정 입력과 한 번의 본문 확정.
 pub mod text_input;
 pub use frame_move::{FrameValue, SelectedFrame, SelectedNode};
-pub use canvas_gesture::{CanvasNodeKind, CanvasPick, CanvasSelectionItem, RadiusHandles};
+pub use canvas_gesture::{
+    CanvasEdit, CanvasNodeKind, CanvasPick, CanvasSelectionItem, RadiusHandles,
+};
 pub use frame_insert::ShapePaint;
 pub use node_delete::{SelectionEdit, SelectionEditTarget};
 pub use stellar_document::model::SiblingOrder;

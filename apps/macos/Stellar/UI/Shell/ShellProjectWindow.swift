@@ -124,12 +124,6 @@ final class ShellWindowSessionHandle {
         return track { done in pump.insertFrame(session: session, parent: parent, rect: rect, completion: done) } completion: { completion($0) }
     }
 
-    func moveFrame(_ hit: CanvasFrameHit, delta: CGVector, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
-        guard !isClosed, !isClosing else { return false }
-        return track { done in
-            pump.moveFrame(session: session, hit: hit, delta: delta, completion: done)
-        } completion: { completion($0) }
-    }
 
     /// 이 창 session에 코어 명령 코드를 보냅니다(XII.6.4). 닫혔거나 요청을 받지 않으면 false입니다.
     @discardableResult
@@ -630,6 +624,10 @@ final class ShellProjectWindow {
             if event.keyCode == 36, event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
                let self, let hit = self.canvasHost.canvasView.textHit() {
                 return self.editCanvasText(hit, at: nil, canvas: self.canvasHost.canvasView)
+            }
+            // 화살표는 선택을 1px, Shift+화살표는 10px 옮깁니다(부모 공간, UX 명세 5.4).
+            if let self, let delta = Self.arrowNudge(event), !self.canvasHost.canvasView.selectionBoxes.isEmpty {
+                return self.moveSelection(anchor: nil, delta: delta, flags: UInt32(STELLAR_MOVE_PARENT_SPACE))
             }
             guard let router, let tool = CanvasToolShortcut.tool(for: event) else { return false }
             return router.dispatch(tool.command)

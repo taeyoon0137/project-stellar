@@ -7,8 +7,8 @@ use stellar_core_types::ids::StableId;
 use stellar_core_types::revision::DocumentRevision;
 use stellar_core_types::value::{FiniteF32, Vec2};
 use stellar_runtime::app::{
-    CanvasNodeKind, CanvasPick, CanvasSelectionItem, RadiusHandles, ShapeKind, ShapePaint,
-    WindowSessionHandle,
+    CanvasEdit, CanvasNodeKind, CanvasPick, CanvasSelectionItem, RadiusHandles, ShapeKind,
+    ShapePaint, WindowSessionHandle,
 };
 
 use crate::canvas::StellarCanvasColor;
@@ -253,6 +253,78 @@ pub unsafe extern "C" fn stellar_window_canvas_pick_area(
             session,
             StableId::from_bytes(unsafe { *view }),
             pick,
+            out_request,
+        )
+    })
+}
+
+/// 이동 flag: Option 드래그(복제본을 원본 바로 위에 만들어 옮기고 선택).
+pub const MOVE_DUPLICATE: u32 = 1;
+/// 이동 flag: delta가 각 node의 부모 공간 단위(화살표 키).
+pub const MOVE_PARENT_SPACE: u32 = 2;
+
+fn submit_edit(
+    handle: u64,
+    session: u64,
+    view: StableId,
+    edit: CanvasEdit,
+    out_request: *mut u64,
+) -> StellarStatus {
+    let Ok(mut reg) = registry().lock() else {
+        return StellarStatus::Internal;
+    };
+    let Some(rt) = reg.live.get_mut(&handle) else {
+        return StellarStatus::InvalidHandle;
+    };
+    let result = match rt.app() {
+        Ok(app) => app.canvas_edit(WindowSessionHandle(session), view, edit),
+        Err(status) => return status,
+    };
+    unsafe { rt.finish_request(result, out_request) }
+}
+
+/// 선택한 node 전부를 `(dx, dy)`만큼 옮깁니다(UX 명세 5.4). `anchor`는 드래그를 시작한 행(키 이동은 null)이며,
+/// 지금 선택이 그 행을 덮지 않으면 옮기지 않습니다. 기본 단위는 world이고 `STELLAR_MOVE_PARENT_SPACE`면 부모 공간,
+/// `STELLAR_MOVE_DUPLICATE`면 복제본을 옮기고 고릅니다. 한 호출이 Undo 한 번입니다.
+///
+/// # Safety
+/// `view`는 16 byte, `anchor`는 null 또는 16 byte를 읽을 수 있어야 하고 `out_request`는 null 또는 쓰기 가능해야 합니다.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn stellar_window_canvas_move(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    anchor: *const [u8; 16],
+    dx: f32,
+    dy: f32,
+    flags: u32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let Ok(delta) = Vec2::new(dx, dy) else {
+            return StellarStatus::InvalidArgument;
+        };
+        if flags & !(MOVE_DUPLICATE | MOVE_PARENT_SPACE) != 0 {
+            return StellarStatus::InvalidArgument;
+        }
+        let edit = CanvasEdit::Move {
+            anchor: (!anchor.is_null()).then(|| StableId::from_bytes(unsafe { *anchor })),
+            delta,
+            parent_space: flags & MOVE_PARENT_SPACE != 0,
+            duplicate: flags & MOVE_DUPLICATE != 0,
+        };
+        submit_edit(
+            handle,
+            session,
+            StableId::from_bytes(unsafe { *view }),
+            edit,
             out_request,
         )
     })

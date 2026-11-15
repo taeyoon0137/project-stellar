@@ -186,10 +186,10 @@ final class ShellRuntimeEventPump {
                                             flags: flags), completion)
     }
 
-    func moveFrame(session: UInt64, hit: CanvasFrameHit, delta: CGVector,
-                   completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
-        register(CoreRuntime.moveFrame(handle: runtimeHandle, session: session, view: hit.viewID,
-                                       node: hit.id, revision: hit.revision, delta: delta), completion)
+    func canvasMove(session: UInt64, view: UUID, anchor: UUID?, delta: CGVector, flags: UInt32,
+                    completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.canvasMove(handle: runtimeHandle, session: session, view: view, anchor: anchor,
+                                        delta: delta, flags: flags), completion)
     }
 
     func renameLayer(session: UInt64, view: UUID, node: UUID, revision: UInt64, name: String,

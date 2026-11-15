@@ -26,6 +26,32 @@ extension ShellProjectWindow {
         }
     }
 
+    /// 화살표 키의 이동량(부모 공간 px). Shift는 10px입니다. ⌘·Option·Control이 있으면 nil입니다.
+    static func arrowNudge(_ event: NSEvent) -> CGVector? {
+        guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return nil }
+        let step: CGFloat = event.modifierFlags.contains(.shift) ? 10 : 1
+        switch event.keyCode {
+        case 123: return CGVector(dx: -step, dy: 0)
+        case 124: return CGVector(dx: step, dy: 0)
+        case 125: return CGVector(dx: 0, dy: step)
+        case 126: return CGVector(dx: 0, dy: -step)
+        default: return nil
+        }
+    }
+
+    /// 선택 전부를 옮깁니다(ADR-0071). 한 번이 Undo 한 번입니다.
+    @discardableResult
+    func moveSelection(anchor: UUID?, delta: CGVector, flags: UInt32) -> Bool {
+        guard let project = dataSource.session, let session = windowController.windowSession,
+              !session.isClosing, !session.isClosed, let view = session.viewInfo, view.has_view == 1 else { return false }
+        return session.track({ project.pump.canvasMove(session: session.session, view: UUID(uuid: view.active_view),
+                                                       anchor: anchor, delta: delta, flags: flags, completion: $0) }) {
+            [weak self, weak session] _ in
+            guard let self, self.windowController.windowSession === session else { return }
+            self.refreshSessionCommands()
+        }
+    }
+
     /// 그린 행에서 고른 선택을 코어로 보냅니다(ADR-0071). leaf가 nil이면 모든 Frame 밖입니다.
     @discardableResult
     func pickCanvas(view: UUID, leaf: UUID?, flags: UInt32) -> Bool {
@@ -226,7 +252,7 @@ extension ShellProjectWindow {
                 if event.modifierFlags.contains(.command) { flags |= UInt32(STELLAR_PICK_DEEP) }
                 if event.clickCount >= 2 { flags |= UInt32(STELLAR_PICK_ENTER) }
                 guard self.pickCanvas(view: view, leaf: hit.id, flags: flags) else { return false }
-                if hit.isText || hit.isImage { return true }
+                // Text·Image를 포함한 모든 node를 끌어 옮깁니다. 무엇을 옮길지는 놓을 때 코어 선택이 정합니다.
                 self.frameDrag = CanvasFrameDrag(hit: hit, start: point, session: session.session,
                                                  size: canvas.bounds.size, viewport: viewport, tool: .move)
                 return true
@@ -242,7 +268,21 @@ extension ShellProjectWindow {
                     drag.moved = true
                     self.frameDrag = drag
                 }
-                canvas.setFrameDragPreview(id: drag.hit.id, offset: offset)
+                let moving = canvas.selectionBoxes.filter { $0.has(STELLAR_CANVAS_ITEM_MOVABLE) }
+                if event.modifierFlags.contains(.option) {
+                    // Option: 원본은 그대로 두고 복제본 자리를 윤곽으로 보입니다.
+                    canvas.setFrameDragPreview(ids: [], offset: .zero)
+                    let ghost = CGMutablePath()
+                    for box in moving {
+                        var placement = box.world.concatenating(canvas.worldToView)
+                            .concatenating(CGAffineTransform(translationX: offset.dx, y: offset.dy))
+                        ghost.addPath(CGPath(rect: box.rect, transform: &placement))
+                    }
+                    canvas.insertionOutline = ghost
+                } else {
+                    canvas.insertionOutline = nil
+                    canvas.setFrameDragPreview(ids: moving.isEmpty ? [drag.hit.id] : moving.map { $0.id }, offset: offset)
+                }
                 return true
             case .leftMouseUp:
                 guard let drag = self.frameDrag else { return false }
@@ -252,18 +292,13 @@ extension ShellProjectWindow {
                       session.session == drag.session, let camera = session.viewInfo,
                       camera.center_x == drag.viewport.center_x, camera.center_y == drag.viewport.center_y,
                       camera.zoom == drag.viewport.zoom else { return true }
-                let parentToView = drag.hit.parentToWorld.concatenating(drag.hit.worldToView)
-                let determinant = parentToView.a * parentToView.d - parentToView.b * parentToView.c
-                guard determinant.isFinite, determinant != 0 else { return true }
-                // 벡터에는 역변환의 translation이 들어가지 않습니다.
-                let inverse = parentToView.inverted()
+                // 화면 이동량을 world 벡터로 바꿔 보냅니다(벡터라 역변환의 translation은 쓰지 않음). 부모 공간 변환은 코어가 합니다.
+                let inverse = drag.hit.worldToView.inverted()
                 let dx = point.x - drag.start.x, dy = point.y - drag.start.y
-                let delta = CGVector(dx: inverse.a * dx + inverse.c * dy,
-                                     dy: inverse.b * dx + inverse.d * dy)
+                let delta = CGVector(dx: inverse.a * dx + inverse.c * dy, dy: inverse.b * dx + inverse.d * dy)
                 guard delta.dx.isFinite, delta.dy.isFinite, delta != .zero else { return true }
-                _ = session.moveFrame(drag.hit, delta: delta) { [weak self] _ in
-                    self?.refreshSessionCommands()
-                }
+                let flags = event.modifierFlags.contains(.option) ? UInt32(STELLAR_MOVE_DUPLICATE) : 0
+                self.moveSelection(anchor: drag.hit.id, delta: delta, flags: flags)
                 return true
             default: return false
             }
