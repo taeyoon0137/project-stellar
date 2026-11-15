@@ -85,4 +85,3 @@
   컴파일되지 않습니다(`cfg(target_os = "macos")`).
 - 상태 변수 이름의 Swift 식별자 변환은 ASCII 정리·예약어 접미사 수준입니다(한글 이름은 `state`, `state_2` …). escape
   규칙 고정은 XXII.5.1 범위입니다.
-- `check-core` 전체 실행은 마지막 행(XXII.4.2)에서 다시 합니다.

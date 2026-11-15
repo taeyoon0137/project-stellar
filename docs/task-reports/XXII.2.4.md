@@ -85,4 +85,3 @@
 - 정적 검사 규칙은 생성기가 쓰는 element·role 집합 중심이라 WAI-ARIA 전체를 검사하지 않습니다(예: `aria-describedby`
   내용, 색 대비, focus 순서의 시각 일치).
 - 이름 계산은 aria-labelledby·aria-label·alt·내용만 보는 단순화입니다(CSS 생성 내용·`title` 미포함).
-- `check-core` 전체 실행은 마지막 행(XXII.4.2)에서 다시 합니다(XXII.1.1 보고서의 부하 관련 실패 참고).
