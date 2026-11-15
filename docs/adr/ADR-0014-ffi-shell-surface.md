@@ -115,11 +115,30 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
    (`AppRuntime::SHUTDOWN_TIMEOUT`)까지만 기다리고, 넘으면 아직 시작하지 않은 요청을 버리고 thread를
    분리한 뒤 반환합니다(2026-11-14 보완, 보안 리뷰 FR-1: 멈춘 파일 시스템 호출이 앱 종료를 막지 않게).
    시그니처와 반환 상태는 그대로입니다.
-9. **New/Clone Project는 이 결정에 없습니다**: `create_project`·`clone_and_open`(IV.4.7·IV.6.4)은
-   `stellar-git-porcelain`의 `GitRunner`·`GitVersion`을 인자로 받는데, crate 정책은
-   `stellar-runtime → stellar-git-porcelain`을 허용하지 않고 `stellar-project`도 runner를 만드는 공개
-   API가 없습니다. 정책 변경(ADR-0013 갱신) 또는 project의 시스템 Git facade가 생기면 같은 요청·event
-   규칙으로 추가합니다.
+9. **New/Clone Project는 이 절에 없습니다**: 처음 기록할 때는 crate 정책이 `stellar-runtime →
+   stellar-git-porcelain`을 허용하지 않아 `create_project`·`clone_and_open`(IV.4.7·IV.6.4)에 runner를 넘길 수
+   없었습니다. ADR-0013이 XIV.5.5를 위해 이 직접 의존을 허용한 뒤, 새 프로젝트 생성은 아래 'XII.6.1 — 새 프로젝트
+   생성'에서 같은 요청·event 규칙으로 추가합니다(2026-11-15 정정).
+
+### XII.6.1 — 새 프로젝트 생성
+
+시작 창의 New Project…가 부르는 코어 경계입니다(2026-11-15 검토에서 소급 기록).
+
+1. **요청**: `stellar_project_create(handle, path ptr+len, *out_request)`. path 규칙은 `stellar_project_open`과 같습니다
+   (절대 경로, UTF-8, NUL 없음, 위반은 event 없이 `INVALID_ARGUMENT`·`INVALID_UTF8`·`NULL_POINTER`와 `out_request = 0`).
+   마지막 경로 요소가 새 폴더 이름이자 프로젝트 이름입니다. 이미 있는 폴더는 만들지 않습니다.
+2. **실행 위치**: document thread가 아니라 전용 worker thread(`stellar-project-create`)에서 실행합니다. 시스템 Git을
+   찾아 버전을 확인하고(환경 변수는 HOME·XDG_CONFIG_HOME·GIT_CONFIG_*·PATH·Git 작성자·EMAIL만 넘김, 명령당 30초),
+   `stellar-project`의 `create_editable_project`로 폴더 → scaffold → 첫 문서 generation 1 → `git init` → add → 첫 commit을
+   진행합니다. 첫 문서의 텍스트 원본 전환은 V.10.7 범위입니다.
+3. **완료 event**: `STELLAR_EVENT_PROJECT_CREATED`(`0x010d`: request u64, git_state u32). git_state는 0(첫 commit 완료),
+   1(Git 사용자 정보 없음), 2(add 실패), 3(commit 실패)입니다. 1–3은 폴더와 첫 generation을 남기고 Git 초기화만 미완료인
+   상태라, 셸은 같은 path로 `stellar_project_open`을 부르고 사용자에게 commit을 안내합니다. 생성 자체가 실패하면
+   (폴더 생성·scaffold·저장·`git init` 실패, 시스템 Git 없음) 만든 폴더를 롤백하고 `REQUEST_FAILED` +
+   `STELLAR_FAILURE_PROJECT_CREATE_FAILED`(27)와 사유 문구를 보냅니다.
+4. **동시 생성**: 한 runtime에서 생성은 한 번에 하나만 실행합니다. 앞 생성이 끝나기 전의 요청도 접수해 request id를
+   돌려준 뒤 `REQUEST_FAILED` + `PROJECT_CREATE_FAILED`와 '다른 새 프로젝트를 만드는 중' 문구로 끝냅니다.
+   `STELLAR_QUEUE_FULL`은 완료 event 상한(결정 7)에만 씁니다.
 
 ### 로컬 개발 — 선택 subtree Copy·Paste
 

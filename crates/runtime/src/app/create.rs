@@ -12,6 +12,9 @@ use stellar_project::create::{
     create_editable_project, IncompleteReason, ProjectCreateRequest, ProjectCreated,
 };
 
+/// 다른 새 프로젝트 생성이 끝나기 전에 들어온 생성 요청의 실패 문구.
+const CREATE_BUSY_MESSAGE: &str = "다른 새 프로젝트를 만드는 중입니다. 끝난 뒤 다시 시도하세요";
+
 pub(super) fn project_git(
 ) -> Result<(GitRunner, stellar_git_porcelain::version::GitVersion), String> {
     let git = discover_git(&GitDiscoveryConfig::default()).ok_or("시스템 Git을 찾지 못했습니다")?;
@@ -197,11 +200,16 @@ impl AppRuntime {
             folder_name: name.into(),
             project_name: name.into(),
         };
-        // 느린 Git 명령이 반복 요청 수만큼 worker를 만들지 않도록 한 번에 한 생성만 접수합니다.
+        // 느린 Git 명령이 반복 요청 수만큼 worker를 만들지 않도록 한 번에 한 생성만 실행합니다.
+        // 겹친 요청은 접수한 뒤 이유를 담은 생성 실패 event로 끝냅니다(대기열 포화와 구분).
         let request = self.reserve_request()?;
         if self.shared.creating.swap(true, Ordering::AcqRel) {
-            self.shared.release_one();
-            return Err(RequestError::QueueFull);
+            self.shared.outbox().push_back(RuntimeEvent::RequestFailed {
+                request,
+                failure: RequestFailure::ProjectCreateFailed,
+                message: CREATE_BUSY_MESSAGE.into(),
+            });
+            return Ok(request);
         }
         let shared = Arc::clone(&self.shared);
         if std::thread::Builder::new()
