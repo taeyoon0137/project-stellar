@@ -672,12 +672,11 @@ final class ShellProjectWindow {
         inspectorSource.refresh(selected)
     }
 
-    /// 창 session 정보로 Undo·Redo·Save Now 활성 상태를 다시 계산합니다.
     var subtreePasteboard: NSPasteboard = .general
-    var clipboardKeyWindow: () -> NSWindow? = { NSApp.keyWindow }
     private static let subtreePasteboardType = NSPasteboard.PasteboardType("xyz.taeyoon.stellar.node-subtree.v1")
     let clipboardQueue = DispatchQueue(label: "xyz.taeyoon.stellar.clipboard", qos: .userInitiated)
 
+    /// 창 session 정보로 Undo·Redo·Save Now 활성 상태를 다시 계산합니다.
     func refreshSessionCommands() {
         let session = windowController.windowSession
         canvasHost.canvasView.frameSession = session?.session
@@ -719,20 +718,20 @@ final class ShellProjectWindow {
     func performSessionCommand(_ command: ShellCommand) -> Bool {
         if command == .zoomToFit { return fitRootFrame() }
         if command == .copy {
-            guard !router.isTextEditing, let owner = window, clipboardKeyWindow() === owner,
+            guard !router.isTextEditing, let owner = window,
                   let session = windowController.windowSession, !session.isClosing, !session.isClosed,
                   session.pendingCommandCount == 0, let target = displayedSelection,
                   target.session == session.session, target.selection_count == 1,
                   let runtime = dataSource.session?.pump.runtimeHandle else { return false }
             let boardID = ObjectIdentifier(subtreePasteboard)
             let changeCount = subtreePasteboard.changeCount
+            // 코어가 복사 시점에 표시한 선택을 확인합니다. 전달 시점에는 pasteboard·창·session만 확인해
+            // 그사이 선택이 바뀌어도 사용자가 복사한 내용을 버리지 않습니다.
             clipboardQueue.async { [weak self, weak session, weak owner] in
                 let data = CoreRuntime.copySubtree(handle: runtime, target: target)
                 DispatchQueue.main.async { [weak self, weak session, weak owner] in
-                    guard let self, let session, let owner, self.window === owner, self.clipboardKeyWindow() === owner,
-                          !self.router.isTextEditing, self.windowController.windowSession === session,
-                          !session.isClosed, !session.isClosing, session.pendingCommandCount == 0,
-                          target.matches(self.displayedSelection), target.matches(session.selectionTarget),
+                    guard let self, let session, let owner, self.window === owner,
+                          self.windowController.windowSession === session, !session.isClosed,
                           ObjectIdentifier(self.subtreePasteboard) == boardID, self.subtreePasteboard.changeCount == changeCount, let data else { return }
                     let item = NSPasteboardItem()
                     item.setData(data, forType: Self.subtreePasteboardType)
@@ -743,7 +742,7 @@ final class ShellProjectWindow {
             return true
         }
         if command == .paste {
-            guard !router.isTextEditing, let owner = window, clipboardKeyWindow() === owner,
+            guard !router.isTextEditing,
                   let session = windowController.windowSession, let target = displayedSelection,
                   target.session == session.session, session.pendingCommandCount == 0,
                   let data = subtreePasteboard.data(forType: Self.subtreePasteboardType),

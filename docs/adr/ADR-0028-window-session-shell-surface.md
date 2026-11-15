@@ -365,3 +365,15 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
   `stellar_window_session_duplicate_selection`과 runtime `delete_selected_nodes`·`duplicate_selected_node`는
   셸 호출자가 없고 대상 ABI와 기능이 겹쳐 삭제했습니다. 경쟁 테스트는 `edit_selection`으로 옮겼습니다.
 - 단정 없이 시간을 출력만 하던 `measure_layer_reorder`(commands)를 삭제했습니다.
+
+### 선택 Copy·Paste
+
+- Copy·Paste ABI는 `stellar_window_copy_selection`·`stellar_window_paste_selection` 둘이며 위 선택 대상을 씁니다.
+  규칙은 ADR-0014 "선택 subtree Copy·Paste"에 있습니다. Paste의 목적지는 실행 시점의 선택에서 정하며 명시 부모
+  인자는 없습니다.
+- 삭제한 레거시 ABI: View·revision만 받던 `stellar_window_session_copy_subtree`와 명시 부모를 받던
+  `stellar_window_session_paste_subtree`, runtime `copy_selected_subtree`·`paste_node_subtree`. 셸 호출자가 없고
+  선택 대상 ABI와 겹쳤으며 ADR이 레거시만 설명하고 있었습니다.
+- 셸은 Copy 결과 전달 때 pasteboard·창·session만 다시 확인합니다. 이전에는 선택·key 창·텍스트 포커스까지
+  다시 확인해, 복사한 뒤 선택이 바뀌면 결과를 조용히 버렸습니다. 검사만을 위해 둔 key 창 주입 seam과 그
+  검사 블록도 지웠습니다.

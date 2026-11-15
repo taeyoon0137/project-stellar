@@ -222,10 +222,6 @@ enum ShellCanvasMoveCheck {
         defer { board.releaseGlobally() }
         reopened.subtreePasteboard = board
         let clipboardDepth = deleteSession.info?.undo_depth
-        // The CLI fixture runs with background windows. Supply the same active-window
-        // identity that AppKit's keyWindow supplies during interactive use.
-        weak var keyWindow = reopened.window
-        reopened.clipboardKeyWindow = { keyWindow }
         guard reopened.router.dispatch(.copy) else { return fail("선택 복사 요청") }
         let clipboardType = NSPasteboard.PasteboardType("xyz.taeyoon.stellar.node-subtree.v1")
         let deadline = Date().addingTimeInterval(5)
@@ -283,41 +279,6 @@ enum ShellCanvasMoveCheck {
               Int32(bitPattern: failure) == STELLAR_FAILURE_UNKNOWN_VIEW,
               changed.matches(deleteSession.selectionTarget), action(reopened, .undo), shown.matches(deleteSession.selectionTarget)
         else { return fail("같은 revision에서 바뀐 선택으로 Copy/Paste가 적용됨") }
-
-        // Let the worker capture A, then publish B without pumping the queued main-thread
-        // pasteboard delivery. This covers a selection change *after* a successful capture.
-        guard reopened.performSessionCommand(.copy) else { return fail("선택 전환 전 Copy") }
-        reopened.clipboardQueue.sync {}
-        let selecting = CoreRuntime.select(handle: pump.runtimeHandle, session: deleteSession.session, ids: [sibling])
-        guard case .success = selecting else { return fail("다른 원본 선택") }
-        let timeout = Date().addingTimeInterval(3)
-        while shown.matches(deleteSession.selectionTarget) && Date() < timeout { Thread.sleep(forTimeInterval: 0.005) }
-        guard let current = deleteSession.selectionTarget, current.revision == shown.revision,
-              current.selection_count == shown.selection_count, current.history_sequence != shown.history_sequence,
-              finishCopy(), board.changeCount == boardVersion, action(reopened, .undo), shown.matches(deleteSession.selectionTarget)
-        else { return fail("복사 결과 전달 전 바뀐 선택에 pasteboard 쓰기") }
-
-        // Keep main busy until copy has captured the bytes. Its queued delivery must
-        // recheck the active window, independently of the worker's selection check.
-        guard reopened.performSessionCommand(.copy) else { return fail("창 전환 전 Copy") }
-        reopened.clipboardQueue.sync {}
-        keyWindow = b.window
-        guard !reopened.performSessionCommand(.paste),
-              finishCopy(), board.changeCount == boardVersion, board.data(forType: clipboardType) == copied,
-              shown.matches(deleteSession.selectionTarget)
-        else { return fail("다른 key 창에서 늦은 Copy/Paste 거부") }
-
-        keyWindow = reopened.window
-        guard reopened.performSessionCommand(.copy) else { return fail("텍스트 포커스 전 Copy") }
-        reopened.clipboardQueue.sync {}
-        let editor = NSTextView(frame: .init(x: 0, y: 0, width: 100, height: 32))
-        reopened.window?.contentView?.addSubview(editor)
-        guard reopened.window?.makeFirstResponder(editor) == true, reopened.router.isTextEditing,
-              !reopened.router.responds(to: #selector(NSText.copy(_:))), !reopened.router.responds(to: #selector(NSText.paste(_:))),
-              !reopened.performSessionCommand(.paste), finishCopy(), board.changeCount == boardVersion
-        else { return fail("텍스트 응답자에서 지연된 객체 복사·붙여넣기") }
-        editor.removeFromSuperview()
-        reopened.window?.makeFirstResponder(deleteCanvas)
 
         // A를 표시한 채 같은 revision에서 B를 선택한 다음 페이지를 읽습니다.
         // B의 행을 A의 history에서 편집할 수 없어야 합니다.
@@ -405,7 +366,7 @@ enum ShellCanvasMoveCheck {
         guard pump.waitForPendingRequests(timeout: 10), let deleted = open(path), deleted !== reopened,
               deleted.windowController.windowSession?.info?.generation == deletedGeneration,
               at(30, in: deleted.canvasHost.canvasView) != node else { return fail("삭제 저장 재열기") }
-        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Copy/Paste after source deletion, 4 KiB retry, stale clipboard selection, key-window identity and text focus, Duplicate history, Delete/Backspace and Layers deletion history/save/reopen, stale same-count menu and Layers targets, cross-history page rejection and Undo recovery")
+        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Copy/Paste after source deletion, 4 KiB retry, stale clipboard selection, Duplicate history, Delete/Backspace and Layers deletion history/save/reopen, stale same-count menu and Layers targets, cross-history page rejection and Undo recovery")
         return true
     }
 }

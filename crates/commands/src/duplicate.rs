@@ -334,7 +334,6 @@ mod tests {
             model.insert_node(unrelated).unwrap();
         }
         let clock = ManualClock::new(100);
-        let started = std::time::Instant::now();
         for seed in 0..128 {
             let command = DuplicateSubtree::plan(
                 &model,
@@ -349,10 +348,6 @@ mod tests {
             assert_eq!(command.remap[0].0, sid(13));
             assert_ne!(command.copy_root(), Some(sid(13)));
         }
-        eprintln!(
-            "128 small-subtree plans in 4,000 unrelated nodes: {:?}",
-            started.elapsed()
-        );
     }
 
     fn snapshot(state: &DocumentState) -> String {

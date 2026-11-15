@@ -366,14 +366,14 @@ uint32_t stellar_window_layer_order_flags(uint64_t handle, const StellarSelectio
 StellarStatus stellar_window_selection_target(uint64_t handle, uint64_t session, StellarSelectionTarget *out);
 /* NULL/0은 위 target의 선택 전체, ids가 있으면 순서와 무관하게 실제 선택 전체와 일치해야 합니다. */
 StellarStatus stellar_window_edit_selection(uint64_t handle, const StellarSelectionTarget *target, uint32_t action, const uint8_t *ids, size_t count, uint64_t *out_request);
-/* Clipboard subtree data uses caller-owned byte buffers. */
 /* Place selected, decoded PNG bytes by SHA-256. Read validated image content on a worker. */
 StellarStatus stellar_window_place_png(uint64_t handle, const StellarSelectionTarget *target, const uint8_t parent[16], float x, float y, const uint8_t *path, size_t path_len, const uint8_t digest[32], uint64_t *out_request);
 StellarStatus stellar_window_canvas_png(uint64_t handle, uint64_t session, uint64_t revision, uint32_t row, const uint8_t node[16], uint8_t digest[32], uint8_t *buf, size_t capacity, size_t *out_len);
+/* 셸 worker 전용 Copy: 표시한 단일 선택 subtree를 caller buffer에 씁니다(최대 16 MiB). 복사할 수 없으면 NO_ERROR와
+ * 길이 0, 출력 부족은 BUFFER_TOO_SMALL과 필요한 길이입니다. Paste: 같은 문서의 subtree bytes(1 byte~16 MiB)를
+ * 실행 시점의 선택에서 정한 목적지에 넣습니다. 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED입니다. */
 StellarStatus stellar_window_copy_selection(uint64_t handle, const StellarSelectionTarget *target, uint8_t *bytes, size_t capacity, size_t *out_len);
 StellarStatus stellar_window_paste_selection(uint64_t handle, const StellarSelectionTarget *target, const uint8_t *bytes, size_t len, uint64_t *out_request);
-StellarStatus stellar_window_session_copy_subtree(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, uint8_t *bytes, size_t capacity, size_t *out_len);
-StellarStatus stellar_window_session_paste_subtree(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, const uint8_t *bytes, size_t len, uint64_t *out_request);
 /* 화면에 표시한 View·revision에서 선택한 Frame을 부모 좌표계의 delta만큼 이동합니다. */
 StellarStatus stellar_window_session_move_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float dx, float dy, uint64_t *out_request);
 StellarStatus stellar_window_session_resize_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float width, float height, uint64_t *out_request);

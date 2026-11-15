@@ -45,22 +45,6 @@ impl SelectionEditTarget {
 }
 
 impl AppRuntime {
-    pub(super) fn published_selection_target(
-        &self,
-        session: WindowSessionHandle,
-        view: StableId,
-        revision: DocumentRevision,
-    ) -> Option<SelectionEditTarget> {
-        let state = self.state();
-        let summary = state.window(session)?;
-        Some(SelectionEditTarget {
-            session,
-            view,
-            revision,
-            history_sequence: summary.history_sequence,
-        })
-    }
-
     /// 표시된 선택을 편집합니다. Layers가 명시한 ID는 실행 시점의 선택 전체와 일치해야 합니다.
     pub fn edit_selection(
         &self,

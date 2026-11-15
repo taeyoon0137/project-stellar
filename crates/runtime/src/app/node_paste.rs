@@ -7,20 +7,7 @@ use stellar_commands::{
 use stellar_core_types::clock::ManualClock;
 
 impl AppRuntime {
-    /// Shell worker query; never wait for this ticket on the UI thread.
-    pub fn copy_selected_subtree(
-        &self,
-        session: WindowSessionHandle,
-        view: StableId,
-        revision: DocumentRevision,
-    ) -> Result<crate::document_thread::JobTicket<Option<Vec<u8>>>, SubmitError> {
-        let Some(target) = self.published_selection_target(session, view, revision) else {
-            return self.sender.submit(|_| None);
-        };
-        self.copy_displayed_subtree(target)
-    }
-
-    /// Capture only the selection that the requesting window displayed.
+    /// 요청한 창이 표시한 선택만 복사합니다. 셸 worker 전용이며 UI thread에서 ticket을 기다리지 않습니다.
     pub fn copy_displayed_subtree(
         &self,
         target: SelectionEditTarget,
@@ -32,40 +19,18 @@ impl AppRuntime {
         })
     }
 
-    /// Paste a same-document clipboard subtree into an explicit container in the active View.
-    /// A NIL parent resolves from current selection; trust, revision and ancestor locks are checked here.
-    pub fn paste_node_subtree(
-        &self,
-        session: WindowSessionHandle,
-        view: StableId,
-        revision: DocumentRevision,
-        parent: StableId,
-        bytes: Vec<u8>,
-    ) -> Result<RequestId, RequestError> {
-        let Some(target) = self.published_selection_target(session, view, revision) else {
-            return self.submit(move |_, _| Err(unknown_window(session)));
-        };
-        self.paste_displayed_subtree(target, parent, bytes)
-    }
-
-    /// Resolve the paste destination only while the displayed selection still matches.
+    /// 같은 문서의 clipboard subtree를 붙여넣습니다. 목적지는 실행 시점의 선택에서 정합니다:
+    /// 선택한 컨테이너 안, 그 외 단일 선택의 부모 아래, 선택이 없으면 활성 View root 아래입니다.
+    /// 표시한 선택·revision과 조상 잠금은 document thread에서 다시 확인합니다.
     pub fn paste_displayed_subtree(
         &self,
         target: SelectionEditTarget,
-        parent: StableId,
         bytes: Vec<u8>,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
             let window = canvas_window(ctx, target.session)?;
             target.verify(window)?;
-            paste_into(
-                window,
-                request,
-                target.view,
-                target.revision,
-                parent,
-                &bytes,
-            )?;
+            paste_into(window, request, target.view, target.revision, &bytes)?;
             Ok(RuntimeEvent::WindowViewChanged {
                 request,
                 session: target.session,
@@ -94,7 +59,6 @@ fn paste_into(
     request: RequestId,
     view: StableId,
     revision: DocumentRevision,
-    parent: StableId,
     bytes: &[u8],
 ) -> Result<StableId, Failure> {
     let invalid = || {
@@ -115,26 +79,22 @@ fn paste_into(
         .find(|candidate| candidate.id == view)
         .ok_or_else(invalid)?
         .root_frame;
-    // NIL asks for the ordinary app destination, resolved against current document state.
-    let parent = if parent == StableId::NIL {
-        match window.view().selection().ids() {
-            [] => root,
-            [selected] => {
-                let payload = model.payload(*selected).ok_or_else(invalid)?;
-                if stellar_document::validate::can_have_children(payload.kind()) {
-                    *selected
-                } else {
-                    model
-                        .runtime_id(*selected)
-                        .and_then(|id| model.columns().parent(id))
-                        .and_then(|id| model.stable_id(id))
-                        .ok_or_else(invalid)?
-                }
+    // 목적지는 현재 문서 상태의 선택에서 정합니다.
+    let parent = match window.view().selection().ids() {
+        [] => root,
+        [selected] => {
+            let payload = model.payload(*selected).ok_or_else(invalid)?;
+            if stellar_document::validate::can_have_children(payload.kind()) {
+                *selected
+            } else {
+                model
+                    .runtime_id(*selected)
+                    .and_then(|id| model.columns().parent(id))
+                    .and_then(|id| model.stable_id(id))
+                    .ok_or_else(invalid)?
             }
-            _ => return Err(invalid()),
         }
-    } else {
-        parent
+        _ => return Err(invalid()),
     };
     let target = model.payload(parent).ok_or_else(invalid)?;
     if !stellar_document::validate::can_have_children(target.kind()) {
@@ -200,15 +160,8 @@ mod tests {
         assert_eq!(session.revision(), revision);
         assert_eq!(session.history().history().len(), history);
         assert!(!session.has_unsaved_changes());
-        let pasted = paste_into(
-            &mut session,
-            RequestId(1),
-            sid(3),
-            revision,
-            StableId::NIL,
-            &bytes,
-        )
-        .unwrap_or_else(|e| panic!("{}", e.message));
+        let pasted = paste_into(&mut session, RequestId(1), sid(3), revision, &bytes)
+            .unwrap_or_else(|e| panic!("{}", e.message));
         assert_eq!(
             session
                 .document()
@@ -224,15 +177,8 @@ mod tests {
         assert!(session.redo().unwrap());
         session.select(Selection::default()).unwrap();
         let revision = session.revision();
-        let at_root = paste_into(
-            &mut session,
-            RequestId(2),
-            sid(3),
-            revision,
-            StableId::NIL,
-            &bytes,
-        )
-        .unwrap_or_else(|e| panic!("{}", e.message));
+        let at_root = paste_into(&mut session, RequestId(2), sid(3), revision, &bytes)
+            .unwrap_or_else(|e| panic!("{}", e.message));
         assert_eq!(
             session
                 .document()
@@ -270,15 +216,8 @@ mod tests {
         let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
         session.select(Selection::new([sid(12)], None)).unwrap();
         let revision = session.revision();
-        let pasted = paste_into(
-            &mut session,
-            RequestId(1),
-            sid(3),
-            revision,
-            StableId::NIL,
-            &bytes,
-        )
-        .unwrap_or_else(|e| panic!("{}", e.message));
+        let pasted = paste_into(&mut session, RequestId(1), sid(3), revision, &bytes)
+            .unwrap_or_else(|e| panic!("{}", e.message));
         assert_eq!(
             session
                 .document()
@@ -294,30 +233,14 @@ mod tests {
             .unwrap();
         let revision = session.revision();
         let history = session.history().history().len();
-        assert!(paste_into(
-            &mut session,
-            RequestId(2),
-            sid(3),
-            revision,
-            StableId::NIL,
-            &bytes
-        )
-        .is_err());
+        assert!(paste_into(&mut session, RequestId(2), sid(3), revision, &bytes).is_err());
         assert_eq!(session.history().history().len(), history);
         model.replace_flags(sid(10), true, true).unwrap();
         let dir = saved_project_with("clipboard-auto-locked", &[&model]);
         let mut session = ProjectWindowSession::load(identity(dir.path()), window(2)).unwrap();
         session.select(Selection::new([sid(12)], None)).unwrap();
         let revision = session.revision();
-        assert!(paste_into(
-            &mut session,
-            RequestId(3),
-            sid(3),
-            revision,
-            StableId::NIL,
-            &bytes
-        )
-        .is_err());
+        assert!(paste_into(&mut session, RequestId(3), sid(3), revision, &bytes).is_err());
         assert!(!session.has_unsaved_changes());
     }
 
@@ -344,26 +267,9 @@ mod tests {
                 .unwrap();
             let revision = session.revision();
             let history = session.history().history().len();
-            let result = paste_into(
-                &mut session,
-                RequestId(1),
-                sid(3),
-                revision,
-                StableId::NIL,
-                &bytes,
-            );
+            let result = paste_into(&mut session, RequestId(1), sid(3), revision, &bytes);
             if locked.is_some() || destination == 20 {
                 assert!(result.is_err());
-                // Explicit destinations obey the same locks and View boundary.
-                assert!(paste_into(
-                    &mut session,
-                    RequestId(2),
-                    sid(3),
-                    revision,
-                    sid(fragment),
-                    &bytes,
-                )
-                .is_err());
                 assert_eq!(session.revision(), revision);
                 assert_eq!(session.history().history().len(), history);
                 assert_eq!(session.view().selection().ids(), [sid(fragment)]);
@@ -388,16 +294,13 @@ mod tests {
             assert!(!session.document().unwrap().model().contains(pasted));
             assert!(session.redo().unwrap());
             assert_eq!(session.view().selection().ids(), [pasted]);
+            // 목적지는 선택에서 정하므로 Fragment를 다시 선택해 그 안에 한 번 더 붙여넣습니다.
+            session
+                .select(Selection::new([sid(fragment)], None))
+                .unwrap();
             let revision = session.revision();
-            let explicit = paste_into(
-                &mut session,
-                RequestId(2),
-                sid(3),
-                revision,
-                sid(fragment),
-                &bytes,
-            )
-            .unwrap_or_else(|error| panic!("{}", error.message));
+            let explicit = paste_into(&mut session, RequestId(2), sid(3), revision, &bytes)
+                .unwrap_or_else(|error| panic!("{}", error.message));
             session
                 .save_with_lock_dir(|| Ok(dir.path().join("locks")))
                 .unwrap();
@@ -459,15 +362,9 @@ mod tests {
         session.apply(&tx).unwrap();
         let selection = session.view().selection().clone();
         let revision = session.revision();
-        let copy = paste_into(
-            &mut session,
-            RequestId(2),
-            sid(3),
-            revision,
-            sid(10),
-            &bytes,
-        )
-        .unwrap_or_else(|error| panic!("{}", error.message));
+        // 선택이 비었으므로 활성 View root 아래에 붙여넣습니다.
+        let copy = paste_into(&mut session, RequestId(2), sid(3), revision, &bytes)
+            .unwrap_or_else(|error| panic!("{}", error.message));
         let child = session.document().unwrap().model().children_in_order(copy)[0];
         assert_ne!(child, sid(12));
         assert_ne!(copy, sid(11));
@@ -478,7 +375,8 @@ mod tests {
         assert!(session.redo().unwrap());
         assert_eq!(session.view().selection().ids(), [copy]);
         let revision = session.revision();
-        let second = paste_into(&mut session, RequestId(3), sid(3), revision, copy, &bytes)
+        // 붙여넣은 Frame이 선택되어 있으므로 그 안에 붙여넣습니다.
+        let second = paste_into(&mut session, RequestId(3), sid(3), revision, &bytes)
             .unwrap_or_else(|error| panic!("{}", error.message));
         assert_ne!(copy, second);
         session
@@ -494,12 +392,11 @@ mod tests {
 
     #[test]
     fn invalid_destination_and_bytes_leave_history_unchanged() {
-        for (parent, view, locked, malformed) in [
-            (11, 3, Some(10), false),
-            (11, 3, Some(11), false),
-            (11, 4, None, false),
-            (999, 3, None, false),
-            (10, 3, None, true),
+        for (selected, view, locked, malformed) in [
+            (Some(11), 3, Some(10), false),
+            (Some(11), 3, Some(11), false),
+            (Some(11), 4, None, false),
+            (None, 3, None, true),
         ] {
             let mut model = sample_document();
             let mut bytes = ClipboardSubtree::capture(&model, sid(11)).unwrap().encode();
@@ -511,17 +408,12 @@ mod tests {
             }
             let dir = saved_project_with("clipboard-reject", &[&model]);
             let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+            if let Some(id) = selected {
+                session.select(Selection::new([sid(id)], None)).unwrap();
+            }
             let revision = session.revision();
             let history = session.history().history().len();
-            assert!(paste_into(
-                &mut session,
-                RequestId(1),
-                sid(view),
-                revision,
-                sid(parent),
-                &bytes
-            )
-            .is_err());
+            assert!(paste_into(&mut session, RequestId(1), sid(view), revision, &bytes).is_err());
             assert_eq!(session.revision(), revision);
             assert_eq!(session.history().history().len(), history);
             assert!(!session.has_unsaved_changes());
@@ -534,26 +426,11 @@ mod tests {
         let dir = saved_project_with("clipboard-stale", &[&model]);
         let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
         let revision = session.revision();
-        paste_into(
-            &mut session,
-            RequestId(1),
-            sid(3),
-            revision,
-            sid(10),
-            &bytes,
-        )
-        .unwrap_or_else(|error| panic!("{}", error.message));
+        paste_into(&mut session, RequestId(1), sid(3), revision, &bytes)
+            .unwrap_or_else(|error| panic!("{}", error.message));
         let selection = session.view().selection().clone();
         let history = session.history().history().len();
-        assert!(paste_into(
-            &mut session,
-            RequestId(2),
-            sid(3),
-            revision,
-            sid(10),
-            &bytes
-        )
-        .is_err());
+        assert!(paste_into(&mut session, RequestId(2), sid(3), revision, &bytes).is_err());
         assert_eq!(session.view().selection(), &selection);
         assert_eq!(session.history().history().len(), history);
     }
@@ -590,9 +467,12 @@ mod tests {
         };
         changed(app.set_selection(session, vec![sid(11)]).unwrap());
         let revision = app.state().window(session).unwrap().revision;
-        let target = app
-            .published_selection_target(session, sid(3), revision)
-            .unwrap();
+        let target = SelectionEditTarget {
+            session,
+            view: sid(3),
+            revision,
+            history_sequence: app.state().window(session).unwrap().history_sequence,
+        };
         let bytes = app
             .copy_displayed_subtree(target)
             .unwrap()
@@ -602,12 +482,9 @@ mod tests {
         let (release, wait) = mpsc::channel();
         let _barrier = app.sender.submit(move |_| wait.recv().unwrap()).unwrap();
         let select = app.set_selection(session, vec![sid(12)]).unwrap();
-        let copy = app
-            .copy_selected_subtree(session, sid(3), revision)
-            .unwrap();
-        let paste = app
-            .paste_node_subtree(session, sid(3), revision, StableId::NIL, bytes.clone())
-            .unwrap();
+        // 접수 시점에는 A가 게시되어 있지만 실행 시점에는 B가 선택되어 있습니다.
+        let copy = app.copy_displayed_subtree(target).unwrap();
+        let paste = app.paste_displayed_subtree(target, bytes.clone()).unwrap();
         release.send(()).unwrap();
         changed(select);
         assert!(copy.wait().unwrap().is_none());
@@ -618,10 +495,7 @@ mod tests {
             .wait()
             .unwrap()
             .is_none());
-        rejected(
-            app.paste_displayed_subtree(target, StableId::NIL, bytes.clone())
-                .unwrap(),
-        );
+        rejected(app.paste_displayed_subtree(target, bytes.clone()).unwrap());
         let state = app.state();
         let window = state.window(session).unwrap();
         assert_eq!(window.revision, revision);
@@ -636,10 +510,7 @@ mod tests {
             app.copy_displayed_subtree(target).unwrap().wait().unwrap(),
             Some(bytes.clone())
         );
-        changed(
-            app.paste_displayed_subtree(target, StableId::NIL, bytes)
-                .unwrap(),
-        );
+        changed(app.paste_displayed_subtree(target, bytes).unwrap());
         assert_eq!(
             app.state().window(session).unwrap().revision.0,
             revision.0 + 1
@@ -678,9 +549,7 @@ mod tests {
             .wait()
             .unwrap()
             .expect("restricted mode copies the displayed selection");
-        let request = app
-            .paste_displayed_subtree(target, StableId::NIL, bytes)
-            .unwrap();
+        let request = app.paste_displayed_subtree(target, bytes).unwrap();
         assert!(
             matches!(next_event(&app), RuntimeEvent::WindowViewChanged { request: got, .. } if got == request)
         );
