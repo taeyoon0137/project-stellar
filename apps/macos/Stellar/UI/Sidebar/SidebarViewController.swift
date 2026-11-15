@@ -168,6 +168,7 @@ final class SidebarViewController: NSViewController, NSSplitViewDelegate {
         filterAccessory.searchField.isEnabled = filterable
         if filterAccessory.isHidden == filterable { filterAccessory.isHidden = !filterable }
         filterAccessory.sync(query: snapshot.filter?.query ?? "")
+        stateView.emptyMessage = provider.emptyLayersHint
         stateView.show(stateContent(for: snapshot))
     }
 

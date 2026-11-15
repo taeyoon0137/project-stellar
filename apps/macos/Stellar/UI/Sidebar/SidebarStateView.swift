@@ -18,6 +18,8 @@ final class SidebarStateView: NSView {
     var onAction: ((Content) -> Void)?
 
     private(set) var content: Content = .hidden
+    /// 빈 레이어 목록(`.empty`)에 보일 안내 한 줄. provider의 `emptyLayersHint`를 받습니다.
+    var emptyMessage = ""
 
     let spinner = NSProgressIndicator()
     let symbolView = NSImageView()
@@ -118,7 +120,7 @@ final class SidebarStateView: NSView {
             message = SidebarStrings.noViewMessage
         case .empty:
             // 제목·아이콘 없이 다음 행동을 알리는 한 줄만 둡니다.
-            message = SidebarStrings.emptyHint
+            message = emptyMessage
         case .noResults(let query):
             symbol = SidebarSymbols.noResults
             title = SidebarStrings.noResultsTitle

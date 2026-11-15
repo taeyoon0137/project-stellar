@@ -39,6 +39,17 @@ final class ShellSidebarSource: SidebarDataProvider {
     /// 표시·잠금 토글과 Group·Ungroup은 아직 문서 편집에 연결하지 않았습니다.
     var supportsLayerFlagsAndGrouping: Bool { false }
 
+    /// 빈 레이어 목록 안내 한 줄: 다음 행동을 캔버스 단일 키로 알립니다(UX 명세 흐름 1의 6번, 7.2절). 키는
+    /// `CanvasTool.singleKey`에서 읽어 실제 배정과 같습니다. 버튼은 두지 않습니다.
+    var emptyLayersHint: String {
+        func key(_ tool: CanvasTool) -> String { tool.singleKey.map { String($0).uppercased() } ?? "" }
+        let frame = key(.frame), rectangle = key(.rectangle), text = key(.text)
+        return String(
+            localized: "Press \(frame) to draw a frame, \(rectangle) for a rectangle, or \(text) for text.",
+            comment: "Empty layer list hint; the arguments are the Frame, Rectangle, and Text tool keys"
+        )
+    }
+
     func refresh(runtime: UInt64?, session: ShellWindowSessionHandle?, target: StellarSelectionTarget?) {
         self.runtime = runtime
         window = session

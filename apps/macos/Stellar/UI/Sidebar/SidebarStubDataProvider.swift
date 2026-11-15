@@ -9,6 +9,8 @@ import Foundation
 final class SidebarStubDataProvider: SidebarDataProvider {
     private(set) var snapshot: SidebarSnapshot = .empty
     var snapshotDidChange: (() -> Void)?
+    /// 검사용 고정 안내. 실제 창은 셸이 도구 키로 만든 문장을 넣습니다.
+    let emptyLayersHint = "Press F to draw a frame, R for a rectangle, or T for text."
 
     /// 받은 command 기록(검사·디버깅용).
     private(set) var performedCommands: [SidebarCommand] = []
