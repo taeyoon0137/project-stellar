@@ -1997,7 +1997,8 @@ impl AppRuntime {
         })
     }
 
-    /// 새로 만든 프로젝트의 첫 Frame에 맞도록 최초 창의 실제 캔버스 크기로 viewport를 설정합니다.
+    /// 활성 View의 root Frame이 실제 캔버스 크기(logical point) 안에 들어오도록 viewport를 맞춥니다.
+    /// 새 프로젝트 창의 첫 표시와 View ▸ Zoom to Fit이 씁니다. 100%보다 키우지 않습니다.
     pub fn fit_root_frame(
         &self,
         session: WindowSessionHandle,

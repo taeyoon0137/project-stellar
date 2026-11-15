@@ -315,7 +315,8 @@ StellarStatus stellar_command_code(const uint8_t *name, size_t name_len, uint32_
 /* 창 session에 명령(STELLAR_COMMAND_*)을 보냅니다. 모르는 코드는 STELLAR_INVALID_ARGUMENT(요청 없음). */
 StellarStatus stellar_window_session_perform(uint64_t handle, uint64_t session, uint32_t command, uint64_t *out_request);
 
-/* 새 창의 실제 canvas 크기(logical point)로 active View의 root를 맞춥니다. 완료는 WINDOW_VIEW_CHANGED. */
+/* 실제 canvas 크기(logical point)로 active View의 root Frame이 화면에 들어오도록 카메라를 맞춥니다(100% 이하).
+ * 새 창의 첫 표시와 View ▸ Zoom to Fit이 씁니다. 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED. */
 StellarStatus stellar_window_session_fit_root(uint64_t handle, uint64_t session, double width, double height, uint64_t *out_request);
 /* Pan active viewport content in screen points; completes with WINDOW_VIEW_CHANGED or REQUEST_FAILED. */
 StellarStatus stellar_window_session_pan(uint64_t handle, uint64_t session, double dx, double dy, uint64_t *out_request);

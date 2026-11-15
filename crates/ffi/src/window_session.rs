@@ -300,7 +300,8 @@ pub unsafe extern "C" fn stellar_window_session_perform(
     })
 }
 
-/// 실제 canvas 크기(logical point)로 active View root에 초기 카메라를 맞춥니다.
+/// 실제 canvas 크기(logical point)로 active View의 root Frame이 화면에 들어오도록 카메라를 맞춥니다.
+/// 새 창의 첫 표시와 Zoom to Fit이 씁니다. 완료는 `WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`입니다.
 ///
 /// # Safety
 /// `out_request`는 null이거나 `u64` 쓰기가 유효해야 합니다.

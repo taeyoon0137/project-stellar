@@ -140,7 +140,7 @@ impl CanvasCache {
 }
 
 impl CanvasScene {
-    /// 최초 Frame을 창의 logical point 안에 배치합니다. 100%보다 키우지 않습니다.
+    /// 활성 View의 root Frame(painter 순서 첫 행)을 창의 logical point 안에 배치합니다. 100%보다 키우지 않습니다.
     pub(crate) fn root_viewport(&self, width: f64, height: f64) -> Option<CanvasViewport> {
         if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
             return None;

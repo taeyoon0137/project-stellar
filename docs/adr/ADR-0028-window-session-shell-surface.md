@@ -453,3 +453,11 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 - macOS 셸은 값을 사용자 앱 설정(Settings ▸ Canvas의 Default Shape Fill·Default Line Color, `UserDefaults`)에서
   생성 시점에 읽습니다. 초기값은 채우기 #D9D9D9, 선 #000000 1px이고 프로젝트 파일에는 기본값을 쓰지 않습니다.
   Frame 생성의 흰 배경과 Text 삽입은 이 결정의 범위가 아니어서 바꾸지 않았습니다.
+
+### 루트 Frame 맞춤
+
+- `stellar_window_session_fit_root(handle, session, width, height, out_request)`는 셸이 잰 실제 캔버스 크기(logical
+  point, 유한한 양수)로 활성 View의 root Frame이 화면에 들어오도록 viewport를 정합니다. 가장자리마다
+  `min(24pt, 짧은 변의 10%)`를 남기고 100%보다 키우지 않습니다. 중심은 root Frame의 world bounds 중심입니다.
+- 새 프로젝트 창의 첫 표시와 View ▸ Zoom to Fit이 같은 ABI를 씁니다. 완료는 `WINDOW_VIEW_CHANGED`, 맞출 Frame이나
+  크기가 없으면 `REQUEST_FAILED`(InvalidViewport)입니다. viewport 변경은 history에 기록하지 않습니다.
