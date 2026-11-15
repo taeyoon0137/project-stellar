@@ -1,6 +1,6 @@
 # 사이드바(페이지·레이어) UI 명세
 
-- 상태: 기본 창의 활성 Page·View 및 문서 레이어 읽기 연결(2026-11-14)
+- 상태: 기본 창의 활성 Page·View 및 문서 레이어 읽기 연결(2026-11-14). Pages 구획을 머리 줄 팝업으로 교체하고 표시·잠금 토글 연결(2026-11-15)
 - 코드: `apps/macos/Stellar/UI/Sidebar/`
 - 상위 기준: `docs/design/macos-shell-design.md`(이하 "가이드"), `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`(이하 "아키텍처")
 - 근거 표기는 가이드 0.1절을 따릅니다. 이 문서는 가이드·아키텍처·구현 계획을 바꾸지 않으며, 어긋나면 그 문서들이 우선입니다.
@@ -11,11 +11,7 @@
 
 ```text
 ┌ 필터 필드 (split view item 상단 accessory, NSSearchField) ┐
-├ Pages ──────────────────────────────────────────────────────┤
-│ ▾ 📄 Onboarding                                            │  페이지 → View (두 단계)
-│     ▭ Welcome   ← 선택 = active View                        │
-│     ▭ Sign In                                               │
-├──────────────── 얇은 분할선 (NSSplitView) ──────────────────┤
+│ Onboarding › Welcome ▾      (머리 줄 팝업, NSPopUpButton)   │  누르면 Page별 View 목록
 ├ Layers ─────────────────────────────────────────────────────┤
 │ ▾ ⬚ Header                              👁 🔓 (hover·선택)   │  깊이 제한 없는 레이어 트리
 │     Aa Title                                                │
@@ -24,9 +20,10 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-- **페이지 구획**: 열린 문서의 페이지와 각 페이지의 View 목록. HIG의 "두 단계 이내"에 맞춰 페이지 → View 두 단계만 둡니다. 선택은 하나이며 선택이 곧 active 페이지·View입니다. [가이드 6.2] [아키텍처 §12, 계획 VI.1.1]
-- **레이어 구획**: active View의 root Frame 아래 노드 트리. root Frame 자체는 View 행이 대표하므로 행으로 두지 않고, 그 자식부터 최상위 행으로 보입니다. 깊이 제한 없이 `NSOutlineView` disclosure로 표현합니다. [가이드 6.2] [HIG Outline views]
-- 두 구획 모두 source list(사이드바) 스타일 `NSOutlineView`이고, 구획 제목("Pages", "Layers")은 접을 수 없는 group row입니다. 사이드바 재질·접기·폭 유지는 `NSSplitViewItem(sidebarWithViewController:)`가 맡습니다. [가이드 2.3, 3.2]
+- **머리 줄**: 활성 Page와 View를 `Page › View ▾` 한 줄(pull-down `NSPopUpButton`)로 보입니다. 누르면 작업 문서의 Page별 View 목록(Page는 구획 머리 항목)이 열리고, 활성 View에 체크가 있습니다. View를 고르면 그 창의 active View로 엽니다(`.activateView`, 처음 연 View는 root에 맞춤). Page·View 이름 변경과 추가는 코어 Command가 생긴 뒤(UX.12) 같은 메뉴에 붙입니다. 사이드바 높이를 쓰던 Pages 구획(분할 view)은 없앴습니다. [UX 명세 7.1] [가이드 6.2]
+- **레이어 구획**: active View의 root Frame 아래 노드 트리. root Frame 자체는 머리 줄의 View가 대표하므로 행으로 두지 않고, 그 자식부터 최상위 행으로 보입니다. 깊이 제한 없이 `NSOutlineView` disclosure로 표현합니다. [가이드 6.2] [HIG Outline views]
+- 레이어 목록은 source list(사이드바) 스타일 `NSOutlineView`이고, 구획 제목("Layers")은 접을 수 없는 group row입니다. 사이드바 재질·접기·폭 유지는 `NSSplitViewItem(sidebarWithViewController:)`가 맡습니다. [가이드 2.3, 3.2]
+- 머리 줄은 지금 필터 accessory 아래에 있습니다. UX 명세 3.2는 머리 줄 → 탭 → 탭 내용(필터는 레이어 탭 내용) 순서이므로, 사이드바 탭 줄(에셋·변경 탭, UX.5·UX.9)을 넣을 때 머리 줄을 맨 위로 옮기고 필터를 레이어 탭 안으로 내립니다.
 - 레이어 행: 종류 아이콘(SF Symbol), 이름(인라인 이름 변경), 표시 토글, 잠금 토글. 행 높이·글꼴·아이콘 크기는 시스템 사이드바 크기 설정(row size style)을 따릅니다. [가이드 4.1, 4.4]
 - 문서 목록(프로젝트의 여러 문서)은 이 영역에 넣지 않았습니다. 13절 참고.
 
@@ -35,13 +32,13 @@
 | 파일 | 역할 |
 |---|---|
 | `SidebarModel.swift` | 값 snapshot·command·검증 결과 타입, `SidebarDataProvider` 프로토콜 |
-| `../Shell/ShellSidebarSource.swift` | 기본 창의 코어 페이지 조회·펼친 행·창별 선택 |
+| `../Shell/ShellSidebarSource.swift` | 기본 창의 코어 페이지 조회·펼친 행·창별 선택, 머리 줄 Page·View 목록 읽기(문서 revision마다) |
 | `SidebarStubDataProvider.swift` | UI 상호작용 검사용 메모리 트리 |
 | `SidebarViewController.swift` | 구성, snapshot 반영 병합, 상태 화면 결정, split view item·accessory 연결, `SidebarMetrics` |
-| `SidebarPagesController.swift` | 페이지·View outline, 공통 outline 생성(`SidebarOutlineFactory`), `SidebarOutlineItem` |
+| `SidebarPagePopup.swift` | 머리 줄 `Page › View ▾` 팝업과 View 전환 |
 | `SidebarLayersController.swift` | 레이어 outline: 데이터·선택·펼침·이름 변경·토글·문맥 메뉴·드래그 |
-| `SidebarOutlineView.swift` | `NSOutlineView` 하위 클래스: Return·Delete·단축키, 메뉴 막대용 responder action |
-| `SidebarCellViews.swift` | 구획 제목 셀, 이름 셀(페이지·View), 레이어 셀(토글 포함) |
+| `SidebarOutlineView.swift` | `NSOutlineView` 하위 클래스: Return·Delete·단축키, 메뉴 막대용 responder action. 공통 outline 생성(`SidebarOutlineFactory`), `SidebarOutlineItem` |
+| `SidebarCellViews.swift` | 구획 제목 셀, 이름 셀, 레이어 셀(토글 포함) |
 | `SidebarInlineRename.swift` | 인라인 이름 변경 확정·취소 처리 |
 | `SidebarStateView.swift` | 로드 중·실패·View 없음·빈 목록·결과 없음 화면 |
 | `SidebarFilterAccessoryViewController.swift` | 필터 필드 accessory(`NSSplitViewItemAccessoryViewController`) |
@@ -52,7 +49,7 @@ AppKit만 씁니다. 가이드 5.3은 빈 상태 화면에 SwiftUI를 허용하�
 
 ## 3. 상태
 
-레이어 구획 위에 `SidebarStateView`를 겹쳐 보입니다. 배경을 칠하지 않으며 버튼 외 영역의 클릭은 아래 목록으로 통과합니다. 페이지 구획은 상태 화면을 두지 않습니다. [가이드 7.1] [HIG Writing]
+레이어 구획 위에 `SidebarStateView`를 겹쳐 보입니다. 배경을 칠하지 않으며 버튼 외 영역의 클릭은 아래 목록으로 통과합니다. 머리 줄은 상태 화면을 두지 않고, 활성 View가 없으면 숨깁니다. [가이드 7.1] [HIG Writing]
 
 | 조건(위에서부터 우선) | 화면 | 버튼 → command |
 |---|---|---|
@@ -73,10 +70,7 @@ AppKit만 씁니다. 가이드 5.3은 빈 상태 화면에 SwiftUI를 허용하�
 - 레이어 구획은 다중 선택이고, 선택은 창별 선택 상태(WindowViewState)와 같습니다. 사이드바 선택 변경은 `.setSelection(ids, primary:)`로 보냅니다. 순서는 선택한 순서이며 primary는 마지막으로 더한 행입니다. [가이드 6.2] [계획 VII.3.1, VII.3.2, XII.2.5]
 - snapshot의 선택이 사이드바가 마지막으로 보낸 선택과 다르면 외부(캔버스 등) 변경으로 보고, 조상 행을 펼치고 첫 선택 행이 보이게 스크롤합니다. 사이드바가 보낸 선택에는 스크롤·펼침을 하지 않습니다(사용자 조작 없이 화면을 움직이지 않음). [가이드 8.2]
 - 구획 제목 행은 선택되지 않습니다(`selectionIndexesForProposedSelection`에서 제외).
-- 페이지 구획 선택: 페이지 행 → `.activatePage`, View 행 → `.activateView`. 빈 곳을 눌러 선택이 비면 active 표시를 되살립니다.
-- 페이지 행을 골라 그 페이지가 active가 되면, 코어가 고른 active View 행으로 선택이 옮겨 갑니다(페이지가 접혀 있으면 페이지 행). 선택을 옮기는 때는 active 페이지·View가 바뀐 snapshot을 반영할 때뿐입니다.
-- 이미 active인 페이지 행을 고르면(↑·←로 닿는 경우 포함) command를 보내지 않고 그 행 선택을 그대로 둡니다. active가 바뀌지 않은 snapshot이 와도(목록 reload 포함) 옮기지 않습니다. 이 행을 View 행으로 되돌리면 키보드 이동이 이 행에서 막히고(위쪽 페이지·View로 못 감) ←로 페이지를 접을 수 없습니다. [HIG Keyboard]
-- 페이지를 접으면 그 안의 선택은 페이지 행으로 옮겨 가고, 다시 펼쳐도 선택을 옮기지 않으므로 페이지 행에 머뭅니다.
+- 머리 줄 팝업에서 View를 고르면 `.activateView`를 보냅니다. 이미 활성인 View는 command를 보내지 않습니다. 목록에는 provider가 실행할 수 있는 항목만 둡니다.
 
 ### 4.2 인라인 이름 변경
 
@@ -92,7 +86,8 @@ AppKit만 씁니다. 가이드 5.3은 빈 상태 화면에 SwiftUI를 허용하�
 - 행 오른쪽의 테두리 없는 아이콘 버튼입니다. 마우스를 올린 행·선택한 행에서 보이고, 숨김·잠김 상태인 행에서는 항상 보입니다. 대비 높이기가 켜져 있으면 모든 행에서 보입니다. 숨겨진 토글도 자리를 차지해 열 위치가 행마다 같습니다.
 - 클릭 대상은 symbol 크기(약 21×13pt)가 아니라 HIG macOS 최소 컨트롤 크기 20×20pt 이상입니다. 이미지는 가운데에 그대로 그립니다. [가이드 4.4] [HIG Accessibility]
 - 크기 제약은 버튼의 alignment rect에 겁니다. 버튼 frame은 symbol 정렬 여백만큼 위아래로 더 커서(macOS 27.2 실측 24~27pt), 작은 사이드바 크기 설정의 행(24pt)에서는 셀 밖으로 최대 2pt 나갑니다. AppKit hit test는 셀 밖의 점을 그 안의 버튼으로 넘기지 않으므로 그 부분은 눌리지 않고 옆 행의 클릭도 가로채지 않습니다. 실제로 눌리는 영역(frame과 셀의 겹침)은 작게·중간·크게 모두 20×24pt 이상입니다(11절 검사).
-- 버튼은 해당 행 하나에만 적용하며 선택을 바꾸지 않습니다. 여러 행에 적용할 때(단축키·문맥 메뉴): 모두 보이면 숨기고 하나라도 숨겨져 있으면 모두 보입니다. 잠금도 같은 규칙입니다.
+- 버튼은 해당 행 하나에만 적용하며 선택을 바꾸지 않습니다. 여러 행에 적용할 때(단축키·문맥 메뉴): 모두 보이면 숨기고 하나라도 숨겨져 있으면 모두 보입니다. 잠금도 같은 규칙입니다. 대상이 창 선택 전체이면 메뉴 막대 Hide·Lock과 같은 선택 토글(`STELLAR_SELECTION_TOGGLE_*`)로 보내 방향을 코어가 정하고, 그 밖의 행(선택하지 않은 행의 버튼)은 그 행 값을 뒤집어 보냅니다(ADR-0028 "레이어 표시·잠금 변경").
+- 잠금 규칙(D8: 잠긴 조상 아래 행은 바꾸지 않고, 잠긴 행은 숨기지 않음)은 코어가 행마다 계산해 행 플래그로 줍니다(표시 변경 가능·잠금 변경 가능). 셸은 그 값으로 버튼을 끄고, 꺼진 버튼의 도움말에 이유 한 가지("Locked layers can’t be hidden.", "A parent layer is locked.")를 둡니다. 표시·잠금은 프로젝트 신뢰와 무관하게 됩니다(D1).
 - 숨김은 흐린 글자만이 아니라 `eye.slash` 아이콘과 접근성 문구("Hidden")로도 알립니다. [가이드 4.2 "색에만 의존하지 않음"]
 
 ### 4.4 문맥 메뉴
@@ -100,7 +95,6 @@ AppKit만 씁니다. 가이드 5.3은 빈 상태 화면에 SwiftUI를 허용하�
 - 대상: 클릭한 행이 선택에 속하면 선택 전체, 아니면 클릭한 행 하나(macOS 목록 관례). [HIG Lists and tables]
 - 항목: Rename / Duplicate / Delete — Group Selection / Ungroup — Hide·Show / Lock·Unlock. 지금 쓸 수 없는 항목은 숨기지 않고 비활성화하며, 활성화 여부는 provider 사전 검증(`validate`)으로 정합니다. [가이드 8.1] [HIG The menu bar]
 - Group은 대상을 새 그룹 marker(Fragment) 아래로 옮기는 command이고, Ungroup은 그룹 marker를 지우고 자식을 그 자리로 올리는 command입니다. 실제 의미(어떤 노드를 쓸지, 위치)는 코어가 정합니다. [아키텍처 §12.4]
-- 페이지 구획의 문맥 메뉴는 Rename만 있습니다.
 - 문맥 메뉴 항목에는 단축키 표시(key equivalent)를 넣지 않습니다. 단축키는 메뉴 막대 항목(XII.6.5)이 보입니다. [HIG Context menus]
 
 ### 4.5 드래그 재정렬·재부모화
@@ -136,7 +130,7 @@ AppKit만 씁니다. 가이드 5.3은 빈 상태 화면에 SwiftUI를 허용하�
 | ⌥⌘G / ⇧⌥⌘G | 묶기 / 풀기 | ⌘G(Find Next) 표준 의미 보존, Apple 앱(Keynote·Pages) 관례 |
 | ⇧⌘H | 보이기·숨기기 | 잠정값(디자인 도구 관례), 열린 결정 O8 |
 | ⇧⌘L | 잠그기·풀기 | 잠정값(디자인 도구 관례), 열린 결정 O8 |
-| Tab / ⇧Tab | 필터 → 페이지 목록 → 레이어 목록 | 가이드 8.2 |
+| Tab / ⇧Tab | 필터 → 머리 줄 팝업 → 레이어 목록 | 가이드 8.2 |
 
 - 메뉴 막대(XII.6.5)가 생기기 전까지 ⌘ 단축키는 레이어 목록이 first responder일 때만 목록이 처리합니다. 텍스트 편집 중에는 field editor가 먼저 받으므로 발동하지 않습니다. [가이드 8.2]
 - 메뉴 막대가 연결할 target 없는 responder action을 `SidebarOutlineView`에 두었습니다: `delete(_:)`, `duplicate(_:)`, `renameSidebarItem(_:)`, `groupSidebarLayers(_:)`, `ungroupSidebarLayers(_:)`, `toggleSidebarLayerVisibility(_:)`, `toggleSidebarLayerLock(_:)`. 활성화는 `validateUserInterfaceItem`이 같은 검증으로 답합니다.
@@ -144,12 +138,12 @@ AppKit만 씁니다. 가이드 5.3은 빈 상태 화면에 SwiftUI를 허용하�
 
 ## 6. 접근성
 
-- 목록: "Pages", "Layers" 레이블. 필터 필드: "Filter Layers" 레이블과 도움말 태그. [가이드 8.3] [아키텍처 §18 "앱 자체 UI는 네이티브 접근성 API"]
+- 목록: "Layers" 레이블. 머리 줄 팝업: "Page and View" 레이블(`SidebarStrings.pagePath`). 필터 필드: "Filter Layers" 레이블과 도움말 태그. [가이드 8.3] [아키텍처 §18 "앱 자체 UI는 네이티브 접근성 API"]
 - 접근성 서버가 내보내는 행 구조(macOS 27.2 실측): 목록(`AXOutline`) → 행(`AXRow`) → 셀(`AXCell`) 하나 → 이름 필드·보이는 토글·펼침 삼각형. `AXRow`·`AXCell`은 AppKit 내부 요소이며, AppKit은 `AXCell`의 설명과 custom action을 셀 view(`NSTableCellView`)의 `accessibilityLabel()`·`accessibilityCustomActions()`에서 가져옵니다. 그래서 행 레이블과 custom action은 셀 view에 둡니다. 행 view(`NSTableRowView`)에 둔 값은 `AXRow`에 쓰이지 않습니다. VoiceOver는 키보드 포커스 목록의 선택 행(`AXSelectedRows`)을 읽고, 그 행의 유일한 자식인 `AXCell`이 행 전체를 대표합니다. [가이드 8.3 "하나의 요소로 묶어"] [AppKit 문서 NSAccessibility]
 - AppKit 컨트롤의 접근성 요소는 view가 아니라 cell(`NSButtonCell`, `NSImageCell`, `NSSearchFieldCell`)입니다. view에만 넣은 레이블·제외 설정은 그 요소에 닿지 않으므로 cell에도 둡니다(`SidebarAccessibility`). 예: view에만 레이블을 둔 토글은 symbol 기본 설명(eye → "show")을 읽어 실제 동작(Hide)과 반대로 들렸고, view만 뺀 종류 아이콘은 `AXImage`("Rectangle with a dashed outline")로 남았습니다.
 - 레이어 행 레이블(`AXCell` 설명): `이름, 종류[, Hidden][, Locked][, Contains matches]`. 이름이 비면 종류 이름을 씁니다. 종류 아이콘은 장식으로 보고 접근성 트리에서 뺍니다. 선택 상태는 시스템 행(`AXRow`)이 노출합니다. [가이드 8.3] [HIG Accessibility]
 - 토글 버튼 레이블은 다음 동작을 말합니다(예: "Hide Header", "Unlock Background"). 도움말 태그도 둡니다. 숨긴 토글은 접근성 트리에서도 빠지고, 보이는 토글은 화면 순서(표시 → 잠금)로 노출됩니다. [가이드 5.4, 8.1, 8.3]
-- VoiceOver custom action(`AXCell`, 행마다): Rename, Hide·Show, Lock·Unlock, Duplicate, Delete. 페이지·View 행: Rename. 해당 행 하나에만 적용하고 선택을 바꾸지 않습니다. 토글이 숨겨져 있어도 이 동작으로 닿습니다. [가이드 8.3 "제스처 동작에 접근성 기본 동작 연결"]
+- VoiceOver custom action(`AXCell`, 행마다): Rename, Hide·Show, Lock·Unlock, Duplicate, Delete. 해당 행 하나에만 적용하고 선택을 바꾸지 않습니다. 토글이 숨겨져 있어도 이 동작으로 닿습니다. [가이드 8.3 "제스처 동작에 접근성 기본 동작 연결"]
 - 상태 화면은 하나의 group 요소로 제목과 설명을 함께 읽고, 상태 아이콘은 노출하지 않습니다.
 - 시스템 접근성 설정 [가이드 8.4]
   - 대비 높이기: 토글을 모든 행에서 보입니다. 색은 모두 시스템 의미 색이라 시스템이 대비를 올립니다.
@@ -190,8 +184,8 @@ protocol SidebarDataProvider: AnyObject {
 ```
 
 - `SidebarSnapshot`: `generation`, `loadState`, `pages`(페이지·View 행), `activePageID`, `activeViewID`, `layers`(`structureRevision`, `topLevelIDs`, 부모별 `childIDs`, `rows`), `selection`·`primarySelection`, `filter`(`query`, `matchCount`).
-- `SidebarLayerRow`: `id`, `parentID`, `kind`, `shapeKind`, `name`, `isVisible`, `isLocked`, `hasChildren`, `isFilterMatch`.
-- `SidebarCommand`: `activatePage`, `activateView`, `renamePage`, `renameView`, `setSelection`, `renameNode`, `setVisible`, `setLocked`, `duplicate`, `delete`, `group`, `ungroup`, `move`, `setFilter`, `loadChildren`, `reload`.
+- `SidebarLayerRow`: `id`, `parentID`, `kind`, `shapeKind`, `name`, `isVisible`, `isLocked`, `hasChildren`, `isFilterMatch`, `canHide`, `canLock`(코어가 잠금 규칙으로 계산).
+- `SidebarCommand`: `activateView`, `setSelection`, `renameNode`, `setVisible`, `setLocked`, `duplicate`, `delete`, `group`, `ungroup`, `move`, `setFilter`, `loadChildren`, `loadMore`, `reload`. Page·View 이름 변경 command는 코어 Command와 함께 UX.12에서 더합니다.
 - 식별자는 `SidebarStableID`(UUID 128비트 = StableId)이며 셸은 해석하지 않습니다. 모든 필드는 UUID·정수·Bool·UTF-8 문자열이라 FFI POD로 옮길 수 있고 Rust 타입을 노출하지 않습니다. [아키텍처 §8.2, §12.1] [ADR-0009]
 - 계약
   - `generation`은 단조 증가합니다. 셸은 이미 반영한 세대보다 오래된 snapshot을 버립니다. [아키텍처 §9.1]
@@ -214,8 +208,7 @@ protocol SidebarDataProvider: AnyObject {
 
 | 항목 | 값 | 근거 | 위치 |
 |---|---|---|---|
-| 페이지 구획 첫 높이 비율 | safe area 아래 높이의 0.3 | 페이지(수 개)보다 레이어(수백~)가 많음. 이후 사용자 분할선 위치를 따름 | `SidebarMetrics.initialPagesFraction` |
-| 구획 최소 높이 | 3행(제목 행 포함) × 시스템 행 높이 | 분할선이 사라지지 않게 함 [HIG Split views] | `SidebarMetrics.minimumPaneRows` |
+| 머리 줄 여백 | 좌우 12pt, 위·아래 6pt(12pt의 절반) | 팝업 글자 시작점을 레이어 행의 들여쓰기 시작점과 맞추고, 한 줄 머리 줄이 목록과 붙어 보이지 않게 함 [가이드 4.4] | `SidebarMetrics.headerInset` |
 | 셀 안 간격 | 시스템 간격 × 0.5 (아이콘↔이름, 이름↔토글, 토글↔끝) | 하드코딩 point 대신 시스템 간격 기준 [가이드 4.4] | `SidebarNameCellView` |
 | 행 토글 최소 클릭 대상 | 20×20pt 이상 | HIG Accessibility의 macOS 최소 컨트롤 크기. 작은 사이드바 크기 설정의 행(24pt) 안에서도 눌리는 영역이 20×24pt 이상(4.3절, 11절 검사) [가이드 4.4] | `SidebarMetrics.minimumHitTarget` |
 | 상태 화면 좌우 여백 | 시스템 간격 × 1 | 같음 | `SidebarStateView` |
@@ -235,7 +228,7 @@ protocol SidebarDataProvider: AnyObject {
 
 ## 12. 기본 창 연결 범위와 남은 일
 
-Pages는 활성 Page와 View 이름을 표시합니다. Layers는 이 View의 실제 직계 자식을 위에 그린 순서로 보여 주며, 선택과 disclosure를 사용할 수 있습니다. 숨김·잠금과 종류도 원본의 값을 사용합니다. 제한 모드에서도 열려 있는 창 문서를 읽고 편집할 수 있습니다. 레이어 행을 선택하고 Return을 누르면 이름을 편집합니다. 자신이나 조상이 잠긴 행은 편집할 수 없으며, 이름 변경은 Undo 한 번으로 되돌릴 수 있습니다. 부모를 펼치거나 목록 끝의 다음 페이지 행이 화면에 들어오면 그 부모의 다음 64행을 가져옵니다(별도 버튼 없음). 편집으로 revision이 바뀌면 부모마다 이어 읽은 페이지 수만큼 다시 읽고, primary 선택으로 가는 행이 나올 때까지 같은 부모의 다음 페이지를 읽습니다. 창이 이미 다른 revision을 게시해 결과가 비면 실패 화면 없이 버립니다. 코어는 문서 스레드에서 현재 View·revision을 확인하고 형제 순서 인덱스에서 직접 다음 페이지를 읽습니다. 셸의 worker가 문자열과 행을 변환하며 창을 닫거나 View·revision이 바뀐 결과는 폐기합니다. 표시·잠금 토글, 필터, Group·Ungroup은 아직 문서 편집에 연결하지 않았으므로 기본 창에서는 비활성으로 두지 않고 숨깁니다. Pages 구획은 활성 Page와 View 하나만 보입니다(전체 Page 목록은 아직 없음).
+머리 줄은 작업 문서의 모든 Page·View를 보이고 View 전환을 합니다(문서 revision마다 목록을 다시 읽고, 활성 Page·View 이름은 레이어 페이지가 함께 읽은 값을 우선). Layers는 이 View의 실제 직계 자식을 위에 그린 순서로 보여 주며, 선택과 disclosure를 사용할 수 있습니다. 숨김·잠금과 종류도 원본의 값을 사용합니다. 제한 모드에서도 열려 있는 창 문서를 읽고 편집할 수 있습니다. 레이어 행을 선택하고 Return을 누르면 이름을 편집합니다. 자신이나 조상이 잠긴 행은 편집할 수 없으며, 이름 변경은 Undo 한 번으로 되돌릴 수 있습니다. 표시·잠금 토글은 코어가 계산한 잠금 규칙(D8)으로 켜지고 꺼집니다. 부모를 펼치거나 목록 끝의 다음 페이지 행이 화면에 들어오면 그 부모의 다음 64행을 가져옵니다(별도 버튼 없음). 편집으로 revision이 바뀌면 부모마다 이어 읽은 페이지 수만큼 다시 읽고, primary 선택으로 가는 행이 나올 때까지 같은 부모의 다음 페이지를 읽습니다. 창이 이미 다른 revision을 게시해 결과가 비면 실패 화면 없이 버립니다. 코어는 문서 스레드에서 현재 View·revision을 확인하고 형제 순서 인덱스에서 직접 다음 페이지를 읽습니다. 셸의 worker가 문자열과 행을 변환하며 창을 닫거나 View·revision이 바뀐 결과는 폐기합니다. 필터와 Group·Ungroup은 아직 문서 편집에 연결하지 않았으므로 기본 창에서는 비활성으로 두지 않고 숨깁니다.
 
 | 항목 | 관련 WBS·문서 |
 |---|---|
