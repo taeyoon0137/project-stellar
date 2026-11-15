@@ -9,7 +9,7 @@
 //! | group | `div` | `role="group"` |
 //! | button | `button type="button"` | `disabled`, `aria-pressed` |
 //! | textField | 자식 없으면 `input type="text"`, 있으면 `div role="textbox"` | `value`·`readonly`(input), `aria-readonly`(div) |
-//! | dialog | `dialog open` | `aria-modal` |
+//! | dialog | `dialog open` | modal은 노트(아래 상태) |
 //! | list | 자식 element가 모두 항목이면 `ul`, 아니면 `div role="list"` | 선택 항목이 있거나 다중 선택이면 `role="listbox"`, `aria-multiselectable` |
 //! | listItem | 부모 element가 `ul`이면 `li`, 아니면 `div role="listitem"` | listbox 안이면 `role="option"`, `aria-selected` |
 //! | radioGroup | `div role="radiogroup"` | — |
@@ -22,9 +22,11 @@
 //!   노트로 남깁니다.
 //! - **상태**: 정적 값을 씁니다. 상태 변수에 묶인 값은 초기값을 쓰고 [`WebNoteKind::DynamicBinding`]으로 알립니다.
 //!   `focusable`은 native로 focus를 받지 않는 element에 `tabindex="0"`, `focused`는 `autofocus`, `disabled`는 native
-//!   control에 `disabled`·그 밖에 `aria-disabled`, `modal`은 `aria-modal`입니다.
+//!   control에 `disabled`·그 밖에 `aria-disabled`입니다. `modal`은 쓰지 않고 [`WebNoteKind::NoEquivalent`]로
+//!   남깁니다(`<dialog open>`은 non-modal로 열리고 정적 HTML은 바깥 콘텐츠를 inert로 만들 수 없어, `aria-modal`은
+//!   사실과 다른 상태를 알립니다. modal 표시는 `showModal()` 연결이 필요한 script 범위입니다).
 //! - **숨김**: 자신과 하위에 접근성 entry가 없는 subtree는 맨 위 element에 `aria-hidden="true"`를 붙입니다(`img`는
-//!   `alt=""`도).
+//!   `alt=""`도). Fragment는 element가 없으므로 "맨 위"는 DOM 부모 element 기준입니다.
 //! - **읽기 순서**: entry의 자식 읽기 순서가 DOM 순서와 다르거나 자식이 DOM 하위가 아니면(접근성 재부모) 그 entry
 //!   element에 `aria-owns`로 자식 전체를 읽기 순서대로 적습니다.
 //! - **action**: activate·select·setValue·focus·dismiss는 role과 native element(button·input·dialog)가 제공합니다.
@@ -96,16 +98,20 @@ struct Mapper<'a> {
     element_of: Vec<Option<u32>>,
     notes: Vec<WebNote>,
     referenced: BTreeSet<u32>,
+    /// entry index → 자식 entry index(읽기 순서, 한 번만 계산).
+    children: Vec<Vec<u32>>,
+    /// entry index → listbox로 낼 List인지(한 번만 계산).
+    listbox: Vec<bool>,
 }
 
-fn is_listbox(ir: &IrTree, entry: u32) -> bool {
-    let list = &ir.accessibility[entry as usize].semantics;
+fn is_listbox(ir: &IrTree, children: &[Vec<u32>], entry: usize) -> bool {
+    let list = &ir.accessibility[entry].semantics;
     if list.role != AccessibilityRole::List {
         return false;
     }
     list.states.contains_key(&StateKind::Multiselectable)
-        || ir.accessibility_children(entry).into_iter().any(|child| {
-            ir.accessibility[child as usize]
+        || children[entry].iter().any(|child| {
+            ir.accessibility[*child as usize]
                 .semantics
                 .actions
                 .contains_key(&ActionKind::Select)
@@ -202,7 +208,7 @@ impl<'a> Mapper<'a> {
                 }
                 Some(AccessibilityRole::List) => {
                     let entry = node.semantics.unwrap_or_default();
-                    let listbox = is_listbox(ir, entry);
+                    let listbox = self.listbox[entry as usize];
                     let all_items = has_children
                         && self.element_children(element).into_iter().all(|child| {
                             self.node_of(child).and_then(|n| self.role(n))
@@ -226,7 +232,7 @@ impl<'a> Mapper<'a> {
                     let in_listbox = ir
                         .semantics_of(node_index)
                         .and_then(|entry| entry.parent)
-                        .is_some_and(|parent| is_listbox(ir, parent));
+                        .is_some_and(|parent| self.listbox[parent as usize]);
                     // 부모 element tag는 부모가 먼저 처리되므로(preorder) 이미 정해졌습니다.
                     let parent_is_ul = self
                         .doc
@@ -485,11 +491,9 @@ impl<'a> Mapper<'a> {
                     _ => self.note(node, WebNoteKind::NoEquivalent(Facet::State(state))),
                 },
                 StateKind::Modal => {
-                    if tag == "dialog" {
-                        if value {
-                            self.doc.set_attr(element, "aria-modal", "true");
-                        }
-                    } else {
+                    // `<dialog open>`은 non-modal로 열리고 정적 HTML은 바깥 콘텐츠를 inert로 만들 수 없습니다.
+                    // modal 표시는 `showModal()` 연결(script 범위)이 필요하므로 `aria-modal`을 쓰지 않습니다.
+                    if tag != "dialog" || value {
                         self.note(node, WebNoteKind::NoEquivalent(Facet::State(state)));
                     }
                 }
@@ -556,12 +560,13 @@ impl<'a> Mapper<'a> {
 
     fn assign_reading_order(&mut self) {
         let ir = self.ir;
+        let child_lists = std::mem::take(&mut self.children);
         for (index, entry) in ir.accessibility.iter().enumerate() {
             let Some(element) = self.element_of[entry.node as usize] else {
                 continue;
             };
-            let children = ir.accessibility_children(index as u32);
-            if children.is_empty() || self.dom_order(index as u32, element) == children {
+            let children = &child_lists[index];
+            if children.is_empty() || self.dom_order(index as u32, element) == *children {
                 continue;
             }
             let ids: Vec<String> = children
@@ -578,6 +583,7 @@ impl<'a> Mapper<'a> {
                 .collect();
             self.doc.set_attr(element, "aria-owns", ids.join(" "));
         }
+        self.children = child_lists;
         // 접근성 root가 여럿이면 DOM 순서로만 읽힙니다.
         let roots: Vec<u32> = ir
             .accessibility
@@ -591,7 +597,7 @@ impl<'a> Mapper<'a> {
                 .nodes
                 .iter()
                 .filter_map(|node| node.semantics)
-                .filter(|entry| roots.contains(entry))
+                .filter(|entry| ir.accessibility[*entry as usize].parent.is_none())
                 .collect();
             if dom != roots {
                 let first = ir.accessibility[roots[0] as usize].node;
@@ -603,12 +609,18 @@ impl<'a> Mapper<'a> {
 
 /// IR 접근성 tree를 HTML/ARIA 조각으로 매핑합니다(모듈 문서 규칙).
 pub fn map_accessibility(ir: &IrTree) -> WebAccessibility {
+    let children = ir.accessibility_child_lists();
+    let listbox = (0..ir.accessibility.len())
+        .map(|entry| is_listbox(ir, &children, entry))
+        .collect();
     let mut mapper = Mapper {
         ir,
         doc: HtmlDocument::new(),
         element_of: vec![None; ir.nodes.len()],
         notes: Vec::new(),
         referenced: BTreeSet::new(),
+        children,
+        listbox,
     };
     let has_semantics = ir.semantic_subtrees();
     mapper.build_structure();

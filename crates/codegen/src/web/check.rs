@@ -17,11 +17,17 @@
 //! | `button` 안의 interactive content | [`WebA11yIssue::NestedInteractive`] |
 //! | `aria-hidden` subtree 안의 focus 가능한 element | [`WebA11yIssue::FocusableInHidden`] |
 //! | 두 element가 같은 element를 `aria-owns`, 소유 순환 | [`WebA11yIssue::OwnedTwice`], [`WebA11yIssue::OwnsCycle`] |
+//! | `open`으로 연(non-modal) `dialog`의 `aria-modal="true"` | [`WebA11yIssue::ModalOpenDialog`] |
 //!
 //! 접근성 부모는 `aria-owns` 소유자 또는 DOM 부모이며, generic·none·presentation role element는 건너뜁니다.
+//!
+//! [`check_against_ir`]는 문서를 만든 IR과 대조합니다. 자신과 하위에 접근성 entry가 없는 node의 element가
+//! `aria-hidden` 밖에 있으면 [`WebA11yIssue::ExposedWithoutSemantics`], entry가 있는 node의 element가 `aria-hidden`
+//! 안에 있으면 [`WebA11yIssue::SemanticsHidden`]입니다.
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::ir::IrTree;
 use crate::web::html::{HtmlChild, HtmlDocument, HtmlElement};
 
 /// 정적 검사 issue. `element`는 문서 안 element index입니다.
@@ -119,6 +125,22 @@ pub enum WebA11yIssue {
     /// 소유 순환.
     OwnsCycle {
         /// 순환에 걸린 element.
+        element: u32,
+    },
+    /// `open`으로 연 `dialog`(non-modal)의 `aria-modal="true"`. 정적 HTML은 바깥 콘텐츠를 inert로 만들 수 없어
+    /// 보조 기술에 사실과 다른 modal 상태를 알립니다.
+    ModalOpenDialog {
+        /// element.
+        element: u32,
+    },
+    /// IR에서 자신과 하위에 접근성 entry가 없는 node의 element가 `aria-hidden` 밖에 있음.
+    ExposedWithoutSemantics {
+        /// element.
+        element: u32,
+    },
+    /// 접근성 entry가 있는 node의 element가 `aria-hidden` 안에 있음.
+    SemanticsHidden {
+        /// element.
         element: u32,
     },
 }
@@ -461,6 +483,24 @@ fn is_interactive(element: &HtmlElement) -> bool {
         || WIDGET_ROLES.contains(&effective_role(element).as_str())
 }
 
+/// element마다 자신이나 DOM 조상이 `aria-hidden="true"`인지(index = element index).
+fn hidden_flags(doc: &HtmlDocument) -> Vec<bool> {
+    let mut hidden = vec![false; doc.elements().len()];
+    // 부모가 먼저 계산되도록 root부터 DOM preorder로 훑습니다.
+    let mut stack: Vec<(u32, bool)> = doc.roots().iter().map(|r| (*r, false)).collect();
+    while let Some((index, inherited)) = stack.pop() {
+        let element = doc.element(index);
+        let flag = inherited || is_hidden_attr(element);
+        hidden[index as usize] = flag;
+        for child in &element.children {
+            if let HtmlChild::Element(child) = child {
+                stack.push((*child, flag));
+            }
+        }
+    }
+    hidden
+}
+
 struct Checker<'a> {
     doc: &'a HtmlDocument,
     issues: Vec<WebA11yIssue>,
@@ -472,17 +512,6 @@ struct Checker<'a> {
 impl<'a> Checker<'a> {
     fn element(&self, index: u32) -> &'a HtmlElement {
         self.doc.element(index)
-    }
-
-    fn element_children(&self, index: u32) -> impl Iterator<Item = u32> + 'a {
-        self.doc
-            .element(index)
-            .children
-            .iter()
-            .filter_map(|child| match child {
-                HtmlChild::Element(child) => Some(*child),
-                HtmlChild::Text(_) => None,
-            })
     }
 
     fn collect_ids(&mut self) {
@@ -499,14 +528,7 @@ impl<'a> Checker<'a> {
     }
 
     fn collect_hidden(&mut self) {
-        // 부모가 먼저 계산되도록 root부터 DOM preorder로 훑습니다.
-        let mut stack: Vec<(u32, bool)> = self.doc.roots().iter().map(|r| (*r, false)).collect();
-        while let Some((index, inherited)) = stack.pop() {
-            let hidden = inherited || is_hidden_attr(self.element(index));
-            self.hidden[index as usize] = hidden;
-            let children: Vec<u32> = self.element_children(index).collect();
-            stack.extend(children.into_iter().map(|child| (child, hidden)));
-        }
+        self.hidden = hidden_flags(self.doc);
     }
 
     fn collect_owners(&mut self) {
@@ -706,6 +728,13 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        if element.tag == "dialog"
+            && element.attr("open").is_some()
+            && element.attr("aria-modal") == Some("true")
+        {
+            self.issues
+                .push(WebA11yIssue::ModalOpenDialog { element: index });
+        }
         if self.hidden[index as usize] {
             if is_focusable(element) {
                 self.issues
@@ -857,5 +886,30 @@ pub fn check_document(doc: &HtmlDocument) -> Vec<WebA11yIssue> {
     let mut issues = checker.issues;
     issues.sort();
     issues.dedup();
+    issues
+}
+
+/// 문서를 만든 IR과 대조하는 정적 검사(모듈 문서). issue를 정렬해 돌려줍니다(없으면 빈 목록).
+pub fn check_against_ir(ir: &IrTree, doc: &HtmlDocument) -> Vec<WebA11yIssue> {
+    let has = ir.semantic_subtrees();
+    let hidden = hidden_flags(doc);
+    let mut issues = Vec::new();
+    for (index, element) in doc.elements().iter().enumerate() {
+        let Some(node) = element.source.and_then(|source| ir.node_index(source)) else {
+            continue;
+        };
+        let element_index = index as u32;
+        if !has[node as usize] && !hidden[index] {
+            issues.push(WebA11yIssue::ExposedWithoutSemantics {
+                element: element_index,
+            });
+        }
+        if ir.nodes[node as usize].semantics.is_some() && hidden[index] {
+            issues.push(WebA11yIssue::SemanticsHidden {
+                element: element_index,
+            });
+        }
+    }
+    issues.sort();
     issues
 }

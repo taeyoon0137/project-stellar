@@ -23,3 +23,6 @@ pub mod apple;
 
 #[cfg(test)]
 pub(crate) mod fixture;
+
+#[cfg(test)]
+mod scale_tests;

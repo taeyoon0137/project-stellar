@@ -23,9 +23,12 @@ use std::collections::BTreeMap;
 
 use stellar_accessibility::control::{ControlSemantics, SelectionMode, SourceControl};
 use stellar_accessibility::generate::generate;
-use stellar_accessibility::node::AccessibilityBinding;
+use stellar_accessibility::node::{
+    AccessibilityBinding, AccessibilityNode, AccessibilityRole, ActionKind, ActionTarget, StateKind,
+};
 use stellar_accessibility::snapshot::AccessibilitySnapshot;
 use stellar_accessibility::source::{SourceKind, SourceNode, SourceTree};
+use stellar_accessibility::tree::AccessibilityTree;
 use stellar_core_types::color::{Color, ColorSpace};
 use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
@@ -537,6 +540,131 @@ impl Fixture {
     /// profile의 IR.
     pub fn ir(&self, profile: &TargetProfile) -> CodegenIr {
         build_ir(&self.sources(), profile, &self.catalog).expect("IR")
+    }
+}
+
+/// root Frame(generic) 아래 Fragment(2) ─ Text 3 "숨길 장식"(접근성 entry 없음)과 Text 4 "보임"(staticText)을 둔
+/// fixture입니다. Fragment 아래에서 시작하는 장식 subtree의 숨김을 검사합니다.
+pub fn fragment_fixture() -> Fixture {
+    let view = ViewModel {
+        nodes: vec![
+            view_node(1, None, ElementKind::FRAME, &[]),
+            view_node(2, Some(1), ElementKind::FRAGMENT, &[]),
+            view_node(3, Some(2), ElementKind::TEXT, &[]),
+            view_node(4, Some(1), ElementKind::TEXT, &[]),
+        ],
+        ..ViewModel::default()
+    };
+    let layout = LayoutInput::new(
+        sid(1),
+        vec![
+            LayoutNode::new(sid(1))
+                .with_child(sid(3), key(1))
+                .with_child(sid(4), key(2)),
+            LayoutNode::new(sid(3)),
+            LayoutNode::new(sid(4)),
+        ],
+    );
+    let mut tree = AccessibilityTree::new();
+    tree.insert(AccessibilityNode::new(sid(1), AccessibilityRole::Generic))
+        .expect("root");
+    tree.insert(
+        AccessibilityNode::new(sid(4), AccessibilityRole::StaticText)
+            .with_label(AccessibilityBinding::NodeText(sid(4))),
+    )
+    .expect("text");
+    tree.push_root(sid(1));
+    tree.push_child(sid(1), sid(4));
+    let texts = [(3, "숨길 장식"), (4, "보임")]
+        .into_iter()
+        .map(|(id, value)| (sid(id), value.to_string()))
+        .collect();
+    Fixture {
+        view,
+        variants: VariantLayer::none(),
+        layout,
+        accessibility: AccessibilitySnapshot::from_tree(&tree).expect("snapshot"),
+        texts,
+        states: Vec::new(),
+        tokens: Vec::new(),
+        token_bindings: BTreeMap::new(),
+        catalog: builtin::catalog().expect("catalog"),
+    }
+}
+
+/// 마지막 4바이트가 `n`인 결정론 StableId(큰 fixture용).
+pub fn sid32(n: u32) -> StableId {
+    let mut bytes = [0u8; 16];
+    bytes[12..].copy_from_slice(&n.to_be_bytes());
+    StableId::from_bytes(bytes)
+}
+
+/// 큰 목록 fixture 항목 StableId의 시작값(상태 id와 겹치지 않음).
+const LIST_ITEM_BASE: u32 = 0x0100_0000;
+
+/// root Frame(세로 Stack, 이름 "목록"인 단일 선택 List) 아래 선택 가능한 ListItem Frame `items`개를 둔 fixture입니다.
+/// 항목 selected는 상태 `STATE_SIZE`가 항목 StableId와 같은지이고 select 동작이 그 상태를 씁니다(adapter 시간 상한
+/// 검사용).
+pub fn list_fixture(items: u32) -> Fixture {
+    let root = sid(1);
+    let selection = sid(STATE_SIZE);
+    let ids: Vec<StableId> = (0..items).map(|i| sid32(LIST_ITEM_BASE + i)).collect();
+    let mut nodes = vec![view_node(1, None, ElementKind::FRAME, &[])];
+    nodes.extend(ids.iter().map(|id| ViewNode {
+        id: *id,
+        parent: Some(root),
+        element: ElementKind::FRAME,
+        contracts: Vec::new(),
+    }));
+    let view = ViewModel {
+        nodes,
+        ..ViewModel::default()
+    };
+    let mut root_layout = LayoutNode::new(root)
+        .with_container(ContainerLayout::Stack(StackLayout::new(Axis::Vertical)));
+    for (order, id) in ids.iter().enumerate() {
+        root_layout = root_layout.with_child(*id, key(order as u32 + 1));
+    }
+    let mut layout_nodes = vec![root_layout];
+    layout_nodes.extend(ids.iter().map(|id| LayoutNode::new(*id)));
+    let mut tree = AccessibilityTree::new();
+    tree.insert(
+        AccessibilityNode::new(root, AccessibilityRole::List)
+            .with_label(AccessibilityBinding::text("목록")),
+    )
+    .expect("list");
+    for id in &ids {
+        tree.insert(
+            AccessibilityNode::new(*id, AccessibilityRole::ListItem)
+                .with_label(AccessibilityBinding::text("항목"))
+                .with_state(
+                    StateKind::Selected,
+                    AccessibilityBinding::SelectionMatches {
+                        selection,
+                        item: *id,
+                    },
+                )
+                .with_action(ActionKind::Select, ActionTarget::State(selection)),
+        )
+        .expect("item");
+    }
+    tree.push_root(root);
+    tree.set_children(root, ids.clone());
+    let initial = ids.first().map(ToString::to_string).unwrap_or_default();
+    Fixture {
+        view,
+        variants: VariantLayer::none(),
+        layout: LayoutInput::new(root, layout_nodes),
+        accessibility: AccessibilitySnapshot::from_tree(&tree).expect("snapshot"),
+        texts: BTreeMap::new(),
+        states: vec![StateDecl {
+            id: selection,
+            name: "selection".to_string(),
+            initial: TypedValue::String(initial),
+        }],
+        tokens: Vec::new(),
+        token_bindings: BTreeMap::new(),
+        catalog: builtin::catalog().expect("catalog"),
     }
 }
 

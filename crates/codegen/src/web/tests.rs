@@ -4,7 +4,7 @@ use stellar_accessibility::node::StateKind;
 
 use crate::fixture::{self as fx, sid, Fixture};
 use crate::web::aria::{element_id, map_accessibility, Facet, WebNote, WebNoteKind};
-use crate::web::check::{check_document, WebA11yIssue};
+use crate::web::check::{check_against_ir, check_document, WebA11yIssue};
 use crate::web::html::HtmlDocument;
 
 #[test]
@@ -16,7 +16,8 @@ fn site_profile_maps_to_golden_html_and_passes_static_check() {
     let web = map_accessibility(&ir);
     fx::check_golden("web_aria_site.html", &web.to_html());
     assert_eq!(check_document(&web.document), Vec::new());
-    // 상태 변수에 묶인 값은 초기값을 쓰고 노트로 남깁니다.
+    assert_eq!(check_against_ir(&ir, &web.document), Vec::new());
+    // 상태 변수에 묶인 값은 초기값을 쓰고, 정적 HTML이 표현하지 못하는 modal은 노트로 남깁니다.
     assert_eq!(
         web.notes,
         vec![
@@ -36,6 +37,10 @@ fn site_profile_maps_to_golden_html_and_passes_static_check() {
                 node: sid(12),
                 kind: WebNoteKind::DynamicBinding(Facet::State(StateKind::Disabled)),
             },
+            WebNote {
+                node: sid(16),
+                kind: WebNoteKind::NoEquivalent(Facet::State(StateKind::Modal)),
+            },
         ]
     );
 }
@@ -53,7 +58,49 @@ fn every_profile_ir_passes_static_check_and_is_deterministic() {
             "{}",
             profile.id.as_str()
         );
+        assert_eq!(
+            check_against_ir(&ir, &first.document),
+            Vec::new(),
+            "{}",
+            profile.id.as_str()
+        );
     }
+}
+
+#[test]
+fn fragment_is_transparent_for_hidden_subtrees() {
+    // Fragment 아래에서 시작하는 entry 없는 subtree도 맨 위 element를 숨깁니다(Fragment는 element가 없음).
+    let fixture = fx::fragment_fixture();
+    let ir = fixture.ir(&fx::web_profile());
+    let web = map_accessibility(&ir);
+    let index = |n: u8| {
+        web.document
+            .elements()
+            .iter()
+            .position(|e| e.source == Some(sid(n)))
+            .expect("element") as u32
+    };
+    let (decoration, visible) = (index(3), index(4));
+    assert_eq!(
+        web.document.element(decoration).attr("aria-hidden"),
+        Some("true")
+    );
+    assert_eq!(web.document.element(visible).attr("aria-hidden"), None);
+    assert_eq!(check_document(&web.document), Vec::new());
+    assert_eq!(check_against_ir(&ir, &web.document), Vec::new());
+    // IR 대조 검사는 숨김이 빠진 장식과 숨겨진 의미를 잡습니다.
+    let mut exposed = web.document.clone();
+    exposed.remove_attr(decoration, "aria-hidden");
+    exposed.set_attr(visible, "aria-hidden", "true");
+    assert_eq!(
+        check_against_ir(&ir, &exposed),
+        vec![
+            WebA11yIssue::ExposedWithoutSemantics {
+                element: decoration
+            },
+            WebA11yIssue::SemanticsHidden { element: visible },
+        ]
+    );
 }
 
 #[test]
@@ -89,7 +136,8 @@ fn mapping_uses_native_semantics_reading_order_and_hidden_subtrees() {
     assert_eq!(of(11).attr("aria-label"), Some("메모"));
     assert_eq!(of(12).attr("disabled"), None);
     assert_eq!(of(16).tag, "dialog");
-    assert_eq!(of(16).attr("aria-modal"), Some("true"));
+    // `<dialog open>`은 non-modal이라 aria-modal을 쓰지 않습니다(노트).
+    assert_eq!(of(16).attr("aria-modal"), None);
     // 읽기 순서(이미지 먼저)가 DOM 순서와 달라 root가 자식 전체를 aria-owns로 적습니다.
     let root = doc.element(doc.roots()[0]);
     let owns: Vec<&str> = root
@@ -362,6 +410,20 @@ fn static_check_detects_each_rule_violation() {
         d.issues(),
         vec![WebA11yIssue::FocusableInHidden { element: button }]
     );
+
+    let mut d = Doc::new();
+    let dialog = d.root(
+        "dialog",
+        &[("aria-label", "알림"), ("aria-modal", "true"), ("open", "")],
+    );
+    assert_eq!(
+        d.issues(),
+        vec![WebA11yIssue::ModalOpenDialog { element: dialog }]
+    );
+    // `open` 없이 script가 `showModal()`로 여는 dialog의 aria-modal은 허용합니다.
+    let mut d = Doc::new();
+    d.root("dialog", &[("aria-label", "알림"), ("aria-modal", "true")]);
+    assert_eq!(d.issues(), Vec::new());
 
     let mut d = Doc::new();
     let root = d.root("div", &[("role", "group"), ("aria-owns", "x")]);
