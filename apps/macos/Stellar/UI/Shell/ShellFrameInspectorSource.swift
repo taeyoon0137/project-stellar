@@ -13,30 +13,26 @@ final class ShellFrameInspectorSource: InspectorDataSource {
     var snapshotHandler: (@MainActor (InspectorSnapshot) -> Void)?
     var editFrame: ((CanvasInspectorFrame, FrameInspectorEdit, @escaping (Bool) -> Void) -> Bool)?
     private var selected: CanvasInspectorFrame?
-    private var trusted = false
     private var inFlight = false
     private var queued: [InspectorCommand] = []
     private static let white = InspectorColor(space: .srgb, red: 1, green: 1, blue: 1, alpha: 1)
 
-    func refresh(_ next: CanvasInspectorFrame?, trusted: Bool) {
-        guard next != selected || trusted != self.trusted else { return }
+    func refresh(_ next: CanvasInspectorFrame?) {
+        guard next != selected else { return }
         let selectionHistoryChanged = next?.revision == selected?.revision && next?.historySequence != selected?.historySequence
         if next?.session != selected?.session || next?.view != selected?.view || next?.node != selected?.node || selectionHistoryChanged {
             snapshot.selectionToken &+= 1
             queued.removeAll()
         }
         selected = next
-        self.trusted = trusted
-        if !trusted || next?.editable != true { queued.removeAll() }
+        if next?.editable != true { queued.removeAll() }
         publish()
     }
 
     private func publish() {
         let generation = snapshot.generation &+ 1, token = snapshot.selectionToken
         if let selected {
-            let editability: InspectorEditability = !trusted
-                ? .readOnly(reason: String(localized: "Trust the project to edit this frame."))
-                : (selected.editable ? .editable : .locked)
+            let editability: InspectorEditability = selected.editable ? .editable : .locked
             var row = InspectorPropertyCatalog.frameSizeRow.make { field in
                 let size = selected.size
                 return InspectorFieldState(value: .number(field.id.path == "frame.size.width" ? size.width : size.height),
@@ -73,7 +69,7 @@ final class ShellFrameInspectorSource: InspectorDataSource {
     }
 
     func submit(_ command: InspectorCommand, basedOn generation: UInt64) {
-        guard generation == snapshot.generation, trusted, selected?.editable == true,
+        guard generation == snapshot.generation, selected?.editable == true,
               case let .setValue(_, _, phase) = command else {
             publish()
             return
@@ -85,7 +81,7 @@ final class ShellFrameInspectorSource: InspectorDataSource {
     }
 
     private func submitNext() {
-        guard !inFlight, let selected, trusted, selected.editable else { return }
+        guard !inFlight, let selected, selected.editable else { return }
         while !queued.isEmpty {
             guard let change = edit(queued.removeFirst(), on: selected) else {
                 publish()

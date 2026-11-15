@@ -146,12 +146,11 @@ enum ShellFrameInsertCheck {
         }
         window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
         window.orderFront(nil)
-        guard !project.gitSource.trusted, window.attachedSheet == nil, stroke(),
-              ShellProjectTrustCheck.respondToTrustSheet(in: window, approving: false), wait(),
-              !project.gitSource.trusted, unchanged() else { return fail("제한 모드 F 드래그 승인 취소·원본 보존") }
-        guard stroke(), ShellProjectTrustCheck.respondToTrustSheet(in: window, approving: true), wait(),
-              project.gitSource.trusted, unchanged(), project.toolsModel.snapshot.activeTool == .frame
-        else { return fail("F 드래그 신뢰 승인 직후 입력 재생 없이 원본 보존") }
+        // 제한 모드도 캔버스 편집을 허용합니다(사용자 결정 D1). 신뢰는 아래 Git 패널 검사에만 필요합니다.
+        guard !project.gitSource.trusted, window.attachedSheet == nil, unchanged() else { return fail("제한 모드 원본") }
+        project.gitSource.updateTrust(true)
+        guard wait(), project.gitSource.trusted, unchanged(), project.toolsModel.snapshot.activeTool == .frame
+        else { return fail("Git 검사용 신뢰 승인과 원본 보존") }
         if CommandLine.arguments.contains("--expect-missing-git-identity") {
             let panel = project.panelsSlot.gitPanel
             panel.loadViewIfNeeded()
@@ -280,7 +279,7 @@ enum ShellFrameInsertCheck {
                       let enabled = owner.inspectorSlot.inspector.control(identifier: "frame.background.enabled") as? NSSwitch,
                       let well = owner.inspectorSlot.inspector.control(identifier: "frame.background.color") as? NSColorWell,
                       selected.background == expected, enabled.state == (expected == nil ? .off : .on),
-                      well.isEnabled == (expected != nil && owner.gitSource.trusted && selected.editable)
+                      well.isEnabled == (expected != nil && selected.editable)
                 else { return false }
                 return expected.map { InspectorColor(well.color) == $0 } ?? !well.isEnabled
             }
@@ -323,24 +322,6 @@ enum ShellFrameInsertCheck {
               radiiAre([0, 128, 0, 0], reopened),
               shown.frameHit(at: viewPoint(116, 32, canvas: shown))?.id == root,
               let reopenedWindow = reopened.window, centerPixel(shown, in: reopenedWindow) == painted else { return fail("재열기 후 자식 위치·크기") }
-        reopened.gitSource.updateTrust(false)
-        guard wait(), awaitSidebar({ field("width", reopened)?.isEnabled == false }),
-              let restrictedSession = reopened.windowController.windowSession,
-              let restricted = restrictedSession.info, let lockedWidth = field("width", reopened),
-              !lockedWidth.isEnabled, radiusField("topRight", reopened)?.isEnabled == false, !restrictedSession.isClosing else { return fail("읽기 전용 Inspector 필드") }
-        let restrictedSource = reopened.inspectorSource
-        restrictedSource.submit(.setValue(InspectorPropertyCatalog.FrameCorner.topRight.field.id, .number(9), phase: .commit),
-                                basedOn: restrictedSource.snapshot.generation)
-        restrictedSource.submit(.setValue(InspectorPropertyID("frame.size.width"), .number(12), phase: .commit),
-                                basedOn: restrictedSource.snapshot.generation)
-        restrictedSource.submit(.setValue(InspectorPropertyID("frame.background.enabled"), .bool(false), phase: .commit),
-                                basedOn: restrictedSource.snapshot.generation)
-        guard wait(), restrictedSession.info?.revision == restricted.revision, sizeIs(78.5, 68, reopened), fillIs(p3, in: reopened),
-              (reopened.inspectorSlot.inspector.control(identifier: "frame.background.color") as? NSColorWell)?.isEnabled == false
-        else { return fail("읽기 전용 Inspector 크기 보존") }
-        guard radiiAre([0, 128, 0, 0], reopened) else { return fail("읽기 전용 반경 보존") }
-        reopened.gitSource.updateTrust(true)
-        guard wait(), awaitSidebar({ field("width", reopened)?.isEnabled == true }) else { return fail("신뢰 후 Inspector 복구") }
         guard key(3, "f", canvas: shown), pointer(.leftMouseDown, 45, 36, canvas: shown),
               pointer(.leftMouseDragged, 62, 52, canvas: shown), pointer(.leftMouseUp, 62, 52, canvas: shown), wait(),
               let nested = shown.frameHit(at: viewPoint(46, 37, canvas: shown))?.id,
@@ -528,7 +509,7 @@ enum ShellFrameInsertCheck {
             }
         }
         print("shape tools ok: Ellipse, reverse Line and Polygon from menu to path hit, single Undo, Redo, Save and reopen")
-        print("frame-insert ok: F, restricted, cancel, undo/redo and reopen; Inspector size, four independent raw corners and stale A-B-A guard, optional fill, P3/alpha, invalid input, undo/redo, trust and reopen; R Rectangle Shape, V move, clip, pixels and reopen; live Layers, inline rename with undo/redo and reopen, nested disclosure, 64+1 pagination and two windows")
+        print("frame-insert ok: F, cancel, undo/redo and reopen; Inspector size, four independent raw corners and stale A-B-A guard, optional fill, P3/alpha, invalid input, undo/redo and reopen; R Rectangle Shape, V move, clip, pixels and reopen; live Layers, inline rename with undo/redo and reopen, nested disclosure, 64+1 pagination and two windows")
         return true
     }
 }

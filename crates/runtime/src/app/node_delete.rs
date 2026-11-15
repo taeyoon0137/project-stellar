@@ -1,5 +1,5 @@
 //! Delete selected subtrees through the owning window's document history.
-use super::frame_move::{command_id, trusted_canvas_window};
+use super::frame_move::{canvas_window, command_id};
 use super::*;
 use stellar_commands::{
     command::Command, id::CommandOrigin, node_ops::DeleteSubtree, transaction::CommandTransaction,
@@ -103,7 +103,7 @@ impl AppRuntime {
         ids: Option<Vec<StableId>>,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            let window = trusted_canvas_window(ctx, target.session)?;
+            let window = canvas_window(ctx, target.session)?;
             let selected = window.view().selection().ids();
             target.verify(window)?;
             if ids
@@ -300,28 +300,46 @@ mod tests {
     }
 
     #[test]
-    fn untrusted_delete_is_rejected_without_mutation() {
+    fn restricted_mode_selection_edits_apply_without_project_trust() {
+        // 제한 모드는 문서 편집을 막지 않습니다(사용자 결정 D1).
         use crate::app_window_tests::{next_event, open_project, open_window};
         let dir = saved_project_with("delete-untrusted", &[&sample_document()]);
         let app = AppRuntime::start().unwrap();
         let owner = open_project(&app, dir.path());
+        assert_ne!(
+            app.state().project(owner).unwrap().trust,
+            TrustStatus::Trusted
+        );
         let (session, _, _) = open_window(&app, owner);
-        app.set_selection(session, vec![sid(11)]).unwrap();
-        assert!(matches!(
-            next_event(&app),
-            RuntimeEvent::WindowViewChanged { .. }
-        ));
-        let rev = app.state().window(session).unwrap().revision;
-        app.delete_selected_nodes(session, sid(3), rev).unwrap();
-        assert!(matches!(
-            next_event(&app),
-            RuntimeEvent::RequestFailed {
-                failure: RequestFailure::TrustUnavailable,
-                ..
+        let target = || {
+            let state = app.state();
+            let window = state.window(session).unwrap();
+            SelectionEditTarget {
+                session,
+                view: window.active_view.unwrap(),
+                revision: window.revision,
+                history_sequence: window.history_sequence,
             }
-        ));
-        assert_eq!(app.state().window(session).unwrap().revision, rev);
-        assert!(!app.state().window(session).unwrap().has_unsaved_changes);
+        };
+        let changed = |request| {
+            assert!(
+                matches!(next_event(&app), RuntimeEvent::WindowViewChanged { request: got, .. } if got == request)
+            );
+        };
+        changed(app.set_selection(session, vec![sid(11)]).unwrap());
+        let rev = app.state().window(session).unwrap().revision;
+        changed(
+            app.edit_selection(target(), SelectionEdit::Duplicate, None)
+                .unwrap(),
+        );
+        changed(
+            app.edit_selection(target(), SelectionEdit::Delete, None)
+                .unwrap(),
+        );
+        let state = app.state();
+        let summary = state.window(session).unwrap();
+        assert_eq!(summary.revision.0, rev.0 + 2);
+        assert!(summary.has_unsaved_changes);
     }
 
     #[test]

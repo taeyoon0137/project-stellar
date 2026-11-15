@@ -7,7 +7,6 @@ struct CanvasFrameDrag {
     let session: UInt64
     let size: NSSize
     let viewport: StellarWindowViewInfo
-    let canMove: Bool
     let tool: CanvasTool
     var moved = false
 }
@@ -117,15 +116,14 @@ extension ShellProjectWindow {
                       self.selectNodes([hit.id]) else { return false }
                 if hit.isText || hit.isImage { return true }
                 self.frameDrag = CanvasFrameDrag(hit: hit, start: point, session: session.session,
-                                                 size: canvas.bounds.size, viewport: viewport, canMove: self.gitSource.trusted, tool: .move)
+                                                 size: canvas.bounds.size, viewport: viewport, tool: .move)
                 return true
             case .leftMouseDragged:
                 guard var drag = self.frameDrag else { return false }
-                guard self.gitSource.trusted, self.toolsModel.snapshot.activeTool == .move else {
+                guard self.toolsModel.snapshot.activeTool == .move else {
                     _ = canvas.cancelFrameGesture?()
                     return true
                 }
-                guard drag.canMove else { return true }
                 let offset = CGVector(dx: point.x - drag.start.x, dy: point.y - drag.start.y)
                 if !drag.moved {
                     guard hypot(offset.dx, offset.dy) >= 3 else { return true }
@@ -137,7 +135,7 @@ extension ShellProjectWindow {
             case .leftMouseUp:
                 guard let drag = self.frameDrag else { return false }
                 _ = canvas.cancelFrameGesture?()
-                guard drag.moved, drag.canMove, self.gitSource.trusted, self.toolsModel.snapshot.activeTool == .move,
+                guard drag.moved, self.toolsModel.snapshot.activeTool == .move,
                       canvas.bounds.size == drag.size, let session = self.windowController.windowSession,
                       session.session == drag.session, let camera = session.viewInfo,
                       camera.center_x == drag.viewport.center_x, camera.center_y == drag.viewport.center_y,

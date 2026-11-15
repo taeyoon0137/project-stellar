@@ -1,6 +1,6 @@
 //! 자유 배치 Frame에 새 Frame, Shape 또는 본문이 있는 Text를 삽입하고 선택합니다.
 
-use super::frame_move::{command_id, editable_frame, trusted_canvas_window};
+use super::frame_move::{canvas_window, command_id, editable_frame};
 use super::*;
 use stellar_commands::{
     command::Command, id::CommandOrigin, node_ops::InsertNode, transaction::CommandTransaction,
@@ -115,7 +115,7 @@ impl AppRuntime {
         item: Option<CanvasItem>,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            let window = trusted_canvas_window(ctx, session)?;
+            let window = canvas_window(ctx, session)?;
             let item = item.ok_or_else(|| {
                 Failure::new(
                     RequestFailure::UnknownView,

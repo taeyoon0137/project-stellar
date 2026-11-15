@@ -211,7 +211,7 @@ UI thread는 기다리지 않습니다.
 
 기본 창의 이동 도구는 표시된 Frame을 드래그할 때 해당 창 scene에서 그 하위 트리를 임시 이동합니다.
 마우스를 놓으면 `stellar_window_session_move_frame`에 창 session, 클릭 시점의 View ID와 문서 revision,
-Frame ID, 부모 좌표계 이동량을 보냅니다. document thread는 신뢰와 현재 선택·View·revision·조상 잠금을
+Frame ID, 부모 좌표계 이동량을 보냅니다. document thread는 현재 선택·View·revision·조상 잠금을
 확인한 뒤 Frame transform 속성 transaction 하나를 기록합니다. 기존 아핀의 회전·배율은 보존합니다.
 Escape·창 포커스 상실로 미리보기를 취소하면 문서 변경이 없습니다. 창의 Undo·Redo 및 Save Now가
 이 transaction을 처리합니다. 현재 표시 가능한 자유 배치 Frame 한 개 이동이 지원 범위입니다.
@@ -223,26 +223,26 @@ Escape·창 포커스 상실로 미리보기를 취소하면 문서 변경이 �
 ### 자식 Free Frame 생성
 
 `stellar_window_session_insert_frame`은 누른 부모 Frame의 ID, 표시한 View·revision과 부모 local rect를
-받습니다. document thread가 창의 실제 신뢰·View·revision·부모 잠금 및 지원하는 자유 배치 여부를 확인하고,
+받습니다. document thread가 창의 실제 View·revision·부모 잠금 및 지원하는 자유 배치 여부를 확인하고,
 마지막 형제 뒤에 `InsertNode`를 기록합니다. 이전 선택과 생성된 Frame의 선택을 같은 history entry에 보관하므로
 Undo 한 번은 node와 선택을 함께 되돌리고 Redo는 같은 ID를 복원합니다. 화면의 드래그 미리보기는 저장되지 않습니다.
 
 도형 도구는 `stellar_window_session_insert_shape`에 저장 포맷의 ShapeKind tag와 부모 local 시작·끝 두 점을 전달합니다.
 Ellipse와 Polygon은 좌상단을 Transform에, 로컬 원점 기준 크기를 Shape에 저장합니다. Line은 시작점을 Transform에, 부호 있는 끝점 차이를 Shape에 저장해 드래그 방향을 보존합니다.
-기존 Rectangle·Frame ABI와 같이 document thread가 표시 revision·편집 가능한 부모·신뢰를 확인하며 생성과 선택을 한 번에 기록합니다.
+Frame ABI와 같이 document thread가 표시 revision·편집 가능한 부모를 확인하며 생성과 선택을 한 번에 기록합니다.
 
 ### 기본 창의 레이어 읽기
 
 `stellar_window_layer_page`는 셸 worker에서 창 handle·활성 View·표시 revision·부모·직전 자식 ID로 직계 자식 64개까지 읽습니다. 코어는 document thread에서 해당 창이 이미 연 문서를 조회합니다. cursor의 부모와 활성 View 소속을 확인하고 순서 인덱스에서 다음 형제부터 반환합니다. 반환값은 Page·View 이름, 원본 노드 종류·표시 이름·잠금·표시 상태, 자식 유무와 창 선택입니다. registry 잠금은 읽기 접수까지만 유지합니다. UI thread는 저장 폴더를 열거나 조회 완료를 기다리지 않습니다.
 
-레이어 이름 편집은 stellar_window_layer_rename에 창·View·표시 revision·노드 ID와 UTF-8 이름을 전달합니다. 코어가 프로젝트 신뢰, 표시 revision, View 소속 및 조상 잠금을 확인하고 기존 RenameNode를 창의 문서 transaction으로 실행합니다.
+레이어 이름 편집은 stellar_window_layer_rename에 창·View·표시 revision·노드 ID와 UTF-8 이름을 전달합니다. 코어가 표시 revision, View 소속 및 조상 잠금을 확인하고 기존 RenameNode를 창의 문서 transaction으로 실행합니다.
 
 ### Frame Inspector의 개별 모서리 반경
 
 창의 불변 snapshot은 단일 선택 Frame의 원본 반경 네 값을 보존합니다. 셸은
 `stellar_window_selected_frame_corners`가 함께 돌려준 View·node·revision과 화면 대상이 일치할 때
 TL·TR·BR·BL 입력을 표시합니다. 캔버스와 hit test에는 기존의 bounds 기준 정규화 반경을 사용합니다.
-`stellar_window_session_set_frame_corner`는 선택·현재 revision·View·신뢰·잠금을 검증한 뒤
+`stellar_window_session_set_frame_corner`는 선택·현재 revision·View·잠금을 검증한 뒤
 조회 시점의 selection history sequence가 일치하는지 확인하고 해당 CSS longhand의 `SetProperty` 하나를 Undo 가능한 transaction에 기록합니다.
 
 ## 컴포넌트 라이브러리 창 계열 ABI 제거 (2026-11-15 검토)
@@ -309,3 +309,23 @@ U051이 이 ADR 없이 추가한 ABI를 기록합니다. 의미는 아래와 같
 staging 코어(`prepare_stage_candidate`·`prepare_unstage_candidate`·`apply_stage_candidate`)와 프로젝트 신뢰
 요청 `stellar_project_trust`는 유지합니다. 앱 Git 패널은 신뢰 확인·승인·철회만 표시합니다. 변경 목록과
 Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID 기반 ABI로 다시 정합니다.
+
+## 캔버스 편집 ABI 정리 (2026-11-15 검토, 묶음 B4)
+
+2026-11-15 검토에서 Codex가 이 ADR에 기록하지 않고 넓힌 캔버스 편집·선택·레이어·Inspector ABI를 정리합니다.
+남기는 ABI는 이 절에 기록하고, 지운 ABI는 사유와 함께 적습니다.
+
+### 제한 모드의 문서 편집 (사용자 결정 D1)
+
+- 제한 모드(신뢰 전)의 목적은 신뢰하지 않은 저장소에서 코드 실행을 막는 것입니다. 대상은 Git hook·filter,
+  내장 터미널, MCP·에이전트 노출, 외부 명령, 프로젝트 밖 symlink 내용 노출입니다(아키텍처 §24.3).
+- 캔버스·Inspector·Layers의 문서 편집과 저장은 프로젝트 신뢰와 무관하게 허용합니다. CLI `stellar apply`도
+  신뢰를 요구하지 않으므로 앱과 CLI의 규칙이 같아집니다.
+- runtime의 편집 대상 조회는 `canvas_window`(이전 `trusted_canvas_window`)이며 신뢰를 검사하지 않습니다.
+  이동·크기·배경·모서리, Frame·Shape 삽입, 선택 삭제·복제·순서, Copy·Paste, 레이어 이름 변경은
+  `STELLAR_FAILURE_TRUST_UNAVAILABLE`로 거부되지 않습니다.
+- 셸은 편집 경로에서 신뢰 시트를 요청하지 않고, Inspector에 신뢰 이유의 읽기 전용 상태를 표시하지 않습니다.
+  신뢰 시트는 Git 패널과 실행 계열 기능에서만 엽니다.
+- 이미지 배치(`stellar_window_place_png`)는 asset 가져오기 단계의 신뢰 확인을 아직 유지합니다. 이미지 레코드
+  위치 결정(D2)과 함께 캔버스 렌더·입력·감시 묶음(B8)에서 같은 규칙으로 맞춥니다.
+

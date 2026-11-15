@@ -1,5 +1,5 @@
 //! Platform clipboard bytes enter the owning window's ordinary document history.
-use super::frame_move::{command_id, trusted_canvas_window};
+use super::frame_move::{canvas_window, command_id};
 use super::*;
 use stellar_commands::{
     command::Command, id::CommandOrigin, paste::ClipboardSubtree, transaction::CommandTransaction,
@@ -26,7 +26,7 @@ impl AppRuntime {
         target: SelectionEditTarget,
     ) -> Result<crate::document_thread::JobTicket<Option<Vec<u8>>>, SubmitError> {
         self.sender.submit(move |ctx| {
-            let window = trusted_canvas_window(ctx, target.session).ok()?;
+            let window = canvas_window(ctx, target.session).ok()?;
             target.verify(window).ok()?;
             copy_from(window, target.view, target.revision)
         })
@@ -56,7 +56,7 @@ impl AppRuntime {
         bytes: Vec<u8>,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            let window = trusted_canvas_window(ctx, target.session)?;
+            let window = canvas_window(ctx, target.session)?;
             target.verify(window)?;
             paste_into(
                 window,
@@ -648,27 +648,46 @@ mod tests {
     }
 
     #[test]
-    fn untrusted_paste_request_is_rejected() {
+    fn restricted_mode_copy_and_paste_apply_without_project_trust() {
+        // 제한 모드는 문서 편집을 막지 않습니다(사용자 결정 D1).
         use crate::app_window_tests::{next_event, open_project, open_window};
         let model = sample_document();
-        let bytes = ClipboardSubtree::capture(&model, sid(11)).unwrap().encode();
         let dir = saved_project_with("clipboard-untrusted", &[&model]);
         let app = AppRuntime::start().unwrap();
         let owner = open_project(&app, dir.path());
+        assert_ne!(
+            app.state().project(owner).unwrap().trust,
+            TrustStatus::Trusted
+        );
         let (session, _, _) = open_window(&app, owner);
-        let revision = app.state().window(session).unwrap().revision;
-        assert!(app
-            .copy_selected_subtree(session, sid(3), revision)
+        app.set_selection(session, vec![sid(11)]).unwrap();
+        assert!(matches!(
+            next_event(&app),
+            RuntimeEvent::WindowViewChanged { .. }
+        ));
+        let state = app.state();
+        let window = state.window(session).unwrap();
+        let target = SelectionEditTarget {
+            session,
+            view: window.active_view.unwrap(),
+            revision: window.revision,
+            history_sequence: window.history_sequence,
+        };
+        let bytes = app
+            .copy_displayed_subtree(target)
             .unwrap()
             .wait()
             .unwrap()
-            .is_none());
+            .expect("restricted mode copies the displayed selection");
         let request = app
-            .paste_node_subtree(session, sid(3), revision, sid(10), bytes)
+            .paste_displayed_subtree(target, StableId::NIL, bytes)
             .unwrap();
-        assert!(matches!(next_event(&app), RuntimeEvent::RequestFailed {
-            request: got, failure: RequestFailure::TrustUnavailable, ..
-        } if got == request));
-        assert_eq!(app.state().window(session).unwrap().revision, revision);
+        assert!(
+            matches!(next_event(&app), RuntimeEvent::WindowViewChanged { request: got, .. } if got == request)
+        );
+        assert_eq!(
+            app.state().window(session).unwrap().revision.0,
+            target.revision.0 + 1
+        );
     }
 }

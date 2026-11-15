@@ -59,7 +59,7 @@ impl AppRuntime {
         name: String,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            let window = super::frame_move::trusted_canvas_window(ctx, session)?;
+            let window = super::frame_move::canvas_window(ctx, session)?;
             rename(window, request, view, revision, node, name)?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })

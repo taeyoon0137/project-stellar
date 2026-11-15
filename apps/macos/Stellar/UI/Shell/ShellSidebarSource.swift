@@ -35,9 +35,6 @@ final class ShellSidebarSource: SidebarDataProvider {
     var canEditSelection: ((ShellCommand) -> Bool)?
     var select: (([UUID]) -> Void)?
     var rename: ((_ view: UUID, _ revision: UInt64, _ id: UUID, _ name: String) -> Void)?
-    var trusted = false {
-        didSet { if oldValue != trusted { publish() } }
-    }
 
     func refresh(runtime: UInt64?, session: ShellWindowSessionHandle?, target: StellarSelectionTarget?) {
         self.runtime = runtime
@@ -93,7 +90,7 @@ final class ShellSidebarSource: SidebarDataProvider {
                 ? .allowed : .denied(.unsupported)
         case .reload: return display != nil ? .allowed : .denied(.unsupported)
         case .renameNode(let id, _):
-            guard trusted, window?.isClosing == false else { return .denied(.unsupported) }
+            guard window?.isClosing == false else { return .denied(.unsupported) }
             var current: SidebarStableID? = id
             while let target = current {
                 guard let row = snapshot.layers.rows[target] else { return .denied(.unknownNode) }

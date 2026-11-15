@@ -31,7 +31,7 @@ enum FrameEdit {
 
 impl AppRuntime {
     /// 표시한 View와 revision에서 선택한 Frame을 부모 좌표계의 delta만큼 이동합니다.
-    /// 신뢰, 활성 View, 선택 및 조상 잠금은 document thread에서 다시 확인합니다.
+    /// 활성 View, 선택 및 조상 잠금은 document thread에서 다시 확인합니다.
     pub fn move_canvas_frame(
         &self,
         session: WindowSessionHandle,
@@ -93,32 +93,21 @@ impl AppRuntime {
         edit: FrameEdit,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            let window = trusted_canvas_window(ctx, session)?;
+            let window = canvas_window(ctx, session)?;
             edit_selected(window, request, view, revision, node, edit)?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
     }
 }
 
-pub(super) fn trusted_canvas_window(
+/// 캔버스·Inspector·Layers 편집 대상 창을 찾습니다.
+///
+/// 문서 편집과 저장은 프로젝트 신뢰와 무관하게 허용합니다(사용자 결정 D1, 아키텍처 §24.3). 제한 모드는
+/// Git hook·filter, 내장 터미널, MCP·에이전트, 외부 명령처럼 코드를 실행하는 경로에만 적용합니다.
+pub(super) fn canvas_window(
     ctx: &mut DocumentContext,
     session: WindowSessionHandle,
 ) -> Result<&mut ProjectWindowSession, Failure> {
-    let sessions = ctx.app_sessions();
-    let entry = sessions
-        .windows
-        .get(&session)
-        .ok_or_else(|| unknown_window(session))?;
-    let trusted = sessions
-        .projects
-        .get(&entry.project)
-        .is_some_and(|p| p.trust == TrustStatus::Trusted);
-    if !trusted {
-        return Err(Failure::new(
-            RequestFailure::TrustUnavailable,
-            "Frame 편집에 프로젝트 신뢰가 필요합니다",
-        ));
-    }
     window_mut(ctx, session)
 }
 
@@ -760,10 +749,15 @@ mod tests {
     }
 
     #[test]
-    fn untrusted_window_can_select_but_cannot_move_a_frame() {
+    fn restricted_mode_window_edits_frames_without_project_trust() {
+        // 제한 모드는 코드 실행 경로만 막고 문서 편집은 막지 않습니다(사용자 결정 D1).
         let project = saved_project_with("canvas-move-restricted", &[&sample_document()]);
         let app = AppRuntime::start().unwrap();
         let owner = open_project(&app, project.path());
+        assert_ne!(
+            app.state().project(owner).unwrap().trust,
+            TrustStatus::Trusted
+        );
         let (session, _, _) = open_window(&app, owner);
         app.set_selection(session, vec![sid(11)]).unwrap();
         assert!(matches!(
@@ -771,7 +765,7 @@ mod tests {
             RuntimeEvent::WindowViewChanged { .. }
         ));
         let rev = app.state().window(session).unwrap().revision;
-        let attempted = app
+        let moved = app
             .move_canvas_frame(
                 session,
                 sid(3),
@@ -781,8 +775,9 @@ mod tests {
             )
             .unwrap();
         assert!(
-            matches!(next_event(&app),RuntimeEvent::RequestFailed{request,failure: RequestFailure::TrustUnavailable,..} if request == attempted)
+            matches!(next_event(&app), RuntimeEvent::WindowViewChanged { request, .. } if request == moved)
         );
+        let rev = app.state().window(session).unwrap().revision;
         let resized = app
             .resize_canvas_frame(
                 session,
@@ -793,27 +788,11 @@ mod tests {
             )
             .unwrap();
         assert!(
-            matches!(next_event(&app),RuntimeEvent::RequestFailed{request,failure: RequestFailure::TrustUnavailable,..} if request == resized)
+            matches!(next_event(&app), RuntimeEvent::WindowViewChanged { request, .. } if request == resized)
         );
-        let corner = app
-            .set_canvas_frame_corner(
-                SelectionEditTarget {
-                    session,
-                    view: sid(3),
-                    revision: rev,
-                    history_sequence: app.state().window(session).unwrap().history_sequence,
-                },
-                sid(11),
-                keys::BORDER_TOP_RIGHT_RADIUS,
-                stellar_core_types::value::FiniteF32::new(128.).unwrap(),
-            )
-            .unwrap();
-        assert!(
-            matches!(next_event(&app), RuntimeEvent::RequestFailed {request, failure: RequestFailure::TrustUnavailable, ..} if request == corner)
-        );
-        let state = app.state();
-        let summary = state.window(session).unwrap();
-        assert_eq!(summary.revision, rev);
-        assert!(!summary.has_unsaved_changes);
+        let summary = app.state();
+        let summary = summary.window(session).unwrap();
+        assert_eq!(summary.revision.0, rev.0 + 1);
+        assert!(summary.has_unsaved_changes);
     }
 }

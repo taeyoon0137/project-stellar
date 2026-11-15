@@ -69,7 +69,7 @@
 |---|---|---|
 | `editable` | 안내 없음 | 필드별 `isEditable`을 따름 |
 | `locked` | `lock.fill` + "This layer is locked…" + Unlock 버튼 | 코어가 필드별 `isEditable=false`로 보냄. 이름·표시·잠금 필드와 Unlock은 편집 가능 |
-| `readOnly(reason)` | `pencil.slash` + 이유(예: 신뢰 전 제한 모드) | 셸이 모든 필드·modifier 조작을 강제로 비활성화(Value Binding 표시는 보기만 가능) |
+| `readOnly(reason)` | `pencil.slash` + 이유(예: 편집을 지원하지 않는 선택) | 셸이 모든 필드·modifier 조작을 강제로 비활성화(Value Binding 표시는 보기만 가능) |
 
 - 비활성 컨트롤은 숨기지 않고 비활성으로 보입니다. [가이드 8.1 "숨기지 않고 비활성화"] [아키텍처 §24.3]
 

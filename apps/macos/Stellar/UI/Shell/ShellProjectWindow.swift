@@ -540,19 +540,16 @@ final class ShellProjectWindow {
             self.reloadComponentCanvas(onWindowReturn: true)
         }
         gitSource.trustDidChange = { [weak self] trusted in
-            if !trusted { self?.canvasTextEditing?.invalidate() }
             self?.dataSource.updateTrust(trusted)
-            self?.sidebarSource.trusted = trusted
             self?.canvasHost.canvasView.allowsImageContent = trusted
             if !trusted { self?.pickedPNG = nil; self?.imagePickGeneration &+= 1 }
             self?.updateComponentFileWatch(trusted: trusted)
             self?.reloadComponentCanvas()
             self?.refreshSessionCommands()
-            if !trusted { _ = self?.canvasHost.canvasView.cancelFrameGesture?() }
         }
         inspectorSource.editFrame = { [weak self] frame, change, completion in
             guard let self, let session = self.windowController.windowSession, session.session == frame.session,
-                  !session.isClosed, !session.isClosing, self.gitSource.trusted,
+                  !session.isClosed, !session.isClosing,
                   let pump = self.dataSource.session?.pump else { return false }
             return session.track({ pump.editFrame(frame, change: change, completion: $0) }) { event in
                 self.refreshSessionCommands()
@@ -672,7 +669,7 @@ final class ShellProjectWindow {
     private func refreshInspector() {
         let selected = windowController.windowSession?.info?.selection_count == 1
             ? canvasHost.canvasView.selectedInspectorFrame : nil
-        inspectorSource.refresh(selected, trusted: gitSource.trusted)
+        inspectorSource.refresh(selected)
     }
 
     /// 창 session 정보로 Undo·Redo·Save Now 활성 상태를 다시 계산합니다.
@@ -688,7 +685,7 @@ final class ShellProjectWindow {
         let view = session?.viewInfo
         let info = session?.info
         displayedSelection = session?.selectionTarget
-        if gitSource.trusted, let target = displayedSelection, target.selection_count == 1, let handle = dataSource.session?.pump.runtimeHandle {
+        if let target = displayedSelection, target.selection_count == 1, let handle = dataSource.session?.pump.runtimeHandle {
             displayedOrderFlags = CoreRuntime.layerOrderFlags(handle: handle, target: target)
         } else { displayedOrderFlags = 0 }
         sidebarSource.refresh(runtime: dataSource.session?.pump.runtimeHandle, session: session, target: displayedSelection)
@@ -706,9 +703,9 @@ final class ShellProjectWindow {
             if let flag = command.layerOrderFlag, displayedOrderFlags & flag != 0 { commands.insert(command) }
         }
         if gitSource.trusted, selectedComponentFrame != nil { commands.insert(.componentFromSelection) }
-        if gitSource.trusted, (displayedSelection?.selection_count ?? 0) > 0 { commands.insert(.delete) }
-        if gitSource.trusted, displayedSelection?.selection_count == 1 { commands.formUnion([.duplicate, .copy]) }
-        if gitSource.trusted, let target = displayedSelection, target.selection_count <= 1 { commands.insert(.paste) }
+        if (displayedSelection?.selection_count ?? 0) > 0 { commands.insert(.delete) }
+        if displayedSelection?.selection_count == 1 { commands.formUnion([.duplicate, .copy]) }
+        if let target = displayedSelection, target.selection_count <= 1 { commands.insert(.paste) }
         toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil })
     }
 
@@ -722,7 +719,7 @@ final class ShellProjectWindow {
     func performSessionCommand(_ command: ShellCommand) -> Bool {
         if command == .zoomToFit { return fitRootFrame() }
         if command == .copy {
-            guard gitSource.trusted, !router.isTextEditing, let owner = window, clipboardKeyWindow() === owner,
+            guard !router.isTextEditing, let owner = window, clipboardKeyWindow() === owner,
                   let session = windowController.windowSession, !session.isClosing, !session.isClosed,
                   session.pendingCommandCount == 0, let target = displayedSelection,
                   target.session == session.session, target.selection_count == 1,
@@ -734,7 +731,7 @@ final class ShellProjectWindow {
                 DispatchQueue.main.async { [weak self, weak session, weak owner] in
                     guard let self, let session, let owner, self.window === owner, self.clipboardKeyWindow() === owner,
                           !self.router.isTextEditing, self.windowController.windowSession === session,
-                          !session.isClosed, !session.isClosing, session.pendingCommandCount == 0, self.gitSource.trusted,
+                          !session.isClosed, !session.isClosing, session.pendingCommandCount == 0,
                           target.matches(self.displayedSelection), target.matches(session.selectionTarget),
                           ObjectIdentifier(self.subtreePasteboard) == boardID, self.subtreePasteboard.changeCount == changeCount, let data else { return }
                     let item = NSPasteboardItem()
@@ -746,7 +743,7 @@ final class ShellProjectWindow {
             return true
         }
         if command == .paste {
-            guard gitSource.trusted, !router.isTextEditing, let owner = window, clipboardKeyWindow() === owner,
+            guard !router.isTextEditing, let owner = window, clipboardKeyWindow() === owner,
                   let session = windowController.windowSession, let target = displayedSelection,
                   target.session == session.session, session.pendingCommandCount == 0,
                   let data = subtreePasteboard.data(forType: Self.subtreePasteboardType),
@@ -772,7 +769,7 @@ final class ShellProjectWindow {
     }
 
     private func editSelection(_ command: ShellCommand, target: StellarSelectionTarget, ids: [UUID]?) -> Bool {
-        guard gitSource.trusted, !router.isTextEditing, let session = windowController.windowSession else { return false }
+        guard !router.isTextEditing, let session = windowController.windowSession else { return false }
         let affectsFlow = command.layerOrderFlag != nil && displayedOrderFlags & UInt32(STELLAR_ORDER_FLOW_PARENT) != 0
         _ = canvasHost.canvasView.cancelFrameGesture?()
         return session.editSelection(target, command: command, ids: ids) { [weak self, weak session] event in
@@ -950,7 +947,7 @@ final class ShellProjectWindow {
     /// 열기에 실패했습니다. 창에 원인과 복구 동작을 보여 줍니다.
     func didFail(_ failure: ShellProjectOpenFailure, path: String) {
         canvasHost.canvasView.frameSession = nil
-        inspectorSource.refresh(nil, trusted: false)
+        inspectorSource.refresh(nil)
         gitSource.attach(nil)
         displayedSelection = nil
         displayedOrderFlags = 0
@@ -966,7 +963,7 @@ final class ShellProjectWindow {
     /// 창을 닫습니다: 창 session을 먼저, 그다음 프로젝트 session을 한 번씩 닫습니다.
     func closeSessions() {
         canvasHost.canvasView.frameSession = nil
-        inspectorSource.refresh(nil, trusted: false)
+        inspectorSource.refresh(nil)
         gitSource.attach(nil)
         displayedSelection = nil
         displayedOrderFlags = 0
@@ -998,7 +995,7 @@ extension ShellProjectWindow: GitPanelHostActions {
               !gitSource.trusted, !gitSource.isCheckingTrust else { return }
         let alert = NSAlert()
         alert.messageText = String(localized: "Trust This Project?")
-        alert.informativeText = String(localized: "Trusting this folder allows Stellar to edit project files and run Git commands for it.") + "\n" + session.rootPath
+        alert.informativeText = String(localized: "Trusting this folder allows Stellar to run Git commands, hooks, and the terminal for it.") + "\n" + session.rootPath
         alert.addButton(withTitle: String(localized: "Cancel"))
         alert.addButton(withTitle: String(localized: "Trust Project"))
         alert.beginSheetModal(for: window) { [weak self, weak session] response in

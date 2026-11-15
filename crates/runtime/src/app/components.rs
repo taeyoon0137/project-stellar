@@ -127,7 +127,7 @@ impl AppRuntime {
                 let create = || -> Result<RuntimeEvent, Failure> {
                     let ticket = sender
                         .submit(move |ctx| {
-                            let window = super::frame_move::trusted_canvas_window(ctx, session)?;
+                            let window = super::frame_move::canvas_window(ctx, session)?;
                             capture_selection(window, name, view, revision, node)
                         })
                         .map_err(|e| Failure::new(RequestFailure::SaveFailed, e.to_string()))?;

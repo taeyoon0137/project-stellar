@@ -51,19 +51,15 @@ extension ShellProjectWindow {
                   let session = windowController.windowSession, !session.isClosed, !session.isClosing,
                   let viewport = session.viewInfo, viewport.has_view == 1, let parent = canvas.frameHit(at: point, onlyFrames: true),
                   UUID(uuid: viewport.active_view) == parent.viewID, session.info?.revision == parent.revision else { return false }
-            guard gitSource.trusted else {
-                requestProjectTrust()
-                return true
-            }
             canvas.window?.makeFirstResponder(canvas)
             frameDrag = CanvasFrameDrag(hit: parent, start: point, session: session.session, size: canvas.bounds.size,
-                viewport: viewport, canMove: true, tool: tool)
+                viewport: viewport, tool: tool)
             return true
         case .leftMouseDragged, .leftMouseUp:
             guard let drag = frameDrag else { return false }
             let release = event.type == .leftMouseUp
             if release { _ = canvas.cancelFrameGesture?() }
-            guard tool == drag.tool, gitSource.trusted, canvas.bounds.size == drag.size,
+            guard tool == drag.tool, canvas.bounds.size == drag.size,
                   let session = windowController.windowSession, session.session == drag.session,
                   !session.isClosing, !session.isClosed else {
                 _ = canvas.cancelFrameGesture?()

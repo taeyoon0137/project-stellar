@@ -135,7 +135,9 @@ enum ShellCanvasMoveCheck {
         let canvas = a.canvasHost.canvasView
         func at(_ x: CGFloat, in canvas: CanvasView) -> UUID? { canvas.frameHit(at: point(canvas, x))?.id }
         guard at(-30, in: canvas) == node, at(30, in: canvas) != node else { return fail("저장 Frame의 최초 좌표") }
-        guard !a.gitSource.trusted, drag(canvas), let restricted = sa.info else { return fail("제한 모드 입력 제출") }
+        // 제한 모드도 문서 편집을 허용합니다(사용자 결정 D1). 아래 이동 검사는 신뢰 없이 실행합니다.
+        guard !a.gitSource.trusted, mouse(canvas, .leftMouseDown, -30), mouse(canvas, .leftMouseUp, -30),
+              pump.waitForPendingRequests(timeout: 10), let restricted = sa.info else { return fail("제한 모드 클릭 선택") }
         guard restricted.selection_count == 1, restricted.revision == initial.revision,
               restricted.has_unsaved_changes == 0 else {
             return fail("제한 모드 선택 \(restricted.selection_count), revision \(initial.revision)→\(restricted.revision), dirty \(restricted.has_unsaved_changes)")
@@ -178,8 +180,6 @@ enum ShellCanvasMoveCheck {
               pump.waitForPendingRequests(timeout: 10),
               a.router.dispatch(.selectMoveTool), at(-30, in: canvas) == node else { return fail("Hand 카메라·scene 복원") }
         guard checkZoomTool(a, other: b, pump: pump) else { return fail("Z, Option-클릭·영역 줌·다른 창과 문서 보존") }
-        a.gitSource.updateTrust(true)
-        guard pump.waitForPendingRequests(timeout: 10), a.gitSource.trusted else { return fail("격리된 프로젝트 신뢰") }
         guard let selectedPixels = bitmap(canvas), mouse(canvas, .leftMouseDown, -30), mouse(canvas, .leftMouseDragged, 30),
               let previewPixels = bitmap(canvas), selectedPixels != previewPixels, sa.info?.revision == initial.revision,
               let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 1,

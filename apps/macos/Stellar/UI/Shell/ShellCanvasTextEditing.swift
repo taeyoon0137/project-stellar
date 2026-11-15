@@ -132,7 +132,7 @@ final class ShellCanvasTextEditing {
 
     private func flush() {
         guard !invalid, !requiresFirstPaint, !applying, let edit = pending.first else { removeIfFinished(); return }
-        guard let shell, let session, !session.isClosed, !session.isClosing, shell.gitSource.trusted,
+        guard let shell, let session, !session.isClosed, !session.isClosing,
               shell.windowController.windowSession === session, session.info?.revision == revision,
               let viewport = session.viewInfo, UUID(uuid: viewport.active_view) == view else {
             fail(String(localized: "The document changed during text input.")); return
@@ -161,7 +161,7 @@ final class ShellCanvasTextEditing {
                                                            revision: targetRevision, start: start, end: end)
             DispatchQueue.main.async { [weak self] in
                 guard let self, let session = self.session, !self.invalid, !session.isClosed,
-                      !session.isClosing, self.shell?.gitSource.trusted == true, status == STELLAR_OK else {
+                      !session.isClosing, status == STELLAR_OK else {
                     if editToken != 0 { CoreRuntime.cancelText(handle: handle, session: owner, token: editToken) }
                     self?.fail(String(localized: "The selected text changed during input.")); return
                 }
@@ -213,10 +213,6 @@ extension ShellProjectWindow {
         guard let session = windowController.windowSession, let project = dataSource.session,
               !session.isClosing, !session.isClosed, let hit = canvas.frameHit(at: point, onlyFrames: true),
               hit.revision == session.info?.revision, let buffer = CanvasTextBuffer("", caret: 0) else { return false }
-        guard gitSource.trusted else {
-            requestProjectTrust()
-            return true
-        }
         let transform = hit.localToWorld.concatenating(hit.worldToView)
         let det = transform.a * transform.d - transform.b * transform.c
         guard det.isFinite, det != 0 else { return false }
@@ -245,10 +241,6 @@ extension ShellProjectWindow {
         if let current = canvasTextEditing { current.stop(); guard canvasTextEditing == nil else { return true } }
         guard hit.isText, let session = windowController.windowSession, !session.isClosing, !session.isClosed,
               let pump = dataSource.session?.pump else { return false }
-        guard gitSource.trusted else {
-            requestProjectTrust()
-            return true
-        }
         let transform = hit.localToWorld.concatenating(hit.worldToView)
         let local = point?.applying(transform.inverted()) ?? .zero
         let handle = pump.runtimeHandle, owner = session.session, view = hit.viewID, node = hit.id, revision = hit.revision
@@ -263,7 +255,7 @@ extension ShellProjectWindow {
                       let buffer = CanvasTextBuffer(text, caret: caret) else { return }
                 DispatchQueue.main.async { [weak self, weak session, weak canvas] in
                     guard let self, let session, let canvas, self.windowController.windowSession === session,
-                          !session.isClosing, !session.isClosed, self.gitSource.trusted, self.canvasTextEditing == nil,
+                          !session.isClosing, !session.isClosed, self.canvasTextEditing == nil,
                           self.window?.firstResponder === canvas, session.info?.selection_count == 1,
                           let current = canvas.textHit(), current.id == node, current.revision == revision else { return }
                     let edit = ShellCanvasTextEditing(shell: self, session: session, pump: pump, view: view,

@@ -71,7 +71,7 @@ fn import(
     let ids: [StableId; 2] = stellar_project::new_ids::new_ids().map_err(fail)?;
     let ticket = sender
         .submit(move |ctx| {
-            let window = frame_move::trusted_canvas_window(ctx, session)?;
+            let window = frame_move::canvas_window(ctx, session)?;
             let document = window
                 .document()
                 .ok_or_else(|| fail("열린 문서가 없습니다"))?;
@@ -103,7 +103,7 @@ fn import(
     let shared = shared.clone();
     let ticket = sender
         .submit(move |ctx| {
-            let window = frame_move::trusted_canvas_window(ctx, session)?;
+            let window = frame_move::canvas_window(ctx, session)?;
             let document = window
                 .document()
                 .ok_or_else(|| fail("열린 문서가 없습니다"))?;

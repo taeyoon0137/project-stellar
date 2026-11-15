@@ -1,5 +1,5 @@
 //! 한 IME 조합의 미확정 본문과 확정 요청. 중간 입력은 창 문서와 history 밖에 둡니다.
-use super::frame_move::{command_id, trusted_canvas_window};
+use super::frame_move::{canvas_window, command_id};
 use super::*;
 use crate::document_thread::JobTicket;
 use stellar_commands::{
@@ -128,7 +128,7 @@ impl AppRuntime {
         new_text: bool,
     ) -> Result<JobTicket<Option<CanvasTextPreview>>, SubmitError> {
         self.sender.submit(move |ctx| {
-            let window = trusted_canvas_window(ctx, session).ok()?;
+            let window = canvas_window(ctx, session).ok()?;
             if window.revision() != revision || window.tabs().active_view() != Some(view) {
                 return None;
             }
@@ -174,7 +174,7 @@ impl AppRuntime {
             node,
         };
         self.sender.submit(move |ctx| {
-            let window = trusted_canvas_window(ctx, session).ok()?;
+            let window = canvas_window(ctx, session).ok()?;
             begin(window, target, replacement)
         })
     }
@@ -190,7 +190,7 @@ impl AppRuntime {
         let range = input.replacement;
         let owner = input.window;
         self.submit(move |ctx, request| {
-            let window = trusted_canvas_window(ctx, target.session)?;
+            let window = canvas_window(ctx, target.session)?;
             if window.window() != owner {
                 return Err(Failure::new(
                     RequestFailure::UnknownWindowSession,
@@ -431,7 +431,8 @@ mod tests {
     }
 
     #[test]
-    fn runtime_checks_window_trust_and_commits_only_when_requested() {
+    fn runtime_edits_restricted_window_and_commits_only_when_requested() {
+        // 제한 모드는 문서 편집을 막지 않습니다(사용자 결정 D1).
         use crate::app_window_tests::{next_event, open_project, open_window};
         let (dir, _, _) = fixture(false);
         let app = AppRuntime::start().unwrap();
@@ -443,46 +444,14 @@ mod tests {
             RuntimeEvent::WindowViewChanged { .. }
         ));
         let revision = app.state().window(handle).unwrap().revision;
-        let begin = || {
-            app.begin_canvas_text(handle, sid(3), revision, sid(11), range(1, 4))
-                .unwrap()
-                .wait()
-                .unwrap()
-        };
-        assert!(begin().is_none());
-        // Drive the same document-thread trust value without writing user preferences in a Rust test.
-        let trust = |trusted| {
-            app.sender
-                .submit(move |ctx| {
-                    ctx.app_sessions_mut()
-                        .projects
-                        .get_mut(&project)
-                        .unwrap()
-                        .trust = if trusted {
-                        TrustStatus::Trusted
-                    } else {
-                        TrustStatus::NotTrusted
-                    };
-                })
-                .unwrap()
-                .wait()
-                .unwrap()
-        };
-        trust(true);
-        let mut input = begin().unwrap();
+        let mut input = app
+            .begin_canvas_text(handle, sid(3), revision, sid(11), range(1, 4))
+            .unwrap()
+            .wait()
+            .unwrap()
+            .unwrap();
         assert!(input.set_marked("ㅎ".into(), range(1, 1)));
         assert!(!app.state().window(handle).unwrap().has_unsaved_changes);
-        trust(false);
-        app.commit_canvas_text(&input, "한".to_owned()).unwrap();
-        assert!(matches!(
-            next_event(&app),
-            RuntimeEvent::RequestFailed {
-                failure: RequestFailure::TrustUnavailable,
-                ..
-            }
-        ));
-        assert_eq!(app.state().window(handle).unwrap().revision, revision);
-        trust(true);
         app.commit_canvas_text(&input, "한".to_owned()).unwrap();
         assert!(matches!(
             next_event(&app),

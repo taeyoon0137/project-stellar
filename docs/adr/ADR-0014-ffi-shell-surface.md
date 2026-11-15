@@ -223,4 +223,4 @@ Copy 결과가 도착하기 전에 pasteboard가 바뀌거나 창이 닫히면 �
 
 - 창의 worker에서 `stellar_text_begin`으로 현재 선택한 Text, 활성 View, 문서 revision, 대체할 Unicode scalar 범위를 전달합니다. 같은 창의 새 입력은 새 토큰을 발급하고 이전 조합을 취소합니다.
 - `stellar_text_mark`는 marked text 안의 UTF-16 선택을 공통 좌표로 변환합니다. surrogate pair 중간은 기존 조합을 보존하며 거부합니다. `stellar_text_preview`는 호출자 버퍼에 미확정 본문을 씁니다. 문단과 run을 포함한 레이아웃용 preview는 runtime의 동일한 편집 세션에서 얻습니다.
-- `stellar_text_commit`은 신뢰·View·선택·revision을 다시 확인해 단일 ReplaceText를 창 history에 기록합니다. 값이 같으면 history를 추가하지 않습니다. `stellar_text_cancel` 또는 창 닫기는 미확정 본문을 버립니다.
+- `stellar_text_commit`은 View·선택·revision을 다시 확인해 단일 ReplaceText를 창 history에 기록합니다. 값이 같으면 history를 추가하지 않습니다. `stellar_text_cancel` 또는 창 닫기는 미확정 본문을 버립니다.

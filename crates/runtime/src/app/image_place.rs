@@ -143,7 +143,7 @@ impl AppRuntime {
                     let publish = shared.clone();
                     sender
                         .submit(move |ctx| {
-                            let window = super::frame_move::trusted_canvas_window(ctx, session)?;
+                            let window = super::frame_move::canvas_window(ctx, session)?;
                             input.target.verify(window)?;
                             if window.loaded_generation().map(|g| g.manifest_hash) != generation {
                                 return Err(invalid("열린 이미지 배치 세대가 바뀌었습니다"));

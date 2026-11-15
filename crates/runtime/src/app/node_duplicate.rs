@@ -121,24 +121,4 @@ mod tests {
             assert!(!session.has_unsaved_changes());
         }
     }
-
-    #[test]
-    fn untrusted_duplicate_is_rejected() {
-        use crate::app_window_tests::{next_event, open_project, open_window};
-        let dir = saved_project_with("duplicate-untrusted", &[&sample_document()]);
-        let app = AppRuntime::start().unwrap();
-        let owner = open_project(&app, dir.path());
-        let (session, _, _) = open_window(&app, owner);
-        app.set_selection(session, vec![sid(11)]).unwrap();
-        assert!(matches!(
-            next_event(&app),
-            RuntimeEvent::WindowViewChanged { .. }
-        ));
-        let rev = app.state().window(session).unwrap().revision;
-        let request = app.duplicate_selected_node(session, sid(3), rev).unwrap();
-        assert!(matches!(next_event(&app), RuntimeEvent::RequestFailed {
-            request: got, failure: RequestFailure::TrustUnavailable, ..
-        } if got == request));
-        assert_eq!(app.state().window(session).unwrap().revision, rev);
-    }
 }

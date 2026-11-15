@@ -1930,7 +1930,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn paste_subtree_ffi_routes_untrusted_request_without_changing_history() {
+    fn paste_subtree_ffi_rejects_invalid_bytes_without_changing_history() {
         let fixture = FixtureProject::copy("paste-untrusted");
         let h = create();
         let session = open_window(h, open_project(h, &fixture.path));
@@ -1974,7 +1974,7 @@ pub(crate) mod tests {
         bytes.clear();
         drop(bytes);
         assert!(matches!(next_event(h), RuntimeEvent::RequestFailed {
-            request: got, failure: RequestFailure::TrustUnavailable, ..
+            request: got, failure: RequestFailure::UnknownView, ..
         } if got == RequestId(request)));
         let after = info(h, session).unwrap();
         assert_eq!(after.revision, before.revision);
