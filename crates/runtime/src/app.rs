@@ -900,20 +900,13 @@ impl ProjectSummary {
 
     /// [`Self::verify_location`]에 더해 OS 사용자 신뢰 저장소가 이 프로젝트를 아직 신뢰하는지 확인합니다.
     fn verify_trust(&self) -> Result<(), String> {
-        let root = &self.canonical_root;
-        if self.root.canonicalize().ok().as_deref() != Some(root) {
-            return Err("열린 프로젝트 폴더가 바뀌었습니다".into());
-        }
-        let identity = ProjectIdentity::new(self.project_id, root).map_err(|e| e.to_string())?;
-        let dir = os_user_data_base()
-            .filter(|p| p.is_absolute())
-            .ok_or("사용자 데이터 경로 없음")?;
-        let store = FileTrustStore::open(&dir.join(stellar_ops::lock::APP_DATA_DIR))
+        self.verify_location()?;
+        let identity = ProjectIdentity::new(self.project_id, &self.canonical_root)
             .map_err(|e| e.to_string())?;
-        if store.status(&identity) != TrustStatus::Trusted {
+        if stellar_ops::trusted::os_trust_status(&identity) != TrustStatus::Trusted {
             return Err("프로젝트 신뢰가 필요합니다".into());
         }
-        self.verify_location()
+        Ok(())
     }
 }
 
@@ -1221,10 +1214,8 @@ fn check_project_trust(
     decision: Option<bool>,
 ) -> Result<TrustStatus, Failure> {
     let unavailable = |message: &str| Failure::new(RequestFailure::TrustUnavailable, message);
-    let dir = os_user_data_base()
-        .filter(|base| base.is_absolute())
-        .ok_or_else(|| unavailable("사용자 데이터 위치를 찾지 못했습니다"))?
-        .join(stellar_ops::lock::APP_DATA_DIR);
+    let dir = stellar_ops::trusted::os_trust_data_dir()
+        .ok_or_else(|| unavailable("사용자 데이터 위치를 찾지 못했습니다"))?;
     let mut store = FileTrustStore::open(&dir).map_err(|error| unavailable(&error.to_string()))?;
     if decision == Some(false) {
         store

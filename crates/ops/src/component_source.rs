@@ -317,15 +317,11 @@ pub fn query(snapshot: &crate::snapshot::ProjectSnapshot) -> Result<ProjectCompo
 /// MCP는 앱과 같은 OS 사용자 데이터의 신뢰 저장소를 읽고, 신뢰를 확인할 수 없으면 외부 target 내용을
 /// 읽지 않습니다. 저장소 파일을 만들거나 바꾸지 않습니다.
 pub fn external_access(project_id: StableId, root: &Path) -> ExternalAccess {
-    use stellar_project::{identity::ProjectIdentity, trust::TrustStatus, trust_store};
-    let status = trust_store::os_user_data_base()
-        .filter(|base| base.is_absolute())
-        .and_then(|base| {
-            trust_store::FileTrustStore::open(&base.join(crate::lock::APP_DATA_DIR)).ok()
-        })
-        .zip(ProjectIdentity::new(project_id, root).ok())
-        .map_or(TrustStatus::NotTrusted, |(store, identity)| {
-            store.status(&identity)
+    use stellar_project::{identity::ProjectIdentity, trust::TrustStatus};
+    let status = ProjectIdentity::new(project_id, root)
+        .ok()
+        .map_or(TrustStatus::NotTrusted, |identity| {
+            crate::trusted::os_trust_status(&identity)
         });
     ExternalAccess::from_trust(status)
 }

@@ -55,7 +55,7 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 ## 배치된 인스턴스
 
-신뢰한 macOS 프로젝트는 프로젝트 session마다 코어의 파일 감시기(FSEvents) 하나로 `design/components/`와 바로 아래의 `*.stellar.yaml`을 감시합니다. 앱·CLI·내장 터미널의 편집이나 Git 복원 뒤 그 프로젝트의 모든 창이 원본을 다시 읽어 이미 배치한 인스턴스의 표시와 클릭 영역을 갱신합니다. 창이 계속 key 창이어도 반영되며, 문서의 미저장 편집·선택·Undo 기록은 유지됩니다. 감시는 프로젝트 폴더 안만 봅니다. 내부 심볼릭 링크의 실제 대상만 감시 경로 밖에서 바꾼 경우에는 신뢰를 다시 확인하거나 프로젝트를 다시 열 때 반영됩니다.
+macOS 프로젝트 창은 신뢰 여부와 무관하게 프로젝트 session마다 코어의 파일 감시기(FSEvents) 하나로 `design/components/`와 바로 아래의 `*.stellar.yaml`을 감시합니다. 앱·CLI·내장 터미널의 편집이나 Git 복원 뒤 그 프로젝트의 모든 창이 원본을 다시 읽어 이미 배치한 인스턴스의 표시와 클릭 영역을 갱신합니다. 창이 계속 key 창이어도 반영되며, 문서의 미저장 편집·선택·Undo 기록은 유지됩니다. 감시는 프로젝트 폴더 안만 봅니다. 내부 심볼릭 링크의 실제 대상만 감시 경로 밖에서 바꾼 경우에는 신뢰를 다시 확인하거나 프로젝트를 다시 열 때 반영됩니다.
 
 인스턴스 payload에는 정의 참조와 override가 있고, 위치는 해당 노드 소유의 Transform modifier에 있습니다. 원본을 찾을 수 없으면 `stellar validate`가 인스턴스와 정의 ID를 포함하는 `missing-component-definition` 진단을 냅니다. 정의 이름을 다른 파일에 다시 사용하는 것은 이 참조를 바꾸지 않습니다.
 
@@ -67,7 +67,7 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 정의별 `stellar query <프로젝트> component <id>`와 headless `stellar://components/{component}{?cursor,limit}`는 같은 저장 트리를 읽습니다. 응답은 `revision`, `component`, `root`, `name`, `source_hash`, `component_source_hash`, `nodes`를 담습니다. 각 노드의 메타데이터와 Frame payload는 v1·v2 저장 데이터에도 v3의 한 속성 한 줄 키와 값 표현을 사용합니다. 표시·잠금은 JSON bool이고 루트 부모는 JSON null입니다. payload의 수치와 색은 원본과 같은 문자열입니다. MCP는 기존 페이지 개수·바이트 상한을 적용하고 세대·파일 hash·프로젝트 및 컴포넌트 ID에 cursor를 묶습니다. 읽기 전용 요청에는 파일 경로가 포함되지 않습니다.
 
-symlink 읽기는 프로젝트의 신뢰 상태 하나로 정합니다(기술 아키텍처 §19.3, [ADR-0061](../adr/ADR-0061-text-source-format-and-layout.md) 결정 8). 신뢰한 프로젝트는 `design/components/`나 그 안 파일이 프로젝트 밖을 가리켜도 읽으며, 이때 결과는 `component-source check <폴더>`와 같습니다. 신뢰하지 않은 프로젝트는 프로젝트 밖 target의 내용을 읽지 않고 오류를 반환합니다. CLI와 headless MCP는 앱과 같은 OS 사용자 데이터의 신뢰 저장소를, 앱은 창의 신뢰 상태를 씁니다. 정의 폴더가 없거나 해당 확장자의 파일이 없으면 `entries`는 빈 배열이고 `chunk_count`는 generation의 `component-library` 포인터 수입니다. 바이너리 라이브러리와 YAML 원본이 함께 있으면 오류를 반환합니다. 한 요청에 읽는 전체 원본은 64 MiB까지이고, MCP 리소스는 기존 512 KiB 본문 상한을 적용합니다. 파일·캐시·generation을 작성하지 않습니다.
+symlink 읽기는 프로젝트의 신뢰 상태 하나로 정합니다(기술 아키텍처 §19.3, [ADR-0061](../adr/ADR-0061-text-source-format-and-layout.md) 결정 8). 신뢰한 프로젝트는 `design/components/`나 그 안 파일이 프로젝트 밖을 가리켜도 읽으며, 이때 결과는 `component-source check <폴더>`와 같습니다. 신뢰하지 않은 프로젝트는 프로젝트 밖 target의 내용을 읽지 않고 오류를 반환합니다. CLI와 headless MCP는 앱과 같은 OS 사용자 데이터의 신뢰 저장소를, 앱은 창의 신뢰 상태를 씁니다. 신뢰하지 않은 프로젝트의 앱 창도 프로젝트 안 원본은 읽어 인스턴스를 그리므로 CLI·MCP와 같은 정의를 봅니다. 정의 폴더가 없거나 해당 확장자의 파일이 없으면 `entries`는 빈 배열이고 `chunk_count`는 generation의 `component-library` 포인터 수입니다. 바이너리 라이브러리와 YAML 원본이 함께 있으면 오류를 반환합니다. 한 요청에 읽는 전체 원본은 64 MiB까지이고, MCP 리소스는 기존 512 KiB 본문 상한을 적용합니다. 파일·캐시·generation을 작성하지 않습니다.
 
 MCP에서 `stellar://components`를 읽으면 StableId 순서의 첫 페이지를 받습니다. `entries`는 현재 페이지이고 `total`은 전체 개수입니다. `next_cursor`가 문자열이면 `stellar://components?cursor=<값>`으로 이어 읽고, `null`이면 마지막 페이지입니다. `limit`을 생략하면 기본 500개이며, 명시할 수 있는 최댓값은 2,000개입니다. 모든 경우에 응답 바이트 상한을 적용합니다. 도중에 generation 또는 컴포넌트 파일 이름·내용이 바뀌면 이전 커서를 거부하므로 첫 페이지부터 다시 읽습니다.
 

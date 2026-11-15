@@ -12,6 +12,22 @@ use stellar_storage::generation::current::{read_current_pointer, CurrentPointerE
 use crate::core_types::ids::StableId;
 use crate::snapshot::{open_snapshot, probe, ProjectProbe, ProjectSnapshot};
 
+/// 앱·CLI·headless MCP가 함께 쓰는 신뢰 저장소 위치: `<OS 사용자 데이터>/xyz.taeyoon.stellar`. 사용자 데이터
+/// 위치가 없거나 절대 경로가 아니면 `None`입니다.
+pub fn os_trust_data_dir() -> Option<PathBuf> {
+    os_user_data_base()
+        .filter(|base| base.is_absolute())
+        .map(|base| base.join(crate::lock::APP_DATA_DIR))
+}
+
+/// OS 사용자 데이터의 신뢰 저장소에서 `identity`의 상태를 읽습니다. 저장소를 열 수 없으면 신뢰하지 않음입니다.
+/// 저장소 파일을 만들거나 바꾸지 않습니다.
+pub fn os_trust_status(identity: &ProjectIdentity) -> TrustStatus {
+    os_trust_data_dir()
+        .and_then(|dir| FileTrustStore::open(&dir).ok())
+        .map_or(TrustStatus::NotTrusted, |store| store.status(identity))
+}
+
 /// 신뢰를 확인할 수 없거나 고정한 프로젝트를 열 수 없음. 경로·내용은 노출하지 않습니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrustedReadError {
@@ -35,10 +51,7 @@ impl TrustedProject {
     /// 등록은 실제 경로(canonical target)로 찾으므로, 같은 프로젝트 ID의 작업 폴더가 여러 개 신뢰돼
     /// 있어도 루트마다 따로 고를 수 있습니다. 신뢰를 확인하기 전에는 프로젝트 파일을 읽지 않습니다.
     pub fn select(root: &Path) -> Result<Self, TrustedReadError> {
-        let data_dir = os_user_data_base()
-            .filter(|base| base.is_absolute())
-            .ok_or(TrustedReadError::NotTrusted)?
-            .join(crate::lock::APP_DATA_DIR);
+        let data_dir = os_trust_data_dir().ok_or(TrustedReadError::NotTrusted)?;
         Self::select_in(root, data_dir)
     }
 
