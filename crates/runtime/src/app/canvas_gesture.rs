@@ -298,10 +298,11 @@ fn apply_edit(
             )
         }
         CanvasEdit::Resize { node, rect } => {
-            // 처음 넣는 위치 Transform modifier의 ID(UUIDv7, OS 난수). command ID에서 파생하지 않습니다.
-            let [modifier] = super::frame_move::fresh_ids()?;
             let (model, payload) = sole_editable(window, view, node)?;
-            resize_commands(model, node, &payload, rect, modifier)?
+            let mut ids = super::frame_move::FreshIds::default();
+            let commands = resize_commands(model, node, &payload, rect, &mut || ids.next());
+            ids.finish()?;
+            commands?
         }
         CanvasEdit::LineEnd { node, end, point } => {
             let (model, payload) = sole_editable(window, view, node)?;
@@ -441,7 +442,7 @@ fn resize_commands(
     node: StableId,
     payload: &NodePayload,
     rect: Rect,
-    new_modifier: StableId,
+    new_modifier: &mut dyn FnMut() -> StableId,
 ) -> Result<Vec<Command>, Failure> {
     use stellar_commands::document::frame::keys;
     use stellar_document::payload_metadata::{image_keys, shape_keys};
@@ -522,12 +523,14 @@ fn resize_commands(
 }
 
 /// 위치 Transform modifier를 `next`로 바꾸거나(없으면 맨 앞에 새로) 넣는 command.
+///
+/// `new_modifier`는 새 modifier를 넣을 때만 부릅니다. 제품 경로는 UUIDv7(`FreshIds`)을 넘깁니다.
 fn transform_command(
     model: &DocumentModel,
     node: StableId,
     modifier: Option<ModifierId>,
     next: Transform2D,
-    new_modifier: StableId,
+    new_modifier: &mut dyn FnMut() -> StableId,
 ) -> Command {
     use stellar_commands::modifier_ops::{InsertModifier, SetModifierProperty};
     use stellar_core_types::order_key::OrderKey;
@@ -551,7 +554,7 @@ fn transform_command(
             Command::InsertModifier(InsertModifier {
                 node,
                 entry: ModifierEntry {
-                    id: ModifierId::new(new_modifier),
+                    id: ModifierId::new(new_modifier()),
                     order,
                     kind: ModifierKind::Transform,
                     enabled: true,
@@ -655,7 +658,7 @@ fn move_command(
     target: StableId,
     delta: Vec2,
     remap: Option<&std::collections::BTreeMap<StableId, StableId>>,
-    new_modifier: StableId,
+    new_modifier: &mut dyn FnMut() -> StableId,
 ) -> Result<Option<Command>, Failure> {
     use stellar_commands::document::frame::keys;
     let modifier_of = |id: ModifierId| -> Result<ModifierId, Failure> {
@@ -738,7 +741,7 @@ fn can_move(model: &DocumentModel, view: StableId, node: StableId) -> bool {
     editable_ancestry(model, view, node, !frame).is_some()
         && Vec2::new(1.0, 0.0)
             .ok()
-            .is_some_and(|probe| move_command(model, node, node, probe, None, node).is_ok())
+            .is_some_and(|probe| move_command(model, node, node, probe, None, &mut || node).is_ok())
 }
 
 /// 형제 순서에서 `node` 바로 위(다음 형제 앞) 자리.
@@ -793,7 +796,7 @@ fn move_selection(
     }
     let rows = row_index(scene);
     let id = super::frame_move::command_id(window.window(), request);
-    // 복제본과 처음 넣는 Transform modifier의 ID는 ID마다 new_ids로 만든 UUIDv7입니다(ADR-0028 "새 영속 ID").
+    // 복제본과 새 위치 Transform modifier의 ID는 UUIDv7(OS 난수)입니다. command ID에서 파생하지 않습니다.
     let mut ids = super::frame_move::FreshIds::default();
     let revision = window.revision();
     let mut transaction = CommandTransaction::new(id, CommandOrigin::User);
@@ -813,9 +816,8 @@ fn move_selection(
             }
             let parent = parent_of(model, node).ok_or_else(stale_view)?;
             let order = order_above(model, parent, node).ok_or_else(stale_view)?;
-            let plan =
-                DuplicateSubtree::plan_with(model, node, parent, order, &mut || ids.next())
-                    .map_err(|_| stale_view())?;
+            let plan = DuplicateSubtree::plan_with(model, node, parent, order, &mut || ids.next())
+                .map_err(|_| stale_view())?;
             let copy = plan.copy_root().ok_or_else(stale_view)?;
             let remap: std::collections::BTreeMap<_, _> = plan.remap.iter().copied().collect();
             transaction = transaction.with_command(revision, Command::DuplicateSubtree(plan));
@@ -825,18 +827,16 @@ fn move_selection(
         } else {
             (node, None)
         };
-        if let Some(command) = move_command(
-            model,
-            node,
-            target,
-            local,
-            remap.as_ref(),
-            ids.next(),
-        )? {
+        if let Some(command) =
+            move_command(model, node, target, local, remap.as_ref(), &mut || {
+                ids.next()
+            })?
+        {
             transaction = transaction.with_command(revision, command);
             commands += 1;
         }
     }
+    // 새 ID를 만들지 못했으면(NIL) 적용하지 않습니다.
     ids.finish()?;
     if commands == 0 {
         return Ok(());
@@ -1979,6 +1979,63 @@ mod tests {
     }
 
     /// all_shapes_document에 root 아래 Text 18과 Image 19(각 Transform 하나)를 더합니다.
+    /// 새 복제본·위치 Transform modifier ID는 UUIDv7(OS 난수)이고, 창 ID·요청 순번으로 정해지지 않습니다(B4).
+    #[test]
+    fn copies_and_new_position_modifiers_get_fresh_uuidv7_ids() {
+        use stellar_document::modifier::{ModifierKind, ModifierStack};
+        // Ellipse 15는 Fill만 둡니다. 이동·원점이 바뀌는 크기 조절은 위치 Transform을 새로 넣습니다.
+        let mut model = all_shapes_document();
+        let fill = model.modifier_stack(sid(15)).unwrap().entries()[1].clone();
+        let mut stack = ModifierStack::new(sid(15));
+        stack.insert(fill).unwrap();
+        model.set_modifier_stack(stack).unwrap();
+        let dir = saved_project_with("canvas-fresh-ids", &[&model]);
+        let inserted_transform = |session: &ProjectWindowSession| {
+            let model = session.document().unwrap().model();
+            let entries = model.modifier_stack(sid(15)).unwrap().entries().to_vec();
+            assert_eq!(entries.len(), 2);
+            assert_eq!(entries[0].kind, ModifierKind::Transform);
+            entries[0].id.stable_id()
+        };
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        session
+            .select(Selection::new([sid(15)], Some(sid(15))))
+            .unwrap();
+        assert!(drag(&mut session, 1, None, (5., 0.), true, false));
+        let moved = inserted_transform(&session);
+        assert!(session.undo().unwrap());
+        assert!(edit(&mut session, 2, resize(15, 3., 0., 40., 20.)));
+        let resized = inserted_transform(&session);
+        assert_eq!((moved.version(), resized.version()), (7, 7));
+        assert_ne!(moved, resized);
+        // 같은 창 ID·같은 요청 순번으로 두 번 복제해도 새 ID의 난수 부분이 다릅니다.
+        let duplicate = || {
+            let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+            session
+                .select(Selection::new([sid(14)], Some(sid(14))))
+                .unwrap();
+            assert!(drag(&mut session, 7, Some(14), (20., 0.), false, true));
+            let copy = session.view().selection().ids()[0];
+            let model = session.document().unwrap().model();
+            let mut ids = vec![copy];
+            ids.extend(
+                model
+                    .modifier_stack(copy)
+                    .unwrap()
+                    .entries()
+                    .iter()
+                    .map(|e| e.id.stable_id()),
+            );
+            ids
+        };
+        let (first, second) = (duplicate(), duplicate());
+        assert_eq!(first.len(), 3);
+        for (a, b) in first.iter().zip(&second) {
+            assert_eq!((a.version(), b.version()), (7, 7));
+            assert_ne!(a.to_bytes()[8..], b.to_bytes()[8..]);
+        }
+    }
+
     fn every_kind_document() -> DocumentModel {
         use stellar_core_types::order_key::OrderKey;
         use stellar_core_types::reference::AssetRef;
@@ -2153,7 +2210,7 @@ mod tests {
                 &[sid(node)],
                 property,
                 &InspectorInput::Set(CssValue::Length(value)),
-                &mut || StableId::NIL,
+                &mut || sid(98),
             )
             .unwrap()
         };
@@ -2161,15 +2218,27 @@ mod tests {
         let box_of = |w: f32, h: f32| Rect::new(Vec2::ZERO, Size2::new(w, h).unwrap());
         // Rectangle 오른쪽 핸들 = `width`, Image 아래 핸들 = `height`.
         assert_eq!(
-            resize_commands(&model, sid(14), &payload(14), box_of(45., 30.), sid(99))
-                .ok()
-                .unwrap(),
+            resize_commands(
+                &model,
+                sid(14),
+                &payload(14),
+                box_of(45., 30.),
+                &mut || sid(99)
+            )
+            .ok()
+            .unwrap(),
             tab(14, InspectorProperty::Width, 45.)
         );
         assert_eq!(
-            resize_commands(&model, sid(19), &payload(19), box_of(30., 44.), sid(99))
-                .ok()
-                .unwrap(),
+            resize_commands(
+                &model,
+                sid(19),
+                &payload(19),
+                box_of(30., 44.),
+                &mut || sid(99)
+            )
+            .ok()
+            .unwrap(),
             tab(19, InspectorProperty::Height, 44.)
         );
         // Rectangle Option 반경 = 그 모서리 longhand, Polygon 반경 = 반경 key.

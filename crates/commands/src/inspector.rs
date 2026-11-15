@@ -968,8 +968,8 @@ fn node_commands(
 
 /// 선택 전체에 `input`을 적용하는 command 목록. 값이 모두 같으면 빈 목록입니다.
 ///
-/// 새 modifier ID는 `new_id`에서 받습니다. 이 함수는 ID를 command·node ID에서 파생하지 않습니다(ADR-0028 "새
-/// 영속 ID"). runtime은 OS 난수 seed의 UUIDv7 생성기를 넘깁니다.
+/// `new_id`는 새 modifier(Fill·Stroke·위치 Transform)를 넣을 때만 부르며, 부를 때마다 다른 영속 ID를 돌려줘야
+/// 합니다. 제품 경로는 UUIDv7(OS 난수, `stellar_project::new_ids`)을 넘깁니다. command ID에서 파생하지 않습니다.
 pub fn edit_commands(
     model: &DocumentModel,
     selection: &[StableId],

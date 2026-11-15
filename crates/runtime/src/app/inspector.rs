@@ -186,7 +186,8 @@ fn edit_property(
             .map_err(history_failure)?;
     }
     let selection = window.history.view().selection().ids().to_vec();
-    // 새 modifier ID는 ID마다 new_ids로 만든 UUIDv7입니다(ADR-0028 "새 영속 ID"). command ID에서 파생하지 않습니다.
+    // 새 Fill·Stroke·위치 Transform modifier ID는 UUIDv7(OS 난수)입니다. 연속 조작은 단계마다 시작 상태에서 다시
+    // 계산하므로 단계마다 새 ID여도 확정되는 문서에는 마지막 단계의 ID 하나만 남습니다.
     let mut ids = FreshIds::default();
     let commands = edit_commands(
         document.state.model(),
