@@ -12,7 +12,6 @@ use crate::object::FileMode;
 use crate::ops::{require_success, GitOpError};
 use crate::runner::{argv, GitRunError};
 use crate::snapshot::index::read_index_snapshot_cancellable;
-use crate::snapshot::materialize::{materialize_snapshot, MaterializedSnapshot};
 use crate::snapshot::{IndexSnapshot, SnapshotEntry};
 use crate::trust::{GatedGitRunner, GatedRunError, GitTrust};
 
@@ -25,7 +24,6 @@ pub struct PublishedIndex {
     inverse: WrittenCandidate,
     bytes: Option<Vec<u8>>,
     root: PathBuf,
-    isolated_worktree: Option<MaterializedSnapshot>,
 }
 
 impl PublishedIndex {
@@ -48,53 +46,11 @@ pub fn publish_with_receipt(
     candidate: &WrittenCandidate,
     cancel: &GitCancelToken,
 ) -> Result<PublishedIndex, PublishError> {
-    publish_receipt(git, worktree, candidate, cancel, None)
-}
-
-/// 앱의 선택 Stage/Unstage. 격리된 빈 작업 트리를 사용해 Git의 index stat 갱신이 실제
-/// 파일에 clean 필터를 실행하지 않게 합니다. 적용과 조건부 복원 모두 Git hook을 끕니다.
-pub fn publish_isolated(
-    git: &GatedGitRunner,
-    worktree: &Path,
-    parent: &Path,
-    candidate: &WrittenCandidate,
-    cancel: &GitCancelToken,
-) -> Result<PublishedIndex, PublishError> {
-    git.runner()?;
-    let parent = parent
-        .canonicalize()
-        .map_err(|e| PublishError::Io(e.kind()))?;
-    let root = worktree
-        .canonicalize()
-        .map_err(|e| PublishError::Io(e.kind()))?;
-    if parent.starts_with(root) {
-        return Err(PublishError::Unsupported("격리 폴더가 작업 트리 안에 있음"));
-    }
-    let empty = materialize_snapshot(git, worktree, &[], &parent)
-        .map_err(|_| PublishError::Unsupported("빈 임시 작업 트리 생성 실패"))?;
-    publish_receipt(git, worktree, candidate, cancel, Some(empty))
-}
-
-fn publish_receipt(
-    git: &GatedGitRunner,
-    worktree: &Path,
-    candidate: &WrittenCandidate,
-    cancel: &GitCancelToken,
-    isolated_worktree: Option<MaterializedSnapshot>,
-) -> Result<PublishedIndex, PublishError> {
-    let applied = publish_inner(
-        git,
-        worktree,
-        candidate,
-        cancel,
-        None,
-        isolated_worktree.as_ref(),
-    )?;
+    let applied = publish_inner(git, worktree, candidate, cancel, None)?;
     Ok(PublishedIndex {
         inverse: candidate.inverse(applied.snapshot),
         bytes: applied.bytes,
         root: applied.root,
-        isolated_worktree,
     })
 }
 
@@ -112,7 +68,6 @@ pub fn restore_published(
         &receipt.inverse,
         cancel,
         Some(&receipt.bytes),
-        receipt.isolated_worktree.as_ref(),
     )
     .map(|r| r.snapshot)
 }
@@ -419,7 +374,7 @@ pub fn publish_candidate(
     candidate: &WrittenCandidate,
     cancel: &GitCancelToken,
 ) -> Result<IndexSnapshot, PublishError> {
-    publish_inner(git, worktree, candidate, cancel, None, None).map(|r| r.snapshot)
+    publish_inner(git, worktree, candidate, cancel, None).map(|r| r.snapshot)
 }
 
 fn publish_inner(
@@ -428,7 +383,6 @@ fn publish_inner(
     candidate: &WrittenCandidate,
     cancel: &GitCancelToken,
     required_bytes: Option<&Option<Vec<u8>>>,
-    isolated_worktree: Option<&MaterializedSnapshot>,
 ) -> Result<AppliedIndex, PublishError> {
     let runner = git.runner()?;
     if !cfg!(target_os = "macos") {
@@ -555,34 +509,22 @@ fn publish_inner(
             }
         }
     };
-    let mut protocol_git = protocol_runner(git)?;
-    let mut args = Vec::new();
-    let child_cwd = if let Some(empty) = isolated_worktree {
-        // Git can refresh other index entries even with --index-info. Both cwd and
-        // GIT_WORK_TREE must be empty, otherwise relative stats can run clean filters.
-        let git_dir = git_path(git, &root, &["rev-parse", "--absolute-git-dir"], cancel)?;
-        protocol_git = GatedGitRunner::new(
-            protocol_git.runner()?.clone().with_added_env(vec![
-                ("GIT_DIR".into(), git_dir.into_os_string()),
-                ("GIT_WORK_TREE".into(), empty.root().as_os_str().to_owned()),
-            ]),
-            GitTrust::Trusted,
-        );
-        args.extend(argv(["-c", "core.hooksPath=/dev/null"]));
-        empty.root()
-    } else {
-        &root
-    };
-    args.extend(argv([
-        "-c",
-        "core.fsmonitor=false",
-        "-c",
-        "core.ignorestat=false",
-        "update-index",
-        "-z",
-        "--index-info",
-    ]));
-    let result = protocol_git.run_with_checked_input(&args, child_cwd, &bytes, cancel, &mut check);
+    let protocol_git = protocol_runner(git)?;
+    let result = protocol_git.run_with_checked_input(
+        &argv([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.ignorestat=false",
+            "update-index",
+            "-z",
+            "--index-info",
+        ]),
+        &root,
+        &bytes,
+        cancel,
+        &mut check,
+    );
     if !approved && lock.try_exists().unwrap_or(true) {
         return Err(if owned {
             PublishError::LockCleanupUnconfirmed
