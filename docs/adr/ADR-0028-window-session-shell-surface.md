@@ -329,8 +329,9 @@ Frame ABI와 같이 document thread가 표시 revision·편집 가능한 부모�
 ### Frame Inspector의 개별 모서리 반경
 
 이 절의 `stellar_window_selected_frame_corners`·`stellar_window_session_set_frame_corner`는 2026-11-15 검토에서
-아래 "Inspector 선택 snapshot과 Frame 속성 편집"의 두 ABI로 대체했습니다. 모서리 네 값을 원본 그대로 보존하고
-캔버스·hit test에는 bounds 기준 정규화 반경을 쓰는 규칙은 그대로입니다.
+지웠습니다. 모든 node 종류의 행 읽기와 편집(4모서리 `border-*-radius` longhand 포함)은 ADR-0070의
+`stellar_window_inspector`·`stellar_window_edit_property`가 대체합니다. 모서리 네 값을 원본 그대로 보존하고 캔버스·
+hit test에는 bounds 기준 정규화 반경을 쓰는 규칙은 그대로입니다.
 
 ## 컴포넌트 라이브러리 창 계열 ABI 제거 (2026-11-15 검토)
 

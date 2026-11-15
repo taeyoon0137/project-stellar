@@ -319,20 +319,6 @@ enum CoreRuntime {
         return .success(request)
     }
 
-    /// 선택 Frame의 CSS longhand 하나(width·height·모서리·background)를 바꿉니다. 모든 key가 history sequence를 검사합니다.
-    static func setFrameProperty(handle: UInt64, session: UInt64, view: UUID, node: UUID, revision: UInt64,
-                                 historySequence: UInt64, key: UInt32, value: StellarFrameValue) -> Result<UInt64, CoreRuntimeCallError> {
-        var request: UInt64 = 0
-        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
-            withUnsafeBytes(of: node.uuid) { nodeBytes in
-                stellar_window_session_set_frame_property(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
-                    nodeBytes.bindMemory(to: UInt8.self).baseAddress, revision, historySequence, key, value, &request)
-            }
-        }
-        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
-        return .success(request)
-    }
-
     /// 열린 창 session의 최신 정보. 열려 있지 않으면 nil입니다. document thread를 기다리지 않습니다.
     static func windowSessionInfo(handle: UInt64, session: UInt64) -> StellarWindowSessionInfo? {
         var info = StellarWindowSessionInfo()

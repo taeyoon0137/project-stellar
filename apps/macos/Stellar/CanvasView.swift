@@ -49,6 +49,9 @@ final class CanvasView: NSView {
 
     var framePointerHandler: ((NSEvent) -> Bool)?
     var cancelFrameGesture: (() -> Bool)?
+    /// 캔버스 포인터 제스처(이동·생성·Hand·Zoom 드래그 등)가 진행 중인지. 창이 연결하고, 속성 패널은 이 값 하나로
+    /// 제스처 중 섹션 구성을 고정합니다(UX.2.12). 새 제스처 상태는 이 질의에 함께 넣습니다.
+    var frameGestureActive: (() -> Bool)?
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if let window {
