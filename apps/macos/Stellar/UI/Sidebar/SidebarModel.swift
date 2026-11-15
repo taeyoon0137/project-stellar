@@ -269,4 +269,12 @@ protocol SidebarDataProvider: AnyObject {
 
     /// command를 보냅니다. 결과는 다음 snapshot으로 반영됩니다.
     func perform(_ command: SidebarCommand)
+
+    /// 표시·잠금 토글과 Group·Ungroup을 이 provider가 문서 편집으로 연결했는지. 연결하지 않은 provider에서는
+    /// 비활성 컨트롤로 노출하지 않고 숨깁니다.
+    var supportsLayerFlagsAndGrouping: Bool { get }
+}
+
+extension SidebarDataProvider {
+    var supportsLayerFlagsAndGrouping: Bool { true }
 }

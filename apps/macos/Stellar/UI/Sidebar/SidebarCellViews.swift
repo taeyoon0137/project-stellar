@@ -173,6 +173,10 @@ final class SidebarLayerCellView: SidebarNameCellView {
     var showsTogglesAlways = false {
         didSet { updateToggleVisibility() }
     }
+    /// `false`이면 토글을 숨깁니다. 문서 편집으로 연결되지 않은 토글은 비활성 상태로 노출하지 않습니다.
+    var togglesAvailable = true {
+        didSet { updateToggleVisibility() }
+    }
     private var hoverArea: NSTrackingArea?
 
     init() {
@@ -271,8 +275,8 @@ final class SidebarLayerCellView: SidebarNameCellView {
 
     private func updateToggleVisibility() {
         let reveal = showsTogglesAlways || isHovered || isRowSelected
-        visibilityButton.isHidden = !(reveal || !(row?.isVisible ?? true))
-        lockButton.isHidden = !(reveal || (row?.isLocked ?? false))
+        visibilityButton.isHidden = !togglesAvailable || !(reveal || !(row?.isVisible ?? true))
+        lockButton.isHidden = !togglesAvailable || !(reveal || (row?.isLocked ?? false))
     }
 
     override var backgroundStyle: NSView.BackgroundStyle {

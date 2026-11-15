@@ -290,13 +290,24 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
             return cell
         }
         if item.role == .more {
+            // 다음 페이지 행이 화면에 들어오면 자동으로 다음 64행을 읽습니다(별도 버튼 없음).
             let reuseID = NSUserInterfaceItemIdentifier("SidebarMoreLayers")
-            let button = outlineView.makeView(withIdentifier: reuseID, owner: nil) as? NSButton ??
-                NSButton(title: String(localized: "Show More Layers"), target: self, action: #selector(showMore(_:)))
-            button.identifier = reuseID
-            button.bezelStyle = .inline
-            button.controlSize = .small
-            return button
+            let spinner = outlineView.makeView(withIdentifier: reuseID, owner: nil) as? NSProgressIndicator ?? {
+                let indicator = NSProgressIndicator()
+                indicator.style = .spinning
+                indicator.controlSize = .small
+                indicator.isIndeterminate = true
+                indicator.identifier = reuseID
+                return indicator
+            }()
+            spinner.startAnimation(nil)
+            let parent = item.id
+            // data source 호출 중에 snapshot을 바꾸지 않도록 다음 런 루프에서 요청합니다.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.provider.validate(.loadMore(parent)).isAllowed else { return }
+                self.provider.perform(.loadMore(parent))
+            }
+            return spinner
         }
         guard let id = item.layerID, let row = snapshot.layers.rows[id] else { return nil }
         let cell = outlineView.makeView(withIdentifier: SidebarCellIdentifier.layer, owner: nil)
@@ -304,6 +315,7 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
         cell.delegate = self
         cell.nameField.delegate = rename
         cell.showsTogglesAlways = showsTogglesAlways
+        cell.togglesAvailable = provider.supportsLayerFlagsAndGrouping
         configure(cell, row: row)
         return cell
     }
@@ -327,13 +339,6 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
                 self?.perform(action, targets: [id]) ?? false
             }
         })
-    }
-
-    @objc private func showMore(_ sender: NSButton) {
-        let row = outline.row(for: sender)
-        guard row >= 0, let more = outline.item(atRow: row) as? SidebarOutlineItem, more.role == .more,
-              provider.validate(.loadMore(more.id)).isAllowed else { return }
-        provider.perform(.loadMore(more.id))
     }
 
     func outlineView(_ outlineView: NSOutlineView, typeSelectStringFor tableColumn: NSTableColumn?, item: Any) -> String? {
@@ -500,14 +505,17 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
         let rows = targets.compactMap { snapshot.layers.rows[$0] }
         let allVisible = rows.allSatisfy(\.isVisible)
         let allLocked = rows.allSatisfy(\.isLocked)
-        let groups: [[(SidebarOutlineAction, String)]] = [
+        var groups: [[(SidebarOutlineAction, String)]] = [
             [(.rename, SidebarStrings.rename), (.duplicate, SidebarStrings.duplicate), (.delete, SidebarStrings.delete)],
-            [(.group, SidebarStrings.group), (.ungroup, SidebarStrings.ungroup)],
-            [
+        ]
+        // 문서 편집으로 연결하지 않은 provider에서는 Group·표시·잠금 항목을 비활성으로 두지 않고 뺍니다.
+        if provider.supportsLayerFlagsAndGrouping {
+            groups.append([(.group, SidebarStrings.group), (.ungroup, SidebarStrings.ungroup)])
+            groups.append([
                 (.toggleVisibility, allVisible ? SidebarStrings.hide : SidebarStrings.show),
                 (.toggleLock, allLocked ? SidebarStrings.unlock : SidebarStrings.lock),
-            ],
-        ]
+            ])
+        }
         for (index, group) in groups.enumerated() {
             if index > 0 { menu.addItem(.separator()) }
             for (action, title) in group {

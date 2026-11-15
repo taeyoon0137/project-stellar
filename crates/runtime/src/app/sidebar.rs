@@ -167,6 +167,13 @@ fn read_page(
     let more = ids.len() > PAGE_SIZE;
     ids.truncate(PAGE_SIZE);
     let selection = window.view().selection();
+    // 행마다 선택 목록을 훑지 않도록 선택 순번 표를 한 번만 만듭니다(선택 수 + 페이지 행 수에 선형).
+    let selection_order: std::collections::HashMap<StableId, usize> = selection
+        .ids()
+        .iter()
+        .enumerate()
+        .map(|(order, id)| (*id, order))
+        .collect();
     let mut reveal_child = None;
     let mut cursor = selection.primary();
     while let Some(id) = cursor {
@@ -195,7 +202,7 @@ fn read_page(
                 visible: fields.visible,
                 locked: fields.locked,
                 has_children: model.columns().child_count(handle)? != 0,
-                selection_order: selection.ids().iter().position(|selected| *selected == id),
+                selection_order: selection_order.get(&id).copied(),
             })
         })
         .collect::<Option<Vec<_>>>()?;

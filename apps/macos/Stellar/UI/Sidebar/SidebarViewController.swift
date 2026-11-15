@@ -163,7 +163,10 @@ final class SidebarViewController: NSViewController, NSSplitViewDelegate {
         appliedGeneration = snapshot.generation
         pagesController.apply(snapshot)
         layersController.apply(snapshot)
-        filterAccessory.searchField.isEnabled = provider.validate(.setFilter("")).isAllowed
+        // 필터를 지원하지 않는 provider에서는 비활성 필드 대신 accessory를 숨깁니다.
+        let filterable = provider.validate(.setFilter("")).isAllowed
+        filterAccessory.searchField.isEnabled = filterable
+        if filterAccessory.isHidden == filterable { filterAccessory.isHidden = !filterable }
         filterAccessory.sync(query: snapshot.filter?.query ?? "")
         stateView.show(stateContent(for: snapshot))
     }

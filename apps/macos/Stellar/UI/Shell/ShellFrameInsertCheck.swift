@@ -181,8 +181,8 @@ enum ShellFrameInsertCheck {
         guard awaitSidebar({ layerRow(child, in: project) != nil }), let index = layerRow(child, in: project),
               firstOutline.selectedRow == index,
               let cell = firstOutline.view(atColumn: 0, row: index, makeIfNecessary: true) as? SidebarLayerCellView,
-              cell.nameField.stringValue == "Frame", cell.nameField.isEditable, !cell.lockButton.isEnabled,
-              !cell.visibilityButton.isEnabled, !project.sidebarSlot.sidebar.filterAccessory.searchField.isEnabled,
+              cell.nameField.stringValue == "Frame", cell.nameField.isEditable, cell.lockButton.isHidden,
+              cell.visibilityButton.isHidden, project.sidebarSlot.sidebar.filterAccessory.isHidden,
               other.sidebarSlot.sidebar.layersController.snapshot.layers.rows.isEmpty else { return fail("추가된 실제 행·이름 편집·창 격리") }
         guard action(.undo), awaitSidebar({ layerRow(child, in: project) == nil }), canvas.frameHit(at: viewPoint(50, 50))?.id == root, session.info?.selection_count == 0,
               action(.redo), awaitSidebar({ layerRow(child, in: project) != nil }), canvas.frameHit(at: viewPoint(50, 50))?.id == child, session.info?.selection_count == 1,

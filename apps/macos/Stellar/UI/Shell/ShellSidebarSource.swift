@@ -24,6 +24,8 @@ final class ShellSidebarSource: SidebarDataProvider {
     private weak var window: ShellWindowSessionHandle?
     private var queued: [Request] = []
     private var loaded: [Request] = []
+    /// 문서 revision이 바뀌기 전에 부모별로 읽어 둔 페이지 수. 새 revision에서 같은 수만큼 다시 읽습니다.
+    private var restorePages: [SidebarStableID?: Int] = [:]
     private var selectedOrder: [SidebarStableID: Int] = [:]
     private var running: Request?
     private var epoch: UInt64 = 0
@@ -34,6 +36,8 @@ final class ShellSidebarSource: SidebarDataProvider {
     var canEditSelection: ((ShellCommand) -> Bool)?
     var select: (([UUID]) -> Void)?
     var rename: ((_ view: UUID, _ revision: UInt64, _ id: UUID, _ name: String) -> Void)?
+    /// 표시·잠금 토글과 Group·Ungroup은 아직 문서 편집에 연결하지 않았습니다.
+    var supportsLayerFlagsAndGrouping: Bool { false }
 
     func refresh(runtime: UInt64?, session: ShellWindowSessionHandle?, target: StellarSelectionTarget?) {
         self.runtime = runtime
@@ -49,6 +53,7 @@ final class ShellSidebarSource: SidebarDataProvider {
         }
         let next = Display(target: target)
         guard next != display else { startNext(); return }
+        let previous = display
         let selectionOnly = display?.session == next.session && display?.view == next.view && display?.revision == next.revision
         display = next
         if selectionOnly && !loaded.isEmpty {
@@ -59,7 +64,11 @@ final class ShellSidebarSource: SidebarDataProvider {
             if let running, !queued.contains(running) { queued.append(running) }
             startNext()
         } else {
+            // 같은 창·View에서 revision만 바뀌면(편집) 부모별로 이어 읽은 페이지 수를 기억해 다시 읽습니다.
+            let sameView = previous?.session == next.session && previous?.view == next.view
+            let pages = sameView ? Dictionary(grouping: loaded, by: \.parent).mapValues(\.count) : [:]
             reset()
+            restorePages = pages
             enqueue(Request(parent: nil, after: nil))
         }
     }
@@ -68,6 +77,7 @@ final class ShellSidebarSource: SidebarDataProvider {
         epoch &+= 1
         queued.removeAll()
         loaded.removeAll()
+        restorePages.removeAll()
         selectedOrder.removeAll()
         snapshot = .empty
     }
@@ -166,11 +176,12 @@ final class ShellSidebarSource: SidebarDataProvider {
                             if !self.queued.contains(request) { self.queued.append(request) }
                             guard display.target.matches(self.window?.selectionTarget) else { return }
                         }
-                    } else {
+                    } else if display.target.matches(self.window?.selectionTarget) {
                         self.queued.removeAll()
                         self.snapshot.loadState = .failed(message: String(localized: "The layer list changed. Try again."))
                         self.publish()
                     }
+                    // 창이 이미 다른 revision·선택을 게시했으면 조용히 버립니다. 다음 refresh가 다시 읽습니다.
                 }
                 self.startNext()
             }
@@ -201,6 +212,13 @@ final class ShellSidebarSource: SidebarDataProvider {
         snapshot.primarySelection = page.primary
         snapshot.loadState = .ready
         publish(structureChanged: !refreshing)
+        if !refreshing, page.hasMore, let last = ids.last {
+            // 편집 전에 이어 읽은 페이지까지, 그리고 primary로 가는 행이 나올 때까지 같은 부모의 다음 페이지를 읽습니다.
+            let pages = loaded.filter { $0.parent == request.parent }.count
+            let restoring = pages < (restorePages[request.parent] ?? 0)
+            let revealing = page.revealChild.map { !ids.contains($0) } ?? false
+            if restoring || revealing { enqueue(Request(parent: request.parent, after: last)) }
+        }
         if let child = page.revealChild, child != page.primary, snapshot.layers.rows[child]?.hasChildren == true,
            snapshot.layers.childIDs[child] == nil {
             enqueue(Request(parent: child, after: nil))
