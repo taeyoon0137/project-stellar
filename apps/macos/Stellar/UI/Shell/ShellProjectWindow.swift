@@ -1128,9 +1128,11 @@ extension ShellProjectWindow: GitPanelHostActions {
               !gitSource.trusted, !gitSource.isCheckingTrust else { return }
         let alert = NSAlert()
         alert.messageText = String(localized: "Trust This Project?")
-        // 편집 경로의 신뢰 게이트(D1)가 남아 있는 동안은 신뢰가 편집도 엽니다. 게이트를 걷어 낸 뒤 실행 계열 문구로
-        // 바꿉니다(UX 명세 8.7).
-        alert.informativeText = String(localized: "Trusting this folder allows Stellar to edit project files and run Git commands for it.") + "\n" + session.rootPath
+        // 신뢰는 코드 실행 계열(아키텍처 §24.3)만 엽니다. 편집·저장은 신뢰와 관계없이 됩니다(D1, UX 명세 8.7).
+        alert.informativeText = String(
+            localized: "In Restricted Mode, Stellar doesn’t run code from this folder: Git hooks and filters, the integrated terminal, MCP and agents, and external commands. It also doesn’t show the contents of symbolic links that point outside the project. Trust this folder if you know where it came from. Editing and saving work either way.",
+            comment: "Trust alert message; the project folder path follows on the next line"
+        ) + "\n" + session.rootPath
         alert.addButton(withTitle: String(localized: "Cancel"))
         alert.addButton(withTitle: String(localized: "Trust Project"))
         alert.beginSheetModal(for: window) { [weak self, weak session] response in
