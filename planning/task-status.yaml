@@ -2347,13 +2347,12 @@ tasks:
       - DEV-MAC
     report: "docs/task-reports/V.10.3.md"
   - id: "V.10.4"
-    title: "macOS 앱은 빈 공개 인터페이스와 Free Frame 트리를 가진 컴포넌트를 정의 하나당 YAML 파일 하나에 저장합니다. 앱·CLI·MCP는 같은 정의를 읽습니다. 정의 v1은 루트 하나, v2는 중첩 Frame의 부모와 형제 순서를 보존합니다. 단일 View의 명시적 텍스트 내보내기는 Text, 새 문서의 기본 타이포그래피와 배치한 인스턴스의 정의 ID·위치를 왕복합니다. 일반 캔버스 문서는 여전히 generation에 저장됩니다. 전체 영속 의미(모든 node·modifier·component·token·resource)를 텍스트화하고 문서·페이지·View·큰 Frame 파일 참조 및 이름/StableId 규칙을 완성합니다. 미지원 필드·레코드는 보존하거나 쓰기를 거부합니다. 기존 generation 변환은 전체 semantic snapshot이 같을 때만 성공합니다."
-    status: reported_done
+    title: "전체 영속 의미(모든 node·modifier·component·token·resource)를 텍스트화하고 문서·페이지·View·큰 Frame 파일 참조 및 이름/StableId 규칙을 완성합니다. 미지원 필드·레코드는 보존하거나 쓰기를 거부합니다. 기존 generation 변환은 전체 semantic snapshot이 같을 때만 성공합니다."
+    status: not_started
     depends_on:
       - "V.10.3"
     required_environments:
       - DEV-MAC
-    report: "docs/task-reports/V.10.4.md"
   - id: "V.10.5"
     title: "여러 의미 파일의 temp/fsync/rename 저장 journal과 앞/새 세대 한쪽 복구를 구현합니다. 삭제·rename·디스크 오류도 원본과 미저장 작업을 보호합니다."
     status: not_started
@@ -2362,16 +2361,15 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "V.10.6"
-    title: "텍스트 원본을 파일 감시·외부 변경·명령 저장 및 재열기 경로에 연결합니다. 첫 부분은 opt-in 단일 파일 CLI apply의 source hash·필수 잠금·명령 transaction·dry-run 및 조건부 저장이며, Frame 크기·변환은 JSON 숫자로 편집할 수 있습니다. 열린 뒤 외부 편집이나 git pull이 있으면 dirty 편집을 보존하고 재로드·병합하는 전체 연결은 후속입니다."
-    status: reported_done
+    title: "텍스트 원본을 파일 감시·외부 변경·명령 저장 및 재열기 경로에 연결합니다. 열린 뒤 외부 편집이나 git pull이 있으면 dirty 편집을 보존하고 재로드·병합합니다."
+    status: not_started
     depends_on:
       - "V.10.5"
       - "XIII.3.1"
     required_environments:
       - DEV-MAC
-    report: "docs/task-reports/V.10.6.md"
   - id: "V.10.7"
-    title: "검증된 전체 변환 경로에서만 기본 원본을 텍스트로 전환하고 기존 chunk 저장은 로컬 cache로 내립니다. source hash 기반 빠른 열기·부분 로딩과 cache GC를 연결합니다."
+    title: "검증된 전체 변환 경로에서만 기본 원본을 텍스트로 전환하고 기존 chunk 저장은 로컬 cache로 내립니다. 새 프로젝트를 만들 때의 첫 저장도 같은 텍스트 원본으로 전환합니다. source hash 기반 빠른 열기·부분 로딩과 cache GC를 연결합니다."
     status: not_started
     depends_on:
       - "V.10.6"
@@ -6810,10 +6808,6 @@ tasks:
       - "XII.2.3"
     required_environments:
       - DEV-MAC
-    evidence:
-      - environment: DEV-MAC
-        locator: "docs/task-reports/XII.6.1.md"
-    commit: "0d5e7dc746c0d670320466269d3a1e2fb367d2e3"
     report: "docs/task-reports/XII.6.1.md"
   - id: "XII.6.2"
     title: "Open Project command가 folder를 선택하고 ProjectProbe 후 session을 엽니다."
@@ -6835,9 +6829,6 @@ tasks:
       - "IV.6.4"
     required_environments:
       - DEV-MAC
-    evidence:
-      - environment: DEV-MAC
-        locator: "docs/task-reports/XII.6.3.md"
     report: "docs/task-reports/XII.6.3.md"
   - id: "XII.6.4"
     title: "Undo/Redo/Save Now command를 active WindowSession에 연결합니다."
@@ -8511,7 +8502,7 @@ tasks:
     report: "docs/task-reports/XIV.7.2.md"
     verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XIV.7.3"
-    title: "현재 Index에서 선택·승인한 변경을 HEAD 값으로 되돌린 후보를 Phase XIV.6 index 기록 경로로 적용합니다."
+    title: "승인된 candidate를 Phase XIV.6 index 기록 경로로 적용합니다."
     status: verified
     depends_on:
       - "XIV.7.2"
@@ -9592,14 +9583,13 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XVI.4.7"
-    title: "부분 구현은 `InsertNode`의 영속 ID·형제 OrderKey 검사를 모델의 증분 인덱스 조회로 바꾸고 단일 Frame 삽입을 release 측정한 범위입니다. RestoreNodeRecords와 나머지 command는 미완료입니다. command 검증이 호출마다 다시 만드는 문서 전체 index(`crates/commands/src/tree.rs`의 `id_owners`·`ChildIndex`·`reference_index`, 각 O(N))를 `DocumentModel`이 편집과 함께 증분 유지하는 id 종류·자식·inbound 참조 index로 바꿉니다. RestoreNodeRecords(ConvertShapeToPath·ConvertFragmentToFrame의 undo·redo, VII.2.7)부터 옮기고, 같은 index를 쓰는 다른 command 검증도 옮깁니다. 검사 규칙과 오류 값은 바꾸지 않습니다."
-    status: reported_done
+    title: "command 검증이 호출마다 다시 만드는 문서 전체 index(`crates/commands/src/tree.rs`의 `id_owners`·`ChildIndex`·`reference_index`, 각 O(N))를 `DocumentModel`이 편집과 함께 증분 유지하는 id 종류·자식·inbound 참조 index로 바꿉니다. RestoreNodeRecords(ConvertShapeToPath·ConvertFragmentToFrame의 undo·redo, VII.2.7)부터 옮기고, 같은 index를 쓰는 다른 command 검증도 옮깁니다. 검사 규칙과 오류 값은 바꾸지 않습니다."
+    status: not_started
     depends_on:
       - "VII.2.7"
       - "VI.2.5"
     required_environments:
       - DEV-MAC
-    report: "docs/task-reports/XVI.4.7.md"
   - id: "XVI.4.8"
     title: "binding 저장소 조회의 선형 검색을 index로 바꿉니다. `BindingStore`에 token → binding(live·orphan) 역참조 index를 두어 토큰 Delete의 inbound 검사(VIII.5.5 `TokenOrphanPlan::current`)가 모든 binding source를 훑지 않게 하고, orphan target index로 `StoreTypes::reference_type`(VIII.8.2)이 Property 참조마다 하는 orphan 선형 검색을 없앱니다. 판정 결과는 바꾸지 않습니다."
     status: not_started

@@ -79,6 +79,7 @@ cargo run -q -p stellar-cli -- --help
 `apply`의 `commands` 배열에는 Frame 크기를 JSON 숫자로 지정하는
 `set-frame-size`(`node`, `width`, `height`)와 local 변환을 지정하는
 `set-frame-transform`(`node`, `a`, `b`, `c`, `d`, `tx`, `ty`)를 넣을 수 있습니다.
+`set-frame-transform`은 Frame 위치와 transform을 분리하는 IX.11.9 이후 위치·`transform` longhand 명령으로 대체합니다.
 한 축만 바꾸려면 `set-frame-width`(`node`, `width`) 또는 `set-frame-height`(`node`, `height`)를 사용합니다.
 숫자는 모델의 `f32`로 변환하며 무한대가 되면 거부하고, `width`·`height`는 비음수여야 합니다. 변환은
 `(x, y)`를 `(a*x + c*y + tx, b*x + d*y + ty)`로 보냅니다. Frame이 아닌 node에 적용하면 transaction 전체를 거부합니다.

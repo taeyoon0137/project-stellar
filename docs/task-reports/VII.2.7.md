@@ -119,11 +119,13 @@
 
 `DocumentModel`이 Frame clip과 활성·비활성 modifier의 참조를 소유 node의 편집과 함께 갱신합니다. 역 command는 이 인덱스로 참조를 읽고, 자식이 허용되지 않는 종류만 자식 수를 조회합니다. Path element의 ID 중복과 clip 대상 종류를 판정해야 하는 경우에는 기존 전체 ID 검사를 사용합니다.
 
-Apple M3 Max, macOS 27.2, release 빌드에서 root 한 개·그룹 100개·leaf Frame 50,000개를 만들고 같은 leaf의 이름을 101회 번갈아 복원했습니다. 검증과 command 실행은 개별 측정이며 실행에는 요청 생성, 검증, 역 command 생성 및 변경 적용이 포함됩니다.
+root 한 개·그룹 100개·leaf Frame 50,000개를 만들고 같은 leaf의 이름을 101회 번갈아 복원합니다. 검증과 command 실행(요청 생성, 검증, 역 command 생성, 변경 적용)을 따로 잽니다. 처음 기록한 수치는 다시 확인하지 않은 값이라 지웠고, 아래는 2026-11-15 검토에서 `DEV-MAC`(Apple M3 Max, 메모리 36 GiB, macOS 27.2, rustc 1.96.0)의 release 빌드로 다시 잰 결과입니다.
 
-| 시간 | 변경 전 p50 | 변경 후 p50 | 변경 전 p95 | 변경 후 p95 |
-|---|---:|---:|---:|---:|
-| 검증 | 15.684 ms | 0.333 µs | 16.559 ms | 0.458 µs |
-| command 실행 | 15.523 ms | 0.875 µs | 16.116 ms | 1.750 µs |
+| 시간 | p50 | p95 | p99 |
+|---|---:|---:|---:|
+| 검증 | 375 ns | 708 ns | 2.542 µs |
+| command 실행 | 1.166 µs | 2.083 µs | 3.458 µs |
 
-재측정 명령은 `cargo test -p stellar-commands --release measure_restore_single_frame_50k -- --ignored --nocapture`입니다. 같은 대상의 warm-cache 측정입니다. 다른 node 종류, 앱 화면 갱신, 저장, 기준 장비의 결과는 별도 검증이 필요합니다. 전체 ID 인덱스와 다른 command의 전체 트리 조회가 남아 있어 XVI.4.7은 진행 전 상태를 유지합니다.
+재측정 명령은 `cargo test -p stellar-commands --release measure_restore_single_frame_50k -- --ignored --nocapture`(종료 0)입니다. 같은 대상의 warm-cache 단일 실행이며 기준 장비(`REF-MAC`) 결과가 아닙니다. 변경 전 코드는 다시 재지 않았습니다. 다른 node 종류, 앱 화면 갱신, 저장은 포함하지 않습니다.
+
+이 절의 참조 index와 InsertNode의 증분 index(`f7d343cb`)는 XVI.4.7 범위의 일부입니다. Path element ID 중복과 clip 대상 종류 판정은 아직 전체 ID 검사를 쓰고, 같은 index를 쓰는 다른 command 검증도 옮기지 않았으므로 XVI.4.7은 미완료(`[ ]`)입니다.
