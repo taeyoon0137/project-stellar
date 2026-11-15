@@ -58,11 +58,13 @@ final class ShellCommandRouter: NSResponder, NSMenuItemValidation {
     /// 텍스트 편집 중 셸 명령으로 보내지 않고 응답자 체인에 맡기는 표준 action.
     /// Copy·Paste·Delete는 field editor·캔버스 Text 입력이, Undo·Redo는 창 undo manager가 처리합니다.
     static let textEditingPassThroughActions: Set<Selector> = [
+        #selector(ShellCommandRouter.cut(_:)),
         #selector(ShellCommandRouter.copy(_:)),
         #selector(ShellCommandRouter.paste(_:)),
         #selector(ShellCommandRouter.delete(_:)),
         #selector(ShellCommandRouter.undo(_:)),
         #selector(ShellCommandRouter.redo(_:)),
+        #selector(ShellCommandRouter.selectAll(_:)),
     ]
 
     /// 텍스트 편집 중에는 위 action에 응답하지 않는다고 알립니다. AppKit의 target 탐색(`sendAction`,

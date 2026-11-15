@@ -321,6 +321,39 @@ enum ShellCanvasMoveCheck {
         guard pump.waitForPendingRequests(timeout: 10), let layerCopy = at(30, in: deleteCanvas), layerCopy != node,
               action(reopened, .undo), at(30, in: deleteCanvas) == node
         else { return fail("Layers 복제·Undo") }
+        // Cut(⌘X): 복사한 뒤 같은 선택을 지우고, 문서 변경은 Undo 한 번에 되돌아옵니다.
+        let beforeCut = deleteSession.info
+        let cutBoard = board.changeCount
+        guard reopened.router.dispatch(.cut) else { return fail("Cut 요청") }
+        let cutDeadline = Date().addingTimeInterval(5)
+        while board.changeCount == cutBoard && Date() < cutDeadline { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+        guard board.changeCount != cutBoard, board.data(forType: clipboardType)?.isEmpty == false,
+              pump.waitForPendingRequests(timeout: 10), at(30, in: deleteCanvas) != node,
+              deleteSession.info?.undo_depth == (beforeCut?.undo_depth ?? 0) + 1,
+              action(reopened, .undo), at(30, in: deleteCanvas) == node, deleteSession.info?.undo_depth == beforeCut?.undo_depth
+        else { return fail("Cut·Undo 한 번") }
+        // Select All(⌘A): 활성 View 루트의 보이고 잠기지 않은 자식을 모두 고릅니다. 기대값은 코어 레이어 페이지에서 읽습니다.
+        guard let allTarget = deleteSession.selectionTarget else { return fail("Select All 기준 선택") }
+        var expectedAll: Set<UUID>?
+        let readAll = DispatchSemaphore(value: 0)
+        let allRuntime = pump.runtimeHandle
+        DispatchQueue.global(qos: .userInitiated).async {
+            expectedAll = CoreRuntime.layerPage(handle: allRuntime, session: allTarget.session, view: UUID(uuid: allTarget.view),
+                                                revision: allTarget.revision, parent: nil, after: nil)
+                .map { Set($0.rows.filter { $0.isVisible && !$0.isLocked }.map(\.id.uuid)) }
+            readAll.signal()
+        }
+        readAll.wait()
+        guard let expectedAll, expectedAll.count > 1, expectedAll.contains(node), reopened.router.dispatch(.selectAll)
+        else { return fail("Select All 요청") }
+        let allDeadline = Date().addingTimeInterval(5)
+        while deleteSession.info?.selection_count != UInt32(expectedAll.count) && Date() < allDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            _ = pump.waitForPendingRequests(timeout: 1)
+        }
+        guard deleteSession.info?.selection_count == UInt32(expectedAll.count), deleteSession.info?.revision == allTarget.revision,
+              reopened.selectNodes([node]), pump.waitForPendingRequests(timeout: 10), deleteSession.info?.selection_count == 1
+        else { return fail("Select All 선택 수 \(String(describing: deleteSession.info?.selection_count)) / \(expectedAll.count)") }
         for code in [UInt16(51), UInt16(117)] {
             guard let key = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 1,
                 windowNumber: reopened.window?.windowNumber ?? 0, context: nil, characters: "\u{7f}",
@@ -347,7 +380,7 @@ enum ShellCanvasMoveCheck {
         guard pump.waitForPendingRequests(timeout: 10), let deleted = open(path), deleted !== reopened,
               deleted.windowController.windowSession?.info?.generation == deletedGeneration,
               at(30, in: deleted.canvasHost.canvasView) != node else { return fail("삭제 저장 재열기") }
-        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Copy/Paste after source deletion, 4 KiB retry, stale clipboard selection, Duplicate history, Delete/Backspace and Layers deletion history/save/reopen, stale same-count menu and Layers targets")
+        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Copy/Paste after source deletion, 4 KiB retry, stale clipboard selection, Duplicate history, Cut with one Undo, Select All of visible top-level layers, Delete/Backspace and Layers deletion history/save/reopen, stale same-count menu and Layers targets")
         return true
     }
 }

@@ -729,12 +729,12 @@ final class ShellProjectWindow {
         }
         var commands = ShellWindowToolsModelStub.sessionCommands(info: info, view: view)
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
-        if view?.has_view == 1 { commands.insert(.zoomToFit) }
+        if view?.has_view == 1 { commands.formUnion([.zoomToFit, .selectAll]) }
         for command: ShellCommand in [.bringForward, .bringToFront, .sendBackward, .sendToBack] {
             if let flag = command.layerOrderFlag, displayedOrderFlags & flag != 0 { commands.insert(command) }
         }
         if (displayedSelection?.selection_count ?? 0) > 0 { commands.insert(.delete) }
-        if displayedSelection?.selection_count == 1 { commands.formUnion([.duplicate, .copy]) }
+        if displayedSelection?.selection_count == 1 { commands.formUnion([.duplicate, .copy, .cut]) }
         if let target = displayedSelection, target.selection_count <= 1 { commands.insert(.paste) }
         toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil })
     }
@@ -748,7 +748,9 @@ final class ShellProjectWindow {
     @discardableResult
     func performSessionCommand(_ command: ShellCommand) -> Bool {
         if command == .zoomToFit { return fitRootFrame() }
-        if command == .copy {
+        if command == .selectAll { return selectAllLayers() }
+        // Cut = Copy 뒤 같은 선택을 코어 delete command로 지웁니다. 문서 변경은 delete 하나라 Undo 한 번이 되돌립니다.
+        if command == .copy || command == .cut {
             guard !router.isTextEditing, let owner = window,
                   let session = windowController.windowSession, !session.isClosing, !session.isClosed,
                   session.pendingCommandCount == 0, let target = displayedSelection,
@@ -768,6 +770,7 @@ final class ShellProjectWindow {
                     item.setData(data, forType: Self.subtreePasteboardType)
                     self.subtreePasteboard.clearContents()
                     self.subtreePasteboard.writeObjects([item])
+                    if command == .cut { _ = self.editSelection(.delete, target: target, ids: nil) }
                 }
             }
             return true
