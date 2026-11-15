@@ -47,6 +47,8 @@ final class InspectorViewController: NSViewController {
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
+        // 내용이 짧아도 위에서부터 보이게 clip view를 뒤집고 문서 view를 위·좌우에 붙입니다.
+        scrollView.contentView = InspectorClipView()
         content.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -63,6 +65,8 @@ final class InspectorViewController: NSViewController {
         content.addSubview(stack)
         scrollView.documentView = content
         NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            content.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
             content.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
             stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
@@ -210,6 +214,11 @@ final class InspectorViewController: NSViewController {
             pendingReveal = section
         }
     }
+}
+
+/// 위에서 시작하는 clip view.
+final class InspectorClipView: NSClipView {
+    override var isFlipped: Bool { true }
 }
 
 /// 위에서 아래로 쌓는 문서 view.
