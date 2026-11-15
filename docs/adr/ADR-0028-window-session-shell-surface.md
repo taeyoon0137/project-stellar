@@ -269,3 +269,10 @@ TL·TR·BR·BL 입력을 표시합니다. 캔버스와 hit test에는 기존의 
   만드는 요청입니다. runtime `create_component` 래퍼와 함께 삭제했습니다. 선택에서 만드는
   `stellar_window_component_from_selection`은 유지 여부가 사용자 결정(D3)에 걸려 있어 그대로 두며, 그 ABI 기록은
   결정 뒤 텍스트 원본 묶음(B2)에서 합니다. 빈 컴포넌트는 CLI `component-source create`로 만듭니다.
+- `stellar_window_selected_definition`: Component Library 창을 열 때 선택한 인스턴스의 정의 행으로 이동하려고
+  창 상태 요약에 넣은 정의 ID 조회입니다. 창이 없어져 소비자가 없으므로 runtime 요약 필드
+  `selected_definition`과 함께 삭제했습니다.
+
+이 계열에서 남는 창 ABI는 원본 감시(`stellar_window_component_watch_fd`), 캔버스 재읽기
+(`stellar_window_reload_component_canvas`), D3에 걸린 선택 생성(`stellar_window_component_from_selection`)입니다.
+앞의 두 ABI의 기록과 감시 구조 정리는 캔버스 렌더·입력·감시 묶음(B8)에서 합니다.

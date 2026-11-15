@@ -1072,8 +1072,6 @@ pub struct WindowSessionSummary {
     pub selected_frame: Option<StableId>,
     /// 선택 Frame의 bounds 정규화 전 모서리 반경.
     pub selected_frame_corners: Option<stellar_document::frame::CornerRadius>,
-    /// 확정 단일 선택이 인스턴스일 때 원본 정의 ID. 정의 파일이 누락되어도 참조는 유지됩니다.
-    pub selected_definition: Option<StableId>,
     /// 저장되지 않은 문서 변경이 있는지(선택·viewport 제외).
     pub has_unsaved_changes: bool,
     /// 열린 탭 수.
@@ -1507,19 +1505,15 @@ fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> Windo
     entry.checkpoint.observe(&entry.session);
     let session = &entry.session;
     let clamp = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    let (selected_frame, selected_definition, selected_frame_corners) =
-        match session.view().selection().ids() {
-            [node] => match session.document().and_then(|d| d.model().payload(*node)) {
-                Some(stellar_document::records::NodePayload::Frame(frame)) => {
-                    (Some(*node), None, Some(frame.corner_radius))
-                }
-                Some(stellar_document::records::NodePayload::ComponentInstance(instance)) => {
-                    (None, Some(instance.component().id()), None)
-                }
-                _ => (None, None, None),
-            },
-            _ => (None, None, None),
-        };
+    let (selected_frame, selected_frame_corners) = match session.view().selection().ids() {
+        [node] => match session.document().and_then(|d| d.model().payload(*node)) {
+            Some(stellar_document::records::NodePayload::Frame(frame)) => {
+                (Some(*node), Some(frame.corner_radius))
+            }
+            _ => (None, None),
+        },
+        _ => (None, None),
+    };
     WindowSessionSummary {
         session: handle,
         project: entry.project,
@@ -1535,7 +1529,6 @@ fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> Windo
         primary_selection: session.view().displayed_selection().primary(),
         selected_frame,
         selected_frame_corners,
-        selected_definition,
         has_unsaved_changes: session.has_unsaved_changes(),
         tab_count: clamp(session.tabs().len()),
         active_view: session.tabs().active_view(),

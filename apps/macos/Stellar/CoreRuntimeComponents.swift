@@ -11,14 +11,6 @@ extension CoreRuntime {
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
         return .success(request)
     }
-
-    static func selectedDefinition(handle: UInt64, session: UInt64) -> UUID? {
-        var id: uuid_t = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-        let status = withUnsafeMutableBytes(of: &id) {
-            stellar_window_selected_definition(handle, session, $0.bindMemory(to: UInt8.self).baseAddress)
-        }
-        return status == STELLAR_OK ? UUID(uuid: id) : nil
-    }
 }
 
 extension StellarCanvasColor {

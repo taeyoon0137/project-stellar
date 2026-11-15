@@ -1,38 +1,6 @@
-//! 컴포넌트 라이브러리 조회와 원본 편집을 위한 네이티브 셸 API.
+//! 컴포넌트 원본 감시와 캔버스 재읽기를 위한 네이티브 셸 API.
 use crate::{ffi_guard, registry, StellarStatus};
 use stellar_runtime::app::WindowSessionHandle;
-
-/// 게시된 창 문서의 단일 인스턴스가 참조하는 정의 ID를 반환합니다. 파일은 읽지 않습니다.
-/// # Safety
-/// out은 16바이트 쓰기가 가능해야 합니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_window_selected_definition(
-    handle: u64,
-    session: u64,
-    out: *mut [u8; 16],
-) -> StellarStatus {
-    ffi_guard(move || {
-        if out.is_null() {
-            return StellarStatus::NullPointer;
-        }
-        unsafe { out.write([0; 16]) };
-        let Ok(reg) = registry().lock() else {
-            return StellarStatus::Internal;
-        };
-        let Some(app) = reg.live.get(&handle).and_then(|rt| rt.app.as_ref()) else {
-            return StellarStatus::InvalidHandle;
-        };
-        let state = app.state();
-        let Some(window) = state.window(WindowSessionHandle(session)) else {
-            return StellarStatus::InvalidHandle;
-        };
-        let Some(id) = window.selected_definition else {
-            return StellarStatus::NoError;
-        };
-        unsafe { out.write(id.to_bytes()) };
-        StellarStatus::Ok
-    })
-}
 
 /// 비차단 macOS 변경 신호 fd를 생성합니다. 호출자는 worker에서 기다리고 fd를 닫습니다.
 #[cfg(target_os = "macos")]
