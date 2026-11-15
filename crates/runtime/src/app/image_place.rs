@@ -30,6 +30,8 @@ const MAX_ASSET_RECORD_BYTES: u64 = 64 * 1024;
 
 const MAX_PNG_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_PNG_PIXELS: u64 = 16 * 1024 * 1024;
+/// 진행 중인 자동 저장 쓰기가 끝나기를 기다리는 상한(ADR-0072).
+const AUTOSAVE_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// 선택한 원본과 캔버스 hit의 화면 기준입니다.
 pub struct ImagePlacement {
@@ -92,7 +94,8 @@ impl AppRuntime {
     /// 원본 hash와 보안 경계를 worker에서 다시 확인합니다. 최종 명령은 document thread에서 실행합니다.
     pub fn place_png(&self, input: ImagePlacement) -> Result<RequestId, RequestError> {
         let request = self.reserve_request()?;
-        if self.shared.importing_image.swap(true, Ordering::AcqRel) {
+        // 가져오기 표시를 먼저 세우면 그 뒤 자동 저장은 쓰지 않고 미룹니다(ADR-0072, SeqCst 서로 배제).
+        if self.shared.importing_image.swap(true, Ordering::SeqCst) {
             self.shared.release_one();
             return Err(RequestError::QueueFull);
         }
@@ -103,6 +106,16 @@ impl AppRuntime {
             .name("stellar-image-import".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(|| -> Result<(), Failure> {
+                    // 이미 진행 중인 자동 저장은 새 generation을 게시할 때까지 기다린 뒤 그 상태로 시작합니다.
+                    let deadline = std::time::Instant::now() + AUTOSAVE_WAIT;
+                    while shared.autosave_writing.load(Ordering::SeqCst) {
+                        if std::time::Instant::now() >= deadline {
+                            return Err(invalid(
+                                "자동 저장이 끝나지 않아 이미지를 배치하지 못했습니다",
+                            ));
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
                     let state = shared.current_state();
                     let window = state
                         .window(session)
@@ -188,7 +201,7 @@ impl AppRuntime {
                         .map_err(|e| invalid(e.to_string()))?
                 })
                 .unwrap_or_else(|_| Err(invalid("이미지 가져오기를 완료하지 못했습니다")));
-                shared.importing_image.store(false, Ordering::Release);
+                shared.importing_image.store(false, Ordering::SeqCst);
                 shared.outbox().push_back(match result {
                     Ok(()) => RuntimeEvent::WindowViewChanged { request, session },
                     Err(e) => RuntimeEvent::RequestFailed {
@@ -199,7 +212,7 @@ impl AppRuntime {
                 });
             });
         if result.is_err() {
-            self.shared.importing_image.store(false, Ordering::Release);
+            self.shared.importing_image.store(false, Ordering::SeqCst);
             self.shared.release_one();
             return Err(RequestError::Stopped);
         }

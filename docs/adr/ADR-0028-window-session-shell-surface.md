@@ -405,6 +405,23 @@ Frame ABI와 같이 document thread가 표시 revision·편집 가능한 부모�
 `stellar_window_inspector`·`stellar_window_edit_property`가 대체합니다. 모서리 네 값을 원본 그대로 보존하고 캔버스·
 hit test에는 bounds 기준 정규화 반경을 쓰는 규칙은 그대로입니다.
 
+## 창 session 자동 저장 상태 — UX.2.11 (ADR-0072)
+
+- `StellarWindowSessionInfo`를 version 3으로 올립니다. 끝(offset 88)에 `autosave`(u32)와 `reserved`(u32, 0)를 더해
+  88 → 96 byte가 됩니다. 앞 필드의 offset은 그대로이고 셸은 version을 확인합니다.
+- `autosave` 값: `STELLAR_AUTOSAVE_IDLE`(0, 저장할 완료 편집 없음, 자동 저장을 켜지 않은 runtime 포함),
+  `_PENDING`(1, 저장 기한을 기다림), `_SAVING`(2, writer가 쓰는 중), `_FAILED`(3, 마지막 자동 저장 실패, 다시 시도를
+  기다리거나 쓰는 중이며 성공하거나 clean이면 풀림), `_STALE`(4, 다른 창·프로세스가 먼저 저장해 멈춤, clean이 될 때까지
+  쓰지 않음). 겹치면 stale → 실패 → 쓰는 중 → 대기 순입니다.
+- 자동 저장이 디스크에 쓰면 같은 info의 `generation`과 `has_unsaved_changes`가 바뀝니다. 셸은 `autosave`가
+  `PENDING`·`SAVING`·`FAILED`인 동안 `stellar_runtime_state`의 상태 세대를 낮은 주기로 읽어 이 변화를 관찰합니다(callback
+  없음, ADR-0072 7절).
+- Save Now(`STELLAR_COMMAND_SAVE_NOW`)는 그 창을 포함한 진행 중인 자동 저장 쓰기를 먼저 기다려 반영한 뒤 남은 편집만
+  저장합니다. 기다림이 `window_close_flush_timeout_ms`를 넘으면 `STELLAR_FAILURE_SAVE_FAILED`입니다. 기존 저장 규칙과
+  실패 코드는 그대로입니다.
+- 앱 비활성화 flush `stellar_runtime_flush_autosave`와 Debug 검사 전환 `stellar_runtime_check_disable_autosave`의
+  기록은 ADR-0014 XII.6 10번과 ADR-0072입니다.
+
 ## 컴포넌트 라이브러리 창 계열 ABI 제거 (2026-11-15 검토)
 
 사용자가 정의하지 않은 Component Library 창(U099)과 그 위의 크기·채우기 편집(U104·U119), 숫자 좌표

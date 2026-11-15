@@ -33,6 +33,10 @@
 //! 아무것도 쓰지 않습니다(다른 창·프로세스가 먼저 저장함, 선택지는 XII.7). 바뀐 chunk가 없으면 새 generation을
 //! 만들지 않습니다(`written == false`). 성공하면 loaded generation을 새 generation으로 바꿉니다(V.5.4).
 //!
+//! 저장은 세 단계입니다: [`ProjectWindowSession::capture_save`](document thread에서 문서 레코드·기준 generation만 복사),
+//! [`SaveCapture::write`](직렬화·잠금·base 검사·쓰기, 다른 thread에서도 됨), [`ProjectWindowSession::apply_save`](결과 반영).
+//! Save Now는 셋을 차례로 실행하고, 자동 저장은 쓰기를 writer thread에서 합니다(XIII.1.4, ADR-0072).
+//!
 //! # scene camera (XII.4.3)
 //!
 //! [`ProjectWindowSession::camera`]는 active 탭 viewport와 캔버스 화면 크기로 scene camera 입력
@@ -65,11 +69,12 @@ use stellar_commands::view_tabs::{
 use stellar_core_types::ids::{StableId, WindowSessionId};
 use stellar_core_types::revision::DocumentRevision;
 use stellar_core_types::value::Size2;
+use stellar_document::records::DocumentRecords;
 use stellar_history::entry::{HistoryError, HistorySequence};
 use stellar_history::window::WindowHistory;
 use stellar_ops::lock::{default_lock_dir, LockError, SaveLock};
 use stellar_project::document_io::load::{load_document_from_generation, LoadDocumentError};
-use stellar_project::document_io::serialize::{serialize_document, SerializeError};
+use stellar_project::document_io::serialize::{serialize_records, SerializeError};
 use stellar_project::identity::ProjectIdentity;
 use stellar_project::manifest::CURRENT_SCHEMA_VERSION;
 use stellar_scene::overlay::{
@@ -148,6 +153,9 @@ pub enum WindowSessionSaveError {
     Run(SaveRunError),
     /// 저장은 끝났지만 새 current generation을 다시 읽지 못했습니다.
     Reload(LoadError),
+    /// 자동 저장 쓰기가 끝나지 않았습니다(worker 중단, 또는 Save Now가 기다리는 제한 시간 초과). 편집은 메모리에
+    /// 남습니다.
+    Interrupted,
 }
 
 impl fmt::Display for WindowSessionSaveError {
@@ -166,11 +174,165 @@ impl fmt::Display for WindowSessionSaveError {
             WindowSessionSaveError::Reload(error) => {
                 write!(f, "저장 뒤 generation을 다시 읽지 못했습니다: {error}")
             }
+            WindowSessionSaveError::Interrupted => {
+                f.write_str("진행 중인 자동 저장이 끝나지 않았습니다")
+            }
         }
     }
 }
 
 impl std::error::Error for WindowSessionSaveError {}
+
+/// 저장 snapshot([`ProjectWindowSession::capture_save`]). document thread에서 문서 레코드와 기준 generation만
+/// 복사해 두고, 직렬화·chunk 쓰기·current pointer 전환은 [`SaveCapture::write`]가 다른 thread에서 합니다(XIII.1.4).
+#[derive(Debug)]
+pub(crate) struct SaveCapture {
+    identity: ProjectIdentity,
+    base: Option<LoadedGeneration>,
+    revision: DocumentRevision,
+    records: DocumentRecords,
+    owned_chunks: BTreeSet<ChunkId>,
+    image_records:
+        std::sync::Arc<std::collections::BTreeMap<StableId, stellar_assets::record::AssetRecord>>,
+}
+
+/// [`SaveCapture::write`] 결과. [`ProjectWindowSession::apply_save`]가 document thread에서 반영합니다.
+#[derive(Debug)]
+pub(crate) struct SaveWritten {
+    /// 캡처한 기준 generation의 manifest hash.
+    base: Option<ContentHash>,
+    document_id: StableId,
+    /// 디스크와 내용이 같아진 작업 문서 revision.
+    revision: DocumentRevision,
+    /// 새로 쓴 generation과 작업 문서가 차지한 chunk(쓸 것이 없었으면 `None`).
+    saved: Option<(LoadedGeneration, BTreeSet<ChunkId>)>,
+}
+
+impl SaveCapture {
+    /// 캡처한 revision.
+    pub(crate) fn revision(&self) -> DocumentRevision {
+        self.revision
+    }
+
+    /// 직렬화하고 loaded generation 위의 SavePlan을 씁니다. 공용 저장 잠금 안에서 current pointer가 캡처한 기준
+    /// generation과 다르면 [`WindowSessionSaveError::Stale`]로 아무것도 쓰지 않습니다(current pointer를 바꾸지 않음).
+    pub(crate) fn write(
+        self,
+        lock_dir: impl FnOnce() -> Result<std::path::PathBuf, LockError>,
+    ) -> Result<SaveWritten, WindowSessionSaveError> {
+        let root = self.identity.canonical_target();
+        let base = self.base.as_ref();
+        let serialized =
+            serialize_records(&self.records).map_err(WindowSessionSaveError::Serialize)?;
+        let document_id = serialized.document_id;
+        let new_chunks: BTreeSet<ChunkId> = serialized
+            .chunks()
+            .into_iter()
+            .map(|chunk| chunk.chunk_id)
+            .collect();
+        let mut states = serialized.to_dirty_states();
+        if !self.image_records.is_empty() {
+            let referenced: BTreeSet<_> = self
+                .records
+                .nodes
+                .iter()
+                .filter_map(|node| match &node.payload {
+                    stellar_document::records::NodePayload::Image(image) => Some(image.asset.id()),
+                    _ => None,
+                })
+                .collect();
+            for (&id, record) in self
+                .image_records
+                .iter()
+                .filter(|(id, _)| referenced.contains(id))
+            {
+                let chunk_id = ChunkId::from_stable_id(id);
+                if base.is_some_and(|g| {
+                    g.manifest
+                        .chunk_pointers
+                        .iter()
+                        .any(|p| p.chunk_id == chunk_id)
+                }) {
+                    continue;
+                }
+                states.push(LogicalChunkState::Dirty {
+                    chunk_id,
+                    kind: stellar_storage::chunk::kinds::KIND_ASSET_METADATA,
+                    schema_version: 1,
+                    payload: record
+                        .encode()
+                        .map_err(|_| WindowSessionSaveError::ImageMetadata)?,
+                });
+            }
+        }
+        let mut roots = base.map_or_else(Vec::new, |base| base.manifest.root_document_ids.clone());
+        if let Some(base) = base {
+            // 작업 문서가 차지하지 않은 base chunk(다른 문서·에셋 등)는 그대로 이어 씁니다. 작업 문서가 로드할 때
+            // 차지했지만 이번에 만들지 않은 chunk(지운 subtree 등)는 새 generation에서 빠집니다.
+            states.extend(
+                base.manifest
+                    .chunk_pointers
+                    .iter()
+                    .filter(|pointer| {
+                        !self.owned_chunks.contains(&pointer.chunk_id)
+                            && !new_chunks.contains(&pointer.chunk_id)
+                    })
+                    .map(|pointer| LogicalChunkState::Clean {
+                        chunk_id: pointer.chunk_id,
+                    }),
+            );
+        }
+        if !roots.contains(&document_id) {
+            roots.push(document_id);
+        }
+        let schema_version =
+            base.map_or(CURRENT_SCHEMA_VERSION, |base| base.manifest.schema_version);
+        let plan = build_save_plan(
+            base,
+            self.identity.project_id(),
+            schema_version,
+            &states,
+            roots,
+        )
+        .map_err(WindowSessionSaveError::Plan)?;
+        let written = |saved| SaveWritten {
+            base: base.map(|base| base.manifest_hash),
+            document_id,
+            revision: self.revision,
+            saved,
+        };
+        if let Some(base) = base {
+            let unchanged = plan.dirty_chunks.is_empty()
+                && plan.manifest.chunk_pointers == base.manifest.chunk_pointers
+                && plan.manifest.root_document_ids == base.manifest.root_document_ids;
+            if unchanged {
+                check_base_generation(root, &plan).map_err(WindowSessionSaveError::Stale)?;
+                return Ok(written(None));
+            }
+        }
+        // 계획은 메모리에서만 만듭니다. 실제 쓰기만 CLI와 직렬화하고 잠금 안에서 base를 확인합니다.
+        let dir = lock_dir().map_err(WindowSessionSaveError::Lock)?;
+        let _guard =
+            SaveLock::for_identity(&dir, &self.identity).map_err(WindowSessionSaveError::Lock)?;
+        check_base_generation(root, &plan).map_err(WindowSessionSaveError::Stale)?;
+        let mut memory = SavedGenerationState::new(
+            base.map(|base| (base.manifest.generation, base.manifest_hash)),
+        );
+        run_save(root, &plan, &mut memory, &CancelToken::new())
+            .map_err(WindowSessionSaveError::Run)?;
+        // commit(V.5.4)이 성공하면 메모리 상태에 새 (generation, manifest hash)가 들어 있습니다. 없으면 디스크에서
+        // 다시 읽습니다.
+        let loaded = match memory.saved() {
+            Some((_, manifest_hash)) => LoadedGeneration {
+                manifest_hash,
+                manifest: plan.manifest.clone(),
+            },
+            None => load_current_generation(root, self.identity.project_id())
+                .map_err(WindowSessionSaveError::Reload)?,
+        };
+        Ok(written(Some((loaded, new_chunks))))
+    }
+}
 
 /// 작업 문서 하나: 이 창의 문서 state와 로드할 때 읽은 그 문서의 chunk.
 #[derive(Debug)]
@@ -591,7 +753,7 @@ impl ProjectWindowSession {
             .map_err(WindowSessionEditError::History)
     }
 
-    /// 작업 문서를 지금 저장합니다(모듈 문서 "Undo·Redo·Save Now").
+    /// 작업 문서를 지금 저장합니다(모듈 문서 "Undo·Redo·Save Now"). 캡처·쓰기·반영을 이 thread에서 차례로 합니다.
     pub fn save_now(&mut self) -> Result<SaveOutcome, WindowSessionSaveError> {
         self.save_with_lock_dir(default_lock_dir)
     }
@@ -600,142 +762,77 @@ impl ProjectWindowSession {
         &mut self,
         lock_dir: impl FnOnce() -> Result<std::path::PathBuf, LockError>,
     ) -> Result<SaveOutcome, WindowSessionSaveError> {
-        let Some(document) = self.document.as_mut() else {
+        let Some(capture) = self.capture_save()? else {
             return Ok(SaveOutcome {
                 generation: self.generation_number(),
                 written: false,
             });
         };
+        let written = capture.write(lock_dir)?;
+        Ok(self.apply_save(written))
+    }
+
+    /// 저장 snapshot을 캡처합니다(XIII.1.3·XIII.1.4). 문서 레코드·기준 generation·소유 chunk만 복사하고 직렬화와
+    /// 쓰기는 [`SaveCapture::write`]가 합니다. 작업 문서가 없거나 저장 뒤 바뀐 것이 없으면 `Ok(None)`이고, 바뀐 것이
+    /// 없을 때도 current pointer가 loaded generation과 같은지는 확인합니다(stale이면 오류).
+    pub(crate) fn capture_save(&self) -> Result<Option<SaveCapture>, WindowSessionSaveError> {
+        let Some(document) = self.document.as_ref() else {
+            return Ok(None);
+        };
         let base = self.loaded.as_ref();
-        let root = self.identity.canonical_target();
         let revision = document.state.revision();
         if let Some(base) = base {
             if revision == document.saved_revision {
-                check_base_manifest(root, Some(base.manifest_hash))
+                check_base_manifest(self.identity.canonical_target(), Some(base.manifest_hash))
                     .map_err(WindowSessionSaveError::Stale)?;
-                return Ok(SaveOutcome {
-                    generation: base.manifest.generation,
-                    written: false,
-                });
+                return Ok(None);
             }
         }
-        let serialized = serialize_document(document.state.model())
-            .map_err(WindowSessionSaveError::Serialize)?;
-        let document_id = serialized.document_id;
-        let new_chunks: BTreeSet<ChunkId> = serialized
-            .chunks()
-            .into_iter()
-            .map(|chunk| chunk.chunk_id)
-            .collect();
-        let mut states = serialized.to_dirty_states();
-        if !self.image_records.is_empty() {
-            let model = document.state.model();
-            let referenced: BTreeSet<_> = model
-                .columns()
-                .iter_live()
-                .filter_map(|handle| model.stable_id(handle))
-                .filter_map(|id| match model.payload(id) {
-                    Some(stellar_document::records::NodePayload::Image(image)) => {
-                        Some(image.asset.id())
-                    }
-                    _ => None,
-                })
-                .collect();
-            for (&id, record) in self
-                .image_records
-                .iter()
-                .filter(|(id, _)| referenced.contains(id))
-            {
-                let chunk_id = ChunkId::from_stable_id(id);
-                if base.is_some_and(|g| {
-                    g.manifest
-                        .chunk_pointers
-                        .iter()
-                        .any(|p| p.chunk_id == chunk_id)
-                }) {
-                    continue;
-                }
-                states.push(LogicalChunkState::Dirty {
-                    chunk_id,
-                    kind: stellar_storage::chunk::kinds::KIND_ASSET_METADATA,
-                    schema_version: 1,
-                    payload: record
-                        .encode()
-                        .map_err(|_| WindowSessionSaveError::ImageMetadata)?,
-                });
-            }
-        }
-        let mut roots = base.map_or_else(Vec::new, |base| base.manifest.root_document_ids.clone());
-        if let Some(base) = base {
-            // 작업 문서가 차지하지 않은 base chunk(다른 문서·에셋 등)는 그대로 이어 씁니다. 작업 문서가 로드할 때
-            // 차지했지만 이번에 만들지 않은 chunk(지운 subtree 등)는 새 generation에서 빠집니다.
-            states.extend(
-                base.manifest
-                    .chunk_pointers
-                    .iter()
-                    .filter(|pointer| {
-                        !document.owned_chunks.contains(&pointer.chunk_id)
-                            && !new_chunks.contains(&pointer.chunk_id)
-                    })
-                    .map(|pointer| LogicalChunkState::Clean {
-                        chunk_id: pointer.chunk_id,
-                    }),
-            );
-        }
-        if !roots.contains(&document_id) {
-            roots.push(document_id);
-        }
-        let schema_version =
-            base.map_or(CURRENT_SCHEMA_VERSION, |base| base.manifest.schema_version);
-        let plan = build_save_plan(
-            base,
-            self.identity.project_id(),
-            schema_version,
-            &states,
-            roots,
-        )
-        .map_err(WindowSessionSaveError::Plan)?;
-        if let Some(base) = base {
-            let unchanged = plan.dirty_chunks.is_empty()
-                && plan.manifest.chunk_pointers == base.manifest.chunk_pointers
-                && plan.manifest.root_document_ids == base.manifest.root_document_ids;
-            if unchanged {
-                check_base_generation(root, &plan).map_err(WindowSessionSaveError::Stale)?;
-                document.saved_revision = revision;
-                return Ok(SaveOutcome {
-                    generation: base.manifest.generation,
-                    written: false,
-                });
-            }
-        }
-        // 계획은 메모리에서만 만듭니다. 실제 쓰기만 CLI와 직렬화하고 잠금 안에서 base를 확인합니다.
-        let dir = lock_dir().map_err(WindowSessionSaveError::Lock)?;
-        let _guard =
-            SaveLock::for_identity(&dir, &self.identity).map_err(WindowSessionSaveError::Lock)?;
-        check_base_generation(root, &plan).map_err(WindowSessionSaveError::Stale)?;
-        let mut memory = SavedGenerationState::new(
-            base.map(|base| (base.manifest.generation, base.manifest_hash)),
-        );
-        run_save(root, &plan, &mut memory, &CancelToken::new())
-            .map_err(WindowSessionSaveError::Run)?;
-        // commit(V.5.4)이 성공하면 메모리 상태에 새 (generation, manifest hash)가 들어 있습니다. 없으면 디스크에서
-        // 다시 읽습니다.
-        let loaded = match memory.saved() {
-            Some((_, manifest_hash)) => LoadedGeneration {
-                manifest_hash,
-                manifest: plan.manifest,
-            },
-            None => load_current_generation(root, self.identity.project_id())
-                .map_err(WindowSessionSaveError::Reload)?,
+        let records = document
+            .state
+            .model()
+            .to_records()
+            .map_err(|error| WindowSessionSaveError::Serialize(SerializeError::Model(error)))?;
+        Ok(Some(SaveCapture {
+            identity: self.identity.clone(),
+            base: base.cloned(),
+            revision,
+            records,
+            owned_chunks: document.owned_chunks.clone(),
+            image_records: std::sync::Arc::clone(&self.image_records),
+        }))
+    }
+
+    /// [`SaveCapture::write`] 결과를 이 창에 반영합니다. 캡처 뒤 이 창의 기준 generation이나 작업 문서가 바뀌었으면
+    /// (다른 저장·다시 불러오기) 아무것도 바꾸지 않습니다. 캡처 뒤의 편집은 dirty로 남습니다.
+    pub(crate) fn apply_save(&mut self, written: SaveWritten) -> SaveOutcome {
+        let current = self.loaded.as_ref().map(|loaded| loaded.manifest_hash);
+        let wrote = written.saved.is_some();
+        let Some(document) = self
+            .document
+            .as_mut()
+            .filter(|document| document.state.model().document_id() == written.document_id)
+        else {
+            return SaveOutcome {
+                generation: self.generation_number(),
+                written: wrote,
+            };
         };
-        let generation = loaded.manifest.generation;
-        self.loaded = Some(loaded);
-        document.owned_chunks = new_chunks;
-        document.saved_revision = revision;
-        Ok(SaveOutcome {
-            generation,
-            written: true,
-        })
+        if current != written.base {
+            return SaveOutcome {
+                generation: self.generation_number(),
+                written: wrote,
+            };
+        }
+        if let Some((loaded, chunks)) = written.saved {
+            self.loaded = Some(loaded);
+            document.owned_chunks = chunks;
+        }
+        document.saved_revision = written.revision;
+        SaveOutcome {
+            generation: self.generation_number(),
+            written: wrote,
+        }
     }
 
     /// 선택을 바꾸고 이 창 history에 기록합니다(같은 선택이면 기록하지 않음).

@@ -19,8 +19,10 @@
 //!   키는 거부합니다.
 //! - 앱 비활성화·창 닫기 flush는 아키텍처가 요구하는 동작이라 끌 수 없고, 제한 시간만 설정합니다.
 //!
-//! 무엇이 저장 대상(dirty)인지는 [`dirty`](XIII.1.2)가, 언제 저장할지는 [`schedule`]이 정합니다. 제품 값은
-//! `config/performance-budgets.yaml`의 `autosave` 절(ADR-0072)에 있습니다.
+//! 언제 저장할지는 [`schedule`]이 정합니다. 앱 runtime의 저장 대상 판단은 [`dirty`](XIII.1.2)의
+//! `DirtyTrackedHistory`가 아니라 창 session의 `has_unsaved_changes`(작업 문서 revision이 마지막 저장 revision과
+//! 다름)입니다. preview 갱신도 revision을 바꾸므로 dirty로 세지만, preview가 진행 중이면 [`schedule`]이 쓰지
+//! 않습니다(ADR-0072). 제품 값은 `config/performance-budgets.yaml`의 `autosave` 절에 있습니다.
 
 use std::io;
 use std::path::{Path, PathBuf};

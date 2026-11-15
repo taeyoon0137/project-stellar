@@ -31,7 +31,8 @@ autosave:
   debounce_ms: 1000
   # 완료 편집이 계속 이어져도 저장되지 않은 첫 편집에서 이 시간이 지나면 저장합니다(drag·scrub 제스처 중은 제외).
   max_delay_ms: 10000
-  # 앱 비활성화 flush 제한 시간. 비활성화 flush는 셸을 기다리게 하지 않으므로 아직 대기 상한으로 쓰지 않습니다(XIII.1.6).
+  # 앱 비활성화 flush 제한 시간. 아직 쓰지 않습니다(XIII.1.6). 비활성화 flush는 셸을 기다리게 하지 않습니다.
   app_deactivate_flush_timeout_ms: 2000
-  # 창 닫기 flush 제한 시간. macOS 셸 닫기 응답 watchdog(ShellProjectWindow.closeReplyTimeout)과 같은 값입니다.
+  # 창 닫기 flush 제한 시간. Save Now(창 닫기 flush)가 진행 중인 자동 저장 쓰기를 기다리는 상한이고, 넘으면 저장
+  # 실패를 돌려줍니다. macOS 셸의 닫기 응답 watchdog(closeReplyTimeout)은 셸 값이며 이 값을 읽지 않습니다(XIII.1.6).
   window_close_flush_timeout_ms: 10000

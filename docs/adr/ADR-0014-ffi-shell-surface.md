@@ -135,6 +135,12 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
    stellar-git-porcelain`을 허용하지 않아 `create_project`·`clone_and_open`(IV.4.7·IV.6.4)에 runner를 넘길 수
    없었습니다. ADR-0013이 XIV.5.5를 위해 이 직접 의존을 허용한 뒤, 새 프로젝트 생성은 아래 'XII.6.1 — 새 프로젝트
    생성'과 'Clone Project'에서 같은 요청·event 규칙으로 추가합니다(2026-11-15 정정).
+10. **지연 자동 저장 flush(UX.2.11, ADR-0072)**: `stellar_runtime_flush_autosave(handle)`는 앱 비활성화 때
+    저장되지 않은 완료 편집을 debounce 없이 캡처하도록 접수하고 기다리지 않습니다. 요청이 아니므로 request id와 완료
+    event가 없고 outbox 상한을 쓰지 않습니다. 앱 runtime이 아직 없으면 `STELLAR_OK`, 대기열이 차면 `STELLAR_QUEUE_FULL`.
+    자동 저장 결과는 창 session 상태 snapshot(`StellarWindowSessionInfo` v3의 `autosave`, ADR-0028)과 상태 세대로만
+    셸에 돌아옵니다. Debug 전용 `stellar_runtime_check_disable_autosave(handle)`는 검사 실행의 앱 runtime을 자동 저장
+    없이 시작합니다(앱 runtime 시작 전만, 이후는 `STELLAR_INVALID_ARGUMENT`).
 
 ### 캔버스 Text 편집
 

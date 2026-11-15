@@ -13,14 +13,39 @@
 
 use stellar_core_types::ids::StableId;
 use stellar_runtime::app::{
-    AppRuntime, ProjectSessionId, SelectionEdit, SelectionEditTarget, WindowSessionHandle,
+    AppRuntime, AutosaveStatus, ProjectSessionId, SelectionEdit, SelectionEditTarget,
+    WindowSessionHandle,
 };
 use stellar_runtime::app_command::AppCommand;
 
 use crate::{ffi_guard, registry, StellarStatus};
 
 /// `StellarWindowSessionInfo` 레이아웃 버전.
-pub const WINDOW_SESSION_INFO_VERSION: u32 = 2;
+pub const WINDOW_SESSION_INFO_VERSION: u32 = 3;
+
+/// `StellarWindowSessionInfo::autosave` 값(ADR-0072). 셸은 `PENDING`·`SAVING`·`FAILED`인 동안 상태 세대를 관찰합니다.
+pub mod autosave_state {
+    /// 저장할 완료 편집이 없음(자동 저장을 켜지 않은 runtime 포함).
+    pub const IDLE: u32 = 0;
+    /// 완료 편집이 저장 기한을 기다림.
+    pub const PENDING: u32 = 1;
+    /// writer가 쓰는 중.
+    pub const SAVING: u32 = 2;
+    /// 마지막 자동 저장 실패(다시 시도 대기 또는 다시 쓰는 중). 성공하거나 clean이 되면 풀림.
+    pub const FAILED: u32 = 3;
+    /// 다른 창·프로세스가 먼저 저장해 멈춤. clean이 될 때까지 쓰지 않음.
+    pub const STALE: u32 = 4;
+}
+
+fn autosave_code(status: AutosaveStatus) -> u32 {
+    match status {
+        AutosaveStatus::Idle => autosave_state::IDLE,
+        AutosaveStatus::Pending => autosave_state::PENDING,
+        AutosaveStatus::Saving => autosave_state::SAVING,
+        AutosaveStatus::Failed => autosave_state::FAILED,
+        AutosaveStatus::Stale => autosave_state::STALE,
+    }
+}
 
 /// `StellarWindowViewInfo` 레이아웃 버전.
 pub const WINDOW_VIEW_INFO_VERSION: u32 = 1;
@@ -140,7 +165,7 @@ pub unsafe extern "C" fn stellar_window_selected_node(
     })
 }
 
-/// 열린 창 session 정보(고정 88 byte, C ABI).
+/// 열린 창 session 정보(고정 96 byte, C ABI).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(C)]
 pub struct StellarWindowSessionInfo {
@@ -168,6 +193,10 @@ pub struct StellarWindowSessionInfo {
     pub window_id: [u8; 16],
     /// 작업 문서 StableId 16 byte(없으면 0).
     pub document_id: [u8; 16],
+    /// 자동 저장 상태([`autosave_state`], v3).
+    pub autosave: u32,
+    /// 0(v3).
+    pub reserved: u32,
 }
 
 /// 프로젝트 session 아래에서 창 session 열기를 요청합니다. 기다리지 않고 request id를 씁니다.
@@ -1060,6 +1089,8 @@ pub unsafe extern "C" fn stellar_window_session_info(
             has_unsaved_changes: u32::from(summary.has_unsaved_changes),
             window_id: summary.window_id.stable_id().to_bytes(),
             document_id: summary.document_id.map_or([0; 16], |id| id.to_bytes()),
+            autosave: autosave_code(summary.autosave),
+            reserved: 0,
         };
         unsafe { *out_info = info };
         StellarStatus::Ok
@@ -1313,7 +1344,7 @@ pub(crate) mod tests {
 
     #[test]
     fn info_layout_is_fixed() {
-        assert_eq!(std::mem::size_of::<StellarWindowSessionInfo>(), 88);
+        assert_eq!(std::mem::size_of::<StellarWindowSessionInfo>(), 96);
         assert_eq!(std::mem::align_of::<StellarWindowSessionInfo>(), 8);
         assert_eq!(
             std::mem::offset_of!(StellarWindowSessionInfo, has_unsaved_changes),
@@ -1323,6 +1354,7 @@ pub(crate) mod tests {
             std::mem::offset_of!(StellarWindowSessionInfo, window_id),
             56
         );
+        assert_eq!(std::mem::offset_of!(StellarWindowSessionInfo, autosave), 88);
         assert_eq!(std::mem::size_of::<StellarSelectionTarget>(), 48);
         assert_eq!(std::mem::offset_of!(StellarSelectionTarget, view), 32);
         assert_eq!(std::mem::size_of::<StellarSelectedNode>(), 104);
@@ -1340,7 +1372,7 @@ pub(crate) mod tests {
         assert_eq!(std::mem::offset_of!(StellarSelectedNode, background), 84);
         assert_eq!(std::mem::size_of::<StellarFrameValue>(), 24);
         assert_eq!(std::mem::offset_of!(StellarFrameValue, color), 4);
-        assert_eq!(WINDOW_SESSION_INFO_VERSION, 2);
+        assert_eq!(WINDOW_SESSION_INFO_VERSION, 3);
         assert_eq!(std::mem::size_of::<StellarWindowViewInfo>(), 56);
         assert_eq!(std::mem::offset_of!(StellarWindowViewInfo, center_x), 16);
         assert_eq!(std::mem::offset_of!(StellarWindowViewInfo, active_view), 40);

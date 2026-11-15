@@ -162,9 +162,19 @@ typedef struct StellarDocumentInfo {
 } StellarDocumentInfo;
 
 /* StellarWindowSessionInfo 레이아웃 버전. */
-#define STELLAR_WINDOW_SESSION_INFO_VERSION 2
+#define STELLAR_WINDOW_SESSION_INFO_VERSION 3
 
-/* 열린 창 session 정보(고정 88 byte, 코어가 씀). 창 controller 하나가 창 session handle 하나를 소유합니다. */
+/* StellarWindowSessionInfo.autosave 값(ADR-0072). IDLE 저장할 완료 편집 없음(자동 저장을 켜지 않은 runtime 포함),
+   PENDING 완료 편집이 저장 기한을 기다림, SAVING writer가 쓰는 중, FAILED 마지막 자동 저장 실패(다시 시도 대기·진행,
+   성공하거나 clean이면 풀림), STALE 다른 창·프로세스가 먼저 저장해 멈춤(clean이 될 때까지 쓰지 않음).
+   셸은 PENDING·SAVING·FAILED인 동안 상태 세대를 관찰합니다. */
+#define STELLAR_AUTOSAVE_IDLE 0
+#define STELLAR_AUTOSAVE_PENDING 1
+#define STELLAR_AUTOSAVE_SAVING 2
+#define STELLAR_AUTOSAVE_FAILED 3
+#define STELLAR_AUTOSAVE_STALE 4
+
+/* 열린 창 session 정보(고정 96 byte, 코어가 씀). 창 controller 하나가 창 session handle 하나를 소유합니다. */
 typedef struct StellarWindowSessionInfo {
     uint32_t version;         /* STELLAR_WINDOW_SESSION_INFO_VERSION */
     uint32_t has_document;    /* 작업 문서가 있으면 1(저장한 적 없는 프로젝트는 0) */
@@ -178,6 +188,8 @@ typedef struct StellarWindowSessionInfo {
     uint32_t has_unsaved_changes; /* 저장되지 않은 문서 변경 1, 선택·viewport 제외(v1 reserved) */
     uint8_t window_id[16];    /* 창 편집 session id(UUID 바이트 순서) */
     uint8_t document_id[16];  /* 작업 문서 StableId(없으면 0) */
+    uint32_t autosave;        /* STELLAR_AUTOSAVE_* (v3) */
+    uint32_t reserved;        /* 0 (v3) */
 } StellarWindowSessionInfo;
 
 /* v1: 좌상단 원점 logical point. world/camera는 CGAffineTransform 순서 (a,b,c,d,tx,ty). */
@@ -220,12 +232,12 @@ typedef struct StellarWindowViewInfo {
 #ifdef __cplusplus
 static_assert(sizeof(StellarRuntimeState) == 48, "StellarRuntimeState layout");
 static_assert(sizeof(StellarDocumentInfo) == 56, "StellarDocumentInfo layout");
-static_assert(sizeof(StellarWindowSessionInfo) == 88, "StellarWindowSessionInfo layout");
+static_assert(sizeof(StellarWindowSessionInfo) == 96, "StellarWindowSessionInfo layout");
 static_assert(sizeof(StellarWindowViewInfo) == 56, "StellarWindowViewInfo layout");
 #else
 _Static_assert(sizeof(StellarRuntimeState) == 48, "StellarRuntimeState layout");
 _Static_assert(sizeof(StellarDocumentInfo) == 56, "StellarDocumentInfo layout");
-_Static_assert(sizeof(StellarWindowSessionInfo) == 88, "StellarWindowSessionInfo layout");
+_Static_assert(sizeof(StellarWindowSessionInfo) == 96, "StellarWindowSessionInfo layout");
 _Static_assert(sizeof(StellarWindowViewInfo) == 56, "StellarWindowViewInfo layout");
 #endif
 
@@ -540,6 +552,10 @@ typedef struct StellarRecoveryCandidate {
 static_assert(sizeof(StellarRecoveryCandidate) == 56, "StellarRecoveryCandidate layout");
 #else
 _Static_assert(sizeof(StellarRecoveryCandidate) == 56, "StellarRecoveryCandidate layout");
+#endif
+#if defined(DEBUG) && DEBUG
+/* Debug native check only: start this handle's app runtime without autosave (before the first project request). ADR-0072. */
+StellarStatus stellar_runtime_check_disable_autosave(uint64_t handle);
 #endif
 /* 파일을 읽으므로 UI thread 밖에서 부릅니다. 없으면 has_candidate 0, 저장소 읽기 실패는 STELLAR_INTERNAL과 last error. */
 StellarStatus stellar_window_recovery_probe(uint64_t handle, uint64_t session, StellarRecoveryCandidate *out_candidate);

@@ -12,8 +12,6 @@
 //! 경계를 넘지 않고 정수 handle·고정 POD 구조체·버전형 바이트만 씁니다. `AppRuntime`(document
 //! thread)은 handle의 첫 프로젝트·문서 요청에서 시작합니다.
 
-/// 자동 저장 flush (UX.2.11).
-mod autosave;
 pub mod canvas;
 mod canvas_gesture;
 mod canvas_text;
@@ -32,6 +30,9 @@ mod sidebar;
 mod text_input;
 /// 창 session C ABI (XII.2.2).
 pub mod window_session;
+
+/// 자동 저장 flush와 Debug 검사 전환 (UX.2.11, ADR-0072).
+mod autosave;
 
 use std::collections::{HashMap, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -118,6 +119,8 @@ struct Runtime {
     input_domain: Option<InputTimeDomain>,
     /// 프로젝트·문서 요청을 처리하는 앱 runtime(첫 요청에서 시작).
     app: Option<AppRuntime>,
+    /// 앱 runtime을 시작할 때 지연 자동 저장을 켤지(ADR-0072). Debug 검사 실행만 끕니다.
+    autosave: bool,
 }
 
 impl Runtime {
@@ -130,6 +133,7 @@ impl Runtime {
             input: InputQueue::new(INPUT_QUEUE_CAPACITY),
             input_domain: None,
             app: None,
+            autosave: true,
         }
     }
 
@@ -140,8 +144,10 @@ impl Runtime {
                 Ok(mut app) => {
                     app.enable_recovery();
                     // 앱 runtime은 지연 자동 저장을 켭니다(ADR-0072). 예산 값이 잘못되면 Save Now로만 저장합니다.
-                    if let Err(error) = app.enable_autosave() {
-                        eprintln!("Stellar autosave: {error}");
+                    if self.autosave {
+                        if let Err(error) = app.enable_autosave() {
+                            eprintln!("Stellar autosave: {error}");
+                        }
                     }
                     self.app = Some(app)
                 }
@@ -1631,6 +1637,15 @@ mod tests {
             "STELLAR_WINDOW_VIEW_INFO_VERSION",
             window_session::WINDOW_VIEW_INFO_VERSION.to_string(),
         );
+        for (name, value) in [
+            ("IDLE", window_session::autosave_state::IDLE),
+            ("PENDING", window_session::autosave_state::PENDING),
+            ("SAVING", window_session::autosave_state::SAVING),
+            ("FAILED", window_session::autosave_state::FAILED),
+            ("STALE", window_session::autosave_state::STALE),
+        ] {
+            define(&format!("STELLAR_AUTOSAVE_{name}"), value.to_string());
+        }
         assert!(header.contains(&format!(
             "sizeof(StellarWindowViewInfo) == {}",
             std::mem::size_of::<window_session::StellarWindowViewInfo>()

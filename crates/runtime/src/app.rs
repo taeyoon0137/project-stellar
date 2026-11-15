@@ -127,7 +127,6 @@ use stellar_project::root::{classify_project_open, OpenError, RootError};
 use stellar_project::trust::TrustStatus;
 use stellar_project::trust_store::{os_user_data_base, FileTrustStore};
 
-mod autosave;
 mod canvas_gesture;
 mod components;
 mod create;
@@ -155,6 +154,10 @@ pub use frame_insert::ShapePaint;
 pub use node_delete::{SelectionEdit, SelectionEditTarget};
 pub use stellar_document::model::SiblingOrder;
 pub use stellar_document::shape::ShapeKind;
+
+/// 지연 자동 저장 트리거와 worker 쓰기(UX.2.11, ADR-0072).
+mod autosave;
+pub use stellar_project::autosave::schedule::AutosaveStatus;
 
 use crate::app_command::AppCommand;
 use crate::command_queue::QueueCapacity;
@@ -963,6 +966,8 @@ pub struct WindowSessionSummary {
     pub has_unsaved_changes: bool,
     /// 열린 탭 수.
     pub tab_count: u32,
+    /// 자동 저장 상태(대기·쓰는 중·실패·stale, ADR-0072). 자동 저장을 켜지 않은 runtime은 늘 `Idle`입니다.
+    pub autosave: AutosaveStatus,
     /// active view(열린 탭이 없으면 `None`).
     pub active_view: Option<StableId>,
     /// active 탭의 viewport(열린 탭이 없으면 `None`).
@@ -1475,6 +1480,7 @@ fn window_summary(
         inspector,
         has_unsaved_changes: session.has_unsaved_changes(),
         tab_count: clamp(session.tabs().len()),
+        autosave: entry.autosave.status(),
         active_view: session.tabs().active_view(),
         viewport: session.tabs().active_viewport(),
         image_records: session.image_records.clone(),
@@ -1516,6 +1522,11 @@ fn perform_on_thread(
     session: WindowSessionHandle,
     command: AppCommand,
 ) -> Result<RuntimeEvent, Failure> {
+    if command == AppCommand::SaveNow {
+        // 진행 중인 자동 저장을 먼저 반영해 같은 편집을 두 번 쓰지 않습니다(XIII.1.5, ADR-0072).
+        autosave::settle(ctx)
+            .map_err(|error| Failure::new(RequestFailure::SaveFailed, error.to_string()))?;
+    }
     let window = window_mut(ctx, session)?;
     match command {
         AppCommand::Undo | AppCommand::Redo => {
@@ -1603,13 +1614,14 @@ fn build_state(ctx: &mut DocumentContext) -> RuntimeState {
                 .map_or(0, |view| view.len() as u64),
         })
         .collect();
+    // 자동 저장 관찰을 먼저 해 창 요약이 이번 게시의 자동 저장 상태를 담습니다.
+    autosave::observe(ctx);
     let sessions = ctx.app_sessions_mut();
     let windows = sessions
         .windows
         .iter_mut()
         .map(|(handle, entry)| window_summary(*handle, entry, &mut sessions.shared_scenes))
         .collect();
-    autosave::observe(ctx);
     RuntimeState {
         generation,
         projects,
@@ -1694,6 +1706,8 @@ struct AppShared {
             std::os::unix::net::UnixDatagram,
         )>,
     >,
+    /// 자동 저장 쓰기가 진행 중인지. 이미지 가져오기와 서로 배제합니다(ADR-0072).
+    autosave_writing: std::sync::atomic::AtomicBool,
 }
 
 /// 접수했지만 아직 반영하지 않은 wheel 팬. `scheduled`면 그 합을 가져갈 job이 대기 중입니다.
@@ -1787,9 +1801,8 @@ impl Drop for AppRuntime {
         {
             token.cancel();
         }
-        self.stop_autosave();
         // shutdown·shutdown_timeout으로 이미 종료했으면 아무것도 하지 않습니다.
-        let _ = self.document.stop_within(Some(self.drop_timeout));
+        let _ = self.stop_with_autosave(Some(self.drop_timeout));
         // 닫은 창의 복구본 삭제(폐기·저장 뒤 정리)가 프로세스 종료 전에 끝나도록 잠시 기다립니다.
         self.recovery_workers
             .wait_idle(AppRuntime::RECOVERY_FLUSH_TIMEOUT);
@@ -1849,6 +1862,7 @@ impl AppRuntime {
             component_watches: Mutex::default(),
             #[cfg(unix)]
             event_ready: Mutex::default(),
+            autosave_writing: false.into(),
         });
         let fonts = {
             let sender = document.sender();
@@ -2322,8 +2336,7 @@ impl AppRuntime {
 
     /// document thread를 종료합니다. 이미 접수한 요청은 실행하고, 끝날 때까지 기다립니다.
     pub fn shutdown(mut self) -> Result<DocumentLoopStats, DocumentThreadError> {
-        self.stop_autosave();
-        self.document.stop_within(None)
+        self.stop_with_autosave(None)
     }
 
     /// [`AppRuntime::shutdown`]과 같이 종료하되 최대 `timeout`까지만 기다립니다. 넘으면 아직 시작하지
@@ -2332,8 +2345,7 @@ impl AppRuntime {
         mut self,
         timeout: Duration,
     ) -> Result<DocumentLoopStats, DocumentThreadError> {
-        self.stop_autosave();
-        self.document.stop_within(Some(timeout))
+        self.stop_with_autosave(Some(timeout))
     }
 }
 

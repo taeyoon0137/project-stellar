@@ -16,6 +16,9 @@ final class ShellRuntimeEventPump {
     /// 한 번 깨어날 때 꺼내는 event 상한. 남으면 다음 주기에 이어서 꺼냅니다.
     nonisolated static let maximumEventsPerDrain = 64
 
+    /// 요청 밖 상태 변경(자동 저장 등)을 관찰하는 주기(초, ADR-0072).
+    nonisolated static let statePollInterval: TimeInterval = 0.25
+
     let runtimeHandle: UInt64
     private var completions: [UInt64: (CoreRuntimeEvent) -> Void] = [:]
     private var timer: Timer?
@@ -24,6 +27,16 @@ final class ShellRuntimeEventPump {
     /// 요청 없는 event를 받을 곳(앱 구성이 창으로 나눕니다).
     var unsolicitedEventHandler: ((CoreRuntimeEvent) -> Void)?
     private var readySource: DispatchSourceRead?
+
+    /// 요청 밖 상태 변경 관찰자. 코어는 callback을 부르지 않으므로(ADR-0009) 관찰자 하나라도 `isWaiting`이 참인
+    /// 동안만 낮은 주기로 상태 snapshot 세대를 읽고, 세대가 바뀌면 모든 관찰자의 `changed`를 부릅니다(ADR-0072).
+    private struct StateObserver {
+        let isWaiting: () -> Bool
+        let changed: () -> Void
+    }
+    private var stateObservers: [UUID: StateObserver] = [:]
+    private var stateTimer: Timer?
+    private var observedGeneration: UInt64?
 
     init(runtimeHandle: UInt64) {
         self.runtimeHandle = runtimeHandle
@@ -269,7 +282,49 @@ final class ShellRuntimeEventPump {
         if completions.isEmpty {
             stopPolling()
         }
+        // 완료한 편집이 자동 저장 대기를 만들었을 수 있습니다.
+        if drained > 0 { updateStateWatch() }
         return drained
+    }
+
+    /// 요청 밖 상태 변경을 관찰합니다. `isWaiting`이 참인 관찰자가 있는 동안 `statePollInterval`마다 상태 세대를 읽고,
+    /// 바뀌면 `changed`를 부릅니다. 돌려준 token을 `removeStateObserver`에 넘기면 멈춥니다.
+    func observeState(isWaiting: @escaping () -> Bool, changed: @escaping () -> Void) -> UUID {
+        let token = UUID()
+        stateObservers[token] = StateObserver(isWaiting: isWaiting, changed: changed)
+        updateStateWatch()
+        return token
+    }
+
+    func removeStateObserver(_ token: UUID) {
+        stateObservers[token] = nil
+        updateStateWatch()
+    }
+
+    /// 관찰을 계속할지 다시 판단합니다(요청 완료 뒤, 관찰자 등록·해제, 매 관찰 뒤).
+    func updateStateWatch() {
+        let waiting = stateObservers.values.contains { $0.isWaiting() }
+        if !waiting {
+            stateTimer?.invalidate()
+            stateTimer = nil
+            return
+        }
+        guard stateTimer == nil else { return }
+        observedGeneration = CoreRuntime.state(handle: runtimeHandle)?.generation
+        let timer = Timer(timeInterval: Self.statePollInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pollState() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        stateTimer = timer
+    }
+
+    private func pollState() {
+        let generation = CoreRuntime.state(handle: runtimeHandle)?.generation
+        if generation != observedGeneration {
+            observedGeneration = generation
+            for observer in Array(stateObservers.values) { observer.changed() }
+        }
+        updateStateWatch()
     }
 
     /// 기다리는 요청이 모두 끝날 때까지 run loop를 돌립니다(검사·종료 경로 전용, 최대 `timeout`초).
