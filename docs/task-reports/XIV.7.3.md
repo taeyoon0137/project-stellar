@@ -24,9 +24,11 @@ DEV-MAC에서 시스템 Git과 임시 저장소를 사용했습니다. 두 속�
 
 ## 명령과 종료 코드
 
+2026-11-15 검토에서 이름 전용 앱 연결을 삭제하고 index 게시를 `publish_with_receipt`로 되돌린 뒤 DEV-MAC에서 다시 실행한 결과입니다. 처음 구현 때의 실행 기록은 근거로 쓰지 않습니다.
+
 | 명령 | 종료 코드 | 결과 |
 |---|---:|---|
-| `RUST_TEST_THREADS=1 cargo test --locked --offline -p stellar-runtime --lib staging::` | 0 | 9개 통과 |
+| `RUST_TEST_THREADS=1 cargo test --locked --offline -p stellar-runtime --lib staging::` | 0 | 9개 통과(`unstage_only_the_selected_name_from_index_even_when_working_is_different` 포함) |
 | `cargo clippy --locked --offline -p stellar-runtime -p stellar-ffi --all-targets -- -D warnings` | 0 | 경고 없음 |
 | `cargo fmt --all -- --check`, `git diff --check` | 0 | 통과 |
 
