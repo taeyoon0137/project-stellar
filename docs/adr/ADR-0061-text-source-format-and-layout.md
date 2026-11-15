@@ -29,8 +29,8 @@ Accepted (2026-11-15). 제품 책임자가 텍스트 원본 형식과 배치의 
    다음을 지킵니다.
    - 여러 longhand를 한 줄에 묶지 않습니다. Frame은 `width`·`height`와 네 모서리
      `border-top-left-radius`·`border-top-right-radius`·`border-bottom-right-radius`·`border-bottom-left-radius`를
-     각각 한 줄로 씁니다(ADR-0024 결정 14의 PropertyKey와 같은 이름). 배치 평행이동은 `x`·`y`, 도형 좌표는 `x`·`y`·
-     `x1`·`y1`·`x2`·`y2`입니다.
+     각각 한 줄로 씁니다(ADR-0024 결정 14의 PropertyKey와 같은 이름). 배치 평행이동은 `translate-x`·`translate-y`,
+     도형 좌표는 `origin-x`·`origin-y`와 `start-x`·`start-y`·`end-x`·`end-y`입니다.
    - 값 하나를 여러 줄로 나누지 않습니다. 색은 `srgb 1 0 0 1`처럼 색 공간과 비연관 RGBA를 한 줄에 쓰고, Frame
      `border`(아직 longhand로 나뉘지 않은 묶음 key 0x0105)는 두께와 색을, `clipping`은 방식과 Path 대상을 한 줄에
      씁니다. `transform`은 CSS `transform` 행렬 하나이므로 여섯 성분을 한 줄에 씁니다.

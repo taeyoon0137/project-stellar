@@ -1,6 +1,8 @@
-//! ADR-0059 단일 View 텍스트 원본. 독립 컴포넌트는 정의 ID로 참조합니다.
+//! 단일 View 텍스트 원본(ADR-0059 방향, ADR-0061 형식). 독립 컴포넌트는 정의 ID로 참조합니다.
 //!
-//! 모든 저장 속성을 명시하며, 미지원 레코드나 키는 생략하지 않고 거부합니다.
+//! 쓰기 버전은 View `schema_version: "2"` 하나입니다. 커밋된 v1은 읽기 전용입니다. 영속 속성 하나를
+//! 키 하나·한 줄로 쓰고, 파일에 없는 값을 버전 번호에서 복원하지 않습니다. 미지원 레코드나 키는
+//! 생략하지 않고 거부합니다.
 
 use std::fmt::Display;
 use std::str::FromStr;
@@ -10,9 +12,7 @@ use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
 use stellar_core_types::reference::{ComponentRef, NodeRef};
 use stellar_core_types::text::UserText;
-use stellar_core_types::typed_value::TypographyValue;
-use stellar_core_types::typography::{FontSize, FontStyle, LetterSpacing, LineHeight, Typography};
-use stellar_core_types::value::{FiniteF32, Size2, Transform2D};
+use stellar_core_types::value::{Size2, Transform2D};
 use stellar_document::component::instance::ComponentInstancePayload;
 use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
 use stellar_document::fragment::FragmentPayload;
@@ -23,10 +23,7 @@ use stellar_document::modifier::{
 };
 use stellar_document::records::{DocumentRecords, NodePayload, NodeRecord};
 use stellar_document::shape::ShapeKind;
-use stellar_document::text::{
-    LineHeight as ParagraphLineHeight, Paragraph, ParagraphStyle, StyleRun, TextAlignment,
-    TextPayload, TextRange, TextStyle, WrappingMode,
-};
+use stellar_document::text::{Paragraph, StyleRun, TextPayload, TextRange};
 use stellar_document::text_styles::DocumentTextStyles;
 use stellar_document::validate::validate_document;
 
@@ -35,6 +32,9 @@ use crate::yaml::{load_restricted, write_canonical_checked, YamlValue};
 
 mod document_font;
 mod shape;
+
+/// View 원본의 유일한 쓰기 버전.
+const VIEW_VERSION: &str = "2";
 
 pub(super) fn invalid(error: impl Display) -> TextSourceError {
     TextSourceError::Invalid(error.to_string())
@@ -67,25 +67,6 @@ fn optional<T>(value: Option<T>, encode: impl FnOnce(T) -> YamlValue) -> YamlVal
     value.map_or_else(|| scalar("none"), encode)
 }
 
-fn color(value: Color) -> YamlValue {
-    mapping([
-        ("space", scalar(space_name(value.space()))),
-        (
-            "rgba",
-            floats(&[value.r(), value.g(), value.b(), value.alpha()]),
-        ),
-    ])
-}
-
-/// Frame payload 문법.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Grammar {
-    /// 커밋된 View v1과 컴포넌트 v1·v2. 읽기 전용입니다(`size`, `corner_radius`, 색·clipping mapping).
-    Legacy,
-    /// ADR-0061 결정 2: 영속 속성 하나 = 키 하나·한 줄(View v2, 컴포넌트 v3).
-    Current,
-}
-
 fn space_name(space: ColorSpace) -> &'static str {
     match space {
         ColorSpace::Srgb => "srgb",
@@ -103,6 +84,19 @@ pub fn color_source_value(value: Color) -> String {
         value.b(),
         value.alpha()
     )
+}
+
+fn color_line(value: Option<Color>) -> YamlValue {
+    optional(value, |color| scalar(color_source_value(color)))
+}
+
+/// Frame payload 문법.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Grammar {
+    /// 커밋된 View v1과 컴포넌트 v1·v2. 읽기 전용입니다(`size`, `corner_radius`, 색·clipping mapping).
+    Legacy,
+    /// ADR-0061 결정 2: 영속 속성 하나 = 키 하나·한 줄(View v2, 컴포넌트 v3).
+    Current,
 }
 
 /// 한 속성 한 줄 문법의 Frame 키. 파일의 줄 순서이며 이름 오름차순입니다.
@@ -139,10 +133,7 @@ pub(super) fn frame(payload: &FramePayload) -> YamlValue {
         Clipping::Path(target) => format!("path {}", target.id()),
     };
     mapping([
-        (
-            "background",
-            optional(*background, |value| scalar(color_source_value(value))),
-        ),
+        ("background", color_line(*background)),
         (
             "border",
             optional(*border, |value| {
@@ -165,47 +156,7 @@ pub(super) fn frame(payload: &FramePayload) -> YamlValue {
     ])
 }
 
-fn legacy_frame(payload: &FramePayload) -> YamlValue {
-    let FramePayload {
-        size,
-        transform,
-        clipping,
-        background,
-        border,
-        corner_radius,
-        layout_mode,
-    } = payload;
-    let (a, b, c, d, tx, ty) = transform.components();
-    let (tl, tr, br, bl) = corner_radius.components();
-    mapping([
-        ("size", floats(&[size.width(), size.height()])),
-        ("transform", floats(&[a, b, c, d, tx, ty])),
-        (
-            "clipping",
-            match clipping {
-                Clipping::Disabled => mapping([("kind", scalar("disabled"))]),
-                Clipping::FrameBounds => mapping([("kind", scalar("frame-bounds"))]),
-                Clipping::Path(target) => {
-                    mapping([("kind", scalar("path")), ("target", scalar(target.id()))])
-                }
-            },
-        ),
-        ("background", optional(*background, color)),
-        (
-            "border",
-            optional(*border, |value| {
-                mapping([
-                    ("color", color(value.color)),
-                    ("thickness", scalar(value.thickness())),
-                ])
-            }),
-        ),
-        ("corner_radius", floats(&[tl, tr, br, bl])),
-        ("layout_mode", optional(*layout_mode, scalar)),
-    ])
-}
-
-fn text_payload(payload: &TextPayload) -> Result<YamlValue, TextSourceError> {
+fn text_payload(payload: &TextPayload) -> Result<Vec<(YamlValue, YamlValue)>, TextSourceError> {
     // TextRange의 public 필드로 직접 만든 역전 범위도 쓰기 전에 거부합니다.
     if payload
         .style_runs()
@@ -214,7 +165,7 @@ fn text_payload(payload: &TextPayload) -> Result<YamlValue, TextSourceError> {
     {
         return Err(invalid("Text run의 start는 end 이하여야 합니다"));
     }
-    Ok(mapping([
+    let YamlValue::Mapping(fields) = mapping([
         ("content", scalar(payload.content())),
         (
             "paragraphs",
@@ -242,20 +193,17 @@ fn text_payload(payload: &TextPayload) -> Result<YamlValue, TextSourceError> {
                     .collect(),
             ),
         ),
-    ]))
+    ]) else {
+        unreachable!("mapping")
+    };
+    Ok(fields)
 }
 
-pub(super) fn node(record: &NodeRecord, grammar: Grammar) -> Result<YamlValue, TextSourceError> {
+/// Frame·Fragment 레코드. 컴포넌트 원본(v3)과 View 원본(v2)이 공유합니다.
+pub(super) fn node(record: &NodeRecord) -> Result<YamlValue, TextSourceError> {
     let (kind, payload) = match &record.payload {
-        NodePayload::Frame(value) => (
-            "frame",
-            match grammar {
-                Grammar::Legacy => legacy_frame(value),
-                Grammar::Current => frame(value),
-            },
-        ),
+        NodePayload::Frame(value) => ("frame", frame(value)),
         NodePayload::Fragment(_) => ("fragment", scalar("none")),
-        NodePayload::Text(value) => ("text", text_payload(value)?),
         other => {
             return Err(TextSourceError::Unsupported(format!(
                 "node {}: {} payload",
@@ -290,59 +238,10 @@ fn node_fields(record: &NodeRecord, kind: &str, payload: YamlValue) -> YamlValue
 }
 
 /// 배치 명령의 단일 활성 평행이동만 표현합니다. 다른 modifier를 좌표로 축약하지 않습니다.
-fn view_node(
-    record: &NodeRecord,
-    stack: Option<&ModifierStack>,
-    document_font: bool,
-) -> Result<YamlValue, TextSourceError> {
-    if let NodePayload::Shape(geometry) = &record.payload {
-        return Ok(node_fields(
-            record,
-            geometry.kind().name(),
-            shape::encode(geometry, stack)?,
-        ));
-    }
-    if let (true, NodePayload::Text(text)) = (document_font, &record.payload) {
-        document_font::check_text(text)?;
-        let YamlValue::Mapping(mut fields) = text_payload(text)? else {
-            unreachable!()
-        };
-        fields.push((
-            scalar("placement"),
-            stack
-                .map(translation)
-                .transpose()?
-                .unwrap_or_else(|| scalar("none")),
-        ));
-        return Ok(node_fields(record, "text", YamlValue::Mapping(fields)));
-    }
-    let NodePayload::ComponentInstance(instance) = &record.payload else {
-        if stack.is_some() {
-            return Err(TextSourceError::Unsupported("modifier stack".into()));
-        }
-        return node(record, Grammar::Legacy);
+fn placement(stack: Option<&ModifierStack>) -> Result<YamlValue, TextSourceError> {
+    let Some(stack) = stack else {
+        return Ok(scalar("none"));
     };
-    if !instance.has_no_overrides() {
-        return Err(TextSourceError::Unsupported(
-            "component instance override".into(),
-        ));
-    }
-    let component = instance.component().id();
-    if component == StableId::NIL {
-        return Err(invalid("빈 component 참조"));
-    }
-    let placement = stack
-        .map(translation)
-        .transpose()?
-        .unwrap_or_else(|| scalar("none"));
-    Ok(node_fields(
-        record,
-        "component-instance",
-        mapping([("component", scalar(component)), ("placement", placement)]),
-    ))
-}
-
-fn translation(stack: &ModifierStack) -> Result<YamlValue, TextSourceError> {
     let [entry] = stack.entries() else {
         return Err(TextSourceError::Unsupported(
             "복합 배치 modifier stack".into(),
@@ -360,71 +259,56 @@ fn translation(stack: &ModifierStack) -> Result<YamlValue, TextSourceError> {
     Ok(mapping([
         ("id", scalar(entry.id.stable_id())),
         ("order_key", order_key(&entry.order)),
-        ("position", floats(&[x, y])),
+        ("translate-x", scalar(x)),
+        ("translate-y", scalar(y)),
     ]))
 }
 
-/// `initial_typography_id`가 표현하는 v2 표. 새 문서의 생성 기본값과 독립적인 포맷 상수입니다.
-fn v2_text_styles(resource: StableId) -> DocumentTextStyles {
-    let typography = TypographyValue::from_record(&Typography {
-        families: Vec::new(),
-        size: FontSize::Medium,
-        weight: FiniteF32::new(400.0).expect("v2 font weight"),
-        style: FontStyle::Normal,
-        stretch_percent: FiniteF32::new(100.0).expect("v2 font stretch"),
-        line_height: LineHeight::Normal,
-        letter_spacing: LetterSpacing::Normal,
-    })
-    .expect("v2 typography");
-    let paragraph = ParagraphStyle {
-        typography: None,
-        alignment: TextAlignment::Start,
-        wrapping: WrappingMode::Wrap,
-        line_height: ParagraphLineHeight::Auto,
-    };
-    DocumentTextStyles {
-        default_typography: Some(resource),
-        default_fill: None,
-        typography: [(resource, typography)].into(),
-        fonts: Default::default(),
-        paragraphs: [(0, paragraph)].into(),
-        runs: [(0, TextStyle::new(None, None, vec![], vec![]))].into(),
+fn view_node(
+    record: &NodeRecord,
+    stack: Option<&ModifierStack>,
+) -> Result<YamlValue, TextSourceError> {
+    match &record.payload {
+        NodePayload::Shape(geometry) => Ok(node_fields(
+            record,
+            geometry.kind().name(),
+            shape::encode(geometry, stack)?,
+        )),
+        NodePayload::Text(text) => {
+            let mut fields = text_payload(text)?;
+            fields.push((scalar("placement"), placement(stack)?));
+            Ok(node_fields(record, "text", YamlValue::Mapping(fields)))
+        }
+        NodePayload::ComponentInstance(instance) => {
+            if !instance.has_no_overrides() {
+                return Err(TextSourceError::Unsupported(
+                    "component instance override".into(),
+                ));
+            }
+            let component = instance.component().id();
+            if component == StableId::NIL {
+                return Err(invalid("빈 component 참조"));
+            }
+            Ok(node_fields(
+                record,
+                "component-instance",
+                mapping([
+                    ("component", scalar(component)),
+                    ("placement", placement(stack)?),
+                ]),
+            ))
+        }
+        _ if stack.is_some() => Err(TextSourceError::Unsupported("modifier stack".into())),
+        _ => node(record),
     }
 }
 
-/// 지원 범위를 검증한 뒤 결정론적인 제한 YAML로 기록합니다.
+/// 지원 범위를 검증한 뒤 결정론적인 제한 YAML(View v2)로 기록합니다.
 pub fn encode(model: &DocumentModel) -> Result<String, TextSourceError> {
     let records = model.to_records().map_err(invalid)?;
     validate_document(&records).map_err(invalid)?;
     let definition = &records.definition;
-    let id = scalar(definition.id);
-    let name = scalar(definition.display_name());
-    let styles = &definition.text_styles;
-    let (version, document) = if styles.is_empty() {
-        (1, mapping([("id", id), ("display_name", name)]))
-    } else if let Some(resource) = styles
-        .default_typography
-        .filter(|id| *styles == v2_text_styles(*id))
-    {
-        (
-            2,
-            mapping([
-                ("id", id),
-                ("display_name", name),
-                ("initial_typography_id", scalar(resource)),
-            ]),
-        )
-    } else {
-        (
-            3,
-            mapping([
-                ("id", id),
-                ("display_name", name),
-                ("document_font", document_font::encode(styles)?),
-            ]),
-        )
-    };
-    let [page] = records.definition.pages.as_slice() else {
+    let [page] = definition.pages.as_slice() else {
         return Err(TextSourceError::Unsupported(
             "정확히 하나의 페이지가 필요합니다".into(),
         ));
@@ -435,8 +319,18 @@ pub fn encode(model: &DocumentModel) -> Result<String, TextSourceError> {
         ));
     };
     let value = mapping([
-        ("schema_version", scalar(version)),
-        ("document", document),
+        ("schema_version", scalar(VIEW_VERSION)),
+        (
+            "document",
+            mapping([
+                ("id", scalar(definition.id)),
+                ("display_name", scalar(definition.display_name())),
+                (
+                    "document_font",
+                    document_font::encode(&definition.text_styles)?,
+                ),
+            ]),
+        ),
         (
             "page",
             mapping([
@@ -458,7 +352,7 @@ pub fn encode(model: &DocumentModel) -> Result<String, TextSourceError> {
                 records
                     .nodes
                     .iter()
-                    .map(|record| view_node(record, model.modifier_stack(record.id), version == 3))
+                    .map(|record| view_node(record, model.modifier_stack(record.id)))
                     .collect::<Result<_, _>>()?,
             ),
         ),
@@ -533,58 +427,13 @@ fn parse_floats<const N: usize>(value: &YamlValue) -> Result<[f32; N], TextSourc
     Ok(result)
 }
 
-fn parse_color(value: &YamlValue) -> Result<Color, TextSourceError> {
-    fields(value, &["space", "rgba"])?;
-    let space = match text(field(value, "space")?)? {
-        "srgb" => ColorSpace::Srgb,
-        "display-p3" => ColorSpace::DisplayP3,
-        _ => return Err(TextSourceError::Unsupported("알 수 없는 색공간".into())),
-    };
-    let [r, g, b, a] = parse_floats(field(value, "rgba")?)?;
-    Color::new(space, r, g, b, a).map_err(invalid)
-}
-
-fn parse_border(value: &YamlValue) -> Result<Border, TextSourceError> {
-    fields(value, &["color", "thickness"])?;
-    Border::new(
-        parse_color(field(value, "color")?)?,
-        parse(field(value, "thickness")?)?,
-    )
-    .map_err(invalid)
-}
-
-fn parse_clipping(value: &YamlValue) -> Result<Clipping, TextSourceError> {
-    match text(field(value, "kind")?)? {
-        "disabled" => {
-            fields(value, &["kind"])?;
-            Ok(Clipping::Disabled)
-        }
-        "frame-bounds" => {
-            fields(value, &["kind"])?;
-            Ok(Clipping::FrameBounds)
-        }
-        "path" => {
-            fields(value, &["kind", "target"])?;
-            Ok(Clipping::Path(NodeRef::new(parse(field(
-                value, "target",
-            )?)?)))
-        }
-        _ => Err(TextSourceError::Unsupported(
-            "알 수 없는 clipping 방식".into(),
-        )),
-    }
-}
-
 fn finite(value: &YamlValue) -> Result<f32, TextSourceError> {
-    let number: f32 = parse(value)?;
-    if !number.is_finite() {
-        return Err(invalid("float은 유한해야 합니다"));
-    }
+    let [number] = parse_floats(value)?;
     Ok(number)
 }
 
-fn parse_color_line(value: &str) -> Result<Color, TextSourceError> {
-    let (space, rgba) = value
+fn parse_color_line(value: &YamlValue) -> Result<Color, TextSourceError> {
+    let (space, rgba) = text(value)?
         .split_once(' ')
         .ok_or_else(|| invalid("색은 색 공간과 RGBA가 필요합니다"))?;
     let space = match space {
@@ -616,7 +465,7 @@ fn parse_border_line(value: &YamlValue) -> Result<Border, TextSourceError> {
         .split_once(' ')
         .ok_or_else(|| invalid("border는 두께와 색이 필요합니다"))?;
     let thickness = finite(&YamlValue::scalar(thickness))?;
-    Border::new(parse_color_line(color)?, thickness).map_err(invalid)
+    Border::new(parse_color_line(&YamlValue::scalar(color))?, thickness).map_err(invalid)
 }
 
 fn parse_frame(value: &YamlValue) -> Result<FramePayload, TextSourceError> {
@@ -627,7 +476,7 @@ fn parse_frame(value: &YamlValue) -> Result<FramePayload, TextSourceError> {
         size: Size2::new(length("width")?, length("height")?).map_err(invalid)?,
         transform: Transform2D::new(a, b, c, d, tx, ty).map_err(invalid)?,
         clipping: parse_clipping_line(text(field(value, "clipping")?)?)?,
-        background: parse_optional(field(value, "background")?, |v| parse_color_line(text(v)?))?,
+        background: parse_optional(field(value, "background")?, parse_color_line)?,
         border: parse_optional(field(value, "border")?, parse_border_line)?,
         corner_radius: CornerRadius::new(
             length("border-top-left-radius")?,
@@ -638,6 +487,49 @@ fn parse_frame(value: &YamlValue) -> Result<FramePayload, TextSourceError> {
         .map_err(invalid)?,
         layout_mode: parse_optional(field(value, "layout-mode")?, parse)?,
     })
+}
+
+/// 읽기 전용 v1 색 mapping.
+fn parse_legacy_color(value: &YamlValue) -> Result<Color, TextSourceError> {
+    fields(value, &["space", "rgba"])?;
+    let space = match text(field(value, "space")?)? {
+        "srgb" => ColorSpace::Srgb,
+        "display-p3" => ColorSpace::DisplayP3,
+        _ => return Err(TextSourceError::Unsupported("알 수 없는 색공간".into())),
+    };
+    let [r, g, b, a] = parse_floats(field(value, "rgba")?)?;
+    Color::new(space, r, g, b, a).map_err(invalid)
+}
+
+fn parse_legacy_border(value: &YamlValue) -> Result<Border, TextSourceError> {
+    fields(value, &["color", "thickness"])?;
+    Border::new(
+        parse_legacy_color(field(value, "color")?)?,
+        parse(field(value, "thickness")?)?,
+    )
+    .map_err(invalid)
+}
+
+fn parse_legacy_clipping(value: &YamlValue) -> Result<Clipping, TextSourceError> {
+    match text(field(value, "kind")?)? {
+        "disabled" => {
+            fields(value, &["kind"])?;
+            Ok(Clipping::Disabled)
+        }
+        "frame-bounds" => {
+            fields(value, &["kind"])?;
+            Ok(Clipping::FrameBounds)
+        }
+        "path" => {
+            fields(value, &["kind", "target"])?;
+            Ok(Clipping::Path(NodeRef::new(parse(field(
+                value, "target",
+            )?)?)))
+        }
+        _ => Err(TextSourceError::Unsupported(
+            "알 수 없는 clipping 방식".into(),
+        )),
+    }
 }
 
 fn parse_legacy_frame(value: &YamlValue) -> Result<FramePayload, TextSourceError> {
@@ -659,9 +551,9 @@ fn parse_legacy_frame(value: &YamlValue) -> Result<FramePayload, TextSourceError
     Ok(FramePayload {
         size: Size2::new(width, height).map_err(invalid)?,
         transform: Transform2D::new(a, b, c, d, tx, ty).map_err(invalid)?,
-        clipping: parse_clipping(field(value, "clipping")?)?,
-        background: parse_optional(field(value, "background")?, parse_color)?,
-        border: parse_optional(field(value, "border")?, parse_border)?,
+        clipping: parse_legacy_clipping(field(value, "clipping")?)?,
+        background: parse_optional(field(value, "background")?, parse_legacy_color)?,
+        border: parse_optional(field(value, "border")?, parse_legacy_border)?,
         corner_radius: CornerRadius::new(tl, tr, br, bl).map_err(invalid)?,
         layout_mode: parse_optional(field(value, "layout_mode")?, parse)?,
     })
@@ -715,23 +607,24 @@ fn parse_text_payload(value: &YamlValue) -> Result<TextPayload, TextSourceError>
     .map_err(invalid)
 }
 
+/// Frame·Fragment 레코드와 읽기 전용 v1 Text를 해석합니다.
 pub(super) fn parse_node(
     value: &YamlValue,
     grammar: Grammar,
 ) -> Result<NodeRecord, TextSourceError> {
     let payload = field(value, "payload")?;
-    let payload = match text(field(value, "kind")?)? {
-        "frame" => NodePayload::Frame(match grammar {
-            Grammar::Legacy => parse_legacy_frame(payload)?,
-            Grammar::Current => parse_frame(payload)?,
-        }),
-        "fragment" if payload.as_scalar() == Some("none") => NodePayload::Fragment(FragmentPayload),
-        "fragment" => return Err(invalid("Fragment payload는 none이어야 합니다")),
-        "text" => {
+    let payload = match (text(field(value, "kind")?)?, grammar) {
+        ("frame", Grammar::Legacy) => NodePayload::Frame(parse_legacy_frame(payload)?),
+        ("frame", Grammar::Current) => NodePayload::Frame(parse_frame(payload)?),
+        ("fragment", _) if payload.as_scalar() == Some("none") => {
+            NodePayload::Fragment(FragmentPayload)
+        }
+        ("fragment", _) => return Err(invalid("Fragment payload는 none이어야 합니다")),
+        ("text", Grammar::Legacy) => {
             fields(payload, &["content", "paragraphs", "style_runs"])?;
             NodePayload::Text(parse_text_payload(payload)?)
         }
-        kind => {
+        (kind, _) => {
             return Err(TextSourceError::Unsupported(format!(
                 "node payload: {kind}"
             )))
@@ -768,57 +661,20 @@ fn parse_node_fields(
     })
 }
 
-fn parse_view_node(
-    value: &YamlValue,
-    stacks: &mut Vec<ModifierStack>,
-    document_font: bool,
-) -> Result<NodeRecord, TextSourceError> {
-    let kind = text(field(value, "kind")?)?;
-    if let Some(shape_kind) = ShapeKind::ALL
-        .into_iter()
-        .find(|shape| shape.name() == kind)
-    {
-        return shape::decode(value, shape_kind, stacks);
-    }
-    if document_font && kind == "text" {
-        let payload = field(value, "payload")?;
-        fields(
-            payload,
-            &["content", "paragraphs", "style_runs", "placement"],
-        )?;
-        let placement = field(payload, "placement")?;
-        let text = parse_text_payload(payload)?;
-        document_font::check_text(&text)?;
-        let record = parse_node_fields(value, NodePayload::Text(text))?;
-        if placement.as_scalar() != Some("none") {
-            stacks.push(parse_translation(record.id, placement)?);
-        }
-        return Ok(record);
-    }
-    if kind != "component-instance" {
-        return parse_node(value, Grammar::Legacy);
-    }
-    let payload = field(value, "payload")?;
-    fields(payload, &["component", "placement"])?;
-    let component = parse(field(payload, "component")?)?;
-    if component == StableId::NIL {
-        return Err(invalid("빈 component 참조"));
-    }
-    let instance = ComponentInstancePayload::new(ComponentRef::new(component));
-    let record = parse_node_fields(value, NodePayload::ComponentInstance(instance))?;
-    let placement = field(payload, "placement")?;
-    if placement.as_scalar() != Some("none") {
-        stacks.push(parse_translation(record.id, placement)?);
-    }
-    Ok(record)
-}
-
-fn parse_translation(
+fn parse_placement(
     owner: StableId,
     placement: &YamlValue,
-) -> Result<ModifierStack, TextSourceError> {
-    fields(placement, &["id", "order_key", "position"])?;
-    let [x, y] = parse_floats(field(placement, "position")?)?;
+    stacks: &mut Vec<ModifierStack>,
+) -> Result<(), TextSourceError> {
+    if placement.as_scalar() == Some("none") {
+        return Ok(());
+    }
+    fields(
+        placement,
+        &["id", "order_key", "translate-x", "translate-y"],
+    )?;
+    let x = finite(field(placement, "translate-x")?)?;
+    let y = finite(field(placement, "translate-y")?)?;
     let mut stack = ModifierStack::new(owner);
     stack
         .insert(ModifierEntry {
@@ -831,10 +687,53 @@ fn parse_translation(
             ),
         })
         .map_err(invalid)?;
-    Ok(stack)
+    stacks.push(stack);
+    Ok(())
+}
+
+fn parse_view_node(
+    value: &YamlValue,
+    stacks: &mut Vec<ModifierStack>,
+) -> Result<NodeRecord, TextSourceError> {
+    let kind = text(field(value, "kind")?)?;
+    if let Some(shape_kind) = ShapeKind::ALL
+        .into_iter()
+        .find(|shape| shape.name() == kind)
+    {
+        return shape::decode(value, shape_kind, stacks);
+    }
+    let payload = field(value, "payload")?;
+    match kind {
+        "text" => {
+            fields(
+                payload,
+                &["content", "paragraphs", "style_runs", "placement"],
+            )?;
+            let text = parse_text_payload(payload)?;
+            let record = parse_node_fields(value, NodePayload::Text(text))?;
+            parse_placement(record.id, field(payload, "placement")?, stacks)?;
+            Ok(record)
+        }
+        "component-instance" => {
+            fields(payload, &["component", "placement"])?;
+            let component = parse(field(payload, "component")?)?;
+            if component == StableId::NIL {
+                return Err(invalid("빈 component 참조"));
+            }
+            let instance = ComponentInstancePayload::new(ComponentRef::new(component));
+            let record = parse_node_fields(value, NodePayload::ComponentInstance(instance))?;
+            parse_placement(record.id, field(payload, "placement")?, stacks)?;
+            Ok(record)
+        }
+        _ => parse_node(value, Grammar::Current),
+    }
 }
 
 /// 제한 YAML을 엄격하게 해석하고 문서 validator로 runtime 모델을 재구축합니다.
+///
+/// `"2"`가 유일한 쓰기 버전입니다. `"1"`은 커밋된 기존 원본의 읽기 전용 문법입니다(문서 style 표·
+/// 도형·인스턴스·배치 없음). 같은 번호를 재정의하기 전 작업 트리에서만 쓰인 문법(`initial_typography_id`,
+/// `schema_version: "3"`)은 거부합니다.
 pub fn decode(source: &str) -> Result<DocumentModel, TextSourceError> {
     let value = load_restricted(source).map_err(invalid)?;
     fields(
@@ -842,19 +741,14 @@ pub fn decode(source: &str) -> Result<DocumentModel, TextSourceError> {
         &["schema_version", "document", "page", "view", "nodes"],
     )?;
     let document = field(&value, "document")?;
-    let version = text(field(&value, "schema_version")?)?;
-    let styles = match version {
+    let current = match text(field(&value, "schema_version")?)? {
         "1" => {
             fields(document, &["id", "display_name"])?;
-            DocumentTextStyles::default()
+            false
         }
-        "2" => {
-            fields(document, &["id", "display_name", "initial_typography_id"])?;
-            v2_text_styles(parse(field(document, "initial_typography_id")?)?)
-        }
-        "3" => {
+        VIEW_VERSION => {
             fields(document, &["id", "display_name", "document_font"])?;
-            document_font::decode(field(document, "document_font")?)?
+            true
         }
         _ => {
             return Err(TextSourceError::Unsupported(
@@ -870,7 +764,11 @@ pub fn decode(source: &str) -> Result<DocumentModel, TextSourceError> {
         parse(field(document, "id")?)?,
         text(field(document, "display_name")?)?.to_owned(),
     );
-    definition.text_styles = styles;
+    definition.text_styles = if current {
+        document_font::decode(field(document, "document_font")?)?
+    } else {
+        DocumentTextStyles::default()
+    };
     let mut page_definition = PageDefinition::new(
         parse(field(page, "id")?)?,
         text(field(page, "display_name")?)?.to_owned(),
@@ -887,12 +785,19 @@ pub fn decode(source: &str) -> Result<DocumentModel, TextSourceError> {
         .as_sequence()
         .ok_or_else(|| invalid("nodes는 sequence여야 합니다"))?;
     let mut modifier_stacks = Vec::new();
+    let nodes = nodes
+        .iter()
+        .map(|node| {
+            if current {
+                parse_view_node(node, &mut modifier_stacks)
+            } else {
+                parse_node(node, Grammar::Legacy)
+            }
+        })
+        .collect::<Result<_, _>>()?;
     let records = DocumentRecords {
         definition,
-        nodes: nodes
-            .iter()
-            .map(|node| parse_view_node(node, &mut modifier_stacks, version == "3"))
-            .collect::<Result<_, _>>()?,
+        nodes,
         modifier_stacks,
     };
     DocumentModel::from_records(records)
@@ -954,22 +859,73 @@ mod tests {
     fn all_supported_properties_round_trip_with_stable_text() {
         let model = model();
         let first = encode(&model).unwrap();
+        assert!(first.starts_with("schema_version: \"2\"\n"));
         let decoded = decode(&first).unwrap();
         assert_eq!(decoded.to_records().unwrap(), model.to_records().unwrap());
         assert_eq!(encode(&decoded).unwrap(), first);
         assert!(
             first.find(&sid(10).to_string()).unwrap() < first.rfind(&sid(11).to_string()).unwrap()
         );
+        // 영속 속성 하나 = 한 줄. 묶음 값이나 여러 줄 색 mapping이 없습니다.
+        for line in [
+            "      background: \"display-p3 -0.125 1.25 0.1 0.5\"\n",
+            "      border: \"0.3 display-p3 -0.125 1.25 0.1 0.5\"\n",
+            "      border-bottom-left-radius: \"4\"\n",
+            "      border-bottom-right-radius: \"3\"\n",
+            "      border-top-left-radius: \"1\"\n",
+            "      border-top-right-radius: \"2\"\n",
+            &format!("      clipping: \"path {}\"\n", sid(99)),
+            "      width: \"0.1\"\n",
+        ] {
+            assert!(first.contains(line), "{line}\n{first}");
+        }
+        for bundled in ["size:", "corner_radius:", "space:", "rgba:", "kind: path"] {
+            assert!(!first.contains(bundled), "{bundled}");
+        }
+    }
+
+    #[test]
+    fn legacy_v1_is_read_only_and_redefined_numbers_reject_old_syntax() {
+        let current = encode(&model()).unwrap();
+        // 커밋된 v1 문법: 묶음 Frame 값과 문서 style 표 없음.
+        let legacy = format!(
+            "schema_version: \"1\"\ndocument:\n  id: \"{}\"\n  display_name: Doc\npage:\n  id: \"{}\"\n  display_name: Page\nview:\n  id: \"{}\"\n  display_name: View\n  root_frame: \"{}\"\nnodes:\n  -\n    id: \"{}\"\n    parent: none\n    order_key: \"80\"\n    visible: \"true\"\n    locked: \"false\"\n    display_name: Root\n    kind: frame\n    payload:\n      size: \"10 20\"\n      transform: \"1 0 0 1 0 0\"\n      clipping:\n        kind: frame-bounds\n      background:\n        space: srgb\n        rgba: \"1 0 0 1\"\n      border: none\n      corner_radius: \"1 2 3 4\"\n      layout_mode: none\n",
+            sid(1),
+            sid(2),
+            sid(3),
+            sid(10),
+            sid(10)
+        );
+        let opened = decode(&legacy).unwrap();
+        let rewritten = encode(&opened).unwrap();
+        assert!(rewritten.starts_with("schema_version: \"2\"\n"));
+        assert!(rewritten.contains("      background: \"srgb 1 0 0 1\"\n"));
+        assert!(rewritten.contains("  document_font: none\n"));
+        for rejected in [
+            legacy.replacen("schema_version: \"1\"", "schema_version: \"2\"", 1),
+            current.replacen("schema_version: \"2\"", "schema_version: \"1\"", 1),
+            current.replacen("schema_version: \"2\"", "schema_version: \"3\"", 1),
+            current.replacen(
+                "  document_font: none\n",
+                &format!("  initial_typography_id: \"{}\"\n", sid(6)),
+                1,
+            ),
+        ] {
+            assert!(decode(&rejected).is_err(), "{rejected}");
+        }
     }
 
     #[test]
     fn omitted_unknown_and_invalid_fields_never_default() {
         let source = encode(&model()).unwrap();
         for changed in [
-            source.replacen("schema_version: \"1\"", "schema_version: \"2\"", 1),
-            source.replacen("layout_mode:", "unknown_property:", 1),
+            source.replacen("layout-mode:", "unknown_property:", 1),
             source.replacen("kind: fragment", "kind: shape", 1),
             source.replacen("visible: \"true\"", "visible: yes", 1),
+            source.replacen("      width: \"0.1\"\n", "", 1),
+            source.replacen("width: \"0.1\"", "width: NaN", 1),
+            source.replacen("background: \"display-p3", "background: \"oklch", 1),
+            source.replacen("clipping: \"path", "clipping: \"mask", 1),
             format!("{source}modifier_stacks: []\n"),
         ] {
             assert_ne!(changed, source);
@@ -1032,11 +988,15 @@ mod tests {
             .unwrap();
         model.set_modifier_stack(stack.clone()).unwrap();
         let placed = encode(&model).unwrap();
+        assert!(
+            placed.contains("        translate-x: \"-4.25\"\n        translate-y: \"0\"\n"),
+            "{placed}"
+        );
         assert_eq!(
             decode(&placed).unwrap().to_records().unwrap(),
             model.to_records().unwrap()
         );
-        // 독립 정의에서 공유하는 기존 reader는 View의 새로운 노드 종류를 받지 않습니다.
+        // 독립 정의에서 공유하는 Frame reader는 View의 다른 노드 종류를 받지 않습니다.
         let yaml = load_restricted(&placed).unwrap();
         let value = field(&yaml, "nodes")
             .unwrap()
@@ -1045,12 +1005,13 @@ mod tests {
             .last()
             .unwrap();
         assert!(matches!(
-            parse_node(value, Grammar::Legacy),
+            parse_node(value, Grammar::Current),
             Err(TextSourceError::Unsupported(_))
         ));
         for bad in [
-            placed.replace("position: \"-4.25 0\"", "position: \"NaN 0\""),
-            placed.replace("position:", "matrix:"),
+            placed.replace("translate-x: \"-4.25\"", "translate-x: NaN"),
+            placed.replace("        translate-x: \"-4.25\"\n", ""),
+            placed.replace("translate-x: \"-4.25\"", "position: \"-4.25 0\""),
             placed.replace(&sid(21).to_string(), &sid(11).to_string()),
             placed.replace(&sid(20).to_string(), &StableId::NIL.to_string()),
             placed.replace("placement:", "slot_overrides: []\n      placement:"),

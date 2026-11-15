@@ -1,327 +1,387 @@
-//! 단일 View v3. 문서가 소유하는 기본 문단/문자 0과 명시적으로 등록한 프로젝트 글꼴.
+//! View v2의 문서 style 표(`document_font`).
+//!
+//! 기본 typography resource 하나의 CSS longhand 일곱 개, 기본 글자색, 문단 style 0, 문자 style 0을
+//! 모두 명시합니다(ADR-0061 결정 3). 파일에 없는 값을 버전 번호나 앱 기본값에서 복원하지 않습니다.
+//! 등록 글꼴의 asset record와 face 참조는 텍스트 asset catalog(결정 6)가 생기기 전까지 거부합니다.
 use super::*;
-use crate::fonts::{
-    license::FontLicenseInfo,
-    project_font::ProjectFontRecord,
-    sfnt::{FontFaceNames, FontFileFormat},
+use stellar_core_types::typed_value::TypographyValue;
+use stellar_core_types::typography::{
+    Family, FontSize, FontStyle, LetterSpacing, LineHeight, Typography,
 };
-use stellar_assets::{
-    id::AssetId,
-    media_type::MediaType,
-    record::{AssetRecord, SourceLocation, SourceMetadata},
+use stellar_core_types::value::FiniteF32;
+use stellar_document::text::{
+    LineHeight as ParagraphLineHeight, ParagraphStyle, TextAlignment, TextStyle, WrappingMode,
 };
-use stellar_core_types::{
-    font::{FontFaceRef, FontFileHash, FontSource},
-    typography::Family,
-};
-use stellar_document::text_styles::DocumentFontAsset;
-use stellar_storage::hash::ContentHash;
 
-fn unsupported() -> TextSourceError {
-    TextSourceError::Unsupported(
-        "문서 글꼴은 기본 문단·문자 0 및 명시적으로 등록한 프로젝트 face를 지원합니다".into(),
-    )
+fn unsupported(what: &str) -> TextSourceError {
+    TextSourceError::Unsupported(format!("문서 style 표: {what}"))
 }
 
-pub(super) fn check_text(payload: &TextPayload) -> Result<(), TextSourceError> {
-    if payload.paragraphs().iter().any(|p| p.style != 0)
-        || payload.style_runs().iter().any(|r| r.style != 0)
-    {
-        return Err(unsupported());
-    }
-    Ok(())
-}
-
-pub(super) fn encode(styles: &DocumentTextStyles) -> Result<YamlValue, TextSourceError> {
-    let id = styles.default_typography.ok_or_else(unsupported)?;
-    let typography = styles
-        .typography
-        .get(&id)
-        .ok_or_else(unsupported)?
-        .record()
-        .map_err(|_| unsupported())?;
-    let [family] = typography.families.as_slice() else {
-        return Err(unsupported());
-    };
-    let face = family.face.as_ref().ok_or_else(unsupported)?;
-    let FontSize::Subpixels(size) = typography.size else {
-        return Err(unsupported());
-    };
-    let fonts = styles
-        .fonts
-        .iter()
-        .map(|(hash, entry)| encode_font(*hash, entry))
-        .collect::<Result<_, _>>()?;
-    let value = mapping([
-        ("id", scalar(id)),
-        (
-            "font-family",
-            mapping([
-                ("name", scalar(&family.name)),
-                ("file_hash", scalar(face.file_hash())),
-                ("face_index", scalar(face.face_index())),
-            ]),
-        ),
-        ("font-size", scalar(format!("{}px", f64::from(size) / 64.0))),
-        ("font-weight", scalar(typography.weight.get())),
-        ("font-style", scalar("normal")),
-        (
-            "font-stretch",
-            scalar(format!("{}%", typography.stretch_percent.get())),
-        ),
-        ("line-height", scalar("normal")),
-        ("letter-spacing", scalar("normal")),
-        ("color", color(styles.default_fill.ok_or_else(unsupported)?)),
-        ("project_fonts", YamlValue::Sequence(fonts)),
-    ]);
-    // 재구성한 표 전체를 비교하여 다른 resource/문단/run, 미지원 axis·라이선스나
-    // binary decoder가 건너뛰는 향후 optional field도 유실되지 않게 합니다.
-    if &decode(&value)? != styles {
-        return Err(unsupported());
-    }
-    Ok(value)
-}
-
-fn encode_font(
-    hash: FontFileHash,
-    entry: &DocumentFontAsset,
-) -> Result<YamlValue, TextSourceError> {
-    let font = ProjectFontRecord::decode(&entry.font_record).map_err(invalid)?;
-    let asset = AssetRecord::decode(&entry.asset_record).map_err(invalid)?;
-    if hash != font.file_hash()
-        || asset.content_hash.digest() != hash.sha256_digest()
-        || asset.media_type.as_str() != font.format().media_type()
-    {
-        return Err(invalid("프로젝트 글꼴의 hash 또는 media type 불일치"));
-    }
-    let faces = font
-        .faces()
-        .iter()
-        .map(|names| {
-            let names = [
-                ("family", names.family()),
-                ("subfamily", names.subfamily()),
-                ("postscript", names.postscript()),
-            ];
-            YamlValue::Mapping(
-                names
-                    .into_iter()
-                    .filter_map(|(key, value)| value.map(|v| (scalar(key), scalar(v))))
-                    .collect(),
-            )
-        })
-        .collect();
-    let source = optional(asset.source_metadata.as_ref(), |metadata| {
-        match metadata.location() {
-            SourceLocation::Project { relative_path } => {
-                mapping([("kind", scalar("project")), ("path", scalar(relative_path))])
-            }
-            SourceLocation::External { file_name, origin } => mapping([
-                ("kind", scalar("external")),
-                ("filename", scalar(file_name)),
-                ("origin", scalar(origin)),
-            ]),
-        }
-    });
-    Ok(mapping([
-        ("content_hash", scalar(hash)),
-        ("asset_id", scalar(font.asset_id())),
-        ("media_type", scalar(asset.media_type)),
-        ("byte_size", scalar(asset.size)),
-        ("source", source),
-        ("faces", YamlValue::Sequence(faces)),
-    ]))
-}
-
-fn parse_source(value: &YamlValue) -> Result<SourceMetadata, TextSourceError> {
-    match text(field(value, "kind")?)? {
-        "project" => {
-            fields(value, &["kind", "path"])?;
-            SourceMetadata::project(text(field(value, "path")?)?).map_err(invalid)
-        }
-        "external" => {
-            fields(value, &["kind", "filename", "origin"])?;
-            SourceMetadata::external(
-                text(field(value, "filename")?)?,
-                parse(field(value, "origin")?)?,
-            )
-            .map_err(invalid)
-        }
-        _ => Err(unsupported()),
-    }
-}
-
-fn parse_face(value: &YamlValue) -> Result<FontFaceNames, TextSourceError> {
-    let names = value
-        .as_mapping()
-        .ok_or_else(|| invalid("face 이름 mapping이 필요합니다"))?;
-    for (key, _) in names {
-        if !matches!(text(key)?, "family" | "subfamily" | "postscript") {
-            return Err(unsupported());
-        }
-    }
-    let name = |key| {
-        value
-            .get(key)
-            .map(text)
-            .transpose()
-            .map(|opt| opt.map(str::to_owned))
-    };
-    FontFaceNames::new(name("family")?, name("subfamily")?, name("postscript")?).map_err(invalid)
-}
-
-fn parse_font(value: &YamlValue) -> Result<(ProjectFontRecord, AssetRecord), TextSourceError> {
-    fields(
-        value,
-        &[
-            "content_hash",
-            "asset_id",
-            "media_type",
-            "byte_size",
-            "source",
-            "faces",
-        ],
-    )?;
-    let hash: ContentHash = parse(field(value, "content_hash")?)?;
-    let id: AssetId = parse(field(value, "asset_id")?)?;
-    let format = text(field(value, "media_type")?)?;
-    let format = FontFileFormat::ALL
-        .into_iter()
-        .find(|f| f.media_type() == format)
-        .ok_or_else(unsupported)?;
-    let faces = field(value, "faces")?
-        .as_sequence()
-        .ok_or_else(|| invalid("faces sequence가 필요합니다"))?;
-    let size = parse(field(value, "byte_size")?)?;
-    if id == AssetId::NIL
-        || size == 0
-        || faces.len() > crate::fonts::sfnt::MAX_FACES_PER_FILE as usize
-    {
-        return Err(invalid("프로젝트 글꼴 ID, 크기 또는 face 수 오류"));
-    }
-    let font = ProjectFontRecord::new(
-        id,
-        FontFileHash::from_sha256_digest(*hash.digest()),
-        format,
-        faces.iter().map(parse_face).collect::<Result<_, _>>()?,
-        FontLicenseInfo::default(),
-    )
-    .map_err(invalid)?;
-    let asset = AssetRecord::new(
-        hash,
-        MediaType::new(format.media_type()).map_err(invalid)?,
-        size,
-        parse_optional(field(value, "source")?, parse_source)?,
-    );
-    Ok((font, asset))
+fn px(subpixels: u32) -> String {
+    format!("{}px", f64::from(subpixels) / 64.0)
 }
 
 /// CSS px를 문서의 1/64 px 정수로 정확히 변환합니다. 실수 반올림으로 다른 입력을 허용하지 않습니다.
-fn parse_size(css: &str) -> Result<u32, TextSourceError> {
-    let error = || invalid("font-size는 양의 1/64 px 단위여야 합니다");
+fn parse_px(css: &str) -> Result<u32, TextSourceError> {
+    let error = || invalid("길이는 1/64 px 단위의 비음수 px여야 합니다");
     let px = css.strip_suffix("px").ok_or_else(error)?;
     let (whole, fraction) = px.split_once('.').unwrap_or((px, ""));
     let fraction = fraction.trim_end_matches('0');
-    if !whole.bytes().all(|b| b.is_ascii_digit())
+    if whole.is_empty()
+        || !whole.bytes().all(|b| b.is_ascii_digit())
         || !fraction.bytes().all(|b| b.is_ascii_digit())
         || fraction.len() > 6
     {
         return Err(error());
     }
-    let denominator = 10u32.pow(fraction.len() as u32);
+    let denominator = 10u64.pow(fraction.len() as u32);
     let remainder = if fraction.is_empty() {
         0
     } else {
-        fraction.parse::<u32>().map_err(|_| error())? * 64
+        fraction.parse::<u64>().map_err(|_| error())? * 64
     };
     if remainder % denominator != 0 {
         return Err(error());
     }
     whole
-        .parse::<u32>()
+        .parse::<u64>()
         .ok()
         .and_then(|n| n.checked_mul(64))
         .and_then(|n| n.checked_add(remainder / denominator))
-        .filter(|n| (1..=i32::MAX as u32).contains(n))
+        .and_then(|n| u32::try_from(n).ok())
         .ok_or_else(error)
 }
 
-pub(super) fn decode(value: &YamlValue) -> Result<DocumentTextStyles, TextSourceError> {
+fn number(text: &str) -> Result<FiniteF32, TextSourceError> {
+    let value: f32 = text
+        .parse()
+        .map_err(|_| invalid("숫자 형식이 잘못되었습니다"))?;
+    FiniteF32::new(value).map_err(invalid)
+}
+
+fn letter_spacing(value: LetterSpacing) -> String {
+    match value {
+        LetterSpacing::Normal => "normal".into(),
+        LetterSpacing::Px(v) => format!("{}px", v.get()),
+        LetterSpacing::Em(v) => format!("{}em", v.get()),
+    }
+}
+
+fn parse_letter_spacing(text: &str) -> Result<LetterSpacing, TextSourceError> {
+    if text == "normal" {
+        Ok(LetterSpacing::Normal)
+    } else if let Some(v) = text.strip_suffix("px") {
+        Ok(LetterSpacing::Px(number(v)?))
+    } else if let Some(v) = text.strip_suffix("em") {
+        Ok(LetterSpacing::Em(number(v)?))
+    } else {
+        Err(invalid(
+            "letter-spacing은 normal, px, em 중 하나여야 합니다",
+        ))
+    }
+}
+
+/// font-family 한 줄: 작성자 순서의 큰따옴표 이름 목록. 빈 목록은 `none`입니다.
+fn families(families: &[Family]) -> Result<String, TextSourceError> {
+    if families.is_empty() {
+        return Ok("none".into());
+    }
+    let mut names = Vec::with_capacity(families.len());
+    for family in families {
+        if family.face.is_some() {
+            return Err(unsupported(
+                "고정 face 참조는 텍스트 asset catalog의 글꼴 항목이 필요합니다",
+            ));
+        }
+        names.push(format!(
+            "\"{}\"",
+            family.name.replace('\\', "\\\\").replace('"', "\\\"")
+        ));
+    }
+    Ok(names.join(", "))
+}
+
+fn parse_families(text: &str) -> Result<Vec<Family>, TextSourceError> {
+    if text == "none" {
+        return Ok(Vec::new());
+    }
+    let error = || invalid("font-family는 큰따옴표 이름을 \", \"로 구분해야 합니다");
+    let mut families = Vec::new();
+    let mut chars = text.chars();
+    loop {
+        if chars.next() != Some('"') {
+            return Err(error());
+        }
+        let mut name = String::new();
+        loop {
+            match chars.next().ok_or_else(error)? {
+                '"' => break,
+                '\\' => match chars.next() {
+                    Some(c @ ('\\' | '"')) => name.push(c),
+                    _ => return Err(error()),
+                },
+                c => name.push(c),
+            }
+        }
+        families.push(Family { name, face: None });
+        match (chars.next(), chars.next()) {
+            (None, _) => return Ok(families),
+            (Some(','), Some(' ')) => {}
+            _ => return Err(error()),
+        }
+    }
+}
+
+fn typography(id: StableId, value: &Typography) -> Result<YamlValue, TextSourceError> {
+    Ok(mapping([
+        ("id", scalar(id)),
+        ("font-family", scalar(families(&value.families)?)),
+        (
+            "font-size",
+            scalar(match value.size {
+                FontSize::Medium => "medium".into(),
+                FontSize::Subpixels(n) => px(n),
+            }),
+        ),
+        (
+            "font-stretch",
+            scalar(format!("{}%", value.stretch_percent.get())),
+        ),
+        (
+            "font-style",
+            scalar(match value.style {
+                FontStyle::Normal => "normal".into(),
+                FontStyle::Italic => "italic".into(),
+                FontStyle::Oblique(angle) => format!("oblique {}deg", angle.get()),
+            }),
+        ),
+        ("font-weight", scalar(value.weight.get())),
+        (
+            "letter-spacing",
+            scalar(letter_spacing(value.letter_spacing)),
+        ),
+        (
+            "line-height",
+            scalar(match value.line_height {
+                LineHeight::Normal => "normal".into(),
+                LineHeight::Number(v) => v.get().to_string(),
+                LineHeight::Subpixels(n) => px(n),
+            }),
+        ),
+    ]))
+}
+
+fn parse_typography(value: &YamlValue) -> Result<(StableId, Typography), TextSourceError> {
     fields(
         value,
         &[
             "id",
             "font-family",
             "font-size",
-            "font-weight",
-            "font-style",
             "font-stretch",
-            "line-height",
+            "font-style",
+            "font-weight",
             "letter-spacing",
-            "color",
-            "project_fonts",
+            "line-height",
         ],
     )?;
-    let id = parse(field(value, "id")?)?;
-    let family = field(value, "font-family")?;
-    fields(family, &["name", "file_hash", "face_index"])?;
-    let name = text(field(family, "name")?)?;
-    let hash: FontFileHash = parse(field(family, "file_hash")?)?;
-    let index = parse(field(family, "face_index")?)?;
-    let number = |key, suffix| -> Result<&str, TextSourceError> {
-        text(field(value, key)?)?
-            .strip_suffix(suffix)
-            .ok_or_else(|| invalid(format!("{key} 단위 오류")))
+    let id: StableId = parse(field(value, "id")?)?;
+    if id == StableId::NIL {
+        return Err(invalid("typography resource ID가 비어 있습니다"));
+    }
+    let line = |key| text(field(value, key)?);
+    let size = match line("font-size")? {
+        "medium" => FontSize::Medium,
+        other => FontSize::Subpixels(parse_px(other)?),
     };
-    let size = parse_size(text(field(value, "font-size")?)?)?;
-    for key in ["font-style", "line-height", "letter-spacing"] {
+    let style = match line("font-style")? {
+        "normal" => FontStyle::Normal,
+        "italic" => FontStyle::Italic,
+        other => FontStyle::Oblique(number(
+            other
+                .strip_prefix("oblique ")
+                .and_then(|v| v.strip_suffix("deg"))
+                .ok_or_else(|| invalid("font-style 형식이 잘못되었습니다"))?,
+        )?),
+    };
+    let stretch = line("font-stretch")?
+        .strip_suffix('%')
+        .ok_or_else(|| invalid("font-stretch는 백분율이어야 합니다"))?;
+    let line_height = match line("line-height")? {
+        "normal" => LineHeight::Normal,
+        other if other.ends_with("px") => LineHeight::Subpixels(parse_px(other)?),
+        other => LineHeight::Number(number(other)?),
+    };
+    let record = Typography {
+        families: parse_families(line("font-family")?)?,
+        size,
+        weight: number(line("font-weight")?)?,
+        style,
+        stretch_percent: number(stretch)?,
+        line_height,
+        letter_spacing: parse_letter_spacing(line("letter-spacing")?)?,
+    };
+    record
+        .validate()
+        .map_err(|_| invalid("typography 값이 범위를 벗어났습니다"))?;
+    Ok((id, record))
+}
+
+fn paragraph(style: &ParagraphStyle) -> YamlValue {
+    mapping([
+        (
+            "line-height",
+            scalar(match style.line_height {
+                ParagraphLineHeight::Auto => "auto".into(),
+                ParagraphLineHeight::Multiplier(v) => v.get().to_string(),
+                ParagraphLineHeight::Fixed(v) => format!("{}px", v.get()),
+            }),
+        ),
+        (
+            "text-align",
+            scalar(match style.alignment {
+                TextAlignment::Start => "start",
+                TextAlignment::Center => "center",
+                TextAlignment::End => "end",
+                TextAlignment::Justify => "justify",
+            }),
+        ),
+        ("typography", optional(style.typography, scalar)),
+        (
+            "wrapping",
+            scalar(match style.wrapping {
+                WrappingMode::Wrap => "wrap",
+                WrappingMode::NoWrap => "nowrap",
+            }),
+        ),
+    ])
+}
+
+fn parse_paragraph(value: &YamlValue) -> Result<ParagraphStyle, TextSourceError> {
+    fields(
+        value,
+        &["line-height", "text-align", "typography", "wrapping"],
+    )?;
+    let line_height = match text(field(value, "line-height")?)? {
+        "auto" => ParagraphLineHeight::Auto,
+        other => match other.strip_suffix("px") {
+            Some(fixed) => ParagraphLineHeight::Fixed(number(fixed)?),
+            None => ParagraphLineHeight::Multiplier(number(other)?),
+        },
+    };
+    let style = ParagraphStyle {
+        typography: parse_optional(field(value, "typography")?, parse)?,
+        alignment: match text(field(value, "text-align")?)? {
+            "start" => TextAlignment::Start,
+            "center" => TextAlignment::Center,
+            "end" => TextAlignment::End,
+            "justify" => TextAlignment::Justify,
+            _ => return Err(invalid("text-align 값이 잘못되었습니다")),
+        },
+        line_height,
+        wrapping: match text(field(value, "wrapping")?)? {
+            "wrap" => WrappingMode::Wrap,
+            "nowrap" => WrappingMode::NoWrap,
+            _ => return Err(invalid("wrapping 값이 잘못되었습니다")),
+        },
+    };
+    style.validate().map_err(invalid)?;
+    Ok(style)
+}
+
+fn run(style: &TextStyle) -> Result<YamlValue, TextSourceError> {
+    if !style.features().is_empty() || !style.variations().is_empty() {
+        return Err(unsupported("OpenType feature·variation"));
+    }
+    Ok(mapping([
+        ("color", color_line(style.fill)),
+        ("font-feature-settings", scalar("normal")),
+        ("font-variation-settings", scalar("normal")),
+        (
+            "letter-spacing",
+            optional(style.letter_spacing, |v| scalar(letter_spacing(v))),
+        ),
+        ("typography", optional(style.typography, scalar)),
+    ]))
+}
+
+fn parse_run(value: &YamlValue) -> Result<TextStyle, TextSourceError> {
+    fields(
+        value,
+        &[
+            "color",
+            "font-feature-settings",
+            "font-variation-settings",
+            "letter-spacing",
+            "typography",
+        ],
+    )?;
+    for key in ["font-feature-settings", "font-variation-settings"] {
         if text(field(value, key)?)? != "normal" {
-            return Err(unsupported());
+            return Err(unsupported("OpenType feature·variation"));
         }
     }
-    let typography = Typography {
-        families: vec![Family {
-            name: name.to_owned(),
-            face: Some(FontFaceRef::new(FontSource::Project, hash, index, vec![])),
-        }],
-        size: FontSize::Subpixels(size),
-        weight: FiniteF32::new(parse(field(value, "font-weight")?)?).map_err(invalid)?,
-        style: FontStyle::Normal,
-        stretch_percent: FiniteF32::new(number("font-stretch", "%")?.parse().map_err(invalid)?)
-            .map_err(invalid)?,
-        line_height: LineHeight::Normal,
-        letter_spacing: LetterSpacing::Normal,
-    };
-    let mut styles = v2_text_styles(id);
-    styles.typography.insert(
-        id,
-        TypographyValue::from_record(&typography).map_err(invalid)?,
+    let mut style = TextStyle::new(
+        parse_optional(field(value, "typography")?, parse)?,
+        parse_optional(field(value, "color")?, parse_color_line)?,
+        Vec::new(),
+        Vec::new(),
     );
-    styles.default_fill = Some(parse_color(field(value, "color")?)?);
-    let mut ids = std::collections::BTreeSet::new();
-    for font in field(value, "project_fonts")?
-        .as_sequence()
-        .ok_or_else(|| invalid("project_fonts sequence가 필요합니다"))?
-    {
-        let (font, asset) = parse_font(font)?;
-        if !ids.insert(font.asset_id()) || styles.fonts.contains_key(&font.file_hash()) {
-            return Err(invalid("중복 글꼴 hash 또는 asset ID"));
-        }
-        if hash == font.file_hash()
-            && font.face_names(index).and_then(FontFaceNames::family) != Some(name)
-        {
-            return Err(invalid("font-family가 등록한 face와 일치하지 않습니다"));
-        }
-        styles.fonts.insert(
-            font.file_hash(),
-            DocumentFontAsset {
-                font_record: font.encode().map_err(invalid)?,
-                asset_record: asset.encode().map_err(invalid)?,
-            },
-        );
+    style.letter_spacing = parse_optional(field(value, "letter-spacing")?, |v| {
+        parse_letter_spacing(text(v)?)
+    })?;
+    Ok(style)
+}
+
+/// 표 전체를 다시 읽어 비교하므로 이 블록으로 표현할 수 없는 항목은 저장 전에 거부됩니다.
+pub(super) fn encode(styles: &DocumentTextStyles) -> Result<YamlValue, TextSourceError> {
+    if styles.is_empty() {
+        return Ok(scalar("none"));
     }
-    if !styles.fonts.contains_key(&hash) {
-        return Err(invalid("font-family의 프로젝트 글꼴이 없습니다"));
+    if !styles.fonts.is_empty() {
+        return Err(unsupported(
+            "등록 글꼴의 asset record는 텍스트 asset catalog에 둡니다(ADR-0061 결정 6)",
+        ));
     }
-    Ok(styles)
+    let id = styles
+        .default_typography
+        .ok_or_else(|| unsupported("기본 typography가 없는 표"))?;
+    let (Some(resource), 1) = (styles.typography.get(&id), styles.typography.len()) else {
+        return Err(unsupported("기본 typography 외의 resource"));
+    };
+    let (Some(paragraph_style), 1) = (styles.paragraphs.get(&0), styles.paragraphs.len()) else {
+        return Err(unsupported("문단 style 0 외의 항목"));
+    };
+    let (Some(run_style), 1) = (styles.runs.get(&0), styles.runs.len()) else {
+        return Err(unsupported("문자 style 0 외의 항목"));
+    };
+    let record = resource
+        .record()
+        .map_err(|_| unsupported("해석할 수 없는 typography"))?;
+    let value = mapping([
+        ("color", color_line(styles.default_fill)),
+        ("paragraph", paragraph(paragraph_style)),
+        ("run", run(run_style)?),
+        ("typography", typography(id, &record)?),
+    ]);
+    if &decode(&value)? != styles {
+        return Err(unsupported("한 줄 표현으로 정확히 복원할 수 없는 값"));
+    }
+    Ok(value)
+}
+
+pub(super) fn decode(value: &YamlValue) -> Result<DocumentTextStyles, TextSourceError> {
+    if value.as_scalar() == Some("none") {
+        return Ok(DocumentTextStyles::default());
+    }
+    fields(value, &["color", "paragraph", "run", "typography"])?;
+    let (id, record) = parse_typography(field(value, "typography")?)?;
+    Ok(DocumentTextStyles {
+        default_typography: Some(id),
+        default_fill: parse_optional(field(value, "color")?, parse_color_line)?,
+        typography: [(id, TypographyValue::from_record(&record).map_err(invalid)?)].into(),
+        fonts: Default::default(),
+        paragraphs: [(0, parse_paragraph(field(value, "paragraph")?)?)].into(),
+        runs: [(0, parse_run(field(value, "run")?)?)].into(),
+    })
 }

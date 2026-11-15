@@ -86,73 +86,74 @@ fn fixture() -> DocumentModel {
 }
 
 #[test]
-fn initial_typography_recreates_identical_chunks_and_preserves_v1() {
+fn new_project_style_table_is_explicit_and_reproduces_the_same_bytes_and_chunks() {
+    use stellar_document::text_styles::DocumentTextStyles;
     use stellar_project::document_io::serialize::serialize_document;
 
     let dir = TempDir::new("text-source-typography");
-    let model = fixture();
-    let legacy = dir.path.join("v1.stellar.yaml");
-    text_source::save_new(&legacy, &model).unwrap();
-    let before = std::fs::read_to_string(&legacy).unwrap();
-    assert!(before.starts_with("schema_version: \"1\"\n"));
+    let mut model = fixture();
     let resource = id(2, 101);
-    let modern = dir.path.join("v2.stellar.yaml");
-    let after = before
-        .replacen("schema_version: \"1\"", "schema_version: \"2\"", 1)
-        .replacen(
-            "\npage:",
-            &format!("\n  initial_typography_id: \"{resource}\"\npage:"),
-            1,
-        );
-    std::fs::write(&modern, &after).unwrap();
-    let opened = text_source::open(&modern).unwrap();
-    // 앱 기본값에 의존하지 않고, 기존 v2 원본이 복원한 전체 STTS 표를 고정합니다.
-    assert_eq!(
-        stellar_storage::hash::ContentHash::compute(
-            &opened.model.definition().text_styles.encode()
-        )
-        .to_string(),
-        "sha256:86dbafa6c6cfc9e3de5a4b7c0d4aeaff6876f3318f0a0e7aa032443aca841b73",
+    // 새 프로젝트가 만드는 표(CSS initial typography, 문단·문자 0)를 그대로 씁니다.
+    model.replace_text_styles(DocumentTextStyles::initial(resource));
+    let path = dir.path.join("view.stellar.yaml");
+    let hash = text_source::save_new(&path, &model).unwrap();
+    let source = std::fs::read_to_string(&path).unwrap();
+    assert!(source.starts_with("schema_version: \"2\"\n"));
+    // 숨은 상수 표 없이 문단 0·문자 0과 typography longhand를 모두 명시합니다.
+    let block = format!(
+        "  document_font:\n    color: none\n    paragraph:\n      line-height: auto\n      text-align: start\n      typography: none\n      wrapping: wrap\n    run:\n      color: none\n      font-feature-settings: normal\n      font-variation-settings: normal\n      letter-spacing: none\n      typography: none\n    typography:\n      id: \"{resource}\"\n      font-family: none\n      font-size: medium\n      font-stretch: \"100%\"\n      font-style: normal\n      font-weight: \"400\"\n      letter-spacing: normal\n      line-height: normal\n"
     );
-    let copy = dir.path.join("copy.stellar.yaml");
-    let hash = text_source::save_new(&copy, &opened.model).unwrap();
-    assert_eq!(std::fs::read_to_string(&copy).unwrap(), after);
-    let copied = text_source::open(&copy).unwrap();
+    assert!(source.contains(&block), "{source}");
+    // export → check → export: 같은 bytes와 같은 chunk.
+    let opened = text_source::open(&path).unwrap();
     assert_eq!(
         serialize_document(&opened.model).unwrap(),
-        serialize_document(&copied.model).unwrap()
+        serialize_document(&model).unwrap()
     );
-    assert_eq!(
-        text_source::save(&modern, &opened.model, hash).unwrap(),
-        hash
-    );
-    assert_eq!(std::fs::read_to_string(&modern).unwrap(), after);
+    let copy = dir.path.join("copy.stellar.yaml");
+    assert_eq!(text_source::save_new(&copy, &opened.model).unwrap(), hash);
+    assert_eq!(std::fs::read_to_string(&copy).unwrap(), source);
+    assert_eq!(text_source::save(&path, &opened.model, hash).unwrap(), hash);
 
+    // 같은 번호를 재정의하기 전의 문법과 잘못된 표는 열지 않고 원본을 보존합니다.
+    let old_v2 = source.replacen(
+        &block,
+        &format!("  initial_typography_id: \"{resource}\"\n"),
+        1,
+    );
     for wrong in [
-        after.replacen("schema_version: \"2\"", "schema_version: \"1\"", 1),
-        before.replacen("schema_version: \"1\"", "schema_version: \"2\"", 1),
-        after.replace(&resource.to_string(), "invalid-id"),
-        after.replace(&resource.to_string(), &model.document_id().to_string()),
-        after.replace(
+        old_v2,
+        source.replacen("schema_version: \"2\"", "schema_version: \"3\"", 1),
+        source.replacen("schema_version: \"2\"", "schema_version: \"1\"", 1),
+        source.replace(&resource.to_string(), "invalid-id"),
+        source.replace(
             &resource.to_string(),
             &stellar_core_types::ids::StableId::NIL.to_string(),
         ),
-        after.replace("initial_typography_id:", "unknown_typography_id:"),
+        source.replacen("      text-align: start\n", "", 1),
+        source.replacen("font-size: medium", "font-size: \"16.001px\"", 1),
+        source.replacen(
+            "font-feature-settings: normal",
+            "font-feature-settings: \"liga\"",
+            1,
+        ),
     ] {
-        assert_ne!(after, wrong);
-        std::fs::write(&modern, &wrong).unwrap();
-        assert!(text_source::open(&modern).is_err());
-        assert!(text_source::save(&modern, &model, hash).is_err());
-        assert_eq!(std::fs::read_to_string(&modern).unwrap(), wrong);
+        assert_ne!(source, wrong);
+        std::fs::write(&path, &wrong).unwrap();
+        assert!(text_source::open(&path).is_err(), "{wrong}");
+        assert!(text_source::save(&path, &model, hash).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), wrong);
     }
 }
 
 #[test]
-fn explicit_resources_and_modified_tables_never_fall_back_to_initial() {
+fn representable_style_values_round_trip_and_other_tables_are_rejected() {
     use stellar_core_types::font::FontFileHash;
     use stellar_core_types::typed_value::TypographyValue;
-    use stellar_core_types::typography::FontSize;
+    use stellar_core_types::typography::{Family, FontSize, LetterSpacing};
+    use stellar_core_types::value::FiniteF32;
     use stellar_document::text_styles::{DocumentFontAsset, DocumentTextStyles};
+    use stellar_project::document_io::serialize::serialize_document;
     let dir = TempDir::new("text-source-typography");
     let path = dir.path.join("view.stellar.yaml");
     let mut model = fixture();
@@ -161,22 +162,63 @@ fn explicit_resources_and_modified_tables_never_fall_back_to_initial() {
     model.replace_text_styles(initial.clone());
     let expected = text_source::save_new(&path, &model).unwrap();
     let bytes = std::fs::read(&path).unwrap();
-    for change in 0..7 {
+
+    // 한 줄 표현으로 정확히 왕복하는 값.
+    let mut styled = initial.clone();
+    styled.default_fill = Some(Color::new(ColorSpace::DisplayP3, 1.125, 0., -0.25, 0.5).unwrap());
+    let mut typography = styled.typography[&resource].record().unwrap();
+    typography.size = FontSize::Subpixels(24 * 64 + 1);
+    typography.letter_spacing = LetterSpacing::Em(FiniteF32::new(-0.05).unwrap());
+    typography.families = vec![
+        Family {
+            name: "Pretendard \"Variable\"".into(),
+            face: None,
+        },
+        Family {
+            name: "system-ui".into(),
+            face: None,
+        },
+    ];
+    styled
+        .typography
+        .insert(resource, TypographyValue::from_record(&typography).unwrap());
+    styled.runs.get_mut(&0).unwrap().letter_spacing = Some(LetterSpacing::Normal);
+    let mut round_trip = fixture();
+    round_trip.replace_text_styles(styled);
+    let styled_path = dir.path.join("styled.stellar.yaml");
+    text_source::save_new(&styled_path, &round_trip).unwrap();
+    let styled_source = std::fs::read_to_string(&styled_path).unwrap();
+    for line in [
+        "    color: \"display-p3 1.125 0 -0.25 0.5\"\n",
+        "      font-family: \"\\\"Pretendard \\\\\\\"Variable\\\\\\\"\\\", \\\"system-ui\\\"\"\n",
+        "      font-size: \"24.015625px\"\n",
+        "      letter-spacing: \"-0.05em\"\n",
+        "      letter-spacing: normal\n",
+    ] {
+        assert!(styled_source.contains(line), "{line}\n{styled_source}");
+    }
+    assert_eq!(
+        serialize_document(&text_source::open(&styled_path).unwrap().model).unwrap(),
+        serialize_document(&round_trip).unwrap()
+    );
+
+    // 이 블록으로 표현할 수 없는 표는 기존 원본을 덮어쓰지 않고 거부합니다.
+    for change in 0..6 {
         let mut changed = initial.clone();
         match change {
-            0 => changed.default_fill = Some(Color::new(ColorSpace::Srgb, 1., 0., 0., 1.).unwrap()),
-            1 => {
+            0 => {
                 changed.paragraphs.insert(1, changed.paragraphs[&0]);
             }
-            2 => {
+            1 => {
                 changed.runs.insert(1, changed.runs[&0].clone());
             }
-            3 => {
+            2 => {
                 changed
                     .typography
                     .insert(id(2, 102), changed.typography[&resource].clone());
             }
-            4 => {
+            3 => {
+                // 등록 글꼴 asset record는 텍스트 asset catalog(ADR-0061 결정 6)에 둡니다.
                 changed.fonts.insert(
                     FontFileHash::from_sha256_digest([1; 32]),
                     DocumentFontAsset {
@@ -185,56 +227,46 @@ fn explicit_resources_and_modified_tables_never_fall_back_to_initial() {
                     },
                 );
             }
-            5 => {
+            4 => {
                 changed.default_typography = None;
             }
             _ => {
                 let mut typography = changed.typography[&resource].record().unwrap();
-                typography.size = FontSize::Subpixels(16 * 64);
+                typography.families = vec![Family {
+                    name: "Example".into(),
+                    face: Some(stellar_core_types::font::FontFaceRef::new(
+                        stellar_core_types::font::FontSource::Project,
+                        FontFileHash::from_sha256_digest([2; 32]),
+                        0,
+                        vec![],
+                    )),
+                }];
                 changed
                     .typography
                     .insert(resource, TypographyValue::from_record(&typography).unwrap());
             }
         }
         model.replace_text_styles(changed);
-        assert!(matches!(
-            text_source::save(&path, &model, expected),
-            Err(TextSourceError::Unsupported(_))
-        ));
+        assert!(
+            matches!(
+                text_source::save(&path, &model, expected),
+                Err(TextSourceError::Unsupported(_))
+            ),
+            "change {change}"
+        );
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
     }
 }
 
 #[test]
-fn placed_text_and_registered_document_font_recreate_the_same_chunks() {
+fn placed_text_recreates_the_same_chunks() {
     use stellar_document::modifier::{ModifierId, ModifierKind, ModifierPayload, ModifierStack};
     use stellar_document::text_styles::DocumentTextStyles;
     use stellar_project::document_io::serialize::serialize_document;
-    use stellar_project::fonts::document::{
-        import_default_font, load_document_face, verify_document_font_assets, DocumentFontSelection,
-    };
 
-    let project = TempDir::new("text-source-font");
-    let user_data = TempDir::new("text-source-font-user");
-    let font = user_data.path.join("face.ttf");
-    std::fs::write(&font, stellar_text::test_support::outline_test_font()).unwrap();
-    let resource = id(2, 101);
-    let selection = DocumentFontSelection {
-        file: font,
-        index: 0,
-        size: 24 * 64 + 1,
-        fill: Color::new(ColorSpace::DisplayP3, 1.125, 0., -0.25, 0.5).unwrap(),
-    };
-    let imported = import_default_font(
-        &project.path,
-        &user_data.path,
-        &DocumentTextStyles::initial(resource),
-        [resource, id(2, 102)],
-        &selection,
-    )
-    .unwrap();
+    let dir = TempDir::new("text-source-placed-text");
     let mut model = fixture();
-    model.replace_text_styles(imported.styles);
+    model.replace_text_styles(DocumentTextStyles::initial(id(2, 101)));
     let node = id(1, 8);
     model
         .set_payload(
@@ -262,54 +294,20 @@ fn placed_text_and_registered_document_font_recreate_the_same_chunks() {
         )
         .unwrap();
     model.set_modifier_stack(stack).unwrap();
-    let path = project.path.join("submit.stellar.yaml");
+    let path = dir.path.join("submit.stellar.yaml");
     let hash = text_source::save_new(&path, &model).unwrap();
     let source = std::fs::read_to_string(&path).unwrap();
-    assert!(source.starts_with("schema_version: \"3\""));
-    assert!(source.contains("24.015625px") && source.contains("-12.25 8.5"));
+    assert!(source.contains("translate-x: \"-12.25\"\n        translate-y: \"8.5\"\n"));
     let loaded = text_source::open(&path).unwrap().model;
     assert_eq!(
         serialize_document(&model).unwrap(),
         serialize_document(&loaded).unwrap()
     );
-    load_document_face(
-        &project.path,
-        &loaded.definition().text_styles,
-        &imported.reference,
-    )
-    .unwrap();
     assert_eq!(text_source::save(&path, &loaded, hash).unwrap(), hash);
-
-    let styles = &loaded.definition().text_styles;
-    verify_document_font_assets(&project.path, styles).unwrap();
-    let store = stellar_assets::store::AssetStore::new(&project.path);
-    let record = stellar_assets::record::AssetRecord::decode(
-        &styles.fonts[&imported.reference.file_hash()].asset_record,
-    )
-    .unwrap();
-    let object = store
-        .locate_content(&record.content_hash, record.size)
-        .unwrap()
-        .unwrap();
-    let asset_path = store.content_path(&object);
-    let mut bytes = std::fs::read(&asset_path).unwrap();
-    bytes[0] ^= 1;
-    std::fs::write(&asset_path, bytes).unwrap();
-    assert!(verify_document_font_assets(&project.path, styles).is_err());
-    std::fs::remove_file(asset_path).unwrap();
-    assert!(verify_document_font_assets(&project.path, styles).is_err());
-    assert!(text_source::open(&path).is_ok());
-
     for (before, after) in [
-        ("24.015625px", "24.01562500000000001px"),
-        ("face_index: \"0\"", "face_index: \"1\""),
-        ("file_hash:", "unknown_hash:"),
-        ("style: \"0\"", "style: \"9\""),
-        ("font-style: normal", "font-style: italic"),
         ("placement:", "lost_placement:"),
-        ("font/ttf", "image/png"),
-        ("kind: external", "kind: project"),
-        ("schema_version: \"3\"", "schema_version: \"2\""),
+        ("translate-y: \"8.5\"", "translate-y: \"8.5 0\""),
+        ("style: \"0\"", "style: \"-1\""),
     ] {
         let bad = source.replacen(before, after, 1);
         assert_ne!(bad, source);
@@ -627,18 +625,16 @@ fn ellipse_directed_lines_and_polygon_preserve_geometry_and_modifier_chunk_bytes
     assert_eq!(std::fs::read_to_string(second).unwrap(), source);
     for (old, new) in [
         ("kind: ellipse", "kind: future-shape"),
-        ("origin:", "future-origin:"),
-        ("end:", "future-end:"),
+        ("origin-x:", "future-origin:"),
+        ("end-x:", "future-end:"),
         ("cap: square", "cap: future"),
         ("sides: \"9\"", "sides: \"1001\""),
         ("rotation_degrees: \"-32.5\"", "rotation_degrees: NaN"),
         ("corner_radius: \"19.75\"", "corner_radius: \"-1\""),
         ("width: \"2.375\"", "width: \"-1\""),
         ("kind: stroke", "kind: future-stroke"),
-        (
-            "color:\n              space:",
-            "future-color:\n              space:",
-        ),
+        ("color: \"display-p3", "color: \"oklch"),
+        ("matrix:", "future-matrix:"),
     ] {
         let malformed = source.replacen(old, new, 1);
         assert_ne!(malformed, source, "{old}");

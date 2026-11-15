@@ -1,64 +1,82 @@
-//! 단일 View의 도형 geometry와 순서 있는 Transform·Fill·Stroke 원본을 보존합니다.
+//! View v2의 도형 geometry와 순서 있는 Transform·Fill·Stroke 원본을 보존합니다.
+//! 기하 속성과 modifier 파라미터는 값 하나를 키 하나·한 줄로 씁니다(ADR-0061 결정 2).
 
 use super::*;
-use stellar_core_types::value::{Angle, Rect, Vec2};
+use stellar_core_types::value::{Angle, FiniteF32, Rect, Vec2};
 use stellar_document::shape::{
     EllipseParams, LineCap, LineParams, PolygonParams, RectangleParams, ShapeGeometry,
 };
+
+fn modifier(entry: &ModifierEntry) -> Result<YamlValue, TextSourceError> {
+    let common = |kind: &str| {
+        vec![
+            (scalar("id"), scalar(entry.id.stable_id())),
+            (scalar("order_key"), order_key(&entry.order)),
+            (scalar("enabled"), scalar(entry.enabled)),
+            (scalar("kind"), scalar(kind)),
+        ]
+    };
+    let fields = match &entry.payload {
+        ModifierPayload::Transform(transform) => {
+            let (a, b, c, d, x, y) = transform.components();
+            let mut fields = common("transform");
+            fields.push((scalar("matrix"), floats(&[a, b, c, d, x, y])));
+            fields
+        }
+        ModifierPayload::Fill { color: fill } => {
+            let mut fields = common("fill");
+            fields.push((scalar("color"), color_line(Some(*fill))));
+            fields
+        }
+        ModifierPayload::Stroke { color: ink, width } => {
+            let mut fields = common("stroke");
+            fields.push((scalar("color"), color_line(Some(*ink))));
+            fields.push((scalar("width"), scalar(width.get())));
+            fields
+        }
+        _ => {
+            return Err(TextSourceError::Unsupported(format!(
+                "Shape modifier: {:?}",
+                entry.kind
+            )))
+        }
+    };
+    Ok(YamlValue::Mapping(fields))
+}
 
 pub(super) fn encode(
     geometry: &ShapeGeometry,
     stack: Option<&ModifierStack>,
 ) -> Result<YamlValue, TextSourceError> {
-    let mut modifiers = Vec::new();
-    for entry in stack.into_iter().flat_map(ModifierStack::entries) {
-        let (kind, value) = match &entry.payload {
-            ModifierPayload::Transform(transform) => {
-                let (a, b, c, d, x, y) = transform.components();
-                ("transform", floats(&[a, b, c, d, x, y]))
-            }
-            ModifierPayload::Fill { color: fill } => ("fill", color(*fill)),
-            ModifierPayload::Stroke { color: ink, width } => (
-                "stroke",
-                mapping([("color", color(*ink)), ("width", scalar(width.get()))]),
-            ),
-            _ => {
-                return Err(TextSourceError::Unsupported(format!(
-                    "Shape modifier: {:?}",
-                    entry.kind
-                )))
-            }
-        };
-        modifiers.push(mapping([
-            ("id", scalar(entry.id.stable_id())),
-            ("order_key", order_key(&entry.order)),
-            ("enabled", scalar(entry.enabled)),
-            ("kind", scalar(kind)),
-            ("value", value),
-        ]));
-    }
-    let modifiers = ("modifiers", YamlValue::Sequence(modifiers));
+    let modifiers = (
+        "modifiers",
+        YamlValue::Sequence(
+            stack
+                .into_iter()
+                .flat_map(ModifierStack::entries)
+                .map(modifier)
+                .collect::<Result<_, _>>()?,
+        ),
+    );
     Ok(match geometry {
         ShapeGeometry::Rectangle(rectangle) => {
             let (tl, tr, br, bl) = rectangle.corner_radius.components();
             mapping([
-                ("width", scalar(rectangle.size.width())),
-                ("height", scalar(rectangle.size.height())),
+                ("border-bottom-left-radius", scalar(bl)),
+                ("border-bottom-right-radius", scalar(br)),
                 ("border-top-left-radius", scalar(tl)),
                 ("border-top-right-radius", scalar(tr)),
-                ("border-bottom-right-radius", scalar(br)),
-                ("border-bottom-left-radius", scalar(bl)),
+                ("height", scalar(rectangle.size.height())),
+                ("width", scalar(rectangle.size.width())),
                 modifiers,
             ])
         }
         ShapeGeometry::Ellipse(ellipse) => {
             EllipseParams::new(ellipse.bounds).map_err(invalid)?;
-            let [origin, width, height] = bounds_fields(ellipse.bounds);
-            mapping([origin, width, height, modifiers])
+            let [height, x, y, width] = bounds_fields(ellipse.bounds);
+            mapping([height, x, y, width, modifiers])
         }
         ShapeGeometry::Line(line) => mapping([
-            ("start", point(line.start)),
-            ("end", point(line.end)),
             (
                 "cap",
                 scalar(match line.cap {
@@ -67,38 +85,79 @@ pub(super) fn encode(
                     LineCap::Square => "square",
                 }),
             ),
+            ("end-x", scalar(line.end.x())),
+            ("end-y", scalar(line.end.y())),
+            ("start-x", scalar(line.start.x())),
+            ("start-y", scalar(line.start.y())),
             modifiers,
         ]),
         ShapeGeometry::Polygon(polygon) => {
-            let [origin, width, height] = bounds_fields(polygon.bounds());
+            let [height, x, y, width] = bounds_fields(polygon.bounds());
             mapping([
-                origin,
-                width,
-                height,
-                ("sides", scalar(polygon.sides())),
-                ("rotation_degrees", scalar(polygon.rotation_degrees())),
                 ("corner_radius", scalar(polygon.corner_radius())),
+                height,
+                x,
+                y,
+                ("rotation_degrees", scalar(polygon.rotation_degrees())),
+                ("sides", scalar(polygon.sides())),
+                width,
                 modifiers,
             ])
         }
     })
 }
 
-fn point(value: Vec2) -> YamlValue {
-    floats(&[value.x(), value.y()])
-}
-
-fn bounds_fields(bounds: Rect) -> [(&'static str, YamlValue); 3] {
+/// 로컬 경계의 크기와 왼쪽 위 좌표(이름 오름차순).
+fn bounds_fields(bounds: Rect) -> [(&'static str, YamlValue); 4] {
     [
-        ("origin", point(bounds.origin())),
-        ("width", scalar(bounds.size().width())),
         ("height", scalar(bounds.size().height())),
+        ("origin-x", scalar(bounds.origin().x())),
+        ("origin-y", scalar(bounds.origin().y())),
+        ("width", scalar(bounds.size().width())),
     ]
 }
 
-fn parse_point(value: &YamlValue) -> Result<Vec2, TextSourceError> {
-    let [x, y] = parse_floats(value)?;
-    Vec2::new(x, y).map_err(invalid)
+fn parse_modifier(entry: &YamlValue) -> Result<ModifierEntry, TextSourceError> {
+    const COMMON: [&str; 4] = ["id", "order_key", "enabled", "kind"];
+    let with = |params: &[&'static str]| -> Vec<&'static str> {
+        COMMON
+            .iter()
+            .copied()
+            .chain(params.iter().copied())
+            .collect()
+    };
+    let payload = match text(field(entry, "kind")?)? {
+        "transform" => {
+            fields(entry, &with(&["matrix"]))?;
+            let [a, b, c, d, tx, ty] = parse_floats(field(entry, "matrix")?)?;
+            ModifierPayload::Transform(Transform2D::new(a, b, c, d, tx, ty).map_err(invalid)?)
+        }
+        "fill" => {
+            fields(entry, &with(&["color"]))?;
+            ModifierPayload::Fill {
+                color: parse_color_line(field(entry, "color")?)?,
+            }
+        }
+        "stroke" => {
+            fields(entry, &with(&["color", "width"]))?;
+            ModifierPayload::Stroke {
+                color: parse_color_line(field(entry, "color")?)?,
+                width: FiniteF32::new(finite(field(entry, "width")?)?).map_err(invalid)?,
+            }
+        }
+        kind => {
+            return Err(TextSourceError::Unsupported(format!(
+                "Shape modifier: {kind}"
+            )))
+        }
+    };
+    Ok(ModifierEntry {
+        id: ModifierId::new(parse(field(entry, "id")?)?),
+        order: parse_order_key(field(entry, "order_key")?)?,
+        enabled: parse(field(entry, "enabled")?)?,
+        kind: payload.kind(),
+        payload,
+    })
 }
 
 pub(super) fn decode(
@@ -107,22 +166,25 @@ pub(super) fn decode(
     stacks: &mut Vec<ModifierStack>,
 ) -> Result<NodeRecord, TextSourceError> {
     let value = field(node, "payload")?;
-    let length = |key| parse::<f32>(field(value, key)?);
+    let length = |key| finite(field(value, key)?);
     let size = || Size2::new(length("width")?, length("height")?).map_err(invalid);
+    let point = |x, y| -> Result<Vec2, TextSourceError> {
+        Vec2::new(length(x)?, length(y)?).map_err(invalid)
+    };
     let bounds = || -> Result<Rect, TextSourceError> {
-        Ok(Rect::new(parse_point(field(value, "origin")?)?, size()?))
+        Ok(Rect::new(point("origin-x", "origin-y")?, size()?))
     };
     let geometry = match kind {
         ShapeKind::Rectangle => {
             fields(
                 value,
                 &[
-                    "width",
-                    "height",
+                    "border-bottom-left-radius",
+                    "border-bottom-right-radius",
                     "border-top-left-radius",
                     "border-top-right-radius",
-                    "border-bottom-right-radius",
-                    "border-bottom-left-radius",
+                    "height",
+                    "width",
                     "modifiers",
                 ],
             )?;
@@ -138,14 +200,20 @@ pub(super) fn decode(
             })
         }
         ShapeKind::Ellipse => {
-            fields(value, &["origin", "width", "height", "modifiers"])?;
+            fields(
+                value,
+                &["height", "origin-x", "origin-y", "width", "modifiers"],
+            )?;
             ShapeGeometry::Ellipse(EllipseParams::new(bounds()?).map_err(invalid)?)
         }
         ShapeKind::Line => {
-            fields(value, &["start", "end", "cap", "modifiers"])?;
+            fields(
+                value,
+                &["cap", "end-x", "end-y", "start-x", "start-y", "modifiers"],
+            )?;
             ShapeGeometry::Line(LineParams {
-                start: parse_point(field(value, "start")?)?,
-                end: parse_point(field(value, "end")?)?,
+                start: point("start-x", "start-y")?,
+                end: point("end-x", "end-y")?,
                 cap: match text(field(value, "cap")?)? {
                     "butt" => LineCap::Butt,
                     "round" => LineCap::Round,
@@ -160,12 +228,13 @@ pub(super) fn decode(
             fields(
                 value,
                 &[
-                    "origin",
-                    "width",
-                    "height",
-                    "sides",
-                    "rotation_degrees",
                     "corner_radius",
+                    "height",
+                    "origin-x",
+                    "origin-y",
+                    "rotation_degrees",
+                    "sides",
+                    "width",
                     "modifiers",
                 ],
             )?;
@@ -186,38 +255,7 @@ pub(super) fn decode(
         .ok_or_else(|| invalid("도형 modifiers는 sequence여야 합니다"))?;
     let mut stack = ModifierStack::new(record.id);
     for entry in entries {
-        fields(entry, &["id", "order_key", "enabled", "kind", "value"])?;
-        let value = field(entry, "value")?;
-        let payload = match text(field(entry, "kind")?)? {
-            "transform" => {
-                let [a, b, c, d, tx, ty] = parse_floats(value)?;
-                ModifierPayload::Transform(Transform2D::new(a, b, c, d, tx, ty).map_err(invalid)?)
-            }
-            "fill" => ModifierPayload::Fill {
-                color: parse_color(value)?,
-            },
-            "stroke" => {
-                fields(value, &["color", "width"])?;
-                ModifierPayload::Stroke {
-                    color: parse_color(field(value, "color")?)?,
-                    width: FiniteF32::new(parse(field(value, "width")?)?).map_err(invalid)?,
-                }
-            }
-            kind => {
-                return Err(TextSourceError::Unsupported(format!(
-                    "Shape modifier: {kind}"
-                )))
-            }
-        };
-        stack
-            .insert(ModifierEntry {
-                id: ModifierId::new(parse(field(entry, "id")?)?),
-                order: parse_order_key(field(entry, "order_key")?)?,
-                enabled: parse(field(entry, "enabled")?)?,
-                kind: payload.kind(),
-                payload,
-            })
-            .map_err(invalid)?;
+        stack.insert(parse_modifier(entry)?).map_err(invalid)?;
     }
     if !entries.is_empty() {
         stacks.push(stack);

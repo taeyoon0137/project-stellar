@@ -325,17 +325,12 @@ impl ComponentSource {
                     ("root", scalar(self.definition.root.id())),
                 ]),
             ),
-            (scalar("root_node"), node(&self.root, Grammar::Current)?),
+            (scalar("root_node"), node(&self.root)?),
         ];
         if !self.children.is_empty() {
             fields.push((
                 scalar("children"),
-                YamlValue::Sequence(
-                    self.children
-                        .values()
-                        .map(|record| node(record, Grammar::Current))
-                        .collect::<Result<_, _>>()?,
-                ),
+                YamlValue::Sequence(self.children.values().map(node).collect::<Result<_, _>>()?),
             ));
         }
         write_canonical_checked(&YamlValue::Mapping(fields)).map_err(invalid)

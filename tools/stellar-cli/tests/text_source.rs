@@ -207,7 +207,7 @@ fn git(root: &Path, args: &[&str]) -> String {
 }
 
 #[test]
-fn v2_source_with_initial_typography_reopens_from_a_source_only_git_clone() {
+fn v2_source_with_new_project_styles_reopens_from_a_source_only_git_clone() {
     let mut model = text_document();
     let resource = StableId::new_v7(991, 0, 77);
     model.replace_text_styles(stellar_ops::test_support::DocumentTextStyles::initial(
@@ -216,7 +216,9 @@ fn v2_source_with_initial_typography_reopens_from_a_source_only_git_clone() {
     let (project, source, path) = exported("text-source-v2-git", model);
     let original = file_digest(&project.path);
     let text = std::fs::read_to_string(&path).unwrap();
-    assert!(text.contains(&format!("  initial_typography_id: \"{resource}\"\n")));
+    assert!(text.starts_with("schema_version: \"2\"\n"));
+    assert!(text.contains("  document_font:\n"));
+    assert!(text.contains(&format!("    typography:\n      id: \"{resource}\"\n")));
     let annotated = format!("# collaborator comment\n{text}");
     std::fs::write(&path, &annotated).unwrap();
     let checked = run(&["text-source", "check", path.to_str().unwrap()], 0);
