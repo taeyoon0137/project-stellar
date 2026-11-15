@@ -630,3 +630,16 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
   창에서 빠지는 한계도 함께 없앱니다. 이번 검토에서는 `crates/storage` `ChunkStore::read_chunk_limited`를 다시
   비공개로 되돌리고(U127이 이 ADR 없이 공개함) 공개 `read_chunk` 뒤 길이를 확인합니다.
 
+### 도형 경로 — `stellar_canvas_shape_path`, flags bit6
+
+- Ellipse·Line·Polygon처럼 사각형이 아닌 도형 행은 flags bit6(경로 Shape)이고, 경로를 표시 목록 행에 넣지 않고 따로
+  조회합니다. `stellar_canvas_shape_path(handle, session, query, rows, capacity, count, cap_flags)`는
+  `StellarCanvasTextQuery`(view\[16\], node\[16\], revision u64, row u32)가 마지막 게시 snapshot의 같은 View·revision·
+  행·node를 가리킬 때만 그 행의 local 경로를 복사합니다. 맞지 않거나 도형 경로가 없으면 `STELLAR_NO_ERROR`(개수 0),
+  열려 있지 않은 창은 `STELLAR_INVALID_ARGUMENT`입니다. document thread를 기다리지 않습니다.
+- 요소는 `StellarCanvasTextElement`(op u32, points f32×6)입니다. op 1·2·3·4는 Move·Line·Cubic·Close이고, op 5는 길이
+  0인 Line의 cap을 그릴 local 사각형(x, y, w, h)입니다. `cap_flags`에는 stroke cap(0 butt, 1 round, 2 square)을 씁니다.
+  `rows`가 null이면 `count`만 쓰고, `capacity`가 모자라면 `STELLAR_BUFFER_TOO_SMALL`입니다.
+- 경로는 코어 SceneBuilder가 확정한 값이며 셸은 그대로 그립니다. 이 함수와 bit6은 위 임시 CG 경로의 일부라 Metal 이관 때
+  다시 정합니다.
+
