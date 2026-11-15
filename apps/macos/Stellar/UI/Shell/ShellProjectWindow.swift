@@ -277,7 +277,7 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
                 id: ShellProjectCommandID.revealInFinder,
                 title: String(localized: "Show in Finder", comment: "Title document menu item")
             ),
-            Self.trustAction(trusted: false),
+            Self.trustAction(trusted: false, enabled: !isCheckingTrust),
             ShellActionDescriptor(
                 id: ShellProjectCommandID.closeProject,
                 title: String(localized: "Close Project", comment: "Title document menu item")
@@ -286,12 +286,29 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
         publish(next)
     }
 
-    /// 제목 문서 메뉴의 신뢰 항목. 제한 모드면 신뢰 부여, 신뢰했으면 신뢰 철회입니다(UX 명세 3.3). 늘 한 항목이 있습니다.
-    static func trustAction(trusted: Bool) -> ShellActionDescriptor {
+    /// 제목 문서 메뉴의 신뢰 항목. 제한 모드면 신뢰 부여, 신뢰했으면 신뢰 철회입니다(UX 명세 3.3). 늘 한 항목이 있고,
+    /// 신뢰 확인 요청 중에는 비활성입니다.
+    static func trustAction(trusted: Bool, enabled: Bool = true) -> ShellActionDescriptor {
         trusted
-            ? ShellActionDescriptor(id: ShellProjectCommandID.revokeTrust, title: String(localized: "Revoke Project Trust"))
+            ? ShellActionDescriptor(id: ShellProjectCommandID.revokeTrust, title: String(localized: "Revoke Project Trust"),
+                                    isEnabled: enabled)
             : ShellActionDescriptor(id: ShellProjectCommandID.trustProject,
-                                    title: String(localized: "Trust Project…", comment: "Title document menu item"))
+                                    title: String(localized: "Trust Project…", comment: "Title document menu item"),
+                                    isEnabled: enabled)
+    }
+
+    /// 신뢰 확인 요청 중인지. 요청 중에는 신뢰 항목을 누를 수 없으므로 비활성으로 보입니다.
+    private(set) var isCheckingTrust = false
+
+    func setTrustChecking(_ checking: Bool) {
+        guard checking != isCheckingTrust else { return }
+        isCheckingTrust = checking
+        guard let index = currentSnapshot.moreActions.firstIndex(where: {
+            $0.id == ShellProjectCommandID.trustProject || $0.id == ShellProjectCommandID.revokeTrust
+        }) else { return }
+        var next = currentSnapshot
+        next.moreActions[index].isEnabled = !checking
+        publish(next)
     }
 
     func updateTrust(_ trusted: Bool) {
@@ -301,7 +318,7 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
         if let index = next.moreActions.firstIndex(where: {
             $0.id == ShellProjectCommandID.trustProject || $0.id == ShellProjectCommandID.revokeTrust
         }) {
-            next.moreActions[index] = Self.trustAction(trusted: trusted)
+            next.moreActions[index] = Self.trustAction(trusted: trusted, enabled: !isCheckingTrust)
         }
         publish(next)
     }
@@ -594,6 +611,7 @@ final class ShellProjectWindow {
                 }
             }
         }
+        gitSource.trustCheckDidChange = { [weak self] checking in self?.dataSource.setTrustChecking(checking) }
         connectFrameInteractions()
         if let window = windowController.window {
             // 응답자 체인: content view → router → split controller → 창. 텍스트 편집 중에는 field editor가 먼저 받습니다.

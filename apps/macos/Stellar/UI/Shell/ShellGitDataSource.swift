@@ -10,7 +10,11 @@ final class ShellGitDataSource: GitPanelDataSource {
     private var events: [GitPanelEvent] = []
     private(set) var trusted = false
     private var message: String?
-    private var trustRequest: UInt64?
+    /// 신뢰 확인 요청이 시작되거나 끝나면 부릅니다. 요청 중에는 창이 신뢰 항목을 비활성으로 보입니다.
+    var trustCheckDidChange: ((Bool) -> Void)?
+    private var trustRequest: UInt64? {
+        didSet { if (oldValue == nil) != (trustRequest == nil) { trustCheckDidChange?(trustRequest != nil) } }
+    }
     var isCheckingTrust: Bool { trustRequest != nil }
 
     func attach(_ session: ShellProjectSessionHandle?) {

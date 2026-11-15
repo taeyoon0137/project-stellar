@@ -192,7 +192,7 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// 제목 문서 메뉴 동작의 메뉴 막대 항목(`ShellFrameMenuItems.makeFrameActionItem`). sender의 명령 ID를 보냅니다.
     @objc func performFrameAction(_ sender: Any?) {
-        guard let action = frameAction(for: sender), action.isEnabled else { return }
+        guard window?.attachedSheet == nil, let action = frameAction(for: sender), action.isEnabled else { return }
         dataSource.send(.perform(action.id))
     }
 
@@ -253,6 +253,8 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         switch item.action {
         case #selector(performFrameAction(_:)):
             guard let action = frameAction(for: item) else { return false }
+            // 창에 sheet가 떠 있으면 그 sheet에 먼저 답해야 합니다.
+            guard window?.attachedSheet == nil else { return false }
             if let menuItem = item as? NSMenuItem, menuItem.representedObject is [String], menuItem.title != action.title {
                 menuItem.title = action.title
             }

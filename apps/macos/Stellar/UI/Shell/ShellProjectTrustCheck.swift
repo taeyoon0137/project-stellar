@@ -51,6 +51,13 @@ enum ShellProjectTrustCheck {
             return false
         }
         guard let first = openWindow(), !FileManager.default.fileExists(atPath: list.path) else { return failed("최초 restricted 열기") }
+        // 신뢰 확인 요청 중에는 신뢰 항목이 비활성이고, 결과가 오면 다시 켜집니다.
+        func trustItemEnabled() -> Bool? {
+            first.dataSource.currentSnapshot.moreActions.first { $0.id == ShellProjectCommandID.trustProject }?.isEnabled
+        }
+        first.gitSource.send(.refreshStatus)
+        guard first.gitSource.isCheckingTrust, trustItemEnabled() == false, pump.waitForPendingRequests(timeout: 10),
+              trustItemEnabled() == true else { return failed("신뢰 확인 중 신뢰 항목 비활성") }
         guard trustButton(first, approving: false), !FileManager.default.fileExists(atPath: list.path) else { return failed("신뢰 sheet 취소") }
         guard trustButton(first, approving: true), FileManager.default.fileExists(atPath: list.path),
               first.dataSource.currentSnapshot.subtitle.isEmpty else { return failed("신뢰 sheet 승인") }
