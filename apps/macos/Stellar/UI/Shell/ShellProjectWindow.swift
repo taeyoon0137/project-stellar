@@ -656,11 +656,12 @@ final class ShellProjectWindow {
         }
     }
 
+    /// 이 창에 활성 에이전트 세션이 있는지. 에이전트 세션 실행 경로(XXIX)가 연결되기 전에는 늘 false이고, 오른쪽
+    /// 에이전트 탭이 들어오면 그 세션 상태를 여기에 넣습니다. 닫기·종료 확인 경로는 이 값으로 검사합니다.
+    var hasActiveAgentSession: () -> Bool = { false }
+
     /// 창을 닫기 전에 확인이 필요한지(활성 에이전트 세션, ADR-0005 결정 4.5).
-    ///
-    /// 에이전트 세션 실행 경로(XXIX)가 연결되기 전에는 이 창에 에이전트 세션이 없습니다. 오른쪽 에이전트 탭이 들어오면
-    /// 그 세션 상태를 돌려줍니다.
-    var requiresConfirmationBeforeClosing: Bool { false }
+    var requiresConfirmationBeforeClosing: Bool { hasActiveAgentSession() }
 
     /// 코어가 프로젝트와 이 창의 창 session을 열었습니다. 창 controller가 창 session handle을 소유합니다(XII.2.2).
     func didOpen(_ session: ShellProjectSessionHandle, windowSession: ShellWindowSessionHandle) {

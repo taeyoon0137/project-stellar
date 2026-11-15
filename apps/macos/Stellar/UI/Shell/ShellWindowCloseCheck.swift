@@ -120,6 +120,19 @@ private final class ShellWindowCloseCheckRunner {
         guard let closed = open() else { return report() }
         expect(savedName(closed) == "닫기 저장", "정상 닫기로 저장한 이름을 다시 읽지 못함")
 
+        // 활성 에이전트 세션이 있는 창이 있으면 종료 전에 한 번 확인하고, 취소하면 종료하지 않습니다(ADR-0005 결정 4.5).
+        closed.hasActiveAgentSession = { true }
+        expect(coordinator.requiresConfirmationBeforeTerminating, "활성 에이전트 fixture 없음")
+        var confirmations = 0
+        let cancelledQuit = coordinator.prepareToTerminate(confirmAgent: {
+            confirmations += 1
+            expect(coordinator.prepareToTerminate(confirmAgent: { confirmations += 1; return true }, reply: { _ in }) ==
+                .terminateCancel, "확인 창 중복 종료")
+            return false
+        }, reply: { _ in self.expect(false, "사용자 취소 후 비동기 종료 응답") })
+        expect(cancelledQuit == .terminateCancel && confirmations == 1, "활성 에이전트 종료 취소")
+        closed.hasActiveAgentSession = { false }
+
         // 앱 종료(⌘Q): 모든 창의 저장이 끝난 뒤에만 종료를 승인합니다.
         guard let quitSession = closed.windowController.windowSession else { return report() }
         rename(closed, "종료 저장")
