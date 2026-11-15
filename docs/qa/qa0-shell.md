@@ -38,7 +38,7 @@
 | QA0-16 | 새 프로젝트의 캔버스 보기 | 800 × 600의 흰 Frame이 사이드바·인스펙터 사이에 보입니다. |
 | QA0-17 | 사이드바 토글: 툴바 왼쪽 버튼, View ▸ Hide Sidebar, ⌃⌘S를 차례로 | 세 경로 모두 같은 사이드바를 접고 폄. 숨기면 캔버스가 그만큼 넓어짐. 메뉴 제목이 Show/Hide로 바뀜 |
 | QA0-18 | 인스펙터 토글: 툴바 오른쪽 버튼, View ▸ Hide Inspector, ⌥⌘I | QA0-17과 같은 동작(오른쪽) |
-| QA0-19 | View ▸ Show Panels | 캔버스 아래 보조 패널(Git·Agent 탭)이 펼쳐짐. 처음 연 창에서는 접혀 있음. Git 탭은 제한 모드 안내 |
+| QA0-19 | View 메뉴 보기 | 캔버스 아래 보조 패널과 그 토글(Show Panels), 툴바 숨김(Show/Hide Toolbar)이 없음. 창은 사이드바·캔버스·인스펙터 3열뿐 |
 | QA0-20 | 프로젝트 창 닫기(⌘W 또는 File ▸ Close Project ⇧⌘W) | 프로젝트 창이 닫히고 시작 창이 나타남(앱은 종료되지 않음) |
 | QA0-21 | 시작 창만 남은 상태에서 시작 창 닫기 | 앱 종료 |
 
@@ -49,11 +49,11 @@
 | QA0-22 | 캔버스 아래쪽 보기 | 캔버스 하단 가운데에 떠 있는 Liquid Glass 캡슐 하나. 도구 10개(Move, Frame, Rectangle, Ellipse, Line, Polygon, Text, Image, Hand, Zoom) 순서, 칸 사이 구분선 없음, Move 뒤에 둥근 회색 선택 표시. 캔버스 아래 가장자리와 간격이 있음 |
 | QA0-23 | 사이드바·인스펙터를 각각·함께 접고 펴기, 창 폭 바꾸기 | 막대가 언제나 캔버스 영역의 가운데에 있음 |
 | QA0-24 | 막대의 도구 클릭 | 선택 표시가 그 도구로 옮겨 감. View(Move·Hand·Zoom Tool)·Insert 메뉴의 체크 표시도 같은 도구 |
-| QA0-25 | 캔버스를 한 번 클릭한 뒤 V, F, R, O, L, T, H, Z 키 | 각각 Move, Frame, Rectangle, Ellipse, Line, Text, Hand, Zoom 선택. Polygon·Image는 단일 키 없음(Image는 Insert ▸ Image ⇧⌘K) |
+| QA0-25 | 캔버스를 한 번 클릭한 뒤 V, F, R, O, L, P, T, H, Z 키 | 각각 Move, Frame, Rectangle, Ellipse, Line, Polygon, Text, Hand, Zoom 선택. Image는 단일 키 없음(Insert ▸ Image ⇧⌘K) |
 | QA0-26 | 한글 입력 소스(두벌식)로 바꾸고 캔버스에서 ㄱ(R 자리) 키 | Rectangle 선택(물리 키 위치 기준) |
 | QA0-27 | 캔버스에서 ⌘R, Shift-R | 도구가 바뀌지 않음 |
 | QA0-28 | 사이드바 필터 필드에 글자 입력 중 R | 필드에 글자가 들어가고 도구는 바뀌지 않음 |
-| QA0-29 | 도구 위에 마우스를 올려 기다리기 | 도움말 태그(예: "Rectangle (R)") |
+| QA0-29 | 도구 위에 마우스를 올려 기다리기 | 도움말 태그(예: "Rectangle (R)", Image는 "Image (⇧⌘K)"). 막대 안은 Move · Frame · 도형 4종 · Text·Image · Hand·Zoom 그룹 사이가 구분선 없이 조금 더 벌어짐 |
 | QA0-30 | 신뢰한 프로젝트에서 F로 흰 Frame 안을 드래그 | 자식 Frame이 생기고 Layers 행이 선택됩니다. |
 
 ## 5. 상단 바(툴바)
@@ -61,11 +61,11 @@
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
 | QA0-31 | 상단 바와 캔버스·사이드바·인스펙터 경계 보기 | 상단 바 아래 구분선이 없음. 콘텐츠 영역 상단 바 뒤는 블러 배경 |
-| QA0-32 | 툴바 항목 순서 보기(창 폭 1440pt 정도) | 사이드바 토글 \| 뒤로·앞으로(비활성), 제목·부제목 … 현재 배율을 표시하는 줌 메뉴, 검색(비활성), 더 보기(…) \| 인스펙터 토글. 캔버스 도구는 상단에 없음 |
-| QA0-33 | 더 보기(…) ▸ Show in Finder | Finder에서 샘플 폴더가 열림(`stellar.yaml`, `design`, `assets`가 보임) |
+| QA0-32 | 툴바 항목 순서 보기(창 폭 1440pt 정도) | 사이드바 토글 \| 제목·부제목 … 현재 배율을 표시하는 줌 메뉴 \| 인스펙터 토글. 뒤로·앞으로, 검색, 더 보기(…)는 없음. 캔버스 도구는 상단에 없음 |
+| QA0-33 | 상단 바 제목(프로젝트 이름)을 눌러 제목 문서 메뉴 ▸ Show in Finder | Finder에서 샘플 폴더가 열림(`stellar.yaml`, `design`, `assets`가 보임). 메뉴 항목은 Show in Finder, Trust Project…(제한 모드) 또는 Revoke Project Trust(신뢰함), Close Project |
 | QA0-34 | 창 폭을 점점 줄이기 | 들어가지 않는 항목이 overflow(») 메뉴로 넘어감. 항목이 겹치거나 잘리지 않음 |
-| QA0-35 | View ▸ Customize Toolbar…에서 항목 하나를 빼고 Done → 앱 종료 후 다시 실행 | 바꾼 구성이 유지됨. 사이드바 토글은 옮기거나 뺄 수 없음 |
-| QA0-36 | 문서가 열린 창에서 줌 메뉴, 뒤로·앞으로, 검색 확인 | 확대·축소 후 배율이 바뀝니다. 뒤로·앞으로와 프로젝트 검색은 **구현 대기**입니다. |
+| QA0-35 | View ▸ Customize Toolbar…에서 항목 하나를 빼고 Done → 앱 종료 후 다시 실행 | 바꾼 구성이 유지됨. 사이드바 토글과 제목은 옮기거나 뺄 수 없음 |
+| QA0-36 | 문서가 열린 창에서 줌 메뉴 확인 | 확대·축소 후 배율이 바뀝니다. |
 
 ## 6. 메뉴·단축키
 
@@ -74,11 +74,11 @@
 | QA0-37 | 메뉴 막대 보기 | 순서: 앱 메뉴, File, Edit, View, Insert, Object, Window, Help. 앱 메뉴 이름은 "Stellar" |
 | QA0-38 | 편집 전후 메뉴 상태 확인 | New Project는 ⌘N으로 열립니다. 문서가 열리면 Save Now를 쓸 수 있고 Frame 생성 후 Undo, Undo 후 Redo가 활성화됩니다. |
 | QA0-39 | Settings…(⌘,) | 설정 창이 열림. 지금은 "Stellar Settings" 글자만 있는 placeholder(설정 창 전용 WBS 없음) |
-| QA0-40 | File ▸ Show in Finder | QA0-33과 같음 |
-| QA0-41 | ⌃⌘F, ⌘M, ⌘H, ⌥⌘T | 전체 화면 전환, 최소화, 앱 가리기, 툴바 보이기·숨기기 |
+| QA0-40 | File ▸ Show in Finder, File ▸ Trust Project… | Show in Finder는 QA0-33과 같음. 신뢰 항목은 제한 모드 창에서 Trust Project…, 신뢰한 창에서 Revoke Project Trust로 바뀌고 제목 문서 메뉴와 같은 동작. 신뢰 확인 중이거나 sheet가 떠 있으면 비활성 |
+| QA0-41 | ⌃⌘F, ⌘M, ⌘H | 전체 화면 전환, 최소화, 앱 가리기. ⌥⌘T(툴바 숨김)는 배정하지 않음 |
 | QA0-42 | 앱을 쓰는 중 ⌘Space, ⌘Tab, ⇧⌘5 | 시스템 단축키가 그대로 동작(앱이 가로채지 않음) |
 | QA0-43 | 사이드바 필터 필드에 입력 후 ⌘Z, ⇧⌘Z, ⌘A·⌘C·⌘V | 필드 입력이 되돌려지고 다시 적용됨(Edit 메뉴 제목 "Undo Typing"). 선택·복사·붙여넣기도 필드에 적용 |
-| QA0-44 | Help ▸ Stellar Help | 시스템 기본 동작(도움말 없음 안내). Help Book은 전용 WBS 없음 |
+| QA0-44 | Help 메뉴 보기 | 시스템 메뉴 검색 필드만 있음. 도움말 콘텐츠가 생기기 전에는 Stellar Help 항목이 없음 |
 | QA0-45 | Undo·Redo·Save Now를 활성 창 세션에 연결 | **구현 대기**(XII.6.4). 메뉴 단축키의 코어 command ID 공유는 XII.6.5 |
 
 ## 7. 다크 모드

@@ -4,7 +4,7 @@
 
 - 실행: `./scripts/macos/qa.sh --fresh`(편집 QA는 깨끗한 샘플에서 시작합니다)
 - 기준 명세: [도구·메뉴](../design/ui/tools_menus.md), [사이드바](../design/ui/sidebar.md) 4장, [인스펙터](../design/ui/inspector.md) 6장, [macOS 셸 디자인 가이드](../design/macos-shell-design.md) 2.5·5.2·8장
-- 새 프로젝트에서 **보기 → 패널 보기 → Git → Trust Project**를 눌러 편집을 허용합니다. 먼저 F로 흰 Frame 안에 자식 Frame을 그립니다. 아래에서 ‘새 Frame’은 이 자식을 가리킵니다.
+- 새 프로젝트에서 상단 바 제목을 눌러 **Trust Project…**(또는 **File ▸ Trust Project…**)를 고르고 확인해 편집을 허용합니다. 먼저 F로 흰 Frame 안에 자식 Frame을 그립니다. 아래에서 ‘새 Frame’은 이 자식을 가리킵니다.
 - 저장 전후의 Git 변경은 `git -C <프로젝트 폴더> status --short`로 확인합니다.
 
 ## 1. 만들기 도구
@@ -26,6 +26,8 @@
 | QA2-13 | Footer (Locked) 끌기 | 잠금 레이어는 움직이지 않음. **구현 대기** |
 | QA2-14 | Frame 하나를 선택하고 Edit ▸ Duplicate(⌘D), Delete, ⌘Z | 복제본이 선택되고 Delete로 사라지며 ⌘Z로 복원됩니다. Layers 문맥 메뉴에서도 확인합니다. 텍스트 필드에서는 필드 편집이 우선합니다(QA0-43). |
 | QA2-15 | 자식이 있는 Frame을 복사(⌘C)한 뒤 붙여넣기(⌘V), ⌘Z | 자식을 포함한 복사본이 새 ID를 받습니다. Undo 한 번에 복사본이 사라집니다. |
+| QA2-16 | Frame 하나를 선택하고 Edit ▸ Cut(⌘X), ⌘Z, 다시 ⌘X 뒤 ⌘V | ⌘X로 Frame이 사라지고 ⌘Z 한 번에 돌아옵니다. 잘라 낸 뒤 ⌘V로 같은 내용이 새 ID로 붙습니다. |
+| QA2-17 | 캔버스를 클릭한 뒤 Edit ▸ Select All(⌘A) | 흰 Frame 안 맨 위 단계의 보이고 잠기지 않은 레이어가 모두 선택되고 Layers 행도 함께 선택됩니다. 텍스트 필드에서는 필드 글자를 고릅니다(QA0-43). |
 
 ## 3. Undo·Redo
 
@@ -51,8 +53,8 @@
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
 | QA2-40 | Bring Forward(⌘]), Send Backward(⌘[), Bring to Front, Send to Back | 신뢰한 창의 단일 레이어가 같은 부모 안에서 이동합니다. 가장 앞·뒤 경계, 뷰 루트 및 잠금은 해당 명령을 비활성화합니다. Layers에서 위에 표시된 형제가 겹친 위치에서 먼저 선택되는지와 Undo·Redo·저장 후 다시 열기를 확인합니다. |
-| QA2-41 | Align Left(⌘{)·Center(⌘\|)·Right(⌘}), Distribute | 다중 선택 정렬·분배. **구현 대기** |
-| QA2-42 | Flip Horizontal·Vertical, Lock, Hide | 메뉴 제목이 상태를 반영(Lock/Unlock, Hide/Show). **구현 대기** |
+| QA2-41 | Object 메뉴 보기 | 정렬·분배(Align·Distribute) 항목이 없음. 기능 행(XII.10.21)이 들어올 때 메뉴와 함께 추가. **구현 대기** |
+| QA2-42 | Object 메뉴 보기 | Flip, Lock, Hide, Group 항목이 없음. 숨김·잠금은 Layers 행 토글(UX.3.4)로 연결. **구현 대기** |
 
 ## 6. 인스펙터에서 바꾸기
 

@@ -10,7 +10,7 @@
 
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
-| QA1-01 | 더 보기(…) ▸ Show in Finder → 샘플 폴더 | `stellar.yaml`, `stellar.lock.yaml`, `design`(`current`, `generations`, `objects`), `assets`(`<prefix>/<hash>.jpg` 하나) |
+| QA1-01 | 상단 바 제목을 눌러 Show in Finder(또는 File ▸ Show in Finder) → 샘플 폴더 | `stellar.yaml`, `stellar.lock.yaml`, `design`(`current`, `generations`, `objects`), `assets`(`<prefix>/<hash>.jpg` 하나) |
 | QA1-02 | 터미널에서 `git -C <샘플 폴더> log --oneline` | 커밋 2개("New Stellar project initialized", "QA 샘플 문서와 에셋 추가"). Git identity가 없었으면 커밋 없음 |
 | QA1-03 | 사이드바 필터 필드 보기 | 실제 문서 필터는 **구현 대기**이며 입력이 비활성입니다. |
 
