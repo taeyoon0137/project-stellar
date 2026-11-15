@@ -162,12 +162,18 @@ enum InspectorInput: Equatable {
     case adjust(Double)
 }
 
-/// 편집 단계(코어 Undo 단위). 연속 조작은 `continuous` 여러 개 뒤 `ended` 하나가 Undo 한 항목입니다.
+/// 편집 단계(코어 Undo 단위).
+///
+/// - 레이블 scrub(포인터 제스처)은 `continuous` 여러 개 뒤 `ended`(또는 `cancel`) 하나가 Undo 한 항목입니다. 코어는
+///   그동안 preview를 열고, `cancel`은 표시 상태와 무관하게 preview를 닫습니다.
+/// - 화살표·색 견본·색 패널은 `repeated`입니다. 누를 때마다 바로 적용되고, 같은 속성을 0.5초 안에 이어 바꾸면
+///   코어가 Undo 한 항목으로 합칩니다(preview 없음, 그 사이 Undo·선택이 막히지 않음).
 enum InspectorEditPhase: UInt32 {
     case commit = 0
     case continuous = 1
     case ended = 2
     case cancel = 3
+    case repeated = 4
 }
 
 /// 편집 요청이 받아들여지지 않은 이유.

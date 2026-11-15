@@ -18,7 +18,7 @@ use crate::{ffi_guard, registry, StellarStatus};
 /// `StellarInspectorInfo` 레이아웃 버전.
 pub const INSPECTOR_INFO_VERSION: u32 = 1;
 
-/// 속성 패널 snapshot 머리(고정 64 byte).
+/// 속성 패널 snapshot 머리(고정 56 byte).
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StellarInspectorInfo {
@@ -37,7 +37,8 @@ pub struct StellarInspectorInfo {
     pub history_sequence: u64,
     /// active View(없으면 0).
     pub view: [u8; 16],
-    /// 텍스트 첫 부분의 단일 선택 레이어 이름 byte 수.
+    /// 텍스트 첫 부분의 이름 byte 수: 단일 선택이면 레이어 이름, 선택이 없으면 현재 Page 요약(`Page · View`),
+    /// 다중 선택이면 0.
     pub name_len: u32,
     /// 전체 텍스트 byte 수.
     pub text_len: u32,
@@ -171,7 +172,8 @@ pub struct StellarPropertyEdit {
     pub delta: f64,
     /// 0: 값 텍스트로 설정, 1: 각 node의 현재 값에 `delta`를 더함.
     pub mode: u32,
-    /// 0 확정, 1 연속 중간 값, 2 연속 끝, 3 연속 취소.
+    /// 0 확정, 1 연속 중간 값, 2 연속 끝, 3 연속 취소(표시 상태와 무관하게 열린 preview를 닫음), 4 반복 입력
+    /// (화살표·색: 바로 기록하고 같은 속성의 0.5초 안 반복은 Undo 한 항목으로 합침).
     pub phase: u32,
 }
 

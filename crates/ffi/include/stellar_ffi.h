@@ -280,8 +280,9 @@ StellarStatus stellar_project_clone_cancel(uint64_t handle, uint64_t request);
  * 그 프로젝트의 원본 감시를 시작하고, 이후 원본이 바뀌면 요청 없는 WINDOW_VIEW_CHANGED(request 0)를 보냅니다. */
 StellarStatus stellar_window_reload_component_canvas(uint64_t handle, uint64_t session, uint64_t *out_request);
 
-/* 속성 패널(UX.2.2, ADR-0070). 확정 선택의 CSS 속성 행을 게시 snapshot에서 읽습니다. 텍스트는 단일 선택 이름 뒤에
- * 행마다 이름·값·선택지(공백 구분)가 이어집니다. 용량이 모자라면 BUFFER_TOO_SMALL과 함께 info에 필요한 크기를 씁니다. */
+/* 속성 패널(UX.2.2, ADR-0070). 확정 선택의 CSS 속성 행을 게시 snapshot에서 읽습니다. 텍스트는 이름(단일 선택이면 레이어
+ * 이름, 선택이 없으면 "Page · View") 뒤에 행마다 이름·값·선택지(공백 구분)가 이어집니다. 용량이 모자라면
+ * BUFFER_TOO_SMALL과 함께 info에 필요한 크기를 씁니다. */
 #define STELLAR_INSPECTOR_MIXED        0x0001u
 #define STELLAR_INSPECTOR_READ_ONLY    0x0002u
 #define STELLAR_INSPECTOR_COLOR        0x0004u
@@ -300,8 +301,9 @@ typedef struct StellarInspectorInfo {
 typedef struct StellarInspectorRow { uint32_t key, flags, section, name_len, value_len, choices_len; } StellarInspectorRow;
 StellarStatus stellar_window_inspector(uint64_t handle, uint64_t session, StellarInspectorInfo *info, StellarInspectorRow *rows, size_t row_capacity, uint8_t *text, size_t text_capacity);
 /* 확정 선택 전체에 속성 하나를 적용합니다. mode 0은 CSS 값 텍스트, 1은 각 node 현재 값에 delta를 더함.
- * phase 0 확정, 1 연속 중간 값, 2 연속 끝(Undo 한 항목), 3 연속 취소. 값 문법 오류는 요청 없이 INVALID_ARGUMENT와
- * "code: 이유" 진단을 씁니다. 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED. */
+ * phase 0 확정, 1 연속 중간 값(포인터 scrub preview), 2 연속 끝(Undo 한 항목), 3 연속 취소(열린 preview를 늘 닫음),
+ * 4 반복 입력(화살표·색, 바로 기록하고 같은 속성 0.5초 안 반복은 한 항목). 값 문법 오류는 요청 없이
+ * INVALID_ARGUMENT와 "code: 이유" 진단을 씁니다. 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED. */
 typedef struct StellarPropertyEdit {
     uint8_t view[16];
     uint64_t revision, history_sequence;

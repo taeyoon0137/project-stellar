@@ -3,9 +3,9 @@ import AppKit
 /// 속성 행 하나: CSS 이름 레이블(끌면 scrub)과 값 컨트롤, 행 아래 진단 한 줄.
 ///
 /// 값은 코어 snapshot 텍스트를 그대로 보이고, 입력은 CSS 값 텍스트·수치 delta로 보냅니다(UX 명세 6.4).
-/// - Return 적용, Escape 취소 후 캔버스로, Tab 다음 필드.
-/// - ↑↓ ±1, Shift ±10. 이어 누른 화살표는 연속 조작 하나(Undo 한 번)입니다.
-/// - 레이블을 좌우로 끌면 scrub. 끌기 한 번이 Undo 한 번입니다.
+/// - Return 적용, Escape는 입력 중인 텍스트를 버리고 캔버스로, Tab 다음 필드.
+/// - ↑↓ ±1, Shift ±10. 누를 때마다 바로 적용하고, 이어 누르면 코어가 Undo 한 번으로 합칩니다(반복 입력).
+/// - 레이블을 좌우로 끌면 scrub. 끌기 한 번이 Undo 한 번입니다(포인터 제스처, 시작·끝 알림은 한 번씩).
 /// - 잘못된 값은 적용되지 않고 행 아래 진단(`unsupported-unit: …`)으로 보입니다.
 @MainActor
 final class InspectorRowView: NSView, NSTextFieldDelegate {
@@ -16,7 +16,7 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
     var onToggleGroup: ((Bool) -> Void)?
     /// Escape로 입력을 끝냈을 때(포커스를 캔버스로).
     var onEscape: (() -> Void)?
-    /// scrub·화살표 같은 연속 조작이 시작·끝날 때(섹션 구성 고정, UX.2.12).
+    /// 레이블 scrub이 시작·끝날 때 한 번씩(섹션 구성 고정, UX.2.12).
     var onGesture: ((Bool) -> Void)?
 
     let label = InspectorScrubLabel(labelWithString: "")
@@ -24,8 +24,9 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
     private var popup: NSPopUpButton?
     /// 색 행의 견본: 누르면 popover, 그 안에서 시스템 색 패널로 이어집니다(UX 명세 6.4).
     private var swatch: NSColorWell?
-    private var colorTimer: Timer?
+    /// 색 견본·색 패널로 막 보낸 색. 잠시 동안 늦게 온 snapshot이 견본을 되돌리지 않게 합니다(표시 전용).
     private var lastColorText: String?
+    private var colorHold: Timer?
     private var checkbox: NSButton?
     private let diagnostic = NSTextField(wrappingLabelWithString: "")
     private let line = NSStackView()
@@ -34,9 +35,11 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
 
     /// 사용자가 필드에 입력을 시작했는지(그 사이에는 snapshot 값으로 덮어쓰지 않음).
     private var userTyped = false
-    /// 이어 누른 화살표의 누적 delta와 끝 타이머.
-    private var arrowTotal = 0.0
-    private var arrowTimer: Timer?
+    /// 레이블 scrub 중인지.
+    private var scrubbing = false
+    /// 레이블 열 폭 제약과 그 안의 펼침 단추·들여쓰기 몫.
+    private var labelWidthConstraint: NSLayoutConstraint?
+    private var labelInset: CGFloat = 0
 
     /// - Parameters:
     ///   - labelWidth: 같은 패널 모든 행의 레이블 열 폭(가장 긴 CSS 이름에 맞춤).
@@ -61,7 +64,6 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
         line.spacing = 6
         line.alignment = .centerY
         line.translatesAutoresizingMaskIntoConstraints = false
-        var labelColumn = labelWidth
         if row.flags.contains(.group) {
             let button = NSButton()
             button.bezelStyle = .disclosure
@@ -73,7 +75,7 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
             button.setAccessibilityLabel(String(localized: "Show \(row.name) longhands"))
             line.addArrangedSubview(button)
             disclosure = button
-            labelColumn -= 18
+            labelInset += 18
         }
         line.addArrangedSubview(label)
         buildControl()
@@ -89,7 +91,7 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
         addSubview(column)
         // longhand 행은 묶음 행 아래에 들여 씁니다.
         let indent: CGFloat = row.flags.contains(.longhand) ? 12 : 0
-        labelColumn -= indent
+        labelInset += indent
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: indent),
             column.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -99,10 +101,22 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
             diagnostic.trailingAnchor.constraint(equalTo: column.trailingAnchor),
         ])
         // 패널이 아주 좁아도 제약 충돌 없이 값 필드가 먼저 줄어듭니다.
-        let labelWidthConstraint = label.widthAnchor.constraint(equalToConstant: max(labelColumn, 40))
-        labelWidthConstraint.priority = .init(900)
-        labelWidthConstraint.isActive = true
+        let constraint = label.widthAnchor.constraint(equalToConstant: max(labelWidth - labelInset, 40))
+        constraint.priority = .init(900)
+        constraint.isActive = true
+        labelWidthConstraint = constraint
         update(row)
+    }
+
+    /// 패널 폭이 바뀌면 같은 패널 모든 행의 레이블 열 폭을 다시 맞춥니다.
+    func setLabelWidth(_ labelWidth: CGFloat) {
+        labelWidthConstraint?.constant = max(labelWidth - labelInset, 40)
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        // 끌던 중 행이 사라지면 scrub을 취소해 코어 preview와 구성 고정을 남기지 않습니다.
+        if newWindow == nil, scrubbing { scrub(0, phase: .cancel) }
     }
 
     @available(*, unavailable)
@@ -199,7 +213,7 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
             if !mixed { popup.selectItem(withTitle: next.value) }
             popup.isEnabled = editable
         }
-        if let swatch, colorTimer == nil {
+        if let swatch, colorHold == nil {
             // 견본은 코어가 정규화한 값을 표시만 합니다. none·Mixed는 투명.
             swatch.color = mixed ? .clear : (InspectorColor(css: next.value)?.nsColor ?? .clear)
             swatch.isEnabled = editable
@@ -256,26 +270,23 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
         onToggleGroup?(disclosure?.state == .on)
     }
 
-    /// 색 견본·색 패널 변경. 끄는 동안은 연속 조작이고, 0.4초 쉬면 끝냅니다(Undo 한 번).
+    /// 색 견본·색 패널 변경. 바꿀 때마다 바로 적용하고(반복 입력), 같은 속성을 이어 바꾸면 코어가 Undo 한 항목으로
+    /// 합칩니다. 코어 preview를 열지 않으므로 색 패널을 연 채 Undo·캔버스 선택을 해도 막히지 않습니다.
     @objc private func pickColor() {
         guard let swatch, let color = InspectorColor(swatch.color) else { return }
         let text = color.cssText
         guard text != lastColorText else { return }
-        if colorTimer == nil { onGesture?(true) }
         lastColorText = text
-        send(.text(text), .continuous)
-        colorTimer?.invalidate()
-        colorTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.endColor() }
+        send(.text(text), .repeated)
+        colorHold?.invalidate()
+        colorHold = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.colorHold = nil
+                self.lastColorText = nil
+                self.update(self.row)
+            }
         }
-    }
-
-    private func endColor() {
-        colorTimer?.invalidate()
-        colorTimer = nil
-        if let text = lastColorText { send(.text(text), .ended) }
-        lastColorText = nil
-        onGesture?(false)
     }
 
     @objc private func toggleBool() {
@@ -306,7 +317,7 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         switch selector {
         case #selector(NSResponder.cancelOperation(_:)):
-            // Escape: 입력을 버리고 snapshot 값으로 돌린 뒤 캔버스로.
+            // Escape: 입력 중인 텍스트를 버리고 snapshot 값으로 돌린 뒤 캔버스로(화살표는 누를 때 이미 적용됨).
             userTyped = false
             show(nil)
             field.abortEditing()
@@ -322,52 +333,36 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
         }
     }
 
-    /// ↑↓ ±1, Shift ±10. 이어 누르면 연속 조작 하나로 묶고, 0.5초 쉬면 끝냅니다.
+    /// ↑↓ ±1, Shift ±10. 누를 때마다 바로 적용하고(반복 입력), 이어 누르면 코어가 Undo 한 항목으로 합칩니다.
     private func arrow(_ sign: Double, shift: Bool) -> Bool {
         guard row.flags.contains(.numeric), !row.flags.contains(.readOnly) else { return false }
         if userTyped { commitField() }
         let shiftDown = shift || NSApp.currentEvent?.modifierFlags.contains(.shift) == true
-        if arrowTimer == nil { onGesture?(true) }
-        arrowTotal += sign * (shiftDown ? 10 : 1)
-        send(.adjust(arrowTotal), .continuous)
-        arrowTimer?.invalidate()
-        arrowTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.endArrows() }
-        }
+        send(.adjust(sign * (shiftDown ? 10 : 1)), .repeated)
         return true
     }
 
-    private func endArrows() {
-        arrowTimer?.invalidate()
-        arrowTimer = nil
-        let total = arrowTotal
-        arrowTotal = 0
-        if total != 0 { send(.adjust(total), .ended) }
-        onGesture?(false)
-    }
-
-    func controlTextDidEndEditing(_ notification: Notification) {
-        if arrowTimer != nil { endArrows() }
-    }
-
+    /// 레이블 scrub. 처음 움직일 때 한 번 시작을 알리고, 끝·취소에서 한 번 끝을 알립니다.
     private func scrub(_ delta: Double, phase: InspectorEditPhase) {
         switch phase {
         case .continuous:
-            onGesture?(true)
+            if !scrubbing {
+                scrubbing = true
+                onGesture?(true)
+            }
             send(.adjust(delta), .continuous)
-        case .ended:
-            send(.adjust(delta), delta != 0 ? .ended : .cancel)
+        case .ended, .cancel:
+            guard scrubbing else { return }
+            scrubbing = false
+            send(.adjust(delta), phase == .ended && delta != 0 ? .ended : .cancel)
             onGesture?(false)
-        case .cancel:
-            send(.adjust(0), .cancel)
-            onGesture?(false)
-        case .commit:
+        case .commit, .repeated:
             break
         }
     }
 }
 
-/// 좌우로 끌면 값을 바꾸는 행 레이블(scrub). 1pt = 1, Shift ×10, Option ×0.1. 끌기 한 번이 Undo 한 번입니다.
+/// 좌우로 끌면 값을 바꾸는 행 레이블(scrub). 1pt = 1, Shift ×10. 끌기 한 번이 Undo 한 번입니다.
 @MainActor
 final class InspectorScrubLabel: NSTextField {
     var scrubs = false {
@@ -396,8 +391,8 @@ final class InspectorScrubLabel: NSTextField {
     override func mouseDragged(with event: NSEvent) {
         guard let start else { return }
         let distance = Double(event.locationInWindow.x - start.x)
-        let scale = event.modifierFlags.contains(.shift) ? 10 : (event.modifierFlags.contains(.option) ? 0.1 : 1)
-        let next = (distance * scale * 10).rounded() / 10
+        let scale = event.modifierFlags.contains(.shift) ? 10.0 : 1.0
+        let next = (distance * scale).rounded()
         guard next != total else { return }
         moved = true
         total = next

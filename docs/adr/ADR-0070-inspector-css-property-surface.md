@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-11-15, UX.2.1·UX.2.2 구현 기록)
+Accepted (2026-11-15, UX.2.1·UX.2.2 구현 기록, 같은 날 검토 지적 반영)
 
 ## Context
 
@@ -25,15 +25,23 @@ ADR-0024는 디자인 속성의 이름·값 문법을 CSS longhand로 정하고(
    0x030d·`polygon-corner-radius` 0x030e(Polygon, Stellar 전용), Image `width` 0x0602·`height` 0x0603·
    `object-fit` 0x0604·`image-rendering` 0x0605. `SetProperty`는 payload를 보고 도형 종류에 없는 key를
    거부합니다. 값 타입에 부호 있는 수(`Number`, tag 18)와 keyword 저장 tag(`Keyword`, tag 19)를 더합니다.
-   Text style longhand는 Typography record(IX.11.11)가 생긴 뒤 같은 규칙으로 더합니다.
+   Text style longhand는 Typography record(IX.11.11)가 생긴 뒤 같은 규칙으로 더합니다. 따라서 UX.2.1의 Text
+   부분은 끝나지 않았고, Text 선택은 지금 Layer·Position 행과 `color`만 보입니다.
 2. **속성 표면(UX.2.2)**: `crates/commands/src/inspector.rs`가 선택 node들의 행(섹션, CSS 이름, 저장 key,
    flag, 정규 값 텍스트)과 편집 command를 만듭니다. 값 parser·formatter는 `css_value.rs`이며 속성 모델 2장
    입력만 받고 그 밖은 `unsupported-unit`·`unsupported-value`·`unknown-token`·`forbidden-value`·
    `invalid-value`로 거부합니다. 저장 위치는 코어가 정합니다.
+   - 행은 UX 명세 6.2절 표에 있는 속성만 냅니다. key가 있어도 표에 없는 `stroke-linecap`·`image-rendering`은
+     행으로 내지 않습니다(key와 저장은 그대로). Path는 앱 캔버스가 아직 그리지 않고 만드는 도구도 없어 Layer
+     행만 둡니다. 칠하기·선 행을 두면 바꿔도 보이지 않는 값이 되므로, Path 투영이 생길 때 넣습니다.
+   - 선택이 없으면 행 없이 이름 자리에 현재 Page 요약(`Page · View`)을 둡니다(UX 명세 6.1).
    - Frame: payload longhand(`width`, `height`, `background-color`, `border`, `overflow`, 4모서리).
    - Shape·Image: 위 payload key.
    - `fill`·`stroke`·`stroke-width`와 Text `color`: 첫 활성 Fill·Stroke modifier. 없으면 렌더 순서
      (Transform → Fill → Stroke)에 맞춰 넣고, `none`이면 뺍니다. 행은 늘 있습니다.
+   - 색 기본값은 코어에 두지 않습니다(D7: 셸 설정). 선이 없는 node에 `stroke` 색을 넣으면 두께는 CSS
+     `stroke-width` 초기값 1px로 시작합니다. 선이 없는 node의 `stroke-width`만 바꾸는 입력과, 테두리 없는
+     Frame에 두께나 색 하나만 적은 `border`는 거부합니다. 테두리가 있으면 빠진 쪽은 지금 값을 이어 씁니다.
    - `left`·`top`: Frame은 `transform` 이동 성분, 그 밖은 앞쪽 Transform modifier 이동 성분입니다. 캔버스 이동과
      같은 저장 위치이며, 위치 longhand(IX.11.6·IX.11.9)가 생기면 그 key로 옮깁니다.
    - 묶음 행 `border-radius`는 longhand 4개의 shorthand이고 편집은 longhand 변경 집합 하나입니다.
@@ -46,18 +54,44 @@ ADR-0024는 디자인 속성의 이름·값 문법을 CSS longhand로 정하고(
    - `stellar_window_edit_property(handle, session, edit, name, name_len, value, value_len, out_request,
      diagnostic, diagnostic_capacity, out_diagnostic_len)`: `StellarPropertyEdit`(48 byte: view\[16\],
      revision, history_sequence, delta, mode, phase). mode 0은 CSS 값 텍스트, 1은 각 node 현재 값에 delta를
-     더합니다(혼합 값의 화살표). phase 0 확정, 1 연속 중간 값, 2 연속 끝, 3 연속 취소. 값 문법 오류는 요청을
-     만들지 않고 `InvalidArgument`와 `code: 이유` 진단을 씁니다. 완료는 `STELLAR_EVENT_WINDOW_VIEW_CHANGED` 또는
-     `STELLAR_EVENT_REQUEST_FAILED`입니다.
+     더합니다(혼합 값의 화살표). phase 0 확정, 1 연속 중간 값, 2 연속 끝, 3 연속 취소, 4 반복 입력(결정 4).
+     값 문법 오류는 요청을 만들지 않고 `InvalidArgument`와 `code: 이유` 진단을 씁니다. 완료는
+     `STELLAR_EVENT_WINDOW_VIEW_CHANGED` 또는 `STELLAR_EVENT_REQUEST_FAILED`입니다.
    - 모든 편집은 history sequence와 active View를 검사하고, 연속 조작 중이 아니면 revision도 검사합니다.
-     history sequence는 선택 변경에도 바뀌므로 표시한 선택과 다른 선택에는 적용되지 않습니다.
-4. **Undo 단위**: 확정 입력은 한 history 항목입니다. 연속 조작은 history preview(VII.4.2·VII.4.5)로 문서에
-   반영하고, 매 갱신마다 시작 전 상태로 되돌린 뒤 시작 값 기준으로 다시 계산합니다. 끝(phase 2)에서 한 항목으로
-   확정하고 취소(phase 3)는 항목을 만들지 않습니다.
-5. **잠금(D8)**: 자신이나 조상이 잠긴 node는 `locked` 행 외에는 읽기 전용이고 편집을 거부합니다. 편집은 신뢰와
-   무관합니다(D1).
-6. 속성마다 C ABI 함수를 새로 두지 않습니다. 기존 Frame 전용 편집 함수는 셸이 더 쓰지 않으며, 정리 통합의 단일
-   인스펙터 편집 함수와 합칠 때 제거합니다.
+     history sequence는 선택 변경에도 바뀌므로 표시한 선택과 다른 선택에는 적용되지 않습니다. 취소(phase 3)만은
+     검사 없이 열린 preview를 닫습니다.
+4. **Undo 단위**: 확정 입력은 한 history 항목입니다.
+   - history preview(VII.4.2·VII.4.5)는 실제 포인터 제스처인 레이블 scrub에만 씁니다. 포인터를 누르고 있는
+     동안이라 preview 중에 다른 창 요청(Undo·캔버스 선택)이 끼지 않습니다. 매 갱신마다 시작 전 상태로 되돌린 뒤
+     시작 값 기준으로 다시 계산하고, 끝(phase 2)에서 한 항목으로 확정하며 취소(phase 3)는 항목을 만들지 않습니다.
+   - preview를 남기지 않습니다: 취소는 표시 상태와 무관하게 preview를 닫고, 검사에 걸린 끝·중간 요청도 preview를
+     닫은 뒤 거부합니다. 셸은 끝·취소를 큐에서 버리지 않고 기다림 없이 바로 보내며, 선택이 사라졌으면 끝 대신
+     취소를 보냅니다.
+   - 화살표 ±1·±10과 색 견본·색 패널 변경은 반복 입력(phase 4)입니다. preview 없이 요청마다 바로 기록하고, 같은
+     선택·같은 속성 저장 key의 직전 반복 입력과 0.5초 안이면 history grouping(VII.4.4 키보드 반복 정책)으로 한
+     항목에 합칩니다. 그 사이 Undo·선택·다른 편집은 막히지 않습니다. `left`·`top`은 같은 저장 key(이동 성분)라
+     0.5초 안에 이어 바꾸면 이동 한 번으로 합쳐집니다. Escape는 입력 중인 텍스트만 버리며, 이미 적용한 화살표
+     값은 Undo로 되돌립니다.
+5. **잠금(D8)**: 자신이나 조상이 잠긴 node는 `locked` 행 외에는 읽기 전용이고 편집을 거부합니다. 판정은
+   `stellar_commands::lock::NodeLock` 하나입니다. Layers의 표시·잠금 토글과 CLI 적용은 통합할 때 같은 함수로
+   맞춥니다(지금 Layers 이름 편집은 runtime `sidebar`의 자체 조상 검사를 씁니다). 이름·표시·
+   잠금 편집은 Layers와 같은 command(`rename_node`·`set_visibility`·`set_locked`, VII.2.5 `SetProperty`
+   specialization)입니다. 편집은 신뢰와 무관합니다(D1).
+6. **ABI 기준 하나**: 속성마다 C ABI 함수를 새로 두지 않습니다. 속성 패널의 선택 snapshot은
+   `stellar_window_inspector`, 편집은 `stellar_window_edit_property` 하나가 기준입니다.
+   - 이 lane에서 셸의 Frame 전용 경로(`CoreRuntime.resizeFrame`·`selectedFrameRadii`·`setFrameCorner`·
+     `setFrameBackground`, `CanvasFrameScene.selectedInspectorFrame`)를 지웠습니다. FFI 쪽
+     `stellar_window_session_resize_frame`·`_set_frame_background`·`_set_frame_corner`·
+     `stellar_window_selected_frame_corners`와 runtime 래퍼는 같은 시기의 정리 통합(Inspector 선택 snapshot과
+     Frame 속성 편집)이 지우므로 여기서 다시 지우지 않습니다.
+   - 정리 통합이 더한 `stellar_window_selected_node`(`StellarSelectedNode`, runtime `SelectedNode`)와
+     `stellar_window_session_set_frame_property`(`StellarFrameValue`)는 두 함수와 역할이 겹칩니다. 두 변경을
+     합치는 diff에서 이 둘과 셸 호출자를 지우고, 셸 Inspector·닫기 검사는 `stellar_window_inspector` 값을
+     읽습니다. ADR-0028의 해당 절에는 이 ADR로 대체했다고 적습니다. 정리 통합이 먼저 들어가면 그 위에 이 변경을
+     다시 맞춥니다.
+7. **제스처 중 구성 고정(UX.2.12)**: 속성 패널은 캔버스 쪽 질의 하나(`CanvasView.frameGestureActive`)와 패널
+   scrub 중인 행 집합으로 제스처 여부를 판단합니다. 캔버스의 새 제스처 상태(크기 조절 핸들, 영역 선택, 모서리
+   반경 핸들)는 그 질의에 더합니다.
 
 ## Alternatives
 
@@ -72,12 +106,15 @@ ADR-0024는 디자인 속성의 이름·값 문법을 CSS longhand로 정하고(
 - 행 snapshot은 창 상태를 게시할 때 확정 선택·revision·history 위치가 바뀐 경우에만 다시 만들고, 비용은 선택
   크기에 비례합니다.
 - 고정 px만 저장하는 속성에 `%`·`fit-content`·`var()`를 넣으면 문법은 알아보되 적용하지 않고 진단합니다. 저장
-  형식은 IX.11.6·토큰 연결이 정합니다.
+  형식은 IX.11.6·토큰 연결이 정합니다. 따라서 UX.2.6의 "`50%`·`fit-content`·`var(--x)`가 정규화되어 저장됨"
+  기준은 아직 충족하지 않습니다(`320`·`1.5turn`만 저장, `1.5turn`은 회전 longhand가 생기기 전까지
+  `polygon-rotation`에서만).
 - semantic snapshot의 Shape·Image 전용 key(`0xE3xx`·`0xE6xx`) 교체는 IX.11.3에 남깁니다.
 
 ## Compatibility
 
 - 새 C ABI 함수 2개와 구조체 3개, flag 상수를 더합니다. 기존 함수·상태 코드·event 의미는 바꾸지 않습니다.
+  phase 4(반복 입력)와 선택 없음 때의 Page 요약 이름은 같은 날 검토 지적으로 더했으며 구조체 크기는 같습니다.
 - `SetProperty` 값 tag 18·19는 추가이며 기존 journal bytes의 의미는 그대로입니다. 저장 형식은 바뀌지 않습니다
   (PropertyKey는 payload bytes에 담기지 않음).
 - 헤더는 `cargo xtask generate-ffi-header`로 템플릿에서 생성합니다.
@@ -85,7 +122,18 @@ ADR-0024는 디자인 속성의 이름·값 문법을 CSS longhand로 정하고(
 ## Performance
 
 - 읽기는 게시된 snapshot 복사뿐이라 UI thread에서 문서 질의가 없습니다. 연속 조작은 요청마다 preview 되돌림과
-  적용 한 번이며 비용은 선택 크기에 비례합니다. 입력→Present 10ms 계약 측정은 Release 빌드에서 따로 합니다.
+  적용 한 번이며 비용은 선택 크기에 비례합니다.
+- 행 snapshot은 node마다 modifier stack을 한 번 훑어 요약하고(Transform 합성, 첫 Fill·Stroke) 속성 행은 그 요약을
+  읽습니다. 값은 해석한 값끼리 비교해 혼합 여부를 정하고 정규 텍스트는 행마다 한 번만 만듭니다. 잠금은 공통
+  column의 조상 사슬만 따라갑니다. 비용은 선택 node 수 × (modifier 수 + 조상 수 + 속성 수)이며 문서 크기와
+  무관합니다.
+- 측정(2026-11-15, Apple M3 Max, Release `cargo test --release`의 임시 측정, REF-MAC 판정 아님): Fill·Stroke·
+  Transform modifier가 있는 Rectangle 1만 개를 모두 고른 snapshot은 7회 중앙값 6.8ms(6.5–7.2ms)입니다. 위 요약·값
+  비교 전에는 17.2ms(16.7–18.0ms)였습니다. node 하나 선택은 중앙값 2.4µs입니다. 같은 1만 개에 `fill` 하나를 넣는
+  command 만들기는 약 6ms, transaction 적용은 14–18ms(command 경로 비용)입니다. 1만 개 선택에서는 편집 한 번이
+  document thread를 20ms 넘게 점유하므로, 큰 선택의 행 수 상한·지연 계산은 Select All(UX.3)을 통합할 때 이 수치로
+  다시 정합니다.
+- 입력→Present 10ms 계약 측정은 하지 않았습니다(UX.2.12 미완료 기준). Release 빌드의 입력 trace로 따로 합니다.
 
 ## Security
 
