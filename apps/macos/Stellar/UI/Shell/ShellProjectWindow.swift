@@ -487,7 +487,7 @@ final class ShellProjectWindow {
     let sidebarSource = ShellSidebarSource()
     private var displayedSelection: StellarSelectionTarget?
     private var displayedOrderFlags: UInt32 = 0
-    let inspectorSource = ShellFrameInspectorSource()
+    let inspectorSource = ShellInspectorSource()
     /// 창 도구 모델 → 하단 도구 막대(셸 프레임 snapshot 도구 목록) 구독.
     private var toolsObservation: ToolsMenuObservation?
 
@@ -550,14 +550,28 @@ final class ShellProjectWindow {
             self?.reloadComponentCanvas()
             self?.refreshSessionCommands()
         }
-        inspectorSource.editFrame = { [weak self] frame, change, completion in
-            guard let self, let session = self.windowController.windowSession, session.session == frame.session,
-                  !session.isClosed, !session.isClosing,
-                  let pump = self.dataSource.session?.pump else { return false }
-            return session.track({ pump.editFrame(frame, change: change, completion: $0) }) { event in
-                self.refreshSessionCommands()
-                if case .windowViewChanged = event { completion(true) } else { completion(false) }
+        // 속성 패널 편집(ADR-0070). 편집은 신뢰와 무관합니다(D1).
+        inspectorSource.send = { [weak self] name, input, phase, basis, completion in
+            guard let self, let session = self.windowController.windowSession, !session.isClosed, !session.isClosing,
+                  let pump = self.dataSource.session?.pump else {
+                completion(String(localized: "The window isn’t ready."))
+                return
             }
+            var diagnostic: String?
+            let accepted = session.track({ done in
+                let result = pump.editProperty(session: session.session, basis: basis, name: name, input: input,
+                                               phase: phase, completion: done)
+                if case .failure(let failure) = result { diagnostic = failure.diagnostic }
+                return result.mapError { CoreRuntimeCallError(status: $0.status) }
+            }) { [weak self] event in
+                self?.refreshSessionCommands()
+                if case .requestFailed(_, _, let message) = event { completion(message) } else { completion(nil) }
+            }
+            if !accepted { completion(diagnostic ?? String(localized: "Stellar couldn’t apply the value.")) }
+        }
+        inspectorSlot.inspector.focusCanvas = { [weak self] in
+            guard let self else { return }
+            self.window?.makeFirstResponder(self.canvasHost.canvasView)
         }
         sidebarSource.editSelection = { [weak self] command, target, ids in
             _ = self?.editSelection(command, target: target, ids: ids)
@@ -668,17 +682,10 @@ final class ShellProjectWindow {
 
     /// Inspector 값은 core가 문서에서 읽은 선택 snapshot 하나에서 가져옵니다(캔버스 투영을 보지 않음).
     private func refreshInspector() {
-        guard let session = windowController.windowSession, !session.isClosed,
-              let handle = dataSource.session?.pump.runtimeHandle,
-              let info = CoreRuntime.selectedNode(handle: handle, session: session.session) else {
-            inspectorSource.refresh(nil)
-            return
-        }
-        inspectorSource.refresh(InspectorCoreSelection(info, session: session.session))
+        let session = windowController.windowSession
+        inspectorSource.refresh(runtime: dataSource.session?.pump.runtimeHandle,
+                                session: session.flatMap { $0.isClosed ? nil : $0.session })
     }
-
-    /// Inspector에 표시한 선택 Frame의 core 값(검사용 조회).
-    var inspectedFrame: CanvasInspectorFrame? { inspectorSource.selection?.frame }
 
     var subtreePasteboard: NSPasteboard = .general
     private static let subtreePasteboardType = NSPasteboard.PasteboardType("xyz.taeyoon.stellar.node-subtree.v1")
@@ -984,7 +991,7 @@ final class ShellProjectWindow {
     /// 열기에 실패했습니다. 창에 원인과 복구 동작을 보여 줍니다.
     func didFail(_ failure: ShellProjectOpenFailure, path: String) {
         canvasHost.canvasView.frameSession = nil
-        inspectorSource.refresh(nil)
+        inspectorSource.refresh(runtime: nil, session: nil)
         gitSource.attach(nil)
         displayedSelection = nil
         displayedOrderFlags = 0
@@ -1000,7 +1007,7 @@ final class ShellProjectWindow {
     /// 창을 닫습니다: 창 session을 먼저, 그다음 프로젝트 session을 한 번씩 닫습니다.
     func closeSessions() {
         canvasHost.canvasView.frameSession = nil
-        inspectorSource.refresh(nil)
+        inspectorSource.refresh(runtime: nil, session: nil)
         gitSource.attach(nil)
         displayedSelection = nil
         displayedOrderFlags = 0

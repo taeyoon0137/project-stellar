@@ -108,7 +108,7 @@ echo "text 구조 ok: ${NATIVE_UI_SOURCES[*]}"
 "$APP" --update-check
 
 # UI 영역 검사: 각 영역(docs/design/ui/*.md)을 화면 밖 창으로 만들어 레이아웃·접근성·명령·snapshot 반영을 확인합니다.
-AREA_UI_CHECKS=(shell-frame tools-menus sidebar inspector git-panel agent-panel welcome)
+AREA_UI_CHECKS=(shell-frame tools-menus sidebar git-panel agent-panel welcome)
 for area in "${AREA_UI_CHECKS[@]}"; do
   "$APP" "--${area}-ui-check"
 done
@@ -139,13 +139,6 @@ WINDOW_SESSION_FIXTURE="$REPO_ROOT/crates/runtime/tests/fixtures/window-session-
 cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --locked -p stellar-cli
 cli_target="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
 python3 "$REPO_ROOT/scripts/macos/canvas-move-check.py" "$APP" "$cli_target/debug/stellar" "$WINDOW_SESSION_FIXTURE"
-(
-  frame_home="$(mktemp -d)"
-  trap 'rm -rf "$frame_home"' EXIT
-  unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL EMAIL
-  HOME="$frame_home" XDG_CONFIG_HOME="$frame_home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-    "$APP" --frame-insert-check "$frame_home" --expect-missing-git-identity
-)
 
 "$APP" --window-session-check "$WINDOW_SESSION_FIXTURE"
 

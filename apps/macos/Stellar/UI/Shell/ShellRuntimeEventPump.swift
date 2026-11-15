@@ -182,23 +182,6 @@ final class ShellRuntimeEventPump {
                                          node: node, revision: revision, name: name), completion)
     }
 
-    func editFrame(_ frame: CanvasInspectorFrame, change: FrameInspectorEdit, completion: @escaping (CoreRuntimeEvent) -> Void)
-        -> Result<UInt64, CoreRuntimeCallError> {
-        var value = StellarFrameValue()
-        let key: UInt32
-        switch change {
-        case let .length(property, length):
-            key = property
-            value.length = length
-        case .background(let color):
-            key = InspectorPropertyCatalog.frameBackgroundKey
-            value.color = StellarCanvasColor(color)
-        }
-        return register(CoreRuntime.setFrameProperty(handle: runtimeHandle, session: frame.session, view: frame.view,
-                                                     node: frame.node, revision: frame.revision,
-                                                     historySequence: frame.historySequence, key: key, value: value), completion)
-    }
-
     func reloadComponentCanvas(_ session: UInt64, completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.reloadComponentCanvas(handle: runtimeHandle, session: session), completion)
     }
