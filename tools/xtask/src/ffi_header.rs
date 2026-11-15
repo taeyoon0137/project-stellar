@@ -462,6 +462,29 @@ StellarStatus stellar_text_content(uint64_t handle, uint64_t session, const uint
 /* 표시한 View·revision의 레이어 이름을 UTF-8로 바꿉니다. 코어가 View 소속과 조상 잠금을 확인하고 RenameNode 하나를
  * 창 history에 기록합니다. 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED입니다. */
 StellarStatus stellar_window_layer_rename(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, const uint8_t *name, size_t name_len, uint64_t *out_request);
+
+/* ADR-0071 캔버스 직접 조작. 셸은 그린 행·world 값만 넘기고 선택·편집 의미는 코어가 정합니다. */
+#define STELLAR_PICK_TOGGLE 1
+#define STELLAR_PICK_DEEP 2
+#define STELLAR_PICK_ENTER 4
+#define STELLAR_AREA_CONTAIN 1
+#define STELLAR_AREA_ADD 2
+/* leaf: 포인터 아래 가장 위 행의 node(NULL = 모든 Frame 밖). 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED. */
+StellarStatus stellar_window_canvas_pick(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t *leaf, uint32_t flags, uint64_t *out_request);
+/* world 영역의 두 꼭짓점. root의 직계 자식 가운데 겹치는(CONTAIN이면 완전히 포함된) node를 고릅니다. */
+StellarStatus stellar_window_canvas_pick_area(uint64_t handle, uint64_t session, const uint8_t view[16], float x0, float y0, float x1, float y1, uint32_t flags, uint64_t *out_request);
+#define STELLAR_CANVAS_ITEM_MOVABLE 1
+#define STELLAR_CANVAS_ITEM_RESIZABLE 2
+#define STELLAR_CANVAS_ITEM_RADIUS 4
+#define STELLAR_CANVAS_ITEM_RADIUS_PER_CORNER 8
+#define STELLAR_CANVAS_ITEM_FIXED_WIDTH 16
+#define STELLAR_CANVAS_ITEM_FIXED_HEIGHT 32
+/* kind: 1 Frame, 2 Rectangle, 3 Ellipse, 4 Line, 5 Polygon, 6 Text, 7 Image, 8 Instance.
+ * world: local→world (a b c d tx ty). rect: local x y w h. radii: tl tr br bl. */
+typedef struct StellarCanvasSelectionItem { uint8_t id[16]; uint32_t kind, flags; float world[6], rect[4], radii[4]; } StellarCanvasSelectionItem;
+/* 최신 게시 snapshot의 선택 상자. items=NULL이면 수만, 용량 부족은 BUFFER_TOO_SMALL과 필요한 수. */
+StellarStatus stellar_window_canvas_selection(uint64_t handle, uint64_t session, StellarCanvasSelectionItem *items, size_t capacity, size_t *out_count, uint64_t *out_revision);
+
 /* 셸 worker 전용. 활성 View/revision의 직계 자식을 앞에서부터 조회합니다.
  * rows: STELLAR_LAYER_PAGE_SIZE개 caller buffer. 플래그 bit 0 표시, 1 잠금, 2 자식 있음.
  * UTF-8 text는 페이지·View·행 이름 순서. BUFFER_TOO_SMALL은 info.text_len만큼 확보해 재호출합니다.

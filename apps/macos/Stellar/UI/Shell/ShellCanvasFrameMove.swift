@@ -26,19 +26,47 @@ extension ShellProjectWindow {
         }
     }
 
+    /// 그린 행에서 고른 선택을 코어로 보냅니다(ADR-0071). leaf가 nil이면 모든 Frame 밖입니다.
+    @discardableResult
+    func pickCanvas(view: UUID, leaf: UUID?, flags: UInt32) -> Bool {
+        guard let project = dataSource.session, let session = windowController.windowSession,
+              !session.isClosing, !session.isClosed else { return false }
+        return session.track({ project.pump.canvasPick(session: session.session, view: view, leaf: leaf, flags: flags,
+                                                       completion: $0) }) { [weak self, weak session] _ in
+            guard let self, self.windowController.windowSession === session else { return }
+            self.refreshSessionCommands()
+        }
+    }
+
+    /// world 영역 선택을 코어로 보냅니다(ADR-0071).
+    @discardableResult
+    func pickCanvasArea(view: UUID, from: CGPoint, to: CGPoint, flags: UInt32) -> Bool {
+        guard let project = dataSource.session, let session = windowController.windowSession,
+              !session.isClosing, !session.isClosed else { return false }
+        return session.track({ project.pump.canvasPickArea(session: session.session, view: view, from: from, to: to,
+                                                           flags: flags, completion: $0) }) { [weak self, weak session] _ in
+            guard let self, self.windowController.windowSession === session else { return }
+            self.refreshSessionCommands()
+        }
+    }
+
     func connectFrameInteractions() {
         let canvas = canvasHost.canvasView
         // temporary: Space를 누르는 동안 시작한 임시 Hand. 도중에 Space를 놓아도 마우스를 놓을 때까지 팬합니다.
         var handDrag: (point: NSPoint, session: UInt64, size: NSSize, temporary: Bool)?
         var zoomDrag: (start: NSPoint, session: UInt64, camera: StellarWindowViewInfo, bounds: CGRect)?
+        // 빈 곳(root 배경 또는 모든 Frame 밖)에서 시작한 영역 선택. leaf는 클릭으로 끝날 때 고를 행입니다.
+        var marquee: (start: NSPoint, leaf: UUID?, view: UUID, session: UInt64, size: NSSize, moved: Bool)?
         // 진행 중인 캔버스 제스처 하나라도 있으면 true. 새 제스처 상태(크기 조절·영역 선택 등)도 여기에 더합니다.
         canvas.frameGestureActive = { [weak self] in
-            self?.frameDrag != nil || handDrag != nil || zoomDrag != nil
+            self?.frameDrag != nil || handDrag != nil || zoomDrag != nil || marquee != nil
         }
         canvas.cancelFrameGesture = { [weak self, weak canvas] in
-            guard let self, self.frameDrag != nil || handDrag != nil || zoomDrag != nil || self.rejectedDraw else { return false }
+            guard let self, self.frameDrag != nil || handDrag != nil || zoomDrag != nil || marquee != nil || self.rejectedDraw
+            else { return false }
             handDrag = nil
             zoomDrag = nil
+            marquee = nil
             self.frameDrag = nil
             if self.rejectedDraw {
                 self.rejectedDraw = false
@@ -145,18 +173,59 @@ extension ShellProjectWindow {
             if self.frameDrag?.tool.insertsBounds == true || (event.type == .leftMouseDown && self.toolsModel.snapshot.activeTool.insertsBounds) {
                 return self.handleFrameInsertion(event, point: point, canvas: canvas)
             }
+            if var area = marquee, event.type == .leftMouseDragged || event.type == .leftMouseUp {
+                guard self.toolsModel.snapshot.activeTool == .move, canvas.bounds.size == area.size,
+                      let session = self.windowController.windowSession, session.session == area.session else {
+                    _ = canvas.cancelFrameGesture?()
+                    return true
+                }
+                let rect = CGRect(x: min(point.x, area.start.x), y: min(point.y, area.start.y),
+                                  width: abs(point.x - area.start.x), height: abs(point.y - area.start.y))
+                if !area.moved, hypot(rect.width, rect.height) >= 3 {
+                    area.moved = true
+                    marquee = area
+                }
+                if event.type == .leftMouseDragged {
+                    canvas.insertionOutline = area.moved ? CGPath(rect: rect, transform: nil) : nil
+                    return true
+                }
+                _ = canvas.cancelFrameGesture?()
+                let modifiers = event.modifierFlags
+                if area.moved {
+                    // 영역은 world로 바꿔 보내고, 무엇을 고를지는 코어가 정합니다(Option 완전 포함, Shift 더하기).
+                    let toWorld = canvas.worldToView.inverted()
+                    var flags: UInt32 = 0
+                    if modifiers.contains(.option) { flags |= UInt32(STELLAR_AREA_CONTAIN) }
+                    if modifiers.contains(.shift) { flags |= UInt32(STELLAR_AREA_ADD) }
+                    self.pickCanvasArea(view: area.view, from: area.start.applying(toWorld), to: point.applying(toWorld),
+                                        flags: flags)
+                } else {
+                    self.pickCanvas(view: area.view, leaf: area.leaf,
+                                    flags: modifiers.contains(.shift) ? UInt32(STELLAR_PICK_TOGGLE) : 0)
+                }
+                return true
+            }
             switch event.type {
             case .leftMouseDown:
                 _ = canvas.cancelFrameGesture?()
                 guard self.toolsModel.snapshot.activeTool == .move,
-                      event.modifierFlags.intersection([.command, .control, .shift, .option]).isEmpty,
+                      event.modifierFlags.intersection([.control]).isEmpty,
                       let session = self.windowController.windowSession,
                       !session.isClosed, !session.isClosing, let viewport = session.viewInfo,
                       viewport.has_view == 1 else { return false }
                 canvas.window?.makeFirstResponder(canvas)
-                guard let hit = canvas.frameHit(at: point) else { return self.selectNodes([]) }
-                guard session.info?.revision == hit.revision, UUID(uuid: viewport.active_view) == hit.viewID,
-                      self.selectNodes([hit.id]) else { return false }
+                let view = UUID(uuid: viewport.active_view)
+                guard let hit = canvas.frameHit(at: point), hit.id != canvas.rootFrameID else {
+                    marquee = (point, canvas.frameHit(at: point)?.id, view, session.session, canvas.bounds.size, false)
+                    return true
+                }
+                guard session.info?.revision == hit.revision, view == hit.viewID else { return false }
+                // 무엇을 고를지(직계 자식, Shift 넣고 빼기, ⌘ 깊은 선택, 더블클릭 한 단계 들어가기)는 코어가 정합니다.
+                var flags: UInt32 = 0
+                if event.modifierFlags.contains(.shift) { flags |= UInt32(STELLAR_PICK_TOGGLE) }
+                if event.modifierFlags.contains(.command) { flags |= UInt32(STELLAR_PICK_DEEP) }
+                if event.clickCount >= 2 { flags |= UInt32(STELLAR_PICK_ENTER) }
+                guard self.pickCanvas(view: view, leaf: hit.id, flags: flags) else { return false }
                 if hit.isText || hit.isImage { return true }
                 self.frameDrag = CanvasFrameDrag(hit: hit, start: point, session: session.session,
                                                  size: canvas.bounds.size, viewport: viewport, tool: .move)

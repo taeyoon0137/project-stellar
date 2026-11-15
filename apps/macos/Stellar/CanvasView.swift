@@ -46,9 +46,21 @@ final class CanvasView: NSView {
     }
 
     func setFrameDragPreview(id: UUID?, offset: CGVector) {
-        frameScene.setDragPreview(id: id, offset: offset)
+        setFrameDragPreview(ids: id.map { [$0] } ?? [], offset: offset)
+    }
+
+    /// 드래그 중인 node들(그 subtree 포함)을 화면에서 `offset`만큼 옮겨 그립니다. 문서는 바꾸지 않습니다.
+    func setFrameDragPreview(ids: [UUID], offset: CGVector) {
+        frameScene.setDragPreview(ids: ids, offset: offset)
         needsDisplay = true
     }
+
+    /// 코어가 정한 선택 상자(ADR-0071).
+    var selectionBoxes: [CanvasSelectionBox] { frameScene.selection }
+    /// 활성 View의 root Frame. 그 배경을 누르면 빈 곳으로 봅니다.
+    var rootFrameID: UUID? { frameScene.rootID }
+    /// 문서 → 화면 변환.
+    var worldToView: CGAffineTransform { frameScene.worldToView }
 
     var insertionOutline: CGPath? { didSet { needsDisplay = true } }
 

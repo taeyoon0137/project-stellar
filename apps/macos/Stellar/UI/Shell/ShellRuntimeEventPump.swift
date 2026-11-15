@@ -175,6 +175,17 @@ final class ShellRuntimeEventPump {
                                          parent: parent.id, revision: parent.revision, rect: rect), completion)
     }
 
+    func canvasPick(session: UInt64, view: UUID, leaf: UUID?, flags: UInt32,
+                    completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.canvasPick(handle: runtimeHandle, session: session, view: view, leaf: leaf, flags: flags), completion)
+    }
+
+    func canvasPickArea(session: UInt64, view: UUID, from: CGPoint, to: CGPoint, flags: UInt32,
+                        completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.canvasPickArea(handle: runtimeHandle, session: session, view: view, from: from, to: to,
+                                            flags: flags), completion)
+    }
+
     func moveFrame(session: UInt64, hit: CanvasFrameHit, delta: CGVector,
                    completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.moveFrame(handle: runtimeHandle, session: session, view: hit.viewID,

@@ -6,7 +6,10 @@
 use stellar_core_types::ids::StableId;
 use stellar_core_types::revision::DocumentRevision;
 use stellar_core_types::value::{FiniteF32, Vec2};
-use stellar_runtime::app::{ShapeKind, ShapePaint, WindowSessionHandle};
+use stellar_runtime::app::{
+    CanvasNodeKind, CanvasPick, CanvasSelectionItem, RadiusHandles, ShapeKind, ShapePaint,
+    WindowSessionHandle,
+};
 
 use crate::canvas::StellarCanvasColor;
 use crate::{ffi_guard, registry, StellarStatus};
@@ -134,6 +137,241 @@ pub unsafe extern "C" fn stellar_window_session_zoom_by(
             Err(status) => return status,
         };
         unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 클릭 선택 flag: Shift(넣고 빼기).
+pub const PICK_TOGGLE: u32 = 1;
+/// 클릭 선택 flag: ⌘(깊은 선택).
+pub const PICK_DEEP: u32 = 2;
+/// 클릭 선택 flag: 더블클릭(한 단계 들어가기).
+pub const PICK_ENTER: u32 = 4;
+/// 영역 선택 flag: Option(완전히 포함된 것만).
+pub const AREA_CONTAIN: u32 = 1;
+/// 영역 선택 flag: Shift(지금 선택에 더하기).
+pub const AREA_ADD: u32 = 2;
+
+fn submit_pick(
+    handle: u64,
+    session: u64,
+    view: StableId,
+    pick: CanvasPick,
+    out_request: *mut u64,
+) -> StellarStatus {
+    let Ok(mut reg) = registry().lock() else {
+        return StellarStatus::Internal;
+    };
+    let Some(rt) = reg.live.get_mut(&handle) else {
+        return StellarStatus::InvalidHandle;
+    };
+    let result = match rt.app() {
+        Ok(app) => app.canvas_pick(WindowSessionHandle(session), view, pick),
+        Err(status) => return status,
+    };
+    unsafe { rt.finish_request(result, out_request) }
+}
+
+/// 포인터 아래 가장 위 행(`leaf`, null이면 모든 Frame 밖)에서 선택을 정해 그 창 history에 기록합니다(UX 명세 5.3).
+/// 무엇을 고를지(직계 자식, 넣고 빼기, 깊은 선택, 한 단계 들어가기)는 코어가 정합니다.
+///
+/// # Safety
+/// `view`는 16 byte, `leaf`는 null 또는 16 byte를 읽을 수 있어야 하고 `out_request`는 null 또는 쓰기 가능해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_canvas_pick(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    leaf: *const [u8; 16],
+    flags: u32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        if flags & !(PICK_TOGGLE | PICK_DEEP | PICK_ENTER) != 0 {
+            return StellarStatus::InvalidArgument;
+        }
+        let leaf = (!leaf.is_null()).then(|| StableId::from_bytes(unsafe { *leaf }));
+        let pick = CanvasPick::Point {
+            leaf,
+            toggle: flags & PICK_TOGGLE != 0,
+            deep: flags & PICK_DEEP != 0,
+            enter: flags & PICK_ENTER != 0,
+        };
+        submit_pick(
+            handle,
+            session,
+            StableId::from_bytes(unsafe { *view }),
+            pick,
+            out_request,
+        )
+    })
+}
+
+/// world 영역 `(x0, y0)`–`(x1, y1)`으로 root의 직계 자식을 고릅니다(Option 완전 포함, Shift 더하기).
+///
+/// # Safety
+/// `view`는 16 byte를 읽을 수 있어야 하고 `out_request`는 null 또는 쓰기 가능해야 합니다.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn stellar_window_canvas_pick_area(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    flags: u32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let (Ok(from), Ok(to)) = (Vec2::new(x0, y0), Vec2::new(x1, y1)) else {
+            return StellarStatus::InvalidArgument;
+        };
+        if flags & !(AREA_CONTAIN | AREA_ADD) != 0 {
+            return StellarStatus::InvalidArgument;
+        }
+        let pick = CanvasPick::Area {
+            from,
+            to,
+            contain: flags & AREA_CONTAIN != 0,
+            add: flags & AREA_ADD != 0,
+        };
+        submit_pick(
+            handle,
+            session,
+            StableId::from_bytes(unsafe { *view }),
+            pick,
+            out_request,
+        )
+    })
+}
+
+/// 선택 항목 flag.
+pub const ITEM_MOVABLE: u32 = 1;
+/// 크기 핸들 있음.
+pub const ITEM_RESIZABLE: u32 = 2;
+/// 반경 핸들 있음.
+pub const ITEM_RADIUS: u32 = 4;
+/// 반경이 모서리별 longhand(없으면 값 하나).
+pub const ITEM_RADIUS_PER_CORNER: u32 = 8;
+/// 가로 고정 크기(없으면 `fit-content`).
+pub const ITEM_FIXED_WIDTH: u32 = 16;
+/// 세로 고정 크기.
+pub const ITEM_FIXED_HEIGHT: u32 = 32;
+
+/// 표시한 선택 node 하나의 상자. kind: 1 Frame, 2 Rectangle, 3 Ellipse, 4 Line, 5 Polygon, 6 Text, 7 Image, 8 Instance.
+#[derive(Clone, Copy, Default)]
+#[repr(C)]
+pub struct StellarCanvasSelectionItem {
+    id: [u8; 16],
+    kind: u32,
+    flags: u32,
+    world: [f32; 6],
+    rect: [f32; 4],
+    radii: [f32; 4],
+}
+
+impl From<&CanvasSelectionItem> for StellarCanvasSelectionItem {
+    fn from(item: &CanvasSelectionItem) -> Self {
+        let kind = match item.kind {
+            CanvasNodeKind::Frame => 1,
+            CanvasNodeKind::Rectangle => 2,
+            CanvasNodeKind::Ellipse => 3,
+            CanvasNodeKind::Line => 4,
+            CanvasNodeKind::Polygon => 5,
+            CanvasNodeKind::Text => 6,
+            CanvasNodeKind::Image => 7,
+            CanvasNodeKind::Instance => 8,
+        };
+        let bit = |on: bool, flag: u32| if on { flag } else { 0 };
+        let flags = bit(item.movable, ITEM_MOVABLE)
+            | bit(item.resizable, ITEM_RESIZABLE)
+            | bit(item.radius.is_some(), ITEM_RADIUS)
+            | bit(
+                item.radius == Some(RadiusHandles::PerCorner),
+                ITEM_RADIUS_PER_CORNER,
+            )
+            | bit(item.fixed[0], ITEM_FIXED_WIDTH)
+            | bit(item.fixed[1], ITEM_FIXED_HEIGHT);
+        let (a, b, c, d, x, y) = item.world.components();
+        let origin = item.rect.origin();
+        let size = item.rect.size();
+        let (tl, tr, br, bl) = item.radii.components();
+        Self {
+            id: item.id.to_bytes(),
+            kind,
+            flags,
+            world: [a, b, c, d, x, y],
+            rect: [origin.x(), origin.y(), size.width(), size.height()],
+            radii: [tl, tr, br, bl],
+        }
+    }
+}
+
+/// 최신 게시 snapshot의 선택 상자를 씁니다. `items`가 null이면 수만 씁니다(`out_count`).
+/// 용량이 모자라면 `STELLAR_BUFFER_TOO_SMALL`과 필요한 수를 씁니다. `out_revision`은 항목을 계산한 문서 revision입니다.
+///
+/// # Safety
+/// `out_count`·`out_revision`은 쓰기 가능하고, `items`는 null이거나 `capacity`개를 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_canvas_selection(
+    handle: u64,
+    session: u64,
+    items: *mut StellarCanvasSelectionItem,
+    capacity: usize,
+    out_count: *mut usize,
+    out_revision: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out_count.is_null() || out_revision.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe {
+            out_count.write(0);
+            out_revision.write(0);
+        }
+        let state = {
+            let Ok(reg) = registry().lock() else {
+                return StellarStatus::Internal;
+            };
+            let Some(runtime) = reg.live.get(&handle) else {
+                return StellarStatus::InvalidHandle;
+            };
+            let Some(app) = &runtime.app else {
+                return StellarStatus::InvalidArgument;
+            };
+            app.state()
+        };
+        let Some(window) = state.window(WindowSessionHandle(session)) else {
+            return StellarStatus::InvalidArgument;
+        };
+        let selection = &window.canvas_selection;
+        unsafe {
+            out_count.write(selection.len());
+            out_revision.write(window.revision.0);
+        }
+        if items.is_null() {
+            return StellarStatus::Ok;
+        }
+        if capacity < selection.len() {
+            return StellarStatus::BufferTooSmall;
+        }
+        for (index, item) in selection.iter().enumerate() {
+            unsafe { items.add(index).write(item.into()) };
+        }
+        StellarStatus::Ok
     })
 }
 

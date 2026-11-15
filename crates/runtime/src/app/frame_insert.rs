@@ -379,7 +379,10 @@ mod tests {
         }
         let hairline = ShapePaint {
             fill: None,
-            stroke: Some((Color::new(ColorSpace::Srgb, 0., 0., 0., 1.).unwrap(), FiniteF32::ZERO)),
+            stroke: Some((
+                Color::new(ColorSpace::Srgb, 0., 0., 0., 1.).unwrap(),
+                FiniteF32::ZERO,
+            )),
         };
         assert!(shape_from_points(ShapeKind::Line, [start, point(5., 11.)], hairline).is_none());
         let fill_only = settings_paint(ShapeKind::Rectangle);

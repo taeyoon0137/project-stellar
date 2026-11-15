@@ -145,10 +145,10 @@ pub mod sidebar;
 /// 캔버스의 미확정 입력과 한 번의 본문 확정.
 pub mod text_input;
 pub use frame_move::{FrameValue, SelectedFrame, SelectedNode};
+pub use canvas_gesture::{CanvasNodeKind, CanvasPick, CanvasSelectionItem, RadiusHandles};
 pub use node_delete::{SelectionEdit, SelectionEditTarget};
 pub use stellar_document::model::SiblingOrder;
 pub use stellar_document::shape::ShapeKind;
-pub use frame_insert::ShapePaint;
 
 use crate::app_command::AppCommand;
 use crate::command_queue::QueueCapacity;
@@ -961,6 +961,8 @@ pub struct WindowSessionSummary {
     pub viewport: Option<CanvasViewport>,
     /// 활성 View의 painter 목록. 문서 또는 View가 바뀔 때만 다시 평가합니다.
     pub canvas: Option<Arc<crate::canvas::CanvasScene>>,
+    /// 표시한 선택의 상자와 편집 가능 범위(ADR-0071). 셸은 외곽선·핸들만 그립니다.
+    pub canvas_selection: Arc<[CanvasSelectionItem]>,
 }
 
 /// document thread가 게시한 불변 상태 snapshot.
@@ -1430,6 +1432,15 @@ fn window_summary(
         }),
         _ => None,
     };
+    let canvas = entry.canvas.current(
+        session,
+        entry
+            .text
+            .as_ref()
+            .and_then(|c| c.preview_at(session.revision())),
+        shared_scenes,
+    );
+    let canvas_selection = canvas_gesture::selection_items(session, canvas.as_deref());
     WindowSessionSummary {
         session: handle,
         project: entry.project,
@@ -1453,14 +1464,8 @@ fn window_summary(
         asset_chunks: session.asset_chunks.clone(),
         image_generation: session.loaded_generation().map(|g| g.manifest_hash),
         component_library: entry.canvas.library.clone(),
-        canvas: entry.canvas.current(
-            session,
-            entry
-                .text
-                .as_ref()
-                .and_then(|c| c.preview_at(session.revision())),
-            shared_scenes,
-        ),
+        canvas_selection,
+        canvas,
     }
 }
 

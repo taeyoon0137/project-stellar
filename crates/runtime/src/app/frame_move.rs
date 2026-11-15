@@ -319,7 +319,7 @@ fn translated(current: Transform2D, delta: Vec2) -> Option<Transform2D> {
     Transform2D::new(a, b, c, d, x + delta.x(), y + delta.y()).ok()
 }
 
-fn editable_ancestry(
+pub(super) fn editable_ancestry(
     model: &DocumentModel,
     view: StableId,
     node: StableId,
@@ -347,8 +347,12 @@ fn editable_ancestry(
             Some(NodePayload::Frame(frame))
                 if frame.layout_mode.is_none() && !matches!(frame.clipping, Clipping::Path(_)) => {}
             Some(NodePayload::Fragment(_)) => {}
-            Some(NodePayload::Shape(_) | NodePayload::ComponentInstance(_))
-                if modifier_target && current == node => {}
+            Some(
+                NodePayload::Shape(_)
+                | NodePayload::ComponentInstance(_)
+                | NodePayload::Text(_)
+                | NodePayload::Image(_),
+            ) if modifier_target && current == node => {}
             _ => return None,
         }
         if current == root {

@@ -42,6 +42,23 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
    Space를 누르는 동안의 임시 Hand는 Hand 도구와 같은 `stellar_window_session_pan`을 씁니다.
 3. 카메라 조작은 문서·history·저장 상태를 바꾸지 않습니다.
 
+### UX.3.6 — 선택
+
+1. `stellar_window_canvas_pick(handle, session, view, leaf, flags, out_request)`: 셸은 포인터 아래 가장 위에 그린
+   행의 node(`leaf`, null은 모든 Frame 밖)와 수식키 flag(`STELLAR_PICK_TOGGLE` Shift, `STELLAR_PICK_DEEP` ⌘,
+   `STELLAR_PICK_ENTER` 더블클릭)만 보냅니다. 코어가 고를 node를 정합니다.
+   - 기본: 지금 선택과 같은 깊이(선택한 node의 부모가 leaf의 조상이면 그 부모의 자식)를 고르고, 없으면 root의
+     직계 자식을 고릅니다. root 배경이면 root, 모든 Frame 밖이면 선택을 비웁니다.
+   - ⌘는 leaf 자체, 더블클릭은 선택한 node 안의 자식, Shift는 넣고 빼기(빈 곳이면 그대로)입니다.
+2. `stellar_window_canvas_pick_area(handle, session, view, x0, y0, x1, y1, flags, out_request)`: world 영역으로 root의
+   직계 자식 가운데 보이고 잠기지 않은 node를 고릅니다. 기본은 겹침, `STELLAR_AREA_CONTAIN`(Option)은 완전 포함,
+   `STELLAR_AREA_ADD`(Shift)는 지금 선택에 더하기입니다. 경계는 코어가 평가한 캔버스 행의 world 상자입니다.
+3. `stellar_window_canvas_selection(handle, session, items, capacity, out_count, out_revision)`: 최신 게시 snapshot의
+   `StellarCanvasSelectionItem`(id, kind, flags, world, local rect, radii)을 씁니다. flags는 이동·크기·반경 핸들
+   가능 여부와 고정 크기 여부(`STELLAR_CANVAS_ITEM_*`)이며 코어가 잠금·숨김·흐름 부모·modifier 구성으로 정합니다.
+   셸은 이 값으로 외곽선·핸들·크기 라벨만 그립니다. runtime `WindowSessionSummary`에 `canvas_selection`을 더합니다.
+4. 선택은 기존과 같이 그 창 history의 선택 항목으로 기록하고 문서·저장 상태는 바꾸지 않습니다.
+
 ## Alternatives
 
 - 코어에 기본 색 표를 두고 셸이 덮어쓰기: D7("코어 하드코딩 없음")에 어긋나 채택하지 않았습니다.

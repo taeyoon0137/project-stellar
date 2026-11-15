@@ -1,5 +1,33 @@
 import AppKit
 
+/// 코어가 정한 선택 상자 하나(ADR-0071). 셸은 이 값으로 외곽선·핸들·크기 라벨만 그립니다.
+struct CanvasSelectionBox: Equatable {
+    let id: UUID
+    /// 1 Frame, 2 Rectangle, 3 Ellipse, 4 Line, 5 Polygon, 6 Text, 7 Image, 8 Instance.
+    let kind: UInt32
+    let flags: UInt32
+    /// local → world.
+    let world: CGAffineTransform
+    /// local 상자.
+    let rect: CGRect
+    /// tl, tr, br, bl.
+    let radii: [CGFloat]
+
+    init(_ item: StellarCanvasSelectionItem) {
+        id = UUID(uuid: item.id)
+        kind = item.kind
+        flags = item.flags
+        let w = item.world
+        world = CGAffineTransform(a: CGFloat(w.0), b: CGFloat(w.1), c: CGFloat(w.2), d: CGFloat(w.3),
+                                  tx: CGFloat(w.4), ty: CGFloat(w.5))
+        rect = CGRect(x: CGFloat(item.rect.0), y: CGFloat(item.rect.1),
+                      width: CGFloat(item.rect.2), height: CGFloat(item.rect.3))
+        radii = [CGFloat(item.radii.0), CGFloat(item.radii.1), CGFloat(item.radii.2), CGFloat(item.radii.3)]
+    }
+
+    func has(_ flag: Int32) -> Bool { flags & UInt32(flag) != 0 }
+}
+
 struct CanvasFrameHit {
     var textQuery: StellarCanvasTextQuery? = nil
     var isText: Bool { textQuery != nil }
@@ -172,15 +200,25 @@ final class CanvasFrameScene {
     private static let emptyID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
     private var primary: UUID?
     private var primaryIndex: Int?
-    private var previewID: UUID?
-    private var previewRange: ClosedRange<Int>?
+    private var previewIDs: [UUID] = []
+    /// 드래그 중 함께 옮겨 그리는 subtree 행 범위. 서로 겹치지 않습니다(조상이 있으면 자손 범위는 뺍니다).
+    private var previewRanges: [ClosedRange<Int>] = []
     private var previewOffset = CGVector.zero
+    private var indexByID: [UUID: Int] = [:]
+    /// 코어가 정한 선택 상자(ADR-0071).
+    private(set) var selection: [CanvasSelectionBox] = []
+    /// 활성 View의 root Frame.
+    private(set) var rootID: UUID?
 
-    func setDragPreview(id: UUID?, offset: CGVector) {
-        if previewID != id {
-            previewID = id
-            previewRange = id.flatMap { id in frames.firstIndex { $0.id == id } }
-                .map { $0...frames[$0].lastDescendant }
+    private func previewing(_ index: Int) -> Bool { previewRanges.contains { $0.contains(index) } }
+
+    func setDragPreview(ids: [UUID], offset: CGVector) {
+        if previewIDs != ids {
+            previewIDs = ids
+            let ranges = ids.compactMap { indexByID[$0] }.map { $0...frames[$0].lastDescendant }
+            previewRanges = ranges.filter { range in
+                !ranges.contains { $0 != range && $0.contains(range.lowerBound) && $0.count > range.count }
+            }
         }
         let inverse = worldToView.inverted()
         previewOffset = CGVector(dx: inverse.a * offset.dx + inverse.c * offset.dy,
@@ -201,8 +239,11 @@ final class CanvasFrameScene {
         skipped = 0
         primary = nil
         primaryIndex = nil
-        previewID = nil
-        previewRange = nil
+        previewIDs = []
+        previewRanges = []
+        indexByID = [:]
+        selection = []
+        rootID = nil
     }
 
     func refresh(handle: UInt64, session: UInt64, size: CGSize) {
@@ -213,8 +254,8 @@ final class CanvasFrameScene {
             return
         }
         if self.session != session || viewID != UUID(uuid: info.view) || revision != info.revision {
-            previewID = nil
-            previewRange = nil
+            previewIDs = []
+            previewRanges = []
             primary = nil
             primaryIndex = nil
             // 사이에 document thread가 더 큰 revision을 게시할 수 있습니다. 두 번째 호출의 metadata와 행을 함께 채택합니다.
@@ -251,6 +292,8 @@ final class CanvasFrameScene {
             frames = projected
             // revision이 바뀌어도 남은 이미지 행은 다시 확인할 때까지 이전 픽셀을 그립니다(깜박임 없음).
             png.retain(Set(frames.lazy.filter(\.isImage).map(\.id)))
+            indexByID = Dictionary(frames.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+            rootID = frames.first { $0.parent == nil }?.id
             documentTexts = nextTexts
             for i in frames.indices.reversed() {
                 if let parent = frames[i].parent {
@@ -271,6 +314,16 @@ final class CanvasFrameScene {
         }
         skipped = info.skipped
         worldToView = transform(info.camera)
+        selection = CoreRuntime.canvasSelection(handle: handle, session: session)?.items.map(CanvasSelectionBox.init) ?? []
+    }
+
+    /// 선택 상자의 local → 화면 변환. 드래그 미리보기 중이면 같은 만큼 옮깁니다.
+    func selectionPlacement(_ box: CanvasSelectionBox) -> CGAffineTransform {
+        var placement = box.world
+        if let index = indexByID[box.id], previewing(index) {
+            placement = placement.concatenating(CGAffineTransform(translationX: previewOffset.dx, y: previewOffset.dy))
+        }
+        return placement.concatenating(worldToView)
     }
 
     func hit(at point: CGPoint, onlyFrames: Bool) -> CanvasFrameHit? {
@@ -332,7 +385,7 @@ final class CanvasFrameScene {
     private func imageReady(at index: Int) {
         guard frames.indices.contains(index) else { return }
         var damage = frames[index].worldBounds
-        if previewRange?.contains(index) == true {
+        if previewing(index) {
             damage = damage.offsetBy(dx: previewOffset.dx, dy: previewOffset.dy)
         }
         redrawImage?(damage.applying(worldToView).insetBy(dx: -1, dy: -1))
@@ -353,17 +406,17 @@ final class CanvasFrameScene {
                 context.restoreGState()
                 clipEnds.removeLast()
             }
-            let frameQuery = previewRange?.contains(index) == true ? previewQuery : query
+            let frameQuery = previewing(index) ? previewQuery : query
             let visible = frame.worldBounds.intersects(frameQuery)
             if !visible {
                 // 원래 subtree 전체가 화면 밖이어도 드래그 중인 자식이 들어올 수 있습니다.
-                let movingChild = previewRange.map { index < $0.lowerBound && $0.lowerBound <= frame.lastDescendant } ?? false
+                let movingChild = previewRanges.contains { index < $0.lowerBound && $0.lowerBound <= frame.lastDescendant }
                 if frame.clips || (!movingChild && !frame.subtreeBounds.intersects(frameQuery)) {
                     index = frame.lastDescendant + 1
                     continue
                 }
             }
-            if index == previewRange?.lowerBound {
+            if previewRanges.contains(where: { $0.lowerBound == index }) {
                 context.saveGState()
                 context.translateBy(x: previewOffset.dx, y: previewOffset.dy)
                 clipEnds.append(frame.lastDescendant)
@@ -422,21 +475,15 @@ final class CanvasFrameScene {
         for _ in clipEnds { context.restoreGState() }
         context.restoreGState()
         if let overlay = textEditOverlay { drawTextEdit(overlay, in: context) }
-        // 선택 외곽선은 조상의 clip과 관계없이 scene 위에 표시합니다.
-        if let i = primaryIndex {
-            let frame = frames[i]
-            var placement = frame.world
-            if previewRange?.contains(i) == true {
-                placement = placement.concatenating(CGAffineTransform(translationX: previewOffset.dx, y: previewOffset.dy))
-            }
-            placement = placement.concatenating(worldToView)
-            let path = CGPath(rect: frame.localBounds, transform: &placement)
-            context.saveGState()
-            context.setStrokeColor(NSColor.controlAccentColor.cgColor)
-            context.setLineWidth(1.5)
-            context.addPath(path)
-            context.strokePath()
-            context.restoreGState()
+        // 선택 외곽선은 조상의 clip과 관계없이 scene 위에 표시합니다. 상자는 코어가 정합니다(ADR-0071).
+        context.saveGState()
+        context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+        context.setLineWidth(1.5)
+        for box in selection {
+            var placement = selectionPlacement(box)
+            context.addPath(CGPath(rect: box.rect, transform: &placement))
         }
+        context.strokePath()
+        context.restoreGState()
     }
 }

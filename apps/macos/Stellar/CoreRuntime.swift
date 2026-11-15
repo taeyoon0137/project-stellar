@@ -318,6 +318,48 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    /// 그린 행(`leaf`, nil이면 모든 Frame 밖)에서 고를 선택을 코어 규칙으로 정합니다(ADR-0071).
+    static func canvasPick(handle: UInt64, session: UInt64, view: UUID, leaf: UUID?,
+                           flags: UInt32) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
+            let viewPointer = viewBytes.bindMemory(to: UInt8.self).baseAddress
+            guard let leaf else { return stellar_window_canvas_pick(handle, session, viewPointer, nil, flags, &request) }
+            return withUnsafeBytes(of: leaf.uuid) { leafBytes in
+                stellar_window_canvas_pick(handle, session, viewPointer, leafBytes.bindMemory(to: UInt8.self).baseAddress,
+                                           flags, &request)
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    /// world 영역 두 꼭짓점으로 root의 직계 자식을 고릅니다(ADR-0071).
+    static func canvasPickArea(handle: UInt64, session: UInt64, view: UUID, from: CGPoint, to: CGPoint,
+                               flags: UInt32) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
+            stellar_window_canvas_pick_area(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
+                                            Float(from.x), Float(from.y), Float(to.x), Float(to.y), flags, &request)
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    /// 최신 게시 snapshot의 선택 상자와 그 문서 revision. document thread를 기다리지 않습니다.
+    static func canvasSelection(handle: UInt64, session: UInt64) -> (items: [StellarCanvasSelectionItem], revision: UInt64)? {
+        var count = 0
+        var revision: UInt64 = 0
+        guard stellar_window_canvas_selection(handle, session, nil, 0, &count, &revision) == STELLAR_OK else { return nil }
+        guard count > 0 else { return ([], revision) }
+        var items = [StellarCanvasSelectionItem](repeating: StellarCanvasSelectionItem(), count: count)
+        let status = items.withUnsafeMutableBufferPointer {
+            stellar_window_canvas_selection(handle, session, $0.baseAddress, $0.count, &count, &revision)
+        }
+        guard status == STELLAR_OK, count <= items.count else { return nil }
+        return (Array(items.prefix(count)), revision)
+    }
+
     static func moveFrame(handle: UInt64, session: UInt64, view: UUID, node: UUID,
                           revision: UInt64, delta: CGVector) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
