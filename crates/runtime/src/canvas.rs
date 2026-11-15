@@ -98,6 +98,38 @@ impl Default for CanvasCache {
     }
 }
 
+/// 저장본과 같은 문서를 보는 창들이 함께 쓰는 표시 목록(document thread 전용).
+///
+/// 창 문서의 revision 번호는 창마다 따로 셉니다. 그래서 revision 번호만으로는 두 창의 내용이 같은지 알 수
+/// 없습니다. 저장하지 않은 변경이 없는 창의 문서는 loaded generation과 내용이 같습니다(Save Now가 저장한
+/// revision과 generation을 함께 갱신). 이 경우 같은 프로젝트·generation·문서·View·컴포넌트 원본 hash면 같은
+/// 표시 목록이므로 한 번만 평가해 공유합니다. 편집 중인 창은 자기 목록을 따로 평가합니다.
+#[derive(Debug, Default)]
+pub(crate) struct SharedScenes(
+    std::collections::HashMap<SharedSceneKey, std::sync::Weak<CanvasScene>>,
+);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct SharedSceneKey {
+    project: std::path::PathBuf,
+    manifest: ContentHash,
+    document: StableId,
+    view: StableId,
+    library: Option<ContentHash>,
+}
+
+impl SharedScenes {
+    fn get(&self, key: &SharedSceneKey) -> Option<Arc<CanvasScene>> {
+        self.0.get(key).and_then(std::sync::Weak::upgrade)
+    }
+
+    fn insert(&mut self, key: SharedSceneKey, scene: &Arc<CanvasScene>) {
+        // 닫힌 창·지난 generation의 항목은 다른 창이 가리키지 않으면 여기서 정리합니다.
+        self.0.retain(|_, scene| scene.strong_count() > 0);
+        self.0.insert(key, Arc::downgrade(scene));
+    }
+}
+
 impl CanvasCache {
     pub(crate) fn new(fonts: Arc<text::fonts::FaceLoader>) -> Self {
         Self {
@@ -134,15 +166,29 @@ impl CanvasCache {
         &mut self,
         session: &ProjectWindowSession,
         text: Option<&text::TextPreview>,
+        shared: &mut SharedScenes,
     ) -> Option<Arc<CanvasScene>> {
         let view = session.tabs().active_view()?;
         let state = session.document()?;
-        let key = text.map(|t| t.key);
-        let scene_key = (state.revision(), view, key);
+        let scene_key = (state.revision(), view, text.map(|t| t.key));
         if let Some((previous, scene)) = &self.latest {
             if *previous == scene_key {
                 return Some(scene.clone());
             }
+        }
+        let key = session
+            .loaded_generation()
+            .filter(|_| !session.has_unsaved_changes())
+            .map(|loaded| SharedSceneKey {
+                project: session.identity().canonical_target().to_path_buf(),
+                manifest: loaded.manifest_hash,
+                document: state.model().document_id(),
+                view,
+                library: self.library.as_ref().map(|library| library.source_hash),
+            });
+        if let Some(scene) = key.as_ref().and_then(|key| shared.get(key)) {
+            self.latest = Some((scene_key, scene.clone()));
+            return Some(scene);
         }
         let model = state.model();
         let root = model
@@ -167,6 +213,9 @@ impl CanvasCache {
             text,
         ));
         self.saved_text.end_view();
+        if let Some(key) = key {
+            shared.insert(key, &scene);
+        }
         self.latest = Some((scene_key, scene.clone()));
         Some(scene)
     }
@@ -619,7 +668,8 @@ mod tests {
         let dir = saved_project_with("visible-frames", &[&model]);
         let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
         let mut cache = CanvasCache::default();
-        let scene = cache.current(&session, None).unwrap();
+        let mut shared = SharedScenes::default();
+        let scene = cache.current(&session, None, &mut shared).unwrap();
         assert_eq!(scene.skipped, 0);
         assert_eq!(
             scene.frames.iter().map(|r| r.id).collect::<Vec<_>>(),
@@ -631,8 +681,48 @@ mod tests {
             Vec2::new(70., 20.).unwrap()
         );
         session.pan(13., -22.).unwrap();
-        assert!(Arc::ptr_eq(&scene, &cache.current(&session, None).unwrap()));
+        assert!(Arc::ptr_eq(
+            &scene,
+            &cache.current(&session, None, &mut shared).unwrap()
+        ));
         session.open_view(sid(4)).unwrap();
-        assert_eq!(cache.current(&session, None).unwrap().frames[0].id, sid(20));
+        assert_eq!(
+            cache.current(&session, None, &mut shared).unwrap().frames[0].id,
+            sid(20)
+        );
+    }
+
+    #[test]
+    fn clean_windows_of_the_same_generation_share_one_scene_until_edited() {
+        use crate::window_session::test_fixtures::rename;
+        let dir = saved_project_with("shared-scene", &[&sample_document()]);
+        let mut a = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        let b = ProjectWindowSession::load(identity(dir.path()), window(2)).unwrap();
+        let mut shared = SharedScenes::default();
+        let (mut cache_a, mut cache_b) = (CanvasCache::default(), CanvasCache::default());
+        let first = cache_a.current(&a, None, &mut shared).unwrap();
+        assert!(Arc::ptr_eq(
+            &first,
+            &cache_b.current(&b, None, &mut shared).unwrap()
+        ));
+
+        // 편집한 창은 자기 목록을 다시 평가하고, 저장본 그대로인 창은 공유 목록을 유지합니다.
+        let tx = rename(a.document().unwrap(), 1, 11, "Edited");
+        a.apply(&tx).unwrap();
+        assert!(a.has_unsaved_changes());
+        let edited = cache_a.current(&a, None, &mut shared).unwrap();
+        assert!(!Arc::ptr_eq(&first, &edited));
+        assert!(Arc::ptr_eq(
+            &first,
+            &cache_b.current(&b, None, &mut shared).unwrap()
+        ));
+
+        // 편집 중인 창의 목록은 같은 revision 번호의 다른 창과 공유하지 않습니다.
+        let mut c = ProjectWindowSession::load(identity(dir.path()), window(3)).unwrap();
+        let tx = rename(c.document().unwrap(), 2, 12, "Other");
+        c.apply(&tx).unwrap();
+        assert_eq!(c.revision(), a.revision());
+        let other = CanvasCache::default().current(&c, None, &mut shared).unwrap();
+        assert!(!Arc::ptr_eq(&edited, &other));
     }
 }

@@ -1042,6 +1042,8 @@ pub(crate) struct AppSessions {
     by_document_id: BTreeMap<StableId, DocumentSessionId>,
     pub(crate) windows: BTreeMap<WindowSessionHandle, WindowEntry>,
     window_ids: WindowIdSource,
+    /// 저장본 그대로인 창들이 함께 쓰는 캔버스 표시 목록.
+    shared_scenes: crate::canvas::SharedScenes,
 }
 
 /// 창 편집 session id 공급기: UUIDv7(현재 Unix ms + 시각·프로세스·순번에서 섞은 난수 bit).
@@ -1410,7 +1412,11 @@ fn close_window_session_on_thread(
 }
 
 /// 창 session 요약(상태 snapshot용).
-fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> WindowSessionSummary {
+fn window_summary(
+    handle: WindowSessionHandle,
+    entry: &mut WindowEntry,
+    shared_scenes: &mut crate::canvas::SharedScenes,
+) -> WindowSessionSummary {
     entry.checkpoint.observe(&entry.session);
     let session = &entry.session;
     let clamp = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
@@ -1448,6 +1454,7 @@ fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> Windo
                 .text
                 .as_ref()
                 .and_then(|c| c.preview_at(session.revision())),
+            shared_scenes,
         ),
     }
 }
@@ -1569,11 +1576,11 @@ fn build_state(ctx: &mut DocumentContext) -> RuntimeState {
                 .map_or(0, |view| view.len() as u64),
         })
         .collect();
-    let windows = ctx
-        .app_sessions_mut()
+    let sessions = ctx.app_sessions_mut();
+    let windows = sessions
         .windows
         .iter_mut()
-        .map(|(handle, entry)| window_summary(*handle, entry))
+        .map(|(handle, entry)| window_summary(*handle, entry, &mut sessions.shared_scenes))
         .collect();
     RuntimeState {
         generation,
@@ -2050,8 +2057,8 @@ impl AppRuntime {
         height: f64,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            let entry = ctx
-                .app_sessions_mut()
+            let sessions = ctx.app_sessions_mut();
+            let entry = sessions
                 .windows
                 .get_mut(&session)
                 .ok_or_else(|| unknown_window(session))?;
@@ -2061,7 +2068,7 @@ impl AppRuntime {
                 .and_then(|c| c.preview_at(entry.session.revision()));
             let viewport = entry
                 .canvas
-                .current(&entry.session, preview)
+                .current(&entry.session, preview, &mut sessions.shared_scenes)
                 .and_then(|scene| scene.root_viewport(width, height))
                 .ok_or_else(|| {
                     Failure::new(

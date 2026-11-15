@@ -540,3 +540,29 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
   `min(24pt, 짧은 변의 10%)`를 남기고 100%보다 키우지 않습니다. 중심은 root Frame의 world bounds 중심입니다.
 - 새 프로젝트 창의 첫 표시와 View ▸ Zoom to Fit이 같은 ABI를 씁니다. 완료는 `WINDOW_VIEW_CHANGED`, 맞출 Frame이나
   크기가 없으면 `REQUEST_FAILED`(InvalidViewport)입니다. viewport 변경은 history에 기록하지 않습니다.
+
+## 캔버스 표시·입력·감시 ABI 기록 (2026-11-15 검토)
+
+2026-11-15 검토에서 이 ADR 없이 `crates/ffi`에 들어온 캔버스 계열 ABI를 아래처럼 기록하거나 바꿉니다. 남는 ABI만 적습니다.
+
+### 저장 Frame 표시 목록 — `stellar_window_canvas`
+
+- `stellar_window_canvas(handle, session, width, height, info, rows, capacity)`는 창 session의 마지막 게시 상태
+  snapshot 하나에서 active View 표시 목록과 카메라를 복사합니다. document thread를 기다리지 않습니다. width·height는
+  캔버스 logical point이며 유한한 양수여야 합니다(아니면 `STELLAR_INVALID_ARGUMENT`). 열려 있지 않은 창도
+  `STELLAR_INVALID_ARGUMENT`, active View·표시 목록이 없으면 `STELLAR_NO_ERROR`입니다. `rows`가 null이면
+  `info`만 씁니다. `capacity`가 모자라면 `info.count`에 최신 개수를 쓰고 `STELLAR_BUFFER_TOO_SMALL`입니다.
+- `StellarCanvasInfo`(v1): revision u64, view\[16\], primary\[16\](표시 primary 선택, 없으면 0), camera f32×6, count u32,
+  skipped u32(코어가 해석하지 못해 건너뛴 subtree 수). 좌표는 좌상단 원점 logical point이고 camera·world는
+  CGAffineTransform 순서 (a, b, c, d, tx, ty)입니다.
+- `StellarCanvasFrame`(v1, painter 순서): id\[16\], parent u32(root는 `UINT32_MAX`), flags u32, world f32×6,
+  size f32×2, radii f32×4(TL·TR·BR·BL, bounds 기준 정규화 뒤), fill·border `StellarCanvasColor`, border_width f32.
+  flags는 bit0 자식 clip, bit1 hit 대상, bit2 Rectangle Shape, bit3 컴포넌트 인스턴스 투영 행, bit4 Text, bit5 Image,
+  bit6 경로 Shape입니다.
+- `StellarCanvasColor`: space u32(0 색 없음, 1 sRGB, 2 Display P3)와 비연관 RGBA f32×4.
+- 표시 목록은 문서 revision이나 active View가 바뀔 때만 다시 평가합니다. 창 문서의 revision 번호는 창마다
+  따로 세므로, 저장하지 않은 변경이 없는 창끼리만 같은 프로젝트·generation·문서·View·컴포넌트 원본 hash로
+  목록 하나를 공유합니다(`canvas::SharedScenes`). 편집 중인 창은 자기 목록을 평가합니다.
+- 현재 macOS 셸은 이 목록을 Swift Core Graphics 경로(`CanvasFrameScene`)로 그리고 hit test·선택 외곽선도 셸에서
+  계산합니다. 아키텍처 §3.5·§10.1과 다른 임시 구조입니다. 코어 SceneSnapshot을 Metal로 그리고 hit test를 코어
+  질의로 바꾸는 일(XI.8.2 다음 XII.4.1)에서 이 경로를 지우며, 그때까지 CG 경로에는 기능을 더하지 않습니다.
