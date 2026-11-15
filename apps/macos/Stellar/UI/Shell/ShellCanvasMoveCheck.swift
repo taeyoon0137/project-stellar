@@ -135,13 +135,14 @@ enum ShellCanvasMoveCheck {
         let canvas = a.canvasHost.canvasView
         func at(_ x: CGFloat, in canvas: CanvasView) -> UUID? { canvas.frameHit(at: point(canvas, x))?.id }
         guard at(-30, in: canvas) == node, at(30, in: canvas) != node else { return fail("저장 Frame의 최초 좌표") }
-        // 제한 모드도 문서 편집을 허용합니다(사용자 결정 D1). 아래 이동 검사는 신뢰 없이 실행합니다.
-        guard !a.gitSource.trusted, mouse(canvas, .leftMouseDown, -30), mouse(canvas, .leftMouseUp, -30),
-              pump.waitForPendingRequests(timeout: 10), let restricted = sa.info else { return fail("제한 모드 클릭 선택") }
-        guard restricted.selection_count == 1, restricted.revision == initial.revision,
-              restricted.has_unsaved_changes == 0 else {
-            return fail("제한 모드 선택 \(restricted.selection_count), revision \(initial.revision)→\(restricted.revision), dirty \(restricted.has_unsaved_changes)")
+        // D1: 제한 모드는 코드 실행만 막고 캔버스 편집은 막지 않습니다. 끌기 한 번이 옮기고 Undo 한 번이 되돌립니다.
+        guard !a.gitSource.trusted, drag(canvas), let restricted = sa.info else { return fail("제한 모드 입력 제출") }
+        guard restricted.selection_count == 1, restricted.revision != initial.revision,
+              restricted.has_unsaved_changes == 1, at(30, in: canvas) == node, at(-30, in: canvas) != node else {
+            return fail("제한 모드 이동: 선택 \(restricted.selection_count), revision \(initial.revision)→\(restricted.revision), dirty \(restricted.has_unsaved_changes)")
         }
+        guard action(a, .undo), at(-30, in: canvas) == node, at(30, in: canvas) != node, let base = sa.info,
+              base.selection_count == 1 else { return fail("제한 모드 이동 Undo") }
         guard mouse(canvas, .leftMouseDown, 240), mouse(canvas, .leftMouseUp, 240),
               pump.waitForPendingRequests(timeout: 10), sa.info?.selection_count == 0,
               mouse(canvas, .leftMouseDown, -30), mouse(canvas, .leftMouseUp, -30),
@@ -181,13 +182,13 @@ enum ShellCanvasMoveCheck {
               a.router.dispatch(.selectMoveTool), at(-30, in: canvas) == node else { return fail("Hand 카메라·scene 복원") }
         guard checkZoomTool(a, other: b, pump: pump) else { return fail("Z, Option-클릭·영역 줌·다른 창과 문서 보존") }
         guard let selectedPixels = bitmap(canvas), mouse(canvas, .leftMouseDown, -30), mouse(canvas, .leftMouseDragged, 30),
-              let previewPixels = bitmap(canvas), selectedPixels != previewPixels, sa.info?.revision == initial.revision,
+              let previewPixels = bitmap(canvas), selectedPixels != previewPixels, sa.info?.revision == base.revision,
               let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 1,
                   windowNumber: a.window?.windowNumber ?? 0, context: nil, characters: "\u{1b}",
                   charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53) else { return fail("취소 입력 생성") }
         canvas.keyDown(with: escape)
         guard mouse(canvas, .leftMouseUp, 30), pump.waitForPendingRequests(timeout: 10),
-              bitmap(canvas) == selectedPixels, sa.info?.revision == initial.revision,
+              bitmap(canvas) == selectedPixels, sa.info?.revision == base.revision,
               let selected = sa.info else { return fail("Escape 뒤 이동 미반영") }
         guard action(a, .zoomOut), sa.viewInfo?.zoom == 0.5,
               at(-30, in: canvas) == node, sb.viewInfo?.zoom == 1 else { return fail("창별 50% 카메라") }
@@ -354,6 +355,39 @@ enum ShellCanvasMoveCheck {
         guard deleteSession.info?.selection_count == UInt32(expectedAll.count), deleteSession.info?.revision == allTarget.revision,
               reopened.selectNodes([node]), pump.waitForPendingRequests(timeout: 10), deleteSession.info?.selection_count == 1
         else { return fail("Select All 선택 수 \(String(describing: deleteSession.info?.selection_count)) / \(expectedAll.count)") }
+        // 여러 개를 고른 채 그중 하나를 끌면 모두 함께 움직입니다(누를 때 코어가 선택을 그대로 둠). Option 끌기는 모두 복제합니다.
+        func worldX() -> [UUID: CGFloat] {
+            deleteCanvas.refreshFrames()
+            return Dictionary(deleteCanvas.selectionBoxes.map { ($0.id, $0.world.tx) }, uniquingKeysWith: { first, _ in first })
+        }
+        func dragNode(from x: CGFloat, by dx: CGFloat, _ flags: NSEvent.ModifierFlags = []) -> Bool {
+            Self.mouse(deleteCanvas, .leftMouseDown, at: point(deleteCanvas, x), modifiers: flags) &&
+                Self.mouse(deleteCanvas, .leftMouseDragged, at: point(deleteCanvas, x + dx / 2), modifiers: flags) &&
+                Self.mouse(deleteCanvas, .leftMouseDragged, at: point(deleteCanvas, x + dx), modifiers: flags) &&
+                Self.mouse(deleteCanvas, .leftMouseUp, at: point(deleteCanvas, x + dx), modifiers: flags) &&
+                pump.waitForPendingRequests(timeout: 10)
+        }
+        guard sibling != deleteCanvas.rootFrameID, deleteSession.select([node, sibling], completion: { _ in }),
+              pump.waitForPendingRequests(timeout: 10), deleteSession.info?.selection_count == 2 else { return fail("다중 선택") }
+        let together = worldX()
+        guard together.count == 2, let beforeMulti = deleteSession.info, dragNode(from: 30, by: 30),
+              let movedMulti = deleteSession.info, movedMulti.selection_count == 2,
+              movedMulti.undo_depth == beforeMulti.undo_depth + 1, at(60, in: deleteCanvas) == node else {
+            return fail("다중 선택 끌기: 선택 \(deleteSession.info?.selection_count ?? 0)")
+        }
+        let shifted = worldX()
+        guard shifted.count == 2, together.allSatisfy({ abs((shifted[$0.key] ?? .nan) - $0.value - 30) < 0.01 }) else {
+            return fail("다중 선택 끌기에서 둘 다 30 움직이지 않음: \(together) → \(shifted)")
+        }
+        guard dragNode(from: 60, by: 30, .option), let copied = deleteSession.info, copied.selection_count == 2,
+              copied.undo_depth == movedMulti.undo_depth + 1, Set(worldX().keys).isDisjoint(with: [node, sibling]),
+              at(60, in: deleteCanvas) == node else { return fail("다중 선택 Option 복제") }
+        guard action(reopened, .undo), deleteSession.info?.selection_count == 2, Set(worldX().keys) == [node, sibling],
+              action(reopened, .undo), at(30, in: deleteCanvas) == node, deleteSession.info?.selection_count == 2
+        else { return fail("다중 이동·복제 Undo") }
+        // 고른 node를 끌지 않고 클릭하면(누름에서 미룬 변경) 그 node 하나로 줄어듭니다.
+        guard dragNode(from: 30, by: 0), deleteSession.info?.selection_count == 1, Set(worldX().keys) == [node]
+        else { return fail("다중 선택 클릭으로 하나 고르기") }
         for code in [UInt16(51), UInt16(117)] {
             guard let key = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 1,
                 windowNumber: reopened.window?.windowNumber ?? 0, context: nil, characters: "\u{7f}",
@@ -364,7 +398,9 @@ enum ShellCanvasMoveCheck {
                   deleteSession.info?.undo_depth == (before?.undo_depth ?? 0) + 1,
                   at(30, in: deleteCanvas) != node, action(reopened, .undo),
                   deleteSession.info?.selection_count == 1, at(30, in: deleteCanvas) == node
-            else { return fail("삭제 키·Undo 선택 복원") }
+            else {
+                return fail("삭제 키 \(code)·Undo 선택 복원: 선택 \(before?.selection_count ?? 99)→\(deleteSession.info?.selection_count ?? 99), undo \(before?.undo_depth ?? 99)→\(deleteSession.info?.undo_depth ?? 99), at30 \(String(describing: at(30, in: deleteCanvas))) node \(node)")
+            }
         }
         // Layers의 삭제 요청도 같은 transaction으로 이어집니다.
         let layerDelete = SidebarCommand.delete([SidebarStableID(node)])
@@ -380,7 +416,7 @@ enum ShellCanvasMoveCheck {
         guard pump.waitForPendingRequests(timeout: 10), let deleted = open(path), deleted !== reopened,
               deleted.windowController.windowSession?.info?.generation == deletedGeneration,
               at(30, in: deleted.canvasHost.canvasView) != node else { return fail("삭제 저장 재열기") }
-        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Copy/Paste after source deletion, 4 KiB retry, stale clipboard selection, Duplicate history, Cut with one Undo, Select All of visible top-level layers, Delete/Backspace and Layers deletion history/save/reopen, stale same-count menu and Layers targets")
+        print("canvas-move ok: restricted-mode move and undo, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Copy/Paste after source deletion, 4 KiB retry, stale clipboard selection, Duplicate history, Cut with one Undo, Select All of visible top-level layers, multi-selection drag and Option duplicate, Delete/Backspace and Layers deletion history/save/reopen, stale same-count menu and Layers targets")
         return true
     }
 }
