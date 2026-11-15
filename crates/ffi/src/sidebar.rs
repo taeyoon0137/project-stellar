@@ -1,6 +1,7 @@
 //! 셸 worker가 읽는 창·View·revision별 한정된 트리 페이지.
 use crate::{ffi_guard, registry, StellarStatus};
 use stellar_core_types::{ids::StableId, revision::DocumentRevision};
+use stellar_runtime::app::sidebar::LayerFlag;
 use stellar_runtime::app::WindowSessionHandle;
 use stellar_runtime::document_thread::SubmitError;
 
@@ -177,6 +178,69 @@ pub unsafe extern "C" fn stellar_window_layer_rename(
                 DocumentRevision(revision),
                 node,
                 name,
+            ),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 표시한 레이어 행들의 표시(`flag` 1) 또는 잠금(`flag` 2)을 `value`(0·1)로 한 transaction에 바꿉니다.
+/// # Safety
+/// view는 16바이트, nodes는 `count * 16`바이트를 읽을 수 있어야 합니다.
+/// out_request는 null이거나 u64 하나를 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_layer_set_flag(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    revision: u64,
+    nodes: *const [u8; 16],
+    count: usize,
+    flag: u32,
+    value: u32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() || nodes.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let flag = match flag {
+            1 => LayerFlag::Visible,
+            2 => LayerFlag::Locked,
+            _ => return StellarStatus::InvalidArgument,
+        };
+        let value = match value {
+            0 => false,
+            1 => true,
+            _ => return StellarStatus::InvalidArgument,
+        };
+        if count == 0 || count > isize::MAX as usize / 16 {
+            return StellarStatus::InvalidArgument;
+        }
+        let view = StableId::from_bytes(unsafe { *view });
+        let nodes = unsafe { std::slice::from_raw_parts(nodes, count) }
+            .iter()
+            .copied()
+            .map(StableId::from_bytes)
+            .collect();
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.set_layer_flag(
+                WindowSessionHandle(session),
+                view,
+                DocumentRevision(revision),
+                nodes,
+                flag,
+                value,
             ),
             Err(status) => return status,
         };

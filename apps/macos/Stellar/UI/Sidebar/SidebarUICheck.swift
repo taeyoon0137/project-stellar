@@ -723,15 +723,16 @@ enum SidebarUICheck {
         }
 
         let fragmentMenu = menuState([iconsID])
-        try require(fragmentMenu.count == 7, "문맥 메뉴 항목 수 불일치: \(fragmentMenu)")
+        // 문맥 메뉴에는 지금 동작하는 항목만 있습니다.
+        try require(!fragmentMenu.isEmpty && fragmentMenu.values.allSatisfy { $0 }, "문맥 메뉴에 비활성 항목: \(fragmentMenu)")
         // 문맥 메뉴에는 단축키 표시가 없습니다(HIG Context menus). 단축키는 메뉴 막대가 보입니다.
         try require(shortcutTitles.isEmpty, "문맥 메뉴에 단축키 표시가 있음: \(shortcutTitles)")
         try require(fragmentMenu[SidebarStrings.ungroup] == true, "그룹 marker에서 Ungroup이 비활성")
         try require(fragmentMenu[SidebarStrings.rename] == true, "단일 대상 Rename이 비활성")
         let mixedMenu = menuState([starID, dividerID])
-        try require(mixedMenu[SidebarStrings.group] == false, "부모가 다른 행의 Group이 활성")
-        try require(mixedMenu[SidebarStrings.rename] == false, "다중 대상 Rename이 활성")
-        try require(mixedMenu[SidebarStrings.ungroup] == false, "그룹 marker 없는 Ungroup이 활성")
+        try require(mixedMenu[SidebarStrings.group] == nil, "부모가 다른 행의 Group이 보임")
+        try require(mixedMenu[SidebarStrings.rename] == nil, "다중 대상 Rename이 보임")
+        try require(mixedMenu[SidebarStrings.ungroup] == nil, "그룹 marker 없는 Ungroup이 보임")
 
         // 키보드: ⌘D 복제, ⌥⌘G 묶기, ⇧⌥⌘G 풀기, ⇧⌘H 숨기기, Delete 삭제.
         try require(harness.window.makeFirstResponder(outline), "레이어 목록 first responder 실패")

@@ -385,6 +385,9 @@ typedef struct StellarSelectionTarget {
 #define STELLAR_SELECTION_BACKWARD 4
 #define STELLAR_SELECTION_FRONT 5
 #define STELLAR_SELECTION_BACK 6
+/* 선택이 모두 켜져 있으면 끄고, 하나라도 꺼져 있으면 모두 켭니다. 잠긴 노드의 표시와 잠긴 조상 아래 노드는 거부합니다. */
+#define STELLAR_SELECTION_TOGGLE_VISIBILITY 7
+#define STELLAR_SELECTION_TOGGLE_LOCK 8
 #define STELLAR_ORDER_CAN_FORWARD 1
 #define STELLAR_ORDER_CAN_BACKWARD 2
 #define STELLAR_ORDER_FLOW_PARENT 4
@@ -503,6 +506,10 @@ StellarStatus stellar_window_canvas_selection(uint64_t handle, uint64_t session,
  * UTF-8 text는 페이지·View·행 이름 순서. BUFFER_TOO_SMALL은 info.text_len만큼 확보해 재호출합니다.
  * out_history(필수)에는 행의 선택 순서와 같은 시점의 창 history sequence를 씁니다. 읽지 못하면 0입니다. */
 StellarStatus stellar_window_layer_page(uint64_t handle, uint64_t session, const StellarLayerQuery *query, StellarLayerInfo *info, StellarLayerRow *rows, uint8_t *text, size_t capacity, uint64_t *out_history);
+#define STELLAR_LAYER_FLAG_VISIBLE 1
+#define STELLAR_LAYER_FLAG_LOCKED 2
+/* 표시한 레이어 행들의 flag를 value(0·1)로 한 transaction에 바꿉니다. 잠금 규칙은 STELLAR_SELECTION_TOGGLE_*와 같습니다. */
+StellarStatus stellar_window_layer_set_flag(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, const uint8_t *nodes, size_t count, uint32_t flag, uint32_t value, uint64_t *out_request);
 
 /* 열린 창 session의 view state(탭 수, active view, viewport)를 씁니다(없는 창 session은 STELLAR_INVALID_ARGUMENT). */
 StellarStatus stellar_window_view_info(uint64_t handle, uint64_t session, StellarWindowViewInfo *out_info);

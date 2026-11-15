@@ -315,7 +315,6 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
         cell.delegate = self
         cell.nameField.delegate = rename
         cell.showsTogglesAlways = showsTogglesAlways
-        cell.togglesAvailable = provider.supportsLayerFlagsAndGrouping
         configure(cell, row: row)
         return cell
     }
@@ -505,24 +504,23 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
         let rows = targets.compactMap { snapshot.layers.rows[$0] }
         let allVisible = rows.allSatisfy(\.isVisible)
         let allLocked = rows.allSatisfy(\.isLocked)
-        var groups: [[(SidebarOutlineAction, String)]] = [
+        let groups: [[(SidebarOutlineAction, String)]] = [
             [(.rename, SidebarStrings.rename), (.duplicate, SidebarStrings.duplicate), (.delete, SidebarStrings.delete)],
-        ]
-        // 문서 편집으로 연결하지 않은 provider에서는 Group·표시·잠금 항목을 비활성으로 두지 않고 뺍니다.
-        if provider.supportsLayerFlagsAndGrouping {
-            groups.append([(.group, SidebarStrings.group), (.ungroup, SidebarStrings.ungroup)])
-            groups.append([
+            [(.group, SidebarStrings.group), (.ungroup, SidebarStrings.ungroup)],
+            [
                 (.toggleVisibility, allVisible ? SidebarStrings.hide : SidebarStrings.show),
                 (.toggleLock, allLocked ? SidebarStrings.unlock : SidebarStrings.lock),
-            ])
-        }
-        for (index, group) in groups.enumerated() {
-            if index > 0 { menu.addItem(.separator()) }
-            for (action, title) in group {
+            ],
+        ]
+        // 지금 대상에 동작하는 항목만 넣습니다. 비어 있는 묶음은 구분선도 넣지 않습니다.
+        for group in groups {
+            let allowed = group.filter { canPerform($0.0, targets: targets) }
+            guard !allowed.isEmpty else { continue }
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            for (action, title) in allowed {
                 let item = NSMenuItem(title: title, action: #selector(contextAction(_:)), keyEquivalent: "")
                 item.target = self
                 item.tag = SidebarOutlineAction.allCases.firstIndex(of: action) ?? 0
-                item.isEnabled = canPerform(action, targets: targets)
                 menu.addItem(item)
             }
         }

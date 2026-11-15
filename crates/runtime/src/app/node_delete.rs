@@ -14,6 +14,10 @@ pub enum SelectionEdit {
     Duplicate,
     /// 같은 부모 안에서 단일 선택의 저장 순서를 바꿉니다.
     Reorder(stellar_document::model::SiblingOrder),
+    /// 선택이 모두 보이면 숨기고, 하나라도 숨겨져 있으면 모두 보입니다.
+    ToggleVisibility,
+    /// 선택이 모두 잠겨 있으면 풀고, 하나라도 풀려 있으면 모두 잠급니다.
+    ToggleLock,
 }
 
 /// 하나의 게시 시점에 읽은 창·뷰·문서·선택 history 위치.
@@ -78,6 +82,23 @@ impl AppRuntime {
                         request,
                         target.view,
                         target.revision,
+                    )?;
+                }
+                SelectionEdit::ToggleVisibility | SelectionEdit::ToggleLock => {
+                    let flag = if matches!(edit, SelectionEdit::ToggleLock) {
+                        super::sidebar::LayerFlag::Locked
+                    } else {
+                        super::sidebar::LayerFlag::Visible
+                    };
+                    let nodes = window.view().selection().ids().to_vec();
+                    super::sidebar::set_flags(
+                        window,
+                        request,
+                        target.view,
+                        target.revision,
+                        &nodes,
+                        flag,
+                        None,
                     )?;
                 }
             }

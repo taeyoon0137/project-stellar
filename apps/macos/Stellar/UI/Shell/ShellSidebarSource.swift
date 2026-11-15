@@ -36,8 +36,12 @@ final class ShellSidebarSource: SidebarDataProvider {
     var canEditSelection: ((ShellCommand) -> Bool)?
     var select: (([UUID]) -> Void)?
     var rename: ((_ view: UUID, _ revision: UInt64, _ id: UUID, _ name: String) -> Void)?
-    /// 표시·잠금 토글과 Group·Ungroup은 아직 문서 편집에 연결하지 않았습니다.
-    var supportsLayerFlagsAndGrouping: Bool { false }
+    var setFlag: ((_ view: UUID, _ revision: UInt64, _ ids: [UUID], _ flag: ShellLayerFlag, _ value: Bool) -> Void)?
+    /// 게시할 때마다 부릅니다. 창은 선택 행의 표시·잠금 상태로 Hide·Lock 메뉴를 갱신합니다.
+    var selectionStateDidChange: (() -> Void)?
+    var trusted = false {
+        didSet { if oldValue != trusted { publish() } }
+    }
 
     /// 빈 레이어 목록 안내 한 줄: 다음 행동을 캔버스 단일 키로 알립니다(UX 명세 흐름 1의 6번, 7.2절). 키는
     /// `CanvasTool.singleKey`에서 읽어 실제 배정과 같습니다. 버튼은 두지 않습니다.
@@ -98,6 +102,33 @@ final class ShellSidebarSource: SidebarDataProvider {
         snapshot.generation = version
         if structureChanged { snapshot.layers.structureRevision = version }
         snapshotDidChange?()
+        selectionStateDidChange?()
+    }
+
+    /// 표시한 선택의 행을 모두 읽었을 때 그 표시·잠금 상태. 일부만 읽었으면 nil이고, 최종 판정은 코어가 합니다.
+    var selectionFlags: (anyHidden: Bool, allLocked: Bool, canHide: Bool, canLock: Bool)? {
+        guard let display, display.target.selection_count > 0,
+              display.target.selection_count == UInt64(selectedOrder.count) else { return nil }
+        let rows = selectedOrder.keys.compactMap { snapshot.layers.rows[$0] }
+        guard rows.count == selectedOrder.count else { return nil }
+        return (rows.contains { !$0.isVisible }, rows.allSatisfy(\.isLocked),
+                canSetFlag(rows.map(\.id), blockedBySelf: true), canSetFlag(rows.map(\.id), blockedBySelf: false))
+    }
+
+    /// 잠금 규칙(D8)을 표시한 행으로 미리 확인합니다. 잠긴 조상 아래 행은 바꾸지 않고, 표시 변경은 행 자신의 잠금도
+    /// 막습니다. 최종 판정은 코어가 합니다.
+    private func canSetFlag(_ ids: [SidebarStableID], blockedBySelf: Bool) -> Bool {
+        guard display != nil, window?.isClosing == false, !ids.isEmpty, Set(ids).count == ids.count else { return false }
+        return ids.allSatisfy { id in
+            guard let row = snapshot.layers.rows[id], !(blockedBySelf && row.isLocked) else { return false }
+            var parent = row.parentID
+            while let current = parent {
+                guard let ancestor = snapshot.layers.rows[current] else { return false }
+                if ancestor.isLocked { return false }
+                parent = ancestor.parentID
+            }
+            return true
+        }
     }
 
     func validate(_ command: SidebarCommand) -> SidebarCommandValidation {
@@ -109,6 +140,10 @@ final class ShellSidebarSource: SidebarDataProvider {
             return canEditSelection?(.delete) == true && !ids.isEmpty && matchesSelection(ids)
                 ? .allowed : .denied(.unsupported)
         case .reload: return display != nil ? .allowed : .denied(.unsupported)
+        case .setVisible(let ids, _):
+            return canSetFlag(ids, blockedBySelf: true) ? .allowed : .denied(.unsupported)
+        case .setLocked(let ids, _):
+            return canSetFlag(ids, blockedBySelf: false) ? .allowed : .denied(.unsupported)
         case .renameNode(let id, _):
             guard window?.isClosing == false else { return .denied(.unsupported) }
             var current: SidebarStableID? = id
@@ -143,6 +178,10 @@ final class ShellSidebarSource: SidebarDataProvider {
         case .reload:
             reset()
             enqueue(Request(parent: nil, after: nil))
+        case .setVisible(let ids, let value):
+            if let display { setFlag?(display.view, display.revision, ids.map(\.uuid), .visible, value) }
+        case .setLocked(let ids, let value):
+            if let display { setFlag?(display.view, display.revision, ids.map(\.uuid), .locked, value) }
         case .loadChildren(let id):
             if snapshot.layers.childIDs[id] == nil { enqueue(Request(parent: id, after: nil)) }
         case .renameNode(let id, let name):

@@ -273,12 +273,4 @@ protocol SidebarDataProvider: AnyObject {
     /// 빈 레이어 목록에 보일 다음 행동 안내 한 줄(UX 명세 7.2). 도구 키처럼 사이드바 밖의 배정을 담으므로 셸이 넣고,
     /// 사이드바는 받은 문자열만 보여 줍니다.
     var emptyLayersHint: String { get }
-
-    /// 표시·잠금 토글과 Group·Ungroup을 이 provider가 문서 편집으로 연결했는지. 연결하지 않은 provider에서는
-    /// 비활성 컨트롤로 노출하지 않고 숨깁니다.
-    var supportsLayerFlagsAndGrouping: Bool { get }
-}
-
-extension SidebarDataProvider {
-    var supportsLayerFlagsAndGrouping: Bool { true }
 }

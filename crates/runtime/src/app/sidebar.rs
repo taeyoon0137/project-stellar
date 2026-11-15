@@ -48,7 +48,33 @@ pub struct LayerPage {
     pub rows: Vec<LayerRow>,
 }
 
+/// 레이어 행에서 켜고 끄는 노드 속성(`SetProperty::visibility`·`SetProperty::locked`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayerFlag {
+    /// `node.visible`.
+    Visible,
+    /// `node.locked`.
+    Locked,
+}
+
 impl AppRuntime {
+    /// 표시한 레이어 행들의 표시 또는 잠금을 한 번의 Undo 가능한 transaction으로 바꿉니다.
+    pub fn set_layer_flag(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+        revision: DocumentRevision,
+        nodes: Vec<StableId>,
+        flag: LayerFlag,
+        value: bool,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            let window = super::frame_move::canvas_window(ctx, session)?;
+            set_flags(window, request, view, revision, &nodes, flag, Some(value))?;
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
+        })
+    }
+
     /// 현재 표시한 레이어 이름을 한 번의 Undo 가능한 문서 명령으로 바꿉니다.
     pub fn rename_layer(
         &self,
@@ -137,6 +163,104 @@ fn rename(
     )
     .with_command(revision, Command::rename_node(node, name));
     window.apply(&tx).map_err(view_failure)?;
+    Ok(())
+}
+
+/// 대상 노드들의 표시 또는 잠금을 한 transaction으로 바꿉니다. 바뀌는 값이 없으면 기록하지 않습니다.
+///
+/// `value`가 없으면 대상이 모두 켜져 있을 때 모두 끄고, 아니면 모두 켭니다(선택 메뉴 명령).
+/// 잠금 규칙(D8): 잠긴 조상 아래의 노드는 바꾸지 않고, 표시 변경은 노드 자신의 잠금도 막습니다.
+/// 잠금 해제는 그 노드의 잠금 명령으로만 합니다.
+pub(super) fn set_flags(
+    window: &mut ProjectWindowSession,
+    request: RequestId,
+    view: StableId,
+    revision: DocumentRevision,
+    nodes: &[StableId],
+    flag: LayerFlag,
+    value: Option<bool>,
+) -> Result<(), Failure> {
+    use stellar_commands::{command::Command, id::CommandOrigin, transaction::CommandTransaction};
+    let stale = || {
+        Failure::new(
+            RequestFailure::UnknownView,
+            "뷰·레이어·편집 상태가 변경되었습니다",
+        )
+    };
+    let locked = || {
+        Failure::new(
+            RequestFailure::UnknownView,
+            "잠긴 레이어는 바꿀 수 없습니다",
+        )
+    };
+    if nodes.is_empty()
+        || window.revision() != revision
+        || window.tabs().active_view() != Some(view)
+    {
+        return Err(stale());
+    }
+    let model = window.document().ok_or_else(stale)?.model();
+    let root = model
+        .definition()
+        .pages
+        .iter()
+        .flat_map(|p| &p.views)
+        .find(|v| v.id == view)
+        .ok_or_else(stale)?
+        .root_frame;
+    let columns = model.columns();
+    let mut seen = std::collections::HashSet::with_capacity(nodes.len());
+    let mut targets = Vec::with_capacity(nodes.len());
+    for &node in nodes {
+        if node == root || !seen.insert(node) {
+            return Err(stale());
+        }
+        let fields = columns
+            .get(model.runtime_id(node).ok_or_else(stale)?)
+            .ok_or_else(stale)?;
+        if flag == LayerFlag::Visible && fields.locked {
+            return Err(locked());
+        }
+        let mut cursor = columns
+            .get(fields.parent.ok_or_else(stale)?)
+            .ok_or_else(stale)?;
+        loop {
+            if cursor.locked {
+                return Err(locked());
+            }
+            if cursor.stable_id == root {
+                break;
+            }
+            cursor = columns
+                .get(cursor.parent.ok_or_else(stale)?)
+                .ok_or_else(stale)?;
+        }
+        let on = match flag {
+            LayerFlag::Visible => fields.visible,
+            LayerFlag::Locked => fields.locked,
+        };
+        targets.push((node, on));
+    }
+    let value = value.unwrap_or_else(|| !targets.iter().all(|(_, on)| *on));
+    let mut tx = CommandTransaction::new(
+        super::frame_move::command_id(window.window(), request),
+        CommandOrigin::User,
+    );
+    let mut changed = false;
+    for (node, on) in targets {
+        if on == value {
+            continue;
+        }
+        changed = true;
+        let command = match flag {
+            LayerFlag::Visible => Command::set_visibility(node, value),
+            LayerFlag::Locked => Command::set_locked(node, value),
+        };
+        tx = tx.with_command(revision, command);
+    }
+    if changed {
+        window.apply(&tx).map_err(view_failure)?;
+    }
     Ok(())
 }
 
@@ -261,6 +385,76 @@ mod tests {
         assert_eq!(name(&session), "n12");
         assert!(session.redo().unwrap());
         assert_eq!(name(&session), "버튼");
+    }
+
+    #[test]
+    fn layer_flags_are_one_history_entry_and_follow_lock_rules() {
+        use crate::window_session::test_fixtures::{sample_document, saved_project_with};
+        let mut model = sample_document();
+        let mut locked = model.record(sid(12)).unwrap();
+        locked.locked = true;
+        locked.id = sid(30);
+        locked.parent = Some(sid(12));
+        model.insert_node(locked).unwrap();
+        let mut child = model.record(sid(11)).unwrap();
+        child.id = sid(31);
+        child.parent = Some(sid(30));
+        model.insert_node(child).unwrap();
+        let dir = saved_project_with("layer-flags", &[&model]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        let set = |win: &mut ProjectWindowSession, nodes: &[u64], flag, value| {
+            let revision = win.revision();
+            let nodes: Vec<_> = nodes.iter().map(|n| sid(*n)).collect();
+            set_flags(win, RequestId(7), sid(3), revision, &nodes, flag, value)
+        };
+        let flags = |win: &ProjectWindowSession, n| {
+            let record = win.document().unwrap().model().record(sid(n)).unwrap();
+            (record.visible, record.locked)
+        };
+        let rev = session.revision();
+        // 루트·다른 View·없는 노드·중복·오래된 revision은 거부합니다.
+        for nodes in [&[10][..], &[20], &[999], &[11, 11], &[]] {
+            assert!(set(&mut session, nodes, LayerFlag::Visible, Some(false)).is_err());
+        }
+        let next = DocumentRevision(rev.0 + 1);
+        assert!(set_flags(
+            &mut session,
+            RequestId(7),
+            sid(3),
+            next,
+            &[sid(11)],
+            LayerFlag::Visible,
+            Some(false)
+        )
+        .is_err());
+        // 잠긴 노드의 표시와 잠긴 조상 아래 노드는 바꾸지 않습니다(D8).
+        assert!(set(&mut session, &[30], LayerFlag::Visible, Some(false)).is_err());
+        assert!(set(&mut session, &[31], LayerFlag::Locked, Some(true)).is_err());
+        // 같은 값은 기록하지 않습니다.
+        assert!(set(&mut session, &[11, 12], LayerFlag::Visible, Some(true)).is_ok());
+        assert_eq!(session.revision(), rev);
+        // 두 노드 숨김은 history 한 항목입니다.
+        let depth = session.history().history().len();
+        assert!(set(&mut session, &[11, 12], LayerFlag::Visible, Some(false)).is_ok());
+        assert_eq!(session.history().history().len(), depth + 1);
+        assert_eq!(
+            (flags(&session, 11), flags(&session, 12)),
+            ((false, false), (false, false))
+        );
+        assert!(session.undo().unwrap());
+        assert_eq!(
+            (flags(&session, 11), flags(&session, 12)),
+            ((true, false), (true, false))
+        );
+        // 잠금 해제는 그 노드의 잠금 명령으로 합니다. 토글은 하나라도 풀려 있으면 모두 잠급니다.
+        assert!(set(&mut session, &[30], LayerFlag::Locked, Some(false)).is_ok());
+        assert_eq!(flags(&session, 30), (true, false));
+        assert!(set(&mut session, &[11, 30], LayerFlag::Locked, None).is_ok());
+        assert!(flags(&session, 11).1 && flags(&session, 30).1);
+        assert!(set(&mut session, &[11, 30], LayerFlag::Locked, None).is_ok());
+        assert!(!flags(&session, 11).1 && !flags(&session, 30).1);
+        assert!(set(&mut session, &[11], LayerFlag::Visible, None).is_ok());
+        assert_eq!(flags(&session, 11), (false, false));
     }
 
     #[test]

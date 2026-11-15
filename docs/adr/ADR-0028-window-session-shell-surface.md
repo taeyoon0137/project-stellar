@@ -348,6 +348,21 @@ Frame ABI와 같이 document thread가 표시 revision·편집 가능한 부모�
 
 레이어 이름 편집은 stellar_window_layer_rename에 창·View·표시 revision·노드 ID와 UTF-8 이름을 전달합니다. 코어가 표시 revision, View 소속 및 조상 잠금을 확인하고 기존 RenameNode를 창의 문서 transaction으로 실행합니다.
 
+### 레이어 표시·잠금 변경 — UX.3.4
+
+- `stellar_window_layer_set_flag(handle, session, view, revision, nodes, count, flag, value, out_request)`는
+  레이어 행에서 고른 노드들의 `node.visible`(`STELLAR_LAYER_FLAG_VISIBLE`) 또는 `node.locked`
+  (`STELLAR_LAYER_FLAG_LOCKED`)을 `value`(0·1)로 바꿉니다. document thread가 창 확인(이름 변경과 같은 경로),
+  표시 revision, 활성 View 소속, 중복을 확인하고 기존 `SetProperty::visibility`·`SetProperty::locked`를 창의
+  문서 transaction 하나로 기록합니다. 값이 이미 같은 노드는 건너뛰고, 바뀌는 노드가 없으면 기록하지 않습니다.
+- `stellar_window_edit_selection`의 `STELLAR_SELECTION_TOGGLE_VISIBILITY`(7)·`STELLAR_SELECTION_TOGGLE_LOCK`(8)은
+  메뉴 막대와 캔버스 문맥 메뉴의 Hide·Lock 명령입니다. 표시한 선택 전체가 켜져 있으면 끄고, 하나라도 꺼져
+  있으면 모두 켭니다. 값은 실행 시점 문서에서 코어가 정하므로 셸이 선택 행을 모두 읽어 둘 필요가 없습니다.
+- 잠금 규칙(D8): 잠긴 조상 아래의 노드는 표시·잠금을 바꾸지 않고, 표시 변경은 노드 자신의 잠금도 거부합니다.
+  잠금 해제는 그 노드의 잠금 변경으로만 합니다. 캔버스는 기존대로 숨긴 노드를 그리지 않고 잠긴 노드와 그 자손을
+  hit 대상에서 뺍니다.
+- 기존 구조체·입력 encoding·저장 포맷은 바꾸지 않습니다. 거부는 `REQUEST_FAILED`(`UNKNOWN_VIEW`)로 옵니다.
+
 ### Frame Inspector의 개별 모서리 반경
 
 이 절의 `stellar_window_selected_frame_corners`·`stellar_window_session_set_frame_corner`는 2026-11-15 검토에서

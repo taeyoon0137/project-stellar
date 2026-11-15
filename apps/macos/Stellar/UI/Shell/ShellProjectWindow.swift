@@ -100,6 +100,8 @@ final class ShellWindowSessionHandle {
         case .sendBackward: action = UInt32(STELLAR_SELECTION_BACKWARD)
         case .bringToFront: action = UInt32(STELLAR_SELECTION_FRONT)
         case .sendToBack: action = UInt32(STELLAR_SELECTION_BACK)
+        case .toggleVisibility: action = UInt32(STELLAR_SELECTION_TOGGLE_VISIBILITY)
+        case .toggleLock: action = UInt32(STELLAR_SELECTION_TOGGLE_LOCK)
         default: return false
         }
         return track({ pump.editSelection(target: target, action: action, ids: ids, completion: $0) }, completion: completion)
@@ -426,7 +428,21 @@ final class ShellWindowToolsModelStub: ToolsMenuModel {
     /// 프로젝트 상태에 맞춰 실행 가능한 명령을 바꿉니다. ready가 아니면 창 session 명령도 비활성입니다.
     func setProjectReady(_ ready: Bool) {
         isReady = ready
-        if !ready { sessionCommands = [] }
+        if !ready { sessionCommands = []; selectionCommands = [] }
+        republishEnabledCommands()
+    }
+
+    /// 선택한 레이어의 Hide·Lock 명령과 메뉴 제목 상태(UX.3.4). 사이드바가 선택 행을 읽을 때마다 갱신합니다.
+    private(set) var selectionCommands: Set<ShellCommand> = []
+
+    func setSelectionState(commands: Set<ShellCommand>, hidden: Bool, locked: Bool) {
+        selectionCommands = isReady ? commands : []
+        if snapshot.selectionIsHidden != hidden || snapshot.selectionIsLocked != locked {
+            var next = snapshot
+            next.selectionIsHidden = hidden
+            next.selectionIsLocked = locked
+            publish(next)
+        }
         republishEnabledCommands()
     }
 
@@ -462,7 +478,7 @@ final class ShellWindowToolsModelStub: ToolsMenuModel {
     }
 
     private func republishEnabledCommands() {
-        let commands = isReady ? Self.readyCommands.union(sessionCommands) : Self.notReadyCommands
+        let commands = isReady ? Self.readyCommands.union(sessionCommands).union(selectionCommands) : Self.notReadyCommands
         guard commands != snapshot.enabledCommands else { return }
         var next = snapshot
         next.enabledCommands = commands
@@ -611,6 +627,7 @@ final class ShellProjectWindow {
         }
         gitSource.trustCheckDidChange = { [weak self] checking in self?.dataSource.setTrustChecking(checking) }
         connectFrameInteractions()
+        connectLayerFlags()
         if let window = windowController.window {
             // 응답자 체인: content view → router → split controller → 창. 텍스트 편집 중에는 field editor가 먼저 받습니다.
             router.install(in: window)
@@ -758,6 +775,7 @@ final class ShellProjectWindow {
         if displayedSelection?.selection_count == 1 { commands.formUnion([.duplicate, .copy, .cut]) }
         if let target = displayedSelection, target.selection_count <= 1 { commands.insert(.paste) }
         toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil })
+        refreshLayerFlagCommands()
     }
 
     /// 코어 command ID 표(XII.6.5). 코어가 공유 이름으로 알려 준 ID로만 명령을 보냅니다.
@@ -809,7 +827,8 @@ final class ShellProjectWindow {
             }
         }
         if let flag = command.layerOrderFlag, displayedOrderFlags & flag == 0 { return false }
-        if command == .delete || command == .duplicate || command.layerOrderFlag != nil {
+        if command == .delete || command == .duplicate || command.layerOrderFlag != nil
+            || command == .toggleVisibility || command == .toggleLock {
             guard let target = displayedSelection else { return false }
             return editSelection(command, target: target, ids: nil)
         }
