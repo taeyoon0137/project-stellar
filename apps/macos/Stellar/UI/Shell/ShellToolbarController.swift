@@ -215,6 +215,9 @@ final class ShellTitleMenuView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         titleButton.isBordered = false
+        // 시스템 툴바 제목(`window.title`)과 같은 모양입니다: 제목은 bold 시스템 글꼴 13pt, 부제목은 일반 11pt
+        // secondaryLabelColor(macOS 27.2에서 시스템 제목·부제목 필드의 글꼴을 읽어 맞춘 값). `NSFont.titleBarFont`는
+        // headline 굵기라 시스템 툴바 제목과 다릅니다.
         titleButton.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
         titleButton.lineBreakMode = .byTruncatingTail
         (titleButton.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtCenter
