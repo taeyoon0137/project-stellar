@@ -179,7 +179,7 @@ final class InspectorViewController: NSViewController {
         }.max() ?? 0
         let labelWidth = currentLabelWidth()
         var currentGroup: String?
-        for row in snapshot.rows {
+        for (index, row) in snapshot.rows.enumerated() {
             let section = sectionViews[row.section] ?? {
                 let view = InspectorSectionView(kind: row.section,
                                                 title: InspectorPropertyCatalog.title(row.section, classes: classes),
@@ -190,7 +190,10 @@ final class InspectorViewController: NSViewController {
                 view.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
                 return view
             }()
-            let rowView = InspectorRowView(row: row, labelWidth: labelWidth, expanded: expandedGroups.contains(row.name))
+            let longhands = row.flags.contains(.group)
+                ? InspectorPropertyCatalog.longhands(after: index, in: snapshot.rows) : []
+            let rowView = InspectorRowView(row: row, labelWidth: labelWidth, expanded: expandedGroups.contains(row.name),
+                                           longhands: longhands)
             rowView.onEdit = { [weak self] name, input, phase, completion in
                 self?.dataSource.edit(name, input, phase: phase, completion: completion)
             }

@@ -51,10 +51,12 @@ enum InspectorPropertyCatalog {
     }
 
     /// 툴팁·접근성 도움말: 쉬운 설명, CSS longhand 이름, 변환 진단(UX 명세 6.3). 진단은 코어 행 flag에서 옵니다.
-    static func help(for row: InspectorRowState) -> String {
+    /// 묶음 행은 코어가 그 행 바로 뒤에 넘긴 longhand 행 이름(`longhands`)으로 설명합니다.
+    static func help(for row: InspectorRowState, longhands: [String] = []) -> String {
         var lines = [summary(row.name)].filter { !$0.isEmpty }
         if row.flags.contains(.group) {
-            lines.append(String(localized: "Shorthand for the four border-*-radius longhands."))
+            let names = ListFormatter.localizedString(byJoining: longhands)
+            lines.append(names.isEmpty ? row.name : String(localized: "Shorthand for \(names)."))
         } else {
             lines.append(row.name)
         }
@@ -65,6 +67,11 @@ enum InspectorPropertyCatalog {
             lines.append(String(localized: "Drag the label or press ↑↓ (Shift ×10) to change."))
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// 묶음 행 `index` 바로 뒤에 코어가 넘긴 longhand 행 이름들.
+    static func longhands(after index: Int, in rows: [InspectorRowState]) -> [String] {
+        rows.dropFirst(index + 1).prefix { $0.flags.contains(.longhand) }.map(\.name)
     }
 }
 

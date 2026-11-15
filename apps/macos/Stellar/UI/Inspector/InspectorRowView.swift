@@ -37,6 +37,8 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
     private var userTyped = false
     /// 레이블 scrub 중인지.
     private var scrubbing = false
+    /// 묶음 행이 묶는 longhand 행 이름(코어 행 순서).
+    private let longhands: [String]
     /// 레이블 열 폭 제약과 그 안의 펼침 단추·들여쓰기 몫.
     private var labelWidthConstraint: NSLayoutConstraint?
     private var labelInset: CGFloat = 0
@@ -44,8 +46,10 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
     /// - Parameters:
     ///   - labelWidth: 같은 패널 모든 행의 레이블 열 폭(가장 긴 CSS 이름에 맞춤).
     ///   - expanded: 묶음 행이면 처음 펼침 상태.
-    init(row: InspectorRowState, labelWidth: CGFloat, expanded: Bool = false) {
+    ///   - longhands: 묶음 행이면 코어가 그 뒤에 넘긴 longhand 행 이름(도움말에 씀).
+    init(row: InspectorRowState, labelWidth: CGFloat, expanded: Bool = false, longhands: [String] = []) {
         self.row = row
+        self.longhands = longhands
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         // 레이블은 CSS 속성 이름 그대로, 시스템 글꼴(UX 명세 6.3 권장안).
@@ -53,7 +57,7 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
         label.textColor = .secondaryLabelColor
         label.lineBreakMode = .byTruncatingMiddle
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.toolTip = InspectorPropertyCatalog.help(for: row)
+        label.toolTip = InspectorPropertyCatalog.help(for: row, longhands: longhands)
         label.scrubs = row.flags.contains(.numeric) && !row.flags.contains(.readOnly)
         label.onScrub = { [weak self] delta, phase in self?.scrub(delta, phase: phase) }
         label.onClick = { [weak self] in
@@ -123,7 +127,7 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
     required init?(coder: NSCoder) { fatalError("코드로만 생성합니다") }
 
     private func buildControl() {
-        let help = InspectorPropertyCatalog.help(for: row)
+        let help = InspectorPropertyCatalog.help(for: row, longhands: longhands)
         if row.flags.contains(.bool) {
             let box = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggleBool))
             box.controlSize = InspectorMetrics.controlSize
