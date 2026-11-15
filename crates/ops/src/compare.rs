@@ -169,23 +169,6 @@ pub fn working_component_hash(snapshot: &ProjectSnapshot) -> Result<ContentHash,
     Ok(working_components(snapshot)?.hash())
 }
 
-/// 고정 HEAD와 working tree의 문서·공용 컴포넌트를 CLI와 같은 규칙으로 비교합니다.
-pub fn semantic_diff_head(
-    head: &crate::trusted::ProjectHead,
-    target: &ProjectSnapshot,
-) -> Result<DiffReport, CompareError> {
-    Ok(semantic_diff_head_with_source_hash(head, target)?.0)
-}
-
-/// diff에 실제 사용한 작업 파일 집합의 hash도 반환합니다.
-pub fn semantic_diff_head_with_source_hash(
-    head: &crate::trusted::ProjectHead,
-    target: &ProjectSnapshot,
-) -> Result<(DiffReport, ContentHash), CompareError> {
-    let base = HeadDiffBase::open(head, target)?;
-    base.compare(target, &working_components(target)?)
-}
-
 /// 불변 Git commit에서 한 번 읽고 검증한 semantic 비교 기준.
 #[derive(Debug)]
 pub struct HeadDiffBase {
@@ -256,7 +239,6 @@ impl HeadDiffBase {
                 "다른 프로젝트의 HEAD 비교 기준입니다".into(),
             ));
         }
-        let mut working = document_builder(target, "target")?;
         if target.revision().manifest_hash() == Some(self.manifest_hash)
             && observed.entries().len() == self.components.len()
         {
@@ -281,6 +263,9 @@ impl HeadDiffBase {
                 }
             }
         }
+        // 문서는 전체 조립 경로에서만 읽습니다. 위의 단일 파일 경로는 저장 generation의 manifest
+        // hash가 HEAD와 같다는 것을 이미 확인했으므로 문서 투영이 HEAD와 같아 다시 읽지 않습니다.
+        let mut working = document_builder(target, "target")?;
         let (library, files) =
             crate::component_source::project_library(target).map_err(|error| {
                 CompareError::ComponentSource {

@@ -315,7 +315,7 @@ impl ComponentSource {
     }
 
     /// 검증한 정의를 유일한 쓰기 버전 v3의 canonical YAML로 직렬화합니다(ADR-0061 결정 4).
-    pub fn to_yaml(&self) -> Result<String, TextSourceError> {
+    fn to_yaml(&self) -> Result<String, TextSourceError> {
         let mut fields = vec![
             (scalar("format"), scalar("stellar-component")),
             (scalar("schema_version"), scalar(3)),
@@ -623,12 +623,6 @@ fn project_library(
         Ok((path, source, hash))
     }))?;
     Ok((library, files, remaining))
-}
-
-/// 프로젝트 루트 내부 실제 경로에서 읽은 파일 이름과 bytes hash의 결정적 집합 hash.
-/// HEAD 비교 페이지에서 YAML을 다시 파싱하지 않고 현재 원본을 재확인합니다.
-pub fn project_source_hash(root: &Path) -> Result<ContentHash, TextSourceError> {
-    Ok(project_source_index(root)?.hash)
 }
 
 /// 실제 경계 안에서 bytes를 읽어 만든 원본 파일 목록. 읽기 요청 하나에만 유효합니다.
