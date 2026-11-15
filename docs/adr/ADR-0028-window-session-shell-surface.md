@@ -154,8 +154,11 @@ UI thread는 기다리지 않습니다.
 
 ## Security
 
-새 외부 의존성과 `unsafe` 패턴이 없습니다(기존 포인터 규칙 그대로). 신뢰되지 않은 프로젝트도 창 session은
-저장된 design chunk만 읽고 Git·필터를 실행하지 않습니다.
+새 외부 의존성과 `unsafe` 패턴이 없습니다(기존 포인터 규칙 그대로). 신뢰되지 않은 프로젝트(제한 모드)의 창
+session도 Git·필터를 실행하지 않습니다. 읽는 것은 저장된 design chunk와, 프로젝트 안의 컴포넌트 원본
+(`design/components/*.stellar.yaml`)·PNG 에셋입니다(사용자 결정 D1). 컴포넌트 원본이 프로젝트 밖을 가리키는
+symlink이면 신뢰 전에는 그 내용을 읽지 않습니다(ADR-0061 결정 8). 2026-11-15 교차 검토에서 처음 문장("저장된
+design chunk만 읽고")을 고쳤습니다. 제한 모드 창이 컴포넌트 원본과 에셋을 읽게 된 뒤 사실과 달랐습니다.
 
 ## Migration
 
@@ -476,7 +479,13 @@ U051이 이 ADR 없이 추가한 ABI를 기록합니다. 의미는 아래와 같
   snapshot을 게시하므로 이후 요청은 낮춘 신뢰를 봅니다.
 - 컴포넌트 원본 읽기·감시와 캔버스 인스턴스 표시는 신뢰와 무관합니다(사용자 결정 D1). 신뢰는 프로젝트 밖 target 내용을
   읽을지만 정합니다.
-- 한계: 다른 창의 셸 표시는 그 창이 신뢰를 다시 조회할 때 갱신됩니다. 신뢰 변경 알림 event는 없습니다.
+- 셸의 신뢰 부여·철회 진입점은 제목 문서 메뉴와 File ▸ Trust Project…/Revoke Project Trust입니다(UX.1.4). 신뢰
+  상태는 창 부제목("Restricted Mode")과 그 메뉴 항목 이름으로 보입니다. 창에는 Git 패널이 없습니다(UX.1.1이 보조 패널과
+  함께 뗐고, UX.5.2가 사이드바 "변경" 탭으로 다시 붙임).
+- 한계: 앱은 한 폴더에 창 하나만 엽니다(`ShellAppCoordinator.projectWindow(forPath:)`). 신뢰 변경 자체를 알리는 event는
+  없으므로, 다른 프로세스가 사용자 신뢰 목록을 바꾸면 이 창의 표시는 다음 신뢰 조회(창을 다시 열 때나 메뉴로 부여·
+  철회할 때)에 갱신됩니다(2026-11-15 교차 검토: 처음 문장의 "다른 창의 셸 신뢰 표시(Git 패널)" 재조회 경로는 창에
+  Git 패널이 없어 부르는 곳이 없었음).
 
 ## Git 패널 이름·컴포넌트 Stage ABI 제거 (2026-11-15 검토)
 
@@ -492,7 +501,8 @@ U051이 이 ADR 없이 추가한 ABI를 기록합니다. 의미는 아래와 같
   `list_working_tree_pathspec`, 공개 `git_component_library`)도 삭제했습니다.
 
 staging 코어(`prepare_stage_candidate`·`prepare_unstage_candidate`·`apply_stage_candidate`)와 프로젝트 신뢰
-요청 `stellar_project_trust`는 유지합니다. 앱 Git 패널은 신뢰 확인·승인·철회만 표시합니다. 변경 목록과
+요청 `stellar_project_trust`는 유지합니다. 지금 프로젝트 창에는 Git 패널이 없습니다(UX.1.1). 신뢰 확인·승인·철회는
+제목 문서 메뉴와 File 메뉴가 하고(UX.1.4), Git 패널은 UX.5.2에서 사이드바 "변경" 탭으로 다시 붙입니다. 변경 목록과
 Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID 기반 ABI로 다시 정합니다.
 
 ## 캔버스 편집 ABI 정리 (2026-11-15 검토, 묶음 B4)
@@ -511,7 +521,8 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
   이동·크기·배경·모서리, Frame·Shape 삽입, 선택 삭제·복제·순서, Copy·Paste, 레이어 이름 변경은
   `STELLAR_FAILURE_TRUST_UNAVAILABLE`로 거부되지 않습니다.
 - 셸은 편집 경로에서 신뢰 시트를 요청하지 않고, Inspector에 신뢰 이유의 읽기 전용 상태를 표시하지 않습니다.
-  신뢰 시트는 Git 패널과 실행 계열 기능에서만 엽니다.
+  신뢰 alert는 제목 문서 메뉴와 File ▸ Trust Project…에서만 엽니다(UX.1.4). 실행 계열 기능(Git 작업, 내장 터미널,
+  에이전트)이 붙으면 그 진입점도 같은 alert를 씁니다.
 - 이미지 배치(`stellar_window_place_png`)도 같은 규칙입니다. 이미지 경로의 신뢰 확인은 캔버스 렌더·입력·감시
   묶음(B8)에서 지웠습니다(아래 "PNG 배치와 표시"). 이미지 레코드 위치(D2)는 그 절의 남은 일입니다.
 

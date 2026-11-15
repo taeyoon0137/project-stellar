@@ -247,7 +247,7 @@ struct ShellFrameSlots {
 - 프로젝트 창의 `ShellFrameDataSource`(`ShellProjectFrameDataSource`)는 코어 프로젝트 열기 결과만 씁니다. 코어 내비게이션·검색 snapshot이 없어 늘 비활성이던 뒤로·앞으로·검색은 영구 비활성 UI라 UX.1.2에서 지웠습니다. [아키텍처 §8.2] [ADR-0009] [결정 U4]
 - 끝난 일(XII.2.2): 창 controller(`ShellWindowController.windowSession`)가 코어 `ProjectWindowSession` handle(`ShellWindowSessionHandle`) 하나를 소유합니다. 셸은 프로젝트 session을 연 뒤 창 session까지 열린 다음에 창을 ready로 두고, 창 session을 열지 못하면 프로젝트 session을 닫고 "The Project’s Design Couldn’t Be Loaded"로 안내합니다. 창을 닫으면 창 session → 프로젝트 session 순서로 한 번씩 닫습니다. 프로젝트 session handle(`ShellProjectSessionHandle`)은 그대로 data source가 소유합니다. [가이드 2.5] [계획 XII.2.1, XII.2.2] [ADR-0028]
 - `NativeFieldsPanel`(텍스트 입력 검증 fixture)은 `--text-input-check` 전용 창(`CanvasWindowController`)에 남아 있습니다. 셸 창의 텍스트 편집 중 Undo 경로는 `--tools-menus-ui-check`가 검사합니다. [가이드 10.1]
-- 선택 속성과 에이전트 세션을 연결하면 해당 영역의 `ShellAreaDataStubs`를 교체합니다. 사이드바의 활성 문서 트리와 Git 변경 목록은 창별 코어 데이터를 사용합니다. 보조 패널은 두지 않고(가이드 2.4, 결정 U1), Git은 사이드바 변경 탭, 에이전트는 오른쪽 에이전트 탭입니다.
+- 속성 탭은 창 session의 inspector snapshot(ADR-0070)을 읽습니다. 에이전트 탭은 XXIX에서 붙이며, 쓰이지 않던 에이전트 패널 코드는 지웠습니다(76e58192). 사이드바의 활성 문서 트리와 Git 변경 목록은 창별 코어 데이터를 사용합니다. 보조 패널은 두지 않고(가이드 2.4, 결정 U1), Git은 사이드바 변경 탭, 에이전트는 오른쪽 에이전트 탭입니다.
 - 다중 창(XII.2.4)에서 창별 `ShellWindowConfiguration` 이름 규칙을 정합니다. 지금은 모든 프로젝트 창이 `.standard` 이름을 써서 둘째 창부터 frame autosave가 걸리지 않고 split autosave는 서로 덮어씁니다.
 - 모든 프로젝트 창의 캔버스(`CanvasView`)가 앱의 코어 runtime handle 하나를 함께 씁니다. 코어에 창별 session·view state가 없어 창마다 보내는 drawable 크기(`stellar_runtime_set_drawable_size`)와 입력(`stellar_runtime_submit_mac_event`)이 같은 runtime으로 가므로, 프로젝트 창이 둘 이상이면 마지막으로 보낸 창의 drawable 크기가 남습니다. 코어 `ProjectWindowSession`·창별 view state가 생기면 캔버스 호스트가 창 session으로 보내도록 바꿉니다. [계획 XII.2.1, XII.2.5]
 - 툴바 스타일(O1)과 배치 수치 확정(가이드 12장)을 XII.9.1에서 정합니다. 캔버스 확장(O2)은 확장 방향으로 정했고, UX.3.10에서 측정해 계약 안일 때 적용합니다(1장).
@@ -309,7 +309,7 @@ AppDelegate ─ RuntimeHost(코어 runtime 1개)
 
 ### 14.5 영역 data source(Stub)
 
-사이드바는 창의 활성 Page·View와 레이어를 코어에서 읽습니다. Git 패널은 프로젝트 신뢰와 실제 Git 이름 변경을 사용합니다. `ShellAreaDataStubs`는 인스펙터 선택 없음과 에이전트 세션 없음 상태를 제공합니다. 창별 도구 상태는 `ShellWindowToolsModelStub`이 보관합니다. 메뉴는 창 세션이 제공하는 Undo·Redo·Save Now와 줌 명령의 활성 상태를 반영합니다.
+사이드바는 창의 활성 Page·View와 레이어를 코어에서 읽습니다. 창에는 Git 패널이 없고(UX.1.1, UX.5.2에서 사이드바 "변경" 탭으로 다시 붙임), 프로젝트 신뢰 조회·부여·철회는 `ShellGitDataSource`가 코어에 보내 창 부제목과 제목 문서 메뉴·File 메뉴 항목에 반영합니다. Git 이름 변경 ABI는 2026-11-15 검토에서 지웠습니다(ADR-0028). 창별 도구 상태는 `ShellWindowToolsModelStub`이 보관합니다. 메뉴는 창 세션이 제공하는 Undo·Redo·Save Now와 줌 명령의 활성 상태를 반영합니다.
 
 ### 14.6 통합 검사(`--shell-integration-check`)
 

@@ -1,6 +1,6 @@
 # Git 패널 UI 명세 (git_panel)
 
-- 정상 앱의 프로젝트 창은 신뢰 확인·승인·철회만 코어에 연결합니다. 변경 목록·Stage·Unstage·HEAD 표시는 코어 Git 패널 API(XIV.13.1·XIV.13.2) 연결 뒤 구현합니다.
+- 지금 정상 앱의 프로젝트 창에는 Git 패널이 없습니다. UX.1.1이 보조 패널과 함께 뗐고 UX.5.2에서 사이드바 "변경" 탭으로 다시 붙입니다. 그동안 신뢰 확인·승인·철회는 제목 문서 메뉴와 File ▸ Trust Project…가 합니다(UX.1.4). 변경 목록·Stage·Unstage·HEAD 표시는 코어 Git 패널 API(XIV.13.1·XIV.13.2) 연결 뒤 구현합니다. 패널 자체는 `--git-panel-ui-check`의 Stub data source로 검사합니다.
 - 계획 XIV.13.5의 패널 UI 명세입니다. 정상 앱에서 Commit·Push와 나머지 코어 명령의 연결은 후속 범위입니다(11장).
 - 위치: 왼쪽 사이드바의 "변경" 탭(2장, UX 명세 8장). 2026-11-15 UX 명세 반영.
 - 코드: `apps/macos/Stellar/UI/Git/`
