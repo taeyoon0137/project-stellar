@@ -119,7 +119,8 @@ const FRAME_KEYS: [&str; 12] = [
     "transform",
 ];
 
-/// Frame의 모든 영속 속성을 각각 한 줄로 씁니다. 각 줄이 CSS longhand 하나의 병합 단위입니다.
+/// Frame의 모든 영속 속성을 각각 한 줄로 씁니다. 각 줄이 영속 속성 하나의 병합 단위입니다. 파일 키와 속성 패널
+/// 행·웹 CSS 출력 이름의 대응은 `docs/spec/text-view-source-v1.md`의 대응 표에 있습니다(ADR-0061 결정 2).
 ///
 /// 내부 모델의 묶음 key `border`(0x0105, 색과 두께)는 `border-color`·`border-width` 두 줄로 나눠 씁니다. 테두리가
 /// 없으면 두 줄이 모두 `none`입니다.

@@ -73,7 +73,7 @@ nodes:
 
 ## 한 속성 한 줄
 
-영속 속성 하나는 키 하나이고 값은 한 줄입니다([ADR-0061](../adr/ADR-0061-text-source-format-and-layout.md) 결정 2). Frame 키 이름은 CSS longhand 이름입니다. 키 순서는 고정이며, 모양(배경·테두리·모서리)과 크기 키를 이름 오름차순으로 쓴 뒤 `clipping`과 `transform`을 씁니다. 내부 묶음 key `border`(0x0105)는 `border-color`와 `border-width` 두 줄로 나눠 씁니다. 공통 조상에서 서로 다른 속성을 바꾼 두 브랜치는 바뀐 두 줄 사이에 바뀌지 않은 줄이 있으면 일반 `git merge`로 합쳐집니다. 이 순서에서는 이동(`transform`)과 폭·높이, 테두리 색과 두께 사이에 늘 다른 줄이 있습니다. 바로 이웃한 줄을 양쪽에서 바꾸면 Git 텍스트 충돌로 남고, 지금은 사용자가 직접 풉니다. `stellar semantic-merge`는 속성 단위 병합 결과를 보고하는 읽기 전용 명령이라 파일을 고치지 않으며, 자동 해결은 Git merge driver(XXIV.2.1) 이후입니다.
+영속 속성 하나는 키 하나이고 값은 한 줄입니다([ADR-0061](../adr/ADR-0061-text-source-format-and-layout.md) 결정 2). Frame 키는 Stellar 파일 키입니다. 크기·모서리·`transform`은 CSS 속성 이름과 같고, `background`·`border-color`·`border-width`·`clipping`은 아래 대응 표처럼 속성 패널 행과 웹 CSS 출력의 이름이 다릅니다. 키 순서는 고정이며, 모양(배경·테두리·모서리)과 크기 키를 이름 오름차순으로 쓴 뒤 `clipping`과 `transform`을 씁니다. 내부 묶음 key `border`(0x0105)는 `border-color`와 `border-width` 두 줄로 나눠 씁니다. 공통 조상에서 서로 다른 속성을 바꾼 두 브랜치는 바뀐 두 줄 사이에 바뀌지 않은 줄이 있으면 일반 `git merge`로 합쳐집니다. 이 순서에서는 이동(`transform`)과 폭·높이, 테두리 색과 두께 사이에 늘 다른 줄이 있습니다. 바로 이웃한 줄을 양쪽에서 바꾸면 Git 텍스트 충돌로 남고, 지금은 사용자가 직접 풉니다. `stellar semantic-merge`는 속성 단위 병합 결과를 보고하는 읽기 전용 명령이라 파일을 고치지 않으며, 자동 해결은 Git merge driver(XXIV.2.1) 이후입니다.
 
 | Frame 키 | 값 |
 |---|---|
@@ -85,6 +85,20 @@ nodes:
 | `layout-mode` | 참조 `StableId` 또는 `none` |
 | `clipping` | `disabled`, `frame-bounds`, 또는 `path <StableId>` |
 | `transform` | `a b c d tx ty` 순서의 유한 f32 여섯 개(CSS `transform` 행렬 하나) |
+
+파일 키와 속성 패널 행(ADR-0070), `stellar export-web`의 CSS 출력은 다음처럼 대응합니다. 같은 값을 세 곳에서 읽을 때 이 표로 이름을 맞춥니다.
+
+| Frame 파일 키 | 모델 값 | 속성 패널 행 | 웹 CSS 출력 |
+|---|---|---|---|
+| `background` | 배경색 하나 또는 없음 | `background-color` | `background-color`(없으면 `transparent`) |
+| `border-color`, `border-width` | 네 변 공통 테두리 하나(색·두께) 또는 없음 | `border` 한 행(`2px solid #ff0000`) | 변마다 `border-{top,right,bottom,left}-width`·`-style`·`-color` |
+| `border-*-radius` 넷 | 모서리 반경 | 같은 이름(묶음 행 `border-radius`) | 같은 이름 |
+| `width`, `height` | 크기 | `width`, `height` | `width`, `height` |
+| `clipping` | `disabled`·`frame-bounds`·`path <StableId>` | `overflow`(`visible`·`hidden`, `path`면 바꿀 수 없음) | `frame-bounds`면 `overflow-x`·`overflow-y: clip`과 `overflow-clip-margin: border-box`, 반경이 있으면 `clip-path: border-box`. `path`는 출력하지 않고 진단 |
+| `transform` | 2D 행렬 | 평행이동 성분을 `left`·`top`으로 보임 | `transform: matrix(a, b, c, d, tx, ty)` |
+| `layout-mode` | 레이아웃 참조 | 없음 | 참조가 있으면 출력하지 않고 진단 |
+
+CSS에서 `border-color`·`border-width`·`background`는 shorthand이고 `clipping`은 CSS 속성이 아닙니다. 파일 키는 모델 값 하나에 한 줄이라는 병합 단위를 따르므로, 모델이 네 변을 따로 갖지 않는 테두리는 두 줄, 단색 배경은 `background` 한 줄입니다.
 
 색은 `srgb 1 0 0 1`처럼 색 공간(`srgb` 또는 `display-p3`)과 비연관 알파 `r g b a`를 공백으로 구분해 한 줄에 씁니다. 알파는 `[0, 1]`, RGB는 확장 범위를 허용합니다.
 
