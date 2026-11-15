@@ -8,7 +8,7 @@ use stellar_ops::component_source::{self, ComponentInfo};
 use stellar_ops::core_types::{
     color::{Color, ColorSpace},
     ids::StableId,
-    value::{Size2, Vec2},
+    value::Size2,
 };
 
 fn argument(message: &str) -> CliError {
@@ -76,7 +76,7 @@ pub(crate) fn component_json(info: ComponentInfo, include_file: bool) -> J {
 }
 
 pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
-    const USAGE: &str = "component-source create <폴더> <이름> <id> <root-id> | check <폴더> | resize <파일> <원본 hash> <너비> <높이> | set-fill <파일> <원본 hash> <none 또는 색 공간과 RGBA> | resize-frame <파일> <원본 hash> <node-id> <너비> <높이> | set-position <파일> <원본 hash> <node-id> <x> <y> | set-visible <파일> <원본 hash> <node-id> <true|false> | set-locked <파일> <원본 hash> <node-id> <true|false> | remove-frame <파일> <원본 hash> <node-id> | rename-frame <파일> <원본 hash> <node-id> <이름> | add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>";
+    const USAGE: &str = "component-source create <폴더> <이름> <id> <root-id> | check <폴더> | resize <파일> <원본 hash> <너비> <높이> | set-fill <파일> <원본 hash> <none 또는 색 공간과 RGBA> | add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>";
     let result = match args {
         [op, dir, name, component, root] if op == "create" => {
             let source =
@@ -112,59 +112,6 @@ pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
                 component_source::ComponentRootEdit::Background(fill(value)?),
             )
             .map_err(|error| operation_error(&error).with_context(file))?,
-            true,
-        ),
-        [op, file, hash, node, width, height] if op == "resize-frame" => component_json(
-            component_source::resize_frame(Path::new(file), hash, id(node)?, size(width, height)?)
-                .map_err(|error| operation_error(&error).with_context(file))?,
-            true,
-        ),
-        [op, file, hash, node, x, y] if op == "set-position" => {
-            let coordinate = |value: &str| {
-                value
-                    .parse::<f32>()
-                    .map_err(|_| argument("좌표는 유한한 수여야 합니다"))
-            };
-            let position = Vec2::new(coordinate(x)?, coordinate(y)?)
-                .map_err(|_| argument("좌표는 유한한 수여야 합니다"))?;
-            component_json(
-                component_source::set_position(Path::new(file), hash, id(node)?, position)
-                    .map_err(|error| operation_error(&error).with_context(file))?,
-                true,
-            )
-        }
-        [op, file, hash, node, visible] if op == "set-visible" => component_json(
-            component_source::set_visible(
-                Path::new(file),
-                hash,
-                id(node)?,
-                visible
-                    .parse::<bool>()
-                    .map_err(|_| argument("표시 여부는 true 또는 false여야 합니다"))?,
-            )
-            .map_err(|error| operation_error(&error).with_context(file))?,
-            true,
-        ),
-        [op, file, hash, node, locked] if op == "set-locked" => component_json(
-            component_source::set_locked(
-                Path::new(file),
-                hash,
-                id(node)?,
-                locked
-                    .parse::<bool>()
-                    .map_err(|_| argument("잠금 여부는 true 또는 false여야 합니다"))?,
-            )
-            .map_err(|error| operation_error(&error).with_context(file))?,
-            true,
-        ),
-        [op, file, hash, node] if op == "remove-frame" => component_json(
-            component_source::remove_frame(Path::new(file), hash, id(node)?)
-                .map_err(|error| operation_error(&error).with_context(file))?,
-            true,
-        ),
-        [op, file, hash, node, name] if op == "rename-frame" => component_json(
-            component_source::rename_frame(Path::new(file), hash, id(node)?, name.clone())
-                .map_err(|error| operation_error(&error).with_context(file))?,
             true,
         ),
         [op, file, hash, parent, child, name, width, height] if op == "add-frame" => {

@@ -427,7 +427,7 @@ fn two_instances_follow_one_source_and_keep_distinct_dom_ids() {
     let id = |n| fixture::id(n).to_string();
     let root = component(&["create", folder.to_str().unwrap(), "Card", &id(70), &id(71)]);
     let path = get(&root, "file");
-    let frame = component(&[
+    component(&[
         "add-frame",
         &path,
         &get(&root, "source_hash"),
@@ -437,24 +437,27 @@ fn two_instances_follow_one_source_and_keep_distinct_dom_ids() {
         "12",
         "8",
     ]);
-    let frame = component(&[
-        "set-position",
-        &path,
-        &get(&frame, "source_hash"),
-        &id(72),
-        "2",
-        "3",
-    ]);
-    // Root가 캔버스에 있던 좌표는 배치 좌표에 더하지 않습니다.
-    let frame = component(&[
-        "set-position",
-        &path,
-        &get(&frame, "source_hash"),
-        &id(71),
-        "40",
-        "30",
-    ]);
-    let frame = component(&["resize", &path, &get(&frame, "source_hash"), "90", "60"]);
+    // 위치와 표시 여부는 YAML 원본을 직접 고칩니다(CLI는 root 크기·채우기와 자식 추가만 편집합니다).
+    // 파일에는 root_node가 children보다 먼저 나옵니다.
+    let rewrite = |edit: &dyn Fn(String) -> String| {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let edited = edit(text.clone());
+        assert_ne!(edited, text);
+        std::fs::write(&path, edited).unwrap();
+        let checked = component(&["check", folder.to_str().unwrap()]);
+        get(
+            &checked.get("components").unwrap().as_array().unwrap()[0],
+            "source_hash",
+        )
+    };
+    let identity = "transform: \"1 0 0 1 0 0\"";
+    let hash = rewrite(&|mut text| {
+        let inset = text.rfind(identity).unwrap();
+        text.replace_range(inset..inset + identity.len(), "transform: \"1 0 0 1 2 3\"");
+        // Root가 캔버스에 있던 좌표는 배치 좌표에 더하지 않습니다.
+        text.replacen(identity, "transform: \"1 0 0 1 40 30\"", 1)
+    });
+    let frame = component(&["resize", &path, &hash, "90", "60"]);
     let before = file_digest(&dir.path);
     let first = export(&dir.path, 4);
     assert_eq!(first, export(&dir.path, 4));
@@ -482,7 +485,7 @@ fn two_instances_follow_one_source_and_keep_distinct_dom_ids() {
         let inset_css = css(html(&first), &unique);
         assert!(inset_css.contains("width: 12px") && inset_css.contains("left: calc(2px - 0px)"));
     }
-    let resize = component(&["resize", &path, &get(&frame, "source_hash"), "144", "60"]);
+    component(&["resize", &path, &get(&frame, "source_hash"), "144", "60"]);
     let next = export(&dir.path, 4);
     assert_eq!(html(&next).matches("width: 144px").count(), 2);
     assert_eq!(
@@ -493,13 +496,12 @@ fn two_instances_follow_one_source_and_keep_distinct_dom_ids() {
         first.get("result").unwrap().get("component_source_hash"),
         next.get("result").unwrap().get("component_source_hash")
     );
-    component(&[
-        "set-visible",
-        &path,
-        &get(&resize, "source_hash"),
-        &id(72),
-        "false",
-    ]);
+    let visible = "visible: \"true\"";
+    rewrite(&|mut text| {
+        let inset = text.rfind(visible).unwrap();
+        text.replace_range(inset..inset + visible.len(), "visible: \"false\"");
+        text
+    });
     let hidden = export(&dir.path, 4);
     for n in [21, 22] {
         assert!(

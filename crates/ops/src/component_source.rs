@@ -2,10 +2,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::apply::ApplyError;
-use crate::core_types::{
-    ids::StableId,
-    value::{Size2, Vec2},
-};
+use crate::core_types::{ids::StableId, value::Size2};
 use crate::lock::{default_lock_dir, SaveLock};
 use crate::text_source::TextSourceOperationError as Error;
 use stellar_document::component::definition::ComponentLibrary;
@@ -418,73 +415,6 @@ pub fn add_frame(
     Ok(info(&source, file.into(), hash))
 }
 
-/// 원본 hash가 일치하면 root 또는 자식 Frame의 표시 이름을 변경합니다.
-pub fn rename_frame(
-    file: &Path,
-    expected: &str,
-    id: StableId,
-    name: String,
-) -> Result<ComponentInfo, Error> {
-    let (_guard, hash) = lock_file(file, expected)?;
-    let (source, hash) = component_source::rename_frame(file, hash, id, name)?;
-    Ok(info(&source, file.into(), hash))
-}
-
-/// 원본 hash가 일치하면 root 또는 자식 Frame의 표시 여부을 변경합니다.
-pub fn set_visible(
-    file: &Path,
-    expected: &str,
-    id: StableId,
-    visible: bool,
-) -> Result<ComponentInfo, Error> {
-    let (_guard, hash) = lock_file(file, expected)?;
-    let (source, hash) = component_source::set_visible(file, hash, id, visible)?;
-    Ok(info(&source, file.into(), hash))
-}
-
-/// 원본 hash가 일치하면 root 또는 자식 Frame의 잠금 여부를 변경합니다.
-pub fn set_locked(
-    file: &Path,
-    expected: &str,
-    id: StableId,
-    locked: bool,
-) -> Result<ComponentInfo, Error> {
-    let (_guard, hash) = lock_file(file, expected)?;
-    let (source, hash) = component_source::set_locked(file, hash, id, locked)?;
-    Ok(info(&source, file.into(), hash))
-}
-
-/// 원본 hash가 일치하면 Frame의 부모 좌표계 위치를 변경합니다.
-pub fn set_position(
-    file: &Path,
-    expected: &str,
-    id: StableId,
-    position: Vec2,
-) -> Result<ComponentInfo, Error> {
-    let (_guard, hash) = lock_file(file, expected)?;
-    let (source, hash) = component_source::set_position(file, hash, id, position)?;
-    Ok(info(&source, file.into(), hash))
-}
-
-/// 원본 hash가 일치하면 지정 Frame의 크기를 변경합니다.
-pub fn resize_frame(
-    file: &Path,
-    expected: &str,
-    id: StableId,
-    size: Size2,
-) -> Result<ComponentInfo, Error> {
-    let (_guard, hash) = lock_file(file, expected)?;
-    let (source, hash) = component_source::resize_frame(file, hash, id, size)?;
-    Ok(info(&source, file.into(), hash))
-}
-
-/// 원본 hash가 일치하면 자식 Frame과 하위 트리를 삭제합니다.
-pub fn remove_frame(file: &Path, expected: &str, id: StableId) -> Result<ComponentInfo, Error> {
-    let (_guard, hash) = lock_file(file, expected)?;
-    let (source, hash) = component_source::remove_frame(file, hash, id)?;
-    Ok(info(&source, file.into(), hash))
-}
-
 fn lock_file(file: &Path, expected: &str) -> Result<(SaveLock, ContentHash), Error> {
     let hash = expected
         .parse()
@@ -509,33 +439,6 @@ mod tests {
         commit::SavedGenerationState,
         plan::build_save_plan,
     };
-
-    #[test]
-    fn renamed_root_and_child_reopen_with_unchanged_identity_and_geometry() {
-        let dir = TempDir::new("component-rename-roundtrip");
-        let id = |n| StableId::new_v7(10, 0, n);
-        let source = ComponentSource::new(id(1), "Card".into(), id(2)).unwrap();
-        let (file, hash) = component_source::create(&dir.path, &source).unwrap();
-        let size = Size2::new(32.0, 16.0).unwrap();
-        let (_, hash) =
-            component_source::add_frame(&file, hash, id(2), id(3), "Child".into(), size).unwrap();
-        let name = "이름 / : # \"버튼\"\n다음 줄";
-        let (_, hash) = component_source::rename_frame(&file, hash, id(3), name.into()).unwrap();
-        let (_, hash) = component_source::rename_frame(&file, hash, id(2), String::new()).unwrap();
-        assert_eq!(component_source::open(&file).unwrap().1, hash);
-        let (library, _) = component_source::read_library(&dir.path).unwrap();
-        let entry = library.iter().next().unwrap();
-        assert_eq!(entry.definition().id, id(1));
-        assert_eq!(entry.definition().display_name(), "Card");
-        assert_eq!(entry.tree().node(id(2)).unwrap().display_name, "");
-        let child = entry.tree().node(id(3)).unwrap();
-        assert_eq!(child.display_name, name);
-        assert_eq!(child.parent, Some(id(2)));
-        let NodePayload::Frame(frame) = decode_payload(child.kind, &child.payload).unwrap() else {
-            panic!("Frame expected")
-        };
-        assert_eq!(frame.size, size);
-    }
 
     #[cfg(unix)]
     #[test]
