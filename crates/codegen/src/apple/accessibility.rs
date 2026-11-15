@@ -4,7 +4,7 @@
 //!
 //! | 의미 | SwiftUI(`ViewModifier`) | AppKit(`NSView`) |
 //! |---|---|---|
-//! | 접근성 entry 없는 subtree | `.accessibilityHidden(true)` | `setAccessibilityElement(false)`, `setAccessibilityChildren([])` |
+//! | 접근성 entry 없는 subtree(맨 위 view, Fragment는 view가 없어 건너뜀) | `.accessibilityHidden(true)` | `setAccessibilityElement(false)`, `setAccessibilityChildren([])` |
 //! | group·radioGroup·list·dialog | `.accessibilityElement(children: .contain)` | `setAccessibilityElement(true)` + role |
 //! | button·radio·listItem | `.accessibilityElement(children: .combine)` | `setAccessibilityElement(true)` + role, 이름이 없으면 하위 staticText 텍스트를 label로 |
 //! | role | button·radio `.isButton`, staticText `.isStaticText`, image `.isImage` | `.group` `.button` `.textField` `.list` `.radioGroup` `.radioButton` `.staticText` `.image`, dialog는 `.group` + subrole `.dialog`(근사), listItem은 `.group`(근사) |
@@ -35,6 +35,7 @@ use stellar_accessibility::node::{
 };
 use stellar_core_types::ids::StableId;
 use stellar_core_types::typed_value::TypedValue;
+use stellar_target_profile::capability::ElementKind;
 use stellar_target_profile::spec::{ApplePlatform, AppleProfile};
 
 use crate::apple::swift::{identifiers, string_literal};
@@ -292,12 +293,15 @@ impl Ctx<'_> {
 fn plan(ctx: &mut Ctx<'_>) -> Vec<Vec<Op>> {
     let ir = ctx.ir;
     let has = ir.semantic_subtrees();
+    let element_parents = ir.element_parents();
     let mut ops: Vec<Vec<Op>> = vec![Vec::new(); ir.nodes.len()];
     for (index, node) in ir.nodes.iter().enumerate() {
         match ir.semantics_of(index as u32) {
             Some(entry) => ops[index] = ctx.entry_ops(index as u32, entry),
+            // Fragment는 view가 없어 modifier를 붙일 곳이 없습니다. 자식은 Fragment를 건너뛴 부모로 판정합니다.
+            None if node.element == ElementKind::FRAGMENT => {}
             None => {
-                let parent_has = node.parent.is_none_or(|p| has[p as usize]);
+                let parent_has = element_parents[index].is_none_or(|p| has[p as usize]);
                 if !has[index] && parent_has {
                     ops[index].push(Op::Hidden);
                 }
@@ -315,11 +319,11 @@ fn plan(ctx: &mut Ctx<'_>) -> Vec<Vec<Op>> {
         }
         false
     };
+    let child_lists = ir.accessibility_child_lists();
     for (entry_index, entry) in ir.accessibility.iter().enumerate() {
-        let children: Vec<u32> = ir
-            .accessibility_children(entry_index as u32)
-            .into_iter()
-            .map(|child| ir.accessibility[child as usize].node)
+        let children: Vec<u32> = child_lists[entry_index]
+            .iter()
+            .map(|child| ir.accessibility[*child as usize].node)
             .collect();
         if children.is_empty() {
             continue;

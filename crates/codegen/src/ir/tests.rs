@@ -268,6 +268,20 @@ fn semantic_subtrees_mark_nodes_with_accessible_descendants() {
 }
 
 #[test]
+fn element_parents_skip_fragments() {
+    let fixture = Fixture::new();
+    let ir = fixture.ir(&fx::web_profile());
+    let parents = ir.element_parents();
+    let index = |id: u8| ir.node_index(sid(id)).expect("node");
+    // Fragment(3) 아래 4·5의 출력 부모는 root(1)이고, Fragment가 아닌 부모는 그대로입니다.
+    assert_eq!(parents[index(4) as usize], Some(index(1)));
+    assert_eq!(parents[index(5) as usize], Some(index(1)));
+    assert_eq!(parents[index(3) as usize], Some(index(1)));
+    assert_eq!(parents[index(9) as usize], Some(index(8)));
+    assert_eq!(parents[0], None);
+}
+
+#[test]
 fn accessibility_child_lists_match_per_entry_children() {
     let fixture = Fixture::new();
     for profile in [fx::web_profile(), fx::ios_profile()] {

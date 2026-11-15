@@ -401,6 +401,24 @@ impl IrTree {
         lists
     }
 
+    /// node마다 Fragment를 건너뛴 가장 가까운 조상 node(출력 element의 부모, 없으면 `None`). Fragment는 출력
+    /// element가 없으므로 adapter는 숨김 판정에서 Fragment를 투명하게 다룹니다.
+    pub fn element_parents(&self) -> Vec<Option<u32>> {
+        let mut parents: Vec<Option<u32>> = Vec::with_capacity(self.nodes.len());
+        // preorder라 부모의 값이 먼저 정해집니다.
+        for node in &self.nodes {
+            let parent = node.parent.and_then(|parent| {
+                if self.nodes[parent as usize].element == ElementKind::FRAGMENT {
+                    parents[parent as usize]
+                } else {
+                    Some(parent)
+                }
+            });
+            parents.push(parent);
+        }
+        parents
+    }
+
     /// node마다 자신이나 하위 node가 접근성 entry를 가지는지(index = IR node index).
     pub fn semantic_subtrees(&self) -> Vec<bool> {
         let mut has = vec![false; self.nodes.len()];

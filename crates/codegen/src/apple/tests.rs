@@ -150,6 +150,34 @@ fn pressed_toggle_respects_minimum_os() {
 }
 
 #[test]
+fn fragment_is_transparent_for_hidden_subtrees() {
+    // Fragment(2)는 view가 없어 modifier·함수를 만들지 않고, 그 아래 장식 Text(3)를 숨깁니다.
+    let fixture = fx::fragment_fixture();
+    let swiftui = export_apple(
+        &fixture.ir(&fx::ios_profile()),
+        &AppleOptions::new(AppleDialect::SwiftUi),
+    )
+    .expect("export");
+    assert!(!swiftui
+        .source
+        .contains("StellarAccessibility00000000000000000000000000000002"));
+    assert!(swiftui.source.contains(
+        "struct StellarAccessibility00000000000000000000000000000003: ViewModifier {\n    func body(content: Content) -> some View {\n        content\n            .accessibilityHidden(true)\n"
+    ));
+    let appkit = export_apple(
+        &fixture.ir(&fx::mac_profile()),
+        &AppleOptions::new(AppleDialect::AppKit),
+    )
+    .expect("export");
+    assert!(!appkit
+        .source
+        .contains("apply00000000000000000000000000000002"));
+    assert!(appkit.source.contains(
+        "static func apply00000000000000000000000000000003(to view: NSView) {\n        view.setAccessibilityElement(false)\n        view.setAccessibilityChildren([])\n"
+    ));
+}
+
+#[test]
 fn invalid_targets_and_options_are_rejected() {
     let fixture = Fixture::new();
     let web = fixture.ir(&fx::web_profile());

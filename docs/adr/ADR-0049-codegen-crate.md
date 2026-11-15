@@ -44,6 +44,9 @@ Accepted (2026-11-14). 제품 소유자가 기술 문서에 세부가 없는 설
 ## Performance
 
 핵심 입력·렌더링 경로에 들어가지 않습니다. IR 변환은 node 수에 대해 O(N log N)이고 재귀를 쓰지 않습니다.
+Web·Apple adapter는 접근성 entry의 자식 목록(`IrTree::accessibility_child_lists`)과 listbox 여부를 한 번만
+계산하므로 형제 수(목록 항목 수)에 대해 제곱으로 늘지 않습니다(항목 10만 개 목록의 단위 테스트). Apple 읽기
+순서의 시각 조상 확인과 AppKit 하위 텍스트 수집에는 tree 깊이에 비례하는 비용이 더해집니다.
 
 ## Security
 

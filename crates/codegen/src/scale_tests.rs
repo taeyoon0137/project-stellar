@@ -5,6 +5,7 @@
 
 use std::time::{Duration, Instant};
 
+use crate::apple::{export_apple, AppleDialect, AppleOptions};
 use crate::fixture as fx;
 use crate::web::aria::map_accessibility;
 use crate::web::check::{check_against_ir, check_document};
@@ -41,4 +42,12 @@ fn adapters_stay_linear_on_large_lists() {
         assert_eq!(check_document(&web.document), Vec::new());
         assert_eq!(check_against_ir(&ios, &web.document), Vec::new());
     });
+
+    let swiftui = timed("SwiftUI", || {
+        export_apple(&ios, &AppleOptions::new(AppleDialect::SwiftUi)).expect("export")
+    });
+    assert_eq!(
+        swiftui.source.matches(": ViewModifier {").count(),
+        ITEMS as usize + 1
+    );
 }
