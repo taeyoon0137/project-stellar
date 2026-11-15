@@ -39,9 +39,13 @@ final class ShellSidebarSource: SidebarDataProvider {
     var setFlag: ((_ view: UUID, _ revision: UInt64, _ ids: [UUID], _ flag: ShellLayerFlag, _ value: Bool) -> Void)?
     /// 머리 줄 팝업에서 고른 View로 전환합니다.
     var openView: ((UUID) -> Void)?
-    /// 창 작업 문서의 Page·View 목록과 그것을 읽은 창. 머리 줄 팝업이 씁니다.
-    private var outline: (session: UInt64, pages: [SidebarPageRow])?
-    private var outlineRequest: UInt64?
+    /// 창 작업 문서의 Page·View 목록과 그것을 읽은 창·revision. 머리 줄 팝업이 씁니다.
+    private var outline: (key: OutlineKey, pages: [SidebarPageRow])?
+    private var outlineRequest: OutlineKey?
+    private struct OutlineKey: Equatable {
+        let session: UInt64
+        let revision: UInt64
+    }
 
     /// 빈 레이어 목록 안내 한 줄: 다음 행동을 캔버스 단일 키로 알립니다(UX 명세 흐름 1의 6번, 7.2절). 키는
     /// `CanvasTool.singleKey`에서 읽어 실제 배정과 같습니다. 버튼은 두지 않습니다.
@@ -89,23 +93,37 @@ final class ShellSidebarSource: SidebarDataProvider {
         }
     }
 
-    /// 창마다 한 번 Page·View 목록을 읽습니다. Page·View를 바꾸는 코어 Command가 아직 없어 창이 바뀔 때만 다시 읽습니다.
+    /// 창 문서 revision마다 Page·View 목록을 다시 읽습니다. 복구·외부 변경 반영처럼 같은 창에서 문서가 바뀌어도
+    /// 팝업이 옛 이름·View를 보이지 않게 합니다(Page·View 수가 적어 worker 읽기 비용이 작음).
     private func loadOutline() {
-        guard let display, let runtime, outline?.session != display.session, outlineRequest != display.session else { return }
-        let session = display.session
-        outlineRequest = session
+        guard let display, let runtime else { return }
+        let key = OutlineKey(session: display.session, revision: display.revision)
+        guard outline?.key != key, outlineRequest != key else { return }
+        outlineRequest = key
         queue.async { [weak self] in
-            let pages = CoreRuntime.viewOutline(handle: runtime, session: session)
+            let pages = CoreRuntime.viewOutline(handle: runtime, session: key.session)
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.outlineRequest == session else { return }
+                guard let self, self.outlineRequest == key else { return }
                 self.outlineRequest = nil
-                guard let pages, self.display?.session == session else { return }
-                self.outline = (session, pages)
+                guard let pages, self.display?.session == key.session, self.display?.revision == key.revision else { return }
+                self.outline = (key, pages)
                 if let active = self.snapshot.activePageID, pages.contains(where: { $0.id == active }) {
-                    self.snapshot.pages = pages
+                    self.snapshot.pages = self.merged(pages, active: self.activePage)
                     self.publish(structureChanged: false)
                 }
             }
+        }
+    }
+
+    /// 레이어 페이지가 함께 읽은 활성 Page·View 이름. 목록보다 나중에 읽은 값이므로 이름은 이 값을 우선합니다.
+    private var activePage: SidebarPageRow?
+
+    private func merged(_ pages: [SidebarPageRow], active: SidebarPageRow?) -> [SidebarPageRow] {
+        guard let active, let view = active.views.first else { return pages }
+        return pages.map { page in
+            guard page.id == active.id else { return page }
+            return SidebarPageRow(id: page.id, name: active.name,
+                                  views: page.views.map { $0.id == view.id ? view : $0 })
         }
     }
 
@@ -115,6 +133,7 @@ final class ShellSidebarSource: SidebarDataProvider {
         loaded.removeAll()
         restorePages.removeAll()
         selectedOrder.removeAll()
+        activePage = nil
         snapshot = .empty
     }
 
@@ -258,8 +277,9 @@ final class ShellSidebarSource: SidebarDataProvider {
         var ids = request.parent.map { snapshot.layers.childIDs[$0] ?? [] } ?? snapshot.layers.topLevelIDs
         // 삭제·이동 또는 같은 페이지의 중복 요청 결과를 현재 목록에 이어 붙이지 않습니다.
         guard refreshing || request.after == nil || ids.last == request.after else { return }
-        if let outline, outline.session == display?.session, outline.pages.contains(where: { $0.id == page.page.id }) {
-            snapshot.pages = outline.pages
+        activePage = page.page
+        if let outline, outline.key.session == display?.session, outline.pages.contains(where: { $0.id == page.page.id }) {
+            snapshot.pages = merged(outline.pages, active: page.page)
         } else {
             snapshot.pages = [page.page]
         }
