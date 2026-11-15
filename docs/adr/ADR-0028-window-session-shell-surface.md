@@ -485,7 +485,8 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
   Shape를 담을 수 있게 된 뒤 다시 설계합니다.
 - 삭제한 ABI: `stellar_window_component_from_selection`, 완료 event `STELLAR_EVENT_COMPONENT_CREATED`(0x010E,
   다른 event가 쓰지 않는 번호로 남깁니다), runtime `create_component_from_selection`과 진행 플래그.
-  `stellar_project`의 `ComponentSource::from_selection`·`new_ids_vec` 정리는 텍스트 원본 묶음(B2)에서 합니다.
+  호출자가 없어진 `stellar_project`의 `ComponentSource::from_selection`과 그 전용 `new_ids_vec`도 묶음 통합 때
+  삭제했습니다.
 
 ### Inspector 선택 snapshot과 Frame 속성 편집
 

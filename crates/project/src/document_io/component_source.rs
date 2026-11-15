@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use stellar_core_types::{
     color::Color,
-    ids::{IdRemapTable, StableId},
+    ids::StableId,
     order_key::OrderKey,
     reference::{ComponentRef, NodeRef},
     value::Size2,
@@ -14,7 +14,6 @@ use stellar_document::component::definition::{
     ComponentDefinition, ComponentLibrary, DefinitionNode, DefinitionTree,
 };
 use stellar_document::frame::{Clipping, FramePayload};
-use stellar_document::model::DocumentModel;
 use stellar_document::record_codec::encode_payload;
 use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_storage::{hash::ContentHash, source_file};
@@ -87,103 +86,6 @@ impl ComponentSource {
         };
         value.definition_tree()?;
         Ok(value)
-    }
-
-    /// 현재 문서의 선택 subtree를 새 ID로 복제합니다. root의 기존 부모만 떼고 로컬 affine은 보존합니다.
-    pub fn from_selection(
-        model: &DocumentModel,
-        view: StableId,
-        selected: StableId,
-        name: String,
-    ) -> Result<Self, TextSourceError> {
-        validate_folder_name(&name).map_err(invalid)?;
-        let root = model
-            .definition()
-            .pages
-            .iter()
-            .flat_map(|p| &p.views)
-            .find(|v| v.id == view)
-            .ok_or_else(|| invalid("활성 View가 없습니다"))?
-            .root_frame;
-        let mut cursor = model
-            .runtime_id(selected)
-            .ok_or_else(|| invalid("선택한 Frame이 없습니다"))?;
-        loop {
-            let fields = model
-                .columns()
-                .get(cursor)
-                .ok_or_else(|| invalid("선택 경로가 없습니다"))?;
-            if fields.stable_id == root {
-                break;
-            }
-            cursor = fields
-                .parent
-                .ok_or_else(|| invalid("다른 View에 속한 선택입니다"))?;
-        }
-
-        // 모든 Frame은 YAML에 적어도 UUID 문자열 하나와 표시 이름을 씁니다.
-        // 확실히 파일 상한을 넘는 subtree는 레코드 또는 전체 형제 배열을 복제하기 전에 중단합니다.
-        const ID_BYTES: usize = 36;
-        let too_large = || invalid("컴포넌트 원본이 파일 크기 상한을 넘습니다");
-        let mut remaining = MAX_INPUT_BYTES;
-        let mut pending = vec![selected];
-        let mut records = Vec::new();
-        while let Some(id) = pending.pop() {
-            check_frame(
-                model
-                    .payload(id)
-                    .ok_or_else(|| invalid("선택한 Frame이 없습니다"))?,
-            )?;
-            if model.modifier_stack(id).is_some() {
-                return Err(TextSourceError::Unsupported(
-                    "컴포넌트 원본은 modifier stack을 지원하지 않습니다".into(),
-                ));
-            }
-            let record = model
-                .record(id)
-                .ok_or_else(|| invalid("선택한 Frame이 없습니다"))?;
-            remaining = remaining
-                .checked_sub(ID_BYTES + record.display_name.len())
-                .ok_or_else(too_large)?;
-            let handle = model
-                .runtime_id(id)
-                .ok_or_else(|| invalid("선택한 Frame이 없습니다"))?;
-            let children = model.columns().child_count(handle).unwrap_or(0);
-            if children + pending.len() > remaining / ID_BYTES {
-                return Err(too_large());
-            }
-            pending.extend(model.children_in_order(id));
-            records.push(record);
-        }
-        let ids = crate::new_ids::new_ids_vec(records.len() + 1)?;
-        let unique: BTreeSet<_> = ids.iter().copied().collect();
-        if unique.len() != ids.len() || ids.iter().any(|id| model.contains_persistent_id(*id)) {
-            return Err(invalid("새 컴포넌트 식별자 충돌"));
-        }
-        let mut remap = IdRemapTable::new();
-        for (record, &id) in records.iter().zip(&ids[1..]) {
-            remap.insert(record.id, id);
-        }
-        for record in &mut records {
-            record.parent = if record.id == selected {
-                None
-            } else {
-                Some(
-                    record
-                        .parent
-                        .and_then(|p| remap.mapped(p))
-                        .ok_or_else(|| invalid("잘못된 subtree 부모"))?,
-                )
-            };
-            record.id = remap.remap(record.id);
-        }
-        let mut records = records.into_iter();
-        let root = records.next().ok_or_else(|| invalid("선택이 비었습니다"))?;
-        Ok(Self {
-            definition: ComponentDefinition::new(ids[0], name, NodeRef::new(root.id)),
-            root,
-            children: records.map(|r| (r.id, r)).collect(),
-        })
     }
 
     /// 실제 문서 도메인 정의.
@@ -1000,62 +902,6 @@ mod tests {
                 },
             );
         }
-        // 실제 문서에 배치한 뒤 선택을 복제하고 yaml을 재열어 ID·부모 외의 전 필드를 비교합니다.
-        use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
-        let mut def = DocumentDefinition::new(id(20), "Document".into());
-        let mut page = PageDefinition::new(id(21), "Page".into());
-        page.add_view(ViewDefinition::new(id(22), "View".into(), id(23)))
-            .unwrap();
-        def.add_page(page).unwrap();
-        let mut model = DocumentModel::new(def);
-        model
-            .insert_node(NodeRecord {
-                id: id(23),
-                ..source.root.clone()
-            })
-            .unwrap();
-        model
-            .insert_node(NodeRecord {
-                parent: Some(id(23)),
-                ..source.root.clone()
-            })
-            .unwrap();
-        for child in [id(9), id(3), id(7)] {
-            model.insert_node(source.children[&child].clone()).unwrap();
-        }
-        let before = model.to_records().unwrap();
-        let copied =
-            ComponentSource::from_selection(&model, id(22), source.root.id, "Copy".into()).unwrap();
-        let copied = ComponentSource::decode(&copied.to_yaml().unwrap()).unwrap();
-        copied.definition_tree().unwrap();
-        let copied_id = |n: StableId| {
-            if n == source.root.id {
-                return copied.root.id;
-            }
-            let name = &source.children[&n].display_name;
-            copied
-                .children
-                .values()
-                .find(|r| r.display_name == *name)
-                .unwrap()
-                .id
-        };
-        assert_eq!(copied.node_count(), source.node_count());
-        assert!(!model.contains_persistent_id(copied.definition.id));
-        for old in std::iter::once(&source.root).chain(source.children.values()) {
-            let new = copied_id(old.id);
-            assert!(!model.contains_persistent_id(new));
-            let record = copied.children.get(&new).unwrap_or(&copied.root);
-            assert_eq!(
-                *record,
-                NodeRecord {
-                    id: new,
-                    parent: old.parent.map(copied_id),
-                    ..old.clone()
-                }
-            );
-        }
-        assert_eq!(model.to_records().unwrap(), before);
         let text = source.to_yaml().unwrap();
         let reopened = ComponentSource::decode(&text).unwrap();
         let disconnected = text.replace(

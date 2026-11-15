@@ -11,14 +11,6 @@ pub fn new_ids<const N: usize>() -> io::Result<[StableId; N]> {
     Ok(entropy.map(|bytes| uuid(ms, bytes)))
 }
 
-/// 한 번의 OS 난수 읽기로 가변 길이 subtree의 독립 식별자를 만듭니다.
-pub(crate) fn new_ids_vec(count: usize) -> io::Result<Vec<StableId>> {
-    let mut entropy = vec![[0u8; 10]; count];
-    fill_entropy(entropy.as_flattened_mut())?;
-    let ms = timestamp_ms()?;
-    Ok(entropy.into_iter().map(|bytes| uuid(ms, bytes)).collect())
-}
-
 fn timestamp_ms() -> io::Result<u64> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
