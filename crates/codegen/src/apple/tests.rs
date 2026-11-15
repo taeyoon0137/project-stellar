@@ -177,6 +177,52 @@ fn fragment_is_transparent_for_hidden_subtrees() {
     ));
 }
 
+/// 상태·token 이름을 생성 코드가 쓰는 type·매개변수 이름으로 바꾼 fixture.
+fn colliding_names() -> Fixture {
+    let mut fixture = Fixture::new();
+    for state in &mut fixture.states {
+        state.name = match state.name.as_str() {
+            "memo" => "Text",
+            "selectedSize" => "Content",
+            _ => "views",
+        }
+        .to_string();
+    }
+    for token in &mut fixture.tokens {
+        if token.id == sid(fx::TOKEN_ACCENT) {
+            token.name = "Color".to_string();
+        } else if token.id == sid(fx::TOKEN_SURFACE) {
+            // node 속성 상수 이름과 같은 token 이름.
+            token.name = "n0000000000000000000000000000000c_4".to_string();
+        }
+    }
+    fixture
+}
+
+#[test]
+fn identifiers_avoid_generated_type_and_parameter_names() {
+    let fixture = colliding_names();
+    let swiftui = export_apple(
+        &fixture.ir(&fx::ios_profile()),
+        &AppleOptions::new(AppleDialect::SwiftUi),
+    )
+    .expect("export");
+    assert!(swiftui.source.contains("@Binding var Text_2: String"));
+    assert!(swiftui.source.contains("@Binding var Content_2: String"));
+    assert!(swiftui.source.contains("@Binding var views_2: Bool"));
+    assert!(swiftui.source.contains("static let Color_2 = Color(.sRGB"));
+    // token 상수가 먼저 이름을 가지므로 같은 이름의 node 속성 상수는 접미사를 받습니다.
+    assert!(swiftui
+        .source
+        .contains("static let n0000000000000000000000000000000c_4_2 = Color_2"));
+    let appkit = export_apple(
+        &fixture.ir(&fx::mac_profile()),
+        &AppleOptions::new(AppleDialect::AppKit),
+    )
+    .expect("export");
+    assert!(appkit.source.contains("views_2: Bool"));
+}
+
 #[test]
 fn invalid_targets_and_options_are_rejected() {
     let fixture = Fixture::new();
@@ -226,53 +272,70 @@ fn typecheck(source: &str, name: &str, sdk: &str, target: &str) {
     );
 }
 
+/// profile 최소 OS를 deployment target으로 쓰는 `swiftc` target triple과 SDK.
+#[cfg(target_os = "macos")]
+fn sdk_target(profile: &stellar_target_profile::spec::TargetProfile) -> (&'static str, String) {
+    let stellar_target_profile::spec::ProfileSpec::Apple(apple) = profile.spec else {
+        panic!("Apple profile");
+    };
+    let version = format!("{}.{}", apple.minimum_os.major(), apple.minimum_os.minor());
+    match apple.platform {
+        ApplePlatform::MacOs => ("macosx", format!("arm64-apple-macos{version}")),
+        ApplePlatform::Ios | ApplePlatform::IpadOs => (
+            "iphonesimulator",
+            format!("arm64-apple-ios{version}-simulator"),
+        ),
+        other => panic!("compile fixture가 다루지 않는 플랫폼 {}", other.name()),
+    }
+}
+
+/// 최소 OS를 바꾼 profile.
+#[cfg(target_os = "macos")]
+fn with_minimum_os(
+    mut profile: stellar_target_profile::spec::TargetProfile,
+    major: u16,
+    minor: u16,
+) -> stellar_target_profile::spec::TargetProfile {
+    if let stellar_target_profile::spec::ProfileSpec::Apple(apple) = &mut profile.spec {
+        apple.minimum_os = stellar_target_profile::spec::DottedVersion::new(major, minor, 0);
+    }
+    profile
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn generated_swift_typechecks_against_apple_sdks() {
-    // 검증 기준(XXII.3.3) compile fixture: iOS·macOS SDK로 SwiftUI·AppKit 소스를 typecheck합니다.
-    let ios = export(&fx::ios_profile(), AppleDialect::SwiftUi);
-    typecheck(
-        &ios.source,
-        "ios-swiftui",
-        "iphonesimulator",
-        "arm64-apple-ios26.0-simulator",
-    );
-    let mac = export(&fx::mac_profile(), AppleDialect::SwiftUi);
-    typecheck(
-        &mac.source,
-        "mac-swiftui",
-        "macosx",
-        "arm64-apple-macos26.0",
-    );
-    let mut fixture = Fixture::new();
-    let property_name = "n0000000000000000000000000000000c_4";
-    let accent = fixture
-        .tokens
-        .iter_mut()
-        .find(|token| token.id == sid(fx::TOKEN_ACCENT))
-        .unwrap();
-    accent.name = property_name.into();
-    for state in &mut fixture.states {
-        if state.name == "selectedSize" {
-            state.name = "onStateChange".into();
-        } else if state.name == "memo" {
-            state.name = "views".into();
+    // 검증 기준(XXII.3.3) compile fixture: iOS·macOS SDK로 SwiftUI·AppKit 소스를 profile 최소 OS를 deployment
+    // target으로 typecheck합니다. 최소 OS가 낮은 profile(`.isToggle` 이전 iOS 16.4·macOS 13.0)과 생성 코드 이름과
+    // 겹치는 상태·token 이름도 같은 방식으로 검사합니다.
+    let fixture = Fixture::new();
+    let colliding = colliding_names();
+    let cases = [
+        ("ios-swiftui", fx::ios_profile(), AppleDialect::SwiftUi),
+        ("mac-swiftui", fx::mac_profile(), AppleDialect::SwiftUi),
+        ("mac-appkit", fx::mac_profile(), AppleDialect::AppKit),
+        (
+            "ios16-swiftui",
+            with_minimum_os(fx::ios_profile(), 16, 4),
+            AppleDialect::SwiftUi,
+        ),
+        (
+            "mac13-swiftui",
+            with_minimum_os(fx::mac_profile(), 13, 0),
+            AppleDialect::SwiftUi,
+        ),
+        (
+            "mac13-appkit",
+            with_minimum_os(fx::mac_profile(), 13, 0),
+            AppleDialect::AppKit,
+        ),
+    ];
+    for (name, profile, dialect) in cases {
+        let (sdk, target) = sdk_target(&profile);
+        for (variant, input) in [("", &fixture), ("-names", &colliding)] {
+            let export =
+                export_apple(&input.ir(&profile), &AppleOptions::new(dialect)).expect("export");
+            typecheck(&export.source, &format!("{name}{variant}"), sdk, &target);
         }
     }
-    let appkit = export_apple(
-        &fixture.ir(&fx::mac_profile()),
-        &AppleOptions::new(AppleDialect::AppKit),
-    )
-    .unwrap();
-    assert!(appkit.source.contains("onStateChange_2"));
-    assert!(appkit.source.contains("views_2"));
-    assert!(appkit
-        .source
-        .contains(&format!("static let {property_name}_2 = {property_name}")));
-    typecheck(
-        &appkit.source,
-        "mac-appkit",
-        "macosx",
-        "arm64-apple-macos26.0",
-    );
 }

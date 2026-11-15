@@ -2,11 +2,27 @@
 
 use crate::text::{num, unique_identifiers};
 
-/// Swift 예약어와 생성 코드가 쓰는 멤버 이름(식별자 충돌 방지).
+/// Swift 예약어와 생성 코드가 쓰는 type·멤버·매개변수 이름(식별자 충돌 방지). 상태 변수·token 이름이 이 이름과
+/// 같으면 SwiftUI `Text`·`Content`처럼 생성 코드가 참조하는 이름을 가려 컴파일되지 않습니다.
 pub const RESERVED: &[&str] = &[
     "Any",
+    "Binding",
+    "Bool",
+    "Color",
+    "Content",
+    "Double",
+    "MainActor",
+    "NSAccessibilityCustomAction",
+    "NSColor",
+    "NSView",
     "Self",
+    "String",
+    "Text",
     "Type",
+    "UIColor",
+    "View",
+    "ViewModifier",
+    "Void",
     "as",
     "associatedtype",
     "await",
@@ -51,6 +67,7 @@ pub const RESERVED: &[&str] = &[
     "rethrows",
     "return",
     "self",
+    "some",
     "static",
     "struct",
     "subscript",
