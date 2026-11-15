@@ -95,6 +95,8 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         }
         Self.installTitlebarBackground(in: splitController.contentContainer.view)
         Self.installToolBar(toolbarController.toolBar, in: splitController.contentContainer.view)
+        Self.installHint(toolbarController.hintView, above: toolbarController.toolBar,
+                         in: splitController.contentContainer.view)
 
         splitController.contentContainer.actionHandler = { [weak self] id in
             self?.dataSource.send(.perform(id))
@@ -147,6 +149,17 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             toolBar.centerXAnchor.constraint(equalTo: safeArea.centerXAnchor),
             toolBar.bottomAnchor.constraint(
                 equalTo: safeArea.bottomAnchor, constant: -ShellToolBarView.Metrics.bottomInset),
+        ])
+    }
+
+    /// 한 줄 안내를 도구 막대 바로 위 가운데에 둡니다. 캔버스 폭보다 넓어지지 않습니다.
+    private static func installHint(_ hint: ShellCanvasHintView, above toolBar: ShellToolBarView, in contentView: NSView) {
+        hint.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(hint)
+        NSLayoutConstraint.activate([
+            hint.centerXAnchor.constraint(equalTo: toolBar.centerXAnchor),
+            hint.bottomAnchor.constraint(equalTo: toolBar.topAnchor, constant: -ShellCanvasHintView.spacing),
+            hint.widthAnchor.constraint(lessThanOrEqualTo: contentView.safeAreaLayoutGuide.widthAnchor, constant: -32),
         ])
     }
 

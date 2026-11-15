@@ -533,6 +533,8 @@ final class ShellProjectWindow {
     /// 저장 응답을 기다리는 셸 watchdog. AutosavePolicy의 미확정 성능 수치를 대체하지 않습니다.
     private let closeReplyTimeout: TimeInterval = 10
     var frameDrag: CanvasFrameDrag?
+    /// root Frame 밖에서 생성 도구로 누른 뒤 놓을 때까지 금지 커서를 유지합니다(UX.2.8).
+    var rejectedDraw = false
     var isWaitingToClose: Bool { closeAttempt != nil }
 
     /// - Parameters:

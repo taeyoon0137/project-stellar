@@ -151,3 +151,82 @@ final class ShellToolButton: NSButton {
         super.draw(dirtyRect)
     }
 }
+
+/// 도구 막대 위 한 줄 안내(UX 명세 3.2·3.5). 내 조작의 즉시 결과(그릴 수 없는 곳 등)를 2.5초 보여 줍니다.
+///
+/// 캔버스 scene 밖의 별도 view라 렌더 결과·내보내기에 섞이지 않습니다. 같은 문구를 VoiceOver에도 알립니다.
+final class ShellCanvasHintView: NSView {
+    /// 안내가 보이는 시간(초).
+    static let duration: TimeInterval = 2.5
+    /// 도구 막대와의 간격.
+    static let spacing: CGFloat = 8
+
+    private let background = NSVisualEffectView()
+    private let label = NSTextField(labelWithString: "")
+    private var hideWork: DispatchWorkItem?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        background.material = .hudWindow
+        background.blendingMode = .withinWindow
+        background.state = .active
+        background.wantsLayer = true
+        background.layer?.cornerRadius = 12
+        background.layer?.masksToBounds = true
+        background.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(background)
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.textColor = .labelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        background.addSubview(label)
+        NSLayoutConstraint.activate([
+            background.leadingAnchor.constraint(equalTo: leadingAnchor),
+            background.trailingAnchor.constraint(equalTo: trailingAnchor),
+            background.topAnchor.constraint(equalTo: topAnchor),
+            background.bottomAnchor.constraint(equalTo: bottomAnchor),
+            label.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -12),
+            label.topAnchor.constraint(equalTo: background.topAnchor, constant: 4),
+            label.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -4),
+        ])
+        isHidden = true
+        // 안내는 VoiceOver 알림으로 전달하고, 화면의 label은 접근성 트리에 중복으로 두지 않습니다.
+        setAccessibilityElement(false)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("ShellCanvasHintView는 코드로만 생성합니다")
+    }
+
+    /// 안내를 보이고 VoiceOver로 알립니다. 다시 보이면 시간을 새로 셉니다.
+    func show(_ message: String) {
+        hideWork?.cancel()
+        label.stringValue = message
+        if isHidden {
+            let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            alphaValue = reduceMotion ? 1 : 0
+            isHidden = false
+            if !reduceMotion {
+                NSAnimationContext.runAnimationGroup { $0.duration = 0.15; animator().alphaValue = 1 }
+            }
+        }
+        if let window {
+            NSAccessibility.post(element: window, notification: .announcementRequested, userInfo: [
+                .announcement: message,
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+            ])
+        }
+        let work = DispatchWorkItem { [weak self] in self?.hide() }
+        hideWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.duration, execute: work)
+    }
+
+    /// 다음 입력이나 시간이 지나면 숨깁니다.
+    func hide() {
+        hideWork?.cancel()
+        hideWork = nil
+        isHidden = true
+    }
+}

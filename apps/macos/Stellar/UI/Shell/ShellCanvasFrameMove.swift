@@ -21,10 +21,14 @@ extension ShellProjectWindow {
             self?.frameDrag != nil || handDrag != nil || zoomDrag != nil
         }
         canvas.cancelFrameGesture = { [weak self, weak canvas] in
-            guard let self, self.frameDrag != nil || handDrag != nil || zoomDrag != nil else { return false }
+            guard let self, self.frameDrag != nil || handDrag != nil || zoomDrag != nil || self.rejectedDraw else { return false }
             handDrag = nil
             zoomDrag = nil
             self.frameDrag = nil
+            if self.rejectedDraw {
+                self.rejectedDraw = false
+                NSCursor.arrow.set()
+            }
             canvas?.setFrameDragPreview(id: nil, offset: .zero)
             canvas?.insertionOutline = nil
             return true
@@ -32,6 +36,9 @@ extension ShellProjectWindow {
         canvas.framePointerHandler = { [weak self, weak canvas] event in
             guard let self, let canvas else { return false }
             let point = CanvasInput.viewPoint(of: event, in: canvas)
+            if self.continueRejectedDraw(event) { return true }
+            // 한 줄 안내는 다음 누름에서 사라집니다(UX 명세 3.2).
+            if event.type == .leftMouseDown { self.windowController.toolbarController.hintView.hide() }
             if self.toolsModel.snapshot.activeTool == .zoom {
                 if event.type == .leftMouseDown {
                     _ = canvas.cancelFrameGesture?()
@@ -74,10 +81,21 @@ extension ShellProjectWindow {
             }
             if event.type == .leftMouseDown, self.toolsModel.snapshot.activeTool == .text,
                event.modifierFlags.intersection([.shift, .control, .command, .option]).isEmpty {
+                if self.canvasTextEditing == nil, self.windowController.windowSession?.viewInfo?.has_view == 1,
+                   canvas.frameHit(at: point, onlyFrames: true) == nil {
+                    return self.rejectDrawOutsideFrame(canvas)
+                }
                 return self.beginCanvasText(at: point, canvas: canvas)
             }
             if self.toolsModel.snapshot.activeTool == .image {
-                if event.type == .leftMouseDown { return self.placeImage(at: point, canvas: canvas) }
+                if event.type == .leftMouseDown {
+                    // root Frame 밖 빈 캔버스는 파일을 고르기 전에 거부하고 이유를 보입니다(UX 명세 5.2).
+                    if self.windowController.windowSession?.viewInfo?.has_view == 1,
+                       canvas.frameHit(at: point, onlyFrames: true) == nil {
+                        return self.rejectDrawOutsideFrame(canvas)
+                    }
+                    return self.placeImage(at: point, canvas: canvas)
+                }
                 return true
             }
             if self.frameDrag?.tool.insertsBounds == true || (event.type == .leftMouseDown && self.toolsModel.snapshot.activeTool.insertsBounds) {

@@ -53,6 +53,8 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate {
     let toolBar = ShellToolBarView()
     /// 상단 바 앞쪽 제목·부제목과 제목 문서 메뉴. 툴바 제목 항목이 이 뷰를 담습니다.
     let titleView = ShellTitleMenuView()
+    /// 도구 막대 위 한 줄 안내. 도구 막대와 함께 캔버스 영역에 붙습니다.
+    let hintView = ShellCanvasHintView()
     /// 현재 도구 영역 항목이 만들어진 도구 목록.
     private var builtTools: [ShellToolDescriptor] = []
 

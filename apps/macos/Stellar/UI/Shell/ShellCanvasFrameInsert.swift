@@ -45,6 +45,34 @@ extension CanvasTool {
 }
 
 extension ShellProjectWindow {
+    /// 생성 도구로 root Frame 밖을 눌렀습니다. 놓을 때까지 금지 커서를 두고 도구 막대 위에 이유를 보입니다.
+    func rejectDrawOutsideFrame(_ canvas: CanvasView) -> Bool {
+        _ = canvas.cancelFrameGesture?()
+        canvas.window?.makeFirstResponder(canvas)
+        rejectedDraw = true
+        NSCursor.operationNotAllowed.set()
+        windowController.toolbarController.hintView.show(String(
+            localized: "Draw inside a Frame.",
+            comment: "Canvas hint when a creation tool is used outside every Frame"
+        ))
+        return true
+    }
+
+    /// 거부한 누름의 드래그·놓기를 삼키고, 놓으면 커서를 되돌립니다.
+    func continueRejectedDraw(_ event: NSEvent) -> Bool {
+        guard rejectedDraw else { return false }
+        switch event.type {
+        case .leftMouseDragged:
+            NSCursor.operationNotAllowed.set()
+        case .leftMouseUp:
+            rejectedDraw = false
+            NSCursor.arrow.set()
+        default:
+            return false
+        }
+        return true
+    }
+
     func handleFrameInsertion(_ event: NSEvent, point: CGPoint, canvas: CanvasView) -> Bool {
         let tool = toolsModel.snapshot.activeTool
         switch event.type {
@@ -52,8 +80,10 @@ extension ShellProjectWindow {
             _ = canvas.cancelFrameGesture?()
             guard tool.insertsBounds, event.modifierFlags.intersection([.command, .control]).isEmpty,
                   let session = windowController.windowSession, !session.isClosed, !session.isClosing,
-                  let viewport = session.viewInfo, viewport.has_view == 1, let parent = canvas.frameHit(at: point, onlyFrames: true),
-                  UUID(uuid: viewport.active_view) == parent.viewID, session.info?.revision == parent.revision else { return false }
+                  let viewport = session.viewInfo, viewport.has_view == 1 else { return false }
+            // root Frame 밖 빈 캔버스는 거부하고 이유를 보입니다(UX 명세 5.2).
+            guard let parent = canvas.frameHit(at: point, onlyFrames: true) else { return rejectDrawOutsideFrame(canvas) }
+            guard UUID(uuid: viewport.active_view) == parent.viewID, session.info?.revision == parent.revision else { return false }
             canvas.window?.makeFirstResponder(canvas)
             frameDrag = CanvasFrameDrag(hit: parent, start: point, session: session.session, size: canvas.bounds.size,
                 viewport: viewport, tool: tool)
