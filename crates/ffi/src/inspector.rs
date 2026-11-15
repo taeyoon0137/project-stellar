@@ -296,6 +296,157 @@ pub unsafe extern "C" fn stellar_window_edit_property(
 mod tests {
     use super::*;
 
+    fn read(h: u64, session: u64) -> (StellarInspectorInfo, Vec<(String, String, u32)>) {
+        let mut info = StellarInspectorInfo::default();
+        let mut rows = vec![StellarInspectorRow::default(); 64];
+        let mut text = vec![0u8; 4096];
+        let status = unsafe {
+            stellar_window_inspector(
+                h,
+                session,
+                &mut info,
+                rows.as_mut_ptr(),
+                rows.len(),
+                text.as_mut_ptr(),
+                text.len(),
+            )
+        };
+        assert_eq!(status, StellarStatus::Ok);
+        let mut offset = info.name_len as usize;
+        let mut out = Vec::new();
+        for row in &rows[..info.row_count as usize] {
+            let mut take = |len: u32| {
+                let s = String::from_utf8(text[offset..offset + len as usize].to_vec()).unwrap();
+                offset += len as usize;
+                s
+            };
+            let name = take(row.name_len);
+            let value = take(row.value_len);
+            take(row.choices_len);
+            out.push((name, value, row.flags));
+        }
+        (info, out)
+    }
+
+    fn value(rows: &[(String, String, u32)], name: &str) -> String {
+        rows.iter()
+            .find(|r| r.0 == name)
+            .map(|r| r.1.clone())
+            .unwrap_or_else(|| panic!("{name} 행 없음"))
+    }
+
+    fn edit(
+        h: u64,
+        session: u64,
+        info: &StellarInspectorInfo,
+        name: &str,
+        value: &str,
+    ) -> (StellarStatus, String) {
+        let edit = StellarPropertyEdit {
+            view: info.view,
+            revision: info.revision,
+            history_sequence: info.history_sequence,
+            delta: 0.,
+            mode: 0,
+            phase: 0,
+        };
+        let mut request = 0u64;
+        let mut diagnostic = [0u8; 256];
+        let mut len = 0usize;
+        let status = unsafe {
+            stellar_window_edit_property(
+                h,
+                session,
+                &edit,
+                name.as_ptr(),
+                name.len(),
+                value.as_ptr(),
+                value.len(),
+                &mut request,
+                diagnostic.as_mut_ptr(),
+                diagnostic.len(),
+                &mut len,
+            )
+        };
+        (
+            status,
+            String::from_utf8_lossy(&diagnostic[..len.min(256)]).into_owned(),
+        )
+    }
+
+    #[test]
+    fn shell_reads_rows_edits_with_css_text_and_undoes_through_the_c_abi() {
+        use crate::window_session::stellar_window_session_select;
+        use crate::window_session::tests::{
+            create, next_event, open_project, open_window, FixtureProject,
+        };
+        use stellar_runtime::app::RuntimeEvent;
+        let project = FixtureProject::copy("inspector-abi");
+        let h = create();
+        let session = open_window(h, open_project(h, &project.path));
+        // 선택이 없으면 행이 없습니다.
+        let (info, rows) = read(h, session);
+        assert_eq!((info.count, rows.len()), (0, 0));
+        let child = StableId::new_v7(11, 0, 11).to_bytes();
+        let mut request = 0u64;
+        assert_eq!(
+            unsafe { stellar_window_session_select(h, session, child.as_ptr(), 1, &mut request) },
+            StellarStatus::Ok
+        );
+        assert!(matches!(
+            next_event(h),
+            RuntimeEvent::WindowViewChanged { .. }
+        ));
+        let (info, rows) = read(h, session);
+        assert_eq!(info.count, 1);
+        assert_eq!(info.classes, 1, "Frame");
+        let before = value(&rows, "width");
+        assert!(rows.iter().any(|r| r.0 == "background-color"));
+        // 잘못된 값은 요청 없이 진단, 올바른 값은 정규화되어 저장.
+        let (status, diagnostic) = edit(h, session, &info, "width", "2rem");
+        assert_eq!(status, StellarStatus::InvalidArgument);
+        assert!(diagnostic.starts_with("unsupported-unit"), "{diagnostic}");
+        let (status, _) = edit(h, session, &info, "width", "320");
+        assert_eq!(status, StellarStatus::Ok);
+        assert!(matches!(
+            next_event(h),
+            RuntimeEvent::WindowViewChanged { .. }
+        ));
+        let (after, rows) = read(h, session);
+        assert_eq!(value(&rows, "width"), "320px");
+        // 오래된 snapshot의 편집은 거부됩니다.
+        let (status, _) = edit(h, session, &info, "width", "10");
+        assert_eq!(status, StellarStatus::Ok);
+        assert!(matches!(next_event(h), RuntimeEvent::RequestFailed { .. }));
+        let (status, _) = edit(h, session, &after, "background-color", "#3366FF");
+        assert_eq!(status, StellarStatus::Ok);
+        assert!(matches!(
+            next_event(h),
+            RuntimeEvent::WindowViewChanged { .. }
+        ));
+        let (_, rows) = read(h, session);
+        assert_eq!(value(&rows, "background-color"), "#3366ff");
+        // Undo 두 번이면 처음 값.
+        for _ in 0..2 {
+            let mut request = 0u64;
+            assert_eq!(
+                unsafe {
+                    crate::window_session::stellar_window_session_perform(
+                        h,
+                        session,
+                        stellar_runtime::app_command::AppCommand::Undo.code(),
+                        &mut request,
+                    )
+                },
+                StellarStatus::Ok
+            );
+            next_event(h);
+        }
+        let (_, rows) = read(h, session);
+        assert_eq!(value(&rows, "width"), before);
+        crate::stellar_runtime_destroy(h);
+    }
+
     #[test]
     fn layouts_are_fixed() {
         assert_eq!(std::mem::size_of::<StellarInspectorInfo>(), 56);
