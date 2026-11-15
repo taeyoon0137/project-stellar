@@ -174,3 +174,8 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
 ## Migration
 
 없습니다. 기존 문서의 도형은 그대로 읽힙니다.
+
+## 개정 기록
+
+- 2026-11-15: UX.3.1이 팬 판정에서 Shift를 뺀 뒤 `crates/ffi/src/canvas.rs`의 수정자 배열이 rustfmt 형식과 달라
+  `cargo xtask check-core`의 fmt 단계가 실패했습니다. 줄 맞춤만 고쳤고 C ABI·동작은 바뀌지 않습니다.
