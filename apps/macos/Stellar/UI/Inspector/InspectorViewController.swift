@@ -16,6 +16,7 @@ final class InspectorViewController: NSViewController {
     /// 선택마다 다시 만드는 행 영역.
     private let body = NSStackView()
     private var rowViews: [String: InspectorRowView] = [:]
+    private var sectionViews: [InspectorSectionKind: InspectorSectionView] = [:]
     private var appliedStructure: [String] = []
     private(set) var appliedSnapshot = InspectorSnapshot.empty
 
@@ -41,7 +42,7 @@ final class InspectorViewController: NSViewController {
         stack.translatesAutoresizingMaskIntoConstraints = false
         body.orientation = .vertical
         body.alignment = .leading
-        body.spacing = InspectorMetrics.rowSpacing
+        body.spacing = InspectorMetrics.sectionSpacing
         body.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(header)
         stack.addArrangedSubview(body)
@@ -89,15 +90,36 @@ final class InspectorViewController: NSViewController {
             view.removeFromSuperview()
         }
         rowViews.removeAll()
+        sectionViews.removeAll()
+        // 섹션은 코어 행의 섹션 순서(속성 모델 12장)대로, 행이 하나라도 있는 섹션만 둡니다.
+        let classes = snapshot.classes
+        let collapsed = InspectorCollapseMemory.collapsed(for: classes)
         for row in snapshot.rows {
+            let section = sectionViews[row.section] ?? {
+                let view = InspectorSectionView(kind: row.section, collapsed: collapsed.contains(row.section))
+                view.onToggle = { [weak self] _, _ in self?.rememberCollapse(for: classes) }
+                sectionViews[row.section] = view
+                body.addArrangedSubview(view)
+                view.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
+                return view
+            }()
             let rowView = InspectorRowView(row: row)
             rowView.onEdit = { [weak self] name, input, phase, completion in
                 self?.dataSource.edit(name, input, phase: phase, completion: completion)
             }
             rowViews[row.name] = rowView
-            body.addArrangedSubview(rowView)
-            rowView.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
+            section.add(rowView)
         }
+    }
+
+    private func rememberCollapse(for classes: InspectorNodeClasses) {
+        let collapsed = Set(sectionViews.values.filter(\.isCollapsed).map(\.kind))
+        InspectorCollapseMemory.set(collapsed, for: classes)
+    }
+
+    /// 섹션을 펼쳐 보이게 합니다(예: 텍스트 편집 시작 때 Typography).
+    func reveal(_ section: InspectorSectionKind) {
+        sectionViews[section]?.setCollapsed(false)
     }
 }
 
