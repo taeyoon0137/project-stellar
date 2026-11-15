@@ -197,6 +197,9 @@ enum SidebarUICheck {
         try require(harness.commands(since: mark) == [.activateView(generalID)], "View 활성화 command 불일치")
         harness.refresh()
         try require(sidebar.stateView.content == .empty && !sidebar.stateView.isHidden, "빈 레이어 상태가 보이지 않음")
+        try require(sidebar.stateView.messageField.stringValue == SidebarStrings.emptyHint && sidebar.stateView.actionButton.isHidden
+                    && sidebar.stateView.accessibilityLabel() == SidebarStrings.emptyHint,
+                    "빈 레이어 상태가 버튼 없는 키 안내 한 줄이 아님")
         try require(layers.outline.numberOfRows == 1, "빈 View에 레이어 행이 남음")
         try checkStateAccessibility(sidebar.stateView, label: "빈 상태")
 

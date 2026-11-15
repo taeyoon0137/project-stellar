@@ -28,7 +28,6 @@ enum SidebarSymbols {
     static let unlocked = "lock.open"
 
     // 상태 화면
-    static let emptyLayers = "square.stack.3d.up.slash"
     static let noResults = "magnifyingglass"
     static let failed = "exclamationmark.triangle"
     static let noView = "sidebar.left"
@@ -57,7 +56,7 @@ enum SidebarSymbols {
     static var allNames: [String] {
         [
             frame, fragment, shape, rectangle, ellipse, line, polygon, path, text, image, componentInstance,
-            page, view, visible, hidden, locked, unlocked, emptyLayers, noResults, failed, noView,
+            page, view, visible, hidden, locked, unlocked, noResults, failed, noView,
         ]
     }
 
@@ -89,11 +88,16 @@ enum SidebarStrings {
     static let loading = String(localized: "Loading Layers…", comment: "레이어 로드 중")
     static let failedTitle = String(localized: "Couldn’t Load Layers", comment: "레이어 로드 실패 제목")
     static let retry = String(localized: "Try Again", comment: "다시 시도 버튼")
-    static let emptyTitle = String(localized: "No Layers", comment: "빈 레이어 목록 제목")
-    static let emptyMessage = String(
-        localized: "Layers you add to this view appear here.",
-        comment: "빈 레이어 목록 설명"
-    )
+    /// 빈 레이어 목록 안내 한 줄: 다음 행동을 캔버스 단일 키로 알립니다(UX 명세 흐름 1의 6번, 7.2절). 키는
+    /// `CanvasTool.singleKey`에서 읽어 실제 배정과 같습니다. 버튼은 두지 않습니다.
+    static var emptyHint: String {
+        func key(_ tool: CanvasTool) -> String { tool.singleKey.map { String($0).uppercased() } ?? "" }
+        let frame = key(.frame), rectangle = key(.rectangle), text = key(.text)
+        return String(
+            localized: "Press \(frame) to draw a frame, \(rectangle) for a rectangle, or \(text) for text.",
+            comment: "빈 레이어 목록 안내; 인자는 Frame·Rectangle·Text 도구 단일 키"
+        )
+    }
     static let noViewTitle = String(localized: "No View Selected", comment: "선택된 View 없음 제목")
     static let noViewMessage = String(
         localized: "Select a page or view to see its layers.",

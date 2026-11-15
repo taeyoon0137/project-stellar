@@ -117,9 +117,8 @@ final class SidebarStateView: NSView {
             title = SidebarStrings.noViewTitle
             message = SidebarStrings.noViewMessage
         case .empty:
-            symbol = SidebarSymbols.emptyLayers
-            title = SidebarStrings.emptyTitle
-            message = SidebarStrings.emptyMessage
+            // 제목·아이콘 없이 다음 행동을 알리는 한 줄만 둡니다.
+            message = SidebarStrings.emptyHint
         case .noResults(let query):
             symbol = SidebarSymbols.noResults
             title = SidebarStrings.noResultsTitle
@@ -138,7 +137,7 @@ final class SidebarStateView: NSView {
         messageField.isHidden = message.isEmpty
         actionButton.title = action ?? ""
         actionButton.isHidden = action == nil
-        setAccessibilityLabel(message.isEmpty ? title : "\(title). \(message)")
+        setAccessibilityLabel(message.isEmpty ? title : title.isEmpty ? message : "\(title). \(message)")
     }
 
     @objc private func performAction(_ sender: Any?) {
