@@ -27,6 +27,16 @@ enum ShellFrameMenuItems {
         return item
     }
 
+    /// 제목 문서 메뉴에서 한 자리를 번갈아 쓰는 동작(예: 신뢰 부여·신뢰 철회)의 메뉴 막대 항목 하나.
+    ///
+    /// 검증할 때 활성 창 snapshot의 제목 문서 동작 가운데 `ids`에 있는 쪽의 제목·명령 ID를 씁니다. 어느 쪽도 없으면
+    /// `title`인 채 비활성입니다.
+    static func makeFrameActionItem(title: String, alternatives ids: [ShellCommandID]) -> NSMenuItem {
+        let item = makeItem(title, #selector(ShellWindowController.performFrameAction(_:)), "", [])
+        item.representedObject = ids.map(\.rawValue)
+        return item
+    }
+
     private static func makeItem(
         _ title: String,
         _ action: Selector,

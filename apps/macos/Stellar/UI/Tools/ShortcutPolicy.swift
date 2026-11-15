@@ -103,7 +103,7 @@ enum ShortcutPolicy {
             (.command("s"), "Save", [.saveNow]),
             (KeyShortcut("s", [.shift, .command]), "Duplicate / Save As", []),
             (.command("t"), "Fonts 창", []),
-            (KeyShortcut("t", [.option, .command]), "Show/Hide Toolbar", [.toggleToolbar]),
+            (KeyShortcut("t", [.option, .command]), "Show/Hide Toolbar", []),
             (.command("u"), "Underline", []),
             (.command("v"), "Paste", [.paste]),
             (KeyShortcut("v", [.shift, .command]), "Paste as", []),

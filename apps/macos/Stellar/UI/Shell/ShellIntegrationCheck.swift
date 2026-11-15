@@ -137,6 +137,12 @@ private final class ShellIntegrationCheckRunner {
             expect(file != nil && matches.count == 1 && matches[0].menu === file && matches[0].target == nil,
                    "File 메뉴의 활성 창 명령 설치 불일치: \(id.rawValue)")
         }
+        let trustIDs = [ShellProjectCommandID.trustProject.rawValue, ShellProjectCommandID.revokeTrust.rawValue]
+        let trustItems = actions.filter { ($0.representedObject as? [String]) == trustIDs }
+        expect(file != nil && trustItems.count == 1 && trustItems[0].menu === file && trustItems[0].target == nil,
+               "File 메뉴에 신뢰 부여·철회 항목이 없음")
+        expect(view?.items.contains { $0.action == NSSelectorFromString("toggleToolbarShown:") } == false,
+               "View 메뉴에 툴바 숨김 항목이 남음")
 
         // key equivalent는 한 명령에만 둡니다(⌘[·⌘]는 Object 메뉴 소유).
         var seen: [String: String] = [:]
@@ -667,6 +673,11 @@ private final class ShellIntegrationCheckRunner {
         expect(router.validateMenuItem(close), "Close Project가 비활성")
         let reveal = ShellFrameMenuItems.makeFrameActionItem(title: "Show in Finder", id: ShellProjectCommandID.revealInFinder)
         expect(controller.validateMenuItem(reveal), "Show in Finder 메뉴가 비활성")
+        // 메뉴 막대 신뢰 항목: 제한 모드 창에서는 Trust Project…로 활성입니다(툴바를 거치지 않는 신뢰 경로).
+        let trust = ShellFrameMenuItems.makeFrameActionItem(
+            title: "", alternatives: [ShellProjectCommandID.trustProject, ShellProjectCommandID.revokeTrust])
+        expect(controller.validateMenuItem(trust) && trust.title == String(localized: "Trust Project…", comment: "Title document menu item"),
+               "메뉴 막대 신뢰 항목이 비활성이거나 제목이 다름: \(trust.title)")
         window.makeFirstResponder(nil)
     }
 

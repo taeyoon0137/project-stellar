@@ -784,7 +784,7 @@ final class ShellWelcomeDataSource: WelcomeDataSource {
 
 /// `MainMenuBuilder` 메뉴에 셸 프레임 명령 항목을 끼웁니다(가이드 6.1 "툴바의 모든 명령은 메뉴 막대에도").
 ///
-/// - File: Save Now 뒤에 Show in Finder(제목 문서 메뉴와 같은 동작)
+/// - File: Save Now 뒤에 Show in Finder, Trust Project…·Revoke Project Trust(제목 문서 메뉴와 같은 동작)
 @MainActor
 enum ShellMainMenuInstaller {
     static func install(into mainMenu: MainMenuBuilder.MainMenu) {
@@ -797,6 +797,14 @@ enum ShellMainMenuInstaller {
             reveal.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
             file.addItem(.separator())
             file.addItem(reveal)
+            // 제목 문서 메뉴의 신뢰 부여·철회와 같은 동작입니다. 툴바와 관계없이 메뉴 막대·키보드로 닿습니다(UX 명세 12.1).
+            // Git 메뉴(U16)가 생기면 그 메뉴로 옮깁니다.
+            let trust = ShellFrameMenuItems.makeFrameActionItem(
+                title: String(localized: "Trust Project…", comment: "File menu item"),
+                alternatives: [ShellProjectCommandID.trustProject, ShellProjectCommandID.revokeTrust]
+            )
+            trust.image = NSImage(systemSymbolName: "checkmark.shield", accessibilityDescription: nil)
+            file.addItem(trust)
         }
     }
 

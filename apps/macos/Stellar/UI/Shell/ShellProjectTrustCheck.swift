@@ -57,7 +57,16 @@ enum ShellProjectTrustCheck {
         first.window?.close()
         guard pump.waitForPendingRequests(timeout: 10), let reopened = openWindow(),
               reopened !== first, reopened.dataSource.currentSnapshot.subtitle.isEmpty else { return failed("신뢰 등록 후 재열기") }
-        guard chooseTitleMenuItem(reopened, ShellProjectCommandID.revokeTrust) else { return failed("제목 메뉴 신뢰 철회 항목") }
+        reopened.windowController.flushPendingSnapshot()
+        guard reopened.windowController.toolbarController.titleView.titleButton.menu?.items.contains(where: {
+            ($0.representedObject as? String) == ShellProjectCommandID.revokeTrust.rawValue && $0.isEnabled
+        }) == true else { return failed("제목 메뉴 신뢰 철회 항목") }
+        // 메뉴 막대 File의 신뢰 항목은 신뢰한 창에서 Revoke Project Trust가 되고 같은 동작을 보냅니다(툴바 없이 닿는 경로).
+        let menuBarTrust = ShellFrameMenuItems.makeFrameActionItem(
+            title: "", alternatives: [ShellProjectCommandID.trustProject, ShellProjectCommandID.revokeTrust])
+        guard reopened.windowController.validateMenuItem(menuBarTrust),
+              menuBarTrust.title == String(localized: "Revoke Project Trust") else { return failed("메뉴 막대 신뢰 철회 항목") }
+        reopened.windowController.performFrameAction(menuBarTrust)
         guard pump.waitForPendingRequests(timeout: 10),
               !reopened.dataSource.currentSnapshot.subtitle.isEmpty else { return failed("신뢰 철회") }
         reopened.window?.close()

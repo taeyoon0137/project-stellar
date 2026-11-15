@@ -59,7 +59,8 @@ enum MainMenuBuilder {
             [.command(.selectAll)],
         ]),
         ("View", [
-            [.command(.toggleToolbar), .command(.customizeToolbar)],
+            // 상단 바는 늘 보이므로 툴바 숨김 항목은 두지 않습니다(UX 명세 3.2).
+            [.command(.customizeToolbar)],
             [.command(.toggleSidebar), .command(.toggleInspector)],
             ShellCommand.zoomCommands.map { .command($0) },
             [.command(.selectMoveTool), .command(.selectHandTool), .command(.selectZoomTool)],

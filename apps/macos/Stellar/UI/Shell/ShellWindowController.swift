@@ -84,6 +84,9 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             self?.dataSource.send(command)
         }
         window.toolbar = toolbarController.toolbar
+        // 상단 바(제목·부제목·제목 문서 메뉴)는 늘 보입니다(UX 명세 3.2). 툴바 숨김 명령은 두지 않고, 이전 버전에서
+        // 숨긴 채 저장된 툴바 구성도 다시 보이게 합니다.
+        toolbarController.toolbar.isVisible = true
         toolbarController.ensureTitleItem()
         // 상단 바: 구분선 없이 블러 배경만 둡니다.
         window.titlebarSeparatorStyle = .none
@@ -189,17 +192,20 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// 제목 문서 메뉴 동작의 메뉴 막대 항목(`ShellFrameMenuItems.makeFrameActionItem`). sender의 명령 ID를 보냅니다.
     @objc func performFrameAction(_ sender: Any?) {
-        guard let id = Self.frameActionID(from: sender), isFrameActionEnabled(id) else { return }
-        dataSource.send(.perform(id))
+        guard let action = frameAction(for: sender), action.isEnabled else { return }
+        dataSource.send(.perform(action.id))
     }
 
-    private static func frameActionID(from sender: Any?) -> ShellCommandID? {
-        guard let raw = (sender as? NSMenuItem)?.representedObject as? String else { return nil }
-        return ShellCommandID(raw)
-    }
-
-    private func isFrameActionEnabled(_ id: ShellCommandID) -> Bool {
-        snapshot.moreActions.contains { $0.id == id && $0.isEnabled }
+    /// 메뉴 항목이 가리키는 제목 문서 동작. 번갈아 쓰는 항목(`makeFrameActionItem(title:alternatives:)`)이면 활성 창
+    /// snapshot에 있는 쪽입니다.
+    private func frameAction(for sender: Any?) -> ShellActionDescriptor? {
+        let ids: [String]
+        switch (sender as? NSMenuItem)?.representedObject {
+        case let id as String: ids = [id]
+        case let alternatives as [String]: ids = alternatives
+        default: return nil
+        }
+        return snapshot.moreActions.first { ids.contains($0.id.rawValue) }
     }
 
     // first responder가 창 자체일 때도 pane 명령이 split controller에 닿도록 창 delegate에서
@@ -246,8 +252,11 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     private func validate(_ item: any NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
         case #selector(performFrameAction(_:)):
-            guard let id = Self.frameActionID(from: item) else { return false }
-            return isFrameActionEnabled(id)
+            guard let action = frameAction(for: item) else { return false }
+            if let menuItem = item as? NSMenuItem, menuItem.representedObject is [String], menuItem.title != action.title {
+                menuItem.title = action.title
+            }
+            return action.isEnabled
         case #selector(toggleSidebar(_:)), #selector(toggleInspector(_:)):
             return splitController.validateUserInterfaceItem(item)
         default:

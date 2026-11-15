@@ -34,7 +34,6 @@ enum ShellCommand: String, CaseIterable {
     case selectAll = "edit.select_all"
 
     // MARK: View
-    case toggleToolbar = "view.toggle_toolbar"
     case customizeToolbar = "view.customize_toolbar"
     case toggleSidebar = "view.toggle_sidebar"
     case toggleInspector = "view.toggle_inspector"
@@ -109,7 +108,6 @@ enum ShellCommand: String, CaseIterable {
         case .delete: return "Delete"
         case .duplicate: return "Duplicate"
         case .selectAll: return "Select All"
-        case .toggleToolbar: return "Show Toolbar"
         case .customizeToolbar: return "Customize Toolbar…"
         case .toggleSidebar: return "Show Sidebar"
         case .toggleInspector: return "Show Inspector"
@@ -163,7 +161,7 @@ enum ShellCommand: String, CaseIterable {
         switch self {
         case .about, .settings, .hideApp, .hideOthers, .showAll, .quit,
              .closeWindow,
-             .toggleToolbar, .customizeToolbar, .toggleSidebar, .toggleInspector,
+             .customizeToolbar, .toggleSidebar, .toggleInspector,
              .toggleFullScreen,
              .minimize, .minimizeAll, .zoomWindow, .bringAllToFront:
             return .shell
@@ -192,7 +190,6 @@ enum ShellCommand: String, CaseIterable {
         case .paste: return #selector(NSText.paste(_:))
         case .delete: return #selector(NSText.delete(_:))
         case .selectAll: return #selector(NSText.selectAll(_:))
-        case .toggleToolbar: return #selector(NSWindow.toggleToolbarShown(_:))
         case .customizeToolbar: return #selector(NSWindow.runToolbarCustomizationPalette(_:))
         case .toggleSidebar: return #selector(NSSplitViewController.toggleSidebar(_:))
         case .toggleInspector: return #selector(NSSplitViewController.toggleInspector(_:))
@@ -224,7 +221,6 @@ enum ShellCommand: String, CaseIterable {
         case .paste: return .command("v")
         case .duplicate: return .command("d")
         case .selectAll: return .command("a")
-        case .toggleToolbar: return KeyShortcut("t", [.option, .command])
         case .toggleSidebar: return KeyShortcut("s", [.control, .command])
         case .toggleInspector: return KeyShortcut("i", [.option, .command])
         case .zoomIn: return .command("+")
@@ -308,7 +304,6 @@ enum ShellCommand: String, CaseIterable {
         case .delete: return "trash"
         case .duplicate: return "plus.square.on.square"
         case .selectAll: return "checkmark.circle"
-        case .toggleToolbar: return "menubar.rectangle"
         case .customizeToolbar: return "wrench.adjustable"
         case .toggleSidebar: return "sidebar.left"
         case .toggleInspector: return "sidebar.right"
