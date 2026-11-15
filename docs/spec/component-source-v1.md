@@ -45,13 +45,13 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 ## macOS 프로젝트 창에서 생성
 
-열린 프로젝트의 Git 패널에서 **Trust Project…**로 폴더를 신뢰한 뒤 **Insert → New Component…**에서 이름을 입력합니다. **Create**는 `design/components/`에 독립된 v3 정의와 기본 root Frame을 파일 하나로 저장합니다. 같은 이름을 다시 입력하면 별도의 UUIDv7 두 개(component와 root)를 생성하므로 두 정의가 공존합니다. 완성된 파일의 경로를 창에 표시하며, Git staging과 commit은 사용자가 진행합니다.
+열린 프로젝트의 Git 패널에서 **Trust Project…**로 폴더를 신뢰한 뒤 Frame 하나를 선택하고 **Object → Create Component from Selection…**에서 이름을 입력합니다. **Create**는 `design/components/`에 독립된 v3 정의를 파일 하나로 저장합니다. 같은 이름을 다시 입력해도 새 UUIDv7 정의가 생기므로 두 정의가 공존합니다. 완성된 파일의 경로를 창에 표시하며, Git staging과 commit은 사용자가 진행합니다. 빈 컴포넌트는 CLI `component-source create`로 만듭니다.
 
-빈 컴포넌트 생성은 생성 직전의 문서 generation·선택·Undo 기록을 보존합니다. 생성 결과는 프로젝트를 다시 열거나 다른 브랜치를 checkout한 뒤에도 현재 폴더에서 CLI와 MCP로 조회할 수 있습니다. 캔버스 Undo는 이 파일 생성을 취소하지 않습니다. 신뢰를 해제한 프로젝트, 기존 component-library chunk가 있는 프로젝트, 잘못된 이름·원본 또는 외부나 Git 내부를 가리키는 쓰기 폴더에서는 새 파일을 기록하지 않습니다. 같은 사용자로 동작하는 프로젝트 writer와 source CLI의 잠금을 사용합니다.
+컴포넌트 생성은 생성 직전의 문서 generation·선택·Undo 기록을 보존합니다. 생성 결과는 프로젝트를 다시 열거나 다른 브랜치를 checkout한 뒤에도 현재 폴더에서 CLI와 MCP로 조회할 수 있습니다. 캔버스 Undo는 이 파일 생성을 취소하지 않습니다. 신뢰를 해제한 프로젝트, 기존 component-library chunk가 있는 프로젝트, 잘못된 이름·원본 또는 외부나 Git 내부를 가리키는 쓰기 폴더에서는 새 파일을 기록하지 않습니다. 같은 사용자로 동작하는 프로젝트 writer와 source CLI의 잠금을 사용합니다.
 
-**Object → Create Component from Selection…**은 선택한 Frame 한 개와 그 아래의 모든 Free Frame을 현재 창의 미저장 편집까지 포함해 복사합니다. 정의와 모든 노드에 새 UUIDv7을 부여하고 내부 부모를 새 ID로 잇습니다. 선택 Frame은 부모가 없는 정의 root가 되고 모든 Frame의 기존 로컬 affine(이동 성분 포함), 크기, 색·테두리·모서리·clipping, 표시·잠금, 이름과 순서 키를 그대로 저장합니다. 이전 부모의 world transform은 곱하지 않습니다. 선택에서 만든 정의도 v3로 저장합니다.
+이 명령은 선택한 Frame 한 개와 그 아래의 모든 Free Frame을 현재 창의 미저장 편집까지 포함해 복사합니다. 정의와 모든 노드에 새 UUIDv7을 부여하고 내부 부모를 새 ID로 잇습니다. 선택 Frame은 부모가 없는 정의 root가 되고 모든 Frame의 기존 로컬 affine(이동 성분 포함), 크기, 색·테두리·모서리·clipping, 표시·잠금, 이름과 순서 키를 그대로 저장합니다. 이전 부모의 world transform은 곱하지 않습니다.
 
-선택 트리 안에 다른 종류의 노드, modifier stack, layout 참조 또는 Path clip이 있으면 전체 생성을 거부합니다. 이름 sheet가 열려 있던 선택·View·문서 revision이 다르거나 Git checkout으로 창이 읽은 generation의 hash가 달라져도 기록하지 않습니다. 캔버스의 원래 Frame·자식과 Undo 기록은 유지합니다. 이 명령은 독립 정의를 생성하며 캔버스에 인스턴스를 삽입하지 않습니다.
+선택 트리 안에 다른 종류의 노드, modifier stack, layout 참조 또는 Path clip이 있으면 전체 생성을 거부합니다. 이름 sheet가 열려 있던 선택·View·문서 revision이 다르거나 Git checkout으로 창이 읽은 generation의 hash가 달라져도 기록하지 않습니다. 캔버스의 원래 Frame·자식과 Undo 기록은 유지합니다. 독립 정의를 생성하며 캔버스에 인스턴스를 삽입하지 않습니다.
 
 ## 배치된 인스턴스
 

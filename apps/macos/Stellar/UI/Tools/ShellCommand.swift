@@ -53,7 +53,6 @@ enum ShellCommand: String, CaseIterable {
     // MARK: 도구(View·Insert 메뉴, 툴바 도구 그룹)
     case selectMoveTool = "tool.move"
     case componentFromSelection = "object.component_from_selection"
-    case newComponent = "insert.new_component"
     case selectFrameTool = "tool.frame"
     case selectRectangleTool = "tool.rectangle"
     case selectEllipseTool = "tool.ellipse"
@@ -120,7 +119,6 @@ enum ShellCommand: String, CaseIterable {
         case .showAll: return "Show All"
         case .quit: return "Quit \(MainMenuBuilder.applicationName)"
         case .newProject: return "New Project…"
-        case .newComponent: return "New Component…"
         case .componentFromSelection: return "Create Component from Selection…"
         case .openProject: return "Open Project…"
         case .cloneProject: return "Clone Project…"
@@ -188,7 +186,7 @@ enum ShellCommand: String, CaseIterable {
         switch self {
         // 도구 선택(Image 포함)은 모드 전환이라 그 자체로 추가 입력을 받지 않습니다. 이미지 파일 선택은 도구를
         // 쓰는 단계(캔버스 클릭)에서 열리므로 메뉴 제목에 말줄임표를 붙이지 않습니다.
-        case .settings, .newProject, .newComponent, .componentFromSelection, .openProject, .cloneProject, .find, .customizeToolbar:
+        case .settings, .newProject, .componentFromSelection, .openProject, .cloneProject, .find, .customizeToolbar:
             return true
         default:
             return false
@@ -358,7 +356,7 @@ enum ShellCommand: String, CaseIterable {
         case .showAll: return "rectangle.on.rectangle"
         case .quit: return "power"
         case .newProject: return "folder.badge.plus"
-        case .newComponent, .componentFromSelection: return "square.3.layers.3d"
+        case .componentFromSelection: return "square.3.layers.3d"
         case .openProject: return "folder"
         case .cloneProject: return "square.and.arrow.down.on.square"
         case .closeWindow: return "xmark"

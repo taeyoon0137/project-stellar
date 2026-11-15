@@ -28,13 +28,10 @@ enum CoreRuntime {
     }
 
     static func createComponent(handle: UInt64, session: UInt64, name: String,
-                                selection: StellarFrameSelection? = nil) -> Result<UInt64, CoreRuntimeCallError> {
+                                selection: StellarFrameSelection) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
         let status = Array(name.utf8).withUnsafeBufferPointer { bytes in
-            guard let selection else {
-                return stellar_window_component_create(handle, session, bytes.baseAddress, bytes.count, &request)
-            }
-            return withUnsafeBytes(of: selection.view) { view in
+            withUnsafeBytes(of: selection.view) { view in
                 withUnsafeBytes(of: selection.node) { node in
                     stellar_window_component_from_selection(handle, session, bytes.baseAddress, bytes.count,
                         view.bindMemory(to: UInt8.self).baseAddress, node.bindMemory(to: UInt8.self).baseAddress,

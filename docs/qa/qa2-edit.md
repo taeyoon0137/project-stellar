@@ -85,4 +85,4 @@
 
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
-| QA2-78 | Insert ▸ New Component…에서 같은 이름으로 두 번 생성한 뒤 프로젝트 폴더에서 `stellar query . components` 실행 | 두 정의에 서로 다른 ID와 원본 파일이 있고, 각 항목에서 루트 크기를 확인합니다. |
+| QA2-78 | Frame 하나를 선택하고 Object ▸ Create Component from Selection…으로 같은 이름을 두 번 생성한 뒤 프로젝트 폴더에서 `stellar query . components` 실행 | 두 정의에 서로 다른 ID와 원본 파일이 있고, 각 항목에서 루트 크기를 확인합니다. |

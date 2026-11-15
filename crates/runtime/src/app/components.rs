@@ -104,32 +104,15 @@ impl AppRuntime {
         Ok(request)
     }
 
-    /// 창이 가리키는 실제 프로젝트의 신뢰를 다시 검사한 뒤 이름을 가진 정의 한 개를 만듭니다.
-    pub fn create_component(
-        &self,
-        session: WindowSessionHandle,
-        name: String,
-    ) -> Result<RequestId, RequestError> {
-        self.create_named_component(session, name, None)
-    }
-
-    /// 이름 sheet를 열 때 표시한 단일 Frame을 현재 문서에서 복제합니다.
+    /// 이름 sheet를 열 때 표시한 단일 Frame을 현재 문서에서 복제합니다. 창이 가리키는 실제
+    /// 프로젝트의 신뢰를 다시 검사한 뒤 정의 한 개를 만듭니다.
     pub fn create_component_from_selection(
         &self,
         session: WindowSessionHandle,
         name: String,
         view: StableId,
         revision: DocumentRevision,
-        selected: StableId,
-    ) -> Result<RequestId, RequestError> {
-        self.create_named_component(session, name, Some((view, revision, selected)))
-    }
-
-    fn create_named_component(
-        &self,
-        session: WindowSessionHandle,
-        name: String,
-        selection: Option<(StableId, DocumentRevision, StableId)>,
+        node: StableId,
     ) -> Result<RequestId, RequestError> {
         let request = self.reserve_request()?;
         if self.shared.creating_component.swap(true, Ordering::AcqRel) {
@@ -142,21 +125,15 @@ impl AppRuntime {
             .name("stellar-component-create".into())
             .spawn(move || {
                 let create = || -> Result<RuntimeEvent, Failure> {
-                    let captured = if let Some((view, revision, node)) = selection {
-                        let name = name.clone();
-                        let ticket = sender
-                            .submit(move |ctx| {
-                                let window =
-                                    super::frame_move::trusted_canvas_window(ctx, session)?;
-                                capture_selection(window, name, view, revision, node)
-                            })
-                            .map_err(|e| Failure::new(RequestFailure::SaveFailed, e.to_string()))?;
-                        Some(ticket.wait().map_err(|e| {
-                            Failure::new(RequestFailure::SaveFailed, e.to_string())
-                        })??)
-                    } else {
-                        None
-                    };
+                    let ticket = sender
+                        .submit(move |ctx| {
+                            let window = super::frame_move::trusted_canvas_window(ctx, session)?;
+                            capture_selection(window, name, view, revision, node)
+                        })
+                        .map_err(|e| Failure::new(RequestFailure::SaveFailed, e.to_string()))?;
+                    let (source, base) = ticket
+                        .wait()
+                        .map_err(|e| Failure::new(RequestFailure::SaveFailed, e.to_string()))??;
                     let state = shared.current_state();
                     let project = state
                         .window(session)
@@ -171,21 +148,12 @@ impl AppRuntime {
                     project
                         .verify_trust()
                         .map_err(|e| Failure::new(RequestFailure::TrustUnavailable, e))?;
-                    let info = match captured {
-                        Some((source, base)) => {
-                            stellar_ops::component_source::create_project_source(
-                                &project.canonical_root,
-                                project.project_id,
-                                &source,
-                                Some(base),
-                            )
-                        }
-                        None => stellar_ops::component_source::create_in_project(
-                            &project.canonical_root,
-                            project.project_id,
-                            name,
-                        ),
-                    }
+                    let info = stellar_ops::component_source::create_project_source(
+                        &project.canonical_root,
+                        project.project_id,
+                        &source,
+                        Some(base),
+                    )
                     .map_err(|e| Failure::new(RequestFailure::SaveFailed, e.to_string()))?;
                     let filename = info
                         .file

@@ -6,16 +6,12 @@ extension ShellProjectWindow {
         return CoreRuntime.selectedFrame(handle: project.pump.runtimeHandle, session: session.session)
     }
 
-    func promptForComponent(fromSelection: Bool = false) {
+    func promptForComponentFromSelection() {
         guard let window, let project = dataSource.session, let session = windowController.windowSession,
-              !session.isClosing, !session.isClosed, gitSource.trusted else { return }
-        let selection = fromSelection ? selectedComponentFrame : nil
-        if fromSelection && selection == nil { return }
+              !session.isClosing, !session.isClosed, gitSource.trusted, let selection = selectedComponentFrame else { return }
         let sheet = NSAlert()
-        sheet.messageText = fromSelection ? String(localized: "Create Component from Selection") : String(localized: "New Component")
-        sheet.informativeText = fromSelection
-            ? String(localized: "Save a copy of the selected Frame and its child Frames in design/components.")
-            : String(localized: "Name the new component to save it in design/components.")
+        sheet.messageText = String(localized: "Create Component from Selection")
+        sheet.informativeText = String(localized: "Save a copy of the selected Frame and its child Frames in design/components.")
         let name = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
         name.placeholderString = String(localized: "Component name")
         name.setAccessibilityLabel(String(localized: "Component name"))

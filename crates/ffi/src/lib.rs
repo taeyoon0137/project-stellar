@@ -915,23 +915,10 @@ pub extern "C" fn stellar_project_clone_cancel(handle: u64, request: u64) -> Ste
     })
 }
 
-/// 이름으로 새 프로젝트 컴포넌트 원본을 만드는 비동기 요청.
+/// 이름 sheet가 표시한 선택과 같은 Frame subtree를 독립 원본으로 만드는 비동기 요청.
 /// # Safety
-/// name은 name_len개의 읽을 수 있는 UTF-8 바이트, out_request는 쓸 수 있는 u64여야 합니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_window_component_create(
-    handle: u64,
-    session: u64,
-    name: *const u8,
-    name_len: usize,
-    out_request: *mut u64,
-) -> StellarStatus {
-    unsafe { component_create_request(handle, session, name, name_len, None, out_request) }
-}
-
-/// 이름 sheet가 표시한 선택과 같은 Frame subtree를 독립 원본으로 만듭니다.
-/// # Safety
-/// view와 node는 각각 16바이트 UUID입니다. 이름과 출력은 stellar_window_component_create와 같습니다.
+/// view와 node는 각각 16바이트 UUID, name은 name_len개의 읽을 수 있는 UTF-8 바이트,
+/// out_request는 쓸 수 있는 u64여야 합니다.
 #[no_mangle]
 pub unsafe extern "C" fn stellar_window_component_from_selection(
     handle: u64,
@@ -956,16 +943,7 @@ pub unsafe extern "C" fn stellar_window_component_from_selection(
             revision,
         )
     };
-    unsafe {
-        component_create_request(
-            handle,
-            session,
-            name,
-            name_len,
-            Some(selection),
-            out_request,
-        )
-    }
+    unsafe { component_create_request(handle, session, name, name_len, selection, out_request) }
 }
 
 unsafe fn component_create_request(
@@ -973,7 +951,7 @@ unsafe fn component_create_request(
     session: u64,
     name: *const u8,
     name_len: usize,
-    selection: Option<(StableId, StableId, u64)>,
+    (view, node, revision): (StableId, StableId, u64),
     out_request: *mut u64,
 ) -> StellarStatus {
     ffi_guard(move || {
@@ -997,19 +975,13 @@ unsafe fn component_create_request(
             Err(status) => return status,
         };
         let result = match rt.app() {
-            Ok(app) => {
-                let session = stellar_runtime::app::WindowSessionHandle(session);
-                match selection {
-                    Some((view, node, revision)) => app.create_component_from_selection(
-                        session,
-                        name,
-                        view,
-                        stellar_core_types::revision::DocumentRevision(revision),
-                        node,
-                    ),
-                    None => app.create_component(session, name),
-                }
-            }
+            Ok(app) => app.create_component_from_selection(
+                stellar_runtime::app::WindowSessionHandle(session),
+                name,
+                view,
+                stellar_core_types::revision::DocumentRevision(revision),
+                node,
+            ),
             Err(status) => return status,
         };
         unsafe { rt.finish_request(result, out_request) }

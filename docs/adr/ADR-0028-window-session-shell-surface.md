@@ -265,3 +265,7 @@ TL·TR·BR·BL 입력을 표시합니다. 캔버스와 hit test에는 기존의 
   생성과 같은 진행 플래그를 써서 서로를 거부했습니다. runtime `place_component_instance`(`instance_place.rs`)와
   창 전용 조회 `ProjectSummary::component_library`도 삭제했습니다. 정의 hash를 확인하는 한 transaction 삽입은
   CLI 명령으로 옮겨 다시 만듭니다(B6).
+- `stellar_window_component_create`: 정의되지 않은 **Insert → New Component…** 메뉴가 크기 0×0인 빈 컴포넌트를
+  만드는 요청입니다. runtime `create_component` 래퍼와 함께 삭제했습니다. 선택에서 만드는
+  `stellar_window_component_from_selection`은 유지 여부가 사용자 결정(D3)에 걸려 있어 그대로 두며, 그 ABI 기록은
+  결정 뒤 텍스트 원본 묶음(B2)에서 합니다. 빈 컴포넌트는 CLI `component-source create`로 만듭니다.

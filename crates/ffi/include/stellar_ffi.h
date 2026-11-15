@@ -287,14 +287,13 @@ int32_t stellar_window_component_watch_fd(uint64_t handle, uint64_t session);
 StellarStatus stellar_window_recovery_probe(uint64_t handle, uint64_t session, uint8_t *out, size_t capacity, size_t *out_len);
 StellarStatus stellar_window_recovery_apply(uint64_t handle, uint64_t session, const uint8_t *ticket, size_t ticket_len, const uint8_t *path, size_t path_len, uint64_t *request);
 
-/* 열린 신뢰 창의 프로젝트에 독립 컴포넌트 원본 한 개 생성. 완료는 COMPONENT_CREATED 또는 REQUEST_FAILED. */
-StellarStatus stellar_window_component_create(uint64_t handle, uint64_t session, const uint8_t *name, size_t name_len, uint64_t *out_request);
 typedef struct StellarFrameSelection { uint64_t revision; uint8_t view[16], node[16]; } StellarFrameSelection;
 StellarStatus stellar_window_selected_frame(uint64_t handle, uint64_t session, StellarFrameSelection *out);
 /* 한 snapshot의 선택과 bounds 정규화 이전 TL/TR/BR/BL 값. */
 StellarStatus stellar_window_selected_frame_corners(uint64_t handle, uint64_t session, StellarFrameSelection *out, uint64_t *history_sequence, float radii[4]);
 /* 확정 단일 인스턴스 선택의 정의 UUID. 그 밖의 선택은 STELLAR_NO_ERROR. */
 StellarStatus stellar_window_selected_definition(uint64_t handle, uint64_t session, uint8_t out[16]);
+/* 열린 신뢰 창의 선택 Frame subtree를 독립 컴포넌트 원본으로 복사. 완료는 COMPONENT_CREATED 또는 REQUEST_FAILED. */
 StellarStatus stellar_window_component_from_selection(uint64_t handle, uint64_t session, const uint8_t *name, size_t name_len, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint64_t *out_request);
 
 /* 프로젝트 session 닫기를 요청합니다(그 아래 문서도 닫음). */

@@ -701,7 +701,7 @@ final class ShellProjectWindow {
         var commands = ShellWindowToolsModelStub.sessionCommands(info: info, view: view)
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
         if view?.has_view == 1 { commands.insert(.zoomToFit) }
-        if gitSource.trusted, session != nil { commands.formUnion([.newComponent, .selectImageTool]) }
+        if gitSource.trusted, session != nil { commands.insert(.selectImageTool) }
         for command: ShellCommand in [.bringForward, .bringToFront, .sendBackward, .sendToBack] {
             if let flag = command.layerOrderFlag, displayedOrderFlags & flag != 0 { commands.insert(command) }
         }
