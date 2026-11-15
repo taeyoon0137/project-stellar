@@ -659,38 +659,38 @@ fn locked_change(
         .find(|node| old_stacks.get(node) != new_stacks.get(node) && protected(*node, true))
 }
 
-/// 잠금 거부를 일으킨 입력 위치: 노드나 그 조상을 가리키는 첫 command. 찾지 못하면 입력 수입니다.
+/// 잠금 거부를 처음 일으킨 입력 위치. 거부 경로에서만 앞에서부터 command를 하나씩 더 적용하며 같은 검사를 다시
+/// 합니다. 같은 노드나 조상을 가리키는 무관한 앞 command를 지목하지 않습니다. 찾지 못하면 입력 수입니다.
 fn locked_input(
-    inputs: &[CommandInput],
+    snapshot: &crate::snapshot::ProjectSnapshot,
+    document: StableId,
     before: &stellar_document::records::DocumentRecords,
-    node: StableId,
+    commands: &[Command],
 ) -> usize {
-    let mut targets = vec![node.to_bytes()];
-    let mut current = before
-        .nodes
-        .iter()
-        .find(|n| n.id == node)
-        .and_then(|n| n.parent);
-    while let Some(id) = current {
-        if targets.len() > before.nodes.len() {
-            break;
-        }
-        targets.push(id.to_bytes());
-        current = before
-            .nodes
-            .iter()
-            .find(|n| n.id == id)
-            .and_then(|n| n.parent);
-    }
-    inputs
-        .iter()
-        .position(|input| {
-            input.to_command().is_ok_and(|command| {
-                let bytes = stellar_commands::codec::encode_command(&command);
-                bytes.windows(16).any(|w| targets.iter().any(|t| w == t))
+    (1..=commands.len())
+        .find(|&end| {
+            let Ok(model) = snapshot.document_model(document) else {
+                return true;
+            };
+            let mut state = DocumentState::new(model);
+            let transaction = CommandTransaction {
+                id: command_id(document, &commands[..end]),
+                origin: CommandOrigin::User,
+                requests: commands[..end]
+                    .iter()
+                    .cloned()
+                    .map(|command| CommandRequest::new(DocumentRevision(0), command))
+                    .collect(),
+            };
+            if state.execute_transaction(&transaction).is_err() {
+                return true;
+            }
+            state.into_model().to_records().map_or(true, |mut after| {
+                after.sort_canonical();
+                locked_change(before, &after).is_some()
             })
         })
-        .unwrap_or(inputs.len())
+        .map_or(commands.len(), |end| end - 1)
 }
 
 /// command id: 요청 내용 canonical bytes의 content hash 앞 16바이트(결정론적, 저장하지 않음).
@@ -775,7 +775,7 @@ pub fn apply(
     after.sort_canonical();
     if let Some(node) = locked_change(&before, &after) {
         return Err(ApplyError::Rejected {
-            index: locked_input(&request.commands, &before, node),
+            index: locked_input(&snapshot, request.document, &before, &commands),
             reason: format!(
                 "잠긴 노드 {node}는 바꿀 수 없습니다(잠금 해제는 그 노드의 set-locked)"
             ),
@@ -1061,6 +1061,20 @@ mod tests {
             before,
             "거부는 파일을 바꾸지 않습니다"
         );
+        // 거부 위치는 잠금을 처음 어긴 command입니다. 같은 노드를 가리키는 앞의 허용된 command가 아닙니다.
+        assert!(matches!(
+            run(vec![
+                CommandInput::SetLocked {
+                    node: target,
+                    locked: true,
+                },
+                CommandInput::Rename {
+                    node: target,
+                    name: "잠김".into(),
+                },
+            ]),
+            Err(ApplyError::Rejected { index: 1, .. })
+        ));
         run(vec![CommandInput::SetLocked {
             node: target,
             locked: false,
