@@ -189,6 +189,9 @@ final class CanvasFrameScene {
     private(set) var worldToView = CGAffineTransform.identity
     private(set) var skipped: UInt32 = 0
 
+    /// 다음 `refresh`가 같은 revision이라도 행을 다시 읽게 합니다.
+    func invalidateRows() { viewID = nil }
+
     func clear() {
         png.reset()
         frames.removeAll()

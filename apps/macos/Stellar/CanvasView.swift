@@ -27,7 +27,8 @@ final class CanvasView: NSView {
     func textHit(id: UUID? = nil) -> CanvasFrameHit? { frameScene.textHit(id: id) }
     var frameSession: UInt64? { didSet { refreshFrames() } }
 
-    func invalidateComponentFrames() { frameScene.clear(); refreshFrames() }
+    /// 문서 revision이 같아도 표시 목록을 다시 읽습니다(컴포넌트 정의 변경). 남은 이미지 픽셀은 유지합니다.
+    func invalidateComponentFrames() { frameScene.invalidateRows(); refreshFrames() }
 
     func refreshFrames() {
         frameScene.redrawImage = { [weak self] damage in self?.setNeedsDisplay(damage) }
