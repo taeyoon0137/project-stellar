@@ -168,6 +168,11 @@ enum ToolsUICheck {
         let help = CanvasTool.shortcutHelp
         recorder.expect(CanvasTool.allCases.compactMap(\.singleKey).allSatisfy { help.contains(String($0).uppercased()) },
                         "캔버스 접근성 도움말이 단일 키 배정과 다름: \(help)")
+        // 목록 구분자는 문장과 같은 언어입니다(영문 문장에 시스템 언어 "또는"이 섞이지 않음).
+        recorder.expect(Bundle.main.preferredLocalizations.first != "en" || help.contains(", or "),
+                        "캔버스 접근성 도움말 목록 언어가 문장과 다름: \(help)")
+        recorder.expect(CanvasTool.image.helpTag.hasSuffix("(\(ShellCommand.selectImageTool.shortcut?.displayString ?? "?"))"),
+                        "Image 도구 도움말에 메뉴 단축키가 없음: \(CanvasTool.image.helpTag)")
         recorder.expect(resolve("1", 0x12) == nil, "숫자 키가 도구로 해석됨")
         recorder.expect(resolve("q", 0x0C) == nil, "할당 없는 Q가 도구로 해석됨")
 

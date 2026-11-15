@@ -82,10 +82,11 @@ enum CanvasTool: String, CaseIterable {
         }
     }
 
-    /// 도움말 태그(툴바 tooltip). 단일 키가 있으면 함께 보여 줍니다.
+    /// 도움말 태그(툴바 tooltip). 단일 키가 있으면 그 키를, 없으면 메뉴 단축키(예: Image ⇧⌘K)를 함께 보여 줍니다.
     var helpTag: String {
-        guard let key = singleKey else { return label }
-        return "\(label) (\(String(key).uppercased()))"
+        if let key = singleKey { return "\(label) (\(String(key).uppercased()))" }
+        if let shortcut = command.shortcut { return "\(label) (\(shortcut.displayString))" }
+        return label
     }
 
     /// 도구 막대에서 이 도구 앞에 그룹 간격을 두는지. 그룹은 선택(Move) · 컨테이너(Frame) ·
@@ -97,10 +98,12 @@ enum CanvasTool: String, CaseIterable {
         }
     }
 
-    /// 캔버스 접근성 도움말: 단일 키 목록을 `singleKey`에서 만들어 실제 배정과 늘 같습니다.
+    /// 캔버스 접근성 도움말: 단일 키 목록을 `singleKey`에서 만들어 실제 배정과 늘 같습니다. 목록 구분자는 "또는" 목록
+    /// 형식이 정하고(문자열을 이어 붙이지 않음), 언어는 문장과 같게 앱이 실제로 쓰는 현지화를 따릅니다.
     static var shortcutHelp: String {
-        let keys = allCases.compactMap(\.singleKey).map { String($0).uppercased() }
-        let list = keys.dropLast().joined(separator: ", ") + (keys.count > 1 ? ", or " : "") + (keys.last ?? "")
+        let locale = Locale(identifier: Bundle.main.preferredLocalizations.first ?? "en")
+        let list = allCases.compactMap(\.singleKey).map { String($0).uppercased() }
+            .formatted(.list(type: .or).locale(locale))
         return String(localized: "Press \(list) to choose a tool.", comment: "Accessibility help of the canvas; the argument lists tool keys")
     }
 }
