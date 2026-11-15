@@ -185,19 +185,12 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
         label.stringValue = next.name
         let editable = !next.flags.contains(.readOnly)
         let mixed = next.flags.contains(.mixed)
-        if !userTyped {
-            let editor = field.currentEditor()
-            let selection = editor?.selectedRange
-            field.stringValue = next.value
-            if let editor, let selection {
-                let length = next.value.utf16.count
-                let location = min(selection.location, length)
-                editor.selectedRange = NSRange(location: location, length: min(selection.length, length - location))
-            }
-        }
+        if !userTyped { display(next.value) }
         field.placeholderString = mixed ? String(localized: "Mixed") : nil
-        field.isEditable = editable
-        field.isEnabled = editable
+        if field.currentEditor() == nil || !editable {
+            field.isEditable = editable
+            field.isEnabled = editable
+        }
         label.scrubs = next.flags.contains(.numeric) && editable
         if let popup {
             popup.removeAllItems()
@@ -220,6 +213,21 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
         if changed { show(nil) }
     }
 
+    /// 필드에 값을 보입니다. 포커스가 있으면 편집을 끝내지 않고 field editor 내용만 바꿉니다(필드 값을 직접 바꾸면
+    /// 편집이 끝나 화살표 반복이 끊김).
+    private func display(_ text: String) {
+        guard let editor = field.currentEditor() else {
+            field.stringValue = text
+            return
+        }
+        guard editor.string != text else { return }
+        let selection = editor.selectedRange
+        editor.string = text
+        let length = text.utf16.count
+        let location = min(selection.location, length)
+        editor.selectedRange = NSRange(location: location, length: min(selection.length, length - location))
+    }
+
     /// 행 아래 진단 한 줄. nil이면 숨깁니다.
     func show(_ message: String?) {
         diagnostic.stringValue = message ?? ""
@@ -235,7 +243,7 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
             guard let self else { return }
             if let message {
                 self.show(message)
-                if !self.userTyped { self.field.stringValue = self.row.value }
+                if !self.userTyped { self.display(self.row.value) }
             } else if phase != .continuous {
                 self.show(nil)
             }
@@ -300,9 +308,9 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
         case #selector(NSResponder.cancelOperation(_:)):
             // Escape: 입력을 버리고 snapshot 값으로 돌린 뒤 캔버스로.
             userTyped = false
-            field.stringValue = row.value
             show(nil)
             field.abortEditing()
+            field.stringValue = row.value
             onEscape?()
             return true
         case #selector(NSResponder.moveUp(_:)), #selector(NSResponder.moveUpAndModifySelection(_:)):
