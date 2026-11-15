@@ -1435,6 +1435,24 @@ fn close_window_session_on_thread(
     Ok(RuntimeEvent::WindowSessionClosed { request, session })
 }
 
+/// 새 글꼴 face를 다 읽은 뒤 document thread에서 실행합니다. 대체 글꼴로 평가했거나 Text를 아직 그리지 못한
+/// scene을 버리고 다시 게시한 다음, scene을 버린 창마다 요청 없는 `WINDOW_VIEW_CHANGED`를 보냅니다. 셸은
+/// 문서 revision이 같아도 이 event에서 표시 행을 다시 읽습니다(ADR-0067 §5).
+fn republish_after_fonts_loaded(shared: &AppShared, ctx: &mut DocumentContext) {
+    let sessions = ctx.app_sessions_mut();
+    let dropped: Vec<_> = sessions
+        .windows
+        .iter_mut()
+        .filter_map(|(handle, entry)| entry.canvas.fonts_loaded().then_some(*handle))
+        .collect();
+    // 창끼리 공유하던 목록도 대체 글꼴로 평가했으므로 함께 버립니다.
+    sessions.shared_scenes.clear();
+    shared.publish_state(build_state(ctx));
+    for session in dropped {
+        shared.push_unsolicited_view_change(session);
+    }
+}
+
 /// 창 session 요약(상태 snapshot용).
 fn window_summary(
     handle: WindowSessionHandle,
@@ -1861,15 +1879,7 @@ impl AppRuntime {
             crate::canvas::text::fonts::FaceLoader::spawn(move || {
                 let shared = Arc::clone(&shared);
                 // 다 읽은 face로 열린 창의 scene을 다시 게시합니다. 접수하지 못하면 다음 게시 때 반영됩니다.
-                let _ = sender.submit(move |ctx| {
-                    let sessions = ctx.app_sessions_mut();
-                    for entry in sessions.windows.values_mut() {
-                        entry.canvas.fonts_loaded();
-                    }
-                    // 창끼리 공유하던 목록도 대체 글꼴로 평가했으므로 함께 버립니다.
-                    sessions.shared_scenes.clear();
-                    shared.publish_state(build_state(ctx));
-                });
+                let _ = sender.submit(move |ctx| republish_after_fonts_loaded(&shared, ctx));
             })
         };
         Ok(AppRuntime {
@@ -2785,6 +2795,45 @@ mod tests {
             }
         );
         assert_eq!(center(), (-19.0, 2.0));
+        app.shutdown().unwrap();
+    }
+
+    #[test]
+    fn loaded_fonts_notify_each_window_whose_scene_was_dropped_once() {
+        use crate::app_window_tests::{open_project, open_window};
+        use crate::window_session::test_fixtures::saved_project;
+        let dir = saved_project("app-fonts-loaded");
+        let app = AppRuntime::start().unwrap();
+        let project = open_project(&app, dir.path());
+        let (a, _, _) = open_window(&app, project);
+        let (b, _, _) = open_window(&app, project);
+        let fonts_loaded = || {
+            let shared = Arc::clone(&app.shared);
+            app.sender
+                .submit(move |ctx| republish_after_fonts_loaded(&shared, ctx))
+                .unwrap()
+                .wait()
+                .unwrap();
+        };
+        fonts_loaded();
+        // 셸이 아직 읽지 않은 동안 다시 읽어도 창마다 event 하나입니다.
+        fonts_loaded();
+        let unsolicited = |session| RuntimeEvent::WindowViewChanged {
+            request: RequestId(0),
+            session,
+        };
+        assert_eq!(app.pop_event(), Some(unsolicited(a)));
+        assert_eq!(app.pop_event(), Some(unsolicited(b)));
+        assert_eq!(app.pop_event(), None);
+        assert!(
+            app.shared
+                .current_state()
+                .window(a)
+                .unwrap()
+                .canvas
+                .is_some(),
+            "다시 평가한 scene을 게시함"
+        );
         app.shutdown().unwrap();
     }
 

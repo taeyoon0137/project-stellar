@@ -94,8 +94,10 @@ Accepted (2026-11-15, Codex 작업 검토 묶음 B5)
   - 문서 style 표에 등록된 project face는 처음 필요할 때 loader에 요청합니다. 읽는 동안 그 Text는 기본 chain으로
     대체해 그립니다. 다 읽으면 열린 창의 대체 layout과 scene을 버리고 상태를 다시 게시합니다.
   - loader의 결과는 (프로젝트 루트, face, 그 face의 글꼴·asset record)로 구분합니다. record가 바뀌면 다시 검증합니다.
-- 현재 셸은 요청 완료 때만 canvas를 다시 읽습니다. 그래서 loader의 재게시는 다음 요청 완료 때 화면에 나타납니다.
-  기본 chain은 앱 시작 직후 읽으므로 보통 창이 열리기 전에 끝납니다.
+- loader가 face를 다 읽으면 document thread에서 열린 창의 scene을 버리고 다시 평가해 게시한 뒤, scene을 버린 창마다
+  요청 없는 `WINDOW_VIEW_CHANGED`(request 0, ADR-0028 "요청 없는 event")를 보냅니다. 셸은 문서 revision이 같아도 이
+  event에서 표시 행을 다시 읽으므로, 기본 chain을 다 읽기 전에 열린 창(시작 시 창 복원, 빠른 프로젝트 열기)도 다음
+  편집을 기다리지 않고 Text를 그립니다. 같은 창의 요청 없는 event가 아직 남아 있으면 더하지 않습니다.
 
 ### 6. 캔버스 Text 편집 session
 

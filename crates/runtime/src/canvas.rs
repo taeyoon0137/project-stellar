@@ -152,10 +152,10 @@ impl CanvasCache {
         }
     }
 
-    /// 새 글꼴 face를 읽었습니다. 대체 글꼴로 만든 layout과 게시한 scene을 버립니다.
-    pub(crate) fn fonts_loaded(&mut self) {
-        self.latest = None;
+    /// 새 글꼴 face를 읽었습니다. 대체 글꼴로 만든 layout과 게시한 scene을 버립니다. 버린 scene이 있으면 true입니다.
+    pub(crate) fn fonts_loaded(&mut self) -> bool {
         self.saved_text = Default::default();
+        self.latest.take().is_some()
     }
 
     /// `order`에 시작한 읽기 결과로 정의 집합을 바꿉니다. 더 늦게 시작한 읽기가 이미 반영됐으면 버립니다.
