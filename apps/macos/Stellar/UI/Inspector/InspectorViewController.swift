@@ -132,7 +132,7 @@ final class InspectorViewController: NSViewController {
 
     /// 속성 이름(CSS longhand)으로 값 컨트롤을 찾습니다(키보드 포커스 이동·접근성).
     func control(identifier: String) -> NSView? {
-        rowViews[identifier]?.field
+        rowViews[identifier]?.keyControl
     }
 
     private func rebuild(_ snapshot: InspectorSnapshot) {

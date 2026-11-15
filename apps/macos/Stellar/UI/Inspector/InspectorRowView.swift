@@ -97,8 +97,11 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
             column.bottomAnchor.constraint(equalTo: bottomAnchor),
             line.widthAnchor.constraint(equalTo: column.widthAnchor),
             diagnostic.trailingAnchor.constraint(equalTo: column.trailingAnchor),
-            label.widthAnchor.constraint(equalToConstant: max(labelColumn, 40)),
         ])
+        // 패널이 아주 좁아도 제약 충돌 없이 값 필드가 먼저 줄어듭니다.
+        let labelWidthConstraint = label.widthAnchor.constraint(equalToConstant: max(labelColumn, 40))
+        labelWidthConstraint.priority = .init(900)
+        labelWidthConstraint.isActive = true
         update(row)
     }
 
@@ -127,7 +130,9 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
             menu.setAccessibilityHelp(help)
             menu.identifier = NSUserInterfaceItemIdentifier(row.name)
             line.addArrangedSubview(menu)
-            menu.widthAnchor.constraint(greaterThanOrEqualToConstant: InspectorMetrics.minimumFieldWidth).isActive = true
+            let minimum = menu.widthAnchor.constraint(greaterThanOrEqualToConstant: InspectorMetrics.minimumFieldWidth)
+            minimum.priority = .init(800)
+            minimum.isActive = true
             popup = menu
             field.isHidden = true
             return
@@ -160,7 +165,10 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
         field.setAccessibilityLabel(row.name)
         field.setAccessibilityHelp(help)
         line.addArrangedSubview(field)
-        field.widthAnchor.constraint(greaterThanOrEqualToConstant: InspectorMetrics.minimumFieldWidth).isActive = true
+        let minimum = field.widthAnchor.constraint(greaterThanOrEqualToConstant: InspectorMetrics.minimumFieldWidth)
+        minimum.priority = .init(800)
+        minimum.isActive = true
+        field.setContentHuggingPriority(.init(100), for: .horizontal)
     }
 
     /// 키보드 포커스를 받는 값 컨트롤(Tab 순서).
