@@ -584,8 +584,10 @@ final class ShellProjectWindow {
         guard let session = windowController.windowSession, !session.isClosed else { return false }
         return session.pendingCommandCount != 0 || session.info?.has_unsaved_changes != 0
     }
-    /// 저장 응답을 기다리는 셸 watchdog. AutosavePolicy의 미확정 성능 수치를 대체하지 않습니다.
-    private let closeReplyTimeout: TimeInterval = 10
+    /// 저장 응답을 기다리는 셸 watchdog. 코어 Save Now는 같은 프로젝트의 진행 중인 자동 저장을 최대
+    /// `window_close_flush_timeout_ms`(10초, `config/performance-budgets.yaml`) 기다린 뒤 다시 쓰므로, watchdog은 그 상한과
+    /// 쓰기 시간보다 길어야 저장에 성공한 닫기를 실패로 보고하지 않습니다. 같은 값을 코어에서 읽는 일은 XIII.1.6입니다.
+    private let closeReplyTimeout: TimeInterval = 30
     var frameDrag: CanvasFrameDrag?
     /// root Frame 밖에서 생성 도구로 누른 뒤 놓을 때까지 금지 커서를 유지합니다(UX.2.8).
     var rejectedDraw = false

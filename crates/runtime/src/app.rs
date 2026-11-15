@@ -1524,7 +1524,7 @@ fn perform_on_thread(
 ) -> Result<RuntimeEvent, Failure> {
     if command == AppCommand::SaveNow {
         // 진행 중인 자동 저장을 먼저 반영해 같은 편집을 두 번 쓰지 않습니다(XIII.1.5, ADR-0072).
-        autosave::settle(ctx)
+        autosave::settle(ctx, session)
             .map_err(|error| Failure::new(RequestFailure::SaveFailed, error.to_string()))?;
     }
     let window = window_mut(ctx, session)?;

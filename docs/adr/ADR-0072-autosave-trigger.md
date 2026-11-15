@@ -65,8 +65,10 @@ watchdog(`closeReplyTimeout`, 10초, ADR-0028)은 셸 값이고 이 파일을 �
 
 ### 4. Save Now 합치기 (XIII.1.5)
 
-Save Now(⌘S, 창 닫기 flush)는 먼저 진행 중인 자동 저장 쓰기를 모두 기다려 반영하고(`settle`), 그 뒤 남은 편집만
-저장합니다. 그래서 같은 revision을 두 번 쓰지 않고, 같은 프로세스 안에서 저장 잠금(`flock` 즉시 실패)을 다투지 않으며,
+Save Now(⌘S, 창 닫기 flush)는 먼저 같은 프로젝트에서 진행 중인 자동 저장 쓰기를 기다려 반영하고(`settle`), 그 뒤 남은
+편집만 저장합니다. 다른 프로젝트의 쓰기는 잠금·generation이 따로라 기다리지 않습니다(처음 구현은 모든 프로젝트를 기다려,
+느린 다른 프로젝트 때문에 이 창의 Save Now가 늦거나 실패할 수 있었습니다). 셸의 닫기 응답 watchdog은 이 상한과 쓰기 시간보다
+긴 30초입니다. 그래서 같은 revision을 두 번 쓰지 않고, 같은 프로세스 안에서 저장 잠금(`flock` 즉시 실패)을 다투지 않으며,
 자동 저장이 막 쓴 generation을 stale로 오인하지 않습니다. 기다리는 상한은 `window_close_flush_timeout_ms`이고, 넘으면
 `STELLAR_FAILURE_SAVE_FAILED`입니다(편집은 메모리에 남음). Save Now가 먼저 저장해 clean이 되면 대기가 비고, 이미 접수한
 자동 저장 job은 clean인 창을 쓰지 않습니다.

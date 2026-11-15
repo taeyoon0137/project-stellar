@@ -273,17 +273,28 @@ fn finish(entry: &mut WindowEntry, result: SaveResult, now: Duration) {
     }
 }
 
-/// Save Now 전에 진행 중인 자동 저장을 모두 기다려 반영합니다(XIII.1.5). 같은 프로세스의 쓰기는 writer 하나가 차례로
-/// 하므로 이 뒤의 Save Now는 저장 잠금을 다투지 않고 최신 기준 generation 위에서 씁니다. 쓰기 표시는 writer가 보내는
-/// 반영 job이 내립니다. 기다리는 상한(`window_close_flush_timeout_ms`)을 넘으면
-/// [`WindowSessionSaveError::Interrupted`]입니다.
-pub(super) fn settle(ctx: &mut DocumentContext) -> Result<(), WindowSessionSaveError> {
+/// Save Now 전에 `session`과 같은 프로젝트에서 진행 중인 자동 저장을 기다려 반영합니다(XIII.1.5). 같은 프로세스의
+/// 쓰기는 writer 하나가 차례로 하므로 이 뒤의 Save Now는 그 프로젝트의 저장 잠금을 다투지 않고 최신 기준 generation
+/// 위에서 씁니다. 다른 프로젝트의 쓰기는 잠금·generation이 따로라 기다리지 않습니다(느린 다른 프로젝트 때문에 이 창의
+/// Save Now가 늦거나 실패하지 않게). 쓰기 표시는 writer가 보내는 반영 job이 내립니다. 기다리는 상한
+/// (`window_close_flush_timeout_ms`)을 넘으면 [`WindowSessionSaveError::Interrupted`]입니다.
+pub(super) fn settle(
+    ctx: &mut DocumentContext,
+    session: WindowSessionHandle,
+) -> Result<(), WindowSessionSaveError> {
     let sessions = ctx.app_sessions_mut();
     let Some(setup) = sessions.autosave.as_ref() else {
         return Ok(());
     };
+    let Some(project) = sessions.windows.get(&session).map(|entry| entry.project) else {
+        return Ok(());
+    };
     let deadline = Instant::now() + setup.policy.window_close_flush.timeout;
-    for entry in sessions.windows.values_mut() {
+    for entry in sessions
+        .windows
+        .values_mut()
+        .filter(|entry| entry.project == project)
+    {
         let Some(slot) = entry.autosave.in_flight.clone() else {
             continue;
         };
