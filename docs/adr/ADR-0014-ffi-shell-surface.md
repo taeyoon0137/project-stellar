@@ -55,6 +55,10 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
      하나가 단조 보정으로 이후 입력 시각을 고정하는 범위를 10초 안으로 묶습니다(허용 오차는 합성 이벤트를
      최대 9초 앞선 timestamp로 만드는 셸 입력 검사 `InputCheck.swift` 때문입니다). 구조체·시그니처는
      그대로입니다.
+8. **창 지정 제출(2026-11-15 검토)**: `stellar_window_session_submit_mac_event(handle, session, event, out_request)`는
+   같은 변환·시간 domain 규칙으로 창 session 하나를 대상으로 받습니다. 수식키 없는 스크롤은 코어가 그 창의 팬으로
+   해석하고, 그 밖의 이벤트는 위 입력 대기열에 넣습니다. 팬 해석과 합치기 규칙은 ADR-0028 "스크롤의 창별 팬
+   연결"에 있습니다.
 
 ### XII.3.4 — 입력 대기열 coalescing
 

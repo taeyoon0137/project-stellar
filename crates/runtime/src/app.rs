@@ -1651,6 +1651,16 @@ struct AppShared {
     /// 완료 event를 아직 꺼내지 않은 요청 수(실행 중 포함).
     outstanding: AtomicUsize,
     state: Mutex<Arc<RuntimeState>>,
+    /// 창별로 document thread가 아직 반영하지 않은 wheel 팬 합계([`AppRuntime::wheel_pan`]).
+    wheel_pans: Mutex<BTreeMap<WindowSessionHandle, PendingWheelPan>>,
+}
+
+/// 접수했지만 아직 반영하지 않은 wheel 팬. `scheduled`면 그 합을 가져갈 job이 대기 중입니다.
+#[derive(Debug, Default, Clone, Copy)]
+struct PendingWheelPan {
+    dx: f64,
+    dy: f64,
+    scheduled: bool,
 }
 
 impl AppShared {
@@ -1764,6 +1774,7 @@ impl AppRuntime {
             outbox: Mutex::new(VecDeque::new()),
             outstanding: AtomicUsize::new(0),
             state: Mutex::new(Arc::new(RuntimeState::default())),
+            wheel_pans: Mutex::default(),
         });
         let fonts = {
             let sender = document.sender();
@@ -2005,7 +2016,7 @@ impl AppRuntime {
     }
 
     /// 창 session의 active 탭 viewport를 화면에서 `(dx, dy)` point만큼 옮깁니다(XII.4.3). 문서·history·저장에는
-    /// 영향이 없습니다.
+    /// 영향이 없습니다. Hand 도구 드래그가 씁니다. 스크롤은 [`AppRuntime::wheel_pan`]을 씁니다.
     pub fn pan_viewport(
         &self,
         session: WindowSessionHandle,
@@ -2017,6 +2028,54 @@ impl AppRuntime {
                 window.pan(dx, dy).map(|_| ())
             })
         })
+    }
+
+    /// 셸이 넘긴 wheel·trackpad 스크롤의 팬(화면 point, 내용 이동 방향)을 창 session 하나에 반영합니다.
+    ///
+    /// 연속 스크롤은 document thread가 아직 반영하지 않은 합에 더합니다(XII.3.4와 같은 delta 보존). 합을
+    /// 가져갈 job이 이미 대기 중이면 새 요청을 만들지 않고 `Ok(None)`입니다. job은 실행 시점의 합 전체를
+    /// 가져가 한 번 이동하고 `WINDOW_VIEW_CHANGED`를 보냅니다. 접수가 거부(`QueueFull` 등)되면 합을 버리지
+    /// 않고 다음 스크롤 때 함께 다시 제출합니다.
+    pub fn wheel_pan(
+        &self,
+        session: WindowSessionHandle,
+        dx: f64,
+        dy: f64,
+    ) -> Result<Option<RequestId>, RequestError> {
+        let pans = || {
+            self.shared
+                .wheel_pans
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+        };
+        {
+            let mut pending = pans();
+            let entry = pending.entry(session).or_default();
+            entry.dx += dx;
+            entry.dy += dy;
+            if entry.scheduled {
+                return Ok(None);
+            }
+            entry.scheduled = true;
+        }
+        let shared = Arc::clone(&self.shared);
+        let submitted = self.submit(move |ctx, request| {
+            let PendingWheelPan { dx, dy, .. } = shared
+                .wheel_pans
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&session)
+                .unwrap_or_default();
+            change_view_on_thread(ctx, request, session, |window| {
+                window.pan(dx, dy).map(|_| ())
+            })
+        });
+        if submitted.is_err() {
+            if let Some(entry) = pans().get_mut(&session) {
+                entry.scheduled = false;
+            }
+        }
+        submitted.map(Some)
     }
 
     /// 화면 중앙 기준 point를 고정해서 확대하거나, 선택한 영역의 중앙을 화면 가운데로 맞춥니다.
@@ -2568,5 +2627,58 @@ mod tests {
             .unwrap();
         let stats = app.shutdown_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(stats.jobs_run, 1);
+    }
+
+    #[test]
+    fn wheel_pan_merges_pending_scroll_and_keeps_a_refused_delta() {
+        use crate::app_window_tests::{next_event, open_project, open_window};
+        use crate::window_session::test_fixtures::saved_project;
+        let dir = saved_project("app-wheel-pan");
+        let app = AppRuntime::start_with(QueueCapacity::default(), 2).unwrap();
+        let (a, _, _) = open_window(&app, open_project(&app, dir.path()));
+        let center = || {
+            let viewport = app.state().window(a).unwrap().viewport.unwrap();
+            (viewport.center_x(), viewport.center_y())
+        };
+        // document thread가 멈춘 동안 들어온 스크롤은 대기 중인 팬 하나에 합칩니다.
+        let release = stall(&app);
+        let first = app.wheel_pan(a, 10.0, -4.0).unwrap().expect("새 팬 요청");
+        assert_eq!(app.wheel_pan(a, 5.0, 2.0).unwrap(), None);
+        drop(release);
+        assert_eq!(
+            next_event(&app),
+            RuntimeEvent::WindowViewChanged {
+                request: first,
+                session: a
+            }
+        );
+        assert_eq!(center(), (-15.0, 2.0));
+        // event 상한(2)이 차서 팬 접수가 거부돼도 이동량은 남아 다음 스크롤과 함께 반영됩니다.
+        let release = stall(&app);
+        let other = [
+            app.set_selection(a, Vec::new()).unwrap(),
+            app.set_selection(a, Vec::new()).unwrap(),
+        ];
+        assert_eq!(app.wheel_pan(a, 3.0, 0.0), Err(RequestError::QueueFull));
+        drop(release);
+        for request in other {
+            assert_eq!(
+                next_event(&app),
+                RuntimeEvent::WindowViewChanged {
+                    request,
+                    session: a
+                }
+            );
+        }
+        let retried = app.wheel_pan(a, 1.0, 0.0).unwrap().expect("다시 제출");
+        assert_eq!(
+            next_event(&app),
+            RuntimeEvent::WindowViewChanged {
+                request: retried,
+                session: a
+            }
+        );
+        assert_eq!(center(), (-19.0, 2.0));
+        app.shutdown().unwrap();
     }
 }

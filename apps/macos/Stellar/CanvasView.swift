@@ -15,8 +15,9 @@ final class CanvasView: NSView {
     /// `keyDownHandler`가 처리해 짝 key up도 삼킬 key code.
     private var handledKeyCodes: Set<UInt16> = []
 
-    /// 창별 viewport가 처리한 스크롤은 공용 runtime 입력 대기열에 중복 제출하지 않습니다.
-    var scrollWheelHandler: ((NSEvent) -> Bool)?
+    /// 창 session이 준비된 창이 원시 입력을 그 창 session으로 넘기는 경로(ADR-0028). 해석은 코어가 하고,
+    /// 셸은 접수한 요청의 완료만 기다립니다. false면 runtime 입력 대기열로 보냅니다.
+    var windowInputSink: ((StellarMacEvent) -> Bool)?
 
     private let frameScene = CanvasFrameScene()
     var textEditOverlay: CanvasFrameScene.TextEditOverlay? {
@@ -164,7 +165,10 @@ final class CanvasView: NSView {
     override func otherMouseUp(with event: NSEvent) { submitInput(event) }
     override func otherMouseDragged(with event: NSEvent) { submitInput(event) }
     override func scrollWheel(with event: NSEvent) {
-        if scrollWheelHandler?(event) == true { return }
+        // 진행 중인 Frame 드래그 미리보기는 화면 좌표라 카메라가 움직이면 어긋나므로 먼저 취소합니다.
+        _ = cancelFrameGesture?()
+        let raw = CanvasInput.macEvent(from: event, in: self, receivedAt: ProcessInfo.processInfo.systemUptime)
+        if windowInputSink?(raw) == true { return }
         submitInput(event)
     }
     override func keyDown(with event: NSEvent) {

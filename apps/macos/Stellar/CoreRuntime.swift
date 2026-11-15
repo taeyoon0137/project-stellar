@@ -179,6 +179,14 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    /// 창 session 대상 원시 입력 제출. 새 요청이면 그 id, 요청이 생기지 않았으면 0입니다.
+    static func submitWindowEvent(handle: UInt64, session: UInt64, event: StellarMacEvent) -> Result<UInt64, CoreRuntimeCallError> {
+        var raw = event, request: UInt64 = 0
+        let status = stellar_window_session_submit_mac_event(handle, session, &raw, &request)
+        guard status == STELLAR_OK else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     static func pan(handle: UInt64, session: UInt64, dx: Double, dy: Double) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
         let status = stellar_window_session_pan(handle, session, dx, dy, &request)

@@ -314,8 +314,12 @@ StellarStatus stellar_window_session_perform(uint64_t handle, uint64_t session, 
 /* 실제 canvas 크기(logical point)로 active View의 root Frame이 화면에 들어오도록 카메라를 맞춥니다(100% 이하).
  * 새 창의 첫 표시와 View ▸ Zoom to Fit이 씁니다. 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED. */
 StellarStatus stellar_window_session_fit_root(uint64_t handle, uint64_t session, double width, double height, uint64_t *out_request);
-/* Pan active viewport content in screen points; completes with WINDOW_VIEW_CHANGED or REQUEST_FAILED. */
+/* Hand 도구 드래그: active viewport 내용을 화면 point만큼 옮깁니다. 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED. */
 StellarStatus stellar_window_session_pan(uint64_t handle, uint64_t session, double dx, double dy, uint64_t *out_request);
+/* 창 하나를 대상으로 NSEvent 원시 필드를 제출합니다. 해석은 코어가 합니다. 수식키 없는 스크롤은 그 창의 팬이며
+ * 새 팬 요청이면 out_request에 id(완료 WINDOW_VIEW_CHANGED), 대기 중인 팬에 더했거나 이동량이 0이면 0입니다.
+ * 그 밖의 이벤트는 stellar_runtime_submit_mac_event와 같이 입력 대기열에 넣고 out_request는 0입니다. */
+StellarStatus stellar_window_session_submit_mac_event(uint64_t handle, uint64_t session, const StellarMacEvent *event, uint64_t *out_request);
 /* Click: fit_factor=0 and zoom_out=0/1. Area: fit_factor>0 centers the anchor and scales the viewport. */
 StellarStatus stellar_window_session_zoom_at(uint64_t handle, uint64_t session, double x, double y, double fit_factor, uint32_t zoom_out, uint64_t *out_request);
 /* 한 게시 시점의 선택. 기존 창·뷰 info의 고정 레이아웃과 독립적입니다. */

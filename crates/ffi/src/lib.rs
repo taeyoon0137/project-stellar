@@ -617,56 +617,75 @@ pub unsafe extern "C" fn stellar_runtime_submit_mac_event(
             }
         };
         write_queued(0);
-        // 기준점이 없으면 이 이벤트의 수신 시각으로 임시 domain을 만들고, 이벤트가 검증을 통과했을
-        // 때만 runtime에 남깁니다. 거부될 이벤트가 기준점을 영구히 정하지 않게 합니다.
-        let anchored = rt.input_domain.is_some();
-        let mut domain = match rt.input_domain.take() {
-            Some(domain) => domain,
-            None => {
-                let anchor = InputTimeDomain::new(
-                    NativeTimestamp::MacEventSeconds(raw.receive_uptime),
-                    &InstantClock,
-                );
-                match anchor {
-                    Ok(domain) => domain,
-                    Err(error) => {
-                        rt.last_error = Some((
-                            StellarStatus::InvalidArgument,
-                            format!("입력 시각 기준점 오류: {error}"),
-                        ));
-                        return StellarStatus::InvalidArgument;
-                    }
-                }
-            }
-        };
-        let converted = convert_mac_event(&raw, &mut domain);
-        if anchored || converted.is_ok() {
-            rt.input_domain = Some(domain);
-        }
-        match converted {
+        match convert_received(rt, &raw) {
             Ok(None) => StellarStatus::Ok,
             Ok(Some(input)) => {
-                let receipt = InputReceipt::new(input.timestamp().get(), received);
-                match rt.input.push_received(input, receipt) {
-                    PushOutcome::Queued | PushOutcome::Coalesced => {
-                        write_queued(1);
-                        StellarStatus::Ok
-                    }
-                    PushOutcome::Full => {
-                        rt.last_error = Some((
-                            StellarStatus::QueueFull,
-                            format!("입력 대기열이 가득 찼습니다({INPUT_QUEUE_CAPACITY})"),
-                        ));
-                        StellarStatus::QueueFull
-                    }
+                let status = queue_input(rt, input, received);
+                if status == StellarStatus::Ok {
+                    write_queued(1);
                 }
+                status
             }
-            Err(error) => {
-                rt.last_error = Some((StellarStatus::InvalidArgument, error.to_string()));
-                StellarStatus::InvalidArgument
-            }
+            Err(status) => status,
         }
     })
+}
+
+/// 셸이 넘긴 macOS 이벤트를 runtime 시간 domain의 공통 입력으로 변환합니다(공통 집합 밖이면 `None`).
+///
+/// 기준점이 없으면 이 이벤트의 수신 시각으로 임시 domain을 만들고, 이벤트가 검증을 통과했을 때만 runtime에
+/// 남깁니다. 거부될 이벤트가 기준점을 영구히 정하지 않게 합니다. 실패는 last error를 설정합니다.
+pub(crate) fn convert_received(
+    rt: &mut Runtime,
+    raw: &StellarMacEvent,
+) -> Result<Option<crate::input::InputEvent>, StellarStatus> {
+    let anchored = rt.input_domain.is_some();
+    let mut domain = match rt.input_domain.take() {
+        Some(domain) => domain,
+        None => {
+            let anchor = InputTimeDomain::new(
+                NativeTimestamp::MacEventSeconds(raw.receive_uptime),
+                &InstantClock,
+            );
+            match anchor {
+                Ok(domain) => domain,
+                Err(error) => {
+                    rt.last_error = Some((
+                        StellarStatus::InvalidArgument,
+                        format!("입력 시각 기준점 오류: {error}"),
+                    ));
+                    return Err(StellarStatus::InvalidArgument);
+                }
+            }
+        }
+    };
+    let converted = convert_mac_event(raw, &mut domain);
+    if anchored || converted.is_ok() {
+        rt.input_domain = Some(domain);
+    }
+    converted.map_err(|error| {
+        rt.last_error = Some((StellarStatus::InvalidArgument, error.to_string()));
+        StellarStatus::InvalidArgument
+    })
+}
+
+/// 공통 입력을 runtime 입력 대기열에 넣습니다. 끝 항목 병합도 반영으로 보고, 가득 차면 `QueueFull`입니다.
+pub(crate) fn queue_input(
+    rt: &mut Runtime,
+    input: crate::input::InputEvent,
+    received: u64,
+) -> StellarStatus {
+    let receipt = InputReceipt::new(input.timestamp().get(), received);
+    match rt.input.push_received(input, receipt) {
+        PushOutcome::Queued | PushOutcome::Coalesced => StellarStatus::Ok,
+        PushOutcome::Full => {
+            rt.last_error = Some((
+                StellarStatus::QueueFull,
+                format!("입력 대기열이 가득 찼습니다({INPUT_QUEUE_CAPACITY})"),
+            ));
+            StellarStatus::QueueFull
+        }
+    }
 }
 
 /// 입력 대기열의 다음 공통 입력 이벤트를 직렬화 바이트(`InputEvent::encode`)로 읽습니다(FIFO).

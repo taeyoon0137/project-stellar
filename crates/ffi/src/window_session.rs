@@ -333,8 +333,9 @@ pub unsafe extern "C" fn stellar_window_session_fit_root(
     })
 }
 
-/// 창의 active viewport 내용을 화면 point 단위로 이동합니다. 문서·history는 바꾸지 않습니다.
-/// 완료는 `STELLAR_EVENT_WINDOW_VIEW_CHANGED` 또는 `STELLAR_EVENT_REQUEST_FAILED`입니다.
+/// 창의 active viewport 내용을 화면 point 단위로 이동합니다(Hand 도구 드래그). 문서·history는 바꾸지 않습니다.
+/// 완료는 `STELLAR_EVENT_WINDOW_VIEW_CHANGED` 또는 `STELLAR_EVENT_REQUEST_FAILED`입니다. 스크롤은
+/// `stellar_window_session_submit_mac_event`로 코어가 해석합니다.
 ///
 /// # Safety
 /// `out_request`는 null이거나 u64 쓰기가 유효해야 합니다.

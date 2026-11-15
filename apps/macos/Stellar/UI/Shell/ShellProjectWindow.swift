@@ -142,6 +142,21 @@ final class ShellWindowSessionHandle {
         }
     }
 
+    /// 캔버스 원시 입력을 이 창 session으로 보냅니다. 코어가 새 요청을 접수하면 완료 뒤 `completion`을 부르고,
+    /// 대기 중인 요청에 합쳤으면 그 요청의 완료가 반영합니다. 닫혔거나 접수하지 않으면 false입니다.
+    func submitInput(_ event: StellarMacEvent, completion: @escaping () -> Void) -> Bool {
+        guard !isClosed, !isClosing else { return false }
+        switch CoreRuntime.submitWindowEvent(handle: pump.runtimeHandle, session: session, event: event) {
+        case .failure:
+            return false
+        case .success(0):
+            return true
+        case .success(let request):
+            // 창 닫기가 접수된 팬 완료를 기다리도록 다른 요청과 같이 추적합니다.
+            return track({ pump.register(.success(request), $0) }, completion: { _ in completion() })
+        }
+    }
+
     @discardableResult
     func pan(dx: Double, dy: Double, completion: @escaping () -> Void = {}) -> Bool {
         guard !isClosed, !isClosing, viewInfo?.has_view == 1 else { return false }
@@ -592,16 +607,9 @@ final class ShellProjectWindow {
             guard let router, let tool = CanvasToolShortcut.tool(for: event) else { return false }
             return router.dispatch(tool.command)
         }
-        canvasHost.canvasView.scrollWheelHandler = { [weak self] event in
-            guard let session = self?.windowController.windowSession,
-                  event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty else { return false }
-            // AppKit이 시스템 스크롤 방향을 적용한 delta를 그대로 사용합니다. flipped canvas의 y는 아래로 증가합니다.
-            _ = self?.canvasHost.canvasView.cancelFrameGesture?()
-            let pointsPerUnit = event.hasPreciseScrollingDeltas ? 1.0 : 10.0
-            let dx = Double(event.scrollingDeltaX) * pointsPerUnit
-            let dy = Double(event.scrollingDeltaY) * pointsPerUnit
-            guard dx.isFinite, dy.isFinite else { return false }
-            return session.pan(dx: dx, dy: dy) { [weak self] in self?.canvasHost.canvasView.refreshFrames() }
+        canvasHost.canvasView.windowInputSink = { [weak self] event in
+            guard let session = self?.windowController.windowSession else { return false }
+            return session.submitInput(event) { [weak self] in self?.canvasHost.canvasView.refreshFrames() }
         }
         canvasHost.canvasView.setAccessibilityHelp(String(
             localized: "Press V, F, R, O, L, P, T, H, or Z to choose a tool.",

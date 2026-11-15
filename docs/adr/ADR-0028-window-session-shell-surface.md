@@ -274,16 +274,27 @@ U125가 ADR 없이 넣은 복구 경로를 아키텍처 §22.3 범위(Restore·D
 
 ## 스크롤의 창별 팬 연결 — XII.10.37 부분 구현
 
-- `stellar_window_session_pan(handle, session, dx, dy, out_request)`는 기존 runtime `pan_viewport`를 호출합니다.
-  delta는 화면 point 단위의 내용 이동이며, 완료는 기존 `WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`입니다.
-  기존 ABI 구조체·입력 encoding·저장 포맷은 바꾸지 않습니다.
-- 기본 프로젝트 창은 수식키 없는 스크롤 이벤트를 해당 창 session에만 보냅니다.
-  `hasPreciseScrollingDeltas`가 참이면 delta를 point로 그대로 쓰고, 일반 휠은 한 단위를 10 point로 환산합니다.
-  관성 이벤트도 같은 delta 경로로 처리하고, 처리한 입력은 공용 runtime 입력 대기열에 중복 제출하지 않습니다.
-  수식키 조합과 준비되지 않은 창은 기존 입력 경로를 유지합니다.
-- 합성 AppKit 입력의 창별 camera 이동, 연속 입력과 저장 불변성은 호스트 앱에서 확인했습니다.
-  [스크롤 팬 검증 기록](../status/canvas-scroll-pan.md)에 명령과 남은 범위를 기록합니다.
+2026-11-15 검토에서 셸이 스크롤을 해석하던 구조(ADR-0014 XII.3.2 결정 2 위반, XII.3.4 delta 병합 우회,
+접수 거부 시 delta 유실)를 아래처럼 코어로 옮겼습니다.
 
+- 셸 `CanvasView.scrollWheel`은 `StellarMacEvent`를 복사해
+  `stellar_window_session_submit_mac_event(handle, session, event, out_request)`로 그 창 session에 넘깁니다.
+  창 session이 없으면 기존 `stellar_runtime_submit_mac_event`로 보냅니다.
+- 코어는 이벤트를 runtime 시간 domain의 공통 입력으로 바꾼 뒤(`stellar_runtime_submit_mac_event`와 같은 규칙),
+  Shift·Control·Option·Command가 없는 wheel·trackpad 스크롤을 그 창의 팬으로 처리합니다. delta 단위가
+  point(precise scrolling)면 그대로, 줄(일반 휠)이면 한 줄을 `WHEEL_LINE_POINTS`(10pt)로 환산하며, 공통 wheel
+  delta(scroll 양)의 반대 방향이 내용 이동입니다. 관성 단계도 같은 규칙입니다.
+- 팬은 창별 대기 합으로 모읍니다(`AppRuntime::wheel_pan`). 합을 가져갈 job이 이미 대기 중이면 새 요청을 만들지
+  않고 `out_request`는 0입니다. job은 실행 시점의 합 전체로 한 번 이동하고 `WINDOW_VIEW_CHANGED`를 보냅니다.
+  접수가 거부되면(`STELLAR_QUEUE_FULL`) 합을 버리지 않고 다음 스크롤 때 함께 제출합니다. 이동량이 0이면 요청이
+  없습니다.
+- 그 밖의 이벤트(수식키 스크롤 포함)는 runtime 입력 대기열에 넣고 `out_request`는 0입니다.
+- 셸은 접수된 팬 요청의 완료 event를 받은 뒤 표시 목록을 다시 읽고, 창 닫기는 그 완료를 기다립니다. 진행 중인
+  Frame 드래그 미리보기는 화면 좌표라 스크롤이 오면 먼저 취소합니다.
+- `stellar_window_session_pan(handle, session, dx, dy, out_request)`은 Hand 도구 드래그 전용으로 남깁니다(화면
+  point 내용 이동, 완료는 `WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`).
+- 검증은 Rust 테스트로 합니다: runtime `wheel_pan_merges_pending_scroll_and_keeps_a_refused_delta`, C ABI
+  `core_interprets_scroll_as_a_pan_of_only_the_target_window`.
 
 ### 저장된 Frame의 이동
 
