@@ -74,9 +74,11 @@ final class ShellGitDataSource: GitPanelDataSource {
         emit(.status(status))
     }
 
+    /// 이벤트를 꺼낼 패널이 없으면 쌓지 않습니다(패널은 붙을 때 `.refreshStatus`로 현재 상태를 다시 받습니다).
     private func emit(_ event: GitPanelEvent) {
+        guard let onEventsAvailable else { return }
         events.append(event)
-        onEventsAvailable?()
+        onEventsAvailable()
     }
 
     func pollEvent() -> GitPanelEvent? { events.isEmpty ? nil : events.removeFirst() }
