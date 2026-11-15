@@ -550,10 +550,6 @@ static_assert(sizeof(StellarRecoveryCandidate) == 56, "StellarRecoveryCandidate 
 #else
 _Static_assert(sizeof(StellarRecoveryCandidate) == 56, "StellarRecoveryCandidate layout");
 #endif
-#if defined(DEBUG) && DEBUG
-/* Debug native check only: start this handle's app runtime without autosave (before the first project request). ADR-0072. */
-StellarStatus stellar_runtime_check_disable_autosave(uint64_t handle);
-#endif
 /* 파일을 읽으므로 UI thread 밖에서 부릅니다. 없으면 has_candidate 0, 저장소 읽기 실패는 STELLAR_INTERNAL과 last error. */
 StellarStatus stellar_window_recovery_probe(uint64_t handle, uint64_t session, StellarRecoveryCandidate *out_candidate);
 /* probe 결과에 RESTORE 또는 DISCARD를 적용합니다(같은 bytes일 때만). 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED. */
@@ -615,7 +611,6 @@ mod tests {
             "stellar_runtime_submit_mac_event",
             "stellar_runtime_poll_input",
             "stellar_runtime_flush_autosave",
-            "stellar_runtime_check_disable_autosave",
             "STELLAR_AUTOSAVE_STALE",
             "typedef struct StellarMacEvent",
             "STELLAR_MAC_EVENT_VERSION",

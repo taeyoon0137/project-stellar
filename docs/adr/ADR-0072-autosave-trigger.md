@@ -127,9 +127,13 @@ UX.2.2(scrub)·UX.2.9·UX.3.7이 통합되면 같은 판정이 그 제스처에�
 ### 10. Debug 검사 실행
 
 Debug native 검사(`--…-check`)는 dirty·stale 상태와 디스크 bytes를 시간에 걸쳐 단정합니다. 그래서 검사 실행의
-`RuntimeHost`는 Debug 전용 `stellar_runtime_check_disable_autosave(handle)`로 앱 runtime을 자동 저장 없이 시작합니다.
-앱 runtime이 이미 시작됐으면 `STELLAR_INVALID_ARGUMENT`입니다. Release에는 심벌이 없고 Swift 호출도 `#if DEBUG` 안입니다.
-일반 앱 실행은 늘 자동 저장을 켭니다.
+`RuntimeHost`는 코어 runtime을 만들기 전에 검사 전용 환경 변수 `STELLAR_CHECK_DISABLE_AUTOSAVE=1`을 두고(Swift
+`#if DEBUG` 안), Debug 코어는 앱 runtime을 시작할 때 이 값을 보고 자동 저장을 켜지 않습니다. Release 코어는 변수를 읽지
+않습니다. 일반 앱 실행은 늘 자동 저장을 켭니다.
+
+처음에는 Debug 전용 C 함수(`stellar_runtime_check_disable_autosave`, 헤더의 `DEBUG` 블록)로 두었지만, 공개 헤더가 구성마다
+달라지고 Debug 구성에 `DEBUG=1`을 되살려야 해서 ADR-0028의 결정("Debug 전용 창 편집 검사 ABI 삭제")과 어긋났습니다. 헤더를
+바꾸지 않는 환경 변수로 바꿨습니다.
 
 ## Alternatives
 
@@ -159,7 +163,7 @@ Debug native 검사(`--…-check`)는 dirty·stale 상태와 디스크 bytes를 
   - `StellarWindowSessionInfo`를 version 3으로 올립니다. 끝에 `autosave`(u32)와 `reserved`(u32, 0)를 더해 88 → 96 byte가
     됩니다. 앞 필드의 offset은 그대로이고, 셸은 기존대로 `version == STELLAR_WINDOW_SESSION_INFO_VERSION`을 확인합니다.
   - 상수 `STELLAR_AUTOSAVE_IDLE`·`_PENDING`·`_SAVING`·`_FAILED`·`_STALE`을 더합니다.
-  - Debug 전용 `stellar_runtime_check_disable_autosave`(헤더의 `DEBUG` 블록)를 더합니다.
+  - 검사 실행의 자동 저장 끄기는 C ABI가 아니라 Debug 코어만 읽는 환경 변수입니다(10절). 헤더는 구성마다 같습니다.
   - 헤더는 `cargo xtask generate-ffi-header`로 생성합니다. 기존 함수·상태 코드·event는 그대로입니다.
 - `config/performance-budgets.yaml`: 최상위 절 `autosave`. 다른 절의 reader는 바뀌지 않습니다.
 - 저장 파일 형식은 바뀌지 않습니다(Save Now와 같은 저장 경로).

@@ -119,8 +119,6 @@ struct Runtime {
     input_domain: Option<InputTimeDomain>,
     /// 프로젝트·문서 요청을 처리하는 앱 runtime(첫 요청에서 시작).
     app: Option<AppRuntime>,
-    /// 앱 runtime을 시작할 때 지연 자동 저장을 켤지(ADR-0072). Debug 검사 실행만 끕니다.
-    autosave: bool,
 }
 
 impl Runtime {
@@ -133,7 +131,6 @@ impl Runtime {
             input: InputQueue::new(INPUT_QUEUE_CAPACITY),
             input_domain: None,
             app: None,
-            autosave: true,
         }
     }
 
@@ -144,7 +141,7 @@ impl Runtime {
                 Ok(mut app) => {
                     app.enable_recovery();
                     // 앱 runtime은 지연 자동 저장을 켭니다(ADR-0072). 예산 값이 잘못되면 Save Now로만 저장합니다.
-                    if self.autosave {
+                    if !autosave::disabled_for_native_checks() {
                         if let Err(error) = app.enable_autosave() {
                             eprintln!("Stellar autosave: {error}");
                         }

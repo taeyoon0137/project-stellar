@@ -11,13 +11,14 @@ final class RuntimeHost {
     private var destroyed = false
 
     init() {
-        created = (stellar_runtime_create(&handle) == STELLAR_OK)
         #if DEBUG
-        // 검사 실행(`--…-check`)은 dirty·stale 상태를 시간에 걸쳐 단정하므로 자동 저장 없이 시작합니다(ADR-0072).
-        if created, CommandLine.arguments.contains(where: { $0.hasPrefix("--") && $0.hasSuffix("-check") }) {
-            _ = stellar_runtime_check_disable_autosave(handle)
+        // 검사 실행(`--…-check`)은 dirty·stale 상태를 시간에 걸쳐 단정하므로 앱 runtime을 자동 저장 없이 시작합니다
+        // (ADR-0072 10절). C ABI가 아니라 Debug 코어만 읽는 검사 전용 환경 변수로 알립니다.
+        if CommandLine.arguments.contains(where: { $0.hasPrefix("--") && $0.hasSuffix("-check") }) {
+            setenv("STELLAR_CHECK_DISABLE_AUTOSAVE", "1", 1)
         }
         #endif
+        created = (stellar_runtime_create(&handle) == STELLAR_OK)
     }
 
     /// 소유한 handle의 코어 버전 문자열.

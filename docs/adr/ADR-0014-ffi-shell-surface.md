@@ -139,8 +139,8 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
     저장되지 않은 완료 편집을 debounce 없이 캡처하도록 접수하고 기다리지 않습니다. 요청이 아니므로 request id와 완료
     event가 없고 outbox 상한을 쓰지 않습니다. 앱 runtime이 아직 없으면 `STELLAR_OK`, 대기열이 차면 `STELLAR_QUEUE_FULL`.
     자동 저장 결과는 창 session 상태 snapshot(`StellarWindowSessionInfo` v3의 `autosave`, ADR-0028)과 상태 세대로만
-    셸에 돌아옵니다. Debug 전용 `stellar_runtime_check_disable_autosave(handle)`는 검사 실행의 앱 runtime을 자동 저장
-    없이 시작합니다(앱 runtime 시작 전만, 이후는 `STELLAR_INVALID_ARGUMENT`).
+    셸에 돌아옵니다. 검사 실행에서 자동 저장을 끄는 방법은 C ABI가 아니라 Debug 코어만 읽는 환경 변수입니다(ADR-0072
+    10절). 공개 헤더에는 구성별 조건 선언이 없습니다(ADR-0028).
 
 ### 캔버스 Text 편집
 

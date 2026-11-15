@@ -419,8 +419,12 @@ hit test에는 bounds 기준 정규화 반경을 쓰는 규칙은 그대로입�
 - Save Now(`STELLAR_COMMAND_SAVE_NOW`)는 그 창을 포함한 진행 중인 자동 저장 쓰기를 먼저 기다려 반영한 뒤 남은 편집만
   저장합니다. 기다림이 `window_close_flush_timeout_ms`를 넘으면 `STELLAR_FAILURE_SAVE_FAILED`입니다. 기존 저장 규칙과
   실패 코드는 그대로입니다.
-- 앱 비활성화 flush `stellar_runtime_flush_autosave`와 Debug 검사 전환 `stellar_runtime_check_disable_autosave`의
-  기록은 ADR-0014 XII.6 10번과 ADR-0072입니다.
+- 앱 비활성화 flush `stellar_runtime_flush_autosave`의 기록은 ADR-0014 XII.6 10번과 ADR-0072입니다.
+- 통합 때 UX-E의 Debug 전용 `stellar_runtime_check_disable_autosave`를 살리려고 헤더의 `#if defined(DEBUG) && DEBUG`
+  블록과 Debug 구성의 `DEBUG=1`이 되살아났습니다. 위 "Debug 전용 창 편집 검사 ABI 삭제" 결정(구성마다 같은 공개
+  헤더)을 지키려고 셋을 다시 지웠습니다. 검사 실행에서 자동 저장을 끄는 방법은 Debug 코어가 앱 runtime을 시작할 때
+  읽는 검사 전용 환경 변수 `STELLAR_CHECK_DISABLE_AUTOSAVE=1`입니다(ADR-0072 10절). Release 코어는 이 변수를 읽지
+  않습니다.
 
 ## 컴포넌트 라이브러리 창 계열 ABI 제거 (2026-11-15 검토)
 
