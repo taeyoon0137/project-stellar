@@ -156,7 +156,7 @@ if [ "$WELCOME" -eq 0 ]; then
     echo "qa: 샘플이 완성된 Stellar 프로젝트가 아닙니다(stellar.yaml·.git·design/current 중 없음): $SAMPLE (--fresh로 다시 만드세요)" >&2
     exit 1
   fi
-  # 새로 만들었든 있던 샘플을 쓰든 같은 줄로 경로를 알립니다(docs/qa/README.md 3절, QA0-08).
+  # 새로 만들었든 있던 샘플을 쓰든 같은 줄로 경로를 알립니다(docs/qa/README.md 1절, QA0-08).
   echo "샘플 프로젝트: $SAMPLE"
 fi
 
