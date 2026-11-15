@@ -1407,23 +1407,6 @@ Working Tree 파일을 Stage 목적으로 임시 수정하지 않습니다. 참�
 
 Git index가 Staged 상태의 유일한 원본입니다. Stellar의 UI 캐시를 별도 원본으로 취급하지 않습니다.
 
-실제 index 적용은 기존 trusted GitRunner의 stdin 승인 경계를 사용합니다. 공식 Git 자식이
-index lock inode를 쓰기 FD로 보유하는지 확인한 뒤 잠금 안에서 기준 snapshot·index bytes·flags를
-비교하고, Git의 index-read 완료로 정리 handler 준비도 확인한 뒤 검증된 여러 경로를 하나의 `update-index --index-info` 입력으로 전달합니다. 파일 존재나
-고정 대기 시간은 잠금 소유 증거가 아닙니다. 승인 전 실패에는 EOF를 보내지 않고 Git을 취소합니다.
-적용 뒤에는 Index provider를 다시 읽습니다. 결과 소유를 확인할 수 없는 상태는 진단하며 외부
-변경을 무조건 복원으로 덮지 않습니다. 확인된 성공에는 일회용 복원 증표를 발급하고, 복원도
-잠금 안에서 증표의 전체 index bytes가 유지되는지 검사한 뒤 공식 Git으로 inverse 경로를 적용합니다.
-부모 종료가 일부 입력만 EOF로 확정하지 않도록 현재는 적용과 inverse 입력 모두 macOS의
-atomic pipe 쓰기 한도(512 bytes)에 맞는 후보만 승인합니다. 초과 후보는 분할하지 않고 진단합니다.
-검증된 OS/Git/index 지원 범위와 후속 보강은 `docs/task-reports/XIV.6.2.md`와
-`docs/task-reports/XIV.6.4.md`에 기록합니다.
-
-현재 runtime 부분 stage는 `SavedProjectLoader`가 여는 기존 `design/current`·generation·objects
-호환 형식을 대상으로 합니다. ADR-0059의 단일 View 텍스트 원본에 대한 의미 선택 stage는
-아직 연결하지 않았습니다. Git 적용·조건부 복원 경로는 재사용할 수 있지만 텍스트 후보의
-직렬화·검증은 V.10 전환에서 별도로 검증합니다. `.stellar/cache/`는 stage 원본으로 사용하지 않습니다.
-
 ---
 
 ## 27. Semantic Merge와 Conflict
