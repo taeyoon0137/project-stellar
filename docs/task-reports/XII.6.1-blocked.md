@@ -20,7 +20,9 @@
   검사입니다. 2026-11-15 DEV-MAC의 `cargo test --workspace`(종료 0)에 포함되어 통과했습니다.
 - `scripts/macos/smoke.sh` — 2026-11-15 DEV-MAC 실행에서 `shell-integration ok: 176 checks`(메뉴·시작 창의 생성과 열기)는
   통과했습니다. 처음 실행에서는 뒤이은 `--frame-insert-check`가 실패했는데, 원인은 이 행과 무관하게 B3(`ed6bd994`)가
-  지운 Git 패널 HEAD 표시를 검사가 계속 단언한 것이었습니다. 조치 커밋 `1cdaee9f` 뒤 smoke 전체가 종료 0입니다.
+  지운 Git 패널 HEAD 표시를 검사가 계속 단언한 것이었습니다. 그 검사는 UX.2.3 속성 패널 연결(`587de247`)이 지웠고,
+  정리 쪽 조치 커밋 `1cdaee9f`는 빈 커밋이 되어 이 history에 들어오지 않았습니다. UX 1단계 통합 위로 정리를 옮긴
+  브랜치에서 smoke 전체가 종료 0입니다(2026-11-15 `DEV-MAC`, 교차 검토 반영 뒤 다시 실행).
 
 ## 필요한 결정과 환경
 
