@@ -176,11 +176,8 @@ struct SidebarDropTarget: Equatable {
 
 /// 셸이 코어에 보내는 의도. 코어는 일반 Command로 적용해 창별 Undo에 넣습니다(아키텍처 §23, 계획 VII.2).
 enum SidebarCommand: Equatable {
-    // 페이지·View
-    case activatePage(SidebarStableID)
+    // 페이지·View(이름 변경·추가는 코어 Command와 함께 UX.12에서 더합니다)
     case activateView(SidebarStableID)
-    case renamePage(SidebarStableID, name: String)
-    case renameView(SidebarStableID, name: String)
 
     // 레이어
     /// 선택 변경(VII.3.2 SetSelection). 순서는 선택한 순서, `primary`는 마지막으로 더한 행입니다.

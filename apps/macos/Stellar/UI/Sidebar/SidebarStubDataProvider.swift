@@ -86,12 +86,8 @@ final class SidebarStubDataProvider: SidebarDataProvider {
 
     func validate(_ command: SidebarCommand) -> SidebarCommandValidation {
         switch command {
-        case .activatePage(let id):
-            return pages.contains { $0.id == id } ? .allowed : .denied(.unknownNode)
-        case .activateView(let id), .renameView(let id, _):
+        case .activateView(let id):
             return pages.contains { $0.views.contains { $0.id == id } } ? .allowed : .denied(.unknownNode)
-        case .renamePage(let id, _):
-            return pages.contains { $0.id == id } ? .allowed : .denied(.unknownNode)
         case .loadMore: return .denied(.unsupported)
         case .setSelection, .setFilter, .reload:
             return .allowed
@@ -116,26 +112,11 @@ final class SidebarStubDataProvider: SidebarDataProvider {
         performedCommands.append(command)
         guard validate(command).isAllowed else { return }
         switch command {
-        case .activatePage(let id):
-            activePageID = id
-            activeViewID = pages.first { $0.id == id }?.views.first?.id
-            clearSelection()
-            commit(structural: true)
         case .activateView(let id):
             activeViewID = id
             activePageID = pages.first { $0.views.contains { $0.id == id } }?.id
             clearSelection()
             commit(structural: true)
-        case .renamePage(let id, let name):
-            if let index = pages.firstIndex(where: { $0.id == id }) { pages[index].name = name }
-            commit(structural: false)
-        case .renameView(let id, let name):
-            for pageIndex in pages.indices {
-                if let viewIndex = pages[pageIndex].views.firstIndex(where: { $0.id == id }) {
-                    pages[pageIndex].views[viewIndex].name = name
-                }
-            }
-            commit(structural: false)
         case .setSelection(let ids, let primary):
             selection = ids.filter { nodes[$0]?.viewID == activeViewID }
             primarySelection = primary.flatMap { selection.contains($0) ? $0 : nil } ?? selection.last
