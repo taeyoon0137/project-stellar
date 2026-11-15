@@ -347,7 +347,8 @@ pub enum ApplyStageError {
     Delta(stellar_git_porcelain::candidate_delta::CandidateDeltaError),
     /// blob 기록 실패. 미참조 object는 Git GC에 맡깁니다.
     Blob(GitOpError),
-    /// 적용 실패 또는 결과 미확정. 복원 증표가 없어 역쓰기하지 않습니다.
+    /// 적용 실패. 결과 미확정이면 게시 단계가 다시 읽은 index로 되돌렸는지(`RolledBack`) 또는 덮어쓰지
+    /// 않았는지(`OutcomeUnknown`)를 알려 줍니다. 성공 증표가 없으므로 이 단계는 더 역쓰기하지 않습니다.
     Publish(stellar_git_porcelain::index_publish::PublishError),
     /// 실제 Index provider의 semantic 재검증 실패와 조건부 복원 결과.
     Verification {
