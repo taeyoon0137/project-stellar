@@ -41,7 +41,7 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 파일 하나를 직접 고칠 때도 `component.root`와 `root_node.id`는 같은 전체 ID여야 합니다. 이름을 수동으로 변경하면 같은 변경에서 파일명도 새 이름·기존 접미사로 맞춰야 합니다. `check`는 불일치 상태를 거부합니다. CLI는 파일명 변경이나 여러 파일의 원자 저장을 제공하지 않습니다.
 
-macOS의 Component Library는 `design/components/`에 있는 정의를 직접 읽습니다. 일반 캔버스 문서는 아직 generation과 chunk에 저장되며, 기존 바이너리 라이브러리 전체 변환과 다중 파일 복구는 후속 범위입니다. 등록된 Property·Slot·token·state machine, Frame 이외의 자식 종류, 외부 layout 참조, Path clip, 알 수 없는 필드나 버전을 만나면 쓰기를 거부합니다. [ADR-0059](../adr/ADR-0059-text-source-files-with-chunk-cache.md)
+일반 캔버스 문서는 아직 generation과 chunk에 저장되며, 기존 바이너리 라이브러리 전체 변환과 다중 파일 복구는 후속 범위입니다. 등록된 Property·Slot·token·state machine, Frame 이외의 자식 종류, 외부 layout 참조, Path clip, 알 수 없는 필드나 버전을 만나면 쓰기를 거부합니다. [ADR-0059](../adr/ADR-0059-text-source-files-with-chunk-cache.md)
 
 ## macOS 프로젝트 창에서 생성
 
@@ -53,17 +53,9 @@ macOS의 Component Library는 `design/components/`에 있는 정의를 직접 �
 
 선택 트리 안에 다른 종류의 노드, modifier stack, layout 참조 또는 Path clip이 있으면 전체 생성을 거부합니다. 이름 sheet가 열려 있던 선택·View·문서 revision이 다르거나 Git checkout으로 창이 읽은 generation의 hash가 달라져도 기록하지 않습니다. 캔버스의 원래 Frame·자식과 Undo 기록은 유지합니다. 이 명령은 독립 정의를 생성하며 캔버스에 인스턴스를 삽입하지 않습니다.
 
-**View → Component Library**는 열린 프로젝트의 컴포넌트 이름·파일명·Frame 수·root 크기를 보여줍니다. 행을 선택하면 프로젝트 내 경로와 전체 component ID가 표시됩니다. 캔버스나 Layers에서 인스턴스 하나를 선택하고 이 메뉴를 열면 그 인스턴스가 참조하는 정의 행으로 이동합니다. 같은 이름의 정의는 전체 ID로 구분하며, 원본이 누락되면 해당 ID와 함께 안내합니다. 다른 창에서 작업하다 목록으로 돌아오거나 **Refresh**를 누르면 디스크의 현재 원본을 다시 읽습니다. Git checkout으로 같은 generation에서 원본 파일만 바뀐 경우도 반영합니다. 잘못된 파일이나 이중 원본에서는 이전 목록을 비우고 오류를 표시하고, 신뢰를 철회하거나 프로젝트를 닫으면 목록 창도 닫힙니다.
-
-라이브러리에서 행을 선택하고 **Width**, **Height**에 논리 픽셀 크기를 입력한 뒤 **Apply Size** 또는 Return을 누르면 해당 컴포넌트의 root Frame을 즉시 저장합니다. 유한한 0 이상의 크기를 받습니다. 코어는 행에 표시된 전체 component ID와 원본 hash를 확인합니다. Git checkout·수동 편집·CLI 저장으로 같은 파일의 내용이 바뀌었거나 root가 잠겼으면 값을 적용하지 않고 현재 목록을 다시 읽습니다. 무변경은 주석을 포함한 bytes를 보존합니다. 다른 원본의 변경은 선택한 정의가 유효한 한 충돌로 간주하지 않습니다. 이 편집은 문서 generation이나 캔버스 Undo 기록을 만들지 않습니다.
-
-같은 행의 **Edit Fill…**에서 root Frame의 채우기를 편집합니다. **Fill**을 켜면 sRGB 또는 Display P3의 RGB와 알파를 지정할 수 있습니다. 알파 0인 색도 색공간과 RGB를 보존합니다. **Fill**을 끄고 **Apply**를 누르면 해당 Frame의 채우기가 없어집니다. **Cancel**은 파일을 쓰지 않습니다. **Apply**는 시트를 열 때 읽은 원본 hash와 root 잠금을 크기 편집과 같은 규칙으로 확인합니다. 저장하면 현재 문서에서 그 정의를 참조하는 인스턴스들이 같은 문서 revision에서 갱신됩니다.
-
 ## 라이브러리에서 인스턴스 배치
 
-신뢰한 macOS 프로젝트 창은 FSEvents로 `design/components/`와 바로 아래의 `*.stellar.yaml`을 감시합니다. CLI 편집이나 Git 복원 후 캔버스가 원본을 다시 읽어 이미 배치한 인스턴스의 표시와 클릭 영역을 갱신합니다. 창이 계속 활성인 경우에도 동작하며, 문서의 미저장 편집·선택·Undo 기록은 유지됩니다. 내부 심볼릭 링크의 실제 대상만 감시 경로 밖에서 바꾼 경우에는 프로젝트 창으로 돌아오거나 **Refresh**를 눌러 다시 읽습니다.
-
-신뢰한 프로젝트에서 **View → Component Library**로 정의를 선택하고 **Place Instance…**를 누릅니다. 활성 View의 root Frame을 기준으로 X·Y를 논리 픽셀로 입력합니다. 음수와 소수 좌표를 사용할 수 있습니다. **Place**는 새 StableId를 가진 ComponentInstance 한 개를 추가하고 선택합니다. 기존 정의를 여러 번 배치하면 각 인스턴스는 같은 component ID를 참조합니다. 표시되었던 원본의 hash, 활성 View, 문서 revision 또는 기반 generation이 바뀌면 배치하지 않습니다.
+신뢰한 macOS 프로젝트 창은 FSEvents로 `design/components/`와 바로 아래의 `*.stellar.yaml`을 감시합니다. CLI 편집이나 Git 복원 후 캔버스가 원본을 다시 읽어 이미 배치한 인스턴스의 표시와 클릭 영역을 갱신합니다. 창이 계속 활성인 경우에도 동작하며, 문서의 미저장 편집·선택·Undo 기록은 유지됩니다. 내부 심볼릭 링크의 실제 대상만 감시 경로 밖에서 바꾼 경우에는 프로젝트 창으로 돌아오면 다시 읽습니다.
 
 각 배치는 Undo 한 단계이며 **Save Now**가 기존 문서 저장 절차로 기록합니다. 정의 YAML은 쓰지 않습니다. 인스턴스 payload에는 정의 참조와 override가 있고, 위치는 해당 노드 소유의 Transform modifier에 있습니다. 원본을 찾을 수 없으면 `stellar validate`가 인스턴스와 정의 ID를 포함하는 `missing-component-definition` 진단을 냅니다. 정의 이름을 다른 파일에 다시 사용하는 것은 이 참조를 바꾸지 않습니다.
 

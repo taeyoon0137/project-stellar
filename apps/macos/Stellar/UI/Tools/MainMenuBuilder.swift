@@ -62,7 +62,7 @@ enum MainMenuBuilder {
         ]),
         ("View", [
             [.command(.toggleToolbar), .command(.customizeToolbar)],
-            [.command(.toggleSidebar), .command(.toggleInspector), .command(.componentLibrary)],
+            [.command(.toggleSidebar), .command(.toggleInspector)],
             ShellCommand.zoomCommands.map { .command($0) },
             [.command(.selectMoveTool), .command(.selectHandTool), .command(.selectZoomTool)],
             [.command(.toggleRulers)],

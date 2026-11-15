@@ -488,9 +488,7 @@ final class ShellAppCoordinator: NSObject {
             self.performFrameCommand(id, in: projectWindow)
         }
         projectWindow.toolsModel.commandHandler = { [weak projectWindow] command in
-            if command == .componentLibrary {
-                projectWindow?.showComponentLibrary()
-            } else if command == .newComponent || command == .componentFromSelection {
+            if command == .newComponent || command == .componentFromSelection {
                 projectWindow?.promptForComponent(fromSelection: command == .componentFromSelection)
             } else if command == .closeProject {
                 projectWindow?.window?.performClose(nil)

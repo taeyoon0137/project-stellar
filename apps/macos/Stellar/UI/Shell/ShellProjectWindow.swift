@@ -472,7 +472,6 @@ final class ShellProjectWindow {
     var pickedPNG: PickedPNG?
     var imagePickGeneration: UInt64 = 0
     var componentFileWatch: ShellComponentFileWatch?
-    var componentLibrary: ShellComponentLibrary?
     var recoveryPrompt: NSAlert?
     let sidebarSource = ShellSidebarSource()
     private var displayedSelection: StellarSelectionTarget?
@@ -549,11 +548,7 @@ final class ShellProjectWindow {
             self?.updateComponentFileWatch(trusted: trusted)
             self?.reloadComponentCanvas()
             self?.refreshSessionCommands()
-            if !trusted {
-                _ = self?.canvasHost.canvasView.cancelFrameGesture?()
-                self?.componentLibrary?.invalidate()
-                self?.componentLibrary = nil
-            }
+            if !trusted { _ = self?.canvasHost.canvasView.cancelFrameGesture?() }
         }
         inspectorSource.editFrame = { [weak self] frame, change, completion in
             guard let self, let session = self.windowController.windowSession, session.session == frame.session,
@@ -706,7 +701,7 @@ final class ShellProjectWindow {
         var commands = ShellWindowToolsModelStub.sessionCommands(info: info, view: view)
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
         if view?.has_view == 1 { commands.insert(.zoomToFit) }
-        if gitSource.trusted, session != nil { commands.formUnion([.newComponent, .componentLibrary, .selectImageTool]) }
+        if gitSource.trusted, session != nil { commands.formUnion([.newComponent, .selectImageTool]) }
         for command: ShellCommand in [.bringForward, .bringToFront, .sendBackward, .sendToBack] {
             if let flag = command.layerOrderFlag, displayedOrderFlags & flag != 0 { commands.insert(command) }
         }
@@ -970,8 +965,6 @@ final class ShellProjectWindow {
 
     /// 창을 닫습니다: 창 session을 먼저, 그다음 프로젝트 session을 한 번씩 닫습니다.
     func closeSessions() {
-        componentLibrary?.invalidate()
-        componentLibrary = nil
         canvasHost.canvasView.frameSession = nil
         inspectorSource.refresh(nil, trusted: false)
         gitSource.attach(nil)

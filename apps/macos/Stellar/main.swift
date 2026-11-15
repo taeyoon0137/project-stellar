@@ -69,12 +69,6 @@ if let flag = CommandLine.arguments.firstIndex(of: "--document-recovery-check") 
     exit(MainActor.assumeIsolated { ShellDocumentRecoveryCheck.run(URL(fileURLWithPath: home, isDirectory: true), mode: CommandLine.arguments[flag + 2]) } ? 0 : 1)
 }
 
-if let flag = CommandLine.arguments.firstIndex(of: "--component-library-check") {
-    guard CommandLine.arguments.indices.contains(flag + 1), let home = ProcessInfo.processInfo.environment["HOME"],
-          CommandLine.arguments[flag + 1] == home else { exit(1) }
-    exit(MainActor.assumeIsolated { ShellComponentLibraryCheck.run(directory: URL(fileURLWithPath: home, isDirectory: true)) } ? 0 : 1)
-}
-
 if let flag = CommandLine.arguments.firstIndex(where: { ["--component-create-check", "--selected-component-check"].contains($0) }) {
     guard CommandLine.arguments.indices.contains(flag + 1), let home = ProcessInfo.processInfo.environment["HOME"],
           CommandLine.arguments[flag + 1] == home else { exit(1) }

@@ -275,10 +275,6 @@ StellarStatus stellar_project_create(uint64_t handle, const uint8_t *path, size_
 StellarStatus stellar_project_clone(uint64_t handle, const uint8_t *url, size_t url_len, const uint8_t *target, size_t target_len, uint64_t *out_request);
 StellarStatus stellar_project_clone_cancel(uint64_t handle, uint64_t request);
 
-/* Read fresh source components on a worker. Output is a tagged little-endian buffer:
- * 0, u32 legacy chunk count, u32 row count, rows (UUID, root UUID, u32 nodes, f32 width, f32 height,
- * length-prefixed UTF-8 name, filename, hash); or 1, length-prefixed UTF-8 error.
- * out_len reports required bytes. STELLAR_BUFFER_TOO_SMALL means retry with a larger buffer. */
 /* Queues a background component source read and a WINDOW_VIEW_CHANGED event. */
 StellarStatus stellar_window_reload_component_canvas(uint64_t handle, uint64_t session, uint64_t *out_request);
 #ifdef __APPLE__
@@ -286,13 +282,10 @@ StellarStatus stellar_window_reload_component_canvas(uint64_t handle, uint64_t s
  * The trusted window owns the watch until revocation, close, or replacement. */
 int32_t stellar_window_component_watch_fd(uint64_t handle, uint64_t session);
 #endif
-StellarStatus stellar_window_component_library(uint64_t handle, uint64_t session, uint8_t *buf, size_t capacity, size_t *out_len);
-/* Same rows with root fill appended to each: 0 for none, or ColorSpace tag followed by 4 f32le channels. */
 /* Recovery probe returns an empty ticket, a matching-base or separate-copy ticket, or error text.
  * Call probe off the UI thread. Apply submits a request that completes via WINDOW_VIEW_CHANGED. */
 StellarStatus stellar_window_recovery_probe(uint64_t handle, uint64_t session, uint8_t *out, size_t capacity, size_t *out_len);
 StellarStatus stellar_window_recovery_apply(uint64_t handle, uint64_t session, const uint8_t *ticket, size_t ticket_len, const uint8_t *path, size_t path_len, uint64_t *request);
-StellarStatus stellar_window_component_library_with_fill(uint64_t handle, uint64_t session, uint8_t *buf, size_t capacity, size_t *out_len);
 
 /* Conditional root-size edit on a worker. id is 16 bytes; hash is the source SHA-256 shown by the library.
  * Pass an error buffer of STELLAR_EVENT_TEXT_MAX or more before calling. Non-OK may report UTF-8 detail. */

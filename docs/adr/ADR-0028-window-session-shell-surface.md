@@ -244,3 +244,14 @@ Ellipse와 Polygon은 좌상단을 Transform에, 로컬 원점 기준 크기를 
 TL·TR·BR·BL 입력을 표시합니다. 캔버스와 hit test에는 기존의 bounds 기준 정규화 반경을 사용합니다.
 `stellar_window_session_set_frame_corner`는 선택·현재 revision·View·신뢰·잠금을 검증한 뒤
 조회 시점의 selection history sequence가 일치하는지 확인하고 해당 CSS longhand의 `SetProperty` 하나를 Undo 가능한 transaction에 기록합니다.
+
+## 컴포넌트 라이브러리 창 계열 ABI 제거 (2026-11-15 검토)
+
+사용자가 정의하지 않은 Component Library 창(U099)과 그 위의 크기·채우기 편집(U104·U119), 숫자 좌표
+인스턴스 배치(U114), 빈 컴포넌트 생성(U097)은 이 ADR에 기록되지 않은 채 `crates/ffi`를 넓혔습니다.
+2026-11-15 검토에서 반려해 앱 진입점과 함께 아래 ABI를 삭제합니다. 앱에서 컴포넌트를 찾고 배치하고
+편집하는 UX는 사용자 결정(D4) 뒤 새 ABI로 다시 정합니다. 그동안 원본 조회와 편집은 CLI(`stellar query
+<경로> components`, `component-source resize·set-fill·add-frame`)와 MCP `stellar://components`가 맡습니다.
+
+- `stellar_window_component_library`, `stellar_window_component_library_with_fill`: 라이브러리 창 전용
+  행 목록 조회입니다. 창과 함께 삭제했습니다.

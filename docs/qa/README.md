@@ -56,7 +56,7 @@ QA0부터 진행합니다. 앞 단계에서 막히는 문제(앱이 뜨지 않�
 
 - 도형·텍스트·이미지는 Transform·Fill modifier로 위치와 색을 가집니다. Divider 선은 Fill 없이 Stroke(두께 1), Hexagon은 Fill과 Stroke(두께 2)를 함께 가집니다. 인스펙터 Modifiers 섹션 확인용입니다.
 - 이미지 원본은 저장소의 README 히어로 이미지(`assets/docs/hero.jpg`)를 `assets/<prefix>/<hash>.jpg`로 복사한 것입니다.
-- 이 샘플의 “Components” 페이지에는 일반 Frame 버튼이 들어 있습니다. 샘플 생성기는 Hero Image 레이어와 복사한 JPEG를 연결하지 않습니다. 실제 공유 컴포넌트와 PNG의 저장·재열기는 QA2-03, QA2-78~80에서 직접 만든 항목으로 확인합니다.
+- 이 샘플의 “Components” 페이지에는 일반 Frame 버튼이 들어 있습니다. 샘플 생성기는 Hero Image 레이어와 복사한 JPEG를 연결하지 않습니다. 실제 공유 컴포넌트와 PNG의 저장·재열기는 QA2-03, QA2-78에서 직접 만든 항목으로 확인합니다.
 
 ## 4. 진행 방식
 
