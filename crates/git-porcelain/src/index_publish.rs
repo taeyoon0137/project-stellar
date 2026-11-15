@@ -343,6 +343,15 @@ fn protocol_runner(git: &GatedGitRunner) -> Result<GatedGitRunner, GatedRunError
     ))
 }
 
+/// 승인 신호(`index_read_ready`)가 전제하는 "lock 생성 뒤 index 읽기" 순서와 trace2 형식을 확인한 Git 버전.
+/// FD 소유 검사는 이 순서를 증명하지 못하므로 다른 버전은 입력 승인 전에 거부합니다(XIV.6.2).
+const VERIFIED_GIT: (u32, u32, u32) = (2, 54, 0);
+const UNVERIFIED_GIT: &str = "검증된 Git 2.54.0 필요";
+
+fn verified_git_version(stdout: &[u8]) -> bool {
+    crate::version::parse_git_version_output(&String::from_utf8_lossy(stdout)) == Some(VERIFIED_GIT)
+}
+
 // v2.54.0 read_index_from emits this after lock creation/cleanup registration even for an absent index.
 // This is readiness only: the separate kernel FD check still proves lock ownership.
 fn index_read_ready(pid: u32, stderr: &[u8]) -> bool {
@@ -366,7 +375,8 @@ fn index_read_ready(pid: u32, stderr: &[u8]) -> bool {
 
 /// 승인된 blob 후보를 실제 index에 적용하고 Index provider 결과를 대조합니다.
 /// Working Tree나 인메모리 문서에 접근하지 않습니다. 아직 UI/FFI staging 진입점은 아닙니다.
-/// macOS에서 실제 update-index 자식의 쓰기 FD 소유와 선택한 Git의 index 조회 결과를 확인한 뒤 승인합니다.
+/// macOS의 Git 2.54.0(Apple·upstream)에서만 실제 update-index 자식의 쓰기 FD 소유와 index 조회 결과를
+/// 확인한 뒤 승인합니다. 다른 OS와 Git 버전은 입력 승인 전에 `Unsupported`로 거부합니다.
 /// 적용과 복원 입력 모두 atomic pipe 쓰기 한도(512 bytes) 안에 들어야 합니다.
 pub fn publish_candidate(
     git: &GatedGitRunner,
@@ -404,6 +414,10 @@ fn publish_inner(
     }
     if cancel.is_cancelled() {
         return Err(GatedRunError::Run(GitRunError::Cancelled).into());
+    }
+    let version = require_success(git.run_cancellable(&argv(["--version"]), worktree, cancel)?)?;
+    if !verified_git_version(&version.stdout) {
+        return Err(PublishError::Unsupported(UNVERIFIED_GIT));
     }
     let expected = expected_index(candidate)?;
     check_input_budget(candidate)?;

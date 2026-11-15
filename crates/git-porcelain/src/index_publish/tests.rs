@@ -115,6 +115,58 @@ fn flags_probe_requires_exactly_the_base_index_paths() {
 }
 
 #[test]
+fn unverified_git_version_is_rejected_before_index_update() {
+    use std::os::unix::fs::PermissionsExt;
+    assert!(verified_git_version(b"git version 2.54.0\n"));
+    assert!(verified_git_version(
+        b"git version 2.54.0 (Apple Git-157)\n"
+    ));
+    for other in [
+        &b"git version 2.50.1 (Apple Git-155)\n"[..],
+        b"git version 2.54.1\n",
+        b"git version 2.55.0\n",
+        b"",
+    ] {
+        assert!(!verified_git_version(other));
+    }
+    let fx = fixture("publish-version-gate");
+    fx.write("selected", b"base").unwrap();
+    fx.git(["add", "selected"]).unwrap();
+    let c = candidate(
+        &fx,
+        vec![upsert(&fx, "selected", FileMode::REGULAR, b"candidate")],
+    );
+    let real_git = std::env::var_os("STELLAR_INDEX_PUBLISH_TEST_GIT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| crate::test_support::system_git().unwrap());
+    let ran = fx.root().join("update-index-ran");
+    let script = fx.root().join("older-git");
+    let quote = |p: &Path| format!("'{}'", p.to_str().unwrap().replace('\'', "'\\''"));
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\ncase \"$*\" in\n*--version*) echo 'git version 2.50.1 (Apple Git-155)'; exit 0;;\n*update-index*) : > {};;\nesac\nexec {} \"$@\"\n",
+            quote(&ran),
+            quote(&real_git)
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let gate = GatedGitRunner::new(
+        fx.runner().clone().with_test_executable(script),
+        GitTrust::Trusted,
+    );
+    let before = index_bytes(&fx.work().join(".git/index")).unwrap();
+    assert_eq!(
+        publish_candidate(&gate, fx.work(), &c, &GitCancelToken::new()),
+        Err(PublishError::Unsupported(UNVERIFIED_GIT))
+    );
+    assert!(!ran.exists());
+    assert_eq!(index_bytes(&fx.work().join(".git/index")).unwrap(), before);
+    assert!(!fx.work().join(".git/index.lock").exists());
+}
+
+#[test]
 fn modes_deletion_and_valid_directory_file_transitions() {
     for (old, new) in [("d/a", "d"), ("d", "d/a")] {
         let fx = fixture("publish-modes");
