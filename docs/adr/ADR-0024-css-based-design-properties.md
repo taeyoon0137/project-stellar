@@ -279,26 +279,19 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
 
 ### Typography value v1 (IX.11.11)
 
-`TypedValue::Typography`는 tag `0x0C`와 기존 외부 길이 envelope를 유지합니다. 내부 `STTY` + u8 version 1은
-가족 이름의 순서와 선택적 고정 FontFaceRef, font-size, weight, style, stretch, line-height, letter-spacing을 기록합니다.
-FontFaceRef는 X.8.1의 canonical bytes를 공유합니다. 이름마다 길이(u32 LE)와 UTF-8, face 유무(u8)를 기록하며,
-빈 가족 목록과 medium은 design profile이 해석할 CSS initial입니다. medium의 기기별 px나 설치된 family를 저장 시 추정하지 않습니다.
-크기는 1/64 logical px, 굵기·너비(%)·각도(deg)·배수·자간(px 또는 em)은 유한한 canonical f32입니다.
-normal line-height와 inline box별 CSS half-leading, normal letter-spacing과 명시적 0을 구분합니다.
-읽을 수 없는 버전·기존 blob은 원래 bytes를 갖고 `typography-unrecognized`를 반환합니다.
-
-- 고정 FontFaceRef는 파일 hash와 face index만 가리키고 variation axis를 담지 않습니다. axis 값은 font-weight·
-  font-stretch와 run의 font-variation-settings가 정하므로, axis가 있는 face는 encode와 decode가 모두 거부합니다.
-- `TypographyValue`의 기본값은 해석할 수 있는 CSS initial record(`Typography::default()`의 STTY bytes)입니다.
-  binding 안전값(VIII.8.3)과 새 literal도 이 값을 씁니다. 빈 bytes는 해석할 수 없는 값이라 기본값으로 쓰지 않습니다.
-- STTY v1 bytes는 `crates/core-types/src/typography.rs`의 golden 테스트로 고정합니다.
+- `TypedValue::Typography`의 내부 이진 형식(`STTY` v1)은 이 ADR의 결정이 아닙니다. 2026-11-14 Codex 작업이 IX.11.11
+  선행(IX.11.21 migration 경로 등) 없이 이 Accepted ADR에 적었던 형식 기록은
+  [ADR-0067](ADR-0067-canvas-text-input-and-default-fonts.md) §4(Proposed, 확정 아님)로 옮겼습니다. 최종 형식은
+  사용자 결정 D2(텍스트 asset catalog)에 따라 텍스트 원본 ADR이 정합니다.
+- 이 ADR이 정하는 것은 Typography가 CSS longhand(`font-family`, `font-size`, `font-weight`, `font-style`,
+  `font-stretch`, `line-height`, `letter-spacing`)의 묶음 값이라는 어휘와 CSS initial 의미뿐입니다.
 
 ### 문서 Text style 표
 
 - 문서 Text style 표의 저장 위치와 형식은 이 ADR의 결정이 아닙니다.
 - 사용자 결정 D2(2026-11-15)에 따라 style 표와 글꼴·이미지 asset 레코드는 텍스트 asset catalog 한 곳에 두고
   문서는 참조만 합니다. 형식과 migration 경로(IX.11.21)는 텍스트 원본 ADR이 정합니다.
-- 현재 구현의 상태 기록은 ADR-0067 §4(Proposed)에 옮겼습니다.
+- 현재 구현의 상태 기록은 ADR-0067 §4(Proposed, 확정 아님)에 옮겼습니다.
 
 ## Performance
 

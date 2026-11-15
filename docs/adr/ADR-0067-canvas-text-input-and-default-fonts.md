@@ -2,7 +2,16 @@
 
 ## Status
 
-Accepted (2026-11-15, Codex 작업 검토 묶음 B5)
+Proposed (2026-11-15, Codex 작업 검토 묶음 B5, 사용자 확인 대기)
+
+- 검토 계획 0절 3항은 새 결정 ADR을 B2(ADR-0061) 하나로 정했습니다. B5가 이 ADR을 Accepted로 표시한 것은 사용자
+  승인 없는 확정이었으므로 Proposed로 내립니다.
+- §1·§2·§6의 제거·ABI 기록과 §3의 기본값 정정은 B5가 보호 경로(`crates/ffi`, `crates/core-types`)를 바꾼 사실 기록이며
+  코드와 같습니다.
+- 사용자 확인이 필요한 새 결정은 §5(기본 글꼴 chain `Helvetica` → `AppleGothic` → `HiraginoSans-W3`, loader thread,
+  64 MiB 파일 상한)입니다. 검토 계획 B5가 요구한 '기본 글꼴 fallback'을 구현한 선택이며, 확인 전까지 확정이 아닙니다.
+- §4의 '현재 저장 상태'와 Typography value 형식은 결정이 아닌 현행 구현 기록입니다. 사용자 결정 D2의 텍스트 asset
+  catalog ADR이 대체합니다.
 
 ## Context
 
@@ -55,7 +64,7 @@ Accepted (2026-11-15, Codex 작업 검토 묶음 B5)
 - `TypographyValue::default()`는 빈 bytes가 아니라 CSS initial record입니다. 이전 기본값은 해석할 수 없어,
   binding 안전값과 새 literal이 표시할 수 없는 값을 만들었습니다.
   - binding 안전값 golden(`fallback_golden_corpus_v1.golden`)의 Typography 행이 이 값으로 바뀝니다.
-- Typography family의 고정 face에는 variation axis를 넣지 않습니다(ADR-0024에 규칙을 기록합니다).
+- Typography family의 고정 face에는 variation axis를 넣지 않습니다(아래 §4 Typography value 기록).
 - `FontFaceRef`·`FontSource`·`FontFileHash`·`OpenTypeTag`의 형식 테스트는 정의가 있는 core-types로 옮깁니다.
   `stellar-text`에는 다른 테스트가 쓰는 값 helper만 남깁니다.
 
@@ -76,6 +85,22 @@ Accepted (2026-11-15, Codex 작업 검토 묶음 B5)
   - 표에는 기본 typography·글자색, StableId별 typography resource, hash별 project 글꼴과 asset record, 원래
     u32 index별 문단·문자 style이 있습니다.
   - 기존 v1 generation은 빈 style 표로 읽습니다.
+- Typography value 현재 형식(Proposed, 확정 아님, IX.11.11 미완료): 2026-11-14 Codex 커밋 86a2e820이 IX.11.11 선행
+  없이 Accepted ADR-0024에 적었던 기록을 그대로 옮겼습니다. 최종 형식은 D2에 따라 텍스트 원본 ADR이 정합니다.
+
+  `TypedValue::Typography`는 tag `0x0C`와 기존 외부 길이 envelope를 유지합니다. 내부 `STTY` + u8 version 1은
+  가족 이름의 순서와 선택적 고정 FontFaceRef, font-size, weight, style, stretch, line-height, letter-spacing을 기록합니다.
+  FontFaceRef는 X.8.1의 canonical bytes를 공유합니다. 이름마다 길이(u32 LE)와 UTF-8, face 유무(u8)를 기록하며,
+  빈 가족 목록과 medium은 design profile이 해석할 CSS initial입니다. medium의 기기별 px나 설치된 family를 저장 시 추정하지 않습니다.
+  크기는 1/64 logical px, 굵기·너비(%)·각도(deg)·배수·자간(px 또는 em)은 유한한 canonical f32입니다.
+  normal line-height와 inline box별 CSS half-leading, normal letter-spacing과 명시적 0을 구분합니다.
+  읽을 수 없는 버전·기존 blob은 원래 bytes를 갖고 `typography-unrecognized`를 반환합니다.
+
+  - 고정 FontFaceRef는 파일 hash와 face index만 가리키고 variation axis를 담지 않습니다. axis 값은 font-weight·
+    font-stretch와 run의 font-variation-settings가 정하므로, axis가 있는 face는 encode와 decode가 모두 거부합니다.
+  - `TypographyValue`의 기본값은 해석할 수 있는 CSS initial record(`Typography::default()`의 STTY bytes)입니다.
+    binding 안전값(VIII.8.3)과 새 literal도 이 값을 씁니다. 빈 bytes는 해석할 수 없는 값이라 기본값으로 쓰지 않습니다.
+  - STTY v1 bytes는 `crates/core-types/src/typography.rs`의 golden 테스트로 고정합니다.
 
 ### 5. 기본 글꼴 chain과 글꼴 읽기
 
