@@ -1,4 +1,4 @@
-# 컴포넌트별 텍스트 원본 v1–v3
+# 컴포넌트별 텍스트 원본(쓰기 v3)
 
 `stellar component-source`는 빈 공개 인터페이스와 자유 배치 Frame 트리로 이루어진 컴포넌트를 독립 YAML 파일에 저장합니다. 지정한 폴더가 원본이고 `check`는 여기서 실제 `ComponentLibrary`를 재조립합니다. 예를 들어 다음 명령은 이름이 같은 컴포넌트 두 개를 생성합니다.
 
@@ -12,10 +12,10 @@ stellar component-source check design/components
 위 명령이 만드는 파일은 `버튼-8c5619572809.stellar.yaml`과 `버튼-bc6dfb3d3aea.stellar.yaml`입니다.
 
 - 파일명은 `<컴포넌트 이름>-<접미사>.stellar.yaml`입니다. 접미사는 component StableId 16바이트의 SHA-256 digest 앞 12자리 소문자 hex입니다. 파일 내부의 `component.id`와 `component.root`는 전체 StableId입니다. 이름은 파일 이름으로 쓸 수 있어야 하고 전체 파일명은 UTF-8 255바이트 이하여야 합니다. 중복 ID와 대소문자 무시 파일명 충돌은 거부합니다.
-- v1(루트 하나)의 최상위 키는 `format: "stellar-component"`, `schema_version: "1"`, `component`, `root_node`입니다. `component`는 `id`, `name`, `root`를 가집니다. `root_node`는 단일 View 원본과 같은 Frame 레코드입니다. 크기·affine·배경색·테두리·모서리·clipping·표시/잠금·순서 키를 보존합니다. 루트는 부모가 없는 Frame이어야 합니다. [Frame 레코드 문법](text-view-source-v1.md)
-- v2는 v1의 루트와 컴포넌트 필드를 그대로 쓰고 최상위 `children`에 루트 아래 모든 Frame을 기록합니다. 각 항목은 `root_node`와 같은 필드를 가집니다. 파일의 배열은 전체 StableId 오름차순으로 씁니다. 부모는 `parent`, 형제의 화면 순서는 `order_key`로 정하므로 배열에서 손자가 부모보다 먼저 나와도 같은 트리가 됩니다. 중복 ID, 다른 컴포넌트의 부모, 순환, 분리된 노드, 같은 부모의 중복 순서 키는 오류입니다. 기존 v1 파일에 첫 자식을 추가하면 v2가 됩니다.
-- 새 컴포넌트는 `schema_version: "3"`으로 생성합니다. 자식이 있으면 `children`에 기록하고 없으면 키를 생략합니다. 루트와 모든 자식 Frame은 `size` 대신 각각 논리 픽셀 단위의 `width`, `height`를 사용합니다. Frame payload는 `background`, `border`, `clipping`, `corner_radius`, `height`, `layout_mode`, `transform`, `width` 순으로 씁니다. 따라서 v3를 공통 조상으로 삼는 두 브랜치에서 같은 Frame의 폭과 높이를 따로 바꾸면 일반 `git merge`로 두 값을 합칠 수 있습니다. 같은 축을 서로 다른 값으로 바꾸면 충돌합니다.
-- 기존 v1·v2는 열거나 크기를 편집해도 `size: "너비 높이"` 표현을 유지합니다. 이 파일은 한 축씩 고쳐도 일반 Git에서 같은 줄의 충돌이 발생할 수 있습니다. `stellar semantic-merge`는 해당 Frame의 폭·높이를 개별 속성으로 비교합니다. v1·v2 전용 클라이언트는 v3를 열 수 없습니다.
+- 쓰기 버전은 `schema_version: "3"` 하나입니다([ADR-0061](../adr/ADR-0061-text-source-format-and-layout.md) 결정 4). 최상위 키는 `format: "stellar-component"`, `schema_version`, `component`, `root_node`와 자식이 있을 때의 `children`입니다. `component`는 `id`, `name`, `root`를 가집니다. `root_node`와 `children`의 각 항목은 공통 노드 필드(`id`, `parent`, `order_key`, `visible`, `locked`, `display_name`, `kind`, `payload`)를 가진 Frame 레코드입니다. 루트는 부모가 없는 Frame이어야 합니다.
+- `children`은 루트 아래 모든 Frame을 전체 StableId 오름차순으로 기록합니다. 부모는 `parent`, 형제의 화면 순서는 `order_key`로 정하므로 배열에서 손자가 부모보다 먼저 나와도 같은 트리가 됩니다. 중복 ID, 다른 컴포넌트의 부모, 순환, 분리된 노드, 같은 부모의 중복 순서 키는 오류입니다.
+- Frame `payload`는 영속 속성 하나를 키 하나·한 줄로 이름 오름차순에 씁니다: `background`, `border`, `border-bottom-left-radius`, `border-bottom-right-radius`, `border-top-left-radius`, `border-top-right-radius`, `clipping`, `height`, `layout-mode`, `transform`, `width`. 길이와 반경은 논리 픽셀 f32, `transform`은 `a b c d tx ty`, `clipping`은 `disabled` 또는 `frame-bounds`, `background`는 `none` 또는 `srgb 1 0 0 1`처럼 색 공간과 비연관 RGBA, `border`는 `none` 또는 두께 뒤에 같은 색 표현, `layout-mode`는 `none`입니다. 따라서 공통 조상에서 서로 다른 속성을 바꾼 두 브랜치는, 바뀐 두 줄 사이에 바뀌지 않은 줄이 있으면 일반 `git merge`로 합쳐집니다. 예를 들어 폭과 높이, 왼쪽 위와 왼쪽 아래 모서리가 그렇습니다. 바로 이웃한 줄(예: 왼쪽 위와 오른쪽 위 모서리)은 Git 충돌로 남고 `stellar semantic-merge`가 두 속성을 따로 합칩니다. 같은 속성을 서로 다른 값으로 바꾸면 양쪽 모두 충돌입니다.
+- 이미 커밋된 v1(루트 하나)과 v2(`children` 포함)는 읽기 전용입니다. Frame은 `size: "너비 높이"`, `corner_radius: "좌상 우상 우하 좌하"`, 색·clipping mapping으로 기록되어 있습니다. 무변경 요청은 기존 bytes를 보존하고, 실제로 편집하면 v3로 다시 씁니다. 같은 번호를 재정의하기 전 작업 트리에서만 쓰인 v3 문법(`corner_radius` 한 줄)은 알 수 없는 키로 거부합니다.
 - `check`는 지정 폴더 바로 아래의 모든 `.stellar.yaml`을 제한 YAML로 검사하고, 이름과 접미사, 전체 component·Frame ID, tree 소유권이 일치하는 정의를 StableId 순으로 반환합니다. `node_count`에는 루트도 포함됩니다. 파일당 1 MiB, 폴더당 4,096개까지 허용합니다. 캐시, 중앙 색인이나 generation은 필요하지 않습니다.
 - `resize <파일> <source_hash> <너비> <높이>`는 root Frame의 크기를 논리 픽셀로 바꿉니다. `source_hash`는 `create` 또는 `check` 결과에서 얻습니다. 크기는 유한한 비음수 f32이며 결과 JSON에서는 최단 왕복 문자열입니다. 실제 변경은 해당 파일 하나를 결정론적으로 다시 씁니다. 무변경 요청은 주석과 서식을 포함한 기존 bytes를 보존합니다. 협조적 CLI writer는 원본 폴더 잠금을 공유하고, 외부 변경으로 hash가 다르면 종료 코드 75로 실패합니다.
 
@@ -65,7 +65,7 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 `revision`은 프로젝트의 바이너리 generation을 가리킵니다. Git checkout이나 미커밋 YAML 편집은 generation을 올리지 않으므로 같은 MCP 연결에서도 매 요청마다 파일을 다시 읽습니다. 독립된 파일별 버전은 각 항목의 `source_hash`를 사용합니다. 여러 파일을 동시에 편집할 때 단일 시점의 스냅샷을 보장하려면 다중 파일 journal이 필요합니다.
 
-정의별 `stellar query <프로젝트> component <id>`와 headless `stellar://components/{component}{?cursor,limit}`는 같은 저장 트리를 읽습니다. 응답은 `revision`, `component`, `root`, `name`, `source_hash`, `nodes`를 담습니다. 각 노드의 메타데이터와 Frame payload는 v1·v2 저장 데이터에도 v3의 개별 폭·높이 필드를 사용합니다. 표시·잠금은 JSON bool이고 루트 부모는 JSON null입니다. payload의 수치와 색은 원본과 같은 문자열입니다. MCP는 기존 페이지 개수·바이트 상한을 적용하고 세대·파일 hash·프로젝트 및 컴포넌트 ID에 cursor를 묶습니다. 읽기 전용 요청에는 파일 경로가 포함되지 않습니다.
+정의별 `stellar query <프로젝트> component <id>`와 headless `stellar://components/{component}{?cursor,limit}`는 같은 저장 트리를 읽습니다. 응답은 `revision`, `component`, `root`, `name`, `source_hash`, `nodes`를 담습니다. 각 노드의 메타데이터와 Frame payload는 v1·v2 저장 데이터에도 v3의 한 속성 한 줄 키와 값 표현을 사용합니다. 표시·잠금은 JSON bool이고 루트 부모는 JSON null입니다. payload의 수치와 색은 원본과 같은 문자열입니다. MCP는 기존 페이지 개수·바이트 상한을 적용하고 세대·파일 hash·프로젝트 및 컴포넌트 ID에 cursor를 묶습니다. 읽기 전용 요청에는 파일 경로가 포함되지 않습니다.
 
 프로젝트 단위 조회는 프로젝트 내부에서 해석되는 원본만 읽습니다. 정의 폴더가 없거나 해당 확장자의 파일이 없으면 `entries`는 빈 배열이고 `chunk_count`는 generation의 `component-library` 포인터 수입니다. 바이너리 라이브러리와 YAML 원본이 함께 있으면 오류를 반환합니다. 한 요청에 읽는 전체 원본은 64 MiB까지이고, MCP 리소스는 기존 512 KiB 본문 상한을 적용합니다. 파일·캐시·generation을 작성하지 않습니다.
 
@@ -99,7 +99,7 @@ cargo test --locked --offline -p stellar-mcp --test headless_read component_diff
 
 `cargo test -p stellar-cli --test component_source`는 기존 generation을 가진 프로젝트에서 위 두 파일을 생성·커밋하고, 각각의 브랜치에서 한 파일만 수정합니다. 일반 `git merge --no-ff` 후 새 clone에서 `check`가 양쪽 root 크기(240.5 × 64, 32 × 55), 전체 ID와 파일 hash를 재현하며 작업 트리는 깨끗합니다. 한 파일의 편집 전후에 다른 파일 bytes를 직접 비교하고, clone 뒤 기존 프로젝트 설정·generation의 hash가 모두 같은지 확인합니다. 같은 테스트가 component/root 교차 중복 ID, 오래된 hash, 미지원 중첩 Property·Slot·state·token·알 수 없는 Frame 필드와 잘못된 root 참조의 원본 보존, 이름 변경 후 참조를 확인합니다.
 
-`git_and_semantic_merge_of_two_clones_separate_frame_width_and_height`는 같은 v3 Card의 폭을 90에서 144로, 높이를 60에서 96으로 두 clone에서 각각 바꿉니다. 기본 `git merge` 뒤 새 clone의 `stellar query . components`에서 같은 ID와 144 × 96 크기를 확인하고, 두 브랜치가 같은 폭을 144와 128로 바꾼 경우에는 해당 파일에 충돌이 남는지 확인합니다.
+`git_and_semantic_merge_of_two_clones_separate_frame_width_and_height`는 같은 v3 Card의 폭을 90에서 144로, 높이를 60에서 96으로 두 clone에서 각각 바꿉니다. 기본 `git merge` 뒤 새 clone의 `stellar query . components`에서 같은 ID와 144 × 96 크기를 확인하고, 두 브랜치가 같은 폭을 144와 128로 바꾼 경우에는 해당 파일에 충돌이 남는지 확인합니다. `frame_corners_merge_by_line_in_git_and_by_property_in_semantic_merge`는 이웃하지 않은 두 모서리 변경이 일반 `git merge`로 합쳐지고, 이웃한 두 모서리 변경은 Git 충돌로 남지만 `semantic-merge`가 두 속성으로 합치며, 같은 모서리의 서로 다른 값은 그 속성만 충돌하는지 확인합니다.
 
 `cargo test -p stellar-project frame_and_component_library_bytes_survive_a_source_round_trip`는 회전·이동, Display P3 배경·테두리, 서로 다른 모서리 반경, 표시·잠금 값을 설정하고 YAML 왕복 전후 실제 라이브러리의 canonical binary bytes를 비교합니다.
 

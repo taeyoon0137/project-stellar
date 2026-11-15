@@ -221,7 +221,10 @@ fn git_and_semantic_merge_of_two_clones_separate_frame_width_and_height() {
 }
 
 #[test]
-fn semantic_merge_compares_each_frame_corner_in_the_component_source() {
+fn frame_corners_merge_by_line_in_git_and_by_property_in_semantic_merge() {
+    // v3는 네 모서리를 이름 오름차순(BL, BR, TL, TR)의 네 줄로 씁니다.
+    // 사이에 바뀌지 않은 줄이 있는 두 모서리는 일반 git merge로 합쳐지고, 바로 이웃한 줄의
+    // 두 모서리는 Git 충돌로 남지만 semantic-merge가 속성 단위로 해결합니다.
     let fixture = TempDir::new("frame-corners");
     let base = fixture.path.join("base");
     let home = fixture.path.join("home");
@@ -233,62 +236,104 @@ fn semantic_merge_compares_each_frame_corner_in_the_component_source() {
     let card = cli(&base, &home, &["create", folder, "Card", A, AR], 0);
     let file = value(&card, "file");
     let original = fs::read_to_string(base.join(file)).unwrap();
-    let old = r#"corner_radius: "0 0 0 0""#;
-    assert_eq!(original.matches(old).count(), 1);
-    git(&base, &["init", "-q"]);
+    let corner = |name: &str, radius: &str| format!("    border-{name}-radius: \"{radius}\"\n");
+    let lines: Vec<_> = ["bottom-left", "bottom-right", "top-left", "top-right"]
+        .into_iter()
+        .map(|name| corner(name, "0"))
+        .collect();
+    assert!(original.contains(&lines.concat()), "{original}");
+    assert!(!original.contains("corner_radius"));
+    git(&base, &["init", "-q", "-b", "main"]);
     git(&base, &["add", "."]);
     git(&base, &["commit", "-qm", "Card"]);
     for side in ["ours", "theirs"] {
         git(&fixture.path, &["clone", "-q", "--no-local", "base", side]);
     }
-    let change = |side: &str, radii: &str| {
-        fs::write(
-            fixture.path.join(side).join(file),
-            original.replace(old, &format!(r#"corner_radius: "{radii}""#)),
-        )
-        .unwrap();
+    let change = |side: &str, edits: &[(&str, &str)]| {
+        let mut text = original.clone();
+        for (name, radius) in edits {
+            text = text.replacen(&corner(name, "0"), &corner(name, radius), 1);
+        }
+        assert_ne!(text, original);
+        fs::write(fixture.path.join(side).join(file), text).unwrap();
+    };
+    let changes = |result: &JsonValue| {
+        result
+            .get("changes")
+            .unwrap()
+            .get("entries")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                assert_eq!(value(entry, "component"), A);
+                assert_eq!(value(entry, "object"), AR);
+                let number = entry.get("new").unwrap().get("value").unwrap();
+                (value(entry, "path").to_owned(), number.clone())
+            })
+            .collect::<Vec<_>>()
+    };
+    let number = |n: i64| JsonValue::Array(vec![JsonValue::int(n)]);
+    // 실제 Git 병합: base 저장소에서 두 clone의 커밋을 합칩니다.
+    let git_merge = |name: &str| {
+        for side in ["ours", "theirs"] {
+            let repo = fixture.path.join(side);
+            git(&repo, &["commit", "-qam", name]);
+            let source = repo.to_str().unwrap().to_owned();
+            git(
+                &base,
+                &["fetch", "-q", &source, &format!("main:{side}-{name}")],
+            );
+        }
+        git(&base, &["switch", "-qc", name, &format!("ours-{name}")]);
+        let merged = git_output(&base, &["merge", "--no-edit", &format!("theirs-{name}")]);
+        let clean = merged.status.success();
+        if !clean {
+            git(&base, &["merge", "--abort"]);
+        }
+        git(&base, &["switch", "-q", "main"]);
+        for side in ["ours", "theirs"] {
+            git(
+                &fixture.path.join(side),
+                &["reset", "-q", "--hard", "HEAD^"],
+            );
+        }
+        clean
     };
     let args = ["base", "ours", "theirs"];
-    change("ours", "11 0 0 0");
-    change("theirs", "0 0 23 0");
+
+    // 비인접(BL과 TL 사이에 BR 줄): 일반 git merge와 semantic-merge가 모두 깨끗합니다.
+    change("ours", &[("top-left", "11")]);
+    change("theirs", &[("bottom-left", "23")]);
     let merged = run(&fixture.path, &home, "semantic-merge", &args, 0);
-    let changes = merged
-        .get("changes")
-        .unwrap()
-        .get("entries")
-        .unwrap()
-        .as_array()
-        .unwrap();
-    assert_eq!(changes.len(), 2);
-    for (entry, (key, number)) in changes.iter().zip([("0x010a", 11), ("0x010c", 23)]) {
-        assert_eq!(value(entry, "component"), A);
-        assert_eq!(value(entry, "object"), AR);
-        assert_eq!(value(entry, "path"), key);
-        assert_eq!(
-            entry
-                .get("new")
-                .unwrap()
-                .get("value")
-                .unwrap()
-                .as_array()
-                .unwrap(),
-            &[JsonValue::int(number)]
-        );
-    }
-    change("theirs", "17 0 23 0");
+    assert_eq!(
+        changes(&merged),
+        [("0x010a".into(), number(11)), ("0x010d".into(), number(23))]
+    );
+    assert!(git_merge("separate"));
+    let combined = git(&base, &["show", &format!("separate:{file}")]);
+    assert!(combined.contains(corner("top-left", "11").trim()));
+    assert!(combined.contains(corner("bottom-left", "23").trim()));
+
+    // 인접(TL과 TR이 이웃한 줄): Git은 충돌로 남기고 semantic-merge는 두 속성을 합칩니다.
+    change("ours", &[("top-left", "11")]);
+    change("theirs", &[("top-right", "17")]);
+    let merged = run(&fixture.path, &home, "semantic-merge", &args, 0);
+    assert_eq!(
+        changes(&merged),
+        [("0x010a".into(), number(11)), ("0x010b".into(), number(17))]
+    );
+    assert!(!git_merge("adjacent"));
+
+    // 같은 모서리를 서로 다른 값으로 바꾸면 그 속성만 충돌하고 나머지 변경은 남습니다.
+    change("ours", &[("top-left", "11")]);
+    change("theirs", &[("top-left", "17"), ("bottom-left", "23")]);
     let unresolved = run(&fixture.path, &home, "semantic-merge", &args, 1);
     let conflicts = unresolved.get("conflicts").unwrap().as_array().unwrap();
     assert_eq!(conflicts.len(), 1);
     assert_eq!(value(&conflicts[0], "path"), "0x010a");
-    let kept = unresolved
-        .get("changes")
-        .unwrap()
-        .get("entries")
-        .unwrap()
-        .as_array()
-        .unwrap();
-    assert_eq!(kept.len(), 1);
-    assert_eq!(value(&kept[0], "path"), "0x010c");
+    assert_eq!(changes(&unresolved), [("0x010d".into(), number(23))]);
 }
 
 #[test]
@@ -617,7 +662,7 @@ const SECOND: &str = "0195c530-3acd-7bc1-8414-c213f61cb970";
 const NESTED: &str = "0195c530-3acd-7bc1-8414-c213f61cb960";
 
 #[test]
-fn legacy_component_edits_keep_the_paired_size_and_original_encoding() {
+fn legacy_component_sources_are_read_and_rewritten_only_as_v3() {
     let fixture = TempDir::new("legacy-component-dimensions");
     let folder = fixture.path.join("components");
     let home = fixture.path.join("home");
@@ -633,12 +678,18 @@ fn legacy_component_edits_keep_the_paired_size_and_original_encoding() {
     let card = &checked.get("components").unwrap().as_array().unwrap()[0];
     assert_eq!(value(card, "id"), A);
     assert_eq!(value(card, "root"), AR);
+    assert_eq!(value(card, "width"), "90");
     let hash = value(card, "source_hash");
+    // 무변경 요청은 v1 bytes와 주석을 보존합니다.
     run(&["resize", file, hash, "90", "60"]);
     assert_eq!(fs::read_to_string(&path).unwrap(), commented);
+    // 실제 편집은 유일한 쓰기 버전 v3로 다시 씁니다.
     let resized = run(&["resize", file, hash, "144", "60"]);
-    let expected = legacy.replace(r#"size: "90 60""#, r#"size: "144 60""#);
-    assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+    let rewritten = fs::read_to_string(&path).unwrap();
+    assert!(rewritten.contains("schema_version: \"3\"\n"), "{rewritten}");
+    assert!(rewritten.contains("    width: \"144\"\n"));
+    assert!(rewritten.contains("    height: \"60\"\n"));
+    assert!(!rewritten.contains("size:") && !rewritten.contains("corner_radius"));
     run(&[
         "add-frame",
         file,
@@ -649,9 +700,9 @@ fn legacy_component_edits_keep_the_paired_size_and_original_encoding() {
         "15",
         "16",
     ]);
-    let old_tree = fs::read_to_string(&path).unwrap();
-    assert!(old_tree.contains(r#"schema_version: "2""#));
-    assert_eq!(old_tree.matches("size: ").count(), 2);
+    let tree = fs::read_to_string(&path).unwrap();
+    assert!(tree.contains("schema_version: \"3\"\n"));
+    assert_eq!(tree.matches("    width: ").count(), 2);
 }
 
 #[test]

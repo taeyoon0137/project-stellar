@@ -69,13 +69,7 @@ fn optional<T>(value: Option<T>, encode: impl FnOnce(T) -> YamlValue) -> YamlVal
 
 fn color(value: Color) -> YamlValue {
     mapping([
-        (
-            "space",
-            scalar(match value.space() {
-                ColorSpace::Srgb => "srgb",
-                ColorSpace::DisplayP3 => "display-p3",
-            }),
-        ),
+        ("space", scalar(space_name(value.space()))),
         (
             "rgba",
             floats(&[value.r(), value.g(), value.b(), value.alpha()]),
@@ -83,13 +77,51 @@ fn color(value: Color) -> YamlValue {
     ])
 }
 
+/// Frame payload 문법.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum FrameDimensions {
-    Paired,
-    Longhands,
+pub(super) enum Grammar {
+    /// 커밋된 View v1과 컴포넌트 v1·v2. 읽기 전용입니다(`size`, `corner_radius`, 색·clipping mapping).
+    Legacy,
+    /// ADR-0061 결정 2: 영속 속성 하나 = 키 하나·한 줄(View v2, 컴포넌트 v3).
+    Current,
 }
 
-pub(super) fn frame(payload: &FramePayload, dimensions: FrameDimensions) -> YamlValue {
+fn space_name(space: ColorSpace) -> &'static str {
+    match space {
+        ColorSpace::Srgb => "srgb",
+        ColorSpace::DisplayP3 => "display-p3",
+    }
+}
+
+/// 원본 한 줄 색: 색 공간과 비연관 RGBA. CLI·MCP 조회도 이 표현을 그대로 씁니다.
+pub fn color_source_value(value: Color) -> String {
+    format!(
+        "{} {} {} {} {}",
+        space_name(value.space()),
+        value.r(),
+        value.g(),
+        value.b(),
+        value.alpha()
+    )
+}
+
+/// 한 속성 한 줄 문법의 Frame 키. 파일의 줄 순서이며 이름 오름차순입니다.
+const FRAME_KEYS: [&str; 11] = [
+    "background",
+    "border",
+    "border-bottom-left-radius",
+    "border-bottom-right-radius",
+    "border-top-left-radius",
+    "border-top-right-radius",
+    "clipping",
+    "height",
+    "layout-mode",
+    "transform",
+    "width",
+];
+
+/// Frame의 모든 영속 속성을 각각 한 줄로 씁니다. 각 줄이 PropertyKey 하나의 병합 단위입니다.
+pub(super) fn frame(payload: &FramePayload) -> YamlValue {
     let FramePayload {
         size,
         transform,
@@ -101,50 +133,76 @@ pub(super) fn frame(payload: &FramePayload, dimensions: FrameDimensions) -> Yaml
     } = payload;
     let (a, b, c, d, tx, ty) = transform.components();
     let (tl, tr, br, bl) = corner_radius.components();
-    let transform = ("transform", floats(&[a, b, c, d, tx, ty]));
-    let clipping = (
-        "clipping",
-        match clipping {
-            Clipping::Disabled => mapping([("kind", scalar("disabled"))]),
-            Clipping::FrameBounds => mapping([("kind", scalar("frame-bounds"))]),
-            Clipping::Path(target) => {
-                mapping([("kind", scalar("path")), ("target", scalar(target.id()))])
-            }
-        },
-    );
-    let background = ("background", optional(*background, color));
-    let border = (
-        "border",
-        optional(*border, |value| {
-            mapping([
-                ("color", color(value.color)),
-                ("thickness", scalar(value.thickness())),
-            ])
-        }),
-    );
-    let corner_radius = ("corner_radius", floats(&[tl, tr, br, bl]));
-    let layout_mode = ("layout_mode", optional(*layout_mode, scalar));
-    match dimensions {
-        FrameDimensions::Paired => mapping([
-            ("size", floats(&[size.width(), size.height()])),
-            transform,
-            clipping,
-            background,
-            border,
-            corner_radius,
-            layout_mode,
-        ]),
-        FrameDimensions::Longhands => mapping([
-            background,
-            border,
-            clipping,
-            corner_radius,
-            ("height", scalar(size.height())),
-            layout_mode,
-            transform,
-            ("width", scalar(size.width())),
-        ]),
-    }
+    let clipping = match clipping {
+        Clipping::Disabled => "disabled".to_owned(),
+        Clipping::FrameBounds => "frame-bounds".to_owned(),
+        Clipping::Path(target) => format!("path {}", target.id()),
+    };
+    mapping([
+        (
+            "background",
+            optional(*background, |value| scalar(color_source_value(value))),
+        ),
+        (
+            "border",
+            optional(*border, |value| {
+                scalar(format!(
+                    "{} {}",
+                    value.thickness(),
+                    color_source_value(value.color)
+                ))
+            }),
+        ),
+        ("border-bottom-left-radius", scalar(bl)),
+        ("border-bottom-right-radius", scalar(br)),
+        ("border-top-left-radius", scalar(tl)),
+        ("border-top-right-radius", scalar(tr)),
+        ("clipping", scalar(clipping)),
+        ("height", scalar(size.height())),
+        ("layout-mode", optional(*layout_mode, scalar)),
+        ("transform", floats(&[a, b, c, d, tx, ty])),
+        ("width", scalar(size.width())),
+    ])
+}
+
+fn legacy_frame(payload: &FramePayload) -> YamlValue {
+    let FramePayload {
+        size,
+        transform,
+        clipping,
+        background,
+        border,
+        corner_radius,
+        layout_mode,
+    } = payload;
+    let (a, b, c, d, tx, ty) = transform.components();
+    let (tl, tr, br, bl) = corner_radius.components();
+    mapping([
+        ("size", floats(&[size.width(), size.height()])),
+        ("transform", floats(&[a, b, c, d, tx, ty])),
+        (
+            "clipping",
+            match clipping {
+                Clipping::Disabled => mapping([("kind", scalar("disabled"))]),
+                Clipping::FrameBounds => mapping([("kind", scalar("frame-bounds"))]),
+                Clipping::Path(target) => {
+                    mapping([("kind", scalar("path")), ("target", scalar(target.id()))])
+                }
+            },
+        ),
+        ("background", optional(*background, color)),
+        (
+            "border",
+            optional(*border, |value| {
+                mapping([
+                    ("color", color(value.color)),
+                    ("thickness", scalar(value.thickness())),
+                ])
+            }),
+        ),
+        ("corner_radius", floats(&[tl, tr, br, bl])),
+        ("layout_mode", optional(*layout_mode, scalar)),
+    ])
 }
 
 fn text_payload(payload: &TextPayload) -> Result<YamlValue, TextSourceError> {
@@ -187,12 +245,15 @@ fn text_payload(payload: &TextPayload) -> Result<YamlValue, TextSourceError> {
     ]))
 }
 
-pub(super) fn node(
-    record: &NodeRecord,
-    dimensions: FrameDimensions,
-) -> Result<YamlValue, TextSourceError> {
+pub(super) fn node(record: &NodeRecord, grammar: Grammar) -> Result<YamlValue, TextSourceError> {
     let (kind, payload) = match &record.payload {
-        NodePayload::Frame(value) => ("frame", frame(value, dimensions)),
+        NodePayload::Frame(value) => (
+            "frame",
+            match grammar {
+                Grammar::Legacy => legacy_frame(value),
+                Grammar::Current => frame(value),
+            },
+        ),
         NodePayload::Fragment(_) => ("fragment", scalar("none")),
         NodePayload::Text(value) => ("text", text_payload(value)?),
         other => {
@@ -259,7 +320,7 @@ fn view_node(
         if stack.is_some() {
             return Err(TextSourceError::Unsupported("modifier stack".into()));
         }
-        return node(record, FrameDimensions::Paired);
+        return node(record, Grammar::Legacy);
     };
     if !instance.has_no_overrides() {
         return Err(TextSourceError::Unsupported(
@@ -514,12 +575,75 @@ fn parse_clipping(value: &YamlValue) -> Result<Clipping, TextSourceError> {
     }
 }
 
-fn parse_frame(
-    value: &YamlValue,
-    dimensions: FrameDimensions,
-) -> Result<FramePayload, TextSourceError> {
-    let required: &[&str] = match dimensions {
-        FrameDimensions::Paired => &[
+fn finite(value: &YamlValue) -> Result<f32, TextSourceError> {
+    let number: f32 = parse(value)?;
+    if !number.is_finite() {
+        return Err(invalid("float은 유한해야 합니다"));
+    }
+    Ok(number)
+}
+
+fn parse_color_line(value: &str) -> Result<Color, TextSourceError> {
+    let (space, rgba) = value
+        .split_once(' ')
+        .ok_or_else(|| invalid("색은 색 공간과 RGBA가 필요합니다"))?;
+    let space = match space {
+        "srgb" => ColorSpace::Srgb,
+        "display-p3" => ColorSpace::DisplayP3,
+        _ => return Err(TextSourceError::Unsupported("알 수 없는 색공간".into())),
+    };
+    let [r, g, b, a] = parse_floats(&YamlValue::scalar(rgba))?;
+    Color::new(space, r, g, b, a).map_err(invalid)
+}
+
+fn parse_clipping_line(value: &str) -> Result<Clipping, TextSourceError> {
+    match value.split_once(' ') {
+        None if value == "disabled" => Ok(Clipping::Disabled),
+        None if value == "frame-bounds" => Ok(Clipping::FrameBounds),
+        Some(("path", target)) => {
+            Ok(Clipping::Path(NodeRef::new(target.parse().map_err(
+                |_| invalid("clipping path 대상 형식이 잘못되었습니다"),
+            )?)))
+        }
+        _ => Err(TextSourceError::Unsupported(
+            "알 수 없는 clipping 방식".into(),
+        )),
+    }
+}
+
+fn parse_border_line(value: &YamlValue) -> Result<Border, TextSourceError> {
+    let (thickness, color) = text(value)?
+        .split_once(' ')
+        .ok_or_else(|| invalid("border는 두께와 색이 필요합니다"))?;
+    let thickness = finite(&YamlValue::scalar(thickness))?;
+    Border::new(parse_color_line(color)?, thickness).map_err(invalid)
+}
+
+fn parse_frame(value: &YamlValue) -> Result<FramePayload, TextSourceError> {
+    fields(value, &FRAME_KEYS)?;
+    let length = |key| finite(field(value, key)?);
+    let [a, b, c, d, tx, ty] = parse_floats(field(value, "transform")?)?;
+    Ok(FramePayload {
+        size: Size2::new(length("width")?, length("height")?).map_err(invalid)?,
+        transform: Transform2D::new(a, b, c, d, tx, ty).map_err(invalid)?,
+        clipping: parse_clipping_line(text(field(value, "clipping")?)?)?,
+        background: parse_optional(field(value, "background")?, |v| parse_color_line(text(v)?))?,
+        border: parse_optional(field(value, "border")?, parse_border_line)?,
+        corner_radius: CornerRadius::new(
+            length("border-top-left-radius")?,
+            length("border-top-right-radius")?,
+            length("border-bottom-right-radius")?,
+            length("border-bottom-left-radius")?,
+        )
+        .map_err(invalid)?,
+        layout_mode: parse_optional(field(value, "layout-mode")?, parse)?,
+    })
+}
+
+fn parse_legacy_frame(value: &YamlValue) -> Result<FramePayload, TextSourceError> {
+    fields(
+        value,
+        &[
             "size",
             "transform",
             "clipping",
@@ -528,25 +652,8 @@ fn parse_frame(
             "corner_radius",
             "layout_mode",
         ],
-        FrameDimensions::Longhands => &[
-            "background",
-            "border",
-            "clipping",
-            "corner_radius",
-            "height",
-            "layout_mode",
-            "transform",
-            "width",
-        ],
-    };
-    fields(value, required)?;
-    let [width, height] = match dimensions {
-        FrameDimensions::Paired => parse_floats(field(value, "size")?)?,
-        FrameDimensions::Longhands => [
-            parse(field(value, "width")?)?,
-            parse(field(value, "height")?)?,
-        ],
-    };
+    )?;
+    let [width, height] = parse_floats(field(value, "size")?)?;
     let [a, b, c, d, tx, ty] = parse_floats(field(value, "transform")?)?;
     let [tl, tr, br, bl] = parse_floats(field(value, "corner_radius")?)?;
     Ok(FramePayload {
@@ -610,11 +717,14 @@ fn parse_text_payload(value: &YamlValue) -> Result<TextPayload, TextSourceError>
 
 pub(super) fn parse_node(
     value: &YamlValue,
-    dimensions: FrameDimensions,
+    grammar: Grammar,
 ) -> Result<NodeRecord, TextSourceError> {
     let payload = field(value, "payload")?;
     let payload = match text(field(value, "kind")?)? {
-        "frame" => NodePayload::Frame(parse_frame(payload, dimensions)?),
+        "frame" => NodePayload::Frame(match grammar {
+            Grammar::Legacy => parse_legacy_frame(payload)?,
+            Grammar::Current => parse_frame(payload)?,
+        }),
         "fragment" if payload.as_scalar() == Some("none") => NodePayload::Fragment(FragmentPayload),
         "fragment" => return Err(invalid("Fragment payload는 none이어야 합니다")),
         "text" => {
@@ -686,7 +796,7 @@ fn parse_view_node(
         return Ok(record);
     }
     if kind != "component-instance" {
-        return parse_node(value, FrameDimensions::Paired);
+        return parse_node(value, Grammar::Legacy);
     }
     let payload = field(value, "payload")?;
     fields(payload, &["component", "placement"])?;
@@ -935,7 +1045,7 @@ mod tests {
             .last()
             .unwrap();
         assert!(matches!(
-            parse_node(value, FrameDimensions::Paired),
+            parse_node(value, Grammar::Legacy),
             Err(TextSourceError::Unsupported(_))
         ));
         for bad in [

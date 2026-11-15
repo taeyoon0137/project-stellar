@@ -20,7 +20,7 @@ use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_storage::{hash::ContentHash, source_file};
 
 use super::text_codec::{
-    field, fields, invalid, mapping, node, parse, parse_node, scalar, text, FrameDimensions,
+    field, fields, invalid, mapping, node, parse, parse_node, scalar, text, Grammar,
 };
 use super::text_source::TextSourceError;
 use crate::folder_name::{collision_key, validate_folder_name};
@@ -30,9 +30,9 @@ pub(crate) const EXT: &str = ".stellar.yaml";
 pub(crate) const MAX_COMPONENT_FILES: usize = 4096;
 pub(crate) const MAX_PROJECT_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 
-/// 컴포넌트 조회에서 사용하는 정규 Frame 속성. 이전 저장 버전도 폭과 높이를 개별 필드로 제공합니다.
+/// 컴포넌트 조회에서 사용하는 Frame 속성. 읽기 전용 v1·v2 원본도 v3의 한 속성 한 줄 표현으로 제공합니다.
 pub fn frame_source_properties(frame: &FramePayload) -> YamlValue {
-    super::text_codec::frame(frame, FrameDimensions::Longhands)
+    super::text_codec::frame(frame)
 }
 
 /// 기본 앱이 선택된 원본 한 개에 수행하는 root Frame 편집.
@@ -47,7 +47,6 @@ pub enum ComponentRootEdit {
 /// 빈 공개 인터페이스와 Free Frame tree의 편집 원본.
 #[derive(Debug)]
 pub struct ComponentSource {
-    dimensions: FrameDimensions,
     definition: ComponentDefinition,
     root: NodeRecord,
     children: BTreeMap<StableId, NodeRecord>,
@@ -71,7 +70,6 @@ impl ComponentSource {
     /// 새 정의와 독립된 root Frame을 만듭니다. ID는 표시 이름과 독립적입니다.
     pub fn new(id: StableId, name: String, root: StableId) -> Result<Self, TextSourceError> {
         let value = Self {
-            dimensions: FrameDimensions::Longhands,
             definition: ComponentDefinition::new(id, name, NodeRef::new(root)),
             children: BTreeMap::new(),
             root: NodeRecord {
@@ -179,7 +177,6 @@ impl ComponentSource {
         let mut records = records.into_iter();
         let root = records.next().ok_or_else(|| invalid("선택이 비었습니다"))?;
         Ok(Self {
-            dimensions: FrameDimensions::Longhands,
             definition: ComponentDefinition::new(ids[0], name, NodeRef::new(root.id)),
             root,
             children: records.map(|r| (r.id, r)).collect(),
@@ -315,16 +312,11 @@ impl ComponentSource {
             .map_err(invalid)
     }
 
-    /// 검증한 정의를 버전에 맞는 canonical YAML로 직렬화합니다.
+    /// 검증한 정의를 유일한 쓰기 버전 v3의 canonical YAML로 직렬화합니다(ADR-0061 결정 4).
     pub fn to_yaml(&self) -> Result<String, TextSourceError> {
-        let version = match self.dimensions {
-            FrameDimensions::Longhands => 3,
-            FrameDimensions::Paired if self.children.is_empty() => 1,
-            FrameDimensions::Paired => 2,
-        };
         let mut fields = vec![
             (scalar("format"), scalar("stellar-component")),
-            (scalar("schema_version"), scalar(version)),
+            (scalar("schema_version"), scalar(3)),
             (
                 scalar("component"),
                 mapping([
@@ -333,7 +325,7 @@ impl ComponentSource {
                     ("root", scalar(self.definition.root.id())),
                 ]),
             ),
-            (scalar("root_node"), node(&self.root, self.dimensions)?),
+            (scalar("root_node"), node(&self.root, Grammar::Current)?),
         ];
         if !self.children.is_empty() {
             fields.push((
@@ -341,7 +333,7 @@ impl ComponentSource {
                 YamlValue::Sequence(
                     self.children
                         .values()
-                        .map(|record| node(record, self.dimensions))
+                        .map(|record| node(record, Grammar::Current))
                         .collect::<Result<_, _>>()?,
                 ),
             ));
@@ -354,10 +346,11 @@ impl ComponentSource {
         if text(field(&v, "format")?)? != "stellar-component" {
             return Err(TextSourceError::Unsupported("컴포넌트 원본 형식".into()));
         }
+        // v1·v2는 커밋된 기존 원본의 읽기 전용 문법입니다. 편집하면 v3로 다시 씁니다.
         let version = text(field(&v, "schema_version")?)?;
-        let dimensions = match version {
-            "1" | "2" => FrameDimensions::Paired,
-            "3" => FrameDimensions::Longhands,
+        let grammar = match version {
+            "1" | "2" => Grammar::Legacy,
+            "3" => Grammar::Current,
             _ => return Err(TextSourceError::Unsupported("컴포넌트 원본 버전".into())),
         };
         let mut children = BTreeMap::new();
@@ -377,7 +370,7 @@ impl ComponentSource {
                 .filter(|records| !records.is_empty())
                 .ok_or_else(|| invalid("children에 자식 Frame이 필요합니다"))?;
             for record in records {
-                let record = parse_node(record, dimensions)?;
+                let record = parse_node(record, grammar)?;
                 if children.insert(record.id, record).is_some() {
                     return Err(invalid("중복 자식 Frame ID"));
                 }
@@ -388,13 +381,12 @@ impl ComponentSource {
         let component = field(&v, "component")?;
         fields(component, &["id", "name", "root"])?;
         let value = Self {
-            dimensions,
             definition: ComponentDefinition::new(
                 parse(field(component, "id")?)?,
                 text(field(component, "name")?)?.to_owned(),
                 NodeRef::new(parse(field(component, "root")?)?),
             ),
-            root: parse_node(field(&v, "root_node")?, dimensions)?,
+            root: parse_node(field(&v, "root_node")?, grammar)?,
             children,
         };
         Ok(value)
@@ -627,77 +619,13 @@ fn project_library(
         return Ok((ComponentLibrary::new(), BTreeMap::new(), limit));
     };
     let mut remaining = limit;
-    // 작은 라이브러리는 worker 시작 비용 없이 순차 처리합니다.
-    const PARALLEL_MIN_FILES: usize = 32;
-    const MAX_DECODE_WORKERS: usize = 4;
-    let workers = if paths.files.len() < PARALLEL_MIN_FILES {
-        1
-    } else {
-        std::thread::available_parallelism().map_or(1, |n| n.get().min(MAX_DECODE_WORKERS))
-    };
-    let inputs = paths.files.into_iter().map(|path| {
+    // 읽기·예산 차감·조립은 정렬된 파일 순서대로 합니다. 앞 파일의 ID 충돌이 뒤 파일의 오류보다 먼저 보고됩니다.
+    let (library, files) = assemble(paths.files.into_iter().map(|path| {
         let bytes = read_project_source(&paths.root, &path, &mut remaining)?;
-        Ok((path, bytes))
-    });
-    let (library, files) = if workers == 1 {
-        assemble(inputs.map(decode_project_file))?
-    } else {
-        assemble_parallel(inputs, workers)?
-    };
+        let (source, hash) = decode_named(&path, &bytes)?;
+        Ok((path, source, hash))
+    }))?;
     Ok((library, files, remaining))
-}
-
-type SourceBytes = Result<(PathBuf, Vec<u8>), TextSourceError>;
-type DecodedSource = Result<(PathBuf, ComponentSource, ContentHash), TextSourceError>;
-
-fn decode_project_file(input: SourceBytes) -> DecodedSource {
-    let (path, bytes) = input?;
-    let (source, hash) = decode_named(&path, &bytes)?;
-    Ok((path, source, hash))
-}
-
-fn assemble_parallel(
-    mut inputs: impl Iterator<Item = SourceBytes>,
-    workers: usize,
-) -> Result<(ComponentLibrary, ComponentFiles), TextSourceError> {
-    use std::sync::mpsc::channel;
-    std::thread::scope(|scope| {
-        let mut lanes = Vec::with_capacity(workers);
-        for _ in 0..workers {
-            let (send, input) = channel();
-            let (result, receive) = channel();
-            std::thread::Builder::new().spawn_scoped(scope, move || {
-                for item in input {
-                    if result.send(decode_project_file(item)).is_err() {
-                        break;
-                    }
-                }
-            })?;
-            lanes.push((send, receive));
-        }
-        // 읽기·예산 차감 및 결과 조립은 정렬된 파일 순서대로 수행합니다.
-        // worker당 파일 하나만 진행하여 미조립 입력도 worker 수 × 1 MiB로 제한합니다.
-        let mut active = std::collections::VecDeque::with_capacity(workers);
-        for (lane, item) in lanes.into_iter().zip(inputs.by_ref()) {
-            lane.0
-                .send(item)
-                .map_err(|_| invalid("컴포넌트 디코딩 worker 종료"))?;
-            active.push_back(lane);
-        }
-        assemble(std::iter::from_fn(|| {
-            let (send, receive) = active.pop_front()?;
-            let result = receive
-                .recv()
-                .unwrap_or_else(|_| Err(invalid("컴포넌트 디코딩 worker 종료")));
-            if let Some(item) = inputs.next() {
-                if send.send(item).is_err() {
-                    return Some(Err(invalid("컴포넌트 디코딩 worker 종료")));
-                }
-                active.push_back((send, receive));
-            }
-            Some(result)
-        }))
-    })
 }
 
 /// 프로젝트 루트 내부 실제 경로에서 읽은 파일 이름과 bytes hash의 결정적 집합 hash.
@@ -897,7 +825,7 @@ mod tests {
     use stellar_document::frame::{Border, CornerRadius};
 
     #[test]
-    fn parallel_project_read_preserves_budget_and_first_error() {
+    fn project_read_preserves_budget_and_first_error() {
         let temp = crate::saved_project::tests::TempDir::new();
         let root = temp.path.canonicalize().unwrap();
         let dir = root.join("design/components");

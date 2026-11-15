@@ -338,6 +338,8 @@ impl DefinitionTree {
                         parent,
                     });
                 }
+                // 형제는 OrderKey 오름차순으로 유지하고 같은 키는 거부하므로, 위치는 OrderKey만으로
+                // 정해집니다(StableId로 순서를 가르지 않습니다).
                 let siblings = self.children.entry(parent).or_default();
                 match siblings.binary_search_by(|id| self.nodes[id].order_key.cmp(&node.order_key))
                 {
