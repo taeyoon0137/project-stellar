@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use crate::candidate_tree::{CandidateTree, CandidateTreeFile};
+use crate::candidate_tree::{CandidateOrigin, CandidateTree, CandidateTreeFile};
 use crate::classify::{classify_project_path, ProjectFileClass};
 use crate::decode::GitPath;
 use crate::object::{FileMode, FileModeKind};
@@ -153,9 +153,11 @@ pub fn compute_candidate_delta(
 
 /// 명시적 읽기 상한으로 변경을 계산합니다.
 ///
-/// index blob은 기존 batch reader로 한 batch만 유지합니다. candidate는 한 파일씩 안전하게 읽고,
-/// 변경된 bytes만 결과에 보관합니다. `max_total_bytes`는 index에서 비교할 bytes 합과 candidate에서
-/// 읽을 bytes 합 각각에 적용합니다. 반환 후 동시 index 변경의 원자적 검증은 설치 단계의 책임입니다.
+/// 기준 index의 같은 경로·같은 blob·같은 종류에서 만든 파일(`CandidateOrigin::Index`)은 내용이 같으므로
+/// 양쪽 모두 읽지 않고 unchanged로 둡니다. 나머지 index blob은 기존 batch reader로 한 batch만 유지하고,
+/// candidate는 한 파일씩 안전하게 읽어 변경된 bytes만 결과에 보관합니다. `max_total_bytes`는 비교 대상인
+/// index bytes 합과 candidate bytes 합 각각에 적용합니다. 반환 후 동시 index 변경의 원자적 검증은 설치
+/// 단계의 책임입니다.
 pub fn compute_candidate_delta_with_limits(
     git: &GatedGitRunner,
     worktree: &Path,
@@ -206,8 +208,18 @@ pub fn compute_candidate_delta_with_limits(
             });
         }
     }
-    let oids = candidate
+    // 추적 파일 전체를 읽지 않도록 같은 index blob에서 만든 파일은 비교·상한 계산에서 뺍니다.
+    let compared: Vec<&CandidateTreeFile> = candidate
         .files()
+        .iter()
+        .filter(|file| match &file.origin {
+            CandidateOrigin::Index { oid } => !indexed
+                .get(&file.path)
+                .is_some_and(|entry| entry.oid == *oid && entry.kind() == Some(file.kind)),
+            CandidateOrigin::WorkingTree | CandidateOrigin::Bytes => true,
+        })
+        .collect();
+    let oids = compared
         .iter()
         .filter_map(|file| indexed.get(&file.path).map(|entry| entry.oid.clone()))
         .collect();
@@ -215,7 +227,7 @@ pub fn compute_candidate_delta_with_limits(
         OrderedBlobReader::new(git, worktree, oids, limits).map_err(CandidateDeltaError::Blob)?;
     let mut changes = Vec::new();
     let mut total = 0u64;
-    for file in candidate.files() {
+    for file in compared {
         let bytes = read_candidate_file(candidate.root(), file, limits, total)?;
         total += bytes.len() as u64;
         let mode = indexed

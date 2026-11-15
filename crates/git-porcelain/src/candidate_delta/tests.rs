@@ -260,8 +260,20 @@ fn missing_or_replaced_candidate_files_fail_without_following_symlinks() {
     let outside = fx.root().join("outside");
     std::fs::create_dir(&outside).unwrap();
     std::fs::write(outside.join("current.stellarref"), b"outside secret").unwrap();
+    // 같은 index blob에서 만든 파일은 읽지 않으므로, 읽기 경로는 serializer bytes로 검사합니다.
+    let files: Vec<_> = unchanged()
+        .into_iter()
+        .map(|file| match file.path().as_bytes() {
+            b"design/current.stellarref" => bytes(
+                "design/current.stellarref",
+                FileModeKind::Regular,
+                b"selected generation\n",
+            ),
+            _ => file,
+        })
+        .collect();
     for change in ["missing", "leaf-link", "parent-link", "mode"] {
-        let candidate = tree(&fx, &unchanged());
+        let candidate = tree(&fx, &files);
         let local = candidate.root().join("design/current.stellarref");
         match change {
             "missing" => std::fs::remove_file(&local).unwrap(),
@@ -292,16 +304,20 @@ fn missing_or_replaced_candidate_files_fail_without_following_symlinks() {
 }
 
 #[test]
-fn mutated_preserved_non_stellar_file_is_rejected() {
+fn unchanged_index_blob_copies_are_neither_read_nor_staged() {
     let Some(fx) = fixture() else { return };
     let candidate = tree(&fx, &unchanged());
+    // 임시 사본을 바꿔도 같은 index blob에서 만든 파일은 비교하지 않으므로 결과에 나오지 않습니다.
     std::fs::write(candidate.root().join("README.md"), b"tampered").unwrap();
-    assert_eq!(
-        compute_candidate_delta(&fx.gated(), fx.work(), &candidate),
-        Err(CandidateDeltaError::PreservedPathChanged {
-            path: p("README.md")
-        })
-    );
+    std::fs::write(
+        candidate.root().join("design/other-document.starchunk"),
+        b"tampered",
+    )
+    .unwrap();
+    let before = fx.runner().spawn_count();
+    let delta = compute_candidate_delta(&fx.gated(), fx.work(), &candidate).unwrap();
+    assert!(delta.changes().is_empty());
+    assert_eq!(fx.runner().spawn_count() - before, 2); // 전후 ls-files만, blob 조회 없음.
 }
 
 #[test]
@@ -365,7 +381,29 @@ fn candidate_and_index_byte_limits_are_enforced() {
     fx.write("assets/a", b"123456").unwrap();
     fx.write("assets/b", b"abcdef").unwrap();
     fx.git(["add", "--", "assets"]).unwrap();
-    let candidate = tree(&fx, &[keep("assets/a"), keep("assets/b")]);
+    // 같은 blob에서 만든 파일은 상한 계산 대상이 아닙니다. 추적 파일 합이 상한을 넘어도 읽지 않습니다.
+    let kept = tree(&fx, &[keep("assets/a"), keep("assets/b")]);
+    let tiny = BlobLimits {
+        max_blob_bytes: 1,
+        max_batch_bytes: 1,
+        max_total_bytes: 1,
+    };
+    let before = fx.runner().spawn_count();
+    assert!(
+        compute_candidate_delta_with_limits(&fx.gated(), fx.work(), &kept, &tiny)
+            .unwrap()
+            .changes()
+            .is_empty()
+    );
+    assert_eq!(fx.runner().spawn_count() - before, 2); // 전후 ls-files만.
+                                                       // serializer bytes는 기존 index blob과 비교하므로 index 쪽 상한을 적용합니다.
+    let candidate = tree(
+        &fx,
+        &[
+            bytes("assets/a", FileModeKind::Regular, b"123456"),
+            bytes("assets/b", FileModeKind::Regular, b"abcdef"),
+        ],
+    );
     let before = fx.runner().spawn_count();
     let limit = BlobLimits {
         max_blob_bytes: 5,
