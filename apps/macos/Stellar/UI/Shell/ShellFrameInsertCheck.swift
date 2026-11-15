@@ -399,7 +399,7 @@ enum ShellFrameInsertCheck {
             let found = center.flatMap { layers.snapshot.layers.rows[SidebarStableID($0.id)] }
             return fail("R 도구·부모 clip·실제 Shape 레이어: tool=\(reopened.toolsModel.snapshot.activeTool) selected=\(center?.isRectangle == true) parent=\(parentHit?.id == child) kind=\(String(describing: found?.kind))/\(String(describing: found?.shapeKind))")
         }
-        func blackShape(_ owner: ShellProjectWindow, moved: Bool = false) -> Bool {
+        func filledShape(_ owner: ShellProjectWindow, moved: Bool = false) -> Bool {
             guard let window = owner.window else { return false }
             let view = owner.canvasHost.canvasView
             guard let image = ShellVisibleFramesCheck.bitmap(view, in: window) else { return false }
@@ -413,12 +413,16 @@ enum ShellFrameInsertCheck {
                 return Array(pixel.prefix(3))
             }
             let interior = moved ? sample(95, 75) : sample(112, 90)
-            return interior == [0, 0, 0] && sample(128, 92) == [255, 255, 255]
+            // 새 도형 채우기는 사용자 앱 설정의 기본 색입니다(D7, 초기 #D9D9D9).
+            let fill = CanvasShapeDefaults.load().fill.nsColor.usingColorSpace(.sRGB)
+            let expected = [fill?.redComponent, fill?.greenComponent, fill?.blueComponent].map { Int((($0 ?? 0) * 255).rounded()) }
+            return interior.count == 3 && zip(interior, expected).allSatisfy { abs($0 - $1) <= 2 }
+                && sample(128, 92) == [255, 255, 255]
 
         }
-        guard blackShape(reopened), reopened.performSessionCommand(.undo), wait(),
+        guard filledShape(reopened), reopened.performSessionCommand(.undo), wait(),
               shown.frameHit(at: viewPoint(112, 90, canvas: shown))?.id == child,
-              reopened.performSessionCommand(.redo), wait(), blackShape(reopened),
+              reopened.performSessionCommand(.redo), wait(), filledShape(reopened),
               reopened.performSessionCommand(.saveNow), wait(), let shapeWindow = reopened.window else {
             return fail("사각형 픽셀·실행취소·다시실행·저장")
         }
@@ -429,7 +433,7 @@ enum ShellFrameInsertCheck {
         again.window?.setContentSize(NSSize(width: 1300, height: 800))
         again.window?.contentView?.layoutSubtreeIfNeeded()
         let visibleShape = again.canvasHost.canvasView
-        guard blackShape(again), visibleShape.frameHit(at: viewPoint(112, 90, canvas: visibleShape))?.id == paintedShape.id,
+        guard filledShape(again), visibleShape.frameHit(at: viewPoint(112, 90, canvas: visibleShape))?.id == paintedShape.id,
               loadShapeRow(again, paintedShape.id)?.kind == .shape,
               pointer(.leftMouseDown, 112, 90, canvas: visibleShape), pointer(.leftMouseUp, 112, 90, canvas: visibleShape),
               wait(), again.windowController.windowSession?.info?.selection_count == 1,
@@ -443,9 +447,9 @@ enum ShellFrameInsertCheck {
               movedSession.info?.undo_depth == beforeMove.undo_depth + 1,
               visibleShape.frameHit(at: viewPoint(95, 75, canvas: visibleShape))?.id == paintedShape.id,
               visibleShape.frameHit(at: viewPoint(117, 90, canvas: visibleShape))?.id == child,
-              blackShape(again, moved: true), again.performSessionCommand(.undo), wait(),
-              visibleShape.frameHit(at: viewPoint(95, 75, canvas: visibleShape))?.id == child, blackShape(again),
-              again.performSessionCommand(.redo), wait(), blackShape(again, moved: true),
+              filledShape(again, moved: true), again.performSessionCommand(.undo), wait(),
+              visibleShape.frameHit(at: viewPoint(95, 75, canvas: visibleShape))?.id == child, filledShape(again),
+              again.performSessionCommand(.redo), wait(), filledShape(again, moved: true),
               again.performSessionCommand(.saveNow), wait(), let savedShapeWindow = again.window else {
             return fail("V Rectangle 이동·Undo/Redo·저장")
         }
@@ -456,7 +460,7 @@ enum ShellFrameInsertCheck {
         restored.window?.setContentSize(NSSize(width: 1300, height: 800))
         restored.window?.contentView?.layoutSubtreeIfNeeded()
         let restoredCanvas = restored.canvasHost.canvasView
-        guard blackShape(restored, moved: true),
+        guard filledShape(restored, moved: true),
               restoredCanvas.frameHit(at: viewPoint(95, 75, canvas: restoredCanvas))?.id == paintedShape.id,
               restoredCanvas.frameHit(at: viewPoint(117, 90, canvas: restoredCanvas))?.id == child,
               loadShapeRow(restored, paintedShape.id)?.shapeKind == .rectangle else {

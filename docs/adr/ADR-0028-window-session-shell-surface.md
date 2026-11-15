@@ -442,3 +442,14 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 - Rectangle 도구는 다른 도형과 같은 `stellar_window_session_insert_shape`(ShapeKind tag 1, 부모 local 두 점)를
   씁니다. 수식키(Shift 정사각형, Option 중심 기준)와 클릭 생성 크기가 다른 도형과 같아집니다. 같은 일을 하던
   `stellar_window_session_insert_rectangle`과 runtime `insert_canvas_rectangle`은 삭제했습니다.
+
+### 새 도형의 기본 스타일 (사용자 결정 D7)
+
+- `stellar_window_session_insert_shape`는 끝에서 둘째 인자로 고정 44 byte `StellarShapeStyle`(`fill`
+  `StellarCanvasColor` offset 0, `stroke` 20, `stroke_width` f32 40)을 받습니다. Rectangle·Ellipse·Polygon은 `fill`로
+  Fill modifier를, Line은 `stroke`·`stroke_width`로 Stroke modifier를 만듭니다. 색공간 0(색 없음), 비유한 값,
+  0 이하 두께는 `INVALID_ARGUMENT`입니다. core는 기본 색을 정하지 않습니다. 이전에는 core가 `default_for`의
+  검정을 근거 없이 썼습니다.
+- macOS 셸은 값을 사용자 앱 설정(Settings ▸ Canvas의 Default Shape Fill·Default Line Color, `UserDefaults`)에서
+  생성 시점에 읽습니다. 초기값은 채우기 #D9D9D9, 선 #000000 1px이고 프로젝트 파일에는 기본값을 쓰지 않습니다.
+  Frame 생성의 흰 배경과 Text 삽입은 이 결정의 범위가 아니어서 바꾸지 않았습니다.

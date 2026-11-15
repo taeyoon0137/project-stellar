@@ -848,7 +848,20 @@ pub unsafe extern "C" fn stellar_window_session_insert_frame(
     }
 }
 
+/// 새 도형의 채우기·선 스타일(고정 44 byte). 셸이 사용자 앱 설정에서 채웁니다(사용자 결정 D7).
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+pub struct StellarShapeStyle {
+    /// Rectangle·Ellipse·Polygon 채우기. 색공간 0은 허용하지 않습니다.
+    pub fill: crate::canvas::StellarCanvasColor,
+    /// Line 선 색. 색공간 0은 허용하지 않습니다.
+    pub stroke: crate::canvas::StellarCanvasColor,
+    /// Line 선 두께(유한, 0보다 큼).
+    pub stroke_width: f32,
+}
+
 /// 부모 local 공간의 시작·끝 두 점으로 Shape를 생성합니다(ShapeKind 저장 tag).
+/// Fill·Stroke modifier는 `style` 값으로 만듭니다. core는 기본 색을 정하지 않습니다.
 /// # Safety
 /// `view`와 `parent`는 각각 16 byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
 #[no_mangle]
@@ -863,10 +876,11 @@ pub unsafe extern "C" fn stellar_window_session_insert_shape(
     y0: f32,
     x1: f32,
     y1: f32,
+    style: StellarShapeStyle,
     out_request: *mut u64,
 ) -> StellarStatus {
-    use stellar_core_types::value::Vec2;
-    use stellar_runtime::app::ShapeKind;
+    use stellar_core_types::value::{FiniteF32, Vec2};
+    use stellar_runtime::app::{ShapeKind, ShapeStyle};
     ffi_guard(move || {
         if !out_request.is_null() {
             unsafe { *out_request = 0 };
@@ -880,6 +894,21 @@ pub unsafe extern "C" fn stellar_window_session_insert_shape(
             Vec2::new(x1, y1),
         ) else {
             return StellarStatus::InvalidArgument;
+        };
+        let (Ok(Some(fill)), Ok(Some(stroke)), Ok(stroke_width)) = (
+            style.fill.decode(),
+            style.stroke.decode(),
+            FiniteF32::new(style.stroke_width),
+        ) else {
+            return StellarStatus::InvalidArgument;
+        };
+        if stroke_width.get() <= 0.0 {
+            return StellarStatus::InvalidArgument;
+        }
+        let style = ShapeStyle {
+            fill,
+            stroke,
+            stroke_width,
         };
         let view = StableId::from_bytes(unsafe { *view });
         let parent = StableId::from_bytes(unsafe { *parent });
@@ -897,6 +926,7 @@ pub unsafe extern "C" fn stellar_window_session_insert_shape(
                 parent,
                 kind,
                 [start, end],
+                style,
             ),
             Err(status) => return status,
         };
@@ -1430,6 +1460,9 @@ pub(crate) mod tests {
         assert_eq!(std::mem::offset_of!(StellarSelectedNode, radii), 68);
         assert_eq!(std::mem::offset_of!(StellarSelectedNode, background), 84);
         assert_eq!(std::mem::size_of::<StellarFrameValue>(), 24);
+        assert_eq!(std::mem::size_of::<StellarShapeStyle>(), 44);
+        assert_eq!(std::mem::offset_of!(StellarShapeStyle, stroke), 20);
+        assert_eq!(std::mem::offset_of!(StellarShapeStyle, stroke_width), 40);
         assert_eq!(std::mem::offset_of!(StellarFrameValue, color), 4);
         assert_eq!(WINDOW_SESSION_INFO_VERSION, 2);
         assert_eq!(std::mem::size_of::<StellarWindowViewInfo>(), 56);

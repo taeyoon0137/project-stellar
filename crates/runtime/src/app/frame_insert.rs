@@ -7,22 +7,32 @@ use stellar_commands::{
 };
 use stellar_core_types::color::{Color, ColorSpace};
 use stellar_core_types::order_key::OrderKey;
-use stellar_core_types::value::{Angle, Rect, Size2, Transform2D, Vec2};
+use stellar_core_types::value::{Angle, FiniteF32, Rect, Size2, Transform2D, Vec2};
 use stellar_document::frame::{CornerRadius, FramePayload};
-use stellar_document::modifier::{
-    ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack,
-};
+use stellar_document::modifier::{ModifierEntry, ModifierId, ModifierPayload, ModifierStack};
 use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_document::shape::{
     EllipseParams, LineCap, LineParams, PolygonParams, RectangleParams, ShapeGeometry,
 };
 use stellar_document::text::{edit_text, TextPayload, TextRange};
 
+/// 새 도형의 채우기·선 스타일. 셸이 사용자 앱 설정에서 읽어 넘기며 core는 기본 색을 정하지 않습니다(사용자 결정 D7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShapeStyle {
+    /// Rectangle·Ellipse·Polygon의 단색 Fill.
+    pub fill: Color,
+    /// Line의 Stroke 색.
+    pub stroke: Color,
+    /// Line의 Stroke 두께(논리 픽셀, 0보다 큼).
+    pub stroke_width: FiniteF32,
+}
+
 enum CanvasItem {
     Frame(Rect),
     Shape {
         origin: Vec2,
         geometry: ShapeGeometry,
+        style: ShapeStyle,
     },
     Text {
         id: StableId,
@@ -51,6 +61,8 @@ impl AppRuntime {
     }
 
     /// 방향이 있는 두 부모 local 점으로 도형을 만들고, 선택까지 한 history 항목에 기록합니다.
+    /// Fill·Stroke modifier는 `style`의 값으로 만듭니다.
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_canvas_shape(
         &self,
         session: WindowSessionHandle,
@@ -59,13 +71,14 @@ impl AppRuntime {
         parent: StableId,
         kind: ShapeKind,
         points: [Vec2; 2],
+        style: ShapeStyle,
     ) -> Result<RequestId, RequestError> {
         self.insert_canvas_item(
             session,
             view,
             revision,
             parent,
-            shape_from_points(kind, points),
+            shape_from_points(kind, points, style),
         )
     }
 
@@ -116,17 +129,22 @@ impl AppRuntime {
     }
 }
 
-fn rectangle(bounds: Rect) -> Option<CanvasItem> {
+fn rectangle(bounds: Rect, style: ShapeStyle) -> Option<CanvasItem> {
     (!bounds.is_empty()).then_some(CanvasItem::Shape {
         origin: bounds.origin(),
         geometry: ShapeGeometry::Rectangle(RectangleParams {
             size: bounds.size(),
             corner_radius: CornerRadius::ZERO,
         }),
+        style,
     })
 }
 
-fn shape_from_points(kind: ShapeKind, [start, end]: [Vec2; 2]) -> Option<CanvasItem> {
+fn shape_from_points(
+    kind: ShapeKind,
+    [start, end]: [Vec2; 2],
+    style: ShapeStyle,
+) -> Option<CanvasItem> {
     let delta = Vec2::new(end.x() - start.x(), end.y() - start.y()).ok()?;
     let size = Size2::new(delta.x().abs(), delta.y().abs()).ok()?;
     let origin = Vec2::new(start.x().min(end.x()), start.y().min(end.y())).ok()?;
@@ -140,9 +158,10 @@ fn shape_from_points(kind: ShapeKind, [start, end]: [Vec2; 2]) -> Option<CanvasI
                     end: delta,
                     cap: LineCap::Butt,
                 }),
+                style,
             });
         }
-        ShapeKind::Rectangle => return rectangle(Rect::new(origin, size)),
+        ShapeKind::Rectangle => return rectangle(Rect::new(origin, size), style),
         ShapeKind::Ellipse if !size.is_empty() => {
             ShapeGeometry::Ellipse(EllipseParams::new(bounds).ok()?)
         }
@@ -151,7 +170,11 @@ fn shape_from_points(kind: ShapeKind, [start, end]: [Vec2; 2]) -> Option<CanvasI
         }
         _ => return None,
     };
-    Some(CanvasItem::Shape { origin, geometry })
+    Some(CanvasItem::Shape {
+        origin,
+        geometry,
+        style,
+    })
 }
 
 fn insert_item(
@@ -204,20 +227,26 @@ fn insert_item(
             }),
             [None, None],
         ),
-        CanvasItem::Shape { geometry, .. } => {
+        CanvasItem::Shape {
+            geometry, style, ..
+        } => {
+            let fill = ModifierPayload::Fill { color: style.fill };
             let (name, paint) = match geometry.kind() {
-                ShapeKind::Rectangle => ("Rectangle", ModifierKind::Fill),
-                ShapeKind::Ellipse => ("Ellipse", ModifierKind::Fill),
-                ShapeKind::Line => ("Line", ModifierKind::Stroke),
-                ShapeKind::Polygon => ("Polygon", ModifierKind::Fill),
+                ShapeKind::Rectangle => ("Rectangle", fill),
+                ShapeKind::Ellipse => ("Ellipse", fill),
+                ShapeKind::Line => (
+                    "Line",
+                    ModifierPayload::Stroke {
+                        color: style.stroke,
+                        width: style.stroke_width,
+                    },
+                ),
+                ShapeKind::Polygon => ("Polygon", fill),
             };
             (
                 name,
                 NodePayload::Shape(geometry),
-                [
-                    Some(ModifierPayload::Transform(transform)),
-                    Some(ModifierPayload::default_for(paint)),
-                ],
+                [Some(ModifierPayload::Transform(transform)), Some(paint)],
             )
         }
         CanvasItem::Text { content, .. } => {
@@ -278,6 +307,15 @@ mod tests {
     use crate::window_session::test_fixtures::{identity, saved_project, sid, window};
     use stellar_commands::selection::Selection;
     use stellar_core_types::value::{Size2, Vec2};
+
+    /// 사용자 설정에서 온 것처럼 쓰는 시험 스타일. core 기본값과 구분되도록 검정이 아닌 색을 씁니다.
+    fn style() -> ShapeStyle {
+        ShapeStyle {
+            fill: Color::new(ColorSpace::Srgb, 0.85, 0.85, 0.85, 1.0).unwrap(),
+            stroke: Color::new(ColorSpace::DisplayP3, 0.25, 0.5, 0.75, 0.5).unwrap(),
+            stroke_width: FiniteF32::new(2.5).unwrap(),
+        }
+    }
 
     fn insert_frame(
         window: &mut ProjectWindowSession,
@@ -366,7 +404,7 @@ mod tests {
             view.id,
             revision,
             view.root_frame,
-            rectangle(bounds).unwrap(),
+            rectangle(bounds, style()).unwrap(),
         )
         .ok()
         .expect("Rectangle 삽입");
@@ -382,7 +420,9 @@ mod tests {
         );
         assert_eq!(
             entries[1].payload,
-            ModifierPayload::default_for(ModifierKind::Fill)
+            ModifierPayload::Fill {
+                color: style().fill
+            }
         );
         assert_eq!(model.children_in_order(view.root_frame).last(), Some(&node));
         assert_eq!(session.view().selection().ids(), [node]);
@@ -423,14 +463,16 @@ mod tests {
             (ShapeKind::Line, point(-12., 50.)),
         ];
         for kind in ShapeKind::ALL {
-            assert!(shape_from_points(kind, [start, start]).is_none());
+            assert!(shape_from_points(kind, [start, start], style()).is_none());
         }
-        assert!(shape_from_points(ShapeKind::Ellipse, [start, point(25., -12.)]).is_none());
+        assert!(
+            shape_from_points(ShapeKind::Ellipse, [start, point(25., -12.)], style()).is_none()
+        );
         let mut saved = Vec::new();
         for (index, (kind, end)) in targets.into_iter().enumerate() {
             let revision = session.revision();
             let previous = session.view().selection().ids().to_vec();
-            let draw = || shape_from_points(kind, [start, end]).unwrap();
+            let draw = || shape_from_points(kind, [start, end], style()).unwrap();
             let request = RequestId(250 + index as u64);
             let id = insert_item(&mut session, request, sid(3), revision, parent, draw())
                 .ok()
@@ -445,7 +487,12 @@ mod tests {
             let (origin, paint) = match shape {
                 ShapeGeometry::Ellipse(ellipse) => {
                     assert_eq!(ellipse.bounds, bounds);
-                    (end, ModifierKind::Fill)
+                    (
+                        end,
+                        ModifierPayload::Fill {
+                            color: style().fill,
+                        },
+                    )
                 }
                 ShapeGeometry::Polygon(polygon) => {
                     assert_eq!(polygon.bounds(), bounds);
@@ -457,13 +504,24 @@ mod tests {
                         ),
                         (5, 0., 0.)
                     );
-                    (end, ModifierKind::Fill)
+                    (
+                        end,
+                        ModifierPayload::Fill {
+                            color: style().fill,
+                        },
+                    )
                 }
                 ShapeGeometry::Line(line) => {
                     assert_eq!(line.start, Vec2::ZERO);
                     assert_eq!(line.end, point(end.x() - start.x(), end.y() - start.y()));
                     assert_eq!(line.cap, LineCap::Butt);
-                    (start, ModifierKind::Stroke)
+                    (
+                        start,
+                        ModifierPayload::Stroke {
+                            color: style().stroke,
+                            width: style().stroke_width,
+                        },
+                    )
                 }
                 _ => panic!("unexpected shape"),
             };
@@ -474,10 +532,7 @@ mod tests {
                 matches!(stack.entries()[0].payload, ModifierPayload::Transform(t)
                 if t.components() == (1., 0., 0., 1., origin.x(), origin.y()))
             );
-            assert_eq!(
-                stack.entries()[1].payload,
-                ModifierPayload::default_for(paint)
-            );
+            assert_eq!(stack.entries()[1].payload, paint);
             saved.push((id, *shape, stack.clone()));
             assert_eq!(session.view().selection().ids(), [id]);
             assert!(session.undo().unwrap());

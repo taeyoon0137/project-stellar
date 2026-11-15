@@ -139,6 +139,7 @@ pub mod recovery;
 pub mod sidebar;
 /// 캔버스의 미확정 입력과 한 번의 본문 확정.
 pub mod text_input;
+pub use frame_insert::ShapeStyle;
 pub use frame_move::{FrameValue, SelectedFrame, SelectedNode};
 pub use node_delete::{SelectionEdit, SelectionEditTarget};
 pub use stellar_document::model::SiblingOrder;

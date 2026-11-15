@@ -99,7 +99,9 @@ extension ShellProjectWindow {
                     self.refreshSessionCommands()
                 }
                 if let kind = tool.drawnShape {
-                    _ = session.insertShape(parent: drag.hit, kind: kind, start: start, end: end, completion: completion)
+                    // 새 도형 색은 생성 시점의 사용자 앱 설정(Settings ▸ Canvas)에서 읽습니다.
+                    _ = session.insertShape(parent: drag.hit, kind: kind, start: start, end: end,
+                                            style: CanvasShapeDefaults.load().style, completion: completion)
                 } else {
                     _ = session.insertFrame(parent: drag.hit, rect: rect, completion: completion)
                 }

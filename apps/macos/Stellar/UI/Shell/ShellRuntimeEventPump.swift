@@ -138,9 +138,10 @@ final class ShellRuntimeEventPump {
     }
 
     func insertShape(session: UInt64, parent: CanvasFrameHit, kind: InspectorShapeKind, start: CGPoint, end: CGPoint,
+                     style: StellarShapeStyle,
                      completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.insertShape(handle: runtimeHandle, session: session, view: parent.viewID, parent: parent.id,
-                                         revision: parent.revision, kind: kind, start: start, end: end), completion)
+                                         revision: parent.revision, kind: kind, start: start, end: end, style: style), completion)
     }
 
     func insertFrame(session: UInt64, parent: CanvasFrameHit, rect: CGRect,

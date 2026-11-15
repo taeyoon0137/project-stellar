@@ -113,10 +113,10 @@ final class ShellWindowSessionHandle {
     }
 
     func insertShape(parent: CanvasFrameHit, kind: InspectorShapeKind, start: CGPoint, end: CGPoint,
-                     completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
+                     style: StellarShapeStyle, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
         guard !isClosed, !isClosing else { return false }
         return track { done in pump.insertShape(session: session, parent: parent, kind: kind, start: start, end: end,
-                                                completion: done) } completion: { completion($0) }
+                                                style: style, completion: done) } completion: { completion($0) }
     }
 
     func insertFrame(parent: CanvasFrameHit, rect: CGRect, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
