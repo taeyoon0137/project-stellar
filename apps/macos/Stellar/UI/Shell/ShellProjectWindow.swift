@@ -662,6 +662,10 @@ final class ShellProjectWindow {
 
     /// 저장 실패를 알리는 곳(창, 제목, 메시지). coordinator가 앱 alert 경로를 넣습니다.
     var alertPresenter: ((_ title: String, _ message: String, _ window: NSWindow?) -> Void)?
+    /// 닫기 저장이 실패했을 때 다시 시도·저장하지 않고 닫기·취소 중 하나를 고르게 합니다(§22.2 선택 팝업).
+    /// coordinator가 앱 시트 경로를 넣습니다.
+    var closeFailureChooser: ((_ message: String, _ window: NSWindow?,
+                               _ choose: @escaping (ShellCloseFailureChoice) -> Void) -> Void)?
 
     /// 창 session 명령(Undo·Redo·Save Now)이 끝날 때마다 받은 완료 event(검사용).
     private(set) var lastSessionCommandEvent: CoreRuntimeEvent?
@@ -820,7 +824,7 @@ final class ShellProjectWindow {
             MainActor.assumeIsolated {
                 guard let self, self.closeAttempt == attempt else { return }
                 self.failClose(String(
-                    localized: "Saving is taking longer than expected. This window is still open and saving may still finish. Close the window again to retry.",
+                    localized: "Saving is taking longer than expected. This window is still open and saving may still finish.",
                     comment: "Close save response timeout; memory and window are retained"
                 ))
             }
@@ -838,7 +842,7 @@ final class ShellProjectWindow {
               !session.isClosed, session.pendingCommandCount == 0 else { return }
         session.commandsDidFinish = nil
         guard let info = session.info else {
-            failClose(String(localized: "The design’s save state couldn’t be checked. This window is still open. Try closing it again."))
+            failClose(String(localized: "The design’s save state couldn’t be checked. This window is still open."))
             return
         }
         if info.has_unsaved_changes == 0 {
@@ -858,7 +862,7 @@ final class ShellProjectWindow {
                       self.failCloseAfterSave(event)
                   }
               }) else {
-            failClose(String(localized: "Saving couldn’t start. This window and its changes are still open. Try closing it again."))
+            failClose(String(localized: "Saving couldn’t start. This window and its changes are still open."))
             return
         }
     }
@@ -895,12 +899,44 @@ final class ShellProjectWindow {
         } else { stale = false }
         failClose(stale
             ? String(localized: "This project changed on disk. This window and its unsaved changes are still open. The disk version wasn’t overwritten.")
-            : String(localized: "The design couldn’t be saved. This window and its changes are still open. Check the project folder, then close the window again to retry."))
+            : String(localized: "The design couldn’t be saved. This window and its changes are still open. Check the project folder."))
     }
 
+    /// 창과 편집은 그대로 둔 채 사용자에게 다음 동작을 묻습니다. 앱 종료 중이면 고른 결과를 종료 흐름에 돌려줍니다.
     private func failClose(_ message: String) {
+        let quit = quitSaveCompletion
+        quitSaveCompletion = nil
+        let agentConfirmed = agentCloseConfirmed
         cancelPendingClose()
-        alertPresenter?(String(localized: "The Window Couldn’t Be Closed"), message, window)
+        guard let closeFailureChooser else {
+            alertPresenter?(String(localized: "The Window Couldn’t Be Closed"), message, window)
+            quit?(false)
+            return
+        }
+        closeFailureChooser(message, window) { [weak self] choice in
+            guard let self, let session = self.windowController.windowSession, !session.isClosed else {
+                quit?(false)
+                return
+            }
+            switch choice {
+            case .retry:
+                if let quit {
+                    // 종료 흐름은 이 창의 저장 결과를 기다립니다. 입력을 끝낼 수 없으면 종료를 취소합니다.
+                    guard self.finishInputBeforeClosing() else { return quit(false) }
+                    if self.shouldCloseAfterSaving(forQuit: quit) { quit(true) }
+                } else {
+                    // 에이전트 확인은 이미 받았으므로 다시 묻지 않고 같은 닫기 경로로 저장을 재시도합니다.
+                    self.agentCloseConfirmed = agentConfirmed
+                    self.window?.performClose(nil)
+                }
+            case .discard:
+                // 저수준 close는 저장하지 않는 명시적 폐기입니다. 창 session과 복구 체크포인트를 함께 버립니다.
+                self.window?.close()
+                quit?(true)
+            case .cancel:
+                quit?(false)
+            }
+        }
     }
 
     /// 취소·실제 닫힘·session 교체 뒤 도착하는 저장 응답은 닫기 권한이 없습니다.
@@ -1021,6 +1057,16 @@ extension ShellProjectWindow: GitPanelHostActions {
         alertPresenter?(String(localized: "Git Is Unavailable"),
                         String(localized: "Install the Xcode Command Line Tools to use Git on this Mac."), window)
     }
+}
+
+/// 닫기 저장이 실패했을 때 사용자가 고른 동작(D6).
+enum ShellCloseFailureChoice {
+    /// 같은 닫기 경로로 저장을 다시 시도합니다.
+    case retry
+    /// 저장하지 않고 창을 닫습니다. 메모리의 편집과 복구 체크포인트를 버립니다.
+    case discard
+    /// 창과 편집을 그대로 둡니다. 앱 종료 중이면 종료를 취소합니다.
+    case cancel
 }
 
 extension CanvasTool {

@@ -58,6 +58,33 @@ final class ShellAppCoordinator: NSObject {
             alert.runModal()
         }
     }
+    /// 닫기 저장 실패 선택 시트(§22.2): 다시 시도·저장하지 않고 닫기·취소. 검사에서 바꿉니다.
+    lazy var closeFailureChooser: (_ message: String, _ window: NSWindow?,
+                                   _ choose: @escaping (ShellCloseFailureChoice) -> Void) -> Void = { message, window, choose in
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = String(localized: "The Window Couldn’t Be Closed")
+        alert.informativeText = message
+        alert.addButton(withTitle: String(localized: "Try Again", comment: "Close failure button"))
+        alert.addButton(withTitle: String(localized: "Close Without Saving", comment: "Close failure button"))
+        alert.addButton(withTitle: String(localized: "Cancel", comment: "Button"))
+        alert.buttons[1].hasDestructiveAction = true
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            switch response {
+            case .alertFirstButtonReturn: choose(.retry)
+            case .alertSecondButtonReturn: choose(.discard)
+            default: choose(.cancel)
+            }
+        }
+        if let window, window.isVisible {
+            alert.beginSheetModal(for: window) { response in
+                // 시트가 창에서 떨어진 뒤에 다시 닫기·종료 판단을 합니다.
+                DispatchQueue.main.async { finish(response) }
+            }
+        } else {
+            finish(alert.runModal())
+        }
+    }
     /// 프로젝트 폴더를 고릅니다(NSOpenPanel). 검사에서 바꿉니다.
     lazy var folderChooser: (_ window: NSWindow?, _ completion: @escaping (String?) -> Void) -> Void = { window, completion in
         let panel = NSOpenPanel()
@@ -498,6 +525,10 @@ final class ShellAppCoordinator: NSObject {
         projectWindow.coreCommandIDs = coreCommandIDs
         projectWindow.alertPresenter = { [weak self] title, message, window in
             self?.alertPresenter(title, message, window)
+        }
+        projectWindow.closeFailureChooser = { [weak self] message, window, choose in
+            guard let self else { return choose(.cancel) }
+            self.closeFailureChooser(message, window, choose)
         }
         let controller = projectWindow.windowController
         controller.shouldCloseHandler = { [weak self, weak projectWindow] in
