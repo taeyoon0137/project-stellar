@@ -263,40 +263,6 @@ fn lock_source_project(
     Ok(guard)
 }
 
-/// 현재 창이 읽은 component ID와 원본 hash가 일치할 때 루트 Frame의 크기를 저장합니다.
-pub fn resize_project_root(
-    root: &Path,
-    project_id: StableId,
-    id: StableId,
-    hash: ContentHash,
-    size: Size2,
-) -> Result<ComponentInfo, Error> {
-    edit_project_root(root, project_id, id, hash, ComponentRootEdit::Size(size))
-}
-
-/// size와 RGBA 편집은 같은 창 원본 잠금과 전체 ID·hash 검사를 사용합니다.
-pub fn edit_project_root(
-    root: &Path,
-    project_id: StableId,
-    id: StableId,
-    hash: ContentHash,
-    edit: ComponentRootEdit,
-) -> Result<ComponentInfo, Error> {
-    let _project = lock_source_project(root, project_id, None)?;
-    let folder = root
-        .join("design/components")
-        .canonicalize()
-        .map_err(|e| Error::Io(e.kind()))?;
-    if !source_directory(root, &folder) {
-        return Err(Error::Invalid(
-            "프로젝트 내부의 컴포넌트 폴더가 필요합니다".into(),
-        ));
-    }
-    let _folder = lock(&folder)?;
-    let (source, file, hash) = component_source::edit_project_root(root, &folder, id, hash, edit)?;
-    Ok(info(&source, file, hash))
-}
-
 fn source_directory(root: &Path, dir: &Path) -> bool {
     let Ok(relative) = dir.strip_prefix(root) else {
         return false;
@@ -505,48 +471,6 @@ mod tests {
             .entries
             .iter()
             .any(|e| e.id == first.id && e.hash == first.hash));
-    }
-
-    #[test]
-    fn project_root_resize_is_conditional_and_preserves_unrelated_source_bytes() {
-        use std::fs;
-        let dir = TempDir::new("component-app-root-size");
-        let root = dir.path.canonicalize().unwrap();
-        scaffold_project(&root);
-        let first = create_in_project(&root, project_id(), "First".into()).unwrap();
-        let other = create_in_project(&root, project_id(), "Other".into()).unwrap();
-        let second_before = fs::read(&other.file).unwrap();
-        let new_size = Size2::new(230.5, 41.0).unwrap();
-        let edit =
-            |id, expected, size| resize_project_root(&root, project_id(), id, expected, size);
-        let saved = edit(first.id, first.hash, new_size).unwrap();
-        assert_eq!(second_before, fs::read(&other.file).unwrap());
-        assert_eq!(
-            query(&open_snapshot(&root).unwrap())
-                .unwrap()
-                .entries
-                .iter()
-                .find(|e| e.id == first.id)
-                .unwrap()
-                .size,
-            new_size
-        );
-        assert!(matches!(
-            edit(first.id, first.hash, new_size),
-            Err(Error::Changed)
-        ));
-        let bytes = fs::read_to_string(&saved.file).unwrap();
-        let commented = format!("# keep comment\n{bytes}");
-        fs::write(&saved.file, &commented).unwrap();
-        let current = ContentHash::compute(commented.as_bytes());
-        assert_eq!(edit(first.id, current, new_size).unwrap().hash, current);
-        assert_eq!(fs::read_to_string(&saved.file).unwrap(), commented);
-        let locked = commented.replace("locked: \"false\"", "locked: \"true\"");
-        assert_ne!(locked, commented);
-        fs::write(&saved.file, &locked).unwrap();
-        let expected = ContentHash::compute(locked.as_bytes());
-        assert!(edit(first.id, expected, Size2::new(1., 1.).unwrap()).is_err());
-        assert_eq!(fs::read_to_string(&saved.file).unwrap(), locked);
     }
 
     #[test]

@@ -605,66 +605,6 @@ fn edit_record(
 /// 조립할 때 읽은 각 원본 경로와 실제 bytes의 hash. 키는 전체 component ID입니다.
 pub type ComponentFiles = BTreeMap<StableId, (PathBuf, ContentHash)>;
 
-/// 프로젝트 라이브러리에서 선택한 정의의 루트 크기를 바꿉니다. byte hash·전체 ID와
-/// writer 잠금을 잡은 디렉터리를 확인한 다음 그 원본 파일 하나만 교체합니다.
-pub fn resize_project_root(
-    root: &Path,
-    dir: &Path,
-    id: StableId,
-    expected: ContentHash,
-    size: Size2,
-) -> Result<(ComponentSource, PathBuf, ContentHash), TextSourceError> {
-    edit_project_root(root, dir, id, expected, ComponentRootEdit::Size(size))
-}
-
-/// 선택한 원본의 크기·채우기를 동일한 CAS·잠금·용량 예산으로 기록합니다.
-pub fn edit_project_root(
-    root: &Path,
-    dir: &Path,
-    id: StableId,
-    expected: ContentHash,
-    edit: ComponentRootEdit,
-) -> Result<(ComponentSource, PathBuf, ContentHash), TextSourceError> {
-    edit_project_root_with_budget(root, dir, id, expected, edit, MAX_PROJECT_SOURCE_BYTES)
-}
-
-fn edit_project_root_with_budget(
-    root: &Path,
-    dir: &Path,
-    id: StableId,
-    expected: ContentHash,
-    edit: ComponentRootEdit,
-    limit: u64,
-) -> Result<(ComponentSource, PathBuf, ContentHash), TextSourceError> {
-    let (_, mut files, remaining) = project_library(root, limit)?;
-    let (path, listed) = files.remove(&id).ok_or(TextSourceError::Changed)?;
-    if listed != expected
-        || path.parent() != Some(dir)
-        || root.join("design/components").canonicalize()? != dir
-    {
-        return Err(TextSourceError::Changed);
-    }
-    // 폴더의 내부 별칭은 허용하지만 개별 원본 링크를 일반 파일로 바꾸지 않습니다.
-    if path.canonicalize()? != path {
-        return Err(invalid("링크된 컴포넌트 파일은 수정할 수 없습니다"));
-    }
-    let bytes = source_file::read_resolved(&path, MAX_INPUT_BYTES as u64)?;
-    let (mut source, actual) = decode_named(&path, &bytes)?;
-    if actual != expected || source.definition().id != id {
-        return Err(TextSourceError::Changed);
-    }
-    if !source.edit_frame(source.root.id, edit)? {
-        return Ok((source, path, actual));
-    }
-    let encoded = source.to_yaml()?;
-    let limit = (remaining + bytes.len() as u64).min(MAX_INPUT_BYTES as u64);
-    if root.join("design/components").canonicalize()? != dir {
-        return Err(TextSourceError::Changed);
-    }
-    source_file::write_checked_resolved(root, &path, encoded.as_bytes(), Some(expected), limit)?;
-    Ok((source, path, ContentHash::compute(encoded.as_bytes())))
-}
-
 /// 같은 폴더의 컴포넌트 정의를 기존 library로 재조립합니다. 참조는 전체 StableId를 사용합니다.
 pub fn read_library(dir: &Path) -> Result<(ComponentLibrary, ComponentFiles), TextSourceError> {
     assemble_library(dir, read_source)
@@ -1032,51 +972,6 @@ mod tests {
     }
 
     #[test]
-    fn project_resize_reuses_only_the_selected_files_budget() {
-        let temp = crate::saved_project::tests::TempDir::new();
-        let root = temp.path.canonicalize().unwrap();
-        let dir = root.join("design/components");
-        std::fs::create_dir_all(&dir).unwrap();
-        let id = |n| StableId::new_v7(1, 0, n);
-        let mut first = ComponentSource::new(id(1), "First".into(), id(2)).unwrap();
-        let other = ComponentSource::new(id(3), "Other".into(), id(4)).unwrap();
-        let (file, hash) = create_in_project(&root, &dir, &first).unwrap();
-        let (sibling, _) = create_in_project(&root, &dir, &other).unwrap();
-        let size = Size2::new(248.5, 64.75).unwrap();
-        first
-            .edit_frame(id(2), ComponentRootEdit::Size(size))
-            .unwrap();
-        let exact =
-            std::fs::metadata(&sibling).unwrap().len() + first.to_yaml().unwrap().len() as u64;
-        let original = std::fs::read(&file).unwrap();
-        let other_bytes = std::fs::read(&sibling).unwrap();
-        assert!(edit_project_root_with_budget(
-            &root,
-            &dir,
-            id(1),
-            hash,
-            ComponentRootEdit::Size(size),
-            exact - 1
-        )
-        .is_err());
-        assert_eq!(std::fs::read(&file).unwrap(), original);
-        edit_project_root_with_budget(
-            &root,
-            &dir,
-            id(1),
-            hash,
-            ComponentRootEdit::Size(size),
-            exact,
-        )
-        .unwrap();
-        assert_eq!(
-            std::fs::read_to_string(&file).unwrap(),
-            first.to_yaml().unwrap()
-        );
-        assert_eq!(std::fs::read(&sibling).unwrap(), other_bytes);
-    }
-
-    #[test]
     fn locked_root_rejects_fill_even_if_unchanged() {
         let temp = crate::saved_project::tests::TempDir::new();
         let root = temp.path.canonicalize().unwrap();
@@ -1090,13 +985,7 @@ mod tests {
         let NodePayload::Frame(frame) = &component.root.payload else {
             unreachable!()
         };
-        let result = edit_project_root(
-            &root,
-            &dir,
-            id(1),
-            hash,
-            ComponentRootEdit::Background(frame.background),
-        );
+        let result = edit_root(&file, hash, ComponentRootEdit::Background(frame.background));
         assert!(matches!(result, Err(TextSourceError::Invalid(_))));
         assert_eq!(std::fs::read(file).unwrap(), original);
     }

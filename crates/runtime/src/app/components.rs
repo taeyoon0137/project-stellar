@@ -290,60 +290,6 @@ impl ProjectSummary {
         }))
     }
 
-    /// 창이 표시했던 전체 ID와 원본 hash로 프로젝트 파일 하나를 조건부 저장합니다.
-    pub fn resize_component_root(
-        &self,
-        id: StableId,
-        hash: &str,
-        width: f32,
-        height: f32,
-    ) -> Result<(), String> {
-        let size = stellar_core_types::value::Size2::new(width, height)
-            .map_err(|_| "유한한 비음수 크기가 필요합니다")?;
-        self.edit_component_root(
-            id,
-            hash,
-            stellar_ops::component_source::ComponentRootEdit::Size(size),
-        )
-    }
-
-    /// 빈 채우기와 sRGB·Display P3 RGBA를 구별해 저장합니다.
-    pub fn set_component_root_background(
-        &self,
-        id: StableId,
-        hash: &str,
-        background: Option<stellar_core_types::color::Color>,
-    ) -> Result<(), String> {
-        self.edit_component_root(
-            id,
-            hash,
-            stellar_ops::component_source::ComponentRootEdit::Background(background),
-        )
-    }
-
-    /// 신뢰된 창이 조회한 StableId와 hash가 아직 같은 원본만 수정합니다.
-    fn edit_component_root(
-        &self,
-        id: StableId,
-        hash: &str,
-        edit: stellar_ops::component_source::ComponentRootEdit,
-    ) -> Result<(), String> {
-        if self.trust != TrustStatus::Trusted {
-            return Err("프로젝트 신뢰가 필요합니다".into());
-        }
-        self.verify_trust()?;
-        let hash = hash.parse().map_err(|_| "잘못된 원본 hash입니다")?;
-        stellar_ops::component_source::edit_project_root(
-            &self.canonical_root,
-            self.project_id,
-            id,
-            hash,
-            edit,
-        )
-        .map(|_| ())
-        .map_err(|e| e.to_string())
-    }
-
     /// 사용자가 연 창의 프로젝트 식별자를 고정하고 폴더의 현재 원본을 읽습니다.
     /// 호출자는 UI/document thread 밖에서 실행해야 합니다.
     pub fn component_library(

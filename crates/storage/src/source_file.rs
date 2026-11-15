@@ -138,17 +138,6 @@ fn write_checked_observed(
 /// 프로젝트 안에서 해석을 마친 절대 경로에 새 원본을 기록합니다. 기존 파일을 덮어쓰지 않으며
 /// temp·게시 직전에 canonical root 이하 디렉터리의 identity를 검사합니다.
 pub fn write_new_resolved(root: &Path, path: &Path, bytes: &[u8], limit: u64) -> io::Result<()> {
-    write_checked_resolved(root, path, bytes, None, limit)
-}
-
-/// 프로젝트에 속한 실제 파일의 기대 hash를 확인하고 권한을 보존해 조건부 교체합니다.
-pub fn write_checked_resolved(
-    root: &Path,
-    path: &Path,
-    bytes: &[u8],
-    expected_hash: Option<ContentHash>,
-    limit: u64,
-) -> io::Result<()> {
     if bytes.len() as u64 > limit {
         return Err(io::ErrorKind::FileTooLarge.into());
     }
@@ -167,30 +156,15 @@ pub fn write_checked_resolved(
         }
         dirs.push((ancestor.to_path_buf(), id));
     }
-    let permissions = if expected_hash.is_some() {
-        let (metadata, _) = FileIdentity::lstat(path)?;
-        if !metadata.is_file() {
-            return Err(Refusal::NotRegularFile.into_io());
-        }
-        Some(metadata.permissions())
-    } else {
-        None
-    };
     let mut inner = NoopObserver;
     let mut expected = Expected {
         path,
-        hash: expected_hash,
+        hash: None,
         limit,
         observer: &mut inner,
     };
     let mut guard = DirGuard::new(&mut expected, dirs);
-    write_file_atomic_observed_with_permissions(
-        path,
-        bytes,
-        &mut guard,
-        permissions,
-        expected_hash.is_some(),
-    )
+    write_file_atomic_observed_with_permissions(path, bytes, &mut guard, None, false)
 }
 
 /// 원본 hash에 속한 파생 cache chunk 하나를 검증하고 없거나 손상됐으면 다시 씁니다.

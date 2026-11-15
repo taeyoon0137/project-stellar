@@ -255,3 +255,9 @@ TL·TR·BR·BL 입력을 표시합니다. 캔버스와 hit test에는 기존의 
 
 - `stellar_window_component_library`, `stellar_window_component_library_with_fill`: 라이브러리 창 전용
   행 목록 조회입니다. 창과 함께 삭제했습니다.
+- `stellar_window_component_resize`, `stellar_window_component_set_fill`: 라이브러리 창의 root 크기·채우기
+  편집입니다. Document Thread와 history를 우회해 Undo가 없고 모든 실패를 `InvalidArgument` 하나로 돌려줬습니다.
+  runtime `resize_component_root`·`set_component_root_background`, ops·project의 `resize_project_root`·
+  `edit_project_root`와 함께 삭제했습니다. 이 경로만 쓰던 `crates/storage`의 `source_file::write_checked_resolved`도
+  삭제하고 `write_new_resolved`를 새 파일 전용 본문으로 되돌렸습니다. CLI `component-source resize·set-fill`이
+  쓰는 단일 파일 `edit_root`는 유지합니다.
