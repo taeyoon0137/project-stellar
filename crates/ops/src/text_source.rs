@@ -80,13 +80,30 @@ impl From<TextSourceError> for TextSourceOperationError {
     }
 }
 
+/// 출력이 프로젝트 루트 안에 있는지 실제 경로로 판정합니다. 출력 파일은 아직 없으므로 부모를 해석합니다.
+fn inside_project(project: &Path, output: &Path) -> Result<bool, TextSourceOperationError> {
+    let io = |error: std::io::Error| TextSourceOperationError::Io(error.kind());
+    let root = project.canonicalize().map_err(io)?;
+    let parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    Ok(parent.canonicalize().map_err(io)?.starts_with(root))
+}
+
 /// 저장된 단일 문서·page·View 프로젝트를 새 텍스트 파일로 내보냅니다.
-/// 기존 출력 파일은 덮어쓰지 않습니다.
+/// 기존 출력 파일은 덮어쓰지 않습니다. 기본 저장 전환(V.10.7) 전에는 generation이 원본이므로
+/// 프로젝트 루트 안으로의 출력은 두 번째 원본이 되어 거부합니다(ADR-0061 결정 5).
 pub fn export(
     project: &Path,
     output: &Path,
 ) -> Result<TextSourceOutcome, TextSourceOperationError> {
     let snapshot = open_snapshot(project).map_err(TextSourceOperationError::Open)?;
+    if inside_project(project, output)? {
+        return Err(TextSourceOperationError::Unsupported(
+            "프로젝트 루트 안으로 내보내면 generation과 함께 두 번째 원본이 됩니다".into(),
+        ));
+    }
     let generation = snapshot.generation().ok_or_else(|| {
         TextSourceOperationError::Unsupported("저장된 generation이 필요합니다".into())
     })?;
@@ -162,13 +179,43 @@ mod tests {
     use stellar_storage::generation::current::write_current_pointer;
     use stellar_storage::generation::loader::{load_current_generation, write_manifest_file};
 
+    #[cfg(unix)]
+    #[test]
+    fn export_into_the_project_root_is_rejected_without_writing() {
+        use std::os::unix::fs::symlink;
+        let dir = TempDir::new("text-source-inside");
+        let outside = TempDir::new("text-source-outside");
+        scaffold_project(&dir.path);
+        save_documents(&dir.path, &[&large_document(4)]);
+        std::fs::create_dir(dir.path.join("exports")).unwrap();
+        symlink(dir.path.join("exports"), outside.path.join("alias")).unwrap();
+        let before = file_digest(&dir.path);
+        for output in [
+            dir.path.join("view.stellar.yaml"),
+            dir.path.join("exports/view.stellar.yaml"),
+            outside.path.join("alias/view.stellar.yaml"),
+        ] {
+            assert!(matches!(
+                export(&dir.path, &output),
+                Err(TextSourceOperationError::Unsupported(_))
+            ));
+            assert!(!output.exists());
+        }
+        assert_eq!(file_digest(&dir.path), before);
+        let output = outside.path.join("view.stellar.yaml");
+        export(&dir.path, &output).unwrap();
+        assert_eq!(check(&output).unwrap().node_count, 4);
+        assert_eq!(file_digest(&dir.path), before);
+    }
+
     #[test]
     fn export_rejects_unconsumed_chunks_and_changed_pointer_metadata_without_writing() {
         let dir = TempDir::new("text-source-chunks");
+        let exports = TempDir::new("text-source-chunks-output");
         scaffold_project(&dir.path);
         save_documents(&dir.path, &[&large_document(4)]);
         let original = load_current_generation(&dir.path, project_id()).unwrap();
-        let output = dir.path.join("view.stellar.yaml");
+        let output = exports.path.join("view.stellar.yaml");
         for case in 0..6 {
             let mut manifest = original.manifest.clone();
             match case {

@@ -128,7 +128,8 @@ fn unsupported_multi_document_export_preserves_every_file() {
         &[&random_valid_document(300), &random_valid_document(301)],
     );
     let before = file_digest(&project.path);
-    let output = project.path.join("unsupported.stellar.yaml");
+    let exports = TempDir::new("text-source-cli-unsupported-output");
+    let output = exports.path.join("unsupported.stellar.yaml");
     let result = run(
         &[
             "text-source",

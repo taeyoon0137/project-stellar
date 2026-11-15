@@ -15,11 +15,11 @@
 파일 이름은 `home-00000003.stellar.yaml`처럼 사람이 읽는 View 이름의 slug와 View `StableId`의 짧은 고정 부분을 조합하는 것을 권장합니다. 확장자·slug 생성·충돌 처리를 자동화하지 않으며, CLI에 출력 경로를 직접 지정합니다. 식별 기준은 파일 안의 전체 `StableId`입니다. 이름을 바꿔도 ID는 유지합니다.
 
 ```sh
-stellar text-source export ./MyProject ./home-00000003.stellar.yaml
-stellar text-source check ./home-00000003.stellar.yaml
+stellar text-source export ./MyProject ../exports/home-00000003.stellar.yaml
+stellar text-source check ../exports/home-00000003.stellar.yaml
 ```
 
-`export <project> <new-file>`은 지원 범위의 기존 저장 프로젝트를 새 파일로 내보냅니다. 출력 파일이 이미 있으면 실패하며 덮어쓰지 않습니다. 기존 프로젝트의 원본과 generation은 변경하지 않습니다. `check <file>`은 텍스트를 읽어 문법·지원 범위·문서 불변식을 검증합니다. `check`와 라이브러리 `open`은 원본·캐시를 쓰지 않는 읽기 전용 작업입니다.
+`export <project> <new-file>`은 지원 범위의 기존 저장 프로젝트를 새 파일로 내보냅니다. 출력 파일이 이미 있으면 실패하며 덮어쓰지 않습니다. 기존 프로젝트의 원본과 generation은 변경하지 않습니다. 기본 저장 전환(V.10.7) 전에는 generation이 원본이므로, 실제 경로로 해석한 출력 위치가 프로젝트 루트 안이면 두 번째 원본이 되어 거부합니다(종료 코드 69). `check <file>`은 텍스트를 읽어 문법·지원 범위·문서 불변식을 검증합니다. `check`와 라이브러리 `open`은 원본·캐시를 쓰지 않는 읽기 전용 작업입니다.
 
 ## 전체 예시
 

@@ -410,7 +410,9 @@ mod tests {
             matches!(loaded.payload(node), Some(NodePayload::Shape(ShapeGeometry::Rectangle(r))) if r.size == bounds.size())
         );
         assert_eq!(loaded.modifier_stack(node), Some(&stack));
-        let view_source = project.path().join("rectangle.stellar.yaml");
+        // 프로젝트 안 export는 두 번째 원본이 되므로 별도 폴더에 씁니다(ADR-0061 결정 5).
+        let exports = crate::window_session::test_fixtures::TempDir::new("draw-rectangle-export");
+        let view_source = exports.path().join("rectangle.stellar.yaml");
         stellar_ops::text_source::export(project.path(), &view_source).unwrap();
         let source = stellar_project::document_io::text_source::open(&view_source).unwrap();
         assert_eq!(
