@@ -221,6 +221,7 @@ impl TextHitGeometry for CanvasTextGeometry {
 mod tests;
 
 pub(crate) mod document;
+pub(crate) mod fonts;
 pub(crate) mod saved;
 pub use document::DocumentText;
 

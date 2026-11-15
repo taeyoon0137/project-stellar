@@ -1,9 +1,16 @@
 //! 저장된 문단/문자의 명시적 스타일로 layout을 만들고 같은 layout에서 picking·caret을 구합니다.
+//!
+//! 문서가 정하지 않은 값은 CSS initial의 화면 해석을 씁니다(ADR-0067 §5): family 없음은 기본 chain, medium은
+//! 16px, 글자색 없음은 검정입니다. 글꼴 파일은 [`super::fonts::FaceLoader`]가 document thread 밖에서 읽습니다.
+use super::fonts::FaceLoader;
 use super::*;
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 use stellar_core_types::{
     color::Color,
@@ -38,6 +45,14 @@ use stellar_text::{
 
 // 프로세스 안에서만 쓰는 동일 paint 식별자. wrap되면 새 식별자 발급을 중단합니다.
 static NEXT_PAINT: AtomicU64 = AtomicU64::new(1);
+
+/// CSS `font-size: medium`의 화면 해석(1/64 px). design profile이 없을 때의 UA 기본값입니다.
+const MEDIUM_SUBPIXELS: u32 = 16 * 64;
+
+/// CSS initial `color`(canvastext)의 밝은 화면 해석.
+fn initial_text_color() -> Color {
+    Color::new(stellar_core_types::color::ColorSpace::Srgb, 0., 0., 0., 1.).expect("불투명 검정")
+}
 
 /// 한 줄의 문자/byte 경계와 문서 scalar offset 시작점.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -156,46 +171,74 @@ impl DocumentText {
 
 #[derive(Debug)]
 pub(crate) struct FontCache {
+    loader: Arc<FaceLoader>,
     registrations: BTreeMap<FontFileHash, DocumentFontAsset>,
     registry: InMemoryFontRegistry,
     faces: LoadedFaces,
     resolver: GlyphResolver,
     atlas: ShelfGlyphAtlas,
+    /// registry에 넣은 기본 chain. loader가 아직 읽는 중이면 `None`입니다.
+    defaults: Option<Vec<stellar_core_types::font::FontFaceRef>>,
 }
 
+/// 테스트는 호출한 thread에서 바로 읽는 loader를 씁니다.
+#[cfg(test)]
 impl Default for FontCache {
     fn default() -> Self {
+        Self::new(FaceLoader::inline())
+    }
+}
+
+impl FontCache {
+    pub(crate) fn new(loader: Arc<FaceLoader>) -> Self {
         Self {
+            loader,
             registrations: BTreeMap::new(),
             registry: InMemoryFontRegistry::new(),
             faces: LoadedFaces::new(),
             resolver: GlyphResolver::new(),
             atlas: ShelfGlyphAtlas::new(AtlasConfig::default()).expect("기본 atlas 설정"),
+            defaults: None,
         }
     }
-}
 
-impl FontCache {
     pub(crate) fn sync_registrations(&mut self, styles: &DocumentTextStyles) {
         if self.registrations != styles.fonts {
             *self = Self {
                 registrations: styles.fonts.clone(),
-                ..Self::default()
+                ..Self::new(Arc::clone(&self.loader))
             };
         }
     }
 
-    pub(crate) fn insert(
+    fn insert(
         &mut self,
+        source: FontSource,
         face: &stellar_core_types::font::FontFaceRef,
         font: shaping::FontFace,
     ) -> Option<()> {
         let handle = self
             .registry
-            .register(FontSource::Project, FontFaceKey::from(face))
+            .register(source, FontFaceKey::from(face))
             .ok()?;
         self.faces.insert(handle, font);
         Some(())
+    }
+
+    /// 기본 chain을 registry에 한 번 넣고 그 참조를 돌려줍니다. 아직 읽는 중이거나 하나도 없으면 `None`입니다.
+    fn default_chain(&mut self) -> Option<Vec<stellar_core_types::font::FontFaceRef>> {
+        if self.defaults.is_none() {
+            let faces = self.loader.defaults()?;
+            let mut refs = Vec::with_capacity(faces.len());
+            for (reference, face) in faces {
+                if self.registry.lookup(FontFaceKey::from(reference)).is_none() {
+                    self.insert(FontSource::System, reference, face.clone())?;
+                }
+                refs.push(reference.clone());
+            }
+            self.defaults = Some(refs);
+        }
+        self.defaults.clone().filter(|refs| !refs.is_empty())
     }
 
     fn register(
@@ -209,9 +252,9 @@ impl FontCache {
         }
         let key = FontFaceKey::from(face);
         if self.registry.lookup(key).is_none() {
-            let font =
-                stellar_project::fonts::document::load_document_face(root, styles, face).ok()?;
-            self.insert(face, font)?;
+            // 읽는 중이면 이번 layout은 기본 chain으로 대체하고, 다 읽은 뒤 scene을 다시 만듭니다.
+            let font = self.loader.project_face(root, styles, face)?;
+            self.insert(FontSource::Project, face, font)?;
         }
         Some(())
     }
@@ -346,13 +389,16 @@ impl FontCache {
         let mut color = None;
         for ((paragraph, run), _) in keys {
             let style = table.resolve(paragraph, run)?;
-            let fill = modifier_fill.or(style.fill)?;
+            let fill = modifier_fill
+                .or(style.fill)
+                .unwrap_or_else(initial_text_color);
             if color.replace(fill).is_some_and(|previous| previous != fill) {
                 return None;
             }
             let typography = style.typography.record().ok()?;
-            let CssSize::Subpixels(size) = typography.size else {
-                return None;
+            let size = match typography.size {
+                CssSize::Subpixels(size) => size,
+                CssSize::Medium => MEDIUM_SUBPIXELS,
             };
             let spacing = style
                 .run
@@ -375,7 +421,8 @@ impl FontCache {
                 }
             }
             if refs.is_empty() {
-                return None;
+                // CSS initial family(빈 목록)이거나 지정한 face를 하나도 쓸 수 없으면 기본 chain으로 그립니다.
+                refs = self.default_chain()?;
             }
             let mut features = Vec::new();
             let mut axes = Vec::new();

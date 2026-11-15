@@ -77,6 +77,26 @@ Accepted (2026-11-15, Codex 작업 검토 묶음 B5)
     u32 index별 문단·문자 style이 있습니다.
   - 기존 v1 generation은 빈 style 표로 읽습니다.
 
+### 5. 기본 글꼴 chain과 글꼴 읽기
+
+- 문서가 정하지 않은 값은 CSS initial의 화면 해석으로 그립니다. 문서에는 아무것도 쓰지 않습니다.
+  - font-family가 빈 목록(CSS initial)이거나, 지정한 family의 고정 face를 하나도 쓸 수 없으면 기본 chain으로 그립니다.
+  - `font-size: medium`은 16px(design profile이 없을 때의 UA 기본값)입니다.
+  - 글자색이 없으면 검정(sRGB, CSS initial `color`의 밝은 화면 해석)입니다.
+- 기본 chain(macOS, PostScript 이름 순서): `Helvetica` → `AppleGothic` → `HiraginoSans-W3`.
+  - Latin, 한글, 일본어 가나·한자를 덮습니다. glyph가 없는 글자는 chain의 다음 face로 넘깁니다(X.9.5).
+  - CoreText로 이름이 정확히 같은 파일만 찾고(다른 글꼴로 대체 금지, X.8.3), 파일은 한 번 읽어 hash·face index·shaping
+    face를 같은 bytes에서 구합니다. 64 MiB를 넘는 파일은 건너뜁니다.
+  - 찾지 못한 이름은 건너뜁니다. 하나도 없으면 family 없는 Text는 그리지 않고 scene의 skipped로 셉니다.
+  - 이 chain은 화면 대체용입니다. 기기마다 파일 hash가 다를 수 있으므로 export·codegen의 재현성 근거로 쓰지 않습니다.
+- 글꼴 파일은 document thread에서 읽지 않습니다.
+  - runtime이 시작할 때 loader thread 하나를 띄워 기본 chain을 프로세스에서 한 번 읽습니다.
+  - 문서 style 표에 등록된 project face는 처음 필요할 때 loader에 요청합니다. 읽는 동안 그 Text는 기본 chain으로
+    대체해 그립니다. 다 읽으면 열린 창의 대체 layout과 scene을 버리고 상태를 다시 게시합니다.
+  - loader의 결과는 (프로젝트 루트, face, 그 face의 글꼴·asset record)로 구분합니다. record가 바뀌면 다시 검증합니다.
+- 현재 셸은 요청 완료 때만 canvas를 다시 읽습니다. 그래서 loader의 재게시는 다음 요청 완료 때 화면에 나타납니다.
+  기본 chain은 앱 시작 직후 읽으므로 보통 창이 열리기 전에 끝납니다.
+
 ### 6. 캔버스 Text 편집 session
 
 - 조합 상태의 원본은 runtime 창 session의 조합 하나(`WindowEntry.text`)입니다.
@@ -142,9 +162,11 @@ Accepted (2026-11-15, Codex 작업 검토 묶음 B5)
 
 ## Performance
 
-- 문서 thread에서 사용자 글꼴 파일을 동기로 읽는 경로가 없어집니다.
+- 문서 thread에서 글꼴 파일을 읽지 않습니다. 기본 chain(약 25 MB)은 프로세스에서 한 번 읽어 메모리에 둡니다.
 
 ## Security
+
+- 기본 chain은 CoreText가 알려 준 설치 글꼴 경로만 읽고 쓰지 않습니다. 파일 크기 상한을 둡니다.
 
 - 사용자가 고른 임의 경로의 파일을 프로젝트로 복사하는 경로가 없어집니다.
 

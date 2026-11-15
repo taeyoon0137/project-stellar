@@ -351,7 +351,12 @@ fn document_selection_projects_multiline_scalar_offsets_and_verifies_changed_reg
     changed.fonts.get_mut(&hash).unwrap().asset_record.clear();
     model.replace_text_styles(changed);
     cache.sync_registrations(&model.definition().text_styles);
-    assert!(project_text(&mut cache, &model).is_none());
+    // 등록이 바뀌어 project face를 열 수 없으면 기본 chain으로 대체해 그립니다(ADR-0067 §5).
+    let substituted = project_text(&mut cache, &model);
+    #[cfg(target_os = "macos")]
+    assert_ne!(substituted.unwrap().0.outlines, text.outlines);
+    #[cfg(not(target_os = "macos"))]
+    assert!(substituted.is_none());
 }
 
 #[test]
@@ -542,4 +547,42 @@ fn composition_preview_uses_the_scene_font_cache_and_draws_new_text_last_in_pare
     assert_eq!(glyphs(&previewed, sid(777)), 2);
     assert_eq!(previewed.frames.len(), stored.frames.len() + 1);
     assert!(!model.contains(sid(777)));
+}
+
+/// 새 프로젝트의 CSS initial style(family 없음, medium, 색 없음)도 기본 chain으로 보입니다(ADR-0067 §5).
+#[cfg(target_os = "macos")]
+#[test]
+fn initial_style_text_is_drawn_with_the_default_chain() {
+    use crate::window_session::test_fixtures::{sample_document, sid, TempDir};
+    use stellar_document::text_styles::DocumentTextStyles;
+    let project = TempDir::new("initial-text");
+    let mut model = sample_document();
+    model.replace_text_styles(DocumentTextStyles::initial(sid(900)));
+    let payload = TextPayload::new(
+        UserText::new("한글 Abc\nかな"),
+        vec![Paragraph { style: 0 }; 2],
+        vec![],
+    )
+    .unwrap();
+    let mut cache = document::FontCache::default();
+    cache.sync_registrations(&model.definition().text_styles);
+    let (text, size, _) = cache
+        .layout(&model, project.path(), sid(503), &payload)
+        .unwrap();
+    // 공백은 잉크가 없으므로 glyph 7개(한·글·A·b·c·か·な)입니다.
+    assert_eq!(text.glyphs.len(), 7);
+    assert_eq!(text.lines.len(), 2);
+    assert_eq!(
+        text.fill,
+        stellar_core_types::color::Color::new(
+            stellar_core_types::color::ColorSpace::Srgb,
+            0.,
+            0.,
+            0.,
+            1.
+        )
+        .unwrap()
+    );
+    // medium = 16px: 두 줄의 높이는 16px보다 큽니다.
+    assert!(size.height() > 32.);
 }

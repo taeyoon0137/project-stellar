@@ -1352,6 +1352,7 @@ fn open_window_session_on_thread(
     request: RequestId,
     project: ProjectSessionId,
     recovery: Option<recovery::CheckpointConfig>,
+    fonts: Arc<crate::canvas::text::fonts::FaceLoader>,
 ) -> Result<RuntimeEvent, Failure> {
     let sessions = ctx.app_sessions_mut();
     let identity = sessions
@@ -1371,7 +1372,7 @@ fn open_window_session_on_thread(
         WindowEntry {
             project,
             session,
-            canvas: Default::default(),
+            canvas: crate::canvas::CanvasCache::new(fonts),
             text: None,
             checkpoint: recovery::WindowCheckpoint::new(recovery, handle),
             #[cfg(target_os = "macos")]
@@ -1678,6 +1679,8 @@ impl AppShared {
 pub struct AppRuntime {
     sender: DocumentSender,
     shared: Arc<AppShared>,
+    /// 창 canvas Text의 글꼴 face loader(ADR-0067 §5). document thread는 글꼴 파일을 읽지 않습니다.
+    fonts: Arc<crate::canvas::text::fonts::FaceLoader>,
     next_request: AtomicU64,
     recovery_root: Option<PathBuf>,
     /// 창별 복구 worker. drop이 남은 정리를 잠시 기다립니다.
@@ -1747,16 +1750,32 @@ impl AppRuntime {
         event_capacity: usize,
     ) -> Result<AppRuntime, DocumentThreadError> {
         let document = DocumentThread::spawn_with(capacity)?;
+        let shared = Arc::new(AppShared {
+            creating: false.into(),
+            cloning: Mutex::default(),
+            importing_image: false.into(),
+            outbox: Mutex::new(VecDeque::new()),
+            outstanding: AtomicUsize::new(0),
+            state: Mutex::new(Arc::new(RuntimeState::default())),
+        });
+        let fonts = {
+            let sender = document.sender();
+            let shared = Arc::clone(&shared);
+            crate::canvas::text::fonts::FaceLoader::spawn(move || {
+                let shared = Arc::clone(&shared);
+                // 다 읽은 face로 열린 창의 scene을 다시 게시합니다. 접수하지 못하면 다음 게시 때 반영됩니다.
+                let _ = sender.submit(move |ctx| {
+                    for entry in ctx.app_sessions_mut().windows.values_mut() {
+                        entry.canvas.fonts_loaded();
+                    }
+                    shared.publish_state(build_state(ctx));
+                });
+            })
+        };
         Ok(AppRuntime {
             sender: document.sender(),
-            shared: Arc::new(AppShared {
-                creating: false.into(),
-                cloning: Mutex::default(),
-                importing_image: false.into(),
-                outbox: Mutex::new(VecDeque::new()),
-                outstanding: AtomicUsize::new(0),
-                state: Mutex::new(Arc::new(RuntimeState::default())),
-            }),
+            shared,
+            fonts,
             next_request: AtomicU64::new(1),
             recovery_root: None,
             recovery_workers: Default::default(),
@@ -1924,8 +1943,9 @@ impl AppRuntime {
                 sender: self.sender.clone(),
                 workers: self.recovery_workers.clone(),
             });
+        let fonts = Arc::clone(&self.fonts);
         self.submit(move |ctx, request| {
-            open_window_session_on_thread(ctx, request, project, recovery)
+            open_window_session_on_thread(ctx, request, project, recovery, fonts)
         })
     }
 

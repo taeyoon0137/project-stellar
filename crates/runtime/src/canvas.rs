@@ -82,16 +82,38 @@ pub(crate) struct CanvasComponentLibrary {
 /// 게시한 scene의 재사용 조건: 문서 revision, 활성 View, 진행 중 Text 조합(token, 갱신 순번).
 type SceneKey = (DocumentRevision, StableId, Option<(u64, u64)>);
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct CanvasCache {
-    pub(crate) fonts: text::document::FontCache,
+    fonts: text::document::FontCache,
     saved_text: text::saved::SavedTextLayouts,
     library_request: u64,
     latest: Option<(SceneKey, Arc<CanvasScene>)>,
     pub(crate) library: Option<Arc<CanvasComponentLibrary>>,
 }
 
+#[cfg(test)]
+impl Default for CanvasCache {
+    fn default() -> Self {
+        Self::new(text::fonts::FaceLoader::inline())
+    }
+}
+
 impl CanvasCache {
+    pub(crate) fn new(fonts: Arc<text::fonts::FaceLoader>) -> Self {
+        Self {
+            fonts: text::document::FontCache::new(fonts),
+            saved_text: Default::default(),
+            library_request: 0,
+            latest: None,
+            library: None,
+        }
+    }
+
+    /// 새 글꼴 face를 읽었습니다. 대체 글꼴로 만든 layout과 게시한 scene을 버립니다.
+    pub(crate) fn fonts_loaded(&mut self) {
+        self.latest = None;
+        self.saved_text = Default::default();
+    }
     pub(crate) fn update_library(
         &mut self,
         request: u64,
