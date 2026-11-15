@@ -268,6 +268,19 @@ fn semantic_subtrees_mark_nodes_with_accessible_descendants() {
 }
 
 #[test]
+fn accessibility_child_lists_match_per_entry_children() {
+    let fixture = Fixture::new();
+    for profile in [fx::web_profile(), fx::ios_profile()] {
+        let ir = fixture.ir(&profile);
+        let lists = ir.accessibility_child_lists();
+        assert_eq!(lists.len(), ir.accessibility.len());
+        for entry in 0..ir.accessibility.len() as u32 {
+            assert_eq!(lists[entry as usize], ir.accessibility_children(entry));
+        }
+    }
+}
+
+#[test]
 fn structural_errors_are_rejected() {
     let profile = fx::web_profile();
     let cases: Vec<Case> = vec![
@@ -444,6 +457,21 @@ fn input_consistency_errors_are_rejected() {
                 f.accessibility = AccessibilitySnapshot::from_tree(&tree).expect("snapshot");
             }),
             IrError::AccessibilityOutsideView(sid(99)),
+        ),
+        (
+            "Fragment 접근성 source",
+            Box::new(|f| {
+                // 3은 Fragment라 출력 element가 없어 의미를 붙일 곳이 없습니다.
+                let mut tree = AccessibilityTree::new();
+                tree.insert(AccessibilityNode::new(sid(1), AccessibilityRole::Generic))
+                    .expect("root");
+                tree.insert(AccessibilityNode::new(sid(3), AccessibilityRole::Group))
+                    .expect("fragment");
+                tree.push_root(sid(1));
+                tree.push_child(sid(1), sid(3));
+                f.accessibility = AccessibilitySnapshot::from_tree(&tree).expect("snapshot");
+            }),
+            IrError::AccessibilityOnFragment(sid(3)),
         ),
     ];
     for (name, mutate, expected) in cases {

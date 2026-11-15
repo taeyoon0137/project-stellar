@@ -26,9 +26,9 @@
 //!   node와 그 하위 node는 IR에 넣지 않습니다(값·텍스트·layout·접근성 entry도 버림).
 //! - **layout**: Fragment가 아닌 node마다 layout node가 있어야 합니다. layout 자식 목록(OrderKey 순, 제외 node
 //!   제외)은 Fragment를 펼친 IR 자식 순서와 같아야 합니다. Fragment는 layout이 없습니다.
-//! - **semantics**: 접근성 entry의 source는 View node여야 합니다. source가 제외된 entry는 버리고 그 자식은 가장
-//!   가까운 남은 조상 entry 아래로 올립니다(읽기 순서 유지). binding·action이 가리키는 상태 변수는 선언되어
-//!   있어야 합니다.
+//! - **semantics**: 접근성 entry의 source는 Fragment가 아닌 View node여야 합니다(Fragment는 출력 element가 없음).
+//!   source가 제외된 entry는 버리고 그 자식은 가장 가까운 남은 조상 entry 아래로 올립니다(읽기 순서 유지).
+//!   binding·action이 가리키는 상태 변수는 선언되어 있어야 합니다.
 //! - **target capability**: IX.10.8 validator 결과(Native 포함 모든 진단)를 node별로 붙입니다. profile이 pin한
 //!   registry release를 앱이 모르면 IR을 만들지 않습니다.
 //! - **tokens·state**: 선언 전체를 id 오름차순으로 담습니다. token binding은 IR에 값이 있는 속성에만 붙습니다.
@@ -364,7 +364,8 @@ impl IrTree {
             .map(|index| &self.tokens[index])
     }
 
-    /// 접근성 entry의 자식 entry index(읽기 순서).
+    /// 접근성 entry의 자식 entry index(읽기 순서). entry 하나의 하위 범위를 훑으므로 여러 entry의 자식이 필요하면
+    /// [`IrTree::accessibility_child_lists`]를 한 번 부릅니다.
     pub fn accessibility_children(&self, entry: u32) -> Vec<u32> {
         // entry는 preorder이고 부모 index가 항상 앞이므로 뒤쪽만 훑습니다. 자식은 depth가 하나 큰 entry 중 부모가
         // `entry`인 것입니다.
@@ -386,6 +387,18 @@ impl IrTree {
             }
         }
         children
+    }
+
+    /// 모든 접근성 entry의 자식 entry index(읽기 순서, index = entry index). entry 수에 선형입니다.
+    pub fn accessibility_child_lists(&self) -> Vec<Vec<u32>> {
+        let mut lists = vec![Vec::new(); self.accessibility.len()];
+        // entry는 preorder이므로 부모마다 자식이 읽기 순서대로 쌓입니다.
+        for (index, entry) in self.accessibility.iter().enumerate() {
+            if let Some(parent) = entry.parent {
+                lists[parent as usize].push(index as u32);
+            }
+        }
+        lists
     }
 
     /// node마다 자신이나 하위 node가 접근성 entry를 가지는지(index = IR node index).
@@ -457,6 +470,8 @@ pub enum IrError {
     TextOnNonTextNode(StableId),
     /// 접근성 entry의 source가 View node가 아닙니다.
     AccessibilityOutsideView(StableId),
+    /// 접근성 entry의 source가 Fragment입니다(Fragment는 출력 element가 없어 의미를 붙일 수 없음).
+    AccessibilityOnFragment(StableId),
     /// 같은 상태 변수가 두 번 선언되었습니다.
     DuplicateState(StableId),
     /// 상태 변수 이름이 비었습니다.
@@ -525,6 +540,9 @@ impl fmt::Display for IrError {
             }
             IrError::AccessibilityOutsideView(id) => {
                 write!(f, "접근성 entry의 source {id}가 View node가 아닙니다")
+            }
+            IrError::AccessibilityOnFragment(id) => {
+                write!(f, "접근성 entry의 source {id}가 Fragment입니다")
             }
             IrError::DuplicateState(id) => write!(f, "상태 변수가 두 번 선언되었습니다: {id}"),
             IrError::EmptyStateName(id) => write!(f, "상태 변수 {id}의 이름이 비었습니다"),

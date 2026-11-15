@@ -18,6 +18,13 @@ Accepted (2026-11-14). 제품 소유자가 기술 문서에 세부가 없는 설
 3. `CodegenIr`은 Target Profile 하나로 해석한 결과입니다. 구조·layout·semantics·state·tokens·target capability를 담고, 결정론 semantic snapshot 텍스트를 제공합니다. 생성 코드를 IR이나 문서로 되읽는 API는 두지 않습니다.
 4. 플랫폼 adapter(Web·Apple·Android)는 이 crate 안의 module로 두고 IR만 읽습니다.
 5. 외부 의존성 없이 시작합니다. 외부 crate가 필요하면 `config/dependencies.yaml`과 별도 ADR로 추가합니다.
+6. (2026-11-15 보완) ADR-0025 결정 4와의 관계: ADR-0025 결정 4.1(CodegenIR은 XXII.1.1에서 CSS 기반 속성
+   record를 입력으로 받음)과 4.2(속성 매핑은 capability registry 한 곳에서 관리하고 Apple·Android lowering은
+   XXII.1.4 matrix에 더함)가 이 ADR의 결정 2·4보다 우선합니다. 결정 2의 입력 경계(ViewModel·PropertyPath 지역
+   모델)와 adapter 안에 둔 속성 매핑은 그 record·matrix(IX.11.6·IX.11.11·IX.11.19, XXII.1.4)가 생기기 전의
+   임시 경계입니다. 그 행들이 끝나면 IR 입력을 CSS 기반 속성 record로 바꾸고 adapter의 layout·속성 매핑을
+   matrix 규칙으로 옮깁니다. crate 경계(결정 1), 단방향 IR(결정 3), adapter module 배치(결정 4의 위치), 외부
+   의존 정책(결정 5)은 그대로입니다.
 
 ## Alternatives
 

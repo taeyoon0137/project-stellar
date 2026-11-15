@@ -353,6 +353,9 @@ fn attach_accessibility(
         let source = entry.node.source;
         match ir_index.get(&source) {
             Some(&node) => {
+                if nodes[node as usize].element == ElementKind::FRAGMENT {
+                    return Err(IrError::AccessibilityOnFragment(source));
+                }
                 let index = entries.len() as u32;
                 let depth = parent_effective
                     .map(|p| entries[p as usize].depth + 1)
