@@ -1,6 +1,6 @@
-# 단일 View 텍스트 원본 v1
+# 단일 View 텍스트 원본 v1·v2·v3
 
-[ADR-0059](../adr/ADR-0059-text-source-files-with-chunk-cache.md)의 첫 opt-in 구현 형식입니다. 문서 하나, 페이지 하나, View 하나와 그 아래 Frame·Fragment·Text를 사람이 읽는 YAML 파일 하나에 보관합니다. 기존 프로젝트의 기본 열기·저장 경로는 세대 기반 chunk 저장을 계속 사용합니다. 이 형식은 전체 프로젝트 포맷 전환이나 공개 포맷 동결을 뜻하지 않습니다.
+[ADR-0059](../adr/ADR-0059-text-source-files-with-chunk-cache.md)의 첫 opt-in 구현 형식입니다. 문서 하나, 페이지 하나, View 하나와 그 아래 Frame·Fragment·Rectangle·Ellipse·Line·Polygon·Text·컴포넌트 인스턴스 참조를 사람이 읽는 YAML 파일 하나에 보관합니다. 기존 프로젝트의 기본 열기·저장 경로는 세대 기반 chunk 저장을 계속 사용합니다.
 
 구현 원본은 [`text_codec.rs`](../../crates/project/src/document_io/text_codec.rs), 파일 입출력은 [`text_source.rs`](../../crates/project/src/document_io/text_source.rs), 기존 프로젝트 export는 [`ops/text_source.rs`](../../crates/ops/src/text_source.rs)입니다.
 
@@ -36,18 +36,20 @@ stellar text-source apply ./home-00000003.stellar.yaml ./edit.json
 
 요청의 키는 위 다섯 개만 허용합니다. 입력은 기존 apply와 같은 8 MiB·깊이 16·명령 10,000개 상한을 사용합니다. `rename`, `set-visible`, `set-locked`, `move-node`, `delete-subtree` 필드 형식과 등록된 명령의 `canonical` 소문자 hex 형식은 기존 `stellar apply`와 같습니다. command validator와 전체 transaction 실행을 거치므로 중간 실패는 저장하지 않습니다. 미지원 노드·modifier·속성이 생기는 명령은 결과 텍스트 직렬화 단계에서 **dry-run과 쓰기 모두 거부**합니다.
 
-Frame의 크기와 local 아핀 변환은 두 apply 경로 모두에서 JSON 숫자로 지정할 수 있습니다. `node`는 Frame의 전체 StableId이며 아래 필드는 모두 필수입니다. 다른 키나 숫자를 담은 문자열은 거부합니다.
+Frame의 크기와 local 아핀 변환은 두 apply 경로 모두에서 JSON 숫자로 지정할 수 있습니다. `node`는 Frame의 전체 StableId이며 각 명령에 표시한 필드는 모두 필수입니다. 다른 키나 숫자를 담은 문자열은 거부합니다.
 
 ```json
 {"kind":"set-frame-size","node":"019a8180-0010-7000-8000-000000000010","width":320.5,"height":180}
+{"kind":"set-frame-width","node":"019a8180-0010-7000-8000-000000000010","width":320.5}
+{"kind":"set-frame-height","node":"019a8180-0010-7000-8000-000000000010","height":180}
 {"kind":"set-frame-transform","node":"019a8180-0010-7000-8000-000000000010","a":1,"b":0,"c":0,"d":1,"tx":12.75,"ty":-30}
 ```
 
-각 object를 요청의 `commands` 배열에 넣습니다. 숫자는 원문에서 모델의 `f32`로 변환하며 정수·소수·지수 표기를 허용합니다. `f32` 변환 결과가 무한대이면 오류이고, `width`·`height`는 비음수여야 합니다. 변환은 `(x, y)`를 `(a*x + c*y + tx, b*x + d*y + ty)`로 보냅니다. 이 두 입력은 기존 `SetProperty`의 `size`·`transform`에 대응하므로 새 저장 opcode나 바이너리 포맷을 만들지 않습니다. Frame이 아닌 노드에 적용하면 validator가 전체 transaction을 거부합니다. 현재 모델의 묶음 속성을 사용하며, CSS width/height longhand 전환(IX.11.22)의 완료를 뜻하지 않습니다.
+각 object를 요청의 `commands` 배열에 넣습니다. 숫자는 원문에서 모델의 `f32`로 변환하며 정수·소수·지수 표기를 허용합니다. `f32` 변환 결과가 무한대이면 오류이고, `width`·`height`는 비음수여야 합니다. 변환은 `(x, y)`를 `(a*x + c*y + tx, b*x + d*y + ty)`로 보냅니다. `set-frame-width`와 `set-frame-height`는 각각 한 축만 변경합니다. `set-frame-size`는 같은 트랜잭션에서 두 축을 함께 지정합니다. Frame이 아닌 노드에 적용하면 validator가 전체 transaction을 거부합니다. 기존 원본 YAML(v1~v3)은 Frame의 `size` 줄을 유지하며, semantic diff는 너비와 높이를 독립 속성으로 반환합니다.
 
 - dry-run은 원본·generation·cache·잠금 파일을 쓰지 않고 적용될 semantic `changes`를 반환합니다. `source_hash`는 디스크의 기존 hash이며 `written`은 false입니다.
 - 쓰기는 기존 OS 사용자 데이터 저장 잠금을 문서 ID와 canonical 원본 파일 경로로 잡은 뒤 원본을 다시 읽고 hash·문서 ID를 확인합니다. 동일 파일의 협조적 CLI writer는 직렬화합니다. 정상 저장 결과에는 새 `source_hash`와 `written: true`가 있고 `check`로 재열 수 있습니다.
-- 동일 모델이 되는 명령은 원본 주석·공백·hash를 그대로 보존하고 `written: false`를 반환합니다. 실제 의미 변경 시에는 v1의 결정론적 writer가 파일 전체를 다시 쓰므로 주석·서식은 보존하지 않습니다.
+- 동일 모델이 되는 명령은 원본 주석·공백·hash를 그대로 보존하고 `written: false`를 반환합니다. 실제 의미 변경 시에는 해당 버전의 결정론적 writer가 파일 전체를 다시 쓰므로 주석·서식은 보존하지 않습니다.
 - 외부 수정에는 주석·공백 변경도 포함하며 `text-source-changed`(75)로 거부합니다. 다시 `check`하고 변경을 검토한 후 새 hash로 요청해야 합니다. 알 수 없는 원본 필드·레코드는 `text-source-unsupported`(69)로 거부하고 원본을 덮어쓰지 않습니다. 명령 실패(1), 잘못된 요청·문서 ID(65), 저장 잠금 경합(75), 잠금용 사용자 데이터 위치 누락(78)을 구분합니다.
 
 기존 프로젝트에서 export한 파일을 이 명령으로 고쳐도 기존 generation은 변경하지 않습니다. 기본 앱에서 그 변경을 자동으로 읽는 연결은 아직 없으므로, 이 CLI는 명시적으로 지정한 텍스트 파일만의 편집 경로입니다. 저장 후 일반 `git diff -- <file>`로 사람이 읽는 속성 변경을 검토할 수 있습니다.
@@ -103,19 +105,76 @@ nodes:
     payload: none
 ```
 
+## 새 편집 문서의 기본 타이포그래피
+
+문서 스타일 표가 없는 기존 원본은 계속 v1으로 저장합니다. 문서의 스타일 표 전체가 아래 v2 규격과 일치할 때 타이포그래피 리소스 ID 하나로 내보냅니다.
+
+```yaml
+schema_version: "2"
+document:
+  id: "019a8180-0001-7000-8000-000000000001"
+  display_name: Document
+  initial_typography_id: "019a8180-0006-7000-8000-000000000006"
+```
+
+v2 리소스의 family 목록은 비고 크기는 CSS `medium`입니다. 두께는 400, 스타일은 normal, stretch는 100%, line-height와 letter-spacing은 normal입니다. 문단 0번은 Start 정렬, Wrap 줄바꿈, Auto 줄 높이로 문서의 타이포그래피를 상속합니다. 문자 0번은 명시적 타이포그래피·채우기·자간·OpenType feature·variation이 없습니다. 다른 문단·문자 항목이나 문서 채우기·프로젝트 글꼴도 없습니다. 이 값들은 v2에 고정되며 앱의 새 문서 기본값과 독립적으로 복원됩니다. 노드의 문단·run 인덱스와 범위는 v1의 표현을 그대로 사용합니다. 리소스 ID의 NIL 값과 문서 내 ID 충돌은 검증 오류입니다. File → Document Font…에서 등록한 프로젝트 글꼴이 있으면 다음 v3 형식을 사용합니다.
+
+## 등록한 문서 글꼴과 Text 위치 (v3)
+
+단일 문서가 소유하는 기본 글꼴을 지정한 경우 `document`에 `id`, `display_name`, `document_font`를 기록합니다. 다음 예시는 기본 색과 텍스트 스타일 리소스, 프로젝트에 포함된 파일의 face 0을 연결합니다. 본문의 글자가 쓰는 문단·문자 0번은 v2와 같은 상속 항목입니다.
+
+```yaml
+document_font:
+  id: "019a8180-0006-7000-8000-000000000006"
+  font-family:
+    name: Example
+    file_hash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    face_index: "0"
+  font-size: "24px"
+  font-weight: "400"
+  font-style: normal
+  font-stretch: "100%"
+  line-height: normal
+  letter-spacing: normal
+  color:
+    space: srgb
+    rgba: "0 0 0 1"
+  project_fonts:
+    -
+      content_hash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      asset_id: "019a8180-0007-7000-8000-000000000007"
+      media_type: "font/ttf"
+      byte_size: "8192"
+      source:
+        kind: project
+        path: "fonts/Example.ttf"
+      faces:
+        -
+          family: Example
+          subfamily: Regular
+```
+
+- `font-size`는 양의 1/64 px 단위를 정확히 표현하는 십진수와 `px`입니다. `font-weight`의 범위는 1~1000, `font-stretch`는 비음수 백분율입니다. 현재 일반 글꼴 경로의 `font-style`, `line-height`, `letter-spacing`은 각각 `normal`을 명시합니다.
+- `font-family`는 등록된 프로젝트 글꼴의 SHA-256, 실제 face 인덱스, 해당 face의 family 이름에 일치해야 합니다. `project_fonts`는 hash 순으로 기록하며 이전에 선택해 등록된 글꼴도 유지합니다. 각 face의 `family`, `subfamily`, `postscript` 중 원래 없는 이름은 생략합니다. 등록 레코드의 media type에서 컨테이너 형식을 복원합니다. `source`는 `none`, 프로젝트 안의 상대 경로, 또는 `kind: external`과 `filename`, `origin`(원래의 HMAC 출처 지문)으로 기록합니다. 외부 원본의 절대 경로를 저장하지 않습니다.
+- v3 Text 노드는 `content`, `paragraphs`, `style_runs`, `placement`를 모두 가집니다. `placement: none` 또는 기존 단일 활성 Transform의 `id`, `order_key`, 부모 좌표계의 `position`을 기록합니다. 문단/문자 스타일 0을 참조하는 run의 범위와 순서를 보존합니다.
+- 다른 스타일 항목, 여러 family와 fallback, variation, 사용자 지정 라이선스 정보, 미지원 modifier 또는 해석할 수 없는 등록 레코드는 저장 전에 거부합니다. 독립 YAML의 `check`는 문서 안의 참조와 등록 메타데이터를 검증합니다. 프로젝트를 내보낼 때 등록된 모든 글꼴 파일의 hash와 byte 수를 asset store에서 확인합니다. 파일을 복사한 프로젝트에서도 같은 등록 face를 열어 사용합니다.
+
 ## 스키마와 값 규칙
 
-모든 mapping은 아래 키만 허용하며, 나열한 키는 모두 필수입니다. 값이 기본값이거나 비어 있어도 키를 생략하지 않습니다. 알 수 없는 키, 중복 키, 빠진 키, 잘못된 타입은 오류입니다. `schema_version`은 정확히 `1`만 지원합니다.
+모든 mapping은 아래 키만 허용하며, 나열한 키는 모두 필수입니다. 값이 기본값이거나 비어 있어도 키를 생략하지 않습니다. 알 수 없는 키, 중복 키, 빠진 키, 잘못된 타입은 오류입니다. `schema_version`은 `1`, `2`, `3`입니다.
 
 | 위치 | 필수 키와 의미 |
 |---|---|
 | 최상위 | `schema_version`, `document`, `page`, `view`, `nodes` |
-| `document` | `id`, `display_name` |
+| `document` | `id`, `display_name`. v2에는 `initial_typography_id`, v3에는 `document_font`도 필수 |
 | `page` | `id`, `display_name` |
 | `view` | `id`, `display_name`, `root_frame` |
 | `nodes`의 각 항목 | `id`, `parent`, `order_key`, `visible`, `locked`, `display_name`, `kind`, `payload` |
 | Frame `payload` | `size`, `transform`, `clipping`, `background`, `border`, `corner_radius`, `layout_mode` |
-| Text `payload` | `content`, `paragraphs`, `style_runs` |
+| 도형 `payload` | 종류별 기하 필드와 `modifiers` 목록. [도형](#도형) 참조 |
+| Text `payload` | `content`, `paragraphs`, `style_runs`. v3에는 `placement`도 필수 |
+| ComponentInstance `payload` | `component`, `placement` |
+| 인스턴스 `placement` | `none` 또는 `id`, `order_key`, `position` mapping |
 | Text 문단 | `style` (기존 문단 style 표의 `u32` index) |
 | Text style run | `start`, `end`, `style` (`u32`) |
 | 색상 | `space`, `rgba` |
@@ -129,7 +188,7 @@ nodes:
 | `parent` | 부모 노드의 전체 `StableId`, root는 `none` |
 | `order_key` | byte당 두 자리 hex 문자열. 빈 값·홀수 길이·마지막 byte `00`은 거부 |
 | `visible`, `locked` | 소문자 `true` 또는 `false` |
-| `kind` | `frame`, `fragment`, `text` |
+| `kind` | `frame`, `fragment`, `rectangle`, `ellipse`, `line`, `polygon`, `text`, `component-instance` |
 | Fragment `payload` | 정확히 `none`; 별도 시각·layout 필드 없음 |
 | Frame `size` | `width height` 순서의 비음수 유한 `f32` 두 개 |
 | Frame `transform` | `a b c d tx ty` 순서의 유한 `f32` 여섯 개 |
@@ -177,11 +236,45 @@ style_runs:
     style: "3"
 ```
 
-`paragraphs` 길이는 본문의 LF 개수 + 1이어야 합니다. 빈 본문도 문단 하나를 가지며, 빈 `style_runs`는 `[]`입니다. 각 run은 `0 <= start <= end <= 본문 scalar 길이`를 만족해야 합니다. 정수는 `u32` 범위이며 음수·범위 초과는 거부합니다. 문단 style과 run style은 기존 모델의 숫자 index를 보존하며, 별도 font/style 정의를 이 파일 안에 만들어 넣지 않습니다.
+`paragraphs` 길이는 본문의 LF 개수 + 1이어야 합니다. 빈 본문도 문단 하나를 가지며, 빈 `style_runs`는 `[]`입니다. 각 run은 `0 <= start <= end <= 본문 scalar 길이`를 만족해야 합니다. 정수는 `u32` 범위이며 음수·범위 초과는 거부합니다. v1·v2는 기존 모델의 숫자 index와 범위를 보존합니다. v3는 같은 범위 표현을 사용하며 0번 스타일을 문서 글꼴로 해석합니다.
 
 본문의 Unicode 정규화, CR/CRLF 변환, run 정렬·병합·겹침 제거를 하지 않습니다. 빈 run·겹치는 run·run 순서도 기존 payload 그대로 보존합니다. 제어 문자는 YAML 인용·이스케이프를 사용하고 읽을 수 없는 긴 scalar는 저장 전에 거부합니다. 본문은 `apply`의 `replace-text` 명령으로 편집합니다. 예를 들어 `{"kind":"replace-text","node":"<Text ID>","start":0,"end":2,"text":"저장"}`은 처음 두 Unicode scalar를 교체합니다. 같은 위치의 start·end는 삽입, 빈 text는 삭제입니다. 기존 Text 편집 규칙으로 문단과 상속 스타일을 갱신하며, 동일한 문자열로 교체하면 원본 payload를 보존합니다. 잘못된 범위 또는 node 종류는 트랜잭션 전체를 거부합니다. 기존 `rename`·표시 여부 등 CLI 명령은 Text payload 전체를 보존하면서 적용됩니다.
 
-V.10.4의 부분 확장이므로 schema version은 1을 유지합니다. 이전 구현은 `kind: text`를 미지원으로 거부해 덮어쓰지 않으며, 기존 Frame/Fragment 파일의 bytes·문법은 바뀌지 않습니다.
+스타일 표가 없는 문서의 Text는 기존 v1을 사용합니다. 등록된 문서 글꼴과 배치 ID가 있는 v3는 구버전 reader에서 거부됩니다.
+
+## 컴포넌트 인스턴스의 배치
+
+앱의 **Place Instance…**가 만든 노드는 독립 정의의 전체 StableId를 참조합니다. 인스턴스마다 공통 노드 필드에 자신의 ID·부모·순서 키가 있고, `payload`에 다음 값을 기록합니다.
+
+```yaml
+kind: component-instance
+payload:
+  component: "019a8180-0030-7000-8000-000000000030"
+  placement:
+    id: "019a8180-0031-7000-8000-000000000031"
+    order_key: "80"
+    position: "230.5 -10"
+```
+
+`placement.id`와 `order_key`는 인스턴스 소유의 단일 활성 Transform modifier에서 가져옵니다. `position`은 부모 좌표계의 X·Y이며 선형부는 단위 행렬입니다. 명시적으로 (0, 0)에 배치한 노드도 이 modifier를 유지합니다. modifier가 없는 인스턴스는 `placement: none`으로 저장합니다. Property·Slot override, 복수 modifier, 비활성 modifier, 회전·스케일 등이 있으면 저장을 거부합니다.
+
+v1·v2·v3 모두 이 노드 종류를 사용할 수 있습니다. 이전 reader는 새 종류를 만나면 파일을 거부합니다. 단일 파일 `check`는 인스턴스 노드와 참조 ID를 복원합니다. 참조하는 정의가 실제 프로젝트에 있는지는 `stellar validate <프로젝트>`로 확인합니다. 컴포넌트 정의 파일은 기존 `design/components/*.stellar.yaml`에 따로 둡니다.
+
+## 도형
+
+`kind: rectangle`의 `payload`에는 `width`, `height`, `border-top-left-radius`, `border-top-right-radius`, `border-bottom-right-radius`, `border-bottom-left-radius`를 각각 논리 픽셀로 기록합니다. 화면에 맞춰 줄이기 전의 네 모서리 값을 보존합니다.
+
+`kind: ellipse`는 로컬 경계의 왼쪽 위 좌표 `origin`(공백으로 구분한 x, y), `width`, `height`를 갖습니다. `kind: polygon`은 같은 경계와 3~1,000 사이의 변 수 `sides`, 도 단위 회전 `rotation_degrees`, 보정 전 논리 픽셀 반경 `corner_radius`를 갖습니다. `kind: line`의 `start`와 `end`는 그린 방향의 로컬 좌표이며 `cap`은 `butt`, `round`, `square` 중 하나입니다.
+
+네 도형의 `modifiers` 목록은 원본의 `order_key` 순서로 기록합니다. 각 항목은 `id`, `order_key`, `enabled`, `kind`, `value`를 가지며, 항목이 없는 도형은 빈 목록을 씁니다.
+
+| `kind` | `value` |
+| --- | --- |
+| `transform` | 여섯 affine 성분을 담은 문자열 |
+| `fill` | Frame 색과 같은 `space`와 `rgba` |
+| `stroke` | `color`(`space`, `rgba`)와 논리 픽셀 단위의 비음수 `width` |
+
+v1·v2·v3는 같은 도형 문법을 사용합니다. 이전 reader는 해석할 수 없는 노드나 modifier 종류를 거부합니다.
 
 ## 텍스트 결정론과 파서 제한
 
@@ -197,7 +290,7 @@ V.10.4의 부분 확장이므로 schema version은 1을 유지합니다. 이전 
 
 ## 지원 범위 밖의 데이터
 
-Shape·Path·Image payload, component instance·library, token set, modifier stack과 다중 문서·페이지·View는 이번 범위에 포함하지 않습니다. 미지원 데이터를 만났을 때 생략한 결과를 저장하지 않고 실패합니다. disabled modifier도 stack 데이터이므로 거부합니다.
+Path·Image payload, component library, token set, 도형의 Transform·Fill·Stroke 및 인스턴스나 v3 Text의 배치를 제외한 modifier stack, 다중 문서·페이지·View는 저장할 수 없습니다. 미지원 데이터를 만나면 원본을 보존하고 오류를 반환합니다.
 
 기존 프로젝트 export는 로드한 문서를 다시 직렬화한 **전체 chunk pointer 집합**이 저장된 generation과 정확히 같아야 합니다. ChunkId·내용 hash·kind·schema version을 비교하고 generation schema와 단일 root 문서도 검사합니다. 따라서 문서 밖 메타데이터, component·token chunk, 사용되지 않는 추가 chunk, 알 수 없는 optional chunk도 조용히 버리지 않습니다. 이미 알려진 kind라는 이유만으로 허용하지 않습니다. 지원되는 단일 View의 예상 집합은 DocumentManifest 하나, ViewTree 하나, subtree 하나입니다.
 

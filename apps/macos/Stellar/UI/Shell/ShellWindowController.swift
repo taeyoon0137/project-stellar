@@ -34,6 +34,7 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     var shouldCloseHandler: (() -> Bool)?
     /// 다른 시트가 끝나기를 기다리는 닫기 요청이 있으면 알려 줍니다.
     var didEndSheetHandler: (() -> Void)?
+    var didBecomeKeyHandler: (() -> Void)?
     /// 창이 닫힐 때 한 번 호출합니다(프로젝트 session 닫기, 시작 창 표시).
     var willCloseHandler: (() -> Void)?
     /// 창 복원 상태에 값을 더하는 hook(예: 프로젝트 경로). `NSWindowRestoration`이 다시 읽습니다(가이드 2.6).
@@ -247,6 +248,10 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     func windowDidEndSheet(_ notification: Notification) {
         didEndSheetHandler?()
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        didBecomeKeyHandler?()
     }
 
     func windowWillClose(_ notification: Notification) {

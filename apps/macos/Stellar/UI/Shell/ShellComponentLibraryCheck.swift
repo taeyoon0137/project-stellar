@@ -4,7 +4,9 @@ import AppKit
 @MainActor
 enum ShellComponentLibraryCheck {
     static func run(directory: URL) -> Bool {
-        NSApplication.shared.setActivationPolicy(.accessory)
+        let keyWindow = CommandLine.arguments.contains("--project-window-return")
+        NSApplication.shared.setActivationPolicy(keyWindow ? .regular : .accessory)
+        if keyWindow { NSApp.finishLaunching() }
         let host = RuntimeHost()
         defer { host.shutdown() }
         let app = ShellAppCoordinator(runtimeHandle: host.handle)
@@ -21,6 +23,9 @@ enum ShellComponentLibraryCheck {
         if !shell.gitSource.trusted {
             shell.gitSource.updateTrust(true)
             guard pump.waitForPendingRequests(timeout: 10) else { return false }
+        }
+        if CommandLine.arguments.contains("--project-window-return") {
+            return checkWindowReturn(shell, window: window, pump: pump, app: app, root: root)
         }
         guard shell.router.validateMenuItem(menu) else { return false }
         window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
@@ -57,6 +62,33 @@ enum ShellComponentLibraryCheck {
                 continue
             }
             if command == "done" { shell.window?.close(); return pump.waitForPendingRequests(timeout: 10) }
+            if command.hasPrefix("pointer ") || command.hasPrefix("hit ") {
+                let sendPointer = command.hasPrefix("pointer ")
+                let numbers = command.split(separator: " ").dropFirst().compactMap { Double($0) }
+                guard numbers.count == (sendPointer ? 4 : 2), let session = shell.windowController.windowSession,
+                      let camera = session.viewInfo else { return false }
+                let canvas = shell.canvasHost.canvasView
+                func point(_ x: Double, _ y: Double) -> CGPoint {
+                    CGPoint(x: canvas.bounds.midX + (x - camera.center_x) * camera.zoom,
+                            y: canvas.bounds.midY + (y - camera.center_y) * camera.zoom)
+                }
+                let start = point(numbers[0], numbers[1])
+                let hit = canvas.frameHit(at: start)
+                if sendPointer {
+                    let end = point(numbers[2], numbers[3])
+                    guard shell.router.dispatch(.selectMoveTool),
+                          ShellCanvasMoveCheck.mouse(canvas, .leftMouseDown, at: start),
+                          start == end || ShellCanvasMoveCheck.mouse(canvas, .leftMouseDragged, at: end),
+                          ShellCanvasMoveCheck.mouse(canvas, .leftMouseUp, at: end),
+                          pump.waitForPendingRequests(timeout: 10) else { return false }
+                }
+                guard let info = session.info else { return false }
+                let result: [String: Any] = ["hit": hit?.id.uuidString.lowercased() ?? "",
+                    "scaleX": hit?.localToWorld.a ?? 0, "undo": info.undo_depth, "revision": info.revision]
+                guard let data = try? JSONSerialization.data(withJSONObject: result) else { return false }
+                FileHandle.standardOutput.write(data + Data([10]))
+                continue
+            }
             if command == "revoke" {
                 guard let previous = library.rows.first, let session = shell.windowController.windowSession?.session else { return false }
                 shell.gitSource.updateTrust(false)
@@ -84,6 +116,17 @@ enum ShellComponentLibraryCheck {
                 shell.router.performShellCommand(menu)
                 guard let reopenedLibrary = shell.componentLibrary else { return false }
                 library = reopenedLibrary
+            } else if command.hasPrefix("layer ") {
+                guard let id = UUID(uuidString: String(command.dropFirst(6))) else { return false }
+                let outline = shell.sidebarSlot.sidebar.layersController.outline
+                func row() -> Int? {
+                    (0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? SidebarOutlineItem)?.layerID?.uuid == id }
+                }
+                guard until({ row() != nil }), let index = row() else { return false }
+                outline.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+                guard pump.waitForPendingRequests(timeout: 10) else { return false }
+            } else if command == "show-library" {
+                shell.router.performShellCommand(menu)
             } else if command == "initial" || command == "refresh" {
                 if command == "refresh" { library.refresh() }
             } else if command.hasPrefix("select ") {
@@ -137,17 +180,87 @@ enum ShellComponentLibraryCheck {
             let deadline = Date().addingTimeInterval(10)
             while library.isLoading, Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
             guard !library.isLoading else { return false }
+            func channels(_ color: InspectorColor?) -> [Double]? {
+                color.map { [Double($0.space.rawValue), $0.red, $0.green, $0.blue, $0.alpha] }
+            }
             let rows: [[String: Any]] = library.rows.map {
                 ["id": $0.id.uuidString.lowercased(), "root": $0.root.uuidString.lowercased(), "name": $0.name,
-                 "node_count": $0.nodeCount, "width": $0.width, "height": $0.height, "filename": $0.filename, "source_hash": $0.hash]
+                 "node_count": $0.nodeCount, "width": $0.width, "height": $0.height, "filename": $0.filename,
+                 "source_hash": $0.hash, "background": channels($0.background) as Any]
             }
             let selected = library.rows.indices.contains(library.table.selectedRow) ? library.rows[library.table.selectedRow] : nil
-            let fill: [Double]? = selected?.background.map { [Double($0.space.rawValue), $0.red, $0.green, $0.blue, $0.alpha] }
-            guard let bytes = try? JSONSerialization.data(withJSONObject: ["entries": rows, "selected": selected?.id.uuidString.lowercased() ?? "", "fill": fill as Any, "message": library.message.stringValue, "selection": shell.windowController.windowSession?.info?.selection_count ?? 0, "undo": shell.windowController.windowSession?.info?.undo_depth ?? 0, "generation": shell.windowController.windowSession?.info?.generation ?? 0]) else { return false }
+            let fill = channels(selected?.background)
+            guard let bytes = try? JSONSerialization.data(withJSONObject: ["entries": rows, "selected": selected?.id.uuidString.lowercased() ?? "", "details": library.details.stringValue, "fill": fill as Any, "message": library.message.stringValue, "selection": shell.windowController.windowSession?.info?.selection_count ?? 0, "undo": shell.windowController.windowSession?.info?.undo_depth ?? 0, "generation": shell.windowController.windowSession?.info?.generation ?? 0]) else { return false }
             FileHandle.standardOutput.write(bytes + Data([10]))
         }
         return false
     }
+    private static func checkWindowReturn(_ shell: ShellProjectWindow, window: NSWindow, pump: ShellRuntimeEventPump,
+                                          app: ShellAppCoordinator, root: String) -> Bool {
+        guard let session = shell.windowController.windowSession else { return false }
+        window.setContentSize(NSSize(width: 1300, height: 850))
+        window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+        window.orderBack(nil)
+        window.contentView?.layoutSubtreeIfNeeded()
+        guard session.track({ pump.fitRoot(session: session.session, size: shell.canvasHost.canvasView.bounds.size, completion: $0) },
+                            completion: { _ in shell.refreshSessionCommands() }),
+              pump.waitForPendingRequests(timeout: 10) else { return false }
+        while let command = readLine() {
+            switch command {
+            case "key":
+                window.makeKeyAndOrderFront(nil)
+                NSApp.activate()
+                let deadline = Date().addingTimeInterval(4)
+                while NSApp.keyWindow !== window, Date() < deadline {
+                    if let event = NSApp.nextEvent(matching: .any, until: Date().addingTimeInterval(0.01), inMode: .default, dequeue: true) {
+                        NSApp.sendEvent(event)
+                    }
+                }
+                guard window.isKeyWindow, NSApp.keyWindow === window else {
+                    FileHandle.standardError.write(Data("project fixture could not become key (active=\(NSApp.isActive), visible=\(window.isVisible), canKey=\(window.canBecomeKey), key=\(window.isKeyWindow))\n".utf8))
+                    return false
+                }
+            case "focus-only":
+                shell.componentFileWatch?.cancel()
+                shell.componentFileWatch = nil
+            case "watch":
+                shell.updateComponentFileWatch(trusted: shell.gitSource.trusted)
+            case "sample":
+                guard window.isKeyWindow, NSApp.keyWindow === window else { return false }
+                RunLoop.current.run(until: Date().addingTimeInterval(0.04))
+            case "leave": window.resignKey()
+            case "return": window.becomeKey()
+            case "revoke": shell.gitSource.updateTrust(false)
+            case "reopen":
+                window.close()
+                guard pump.waitForPendingRequests(timeout: 10), session.isClosed, shell.componentFileWatch == nil else { return false }
+                app.openProject(atPath: root, origin: .application)
+                guard pump.waitForPendingRequests(timeout: 10), let next = app.projectWindow(forPath: root),
+                      next !== shell, let nextWindow = next.window, next.gitSource.trusted else { return false }
+                FileHandle.standardOutput.write(Data("{}\n".utf8))
+                return checkWindowReturn(next, window: nextWindow, pump: pump, app: app, root: root)
+            case "done":
+                shell.closeSessions()
+                return pump.waitForPendingRequests(timeout: 10)
+            default:
+                guard let id = UUID(uuidString: command), shell.selectNodes([id]), pump.waitForPendingRequests(timeout: 10),
+                      let target = session.selectionTarget else { return false }
+                shell.sidebarSource.rename?(UUID(uuid: target.view), target.revision, id, "Unsaved local name")
+            }
+            guard shell.componentLibrary == nil, pump.waitForPendingRequests(timeout: 10),
+                  let target = session.selectionTarget, let info = session.info, var state = canvasSample(shell) else { return false }
+            let size = shell.canvasHost.canvasView.bounds.size
+            guard let scene = CoreRuntime.canvasInfo(handle: pump.runtimeHandle, session: session.session, size: size) else { return false }
+            state["dirty"] = info.has_unsaved_changes
+            state["history"] = target.history_sequence
+            state["selection"] = UUID(uuid: scene.primary).uuidString.lowercased()
+            state["undo"] = info.undo_depth
+            guard let bytes = try? JSONSerialization.data(withJSONObject: state) else { return false }
+            FileHandle.standardOutput.write(bytes + Data([10]))
+        }
+        return false
+    }
+
     // 실제 CanvasView의 hit test 및 sRGB bitmap을 같은 카메라 좌표에서 읽습니다.
     private static func canvasSample(_ shell: ShellProjectWindow) -> [String: Any]? {
         guard let window = shell.window, let session = shell.windowController.windowSession,

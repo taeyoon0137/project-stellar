@@ -14,12 +14,23 @@ enum ShellFrameInsertCheck {
         app.windowConfiguration = { autosave.configuration }
         guard let pump = app.pump else { return false }
         let path = directory.appendingPathComponent("Frame Insert").path
-        app.createProject(parentDirectory: directory.path, folderName: "Frame Insert")
         func fail(_ message: String) -> Bool {
             FileHandle.standardError.write(Data("frame-insert 실패: \(message)\n".utf8))
             return false
         }
         func wait() -> Bool { pump.waitForPendingRequests(timeout: 15) }
+        let showAlert = app.alertPresenter
+        app.alertPresenter = { title, message, owner in
+            // 숨긴 검사 창도 실제로 sheet를 붙일 수 있게 화면 밖에서 먼저 표시합니다.
+            owner?.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+            owner?.orderFront(nil)
+            showAlert(title, message, owner)
+        }
+        app.showWelcome()
+        guard let welcome = app.welcomeController?.welcomeViewController else { return fail("시작 창") }
+        welcome.renderNow()
+        welcome.chooseNewProjectLocation = { _, _, completion in completion(URL(fileURLWithPath: path)) }
+        welcome.newProjectButton.performClick(nil)
         guard wait(), let project = app.projectWindow(forPath: path), let window = project.window,
               let session = project.windowController.windowSession, let initial = session.info else { return fail("새 프로젝트 열기") }
         window.setContentSize(NSSize(width: 1300, height: 800))
@@ -32,6 +43,29 @@ enum ShellFrameInsertCheck {
             }
             return matches()
         }
+        func acknowledgeFirstCommit(_ owner: NSWindow) -> Bool {
+            let expectsNotice = CommandLine.arguments.contains("--expect-missing-git-identity")
+            if expectsNotice,
+               !awaitSidebar({ owner.attachedSheet != nil }) { return fail("첫 커밋 안내 미표시") }
+            guard let sheet = owner.attachedSheet else { return !expectsNotice }
+            func contents(_ view: NSView) -> [NSView] {
+                [view] + view.subviews.flatMap(contents)
+            }
+            guard let content = sheet.contentView else { return false }
+            let controls = contents(content)
+            let labels = controls.compactMap { ($0 as? NSTextField)?.stringValue }
+            guard labels.contains(String(localized: "Project Created Without a First Commit")),
+                  labels.contains(String(localized: "Set your Git user.name and user.email, then make the first commit in this project.")),
+                  let ok = controls.compactMap({ $0 as? NSButton }).first(where: { $0.title == String(localized: "OK") }) else {
+                return fail("첫 커밋 안내 내용·버튼: \(labels)")
+            }
+            ok.performClick(nil)
+            guard awaitSidebar({ owner.attachedSheet == nil }) else { return fail("첫 커밋 안내 확인 뒤 sheet 유지") }
+            print("new-project ok: first-commit notice explains missing Git identity and OK dismisses it")
+            return true
+        }
+        guard initial.generation == 1, initial.has_document == 1, !project.gitSource.trusted else { return fail("초기 제한 모드 문서") }
+        guard acknowledgeFirstCommit(window) else { return false }
         func layerRow(_ id: UUID, in owner: ShellProjectWindow) -> Int? {
             let outline = owner.sidebarSlot.sidebar.layersController.outline
             return (0..<outline.numberOfRows).first {
@@ -52,7 +86,7 @@ enum ShellFrameInsertCheck {
               project.sidebarSlot.sidebar.layersController.snapshot.layers.topLevelIDs.isEmpty else { return fail("새 프로젝트의 Pages·빈 Layers") }
         app.createProject(parentDirectory: directory.path, folderName: "Other Window")
         let otherPath = directory.appendingPathComponent("Other Window").path
-        guard wait(), let other = app.projectWindow(forPath: otherPath),
+        guard wait(), let other = app.projectWindow(forPath: otherPath), let otherWindow = other.window, acknowledgeFirstCommit(otherWindow),
               awaitSidebar({ showsActiveView(other) }), other.sidebarSlot.sidebar.pagesController.snapshot.activeViewID !=
               project.sidebarSlot.sidebar.pagesController.snapshot.activeViewID else { return fail("다른 창의 실제 View") }
         func viewPoint(_ x: CGFloat, _ y: CGFloat, canvas target: CanvasView = canvas) -> NSPoint {
@@ -78,14 +112,62 @@ enum ShellFrameInsertCheck {
                 pointer(.leftMouseDragged, 40, 30) && pointer(.leftMouseUp, 40, 30) && wait()
         }
         func action(_ command: ShellCommand) -> Bool {
+            if command == .saveNow {
+                let menu = NSMenu()
+                menu.addItem(MainMenuBuilder.makeItem(for: .saveNow, target: project.router))
+                guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                    timestamp: 1, windowNumber: window.windowNumber, context: nil, characters: "s",
+                    charactersIgnoringModifiers: "s", isARepeat: false, keyCode: 1) else { return false }
+                return menu.performKeyEquivalent(with: event) && wait()
+            }
             project.router.performShellCommand(MainMenuBuilder.makeItem(for: command, target: nil))
             return wait()
         }
-        guard let root = canvas.frameHit(at: viewPoint(50, 50))?.id,
-              key(3, "f"), project.toolsModel.snapshot.activeTool == .frame,
-              !project.gitSource.trusted, stroke(), session.info?.revision == initial.revision else { return fail("제한 모드에서 F 드래그") }
-        project.gitSource.updateTrust(true)
-        guard wait(), project.gitSource.trusted, pointer(.leftMouseDown, 40, 30), pointer(.leftMouseDragged, 90, 70),
+        let design = URL(fileURLWithPath: path).appendingPathComponent("design")
+        func savedDesign() throws -> [URL: Data] {
+            let files = try FileManager.default.subpathsOfDirectory(atPath: design.path)
+            var bytes: [URL: Data] = [:]
+            for entry in files {
+                let url = design.appendingPathComponent(entry)
+                if try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true {
+                    bytes[url] = try Data(contentsOf: url)
+                }
+            }
+            return bytes
+        }
+        guard let original = try? savedDesign(), !original.isEmpty,
+              let root = canvas.frameHit(at: viewPoint(50, 50))?.id,
+              key(3, "f"), project.toolsModel.snapshot.activeTool == .frame else { return fail("F 도구와 원본 문서") }
+        func unchanged() -> Bool {
+            guard let info = session.info else { return false }
+            return info.revision == initial.revision && info.undo_depth == initial.undo_depth &&
+                info.has_unsaved_changes == initial.has_unsaved_changes && canvas.insertionOutline == nil &&
+                canvas.frameHit(at: viewPoint(50, 50))?.id == root && (try? savedDesign()) == original
+        }
+        window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+        window.orderFront(nil)
+        guard !project.gitSource.trusted, window.attachedSheet == nil, stroke(),
+              ShellProjectTrustCheck.respondToTrustSheet(in: window, approving: false), wait(),
+              !project.gitSource.trusted, unchanged() else { return fail("제한 모드 F 드래그 승인 취소·원본 보존") }
+        guard stroke(), ShellProjectTrustCheck.respondToTrustSheet(in: window, approving: true), wait(),
+              project.gitSource.trusted, unchanged(), project.toolsModel.snapshot.activeTool == .frame
+        else { return fail("F 드래그 신뢰 승인 직후 입력 재생 없이 원본 보존") }
+        if CommandLine.arguments.contains("--expect-missing-git-identity") {
+            let panel = project.panelsSlot.gitPanel
+            panel.loadViewIfNeeded()
+            panel.dataSource.send(.refreshStatus)
+            guard awaitSidebar({ panel.status?.availability == .ready && !panel.isBusy
+                && ((panel.status?.changes.generation ?? 0) > 0 || panel.status?.semanticStatusError != nil) }),
+                let current = panel.status, current.changes.generation > 0, current.semanticStatusError == nil,
+                current.head == .unborn(branch: "main"), current.stagedChangeCount > 0,
+                panel.branchLabel.stringValue == GitPanelStrings.head(.unborn(branch: "main")),
+                panel.changesOverlay.titleField.stringValue == String(localized: "No Commits Yet")
+            else {
+                return fail("첫 커밋 전 Git: title=\(panel.changesOverlay.titleField.stringValue), generation=\(panel.status?.changes.generation ?? 0), issue=\(panel.status?.semanticStatusError ?? "")")
+            }
+            print("unborn Git panel: \(panel.branchLabel.stringValue), \(panel.summaryLabel.stringValue), \(panel.changesOverlay.titleField.stringValue)")
+        }
+        guard pointer(.leftMouseDown, 40, 30), pointer(.leftMouseDragged, 90, 70),
               canvas.insertionOutline != nil, key(53, "\u{1b}"), pointer(.leftMouseUp, 90, 70), wait(),
               canvas.insertionOutline == nil, session.info?.revision == initial.revision,
               pointer(.leftMouseDown, 40, 30), pointer(.leftMouseDragged, 41, 31), pointer(.leftMouseUp, 41, 31), wait(),
@@ -138,6 +220,47 @@ enum ShellFrameInsertCheck {
               action(.undo), sizeIs(78.5, 60, project), action(.undo), sizeIs(60, 60, project),
               action(.redo), sizeIs(78.5, 60, project), action(.redo), sizeIs(78.5, 68, project),
               other.inspectorSource.snapshot.state == .noSelection else { return fail("Inspector 입력·Undo·Redo") }
+
+        func radiusField(_ name: String, _ owner: ShellProjectWindow) -> NSTextField? {
+            owner.inspectorSlot.inspector.control(identifier: "frame.cornerRadius." + name) as? NSTextField
+        }
+        func radiiAre(_ expected: [Double], _ owner: ShellProjectWindow) -> Bool {
+            awaitSidebar {
+                zip(["topLeft", "topRight", "bottomRight", "bottomLeft"], expected).allSatisfy {
+                    radiusField($0.0, owner)?.doubleValue == $0.1
+                }
+            }
+        }
+        guard radiiAre([0, 0, 0, 0], project), let beforeCorners = session.info else { return fail("Frame 반경 입력 준비") }
+        for (index, name) in ["topLeft", "topRight", "bottomRight", "bottomLeft"].enumerated() {
+            var expected = [Double](repeating: 0, count: 4)
+            expected[index] = 13
+            guard let control = radiusField(name, project), enter("13", in: control), wait(),
+                  radiiAre(expected, project), session.info?.undo_depth == beforeCorners.undo_depth + 1,
+                  action(.undo), radiiAre([0, 0, 0, 0], project) else { return fail("개별 모서리 입력·Undo " + name) }
+        }
+        guard let topRight = radiusField("topRight", project), let rawBase = session.info,
+              enter("NaN", in: topRight), wait(), radiiAre([0, 0, 0, 0], project),
+              session.info?.revision == rawBase.revision,
+              enter("128", in: topRight), wait(), radiiAre([0, 128, 0, 0], project),
+              session.info?.undo_depth == beforeCorners.undo_depth + 1,
+              action(.undo), radiiAre([0, 0, 0, 0], project),
+              action(.redo), radiiAre([0, 128, 0, 0], project),
+              canvas.frameHit(at: viewPoint(116, 32))?.id == root,
+              canvas.frameHit(at: viewPoint(42, 32))?.id == child
+        else { return fail("범위보다 큰 우상 원본 반경·캔버스 hit·Undo·Redo") }
+
+        guard let oldFrame = canvas.selectedInspectorFrame, let beforeReselect = session.info,
+              project.selectNodes([root]), wait(), project.selectNodes([child]), wait(),
+              radiiAre([0, 128, 0, 0], project), let reselected = canvas.selectedInspectorFrame,
+              let afterReselect = session.info, reselected.revision == oldFrame.revision,
+              reselected.historySequence != oldFrame.historySequence else { return fail("A→B→A 선택 준비") }
+        var staleFailed = false
+        guard case .success = pump.editFrame(oldFrame, change: .corner(.topRight, 17), completion: {
+            if case .requestFailed = $0 { staleFailed = true }
+        }), wait(), staleFailed, radiiAre([0, 128, 0, 0], project),
+              session.info?.revision == beforeReselect.revision, session.info?.undo_depth == afterReselect.undo_depth
+        else { return fail("A→B→A 뒤 오래된 반경 요청 거부") }
 
         let white = InspectorColor(space: .srgb, red: 1, green: 1, blue: 1, alpha: 1)
         let p3 = InspectorColor(space: .displayP3, red: 0.75, green: 0.125, blue: 0.625, alpha: 0.375)
@@ -197,13 +320,17 @@ enum ShellFrameInsertCheck {
               shown.frameHit(at: viewPoint(117, 97, canvas: shown))?.id == child,
               shown.frameHit(at: viewPoint(120, 99, canvas: shown))?.id == root,
               reopened.selectNodes([child]), wait(), sizeIs(78.5, 68, reopened), fillIs(p3, in: reopened),
+              radiiAre([0, 128, 0, 0], reopened),
+              shown.frameHit(at: viewPoint(116, 32, canvas: shown))?.id == root,
               let reopenedWindow = reopened.window, centerPixel(shown, in: reopenedWindow) == painted else { return fail("재열기 후 자식 위치·크기") }
         reopened.gitSource.updateTrust(false)
         guard wait(), awaitSidebar({ field("width", reopened)?.isEnabled == false }),
               let restrictedSession = reopened.windowController.windowSession,
               let restricted = restrictedSession.info, let lockedWidth = field("width", reopened),
-              !lockedWidth.isEnabled, !restrictedSession.isClosing else { return fail("읽기 전용 Inspector 필드") }
+              !lockedWidth.isEnabled, radiusField("topRight", reopened)?.isEnabled == false, !restrictedSession.isClosing else { return fail("읽기 전용 Inspector 필드") }
         let restrictedSource = reopened.inspectorSource
+        restrictedSource.submit(.setValue(InspectorPropertyCatalog.FrameCorner.topRight.field.id, .number(9), phase: .commit),
+                                basedOn: restrictedSource.snapshot.generation)
         restrictedSource.submit(.setValue(InspectorPropertyID("frame.size.width"), .number(12), phase: .commit),
                                 basedOn: restrictedSource.snapshot.generation)
         restrictedSource.submit(.setValue(InspectorPropertyID("frame.background.enabled"), .bool(false), phase: .commit),
@@ -211,6 +338,7 @@ enum ShellFrameInsertCheck {
         guard wait(), restrictedSession.info?.revision == restricted.revision, sizeIs(78.5, 68, reopened), fillIs(p3, in: reopened),
               (reopened.inspectorSlot.inspector.control(identifier: "frame.background.color") as? NSColorWell)?.isEnabled == false
         else { return fail("읽기 전용 Inspector 크기 보존") }
+        guard radiiAre([0, 128, 0, 0], reopened) else { return fail("읽기 전용 반경 보존") }
         reopened.gitSource.updateTrust(true)
         guard wait(), awaitSidebar({ field("width", reopened)?.isEnabled == true }) else { return fail("신뢰 후 Inspector 복구") }
         guard key(3, "f", canvas: shown), pointer(.leftMouseDown, 45, 36, canvas: shown),
@@ -353,7 +481,54 @@ enum ShellFrameInsertCheck {
               loadShapeRow(restored, paintedShape.id)?.shapeKind == .rectangle else {
             return fail("Rectangle 이동 위치·Shape 종류·픽셀 재열기")
         }
-        print("frame-insert ok: F, restricted, cancel, undo/redo and reopen; Inspector size, optional fill, P3/alpha, invalid input, undo/redo, trust and reopen; R Rectangle Shape, V move, clip, pixels and reopen; live Layers, inline rename with undo/redo and reopen, nested disclosure, 64+1 pagination and two windows")
+        // 메뉴와 마우스로 만든 도형의 내부와, 외접 사각형 안이지만 경로 밖인 점을 함께 확인합니다.
+        func shapeAt(_ point: CGPoint, in view: CanvasView) -> UUID? {
+            view.frameHit(at: viewPoint(point.x, point.y, canvas: view))?.id
+        }
+        let shapes: [(tool: CanvasTool, start: CGPoint, end: CGPoint, inside: CGPoint, outside: CGPoint)] = [
+            (.ellipse, CGPoint(x: 180, y: 48), CGPoint(x: 220, y: 72), CGPoint(x: 200, y: 60), CGPoint(x: 181, y: 49)),
+            (.line, CGPoint(x: 284, y: 72), CGPoint(x: 232, y: 48), CGPoint(x: 258, y: 60), CGPoint(x: 240, y: 70)),
+            (.polygon, CGPoint(x: 244, y: 92), CGPoint(x: 284, y: 120), CGPoint(x: 264, y: 106), CGPoint(x: 245, y: 93)),
+        ]
+        var drawn: [UUID] = []
+        for (tool, start, end, inside, outside) in shapes {
+            let menu = NSMenu()
+            menu.addItem(MainMenuBuilder.makeItem(for: tool.command, target: restored.router))
+            menu.performActionForItem(at: 0)
+            guard restored.toolsModel.snapshot.activeTool == tool,
+                  let before = restored.windowController.windowSession?.info,
+                  pointer(.leftMouseDown, start.x, start.y, canvas: restoredCanvas),
+                  pointer(.leftMouseDragged, end.x, end.y, canvas: restoredCanvas),
+                  restoredCanvas.insertionOutline != nil,
+                  restored.windowController.windowSession?.info?.revision == before.revision,
+                  pointer(.leftMouseUp, end.x, end.y, canvas: restoredCanvas), wait(),
+                  let id = shapeAt(inside, in: restoredCanvas), id != root,
+                  shapeAt(outside, in: restoredCanvas) == root,
+                  restored.windowController.windowSession?.info?.undo_depth == before.undo_depth + 1,
+                  restored.toolsModel.snapshot.activeTool == .move,
+                  restored.performSessionCommand(.undo), wait(), shapeAt(inside, in: restoredCanvas) == root,
+                  restored.performSessionCommand(.redo), wait(), shapeAt(inside, in: restoredCanvas) == id else {
+                return fail("\(tool.label) 생성·실제 경로 hit·Undo/Redo")
+            }
+            drawn.append(id)
+        }
+        guard restored.performSessionCommand(.saveNow), wait(), let editedWindow = restored.window else {
+            return fail("도형 세 개 저장")
+        }
+        editedWindow.close()
+        guard wait() else { return fail("도형 창 닫기") }
+        app.openProject(atPath: path, origin: .application)
+        guard wait(), let final = app.projectWindow(forPath: path), final !== restored else { return fail("도형 재열기") }
+        final.window?.setContentSize(NSSize(width: 1300, height: 800))
+        final.window?.contentView?.layoutSubtreeIfNeeded()
+        for (shape, id) in zip(shapes, drawn) {
+            let view = final.canvasHost.canvasView
+            guard shapeAt(shape.inside, in: view) == id, shapeAt(shape.outside, in: view) == root else {
+                return fail("재열기 뒤 \(shape.tool.label) ID·경로 불일치")
+            }
+        }
+        print("shape tools ok: Ellipse, reverse Line and Polygon from menu to path hit, single Undo, Redo, Save and reopen")
+        print("frame-insert ok: F, restricted, cancel, undo/redo and reopen; Inspector size, four independent raw corners and stale A-B-A guard, optional fill, P3/alpha, invalid input, undo/redo, trust and reopen; R Rectangle Shape, V move, clip, pixels and reopen; live Layers, inline rename with undo/redo and reopen, nested disclosure, 64+1 pagination and two windows")
         return true
     }
 }

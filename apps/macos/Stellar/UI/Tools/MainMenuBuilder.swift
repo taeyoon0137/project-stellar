@@ -73,7 +73,7 @@ enum MainMenuBuilder {
             [.command(.selectFrameTool)],
             [.command(.selectRectangleTool), .command(.selectEllipseTool),
              .command(.selectLineTool), .command(.selectPolygonTool)],
-            [.command(.selectPenTool), .command(.selectTextTool)],
+            [.command(.selectTextTool)],
             [.command(.selectImageTool)],
         ]),
         ("Object", [

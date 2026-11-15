@@ -221,11 +221,12 @@ enum InspectorUICheck {
         try require(width.stringValue == "320", "초기 너비 '\(width.stringValue)'")
         width.stringValue = "480"
         width.sendAction(width.action, to: width.target)
-        try require(source.receivedCommands.last == .setValue(InspectorPropertyID("frame.size.width", coreKey: 0x0101),
+        try require(source.receivedCommands.last == .setValue(InspectorPropertyID("frame.size.width", coreKey: 0x0108),
                                                               .number(480), phase: .commit),
                     "너비 확정 명령 불일치: \(String(describing: source.receivedCommands.last))")
         harness.flush()
         try require(width.stringValue == "480", "너비 갱신 실패 '\(width.stringValue)'")
+        try require(try propertyID(harness, "frame.size.height").coreKey == 0x0109, "높이 속성 key 불일치")
 
         // 음수 크기는 규격 하한으로 clamp(코어 Size2 비음수 정책과 같은 방향).
         width.stringValue = "-5"

@@ -44,8 +44,20 @@ DEV-MAC, macOS 27.2 arm64. smoke는 로컬 Xcode로 빌드한 `Stellar.app`에�
 
 계획에 있는 다섯 생성 도구 중 자유 배치 Frame의 일반 드래그 경로를 구현했습니다. 후속 도구에서도 `InsertNode`와 생성 전후 선택을 한 entry에 담는 기존 경로를 재사용할 수 있습니다.
 
-## 남은 위험
+## 최초 Frame 드래그 검증 당시의 범위
 
 - Rectangle·Ellipse·Line·Polygon 생성과 클릭 기본 크기 생성이 남았습니다.
 - Shift 정비례·45도, Option 중심 기준, 드래그 중 Space로 시작점 이동, 흐름 컨테이너의 pointer 위치에 맞춘 삽입 순서가 남았습니다.
 - 합성 이벤트를 사용했습니다. 물리 마우스와 트랙패드의 드래그 감각, 회전된 부모에서의 실기 조작은 미검증입니다.
+
+## 후속 구현 — Ellipse·Line·Polygon
+
+- 자유 배치 부모의 두 local 점으로 실제 Shape를 생성합니다. Ellipse·Polygon은 Transform과 Fill, Line은 시작점 Transform과 Stroke를 기록합니다. 선의 로컬 끝점에는 방향 부호를 보존합니다.
+- 클릭 기본값은 Ellipse·Polygon 100×100, Line은 오른쪽 100입니다. Polygon은 기존 도구의 `pentagon` 아이콘에 맞춘 5변, 위쪽 첫 꼭짓점, 모서리 반경 0입니다.
+- `drawn_shapes_preserve_local_geometry_paint_selection_and_history_on_reopen`은 중첩 Frame 속 다섯 입력(역방향 Ellipse·Polygon, 수평·수직·대각 Line)의 한 번 Undo·이전 선택, Redo·ID, 재열기 후 실제 payload·modifier stack을 검사합니다. 같은 revision으로 재시도한 요청과 길이 0인 Line도 검사합니다.
+- 세 도구는 Shift 정비례·45도와 Option 중심 기준을 지원합니다. 드래그 중 오각형 미리보기는 위의 첫 꼭짓점에서 시작해 실제 경로와 같은 다섯 꼭짓점을 연결합니다.
+
+## 남은 위험
+
+- Frame·Rectangle의 클릭 기본 크기와 수식키, 생성 드래그 중 Space로 시작점 이동, 흐름 컨테이너 삽입은 미구현입니다.
+- 물리 마우스·트랙패드 입력과 화면 지연은 별도 실기 측정이 필요합니다.

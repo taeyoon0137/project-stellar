@@ -9,6 +9,7 @@ enum ShellWindowCloseCheck {
         }
         return MainActor.assumeIsolated {
             let fixture = URL(fileURLWithPath: arguments[flag + 1])
+            if arguments.contains("--quit-process") { return runQuitProcess(project: fixture) }
             let native = arguments.contains("--native-close")
             let app = NSApplication.shared
             app.setActivationPolicy(native ? .regular : .accessory)
@@ -26,6 +27,42 @@ enum ShellWindowCloseCheck {
             return result
         }
     }
+    // A separate accessory process drives AppKit's real terminateLater/reply loop.
+    // Its caller owns this temporary HOME and reads the saved project after process exit.
+    @MainActor private static func runQuitProcess(project: URL) -> Bool {
+        guard let home = ProcessInfo.processInfo.environment["HOME"],
+              project.resolvingSymlinksInPath().deletingLastPathComponent().path ==
+                URL(fileURLWithPath: home).resolvingSymlinksInPath().path,
+              project.lastPathComponent == "Quit Fixture" else { return false }
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let host = RuntimeHost()
+        let coordinator = ShellAppCoordinator(runtimeHandle: host.handle)
+        let settings = ShellCheckAutosave(prefix: "StellarQuitFixture")
+        coordinator.presentsWindows = false
+        coordinator.windowConfiguration = { settings.configuration }
+        let delegate = AppDelegate(checking: coordinator)
+        guard let pump = coordinator.pump else { return false }
+        app.finishLaunching()
+        let requestQuit = Timer(timeInterval: 0, repeats: false) { _ in
+            MainActor.assumeIsolated {
+                app.delegate = delegate
+                coordinator.openProject(atPath: project.path, origin: .application)
+                guard pump.waitForPendingRequests(timeout: 5),
+                      let window = coordinator.projectWindow(forPath: project.path),
+                      let session = window.windowController.windowSession,
+                      let node = UUID(uuidString: "00000000-000b-7000-8000-00000000000b"),
+                      session.track({ pump.checkWindowEdit(session: session.session, node: node, name: "Quit Process Saved",
+                                                          delayMS: 100, completion: $0) }, completion: { _ in })
+                else { exit(1) }
+                app.terminate(nil)
+            }
+        }
+        RunLoop.main.add(requestQuit, forMode: .default)
+        withExtendedLifetime((host, coordinator, delegate, settings)) { app.run() }
+        return false
+    }
+
 }
 
 @MainActor
@@ -267,6 +304,113 @@ private final class ShellWindowCloseCheckRunner {
         wait()
         expect(coordinator.projectWindows.isEmpty && cancelledSession.isClosed, "닫힌 창에 late callback 재부착")
         expect(alerts.count == 4, "늦은 응답의 추가 경고")
+        // 두 문서 중 두 번째 저장 실패 시 첫 창도 열어 둡니다. 같은 종료 요청의 reply는 1회입니다.
+        let agentStub = AgentSessionStub(scenario: .noSession)
+        let normalAgentSource = coordinator.makeAgentSource
+        coordinator.makeAgentSource = { agentStub }
+        guard let first = open(), let firstSession = first.windowController.windowSession,
+              let otherPath = projects.copy(fixture, as: "Other") else { return false }
+        coordinator.makeAgentSource = normalAgentSource
+        coordinator.openProject(atPath: otherPath, origin: .application)
+        wait()
+        guard let other = coordinator.projectWindow(forPath: otherPath),
+              let otherSession = other.windowController.windowSession else { return false }
+        let delegate = AppDelegate(checking: coordinator)
+        expect(delegate.applicationShouldTerminate(NSApp) == .terminateNow, "clean 문서에서 즉시 종료하지 않음")
+        // End editing through the actual AppKit field editor, without sending Return.
+        first.gitSource.updateTrust(true)
+        wait()
+        expect(first.selectNodes([node]), "Inspector 선택 요청")
+        wait()
+        first.window?.contentView?.layoutSubtreeIfNeeded()
+        let fieldDeadline = Date().addingTimeInterval(3)
+        func widthField() -> NSTextField? {
+            first.inspectorSlot.inspector.control(identifier: "frame.size.width") as? NSTextField
+        }
+        while widthField()?.isEnabled != true && Date() < fieldDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        guard let width = widthField(), let parent = first.window else { return false }
+        width.selectText(nil)
+        guard let fieldEditor = parent.firstResponder as? NSTextView, fieldEditor.isFieldEditor else {
+            expect(false, "Inspector field editor 없음"); return report()
+        }
+        fieldEditor.insertText("147", replacementRange: NSRange(location: 0, length: fieldEditor.string.utf16.count))
+        var widthReply: Bool?
+        let widthDecision = coordinator.prepareToTerminate(confirmAgent: { true }) { widthReply = $0 }
+        expect(widthDecision == .terminateLater, "미확정 필드의 저장 요청 대기 누락")
+        let widthDeadline = Date().addingTimeInterval(6)
+        while widthReply == nil && Date() < widthDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        expect(widthReply == true && first.canvasHost.canvasView.selectedInspectorFrame?.size.width == 147 &&
+            firstSession.info?.has_unsaved_changes == 0, "Return 없는 Inspector 값의 종료 저장 실패")
+        let agent = first.panelsSlot.agentPanel
+        _ = agent.view
+        agentStub.perform(.startSession(cli: AgentSessionStub.primaryCLI.id, mode: .readOnly))
+        agent.pumpEvents()
+        expect(coordinator.requiresConfirmationBeforeTerminating, "활성 에이전트 fixture 없음")
+        var confirmations = 0
+        let cancelledQuit = coordinator.prepareToTerminate(confirmAgent: {
+            confirmations += 1
+            expect(coordinator.prepareToTerminate(confirmAgent: { confirmations += 1; return true }, reply: { _ in }) ==
+                .terminateCancel, "확인 창 중복 종료")
+            return false
+        }, reply: { _ in self.expect(false, "사용자 취소 후 비동기 종료 응답") })
+        expect(cancelledQuit == .terminateCancel && confirmations == 1, "활성 에이전트 종료 취소")
+        agentStub.perform(.stopSession)
+        agent.pumpEvents()
+        let otherObjects = URL(fileURLWithPath: otherPath).appendingPathComponent("design/objects")
+        let otherBackup = URL(fileURLWithPath: otherPath).appendingPathComponent("backup")
+        do {
+            try FileManager.default.moveItem(at: otherObjects, to: otherBackup)
+            try Data("blocked".utf8).write(to: otherObjects)
+        } catch { expect(false, "종료 쓰기 오류 구성 실패"); return false }
+        edit(firstSession, "첫 창 종료 저장", delay: 50)
+        edit(otherSession, "둘째 창 종료 저장")
+        var replies: [Bool] = []
+        func requestQuit() -> NSApplication.TerminateReply {
+            coordinator.prepareToTerminate(confirmAgent: { true }) { replies.append($0) }
+        }
+        func waitForReply(_ count: Int) {
+            let deadline = Date().addingTimeInterval(6)
+            while replies.count < count, Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
+        }
+        expect(requestQuit() == .terminateLater && requestQuit() == .terminateLater, "접수 중복/보류 종료 판단 오류")
+        waitForReply(1)
+        expect(replies == [false] && firstSession.info?.has_unsaved_changes == 0 &&
+            otherSession.info?.has_unsaved_changes == 1, "부분 저장 실패 후 종료 승인 또는 편집 손실")
+        retained(first, "Quit 실패 첫 창")
+        retained(other, "Quit 실패 둘째 창")
+        edit(otherSession, "둘째 창 종료 저장", verify: true)
+        wait()
+        do {
+            try FileManager.default.removeItem(at: otherObjects)
+            try FileManager.default.moveItem(at: otherBackup, to: otherObjects)
+        } catch { expect(false, "종료 오류 해제 실패"); return false }
+        edit(firstSession, "Quit 직전 요청", delay: 75)
+        expect(requestQuit() == .terminateLater, "재시도·접수된 편집을 기다리지 않음")
+        waitForReply(2)
+        expect(replies == [false, true] && firstSession.info?.has_unsaved_changes == 0 &&
+            otherSession.info?.has_unsaved_changes == 0, "두 창의 저장이 끝나기 전 승인")
+        first.window?.close()
+        other.window?.close()
+        wait()
+        coordinator.openProject(atPath: otherPath, origin: .application)
+        wait()
+        guard let reloadedOther = coordinator.projectWindow(forPath: otherPath),
+              let otherAfterQuit = reloadedOther.windowController.windowSession else { return false }
+        edit(otherAfterQuit, "둘째 창 종료 저장", verify: true)
+        wait()
+        reloadedOther.window?.close()
+        wait()
+        guard let reloadedFirst = open(), let firstAfterQuit = reloadedFirst.windowController.windowSession else { return false }
+        edit(firstAfterQuit, "Quit 직전 요청", verify: true)
+        wait()
+        reloadedFirst.window?.close()
+        wait()
         expect(CoreRuntime.state(handle: host.handle)?.window_session_count == 0, "코어 창 session 누수")
         expect(CoreRuntime.state(handle: host.handle)?.project_count == 0, "코어 프로젝트 session 누수")
         RunLoop.current.run(until: Date().addingTimeInterval(0.1))

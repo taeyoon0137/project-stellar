@@ -77,7 +77,7 @@ const CLIP_TAG_PATH: u8 = 2;
 pub mod keys {
     use stellar_core_types::property::PropertyKey;
 
-    /// size.
+    /// 이전 SetProperty와 journal의 폭·높이 묶음.
     pub const SIZE: PropertyKey = PropertyKey(0x0101);
     /// local transform.
     pub const TRANSFORM: PropertyKey = PropertyKey(0x0102);
@@ -87,10 +87,29 @@ pub mod keys {
     pub const BACKGROUND: PropertyKey = PropertyKey(0x0104);
     /// border.
     pub const BORDER: PropertyKey = PropertyKey(0x0105);
-    /// corner radius.
+    /// 이전 SetProperty와 journal의 네 모서리 묶음.
     pub const CORNER_RADIUS: PropertyKey = PropertyKey(0x0106);
     /// layout mode 참조.
     pub const LAYOUT_MODE: PropertyKey = PropertyKey(0x0107);
+    /// 고정 폭 (CSS width).
+    pub const WIDTH: PropertyKey = PropertyKey(0x0108);
+    /// 고정 높이 (CSS height).
+    pub const HEIGHT: PropertyKey = PropertyKey(0x0109);
+    /// CSS border-top-left-radius.
+    pub const BORDER_TOP_LEFT_RADIUS: PropertyKey = PropertyKey(0x010a);
+    /// CSS border-top-right-radius.
+    pub const BORDER_TOP_RIGHT_RADIUS: PropertyKey = PropertyKey(0x010b);
+    /// CSS border-bottom-right-radius.
+    pub const BORDER_BOTTOM_RIGHT_RADIUS: PropertyKey = PropertyKey(0x010c);
+    /// CSS border-bottom-left-radius.
+    pub const BORDER_BOTTOM_LEFT_RADIUS: PropertyKey = PropertyKey(0x010d);
+    /// CSS 순서(좌상, 우상, 우하, 좌하)의 독립 속성.
+    pub const BORDER_RADIUS_LONGHANDS: [PropertyKey; 4] = [
+        BORDER_TOP_LEFT_RADIUS,
+        BORDER_TOP_RIGHT_RADIUS,
+        BORDER_BOTTOM_RIGHT_RADIUS,
+        BORDER_BOTTOM_LEFT_RADIUS,
+    ];
 }
 
 /// clip 해석 결과 (VI.3.4).
@@ -233,7 +252,7 @@ pub struct FramePayload {
     pub background: Option<Color>,
     /// 테두리.
     pub border: Option<Border>,
-    /// corner radius.
+    /// 이전 SetProperty와 journal의 네 모서리 묶음.
     pub corner_radius: CornerRadius,
     /// layout mode 참조(layout 정의는 layout crate, Phase X). 없으면 자유 배치.
     pub layout_mode: Option<StableId>,

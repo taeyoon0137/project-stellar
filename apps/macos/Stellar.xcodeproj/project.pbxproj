@@ -270,6 +270,16 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				EXCLUDED_SOURCE_FILE_NAMES = (
+					"$(inherited)",
+					"Shell*Check.swift",
+					"*UICheck.swift",
+					InputCheck.swift,
+					TextInputCheck.swift,
+					UITimingCheck.swift,
+					CanvasWindowController.swift,
+					NativeFieldsPanel.swift,
+				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../target/aarch64-apple-darwin/release";
 				MARKETING_VERSION = 0.0.0;
 				OTHER_LDFLAGS = (

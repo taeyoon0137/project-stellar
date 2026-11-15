@@ -1,6 +1,6 @@
 //! 원시 YAML blob 하나만 선택하여 stage/unstage합니다. 문서 generation은 직렬화하지 않습니다.
 use super::git_names::live;
-use super::{ProjectSummary, SelectionOperation};
+use super::{GitPanelHead, ProjectSummary, SelectionOperation};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -46,13 +46,17 @@ pub struct GitComponentRow {
 }
 
 #[derive(Debug)]
-struct HeadReview {
+pub(super) struct HeadReview {
     tree: ResolvedTree,
     reference: Option<Vec<u8>>,
 }
 
 impl HeadReview {
-    fn current(git: &GatedGitRunner, root: &Path, expected: &ResolvedTree) -> Result<Self, String> {
+    pub(super) fn current(
+        git: &GatedGitRunner,
+        root: &Path,
+        expected: &ResolvedTree,
+    ) -> Result<Self, String> {
         let head = git
             .run(&argv(["symbolic-ref", "-q", "HEAD"]), root)
             .map_err(|e| e.to_string())?;
@@ -66,6 +70,30 @@ impl HeadReview {
             return Err("컴포넌트 표시 이후 HEAD가 바뀌었습니다. 새로고침하세요".into());
         }
         Ok(Self { tree, reference })
+    }
+
+    pub(super) fn panel_head(&self, index_files: usize) -> Result<GitPanelHead, String> {
+        if let Some(reference) = &self.reference {
+            let branch = reference.strip_suffix(b"\n").unwrap_or(reference);
+            let branch = branch
+                .strip_prefix(b"refs/heads/")
+                .ok_or("HEAD가 로컬 브랜치를 가리키지 않습니다")?;
+            let branch = String::from_utf8_lossy(branch).into_owned();
+            return Ok(if self.tree == ResolvedTree::Unborn {
+                GitPanelHead::Unborn {
+                    branch,
+                    staged_files: u32::try_from(index_files).map_err(|_| "index 파일 수 초과")?,
+                }
+            } else {
+                GitPanelHead::Branch(branch)
+            });
+        }
+        match &self.tree {
+            ResolvedTree::Tree {
+                commit: Some(id), ..
+            } => Ok(GitPanelHead::Detached(id.to_string())),
+            _ => Err("분리된 HEAD의 commit을 확인할 수 없습니다".into()),
+        }
     }
 
     fn verify(&self, git: &GatedGitRunner, root: &Path) -> Result<(), String> {
@@ -151,6 +179,7 @@ pub(super) fn rows(
     head: &TreeSnapshot,
     index: &IndexSnapshot,
     working: &SavedProject,
+    head_ref: &Arc<HeadReview>,
 ) -> Result<(Vec<GitComponentRow>, bool), String> {
     let indexed = index_files(git, root, &index.entries)?;
     let committed = if head.entries == index.entries {
@@ -192,7 +221,6 @@ pub(super) fn rows(
     }
     let mut other = !renamed.is_empty();
     let mut rows = Vec::new();
-    let head_ref = Arc::new(HeadReview::current(git, root, &head.resolved)?);
     for path in paths {
         let old = committed.get(path);
         let middle = indexed.get(path);
@@ -227,7 +255,7 @@ pub(super) fn rows(
             head: old.map(|e| e.1),
             index: middle.map(|e| e.1),
             working: file.map(|e| e.1),
-            head_ref: Arc::clone(&head_ref),
+            head_ref: Arc::clone(head_ref),
             head_entry: before.get(path.as_bytes()).map(|e| (*e).clone()),
             index_entry: staged.get(path.as_bytes()).map(|e| (*e).clone()),
             working_mode: disk_mode,
@@ -406,7 +434,8 @@ mod tests {
         let read = || {
             let tree = read_tree_snapshot(&git, &root, &SnapshotSource::Head).unwrap();
             let index = read_index_snapshot(&git, &root).unwrap();
-            let (mut items, other) = rows(&git, &root, &tree, &index, &saved).unwrap();
+            let review = Arc::new(HeadReview::current(&git, &root, &tree.resolved).unwrap());
+            let (mut items, other) = rows(&git, &root, &tree, &index, &saved, &review).unwrap();
             assert!(!other);
             assert_eq!(items.len(), 1);
             items.pop().unwrap()
@@ -479,7 +508,8 @@ mod tests {
         component_source::create(&sources, &moved).unwrap();
         let tree = read_tree_snapshot(&git, &root, &SnapshotSource::Head).unwrap();
         let index = read_index_snapshot(&git, &root).unwrap();
-        let (items, other) = rows(&git, &root, &tree, &index, &saved).unwrap();
+        let review = Arc::new(HeadReview::current(&git, &root, &tree.resolved).unwrap());
+        let (items, other) = rows(&git, &root, &tree, &index, &saved, &review).unwrap();
         assert!(
             other && items.is_empty(),
             "rename requires a multi-path selection"

@@ -8,16 +8,32 @@ if CommandLine.arguments.contains("--lifecycle-check") {
 }
 
 // canvas 검사 모드: drawable pixel == point × scale 및 코어 round-trip을 검증하고 종료(II.5.4).
-if let flag = CommandLine.arguments.firstIndex(of: "--canvas-culling-check"), CommandLine.arguments.indices.contains(flag + 1) {
-    exit(MainActor.assumeIsolated { ShellCanvasCullingCheck.run(path: CommandLine.arguments[flag + 1]) } ? 0 : 1)
-}
-
-if CommandLine.arguments.contains("--visible-frames-check") {
-    exit(MainActor.assumeIsolated { ShellVisibleFramesCheck.run(CommandLine.arguments) } ? 0 : 1)
-}
-
 if CommandLine.arguments.contains("--canvas-check") {
     exit(CanvasCheck.run() ? 0 : 1)
+}
+
+// update 검사 모드: 업데이트 구성, Stable/Beta 채널 격리, appcast 서명, 승인 전 다운로드 금지를 실제 Sparkle과
+// loopback fixture로 headless 검증하고 종료(XVI.9.5, ADR-0017).
+if CommandLine.arguments.contains("--update-check") {
+    exit(UpdateCheck.run() ? 0 : 1)
+}
+
+if let flag = CommandLine.arguments.firstIndex(of: "--canvas-culling-check") {
+    #if DEBUG || STELLAR_PROFILE
+    guard CommandLine.arguments.indices.contains(flag + 1) else {
+        FileHandle.standardError.write(Data("usage: --canvas-culling-check <project>\n".utf8))
+        exit(1)
+    }
+    exit(MainActor.assumeIsolated { ShellCanvasCullingCheck.run(path: CommandLine.arguments[flag + 1]) } ? 0 : 1)
+    #else
+    FileHandle.standardError.write(Data("--canvas-culling-check requires a Debug or STELLAR_PROFILE build\n".utf8))
+    exit(1)
+    #endif
+}
+
+#if DEBUG
+if CommandLine.arguments.contains("--visible-frames-check") {
+    exit(MainActor.assumeIsolated { ShellVisibleFramesCheck.run(CommandLine.arguments) } ? 0 : 1)
 }
 
 // text input 검사 모드: 네이티브 UI 텍스트 컨트롤의 undo/IME smoke를 headless로 검증하고 종료(XII.5.1).
@@ -28,12 +44,6 @@ if CommandLine.arguments.contains("--text-input-check") {
 // input 검사 모드: mouse·trackpad·keyboard NSEvent → 공통 InputEvent 변환을 headless로 검증하고 종료(XII.3.2).
 if CommandLine.arguments.contains("--input-check") {
     exit(InputCheck.run() ? 0 : 1)
-}
-
-// update 검사 모드: 업데이트 구성, Stable/Beta 채널 격리, appcast 서명, 승인 전 다운로드 금지를 실제 Sparkle과
-// loopback fixture로 headless 검증하고 종료(XVI.9.5, ADR-0017).
-if CommandLine.arguments.contains("--update-check") {
-    exit(UpdateCheck.run() ? 0 : 1)
 }
 
 // 영역별 UI 검사 모드: 각 UI 영역을 화면 밖 창으로 만들어 검사하고 종료합니다(docs/design/ui/*.md 검사 절).
@@ -71,7 +81,6 @@ if let flag = CommandLine.arguments.firstIndex(where: { ["--component-create-che
     exit(MainActor.assumeIsolated { ShellComponentCreateCheck.run(directory: URL(fileURLWithPath: home, isDirectory: true), fromSelection: CommandLine.arguments[flag] == "--selected-component-check") } ? 0 : 1)
 }
 
-#if DEBUG
 if let flag = CommandLine.arguments.firstIndex(of: "--canvas-ime-check") {
     guard CommandLine.arguments.indices.contains(flag + 3), CommandLine.arguments[flag + 3] == ProcessInfo.processInfo.environment["HOME"] else { exit(1) }
     let fixture = URL(fileURLWithPath: CommandLine.arguments[flag+1])
@@ -84,7 +93,6 @@ if let flag = CommandLine.arguments.firstIndex(of: "--document-font-check") {
     let font = URL(fileURLWithPath: CommandLine.arguments[flag+2])
     exit(MainActor.assumeIsolated { ShellDocumentFontCheck.run(fixture: fixture, font: font) } ? 0 : 1)
 }
-#endif
 if let flag = CommandLine.arguments.firstIndex(of: "--image-place-check") {
     guard CommandLine.arguments.indices.contains(flag + 1),
    let home = ProcessInfo.processInfo.environment["HOME"], CommandLine.arguments[flag + 1] == home else { exit(1) }
@@ -122,6 +130,12 @@ if CommandLine.arguments.contains("--project-open-check") {
     exit(ShellProjectOpenCheck.run() ? 0 : 1)
 }
 
+if let index = CommandLine.arguments.firstIndex(of: "--project-clone-check"),
+   CommandLine.arguments.indices.contains(index + 1), CommandLine.arguments[index + 1] == ProcessInfo.processInfo.environment["HOME"] {
+    let directory = URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)
+    exit(MainActor.assumeIsolated { ShellProjectOpenCheck.clone(in: directory) } ? 0 : 1)
+}
+
 // 창 session 검사 모드: 저장 프로젝트 fixture(다음 인자)를 복사한 두 프로젝트를 열고 닫으며 창 controller마다 코어 창
 // session handle 하나를 소유하는지 검사하고 종료합니다(XII.2.2).
 if CommandLine.arguments.contains("--window-session-check") {
@@ -134,17 +148,16 @@ if CommandLine.arguments.contains("--session-commands-check") {
     exit(ShellSessionCommandsCheck.run(arguments: CommandLine.arguments) ? 0 : 1)
 }
 
-#if DEBUG
 if CommandLine.arguments.contains("--window-close-check") {
     exit(ShellWindowCloseCheck.run(arguments: CommandLine.arguments) ? 0 : 1)
 }
-#endif
 
 // 단축키 대응 검사 모드: 코어가 공유하는 command ID와 macOS 관례 단축키(⌘Z·⇧⌘Z·⌘S)의 대응, 메뉴 action이 창 session에
 // 도착하는지 저장 프로젝트 fixture(다음 인자)로 검사하고 종료합니다(XII.6.5).
 if CommandLine.arguments.contains("--key-mapping-check") {
     exit(ShellKeyMappingCheck.run(arguments: CommandLine.arguments) ? 0 : 1)
 }
+#endif
 
 // smoke 모드: GUI를 띄우지 않고 FFI로 코어 버전을 읽어 출력한 뒤 종료합니다(II.5.2).
 if CommandLine.arguments.contains("--smoke") {

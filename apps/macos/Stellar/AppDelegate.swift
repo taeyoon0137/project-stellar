@@ -10,6 +10,12 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let runtimeHost = RuntimeHost()
     private var coordinator: ShellAppCoordinator?
+    #if DEBUG
+    convenience init(checking coordinator: ShellAppCoordinator) {
+        self.init()
+        self.coordinator = coordinator
+    }
+    #endif
     /// 앱 업데이트(XVI.9.5, ADR-0017). 구성이 완전한 빌드에서만 Sparkle updater를 시작합니다.
     private var updateController: AppUpdateController?
 
@@ -66,17 +72,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
-    /// 활성 에이전트 세션이 있으면 종료 전에 확인합니다(ADR-0005 결정 4.5).
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         MainActor.assumeIsolated {
-            guard coordinator?.requiresConfirmationBeforeTerminating == true else { return .terminateNow }
-            let alert = ShellAppCoordinator.makeAgentSessionCloseAlert()
-            alert.messageText = String(
-                localized: "Quit Stellar and Stop the Agent Session?",
-                comment: "Alert title shown before quitting with an active agent session"
-            )
-            alert.buttons.first?.title = String(localized: "Quit", comment: "Destructive alert button")
-            return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+            coordinator?.prepareToTerminate(confirmAgent: {
+                let alert = ShellAppCoordinator.makeAgentSessionCloseAlert()
+                alert.messageText = String(
+                    localized: "Quit Stellar and Stop the Agent Session?",
+                    comment: "Alert title shown before quitting with an active agent session"
+                )
+                alert.buttons.first?.title = String(localized: "Quit", comment: "Destructive alert button")
+                return alert.runModal() == .alertFirstButtonReturn
+            }, reply: { sender.reply(toApplicationShouldTerminate: $0) }) ?? .terminateNow
         }
     }
 

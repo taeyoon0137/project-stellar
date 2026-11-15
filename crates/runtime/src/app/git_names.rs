@@ -12,7 +12,8 @@ use stellar_git_porcelain::cancel::GitCancelToken;
 use stellar_git_porcelain::discovery::{discover_git, GitDiscoveryConfig};
 use stellar_git_porcelain::runner::GitRunner;
 use stellar_git_porcelain::snapshot::{
-    materialize_snapshot, read_index_snapshot, read_tree_snapshot, SnapshotEntry, SnapshotSource,
+    materialize_snapshot, read_index_snapshot, read_tree_snapshot, ResolvedTree, SnapshotEntry,
+    SnapshotSource,
 };
 use stellar_git_porcelain::trust::{GatedGitRunner, GitTrust};
 use stellar_ops::candidate::{
@@ -22,10 +23,10 @@ use stellar_ops::candidate::{
 use stellar_project::saved_project::SavedProjectLoader;
 use stellar_project::trust::TrustStatus;
 
-use super::git_components::{self, GitComponentRow};
+use super::git_components::{self, GitComponentRow, HeadReview};
 use super::{
-    AppRuntime, ProjectSummary, RequestError, RequestFailure, RequestId, RuntimeEvent,
-    WindowSessionHandle,
+    AppRuntime, GitPanelHead, ProjectSummary, RequestError, RequestFailure, RequestId,
+    RuntimeEvent, WindowSessionHandle,
 };
 use crate::staging::{
     apply_stage_candidate, prepare_stage_candidate_with_preview, prepare_unstage_candidate,
@@ -193,12 +194,18 @@ fn snapshot(
     document_names(&saved)
 }
 
+struct PanelChanges {
+    rows: Vec<PanelRow>,
+    other: bool,
+    head: GitPanelHead,
+}
+
 fn read_names(
     git: &GatedGitRunner,
     project: &ProjectSummary,
     parent: &Path,
     cancel: &GitCancelToken,
-) -> Result<(Vec<PanelRow>, bool), String> {
+) -> Result<PanelChanges, String> {
     let root = &project.canonical_root;
     live(cancel)?;
     let location =
@@ -211,7 +218,12 @@ fn read_names(
     if index.has_conflicts() {
         return Err("index 충돌을 먼저 해결해야 합니다".into());
     }
-    let indexed = snapshot(git, project, &index.entries, parent)?;
+    let unborn = head.resolved == ResolvedTree::Unborn;
+    let indexed = if unborn && index.entries.is_empty() {
+        None
+    } else {
+        snapshot(git, project, &index.entries, parent)?
+    };
     live(cancel)?;
     let working_project = SavedProjectLoader::new()
         .open(root)
@@ -219,19 +231,23 @@ fn read_names(
     if working_project.project_id != project.project_id {
         return Err("작업 프로젝트 ID가 다릅니다".into());
     }
-    let (components, mut other) = git_components::rows(git, root, &head, &index, &working_project)?;
+    let review = Arc::new(HeadReview::current(git, root, &head.resolved)?);
+    let panel_head = review.panel_head(index.entries.len())?;
+    let (components, mut other) =
+        git_components::rows(git, root, &head, &index, &working_project, &review)?;
     let working = document_names(&working_project)?;
-    let committed = if head.entries == index.entries {
+    let committed = if unborn || head.entries == index.entries {
         None
     } else {
         snapshot(git, project, &head.entries, parent)?
     };
     let mut rows = BTreeMap::new();
     let (Some(indexed), Some(working)) = (indexed, working) else {
-        return Ok((
-            components.into_iter().map(PanelRow::Component).collect(),
-            true,
-        ));
+        return Ok(PanelChanges {
+            rows: components.into_iter().map(PanelRow::Component).collect(),
+            other: true,
+            head: panel_head,
+        });
     };
     let staged = if head.entries == index.entries {
         SemanticDiff::default()
@@ -298,7 +314,11 @@ fn read_names(
         .map(PanelRow::Name)
         .chain(components.into_iter().map(PanelRow::Component))
         .collect();
-    Ok((rows, other))
+    Ok(PanelChanges {
+        rows,
+        other,
+        head: panel_head,
+    })
 }
 
 fn apply_name(
@@ -510,15 +530,16 @@ impl AppRuntime {
                     }
                 });
                 let event = match result {
-                    Ok((items, other_changes)) => {
-                        let rows = items.len() as u32;
-                        jobs.snapshots.insert(session, (request, items));
+                    Ok(changes) => {
+                        let rows = changes.rows.len() as u32;
+                        jobs.snapshots.insert(session, (request, changes.rows));
                         RuntimeEvent::GitNames {
                             request,
                             session,
                             rows,
-                            other_changes,
+                            other_changes: changes.other,
                             staged: selection.is_some(),
+                            head: Some(changes.head),
                         }
                     }
                     Err(message) => {

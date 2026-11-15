@@ -95,8 +95,8 @@ enum WelcomeFailureReason: Equatable {
     /// 그 원인의 제목과 해결 방법입니다. `path`는 고른 폴더입니다(문구에는 폴더 이름만 씀).
     case projectOpenFailed(ShellProjectOpenFailure, path: String)
     case projectCreationFailed(message: String)
-    /// 이 빌드에는 Clone 코어 경로가 아직 없습니다(Clone Project).
-    case projectCloneUnavailable
+    /// Git이 checkout을 만들지 못했거나 대상 경로에 쓸 수 없습니다.
+    case projectCloneFailed
 }
 
 /// 진행 중 작업.

@@ -8,8 +8,9 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use stellar_git_porcelain::repo::{git_clone, RepoError};
-use stellar_git_porcelain::runner::GitRunner;
+use stellar_git_porcelain::cancel::GitCancelToken;
+use stellar_git_porcelain::repo::{git_clone_cancellable, RepoError};
+use stellar_git_porcelain::runner::{GitRunError, GitRunner};
 
 use crate::private_temp::{sweep_stale_private_temps, PrivateTempDir, PrivateTempError};
 use crate::probe::{probe_project, ProbeError, ProjectProbe};
@@ -136,8 +137,17 @@ const STAGING_CHECKOUT: &str = "checkout";
 /// 지우므로 **최종 폴더는 존재하지 않습니다.** 시작할 때 비정상 종료로 남은 이전 staging
 /// ([`sweep_stale_private_temps`])을 먼저 정리합니다.
 pub fn clone_project(request: &CloneRequest, runner: &GitRunner) -> Result<PathBuf, CloneError> {
+    clone_project_cancellable(request, runner, &GitCancelToken::new())
+}
+
+/// Git 종료와 최종 폴더 공개 전까지 취소할 수 있는 clone입니다.
+pub fn clone_project_cancellable(
+    request: &CloneRequest,
+    runner: &GitRunner,
+    cancel: &GitCancelToken,
+) -> Result<PathBuf, CloneError> {
     let target = request.target_path();
-    if target.exists() {
+    if std::fs::symlink_metadata(&target).is_ok() {
         return Err(CloneError::TargetExists);
     }
     // 이전 비정상 종료의 잔여 staging 정리(실패해도 clone은 계속).
@@ -146,19 +156,65 @@ pub fn clone_project(request: &CloneRequest, runner: &GitRunner) -> Result<PathB
         .map_err(CloneError::Staging)?;
     let checkout = staging.path().join(STAGING_CHECKOUT);
 
-    match git_clone(runner, request.url.expose(), &checkout) {
-        Ok(()) => {
-            if let Err(e) = std::fs::rename(&checkout, &target) {
-                // rename 실패: staging은 drop 시 정리(최종 폴더는 생기지 않음).
-                return Err(CloneError::Rename { kind: e.kind() });
-            }
-            // 빈 staging(표식만 남음) 정리. 실패해도 다음 clone의 잔여 정리가 지웁니다.
-            let _ = staging.cleanup();
-            Ok(target)
-        }
-        // clone 실패: git이 만든 부분 checkout은 staging drop 시 정리.
-        Err(e) => Err(CloneError::Clone(e)),
+    git_clone_cancellable(runner, request.url.expose(), &checkout, cancel)
+        .map_err(CloneError::Clone)?;
+    if cancel.is_cancelled() {
+        return Err(CloneError::Clone(RepoError::Run(GitRunError::Cancelled)));
     }
+    publish_checkout(&checkout, &target).map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => CloneError::TargetExists,
+        kind => CloneError::Rename { kind },
+    })?;
+    let _ = staging.cleanup();
+    Ok(target)
+}
+
+// std::fs::rename은 기존의 빈 디렉터리를 대체할 수 있습니다.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn publish_checkout(source: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
+    use std::ffi::{c_char, c_int, c_uint, CString};
+    use std::os::unix::ffi::OsStrExt;
+    let source = CString::new(source.as_os_str().as_bytes())?;
+    let target = CString::new(target.as_os_str().as_bytes())?;
+    #[cfg(target_os = "macos")]
+    unsafe extern "C" {
+        fn renamex_np(from: *const c_char, to: *const c_char, flags: c_uint) -> c_int;
+    }
+    #[cfg(target_os = "linux")]
+    unsafe extern "C" {
+        fn renameat2(
+            from_dir: c_int,
+            from: *const c_char,
+            to_dir: c_int,
+            to: *const c_char,
+            flags: c_uint,
+        ) -> c_int;
+    }
+    // SAFETY: 시스템 호출이 끝날 때까지 두 경로는 유효한 NUL 종단 문자열입니다.
+    #[cfg(target_os = "macos")]
+    let status = unsafe {
+        renamex_np(source.as_ptr(), target.as_ptr(), 4 /* RENAME_EXCL */)
+    };
+    #[cfg(target_os = "linux")]
+    let status = unsafe {
+        renameat2(
+            -100,
+            source.as_ptr(),
+            -100,
+            target.as_ptr(),
+            1, /* RENAME_NOREPLACE */
+        )
+    };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn publish_checkout(source: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
+    std::fs::rename(source, target)
 }
 
 /// clone 후 열기 분류 결과.
@@ -327,6 +383,27 @@ mod git_clone_tests {
         std::fs::write(dir.join("file.txt"), b"hello\n").unwrap();
         runner.run(&argv(["add", "--all"]), dir).unwrap();
         runner.run(&argv(["commit", "-m", "init"]), dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn final_publication_preserves_an_empty_directory_created_during_clone() {
+        use std::os::unix::fs::MetadataExt;
+        let root = temp_dir();
+        let target = root.join("target");
+        let checkout = root.join("checkout");
+        std::fs::create_dir(&checkout).unwrap();
+        std::fs::write(checkout.join("incoming"), b"incoming").unwrap();
+        std::fs::create_dir(&target).unwrap();
+        let inode = std::fs::metadata(&target).unwrap().ino();
+        assert_eq!(
+            publish_checkout(&checkout, &target).unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(std::fs::metadata(&target).unwrap().ino(), inode);
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
+        assert!(checkout.join("incoming").exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

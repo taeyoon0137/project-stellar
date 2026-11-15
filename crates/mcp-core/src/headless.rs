@@ -1,5 +1,6 @@
 //! 고정한 신뢰 프로젝트의 저장 문서 조회·비교·검증 L2 backend (XIX.9.3).
 mod comparison;
+mod components;
 mod validation;
 use std::cell::RefCell;
 
@@ -10,7 +11,7 @@ use stellar_ops::snapshot::ProjectSnapshot;
 use stellar_ops::trusted::{TrustedProject, TrustedReadError};
 
 use crate::catalog::paging::{self, PageSource};
-use crate::catalog::resources::{descriptor, resource};
+use crate::catalog::resources::{descriptor, resource, template_descriptor};
 use crate::catalog::scope::{ApprovedScope, ProjectDocuments, ScopedPayload};
 use crate::catalog::tools::{self, SEMANTIC_DIFF, VALIDATE_DOCUMENT};
 use crate::json::{self, JsonNumber, JsonValue};
@@ -34,6 +35,8 @@ struct CachedRead {
     tree: Option<(StableId, DocumentTree)>,
     validation: Option<validation::FindingsPage>,
     comparison: Option<comparison::DiffPage>,
+    components: Option<stellar_ops::component_source::ProjectComponents>,
+    component: Option<stellar_ops::component_source::ComponentDetail>,
 }
 
 impl Headless {
@@ -81,15 +84,23 @@ impl Headless {
         }
         let (field, names): (_, &[&str]) = match method {
             "resources/list" => ("resources", &["project-structure", "components"]),
-            "resources/templates/list" => ("resourceTemplates", &["document"]),
+            "resources/templates/list" => (
+                "resourceTemplates",
+                &["document", "components", "component"],
+            ),
             _ => return Err(invalid("제공하지 않는 목록입니다")),
+        };
+        let describe = if method == "resources/templates/list" {
+            template_descriptor
+        } else {
+            descriptor
         };
         Ok(JsonValue::object(vec![(
             field,
             JsonValue::Array(
                 names
                     .iter()
-                    .map(|name| descriptor(resource(name).expect("catalog resource")))
+                    .map(|name| describe(resource(name).expect("catalog resource")))
                     .collect(),
             ),
         )]))
@@ -173,6 +184,8 @@ impl Headless {
                 tree: None,
                 validation: None,
                 comparison: None,
+                components: None,
+                component: None,
             });
         }
         let cached = cache.as_mut().expect("snapshot을 열었음");
@@ -218,30 +231,14 @@ impl Headless {
             "project-structure" => {
                 JsonValue::object(structure_fields(&project_structure(snapshot)))
             }
-            "components" => {
-                let set = stellar_ops::component_source::query(snapshot).map_err(|_| {
-                    RpcError::new(-32000, "프로젝트의 컴포넌트 원본을 읽을 수 없습니다")
-                })?;
-                let entries = set
-                    .entries
-                    .into_iter()
-                    .map(|entry| {
-                        JsonValue::object(vec![
-                            ("id", id(entry.id)),
-                            ("root", id(entry.root)),
-                            ("node_count", count(entry.node_count)),
-                            ("name", JsonValue::string(entry.name)),
-                            ("width", JsonValue::string(entry.size.width().to_string())),
-                            ("height", JsonValue::string(entry.size.height().to_string())),
-                            ("source_hash", JsonValue::string(entry.hash.to_string())),
-                        ])
-                    })
-                    .collect();
-                JsonValue::object(vec![
-                    ("revision", revision(set.revision)),
-                    ("chunk_count", count(set.chunk_count)),
-                    ("entries", JsonValue::Array(entries)),
-                ])
+            "components" => components::read(cached, uri)?,
+            "component" => {
+                let component = target
+                    .component
+                    .as_deref()
+                    .and_then(|id| id.parse().ok())
+                    .ok_or_else(|| invalid("컴포넌트 ID가 필요합니다"))?;
+                components::read_detail(cached, uri, component)?
             }
             "document" => {
                 let document = target

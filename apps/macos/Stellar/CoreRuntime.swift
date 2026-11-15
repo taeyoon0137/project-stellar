@@ -56,6 +56,21 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    static func cloneProject(handle: UInt64, remote: String, target: String) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = Array(remote.utf8).withUnsafeBufferPointer { url in
+            Array(target.utf8).withUnsafeBufferPointer { path in
+                stellar_project_clone(handle, url.baseAddress, url.count, path.baseAddress, path.count, &request)
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    static func cancelClone(handle: UInt64, request: UInt64) {
+        _ = stellar_project_clone_cancel(handle, request)
+    }
+
     /// 프로젝트 폴더 열기를 요청합니다. 기다리지 않고 request id를 돌려줍니다.
     ///
     /// 결과는 `pollEvent(handle:)`로 꺼내는 `.projectOpened` 또는 `.requestFailed` 하나입니다. 빈 경로·상대 경로·NUL은
@@ -142,6 +157,44 @@ enum CoreRuntime {
         return info
     }
 
+    static func canvasInfo(handle: UInt64, session: UInt64, size: CGSize) -> StellarCanvasInfo? {
+        var info = StellarCanvasInfo()
+        let status = stellar_window_canvas(handle, session, Float(size.width), Float(size.height), &info, nil, 0)
+        return status == STELLAR_OK ? info : nil
+    }
+
+    /// 도형과 glyph outline은 같은 revision/row 식별자와 move·line·curve·close 경로 요소를 사용합니다.
+    static func canvasShapePath(handle: UInt64, session: UInt64, query: StellarCanvasTextQuery)
+        -> ([StellarCanvasTextElement], UInt32)? {
+        var count = 0, flags: UInt32 = 0
+        guard stellar_canvas_shape_path(handle, session, query, nil, 0, &count, &flags) == STELLAR_OK else { return nil }
+        var elements = [StellarCanvasTextElement](repeating: StellarCanvasTextElement(), count: count)
+        let status = elements.withUnsafeMutableBufferPointer {
+            stellar_canvas_shape_path(handle, session, query, $0.baseAddress, $0.count, &count, &flags)
+        }
+        return status == STELLAR_OK ? (elements, flags) : nil
+    }
+
+    static func probeRecovery(handle: UInt64, session: UInt64, capacity: Int = Int(STELLAR_EVENT_TEXT_MAX))
+        -> (status: StellarStatus, bytes: ArraySlice<UInt8>) {
+        var length = 0, bytes = [UInt8](repeating: 0, count: capacity)
+        let status = bytes.withUnsafeMutableBufferPointer {
+            stellar_window_recovery_probe(handle, session, $0.baseAddress, $0.count, &length)
+        }
+        return (status, bytes.prefix(length))
+    }
+
+    static func recoverDocument(handle: UInt64, session: UInt64, ticket: String, destination: URL?) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = Array(ticket.utf8).withUnsafeBufferPointer { token in
+            Array((destination?.path ?? "").utf8).withUnsafeBufferPointer { path in
+                stellar_window_recovery_apply(handle, session, token.baseAddress, token.count, path.baseAddress, path.count, &request)
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     /// 공유 command 이름(예: `edit.undo`)의 코어 명령 코드(XII.6.5). 코어 명령이 아니면 nil입니다(handle 불필요).
     static func commandCode(name: String) -> UInt32? {
         var code: UInt32 = 0
@@ -165,6 +218,13 @@ enum CoreRuntime {
     static func fitRoot(handle: UInt64, session: UInt64, size: CGSize) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
         let status = stellar_window_session_fit_root(handle, session, size.width, size.height, &request)
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    static func zoomAt(handle: UInt64, session: UInt64, anchor: CGPoint, fitFactor: Double?, zoomOut: Bool) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = stellar_window_session_zoom_at(handle, session, anchor.x, anchor.y, fitFactor ?? 0, zoomOut ? 1 : 0, &request)
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
         return .success(request)
     }
@@ -243,6 +303,21 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    static func placePNG(handle: UInt64, target: StellarSelectionTarget, parent: UUID, position: CGPoint,
+                         path: String, digest: Data) -> Result<UInt64, CoreRuntimeCallError> {
+        var target = target, request: UInt64 = 0
+        let status = withUnsafeBytes(of: parent.uuid) { id in
+            digest.withUnsafeBytes { digest in
+                Array(path.utf8).withUnsafeBufferPointer { path in
+                    stellar_window_place_png(handle, &target, id.bindMemory(to: UInt8.self).baseAddress,
+                        Float(position.x), Float(position.y), path.baseAddress, path.count, digest.bindMemory(to: UInt8.self).baseAddress, &request)
+                }
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     static func insertFrame(handle: UInt64, session: UInt64, view: UUID, parent: UUID, revision: UInt64,
                             rect: CGRect, rectangle: Bool) -> Result<UInt64, CoreRuntimeCallError> {
         let insert = rectangle ? stellar_window_session_insert_rectangle : stellar_window_session_insert_frame
@@ -252,6 +327,20 @@ enum CoreRuntime {
                 insert(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
                     parentBytes.bindMemory(to: UInt8.self).baseAddress, revision, Float(rect.minX), Float(rect.minY),
                     Float(rect.width), Float(rect.height), &request)
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    static func insertShape(handle: UInt64, session: UInt64, view: UUID, parent: UUID, revision: UInt64,
+                            kind: InspectorShapeKind, start: CGPoint, end: CGPoint) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
+            withUnsafeBytes(of: parent.uuid) { parentBytes in
+                stellar_window_session_insert_shape(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
+                    parentBytes.bindMemory(to: UInt8.self).baseAddress, revision, kind.rawValue,
+                    Float(start.x), Float(start.y), Float(end.x), Float(end.y), &request)
             }
         }
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
@@ -278,6 +367,30 @@ enum CoreRuntime {
             withUnsafeBytes(of: node.uuid) { nodeBytes in
                 stellar_window_session_resize_frame(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
                     nodeBytes.bindMemory(to: UInt8.self).baseAddress, revision, Float(size.width), Float(size.height), &request)
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    static func selectedFrameRadii(handle: UInt64, session: UInt64, view: UUID,
+                                   node: UUID, revision: UInt64) -> (radii: [Float], historySequence: UInt64)? {
+        var target = StellarFrameSelection()
+        var sequence: UInt64 = 0
+        var values = [Float](repeating: 0, count: 4)
+        guard stellar_window_selected_frame_corners(handle, session, &target, &sequence, &values) == STELLAR_OK,
+              target.revision == revision, UUID(uuid: target.view) == view, UUID(uuid: target.node) == node
+        else { return nil }
+        return (values, sequence)
+    }
+
+    static func setFrameCorner(handle: UInt64, session: UInt64, view: UUID, node: UUID,
+                               revision: UInt64, historySequence: UInt64, key: UInt32, radius: Float) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
+            withUnsafeBytes(of: node.uuid) { nodeBytes in
+                stellar_window_session_set_frame_corner(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
+                    nodeBytes.bindMemory(to: UInt8.self).baseAddress, revision, historySequence, key, radius, &request)
             }
         }
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
@@ -375,13 +488,18 @@ struct CoreGitChange: Equatable {
     let unstaged: Bool
 }
 
+struct CoreGitPanelHead: Equatable {
+    let state: GitHeadState
+    let initialStagedFiles: UInt32?
+}
+
 enum CoreRuntimeEvent: Equatable {
     case componentCreated(request: UInt64, session: UInt64, filename: String)
     case projectCreated(request: UInt64, gitState: UInt32)
     case projectOpened(request: UInt64, project: UInt64, projectID: UUID, name: String, root: String)
     case projectClosed(request: UInt64, project: UInt64, closedDocuments: UInt32)
     case projectTrust(request: UInt64, project: UInt64, trusted: Bool)
-    case gitNames(request: UInt64, session: UInt64, rows: UInt32, other: Bool, applied: Bool)
+    case gitNames(request: UInt64, session: UInt64, rows: UInt32, other: Bool, applied: Bool, head: CoreGitPanelHead?)
     case documentOpened(request: UInt64, project: UInt64, document: UInt64, documentID: UUID, alreadyOpen: Bool)
     case documentClosed(request: UInt64, document: UInt64)
     case requestFailed(request: UInt64, failure: UInt32, message: String)
@@ -403,7 +521,7 @@ enum CoreRuntimeEvent: Equatable {
     var request: UInt64? {
         switch self {
         case .componentCreated(let request, _, _), .projectCreated(let request, _), .projectOpened(let request, _, _, _, _), .projectClosed(let request, _, _), .projectTrust(let request, _, _),
-             .gitNames(let request, _, _, _, _), .documentOpened(let request, _, _, _, _), .documentClosed(let request, _),
+             .gitNames(let request, _, _, _, _, _), .documentOpened(let request, _, _, _, _), .documentClosed(let request, _),
              .requestFailed(let request, _, _), .windowSessionOpened(let request, _, _, _, _, _),
              .windowSessionClosed(let request, _), .windowViewChanged(let request, _),
              .historyReplayed(let request, _, _, _, _), .windowSessionSaved(let request, _, _, _):
@@ -440,7 +558,24 @@ enum CoreRuntimeEvent: Equatable {
         case UInt32(STELLAR_EVENT_GIT_NAMES):
             guard let request = reader.u64(), let session = reader.u64(), let rows = reader.u32(),
                   let other = reader.bool(), let applied = reader.bool() else { return .undecodable(kind: kind) }
-            event = .gitNames(request: request, session: session, rows: rows, other: other, applied: applied)
+            var head: CoreGitPanelHead?
+            if !reader.isAtEnd {
+                guard let text = reader.text() else { return .undecodable(kind: kind) }
+                if text.isEmpty {
+                    let state: GitHeadState
+                    guard let tag = reader.u8(), let value = reader.text() else { return .undecodable(kind: kind) }
+                    switch tag {
+                    case 1: state = .branch(name: value)
+                    case 2: state = .detached(shortHash: String(value.prefix(7)))
+                    default: return .undecodable(kind: kind)
+                    }
+                    head = CoreGitPanelHead(state: state, initialStagedFiles: nil)
+                } else {
+                    guard let files = reader.u32() else { return .undecodable(kind: kind) }
+                    head = CoreGitPanelHead(state: .unborn(branch: text), initialStagedFiles: files)
+                }
+            }
+            event = .gitNames(request: request, session: session, rows: rows, other: other, applied: applied, head: head)
         case UInt32(STELLAR_EVENT_PROJECT_TRUST):
             event = reader.u64().flatMap { request in
                 reader.u64().flatMap { project in

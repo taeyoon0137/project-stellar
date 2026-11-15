@@ -60,7 +60,6 @@ enum ShellCommand: String, CaseIterable {
     case selectEllipseTool = "tool.ellipse"
     case selectLineTool = "tool.line"
     case selectPolygonTool = "tool.polygon"
-    case selectPenTool = "tool.pen"
     case selectTextTool = "tool.text"
     case selectImageTool = "tool.image"
     case selectHandTool = "tool.hand"
@@ -157,7 +156,7 @@ enum ShellCommand: String, CaseIterable {
         case .selectHandTool: return "Hand Tool"
         case .selectZoomTool: return "Zoom Tool"
         case .selectFrameTool, .selectRectangleTool, .selectEllipseTool, .selectLineTool,
-             .selectPolygonTool, .selectPenTool, .selectTextTool, .selectImageTool:
+             .selectPolygonTool, .selectTextTool, .selectImageTool:
             return canvasTool?.label ?? rawValue
         case .group: return "Group"
         case .ungroup: return "Ungroup"
@@ -416,7 +415,7 @@ enum ShellCommand: String, CaseIterable {
         case .bringAllToFront: return "square.3.layers.3d"
         case .help: return "questionmark.circle"
         case .selectMoveTool, .selectFrameTool, .selectRectangleTool, .selectEllipseTool, .selectLineTool,
-             .selectPolygonTool, .selectPenTool, .selectTextTool, .selectImageTool, .selectHandTool,
+             .selectPolygonTool, .selectTextTool, .selectImageTool, .selectHandTool,
              .selectZoomTool:
             return "questionmark"
         }

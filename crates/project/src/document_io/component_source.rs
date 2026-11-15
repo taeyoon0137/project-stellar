@@ -19,7 +19,9 @@ use stellar_document::record_codec::encode_payload;
 use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_storage::{hash::ContentHash, source_file};
 
-use super::text_codec::{field, fields, invalid, mapping, node, parse, parse_node, scalar, text};
+use super::text_codec::{
+    field, fields, invalid, mapping, node, parse, parse_node, scalar, text, FrameDimensions,
+};
 use super::text_source::TextSourceError;
 use crate::folder_name::{collision_key, validate_folder_name};
 use crate::yaml::{load_restricted, loader::MAX_INPUT_BYTES, write_canonical_checked, YamlValue};
@@ -27,6 +29,11 @@ use crate::yaml::{load_restricted, loader::MAX_INPUT_BYTES, write_canonical_chec
 pub(crate) const EXT: &str = ".stellar.yaml";
 pub(crate) const MAX_COMPONENT_FILES: usize = 4096;
 pub(crate) const MAX_PROJECT_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// 컴포넌트 조회에서 사용하는 정규 Frame 속성. 이전 저장 버전도 폭과 높이를 개별 필드로 제공합니다.
+pub fn frame_source_properties(frame: &FramePayload) -> YamlValue {
+    super::text_codec::frame(frame, FrameDimensions::Longhands)
+}
 
 /// 기본 앱이 선택된 원본 한 개에 수행하는 root Frame 편집.
 #[derive(Clone, Copy)]
@@ -40,6 +47,7 @@ pub enum ComponentRootEdit {
 /// 빈 공개 인터페이스와 Free Frame tree의 편집 원본.
 #[derive(Debug)]
 pub struct ComponentSource {
+    dimensions: FrameDimensions,
     definition: ComponentDefinition,
     root: NodeRecord,
     children: BTreeMap<StableId, NodeRecord>,
@@ -63,6 +71,7 @@ impl ComponentSource {
     /// 새 정의와 독립된 root Frame을 만듭니다. ID는 표시 이름과 독립적입니다.
     pub fn new(id: StableId, name: String, root: StableId) -> Result<Self, TextSourceError> {
         let value = Self {
+            dimensions: FrameDimensions::Longhands,
             definition: ComponentDefinition::new(id, name, NodeRef::new(root)),
             children: BTreeMap::new(),
             root: NodeRecord {
@@ -170,6 +179,7 @@ impl ComponentSource {
         let mut records = records.into_iter();
         let root = records.next().ok_or_else(|| invalid("선택이 비었습니다"))?;
         Ok(Self {
+            dimensions: FrameDimensions::Longhands,
             definition: ComponentDefinition::new(ids[0], name, NodeRef::new(root.id)),
             root,
             children: records.map(|r| (r.id, r)).collect(),
@@ -217,11 +227,6 @@ impl ComponentSource {
             current = record.parent;
         }
         Ok(())
-    }
-
-    /// CLI 및 프로젝트 창에서 같은 Frame 잠금과 무변경 판정을 사용합니다.
-    fn set_frame_size(&mut self, id: StableId, size: Size2) -> Result<bool, TextSourceError> {
-        self.edit_frame(id, ComponentRootEdit::Size(size))
     }
 
     fn edit_frame(
@@ -312,7 +317,11 @@ impl ComponentSource {
 
     /// 검증한 정의를 버전에 맞는 canonical YAML로 직렬화합니다.
     pub fn to_yaml(&self) -> Result<String, TextSourceError> {
-        let version = if self.children.is_empty() { 1 } else { 2 };
+        let version = match self.dimensions {
+            FrameDimensions::Longhands => 3,
+            FrameDimensions::Paired if self.children.is_empty() => 1,
+            FrameDimensions::Paired => 2,
+        };
         let mut fields = vec![
             (scalar("format"), scalar("stellar-component")),
             (scalar("schema_version"), scalar(version)),
@@ -324,12 +333,17 @@ impl ComponentSource {
                     ("root", scalar(self.definition.root.id())),
                 ]),
             ),
-            (scalar("root_node"), node(&self.root)?),
+            (scalar("root_node"), node(&self.root, self.dimensions)?),
         ];
         if !self.children.is_empty() {
             fields.push((
                 scalar("children"),
-                YamlValue::Sequence(self.children.values().map(node).collect::<Result<_, _>>()?),
+                YamlValue::Sequence(
+                    self.children
+                        .values()
+                        .map(|record| node(record, self.dimensions))
+                        .collect::<Result<_, _>>()?,
+                ),
             ));
         }
         write_canonical_checked(&YamlValue::Mapping(fields)).map_err(invalid)
@@ -340,42 +354,47 @@ impl ComponentSource {
         if text(field(&v, "format")?)? != "stellar-component" {
             return Err(TextSourceError::Unsupported("컴포넌트 원본 형식".into()));
         }
+        let version = text(field(&v, "schema_version")?)?;
+        let dimensions = match version {
+            "1" | "2" => FrameDimensions::Paired,
+            "3" => FrameDimensions::Longhands,
+            _ => return Err(TextSourceError::Unsupported("컴포넌트 원본 버전".into())),
+        };
         let mut children = BTreeMap::new();
-        match text(field(&v, "schema_version")?)? {
-            "1" => fields(&v, &["format", "schema_version", "component", "root_node"])?,
-            "2" => {
-                fields(
-                    &v,
-                    &[
-                        "format",
-                        "schema_version",
-                        "component",
-                        "root_node",
-                        "children",
-                    ],
-                )?;
-                let records = field(&v, "children")?
-                    .as_sequence()
-                    .filter(|records| !records.is_empty())
-                    .ok_or_else(|| invalid("v2 children에 자식 Frame이 필요합니다"))?;
-                for record in records {
-                    let record = parse_node(record)?;
-                    if children.insert(record.id, record).is_some() {
-                        return Err(invalid("중복 자식 Frame ID"));
-                    }
+        if version == "2" || (version == "3" && v.get("children").is_some()) {
+            fields(
+                &v,
+                &[
+                    "format",
+                    "schema_version",
+                    "component",
+                    "root_node",
+                    "children",
+                ],
+            )?;
+            let records = field(&v, "children")?
+                .as_sequence()
+                .filter(|records| !records.is_empty())
+                .ok_or_else(|| invalid("children에 자식 Frame이 필요합니다"))?;
+            for record in records {
+                let record = parse_node(record, dimensions)?;
+                if children.insert(record.id, record).is_some() {
+                    return Err(invalid("중복 자식 Frame ID"));
                 }
             }
-            _ => return Err(TextSourceError::Unsupported("컴포넌트 원본 버전".into())),
+        } else {
+            fields(&v, &["format", "schema_version", "component", "root_node"])?;
         }
         let component = field(&v, "component")?;
         fields(component, &["id", "name", "root"])?;
         let value = Self {
+            dimensions,
             definition: ComponentDefinition::new(
                 parse(field(component, "id")?)?,
                 text(field(component, "name")?)?.to_owned(),
                 NodeRef::new(parse(field(component, "root")?)?),
             ),
-            root: parse_node(field(&v, "root_node")?)?,
+            root: parse_node(field(&v, "root_node")?, dimensions)?,
             children,
         };
         Ok(value)
@@ -645,9 +664,18 @@ pub fn resize(
     expected: ContentHash,
     size: Size2,
 ) -> Result<(ComponentSource, ContentHash), TextSourceError> {
+    edit_root(path, expected, ComponentRootEdit::Size(size))
+}
+
+/// 단일 원본의 루트에 앱과 같은 잠금·무변경 판정을 적용합니다.
+pub fn edit_root(
+    path: &Path,
+    expected: ContentHash,
+    edit: ComponentRootEdit,
+) -> Result<(ComponentSource, ContentHash), TextSourceError> {
     let (source, hash) = open_expected(path, expected)?;
     let id = source.root.id;
-    resize_record(path, source, hash, id, size)
+    edit_record(path, source, hash, id, edit)
 }
 
 /// root 또는 자식 Frame의 크기를 조건부 저장합니다.
@@ -658,17 +686,17 @@ pub fn resize_frame(
     size: Size2,
 ) -> Result<(ComponentSource, ContentHash), TextSourceError> {
     let (source, hash) = open_expected(path, expected)?;
-    resize_record(path, source, hash, id, size)
+    edit_record(path, source, hash, id, ComponentRootEdit::Size(size))
 }
 
-fn resize_record(
+fn edit_record(
     path: &Path,
     mut source: ComponentSource,
     hash: ContentHash,
     id: StableId,
-    size: Size2,
+    edit: ComponentRootEdit,
 ) -> Result<(ComponentSource, ContentHash), TextSourceError> {
-    if !source.set_frame_size(id, size)? {
+    if !source.edit_frame(id, edit)? {
         return Ok((source, hash));
     }
     save_changed(path, hash, source)
@@ -759,12 +787,77 @@ fn project_library(
         return Ok((ComponentLibrary::new(), BTreeMap::new(), limit));
     };
     let mut remaining = limit;
-    let (library, files) = assemble(paths.files.into_iter().map(|path| {
+    // 작은 라이브러리는 worker 시작 비용 없이 순차 처리합니다.
+    const PARALLEL_MIN_FILES: usize = 32;
+    const MAX_DECODE_WORKERS: usize = 4;
+    let workers = if paths.files.len() < PARALLEL_MIN_FILES {
+        1
+    } else {
+        std::thread::available_parallelism().map_or(1, |n| n.get().min(MAX_DECODE_WORKERS))
+    };
+    let inputs = paths.files.into_iter().map(|path| {
         let bytes = read_project_source(&paths.root, &path, &mut remaining)?;
-        let (source, hash) = decode_named(&path, &bytes)?;
-        Ok((path, source, hash))
-    }))?;
+        Ok((path, bytes))
+    });
+    let (library, files) = if workers == 1 {
+        assemble(inputs.map(decode_project_file))?
+    } else {
+        assemble_parallel(inputs, workers)?
+    };
     Ok((library, files, remaining))
+}
+
+type SourceBytes = Result<(PathBuf, Vec<u8>), TextSourceError>;
+type DecodedSource = Result<(PathBuf, ComponentSource, ContentHash), TextSourceError>;
+
+fn decode_project_file(input: SourceBytes) -> DecodedSource {
+    let (path, bytes) = input?;
+    let (source, hash) = decode_named(&path, &bytes)?;
+    Ok((path, source, hash))
+}
+
+fn assemble_parallel(
+    mut inputs: impl Iterator<Item = SourceBytes>,
+    workers: usize,
+) -> Result<(ComponentLibrary, ComponentFiles), TextSourceError> {
+    use std::sync::mpsc::channel;
+    std::thread::scope(|scope| {
+        let mut lanes = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            let (send, input) = channel();
+            let (result, receive) = channel();
+            std::thread::Builder::new().spawn_scoped(scope, move || {
+                for item in input {
+                    if result.send(decode_project_file(item)).is_err() {
+                        break;
+                    }
+                }
+            })?;
+            lanes.push((send, receive));
+        }
+        // 읽기·예산 차감 및 결과 조립은 정렬된 파일 순서대로 수행합니다.
+        // worker당 파일 하나만 진행하여 미조립 입력도 worker 수 × 1 MiB로 제한합니다.
+        let mut active = std::collections::VecDeque::with_capacity(workers);
+        for (lane, item) in lanes.into_iter().zip(inputs.by_ref()) {
+            lane.0
+                .send(item)
+                .map_err(|_| invalid("컴포넌트 디코딩 worker 종료"))?;
+            active.push_back(lane);
+        }
+        assemble(std::iter::from_fn(|| {
+            let (send, receive) = active.pop_front()?;
+            let result = receive
+                .recv()
+                .unwrap_or_else(|_| Err(invalid("컴포넌트 디코딩 worker 종료")));
+            if let Some(item) = inputs.next() {
+                if send.send(item).is_err() {
+                    return Some(Err(invalid("컴포넌트 디코딩 worker 종료")));
+                }
+                active.push_back((send, receive));
+            }
+            Some(result)
+        }))
+    })
 }
 
 /// 프로젝트 루트 내부 실제 경로에서 읽은 파일 이름과 bytes hash의 결정적 집합 hash.
@@ -964,6 +1057,45 @@ mod tests {
     use stellar_document::frame::{Border, CornerRadius};
 
     #[test]
+    fn parallel_project_read_preserves_budget_and_first_error() {
+        let temp = crate::saved_project::tests::TempDir::new();
+        let root = temp.path.canonicalize().unwrap();
+        let dir = root.join("design/components");
+        fs::create_dir_all(&dir).unwrap();
+        let id = |n| StableId::new_v7(1, 0, n);
+        let mut length = 0;
+        let mut files = Vec::new();
+        for n in 0..40 {
+            let source =
+                ComponentSource::new(id(2 * n + 1), format!("Card {n:02}"), id(2 * n + 2)).unwrap();
+            let bytes = source.to_yaml().unwrap();
+            let path = dir.join(source.filename().unwrap());
+            fs::write(&path, &bytes).unwrap();
+            length += bytes.len() as u64;
+            files.push(path);
+        }
+        let (_, index, remaining) = project_library(&root, length).unwrap();
+        assert_eq!((index.len(), remaining), (40, 0));
+        let result = project_library(&root, length - 1);
+        assert!(
+            matches!(result, Err(TextSourceError::Io(ref e)) if e.kind() == std::io::ErrorKind::FileTooLarge)
+        );
+
+        // 파일 간 ID 충돌이 뒤쪽 파일의 구문 오류·읽기 상한보다 먼저 보고되어야 합니다.
+        let duplicate = ComponentSource::new(id(5), "Card 02".into(), id(2)).unwrap();
+        fs::write(&files[2], duplicate.to_yaml().unwrap()).unwrap();
+        let collision = read_library(&dir).unwrap_err().to_string();
+        fs::write(&files[3], b"invalid").unwrap();
+        fs::write(&files[4], vec![0; MAX_INPUT_BYTES + 1]).unwrap();
+        assert_eq!(
+            project_library(&root, MAX_PROJECT_SOURCE_BYTES)
+                .unwrap_err()
+                .to_string(),
+            collision
+        );
+    }
+
+    #[test]
     fn project_creation_charges_existing_bytes_before_writing() {
         let temp = crate::saved_project::tests::TempDir::new();
         let root = temp.path.canonicalize().unwrap();
@@ -1011,7 +1143,9 @@ mod tests {
         let (file, hash) = create_in_project(&root, &dir, &first).unwrap();
         let (sibling, _) = create_in_project(&root, &dir, &other).unwrap();
         let size = Size2::new(248.5, 64.75).unwrap();
-        first.set_frame_size(id(2), size).unwrap();
+        first
+            .edit_frame(id(2), ComponentRootEdit::Size(size))
+            .unwrap();
         let exact =
             std::fs::metadata(&sibling).unwrap().len() + first.to_yaml().unwrap().len() as u64;
         let original = std::fs::read(&file).unwrap();
@@ -1088,7 +1222,7 @@ mod tests {
         let color = Color::new(ColorSpace::DisplayP3, 0.7, 0.2, 0.3, 0.5).unwrap();
         frame.background = Some(color);
         frame.border = Some(Border::new(color, 1.25).unwrap());
-        // v1 root의 색·geometry와 같은 payload를 가진 손자. StableId 정렬에서 부모보다 앞에 둡니다.
+        // root의 색·geometry와 같은 payload를 가진 손자. StableId 정렬에서 부모보다 앞에 둡니다.
         let id = |n| StableId::new_v7(10, 0, n);
         for (child, parent, order, name) in [
             (id(9), source.root.id, 0x40, "그룹"),

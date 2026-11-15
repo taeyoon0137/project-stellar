@@ -46,10 +46,10 @@
 
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
-| QA0-22 | 캔버스 아래쪽 보기 | 캔버스 하단 가운데에 떠 있는 Liquid Glass 캡슐 하나. 도구 11개(Move, Frame, Rectangle, Ellipse, Line, Polygon, Pen, Text, Image, Hand, Zoom) 순서, 칸 사이 구분선 없음, Move 뒤에 둥근 회색 선택 표시. 캔버스 아래 가장자리와 간격이 있음 |
+| QA0-22 | 캔버스 아래쪽 보기 | 캔버스 하단 가운데에 떠 있는 Liquid Glass 캡슐 하나. 도구 10개(Move, Frame, Rectangle, Ellipse, Line, Polygon, Text, Image, Hand, Zoom) 순서, 칸 사이 구분선 없음, Move 뒤에 둥근 회색 선택 표시. 캔버스 아래 가장자리와 간격이 있음 |
 | QA0-23 | 사이드바·인스펙터를 각각·함께 접고 펴기, 창 폭 바꾸기 | 막대가 언제나 캔버스 영역의 가운데에 있음 |
 | QA0-24 | 막대의 도구 클릭 | 선택 표시가 그 도구로 옮겨 감. View(Move·Hand·Zoom Tool)·Insert 메뉴의 체크 표시도 같은 도구 |
-| QA0-25 | 캔버스를 한 번 클릭한 뒤 V, F, R, O, L, P, T, H, Z 키 | 각각 Move, Frame, Rectangle, Ellipse, Line, Pen, Text, Hand, Zoom 선택. Polygon·Image는 단일 키 없음(Image는 Insert ▸ Image ⇧⌘K) |
+| QA0-25 | 캔버스를 한 번 클릭한 뒤 V, F, R, O, L, T, H, Z 키 | 각각 Move, Frame, Rectangle, Ellipse, Line, Text, Hand, Zoom 선택. Polygon·Image는 단일 키 없음(Image는 Insert ▸ Image ⇧⌘K) |
 | QA0-26 | 한글 입력 소스(두벌식)로 바꾸고 캔버스에서 ㄱ(R 자리) 키 | Rectangle 선택(물리 키 위치 기준) |
 | QA0-27 | 캔버스에서 ⌘R, Shift-R | 도구가 바뀌지 않음 |
 | QA0-28 | 사이드바 필터 필드에 글자 입력 중 R | 필드에 글자가 들어가고 도구는 바뀌지 않음 |

@@ -1,4 +1,4 @@
-//! 자유 배치 Frame에 새 Frame, 사각형 Shape 또는 본문이 있는 Text를 삽입하고 선택합니다.
+//! 자유 배치 Frame에 새 Frame, Shape 또는 본문이 있는 Text를 삽입하고 선택합니다.
 
 use super::frame_move::{command_id, editable_frame, trusted_canvas_window};
 use super::*;
@@ -7,19 +7,23 @@ use stellar_commands::{
 };
 use stellar_core_types::color::{Color, ColorSpace};
 use stellar_core_types::order_key::OrderKey;
-use stellar_core_types::value::{Rect, Transform2D, Vec2};
+use stellar_core_types::value::{Angle, Rect, Size2, Transform2D, Vec2};
 use stellar_document::frame::{CornerRadius, FramePayload};
 use stellar_document::modifier::{
     ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack,
 };
 use stellar_document::records::{NodePayload, NodeRecord};
-use stellar_document::shape::{RectangleParams, ShapeGeometry};
-
+use stellar_document::shape::{
+    EllipseParams, LineCap, LineParams, PolygonParams, RectangleParams, ShapeGeometry,
+};
 use stellar_document::text::{edit_text, TextPayload, TextRange};
 
 enum CanvasItem {
     Frame(Rect),
-    Rectangle(Rect),
+    Shape {
+        origin: Vec2,
+        geometry: ShapeGeometry,
+    },
     Text {
         id: StableId,
         origin: Vec2,
@@ -37,7 +41,13 @@ impl AppRuntime {
         parent: StableId,
         bounds: Rect,
     ) -> Result<RequestId, RequestError> {
-        self.insert_canvas_item(session, view, revision, parent, CanvasItem::Frame(bounds))
+        self.insert_canvas_item(
+            session,
+            view,
+            revision,
+            parent,
+            Some(CanvasItem::Frame(bounds)),
+        )
     }
 
     /// 부모의 local 영역에 실제 Rectangle Shape와 Transform·Fill modifier를 생성합니다.
@@ -49,12 +59,25 @@ impl AppRuntime {
         parent: StableId,
         bounds: Rect,
     ) -> Result<RequestId, RequestError> {
+        self.insert_canvas_item(session, view, revision, parent, rectangle(bounds))
+    }
+
+    /// 방향이 있는 두 부모 local 점으로 도형을 만들고, 선택까지 한 history 항목에 기록합니다.
+    pub fn insert_canvas_shape(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+        revision: DocumentRevision,
+        parent: StableId,
+        kind: ShapeKind,
+        points: [Vec2; 2],
+    ) -> Result<RequestId, RequestError> {
         self.insert_canvas_item(
             session,
             view,
             revision,
             parent,
-            CanvasItem::Rectangle(bounds),
+            shape_from_points(kind, points),
         )
     }
 
@@ -74,11 +97,11 @@ impl AppRuntime {
             view,
             revision,
             parent,
-            CanvasItem::Text {
+            Some(CanvasItem::Text {
                 id,
                 origin,
                 content,
-            },
+            }),
         )
         .map(|request| (request, id))
     }
@@ -89,14 +112,58 @@ impl AppRuntime {
         view: StableId,
         revision: DocumentRevision,
         parent: StableId,
-        item: CanvasItem,
+        item: Option<CanvasItem>,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
             let window = trusted_canvas_window(ctx, session)?;
+            let item = item.ok_or_else(|| {
+                Failure::new(
+                    RequestFailure::UnknownView,
+                    "도형의 원점 또는 크기가 유효하지 않습니다",
+                )
+            })?;
             insert_item(window, request, view, revision, parent, item)?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
     }
+}
+
+fn rectangle(bounds: Rect) -> Option<CanvasItem> {
+    (!bounds.is_empty()).then_some(CanvasItem::Shape {
+        origin: bounds.origin(),
+        geometry: ShapeGeometry::Rectangle(RectangleParams {
+            size: bounds.size(),
+            corner_radius: CornerRadius::ZERO,
+        }),
+    })
+}
+
+fn shape_from_points(kind: ShapeKind, [start, end]: [Vec2; 2]) -> Option<CanvasItem> {
+    let delta = Vec2::new(end.x() - start.x(), end.y() - start.y()).ok()?;
+    let size = Size2::new(delta.x().abs(), delta.y().abs()).ok()?;
+    let origin = Vec2::new(start.x().min(end.x()), start.y().min(end.y())).ok()?;
+    let bounds = Rect::new(Vec2::ZERO, size);
+    let geometry = match kind {
+        ShapeKind::Line if delta != Vec2::ZERO => {
+            return Some(CanvasItem::Shape {
+                origin: start,
+                geometry: ShapeGeometry::Line(LineParams {
+                    start: Vec2::ZERO,
+                    end: delta,
+                    cap: LineCap::Butt,
+                }),
+            });
+        }
+        ShapeKind::Rectangle => return rectangle(Rect::new(origin, size)),
+        ShapeKind::Ellipse if !size.is_empty() => {
+            ShapeGeometry::Ellipse(EllipseParams::new(bounds).ok()?)
+        }
+        ShapeKind::Polygon if !size.is_empty() => {
+            ShapeGeometry::Polygon(PolygonParams::new(bounds, 5, Angle::new(0.).ok()?, 0.).ok()?)
+        }
+        _ => return None,
+    };
+    Some(CanvasItem::Shape { origin, geometry })
 }
 
 fn insert_item(
@@ -135,9 +202,8 @@ fn insert_item(
         )
     };
     let origin = match &item {
-        CanvasItem::Frame(bounds) | CanvasItem::Rectangle(bounds) if !bounds.is_empty() => {
-            bounds.origin()
-        }
+        CanvasItem::Frame(bounds) if !bounds.is_empty() => bounds.origin(),
+        CanvasItem::Shape { origin, .. } => *origin,
         CanvasItem::Text {
             origin, content, ..
         } if !content.is_empty() => *origin,
@@ -158,17 +224,22 @@ fn insert_item(
             }),
             [None, None],
         ),
-        CanvasItem::Rectangle(bounds) => (
-            "Rectangle",
-            NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
-                size: bounds.size(),
-                corner_radius: CornerRadius::ZERO,
-            })),
-            [
-                Some(ModifierPayload::Transform(transform)),
-                Some(ModifierPayload::default_for(ModifierKind::Fill)),
-            ],
-        ),
+        CanvasItem::Shape { geometry, .. } => {
+            let (name, paint) = match geometry.kind() {
+                ShapeKind::Rectangle => ("Rectangle", ModifierKind::Fill),
+                ShapeKind::Ellipse => ("Ellipse", ModifierKind::Fill),
+                ShapeKind::Line => ("Line", ModifierKind::Stroke),
+                ShapeKind::Polygon => ("Polygon", ModifierKind::Fill),
+            };
+            (
+                name,
+                NodePayload::Shape(geometry),
+                [
+                    Some(ModifierPayload::Transform(transform)),
+                    Some(ModifierPayload::default_for(paint)),
+                ],
+            )
+        }
         CanvasItem::Text { content, .. } => {
             let text = edit_text(
                 &TextPayload::empty(0),
@@ -297,7 +368,10 @@ mod tests {
 
     #[test]
     fn inserted_rectangle_keeps_shape_geometry_and_modifier_identity_after_reopen() {
-        let project = saved_project("canvas-insert-rectangle");
+        use crate::window_session::test_fixtures::{other_document, saved_project_with};
+        let document = other_document();
+        let view = &document.definition().pages[0].views[0];
+        let project = saved_project_with("canvas-insert-rectangle", &[&document]);
         let mut session = ProjectWindowSession::load(identity(project.path()), window(1)).unwrap();
         let bounds = Rect::new(
             Vec2::new(14.0, 22.0).unwrap(),
@@ -307,10 +381,10 @@ mod tests {
         let node = insert_item(
             &mut session,
             RequestId(171),
-            sid(3),
+            view.id,
             revision,
-            sid(10),
-            CanvasItem::Rectangle(bounds),
+            view.root_frame,
+            rectangle(bounds).unwrap(),
         )
         .ok()
         .expect("Rectangle 삽입");
@@ -324,7 +398,7 @@ mod tests {
             entries[1].payload,
             ModifierPayload::default_for(ModifierKind::Fill)
         );
-        assert_eq!(model.children_in_order(sid(10)).last(), Some(&node));
+        assert_eq!(model.children_in_order(view.root_frame).last(), Some(&node));
         assert_eq!(session.view().selection().ids(), [node]);
         session.undo().unwrap();
         assert!(!session.document().unwrap().model().contains(node));
@@ -336,6 +410,101 @@ mod tests {
             matches!(loaded.payload(node), Some(NodePayload::Shape(ShapeGeometry::Rectangle(r))) if r.size == bounds.size())
         );
         assert_eq!(loaded.modifier_stack(node), Some(&stack));
+        let view_source = project.path().join("rectangle.stellar.yaml");
+        stellar_ops::text_source::export(project.path(), &view_source).unwrap();
+        let source = stellar_project::document_io::text_source::open(&view_source).unwrap();
+        assert_eq!(
+            loaded.to_records().unwrap(),
+            source.model.to_records().unwrap()
+        );
+    }
+
+    #[test]
+    fn drawn_shapes_preserve_local_geometry_paint_selection_and_history_on_reopen() {
+        let project = saved_project("draw-shapes");
+        let mut session = ProjectWindowSession::load(identity(project.path()), window(1)).unwrap();
+        let parent = sid(11);
+        session.select(Selection::new([parent], None)).unwrap();
+        let point = |x, y| Vec2::new(x, y).unwrap();
+        let start = point(25., 35.);
+        let targets = [
+            (ShapeKind::Ellipse, point(5., 11.)),
+            (ShapeKind::Polygon, point(5., 11.)),
+            (ShapeKind::Line, point(-12., 35.)),
+            (ShapeKind::Line, point(25., -12.)),
+            (ShapeKind::Line, point(-12., 50.)),
+        ];
+        for kind in ShapeKind::ALL {
+            assert!(shape_from_points(kind, [start, start]).is_none());
+        }
+        assert!(shape_from_points(ShapeKind::Ellipse, [start, point(25., -12.)]).is_none());
+        let mut saved = Vec::new();
+        for (index, (kind, end)) in targets.into_iter().enumerate() {
+            let revision = session.revision();
+            let previous = session.view().selection().ids().to_vec();
+            let draw = || shape_from_points(kind, [start, end]).unwrap();
+            let request = RequestId(250 + index as u64);
+            let id = insert_item(&mut session, request, sid(3), revision, parent, draw())
+                .ok()
+                .unwrap();
+            assert!(insert_item(&mut session, request, sid(3), revision, parent, draw()).is_err());
+            let model = session.document().unwrap().model();
+            assert_eq!(model.children_in_order(parent).last(), Some(&id));
+            let Some(NodePayload::Shape(shape)) = model.payload(id) else {
+                panic!("shape");
+            };
+            let bounds = Rect::new(Vec2::ZERO, Size2::new(20., 24.).unwrap());
+            let (origin, paint) = match shape {
+                ShapeGeometry::Ellipse(ellipse) => {
+                    assert_eq!(ellipse.bounds, bounds);
+                    (end, ModifierKind::Fill)
+                }
+                ShapeGeometry::Polygon(polygon) => {
+                    assert_eq!(polygon.bounds(), bounds);
+                    assert_eq!(
+                        (
+                            polygon.sides(),
+                            polygon.rotation_degrees(),
+                            polygon.corner_radius()
+                        ),
+                        (5, 0., 0.)
+                    );
+                    (end, ModifierKind::Fill)
+                }
+                ShapeGeometry::Line(line) => {
+                    assert_eq!(line.start, Vec2::ZERO);
+                    assert_eq!(line.end, point(end.x() - start.x(), end.y() - start.y()));
+                    assert_eq!(line.cap, LineCap::Butt);
+                    (start, ModifierKind::Stroke)
+                }
+                _ => panic!("unexpected shape"),
+            };
+            assert_eq!(shape.kind(), kind);
+            let stack = model.modifier_stack(id).unwrap();
+            assert_eq!(stack.entries().len(), 2);
+            assert!(
+                matches!(stack.entries()[0].payload, ModifierPayload::Transform(t)
+                if t.components() == (1., 0., 0., 1., origin.x(), origin.y()))
+            );
+            assert_eq!(
+                stack.entries()[1].payload,
+                ModifierPayload::default_for(paint)
+            );
+            saved.push((id, *shape, stack.clone()));
+            assert_eq!(session.view().selection().ids(), [id]);
+            assert!(session.undo().unwrap());
+            assert_eq!(session.view().selection().ids(), previous);
+            assert!(!session.document().unwrap().model().contains(id));
+            assert!(session.redo().unwrap());
+            assert_eq!(session.view().selection().ids(), [id]);
+        }
+        session.save_now().unwrap();
+        let reopened = ProjectWindowSession::load(identity(project.path()), window(2)).unwrap();
+        let model = reopened.document().unwrap().model();
+        for (id, shape, stack) in saved {
+            assert_eq!(model.payload(id), Some(&NodePayload::Shape(shape)));
+            assert_eq!(model.modifier_stack(id), Some(&stack));
+        }
     }
 
     #[test]

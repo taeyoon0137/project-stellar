@@ -63,7 +63,7 @@ cargo run -q -p stellar-cli -- --help
 | `help` | `--help`, `-h` | 없음 | stdout에 텍스트 도움말, 종료 코드 0 |
 | `version` | `--version`, `-V` | 없음 | stdout에 결과 JSON |
 | `inspect` | 없음 | `<경로> [--structure]` | 프로젝트 검사, 구조·revision |
-| `query` | 없음 | `<경로> <대상>` | project·tree·node·tokens·components 조회 |
+| `query` | 없음 | `<경로> <대상>` | project·tree·node·tokens·components 및 component ID별 정의 조회 |
 | `validate` | 없음 | `<경로>` | 저장 문서 검증 |
 | `semantic-diff` | 없음 | `<base> <target>` | 의미 차이 |
 | `semantic-merge` | 없음 | `<base> <ours> <theirs>` | 메모리 내 merge·conflict |
@@ -81,6 +81,7 @@ cargo run -q -p stellar-cli -- --help
 `apply`와 `text-source apply`의 `commands` 배열에는 Frame 크기를 JSON 숫자로 지정하는
 `set-frame-size`(`node`, `width`, `height`)와 local 변환을 지정하는
 `set-frame-transform`(`node`, `a`, `b`, `c`, `d`, `tx`, `ty`)를 넣을 수 있습니다.
+한 축만 바꾸려면 `set-frame-width`(`node`, `width`) 또는 `set-frame-height`(`node`, `height`)를 사용합니다.
 Text 레이어 본문은 `replace-text`(`node`, Unicode scalar 정수 `start`와 `end`, 문자열 `text`)로 교체합니다.
 입력 예시와 dry-run→저장→재열기 절차는 [텍스트 원본 명령 적용](../spec/text-view-source-v1.md#명시적-명령-적용)을
 참고합니다. 두 경로의 요청은 각각 generation revision과 source hash를 사용합니다.
@@ -211,6 +212,18 @@ stellar-mcp --connection-info
 ```jsonl
 {"jsonrpc":"2.0","id":6,"method":"resources/read","params":{"uri":"stellar://components"}}
 ```
+
+목록의 `id`로 정의 자체를 읽습니다. 같은 이름의 정의가 여러 개여도 ID로 구분됩니다. 배치한 인스턴스에서는 `query node`의 컴포넌트 참조 속성(`0x0a01`)이 이 ID입니다.
+
+```sh
+stellar query . component 0195c530-3acd-7bc1-8414-c213f61cb965
+```
+
+```jsonl
+{"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"stellar://components/0195c530-3acd-7bc1-8414-c213f61cb965?limit=100"}}
+```
+
+양쪽의 `nodes`는 루트부터 부모 우선·형제 표시 순서로 나옵니다. 각 Frame에는 `id`, `parent`(루트는 null), `order_key`, `display_name`, `kind`, `visible`, `locked`, `payload`가 있습니다. `payload.width`·`height`는 논리 픽셀, `transform`의 여섯 수 중 마지막 두 수는 부모 좌표계에서의 위치입니다. 채우기·테두리·모서리·클립도 원본의 값을 유지합니다. CLI는 단일 정의 전체를 반환합니다. headless MCP의 다음 페이지에는 같은 URI에 `cursor`로 응답의 `next_cursor`를 넣습니다. 프로젝트 revision이나 선택한 파일의 `source_hash`가 바뀐 경우 첫 페이지부터 다시 읽습니다.
 
 ### 저장된 문서의 진단 조회
 

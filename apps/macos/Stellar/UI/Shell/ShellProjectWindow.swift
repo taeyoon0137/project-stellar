@@ -51,6 +51,8 @@ final class ShellWindowSessionHandle {
     private(set) var pendingCommandCount = 0
     var isClosing = false
     var commandsDidFinish: (() -> Void)?
+    var checkingComponentsOnReturn = false
+    var recheckComponentsOnReturn = false
 
     init(
         session: UInt64, project: UInt64, windowID: UUID, documentID: UUID?, openedGeneration: UInt64,
@@ -108,6 +110,13 @@ final class ShellWindowSessionHandle {
     func pasteSubtree(_ data: Data, target: StellarSelectionTarget, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
         guard !isClosed, !isClosing, target.session == session else { return false }
         return track({ pump.pasteSubtree(target: target, data: data, completion: $0) }, completion: completion)
+    }
+
+    func insertShape(parent: CanvasFrameHit, kind: InspectorShapeKind, start: CGPoint, end: CGPoint,
+                     completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
+        guard !isClosed, !isClosing else { return false }
+        return track { done in pump.insertShape(session: session, parent: parent, kind: kind, start: start, end: end,
+                                                completion: done) } completion: { completion($0) }
     }
 
     func insertFrame(parent: CanvasFrameHit, rect: CGRect, rectangle: Bool, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
@@ -336,10 +345,10 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
 ///
 /// 코어 도구 상태 기계(XII.3.6)가 없으므로, 창별 현재 도구만 셸이 보관합니다. 제한:
 /// - 실행 가능한 명령은 도구 선택 11개, Close Project, 그리고 창 session 상태에 따른 Undo·Redo·Save Now(XII.6.4)와
-///   Zoom In·Zoom Out·Actual Size(XII.4.3)입니다. Undo는 그 창 undo stack이, Redo는 redo stack이 비어 있지 않을 때,
+///   Zoom In·Zoom Out·Actual Size·Zoom to Fit(XII.4.3)입니다. Undo는 그 창 undo stack이, Redo는 redo stack이 비어 있지 않을 때,
 ///   Save Now는 창 session에 작업 문서가 있을 때, 줌은 active view가 있고 배율이 경계(2%·25600%)에 닿지 않았을 때
-///   활성입니다(`setSessionState`, 코어 command ID가 있는 명령만). 배율 표시는 코어 viewport 값입니다. 편집·객체 명령과
-///   Zoom to Fit·Zoom to Selection은 코어 경로가 없어 숨기지 않고 비활성입니다.
+///   활성입니다. Zoom to Fit은 현재 캔버스 크기를 코어에 보내며, 배율 표시는 코어 viewport 값입니다.
+///   Zoom to Selection은 비활성입니다.
 /// - 프로젝트가 ready가 아니면 도구 선택도 비활성입니다.
 /// - 도구 선택은 코어로 보내지 않습니다. 다른 명령은 `commandHandler`(프로젝트 창)로 넘깁니다.
 final class ShellWindowToolsModelStub: ToolsMenuModel {
@@ -462,6 +471,7 @@ final class ShellProjectWindow {
     }
     var pickedPNG: PickedPNG?
     var imagePickGeneration: UInt64 = 0
+    var componentFileWatch: ShellComponentFileWatch?
     var componentLibrary: ShellComponentLibrary?
     var recoveryPrompt: NSAlert?
     let sidebarSource = ShellSidebarSource()
@@ -481,6 +491,11 @@ final class ShellProjectWindow {
     var agentCloseConfirmed = false
     private var closeAttempt: UUID?
     private var closeTimer: Timer?
+    private var quitSaveCompletion: ((Bool) -> Void)?
+    var needsSaveBeforeClosing: Bool {
+        guard let session = windowController.windowSession, !session.isClosed else { return false }
+        return session.pendingCommandCount != 0 || session.info?.has_unsaved_changes != 0
+    }
     /// 저장 응답을 기다리는 셸 watchdog. AutosavePolicy의 미확정 성능 수치를 대체하지 않습니다.
     var closeReplyTimeout: TimeInterval = 10
     var frameDrag: CanvasFrameDrag?
@@ -489,7 +504,7 @@ final class ShellProjectWindow {
     /// - Parameters:
     ///   - rootPath: 열 프로젝트 폴더(절대 경로). 창은 열기 중 상태로 시작합니다.
     ///   - runtimeHandle: 캔버스 drawable·입력을 받을 코어 runtime handle.
-    init(rootPath: String, runtimeHandle: UInt64?, configuration: ShellWindowConfiguration = .standard) {
+    init(rootPath: String, runtimeHandle: UInt64?, configuration: ShellWindowConfiguration, agentSource: AgentPanelSource) {
         dataSource = ShellProjectFrameDataSource(rootPath: rootPath)
         toolsModel = ShellWindowToolsModelStub()
         router = ShellCommandRouter(model: toolsModel)
@@ -506,7 +521,7 @@ final class ShellProjectWindow {
         )
         panelsSlot = ShellPanelTabsSlot(
             gitPanel: GitPanelViewController(dataSource: gitSource),
-            agentPanel: AgentPanelViewController(source: ShellAreaDataStubs.makeAgentSource())
+            agentPanel: AgentPanelViewController(source: agentSource)
         )
         windowController = ShellWindowController(
             configuration: configuration,
@@ -516,13 +531,22 @@ final class ShellProjectWindow {
             ),
             toolbarItemProvider: toolsToolbar
         )
-        toolsModel.toolChanged = { [weak self] in self?.imageToolChanged($0) }
+        toolsModel.toolChanged = { [weak self] tool in
+            _ = self?.canvasHost.canvasView.cancelFrameGesture?()
+            self?.imageToolChanged(tool)
+        }
+        windowController.didBecomeKeyHandler = { [weak self] in
+            guard let self else { return }
+            if self.componentFileWatch?.unavailable == true { self.updateComponentFileWatch(trusted: self.gitSource.trusted) }
+            self.reloadComponentCanvas(onWindowReturn: true)
+        }
         gitSource.trustDidChange = { [weak self] trusted in
             if !trusted { self?.canvasTextEditing?.invalidate() }
             self?.dataSource.updateTrust(trusted)
             self?.sidebarSource.trusted = trusted
             self?.canvasHost.canvasView.allowsImageContent = trusted
             if !trusted { self?.pickedPNG = nil; self?.imagePickGeneration &+= 1 }
+            self?.updateComponentFileWatch(trusted: trusted)
             self?.reloadComponentCanvas()
             self?.refreshSessionCommands()
             if !trusted {
@@ -631,15 +655,16 @@ final class ShellProjectWindow {
         window?.invalidateRestorableState()
     }
 
-    /// 생성 직후 한 번만 호출합니다. 복원한 split 폭과 안전 영역을 반영한 캔버스의 실제 point 크기를 사용합니다.
-    func fitNewProjectFrame() {
-        guard let session = windowController.windowSession, let project = dataSource.session else { return }
+    /// 현재 View의 루트 Frame을 실제 캔버스 크기에 맞춥니다.
+    private func fitRootFrame() -> Bool {
+        guard let session = windowController.windowSession, !session.isClosing, !session.isClosed,
+              session.viewInfo?.has_view == 1, let project = dataSource.session else { return false }
         window?.contentView?.layoutSubtreeIfNeeded()
         let size = canvasHost.canvasView.bounds.size
-        guard size.width > 0, size.height > 0 else { return }
-        session.track({ project.pump.fitRoot(session: session.session, size: size, completion: $0) }) { [weak self, weak session] _ in
+        guard size.width > 0, size.height > 0 else { return false }
+        return session.track({ project.pump.fitRoot(session: session.session, size: size, completion: $0) }) { [weak self, weak session] event in
             guard let self, let session, self.windowController.windowSession === session else { return }
-            self.refreshSessionCommands()
+            self.finishSessionCommand(.zoomToFit, event: event)
         }
     }
 
@@ -668,8 +693,8 @@ final class ShellProjectWindow {
         let view = session?.viewInfo
         let info = session?.info
         displayedSelection = session?.selectionTarget
-        if gitSource.trusted, var target = displayedSelection, target.selection_count == 1, let handle = dataSource.session?.pump.runtimeHandle {
-            displayedOrderFlags = stellar_window_layer_order_flags(handle, &target)
+        if gitSource.trusted, let target = displayedSelection, target.selection_count == 1, let handle = dataSource.session?.pump.runtimeHandle {
+            displayedOrderFlags = CoreRuntime.layerOrderFlags(handle: handle, target: target)
         } else { displayedOrderFlags = 0 }
         sidebarSource.refresh(runtime: dataSource.session?.pump.runtimeHandle, session: session, target: displayedSelection)
         if let drag = frameDrag,
@@ -680,6 +705,7 @@ final class ShellProjectWindow {
         }
         var commands = ShellWindowToolsModelStub.sessionCommands(info: info, view: view)
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
+        if view?.has_view == 1 { commands.insert(.zoomToFit) }
         if gitSource.trusted, session != nil { commands.formUnion([.newComponent, .componentLibrary, .selectImageTool]) }
         for command: ShellCommand in [.bringForward, .bringToFront, .sendBackward, .sendToBack] {
             if let flag = command.layerOrderFlag, displayedOrderFlags & flag != 0 { commands.insert(command) }
@@ -694,12 +720,12 @@ final class ShellProjectWindow {
     /// 코어 command ID 표(XII.6.5). 코어가 공유 이름으로 알려 준 ID로만 명령을 보냅니다.
     var coreCommandIDs = ShellCommandCoreIDs.empty
 
-    /// 코어 명령(Undo·Redo·Save Now)을 이 창의 창 session(활성 창 session)에 보냅니다(XII.6.4, XII.6.5). 코어 ID가 없는
-    /// 명령이면 false입니다.
+    /// 이 창의 명령을 코어 창 session으로 보냅니다. Zoom to Fit에는 캔버스의 실제 표시 크기가 필요합니다.
     ///
     /// 메뉴·단축키는 응답자 체인으로 key 창의 router가 받으므로 여기 오는 명령은 언제나 이 창(활성 창)의 것입니다.
     @discardableResult
     func performSessionCommand(_ command: ShellCommand) -> Bool {
+        if command == .zoomToFit { return fitRootFrame() }
         if command == .copy {
             guard gitSource.trusted, !router.isTextEditing, let owner = window, clipboardKeyWindow() === owner,
                   let session = windowController.windowSession, !session.isClosing, !session.isClosed,
@@ -766,13 +792,28 @@ final class ShellProjectWindow {
         }
     }
 
-    /// 정상 NSWindow close 진입점. clean은 즉시 허용하고 dirty는 실제 저장 성공까지 창을 유지합니다.
-    func shouldCloseAfterSaving() -> Bool {
-        guard closeAttempt == nil else { return false }
-        guard let session = windowController.windowSession, !session.isClosed else { return true }
-        if session.pendingCommandCount == 0, let info = session.info, info.has_unsaved_changes == 0 {
-            return true
+    /// 조합 중인 입력은 그대로 두고, 확정된 편집은 session을 닫기 전에 코어에 도착하게 합니다.
+    func finishInputBeforeClosing() -> Bool {
+        guard let window else { return true }
+        if let editing = canvasTextEditing {
+            guard !editing.input.hasMarkedText() else { return false }
+            editing.stop()
+            // focus가 끝난 뒤에도 첫 paint 또는 다음 확정 입력을 기다리면 adapter가 계속 남습니다.
+            guard canvasTextEditing == nil else { return false }
         }
+        if let editor = window.firstResponder as? NSTextView, editor.isFieldEditor {
+            guard !editor.hasMarkedText() else { return false }
+            return window.makeFirstResponder(nil)
+        }
+        return true
+    }
+
+    /// 정상 NSWindow close 진입점. clean은 즉시 허용하고 dirty는 실제 저장 성공까지 창을 유지합니다.
+    func shouldCloseAfterSaving(forQuit completion: ((Bool) -> Void)? = nil) -> Bool {
+        guard closeAttempt == nil, finishInputBeforeClosing() else { return false }
+        guard let session = windowController.windowSession, !session.isClosed else { return true }
+        guard needsSaveBeforeClosing else { return true }
+        quitSaveCompletion = completion
         let attempt = UUID()
         closeAttempt = attempt
         _ = canvasHost.canvasView.cancelFrameGesture?()
@@ -836,6 +877,12 @@ final class ShellProjectWindow {
             }
             return
         }
+        if let completion = quitSaveCompletion {
+            quitSaveCompletion = nil
+            cancelPendingClose()
+            completion(true)
+            return
+        }
         let confirmed = agentCloseConfirmed
         cancelPendingClose()
         agentCloseConfirmed = confirmed
@@ -867,6 +914,9 @@ final class ShellProjectWindow {
         windowController.didEndSheetHandler = nil
         windowController.windowSession?.isClosing = false
         windowController.windowSession?.commandsDidFinish = nil
+        let completion = quitSaveCompletion
+        quitSaveCompletion = nil
+        completion?(false)
     }
 
     /// 캔버스가 고른 node를 이 창의 선택 history에 기록하고 명령 활성 상태를 갱신합니다.
@@ -945,7 +995,14 @@ final class ShellProjectWindow {
 
 extension ShellProjectWindow: GitPanelHostActions {
     func gitPanelRequestsProjectTrust() {
-        guard let window, let session = dataSource.session, !session.isClosed else { return }
+        requestProjectTrust()
+    }
+
+    func requestProjectTrust() {
+        guard let window, window.attachedSheet == nil,
+              let session = dataSource.session, !session.isClosed,
+              let editor = windowController.windowSession, !editor.isClosing, !editor.isClosed,
+              !gitSource.trusted, !gitSource.isCheckingTrust else { return }
         let alert = NSAlert()
         alert.messageText = String(localized: "Trust This Project?")
         alert.informativeText = String(localized: "Trusting this folder allows Stellar to edit project files and run Git commands for it.") + "\n" + session.rootPath
@@ -953,7 +1010,8 @@ extension ShellProjectWindow: GitPanelHostActions {
         alert.addButton(withTitle: String(localized: "Trust Project"))
         alert.beginSheetModal(for: window) { [weak self, weak session] response in
             guard response == .alertSecondButtonReturn, let self, let session,
-                  self.dataSource.session === session, !session.isClosed else { return }
+                  self.dataSource.session === session, !session.isClosed,
+                  self.windowController.windowSession === editor, !editor.isClosed, !editor.isClosing else { return }
             self.gitSource.updateTrust(true)
         }
     }

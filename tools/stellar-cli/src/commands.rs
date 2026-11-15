@@ -160,6 +160,7 @@ enum QueryPlan {
     },
     Tokens,
     Components,
+    Component(StableId),
 }
 
 fn no_extra(target: &str, rest: &[String]) -> Result<(), CliError> {
@@ -234,6 +235,12 @@ fn query_plan(target: &str, rest: &[String]) -> Result<QueryPlan, CliError> {
         "project" => no_extra(target, rest).map(|()| QueryPlan::Project),
         "tokens" => no_extra(target, rest).map(|()| QueryPlan::Tokens),
         "components" => no_extra(target, rest).map(|()| QueryPlan::Components),
+        "component" => match rest {
+            [component] => Ok(QueryPlan::Component(parse_id(component, "컴포넌트")?)),
+            _ => Err(CliError::usage(
+                "query component에는 <컴포넌트 id>가 필요합니다",
+            )),
+        },
         "node" => match rest {
             [document, node] if !is_option(document) && !is_option(node) => Ok(QueryPlan::Node {
                 document: parse_id(document, "문서")?,
@@ -295,6 +302,31 @@ pub fn query(args: &[String]) -> Result<Success, CliError> {
             views::node_detail(&detail)
         }
         QueryPlan::Tokens => views::definition_set(&tokens(&snapshot)),
+        QueryPlan::Component(id) => {
+            let detail = stellar_ops::component_source::detail(&snapshot, id)
+                .map_err(|err| crate::text_source::operation_error(&err))?
+                .ok_or_else(|| {
+                    CliError::new(
+                        crate::exit::ExitStatus::NoInput,
+                        "unknown-component",
+                        format!("프로젝트에 컴포넌트 {id}가 없습니다"),
+                    )
+                })?;
+            JsonValue::object(vec![
+                ("revision", views::revision(detail.revision)),
+                ("component", views::id(id)),
+                ("root", views::id(detail.root)),
+                ("name", JsonValue::string(detail.name)),
+                (
+                    "source_hash",
+                    JsonValue::string(detail.source_hash.to_string()),
+                ),
+                (
+                    "nodes",
+                    JsonValue::Array(detail.nodes.iter().map(JsonValue::from).collect()),
+                ),
+            ])
+        }
         QueryPlan::Components => {
             let set = stellar_ops::component_source::query(&snapshot)
                 .map_err(|err| crate::text_source::operation_error(&err).with_context(context))?;

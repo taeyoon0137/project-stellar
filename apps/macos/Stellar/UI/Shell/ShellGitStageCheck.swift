@@ -90,6 +90,30 @@ enum ShellGitStageCheck {
         }
         guard let window = open() else { return fail("프로젝트 창 열기") }
         guard let panel = showGitPanel(window) else { return fail("프로젝트 창의 Git 패널 표시") }
+        if replacement == "--observe-head" {
+            guard spin({ panel.status?.availability == .ready && (panel.status?.changes.generation ?? 0) > 0 }) else {
+                return fail("Git panel initial refresh")
+            }
+            while let line = readLine() {
+                let fields = line.split(separator: " ", maxSplits: 1)
+                guard fields.count == 2 else { return fail("invalid HEAD expectation") }
+                let expected: GitHeadState
+                switch fields[0] {
+                case "branch": expected = .branch(name: String(fields[1]))
+                case "detached": expected = .detached(shortHash: String(fields[1].prefix(7)))
+                default: return fail("invalid HEAD kind")
+                }
+                let previous = panel.status?.changes.generation ?? 0
+                panel.refresh(nil)
+                guard spin({ (panel.status?.changes.generation ?? 0) > previous }) else { return fail("Git panel refresh") }
+                let actual = panel.branchLabel.stringValue
+                guard panel.status?.head == expected, actual == GitPanelStrings.head(expected) else {
+                    return fail("HEAD label expected \(GitPanelStrings.head(expected)), displayed \(actual)")
+                }
+                FileHandle.standardOutput.write(Data((actual + "\n").utf8))
+            }
+            return true
+        }
         if let component {
             let file = URL(fileURLWithPath: path).appendingPathComponent("design/components").appendingPathComponent(component)
             let gitIndex = URL(fileURLWithPath: path).appendingPathComponent(".git/index")

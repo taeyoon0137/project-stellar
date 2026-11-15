@@ -11,7 +11,6 @@ enum CanvasTool: String, CaseIterable {
     case ellipse
     case line
     case polygon
-    case pen
     case text
     case image
     case hand
@@ -26,7 +25,6 @@ enum CanvasTool: String, CaseIterable {
         case .ellipse: return "Ellipse"
         case .line: return "Line"
         case .polygon: return "Polygon"
-        case .pen: return "Pen"
         case .text: return "Text"
         case .image: return "Image"
         case .hand: return "Hand"
@@ -43,7 +41,6 @@ enum CanvasTool: String, CaseIterable {
         case .ellipse: return "circle"
         case .line: return "line.diagonal"
         case .polygon: return "pentagon"
-        case .pen: return "pencil.tip"
         case .text: return "textformat"
         case .image: return "photo"
         case .hand: return "hand.raised"
@@ -62,7 +59,6 @@ enum CanvasTool: String, CaseIterable {
         case .ellipse: return "o"
         case .line: return "l"
         case .polygon: return nil
-        case .pen: return "p"
         case .text: return "t"
         case .image: return nil
         case .hand: return "h"
@@ -79,7 +75,6 @@ enum CanvasTool: String, CaseIterable {
         case .ellipse: return .selectEllipseTool
         case .line: return .selectLineTool
         case .polygon: return .selectPolygonTool
-        case .pen: return .selectPenTool
         case .text: return .selectTextTool
         case .image: return .selectImageTool
         case .hand: return .selectHandTool
@@ -103,7 +98,7 @@ enum CanvasToolShortcut {
     /// 미국 ANSI 배열 가상 키 코드(Carbon `kVK_ANSI_*`와 같은 값) → 글자.
     private static let ansiKeyCodes: [UInt16: Character] = [
         0x09: "v", 0x03: "f", 0x0F: "r", 0x1F: "o", 0x25: "l",
-        0x23: "p", 0x11: "t", 0x04: "h", 0x06: "z",
+        0x11: "t", 0x04: "h", 0x06: "z",
     ]
 
     /// 키 이벤트 값으로 도구를 해석합니다.

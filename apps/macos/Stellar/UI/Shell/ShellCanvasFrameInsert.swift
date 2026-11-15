@@ -1,7 +1,43 @@
 import AppKit
 
 extension CanvasTool {
-    var insertsBounds: Bool { self == .frame || self == .rectangle }
+    var insertsBounds: Bool { self == .frame || self == .rectangle || drawnShape != nil }
+
+    fileprivate var drawnShape: InspectorShapeKind? {
+        switch self {
+        case .ellipse: return .ellipse
+        case .line: return .line
+        case .polygon: return .polygon
+        default: return nil
+        }
+    }
+}
+
+private extension InspectorShapeKind {
+    func endpoints(from anchor: CGPoint, to pointer: CGPoint, click: Bool,
+                   modifiers: NSEvent.ModifierFlags) -> (CGPoint, CGPoint) {
+        let centered = modifiers.contains(.option)
+        var dx = pointer.x - anchor.x, dy = pointer.y - anchor.y
+        if click {
+            dx = centered ? 50 : 100
+            dy = self == .line ? 0 : dx
+        } else if modifiers.contains(.shift) {
+            if self == .line {
+                let octant = Int((atan2(dy, dx) / (.pi / 4)).rounded())
+                let length = hypot(dx, dy)
+                let angle = CGFloat(octant) * .pi / 4
+                let x = cos(angle), y = sin(angle)
+                dx = length * (octant.isMultiple(of: 2) ? x.rounded() : x)
+                dy = length * (octant.isMultiple(of: 2) ? y.rounded() : y)
+            } else {
+                let extent = max(abs(dx), abs(dy))
+                dx = dx < 0 ? -extent : extent
+                dy = dy < 0 ? -extent : extent
+            }
+        }
+        let start = centered ? CGPoint(x: anchor.x - dx, y: anchor.y - dy) : anchor
+        return (start, CGPoint(x: anchor.x + dx, y: anchor.y + dy))
+    }
 }
 
 extension ShellProjectWindow {
@@ -10,10 +46,15 @@ extension ShellProjectWindow {
         switch event.type {
         case .leftMouseDown:
             _ = canvas.cancelFrameGesture?()
-            guard tool.insertsBounds, gitSource.trusted, event.modifierFlags.intersection([.command, .shift, .control, .option]).isEmpty,
+            let blocked: NSEvent.ModifierFlags = tool.drawnShape == nil ? [.command, .shift, .control, .option] : [.command, .control]
+            guard tool.insertsBounds, event.modifierFlags.intersection(blocked).isEmpty,
                   let session = windowController.windowSession, !session.isClosed, !session.isClosing,
                   let viewport = session.viewInfo, viewport.has_view == 1, let parent = canvas.frameHit(at: point, onlyFrames: true),
                   UUID(uuid: viewport.active_view) == parent.viewID, session.info?.revision == parent.revision else { return false }
+            guard gitSource.trusted else {
+                requestProjectTrust()
+                return true
+            }
             canvas.window?.makeFirstResponder(canvas)
             frameDrag = CanvasFrameDrag(hit: parent, start: point, session: session.session, size: canvas.bounds.size,
                 viewport: viewport, canMove: true, tool: tool)
@@ -32,12 +73,19 @@ extension ShellProjectWindow {
             let det = localToView.a * localToView.d - localToView.b * localToView.c
             guard det.isFinite, det != 0 else { return true }
             let inverse = localToView.inverted()
-            let start = drag.start.applying(inverse), end = point.applying(inverse)
+            let anchor = drag.start.applying(inverse), pointer = point.applying(inverse)
+            guard anchor.x.isFinite, anchor.y.isFinite, pointer.x.isFinite, pointer.y.isFinite else { return true }
+            let distance = hypot(point.x - drag.start.x, point.y - drag.start.y)
+            if !release && distance >= 3 { frameDrag?.moved = true }
+            let click = tool.drawnShape != nil && release && !drag.moved && distance < 3
+            let (start, end) = tool.drawnShape?.endpoints(from: anchor, to: pointer, click: click,
+                                                         modifiers: event.modifierFlags) ?? (anchor, pointer)
             let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
-                width: abs(end.x - start.x), height: abs(end.y - start.y))
-            // 양축 모두 화면 3 point 이상이어야 실제 면적의 Frame을 만듭니다.
-            guard rect.width * hypot(localToView.a, localToView.b) >= 3,
-                  rect.height * hypot(localToView.c, localToView.d) >= 3 else {
+                              width: abs(end.x - start.x), height: abs(end.y - start.y))
+            let a = start.applying(localToView), b = end.applying(localToView)
+            let usable = tool == .line ? hypot(b.x - a.x, b.y - a.y) >= 3
+                : rect.width * hypot(localToView.a, localToView.b) >= 3 && rect.height * hypot(localToView.c, localToView.d) >= 3
+            guard usable || click else {
                 canvas.insertionOutline = nil
                 return true
             }
@@ -45,15 +93,41 @@ extension ShellProjectWindow {
                 guard let camera = session.viewInfo, UUID(uuid: camera.active_view) == drag.hit.viewID,
                       camera.center_x == drag.viewport.center_x, camera.center_y == drag.viewport.center_y,
                       camera.zoom == drag.viewport.zoom else { return true }
-                _ = session.insertFrame(parent: drag.hit, rect: rect, rectangle: tool == .rectangle) { [weak self] event in
+                let completion: (CoreRuntimeEvent) -> Void = { [weak self] event in
                     guard let self else { return }
                     if case .windowViewChanged = event, self.toolsModel.snapshot.activeTool == tool {
                         _ = self.router.dispatch(CanvasTool.move.command)
                     }
                     self.refreshSessionCommands()
                 }
+                if let kind = tool.drawnShape {
+                    _ = session.insertShape(parent: drag.hit, kind: kind, start: start, end: end, completion: completion)
+                } else {
+                    _ = session.insertFrame(parent: drag.hit, rect: rect, rectangle: tool == .rectangle, completion: completion)
+                }
             } else {
-                canvas.insertionOutline = CGPath(rect: rect, transform: &localToView)
+                switch tool {
+                case .line:
+                    let path = CGMutablePath()
+                    path.move(to: a)
+                    path.addLine(to: b)
+                    canvas.insertionOutline = path
+                case .ellipse:
+                    canvas.insertionOutline = CGPath(ellipseIn: rect, transform: &localToView)
+                case .polygon:
+                    // PolygonParams의 기본 0°는 위 꼭짓점에서 시작해 y-down에서 시계 방향입니다.
+                    let path = CGMutablePath()
+                    for vertex in 0..<5 {
+                        let angle = CGFloat(vertex) * 2 * .pi / 5 - .pi / 2
+                        let p = CGPoint(x: rect.midX + rect.width * cos(angle) / 2,
+                                        y: rect.midY + rect.height * sin(angle) / 2).applying(localToView)
+                        if vertex == 0 { path.move(to: p) } else { path.addLine(to: p) }
+                    }
+                    path.closeSubpath()
+                    canvas.insertionOutline = path
+                default:
+                    canvas.insertionOutline = CGPath(rect: rect, transform: &localToView)
+                }
             }
             return true
         default: return false

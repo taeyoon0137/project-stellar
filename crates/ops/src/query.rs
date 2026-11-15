@@ -19,7 +19,7 @@ use std::str::FromStr;
 
 use stellar_document::definitions::DocumentDefinition;
 use stellar_document::model::DocumentModel;
-use stellar_semantic_diff::build::SnapshotBuilder;
+use stellar_semantic_diff::build::project_document_node;
 use stellar_semantic_diff::value::SemanticValue;
 
 use crate::core_types::ids::StableId;
@@ -487,42 +487,23 @@ pub fn node_detail(
     document: StableId,
     node: StableId,
 ) -> Result<NodeDetail, QueryError> {
-    let records = snapshot.document_records(document)?;
-    let record = records
-        .nodes
-        .iter()
-        .find(|n| n.id == node)
+    let model = snapshot.document_model(document)?;
+    let record = model
+        .record(node)
         .ok_or(QueryError::UnknownNode { document, node })?;
-    let mut children: Vec<(&OrderKey, StableId)> = records
-        .nodes
-        .iter()
-        .filter(|n| n.parent == Some(node))
-        .map(|n| (&n.order_key, n.id))
-        .collect();
-    children.sort();
-    let mut builder = SnapshotBuilder::new();
-    builder
-        .add_document(&records)
+    let object = project_document_node(document, &record)
         .map_err(|e| QueryError::Projection(e.to_string()))?;
-    let semantic = builder.finish();
-    let properties = semantic
-        .get(node)
-        .map(|object| {
-            object
-                .properties()
-                .iter()
-                .map(|(path, value)| NodeProperty {
-                    path: property_path_label(path),
-                    value: OpsValue::from(value),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let modifier_count = records
-        .modifier_stacks
+    let properties = object
+        .properties()
         .iter()
-        .find(|s| s.node == node)
-        .map_or(0, |s| s.entries().len());
+        .map(|(path, value)| NodeProperty {
+            path: property_path_label(path),
+            value: OpsValue::from(value),
+        })
+        .collect();
+    let modifier_count = model
+        .modifier_stack(node)
+        .map_or(0, |stack| stack.entries().len());
     Ok(NodeDetail {
         revision: snapshot.revision(),
         document,
@@ -538,7 +519,7 @@ pub fn node_detail(
         display_name: record.display_name.clone(),
         visible: record.visible,
         locked: record.locked,
-        children: children.into_iter().map(|(_, id)| id).collect(),
+        children: model.children_in_order(node),
         properties,
         modifier_count,
     })

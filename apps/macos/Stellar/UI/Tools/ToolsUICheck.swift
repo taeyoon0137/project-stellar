@@ -164,7 +164,7 @@ enum ToolsUICheck {
         recorder.expect(resolve("r", 0x0F, [.control]) == nil, "⌃R이 도구로 해석됨")
         recorder.expect(resolve("r", 0x0F, repeat: true) == nil, "키 반복이 도구로 해석됨")
         recorder.expect(resolve("ㄱ", 0x0F) == .rectangle, "한글 입력 소스(ㄱ, R 위치) 해석 실패")
-        recorder.expect(resolve("ㅍ", 0x23) == .pen, "한글 입력 소스(ㅍ, P 위치) 해석 실패")
+        recorder.expect(resolve("p", 0x23) == nil && resolve("ㅔ", 0x23) == nil, "할당 없는 P가 도구로 해석됨")
         recorder.expect(resolve("1", 0x12) == nil, "숫자 키가 도구로 해석됨")
         recorder.expect(resolve("q", 0x0C) == nil, "할당 없는 Q가 도구로 해석됨")
 
@@ -561,17 +561,17 @@ enum ToolsUICheck {
         recorder.expect(lockItem.title == "Unlock", "Lock 토글 제목 불일치: \(lockItem.title)")
 
         // 사용자가 도구 그룹을 누름 → 명령 → snapshot → 선택·메뉴 체크.
-        guard let pen = tools.firstIndex(of: .pen), let rectangle = tools.firstIndex(of: .rectangle),
+        guard let frame = tools.firstIndex(of: .frame), let rectangle = tools.firstIndex(of: .rectangle),
               let image = tools.firstIndex(of: .image), let move = tools.firstIndex(of: .move)
         else { return }
         recorder.expect(group.selectedIndex == move, "초기 도구 선택이 Move가 아님: \(group.selectedIndex)")
-        group.selectedIndex = pen
+        group.selectedIndex = frame
         controller.toolSelectionChanged(group)
-        recorder.expect(model.sentCommands.last == .selectPenTool && model.snapshot.activeTool == .pen, "도구 그룹 → Pen 명령 실패")
-        let penItem = item(.selectPenTool)
-        _ = router.validateMenuItem(penItem)
+        recorder.expect(model.sentCommands.last == .selectFrameTool && model.snapshot.activeTool == .frame, "도구 그룹 → Frame 명령 실패")
+        let frameItem = item(.selectFrameTool)
+        _ = router.validateMenuItem(frameItem)
         _ = router.validateMenuItem(moveItem)
-        recorder.expect(penItem.state == .on && moveItem.state == .off, "Pen 체크 갱신 실패")
+        recorder.expect(frameItem.state == .on && moveItem.state == .off, "Frame 체크 갱신 실패")
 
         // 코어(Stub) 쪽 변경 → 툴바 선택 반영.
         model.send(.selectRectangleTool)

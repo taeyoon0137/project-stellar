@@ -102,7 +102,7 @@
 //! | `0x0109` | HistoryReplayed | request u64, session u64, redo u8, applied u8, revision u64 |
 //! | `0x010A` | WindowSessionSaved | request u64, session u64, generation u64, written u8 |
 //! | `0x010B` | ProjectTrust | request u64, project u64, trusted u8 |
-//! | `0x010C` | GitNames | request u64, session u64, rows u32, other_changes u8, staged u8 |
+//! | `0x010C` | GitNames | request u64, session u64, rows u32, other_changes u8, staged u8; unborn은 branch text + staged_files u32, branch/detached는 빈 text + kind u8(1/2) + 이름/OID text |
 //! | `0x010D` | ProjectCreated | request u64, git_state u32 |
 //! | `0x010E` | ComponentCreated | request u64, session u64, filename text |
 //!
@@ -148,6 +148,7 @@ pub use git_components::GitComponentRow;
 pub use git_names::{GitNameRow, SelectionOperation};
 pub use node_delete::{SelectionEdit, SelectionEditTarget};
 pub use stellar_document::model::SiblingOrder;
+pub use stellar_document::shape::ShapeKind;
 
 use crate::app_command::AppCommand;
 use crate::command_queue::QueueCapacity;
@@ -279,11 +280,17 @@ pub enum RequestFailure {
     GitNamesUnavailable,
     /// 새 프로젝트 생성 실패.
     ProjectCreateFailed,
+    /// Git checkout·대상 폴더 공개 실패. Git 진단은 URL을 포함할 수 있어 전달하지 않습니다.
+    ProjectCloneFailed,
+    /// Clone 대상 이름이 이미 존재합니다.
+    CloneTargetExists,
+    /// 최종 폴더 공개 전에 사용자가 Clone을 취소했습니다.
+    CloneCancelled,
 }
 
 impl RequestFailure {
     /// 전체 코드(값 순서).
-    pub const ALL: [RequestFailure; 22] = [
+    pub const ALL: [RequestFailure; 25] = [
         RequestFailure::UnknownProject,
         RequestFailure::UnknownDocument,
         RequestFailure::DocumentInOtherProject,
@@ -306,6 +313,9 @@ impl RequestFailure {
         RequestFailure::TrustUnavailable,
         RequestFailure::GitNamesUnavailable,
         RequestFailure::ProjectCreateFailed,
+        RequestFailure::ProjectCloneFailed,
+        RequestFailure::CloneTargetExists,
+        RequestFailure::CloneCancelled,
     ];
 
     /// C ABI 코드 값.
@@ -333,6 +343,9 @@ impl RequestFailure {
             RequestFailure::TrustUnavailable => 25,
             RequestFailure::GitNamesUnavailable => 26,
             RequestFailure::ProjectCreateFailed => 27,
+            RequestFailure::ProjectCloneFailed => 28,
+            RequestFailure::CloneTargetExists => 29,
+            RequestFailure::CloneCancelled => 30,
         }
     }
 
@@ -342,6 +355,22 @@ impl RequestFailure {
             .into_iter()
             .find(|failure| failure.code() == code)
     }
+}
+
+/// Git 패널이 변경 행과 함께 관측한 HEAD.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitPanelHead {
+    /// 첫 commit 전 브랜치와 실제 index 파일 수.
+    Unborn {
+        /// HEAD가 가리키는 로컬 브랜치 이름.
+        branch: String,
+        /// 첫 commit에 포함될 실제 index 항목 수.
+        staged_files: u32,
+    },
+    /// commit을 가리키는 로컬 브랜치 이름.
+    Branch(String),
+    /// 브랜치에서 분리된 전체 commit OID.
+    Detached(String),
 }
 
 /// 요청 완료 event. 요청마다 정확히 하나가 outbox에 쌓입니다.
@@ -397,6 +426,8 @@ pub enum RuntimeEvent {
         other_changes: bool,
         /// 이번 요청이 실제 Stage였는지.
         staged: bool,
+        /// 과거 payload에는 HEAD가 없습니다.
+        head: Option<GitPanelHead>,
     },
     /// 프로젝트를 닫았습니다.
     ProjectClosed {
@@ -752,12 +783,33 @@ impl RuntimeEvent {
                 rows,
                 other_changes,
                 staged,
+                head,
             } => {
                 w.u64(request.0);
                 w.u64(session.0);
                 w.u32(*rows);
                 w.u8(u8::from(*other_changes));
                 w.u8(u8::from(*staged));
+                match head {
+                    None => {}
+                    Some(GitPanelHead::Unborn {
+                        branch,
+                        staged_files,
+                    }) => {
+                        w.text(branch);
+                        w.u32(*staged_files);
+                    }
+                    Some(GitPanelHead::Branch(branch)) => {
+                        w.text("");
+                        w.u8(1);
+                        w.text(branch);
+                    }
+                    Some(GitPanelHead::Detached(commit)) => {
+                        w.text("");
+                        w.u8(2);
+                        w.text(commit);
+                    }
+                }
             }
             RuntimeEvent::ProjectTrust {
                 request,
@@ -840,6 +892,23 @@ impl RuntimeEvent {
                 rows: r.u32()?,
                 other_changes: r.bool()?,
                 staged: r.bool()?,
+                head: if r.bytes.is_empty() {
+                    None
+                } else {
+                    let text = r.text()?;
+                    Some(if text.is_empty() {
+                        match r.u8()? {
+                            1 => GitPanelHead::Branch(r.text()?),
+                            2 => GitPanelHead::Detached(r.text()?),
+                            _ => return Err(EventDecodeError::Length),
+                        }
+                    } else {
+                        GitPanelHead::Unborn {
+                            branch: text,
+                            staged_files: r.u32()?,
+                        }
+                    })
+                },
             },
             event_kind::PROJECT_TRUST => RuntimeEvent::ProjectTrust {
                 request: RequestId(r.u64()?),
@@ -988,6 +1057,7 @@ pub struct WindowSessionSummary {
     pub(crate) asset_chunks:
         Arc<std::collections::BTreeMap<StableId, stellar_storage::hash::ContentHash>>,
     pub(crate) image_generation: Option<stellar_storage::hash::ContentHash>,
+    pub(crate) component_library: Option<Arc<crate::canvas::CanvasComponentLibrary>>,
     /// undo stack 깊이.
     pub undo_depth: u32,
     /// redo stack 깊이.
@@ -1002,6 +1072,10 @@ pub struct WindowSessionSummary {
     pub primary_selection: Option<StableId>,
     /// 현재 확정된 단일 선택이 Frame일 때 그 ID. viewport 가시성과 독립적입니다.
     pub selected_frame: Option<StableId>,
+    /// 선택 Frame의 bounds 정규화 전 모서리 반경.
+    pub selected_frame_corners: Option<stellar_document::frame::CornerRadius>,
+    /// 확정 단일 선택이 인스턴스일 때 원본 정의 ID. 정의 파일이 누락되어도 참조는 유지됩니다.
+    pub selected_definition: Option<StableId>,
     /// 저장되지 않은 문서 변경이 있는지(선택·viewport 제외).
     pub has_unsaved_changes: bool,
     /// 열린 탭 수.
@@ -1073,6 +1147,11 @@ pub(crate) struct WindowEntry {
     pub(crate) session: ProjectWindowSession,
     canvas: crate::canvas::CanvasCache,
     checkpoint: recovery::WindowCheckpoint,
+    #[cfg(target_os = "macos")]
+    component_watch: Option<(
+        stellar_project::watcher::fsevents::ComponentFileWatch,
+        std::os::unix::net::UnixDatagram,
+    )>,
 }
 
 #[derive(Debug)]
@@ -1391,6 +1470,8 @@ fn open_window_session_on_thread(
             session,
             canvas: Default::default(),
             checkpoint: recovery::WindowCheckpoint::new(recovery_root),
+            #[cfg(target_os = "macos")]
+            component_watch: None,
         },
     );
     if let Some(owner) = sessions.projects.get_mut(&project) {
@@ -1428,6 +1509,19 @@ fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> Windo
     entry.checkpoint.observe(&entry.session);
     let session = &entry.session;
     let clamp = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let (selected_frame, selected_definition, selected_frame_corners) =
+        match session.view().selection().ids() {
+            [node] => match session.document().and_then(|d| d.model().payload(*node)) {
+                Some(stellar_document::records::NodePayload::Frame(frame)) => {
+                    (Some(*node), None, Some(frame.corner_radius))
+                }
+                Some(stellar_document::records::NodePayload::ComponentInstance(instance)) => {
+                    (None, Some(instance.component().id()), None)
+                }
+                _ => (None, None, None),
+            },
+            _ => (None, None, None),
+        };
     WindowSessionSummary {
         session: handle,
         project: entry.project,
@@ -1441,17 +1535,9 @@ fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> Windo
         history_sequence: session.history_sequence(),
         order_flags: node_order::capabilities(session),
         primary_selection: session.view().displayed_selection().primary(),
-        selected_frame: match session.view().selection().ids() {
-            [node]
-                if matches!(
-                    session.document().and_then(|d| d.model().payload(*node)),
-                    Some(stellar_document::records::NodePayload::Frame(_))
-                ) =>
-            {
-                Some(*node)
-            }
-            _ => None,
-        },
+        selected_frame,
+        selected_frame_corners,
+        selected_definition,
         has_unsaved_changes: session.has_unsaved_changes(),
         tab_count: clamp(session.tabs().len()),
         active_view: session.tabs().active_view(),
@@ -1459,6 +1545,7 @@ fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> Windo
         image_records: session.image_records.clone(),
         asset_chunks: session.asset_chunks.clone(),
         image_generation: session.loaded_generation().map(|g| g.manifest_hash),
+        component_library: entry.canvas.library.clone(),
         canvas: entry.canvas.current(session),
     }
 }
@@ -1649,6 +1736,7 @@ pub enum EventPoll {
 #[derive(Debug)]
 struct AppShared {
     creating: std::sync::atomic::AtomicBool,
+    cloning: Mutex<Option<(RequestId, stellar_git_porcelain::cancel::GitCancelToken)>>,
     creating_component: std::sync::atomic::AtomicBool,
     importing_font: std::sync::atomic::AtomicBool,
     importing_image: std::sync::atomic::AtomicBool,
@@ -1702,6 +1790,15 @@ pub struct AppRuntime {
 
 impl Drop for AppRuntime {
     fn drop(&mut self) {
+        if let Some((_, token)) = self
+            .shared
+            .cloning
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+        {
+            token.cancel();
+        }
         self.shared
             .git_names
             .lock()
@@ -1753,6 +1850,7 @@ impl AppRuntime {
             sender: document.sender(),
             shared: Arc::new(AppShared {
                 creating: false.into(),
+                cloning: Mutex::default(),
                 creating_component: false.into(),
                 importing_font: false.into(),
                 importing_image: false.into(),
@@ -1892,6 +1990,10 @@ impl AppRuntime {
                     .values_mut()
                     .filter(|w| w.project == project)
                 {
+                    #[cfg(target_os = "macos")]
+                    {
+                        window.component_watch.take();
+                    }
                     window.canvas.update_library(request.0, None);
                 }
             }
@@ -2009,6 +2111,35 @@ impl AppRuntime {
         self.submit(move |ctx, request| {
             change_view_on_thread(ctx, request, session, |window| {
                 window.pan(dx, dy).map(|_| ())
+            })
+        })
+    }
+
+    /// 화면 중앙 기준 point를 고정해서 확대하거나, 선택한 영역의 중앙을 화면 가운데로 맞춥니다.
+    pub fn zoom_viewport_at(
+        &self,
+        session: WindowSessionHandle,
+        anchor: [f64; 2],
+        fit_factor: Option<f64>,
+        zoom_out: bool,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            change_view_on_thread(ctx, request, session, |window| {
+                let Some(factor) = fit_factor else {
+                    let step = if zoom_out { 1.0 / ZOOM_STEP } else { ZOOM_STEP };
+                    return window.zoom(step, anchor[0], anchor[1]).map(|_| ());
+                };
+                let camera = window
+                    .tabs()
+                    .active_viewport()
+                    .ok_or(WindowSessionEditError::View(ViewTabsError::NoActiveTab))?;
+                let next = CanvasViewport::new(
+                    camera.center_x() + anchor[0] / camera.zoom(),
+                    camera.center_y() + anchor[1] / camera.zoom(),
+                    camera.zoom() * factor,
+                )
+                .map_err(WindowSessionEditError::Viewport)?;
+                window.set_viewport(next).map(|_| ())
             })
         })
     }
@@ -2258,6 +2389,36 @@ mod tests {
                 rows: 1,
                 other_changes: true,
                 staged: false,
+                head: None,
+            },
+            RuntimeEvent::GitNames {
+                request: RequestId(23),
+                session: WindowSessionHandle(11),
+                rows: 0,
+                other_changes: true,
+                staged: false,
+                head: Some(GitPanelHead::Unborn {
+                    branch: "main".into(),
+                    staged_files: 10,
+                }),
+            },
+            RuntimeEvent::GitNames {
+                request: RequestId(24),
+                session: WindowSessionHandle(11),
+                rows: 0,
+                other_changes: false,
+                staged: false,
+                head: Some(GitPanelHead::Branch("design/기준".into())),
+            },
+            RuntimeEvent::GitNames {
+                request: RequestId(25),
+                session: WindowSessionHandle(11),
+                rows: 0,
+                other_changes: false,
+                staged: false,
+                head: Some(GitPanelHead::Detached(
+                    "0123456789012345678901234567890123456789".into(),
+                )),
             },
         ]
     }
@@ -2305,6 +2466,39 @@ mod tests {
             // 결정론: 같은 event는 같은 바이트입니다.
             assert_eq!(event.encode(), bytes);
         }
+    }
+
+    #[test]
+    fn git_names_decodes_previous_payloads_without_turning_truncated_counts_into_branches() {
+        let event = |head| RuntimeEvent::GitNames {
+            request: RequestId(1),
+            session: WindowSessionHandle(2),
+            rows: 0,
+            other_changes: false,
+            staged: false,
+            head,
+        };
+        let mut legacy = vec![1, 0, 0, 0];
+        legacy.extend_from_slice(&1u64.to_le_bytes());
+        legacy.extend_from_slice(&2u64.to_le_bytes());
+        legacy.extend_from_slice(&[0; 6]);
+        assert_eq!(
+            RuntimeEvent::decode(event_kind::GIT_NAMES, &legacy),
+            Ok(event(None))
+        );
+        legacy.extend_from_slice(b"\x04\0\0\0main\x01\0\0\0");
+        assert_eq!(
+            RuntimeEvent::decode(event_kind::GIT_NAMES, &legacy),
+            Ok(event(Some(GitPanelHead::Unborn {
+                branch: "main".into(),
+                staged_files: 1
+            })))
+        );
+        legacy.truncate(legacy.len() - 3);
+        assert_eq!(
+            RuntimeEvent::decode(event_kind::GIT_NAMES, &legacy),
+            Err(EventDecodeError::Length)
+        );
     }
 
     #[test]
@@ -2402,7 +2596,10 @@ mod tests {
         let codes: Vec<u32> = RequestFailure::ALL.iter().map(|f| f.code()).collect();
         assert_eq!(
             codes,
-            [1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
+            [
+                1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+                28, 29, 30
+            ]
         );
         let unique: BTreeSet<u32> = codes.iter().copied().collect();
         assert_eq!(unique.len(), codes.len());

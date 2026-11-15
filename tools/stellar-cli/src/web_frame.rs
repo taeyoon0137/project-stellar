@@ -52,7 +52,7 @@ pub fn run(args: &[String]) -> Result<Success, CliError> {
         };
         error.with_context(path)
     })?;
-    let result = JsonValue::object(vec![
+    let mut fields = vec![
         ("revision", views::revision(report.revision)),
         ("document", views::id(report.document)),
         ("view", views::id(report.view)),
@@ -65,7 +65,11 @@ pub fn run(args: &[String]) -> Result<Success, CliError> {
                 .as_ref()
                 .map_or(JsonValue::Null, JsonValue::string),
         ),
-    ]);
+    ];
+    if let Some(hash) = report.component_source_hash {
+        fields.push(("component_source_hash", JsonValue::string(hash.to_string())));
+    }
+    let result = JsonValue::object(fields);
     let diagnostics: Vec<_> = report
         .diagnostics
         .into_iter()

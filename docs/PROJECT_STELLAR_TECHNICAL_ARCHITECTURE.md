@@ -947,7 +947,7 @@ Stellar 애플리케이션 자체 UI는 각 운영체제의 네이티브 접근�
 
 Stellar는 단일 패키지 파일이 아니라 프로젝트 폴더 자체를 엽니다.
 
-[ADR-0059](adr/ADR-0059-text-source-files-with-chunk-cache.md)에 따라 목표 Git 원본은 의미 단위 텍스트 파일이고 chunk는 `.stellar/cache/`의 파생 데이터입니다. 아래 구조는 아직 기본인 기존 generation 형식입니다. 첫 전환 단위(V.10.1~V.10.3)는 [단일 View 텍스트 문법](spec/text-view-source-v1.md)의 명시적 export/open을 지원하며, V.10.6의 첫 부분은 같은 단일 파일의 opt-in CLI 명령 편집입니다. 전체 의미 왕복·저장 복구·외부 변경 검증(V.10.4~V.10.7)이 끝나기 전에는 기존 프로젝트의 기본 저장을 바꾸지 않습니다.
+[ADR-0059](adr/ADR-0059-text-source-files-with-chunk-cache.md)에 따라 목표 Git 원본은 의미 단위 텍스트 파일이고 chunk는 `.stellar/cache/`의 파생 데이터입니다. 현재 macOS 앱에서 만든 [컴포넌트 정의](spec/component-source-v1.md)는 `design/components/`에 하나씩 저장하며, 앱·CLI·MCP가 같은 파일을 읽습니다. 일반 캔버스 문서는 아래 generation 형식으로 저장됩니다. [단일 View 텍스트 원본](spec/text-view-source-v1.md)은 명시적으로 내보내고 CLI에서 편집할 수 있습니다. 프로젝트 전체의 기본 저장 전환은 의미 왕복·저장 복구·외부 변경 검증(V.10.4~V.10.7)을 거칩니다.
 
 ```text
 ProjectName/
@@ -958,11 +958,13 @@ ProjectName/
 ├── .gitignore
 ├── .gitattributes
 ├── design/
-│   ├── current.stellarref
+│   ├── components/            # 독립 컴포넌트 정의를 만든 경우
+│   │   └── <name>-<id-suffix>.stellar.yaml
+│   ├── current
 │   ├── generations/
-│   │   └── <manifest-hash>.stargen
+│   │   └── sha256-<manifest-hash>.starmanifest
 │   └── objects/
-│       └── sha256/<prefix>/<content-hash>.starchunk
+│       └── <prefix>/sha256-<content-hash>.starchunk
 ├── assets/
 │   └── sha256/<prefix>/<content-hash>.<ext>
 └── .stellar/

@@ -68,11 +68,33 @@ pub unsafe extern "C" fn stellar_window_selected_frame(
     session: u64,
     out: *mut StellarFrameSelection,
 ) -> StellarStatus {
+    let mut radii = [0.; 4];
+    let mut sequence = 0;
+    unsafe {
+        stellar_window_selected_frame_corners(handle, session, out, &mut sequence, &mut radii)
+    }
+}
+
+/// 현재 선택의 view·node·revision과 원본 TL/TR/BR/BL 길이를 동일 snapshot으로 돌려줍니다.
+/// # Safety
+/// `out`, `history_sequence`, `radii`는 각각 해당 타입의 쓰기 가능한 버퍼여야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_selected_frame_corners(
+    handle: u64,
+    session: u64,
+    out: *mut StellarFrameSelection,
+    history_sequence: *mut u64,
+    radii: *mut [f32; 4],
+) -> StellarStatus {
     ffi_guard(move || {
-        if out.is_null() {
+        if out.is_null() || history_sequence.is_null() || radii.is_null() {
             return StellarStatus::NullPointer;
         }
-        unsafe { *out = StellarFrameSelection::default() };
+        unsafe {
+            *out = StellarFrameSelection::default();
+            *radii = [0.; 4];
+            *history_sequence = 0;
+        }
         let Ok(reg) = registry().lock() else {
             return StellarStatus::Internal;
         };
@@ -86,16 +108,21 @@ pub unsafe extern "C" fn stellar_window_selected_frame(
         else {
             return StellarStatus::NoError;
         };
-        let (Some(view), Some(node)) = (w.active_view, w.selected_frame) else {
+        let (Some(view), Some(node), Some(corners)) =
+            (w.active_view, w.selected_frame, w.selected_frame_corners)
+        else {
             return StellarStatus::NoError;
         };
+        let (tl, tr, br, bl) = corners.components();
         unsafe {
             *out = StellarFrameSelection {
                 revision: w.revision.0,
                 view: view.to_bytes(),
                 node: node.to_bytes(),
-            }
-        };
+            };
+            *radii = [tl, tr, br, bl];
+            *history_sequence = w.history_sequence;
+        }
         StellarStatus::Ok
     })
 }
@@ -317,6 +344,50 @@ pub unsafe extern "C" fn stellar_window_session_pan(
         };
         let result = match rt.app() {
             Ok(app) => app.pan_viewport(WindowSessionHandle(session), dx, dy),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 화면 중앙 기준 클릭으로 한 단계 줌. fit_factor > 0이면 영역 중심을 가운데 두고 해당 배율을 곱합니다.
+/// # Safety
+/// out_request는 null이거나 요청 ID 하나를 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_zoom_at(
+    handle: u64,
+    session: u64,
+    x: f64,
+    y: f64,
+    fit_factor: f64,
+    zoom_out: u32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { out_request.write(0) };
+        }
+        if !x.is_finite()
+            || !y.is_finite()
+            || !fit_factor.is_finite()
+            || fit_factor < 0.0
+            || zoom_out > 1
+        {
+            return StellarStatus::InvalidArgument;
+        }
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.zoom_viewport_at(
+                WindowSessionHandle(session),
+                [x, y],
+                (fit_factor > 0.0).then_some(fit_factor),
+                zoom_out != 0,
+            ),
             Err(status) => return status,
         };
         unsafe { rt.finish_request(result, out_request) }
@@ -852,6 +923,61 @@ pub unsafe extern "C" fn stellar_window_session_resize_frame(
     })
 }
 
+/// 선택한 Frame의 모서리 반경 변경을 요청합니다.
+///
+/// # Safety
+/// `view`와 `node`는 각각 16 byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_set_frame_corner(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    node: *const [u8; 16],
+    revision: u64,
+    history_sequence: u64,
+    property_key: u32,
+    radius: f32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() || node.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let Ok(radius) = stellar_core_types::value::FiniteF32::new(radius) else {
+            return StellarStatus::InvalidArgument;
+        };
+        if radius.get() < 0.0 {
+            return StellarStatus::InvalidArgument;
+        }
+        let view = StableId::from_bytes(unsafe { *view });
+        let node = StableId::from_bytes(unsafe { *node });
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.set_canvas_frame_corner(
+                SelectionEditTarget {
+                    session: WindowSessionHandle(session),
+                    view,
+                    revision: stellar_core_types::revision::DocumentRevision(revision),
+                    history_sequence,
+                },
+                node,
+                stellar_core_types::property::PropertyKey(property_key),
+                radius,
+            ),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
 /// 선택한 Free Frame의 단색 배경을 변경합니다. 색공간 0은 배경 제거입니다.
 ///
 /// # Safety
@@ -964,6 +1090,62 @@ pub unsafe extern "C" fn stellar_window_session_insert_rectangle(
             true,
         )
     }
+}
+
+/// 부모 local 공간의 시작·끝 두 점으로 Shape를 생성합니다(ShapeKind 저장 tag).
+/// # Safety
+/// `view`와 `parent`는 각각 16 byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_insert_shape(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    parent: *const [u8; 16],
+    revision: u64,
+    shape: u8,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    use stellar_core_types::value::Vec2;
+    use stellar_runtime::app::ShapeKind;
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() || parent.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let (Ok(kind), Ok(start), Ok(end)) = (
+            ShapeKind::from_tag(shape),
+            Vec2::new(x0, y0),
+            Vec2::new(x1, y1),
+        ) else {
+            return StellarStatus::InvalidArgument;
+        };
+        let view = StableId::from_bytes(unsafe { *view });
+        let parent = StableId::from_bytes(unsafe { *parent });
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.insert_canvas_shape(
+                WindowSessionHandle(session),
+                view,
+                stellar_core_types::revision::DocumentRevision(revision),
+                parent,
+                kind,
+                [start, end],
+            ),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

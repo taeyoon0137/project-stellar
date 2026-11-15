@@ -4,6 +4,7 @@ pub mod text;
 
 use std::sync::Arc;
 
+pub use shape::CanvasShapePath;
 use stellar_commands::view_tabs::CanvasViewport;
 use stellar_core_types::color::Color;
 use stellar_core_types::ids::StableId;
@@ -18,6 +19,7 @@ use stellar_scene::builder::{
     BorderInput, FragmentInput, FrameClipInput, FrameInput, NodeInput, SceneBuilder,
 };
 use stellar_scene::node::{CornerRadii, RectPrimitive, SceneContent};
+use stellar_storage::hash::ContentHash;
 
 use crate::window_session::ProjectWindowSession;
 
@@ -30,6 +32,8 @@ pub(crate) mod shape;
 pub struct CanvasFrame {
     /// Shape Rectangle이면 true입니다. Frame과 같은 사각형 painter를 사용합니다.
     pub rectangle_shape: bool,
+    /// 불변 scene의 경로 행으로 그리는 Shape입니다.
+    pub path_shape: bool,
     /// 저장한 font/style로 layout한 Text 행.
     pub text_node: bool,
     /// 실제 문서의 ComponentInstance를 표시하는 투영 행입니다.
@@ -59,10 +63,20 @@ pub struct CanvasFrame {
 pub struct CanvasScene {
     /// 아래에서 위로 칠하는 Frame·Rectangle·ComponentInstance·Text 목록.
     pub frames: Vec<CanvasFrame>,
+    /// Frame 행에는 할당하지 않는 도형별 canonical 경로입니다.
+    pub shapes: std::collections::BTreeMap<u32, CanvasShapePath>,
     /// Text 행 번호별 layout 및 glyph path.
     pub text: std::collections::BTreeMap<u32, Arc<text::DocumentText>>,
     /// 해석하지 못한 subtree 수. 그 자손도 잘못된 위치·clip으로 표시하지 않습니다.
     pub skipped: u32,
+}
+
+/// 파일 이름과 원본 bytes 전체가 검증된 창별 정의 집합. worker와 장면이 같은 자료를 읽습니다.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct CanvasComponentLibrary {
+    pub(crate) revision: stellar_ops::revision::ProjectRevision,
+    pub(crate) source_hash: ContentHash,
+    pub(crate) definitions: stellar_document::component::definition::ComponentLibrary,
 }
 
 #[derive(Debug, Default)]
@@ -71,29 +85,23 @@ pub(crate) struct CanvasCache {
     saved_text: text::saved::SavedTextLayouts,
     library_request: u64,
     latest: Option<(DocumentRevision, StableId, Arc<CanvasScene>)>,
-    library: Option<(
-        stellar_project::document_io::component_source::ComponentFiles,
-        stellar_document::component::definition::ComponentLibrary,
-    )>,
+    pub(crate) library: Option<Arc<CanvasComponentLibrary>>,
 }
 
 impl CanvasCache {
     pub(crate) fn update_library(
         &mut self,
         request: u64,
-        next: Option<(
-            stellar_project::document_io::component_source::ComponentFiles,
-            stellar_document::component::definition::ComponentLibrary,
-        )>,
+        next: Option<Arc<CanvasComponentLibrary>>,
     ) {
         if request < self.library_request {
             return;
         }
         self.library_request = request;
-        if self.library.as_ref().map(|v| &v.0) != next.as_ref().map(|v| &v.0) {
-            self.library = next;
+        if self.library.as_ref().map(|v| v.source_hash) != next.as_ref().map(|v| v.source_hash) {
             self.latest = None;
         }
+        self.library = next;
     }
 
     pub(crate) fn current(&mut self, session: &ProjectWindowSession) -> Option<Arc<CanvasScene>> {
@@ -118,7 +126,7 @@ impl CanvasCache {
         let scene = Arc::new(CanvasScene::with_library(
             model,
             root,
-            self.library.as_ref().map(|v| &v.1),
+            self.library.as_ref().map(|v| &v.definitions),
             Some((
                 session.identity().canonical_target(),
                 &mut self.fonts,
@@ -200,6 +208,7 @@ impl CanvasScene {
         let index = self.frames.len() as u32;
         self.frames.push(CanvasFrame {
             rectangle_shape: false,
+            path_shape: false,
             instance_frame: false,
             text_node: false,
             image_asset: None,
@@ -270,6 +279,7 @@ impl CanvasScene {
                     Some((
                         CanvasFrame {
                             rectangle_shape: false,
+                            path_shape: false,
                             instance_frame: false,
                             text_node: true,
                             image_asset: None,
@@ -296,11 +306,8 @@ impl CanvasScene {
                 }
                 continue;
             }
-            if let Some(NodePayload::Shape(stellar_document::shape::ShapeGeometry::Rectangle(
-                shape,
-            ))) = payload
-            {
-                if let Some(rectangle) = shape::rectangle(
+            if let Some(NodePayload::Shape(shape)) = payload {
+                if let Some((frame, path)) = shape::project(
                     model,
                     id,
                     shape,
@@ -309,7 +316,10 @@ impl CanvasScene {
                     fields.locked,
                     &mut builder,
                 ) {
-                    result.frames.push(rectangle);
+                    if let Some(path) = path {
+                        result.shapes.insert(result.frames.len() as u32, path);
+                    }
+                    result.frames.push(frame);
                 } else {
                     result.skipped += 1;
                 }
@@ -447,8 +457,15 @@ mod tests {
         assert!(CanvasScene::default().root_viewport(800.0, 600.0).is_none());
     }
 
+    // 저장소 루트에서 로컬 성능 측정용 Release 앱을 빌드한 뒤 실행합니다.
+    // profile_dd="$(mktemp -d)"
+    // xcodebuild -project apps/macos/Stellar.xcodeproj -scheme Stellar -configuration Release \
+    //   -derivedDataPath "$profile_dd" -destination 'platform=macOS,arch=arm64' \
+    //   SWIFT_ACTIVE_COMPILATION_CONDITIONS=STELLAR_PROFILE EXCLUDED_SOURCE_FILE_NAMES=AgentPanelUICheck.swift CODE_SIGNING_ALLOWED=NO build
+    // STELLAR_CANVAS_PROFILE_APP="$profile_dd/Build/Products/Release/Stellar.app/Contents/MacOS/Stellar" \
+    //   cargo test --locked -p stellar-runtime --lib canvas::tests::profile_saved_canvas_50000_frames -- --ignored --exact --nocapture
     #[test]
-    #[ignore = "requires a Release macOS app and writes the 50,000-Frame benchmark project"]
+    #[ignore = "requires a STELLAR_PROFILE Release macOS app and writes the 50,000-Frame benchmark project"]
     fn profile_saved_canvas_50000_frames() {
         let app =
             std::env::var_os("STELLAR_CANVAS_PROFILE_APP").expect("set STELLAR_CANVAS_PROFILE_APP");

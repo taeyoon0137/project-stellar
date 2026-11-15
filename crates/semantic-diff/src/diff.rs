@@ -389,14 +389,9 @@ mod tests {
         };
         assert_eq!(
             change.path,
-            PropertyPath::with_keys(sid(10), vec![keys::frame::SIZE])
+            PropertyPath::with_keys(sid(10), vec![keys::frame::WIDTH])
         );
-        let floats = |w: f32| {
-            SemanticValue::Floats(vec![
-                FiniteF32::new(w).unwrap(),
-                FiniteF32::new(240.0).unwrap(),
-            ])
-        };
+        let floats = |w: f32| SemanticValue::Floats(vec![FiniteF32::new(w).unwrap()]);
         assert_eq!(change.old, Some(floats(320.0)));
         assert_eq!(change.new, Some(floats(next)));
         assert_eq!(change.provenance, Provenance::Document { document: sid(1) });

@@ -40,18 +40,7 @@ enum ShellProjectTrustCheck {
                   let owner = window.window else { return failed("restricted 패널 버튼") }
             owner.orderFront(nil)
             panel.changesOverlay.actionButton.performClick(nil)
-            let until = Date().addingTimeInterval(3)
-            while owner.attachedSheet == nil && Date() < until {
-                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-            }
-            guard let sheet = owner.attachedSheet else { return failed("표시된 프로젝트 신뢰 sheet 없음") }
-            guard let button = descendantButton(sheet.contentView, title: approving ? String(localized: "Trust Project") : String(localized: "Cancel")) else { return failed("sheet 버튼 없음") }
-            button.performClick(nil)
-            let deadline = Date().addingTimeInterval(5)
-            while owner.attachedSheet != nil && Date() < deadline {
-                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-            }
-            return owner.attachedSheet == nil && pump.waitForPendingRequests(timeout: 10)
+            return respondToTrustSheet(in: owner, approving: approving) && pump.waitForPendingRequests(timeout: 10)
         }
         func failed(_ step: String) -> Bool {
             FileHandle.standardError.write(Data("project-trust 실패: \(step)\n".utf8))
@@ -74,6 +63,22 @@ enum ShellProjectTrustCheck {
         guard pump.waitForPendingRequests(timeout: 10) else { return false }
         print("project-trust ok: cancel, approve, reopen, revoke, reopen")
         return true
+    }
+
+    @MainActor static func respondToTrustSheet(in owner: NSWindow, approving: Bool) -> Bool {
+        let until = Date().addingTimeInterval(3)
+        while owner.attachedSheet == nil && Date() < until {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        guard let view = owner.attachedSheet?.contentView,
+              let approve = descendantButton(view, title: String(localized: "Trust Project")),
+              let cancel = descendantButton(view, title: String(localized: "Cancel")) else { return false }
+        (approving ? approve : cancel).performClick(nil)
+        let deadline = Date().addingTimeInterval(5)
+        while owner.attachedSheet != nil && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        return owner.attachedSheet == nil
     }
 
     @MainActor private static func descendantButton(_ view: NSView?, title: String) -> NSButton? {

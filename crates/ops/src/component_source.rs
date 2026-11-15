@@ -15,7 +15,102 @@ pub use stellar_project::document_io::component_source::ComponentRootEdit;
 use stellar_project::document_io::component_source::{self, ComponentFiles, ComponentSource};
 use stellar_storage::hash::ContentHash;
 
+/// 검증된 원본의 Frame 속성 값입니다. 수치와 색은 텍스트 원본의 정확한 표현을 유지합니다.
+pub use stellar_project::yaml::YamlValue as SourceValue;
+
+/// 단일 정의에 소속된 Frame의 공통 메타데이터와 정규 원본 속성.
+#[derive(Debug)]
+pub struct DefinitionFrame {
+    /// 정의 안에서 안정적인 node ID.
+    pub id: StableId,
+    /// 부모 ID. 정의 root에는 없습니다.
+    pub parent: Option<StableId>,
+    /// 형제 간 화면 순서를 정하는 hex key.
+    pub order_key: String,
+    /// 사용자가 지정한 이름.
+    pub display_name: String,
+    /// 저장된 자체 표시 여부.
+    pub visible: bool,
+    /// 저장된 자체 잠금 여부.
+    pub locked: bool,
+    /// 크기, local affine, 채우기·테두리 등 원본 Frame payload.
+    pub payload: SourceValue,
+}
+
+/// 현재 프로젝트의 한 공유 정의. node 순서는 부모 우선, 형제는 OrderKey 순입니다.
+#[derive(Debug)]
+pub struct ComponentDetail {
+    /// project ID. 페이지가 속한 프로젝트를 판별합니다.
+    pub project: StableId,
+    /// 저장된 프로젝트 revision.
+    pub revision: crate::revision::ProjectRevision,
+    /// 요청한 컴포넌트 정의의 안정 식별자.
+    pub component: StableId,
+    /// 컴포넌트 이름. 서로 같은 이름을 허용합니다.
+    pub name: String,
+    /// 루트 Frame ID.
+    pub root: StableId,
+    /// 선택한 파일의 원본 bytes hash.
+    pub source_hash: ContentHash,
+    /// 읽을 때 검증한 전체 원본 집합. 다른 파일의 ID 충돌도 다시 검증합니다.
+    pub library_hash: ContentHash,
+    /// 정의 tree 전체.
+    pub nodes: Vec<DefinitionFrame>,
+}
+
+/// 승인된 snapshot의 프로젝트 폴더에서 정의를 찾습니다. 다른 프로젝트의 ID는 찾을 수 없습니다.
+pub fn detail(
+    snapshot: &crate::snapshot::ProjectSnapshot,
+    component: StableId,
+) -> Result<Option<ComponentDetail>, Error> {
+    let (library, files) = project_library(snapshot)?;
+    let Some(entry) = library.get(crate::core_types::reference::ComponentRef::new(component))
+    else {
+        return Ok(None);
+    };
+    let root = entry.definition().root.id();
+    let tree = entry.tree();
+    let mut nodes = Vec::with_capacity(tree.len());
+    let mut pending = vec![root];
+    while let Some(id) = pending.pop() {
+        let node = tree.node(id).expect("validated component tree");
+        let NodePayload::Frame(frame) = decode_payload(node.kind, &node.payload)
+            .map_err(|err| Error::Invalid(err.to_string()))?
+        else {
+            return Err(Error::Unsupported(
+                "컴포넌트 원본은 Free Frame만 지원합니다".into(),
+            ));
+        };
+        nodes.push(DefinitionFrame {
+            id,
+            parent: node.parent,
+            order_key: node
+                .order_key
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+            display_name: node.display_name.clone(),
+            visible: node.visible,
+            locked: node.locked,
+            payload: component_source::frame_source_properties(&frame),
+        });
+        pending.extend(tree.children(id).iter().rev().copied());
+    }
+    Ok(Some(ComponentDetail {
+        project: snapshot.project_id(),
+        revision: snapshot.revision(),
+        component,
+        name: entry.definition().display_name().into(),
+        root,
+        source_hash: files[&component].1,
+        library_hash: component_source::source_set_hash(files.into_values())?,
+        nodes,
+    }))
+}
+
 /// CLI에 노출하는 component/root의 실제 식별자와 저장된 Frame 크기.
+#[derive(Debug)]
 pub struct ComponentInfo {
     /// 전체 component ID.
     pub id: StableId,
@@ -33,6 +128,29 @@ pub struct ComponentInfo {
     pub file: PathBuf,
     /// 다음 쓰기에 사용할 실제 bytes hash.
     pub hash: ContentHash,
+}
+
+impl ComponentInfo {
+    /// CLI와 MCP에서 YAML과 같은 색 공간 이름·비연관 RGBA를 반환합니다.
+    pub fn background_source_value(&self) -> Option<(&'static str, String)> {
+        use crate::core_types::color::ColorSpace;
+        self.background.map(|color| {
+            let space = match color.space() {
+                ColorSpace::Srgb => "srgb",
+                ColorSpace::DisplayP3 => "display-p3",
+            };
+            (
+                space,
+                format!(
+                    "{} {} {} {}",
+                    color.r(),
+                    color.g(),
+                    color.b(),
+                    color.alpha()
+                ),
+            )
+        })
+    }
 }
 
 fn lock(dir: &Path) -> Result<SaveLock, Error> {
@@ -201,11 +319,14 @@ pub fn check(dir: &Path) -> Result<Vec<ComponentInfo>, Error> {
 }
 
 /// 프로젝트 안에 저장된 바이너리 chunk 개수와 텍스트 원본에서 실제로 읽은 컴포넌트들.
+#[derive(Debug)]
 pub struct ProjectComponents {
     /// 문서와 바이너리 chunk가 속한 generation revision.
     pub revision: crate::revision::ProjectRevision,
     /// generation의 component-library chunk 개수.
     pub chunk_count: usize,
+    /// 아래 항목을 읽은 파일명과 원본 bytes 전체의 hash. generation과 별도로 바뀝니다.
+    pub source_hash: ContentHash,
     /// 전체 component StableId 순서로 조립한 텍스트 원본 메타데이터.
     pub entries: Vec<ComponentInfo>,
 }
@@ -214,9 +335,11 @@ pub struct ProjectComponents {
 pub fn query(snapshot: &crate::snapshot::ProjectSnapshot) -> Result<ProjectComponents, Error> {
     let chunks = crate::query::components(snapshot);
     let (library, files) = project_library(snapshot)?;
+    let source_hash = component_source::source_set_hash(files.values().cloned())?;
     Ok(ProjectComponents {
         revision: chunks.revision,
         chunk_count: chunks.chunk_count,
+        source_hash,
         entries: entries(&library, files)?,
     })
 }
@@ -267,8 +390,17 @@ fn entries(
 
 /// 파일을 열 때 관측한 hash가 일치하면 root Frame 크기를 바꿉니다.
 pub fn resize(file: &Path, expected: &str, size: Size2) -> Result<ComponentInfo, Error> {
+    edit_root(file, expected, ComponentRootEdit::Size(size))
+}
+
+/// 파일을 열 때 관측한 hash로 단일 root의 크기·채우기를 조건부 저장합니다.
+pub fn edit_root(
+    file: &Path,
+    expected: &str,
+    edit: ComponentRootEdit,
+) -> Result<ComponentInfo, Error> {
     let (_guard, hash) = lock_file(file, expected)?;
-    let (source, hash) = component_source::resize(file, hash, size)?;
+    let (source, hash) = component_source::edit_root(file, hash, edit)?;
     Ok(info(&source, file.into(), hash))
 }
 

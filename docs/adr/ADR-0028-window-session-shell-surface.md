@@ -104,6 +104,9 @@ WindowSessionId, 독립 document state, view state, history, loaded generation)�
    배율을 2%\~25600%로 맞춥니다. 공유 이름은 `view.zoom_in`·`view.zoom_out`·`view.zoom_actual_size`이고 완료는
    `WINDOW_VIEW_CHANGED`입니다. 이동은 runtime `pan_viewport`(화면 point 단위)로 합니다(입력 파이프라인 연결은 XII.3 범위).
    유한하지 않은 결과는 `STELLAR_FAILURE_INVALID_VIEWPORT`(24)입니다. 이동·확대는 history에 기록하지 않습니다.
+   Zoom 도구의 `stellar_window_session_zoom_at`은 화면 중앙에서 측정한 logical point를 받습니다.
+   클릭은 그 점의 문서 좌표를 고정해 메뉴와 같은 한 단계로 확대·축소하고, 영역 드래그는 선택 사각형의
+   중앙을 화면 가운데에 놓고 양 축이 들어오는 배율을 적용합니다. 기존 viewport 배율 상하한을 따릅니다.
 4. **view 정보**: `stellar_window_view_info(handle, session, out_info)`가 고정 56 byte `StellarWindowViewInfo`(version 1:
    has_view, tab_count, center_x, center_y, zoom, active_view)를 씁니다. 셸은 이 배율로 툴바 줌 제목을 보이고, active view가
    있을 때만 줌 명령을 활성화합니다.
@@ -224,8 +227,20 @@ Escape·창 포커스 상실로 미리보기를 취소하면 문서 변경이 �
 마지막 형제 뒤에 `InsertNode`를 기록합니다. 이전 선택과 생성된 Frame의 선택을 같은 history entry에 보관하므로
 Undo 한 번은 node와 선택을 함께 되돌리고 Redo는 같은 ID를 복원합니다. 화면의 드래그 미리보기는 저장되지 않습니다.
 
+도형 도구는 `stellar_window_session_insert_shape`에 저장 포맷의 ShapeKind tag와 부모 local 시작·끝 두 점을 전달합니다.
+Ellipse와 Polygon은 좌상단을 Transform에, 로컬 원점 기준 크기를 Shape에 저장합니다. Line은 시작점을 Transform에, 부호 있는 끝점 차이를 Shape에 저장해 드래그 방향을 보존합니다.
+기존 Rectangle·Frame ABI와 같이 document thread가 표시 revision·편집 가능한 부모·신뢰를 확인하며 생성과 선택을 한 번에 기록합니다.
+
 ### 기본 창의 레이어 읽기
 
 `stellar_window_layer_page`는 셸 worker에서 창 handle·활성 View·표시 revision·부모·직전 자식 ID로 직계 자식 64개까지 읽습니다. 코어는 document thread에서 해당 창이 이미 연 문서를 조회합니다. cursor의 부모와 활성 View 소속을 확인하고 순서 인덱스에서 다음 형제부터 반환합니다. 반환값은 Page·View 이름, 원본 노드 종류·표시 이름·잠금·표시 상태, 자식 유무와 창 선택입니다. registry 잠금은 읽기 접수까지만 유지합니다. UI thread는 저장 폴더를 열거나 조회 완료를 기다리지 않습니다.
 
 레이어 이름 편집은 stellar_window_layer_rename에 창·View·표시 revision·노드 ID와 UTF-8 이름을 전달합니다. 코어가 프로젝트 신뢰, 표시 revision, View 소속 및 조상 잠금을 확인하고 기존 RenameNode를 창의 문서 transaction으로 실행합니다.
+
+### Frame Inspector의 개별 모서리 반경
+
+창의 불변 snapshot은 단일 선택 Frame의 원본 반경 네 값을 보존합니다. 셸은
+`stellar_window_selected_frame_corners`가 함께 돌려준 View·node·revision과 화면 대상이 일치할 때
+TL·TR·BR·BL 입력을 표시합니다. 캔버스와 hit test에는 기존의 bounds 기준 정규화 반경을 사용합니다.
+`stellar_window_session_set_frame_corner`는 선택·현재 revision·View·신뢰·잠금을 검증한 뒤
+조회 시점의 selection history sequence가 일치하는지 확인하고 해당 CSS longhand의 `SetProperty` 하나를 Undo 가능한 transaction에 기록합니다.

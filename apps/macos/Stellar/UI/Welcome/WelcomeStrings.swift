@@ -170,9 +170,9 @@ enum WelcomeStrings {
             return "\(failure.title). \(failure.message(path: path))"
         case .projectCreationFailed(let message):
             return message
-        case .projectCloneUnavailable:
+        case .projectCloneFailed:
             return String(
-                localized: "Cloning projects isn’t available in this build yet. Clone the repository with Git, then open the folder.",
+                localized: "Couldn’t clone the repository. Check the repository URL, Git access, and destination folder.",
                 comment: "Failure reason"
             )
         }

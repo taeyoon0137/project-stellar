@@ -36,6 +36,10 @@ pub trait PageSource {
     fn total(&self) -> usize;
     /// `index` item(0..total).
     fn item(&self, index: usize) -> JsonValue;
+    /// 기존 resource의 목록 필드 이름을 유지합니다.
+    fn items_field(&self) -> &'static str {
+        "items"
+    }
     /// `revision` 다음에 넣을 resource별 고정 field(예: `document`).
     fn header(&self) -> Vec<(&'static str, JsonValue)> {
         Vec::new()
@@ -178,7 +182,7 @@ pub fn build_page(source: &dyn PageSource, request: &PageRequest) -> Result<Json
             ("total", count(total)),
             ("offset", count(offset)),
             ("limit", count(limit)),
-            ("items", JsonValue::Array(Vec::new())),
+            (source.items_field(), JsonValue::Array(Vec::new())),
             (
                 "next_cursor",
                 JsonValue::string(encode_cursor(total, &key, &revision)),
@@ -207,7 +211,7 @@ pub fn build_page(source: &dyn PageSource, request: &PageRequest) -> Result<Json
         ("total", count(total)),
         ("offset", count(offset)),
         ("limit", count(limit)),
-        ("items", JsonValue::Array(items)),
+        (source.items_field(), JsonValue::Array(items)),
         (
             "next_cursor",
             next.map_or(JsonValue::Null, JsonValue::string),

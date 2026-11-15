@@ -264,3 +264,56 @@ pub fn rectangle(case: &str) -> DocumentModel {
     }
     model
 }
+
+/// 하나의 정의를 두 좌표에 배치한 View. 둘째 인스턴스는 편집 잠금 상태입니다.
+pub fn placed_components(case: &str) -> DocumentModel {
+    use crate::core_types::reference::ComponentRef;
+    use stellar_document::component::instance::ComponentInstancePayload;
+    use stellar_document::modifier::ModifierPayload;
+    let mut model = document();
+    for (n, x, y) in [(21, 30.0, 20.0), (22, 230.5, -10.0)] {
+        let mut node = model.remove_leaf(id(n)).unwrap();
+        let mut payload = ComponentInstancePayload::new(ComponentRef::new(id(70)));
+        if case == "override" {
+            use stellar_document::component::{
+                definition::ComponentPropertyId, instance::OverrideKey,
+            };
+            payload.set_property_override(
+                OverrideKey::direct(ComponentPropertyId::new(id(89))),
+                crate::core_types::typed_value::TypedValue::Boolean(true),
+            );
+        }
+        node.payload = NodePayload::ComponentInstance(payload);
+        node.locked = n == 22;
+        node.visible = n != 21 || case != "hidden";
+        model.insert_node(node).unwrap();
+        let mut stack = ModifierStack::new(id(n));
+        let modifier = ModifierId::new(id(n + 90));
+        let kind = if case == "modifier" {
+            ModifierKind::Opacity
+        } else {
+            ModifierKind::Transform
+        };
+        stack.push_back(modifier, kind).unwrap();
+        if kind == ModifierKind::Transform {
+            stack
+                .set_payload(
+                    modifier,
+                    ModifierPayload::Transform(
+                        Transform2D::new(
+                            if case == "singular" { 0. } else { 1. },
+                            0.,
+                            0.,
+                            1.,
+                            x,
+                            y,
+                        )
+                        .unwrap(),
+                    ),
+                )
+                .unwrap();
+        }
+        model.set_modifier_stack(stack).unwrap();
+    }
+    model
+}

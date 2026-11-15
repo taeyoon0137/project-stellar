@@ -1,8 +1,8 @@
 //! 정의의 Frame을 원본 인스턴스 한 개의 painter 행으로 펼칩니다. 문서에는 복제하지 않습니다.
 use super::*;
 use stellar_document::component::definition::ComponentEntry;
-use stellar_document::modifier::{ModifierPayload, ModifierStack};
-use stellar_document::record_codec::decode_payload;
+use stellar_document::component::instance::{frame_instance_transform, placed_free_frame};
+use stellar_document::modifier::ModifierStack;
 use stellar_scene::builder::SceneScope;
 
 #[allow(clippy::too_many_arguments)]
@@ -16,17 +16,7 @@ pub(super) fn project(
     stack: Option<&ModifierStack>,
     entry: &ComponentEntry,
 ) -> Option<()> {
-    let mut position = Transform2D::identity();
-    for modifier in stack
-        .into_iter()
-        .flat_map(ModifierStack::entries)
-        .filter(|m| m.enabled)
-    {
-        let ModifierPayload::Transform(next) = modifier.payload else {
-            return None;
-        };
-        position = position.then(&next).ok()?;
-    }
+    let position = frame_instance_transform(stack)?;
     let tree = entry.tree();
     let root = tree.tree_root()?;
     let mut pending = vec![(root, scope.clone(), parent)];
@@ -35,19 +25,7 @@ pub(super) fn project(
         if !node.visible {
             continue;
         }
-        let NodePayload::Frame(mut frame) = decode_payload(node.kind, &node.payload).ok()? else {
-            return None;
-        };
-        if frame.layout_mode.is_some() || matches!(frame.clipping, Clipping::Path(_)) {
-            return None;
-        }
-        if id == root {
-            let (a, b, c, d, _, _) = frame.transform.components();
-            frame.transform = Transform2D::new(a, b, c, d, 0., 0.)
-                .ok()?
-                .then(&position)
-                .ok()?;
-        }
+        let frame = placed_free_frame(node, (id == root).then_some(position))?;
         let (scope, index) =
             scene.push_frame(builder, &parent_scope, parent, instance, &frame, locked)?;
         scene.frames[index as usize].instance_frame = true;

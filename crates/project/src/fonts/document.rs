@@ -131,6 +131,28 @@ pub fn import_default_font(
     })
 }
 
+/// 원본을 export할 때 각 등록된 폰트 객체의 hash와 byte 수를 사용자 경로에 접근하지 않고 확인합니다.
+pub fn verify_document_font_assets(
+    root: &Path,
+    styles: &DocumentTextStyles,
+) -> Result<(), ProjectFaceError> {
+    let store = AssetStore::new(root);
+    for (hash, entry) in &styles.fonts {
+        let asset = AssetRecord::decode(&entry.asset_record)
+            .map_err(|_| ProjectFaceError::ReferenceMismatch)?;
+        if asset.content_hash.digest() != hash.sha256_digest()
+            || asset.size > import_policy().max_file_size_bytes()
+        {
+            return Err(ProjectFaceError::ReferenceMismatch);
+        }
+        store
+            .locate_content(&asset.content_hash, asset.size)
+            .map_err(ProjectFaceError::Store)?
+            .ok_or(ProjectFaceError::MissingAsset)?;
+    }
+    Ok(())
+}
+
 /// project 글꼴의 저장된 기록을 사용합니다. 경로·family 이름으로 시스템 파일을 검색하지 않습니다.
 pub fn load_document_face(
     root: &Path,

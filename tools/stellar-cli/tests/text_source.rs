@@ -284,6 +284,93 @@ fn git(root: &Path, args: &[&str]) -> String {
 }
 
 #[test]
+fn v2_git_clone_reopens_single_line_edits_and_preserves_stale_or_noop_source() {
+    let mut model = text_document();
+    let resource = StableId::new_v7(991, 0, 77);
+    model.replace_text_styles(stellar_ops::test_support::DocumentTextStyles::initial(
+        resource,
+    ));
+    let fixture = ApplyFixture::from_model("text-source-v2-git", model);
+    let path = fixture.path.to_str().unwrap();
+    let source = &fixture.source.path;
+    let before = std::fs::read_to_string(path).unwrap();
+    assert!(before.contains(&format!("  initial_typography_id: \"{resource}\"\n")));
+    let original = file_digest(&fixture.project.path);
+    git(source, &["init", "--quiet"]);
+    git(source, &["add", "view.stellar.yaml"]);
+    git(
+        source,
+        &["commit", "--quiet", "-m", "view with initial typography"],
+    );
+    let operation = format!(
+        r#"{{"kind":"rename","node":"{}","name":"TitleEdited"}}"#,
+        fixture.node
+    );
+    let args = ["text-source", "apply", path, "-"];
+    let reply = run_with_stdin(
+        &args,
+        &fixture.request(&operation),
+        Some(&fixture.home.path),
+        0,
+    );
+    let hash = reply
+        .get("result")
+        .unwrap()
+        .get("source_hash")
+        .unwrap()
+        .as_str()
+        .unwrap();
+    let diff = git(source, &["diff", "--numstat"]);
+    assert_eq!(diff.trim(), "1\t1\tview.stellar.yaml");
+    assert!(git(source, &["diff", "--unified=0"]).contains("+    display_name: TitleEdited"));
+    let canonical = std::fs::read_to_string(path).unwrap();
+    let annotated = format!("# collaborator comment\n{canonical}");
+    std::fs::write(path, &annotated).unwrap();
+    run_with_stdin(
+        &args,
+        &transaction(hash, fixture.document, &operation),
+        Some(&fixture.home.path),
+        75,
+    );
+    let checked = run(&["text-source", "check", path], 0);
+    let checked_hash = checked
+        .get("result")
+        .unwrap()
+        .get("source_hash")
+        .unwrap()
+        .as_str()
+        .unwrap();
+    let same = run_with_stdin(
+        &args,
+        &transaction(checked_hash, fixture.document, &operation),
+        Some(&fixture.home.path),
+        0,
+    );
+    assert_eq!(
+        same.get("result").unwrap().get("written"),
+        Some(&JsonValue::Bool(false))
+    );
+    assert_eq!(std::fs::read_to_string(path).unwrap(), annotated);
+    git(source, &["add", "view.stellar.yaml"]);
+    git(source, &["commit", "--quiet", "-m", "edit one layer"]);
+    let dir = TempDir::new("v2-source-only-clone");
+    git(
+        &dir.path,
+        &["clone", "--no-local", source.to_str().unwrap(), "clone"],
+    );
+    let clone = dir.path.join("clone");
+    let cloned = clone.join("view.stellar.yaml");
+    assert_eq!(
+        run(&["text-source", "check", cloned.to_str().unwrap()], 0),
+        checked
+    );
+    assert_eq!(std::fs::read_to_string(cloned).unwrap(), annotated);
+    assert!(!clone.join("design").exists() && !clone.join(".stellar/cache").exists());
+    assert!(git(&clone, &["status", "--porcelain"]).is_empty());
+    assert_eq!(file_digest(&fixture.project.path), original);
+}
+
+#[test]
 fn apply_dry_run_then_write_checks_semantic_diff_and_readable_git_changes() {
     let fixture = ApplyFixture::new("text-source-cli-apply");
     let project_before = file_digest(&fixture.project.path);
@@ -615,12 +702,18 @@ fn apply_frame_geometry_round_trips_through_cli_and_readable_git_diff() {
         Some(&JsonValue::string(&fixture.hash))
     );
     let changes = dry_result.get("changes").unwrap();
-    assert_eq!(changes.get("count"), Some(&JsonValue::int(2)));
+    assert_eq!(changes.get("count"), Some(&JsonValue::int(3)));
     assert_eq!(
         changes.get("by_kind").unwrap().get("set-property"),
-        Some(&JsonValue::int(2))
+        Some(&JsonValue::int(3))
     );
-    for entry in changes.get("entries").unwrap().as_array().unwrap() {
+    let entries = changes.get("entries").unwrap().as_array().unwrap();
+    let paths: Vec<_> = entries
+        .iter()
+        .map(|entry| entry.get("path").unwrap().as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["0x0102", "0x0108", "0x0109"]);
+    for entry in entries {
         assert_eq!(
             entry.get("object"),
             Some(&JsonValue::string(root.to_string()))
@@ -700,6 +793,21 @@ fn apply_frame_geometry_rejects_invalid_fields_and_rolls_back_wrong_node_kind() 
         r#"{{"kind":"set-frame-transform","node":"{root}","a":1,"b":0,"c":0,"d":1,"tx":12,"ty":-30}}"#
     );
     let cases = [
+        (
+            format!(r#"{{"kind":"set-frame-width","node":"{root}","width":-1}}"#),
+            65,
+            "invalid-transaction",
+        ),
+        (
+            format!(r#"{{"kind":"set-frame-height","node":"{root}","height":1e39}}"#),
+            65,
+            "invalid-transaction",
+        ),
+        (
+            format!(r#"{{"kind":"set-frame-height","node":"{root}","height":13,"width":20}}"#),
+            65,
+            "invalid-transaction",
+        ),
         (
             format!(r#"{{"kind":"set-frame-size","node":"{root}","width":-1,"height":180}}"#),
             65,
@@ -787,6 +895,16 @@ fn apply_frame_geometry_rejects_invalid_fields_and_rolls_back_wrong_node_kind() 
                 Some(&JsonValue::string(code)),
                 "{commands}"
             );
+            if code == "rejected-command" {
+                let message = rejected
+                    .get("error")
+                    .unwrap()
+                    .get("message")
+                    .unwrap()
+                    .as_str()
+                    .unwrap();
+                assert!(message.contains("command #2"), "{message}");
+            }
             assert_eq!(file_digest(&fixture.source.path), source_before);
             assert_eq!(file_digest(&fixture.project.path), project_before);
         }

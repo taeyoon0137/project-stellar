@@ -10,7 +10,7 @@
 //!   있어야 하므로 attached 전용입니다.
 //! - 큰 내용(문서 트리)은 page 단위입니다(XIX.2.2 [`super::paging`]). 모든 내용에는 revision이 있습니다.
 //!
-//! 이 목록은 정의입니다. headless는 구현한 project-structure·document만 광고합니다. 나머지
+//! 이 목록은 정의입니다. headless는 구현한 project-structure·document·components만 광고합니다. 나머지
 //! backend 연결과 `stellar-agent-protocol`로의 이동(XIX.9.2)은 후속 작업입니다.
 
 use crate::json::JsonValue;
@@ -143,15 +143,29 @@ pub const RESOURCES: &[ResourceDef] = &[
     ResourceDef {
         name: "components",
         title: "Components",
-        description: "프로젝트 안의 컴포넌트 텍스트 원본 요약과 generation의 바이너리 chunk 수",
+        description: "컴포넌트 원본 요약. 다음 페이지는 응답의 next_cursor로 읽습니다.",
         uri: "stellar://components",
         template: false,
         availability: Availability::All,
-        paginated: false,
+        paginated: true,
         content_schema: concat!(
-            r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"required":["revision","chunk_count","entries"],"properties":{"revision":"#,
+            r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"required":["revision","chunk_count","total","offset","limit","entries","next_cursor"],"properties":{"revision":"#,
             revision_schema!(),
-            r#","chunk_count":{"type":"integer","minimum":0},"entries":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","root","node_count","name","width","height","source_hash"],"properties":{"id":{"type":"string"},"root":{"type":"string"},"node_count":{"type":"integer","minimum":1},"name":{"type":"string"},"width":{"type":"string"},"height":{"type":"string"},"source_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}}}}}}"#
+            r#","chunk_count":{"type":"integer","minimum":0},"total":{"type":"integer","minimum":0},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1},"next_cursor":{"type":["string","null"]},"entries":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","root","node_count","name","width","height","background","source_hash"],"properties":{"id":{"type":"string"},"root":{"type":"string"},"node_count":{"type":"integer","minimum":1},"name":{"type":"string"},"width":{"type":"string"},"height":{"type":"string"},"background":{"type":["object","null"],"additionalProperties":false,"required":["space","rgba"],"properties":{"space":{"enum":["srgb","display-p3"]},"rgba":{"type":"string"}}},"source_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}}}}}}"#
+        ),
+    },
+    ResourceDef {
+        name: "component",
+        title: "Component definition",
+        description: "ID로 선택한 공유 정의의 Frame 트리 한 페이지와 실제 저장 속성",
+        uri: "stellar://components/{component}{?cursor,limit}",
+        template: true,
+        availability: Availability::All,
+        paginated: true,
+        content_schema: concat!(
+            r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"required":["revision","component","root","name","source_hash","total","offset","limit","nodes","next_cursor"],"properties":{"revision":"#,
+            revision_schema!(),
+            r#","component":{"type":"string"},"root":{"type":"string"},"name":{"type":"string"},"source_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},"total":{"type":"integer","minimum":0},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1},"nodes":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","parent","order_key","display_name","kind","visible","locked","payload"],"properties":{"id":{"type":"string"},"parent":{"type":["string","null"]},"order_key":{"type":"string"},"display_name":{"type":"string"},"kind":{"const":"frame"},"visible":{"type":"boolean"},"locked":{"type":"boolean"},"payload":{"type":"object","additionalProperties":false,"required":["width","height","transform","corner_radius","layout_mode","clipping","border","background"],"properties":{"width":{"type":"string"},"height":{"type":"string"},"transform":{"type":"string"},"corner_radius":{"type":"string"},"layout_mode":{"const":"none"},"clipping":{"type":"object","additionalProperties":false,"required":["kind"],"properties":{"kind":{"enum":["disabled","frame-bounds"]}}},"border":{"oneOf":[{"const":"none"},{"type":"object","additionalProperties":false,"required":["color","thickness"],"properties":{"color":{"type":"object","additionalProperties":false,"required":["space","rgba"],"properties":{"space":{"enum":["srgb","display-p3"]},"rgba":{"type":"string"}}},"thickness":{"type":"string"}}}]},"background":{"oneOf":[{"const":"none"},{"type":"object","additionalProperties":false,"required":["space","rgba"],"properties":{"space":{"enum":["srgb","display-p3"]},"rgba":{"type":"string"}}}]}}}}}},"next_cursor":{"type":["string","null"]}}}"#
         ),
     },
     ResourceDef {
@@ -205,13 +219,26 @@ pub fn resource(name: &str) -> Option<&'static ResourceDef> {
 
 pub(crate) fn descriptor(def: &ResourceDef) -> JsonValue {
     let uri_key = if def.template { "uriTemplate" } else { "uri" };
+    describe(def, uri_key, def.uri)
+}
+
+fn describe(def: &ResourceDef, key: &'static str, uri: &str) -> JsonValue {
     JsonValue::object(vec![
-        (uri_key, JsonValue::string(def.uri)),
+        (key, JsonValue::string(uri)),
         ("name", JsonValue::string(def.name)),
         ("title", JsonValue::string(def.title)),
         ("description", JsonValue::string(def.description)),
         ("mimeType", JsonValue::string(MIME_JSON)),
     ])
+}
+
+/// 고정 목록의 원래 URI도 유지하면서 페이지를 넘기는 query 문법을 광고합니다.
+pub(crate) fn template_descriptor(def: &ResourceDef) -> JsonValue {
+    if def.template {
+        descriptor(def)
+    } else {
+        describe(def, "uriTemplate", &format!("{}{{?cursor,limit}}", def.uri))
+    }
 }
 
 /// MCP `resources/list` 결과(`backend`가 제공하는 고정 URI resource).
@@ -235,8 +262,8 @@ pub fn templates_list(backend: Backend) -> JsonValue {
         JsonValue::Array(
             RESOURCES
                 .iter()
-                .filter(|r| r.template && r.availability.includes(backend))
-                .map(descriptor)
+                .filter(|r| (r.template || r.paginated) && r.availability.includes(backend))
+                .map(template_descriptor)
                 .collect(),
         ),
     )])
@@ -292,8 +319,12 @@ mod tests {
             assert!(required.contains(&"revision"), "{}", def.name);
             if def.paginated {
                 assert!(required.contains(&"next_cursor"), "{}", def.name);
-                assert!(def.template, "page resource는 cursor 인자를 받는 template");
-                assert!(def.uri.ends_with("{?cursor,limit}"), "{}", def.name);
+                let template = template_descriptor(def);
+                let uri = template
+                    .get("uriTemplate")
+                    .and_then(JsonValue::as_str)
+                    .unwrap();
+                assert!(uri.ends_with("{?cursor,limit}"), "{}", def.name);
             }
             assert!(def.uri.starts_with("stellar://"), "{}", def.name);
             assert!(!def.uri.contains("project/{"), "프로젝트 선택 segment 없음");

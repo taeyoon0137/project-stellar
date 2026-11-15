@@ -13,7 +13,7 @@ import Foundation
 ///
 /// `path`는 셸과 코어 adapter가 공유하는 안정 문자열 경로입니다(예: `frame.size.width`).
 /// `coreKey`는 문서 모델에 `PropertyKey` 숫자 값이 이미 정해진 속성에만 채웁니다
-/// (예: Frame size = `0x0101`, Fill color modifier = `0x1071`). 표시 이름은 식별에 쓰지 않습니다.
+/// (예: Frame width = `0x0108`, Fill color modifier = `0x1071`). 표시 이름은 식별에 쓰지 않습니다.
 struct InspectorPropertyID: Hashable {
     let path: String
     let coreKey: UInt32?

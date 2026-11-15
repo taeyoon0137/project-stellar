@@ -182,11 +182,22 @@ fn insert(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::window_session::test_fixtures::{identity, saved_project, sid, window};
+    use crate::window_session::test_fixtures::{
+        identity, other_document, saved_project_with, sid, window, TempDir,
+    };
+    use stellar_project::document_io::{
+        component_source::{self, ComponentSource},
+        serialize::serialize_document,
+        text_source,
+    };
 
     #[test]
     fn place_records_real_reference_and_exact_offsets_with_one_undo_and_save() {
-        let dir = saved_project("place-instance");
+        let dir = saved_project_with("place-instance", &[&other_document()]);
+        let folder = dir.path().join("design/components");
+        std::fs::create_dir(&folder).unwrap();
+        let source = ComponentSource::new(sid(301), "Card".into(), sid(302)).unwrap();
+        let (file, hash) = component_source::create(&folder, &source).unwrap();
         let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
         let loaded = session.loaded_generation().unwrap();
         let base = ProjectRevision::Saved {
@@ -195,8 +206,8 @@ mod tests {
         };
         let mut input = InstancePlacement {
             component: sid(301),
-            source_hash: ContentHash::compute(b"source"),
-            view: sid(3),
+            source_hash: hash,
+            view: sid(501),
             revision: session.revision(),
             position: Vec2::new(230.5, -10.).unwrap(),
         };
@@ -217,7 +228,7 @@ mod tests {
             &input,
             base,
             "Card".into(),
-            [sid(11), sid(401)]
+            [sid(511), sid(401)]
         )
         .is_err());
         assert_eq!(
@@ -282,5 +293,29 @@ mod tests {
             );
         }
         assert_eq!(model.references().inbound(sid(301)), [sid(400), sid(402)]);
+
+        let output = TempDir::new("placed-view-source");
+        let path = output.path().join("View.stellar.yaml");
+        let exported = stellar_ops::text_source::export(dir.path(), &path).unwrap();
+        let checked = stellar_ops::text_source::check(&path).unwrap();
+        assert_eq!(checked.source_hash, exported.source_hash);
+        assert_eq!(checked.document, model.document_id());
+        let restored = text_source::open(&path).unwrap().model;
+        assert_eq!(model.to_records().unwrap(), restored.to_records().unwrap());
+        assert_eq!(
+            serialize_document(model).unwrap(),
+            serialize_document(&restored).unwrap()
+        );
+        assert_eq!(
+            restored.references().inbound(sid(301)),
+            [sid(400), sid(402)]
+        );
+        let yaml = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(yaml.matches("kind: component-instance").count(), 2);
+        for (id, position) in [(401, "230.5 -10"), (403, "30 20")] {
+            assert!(yaml.contains(&format!("id: \"{}\"", sid(id))));
+            assert!(yaml.contains(&format!("position: \"{position}\"")));
+        }
+        assert_eq!(ContentHash::compute(&std::fs::read(file).unwrap()), hash);
     }
 }

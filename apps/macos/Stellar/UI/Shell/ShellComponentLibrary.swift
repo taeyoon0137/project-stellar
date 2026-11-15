@@ -23,6 +23,7 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
     private(set) var isLoading = false
     private var editingFill = false
     private var needsRefresh = false
+    private var requestedDefinition: UUID?
     private var invalidated = false
     let message = NSTextField(wrappingLabelWithString: "")
     let details = NSTextField(wrappingLabelWithString: "")
@@ -103,7 +104,9 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
         scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
     }
 
-    func show(relativeTo parent: NSWindow) {
+    func show(relativeTo parent: NSWindow, definition: UUID?) {
+        requestedDefinition = definition
+        saveMessage = nil
         if !panel.isVisible {
             panel.setFrameTopLeftPoint(NSPoint(x: parent.frame.midX - panel.frame.width / 2,
                                                y: parent.frame.midY + panel.frame.height / 2))
@@ -114,7 +117,23 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
 
     func windowDidBecomeKey(_ notification: Notification) { if !isLoading { refresh() } }
 
+    func refreshAfterFileChange() -> Bool {
+        guard panel.isVisible else { return false }
+        if editingFill { needsRefresh = true; return false }
+        // 원래 해시로 적용할 사용자의 미저장 입력은 보존합니다.
+        guard panel.attachedSheet == nil, rootWidth.currentEditor() == nil, rootHeight.currentEditor() == nil else { return false }
+        if let entry = editingEntry,
+           rootWidth.stringValue != sizeString(entry.width) || rootHeight.stringValue != sizeString(entry.height) { return false }
+        reload()
+        return true
+    }
+
     @objc func refresh() {
+        saveMessage = nil
+        reload()
+    }
+
+    private func reload() {
         guard !invalidated else { return }
         guard !isLoading && !editingFill else { needsRefresh = true; return }
         isLoading = true
@@ -128,12 +147,15 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
                 guard let self, !self.invalidated else { return }
                 self.isLoading = false
                 self.refreshButton.isEnabled = true
-                let selected = self.rows.indices.contains(self.table.selectedRow) ? self.rows[self.table.selectedRow].id : nil
+                let requested = self.requestedDefinition
+                let selected = requested ?? self.editingEntry?.id
                 switch result {
                 case .loaded(let components, let chunks):
                     self.rows = components
                     if chunks > 0 {
                         self.message.stringValue = String(localized: "This project stores its component library in a binary generation.")
+                    } else if let requested, !components.contains(where: { $0.id == requested }) {
+                        self.message.stringValue = String(localized: "The selected instance’s component source is missing.") + " " + requested.uuidString.lowercased()
                     } else if components.isEmpty {
                         self.message.stringValue = String(localized: "No components. Use Insert → New Component… to create one.")
                     } else { self.message.stringValue = "" }
@@ -144,14 +166,15 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
                 self.table.reloadData()
                 self.didReadSources?()
                 if let index = self.rows.firstIndex(where: { $0.id == selected }) {
+                    self.requestedDefinition = nil
                     self.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+                    if requested != nil { self.table.scrollRowToVisible(index) }
                 } else { self.table.deselectAll(nil) }
                 self.updateDetails()
                 if let reason = self.saveMessage {
                     self.message.stringValue = reason
-                    self.saveMessage = nil
                 }
-                if self.needsRefresh { self.needsRefresh = false; self.refresh() }
+                if self.needsRefresh { self.needsRefresh = false; self.reload() }
             }
         }
     }
@@ -189,7 +212,10 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
         return cell
     }
 
-    func tableViewSelectionDidChange(_ notification: Notification) { updateDetails() }
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        if rows.indices.contains(table.selectedRow) { requestedDefinition = nil }
+        updateDetails()
+    }
     private func updateDetails() {
         let entry = rows.indices.contains(table.selectedRow) ? rows[table.selectedRow] : nil
         editingEntry = entry
@@ -292,19 +318,98 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
                 self.isLoading = false
                 self.needsRefresh = false
                 self.saveMessage = error
-                self.refresh()
+                self.reload()
             }
         }
     }
 }
 
-extension ShellProjectWindow {
-    func reloadComponentCanvas() {
-        guard let project = dataSource.session, let session = windowController.windowSession, !session.isClosing, !session.isClosed else { return }
-        _ = session.track({ project.pump.reloadComponentCanvas(session.session, completion: $0) }) { [weak self, weak session] event in
-            guard let self, self.windowController.windowSession === session, case .windowViewChanged = event else { return }
-            self.canvasHost.canvasView.invalidateComponentFrames()
+/// FSEvents가 알린 뒤에만 메인 큐를 깨웁니다. 읽기 가능한 fd 하나가 여러 변경을 합칩니다.
+@MainActor
+final class ShellComponentFileWatch {
+    let session: ShellWindowSessionHandle
+    private var source: DispatchSourceRead?
+    private var invalidated = false
+    private(set) var unavailable = false
+
+    init(runtime: UInt64, session: ShellWindowSessionHandle, changed: @escaping () -> Void) {
+        self.session = session
+        let handle = session.session
+        Task { [weak self] in
+            let fd = await Task.detached { CoreRuntime.componentWatchFD(handle: runtime, session: handle) }.value
+            guard fd >= 0 else { self?.unavailable = true; return }
+            guard let self, !self.invalidated else { Darwin.close(fd); return }
+            let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
+            self.source = source
+            source.setCancelHandler { Darwin.close(fd) }
+            source.setEventHandler { [weak self] in
+                guard self?.invalidated == false else { return }
+                var signal: UInt8 = 0
+                var received = false
+                for _ in 0..<64 {
+                    guard Darwin.recv(fd, &signal, 1, 0) == 1 else { break }
+                    received = true
+                }
+                if received { changed() }
+            }
+            source.resume()
+            // 최초 장면 읽기와 stream 시작 사이에 완료된 외부 쓰기도 반영합니다.
+            changed()
         }
+    }
+
+    deinit { source?.cancel() }
+
+    func cancel() {
+        invalidated = true
+        source?.cancel()
+        source = nil
+    }
+}
+
+extension ShellProjectWindow {
+    func updateComponentFileWatch(trusted: Bool) {
+        guard trusted, let project = dataSource.session, let session = windowController.windowSession,
+              !session.isClosed, !session.isClosing else {
+            componentFileWatch?.cancel()
+            componentFileWatch = nil
+            return
+        }
+        if let watch = componentFileWatch, watch.session === session, !watch.unavailable { return }
+        componentFileWatch?.cancel()
+        componentFileWatch = ShellComponentFileWatch(runtime: project.pump.runtimeHandle, session: session) { [weak self, weak session] in
+            guard let self, let session, self.windowController.windowSession === session,
+                  !session.isClosing, !session.isClosed, self.gitSource.trusted else { return }
+            if self.componentLibrary?.refreshAfterFileChange() != true { self.reloadComponentCanvas(onWindowReturn: true) }
+        }
+    }
+}
+
+extension ShellProjectWindow {
+    func reloadComponentCanvas(onWindowReturn: Bool = false) {
+        guard let project = dataSource.session, let session = windowController.windowSession, !session.isClosing, !session.isClosed else { return }
+        if onWindowReturn {
+            guard gitSource.trusted else { return }
+            if session.checkingComponentsOnReturn {
+                session.recheckComponentsOnReturn = true
+                return
+            }
+        }
+        // 원본 읽기는 저장 대기 중인 편집 명령에 포함하지 않습니다.
+        let result = project.pump.reloadComponentCanvas(session.session) { [weak self, weak session] event in
+            guard let self, let session, self.windowController.windowSession === session, !session.isClosed else { return }
+            if case .windowViewChanged = event {
+                self.canvasHost.canvasView.invalidateComponentFrames()
+            }
+            if onWindowReturn {
+                session.checkingComponentsOnReturn = false
+                if session.recheckComponentsOnReturn {
+                    session.recheckComponentsOnReturn = false
+                    self.reloadComponentCanvas(onWindowReturn: true)
+                }
+            }
+        }
+        if onWindowReturn, case .success = result { session.checkingComponentsOnReturn = true }
     }
 
     func showComponentLibrary() {
@@ -312,11 +417,12 @@ extension ShellProjectWindow {
               !session.isClosed, !session.isClosing, gitSource.trusted else { return }
         if componentLibrary == nil {
             let library = ShellComponentLibrary(runtime: project.pump.runtimeHandle, session: session.session, projectName: project.name)
-            library.didReadSources = { [weak self] in self?.reloadComponentCanvas() }
+            library.didReadSources = { [weak self] in self?.reloadComponentCanvas(onWindowReturn: true) }
             library.beginPlacement = { [weak self] entry in self?.promptForInstance(entry) }
             componentLibrary = library
         }
-        componentLibrary?.show(relativeTo: window)
+        let definition = CoreRuntime.selectedDefinition(handle: project.pump.runtimeHandle, session: session.session)
+        componentLibrary?.show(relativeTo: window, definition: definition)
     }
 }
 

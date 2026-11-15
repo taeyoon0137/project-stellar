@@ -16,6 +16,7 @@
 //! | `set-locked` | `node`, `locked`(bool) |
 //! | `rename` | `node`, `name`(string) |
 //! | `set-frame-size` | `node`, `width`, `height`(비음수 유한 f32 JSON 숫자) |
+//! | `set-frame-width`·`set-frame-height` | `node`, 해당 축의 `width` 또는 `height` |
 //! | `set-frame-transform` | `node`, `a`, `b`, `c`, `d`, `tx`, `ty`(유한 f32 JSON 숫자) |
 //! | `delete-subtree` | `root` |
 //! | `move-node` | `node`, `new_parent`, `order_key`(OrderKey bytes 16진수) |
@@ -33,7 +34,7 @@ use std::path::Path;
 
 use stellar_ops::apply::{apply, ApplyError, ApplyMode, ApplyRequest, CommandInput, MAX_COMMANDS};
 use stellar_ops::core_types::ids::StableId;
-use stellar_ops::core_types::value::{Size2, Transform2D};
+use stellar_ops::core_types::value::{FiniteF32, Size2, Transform2D};
 use stellar_ops::lock::{default_lock_dir, LockPolicy};
 use stellar_ops::revision::ProjectRevision;
 
@@ -128,7 +129,7 @@ fn bool_field(value: &JsonValue, key: &str, at: &str) -> Result<bool, CliError> 
     })
 }
 
-fn f32_field(value: &JsonValue, key: &str, at: &str) -> Result<f32, CliError> {
+fn f32_field(value: &JsonValue, key: &str, at: &str) -> Result<FiniteF32, CliError> {
     let bad = || {
         invalid(
             "invalid-transaction",
@@ -140,10 +141,7 @@ fn f32_field(value: &JsonValue, key: &str, at: &str) -> Result<f32, CliError> {
     };
     // JSON 원문에서 직접 f32로 변환해 f64를 거치는 이중 반올림을 피합니다.
     let number = number.as_str().parse::<f32>().map_err(|_| bad())?;
-    if !number.is_finite() {
-        return Err(bad());
-    }
-    Ok(number)
+    FiniteF32::new(number).map_err(|_| bad())
 }
 
 fn hex_field(value: &JsonValue, key: &str, at: &str) -> Result<Vec<u8>, CliError> {
@@ -223,13 +221,40 @@ fn command_input(value: &JsonValue, index: usize) -> Result<CommandInput, CliErr
         "set-frame-size" => {
             only_keys(value, &["kind", "node", "width", "height"], &at)?;
             let size = Size2::new(
-                f32_field(value, "width", &at)?,
-                f32_field(value, "height", &at)?,
+                f32_field(value, "width", &at)?.get(),
+                f32_field(value, "height", &at)?.get(),
             )
             .map_err(|error| invalid("invalid-transaction", format!("{at}: {error}")))?;
             CommandInput::SetFrameSize {
                 node: id_field(value, "node", &at)?,
                 size,
+            }
+        }
+        "set-frame-width" | "set-frame-height" => {
+            let field = if kind == "set-frame-width" {
+                "width"
+            } else {
+                "height"
+            };
+            only_keys(value, &["kind", "node", field], &at)?;
+            let dimension = f32_field(value, field, &at)?;
+            if dimension.get() < 0.0 {
+                return Err(invalid(
+                    "invalid-transaction",
+                    format!("{at}.{field}는 음수일 수 없습니다"),
+                ));
+            }
+            let node = id_field(value, "node", &at)?;
+            if field == "width" {
+                CommandInput::SetFrameWidth {
+                    node,
+                    width: dimension,
+                }
+            } else {
+                CommandInput::SetFrameHeight {
+                    node,
+                    height: dimension,
+                }
             }
         }
         "set-frame-transform" => {
@@ -239,12 +264,12 @@ fn command_input(value: &JsonValue, index: usize) -> Result<CommandInput, CliErr
                 &at,
             )?;
             let transform = Transform2D::new(
-                f32_field(value, "a", &at)?,
-                f32_field(value, "b", &at)?,
-                f32_field(value, "c", &at)?,
-                f32_field(value, "d", &at)?,
-                f32_field(value, "tx", &at)?,
-                f32_field(value, "ty", &at)?,
+                f32_field(value, "a", &at)?.get(),
+                f32_field(value, "b", &at)?.get(),
+                f32_field(value, "c", &at)?.get(),
+                f32_field(value, "d", &at)?.get(),
+                f32_field(value, "tx", &at)?.get(),
+                f32_field(value, "ty", &at)?.get(),
             )
             .map_err(|error| invalid("invalid-transaction", format!("{at}: {error}")))?;
             CommandInput::SetFrameTransform {

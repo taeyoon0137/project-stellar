@@ -6,7 +6,7 @@
 //!
 //! **누락 검사**: [`frame_field_keys`]는 [`FramePayload`]를 `..` 없이 구조 분해하므로
 //! payload에 필드가 추가되면 컴파일이 실패합니다. 테스트는 registry와 필드
-//! 목록이 1:1인지, 기본값이 일치하는지 검사합니다.
+//! 목록이 일치하는지, 이전 크기·모서리 반경 묶음 key가 보존되는지 검사합니다.
 
 use stellar_core_types::property::{PropertyKey, PropertyNameRegistry};
 
@@ -17,6 +17,8 @@ use crate::frame::{keys, FramePayload};
 pub enum FramePropertyType {
     /// 비음수 크기(`Size2`).
     Size,
+    /// 고정 길이(폭, 높이 또는 모서리 반경, 비음수).
+    Dimension,
     /// 2D 아핀 변환.
     Transform,
     /// clipping 방식.
@@ -69,7 +71,7 @@ pub struct FramePropertyMetadata {
 }
 
 /// Frame 속성 registry. 순서는 key 오름차순입니다.
-pub const FRAME_PROPERTIES: [FramePropertyMetadata; 7] = [
+pub const FRAME_PROPERTIES: [FramePropertyMetadata; 13] = [
     FramePropertyMetadata {
         key: keys::SIZE,
         name: "size",
@@ -121,6 +123,48 @@ pub const FRAME_PROPERTIES: [FramePropertyMetadata; 7] = [
         default: "none",
         invalidation: Invalidation::LAYOUT_AND_PAINT,
     },
+    FramePropertyMetadata {
+        key: keys::WIDTH,
+        name: "width",
+        value_type: FramePropertyType::Dimension,
+        default: "0",
+        invalidation: Invalidation::LAYOUT_AND_PAINT,
+    },
+    FramePropertyMetadata {
+        key: keys::HEIGHT,
+        name: "height",
+        value_type: FramePropertyType::Dimension,
+        default: "0",
+        invalidation: Invalidation::LAYOUT_AND_PAINT,
+    },
+    FramePropertyMetadata {
+        key: keys::BORDER_TOP_LEFT_RADIUS,
+        name: "border-top-left-radius",
+        value_type: FramePropertyType::Dimension,
+        default: "0",
+        invalidation: Invalidation::PAINT,
+    },
+    FramePropertyMetadata {
+        key: keys::BORDER_TOP_RIGHT_RADIUS,
+        name: "border-top-right-radius",
+        value_type: FramePropertyType::Dimension,
+        default: "0",
+        invalidation: Invalidation::PAINT,
+    },
+    FramePropertyMetadata {
+        key: keys::BORDER_BOTTOM_RIGHT_RADIUS,
+        name: "border-bottom-right-radius",
+        value_type: FramePropertyType::Dimension,
+        default: "0",
+        invalidation: Invalidation::PAINT,
+    },
+    FramePropertyMetadata {
+        key: keys::BORDER_BOTTOM_LEFT_RADIUS,
+        name: "border-bottom-left-radius",
+        value_type: FramePropertyType::Dimension,
+        default: "0",
+        invalidation: Invalidation::PAINT,
+    },
 ];
 
 /// key로 metadata를 찾습니다.
@@ -132,7 +176,7 @@ pub fn frame_property(key: PropertyKey) -> Option<&'static FramePropertyMetadata
 ///
 /// `..` 없는 구조 분해라 [`FramePayload`]에 필드가 추가·제거되면 컴파일이
 /// 실패합니다 — registry 누락이 빌드 단계에서 드러납니다.
-pub fn frame_field_keys(payload: &FramePayload) -> [PropertyKey; 7] {
+pub fn frame_field_keys(payload: &FramePayload) -> [PropertyKey; 11] {
     let FramePayload {
         size: _,
         transform: _,
@@ -143,13 +187,17 @@ pub fn frame_field_keys(payload: &FramePayload) -> [PropertyKey; 7] {
         layout_mode: _,
     } = payload;
     [
-        keys::SIZE,
         keys::TRANSFORM,
         keys::CLIPPING,
         keys::BACKGROUND,
         keys::BORDER,
-        keys::CORNER_RADIUS,
         keys::LAYOUT_MODE,
+        keys::WIDTH,
+        keys::HEIGHT,
+        keys::BORDER_TOP_LEFT_RADIUS,
+        keys::BORDER_TOP_RIGHT_RADIUS,
+        keys::BORDER_BOTTOM_RIGHT_RADIUS,
+        keys::BORDER_BOTTOM_LEFT_RADIUS,
     ]
 }
 
@@ -167,16 +215,17 @@ mod tests {
     use stellar_core_types::value::{Size2, Transform2D};
 
     #[test]
-    fn registry_and_payload_fields_match_one_to_one() {
+    fn registry_covers_payload_fields_and_legacy_groups() {
         // 검증 기준(VI.3.5): registry와 실제 payload 필드 누락 검사 통과.
         let field_keys = frame_field_keys(&FramePayload::default());
-        assert_eq!(field_keys.len(), FRAME_PROPERTIES.len());
+        assert_eq!(field_keys.len() + 2, FRAME_PROPERTIES.len());
         for key in field_keys {
             assert!(frame_property(key).is_some(), "registry 누락: {key:?}");
         }
         for metadata in &FRAME_PROPERTIES {
             assert!(
-                field_keys.contains(&metadata.key),
+                matches!(metadata.key, keys::SIZE | keys::CORNER_RADIUS)
+                    || field_keys.contains(&metadata.key),
                 "payload에 없는 registry 항목: {}",
                 metadata.name
             );
@@ -205,6 +254,8 @@ mod tests {
         let d = FramePayload::default();
         assert_eq!(d.size, Size2::ZERO);
         assert_eq!(frame_property(keys::SIZE).unwrap().default, "0 × 0");
+        assert_eq!(frame_property(keys::WIDTH).unwrap().default, "0");
+        assert_eq!(frame_property(keys::HEIGHT).unwrap().default, "0");
         assert_eq!(d.transform, Transform2D::identity());
         assert_eq!(frame_property(keys::TRANSFORM).unwrap().default, "identity");
         assert_eq!(d.clipping, Clipping::FrameBounds);
@@ -227,7 +278,13 @@ mod tests {
             .collect();
         assert_eq!(
             layout_keys,
-            vec![keys::SIZE, keys::BORDER, keys::LAYOUT_MODE]
+            vec![
+                keys::SIZE,
+                keys::BORDER,
+                keys::LAYOUT_MODE,
+                keys::WIDTH,
+                keys::HEIGHT
+            ]
         );
         // 모든 속성은 paint를 무효화합니다.
         assert!(FRAME_PROPERTIES.iter().all(|m| m.invalidation.paint));

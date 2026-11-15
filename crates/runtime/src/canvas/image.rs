@@ -57,6 +57,7 @@ pub(super) fn project(
     Aabb::from_rect(rect).transformed(&world)?;
     Some(CanvasFrame {
         rectangle_shape: false,
+        path_shape: false,
         instance_frame: false,
         image_asset: Some(image.asset.id()),
         text_node: false,

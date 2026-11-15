@@ -1,62 +1,117 @@
-//! 고정 Rectangle Shape의 Transform·단색 Fill을 문서 순서대로 평가합니다.
+//! 고정 도형의 canonical path와 순서가 있는 Transform·단색 Fill·Stroke를 같은 장면에 투영합니다.
 use super::*;
 use stellar_core_types::value::{Rect, Vec2};
+use stellar_document::frame::Border;
 use stellar_document::modifier::{ModifierId, ModifierPayload, ModifierStack};
 use stellar_document::path::PathCommand as DocumentPath;
-use stellar_scene::builder::{SceneScope, ShapeInput};
+use stellar_document::shape::{evaluate_shape_path, ShapeGeometry};
+use stellar_scene::builder::{SceneScope, ShapeInput, StrokeInput};
 use stellar_scene::geometry::{PathCommand, PathGeometry};
 use stellar_scene::stack::{Paint, StrokeCap};
 
 /// 캔버스가 평가하는 transform과 fill. 부모 공간 이동은 마지막 Transform에 적용합니다.
-pub(crate) struct RectangleStyle {
+pub(crate) struct ShapeStyle {
     pub(crate) transform: Transform2D,
     pub(crate) last_transform: Option<(ModifierId, Transform2D)>,
     fill: Option<Color>,
+    stroke: Option<Border>,
 }
 
-pub(crate) fn rectangle_style(stack: Option<&ModifierStack>) -> Option<RectangleStyle> {
+pub(crate) fn shape_style(stack: Option<&ModifierStack>) -> Option<ShapeStyle> {
     let mut last_transform = None;
     let mut transform = Transform2D::identity();
     let mut fill = None;
+    let mut stroke = None;
     if let Some(stack) = stack {
         for entry in stack.entries().iter().filter(|e| e.enabled) {
             match entry.payload {
-                ModifierPayload::Transform(next) if fill.is_none() => {
+                ModifierPayload::Transform(next) if fill.is_none() && stroke.is_none() => {
                     transform = transform.then(&next).ok()?;
                     last_transform = Some((entry.id, next));
                 }
-                ModifierPayload::Fill { color } if fill.is_none() => fill = Some(color),
+                ModifierPayload::Fill { color } if fill.is_none() && stroke.is_none() => {
+                    fill = Some(color)
+                }
+                ModifierPayload::Stroke { color, width } if stroke.is_none() => {
+                    stroke = Some(Border::new(color, width.get()).ok()?);
+                }
                 _ => return None,
             }
         }
     }
-    Some(RectangleStyle {
+    Some(ShapeStyle {
         transform,
         last_transform,
         fill,
+        stroke,
     })
 }
 
-pub(super) fn rectangle(
+/// Free Frame 목록은 경로를 할당하지 않습니다. 이 정보는 도형 행에만 있습니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanvasShapePath {
+    /// SceneBuilder가 확정한 local path.
+    pub geometry: PathGeometry,
+    /// stroke cap. Line은 저장된 cap을 따릅니다.
+    pub cap: StrokeCap,
+    /// 길이 0인 선의 cap을 그릴 정확한 local bounds.
+    pub point_cap: Option<Rect>,
+}
+
+pub(super) fn project(
     model: &DocumentModel,
     id: StableId,
-    shape: &RectangleParams,
+    shape: &ShapeGeometry,
     parent_scope: &SceneScope,
     parent: Option<u32>,
     locked: bool,
     builder: &mut SceneBuilder,
-) -> Option<CanvasFrame> {
-    let RectangleStyle {
-        transform, fill, ..
-    } = rectangle_style(model.modifier_stack(id))?;
-    let mut node = NodeInput::new(id, transform);
+) -> Option<(CanvasFrame, Option<CanvasShapePath>)> {
+    let style = shape_style(model.modifier_stack(id))?;
+    let mut node = NodeInput::new(id, style.transform);
     node.locked = locked;
-    if let Some(color) = fill {
+    if let Some(color) = style.fill {
         node.paint.fills.push(Paint::Solid(color));
     }
-    let bounds = Rect::new(Vec2::ZERO, shape.size);
-    let path = shape
-        .to_path()
+    if let Some(stroke) = style.stroke {
+        node.paint.strokes.push(StrokeInput {
+            paint: Paint::Solid(stroke.color),
+            width: stroke.thickness(),
+        });
+    }
+    let mut cap = StrokeCap::Butt;
+    let mut point_cap = None;
+    let mut radii = CornerRadii::ZERO;
+    let bounds = match shape {
+        ShapeGeometry::Rectangle(rect) => {
+            let (tl, tr, br, bl) = rect.effective_corner_radius();
+            radii = CornerRadii::new(tl, tr, br, bl).ok()?;
+            Rect::new(Vec2::ZERO, rect.size)
+        }
+        ShapeGeometry::Ellipse(ellipse) => ellipse.bounds,
+        ShapeGeometry::Polygon(polygon) => polygon.bounds(),
+        ShapeGeometry::Line(line) => {
+            cap = StrokeCap::from_tag(line.cap as u8)?;
+            if line.is_zero_length() {
+                point_cap = style
+                    .stroke
+                    .and_then(|stroke| line.stroked_bounds(stroke.thickness()));
+            }
+            let min = Vec2::new(
+                line.start.x().min(line.end.x()),
+                line.start.y().min(line.end.y()),
+            )
+            .ok()?;
+            let size = stellar_core_types::value::Size2::new(
+                (line.end.x() - line.start.x()).abs(),
+                (line.end.y() - line.start.y()).abs(),
+            )
+            .ok()?;
+            Rect::new(min, size)
+        }
+    };
+    let path = evaluate_shape_path(shape)
+        .ok()?
         .into_iter()
         .map(|command| match command {
             DocumentPath::MoveTo(p) => PathCommand::MoveTo(p),
@@ -72,16 +127,30 @@ pub(super) fn rectangle(
                 node,
                 layout_rect: bounds,
                 geometry: PathGeometry::new(path).ok()?,
-                cap: StrokeCap::Butt,
+                cap,
             },
         )
         .ok()?;
     let world = item.world_transform();
     world.inverse()?;
     Aabb::from_rect(bounds).transformed(&world)?;
-    let r = shape.effective_corner_radius();
-    Some(CanvasFrame {
-        rectangle_shape: true,
+    let rectangle = matches!(shape, ShapeGeometry::Rectangle(_));
+    // 보통 Rectangle은 기존 rounded-rect 행을 그대로 사용합니다. 가운데 stroke가 있으면 실제 path가 필요합니다.
+    let path = if !rectangle || style.stroke.is_some() {
+        let SceneContent::Path(path) = item.content() else {
+            return None;
+        };
+        Some(CanvasShapePath {
+            geometry: path.geometry.clone(),
+            cap,
+            point_cap,
+        })
+    } else {
+        None
+    };
+    let frame = CanvasFrame {
+        rectangle_shape: rectangle,
+        path_shape: path.is_some(),
         instance_frame: false,
         text_node: false,
         image_asset: None,
@@ -90,11 +159,12 @@ pub(super) fn rectangle(
         world,
         geometry: RectPrimitive {
             rect: bounds,
-            radii: CornerRadii::new(r.0, r.1, r.2, r.3).ok()?,
+            radii,
         },
-        background: fill,
-        border: None,
+        background: style.fill,
+        border: style.stroke,
         clip_children: false,
         hit_target: item.hit().is_hit_target(),
-    })
+    };
+    Some((frame, path))
 }

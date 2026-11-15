@@ -722,10 +722,13 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
             }
         }
         if let status, ready {
-            summaryLabel.setStringIfChanged(GitPanelStrings.statusSummary(
-                staged: status.stagedChangeCount,
-                unstaged: status.unstagedChangeCount
-            ))
+            if case .unborn = status.head {
+                let files = status.stagedChangeCount
+                summaryLabel.setStringIfChanged(files == 1 ? String(localized: "1 file staged for the first commit") :
+                    String(localized: "\(files) files staged for the first commit"))
+            } else {
+                summaryLabel.setStringIfChanged(GitPanelStrings.statusSummary(staged: status.stagedChangeCount, unstaged: status.unstagedChangeCount))
+            }
         }
         rootColumn.setItem(summaryLabel, visible: ready)
         let conflictTotal = (status?.semanticConflictCount ?? 0) + (status?.rawConflictCount ?? 0)
@@ -741,12 +744,21 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
     }
 
     private func updateOverlays() {
+        let emptyTitle: String
+        let emptyMessage: String
+        if case .unborn = status?.head {
+            emptyTitle = String(localized: "No Commits Yet")
+            emptyMessage = String(localized: "Make the first commit in this project to compare saved changes with it.")
+        } else {
+            emptyTitle = GitPanelStrings.noChangesTitle
+            emptyMessage = GitPanelStrings.noChangesMessage
+        }
         configureOverlay(
             changesOverlay,
             list: changeList.scrollView,
             rowCount: status?.changes.documentCount ?? 0,
-            emptyTitle: GitPanelStrings.noChangesTitle,
-            emptyMessage: GitPanelStrings.noChangesMessage
+            emptyTitle: emptyTitle,
+            emptyMessage: emptyMessage
         )
         configureOverlay(
             conflictsOverlay,

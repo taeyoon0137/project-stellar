@@ -94,6 +94,8 @@ pub struct ResourceTarget {
     pub name: &'static str,
     /// URI의 문서 id(문서 template만).
     pub document: Option<String>,
+    /// URI의 공유 정의 ID(컴포넌트 template만). backend는 승인된 프로젝트에서만 조회합니다.
+    pub component: Option<String>,
     /// query(`cursor`·`limit`) 원문.
     pub query: Option<String>,
 }
@@ -111,7 +113,7 @@ fn safe_segment(segment: &str) -> bool {
 fn match_template(def: &ResourceDef, path: &str) -> Option<Option<String>> {
     let pattern = def.uri.strip_prefix("stellar://")?;
     let pattern = pattern.split('{').next().unwrap_or(pattern);
-    let has_var = def.uri.contains("{document}");
+    let has_var = def.uri.contains("{document}") || def.uri.contains("{component}");
     if has_var {
         let rest = path.strip_prefix(pattern)?;
         safe_segment(rest).then(|| Some(rest.to_string()))
@@ -154,7 +156,12 @@ impl ApprovedScope {
             return Err(ScopeError::MalformedUri);
         }
         for def in RESOURCES {
-            if let Some(document) = match_template(def, path) {
+            if let Some(value) = match_template(def, path) {
+                let (document, component) = if def.uri.contains("{component}") {
+                    (None, value)
+                } else {
+                    (value, None)
+                };
                 if query.is_some() && !def.paginated {
                     return Err(ScopeError::MalformedUri);
                 }
@@ -171,6 +178,7 @@ impl ApprovedScope {
                 return Ok(ResourceTarget {
                     name: def.name,
                     document,
+                    component,
                     query,
                 });
             }

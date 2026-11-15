@@ -12,6 +12,128 @@ import AppKit
 ///   복원 실패는 창의 실패 상태
 /// - 모든 실패에서 프로젝트 창·코어 session이 생기지 않음
 enum ShellProjectOpenCheck {
+    @MainActor
+    static func clone(in directory: URL) -> Bool {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        let runtime = RuntimeHost()
+        defer { runtime.shutdown() }
+        let app = ShellAppCoordinator(runtimeHandle: runtime.handle)
+        let autosave = ShellCheckAutosave(prefix: "StellarClone")
+        defer { autosave.removeRecords() }
+        app.windowConfiguration = { autosave.configuration }
+        app.presentsWindows = false
+        let source = directory.appendingPathComponent("source")
+        let target = directory.resolvingSymlinksInPath().appendingPathComponent("checkout")
+        guard let pump = app.pump else { return false }
+        var created = false
+        pump.createProject(path: source.path) { event in
+            if case .projectCreated(_, 0) = event { created = true }
+        }
+        guard pump.waitForPendingRequests(timeout: 15), created else { return false }
+
+        func until(_ predicate: () -> Bool) -> Bool {
+            let deadline = Date().addingTimeInterval(5)
+            while !predicate(), Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+            return predicate()
+        }
+        func failed(_ step: String) -> Bool {
+            FileHandle.standardError.write(Data("project-clone check failed: \(step)\n".utf8))
+            return false
+        }
+        func git(_ root: URL, _ args: [String]) throws -> String {
+            let process = Process(), out = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = ["-C", root.path] + args
+            process.standardOutput = out
+            try process.run()
+            let result = out.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { throw CocoaError(.fileReadUnknown) }
+            return String(decoding: result, as: UTF8.self)
+        }
+        func sheet(_ name: String, cancel: Bool = false, afterSubmit: (() -> Bool)? = nil) -> Bool {
+            app.showWelcome()
+            guard let controller = app.welcomeController, let window = controller.window else { return false }
+            window.setFrameAutosaveName("")
+            window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
+            window.orderBack(nil)
+            let welcome = controller.welcomeViewController
+            guard until({ welcome.commandAvailability.cloneProject && welcome.cloneProjectButton.isEnabled }) else { return failed("open Clone sheet for " + name) }
+            welcome.cloneProjectButton.performClick(nil)
+            guard until({ window.attachedSheet != nil }),
+                  let sheet = welcome.presentedViewControllers?.last as? WelcomeCloneSheetController else { return failed("present Clone sheet for " + name) }
+            sheet.chooseParentDirectory = { _, _, complete in complete(directory) }
+            sheet.chooseButton.performClick(nil)
+            sheet.simulateInput(url: source.absoluteString)
+            sheet.nameField.stringValue = name
+            sheet.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: sheet.nameField))
+            guard sheet.cloneButton.isEnabled, sheet.request?.parentDirectory == directory.path else { return false }
+            (cancel ? sheet.cancelButton : sheet.cloneButton).performClick(nil)
+            if cancel { return until({ window.attachedSheet == nil }) && app.welcomeData.currentSnapshot().activity == nil }
+            guard app.welcomeData.currentSnapshot().activity?.kind == .cloning else { return failed("submit " + name) }
+            if let afterSubmit, !afterSubmit() { return false }
+            return pump.waitForPendingRequests(timeout: 20)
+        }
+        func dismissNotice() {
+            if let window = app.welcomeController?.window, let sheet = window.attachedSheet { window.endSheet(sheet) }
+            if let notice = app.welcomeData.currentSnapshot().notice { app.welcomeData.send(.dismissNotice(id: notice.id)) }
+        }
+        do {
+            guard sheet("cancelled", cancel: true),
+                  !FileManager.default.fileExists(atPath: directory.appendingPathComponent("cancelled").path) else { return failed("cancel sheet") }
+            // 임시 로컬 Git 설정으로 checkout을 지연해 실행 중인 프로세스의 취소를 확인합니다.
+            let started = directory.appendingPathComponent("checkout-started")
+            let template = directory.appendingPathComponent("clone-template")
+            let hooks = template.appendingPathComponent("hooks")
+            try FileManager.default.createDirectory(at: hooks, withIntermediateDirectories: true)
+            let hook = hooks.appendingPathComponent("post-checkout")
+            try "#!/bin/sh\ntouch \"$HOME/checkout-started\"\nexec sleep 30\n".write(to: hook, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: hook.path)
+            let settings = directory.appendingPathComponent("clone.gitconfig")
+            let previousConfig = ProcessInfo.processInfo.environment["GIT_CONFIG_GLOBAL"]
+            _ = try git(source, ["config", "--file", settings.path, "init.templateDir", template.path])
+            setenv("GIT_CONFIG_GLOBAL", settings.path, 1)
+            let stopped = sheet("interrupted") {
+                guard let welcome = app.welcomeController?.welcomeViewController,
+                      let activity = app.welcomeData.currentSnapshot().activity, activity.kind == .cloning, activity.isCancellable,
+                      until({ FileManager.default.fileExists(atPath: started.path) }) else { return failed("in-flight clone") }
+                guard until({ welcome.renderedSnapshot?.activity == activity && !welcome.activityView.isHidden &&
+                    !welcome.activityView.cancelButton.isHidden && welcome.view.window?.attachedSheet == nil }) else { return failed("cancel control") }
+                welcome.activityView.cancelButton.performClick(nil)
+                return true
+            }
+            if let previousConfig { setenv("GIT_CONFIG_GLOBAL", previousConfig, 1) } else { unsetenv("GIT_CONFIG_GLOBAL") }
+            guard stopped, app.welcomeData.currentSnapshot().activity == nil else { return failed("cancel request completion") }
+            guard app.welcomeData.currentSnapshot().notice == nil else { return failed("notice after cancel") }
+            guard !FileManager.default.fileExists(atPath: directory.appendingPathComponent("interrupted").path),
+                  !((try FileManager.default.contentsOfDirectory(atPath: directory.path)).contains { $0.hasPrefix(".stellar-clone-tmp") })
+            else { return failed("cancelled checkout left files") }
+            guard sheet("checkout") else { return failed("checkout request") }
+            guard let opened = app.projectWindow(forPath: target.path) else { return failed("checkout window") }
+            guard let session = opened.windowController.windowSession, session.info?.has_document == 1,
+                  session.viewInfo?.has_view == 1, !opened.gitSource.trusted,
+                  opened.dataSource.currentSnapshot.subtitle == String(localized: "Restricted Mode") else { return failed("restricted document") }
+            guard try git(target, ["rev-parse", "HEAD"]) == git(source, ["rev-parse", "HEAD"]),
+                  try git(target, ["status", "--porcelain"]).isEmpty else { return failed("checkout contents") }
+            opened.window?.close()
+            guard pump.waitForPendingRequests(timeout: 10) else { return false }
+            let marker = target.appendingPathComponent("keep")
+            try Data("existing".utf8).write(to: marker)
+            guard sheet("checkout"), app.welcomeData.currentSnapshot().notice?.kind == .folderAlreadyExists(path: target.path),
+                  try Data(contentsOf: marker) == Data("existing".utf8), app.projectWindows.isEmpty else { return false }
+            dismissNotice()
+            _ = try git(source, ["rm", "-q", "stellar.yaml"])
+            _ = try git(source, ["commit", "-qm", "non-Stellar fixture"])
+            let plain = directory.resolvingSymlinksInPath().appendingPathComponent("plain")
+            guard sheet("plain"), app.welcomeData.currentSnapshot().notice?.kind == .notStellarProject(path: plain.path),
+                  !FileManager.default.fileExists(atPath: plain.appendingPathComponent("stellar.yaml").path),
+                  try git(plain, ["rev-parse", "HEAD"]) == git(source, ["rev-parse", "HEAD"]),
+                  app.projectWindows.isEmpty else { return false }
+        } catch { return false }
+        print("project-clone ok: native sheet, cancelled input and in-flight Git, identical HEAD, clean restricted document, existing target preserved, non-Stellar checkout retained")
+        return true
+    }
+
     static func run() -> Bool {
         MainActor.assumeIsolated {
             ShellProjectOpenCheckRunner().run()

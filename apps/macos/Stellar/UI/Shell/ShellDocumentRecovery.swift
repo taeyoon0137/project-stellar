@@ -6,17 +6,14 @@ private enum DocumentRecoveryOffer: Sendable {
     case failed(String)
 
     static func probe(_ runtime: UInt64, _ session: UInt64) -> Self {
-        var len = 0, bytes = [UInt8](repeating: 0, count: Int(STELLAR_EVENT_TEXT_MAX))
-        let status = bytes.withUnsafeMutableBufferPointer {
-            stellar_window_recovery_probe(runtime, session, $0.baseAddress, $0.count, &len)
-        }
-        guard status == STELLAR_OK, len > 0, len <= bytes.count else {
+        let (status, bytes) = CoreRuntime.probeRecovery(handle: runtime, session: session)
+        guard status == STELLAR_OK, let tag = bytes.first else {
             return .failed(String(localized: "Couldn’t check for unsaved changes."))
         }
-        let message = String(decoding: bytes[1..<len], as: UTF8.self)
-        switch bytes[0] {
+        let message = String(decoding: bytes.dropFirst(), as: UTF8.self)
+        switch tag {
         case 48: return .none
-        case 49, 50: return .checkpoint(message, canRestore: bytes[0] == 49)
+        case 49, 50: return .checkpoint(message, canRestore: tag == 49)
         default: return .failed(message)
         }
     }

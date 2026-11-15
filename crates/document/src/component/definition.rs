@@ -338,20 +338,12 @@ impl DefinitionTree {
                         parent,
                     });
                 }
-                let nodes = &self.nodes;
-                let siblings = self.children.get(&parent).map(Vec::as_slice).unwrap_or(&[]);
-                if siblings
-                    .iter()
-                    .any(|s| nodes.get(s).is_some_and(|n| n.order_key == node.order_key))
+                let siblings = self.children.entry(parent).or_default();
+                match siblings.binary_search_by(|id| self.nodes[id].order_key.cmp(&node.order_key))
                 {
-                    return Err(ComponentDefinitionError::DuplicateOrderKey { parent });
+                    Ok(_) => return Err(ComponentDefinitionError::DuplicateOrderKey { parent }),
+                    Err(at) => siblings.insert(at, node.id),
                 }
-                let at = siblings.partition_point(|s| {
-                    nodes
-                        .get(s)
-                        .is_some_and(|n| (&n.order_key, n.id) < (&node.order_key, node.id))
-                });
-                self.children.entry(parent).or_default().insert(at, node.id);
             }
         }
         self.nodes.insert(node.id, node);

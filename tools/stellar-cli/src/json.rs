@@ -102,6 +102,49 @@ pub enum JsonValue {
     Object(Vec<(String, JsonValue)>),
 }
 
+// CLI와 MCP는 검증된 원본 codec의 스칼라를 문자열로 보존합니다.
+impl From<&stellar_ops::component_source::SourceValue> for JsonValue {
+    fn from(source: &stellar_ops::component_source::SourceValue) -> Self {
+        use stellar_ops::component_source::SourceValue;
+        match source {
+            SourceValue::Scalar(value) => Self::string(value),
+            SourceValue::Sequence(values) => Self::Array(values.iter().map(Self::from).collect()),
+            SourceValue::Mapping(fields) => Self::Object(
+                fields
+                    .iter()
+                    .map(|(key, value)| {
+                        (
+                            key.as_scalar()
+                                .expect("source codec emits scalar keys")
+                                .to_owned(),
+                            Self::from(value),
+                        )
+                    })
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl From<&stellar_ops::component_source::DefinitionFrame> for JsonValue {
+    fn from(node: &stellar_ops::component_source::DefinitionFrame) -> Self {
+        Self::object(vec![
+            ("id", Self::string(node.id.to_string())),
+            (
+                "parent",
+                node.parent
+                    .map_or(Self::Null, |id| Self::string(id.to_string())),
+            ),
+            ("order_key", Self::string(&node.order_key)),
+            ("display_name", Self::string(&node.display_name)),
+            ("kind", Self::string("frame")),
+            ("visible", Self::Bool(node.visible)),
+            ("locked", Self::Bool(node.locked)),
+            ("payload", Self::from(&node.payload)),
+        ])
+    }
+}
+
 impl JsonValue {
     /// 문자열 값을 만듭니다.
     pub fn string(text: impl Into<String>) -> JsonValue {

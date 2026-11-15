@@ -67,7 +67,7 @@ pub enum PropertyValueType {
     NodeRefList,
     /// node 참조 하나(modifier, NIL = 미지정).
     NodeRef,
-    /// 비음수 finite 수(modifier).
+    /// 비음수 finite 수.
     NonNegative,
     /// 색(modifier).
     Color,
@@ -436,6 +436,7 @@ pub struct PropertyInfo {
 fn frame_value_type(value_type: FramePropertyType) -> PropertyValueType {
     match value_type {
         FramePropertyType::Size => PropertyValueType::Size,
+        FramePropertyType::Dimension => PropertyValueType::NonNegative,
         FramePropertyType::Transform => PropertyValueType::Transform,
         FramePropertyType::Clipping => PropertyValueType::Clipping,
         FramePropertyType::OptionalColor => PropertyValueType::OptionalColor,
@@ -477,13 +478,21 @@ fn read_property(record: &NodeRecord, key: PropertyKey) -> Option<PropertyValue>
     };
     Some(match key {
         frame_keys::SIZE => PropertyValue::Size(frame.size),
+        frame_keys::WIDTH => PropertyValue::NonNegative(FiniteF32::new(frame.size.width()).ok()?),
+        frame_keys::HEIGHT => PropertyValue::NonNegative(FiniteF32::new(frame.size.height()).ok()?),
         frame_keys::TRANSFORM => PropertyValue::Transform(frame.transform),
         frame_keys::CLIPPING => PropertyValue::Clipping(frame.clipping),
         frame_keys::BACKGROUND => PropertyValue::OptionalColor(frame.background),
         frame_keys::BORDER => PropertyValue::OptionalBorder(frame.border),
         frame_keys::CORNER_RADIUS => PropertyValue::CornerRadius(frame.corner_radius),
         frame_keys::LAYOUT_MODE => PropertyValue::OptionalLayoutRef(frame.layout_mode),
-        _ => return None,
+        _ => {
+            let index = frame_keys::BORDER_RADIUS_LONGHANDS
+                .iter()
+                .position(|&corner| corner == key)?;
+            let (tl, tr, br, bl) = frame.corner_radius.components();
+            PropertyValue::NonNegative(FiniteF32::new([tl, tr, br, bl][index]).ok()?)
+        }
     })
 }
 
@@ -491,12 +500,34 @@ fn read_property(record: &NodeRecord, key: PropertyKey) -> Option<PropertyValue>
 fn write_frame(frame: &mut FramePayload, key: PropertyKey, value: &PropertyValue) -> bool {
     match (key, value) {
         (frame_keys::SIZE, PropertyValue::Size(v)) => frame.size = *v,
+        (frame_keys::WIDTH, PropertyValue::NonNegative(v)) => {
+            return frame.set_size(v.get(), frame.size.height()).is_ok();
+        }
+        (frame_keys::HEIGHT, PropertyValue::NonNegative(v)) => {
+            return frame.set_size(frame.size.width(), v.get()).is_ok();
+        }
         (frame_keys::TRANSFORM, PropertyValue::Transform(v)) => frame.transform = *v,
         (frame_keys::CLIPPING, PropertyValue::Clipping(v)) => frame.clipping = *v,
         (frame_keys::BACKGROUND, PropertyValue::OptionalColor(v)) => frame.background = *v,
         (frame_keys::BORDER, PropertyValue::OptionalBorder(v)) => frame.border = *v,
         (frame_keys::CORNER_RADIUS, PropertyValue::CornerRadius(v)) => frame.corner_radius = *v,
         (frame_keys::LAYOUT_MODE, PropertyValue::OptionalLayoutRef(v)) => frame.layout_mode = *v,
+        (key, PropertyValue::NonNegative(v)) => {
+            let Some(index) = frame_keys::BORDER_RADIUS_LONGHANDS
+                .iter()
+                .position(|&corner| corner == key)
+            else {
+                return false;
+            };
+            let (tl, tr, br, bl) = frame.corner_radius.components();
+            let mut radii = [tl, tr, br, bl];
+            radii[index] = v.get();
+            let [tl, tr, br, bl] = radii;
+            let Ok(radius) = CornerRadius::new(tl, tr, br, bl) else {
+                return false;
+            };
+            frame.corner_radius = radius;
+        }
         _ => return false,
     }
     true
@@ -526,6 +557,19 @@ pub(crate) fn core_patch_calls() -> usize {
 }
 
 impl SetProperty {
+    /// 고정 크기를 한 transaction에 적용할 width·height 명령으로 펼칩니다.
+    pub fn frame_dimensions(node: StableId, size: Size2) -> [Self; 2] {
+        [
+            (frame_keys::WIDTH, size.width()),
+            (frame_keys::HEIGHT, size.height()),
+        ]
+        .map(|(key, value)| Self {
+            node,
+            key,
+            value: PropertyValue::NonNegative(FiniteF32::new(value).expect("Size2의 유한 좌표")),
+        })
+    }
+
     /// 표시 여부 변경(`SetVisibility` specialization, VII.2.5).
     pub fn visibility(node: StableId, visible: bool) -> SetProperty {
         SetProperty {
@@ -576,6 +620,13 @@ impl SetProperty {
                 expected: info.value_type,
                 found,
             });
+        }
+        if let PropertyValue::NonNegative(value) = self.value {
+            if value.get() < 0.0 {
+                return Err(CommandError::InvalidRequest {
+                    reason: "Frame 길이는 음수일 수 없습니다",
+                });
+            }
         }
         // clip 대상이 문서에 있으면 Path여야 합니다(없으면 미해결 진단).
         if let PropertyValue::Clipping(Clipping::Path(target)) = &self.value {
@@ -678,6 +729,70 @@ mod tests {
             key,
             value,
         })
+    }
+
+    #[test]
+    fn legacy_size_bytes_apply_like_both_dimensions() {
+        // SetProperty(0x0010), payload 길이 29, node, size key(0x0101), Size2 tag(3).
+        let mut bytes = vec![0x10, 0, 29, 0, 0, 0];
+        bytes.extend_from_slice(&sid(11).to_bytes());
+        bytes.extend_from_slice(&[1, 1, 0, 0, 3]);
+        bytes.extend_from_slice(&144.0f32.to_le_bytes());
+        bytes.extend_from_slice(&96.0f32.to_le_bytes());
+        let old = decode_command(&bytes).unwrap();
+        assert_eq!(encode_command(&old), bytes);
+        let mut legacy = DocumentState::new(small_model());
+        legacy.execute(&CommandRequest::at(&legacy, old)).unwrap();
+        let mut split = DocumentState::new(small_model());
+        for field in SetProperty::frame_dimensions(sid(11), Size2::new(144., 96.).unwrap()) {
+            split
+                .execute(&CommandRequest::at(&split, Command::SetProperty(field)))
+                .unwrap();
+        }
+        assert_eq!(
+            legacy.model().payload(sid(11)),
+            split.model().payload(sid(11))
+        );
+        let negative = set(
+            11,
+            frame_keys::HEIGHT,
+            PropertyValue::NonNegative(FiniteF32::new(-1.).unwrap()),
+        );
+        assert!(split
+            .execute(&CommandRequest::at(&split, negative))
+            .is_err());
+        assert_eq!(
+            legacy.model().payload(sid(11)),
+            split.model().payload(sid(11))
+        );
+    }
+
+    #[test]
+    fn grouped_radius_journal_bytes_match_four_independent_edits() {
+        let mut bytes = vec![0x10, 0, 37, 0, 0, 0];
+        bytes.extend_from_slice(&sid(11).to_bytes());
+        bytes.extend_from_slice(&[6, 1, 0, 0, 8]); // 0x0106, CornerRadius tag.
+        let values = [1.25_f32, 2.5, 3.75, 4.0];
+        for value in values {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        let old = decode_command(&bytes).unwrap();
+        assert_eq!(encode_command(&old), bytes);
+        let mut legacy = DocumentState::new(small_model());
+        legacy.execute(&CommandRequest::at(&legacy, old)).unwrap();
+        let mut split = DocumentState::new(small_model());
+        for (key, value) in frame_keys::BORDER_RADIUS_LONGHANDS.into_iter().zip(values) {
+            let command = set(
+                11,
+                key,
+                PropertyValue::NonNegative(FiniteF32::new(value).unwrap()),
+            );
+            split.execute(&CommandRequest::at(&split, command)).unwrap();
+        }
+        assert_eq!(
+            split.model().payload(sid(11)),
+            legacy.model().payload(sid(11))
+        );
     }
 
     fn sample_value(value_type: PropertyValueType) -> PropertyValue {

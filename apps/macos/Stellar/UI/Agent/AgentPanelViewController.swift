@@ -484,7 +484,7 @@ final class AgentPanelViewController: NSViewController, NSTableViewDataSource, N
 
     private func updateChrome() {
         let header = model.header
-        headerView.update(header: header, displayMode: displayMode)
+        headerView.update(snapshot: model, displayMode: displayMode)
 
         if let empty = emptyState() {
             stateView.configure(empty)
@@ -500,7 +500,10 @@ final class AgentPanelViewController: NSViewController, NSTableViewDataSource, N
         let ready = header.connection == .connected && model.phase == .ready && header.selectedCLI?.availability == .ready
         composerView.canSend = ready && !header.isAgentWorking
         composerView.canStop = header.isSessionActive
-        if header.isAgentWorking {
+        composerView.textView.isEditable = model.phase != .unavailable
+        if model.phase == .unavailable {
+            composerView.placeholder = ""
+        } else if header.isAgentWorking {
             composerView.placeholder = AgentPanelText.composerPlaceholderWorking
         } else {
             composerView.placeholder = ready
@@ -544,6 +547,10 @@ final class AgentPanelViewController: NSViewController, NSTableViewDataSource, N
         guard model.items.isEmpty else { return nil }
         let header = model.header
         switch model.phase {
+        case .unavailable:
+            return AgentPanelEmptyState(
+                symbolName: AgentPanelSymbol.noSession, title: AgentPanelText.disconnectedTitle, message: "",
+                actionTitle: nil, action: nil, showsProgress: false)
         case .loading(let reason):
             return AgentPanelEmptyState(
                 symbolName: AgentPanelSymbol.noSession, title: AgentPanelText.loadingTitle(reason), message: "",
@@ -621,7 +628,7 @@ final class AgentPanelViewController: NSViewController, NSTableViewDataSource, N
     }
 
     func setDisplayMode(_ mode: AgentConversationDisplayMode) {
-        guard mode != displayMode else { return }
+        guard model.phase != .unavailable, mode != displayMode else { return }
         displayMode = mode
         updateChrome()
         if mode == .rawText { rawTextView.scrollToEndOfDocument(nil) }
@@ -708,10 +715,10 @@ final class AgentPanelViewController: NSViewController, NSTableViewDataSource, N
             return model.changeSummary.revertableCount > 0
         case #selector(showAgentChatView(_:))?:
             menuItem.state = displayMode == .chat ? .on : .off
-            return true
+            return model.phase != .unavailable
         case #selector(showAgentRawTextView(_:))?:
             menuItem.state = displayMode == .rawText ? .on : .off
-            return true
+            return model.phase != .unavailable
         case #selector(copy(_:))?:
             return model.items.indices.contains(tableView.selectedRow)
         default:

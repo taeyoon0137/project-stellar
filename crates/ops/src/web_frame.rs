@@ -2,6 +2,9 @@
 
 use std::collections::BTreeMap;
 
+use stellar_document::component::definition::ComponentLibrary;
+use stellar_document::component::instance::{frame_instance_transform, placed_free_frame};
+
 use stellar_accessibility::generate::generate;
 use stellar_accessibility::snapshot::AccessibilitySnapshot;
 use stellar_accessibility::source::{SourceKind, SourceNode, SourceTree};
@@ -13,9 +16,10 @@ use stellar_codegen::web::{
 };
 use stellar_document::frame::{Clipping, FramePayload};
 use stellar_document::modifier::{ModifierPayload, ModifierStack};
-use stellar_document::records::NodePayload;
+use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_document::shape::{RectangleParams, ShapeGeometry};
-use stellar_storage::chunk::kinds::KIND_DOCUMENT_MANIFEST;
+use stellar_storage::chunk::kinds::{KIND_DOCUMENT_MANIFEST, KIND_VIEW_TREE};
+use stellar_storage::hash::ContentHash;
 use stellar_target_profile::capability::ElementKind;
 use stellar_target_profile::validate::ViewNode;
 
@@ -32,6 +36,8 @@ use crate::snapshot::ProjectSnapshot;
 pub struct WebFrameHtml {
     /// 열린 저장 generation.
     pub revision: ProjectRevision,
+    /// 독립 원본을 사용한 경우 그 파일 집합의 hash. 문서 generation과 독립적으로 바뀝니다.
+    pub component_source_hash: Option<ContentHash>,
     /// 요청 문서.
     pub document: StableId,
     /// 요청 View.
@@ -57,6 +63,26 @@ impl WebFrameHtml {
             code,
             message: format!("node {node}: {message}"),
         });
+    }
+
+    fn note_source(
+        &mut self,
+        components: &ComponentFrames,
+        error: bool,
+        code: &'static str,
+        id: StableId,
+        message: impl std::fmt::Display,
+    ) {
+        if let Some((instance, definition_node)) = components.sources.get(&id) {
+            self.note(
+                error,
+                code,
+                *instance,
+                format!("정의 node {definition_node}: {message}"),
+            );
+        } else {
+            self.note(error, code, id, message);
+        }
     }
 
     fn failed(&self) -> bool {
@@ -89,6 +115,7 @@ pub fn export_web_frame(
     let root = selected.root_frame;
     let mut result = WebFrameHtml {
         revision: snapshot.revision(),
+        component_source_hash: None,
         document,
         view,
         root_frame: root,
@@ -119,14 +146,35 @@ pub fn export_web_frame(
             );
         }
     }
-    if generation.manifest().chunk_pointers.iter().any(|p| {
-        p.schema_version != 1 && !(p.kind == KIND_DOCUMENT_MANIFEST && p.schema_version == 2)
-    }) {
+    let v2_subtree = stellar_project::document_io::INSTANCE_SUBTREE_SCHEMA_VERSION;
+    if !generation
+        .manifest()
+        .chunk_pointers
+        .iter()
+        .all(|p| match (p.kind, p.schema_version) {
+            (_, 1) | (KIND_DOCUMENT_MANIFEST, 2) => true,
+            (KIND_VIEW_TREE, schema) if schema == v2_subtree => generation
+                .read_chunk_payload(
+                    p.chunk_id,
+                    &mut stellar_storage::generation::lazy::NoopRecorder,
+                )
+                .ok()
+                .and_then(|bytes| {
+                    stellar_document::record_codec::SubtreeRecords::decode(&bytes).ok()
+                })
+                .is_some_and(|tree| {
+                    tree.nodes
+                        .iter()
+                        .any(|n| matches!(n.payload, NodePayload::ComponentInstance(_)))
+                }),
+            _ => false,
+        })
+    {
         result.note(
             true,
             "unsupported-record-schema",
             root,
-            "문서 manifest는 schema 1·2, 고정 도형을 담는 View와 subtree는 schema 1을 지원합니다",
+            "문서 manifest 1·2, View/subtree 1과 실제 인스턴스를 담은 subtree 2를 지원합니다",
         );
     }
     // 문서 전체를 매 node마다 훑지 않고 한 번만 OrderKey 순서를 구성합니다.
@@ -148,23 +196,81 @@ pub fn export_web_frame(
     source.push_root(root);
     let mut nodes = Vec::new();
     let mut styles = BTreeMap::new();
+    let mut components = ComponentFrames::default();
     let mut stack = vec![(root, None, true, Transform2D::identity())];
     while let Some((id, parent_border, ancestor_visible, parent_transform)) = stack.pop() {
-        let Some(record) = model.record(id) else {
-            result.note(
-                true,
-                "invalid-view-tree",
-                id,
-                "저장 node를 읽을 수 없습니다",
-            );
-            continue;
+        let (mut record, mut children) = if let Some(projected) = components.pending.remove(&id) {
+            projected
+        } else {
+            let Some(record) = model.record(id) else {
+                result.note(
+                    true,
+                    "invalid-view-tree",
+                    id,
+                    "저장 node를 읽을 수 없습니다",
+                );
+                continue;
+            };
+            let children = children_by_parent
+                .get(&id)
+                .into_iter()
+                .flatten()
+                .map(|(_, child)| *child)
+                .collect();
+            (record, children)
         };
-        let children: Vec<_> = children_by_parent
-            .get(&id)
-            .into_iter()
-            .flatten()
-            .map(|(_, child)| *child)
-            .collect();
+        let instance = matches!(record.payload, NodePayload::ComponentInstance(_));
+        if let NodePayload::ComponentInstance(ref payload) = record.payload {
+            if !payload.has_no_overrides() || !children.is_empty() {
+                result.note(
+                    true,
+                    "unsupported-component-instance",
+                    id,
+                    "override나 인스턴스 소유 자식이 있습니다",
+                );
+                continue;
+            }
+            if components.library.is_none() {
+                let library = crate::component_source::project_library(snapshot).and_then(
+                    |(library, files)| {
+                        let hash = stellar_project::document_io::component_source::source_set_hash(
+                            files.into_values(),
+                        )?;
+                        result.component_source_hash = Some(hash);
+                        Ok(library)
+                    },
+                );
+                match library {
+                    Ok(library) => components.library = Some(library),
+                    Err(error) => {
+                        result.note(true, "invalid-component-source", id, error);
+                        return Ok(result);
+                    }
+                }
+            }
+            let Some(position) = frame_instance_transform(model.modifier_stack(id)) else {
+                result.note(
+                    true,
+                    "unsupported-modifier",
+                    id,
+                    "컴포넌트 인스턴스는 유한한 활성 Transform만 지원합니다",
+                );
+                continue;
+            };
+            let definition = payload.component();
+            match components.expand(&record, definition, position, &model) {
+                Ok(projected) => (record, children) = projected,
+                Err(reason) => {
+                    result.note(
+                        true,
+                        "unsupported-component-instance",
+                        id,
+                        format!("정의 {}: {reason}", definition.id()),
+                    );
+                    return Ok(result);
+                }
+            }
+        }
         let visible = ancestor_visible && record.visible;
         let mut child_border = parent_border;
         let mut child_transform = parent_transform;
@@ -189,7 +295,7 @@ pub fn export_web_frame(
         } else {
             None
         };
-        if !rectangle && model.modifier_stack(id).is_some() {
+        if !rectangle && !instance && model.modifier_stack(id).is_some() {
             result.note(
                 true,
                 "unsupported-modifier",
@@ -200,7 +306,8 @@ pub fn export_web_frame(
         let supported = match projected.as_ref().unwrap_or(&record.payload) {
             NodePayload::Frame(frame) => {
                 if frame.layout_mode.is_some() {
-                    result.note(
+                    result.note_source(
+                        &components,
                         true,
                         "unsupported-layout",
                         id,
@@ -208,7 +315,8 @@ pub fn export_web_frame(
                     );
                 }
                 if matches!(frame.clipping, Clipping::Path(_)) {
-                    result.note(
+                    result.note_source(
+                        &components,
                         true,
                         "unsupported-clip",
                         id,
@@ -233,7 +341,7 @@ pub fn export_web_frame(
                     parent_border,
                 };
                 if let Err(message) = style.validate() {
-                    result.note(true, "unsupported-frame-value", id, message);
+                    result.note_source(&components, true, "unsupported-frame-value", id, message);
                 }
                 let (a, b, c, d, _, _) = frame.transform.components();
                 let local = if id == root {
@@ -257,24 +365,28 @@ pub fn export_web_frame(
                     })
                 });
                 if !bounded {
-                    result.note(
+                    result.note_source(
+                        &components,
                         true,
                         "unsupported-frame-value",
                         id,
                         "누적 affine 이후 모서리 좌표가 유한한 ±1,000,000px 범위를 넘어갑니다",
                     );
                 }
-                if rectangle && world.as_ref().is_ok_and(|w| w.inverse().is_none()) {
-                    result.note(
+                if (rectangle || instance || components.sources.contains_key(&id))
+                    && world.as_ref().is_ok_and(|w| w.inverse().is_none())
+                {
+                    result.note_source(
+                        &components,
                         true,
                         "unsupported-frame-value",
                         id,
-                        "Rectangle의 누적 affine은 역변환 가능해야 합니다",
+                        "Rectangle·배치된 컴포넌트 Frame의 누적 affine은 역변환 가능해야 합니다",
                     );
                 }
                 if let Ok(world) = world {
                     if !style.size_rounding_fits(&world) {
-                        result.note(true, "unsupported-frame-value", id,
+                        result.note_source(&components, true, "unsupported-frame-value", id,
                             "누적 affine이 CSS 크기의 LayoutUnit 반올림을 화면에서 1/64px보다 크게 확대할 수 있습니다");
                     }
                     child_transform = world;
@@ -285,7 +397,7 @@ pub fn export_web_frame(
                     .chain(frame.border.as_ref().map(|b| b.color))
                     .any(|c| c.alpha() > 0.0 && c.alpha() < 1.0)
                 {
-                    result.note(false, "browser-color-compositing", id, "색공간·straight RGBA 선언은 보존합니다. 브라우저 alpha 합성은 Stellar 선형 합성과 달라 최종 픽셀 동일성은 보장하지 않습니다");
+                    result.note_source(&components, false, "browser-color-compositing", id, "색공간·straight RGBA 선언은 보존합니다. 브라우저 alpha 합성은 Stellar 선형 합성과 달라 최종 픽셀 동일성은 보장하지 않습니다");
                 }
                 child_border = Some(border.map_or(FiniteF32::ZERO, |(_, w)| w));
                 styles.insert(id, style);
@@ -297,7 +409,8 @@ pub fn export_web_frame(
             }
             NodePayload::Fragment(_) => Some((SourceKind::Fragment, ElementKind::FRAGMENT)),
             other => {
-                result.note(
+                result.note_source(
+                    &components,
                     true,
                     "unsupported-node",
                     id,
@@ -319,7 +432,7 @@ pub fn export_web_frame(
             let mut node = SourceNode::new(id, kind).with_children(children);
             node.hidden = !visible;
             if let Err(e) = source.insert(node) {
-                result.note(true, "invalid-view-tree", id, e);
+                result.note_source(&components, true, "invalid-view-tree", id, e);
             }
             nodes.push(ViewNode {
                 id,
@@ -361,7 +474,11 @@ pub fn export_web_frame(
             .element(index)
             .source
             .expect("mapped source");
-        let name = element_id(id);
+        let name = components
+            .sources
+            .get(&id)
+            .map(|(instance, node)| format!("{}-{}", element_id(*instance), element_id(*node)))
+            .unwrap_or_else(|| element_id(id));
         mapped.document.set_attr(index, "id", &name);
         css.push_str(&format!("#{name} {{\n{}}}\n", styles[&id].declarations()));
     }
@@ -372,6 +489,88 @@ pub fn export_web_frame(
         result.html = Some(format!("<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Stellar View {view}</title>\n<style>\n{css}</style>\n</head>\n<body>\n{}</body>\n</html>\n", mapped.to_html()));
     }
     Ok(result)
+}
+
+/// 가상 자식에만 내보내기 중 사용할 로컬 키를 부여합니다. HTML의 식별자는 실제 인스턴스·정의 node 쌍입니다.
+#[derive(Default)]
+struct ComponentFrames {
+    library: Option<ComponentLibrary>,
+    pending: BTreeMap<StableId, (NodeRecord, Vec<StableId>)>,
+    sources: BTreeMap<StableId, (StableId, StableId)>,
+    expanded_frames: usize,
+}
+
+impl ComponentFrames {
+    fn expand(
+        &mut self,
+        instance: &NodeRecord,
+        component: crate::core_types::reference::ComponentRef,
+        position: Transform2D,
+        model: &stellar_document::model::DocumentModel,
+    ) -> Result<(NodeRecord, Vec<StableId>), &'static str> {
+        let entry = self
+            .library
+            .as_ref()
+            .and_then(|lib| lib.get(component))
+            .ok_or("컴포넌트 원본을 찾을 수 없습니다")?;
+        let tree = entry.tree();
+        // 작은 원본을 수많은 인스턴스가 공유해 HTML이 무제한으로 커지는 경우를 제한합니다.
+        const MAX_INSTANCE_FRAMES: usize = 16_384;
+        if tree.len() > MAX_INSTANCE_FRAMES - self.expanded_frames {
+            return Err("펼친 컴포넌트 Frame 상한 16384개를 초과합니다");
+        }
+        self.expanded_frames += tree.len();
+        let root = entry.definition().root.id();
+        let mut ids = BTreeMap::from([(root, instance.id)]);
+        for node in tree.iter().filter(|node| node.id != root) {
+            // IR의 내부 키만 digest로 축약합니다. 문서 키나 이미 펼친 자식과 겹치면 거부합니다.
+            let mut pair = [0u8; 32];
+            pair[..16].copy_from_slice(&instance.id.to_bytes());
+            pair[16..].copy_from_slice(&node.id.to_bytes());
+            let key = StableId::from_bytes(
+                ContentHash::compute(&pair).digest()[..16]
+                    .try_into()
+                    .expect("16 bytes"),
+            );
+            if model.runtime_id(key).is_some() || self.sources.contains_key(&key) {
+                return Err("내보내기 내부 node 키가 중복됩니다");
+            }
+            self.sources.insert(key, (instance.id, node.id));
+            ids.insert(node.id, key);
+        }
+        for node in tree.iter() {
+            let is_root = node.id == root;
+            let frame = placed_free_frame(node, is_root.then_some(position))
+                .ok_or("고정 Free Frame을 배치할 수 없습니다")?;
+            let id = ids[&node.id];
+            let record = NodeRecord {
+                id,
+                parent: node.parent.map(|p| ids[&p]).or(instance.parent),
+                order_key: if is_root {
+                    instance.order_key.clone()
+                } else {
+                    node.order_key.clone()
+                },
+                visible: node.visible && (!is_root || instance.visible),
+                locked: instance.locked,
+                display_name: String::new(),
+                payload: NodePayload::Frame(frame),
+            };
+            self.pending.insert(
+                id,
+                (
+                    record,
+                    tree.children(node.id)
+                        .iter()
+                        .map(|child| ids[child])
+                        .collect(),
+                ),
+            );
+        }
+        self.pending
+            .remove(&instance.id)
+            .ok_or("정의 root를 찾을 수 없습니다")
+    }
 }
 
 // 로컬 main의 runtime::canvas::shape::rectangle_style과 같은 지원 부분집합.

@@ -10,7 +10,7 @@ import SwiftUI
 ///   controller가 창 session handle 하나를 소유하고, 창을 닫으면 창 session → 프로젝트 session 순서로 닫습니다. 같은
 ///   폴더를 연 창이 이미 있으면 새 창을 만들지 않고 그 창을 앞으로 가져옵니다(가이드 2.5).
 /// - 창 복원은 프로젝트 폴더 경로만 창 상태에 저장하고, 복원할 때 같은 경로를 다시 엽니다(가이드 2.6).
-/// - New Project는 Git 프로젝트와 첫 문서를 만들고 창을 엽니다. Clone은 시작 창에서 사용 가능 여부를 안내합니다.
+/// - New Project는 첫 문서를 만듭니다. Clone Project는 새 checkout을 기존 열기 경로로 엽니다.
 @MainActor
 final class ShellAppCoordinator: NSObject {
     /// 창 복원 상태에 프로젝트 폴더 경로를 넣는 키.
@@ -32,6 +32,8 @@ final class ShellAppCoordinator: NSObject {
     /// 코어 command ID 표(XII.6.5). 코어에 공유 이름으로 물어 한 번 만들고 프로젝트 창마다 넘깁니다.
     let coreCommandIDs = ShellCommandCoreIDs.fromCore()
     private(set) var projectWindows: [ShellProjectWindow] = []
+    private var quitReply: ((Bool) -> Void)?
+    private var confirmingQuit = false
     private(set) var welcomeController: WelcomeWindowController?
     private(set) var settingsController: NSWindowController?
     /// 열기 요청을 보냈고 완료를 기다리는 폴더(같은 폴더 중복 요청 방지).
@@ -42,6 +44,7 @@ final class ShellAppCoordinator: NSObject {
     /// 프로젝트 창의 AppKit 상태 저장 이름(frame·split·툴바 autosave, 복원 식별자). 검사는 앱의 실제 기록을 읽거나
     /// 덮어쓰지 않도록 검사 전용 이름을 넘깁니다.
     var windowConfiguration: () -> ShellWindowConfiguration = { .standard }
+    var makeAgentSource: () -> AgentPanelSource = { DisconnectedAgentPanelSource() }
     /// 프로젝트 열기 실패를 alert로 알립니다. 검사에서 바꿉니다.
     lazy var alertPresenter: (_ title: String, _ message: String, _ window: NSWindow?) -> Void = { title, message, window in
         let alert = NSAlert()
@@ -135,6 +138,9 @@ final class ShellAppCoordinator: NSObject {
         case .newProject:
             showWelcome()
             welcomeController?.welcomeViewController.newStellarProject(nil)
+        case .cloneProject:
+            showWelcome()
+            welcomeController?.welcomeViewController.cloneStellarProject(nil)
         case .openProject:
             chooseProjectToOpen(origin: .application)
         case .settings:
@@ -186,6 +192,44 @@ final class ShellAppCoordinator: NSObject {
         return projectWindows.first {
             Self.canonicalPath($0.dataSource.rootPath) == canonical
                 || $0.dataSource.session.map { Self.canonicalPath($0.rootPath) } == canonical
+        }
+    }
+
+    func cloneProject(remote: String, parentDirectory: String, folderName: String) {
+        guard welcomeData.currentSnapshot().activity == nil else { return }
+        guard let pump, parentDirectory.hasPrefix("/"), !parentDirectory.utf8.contains(0),
+              WelcomeCloneSheetController.isValidFolderName(folderName) else {
+            welcomeData.postNotice(.operationFailed(.projectCloneFailed))
+            return
+        }
+        // 상위 폴더의 별칭은 일반 Open과 같은 키를 사용합니다. 최종 항목의 symlink는 기존 대상으로 거부합니다.
+        let path = URL(fileURLWithPath: Self.canonicalPath(parentDirectory), isDirectory: true)
+            .appendingPathComponent(folderName, isDirectory: true).path
+        guard !pendingOpenPaths.contains(path) else { return }
+        let result = pump.cloneProject(remote: remote, target: path) { [weak self] event in
+            guard let self else { return }
+            if case .requestFailed(_, let code, _) = event {
+                self.welcomeData.setActivity(nil)
+                self.pendingOpenPaths.remove(path)
+                switch Int32(bitPattern: code) {
+                case STELLAR_FAILURE_CLONE_CANCELLED: return
+                case STELLAR_FAILURE_CLONE_TARGET_EXISTS: self.welcomeData.postNotice(.folderAlreadyExists(path: path))
+                case STELLAR_FAILURE_PROJECT_CLONE_FAILED: self.welcomeData.postNotice(.operationFailed(.projectCloneFailed))
+                default: self.presentOpenFailure(Self.failure(coreCode: code, path: path), path: path, origin: .welcome)
+                }
+            } else if let request = event.request {
+                self.welcomeData.setActivity(WelcomeActivity(id: request, kind: .opening, projectName: folderName,
+                                                            fractionCompleted: nil, isCancellable: false))
+                self.finishOpening(path: path, origin: .welcome, event: event, createdGitState: nil)
+            }
+        }
+        switch result {
+        case .success(let request):
+            pendingOpenPaths.insert(path)
+            welcomeData.setActivity(WelcomeActivity(id: request, kind: .cloning, projectName: folderName,
+                                                    fractionCompleted: nil, isCancellable: true))
+        case .failure:
+            welcomeData.postNotice(.operationFailed(.projectCloneFailed))
         }
     }
 
@@ -281,7 +325,7 @@ final class ShellAppCoordinator: NSObject {
                 case .success(let windowSession):
                     let projectWindow = self.makeProjectWindow(rootPath: root)
                     projectWindow.didOpen(projectSession, windowSession: windowSession)
-                    if createdGitState != nil { projectWindow.fitNewProjectFrame() }
+                    if createdGitState != nil { projectWindow.performSessionCommand(.zoomToFit) }
                     self.present(projectWindow)
                     if let state = createdGitState, state != 0 {
                         let message = state == 1
@@ -436,7 +480,8 @@ final class ShellAppCoordinator: NSObject {
 
     private func makeProjectWindow(rootPath: String) -> ShellProjectWindow {
         let projectWindow = ShellProjectWindow(
-            rootPath: rootPath, runtimeHandle: runtimeHandle, configuration: windowConfiguration()
+            rootPath: rootPath, runtimeHandle: runtimeHandle, configuration: windowConfiguration(),
+            agentSource: makeAgentSource()
         )
         projectWindow.dataSource.commandHandler = { [weak self, weak projectWindow] id in
             guard let self, let projectWindow else { return }
@@ -564,6 +609,49 @@ final class ShellAppCoordinator: NSObject {
         showWelcomeIfNeeded()
     }
 
+    /// 각 창의 기존 close-save를 이용하되 모든 창이 저장될 때까지 실제 창은 하나도 닫지 않습니다.
+    func prepareToTerminate(confirmAgent: () -> Bool, reply: @escaping (Bool) -> Void) -> NSApplication.TerminateReply {
+        guard quitReply == nil else { return .terminateLater }
+        guard !confirmingQuit, !hasQuitBlocker else { return .terminateCancel }
+        if requiresConfirmationBeforeTerminating {
+            confirmingQuit = true
+            let confirmed = confirmAgent()
+            confirmingQuit = false
+            guard confirmed else { return .terminateCancel }
+        }
+        guard !hasQuitBlocker, projectWindows.allSatisfy({ $0.finishInputBeforeClosing() }) else { return .terminateCancel }
+        guard projectWindows.contains(where: { $0.needsSaveBeforeClosing }) else { return .terminateNow }
+        quitReply = reply
+        // AppKit의 terminateLater 처리가 끝난 후에만 reply를 전달합니다(동기 실패 포함).
+        DispatchQueue.main.async { [weak self] in self?.saveNextWindowForQuit() }
+        return .terminateLater
+    }
+
+    private var hasQuitBlocker: Bool {
+        projectWindows.contains { $0.window?.attachedSheet != nil || $0.closeConfirmationPending || $0.isWaitingToClose }
+    }
+
+    private func saveNextWindowForQuit() {
+        guard quitReply != nil else { return }
+        guard !hasQuitBlocker, projectWindows.allSatisfy({ $0.finishInputBeforeClosing() }) else { finishQuit(false); return }
+        // 앞서 저장한 창에도 새 요청이 들어왔을 수 있으므로 마지막 회신 전 다시 확인합니다.
+        guard let window = projectWindows.first(where: { $0.needsSaveBeforeClosing }) else {
+            finishQuit(true)
+            return
+        }
+        let ready = window.shouldCloseAfterSaving(forQuit: { [weak self] saved in
+            guard let self else { return }
+            if saved { self.saveNextWindowForQuit() } else { self.finishQuit(false) }
+        })
+        if ready { saveNextWindowForQuit() }
+    }
+
+    private func finishQuit(_ allow: Bool) {
+        let reply = quitReply
+        quitReply = nil
+        reply?(allow)
+    }
+
     /// 앱 종료 전 확인이 필요한 창이 있는지(활성 에이전트 세션).
     var requiresConfirmationBeforeTerminating: Bool {
         projectWindows.contains { $0.requiresConfirmationBeforeClosing }
@@ -574,7 +662,7 @@ final class ShellAppCoordinator: NSObject {
 ///
 /// 프로젝트를 만들거나 열 수 있고 설정 창을 열 수 있습니다.
 final class ShellApplicationCommandModel: ToolsMenuModel {
-    static let availableCommands: Set<ShellCommand> = [.newProject, .openProject, .settings]
+    static let availableCommands: Set<ShellCommand> = [.newProject, .openProject, .cloneProject, .settings]
 
     let snapshot = ToolsMenuSnapshot(
         generation: 1,
@@ -615,15 +703,12 @@ final class ShellWelcomeDataSource: WelcomeDataSource {
         defaultParentDirectory: nil
     )
     private var nextNoticeID: UInt64 = 1
-    /// 받은 명령(검사용).
-    private(set) var sentCommands: [WelcomeCommand] = []
 
     func currentSnapshot() -> WelcomeSnapshot {
         snapshot
     }
 
     func send(_ command: WelcomeCommand) {
-        sentCommands.append(command)
         switch command {
         case .openProject(let directory):
             MainActor.assumeIsolated {
@@ -633,12 +718,17 @@ final class ShellWelcomeDataSource: WelcomeDataSource {
             MainActor.assumeIsolated {
                 coordinator?.createProject(parentDirectory: parentDirectory, folderName: folderName)
             }
-        case .cloneProject:
-            postNotice(.operationFailed(.projectCloneUnavailable))
+        case .cloneProject(let remote, let parent, let name):
+            MainActor.assumeIsolated { coordinator?.cloneProject(remote: remote, parentDirectory: parent, folderName: name) }
+        case .cancelActivity(let id):
+            guard let activity = snapshot.activity, activity.id == id, activity.kind == .cloning, activity.isCancellable else { return }
+            MainActor.assumeIsolated {
+                if let handle = coordinator?.runtimeHandle { CoreRuntime.cancelClone(handle: handle, request: id) }
+            }
         case .dismissNotice(let id):
             guard snapshot.notice?.id == id else { return }
             update { $0.notice = nil }
-        case .openRecent, .removeRecent, .reloadRecentProjects, .recheckGit, .useGitExecutable, .cancelActivity:
+        case .openRecent, .removeRecent, .reloadRecentProjects, .recheckGit, .useGitExecutable:
             // 최근 목록·Git 탐색 코어 경로가 없고, 열기 요청은 취소할 수 없습니다(isCancellable == false).
             break
         }

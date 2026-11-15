@@ -23,9 +23,8 @@ enum ShellCanvasCullingCheck {
         window.contentView?.layoutSubtreeIfNeeded()
         let canvas = shell.canvasHost.canvasView
         let opened = clock() - start
-        var info = StellarCanvasInfo()
-        guard stellar_window_canvas(host.handle, session.session, Float(canvas.bounds.width), Float(canvas.bounds.height),
-                                    &info, nil, 0) == STELLAR_OK, info.count == 50_000, info.skipped == 0 else { return false }
+        guard let info = CoreRuntime.canvasInfo(handle: host.handle, session: session.session, size: canvas.bounds.size),
+              info.count == 50_000, info.skipped == 0 else { return false }
         let rebuildStart = clock()
         let freshScene = CanvasFrameScene()
         freshScene.refresh(handle: host.handle, session: session.session, size: canvas.bounds.size)

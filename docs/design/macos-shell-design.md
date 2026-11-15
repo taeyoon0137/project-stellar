@@ -226,7 +226,7 @@ Stellar macOS 셸이 운영체제 기본 구성요소 위에서 일관된 모습
 - **앞쪽 끝**: 사이드바 토글, 창 제목. 사용자 커스터마이즈 대상에서 뺍니다. [HIG Toolbars]
 - **가운데**: 자주 쓰는 도구 전환과 앱 명령. 사용자가 커스터마이즈할 수 있게 하고, 창이 좁아지면 overflow 메뉴로 접히게 합니다. [HIG Toolbars]
   - Select, Pan, Zoom 도구의 상호작용 상태 기계는 XII.3.6이 구현합니다. [계획 XII.3.6]
-  - Frame, Shape 생성 도구는 계획 XII.10.26, Image 삽입은 XII.10.27, 펜은 XII.10.29, Text 생성·편집은 XII.10.33이 구현합니다. [계획 XII.10]
+  - Frame, Shape 생성 도구는 계획 XII.10.26, Image 삽입은 XII.10.27, Text 생성·편집은 XII.10.33이 구현합니다. [계획 XII.10]
 - **뒤쪽 끝**: 인스펙터 토글, 프로젝트 전체 검색(검색 툴바 항목), 더 보기 메뉴. 대표 동작은 하나만 둡니다. [HIG Toolbars, HIG Search fields]
 - 사이드바·인스펙터 토글과 두 pane 경계에 맞춘 항목 정렬은 시스템 툴바 항목 식별자 `.toggleSidebar`, `.sidebarTrackingSeparator`, `.toggleInspector`, `.inspectorTrackingSeparator`로 구성합니다. 항목 위치를 직접 계산하지 않습니다. [AppKit 문서 NSToolbarItem.Identifier] [1.2절 원칙 1]
 - glass 묶음은 `NSToolbarItemGroup`과 spacer로 조절합니다. 저장 상태처럼 누를 수 없는 정보 항목은 테두리를 빼고(`isBordered = false`), 알림 표시는 `NSItemBadge`, 항목 숨김은 뷰가 아니라 `NSToolbarItem.isHidden`으로 합니다. [AppKit 문서 NSToolbarItem, NSToolbarItemGroup, NSItemBadge]
@@ -380,7 +380,7 @@ Stellar macOS 셸이 운영체제 기본 구성요소 위에서 일관된 모습
 | 사이드바 | 검증용 네이티브 필드 패널(검색, 레이어 이름, 값, 메모) | 문서·페이지·View 목록과 레이어 트리 | 골격은 XII.9.1, 내용은 전용 WBS 없음 |
 | 인스펙터 | 없음 | 속성·Value Binding·접근성 preview | 골격은 XII.9.1, 접근성 bridge는 XII.8.3, 내용은 전용 WBS 없음 |
 | 캔버스 | 창 배경 색만 칠하고 drawable 크기·scale만 전달 | Metal 렌더링, ShellTheme 전달(색 포함 여부는 O9), transient overlay | XII.4.1, XII.4.3, XII.4.4, XII.9.3 |
-| 입력 | 캔버스 입력 전달 없음 | InputEvent 변환·병합, 도구 상태 기계 | XII.3.2, XII.3.4, XII.3.6, 생성 도구는 XII.10.26, XII.10.27, XII.10.29, XII.10.33 |
+| 입력 | 캔버스 입력 전달 없음 | InputEvent 변환·병합, 도구 상태 기계 | XII.3.2, XII.3.4, XII.3.6, 생성 도구는 XII.10.26, XII.10.27, XII.10.33 |
 | 메뉴·명령 | 명시적 메인 메뉴 구성 없음 | 메뉴 막대, 표준 단축키, 활성 창 session 연결 | XII.6.1~XII.6.5 |
 | 접근성 | 지정 없음 | label·role·focus 순서, 캔버스 상태 노출 | XII.8.1, XII.9.4 |
 | 다중 창 | 단일 창, 앱 runtime handle 하나 | 같은 프로젝트 여러 창, 저장 충돌 alert | XII.2.2, XII.2.4, XII.7.3 |
@@ -431,7 +431,7 @@ Stellar macOS 셸이 운영체제 기본 구성요소 위에서 일관된 모습
 - `stellar` 명령 PATH 노출 화면: ADR-0005 Open Questions 7 결정 대기(7.3절)
 - 문서 연결: 이 문서를 `AGENTS.md` "주요 참고 문서"에 추가할지는 사용자 승인을 받아 정합니다. [AGENTS.md 지침 우선순위]
 
-처음 이 목록에 있던 Frame·Shape·Text 생성 도구(6.1절)와 가이드·측정 표시(1.2절 원칙 2)는 캔버스 편집 UX 계획(XII.10.16, XII.10.19, XII.10.26, XII.10.27, XII.10.29, XII.10.33)에 반영되었습니다. [계획 XII.10]
+처음 이 목록에 있던 Frame·Shape·Text 생성 도구(6.1절)와 가이드·측정 표시(1.2절 원칙 2)는 캔버스 편집 UX 계획(XII.10.16, XII.10.19, XII.10.26, XII.10.27, XII.10.33)에 반영되었습니다. [계획 XII.10]
 
 ---
 

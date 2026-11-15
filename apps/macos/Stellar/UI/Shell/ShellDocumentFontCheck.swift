@@ -29,7 +29,7 @@ enum ShellDocumentFontCheck {
             }
             window.setContentSize(CGSize(width: 1280, height: 790))
             window.contentView?.layoutSubtreeIfNeeded()
-            project.fitNewProjectFrame()
+            project.performSessionCommand(.zoomToFit)
             return wait() ? project : nil
         }
         func sample(_ project: ShellProjectWindow) -> (CanvasFrameHit?, [UInt8])? {

@@ -16,9 +16,11 @@ extension ShellProjectWindow {
     func connectFrameInteractions() {
         let canvas = canvasHost.canvasView
         var handDrag: (point: NSPoint, session: UInt64, size: NSSize)?
+        var zoomDrag: (start: NSPoint, session: UInt64, camera: StellarWindowViewInfo, bounds: CGRect)?
         canvas.cancelFrameGesture = { [weak self, weak canvas] in
-            guard let self, self.frameDrag != nil || handDrag != nil else { return false }
+            guard let self, self.frameDrag != nil || handDrag != nil || zoomDrag != nil else { return false }
             handDrag = nil
+            zoomDrag = nil
             self.frameDrag = nil
             canvas?.setFrameDragPreview(id: nil, offset: .zero)
             canvas?.insertionOutline = nil
@@ -27,6 +29,42 @@ extension ShellProjectWindow {
         canvas.framePointerHandler = { [weak self, weak canvas] event in
             guard let self, let canvas else { return false }
             let point = CanvasInput.viewPoint(of: event, in: canvas)
+            if self.toolsModel.snapshot.activeTool == .zoom {
+                if event.type == .leftMouseDown {
+                    _ = canvas.cancelFrameGesture?()
+                    guard event.modifierFlags.intersection([.command, .shift, .control]).isEmpty,
+                          let session = self.windowController.windowSession, !session.isClosing, !session.isClosed,
+                          let camera = session.viewInfo, camera.has_view == 1 else { return false }
+                    canvas.window?.makeFirstResponder(canvas)
+                    zoomDrag = (point, session.session, camera, canvas.bounds)
+                    return true
+                }
+                guard let drag = zoomDrag else { return true }
+                guard let session = self.windowController.windowSession, let camera = session.viewInfo,
+                      !session.isClosing, !session.isClosed, session.session == drag.session, canvas.bounds == drag.bounds,
+                      UUID(uuid: camera.active_view) == UUID(uuid: drag.camera.active_view),
+                      camera.center_x == drag.camera.center_x, camera.center_y == drag.camera.center_y,
+                      camera.zoom == drag.camera.zoom else { _ = canvas.cancelFrameGesture?(); return true }
+                let area = CGRect(x: min(point.x, drag.start.x), y: min(point.y, drag.start.y),
+                                  width: abs(point.x - drag.start.x), height: abs(point.y - drag.start.y))
+                let isDrag = hypot(area.width, area.height) >= 3
+                if event.type == .leftMouseDragged {
+                    canvas.insertionOutline = isDrag ? CGPath(rect: area, transform: nil) : nil
+                    return true
+                }
+                _ = canvas.cancelFrameGesture?()
+                guard event.type == .leftMouseUp, let project = self.dataSource.session,
+                      !isDrag || (area.width > 0 && area.height > 0) else { return true }
+                let center = isDrag ? CGPoint(x: area.midX, y: area.midY) : drag.start
+                let anchor = CGPoint(x: center.x - drag.bounds.midX, y: center.y - drag.bounds.midY)
+                let fitFactor = isDrag ? Double(min(drag.bounds.width / area.width, drag.bounds.height / area.height)) : nil
+                _ = session.track({ project.pump.zoomAt(session: session.session, anchor: anchor, fitFactor: fitFactor,
+                                                        zoomOut: event.modifierFlags.contains(.option), completion: $0) }) { [weak self, weak session] _ in
+                    guard let self, self.windowController.windowSession === session else { return }
+                    self.refreshSessionCommands()
+                }
+                return true
+            }
             if event.type == .leftMouseDown, event.clickCount == 2, self.toolsModel.snapshot.activeTool == .move,
                let hit = canvas.frameHit(at: point), hit.isText {
                 return self.editCanvasText(hit, at: point, canvas: canvas)
@@ -77,7 +115,7 @@ extension ShellProjectWindow {
                 guard let hit = canvas.frameHit(at: point) else { return self.selectNodes([]) }
                 guard session.info?.revision == hit.revision, UUID(uuid: viewport.active_view) == hit.viewID,
                       self.selectNodes([hit.id]) else { return false }
-                if hit.isInstance || hit.isText || hit.isImage { return true }
+                if hit.isText || hit.isImage { return true }
                 self.frameDrag = CanvasFrameDrag(hit: hit, start: point, session: session.session,
                                                  size: canvas.bounds.size, viewport: viewport, canMove: self.gitSource.trusted, tool: .move)
                 return true

@@ -176,7 +176,7 @@ enum InspectorPropertyCatalog {
         note: "Fragments group layers without their own layout, transform, or effects. Convert to a Frame to add them."
     )
 
-    // MARK: Frame(VI.3, frame_metadata.rs key 0x0101~0x0107)
+    // MARK: Frame(VI.3, frame_metadata.rs key 0x0101~0x0109)
 
     static let frameClipChoices = [
         InspectorChoice("none", "None"),
@@ -185,9 +185,9 @@ enum InspectorPropertyCatalog {
     ]
 
     static let frameSizeRow = InspectorRowTemplate(id: "size", label: "Size", fields: [
-        InspectorFieldTemplate("frame.size.width", coreKey: 0x0101, label: "Width", short: "W",
+        InspectorFieldTemplate("frame.size.width", coreKey: 0x0108, label: "Width", short: "W",
                                control: .number(.nonNegativeLength)),
-        InspectorFieldTemplate("frame.size.height", coreKey: 0x0101, label: "Height", short: "H",
+        InspectorFieldTemplate("frame.size.height", coreKey: 0x0109, label: "Height", short: "H",
                                control: .number(.nonNegativeLength)),
     ])
 
@@ -227,6 +227,30 @@ enum InspectorPropertyCatalog {
                                control: .color),
     ])
 
+    // Rust Frame PropertyKey 순서와 같은 TL/TR/BR/BL 원본 값 인덱스.
+    enum FrameCorner: UInt32 {
+        case topLeft = 0x010a, topRight = 0x010b, bottomRight = 0x010c, bottomLeft = 0x010d
+
+        var index: Int { Int(rawValue - Self.topLeft.rawValue) }
+
+        var field: InspectorFieldTemplate {
+            let label: String, short: String
+            switch self {
+            case .topLeft:     (label, short) = ("Top Left Radius", "TL")
+            case .topRight:    (label, short) = ("Top Right Radius", "TR")
+            case .bottomRight: (label, short) = ("Bottom Right Radius", "BR")
+            case .bottomLeft:  (label, short) = ("Bottom Left Radius", "BL")
+            }
+            return InspectorFieldTemplate("frame.cornerRadius." + String(describing: self), coreKey: rawValue,
+                                          label: label, short: short, control: .number(.nonNegativeLength))
+        }
+    }
+
+    static let frameRadiusRows = [
+        InspectorRowTemplate(id: "radiusTop", label: "Radius", fields: [FrameCorner.topLeft.field, FrameCorner.topRight.field]),
+        InspectorRowTemplate(id: "radiusBottom", label: "", fields: [FrameCorner.bottomLeft.field, FrameCorner.bottomRight.field]),
+    ]
+
     static let frameAppearanceSection = InspectorSectionTemplate(.frameAppearance, "Appearance", rows: [
         frameBackgroundRow,
         InspectorRowTemplate(id: "border", label: "Border", fields: [
@@ -236,11 +260,7 @@ enum InspectorPropertyCatalog {
             InspectorFieldTemplate("frame.border.thickness", coreKey: 0x0105, label: "Border Width",
                                    control: .number(.nonNegativeLength)),
         ]),
-        radiusRow(id: "radiusTop", label: "Radius", prefix: "frame.cornerRadius", coreKey: 0x0106,
-                  corners: [("topLeft", "Top Left Radius", "TL"), ("topRight", "Top Right Radius", "TR")]),
-        radiusRow(id: "radiusBottom", label: "", prefix: "frame.cornerRadius", coreKey: 0x0106,
-                  corners: [("bottomLeft", "Bottom Left Radius", "BL"), ("bottomRight", "Bottom Right Radius", "BR")]),
-    ])
+    ] + frameRadiusRows)
 
     // MARK: Shape(VI.5)
 

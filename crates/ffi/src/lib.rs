@@ -851,6 +851,70 @@ pub unsafe extern "C" fn stellar_project_create(
     }
 }
 
+/// 새 폴더에 복제하고 일반 프로젝트 열기를 진행합니다.
+/// # Safety
+/// 입력은 지정 길이만큼 읽을 수 있는 UTF-8, out_request는 쓸 수 있는 u64여야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_project_clone(
+    handle: u64,
+    url: *const u8,
+    url_len: usize,
+    target: *const u8,
+    target_len: usize,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out_request.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe {
+            *out_request = 0;
+        }
+        if url_len > stellar_runtime::app::EVENT_TEXT_MAX
+            || target_len > stellar_runtime::app::EVENT_TEXT_MAX
+        {
+            return StellarStatus::InvalidArgument;
+        }
+        let url = match unsafe { decode_utf8_owned(url, url_len) } {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let target = match unsafe { decode_utf8_owned(target, target_len) } {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.clone_project(url, std::path::Path::new(&target)),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 이 runtime에서 진행 중인 동일한 복제 요청만 취소합니다.
+#[no_mangle]
+pub extern "C" fn stellar_project_clone_cancel(handle: u64, request: u64) -> StellarStatus {
+    ffi_guard(move || {
+        let Ok(reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let Some(app) = &rt.app else {
+            return StellarStatus::InvalidArgument;
+        };
+        app.cancel_project_clone(RequestId(request));
+        StellarStatus::Ok
+    })
+}
+
 /// 이름으로 새 프로젝트 컴포넌트 원본을 만드는 비동기 요청.
 /// # Safety
 /// name은 name_len개의 읽을 수 있는 UTF-8 바이트, out_request는 쓸 수 있는 u64여야 합니다.
@@ -1571,6 +1635,9 @@ mod tests {
             ("INVALID_VIEWPORT", RequestFailure::InvalidViewport),
             ("TRUST_UNAVAILABLE", RequestFailure::TrustUnavailable),
             ("PROJECT_CREATE_FAILED", RequestFailure::ProjectCreateFailed),
+            ("PROJECT_CLONE_FAILED", RequestFailure::ProjectCloneFailed),
+            ("CLONE_TARGET_EXISTS", RequestFailure::CloneTargetExists),
+            ("CLONE_CANCELLED", RequestFailure::CloneCancelled),
             ("GIT_NAMES_UNAVAILABLE", RequestFailure::GitNamesUnavailable),
         ];
         assert_eq!(
@@ -1654,7 +1721,10 @@ mod tests {
             "stellar_window_layer_rename",
             "stellar_window_session_resize_frame",
             "stellar_window_session_set_frame_background",
+            "stellar_window_session_set_frame_corner",
+            "stellar_window_selected_frame_corners",
             "stellar_window_session_insert_frame",
+            "stellar_window_session_insert_shape",
             "stellar_window_selection_target",
             "stellar_window_edit_selection",
             "stellar_window_session_delete_selection",

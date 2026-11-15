@@ -68,15 +68,3 @@ final class ShellPanelTabsSlot: ShellAuxiliaryPanelSlot {
         agentPanel.requiresConfirmationBeforeClosing
     }
 }
-
-/// 프로젝트 창이 영역 view controller에 넘기는 data source 묶음.
-///
-/// 영역별 코어 adapter가 생기기 전까지 쓰는 의도적 placeholder입니다(계획 1.2 규칙 6, 이름에 "Stub").
-/// 열린 프로젝트와 어긋난 표본 내용을 보여 주지 않도록 각 Stub의 "비어 있음"에 가까운 상태를 고릅니다.
-/// - 에이전트: 세션 없음.
-@MainActor
-enum ShellAreaDataStubs {
-    static func makeAgentSource() -> AgentPanelSource {
-        AgentSessionStub(scenario: .noSession)
-    }
-}

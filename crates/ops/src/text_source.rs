@@ -17,7 +17,7 @@ use stellar_project::identity::ProjectIdentity;
 use stellar_storage::chunk::pointer::ChunkPointer;
 pub use stellar_storage::hash::ContentHash;
 
-use crate::apply::{decode_commands, ApplyError, ApplyMode, CommandInput};
+use crate::apply::{decode_commands, rejected_input, ApplyError, ApplyMode, CommandInput};
 use crate::core_types::ids::StableId;
 use crate::core_types::revision::DocumentRevision;
 use crate::diff::{diff_records, DiffReport};
@@ -134,6 +134,11 @@ pub fn export(
             "문서 밖 chunk 또는 재직렬화로 보존할 수 없는 chunk가 있습니다".into(),
         ));
     }
+    stellar_project::fonts::document::verify_document_font_assets(
+        project,
+        &model.definition().text_styles,
+    )
+    .map_err(|error| TextSourceOperationError::Invalid(error.to_string()))?;
     Ok(TextSourceOutcome {
         document: model.document_id(),
         source_hash: text_source::save_new(output, &model)?,
@@ -232,18 +237,18 @@ pub fn apply(
     };
     state
         .execute_transaction(&transaction)
-        .map_err(|failure| ApplyError::Rejected {
-            index: failure.index,
-            reason: failure.error.to_string(),
-        })?;
+        .map_err(|failure| rejected_input(&request.commands, failure))?;
     let model = state.into_model();
-    // dry-run도 실제 저장과 같은 지원 범위 및 크기 검사를 통과해야 합니다.
-    text_source::validate_model(&model)?;
     let mut after = model
         .to_records()
         .map_err(|e| ApplyError::InvalidResult(e.to_string()))?;
     after.sort_canonical();
     let diff = diff_records(&[&before], &[&after]).map_err(|e| ApplyError::Projection(e.0))?;
+    // 저장은 save 안에서 같은 codec으로 검증합니다. dry-run 및 주석을 보존하는 무변경
+    // 저장도 실제 writer가 이 모델을 표현할 수 있는지 확인합니다.
+    if mode == ApplyMode::DryRun || before == after {
+        text_source::validate_model(&model)?;
+    }
     let source_hash = match mode {
         ApplyMode::DryRun => opened.source_hash,
         ApplyMode::Write => text_source::save(path, &model, opened.source_hash)?,
@@ -254,7 +259,7 @@ pub fn apply(
         source_hash,
         document: request.document,
         node_count: model.node_count(),
-        command_count: commands.len(),
+        command_count: request.commands.len(),
         diff,
         written: source_hash != opened.source_hash,
     })
@@ -373,7 +378,8 @@ mod tests {
         };
         let before = file_digest(&project.path);
         let saved = apply(&path, &source_request, ApplyMode::Write, &policy).unwrap();
-        assert_eq!(saved.diff.entries.len(), 2);
+        assert_eq!(saved.command_count, 2);
+        assert_eq!(saved.diff.entries.len(), 3);
         assert_eq!(file_digest(&project.path), before);
         let mut text_records = text_source::open(&path)
             .unwrap()
@@ -406,8 +412,8 @@ mod tests {
     fn unsupported_command_result_is_rejected_even_in_dry_run() {
         use stellar_commands::command::Command;
         use stellar_commands::node_ops::InsertNode;
+        use stellar_document::path::{IdentifiedPath, PathData};
         use stellar_document::records::NodePayload;
-        use stellar_document::shape::{RectangleParams, ShapeGeometry};
 
         let dir = TempDir::new("text-source-apply-unsupported");
         let lock_dir = TempDir::new("text-source-apply-unsupported-lock");
@@ -423,10 +429,7 @@ mod tests {
             .unwrap();
         node.id = StableId::new_v7(99, 0, 99);
         node.order_key = crate::core_types::order_key::OrderKey::from_bytes(vec![255]).unwrap();
-        node.payload = NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
-            size: crate::core_types::value::Size2::ZERO,
-            corner_radius: stellar_document::frame::CornerRadius::ZERO,
-        }));
+        node.payload = NodePayload::Path(IdentifiedPath::new(PathData::default(), vec![]).unwrap());
         let command = Command::InsertNode(InsertNode::single(node));
         let request = TextSourceApplyRequest {
             base_source_hash: hash,

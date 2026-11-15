@@ -36,6 +36,8 @@ pub use stellar_document::test_support::random_document::random_valid_document;
 
 /// 문서 모델 타입 재노출(fixture 작성용).
 pub use stellar_document::model::DocumentModel as FixtureDocument;
+/// 테스트에서 실제 새 문서와 같은 영속 스타일 표를 구성합니다.
+pub use stellar_document::text_styles::DocumentTextStyles;
 
 /// 테스트 임시 디렉터리(drop 시 삭제).
 #[derive(Debug)]
@@ -104,7 +106,43 @@ pub fn save_documents_with_schema(root: &Path, documents: &[&DocumentModel], sch
     run_save(root, &plan, &mut memory, &CancelToken::new()).expect("save");
 }
 
-/// 실제 v1 root Frame 컴포넌트 원본들을 만듭니다. 원본 검사는 측정 대상에서 한 번만 수행합니다.
+/// v3 이전 클라이언트와 호환되는, 고정된 v1 root Frame 테스트 원본.
+pub fn legacy_component_yaml(
+    id: StableId,
+    name: &str,
+    root: StableId,
+    width: u32,
+    height: u32,
+) -> String {
+    format!(
+        r#"format: stellar-component
+schema_version: "1"
+component:
+  id: "{id}"
+  name: {name}
+  root: "{root}"
+root_node:
+  id: "{root}"
+  parent: none
+  order_key: "80"
+  visible: "true"
+  locked: "false"
+  display_name: Root
+  kind: frame
+  payload:
+    size: "{width} {height}"
+    transform: "1 0 0 1 0 0"
+    clipping:
+      kind: frame-bounds
+    background: none
+    border: none
+    corner_radius: "0 0 0 0"
+    layout_mode: none
+"#
+    )
+}
+
+/// 이전 실행 파일과 같은 원본에서 비교하기 위해 v1 root Frame 컴포넌트들을 만듭니다.
 pub fn component_diff_fixture(folder: &Path, count: u64) -> std::path::PathBuf {
     use stellar_project::document_io::component_source::ComponentSource;
     std::fs::create_dir_all(folder).unwrap();
@@ -116,7 +154,7 @@ pub fn component_diff_fixture(folder: &Path, count: u64) -> std::path::PathBuf {
         let source = ComponentSource::new(component, name.clone(), root).unwrap();
         let path = folder.join(source.filename().unwrap());
         // create는 기존 라이브러리 전체에서 ID 중복을 검사합니다. fixture에는 위에서 만든 고유 ID만 씁니다.
-        let yaml = source.to_yaml().unwrap();
+        let yaml = legacy_component_yaml(component, &name, root, 0, 0);
         std::fs::write(&path, yaml).unwrap();
         first.get_or_insert(path);
     }

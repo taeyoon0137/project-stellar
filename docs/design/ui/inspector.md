@@ -112,7 +112,7 @@
 | 속성 | 경로 | 모델(key) | 컨트롤 | 단위·범위 | B |
 |---|---|---|---|---|---|
 | 위치 X·Y | `frame.transform.x/y` | `transform: Transform2D`의 이동(0x0102) | 수치 필드 ×2 | px | 예 |
-| 크기 W·H | `frame.size.width/height` | `size: Size2`(0x0101) | 수치 필드 ×2 | px, ≥ 0 | 예 |
+| 크기 W·H | `frame.size.width/height` | `width`(0x0108), `height`(0x0109) | 수치 필드 ×2 | px, ≥ 0 | 예 |
 | 회전 | `frame.transform.rotation` | `transform` 회전 성분(0x0102) | 수치 필드 + `NSStepper` | °, 소수 1자리 | 예 |
 | 좌우·상하 반전 | `frame.transform.flipHorizontal/Vertical` | `mirror_horizontally/vertically`(0x0102) | 아이콘 `NSButton` ×2 | — | 아니오 |
 | Clip | `frame.clipping` | `Clipping` Disabled/FrameBounds/Path(0x0103) | `NSPopUpButton`(None·Frame Bounds·Path) | Path 미해결이면 진단 | 예 |
@@ -120,9 +120,10 @@
 | 배경 사용 | `frame.background.enabled` | `background: Option<Color>`(0x0104) | `NSSwitch` | — | 아니오 |
 | 배경 색 | `frame.background.color` | 같음 | `NSColorWell`(minimal, 알파) | sRGB·Display P3 | 예 |
 | 테두리 사용·색·두께 | `frame.border.enabled/color/thickness` | `border: Option<Border>`(0x0105) | `NSSwitch` + `NSColorWell` + 수치 필드 | px, ≥ 0 | 색·두께 예 |
-| 모서리 4개 | `frame.cornerRadius.topLeft…bottomRight` | `CornerRadius`(0x0106) | 수치 필드 ×4(2행, TL·TR·BL·BR) | px, ≥ 0 | 예 |
+| 모서리 4개 | `frame.cornerRadius.topLeft…bottomRight` | `border-*-radius`(좌상 0x010a, 우상 0x010b, 우하 0x010c, 좌하 0x010d) | 수치 필드 ×4(2행, TL·TR·BL·BR) | px, ≥ 0 | 예 |
 
 - `transform`은 아핀 행렬입니다. 위치·회전 값은 코어가 분해해 보내고, 편집 명령을 받아 다시 합성합니다. 셸은 행렬을 계산하지 않습니다. 기울임(skew)은 편집하지 않습니다. [가이드 1.2 원칙 4]
+- Free Frame의 반경 필드는 저장된 원본 길이를 표시합니다. bounds를 넘는 반경은 화면에서만 정규화하며, 한 필드 확정과 Undo는 같은 모서리 하나에 적용합니다.
 - 음수 크기는 거부합니다(반전은 transform). 셸은 하한 0으로 clamp만 하고 최종 검증은 코어가 합니다. (`frame.rs` VI.3.3)
 
 ### 5.3 Fragment(`fragment.rs`)

@@ -212,6 +212,28 @@ impl<'a> Reader<'a> {
         Size2::new(w, h).map_err(|e| self.invalid(key, format!("{e:?}")))
     }
 
+    fn frame_size(&self) -> Result<Size2, ProjectionError> {
+        use keys::frame;
+        if self.get(frame::SIZE).is_some() {
+            if self.get(frame::WIDTH).is_some() || self.get(frame::HEIGHT).is_some() {
+                return Err(self.bad(frame::SIZE));
+            }
+            return self.size(frame::SIZE);
+        }
+        let [width] = self.floats(frame::WIDTH)?;
+        let [height] = self.floats(frame::HEIGHT)?;
+        Size2::new(width, height).map_err(|e| {
+            self.invalid(
+                if width < 0.0 {
+                    frame::WIDTH
+                } else {
+                    frame::HEIGHT
+                },
+                format!("{e:?}"),
+            )
+        })
+    }
+
     fn vec2(&self, key: PropertyKey) -> Result<Vec2, ProjectionError> {
         let [x, y] = self.floats(key)?;
         Vec2::new(x, y).map_err(|e| self.invalid(key, format!("{e:?}")))
@@ -232,6 +254,30 @@ impl<'a> Reader<'a> {
     fn corner_radius(&self, key: PropertyKey) -> Result<CornerRadius, ProjectionError> {
         let [tl, tr, br, bl] = self.floats(key)?;
         CornerRadius::new(tl, tr, br, bl).map_err(|e| self.invalid(key, format!("{e:?}")))
+    }
+
+    fn frame_corners(&self) -> Result<CornerRadius, ProjectionError> {
+        use keys::frame;
+        if self.get(frame::CORNER_RADIUS).is_some() {
+            if frame::BORDER_RADIUS_LONGHANDS
+                .iter()
+                .any(|&key| self.get(key).is_some())
+            {
+                return Err(self.bad(frame::CORNER_RADIUS));
+            }
+            return self.corner_radius(frame::CORNER_RADIUS);
+        }
+        let mut radii = [0.0; 4];
+        for (slot, key) in radii.iter_mut().zip(frame::BORDER_RADIUS_LONGHANDS) {
+            let [value] = self.floats(key)?;
+            if value < 0.0 {
+                return Err(self.invalid(key, "음수 모서리 반경"));
+            }
+            *slot = value;
+        }
+        let [tl, tr, br, bl] = radii;
+        CornerRadius::new(tl, tr, br, bl)
+            .map_err(|e| self.invalid(frame::CORNER_RADIUS, format!("{e:?}")))
     }
 
     fn small(&self, key: PropertyKey) -> Result<u8, ProjectionError> {
@@ -337,12 +383,12 @@ fn frame_payload(r: &Reader<'_>) -> Result<FramePayload, ProjectionError> {
         Some(_) => return Err(r.bad(frame::LAYOUT_MODE)),
     };
     Ok(FramePayload {
-        size: r.size(frame::SIZE)?,
+        size: r.frame_size()?,
         transform: r.transform(frame::TRANSFORM)?,
         clipping,
         background,
         border,
-        corner_radius: r.corner_radius(frame::CORNER_RADIUS)?,
+        corner_radius: r.frame_corners()?,
         layout_mode,
     })
 }
@@ -609,6 +655,59 @@ mod tests {
     fn canonical(mut records: DocumentRecords) -> DocumentRecords {
         records.sort_canonical();
         records
+    }
+
+    #[test]
+    fn old_frame_size_snapshots_are_read_without_guessing_mixed_keys() {
+        let records = head_records();
+        let mut snapshot = build(&records);
+        let frame = snapshot.get_mut(sid(10)).unwrap();
+        let width = frame.path(&[keys::frame::WIDTH]);
+        let height = frame.path(&[keys::frame::HEIGHT]);
+        let size = frame.path(&[keys::frame::SIZE]);
+        let floats = |value| FiniteF32::new(value).unwrap();
+        frame
+            .insert_property(
+                size,
+                SemanticValue::Floats(vec![floats(320.), floats(240.)]),
+            )
+            .unwrap();
+        assert!(frame_payload(&Reader { object: frame }).is_err());
+        frame.remove_property(&width).unwrap();
+        frame.remove_property(&height).unwrap();
+        assert_eq!(
+            document_records(&snapshot, sid(1)).unwrap().records,
+            canonical(records)
+        );
+    }
+
+    #[test]
+    fn old_radius_snapshot_restores_only_without_longhands() {
+        let records = head_records();
+        let mut snapshot = build(&records);
+        let object = snapshot.get_mut(sid(10)).unwrap();
+        let packed = object.path(&[keys::frame::CORNER_RADIUS]);
+        let mut radii = Vec::new();
+        for key in keys::frame::BORDER_RADIUS_LONGHANDS {
+            let path = object.path(&[key]);
+            let SemanticValue::Floats(value) = object.remove_property(&path).unwrap() else {
+                panic!("Frame 반경은 한 길이 값");
+            };
+            radii.extend(value);
+            assert!(frame_payload(&Reader { object }).is_err());
+        }
+        object
+            .insert_property(packed, SemanticValue::Floats(radii))
+            .unwrap();
+        assert_eq!(
+            frame_payload(&Reader { object }).unwrap().corner_radius,
+            CornerRadius::ZERO
+        );
+        let path = object.path(&[keys::frame::BORDER_BOTTOM_RIGHT_RADIUS]);
+        object
+            .insert_property(path, SemanticValue::Floats(vec![FiniteF32::ZERO]))
+            .unwrap();
+        assert!(frame_payload(&Reader { object }).is_err());
     }
 
     #[test]

@@ -19,6 +19,13 @@ use stellar_core_types::ids::StableId;
 use stellar_core_types::reference::ComponentRef;
 use stellar_core_types::typed_value::{TypedValue, ValueDecodeError};
 
+use super::definition::DefinitionNode;
+use crate::frame::{Clipping, FramePayload};
+use crate::modifier::{ModifierPayload, ModifierStack};
+use crate::record_codec::decode_payload;
+use crate::records::NodePayload;
+use stellar_core_types::value::Transform2D;
+
 use super::codec::{put_bytes, put_count, put_id, Malformed, Reader};
 use super::definition::{ComponentPropertyId, ComponentSlotId};
 use crate::node_kind::NodeKind;
@@ -338,6 +345,43 @@ impl ComponentInstancePayload {
         }
         ComponentInstancePayload::decode(bytes)
     }
+}
+
+/// 고정 Frame 정의를 배치하는 인스턴스의 활성 affine을 저장 순서로 합성합니다.
+pub fn frame_instance_transform(stack: Option<&ModifierStack>) -> Option<Transform2D> {
+    let mut position = Transform2D::identity();
+    for modifier in stack
+        .into_iter()
+        .flat_map(ModifierStack::entries)
+        .filter(|m| m.enabled)
+    {
+        let ModifierPayload::Transform(next) = modifier.payload else {
+            return None;
+        };
+        position = position.then(&next).ok()?;
+    }
+    Some(position)
+}
+
+/// 정의 root의 캔버스 원점만 배치 원점으로 대체합니다. 자식은 정의의 상대 좌표를 유지합니다.
+pub fn placed_free_frame(
+    node: &DefinitionNode,
+    root_placement: Option<Transform2D>,
+) -> Option<FramePayload> {
+    let NodePayload::Frame(mut frame) = decode_payload(node.kind, &node.payload).ok()? else {
+        return None;
+    };
+    if frame.layout_mode.is_some() || matches!(frame.clipping, Clipping::Path(_)) {
+        return None;
+    }
+    if let Some(placement) = root_placement {
+        let (a, b, c, d, _, _) = frame.transform.components();
+        frame.transform = Transform2D::new(a, b, c, d, 0., 0.)
+            .ok()?
+            .then(&placement)
+            .ok()?;
+    }
+    Some(frame)
 }
 
 #[cfg(test)]

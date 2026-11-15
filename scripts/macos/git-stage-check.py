@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import select
 import shutil
 import subprocess
 import sys
@@ -17,7 +18,8 @@ def main(app, cli, fixture):
         work = base / "project"
         home = base / "home"
         home.mkdir()
-        shutil.copytree(fixture, work)
+        origin = base / "origin"
+        shutil.copytree(fixture, origin)
         env = dict(os.environ, HOME=str(home), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
                    GIT_TERMINAL_PROMPT="0", GIT_ALLOW_PROTOCOL="file")
 
@@ -30,9 +32,13 @@ def main(app, cli, fixture):
                 raise RuntimeError(result.stderr or result.stdout)
             return json.loads(result.stdout)["result"]
 
-        git("init", "-q")
-        git("add", ".")
-        git("-c", "user.name=Stellar Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "baseline")
+        def seed(*args):
+            subprocess.run(["git", "-C", origin, *args], env=env, check=True, capture_output=True)
+        branch = "design/기준"
+        seed("init", "-q", "-b", branch)
+        seed("add", ".")
+        seed("-c", "user.name=Stellar Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "baseline")
+        subprocess.run(["git", "clone", "--quiet", "--no-local", origin, work], env=env, check=True)
         project = stellar("query", work, "project")
         document = project["documents"][0]["id"]
 
@@ -59,6 +65,26 @@ def main(app, cli, fixture):
         identity = project["project"]["id"]
         target = json.dumps(str(work.resolve()))
         trust.write_text(f"schema_version: 1\ntrusted:\n  - target: {target}\n    project_id: {identity}\n")
+
+        with subprocess.Popen([app, "--git-stage-check", work, "--observe-head"], env=env,
+                              text=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE) as probe:
+            def read_head(kind, expected):
+                probe.stdin.write(f"{kind} {expected}\n")
+                probe.stdin.flush()
+                if not select.select([probe.stdout], [], [], 30)[0]:
+                    probe.kill()
+                    raise TimeoutError("the Git panel did not refresh HEAD")
+                label = probe.stdout.readline().strip()
+                assert label, "the native Git panel rejected its branch label"
+                return label
+            before_head = read_head("branch", branch)
+            git("switch", "--quiet", "--detach", "HEAD")
+            detached = read_head("detached", git("rev-parse", "HEAD").decode().strip())
+            git("switch", "--quiet", branch)
+            restored = read_head("branch", branch)
+            probe.stdin.close()
+            assert probe.wait(timeout=15) == 0 and before_head == restored
+            print(f"git header ok: {before_head} → {detached} → {restored}", flush=True)
 
         def project_files():
             files = {}

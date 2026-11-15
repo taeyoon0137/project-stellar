@@ -1,4 +1,4 @@
-//! 활성 창에 표시된 Free Frame의 위치·크기를 하나의 문서 transaction으로 편집합니다.
+//! 활성 창의 Frame 편집, Rectangle 및 배치한 인스턴스 이동을 한 transaction으로 적용합니다.
 
 use super::*;
 use stellar_commands::command::Command;
@@ -16,13 +16,17 @@ use stellar_core_types::value::{Size2, Transform2D, Vec2};
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{ModifierEntry, ModifierId, ModifierKind, ModifierPayload};
 use stellar_document::modifier_metadata::keys::TRANSFORM_MATRIX;
-use stellar_document::shape::ShapeGeometry;
 
 #[derive(Clone, Copy)]
 enum FrameEdit {
     Move(Vec2),
     Resize(Size2),
     Background(Option<Color>),
+    Corner(
+        u64,
+        stellar_core_types::property::PropertyKey,
+        stellar_core_types::value::FiniteF32,
+    ),
 }
 
 impl AppRuntime {
@@ -61,6 +65,23 @@ impl AppRuntime {
         color: Option<Color>,
     ) -> Result<RequestId, RequestError> {
         self.edit_canvas_frame(session, view, revision, node, FrameEdit::Background(color))
+    }
+
+    /// 선택 Frame의 한 모서리만 원본 논리 픽셀 값으로 편집합니다.
+    pub fn set_canvas_frame_corner(
+        &self,
+        target: SelectionEditTarget,
+        node: StableId,
+        key: stellar_core_types::property::PropertyKey,
+        radius: stellar_core_types::value::FiniteF32,
+    ) -> Result<RequestId, RequestError> {
+        self.edit_canvas_frame(
+            target.session,
+            target.view,
+            target.revision,
+            node,
+            FrameEdit::Corner(target.history_sequence, key, radius),
+        )
     }
 
     fn edit_canvas_frame(
@@ -123,17 +144,42 @@ fn edit_selected(
     }
     let model = window.document().ok_or_else(stale)?.model();
     let command_id = command_id(window.window(), request);
-    let command =
-        if let (FrameEdit::Move(delta), Some(NodePayload::Shape(ShapeGeometry::Rectangle(_)))) =
-            (edit, model.payload(node))
-        {
+    let mut transaction = CommandTransaction::new(command_id, CommandOrigin::User);
+    let command = match (edit, model.payload(node)) {
+        (
+            FrameEdit::Move(delta),
+            Some(payload @ (NodePayload::Shape(_) | NodePayload::ComponentInstance(_))),
+        ) => {
             if delta == Vec2::ZERO {
                 return Ok(());
             }
             editable_ancestry(model, view, node, true).ok_or_else(stale)?;
             let stack = model.modifier_stack(node);
-            let style = crate::canvas::shape::rectangle_style(stack).ok_or_else(stale)?;
-            if let Some((modifier, last)) = style.last_transform {
+            let last_transform = match payload {
+                NodePayload::ComponentInstance(instance) => {
+                    // Place가 기록한 배치만 수정합니다. 별도 변환·override에는 손대지 않습니다.
+                    let [entry] = stack.ok_or_else(stale)?.entries() else {
+                        return Err(stale());
+                    };
+                    let ModifierPayload::Transform(matrix) = entry.payload else {
+                        return Err(stale());
+                    };
+                    let (a, b, c, d, _, _) = matrix.components();
+                    if !instance.has_no_overrides()
+                        || !entry.enabled
+                        || (a, b, c, d) != (1., 0., 0., 1.)
+                    {
+                        return Err(stale());
+                    }
+                    Some((entry.id, matrix))
+                }
+                _ => {
+                    crate::canvas::shape::shape_style(stack)
+                        .ok_or_else(stale)?
+                        .last_transform
+                }
+            };
+            if let Some((modifier, last)) = last_transform {
                 let next = translated(last, delta).ok_or_else(stale)?;
                 if next == last {
                     return Ok(());
@@ -161,7 +207,8 @@ fn edit_selected(
                     },
                 })
             }
-        } else {
+        }
+        _ => {
             let target = editable_frame(model, view, node).ok_or_else(stale)?;
             let (key, value) = match edit {
                 FrameEdit::Move(delta) => {
@@ -175,7 +222,30 @@ fn edit_selected(
                     if size == target.size {
                         return Ok(());
                     }
-                    (keys::SIZE, PropertyValue::Size(size))
+                    let [width, height] = SetProperty::frame_dimensions(node, size);
+                    if size.width() != target.size.width() {
+                        transaction =
+                            transaction.with_command(revision, Command::SetProperty(width));
+                    }
+                    if size.height() != target.size.height() {
+                        transaction =
+                            transaction.with_command(revision, Command::SetProperty(height));
+                    }
+                    return window.apply(&transaction).map(|_| ()).map_err(view_failure);
+                }
+                FrameEdit::Corner(sequence, key, radius) => {
+                    if window.history_sequence() != sequence {
+                        return Err(stale());
+                    }
+                    let Some(index) = keys::BORDER_RADIUS_LONGHANDS.iter().position(|&k| k == key)
+                    else {
+                        return Err(stale());
+                    };
+                    let (tl, tr, br, bl) = target.corner_radius.components();
+                    if [tl, tr, br, bl][index] == radius.get() {
+                        return Ok(());
+                    }
+                    (key, PropertyValue::NonNegative(radius))
                 }
                 FrameEdit::Background(color) => {
                     if target.background == color {
@@ -185,9 +255,9 @@ fn edit_selected(
                 }
             };
             Command::SetProperty(SetProperty { node, key, value })
-        };
-    let transaction =
-        CommandTransaction::new(command_id, CommandOrigin::User).with_command(revision, command);
+        }
+    };
+    let transaction = transaction.with_command(revision, command);
     window.apply(&transaction).map_err(view_failure)?;
     Ok(())
 }
@@ -213,7 +283,7 @@ fn editable_ancestry(
     model: &DocumentModel,
     view: StableId,
     node: StableId,
-    rectangle: bool,
+    modifier_target: bool,
 ) -> Option<()> {
     let root = model
         .definition()
@@ -229,7 +299,7 @@ fn editable_ancestry(
             .and_then(|id| model.columns().get(id))?;
         if !fields.visible
             || fields.locked
-            || (!(rectangle && current == node) && model.modifier_stack(current).is_some())
+            || (!(modifier_target && current == node) && model.modifier_stack(current).is_some())
         {
             return None;
         }
@@ -237,8 +307,8 @@ fn editable_ancestry(
             Some(NodePayload::Frame(frame))
                 if frame.layout_mode.is_none() && !matches!(frame.clipping, Clipping::Path(_)) => {}
             Some(NodePayload::Fragment(_)) => {}
-            Some(NodePayload::Shape(ShapeGeometry::Rectangle(_)))
-                if rectangle && current == node => {}
+            Some(NodePayload::Shape(_) | NodePayload::ComponentInstance(_))
+                if modifier_target && current == node => {}
             _ => return None,
         }
         if current == root {
@@ -340,11 +410,112 @@ mod tests {
     }
 
     #[test]
+    fn moving_a_placed_instance_only_edits_its_single_active_translation() {
+        use stellar_core_types::reference::ComponentRef;
+        use stellar_document::component::instance::ComponentInstancePayload;
+        use stellar_document::modifier::ModifierStack;
+        let mut model = sample_document();
+        let node = sid(30);
+        let mut record = model.record(sid(11)).unwrap();
+        record.id = node;
+        record.parent = Some(sid(11));
+        record.payload = NodePayload::ComponentInstance(ComponentInstancePayload::new(
+            ComponentRef::new(sid(90)),
+        ));
+        model.insert_node(record).unwrap();
+        let modifier = ModifierId::new(sid(31));
+        let mut placement = ModifierStack::new(node);
+        placement
+            .push_back(modifier, ModifierKind::Transform)
+            .unwrap();
+        placement
+            .set_payload(
+                modifier,
+                ModifierPayload::Transform(Transform2D::new(1., 0., 0., 1., 15., -3.).unwrap()),
+            )
+            .unwrap();
+        for case in [
+            "placed",
+            "no placement",
+            "disabled",
+            "scaled",
+            "additional",
+            "locked parent",
+        ] {
+            let (mut scene, _) = DocumentModel::from_records(model.to_records().unwrap()).unwrap();
+            let mut stack = placement.clone();
+            match case {
+                "disabled" => {
+                    stack.set_enabled(modifier, false).unwrap();
+                }
+                "scaled" => {
+                    stack
+                        .set_payload(
+                            modifier,
+                            ModifierPayload::Transform(
+                                Transform2D::new(2., 0., 0., 1., 15., -3.).unwrap(),
+                            ),
+                        )
+                        .unwrap();
+                }
+                "additional" => {
+                    stack
+                        .push_back(ModifierId::new(sid(32)), ModifierKind::Transform)
+                        .unwrap();
+                }
+                "locked parent" => {
+                    scene.replace_flags(sid(11), true, true).unwrap();
+                }
+                _ => {}
+            }
+            if case != "no placement" {
+                scene.set_modifier_stack(stack).unwrap();
+            }
+            let directory = saved_project_with("instance-move", &[&scene]);
+            let mut session =
+                ProjectWindowSession::load(identity(directory.path()), window(1)).unwrap();
+            session.select(Selection::new([node], None)).unwrap();
+            let revision = session.revision();
+            let edit = FrameEdit::Move(Vec2::new(7., -4.).unwrap());
+            let moved = edit_selected(&mut session, RequestId(1), sid(3), revision, node, edit);
+            if case != "placed" {
+                assert!(moved.is_err(), "{case}");
+                assert_eq!(session.revision(), revision);
+                assert_eq!(
+                    session.document().unwrap().model().to_records().unwrap(),
+                    scene.to_records().unwrap()
+                );
+                continue;
+            }
+            assert!(moved.is_ok());
+            assert!(
+                edit_selected(&mut session, RequestId(2), sid(3), revision, node, edit).is_err()
+            );
+            let mut expected = placement.clone();
+            expected
+                .set_payload(
+                    modifier,
+                    ModifierPayload::Transform(Transform2D::new(1., 0., 0., 1., 22., -7.).unwrap()),
+                )
+                .unwrap();
+            assert_eq!(
+                session.document().unwrap().model().modifier_stack(node),
+                Some(&expected)
+            );
+            assert!(session.undo().unwrap());
+            assert_eq!(
+                session.document().unwrap().model().to_records().unwrap(),
+                scene.to_records().unwrap()
+            );
+        }
+    }
+
+    #[test]
     fn rectangle_translation_preserves_geometry_and_other_modifier_entries() {
         use stellar_document::frame::CornerRadius;
         use stellar_document::modifier::ModifierStack;
         use stellar_document::records::NodeRecord;
-        use stellar_document::shape::RectangleParams;
+        use stellar_document::shape::{RectangleParams, ShapeGeometry};
         let delta = Vec2::new(7.0, -3.0).unwrap();
         let before = Transform2D::new(0.0, 2.0, -0.5, 0.0, -11.0, 8.0).unwrap();
         for has_transform in [false, true] {
@@ -466,6 +637,75 @@ mod tests {
     }
 
     #[test]
+    fn returning_to_the_same_selected_frame_rejects_the_old_corner_edit() {
+        let project = saved_project_with("corner-return-selection", &[&sample_document()]);
+        let mut session = ProjectWindowSession::load(identity(project.path()), window(1)).unwrap();
+        let (a, b) = (sid(11), sid(10));
+        session.select(Selection::new([a], None)).unwrap();
+        let revision = session.revision();
+        let original_sequence = session.history_sequence();
+        session.select(Selection::new([b], None)).unwrap();
+        session.select(Selection::new([a], None)).unwrap();
+        assert_eq!(session.revision(), revision);
+        assert_ne!(session.history_sequence(), original_sequence);
+        let length = stellar_core_types::value::FiniteF32::new(128.).unwrap();
+        let stale = edit_selected(
+            &mut session,
+            RequestId(9),
+            sid(3),
+            revision,
+            a,
+            FrameEdit::Corner(original_sequence, keys::BORDER_TOP_RIGHT_RADIUS, length),
+        );
+        assert!(
+            stale.is_err(),
+            "old edit after A -> B -> A: captured seq={original_sequence}, resulting rev={:?}",
+            session.revision()
+        );
+        assert_eq!(session.revision(), revision);
+        let current = session.history_sequence();
+        assert!(edit_selected(
+            &mut session,
+            RequestId(10),
+            sid(3),
+            revision,
+            a,
+            FrameEdit::Corner(current, keys::BORDER_TOP_RIGHT_RADIUS, length),
+        )
+        .is_ok());
+        assert_eq!(session.revision().0, revision.0 + 1);
+    }
+
+    #[test]
+    fn corner_edits_reject_stale_selection_revision_and_invalid_key() {
+        let model = sample_document();
+        let project = saved_project_with("corner-edit-target", &[&model]);
+        let mut session = ProjectWindowSession::load(identity(project.path()), window(1)).unwrap();
+        let revision = session.revision();
+        let key = keys::BORDER_BOTTOM_RIGHT_RADIUS;
+        let length = stellar_core_types::value::FiniteF32::new(128.).unwrap();
+        session.select(Selection::new([sid(11)], None)).unwrap();
+        let sequence = session.history_sequence();
+        for (view, node, rev, property) in [
+            (sid(3), sid(10), revision, key),
+            (sid(4), sid(11), revision, key),
+            (sid(3), sid(11), DocumentRevision(revision.0 + 1), key),
+            (sid(3), sid(11), revision, keys::SIZE),
+        ] {
+            assert!(edit_selected(
+                &mut session,
+                RequestId(1),
+                view,
+                rev,
+                node,
+                FrameEdit::Corner(sequence, property, length)
+            )
+            .is_err());
+            assert_eq!(session.revision(), revision);
+        }
+    }
+
+    #[test]
     fn locked_ancestor_prevents_moving_a_selected_child() {
         let mut model = sample_document();
         model.replace_flags(sid(10), true, true).unwrap();
@@ -474,6 +714,7 @@ mod tests {
         let revision = session.revision();
         session.select(Selection::new([sid(11)], None)).unwrap();
         let delta = Vec2::new(12.0, -8.5).unwrap();
+        let expected_selection = session.history_sequence();
         assert!(edit_selected(
             &mut session,
             RequestId(1),
@@ -499,6 +740,19 @@ mod tests {
             revision,
             sid(11),
             FrameEdit::Background(None)
+        )
+        .is_err());
+        assert!(edit_selected(
+            &mut session,
+            RequestId(4),
+            sid(3),
+            revision,
+            sid(11),
+            FrameEdit::Corner(
+                expected_selection,
+                keys::BORDER_TOP_LEFT_RADIUS,
+                stellar_core_types::value::FiniteF32::ZERO
+            )
         )
         .is_err());
         assert_eq!(session.revision(), revision);
@@ -540,6 +794,22 @@ mod tests {
             .unwrap();
         assert!(
             matches!(next_event(&app),RuntimeEvent::RequestFailed{request,failure: RequestFailure::TrustUnavailable,..} if request == resized)
+        );
+        let corner = app
+            .set_canvas_frame_corner(
+                SelectionEditTarget {
+                    session,
+                    view: sid(3),
+                    revision: rev,
+                    history_sequence: app.state().window(session).unwrap().history_sequence,
+                },
+                sid(11),
+                keys::BORDER_TOP_RIGHT_RADIUS,
+                stellar_core_types::value::FiniteF32::new(128.).unwrap(),
+            )
+            .unwrap();
+        assert!(
+            matches!(next_event(&app), RuntimeEvent::RequestFailed {request, failure: RequestFailure::TrustUnavailable, ..} if request == corner)
         );
         let state = app.state();
         let summary = state.window(session).unwrap();

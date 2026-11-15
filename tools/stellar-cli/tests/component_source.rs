@@ -2,11 +2,11 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output},
 };
 use stellar_cli::json::{parse, JsonLimits, JsonValue};
 use stellar_ops::test_support::{
-    file_digest, large_document, save_documents, scaffold_project, TempDir,
+    file_digest, large_document, legacy_component_yaml, save_documents, scaffold_project, TempDir,
 };
 
 const A: &str = "0195c530-3acd-7bc1-8414-c213f61cb965";
@@ -39,8 +39,10 @@ fn run(work: &Path, home: &Path, command: &str, args: &[&str], exit: i32) -> Jso
     .unwrap();
     envelope.get("result").unwrap().clone()
 }
-fn git(repo: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+fn git_output(repo: &Path, args: &[&str]) -> Output {
+    Command::new("git")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .args([
             "-c",
             "user.name=Fixture",
@@ -54,7 +56,10 @@ fn git(repo: &Path, args: &[&str]) -> String {
         .args(args)
         .current_dir(repo)
         .output()
-        .unwrap();
+        .unwrap()
+}
+fn git(repo: &Path, args: &[&str]) -> String {
+    let out = git_output(repo, args);
     assert!(
         out.status.success(),
         "{}",
@@ -64,6 +69,226 @@ fn git(repo: &Path, args: &[&str]) -> String {
 }
 fn value<'a>(v: &'a JsonValue, key: &str) -> &'a str {
     v.get(key).unwrap().as_str().unwrap()
+}
+
+#[test]
+fn git_and_semantic_merge_of_two_clones_separate_frame_width_and_height() {
+    let fixture = TempDir::new("same-card-dimensions");
+    let base = fixture.path.join("base");
+    let home = fixture.path.join("home");
+    fs::create_dir(&home).unwrap();
+    scaffold_project(&base);
+    save_documents(&base, &[&large_document(4)]);
+    fs::create_dir_all(base.join("design/components")).unwrap();
+    let card = cli(
+        &base,
+        &home,
+        &["create", "design/components", "Card", A, AR],
+        0,
+    );
+    let file = value(&card, "file");
+    let initial = cli(
+        &base,
+        &home,
+        &["resize", file, value(&card, "source_hash"), "90", "60"],
+        0,
+    );
+    git(&base, &["init", "-q"]);
+    git(&base, &["add", "."]);
+    git(&base, &["commit", "-qm", "Card 90x60"]);
+    let clone = |name, width, height| {
+        let root = fixture.path.join(name);
+        git(
+            &base,
+            &[
+                "clone",
+                "--quiet",
+                "--no-local",
+                ".",
+                root.to_str().unwrap(),
+            ],
+        );
+        let resized = cli(
+            &root,
+            &home,
+            &[
+                "resize",
+                file,
+                value(&initial, "source_hash"),
+                width,
+                height,
+            ],
+            0,
+        );
+        (root, resized)
+    };
+    let (ours, _) = clone("ours", "144", "60");
+    let (theirs, resized) = clone("theirs", "90", "96");
+    let args = [".", ours.to_str().unwrap(), theirs.to_str().unwrap()];
+    let merged = run(&base, &home, "semantic-merge", &args, 0);
+    assert_eq!(merged.get("clean"), Some(&JsonValue::Bool(true)));
+    let entries = merged
+        .get("changes")
+        .unwrap()
+        .get("entries")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), 2);
+    for (entry, (axis, size)) in entries.iter().zip([("0x0108", 144), ("0x0109", 96)]) {
+        assert_eq!(value(entry, "object"), AR);
+        assert_eq!(value(entry, "path"), axis);
+        assert_eq!(
+            entry
+                .get("new")
+                .unwrap()
+                .get("value")
+                .unwrap()
+                .as_array()
+                .unwrap(),
+            &[JsonValue::int(size)]
+        );
+    }
+    for (repo, branch) in [(&ours, "width"), (&theirs, "height")] {
+        git(repo, &["switch", "-qc", branch]);
+        git(repo, &["add", "--", file]);
+        git(repo, &["commit", "-qm", branch]);
+        git(
+            &base,
+            &[
+                "fetch",
+                repo.to_str().unwrap(),
+                &format!("{branch}:{branch}"),
+            ],
+        );
+    }
+    let fresh = fixture.path.join("fresh");
+    git(&base, &["switch", "-qc", "combined", "width"]);
+    git(&base, &["merge", "--no-edit", "height"]);
+    git(
+        &base,
+        &[
+            "clone",
+            "--quiet",
+            "--no-local",
+            ".",
+            fresh.to_str().unwrap(),
+        ],
+    );
+    let query = run(&fresh, &home, "query", &[".", "components"], 0);
+    let component = &query.get("entries").unwrap().as_array().unwrap()[0];
+    assert_eq!(value(component, "id"), A);
+    assert_eq!(value(component, "root"), AR);
+    assert_eq!(value(component, "width"), "144");
+    assert_eq!(value(component, "height"), "96");
+    assert!(git(&fresh, &["status", "--porcelain"]).is_empty());
+    let detail = run(&fresh, &home, "query", &[".", "component", A], 0);
+    assert_eq!(
+        value(&detail, "source_hash"),
+        value(component, "source_hash")
+    );
+    let root = &detail.get("nodes").unwrap().as_array().unwrap()[0];
+    assert_eq!(value(root, "id"), AR);
+    assert_eq!(root.get("parent"), Some(&JsonValue::Null));
+    assert_eq!(value(root.get("payload").unwrap(), "width"), "144");
+    assert_eq!(value(root.get("payload").unwrap(), "height"), "96");
+    // semantic-merge에는 원래 공통 조상 checkout을 전달합니다.
+    git(&base, &["switch", "--detach", "width^"]);
+    cli(
+        &theirs,
+        &home,
+        &["resize", file, value(&resized, "source_hash"), "128", "96"],
+        0,
+    );
+    let conflicted = run(&base, &home, "semantic-merge", &args, 1);
+    let conflicts = conflicted.get("conflicts").unwrap().as_array().unwrap();
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(value(&conflicts[0], "object"), AR);
+    assert_eq!(value(&conflicts[0], "path"), "0x0108");
+    git(&theirs, &["add", "--", file]);
+    git(&theirs, &["commit", "-qm", "conflicting width"]);
+    git(
+        &base,
+        &["fetch", theirs.to_str().unwrap(), "height:divergent"],
+    );
+    git(&base, &["switch", "-q", "width"]);
+    let conflict = git_output(&base, &["merge", "--no-edit", "divergent"]);
+    assert_eq!(conflict.status.code(), Some(1));
+    assert_eq!(
+        git(&base, &["diff", "--name-only", "--diff-filter=U"]),
+        file
+    );
+}
+
+#[test]
+fn semantic_merge_compares_each_frame_corner_in_the_component_source() {
+    let fixture = TempDir::new("frame-corners");
+    let base = fixture.path.join("base");
+    let home = fixture.path.join("home");
+    fs::create_dir(&home).unwrap();
+    scaffold_project(&base);
+    save_documents(&base, &[&large_document(4)]);
+    let folder = "design/components";
+    fs::create_dir_all(base.join(folder)).unwrap();
+    let card = cli(&base, &home, &["create", folder, "Card", A, AR], 0);
+    let file = value(&card, "file");
+    let original = fs::read_to_string(base.join(file)).unwrap();
+    let old = r#"corner_radius: "0 0 0 0""#;
+    assert_eq!(original.matches(old).count(), 1);
+    git(&base, &["init", "-q"]);
+    git(&base, &["add", "."]);
+    git(&base, &["commit", "-qm", "Card"]);
+    for side in ["ours", "theirs"] {
+        git(&fixture.path, &["clone", "-q", "--no-local", "base", side]);
+    }
+    let change = |side: &str, radii: &str| {
+        fs::write(
+            fixture.path.join(side).join(file),
+            original.replace(old, &format!(r#"corner_radius: "{radii}""#)),
+        )
+        .unwrap();
+    };
+    let args = ["base", "ours", "theirs"];
+    change("ours", "11 0 0 0");
+    change("theirs", "0 0 23 0");
+    let merged = run(&fixture.path, &home, "semantic-merge", &args, 0);
+    let changes = merged
+        .get("changes")
+        .unwrap()
+        .get("entries")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert_eq!(changes.len(), 2);
+    for (entry, (key, number)) in changes.iter().zip([("0x010a", 11), ("0x010c", 23)]) {
+        assert_eq!(value(entry, "component"), A);
+        assert_eq!(value(entry, "object"), AR);
+        assert_eq!(value(entry, "path"), key);
+        assert_eq!(
+            entry
+                .get("new")
+                .unwrap()
+                .get("value")
+                .unwrap()
+                .as_array()
+                .unwrap(),
+            &[JsonValue::int(number)]
+        );
+    }
+    change("theirs", "17 0 23 0");
+    let unresolved = run(&fixture.path, &home, "semantic-merge", &args, 1);
+    let conflicts = unresolved.get("conflicts").unwrap().as_array().unwrap();
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(value(&conflicts[0], "path"), "0x010a");
+    let kept = unresolved
+        .get("changes")
+        .unwrap()
+        .get("entries")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(value(&kept[0], "path"), "0x010c");
 }
 
 #[test]
@@ -156,6 +381,105 @@ fn independent_component_files_merge_and_open_without_cache() {
 }
 
 #[test]
+fn set_fill_matches_project_query_and_protects_root_source_on_failed_edits() {
+    let fixture = TempDir::new("component-fill");
+    let project = fixture.path.join("project");
+    let home = fixture.path.join("home");
+    fs::create_dir(&home).unwrap();
+    scaffold_project(&project);
+    save_documents(&project, &[&large_document(2)]);
+    let dir = "design/components";
+    fs::create_dir_all(project.join(dir)).unwrap();
+    let edit = |args: &[&str], status| cli(&project, &home, args, status);
+    let card = edit(&["create", dir, "Card", A, AR], 0);
+    edit(&["create", dir, "Badge", B, BR], 0);
+    let file = value(&card, "file");
+    let hash = value(&card, "source_hash");
+    assert_eq!(card.get("background"), Some(&JsonValue::Null));
+    let before = file_digest(&project);
+    let filled = edit(
+        &[
+            "set-fill",
+            file,
+            hash,
+            "display-p3",
+            "1.2",
+            "-0.1",
+            "0.5",
+            "0",
+        ],
+        0,
+    );
+    let changed: Vec<_> = file_digest(&project)
+        .into_iter()
+        .filter(|(k, v)| before.get(k) != Some(v))
+        .map(|(k, _)| k)
+        .collect();
+    assert_eq!(changed, [file]);
+    let owned = filled.get("background").unwrap();
+    assert_eq!(value(owned, "space"), "display-p3");
+    assert_eq!(value(owned, "rgba"), "1.2 -0.1 0.5 0");
+    let query = run(&project, &home, "query", &[".", "components"], 0);
+    assert_eq!(
+        query.get("entries").unwrap().as_array().unwrap()[0].get("background"),
+        Some(owned)
+    );
+    let path = project.join(file);
+    let current = format!("# local comment\n{}", fs::read_to_string(&path).unwrap());
+    fs::write(&path, &current).unwrap();
+    let refreshed = edit(&["check", dir], 0);
+    let new_hash = value(
+        &refreshed.get("components").unwrap().as_array().unwrap()[0],
+        "source_hash",
+    );
+    edit(
+        &[
+            "set-fill",
+            file,
+            new_hash,
+            "display-p3",
+            "1.2",
+            "-0.1",
+            "0.5",
+            "0",
+        ],
+        0,
+    );
+    edit(&["set-fill", file, hash, "none"], 75);
+    for (space, r, a) in [
+        ("srgb", "NaN", "0"),
+        ("srgb", "0", "1.1"),
+        ("unknown", "0", "0"),
+    ] {
+        edit(&["set-fill", file, new_hash, space, r, "0", "0", a], 65);
+    }
+    assert_eq!(fs::read_to_string(&path).unwrap(), current);
+    let locked = edit(&["set-locked", file, new_hash, AR, "true"], 0);
+    let bytes = fs::read(&path).unwrap();
+    edit(
+        &["set-fill", file, value(&locked, "source_hash"), "none"],
+        65,
+    );
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    let unlocked = edit(
+        &[
+            "set-locked",
+            file,
+            value(&locked, "source_hash"),
+            AR,
+            "false",
+        ],
+        0,
+    );
+    let removed = edit(
+        &["set-fill", file, value(&unlocked, "source_hash"), "none"],
+        0,
+    );
+    assert_eq!(removed.get("background"), Some(&JsonValue::Null));
+    assert_eq!(file_digest(&project), before);
+}
+
+#[test]
 fn duplicate_ids_stale_writes_and_unsupported_sources_preserve_files() {
     let fixture = TempDir::new("component-source-errors");
     let folder = fixture.path.join("components");
@@ -243,6 +567,19 @@ fn nested_unsupported_records_and_invalid_references_are_never_rewritten() {
         .collect();
     unsupported.extend([
         (
+            original.replace(r#"schema_version: "3""#, r#"schema_version: "4""#),
+            69,
+        ),
+        (
+            original.replace(r#"    width: "0""#, r#"    size: "0 0""#),
+            69,
+        ),
+        (original.replace(r#"    width: "0""#, ""), 65),
+        (
+            original.replace(r#"    height: "0""#, r#"    height: "-1""#),
+            65,
+        ),
+        (
             original.replace("root_node:\n", "root_node:\n  children: []\n"),
             69,
         ),
@@ -288,6 +625,58 @@ const SECOND: &str = "0195c530-3acd-7bc1-8414-c213f61cb970";
 const NESTED: &str = "0195c530-3acd-7bc1-8414-c213f61cb960";
 
 #[test]
+fn legacy_component_edits_keep_the_paired_size_and_original_encoding() {
+    let fixture = TempDir::new("legacy-component-dimensions");
+    let folder = fixture.path.join("components");
+    let home = fixture.path.join("home");
+    fs::create_dir(&folder).unwrap();
+    fs::create_dir(&home).unwrap();
+    let run = |args: &[&str]| cli(&folder, &home, args, 0);
+    let file = "Card-8c5619572809.stellar.yaml";
+    let path = folder.join(file);
+    let legacy = legacy_component_yaml(A.parse().unwrap(), "Card", AR.parse().unwrap(), 90, 60);
+    let commented = format!("# Card\n{legacy}");
+    fs::write(&path, &commented).unwrap();
+    let checked = run(&["check", "."]);
+    let card = &checked.get("components").unwrap().as_array().unwrap()[0];
+    assert_eq!(value(card, "id"), A);
+    assert_eq!(value(card, "root"), AR);
+    let hash = value(card, "source_hash");
+    run(&["resize", file, hash, "90", "60"]);
+    assert_eq!(fs::read_to_string(&path).unwrap(), commented);
+    let resized = run(&["resize", file, hash, "144", "60"]);
+    let expected = legacy.replace(r#"size: "90 60""#, r#"size: "144 60""#);
+    assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+    let tree = run(&[
+        "add-frame",
+        file,
+        value(&resized, "source_hash"),
+        AR,
+        FIRST,
+        "Child",
+        "15",
+        "16",
+    ]);
+    let old_tree = fs::read_to_string(&path).unwrap();
+    assert!(old_tree.contains(r#"schema_version: "2""#));
+    assert_eq!(old_tree.matches("size: ").count(), 2);
+    let child = run(&[
+        "resize-frame",
+        file,
+        value(&tree, "source_hash"),
+        FIRST,
+        "15",
+        "20",
+    ]);
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        old_tree.replace(r#"size: "15 16""#, r#"size: "15 20""#)
+    );
+    run(&["remove-frame", file, value(&child, "source_hash"), FIRST]);
+    assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+}
+
+#[test]
 fn nested_frames_survive_a_component_rename_and_fresh_clone() {
     let fixture = TempDir::new("component-frames-clone");
     let repo = fixture.path.join("repo");
@@ -303,7 +692,7 @@ fn nested_frames_survive_a_component_rename_and_fresh_clone() {
     let other = value(&b, "file");
     let original = fs::read_to_string(repo.join(file)).unwrap();
     let other_bytes = fs::read(repo.join(other)).unwrap();
-    assert!(original.contains("schema_version: \"1\"\n"));
+    assert!(original.contains("schema_version: \"3\"\n"));
     assert!(!original.contains("children:"));
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-qm", "root frames"]);
@@ -329,7 +718,7 @@ fn nested_frames_survive_a_component_rename_and_fresh_clone() {
     assert_eq!(info.get("node_count").and_then(JsonValue::as_i64), Some(4));
     assert_eq!(git(&repo, &["diff", "--name-only"]), file);
     let yaml = fs::read_to_string(repo.join(file)).unwrap();
-    assert!(yaml.contains("schema_version: \"2\"\n"));
+    assert!(yaml.contains("schema_version: \"3\"\n"));
     let root_lines = original.split_once("root_node:\n").unwrap().1;
     assert!(yaml.contains(&format!("root_node:\n{root_lines}")));
     let child_records: Vec<_> = yaml
@@ -356,7 +745,8 @@ fn nested_frames_survive_a_component_rename_and_fresh_clone() {
     let resized_yaml = fs::read_to_string(repo.join(file)).unwrap();
     assert_eq!(
         resized_yaml,
-        yaml.replacen("size: \"0 0\"", "size: \"248.5 44\"", 1)
+        yaml.replacen("width: \"0\"", "width: \"248.5\"", 1)
+            .replacen("height: \"0\"", "height: \"44\"", 1)
     );
     assert_ne!(resized_yaml, yaml);
     assert_eq!(fs::read(repo.join(other)).unwrap(), other_bytes);
@@ -532,7 +922,13 @@ fn semantic_diff_compares_project_components_across_git_worktrees() {
         .unwrap()
         .as_array()
         .unwrap();
-    assert_eq!(changes.len(), 5, "{changes:?}");
+    assert_eq!(changes.len(), 6, "{changes:?}");
+    let dimensions: Vec<_> = changes
+        .iter()
+        .filter(|e| value(e, "object") == AR)
+        .map(|e| value(e, "path"))
+        .collect();
+    assert_eq!(dimensions, ["0x0108", "0x0109"]);
     for (id, kind, owner) in [
         (A, "set-property", A),
         (AR, "set-property", A),
@@ -556,7 +952,7 @@ fn semantic_diff_compares_project_components_across_git_worktrees() {
     assert_eq!(observe(), result);
 
     let summary = run(&repo, &home, "diff-summary", &args, 0);
-    assert_eq!(summary.get("total").and_then(JsonValue::as_i64), Some(5));
+    assert_eq!(summary.get("total").and_then(JsonValue::as_i64), Some(6));
     let entries = summary.get("changes").unwrap().as_array().unwrap();
     assert_eq!(entries[0].get("component"), changes[0].get("component"));
 
@@ -587,10 +983,13 @@ fn semantic_diff_compares_project_components_across_git_worktrees() {
         1,
     );
     let conflicts = merge.get("conflicts").unwrap().as_array().unwrap();
-    assert_eq!(conflicts.len(), 1);
-    assert_eq!(value(&conflicts[0], "object"), AR);
-    assert_eq!(value(&conflicts[0], "component"), A);
-    assert_eq!(value(&conflicts[0], "kind"), "property-value");
+    assert_eq!(conflicts.len(), 2);
+    for (conflict, axis) in conflicts.iter().zip(["0x0108", "0x0109"]) {
+        assert_eq!(value(conflict, "object"), AR);
+        assert_eq!(value(conflict, "component"), A);
+        assert_eq!(value(conflict, "kind"), "property-value");
+        assert_eq!(value(conflict, "path"), axis);
+    }
     assert_eq!(observe(), result);
 
     // 손상된 텍스트 파일을 변경 없음으로 취급하거나 기록하지 않습니다.
@@ -717,7 +1116,12 @@ fn resize_frame_changes_only_nested_geometry_and_rejects_invalid_edits() {
     let hash = value(&changed, "source_hash");
     assert_ne!(hash, value(&child, "source_hash"));
     let after = fs::read_to_string(&path).unwrap();
-    assert_eq!(after, before.replace("size: \"12 8\"", "size: \"19.25 0\""));
+    assert_eq!(
+        after,
+        before
+            .replace("width: \"12\"", "width: \"19.25\"")
+            .replace("height: \"8\"", "height: \"0\"")
+    );
     let reopened = stellar_ops::component_source::check(&dir).unwrap();
     assert_eq!(reopened[0].hash.to_string(), hash);
     let noop = run(&["resize-frame", file, hash, NESTED, "19.25", "0"], 0);
@@ -736,7 +1140,9 @@ fn resize_frame_changes_only_nested_geometry_and_rejects_invalid_edits() {
     assert_eq!(value(&root, "height"), "50");
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
-        after.replacen("size: \"0 0\"", "size: \"100 50\"", 1)
+        after
+            .replacen("width: \"0\"", "width: \"100\"", 1)
+            .replacen("height: \"0\"", "height: \"50\"", 1)
     );
 }
 

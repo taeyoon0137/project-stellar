@@ -179,11 +179,29 @@ mod tests {
     fn all_keys() -> Vec<(&'static str, PropertyKey)> {
         vec![
             ("frame.size", frame::SIZE),
+            ("frame.width", frame::WIDTH),
+            ("frame.height", frame::HEIGHT),
             ("frame.transform", frame::TRANSFORM),
             ("frame.clipping", frame::CLIPPING),
             ("frame.background", frame::BACKGROUND),
             ("frame.border", frame::BORDER),
             ("frame.corner_radius", frame::CORNER_RADIUS),
+            (
+                "frame.border-top-left-radius",
+                frame::BORDER_TOP_LEFT_RADIUS,
+            ),
+            (
+                "frame.border-top-right-radius",
+                frame::BORDER_TOP_RIGHT_RADIUS,
+            ),
+            (
+                "frame.border-bottom-right-radius",
+                frame::BORDER_BOTTOM_RIGHT_RADIUS,
+            ),
+            (
+                "frame.border-bottom-left-radius",
+                frame::BORDER_BOTTOM_LEFT_RADIUS,
+            ),
             ("frame.layout_mode", frame::LAYOUT_MODE),
             ("image.asset", IMAGE_ASSET),
             ("instance.component", instance::COMPONENT_REF),

@@ -4,7 +4,7 @@ use std::sync::{Arc, Condvar, Mutex};
 
 #[derive(Debug)]
 enum Job {
-    Write(Capture),
+    Write(Box<Capture>),
     Clear,
 }
 #[derive(Debug, Default)]
@@ -67,7 +67,7 @@ impl WindowCheckpoint {
         }
         let job = if dirty {
             match Capture::from_window(window) {
-                Ok(c) => Job::Write(c),
+                Ok(c) => Job::Write(Box::new(c)),
                 Err(e) => {
                     eprintln!("Stellar recovery capture: {e}");
                     return;

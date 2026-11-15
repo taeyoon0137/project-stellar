@@ -12,6 +12,11 @@ struct WindowLayerPage {
 }
 
 extension CoreRuntime {
+    static func layerOrderFlags(handle: UInt64, target: StellarSelectionTarget) -> UInt32 {
+        var target = target
+        return stellar_window_layer_order_flags(handle, &target)
+    }
+
     static func renameLayer(handle: UInt64, session: UInt64, view: UUID, node: UUID, revision: UInt64,
                             name: String) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0

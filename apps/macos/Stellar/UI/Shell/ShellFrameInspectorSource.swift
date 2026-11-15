@@ -3,9 +3,10 @@ import Foundation
 enum FrameInspectorEdit {
     case size(CGSize)
     case background(InspectorColor?)
+    case corner(InspectorPropertyCatalog.FrameCorner, Float)
 }
 
-/// 현재 창에서 이미 투영한 Free Frame의 고정 크기와 배경을 편집합니다.
+/// 현재 창에서 이미 투영한 Free Frame의 고정 크기, 모서리 반경과 배경을 편집합니다.
 @MainActor
 final class ShellFrameInspectorSource: InspectorDataSource {
     private(set) var snapshot = InspectorSnapshot.placeholder(.noSelection, generation: 0)
@@ -19,7 +20,8 @@ final class ShellFrameInspectorSource: InspectorDataSource {
 
     func refresh(_ next: CanvasInspectorFrame?, trusted: Bool) {
         guard next != selected || trusted != self.trusted else { return }
-        if next?.session != selected?.session || next?.view != selected?.view || next?.node != selected?.node {
+        let selectionHistoryChanged = next?.revision == selected?.revision && next?.historySequence != selected?.historySequence
+        if next?.session != selected?.session || next?.view != selected?.view || next?.node != selected?.node || selectionHistoryChanged {
             snapshot.selectionToken &+= 1
             queued.removeAll()
         }
@@ -47,11 +49,21 @@ final class ShellFrameInspectorSource: InspectorDataSource {
                 return InspectorFieldState(value: value, isEditable: editability == .editable && (isToggle || selected.background != nil))
             }
             for index in paint.fields.indices { paint.fields[index].binding = nil }
+            let radii = InspectorPropertyCatalog.frameRadiusRows.map { template in
+                var result = template.make { field in
+                    guard let key = field.id.coreKey, let corner = InspectorPropertyCatalog.FrameCorner(rawValue: key)
+                    else { return InspectorFieldState(value: .none, isEditable: false) }
+                    return InspectorFieldState(value: .number(Double(selected.radii[corner.index])),
+                                               isEditable: editability == .editable)
+                }
+                for index in result.fields.indices { result.fields[index].binding = nil }
+                return result
+            }
             snapshot = InspectorSnapshot(generation: generation, selectionToken: token, state: .ready,
                 selection: InspectorSelectionSummary(count: 1, nodeKinds: [.frame], shapeKind: nil, displayName: nil),
                 editability: editability, sections: [
                     InspectorSection(id: .frameLayout, title: "Frame", rows: [row]),
-                    InspectorSection(id: .frameAppearance, title: "Appearance", rows: [paint]),
+                    InspectorSection(id: .frameAppearance, title: "Appearance", rows: [paint] + radii),
                 ],
                 modifiers: nil)
         } else {
@@ -100,6 +112,12 @@ final class ShellFrameInspectorSource: InspectorDataSource {
 
     private func edit(_ command: InspectorCommand, on frame: CanvasInspectorFrame) -> FrameInspectorEdit? {
         guard case let .setValue(id, value, _) = command else { return nil }
+        if let key = id.coreKey, let corner = InspectorPropertyCatalog.FrameCorner(rawValue: key),
+           id == corner.field.id, case .number(let value) = value {
+            let radius = Float(value)
+            guard value >= 0, radius.isFinite, radius != frame.radii[corner.index] else { return nil }
+            return .corner(corner, radius)
+        }
         switch (id.path, value) {
         case ("frame.size.width", .number(let value)), ("frame.size.height", .number(let value)):
             guard value >= 0, Float(value).isFinite else { return nil }

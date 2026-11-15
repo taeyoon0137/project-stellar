@@ -37,6 +37,11 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.createProject(handle: runtimeHandle, path: path), completion)
     }
 
+    func cloneProject(remote: String, target: String, completion: @escaping (CoreRuntimeEvent) -> Void)
+        -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.cloneProject(handle: runtimeHandle, remote: remote, target: target), completion)
+    }
+
     /// 프로젝트 열기를 요청하고 완료 event를 `completion`으로 받습니다.
     @discardableResult
     func openProject(
@@ -48,17 +53,8 @@ final class ShellRuntimeEventPump {
 
     func placePNG(_ image: PickedPNG, parent: UUID, at position: CGPoint,
                   completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
-        var target = image.target, request: UInt64 = 0
-        let status = withUnsafeBytes(of: parent.uuid) { id in
-            image.digest.withUnsafeBytes { digest in
-                Array(image.url.path.utf8).withUnsafeBufferPointer { path in
-                    stellar_window_place_png(runtimeHandle, &target, id.bindMemory(to: UInt8.self).baseAddress,
-                        Float(position.x), Float(position.y), path.baseAddress, path.count, digest.bindMemory(to: UInt8.self).baseAddress, &request)
-                }
-            }
-        }
-        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
-        return register(.success(request), completion)
+        register(CoreRuntime.placePNG(handle: runtimeHandle, target: image.target, parent: parent, position: position,
+                                      path: image.url.path, digest: image.digest), completion)
     }
 
     func pasteSubtree(target: StellarSelectionTarget, data: Data,
@@ -107,6 +103,11 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.fitRoot(handle: runtimeHandle, session: session, size: size), completion)
     }
 
+    func zoomAt(session: UInt64, anchor: CGPoint, fitFactor: Double?, zoomOut: Bool,
+                completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.zoomAt(handle: runtimeHandle, session: session, anchor: anchor, fitFactor: fitFactor, zoomOut: zoomOut), completion)
+    }
+
     @discardableResult
     func pan(
         session: UInt64, dx: Double, dy: Double,
@@ -151,6 +152,12 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.editSelection(handle: runtimeHandle, target: target, action: action, ids: ids), completion)
     }
 
+    func insertShape(session: UInt64, parent: CanvasFrameHit, kind: InspectorShapeKind, start: CGPoint, end: CGPoint,
+                     completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.insertShape(handle: runtimeHandle, session: session, view: parent.viewID, parent: parent.id,
+                                         revision: parent.revision, kind: kind, start: start, end: end), completion)
+    }
+
     func insertFrame(session: UInt64, parent: CanvasFrameHit, rect: CGRect, rectangle: Bool,
                      completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.insertFrame(handle: runtimeHandle, session: session, view: parent.viewID,
@@ -171,13 +178,8 @@ final class ShellRuntimeEventPump {
 
     func setDocumentFont(session: UInt64, revision: UInt64, path: String, face: UInt32, size: UInt32,
                          fill: StellarCanvasColor, completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
-        var request: UInt64 = 0
-        let status = Array(path.utf8).withUnsafeBufferPointer { bytes in
-            stellar_window_set_document_font(runtimeHandle, session, revision, bytes.baseAddress, bytes.count, face, size, fill, &request)
-        }
-        let result: Result<UInt64, CoreRuntimeCallError> = status == STELLAR_OK && request != 0
-            ? .success(request) : .failure(CoreRuntimeCallError(status: status))
-        return register(result, completion)
+        register(CoreRuntime.setDocumentFont(handle: runtimeHandle, session: session, revision: revision, path: path,
+                                             face: face, size: size, fill: fill), completion)
     }
 
     func editFrame(_ frame: CanvasInspectorFrame, change: FrameInspectorEdit, completion: @escaping (CoreRuntimeEvent) -> Void)
@@ -186,6 +188,11 @@ final class ShellRuntimeEventPump {
         case .size(let size):
             return register(CoreRuntime.resizeFrame(handle: runtimeHandle, session: frame.session, view: frame.view,
                                                      node: frame.node, revision: frame.revision, size: size), completion)
+        case let .corner(corner, radius):
+            return register(CoreRuntime.setFrameCorner(handle: runtimeHandle, session: frame.session, view: frame.view,
+                                                       node: frame.node, revision: frame.revision,
+                                                       historySequence: frame.historySequence, key: corner.rawValue,
+                                                       radius: radius), completion)
         case .background(let color):
             return register(CoreRuntime.setFrameBackground(handle: runtimeHandle, session: frame.session, view: frame.view,
                                                            node: frame.node, revision: frame.revision, background: color), completion)
@@ -193,29 +200,15 @@ final class ShellRuntimeEventPump {
     }
 
     func reloadComponentCanvas(_ session: UInt64, completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
-        var request: UInt64 = 0
-        let status = stellar_window_reload_component_canvas(runtimeHandle, session, &request)
-        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
-        return register(.success(request), completion)
+        register(CoreRuntime.reloadComponentCanvas(handle: runtimeHandle, session: session), completion)
     }
 
     func recoverDocument(_ session: UInt64, ticket: String, destination: URL?,
                          completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
-        var request: UInt64 = 0
-        let status = Array(ticket.utf8).withUnsafeBufferPointer { token in
-            Array((destination?.path ?? "").utf8).withUnsafeBufferPointer { path in
-                stellar_window_recovery_apply(runtimeHandle, session, token.baseAddress, token.count, path.baseAddress, path.count, &request)
-            }
-        }
-        return trackRequest(status, request, completion: completion)
+        register(CoreRuntime.recoverDocument(handle: runtimeHandle, session: session, ticket: ticket, destination: destination), completion)
     }
 
-    func trackRequest(_ status: StellarStatus, _ request: UInt64, completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
-        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
-        return register(.success(request), completion)
-    }
-
-    private func register(
+    func register(
         _ result: Result<UInt64, CoreRuntimeCallError>,
         _ completion: @escaping (CoreRuntimeEvent) -> Void
     ) -> Result<UInt64, CoreRuntimeCallError> {

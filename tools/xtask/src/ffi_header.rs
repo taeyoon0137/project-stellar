@@ -136,6 +136,9 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_FAILURE_TRUST_UNAVAILABLE 25
 #define STELLAR_FAILURE_GIT_NAMES_UNAVAILABLE 26
 #define STELLAR_FAILURE_PROJECT_CREATE_FAILED 27
+#define STELLAR_FAILURE_PROJECT_CLONE_FAILED 28
+#define STELLAR_FAILURE_CLONE_TARGET_EXISTS 29
+#define STELLAR_FAILURE_CLONE_CANCELLED 30
 
 /* 창 session 명령 코드(stellar_window_session_perform). 코어가 정하고 셸과 공유합니다. 셸은 메뉴 명령의 공유 이름
  * (edit.undo, edit.redo, file.save_now, view.zoom_in, view.zoom_out, view.zoom_actual_size)으로
@@ -282,6 +285,10 @@ StellarStatus stellar_project_open(uint64_t handle, const uint8_t *path, size_t 
 
 /* 새 폴더 생성. 완료 event 뒤 같은 path로 stellar_project_open을 호출할 수 있습니다. */
 StellarStatus stellar_project_create(uint64_t handle, const uint8_t *path, size_t path_len, uint64_t *out_request);
+/* Clone to a new target and open in restricted mode. Completion: PROJECT_OPENED or REQUEST_FAILED.
+ * url and target are UTF-8 and bounded by STELLAR_EVENT_TEXT_MAX. No remote URL is included in events. */
+StellarStatus stellar_project_clone(uint64_t handle, const uint8_t *url, size_t url_len, const uint8_t *target, size_t target_len, uint64_t *out_request);
+StellarStatus stellar_project_clone_cancel(uint64_t handle, uint64_t request);
 
 /* Read fresh source components on a worker. Output is a tagged little-endian buffer:
  * 0, u32 legacy chunk count, u32 row count, rows (UUID, root UUID, u32 nodes, f32 width, f32 height,
@@ -289,6 +296,11 @@ StellarStatus stellar_project_create(uint64_t handle, const uint8_t *path, size_
  * out_len reports required bytes. STELLAR_BUFFER_TOO_SMALL means retry with a larger buffer. */
 /* Queues a background component source read and a WINDOW_VIEW_CHANGED event. */
 StellarStatus stellar_window_reload_component_canvas(uint64_t handle, uint64_t session, uint64_t *out_request);
+#ifdef __APPLE__
+/* Call off-main. Returns an owned nonblocking one-byte datagram notification fd, or -1.
+ * The trusted window owns the watch until revocation, close, or replacement. */
+int32_t stellar_window_component_watch_fd(uint64_t handle, uint64_t session);
+#endif
 StellarStatus stellar_window_component_library(uint64_t handle, uint64_t session, uint8_t *buf, size_t capacity, size_t *out_len);
 /* Same rows with root fill appended to each: 0 for none, or ColorSpace tag followed by 4 f32le channels. */
 /* Recovery probe returns an empty ticket, a matching-base or separate-copy ticket, or error text.
@@ -306,6 +318,10 @@ StellarStatus stellar_window_component_set_fill(uint64_t handle, uint64_t sessio
 StellarStatus stellar_window_component_create(uint64_t handle, uint64_t session, const uint8_t *name, size_t name_len, uint64_t *out_request);
 typedef struct StellarFrameSelection { uint64_t revision; uint8_t view[16], node[16]; } StellarFrameSelection;
 StellarStatus stellar_window_selected_frame(uint64_t handle, uint64_t session, StellarFrameSelection *out);
+/* 한 snapshot의 선택과 bounds 정규화 이전 TL/TR/BR/BL 값. */
+StellarStatus stellar_window_selected_frame_corners(uint64_t handle, uint64_t session, StellarFrameSelection *out, uint64_t *history_sequence, float radii[4]);
+/* 확정 단일 인스턴스 선택의 정의 UUID. 그 밖의 선택은 STELLAR_NO_ERROR. */
+StellarStatus stellar_window_selected_definition(uint64_t handle, uint64_t session, uint8_t out[16]);
 StellarStatus stellar_window_component_from_selection(uint64_t handle, uint64_t session, const uint8_t *name, size_t name_len, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint64_t *out_request);
 StellarStatus stellar_window_place_component(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, const uint8_t component[16], const uint8_t *hash, size_t hash_len, float x, float y, uint64_t *out_request);
 
@@ -354,6 +370,8 @@ StellarStatus stellar_window_session_perform(uint64_t handle, uint64_t session, 
 StellarStatus stellar_window_session_fit_root(uint64_t handle, uint64_t session, double width, double height, uint64_t *out_request);
 /* Pan active viewport content in screen points; completes with WINDOW_VIEW_CHANGED or REQUEST_FAILED. */
 StellarStatus stellar_window_session_pan(uint64_t handle, uint64_t session, double dx, double dy, uint64_t *out_request);
+/* Click: fit_factor=0 and zoom_out=0/1. Area: fit_factor>0 centers the anchor and scales the viewport. */
+StellarStatus stellar_window_session_zoom_at(uint64_t handle, uint64_t session, double x, double y, double fit_factor, uint32_t zoom_out, uint64_t *out_request);
 /* 한 게시 시점의 선택. 기존 창·뷰 info의 고정 레이아웃과 독립적입니다. */
 typedef struct StellarSelectionTarget {
     uint64_t session;
@@ -392,10 +410,14 @@ StellarStatus stellar_window_session_move_frame(uint64_t handle, uint64_t sessio
 StellarStatus stellar_window_session_resize_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float width, float height, uint64_t *out_request);
 /* 선택한 Free Frame 배경. space가 0이면 제거합니다. */
 StellarStatus stellar_window_session_set_frame_background(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, StellarCanvasColor color, uint64_t *out_request);
+/* CSS 모서리 PropertyKey(0x010a–0x010d) 하나를 원본 반경으로 변경합니다. */
+StellarStatus stellar_window_session_set_frame_corner(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint64_t history_sequence, uint32_t property_key, float radius, uint64_t *out_request);
 /* 표시한 부모 Frame의 local rect에 자식 Free Frame을 삽입하고 한 history entry로 선택합니다. */
 StellarStatus stellar_window_session_insert_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, float x, float y, float width, float height, uint64_t *out_request);
 /* 실제 Rectangle Shape와 단색 Fill/Transform modifier를 생성합니다. */
 StellarStatus stellar_window_session_insert_rectangle(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, float x, float y, float width, float height, uint64_t *out_request);
+/* ShapeKind tags: 1 Rectangle, 2 Ellipse, 3 Line, 4 Polygon. Coordinates: ordered parent-local endpoints. */
+StellarStatus stellar_window_session_insert_shape(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, uint8_t shape, float x0, float y0, float x1, float y1, uint64_t *out_request);
 /* 창 session의 선택을 ids(StableId 16 byte × count)로 바꾸고 그 창 history에 기록합니다(count 0 = 비움). */
 StellarStatus stellar_window_session_select(uint64_t handle, uint64_t session, const uint8_t *ids, size_t count, uint64_t *out_request);
 
@@ -403,6 +425,9 @@ StellarStatus stellar_window_session_select(uint64_t handle, uint64_t session, c
  * 용량 부족 시 최신 count와 STELLAR_BUFFER_TOO_SMALL, active View 없음은 STELLAR_NO_ERROR. */
 typedef struct StellarCanvasTextQuery { uint8_t view[16], node[16]; uint64_t revision; uint32_t row; } StellarCanvasTextQuery;
 typedef struct StellarCanvasTextElement { uint32_t op; float points[6]; } StellarCanvasTextElement;
+/* Shared canvas row query and Move/Line/Cubic/Close elements (op 1–4). For a row with flags bit 6,
+ * cap_flags = cap(0 butt, 1 round, 2 square); op 5 is a zero-length Line cap rect (xywh). Null rows query count. */
+StellarStatus stellar_canvas_shape_path(uint64_t handle, uint64_t session, StellarCanvasTextQuery query, StellarCanvasTextElement *rows, size_t capacity, size_t *count, uint32_t *cap_flags);
 StellarStatus stellar_window_text_paint(uint64_t handle, uint64_t session, StellarCanvasTextQuery query, StellarCanvasTextElement *rows, size_t capacity, size_t *count);
 /* Saved text: local outline commands 1..4, line bounds 5, end of unique outline 6,
  * placement 7 with index into the definitions and points[0..2] = pen position. */

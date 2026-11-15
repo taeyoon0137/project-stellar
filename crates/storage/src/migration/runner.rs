@@ -27,7 +27,9 @@ use crate::save::commit::SavedGenerationState;
 use crate::save::executor::SaveObserver;
 use crate::save::plan::{build_save_plan, SavePlanError};
 
-use super::registry::{MigrationDocument, MigrationRegistry, MigrationRegistryError};
+use super::registry::{
+    MigrationChunk, MigrationDocument, MigrationRegistry, MigrationRegistryError,
+};
 
 /// migration 실행 오류.
 #[derive(Debug)]
@@ -112,9 +114,12 @@ pub fn run_migration_observed(
         let payload = store
             .read_chunk(&pointer.content_hash, pointer.kind)
             .map_err(MigrationRunError::Chunk)?;
-        document
-            .chunks
-            .push((pointer.chunk_id, pointer.kind, payload));
+        document.chunks.push(MigrationChunk {
+            chunk_id: pointer.chunk_id,
+            kind: pointer.kind,
+            schema_version: pointer.schema_version,
+            payload,
+        });
     }
 
     // 2. in-memory 변환.
@@ -125,12 +130,12 @@ pub fn run_migration_observed(
     // 3. 새 generation으로 저장(변경 없는 payload는 planner가 재사용).
     let states: Vec<LogicalChunkState> = document
         .chunks
-        .iter()
-        .map(|(chunk_id, kind, payload)| LogicalChunkState::Dirty {
-            chunk_id: *chunk_id,
-            kind: *kind,
-            schema_version: document.schema_version,
-            payload: payload.clone(),
+        .into_iter()
+        .map(|chunk| LogicalChunkState::Dirty {
+            chunk_id: chunk.chunk_id,
+            kind: chunk.kind,
+            schema_version: chunk.schema_version,
+            payload: chunk.payload,
         })
         .collect();
     let plan = build_save_plan(
@@ -231,7 +236,7 @@ mod tests {
                 chunk_id: ChunkId::from_stable_id(stable(1_000 + i as u64)),
                 content_hash: hash,
                 kind: KIND,
-                schema_version: 1,
+                schema_version: [1, 7][i],
             });
         }
         let manifest = GenerationManifest {
@@ -290,13 +295,8 @@ mod tests {
         assert_eq!(new_manifest.generation, 2);
         assert_eq!(new_manifest.parent_generation, Some(1));
         assert_eq!(new_manifest.schema_version, 2);
-        // noop이므로 chunk pointer hash는 원본과 동일(재사용).
-        let new_hashes: Vec<ContentHash> = new_manifest
-            .chunk_pointers
-            .iter()
-            .map(|p| p.content_hash)
-            .collect();
-        assert_eq!(new_hashes, chunk_hashes);
+        let original = GenerationManifest::decode(&original_manifest_bytes).unwrap();
+        assert_eq!(new_manifest.chunk_pointers, original.chunk_pointers);
     }
 
     #[test]
@@ -314,8 +314,9 @@ mod tests {
                     from: 1,
                     to: 2,
                     migrate: Box::new(|doc| {
-                        for (_, _, payload) in &mut doc.chunks {
-                            payload.extend_from_slice(b"-v2");
+                        for chunk in &mut doc.chunks {
+                            chunk.schema_version = 2;
+                            chunk.payload.extend_from_slice(b"-v2");
                         }
                         Ok(())
                     }),

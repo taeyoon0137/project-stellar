@@ -96,7 +96,9 @@ GC 보존과 정리(V.7):
   payload를 바꾸지 않는 이 noop v1→v2뿐입니다.
 - 여기서 말하는 스키마 버전은 generation manifest의 `schema_version`(storage 문서 스키마)입니다.
   프로젝트 manifest `stellar.yaml`의 `CURRENT_SCHEMA_VERSION`(현재 1, project crate)과는 별개의
-  버전입니다.
+  버전입니다. 각 chunk pointer의 `schema_version`은 해당 payload의 형식입니다. migration은 이를
+  그대로 넘기며, payload의 형식을 바꾸는 step이 해당 chunk의 버전을 지정합니다. noop v1→v2는
+  모든 chunk pointer를 원본과 동일하게 유지합니다.
 
 정하지 않은 사항:
 

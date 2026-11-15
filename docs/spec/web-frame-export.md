@@ -1,4 +1,4 @@
-# 저장된 단일 View의 고정 Frame·Rectangle HTML+CSS
+# 저장된 단일 View의 고정 Frame·Rectangle·컴포넌트 HTML+CSS
 
 상태: 제한된 제품 경로 구현. 일반 `stellar` CLI의 `export-web` 명령입니다.
 Phase XXII 전체 코드 생성, XXIV.1.4 일반 render/export 완료를 뜻하지 않습니다.
@@ -51,6 +51,25 @@ CLI 자체는 파일을 만들거나 Git·프로젝트를 수정하지 않습니
 | OrderKey | DOM 순서. 모든 Frame에 `z-index: 0`으로 stacking context 생성 |
 | StableId | 기존 `web::aria::element_id`의 안정적인 ID |
 | 표시 이름·잠금 | 편집 메타데이터. 이름을 Text·button·role·label로 해석하지 않음 |
+
+### 배치한 Free Frame 컴포넌트
+
+선택 View에 인스턴스가 있으면 요청당 한 번 프로젝트의 `design/components/*.stellar.yaml`을 기존 라이브러리
+로더로 검증합니다. 같은 정의를 가리키는 모든 인스턴스가 같은 메모리 사본을 사용합니다. `result.revision`은
+저장된 문서의 generation을 가리키고, 이 경우 추가되는 `result.component_source_hash`는 읽은 파일명과
+바이트 집합의 SHA-256입니다. Git에서 정의만 바꾸면 같은 generation에서도 다음 호출의 결과가 달라집니다.
+
+캔버스와 같은 방식으로 정의 root Frame의 원래 tx·ty를 제거하고 선형 변환 뒤에 인스턴스의 활성
+Transform을 순서대로 합성합니다. 자식은 정의의 상대 좌표와 OrderKey, 부모의 배치·테두리·클립을 따릅니다.
+조상이나 인스턴스, 정의 node가 숨겨지면 하위도 숨깁니다. 잠금은 편집 메타데이터입니다.
+인스턴스 root의 DOM id는 문서 인스턴스 ID입니다. 각 정의 자식은
+`s-<인스턴스 32자 hex>-s-<정의 node 32자 hex>`를 사용합니다. 저장된 ID는 바뀌지 않습니다.
+
+원본 참조 누락, override 또는 인스턴스 소유 자식, Frame 외 정의, 활성 Transform 외 인스턴스 modifier는
+오류입니다. 라이브러리 검증은 기존 프로젝트 안 경로·4,096개 파일·64 MiB 총량 제한을 사용합니다.
+캔버스처럼 배치된 각 Frame의 누적 affine은 역변환 가능해야 합니다.
+작은 정의의 반복 배치로 출력이 증폭되는 것을 막기 위해 한 View에서 펼친 컴포넌트 Frame 총합은
+16,384개까지 허용합니다. 일반 Frame 수에는 이 확장 제한을 적용하지 않습니다.
 
 색은 저장된 sRGB/Display P3 태그와 **straight RGBA**를 유지합니다. 속성 모델 8.2에 따라 모든 채널이
 8-bit 왕복되는 sRGB만 hex로 출력하고, 나머지는 `color(srgb ...)` 또는 `color(display-p3 ...)`입니다.
@@ -106,11 +125,13 @@ Rectangle은 node ID를 포함한 `browser-rectangle-curve` 경고를 반환합�
 | 저장된 layout 참조(정의·해석 경로 없음) | `unsupported-layout` |
 | Text·Rectangle 이외 Shape·Path·Image | `unsupported-node` |
 | Frame modifier stack(비활성 항목도 포함), Rectangle의 미지원 활성 modifier·순서 | `unsupported-modifier` |
+| 잘못된 컴포넌트 원본 집합 | `invalid-component-source` |
+| 미해결 정의, override·소유 자식, 배치할 수 없는 정의, 펼침 상한 초과 | `unsupported-component-instance` |
 | Path clipping | `unsupported-clip` |
 | 숫자·테두리·변환 범위 위반 | `unsupported-frame-value` |
 | 설정된 target profile(저장 profile ↔ capability pin 연결 없음) | `unsupported-target-profile` |
 | document-manifest/view-tree 외 chunk | `unsupported-record` |
-| 문서 manifest schema 1·2 또는 View/subtree schema 1을 벗어난 경우 | `unsupported-record-schema` |
+| 문서 manifest schema 1·2, View/subtree schema 1, 실제 인스턴스가 들어 있는 subtree schema 2 외 포인터 | `unsupported-record-schema` |
 | 기존 접근성 mapper/정적 검사 오류 | `accessibility-mapping`, `html-accessibility-check` |
 
 해석하지 못하는 project chunk·profile은 선택 View에 대한 영향 범위를 판정할 수 없으므로 **선택 root ID**에

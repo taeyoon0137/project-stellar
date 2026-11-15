@@ -111,6 +111,8 @@ enum AgentFailureReason: Equatable {
 }
 
 enum AgentPanelPhase: Equatable {
+    /// 이 창의 내장 패널에 세션 제공자가 연결되어 있지 않습니다.
+    case unavailable
     case loading(AgentLoadingReason)
     case ready
     case failed(AgentFailureReason)
@@ -327,4 +329,19 @@ protocol AgentPanelSource: AnyObject {
     func pollEvent() -> AgentPanelEvent?
     /// 사용자 명령을 전달합니다.
     func perform(_ command: AgentPanelCommand)
+}
+
+/// 세션 제공자가 없는 창에서는 CLI 탐지 결과나 세션 이벤트를 만들지 않습니다.
+final class DisconnectedAgentPanelSource: AgentPanelSource {
+    func currentSnapshot() -> AgentPanelSnapshot {
+        AgentPanelSnapshot(
+            generation: 0,
+            header: AgentSessionHeader(
+                projectDisplayName: "", projectTrusted: false, installedCLIs: [], selectedCLIID: nil,
+                reportedModelName: nil, connection: .noSession, mode: .readOnly, isAgentWorking: false),
+            phase: .unavailable, items: [], rawText: "", changeSummary: .none)
+    }
+
+    func pollEvent() -> AgentPanelEvent? { nil }
+    func perform(_ command: AgentPanelCommand) {}
 }

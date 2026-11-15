@@ -23,6 +23,9 @@ final class WelcomeCloneSheetController: NSViewController, NSTextFieldDelegate {
     let cloneButton = WelcomeViews.button(WelcomeStrings.clone, target: nil, action: nil)
 
     private(set) var parentDirectory: String
+    var chooseParentDirectory: (NSOpenPanel, NSWindow, @escaping (URL?) -> Void) -> Void = { panel, window, complete in
+        panel.beginSheetModal(for: window) { response in complete(response == .OK ? panel.url : nil) }
+    }
     /// 사용자가 이름을 직접 고치면 URL에서 이름을 다시 만들지 않습니다.
     private var nameEditedByUser = false
 
@@ -201,8 +204,8 @@ final class WelcomeCloneSheetController: NSViewController, NSTextFieldDelegate {
         panel.message = WelcomeStrings.chooseLocationMessage
         panel.prompt = WelcomeStrings.choose.replacingOccurrences(of: "…", with: "")
         panel.directoryURL = URL(fileURLWithPath: parentDirectory, isDirectory: true)
-        panel.beginSheetModal(for: window) { [weak self] response in
-            guard let self, response == .OK, let url = panel.url else { return }
+        chooseParentDirectory(panel, window) { [weak self] url in
+            guard let self, let url else { return }
             self.parentDirectory = url.path
             self.updateLocation()
             self.validate()

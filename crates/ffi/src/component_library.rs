@@ -2,6 +2,59 @@
 use crate::{ffi_guard, registry, StellarStatus};
 use stellar_runtime::app::WindowSessionHandle;
 
+/// 게시된 창 문서의 단일 인스턴스가 참조하는 정의 ID를 반환합니다. 파일은 읽지 않습니다.
+/// # Safety
+/// out은 16바이트 쓰기가 가능해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_selected_definition(
+    handle: u64,
+    session: u64,
+    out: *mut [u8; 16],
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe { out.write([0; 16]) };
+        let Ok(reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(app) = reg.live.get(&handle).and_then(|rt| rt.app.as_ref()) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let state = app.state();
+        let Some(window) = state.window(WindowSessionHandle(session)) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let Some(id) = window.selected_definition else {
+            return StellarStatus::NoError;
+        };
+        unsafe { out.write(id.to_bytes()) };
+        StellarStatus::Ok
+    })
+}
+
+/// 비차단 macOS 변경 신호 fd를 생성합니다. 호출자는 worker에서 기다리고 fd를 닫습니다.
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub extern "C" fn stellar_window_component_watch_fd(handle: u64, session: u64) -> i32 {
+    use std::os::fd::IntoRawFd;
+    std::panic::catch_unwind(|| {
+        let start = {
+            let reg = registry().lock().ok()?;
+            reg.live
+                .get(&handle)?
+                .app
+                .as_ref()?
+                .component_file_watch(WindowSessionHandle(session))
+        };
+        Some(start()?.into_raw_fd())
+    })
+    .ok()
+    .flatten()
+    .unwrap_or(-1)
+}
+
 fn text(out: &mut Vec<u8>, string: &str) {
     out.extend_from_slice(&(string.len() as u32).to_le_bytes());
     out.extend_from_slice(string.as_bytes());

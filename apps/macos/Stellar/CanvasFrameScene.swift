@@ -7,6 +7,8 @@ struct CanvasInspectorFrame: Equatable {
     let revision: UInt64
     let size: CGSize
     let background: InspectorColor?
+    let radii: [Float]
+    let historySequence: UInt64
     let editable: Bool
 }
 
@@ -61,9 +63,62 @@ private func outline(_ row: StellarCanvasFrame) -> CGPath {
     return p
 }
 
+/// Rust의 local path를 한 번 읽고 같은 경로로 채우기·stroke·hit를 계산합니다.
+private final class CanvasShapeDrawing {
+    let path: CGPath
+    let stroke: CGPath?
+    let worldStroke: CGPath?
+    let localBounds: CGRect
+    let hitsFill: Bool
+
+    init?(handle: UInt64, session: UInt64, query: StellarCanvasTextQuery, row: StellarCanvasFrame) {
+        guard let (elements, flags) = CoreRuntime.canvasShapePath(handle: handle, session: session, query: query)
+        else { return nil }
+        let outline = CGMutablePath()
+        var pointCap: CGRect?
+        for element in elements {
+            let (x, y, a, b, c, d) = element.points
+            switch element.op {
+            case 1: outline.move(to: CGPoint(x: CGFloat(x), y: CGFloat(y)))
+            case 2: outline.addLine(to: CGPoint(x: CGFloat(x), y: CGFloat(y)))
+            case 3: outline.addCurve(to: CGPoint(x: CGFloat(c), y: CGFloat(d)),
+                                     control1: CGPoint(x: CGFloat(x), y: CGFloat(y)), control2: CGPoint(x: CGFloat(a), y: CGFloat(b)))
+            case 4: outline.closeSubpath()
+            case 5: pointCap = CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(a), height: CGFloat(b))
+            default: return nil
+            }
+        }
+        path = outline
+        let cap: CGLineCap
+        switch flags & 3 {
+        case 0: cap = .butt
+        case 1: cap = .round
+        case 2: cap = .square
+        default: return nil
+        }
+        if row.border.space != 0, row.border_width > 0 {
+            let width = CGFloat(row.border_width)
+            if let box = pointCap {
+                switch cap {
+                case .round: stroke = CGPath(ellipseIn: box, transform: nil)
+                case .square: stroke = CGPath(rect: box, transform: nil)
+                default: stroke = nil
+                }
+            } else {
+                stroke = outline.copy(strokingWithWidth: width, lineCap: cap, lineJoin: .miter, miterLimit: 10)
+            }
+        } else { stroke = nil }
+        hitsFill = row.fill.space != 0 || row.border.space == 0
+        var placement = transform(row.world)
+        worldStroke = stroke?.copy(using: &placement)
+        localBounds = outline.boundingBoxOfPath.union(stroke?.boundingBoxOfPath ?? .null)
+    }
+}
+
 private struct ProjectedFrame {
     let text: CanvasDocumentText?
-    var isFrame: Bool { !isImage && !isRectangle && !isInstance && text == nil }
+    let shape: CanvasShapeDrawing?
+    var isFrame: Bool { !isImage && !isRectangle && shape == nil && !isInstance && text == nil }
     let id: UUID
     let parent: Int?
     let world: CGAffineTransform
@@ -82,16 +137,18 @@ private struct ProjectedFrame {
     let borderWidth: CGFloat
     var lastDescendant: Int
 
-    init(_ row: StellarCanvasFrame, index: Int, text: CanvasDocumentText?) {
+    init(_ row: StellarCanvasFrame, index: Int, text: CanvasDocumentText?, shape: CanvasShapeDrawing?) {
+        self.shape = shape
         self.text = text
         id = UUID(uuid: row.id)
         parent = row.parent == .max ? nil : Int(row.parent)
         var world = transform(row.world)
         self.world = world
-        localBounds = CGRect(x: 0, y: 0, width: CGFloat(row.size.0), height: CGFloat(row.size.1))
-        localPath = text?.hitPath ?? outline(row)
+        localBounds = shape?.localBounds ?? CGRect(x: 0, y: 0, width: CGFloat(row.size.0), height: CGFloat(row.size.1))
+        localPath = shape?.path ?? text?.hitPath ?? outline(row)
         worldPath = localPath.copy(using: &world)!
-        if let text, !text.inkBounds.isNull {
+        if let worldStroke = shape?.worldStroke { worldBounds = worldPath.boundingBox.union(worldStroke.boundingBox) }
+        else if let text, !text.inkBounds.isNull {
             worldBounds = worldPath.boundingBox.union(text.inkBounds.applying(world))
         } else {
             worldBounds = worldPath.boundingBox
@@ -107,6 +164,11 @@ private struct ProjectedFrame {
         borderWidth = CGFloat(row.border_width)
         lastDescendant = index
     }
+    func contains(_ point: CGPoint) -> Bool {
+        guard let shape else { return worldPath.contains(point) }
+        return (shape.hitsFill && worldPath.contains(point)) || (shape.worldStroke?.contains(point) == true)
+    }
+
 }
 
 /// 한 창에서 마지막으로 표시한 scene. 카메라 또는 선택만 바뀌면 path를 다시 만들지 않습니다.
@@ -114,7 +176,7 @@ final class CanvasFrameScene {
     private var frames: [ProjectedFrame] = []
     let png = CanvasPNGCache()
     var allowsImageContent = false
-    private var imageRuntime: UInt64?
+    private var runtimeHandle: UInt64?
     var redrawImage: ((CGRect) -> Void)?
     private var documentTexts: [UUID: CanvasDocumentText] = [:]
     private var viewID: UUID?
@@ -155,10 +217,9 @@ final class CanvasFrameScene {
     }
 
     func refresh(handle: UInt64, session: UInt64, size: CGSize) {
-        imageRuntime = handle
-        var info = StellarCanvasInfo()
+        runtimeHandle = handle
         let width = Float(size.width), height = Float(size.height)
-        guard stellar_window_canvas(handle, session, width, height, &info, nil, 0) == STELLAR_OK else {
+        guard var info = CoreRuntime.canvasInfo(handle: handle, session: session, size: size) else {
             clear()
             return
         }
@@ -191,7 +252,13 @@ final class CanvasFrameScene {
                     text = prepared
                     nextTexts[id] = prepared
                 }
-                projected.append(ProjectedFrame(row, index: index, text: text))
+                var shape: CanvasShapeDrawing?
+                if row.flags & 64 != 0 {
+                    let query = StellarCanvasTextQuery(view: info.view, node: row.id, revision: info.revision, row: UInt32(index))
+                    guard let drawing = CanvasShapeDrawing(handle: handle, session: session, query: query, row: row) else { clear(); return }
+                    shape = drawing
+                }
+                projected.append(ProjectedFrame(row, index: index, text: text, shape: shape))
             }
             frames = projected
             typingIndex = typingLayer.flatMap { layer in frames.firstIndex { $0.id == (layer.node ?? layer.parent) } }
@@ -220,7 +287,9 @@ final class CanvasFrameScene {
     var selectedInspectorFrame: CanvasInspectorFrame? {
         guard let session, let viewID, let primaryIndex else { return nil }
         let selected = frames[primaryIndex]
-        guard selected.isFrame else { return nil }
+        guard selected.isFrame, let handle = runtimeHandle,
+              let values = CoreRuntime.selectedFrameRadii(handle: handle, session: session, view: viewID,
+                                                         node: selected.id, revision: revision) else { return nil }
         let background: InspectorColor?
         if let fill = selected.fill, let rgba = fill.components, rgba.count == 4 {
             let space: InspectorColor.Space = fill.colorSpace?.name == CGColorSpace.extendedDisplayP3 ? .displayP3 : .srgb
@@ -229,18 +298,24 @@ final class CanvasFrameScene {
             background = nil
         }
         return CanvasInspectorFrame(session: session, view: viewID, node: selected.id, revision: revision,
-                                     size: selected.localBounds.size, background: background, editable: selected.pickable)
+                                     size: selected.localBounds.size, background: background, radii: values.radii,
+                                     historySequence: values.historySequence, editable: selected.pickable)
     }
 
     func hit(at point: CGPoint, onlyFrames: Bool) -> CanvasFrameHit? {
         guard let viewID else { return nil }
         let world = point.applying(worldToView.inverted())
-        for frame in frames.reversed() where (!onlyFrames || frame.isFrame) && frame.pickable && frame.worldBounds.contains(world) && frame.worldPath.contains(world) {
+        for frame in frames.reversed() where (!onlyFrames || frame.isFrame) && frame.pickable && frame.worldBounds.contains(world) && frame.contains(world) {
             var ancestor = frame.parent
             while let i = ancestor, !frames[i].clips || frames[i].worldPath.contains(world) { ancestor = frames[i].parent }
             if ancestor == nil {
+                // 정의의 자식 위를 눌러도 이동하는 문서 노드는 인스턴스 하나입니다.
+                var parent = frame.parent
+                if frame.isInstance {
+                    while let i = parent, frames[i].isInstance && frames[i].id == frame.id { parent = frames[i].parent }
+                }
                 return CanvasFrameHit(textQuery: frame.text?.query, isImage: frame.isImage, isInstance: frame.isInstance, isRectangle: frame.isRectangle, id: frame.id, revision: revision, viewID: viewID,
-                                      localToWorld: frame.world, parentToWorld: frame.parent.map { frames[$0].world } ?? .identity, worldToView: worldToView)
+                                      localToWorld: frame.world, parentToWorld: parent.map { frames[$0].world } ?? .identity, worldToView: worldToView)
             }
         }
         return nil
@@ -337,7 +412,7 @@ final class CanvasFrameScene {
             } else if visible && (frame.isImage || frame.fill != nil || frame.border != nil) {
                 context.saveGState()
                 context.concatenate(frame.world)
-                if frame.isImage, allowsImageContent, let recordSession = session, let handle = imageRuntime {
+                if frame.isImage, allowsImageContent, let recordSession = session, let handle = runtimeHandle {
                     if let image = png.image(frame.id) {
                         context.saveGState()
                         context.translateBy(x: 0, y: frame.localBounds.height)
@@ -362,7 +437,13 @@ final class CanvasFrameScene {
                         context.fillPath()
                     }
                 }
-                if let border = frame.border, frame.borderWidth > 0 {
+                if let shape = frame.shape {
+                    if let stroke = shape.stroke, let color = frame.border {
+                        context.setFillColor(color)
+                        context.addPath(stroke)
+                        context.fillPath()
+                    }
+                } else if let border = frame.border, frame.borderWidth > 0 {
                     context.addPath(frame.localPath)
                     context.clip()
                     context.setStrokeColor(border)

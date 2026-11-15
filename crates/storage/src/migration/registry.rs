@@ -12,6 +12,19 @@ use stellar_core_types::ids::StableId;
 use crate::chunk::envelope::ChunkKindCode;
 use crate::chunk::id::ChunkId;
 
+/// 세대 migration 중 보존하거나 변환할 logical chunk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationChunk {
+    /// 논리 id.
+    pub chunk_id: ChunkId,
+    /// chunk kind.
+    pub kind: ChunkKindCode,
+    /// 이 payload의 스키마 버전.
+    pub schema_version: u32,
+    /// canonical payload.
+    pub payload: Vec<u8>,
+}
+
 /// migration이 변환하는 in-memory 문서 모델.
 ///
 /// 저장 계층 관점의 세대 내용입니다: 스키마 버전 + logical chunk payload들 +
@@ -20,8 +33,8 @@ use crate::chunk::id::ChunkId;
 pub struct MigrationDocument {
     /// 현재 스키마 버전.
     pub schema_version: u32,
-    /// logical chunk들: (id, kind, canonical payload).
-    pub chunks: Vec<(ChunkId, ChunkKindCode, Vec<u8>)>,
+    /// 세대 스키마와 독립적인 payload 스키마를 가진 logical chunk들.
+    pub chunks: Vec<MigrationChunk>,
     /// root document StableId들.
     pub root_document_ids: Vec<StableId>,
 }

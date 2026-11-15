@@ -292,7 +292,7 @@ AppDelegate ─ RuntimeHost(코어 runtime 1개)
 `[사이드바 토글] [사이드바 경계] [뒤로·앞으로] [유연] [줌] [검색] [더 보기] [인스펙터 경계] [유연] [인스펙터 토글]`
 
 - 캔버스 도구는 상단 툴바에 넣지 않습니다. 도구 영역은 캔버스 하단 가운데 도구 막대(`ShellToolBarView`, 6.1)에 있으므로(2026-11-14 사용자 결정) provider는 가운데 항목을 내주지 않고, 상단 툴바에는 가운데 고정 항목(`centeredItemIdentifiers`)이 없습니다. provider 항목(줌)의 생성·snapshot 반영·palette 사본은 provider가 맡습니다.
-- 하단 도구 막대에는 창 도구 모델(`ShellWindowToolsModelStub`)의 캔버스 도구 11개를 그립니다. `ShellProjectWindow`가 도구 목록과 현재 도구를 `ShellProjectFrameDataSource.setTools`로 셸 프레임 snapshot(`tools`, `activeToolID`, 명령 ID는 `tool.move` 같은 셸 명령 ID)에 보내고, 막대에서 고른 도구(`selectTool`)는 router로 창 도구 모델에 보냅니다. 선택 표시는 창 도구 모델 snapshot이 돌아올 때 바뀌고, 막대 활성 상태는 셸 프레임 상태(ready)로 정해집니다.
+- 하단 도구 막대에는 창 도구 모델(`ShellWindowToolsModelStub`)의 캔버스 도구 10개를 그립니다. `ShellProjectWindow`가 도구 목록과 현재 도구를 `ShellProjectFrameDataSource.setTools`로 셸 프레임 snapshot(`tools`, `activeToolID`, 명령 ID는 `tool.move` 같은 셸 명령 ID)에 보내고, 막대에서 고른 도구(`selectTool`)는 router로 창 도구 모델에 보냅니다. 선택 표시는 창 도구 모델 snapshot이 돌아올 때 바뀌고, 막대 활성 상태는 셸 프레임 상태(ready)로 정해집니다.
 - 이전 구조(캔버스 도구 그룹을 상단 툴바 가운데에 둠)에서 1200 × 760pt 창은 도구 그룹이 넓어 줌·더 보기·뒤로·앞으로가 overflow(»)로 넘어갔습니다(14.7). 도구 막대를 옮긴 뒤의 상단 툴바 배치는 화면에서 다시 확인하지 않았습니다. 같은 명령은 모두 메뉴 막대에도 있습니다. 배치 확정은 XII.9.1입니다.
 
 ### 14.3 응답자 체인
@@ -316,7 +316,7 @@ AppDelegate ─ RuntimeHost(코어 runtime 1개)
 
 - 메뉴: Open Project…·Settings… 활성(앱 수준 router target), New·Clone Project 비활성, 셸 프레임 항목 설치, key equivalent 중복 없음
 - 시작 창 표시 → 시작 창 Open Project → 진행 표시 → 같은 폴더 중복 요청 없음 → 펌프 timer 켜짐·완료 후 꺼짐 → 창 1개, 시작 창 닫힘, 코어 프로젝트 session 1개
-- 창 구성: 제목·제한 모드 부제목·ready, 복원 설정, 가운데 캔버스 호스트(runtime handle·drawable > 0), 사이드바·인스펙터·Git·에이전트 view controller, 보조 패널 접힘, 사이드바 필터 accessory, 툴바 조합(상단 툴바에 캔버스 도구 그룹·셸 도구 영역·가운데 고정 항목 없음, 줌이 검색 앞), 하단 도구 막대(콘텐츠 영역, 캔버스 도구 11개, 현재 도구 선택), 검색 비활성, 응답자 체인(순환 없음)
+- 창 구성: 제목·제한 모드 부제목·ready, 복원 설정, 가운데 캔버스 호스트(runtime handle·drawable > 0), 사이드바·인스펙터·Git·에이전트 view controller, 보조 패널 접힘, 사이드바 필터 accessory, 툴바 조합(상단 툴바에 캔버스 도구 그룹·셸 도구 영역·가운데 고정 항목 없음, 줌이 검색 앞), 하단 도구 막대(콘텐츠 영역, 캔버스 도구 10개, 현재 도구 선택), 검색 비활성, 응답자 체인(순환 없음)
 - 도구: 하단 도구 막대 → 창 모델 → 메뉴 체크·막대 선택 표시, 캔버스 R 키 → Rectangle(막대 선택 표시 반영), 도구 아닌 키·⌘R은 코어 입력으로, 코어 경로 없는 명령 비활성, Close Project·Show in Finder 활성, Search Project… 비활성
 - 같은 폴더 재열기 시 새 창·요청 없음, 복원 상태 secure coding 왕복(열린 폴더는 기존 창), 창 닫기 → session 닫기 → 시작 창 → 코어 session 0
 - 복원: 열기 중 → ready, 없어진 폴더 → 실패 상태·복구 동작 3개(대표 1개)·도구 명령과 하단 도구 막대 비활성 → Locate Folder…로 같은 창에서 열기

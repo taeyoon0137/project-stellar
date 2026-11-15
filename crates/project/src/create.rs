@@ -495,12 +495,16 @@ mod tests {
             assert_eq!(loaded.generation_number(), 1);
             let ids = loaded.document_ids().unwrap();
             assert_eq!(ids.len(), 1);
-            let records = loaded
-                .load_document(ids[0])
-                .unwrap()
-                .model
-                .to_records()
-                .unwrap();
+            let document = loaded.load_document(ids[0]).unwrap().model;
+            let source = dir.path.join(format!("{name}.stellar.yaml"));
+            let hash = crate::document_io::text_source::save_new(&source, &document).unwrap();
+            let reopened = crate::document_io::text_source::open(&source).unwrap();
+            assert_eq!(hash, reopened.source_hash);
+            assert_eq!(
+                crate::document_io::serialize::serialize_document(&document).unwrap(),
+                crate::document_io::serialize::serialize_document(&reopened.model).unwrap()
+            );
+            let records = reopened.model.to_records().unwrap();
             let style = records.definition.text_styles.resolve(0, None).unwrap();
             let typography = style.typography.record().unwrap();
             assert!(typography.families.is_empty());

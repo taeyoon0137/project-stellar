@@ -406,3 +406,131 @@ fn rectangle_saved_cli_preserves_geometry_modifier_order_and_read_only_scope() {
         );
     }
 }
+
+#[test]
+fn two_instances_follow_one_source_and_keep_distinct_dom_ids() {
+    let dir = TempDir::new("web-instances");
+    scaffold_project(&dir.path);
+    save_documents(&dir.path, &[&fixture::placed_components("supported")]);
+    let folder = dir.path.join("design/components");
+    std::fs::create_dir_all(&folder).unwrap();
+    let component = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_stellar"))
+            .arg("component-source")
+            .args(args)
+            .env("HOME", &dir.path)
+            .output()
+            .unwrap();
+        envelope(&output, 0).get("result").unwrap().clone()
+    };
+    let get = |record: &JsonValue, key: &str| record.get(key).unwrap().as_str().unwrap().to_owned();
+    let id = |n| fixture::id(n).to_string();
+    let root = component(&["create", folder.to_str().unwrap(), "Card", &id(70), &id(71)]);
+    let path = get(&root, "file");
+    let frame = component(&[
+        "add-frame",
+        &path,
+        &get(&root, "source_hash"),
+        &id(71),
+        &id(72),
+        "Inset",
+        "12",
+        "8",
+    ]);
+    let frame = component(&[
+        "set-position",
+        &path,
+        &get(&frame, "source_hash"),
+        &id(72),
+        "2",
+        "3",
+    ]);
+    // Root가 캔버스에 있던 좌표는 배치 좌표에 더하지 않습니다.
+    let frame = component(&[
+        "set-position",
+        &path,
+        &get(&frame, "source_hash"),
+        &id(71),
+        "40",
+        "30",
+    ]);
+    let frame = component(&["resize", &path, &get(&frame, "source_hash"), "90", "60"]);
+    let before = file_digest(&dir.path);
+    let first = export(&dir.path, 4);
+    assert_eq!(first, export(&dir.path, 4));
+    assert_eq!(before, file_digest(&dir.path));
+    let dom_id = |n| format!("s-{}", id(n).replace('-', ""));
+    let css = |page: &str, key: &str| {
+        page.split_once(&format!("#{key} {{"))
+            .unwrap()
+            .1
+            .split_once('}')
+            .unwrap()
+            .0
+            .to_owned()
+    };
+    for (n, left, top) in [(21, "30", "20"), (22, "230", "-10")] {
+        let unique = format!("{}-{}", dom_id(n), dom_id(72));
+        assert_eq!(html(&first).matches(&format!("id=\"{unique}\"")).count(), 1);
+        let root_css = css(html(&first), &dom_id(n));
+        assert!(root_css.contains("width: 90px") && root_css.contains("height: 60px"));
+        assert!(root_css.contains(&format!("left: calc({left}px - 2px)")));
+        assert!(root_css.contains(&format!("top: calc({top}px - 2px)")));
+        if n == 22 {
+            assert!(root_css.contains("matrix(1, 0, 0, 1, 0.5, 0)"));
+        }
+        let inset_css = css(html(&first), &unique);
+        assert!(inset_css.contains("width: 12px") && inset_css.contains("left: calc(2px - 0px)"));
+    }
+    let resize = component(&["resize", &path, &get(&frame, "source_hash"), "144", "60"]);
+    let next = export(&dir.path, 4);
+    assert_eq!(html(&next).matches("width: 144px").count(), 2);
+    assert_eq!(
+        first.get("result").unwrap().get("revision"),
+        next.get("result").unwrap().get("revision")
+    );
+    assert_ne!(
+        first.get("result").unwrap().get("component_source_hash"),
+        next.get("result").unwrap().get("component_source_hash")
+    );
+    component(&[
+        "set-visible",
+        &path,
+        &get(&resize, "source_hash"),
+        &id(72),
+        "false",
+    ]);
+    let hidden = export(&dir.path, 4);
+    for n in [21, 22] {
+        assert!(
+            css(html(&hidden), &format!("{}-{}", dom_id(n), dom_id(72))).contains("display: none")
+        );
+    }
+    for (case, code) in [
+        ("override", "unsupported-component-instance"),
+        ("modifier", "unsupported-modifier"),
+        ("singular", "unsupported-frame-value"),
+    ] {
+        save_documents(&dir.path, &[&fixture::placed_components(case)]);
+        let failure = envelope(&run(&dir.path, &id(1), &id(4)), 1);
+        assert_eq!(
+            failure.get("result").unwrap().get("html"),
+            Some(&JsonValue::Null)
+        );
+        assert!(json::write(failure.get("diagnostics").unwrap()).contains(code));
+    }
+    save_documents(&dir.path, &[&fixture::placed_components("hidden")]);
+    assert!(css(html(&export(&dir.path, 4)), &dom_id(21)).contains("display: none"));
+    std::fs::remove_file(path).unwrap();
+    let missing = envelope(&run(&dir.path, &id(1), &id(4)), 1);
+    assert_eq!(
+        missing.get("result").unwrap().get("html"),
+        Some(&JsonValue::Null)
+    );
+    let notes = json::write(missing.get("diagnostics").unwrap());
+    assert!(notes.contains(&id(70)) && notes.contains(&id(21)));
+    assert_eq!(
+        html(&export(&dir.path, 3)),
+        include_str!("fixtures/web/view-a.html")
+    );
+}

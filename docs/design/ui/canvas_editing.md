@@ -42,7 +42,7 @@
 
 ### 1.1 범위
 
-다룹니다: 도구와 수식키, 선택, 변형 핸들, 이동, 스냅·가이드·눈금자·그리드, 정렬·분배, 순서와 묶음, 레이아웃 인지 편집, 생성 도구, 펜·벡터 편집, Boolean 연산, 캔버스 텍스트, 컴포넌트 인스턴스 편집, 줌·팬, 클립보드, 문맥 메뉴, Undo 단위, 키보드 전용·VoiceOver 경로, 성능 예산.
+다룹니다: 도구와 수식키, 선택, 변형 핸들, 이동, 스냅·가이드·눈금자·그리드, 정렬·분배, 순서와 묶음, 레이아웃 인지 편집, 생성 도구, 벡터 편집, Boolean 연산, 캔버스 텍스트, 컴포넌트 인스턴스 편집, 줌·팬, 클립보드, 문맥 메뉴, Undo 단위, 키보드 전용·VoiceOver 경로, 성능 예산.
 
 다루지 않습니다: 인스펙터 화면 구성(인스펙터 명세), 메뉴 막대 구성과 단축키 충돌 감사(도구·메뉴 명세), 속성 이름·값 문법·저장 필드 대응(속성 모델), 노드 기반 프로토타이핑 그래프와 Context 공급·소비 UI(PO 방향의 후속 단계), 실시간 공동 편집(아키텍처 §4.3 비목표).
 
@@ -89,7 +89,7 @@ NSEvent(셸)
 | `PropertyOverrideCommand::Set`·`Reset` | IX.2.4 | 인스턴스 override |
 | detach | IX.2.6 | 인스턴스 Detach |
 | Slot 콘텐츠 삽입·삭제·재정렬 | IX.3.3 | 인스턴스 Slot |
-| Path point 편집(가칭 `PathEdit`) | 신규 XII.10.28 | 펜·벡터 편집 |
+| Path point 편집(가칭 `PathEdit`) | 신규 XII.10.28 | 벡터 편집 |
 | Text 범위 편집(가칭 `TextEdit`) | 신규 XII.10.32 | 캔버스 텍스트 |
 | 인스턴스 교체(가칭 `SwapInstanceComponent`) | 신규 XII.10.35 | 인스턴스 swap |
 
@@ -103,7 +103,7 @@ CSS 속성의 PropertyKey·영속 record·migration은 계획 IX.11이 만듭니
 
 ### 3.1 도구
 
-도구 11종과 단일 키는 도구·메뉴 명세 6.2절을 그대로 씁니다. 단일 키는 캔버스가 first responder일 때만 해석합니다. [도구·메뉴 6.2] [가이드 8.2]
+도구 10종과 단일 키는 도구·메뉴 명세 6.2절을 그대로 씁니다. 단일 키는 캔버스가 first responder일 때만 해석합니다. [도구·메뉴 6.2] [가이드 8.2]
 
 | 도구 | 키 | 기본 동작 | 구현 |
 |---|---|---|---|
@@ -111,7 +111,6 @@ CSS 속성의 PropertyKey·영속 record·migration은 계획 IX.11이 만듭니
 | Hand | H | camera 팬 | XII.10.37 |
 | Zoom | Z | 클릭 확대, Option-클릭 축소, 영역 드래그 확대 | XII.10.37 |
 | Frame, Rectangle, Ellipse, Line, Polygon | F, R, O, L, (없음) | 드래그·클릭 생성 | XII.10.26 |
-| Pen | P | Path 그리기 | XII.10.29 |
 | Text | T | Text 생성·편집 | XII.10.33 |
 | Image | 메뉴 ⇧⌘K | 파일 선택 후 삽입 | XII.10.27 |
 
@@ -427,25 +426,17 @@ PO 방향에 따라 레이아웃은 CSS의 Flexbox·Grid·positioning 개념으�
 - 생성과 새 선택은 한 entry입니다. Undo 한 번에 생성 전 상태와 선택으로 돌아갑니다. [계획 XII.10.40]
 - Frame 도구로 기존 node 위를 그려도 그 node를 자동으로 품지 않습니다. 품기는 Frame Selection으로 합니다. [관례]
 
-현재 macOS 기본 창에서는 F로 자유 배치 Frame 안에 자식 Frame 하나를 드래그해 추가할 수 있습니다.
-부모 좌표로 환산한 두 변이 화면에서 각각 3 point 이상일 때 확정하고 새 Frame을 선택한 뒤 Move로 돌아갑니다.
-기본 크기 클릭, 수식키 변형, 흐름 배치 및 다른 생성 도구는 후속 범위입니다.
+현재 macOS 기본 창에서는 자유 배치 Frame 안에서 Frame·Rectangle·Ellipse·Line·Polygon을 드래그해 추가합니다.
+화면에서 두 변이 각각 3pt 이상일 때 확정합니다. Line은 두 점 사이의 거리만 3pt 이상이면 수평·수직·역방향 모두 확정합니다.
+Ellipse·Polygon은 클릭하면 부모 좌표의 100×100, Line은 오른쪽 100 길이로 생성합니다. Polygon 기본값은 도구 아이콘과 같은 정오각형이며 첫 꼭짓점은 위를 향합니다.
+이 세 도구에서 Shift는 정비례 또는 Line의 45도 간격, Option은 중심 기준입니다. 생성 직후 새 node를 선택하고 Move로 돌아갑니다.
+Frame·Rectangle의 기본 크기 클릭과 수식키, 드래그 중 Space로 시작점 이동 및 흐름 배치는 후속 범위입니다.
 
 ---
 
-## 12. 펜·벡터 편집
+## 12. 벡터 편집
 
-### 12.1 펜
-
-| 입력 | 결과 | 구현 |
-|---|---|---|
-| 클릭 | 직선 point 추가 | XII.10.29 |
-| 드래그 | 대칭 handle을 가진 곡선 point | XII.10.29 |
-| Option-드래그(handle) | 대칭을 깨고 한쪽만 | XII.10.29 |
-| Shift | 45도 단위 | XII.10.29 |
-| 첫 point 클릭 | subpath 닫기 | XII.10.29 |
-| Return, Escape | 열린 path로 끝내기 | XII.10.29 |
-| Delete | 마지막 point 취소 | XII.10.29 |
+### 12.1 Path 모델
 
 Path command는 MoveTo·LineTo·CubicTo·Close만 씁니다. point와 handle은 StableId를 가져 Semantic Diff가 point 단위로 됩니다. [계획 VI.6.1, VI.6.3]
 
@@ -526,6 +517,7 @@ Path command는 MoveTo·LineTo·CubicTo·Close만 씁니다. point와 handle은 
 | ⌘+ ⌘- ⌘0 ⌘9 ⌘* | 확대·축소·실제 크기·전체 맞춤·선택 맞춤 | 도구·메뉴 6.1, XII.4.3 |
 | 선택 없음에서 화살표 | 팬 | XII.10.14 |
 
+- macOS의 Zoom 도구(Z)에서 클릭하면 그 위치를 고정한 채 한 단계 확대하고 Option-클릭하면 한 단계 축소합니다. 사각형을 드래그하면 그 영역이 캔버스 가운데에 맞춰집니다. 드래그 중 Escape로 취소할 수 있습니다.
 - 줌·팬은 camera 입력일 뿐 문서 geometry를 바꾸지 않고 history에 넣지 않습니다. [계획 XII.4.3] [아키텍처 §23.3]
 - 현재 `InputEvent`에는 확대 제스처 종류가 없으므로 XII.10.36에서 추가합니다. 핀치는 `NSEvent` magnify 이벤트를 직접 받아 연속 move처럼 병합합니다. [계획 XII.3.1, XII.3.4] [AppKit 문서 NSEvent]
 - 지금 `StellarMacEvent`에는 확대 값 필드가 없고 셸 변환은 magnify 이벤트를 변환하지 않습니다(`crates/ffi/src/input_macos.rs`). 그래서 XII.10.36은 구조체 필드와 입력 encoding을 함께 바꾸며, ADR-0014 Compatibility에 따라 `STELLAR_MAC_EVENT_VERSION`과 `INPUT_EVENT_SCHEMA_VERSION`을 올리고 이전 version은 거부합니다. `crates/ffi` 변경이므로 같은 diff에 ADR-0014 갱신이 있어야 합니다. [ADR-0014] [계획 I.3.5, XII.10.36]
@@ -573,7 +565,7 @@ Path command는 MoveTo·LineTo·CubicTo·Close만 씁니다. point와 handle은 
 | 인스펙터 스크럽·stepper | 시작\~끝 1건 | VII.4.5 |
 | 정렬·분배·행·열 정리·묶음·Boolean | 명령당 1건 | VII.1.6 |
 | 생성 도구 | 생성과 새 선택 1건 | XII.10.40 |
-| 펜 point 하나 | 1건 | XII.10.28 |
+| 기존 Path의 point 드래그 | 1건 | XII.10.28 |
 | 텍스트 연속 입력 | 같은 위치 연속 입력 1건 | VII.4.3 |
 | 새 Text를 입력 없이 끝냄, 취소한 제스처, hover, 줌·팬, 도구 전환, 편집 범위 이동 | 0건 | §23.3 |
 
@@ -622,7 +614,7 @@ Path command는 MoveTo·LineTo·CubicTo·Close만 씁니다. point와 handle은 
 | hover 윤곽, 클릭 선택, 핸들 표시 | 목표 5ms, 상한 8ms | XII.10.43 |
 | 마퀴 갱신 | 목표 5ms, 상한 8ms(선택 표시) | XII.10.6, XII.10.43 |
 | 이동(스냅 포함)·크기 조절·회전·padding·gap 핸들 | Present 예약까지 10ms 이하 | XII.10.43 |
-| 펜 point 드래그 | 10ms 이하 | XII.10.43 |
+| Path point 드래그 | 10ms 이하 | XII.10.43 |
 | 텍스트 입력·IME 조합 표시 | 10ms 이하(단일 텍스트 변경) | XII.10.43 |
 | Pan·Zoom(핀치 포함) | 10ms 이하 | XII.10.37 |
 | 대규모 Paste·Delete | 최초 시각 반응 10ms 이하, 전체는 청크 분할 | XII.10.38 |
@@ -637,7 +629,7 @@ Path command는 MoveTo·LineTo·CubicTo·Close만 씁니다. point와 handle은 
 
 - 선택 윤곽과 핸들의 색은 시스템 강조 색을 따르고, ShellTheme이 실어 나르는 셸 색(가이드 열린 결정 O9)으로 받습니다. 다른 제품의 고유 색이나 모양을 쓰지 않습니다. [가이드 4.2, 11장 O9] [PO 2026-11-14 편집 UX]
 - 측정 수치 라벨은 시스템 글꼴의 의미와 고정폭 숫자를 씁니다. 라벨 glyph를 공통 텍스트 엔진으로 그릴지는 열린 결정 C2입니다. [가이드 4.1, 11장 O7]
-- 커서는 시스템 커서(`NSCursor`)가 있는 동작에는 시스템 커서를 쓰고, 회전·펜처럼 시스템에 없는 커서만 Stellar가 정합니다. [가이드 1.2 원칙 2, 3] [AppKit 문서 NSCursor]
+- 커서는 시스템 커서(`NSCursor`)가 있는 동작에는 시스템 커서를 쓰고, 회전처럼 시스템에 없는 커서만 Stellar가 정합니다. [가이드 1.2 원칙 2, 3] [AppKit 문서 NSCursor]
 - overlay는 렌더러 transient layer로 그리며 셸 뷰로 겹쳐 그리지 않습니다. 동작 줄이기·대비 높이기·투명도 줄이기 대응은 7.2절과 같습니다. [가이드 1.2 원칙 2, 8.4] [계획 XII.4.4]
 
 ---
@@ -671,7 +663,7 @@ C1\~C6은 "정할 곳" 행에서 정합니다. 그 행은 결정과 근거를 �
 | 스냅·가이드·눈금자·그리드 | XII.10.15\~XII.10.20 |
 | 정렬·순서·묶음 | XII.10.21\~XII.10.23 |
 | 레이아웃 인지 편집 | XII.10.24, XII.10.25 |
-| 생성·펜·Boolean | XII.10.26\~XII.10.31 |
+| 생성·벡터 편집·Boolean | XII.10.26\~XII.10.31 |
 | 텍스트 | XII.10.32, XII.10.33 |
 | 인스턴스 | XII.10.34, XII.10.35 |
 | 줌·팬·클립보드·문맥 메뉴 | XII.10.36\~XII.10.39 |
@@ -692,4 +684,4 @@ CSS 속성을 편집하는 행은 그 속성의 PropertyKey·영속 record·migr
 | XII.10.25 | `padding-*`, `row-gap`, `column-gap` | IX.11.6 |
 | XII.10.44 | 뒤집기 `scale` 부호, 위치 보정(inset·`translate`) | IX.11.6, IX.11.9 |
 
-가이드 10.4절이 "WBS 없음"으로 두었던 항목 중 생성 도구(XII.10.26, XII.10.27, XII.10.29, XII.10.33), 가이드·측정 표시(XII.10.16), 눈금자(XII.10.19)가 이 행들로 채워졌고, 가이드와 도구·메뉴 명세의 해당 문장도 이 행 번호로 고쳤습니다. 셸 프레임 명세 6.1절의 같은 문장은 그 문서를 고치는 다음 작업에서 맞춥니다. [가이드 0.2, 10.4]
+가이드 10.4절이 "WBS 없음"으로 두었던 항목 중 생성 도구(XII.10.26, XII.10.27, XII.10.33), 가이드·측정 표시(XII.10.16), 눈금자(XII.10.19)가 이 행들로 채워졌고, 가이드와 도구·메뉴 명세의 해당 문장도 이 행 번호로 고쳤습니다. 셸 프레임 명세 6.1절의 같은 문장은 그 문서를 고치는 다음 작업에서 맞춥니다. [가이드 0.2, 10.4]

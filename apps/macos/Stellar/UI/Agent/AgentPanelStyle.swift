@@ -86,6 +86,7 @@ enum AgentPanelText {
     static let conversationViewLabel = "Conversation View"
     static let cliPopUpLabel = "Agent CLI"
     static let noCLIItem = "No CLI Found"
+    static let disconnectedTitle = "No agent session is connected."
     static let modePopUpLabel = "Agent Mode"
     static let moreActions = "More Agent Actions"
     static let conversationLabel = "Agent Conversation"

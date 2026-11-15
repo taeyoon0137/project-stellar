@@ -126,6 +126,13 @@ done
 
 # Open Project(XII.6.2): 폴더 선택 → 코어 열기·안전 probe → 창, 잘못된 폴더 fixture별 실패 코드 → 안내 대응.
 "$APP" --project-open-check
+(
+  clone_home="$(mktemp -d)"
+  trap 'rm -rf "$clone_home"' EXIT
+  HOME="$clone_home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ALLOW_PROTOCOL=file \
+    GIT_AUTHOR_NAME=Fixture GIT_COMMITTER_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid \
+    GIT_COMMITTER_EMAIL=fixture@example.invalid "$APP" --project-clone-check "$clone_home"
+)
 
 # 창 session(XII.2.2): 저장 프로젝트 fixture를 복사한 두 프로젝트를 열고 닫으며 창 controller마다 코어 창 session handle
 # 하나를 소유하는지, 닫으면 그 창 session만 닫히는지 확인합니다.
@@ -138,7 +145,9 @@ python3 "$REPO_ROOT/scripts/macos/canvas-move-check.py" "$APP" "$cli_target/debu
 (
   frame_home="$(mktemp -d)"
   trap 'rm -rf "$frame_home"' EXIT
-  HOME="$frame_home" "$APP" --frame-insert-check "$frame_home"
+  unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL EMAIL
+  HOME="$frame_home" XDG_CONFIG_HOME="$frame_home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    "$APP" --frame-insert-check "$frame_home" --expect-missing-git-identity
 )
 
 "$APP" --window-session-check "$WINDOW_SESSION_FIXTURE"

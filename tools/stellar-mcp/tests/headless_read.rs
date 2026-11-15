@@ -292,7 +292,15 @@ fn approved_snapshot_lists_only_implemented_resources_and_pages_without_writes()
             .get("resourceTemplates")
             .unwrap(),
     );
-    assert_eq!(templates.len(), 1);
+    assert_eq!(templates.len(), 3);
+    assert_eq!(
+        templates[2].get("uriTemplate").map(text),
+        Some("stellar://components/{component}{?cursor,limit}")
+    );
+    assert_eq!(
+        templates[1].get("uriTemplate").map(text),
+        Some("stellar://components{?cursor,limit}")
+    );
     assert_eq!(
         templates[0].get("uriTemplate").map(text),
         Some(resources::resource("document").unwrap().uri)
@@ -438,6 +446,54 @@ fn tool_page(reply: &J) -> J {
 }
 
 #[test]
+fn component_pages_cover_large_libraries_and_reject_a_changed_source_cursor() {
+    let fx = Fixture::new();
+    save_documents(&fx.project, &[&large_document(2)]);
+    let first_file = stellar_mcp::test_support::component_diff_fixture(
+        &fx.project.join("design/components"),
+        2200,
+    );
+    fx.grant();
+    let mut client = fx.launch();
+    client.initialize();
+    let mut uri = COMPONENTS.to_string();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut first_cursor = None;
+    loop {
+        let body = content(&client.read(&uri), &uri);
+        assert_eq!(body.get("total"), Some(&J::int(2200)));
+        if seen.is_empty() {
+            assert_eq!(
+                body.get("limit").and_then(J::as_i64),
+                Some(paging::MAX_PAGE_ITEMS as i64)
+            );
+            assert!(array(body.get("entries").unwrap()).len() > paging::DEFAULT_PAGE_ITEMS);
+        }
+        assert_eq!(
+            body.get("offset").and_then(J::as_i64),
+            Some(seen.len() as i64)
+        );
+        for entry in array(body.get("entries").unwrap()) {
+            assert!(seen.insert(text(entry.get("id").unwrap()).to_owned()));
+        }
+        let Some(cursor) = body.get("next_cursor").and_then(J::as_str) else {
+            break;
+        };
+        first_cursor.get_or_insert_with(|| cursor.to_owned());
+        uri = format!("{COMPONENTS}?cursor={cursor}&limit=1600");
+    }
+    assert_eq!(seen.len(), 2200);
+    let mut bytes = std::fs::read(&first_file).unwrap();
+    bytes.extend_from_slice(b"\n# edited externally\n");
+    std::fs::write(first_file, bytes).unwrap();
+    let stale = format!("{COMPONENTS}?cursor={}", first_cursor.unwrap());
+    assert_error(&client.read(&stale), -32602);
+    let uri = format!("{COMPONENTS}?limit=1");
+    let first = content(&client.read(&uri), &uri);
+    assert_eq!(array(first.get("entries").unwrap()).len(), 1);
+}
+
+#[test]
 fn component_resource_tracks_saved_yaml_across_checkouts_in_one_session() {
     use std::fs;
     const ID: &str = "0195c530-3acd-7bc1-8414-c213f61cb965";
@@ -522,6 +578,24 @@ payload:
         body
     };
     let main = checked(&mut client, 1, "160");
+    assert_eq!(
+        array(main.get("entries").unwrap())[0].get("background"),
+        Some(&J::Null)
+    );
+    let colored = v1.replace(
+        "    background: none",
+        "    background:\n      space: display-p3\n      rgba: \"1.2 -0.1 0.5 0\"",
+    );
+    assert_ne!(colored, v1);
+    fs::write(&path, colored).unwrap();
+    let filled = checked(&mut client, 1, "160");
+    let background = array(filled.get("entries").unwrap())[0]
+        .get("background")
+        .unwrap();
+    assert_eq!(background.get("space").map(text), Some("display-p3"));
+    assert_eq!(background.get("rgba").map(text), Some("1.2 -0.1 0.5 0"));
+    fx.git(&["restore", "--", "design/components"]);
+    assert_eq!(checked(&mut client, 1, "160"), main);
     fx.git(&["switch", "-qc", "nested"]);
     let v2 = v1.replace("schema_version: 1", "schema_version: 2")
         + "children:\n  -\n"
@@ -530,6 +604,32 @@ payload:
     fx.git(&["add", "--", "design/components"]);
     fx.git(&["commit", "-qm", "nested Frame"]);
     let nested = checked(&mut client, 2, "160");
+    let detail = format!("{COMPONENTS}/{ID}");
+    let first_page = format!("{detail}?limit=1");
+    let root_page = content(&client.read(&first_page), &first_page);
+    assert_eq!(
+        root_page.get("source_hash"),
+        nested.get("entries").unwrap().as_array().unwrap()[0].get("source_hash")
+    );
+    let root = &array(root_page.get("nodes").unwrap())[0];
+    assert_eq!(root.get("id").map(text), Some(ROOT));
+    assert_eq!(root.get("parent"), Some(&J::Null));
+    assert_eq!(root.get("display_name").map(text), Some("Frame"));
+    assert_eq!(
+        root.get("payload").unwrap().get("width").map(text),
+        Some("160")
+    );
+    let cursor = text(root_page.get("next_cursor").unwrap());
+    let next_page = format!("{detail}?cursor={cursor}");
+    let child_page = content(&client.read(&next_page), &next_page);
+    let child = &array(child_page.get("nodes").unwrap())[0];
+    assert_eq!(child.get("id").map(text), Some(CHILD));
+    assert_eq!(child.get("parent").map(text), Some(ROOT));
+    assert_eq!(
+        child.get("payload").unwrap().get("height").map(text),
+        Some("12")
+    );
+    assert_error(&client.read(&format!("{COMPONENTS}/{ROOT}")), -32602);
     let nested_head = fx.git(&["rev-parse", "HEAD"]);
     assert_eq!(
         tool_page(&client.diff(empty())).get("total"),
@@ -541,8 +641,19 @@ payload:
     )
     .unwrap();
     let before = file_digest(&fx.temp.path);
+    assert_error(&client.read(&next_page), -32602);
+    let updated = content(&client.read(&detail), &detail);
+    assert_ne!(updated.get("source_hash"), root_page.get("source_hash"));
+    assert_eq!(
+        array(updated.get("nodes").unwrap())[1]
+            .get("payload")
+            .unwrap()
+            .get("width")
+            .map(text),
+        Some("30")
+    );
     let first = tool_page(&client.diff(J::object(vec![("limit", J::int(1))])));
-    assert_eq!(first.get("total"), Some(&J::int(2)));
+    assert_eq!(first.get("total"), Some(&J::int(3)));
     assert_eq!(first.get("revision"), Some(&revision));
     assert_eq!(
         first.get("base_commit").map(text),
@@ -551,11 +662,20 @@ payload:
     let cursor = first.get("next_cursor").unwrap().clone();
     let next = tool_page(&client.diff(J::object(vec![("cursor", cursor.clone())])));
     assert_eq!(next.get("next_cursor"), Some(&J::Null));
-    for (page, object) in [(&first, ROOT), (&next, CHILD)] {
-        let entry = &array(page.get("items").unwrap())[0];
+    let changes: Vec<_> = array(first.get("items").unwrap())
+        .iter()
+        .chain(array(next.get("items").unwrap()))
+        .collect();
+    assert_eq!(changes.len(), 3);
+    for (entry, (object, path)) in
+        changes
+            .into_iter()
+            .zip([(ROOT, "0x0108"), (CHILD, "0x0108"), (CHILD, "0x0109")])
+    {
         assert_eq!(entry.get("document"), Some(&J::Null));
         assert_eq!(entry.get("component").map(text), Some(ID));
         assert_eq!(entry.get("object").map(text), Some(object));
+        assert_eq!(entry.get("path").map(text), Some(path));
         assert_eq!(entry.get("kind").map(text), Some("set-property"));
     }
     assert_eq!(file_digest(&fx.temp.path), before);
@@ -1146,8 +1266,9 @@ fn component_diff_rtt() {
                 client.initialize();
                 let cold = measured(&mut client, 0);
                 let warm = measured(&mut client, 0);
-                std::fs::write(&file, original.replace("size: \"0 0\"", "size: \"161 40\""))
-                    .unwrap();
+                let edited = original.replace(r#"size: "0 0""#, r#"size: "161 0""#);
+                assert_ne!(edited, original);
+                std::fs::write(&file, edited).unwrap();
                 let edit = measured(&mut client, 1);
                 let repeat = measured(&mut client, 1);
                 println!("components={count} sample={turn} binary={label} cold_ms={cold:.2} warm_ms={warm:.2} edit_ms={edit:.2} repeat_ms={repeat:.2}");

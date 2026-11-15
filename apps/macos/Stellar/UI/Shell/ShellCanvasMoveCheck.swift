@@ -2,11 +2,12 @@ import AppKit
 
 /// 실제 기본 창에서 저장된 Frame에 AppKit pointer 입력을 전달하고 Undo, 저장, 재열기를 확인합니다.
 enum ShellCanvasMoveCheck {
-    @MainActor static func mouse(_ canvas: CanvasView, _ kind: NSEvent.EventType, at point: CGPoint) -> Bool {
+    @MainActor static func mouse(_ canvas: CanvasView, _ kind: NSEvent.EventType, at point: CGPoint,
+                                 modifiers: NSEvent.ModifierFlags = []) -> Bool {
         guard let owner = canvas.window else { return false }
         let location = canvas.convert(point, to: nil)
         func event(at location: NSPoint, window: Int) -> NSEvent? {
-            NSEvent.mouseEvent(with: kind, location: location, modifierFlags: [],
+            NSEvent.mouseEvent(with: kind, location: location, modifierFlags: modifiers,
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window,
                 context: nil, eventNumber: 1, clickCount: 1, pressure: 1)
         }
@@ -24,6 +25,61 @@ enum ShellCanvasMoveCheck {
         case .leftMouseUp: canvas.mouseUp(with: event)
         default: return false
         }
+        return true
+    }
+
+    @MainActor private static func checkZoomTool(_ shell: ShellProjectWindow, other: ShellProjectWindow, pump: ShellRuntimeEventPump) -> Bool {
+        let canvas = shell.canvasHost.canvasView
+        func designBytes() throws -> [String: Data] {
+            let design = URL(fileURLWithPath: shell.dataSource.rootPath).appendingPathComponent("design")
+            var files: [String: Data] = [:]
+            for path in try FileManager.default.subpathsOfDirectory(atPath: design.path) {
+                let url = design.appendingPathComponent(path)
+                if try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true { files[path] = try Data(contentsOf: url) }
+            }
+            return files
+        }
+        guard let owner = shell.window, let session = shell.windowController.windowSession,
+              let camera = session.viewInfo, let info = session.info, let otherCamera = other.windowController.windowSession?.viewInfo,
+              let target = session.selectionTarget, let original = try? designBytes(), !original.isEmpty,
+              let z = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 1, windowNumber: owner.windowNumber,
+                                       context: nil, characters: "z", charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6)
+        else { return false }
+        canvas.keyDown(with: z)
+        let center = CGPoint(x: canvas.bounds.midX, y: canvas.bounds.midY)
+        let click = CGPoint(x: center.x - 30, y: center.y)
+        let hit = canvas.frameHit(at: click)?.id
+        func clickWith(_ flags: NSEvent.ModifierFlags) -> Bool {
+            mouse(canvas, .leftMouseDown, at: click, modifiers: flags) && mouse(canvas, .leftMouseUp, at: click, modifiers: flags) &&
+                pump.waitForPendingRequests(timeout: 10)
+        }
+        guard shell.toolsModel.snapshot.activeTool == .zoom, hit != nil, clickWith([]), let closer = session.viewInfo,
+              closer.zoom == camera.zoom * 2, closer.center_x - 30 / closer.zoom == camera.center_x - 30 / camera.zoom,
+              canvas.frameHit(at: click)?.id == hit, clickWith(.option), session.viewInfo?.zoom == camera.zoom,
+              session.viewInfo?.center_x == camera.center_x else { return false }
+        let a = CGPoint(x: center.x + canvas.bounds.width / 4 + 12, y: center.y + canvas.bounds.height / 4 - 8)
+        let b = CGPoint(x: center.x - canvas.bounds.width / 4 + 12, y: center.y - canvas.bounds.height / 4 - 8)
+        guard mouse(canvas, .leftMouseDown, at: a), mouse(canvas, .leftMouseDragged, at: b), canvas.insertionOutline != nil,
+              mouse(canvas, .leftMouseUp, at: b), canvas.insertionOutline == nil, pump.waitForPendingRequests(timeout: 10),
+              session.viewInfo?.zoom == camera.zoom * 2, session.viewInfo?.center_x == camera.center_x + 12 / camera.zoom,
+              session.viewInfo?.center_y == camera.center_y - 8 / camera.zoom else { return false }
+        guard mouse(canvas, .leftMouseDown, at: a), mouse(canvas, .leftMouseDragged, at: b), canvas.insertionOutline != nil,
+              let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 1, windowNumber: owner.windowNumber,
+                                            context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)
+        else { return false }
+        canvas.keyDown(with: escape)
+        let undoAreaZoom = CGPoint(x: center.x + 24, y: center.y - 16)
+        guard canvas.insertionOutline == nil, mouse(canvas, .leftMouseUp, at: b), pump.waitForPendingRequests(timeout: 10),
+              session.viewInfo?.zoom == camera.zoom * 2, mouse(canvas, .leftMouseDown, at: undoAreaZoom, modifiers: .option),
+              mouse(canvas, .leftMouseUp, at: undoAreaZoom, modifiers: .option), pump.waitForPendingRequests(timeout: 10),
+              session.viewInfo?.zoom == camera.zoom, session.viewInfo?.center_x == camera.center_x,
+              session.viewInfo?.center_y == camera.center_y, shell.router.dispatch(.selectMoveTool),
+              let next = session.info, target.matches(session.selectionTarget), next.revision == info.revision,
+              next.generation == info.generation, next.undo_depth == info.undo_depth, next.redo_depth == info.redo_depth,
+              next.has_unsaved_changes == info.has_unsaved_changes, let still = other.windowController.windowSession?.viewInfo,
+              still.zoom == otherCamera.zoom, still.center_x == otherCamera.center_x, still.center_y == otherCamera.center_y,
+              (try? designBytes()) == original else { return false }
+        print("zoom-tool ok: Z, anchored click and Option-click, reversed area drag, Escape, selection/history, saved design bytes and other window preserved")
         return true
     }
 
@@ -121,6 +177,7 @@ enum ShellCanvasMoveCheck {
         guard sa.pan(dx: -60, dy: 0, completion: { canvas.refreshFrames() }),
               pump.waitForPendingRequests(timeout: 10),
               a.router.dispatch(.selectMoveTool), at(-30, in: canvas) == node else { return fail("Hand 카메라·scene 복원") }
+        guard checkZoomTool(a, other: b, pump: pump) else { return fail("Z, Option-클릭·영역 줌·다른 창과 문서 보존") }
         a.gitSource.updateTrust(true)
         guard pump.waitForPendingRequests(timeout: 10), a.gitSource.trusted else { return fail("격리된 프로젝트 신뢰") }
         guard let selectedPixels = bitmap(canvas), mouse(canvas, .leftMouseDown, -30), mouse(canvas, .leftMouseDragged, 30),

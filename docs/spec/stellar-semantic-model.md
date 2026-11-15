@@ -356,13 +356,19 @@ code는 위 표와 정확히 같아야 합니다. 모르는 code(`0x0000`, `0x01
 
 | key | 이름 | 근거 |
 |---|---|---|
-| `0x0101` | frame size | `document::frame::keys::SIZE` |
+| `0x0101` | 이전 Frame 크기 묶음(기존 snapshot·명령 읽기) | `document::frame::keys::SIZE` |
 | `0x0102` | frame transform | `TRANSFORM` |
 | `0x0103` | frame clipping | `CLIPPING` |
 | `0x0104` | frame background | `BACKGROUND` |
 | `0x0105` | frame border | `BORDER` |
-| `0x0106` | frame corner radius | `CORNER_RADIUS` |
+| `0x0106` | 이전 Frame 모서리 반경 묶음(기존 snapshot·명령 읽기) | `CORNER_RADIUS` |
 | `0x0107` | frame layout mode | `LAYOUT_MODE` |
+| `0x0108` | Frame width | `WIDTH` |
+| `0x0109` | Frame height | `HEIGHT` |
+| `0x010a` | Frame border-top-left-radius | `BORDER_TOP_LEFT_RADIUS` |
+| `0x010b` | Frame border-top-right-radius | `BORDER_TOP_RIGHT_RADIUS` |
+| `0x010c` | Frame border-bottom-right-radius | `BORDER_BOTTOM_RIGHT_RADIUS` |
+| `0x010d` | Frame border-bottom-left-radius | `BORDER_BOTTOM_LEFT_RADIUS` |
 | `0x0601` | image asset 참조 | `document::image::IMAGE_PROP_ASSET` |
 | `0x0A01` | instance 정의 참조 | `document::component::instance::keys::COMPONENT_REF` |
 | `0x0A02` | instance Property override | `PROPERTY_OVERRIDES` |
@@ -379,6 +385,12 @@ code는 위 표와 정확히 같아야 합니다. 모르는 code(`0x0000`, `0x01
 | `0x10A1` | blur radius | `BLUR_RADIUS` |
 | `0x10B1` | blend mode | `BLEND_MODE` |
 | `0x10C1` | opacity value | `OPACITY_VALUE` |
+
+Frame의 네 반경은 각자 비음수 길이 하나를 가집니다. CLI와 MCP는 같은 Frame의 다른 모서리를
+서로 다른 속성 경로로 보고하며 semantic merge는 같은 모서리에 서로 다른 값을 쓴 경우만 충돌로
+처리합니다. 이전 `0x0106` snapshot과 명령·history는 좌상·우상·우하·좌하 순으로 읽습니다.
+묶음과 개별 경로가 혼합된 snapshot의 역변환은 거부합니다. 기존 View 및 컴포넌트 YAML의
+`corner_radius`는 한 줄에 네 값을 담으므로 일반 Git 줄 병합에서는 이 편집이 충돌할 수 있습니다.
 
 snapshot 전용 key(`semantic-diff::keys`):
 

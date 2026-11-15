@@ -35,7 +35,7 @@ enum ShellCanvasTextInputCheck {
             guard wait(), let project = app.projectWindow(forPath: path), let window = project.window else { return nil }
             window.setContentSize(CGSize(width: 1280, height: 790))
             window.contentView?.layoutSubtreeIfNeeded()
-            project.fitNewProjectFrame()
+            project.performSessionCommand(.zoomToFit)
             return wait() ? project : nil
         }
         guard let shell = open(), let window = shell.window, let session = shell.windowController.windowSession,
@@ -90,6 +90,10 @@ enum ShellCanvasTextInputCheck {
         }
         guard until({ canvas.typingLayer?.paint.geometry.paths.isEmpty == false }), let marked = ink(),
               marked != blank, session.info?.undo_depth == base.undo_depth else { return fail("transient glyph pixels; paths \(canvas.typingLayer?.paint.geometry.paths.count ?? -1), region dark \(ink()?.filter { $0 < 128 }.count ?? -1), baseline \(blank.filter { $0 < 128 }.count)") }
+        let markedRevision = session.info?.revision
+        guard app.prepareToTerminate(confirmAgent: { true }, reply: { _ in }) == .terminateCancel,
+              !shell.shouldCloseAfterSaving(), window.firstResponder === input,
+              input.hasMarkedText(), session.info?.revision == markedRevision else { return fail("Quit/close while composing") }
         input.cancelOperation(nil)
         guard !input.hasMarkedText(), session.info?.revision == base.revision else { return fail("cancel mark") }
         input.setMarkedText("한", selectedRange: NSRange(location: 1, length: 0), replacementRange: missing)
@@ -114,6 +118,20 @@ enum ShellCanvasTextInputCheck {
         guard wait(), let next = open(), let w = next.window, let hit = next.canvasHost.canvasView.textHit(id: id),
               next.editCanvasText(hit, at: nil, canvas: next.canvasHost.canvasView), until({ w.firstResponder is CanvasTextInputView }),
               (w.firstResponder as? CanvasTextInputView)?.buffer.contents == "재편집", notices.isEmpty else { return fail("saved text after reopen") }
+        guard let active = w.firstResponder as? CanvasTextInputView,
+              let beforeQueue = next.windowController.windowSession?.info?.revision else { return fail("pending quit fixture") }
+        let end = active.buffer.contents.utf16.count
+        active.insertText("1", replacementRange: NSRange(location: end, length: 0))
+        active.insertText("2", replacementRange: NSRange(location: end + 1, length: 0))
+        guard app.prepareToTerminate(confirmAgent: { true }, reply: { _ in }) == .terminateCancel,
+              until({ next.canvasTextEditing == nil && next.windowController.windowSession?.info?.revision == beforeQueue + 2 }),
+              next.performSessionCommand(.saveNow), wait(),
+              let savedHit = next.canvasHost.canvasView.textHit(id: id),
+              next.editCanvasText(savedHit, at: nil, canvas: next.canvasHost.canvasView),
+              until({ w.firstResponder is CanvasTextInputView }),
+              (w.firstResponder as? CanvasTextInputView)?.buffer.contents == "재편집12",
+              app.prepareToTerminate(confirmAgent: { true }, reply: { _ in }) == .terminateNow
+        else { return fail("Quit drops confirmed queued text or blocks idle text focus") }
         print("canvas-ime ok: T click, empty cancel, real marked Hangul outlines, cancel, commit, rapid inserts, Return/range editing, Undo/Redo/save/reopen")
         return true
     }

@@ -48,14 +48,12 @@ enum ShellDocumentRecoveryCheck {
         }
         window.orderBack(nil)
         if mode == "live" {
-            var len = 0, bytes = [UInt8](repeating: 0, count: 256)
-            let status = bytes.withUnsafeMutableBufferPointer { stellar_window_recovery_probe(host.handle, session.session, $0.baseAddress, $0.count, &len) }
-            return status == STELLAR_OK && String(decoding: bytes.prefix(len), as: UTF8.self) == "0"
+            let (status, bytes) = CoreRuntime.probeRecovery(handle: host.handle, session: session.session, capacity: 256)
+            return status == STELLAR_OK && String(decoding: bytes, as: UTF8.self) == "0"
         }
         guard until({ window.attachedSheet != nil }), let prompt = window.attachedSheet else {
-            var len = 0, bytes = [UInt8](repeating: 0, count: 512)
-            let status = bytes.withUnsafeMutableBufferPointer { stellar_window_recovery_probe(host.handle, session.session, $0.baseAddress, $0.count, &len) }
-            return fail("missing prompt. probe=\(status.rawValue) \(String(decoding: bytes.prefix(len), as: UTF8.self))")
+            let (status, bytes) = CoreRuntime.probeRecovery(handle: host.handle, session: session.session, capacity: 512)
+            return fail("missing prompt. probe=\(status.rawValue) \(String(decoding: bytes, as: UTF8.self))")
         }
         func buttons(_ view: NSView) -> [String] {
             (view as? NSButton).map { [$0.title] } ?? view.subviews.flatMap(buttons)
@@ -81,10 +79,9 @@ enum ShellDocumentRecoveryCheck {
         // 취소 뒤 실제 패널이 URL을 반환할 때와 같은 coordinator 진입점으로 fixture 경로를 전달합니다.
         window.endSheet(panel, returnCode: .cancel)
         guard until({ window.attachedSheet == nil }) else { return fail("save panel cancellation") }
-        var length = 0, token = [UInt8](repeating: 0, count: 512)
-        let status = token.withUnsafeMutableBufferPointer { stellar_window_recovery_probe(host.handle, session.session, $0.baseAddress, $0.count, &length) }
-        guard status == STELLAR_OK, length > 1, token[0] == 50 else { return fail("separate copy ticket") }
-        shell.submitDocumentRecovery(String(decoding: token[1..<length], as: UTF8.self), destination: home.appendingPathComponent("Recovered"))
+        let (status, token) = CoreRuntime.probeRecovery(handle: host.handle, session: session.session, capacity: 512)
+        guard status == STELLAR_OK, token.count > 1, token.first == 50 else { return fail("separate copy ticket") }
+        shell.submitDocumentRecovery(String(decoding: token.dropFirst(), as: UTF8.self), destination: home.appendingPathComponent("Recovered"))
         let pointer = home.appendingPathComponent("Recovered/design/current").path
         guard until({ FileManager.default.fileExists(atPath: pointer) }), pump.waitForPendingRequests(timeout: 15),
               session.info?.has_unsaved_changes == 0 else {return fail("precondition")}

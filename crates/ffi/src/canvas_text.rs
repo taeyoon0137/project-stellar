@@ -22,11 +22,11 @@ pub struct StellarCanvasTextElement {
     op: u32,
     points: [f32; 6],
 }
-fn with_text(
+fn with_scene_row(
     handle: u64,
     session: u64,
     q: StellarCanvasTextQuery,
-    run: impl FnOnce(&DocumentText) -> StellarStatus,
+    run: impl FnOnce(&stellar_runtime::canvas::CanvasScene) -> StellarStatus,
 ) -> StellarStatus {
     let state = {
         let Ok(reg) = registry().lock() else {
@@ -52,11 +52,79 @@ fn with_text(
     {
         return StellarStatus::NoError;
     }
-    scene
-        .text
-        .get(&q.row)
-        .map(AsRef::as_ref)
-        .map_or(StellarStatus::NoError, run)
+    run(scene)
+}
+
+fn with_text(
+    handle: u64,
+    session: u64,
+    q: StellarCanvasTextQuery,
+    run: impl FnOnce(&DocumentText) -> StellarStatus,
+) -> StellarStatus {
+    with_scene_row(handle, session, q, |scene| {
+        scene
+            .text
+            .get(&q.row)
+            .map(AsRef::as_ref)
+            .map_or(StellarStatus::NoError, run)
+    })
+}
+
+/// 불변 scene의 shape path를 같은 revision·View·node의 행에서 복사합니다.
+/// # Safety
+/// count와 flags는 쓰기 가능해야 하며 rows는 null 또는 capacity개의 정렬된 요소입니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_canvas_shape_path(
+    handle: u64,
+    session: u64,
+    q: StellarCanvasTextQuery,
+    rows: *mut StellarCanvasTextElement,
+    capacity: usize,
+    count: *mut usize,
+    flags: *mut u32,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if count.is_null() || flags.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe {
+            count.write(0);
+            flags.write(0);
+        }
+        with_scene_row(handle, session, q, |scene| {
+            let Some(shape) = scene.shapes.get(&q.row) else {
+                return StellarStatus::NoError;
+            };
+            let cmds = shape.geometry.commands();
+            let length = cmds.len() + usize::from(shape.point_cap.is_some());
+            unsafe {
+                count.write(length);
+                flags.write(u32::from(shape.cap.tag()));
+            }
+            if rows.is_null() {
+                return StellarStatus::Ok;
+            }
+            if capacity < length {
+                return StellarStatus::BufferTooSmall;
+            }
+            for (i, &command) in cmds.iter().enumerate() {
+                let (op, points) = path_command(command, Vec2::ZERO);
+                unsafe {
+                    rows.add(i).write(StellarCanvasTextElement { op, points });
+                }
+            }
+            if let Some(bounds) = shape.point_cap {
+                let [x, y, w, h] = rect(bounds);
+                unsafe {
+                    rows.add(cmds.len()).write(StellarCanvasTextElement {
+                        op: 5,
+                        points: [x, y, w, h, 0., 0.],
+                    });
+                }
+            }
+            StellarStatus::Ok
+        })
+    })
 }
 fn rect(r: Rect) -> [f32; 4] {
     [

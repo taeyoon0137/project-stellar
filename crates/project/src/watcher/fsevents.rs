@@ -237,6 +237,24 @@ fn overflow_reason(event_flags: u32) -> Option<OverflowReason> {
     }
 }
 
+/// 파일 내용을 다시 읽어야 하는 변경만 전달합니다. rename의 어느 쪽이 보고되어도 충분합니다.
+#[cfg(any(target_os = "macos", test))]
+fn affects_component_sources(folder: &Path, path: Option<&Path>, flags: u32) -> bool {
+    if overflow_reason(flags).is_some() || flags & flags::EVENT_IDS_WRAPPED != 0 {
+        return true;
+    }
+    let changes =
+        flags::ITEM_CREATED | flags::ITEM_REMOVED | flags::ITEM_RENAMED | flags::ITEM_MODIFIED;
+    flags & changes != 0
+        && path.is_some_and(|path| {
+            path == folder
+                || (path.parent() == Some(folder)
+                    && path
+                        .file_name()
+                        .is_some_and(|name| name.as_encoded_bytes().ends_with(b".stellar.yaml")))
+        })
+}
+
 /// 같은 사유의 넘침이 연달아 나오면 하나로 합칩니다.
 fn push_overflow(out: &mut Vec<FileWatchEvent>, reason: OverflowReason) {
     if out.last() != Some(&FileWatchEvent::Overflow(reason)) {
@@ -256,12 +274,13 @@ fn to_path(bytes: &[u8]) -> Option<&Path> {
 }
 
 #[cfg(target_os = "macos")]
-pub use stream::{FsEventsWatcher, WatcherError};
+pub use stream::{ComponentFileWatch, FsEventsWatcher, WatcherError};
 
 #[cfg(target_os = "macos")]
 mod stream {
     use std::collections::VecDeque;
     use std::ffi::{c_char, c_void, CStr, CString};
+    use std::os::unix::net::UnixDatagram;
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Condvar, Mutex, MutexGuard};
     use std::time::{Duration, Instant, SystemTime};
@@ -417,6 +436,7 @@ mod stream {
     struct StreamContext {
         root: WatchRootId,
         queue: Arc<EventQueue>,
+        component_signal: Option<(PathBuf, UnixDatagram)>,
     }
 
     /// FSEvents stream 하나(감시 root 하나).
@@ -449,6 +469,25 @@ mod stream {
         // callback 동안 유효하게 넘깁니다(UseCFTypes 미사용).
         let context = unsafe { &*(info as *const StreamContext) };
         let paths = event_paths as *const *const c_char;
+        if let Some((folder, signal)) = &context.component_signal {
+            for i in 0..num_events {
+                // SAFETY: 이번 callback 동안 두 배열과 null이 아닌 C 경로가 유효합니다.
+                let (path, flags) = unsafe { (*paths.add(i), *event_flags.add(i)) };
+                let path = (!path.is_null())
+                    .then(|| unsafe { CStr::from_ptr(path) }.to_bytes())
+                    .and_then(super::to_path);
+                if super::affects_component_sources(folder, path, flags) {
+                    // 비차단 소켓이 가득 차면 이전 알림이 이미 읽기를 기다리고 있습니다.
+                    while let Err(error) = signal.send(&[1]) {
+                        if error.kind() != std::io::ErrorKind::Interrupted {
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+            return;
+        }
         let mut state = context.queue.lock();
         for i in 0..num_events {
             // SAFETY: 위 설명대로 i < num_events 범위의 배열 원소입니다.
@@ -482,6 +521,7 @@ mod stream {
             root: WatchRootId,
             path: &Path,
             shared: &Arc<EventQueue>,
+            component_signal: Option<(PathBuf, UnixDatagram)>,
         ) -> Result<Stream, WatcherError> {
             let c_path = path_to_cstring(path)?;
             let label =
@@ -491,6 +531,7 @@ mod stream {
             let context = Box::into_raw(Box::new(StreamContext {
                 root,
                 queue: Arc::clone(shared),
+                component_signal,
             }));
             let fail = |context: *mut StreamContext| {
                 // SAFETY: 아직 어떤 stream에도 넘기지 않았거나 이미 해제된 stream의 context입니다.
@@ -597,6 +638,38 @@ mod stream {
         }
     }
 
+    /// 직접 소유하는 컴포넌트 원본의 변경 알림. 파일 내용은 기존 신뢰 검사 경로만 읽습니다.
+    pub struct ComponentFileWatch(Stream);
+
+    impl std::fmt::Debug for ComponentFileWatch {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("ComponentFileWatch")
+                .field("root", &self.0.root)
+                .finish()
+        }
+    }
+
+    impl ComponentFileWatch {
+        /// 디렉터리 자체가 아직 없거나 교체되더라도 프로젝트 스트림을 유지합니다.
+        pub fn start(project: &Path) -> Result<(Self, UnixDatagram), WatcherError> {
+            let roots = WatchRoots::new(project)?;
+            let root = roots.project();
+            let failed = |_| WatcherError::Stream {
+                path: root.path.clone(),
+            };
+            let (reader, writer) = UnixDatagram::pair().map_err(failed)?;
+            reader.set_nonblocking(true).map_err(failed)?;
+            writer.set_nonblocking(true).map_err(failed)?;
+            let stream = Stream::start(
+                root.id,
+                &root.path,
+                &Arc::new(EventQueue::default()),
+                Some((root.path.join("design/components"), writer)),
+            )?;
+            Ok((Self(stream), reader))
+        }
+    }
+
     /// macOS FSEvents 기반 [`ProjectFileWatcher`].
     pub struct FsEventsWatcher {
         roots: WatchRoots,
@@ -622,7 +695,7 @@ mod stream {
             let mut streams = Vec::new();
             for root in roots.iter() {
                 if let Some(path) = stream_path(&roots, root.id) {
-                    streams.push(Stream::start(root.id, &path, &queue)?);
+                    streams.push(Stream::start(root.id, &path, &queue, None)?);
                 }
             }
             Ok(FsEventsWatcher {
@@ -661,7 +734,7 @@ mod stream {
                 .ok_or_else(|| WatcherError::Stream {
                     path: target.to_path_buf(),
                 })
-                .and_then(|path| Stream::start(id, &path, &self.queue));
+                .and_then(|path| Stream::start(id, &path, &self.queue, None));
             match started {
                 Ok(stream) => {
                     self.streams.push(stream);
@@ -746,6 +819,45 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
+
+    #[test]
+    fn component_changes_are_direct_and_overflow_survives_filtering() {
+        let folder = Path::new("/project/design/components");
+        for flag in [ITEM_CREATED, ITEM_REMOVED, ITEM_RENAMED, ITEM_MODIFIED] {
+            assert!(affects_component_sources(folder, Some(folder), flag));
+            assert!(affects_component_sources(
+                folder,
+                Some(&folder.join("Card.stellar.yaml")),
+                flag
+            ));
+            for other in [
+                "temp",
+                "Card.stellar.yaml.tmp",
+                "sub/Card.stellar.yaml",
+                "../Card.stellar.yaml",
+            ] {
+                assert!(!affects_component_sources(
+                    folder,
+                    Some(&folder.join(other)),
+                    flag
+                ));
+            }
+        }
+        assert!(!affects_component_sources(
+            folder,
+            Some(&folder.join("Card.stellar.yaml")),
+            ITEM_XATTR_MOD
+        ));
+        for flag in [
+            EVENT_IDS_WRAPPED,
+            USER_DROPPED,
+            KERNEL_DROPPED,
+            MUST_SCAN_SUB_DIRS,
+            ROOT_CHANGED,
+        ] {
+            assert!(affects_component_sources(folder, None, flag));
+        }
+    }
 
     struct TempDir {
         path: PathBuf,

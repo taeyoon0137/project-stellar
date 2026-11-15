@@ -1,6 +1,7 @@
 import Foundation
 
-/// 코어 연결 전 에이전트 패널용 샘플 데이터 원천입니다. 의도적 placeholder이므로 이름에 Stub을 붙입니다.
+#if DEBUG
+/// 패널·창 닫기 검사에서 주입하는 샘플 데이터입니다.
 ///
 /// CLI를 실행하지 않고, 메시지를 어디에도 보내지 않으며, 문서를 바꾸지 않습니다.
 /// 명령을 받으면 기록하고, 코어가 보낼 법한 이벤트를 큐에 넣어 패널의 상태 전이를 흉내 냅니다.
@@ -318,3 +319,4 @@ final class AgentSessionStub: AgentPanelSource {
         ]
     }
 }
+#endif

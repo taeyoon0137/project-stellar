@@ -141,20 +141,12 @@ final class ShellCanvasTextEditing {
         applying = true
         if node == nil {
             let accepted = session.track({ done in
-                var request: UInt64 = 0
-                var created = UUID().uuid
-                let data = Array(edit.value.utf8)
-                let status = withUnsafeBytes(of: view.uuid) { v in
-                    withUnsafeBytes(of: parent.uuid) { p in
-                        data.withUnsafeBufferPointer { bytes in
-                            stellar_window_insert_text(handle, owner, v.bindMemory(to: UInt8.self).baseAddress,
-                                p.bindMemory(to: UInt8.self).baseAddress, revision, Float(origin.x), Float(origin.y),
-                                bytes.baseAddress, bytes.count, &created, &request)
-                        }
-                    }
-                }
-                if status == STELLAR_OK { insertedID = UUID(uuid: created) }
-                return pump.trackRequest(status, request, completion: done)
+                let result = CoreRuntime.insertText(handle: handle, session: owner, view: view, parent: parent,
+                                                    revision: revision, origin: origin, text: edit.value)
+                return pump.register(result.map { insertion in
+                    insertedID = insertion.node
+                    return insertion.request
+                }, done)
             }, completion: { [weak self] event in self?.didApply(event, first: true) })
             if !accepted { fail(String(localized: "The project is busy. Try again.")) }
             return
@@ -165,29 +157,19 @@ final class ShellCanvasTextEditing {
         }
         let targetView = view, targetRevision = revision
         queue.async { [weak self] in
-            var token: UInt64 = 0
-            let status = withUnsafeBytes(of: targetView.uuid) { v in
-                withUnsafeBytes(of: node.uuid) { n in
-                    stellar_text_begin(handle, owner, v.bindMemory(to: UInt8.self).baseAddress,
-                                       n.bindMemory(to: UInt8.self).baseAddress, targetRevision, start, end, &token)
-                }
-            }
-            let editToken = token
+            let (status, editToken) = CoreRuntime.beginText(handle: handle, session: owner, view: targetView, node: node,
+                                                           revision: targetRevision, start: start, end: end)
             DispatchQueue.main.async { [weak self] in
                 guard let self, let session = self.session, !self.invalid, !session.isClosed,
                       !session.isClosing, self.shell?.gitSource.trusted == true, status == STELLAR_OK else {
-                    if editToken != 0 { _ = stellar_text_cancel(handle, owner, editToken) }
+                    if editToken != 0 { CoreRuntime.cancelText(handle: handle, session: owner, token: editToken) }
                     self?.fail(String(localized: "The selected text changed during input.")); return
                 }
                 let accepted = session.track({ done in
-                    var request: UInt64 = 0
-                    let result = Array(edit.value.utf8).withUnsafeBufferPointer { bytes in
-                        stellar_text_commit(handle, owner, editToken, bytes.baseAddress, bytes.count, &request)
-                    }
-                    return self.pump.trackRequest(result, request, completion: done)
+                    self.pump.register(CoreRuntime.commitText(handle: handle, session: owner, token: editToken, text: edit.value), done)
                 }, completion: { [weak self] event in self?.didApply(event, first: false) })
                 if !accepted {
-                    _ = stellar_text_cancel(handle, owner, editToken)
+                    CoreRuntime.cancelText(handle: handle, session: owner, token: editToken)
                     self.fail(String(localized: "The project is busy. Try again."))
                 }
             }
@@ -205,9 +187,8 @@ final class ShellCanvasTextEditing {
         }
         revision = state.revision
         if first {
-            var info = StellarCanvasInfo()
             guard state.selection_count == 1,
-                  stellar_window_canvas(pump.runtimeHandle, session.session, 1, 1, &info, nil, 0) == STELLAR_OK,
+                  let info = CoreRuntime.canvasInfo(handle: pump.runtimeHandle, session: session.session, size: CGSize(width: 1, height: 1)),
                   UUID(uuid: info.view) == view, info.revision == revision, UUID(uuid: info.primary) == insertedID else {
                 fail(String(localized: "The selection changed during text input.")); return
             }
@@ -229,9 +210,13 @@ extension ShellProjectWindow {
             edit.stop()
             guard canvasTextEditing == nil else { return true }
         }
-        guard let session = windowController.windowSession, let project = dataSource.session, gitSource.trusted,
+        guard let session = windowController.windowSession, let project = dataSource.session,
               !session.isClosing, !session.isClosed, let hit = canvas.frameHit(at: point, onlyFrames: true),
               hit.revision == session.info?.revision, let buffer = CanvasTextBuffer("", caret: 0) else { return false }
+        guard gitSource.trusted else {
+            requestProjectTrust()
+            return true
+        }
         let transform = hit.localToWorld.concatenating(hit.worldToView)
         let det = transform.a * transform.d - transform.b * transform.c
         guard det.isFinite, det != 0 else { return false }
@@ -258,8 +243,12 @@ extension ShellProjectWindow {
     /// worker가 선택한 본문을 읽는 동안 포커스·선택·revision이 바뀌면 편집을 시작하지 않습니다.
     func editCanvasText(_ hit: CanvasFrameHit, at point: CGPoint?, canvas: CanvasView) -> Bool {
         if let current = canvasTextEditing { current.stop(); guard canvasTextEditing == nil else { return true } }
-        guard hit.isText, gitSource.trusted, let session = windowController.windowSession, !session.isClosing, !session.isClosed,
+        guard hit.isText, let session = windowController.windowSession, !session.isClosing, !session.isClosed,
               let pump = dataSource.session?.pump else { return false }
+        guard gitSource.trusted else {
+            requestProjectTrust()
+            return true
+        }
         let transform = hit.localToWorld.concatenating(hit.worldToView)
         let local = point?.applying(transform.inverted()) ?? .zero
         let handle = pump.runtimeHandle, owner = session.session, view = hit.viewID, node = hit.id, revision = hit.revision
@@ -269,20 +258,8 @@ extension ShellProjectWindow {
             guard case .windowViewChanged = event, let self, let session, let canvas else { return }
             self.refreshSessionCommands()
             DispatchQueue.global(qos: .userInitiated).async {
-                var token: UInt64 = 0
-                let status = withUnsafeBytes(of: view.uuid) { v in withUnsafeBytes(of: node.uuid) { n in
-                    stellar_text_begin(handle, owner, v.bindMemory(to: UInt8.self).baseAddress, n.bindMemory(to: UInt8.self).baseAddress,
-                                       revision, caret, caret, &token)
-                } }
-                guard status == STELLAR_OK else { return }
-                var count = 0
-                guard stellar_text_preview(handle, owner, token, nil, 0, &count) == STELLAR_OK else {
-                    _ = stellar_text_cancel(handle, owner, token); return
-                }
-                var bytes = [UInt8](repeating: 0, count: count)
-                let loaded = bytes.withUnsafeMutableBufferPointer { stellar_text_preview(handle, owner, token, $0.baseAddress, $0.count, &count) }
-                _ = stellar_text_cancel(handle, owner, token)
-                guard loaded == STELLAR_OK, let text = String(bytes: bytes, encoding: .utf8),
+                guard let text = CoreRuntime.textAtCaret(handle: handle, session: owner, view: view, node: node,
+                                                        revision: revision, caret: caret),
                       let buffer = CanvasTextBuffer(text, caret: caret) else { return }
                 DispatchQueue.main.async { [weak self, weak session, weak canvas] in
                     guard let self, let session, let canvas, self.windowController.windowSession === session,

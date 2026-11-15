@@ -118,7 +118,7 @@ private final class ShellIntegrationCheckRunner {
         expect(NSApp.mainMenu === menu, "메인 메뉴가 앱에 설치되지 않음")
         let router = coordinator.applicationRouter
         for (command, enabled) in [
-            (ShellCommand.openProject, true), (.settings, true), (.newProject, true), (.cloneProject, false),
+            (ShellCommand.openProject, true), (.settings, true), (.newProject, true), (.cloneProject, true),
         ] {
             guard let entry = item(command, in: menu) else {
                 expect(false, "\(command.rawValue) 메뉴 항목 없음")
@@ -368,12 +368,12 @@ private final class ShellIntegrationCheckRunner {
                "재열기에서 최초 문서의 ID가 바뀜")
         let reopened = coordinator.projectWindows.first?.windowController.windowSession?.viewInfo
         expect(reopened?.zoom == 1 && reopened?.center_x == 0 && reopened?.center_y == 0, "기존 프로젝트 재열기에 생성 시 카메라 맞춤이 적용됨")
+        if let shell = coordinator.projectWindows.first { checkZoomToFit(shell, folder: folder, menu: menu, pump: pump) }
         coordinator.projectWindows.first?.window?.close()
         expect(pump.waitForPendingRequests(timeout: 10), "재열기 창을 닫지 못함")
     }
 
-    /// Welcome에서 생성한 실제 generation과 최초 창. Resize 및 사용자의 카메라 변경은 다시 맞추지 않습니다.
-    private func checkInitialFrame(_ shell: ShellProjectWindow, pump: ShellRuntimeEventPump) {
+    private func checkFittedFrame(_ shell: ShellProjectWindow, capture: Bool = false) {
         guard let window = shell.window, let session = shell.windowController.windowSession,
               let initial = session.viewInfo else { expect(false, "새 창 viewport 없음"); return }
         let canvas = shell.canvasHost.canvasView
@@ -381,7 +381,7 @@ private final class ShellIntegrationCheckRunner {
         let margin = min(24, min(size.width, size.height) / 10)
         let zoom = min(1, (size.width - 2 * margin) / 800, (size.height - 2 * margin) / 600)
         expect(initial.center_x == 400 && initial.center_y == 300 && abs(initial.zoom - zoom) < 0.00001,
-               "생성 직후의 실제 canvas에 Frame 전체가 맞지 않음: \(size), \(initial.zoom)")
+               "실제 canvas에 Frame 전체가 맞지 않음: \(size), \(initial.zoom)")
         guard let image = ShellVisibleFramesCheck.bitmap(canvas, in: window),
               let hit = canvas.frameHit(at: CGPoint(x: size.width / 2, y: size.height / 2)) else {
             expect(false, "새 창 Frame의 bitmap 또는 hit 없음")
@@ -402,10 +402,19 @@ private final class ShellIntegrationCheckRunner {
             expect(pixel(inside) == white && pixel(outside) == background, "새 Frame의 모서리/여백 픽셀 불일치")
             expect(canvas.frameHit(at: inside)?.id == hit.id && canvas.frameHit(at: outside) == nil, "새 Frame 모서리 hit 불일치")
         }
-        if let path = ProcessInfo.processInfo.environment["STELLAR_TEST_NEW_CANVAS_PNG"],
+        if capture, let path = ProcessInfo.processInfo.environment["STELLAR_TEST_NEW_CANVAS_PNG"],
            let png = image.representation(using: .png, properties: [:]) {
             do { try png.write(to: URL(fileURLWithPath: path)) } catch { expect(false, "새 프로젝트 화면 PNG 기록 실패") }
         }
+    }
+
+    /// Welcome에서 생성한 실제 generation과 최초 창. Resize 및 사용자의 카메라 변경은 다시 맞추지 않습니다.
+    private func checkInitialFrame(_ shell: ShellProjectWindow, pump: ShellRuntimeEventPump) {
+        checkFittedFrame(shell, capture: true)
+        guard let window = shell.window, let session = shell.windowController.windowSession,
+              let initial = session.viewInfo else { return }
+        let canvas = shell.canvasHost.canvasView
+        let size = canvas.bounds.size
         expect(shell.performSessionCommand(.zoomOut) && pump.waitForPendingRequests(timeout: 10), "사용자 축소 명령 실패")
         guard let changed = session.viewInfo else { expect(false, "축소된 viewport 없음"); return }
         let oldSize = window.contentView?.bounds.size ?? size
@@ -416,6 +425,45 @@ private final class ShellIntegrationCheckRunner {
                session.viewInfo?.center_x == changed.center_x && session.viewInfo?.center_y == changed.center_y,
                "창 크기 변경이 사용자 viewport를 덮어씀")
         expect(session.info?.has_unsaved_changes == 0 && session.info?.revision == 0, "최초 맞춤이 문서를 수정함")
+    }
+
+    private func checkZoomToFit(_ shell: ShellProjectWindow, folder: URL, menu: NSMenu, pump: ShellRuntimeEventPump) {
+        guard let window = shell.window, let session = shell.windowController.windowSession, let initial = session.info,
+              let viewMenu = ShellMainMenuInstaller.submenu(titled: "View", in: menu),
+              let entry = item(.zoomToFit, in: viewMenu), let toolbar = item(.zoomToFit, in: shell.toolsToolbar.zoomItem.menu),
+              let key = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 1,
+                  windowNumber: window.windowNumber, context: nil, characters: "9", charactersIgnoringModifiers: "9",
+                  isARepeat: false, keyCode: 25) else { expect(false, "재열기 맞춤 메뉴·창 없음"); return }
+        func projectFiles() throws -> [String: Data] {
+            var files: [String: Data] = [:]
+            for path in try FileManager.default.subpathsOfDirectory(atPath: folder.path) {
+                let url = folder.appendingPathComponent(path)
+                if try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true { files[path] = try Data(contentsOf: url) }
+            }
+            return files
+        }
+        guard let bytes = try? projectFiles(), bytes[".git/HEAD"] != nil, bytes["design/current"] != nil else {
+            expect(false, "프로젝트·Git 원본 읽기 실패"); return
+        }
+        // 화면 밖 창을 key로 만들지 않고 실제 View 메뉴의 key equivalent를 그 창의 router로 보냅니다.
+        let target = entry.target
+        entry.target = shell.router
+        defer { entry.target = target }
+        expect(entry.keyEquivalent == "9" && viewMenu.performKeyEquivalent(with: key) &&
+               pump.waitForPendingRequests(timeout: 10), "재열기 후 ⌘9 실패")
+        checkFittedFrame(shell)
+        expect(session.pan(dx: 900, dy: -700) { shell.refreshSessionCommands() } && pump.waitForPendingRequests(timeout: 10) &&
+               session.viewInfo?.center_x != 400, "툴바 검사 전 pan 실패")
+        guard let action = toolbar.action else { expect(false, "툴바의 Zoom to Fit action 없음"); return }
+        expect(toolbar.keyEquivalent.isEmpty && shell.router.validateMenuItem(toolbar) &&
+               NSApp.sendAction(action, to: toolbar.target, from: toolbar) && pump.waitForPendingRequests(timeout: 10),
+               "툴바의 Zoom to Fit 실패")
+        checkFittedFrame(shell)
+        let after = session.info
+        expect(after?.revision == initial.revision && after?.generation == initial.generation &&
+               after?.undo_depth == initial.undo_depth && after?.redo_depth == initial.redo_depth &&
+               after?.selection_count == initial.selection_count && after?.has_unsaved_changes == initial.has_unsaved_changes &&
+               (try? projectFiles()) == bytes, "루트 맞춤이 문서·history·Git 파일을 변경")
     }
 
     /// 열기 중 창 닫기: 복원(Try Again·Locate Folder…도 같은 경로) 열기가 끝나기 전에 창을 닫으면, 늦게 온
@@ -531,6 +579,27 @@ private final class ShellIntegrationCheckRunner {
         expect(tabs?.tabViewItems.map(\.viewController).contains { $0 is GitPanelViewController } == true, "보조 패널에 Git 패널 없음")
         expect(tabs?.tabViewItems.map(\.viewController).contains { $0 is AgentPanelViewController } == true, "보조 패널에 에이전트 패널 없음")
         expect(split.centerController.auxiliaryItem?.isCollapsed == true, "보조 패널이 처음에 펼쳐짐")
+        controller.toggleAuxiliaryPanel(nil)
+        let agent = projectWindow.panelsSlot.agentPanel
+        tabs?.selectedTabViewItemIndex = 1
+        window.contentView?.layoutSubtreeIfNeeded()
+        expect(agent.view.window === window && !agent.stateView.isHidden &&
+               agent.stateView.titleLabel.stringValue == AgentPanelText.disconnectedTitle &&
+               !agent.stateView.showsActionButton, "기본 Agent 탭의 미연결 안내 오류")
+        expect(agent.model.header.installedCLIs.isEmpty && agent.model.header.reportedModelName == nil &&
+               agent.headerView.cliPopUp.titleOfSelectedItem == AgentPanelText.cliPopUpLabel &&
+               agent.headerView.statusLabel.isHidden && agent.headerView.modelLabel.isHidden,
+               "기본 Agent 탭이 확인되지 않은 CLI·모델·상태를 표시함")
+        expect(!agent.canStartSession && !agent.headerView.moreButton.isEnabled &&
+               !agent.composerView.textView.isEditable && !agent.composerView.canSend &&
+               !agent.composerView.canStop && agent.composerView.placeholder.isEmpty,
+               "연결 없는 Agent 탭에 세션 동작이 노출됨")
+        agent.startAgentSession(nil)
+        agent.pumpEvents()
+        expect(window.attachedSheet == nil && agent.model.items.isEmpty && agent.rawTextView.string.isEmpty &&
+               !agent.requiresConfirmationBeforeClosing, "기본 Agent 탭이 세션 또는 종료 확인을 만듦")
+        tabs?.selectedTabViewItemIndex = 0
+        controller.toggleAuxiliaryPanel(nil)
         expect(split.sidebarItem.topAlignedAccessoryViewControllers.contains { $0 is SidebarFilterAccessoryViewController },
                "사이드바 필터 accessory 없음")
         expect(!projectWindow.requiresConfirmationBeforeClosing, "에이전트 세션이 없는데 닫기 확인이 필요함")
@@ -575,16 +644,16 @@ private final class ShellIntegrationCheckRunner {
         expect(toolBar.isEnabled && toolBar.buttons.allSatisfy(\.isEnabled), "ready 창에서 도구 막대가 비활성")
 
         // 하단 도구 막대 → 창 모델 → 메뉴 체크, 막대 선택 표시는 창 모델 snapshot으로 바뀝니다.
-        if let pen = tools.firstIndex(of: .pen), toolBar.buttons.indices.contains(pen) {
-            toolBar.buttons[pen].performClick(nil)
-            expect(model.snapshot.activeTool == .pen, "도구 막대 선택이 창 모델에 반영되지 않음")
+        if let frame = tools.firstIndex(of: .frame), toolBar.buttons.indices.contains(frame) {
+            toolBar.buttons[frame].performClick(nil)
+            expect(model.snapshot.activeTool == .frame, "도구 막대 선택이 창 모델에 반영되지 않음")
             controller.flushPendingSnapshot()
-            expect(toolBar.selectedIndex == pen, "도구 막대 선택 표시가 창 모델 도구로 바뀌지 않음")
-            let penItem = MainMenuBuilder.makeItem(for: .selectPenTool, target: nil)
-            _ = router.validateMenuItem(penItem)
-            expect(penItem.state == .on, "Pen 메뉴 체크 없음")
+            expect(toolBar.selectedIndex == frame, "도구 막대 선택 표시가 창 모델 도구로 바뀌지 않음")
+            let frameItem = MainMenuBuilder.makeItem(for: .selectFrameTool, target: nil)
+            _ = router.validateMenuItem(frameItem)
+            expect(frameItem.state == .on, "Frame 메뉴 체크 없음")
         } else {
-            expect(false, "도구 막대에 Pen 없음")
+            expect(false, "도구 막대에 Frame 없음")
         }
 
         // 캔버스 단일 키: R → Rectangle, 수식키가 있거나 도구가 아닌 키는 코어 입력으로 보냅니다.

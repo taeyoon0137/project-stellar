@@ -1,7 +1,7 @@
 # Git 패널 UI 명세 (git_panel)
 
-- 상태: 초안(2026-11-14). 코어 연결 전 Stub 단계입니다.
-- 범위: 계획 XIV.13.5의 macOS 최소 Git 패널 중 셸 UI 부분. 코어 API(XIV.13.1~XIV.13.4)와 연결은 남은 일입니다(11장).
+- 정상 앱의 신뢰된 프로젝트 창은 현재 브랜치·detached HEAD·첫 커밋 전 브랜치를 표시하며, 선택한 노드 이름 변경 또는 컴포넌트 파일 하나를 실제 Git index에 Stage·Unstage합니다.
+- 계획 XIV.13.5의 패널 UI 명세입니다. 정상 앱에서 Commit·Push와 나머지 코어 명령의 연결은 후속 범위입니다(11장).
 - 코드: `apps/macos/Stellar/UI/Git/`
 - 기준: `docs/design/macos-shell-design.md`(이하 "가이드"), `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`(이하 "아키텍처"), Apple HIG.
 

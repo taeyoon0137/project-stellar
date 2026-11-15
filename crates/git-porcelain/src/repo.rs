@@ -161,13 +161,36 @@ pub fn check_user_identity<G: GitExec + ?Sized>(
 /// `--`로 URL이 플래그로 해석되지 않게 하고, `dest`를 명시합니다. cwd는 `dest`의 부모입니다.
 pub fn git_clone<G: GitExec + ?Sized>(runner: &G, url: &str, dest: &Path) -> Result<(), RepoError> {
     let cwd = dest.parent().unwrap_or(dest);
-    let args = vec![
+    run_ok(runner, &clone_args(url, dest), cwd)?;
+    Ok(())
+}
+
+fn clone_args(url: &str, dest: &Path) -> [OsString; 4] {
+    [
         OsString::from("clone"),
         OsString::from("--"),
         OsString::from(url),
         dest.as_os_str().to_os_string(),
-    ];
-    run_ok(runner, &args, cwd)?;
+    ]
+}
+
+/// 새 checkout을 만드는 동안 취소하면 Git 프로세스 트리까지 종료합니다.
+pub fn git_clone_cancellable(
+    runner: &crate::runner::GitRunner,
+    url: &str,
+    dest: &Path,
+    cancel: &crate::cancel::GitCancelToken,
+) -> Result<(), RepoError> {
+    let output = runner
+        .run_cancellable(
+            &clone_args(url, dest),
+            dest.parent().unwrap_or(dest),
+            cancel,
+        )
+        .map_err(RepoError::Run)?;
+    GitCommandResult::from(output)
+        .require_success()
+        .map_err(RepoError::Git)?;
     Ok(())
 }
 

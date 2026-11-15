@@ -40,7 +40,7 @@ use stellar_document::image::{FitMode, ImagePayload, SamplingMode};
 use stellar_document::modifier::{ModifierEntry, ModifierPayload};
 use stellar_document::node_kind::NodeKind;
 use stellar_document::record_codec::{decode_payload, encode_payload};
-use stellar_document::records::{DocumentRecords, NodePayload};
+use stellar_document::records::{DocumentRecords, NodePayload, NodeRecord};
 use stellar_document::shape::{LineCap, ShapeGeometry};
 
 use crate::keys;
@@ -170,15 +170,7 @@ impl SnapshotBuilder {
         let origin = Origin::Document(document);
         let mut objects = definition_objects(&records.definition)?;
         for node in &records.nodes {
-            let mut object = node_object(
-                node.id,
-                node.kind(),
-                origin,
-                (node.parent, node.order_key.clone()),
-                (node.visible, node.locked, &node.display_name),
-            )?;
-            project_payload(&mut object, &node.payload)?;
-            objects.push(object);
+            objects.push(project_document_node(document, node)?);
         }
         for stack in &records.modifier_stacks {
             for entry in stack.entries() {
@@ -495,6 +487,22 @@ fn definition_objects(
     Ok(objects)
 }
 
+/// 단일 문서 node의 공통 속성과 payload를 전체 비교와 같은 의미 경로로 투영합니다.
+pub fn project_document_node(
+    document: StableId,
+    node: &NodeRecord,
+) -> Result<SemanticObject, SnapshotError> {
+    let mut object = node_object(
+        node.id,
+        node.kind(),
+        Origin::Document(document),
+        (node.parent, node.order_key.clone()),
+        (node.visible, node.locked, &node.display_name),
+    )?;
+    project_payload(&mut object, &node.payload)?;
+    Ok(object)
+}
+
 /// 공통 node 필드(VI.2.2)를 담은 node 객체.
 fn node_object(
     id: StableId,
@@ -610,7 +618,8 @@ fn project_frame(object: &mut SemanticObject, frame: &FramePayload) -> Result<()
         corner_radius,
         layout_mode,
     } = frame;
-    put_floats(object, keys::frame::SIZE, &size_values(*size))?;
+    put_floats(object, keys::frame::WIDTH, &[size.width()])?;
+    put_floats(object, keys::frame::HEIGHT, &[size.height()])?;
     put_floats(
         object,
         keys::frame::TRANSFORM,
@@ -639,11 +648,12 @@ fn project_frame(object: &mut SemanticObject, frame: &FramePayload) -> Result<()
         let thickness = floats(object.id(), keys::frame::BORDER, &[border.thickness()])?;
         object.insert_property(base.with_index(1), thickness)?;
     }
-    put_floats(
-        object,
-        keys::frame::CORNER_RADIUS,
-        &quad(corner_radius.components()),
-    )?;
+    for (key, value) in keys::frame::BORDER_RADIUS_LONGHANDS
+        .into_iter()
+        .zip(quad(corner_radius.components()))
+    {
+        put_floats(object, key, &[value])?;
+    }
     if let Some(mode) = layout_mode {
         put(object, keys::frame::LAYOUT_MODE, SemanticValue::Id(*mode))?;
     }

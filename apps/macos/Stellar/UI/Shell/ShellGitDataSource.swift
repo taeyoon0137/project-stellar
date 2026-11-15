@@ -11,10 +11,12 @@ final class ShellGitDataSource: GitPanelDataSource {
     private(set) var trusted = false
     private var message: String?
     private var trustRequest: UInt64?
+    var isCheckingTrust: Bool { trustRequest != nil }
     private var operation: UInt64?
     private var generation: UInt64 = 0
     private var items: [CoreGitChange] = []
     private var otherChanges = false
+    private var panelHead: CoreGitPanelHead?
 
     // 충돌 가능한 해시 대신 이 창 안에서 UUID·종류별 표시 ID를 발급합니다.
     private var ids: [UUID: [Int: GitChangeNodeID]] = [:]
@@ -40,6 +42,7 @@ final class ShellGitDataSource: GitPanelDataSource {
     private func clearRows() {
         generation = 0
         otherChanges = false
+        panelHead = nil
         items.removeAll()
         roots.removeAll()
         children.removeAll()
@@ -147,7 +150,7 @@ final class ShellGitDataSource: GitPanelDataSource {
         let result = session.pump.gitNames(window.session, selection: target, stage: stage) { [weak self, weak session, weak window] event in
             guard let self, let session, let window, self.session === session, self.windowSession === window,
                   !window.isClosed, let id = event.request, self.operation == id else { return }
-            if case .gitNames(let generation, let owner, let count, let other, let applied) = event, owner == window.session {
+            if case .gitNames(let generation, let owner, let count, let other, let applied, let head) = event, owner == window.session {
                 let handle = session.pump.runtimeHandle
                 DispatchQueue.global(qos: .userInitiated).async { [weak self, weak window] in
                     let found = (0..<count).compactMap {
@@ -162,6 +165,7 @@ final class ShellGitDataSource: GitPanelDataSource {
                             self.generation = generation
                             self.items = found
                             self.otherChanges = other
+                            self.panelHead = head
                             self.message = nil
                             self.rebuild()
                             self.emit(.operationFinished(GitOperationResult(id: id, kind: kind,
@@ -257,11 +261,11 @@ final class ShellGitDataSource: GitPanelDataSource {
     }
 
     private func emitStatus() {
-        let status = GitStatusSnapshot(availability: trusted ? .ready : .restricted, head: .unknown,
-            upstream: nil, remotes: [], identityConfigured: false, stagedChangeCount: items.filter(\.staged).count,
+        let status = GitStatusSnapshot(availability: trusted ? .ready : .restricted, head: panelHead?.state ?? .unknown,
+            upstream: nil, remotes: [], identityConfigured: false, stagedChangeCount: panelHead?.initialStagedFiles.map(Int.init) ?? items.filter(\.staged).count,
             unstagedChangeCount: items.filter { $0.unstaged }.count, mergeState: .none,
             semanticConflictCount: 0, unresolvedConflictCount: 0, rawConflictCount: 0,
-            stagedSnapshotIssue: nil, semanticStatusError: message ?? (otherChanges ? String(localized: "Some saved changes can’t be staged here.") : nil),
+            stagedSnapshotIssue: nil, semanticStatusError: message ?? (otherChanges && panelHead?.initialStagedFiles == nil ? String(localized: "Some saved changes can’t be staged here.") : nil),
             pendingAutosave: (windowSession?.info?.has_unsaved_changes ?? 0) != 0,
             changes: GitChangeTreeInfo(generation: generation, structure: generation, documentCount: roots.count), conflicts: .empty)
         emit(.status(status))

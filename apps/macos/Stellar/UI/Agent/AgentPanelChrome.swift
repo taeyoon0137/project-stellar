@@ -100,12 +100,15 @@ final class AgentPanelHeaderView: NSView {
     }
 
     /// 헤더 값을 갱신합니다. 바뀐 항목만 다시 만듭니다.
-    func update(header: AgentSessionHeader, displayMode: AgentConversationDisplayMode) {
-        if header.installedCLIs != lastCLIOptions || cliPopUp.numberOfItems == 0 {
+    func update(snapshot: AgentPanelSnapshot, displayMode: AgentConversationDisplayMode) {
+        let header = snapshot.header
+        let available = snapshot.phase != .unavailable
+        let emptyTitle = available ? AgentPanelText.noCLIItem : AgentPanelText.cliPopUpLabel
+        if header.installedCLIs != lastCLIOptions || (header.installedCLIs.isEmpty && cliPopUp.titleOfSelectedItem != emptyTitle) {
             lastCLIOptions = header.installedCLIs
             cliPopUp.removeAllItems()
             if header.installedCLIs.isEmpty {
-                cliPopUp.addItem(withTitle: AgentPanelText.noCLIItem)
+                cliPopUp.addItem(withTitle: emptyTitle)
             } else {
                 for option in header.installedCLIs {
                     cliPopUp.addItem(withTitle: AgentPanelText.cliItemTitle(option))
@@ -121,7 +124,12 @@ final class AgentPanelHeaderView: NSView {
         // 세션 중에는 CLI를 바꾸지 않습니다(모델이 세션 중에 바뀌지 않게, ADR-0005 결정 4.1).
         cliPopUp.isEnabled = !header.installedCLIs.isEmpty && !header.isSessionActive
 
-        let status = AgentPanelText.connectionTitle(header)
+        moreButton.isEnabled = available
+        modePopUp.isHidden = !available
+        displayModeControl.isEnabled = available
+        statusSymbolView.isHidden = !available
+        statusLabel.isHidden = !available
+        let status = available ? AgentPanelText.connectionTitle(header) : ""
         statusLabel.stringValue = status
         statusLabel.toolTip = status
         let (symbolName, tint) = Self.statusSymbol(header)

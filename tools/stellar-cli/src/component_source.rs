@@ -6,6 +6,7 @@ use crate::{text_source::operation_error, views};
 use std::path::Path;
 use stellar_ops::component_source::{self, ComponentInfo};
 use stellar_ops::core_types::{
+    color::{Color, ColorSpace},
     ids::StableId,
     value::{Size2, Vec2},
 };
@@ -27,7 +28,35 @@ fn size(width: &str, height: &str) -> Result<Size2, CliError> {
     Size2::new(dimension(width)?, dimension(height)?)
         .map_err(|_| argument("크기는 유한한 비음수여야 합니다"))
 }
+fn fill(args: &[String]) -> Result<Option<Color>, CliError> {
+    match args {
+        [none] if none == "none" => Ok(None),
+        [space, r, g, b, a] => {
+            let space = match space.as_str() {
+                "srgb" => ColorSpace::Srgb,
+                "display-p3" => ColorSpace::DisplayP3,
+                _ => return Err(argument("색 공간은 srgb 또는 display-p3여야 합니다")),
+            };
+            let channel = |s: &str| {
+                s.parse::<f32>()
+                    .map_err(|_| argument("유한한 RGBA 값이 필요합니다"))
+            };
+            Color::new(space, channel(r)?, channel(g)?, channel(b)?, channel(a)?)
+                .map(Some)
+                .map_err(|e| argument(&e.to_string()))
+        }
+        _ => Err(CliError::usage(
+            "set-fill <파일> <원본 hash> none | <srgb|display-p3> <r> <g> <b> <a>",
+        )),
+    }
+}
+
 pub(crate) fn component_json(info: ComponentInfo, include_file: bool) -> J {
+    let background = info
+        .background_source_value()
+        .map_or(J::Null, |(space, rgba)| {
+            J::object(vec![("space", J::string(space)), ("rgba", J::string(rgba))])
+        });
     let mut fields = vec![
         ("id", views::id(info.id)),
         ("root", views::id(info.root)),
@@ -40,13 +69,14 @@ pub(crate) fn component_json(info: ComponentInfo, include_file: bool) -> J {
     fields.extend([
         ("width", J::string(info.size.width().to_string())),
         ("height", J::string(info.size.height().to_string())),
+        ("background", background),
         ("source_hash", J::string(info.hash.to_string())),
     ]);
     J::object(fields)
 }
 
 pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
-    const USAGE: &str = "component-source create <폴더> <이름> <id> <root-id> | check <폴더> | resize <파일> <원본 hash> <너비> <높이> | resize-frame <파일> <원본 hash> <node-id> <너비> <높이> | set-position <파일> <원본 hash> <node-id> <x> <y> | set-visible <파일> <원본 hash> <node-id> <true|false> | set-locked <파일> <원본 hash> <node-id> <true|false> | remove-frame <파일> <원본 hash> <node-id> | rename-frame <파일> <원본 hash> <node-id> <이름> | add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>";
+    const USAGE: &str = "component-source create <폴더> <이름> <id> <root-id> | check <폴더> | resize <파일> <원본 hash> <너비> <높이> | set-fill <파일> <원본 hash> <none 또는 색 공간과 RGBA> | resize-frame <파일> <원본 hash> <node-id> <너비> <높이> | set-position <파일> <원본 hash> <node-id> <x> <y> | set-visible <파일> <원본 hash> <node-id> <true|false> | set-locked <파일> <원본 hash> <node-id> <true|false> | remove-frame <파일> <원본 hash> <node-id> | rename-frame <파일> <원본 hash> <node-id> <이름> | add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>";
     let result = match args {
         [op, dir, name, component, root] if op == "create" => {
             let source =
@@ -75,6 +105,15 @@ pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
                 true,
             )
         }
+        [op, file, hash, value @ ..] if op == "set-fill" => component_json(
+            component_source::edit_root(
+                Path::new(file),
+                hash,
+                component_source::ComponentRootEdit::Background(fill(value)?),
+            )
+            .map_err(|error| operation_error(&error).with_context(file))?,
+            true,
+        ),
         [op, file, hash, node, width, height] if op == "resize-frame" => component_json(
             component_source::resize_frame(Path::new(file), hash, id(node)?, size(width, height)?)
                 .map_err(|error| operation_error(&error).with_context(file))?,

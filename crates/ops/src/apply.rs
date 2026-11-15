@@ -51,7 +51,7 @@ use stellar_storage::save::plan::build_save_plan;
 use crate::core_types::ids::StableId;
 use crate::core_types::order_key::OrderKey;
 use crate::core_types::revision::DocumentRevision;
-use crate::core_types::value::{Size2, Transform2D};
+use crate::core_types::value::{FiniteF32, Size2, Transform2D};
 use crate::diff::{diff_records, DiffReport};
 use crate::error::{DocumentReadError, OpenError};
 use crate::lock::{LockError, LockPolicy, SaveLock};
@@ -97,6 +97,20 @@ pub enum CommandInput {
         /// 유한·비음수 크기.
         size: Size2,
     },
+    /// 다른 축은 유지하고 Frame의 너비만 바꿉니다.
+    SetFrameWidth {
+        /// 대상 Frame.
+        node: StableId,
+        /// 요청한 너비.
+        width: FiniteF32,
+    },
+    /// 다른 축은 유지하고 Frame의 높이만 바꿉니다.
+    SetFrameHeight {
+        /// 대상 Frame.
+        node: StableId,
+        /// 요청한 높이.
+        height: FiniteF32,
+    },
     /// Frame의 local 아핀 변환 변경. 기존 transform 속성 command로 실행합니다.
     SetFrameTransform {
         /// 대상 Frame.
@@ -128,18 +142,22 @@ pub enum CommandInput {
 }
 
 /// 필드 형식으로 받는 종류 이름.
-pub const FIELD_KINDS: [&str; 7] = [
+pub const FIELD_KINDS: [&str; 10] = [
     "set-visible",
     "set-locked",
     "rename",
+    "replace-text",
     "set-frame-size",
+    "set-frame-width",
+    "set-frame-height",
     "set-frame-transform",
     "delete-subtree",
     "move-node",
 ];
 
 impl CommandInput {
-    /// closed enum [`Command`]로 바꿉니다.
+    /// 단일 canonical command로 나타냅니다. 이전 size 묶음 bytes도 이 형식으로 유지합니다.
+    /// 새 편집 transaction은 [`decode_commands`]를 통해 width·height로 펼칩니다.
     pub fn to_command(&self) -> Result<Command, CommandInputError> {
         match self {
             CommandInput::SetVisible { node, visible } => Ok(Command::SetProperty(
@@ -158,6 +176,18 @@ impl CommandInput {
                 key: frame_keys::SIZE,
                 value: PropertyValue::Size(*size),
             })),
+            CommandInput::SetFrameWidth { node, width } => Ok(Command::SetProperty(SetProperty {
+                node: *node,
+                key: frame_keys::WIDTH,
+                value: PropertyValue::NonNegative(*width),
+            })),
+            CommandInput::SetFrameHeight { node, height } => {
+                Ok(Command::SetProperty(SetProperty {
+                    node: *node,
+                    key: frame_keys::HEIGHT,
+                    value: PropertyValue::NonNegative(*height),
+                }))
+            }
             CommandInput::SetFrameTransform { node, transform } => {
                 Ok(Command::SetProperty(SetProperty {
                     node: *node,
@@ -361,16 +391,41 @@ pub fn decode_commands(inputs: &[CommandInput]) -> Result<Vec<Command>, ApplyErr
             count: inputs.len(),
         });
     }
-    inputs
-        .iter()
-        .enumerate()
-        .map(|(index, input)| {
-            input.to_command().map_err(|e| match e {
+    let mut commands = Vec::with_capacity(inputs.len());
+    for (index, input) in inputs.iter().enumerate() {
+        if let CommandInput::SetFrameSize { node, size } = input {
+            commands.extend(SetProperty::frame_dimensions(*node, *size).map(Command::SetProperty));
+        } else {
+            commands.push(input.to_command().map_err(|e| match e {
                 CommandInputError::UnknownKind(kind) => ApplyError::UnknownCommand { index, kind },
                 CommandInputError::Invalid(reason) => ApplyError::InvalidCommand { index, reason },
-            })
+            })?);
+        }
+    }
+    Ok(commands)
+}
+
+/// SetFrameSize가 두 요청으로 펼쳐져도 오류 위치는 호출자가 보낸 입력 배열 기준입니다.
+pub(crate) fn rejected_input(
+    inputs: &[CommandInput],
+    failure: stellar_commands::transaction::TransactionError,
+) -> ApplyError {
+    let mut end = 0;
+    let index = inputs
+        .iter()
+        .position(|input| {
+            end += if matches!(input, CommandInput::SetFrameSize { .. }) {
+                2
+            } else {
+                1
+            };
+            failure.index < end
         })
-        .collect()
+        .unwrap_or(inputs.len());
+    ApplyError::Rejected {
+        index,
+        reason: failure.error.to_string(),
+    }
 }
 
 /// command id: 요청 내용 canonical bytes의 content hash 앞 16바이트(결정론적, 저장하지 않음).
@@ -446,10 +501,7 @@ pub fn apply(
     };
     state
         .execute_transaction(&transaction)
-        .map_err(|failure| ApplyError::Rejected {
-            index: failure.index,
-            reason: failure.error.to_string(),
-        })?;
+        .map_err(|failure| rejected_input(&request.commands, failure))?;
     let model = state.into_model();
     let mut after = model
         .to_records()
@@ -463,7 +515,7 @@ pub fn apply(
             base_revision,
             revision: base_revision,
             document: request.document,
-            command_count: commands.len(),
+            command_count: request.commands.len(),
             diff,
             written_chunks: 0,
         });
@@ -533,7 +585,7 @@ pub fn apply(
         base_revision,
         revision,
         document: request.document,
-        command_count: commands.len(),
+        command_count: request.commands.len(),
         diff,
         written_chunks,
     })
