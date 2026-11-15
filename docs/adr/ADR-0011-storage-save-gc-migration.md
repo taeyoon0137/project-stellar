@@ -32,6 +32,8 @@ Accepted (소급, 2026-11-14). 이 ADR은 이미 구현된 결정을 소급 기�
 | V.8.3 | `361ccfe` | noop v1→v2 migration |
 | V.8.4 | `f023de4` | temp generation migration 검증 |
 | V.8.5 | `89cb0e5` | migration Git working tree fixture |
+| — (창 저장) | `1e0530b3` | `check_base_manifest` 공개(2026-11-15 소급 추가) |
+| — (창 열기) | `d2ee4f3c` | `LazyGeneration::into_loaded` 공개(2026-11-15 소급 추가) |
 
 ## Decision
 
@@ -52,6 +54,13 @@ Accepted (소급, 2026-11-14). 이 ADR은 이미 구현된 결정을 소급 기�
 - fault matrix는 22개 주입 지점(prepare 4 + chunk·manifest·pointer 각각의 atomic write 6단계)을
   고정합니다. pointer rename 이후 실패(부모 디렉터리 sync)만 새 세대로 열리고, 나머지 21개 지점은
   base 세대를 유지하며, 실패한 저장은 in-memory 상태를 바꾸지 않아야 합니다(V.5.6).
+- `check_base_manifest(root, expected)`는 `check_base_generation`의 비교 본문을 `SavePlan` 없이 씁니다.
+  current pointer가 `expected`와 같아야 하고, pointer 파일이 없으면 `None`과 같습니다. 불일치는 같은
+  `StaleBase`이며 아무것도 쓰지 않습니다. 창 session의 변경 없는 Save Now가 문서를 직렬화하지 않고 stale만
+  판정할 때 씁니다. `check_base_generation`의 동작은 바뀌지 않습니다(2026-11-15 소급 추가).
+- `LazyGeneration::into_loaded`는 지연 읽기를 마친 호출자에게 이미 검증한 manifest와 그 hash
+  (`LoadedGeneration`)의 소유권을 넘깁니다. 파일을 다시 읽거나 검증을 생략하는 경로가 아니며, 창 session
+  열기가 같은 세대를 두 번 검증하지 않게 합니다(2026-11-15 소급 추가).
 
 GC 보존과 정리(V.7):
 
@@ -131,7 +140,8 @@ GC 보존과 정리(V.7):
   storage가 읽는 계약입니다.
 - 스키마: 현재 최신 storage 문서 스키마 버전은 2입니다(`LATEST_SCHEMA`, V.8.6, noop step). 프로젝트
   manifest 스키마(`CURRENT_SCHEMA_VERSION = 1`)와는 별개이며, 버전 판정 규칙은 위와 같습니다.
-- 공개 API·FFI: 영향 없음.
+- 공개 API·FFI: FFI 영향은 없습니다. storage 공개 함수 `check_base_manifest`와
+  `LazyGeneration::into_loaded`가 추가됐고 기존 함수의 시그니처·동작은 그대로입니다.
 
 ## Performance
 
