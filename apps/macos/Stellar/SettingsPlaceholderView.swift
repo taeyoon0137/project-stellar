@@ -28,9 +28,20 @@ struct CanvasShapeDefaults: Equatable {
         defaults.set(Self.components(stroke), forKey: Self.strokeKey)
     }
 
-    /// 생성 요청에 넘기는 스타일.
-    var style: StellarShapeStyle {
-        StellarShapeStyle(fill: StellarCanvasColor(fill), stroke: StellarCanvasColor(stroke), stroke_width: Self.strokeWidth)
+    /// 코어 생성 명령에 넘길 칠. 색이 nil이면 그 modifier를 만들지 않습니다(ADR-0071 UX.1.5).
+    struct Paint: Equatable {
+        var fill: InspectorColor?
+        var stroke: InspectorColor?
+        var strokeWidth: Double
+    }
+
+    /// Rectangle·Ellipse·Polygon은 채우기, Line은 선 색 1px를 씁니다.
+    static func paint(for kind: InspectorShapeKind, defaults: UserDefaults = .standard) -> Paint {
+        let values = load(defaults)
+        if kind == .line {
+            return Paint(fill: nil, stroke: values.stroke, strokeWidth: Double(strokeWidth))
+        }
+        return Paint(fill: values.fill, stroke: nil, strokeWidth: 0)
     }
 
     private static func components(_ color: InspectorColor) -> [Double] {

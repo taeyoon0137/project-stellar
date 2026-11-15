@@ -111,10 +111,12 @@ final class ShellWindowSessionHandle {
     }
 
     func insertShape(parent: CanvasFrameHit, kind: InspectorShapeKind, start: CGPoint, end: CGPoint,
-                     style: StellarShapeStyle, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
+                     completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
         guard !isClosed, !isClosing else { return false }
+        // 새 도형의 칠은 앱 설정(Settings ▸ 캔버스, D7) 값을 코어에 넘깁니다.
+        let paint = CanvasShapeDefaults.paint(for: kind)
         return track { done in pump.insertShape(session: session, parent: parent, kind: kind, start: start, end: end,
-                                                style: style, completion: done) } completion: { completion($0) }
+                                                paint: paint, completion: done) } completion: { completion($0) }
     }
 
     func insertFrame(parent: CanvasFrameHit, rect: CGRect, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {

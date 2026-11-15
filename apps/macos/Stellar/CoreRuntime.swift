@@ -290,16 +290,20 @@ enum CoreRuntime {
         return .success(request)
     }
 
-    /// 새 도형의 Fill·Stroke는 `style`(사용자 앱 설정)로 만듭니다. core는 기본 색을 정하지 않습니다.
+    /// 새 도형의 Fill·Stroke는 `paint`(사용자 앱 설정)로 만듭니다. core는 기본 색을 정하지 않습니다.
     static func insertShape(handle: UInt64, session: UInt64, view: UUID, parent: UUID, revision: UInt64,
                             kind: InspectorShapeKind, start: CGPoint, end: CGPoint,
-                            style: StellarShapeStyle) -> Result<UInt64, CoreRuntimeCallError> {
+                            paint: CanvasShapeDefaults.Paint) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
+        var style = StellarShapeStyle()
+        style.fill = StellarCanvasColor(paint.fill)
+        style.stroke = StellarCanvasColor(paint.stroke)
+        style.stroke_width = Float(paint.strokeWidth)
         let status = withUnsafeBytes(of: view.uuid) { viewBytes in
             withUnsafeBytes(of: parent.uuid) { parentBytes in
                 stellar_window_session_insert_shape(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
                     parentBytes.bindMemory(to: UInt8.self).baseAddress, revision, kind.rawValue,
-                    Float(start.x), Float(start.y), Float(end.x), Float(end.y), style, &request)
+                    Float(start.x), Float(start.y), Float(end.x), Float(end.y), &style, &request)
             }
         }
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }

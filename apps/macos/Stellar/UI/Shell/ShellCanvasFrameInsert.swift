@@ -13,16 +13,18 @@ extension CanvasTool {
         default: return nil
         }
     }
-}
 
-private extension InspectorShapeKind {
-    func endpoints(from anchor: CGPoint, to pointer: CGPoint, click: Bool,
-                   modifiers: NSEvent.ModifierFlags) -> (CGPoint, CGPoint) {
+    /// 클릭만으로 기본 크기(100×100)를 만드는 도구. Line은 끝점이 필요해 드래그로만 만듭니다(UX 명세 5.1).
+    fileprivate var createsOnClick: Bool { insertsBounds && self != .line }
+
+    /// 부모 local 공간의 그린 두 점. 클릭은 기본 크기, Shift는 정비례(Line은 45° 단위), Option은 누른 점 중심입니다.
+    fileprivate func endpoints(from anchor: CGPoint, to pointer: CGPoint, click: Bool,
+                               modifiers: NSEvent.ModifierFlags) -> (CGPoint, CGPoint) {
         let centered = modifiers.contains(.option)
         var dx = pointer.x - anchor.x, dy = pointer.y - anchor.y
         if click {
             dx = centered ? 50 : 100
-            dy = self == .line ? 0 : dx
+            dy = dx
         } else if modifiers.contains(.shift) {
             if self == .line {
                 let octant = Int((atan2(dy, dx) / (.pi / 4)).rounded())
@@ -48,8 +50,7 @@ extension ShellProjectWindow {
         switch event.type {
         case .leftMouseDown:
             _ = canvas.cancelFrameGesture?()
-            let blocked: NSEvent.ModifierFlags = tool.drawnShape == nil ? [.command, .shift, .control, .option] : [.command, .control]
-            guard tool.insertsBounds, event.modifierFlags.intersection(blocked).isEmpty,
+            guard tool.insertsBounds, event.modifierFlags.intersection([.command, .control]).isEmpty,
                   let session = windowController.windowSession, !session.isClosed, !session.isClosing,
                   let viewport = session.viewInfo, viewport.has_view == 1, let parent = canvas.frameHit(at: point, onlyFrames: true),
                   UUID(uuid: viewport.active_view) == parent.viewID, session.info?.revision == parent.revision else { return false }
@@ -75,9 +76,8 @@ extension ShellProjectWindow {
             guard anchor.x.isFinite, anchor.y.isFinite, pointer.x.isFinite, pointer.y.isFinite else { return true }
             let distance = hypot(point.x - drag.start.x, point.y - drag.start.y)
             if !release && distance >= 3 { frameDrag?.moved = true }
-            let click = tool.drawnShape != nil && release && !drag.moved && distance < 3
-            let (start, end) = tool.drawnShape?.endpoints(from: anchor, to: pointer, click: click,
-                                                         modifiers: event.modifierFlags) ?? (anchor, pointer)
+            let click = tool.createsOnClick && release && !drag.moved && distance < 3
+            let (start, end) = tool.endpoints(from: anchor, to: pointer, click: click, modifiers: event.modifierFlags)
             let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
                               width: abs(end.x - start.x), height: abs(end.y - start.y))
             let a = start.applying(localToView), b = end.applying(localToView)
@@ -100,8 +100,7 @@ extension ShellProjectWindow {
                 }
                 if let kind = tool.drawnShape {
                     // 새 도형 색은 생성 시점의 사용자 앱 설정(Settings ▸ Canvas)에서 읽습니다.
-                    _ = session.insertShape(parent: drag.hit, kind: kind, start: start, end: end,
-                                            style: CanvasShapeDefaults.load().style, completion: completion)
+                    _ = session.insertShape(parent: drag.hit, kind: kind, start: start, end: end, completion: completion)
                 } else {
                     _ = session.insertFrame(parent: drag.hit, rect: rect, completion: completion)
                 }

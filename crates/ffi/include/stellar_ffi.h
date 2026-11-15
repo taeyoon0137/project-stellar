@@ -407,11 +407,11 @@ typedef struct StellarFrameValue { float length; StellarCanvasColor color; } Ste
 StellarStatus stellar_window_session_set_frame_property(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint64_t history_sequence, uint32_t property_key, StellarFrameValue value, uint64_t *out_request);
 /* 표시한 부모 Frame의 local rect에 자식 Free Frame을 삽입하고 한 history entry로 선택합니다. */
 StellarStatus stellar_window_session_insert_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, float x, float y, float width, float height, uint64_t *out_request);
-/* 새 도형의 채우기·선 스타일. 셸이 사용자 앱 설정에서 채우며 core는 기본 색을 정하지 않습니다.
- * fill: Rectangle·Ellipse·Polygon, stroke·stroke_width: Line. 색공간 0과 0 이하 두께는 STELLAR_INVALID_ARGUMENT입니다. */
-typedef struct StellarShapeStyle { StellarCanvasColor fill, stroke; float stroke_width; } StellarShapeStyle;
+/* ADR-0071: 새 도형의 칠(D7). 셸이 앱 설정 값을 넘기며 코어는 기본 색을 두지 않습니다.
+ * 색공간 0은 없음. stroke가 있으면 stroke_width > 0. Line은 stroke, 닫힌 도형은 fill 또는 stroke가 필요합니다. */
+typedef struct StellarShapeStyle { StellarCanvasColor fill; StellarCanvasColor stroke; float stroke_width; } StellarShapeStyle;
 /* ShapeKind tags: 1 Rectangle, 2 Ellipse, 3 Line, 4 Polygon. Coordinates: ordered parent-local endpoints. */
-StellarStatus stellar_window_session_insert_shape(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, uint8_t shape, float x0, float y0, float x1, float y1, StellarShapeStyle style, uint64_t *out_request);
+StellarStatus stellar_window_session_insert_shape(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, uint8_t shape, float x0, float y0, float x1, float y1, const StellarShapeStyle *style, uint64_t *out_request);
 /* 창 session의 선택을 ids(StableId 16 byte × count)로 바꾸고 그 창 history에 기록합니다(count 0 = 비움). */
 StellarStatus stellar_window_session_select(uint64_t handle, uint64_t session, const uint8_t *ids, size_t count, uint64_t *out_request);
 
