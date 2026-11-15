@@ -161,7 +161,7 @@ final class ToolsToolbarController: NSObject, NSToolbarDelegate {
         group.paletteLabel = "Canvas Tools"
         group.toolTip = "Canvas tools"
         // 도구 전환은 한 번 클릭이어야 하므로 펼친 표현을 고정합니다. macOS 26 SDK(macOS 27.2 실행)에서
-        // 측정한 결과 `.automatic`은 이 11개 그룹을 폭과 무관하게 pull-down으로 접었습니다. 창이 좁으면
+        // 측정한 결과 `.automatic`은 당시 11개(Pen 삭제 전) 그룹을 폭과 무관하게 pull-down으로 접었습니다. 창이 좁으면
         // 시스템 overflow 메뉴가 처리하며, 우선순위가 낮은 줌 항목이 먼저 넘어갑니다(HIG Toolbars).
         group.controlRepresentation = .expanded
         group.visibilityPriority = .high
