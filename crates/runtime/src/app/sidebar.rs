@@ -84,7 +84,7 @@ impl AppRuntime {
         value: bool,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            let window = super::frame_move::canvas_window(ctx, session)?;
+            let window = window_mut(ctx, session)?;
             set_flags(window, request, view, revision, &nodes, flag, Some(value))?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
@@ -100,7 +100,7 @@ impl AppRuntime {
         name: String,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            let window = super::frame_move::canvas_window(ctx, session)?;
+            let window = window_mut(ctx, session)?;
             rename(window, request, view, revision, node, name)?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })

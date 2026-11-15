@@ -1,6 +1,6 @@
 //! 자유 배치 Frame에 새 Frame 또는 Shape를 삽입하고 선택합니다. Text 생성은 `text_input`의 첫 확정이 합니다.
 
-use super::frame_move::{canvas_window, command_id, editable_frame, fresh_ids};
+use super::frame_move::{command_id, editable_frame, fresh_ids};
 use super::*;
 use stellar_commands::{
     command::Command, id::CommandOrigin, node_ops::InsertNode, transaction::CommandTransaction,
@@ -83,7 +83,7 @@ impl AppRuntime {
         item: Option<CanvasItem>,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            let window = canvas_window(ctx, session)?;
+            let window = window_mut(ctx, session)?;
             let item = item.ok_or_else(|| {
                 Failure::new(
                     RequestFailure::UnknownView,

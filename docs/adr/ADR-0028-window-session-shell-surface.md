@@ -502,7 +502,8 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
   내장 터미널, MCP·에이전트 노출, 외부 명령, 프로젝트 밖 symlink 내용 노출입니다(아키텍처 §24.3).
 - 캔버스·Inspector·Layers의 문서 편집과 저장은 프로젝트 신뢰와 무관하게 허용합니다. CLI `stellar apply`도
   신뢰를 요구하지 않으므로 앱과 CLI의 규칙이 같아집니다.
-- runtime의 편집 대상 조회는 `canvas_window`(이전 `trusted_canvas_window`)이며 신뢰를 검사하지 않습니다.
+- runtime의 편집 대상 조회는 일반 창 조회 `window_mut`이며 신뢰를 검사하지 않습니다(이전 `trusted_canvas_window`,
+  그 뒤 이름만 바꾼 감싸기 `canvas_window`는 지웠습니다).
   이동·크기·배경·모서리, Frame·Shape 삽입, 선택 삭제·복제·순서, Copy·Paste, 레이어 이름 변경은
   `STELLAR_FAILURE_TRUST_UNAVAILABLE`로 거부되지 않습니다.
 - 셸은 편집 경로에서 신뢰 시트를 요청하지 않고, Inspector에 신뢰 이유의 읽기 전용 상태를 표시하지 않습니다.

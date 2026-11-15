@@ -184,7 +184,7 @@ impl AppRuntime {
                     let publish = shared.clone();
                     sender
                         .submit(move |ctx| {
-                            let window = super::frame_move::canvas_window(ctx, session)?;
+                            let window = window_mut(ctx, session)?;
                             input.target.verify(window)?;
                             if window.loaded_generation().map(|g| g.manifest_hash) != generation {
                                 return Err(Failure::new(

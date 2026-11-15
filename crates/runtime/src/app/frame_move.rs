@@ -1,21 +1,11 @@
-//! 캔버스·속성 패널·Layers 편집 경로가 함께 쓰는 창·잠금·ID 도우미입니다. 이동·크기·반경은
+//! 캔버스·속성 패널·Layers 편집 경로가 함께 쓰는 잠금·ID 도우미입니다. 편집 대상 창은 `window_mut`로 찾습니다.
+//! 문서 편집과 저장은 프로젝트 신뢰와 무관합니다(사용자 결정 D1). 제한 모드는 코드를 실행하는 경로에만 적용합니다. 이동·크기·반경은
 //! `canvas_gesture`(ADR-0071), 속성 값 편집은 `inspector`(ADR-0070)가 합니다.
 
 use super::*;
 use stellar_commands::document::{frame::Clipping, records::NodePayload};
 use stellar_commands::id::CommandId;
 use stellar_document::model::DocumentModel;
-
-/// 캔버스·Inspector·Layers 편집 대상 창을 찾습니다.
-///
-/// 문서 편집과 저장은 프로젝트 신뢰와 무관하게 허용합니다(사용자 결정 D1, 아키텍처 §24.3). 제한 모드는
-/// Git hook·filter, 내장 터미널, MCP·에이전트, 외부 명령처럼 코드를 실행하는 경로에만 적용합니다.
-pub(super) fn canvas_window(
-    ctx: &mut DocumentContext,
-    session: WindowSessionHandle,
-) -> Result<&mut ProjectWindowSession, Failure> {
-    window_mut(ctx, session)
-}
 
 pub(super) fn editable_frame(
     model: &stellar_document::model::DocumentModel,

@@ -1,5 +1,5 @@
 //! Delete selected subtrees through the owning window's document history.
-use super::frame_move::{canvas_window, command_id};
+use super::frame_move::command_id;
 use super::*;
 use stellar_commands::{
     command::Command, id::CommandOrigin, node_ops::DeleteSubtree, transaction::CommandTransaction,
@@ -57,7 +57,7 @@ impl AppRuntime {
         ids: Option<Vec<StableId>>,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            let window = canvas_window(ctx, target.session)?;
+            let window = window_mut(ctx, target.session)?;
             let selected = window.view().selection().ids();
             target.verify(window)?;
             if ids

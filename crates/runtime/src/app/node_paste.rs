@@ -1,5 +1,5 @@
 //! Platform clipboard bytes enter the owning window's ordinary document history.
-use super::frame_move::{canvas_window, command_id, fresh_generator};
+use super::frame_move::{command_id, fresh_generator};
 use super::*;
 use stellar_commands::{
     command::Command, id::CommandOrigin, paste::ClipboardSubtree, transaction::CommandTransaction,
@@ -13,7 +13,7 @@ impl AppRuntime {
         target: SelectionEditTarget,
     ) -> Result<crate::document_thread::JobTicket<Option<Vec<u8>>>, SubmitError> {
         self.sender.submit(move |ctx| {
-            let window = canvas_window(ctx, target.session).ok()?;
+            let window = window_mut(ctx, target.session).ok()?;
             target.verify(window).ok()?;
             copy_from(window, target.view, target.revision)
         })
@@ -28,7 +28,7 @@ impl AppRuntime {
         bytes: Vec<u8>,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            let window = canvas_window(ctx, target.session)?;
+            let window = window_mut(ctx, target.session)?;
             target.verify(window)?;
             paste_into(window, request, target.view, target.revision, &bytes)?;
             Ok(RuntimeEvent::WindowViewChanged {

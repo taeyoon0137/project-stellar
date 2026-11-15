@@ -1,8 +1,9 @@
 //! node 잠금 판정 (D8).
 //!
 //! 자신이나 조상이 잠긴 node는 바꾸지 않습니다. `locked` 자체는 조상이 잠기지 않았을 때만 바꿀 수 있어, 잠금
-//! 해제는 그 node에 대한 명시 명령으로만 합니다. 속성 패널(`inspector`)이 이 판정을 씁니다. Layers의 표시·잠금
-//! 토글과 CLI 적용도 이 함수로 맞춰 규칙이 갈라지지 않게 합니다(ADR-0070 결정 5).
+//! 해제는 그 node에 대한 명시 명령으로만 합니다. 지금 이 판정을 쓰는 곳은 속성 패널(`inspector`)뿐입니다. 캔버스
+//! (`runtime` `editable_ancestry`), Layers(`runtime` sidebar `path_locked`), CLI(`ops` apply `locked_change`)는 아직 각자
+//! 판정하고 규칙도 다릅니다(root·흐름 부모·숨김 조상). 한 판정으로 모으는 일은 UX WBS UX.3.11입니다(ADR-0070 결정 5).
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::property::PropertyKey;
