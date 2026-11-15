@@ -18,7 +18,7 @@ WBS 설명·완료 기준·선행은 유지하고 XII.3.7 상태만 `[!]`로 갱
 
 - `rg -n '^\| (XI\.2\.1|VII\.4\.2|XII\.3\.[567]) ' docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md`
   — XI.2.1 `[ ]`, VII.4.2 `[x]`, XII.3.5 `[~]`, XII.3.6 `[x]`, XII.3.7 `[!]`.
-- `rg -n 'pop_received|submit_hit_test|InteractionController' crates/ffi/src crates/runtime/src apps/macos/StellarMac`
+- `rg -n 'pop_received|submit_hit_test|InteractionController' crates/ffi/src crates/runtime/src apps/macos/Stellar`
   — 정의·Rust 테스트 외에 정상 앱에서 상태 기계와 hit-test 요청을 구동하는 연결이 없습니다.
 - `rg -n 'update_preview|execute_transaction' crates/history/src/history.rs`
   — 기존 preview는 document transaction을 적용합니다. transient scene 주입과는 다릅니다.
