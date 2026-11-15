@@ -1,50 +1,19 @@
 //! 고정 도형의 canonical path와 순서가 있는 Transform·단색 Fill·Stroke를 같은 장면에 투영합니다.
 use super::*;
 use stellar_core_types::value::{Rect, Vec2};
-use stellar_document::frame::Border;
-use stellar_document::modifier::{ModifierId, ModifierPayload, ModifierStack};
+use stellar_document::modifier::ModifierStack;
 use stellar_document::path::PathCommand as DocumentPath;
-use stellar_document::shape::{evaluate_shape_path, ShapeGeometry};
+use stellar_document::shape::{
+    evaluate_shape_modifiers, evaluate_shape_path, ShapeGeometry, ShapeModifierStyle,
+};
 use stellar_scene::builder::{SceneScope, ShapeInput, StrokeInput};
 use stellar_scene::geometry::{PathCommand, PathGeometry};
 use stellar_scene::stack::{Paint, StrokeCap};
 
-/// 캔버스가 평가하는 transform과 fill. 부모 공간 이동은 마지막 Transform에 적용합니다.
-pub(crate) struct ShapeStyle {
-    pub(crate) transform: Transform2D,
-    pub(crate) last_transform: Option<(ModifierId, Transform2D)>,
-    fill: Option<Color>,
-    stroke: Option<Border>,
-}
-
-pub(crate) fn shape_style(stack: Option<&ModifierStack>) -> Option<ShapeStyle> {
-    let mut last_transform = None;
-    let mut transform = Transform2D::identity();
-    let mut fill = None;
-    let mut stroke = None;
-    if let Some(stack) = stack {
-        for entry in stack.entries().iter().filter(|e| e.enabled) {
-            match entry.payload {
-                ModifierPayload::Transform(next) if fill.is_none() && stroke.is_none() => {
-                    transform = transform.then(&next).ok()?;
-                    last_transform = Some((entry.id, next));
-                }
-                ModifierPayload::Fill { color } if fill.is_none() && stroke.is_none() => {
-                    fill = Some(color)
-                }
-                ModifierPayload::Stroke { color, width } if stroke.is_none() => {
-                    stroke = Some(Border::new(color, width.get()).ok()?);
-                }
-                _ => return None,
-            }
-        }
-    }
-    Some(ShapeStyle {
-        transform,
-        last_transform,
-        fill,
-        stroke,
-    })
+/// 캔버스가 평가하는 transform·fill·stroke. 규칙은 웹 출력과 같은 [`evaluate_shape_modifiers`] 한 곳에 있고,
+/// 캔버스는 평가하지 못하는 stack을 그리지 않습니다. 부모 공간 이동은 마지막 Transform에 적용합니다.
+pub(crate) fn shape_style(stack: Option<&ModifierStack>) -> Option<ShapeModifierStyle> {
+    evaluate_shape_modifiers(stack).ok()
 }
 
 /// Free Frame 목록은 경로를 할당하지 않습니다. 이 정보는 도형 행에만 있습니다.
