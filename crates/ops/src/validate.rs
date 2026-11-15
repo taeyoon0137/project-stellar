@@ -240,10 +240,13 @@ mod tests {
         };
         let dir = TempDir::new("validate-instance");
         scaffold_project(&dir.path);
-        let source = crate::component_source::create_in_project(
-            &dir.path.canonicalize().unwrap(),
-            crate::test_support::project_id(),
+        let components = dir.path.join("design/components");
+        std::fs::create_dir(&components).unwrap();
+        let source = crate::component_source::create(
+            &components,
             "Card".into(),
+            StableId::new_v7(900_010, 0, 1),
+            StableId::new_v7(900_011, 0, 1),
         )
         .unwrap();
         let mut model = random_valid_document(311);

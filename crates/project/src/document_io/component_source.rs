@@ -337,36 +337,7 @@ pub fn create(
     source: &ComponentSource,
 ) -> Result<(PathBuf, ContentHash), TextSourceError> {
     let (library, files) = read_library(dir)?;
-    create_in(dir, source, library, files, None)
-}
-
-/// 고정한 프로젝트 폴더 안에서만 전체 원본을 검사하고 새 파일을 작성합니다.
-/// 기존 원본은 [`read_project_library`]와 같은 신뢰 기반 정책으로 읽습니다.
-pub fn create_in_project(
-    root: &Path,
-    dir: &Path,
-    source: &ComponentSource,
-    access: ExternalAccess,
-) -> Result<(PathBuf, ContentHash), TextSourceError> {
-    create_in_project_with_budget(root, dir, source, MAX_PROJECT_SOURCE_BYTES, access)
-}
-
-fn create_in_project_with_budget(
-    root: &Path,
-    dir: &Path,
-    source: &ComponentSource,
-    limit: u64,
-    access: ExternalAccess,
-) -> Result<(PathBuf, ContentHash), TextSourceError> {
-    let canonical = dir.canonicalize()?;
-    if !canonical.starts_with(root)
-        || canonical == root
-        || root.join("design/components").canonicalize()? != canonical
-    {
-        return Err(invalid("프로젝트의 컴포넌트 원본 폴더가 바뀌었습니다"));
-    }
-    let (library, files, remaining) = project_library(root, limit, access)?;
-    create_in(&canonical, source, library, files, Some((root, remaining)))
+    create_in(dir, source, library, files)
 }
 
 fn create_in(
@@ -374,7 +345,6 @@ fn create_in(
     source: &ComponentSource,
     mut library: ComponentLibrary,
     files: ComponentFiles,
-    project: Option<(&Path, u64)>,
 ) -> Result<(PathBuf, ContentHash), TextSourceError> {
     let filename = source.filename()?;
     let path = dir.join(&filename);
@@ -391,19 +361,7 @@ fn create_in(
     }
     source.add_to(&mut library)?;
     let encoded = source.to_yaml()?;
-    if let Some((root, remaining)) = project {
-        if root.join("design/components").canonicalize()? != dir {
-            return Err(TextSourceError::Changed);
-        }
-        source_file::write_new_resolved(
-            root,
-            &path,
-            encoded.as_bytes(),
-            remaining.min(MAX_INPUT_BYTES as u64),
-        )?;
-    } else {
-        source_file::write_checked(&path, encoded.as_bytes(), None, MAX_INPUT_BYTES as u64)?;
-    }
+    source_file::write_checked(&path, encoded.as_bytes(), None, MAX_INPUT_BYTES as u64)?;
     Ok((path, ContentHash::compute(encoded.as_bytes())))
 }
 
@@ -807,43 +765,6 @@ mod tests {
     }
 
     #[test]
-    fn project_creation_charges_existing_bytes_before_writing() {
-        let temp = crate::saved_project::tests::TempDir::new();
-        let root = temp.path.canonicalize().unwrap();
-        let dir = root.join("design/components");
-        std::fs::create_dir_all(&dir).unwrap();
-        let make = |n| {
-            ComponentSource::new(
-                StableId::new_v7(1, 0, n),
-                "Card".into(),
-                StableId::new_v7(1, 0, n + 1),
-            )
-            .unwrap()
-        };
-        let first = make(10);
-        let second = make(20);
-        let access = ExternalAccess::MetadataOnly;
-        let (file, hash) = create_in_project(&root, &dir, &first, access).unwrap();
-        let first_len = std::fs::metadata(&file).unwrap().len();
-        let exact = first_len + second.to_yaml().unwrap().len() as u64;
-        let next = dir.join(second.filename().unwrap());
-        let result = create_in_project_with_budget(&root, &dir, &second, exact - 1, access);
-        assert!(
-            matches!(result,Err(TextSourceError::Io(ref io)) if io.kind()==std::io::ErrorKind::FileTooLarge)
-        );
-        assert!(!next.exists());
-        assert_eq!(open(&file).unwrap().1, hash);
-        assert_eq!(read_project_library(&root, access).unwrap().1.len(), 1);
-        assert_eq!(
-            create_in_project_with_budget(&root, &dir, &second, exact, access)
-                .unwrap()
-                .0,
-            next
-        );
-        assert_eq!(read_project_library(&root, access).unwrap().1.len(), 2);
-    }
-
-    #[test]
     fn locked_root_rejects_fill_even_if_unchanged() {
         let temp = crate::saved_project::tests::TempDir::new();
         let root = temp.path.canonicalize().unwrap();
@@ -852,8 +773,7 @@ mod tests {
         let id = |n| StableId::new_v7(1, 0, n);
         let mut component = ComponentSource::new(id(1), "Card".into(), id(2)).unwrap();
         component.root.locked = true;
-        let (file, hash) =
-            create_in_project(&root, &dir, &component, ExternalAccess::MetadataOnly).unwrap();
+        let (file, hash) = create(&dir, &component).unwrap();
         let original = std::fs::read(&file).unwrap();
         let NodePayload::Frame(frame) = &component.root.payload else {
             unreachable!()

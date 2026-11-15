@@ -194,59 +194,6 @@ pub fn create(
     Ok(info(&source, file, hash))
 }
 
-/// 열린 프로젝트의 현재 generation과 원본 폴더를 다시 확인한 뒤 한 개의 독립 정의를 추가합니다.
-pub fn create_in_project(
-    root: &Path,
-    project_id: StableId,
-    name: String,
-) -> Result<ComponentInfo, Error> {
-    let [id, root_id] = stellar_project::new_ids::new_ids().map_err(|e| Error::Io(e.kind()))?;
-    let source = ComponentSource::new(id, name, root_id)?;
-    create_project_source(root, project_id, &source, None)
-}
-
-/// 선택한 Frame에서 복제한 정의는 창에서 읽은 것과 같은 generation에만 추가합니다.
-pub fn create_project_source(
-    root: &Path,
-    project_id: StableId,
-    source: &ComponentSource,
-    expected: Option<crate::revision::ProjectRevision>,
-) -> Result<ComponentInfo, Error> {
-    let _project = lock_source_project(root, project_id, expected)?;
-    let design = root
-        .join("design")
-        .canonicalize()
-        .map_err(|e| Error::Io(e.kind()))?;
-    if !source_directory(root, &design) {
-        return Err(Error::Invalid(
-            "프로젝트 내부의 design 폴더가 필요합니다".into(),
-        ));
-    }
-    let folder = design.join("components");
-    let created = match std::fs::create_dir(&folder) {
-        Ok(()) => true,
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => false,
-        Err(e) => return Err(Error::Io(e.kind())),
-    };
-    let result = (|| {
-        let target = folder.canonicalize().map_err(|e| Error::Io(e.kind()))?;
-        if !target.is_dir() || !source_directory(root, &target) {
-            return Err(Error::Invalid(
-                "프로젝트 내부의 컴포넌트 폴더가 필요합니다".into(),
-            ));
-        }
-        let _folder = lock(&target)?;
-        let access = external_access(project_id, root);
-        let (file, hash) = component_source::create_in_project(root, &target, source, access)?;
-        Ok(info(source, file, hash))
-    })();
-    if result.is_err() && created {
-        // 동시 writer가 추가한 파일이 있으면 디렉터리는 보존됩니다.
-        let _ = std::fs::remove_dir(folder);
-    }
-    result
-}
-
 fn lock_source_project(
     root: &Path,
     project_id: StableId,
@@ -267,18 +214,6 @@ fn lock_source_project(
         ));
     }
     Ok(guard)
-}
-
-fn source_directory(root: &Path, dir: &Path) -> bool {
-    let Ok(relative) = dir.strip_prefix(root) else {
-        return false;
-    };
-    !relative.as_os_str().is_empty()
-        && !relative
-            .iter()
-            .any(|part| part.eq_ignore_ascii_case(".git") || part.eq_ignore_ascii_case(".stellar"))
-        && !relative.starts_with("design/objects")
-        && !relative.starts_with("design/generations")
 }
 
 /// 원본 파일만 읽어 ComponentLibrary를 조립하고 ID 순서로 정의를 반환합니다.
@@ -500,45 +435,6 @@ mod tests {
         ));
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn project_component_creation_rejects_redirected_and_invalid_sources() {
-        use std::{fs, os::unix::fs::symlink};
-        let dir = TempDir::new("component-app-boundary");
-        let neighbor = TempDir::new("component-app-neighbor");
-        let root = dir.path.canonicalize().unwrap();
-        scaffold_project(&root);
-        let sources = root.join("design/components");
-        let add = || create_in_project(&root, project_id(), "Toolbar".into());
-        // Both metadata and an external directory are invalid write targets, including through design.
-        for target in [&neighbor.path, &root.join(".git")] {
-            symlink(target, &sources).unwrap();
-            assert!(add().is_err());
-            assert_eq!(fs::read_dir(target).unwrap().count(), 0);
-            fs::remove_file(&sources).unwrap();
-        }
-        fs::create_dir(&sources).unwrap();
-        let unchanged = sources.join("broken.stellar.yaml");
-        fs::write(&unchanged, "broken").unwrap();
-        assert!(add().is_err());
-        assert_eq!(fs::read(&unchanged).unwrap(), b"broken");
-        assert_eq!(fs::read_dir(&sources).unwrap().count(), 1);
-        fs::remove_file(&unchanged).unwrap();
-        fs::remove_dir(&sources).unwrap();
-        let alias = root.join("shared-library");
-        fs::create_dir(&alias).unwrap();
-        symlink(&alias, &sources).unwrap();
-        let first = add().unwrap();
-        let second = add().unwrap();
-        assert_ne!(first.id, second.id);
-        let read = query(&open_snapshot(&root).unwrap()).unwrap();
-        assert_eq!(read.entries.len(), 2);
-        assert!(read
-            .entries
-            .iter()
-            .any(|e| e.id == first.id && e.hash == first.hash));
-    }
-
     #[test]
     fn generation_only_lists_chunks_and_mixed_project_preserves_both_sources() {
         let dir = TempDir::new("component-query-sources");
@@ -564,15 +460,6 @@ mod tests {
         let generation_only = query(&snapshot).unwrap();
         assert_eq!(generation_only.chunk_count, 1);
         assert!(generation_only.entries.is_empty());
-
-        let canonical = root.canonicalize().unwrap();
-        let before = file_digest(root);
-        assert!(matches!(
-            create_in_project(&canonical, project_id(), "Button".into()),
-            Err(Error::Unsupported(_))
-        ));
-        assert_eq!(file_digest(root), before);
-        assert!(!root.join("design/components").exists());
 
         let folder = root.join("design/components");
         std::fs::create_dir(&folder).unwrap();

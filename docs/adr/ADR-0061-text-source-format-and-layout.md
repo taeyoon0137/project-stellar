@@ -105,9 +105,13 @@ Accepted (2026-11-15). 제품 책임자가 텍스트 원본 형식과 배치의 
 
 - 파일 포맷: 위 결정 4의 버전만 읽고 씁니다. 공개 포맷 동결 전이므로 외부 호환 약속은 없습니다.
 - 공개 API: CLI·MCP 컴포넌트 조회의 Frame payload 키와 색 값이 결정 2의 한 줄 표현을 따릅니다.
-- 보호 경로 `crates/storage`의 `source_file`(제한 읽기, 조건부 원자 저장, 새 파일 게시, 캐시 chunk 갱신)은 이 ADR과
-  ADR-0059를 근거로 씁니다. `write_new_resolved`는 프로젝트 내부로 해석한 컴포넌트 폴더에 새 파일만 게시하며, 앱의
-  선택 생성 경로(D3에 따라 제거 예정)가 유일한 호출자입니다.
+- 보호 경로 `crates/storage`의 `source_file`(제한 읽기, 조건부 원자 저장, 캐시 chunk 갱신)은 이 ADR과 ADR-0059를
+  근거로 씁니다.
+- 보호 경로 제거 기록(2026-11-15 검토 후속): `source_file::write_new_resolved`(프로젝트 내부로 해석한 컴포넌트 폴더에
+  새 파일만 게시)와 그 위의 project `create_in_project`, ops `create_in_project`·`create_project_source`를 삭제했습니다.
+  유일한 제품 호출자였던 앱의 선택·빈 컴포넌트 생성 경로가 D3·A6에서 지워져 테스트 외 호출자가 없었습니다. CLI
+  `component-source create`는 처음부터 폴더 단위 `create`(프로젝트 안이면 저장 잠금과 chunk 검사 뒤 `write_checked`)를
+  씁니다. 앱 컴포넌트 UX(D4)가 생성 경로를 다시 필요로 하면 그때 다시 설계합니다.
 - 보호 경로 제거 기록(2026-11-15 검토): 인스턴스를 담은 subtree에만 payload schema 2를 쓰던 표식과 그
   검사(project의 인스턴스 subtree schema 상수, 문서 loader의 schema 검사)를 지우면서, 이를 위해 ADR 없이 추가했던
   `crates/storage`의 `LazyGeneration::chunk_pointer` 접근자도 삭제했습니다. 인스턴스 subtree는 다른 문서 chunk와
