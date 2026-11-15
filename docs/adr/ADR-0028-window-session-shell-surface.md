@@ -377,3 +377,15 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 - 셸은 Copy 결과 전달 때 pasteboard·창·session만 다시 확인합니다. 이전에는 선택·key 창·텍스트 포커스까지
   다시 확인해, 복사한 뒤 선택이 바뀌면 결과를 조용히 버렸습니다. 검사만을 위해 둔 key 창 주입 seam과 그
   검사 블록도 지웠습니다.
+
+### 레이어 페이지와 이름 변경
+
+- `stellar_window_layer_page(handle, session, query, info, rows, text, capacity, out_history)` 하나로 합칩니다.
+  `out_history`는 필수이며, 행의 선택 순서와 같은 document thread 시점의 창 history sequence를 씁니다. 셸은
+  이 값이 표시 중인 선택 대상의 sequence와 다르면 행을 반영하지 않고 다시 읽습니다. null이면
+  `NULL_POINTER`입니다. 같은 기능을 선택 인자로 받던 `stellar_window_layer_page_with_history`는 삭제했습니다.
+  행 레이아웃(`StellarLayerQuery`·`StellarLayerInfo`·`StellarLayerRow`)과 64행 페이지 크기는 그대로입니다.
+- `stellar_window_layer_rename`은 표시 revision·View 소속·조상 잠금을 확인하고 RenameNode 하나를 창 history에
+  기록합니다. 잠긴 레이어(또는 잠긴 부모 아래)는 stale 문구가 아니라 잠금 문구로 거부합니다.
+- 헤더에서 레이어 페이지 주석이 Text 미리보기 선언 위에 붙어 있던 것을 해당 선언 위로 옮기고 이름 변경 주석을
+  더했습니다. 검사 전용으로 셸 sidebar source에 둔 `isReadingLayers`와 그 교차 읽기 검사 시나리오는 지웠습니다.

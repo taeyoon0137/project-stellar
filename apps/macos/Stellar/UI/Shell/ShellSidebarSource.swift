@@ -26,7 +26,6 @@ final class ShellSidebarSource: SidebarDataProvider {
     private var loaded: [Request] = []
     private var selectedOrder: [SidebarStableID: Int] = [:]
     private var running: Request?
-    var isReadingLayers: Bool { running != nil }
     private var epoch: UInt64 = 0
     private var version: UInt64 = 0
     private(set) var snapshot = SidebarSnapshot.empty

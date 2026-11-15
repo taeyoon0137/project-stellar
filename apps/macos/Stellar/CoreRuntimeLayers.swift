@@ -47,7 +47,7 @@ extension CoreRuntime {
         func read() -> StellarStatus {
             rows.withUnsafeMutableBufferPointer { rowBuffer in
                 names.withUnsafeMutableBufferPointer { text in
-                    stellar_window_layer_page_with_history(handle, session, &query, &info, rowBuffer.baseAddress,
+                    stellar_window_layer_page(handle, session, &query, &info, rowBuffer.baseAddress,
                                                           text.baseAddress, text.count, &history)
                 }
             }

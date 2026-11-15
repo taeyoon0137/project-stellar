@@ -34,39 +34,13 @@ pub struct StellarLayerRow {
 }
 
 /// 셸의 background queue에서만 호출합니다. registry 잠금을 푼 뒤 작업 결과를 기다립니다.
+/// 행의 선택 순서와 같은 시점의 창 history sequence를 `out_history`에 함께 씁니다.
 /// # Safety
 /// `query`는 읽기 가능, `info`와 `rows`는 각각 1개와 64개 정렬된 구조체를 쓸 수 있어야 합니다.
-/// `text`는 null 또는 `capacity` 바이트를 쓸 수 있어야 합니다. 출력 버퍼는 서로 겹치지 않아야 합니다.
+/// `text`는 null 또는 `capacity` 바이트를 쓸 수 있어야 합니다. `out_history`는 정렬된 u64 하나를 쓸 수
+/// 있어야 합니다. 출력 버퍼는 서로 겹치지 않아야 합니다.
 #[no_mangle]
 pub unsafe extern "C" fn stellar_window_layer_page(
-    handle: u64,
-    session: u64,
-    query: *const StellarLayerQuery,
-    info: *mut StellarLayerInfo,
-    rows: *mut StellarLayerRow,
-    text: *mut u8,
-    capacity: usize,
-) -> StellarStatus {
-    unsafe {
-        stellar_window_layer_page_with_history(
-            handle,
-            session,
-            query,
-            info,
-            rows,
-            text,
-            capacity,
-            std::ptr::null_mut(),
-        )
-    }
-}
-
-/// 행의 선택과 같은 시점의 history sequence를 함께 반환합니다.
-/// # Safety
-/// 버퍼는 `stellar_window_layer_page`와 같은 계약입니다. `out_history`는 null이거나
-/// 다른 출력과 겹치지 않는 정렬된 u64 하나를 쓸 수 있어야 합니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_window_layer_page_with_history(
     handle: u64,
     session: u64,
     query: *const StellarLayerQuery,
@@ -77,10 +51,13 @@ pub unsafe extern "C" fn stellar_window_layer_page_with_history(
     out_history: *mut u64,
 ) -> StellarStatus {
     ffi_guard(move || {
-        if query.is_null() || info.is_null() || rows.is_null() {
+        if query.is_null() || info.is_null() || rows.is_null() || out_history.is_null() {
             return StellarStatus::NullPointer;
         }
-        unsafe { info.write(StellarLayerInfo::default()) };
+        unsafe {
+            info.write(StellarLayerInfo::default());
+            out_history.write(0);
+        }
         let query = unsafe { &*query };
         let optional = |bytes| (bytes != [0; 16]).then(|| StableId::from_bytes(bytes));
         let ticket = {
@@ -107,9 +84,7 @@ pub unsafe extern "C" fn stellar_window_layer_page_with_history(
             Ok(None) => return StellarStatus::NoError,
             Err(_) => return StellarStatus::Internal,
         };
-        if !out_history.is_null() {
-            unsafe { out_history.write(page.history_sequence) };
-        }
+        unsafe { out_history.write(page.history_sequence) };
         let names = [&page.page_name, &page.view_name]
             .into_iter()
             .chain(page.rows.iter().map(|r| &r.name));

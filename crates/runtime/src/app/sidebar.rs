@@ -116,7 +116,10 @@ fn rename(
     let mut cursor = original;
     loop {
         if cursor.locked {
-            return Err(stale());
+            return Err(Failure::new(
+                RequestFailure::UnknownView,
+                "잠긴 레이어나 잠긴 부모 아래의 레이어는 이름을 바꿀 수 없습니다",
+            ));
         }
         if cursor.stable_id == root {
             break;

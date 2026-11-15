@@ -392,9 +392,6 @@ StellarStatus stellar_window_text_rects(uint64_t handle, uint64_t session, Stell
 StellarStatus stellar_window_set_document_font(uint64_t handle, uint64_t session, uint64_t revision, const uint8_t *path, size_t path_len, uint32_t face, uint32_t size_subpixels, StellarCanvasColor color, uint64_t *out_request);
 StellarStatus stellar_window_canvas(uint64_t handle, uint64_t session, float width, float height, StellarCanvasInfo *info, StellarCanvasFrame *rows, size_t capacity);
 
-/* 셸 worker 전용. 활성 View/revision의 직계 자식을 앞에서부터 조회합니다.
- * rows: STELLAR_LAYER_PAGE_SIZE개 caller buffer. 플래그 bit 0 표시, 1 잠금, 2 자식 있음.
- * UTF-8 text는 페이지·View·행 이름 순서. BUFFER_TOO_SMALL은 info.text_len만큼 확보해 재호출합니다. */
 /* Worker-only input preview. Elements and optional local caret xywh are borrowed only during sink(). */
 typedef void (*StellarTextPaintSink)(void *context, StellarCanvasColor fill, const float *caret, const StellarCanvasTextElement *elements, size_t count);
 StellarStatus stellar_text_input_paint(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t target[16], uint64_t revision, uint32_t new_text, uint32_t start, uint32_t end, const uint8_t *value, size_t len, uint32_t caret, void *context, StellarTextPaintSink sink);
@@ -410,10 +407,14 @@ StellarStatus stellar_text_mark(uint64_t handle, uint64_t session, uint64_t toke
 StellarStatus stellar_text_preview(uint64_t handle, uint64_t session, uint64_t token, uint8_t *buf, size_t capacity, size_t *out_len);
 StellarStatus stellar_text_commit(uint64_t handle, uint64_t session, uint64_t token, const uint8_t *text, size_t len, uint64_t *out_request);
 StellarStatus stellar_text_cancel(uint64_t handle, uint64_t session, uint64_t token);
+/* 표시한 View·revision의 레이어 이름을 UTF-8로 바꿉니다. 코어가 View 소속과 조상 잠금을 확인하고 RenameNode 하나를
+ * 창 history에 기록합니다. 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED입니다. */
 StellarStatus stellar_window_layer_rename(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, const uint8_t *name, size_t name_len, uint64_t *out_request);
-StellarStatus stellar_window_layer_page(uint64_t handle, uint64_t session, const StellarLayerQuery *query, StellarLayerInfo *info, StellarLayerRow *rows, uint8_t *text, size_t capacity);
-/* OK or BUFFER_TOO_SMALL writes the history sequence of the returned rows to optional out_history. */
-StellarStatus stellar_window_layer_page_with_history(uint64_t handle, uint64_t session, const StellarLayerQuery *query, StellarLayerInfo *info, StellarLayerRow *rows, uint8_t *text, size_t capacity, uint64_t *out_history);
+/* 셸 worker 전용. 활성 View/revision의 직계 자식을 앞에서부터 조회합니다.
+ * rows: STELLAR_LAYER_PAGE_SIZE개 caller buffer. 플래그 bit 0 표시, 1 잠금, 2 자식 있음.
+ * UTF-8 text는 페이지·View·행 이름 순서. BUFFER_TOO_SMALL은 info.text_len만큼 확보해 재호출합니다.
+ * out_history(필수)에는 행의 선택 순서와 같은 시점의 창 history sequence를 씁니다. 읽지 못하면 0입니다. */
+StellarStatus stellar_window_layer_page(uint64_t handle, uint64_t session, const StellarLayerQuery *query, StellarLayerInfo *info, StellarLayerRow *rows, uint8_t *text, size_t capacity, uint64_t *out_history);
 
 /* 열린 창 session의 view state(탭 수, active view, viewport)를 씁니다(없는 창 session은 STELLAR_INVALID_ARGUMENT). */
 StellarStatus stellar_window_view_info(uint64_t handle, uint64_t session, StellarWindowViewInfo *out_info);

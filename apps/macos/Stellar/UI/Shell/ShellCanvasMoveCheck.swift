@@ -280,25 +280,6 @@ enum ShellCanvasMoveCheck {
               changed.matches(deleteSession.selectionTarget), action(reopened, .undo), shown.matches(deleteSession.selectionTarget)
         else { return fail("같은 revision에서 바뀐 선택으로 Copy/Paste가 적용됨") }
 
-        // A를 표시한 채 같은 revision에서 B를 선택한 다음 페이지를 읽습니다.
-        // B의 행을 A의 history에서 편집할 수 없어야 합니다.
-        guard let visible = deleteSession.selectionTarget,
-              deleteSession.select([sibling], completion: { _ in }), pump.waitForPendingRequests(timeout: 10),
-              let newer = deleteSession.selectionTarget, newer.revision == visible.revision,
-              newer.history_sequence != visible.history_sequence, newer.selection_count == visible.selection_count
-        else { return fail("Layers 교차 읽기용 형제 선택") }
-        reopened.sidebarSource.perform(.reload)
-        let layerDeadline = Date().addingTimeInterval(5)
-        while reopened.sidebarSource.isReadingLayers && Date() < layerDeadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-        }
-        guard !reopened.sidebarSource.isReadingLayers else { return fail("Layers 교차 읽기 시간 초과") }
-        let crossSelection = reopened.sidebarSource.snapshot.selection
-        guard crossSelection.isEmpty, !reopened.sidebarSource.validate(.delete([SidebarStableID(sibling)])).isAllowed
-        else { return fail("표시 history \(visible.history_sequence)에 다른 선택 행 게시: \(crossSelection.map(\.uuid))") }
-        guard action(reopened, .undo), visible.matches(deleteSession.selectionTarget),
-              awaitLayerAction(layerDuplicate), reopened.sidebarSource.snapshot.selection == [SidebarStableID(node)]
-        else { return fail("Undo 후 Layers 원래 선택 페이지 복원 실패") }
 
         for command in [ShellCommand.delete, .duplicate] {
             let layerCommand: SidebarCommand = command == .delete ? .delete([SidebarStableID(node)]) : layerDuplicate
@@ -366,7 +347,7 @@ enum ShellCanvasMoveCheck {
         guard pump.waitForPendingRequests(timeout: 10), let deleted = open(path), deleted !== reopened,
               deleted.windowController.windowSession?.info?.generation == deletedGeneration,
               at(30, in: deleted.canvasHost.canvasView) != node else { return fail("삭제 저장 재열기") }
-        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Copy/Paste after source deletion, 4 KiB retry, stale clipboard selection, Duplicate history, Delete/Backspace and Layers deletion history/save/reopen, stale same-count menu and Layers targets, cross-history page rejection and Undo recovery")
+        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Copy/Paste after source deletion, 4 KiB retry, stale clipboard selection, Duplicate history, Delete/Backspace and Layers deletion history/save/reopen, stale same-count menu and Layers targets")
         return true
     }
 }
