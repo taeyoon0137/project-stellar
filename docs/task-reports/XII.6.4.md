@@ -98,5 +98,5 @@
 | `Stellar.app --session-commands-check <fixture>` (`scripts/macos/smoke.sh`와 같은 인자로 개별 실행) | 0 — `session-commands ok: 56 checks (undo/redo/save now per window session via menu items)` |
 
 - 검증 기준(창별 history와 save 호출 fixture): `window_session::tests::undo_and_redo_replay_only_their_own_window_history`, `save_now_writes_this_windows_document_as_a_new_generation`, `save_now_keeps_other_documents_of_the_generation`, `app_window_tests::undo_redo_and_save_now_reach_only_the_target_window`, `window_session::tests::undo_redo_and_save_now_go_to_the_given_window_session`과 위 앱 검사 통과.
-- `scripts/macos/smoke.sh` 전체는 종료 1입니다. 뒤 단계의 `--frame-insert-check`가 새 프로젝트 첫 커밋 전 Git 패널 상태에서 실패했고(두 번 재현), 그 뒤 검사는 위처럼 같은 인자로 따로 실행했습니다. 이 행의 범위 밖 실패입니다.
+- `scripts/macos/smoke.sh` 전체는 이 보고서를 처음 쓸 때 종료 1이었습니다(뒤 단계 `--frame-insert-check`, 두 번 재현). 그 뒤 검사는 위처럼 같은 인자로 따로 실행했습니다. 원인은 이 행과 무관한 정리 작업의 회귀였습니다. B3(`ed6bd994`)가 Git 패널 HEAD·변경 목록 표시(U136r)를 지운 뒤에도 검사가 그 표시를 단언했고, 그 실패에 가려 B4(`1fe6076c`, `cea6d84e`)가 바꾼 Layers 다음 페이지 행과 Shape 선택 Inspector의 낡은 단언도 남아 있었습니다. 조치 커밋 `1cdaee9f` 뒤 로컬 smoke 전체가 종료 0입니다(2026-11-15 `DEV-MAC`).
 - 판정: `[~]` → `[x]`. 처음 구현(`64153be6`)은 `[x]`였고 2026-11-14 통합에서 사유 없이 `[~]`로 낮아졌습니다. 검증 기준을 모두 다시 실행해 통과했고 구현 커밋 `101bcd1d`가 있습니다.

@@ -89,5 +89,5 @@
 | `Stellar.app --key-mapping-check <fixture>` (`scripts/macos/smoke.sh`와 같은 인자로 개별 실행) | 0 — `key-mapping ok: 101 checks (core-shared command IDs, macOS shortcuts ⌘Z ⇧⌘Z ⌘S ⌘+ ⌘0 ⌘- → core commands)` |
 
 - 검증 기준(key mapping smoke test)의 macOS 부분: 위 앱 검사와 `app_command::tests::shared_names_are_stable_and_unique`, `window_session::tests::command_codes_are_looked_up_by_shared_name` 통과.
-- `scripts/macos/smoke.sh` 전체는 종료 1입니다. 뒤 단계의 `--frame-insert-check`가 새 프로젝트 첫 커밋 전 Git 패널 상태에서 실패했고(두 번 재현), 그 뒤 검사는 위처럼 같은 인자로 따로 실행했습니다. 이 행의 범위 밖 실패입니다.
+- `scripts/macos/smoke.sh` 전체는 이 보고서를 처음 쓸 때 종료 1이었습니다(뒤 단계 `--frame-insert-check`, 두 번 재현). 그 뒤 검사는 위처럼 같은 인자로 따로 실행했습니다. 원인은 이 행과 무관한 정리 작업의 회귀였습니다. B3(`ed6bd994`)가 Git 패널 HEAD·변경 목록 표시(U136r)를 지운 뒤에도 검사가 그 표시를 단언했고, 그 실패에 가려 B4(`1fe6076c`, `cea6d84e`)가 바꾼 Layers 다음 페이지 행과 Shape 선택 Inspector의 낡은 단언도 남아 있었습니다. 조치 커밋 `1cdaee9f` 뒤 로컬 smoke 전체가 종료 0입니다(2026-11-15 `DEV-MAC`).
 - 판정: `[~]` 유지. Windows 단축키는 ADR-0006으로 보류했습니다(플랫폼 의존 결과는 macOS 증거로 `[~]`).

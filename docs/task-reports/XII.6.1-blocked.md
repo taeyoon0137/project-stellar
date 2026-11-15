@@ -19,7 +19,8 @@
 - `cargo test -p stellar-ffi create_via_abi_reopens_in_an_editable_window_and_preserves_existing_folder` — macOS 구현의 C ABI
   검사입니다. 2026-11-15 DEV-MAC의 `cargo test --workspace`(종료 0)에 포함되어 통과했습니다.
 - `scripts/macos/smoke.sh` — 2026-11-15 DEV-MAC 실행에서 `shell-integration ok: 176 checks`(메뉴·시작 창의 생성과 열기)는
-  통과했고, 뒤이은 `--frame-insert-check`(Git 신원 없는 새 프로젝트)가 같은 오류로 두 번 실패했습니다.
+  통과했습니다. 처음 실행에서는 뒤이은 `--frame-insert-check`가 실패했는데, 원인은 이 행과 무관하게 B3(`ed6bd994`)가
+  지운 Git 패널 HEAD 표시를 검사가 계속 단언한 것이었습니다. 조치 커밋 `1cdaee9f` 뒤 smoke 전체가 종료 0입니다.
 
 ## 필요한 결정과 환경
 
@@ -35,7 +36,7 @@
 
 ## 재개 조건
 
-- XII.2.3 차단이 풀리거나 계획 개정으로 macOS 선행만 남은 뒤, `--frame-insert-check` 실패를 고치고 smoke 전체와 create
-  통합 검사를 다시 실행해 보고서를 완료 형식으로 씁니다.
+- XII.2.3 차단이 풀리거나 계획 개정으로 macOS 선행만 남은 뒤, smoke 전체와 create 통합 검사를 다시 실행해 보고서를 완료
+  형식으로 씁니다.
 - 2026-11-15 검토에서 지적한 "실제 창에서 Create 버튼이 비활성으로 남는 문제"는 이 검토에서 재현하지 않았습니다. 재개 때
   실제 창에서 확인합니다.
