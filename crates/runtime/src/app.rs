@@ -1822,9 +1822,12 @@ impl AppRuntime {
                 let shared = Arc::clone(&shared);
                 // 다 읽은 face로 열린 창의 scene을 다시 게시합니다. 접수하지 못하면 다음 게시 때 반영됩니다.
                 let _ = sender.submit(move |ctx| {
-                    for entry in ctx.app_sessions_mut().windows.values_mut() {
+                    let sessions = ctx.app_sessions_mut();
+                    for entry in sessions.windows.values_mut() {
                         entry.canvas.fonts_loaded();
                     }
+                    // 창끼리 공유하던 목록도 대체 글꼴로 평가했으므로 함께 버립니다.
+                    sessions.shared_scenes.clear();
                     shared.publish_state(build_state(ctx));
                 });
             })

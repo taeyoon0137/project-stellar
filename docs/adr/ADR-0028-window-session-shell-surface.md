@@ -573,7 +573,8 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 - `StellarCanvasColor`: space u32(0 색 없음, 1 sRGB, 2 Display P3)와 비연관 RGBA f32×4.
 - 표시 목록은 문서 revision이나 active View가 바뀔 때만 다시 평가합니다. 창 문서의 revision 번호는 창마다
   따로 세므로, 저장하지 않은 변경이 없는 창끼리만 같은 프로젝트·generation·문서·View·컴포넌트 원본 hash로
-  목록 하나를 공유합니다(`canvas::SharedScenes`). 편집 중인 창은 자기 목록을 평가합니다.
+  목록 하나를 공유합니다(`canvas::SharedScenes`). 편집 중인 창과 Text 조합 미리보기가 있는 창(ADR-0067 §6)은 자기
+  목록을 평가합니다. 새 글꼴 face를 읽으면(ADR-0067 §5) 창별 목록과 함께 공유 목록도 버립니다.
 - 현재 macOS 셸은 이 목록을 Swift Core Graphics 경로(`CanvasFrameScene`)로 그리고 hit test·선택 외곽선도 셸에서
   계산합니다. 아키텍처 §3.5·§10.1과 다른 임시 구조입니다. 코어 SceneSnapshot을 Metal로 그리고 hit test를 코어
   질의로 바꾸는 일(XI.8.2 다음 XII.4.1)에서 이 경로를 지우며, 그때까지 CG 경로에는 기능을 더하지 않습니다.

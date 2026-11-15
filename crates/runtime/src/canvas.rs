@@ -123,6 +123,11 @@ struct SharedSceneKey {
 }
 
 impl SharedScenes {
+    /// 새 글꼴 face를 읽어 대체 글꼴로 평가한 목록을 더 쓰지 않습니다([`CanvasCache::fonts_loaded`]).
+    pub(crate) fn clear(&mut self) {
+        self.0.clear();
+    }
+
     fn get(&self, key: &SharedSceneKey) -> Option<Arc<CanvasScene>> {
         self.0.get(key).and_then(std::sync::Weak::upgrade)
     }
@@ -181,7 +186,8 @@ impl CanvasCache {
         changed
     }
 
-    /// `text`는 진행 중인 IME 조합의 미리보기입니다(ADR-0067 §6). 같은 revision·View·조합이면 scene을 공유합니다.
+    /// `text`는 진행 중인 IME 조합의 미리보기입니다(ADR-0067 §6). 같은 revision·View·조합이면 scene을 다시 씁니다.
+    /// 조합이 없고 저장하지 않은 변경이 없는 창만 같은 저장본을 보는 다른 창과 scene을 공유합니다(`shared`).
     pub(crate) fn current(
         &mut self,
         session: &ProjectWindowSession,
@@ -196,9 +202,10 @@ impl CanvasCache {
                 return Some(scene.clone());
             }
         }
+        // 조합 미리보기는 그 창에만 있으므로 공유 목록에서 찾거나 넣지 않습니다.
         let key = session
             .loaded_generation()
-            .filter(|_| !session.has_unsaved_changes())
+            .filter(|_| text.is_none() && !session.has_unsaved_changes())
             .map(|loaded| SharedSceneKey {
                 project: session.identity().canonical_target().to_path_buf(),
                 manifest: loaded.manifest_hash,
@@ -742,7 +749,9 @@ mod tests {
         let tx = rename(c.document().unwrap(), 2, 12, "Other");
         c.apply(&tx).unwrap();
         assert_eq!(c.revision(), a.revision());
-        let other = CanvasCache::default().current(&c, None, &mut shared).unwrap();
+        let other = CanvasCache::default()
+            .current(&c, None, &mut shared)
+            .unwrap();
         assert!(!Arc::ptr_eq(&edited, &other));
     }
 }
