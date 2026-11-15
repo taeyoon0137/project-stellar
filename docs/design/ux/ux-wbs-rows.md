@@ -1,9 +1,9 @@
 # Stellar UX 구현 WBS 초안
 
-- 상태: 초안. 행 ID `UX.n.m`은 임시 번호이고, `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md`에 등록할 때 정식 ID를 받습니다. 커밋 제목은 정식 ID로 `Task(<WBS-ID>): …` 형식을 씁니다.
+- 상태: 초안(계획서 등록 전). 행 ID `UX.n.m`은 임시 번호이고, `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md`에 등록할 때 정식 ID를 받습니다. 커밋 제목은 정식 ID로 `Task(<WBS-ID>): …` 형식을 씁니다.
 - 명세: `stellar-ux-spec.md`(이하 "명세"). 행의 "명세 n절"은 그 문서의 절입니다.
-- 착수 전제: 정리 통합(되돌림·수정 묶음)이 main에 들어간 뒤입니다. 선행 칸의 "정리"는 이 전제를 뜻합니다.
-- 선행 칸의 `U1`–`U23`은 명세 16장 사용자 결정입니다. 결정 전에는 그 행을 시작하지 않습니다.
+- 착수 전제: 정리 통합(되돌림 결과 `02397601` 위의 수정 묶음)이 main에 들어간 뒤입니다. 선행 칸의 "정리"는 이 전제를 뜻합니다.
+- 선행 칸의 `U1`–`U23`은 명세 16장 결정 항목입니다. 2026-11-15 모두 권장안으로 확정했습니다.
 - 한 행 = 한 커밋입니다. 삭제 행은 커밋 본문에 삭제 사유를 적습니다.
 - `crates/ffi`·`storage`·`core-types`·`schemas`·`config/performance-budgets.yaml`을 바꾸는 행은 같은 diff에 ADR 기록을 넣습니다. 새 FFI는 ADR-0014·ADR-0028 갱신 대상입니다.
 - 검증은 테스트 통과만이 아니라 앱에서 그 흐름을 직접 끝까지 해 보는 행동 확인을 포함합니다. 제품 테스트는 로컬 `cargo xtask check-core`로 하고 CI에 넣지 않습니다.
@@ -27,20 +27,20 @@ lane(병렬 단위, crate가 겹치지 않게 나눔)
 
 | ID | 작업 | 검증 기준 | 선행 | 관련 파일 | lane |
 |---|---|---|---|---|---|
-| UX.0.1 | 정리 통합 결과를 UX 기준선으로 확인하고 결과를 기록합니다. 확인 항목: Pen 삭제, 도구 10종이 모두 반응, 편집 경로 신뢰 게이트 0건, D6 sheet, D7 Settings ▸ 캔버스, 컴포넌트 라이브러리 창·New Component alert·Document Font UI 0건, 인스펙터 편집 FFI 단일화, Git 패널 Stage 경로의 남은 범위 | `gitSource.trusted`·`trusted_canvas_window`·`case pen`·`selectPenTool` 검색 결과가 편집 경로에서 0건. 새 프로젝트에서 10개 도구를 눌러 각각 생성·이동·확대가 실제로 됨. 미충족 항목은 UX.1.5 또는 해당 행 선행으로 기록 | 정리 | `apps/macos/Stellar/UI/Tools/CanvasTool.swift`, `apps/macos/Stellar/UI/Shell/`, `crates/runtime/src/app/` | D |
-| UX.0.2 | 디자인 문서를 명세와 결정에 맞춰 정리합니다. 셸 가이드 6.1(툴바 가운데 도구 → 하단 도구 막대), 2.4·6.4·6.5(하단 패널·Git·에이전트 위치), O2·O4·O8 닫기, 7장 부제목, "핵심 흐름과 완료 기준" 절 신설. tools_menus 11종 → 10종. inspector 2.1 범주 → property_model 12장. sidebar 238행 신뢰 조건 삭제. git_panel 위치·inline 동반 변경·단계별 Stage. agent_panel·shell_frame 하단 패널 삭제. property_model 15장 O9 | 문서 사이 충돌 목록(명세 11.2절)이 0건. 문서 이스케이프 규칙(코드 표시 밖 `\~`·`\<`) 위반 0건. 다른 제품 고유 명칭·문구 0건 | UX.0.1, U1–U6 | `docs/design/macos-shell-design.md`, `docs/design/ui/{tools_menus,inspector,sidebar,git_panel,agent_panel,shell_frame}.md`, `docs/design/property_model.md` | D |
-| UX.0.3 | 계획서를 개정합니다. XII.10.1의 "11종"을 10종으로, XII.10.29(펜 도구) 행 삭제, XIII.3.1을 Synthetic Command(Undo 가능) 반영으로, XIV.13.5에 패널 위치, XVI.11.8에 코드 탭·에이전트 탭 노출 조건, 이 문서의 행 등록 | `cargo xtask sync-plan`·`validate-task-status` 통과. 삭제 행을 참조하는 행 0건. 개정 기록에 사유 | UX.0.2, U12, U13 | `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md`, `planning/task-status.yaml`(생성) | D |
-| UX.0.4 | 셸 배치·상태 표시 결정을 ADR로 기록합니다(U1·U4·U5·U15·U16·U17). 하단 보조 패널 삭제, 탭 구성, 부제목 문법, 한 줄 안내, 공용 상태 사전, Git 메뉴 | ADR이 명세 3장과 일치. ADR 본문에 다른 제품 이름·문구 없음 | UX.0.2 | `docs/adr/`(새 번호) | D |
+| UX.0.1 | 정리 통합 결과를 UX 기준선으로 확인하고 결과를 기록합니다. 확인 항목: Pen 삭제, 도구 10종이 모두 반응, 편집 경로 신뢰 게이트 0건, D6 sheet, D7 Settings ▸ 캔버스, 컴포넌트 라이브러리 창·New Component alert·Document Font UI 0건, 인스펙터 편집 FFI 단일화, Git 패널 Stage 경로의 남은 범위. 결과 기록에 후속 작업 하나를 함께 넣습니다: 디자인 문서(`docs/design/`)의 "기준선 `02397601`" 서술만 다시 훑어, 정리 통합으로 사라진 항목은 "기준선" 표기를 지우고 남은 항목은 처리할 UX.n 행을 가리키게 합니다 | `gitSource.trusted`·`trusted_canvas_window`·`case pen`·`selectPenTool` 검색 결과가 편집 경로에서 0건. 새 프로젝트에서 10개 도구를 눌러 각각 생성·이동·확대가 실제로 됨. 미충족 항목은 UX.1.5 또는 해당 행 선행으로 기록. "기준선 `02397601`" 서술 재점검 결과(고친 문서·줄)가 결과 기록에 있음 | 정리 | `apps/macos/Stellar/UI/Tools/CanvasTool.swift`, `apps/macos/Stellar/UI/Shell/`, `crates/runtime/src/app/`, `docs/design/` | D |
+| UX.0.2 | 디자인 문서를 명세와 결정에 맞춰 정리합니다. 셸 가이드 6.1(툴바 가운데 도구 → 하단 도구 막대), 2.4·6.4·6.5(하단 패널·Git·에이전트 위치), O4·O8 닫기와 O2 방향 기록(닫기는 UX.3.10), 7장 부제목, "핵심 흐름과 완료 기준" 절 신설. tools_menus의 남은 11개 도구 기록과 Polygon 키(기준선에서 Pen은 이미 빠짐). inspector 2.1 범주 → property_model 12장. sidebar 238행 신뢰 조건 삭제. git_panel 위치·inline 동반 변경·단계별 Stage. agent_panel·shell_frame 하단 패널 삭제. property_model 15장 O9 | 문서 사이 충돌 목록(명세 11.2절)이 0건. 문서 이스케이프 규칙(코드 표시 밖 `\~`·`\<`) 위반 0건. 다른 제품 고유 명칭·문구 0건 | UX.0.1, U1–U6 | `docs/design/macos-shell-design.md`, `docs/design/ui/{tools_menus,inspector,sidebar,git_panel,agent_panel,shell_frame}.md`, `docs/design/property_model.md` | D |
+| UX.0.3 | 계획서와 아키텍처 §24.3을 개정합니다. XII.10.1(10종)과 XII.10.29(펜 도구 부분 삭제)가 기준선에 들어 있는지 확인, XIII.3.1을 Synthetic Command(Undo 가능) 반영으로, XIV.13.5에 패널 위치, XVI.11.8에 코드 탭·에이전트 탭 노출 조건, XIV.2.8을 커밋 직전 flush 후 상태 재검증(UX.5.5)으로, 아키텍처 §24.3 "처음 여는 프로젝트는 제한 모드"에 Stellar가 §25.1로 만든 폴더의 신뢰 등록 예외(U8, ADR-0073 결정 10. Clone·열기는 그대로), 이 문서의 행 등록 | `cargo xtask sync-plan`·`validate-task-status` 통과. 삭제 행을 참조하는 행 0건. 개정 기록에 사유. §24.3 문구가 ADR-0073 결정 10과 일치 | UX.0.2, U8, U12, U13 | `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md`, `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`, `planning/task-status.yaml`(생성) | D |
+| UX.0.4 | 셸 배치·상태 표시 결정과 새 프로젝트 신뢰 등록을 ADR로 기록합니다(U1·U4·U5·U8·U15·U16·U17). 하단 보조 패널 삭제, 탭 구성, 부제목 문법, 한 줄 안내, 공용 상태 사전, Git 메뉴, §24.3 예외인 새 프로젝트 신뢰 등록 | ADR이 명세 3장과 일치. ADR 본문에 다른 제품 이름·문구 없음 | UX.0.2 | `docs/adr/ADR-0073-shell-layout-and-status-display.md` | D |
 
 ## UX.1 걷어 내기(흐름 1)
 
 | ID | 작업 | 검증 기준 | 선행 | 관련 파일 | lane |
 |---|---|---|---|---|---|
 | UX.1.1 | 캔버스 아래 보조 패널과 그 토글을 삭제합니다. Agent 탭과 `DisconnectedAgentPanelSource` 연결을 지웁니다. Git 패널 뷰 컨트롤러는 지우지 않고 UX.5.2에서 사이드바에 다시 붙입니다 | 창에 보조 패널 영역 0, View 메뉴에 패널 토글 없음. `grep ShellPanelTabsSlot toggleAuxiliaryPanel` 0건. 창 크기 복원이 깨지지 않음 | UX.0.1, U1 | `UI/Shell/ShellAreaSlots.swift`, `UI/Shell/ShellFrameMenuItems.swift`, `UI/Shell/ShellWindowController.swift`, `UI/Shell/ShellSplitViewController.swift`, `UI/Shell/ShellAppCoordinator.swift` | S |
-| UX.1.2 | 영구 비활성 UI를 삭제합니다. 툴바 뒤로·앞으로·프로젝트 검색, 메뉴의 영구 비활성 항목(Cut, Select All, Find 계열, Rulers, Align·Distribute·Flip, Group, Lock, Hide, Stellar Help 등). 구현된 명령만 남깁니다 | 메뉴 막대와 툴바를 모두 열어 비활성 항목이 "선택 없음" 같은 일시 조건뿐임을 확인. 단축키 감사(`ShortcutPolicy.swift`)가 지운 항목을 가리키지 않음 | UX.0.1 | `UI/Shell/ShellToolbarController.swift`, `UI/Tools/MainMenuBuilder.swift`, `UI/Tools/ShortcutPolicy.swift`, `UI/Shell/ShellProjectWindow.swift`(활성 명령 집합) | S |
+| UX.1.2 | 영구 비활성 UI를 삭제합니다. 툴바 뒤로·앞으로·프로젝트 검색, 메뉴의 영구 비활성 항목(Deselect All, Find 계열, Zoom to Selection, Rulers, Align·Distribute·Flip, Group, Lock, Hide, Stellar Help 등). 구현된 명령만 남깁니다. Cut·Select All은 텍스트 편집 중 field editor가 처리하므로 남깁니다 | 메뉴 막대와 툴바를 모두 열어 비활성 항목이 "선택 없음" 같은 일시 조건뿐임을 확인. 단축키 감사(`ShortcutPolicy.swift`)가 지운 항목을 가리키지 않음 | UX.0.1 | `UI/Shell/ShellToolbarController.swift`, `UI/Tools/MainMenuBuilder.swift`, `UI/Tools/ShortcutPolicy.swift`, `UI/Shell/ShellProjectWindow.swift`(활성 명령 집합) | S |
 | UX.1.3 | Polygon에 단일 키 P를 주고, 도구 막대를 그룹 간격(선택·컨테이너·도형·내용·시점)으로 나눕니다. 접근성 도움말의 키 안내를 실제 배정과 맞춥니다 | 캔버스 포커스에서 P가 Polygon을 고름. 텍스트 입력 중 P는 글자. 도움말·툴팁·메뉴의 키 표시가 `CanvasTool.singleKey`와 같음 | UX.0.1, U6 | `UI/Tools/CanvasTool.swift`, `UI/Shell/ShellToolBarView.swift`, `UI/Shell/ShellProjectWindow.swift`(접근성 도움말) | S |
 | UX.1.4 | 툴바 "…" 메뉴 항목을 제목 문서 메뉴로 옮기고 "프로젝트 신뢰…"를 늘 둡니다. 신뢰 alert 문구를 "Git·hook·터미널·에이전트 실행만 막는다"로 바꿉니다 | 제한 모드 창에서 제목을 눌러 신뢰를 부여할 수 있음. 신뢰 문구에 "edit" 의미 없음. 신뢰 전에도 편집·저장·이미지 표시가 됨 | UX.0.1 | `UI/Shell/ShellProjectWindow.swift`, `UI/Shell/ShellToolbarController.swift` | S |
-| UX.1.5 | (조건부) 정리 통합 뒤에도 반응하지 않는 도구가 있으면 그 생성 경로를 연결합니다. main 기준 runtime `CanvasItem`은 Frame·Rectangle·Text뿐이므로 Ellipse·Line·Polygon 생성을 D7 스타일 입력과 함께 추가합니다 | 10종 도구 각각 클릭·드래그 생성이 되고 Undo 한 번. 생성 스타일이 Settings 값과 같음(코어 하드코딩 없음) | UX.0.1, XII.10.26 | `crates/runtime/src/app/frame_insert.rs`, `crates/ffi/src/window_session.rs`, `UI/Shell/ShellCanvasFrameInsert.swift` | C·S |
+| UX.1.5 | (조건부) 정리 통합 뒤에도 반응하지 않는 도구가 있으면 그 생성 경로를 연결합니다. 작성 기준 main의 runtime `CanvasItem`은 Frame·Rectangle·Text뿐이었고, 기준선 `02397601`에는 Shape(Rectangle·Ellipse·Line·Polygon) 생성 경로가 있습니다. 반응하지 않는 도구와 빠진 D7 스타일 입력만 연결합니다 | 10종 도구 각각 클릭·드래그 생성이 되고 Undo 한 번. 생성 스타일이 Settings 값과 같음(코어 하드코딩 없음) | UX.0.1, XII.10.26 | `crates/runtime/src/app/frame_insert.rs`, `crates/ffi/src/window_session.rs`, `UI/Shell/ShellCanvasFrameInsert.swift` | C·S |
 | UX.1.6 | 레이어 빈 상태를 키 안내 한 줄로 바꿉니다("F로 Frame, R로 사각형, T로 텍스트를 그립니다") | 새 프로젝트의 레이어 탭에 안내가 보이고 버튼이 없음. VoiceOver가 안내를 읽음 | UX.1.3 | `UI/Sidebar/SidebarSymbols.swift`, `UI/Sidebar/SidebarLayersController.swift` | S |
 
 완료 기준(흐름 1): 새 프로젝트를 만든 뒤 첫 드래그까지 대화상자 0개. 눌러서 반응 없는 UI 0개.
@@ -77,6 +77,7 @@ lane(병렬 단위, crate가 겹치지 않게 나눔)
 | UX.3.7 | Text·Image를 포함한 모든 노드를 드래그로 이동하고, Option 드래그 복제, 화살표 이동을 연결합니다 | 7종 노드 이동, 복제본이 원본 바로 위, 화살표 단위가 XII.10.2 ADR과 같음 | UX.3.6, XII.10.2, XII.10.13, XII.10.14 | `crates/runtime/src/app/frame_move.rs`, `UI/Shell/ShellCanvasFrameMove.swift` | R·S |
 | UX.3.8 | 스냅 엔진과 스마트 가이드·측정 overlay, View 메뉴 스냅 토글을 연결합니다. 가이드 거리는 CSS 단위로 | 부모·형제 가장자리·중심 스냅, ⌘로 일시 해제. 가이드가 렌더 결과·내보내기에 없음 | UX.3.7, XII.10.15, XII.10.16, XII.10.17 | `crates/runtime/src/`, `UI/Shell/` | R·S |
 | UX.3.9 | 레이어 드래그로 순서·부모 바꾸기를 기존 형제 순서 편집 Command에 연결합니다. 묶기·풀기는 Command가 연결된 뒤 | 드래그 결과가 메뉴 순서 편집과 같고 Undo 한 번. 사이드바 validate 기본 거부가 연결된 동작에서는 사라짐 | UX.3.5, XII.10.23 | `UI/Shell/ShellSidebarSource.swift`, `UI/Sidebar/SidebarLayersController.swift` | S |
+| UX.3.10 | 캔버스를 사이드바·오른쪽 영역 아래로 확장하는 비용을 측정하고, 계약 안이면 켭니다(셸 가이드 O2). 가운데 항목 `automaticallyAdjustsSafeAreaInsets`와 `NSBackgroundExtensionView`로 확장하고, 패널 아래 영역의 drawable 크기·hit test·렌더 비용을 Release로 잽니다 | 측정 기록(drawable 크기, 프레임 시간, 입력→Present 예약 10ms, UI 스레드 단일 점유 2ms, 아키텍처 §6). 계약 밖이면 켜지 않고 결과만 기록하며 O2는 열린 채 둠. 켜면 패널을 여닫아도 캔버스 내용이 밀리지 않고, 패널 위 클릭이 캔버스 입력으로 가지 않으며, O2를 닫음 | UX.1.1, U2 | `UI/Shell/ShellSplitViewController.swift`, `UI/Shell/ShellCanvasHostViewController.swift`, `CanvasView.swift` | S |
 
 ## UX.4 앱 밖 변경 반영(흐름 3)
 
@@ -98,11 +99,11 @@ lane(병렬 단위, crate가 겹치지 않게 나눔)
 | UX.5.2 | 기존 Git 패널을 왼쪽 사이드바 "변경" 탭으로 옮깁니다. 핵심 동작(메시지·커밋·Push)을 탭 위쪽에 둡니다. 탭 배지(바뀐 객체 수, 충돌 글리프) | 320pt 폭에서 잘림 0. 변경 탭을 열면 캔버스 변경 윤곽 자리(UX.6.3 전에는 없음)를 건드리지 않음 | UX.1.1, UX.5.1, U1 | `UI/Git/GitPanelViewController.swift`, `UI/Git/`, `UI/Sidebar/` | S |
 | UX.5.3 | 부제목을 Git 상태 문법으로 바꿉니다(명세 3.3절). "Restricted Mode" 상시 표시를 없앱니다 | 깨끗함·변경·보낼 커밋·제한 모드·저장 실패 상태별 문구가 표와 같음. 부제목이 눌리지 않음 | UX.5.1, U4 | `UI/Shell/ShellProjectWindow.swift` | S |
 | UX.5.4 | 원본 단위 "커밋에 포함"을 Git index와 연결합니다. View가 generation이면 View 묶음 하나로만 포함하고 그 사실을 보조 문구에 적습니다. 필수 동반 변경은 inline 확인(자동 포함 없음) | 체크 상태가 `git status`와 같고 앱을 다시 열어도 유지. 터미널 `git add` 결과가 앱에 반영 | UX.5.2, XIV.13.2 | `UI/Git/`, `crates/runtime/src/staging.rs`, `crates/ffi/` | G·S |
-| UX.5.5 | 커밋: 메시지 칸, ⌘↩, 커밋 직전 flush, identity 없으면 같은 자리 inline 입력(U9 범위), 성공 머리 줄 "커밋함 `a1b2c3d`" | 흐름 2의 편집을 앱에서 커밋하고 `git log`에 보임. "Save Now / Use Saved Version" 배너 0 | UX.5.4, U9, XIV.13.3 | `UI/Git/`, `crates/runtime/src/`, `crates/git-porcelain/` | G·S |
+| UX.5.5 | 커밋: 메시지 칸, ⌘↩, 커밋 직전 flush, identity 없으면 같은 자리 inline 입력(U9 범위), 성공 머리 줄 "커밋함 `a1b2c3d`" | 흐름 2의 편집을 앱에서 커밋하고 `git log`에 보임. "Save Now / Use Saved Version" 배너 0 | UX.5.4, UX.0.3(XIV.2.8 개정), U9, XIV.13.3 | `UI/Git/`, `crates/runtime/src/`, `crates/git-porcelain/` | G·S |
 | UX.5.6 | Push: 보낼 커밋이 있을 때만 [Push], 등록된 remote만, 강제 Push 없음, 실패 이유를 머리 줄에 | 테스트 remote로 Push 성공. 거부 시 Git 메시지와 다음 행동 안내 | UX.5.5, XIV.13.3 | `UI/Git/`, `crates/git-porcelain/` | G·S |
 | UX.5.7 | 제한 모드 변경 탭: 설명 한 줄과 [프로젝트 신뢰…] | 제한 모드에서 변경 탭으로 신뢰 부여 후 Git 상태가 채워짐. 편집은 신뢰 전에도 됨 | UX.5.2, UX.1.4 | `UI/Git/` | S |
 | UX.5.8 | 메뉴 막대 Git 메뉴(변경 보기, 커밋, Push, 다음 충돌로 이동, 상태 새로 고침, 프로젝트 신뢰…) | 모든 항목이 동작하거나 일시 조건 하나로만 비활성 | UX.5.6, U16, XII.6.5 | `UI/Tools/MainMenuBuilder.swift` | S |
-| UX.5.9 | Stellar가 새로 만든 프로젝트를 만들 때 신뢰 목록에 등록하고, 새 프로젝트 sheet 안에 identity 필드를 둡니다 | 새 프로젝트 첫 화면 부제목이 `main · 변경 없음`. Clone·열기는 제한 모드 | UX.5.3, U8, U9 | `crates/project/src/create.rs`, `crates/runtime/src/app/create.rs`, `UI/Welcome/` | R·S |
+| UX.5.9 | Stellar가 새로 만든 프로젝트를 만들 때 신뢰 목록에 등록하고(ADR-0073 결정 10), 새 프로젝트 sheet 안에 identity 필드를 둡니다 | 새 프로젝트 첫 화면 부제목이 `main · 변경 없음`. Clone·열기는 제한 모드. 생성이 실패·취소되면 등록 없음. 세 경우를 코어 단위 테스트로 고정 | UX.5.3, UX.0.3(§24.3 개정), U8, U9 | `crates/project/src/create.rs`, `crates/runtime/src/app/create.rs`, `UI/Welcome/` | R·S |
 
 완료 기준(흐름 4, 원본 단위): 흐름 2의 편집을 터미널 없이 커밋하고 Push한다.
 
@@ -191,7 +192,7 @@ lane(병렬 단위, crate가 겹치지 않게 나눔)
 |---|---|---|---|---|---|
 | UX.13.1 | 계획 개정: §24.4 범위와 XIV.13.7 노출 금지 검사를 결정대로 바꿉니다 | 개정 기록과 ADR | U18 | `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`, `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md` | D |
 | UX.13.2 | 변경 탭 머리 브랜치 popover: 목록, 전환(flush 뒤 checkout, Snapshot 전환), 새 브랜치 | 전환 뒤 캔버스가 한 번에 바뀌고 부제목 갱신. 미저장 편집 손실 0 | UX.13.1, UX.4.1 | `UI/Git/`, `crates/git-porcelain/src/advanced/` | G·S |
-| UX.13.3 | [받기](Fetch·Pull)와 받을 커밋 수, 결과를 흐름 9로 | 충돌 없는 pull이 Synthetic Command로 반영 | UX.13.2, UX.4.5 | `UI/Git/`, `crates/git-porcelain/src/advanced/` | G·S |
+| UX.13.3 | [받기] 버튼(Fetch·Pull)과 받을 커밋 수, 결과를 흐름 9로 | 충돌 없는 pull이 Synthetic Command로 반영 | UX.13.2, UX.4.5 | `UI/Git/`, `crates/git-porcelain/src/advanced/` | G·S |
 | UX.13.4 | 충돌 해결 뒤 앱 안 커밋으로 병합 마무리 | 터미널 없이 merge 완료 | UX.13.3, UX.11.4 | `UI/Git/` | G·S |
 
 ---
@@ -200,4 +201,4 @@ lane(병렬 단위, crate가 겹치지 않게 나눔)
 
 - `UI/`는 `apps/macos/Stellar/UI/`입니다.
 - 정식 등록 때 기존 행과 내용이 겹치는 UX 행(예: UX.3.1과 XII.10.37)은 새 행을 만들지 않고 기존 행에 셸 연결을 맡기거나, 기존 행을 선행으로 두고 UX 행을 "셸 노출" 행으로만 남깁니다.
-- 결정 대기 행을 빼고도 UX.1–UX.5는 착수할 수 있습니다(U1·U3·U4·U6·U8·U9·U10은 그 전에 받는 것을 권합니다).
+- 16장 결정이 모두 확정되어 결정 대기로 막힌 행은 없습니다. U7(여러 View 렌더)과 U18(브랜치)은 확정안이 "별도 ADR·재검토"라서 UX.12.3과 UX.13은 그 결정 뒤에 시작합니다.
