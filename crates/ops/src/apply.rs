@@ -10,7 +10,9 @@
 //!    `design/components` 원본에서 정의를 찾고, 원본 파일 hash가 요청과 같을 때만 같은 transaction의
 //!    InsertNode 하나가 됩니다. 다르면 [`ApplyError::ComponentSourceChanged`]입니다.
 //! 3. 대상 문서를 읽어 [`DocumentState::execute_transaction`]으로 전부 적용하거나 전부 롤백합니다.
-//!    validator가 거부하면 [`ApplyError::Rejected`]입니다.
+//!    validator가 거부하면 [`ApplyError::Rejected`]입니다. 잠긴 노드를 바꾸는 결과도 같은 오류로
+//!    거부합니다(D8, 앱 레이어 토글과 같은 규칙: 잠긴 조상 아래 노드는 바꾸지 않고, 잠금 해제는 그 노드의
+//!    `set-locked`로만 합니다).
 //! 4. 적용 전후 문서 레코드의 semantic diff(XIV.3)를 계산합니다. dry-run은 여기서 끝나며 파일을
 //!    쓰지 않습니다.
 //! 5. 쓰기 모드는 모든 문서를 다시 직렬화해(VI.10.2) 같은 base generation 위의 SavePlan(V.5.1)을
@@ -596,6 +598,101 @@ pub(crate) fn rejected_input(
     }
 }
 
+/// 적용 전 문서에서 잠긴 노드(또는 잠긴 조상 아래 노드)를 바꾼 결과의 첫 노드(D8).
+///
+/// 그 노드의 레코드·modifier stack 변경, 삭제, 그 아래로의 삽입·이동을 거부합니다. 예외는 조상이 잠기지 않은
+/// 노드의 `locked`만 바뀐 경우(잠금·잠금 해제 명령)입니다. 앱의 레이어 표시·잠금 토글과 같은 규칙입니다.
+fn locked_change(
+    before: &stellar_document::records::DocumentRecords,
+    after: &stellar_document::records::DocumentRecords,
+) -> Option<StableId> {
+    use std::collections::HashMap;
+    let base: HashMap<_, _> = before.nodes.iter().map(|n| (n.id, n)).collect();
+    // 자기 자신(`include_self`)이나 조상이 잠겼는지. 순환 레코드는 잠긴 것으로 봅니다.
+    let protected = |id: StableId, include_self: bool| {
+        let mut current = if include_self {
+            Some(id)
+        } else {
+            base.get(&id).and_then(|n| n.parent)
+        };
+        let mut steps = 0;
+        while let Some(node) = current.and_then(|id| base.get(&id)) {
+            if node.locked || steps > base.len() {
+                return true;
+            }
+            current = node.parent;
+            steps += 1;
+        }
+        false
+    };
+    let next: HashMap<_, _> = after.nodes.iter().map(|n| (n.id, n)).collect();
+    for old in &before.nodes {
+        let Some(new) = next.get(&old.id) else {
+            if protected(old.id, true) {
+                return Some(old.id);
+            }
+            continue;
+        };
+        if *new == old {
+            continue;
+        }
+        let mut relocked = (*old).clone();
+        relocked.locked = new.locked;
+        let lock_only = relocked == **new;
+        if protected(old.id, !lock_only)
+            || (new.parent != old.parent && new.parent.is_some_and(|p| protected(p, true)))
+        {
+            return Some(old.id);
+        }
+    }
+    for new in &after.nodes {
+        if !base.contains_key(&new.id) && new.parent.is_some_and(|p| protected(p, true)) {
+            return Some(new.id);
+        }
+    }
+    let old_stacks: HashMap<_, _> = before.modifier_stacks.iter().map(|s| (s.node, s)).collect();
+    let new_stacks: HashMap<_, _> = after.modifier_stacks.iter().map(|s| (s.node, s)).collect();
+    old_stacks
+        .keys()
+        .chain(new_stacks.keys())
+        .copied()
+        .find(|node| old_stacks.get(node) != new_stacks.get(node) && protected(*node, true))
+}
+
+/// 잠금 거부를 일으킨 입력 위치: 노드나 그 조상을 가리키는 첫 command. 찾지 못하면 입력 수입니다.
+fn locked_input(
+    inputs: &[CommandInput],
+    before: &stellar_document::records::DocumentRecords,
+    node: StableId,
+) -> usize {
+    let mut targets = vec![node.to_bytes()];
+    let mut current = before
+        .nodes
+        .iter()
+        .find(|n| n.id == node)
+        .and_then(|n| n.parent);
+    while let Some(id) = current {
+        if targets.len() > before.nodes.len() {
+            break;
+        }
+        targets.push(id.to_bytes());
+        current = before
+            .nodes
+            .iter()
+            .find(|n| n.id == id)
+            .and_then(|n| n.parent);
+    }
+    inputs
+        .iter()
+        .position(|input| {
+            input.to_command().is_ok_and(|command| {
+                let bytes = stellar_commands::codec::encode_command(&command);
+                bytes.windows(16).any(|w| targets.iter().any(|t| w == t))
+            })
+        })
+        .unwrap_or(inputs.len())
+}
+
 /// command id: 요청 내용 canonical bytes의 content hash 앞 16바이트(결정론적, 저장하지 않음).
 fn command_id(document: StableId, commands: &[Command]) -> CommandId {
     let mut bytes = document.to_bytes().to_vec();
@@ -676,6 +773,14 @@ pub fn apply(
         .to_records()
         .map_err(|e| ApplyError::InvalidResult(e.to_string()))?;
     after.sort_canonical();
+    if let Some(node) = locked_change(&before, &after) {
+        return Err(ApplyError::Rejected {
+            index: locked_input(&request.commands, &before, node),
+            reason: format!(
+                "잠긴 노드 {node}는 바꿀 수 없습니다(잠금 해제는 그 노드의 set-locked)"
+            ),
+        });
+    }
     let diff = diff_records(&[&before], &[&after]).map_err(|e| ApplyError::Projection(e.0))?;
 
     if mode == ApplyMode::DryRun {
@@ -832,10 +937,23 @@ mod tests {
         // 모든 변경이 남아야 하고, 계획 뒤 교체(ConcurrentWrite)는 한 번도 없어야 합니다.
         let (dir, model) = project_with(7);
         let records = model.to_records().unwrap();
+        // 잠긴 노드와 잠긴 조상 아래 노드의 이름은 바꿀 수 없습니다(D8).
+        let unlocked = |mut id: StableId| loop {
+            let Some(node) = records.nodes.iter().find(|n| n.id == id) else {
+                return true;
+            };
+            if node.locked {
+                return false;
+            }
+            match node.parent {
+                Some(parent) => id = parent,
+                None => return true,
+            }
+        };
         let targets: Vec<StableId> = records
             .nodes
             .iter()
-            .filter(|n| n.parent.is_some())
+            .filter(|n| n.parent.is_some() && unlocked(n.id))
             .map(|n| n.id)
             .take(6)
             .collect();
@@ -884,6 +1002,75 @@ mod tests {
             let record = records.nodes.iter().find(|n| n.id == *node).unwrap();
             assert_eq!(record.display_name, format!("writer-{i}"), "손실 0");
         }
+    }
+
+    #[test]
+    fn locked_nodes_reject_edits_but_accept_their_own_lock_change() {
+        let (dir, model) = project_with(7);
+        let records = model.to_records().unwrap();
+        let target = some_child(&model);
+        let child = |parent| {
+            records
+                .nodes
+                .iter()
+                .find(|n| n.parent == Some(parent))
+                .map(|n| n.id)
+        };
+        let run = |commands: Vec<CommandInput>| {
+            let snapshot = open_snapshot(&dir.path).unwrap();
+            let request = ApplyRequest {
+                base_revision: snapshot.revision(),
+                document: model.document_id(),
+                commands,
+            };
+            apply(&dir.path, &request, ApplyMode::Write, &locks(&dir))
+        };
+        run(vec![CommandInput::SetLocked {
+            node: target,
+            locked: true,
+        }])
+        .unwrap();
+        let before = file_digest(&dir.path);
+        for edit in [
+            CommandInput::Rename {
+                node: target,
+                name: "잠김".into(),
+            },
+            CommandInput::SetVisible {
+                node: target,
+                visible: false,
+            },
+            CommandInput::DeleteSubtree { root: target },
+        ] {
+            assert!(matches!(
+                run(vec![edit]),
+                Err(ApplyError::Rejected { index: 0, .. })
+            ));
+        }
+        if let Some(grandchild) = child(target) {
+            assert!(matches!(
+                run(vec![CommandInput::SetLocked {
+                    node: grandchild,
+                    locked: true,
+                }]),
+                Err(ApplyError::Rejected { index: 0, .. })
+            ));
+        }
+        assert_eq!(
+            file_digest(&dir.path),
+            before,
+            "거부는 파일을 바꾸지 않습니다"
+        );
+        run(vec![CommandInput::SetLocked {
+            node: target,
+            locked: false,
+        }])
+        .unwrap();
+        run(vec![CommandInput::Rename {
+            node: target,
+            name: "풀림".into(),
+        }])
+        .unwrap();
     }
 
     #[test]
