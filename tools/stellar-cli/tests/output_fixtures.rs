@@ -891,6 +891,131 @@ fn apply_rejection_fixtures_write_nothing() {
     assert_eq!(revision_token(&root), base);
 }
 
+#[test]
+fn apply_frame_geometry_rejects_invalid_fields_and_rolls_back_wrong_node_kind() {
+    // set-frame-* 입력 검증과 Frame이 아닌 대상의 거부를 generation `stellar apply`에서 확인합니다.
+    // dry-run과 write 모두 프로젝트 파일을 쓰지 않습니다.
+    let dir = TempDir::new("apply-frame-rejections");
+    let root = dir.path.join("project");
+    scaffold_project(&root);
+    let model = large_document(4);
+    save_documents(&root, &[&model]);
+    let path = root.to_str().unwrap();
+    let document = model.document_id().to_string();
+    let records = model.to_records().unwrap();
+    let frame = records
+        .nodes
+        .iter()
+        .find(|node| node.parent.is_none())
+        .unwrap()
+        .id;
+    let fragment = records
+        .nodes
+        .iter()
+        .find(|node| node.payload.kind().name() == "fragment")
+        .unwrap()
+        .id;
+    let base = revision_token(&root);
+    let before = file_digest(&root);
+    let size = format!(r#"{{"kind":"set-frame-size","node":"{frame}","width":320,"height":180}}"#);
+    let transform = format!(
+        r#"{{"kind":"set-frame-transform","node":"{frame}","a":1,"b":0,"c":0,"d":1,"tx":12,"ty":-30}}"#
+    );
+    let invalid = "invalid-transaction";
+    let cases = [
+        (
+            format!(r#"{{"kind":"set-frame-width","node":"{frame}","width":-1}}"#),
+            65,
+            invalid,
+        ),
+        (
+            format!(r#"{{"kind":"set-frame-height","node":"{frame}","height":1e39}}"#),
+            65,
+            invalid,
+        ),
+        (
+            format!(r#"{{"kind":"set-frame-height","node":"{frame}","height":13,"width":20}}"#),
+            65,
+            invalid,
+        ),
+        (
+            format!(r#"{{"kind":"set-frame-size","node":"{frame}","width":-1,"height":180}}"#),
+            65,
+            invalid,
+        ),
+        (
+            format!(r#"{{"kind":"set-frame-size","node":"{frame}","width":"320","height":180}}"#),
+            65,
+            invalid,
+        ),
+        (
+            format!(r#"{{"kind":"set-frame-size","node":"{frame}","width":320}}"#),
+            65,
+            invalid,
+        ),
+        (
+            format!(
+                r#"{{"kind":"set-frame-transform","node":"{frame}","a":1,"b":0,"c":0,"d":1,"tx":1e39,"ty":0}}"#
+            ),
+            65,
+            invalid,
+        ),
+        (
+            format!(
+                r#"{{"kind":"set-frame-transform","node":"{frame}","a":true,"b":0,"c":0,"d":1,"tx":0,"ty":0}}"#
+            ),
+            65,
+            invalid,
+        ),
+        (
+            format!(
+                r#"{{"kind":"set-frame-transform","node":"{frame}","a":1,"b":0,"c":0,"d":1,"tx":0,"ty":0,"extra":0}}"#
+            ),
+            65,
+            invalid,
+        ),
+        (
+            format!(
+                r#"{size},{transform},{{"kind":"set-frame-size","node":"{fragment}","width":320,"height":180}}"#
+            ),
+            1,
+            "rejected-command",
+        ),
+        (
+            format!(
+                r#"{size},{transform},{{"kind":"set-frame-transform","node":"{fragment}","a":1,"b":0,"c":0,"d":1,"tx":12,"ty":-30}}"#
+            ),
+            1,
+            "rejected-command",
+        ),
+    ];
+    let home = dir.path.join("home");
+    for (commands, status, code) in cases {
+        let input = transaction(&base, &document, &commands);
+        for dry_run in [true, false] {
+            let mut args = vec!["apply", path, "-"];
+            if dry_run {
+                args.push("--dry-run");
+            }
+            let result = run_with_stdin(&args, &input, Some(&home));
+            assert_eq!(result.code, status, "{commands}: {}", result.stderr);
+            let envelope = parse(result.stdout.trim_end(), JsonLimits::default()).unwrap();
+            let error = envelope.get("error").unwrap();
+            assert_eq!(
+                error.get("code"),
+                Some(&JsonValue::string(code)),
+                "{commands}"
+            );
+            if code == "rejected-command" {
+                let message = error.get("message").and_then(JsonValue::as_str).unwrap();
+                assert!(message.contains("command #2"), "{message}");
+            }
+            assert_eq!(file_digest(&root), before, "{commands}");
+        }
+    }
+    assert_eq!(revision_token(&root), base);
+}
+
 // --- XXIV.4.5: 교차 프로세스 저장 잠금 ---
 
 /// `HOME`을 `home`으로 둔 `stellar`의 저장 잠금 디렉터리(macOS).

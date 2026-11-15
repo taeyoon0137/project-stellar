@@ -11,48 +11,9 @@
 ```sh
 stellar text-source export ./MyProject ./home-00000003.stellar.yaml
 stellar text-source check ./home-00000003.stellar.yaml
-stellar text-source apply ./home-00000003.stellar.yaml ./edit.json --dry-run
-stellar text-source apply ./home-00000003.stellar.yaml ./edit.json
 ```
 
 `export <project> <new-file>`은 지원 범위의 기존 저장 프로젝트를 새 파일로 내보냅니다. 출력 파일이 이미 있으면 실패하며 덮어쓰지 않습니다. 기존 프로젝트의 원본과 generation은 변경하지 않습니다. `check <file>`은 텍스트를 읽어 문법·지원 범위·문서 불변식을 검증합니다. `check`와 라이브러리 `open`은 원본·캐시를 쓰지 않는 읽기 전용 작업입니다.
-
-## 명시적 명령 적용
-
-`apply <file> <input|-> [--dry-run]`은 내보낸 단일 View 원본에 기존 command transaction을 적용합니다. 입력 파일 대신 `-`로 표준 입력을 읽을 수 있습니다. `check`/`export` 응답의 `document`와 `source_hash`를 요청에 사용합니다. `stellar-apply`의 generation revision과 혼용하지 않습니다.
-
-```json
-{
-  "format": "stellar-text-apply",
-  "format_version": 1,
-  "base_source_hash": "sha256:<check가 반환한 소문자 hex 64자리>",
-  "document": "019a8180-0001-7000-8000-000000000001",
-  "commands": [
-    {"kind": "rename", "node": "019a8180-0011-7000-8000-000000000011", "name": "확인 버튼"},
-    {"kind": "set-visible", "node": "019a8180-0011-7000-8000-000000000011", "visible": false}
-  ]
-}
-```
-
-요청의 키는 위 다섯 개만 허용합니다. 입력은 기존 apply와 같은 8 MiB·깊이 16·명령 10,000개 상한을 사용합니다. `rename`, `set-visible`, `set-locked`, `move-node`, `delete-subtree` 필드 형식과 등록된 명령의 `canonical` 소문자 hex 형식은 기존 `stellar apply`와 같습니다. command validator와 전체 transaction 실행을 거치므로 중간 실패는 저장하지 않습니다. 미지원 노드·modifier·속성이 생기는 명령은 결과 텍스트 직렬화 단계에서 **dry-run과 쓰기 모두 거부**합니다.
-
-Frame의 크기와 local 아핀 변환은 두 apply 경로 모두에서 JSON 숫자로 지정할 수 있습니다. `node`는 Frame의 전체 StableId이며 각 명령에 표시한 필드는 모두 필수입니다. 다른 키나 숫자를 담은 문자열은 거부합니다.
-
-```json
-{"kind":"set-frame-size","node":"019a8180-0010-7000-8000-000000000010","width":320.5,"height":180}
-{"kind":"set-frame-width","node":"019a8180-0010-7000-8000-000000000010","width":320.5}
-{"kind":"set-frame-height","node":"019a8180-0010-7000-8000-000000000010","height":180}
-{"kind":"set-frame-transform","node":"019a8180-0010-7000-8000-000000000010","a":1,"b":0,"c":0,"d":1,"tx":12.75,"ty":-30}
-```
-
-각 object를 요청의 `commands` 배열에 넣습니다. 숫자는 원문에서 모델의 `f32`로 변환하며 정수·소수·지수 표기를 허용합니다. `f32` 변환 결과가 무한대이면 오류이고, `width`·`height`는 비음수여야 합니다. 변환은 `(x, y)`를 `(a*x + c*y + tx, b*x + d*y + ty)`로 보냅니다. `set-frame-width`와 `set-frame-height`는 각각 한 축만 변경합니다. `set-frame-size`는 같은 트랜잭션에서 두 축을 함께 지정합니다. Frame이 아닌 노드에 적용하면 validator가 전체 transaction을 거부합니다. 기존 원본 YAML(v1~v3)은 Frame의 `size` 줄을 유지하며, semantic diff는 너비와 높이를 독립 속성으로 반환합니다.
-
-- dry-run은 원본·generation·cache·잠금 파일을 쓰지 않고 적용될 semantic `changes`를 반환합니다. `source_hash`는 디스크의 기존 hash이며 `written`은 false입니다.
-- 쓰기는 기존 OS 사용자 데이터 저장 잠금을 문서 ID와 canonical 원본 파일 경로로 잡은 뒤 원본을 다시 읽고 hash·문서 ID를 확인합니다. 동일 파일의 협조적 CLI writer는 직렬화합니다. 정상 저장 결과에는 새 `source_hash`와 `written: true`가 있고 `check`로 재열 수 있습니다.
-- 동일 모델이 되는 명령은 원본 주석·공백·hash를 그대로 보존하고 `written: false`를 반환합니다. 실제 의미 변경 시에는 해당 버전의 결정론적 writer가 파일 전체를 다시 쓰므로 주석·서식은 보존하지 않습니다.
-- 외부 수정에는 주석·공백 변경도 포함하며 `text-source-changed`(75)로 거부합니다. 다시 `check`하고 변경을 검토한 후 새 hash로 요청해야 합니다. 알 수 없는 원본 필드·레코드는 `text-source-unsupported`(69)로 거부하고 원본을 덮어쓰지 않습니다. 명령 실패(1), 잘못된 요청·문서 ID(65), 저장 잠금 경합(75), 잠금용 사용자 데이터 위치 누락(78)을 구분합니다.
-
-기존 프로젝트에서 export한 파일을 이 명령으로 고쳐도 기존 generation은 변경하지 않습니다. 기본 앱에서 그 변경을 자동으로 읽는 연결은 아직 없으므로, 이 CLI는 명시적으로 지정한 텍스트 파일만의 편집 경로입니다. 저장 후 일반 `git diff -- <file>`로 사람이 읽는 속성 변경을 검토할 수 있습니다.
 
 ## 전체 예시
 
@@ -238,7 +199,7 @@ style_runs:
 
 `paragraphs` 길이는 본문의 LF 개수 + 1이어야 합니다. 빈 본문도 문단 하나를 가지며, 빈 `style_runs`는 `[]`입니다. 각 run은 `0 <= start <= end <= 본문 scalar 길이`를 만족해야 합니다. 정수는 `u32` 범위이며 음수·범위 초과는 거부합니다. v1·v2는 기존 모델의 숫자 index와 범위를 보존합니다. v3는 같은 범위 표현을 사용하며 0번 스타일을 문서 글꼴로 해석합니다.
 
-본문의 Unicode 정규화, CR/CRLF 변환, run 정렬·병합·겹침 제거를 하지 않습니다. 빈 run·겹치는 run·run 순서도 기존 payload 그대로 보존합니다. 제어 문자는 YAML 인용·이스케이프를 사용하고 읽을 수 없는 긴 scalar는 저장 전에 거부합니다. 본문은 `apply`의 `replace-text` 명령으로 편집합니다. 예를 들어 `{"kind":"replace-text","node":"<Text ID>","start":0,"end":2,"text":"저장"}`은 처음 두 Unicode scalar를 교체합니다. 같은 위치의 start·end는 삽입, 빈 text는 삭제입니다. 기존 Text 편집 규칙으로 문단과 상속 스타일을 갱신하며, 동일한 문자열로 교체하면 원본 payload를 보존합니다. 잘못된 범위 또는 node 종류는 트랜잭션 전체를 거부합니다. 기존 `rename`·표시 여부 등 CLI 명령은 Text payload 전체를 보존하면서 적용됩니다.
+본문의 Unicode 정규화, CR/CRLF 변환, run 정렬·병합·겹침 제거를 하지 않습니다. 빈 run·겹치는 run·run 순서도 기존 payload 그대로 보존합니다. 제어 문자는 YAML 인용·이스케이프를 사용하고 읽을 수 없는 긴 scalar는 저장 전에 거부합니다.
 
 스타일 표가 없는 문서의 Text는 기존 v1을 사용합니다. 등록된 문서 글꼴과 배치 ID가 있는 v3는 구버전 reader에서 거부됩니다.
 
@@ -298,7 +259,7 @@ Path·Image payload, component library, token set, 도형의 Transform·Fill·St
 
 ## 열기·저장과 파생 캐시
 
-라이브러리 `save_new`는 완성된 임시 파일을 hard link로 게시하므로 마지막 검사 후 다른 파일이 생겨도 기존 항목을 덮어쓰지 않습니다. hard link를 지원하지 않는 파일 시스템은 오류로 거부합니다. `save`는 열었을 때의 원본 bytes hash와 문서 ID를 확인한 뒤 단일 파일을 원자적으로 교체합니다. 원본이 외부에서 바뀌었거나 재해석할 수 없는 필드가 생겼으면 덮어쓰지 않습니다. CLI에는 `export`, 읽기 전용 `check`, 명시적 `apply`를 노출합니다. 저장은 기존 파일 권한을 유지합니다. 마지막 hash 검사와 rename 사이에 비협조적 외부 writer가 개입하는 경쟁은 기존 atomic 저장과 같이 남아 있으므로 CLI는 협조적 writer 저장 잠금을 사용하며 앱 연결 전 프로젝트 전체 잠금과 외부 변경 통합이 필요합니다. 부모 디렉터리 fsync 또는 새 파일 게시 뒤 임시 링크 제거 실패는 대상이 이미 생긴 뒤 반환될 수 있으므로 오류 후 실제 원본을 다시 읽어 상태를 확인해야 합니다.
+라이브러리 `save_new`는 완성된 임시 파일을 hard link로 게시하므로 마지막 검사 후 다른 파일이 생겨도 기존 항목을 덮어쓰지 않습니다. hard link를 지원하지 않는 파일 시스템은 오류로 거부합니다. `save`는 열었을 때의 원본 bytes hash와 문서 ID를 확인한 뒤 단일 파일을 원자적으로 교체합니다. 원본이 외부에서 바뀌었거나 재해석할 수 없는 필드가 생겼으면 덮어쓰지 않습니다. CLI에는 현재 `export`와 읽기 전용 `check`만 노출합니다. 저장은 기존 파일 권한을 유지합니다. 마지막 hash 검사와 rename 사이에 비협조적 외부 writer가 개입하는 경쟁은 기존 atomic 저장과 같이 남아 있으므로 앱 연결 전 프로젝트 저장 잠금과 외부 변경 통합이 필요합니다. 부모 디렉터리 fsync 또는 새 파일 게시 뒤 임시 링크 제거 실패는 대상이 이미 생긴 뒤 반환될 수 있으므로 오류 후 실제 원본을 다시 읽어 상태를 확인해야 합니다.
 
 캐시는 라이브러리 `open_with_cache(path, project_root)`를 명시적으로 호출할 때 생성합니다.
 

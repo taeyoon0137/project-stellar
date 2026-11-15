@@ -54,7 +54,7 @@ fn invalid(code: &'static str, message: impl Into<String>) -> CliError {
     CliError::new(ExitStatus::DataErr, code, message)
 }
 
-pub(crate) fn read_input(source: &str) -> Result<Vec<u8>, CliError> {
+fn read_input(source: &str) -> Result<Vec<u8>, CliError> {
     let mut bytes = Vec::new();
     let limit = (MAX_INPUT_BYTES as u64) + 1;
     let result = if source == "-" {
@@ -96,11 +96,7 @@ fn field<'a>(value: &'a JsonValue, key: &str, at: &str) -> Result<&'a JsonValue,
         .ok_or_else(|| invalid("invalid-transaction", format!("{at}에 {key}가 없습니다")))
 }
 
-pub(crate) fn text_field<'a>(
-    value: &'a JsonValue,
-    key: &str,
-    at: &str,
-) -> Result<&'a str, CliError> {
+fn text_field<'a>(value: &'a JsonValue, key: &str, at: &str) -> Result<&'a str, CliError> {
     field(value, key, at)?.as_str().ok_or_else(|| {
         invalid(
             "invalid-transaction",
@@ -109,7 +105,7 @@ pub(crate) fn text_field<'a>(
     })
 }
 
-pub(crate) fn id_field(value: &JsonValue, key: &str, at: &str) -> Result<StableId, CliError> {
+fn id_field(value: &JsonValue, key: &str, at: &str) -> Result<StableId, CliError> {
     text_field(value, key, at)?
         .parse::<StableId>()
         .map_err(|_| {
@@ -310,11 +306,7 @@ fn command_input(value: &JsonValue, index: usize) -> Result<CommandInput, CliErr
 }
 
 /// 입력 JSON을 적용 요청으로 해석합니다.
-pub(crate) fn parse_envelope(
-    bytes: &[u8],
-    format: &str,
-    revision_key: &str,
-) -> Result<JsonValue, CliError> {
+pub fn parse_request(bytes: &[u8]) -> Result<ApplyRequest, CliError> {
     let limits = JsonLimits {
         max_bytes: MAX_INPUT_BYTES,
         max_depth: 16,
@@ -331,16 +323,16 @@ pub(crate) fn parse_envelope(
         &[
             "format",
             "format_version",
-            revision_key,
+            "base_revision",
             "document",
             "commands",
         ],
         "입력",
     )?;
-    if text_field(&doc, "format", "입력")? != format {
+    if text_field(&doc, "format", "입력")? != FORMAT {
         return Err(invalid(
             "invalid-transaction",
-            format!("입력.format은 {format:?}이어야 합니다"),
+            format!("입력.format은 {FORMAT:?}이어야 합니다"),
         ));
     }
     if field(&doc, "format_version", "입력")?.as_i64() != Some(FORMAT_VERSION) {
@@ -349,11 +341,11 @@ pub(crate) fn parse_envelope(
             format!("입력.format_version은 {FORMAT_VERSION}이어야 합니다"),
         ));
     }
-    Ok(doc)
-}
-
-pub(crate) fn parse_commands(doc: &JsonValue) -> Result<Vec<CommandInput>, CliError> {
-    let items = field(doc, "commands", "입력")?
+    let base_revision = text_field(&doc, "base_revision", "입력")?
+        .parse::<ProjectRevision>()
+        .map_err(|e| invalid("invalid-transaction", format!("입력.base_revision: {e}")))?;
+    let document = id_field(&doc, "document", "입력")?;
+    let items = field(&doc, "commands", "입력")?
         .as_array()
         .ok_or_else(|| invalid("invalid-transaction", "입력.commands는 배열이어야 합니다"))?;
     if items.len() > MAX_COMMANDS {
@@ -365,21 +357,11 @@ pub(crate) fn parse_commands(doc: &JsonValue) -> Result<Vec<CommandInput>, CliEr
             ),
         ));
     }
-    items
+    let commands = items
         .iter()
         .enumerate()
         .map(|(i, item)| command_input(item, i))
-        .collect()
-}
-
-/// generation 원본용 입력 JSON을 적용 요청으로 해석합니다.
-pub fn parse_request(bytes: &[u8]) -> Result<ApplyRequest, CliError> {
-    let doc = parse_envelope(bytes, FORMAT, "base_revision")?;
-    let base_revision = text_field(&doc, "base_revision", "입력")?
-        .parse::<ProjectRevision>()
-        .map_err(|e| invalid("invalid-transaction", format!("입력.base_revision: {e}")))?;
-    let document = id_field(&doc, "document", "입력")?;
-    let commands = parse_commands(&doc)?;
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(ApplyRequest {
         base_revision,
         document,

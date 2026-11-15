@@ -72,19 +72,20 @@ cargo run -q -p stellar-cli -- --help
 | `ci` | 없음 | `<경로>` | lockfile·문서·migration 검사 |
 | `apply` | 없음 | `<경로> <입력 파일 또는 -> [--dry-run]` | transaction 검증·저장 또는 diff |
 | `component-source` | 없음 | `create <폴더> <이름> <id> <root-id>`, `check <폴더>`, `resize <파일> <원본 hash> <너비> <높이>`, `add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>` | 컴포넌트별 파일 생성·라이브러리 재조립·root Frame 크기 수정·중첩 Free Frame 추가. [컴포넌트 원본 v1·v2](../spec/component-source-v1.md) |
-| `text-source` | 없음 | `export <프로젝트> <새 파일>`, `check <파일>`, `apply <파일> <입력 파일 또는 -> [--dry-run]` | 단일 View 텍스트 원본 생성·검사·편집. [문법과 지원 범위](../spec/text-view-source-v1.md) |
+| `text-source` | 없음 | `export <프로젝트> <새 파일>`, `check <파일>` | 단일 View 텍스트 원본 생성·읽기 전용 검사. [문법과 지원 범위](../spec/text-view-source-v1.md) |
 | `export-accessibility` | 없음 | `<경로> <문서 id> <View id>` | 정적 접근성 HTML 조각·revision·진단 |
 | `export-web` | 없음 | `<경로> <문서 id> <View id>` | 고정 Free Frame HTML+CSS·revision·진단 |
 
 명령이 없거나(`stellar`만 실행) 알 수 없는 명령이면 사용법 오류(64)입니다.
 
-`apply`와 `text-source apply`의 `commands` 배열에는 Frame 크기를 JSON 숫자로 지정하는
+`apply`의 `commands` 배열에는 Frame 크기를 JSON 숫자로 지정하는
 `set-frame-size`(`node`, `width`, `height`)와 local 변환을 지정하는
 `set-frame-transform`(`node`, `a`, `b`, `c`, `d`, `tx`, `ty`)를 넣을 수 있습니다.
 한 축만 바꾸려면 `set-frame-width`(`node`, `width`) 또는 `set-frame-height`(`node`, `height`)를 사용합니다.
+숫자는 모델의 `f32`로 변환하며 무한대가 되면 거부하고, `width`·`height`는 비음수여야 합니다. 변환은
+`(x, y)`를 `(a*x + c*y + tx, b*x + d*y + ty)`로 보냅니다. Frame이 아닌 node에 적용하면 transaction 전체를 거부합니다.
 Text 레이어 본문은 `replace-text`(`node`, Unicode scalar 정수 `start`와 `end`, 문자열 `text`)로 교체합니다.
-입력 예시와 dry-run→저장→재열기 절차는 [텍스트 원본 명령 적용](../spec/text-view-source-v1.md#명시적-명령-적용)을
-참고합니다. 두 경로의 요청은 각각 generation revision과 source hash를 사용합니다.
+같은 위치의 `start`·`end`는 삽입, 빈 `text`는 삭제이고, 잘못된 범위나 node 종류는 transaction 전체를 거부합니다.
 
 ### `help`
 
@@ -296,7 +297,7 @@ stderr에 함께 나옵니다. 같은 snapshot·문서·View는 같은 HTML·진
 
 CLI 자체는 출력 파일을 만들지 않고 프로젝트·Git을 쓰지 않습니다. 셸 리다이렉션의 출력 위치는 사용자가
 정합니다. 실제 두 View 저장 fixture와 CLI subprocess 테스트는 HTML golden, 선택 범위, 오류 경로,
-반복 출력, 원본 파일·Git index·HEAD·objects 무변경을 검사합니다. text-source apply는 이 명령과 별개입니다.
+반복 출력, 원본 파일·Git index·HEAD·objects 무변경을 검사합니다.
 
 ## 지정 View의 고정 Frame HTML+CSS
 

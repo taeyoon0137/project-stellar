@@ -901,6 +901,63 @@ mod tests {
     }
 
     #[test]
+    fn frame_geometry_commands_write_and_reopen_through_generation() {
+        // set-frame-size·set-frame-transform은 dry-run과 같은 diff로 저장되고, reopen한 문서가
+        // 메모리에서 기대한 Frame 크기·transform과 같습니다.
+        use crate::core_types::value::{Size2, Transform2D};
+        use crate::test_support::large_document;
+        use stellar_document::records::NodePayload;
+
+        let tmp = TempDir::new("apply-frame-geometry");
+        let dir = ProjectDir {
+            path: tmp.path.join("project"),
+            locks: tmp.path.join("user-data").join("locks"),
+            _tmp: tmp,
+        };
+        let model = large_document(4);
+        scaffold_project(&dir.path);
+        save_documents(&dir.path, &[&model]);
+        let mut expected = model.to_records().unwrap();
+        let root = expected
+            .nodes
+            .iter_mut()
+            .find(|n| n.parent.is_none())
+            .unwrap();
+        let node = root.id;
+        let NodePayload::Frame(frame) = &mut root.payload else {
+            panic!("fixture root Frame");
+        };
+        let size = Size2::new(320.5, 240.25).unwrap();
+        let transform = Transform2D::new(0.0, 1.0, -1.0, 0.0, 12.5, -24.25).unwrap();
+        frame.size = size;
+        frame.transform = transform;
+        expected.sort_canonical();
+        let request = ApplyRequest {
+            base_revision: open_snapshot(&dir.path).unwrap().revision(),
+            document: model.document_id(),
+            commands: vec![
+                CommandInput::SetFrameSize { node, size },
+                CommandInput::SetFrameTransform { node, transform },
+            ],
+        };
+        let before = file_digest(&dir.path);
+        let preview = apply(&dir.path, &request, ApplyMode::DryRun, &locks(&dir)).unwrap();
+        assert_eq!(file_digest(&dir.path), before);
+        assert_eq!(preview.command_count, 2);
+        assert_eq!(preview.diff.entries.len(), 3);
+        let saved = apply(&dir.path, &request, ApplyMode::Write, &locks(&dir)).unwrap();
+        assert_eq!(saved.diff.entries, preview.diff.entries);
+        let mut reopened = open_snapshot(&dir.path)
+            .unwrap()
+            .document_model(request.document)
+            .unwrap()
+            .to_records()
+            .unwrap();
+        reopened.sort_canonical();
+        assert_eq!(reopened, expected);
+    }
+
+    #[test]
     fn canonical_form_round_trips_every_field_form() {
         let node = StableId::new_v7(3, 4, 5);
         let inputs = [

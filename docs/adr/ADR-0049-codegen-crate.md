@@ -64,7 +64,7 @@ Accepted (2026-11-14). 제품 소유자가 기술 문서에 세부가 없는 설
   제외 사실을 알립니다. geometry·paint·스타일·modifier·profile·동적 의미는 명시적으로 진단합니다.
   파일 출력 옵션은 없고 JSON의 `result.html`을 사용합니다. Git·프로젝트를 변경하지 않습니다.
 - 이는 정적 접근성 투영의 제품 경로이며 XXIV.1.4의 일반 render/export나 Phase XXII 전체 코드 생성
-  완료가 아닙니다. 저장 형식·FFI·초기 앱 메뉴·text-source apply에는 영향이 없습니다.
+  완료가 아닙니다. 저장 형식·FFI·초기 앱 메뉴에는 영향이 없습니다.
 
 ## 고정 Free Frame HTML+CSS 연결 (2026-11-14)
 

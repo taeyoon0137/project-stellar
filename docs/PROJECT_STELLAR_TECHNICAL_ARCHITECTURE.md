@@ -947,7 +947,7 @@ Stellar 애플리케이션 자체 UI는 각 운영체제의 네이티브 접근�
 
 Stellar는 단일 패키지 파일이 아니라 프로젝트 폴더 자체를 엽니다.
 
-[ADR-0059](adr/ADR-0059-text-source-files-with-chunk-cache.md)에 따라 목표 Git 원본은 의미 단위 텍스트 파일이고 chunk는 `.stellar/cache/`의 파생 데이터입니다. 현재 macOS 앱에서 만든 [컴포넌트 정의](spec/component-source-v1.md)는 `design/components/`에 하나씩 저장하며, 앱·CLI·MCP가 같은 파일을 읽습니다. 일반 캔버스 문서는 아래 generation 형식으로 저장됩니다. [단일 View 텍스트 원본](spec/text-view-source-v1.md)은 명시적으로 내보내고 CLI에서 편집할 수 있습니다. 프로젝트 전체의 기본 저장 전환은 의미 왕복·저장 복구·외부 변경 검증(V.10.4~V.10.7)을 거칩니다.
+[ADR-0059](adr/ADR-0059-text-source-files-with-chunk-cache.md)에 따라 목표 Git 원본은 의미 단위 텍스트 파일이고 chunk는 `.stellar/cache/`의 파생 데이터입니다. 현재 macOS 앱에서 만든 [컴포넌트 정의](spec/component-source-v1.md)는 `design/components/`에 하나씩 저장하며, 앱·CLI·MCP가 같은 파일을 읽습니다. 일반 캔버스 문서는 아래 generation 형식으로 저장됩니다. [단일 View 텍스트 원본](spec/text-view-source-v1.md)은 명시적으로 내보내고 읽기 전용으로 검사할 수 있습니다. 프로젝트 전체의 기본 저장 전환은 의미 왕복·저장 복구·외부 변경 검증(V.10.4~V.10.7)을 거칩니다.
 
 ```text
 ProjectName/

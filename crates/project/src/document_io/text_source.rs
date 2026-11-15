@@ -116,18 +116,6 @@ pub fn open_with_cache(
     Ok((opened, status))
 }
 
-/// 파일 I/O 없이 텍스트 저장 지원 범위·크기·모델 불변식을 검사합니다.
-/// dry-run도 실제 저장과 같은 codec을 통과해야 합니다.
-pub fn validate_model(model: &DocumentModel) -> Result<(), TextSourceError> {
-    let text = text_codec::encode(model)?;
-    if text.len() > MAX_INPUT_BYTES {
-        return Err(TextSourceError::Invalid(
-            "텍스트 원본 크기 상한 초과".into(),
-        ));
-    }
-    Ok(())
-}
-
 /// 기존 파일을 덮어쓰지 않고 새 원본을 만듭니다.
 pub fn save_new(path: &Path, model: &DocumentModel) -> Result<ContentHash, TextSourceError> {
     write(path, model, None)
