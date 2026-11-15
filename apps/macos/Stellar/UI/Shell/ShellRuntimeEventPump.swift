@@ -143,10 +143,10 @@ final class ShellRuntimeEventPump {
                                          revision: parent.revision, kind: kind, start: start, end: end), completion)
     }
 
-    func insertFrame(session: UInt64, parent: CanvasFrameHit, rect: CGRect, rectangle: Bool,
+    func insertFrame(session: UInt64, parent: CanvasFrameHit, rect: CGRect,
                      completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.insertFrame(handle: runtimeHandle, session: session, view: parent.viewID,
-                                         parent: parent.id, revision: parent.revision, rect: rect, rectangle: rectangle), completion)
+                                         parent: parent.id, revision: parent.revision, rect: rect), completion)
     }
 
     func moveFrame(session: UInt64, hit: CanvasFrameHit, delta: CGVector,

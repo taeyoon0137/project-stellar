@@ -50,18 +50,6 @@ impl AppRuntime {
         )
     }
 
-    /// 부모의 local 영역에 실제 Rectangle Shape와 Transform·Fill modifier를 생성합니다.
-    pub fn insert_canvas_rectangle(
-        &self,
-        session: WindowSessionHandle,
-        view: StableId,
-        revision: DocumentRevision,
-        parent: StableId,
-        bounds: Rect,
-    ) -> Result<RequestId, RequestError> {
-        self.insert_canvas_item(session, view, revision, parent, rectangle(bounds))
-    }
-
     /// 방향이 있는 두 부모 local 점으로 도형을 만들고, 선택까지 한 history 항목에 기록합니다.
     pub fn insert_canvas_shape(
         &self,

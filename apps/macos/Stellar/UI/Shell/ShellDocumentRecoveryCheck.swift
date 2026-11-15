@@ -39,7 +39,7 @@ enum ShellDocumentRecoveryCheck {
                                 y: canvas.bounds.midY + (50 - camera.center_y) * camera.zoom)
             guard let rootID = canvas.frameHit(at: point)?.id else {return fail("precondition")}
             let hit = CanvasFrameHit(isInstance: false, isRectangle: false, id: rootID, revision: info.revision, viewID: UUID(uuid: camera.active_view), localToWorld: .identity, parentToWorld: .identity, worldToView: .identity)
-            guard session.insertFrame(parent: hit, rect: CGRect(x: 31, y: 27, width: 199, height: 85), rectangle: false, completion: { _ in shell.refreshSessionCommands() }),
+            guard session.insertFrame(parent: hit, rect: CGRect(x: 31, y: 27, width: 199, height: 85), completion: { _ in shell.refreshSessionCommands() }),
                   pump.waitForPendingRequests(timeout: 15), let selection = CoreRuntime.selectedNode(handle: pump.runtimeHandle, session: session.session),
                   session.info?.has_unsaved_changes == 1 else {return fail("precondition")}
             say(UUID(uuid: selection.node).uuidString.lowercased())

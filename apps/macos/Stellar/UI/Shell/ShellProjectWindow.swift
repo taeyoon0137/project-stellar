@@ -119,9 +119,9 @@ final class ShellWindowSessionHandle {
                                                 completion: done) } completion: { completion($0) }
     }
 
-    func insertFrame(parent: CanvasFrameHit, rect: CGRect, rectangle: Bool, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
+    func insertFrame(parent: CanvasFrameHit, rect: CGRect, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
         guard !isClosed, !isClosing else { return false }
-        return track { done in pump.insertFrame(session: session, parent: parent, rect: rect, rectangle: rectangle, completion: done) } completion: { completion($0) }
+        return track { done in pump.insertFrame(session: session, parent: parent, rect: rect, completion: done) } completion: { completion($0) }
     }
 
     func moveFrame(_ hit: CanvasFrameHit, delta: CGVector, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {

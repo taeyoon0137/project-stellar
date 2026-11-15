@@ -1,10 +1,12 @@
 import AppKit
 
 extension CanvasTool {
-    var insertsBounds: Bool { self == .frame || self == .rectangle || drawnShape != nil }
+    var insertsBounds: Bool { self == .frame || drawnShape != nil }
 
+    /// Rectangle도 다른 도형과 같은 두 점 생성 경로(수식키·클릭 크기)를 씁니다.
     fileprivate var drawnShape: InspectorShapeKind? {
         switch self {
+        case .rectangle: return .rectangle
         case .ellipse: return .ellipse
         case .line: return .line
         case .polygon: return .polygon
@@ -99,7 +101,7 @@ extension ShellProjectWindow {
                 if let kind = tool.drawnShape {
                     _ = session.insertShape(parent: drag.hit, kind: kind, start: start, end: end, completion: completion)
                 } else {
-                    _ = session.insertFrame(parent: drag.hit, rect: rect, rectangle: tool == .rectangle, completion: completion)
+                    _ = session.insertFrame(parent: drag.hit, rect: rect, completion: completion)
                 }
             } else {
                 switch tool {

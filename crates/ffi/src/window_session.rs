@@ -833,7 +833,7 @@ pub unsafe extern "C" fn stellar_window_session_insert_frame(
     out_request: *mut u64,
 ) -> StellarStatus {
     unsafe {
-        insert_canvas_item(
+        insert_canvas_frame(
             handle,
             session,
             view,
@@ -844,41 +844,6 @@ pub unsafe extern "C" fn stellar_window_session_insert_frame(
             width,
             height,
             out_request,
-            false,
-        )
-    }
-}
-
-/// 창에 표시한 자유 배치 부모 Frame의 local 영역에 Rectangle Shape를 생성합니다.
-///
-/// # Safety
-/// `view`와 `parent`는 각각 16 byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_window_session_insert_rectangle(
-    handle: u64,
-    session: u64,
-    view: *const [u8; 16],
-    parent: *const [u8; 16],
-    revision: u64,
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
-    out_request: *mut u64,
-) -> StellarStatus {
-    unsafe {
-        insert_canvas_item(
-            handle,
-            session,
-            view,
-            parent,
-            revision,
-            x,
-            y,
-            width,
-            height,
-            out_request,
-            true,
         )
     }
 }
@@ -940,7 +905,7 @@ pub unsafe extern "C" fn stellar_window_session_insert_shape(
 }
 
 #[allow(clippy::too_many_arguments)]
-unsafe fn insert_canvas_item(
+unsafe fn insert_canvas_frame(
     handle: u64,
     session: u64,
     view: *const [u8; 16],
@@ -951,7 +916,6 @@ unsafe fn insert_canvas_item(
     width: f32,
     height: f32,
     out_request: *mut u64,
-    rectangle: bool,
 ) -> StellarStatus {
     use stellar_core_types::value::{Rect, Size2, Vec2};
     ffi_guard(move || {
@@ -975,14 +939,8 @@ unsafe fn insert_canvas_item(
         let Some(rt) = reg.live.get_mut(&handle) else {
             return StellarStatus::InvalidHandle;
         };
-        let submit = if rectangle {
-            AppRuntime::insert_canvas_rectangle
-        } else {
-            AppRuntime::insert_canvas_frame
-        };
         let result = match rt.app() {
-            Ok(app) => submit(
-                app,
+            Ok(app) => app.insert_canvas_frame(
                 WindowSessionHandle(session),
                 view,
                 stellar_core_types::revision::DocumentRevision(revision),

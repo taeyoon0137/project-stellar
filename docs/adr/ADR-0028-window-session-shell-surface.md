@@ -423,3 +423,22 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
   속성마다 FFI가 늘어 형식이 달랐고 크기·배경은 history sequence를 검사하지 않았습니다. 셸이 배경 색을 캔버스의
   CGColor에서 역산하던 경로도 지웠습니다.
 
+
+### 캔버스 행 flags와 Rectangle 생성
+
+- `StellarCanvasFrame.flags`(u32)는 painter 순서 행의 표시·입력 성질입니다. 남는 bit는 다음과 같습니다.
+
+  | bit | 의미 |
+  | --- | --- |
+  | 0 | 자식을 자기 모양으로 자름(clip children) |
+  | 1 | hit test 대상(표시·잠금 해제, 셸 선택 가능) |
+  | 2 | Rectangle Shape |
+  | 3 | 컴포넌트 인스턴스가 펼친 행 |
+  | 4 | Text(저장 텍스트 그리기 ABI로 글리프를 읽음) |
+  | 5 | Image(PNG 내용 ABI로 픽셀을 읽음) |
+  | 6 | Ellipse·Line·Polygon 경로 Shape(`stellar_canvas_shape_path`로 경로를 읽음) |
+
+  bit 7 이상은 0입니다. bit 4·5·6의 내용 ABI 기록과 정리는 텍스트(B5)·캔버스 렌더(B8) 묶음에서 합니다.
+- Rectangle 도구는 다른 도형과 같은 `stellar_window_session_insert_shape`(ShapeKind tag 1, 부모 local 두 점)를
+  씁니다. 수식키(Shift 정사각형, Option 중심 기준)와 클릭 생성 크기가 다른 도형과 같아집니다. 같은 일을 하던
+  `stellar_window_session_insert_rectangle`과 runtime `insert_canvas_rectangle`은 삭제했습니다.
