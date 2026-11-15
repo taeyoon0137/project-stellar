@@ -11,7 +11,7 @@
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
 | QA1-01 | 상단 바 제목을 눌러 Show in Finder(또는 File ▸ Show in Finder) → 샘플 폴더 | `stellar.yaml`, `stellar.lock.yaml`, `design`(`current`, `generations`, `objects`), `assets`(`<prefix>/<hash>.jpg` 하나) |
-| QA1-02 | 터미널에서 `git -C <샘플 폴더> log --oneline` | 커밋 2개("New Stellar project initialized", "QA 샘플 문서와 에셋 추가"). Git identity가 없었으면 커밋 없음 |
+| QA1-02 | 터미널에서 `git --no-pager -C <샘플 폴더> log --oneline` | 커밋 2개("New Stellar project initialized", "QA 샘플 문서와 에셋 추가"). Git identity가 없었으면 커밋 없음 |
 | QA1-03 | 사이드바 필터 필드 보기 | 문서 필터를 연결할 때까지 필터 필드는 보이지 않습니다. **구현 대기**(전용 WBS 없음) |
 
 ## 2. 페이지·View 고르기(사이드바 머리 줄)
@@ -26,12 +26,12 @@
 
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
-| QA1-20 | Desktop View의 Layers 구획 보기 | 최상위에 Header, Hero, Cards, Accent (Hidden), Footer (Locked). root Frame(Desktop)은 행으로 나오지 않음. **구현 대기** |
-| QA1-21 | Cards ▸ Card 1 펼치기 | Thumbnail, Caption. disclosure로 깊이 제한 없이 펼쳐짐. 화살표 키로 이동·펼침. **구현 대기** |
-| QA1-22 | 종류 아이콘 비교 | Frame, Fragment(Icon Group), 사각형·타원·선·다각형, path(Star), 텍스트, 이미지가 서로 다른 SF Symbol. **구현 대기** |
-| QA1-23 | Accent (Hidden), Footer (Locked) 행 보기 | 숨김 행은 흐린 글자와 `eye.slash` 아이콘, 잠금 행은 `lock` 아이콘이 항상 보임. 색만으로 구분하지 않음. **구현 대기** |
+| QA1-20 | Desktop View의 Layers 구획 보기 | 최상위에 Header, Hero, Cards, Accent (Hidden), Footer (Locked). root Frame(Desktop)은 행으로 나오지 않음 |
+| QA1-21 | Cards ▸ Card 1 펼치기 | Thumbnail, Caption. disclosure로 깊이 제한 없이 펼쳐짐. 화살표 키로 이동·펼침 |
+| QA1-22 | 종류 아이콘 비교 | Frame, Fragment(Icon Group), 사각형·타원·선·다각형, path(Star), 텍스트, 이미지가 서로 다른 SF Symbol |
+| QA1-23 | Accent (Hidden), Footer (Locked) 행 보기 | 숨김 행은 `eye.slash`, 잠금 행은 자물쇠(`lock.fill`) 아이콘으로 구분됨. 색만으로 구분하지 않음 |
 | QA1-24 | 필터에 "Card" 입력 | 일치 행(Card 1\~3)과 조상(Cards)만 보이고 모두 펼쳐짐. 조상 행은 보조 색. 없는 이름이면 "No Results"와 Clear Filter. **구현 대기** |
-| QA1-25 | Components ▸ Buttons의 레이어 보기 | Button / Primary·Secondary(▸ Label), Icon Group(▸ Dot, Square), Divider, Hexagon, Star. **구현 대기** |
+| QA1-25 | Components ▸ Buttons의 레이어 보기 | Button / Primary·Secondary(▸ Label), Icon Group(▸ Dot, Square), Divider, Hexagon, Star |
 
 ## 4. 캔버스 렌더
 
@@ -47,9 +47,9 @@
 
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
-| QA1-40 | 트랙패드 두 손가락 스크롤, 핀치 | 캔버스가 바로 따라 움직이고 확대·축소됨. **구현 대기**(viewport camera XII.4.3, 도구 상태 기계 XII.3.6) |
-| QA1-41 | Hand(H)로 끌기, Zoom(Z)으로 클릭·Option-클릭 | 문서 위치는 그대로 두고 화면이 이동·확대·축소됩니다. Space를 누르는 동안 Hand 일시 전환은 **구현 대기**(XII.10.1) |
-| QA1-42 | ⌘+, ⌘-, ⌘0, ⌘9와 툴바 줌 메뉴 | 확대·축소·실제 크기·맞춤, 툴바 배율 제목 갱신. 새 프로젝트는 창에 맞춰 열립니다. 선택 맞춤(⌘*, Zoom to Selection)은 **구현 대기**(XII.4.3)로 비활성 |
+| QA1-40 | 트랙패드 두 손가락 스크롤, 핀치 | 캔버스가 바로 따라 움직이고 확대·축소됨. 문서는 바뀌지 않음 |
+| QA1-41 | Hand(H)로 끌기, Zoom(Z)으로 클릭·Option-클릭 | 문서 위치는 그대로 두고 화면이 이동·확대·축소됩니다. 다른 도구에서 Space를 누르는 동안 끌면 Hand처럼 화면이 이동하고, 떼면 원래 도구로 돌아옵니다 |
+| QA1-42 | ⌘+, ⌘-, ⌘0, ⌘9와 툴바 줌 메뉴 | 확대·축소·실제 크기·맞춤, 툴바 배율 제목 갱신. 새 프로젝트는 창에 맞춰 열립니다. 선택 맞춤(Zoom to Selection)은 메뉴에 없음(아직 안 됨) |
 | QA1-43 | 이동·확대 뒤 저장 상태 | 문서가 바뀌지 않음(`git status` 변화 없음). **구현 대기**(XII.4.3 완료 기준) |
 
 ## 6. 선택과 인스펙터

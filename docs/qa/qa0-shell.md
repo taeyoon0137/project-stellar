@@ -5,6 +5,7 @@
 - 실행: `./scripts/macos/qa.sh`(샘플 프로젝트 창), `./scripts/macos/qa.sh --no-build --welcome`(시작 창)
 - 기준 명세: [셸 프레임](../design/ui/shell_frame.md), [도구·메뉴](../design/ui/tools_menus.md), [시작 창](../design/ui/welcome.md), [macOS 셸 디자인 가이드](../design/macos-shell-design.md)
 - 편집 절차는 [QA2](qa2-edit.md)에 있습니다. 편집·저장은 제한 모드(신뢰 전)에서도 됩니다. 신뢰는 Git hook·filter, 내장 터미널, MCP·에이전트, 외부 명령 같은 실행 계열에만 필요합니다(D1).
+- 이 단계에서 신뢰를 주었으면(QA0-40) 확인한 뒤 Revoke Project Trust로 거둡니다. 신뢰는 `--fresh` 뒤에도 이어지고, QA2·QA3는 제한 모드에서 시작합니다.
 
 ## 1. 시작 창
 
@@ -15,7 +16,7 @@
 | QA0-03 | Window 메뉴 열기 | 창 목록에 "Welcome" |
 | QA0-04 | New Project…(⌘N) → 상위 폴더와 새 이름 선택 → Create | 새 Git 저장소와 최초 문서를 만들고 프로젝트 창을 엽니다. 창을 닫고 같은 폴더를 열면 같은 문서가 나타납니다. Git 신원을 설정한 환경에서는 최초 커밋이 있고, 신원이 없으면 설정 방법을 안내합니다. |
 | QA0-05 | Clone Project… → Repository URL에 `https://example.com/team/design-system.git` 입력 | Clone sheet(Repository URL, Name, Location). Name이 `design-system`으로 자동 채워짐. URL을 비우면 Clone 버튼 꺼짐. Escape로 닫힘 |
-| QA0-06 | Clone sheet에서 Clone | "The Operation Couldn’t Be Completed" 안내(설명 "Cloning projects isn’t available in this build yet…"). 실제 Clone은 **구현 대기**(XII.6.3) |
+| QA0-06 | Clone sheet에서 Clone | 예시 URL은 없는 저장소라 실패 안내가 뜨고 프로젝트 창은 생기지 않음. 접근할 수 있는 실제 저장소 URL이면 Location 아래에 복제한 뒤 프로젝트 창이 열림 |
 | QA0-07 | 최근 프로젝트 목록 | **구현 대기**(코어 최근 목록 경로, 전용 WBS 없음). 지금: 프로젝트를 열어도 항상 "No Recent Projects" |
 
 ## 2. Open Project
@@ -33,7 +34,7 @@
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
 | QA0-13 | 샘플 프로젝트 창 보기 | 제목 "Stellar QA Sample", 부제목 "Restricted Mode". 왼쪽 사이드바, 가운데 캔버스, 오른쪽 인스펙터 3열 |
-| QA0-14 | 사이드바 보기 | 머리 줄에 `Page › View ▾` 팝업 한 줄이 있고, 그 아래 Layers에 활성 View의 자식이 보입니다. 새 프로젝트는 자식이 없고 "F로 Frame, R로 사각형, T로 텍스트를 그립니다" 같은 키 안내 한 줄만 보입니다. |
+| QA0-14 | 사이드바 보기 | 머리 줄에 `Page › View ▾` 팝업 한 줄이 있고, 그 아래 Layers에 활성 View의 자식이 보입니다. 새 프로젝트는 자식이 없고 "Press F to draw a frame, R for a rectangle, or T for text." 한 줄만 보입니다. |
 | QA0-15 | 아무것도 고르지 않고 인스펙터 보기 | 현재 `Page · View` 이름, "Select a layer to edit its CSS properties."와 도구 키 안내(V Move · F Frame · …). 편집 필드는 없음 |
 | QA0-16 | 새 프로젝트의 캔버스 보기 | 800 × 600의 흰 Frame이 사이드바·인스펙터 사이에 보입니다. |
 | QA0-17 | 사이드바 토글: 툴바 왼쪽 버튼, View ▸ Hide Sidebar, ⌃⌘S를 차례로 | 세 경로 모두 같은 사이드바를 접고 폄. 숨기면 캔버스가 그만큼 넓어짐. 메뉴 제목이 Show/Hide로 바뀜 |
@@ -74,12 +75,12 @@
 | QA0-37 | 메뉴 막대 보기 | 순서: 앱 메뉴, File, Edit, View, Insert, Object, Window, Help. 앱 메뉴 이름은 "Stellar" |
 | QA0-38 | 편집 전후 메뉴 상태 확인 | New Project는 ⌘N으로 열립니다. 문서가 열리면 Save Now를 쓸 수 있고 Frame 생성 후 Undo, Undo 후 Redo가 활성화됩니다. |
 | QA0-39 | Settings…(⌘,) ▸ Canvas에서 Default Shape Fill과 Default Line Tool Color를 바꾼 뒤 R·L로 새로 그리기 | 설정 창에 Canvas 구획과 두 색 선택이 있음(처음 `#D9D9D9`, `#000000`). 바꾼 뒤 새 사각형은 바꾼 채우기, 새 선은 바꾼 선 색(1px)으로 생김. 이미 있는 도형과 프로젝트 파일의 설정은 바뀌지 않음(앱 설정에만 저장, D7) |
-| QA0-40 | File ▸ Show in Finder, File ▸ Trust Project… | Show in Finder는 QA0-33과 같음. 신뢰 항목은 제한 모드 창에서 Trust Project…, 신뢰한 창에서 Revoke Project Trust로 바뀌고 제목 문서 메뉴와 같은 동작. 신뢰 확인 중이거나 sheet가 떠 있으면 비활성 |
+| QA0-40 | File ▸ Show in Finder, File ▸ Trust Project… → Trust Project, 이어 Revoke Project Trust | Show in Finder는 QA0-33과 같음. 신뢰 항목은 제한 모드 창에서 Trust Project…, 신뢰한 창에서 Revoke Project Trust로 바뀌고 제목 문서 메뉴와 같은 동작. 신뢰하면 부제목 "Restricted Mode"가 사라지고 거두면 돌아옴. 신뢰 확인 중이거나 sheet가 떠 있으면 비활성. 끝은 제한 모드로 둠 |
 | QA0-41 | ⌃⌘F, ⌘M, ⌘H | 전체 화면 전환, 최소화, 앱 가리기. ⌥⌘T(툴바 숨김)는 배정하지 않음 |
 | QA0-42 | 앱을 쓰는 중 ⌘Space, ⌘Tab, ⇧⌘5 | 시스템 단축키가 그대로 동작(앱이 가로채지 않음) |
 | QA0-43 | 사이드바 필터 필드에 입력 후 ⌘Z, ⇧⌘Z, ⌘A·⌘C·⌘V | 필드 입력이 되돌려지고 다시 적용됨(Edit 메뉴 제목 "Undo Typing"). 선택·복사·붙여넣기도 필드에 적용 |
 | QA0-44 | Help 메뉴 보기 | 시스템 메뉴 검색 필드만 있음. 도움말 콘텐츠가 생기기 전에는 Stellar Help 항목이 없음 |
-| QA0-45 | 두 프로젝트 창을 열고 한쪽에서 편집 뒤 Edit ▸ Undo·Redo, File ▸ Save Now | 활성 창의 편집만 되돌리고 저장합니다. Undo 제목에 편집 이름이 붙습니다. |
+| QA0-45 | 두 프로젝트 창을 열고 한쪽에서 편집 뒤 Edit ▸ Undo·Redo, File ▸ Save Now | 활성 창의 편집만 되돌리고 저장합니다. 메뉴 제목은 "Undo"·"Redo" 그대로입니다(동작 이름은 아직 안 붙음) |
 
 ## 7. 다크 모드
 
@@ -111,3 +112,9 @@
 | QA0-59 | 손쉬운 사용 ▸ 동작 ▸ 동작 줄이기 켜고 사이드바·인스펙터 토글 | 애니메이션 없이 바로 접히고 펴짐 |
 | QA0-60 | 손쉬운 사용 ▸ 디스플레이 ▸ 대비 높이기, 투명도 줄이기 (라이트·다크 각각, 둘 다 켠 경우 포함) | 시스템 컨트롤과 Liquid Glass 표면이 설정을 따라 바뀌고, 모든 글자와 아이콘이 읽힘 |
 | QA0-61 | 캔버스 선택·도구 상태를 VoiceOver로 듣기 | **구현 대기**(XII.8.1). 앱 셸 적합성 보고서는 XII.9.4 |
+
+## 10. 아직 안 됨
+
+- 최근 프로젝트 목록(QA0-07), 캔버스 문서 색과 앱 외형 분리(QA0-49), 캔버스 VoiceOver(QA0-61)
+- Undo·Redo 메뉴 제목의 동작 이름
+- "Set Up the stellar Command…": 문자열과 sheet는 있지만 어느 메뉴에도 연결되어 있지 않습니다(모든 빌드). 첫 실행 제안은 Debug 번들에 `stellar`가 없어 나오지 않습니다.
