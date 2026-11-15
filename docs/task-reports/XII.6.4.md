@@ -84,4 +84,4 @@
 
 - Save Now는 document thread에서 동기로 직렬화·기록하므로 큰 문서에서는 그동안 다른 요청이 기다립니다(worker 직렬화 XIII.1.4).
 - 자동 저장(XIII.1)과 앱 종료·비활성화 flush는 아직 연결하지 않았습니다. 정상 macOS 창 닫기의 편집 폐기는
-  [XIII.1.6 부분 근거](../status/window-close-save.md)의 좁은 저장 확인 경로로 보완했습니다. XIII.1.6 전체 완료는 아닙니다.
+  [ADR-0028 정상 창 닫기 저장 보존](../adr/ADR-0028-window-session-shell-surface.md)의 좁은 저장 확인 경로로 보완했습니다. XIII.1.6 전체 완료는 아닙니다.

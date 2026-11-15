@@ -50,9 +50,6 @@
 - 후보와 index의 단일/합계 bytes 상한 및 batch 분할을 실제 명령 증가량으로 확인했습니다. 계측은 fixture 실행기별 before/after 차이를 사용합니다.
 - 기존 runtime 정상 저장 프로젝트에서 속성 A만 담긴 후보의 delta는 chunk·generation·current 3개입니다. B·다른 문서·기존 staged 파일은 후보에서 보존되고 원본 WorkingTree·index bytes는 불변입니다. index generation 기준 no-op은 delta 0입니다.
 
-
-- 기본 제외 8개는 20 GiB stream, 200k/1m 문서 tier, 50k 복원 성능, nightly fuzz, 전체 시스템 폰트 scan, hit-test 성능, `product_serializer_splits_views_over_approved_threshold`입니다. 마지막 항목은 기존 document_io serializer와 V.6.4 split planner 미연결 결함으로 제외되어 있습니다. 이 결함이나 성능 gate를 해결했다고 주장하지 않습니다.
-
 ## 성능
 
 - 경로 대조는 BTreeMap/BTreeSet, index 읽기는 기존 OrderedBlobReader의 batch 상한을 재사용합니다.

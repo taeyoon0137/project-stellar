@@ -181,15 +181,17 @@ UI thread는 기다리지 않습니다.
   대체하지 않으며 config와 성능 예산은 변경하지 않습니다. timeout은 Rust 작업 취소를 뜻하지 않습니다.
   이미 접수된 저장이 나중에 끝날 수 있으나, 그 응답으로 창을 닫지는 않습니다.
 - GUI thread는 run loop timer와 비동기 event만 사용합니다. 직렬화·쓰기의 기존 document thread 실행은
-  그대로이며 worker 이동·snapshot 캡처·autosave 병합(XIII.1.3~.5), 앱 비활성화 flush와 앱 종료는 미구현입니다.
-  따라서 XIII.1.6은 완료 처리하지 않습니다.
+  그대로이며 worker 이동·snapshot 캡처·autosave 병합(XIII.1.3~.5)과 앱 비활성화 flush는 미구현입니다. 앱 종료(⌘Q)
+  저장은 아래 '닫기 실패 선택 시트와 앱 종료'를 따릅니다. 따라서 XIII.1.6은 완료 처리하지 않습니다.
+- 저장을 기다리는 동안 같은 창에 다른 시트가 붙으면 닫기 요청을 시트가 끝날 때까지 보관하고, 원래 창과 session의
+  편집 상태를 다시 확인한 뒤 닫습니다. 시트 응답 시간은 응답 watchdog에 넣지 않습니다.
+- 저수준 `NSWindow.close()`와 `stellar_window_session_close`는 저장하지 않는 명시적 폐기 API로 유지합니다. 사용자의
+  정상 닫기(닫기 버튼, Close Project, 메뉴)는 `performClose`를 거쳐 위 저장 확인을 받습니다.
 - 세대를 기록하는 Save Now는 같은 OS 사용자의 `stellar apply`와 `stellar-ops::lock::SaveLock`을 공유합니다.
   열린 프로젝트 ID와 symlink를 해석한 target으로 잠금을 잡고, 같은 경로의 current manifest를 확인한 뒤
   pointer 교체와 session 갱신까지 보유합니다. 경합이나 잠금 준비 실패는 SaveFailed로 반환하며 편집을 보존합니다.
   작업 문서가 없거나 저장 bytes가 같으면 잠금을 만들지 않습니다. 기존 세대가 있는 문서는 무변경 저장에서도
   current manifest를 확인합니다. Git checkout 등 외부 변경이 base 검사 전에 끝나면 stale을 반환합니다. 외부 변경의 reconciliation은 XXIV.4.6 범위입니다.
-
-검증·남은 범위는 [정상 창 닫기 보고서](../status/window-close-save.md)를 따릅니다.
 
 ## 창 수명·복구 정리 (2026-11-15 검토)
 
