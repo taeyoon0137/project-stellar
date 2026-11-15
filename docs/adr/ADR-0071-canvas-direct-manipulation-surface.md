@@ -31,6 +31,17 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
 4. 앱 설정의 의미(닫힌 도형은 채우기, Line은 선 색 1px)는 셸이 정해 넘깁니다. 값은 사용자 앱 설정에만 있고
    프로젝트 파일에는 쓰지 않습니다.
 
+### UX.3.1 — 연속 줌
+
+1. `stellar_window_session_zoom_by(handle, session, x, y, factor, out_request)`를 추가합니다. 화면 중심에서
+   `(x, y)` point인 점을 고정하고 배율을 `factor`(유한한 양수)배 합니다. 배율 상하한(2%–25600%)은 viewport가
+   정하고, 완료는 `WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`입니다.
+2. 셸은 트랙패드 핀치(`1 + magnification`)와 ⌘ 스크롤(`exp(0.01 × Δy pt)`)을 이 함수로 보냅니다. 두 손가락·휠
+   스크롤 팬은 정리 통합의 코어 해석 경로(`stellar_window_session_submit_mac_event`, ADR-0028 스크롤 절)를 그대로
+   씁니다. 그 경로의 팬 판정에서 Shift를 빼서 Shift+휠(시스템이 가로 delta로 바꿈)도 가로 팬이 되게 했습니다.
+   Space를 누르는 동안의 임시 Hand는 Hand 도구와 같은 `stellar_window_session_pan`을 씁니다.
+3. 카메라 조작은 문서·history·저장 상태를 바꾸지 않습니다.
+
 ## Alternatives
 
 - 코어에 기본 색 표를 두고 셸이 덮어쓰기: D7("코어 하드코딩 없음")에 어긋나 채택하지 않았습니다.

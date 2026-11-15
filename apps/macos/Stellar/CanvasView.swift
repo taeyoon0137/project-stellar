@@ -18,6 +18,13 @@ final class CanvasView: NSView {
     /// 창 session이 준비된 창이 원시 입력을 그 창 session으로 넘기는 경로(ADR-0028). 해석은 코어가 하고,
     /// 셸은 접수한 요청의 완료만 기다립니다. false면 runtime 입력 대기열로 보냅니다.
     var windowInputSink: ((StellarMacEvent) -> Bool)?
+    /// ⌘ 스크롤 줌. 수식키 없는·Shift 스크롤 팬은 코어가 해석하므로(`windowInputSink`) 여기서 받지 않습니다.
+    var scrollZoomHandler: ((NSEvent) -> Bool)?
+    /// 트랙패드 핀치(magnify). 창 viewport를 커서 기준으로 확대·축소합니다.
+    var magnifyHandler: ((NSEvent) -> Bool)?
+
+    /// Space를 누르는 동안 임시 Hand(UX 명세 5.1). 텍스트 입력 중에는 field editor가 키를 받아 켜지지 않습니다.
+    private(set) var isSpaceHeld = false
 
     private let frameScene = CanvasFrameScene()
     var textEditOverlay: CanvasFrameScene.TextEditOverlay? {
@@ -65,13 +72,28 @@ final class CanvasView: NSView {
         super.viewWillMove(toWindow: newWindow)
     }
 
-    @objc private func cancelOnWindowBlur(_ notification: Notification) { _ = cancelFrameGesture?() }
+    @objc private func cancelOnWindowBlur(_ notification: Notification) {
+        releaseSpace()
+        _ = cancelFrameGesture?()
+    }
 
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned { _ = cancelFrameGesture?() }
+        if resigned {
+            releaseSpace()
+            _ = cancelFrameGesture?()
+        }
         return resigned
     }
+
+    private func releaseSpace() {
+        guard isSpaceHeld else { return }
+        isSpaceHeld = false
+        handledKeyCodes.remove(Self.spaceKeyCode)
+        NSCursor.arrow.set()
+    }
+
+    private static let spaceKeyCode: UInt16 = 49
 
     private var mouseTrackingArea: NSTrackingArea?
 
@@ -163,11 +185,25 @@ final class CanvasView: NSView {
     override func scrollWheel(with event: NSEvent) {
         // 진행 중인 Frame 드래그 미리보기는 화면 좌표라 카메라가 움직이면 어긋나므로 먼저 취소합니다.
         _ = cancelFrameGesture?()
+        if scrollZoomHandler?(event) == true { return }
         let raw = CanvasInput.macEvent(from: event, in: self, receivedAt: ProcessInfo.processInfo.systemUptime)
         if windowInputSink?(raw) == true { return }
         submitInput(event)
     }
+    override func magnify(with event: NSEvent) {
+        if magnifyHandler?(event) == true { return }
+        super.magnify(with: event)
+    }
     override func keyDown(with event: NSEvent) {
+        if event.keyCode == Self.spaceKeyCode,
+           event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+            if !event.isARepeat, !isSpaceHeld {
+                isSpaceHeld = true
+                NSCursor.openHand.set()
+            }
+            handledKeyCodes.insert(event.keyCode)
+            return
+        }
         if (event.keyCode == 53 && cancelFrameGesture?() == true) || keyDownHandler?(event) == true {
             handledKeyCodes.insert(event.keyCode)
             return
@@ -176,6 +212,10 @@ final class CanvasView: NSView {
     }
 
     override func keyUp(with event: NSEvent) {
+        if event.keyCode == Self.spaceKeyCode, isSpaceHeld {
+            releaseSpace()
+            return
+        }
         if handledKeyCodes.remove(event.keyCode) != nil { return }
         submitInput(event)
     }

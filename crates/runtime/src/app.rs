@@ -127,6 +127,7 @@ use stellar_project::root::{classify_project_open, OpenError, RootError};
 use stellar_project::trust::TrustStatus;
 use stellar_project::trust_store::{os_user_data_base, FileTrustStore};
 
+mod canvas_gesture;
 mod components;
 mod create;
 mod frame_insert;

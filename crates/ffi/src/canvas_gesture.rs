@@ -102,6 +102,41 @@ pub unsafe extern "C" fn stellar_window_session_insert_shape(
     })
 }
 
+/// 화면 중심에서 `(x, y)` point인 점을 고정하고 배율을 `factor`배 합니다(핀치, ⌘ 스크롤).
+/// 문서·history는 바꾸지 않습니다. 완료는 `WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`입니다.
+///
+/// # Safety
+/// `out_request`는 null이거나 u64 쓰기가 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_zoom_by(
+    handle: u64,
+    session: u64,
+    x: f64,
+    y: f64,
+    factor: f64,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { out_request.write(0) };
+        }
+        if !(x.is_finite() && y.is_finite() && factor.is_finite() && factor > 0.0) {
+            return StellarStatus::InvalidArgument;
+        }
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.zoom_viewport_by(WindowSessionHandle(session), [x, y], factor),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

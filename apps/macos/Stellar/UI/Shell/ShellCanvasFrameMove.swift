@@ -12,9 +12,24 @@ struct CanvasFrameDrag {
 }
 
 extension ShellProjectWindow {
+    /// 화면 중심 기준 `anchor` point를 고정하고 배율을 `factor`배 합니다(핀치·⌘ 스크롤). 문서·history는 그대로입니다.
+    @discardableResult
+    func zoomCanvas(by factor: Double, anchor: CGPoint) -> Bool {
+        guard factor.isFinite, factor > 0, let project = dataSource.session,
+              let session = windowController.windowSession, !session.isClosing, !session.isClosed,
+              session.viewInfo?.has_view == 1 else { return false }
+        _ = canvasHost.canvasView.cancelFrameGesture?()
+        return session.track({ project.pump.zoomBy(session: session.session, anchor: anchor, factor: factor, completion: $0) }) {
+            [weak self, weak session] _ in
+            guard let self, self.windowController.windowSession === session else { return }
+            self.refreshSessionCommands()
+        }
+    }
+
     func connectFrameInteractions() {
         let canvas = canvasHost.canvasView
-        var handDrag: (point: NSPoint, session: UInt64, size: NSSize)?
+        // temporary: Space를 누르는 동안 시작한 임시 Hand. 도중에 Space를 놓아도 마우스를 놓을 때까지 팬합니다.
+        var handDrag: (point: NSPoint, session: UInt64, size: NSSize, temporary: Bool)?
         var zoomDrag: (start: NSPoint, session: UInt64, camera: StellarWindowViewInfo, bounds: CGRect)?
         // 진행 중인 캔버스 제스처 하나라도 있으면 true. 새 제스처 상태(크기 조절·영역 선택 등)도 여기에 더합니다.
         canvas.frameGestureActive = { [weak self] in
@@ -39,6 +54,35 @@ extension ShellProjectWindow {
             if self.continueRejectedDraw(event) { return true }
             // 한 줄 안내는 다음 누름에서 사라집니다(UX 명세 3.2).
             if event.type == .leftMouseDown { self.windowController.toolbarController.hintView.hide() }
+            // Hand 도구 또는 Space를 누르는 동안의 임시 Hand(UX 명세 5.1). 다른 도구보다 먼저 받습니다.
+            if event.type == .leftMouseDown, self.toolsModel.snapshot.activeTool == .hand || canvas.isSpaceHeld {
+                _ = canvas.cancelFrameGesture?()
+                guard event.modifierFlags.intersection([.command, .control, .shift, .option]).isEmpty,
+                      let session = self.windowController.windowSession,
+                      !session.isClosed, !session.isClosing, session.viewInfo?.has_view == 1 else { return false }
+                canvas.window?.makeFirstResponder(canvas)
+                let temporary = self.toolsModel.snapshot.activeTool != .hand
+                if temporary { NSCursor.closedHand.set() }
+                handDrag = (point, session.session, canvas.bounds.size, temporary)
+                return true
+            }
+            if let drag = handDrag, event.type == .leftMouseDragged || event.type == .leftMouseUp {
+                guard drag.temporary || self.toolsModel.snapshot.activeTool == .hand, canvas.bounds.size == drag.size,
+                      let session = self.windowController.windowSession, session.session == drag.session else {
+                    _ = canvas.cancelFrameGesture?()
+                    return true
+                }
+                let dx = Double(point.x - drag.point.x), dy = Double(point.y - drag.point.y)
+                guard dx.isFinite, dy.isFinite else { return true }
+                handDrag = event.type == .leftMouseUp ? nil : (point, drag.session, drag.size, drag.temporary)
+                if event.type == .leftMouseUp, drag.temporary {
+                    (canvas.isSpaceHeld ? NSCursor.openHand : NSCursor.arrow).set()
+                }
+                if !session.pan(dx: dx, dy: dy, completion: { [weak canvas] in canvas?.refreshFrames() }) {
+                    _ = canvas.cancelFrameGesture?()
+                }
+                return true
+            }
             if self.toolsModel.snapshot.activeTool == .zoom {
                 if event.type == .leftMouseDown {
                     _ = canvas.cancelFrameGesture?()
@@ -100,29 +144,6 @@ extension ShellProjectWindow {
             }
             if self.frameDrag?.tool.insertsBounds == true || (event.type == .leftMouseDown && self.toolsModel.snapshot.activeTool.insertsBounds) {
                 return self.handleFrameInsertion(event, point: point, canvas: canvas)
-            }
-            if event.type == .leftMouseDown, self.toolsModel.snapshot.activeTool == .hand {
-                _ = canvas.cancelFrameGesture?()
-                guard event.modifierFlags.intersection([.command, .control, .shift, .option]).isEmpty,
-                      let session = self.windowController.windowSession,
-                      !session.isClosed, !session.isClosing, session.viewInfo?.has_view == 1 else { return false }
-                canvas.window?.makeFirstResponder(canvas)
-                handDrag = (point, session.session, canvas.bounds.size)
-                return true
-            }
-            if let drag = handDrag, event.type == .leftMouseDragged || event.type == .leftMouseUp {
-                guard self.toolsModel.snapshot.activeTool == .hand, canvas.bounds.size == drag.size,
-                      let session = self.windowController.windowSession, session.session == drag.session else {
-                    _ = canvas.cancelFrameGesture?()
-                    return true
-                }
-                let dx = Double(point.x - drag.point.x), dy = Double(point.y - drag.point.y)
-                guard dx.isFinite, dy.isFinite else { return true }
-                handDrag = event.type == .leftMouseUp ? nil : (point, drag.session, drag.size)
-                if !session.pan(dx: dx, dy: dy, completion: { [weak canvas] in canvas?.refreshFrames() }) {
-                    _ = canvas.cancelFrameGesture?()
-                }
-                return true
             }
             switch event.type {
             case .leftMouseDown:

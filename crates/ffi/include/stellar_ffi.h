@@ -354,6 +354,8 @@ StellarStatus stellar_window_session_pan(uint64_t handle, uint64_t session, doub
 StellarStatus stellar_window_session_submit_mac_event(uint64_t handle, uint64_t session, const StellarMacEvent *event, uint64_t *out_request);
 /* Click: fit_factor=0 and zoom_out=0/1. Area: fit_factor>0 centers the anchor and scales the viewport. */
 StellarStatus stellar_window_session_zoom_at(uint64_t handle, uint64_t session, double x, double y, double fit_factor, uint32_t zoom_out, uint64_t *out_request);
+/* ADR-0071: 화면 중심에서 (x, y) point인 점을 고정하고 배율을 factor(> 0)배 합니다(핀치, ⌘ 스크롤). history 없음. */
+StellarStatus stellar_window_session_zoom_by(uint64_t handle, uint64_t session, double x, double y, double factor, uint64_t *out_request);
 /* 한 게시 시점의 선택. 기존 창·뷰 info의 고정 레이아웃과 독립적입니다. */
 typedef struct StellarSelectionTarget {
     uint64_t session;

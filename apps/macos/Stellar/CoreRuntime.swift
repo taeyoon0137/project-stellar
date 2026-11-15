@@ -187,6 +187,14 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    /// 화면 중심 기준 `anchor` point를 고정하고 배율을 `factor`배 합니다(핀치·⌘ 스크롤, ADR-0071).
+    static func zoomBy(handle: UInt64, session: UInt64, anchor: CGPoint, factor: Double) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = stellar_window_session_zoom_by(handle, session, anchor.x, anchor.y, factor, &request)
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     static func pan(handle: UInt64, session: UInt64, dx: Double, dy: Double) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
         let status = stellar_window_session_pan(handle, session, dx, dy, &request)

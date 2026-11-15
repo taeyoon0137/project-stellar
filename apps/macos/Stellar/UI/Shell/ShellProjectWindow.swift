@@ -638,6 +638,24 @@ final class ShellProjectWindow {
             guard let session = self?.windowController.windowSession else { return false }
             return session.submitInput(event) { [weak self] in self?.canvasHost.canvasView.refreshFrames() }
         }
+        canvasHost.canvasView.scrollZoomHandler = { [weak self] event in
+            // ⌘ 스크롤은 커서 기준 줌입니다(위로 굴리면 확대, 10pt마다 약 10%, ADR-0071 UX.3.1).
+            guard let self, event.modifierFlags.contains(.command),
+                  event.modifierFlags.intersection([.option, .control]).isEmpty else { return false }
+            let canvas = self.canvasHost.canvasView
+            let dy = Double(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 1.0 : 10.0)
+            guard dy.isFinite else { return false }
+            let point = CanvasInput.viewPoint(of: event, in: canvas)
+            let anchor = CGPoint(x: point.x - canvas.bounds.midX, y: point.y - canvas.bounds.midY)
+            return dy == 0 || self.zoomCanvas(by: exp(dy * 0.01), anchor: anchor)
+        }
+        canvasHost.canvasView.magnifyHandler = { [weak self] event in
+            guard let self else { return false }
+            let canvas = self.canvasHost.canvasView
+            let point = CanvasInput.viewPoint(of: event, in: canvas)
+            let anchor = CGPoint(x: point.x - canvas.bounds.midX, y: point.y - canvas.bounds.midY)
+            return self.zoomCanvas(by: 1 + Double(event.magnification), anchor: anchor)
+        }
         // 키 목록은 `CanvasTool.singleKey`에서 만들어 실제 배정과 같습니다.
         canvasHost.canvasView.setAccessibilityHelp(CanvasTool.shortcutHelp)
     }

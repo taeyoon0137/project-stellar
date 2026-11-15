@@ -128,6 +128,11 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.zoomAt(handle: runtimeHandle, session: session, anchor: anchor, fitFactor: fitFactor, zoomOut: zoomOut), completion)
     }
 
+    func zoomBy(session: UInt64, anchor: CGPoint, factor: Double,
+                completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.zoomBy(handle: runtimeHandle, session: session, anchor: anchor, factor: factor), completion)
+    }
+
     @discardableResult
     func pan(
         session: UInt64, dx: Double, dy: Double,

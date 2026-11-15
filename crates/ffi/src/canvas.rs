@@ -14,17 +14,17 @@ use crate::{convert_received, ffi_guard, queue_input, registry, InstantClock, St
 /// 일반 wheel 한 줄(notch)을 화면 point로 환산하는 값입니다. precise scrolling(trackpad)은 point 그대로 씁니다.
 pub const WHEEL_LINE_POINTS: f64 = 10.0;
 
-/// 수식키 없는 wheel·trackpad 스크롤이면 창 팬 양(화면 point, 내용 이동 방향)을 돌려줍니다.
+/// 수식키 없는(또는 Shift만 누른) wheel·trackpad 스크롤이면 창 팬 양(화면 point, 내용 이동 방향)을 돌려줍니다.
 ///
 /// 공통 wheel delta는 scroll 양(x 오른쪽·y 아래쪽 양수, AppKit 시스템 스크롤 방향 적용 뒤)이고 팬은 내용
-/// 이동이라 부호가 반대입니다. Shift·Control·Option·Command가 눌린 스크롤은 팬이 아닙니다(Caps Lock은 상태라
-/// 보지 않습니다).
+/// 이동이라 부호가 반대입니다. Shift+휠은 시스템이 가로 delta로 바꿔 주므로 그대로 가로 팬입니다(UX 명세 5.1,
+/// ADR-0071 UX.3.1). Control·Option·Command가 눌린 스크롤은 팬이 아닙니다(⌘ 스크롤 줌은 셸이 `zoom_by`로 보냄,
+/// Caps Lock은 상태라 보지 않습니다).
 pub(crate) fn wheel_pan_points(input: &InputEvent) -> Option<(f64, f64)> {
     let InputEventKind::Wheel(wheel) = input.kind() else {
         return None;
     };
     let held = [
-        Modifiers::SHIFT,
         Modifiers::CONTROL,
         Modifiers::ALT,
         Modifiers::META,
@@ -374,10 +374,15 @@ mod window_input_tests {
             .collect();
         finish(h, a, requests);
         assert_eq!(center(h, a), (before.0 - 64.0, before.1 + 32.0));
-        // 수식키 스크롤은 팬이 아니고 runtime 입력 대기열로 갑니다.
+        // Shift 스크롤은 받은 delta 그대로 팬입니다(시스템이 휠을 가로 delta로 바꿈).
+        let before_shift = center(h, a);
+        let shifted = submit(h, a, scroll((6.0, 0.0), true, modifier_flag::SHIFT));
+        assert_ne!(shifted, 0);
+        finish(h, a, [shifted]);
+        assert_eq!(center(h, a), (before_shift.0 - 6.0, before_shift.1));
+        // 그 밖의 수식키 스크롤은 팬이 아니고 runtime 입력 대기열로 갑니다.
         let after = center(h, a);
         for flag in [
-            modifier_flag::SHIFT,
             modifier_flag::CONTROL,
             modifier_flag::OPTION,
             modifier_flag::COMMAND,
