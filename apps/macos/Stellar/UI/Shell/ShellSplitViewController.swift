@@ -1,16 +1,17 @@
 import AppKit
 
-/// 메인 창 3열 분할: 사이드바 | 가운데(콘텐츠 / 보조 패널) | 인스펙터(가이드 2.3).
+/// 메인 창 3열 분할: 사이드바 | 가운데(캔버스) | 인스펙터(가이드 2.3).
 ///
 /// 사이드바는 `NSSplitViewItem(sidebarWithViewController:)`, 인스펙터는
 /// `NSSplitViewItem(inspectorWithViewController:)`로 만들어 재질, 접기·펼치기, 폭 유지를 시스템에
 /// 맡깁니다. pane 폭과 접힘 상태는 `NSSplitView.autosaveName`으로 유지합니다(가이드 2.6).
+/// 캔버스 아래 보조 패널은 두지 않습니다(UX 명세 3.2).
 final class ShellSplitViewController: NSSplitViewController {
     let sidebarItem: NSSplitViewItem
     let centerItem: NSSplitViewItem
     let inspectorItem: NSSplitViewItem
-    /// 가운데 분할(콘텐츠 / 보조 패널).
-    let centerController: ShellCenterSplitViewController
+    /// 콘텐츠 슬롯과 상태 화면을 담은 controller.
+    let contentContainer: ShellContentContainerViewController
 
     /// 동작 줄이기 설정 조회. 켜져 있으면 pane 전환을 애니메이션 없이 즉시 합니다(가이드 8.4, 8.5).
     /// 검사에서 결정적으로 실행하려고 바꿀 수 있게 둡니다.
@@ -18,17 +19,10 @@ final class ShellSplitViewController: NSSplitViewController {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
-    /// 콘텐츠 슬롯과 상태 화면을 담은 controller.
-    var contentContainer: ShellContentContainerViewController { centerController.contentContainer }
-
     init(slots: ShellFrameSlots, configuration: ShellWindowConfiguration) {
-        centerController = ShellCenterSplitViewController(
-            contentContainer: ShellContentContainerViewController(contentSlot: slots.content),
-            auxiliary: slots.auxiliary,
-            autosaveName: configuration.centerSplitAutosaveName
-        )
+        contentContainer = ShellContentContainerViewController(contentSlot: slots.content)
         sidebarItem = NSSplitViewItem(sidebarWithViewController: slots.sidebar.paneViewController)
-        centerItem = NSSplitViewItem(viewController: centerController)
+        centerItem = NSSplitViewItem(viewController: contentContainer)
         inspectorItem = NSSplitViewItem(inspectorWithViewController: slots.inspector.paneViewController)
         super.init(nibName: nil, bundle: nil)
 
@@ -102,90 +96,14 @@ final class ShellSplitViewController: NSSplitViewController {
         }
     }
 
-    /// 보조 패널 표시 전환. 보조 패널 슬롯이 없으면 아무것도 하지 않습니다.
-    @objc func toggleAuxiliaryPanel(_ sender: Any?) {
-        centerController.toggleAuxiliaryPanel(animated: !prefersReducedMotion())
-    }
-
     override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
         case #selector(toggleInspector(_:)):
             let title = inspectorItem.isCollapsed ? ShellFrameStrings.showInspector : ShellFrameStrings.hideInspector
             if let menuItem = item as? NSMenuItem, menuItem.title != title { menuItem.title = title }
             return true
-        case #selector(toggleAuxiliaryPanel(_:)):
-            guard let auxiliaryItem = centerController.auxiliaryItem else { return false }
-            let name = centerController.auxiliaryTitle ?? ""
-            let title = auxiliaryItem.isCollapsed ? ShellFrameStrings.showPane(name) : ShellFrameStrings.hidePane(name)
-            if let menuItem = item as? NSMenuItem, menuItem.title != title { menuItem.title = title }
-            return true
         default:
             return super.validateUserInterfaceItem(item)
-        }
-    }
-}
-
-/// 가운데 세로 분할: 콘텐츠 위, 보조 패널 아래.
-///
-/// 보조 패널 슬롯이 없으면 콘텐츠 항목 하나만 둡니다. 있으면 처음에는 접힌 상태로 시작합니다
-/// (가이드 2.4 "초기 릴리스에는 노출하지 않습니다"). 높이와 접힘은 split view autosave가 유지합니다.
-final class ShellCenterSplitViewController: NSSplitViewController {
-    let contentContainer: ShellContentContainerViewController
-    let contentItem: NSSplitViewItem
-    let auxiliaryItem: NSSplitViewItem?
-    /// 보조 패널 이름(View 메뉴 항목 제목).
-    let auxiliaryTitle: String?
-
-    init(
-        contentContainer: ShellContentContainerViewController,
-        auxiliary: (any ShellAuxiliaryPanelSlot)?,
-        autosaveName: String
-    ) {
-        self.contentContainer = contentContainer
-        contentItem = NSSplitViewItem(viewController: contentContainer)
-        contentItem.minimumThickness = ShellFrameMetrics.contentMinimumSize.height
-        contentItem.holdingPriority = .defaultLow - 1
-
-        if let auxiliary {
-            let item = NSSplitViewItem(viewController: auxiliary.paneViewController)
-            item.canCollapse = true
-            item.isCollapsed = true
-            item.minimumThickness = ShellFrameMetrics.auxiliaryThickness.lowerBound
-            item.maximumThickness = ShellFrameMetrics.auxiliaryThickness.upperBound
-            item.holdingPriority = .defaultLow
-            ShellSplitViewController.attachAccessories(of: auxiliary, to: item)
-            ShellSplitViewController.labelPaneIfNeeded(auxiliary)
-            auxiliaryItem = item
-            auxiliaryTitle = auxiliary.paneTitle
-        } else {
-            auxiliaryItem = nil
-            auxiliaryTitle = nil
-        }
-        super.init(nibName: nil, bundle: nil)
-
-        let split = NSSplitView()
-        split.isVertical = false
-        split.dividerStyle = .thin
-        split.autosaveName = autosaveName
-        splitView = split
-
-        addSplitViewItem(contentItem)
-        if let auxiliaryItem {
-            addSplitViewItem(auxiliaryItem)
-        }
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("ShellCenterSplitViewController는 코드로만 생성합니다")
-    }
-
-    func toggleAuxiliaryPanel(animated: Bool) {
-        guard let auxiliaryItem else { return }
-        if animated {
-            auxiliaryItem.animator().isCollapsed = !auxiliaryItem.isCollapsed
-        } else {
-            auxiliaryItem.isCollapsed.toggle()
         }
     }
 }

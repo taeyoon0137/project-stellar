@@ -7,7 +7,7 @@ import AppKit
 /// - 분할 구조: 사이드바·인스펙터 behavior, 폭 범위, 창 폭 변경 시 캔버스만 변함, 캔버스가 safe area 안
 /// - Auto Layout 모호성 없음(빈·로딩·오류 상태 포함)
 /// - 접근성 레이블: pane, 캔버스, 제목 문서 메뉴, 도구, 상태 화면 / SF Symbol 이름 유효
-/// - 명령: 응답자 체인으로 사이드바·인스펙터·보조 패널 전환(동작 줄이기·애니메이션 경로), 메뉴 제목
+/// - 명령: 응답자 체인으로 사이드바·인스펙터 전환(동작 줄이기·애니메이션 경로), 메뉴 제목
 /// - snapshot: 다음 런 루프 병합, 오래된 세대 폐기, 도구·제목 문서 메뉴 명령 전달
 /// - AppKit 상태 저장: frame·split autosave 왕복, 창 복원 설정
 /// 을 확인합니다. 검사용 autosave 이름은 실행마다 새로 만들고, 시작과 끝에 검사용 기록을 user defaults에서 지웁니다.
@@ -142,12 +142,8 @@ private final class ShellFrameUICheckRunner {
         expect(split.sidebarItem.behavior == .sidebar, "사이드바 behavior 아님")
         expect(split.inspectorItem.behavior == .inspector, "인스펙터 behavior 아님")
         expect(split.splitView.autosaveName == configuration.mainSplitAutosaveName, "메인 split autosave 이름 없음")
-        expect(
-            split.centerController.splitView.autosaveName == configuration.centerSplitAutosaveName,
-            "가운데 split autosave 이름 없음"
-        )
         expect(window.frameAutosaveName == configuration.autosaveName, "창 frame autosave 이름 없음")
-        expect(split.centerController.auxiliaryItem?.isCollapsed == true, "보조 패널이 처음에 접혀 있지 않음")
+        expect(split.centerItem.viewController === split.contentContainer, "캔버스 아래에 보조 패널 분할이 남음")
         // O2 결정 전: 캔버스를 사이드바·인스펙터 아래로 확장하지 않습니다. 캔버스가 자기 safe area에 붙어 있어
         // 겹침 검사만으로는 이 설정 변경을 잡지 못하므로 값 자체를 확인합니다.
         expect(!split.centerItem.automaticallyAdjustsSafeAreaInsets, "가운데 항목이 safe area를 자동 조정함(O2 전)")
@@ -244,7 +240,6 @@ private final class ShellFrameUICheckRunner {
         let panes: [(String, NSView)] = [
             ("Sidebar", split.sidebarItem.viewController.view),
             ("Inspector", split.inspectorItem.viewController.view),
-            ("Auxiliary Area", split.centerController.auxiliaryItem?.viewController.view ?? NSView()),
         ]
         for (expected, view) in panes {
             expect(view.accessibilityLabel() == expected, "pane 접근성 레이블 불일치: \(expected)")
@@ -327,14 +322,13 @@ private final class ShellFrameUICheckRunner {
         let split = controller.splitController
         // first responder가 창 자체여도 pane 명령이 닿아야 합니다.
         window.makeFirstResponder(nil)
-        let menuItems = ShellFrameMenuItems.makeViewMenuItems(auxiliaryTitle: split.centerController.auxiliaryTitle)
-        expect(menuItems.count == 3, "View 메뉴 항목 수가 3이 아님")
+        let menuItems = ShellFrameMenuItems.makeViewMenuItems()
+        expect(menuItems.count == 2, "View 메뉴 항목 수가 2가 아님")
         expect(menuItems.allSatisfy { $0.target == nil }, "View 메뉴 항목이 first responder action이 아님")
 
         let commands: [(String, Selector, NSSplitViewItem?)] = [
             ("sidebar", #selector(ShellWindowController.toggleSidebar(_:)), split.sidebarItem),
             ("inspector", #selector(ShellWindowController.toggleInspector(_:)), split.inspectorItem),
-            ("auxiliary", #selector(ShellWindowController.toggleAuxiliaryPanel(_:)), split.centerController.auxiliaryItem),
         ]
         for ((name, action, item), menuItem) in zip(commands, menuItems) {
             guard let item else {
@@ -353,16 +347,6 @@ private final class ShellFrameUICheckRunner {
             expect(window.tryToPerform(action, with: nil), "\(name) 명령 되돌리기 실패")
             layout(window)
             expect(item.isCollapsed == before, "\(name) 되돌리기 안 됨")
-        }
-
-        // 보조 패널 펼침 높이.
-        if let auxiliary = split.centerController.auxiliaryItem {
-            split.toggleAuxiliaryPanel(nil)
-            layout(window)
-            let height = auxiliary.viewController.view.frame.height
-            expect(ShellFrameMetrics.auxiliaryThickness.contains(height), "보조 패널 높이 범위 밖: \(height)")
-            split.toggleAuxiliaryPanel(nil)
-            layout(window)
         }
     }
 

@@ -93,13 +93,11 @@ final class ShellFrameDataSourceStub: ShellFrameDataSource {
     }
 }
 
-/// 사이드바·인스펙터·보조 패널 자리를 표시하는 placeholder pane.
+/// 사이드바·인스펙터 자리를 표시하는 placeholder pane.
 ///
 /// 아이콘, 이름, 안내문만 표준 레이블로 보여 줍니다. 배경을 칠하지 않아 사이드바·인스펙터의 시스템
 /// 재질이 그대로 보입니다(가이드 3.2).
-final class ShellPanePlaceholderStub: NSViewController, ShellSidebarSlot, ShellInspectorSlot,
-    ShellAuxiliaryPanelSlot
-{
+final class ShellPanePlaceholderStub: NSViewController, ShellSidebarSlot, ShellInspectorSlot {
     let paneTitle: String
     let symbolName: String
     let message: String
@@ -162,9 +160,9 @@ final class ShellPanePlaceholderStub: NSViewController, ShellSidebarSlot, ShellI
 }
 
 extension ShellFrameSlots {
-    /// placeholder 사이드바·인스펙터·보조 패널과 기존 캔버스 호스트로 슬롯을 채웁니다.
+    /// placeholder 사이드바·인스펙터와 기존 캔버스 호스트로 슬롯을 채웁니다.
     @MainActor
-    static func stub(runtimeHandle: UInt64?, includesAuxiliaryPanel: Bool = true) -> ShellFrameSlots {
+    static func stub(runtimeHandle: UInt64?) -> ShellFrameSlots {
         ShellFrameSlots(
             sidebar: ShellPanePlaceholderStub(
                 title: "Sidebar", symbolName: "sidebar.left",
@@ -174,16 +172,10 @@ extension ShellFrameSlots {
             inspector: ShellPanePlaceholderStub(
                 title: "Inspector", symbolName: "sidebar.right",
                 message: "Properties of the selection appear here."
-            ),
-            auxiliary: includesAuxiliaryPanel
-                ? ShellPanePlaceholderStub(
-                    title: "Auxiliary Area", symbolName: "rectangle.bottomthird.inset.filled",
-                    message: "Git and agent panels can appear here."
-                )
-                : nil
+            )
         )
     }
 
     /// stub 슬롯이 쓰는 SF Symbol 이름(검사용).
-    static let stubSymbolNames = ["sidebar.left", "sidebar.right", "rectangle.bottomthird.inset.filled"]
+    static let stubSymbolNames = ["sidebar.left", "sidebar.right"]
 }

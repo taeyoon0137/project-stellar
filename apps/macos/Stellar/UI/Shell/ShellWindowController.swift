@@ -213,10 +213,6 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         splitController.toggleInspector(sender)
     }
 
-    @objc func toggleAuxiliaryPanel(_ sender: Any?) {
-        splitController.toggleAuxiliaryPanel(sender)
-    }
-
     // MARK: - NSWindowDelegate
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -252,7 +248,7 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         case #selector(performFrameAction(_:)):
             guard let id = Self.frameActionID(from: item) else { return false }
             return isFrameActionEnabled(id)
-        case #selector(toggleSidebar(_:)), #selector(toggleInspector(_:)), #selector(toggleAuxiliaryPanel(_:)):
+        case #selector(toggleSidebar(_:)), #selector(toggleInspector(_:)):
             return splitController.validateUserInterfaceItem(item)
         default:
             return true

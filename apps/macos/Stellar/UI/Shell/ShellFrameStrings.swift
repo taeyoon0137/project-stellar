@@ -15,14 +15,4 @@ enum ShellFrameStrings {
     static var showSidebar: String { String(localized: "Show Sidebar", comment: "View menu item") }
     static var showInspector: String { String(localized: "Show Inspector", comment: "View menu item") }
     static var hideInspector: String { String(localized: "Hide Inspector", comment: "View menu item") }
-
-    /// 보조 패널 표시 항목 제목. `name`은 pane 이름입니다.
-    static func showPane(_ name: String) -> String {
-        String(localized: "Show \(name)", comment: "View menu item that shows a pane; the argument is the pane name")
-    }
-
-    /// 보조 패널 숨김 항목 제목. `name`은 pane 이름입니다.
-    static func hidePane(_ name: String) -> String {
-        String(localized: "Hide \(name)", comment: "View menu item that hides a pane; the argument is the pane name")
-    }
 }

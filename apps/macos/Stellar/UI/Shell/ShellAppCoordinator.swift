@@ -44,7 +44,6 @@ final class ShellAppCoordinator: NSObject {
     /// 프로젝트 창의 AppKit 상태 저장 이름(frame·split·툴바 autosave, 복원 식별자). 검사는 앱의 실제 기록을 읽거나
     /// 덮어쓰지 않도록 검사 전용 이름을 넘깁니다.
     var windowConfiguration: () -> ShellWindowConfiguration = { .standard }
-    var makeAgentSource: () -> AgentPanelSource = { DisconnectedAgentPanelSource() }
     /// 프로젝트 열기 실패를 alert로 알립니다. 검사에서 바꿉니다.
     lazy var alertPresenter: (_ title: String, _ message: String, _ window: NSWindow?) -> Void = { title, message, window in
         let alert = NSAlert()
@@ -513,8 +512,7 @@ final class ShellAppCoordinator: NSObject {
 
     private func makeProjectWindow(rootPath: String) -> ShellProjectWindow {
         let projectWindow = ShellProjectWindow(
-            rootPath: rootPath, runtimeHandle: runtimeHandle, configuration: windowConfiguration(),
-            agentSource: makeAgentSource()
+            rootPath: rootPath, runtimeHandle: runtimeHandle, configuration: windowConfiguration()
         )
         projectWindow.dataSource.commandHandler = { [weak self, weak projectWindow] id in
             guard let self, let projectWindow else { return }
@@ -786,25 +784,11 @@ final class ShellWelcomeDataSource: WelcomeDataSource {
 
 /// `MainMenuBuilder` 메뉴에 셸 프레임 명령 항목을 끼웁니다(가이드 6.1 "툴바의 모든 명령은 메뉴 막대에도").
 ///
-/// - View: 사이드바·인스펙터 묶음 뒤에 보조 패널(Show/Hide Panels)
 /// - File: Save Now 뒤에 Show in Finder(제목 문서 메뉴와 같은 동작)
 @MainActor
 enum ShellMainMenuInstaller {
-    /// 보조 패널 이름(`ShellPanelTabsSlot.paneTitle`과 같은 값).
-    static var auxiliaryPanelTitle: String {
-        String(localized: "Panels", comment: "Name of the area below the canvas; used in Show/Hide Panels")
-    }
-
     static func install(into mainMenu: MainMenuBuilder.MainMenu) {
         let menu = mainMenu.menu
-        if let view = submenu(titled: "View", in: menu),
-            let inspectorIndex = view.items.firstIndex(where: { $0.action == #selector(NSSplitViewController.toggleInspector(_:)) })
-        {
-            if let auxiliary = ShellFrameMenuItems.makeViewMenuItems(auxiliaryTitle: auxiliaryPanelTitle).last {
-                auxiliary.image = NSImage(systemSymbolName: "rectangle.bottomthird.inset.filled", accessibilityDescription: nil)
-                view.insertItem(auxiliary, at: inspectorIndex + 1)
-            }
-        }
         if let file = submenu(titled: "File", in: menu) {
             let reveal = ShellFrameMenuItems.makeFrameActionItem(
                 title: String(localized: "Show in Finder", comment: "File menu item"),

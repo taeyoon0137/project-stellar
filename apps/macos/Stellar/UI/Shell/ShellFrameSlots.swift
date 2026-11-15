@@ -2,7 +2,7 @@ import AppKit
 
 // 메인 창 슬롯 계약, 창 구성 값, 배치 수치.
 //
-// 다른 UI 영역(사이드바 내용, 인스펙터 내용, Git·에이전트 패널, 캔버스)은 아래 슬롯 protocol을
+// 다른 UI 영역(사이드바 내용, 인스펙터 내용, 캔버스)은 아래 슬롯 protocol을
 // 따르는 view controller를 넘겨 메인 창에 끼웁니다. 셸 프레임은 슬롯 내용을 해석하지 않습니다.
 
 /// 메인 창의 pane 하나에 들어가는 내용.
@@ -33,20 +33,12 @@ extension ShellPaneSlot {
 /// 오른쪽 인스펙터 슬롯(가이드 6.3).
 @MainActor protocol ShellInspectorSlot: ShellPaneSlot {}
 
-/// 콘텐츠 아래 보조 패널 슬롯(Git·에이전트·터미널 후보).
-///
-/// 가이드 2.4는 캔버스 아래 분할 영역을 로드맵 기능 자리로만 두고 초기 릴리스에 노출하지 않으며,
-/// Git 패널 위치(O4)와 에이전트 패널 위치(6.5절)는 해당 WBS가 정합니다. 따라서 이 슬롯은 선택
-/// 사항이고, 넘겨도 처음에는 접힌 상태로 시작하며 툴바 버튼을 두지 않습니다.
-@MainActor protocol ShellAuxiliaryPanelSlot: ShellPaneSlot {}
-
-/// 메인 창에 끼울 슬롯 묶음.
+/// 메인 창에 끼울 슬롯 묶음. 캔버스 아래 보조 패널은 두지 않습니다(UX 명세 3.2). Git은 왼쪽 사이드바,
+/// 에이전트는 오른쪽 영역의 탭으로 기능이 연결될 때 들어옵니다.
 struct ShellFrameSlots {
     var sidebar: any ShellSidebarSlot
     var content: any ShellContentSlot
     var inspector: any ShellInspectorSlot
-    /// 없으면 보조 패널 분할 항목 자체를 만들지 않습니다.
-    var auxiliary: (any ShellAuxiliaryPanelSlot)?
 }
 
 /// 창 하나의 AppKit 상태 저장 이름 묶음.
@@ -70,8 +62,6 @@ struct ShellWindowConfiguration {
 
     /// 메인 분할(사이드바 | 가운데 | 인스펙터) autosave 이름.
     var mainSplitAutosaveName: String { autosaveName + ".MainSplit" }
-    /// 가운데 분할(콘텐츠 / 보조 패널) autosave 이름.
-    var centerSplitAutosaveName: String { autosaveName + ".CenterSplit" }
 }
 
 /// 셸 프레임 배치 수치를 한곳에서 정의합니다(가이드 2.3 "허용 범위는 코드 한곳에서 정의").
@@ -89,8 +79,6 @@ enum ShellFrameMetrics {
     static let inspectorThickness: ClosedRange<CGFloat> = 240...400
     /// 캔버스(가운데 콘텐츠) 최소 폭·높이.
     static let contentMinimumSize = NSSize(width: 320, height: 200)
-    /// 보조 패널 높이 허용 범위.
-    static let auxiliaryThickness: ClosedRange<CGFloat> = 140...480
     /// 상태·placeholder 안내문 최대 줄 폭.
     static let statusTextMaxWidth: CGFloat = 320
     /// 상태 화면 요소 사이 간격.

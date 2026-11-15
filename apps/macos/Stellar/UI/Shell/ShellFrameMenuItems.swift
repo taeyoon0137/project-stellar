@@ -7,21 +7,14 @@ import AppKit
 /// (`NSMenuItemValidation`)에서 현재 상태("Show …"/"Hide …")로 바뀝니다.
 @MainActor
 enum ShellFrameMenuItems {
-    /// View 메뉴 항목: 사이드바·인스펙터(·보조 패널) 표시 전환.
-    ///
-    /// - Parameter auxiliaryTitle: 보조 패널 슬롯 이름. nil이면 보조 패널 항목을 만들지 않습니다.
-    static func makeViewMenuItems(auxiliaryTitle: String?) -> [NSMenuItem] {
-        var items = [
+    /// View 메뉴 항목: 사이드바·인스펙터 표시 전환.
+    static func makeViewMenuItems() -> [NSMenuItem] {
+        [
             // Control-Command-S: 사이드바 표시 전환(시스템 앱 관례, HIG Keyboard).
             makeItem(ShellFrameStrings.showSidebar, #selector(ShellWindowController.toggleSidebar(_:)), "s", [.control, .command]),
             // Option-Command-I: 인스펙터 표시 전환(HIG Keyboard 표준 단축키).
             makeItem(ShellFrameStrings.showInspector, #selector(ShellWindowController.toggleInspector(_:)), "i", [.option, .command]),
         ]
-        if let auxiliaryTitle {
-            // 보조 패널 단축키는 앱 고유 메뉴 구성(O8, XII.6.5)에서 정합니다.
-            items.append(makeItem(ShellFrameStrings.showPane(auxiliaryTitle), #selector(ShellWindowController.toggleAuxiliaryPanel(_:)), "", []))
-        }
-        return items
     }
 
     /// 제목 문서 메뉴 동작의 메뉴 막대 항목(가이드 6.1 "툴바의 모든 명령은 메뉴 막대에도").

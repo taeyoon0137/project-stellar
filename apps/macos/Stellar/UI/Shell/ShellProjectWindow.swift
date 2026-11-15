@@ -479,7 +479,8 @@ final class ShellProjectWindow {
     let canvasHost: ShellCanvasHostViewController
     let sidebarSlot: ShellSidebarAreaSlot
     let inspectorSlot: ShellInspectorAreaSlot
-    let panelsSlot: ShellPanelTabsSlot
+    /// Git 상태·신뢰의 원본. Git 패널은 캔버스 아래 보조 패널과 함께 빠졌고, 왼쪽 사이드바 변경 탭(UX.5.2)에서
+    /// 이 data source로 다시 붙습니다.
     let gitSource = ShellGitDataSource()
     var choosePNG: (NSOpenPanel, NSWindow, @escaping (URL?) -> Void) -> Void = { panel, owner, selected in
         panel.beginSheetModal(for: owner) { selected($0 == .OK ? panel.url : nil) }
@@ -518,7 +519,7 @@ final class ShellProjectWindow {
     /// - Parameters:
     ///   - rootPath: 열 프로젝트 폴더(절대 경로). 창은 열기 중 상태로 시작합니다.
     ///   - runtimeHandle: 캔버스 drawable·입력을 받을 코어 runtime handle.
-    init(rootPath: String, runtimeHandle: UInt64?, configuration: ShellWindowConfiguration, agentSource: AgentPanelSource) {
+    init(rootPath: String, runtimeHandle: UInt64?, configuration: ShellWindowConfiguration) {
         dataSource = ShellProjectFrameDataSource(rootPath: rootPath)
         toolsModel = ShellWindowToolsModelStub()
         router = ShellCommandRouter(model: toolsModel)
@@ -533,16 +534,10 @@ final class ShellProjectWindow {
         inspectorSlot = ShellInspectorAreaSlot(
             inspector: InspectorViewController(dataSource: inspectorSource)
         )
-        panelsSlot = ShellPanelTabsSlot(
-            gitPanel: GitPanelViewController(dataSource: gitSource),
-            agentPanel: AgentPanelViewController(source: agentSource)
-        )
         windowController = ShellWindowController(
             configuration: configuration,
             dataSource: dataSource,
-            slots: ShellFrameSlots(
-                sidebar: sidebarSlot, content: canvasHost, inspector: inspectorSlot, auxiliary: panelsSlot
-            ),
+            slots: ShellFrameSlots(sidebar: sidebarSlot, content: canvasHost, inspector: inspectorSlot),
             toolbarItemProvider: toolsToolbar
         )
         toolsModel.toolChanged = { [weak self] tool in
@@ -600,7 +595,6 @@ final class ShellProjectWindow {
             }
         }
         connectFrameInteractions()
-        panelsSlot.gitPanel.host = self
         if let window = windowController.window {
             // 응답자 체인: content view → router → split controller → 창. 텍스트 편집 중에는 field editor가 먼저 받습니다.
             router.install(in: window)
@@ -647,9 +641,10 @@ final class ShellProjectWindow {
     }
 
     /// 창을 닫기 전에 확인이 필요한지(활성 에이전트 세션, ADR-0005 결정 4.5).
-    var requiresConfirmationBeforeClosing: Bool {
-        panelsSlot.requiresConfirmationBeforeClosing
-    }
+    ///
+    /// 에이전트 세션 실행 경로(XXIX)가 연결되기 전에는 이 창에 에이전트 세션이 없습니다. 오른쪽 에이전트 탭이 들어오면
+    /// 그 세션 상태를 돌려줍니다.
+    var requiresConfirmationBeforeClosing: Bool { false }
 
     /// 코어가 프로젝트와 이 창의 창 session을 열었습니다. 창 controller가 창 session handle을 소유합니다(XII.2.2).
     func didOpen(_ session: ShellProjectSessionHandle, windowSession: ShellWindowSessionHandle) {

@@ -57,7 +57,6 @@ private final class ShellIntegrationCheckRunner {
         let appRecordKeys = [
             "NSWindow Frame \(standard.autosaveName)",
             "NSSplitView Subview Frames \(standard.mainSplitAutosaveName)",
-            "NSSplitView Subview Frames \(standard.centerSplitAutosaveName)",
             "NSToolbar Configuration \(standard.toolbarIdentifier)",
         ]
         func appRecords() -> [NSObject?] {
@@ -128,9 +127,9 @@ private final class ShellIntegrationCheckRunner {
             expect(router.validateMenuItem(entry) == enabled, "\(command.rawValue) 활성 상태가 \(enabled)가 아님")
         }
 
-        // 셸 프레임 항목(가이드 6.1): 보조 패널 전환, Finder에서 보기.
-        let auxiliary = items(withAction: #selector(ShellWindowController.toggleAuxiliaryPanel(_:)), in: menu)
-        expect(auxiliary.count == 1 && auxiliary.first?.title == "Show Panels", "View 메뉴에 Show Panels 없음")
+        // 셸 프레임 항목(가이드 6.1): Finder에서 보기. 캔버스 아래 보조 패널과 그 토글은 없습니다(UX 명세 3.2).
+        let view = ShellMainMenuInstaller.submenu(titled: "View", in: menu)
+        expect(view?.items.contains { $0.title.hasSuffix("Panels") } == false, "View 메뉴에 보조 패널 토글이 남음")
         let actions = items(withAction: #selector(ShellWindowController.performFrameAction(_:)), in: menu)
         let file = ShellMainMenuInstaller.submenu(titled: "File", in: menu)
         for id in [ShellProjectCommandID.revealInFinder] {
@@ -569,31 +568,15 @@ private final class ShellIntegrationCheckRunner {
         expect(projectWindow.canvasHost.canvasView.runtimeHandle == host.handle, "캔버스에 runtime handle이 없음")
         expect(split.sidebarItem.viewController is SidebarViewController, "사이드바 슬롯이 SidebarViewController가 아님")
         expect(split.inspectorItem.viewController is InspectorViewController, "인스펙터 슬롯이 InspectorViewController가 아님")
-        let tabs = split.centerController.auxiliaryItem?.viewController as? NSTabViewController
-        expect(tabs?.tabViewItems.map(\.viewController).contains { $0 is GitPanelViewController } == true, "보조 패널에 Git 패널 없음")
-        expect(tabs?.tabViewItems.map(\.viewController).contains { $0 is AgentPanelViewController } == true, "보조 패널에 에이전트 패널 없음")
-        expect(split.centerController.auxiliaryItem?.isCollapsed == true, "보조 패널이 처음에 펼쳐짐")
-        controller.toggleAuxiliaryPanel(nil)
-        let agent = projectWindow.panelsSlot.agentPanel
-        tabs?.selectedTabViewItemIndex = 1
-        window.contentView?.layoutSubtreeIfNeeded()
-        expect(agent.view.window === window && !agent.stateView.isHidden &&
-               agent.stateView.titleLabel.stringValue == AgentPanelText.disconnectedTitle &&
-               !agent.stateView.showsActionButton, "기본 Agent 탭의 미연결 안내 오류")
-        expect(agent.model.header.installedCLIs.isEmpty && agent.model.header.reportedModelName == nil &&
-               agent.headerView.cliPopUp.titleOfSelectedItem == AgentPanelText.cliPopUpLabel &&
-               agent.headerView.statusLabel.isHidden && agent.headerView.modelLabel.isHidden,
-               "기본 Agent 탭이 확인되지 않은 CLI·모델·상태를 표시함")
-        expect(!agent.canStartSession && !agent.headerView.moreButton.isEnabled &&
-               !agent.composerView.textView.isEditable && !agent.composerView.canSend &&
-               !agent.composerView.canStop && agent.composerView.placeholder.isEmpty,
-               "연결 없는 Agent 탭에 세션 동작이 노출됨")
-        agent.startAgentSession(nil)
-        agent.pumpEvents()
-        expect(window.attachedSheet == nil && agent.model.items.isEmpty && agent.rawTextView.string.isEmpty &&
-               !agent.requiresConfirmationBeforeClosing, "기본 Agent 탭이 세션 또는 종료 확인을 만듦")
-        tabs?.selectedTabViewItemIndex = 0
-        controller.toggleAuxiliaryPanel(nil)
+        // 캔버스 아래 보조 패널(Git·Agent 탭)은 없습니다(UX 명세 3.2). 창 안 어디에도 Git·에이전트 패널이 없어야 합니다.
+        expect(split.splitViewItems.count == 3 && split.centerItem.viewController === split.contentContainer,
+               "캔버스 아래에 보조 패널 분할이 남음")
+        func containsPanel(_ view: NSView?) -> Bool {
+            guard let view else { return false }
+            if view.nextResponder is GitPanelViewController || view.nextResponder is AgentPanelViewController { return true }
+            return view.subviews.contains { containsPanel($0) }
+        }
+        expect(!containsPanel(window.contentView), "창에 Git·에이전트 패널이 남음")
         expect(split.sidebarItem.topAlignedAccessoryViewControllers.contains { $0 is SidebarFilterAccessoryViewController },
                "사이드바 필터 accessory 없음")
         expect(!projectWindow.requiresConfirmationBeforeClosing, "에이전트 세션이 없는데 닫기 확인이 필요함")
