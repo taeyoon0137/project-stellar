@@ -48,7 +48,7 @@ final class ShellCanvasTextEditing {
     private(set) var focusEnded = false
     var onEnd: (() -> Void)?
     /// 창 닫기·앱 종료가 기다리는 동안, 아직 보내지 않은 문서 변경 요청을 모두 보낸 뒤 한 번 부릅니다.
-    var onDocumentChangesSent: (() -> Void)?
+    var onDocumentChangesSent: (@MainActor @Sendable () -> Void)?
 
     /// 아직 코어로 보내지 않은 문서 변경 요청이 있는지. 이미 보낸 요청은 창 session의 진행 요청으로 세어 닫기 저장이
     /// 완료를 기다립니다.
@@ -199,7 +199,7 @@ final class ShellCanvasTextEditing {
         if !accepted { fail(String(localized: "The project is busy. Try again.")); return }
         if !hasUnsentDocumentChanges, let retry = onDocumentChangesSent {
             onDocumentChangesSent = nil
-            DispatchQueue.main.async(execute: retry)
+            DispatchQueue.main.async { retry() }
         }
     }
 

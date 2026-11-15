@@ -934,7 +934,7 @@ final class ShellProjectWindow {
     /// - 편집을 끝낸 뒤 남은 요청이 문서를 바꾸지 않으면(조합 시작·갱신·취소, 새 Text의 caret만 있는 경우) 편집을 버리고
     ///   닫기를 막지 않습니다. 이미 보낸 요청은 창 session의 진행 요청이라 닫기 저장이 그 완료를 기다립니다.
     /// - 아직 보내지 않은 확정·입력·Undo가 남았으면 지금은 false이고, 그 요청을 모두 보낸 뒤 `retry`를 한 번 부릅니다.
-    func finishInputBeforeClosing(retry: (() -> Void)? = nil) -> Bool {
+    func finishInputBeforeClosing(retry: (@MainActor @Sendable () -> Void)? = nil) -> Bool {
         guard let window else { return true }
         if let editing = canvasTextEditing {
             guard !editing.input.hasMarkedText() else { return false }
@@ -959,7 +959,10 @@ final class ShellProjectWindow {
 
     /// 정상 NSWindow close 진입점. clean은 즉시 허용하고 dirty는 실제 저장 성공까지 창을 유지합니다.
     func shouldCloseAfterSaving(forQuit completion: ((Bool) -> Void)? = nil) -> Bool {
-        let retryClose: (() -> Void)? = completion == nil ? { [weak self] in self?.window?.performClose(nil) } : nil
+        var retryClose: (@MainActor @Sendable () -> Void)?
+        if completion == nil {
+            retryClose = { [weak self] in self?.window?.performClose(nil) }
+        }
         guard closeAttempt == nil, finishInputBeforeClosing(retry: retryClose) else { return false }
         guard let session = windowController.windowSession, !session.isClosed else { return true }
         guard needsSaveBeforeClosing else { return true }
