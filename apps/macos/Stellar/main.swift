@@ -18,19 +18,6 @@ if CommandLine.arguments.contains("--update-check") {
     exit(UpdateCheck.run() ? 0 : 1)
 }
 
-if let flag = CommandLine.arguments.firstIndex(of: "--canvas-culling-check") {
-    #if DEBUG || STELLAR_PROFILE
-    guard CommandLine.arguments.indices.contains(flag + 1) else {
-        FileHandle.standardError.write(Data("usage: --canvas-culling-check <project>\n".utf8))
-        exit(1)
-    }
-    exit(MainActor.assumeIsolated { ShellCanvasCullingCheck.run(path: CommandLine.arguments[flag + 1]) } ? 0 : 1)
-    #else
-    FileHandle.standardError.write(Data("--canvas-culling-check requires a Debug or STELLAR_PROFILE build\n".utf8))
-    exit(1)
-    #endif
-}
-
 #if DEBUG
 if CommandLine.arguments.contains("--visible-frames-check") {
     exit(MainActor.assumeIsolated { ShellVisibleFramesCheck.run(CommandLine.arguments) } ? 0 : 1)
