@@ -652,7 +652,7 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
   합니다. Line은 `stroke`가, 닫힌 도형은 `fill`이나 `stroke` 하나가 있어야 만듭니다. 함수 위치와 검증 규칙은
   ADR-0071 UX.1.5가 기준입니다. core는 기본 색을 정하지 않습니다. 이전에는 core가 `default_for`의 검정을 근거
   없이 썼습니다.
-- macOS 셸은 값을 사용자 앱 설정(Settings ▸ Canvas의 Default Shape Fill·Default Line Color, `UserDefaults`)에서
+- macOS 셸은 값을 사용자 앱 설정(Settings ▸ Canvas의 Default Shape Fill·Default Line Tool Color, `UserDefaults`)에서
   생성 시점에 읽고, Rectangle·Ellipse·Polygon에는 채우기만, Line에는 선 색 1px만 넘깁니다. 초기값은 채우기
   #D9D9D9, 선 #000000 1px이고 프로젝트 파일에는 기본값을 쓰지 않습니다.
   Frame 생성의 흰 배경과 Text 삽입은 이 결정의 범위가 아니어서 바꾸지 않았습니다.
