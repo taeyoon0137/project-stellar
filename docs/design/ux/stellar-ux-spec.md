@@ -1,38 +1,28 @@
 # Stellar UX 명세
 
-- 상태: 확정(1단계 구현 중). 16장 결정 항목은 2026-11-15 권장안으로 확정했습니다.
-- 작성 기준: main `cc60cbff`의 코드와 문서. 구현 기준선은 되돌림 결과 `02397601`과 그 위의 정리 수정 묶음입니다.
-- 짝 문서: 구현 WBS 초안 [ux-wbs-rows.md](ux-wbs-rows.md).
+- 상태: 초안. 사용자 결정 전입니다(16장 목록).
+- 기준: main `cc60cbff`의 코드와 문서. 구현은 정리 통합(되돌림·수정 묶음) 이후에 착수합니다.
+- 짝 문서: 구현 WBS 초안 `ux-wbs-rows.md`, 정적 시안 `stellar-ux-mockup.html`.
 
 표기
 
 | 표기 | 뜻 |
 |---|---|
 | [정의됨] | 사용자 결정, ADR, 아키텍처, 기존 명세·계획에 이미 있는 것 |
-| [제안] | 이 문서가 처음 제안하는 UI 요소. WBS 행에 들어간 것만 그 행에서 구현합니다 |
-| [결정 Un] | 16장 결정 항목. 2026-11-15 권장안으로 확정했습니다 |
+| [제안] | 이 문서가 처음 제안하는 UI 요소. 사용자가 확정하기 전에는 구현하지 않습니다 |
+| [결정 필요] | 둘 이상의 안 가운데 사용자가 골라야 하는 것. 권장안을 함께 적습니다 |
 | §n | `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`의 절 |
 | 계획 ID | `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md`의 WBS 행(예: XII.10.9) |
-| D1–D9 | 2026-11-15 사용자 결정(아래 표) |
-
-| ID | 결정 요지 |
-|---|---|
-| D1 | 제한 모드는 코드 실행(Git hook·filter, 내장 터미널, MCP·에이전트, 외부 명령, 프로젝트 밖 symlink 내용)만 막습니다. 캔버스·속성·레이어 편집과 저장은 신뢰와 상관없이 됩니다 |
-| D2 | 원본은 제한 YAML 하위 집합 `.stellar.yaml`입니다. 컴포넌트는 `design/components/`에 하나당 파일 하나, 로컬 캐시는 `.stellar/cache/`입니다. 속성은 CSS longhand 한 속성 = 한 줄입니다 |
-| D3 | Object ▸ Create Component from Selection…은 당분간 두지 않습니다 |
-| D4 | 컴포넌트는 사이드바 에셋 탭에서 찾고 캔버스로 끌어 배치합니다. 정의는 캔버스와 속성 탭에서 직접 편집하고 별도 창을 두지 않습니다 |
-| D5 | index 기록 결과가 확정되지 않으면 index를 다시 읽고, 예상과 같을 때만 CAS로 원래 상태로 복원합니다 |
-| D6 | 저장 실패·stale 상태에서 창을 닫으면 선택 sheet(다시 시도, 저장하지 않고 닫기, 취소)를 띄웁니다 |
-| D7 | Settings ▸ 캔버스에 도형 기본 채우기(`#D9D9D9`)와 선 기본 색(`#000000` 1px)을 둡니다. 앱 설정에 저장하고 코어 생성 command에 입력으로 넘깁니다 |
-| D8 | 잠긴 노드의 수정은 앱·CLI·MCP 모두 거부합니다. 잠금 해제는 명시 명령으로만 합니다 |
-| D9 | ADR 보호 경로·커밋 제목 검사는 로컬 `cargo xtask check-core`와 `.githooks/commit-msg`에서 합니다. CI에는 넣지 않습니다 |
+| D1–D9 | 2026-11-15 사용자 결정 기록 |
 
 ---
 
 ## 1. 결론
 
-지금 화면의 골격(사이드바·캔버스·인스펙터 3열, 캔버스 하단 가운데 도구 막대, 구분선 없는 블러 상단 바)은 유지하고, 바꾸는 것은 배치 원리와 흐름입니다. Stellar는 "Git에 있는 사람이 읽는 파일이 원본이고, 앱은 그 파일을 쓰는 쪽 가운데 하나"인 도구입니다. 그래서 같은 문서 값을 캔버스(모양), 속성 탭(CSS longhand), 코드 탭(CSS와 원본 텍스트) 세 가지로 보여 주고, 사람·내장 에이전트·MCP 클라이언트·CLI·Git이 만든 모든 변경을 하나의 의미 변경(`StableId + PropertyPath`)으로 모아 캔버스 윤곽, 레이어 행, 속성 행, 변경 목록 네 곳에 같은 모양으로 표시합니다. 이를 위해 캔버스 아래 보조 패널을 없애고, 왼쪽 사이드바는 레이어·에셋·변경, 오른쪽은 속성·코드·에이전트 탭으로 나누며, 창 부제목에는 브랜치와 변경 수를 늘 보여 줍니다. 만들고 다듬는 경로에는 모달을 두지 않고, 대화상자는 데이터 손실이나 권한을 고르는 순간에만 씁니다. 기능이 연결되지 않은 탭·버튼·메뉴는 보이지 않습니다. 구현은 "흐름 하나가 처음부터 끝까지 되는 것"을 단위로 하며, 순서는 걷어 내기 → 만들고 다듬기 → 앱 밖 변경 반영 → 커밋 고리 → 캔버스 위 diff → 코드 → 레이아웃 → 컴포넌트 → 에이전트 → 충돌입니다.
+지금 화면의 골격(사이드바·캔버스·인스펙터 3열, 캔버스 하단 가운데 도구 막대, 구분선 없는 블러 상단 바)은 유지하고, 바꾸는 것은 배치 원리와 흐름입니다. Stellar는 "Git에 있는 사람이 읽는 파일이 원본이고, 앱은 그 파일을 쓰는 쪽 가운데 하나"인 도구입니다. 그래서 같은 문서 값을 캔버스(모양), 속성 탭(CSS longhand), 코드 탭(CSS와 원본 텍스트) 세 가지로 보여 주고, 사람·내장 에이전트·MCP 클라이언트·CLI·Git이 만든 모든 변경을 하나의 의미 변경(`StableId + PropertyPath`)으로 모아 캔버스 윤곽, 레이어 행, 속성 행, 변경 목록 네 곳에 같은 모양으로 표시합니다. 이를 위해 Xcode 디버그 영역 모양의 캔버스 아래 보조 패널을 없애고, 왼쪽 사이드바는 레이어·에셋·변경, 오른쪽은 속성·코드·에이전트 탭으로 나누며, 창 부제목에는 브랜치와 변경 수를 늘 보여 줍니다. 만들고 다듬는 경로에는 모달을 두지 않고, 대화상자는 데이터 손실이나 권한을 고르는 순간에만 씁니다. 기능이 연결되지 않은 탭·버튼·메뉴는 보이지 않습니다. 구현은 "흐름 하나가 처음부터 끝까지 되는 것"을 단위로 하며, 순서는 걷어 내기 → 만들고 다듬기 → 앱 밖 변경 반영 → 커밋 고리 → 캔버스 위 diff → 코드 → 레이아웃 → 컴포넌트 → 에이전트 → 충돌입니다.
 
+
+**참조 범위(사용자 지시, 2026-11-15)**: Sketch·Figma는 손에 익은 **조작 관례**(도구 단축키, 선택·핸들, 캔버스 이동·확대, 레이어 다루기)만 참고합니다. 두 도구의 **UI 기조**(시각 톤·화면 구성)와 **설계 개념**(Auto Layout, 고정·채움·내용 맞춤 크기 방식, 캔버스 간격 핸들, 그들 방식의 constraints·variant 패널 등)은 쓰지 않습니다. Stellar의 레이아웃은 CSS 의미(display·flex·grid·position과 CSS 값 문법)를 그대로 드러냅니다.
 ---
 
 ## 2. UX 원칙
@@ -42,7 +32,7 @@
 **P1. 보이는 것은 모두 동작한다.** [정의됨: 사용자 지시]
 - 기능이 연결되지 않은 도구·탭·버튼·메뉴는 만들지 않습니다. 비활성 진열을 하지 않습니다.
 - 잠깐 쓸 수 없는 상태(예: 선택 없음)만 비활성으로 두고, 이유는 늘 한 가지로 도움말에 적습니다.
-- 사용자가 정의하지 않은 도구·UI를 임의로 더하지 않습니다. 이 문서의 새 요소는 [제안] 또는 [결정 Un]으로 표시하고, WBS 행에 들어간 것만 구현합니다.
+- 사용자가 정의하지 않은 도구·UI를 임의로 더하지 않습니다. 이 문서의 새 요소는 모두 [제안]입니다.
 
 **P2. 편집은 언제나 되고, 실행만 신뢰가 필요하다.** [정의됨: D1, §24.3]
 - 캔버스·속성·레이어 편집과 저장은 신뢰와 상관없이 됩니다.
@@ -53,7 +43,7 @@
 - 생성 코드를 문서로 다시 가져오는 양방향 동기화는 하지 않습니다(§4.3).
 
 **P4. 속성의 이름은 CSS다.** [정의됨: ADR-0024]
-- 이름, 값 문법, 단위, 복사 결과는 CSS longhand를 따릅니다. 조작은 디자이너식(드래그, 색 견본, 정렬 격자, preset)입니다.
+- 이름, 값 문법, 단위, 복사 결과는 CSS longhand를 따릅니다. 조작은 드래그, 색 견본, CSS 값 직접 입력·선택입니다. 정렬 격자·크기 방식 preset 같은 다른 도구의 레이아웃 추상화 위젯은 두지 않습니다.
 - 변환 손실(`approximated`, `unsupported`, `stellar-only`)을 그 속성 옆에 숨기지 않고 표시합니다(§17).
 
 **P5. 변경은 캔버스에서 읽힌다.** [§26 기반 제안]
@@ -75,7 +65,7 @@
 - 유지, 되돌리기, Stage, 커밋, Push, 잠금 해제는 사람만 실행합니다. 승인 화면의 주 내용은 Stellar가 계산한 semantic diff·검증·렌더 프리뷰이고, 에이전트 설명은 보조입니다.
 
 **P9. 손이 먼저, 패널은 뒤따른다.** [정의됨: §6, `docs/design/ui/canvas_editing.md`]
-- 크기·위치·반경·padding·gap·순서는 캔버스에서 직접 바꿀 수 있어야 하고, 속성 탭은 같은 longhand를 정밀하게 입력하는 두 번째 경로입니다.
+- 크기·위치·반경·순서는 캔버스에서 직접 바꿀 수 있어야 하고(padding·gap은 속성 탭의 CSS 값으로만), 속성 탭은 같은 longhand를 정밀하게 입력하는 두 번째 경로입니다.
 - 입력에서 Present 예약까지 10ms 계약을 지킵니다. 저장·Git·외부 반영·에이전트 출력은 입력을 막지 않습니다.
 
 **P10. 캔버스에서 멈추지 않는다.**
@@ -115,21 +105,21 @@
   - 가운데는 "지금 무엇을 만드나": 캔버스.
   - 오른쪽은 "선택한 것은 무엇이고 누가 다루나": 속성(CSS 값), 코드(같은 값의 텍스트), 에이전트(같은 문서를 편집하는 동료).
 - 이 배치는 변경을 검토하는 동안 변경 목록(왼쪽), 캔버스 윤곽(가운데), 속성의 HEAD 값(오른쪽)을 동시에 보게 합니다. 오른쪽 한 영역에 변경까지 몰아넣는 안은 이 동시 보기가 깨져 채택하지 않습니다.
-- 셸 가이드 열린 결정 O4(Git 패널 위치)는 "왼쪽 사이드바 변경 탭"으로 닫았습니다 [결정 U1].
-- 셸 가이드 O2(캔버스를 사이드바·인스펙터 아래까지 확장)는 확장 방향으로 정했습니다. 블러 상단 바, 떠 있는 도구 막대와 시각 언어가 같고, 패널을 여닫아도 캔버스 내용이 밀리지 않습니다. drawable 크기·hit test·렌더 비용이 바뀌므로 UX.3.10에서 측정해 성능 계약 안일 때 켜고, 그때 O2를 닫습니다 [결정 U2].
+- 셸 가이드 열린 결정 O4(Git 패널 위치)는 "왼쪽 사이드바 변경 탭"으로 닫는 것을 권합니다 [결정 필요 U1].
+- 셸 가이드 O2(캔버스를 사이드바·인스펙터 아래까지 확장)는 확장을 권합니다. 블러 상단 바, 떠 있는 도구 막대와 시각 언어가 같고, 패널을 여닫아도 캔버스 내용이 밀리지 않습니다. drawable 크기·hit test·렌더 비용이 바뀌므로 측정 후 확정합니다 [결정 필요 U2].
 
 ### 3.2 영역별 역할과 표시 조건
 
 | 영역 | 역할 | 보이는 조건 | 숨는 조건 | 근거 |
 |---|---|---|---|---|
 | 상단 바 앞쪽 | 사이드바 토글, 제목(프로젝트 이름), 부제목(Git 상태), 제목 문서 메뉴 | 늘 | 전체 화면에서는 시스템 규칙 | [정의됨] 블러·구분선 없음 |
-| 상단 바 뒤쪽 | 에이전트 상태 항목, 줌 메뉴, 인스펙터 토글 | 줌·토글은 늘. 에이전트 상태 항목은 세션·연결·승인 대기가 있을 때만 | 해당 없음 | 에이전트 상태 항목 [결정 U4] |
-| 왼쪽 사이드바 | 머리 줄(Page › View 팝업 또는 정의 편집 경로), 탭 3개 | 기본 보임 | 사용자가 접음, 창이 좁으면 자동으로 접힘 | 에셋 탭 [정의됨 D4], 변경 탭 [결정 U1] |
+| 상단 바 뒤쪽 | 에이전트 상태 항목, 줌 메뉴, 인스펙터 토글 | 줌·토글은 늘. 에이전트 상태 항목은 세션·연결·승인 대기가 있을 때만 | 해당 없음 | 에이전트 상태 항목 [제안 U4] |
+| 왼쪽 사이드바 | 머리 줄(Page › View 팝업 또는 정의 편집 경로), 탭 3개 | 기본 보임 | 사용자가 접음, 창이 좁으면 자동으로 접힘 | 에셋 탭 [정의됨 D4], 변경 탭 [제안 U1] |
 | 캔버스 | 편집. 위에는 임시 overlay만 | 늘 | 없음 | overlay는 렌더 산출물·내보내기에 넣지 않음 |
 | 하단 도구 막대 | 도구 10종만 | 늘. 캔버스 영역 하단 가운데, 16pt 띄움. 텍스트 편집 중에도 유지 | 없음 | [정의됨] `ShellToolBarView.swift` |
-| 도구 막대 위 한 줄 안내 | 내 조작의 즉시 결과(그릴 수 없는 곳, 잠긴 범위, 받지 않는 파일 형식) | 해당 사건 뒤 2.5초 | 시간이 지나거나 다음 입력 | [결정 U5] |
-| 오른쪽 영역 | 탭 3개: 속성(기본), 코드, 에이전트 | 기본 보임 | 사용자가 접음 | 코드·에이전트 탭 [결정 U12·U13] |
-| 캔버스 아래 보조 패널 | 없앰 | — | — | [결정 U1], 셸 가이드 2.4 "초기 릴리스에 노출하지 않음" |
+| 도구 막대 위 한 줄 안내 | 내 조작의 즉시 결과(그릴 수 없는 곳, 잠긴 범위, 받지 않는 파일 형식) | 해당 사건 뒤 2.5초 | 시간이 지나거나 다음 입력 | [제안 U5] |
+| 오른쪽 영역 | 탭 3개: 속성(기본), 코드, 에이전트 | 기본 보임 | 사용자가 접음 | 코드·에이전트 탭 [제안 U12·U13] |
+| 캔버스 아래 보조 패널 | 없앰 | — | — | 셸 가이드 2.4 "초기 릴리스에 노출하지 않음" |
 
 - 탭은 기능이 연결된 뒤에만 생깁니다. 정리 통합 직후에는 왼쪽 "레이어"만, 오른쪽 "속성"만 있을 수 있습니다. 탭이 하나뿐이면 탭 줄을 그리지 않습니다.
 - 사이드바와 오른쪽 영역의 기본 너비는 320pt입니다. 기존 Git 패널이 320pt 폭으로 설계되어 사이드바 탭에 그대로 들어갑니다(`docs/design/ui/git_panel.md` 2장).
@@ -139,9 +129,9 @@
 **앞쪽**
 - 사이드바 토글 [정의됨].
 - 제목은 프로젝트 이름입니다. 앱 이름은 넣지 않습니다.
-- 제목을 누르면 문서 메뉴가 열립니다. 항목은 Finder에서 보기, 프로젝트 신뢰…(제한 모드일 때) 또는 신뢰 철회(신뢰했을 때), 프로젝트 닫기입니다. 지금 툴바 "…" 메뉴의 항목을 옮기고, 신뢰 부여 항목을 늘 둡니다.
+- 제목을 누르면 문서 메뉴가 열립니다. 항목은 Finder에서 보기, 프로젝트 신뢰…(제한 모드일 때) 또는 신뢰 철회(신뢰했을 때), 프로젝트 닫기입니다. 지금 툴바 "…" 메뉴의 항목을 옮기고, 신뢰 부여 항목을 늘 둡니다(audit F2 해소).
 
-**부제목: Git 상태 문법** [결정 U4]
+**부제목: Git 상태 문법** [제안 U4]
 
 부제목은 누를 수 없는 표시입니다. `NSWindow` 부제목은 컨트롤이 아니므로 동작은 변경 탭, Git 메뉴, 제목 문서 메뉴에 둡니다.
 
@@ -161,7 +151,7 @@
 - 제한 모드에서 브랜치 이름을 Git 실행 없이 `.git/HEAD`에서 읽어 보여 줄 수 있는지는 확인하지 못했습니다(17장).
 
 **뒤쪽**
-- 에이전트 상태 항목 [결정 U4]: 세션 진행, 승인 대기 수, 외부 MCP 연결 수. 누르면 에이전트 탭을 엽니다(툴바 항목이므로 컨트롤).
+- 에이전트 상태 항목 [제안 U4]: 세션 진행, 승인 대기 수, 외부 MCP 연결 수. 누르면 에이전트 탭을 엽니다(툴바 항목이므로 컨트롤).
 - 줌 메뉴, 인스펙터 토글 [정의됨].
 - 뒤로·앞으로와 프로젝트 검색은 삭제합니다. 기능이 생길 때 다시 설계합니다.
 - Git 동작 버튼은 툴바에 넣지 않습니다(셸 가이드 6.1).
@@ -175,7 +165,7 @@
 | 선택이 바뀜 | 속성 탭은 해당 종류의 섹션만 보여 줍니다. 코드 탭은 선택을 따라 갱신합니다. 변경 탭은 해당 객체 행을 강조합니다. **다른 탭으로 자동 전환하지 않습니다** |
 | 드래그·크기 조절·회전·scrub 중 | 속성 탭은 값만 실시간으로 바꾸고 섹션 구성은 제스처가 끝날 때까지 고정합니다 |
 | 텍스트 편집에 들어감 | 속성 탭이면 Typography 섹션을 펼치고 보이는 위치로 스크롤합니다 |
-| flex·grid container Frame 선택 | 캔버스에 padding·gap 핸들이 나타납니다(XII.10.25) |
+| flex·grid container Frame 선택 | 속성 탭의 Layout·Spacing 섹션이 CSS 값 그대로 보입니다. 캔버스 간격 핸들은 두지 않습니다 |
 | 2개 이상 선택 | Position 섹션 머리에 정렬·분배 줄이 나타납니다(XII.10.21이 연결된 뒤) |
 | 인스턴스 선택 | 공개 Property·Slot 섹션이 맨 위에 옵니다 |
 | 정의 편집에 들어감 | 사이드바 머리 줄이 `Home › Button 정의 [완료]`로 바뀝니다. 에셋 탭의 해당 행이 강조됩니다 |
@@ -193,24 +183,24 @@
 | sheet | 저장 실패·stale 상태에서 창 닫기: "다시 시도" / "저장하지 않고 닫기" / "취소" | [정의됨] D6 |
 | sheet | 되돌릴 수 없는 작업 확인(사용처가 있는 컴포넌트 삭제 등) | [정의됨] HIG |
 | sheet | 신뢰 확인, 에이전트 첫 사용 고지, 에이전트의 commit·push 개별 확인, MCP 첫 연결 승인 | [정의됨] ADR-0005 §3·§4.5, XIX.3.3 |
-| 도구 막대 위 한 줄 안내 | 내 조작의 즉시 결과 | [결정 U5] |
+| 도구 막대 위 한 줄 안내 | 내 조작의 즉시 결과 | [제안 U5] |
 | 탭 머리 줄 | 그 탭 작업의 결과·실패·진행(커밋함 `a1b2c3d`, Push 실패 이유, 외부 변경 반영 N개) | [제안] |
-| 부제목 | 지속 상태(3.3절) | [결정 U4] |
-| 캔버스 overlay | 변경 윤곽, 잠금 윤곽, 짧은 강조 | [결정 U15] |
+| 부제목 | 지속 상태(3.3절) | [제안 U4] |
+| 캔버스 overlay | 변경 윤곽, 잠금 윤곽, 짧은 강조 | [제안 U15] |
 
 - 쓰지 않는 것: NSAlert 연쇄, 확인 버튼 하나뿐인 막다른 alert, 캔버스 위 토스트.
 - 한 줄 안내와 탭 머리 줄의 문구는 같은 내용을 VoiceOver에도 알립니다(12장).
 
 ### 3.6 메뉴 막대
 
-- 순서: 앱, File, Edit, View, Insert, Object, Git [결정 U16, 셸 가이드 O8], Window, Help.
+- 순서: 앱, File, Edit, View, Insert, Object, Git [제안 U16, 셸 가이드 O8], Window, Help.
 - 모든 항목은 실제로 동작합니다. 지금 영구 비활성인 항목(약 26개)은 지우고, 해당 기능 행이 들어올 때 메뉴를 함께 추가합니다.
 - Git 메뉴 [제안]: 변경 보기, 커밋(변경 탭 포커스에서 ⌘↩), Push, 다음 충돌로 이동, 상태 새로 고침, 프로젝트 신뢰…. 툴바에 두지 않는 Git 동작이 메뉴에는 모두 있어야 합니다(HIG, `git_panel.md`).
 - View 메뉴: 사이드바·인스펙터 토글, 탭 전환 항목, 줌, "변경 윤곽 늘 보기"·"에이전트 출처 윤곽 보기" 토글, 스냅 토글(XII.10.17).
 - Help: 도움말 콘텐츠가 생기기 전에는 Stellar Help 항목을 두지 않습니다.
-- 탭 전환 단축키 [결정 U17]: 오른쪽 영역은 macOS 인스펙터 관례인 ⌥⌘1–3입니다. 왼쪽 탭 단축키는 지금 배정하지 않고, 왼쪽에 탭이 둘 이상 연결되는 행(UX.5.2)에서 정합니다(후보 ⌘1–3).
+- 탭 전환 단축키 [결정 필요 U17]: 오른쪽 영역은 macOS 인스펙터 관례인 ⌥⌘1–3을 권합니다. 왼쪽은 ⌘1–3이 후보지만 IDE 내비게이터 배정과 같아서 사용자 확인이 필요합니다.
 
-### 3.7 상태 표시 공용 사전 [결정 U15 일부]
+### 3.7 상태 표시 공용 사전 [제안 U15 일부]
 
 모든 영역이 같은 모양을 씁니다. 색만으로 구분하지 않고 글리프 모양으로도 구분합니다. 색은 ShellTheme가 정하고(셸 가이드 O9), 글리프는 SF Symbols에서 고르며 이름은 구현 행에서 정합니다.
 
@@ -238,8 +228,8 @@
 
 1. 시작 창에서 새 프로젝트, 열기, Clone 가운데 하나를 고르거나 최근 항목을 엽니다.
 2. 새 프로젝트는 시작 창 안의 sheet에서 이름과 위치를 받습니다. Stellar가 `git init -b main`, 기본 파일 생성, 최초 커밋을 합니다(§25.1).
-3. Git identity가 없으면 대화상자를 따로 띄우지 않고 같은 sheet 안에 이름·이메일 필드를 보여 줍니다. 이미 설정돼 있으면 값만 읽어 표시합니다. 저장 범위는 저장소 설정(`.git/config`)입니다 [결정 U9]. §24.3의 "Stellar의 신뢰 등록은 Git 전역 설정을 변경하지 않는다"와 같은 정신입니다.
-4. Stellar가 새로 만든 폴더는 만들 때 신뢰 목록에 등록합니다 [결정 U8]. 남이 넣은 hook이 없기 때문입니다. Clone·열기로 연 폴더는 제한 모드로 시작하고, 편집과 이미지 표시는 그대로 됩니다. 이 등록은 §24.3("처음 여는 프로젝트는 제한 모드")의 예외라 ADR-0073 결정 10에 기록했고, §24.3 문구 개정(UX.0.3) 뒤 UX.5.9에서 적용합니다. 그 전까지는 새 프로젝트도 제한 모드로 열립니다.
+3. Git identity가 없으면 대화상자를 따로 띄우지 않고 같은 sheet 안에 이름·이메일 필드를 보여 줍니다. 이미 설정돼 있으면 값만 읽어 표시합니다. 저장 범위는 저장소 설정(`.git/config`)을 권합니다 [결정 필요 U9]. §24.3의 "Stellar의 신뢰 등록은 Git 전역 설정을 변경하지 않는다"와 같은 정신입니다.
+4. Stellar가 새로 만든 폴더는 만들 때 신뢰 목록에 등록하는 것을 권합니다 [결정 필요 U8]. 남이 넣은 hook이 없기 때문입니다. Clone·열기로 연 폴더는 제한 모드로 시작하고, 편집과 이미지 표시는 그대로 됩니다.
 5. 창이 열리면 Page 1의 View(root Frame)가 화면에 맞춰 보이고 Move 도구가 선택돼 있습니다. 부제목은 `main · 변경 없음`입니다.
 6. 레이어 빈 상태는 다음 행동을 키로 안내합니다: "F로 Frame, R로 사각형, T로 텍스트를 그립니다". 새 버튼은 만들지 않습니다.
 7. 첫 실행이면 `stellar` 명령 설치를 제안합니다. helper가 번들된 뒤에만 보여 줍니다(ADR-0005 §7, XXIV.5).
@@ -255,15 +245,15 @@
 5. Option 드래그는 복제, 화살표는 1px, Shift+화살표는 10px 이동입니다(최종값은 XII.10.2 ADR). 각 단계는 Undo 한 번입니다.
 6. 저장은 자동입니다(§22.1). flush 뒤 부제목이 `main · 변경 1`이 되고 레이어 행에 추가 배지가 붙습니다.
 
-완료 기준: Frame·Rectangle·Ellipse·Line·Polygon·Text·Image 모두 속성 탭에 속성이 나오고, 크기·색·반경을 바꿀 수 있으며, 모두 Undo가 됩니다.
+완료 기준: Frame·Rectangle·Ellipse·Line·Polygon·Text·Image 모두 속성 탭에 속성이 나오고(audit F9), 크기·색·반경을 바꿀 수 있으며, 모두 Undo가 됩니다.
 
 ### 흐름 3. 앱 밖의 변경 받기
 
 대상은 `stellar apply`, 텍스트 편집기, `git checkout`·`git pull`, 파일을 직접 고친 CLI 에이전트입니다. 이 흐름은 Git UI와 에이전트 UI의 전제라서 그보다 먼저 구현합니다.
 
 1. 파일 감시가 변경을 잡고 해석·검증합니다(§22.5). 유효하지 않으면 반영하지 않고, 변경 탭 머리(탭이 없으면 도구 막대 위 한 줄 안내)에 "파일·줄·원인"과 "편집기에서 열기"를 보여 줍니다. 캔버스는 그대로 둡니다.
-2. 이 창에 미저장 편집이 없으면 외부 Snapshot을 Synthetic Command 하나로 적용합니다. Undo 메뉴에 "외부 변경 반영 실행 취소"가 생기고, 바뀐 노드에 짧은 윤곽 강조가 나옵니다. 지금 계획 XIII.3.1은 clean 창에서 다시 읽고 history를 버리는데, §22.5의 Synthetic Command 경로로 바꿉니다(계획 개정 UX.0.3).
-3. 미저장 편집이 있으면 XIII.3.4 reconciliation이 연결되기 전까지는 두 선택지 sheet("이 창의 버전으로 저장" / "디스크 버전 불러오기")를 띄웁니다 [결정 U20]. 지금의 확인 버튼 하나뿐인 alert보다 낫고, reconciliation이 들어오면 겹치지 않는 변경은 자동 반영, 의미 충돌은 흐름 9로 보냅니다(XXIV.4.6).
+2. 이 창에 미저장 편집이 없으면 외부 Snapshot을 Synthetic Command 하나로 적용합니다. Undo 메뉴에 "외부 변경 반영 실행 취소"가 생기고, 바뀐 노드에 짧은 윤곽 강조가 나옵니다. 지금 계획 XIII.3.1은 clean 창에서 다시 읽고 history를 버리는데, §22.5의 Synthetic Command 경로로 바꾸는 것을 권합니다(계획 개정 필요).
+3. 미저장 편집이 있으면 XIII.3.4 reconciliation이 연결되기 전까지는 두 선택지 sheet("이 창의 버전으로 저장" / "디스크 버전 불러오기")를 띄웁니다 [결정 필요 U20]. 지금의 확인 버튼 하나뿐인 alert(audit F16)보다 낫고, reconciliation이 들어오면 겹치지 않는 변경은 자동 반영, 의미 충돌은 흐름 9로 보냅니다(XXIV.4.6).
 4. 드래그·텍스트 입력 같은 제스처가 진행 중이면 끝난 뒤 반영합니다. 선택은 StableId로, 포커스와 카메라는 그대로 보존합니다.
 5. checkout처럼 많은 경로가 바뀌면 완성된 Snapshot 단위로 한 번에 전환하고 부제목의 브랜치를 갱신합니다.
 6. 출처: writer 종류(앱 창이 아닌 쓰기)는 generation에 기록된 값을 씁니다. headless 쓰기와 직접 파일 편집에는 행 단위 영구 출처 표시를 두지 않고, 이 세션 동안의 '외부' 표시만 둡니다(ADR-0005 §4.2). 강한 통제가 필요하면 에이전트 탭에서 attached MCP 경로를 안내합니다.
@@ -277,7 +267,7 @@
 3. 객체 행을 누르면 캔버스와 레이어에서 그 객체가 선택되고, 화면 밖이면 보이는 위치로 옮깁니다. 다른 View에 있으면 그 View로 전환합니다. 속성 탭의 해당 행에는 HEAD 값이 함께 보입니다. 탭은 바뀌지 않습니다.
 4. "커밋에 포함" 체크가 곧 Stage입니다(P7). 처음에는 원본 단위(파일)만 체크할 수 있고, 객체·속성 단위는 텍스트 원본의 의미 Stage가 연결된 뒤 엽니다(8.3절).
 5. 함께 들어가야 하는 변경이 있으면 행 아래에 "관련 변경 2개도 포함해야 합니다: 이유 · [함께 포함] [취소]"가 inline으로 나타납니다. 자동으로 포함하지 않습니다(`git_panel.md` "자동 포함 없음").
-6. 맨 위 메시지 칸에 쓰고 [커밋]을 누릅니다(⌘↩). 커밋 직전에 미저장 편집을 flush합니다. identity가 없으면 같은 자리에 이름·이메일 줄이 나옵니다.
+6. 맨 위 메시지 칸에 쓰고 [커밋](⌘↩)을 누릅니다. 커밋 직전에 미저장 편집을 flush합니다. identity가 없으면 같은 자리에 이름·이메일 줄이 나옵니다.
 7. 커밋하면 포함됐던 객체의 윤곽이 사라지고, 포함하지 않은 변경은 남습니다. 탭 머리에 "커밋함 `a1b2c3d`"가 한 줄 보입니다.
 8. 보낼 커밋이 있으면 탭 머리에 [Push]가 나타납니다. 이미 등록된 remote로만 보내고 강제 Push는 없습니다. 거부되면 Git 메시지를 그 자리에 보여 주고, 앱에 Pull이 없는 동안은 "터미널에서 pull 후 다시 Push"라고 안내합니다.
 
@@ -291,15 +281,15 @@
 4. 원본 구획에 이 노드가 저장된 파일 경로와 해당 줄, [Finder에서 보기], [편집기에서 열기]가 있습니다. View 원본이 텍스트로 전환된 뒤(V.10.7)에는 HEAD 대비 추가·삭제 줄도 보여 줍니다. PR에서 리뷰어가 볼 모습입니다.
 5. 개발자는 PR에서 한 줄에 속성 하나인 `.stellar.yaml` diff를 같은 이름으로 읽습니다(ADR-0059).
 
-완료 기준: CLI·UUID·jq 없이 선택한 것의 CSS와 Frame HTML을 앱에서 얻습니다.
+완료 기준: CLI·UUID·jq 없이 선택한 것의 CSS와 Frame HTML을 앱에서 얻습니다(audit F23).
 
 ### 흐름 6. 레이아웃 구성(CSS flex·grid)
 
-선행: IX.11.6 레이아웃 record, IX.11.7 sizing preset.
+선행: IX.11.6 레이아웃 record.
 
-1. Frame을 고르고 Layout 섹션에서 `display`를 `flex`로 바꿉니다. `flex-direction`, 3×3 정렬 격자(`justify-content` + `align-items`), `row-gap`·`column-gap`, `padding`을 정합니다. 같은 값을 캔버스 padding·gap 핸들로도 바꿉니다.
-2. 도형을 flex Frame 안으로 끌면 삽입선이 보이고 형제가 비켜 줍니다. 놓으면 순서가 정해집니다(XII.10.24).
-3. 자식의 크기 방식 preset(고정·채움·내용 맞춤)을 고르면 실제로 설정된 longhand가 옆에 흐린 글씨로 보입니다. 예: `width: fit-content`, `flex: 1 1 0px`.
+1. Frame을 고르고 Layout 섹션에서 `display`를 `flex`로 바꿉니다. `flex-direction`, `justify-content`, `align-items`, `row-gap`·`column-gap`, `padding-*`을 CSS 값으로 정합니다(각각 한 행, CSS 키워드 선택 또는 값 입력).
+2. 도형을 flex Frame 안으로 끌면 삽입 위치 선이 보이고, 놓으면 그 위치로 순서가 정해집니다(XII.10.24). 레이아웃 결과는 놓은 뒤 CSS 계산 결과로만 바뀝니다.
+3. 자식의 `width`·`height`·`flex`를 CSS 값으로 직접 입력하거나 고릅니다(예: `320px`, `100%`, `fit-content`, `flex: 1 1 0px`). 고정·채움·내용 맞춤 같은 별도 크기 방식 개념은 두지 않습니다.
 
 완료 기준: flex 카드 하나를 캔버스와 속성 탭만으로 완성합니다.
 
@@ -307,7 +297,7 @@
 
 1. 에셋 탭의 [+]를 누르면 목록에 새 행이 이름 편집 상태로 생기고, Return으로 확정합니다(NSAlert 아님). `design/components/` 아래에 파일 하나가 생깁니다(D2).
 2. 바로 정의 편집으로 들어갑니다. 캔버스에는 정의의 root Frame만 보이고, 사이드바 머리 줄은 `Home › Button 정의 [완료]`입니다. 속성 탭 머리에는 "편집 대상: Button 정의"가 보입니다.
-3. 평소처럼 그리고 다듬습니다. 일반 Command라 같은 Undo 흐름에 들어갑니다. 정의 편집 중 속성 행 문맥 메뉴 "인스턴스에서 바꿀 수 있게 공개"로 Component Property를 만듭니다 [결정 U21].
+3. 평소처럼 그리고 다듬습니다. 일반 Command라 같은 Undo 흐름에 들어갑니다. 정의 편집 중 속성 행 문맥 메뉴 "인스턴스에서 바꿀 수 있게 공개"로 Component Property를 만듭니다 [결정 필요 U21].
 4. [완료]나 Escape를 누르면 원래 View와 카메라 위치로 돌아갑니다.
 5. 에셋 행을 캔버스로 끌면 포인터 아래 Frame이 부모로 강조되고, 놓은 자리에 인스턴스가 생깁니다. flow container 위라면 삽입선 위치에 들어갑니다. Undo 한 번입니다.
 6. 인스턴스를 고르면 속성 탭 맨 위에 "Button 인스턴스"와 공개 Property·Slot이 나옵니다. override한 행은 표시되고 행마다 되돌릴 수 있습니다. 공개되지 않은 필드는 이유와 함께 비활성이고 "정의 편집" 링크가 붙습니다. Detach는 문맥 메뉴의 명시적 동작입니다(§15.1).
@@ -363,16 +353,16 @@
 | Rectangle | R | 기본 크기로 생성 | Shift 정비례, Option 중심 기준 | D7 기본 채우기·선 |
 | Ellipse | O | 같음 | 같음(Shift는 원) | 같음 |
 | Line | L | 없음 | 시작점에서 끝점. Shift는 45° 단위 | 끝점 핸들 2개 |
-| Polygon | P [결정 U6] | 기본 크기로 생성 | 영역 크기로 생성 | 변 수는 속성 탭. Pen이 빠지면 P가 비고, 지금 접근성 도움말도 P를 안내함 |
+| Polygon | P [결정 필요 U6] | 기본 크기로 생성 | 영역 크기로 생성 | 변 수는 속성 탭. Pen이 빠지면 P가 비고, 지금 접근성 도움말도 P를 안내함 |
 | Text | T | 자동 폭 텍스트를 만들고 바로 입력 | 고정 폭 텍스트 | 조합 입력 유지. Escape로 나오면 선택 상태 |
-| Image | ⇧⌘K | 고르는 즉시 파일 선택 [결정 U11] → 클릭은 원래 크기, 드래그는 그 크기로 배치 | 같음 | Finder 끌어 놓기·붙여넣기도 같은 경로 |
+| Image | ⇧⌘K | 고르는 즉시 파일 선택 [결정 필요 U11] → 클릭은 원래 크기, 드래그는 그 크기로 배치 | 같음 | Finder 끌어 놓기·붙여넣기도 같은 경로 |
 | Hand | H | 없음 | 화면 이동 | Space를 누르는 동안 임시 전환 |
 | Zoom | Z | 확대, Option은 축소 | 영역 맞춤 | 핀치, ⌘ 스크롤과 함께 씀 |
 
-- Pen은 사용자가 정의하지 않은 도구라 삭제합니다(작성 기준 main `CanvasTool.swift` 14행 `case pen`, 65행 키 `p`). 되돌림 기준선 `02397601`에는 Pen이 이미 없고, 계획 XII.10.1은 10종, XII.10.29는 펜 도구 부분을 뺀 Path 벡터 편집 모드입니다.
+- Pen은 사용자가 정의하지 않은 도구라 삭제합니다(main `CanvasTool.swift` 14행 `case pen`, 65행 키 `p`). 정리 통합에서 처리되며, 계획 XII.10.1의 "11종"과 XII.10.29(펜 도구 행)도 함께 고칩니다.
 - 막대 안은 그룹 사이를 간격으로만 나눕니다: 선택(Move) · 컨테이너(Frame) · 도형(Rectangle·Ellipse·Line·Polygon) · 내용(Text·Image) · 시점(Hand·Zoom) [제안]. 도형 4종을 한 칸으로 묶지 않습니다. 새 UI이고 10칸이면 충분합니다.
 - 단일 키는 캔버스에 포커스가 있을 때만 해석합니다(기존 `CanvasToolShortcut` 규칙).
-- 정리 통합 직후 확인할 것: 작성 기준 main에서는 Ellipse·Line·Polygon 생성이 runtime에 없었습니다. 기준선 `02397601`의 `CanvasItem`(`crates/runtime/src/app/frame_insert.rs`)은 Frame·Shape(Rectangle·Ellipse·Line·Polygon)·Text입니다. "10종 모두 반응"은 UX.0.1에서 확인하고, 모자라면 조건부 행 UX.1.5로 처리합니다.
+- 정리 통합 직후 확인할 것: main에서는 Ellipse·Line·Polygon 생성이 runtime에 없습니다(`crates/runtime/src/app/frame_insert.rs`의 `CanvasItem`은 Frame·Rectangle·Text). 정리 통합이 "10종 모두 반응"을 만족하지 못했으면 조건부 행 UX.1.5로 처리합니다.
 
 ### 5.2 생성 위치 규칙
 
@@ -383,8 +373,8 @@
 
 - 이유: 지금 문서 모델은 View 하나가 root Frame을 정확히 하나 가지고(`crates/document/src/definitions.rs`), 창 탭마다 active View 하나만 렌더합니다. 코어에 View·Page 추가 Command도 없습니다.
 - 새 화면(View)은 사이드바 머리 줄 Page › View 팝업의 "새 View"로 만듭니다. 코어 Command가 생긴 뒤에만 이 항목을 보입니다(UX.12).
-- "한 Page에 View 여러 개를 나란히 렌더하고 빈 캔버스에 Frame을 그리면 새 View"는 별도 ADR 후보로 남깁니다 [결정 U7]. 도형마다 작은 View를 자동으로 만드는 안은 Git 원본에 잡음을 쌓아 채택하지 않습니다.
-- 지금은 root 밖 드래그에 아무 반응이 없습니다. 반응 없는 상태를 없애는 것이 목적입니다.
+- "한 Page에 View 여러 개를 나란히 렌더하고 빈 캔버스에 Frame을 그리면 새 View"는 별도 ADR 후보입니다 [결정 필요 U7]. 도형마다 작은 View를 자동으로 만드는 안은 Git 원본에 잡음을 쌓아 채택하지 않습니다.
+- 지금은 root 밖 드래그에 아무 반응이 없습니다(audit F6). 반응 없는 상태를 없애는 것이 목적입니다.
 
 ### 5.3 선택
 
@@ -393,7 +383,7 @@
 - 빈 곳에서 드래그하면 영역 선택이고, Option 영역 선택은 완전히 포함된 것만 고릅니다(XII.10.6).
 - Tab·Shift-Tab은 형제 사이, Return·Shift-Return은 자식·부모 사이를 오갑니다.
 - 마우스를 올리면 캔버스와 레이어 양쪽에 윤곽을 보입니다(XII.10.7).
-- Text·Image도 드래그로 옮깁니다.
+- Text·Image도 드래그로 옮깁니다(audit F10).
 - 잠근 노드는 캔버스에서 선택되지 않고 레이어에서는 선택됩니다. 에이전트가 잠근 범위는 선택할 수 있지만 편집할 수 없습니다.
 
 ### 5.4 핸들과 바뀌는 longhand
@@ -404,7 +394,6 @@
 | 크기 조절 핸들 8개 | `width`·`height`(고정으로 전환). Shift 비율 유지, Option 중심 기준 | XII.10.9 |
 | 회전(모서리 바깥) | `rotate`. Shift는 15° 단위 | XII.10.10 |
 | 반경(모서리 안쪽) | `border-*-radius`. Option은 그 모서리만 | XII.10.11 |
-| padding·gap 핸들 | `padding-*`, `row-gap`·`column-gap` | XII.10.25 |
 | Text 폭 핸들 | `width` 고정, 높이는 자동 | XII.10.33 |
 | Line 끝점 | 끝점 좌표 | XII.10.26 |
 
@@ -420,8 +409,8 @@
 
 ### 5.6 카메라·문맥 메뉴·클립보드
 
-- 핀치, ⌘ 스크롤, 두 손가락 팬, Space 드래그, ⌘+·⌘-(확대·축소), ⌘0(실제 크기), ⌘9(맞춤)을 둡니다(XII.10.36·10.37, `tools_menus.md` 6.1). 카메라 조작은 history에 넣지 않습니다.
-- 우클릭 문맥 메뉴에는 실제로 구현된 명령만 넣고 메뉴 막대와 같은 `ShellCommand`를 씁니다(XII.10.39). 구현 순서대로 채웁니다: 잘라내기·복사·붙여넣기·복제·삭제, 순서, 숨기기·잠금, CSS로 복사, 변경 탭에서 보기, HEAD 값으로 되돌리기 [결정 U14], 정의 편집(인스턴스).
+- 핀치, ⌘ 스크롤, 두 손가락 팬, Space 드래그, ⌘+ ⌘- ⌘0을 둡니다(XII.10.36·10.37). 카메라 조작은 history에 넣지 않습니다.
+- 우클릭 문맥 메뉴에는 실제로 구현된 명령만 넣고 메뉴 막대와 같은 `ShellCommand`를 씁니다(XII.10.39). 구현 순서대로 채웁니다: 잘라내기·복사·붙여넣기·복제·삭제, 순서, 숨기기·잠금, CSS로 복사, 변경 탭에서 보기, HEAD 값으로 되돌리기 [제안 U14], 정의 편집(인스턴스).
 - 클립보드는 XII.10.38을 따르고, CSS 텍스트를 붙여 넣으면 선택 노드에 longhand로 펼쳐 한 번에 적용합니다(IX.11.15).
 
 ### 5.7 Undo 단위 [정의됨: §23.3]
@@ -440,7 +429,7 @@
 2. 마우스 올림 윤곽
 3. 스냅 가이드·측정
 4. 충돌 배지
-5. 변경 윤곽(변경 탭이 열려 있을 때 또는 "변경 윤곽 늘 보기") [결정 U15]
+5. 변경 윤곽(변경 탭이 열려 있을 때 또는 "변경 윤곽 늘 보기") [제안 U15]
 6. 에이전트 잠금 윤곽(점선, 잠금 글리프, 세션 이름)
 7. 에이전트 출처 윤곽(View 메뉴 토글)
 
@@ -458,7 +447,7 @@
 │ 편집 대상: 기본                               │  View Variant·상태, 정의/인스턴스
 ├──────────────────────────────────────────────┤
 │ Position   left 24px      top 96px         ● │  ● = HEAD와 다름(마우스 올림: HEAD 값)
-│ Size       width 320px    height 200px [고정▾]│  preset 옆에 실제 longhand를 흐리게
+│ Size       width 320px    height 200px       │  값은 CSS 값 그대로 입력·선택
 │ Border     border-radius 12px            ▸   │  펼치면 4모서리 longhand
 │ Fill       fill ■ #3366FF  100%            ● │  늘 있는 행(없음이면 "없음")
 │ Stroke     stroke 없음                       │
@@ -472,16 +461,16 @@
 - "편집 대상" 줄: 값을 어디에 쓰는지(View Variant·상태, 컴포넌트 정의·인스턴스)를 늘 보여 줍니다(§15.3, §16).
 - 출처·잠금 줄은 해당될 때만: "에이전트 세션 1이 바꿈 · 검토 대기", "잠김: 에이전트 세션 1 · 중지".
 
-**선택이 없을 때**: 현재 Page 요약과 자주 쓰는 키 안내만 보여 줍니다. 편집 필드는 두지 않습니다. 선택이 있는데 "No Selection"이 나오는 지금 동작은 없앱니다.
+**선택이 없을 때**: 현재 Page 요약과 자주 쓰는 키 안내만 보여 줍니다. 편집 필드는 두지 않습니다. 선택이 있는데 "No Selection"이 나오는 지금 동작(audit F9)은 없앱니다.
 
 ### 6.2 섹션 [정의됨: `docs/design/property_model.md` 12장, IX.11.17]
 
 | 섹션 | 대표 행 | 대상 |
 |---|---|---|
 | Layer | 이름, 표시, 잠금 | 모든 노드 |
-| Layout | `display`, `flex-direction`, 정렬 격자(`justify-content` + `align-items`), `flex-wrap`, `grid-template-*` | container Frame(IX.11.6 뒤) |
+| Layout | `display`, `flex-direction`, `justify-content`, `align-items`, `flex-wrap`, `grid-template-*` | container Frame(IX.11.6 뒤) |
 | Position | `left`, `top`, `position`, `align-self`. 부모 없는 Frame은 "캔버스 위치(Stellar 전용)" | 부모가 있는 노드, root Frame |
-| Size | `width`, `height` + 크기 방식 preset, `min-*`, `max-*`, `aspect-ratio` | Frame, Shape, Image, Text |
+| Size | `width`, `height`, `min-*`, `max-*`, `aspect-ratio` | Frame, Shape, Image, Text |
 | Spacing | `padding`(펼치면 4변), `row-gap`, `column-gap` | container Frame |
 | Overflow | `overflow`, `clip-path` | Frame |
 | Typography | `font-family`, `font-size`, `font-weight`, `line-height`, `letter-spacing`, `text-align`, `color` | Text |
@@ -497,13 +486,13 @@
 - 행은 코어가 받는 PropertyKey가 있는 것만 보입니다. 키가 없는 속성은 숨기고, 키가 생기면(IX.11.3, IX.11.22) 행이 나타납니다.
 - 칠하기와 선은 "+로 modifier 추가" 단계 없이 늘 있는 행입니다. 새 도형은 D7 기본값을 갖고 생기므로 행이 늘 채워져 있습니다. Shape 칠하기의 CSS 대응 이름은 property_model 6장에서 확정합니다(17장).
 
-### 6.3 레이블 [결정 U3, 속성 모델 O9]
+### 6.3 레이블 [결정 필요 U3, 속성 모델 O9]
 
-확정안: 행 레이블은 CSS 속성 이름입니다.
+권장안: 행 레이블은 CSS 속성 이름입니다.
 - 소문자 CSS 이름(`width`, `background-color`)을 시스템 글꼴로 씁니다. 고정폭 글꼴은 쓰지 않습니다. IDE처럼 보이는 것을 피하기 위해서입니다.
 - longhand가 여럿인 값은 shorthand 이름 한 행(`padding`, `border-radius`, `border`)으로 묶고, 펼치면 longhand 행이 됩니다. 값 필드 안의 작은 위치 글리프로 변·모서리를 구분해 폭 압박을 줄입니다.
 - 툴팁에는 쉬운 설명("요소의 가로 크기"), longhand 이름, Target 진단을 둡니다.
-- 채택하지 않은 대안: property_model 12장의 이전 문구(사람이 읽는 레이블 + CSS 이름은 툴팁·복사·접근성 도움말). "CSS 이름으로 보기" 같은 전환 토글은 새 UI라 두지 않습니다.
+- 대안: property_model 12장의 지금 문구(사람이 읽는 레이블 + CSS 이름은 툴팁·복사·접근성 도움말). "CSS 이름으로 보기" 같은 전환 토글은 새 UI라 두지 않습니다.
 
 ### 6.4 값 입력
 
@@ -511,11 +500,11 @@
 - shorthand를 입력하면 longhand로 펼쳐 한 번에 적용하고 Undo 한 번입니다(property_model 11장).
 - 레이블을 좌우로 끌면 값이 바뀝니다(scrub). 위·아래 화살표는 ±1, Shift를 함께 누르면 ±10입니다.
 - Return은 적용, Escape는 취소 후 캔버스로, Tab은 다음 필드입니다.
-- 늘 붙어 있는 `NSStepper`는 없애고 scrub과 화살표로 대신합니다 [결정 U10]. 화살표 키 경로는 반드시 남깁니다.
+- 늘 붙어 있는 `NSStepper`는 없애고 scrub과 화살표로 대신합니다 [결정 필요 U10]. 화살표 키 경로는 반드시 남깁니다.
 - 잘못된 값은 적용하지 않고 행 아래 한 줄 진단(`unsupported-unit` 등)으로 보여 줍니다.
 - 여러 개를 고르고 값이 다르면 "혼합"입니다. 입력하면 모두에 한 번에 적용하고 Undo 한 번입니다.
 - 색: 견본 → popover → 시스템 색 패널. 텍스트로 hex, `rgb()`, `color(display-p3 …)`를 받습니다.
-- 크기 preset은 CSS 값 자체가 선택지입니다(`320px`, `fit-content`, `auto`, `100%`). preset 옆에 실제로 설정한 longhand를 흐리게 보여 줍니다(ADR-0024 결정 7). 다른 제품의 preset 명칭을 쓰지 않습니다.
+- 크기는 CSS 값 자체를 입력·선택합니다(`320px`, `fit-content`, `auto`, `100%`). 고정·채움·내용 맞춤(Fixed·Fill·Hug) 같은 다른 도구의 크기 방식 추상화와 Auto Layout식 개념은 쓰지 않습니다.
 
 ### 6.5 행 끝 표시
 
@@ -528,7 +517,7 @@
 5. 토큰·Property 연결(누르면 출처 경로 popover, §14.2)
 6. 변환 진단(`approximated`, `unsupported`, `stellar-only`)
 
-- 행 문맥 메뉴: CSS로 복사, HEAD 값으로 되돌리기 [결정 U14], (정의 편집 중) 인스턴스에서 바꿀 수 있게 공개 [결정 U21].
+- 행 문맥 메뉴: CSS로 복사, HEAD 값으로 되돌리기 [제안 U14], (정의 편집 중) 인스턴스에서 바꿀 수 있게 공개 [결정 필요 U21].
 
 ### 6.6 충돌 중인 행
 
@@ -540,9 +529,9 @@
 
 ### 7.1 사이드바 머리 줄
 
-- 평소에는 `Page 1 › Home ▾` 팝업 한 줄입니다. 지금 사이드바 높이 30%를 차지하는 1행짜리 Pages 구획을 대신합니다.
+- 평소에는 `Page 1 › Home ▾` 팝업 한 줄입니다. 지금 사이드바 높이 30%를 차지하는 1행짜리 Pages 구획(audit F5)을 대신합니다.
 - 팝업에서 할 수 있는 일: Page·View 전환, 이름 변경, (코어 Command가 생긴 뒤) 새 Page·새 View, 순서 변경. Command가 없는 항목은 만들지 않습니다.
-- 정의 편집 중에는 `Home › Button 정의 [완료]` 경로가 됩니다 [결정 U22]. 캔버스 위에 위치 표시를 그리지 않습니다.
+- 정의 편집 중에는 `Home › Button 정의 [완료]` 경로가 됩니다 [결정 필요 U22]. 캔버스 위에 위치 표시를 그리지 않습니다.
 
 ### 7.2 레이어 탭
 
@@ -623,7 +612,7 @@
 
 ### 8.4 커밋·identity
 
-- `ShellGitDataSource.swift`의 고정값(`head: .unknown`, `remotes: []`, `identityConfigured: false`)을 실제 Git 설정으로 바꿉니다.
+- `ShellGitDataSource.swift` 260–261행의 고정값(`head: .unknown`, `remotes: []`, `identityConfigured: false`)을 실제 Git 설정으로 바꿉니다.
 - identity가 없으면 메시지 칸 위에 이름·이메일 inline 줄이 나옵니다. "저장소 Git 설정에서 설정하라"는 alert는 없앱니다. 저장 범위는 U9.
 - 커밋을 누르면 flush → 상태 재검증 → 커밋 순서입니다. 미저장 편집이 있을 때 띄우던 "Save Now / Use Saved Version" 배너는 자동 flush로 대신합니다.
 - 성공하면 메시지 칸을 비우되 텍스트 Undo로 되살릴 수 있습니다.
@@ -643,12 +632,12 @@
 - 변경 탭 전체가 설명 한 줄과 [프로젝트 신뢰…] 버튼으로 바뀝니다: "이 폴더에서 Git·hook·터미널·에이전트 실행이 꺼져 있습니다. 편집과 저장은 그대로 됩니다."
 - 지금 신뢰 alert의 "Trusting this folder allows Stellar to edit project files…" 문구는 실행 계열만 막는다는 문구로 바꿉니다(D1).
 
-### 8.8 로드맵 [결정 U18]
+### 8.8 로드맵(사용자 결정 뒤) [결정 필요 U18]
 
-§24.4는 Branch·Switch·Pull을 로드맵에 두고 XIV.13.7은 초기 빌드에서 노출하지 않음을 검사합니다. 코어(`crates/git-porcelain/src/advanced/`)에는 API가 있습니다. 사용자가 Git 협업을 1번 핵심으로 꼽았지만, 로드맵을 유지하고 커밋 고리(UX.5) 뒤 다시 검토하기로 정했습니다. 당길 때의 구성:
+§24.4는 Branch·Switch·Pull을 로드맵에 두고 XIV.13.7은 초기 빌드에서 노출하지 않음을 검사합니다. 코어(`crates/git-porcelain/src/advanced/`)에는 API가 있습니다. 사용자가 Git 협업을 1번 핵심으로 꼽았으므로 당길지 정해야 합니다. 당긴다면:
 
 - 머리의 브랜치 이름을 popover로 만들어 목록·전환·새 브랜치를 둡니다. 전환은 flush 뒤 checkout하고 흐름 3의 Snapshot 전환을 따릅니다.
-- [받기] 버튼(Fetch·Pull)과 받을 커밋 수. 결과는 흐름 9로 이어집니다.
+- [받기](Fetch·Pull)와 받을 커밋 수. 결과는 흐름 9로 이어집니다.
 - 충돌 해결 뒤 앱 안 커밋으로 병합 마무리.
 - 후순위 후보: 다른 브랜치를 기준으로 캔버스 윤곽 보기(§27.4 Source 개념), 브랜치를 worktree 새 창으로 열기(§28), 객체 이력(아키텍처에 없음).
 
@@ -661,7 +650,7 @@
 - attached `stellar-mcp` backend(XIX.9.4)나 내장 세션 실행 경로(XXIX.2·XXIX.3)가 연결된 뒤에만 탭이 생깁니다.
 - 지금의 `DisconnectedAgentPanelSource` 탭(버튼 없이 "No agent session is connected."만 있음)은 없앱니다.
 - 초기 빌드 노출 금지 검사(XVI.11.8)와 충돌하므로 탭을 넣기 전에 계획 개정이 필요합니다.
-- 위치는 오른쪽 탭입니다. 인스펙터와 동시에 보는 별도 trailing 열은 채택하지 않았습니다 [결정 U13].
+- 위치는 오른쪽 탭을 권합니다. 인스펙터와 동시에 보는 별도 trailing 열은 대안입니다 [결정 필요 U13].
 
 ### 9.2 구성
 
@@ -691,7 +680,7 @@
 
 ---
 
-## 10. 코드 보기(오른쪽 코드 탭) [결정 U12]
+## 10. 코드 보기(오른쪽 코드 탭) [제안 U12]
 
 - 이 탭은 "생성 코드"가 아니라 "같은 값의 다른 표현"입니다. 앱 전체를 바꾸는 별도 모드가 아니고, 선택을 따라 바뀝니다.
 - 초기 빌드 노출 금지 검사(XVI.11.8의 export·codegen)와 충돌하므로 탭을 넣기 전에 계획 개정이 필요합니다.
@@ -718,29 +707,29 @@
 
 | 파일 | 지금(main `cc60cbff`) | 조치 | 근거 | 처리 시점 |
 |---|---|---|---|---|
-| `UI/Tools/CanvasTool.swift` | `case pen`(14행), 키 `p`(65행), Polygon 키 없음(64행) | Pen 삭제. P를 Polygon에 [U6] | 사용자 지시 | Pen: 정리 / P 키: UX.1.3 |
-| `UI/Shell/ShellCanvasFrameInsert.swift` 등 셸 15개 파일 | `gitSource.trusted` 43곳(편집 경로 신뢰 검사) | 편집 경로에서 제거 | D1 | 정리 |
+| `UI/Tools/CanvasTool.swift` | `case pen`(14행), 키 `p`(65행), Polygon 키 없음(64행) | Pen 삭제. P를 Polygon에 [U6] | 사용자 지시, audit F8 | Pen: 정리 / P 키: UX.1.3 |
+| `UI/Shell/ShellCanvasFrameInsert.swift` 등 셸 15개 파일 | `gitSource.trusted` 43곳(편집 경로 신뢰 검사) | 편집 경로에서 제거 | D1, audit F1 | 정리 |
 | `crates/runtime/src/app/{frame_move, frame_insert, text_input, node_delete, node_paste, image_place, components, document_font, instance_place, sidebar}.rs` | `trusted_canvas_window` 게이트 | 편집 경로에서 제거, 이를 고정하는 테스트도 뒤집기 | D1 | 정리 |
-| `UI/Shell/ShellProjectWindow.swift` | 부제목 "Restricted Mode"(255·273행) | Git 상태 문법(3.3절) | [결정 U4] | UX.5.3 |
+| `UI/Shell/ShellProjectWindow.swift` | 부제목 "Restricted Mode"(255·273행) | Git 상태 문법(3.3절) | audit F20 | UX.5.3 |
 | `UI/Shell/ShellProjectWindow.swift` | 신뢰 alert "allows Stellar to edit project files" | 실행 계열 문구 | D1 | UX.1.4 |
-| `UI/Shell/ShellProjectWindow.swift` | 툴바 "…" 메뉴(신뢰 전 Finder·닫기만) | 제목 문서 메뉴로 옮기고 "프로젝트 신뢰…" 늘 둠 | 3.3절 | UX.1.4 |
-| `UI/Shell/ShellProjectWindow.swift` | Save Now 실패 alert(확인 하나) | §22.2 두 선택지 sheet, 외부 writer는 흐름 3 | [결정 U20] | UX.4.3 |
+| `UI/Shell/ShellProjectWindow.swift` | 툴바 "…" 메뉴(신뢰 전 Finder·닫기만) | 제목 문서 메뉴로 옮기고 "프로젝트 신뢰…" 늘 둠 | audit F2 | UX.1.4 |
+| `UI/Shell/ShellProjectWindow.swift` | Save Now 실패 alert(확인 하나) | §22.2 두 선택지 sheet, 외부 writer는 흐름 3 | audit F16 | UX.4.3 |
 | `UI/Shell/ShellProjectWindow.swift` | 창 닫기 실패 alert | D6 선택 sheet | D6 | 정리 |
-| `UI/Shell/ShellToolbarController.swift` | `navigateBackItem`(20행) 등 뒤로·앞으로, `searchItem`(22행) | 삭제 | [결정 U4] | UX.1.2 |
-| `UI/Shell/ShellAreaSlots.swift` | `ShellPanelTabsSlot`(42행)의 Git·Agent 탭(56행) | 하단 보조 패널 삭제 | [결정 U1], 셸 가이드 2.4 | UX.1.1 |
+| `UI/Shell/ShellToolbarController.swift` | `navigateBackItem`(20행) 등 뒤로·앞으로, `searchItem`(22행) | 삭제 | audit F3 | UX.1.2 |
+| `UI/Shell/ShellAreaSlots.swift` | `ShellPanelTabsSlot`(42행)의 Git·Agent 탭(56행) | 하단 보조 패널 삭제 | 셸 가이드 2.4, audit F18·F21 | UX.1.1 |
 | `UI/Shell/ShellFrameMenuItems.swift`(22행), `ShellWindowController.swift`(238행), `ShellSplitViewController.swift`(106행) | 보조 패널 토글(View 메뉴) | 삭제 | 같음 | UX.1.1 |
 | `UI/Tools/MainMenuBuilder.swift` | Rulers(68행), Align(84행), Distribute(88행) 등 영구 비활성 약 26개 | 삭제. 기능 행이 들어올 때 다시 추가 | P1 | UX.1.2 |
-| `UI/Shell/ShellGitDataSource.swift` | `head: .unknown`, `remotes: []`, `identityConfigured: false` | 실제 값 | 8.4절 | UX.5.1 |
+| `UI/Shell/ShellGitDataSource.swift` | `head: .unknown`, `remotes: []`, `identityConfigured: false`(260–261행) | 실제 값 | audit F19 | UX.5.1 |
 | `UI/Git/GitPanelViewController.swift` 외 `UI/Git/` | 하단 탭 안 세로 패널, 빈 Conflicts 탭, dependency NSAlert | 사이드바 변경 탭으로 재배치, 동반 변경은 inline | O4, `git_panel.md` | UX.5.2 |
-| `UI/Shell/ShellAppCoordinator.swift`, `UI/Agent/` | `DisconnectedAgentPanelSource`, 동작 없는 Agent 탭 | 실행 경로 전까지 탭 없음 | 9.1절 | UX.1.1 |
+| `UI/Shell/ShellAppCoordinator.swift`, `UI/Agent/` | `DisconnectedAgentPanelSource`, 동작 없는 Agent 탭 | 실행 경로 전까지 탭 없음 | audit F21 | UX.1.1 |
 | `UI/Shell/ShellComponentLibrary.swift`, `UI/Shell/ShellNewComponent.swift` | 별도 창, alert 연쇄 | 삭제 | D3·D4 | 정리 |
 | `UI/Shell/ShellDocumentFont.swift` | "Face index" 입력 파일 패널 | 삭제. Typography `font-family`로 대체 | 사용자 미정의 UI | 정리 |
 | `SettingsPlaceholderView.swift` | "Stellar Settings" 문자열뿐 | Settings ▸ 캔버스(기본 채우기·선) | D7 | 정리 |
-| `UI/Shell/ShellFrameInspectorSource.swift`, `CanvasFrameScene.swift` | Frame 하나 선택일 때만 인스펙터 값 생성 | 모든 노드 종류 snapshot | 흐름 2 | UX.2.1–2.3 |
-| `UI/Inspector/InspectorPropertyCatalog.swift`, `UI/Inspector/InspectorSectionView.swift` | Frame/Appearance/Modifiers 섹션, 선택 중 "No Selection" 문구 | CSS 범주 섹션(6.2절), 선택 없음 화면 교체 | IX.11.17, 6.1절 | UX.2.4–2.6 |
-| `UI/Sidebar/SidebarLayersController.swift`, `UI/Shell/ShellSidebarSource.swift` | 표시·잠금 토글 항상 비활성, validate 기본 거부, Pages 30% 구획 | 표시·잠금 연결, Pages를 머리 줄 팝업으로 | 7.1·7.2절 | UX.3.4, UX.3.5 |
-| `UI/Sidebar/SidebarSymbols.swift` | 빈 상태 "No Layers"만 | 키 안내 한 줄 | 흐름 1 | UX.1.6 |
-| `UI/Shell/ShellImagePlacement.swift` | PNG만, 모드 전환 뒤 클릭 | 고르는 즉시 파일 선택, 끌어 놓기·붙여넣기 [결정 U11] | 5.1절 | UX.3.3 |
+| `UI/Shell/ShellFrameInspectorSource.swift`, `CanvasFrameScene.swift` | Frame 하나 선택일 때만 인스펙터 값 생성 | 모든 노드 종류 snapshot | audit F9 | UX.2.1–2.3 |
+| `UI/Inspector/InspectorPropertyCatalog.swift`, `UI/Inspector/InspectorSectionView.swift` | Frame/Appearance/Modifiers 섹션, 선택 중 "No Selection" 문구 | CSS 범주 섹션(6.2절), 선택 없음 화면 교체 | IX.11.17, audit F9·F13 | UX.2.4–2.6 |
+| `UI/Sidebar/SidebarLayersController.swift`, `UI/Shell/ShellSidebarSource.swift` | 표시·잠금 토글 항상 비활성, validate 기본 거부, Pages 30% 구획 | 표시·잠금 연결, Pages를 머리 줄 팝업으로 | audit F5·F12 | UX.3.4, UX.3.5 |
+| `UI/Sidebar/SidebarSymbols.swift` | 빈 상태 "No Layers"만 | 키 안내 한 줄 | audit F4 | UX.3.5 |
+| `UI/Shell/ShellImagePlacement.swift` | PNG만, 모드 전환 뒤 클릭 | 고르는 즉시 파일 선택, 끌어 놓기·붙여넣기 [U11] | audit F8 | UX.3.3 |
 | `CanvasView.swift` | 핀치 없음, 우클릭은 코어 입력으로만 | 핀치·⌘ 스크롤, 문맥 메뉴 | XII.10.36·10.39 | UX.3.1, UX.3.2 |
 | `UI/Shell/ShellToolBarView.swift` | 도구 막대(유지) | 그룹 간격 [제안], 한 줄 안내 자리 [U5] | 사용자 결정 | UX.1.3, UX.2.8 |
 
@@ -748,16 +737,15 @@
 
 | 파일 | 조치 | 처리 시점 |
 |---|---|---|
-| `docs/design/macos-shell-design.md` | 6.1 "툴바 가운데 도구"를 하단 도구 막대로, 2.4·6.4·6.5를 이 명세 배치로, O4·O8을 결정대로 닫고 O2는 방향만 기록(닫기는 UX.3.10), "핵심 흐름과 완료 기준" 절 신설, 7장 부제목 문구 | UX.0.2 |
-| `docs/design/ui/tools_menus.md` | 남은 11개 도구 기록 문구(기준선에서 Pen은 이미 빠짐), 비활성 메뉴 목록 정리, Polygon 키 | UX.0.2 |
+| `docs/design/macos-shell-design.md` | 6.1 "툴바 가운데 도구"를 하단 도구 막대로, 2.4·6.4·6.5를 이 명세 배치로, O2·O4·O8을 결정대로 닫기, "핵심 흐름과 완료 기준" 절 신설, 7장 부제목 문구 | UX.0.2 |
+| `docs/design/ui/tools_menus.md` | 도구 11종 → 10종(68·86·199·237행의 Pen), 비활성 메뉴 목록 정리, Polygon 키 | UX.0.2 |
 | `docs/design/ui/inspector.md` | 2.1 범주를 property_model 12장으로 | UX.0.2 |
 | `docs/design/ui/sidebar.md` | 238행 "신뢰한 프로젝트에서 … 이름을 편집"을 D1대로, 머리 줄·탭 구성 | UX.0.2 |
 | `docs/design/ui/git_panel.md` | 위치(사이드바 탭), dependency prompt를 inline으로, 단계별 Stage | UX.0.2 |
 | `docs/design/ui/agent_panel.md`, `docs/design/ui/shell_frame.md` | 오른쪽 탭, 하단 보조 패널 삭제 | UX.0.2 |
 | `docs/design/ui/components.md`(신설) | 에셋 탭·정의 편집·인스턴스 명세(D4) | UX.9.1 |
 | `docs/design/property_model.md` | 15장 O9 결정 반영 | UX.0.2 |
-| `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md` | XII.10.1(10종)·XII.10.29(펜 도구 부분 삭제)가 기준선에 들어 있는지 확인, XIII.3.1(Synthetic Command), XIV.13.5(위치), XVI.11.8(코드·에이전트 탭 노출), XIV.2.8(커밋 직전 flush 후 상태 재검증, UX.5.5), UX 행 등록 | UX.0.3 |
-| `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md` | §24.3 "처음 여는 프로젝트는 제한 모드" 문구에 Stellar가 §25.1로 만든 폴더의 신뢰 등록 예외를 더함(U8, ADR-0073 결정 10). Clone·열기는 그대로 제한 모드 | UX.0.3 |
+| `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md` | XII.10.1(11종 → 10종), XII.10.29(펜 행 삭제), XIII.3.1(Synthetic Command), XIV.13.5(위치), XVI.11.8(코드·에이전트 탭 노출), UX 행 등록 | UX.0.3 |
 
 삭제 커밋마다 사유를 남깁니다(11-15 사용자 추가 지시).
 
@@ -782,13 +770,13 @@
 | 도구 | ⇧⌘K | Image(파일 선택) | 기존 메뉴 |
 | 일시 전환 | Space(누르는 동안) | Hand | XII.10.1 |
 | 일시 전환 | ⌘(누르는 동안) | 깊은 선택, 드래그 중 스냅 해제 | XII.10.4·10.17 |
-| 카메라 | ⌘+ ⌘-, ⌘0, ⌘9 | 확대·축소, 실제 크기, 맞춤 | XII.10.37, `tools_menus.md` 6.1 |
+| 카메라 | ⌘+ ⌘- ⌘0 | 확대·축소·맞춤 | XII.10.37 |
 | 선택 | Tab·Shift-Tab, Return·Shift-Return, Escape | 형제·자식·부모, 한 단계 나오기 | XII.10.41 |
 | 편집 | 화살표·Shift-화살표 | 1px·10px 이동(최종 XII.10.2 ADR) | O10 |
 | 편집 | ⌘D, ⌫, ⌘C·⌘X·⌘V, ⌘Z·⇧⌘Z | 복제, 삭제, 클립보드, Undo·Redo | XII.10.38 |
 | 패널 | ⌥⌘1–3 [U17] | 속성·코드·에이전트 | macOS 인스펙터 관례 |
-| 패널 | 배정 안 함(후보 ⌘1–3) [결정 U17] | 레이어·에셋·변경 | 왼쪽 탭이 둘 이상 연결될 때(UX.5.2) 정함 |
-| 패널 | ⌃⌘S, ⌥⌘I | 사이드바·인스펙터 토글 | 시스템 관례, `tools_menus.md` 6.1 |
+| 패널 | ⌘1–3 후보 [U17] | 레이어·에셋·변경 | 결정 필요 |
+| 패널 | ⌃⌘S, ⌥⌘0 | 사이드바·인스펙터 토글 | 시스템 관례 |
 | 변경 탭 | Space, ⌘↩ | 포함 토글, 커밋 | `git_panel.md` |
 | 충돌 | B·O·T | Base·내 쪽·상대 쪽 | `git_panel.md` |
 | 값 필드 | ↑↓, Shift+↑↓, Return, Escape, Tab | ±1, ±10, 적용, 취소 후 캔버스, 다음 필드 | 6.4절 |
@@ -836,7 +824,7 @@
 
 ## 15. 작성 근거
 
-- 사용자 지시와 결정: 2026-11-15 사용자 지시와 D1–D9, 이번 사용자 평가(지금 UI는 겉모양만 갖추고 목표 철학과 UX를 고려하지 못했다. UI 컨셉은 괜찮지만 UX가 부족하니 전반적인 설계를 하라).
+- 사용자 지시와 결정: 2026-11-15 판정 기준 모음과 D1–D9, 이번 사용자 말("지금 UI는 Xcode스럽게만 해 놓고 목표 철학이나 UX를 고려하지 못했다. UI 컨셉은 괜찮은데 UX가 너무 별로다. 전반적인 설계도").
 - 세 설계안(Git 협업 축, 캔버스 중심, 코드·AI 중심)과 세 평가(철학 적합성, 디자이너 사용성, 구현 현실성)를 합쳤습니다. 평가 평균이 가장 높은 Git 협업 축 안을 골격으로 하고, 다음을 접목했습니다.
   - 코드·AI 안: "하나의 원본, 세 가지 보기", 통제는 사람만, 앱 밖 변경 반영을 Git보다 먼저, attached MCP를 내장 세션보다 먼저, 출처 표시의 경계, 도구 막대 위 한 줄 안내, CSS 레이블을 시스템 글꼴로.
   - 캔버스 안: 모달 없는 만들기·다듬기, 맥락 규칙 표, 핸들과 longhand 대응 표, 흐름별 완료 기준, Escape 포커스 복귀, 빈 캔버스 거부 안.
@@ -845,20 +833,20 @@
 
 ---
 
-## 16. 결정 항목(2026-11-15 확정)
+## 16. 사용자 결정이 필요한 항목
 
-제품 책임자가 판단을 위임해 모두 권장안으로 확정했습니다(2026-11-15). 채택하지 않은 대안은 기록으로 남깁니다. 셸 배치·상태 표시 결정(U1·U2·U4·U5·U12·U13·U15·U16·U17)과 새 프로젝트 신뢰 등록(U8, 결정 10)은 [ADR-0073](../../adr/ADR-0073-shell-layout-and-status-display.md)에 기록했습니다.
+결정 전에는 해당 [제안]을 구현하지 않습니다. 권장안을 먼저 적습니다.
 
-| ID | 결정 | 확정안(권장안) | 채택하지 않은 대안 |
+| ID | 결정 | 권장안 | 대안 |
 |---|---|---|---|
 | U1 | 하단 보조 패널 삭제와 배치(셸 가이드 O4) | 왼쪽 레이어·에셋·변경, 오른쪽 속성·코드·에이전트 | Git을 오른쪽 탭으로 |
-| U2 | 캔버스를 사이드바·인스펙터 아래로 확장(셸 가이드 O2) | 확장(측정 후 확정, UX.3.10) | 겹치지 않게 유지 |
+| U2 | 캔버스를 사이드바·인스펙터 아래로 확장(셸 가이드 O2) | 확장(측정 후 확정) | 겹치지 않게 유지 |
 | U3 | 속성 행 레이블(속성 모델 O9) | CSS 속성 이름, 시스템 글꼴, 묶음 행 | 사람이 읽는 레이블 + CSS는 툴팁 |
 | U4 | 상단 바: 부제목 Git 상태 문법, 에이전트 상태 항목(조건부), 뒤로·앞으로·검색 삭제 | 모두 채택 | 부제목 비움 |
 | U5 | 도구 막대 위 한 줄 안내 | 채택 | 안내 없이 커서 모양만 |
 | U6 | Polygon 단일 키 | P | 키 없음 |
 | U7 | 한 Page에 여러 View 렌더 + 빈 캔버스 Frame = 새 View | 별도 ADR로 검토. 그 전에는 빈 캔버스 거부 | 지금 결정 |
-| U8 | Stellar가 새로 만든 프로젝트 자동 신뢰 | 채택(Clone·열기는 제외). §24.3 예외라 §24.3 개정(UX.0.3) 뒤 UX.5.9에서 적용 | 늘 제한 모드 |
+| U8 | Stellar가 새로 만든 프로젝트 자동 신뢰 | 채택(Clone·열기는 제외) | 늘 제한 모드 |
 | U9 | identity 저장 범위 | 저장소 설정(`.git/config`) | 전역 설정 |
 | U10 | `NSStepper` 대신 scrub·화살표 | 채택 | 유지 |
 | U11 | Image 도구 즉시 파일 선택, 끌어 놓기·붙여넣기 | 채택 | 지금 방식 |
@@ -867,7 +855,7 @@
 | U14 | "HEAD 값으로 되돌리기"(행·문맥 메뉴, 편집 Command) | 채택 | 없음 |
 | U15 | 캔버스 변경 윤곽(변경 탭 열림 시 + View 메뉴 토글) | 채택 | 레이어·속성 표시만 |
 | U16 | 메뉴 막대 Git 메뉴(셸 가이드 O8) | 채택 | File 메뉴 하위 |
-| U17 | 탭 단축키 | 오른쪽 ⌥⌘1–3. 왼쪽은 탭이 둘 이상 연결될 때(UX.5.2) 정함 | 왼쪽 ⌘1–3 즉시 배정 |
+| U17 | 탭 단축키 | 오른쪽 ⌥⌘1–3. 왼쪽은 확인 필요 | 왼쪽 ⌘1–3 |
 | U18 | §24.4 범위: Branch·Switch·Pull을 초기 범위로 | 커밋 고리 뒤 재검토 | 로드맵 유지 |
 | U19 | 하단 패널을 없앤 뒤 내장 터미널(ADR-0023)의 자리 | 별도 결정(이 명세 범위 밖) | — |
 | U20 | 미저장 편집 + 외부 변경: reconciliation 전까지 두 선택지 sheet | 채택 | 지금 alert 유지 |
@@ -879,7 +867,7 @@
 
 ## 17. 확인하지 못한 것
 
-- 작성할 때 앱을 실행하거나 화면을 보지 않았습니다. 판단은 main `cc60cbff`의 코드·문서 정적 읽기와 받은 조사 결과에 근거합니다. 기준선 `02397601`과 다른 점(Pen 삭제, 계획 XII.10.1 10종, Shape 생성 경로)은 5.1절에 적었습니다.
+- 앱을 실행하거나 화면을 보지 않았습니다. 판단은 main `cc60cbff`의 코드·문서 정적 읽기와 받은 조사 결과에 근거합니다.
 - 정리 통합의 최종 결과(Pen 삭제, 10종 생성, 신뢰 게이트 제거, D6·D7, 단일 인스펙터 편집 FFI, Git Stage 경로가 어떻게 남는지)는 통합 뒤 UX.0.1에서 확인해야 합니다.
 - 코어 semantic status가 generation View에서 앱 변경 목록용으로 계산되는지, `.git/HEAD`를 실행 없이 읽는 경로가 제한 모드 정책과 맞는지 확인하지 못했습니다.
 - Shape 칠하기의 CSS 대응 이름(property_model 6장), merge driver·conflict snapshot의 텍스트 원본 연결, 노드에서 원본 줄 범위로 가는 코어 API 유무를 확인하지 못했습니다.
