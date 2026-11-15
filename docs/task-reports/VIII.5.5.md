@@ -59,8 +59,8 @@
   base에서 모두 `[ ]`이고 `stellar-bindings`는 `stellar-commands`에 의존할 수 없습니다(허용 edge 밖). 그래서 VIII.3.3과
   같은 방식으로 토큰 전용 closed enum command(validate/apply/inverse)를 이 crate에 두었습니다. Phase VII가 구현되면 그
   command enum으로 옮기고 base revision·precondition을 붙이는 재작업이 필요합니다.
-- binding이 토큰을 참조하는 inbound 참조는 binding store(VIII.6.x)가 아직 없어 이 command의 삭제 검사에 포함하지
-  않았습니다. 토큰 간 참조만 검사합니다.
+- (작업 당시) binding이 토큰을 참조하는 inbound 참조는 binding store(VIII.6.x)가 아직 없어 이 command의 삭제 검사에
+  포함하지 않았습니다. 이 차이는 아래 "사후 수정 — binding inbound 참조"에서 해소했습니다.
 - 신규 모듈이므로 테스트는 구현과 함께 작성했습니다(구현 전 상태는 컴파일 불가).
 
 ## 남은 위험 / 한계
@@ -68,3 +68,18 @@
 - Create·SetExpression 검증이 매번 토큰 graph 전체를 만듭니다(O(토큰 수)). 대규모 registry에서는 증분 graph가 필요할
   수 있습니다.
 - tombstone은 메모리 registry 상태이며 저장 형식은 아직 없습니다(토큰 저장 형식 정의 시 포함 필요).
+
+## 사후 수정 — binding inbound 참조 (2026-11-15 통합, 사후 리뷰 EB-3)
+
+- **지적**: ref policy("inbound 참조가 있는 삭제는 orphan plan 없이는 거부")가 토큰 간 참조만 보아, ValueBinding만
+  참조하는 토큰을 `orphan_plan: None`으로 삭제할 수 있었습니다. 2026-11-14 사후 수정(`41dd20fc`·`2fde716e`)이 main에
+  통합되지 않아 이 보고서의 계약이 깨져 있었습니다.
+- **수정**(`61be8c9d`): `TokenCommand::validate`·`apply`가 `&BindingStore`를 받고, inbound 참조를 "default
+  expression에서 읽는 토큰 + source에서 읽는 live·orphan binding"으로 계산합니다(`TokenOrphanPlan::current`). plan은
+  토큰·binding 목록과 정확히 같아야 합니다. binding 쪽 판정은 집합을 만들지 않는 `ValueBinding::refers_to`입니다(형식
+  bytes 불변, ADR-0026 Compatibility에 기록).
+- **재현 test**: `delete_referenced_by_bindings_requires_exact_orphan_plan` — live·orphan binding inbound, plan 없음
+  거부, binding 하나 빠진 plan 거부, 정확한 plan 삭제 후 binding 불변·tombstone, undo inverse plan 정확, 참조 없는 삭제
+  허용.
+- 검증: 이 절은 통합 커밋의 기록을 옮긴 것이며, 수치는 이 보고서에서 다시 실행해 확인하지 않았습니다. 이후 실행 결과는
+  통합 검사 기록을 따릅니다.

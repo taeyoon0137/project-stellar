@@ -313,6 +313,12 @@ AST의 reference payload `0x04`에 `u32` LE로 기록됩니다.
   `environment` 모듈의 key 상수·`*_TYPE` 상수·variant 모듈, `key_info`, `key_by_name`,
   `missing_default`, `check_value`, `EvaluationEnvironment`가 이 결정에 묶입니다. 이 ADR은 API를
   바꾸지 않습니다.
+- 보호 파일 변경 소급 기록(2026-11-15): `61be8c9d`가 `crates/bindings/src/binding.rs`에 `ValueBinding::refers_to`를
+  추가하면서 같은 diff에 ADR을 넣지 않았습니다. `refers_to`는 source AST의 참조 node가 한 대상을 가리키는지
+  할당 없이 판정하는 조회 함수이며, `references`와 같은 판정입니다. `ValueBinding` canonical bytes·버전·registry는
+  바뀌지 않습니다. 같은 커밋은 토큰 삭제 inbound 검사(`TokenCommand::validate`·`apply`)가 `&BindingStore`를 받아
+  live·orphan binding의 참조도 세도록 바꿨습니다(`TokenOrphanPlan::current`, VIII.5.5 사후 수정). 그 부분은 보호
+  경로가 아닙니다.
 - FFI: 영향 없습니다.
 
 ## Performance
