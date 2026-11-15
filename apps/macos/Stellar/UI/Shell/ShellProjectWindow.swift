@@ -51,8 +51,6 @@ final class ShellWindowSessionHandle {
     private(set) var pendingCommandCount = 0
     var isClosing = false
     var commandsDidFinish: (() -> Void)?
-    var checkingComponentsOnReturn = false
-    var recheckComponentsOnReturn = false
 
     init(
         session: UInt64, project: UInt64, windowID: UUID, documentID: UUID?, openedGeneration: UInt64,
@@ -484,7 +482,6 @@ final class ShellProjectWindow {
     }
     var pickedPNG: PickedPNG?
     var imagePickGeneration: UInt64 = 0
-    var componentFileWatch: ShellComponentFileWatch?
     var recoveryPrompt: NSAlert?
     let sidebarSource = ShellSidebarSource()
     private var displayedSelection: StellarSelectionTarget?
@@ -547,16 +544,10 @@ final class ShellProjectWindow {
             _ = self?.canvasHost.canvasView.cancelFrameGesture?()
             self?.imageToolChanged(tool)
         }
-        windowController.didBecomeKeyHandler = { [weak self] in
-            guard let self else { return }
-            if self.componentFileWatch?.unavailable == true { self.updateComponentFileWatch(trusted: self.gitSource.trusted) }
-            self.reloadComponentCanvas(onWindowReturn: true)
-        }
         gitSource.trustDidChange = { [weak self] trusted in
             self?.dataSource.updateTrust(trusted)
             self?.canvasHost.canvasView.allowsImageContent = trusted
             if !trusted { self?.pickedPNG = nil; self?.imagePickGeneration &+= 1 }
-            self?.updateComponentFileWatch(trusted: trusted)
             self?.reloadComponentCanvas()
             self?.refreshSessionCommands()
         }

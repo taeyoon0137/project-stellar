@@ -66,6 +66,10 @@ panic:
   큐는 `NO_ERROR`, buffer 부족은 `BUFFER_TOO_SMALL`이며 이 경우 이벤트를 꺼내지 않습니다(II.4.5).
 - callback 등록 API를 두지 않아 Core→Shell 재진입을 구조적으로 막습니다(II.4.5).
 - 이벤트 push는 Rust 전용 API(`enqueue_event`)이며 C ABI가 아닙니다.
+- 2026-11-15 검토 보완: 셸 요청 없이 생긴 event를 셸이 놓치지 않도록 준비 신호 fd
+  (`stellar_runtime_event_ready_fd`)를 둡니다. fd는 읽기 가능 여부만 알리는 비차단 socket이고, event 자체는
+  여전히 `stellar_runtime_poll_event`로만 꺼냅니다. callback이 아니므로 재진입 금지 규칙은 그대로입니다
+  (세부는 ADR-0014 "요청 없는 event와 event 준비 신호").
 
 입력 이벤트(XII.3.1):
 

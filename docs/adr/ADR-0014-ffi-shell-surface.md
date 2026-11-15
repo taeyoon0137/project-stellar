@@ -60,6 +60,18 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
    해석하고, 그 밖의 이벤트는 위 입력 대기열에 넣습니다. 팬 해석과 합치기 규칙은 ADR-0028 "스크롤의 창별 팬
    연결"에 있습니다.
 
+### 요청 없는 event와 event 준비 신호 (2026-11-15 검토)
+
+1. **요청 없는 event**: 셸 요청 없이 코어가 상태를 바꾸면(현재는 컴포넌트 원본 감시의 창 표시 변경, ADR-0028)
+   request 0인 완료 event를 같은 outbox에 넣습니다. request id는 1부터이므로 0과 겹치지 않습니다. 요청마다
+   정확히 하나라는 기존 완료 event 규칙은 그대로이고, 요청 없는 event는 요청 상한(꺼내지 않은 완료 event 수)에
+   들어가지 않습니다. 같은 대상의 요청 없는 event가 아직 남아 있으면 더하지 않아 outbox가 늘지 않습니다.
+2. **`int32_t stellar_runtime_event_ready_fd(uint64_t handle)`**: 요청 없는 event가 쌓이면 읽을 수 있게 되는 비차단
+   1 byte datagram socket fd를 돌려줍니다(호출자가 소유하고 닫음, 실패 시 -1). 신호는 "꺼낼 event가 있을 수 있음"이며
+   개수가 아닙니다. 셸은 깨어나면 남은 신호를 모두 읽고 `stellar_runtime_poll_event`로 꺼냅니다. 요청한 event는
+   이 신호를 쓰지 않으므로, 기다리는 요청이 있을 때의 셸 polling(ADR-0009 pull 규칙)은 그대로입니다. callback은 여전히
+   없습니다.
+
 ### XII.3.4 — 입력 대기열 coalescing
 
 1. **끝 항목과만 병합**: runtime 입력 대기열(`crates/ffi/src/input_queue.rs`)은 새 이벤트를 아직 꺼내지 않은

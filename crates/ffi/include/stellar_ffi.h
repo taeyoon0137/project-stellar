@@ -74,7 +74,8 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
  *   WINDOW_SESSION_OPENED: request u64, project u64, session u64, window_id[16],
  *                          document_id[16] (작업 문서 없으면 0), generation u64
  *   WINDOW_SESSION_CLOSED: request u64, session u64
- *   WINDOW_VIEW_CHANGED  : request u64, session u64 (탭·active view·viewport·선택, 새 값은 상태 snapshot)
+ *   WINDOW_VIEW_CHANGED  : request u64, session u64 (탭·active view·viewport·선택, 새 값은 상태 snapshot).
+ *                          request 0은 요청 없는 변경(컴포넌트 원본 감시)이며 stellar_runtime_event_ready_fd를 깨웁니다.
  *   HISTORY_REPLAYED     : request u64, session u64, redo u8, applied u8, revision u64
  *   WINDOW_SESSION_SAVED : request u64, session u64, generation u64, written u8 */
 #define STELLAR_EVENT_SCHEMA_VERSION 1
@@ -249,6 +250,10 @@ StellarStatus stellar_runtime_label(uint64_t handle, uint8_t *buf, size_t buf_le
 /* 이벤트 큐에서 다음 이벤트를 pull 방식으로 읽습니다(FIFO, 빈 큐는 STELLAR_NO_ERROR, 프로젝트·문서 완료 event 포함). */
 StellarStatus stellar_runtime_poll_event(uint64_t handle, uint32_t *out_kind, uint8_t *buf, size_t buf_len, size_t *out_written);
 
+/* 요청 없는 event(request 0)가 쌓이면 읽을 수 있게 되는 비차단 1 byte datagram 신호 fd(호출자 소유, 실패 시 -1).
+ * 깨어나면 남은 신호를 모두 읽고 stellar_runtime_poll_event로 event를 꺼냅니다. 요청한 event는 신호를 쓰지 않습니다. */
+int32_t stellar_runtime_event_ready_fd(uint64_t handle);
+
 /* 셸이 계산한 drawable(backing) 픽셀 크기와 backing scale을 코어에 전달합니다. */
 StellarStatus stellar_runtime_set_drawable_size(uint64_t handle, uint32_t pixel_width, uint32_t pixel_height, double scale);
 
@@ -271,13 +276,9 @@ StellarStatus stellar_project_create(uint64_t handle, const uint8_t *path, size_
 StellarStatus stellar_project_clone(uint64_t handle, const uint8_t *url, size_t url_len, const uint8_t *target, size_t target_len, uint64_t *out_request);
 StellarStatus stellar_project_clone_cancel(uint64_t handle, uint64_t request);
 
-/* Queues a background component source read and a WINDOW_VIEW_CHANGED event. */
+/* 창의 컴포넌트 원본을 worker에서 다시 읽고 완료 WINDOW_VIEW_CHANGED를 보냅니다. 신뢰된 프로젝트면 코어가
+ * 그 프로젝트의 원본 감시를 시작하고, 이후 원본이 바뀌면 요청 없는 WINDOW_VIEW_CHANGED(request 0)를 보냅니다. */
 StellarStatus stellar_window_reload_component_canvas(uint64_t handle, uint64_t session, uint64_t *out_request);
-#ifdef __APPLE__
-/* Call off-main. Returns an owned nonblocking one-byte datagram notification fd, or -1.
- * The trusted window owns the watch until revocation, close, or replacement. */
-int32_t stellar_window_component_watch_fd(uint64_t handle, uint64_t session);
-#endif
 
 
 /* 프로젝트 session 닫기를 요청합니다(그 아래 문서도 닫음). */

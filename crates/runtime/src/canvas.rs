@@ -82,11 +82,15 @@ pub(crate) struct CanvasComponentLibrary {
 /// 게시한 scene의 재사용 조건: 문서 revision, 활성 View, 진행 중 Text 조합(token, 갱신 순번).
 type SceneKey = (DocumentRevision, StableId, Option<(u64, u64)>);
 
+/// 컴포넌트 원본 읽기를 시작한 순서. 늦게 끝난 이전 읽기가 새 결과를 덮지 않게 합니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct LibraryOrder(pub(crate) u64);
+
 #[derive(Debug)]
 pub(crate) struct CanvasCache {
     fonts: text::document::FontCache,
     saved_text: text::saved::SavedTextLayouts,
-    library_request: u64,
+    library_order: LibraryOrder,
     latest: Option<(SceneKey, Arc<CanvasScene>)>,
     pub(crate) library: Option<Arc<CanvasComponentLibrary>>,
 }
@@ -135,7 +139,7 @@ impl CanvasCache {
         Self {
             fonts: text::document::FontCache::new(fonts),
             saved_text: Default::default(),
-            library_request: 0,
+            library_order: LibraryOrder::default(),
             latest: None,
             library: None,
         }
@@ -146,19 +150,35 @@ impl CanvasCache {
         self.latest = None;
         self.saved_text = Default::default();
     }
+
+    /// `order`에 시작한 읽기 결과로 정의 집합을 바꿉니다. 더 늦게 시작한 읽기가 이미 반영됐으면 버립니다.
+    /// 원본 hash가 바뀌었으면 true입니다.
     pub(crate) fn update_library(
         &mut self,
-        request: u64,
+        order: LibraryOrder,
         next: Option<Arc<CanvasComponentLibrary>>,
-    ) {
-        if request < self.library_request {
-            return;
+    ) -> bool {
+        if order < self.library_order {
+            return false;
         }
-        self.library_request = request;
-        if self.library.as_ref().map(|v| v.source_hash) != next.as_ref().map(|v| v.source_hash) {
+        self.library_order = order;
+        self.replace_library(next)
+    }
+
+    /// 신뢰 철회처럼 진행 중인 읽기와 무관하게 정의 집합을 비웁니다. 그 뒤 끝나는 읽기는 반영 시점의 신뢰를
+    /// 다시 확인합니다.
+    pub(crate) fn clear_library(&mut self) -> bool {
+        self.replace_library(None)
+    }
+
+    fn replace_library(&mut self, next: Option<Arc<CanvasComponentLibrary>>) -> bool {
+        let changed =
+            self.library.as_ref().map(|v| v.source_hash) != next.as_ref().map(|v| v.source_hash);
+        if changed {
             self.latest = None;
         }
         self.library = next;
+        changed
     }
 
     /// `text`는 진행 중인 IME 조합의 미리보기입니다(ADR-0067 §6). 같은 revision·View·조합이면 scene을 공유합니다.

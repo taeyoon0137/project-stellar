@@ -518,6 +518,36 @@ pub unsafe extern "C" fn stellar_runtime_poll_event(
     })
 }
 
+/// 요청 없는 event(request 0)가 쌓이면 읽을 수 있게 되는 비차단 신호 fd를 돌려줍니다(실패 시 -1).
+///
+/// 호출자가 fd를 소유하고 닫습니다. 신호는 1 byte datagram이며 "꺼낼 event가 있을 수 있음"이라는 뜻입니다.
+/// 셸은 깨어나면 남은 신호를 모두 읽고 [`stellar_runtime_poll_event`]로 event를 꺼냅니다. 요청한 event의
+/// 완료는 이 신호를 쓰지 않습니다(셸은 기다리는 요청이 있을 때 계속 꺼냅니다). 앱 runtime이 아직 없으면
+/// 시작합니다.
+#[cfg(unix)]
+#[no_mangle]
+pub extern "C" fn stellar_runtime_event_ready_fd(handle: u64) -> i32 {
+    use std::os::fd::IntoRawFd;
+    catch_unwind(AssertUnwindSafe(|| {
+        let mut reg = registry().lock().ok()?;
+        let rt = reg.live.get_mut(&handle)?;
+        let app = rt.app().ok()?;
+        match app.event_ready_fd() {
+            Ok(fd) => Some(fd.into_raw_fd()),
+            Err(error) => {
+                rt.last_error = Some((
+                    StellarStatus::Internal,
+                    format!("event 준비 신호를 만들 수 없습니다: {error}"),
+                ));
+                None
+            }
+        }
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(-1)
+}
+
 /// 셸이 계산한 drawable(backing) 픽셀 크기와 backing scale을 코어에 전달합니다.
 ///
 /// 렌더링은 하지 않고 값만 보관합니다(II.5.4 — 전달 구조만). 픽셀 크기는 셸에서

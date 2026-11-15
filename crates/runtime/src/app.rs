@@ -9,6 +9,9 @@
 //! - **완료 event**: 요청마다 정확히 하나의 [`RuntimeEvent`]를 outbox에 쌓습니다. 셸은 pull
 //!   방식으로 꺼냅니다([`AppRuntime::poll_event`], [`AppRuntime::pop_event`]). callback은 없습니다
 //!   (II.4.5).
+//! - **요청 없는 event**: 셸 요청 없이 창 표시가 바뀌면(컴포넌트 원본 감시) request 0인
+//!   `WindowViewChanged`를 쌓고 event 준비 신호([`AppRuntime::event_ready_fd`])를 깨웁니다. 같은 창의
+//!   요청 없는 event가 아직 남아 있으면 더하지 않으며, 요청 상한 계산에 들어가지 않습니다.
 //! - **상태 snapshot**: 요청이 성공하면 document thread가 불변 [`RuntimeState`]를 새로 만들어
 //!   게시합니다(실패한 요청은 상태를 바꾸지 않으므로 게시하지 않습니다). 셸은 [`AppRuntime::state`]로 최신 snapshot을 읽습니다. 완료 event보다 snapshot을
 //!   먼저 게시하므로, 완료 event를 받은 뒤 읽은 snapshot에는 그 요청의 결과가 들어 있습니다.
@@ -1016,11 +1019,6 @@ pub(crate) struct WindowEntry {
     /// 진행 중인 캔버스 Text 조합(ADR-0067 §6). 문서와 history에는 없습니다.
     text: Option<text_input::TextComposition>,
     checkpoint: recovery::WindowCheckpoint,
-    #[cfg(target_os = "macos")]
-    component_watch: Option<(
-        stellar_project::watcher::fsevents::ComponentFileWatch,
-        std::os::unix::net::UnixDatagram,
-    )>,
 }
 
 #[derive(Debug)]
@@ -1377,8 +1375,6 @@ fn open_window_session_on_thread(
             canvas: crate::canvas::CanvasCache::new(fonts),
             text: None,
             checkpoint: recovery::WindowCheckpoint::new(recovery, handle),
-            #[cfg(target_os = "macos")]
-            component_watch: None,
         },
     );
     if let Some(owner) = sessions.projects.get_mut(&project) {
@@ -1653,6 +1649,19 @@ struct AppShared {
     state: Mutex<Arc<RuntimeState>>,
     /// 창별로 document thread가 아직 반영하지 않은 wheel 팬 합계([`AppRuntime::wheel_pan`]).
     wheel_pans: Mutex<BTreeMap<WindowSessionHandle, PendingWheelPan>>,
+    /// 컴포넌트 원본 읽기 시작 순서(`components` 모듈).
+    library_reads: AtomicU64,
+    /// 신뢰된 프로젝트 session별 컴포넌트 원본 감시 thread 식별 token(`components` 모듈).
+    #[cfg(target_os = "macos")]
+    component_watches: Mutex<BTreeMap<ProjectSessionId, Arc<()>>>,
+    /// 요청 없는 event 준비 신호의 (읽기, 쓰기) socket 짝([`AppRuntime::event_ready_fd`]가 처음 만듦).
+    #[cfg(unix)]
+    event_ready: Mutex<
+        Option<(
+            std::os::unix::net::UnixDatagram,
+            std::os::unix::net::UnixDatagram,
+        )>,
+    >,
 }
 
 /// 접수했지만 아직 반영하지 않은 wheel 팬. `scheduled`면 그 합을 가져갈 job이 대기 중입니다.
@@ -1683,6 +1692,31 @@ impl AppShared {
         let _ = self
             .outstanding
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
+    }
+
+    /// 요청 없이 창 표시가 바뀌었음을 알립니다. 같은 창의 알림이 아직 남아 있으면 더하지 않습니다.
+    fn push_unsolicited_view_change(&self, session: WindowSessionHandle) {
+        let event = RuntimeEvent::WindowViewChanged {
+            request: RequestId(0),
+            session,
+        };
+        {
+            let mut outbox = self.outbox();
+            if outbox.contains(&event) {
+                return;
+            }
+            outbox.push_back(event);
+        }
+        #[cfg(unix)]
+        if let Some(signal) = self
+            .event_ready
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+        {
+            // 비차단 socket이 가득 차면 셸이 아직 읽지 않은 신호가 이미 있습니다.
+            let _ = signal.1.send(&[1]);
+        }
     }
 }
 
@@ -1775,6 +1809,11 @@ impl AppRuntime {
             outstanding: AtomicUsize::new(0),
             state: Mutex::new(Arc::new(RuntimeState::default())),
             wheel_pans: Mutex::default(),
+            library_reads: AtomicU64::new(0),
+            #[cfg(target_os = "macos")]
+            component_watches: Mutex::default(),
+            #[cfg(unix)]
+            event_ready: Mutex::default(),
         });
         let fonts = {
             let sender = document.sender();
@@ -1907,11 +1946,7 @@ impl AppRuntime {
                 .values_mut()
                 .filter(|w| lowered.contains(&w.project))
             {
-                #[cfg(target_os = "macos")]
-                {
-                    window.component_watch.take();
-                }
-                window.canvas.update_library(request.0, None);
+                window.canvas.clear_library();
             }
             match checked {
                 Ok(_) => Ok(RuntimeEvent::ProjectTrust {
@@ -2185,7 +2220,8 @@ impl AppRuntime {
     /// 다음 완료 event를 꺼냅니다(FIFO).
     pub fn pop_event(&self) -> Option<RuntimeEvent> {
         let event = self.shared.outbox().pop_front();
-        if event.is_some() {
+        // 요청 없는 event(request 0)는 요청 상한에 들어가지 않았습니다.
+        if event.as_ref().is_some_and(|e| e.request() != RequestId(0)) {
             self.shared.release_one();
         }
         event
@@ -2208,10 +2244,36 @@ impl AppRuntime {
                 len: payload.len(),
             };
         }
+        let solicited = front.request() != RequestId(0);
         outbox.pop_front();
         drop(outbox);
-        self.shared.release_one();
+        if solicited {
+            self.shared.release_one();
+        }
         EventPoll::Taken { kind, payload }
+    }
+
+    /// 요청 없는 event가 쌓이면 읽을 수 있게 되는 비차단 datagram socket을 돌려줍니다(호출자가 소유하고 닫음).
+    ///
+    /// 신호 하나는 1 byte이고, 셸은 깨어나면 남은 신호를 모두 읽은 뒤 [`AppRuntime::poll_event`]로 event를
+    /// 꺼냅니다. 신호는 event 수가 아니라 "꺼낼 것이 있을 수 있음"입니다. 여러 번 부르면 같은 socket을 공유하는
+    /// 새 fd를 돌려줍니다.
+    #[cfg(unix)]
+    pub fn event_ready_fd(&self) -> std::io::Result<std::os::fd::OwnedFd> {
+        use std::os::unix::net::UnixDatagram;
+        let mut slot = self
+            .shared
+            .event_ready
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if slot.is_none() {
+            let (reader, writer) = UnixDatagram::pair()?;
+            reader.set_nonblocking(true)?;
+            writer.set_nonblocking(true)?;
+            *slot = Some((reader, writer));
+        }
+        let (reader, _) = slot.as_ref().expect("방금 만든 신호");
+        Ok(std::os::fd::OwnedFd::from(reader.try_clone()?))
     }
 
     /// 완료 event를 아직 꺼내지 않은 요청 수(실행 중 포함).
@@ -2679,6 +2741,49 @@ mod tests {
             }
         );
         assert_eq!(center(), (-19.0, 2.0));
+        app.shutdown().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unsolicited_view_changes_coalesce_wake_the_shell_and_do_not_use_request_slots() {
+        use crate::app_window_tests::{open_project, open_window};
+        use crate::window_session::test_fixtures::saved_project;
+        use std::os::unix::net::UnixDatagram;
+        let dir = saved_project("app-unsolicited");
+        let app = AppRuntime::start_with(QueueCapacity::default(), 1).unwrap();
+        let (a, _, _) = open_window(&app, open_project(&app, dir.path()));
+        let signal = UnixDatagram::from(app.event_ready_fd().unwrap());
+        signal.set_nonblocking(true).unwrap();
+        app.shared.push_unsolicited_view_change(a);
+        app.shared.push_unsolicited_view_change(a);
+        let mut byte = [0u8; 1];
+        assert_eq!(signal.recv(&mut byte).unwrap(), 1);
+        assert_eq!(app.outstanding(), 0, "요청 상한에 들어가지 않음");
+        // 상한이 1이어도 요청 없는 event가 남아 있는 동안 새 요청을 받습니다.
+        let request = app.set_selection(a, Vec::new()).unwrap();
+        let unsolicited = RuntimeEvent::WindowViewChanged {
+            request: RequestId(0),
+            session: a,
+        };
+        assert_eq!(app.pop_event(), Some(unsolicited));
+        assert_eq!(app.outstanding(), 1);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let completed = loop {
+            if let Some(event) = app.pop_event() {
+                break event;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        };
+        assert_eq!(
+            completed,
+            RuntimeEvent::WindowViewChanged {
+                request,
+                session: a
+            }
+        );
+        assert_eq!(app.outstanding(), 0);
         app.shutdown().unwrap();
     }
 }

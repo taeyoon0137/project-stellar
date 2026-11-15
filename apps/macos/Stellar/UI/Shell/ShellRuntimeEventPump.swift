@@ -6,6 +6,9 @@ import Foundation
 /// 코어는 callback 없이 event를 큐에 쌓기만 하므로(II.4.5), 셸이 꺼내야 합니다. 이 펌프는 기다리는 요청이 있을
 /// 때만 짧은 주기 timer를 켜고, 한 번에 꺼내는 event 수를 제한해 메인 스레드 점유를 짧게 둡니다(아키텍처 §6.3).
 /// 기다리는 요청이 없으면 timer를 끕니다. 모든 호출은 메인 스레드에서 합니다.
+///
+/// 요청 없는 event(request 0, 예: 컴포넌트 원본 감시가 바꾼 창 표시)는 코어의 event 준비 신호 fd가 깨우면 꺼내
+/// `unsolicitedEventHandler`로 넘깁니다(ADR-0014). 기다리는 요청이 없어도 timer를 켜지 않습니다.
 @MainActor
 final class ShellRuntimeEventPump {
     /// 기다리는 요청이 있을 때 event를 확인하는 주기(초).
@@ -18,10 +21,27 @@ final class ShellRuntimeEventPump {
     private var timer: Timer?
     /// 꺼냈지만 기다리는 요청이 없어 버린 event 수(검사·진단용).
     private(set) var unclaimedEventCount = 0
+    /// 요청 없는 event를 받을 곳(앱 구성이 창으로 나눕니다).
+    var unsolicitedEventHandler: ((CoreRuntimeEvent) -> Void)?
+    private var readySource: DispatchSourceRead?
 
     init(runtimeHandle: UInt64) {
         self.runtimeHandle = runtimeHandle
+        let fd = CoreRuntime.eventReadyFD(handle: runtimeHandle)
+        guard fd >= 0 else { return }
+        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
+        source.setEventHandler { [weak self] in
+            // 신호는 "꺼낼 것이 있을 수 있음"이므로 남은 신호를 모두 읽고 한 번 꺼냅니다.
+            var byte: UInt8 = 0
+            while Darwin.recv(fd, &byte, 1, 0) == 1 {}
+            MainActor.assumeIsolated { _ = self?.drain() }
+        }
+        source.setCancelHandler { Darwin.close(fd) }
+        source.resume()
+        readySource = source
     }
+
+    deinit { readySource?.cancel() }
 
     /// 완료를 기다리는 요청 수.
     var pendingRequestCount: Int { completions.count }
@@ -208,6 +228,8 @@ final class ShellRuntimeEventPump {
             drained += 1
             if let request = event.request, let completion = completions.removeValue(forKey: request) {
                 completion(event)
+            } else if event.request == 0, let unsolicitedEventHandler {
+                unsolicitedEventHandler(event)
             } else {
                 unclaimedEventCount += 1
             }

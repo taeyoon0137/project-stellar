@@ -112,6 +112,12 @@ final class ShellAppCoordinator: NSObject {
         applicationModel.commandHandler = { [weak self] command in
             self?.performApplicationCommand(command)
         }
+        // 요청 없는 창 표시 변경(컴포넌트 원본 감시)은 그 창 session을 가진 프로젝트 창으로 보냅니다.
+        pump?.unsolicitedEventHandler = { [weak self] event in
+            guard case .windowViewChanged(_, let session) = event else { return }
+            self?.projectWindows.first { $0.windowController.windowSession?.session == session }?
+                .componentSourcesDidChange()
+        }
         welcomeData.coordinator = self
     }
 

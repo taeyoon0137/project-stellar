@@ -1,8 +1,9 @@
 import Foundation
 
 extension CoreRuntime {
-    static func componentWatchFD(handle: UInt64, session: UInt64) -> Int32 {
-        stellar_window_component_watch_fd(handle, session)
+    /// 요청 없는 event 준비 신호 fd(호출자 소유). 실패하면 -1입니다.
+    static func eventReadyFD(handle: UInt64) -> Int32 {
+        stellar_runtime_event_ready_fd(handle)
     }
 
     static func reloadComponentCanvas(handle: UInt64, session: UInt64) -> Result<UInt64, CoreRuntimeCallError> {

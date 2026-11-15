@@ -360,9 +360,9 @@ Frame ABI와 같이 document thread가 표시 revision·편집 가능한 부모�
   창 상태 요약에 넣은 정의 ID 조회입니다. 창이 없어져 소비자가 없으므로 runtime 요약 필드
   `selected_definition`과 함께 삭제했습니다.
 
-이 계열에서 남는 창 ABI는 원본 감시(`stellar_window_component_watch_fd`)와 캔버스 재읽기
-(`stellar_window_reload_component_canvas`)입니다. 두 ABI의 기록과 감시 구조 정리는 캔버스 렌더·입력·감시
-묶음(B8)에서 합니다.
+이 계열에서 남는 창 ABI는 캔버스 재읽기(`stellar_window_reload_component_canvas`)입니다. 원본 감시 fd
+(`stellar_window_component_watch_fd`)는 삭제했습니다. 재읽기와 감시의 기록은 아래 "캔버스 표시·입력·감시 ABI 기록"에
+있습니다.
 
 ## 프로젝트 신뢰 확인·승인·철회 — XVI.7.2 (2026-11-15 소급 기록)
 
@@ -577,3 +577,29 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 - 현재 macOS 셸은 이 목록을 Swift Core Graphics 경로(`CanvasFrameScene`)로 그리고 hit test·선택 외곽선도 셸에서
   계산합니다. 아키텍처 §3.5·§10.1과 다른 임시 구조입니다. 코어 SceneSnapshot을 Metal로 그리고 hit test를 코어
   질의로 바꾸는 일(XI.8.2 다음 XII.4.1)에서 이 경로를 지우며, 그때까지 CG 경로에는 기능을 더하지 않습니다.
+
+### 컴포넌트 원본 재읽기와 감시 — `stellar_window_reload_component_canvas`, flags bit3
+
+- `stellar_window_reload_component_canvas(handle, session, out_request)`는 그 창 프로젝트의 `design/components/`
+  원본을 문서 thread 밖 worker에서 읽고, document thread에서 창 표시 목록의 정의 집합만 바꿉니다. 문서·history·
+  선택은 바꾸지 않습니다. 완료는 `WINDOW_VIEW_CHANGED`, 창이 닫혔으면 `REQUEST_FAILED`(`UNKNOWN_WINDOW_SESSION`)입니다.
+  읽기는 시작 순서를 가지며, 늦게 끝난 이전 읽기는 새 결과를 덮지 않습니다. 반영 시점에 프로젝트가 신뢰되지 않으면
+  정의를 비우고, 신뢰를 철회하면 진행 중인 읽기와 무관하게 비웁니다.
+- 표시 목록에서 컴포넌트 인스턴스는 override가 없는 경우에만 정의 Frame 트리를 펼친 행(flags bit3)으로 그립니다.
+  override가 있거나 정의를 찾지 못한 인스턴스는 그리지 않고 `skipped`로 셉니다. override 표시가 필요해지면 캔버스
+  투영을 문서의 `InstanceExpansion` 결과로 옮깁니다(후속).
+- **원본 감시**: 코어가 신뢰된 프로젝트 session마다 XIII.2 `FsEventsWatcher` 하나를 둡니다. 그 프로젝트 창의 첫
+  재읽기 요청에서 시작하고, 프로젝트가 닫히거나 신뢰를 잃거나 창이 모두 닫히면 끝납니다(감시 thread가 250ms마다
+  상태 snapshot을 확인). `design/components` 폴더 자체나 그 바로 아래 `*.stellar.yaml`의 변경, 또는 넘침을 보면
+  (`FileWatchEvent::affects_component_sources`) 그 프로젝트의 모든 창에 재읽기를 예약합니다. 앱·CLI·내장 터미널·Git
+  checkout 중 무엇이 고쳤는지 구분하지 않으므로 창이 계속 key 창이어도 반영됩니다.
+- **요청 없는 event**: 감시가 예약한 재읽기로 정의가 실제로 바뀐 창에는 request 0인 `WINDOW_VIEW_CHANGED`를 보냅니다.
+  같은 창의 요청 없는 event가 아직 남아 있으면 더하지 않고, 요청 상한 계산에 들어가지 않습니다. 셸은 이 event를 받으면
+  그 창의 표시 목록을 revision과 무관하게 다시 읽습니다. 셸이 깨어나는 방법은 ADR-0014의 event 준비 신호
+  (`stellar_runtime_event_ready_fd`)입니다.
+- 셸은 신뢰 확인·변경과 문서 복구 뒤에 재읽기를 요청합니다. 창 복귀(key 창 전환) 때마다 다시 읽던 동작은 감시와
+  기능이 겹쳐 삭제했습니다.
+- 삭제: `stellar_window_component_watch_fd`는 창마다 전용 FSEvents stream을 만들고 그 알림 fd를 셸로 넘겼습니다.
+  XIII.2 `FsEventsWatcher`를 우회하고, 같은 프로젝트를 연 창 수만큼 stream이 생겼습니다. 이 ABI와 project
+  `ComponentFileWatch`, runtime 창 entry의 감시 필드, Swift 감시 객체를 함께 삭제했습니다.
+

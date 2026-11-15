@@ -229,7 +229,29 @@ impl FileWatchEvent {
             FileWatchEvent::Overflow(_) => Vec::new(),
         }
     }
+
+    /// 컴포넌트 원본을 다시 읽어야 하는 변경인지.
+    ///
+    /// 프로젝트 root의 [`COMPONENT_SOURCE_DIR`] 폴더 자체나 그 바로 아래 `*.stellar.yaml`을 언급하면 참입니다.
+    /// 이름 변경은 어느 쪽 경로든 해당하면 참이고, 넘침은 무엇이 바뀌었는지 알 수 없으므로 참입니다.
+    pub fn affects_component_sources(&self) -> bool {
+        if let FileWatchEvent::Overflow(_) = self {
+            return true;
+        }
+        self.paths().into_iter().any(|path| {
+            path.root().is_project()
+                && (path.relative() == COMPONENT_SOURCE_DIR
+                    || path
+                        .relative()
+                        .strip_prefix(COMPONENT_SOURCE_DIR)
+                        .and_then(|rest| rest.strip_prefix('/'))
+                        .is_some_and(|name| !name.contains('/') && name.ends_with(".stellar.yaml")))
+        })
+    }
 }
+
+/// 프로젝트 root 기준 컴포넌트 원본 폴더.
+pub const COMPONENT_SOURCE_DIR: &str = "design/components";
 
 /// event 인코딩·디코딩 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -367,6 +389,42 @@ mod tests {
 
     fn path(root: u32, relative: &str) -> WatchPath {
         WatchPath::new(WatchRootId(root), relative).unwrap()
+    }
+
+    #[test]
+    fn component_source_changes_are_the_folder_and_its_direct_yaml_files() {
+        let card = path(0, "design/components/Card-0123456789ab.stellar.yaml");
+        for event in [
+            FileWatchEvent::Created(card.clone()),
+            FileWatchEvent::Modified(card.clone()),
+            FileWatchEvent::Removed(card.clone()),
+            FileWatchEvent::Removed(path(0, "design/components")),
+            FileWatchEvent::Renamed {
+                from: path(0, "design/components/.Card.stellar.yaml.tmp"),
+                to: card.clone(),
+            },
+            FileWatchEvent::Renamed {
+                from: card.clone(),
+                to: path(0, "Card.stellar.yaml"),
+            },
+            FileWatchEvent::Overflow(OverflowReason::EventsDropped),
+        ] {
+            assert!(event.affects_component_sources(), "{event:?}");
+        }
+        for relative in [
+            "design/components/Card.stellar.yaml.tmp",
+            "design/components/sub/Card.stellar.yaml",
+            "design/components-old/Card.stellar.yaml",
+            "design/current",
+            "Card.stellar.yaml",
+        ] {
+            assert!(!FileWatchEvent::Modified(path(0, relative)).affects_component_sources());
+        }
+        // 외부 symlink target root의 같은 상대 경로는 프로젝트 컴포넌트 폴더가 아닙니다.
+        assert!(
+            !FileWatchEvent::Modified(path(1, "design/components/Card.stellar.yaml"))
+                .affects_component_sources()
+        );
     }
 
     /// 모든 종류·사유와 까다로운 경로를 포함한 batch.

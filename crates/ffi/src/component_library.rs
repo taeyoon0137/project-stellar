@@ -1,27 +1,9 @@
-//! 컴포넌트 원본 감시와 캔버스 재읽기를 위한 네이티브 셸 API.
+//! 컴포넌트 원본 캔버스 재읽기를 위한 네이티브 셸 API(ADR-0028).
+//!
+//! 원본 감시는 코어가 신뢰된 프로젝트 session마다 하나 두며 셸에 fd를 넘기지 않습니다. 감시가 예약한 재읽기
+//! 결과는 요청 없는 `WINDOW_VIEW_CHANGED`와 `stellar_runtime_event_ready_fd` 신호로 돌아옵니다.
 use crate::{ffi_guard, registry, StellarStatus};
 use stellar_runtime::app::WindowSessionHandle;
-
-/// 비차단 macOS 변경 신호 fd를 생성합니다. 호출자는 worker에서 기다리고 fd를 닫습니다.
-#[cfg(target_os = "macos")]
-#[no_mangle]
-pub extern "C" fn stellar_window_component_watch_fd(handle: u64, session: u64) -> i32 {
-    use std::os::fd::IntoRawFd;
-    std::panic::catch_unwind(|| {
-        let start = {
-            let reg = registry().lock().ok()?;
-            reg.live
-                .get(&handle)?
-                .app
-                .as_ref()?
-                .component_file_watch(WindowSessionHandle(session))
-        };
-        Some(start()?.into_raw_fd())
-    })
-    .ok()
-    .flatten()
-    .unwrap_or(-1)
-}
 
 /// worker에서 원본 라이브러리를 읽고 현재 창의 캔버스 갱신을 요청합니다.
 /// # Safety
@@ -48,4 +30,28 @@ pub unsafe extern "C" fn stellar_window_reload_component_canvas(
         let result = app.reload_canvas_components(WindowSessionHandle(session));
         unsafe { rt.finish_request(result, out_request) }
     })
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::fd::{FromRawFd, OwnedFd};
+
+    use crate::window_session::tests::create;
+    use crate::{stellar_runtime_destroy, stellar_runtime_event_ready_fd, StellarStatus};
+
+    #[test]
+    fn event_ready_fd_belongs_to_the_caller_and_unknown_handles_fail() {
+        let h = create();
+        let first = stellar_runtime_event_ready_fd(h);
+        let second = stellar_runtime_event_ready_fd(h);
+        assert!(first >= 0 && second >= 0 && first != second);
+        // 호출자가 소유하므로 닫아도 다음 호출이 새 fd를 받습니다.
+        drop(unsafe { OwnedFd::from_raw_fd(first) });
+        drop(unsafe { OwnedFd::from_raw_fd(second) });
+        assert_eq!(stellar_runtime_event_ready_fd(999_999), -1);
+        assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        let header = include_str!("../include/stellar_ffi.h");
+        assert!(header.contains("int32_t stellar_runtime_event_ready_fd(uint64_t handle);"));
+        assert!(!header.contains("component_watch_fd"));
+    }
 }
