@@ -221,6 +221,55 @@ UI thread는 기다리지 않습니다.
   (저장하지 않고 닫기를 고른 창만 닫습니다).
 - 이 결정은 셸 동작이며 C ABI를 더하지 않습니다. 기존 Save Now·창 session 닫기 ABI를 그대로 씁니다.
 
+### 비정상 종료 복구 체크포인트
+
+U125가 ADR 없이 넣은 복구 경로를 아키텍처 §22.3 범위(Restore·Discard·Later)로 줄이고 여기에 기록합니다.
+
+1. **저장 위치·형식**: V.9.1 `RecoverySnapshotStore`(OS 앱 데이터의
+   `recovery/<project identity hash>/<window uuid>.starrecovery`, identity 디렉터리 권한 0700)와 V.9.2
+   `RecoveryPayload`(활성 문서의 전체 chunk, 기준 manifest hash, revision, 탭·viewport·선택)를 그대로 씁니다.
+   프로젝트의 Git 작업 트리와 index에는 쓰지 않습니다. Undo/Redo history는 담지 않습니다.
+2. **캡처 시점**: 상태를 게시할 때 document thread는 문서 revision·dirty 표식만 남깁니다(O(1)). 창별 worker가 마지막
+   표식 뒤 1초(편집이 이어져도 첫 표식 뒤 5초 안)를 기다린 뒤 캡처 job을 document thread의 background lane에 한 번
+   제출합니다. 입력·일반 command job이 먼저 처리됩니다. 직렬화와 원자적 파일 교체는 worker에서 합니다. 선택·viewport만
+   바뀐 경우는 기록하지 않고, 저장되거나 폐기되면 복구본을 지웁니다. 1초·5초는 XIII.8.1 벤치마크 전의 임시
+   correctness 값이며 config와 성능 예산은 바꾸지 않습니다.
+3. **측정**(2026-11-15, DEV-MAC, release, 한 부모 아래 평평한 Frame 문서, 5회 중 최솟값, REF-MAC 판정 아님): 한 번
+   캡처의 `to_records` 비용은 1,000 node 0.14ms, 10,000 node 1.7ms, 50,000 node 12.6ms입니다. 이전에는 이 비용이
+   편집 요청마다 들었고 지금은 debounce 구간마다 한 번입니다. 약 1만 node를 넘는 문서에서는 한 번의 캡처가 document
+   thread 2ms 상한을 넘습니다. autosave와 같은 immutable snapshot을 공유하는 XIII.8.2 전까지 남는 한계입니다.
+4. **잠금·정리**: worker는 처음 쓸 때 자기 `<window uuid>.lock`을 OS 파일 잠금으로 쥡니다. 다른 프로세스·창은 잠긴
+   복구본을 제안하지 않습니다. worker가 끝날 때 남긴 복구본이 없으면 잠금 파일도 지웁니다. runtime 파괴는 document
+   thread를 멈춘 뒤 worker의 남은 정리를 최대 1초(`AppRuntime::RECOVERY_FLUSH_TIMEOUT`) 기다립니다.
+5. **제안 규칙**(V.9.3): 기준 manifest hash가 디스크의 current와 같고 revision이 0보다 큰 복구본만 제안합니다. 다른
+   살아 있는 창이 잠근 것, 해석할 수 없는 것(사유만 기록), 저장한 적 없는 기준, 뒤에 정상 저장되어 current가 바뀐 것은
+   제안하지 않습니다. 최근 창의 복구본부터 하나만 고릅니다.
+6. **C ABI**
+   - `StellarRecoveryCandidate`(고정 56 byte, `STELLAR_RECOVERY_CANDIDATE_VERSION` = 1): version, has_candidate,
+     window_id\[16\], content_hash\[32\](복구본 파일 bytes의 SHA-256). 크기·offset은 Rust 테스트와 헤더
+     `static_assert`로 고정합니다.
+   - `stellar_window_recovery_probe(handle, session, *out_candidate)`: 파일을 읽으므로 UI thread 밖에서 부릅니다. 없으면
+     `has_candidate = 0`과 `OK`, 복구 저장소를 읽지 못하면 `INTERNAL`과 last error, 없는 창 session은
+     `INVALID_ARGUMENT`, app runtime이 시작되지 않은 handle은 `INVALID_HANDLE`입니다.
+   - `stellar_window_recovery_apply(handle, session, *candidate, action, *out_request)`: action은
+     `STELLAR_RECOVERY_RESTORE`(1) 또는 `STELLAR_RECOVERY_DISCARD`(2)입니다. worker에서 같은 bytes hash인지 다시 확인한
+     뒤에만 적용합니다. Restore는 창이 같은 프로젝트·같은 문서이고 revision 0·미저장 변경 없음이며 loaded generation과
+     디스크 current가 복구본의 기준과 같을 때만 문서·탭·viewport·선택을 메모리에 복원합니다. 디스크는 쓰지 않고, 다음
+     Save Now나 정상 닫기가 일반 저장으로 기록합니다. 원래 복구본은 이 창이 새 복구본을 쓰거나 지울 때까지 보존합니다.
+     Discard는 복구본과 그 잠금 파일을 지웁니다. 완료는 `WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`
+     (`WINDOW_SESSION_LOAD_FAILED` 18, 창·디스크 기준이 바뀌었으면 `SAVE_STALE` 21)입니다. 모르는 action,
+     `has_candidate = 0`, 다른 version은 `INVALID_ARGUMENT`이며 요청을 만들지 않습니다.
+   - Later는 요청이 없습니다. 복구본을 그대로 두어 다음 열기에 다시 제안합니다.
+7. **셸**: 창 session을 연 뒤 worker에서 probe하고, 복구본이 있으면 Restore Changes·Discard Changes·Later 시트를
+   띄웁니다. 그 창에 이미 미저장 편집이 있으면 Restore를 보이지 않습니다.
+8. **제거**
+   - 문자열 ticket 프로토콜(첫 byte 태그와 `<uuid> <hash>` 텍스트, 호출자 buffer 출력): 고정 구조체로 바꿨습니다.
+   - Save Recovered Document…와 runtime `export_recovery`: 기준이 바뀐 복구본을 원본 밖 새 폴더에 별도 Git 저장소로
+     내보내는 경로입니다. §22.3에 없는 기능이고 새 프로젝트 생성 경로를 중복 구현했습니다. 기준이 바뀐 복구본은
+     위 제안 규칙대로 제안하지 않습니다.
+   - 앱 검사 `ShellDocumentRecoveryCheck`(`--document-recovery-check`)와 `scripts/macos/document-recovery-check.py`:
+     앱 안에 넣은 원격 조작 검사입니다. 코어 규칙은 runtime 단위 테스트가 다룹니다.
+
 ## 스크롤의 창별 팬 연결 — XII.10.37 부분 구현
 
 - `stellar_window_session_pan(handle, session, dx, dy, out_request)`는 기존 runtime `pan_viewport`를 호출합니다.

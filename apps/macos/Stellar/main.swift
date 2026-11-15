@@ -63,12 +63,6 @@ for check in areaUIChecks where CommandLine.arguments.contains(check.argument) {
 
 // 셸 통합 검사 모드: 실제 앱 구성(메뉴, 시작 창, 코어로 프로젝트 열기, 프로젝트 창 영역·도구, 복원·닫기)을 화면 밖에서
 // 검사하고 종료합니다(docs/design/ui/shell_frame.md 통합 절).
-if let flag = CommandLine.arguments.firstIndex(of: "--document-recovery-check") {
-    guard CommandLine.arguments.indices.contains(flag + 2), let home = ProcessInfo.processInfo.environment["HOME"],
-          CommandLine.arguments[flag + 1] == home else { exit(1) }
-    exit(MainActor.assumeIsolated { ShellDocumentRecoveryCheck.run(URL(fileURLWithPath: home, isDirectory: true), mode: CommandLine.arguments[flag + 2]) } ? 0 : 1)
-}
-
 if let flag = CommandLine.arguments.firstIndex(of: "--canvas-ime-check") {
     guard CommandLine.arguments.indices.contains(flag + 3), CommandLine.arguments[flag + 3] == ProcessInfo.processInfo.environment["HOME"] else { exit(1) }
     let fixture = URL(fileURLWithPath: CommandLine.arguments[flag+1])

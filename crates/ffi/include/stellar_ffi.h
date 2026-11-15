@@ -278,10 +278,6 @@ StellarStatus stellar_window_reload_component_canvas(uint64_t handle, uint64_t s
  * The trusted window owns the watch until revocation, close, or replacement. */
 int32_t stellar_window_component_watch_fd(uint64_t handle, uint64_t session);
 #endif
-/* Recovery probe returns an empty ticket, a matching-base or separate-copy ticket, or error text.
- * Call probe off the UI thread. Apply submits a request that completes via WINDOW_VIEW_CHANGED. */
-StellarStatus stellar_window_recovery_probe(uint64_t handle, uint64_t session, uint8_t *out, size_t capacity, size_t *out_len);
-StellarStatus stellar_window_recovery_apply(uint64_t handle, uint64_t session, const uint8_t *ticket, size_t ticket_len, const uint8_t *path, size_t path_len, uint64_t *request);
 
 
 /* 프로젝트 session 닫기를 요청합니다(그 아래 문서도 닫음). */
@@ -429,6 +425,26 @@ StellarStatus stellar_window_view_info(uint64_t handle, uint64_t session, Stella
 
 /* 열린 창 session의 최신 snapshot 정보를 씁니다(없는 창 session은 STELLAR_INVALID_ARGUMENT). */
 StellarStatus stellar_window_session_info(uint64_t handle, uint64_t session, StellarWindowSessionInfo *out_info);
+
+/* 비정상 종료 복구(§22.3). probe는 V.9.3 규칙(기준 세대 = current, 미저장 revision 있음)에 맞는 복구본 하나를 고릅니다. */
+#define STELLAR_RECOVERY_CANDIDATE_VERSION 1
+#define STELLAR_RECOVERY_RESTORE 1 /* 이 창 session 메모리에 복원(디스크는 쓰지 않음) */
+#define STELLAR_RECOVERY_DISCARD 2 /* 복구본 삭제 */
+typedef struct StellarRecoveryCandidate {
+    uint32_t version;          /* STELLAR_RECOVERY_CANDIDATE_VERSION */
+    uint32_t has_candidate;    /* 제안할 복구본이 있으면 1(없으면 나머지 0) */
+    uint8_t window_id[16];     /* 복구본을 남긴 창 편집 session id */
+    uint8_t content_hash[32];  /* 복구본 파일 bytes의 SHA-256 */
+} StellarRecoveryCandidate;
+#ifdef __cplusplus
+static_assert(sizeof(StellarRecoveryCandidate) == 56, "StellarRecoveryCandidate layout");
+#else
+_Static_assert(sizeof(StellarRecoveryCandidate) == 56, "StellarRecoveryCandidate layout");
+#endif
+/* 파일을 읽으므로 UI thread 밖에서 부릅니다. 없으면 has_candidate 0, 저장소 읽기 실패는 STELLAR_INTERNAL과 last error. */
+StellarStatus stellar_window_recovery_probe(uint64_t handle, uint64_t session, StellarRecoveryCandidate *out_candidate);
+/* probe 결과에 RESTORE 또는 DISCARD를 적용합니다(같은 bytes일 때만). 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED. */
+StellarStatus stellar_window_recovery_apply(uint64_t handle, uint64_t session, const StellarRecoveryCandidate *candidate, uint32_t action, uint64_t *out_request);
 
 /* 살아 있는 runtime handle 수(진단용). */
 uint64_t stellar_runtime_live_count(void);

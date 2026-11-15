@@ -128,22 +128,19 @@ enum CoreRuntime {
         return status == STELLAR_OK ? (elements, flags) : nil
     }
 
-    static func probeRecovery(handle: UInt64, session: UInt64, capacity: Int = Int(STELLAR_EVENT_TEXT_MAX))
-        -> (status: StellarStatus, bytes: ArraySlice<UInt8>) {
-        var length = 0, bytes = [UInt8](repeating: 0, count: capacity)
-        let status = bytes.withUnsafeMutableBufferPointer {
-            stellar_window_recovery_probe(handle, session, $0.baseAddress, $0.count, &length)
-        }
-        return (status, bytes.prefix(length))
+    /// 이 창 session에 제안할 복구본. 파일을 읽으므로 main thread 밖에서 부릅니다. 실패하면 nil입니다.
+    static func probeRecovery(handle: UInt64, session: UInt64) -> StellarRecoveryCandidate? {
+        var candidate = StellarRecoveryCandidate()
+        guard stellar_window_recovery_probe(handle, session, &candidate) == STELLAR_OK,
+              candidate.version == UInt32(STELLAR_RECOVERY_CANDIDATE_VERSION) else { return nil }
+        return candidate
     }
 
-    static func recoverDocument(handle: UInt64, session: UInt64, ticket: String, destination: URL?) -> Result<UInt64, CoreRuntimeCallError> {
+    static func recoverDocument(handle: UInt64, session: UInt64, candidate: StellarRecoveryCandidate,
+                                action: UInt32) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
-        let status = Array(ticket.utf8).withUnsafeBufferPointer { token in
-            Array((destination?.path ?? "").utf8).withUnsafeBufferPointer { path in
-                stellar_window_recovery_apply(handle, session, token.baseAddress, token.count, path.baseAddress, path.count, &request)
-            }
-        }
+        var candidate = candidate
+        let status = stellar_window_recovery_apply(handle, session, &candidate, action, &request)
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
         return .success(request)
     }

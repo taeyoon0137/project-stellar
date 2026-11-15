@@ -307,6 +307,7 @@ impl Worker {
                     self.store
                         .remove_snapshot(&self.identity, *old)
                         .map_err(io::Error::other)?;
+                    remove_lock(&self.store, &self.identity, *old);
                     self.previous = None;
                 }
                 Ok(())
@@ -323,11 +324,7 @@ impl Worker {
                 Ok(None)
             )
         {
-            let path = self
-                .store
-                .snapshot_path(&self.identity, self.owner)
-                .with_extension("lock");
-            let _ = fs::remove_file(path);
+            remove_lock(&self.store, &self.identity, self.owner);
         }
         drop(lease);
         drop(self.active);

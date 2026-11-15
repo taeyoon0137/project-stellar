@@ -1,8 +1,12 @@
-//! 저장 세대와 분리된 활성 문서 복구 체크포인트.
+//! 저장 세대와 분리된 활성 문서 복구 체크포인트(아키텍처 §22.3, V.9).
+//!
+//! 제안은 V.9.3 규칙을 따릅니다: 기준 세대가 디스크의 current와 같고 미저장 revision이 있는 복구본만
+//! 제안합니다. 사용자는 Restore(이 창 메모리에 복원), Discard(복구본 삭제), Later(그대로 둠) 중 하나를
+//! 고릅니다. 복구 동작은 디스크의 프로젝트 파일을 쓰지 않습니다.
 use super::*;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use stellar_commands::selection::Selection;
 use stellar_commands::state::DocumentState;
 use stellar_commands::view_tabs::CanvasViewport;
@@ -15,6 +19,7 @@ use stellar_project::document_io::serialize::{
 };
 use stellar_project::recovery::RecoverySnapshotStore;
 use stellar_project::recovery_payload::{OpenTab, RecoveryPayload, UnsavedChunk, Viewport};
+use stellar_project::recovery_probe::{assess_snapshot, SnapshotFreshness};
 use stellar_storage::chunk::kinds::KIND_DOCUMENT_MANIFEST;
 use stellar_storage::generation::current::read_current_pointer;
 use stellar_storage::hash::ContentHash;
@@ -23,15 +28,22 @@ mod tests;
 mod writer;
 pub(super) use writer::{CheckpointConfig, RecoveryWorkers, WindowCheckpoint};
 
-/// 앱이 표시한 한 후보. action은 동일 bytes hash를 다시 검사합니다.
-#[derive(Debug, Clone)]
+/// 앱이 표시한 한 후보. 동작은 같은 bytes hash인지 다시 검사한 뒤에만 적용합니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecoveryCandidate {
-    /// 비정상 종료한 세션.
+    /// 복구본을 남긴(비정상 종료한) 창 편집 session.
     pub window: WindowSessionId,
-    /// 제안한 파일 자체의 hash.
+    /// 제안한 복구본 파일 bytes의 hash.
     pub hash: ContentHash,
-    /// 기준이 디스크의 현재 세대와 같은지 여부.
-    pub matches_base: bool,
+}
+
+/// 복구 제안에 대한 사용자의 결정. Later는 아무것도 하지 않으므로 요청이 없습니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryAction {
+    /// 이 창 session 메모리에 복원합니다. 디스크는 다음 Save Now·정상 닫기의 일반 저장으로 바뀝니다.
+    Restore,
+    /// 복구본을 지웁니다. 다음 열기에 다시 제안하지 않습니다.
+    Discard,
 }
 #[derive(Debug)]
 struct Capture {
@@ -154,6 +166,10 @@ fn lock_candidate(
     file.try_lock().map_err(io::Error::from)?;
     Ok(file)
 }
+/// 잠금을 쥔 쪽이 복구본을 지운 뒤 잠금 파일도 지웁니다. 다른 프로세스는 try_lock만 하므로 기다리지 않습니다.
+fn remove_lock(store: &RecoverySnapshotStore, id: &ProjectIdentity, window: WindowSessionId) {
+    let _ = fs::remove_file(store.snapshot_path(id, window).with_extension("lock"));
+}
 fn payload_bytes(
     store: &RecoverySnapshotStore,
     id: &ProjectIdentity,
@@ -165,13 +181,15 @@ fn payload_bytes(
         .ok_or_else(|| "복구본이 더 이상 존재하지 않습니다".into())
 }
 impl RecoveryCandidate {
-    /// 셸이 보관한 불투명 ticket에서 원본 ID와 bytes hash를 복원합니다.
-    pub fn from_ticket(window: StableId, hash: &str) -> Result<Self, String> {
-        Ok(Self {
+    /// 셸이 probe 결과로 받은 창 ID와 SHA-256 digest에서 후보를 다시 만듭니다.
+    pub fn from_digest(window: StableId, digest: &[u8; 32]) -> Self {
+        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        Self {
             window: WindowSessionId::from_stable_id(window),
-            hash: hash.parse().map_err(|_| "잘못된 복구 hash")?,
-            matches_base: false,
-        })
+            hash: format!("sha256:{hex}")
+                .parse()
+                .expect("sha256 digest 문자열은 항상 유효합니다"),
+        }
     }
 }
 impl ProjectSummary {
@@ -188,12 +206,12 @@ impl ProjectSummary {
             RecoverySnapshotStore::new(&base.join(stellar_ops::lock::APP_DATA_DIR)),
         ))
     }
-    /// 다른 살아 있는 앱·창이 소유한 복구본은 제안에서 제외합니다. 최근 창부터 표시합니다.
+    /// 제안할 복구본 하나. V.9.3 규칙(기준 세대 = current, 미저장 revision 있음)을 따르고, 다른 살아 있는
+    /// 앱·창이 잠근 복구본과 읽을 수 없는 복구본은 제외합니다. 최근 창부터 고릅니다.
     pub fn recovery_candidate(&self) -> Result<Option<RecoveryCandidate>, String> {
         let (id, store) = self.recovery_store()?;
-        let base = read_current_pointer(id.canonical_target()).ok();
+        let current = read_current_pointer(id.canonical_target()).ok();
         let sessions = store.list_sessions(&id).map_err(|e| e.to_string())?;
-        let mut unreadable = None;
         for name in sessions.into_iter().rev() {
             let Some(window) = parse_project_id(&name).map(WindowSessionId::from_stable_id) else {
                 continue;
@@ -212,20 +230,25 @@ impl ProjectSummary {
             let payload = match RecoveryPayload::decode(&bytes) {
                 Ok(payload) => payload,
                 Err(error) => {
-                    unreadable = Some(error.to_string());
+                    // V.9.3: 해석할 수 없는 복구본은 제안하지 않고 사유만 남깁니다.
+                    eprintln!("Stellar recovery: 읽을 수 없는 복구본을 건너뜁니다: {error}");
                     continue;
                 }
             };
-            if payload.base_manifest_hash.is_none() || payload.revision == 0 {
+            // 저장한 적 없는 기준이거나, 뒤에 정상 저장되어 current가 바뀐 복구본은 제안하지 않습니다.
+            let fresh = matches!(
+                assess_snapshot(current, &payload),
+                SnapshotFreshness::Fresh { .. }
+            );
+            if payload.base_manifest_hash.is_none() || !fresh {
                 continue;
             }
             return Ok(Some(RecoveryCandidate {
                 window,
                 hash: ContentHash::compute(&bytes),
-                matches_base: payload.base_manifest_hash == base,
             }));
         }
-        unreadable.map_or(Ok(None), Err)
+        Ok(None)
     }
     fn read_recovery(
         &self,
@@ -248,64 +271,6 @@ impl ProjectSummary {
         let payload = RecoveryPayload::decode(&bytes).map_err(|e| e.to_string())?;
         Ok((id, store, guard, payload))
     }
-    /// 사용자가 정한 새 폴더에 활성 문서만 복원합니다. 원본 checkout은 읽기 전용입니다.
-    fn export_recovery(&self, candidate: &RecoveryCandidate, folder: &Path) -> Result<(), String> {
-        use stellar_project::{
-            fs_transaction::DirTransaction, manifest::CURRENT_SCHEMA_VERSION,
-            scaffold::write_default_scaffold,
-        };
-        use stellar_storage::save::{
-            cancel::{run_save, CancelToken},
-            commit::SavedGenerationState,
-            plan::build_save_plan,
-        };
-        let (id, store, _guard, payload) = self.read_recovery(candidate)?;
-        let parent = folder
-            .parent()
-            .ok_or("새 복구 폴더가 필요합니다")?
-            .canonicalize()
-            .map_err(|e| e.to_string())?;
-        if parent.starts_with(id.canonical_target()) || !folder.is_absolute() {
-            return Err("원본 프로젝트 밖에 새 폴더를 선택하세요".into());
-        }
-        let name = folder
-            .file_name()
-            .and_then(|s| s.to_str())
-            .ok_or("새 복구 폴더 이름이 필요합니다")?;
-        stellar_project::folder_name::validate_folder_name(name).map_err(|e| e.to_string())?;
-        let model = load_model(&payload)?;
-        let serialized = serialize_document(&model).map_err(|e| e.to_string())?;
-        let [project] = stellar_project::new_ids::new_ids().map_err(|e| e.to_string())?;
-        let plan = build_save_plan(
-            None,
-            project,
-            CURRENT_SCHEMA_VERSION,
-            &serialized.to_dirty_states(),
-            vec![model.document_id()],
-        )
-        .map_err(|e| e.to_string())?;
-        let (runner, version) = super::create::project_git()?;
-        let tx = DirTransaction::create(&parent.join(name)).map_err(|e| e.to_string())?;
-        write_default_scaffold(tx.path(), name, &project.to_string()).map_err(|e| e.to_string())?;
-        run_save(
-            tx.path(),
-            &plan,
-            &mut SavedGenerationState::new(None),
-            &CancelToken::new(),
-        )
-        .map_err(|e| e.to_string())?;
-        stellar_git_porcelain::repo::git_init_main(&runner, &version, tx.path())
-            .map_err(|e| e.to_string())?;
-        stellar_project::saved_project::SavedProjectLoader::new()
-            .open(tx.path())
-            .map_err(|e| e.to_string())?
-            .load_document(model.document_id())
-            .map_err(|e| e.to_string())?;
-        tx.commit();
-        store
-            .remove_snapshot(&id, candidate.window)
-            .map_err(|e| e.to_string())
-    }
 }
 
 /// worker에서 검증한 복구본. 새 편집 또는 다른 세대에 뒤늦게 적용하지 않습니다.
@@ -326,7 +291,7 @@ impl ProjectSummary {
             .base_manifest_hash
             .ok_or("저장된 기준 세대가 없습니다")?;
         if read_current_pointer(project.canonical_target()).ok() != Some(base) {
-            return Err("디스크 세대가 바뀌었습니다. 별도 문서로 복구하세요".into());
+            return Err("디스크 세대가 바뀌어 복구본을 이 창에 복원할 수 없습니다".into());
         }
         let model = load_model(&payload)?;
         Ok(PreparedRecovery {
@@ -338,14 +303,25 @@ impl ProjectSummary {
             payload,
         })
     }
+
+    /// 표시한 것과 같은 bytes인 복구본만 지웁니다. 문서는 조립하지 않습니다.
+    fn discard_recovery(&self, candidate: &RecoveryCandidate) -> Result<(), String> {
+        let (id, store, _lease, _) = self.read_recovery(candidate)?;
+        store
+            .remove_snapshot(&id, candidate.window)
+            .map_err(|e| e.to_string())?;
+        remove_lock(&store, &id, candidate.window);
+        Ok(())
+    }
 }
 impl AppRuntime {
-    /// 셸은 request만 즉시 접수합니다. 파일 읽기와 검증은 worker가 수행합니다.
+    /// 셸은 request만 즉시 접수합니다. 파일 읽기와 검증은 worker가 수행합니다. 두 동작 모두
+    /// [`RuntimeEvent::WindowViewChanged`] 또는 [`RuntimeEvent::RequestFailed`]로 끝납니다.
     pub fn recover_checkpoint(
         &self,
         session: WindowSessionHandle,
         candidate: RecoveryCandidate,
-        destination: Option<PathBuf>,
+        action: RecoveryAction,
     ) -> Result<RequestId, RequestError> {
         let request = self.reserve_request()?;
         let state = self.state();
@@ -359,8 +335,8 @@ impl AppRuntime {
                         .window(session)
                         .and_then(|w| state.project(w.project))
                         .ok_or("열린 창이 없습니다")?;
-                    if let Some(dest) = destination {
-                        return p.export_recovery(&candidate, &dest);
+                    if action == RecoveryAction::Discard {
+                        return p.discard_recovery(&candidate);
                     }
                     let ready = p.prepare_recovery(&candidate)?;
                     let snapshot = shared.clone();
@@ -412,7 +388,7 @@ fn apply_recovery(
     {
         return Err(Failure::new(
             RequestFailure::SaveStale,
-            "창 또는 디스크 세대가 바뀌었습니다. 별도 문서로 복구하세요",
+            "창 또는 디스크 세대가 바뀌어 복구본을 이 창에 복원할 수 없습니다",
         ));
     }
     let p = recovery.payload;

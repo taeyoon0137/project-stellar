@@ -189,9 +189,10 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.reloadComponentCanvas(handle: runtimeHandle, session: session), completion)
     }
 
-    func recoverDocument(_ session: UInt64, ticket: String, destination: URL?,
+    func recoverDocument(_ session: UInt64, candidate: StellarRecoveryCandidate, action: UInt32,
                          completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
-        register(CoreRuntime.recoverDocument(handle: runtimeHandle, session: session, ticket: ticket, destination: destination), completion)
+        register(CoreRuntime.recoverDocument(handle: runtimeHandle, session: session, candidate: candidate, action: action),
+                 completion)
     }
 
     func register(
