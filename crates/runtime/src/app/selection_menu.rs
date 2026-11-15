@@ -146,7 +146,11 @@ fn context_selection(
             return Ok(None);
         }
     }
-    Ok(Some(vec![node]))
+    // 선택 밖을 우클릭하면 왼쪽 클릭과 같은 규칙(⌘·더블클릭 없는 누름)으로 고릅니다. 그래서 가장 안쪽 node가 아니라
+    // 지금 선택과 같은 단계, 선택이 없으면 root의 직계 자식이 선택됩니다(UX 명세 5.3).
+    let target = super::canvas_gesture::point_target(model, root, selected, node, false, false)
+        .ok_or_else(stale)?;
+    Ok(Some(vec![target]))
 }
 
 #[cfg(test)]
@@ -237,9 +241,14 @@ mod tests {
         let next = |win: &ProjectWindowSession, node: Option<u64>| {
             context_selection(win, sid(3), node.map(sid)).ok()
         };
-        // 빈 선택에서 빈 곳은 그대로, 노드는 그것만 선택합니다.
+        // 빈 선택에서 빈 곳은 그대로입니다. 노드를 누르면 가장 안쪽(32)이 아니라 왼쪽 클릭처럼 root의 직계 자식(11)을
+        // 고릅니다(UX 명세 5.3).
         assert_eq!(next(&session, None), Some(None));
-        assert_eq!(next(&session, Some(32)), Some(Some(vec![sid(32)])));
+        assert_eq!(next(&session, Some(32)), Some(Some(vec![sid(11)])));
+        assert_eq!(next(&session, Some(12)), Some(Some(vec![sid(12)])));
+        // 같은 단계에 형제가 선택되어 있으면 그 단계에서 고릅니다.
+        session.select(Selection::new([sid(12)], None)).unwrap();
+        assert_eq!(next(&session, Some(32)), Some(Some(vec![sid(11)])));
         // 다중 선택 안의 노드나 선택한 노드의 자손을 누르면 선택을 유지합니다.
         session
             .select(Selection::new([sid(11), sid(12)], None))

@@ -898,7 +898,7 @@ fn ancestry(model: &DocumentModel, node: StableId, root: StableId) -> Option<Vec
 }
 
 /// 클릭이 고를 node. 지금 선택과 같은 깊이(선택의 부모가 조상이면 그 자식)를 먼저, 없으면 root의 직계 자식을 고릅니다.
-fn point_target(
+pub(super) fn point_target(
     model: &DocumentModel,
     root: StableId,
     current: &[StableId],
