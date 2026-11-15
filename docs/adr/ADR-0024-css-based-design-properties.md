@@ -281,7 +281,7 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
 
 - `TypedValue::Typography`의 내부 이진 형식(`STTY` v1)은 이 ADR의 결정이 아닙니다. 2026-11-14 Codex 작업이 IX.11.11
   선행(IX.11.21 migration 경로 등) 없이 이 Accepted ADR에 적었던 형식 기록은
-  [ADR-0067](ADR-0067-canvas-text-input-and-default-fonts.md) §4(Proposed, 확정 아님)로 옮겼습니다. 최종 형식은
+  [ADR-0067](ADR-0067-canvas-text-input-and-default-fonts.md) §4(현행 구현 기록, 결정 아님)로 옮겼습니다. 최종 형식은
   사용자 결정 D2(텍스트 asset catalog)에 따라 텍스트 원본 ADR이 정합니다.
 - 이 ADR이 정하는 것은 Typography가 CSS longhand(`font-family`, `font-size`, `font-weight`, `font-style`,
   `font-stretch`, `line-height`, `letter-spacing`)의 묶음 값이라는 어휘와 CSS initial 의미뿐입니다.
@@ -291,7 +291,7 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
 - 문서 Text style 표의 저장 위치와 형식은 이 ADR의 결정이 아닙니다.
 - 사용자 결정 D2(2026-11-15)에 따라 style 표와 글꼴·이미지 asset 레코드는 텍스트 asset catalog 한 곳에 두고
   문서는 참조만 합니다. 형식과 migration 경로(IX.11.21)는 텍스트 원본 ADR이 정합니다.
-- 현재 구현의 상태 기록은 ADR-0067 §4(Proposed, 확정 아님)에 옮겼습니다.
+- 현재 구현의 상태 기록은 ADR-0067 §4(현행 구현 기록, 결정 아님)에 옮겼습니다.
 
 ## Performance
 

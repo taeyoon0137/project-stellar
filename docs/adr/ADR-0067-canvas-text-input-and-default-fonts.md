@@ -2,14 +2,23 @@
 
 ## Status
 
-Proposed (2026-11-15, Codex 작업 검토 묶음 B5, 사용자 확인 대기)
+Accepted (2026-11-15, 최종 통합 검토에서 §5를 결정)
 
-- 검토 계획 0절 3항은 새 결정 ADR을 B2(ADR-0061) 하나로 정했습니다. B5가 이 ADR을 Accepted로 표시한 것은 사용자
-  승인 없는 확정이었으므로 Proposed로 내립니다.
+- B5가 처음 이 ADR을 Accepted로 적은 것은 검토 계획 0절 3항(새 결정 ADR은 B2 하나)에 맞지 않아 Proposed로 내렸었습니다.
+  0절 3항은 Codex 작업 묶음이 새 결정을 만들지 못하게 하는 규칙입니다. 이 Accepted는 Codex 묶음의 확정이 아니라, 사용자
+  지시(설계 선택은 기준 문서에 맞게 직접 정하고 ADR·커밋에 기록하며 사용자에게 묻지 않음)에 따라 최종 통합 검토가 §5를
+  정한 것입니다. 같은 날 ADR-0070~0074도 같은 방식으로 Accepted입니다.
 - §1·§2·§6의 제거·ABI 기록과 §3의 기본값 정정은 B5가 보호 경로(`crates/ffi`, `crates/core-types`)를 바꾼 사실 기록이며
   코드와 같습니다.
-- 사용자 확인이 필요한 새 결정은 §5(기본 글꼴 chain `Helvetica` → `AppleGothic` → `HiraginoSans-W3`, loader thread,
-  64 MiB 파일 상한)입니다. 검토 계획 B5가 요구한 '기본 글꼴 fallback'을 구현한 선택이며, 확인 전까지 확정이 아닙니다.
+- §5 결정: 기본 글꼴 chain `Helvetica` → `AppleGothic` → `HiraginoSans-W3`, loader thread, 64 MiB 파일 상한을 그대로
+  씁니다(`crates/runtime/src/canvas/text/fonts.rs`의 `DEFAULT_CHAIN`·`MAX_DEFAULT_FILE_BYTES`). 근거는 다음과 같습니다.
+  - 세 face 모두 macOS에 기본으로 설치되고 Latin·한글·가나·한자를 덮으므로, 문서가 글꼴을 정하지 않은 Text도 빈 화면 없이
+    그립니다.
+  - 이름이 정확히 같은 파일만 쓰고 다른 글꼴로 대체하지 않으며(X.8.3), 화면 대체에만 씁니다. 문서에는 아무것도 쓰지 않고
+    export·codegen의 재현성 근거로도 쓰지 않으므로 Git 원본에 기기마다 다른 값이 들어가지 않습니다.
+  - 글꼴 파일 I/O를 loader thread에서 해 document thread를 막지 않습니다(아키텍처 §6.3의 단일 점유 상한).
+  - 64 MiB는 기본 face 파일보다 넉넉한 메모리 상한입니다. 넘는 파일은 건너뜁니다.
+  - 바꿀 근거(지원 문자 범위, 측정 결과)가 생기면 이 ADR을 개정합니다.
 - §4의 '현재 저장 상태'와 Typography value 형식은 결정이 아닌 현행 구현 기록입니다. 사용자 결정 D2의 텍스트 asset
   catalog ADR이 대체합니다.
 
@@ -79,13 +88,13 @@ Proposed (2026-11-15, Codex 작업 검토 묶음 B5, 사용자 확인 대기)
   - 이전에는 entry 전체를 bytes 하나로 투영해, 다른 필드를 고쳐도 충돌했습니다.
 - 삭제(결정): `ProjectDocumentIndex`의 `STDI` v2 encode·decode 분기는 쓰는 곳이 없어 삭제합니다. index는 문서
   이름·페이지·View만 담고, Text style 표는 각 문서 정의가 저장합니다.
-- 현재 저장 상태(Proposed, 확정 아님): 아래는 Codex가 Accepted ADR-0024에 결정처럼 적었던 현행 구현입니다.
+- 현재 저장 상태(현행 구현 기록, 결정 아님): 아래는 Codex가 Accepted ADR-0024에 결정처럼 적었던 현행 구현입니다.
   최종 위치와 형식은 D2에 따라 텍스트 원본 ADR이 정하며, 그때 이 항목을 대체합니다.
   - style 표가 있는 문서는 DocumentManifest pointer schema 2를 쓰고, 문서 정의 뒤에 `STTS` v1 표를 둡니다.
   - 표에는 기본 typography·글자색, StableId별 typography resource, hash별 project 글꼴과 asset record, 원래
     u32 index별 문단·문자 style이 있습니다.
   - 기존 v1 generation은 빈 style 표로 읽습니다.
-- Typography value 현재 형식(Proposed, 확정 아님, IX.11.11 미완료): 2026-11-14 Codex 커밋 86a2e820이 IX.11.11 선행
+- Typography value 현재 형식(현행 구현 기록, 결정 아님, IX.11.11 미완료): 2026-11-14 Codex 커밋 86a2e820이 IX.11.11 선행
   없이 Accepted ADR-0024에 적었던 기록을 그대로 옮겼습니다. 최종 형식은 D2에 따라 텍스트 원본 ADR이 정합니다.
 
   `TypedValue::Typography`는 tag `0x0C`와 기존 외부 길이 envelope를 유지합니다. 내부 `STTY` + u8 version 1은
