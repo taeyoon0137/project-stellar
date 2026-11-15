@@ -277,6 +277,22 @@ TL·TR·BR·BL 입력을 표시합니다. 캔버스와 hit test에는 기존의 
 (`stellar_window_reload_component_canvas`), D3에 걸린 선택 생성(`stellar_window_component_from_selection`)입니다.
 앞의 두 ABI의 기록과 감시 구조 정리는 캔버스 렌더·입력·감시 묶음(B8)에서 합니다.
 
+## 프로젝트 신뢰 확인·승인·철회 — XVI.7.2 (2026-11-15 소급 기록)
+
+U051이 이 ADR 없이 추가한 ABI를 기록합니다. 의미는 아래와 같고 시그니처는 바꾸지 않았습니다.
+
+- `stellar_project_trust(handle, project, action, out_request)`: action 0 조회, 1 사용자 승인, 2 사용자 철회입니다.
+  다른 값은 요청 없이 `INVALID_ARGUMENT`입니다. 완료는 `STELLAR_EVENT_PROJECT_TRUST`(`0x010B`: request u64,
+  project u64, trusted u8) 또는 `REQUEST_FAILED`입니다. 신뢰 저장소를 열거나 기록하지 못했거나 폴더·ID가 바뀌었으면
+  실패 코드 25(`TRUST_UNAVAILABLE`), 닫힌 프로젝트는 1입니다.
+- 기록 위치는 OS 사용자 데이터의 신뢰 목록(`FileTrustStore`)뿐입니다. 프로젝트 파일과 Git config는 바꾸지 않습니다.
+  조회와 승인은 열린 폴더의 실제 target과 매니페스트 project ID가 열 때와 같은지 다시 확인합니다.
+- 프로젝트는 항상 신뢰되지 않음으로 엽니다(ADR-0014 결정 4). 승인 결과는 요청한 프로젝트 session에만 반영합니다.
+- 결과가 신뢰가 아니거나(철회 포함) 확인에 실패하면, symlink를 해석한 실제 target과 project ID가 같은 모든 프로젝트
+  session을 신뢰되지 않음으로 낮추고, 그 창의 컴포넌트 원본 감시와 캔버스 라이브러리를 내립니다. 실패 완료에도
+  상태 snapshot을 게시하므로 이후 요청은 낮춘 신뢰를 봅니다.
+- 한계: 다른 창의 셸 표시는 그 창이 신뢰를 다시 조회할 때 갱신됩니다. 신뢰 변경 알림 event는 없습니다.
+
 ## Git 패널 이름·컴포넌트 Stage ABI 제거 (2026-11-15 검토)
 
 창의 Git 패널에서 저장 노드 이름 한 속성(U055·U057)과 컴포넌트 원본 파일 하나(U115)를 Stage·Unstage하던 ABI는

@@ -1208,6 +1208,40 @@ fn open_project_on_thread(
     })
 }
 
+/// OS 사용자 신뢰 저장소에서 `identity`의 상태를 읽거나 사용자 결정(승인·철회)을 기록합니다.
+/// 승인과 조회는 열린 폴더와 매니페스트 project ID가 열 때와 같은지 다시 확인합니다.
+fn check_project_trust(
+    identity: &ProjectIdentity,
+    decision: Option<bool>,
+) -> Result<TrustStatus, Failure> {
+    let unavailable = |message: &str| Failure::new(RequestFailure::TrustUnavailable, message);
+    let dir = os_user_data_base()
+        .filter(|base| base.is_absolute())
+        .ok_or_else(|| unavailable("사용자 데이터 위치를 찾지 못했습니다"))?
+        .join(stellar_ops::lock::APP_DATA_DIR);
+    let mut store = FileTrustStore::open(&dir).map_err(|error| unavailable(&error.to_string()))?;
+    if decision == Some(false) {
+        store
+            .revoke(identity)
+            .map_err(|error| unavailable(&error.to_string()))?;
+    } else {
+        let probe = safe_probe(identity.root_path(), TrustStatus::NotTrusted)
+            .map_err(|error| unavailable(&error.to_string()))?;
+        if parse_project_id(&probe.manifest.project.id) != Some(identity.project_id())
+            || identity.root_path().canonicalize().ok().as_deref()
+                != Some(identity.canonical_target())
+        {
+            return Err(unavailable("열린 폴더나 프로젝트 ID가 바뀌었습니다"));
+        }
+        if decision == Some(true) {
+            store
+                .grant(identity)
+                .map_err(|error| unavailable(&error.to_string()))?;
+        }
+    }
+    Ok(store.status(identity))
+}
+
 fn close_project_on_thread(
     ctx: &mut DocumentContext,
     request: RequestId,
@@ -1816,70 +1850,63 @@ impl AppRuntime {
     }
 
     /// 열린 프로젝트의 사용자별 신뢰 상태를 다시 읽거나, 확인한 사용자의 결정을 기록합니다.
-    /// 처음 여는 창은 제한 모드이며, 확인 실패는 Git 사용을 허용하지 않습니다.
+    /// 처음 여는 창은 제한 모드입니다. 결과가 신뢰가 아니거나(철회 포함) 확인에 실패하면, 같은 폴더
+    /// (symlink를 해석한 실제 target과 project ID)를 연 모든 프로젝트 session을 제한 모드로 낮춥니다.
     pub fn project_trust(
         &self,
         project: ProjectSessionId,
         decision: Option<bool>,
     ) -> Result<RequestId, RequestError> {
+        let shared = Arc::clone(&self.shared);
         self.submit(move |ctx, request| {
-            let session = ctx
-                .app_sessions_mut()
+            let identity = ctx
+                .app_sessions()
                 .projects
-                .get_mut(&project)
+                .get(&project)
                 .ok_or_else(|| {
                     Failure::new(RequestFailure::UnknownProject, "이미 닫힌 프로젝트입니다")
-                })?;
-            let unavailable =
-                |message: &str| Failure::new(RequestFailure::TrustUnavailable, message);
-            let dir = os_user_data_base()
-                .filter(|base| base.is_absolute())
-                .ok_or_else(|| unavailable("사용자 데이터 위치를 찾지 못했습니다"))?
-                .join(stellar_ops::lock::APP_DATA_DIR);
-            let identity = &session.identity;
-            let mut store =
-                FileTrustStore::open(&dir).map_err(|error| unavailable(&error.to_string()))?;
-            if decision == Some(false) {
-                store
-                    .revoke(identity)
-                    .map_err(|error| unavailable(&error.to_string()))?;
-            } else {
-                let probe = safe_probe(identity.root_path(), TrustStatus::NotTrusted)
-                    .map_err(|error| unavailable(&error.to_string()))?;
-                let id = parse_project_id(&probe.manifest.project.id);
-                if id != Some(identity.project_id())
-                    || identity.root_path().canonicalize().ok().as_deref()
-                        != Some(identity.canonical_target())
-                {
-                    return Err(unavailable("열린 폴더나 프로젝트 ID가 바뀌었습니다"));
-                }
-                if decision == Some(true) {
-                    store
-                        .grant(identity)
-                        .map_err(|error| unavailable(&error.to_string()))?;
-                }
-            }
-            session.trust = store.status(identity);
-            let trusted = session.trust == TrustStatus::Trusted;
-            if !trusted {
-                for window in ctx
-                    .app_sessions_mut()
-                    .windows
-                    .values_mut()
-                    .filter(|w| w.project == project)
-                {
-                    #[cfg(target_os = "macos")]
-                    {
-                        window.component_watch.take();
+                })?
+                .identity
+                .clone();
+            let checked = check_project_trust(&identity, decision);
+            let trusted = matches!(checked, Ok(TrustStatus::Trusted));
+            let sessions = ctx.app_sessions_mut();
+            let mut lowered = BTreeSet::new();
+            for (id, session) in &mut sessions.projects {
+                if trusted {
+                    if *id == project {
+                        session.trust = TrustStatus::Trusted;
                     }
-                    window.canvas.update_library(request.0, None);
+                } else if session.identity.project_id() == identity.project_id()
+                    && session.identity.same_target(&identity)
+                {
+                    session.trust = TrustStatus::NotTrusted;
+                    lowered.insert(*id);
                 }
             }
-            Ok(RuntimeEvent::ProjectTrust {
-                request,
-                project,
-                trusted,
-            })
+            for window in sessions
+                .windows
+                .values_mut()
+                .filter(|w| lowered.contains(&w.project))
+            {
+                #[cfg(target_os = "macos")]
+                {
+                    window.component_watch.take();
+                }
+                window.canvas.update_library(request.0, None);
+            }
+            match checked {
+                Ok(_) => Ok(RuntimeEvent::ProjectTrust {
+                    request,
+                    project,
+                    trusted,
+                }),
+                Err(failure) => {
+                    // 실패 완료는 상태를 게시하지 않으므로 낮춘 신뢰를 여기서 게시합니다.
+                    shared.publish_state(build_state(ctx));
+                    Err(failure)
+                }
+            }
         })
     }
 
@@ -2399,6 +2426,81 @@ mod tests {
         assert_eq!(RequestFailure::from_code(0), None);
         // 삭제한 Git 이름 Stage 실패 코드는 다시 쓰지 않습니다.
         assert_eq!(RequestFailure::from_code(26), None);
+    }
+
+    /// 신뢰 실패·철회는 같은 폴더(실제 target·project ID)를 연 모든 프로젝트 session을 제한 모드로
+    /// 낮춥니다. 신뢰 저장소 위치가 HOME에서 나오므로 검사 전용 HOME을 넘긴 자식 프로세스에서 실행합니다.
+    #[cfg(unix)]
+    #[test]
+    fn trust_failure_and_revocation_lower_every_session_of_the_same_folder() {
+        use crate::app_window_tests::{next_event, open_project};
+        use crate::window_session::test_fixtures::{unsaved_project, TempDir};
+        const ROOT: &str = "STELLAR_TEST_TRUST_PROJECT";
+        const NAME: &str =
+            "app::tests::trust_failure_and_revocation_lower_every_session_of_the_same_folder";
+        if let Some(root) = std::env::var_os(ROOT) {
+            let root = PathBuf::from(root);
+            let alias = PathBuf::from(std::env::var_os("HOME").unwrap()).join("alias");
+            std::os::unix::fs::symlink(&root, &alias).unwrap();
+            let app = AppRuntime::start().unwrap();
+            let first = open_project(&app, &root);
+            let second = open_project(&app, &alias);
+            let trust = |project, decision| {
+                let request = app.project_trust(project, decision).unwrap();
+                let event = next_event(&app);
+                assert_eq!(event.request(), request);
+                event
+            };
+            let trusted = |event: RuntimeEvent| match event {
+                RuntimeEvent::ProjectTrust { trusted, .. } => trusted,
+                other => panic!("신뢰 결과가 아님: {other:?}"),
+            };
+            let status = |project| app.state().project(project).unwrap().trust;
+            assert!(trusted(trust(first, Some(true))));
+            assert!(trusted(trust(second, None)));
+            assert_eq!(status(first), TrustStatus::Trusted);
+            assert_eq!(status(second), TrustStatus::Trusted);
+            // 다른 session에서 철회해도 같은 폴더를 연 session이 모두 낮아집니다.
+            assert!(!trusted(trust(second, Some(false))));
+            assert_eq!(status(first), TrustStatus::NotTrusted);
+            assert_eq!(status(second), TrustStatus::NotTrusted);
+            assert!(trusted(trust(first, Some(true))));
+            assert!(trusted(trust(second, None)));
+            // 신뢰 저장소를 읽지 못하면 실패를 알리고 같은 폴더의 session을 모두 낮춥니다.
+            let dir = os_user_data_base()
+                .unwrap()
+                .join(stellar_ops::lock::APP_DATA_DIR);
+            let file = FileTrustStore::open(&dir)
+                .unwrap()
+                .file_path()
+                .to_path_buf();
+            std::fs::write(&file, "unknown: 1\n").unwrap();
+            match trust(first, None) {
+                RuntimeEvent::RequestFailed { failure, .. } => {
+                    assert_eq!(failure, RequestFailure::TrustUnavailable)
+                }
+                other => panic!("실패가 아님: {other:?}"),
+            }
+            assert_eq!(status(first), TrustStatus::NotTrusted);
+            assert_eq!(status(second), TrustStatus::NotTrusted);
+            return;
+        }
+        let project = unsaved_project("trust-sessions");
+        let home = TempDir::new("trust-home");
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--test-threads=1"])
+            .env_remove("XDG_DATA_HOME")
+            .env_remove("APPDATA")
+            .env("HOME", home.path())
+            .env(ROOT, project.path())
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]

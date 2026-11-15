@@ -94,8 +94,9 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
    error로 돌려줍니다(`out_request = 0`).
 4. **프로젝트 열기 순서**: 열기 분류(IV.2.4) → 신뢰되지 않은 프로젝트용 안전 probe(IV.5.3: 매니페스트
    메타데이터만 읽고 Git·필터를 실행하지 않으며 symlink 매니페스트를 따르지 않음) → `project.id`
-   StableId 변환 → `ProjectIdentity`(IV.2.3). 신뢰 저장소 연결 전이므로 모든 프로젝트를 신뢰되지
-   않음으로 엽니다. 문서 청크는 읽지 않습니다.
+   StableId 변환 → `ProjectIdentity`(IV.2.3). 모든 프로젝트를 신뢰되지 않음으로 엽니다. OS 사용자
+   신뢰 저장소의 확인·승인·철회는 별도 요청 `stellar_project_trust`(ADR-0028 XVI.7.2 절)가 합니다.
+   문서 청크는 읽지 않습니다.
 5. **문서 session**: 문서는 프로젝트 session 아래 StableId로 엽니다. 같은 session의 재열기는 기존
    문서 session(`already_open = 1`), 다른 session이 연 문서는 실패 3입니다(document thread의 열린 문서
    집합이 하나뿐이기 때문, 창별 독립 memory model은 XII.2.4). 프로젝트를 닫으면 그 아래 문서도
