@@ -57,7 +57,7 @@ impl PropertyEditPhase {
 }
 
 /// 반복 입력 grouping의 시각. 프로세스에서 처음 읽은 시점 이후 경과 nanoseconds입니다(단조).
-struct InstantClock;
+pub(super) struct InstantClock;
 
 impl MonotonicClock for InstantClock {
     fn now_nanos(&self) -> u64 {
@@ -247,7 +247,7 @@ fn edit_property(
 /// 반복 입력의 grouping key: 같은 선택(첫 node)·같은 속성 저장 key의 반복만 합칩니다. 선택 변경·다른 편집은
 /// history가 열린 grouping을 닫으므로 그 뒤 입력은 새 항목입니다. `left`·`top`은 같은 저장 key(이동 성분)라
 /// 0.5초 안에 이어 바꾸면 이동 한 번으로 합쳐집니다.
-fn repeat_key(
+pub(super) fn repeat_key(
     model: &stellar_document::model::DocumentModel,
     selection: &[StableId],
     property: InspectorProperty,

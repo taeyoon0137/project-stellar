@@ -840,9 +840,20 @@ fn move_selection(
     if commands == 0 {
         return Ok(());
     }
+    // 화살표 이동(부모 공간, 누른 행 없음)은 속성 탭 `left`·`top` 반복 입력과 같은 grouping으로 기록합니다. 0.5초 안에
+    // 이어 누르면 Undo 한 번이고, 선택·다른 편집이 끼면 새 항목입니다.
+    let repeat = (parent_space && anchor.is_none() && !duplicate).then(|| {
+        super::inspector::repeat_key(
+            model,
+            &selected,
+            stellar_commands::inspector::InspectorProperty::Left,
+        )
+    });
     if duplicate {
         let primary = copies.last().copied();
         window.apply_and_select(&transaction, Selection::new(copies, primary))
+    } else if let Some(key) = repeat {
+        window.apply_grouped(&transaction, key, &super::inspector::InstantClock)
     } else {
         window.apply(&transaction)
     }
@@ -1458,6 +1469,28 @@ mod tests {
             },
         )
         .is_ok()
+    }
+
+    /// 화살표 이동을 이어 누르면 속성 탭 반복 입력처럼 Undo 한 번으로 묶이고, 끄는 이동은 묶지 않습니다.
+    #[test]
+    fn repeated_arrow_moves_group_into_one_undo_entry() {
+        let dir = saved_project_with("canvas-arrow-group", &[&shape_document()]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        session
+            .select(Selection::new([sid(14)], Some(sid(14))))
+            .unwrap();
+        let undo = session.history().history().len();
+        for request in 1..=3 {
+            assert!(drag(&mut session, request, None, (1., 0.), true, false));
+        }
+        assert_eq!(shape_translation(&session, sid(14)), (303., 200.));
+        assert_eq!(session.history().history().len(), undo + 1);
+        // 끄는 이동은 새 항목입니다.
+        assert!(drag(&mut session, 4, Some(14), (2., 0.), false, false));
+        assert_eq!(session.history().history().len(), undo + 2);
+        assert!(session.undo().unwrap());
+        assert!(session.undo().unwrap());
+        assert_eq!(shape_translation(&session, sid(14)), (300., 200.));
     }
 
     #[test]
