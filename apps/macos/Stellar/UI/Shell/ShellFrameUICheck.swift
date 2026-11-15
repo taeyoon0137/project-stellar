@@ -136,7 +136,6 @@ private final class ShellFrameUICheckRunner {
                 && abs(toolBar.frame.width - expectedWidth) <= halfPixel,
             "도구 막대 치수가 툴바 도구 그룹과 다름: \(toolBar.frame.size)")
         expect(toolbar.autosavesConfiguration && toolbar.allowsUserCustomization, "툴바 구성 autosave·커스터마이즈 꺼짐")
-        expect(controller.toolbarController.navigationGroup?.isNavigational == true, "내비게이션 그룹이 navigational이 아님")
 
         // 분할 구조(가이드 2.3).
         expect(split.splitViewItems.count == 3, "분할 항목 수가 3이 아님")
@@ -259,11 +258,6 @@ private final class ShellFrameUICheckRunner {
         }
 
         let toolbarController = controller.toolbarController
-        for item in toolbarController.navigationGroup?.subitems ?? [] {
-            expect(!item.label.isEmpty && item.toolTip?.isEmpty == false, "내비게이션 항목 레이블·도움말 없음")
-            expect(item.image?.accessibilityDescription?.isEmpty == false, "내비게이션 아이콘 설명 없음")
-            expect(!item.isBordered, "내비게이션 아이콘에 테두리가 있음(가이드 5.4)")
-        }
         let tools = toolbarController.toolBar.buttons
         expect(tools.count == ShellFrameDataSourceStub.sampleTools.count, "도구 막대 항목 수 불일치")
         for button in tools {
@@ -271,12 +265,6 @@ private final class ShellFrameUICheckRunner {
                 button.accessibilityLabel()?.isEmpty == false && button.toolTip?.isEmpty == false
                     && button.image?.accessibilityDescription?.isEmpty == false,
                 "도구 항목 레이블·도움말 없음")
-        }
-        if let search = toolbarController.searchToolbarItem {
-            expect(search.searchField.isEditable, "검색 필드가 편집 불가")
-            expect(search.searchField.accessibilityLabel()?.isEmpty == false, "검색 필드 접근성 레이블 없음")
-        } else {
-            expect(false, "검색 툴바 항목 없음")
         }
         if let more = toolbarController.moreToolbarItem {
             expect(!more.label.isEmpty && more.image?.accessibilityDescription?.isEmpty == false, "더 보기 레이블 없음")
@@ -293,14 +281,10 @@ private final class ShellFrameUICheckRunner {
         toolbar: NSToolbar
     ) {
         let toolbarController = controller.toolbarController
-        let identifiers = [
-            ShellToolbarController.navigationItem, ShellToolbarController.searchItem, ShellToolbarController.moreItem,
-        ]
+        let identifiers = [ShellToolbarController.moreItem]
         func realItem(_ identifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
             toolbar.items.first { $0.itemIdentifier == identifier }
         }
-        expect(toolbarController.navigationGroup === realItem(ShellToolbarController.navigationItem), "내비게이션 참조가 실제 항목이 아님")
-        expect(toolbarController.searchToolbarItem === realItem(ShellToolbarController.searchItem), "검색 참조가 실제 항목이 아님")
         expect(toolbarController.moreToolbarItem === realItem(ShellToolbarController.moreItem), "더 보기 참조가 실제 항목이 아님")
 
         // palette 사본을 만들고(palette 열림) 해제합니다(palette 닫힘).
@@ -315,18 +299,10 @@ private final class ShellFrameUICheckRunner {
             }
             expect(copies.count == identifiers.count, "palette 사본 수 불일치: \(copies.count)")
             expect(copies.allSatisfy { copy in !toolbar.items.contains { $0 === copy } }, "palette 사본이 실제 항목과 같음")
-            if let searchCopy = copies.first(where: { $0.itemIdentifier == ShellToolbarController.searchItem })
-                as? NSSearchToolbarItem
-            {
-                expect(searchCopy.searchField.target == nil, "palette 검색 사본이 명령을 보낼 수 있음")
-            }
         }
-        expect(toolbarController.navigationGroup != nil
-            && toolbarController.searchToolbarItem != nil && toolbarController.moreToolbarItem != nil,
-            "palette를 닫은 뒤 항목 참조가 nil이 됨")
-        expect(toolbarController.searchToolbarItem === realItem(ShellToolbarController.searchItem), "palette 뒤 검색 참조가 사본으로 바뀜")
+        expect(toolbarController.moreToolbarItem === realItem(ShellToolbarController.moreItem), "palette 뒤 더 보기 참조가 사본으로 바뀜")
 
-        // palette 뒤에도 snapshot이 실제 항목과 도구 막대에 닿고, 메뉴 검증이 실제 검색 항목을 봅니다.
+        // palette 뒤에도 snapshot이 도구 막대에 닿습니다.
         // 도구 막대는 툴바 항목이 아니라 controller가 직접 가지므로 palette 사본과 관계없습니다.
         let tools = ShellFrameDataSourceStub.sampleTools
         let initialTool = stub.currentSnapshot.activeToolID
@@ -334,12 +310,8 @@ private final class ShellFrameUICheckRunner {
         controller.flushPendingSnapshot()
         let toolBar = toolbarController.toolBar
         expect(toolBar.selectedIndex == 2, "palette 뒤 도구 선택 snapshot이 도구 막대에 닿지 않음")
-        let searchMenu = ShellFrameMenuItems.makeNavigationMenuItems()[2]
-        expect(controller.validateMenuItem(searchMenu), "palette 뒤 Search Project… 메뉴가 비활성")
         stub.setStatus(ShellFrameDataSourceStub.sampleLoadingStatus)
         controller.flushPendingSnapshot()
-        let realSearch = realItem(ShellToolbarController.searchItem) as? NSSearchToolbarItem
-        expect(realSearch?.searchField.isEnabled == false, "palette 뒤 로딩 상태에서 실제 검색 필드가 활성")
         expect(!toolBar.isEnabled, "palette 뒤 로딩 상태에서 도구 막대가 활성")
         stub.setStatus(.ready)
         if let initialTool {
@@ -347,19 +319,6 @@ private final class ShellFrameUICheckRunner {
         }
         controller.flushPendingSnapshot()
         expect(toolBar.selectedIndex == 0, "도구 선택 복귀 실패")
-
-        // 코어가 검색을 제공하지 않으면 ready여도 검색 필드와 메뉴를 비활성화합니다.
-        var noSearch = stub.currentSnapshot
-        noSearch.isSearchAvailable = false
-        stub.publish(noSearch)
-        controller.flushPendingSnapshot()
-        expect(realSearch?.searchField.isEnabled == false, "검색 미제공인데 검색 필드가 활성")
-        expect(!controller.validateMenuItem(searchMenu), "검색 미제공인데 Search Project… 메뉴가 활성")
-        var withSearch = stub.currentSnapshot
-        withSearch.isSearchAvailable = true
-        stub.publish(withSearch)
-        controller.flushPendingSnapshot()
-        expect(realSearch?.searchField.isEnabled == true, "검색 제공 복귀 후 검색 필드가 비활성")
     }
 
     private func checkPaneCommands(_ controller: ShellWindowController, window: NSWindow) {
@@ -438,22 +397,6 @@ private final class ShellFrameUICheckRunner {
         controller.flushPendingSnapshot()
         expect(controller.window?.title == "C", "오래된 세대 snapshot이 반영됨")
 
-        // 내비게이션: 툴바 항목과 메뉴 항목이 같은 동작으로 연결되고 snapshot으로 활성 상태가 바뀝니다.
-        let navigation = toolbarController.navigationGroup?.subitems ?? []
-        expect(navigation.count == 2 && navigation.allSatisfy { $0.target === controller }, "내비게이션 대상 불일치")
-        toolbarController.validateItems()
-        expect(navigation.first?.isEnabled == true && navigation.last?.isEnabled == false, "내비게이션 초기 활성 상태")
-        let navigationMenu = ShellFrameMenuItems.makeNavigationMenuItems()
-        expect(controller.validateMenuItem(navigationMenu[0]), "Back 메뉴 비활성")
-        controller.navigateBack(nil)
-        expect(stub.sentCommands.last == .navigateBack, "navigateBack 명령 미전달")
-        controller.flushPendingSnapshot()
-        expect(navigation.first?.isEnabled == false && navigation.last?.isEnabled == true, "내비게이션 활성 상태 미반영")
-        expect(!controller.validateMenuItem(navigationMenu[0]), "Back 메뉴가 비활성화되지 않음")
-        expect(controller.window?.subtitle == "Page 1", "내비게이션 부제목 미반영")
-        controller.navigateForward(nil)
-        controller.flushPendingSnapshot()
-
         // 도구 막대 UI 선택 → 명령.
         if toolbarController.toolBar.buttons.indices.contains(1) {
             toolbarController.toolBar.buttons[1].performClick(nil)
@@ -462,14 +405,6 @@ private final class ShellFrameUICheckRunner {
             expect(toolbarController.toolBar.selectedIndex == 1, "도구 선택 후 선택 표시 미반영")
         } else {
             expect(false, "도구 막대 항목 부족")
-        }
-
-        // 검색: Return 확정 질의만 전달.
-        if let field = toolbarController.searchToolbarItem?.searchField {
-            expect(!field.sendsSearchStringImmediately && field.sendsWholeSearchString, "검색이 입력마다 질의함")
-            field.stringValue = "Button"
-            NSApplication.shared.sendAction(field.action!, to: field.target, from: field)
-            expect(stub.sentCommands.last == .submitSearch(query: "Button"), "검색 명령 미전달")
         }
 
         // 더 보기 메뉴.
@@ -495,17 +430,7 @@ private final class ShellFrameUICheckRunner {
         expect(!container.progressIndicator.isHidden, "로딩 진행 표시기 미표시")
         expect(container.progressIndicator.accessibilityLabel()?.isEmpty == false, "로딩 접근성 레이블 없음")
         expect(toolbarController.toolBar.isEnabled == false && toolbarController.toolBar.buttons.allSatisfy { !$0.isEnabled }, "로딩 중 도구 막대가 활성")
-        expect(toolbarController.searchToolbarItem?.searchField.isEnabled == false, "로딩 중 검색이 활성")
         expect(!container.statusTitleField.isAccessibilityElement(), "상태 제목 레이블이 그룹 이름과 중복 낭독됨")
-        // 동작 메서드도 활성화 검사와 같은 조건을 씁니다: ready가 아니면 직접 호출해도 명령을 보내지 않습니다.
-        let sentBeforeGuard = stub.sentCommands.count
-        if stub.currentSnapshot.navigation.canGoBack {
-            controller.navigateBack(nil)
-        }
-        if stub.currentSnapshot.navigation.canGoForward {
-            controller.navigateForward(nil)
-        }
-        expect(stub.sentCommands.count == sentBeforeGuard, "로딩 중 내비게이션 명령이 전달됨")
         checkNoAmbiguity(window, context: "loading")
 
         for (name, status, expectedTitle, expectedButtons) in [

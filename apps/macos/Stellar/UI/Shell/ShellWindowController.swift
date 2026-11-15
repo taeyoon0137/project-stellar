@@ -78,7 +78,6 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         // contentViewController 지정은 창을 fitting size로 바꾸므로 첫 크기를 다시 정합니다.
         window.setContentSize(ShellFrameMetrics.initialContentSize)
 
-        toolbarController.navigationTarget = self
         toolbarController.commandHandler = { [weak self] command in
             self?.dataSource.send(command)
         }
@@ -185,30 +184,6 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     // 동작 메서드의 guard는 활성화 검사(`validate(_:)`)와 같은 조건을 씁니다. 메뉴·툴바 밖의
     // `sendAction`이나 직접 호출도 ready가 아닌 창에서 명령을 보내지 않습니다.
 
-    @objc func navigateBack(_ sender: Any?) {
-        guard canNavigateBack else { return }
-        dataSource.send(.navigateBack)
-    }
-
-    @objc func navigateForward(_ sender: Any?) {
-        guard canNavigateForward else { return }
-        dataSource.send(.navigateForward)
-    }
-
-    private var canNavigateBack: Bool {
-        snapshot.status == .ready && snapshot.navigation.canGoBack
-    }
-
-    private var canNavigateForward: Bool {
-        snapshot.status == .ready && snapshot.navigation.canGoForward
-    }
-
-    /// 툴바 프로젝트 검색 필드로 포커스를 옮깁니다(사용자 명령으로만, 가이드 8.2).
-    @objc func focusProjectSearch(_ sender: Any?) {
-        guard toolbarController.isSearchUsable else { return }
-        toolbarController.searchToolbarItem?.beginSearchInteraction()
-    }
-
     /// 더 보기 메뉴 동작의 메뉴 막대 항목(`ShellFrameMenuItems.makeFrameActionItem`). sender의 명령 ID를 보냅니다.
     @objc func performFrameAction(_ sender: Any?) {
         guard let id = Self.frameActionID(from: sender), isFrameActionEnabled(id) else { return }
@@ -271,12 +246,6 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     private func validate(_ item: any NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
-        case #selector(navigateBack(_:)):
-            return canNavigateBack
-        case #selector(navigateForward(_:)):
-            return canNavigateForward
-        case #selector(focusProjectSearch(_:)):
-            return toolbarController.isSearchUsable && toolbarController.searchToolbarItem != nil
         case #selector(performFrameAction(_:)):
             guard let id = Self.frameActionID(from: item) else { return false }
             return isFrameActionEnabled(id)

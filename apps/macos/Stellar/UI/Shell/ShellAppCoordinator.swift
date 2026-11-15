@@ -702,7 +702,6 @@ final class ShellApplicationCommandModel: ToolsMenuModel {
         enabledCommands: ShellApplicationCommandModel.availableCommands,
         undoActionName: nil,
         redoActionName: nil,
-        rulersVisible: false,
         selectionIsLocked: false,
         selectionIsHidden: false
     )
@@ -785,8 +784,7 @@ final class ShellWelcomeDataSource: WelcomeDataSource {
 
 /// `MainMenuBuilder` 메뉴에 셸 프레임 명령 항목을 끼웁니다(가이드 6.1 "툴바의 모든 명령은 메뉴 막대에도").
 ///
-/// - View: 사이드바·인스펙터 묶음 뒤에 보조 패널(Show/Hide Panels), 그다음 묶음에 Back·Forward
-/// - Edit ▸ Find: Search Project…
+/// - View: 사이드바·인스펙터 묶음 뒤에 보조 패널(Show/Hide Panels)
 /// - File: Save Now 뒤에 Show in Finder(더 보기 메뉴와 같은 동작)
 @MainActor
 enum ShellMainMenuInstaller {
@@ -803,21 +801,6 @@ enum ShellMainMenuInstaller {
             if let auxiliary = ShellFrameMenuItems.makeViewMenuItems(auxiliaryTitle: auxiliaryPanelTitle).last {
                 auxiliary.image = NSImage(systemSymbolName: "rectangle.bottomthird.inset.filled", accessibilityDescription: nil)
                 view.insertItem(auxiliary, at: inspectorIndex + 1)
-            }
-            let navigation = ShellFrameMenuItems.makeNavigationMenuItems()
-            var index = inspectorIndex + 2
-            view.insertItem(.separator(), at: index)
-            for (item, symbol) in zip(navigation.prefix(2), [ShellFrameSymbols.navigateBack, ShellFrameSymbols.navigateForward]) {
-                index += 1
-                item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-                view.insertItem(item, at: index)
-            }
-            if let find = submenu(titled: "Edit", in: menu).flatMap({ submenu(titled: "Find", in: $0) }),
-                let search = navigation.last
-            {
-                find.addItem(.separator())
-                search.image = NSImage(systemSymbolName: "text.magnifyingglass", accessibilityDescription: nil)
-                find.addItem(search)
             }
         }
         if let file = submenu(titled: "File", in: menu) {

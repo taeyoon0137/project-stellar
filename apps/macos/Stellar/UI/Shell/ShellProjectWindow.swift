@@ -211,8 +211,7 @@ enum ShellProjectCommandID {
 /// 프로젝트 창의 셸 프레임 data source.
 ///
 /// 제목은 프로젝트 이름, 부제목은 신뢰 상태(코어가 모든 프로젝트를 신뢰되지 않음으로 열므로 "Restricted Mode",
-/// 가이드 7.2)입니다. 프로젝트 내비게이션·검색 코어 경로가 없으므로 뒤로·앞으로와 검색은 비활성입니다. 상태는
-/// 열기 중(loading) → ready, 또는 실패(failed, 복구 동작 포함)입니다. 도구 목록과 현재 도구는 창 도구 모델에서 받아
+/// 가이드 7.2)입니다. 상태는 열기 중(loading) → ready, 또는 실패(failed, 복구 동작 포함)입니다. 도구 목록과 현재 도구는 창 도구 모델에서 받아
 /// 하단 도구 막대에 보내고(`setTools`), 도구 막대 선택은 `toolSelectionHandler`로 창 도구 모델에 넘깁니다.
 @MainActor
 final class ShellProjectFrameDataSource: ShellFrameDataSource {
@@ -234,12 +233,9 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
             title: Self.folderName(rootPath),
             subtitle: "",
             status: Self.loadingStatus(rootPath),
-            navigation: ShellNavigationState(canGoBack: false, canGoForward: false),
             tools: [],
             activeToolID: nil,
-            moreActions: [],
-            searchPlaceholder: ShellFrameStrings.searchProject,
-            isSearchAvailable: false
+            moreActions: []
         )
     }
 
@@ -338,9 +334,6 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
             commandHandler?(id)
         case .selectTool(let id):
             toolSelectionHandler?(id)
-        case .navigateBack, .navigateForward, .submitSearch:
-            // 코어 내비게이션·검색 경로가 아직 없습니다. 해당 항목은 snapshot으로 비활성화되어 있습니다.
-            break
         }
     }
 
@@ -359,7 +352,6 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
 ///   Zoom In·Zoom Out·Actual Size·Zoom to Fit(XII.4.3)입니다. Undo는 그 창 undo stack이, Redo는 redo stack이 비어 있지 않을 때,
 ///   Save Now는 창 session에 작업 문서가 있을 때, 줌은 active view가 있고 배율이 경계(2%·25600%)에 닿지 않았을 때
 ///   활성입니다. Zoom to Fit은 현재 캔버스 크기를 코어에 보내며, 배율 표시는 코어 viewport 값입니다.
-///   Zoom to Selection은 비활성입니다.
 /// - 프로젝트가 ready가 아니면 도구 선택도 비활성입니다.
 /// - 도구 선택은 코어로 보내지 않습니다. 다른 명령은 `commandHandler`(프로젝트 창)로 넘깁니다.
 final class ShellWindowToolsModelStub: ToolsMenuModel {
@@ -382,7 +374,6 @@ final class ShellWindowToolsModelStub: ToolsMenuModel {
             enabledCommands: Self.notReadyCommands,
             undoActionName: nil,
             redoActionName: nil,
-            rulersVisible: false,
             selectionIsLocked: false,
             selectionIsHidden: false
         )

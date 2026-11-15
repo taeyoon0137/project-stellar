@@ -17,8 +17,6 @@ struct ToolsMenuSnapshot: Equatable {
     var undoActionName: String?
     /// Redo 대상 이름.
     var redoActionName: String?
-    /// 눈금자 표시 여부(placeholder: 전용 WBS 없음).
-    var rulersVisible: Bool
     /// 현재 선택이 잠겨 있는지(Lock/Unlock 제목).
     var selectionIsLocked: Bool
     /// 현재 선택이 숨겨져 있는지(Hide/Show 제목).
@@ -106,8 +104,6 @@ struct ShellCommandPresentation: Equatable {
             if let name = snapshot.undoActionName, !name.isEmpty { title = "Undo \(name)" }
         case .redo:
             if let name = snapshot.redoActionName, !name.isEmpty { title = "Redo \(name)" }
-        case .toggleRulers:
-            title = snapshot.rulersVisible ? "Hide Rulers" : "Show Rulers"
         case .toggleLock:
             title = snapshot.selectionIsLocked ? "Unlock" : "Lock"
         case .toggleVisibility:
@@ -179,18 +175,16 @@ struct ShellCommandCoreIDs: Equatable {
 /// 제한:
 /// - 코어(FFI)를 호출하지 않습니다. 받은 명령은 `sentCommands`에 기록만 합니다.
 /// - 도구 전환, 줌(×2 / ÷2, 2%~25600%), Lock·Hide 토글만 snapshot에 흉내 냅니다.
-/// - 눈금자는 전용 WBS가 없으므로 `toggleRulers`를 항상 비활성으로 둡니다.
 /// - Undo/Redo 이름과 활성 여부는 초기값에서 바뀌지 않습니다.
 final class ToolsMenuModelStub: ToolsMenuModel {
-    /// 샘플 snapshot: Move 도구, 100%, Undo 가능("Move"), Redo 불가, 눈금자 비활성.
+    /// 샘플 snapshot: Move 도구, 100%, Undo 가능("Move"), Redo 불가.
     static let sampleSnapshot = ToolsMenuSnapshot(
         generation: 1,
         activeTool: .move,
         zoomScale: 1.0,
-        enabledCommands: Set(ShellCommand.allCases).subtracting([.redo, .toggleRulers]),
+        enabledCommands: Set(ShellCommand.allCases).subtracting([.redo]),
         undoActionName: "Move",
         redoActionName: nil,
-        rulersVisible: false,
         selectionIsLocked: false,
         selectionIsHidden: false
     )
@@ -222,7 +216,7 @@ final class ToolsMenuModelStub: ToolsMenuModel {
             next.zoomScale = min(snapshot.zoomScale * 2, Self.maximumZoomScale)
         case .zoomOut:
             next.zoomScale = max(snapshot.zoomScale / 2, Self.minimumZoomScale)
-        case .zoomToActualSize, .zoomToFit, .zoomToSelection:
+        case .zoomToActualSize, .zoomToFit:
             next.zoomScale = 1.0
         case .toggleLock:
             next.selectionIsLocked.toggle()

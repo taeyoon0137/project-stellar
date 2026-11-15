@@ -109,7 +109,7 @@ private final class ShellSessionCommandsCheckRunner {
         expect(a.toolsModel.snapshot.zoomScale == 1.0, "처음 배율이 100%가 아님")
         expect(enabled(.zoomIn, in: a) && enabled(.zoomOut, in: a), "active view가 있는데 Zoom In·Out이 비활성")
         expect(!enabled(.zoomToActualSize, in: a), "100%에서 Actual Size가 활성")
-        expect(enabled(.zoomToFit, in: a) && !enabled(.zoomToSelection, in: a), "현재 View의 루트 맞춤 활성 상태 오류")
+        expect(enabled(.zoomToFit, in: a), "현재 View의 루트 맞춤 활성 상태 오류")
         for (command, expected) in [(ShellCommand.zoomIn, 2.0), (.zoomIn, 4.0), (.zoomOut, 2.0), (.zoomToActualSize, 1.0), (.zoomOut, 0.5)] {
             a.router.performShellCommand(MainMenuBuilder.makeItem(for: command, target: nil))
             wait(coordinator, "A \(command.rawValue)")

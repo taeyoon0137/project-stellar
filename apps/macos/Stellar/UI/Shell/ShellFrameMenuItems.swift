@@ -24,19 +24,6 @@ enum ShellFrameMenuItems {
         return items
     }
 
-    /// 내비게이션·검색 항목: 뒤로, 앞으로, 프로젝트 검색.
-    ///
-    /// ⌘[ / ⌘]는 Object 메뉴의 Send Backward·Bring Forward가 쓰므로(tools_menus 6.1) 뒤로·앞으로에는 단축키를 두지
-    /// 않습니다. 같은 키를 두 명령에 두지 않습니다. 단축키 배정은 XII.6.5에서 정합니다.
-    static func makeNavigationMenuItems() -> [NSMenuItem] {
-        [
-            makeItem(ShellFrameStrings.back, #selector(ShellWindowController.navigateBack(_:)), "", []),
-            makeItem(ShellFrameStrings.forward, #selector(ShellWindowController.navigateForward(_:)), "", []),
-            // 추가 입력이 필요하므로 말줄임표를 붙입니다.
-            makeItem(ShellFrameStrings.searchProjectMenu, #selector(ShellWindowController.focusProjectSearch(_:)), "", []),
-        ]
-    }
-
     /// 더 보기 메뉴 동작의 메뉴 막대 항목(가이드 6.1 "툴바의 모든 명령은 메뉴 막대에도").
     ///
     /// `representedObject`의 명령 ID를 활성 창의 `performFrameAction(_:)`으로 보냅니다. 활성 창 snapshot의 더 보기

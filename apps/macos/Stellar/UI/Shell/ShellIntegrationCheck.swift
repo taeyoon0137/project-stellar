@@ -128,14 +128,15 @@ private final class ShellIntegrationCheckRunner {
             expect(router.validateMenuItem(entry) == enabled, "\(command.rawValue) 활성 상태가 \(enabled)가 아님")
         }
 
-        // 셸 프레임 항목(가이드 6.1): 보조 패널 전환, 뒤로·앞으로, 프로젝트 검색, Finder에서 보기.
+        // 셸 프레임 항목(가이드 6.1): 보조 패널 전환, Finder에서 보기.
         let auxiliary = items(withAction: #selector(ShellWindowController.toggleAuxiliaryPanel(_:)), in: menu)
         expect(auxiliary.count == 1 && auxiliary.first?.title == "Show Panels", "View 메뉴에 Show Panels 없음")
-        for action in [#selector(ShellWindowController.navigateBack(_:)), #selector(ShellWindowController.navigateForward(_:)),
-                       #selector(ShellWindowController.focusProjectSearch(_:)), #selector(ShellWindowController.performFrameAction(_:))]
-        {
-            let found = items(withAction: action, in: menu)
-            expect(found.count == 1 && found.allSatisfy { $0.target == nil }, "셸 프레임 메뉴 항목 설치 불일치: \(action)")
+        let actions = items(withAction: #selector(ShellWindowController.performFrameAction(_:)), in: menu)
+        let file = ShellMainMenuInstaller.submenu(titled: "File", in: menu)
+        for id in [ShellProjectCommandID.revealInFinder] {
+            let matches = actions.filter { ($0.representedObject as? String) == id.rawValue }
+            expect(file != nil && matches.count == 1 && matches[0].menu === file && matches[0].target == nil,
+                   "File 메뉴의 활성 창 명령 설치 불일치: \(id.rawValue)")
         }
 
         // key equivalent는 한 명령에만 둡니다(⌘[·⌘]는 Object 메뉴 소유).
@@ -599,7 +600,7 @@ private final class ShellIntegrationCheckRunner {
         let drawable = projectWindow.canvasHost.canvasView.currentDrawable()
         expect(drawable.width > 0 && drawable.height > 0, "캔버스 drawable 크기가 0")
 
-        // 툴바: 줌을 셸 툴바(검색 앞)에 조합합니다. 캔버스 도구는 상단 툴바가 아니라 캔버스 하단 가운데 도구 막대에
+        // 툴바: 줌을 셸 툴바(더 보기 앞)에 조합합니다. 캔버스 도구는 상단 툴바가 아니라 캔버스 하단 가운데 도구 막대에
         // 있습니다(2026-11-14 사용자 결정).
         guard let toolbar = window.toolbar else {
             expect(false, "툴바 없음")
@@ -617,9 +618,8 @@ private final class ShellIntegrationCheckRunner {
         expect(toolBar.selectedIndex == CanvasTool.allCases.firstIndex(of: projectWindow.toolsModel.snapshot.activeTool),
                "도구 막대 선택이 창 도구 모델의 현재 도구가 아님")
         expect(identifiers.firstIndex(of: ToolsToolbarController.zoomItemIdentifier).map { zoom in
-            identifiers.firstIndex(of: ShellToolbarController.searchItem).map { zoom < $0 } ?? false
-        } ?? false, "줌 항목이 검색 앞에 있지 않음")
-        expect(controller.toolbarController.searchToolbarItem?.searchField.isEnabled == false, "코어 검색 없이 검색 필드가 활성")
+            identifiers.firstIndex(of: ShellToolbarController.moreItem).map { zoom < $0 } ?? false
+        } ?? false, "줌 항목이 더 보기 앞에 있지 않음")
 
         // 응답자 체인: content view → split controller → router → 창(순환 없음).
         expect(window.contentView?.nextResponder === split, "content view 다음이 split controller가 아님")
@@ -673,7 +673,6 @@ private final class ShellIntegrationCheckRunner {
         }
         let close = MainMenuBuilder.makeItem(for: .closeProject, target: nil)
         expect(router.validateMenuItem(close), "Close Project가 비활성")
-        expect(!controller.validateMenuItem(ShellFrameMenuItems.makeNavigationMenuItems()[2]), "코어 검색 없이 Search Project…가 활성")
         let reveal = ShellFrameMenuItems.makeFrameActionItem(title: "Show in Finder", id: ShellProjectCommandID.revealInFinder)
         expect(controller.validateMenuItem(reveal), "Show in Finder 메뉴가 비활성")
         window.makeFirstResponder(nil)

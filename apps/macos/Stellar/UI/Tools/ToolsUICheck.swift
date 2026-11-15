@@ -126,7 +126,7 @@ enum ToolsUICheck {
             ("시스템 단축키(⌘Space)", [Binding(command: .duplicate, shortcut: .command(" "), isHiddenAlternate: false)]),
             ("충돌", [
                 Binding(command: .duplicate, shortcut: .command("k"), isHiddenAlternate: false),
-                Binding(command: .frameSelection, shortcut: .command("k"), isHiddenAlternate: false),
+                Binding(command: .copy, shortcut: .command("k"), isHiddenAlternate: false),
             ]),
             ("Command 없음", [Binding(command: .duplicate, shortcut: KeyShortcut("k", []), isHiddenAlternate: false)]),
             ("Control 사용", [Binding(command: .duplicate, shortcut: KeyShortcut("k", [.control, .command]), isHiddenAlternate: false)]),
@@ -550,8 +550,6 @@ enum ToolsUICheck {
         let undoItem = item(.undo)
         recorder.expect(router.validateMenuItem(undoItem) && undoItem.title == "Undo Move", "Undo 제목·활성 불일치: \(undoItem.title)")
         recorder.expect(!router.validateMenuItem(item(.redo)), "Redo가 활성(Stub은 불가)")
-        let rulers = item(.toggleRulers)
-        recorder.expect(!router.validateMenuItem(rulers) && rulers.title == "Show Rulers", "Rulers placeholder가 활성이거나 제목 불일치")
         let moveItem = item(.selectMoveTool)
         _ = router.validateMenuItem(moveItem)
         recorder.expect(moveItem.state == .on, "Move Tool 체크 없음")
@@ -614,7 +612,7 @@ enum ToolsUICheck {
         recorder.expect(window.makeFirstResponder(textField), "텍스트 필드 first responder 실패")
         recorder.expect(router.isTextEditing, "텍스트 편집 판정 실패")
         recorder.expect(!router.validateMenuItem(item(.duplicate)), "텍스트 편집 중 Duplicate가 활성")
-        recorder.expect(!router.validateMenuItem(item(.group)), "텍스트 편집 중 Group이 활성")
+        recorder.expect(!router.validateMenuItem(item(.bringForward)), "텍스트 편집 중 Bring Forward가 활성")
         recorder.expect(router.validateMenuItem(item(.zoomIn)), "텍스트 편집 중 Zoom In이 비활성")
         let countBefore = model.sentCommands.count
         if let editor = window.firstResponder {

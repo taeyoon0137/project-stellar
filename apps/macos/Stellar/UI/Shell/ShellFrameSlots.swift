@@ -99,12 +99,10 @@ enum ShellFrameMetrics {
 
 /// 셸 프레임이 쓰는 SF Symbol 이름(가이드 5.4). 이미지 asset은 쓰지 않습니다.
 enum ShellFrameSymbols {
-    static let navigateBack = "chevron.backward"
-    static let navigateForward = "chevron.forward"
     static let moreMenu = "ellipsis"
     static let emptyStatus = "square.dashed"
     static let failedStatus = "exclamationmark.triangle"
 
     /// 셸 프레임 자체가 쓰는 이름 전체(검사용).
-    static let all = [navigateBack, navigateForward, moreMenu, emptyStatus, failedStatus]
+    static let all = [moreMenu, emptyStatus, failedStatus]
 }

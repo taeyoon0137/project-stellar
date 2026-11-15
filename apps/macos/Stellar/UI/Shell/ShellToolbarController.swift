@@ -2,8 +2,10 @@ import AppKit
 
 /// 메인 창 통합 툴바(가이드 6.1).
 ///
-/// - 앞쪽 끝: 사이드바 토글(시스템 항목), 사이드바 경계 추적 구분자, 뒤로·앞으로 내비게이션
-/// - 뒤쪽 끝: 프로젝트 검색, 더 보기 메뉴, 인스펙터 경계 추적 구분자, 인스펙터 토글(시스템 항목)
+/// - 앞쪽 끝: 사이드바 토글(시스템 항목), 사이드바 경계 추적 구분자
+/// - 뒤쪽 끝: 더 보기 메뉴, 인스펙터 경계 추적 구분자, 인스펙터 토글(시스템 항목)
+///
+/// 뒤로·앞으로와 프로젝트 검색은 기능이 없어 두지 않습니다. 기능이 생길 때 다시 설계합니다(UX 명세 3.3).
 ///
 /// 도구 영역(placeholder, 도구 상태 기계는 XII.3.6)은 툴바가 아니라 캔버스 하단 가운데의
 /// `ShellToolBarView`에 둡니다. 이 controller가 그 막대의 도구 목록·선택·활성 상태를 맡습니다.
@@ -13,22 +15,16 @@ import AppKit
 /// 사용자 구성은 `autosavesConfiguration`으로 AppKit이 저장합니다.
 ///
 /// 다른 영역의 툴바 항목(예: 캔버스 줌, `ToolsToolbarController`)은 `ShellToolbarItemProviding`으로 받아
-/// 같은 툴바에 조합합니다. provider의 뒤쪽 항목은 검색 앞에 놓입니다. 도구는 툴바에 두지 않으므로 provider도
+/// 같은 툴바에 조합합니다. provider의 뒤쪽 항목은 더 보기 메뉴 앞에 놓입니다. 도구는 툴바에 두지 않으므로 provider도
 /// 가운데 항목을 내주지 않습니다. 캔버스 도구 목록은 셸 프레임 snapshot의 `tools`로 하단 도구 막대에 그립니다.
 final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemValidation {
-    static let navigationItem = NSToolbarItem.Identifier("stellar.shell.navigation")
-    static let navigateBackItem = NSToolbarItem.Identifier("stellar.shell.navigation.back")
-    static let navigateForwardItem = NSToolbarItem.Identifier("stellar.shell.navigation.forward")
-    static let searchItem = NSToolbarItem.Identifier("stellar.shell.search")
     static let moreItem = NSToolbarItem.Identifier("stellar.shell.more")
 
     /// 기본 항목 순서.
     static let defaultItemIdentifiers: [NSToolbarItem.Identifier] = [
         .toggleSidebar,
         .sidebarTrackingSeparator,
-        navigationItem,
         .flexibleSpace,
-        searchItem,
         moreItem,
         .inspectorTrackingSeparator,
         .flexibleSpace,
@@ -41,20 +37,16 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
     ]
 
     let toolbar: NSToolbar
-    /// 다른 영역이 내주는 툴바 항목(검색 앞 뒤쪽 항목). nil이면 셸 프레임 항목만 둡니다.
+    /// 다른 영역이 내주는 툴바 항목(더 보기 메뉴 앞 뒤쪽 항목). nil이면 셸 프레임 항목만 둡니다.
     let itemProvider: ShellToolbarItemProviding?
     /// 이 툴바의 기본 항목 순서(provider 반영).
     let defaultItemIdentifiers: [NSToolbarItem.Identifier]
     /// 툴바 동작을 코어 명령으로 보냅니다. 셸 창 controller가 지정합니다.
     var commandHandler: ((ShellFrameCommand) -> Void)?
-    /// 뒤로·앞으로 동작 대상. 메뉴 항목과 같은 동작 메서드를 부르도록 셸 창 controller를 지정합니다.
-    weak var navigationTarget: AnyObject?
 
     private(set) var snapshot: ShellFrameSnapshot
-    private(set) weak var navigationGroup: NSToolbarItemGroup?
     /// 캔버스 하단 가운데 도구 막대. 셸 창 controller가 캔버스 영역에 붙입니다.
     let toolBar = ShellToolBarView()
-    private(set) weak var searchToolbarItem: NSSearchToolbarItem?
     private(set) weak var moreToolbarItem: NSMenuToolbarItem?
     /// 현재 도구 영역 항목이 만들어진 도구 목록.
     private var builtTools: [ShellToolDescriptor] = []
@@ -64,7 +56,7 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
         self.itemProvider = itemProvider
         if let itemProvider {
             defaultItemIdentifiers = Self.defaultItemIdentifiers.flatMap { identifier -> [NSToolbarItem.Identifier] in
-                identifier == Self.searchItem ? itemProvider.trailingItemIdentifiers + [Self.searchItem] : [identifier]
+                identifier == Self.moreItem ? itemProvider.trailingItemIdentifiers + [Self.moreItem] : [identifier]
             }
         } else {
             defaultItemIdentifiers = Self.defaultItemIdentifiers
@@ -95,21 +87,13 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
         if newSnapshot.moreActions != previous.moreActions, let item = moreToolbarItem {
             item.menu = makeMoreMenu()
         }
-        if newSnapshot.searchPlaceholder != previous.searchPlaceholder {
-            searchToolbarItem?.searchField.placeholderString = newSnapshot.searchPlaceholder
-        }
-        if let field = searchToolbarItem?.searchField, field.isEnabled != isSearchUsable {
-            field.isEnabled = isSearchUsable
-        }
         validateItems()
     }
 
     /// 셸 프레임 항목의 활성 상태를 즉시 다시 계산합니다.
     ///
-    /// 내비게이션 항목은 셸 창 controller의 `validateToolbarItem(_:)`로 자동 검사합니다. 도구 막대와
-    /// 더 보기 항목은 snapshot에서 바로 정하므로 자동 검사를 끄고 여기서 지정합니다.
+    /// 도구 막대와 더 보기 항목은 snapshot에서 바로 정하므로 자동 검사를 끄고 여기서 지정합니다.
     func validateItems() {
-        navigationGroup?.subitems.forEach { $0.validate() }
         toolBar.isEnabled = snapshot.status == .ready && !builtTools.isEmpty
         if let moreToolbarItem {
             moreToolbarItem.isEnabled = validateToolbarItem(moreToolbarItem)
@@ -157,10 +141,6 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
         }
         let item: NSToolbarItem?
         switch itemIdentifier {
-        case Self.navigationItem:
-            item = makeNavigationGroup(binds: bindsToController)
-        case Self.searchItem:
-            item = makeSearchItem(binds: bindsToController)
         case Self.moreItem:
             item = makeMoreItem(binds: bindsToController)
         default:
@@ -175,76 +155,10 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
 
     // MARK: - 항목 생성
 
-    private func makeNavigationGroup(binds: Bool) -> NSToolbarItemGroup {
-        let back = makeButtonItem(
-            Self.navigateBackItem, label: ShellFrameStrings.back, symbolName: ShellFrameSymbols.navigateBack,
-            action: #selector(ShellWindowController.navigateBack(_:))
-        )
-        let forward = makeButtonItem(
-            Self.navigateForwardItem, label: ShellFrameStrings.forward, symbolName: ShellFrameSymbols.navigateForward,
-            action: #selector(ShellWindowController.navigateForward(_:))
-        )
-        let group = NSToolbarItemGroup(itemIdentifier: Self.navigationItem)
-        group.subitems = [back, forward]
-        group.label = ShellFrameStrings.backForward
-        group.paletteLabel = ShellFrameStrings.backForward
-        // 내비게이션 항목은 창 제목 앞쪽에 놓입니다.
-        group.isNavigational = true
-        if binds {
-            navigationGroup = group
-        }
-        return group
-    }
-
-    private func makeButtonItem(
-        _ identifier: NSToolbarItem.Identifier,
-        label: String,
-        symbolName: String,
-        action: Selector
-    ) -> NSToolbarItem {
-        let item = NSToolbarItem(itemIdentifier: identifier)
-        item.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: label)
-        item.label = label
-        item.paletteLabel = label
-        item.toolTip = label
-        // 툴바 아이콘은 테두리 없이 둡니다(가이드 5.4). 눌림·강조 표현은 시스템이 그립니다.
-        item.isBordered = false
-        item.target = navigationTarget
-        item.action = action
-        return item
-    }
-
     private func rebuildTools() {
         builtTools = snapshot.tools
         toolBar.setTools(builtTools)
         syncToolSelection()
-    }
-
-    private func makeSearchItem(binds: Bool) -> NSSearchToolbarItem {
-        let item = NSSearchToolbarItem(itemIdentifier: Self.searchItem)
-        item.label = ShellFrameStrings.search
-        item.paletteLabel = ShellFrameStrings.searchProject
-        item.toolTip = ShellFrameStrings.searchProject
-        let field = item.searchField
-        field.placeholderString = snapshot.searchPlaceholder
-        // Return으로 확정한 질의만 보냅니다. 입력마다 질의하지 않아 메인 스레드 부담을 줄입니다(가이드 9장).
-        field.sendsSearchStringImmediately = false
-        field.sendsWholeSearchString = true
-        field.setAccessibilityLabel(ShellFrameStrings.searchProject)
-        if binds {
-            field.target = self
-            field.action = #selector(searchSubmitted(_:))
-            field.isEnabled = isSearchUsable
-            searchToolbarItem = item
-        } else {
-            field.isEnabled = false
-        }
-        return item
-    }
-
-    /// 검색 필드를 쓸 수 있는지: 창이 ready이고 코어가 검색을 제공할 때만.
-    var isSearchUsable: Bool {
-        snapshot.status == .ready && snapshot.isSearchAvailable
     }
 
     private func makeMoreItem(binds: Bool) -> NSMenuToolbarItem {
@@ -295,10 +209,6 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
         commandHandler?(.selectTool(builtTools[index].id))
     }
 
-    @objc func searchSubmitted(_ sender: NSSearchField) {
-        commandHandler?(.submitSearch(query: sender.stringValue))
-    }
-
     @objc func moreActionChosen(_ sender: NSMenuItem) {
         guard let rawValue = sender.representedObject as? String else { return }
         commandHandler?(.perform(ShellCommandID(rawValue)))
@@ -322,7 +232,7 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
 /// 사본을 돌려줘야 합니다(실제 항목 인스턴스를 palette에 넘기지 않음). 도구 영역은 툴바가 아니라 캔버스 하단 가운데
 /// 도구 막대(`ShellToolBarView`)에 있으므로 provider는 가운데 항목을 내주지 않습니다(2026-11-14 사용자 결정).
 protocol ShellToolbarItemProviding: AnyObject {
-    /// 검색 항목 앞에 놓을 뒤쪽 항목.
+    /// 더 보기 메뉴 앞에 놓을 뒤쪽 항목.
     var trailingItemIdentifiers: [NSToolbarItem.Identifier] { get }
     /// 툴바 delegate 요청 하나에 맞는 항목.
     func item(for identifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem?

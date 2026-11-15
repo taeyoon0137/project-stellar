@@ -32,10 +32,6 @@ enum ShellCommand: String, CaseIterable {
     case delete = "edit.delete"
     case duplicate = "edit.duplicate"
     case selectAll = "edit.select_all"
-    case deselectAll = "edit.deselect_all"
-    case find = "edit.find"
-    case findNext = "edit.find_next"
-    case findPrevious = "edit.find_previous"
 
     // MARK: View
     case toggleToolbar = "view.toggle_toolbar"
@@ -46,8 +42,6 @@ enum ShellCommand: String, CaseIterable {
     case zoomOut = "view.zoom_out"
     case zoomToActualSize = "view.zoom_actual_size"
     case zoomToFit = "view.zoom_to_fit"
-    case zoomToSelection = "view.zoom_to_selection"
-    case toggleRulers = "view.toggle_rulers"
     case toggleFullScreen = "view.toggle_full_screen"
 
     // MARK: 도구(View·Insert 메뉴, 툴바 도구 그룹)
@@ -63,23 +57,10 @@ enum ShellCommand: String, CaseIterable {
     case selectZoomTool = "tool.zoom"
 
     // MARK: Object
-    case group = "object.group"
-    case ungroup = "object.ungroup"
-    case frameSelection = "object.frame_selection"
     case bringToFront = "object.bring_to_front"
     case bringForward = "object.bring_forward"
     case sendBackward = "object.send_backward"
     case sendToBack = "object.send_to_back"
-    case alignLeft = "object.align_left"
-    case alignCenter = "object.align_center"
-    case alignRight = "object.align_right"
-    case alignTop = "object.align_top"
-    case alignMiddle = "object.align_middle"
-    case alignBottom = "object.align_bottom"
-    case distributeHorizontally = "object.distribute_horizontally"
-    case distributeVertically = "object.distribute_vertically"
-    case flipHorizontal = "object.flip_horizontal"
-    case flipVertical = "object.flip_vertical"
     case toggleLock = "object.toggle_lock"
     case toggleVisibility = "object.toggle_visibility"
 
@@ -88,9 +69,6 @@ enum ShellCommand: String, CaseIterable {
     case minimizeAll = "window.minimize_all"
     case zoomWindow = "window.zoom"
     case bringAllToFront = "window.bring_all_to_front"
-
-    // MARK: Help
-    case help = "help.app_help"
 
     /// 명령이 닿는 범위.
     enum Scope {
@@ -131,10 +109,6 @@ enum ShellCommand: String, CaseIterable {
         case .delete: return "Delete"
         case .duplicate: return "Duplicate"
         case .selectAll: return "Select All"
-        case .deselectAll: return "Deselect All"
-        case .find: return "Find…"
-        case .findNext: return "Find Next"
-        case .findPrevious: return "Find Previous"
         case .toggleToolbar: return "Show Toolbar"
         case .customizeToolbar: return "Customize Toolbar…"
         case .toggleSidebar: return "Show Sidebar"
@@ -143,8 +117,6 @@ enum ShellCommand: String, CaseIterable {
         case .zoomOut: return "Zoom Out"
         case .zoomToActualSize: return "Actual Size"
         case .zoomToFit: return "Zoom to Fit"
-        case .zoomToSelection: return "Zoom to Selection"
-        case .toggleRulers: return "Show Rulers"
         case .toggleFullScreen: return "Enter Full Screen"
         case .selectMoveTool: return "Move Tool"
         case .selectHandTool: return "Hand Tool"
@@ -152,30 +124,16 @@ enum ShellCommand: String, CaseIterable {
         case .selectFrameTool, .selectRectangleTool, .selectEllipseTool, .selectLineTool,
              .selectPolygonTool, .selectTextTool, .selectImageTool:
             return canvasTool?.label ?? rawValue
-        case .group: return "Group"
-        case .ungroup: return "Ungroup"
-        case .frameSelection: return "Frame Selection"
         case .bringToFront: return "Bring to Front"
         case .bringForward: return "Bring Forward"
         case .sendBackward: return "Send Backward"
         case .sendToBack: return "Send to Back"
-        case .alignLeft: return "Align Left"
-        case .alignCenter: return "Align Center"
-        case .alignRight: return "Align Right"
-        case .alignTop: return "Align Top"
-        case .alignMiddle: return "Align Middle"
-        case .alignBottom: return "Align Bottom"
-        case .distributeHorizontally: return "Distribute Horizontally"
-        case .distributeVertically: return "Distribute Vertically"
-        case .flipHorizontal: return "Flip Horizontal"
-        case .flipVertical: return "Flip Vertical"
         case .toggleLock: return "Lock"
         case .toggleVisibility: return "Hide"
         case .minimize: return "Minimize"
         case .minimizeAll: return "Minimize All"
         case .zoomWindow: return "Zoom"
         case .bringAllToFront: return "Bring All to Front"
-        case .help: return "\(MainMenuBuilder.applicationName) Help"
         }
     }
 
@@ -184,7 +142,7 @@ enum ShellCommand: String, CaseIterable {
         switch self {
         // 도구 선택(Image 포함)은 모드 전환이라 그 자체로 추가 입력을 받지 않습니다. 이미지 파일 선택은 도구를
         // 쓰는 단계(캔버스 클릭)에서 열리므로 메뉴 제목에 말줄임표를 붙이지 않습니다.
-        case .settings, .newProject, .openProject, .cloneProject, .find, .customizeToolbar:
+        case .settings, .newProject, .openProject, .cloneProject, .customizeToolbar:
             return true
         default:
             return false
@@ -194,7 +152,7 @@ enum ShellCommand: String, CaseIterable {
     var scope: Scope {
         switch self {
         case .about, .settings, .hideApp, .hideOthers, .showAll, .quit,
-             .newProject, .openProject, .cloneProject, .bringAllToFront, .minimizeAll, .help:
+             .newProject, .openProject, .cloneProject, .bringAllToFront, .minimizeAll:
             return .application
         default:
             return .window
@@ -206,8 +164,8 @@ enum ShellCommand: String, CaseIterable {
         case .about, .settings, .hideApp, .hideOthers, .showAll, .quit,
              .closeWindow,
              .toggleToolbar, .customizeToolbar, .toggleSidebar, .toggleInspector,
-             .toggleRulers, .toggleFullScreen,
-             .minimize, .minimizeAll, .zoomWindow, .bringAllToFront, .help:
+             .toggleFullScreen,
+             .minimize, .minimizeAll, .zoomWindow, .bringAllToFront:
             return .shell
         default:
             return .core
@@ -243,7 +201,6 @@ enum ShellCommand: String, CaseIterable {
         case .minimizeAll: return #selector(NSApplication.miniaturizeAll(_:))
         case .zoomWindow: return #selector(NSWindow.performZoom(_:))
         case .bringAllToFront: return #selector(NSApplication.arrangeInFront(_:))
-        case .help: return #selector(NSApplication.showHelp(_:))
         default: return nil
         }
     }
@@ -267,10 +224,6 @@ enum ShellCommand: String, CaseIterable {
         case .paste: return .command("v")
         case .duplicate: return .command("d")
         case .selectAll: return .command("a")
-        case .deselectAll: return KeyShortcut("a", [.shift, .command])
-        case .find: return .command("f")
-        case .findNext: return .command("g")
-        case .findPrevious: return KeyShortcut("g", [.shift, .command])
         case .toggleToolbar: return KeyShortcut("t", [.option, .command])
         case .toggleSidebar: return KeyShortcut("s", [.control, .command])
         case .toggleInspector: return KeyShortcut("i", [.option, .command])
@@ -278,20 +231,12 @@ enum ShellCommand: String, CaseIterable {
         case .zoomOut: return .command("-")
         case .zoomToActualSize: return .command("0")
         case .zoomToFit: return .command("9")
-        case .zoomToSelection: return .command("*")
-        case .toggleRulers: return .command("r")
         case .toggleFullScreen: return KeyShortcut("f", [.control, .command])
         case .selectImageTool: return KeyShortcut("k", [.shift, .command])
-        case .group: return KeyShortcut("g", [.option, .command])
-        case .ungroup: return KeyShortcut("g", [.option, .shift, .command])
         case .bringForward: return .command("]")
         case .sendBackward: return .command("[")
-        case .alignLeft: return .command("{")
-        case .alignCenter: return .command("|")
-        case .alignRight: return .command("}")
         case .minimize: return .command("m")
         case .minimizeAll: return KeyShortcut("m", [.option, .command])
-        case .help: return .command("?")
         default: return nil
         }
     }
@@ -325,12 +270,8 @@ enum ShellCommand: String, CaseIterable {
     /// Copy·Paste·Delete는 텍스트 입력이 먼저 받고, router에 직접 와도 캔버스 객체 편집으로 보내지 않습니다.
     var isSuppressedDuringTextEditing: Bool {
         switch self {
-        case .copy, .paste, .delete, .duplicate, .deselectAll,
-             .group, .ungroup, .frameSelection,
-             .bringToFront, .bringForward, .sendBackward, .sendToBack,
-             .alignLeft, .alignCenter, .alignRight, .alignTop, .alignMiddle, .alignBottom,
-             .distributeHorizontally, .distributeVertically,
-             .flipHorizontal, .flipVertical, .toggleLock, .toggleVisibility:
+        case .copy, .paste, .delete, .duplicate,
+             .bringToFront, .bringForward, .sendBackward, .sendToBack, .toggleLock, .toggleVisibility:
             return true
         default:
             return false
@@ -367,10 +308,6 @@ enum ShellCommand: String, CaseIterable {
         case .delete: return "trash"
         case .duplicate: return "plus.square.on.square"
         case .selectAll: return "checkmark.circle"
-        case .deselectAll: return "circle.dashed"
-        case .find: return "magnifyingglass"
-        case .findNext: return "chevron.forward"
-        case .findPrevious: return "chevron.backward"
         case .toggleToolbar: return "menubar.rectangle"
         case .customizeToolbar: return "wrench.adjustable"
         case .toggleSidebar: return "sidebar.left"
@@ -379,33 +316,17 @@ enum ShellCommand: String, CaseIterable {
         case .zoomOut: return "minus.magnifyingglass"
         case .zoomToActualSize: return "1.magnifyingglass"
         case .zoomToFit: return "arrow.up.left.and.arrow.down.right"
-        case .zoomToSelection: return "viewfinder"
-        case .toggleRulers: return "ruler"
         case .toggleFullScreen: return "arrow.up.left.and.arrow.down.right.rectangle"
-        case .group: return "square.on.square.dashed"
-        case .ungroup: return "square.on.square"
-        case .frameSelection: return "number.square"
         case .bringToFront: return "square.3.layers.3d.top.filled"
         case .bringForward: return "square.2.layers.3d.top.filled"
         case .sendBackward: return "square.2.layers.3d.bottom.filled"
         case .sendToBack: return "square.3.layers.3d.bottom.filled"
-        case .alignLeft: return "align.horizontal.left"
-        case .alignCenter: return "align.horizontal.center"
-        case .alignRight: return "align.horizontal.right"
-        case .alignTop: return "align.vertical.top"
-        case .alignMiddle: return "align.vertical.center"
-        case .alignBottom: return "align.vertical.bottom"
-        case .distributeHorizontally: return "distribute.horizontal.center"
-        case .distributeVertically: return "distribute.vertical.center"
-        case .flipHorizontal: return "arrow.left.and.right.righttriangle.left.righttriangle.right"
-        case .flipVertical: return "arrow.up.and.down.righttriangle.up.righttriangle.down"
         case .toggleLock: return "lock"
         case .toggleVisibility: return "eye.slash"
         case .minimize: return "minus.rectangle"
         case .minimizeAll: return "minus.rectangle.portrait"
         case .zoomWindow: return "arrow.up.left.and.arrow.down.right.square"
         case .bringAllToFront: return "square.3.layers.3d"
-        case .help: return "questionmark.circle"
         case .selectMoveTool, .selectFrameTool, .selectRectangleTool, .selectEllipseTool, .selectLineTool,
              .selectPolygonTool, .selectTextTool, .selectImageTool, .selectHandTool,
              .selectZoomTool:
@@ -451,6 +372,6 @@ enum ShellCommand: String, CaseIterable {
 
     /// 줌 명령 묶음(툴바 줌 메뉴와 View 메뉴가 공유).
     static let zoomCommands: [ShellCommand] = [
-        .zoomIn, .zoomOut, .zoomToActualSize, .zoomToFit, .zoomToSelection,
+        .zoomIn, .zoomOut, .zoomToActualSize, .zoomToFit,
     ]
 }

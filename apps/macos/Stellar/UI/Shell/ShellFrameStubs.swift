@@ -5,17 +5,14 @@ import AppKit
 
 /// 고정 sample 값을 돌려주는 셸 프레임 data source.
 ///
-/// 명령을 기록하고, 내비게이션·도구 선택처럼 snapshot이 바뀌는 명령은 세대 번호를 올려 다시
-/// 보냅니다. 검색·동작 명령은 기록만 합니다.
+/// 명령을 기록하고, 도구 선택처럼 snapshot이 바뀌는 명령은 세대 번호를 올려 다시 보냅니다. 동작 명령은
+/// 기록만 합니다.
 @MainActor
 final class ShellFrameDataSourceStub: ShellFrameDataSource {
     private(set) var currentSnapshot: ShellFrameSnapshot
     var snapshotHandler: ((ShellFrameSnapshot) -> Void)?
     /// 받은 명령(검사용).
     private(set) var sentCommands: [ShellFrameCommand] = []
-
-    private static let samplePages = ["Page 1", "Page 2"]
-    private var pageIndex = 1
 
     static let sampleTools = [
         ShellToolDescriptor(id: ShellCommandID("tool.select"), label: "Select", symbolName: "cursorarrow"),
@@ -54,13 +51,11 @@ final class ShellFrameDataSourceStub: ShellFrameDataSource {
         currentSnapshot = ShellFrameSnapshot(
             generation: 1,
             title: "Sample Project",
-            subtitle: Self.samplePages[1],
+            subtitle: "Page 2",
             status: status,
-            navigation: ShellNavigationState(canGoBack: true, canGoForward: false),
             tools: Self.sampleTools,
             activeToolID: Self.sampleTools[0].id,
-            moreActions: Self.sampleMoreActions,
-            searchPlaceholder: "Search Project"
+            moreActions: Self.sampleMoreActions
         )
     }
 
@@ -68,23 +63,12 @@ final class ShellFrameDataSourceStub: ShellFrameDataSource {
         sentCommands.append(command)
         var next = currentSnapshot
         switch command {
-        case .navigateBack:
-            guard pageIndex > 0 else { return }
-            pageIndex -= 1
-        case .navigateForward:
-            guard pageIndex < Self.samplePages.count - 1 else { return }
-            pageIndex += 1
         case .selectTool(let id):
             guard next.tools.contains(where: { $0.id == id }) else { return }
             next.activeToolID = id
-        case .submitSearch, .perform:
+        case .perform:
             return
         }
-        next.subtitle = Self.samplePages[pageIndex]
-        next.navigation = ShellNavigationState(
-            canGoBack: pageIndex > 0,
-            canGoForward: pageIndex < Self.samplePages.count - 1
-        )
         publish(next)
     }
 

@@ -6,19 +6,7 @@ import Foundation
 /// 문자열을 이어 붙이지 않고 형식 문자열(예: "Show %@") 하나로 만들어, 언어마다 어순을 바꿀 수 있게 합니다.
 /// 현지화 표는 아직 없으므로 지금은 영문 키가 그대로 보입니다.
 enum ShellFrameStrings {
-    static var back: String { String(localized: "Back", comment: "Toolbar and menu: navigate back") }
-    static var forward: String { String(localized: "Forward", comment: "Toolbar and menu: navigate forward") }
-    static var backForward: String {
-        String(localized: "Back/Forward", comment: "Toolbar customization label for the back/forward group")
-    }
     static var tools: String { String(localized: "Tools", comment: "Accessibility label for the tool bar at the bottom of the canvas") }
-    static var search: String { String(localized: "Search", comment: "Toolbar label for project search") }
-    static var searchProject: String {
-        String(localized: "Search Project", comment: "Toolbar palette label and help tag for project search")
-    }
-    static var searchProjectMenu: String {
-        String(localized: "Search Project…", comment: "Menu item that focuses the project search field")
-    }
     static var more: String { String(localized: "More", comment: "Toolbar label for the More menu") }
     static var canvas: String { String(localized: "Canvas", comment: "Accessibility name of the canvas area") }
     static var showSidebar: String { String(localized: "Show Sidebar", comment: "View menu item") }

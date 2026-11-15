@@ -53,12 +53,6 @@ enum ShellFrameStatus: Equatable, Sendable {
     case failed(title: String, message: String, recoveryActions: [ShellActionDescriptor])
 }
 
-/// 툴바 내비게이션(뒤로·앞으로) 활성 상태.
-struct ShellNavigationState: Equatable, Sendable {
-    var canGoBack: Bool
-    var canGoForward: Bool
-}
-
 /// 코어가 셸 프레임에 넘기는 불변 값 snapshot(아키텍처 §8.2).
 struct ShellFrameSnapshot: Equatable, Sendable {
     /// 단조 증가 세대 번호. 이미 반영한 세대 이하의 snapshot은 버립니다(가이드 9장, 아키텍처 §9.2).
@@ -68,17 +62,11 @@ struct ShellFrameSnapshot: Equatable, Sendable {
     /// 창 부제목(예: 현재 페이지·View). 빈 문자열이면 표시하지 않습니다.
     var subtitle: String
     var status: ShellFrameStatus
-    var navigation: ShellNavigationState
-    /// 툴바 가운데 도구 영역 항목. 상호작용 상태 기계 자체는 XII.3.6 범위입니다.
+    /// 하단 도구 막대 항목. 상호작용 상태 기계 자체는 XII.3.6 범위입니다.
     var tools: [ShellToolDescriptor]
     var activeToolID: ShellCommandID?
     /// 툴바 뒤쪽 끝 더 보기 메뉴 항목.
     var moreActions: [ShellActionDescriptor]
-    /// 프로젝트 전체 검색 필드의 placeholder.
-    var searchPlaceholder: String
-    /// 코어가 프로젝트 검색을 제공하는지. false이면 ready 상태에서도 검색 필드와 "Search Project…" 메뉴를
-    /// 숨기지 않고 비활성화합니다(가이드 8.1). 검색 질의를 받을 코어 경로가 없을 때 씁니다.
-    var isSearchAvailable: Bool = true
 }
 
 /// 셸 프레임이 코어로 보내는 명령(아키텍처 §8.2).
@@ -86,11 +74,7 @@ struct ShellFrameSnapshot: Equatable, Sendable {
 /// 사이드바·인스펙터·보조 패널 접기는 문서 의미가 아닌 창 상태이므로 명령으로 보내지 않고
 /// AppKit split view 자동 저장이 맡습니다(가이드 2.6).
 enum ShellFrameCommand: Equatable, Sendable {
-    case navigateBack
-    case navigateForward
     case selectTool(ShellCommandID)
-    /// 검색 필드에서 Return으로 확정한 질의. 질의 실행은 코어가 메인 스레드 밖에서 합니다(가이드 9장).
-    case submitSearch(query: String)
     /// 더 보기 메뉴, 빈 상태, 오류 복구 동작.
     case perform(ShellCommandID)
 }

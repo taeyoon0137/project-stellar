@@ -76,18 +76,18 @@ enum ShortcutPolicy {
     static let standard: [KeyShortcut: Standard] = {
         let entries: [(KeyShortcut, String, Set<ShellCommand>)] = [
             (.command("a"), "Select All", [.selectAll]),
-            (KeyShortcut("a", [.shift, .command]), "Deselect All", [.deselectAll]),
+            (KeyShortcut("a", [.shift, .command]), "Deselect All", []),
             (.command("b"), "Bold", []),
             (.command("c"), "Copy", [.copy]),
             (KeyShortcut("c", [.shift, .command]), "Colors 창", []),
             (KeyShortcut("c", [.option, .command]), "Copy Style", []),
             (KeyShortcut("c", [.control, .command]), "서식 복사", []),
             (.command("e"), "Use Selection for Find", []),
-            (.command("f"), "Find", [.find]),
+            (.command("f"), "Find", []),
             (KeyShortcut("f", [.option, .command]), "검색 필드로 이동", []),
             (KeyShortcut("f", [.control, .command]), "Enter Full Screen", [.toggleFullScreen]),
-            (.command("g"), "Find Next", [.findNext]),
-            (KeyShortcut("g", [.shift, .command]), "Find Previous", [.findPrevious]),
+            (.command("g"), "Find Next", []),
+            (KeyShortcut("g", [.shift, .command]), "Find Previous", []),
             (.command("h"), "Hide 앱", [.hideApp]),
             (KeyShortcut("h", [.option, .command]), "Hide Others", [.hideOthers]),
             (.command("i"), "Italic / Get Info", []),
@@ -118,14 +118,14 @@ enum ShortcutPolicy {
             (KeyShortcut("z", [.shift, .command]), "Redo", [.redo]),
             (.command("-"), "선택 크기 줄이기", [.zoomOut]),
             (.command("+"), "선택 크기 키우기", [.zoomIn]),
-            (.command("{"), "왼쪽 정렬", [.alignLeft]),
-            (.command("}"), "오른쪽 정렬", [.alignRight]),
-            (.command("|"), "가운데 정렬", [.alignCenter]),
+            (.command("{"), "왼쪽 정렬", []),
+            (.command("}"), "오른쪽 정렬", []),
+            (.command("|"), "가운데 정렬", []),
             (.command(":"), "Spelling 창", []),
             (.command(";"), "맞춤법 오류 찾기", []),
             (.command(","), "Settings", [.settings]),
             (.command("."), "작업 취소", []),
-            (.command("?"), "Help", [.help]),
+            (.command("?"), "Help", []),
         ]
         return Dictionary(uniqueKeysWithValues: entries.map {
             ($0.0.normalized, Standard(meaning: $0.1, allowed: $0.2))
@@ -139,20 +139,15 @@ enum ShortcutPolicy {
 
     /// 관련 없는 기존 단축키에 수식키를 더한 형태를 의도적으로 쓰는 예외와 근거.
     static let derivedModifierExceptions: [ShellCommand: String] = [
-        .group: "⌘G는 표준 Find Next라 재사용하지 않음. 그룹은 자주 쓰는 명령이라 Option 변형(⌥⌘G)을 씀(Apple iWork 관례로 알려짐, 미확인)",
-        .ungroup: "Group(⌥⌘G)과 짝(⌥⇧⌘G)",
         .toggleSidebar: "AppKit 기본 메인 메뉴 템플릿의 Show Sidebar(⌃⌘S) 관례",
     ]
 
     /// Shift·Option 변형이 서로 관련된 명령 묶음(같은 묶음 안의 파생은 허용).
     static let relatedFamilies: [Set<ShellCommand>] = [
         [.undo, .redo],
-        [.selectAll, .deselectAll],
-        [.findNext, .findPrevious],
         [.closeWindow, .closeProject],
         [.minimize, .minimizeAll],
         [.hideApp, .hideOthers],
-        [.group, .ungroup],
         [.zoomIn],
     ]
 

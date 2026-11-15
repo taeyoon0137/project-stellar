@@ -4,7 +4,8 @@ import AppKit
 ///
 /// 순서는 HIG The menu bar를 따릅니다: 앱(Stellar), File, Edit, View, 앱 고유 메뉴(Insert, Object), Window, Help.
 /// Format 메뉴는 서식 있는 텍스트 편집 명령이 생길 때 Edit와 View 사이에 넣습니다(열린 결정 O8).
-/// 모든 명령 항목은 `ShellCommand` 하나에 대응하며 identifier로 그 명령을 싣습니다.
+/// 모든 명령 항목은 `ShellCommand` 하나에 대응하며 identifier로 그 명령을 싣습니다. 지금 동작하는 명령만 두고,
+/// 기능이 들어올 때 그 명령을 함께 추가합니다(영구 비활성 항목 없음).
 /// - 표준 action 명령: target 없이 응답자 체인으로 보냅니다(시스템·field editor·`ShellCommandRouter`).
 /// - 창 수준 셸 명령: target 없이 `performShellCommand(_:)`를 보내 활성 창의 router가 받습니다.
 /// - 앱 수준 셸 명령: `applicationTarget`을 명시 target으로 씁니다(창이 없어도 동작).
@@ -55,17 +56,13 @@ enum MainMenuBuilder {
         ("Edit", [
             [.command(.undo), .command(.redo)],
             [.command(.cut), .command(.copy), .command(.paste), .command(.delete), .command(.duplicate)],
-            [.command(.selectAll), .command(.deselectAll)],
-            [.submenu(title: "Find", symbol: "magnifyingglass", groups: [
-                [.command(.find), .command(.findNext), .command(.findPrevious)],
-            ])],
+            [.command(.selectAll)],
         ]),
         ("View", [
             [.command(.toggleToolbar), .command(.customizeToolbar)],
             [.command(.toggleSidebar), .command(.toggleInspector)],
             ShellCommand.zoomCommands.map { .command($0) },
             [.command(.selectMoveTool), .command(.selectHandTool), .command(.selectZoomTool)],
-            [.command(.toggleRulers)],
             [.command(.toggleFullScreen)],
         ]),
         ("Insert", [
@@ -76,27 +73,15 @@ enum MainMenuBuilder {
             [.command(.selectImageTool)],
         ]),
         ("Object", [
-            [.command(.group), .command(.ungroup), .command(.frameSelection)],
             [.command(.bringToFront), .command(.bringForward), .command(.sendBackward), .command(.sendToBack)],
-            [
-                .submenu(title: "Align", symbol: "align.horizontal.left", groups: [
-                    [.command(.alignLeft), .command(.alignCenter), .command(.alignRight)],
-                    [.command(.alignTop), .command(.alignMiddle), .command(.alignBottom)],
-                ]),
-                .submenu(title: "Distribute", symbol: "distribute.horizontal.center", groups: [
-                    [.command(.distributeHorizontally), .command(.distributeVertically)],
-                ]),
-            ],
-            [.command(.flipHorizontal), .command(.flipVertical)],
             [.command(.toggleLock), .command(.toggleVisibility)],
         ]),
         ("Window", [
             [.command(.minimize), .command(.minimizeAll), .command(.zoomWindow)],
             [.command(.bringAllToFront)],
         ]),
-        ("Help", [
-            [.command(.help)],
-        ]),
+        // 도움말 콘텐츠가 생기기 전에는 앱 도움말 항목을 두지 않습니다. 시스템이 메뉴 검색 필드를 붙입니다.
+        ("Help", []),
     ]
 
     /// 메인 메뉴를 만듭니다. 앱에 연결하지는 않습니다(`MainMenu.install(on:)`).
