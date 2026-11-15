@@ -296,7 +296,6 @@ StellarStatus stellar_window_selected_frame_corners(uint64_t handle, uint64_t se
 /* 확정 단일 인스턴스 선택의 정의 UUID. 그 밖의 선택은 STELLAR_NO_ERROR. */
 StellarStatus stellar_window_selected_definition(uint64_t handle, uint64_t session, uint8_t out[16]);
 StellarStatus stellar_window_component_from_selection(uint64_t handle, uint64_t session, const uint8_t *name, size_t name_len, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint64_t *out_request);
-StellarStatus stellar_window_place_component(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, const uint8_t component[16], const uint8_t *hash, size_t hash_len, float x, float y, uint64_t *out_request);
 
 /* 프로젝트 session 닫기를 요청합니다(그 아래 문서도 닫음). */
 StellarStatus stellar_project_close(uint64_t handle, uint64_t project, uint64_t *out_request);

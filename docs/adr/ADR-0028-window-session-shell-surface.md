@@ -261,3 +261,7 @@ TL·TR·BR·BL 입력을 표시합니다. 캔버스와 hit test에는 기존의 
   `edit_project_root`와 함께 삭제했습니다. 이 경로만 쓰던 `crates/storage`의 `source_file::write_checked_resolved`도
   삭제하고 `write_new_resolved`를 새 파일 전용 본문으로 되돌렸습니다. CLI `component-source resize·set-fill`이
   쓰는 단일 파일 `edit_root`는 유지합니다.
+- `stellar_window_place_component`: 라이브러리 창의 숫자 X·Y 시트로 인스턴스를 배치하는 요청입니다. 컴포넌트
+  생성과 같은 진행 플래그를 써서 서로를 거부했습니다. runtime `place_component_instance`(`instance_place.rs`)와
+  창 전용 조회 `ProjectSummary::component_library`도 삭제했습니다. 정의 hash를 확인하는 한 transaction 삽입은
+  CLI 명령으로 옮겨 다시 만듭니다(B6).

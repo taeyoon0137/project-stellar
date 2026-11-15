@@ -53,11 +53,11 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 선택 트리 안에 다른 종류의 노드, modifier stack, layout 참조 또는 Path clip이 있으면 전체 생성을 거부합니다. 이름 sheet가 열려 있던 선택·View·문서 revision이 다르거나 Git checkout으로 창이 읽은 generation의 hash가 달라져도 기록하지 않습니다. 캔버스의 원래 Frame·자식과 Undo 기록은 유지합니다. 이 명령은 독립 정의를 생성하며 캔버스에 인스턴스를 삽입하지 않습니다.
 
-## 라이브러리에서 인스턴스 배치
+## 배치된 인스턴스
 
 신뢰한 macOS 프로젝트 창은 FSEvents로 `design/components/`와 바로 아래의 `*.stellar.yaml`을 감시합니다. CLI 편집이나 Git 복원 후 캔버스가 원본을 다시 읽어 이미 배치한 인스턴스의 표시와 클릭 영역을 갱신합니다. 창이 계속 활성인 경우에도 동작하며, 문서의 미저장 편집·선택·Undo 기록은 유지됩니다. 내부 심볼릭 링크의 실제 대상만 감시 경로 밖에서 바꾼 경우에는 프로젝트 창으로 돌아오면 다시 읽습니다.
 
-각 배치는 Undo 한 단계이며 **Save Now**가 기존 문서 저장 절차로 기록합니다. 정의 YAML은 쓰지 않습니다. 인스턴스 payload에는 정의 참조와 override가 있고, 위치는 해당 노드 소유의 Transform modifier에 있습니다. 원본을 찾을 수 없으면 `stellar validate`가 인스턴스와 정의 ID를 포함하는 `missing-component-definition` 진단을 냅니다. 정의 이름을 다른 파일에 다시 사용하는 것은 이 참조를 바꾸지 않습니다.
+인스턴스 payload에는 정의 참조와 override가 있고, 위치는 해당 노드 소유의 Transform modifier에 있습니다. 원본을 찾을 수 없으면 `stellar validate`가 인스턴스와 정의 ID를 포함하는 `missing-component-definition` 진단을 냅니다. 정의 이름을 다른 파일에 다시 사용하는 것은 이 참조를 바꾸지 않습니다.
 
 ## 프로젝트에서 조회
 

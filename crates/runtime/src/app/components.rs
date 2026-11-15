@@ -289,25 +289,6 @@ impl ProjectSummary {
             definitions,
         }))
     }
-
-    /// 사용자가 연 창의 프로젝트 식별자를 고정하고 폴더의 현재 원본을 읽습니다.
-    /// 호출자는 UI/document thread 밖에서 실행해야 합니다.
-    pub fn component_library(
-        &self,
-    ) -> Result<stellar_ops::component_source::ProjectComponents, String> {
-        if self.trust != TrustStatus::Trusted {
-            return Err("프로젝트 신뢰가 필요합니다".into());
-        }
-        self.verify_trust()?;
-        let snapshot = stellar_ops::snapshot::open_snapshot(&self.canonical_root)
-            .map_err(|e| e.to_string())?;
-        if snapshot.project_id() != self.project_id {
-            return Err("열린 프로젝트 ID가 바뀌었습니다".into());
-        }
-        let library = stellar_ops::component_source::query(&snapshot).map_err(|e| e.to_string())?;
-        self.verify_trust()?;
-        Ok(library)
-    }
 }
 
 #[cfg(test)]

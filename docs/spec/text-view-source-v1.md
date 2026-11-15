@@ -205,7 +205,7 @@ style_runs:
 
 ## 컴포넌트 인스턴스의 배치
 
-앱의 **Place Instance…**가 만든 노드는 독립 정의의 전체 StableId를 참조합니다. 인스턴스마다 공통 노드 필드에 자신의 ID·부모·순서 키가 있고, `payload`에 다음 값을 기록합니다.
+컴포넌트 인스턴스 노드는 독립 정의의 전체 StableId를 참조합니다. 인스턴스마다 공통 노드 필드에 자신의 ID·부모·순서 키가 있고, `payload`에 다음 값을 기록합니다.
 
 ```yaml
 kind: component-instance
