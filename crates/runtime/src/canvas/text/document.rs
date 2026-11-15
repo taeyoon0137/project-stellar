@@ -48,7 +48,7 @@ struct ParagraphOffsets {
 }
 
 /// glyph paint와 동일한 layout에서 가져온 caret과 줄 영역.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct DocumentText {
     /// 모양별 단 하나의 지역 좌표 경로.
     pub outlines: Vec<PathGeometry>,
@@ -63,6 +63,20 @@ pub struct DocumentText {
     layout: TextLayout,
     offsets: Vec<ParagraphOffsets>,
 }
+
+/// `paint_token`은 셸 cache 식별자일 뿐 내용이 아니므로 비교에서 뺍니다.
+impl PartialEq for DocumentText {
+    fn eq(&self, other: &Self) -> bool {
+        self.outlines == other.outlines
+            && self.glyphs == other.glyphs
+            && self.lines == other.lines
+            && self.fill == other.fill
+            && self.layout == other.layout
+            && self.offsets == other.offsets
+    }
+}
+
+impl Eq for DocumentText {}
 
 impl DocumentText {
     fn position(&self, offset: u32, affinity: Affinity) -> Option<TextPosition> {

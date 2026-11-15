@@ -156,30 +156,6 @@ fn path_command(cmd: CanvasPathCommand, origin: Vec2) -> (u32, [f32; 6]) {
     }
 }
 
-/// # Safety
-/// count는 유효한 출력, rows는 null(크기 조회) 또는 capacity 원소 출력입니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_window_text_paint(
-    handle: u64,
-    session: u64,
-    q: StellarCanvasTextQuery,
-    rows: *mut StellarCanvasTextElement,
-    capacity: usize,
-    count: *mut usize,
-) -> StellarStatus {
-    ffi_guard(move || {
-        if count.is_null() {
-            return StellarStatus::NullPointer;
-        }
-        unsafe {
-            *count = 0;
-        }
-        with_text(handle, session, q, |text| unsafe {
-            write_text_paint(text, rows, capacity, count)
-        })
-    })
-}
-
 pub(super) unsafe fn write_text_paint(
     text: &DocumentText,
     rows: *mut StellarCanvasTextElement,

@@ -386,7 +386,6 @@ typedef struct StellarCanvasTextElement { uint32_t op; float points[6]; } Stella
 /* Shared canvas row query and Move/Line/Cubic/Close elements (op 1–4). For a row with flags bit 6,
  * cap_flags = cap(0 butt, 1 round, 2 square); op 5 is a zero-length Line cap rect (xywh). Null rows query count. */
 StellarStatus stellar_canvas_shape_path(uint64_t handle, uint64_t session, StellarCanvasTextQuery query, StellarCanvasTextElement *rows, size_t capacity, size_t *count, uint32_t *cap_flags);
-StellarStatus stellar_window_text_paint(uint64_t handle, uint64_t session, StellarCanvasTextQuery query, StellarCanvasTextElement *rows, size_t capacity, size_t *count);
 /* Saved text: local outline commands 1..4, line bounds 5, end of unique outline 6,
  * placement 7 with index into the definitions and points[0..2] = pen position. */
 typedef struct StellarCanvasTextPart { uint32_t op, index; float points[6]; } StellarCanvasTextPart;

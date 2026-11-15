@@ -418,8 +418,7 @@ fn saved_layout_reuses_only_matching_content_modifiers_styles_and_visible_nodes(
     assert_eq!(changed.glyphs.len(), 3);
     let restored = project_text(id, &model, &a).0;
     assert_ne!(original.paint_token, restored.paint_token);
-    assert_eq!(original.outlines, restored.outlines);
-    assert_eq!(original.glyphs, restored.glyphs);
+    assert_eq!(original, restored);
     let mut stack = ModifierStack::new(id);
     stack
         .insert(ModifierEntry {
@@ -447,5 +446,5 @@ fn saved_layout_reuses_only_matching_content_modifiers_styles_and_visible_nodes(
     let returned = project_text(id, &model, &a).0;
     assert!(!Arc::ptr_eq(&returned, &recolored));
     assert_ne!(returned.paint_token, recolored.paint_token);
-    assert_eq!(returned.glyphs, recolored.glyphs);
+    assert_eq!(returned, recolored);
 }

@@ -37,6 +37,19 @@ Accepted (2026-11-15, Codex 작업 검토 묶음 B5)
   - `DocumentTextStyles.fonts` 형식: 원본 위치는 D2 결정(텍스트 asset catalog 참조)에 따라 텍스트 원본 ADR이 정합니다.
 - ShellIntegrationCheck는 U130 이전처럼 `performFrameAction` 메뉴 항목 하나(Show in Finder)만 확인합니다.
 
+### 2. 저장된 Text 그리기 ABI
+
+- 셸은 게시된 canvas scene의 Text 행(`StellarCanvasFrame.flags` bit 4)을 `StellarCanvasTextQuery`(View, node,
+  revision, 행 번호)로 조회합니다. 네 값 중 하나라도 현재 게시 상태와 다르면 `STELLAR_NO_ERROR`와 빈 결과를 돌려줍니다.
+- `stellar_window_text_parts`: 중복 없는 glyph outline 정의(op 1–4, 정의 끝 op 6), 줄 hit 사각형(op 5),
+  배치(op 7, `index`가 정의 번호, `points[0..2]`가 pen 위치)를 한 번에 씁니다. `paint_token`은 같은 layout
+  결과를 다시 쓸 때만 같은 값입니다. 셸은 token이 같으면 이전 path를 재사용합니다.
+- `stellar_window_text_hit`: Text local 좌표를 문서 전체 Unicode scalar offset과 affinity로 바꿉니다.
+- `stellar_window_text_rects`: 같은 layout의 caret(`start == end`) 또는 선택 사각형을 local 좌표로 씁니다.
+- `paint_token`은 셸 cache 식별자이므로 `DocumentText`의 같음 비교에서 뺍니다. 내용이 같으면 token이 달라도 같은
+  값입니다.
+- 소비자가 없던 `stellar_window_text_paint`(glyph마다 outline을 반복해 쓰는 형식)는 삭제합니다.
+
 ## Alternatives
 
 - Document Font UI를 유지하고 face index 입력만 숨기기: 사용자가 정의하지 않은 UI이고, 라이선스 확인과 글꼴 asset
