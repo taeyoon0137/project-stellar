@@ -987,7 +987,7 @@ impl SetProperty {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::codec::{decode_command, encode_command};
     use crate::command::test_fixtures::{sid, small_model};

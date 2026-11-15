@@ -133,6 +133,8 @@ mod frame_insert;
 mod frame_move;
 mod image_place;
 pub use image_place::ImagePlacement;
+/// 속성 패널 행 게시와 CSS 값 편집(UX.2.2).
+pub mod inspector;
 mod node_delete;
 mod node_duplicate;
 mod node_order;
@@ -946,6 +948,8 @@ pub struct WindowSessionSummary {
     pub primary_selection: Option<StableId>,
     /// 확정된 단일 선택의 Inspector 값. 문서에서 읽으며 viewport 가시성과 독립적입니다.
     pub selected: Option<SelectedNode>,
+    /// 확정 선택의 속성 패널 행(UX.2.2).
+    pub inspector: Arc<stellar_commands::inspector::InspectorSnapshot>,
     /// 저장되지 않은 문서 변경이 있는지(선택·viewport 제외).
     pub has_unsaved_changes: bool,
     /// 열린 탭 수.
@@ -1019,6 +1023,7 @@ pub(crate) struct WindowEntry {
     /// 진행 중인 캔버스 Text 조합(ADR-0067 §6). 문서와 history에는 없습니다.
     text: Option<text_input::TextComposition>,
     checkpoint: recovery::WindowCheckpoint,
+    inspector: inspector::InspectorCache,
 }
 
 #[derive(Debug)]
@@ -1375,6 +1380,7 @@ fn open_window_session_on_thread(
             canvas: crate::canvas::CanvasCache::new(fonts),
             text: None,
             checkpoint: recovery::WindowCheckpoint::new(recovery, handle),
+            inspector: Default::default(),
         },
     );
     if let Some(owner) = sessions.projects.get_mut(&project) {
@@ -1414,6 +1420,7 @@ fn window_summary(
     shared_scenes: &mut crate::canvas::SharedScenes,
 ) -> WindowSessionSummary {
     entry.checkpoint.observe(&entry.session);
+    let inspector = inspector::snapshot(&mut entry.inspector, &entry.session);
     let session = &entry.session;
     let clamp = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     let selected = match session.view().selection().ids() {
@@ -1436,6 +1443,7 @@ fn window_summary(
         order_flags: node_order::capabilities(session),
         primary_selection: session.view().displayed_selection().primary(),
         selected,
+        inspector,
         has_unsaved_changes: session.has_unsaved_changes(),
         tab_count: clamp(session.tabs().len()),
         active_view: session.tabs().active_view(),

@@ -295,6 +295,35 @@ StellarStatus stellar_project_clone_cancel(uint64_t handle, uint64_t request);
  * 그 프로젝트의 원본 감시를 시작하고, 이후 원본이 바뀌면 요청 없는 WINDOW_VIEW_CHANGED(request 0)를 보냅니다. */
 StellarStatus stellar_window_reload_component_canvas(uint64_t handle, uint64_t session, uint64_t *out_request);
 
+/* 속성 패널(UX.2.2, ADR-0070). 확정 선택의 CSS 속성 행을 게시 snapshot에서 읽습니다. 텍스트는 단일 선택 이름 뒤에
+ * 행마다 이름·값·선택지(공백 구분)가 이어집니다. 용량이 모자라면 BUFFER_TOO_SMALL과 함께 info에 필요한 크기를 씁니다. */
+#define STELLAR_INSPECTOR_MIXED        0x0001u
+#define STELLAR_INSPECTOR_READ_ONLY    0x0002u
+#define STELLAR_INSPECTOR_COLOR        0x0004u
+#define STELLAR_INSPECTOR_GROUP        0x0008u
+#define STELLAR_INSPECTOR_LONGHAND     0x0010u
+#define STELLAR_INSPECTOR_STELLAR_ONLY 0x0020u
+#define STELLAR_INSPECTOR_NUMERIC      0x0040u
+#define STELLAR_INSPECTOR_KEYWORD      0x0080u
+#define STELLAR_INSPECTOR_BOOL         0x0100u
+typedef struct StellarInspectorInfo {
+    uint32_t version, count, classes, row_count;
+    uint64_t revision, history_sequence;
+    uint8_t view[16];
+    uint32_t name_len, text_len;
+} StellarInspectorInfo;
+typedef struct StellarInspectorRow { uint32_t key, flags, section, name_len, value_len, choices_len; } StellarInspectorRow;
+StellarStatus stellar_window_inspector(uint64_t handle, uint64_t session, StellarInspectorInfo *info, StellarInspectorRow *rows, size_t row_capacity, uint8_t *text, size_t text_capacity);
+/* 확정 선택 전체에 속성 하나를 적용합니다. mode 0은 CSS 값 텍스트, 1은 각 node 현재 값에 delta를 더함.
+ * phase 0 확정, 1 연속 중간 값, 2 연속 끝(Undo 한 항목), 3 연속 취소. 값 문법 오류는 요청 없이 INVALID_ARGUMENT와
+ * "code: 이유" 진단을 씁니다. 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED. */
+typedef struct StellarPropertyEdit {
+    uint8_t view[16];
+    uint64_t revision, history_sequence;
+    double delta;
+    uint32_t mode, phase;
+} StellarPropertyEdit;
+StellarStatus stellar_window_edit_property(uint64_t handle, uint64_t session, const StellarPropertyEdit *edit, const uint8_t *name, size_t name_len, const uint8_t *value, size_t value_len, uint64_t *out_request, uint8_t *diagnostic, size_t diagnostic_capacity, size_t *out_diagnostic_len);
 
 /* 프로젝트 session 닫기를 요청합니다(그 아래 문서도 닫음). */
 StellarStatus stellar_project_close(uint64_t handle, uint64_t project, uint64_t *out_request);

@@ -50,6 +50,12 @@ pub mod node_ops;
 /// `SetProperty` command와 속성 값 (VII.2.4).
 pub mod property;
 
+/// 속성 패널 값의 CSS 값 문법 parser·formatter (UX.2.2).
+pub mod css_value;
+
+/// 속성 패널 표면: 선택 행 snapshot과 CSS 값 편집 (UX.2.2).
+pub mod inspector;
+
 /// modifier stack command (VII.2.6).
 pub mod modifier_ops;
 

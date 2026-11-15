@@ -22,6 +22,8 @@ pub mod input;
 pub mod input_macos;
 /// 셸→코어 입력 대기열과 연속 move/wheel coalescing (XII.3.4).
 pub mod input_queue;
+/// 속성 패널 C ABI (UX.2.2, ADR-0070).
+pub mod inspector;
 mod recovery;
 mod sidebar;
 mod text_input;
