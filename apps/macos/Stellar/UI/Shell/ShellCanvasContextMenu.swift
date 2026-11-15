@@ -41,7 +41,7 @@ extension ShellProjectWindow {
         let canvas = canvasHost.canvasView
         var excluded: Set<ShellCommand> = []
         // 앱이 비활성이라 이 창이 key가 되지 못했으면 클립보드 명령은 실행되지 않으므로 넣지 않습니다.
-        if canvas.window == nil || clipboardKeyWindow() !== canvas.window { excluded.formUnion([.cut, .copy, .paste]) }
+        if canvas.window == nil || NSApp.keyWindow !== canvas.window { excluded.formUnion([.cut, .copy, .paste]) }
         guard let menu = CanvasContextMenu.make(snapshot: toolsModel.snapshot, isTextEditing: router.isTextEditing,
                                                 target: router, excluded: excluded) else { return }
         menu.popUp(positioning: nil, at: point, in: canvas)
