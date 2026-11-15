@@ -38,7 +38,7 @@ hash=$(stellar component-source add-frame "$file" "$hash" "$root" "$group" Conte
 stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 ```
 
-`set-fill <파일> <source_hash> display-p3 1.2 -0.1 0.5 0`처럼 색 공간과 비연관 RGBA를 지정하면 컴포넌트 루트의 Fill을 저장합니다. `srgb`와 `display-p3`를 지원합니다. RGB는 유한한 확장 범위 값을 허용하고 알파는 0~1입니다. `set-fill <파일> <source_hash> none`은 Fill을 제거합니다. 알파가 0인 색도 원래 색 공간과 RGB를 보존합니다. `resize`와 `set-fill`은 root가 잠겨 있으면 무변경 요청도 종료 코드 65로 거부하고 원본 bytes를 보존합니다. 원본 hash가 바뀌면 잠금 검사보다 먼저 종료 코드 75로 실패합니다.
+`set-fill <파일> <source_hash> display-p3 1.2 -0.1 0.5 0`처럼 색 공간과 비연관 RGBA를 지정하면 컴포넌트 루트의 Fill을 저장합니다. `srgb`와 `display-p3`를 지원합니다. RGB는 유한한 확장 범위 값을 허용하고 알파는 0~1입니다. `set-fill <파일> <source_hash> none`은 Fill을 제거합니다. 알파가 0인 색도 원래 색 공간과 RGB를 보존합니다. `resize`와 `set-fill`은 root가 잠겨 있으면 무변경 요청도 종료 코드 65로 거부하고 원본 bytes를 보존합니다. `add-frame`도 parent Frame이나 그 조상이 잠겨 있으면 종료 코드 65로 거부하고 원본 bytes를 보존합니다(사용자 결정 D8, `stellar apply`와 같은 잠금 규칙). 원본 hash가 바뀌면 잠금 검사보다 먼저 종료 코드 75로 실패합니다.
 
 파일 하나를 직접 고칠 때도 `component.root`와 `root_node.id`는 같은 전체 ID여야 합니다. 이름을 수동으로 변경하면 같은 변경에서 파일명도 새 이름·기존 접미사로 맞춥니다. 이름 부분만 다르고 접미사가 정의 ID와 맞는 파일은 ID로 조립하고, `check`와 `query <프로젝트> components`가 `component-file-name-mismatch` 경고로 정규 파일명을 알려 줍니다. 접미사가 다르면 다른 정의의 파일일 수 있으므로 거부합니다. CLI는 파일명 변경이나 여러 파일의 원자 저장을 제공하지 않습니다.
 

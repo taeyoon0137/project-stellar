@@ -365,7 +365,8 @@ fn create_in(
     Ok((path, ContentHash::compute(encoded.as_bytes())))
 }
 
-/// 같은 라이브러리 내 ID를 확인하고 지정한 부모의 마지막 자식으로 Frame을 추가합니다.
+/// 같은 라이브러리 내 ID를 확인하고 지정한 부모의 마지막 자식으로 Frame을 추가합니다. 부모나 그 조상이 잠겼으면
+/// 거부합니다(D8).
 pub fn add_frame(
     path: &Path,
     expected: ContentHash,
@@ -396,6 +397,8 @@ pub fn add_frame(
     if !tree.contains(parent) {
         return Err(invalid("같은 컴포넌트에 parent Frame이 필요합니다"));
     }
+    // 잠긴 Frame이나 잠긴 조상 아래에는 넣지 않습니다(D8, `stellar apply`·앱과 같은 규칙).
+    source.ensure_unlocked(parent)?;
     let last = tree.children(parent).last().and_then(|id| tree.node(*id));
     let record = NodeRecord {
         id,
@@ -780,6 +783,40 @@ mod tests {
         };
         let result = edit_root(&file, hash, ComponentRootEdit::Background(frame.background));
         assert!(matches!(result, Err(TextSourceError::Invalid(_))));
+        assert_eq!(std::fs::read(file).unwrap(), original);
+    }
+
+    #[test]
+    fn locked_parent_or_ancestor_rejects_add_frame() {
+        let temp = crate::saved_project::tests::TempDir::new();
+        let root = temp.path.canonicalize().unwrap();
+        let dir = root.join("design/components");
+        std::fs::create_dir_all(&dir).unwrap();
+        let id = |n| StableId::new_v7(1, 0, n);
+        let mut component = ComponentSource::new(id(1), "Card".into(), id(2)).unwrap();
+        component.root.locked = true;
+        component.children.insert(
+            id(3),
+            NodeRecord {
+                id: id(3),
+                parent: Some(id(2)),
+                order_key: OrderKey::between(None, None),
+                visible: true,
+                locked: false,
+                display_name: "Inner".into(),
+                payload: NodePayload::Frame(FramePayload::default()),
+            },
+        );
+        let (file, hash) = create(&dir, &component).unwrap();
+        let original = std::fs::read(&file).unwrap();
+        let size = Size2::new(10., 10.).unwrap();
+        for parent in [id(2), id(3)] {
+            let result = add_frame(&file, hash, parent, id(9), "New".into(), size);
+            assert!(
+                matches!(result, Err(TextSourceError::Invalid(_))),
+                "{result:?}"
+            );
+        }
         assert_eq!(std::fs::read(file).unwrap(), original);
     }
 
