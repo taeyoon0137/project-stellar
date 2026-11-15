@@ -5,7 +5,7 @@
 Accepted (2026-11-14). 제품 책임자가 결정했습니다("바꾸는 게 나을 것 같은데. 성능적인 부분은 청크를 캐시처럼 활용하는 방안도 있을 것 같기도 하고").
 
 - 기술 아키텍처 §19·§21의 "`ChunkId + ContentHash` 혼합 chunk를 Git에 커밋하는 원본으로 쓴다"는 결정을 대체합니다.
-- 첫 단일 View 텍스트 문법과 전환 WBS V.10.1~V.10.7를 아래에 정합니다. 전체 파일 분할·journal·cache 최적화는 후속 행에서 검증합니다.
+- 세부 텍스트 문법, 파일 분할 기준, 전환 WBS는 후속 작업으로 정합니다(아래 "정하지 않은 사항").
 
 ## Context
 
@@ -36,23 +36,13 @@ Accepted (2026-11-14). 제품 책임자가 결정했습니다("바꾸는 게 나
 5. **외부 변경을 반영합니다.** 에디터, AI 에이전트, `git pull`처럼 앱 밖에서 텍스트를 바꾸면 기존 파일 감시(XIII.2)와 외부 변경 반영(XIII.3) 경로로 다시 읽습니다.
 6. **위층은 그대로 둡니다.** 문서 모델(record, `StableId`), validator, Semantic Diff·Merge, history, command, 복구 스냅샷은 바꾸지 않습니다. 파일 층(`crates/storage`의 세대·manifest 원본 역할과 `crates/project`의 `document_io`)만 바꿉니다.
 
-첫 실행 단위(V.10.1~V.10.3):
-
-- [text-view-source-v1](../spec/text-view-source-v1.md): 기존 제한 YAML 파서·writer를 재사용하며 `.stellar.yaml` 파일 하나에 단일 문서·페이지·View와 Frame/Fragment를 기록합니다. V.10.4의 첫 부분은 Text 본문·문단 style index·style run의 순서와 범위까지 보존하며 지원 범위를 확장합니다. 모든 Frame 속성은 사람이 읽는 값으로 기록하고, 지원하지 않는 node·modifier·필드·schema는 오류로 거부합니다.
-- `stellar text-source export <프로젝트> <새 파일>`은 실제 기존 generation을 읽고 재직렬화 chunk pointer 집합 전체가 같을 때만 별도 파일을 만듭니다. 모르는 optional chunk도 묵시적으로 버리지 않습니다. `check <파일>`은 실제 DocumentModel을 재구축해 읽기 전용 검증합니다.
-- V.10.4의 컴포넌트 원본 첫 범위는 독립 파일 하나에 빈 인터페이스와 root Frame을 기록합니다. 이름과 StableId 유래 고정 접미사로 파일을 찾고, 전체 StableId로 정의와 root를 조립합니다. 기존 generation의 전체 라이브러리를 변환하지 않습니다. [컴포넌트 원본 v1](../spec/component-source-v1.md)
-- 기본 앱·CLI 저장 경로는 그대로 둡니다. 이 파일은 전체 프로젝트 변환 완료의 표식이 아닙니다. 다중 페이지·View/전체 의미는 V.10.4, journal은 V.10.5, 외부 변경/명령 연결은 V.10.6, 기본 전환과 성능 측정은 V.10.7입니다.
-- 단일 파일은 기존 atomic writer와 handle 검사를 재사용합니다(`crates/storage/source_file`). 새 파일의 기존 대상은 거부하고, 수정 저장은 열린 bytes hash를 다시 검사합니다. 원본 읽기의 사용자 symlink 허용은 §19.3을 유지하고, 원자 쓰기와 cache 경로는 symlink를 따라 교체하지 않습니다.
-- 컴포넌트 원본을 프로젝트에 포함할 때 쓰는 opt-in 위치는 `design/components/`입니다. 프로젝트 CLI·headless MCP 조회는 이 내부의 원본 파일을 다시 읽고, 기존 component-library chunk와의 이중 원본은 거부합니다. 사용자가 명시한 단독 파일의 링크 읽기 정책은 유지하며, 프로젝트 단위 조회는 내부로 해석된 실제 경로의 제한된 bytes만 읽습니다. [원본과 조회 계약](../spec/component-source-v1.md)
-- 선택적 `open_with_cache`는 원본을 검증한 뒤 기존 ChunkId·envelope로 `.stellar/cache/text-source-v1/<source-hash>/`를 재생성합니다. 누락·손상은 재생성, cache I/O 실패는 원본 열기 성공과 별도 상태로 반환합니다. 매번 원본을 해석하므로 빠른 열기 성능 완료로 보지 않습니다.
-
 정하지 않은 사항(후속 결정):
 
-- 다중 의미 단위의 디렉터리 배치와 파일 간 참조, 전체 텍스트 스키마
+- 텍스트 문법(제한된 YAML 하위 집합을 쓸지, 전용 들여쓰기 문법을 쓸지), 파일 확장자, 디렉터리 배치
 - 큰 View 분할 기준과 측정
 - 저장 journal 형식
 - 캐시 키와 GC
-- V.10.7의 기본 전환 시점 및 기존 generation 원본 역할 폐기 범위
+- 기존 세대 기반 저장(Phase V)의 원본 역할 폐기 범위와 전환 WBS
 
 ## Alternatives
 
@@ -94,6 +84,5 @@ Accepted (2026-11-14). 제품 책임자가 결정했습니다("바꾸는 게 나
 
 ## Migration
 
-- 현재는 기존 loader로 읽은 단일 View 지원 문서를 새 텍스트 파일로 내보내기만 합니다. 기존 `design/current`·generation·objects·`stellar.yaml`·복구 snapshot은 수정하거나 삭제하지 않습니다. 생성 파일을 `check`로 재열고 semantic 레코드를 비교한 뒤 사람이 Git diff를 검토합니다. 미지원 입력은 원본·기존 출력 모두 보존합니다.
-- 전체 프로젝트 변환은 V.10.4~V.10.7에서 semantic snapshot 동일성, journal 복구, 외부 변경 반영을 검증한 뒤 활성화합니다. 모든 기존 프로젝트의 일괄 전환과 기본 저장 전환은 그 전까지 하지 않습니다.
+- 기존 프로젝트는 세대 기반 chunk 저장에서 텍스트 원본으로 한 번 변환합니다. 변환기는 기존 loader로 문서를 읽고 텍스트 writer로 씁니다. 변환 결과의 semantic snapshot이 원본과 같은지 확인합니다.
 - 공개 배포 전이라 사용자 데이터 이전 부담은 개발용 fixture와 샘플 프로젝트에 한정됩니다.

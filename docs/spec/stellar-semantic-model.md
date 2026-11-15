@@ -311,6 +311,8 @@ code는 위 표와 정확히 같아야 합니다. 모르는 code(`0x0000`, `0x01
 | `Component { document, component }` | 컴포넌트 정의 범위(정의 resource, 정의 tree node, Slot) | `document` |
 | `ProjectComponent(component)` | 프로젝트 공용 컴포넌트 정의와 그 tree·Slot | 없음 |
 
+`ProjectComponent`(교환 tag 4)는 ADR-0059 결정 6을 보완한 [ADR-0061](../adr/ADR-0061-text-source-format-and-layout.md) 결정 9에 따릅니다.
+
 두 객체가 같은 정체성이라는 것은 `id`, `kind`, `origin`이 모두 같다는 뜻입니다(`same_identity`).
 
 ### 3.3 속성 경로
@@ -591,6 +593,8 @@ snapshot 전용 key(`semantic-diff::keys`):
 | 3 | ComponentDefinition | document, component |
 | 4 | InstanceOverride | document, instance, component |
 | 5 | ProjectComponentDefinition | component |
+
+code 5는 [ADR-0061](../adr/ADR-0061-text-source-format-and-layout.md) 결정 9에서 추가했습니다. 기존 code의 의미를 바꾸지 않으므로 교환 인코딩 version은 1입니다.
 
 - 객체의 기본 출처는 Origin에서 유도합니다: Project → Project, Document → Document,
   Component → ComponentDefinition, ProjectComponent → ProjectComponentDefinition(`object_provenance`). 추가·삭제는 그 객체, 위치·속성 변경은 target 객체의
