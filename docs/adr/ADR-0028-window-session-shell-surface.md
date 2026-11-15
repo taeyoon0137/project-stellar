@@ -529,7 +529,8 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
   | 5 | Image(PNG 내용 ABI로 픽셀을 읽음) |
   | 6 | Ellipse·Line·Polygon 경로 Shape(`stellar_canvas_shape_path`로 경로를 읽음) |
 
-  bit 7 이상은 0입니다. bit 4·5·6의 내용 ABI 기록과 정리는 텍스트(B5)·캔버스 렌더(B8) 묶음에서 합니다.
+  bit 7 이상은 0입니다. bit 4의 내용 ABI는 ADR-0067 §2, bit 5·6은 아래 "PNG 배치와 표시"·"도형 경로" 절에
+  있습니다.
 - Rectangle 도구는 다른 도형과 같은 `stellar_window_session_insert_shape`(ShapeKind tag 1, 부모 local 두 점)를
   씁니다. 수식키(Shift 정사각형, Option 중심 기준)와 클릭 생성 크기가 다른 도형과 같아집니다. 같은 일을 하던
   `stellar_window_session_insert_rectangle`과 runtime `insert_canvas_rectangle`은 삭제했습니다.
