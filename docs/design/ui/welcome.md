@@ -364,7 +364,7 @@ protocol WelcomeDataSource: AnyObject {
 ## 15. 코어 연결과 통합 때 남은 일
 
 1. **데이터 어댑터**: `WelcomeDataSource`를 구현하는 코어 어댑터. 최근 목록 저장소, ProjectCreateRequest(XII.6.1), ProjectProbe 후 session 열기(XII.6.2), clone-open pipeline(XII.6.3), Git 탐색·capability(XIV.1.3), Git 명령 취소(XIV.1.4)를 FFI pull 이벤트(`stellar_runtime_poll_event`)와 명령 호출로 연결합니다.
-2. **안내 코드 매핑**: 코어 오류 코드 → `WelcomeNotice.Kind`. `gitIdentityRequired`는 지금 안내만 합니다. 이름·이메일은 별도 sheet를 띄우지 않고 새 프로젝트 sheet 안의 필드로 받아 저장소 설정(`.git/config`)에 씁니다. Stellar가 새로 만든 프로젝트는 만들 때 신뢰 목록에 등록하고, Clone·열기는 제한 모드로 시작합니다(UX 명세 4장 흐름 1, 결정 U8·U9, UX.5.9).
+2. **안내 코드 매핑**: 코어 오류 코드 → `WelcomeNotice.Kind`. `gitIdentityRequired`는 지금 안내만 합니다. 이름·이메일은 별도 sheet를 띄우지 않고 새 프로젝트 sheet 안의 필드로 받아 저장소 설정(`.git/config`)에 씁니다(결정 U9, UX.5.9). Stellar가 새로 만든 프로젝트를 만들 때 신뢰 목록에 등록하는 일(결정 U8, ADR-0073 결정 10)은 아키텍처 §24.3 문구 개정(UX.0.3) 뒤 UX.5.9에서 적용합니다. 그 전까지는 §24.3대로 새 프로젝트도 Clone·열기와 같이 제한 모드로 시작합니다(UX 명세 4장 흐름 1).
 3. **앱 연결**: `AppDelegate`가 열린 프로젝트가 없을 때 `WelcomeWindowController`를 띄우고 `presentCommandInstallOfferIfNeeded()`를 부르게 합니다. 프로젝트가 열리면 시작 창을 닫습니다. 현재 앱은 캔버스 창을 바로 엽니다.
 4. **메뉴**: `MainMenuBuilder` 메뉴를 앱에 설치합니다. File 메뉴의 New Project…(⌘N), Open Project…(⌘O), Clone Project…는 앱 수준 router가 명시 target이므로, 그 router의 model(통합 어댑터)이 시작 창이 떠 있으면 `WelcomeViewController.availability(of:)`를 `enabledCommands`에 싣고 `run(_:)`으로 넘기게 합니다(7장). 앱 메뉴에 "Set Up the stellar Command…"(`WelcomeStrings.setUpCommandMenuItem`) 항목을 두어 `showStellarCommandSetup(_:)`으로 같은 sheet를 관리 모드로 엽니다(XII.6.5, XXIV.5.6, 가이드 8.1). 메뉴 정의는 Tools 영역(`ShellCommand`)이 소유하므로 그 영역에서 명령을 추가합니다.
 5. **smoke 연결**: 완료. `main.swift`의 `--welcome-ui-check` 실행 인자와 `scripts/macos/smoke.sh` 단계로 커밋된 트리에서 실행합니다.

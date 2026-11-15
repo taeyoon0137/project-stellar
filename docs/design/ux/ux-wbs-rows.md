@@ -29,8 +29,8 @@ lane(병렬 단위, crate가 겹치지 않게 나눔)
 |---|---|---|---|---|---|
 | UX.0.1 | 정리 통합 결과를 UX 기준선으로 확인하고 결과를 기록합니다. 확인 항목: Pen 삭제, 도구 10종이 모두 반응, 편집 경로 신뢰 게이트 0건, D6 sheet, D7 Settings ▸ 캔버스, 컴포넌트 라이브러리 창·New Component alert·Document Font UI 0건, 인스펙터 편집 FFI 단일화, Git 패널 Stage 경로의 남은 범위 | `gitSource.trusted`·`trusted_canvas_window`·`case pen`·`selectPenTool` 검색 결과가 편집 경로에서 0건. 새 프로젝트에서 10개 도구를 눌러 각각 생성·이동·확대가 실제로 됨. 미충족 항목은 UX.1.5 또는 해당 행 선행으로 기록 | 정리 | `apps/macos/Stellar/UI/Tools/CanvasTool.swift`, `apps/macos/Stellar/UI/Shell/`, `crates/runtime/src/app/` | D |
 | UX.0.2 | 디자인 문서를 명세와 결정에 맞춰 정리합니다. 셸 가이드 6.1(툴바 가운데 도구 → 하단 도구 막대), 2.4·6.4·6.5(하단 패널·Git·에이전트 위치), O2·O4·O8 닫기, 7장 부제목, "핵심 흐름과 완료 기준" 절 신설. tools_menus의 남은 11개 도구 기록과 Polygon 키(기준선에서 Pen은 이미 빠짐). inspector 2.1 범주 → property_model 12장. sidebar 238행 신뢰 조건 삭제. git_panel 위치·inline 동반 변경·단계별 Stage. agent_panel·shell_frame 하단 패널 삭제. property_model 15장 O9 | 문서 사이 충돌 목록(명세 11.2절)이 0건. 문서 이스케이프 규칙(코드 표시 밖 `\~`·`\<`) 위반 0건. 다른 제품 고유 명칭·문구 0건 | UX.0.1, U1–U6 | `docs/design/macos-shell-design.md`, `docs/design/ui/{tools_menus,inspector,sidebar,git_panel,agent_panel,shell_frame}.md`, `docs/design/property_model.md` | D |
-| UX.0.3 | 계획서를 개정합니다. XII.10.1(10종)과 XII.10.29(펜 도구 부분 삭제)가 기준선에 들어 있는지 확인, XIII.3.1을 Synthetic Command(Undo 가능) 반영으로, XIV.13.5에 패널 위치, XVI.11.8에 코드 탭·에이전트 탭 노출 조건, 이 문서의 행 등록 | `cargo xtask sync-plan`·`validate-task-status` 통과. 삭제 행을 참조하는 행 0건. 개정 기록에 사유 | UX.0.2, U12, U13 | `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md`, `planning/task-status.yaml`(생성) | D |
-| UX.0.4 | 셸 배치·상태 표시 결정을 ADR로 기록합니다(U1·U4·U5·U15·U16·U17). 하단 보조 패널 삭제, 탭 구성, 부제목 문법, 한 줄 안내, 공용 상태 사전, Git 메뉴 | ADR이 명세 3장과 일치. ADR 본문에 다른 제품 이름·문구 없음 | UX.0.2 | `docs/adr/ADR-0073-shell-layout-and-status-display.md` | D |
+| UX.0.3 | 계획서와 아키텍처 §24.3을 개정합니다. XII.10.1(10종)과 XII.10.29(펜 도구 부분 삭제)가 기준선에 들어 있는지 확인, XIII.3.1을 Synthetic Command(Undo 가능) 반영으로, XIV.13.5에 패널 위치, XVI.11.8에 코드 탭·에이전트 탭 노출 조건, 아키텍처 §24.3 "처음 여는 프로젝트는 제한 모드"에 Stellar가 §25.1로 만든 폴더의 신뢰 등록 예외(U8, ADR-0073 결정 10. Clone·열기는 그대로), 이 문서의 행 등록 | `cargo xtask sync-plan`·`validate-task-status` 통과. 삭제 행을 참조하는 행 0건. 개정 기록에 사유. §24.3 문구가 ADR-0073 결정 10과 일치 | UX.0.2, U8, U12, U13 | `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md`, `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`, `planning/task-status.yaml`(생성) | D |
+| UX.0.4 | 셸 배치·상태 표시 결정과 새 프로젝트 신뢰 등록을 ADR로 기록합니다(U1·U4·U5·U8·U15·U16·U17). 하단 보조 패널 삭제, 탭 구성, 부제목 문법, 한 줄 안내, 공용 상태 사전, Git 메뉴, §24.3 예외인 새 프로젝트 신뢰 등록 | ADR이 명세 3장과 일치. ADR 본문에 다른 제품 이름·문구 없음 | UX.0.2 | `docs/adr/ADR-0073-shell-layout-and-status-display.md` | D |
 
 ## UX.1 걷어 내기(흐름 1)
 
@@ -102,7 +102,7 @@ lane(병렬 단위, crate가 겹치지 않게 나눔)
 | UX.5.6 | Push: 보낼 커밋이 있을 때만 [Push], 등록된 remote만, 강제 Push 없음, 실패 이유를 머리 줄에 | 테스트 remote로 Push 성공. 거부 시 Git 메시지와 다음 행동 안내 | UX.5.5, XIV.13.3 | `UI/Git/`, `crates/git-porcelain/` | G·S |
 | UX.5.7 | 제한 모드 변경 탭: 설명 한 줄과 [프로젝트 신뢰…] | 제한 모드에서 변경 탭으로 신뢰 부여 후 Git 상태가 채워짐. 편집은 신뢰 전에도 됨 | UX.5.2, UX.1.4 | `UI/Git/` | S |
 | UX.5.8 | 메뉴 막대 Git 메뉴(변경 보기, 커밋, Push, 다음 충돌로 이동, 상태 새로 고침, 프로젝트 신뢰…) | 모든 항목이 동작하거나 일시 조건 하나로만 비활성 | UX.5.6, U16, XII.6.5 | `UI/Tools/MainMenuBuilder.swift` | S |
-| UX.5.9 | Stellar가 새로 만든 프로젝트를 만들 때 신뢰 목록에 등록하고, 새 프로젝트 sheet 안에 identity 필드를 둡니다 | 새 프로젝트 첫 화면 부제목이 `main · 변경 없음`. Clone·열기는 제한 모드 | UX.5.3, U8, U9 | `crates/project/src/create.rs`, `crates/runtime/src/app/create.rs`, `UI/Welcome/` | R·S |
+| UX.5.9 | Stellar가 새로 만든 프로젝트를 만들 때 신뢰 목록에 등록하고(ADR-0073 결정 10), 새 프로젝트 sheet 안에 identity 필드를 둡니다 | 새 프로젝트 첫 화면 부제목이 `main · 변경 없음`. Clone·열기는 제한 모드. 생성이 실패·취소되면 등록 없음. 세 경우를 코어 단위 테스트로 고정 | UX.5.3, UX.0.3(§24.3 개정), U8, U9 | `crates/project/src/create.rs`, `crates/runtime/src/app/create.rs`, `UI/Welcome/` | R·S |
 
 완료 기준(흐름 4, 원본 단위): 흐름 2의 편집을 터미널 없이 커밋하고 Push한다.
 
