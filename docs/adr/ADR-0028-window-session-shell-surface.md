@@ -375,6 +375,7 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 - 셸은 Copy 결과 전달 때 pasteboard·창·session만 다시 확인합니다. 이전에는 선택·key 창·텍스트 포커스까지
   다시 확인해, 복사한 뒤 선택이 바뀌면 결과를 조용히 버렸습니다. 검사만을 위해 둔 key 창 주입 seam과 그
   검사 블록도 지웠습니다.
+- FFI 내부 helper도 `copy_selection_bytes`·`paste_selection_bytes`로 이름을 맞췄습니다(ABI 변화 없음).
 
 ### 레이어 페이지와 이름 변경
 

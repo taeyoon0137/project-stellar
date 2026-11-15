@@ -583,14 +583,14 @@ pub unsafe extern "C" fn stellar_window_copy_selection(
             return StellarStatus::NullPointer;
         };
         unsafe {
-            copy_subtree_bytes(handle, bytes, capacity, out_len, |app| {
+            copy_selection_bytes(handle, bytes, capacity, out_len, |app| {
                 app.copy_displayed_subtree(target.runtime_target())
             })
         }
     })
 }
 
-unsafe fn copy_subtree_bytes(
+unsafe fn copy_selection_bytes(
     handle: u64,
     bytes: *mut u8,
     capacity: usize,
@@ -658,14 +658,14 @@ pub unsafe extern "C" fn stellar_window_paste_selection(
             return StellarStatus::NullPointer;
         }
         unsafe {
-            paste_subtree_bytes(handle, bytes, len, out_request, |app, data| {
+            paste_selection_bytes(handle, bytes, len, out_request, |app, data| {
                 app.paste_displayed_subtree(target.runtime_target(), data)
             })
         }
     })
 }
 
-unsafe fn paste_subtree_bytes(
+unsafe fn paste_selection_bytes(
     handle: u64,
     bytes: *const u8,
     len: usize,
