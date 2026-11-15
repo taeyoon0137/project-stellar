@@ -92,6 +92,18 @@ pub(super) fn fresh_generator() -> Result<stellar_core_types::ids::StableIdGener
     ))
 }
 
+/// 새 ID 생성기에 넘기는 지금 시각(UUIDv7 timestamp).
+pub(super) fn now_clock() -> Result<stellar_core_types::clock::ManualClock, Failure> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| u64::try_from(d.as_nanos()).ok())
+        .ok_or_else(|| {
+            Failure::new(RequestFailure::UnknownView, "시스템 시각을 읽지 못했습니다")
+        })?;
+    Ok(stellar_core_types::clock::ManualClock::new(nanos))
+}
+
 /// 요청 순번은 runtime 안에서만 유일하므로 창의 영속 ID와 함께 식별합니다.
 pub(super) fn command_id(window: WindowSessionId, request: RequestId) -> CommandId {
     let mut key = [0; 24];

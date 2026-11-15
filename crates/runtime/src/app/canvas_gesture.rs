@@ -298,9 +298,10 @@ fn apply_edit(
             )
         }
         CanvasEdit::Resize { node, rect } => {
-            let id = super::frame_move::command_id(window.window(), request);
+            // 처음 넣는 위치 Transform modifier의 ID(UUIDv7, OS 난수). command ID에서 파생하지 않습니다.
+            let [modifier] = super::frame_move::fresh_ids()?;
             let (model, payload) = sole_editable(window, view, node)?;
-            resize_commands(model, node, &payload, rect, derived_id(id, node))?
+            resize_commands(model, node, &payload, rect, modifier)?
         }
         CanvasEdit::LineEnd { node, end, point } => {
             let (model, payload) = sole_editable(window, view, node)?;
@@ -635,17 +636,6 @@ fn translated(current: Transform2D, delta: Vec2) -> Option<Transform2D> {
     Transform2D::new(a, b, c, d, x + delta.x(), y + delta.y()).ok()
 }
 
-/// 같은 요청 안에서 node마다 다른 영속 id(새 Transform modifier).
-fn derived_id(command: stellar_commands::id::CommandId, node: StableId) -> StableId {
-    let mut key = [0; 32];
-    key[..16].copy_from_slice(&command.to_bytes());
-    key[16..].copy_from_slice(&node.to_bytes());
-    let digest = stellar_storage::hash::ContentHash::compute(&key);
-    let mut raw = [0; 16];
-    raw.copy_from_slice(&digest.digest()[..16]);
-    StableId::from_bytes(raw)
-}
-
 /// `node`의 위치 Transform modifier와 그 값(속성 탭 `left`·`top`과 같은 규칙, ADR-0070).
 fn position_transform(model: &DocumentModel, node: StableId) -> Option<(ModifierId, Transform2D)> {
     let entry = stellar_commands::inspector::position_modifier(model, node)?;
@@ -784,7 +774,6 @@ fn move_selection(
     use stellar_commands::duplicate::DuplicateSubtree;
     use stellar_commands::id::CommandOrigin;
     use stellar_commands::transaction::CommandTransaction;
-    use stellar_core_types::{clock::ManualClock, ids::StableIdGenerator};
     let model = window.document().ok_or_else(stale_view)?.model();
     let root = view_root(model, view).ok_or_else(stale_view)?;
     let selected = window.view().selection().ids().to_vec();
@@ -804,15 +793,9 @@ fn move_selection(
     }
     let rows = row_index(scene);
     let id = super::frame_move::command_id(window.window(), request);
-    let mut generator = StableIdGenerator::new(u64::from_le_bytes(
-        id.to_bytes()[..8].try_into().expect("eight bytes"),
-    ));
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .and_then(|d| u64::try_from(d.as_nanos()).ok())
-        .ok_or_else(stale_view)?;
-    let clock = ManualClock::new(nanos);
+    // 복제본과 처음 넣는 Transform modifier의 ID는 OS 난수 seed의 UUIDv7입니다(ADR-0028 "새 영속 ID").
+    let mut generator = super::frame_move::fresh_generator()?;
+    let clock = super::frame_move::now_clock()?;
     let revision = window.revision();
     let mut transaction = CommandTransaction::new(id, CommandOrigin::User);
     let mut commands = 0;
@@ -848,7 +831,7 @@ fn move_selection(
             target,
             local,
             remap.as_ref(),
-            derived_id(id, target),
+            generator.next_id(&clock),
         )? {
             transaction = transaction.with_command(revision, command);
             commands += 1;
@@ -2003,6 +1986,52 @@ mod tests {
         model
     }
 
+    /// 이동·크기 핸들이 처음 넣는 위치 Transform modifier의 ID는 서로 독립인 UUIDv7이고, 같은 창·요청 순번으로
+    /// 다시 해도 같은 ID가 나오지 않습니다(command ID에서 파생하지 않음, ADR-0028 "새 영속 ID").
+    #[test]
+    fn new_position_modifiers_from_move_and_resize_get_independent_uuid_v7_ids() {
+        use stellar_document::modifier::ModifierKind;
+        let mut model = all_shapes_document();
+        // Ellipse(15)와 Polygon(17)은 위치 Transform 없이 채우기만 둡니다.
+        for n in [15, 17] {
+            let mut stack = model.modifier_stack(sid(n)).unwrap().clone();
+            stack.remove(ModifierId::new(sid(n * 10))).unwrap();
+            model.set_modifier_stack(stack).unwrap();
+        }
+        let dir = saved_project_with("canvas-new-ids", &[&model]);
+        let transform_id = |session: &ProjectWindowSession, n: u64| {
+            let model = session.document().unwrap().model();
+            let entries = model.modifier_stack(sid(n)).unwrap().entries().to_vec();
+            let found: Vec<StableId> = entries
+                .iter()
+                .filter(|e| e.kind == ModifierKind::Transform)
+                .map(|e| e.id.stable_id())
+                .collect();
+            assert_eq!(found.len(), 1, "n{n}");
+            found[0]
+        };
+        let run = || {
+            let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+            session
+                .select(Selection::new([sid(15), sid(17)], Some(sid(17))))
+                .unwrap();
+            assert!(drag(&mut session, 1, None, (5., 5.), true, false));
+            let moved = [transform_id(&session, 15), transform_id(&session, 17)];
+            let mut resized = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+            resized
+                .select(Selection::new([sid(15)], Some(sid(15))))
+                .unwrap();
+            assert!(edit(&mut resized, 1, resize(15, 4., 0., 36., 20.)));
+            let ids = [moved[0], moved[1], transform_id(&resized, 15)];
+            assert!(ids.iter().all(|id| (id.version(), id.variant()) == (7, 2)));
+            assert!(ids[0] != ids[1] && ids[0] != ids[2] && ids[1] != ids[2]);
+            ids
+        };
+        let first = run();
+        let second = run();
+        assert!(first.iter().all(|id| !second.contains(id)));
+    }
+
     #[test]
     fn every_node_kind_moves_with_its_position_transform_in_one_undo() {
         let dir = saved_project_with("canvas-move-kinds", &[&every_kind_document()]);
@@ -2090,7 +2119,7 @@ mod tests {
                 &[sid(node)],
                 property,
                 &InspectorInput::Set(CssValue::Length(value)),
-                [0; 16],
+                &mut || StableId::NIL,
             )
             .unwrap()
         };

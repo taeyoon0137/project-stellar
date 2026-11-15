@@ -15,7 +15,7 @@
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
-use super::frame_move::command_id;
+use super::frame_move::{command_id, fresh_generator, now_clock};
 use super::*;
 use stellar_commands::id::CommandOrigin;
 use stellar_commands::inspector::{edit_commands, inspector_rows, InspectorSnapshot, NodeClass};
@@ -186,12 +186,15 @@ fn edit_property(
             .map_err(history_failure)?;
     }
     let selection = window.history.view().selection().ids().to_vec();
+    // 새 modifier ID는 OS 난수 seed의 UUIDv7입니다(ADR-0028 "새 영속 ID"). command ID에서 파생하지 않습니다.
+    let mut generator = fresh_generator()?;
+    let clock = now_clock()?;
     let commands = edit_commands(
         document.state.model(),
         &selection,
         property,
         input,
-        id.to_bytes(),
+        &mut || generator.next_id(&clock),
     )
     .map_err(|error| Failure::new(RequestFailure::UnknownView, error.0))?;
     if commands.is_empty() {
@@ -369,6 +372,62 @@ mod tests {
         .unwrap();
         assert_eq!(width(&session), start);
         assert_eq!(session.history().history().len(), depth);
+    }
+
+    /// 속성 탭이 처음 넣는 modifier(Fill, 위치 Transform)의 ID는 서로 독립인 UUIDv7이고, 같은 창·요청 순번으로
+    /// 다시 해도 같은 ID가 나오지 않습니다(command ID에서 파생하지 않음, ADR-0028 "새 영속 ID").
+    #[test]
+    fn new_modifiers_from_the_property_tab_get_independent_uuid_v7_ids() {
+        use crate::window_session::test_fixtures::{sample_document, saved_project_with};
+        use stellar_document::records::NodePayload;
+        use stellar_document::shape::{RectangleParams, ShapeGeometry};
+        let mut model = sample_document();
+        let mut record = model.record(sid(12)).unwrap();
+        record.id = sid(14);
+        record.parent = Some(sid(11));
+        record.payload = NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
+            size: stellar_core_types::value::Size2::new(40., 30.).unwrap(),
+            corner_radius: stellar_document::frame::CornerRadius::ZERO,
+        }));
+        model.insert_node(record).unwrap();
+        let project = saved_project_with("inspector-new-ids", &[&model]);
+        let run = || {
+            let mut session =
+                ProjectWindowSession::load(identity(project.path()), window(1)).unwrap();
+            session.select(Selection::new([sid(14)], None)).unwrap();
+            for (request, property, text) in [
+                (940, InspectorProperty::Fill, "#ff0000"),
+                (941, InspectorProperty::Left, "5"),
+            ] {
+                let t = target(&session);
+                let input = InspectorInput::Set(parse_input(property, text).unwrap());
+                edit_property(
+                    &mut session,
+                    RequestId(request),
+                    t,
+                    property,
+                    &input,
+                    PropertyEditPhase::Commit,
+                )
+                .ok()
+                .unwrap();
+            }
+            let model = session.document().unwrap().model();
+            let ids: Vec<StableId> = model
+                .modifier_stack(sid(14))
+                .unwrap()
+                .entries()
+                .iter()
+                .map(|entry| entry.id.stable_id())
+                .collect();
+            assert_eq!(ids.len(), 2);
+            assert!(ids.iter().all(|id| (id.version(), id.variant()) == (7, 2)));
+            assert_ne!(ids[0], ids[1]);
+            ids
+        };
+        let first = run();
+        let second = run();
+        assert!(first.iter().all(|id| !second.contains(id)));
     }
 
     #[test]

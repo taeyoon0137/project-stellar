@@ -513,6 +513,12 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
   `stellar_project::new_ids`(UUIDv7, OS 난수)로 ID를 받습니다. 이전 구현은 창 ID와 요청 순번의 해시나
   node ID의 마지막 byte를 바꾼 값에서 ID를 파생했습니다. 복제·붙여넣기는 계획 API가 ID 생성기를 받으므로
   생성기 seed를 같은 OS 난수에서 채웁니다.
+- 같은 규칙을 캔버스 이동·크기 핸들(`stellar_window_canvas_move`·`_resize`, Option 드래그 복제 포함)과 속성 패널
+  편집(`stellar_window_edit_property`)에도 적용합니다. 통합 때 이 경로들은 command ID와 node ID의 hash,
+  command ID bytes를 seed로 한 생성기, node ID XOR command ID로 새 modifier ID를 만들어 위 규칙이 되돌아갔습니다.
+  지금은 runtime이 OS 난수 seed의 생성기(`fresh_ids`·`fresh_generator`)로 ID를 만들고,
+  `stellar_commands::inspector::edit_commands`는 seed 대신 호출자가 주는 ID 공급자를 받습니다. 이동·크기·속성
+  패널이 처음 넣는 modifier ID가 version 7이고 같은 창·요청 순번으로 다시 해도 겹치지 않음을 테스트로 고정했습니다.
 - 이동·생성 도구의 제스처(드래그 임계값, 수식키, 클릭 생성 크기)는 지금 셸이 해석해 결과 좌표만 위
   ABI로 보냅니다. canvas_editing 원칙 2("셸은 해석하지 않고 전달")와 다른 임시 구조입니다. hit test와 렌더를
   코어로 옮기는 후속(XI.8.2 → XII.4.1)에서 코어 도구 상태 기계로 옮깁니다.

@@ -707,19 +707,6 @@ fn adjusted(
     })
 }
 
-/// 새 modifier id. 같은 transaction의 node마다 다르고(`seed ^ node`), 속성마다 salt가 다릅니다.
-fn modifier_id(seed: [u8; 16], node: StableId, salt: u8) -> ModifierId {
-    let mut bytes = node.to_bytes();
-    for (byte, s) in bytes.iter_mut().zip(seed) {
-        *byte ^= s;
-    }
-    bytes[15] ^= salt;
-    if bytes == [0; 16] {
-        bytes[0] = 1;
-    }
-    ModifierId::new(StableId::from_bytes(bytes))
-}
-
 /// 렌더 순서(Transform* → Fill → Stroke)를 지키는 새 modifier 위치.
 fn paint_order(model: &DocumentModel, id: StableId, kind: ModifierKind) -> OrderKey {
     let entries: &[ModifierEntry] = model.modifier_stack(id).map_or(&[], |s| s.entries());
@@ -739,18 +726,18 @@ fn paint_order(model: &DocumentModel, id: StableId, kind: ModifierKind) -> Order
     }
 }
 
+/// 새 modifier를 넣는 command. ID는 호출자가 준 공급자(`new_id`)에서 받습니다.
 fn insert(
     model: &DocumentModel,
     node: StableId,
     payload: ModifierPayload,
-    seed: [u8; 16],
-    salt: u8,
+    new_id: &mut dyn FnMut() -> StableId,
 ) -> Command {
     let kind = payload.kind();
     Command::InsertModifier(InsertModifier {
         node,
         entry: ModifierEntry {
-            id: modifier_id(seed, node, salt),
+            id: ModifierId::new(new_id()),
             order: paint_order(model, node, kind),
             kind,
             enabled: true,
@@ -783,7 +770,7 @@ fn node_commands(
     node: &NodeView,
     property: InspectorProperty,
     value: &CssValue,
-    seed: [u8; 16],
+    new_id: &mut dyn FnMut() -> StableId,
 ) -> Result<Vec<Command>, InspectorEditError> {
     let id = node.record.id;
     let class = node.class;
@@ -831,7 +818,7 @@ fn node_commands(
                     None => {
                         let t = Transform2D::new(1., 0., 0., 1., dx, dy)
                             .map_err(|_| reject("위치가 유한하지 않습니다"))?;
-                        out.push(insert(model, id, ModifierPayload::Transform(t), seed, 0x11));
+                        out.push(insert(model, id, ModifierPayload::Transform(t), new_id));
                     }
                 }
             }
@@ -895,8 +882,7 @@ fn node_commands(
                 model,
                 id,
                 ModifierPayload::Fill { color: *color },
-                seed,
-                0x71,
+                new_id,
             )),
             (None, Some(entry)) => out.push(Command::RemoveModifier(RemoveModifier {
                 node: id,
@@ -915,8 +901,7 @@ fn node_commands(
                     color: *color,
                     width: STROKE_WIDTH_INITIAL,
                 },
-                seed,
-                0x81,
+                new_id,
             )),
             (None, Some(entry)) => out.push(Command::RemoveModifier(RemoveModifier {
                 node: id,
@@ -944,7 +929,7 @@ fn node_commands(
                     node,
                     corner,
                     &CssValue::Length(*radius),
-                    seed,
+                    new_id,
                 )?);
             }
         }
@@ -983,13 +968,14 @@ fn node_commands(
 
 /// 선택 전체에 `input`을 적용하는 command 목록. 값이 모두 같으면 빈 목록입니다.
 ///
-/// `seed`는 새 modifier id의 바탕입니다(같은 창에서 요청마다 다른 값).
+/// 새 modifier ID는 `new_id`에서 받습니다. 이 함수는 ID를 command·node ID에서 파생하지 않습니다(ADR-0028 "새
+/// 영속 ID"). runtime은 OS 난수 seed의 UUIDv7 생성기를 넘깁니다.
 pub fn edit_commands(
     model: &DocumentModel,
     selection: &[StableId],
     property: InspectorProperty,
     input: &InspectorInput,
-    seed: [u8; 16],
+    new_id: &mut dyn FnMut() -> StableId,
 ) -> Result<Vec<Command>, InspectorEditError> {
     let mut commands = Vec::new();
     if selection.is_empty() {
@@ -1015,7 +1001,7 @@ pub fn edit_commands(
                 adjusted(&current, *delta, property.grammar())?
             }
         };
-        commands.extend(node_commands(model, &node, property, &value, seed)?);
+        commands.extend(node_commands(model, &node, property, &value, new_id)?);
     }
     Ok(commands)
 }
@@ -1028,6 +1014,15 @@ mod tests {
     use crate::state::DocumentState;
     use crate::transaction::CommandTransaction;
     use stellar_document::test_support::semantic_snapshot::model_snapshot_json;
+
+    /// 테스트용 새 modifier ID 공급자(`base`마다 다른 UUIDv7 열).
+    fn new_ids(base: u64) -> impl FnMut() -> StableId {
+        let mut n = 0;
+        move || {
+            n += 1;
+            StableId::new_v7(base, 0, n)
+        }
+    }
 
     fn names(snapshot: &InspectorSnapshot) -> Vec<&'static str> {
         snapshot.rows.iter().map(|r| r.property.name()).collect()
@@ -1127,7 +1122,8 @@ mod tests {
         assert!(names(&snapshot).iter().all(|n| *n != "border-radius"));
         let before = model_snapshot_json(state.model()).unwrap();
         let input = InspectorInput::Set(parse_input(P::Width, "320").unwrap());
-        let commands = edit_commands(state.model(), &selection, P::Width, &input, [3; 16]).unwrap();
+        let commands =
+            edit_commands(state.model(), &selection, P::Width, &input, &mut new_ids(3)).unwrap();
         assert_eq!(commands.len(), 2);
         let undo_width = apply(&mut state, commands);
         let after = inspector_rows(state.model(), &selection);
@@ -1138,7 +1134,7 @@ mod tests {
             &selection,
             P::Height,
             &InspectorInput::Adjust(10.),
-            [4; 16],
+            &mut new_ids(4),
         )
         .unwrap();
         let undo_height = apply(&mut state, commands);
@@ -1152,7 +1148,8 @@ mod tests {
             .collect();
         assert_eq!(heights, ["50px", "30px"]);
         // 같은 값은 command를 만들지 않습니다.
-        let same = edit_commands(state.model(), &selection, P::Width, &input, [5; 16]).unwrap();
+        let same =
+            edit_commands(state.model(), &selection, P::Width, &input, &mut new_ids(5)).unwrap();
         assert!(same.is_empty());
         // 역 transaction 두 번이면 처음 상태(편집 하나 = Undo 하나).
         for inverse in [undo_height, undo_width] {
@@ -1169,13 +1166,15 @@ mod tests {
         let mut state = DocumentState::new(model);
         let rect = [ids[1]];
         let before = model_snapshot_json(state.model()).unwrap();
+        let mut fresh = new_ids(7);
         for (property, text) in [
             (P::Stroke, "#ff0000"),
             (P::Fill, "#3366ff"),
             (P::Left, "24"),
         ] {
             let input = InspectorInput::Set(parse_input(property, text).unwrap());
-            let commands = edit_commands(state.model(), &rect, property, &input, [7; 16]).unwrap();
+            let commands =
+                edit_commands(state.model(), &rect, property, &input, &mut fresh).unwrap();
             apply(&mut state, commands);
         }
         let stack = state.model().modifier_stack(ids[1]).unwrap();
@@ -1194,7 +1193,8 @@ mod tests {
         assert_eq!(value(&snapshot, "stroke-width").value, "1px");
         assert_eq!(value(&snapshot, "left").value, "24px");
         let input = InspectorInput::Set(parse_input(P::Fill, "none").unwrap());
-        let commands = edit_commands(state.model(), &rect, P::Fill, &input, [8; 16]).unwrap();
+        let commands =
+            edit_commands(state.model(), &rect, P::Fill, &input, &mut new_ids(8)).unwrap();
         apply(&mut state, commands);
         assert_eq!(
             value(&inspector_rows(state.model(), &rect), "fill").value,
@@ -1207,7 +1207,8 @@ mod tests {
             "#000000"
         );
         let input = InspectorInput::Set(parse_input(P::Color, "rgb(51 102 255)").unwrap());
-        let commands = edit_commands(state.model(), &text, P::Color, &input, [9; 16]).unwrap();
+        let commands =
+            edit_commands(state.model(), &text, P::Color, &input, &mut new_ids(9)).unwrap();
         apply(&mut state, commands);
         assert_eq!(
             value(&inspector_rows(state.model(), &text), "color").value,
@@ -1222,15 +1223,22 @@ mod tests {
         let mut state = DocumentState::new(model);
         let frame = [ids[0]];
         let input = InspectorInput::Set(parse_input(P::BorderRadius, "4px 8px").unwrap());
-        let commands =
-            edit_commands(state.model(), &frame, P::BorderRadius, &input, [1; 16]).unwrap();
+        let commands = edit_commands(
+            state.model(),
+            &frame,
+            P::BorderRadius,
+            &input,
+            &mut new_ids(1),
+        )
+        .unwrap();
         assert_eq!(commands.len(), 4);
         apply(&mut state, commands);
         let snapshot = inspector_rows(state.model(), &frame);
         assert_eq!(value(&snapshot, "border-radius").value, "4px 8px");
         assert_eq!(value(&snapshot, "border-top-right-radius").value, "8px");
         let input = InspectorInput::Set(parse_input(P::Border, "2px solid #ff0000").unwrap());
-        let commands = edit_commands(state.model(), &frame, P::Border, &input, [1; 16]).unwrap();
+        let commands =
+            edit_commands(state.model(), &frame, P::Border, &input, &mut new_ids(1)).unwrap();
         apply(&mut state, commands);
         assert_eq!(
             value(&inspector_rows(state.model(), &frame), "border").value,
@@ -1238,7 +1246,8 @@ mod tests {
         );
         // 잠그면 locked 외 행은 읽기 전용이고 편집을 거부합니다.
         let lock = InspectorInput::Set(CssValue::Bool(true));
-        let commands = edit_commands(state.model(), &frame, P::Locked, &lock, [1; 16]).unwrap();
+        let commands =
+            edit_commands(state.model(), &frame, P::Locked, &lock, &mut new_ids(1)).unwrap();
         apply(&mut state, commands);
         let snapshot = inspector_rows(state.model(), &frame);
         assert_eq!(
@@ -1247,7 +1256,7 @@ mod tests {
         );
         assert_eq!(value(&snapshot, "locked").flags & flags::READ_ONLY, 0);
         let width = InspectorInput::Set(CssValue::Length(10.));
-        assert!(edit_commands(state.model(), &frame, P::Width, &width, [1; 16]).is_err());
+        assert!(edit_commands(state.model(), &frame, P::Width, &width, &mut new_ids(1)).is_err());
         // 자식(13)은 조상이 잠겨 locked 행도 읽기 전용입니다.
         let child = inspector_rows(state.model(), &[sid(13)]);
         assert_eq!(
@@ -1256,7 +1265,7 @@ mod tests {
         );
         // 종류에 없는 속성은 거부합니다.
         let fill = InspectorInput::Set(CssValue::Color(None));
-        assert!(edit_commands(state.model(), &[ids[6]], P::Fill, &fill, [1; 16]).is_err());
+        assert!(edit_commands(state.model(), &[ids[6]], P::Fill, &fill, &mut new_ids(1)).is_err());
     }
 
     #[test]
@@ -1266,19 +1275,27 @@ mod tests {
         let rect = [ids[1]];
         // 선이 없으면 stroke-width만으로 선을 만들지 않습니다(색 기본값은 셸 설정, D7).
         let width = InspectorInput::Set(parse_input(P::StrokeWidth, "3").unwrap());
-        assert!(edit_commands(state.model(), &rect, P::StrokeWidth, &width, [1; 16]).is_err());
+        assert!(edit_commands(
+            state.model(),
+            &rect,
+            P::StrokeWidth,
+            &width,
+            &mut new_ids(1)
+        )
+        .is_err());
         assert!(edit_commands(
             state.model(),
             &rect,
             P::StrokeWidth,
             &InspectorInput::Adjust(1.),
-            [1; 16]
+            &mut new_ids(1)
         )
         .is_err());
         // 색을 넣으면 CSS 초기값 1px로 선이 생기고, 그 뒤 두께를 바꿀 수 있습니다.
         for (property, text) in [(P::Stroke, "#3366ff"), (P::StrokeWidth, "3")] {
             let input = InspectorInput::Set(parse_input(property, text).unwrap());
-            let commands = edit_commands(state.model(), &rect, property, &input, [2; 16]).unwrap();
+            let commands =
+                edit_commands(state.model(), &rect, property, &input, &mut new_ids(2)).unwrap();
             apply(&mut state, commands);
         }
         let snapshot = inspector_rows(state.model(), &rect);
@@ -1287,14 +1304,19 @@ mod tests {
         // 테두리 없는 Frame에 두께만 넣으면 거부하고, 테두리가 있으면 빠진 쪽을 이어 씁니다.
         let frame = [ids[0]];
         let partial = InspectorInput::Set(parse_input(P::Border, "4px").unwrap());
-        assert!(edit_commands(state.model(), &frame, P::Border, &partial, [3; 16]).is_err());
+        assert!(
+            edit_commands(state.model(), &frame, P::Border, &partial, &mut new_ids(3)).is_err()
+        );
         let full = InspectorInput::Set(parse_input(P::Border, "2px solid #ff0000").unwrap());
-        let commands = edit_commands(state.model(), &frame, P::Border, &full, [3; 16]).unwrap();
+        let commands =
+            edit_commands(state.model(), &frame, P::Border, &full, &mut new_ids(3)).unwrap();
         apply(&mut state, commands);
-        let commands = edit_commands(state.model(), &frame, P::Border, &partial, [4; 16]).unwrap();
+        let commands =
+            edit_commands(state.model(), &frame, P::Border, &partial, &mut new_ids(4)).unwrap();
         apply(&mut state, commands);
         let recolor = InspectorInput::Set(parse_input(P::Border, "blue").unwrap());
-        let commands = edit_commands(state.model(), &frame, P::Border, &recolor, [5; 16]).unwrap();
+        let commands =
+            edit_commands(state.model(), &frame, P::Border, &recolor, &mut new_ids(5)).unwrap();
         apply(&mut state, commands);
         assert_eq!(
             value(&inspector_rows(state.model(), &frame), "border").value,
@@ -1307,7 +1329,8 @@ mod tests {
         let (model, ids) = seven_kind_model();
         let mut state = DocumentState::new(model);
         let lock = InspectorInput::Set(CssValue::Bool(true));
-        let commands = edit_commands(state.model(), &[ids[0]], P::Locked, &lock, [1; 16]).unwrap();
+        let commands =
+            edit_commands(state.model(), &[ids[0]], P::Locked, &lock, &mut new_ids(1)).unwrap();
         apply(&mut state, commands);
         let own = NodeLock::of(state.model(), ids[0]).unwrap();
         assert_eq!(
