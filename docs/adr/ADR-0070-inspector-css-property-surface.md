@@ -90,8 +90,9 @@ ADR-0024는 디자인 속성의 이름·값 문법을 CSS longhand로 정하고(
      셸 호출자(`CoreRuntime.selectedNode`, 이벤트 펌프 `editFrame`, `ShellFrameInspectorSource`)를 지웠습니다.
      셸 Inspector는 `stellar_window_inspector` 값을 읽고, ADR-0028의 해당 절에 이 ADR로 대체했다고 적었습니다.
 7. **제스처 중 구성 고정(UX.2.12)**: 속성 패널은 캔버스 쪽 질의 하나(`CanvasView.frameGestureActive`)와 패널
-   scrub 중인 행 집합으로 제스처 여부를 판단합니다. 캔버스의 새 제스처 상태(크기 조절 핸들, 영역 선택, 모서리
-   반경 핸들)는 그 질의에 더합니다.
+   scrub 중인 행 집합으로 제스처 여부를 판단합니다. 캔버스의 제스처 상태는 모두 그 질의에 넣습니다. UX 1단계
+   통합에서 이동·생성(`frameDrag`), Hand·Space 임시 Hand, Zoom 드래그에 더해 영역 선택(`marquee`)과 핸들 드래그
+   (`handleDrag`: 크기 조절 8개, 모서리 반경, Line 끝점, ADR-0071)를 넣었습니다.
 
 ## Alternatives
 
