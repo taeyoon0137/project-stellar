@@ -1140,54 +1140,6 @@ pub unsafe extern "C" fn stellar_window_session_info(
     })
 }
 
-/// Debug native close 검사 전용입니다. Release에는 이 심벌을 내보내지 않습니다.
-///
-/// # Safety
-/// `node`는 16 byte, `name`은 `name_len` byte 읽기, `out_request`는 u64 쓰기가 유효해야 합니다.
-#[cfg(debug_assertions)]
-#[no_mangle]
-pub unsafe extern "C" fn stellar_window_session_check_edit(
-    handle: u64,
-    session: u64,
-    node: *const u8,
-    name: *const u8,
-    name_len: usize,
-    verify: u32,
-    delay_ms: u32,
-    out_request: *mut u64,
-) -> StellarStatus {
-    ffi_guard(move || {
-        if node.is_null() {
-            return StellarStatus::NullPointer;
-        }
-        let mut bytes = [0; 16];
-        unsafe {
-            std::ptr::copy_nonoverlapping(node, bytes.as_mut_ptr(), 16);
-        }
-        let name = match unsafe { crate::decode_utf8_owned(name, name_len) } {
-            Ok(name) => name,
-            Err(status) => return status,
-        };
-        let Ok(mut reg) = registry().lock() else {
-            return StellarStatus::Internal;
-        };
-        let Some(rt) = reg.live.get_mut(&handle) else {
-            return StellarStatus::InvalidHandle;
-        };
-        let result = match rt.app() {
-            Ok(app) => app.check_window_edit(
-                WindowSessionHandle(session),
-                StableId::from_bytes(bytes),
-                name,
-                verify != 0,
-                delay_ms,
-            ),
-            Err(status) => return status,
-        };
-        unsafe { rt.finish_request(result, out_request) }
-    })
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;

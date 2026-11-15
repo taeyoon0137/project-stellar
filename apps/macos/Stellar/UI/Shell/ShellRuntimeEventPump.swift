@@ -205,17 +205,6 @@ final class ShellRuntimeEventPump {
         return result
     }
 
-    #if DEBUG
-    func checkWindowEdit(
-        session: UInt64, node: UUID, name: String, verify: Bool = false, delayMS: UInt32 = 0,
-        completion: @escaping (CoreRuntimeEvent) -> Void
-    ) -> Result<UInt64, CoreRuntimeCallError> {
-        register(CoreRuntime.checkWindowEdit(
-            handle: runtimeHandle, session: session, node: node, name: name, verify: verify, delayMS: delayMS
-        ), completion)
-    }
-    #endif
-
     /// 지금 쌓인 event를 꺼내 완료 handler를 부릅니다. 꺼낸 event 수를 돌려줍니다.
     @discardableResult
     func drain(limit: Int = ShellRuntimeEventPump.maximumEventsPerDrain) -> Int {

@@ -182,10 +182,6 @@ UI thread는 기다리지 않습니다.
 - GUI thread는 run loop timer와 비동기 event만 사용합니다. 직렬화·쓰기의 기존 document thread 실행은
   그대로이며 worker 이동·snapshot 캡처·autosave 병합(XIII.1.3~.5), 앱 비활성화 flush와 앱 종료는 미구현입니다.
   따라서 XIII.1.6은 완료 처리하지 않습니다.
-- Debug에만 `stellar_window_session_check_edit` 검사 심벌을 추가합니다. 기존 저장 프로젝트 fixture의
-  node에 실제 `CommandTransaction`을 적용하거나 이름을 검증하며, 제한된 지연(최대 500ms)을 document queue에
-  넣습니다. Release에는 심벌이 없고 Swift 호출도 `#if DEBUG` 안입니다. 파일 쓰기·stale·저장 event는
-  제품 경로를 그대로 검사합니다. 헤더 생성기가 검사 선언도 소유합니다.
 - 세대를 기록하는 Save Now는 같은 OS 사용자의 `stellar apply`와 `stellar-ops::lock::SaveLock`을 공유합니다.
   열린 프로젝트 ID와 symlink를 해석한 target으로 잠금을 잡고, 같은 경로의 current manifest를 확인한 뒤
   pointer 교체와 session 갱신까지 보유합니다. 경합이나 잠금 준비 실패는 SaveFailed로 반환하며 편집을 보존합니다.
@@ -193,6 +189,22 @@ UI thread는 기다리지 않습니다.
   current manifest를 확인합니다. Git checkout 등 외부 변경이 base 검사 전에 끝나면 stale을 반환합니다. 외부 변경의 reconciliation은 XXIV.4.6 범위입니다.
 
 검증·남은 범위는 [정상 창 닫기 보고서](../status/window-close-save.md)를 따릅니다.
+
+## 창 수명·복구 정리 (2026-11-15 검토)
+
+2026-11-15 검토에서 창 닫기·앱 종료·복구 경로의 C ABI를 다음과 같이 정리합니다.
+
+### Debug 전용 창 편집 검사 ABI 삭제
+
+- `stellar_window_session_check_edit`와 runtime `AppRuntime::check_window_edit`, Swift `checkWindowEdit`를
+  삭제합니다. 이 함수는 검사만을 위해 공개 헤더와 runtime에 들어간 편집·이름 검증·지연 주입 경로였고,
+  Release와 Debug의 헤더가 달라지게 했습니다.
+- 헤더의 `#if defined(DEBUG) && DEBUG` 블록과, 그 블록 때문에 Debug 구성에 넣은 `GCC_PREPROCESSOR_DEFINITIONS`의
+  `DEBUG=1`을 함께 삭제합니다. 이제 공개 헤더에는 구성별 조건 선언이 없습니다. `bundle_check.sh`는 헤더를
+  C 전처리한 결과에서 함수 목록을 뽑는 방식을 유지합니다(`#ifdef __APPLE__` 선언 판정).
+- 창 닫기 검사(`--window-close-check`)는 제품 편집 경로인 `stellar_window_layer_rename`으로 dirty 상태를 만들고,
+  정상 닫기와 앱 종료(⌘Q) 저장만 확인합니다. 저장된 이름은 다시 연 창의 `stellar_window_layer_page_with_history`로
+  읽습니다.
 
 ## 스크롤의 창별 팬 연결 — XII.10.37 부분 구현
 

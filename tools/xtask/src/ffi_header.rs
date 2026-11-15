@@ -445,11 +445,6 @@ StellarStatus stellar_window_view_info(uint64_t handle, uint64_t session, Stella
 /* 열린 창 session의 최신 snapshot 정보를 씁니다(없는 창 session은 STELLAR_INVALID_ARGUMENT). */
 StellarStatus stellar_window_session_info(uint64_t handle, uint64_t session, StellarWindowSessionInfo *out_info);
 
-#if defined(DEBUG) && DEBUG
-/* Debug native integration check only; no symbol in Release. Real transaction/queue, delay capped at 500 ms. */
-StellarStatus stellar_window_session_check_edit(uint64_t handle, uint64_t session, const uint8_t *node, const uint8_t *name, size_t name_len, uint32_t verify, uint32_t delay_ms, uint64_t *out_request);
-#endif
-
 /* 살아 있는 runtime handle 수(진단용). */
 uint64_t stellar_runtime_live_count(void);
 

@@ -154,8 +154,13 @@ python3 "$REPO_ROOT/scripts/macos/canvas-move-check.py" "$APP" "$cli_target/debu
 # Stale 저장은 쓰지 않고 alert 한 번인지 확인합니다.
 "$APP" --session-commands-check "$WINDOW_SESSION_FIXTURE"
 
-# 정상 AppKit 닫기에서 실제 Rust 편집 저장·실패·timeout·late callback 보존.
-"$APP" --window-close-check "$WINDOW_SESSION_FIXTURE"
+# 정상 창 닫기와 앱 종료(⌘Q)가 레이어 이름 변경을 Save Now로 저장하는지 확인합니다.
+# 신뢰 기록과 복구 체크포인트를 쓰므로 검사 전용 HOME에서 실행합니다.
+(
+  close_home="$(mktemp -d)"
+  trap 'rm -rf "$close_home"' EXIT
+  HOME="$close_home" "$APP" --window-close-check "$WINDOW_SESSION_FIXTURE"
+)
 
 # 단축키 대응(XII.6.5): command ID는 코어가 공유 이름으로 알려 주고, 단축키는 macOS 관례(⌘Z·⇧⌘Z·⌘S)로 메뉴에 둡니다.
 # 키 조합 → 메뉴 항목 → 셸 명령 → 코어 ID → 창 session 도착을 확인합니다.

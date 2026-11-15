@@ -14,7 +14,8 @@
 #  3. 동적 링크는 시스템 경로(/usr/lib, /System/Library)와 @rpath/Sparkle.framework만, 빌드 경로 의존 없음,
 #     @rpath 대상은 번들 안에 존재
 #  4. LC_RPATH는 없거나 @executable_path/@loader_path 상대 경로만
-#  5. C ABI 헤더(stellar_ffi.h)의 모든 stellar_* 함수가 실행 파일에 정의됨(Rust 코어 포함 확인)
+#  5. C ABI 헤더(stellar_ffi.h)를 C 전처리한 결과(`#ifdef __APPLE__` 등 조건 선언을 판정한 뒤)에 남은 모든
+#     stellar_* 함수가 실행 파일에 정의됨(Rust 코어 포함 확인)
 #  6. 코드 서명: codesign --verify --deep --strict, CodeResources 존재, Sealed Resources v2, Info.plist bound,
 #     Hardened Runtime flag, 모든 중첩 코드가 Hardened Runtime이고 앱과 같은 TeamIdentifier.
 #     이미 서명된 앱은 library validation을 끄는 entitlement(`com.apple.security.cs.disable-library-validation`)가

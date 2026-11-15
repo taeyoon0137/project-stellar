@@ -10,12 +10,6 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let runtimeHost = RuntimeHost()
     private var coordinator: ShellAppCoordinator?
-    #if DEBUG
-    convenience init(checking coordinator: ShellAppCoordinator) {
-        self.init()
-        self.coordinator = coordinator
-    }
-    #endif
     /// 앱 업데이트(XVI.9.5, ADR-0017). 구성이 완전한 빌드에서만 Sparkle updater를 시작합니다.
     private var updateController: AppUpdateController?
 
