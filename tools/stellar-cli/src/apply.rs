@@ -49,6 +49,18 @@ pub const FORMAT: &str = "stellar-apply";
 pub const FORMAT_VERSION: i64 = 1;
 /// 입력 최대 byte 수.
 pub const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
+/// command object 하나가 가질 수 있는 JSON 값 수의 최댓값. object 자신 1개와 key·값 쌍 수입니다.
+/// 가장 큰 `set-frame-transform`이 `kind`·`node`·`a`·`b`·`c`·`d`·`tx`·`ty` 8쌍이라 9입니다.
+/// `command_input`에 key가 더 많은 종류를 넣으면 이 값도 함께 올립니다.
+const MAX_COMMAND_JSON_VALUES: usize = 9;
+/// 최상위 envelope의 JSON 값 수. object 1개와 `format`·`format_version`·`base_revision`·
+/// `document`·`commands` 5쌍입니다.
+const ENVELOPE_JSON_VALUES: usize = 6;
+/// JSON reader 값 개수 상한. command 상한([`MAX_COMMANDS`]) 안의 입력을 JSON 단계에서 거부하지
+/// 않도록 정합니다. 상한보다 하나 많은 입력도 JSON 단계를 지나 command 수 검사에서
+/// `TooManyCommands`로 거부되도록 command 하나를 더 셉니다.
+const MAX_INPUT_JSON_VALUES: usize =
+    (MAX_COMMANDS + 1) * MAX_COMMAND_JSON_VALUES + ENVELOPE_JSON_VALUES;
 
 fn invalid(code: &'static str, message: impl Into<String>) -> CliError {
     CliError::new(ExitStatus::DataErr, code, message)
@@ -310,7 +322,7 @@ pub fn parse_request(bytes: &[u8]) -> Result<ApplyRequest, CliError> {
     let limits = JsonLimits {
         max_bytes: MAX_INPUT_BYTES,
         max_depth: 16,
-        ..JsonLimits::default()
+        max_nodes: MAX_INPUT_JSON_VALUES,
     };
     let doc = json::parse_bytes(bytes, limits).map_err(|e| {
         invalid(
@@ -349,13 +361,9 @@ pub fn parse_request(bytes: &[u8]) -> Result<ApplyRequest, CliError> {
         .as_array()
         .ok_or_else(|| invalid("invalid-transaction", "입력.commands는 배열이어야 합니다"))?;
     if items.len() > MAX_COMMANDS {
-        return Err(invalid(
-            "invalid-transaction",
-            format!(
-                "command {}개는 상한 {MAX_COMMANDS}개를 넘습니다",
-                items.len()
-            ),
-        ));
+        return Err(apply_error(&ApplyError::TooManyCommands {
+            count: items.len(),
+        }));
     }
     let commands = items
         .iter()
@@ -480,5 +488,47 @@ mod tests {
         });
         assert_eq!(mismatch.status, ExitStatus::DataErr);
         assert_eq!(mismatch.code, "base-revision-mismatch");
+    }
+
+    /// 가장 큰 command(`set-frame-transform`)를 `count`개 담은 입력.
+    fn transform_request(count: usize) -> Vec<u8> {
+        let node = StableId::from_bytes([7; 16]);
+        let command = format!(
+            r#"{{"kind":"set-frame-transform","node":"{node}","a":1,"b":0,"c":0,"d":1,"tx":2.5,"ty":-3}}"#
+        );
+        let mut text = format!(
+            r#"{{"format":"{FORMAT}","format_version":{FORMAT_VERSION},"base_revision":"g0","document":"{node}","commands":["#
+        );
+        for i in 0..count {
+            if i > 0 {
+                text.push(',');
+            }
+            text.push_str(&command);
+        }
+        text.push_str("]}");
+        text.into_bytes()
+    }
+
+    #[test]
+    fn command_limit_is_enforced_by_count_not_by_json_value_limit() {
+        // 상한 안의 입력은 JSON 값 개수 제한에 걸리지 않고(invalid-json이 아님), 상한을 하나 넘는
+        // 입력은 command 수 검사가 거부합니다.
+        let at_limit = transform_request(MAX_COMMANDS);
+        assert!(at_limit.len() <= MAX_INPUT_BYTES);
+        let request = parse_request(&at_limit).expect("command 10,000개는 해석됩니다");
+        assert_eq!(request.commands.len(), MAX_COMMANDS);
+
+        let over = transform_request(MAX_COMMANDS + 1);
+        assert!(over.len() <= MAX_INPUT_BYTES);
+        let error = parse_request(&over).expect_err("command 10,001개는 거부됩니다");
+        assert_eq!(error.status, ExitStatus::DataErr);
+        assert_eq!(error.code, "invalid-transaction");
+        assert_eq!(
+            error.message,
+            ApplyError::TooManyCommands {
+                count: MAX_COMMANDS + 1
+            }
+            .to_string()
+        );
     }
 }
