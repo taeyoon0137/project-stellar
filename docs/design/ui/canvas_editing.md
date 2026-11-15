@@ -110,9 +110,9 @@ CSS 속성의 PropertyKey·영속 record·migration은 계획 IX.11이 만듭니
 | Move | V | 선택·이동·변형 | XII.10.1, XII.10.3\~XII.10.14 |
 | Hand | H | camera 팬 | XII.10.37 |
 | Zoom | Z | 클릭 확대, Option-클릭 축소, 영역 드래그 확대 | XII.10.37 |
-| Frame, Rectangle, Ellipse, Line, Polygon | F, R, O, L, (없음) | 드래그·클릭 생성 | XII.10.26 |
+| Frame, Rectangle, Ellipse, Line, Polygon | F, R, O, L, P | 드래그·클릭 생성. Polygon의 P는 UX 명세 결정 U6(코드 연결 UX.1.3) | XII.10.26 |
 | Text | T | Text 생성·편집 | XII.10.33 |
-| Image | 메뉴 ⇧⌘K | 파일 선택 후 삽입 | XII.10.27 |
+| Image | 메뉴 ⇧⌘K | 도구를 고르면 즉시 파일 선택, 클릭은 원래 크기·드래그는 그 크기로 삽입. 취소하면 이전 도구(UX 명세 결정 U11, UX.3.3) | XII.10.27 |
 
 - 생성 도구로 하나를 만든 뒤에는 Move로 돌아갑니다. [관례]
 - 도구 상태는 WindowViewState에 두고 저장·history에 넣지 않습니다. [계획 VII.3.1, XII.10.1]
@@ -420,6 +420,7 @@ PO 방향에 따라 레이아웃은 CSS의 Flexbox·Grid·positioning 개념으�
 | 클릭 | 기본 크기로 생성 | 같음 | XII.10.26 |
 | Shift / Option / Space | 정비례·45도 / 중심 기준 / 시작점 이동 | 같음 | XII.10.26 |
 | 흐름 컨테이너 위에서 생성 | pointer 위치의 흐름 순서에 삽입 | 같음 | XII.10.26 |
+| root Frame 밖 빈 캔버스에서 생성 드래그 | 만들지 않음. 금지 커서와 도구 막대 위 한 줄 "Frame 안에 그립니다"(2.5초, VoiceOver 알림) | 없음 | UX 명세 5.2(결정 U5·U7), UX.2.8 |
 | Insert 메뉴 항목 선택(키보드) | 화면 가운데에 기본 크기로 생성 | 같음 | XII.10.41 |
 | Image… / 파일 끌어 놓기 | asset import 후 Image 삽입 | import + `InsertNode` | XII.10.27, XIII.5.2 |
 
@@ -538,7 +539,7 @@ Path command는 MoveTo·LineTo·CubicTo·Close만 씁니다. point와 handle은 
 
 ## 18. 문맥 메뉴
 
-- 우클릭과 Control-클릭은 hit 결과와 현재 선택으로 만든 `NSMenu`를 엽니다. 항목은 모두 메뉴 막대와 같은 `ShellCommand`이며 새 의미를 만들지 않습니다. 지금 쓸 수 없는 항목은 숨기지 않고 비활성화합니다. [가이드 8.1] [HIG The menu bar] [AppKit 문서 NSMenuItemValidation] [계획 XII.10.39]
+- 우클릭과 Control-클릭은 hit 결과와 현재 선택으로 만든 `NSMenu`를 엽니다. 항목은 모두 메뉴 막대와 같은 `ShellCommand`이며 새 의미를 만들지 않습니다. 아래 표는 항목의 자리이고, 실제 메뉴에는 구현 행이 연결된 명령만 넣습니다. 메뉴에 있는 항목이 잠깐 쓸 수 없으면 숨기지 않고 비활성화합니다. [가이드 8.1] [HIG The menu bar] [AppKit 문서 NSMenuItemValidation] [계획 XII.10.39] [UX 명세 2장 P1, 5.6]
 - 클릭한 node가 선택에 없으면 먼저 그 node를 선택합니다(macOS 목록 관례와 같음). [사이드바 4.2] [HIG Lists and tables]
 
 | 대상 | 항목 묶음(구분선 순서) |

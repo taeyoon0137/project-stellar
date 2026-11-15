@@ -1,13 +1,33 @@
 # 사이드바(페이지·레이어) UI 명세
 
-- 상태: 기본 창의 활성 Page·View 및 문서 레이어 읽기 연결(2026-11-14). Pages 구획을 머리 줄 팝업으로 교체하고 표시·잠금 토글 연결(2026-11-15)
+- 상태: 기본 창의 활성 Page·View 및 문서 레이어 읽기 연결(2026-11-14). Pages 구획을 머리 줄 팝업으로 교체하고 표시·잠금 토글 연결, UX 명세 반영(2026-11-15)
 - 코드: `apps/macos/Stellar/UI/Sidebar/`
-- 상위 기준: `docs/design/macos-shell-design.md`(이하 "가이드"), `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`(이하 "아키텍처")
-- 근거 표기는 가이드 0.1절을 따릅니다. 이 문서는 가이드·아키텍처·구현 계획을 바꾸지 않으며, 어긋나면 그 문서들이 우선입니다.
+- 상위 기준: `docs/design/macos-shell-design.md`(이하 "가이드"), `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`(이하 "아키텍처"), `docs/design/ux/stellar-ux-spec.md`(이하 "UX 명세") 7장
+- 근거 표기는 가이드 0.1절을 따릅니다. 이 문서는 가이드·아키텍처·구현 계획을 바꾸지 않으며, 어긋나면 그 문서들이 우선입니다. `UX.n.m`은 `docs/design/ux/ux-wbs-rows.md`의 행입니다.
+
+## 0. 목표 배치(UX 명세)
+
+1장 이하는 구현 기록입니다(머리 줄 팝업 UX.3.5, 표시·잠금 토글 UX.3.4, 빈 상태 안내 UX.1.6 반영). 목표 배치는 다음과 같고, 남은 항목은 각 행에서 코드와 이 문서를 맞춥니다. [가이드 6.2] [UX 명세 3.2, 7장]
+
+```text
+┌ Page 1 › Home ▾ ─────────────────────────── (머리 줄 팝업) ┐
+├ 레이어 · 에셋 · 변경 ───────────── (연결된 탭만, 하나면 탭 줄 없음) ┤
+│ 필터 필드                                                  │
+│ ▾ Header                     (표시·잠금 토글: hover·선택 시) │
+│     Title                                   (상태 배지 자리) │
+└────────────────────────────────────────────────────────────┘
+```
+
+- 머리 줄: Page·View 전환과 이름 변경을 `Page 1 › Home ▾` 팝업 한 줄로 합니다. 지금의 Pages 구획(사이드바 높이 30%)을 대신합니다(UX.3.5). 새 Page·새 View는 코어 Command가 생긴 뒤(UX.12)에만 넣습니다. 컴포넌트 정의 편집 중에는 `Home › Button 정의 [완료]` 경로가 됩니다. [결정 U22]
+- 탭: 레이어(구조), 에셋(재사용 정의, D4, UX.9.2), 변경(Git 패널, UX.5.2). 기능이 연결된 탭만 생깁니다. [결정 U1]
+- 레이어 행 끝 상태 배지(Git 변경·충돌·에이전트 출처·잠금)는 가이드 6.6절 공용 사전의 모양을 씁니다(UX.6.2). [결정 U15]
+- 빈 상태는 버튼 없이 키 안내 한 줄 "F로 Frame, R로 사각형, T로 텍스트를 그립니다"입니다(UX.1.6). [가이드 7.1]
+- 표시·잠금 토글은 코어 `SetProperty::visibility`·`locked`에 연결합니다(UX.3.4). 잠금은 `node.locked`이고 앱·CLI·MCP에 같은 규칙이 적용됩니다. [D8]
+- 이름 변경·순서 편집 같은 레이어 편집은 신뢰 여부와 상관없이 됩니다. [D1]
 
 ## 1. 보여 주는 것
 
-메인 창 3열 중 왼쪽 사이드바입니다. [가이드 2.3, 6.2] [HIG Sidebars]
+메인 창 3열 중 왼쪽 사이드바입니다(기준선 구현). [가이드 2.3, 6.2] [HIG Sidebars]
 
 ```text
 ┌ 필터 필드 (split view item 상단 accessory, NSSearchField) ┐
@@ -93,7 +113,7 @@ AppKit만 씁니다. 가이드 5.3은 빈 상태 화면에 SwiftUI를 허용하�
 ### 4.4 문맥 메뉴
 
 - 대상: 클릭한 행이 선택에 속하면 선택 전체, 아니면 클릭한 행 하나(macOS 목록 관례). [HIG Lists and tables]
-- 항목: Rename / Duplicate / Delete — Group Selection / Ungroup — Hide·Show / Lock·Unlock. 지금 쓸 수 없는 항목은 숨기지 않고 비활성화하며, 활성화 여부는 provider 사전 검증(`validate`)으로 정합니다. [가이드 8.1] [HIG The menu bar]
+- 항목: Rename / Duplicate / Delete — Group Selection / Ungroup — Hide·Show / Lock·Unlock. 캔버스 문맥 메뉴와 같은 항목이며 Command가 연결된 것만 넣습니다. 메뉴에 있는 항목이 잠깐 쓸 수 없으면 숨기지 않고 비활성화하며, 활성화 여부는 provider 사전 검증(`validate`)으로 정합니다. [가이드 8.1] [HIG The menu bar] [UX 명세 7.2]
 - Group은 대상을 새 그룹 marker(Fragment) 아래로 옮기는 command이고, Ungroup은 그룹 marker를 지우고 자식을 그 자리로 올리는 command입니다. 실제 의미(어떤 노드를 쓸지, 위치)는 코어가 정합니다. [아키텍처 §12.4]
 - 문맥 메뉴 항목에는 단축키 표시(key equivalent)를 넣지 않습니다. 단축키는 메뉴 막대 항목(XII.6.5)이 보입니다. [HIG Context menus]
 
@@ -127,7 +147,7 @@ AppKit만 씁니다. 가이드 5.3은 빈 상태 화면에 SwiftUI를 허용하�
 | Escape | 이름 변경 취소 | 가이드 6.2 |
 | Delete(⌫) / Forward Delete(⌦) | 선택 삭제 | 레이어 목록 관례 |
 | ⌘D | 복제 | Finder Duplicate와 같은 표준 의미 |
-| ⌥⌘G / ⇧⌥⌘G | 묶기 / 풀기 | ⌘G(Find Next) 표준 의미 보존, Apple 앱(Keynote·Pages) 관례 |
+| ⌥⌘G / ⇧⌥⌘G | 묶기 / 풀기 | ⌘G(Find Next) 표준 의미 보존, macOS 문서 편집 앱 관례 |
 | ⇧⌘H | 보이기·숨기기 | 잠정값(디자인 도구 관례), 열린 결정 O8 |
 | ⇧⌘L | 잠그기·풀기 | 잠정값(디자인 도구 관례), 열린 결정 O8 |
 | Tab / ⇧Tab | 필터 → 머리 줄 팝업 → 레이어 목록 | 가이드 8.2 |
@@ -244,7 +264,7 @@ protocol SidebarDataProvider: AnyObject {
 
 ## 13. 한계와 열린 사항
 
-- 빈 레이어 상태에 "다음 동작 버튼"이 없습니다. 가이드 7.1은 버튼을 요구하지만 기본 창에서는 F를 눌러 Frame 안에 첫 자식을 드래그해 생성할 수 있습니다(계획 XII.10.26).
+- 빈 레이어 상태에는 버튼을 두지 않고 키 안내 한 줄로 다음 동작을 알립니다(가이드 7.1, UX.1.6). 동작이 캔버스에 있기 때문입니다(F를 눌러 Frame 안에 첫 자식을 드래그, 계획 XII.10.26). 기준선 코드는 아직 "No Layers"와 안내만 보입니다.
 - 문서 목록(프로젝트의 여러 문서)은 이 영역에 없습니다. 가이드 6.2의 "문서·페이지·View 목록" 중 문서 단계는 문서 탭·창 구성과 함께 정해야 합니다.
 - 컴포넌트 인스턴스 내부(Slot 등)는 펼치지 않습니다. Stub은 Frame·Fragment만 자식을 가질 수 있게 하며, 실제 규칙은 코어 Capability가 정합니다. [아키텍처 §12.3, §15]
 - View를 바꾸면 펼침 상태를 버립니다. View별 유지는 WindowViewState(XII.2.5)와 함께 정합니다.

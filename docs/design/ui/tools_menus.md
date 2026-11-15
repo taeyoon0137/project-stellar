@@ -1,15 +1,16 @@
 # 도구·메뉴 영역 명세 (tools_menus)
 
-- 상태: 초안(2026-11-14)
+- 상태: 초안(2026-11-14), UX 명세 반영(2026-11-15)
 - 코드: `apps/macos/Stellar/UI/Tools/`
-- 기준: [macOS 셸 디자인 가이드](../macos-shell-design.md)(이하 "가이드"), 기술 아키텍처 명세(이하 "아키텍처"), 구현 계획(이하 "계획"), Apple HIG
+- 기준: [macOS 셸 디자인 가이드](../macos-shell-design.md)(이하 "가이드"), [UX 명세](../ux/stellar-ux-spec.md), 기술 아키텍처 명세(이하 "아키텍처"), 구현 계획(이하 "계획"), Apple HIG
+- 표기: `[결정 Un]`은 UX 명세 16장 결정 항목, `UX.n.m`은 [UX WBS 초안](../ux/ux-wbs-rows.md)의 행입니다. 결정이 코드보다 앞선 곳은 그 행에서 코드를 맞춥니다.
 - 근거 표기는 가이드 0.1절을 따릅니다. 이 문서는 가이드·아키텍처·계획을 바꾸지 않으며, 어긋나면 그 문서들이 우선입니다. [가이드 0.2]
 
 ## 1. 범위
 
 이 영역은 다음을 맡습니다.
 
-- 캔버스 도구 집합 10종의 툴바 도구 그룹과 캔버스 단일 키 해석
+- 캔버스 도구 집합 10종(하단 도구 막대가 그리는 도구 목록)과 캔버스 단일 키 해석
 - 줌 컨트롤 툴바 항목
 - 메인 메뉴 막대 전체(`MainMenuBuilder`)
 - 메뉴·툴바 명령의 단일 식별자(`ShellCommand`)와 라우팅(`ShellCommandRouter`)
@@ -50,9 +51,9 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 | 뒤쪽 끝 | 줌(Zoom) | `NSMenuToolbarItem`, 제목은 현재 배율 |
 | 뒤쪽 끝 | 인스펙터 경계 구분선, 인스펙터 토글 | `.inspectorTrackingSeparator`, `.toggleInspector` |
 
-- 프로젝트 검색 툴바 항목과 더 보기 메뉴는 검색 영역이 같은 delegate에 추가합니다. 이 영역은 `ToolsToolbarController.item(for:willBeInsertedIntoToolbar:)`로 항목만 내줄 수 있습니다. [가이드 6.1]
+- 프로젝트 검색 툴바 항목, 뒤로·앞으로, 더 보기 메뉴는 두지 않습니다. 검색·내비게이션 기능이 생길 때 다시 설계하고, 더 보기 메뉴 항목은 제목 문서 메뉴로 옮깁니다(UX.1.2, UX.1.4). 툴바 뒤쪽에 더하는 항목은 에이전트 상태 항목(세션·연결·승인 대기가 있을 때만, UX.10.3)뿐입니다. [가이드 6.1] [결정 U4]
 - 사용자 구성 palette: AppKit은 palette에 보일 항목을 `willBeInsertedIntoToolbar: false`로 따로 요청하고 palette를 닫으면 해제합니다. 이때는 `paletteItem(for:)`가 실제 항목과 다른 사본을 만들고 target·action을 달지 않습니다. 실제 항목 인스턴스를 palette에 넘기면 한 항목이 두 곳에 놓입니다.
-- 도구 그룹은 한 번 클릭으로 도구를 바꿔야 하므로 펼친 표현을 고정합니다. macOS 26 SDK로 빌드해 macOS 27.2에서 실행해 보니 `.automatic`은 당시 11개 도구 그룹을 창 폭과 상관없이 pull-down 하나로 접었습니다. 창이 좁으면 시스템 overflow 메뉴가 처리하고, 줌 항목(`visibilityPriority = .low`)이 도구 그룹(`.high`)보다 먼저 overflow로 넘어갑니다. [HIG Toolbars]
+- 도구 그룹은 한 번 클릭으로 도구를 바꿔야 하므로 펼친 표현을 고정합니다. macOS 26 SDK로 빌드해 macOS 27.2에서 실행해 보니 `.automatic`은 상단 툴바에 있던 도구 그룹을 창 폭과 상관없이 pull-down 하나로 접었습니다(도구를 하단 도구 막대로 옮기기 전, Pen이 있던 때의 기록). 창이 좁으면 시스템 overflow 메뉴가 처리하고, 줌 항목(`visibilityPriority = .low`)이 도구 그룹(`.high`)보다 먼저 overflow로 넘어갑니다. [HIG Toolbars]
 - 측정값(같은 환경, 화면 밖 창, 참고용이며 확정 수치 아님): 펼친 도구 그룹 폭 423.5pt. 툴바만 있는 창(분할 뷰 없음)에서 폭 1000pt 이상이면 모든 기본 항목이 보이고, 900pt이면 줌 항목만 overflow로 넘어갑니다. 분할 뷰가 붙으면 사용 가능한 폭이 달라지므로 통합 후 다시 측정합니다. 확정 수치는 가이드 12장에 기록하는 별도 작업으로 정합니다. [가이드 0.2]
 
 도구 그룹 순서와 표시:
@@ -64,17 +65,28 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 | 3 | rectangle | Rectangle | `rectangle` | R | Rectangle (R) |
 | 4 | ellipse | Ellipse | `circle` | O | Ellipse (O) |
 | 5 | line | Line | `line.diagonal` | L | Line (L) |
-| 6 | polygon | Polygon | `pentagon` | 없음 | Polygon |
+| 6 | polygon | Polygon | `pentagon` | P | Polygon (P) |
 | 7 | text | Text | `textformat` | T | Text (T) |
 | 8 | image | Image | `photo` | 없음(메뉴 ⇧⌘K) | Image |
 | 9 | hand | Hand | `hand.raised` | H | Hand (H) |
 | 10 | zoom | Zoom | `magnifyingglass` | Z | Zoom (Z) |
 
+- 도구는 위 순서로 캔버스 하단 가운데 도구 막대(`ShellToolBarView`)에 그립니다. 막대 안은 선택(Move) · 컨테이너(Frame) · 도형(Rectangle·Ellipse·Line·Polygon) · 내용(Text·Image) · 시점(Hand·Zoom) 그룹 사이를 간격으로만 나눕니다(UX.1.3). [UX 명세 5.1]
+- Polygon의 단일 키 P는 결정 U6입니다. 기준선 `02397601`의 `CanvasTool.singleKey`에는 아직 없고 UX.1.3에서 연결하며, 도움말·툴팁·메뉴의 키 표시를 `CanvasTool.singleKey`와 같게 맞춥니다. [결정 U6]
+
 줌 항목의 pull-down 메뉴: Zoom In, Zoom Out, 구분선, Actual Size, Zoom to Fit, Zoom to Selection. 이 메뉴에는 key equivalent를 넣지 않습니다. 단축키는 View 메뉴에만 둡니다(같은 단축키를 두 메뉴에 두지 않음).
 
 ### 3.2 메뉴 막대
 
-순서는 앱(Stellar), File, Edit, View, 앱 고유 메뉴(Insert, Object), Window, Help입니다. Format 메뉴는 서식 있는 텍스트 편집 명령이 아직 없으므로 두지 않습니다. 생기면 Edit와 View 사이에 넣습니다. [HIG The menu bar] [가이드 8.1] 앱 고유 메뉴의 이름과 구성은 가이드의 열린 결정 O8입니다. 이 문서는 Insert(만들기 도구)와 Object(정렬·배치)를 제안안으로 구현합니다.
+순서는 앱(Stellar), File, Edit, View, 앱 고유 메뉴(Insert, Object, Git), Window, Help입니다. Format 메뉴는 서식 있는 텍스트 편집 명령이 아직 없으므로 두지 않습니다. 생기면 Edit와 View 사이에 넣습니다. [HIG The menu bar] [가이드 8.1] 앱 고유 메뉴는 Insert(만들기 도구), Object(순서·묶음·잠금 같은 객체 명령), Git으로 정했습니다(가이드 O8 닫음). [결정 U16]
+
+아래 목록은 명령의 자리입니다. 메뉴에는 기능이 연결된 명령만 넣습니다. 기능 행이 들어오기 전의 명령은 영구 비활성으로 진열하지 않고, 그 행이 메뉴 항목을 함께 추가합니다. [가이드 8.1] [UX 명세 2장 P1, 3.6]
+
+- 기준선 `02397601`에서 영구 비활성인 항목(Cut, Select All, Find ▸, Show Rulers, Group·Ungroup·Frame Selection, Align ▸·Distribute ▸, Flip, Lock·Hide 등)은 UX.1.2에서 메뉴에서 뺍니다. 정확한 목록은 그 행에서 코드의 활성 명령 집합과 대조해 정합니다.
+- Create Component from Selection…은 D3에 따라 당분간 두지 않습니다.
+- Help ▸ Stellar Help는 도움말 콘텐츠가 생기기 전에는 두지 않습니다.
+- Git 메뉴(UX.5.8): 변경 보기, 커밋, Push, 다음 충돌로 이동, 상태 새로 고침, 프로젝트 신뢰…. 기능이 연결된 항목부터 보입니다.
+- View 메뉴에 더할 항목: 탭 전환(오른쪽 ⌥⌘1–3, 결정 U17), "변경 윤곽 늘 보기"(UX.6.4), "에이전트 출처 윤곽 보기"(UX.10.6), 스냅 토글(XII.10.17). 각 기능 행이 들어올 때 추가합니다.
 
 `|`는 구분선입니다. `▸`는 하위 메뉴입니다.
 
@@ -93,7 +105,7 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 - 툴바의 모든 명령은 메뉴 막대에도 있습니다(도구 10개는 View·Insert, 줌 5개는 View). [HIG Toolbars] [가이드 6.1]
 - 추가 입력이 필요한 명령에만 말줄임표를 붙입니다(Settings…, New/Open/Clone Project…, Find…, Customize Toolbar…). 도구 선택은 체크 표시가 붙는 모드 전환이라 Image를 포함해 말줄임표를 붙이지 않습니다. [HIG The menu bar] [가이드 8.1]
 - 제목 형식: View 메뉴의 Move Tool·Hand Tool·Zoom Tool은 탐색 도구라 "Tool"을 붙이고, Insert 메뉴 항목은 만들 대상 이름(Frame, Rectangle, …)만 씁니다. 메뉴 이름이 이미 "삽입"을 말하므로 대상 이름이 더 짧고 명확합니다.
-- 지금 쓸 수 없는 항목은 숨기지 않고 비활성화합니다. [HIG The menu bar] [가이드 8.1]
+- 메뉴에 있는 항목이 잠깐 쓸 수 없으면(선택 없음 등) 숨기지 않고 비활성화하고, 이유는 한 가지로 도움말에 적습니다. 기능이 없는 항목은 위 규칙대로 메뉴에 두지 않습니다. [HIG The menu bar] [가이드 8.1]
 - 표시·숨김 항목의 제목은 현재 상태를 반영합니다. Show/Hide Sidebar·Inspector·Toolbar와 Enter/Exit Full Screen은 AppKit이 바꾸고, Show/Hide Rulers, Lock/Unlock, Hide/Show는 `ShellCommandPresentation`이 snapshot으로 바꿉니다. [HIG The menu bar]
 - 메뉴 아이콘: macOS 26은 표준 action 항목(undo:, copy:, performClose: 등)에 시스템 아이콘을 붙입니다. 셸 명령 항목에는 같은 의미의 SF Symbol을 붙이고, 구분선으로 나뉜 그룹에 아이콘이 없는 표준 항목(예: toggleInspector:, toggleToolbarShown:)이 섞이면 그 항목만 SF Symbol로 채웁니다. 시스템 아이콘은 바꾸지 않습니다. 결과적으로 모든 그룹이 아이콘을 모두 갖거나 모두 갖지 않습니다. [가이드 8.1] [HIG The menu bar]
 
@@ -123,7 +135,7 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 
 명령은 `ToolsMenuModel.send`로 나가고, 결과 snapshot의 `activeTool`이 툴바 선택과 메뉴 체크를 정합니다.
 
-- Image 도구 선택은 다른 도구처럼 모드 전환이므로 메뉴 제목이 "Image"이고 체크 표시가 붙습니다. 이미지 파일 선택 패널은 도구를 쓰는 단계(캔버스 클릭)에서 열고, 취소 시 이전 도구 복귀와 함께 코어 연결 시 정합니다.
+- Image 도구 선택은 다른 도구처럼 모드 전환이므로 메뉴 제목이 "Image"이고 체크 표시가 붙습니다. 도구를 고르면 즉시 파일 선택 패널을 열고, 취소하면 이전 도구로 돌아갑니다. 파일을 고른 뒤 클릭하면 원래 크기, 드래그하면 그 크기로 배치합니다. Finder 끌어 놓기·붙여넣기도 같은 import 경로입니다(UX.3.3). [결정 U11]
 - Space를 누르는 동안 Hand로 전환, Escape로 Move 복귀 같은 일시 전환은 도구 상태 기계의 일입니다. [계획 XII.3.6] [가이드 O10]
 
 ### 5.2 줌
@@ -149,6 +161,8 @@ New/Open/Clone Project와 Settings는 창이 없어도 동작해야 하므로 `M
 ### 6.1 메뉴 단축키 전체 표
 
 분류: **표준**은 HIG Keyboards 표준 단축키 표의 원래 의미, **AppKit**은 AppKit 기본 메인 메뉴 템플릿의 관례, **사용자 정의**는 HIG 사용자 정의 규칙에 맞춘 Stellar 지정입니다.
+
+표는 명령 자리 전체의 단축키 배정입니다. 3.2절 규칙으로 메뉴에서 빠진 명령의 단축키는 기능 행이 들어올 때까지 다른 명령에 쓰지 않고 예약해 둡니다. Git 메뉴와 탭 전환(⌥⌘1–3) 단축키는 해당 행(UX.5.8, UX.7.1·UX.10.3)이 이 표에 더합니다.
 
 | 메뉴 | 항목 | 단축키 | 명령 ID | 분류 |
 |---|---|---|---|---|
@@ -194,7 +208,7 @@ New/Open/Clone Project와 Settings는 창이 없어도 동작해야 하므로 `M
 | Insert | Rectangle | 캔버스 R | `tool.rectangle` | 단일 키 |
 | Insert | Ellipse | 캔버스 O | `tool.ellipse` | 단일 키 |
 | Insert | Line | 캔버스 L | `tool.line` | 단일 키 |
-| Insert | Polygon | — | `tool.polygon` | — |
+| Insert | Polygon | 캔버스 P | `tool.polygon` | 단일 키(결정 U6, UX.1.3) |
 | Insert | Text | 캔버스 T | `tool.text` | 단일 키 |
 | Insert | Image | ⇧⌘K | `tool.image` | 사용자 정의 |
 | Object | Group | ⌥⌘G | `object.group` | 사용자 정의(예외, 6.3) |
@@ -229,7 +243,7 @@ New/Open/Clone Project와 Settings는 창이 없어도 동작해야 하므로 `M
 | V | Move | T | Text |
 | F | Frame | H | Hand |
 | R | Rectangle | Z | Zoom |
-| O | Ellipse | (없음) | Polygon |
+| O | Ellipse | P | Polygon(결정 U6, UX.1.3) |
 | L | Line | (없음) | Image(메뉴 ⇧⌘K) |
 
 - 메뉴 key equivalent로 두지 않고 캔버스 뷰 `keyDown(with:)`에서만 해석합니다. 텍스트 컨트롤이 first responder이면 캔버스가 키를 받지 않으므로 발동하지 않습니다. [가이드 8.2]
@@ -253,7 +267,7 @@ New/Open/Clone Project와 Settings는 창이 없어도 동작해야 하므로 `M
 | 명령 | 단축키 | 규칙 | 근거 |
 |---|---|---|---|
 | Show/Hide Sidebar | ⌃⌘S | 4(Control), 5(⌘S 파생) | AppKit 기본 메인 메뉴 템플릿의 Show Sidebar 관례. 가이드 2.3의 "표준 단축키" 경로 |
-| Group | ⌥⌘G | 5(⌘G Find Next 파생) | ⌘G는 표준 Find Next라 재사용하지 않음. 그룹은 자주 쓰는 명령이라 Option 변형을 씀. Apple iWork 앱의 Group 단축키와 같다고 알려져 있으나 이 작업에서 직접 확인하지 못함 |
+| Group | ⌥⌘G | 5(⌘G Find Next 파생) | ⌘G는 표준 Find Next라 재사용하지 않음. 그룹은 자주 쓰는 명령이라 Option 변형을 씀. macOS 문서 편집 앱의 묶기 단축키 관례로 알려져 있으나 이 작업에서 직접 확인하지 못함 |
 | Ungroup | ⌥⇧⌘G | 5 | Group과 짝 |
 
 감사기 자체의 음성 검사: 표준 재사용(⌘B), 시스템 단축키(⌘Space), 충돌, Command 없음, Control 사용, 파생(⇧⌘B), 정규화 충돌(⌘+ 대 ⇧⌘=)을 일부러 넣으면 모두 문제로 보고하는지 `ToolsUICheck`가 확인합니다.
@@ -336,7 +350,7 @@ protocol ToolsMenuModel: AnyObject {
 - 레이아웃: 4개 외형과 좁은 폭(560pt)에서 창 전체 뷰 계층의 모호한 Auto Layout 없음
 - 성능: snapshot 반영과 View 메뉴 전체 검증 median이 2ms 미만
 
-2026-11-14 로컬 실행 결과(Apple Silicon, macOS 27.2, Debug 앱 바이너리를 임시 실행 인자로 호출, 여러 번 실행): `tools-menus ok: 70 commands, 83 menu items, shortcut audit 0 issues, 11 tools`, snapshot 반영 median 약 0.09ms(최대 0.18ms 이하), View 메뉴 전체 검증 median 약 0.02ms.
+2026-11-14 로컬 실행 결과(Apple Silicon, macOS 27.2, Debug 앱 바이너리를 임시 실행 인자로 호출, 여러 번 실행, Pen 도구를 지우기 전의 기록이라 도구 수가 11): `tools-menus ok: 70 commands, 83 menu items, shortcut audit 0 issues, 11 tools`, snapshot 반영 median 약 0.09ms(최대 0.18ms 이하), View 메뉴 전체 검증 median 약 0.02ms.
 
 ## 11. 코어 연결·통합에 남은 일
 
@@ -345,21 +359,21 @@ protocol ToolsMenuModel: AnyObject {
 - **도구 상태 기계**: Space 일시 Hand, Escape 복귀, Image 파일 선택 흐름. [계획 XII.3.6]
 - **줌(일부 완료)**: Zoom In(×2)·Zoom Out(÷2)·Actual Size(100%)는 코어 창 session viewport를 바꾸고(화면 중심 고정, 2%\~25600%), 툴바 배율 제목은 코어 viewport 값입니다. active view가 없으면 비활성입니다. viewport는 scene camera 입력(`ProjectWindowSession::camera`)입니다. View 메뉴의 Zoom to Fit(⌘9)과 툴바의 같은 항목은 현재 View 루트 Frame의 변환된 경계를 캔버스 가운데에 맞춥니다. 최대 배율은 100%입니다. Zoom to Selection과 트랙패드 확대 입력 연결은 남았습니다. [계획 XII.4.3] [ADR-0028]
 - **프로젝트 명령**: New/Open/Clone Project 흐름과 패널. [계획 XII.6.1~XII.6.3]
-- **Undo/Redo/Save Now(완료)**: 메뉴·단축키는 응답자 체인으로 key 창의 router가 받아 그 창의 코어 창 session(`ShellWindowSessionHandle`)에 `stellar_window_session_perform`으로 보냅니다. Undo는 그 창 undo stack, Redo는 redo stack이 비어 있지 않을 때, Save Now는 작업 문서가 있을 때 활성입니다. 저장 실패(다른 저장이 먼저 끝남, 쓰기 실패)는 alert 한 번으로 알립니다. 검사는 `--session-commands-check`입니다. [계획 XII.6.4] [ADR-0028]
+- **Undo/Redo/Save Now(완료)**: 메뉴·단축키는 응답자 체인으로 key 창의 router가 받아 그 창의 코어 창 session(`ShellWindowSessionHandle`)에 `stellar_window_session_perform`으로 보냅니다. Undo는 그 창 undo stack, Redo는 redo stack이 비어 있지 않을 때, Save Now는 작업 문서가 있을 때 활성입니다. 저장 실패(다른 저장이 먼저 끝남, 쓰기 실패)는 지금 alert 한 번으로 알리며, 확인 버튼 하나뿐인 이 alert는 두 선택지 sheet("이 창의 버전으로 저장" / "디스크 버전 불러오기")로 바꿉니다(결정 U20, UX.4.3). 검사는 `--session-commands-check`입니다. [계획 XII.6.4] [ADR-0028]
 - **접근성**: 캔버스 호스트의 도구 상태 노출과 VoiceOver 자동화. [계획 XII.8.1]
 - **창 통합(완료, shell_frame 14장)**: `ShellAppCoordinator`가 `MainMenuBuilder.build(applicationTarget:)`·`install(on:)`을 하고, 프로젝트 창마다 `ShellCommandRouter.install(in:)`과 셸 툴바 조합(`ToolsToolbarController`가 `ShellToolbarItemProviding`으로 줌 제공)을 합니다. 캔버스 도구 그룹은 셸 툴바에 넣지 않고, 같은 도구 10개를 프로젝트 창이 셸 프레임 snapshot 도구 목록으로 캔버스 하단 가운데 도구 막대(`ShellToolBarView`)에 보냅니다(shell_frame 14.2). 창 모델은 `ShellWindowToolsModelStub`(창별 도구 상태, 코어 경로 없는 명령 비활성)입니다. [가이드 2.3, 2.5]
 - **캔버스 keyDown(단일 키 완료)**: `CanvasView.keyDownHandler`가 `CanvasToolShortcut.tool(for:)`로 도구를 구해 `router.dispatch`합니다. 처리한 키는 key down·짝 key up 모두 코어 입력으로 보내지 않고, 도구가 아니거나 비활성이면 코어 입력으로 보냅니다. Delete 키(`deleteBackward(_:)` → `.delete`)는 코어 삭제 명령 경로가 없어 아직 연결하지 않았습니다.
 - **앱 이름**: 메뉴 막대에는 번들 이름인 `Stellar`가 표시됩니다.
 - **smoke 연결(완료)**: `--tools-menus-ui-check`로 `ToolsUICheck.run()`을 실행하고, `UI/Tools/`가 코어 FFI·runtime(`stellar_`, `CoreRuntime`, `RuntimeHost`, `runtimeHandle`)을 참조하지 않는다는 구조 검사를 `scripts/macos/smoke.sh`가 합니다.
-- **눈금자**: 지금은 placeholder이고 동작은 계획 XII.10.19가 구현합니다.
-- **WBS 없음**: Open Recent, Open in New Window(XII.2.4), Export, Format 메뉴, Help Book(현재 Stellar Help는 시스템 "도움말 없음" 동작), 메뉴 문자열 지역화.
+- **눈금자**: 동작은 계획 XII.10.19가 구현하고, Show Rulers 메뉴 항목도 그 행이 함께 추가합니다(3.2절).
+- **WBS 없음**: Open Recent, Open in New Window(XII.2.4), Export, Format 메뉴, Help Book(도움말 콘텐츠가 생길 때 Help 항목을 추가), 메뉴 문자열 지역화.
 - **실화면 확인**: 화면 밖 bitmap 캡처에서는 선택된 도구 세그먼트의 아이콘이 보이지 않았습니다. 캡처가 시스템 glass·선택 레이어를 담지 못한 것으로 보이나, 실제 키 창 화면에서는 확인하지 않았습니다.
 
-## 12. 이 영역이 제안하는 결정(확정 아님)
+## 12. 이 영역의 결정
 
-| 대상 | 제안 | 정할 곳 |
+| 대상 | 내용 | 상태 |
 |---|---|---|
-| 가이드 O8 앱 고유 메뉴 | Insert(만들기 도구), Object(그룹·순서·정렬·분배·뒤집기·잠금·숨김) | XII.6.5 |
-| 단일 키 배정 | 6.2절 표(Polygon·Image 없음) | XII.3.6 또는 가이드 O10과 함께 |
-| 줌 단축키 | ⌘+/⌘-/⌘0/⌘9/⌘* | XII.6.5 |
-| 도구 그룹 표현 | 펼친 표현 고정, 줌이 먼저 overflow | XII.9.1 |
+| 가이드 O8 앱 고유 메뉴 | Insert(만들기 도구), Object(순서·묶음·정렬·분배·뒤집기·잠금·숨김), Git | 확정(결정 U16). 기능이 연결된 항목만 보임(3.2절) |
+| 단일 키 배정 | 6.2절 표(Polygon P, Image 없음) | 확정(결정 U6). 코드 연결은 UX.1.3 |
+| 줌 단축키 | ⌘+/⌘-/⌘0/⌘9/⌘* | 제안, XII.6.5에서 정함 |
+| 도구 표현 | 상단 툴바가 아니라 캔버스 하단 가운데 도구 막대, 그룹 사이 간격 | 확정(2026-11-14 사용자 결정). 그룹 간격은 UX.1.3 |

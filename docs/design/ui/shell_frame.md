@@ -1,30 +1,31 @@
 # 셸 프레임(메인 창 구성) UI 명세
 
-- 상태: 초안(2026-11-14). 앱 창으로 통합됨(14장). 프로젝트 열기·닫기는 코어 FFI, 영역 내용은 Stub data source
+- 상태: 초안(2026-11-14). 앱 창으로 통합됨(14장). 프로젝트 열기·닫기는 코어 FFI, 영역 내용은 Stub data source. UX 명세 반영(2026-11-15)
 - 영역: `shell_frame` — 코드 위치 `apps/macos/Stellar/UI/Shell/`
-- 기준 문서: [macOS 셸 디자인 가이드](../macos-shell-design.md)(이하 "가이드"), 기술 아키텍처 명세(이하 "아키텍처"), Apple HIG(Windows, Toolbars, Sidebars, Split views, Keyboard, Accessibility, Materials, Writing)
-- WBS 대응은 통합 단계에서 정합니다. 관련 행은 XII.9.1(toolbar·sidebar·inspector 골격)과 가이드 10.4의 "창 상태 저장·복원"(전용 WBS 없음)입니다.
+- 기준 문서: [macOS 셸 디자인 가이드](../macos-shell-design.md)(이하 "가이드"), [UX 명세](../ux/stellar-ux-spec.md) 3장, 기술 아키텍처 명세(이하 "아키텍처"), Apple HIG(Windows, Toolbars, Sidebars, Split views, Keyboard, Accessibility, Materials, Writing)
+- WBS 대응: XII.9.1(toolbar·sidebar·inspector 골격), 가이드 10.4의 "창 상태 저장·복원"(전용 WBS 없음), [UX WBS 초안](../ux/ux-wbs-rows.md)의 UX.1.1(보조 패널 삭제)·UX.1.2(영구 비활성 UI 삭제)·UX.1.4(제목 문서 메뉴)·UX.5.3(부제목)·UX.7.1(오른쪽 탭 자리)
 
 ## 1. 이 영역이 보여 주는 것
 
-메인 프로젝트 창의 틀입니다. 내용(레이어 트리, 속성, Git, 캔버스 렌더링)은 다른 영역이 슬롯으로 끼웁니다.
+메인 프로젝트 창의 틀입니다. 내용(레이어 트리, 속성, Git, 캔버스 렌더링)은 다른 영역이 슬롯으로 끼웁니다. 아래는 목표 배치이고, 기준선 `02397601`과 다른 곳은 각 절에 적습니다. [UX 명세 3.1]
 
 ```text
-┌ NSToolbar(통합, 스타일 automatic) ─────────────────────────────────────────────┐
-│ [사이드바 토글] │ [‹ ›] 제목/부제목                     [검색] [⋯] │ [인스펙터 토글] │
+┌ NSToolbar(통합, 스타일 automatic, 구분선 없는 블러) ─────────────────────────┐
+│ [사이드바 토글] │ 제목(문서 메뉴)/부제목(Git 상태)  (에이전트 상태) [줌 ▾] │ [인스펙터 토글] │
 ├──────────────┬──────────────────────────────────────────┬────────────────────┤
 │ 사이드바 슬롯  │ 콘텐츠 슬롯(캔버스 호스트, safe area 안)  │ 인스펙터 슬롯        │
-│ (sidebar     │  └ 상태 화면: 빈·로딩·오류               │ (inspector         │
-│  item)       │        [도구 막대(하단 가운데)]           │  item)            │
-│              ├──────────────────────────────────────────┤                    │
-│              │ 보조 패널 슬롯(선택, 처음엔 접힘)          │                    │
+│ (레이어·에셋· │  └ 상태 화면: 빈·로딩·오류               │ (속성·코드·에이전트  │
+│  변경 탭)     │     (도구 막대 위 한 줄 안내 자리)        │  탭)               │
+│              │        [도구 막대(하단 가운데)]           │                    │
 └──────────────┴──────────────────────────────────────────┴────────────────────┘
 ```
 
 - 창: 표준 `NSWindow`(titled, closable, miniaturizable, resizable, full-size content). 창 크롬과 툴바 높이는 시스템이 정합니다. [가이드 2.1] [HIG Windows]
-- 분할: `NSSplitViewController` 3열. 사이드바는 `NSSplitViewItem(sidebarWithViewController:)`, 인스펙터는 `NSSplitViewItem(inspectorWithViewController:)`, 가운데는 세로 `NSSplitViewController`(콘텐츠 / 보조 패널)입니다. 분할선은 thin 스타일입니다. [가이드 2.3] [HIG Split views]
+- 분할: `NSSplitViewController` 3열. 사이드바는 `NSSplitViewItem(sidebarWithViewController:)`, 인스펙터는 `NSSplitViewItem(inspectorWithViewController:)`, 가운데는 콘텐츠 슬롯 하나입니다. 분할선은 thin 스타일입니다. [가이드 2.3] [HIG Split views]
+- 캔버스 아래 보조 패널은 두지 않습니다. 기준선의 가운데 세로 `NSSplitViewController`(콘텐츠 / 보조 패널)와 그 토글은 UX.1.1에서 지웁니다. Git 패널은 사이드바 변경 탭(UX.5.2), 에이전트 패널은 오른쪽 에이전트 탭(UX.10.3)으로 갑니다. [가이드 2.4] [결정 U1]
+- 사이드바·인스펙터 슬롯 안의 탭은 기능이 연결된 탭만 만들고, 탭이 하나뿐이면 탭 줄을 그리지 않습니다. 앱이 패널을 자동으로 열거나 숨기거나 탭을 바꾸지 않습니다. [가이드 2.3] [UX 명세 3.2, 3.4]
 - 캔버스: 기존 `CanvasView`(II.5.4)를 수정 없이 생성해 감쌉니다(`ShellCanvasHostViewController`). drawable 크기 전달은 `CanvasView`의 기존 경로가 맡습니다. [가이드 2.3, 9장]
-- 캔버스는 safe area 안에만 둡니다. 툴바 glass와 사이드바·인스펙터 아래로 확장할지는 열린 결정 O2이므로, 결정 전에는 `automaticallyAdjustsSafeAreaInsets = false`로 두고 겹치지 않게 합니다. [가이드 2.3, 열린 결정 O2] [아키텍처 §6.2]
+- 캔버스는 사이드바·인스펙터 아래로 확장하기로 했습니다(O2 닫음). 확장을 켜는 구현 행에서 drawable·hit test·렌더 비용을 측정해 계약 안일 때만 켜고, 그 전까지는 safe area 안에 `automaticallyAdjustsSafeAreaInsets = false`로 두어 겹치지 않게 합니다. [가이드 2.3] [아키텍처 §6.2] [결정 U2]
 - 툴바 스타일은 `.automatic`에서 시작합니다(이 창 구성에서는 통합 툴바로 표시됨). unified와 unified compact 중 선택은 열린 결정 O1입니다. [가이드 2.1]
 
 ## 2. 파일
@@ -44,7 +45,7 @@
 | `ShellFrameUICheck.swift` | offscreen 검사 진입점 `ShellFrameUICheck.run() -> Bool` |
 | `ShellAppCoordinator.swift` | 앱 수준 구성(14장): 메인 메뉴 설치, 시작 창, 프로젝트 열기·복원·닫기, 설정 창, 앱 수준 메뉴 모델, 시작 창 data source |
 | `ShellProjectWindow.swift` | 프로젝트 창 하나: 코어 프로젝트 session handle, 프로젝트 frame data source, 창별 도구 모델 Stub, 구성 묶음 |
-| `ShellAreaSlots.swift` | 사이드바·인스펙터·Git·에이전트 영역을 슬롯에 끼우는 어댑터와 영역 data source Stub |
+| `ShellAreaSlots.swift` | 사이드바·인스펙터·Git·에이전트 영역을 슬롯에 끼우는 어댑터와 영역 data source Stub(보조 패널 탭 `ShellPanelTabsSlot`은 UX.1.1에서 삭제) |
 | `ShellRuntimeEventPump.swift` | 코어 완료 event pull 펌프(요청별 완료 handler) |
 | `ShellIntegrationCheck.swift` | 통합 검사 진입점 `ShellIntegrationCheck.run() -> Bool`(`--shell-integration-check`) |
 | `ShellProjectOpenFailure.swift` | 프로젝트 열기 실패 원인과 안내 문구(14.8, XII.6.2) |
@@ -72,14 +73,14 @@ struct ShellFrameSlots {
     var sidebar: any ShellSidebarSlot
     var content: any ShellContentSlot
     var inspector: any ShellInspectorSlot
-    var auxiliary: (any ShellAuxiliaryPanelSlot)?   // nil이면 보조 패널 분할 항목 자체가 없음
+    var auxiliary: (any ShellAuxiliaryPanelSlot)?   // 기준선 코드. 보조 패널과 함께 UX.1.1에서 삭제
 }
 ```
 
 - pane 하나에만 붙는 상단·하단 컨트롤(예: 레이어 필터 필드)은 accessory로 넘깁니다. safe area와 scroll edge effect는 시스템이 처리합니다. [가이드 2.3, 6.2]
 - 슬롯이 루트 뷰에 접근성 레이블을 붙이지 않았으면 셸이 `paneTitle`을 붙입니다. 역할과 요소 여부는 슬롯이 정합니다. [가이드 8.3]
 - 사이드바·인스펙터 슬롯은 배경을 직접 칠하지 않습니다. 시스템 재질을 가리기 때문입니다. [가이드 3.2]
-- **보조 패널 슬롯과 가이드의 관계**: 가이드 2.4는 캔버스 아래 분할 영역을 로드맵 기능 자리로만 두고 초기 릴리스에 노출하지 않으며, Git 패널 위치(사이드바 구획 또는 인스펙터 탭)는 열린 결정 O4, 에이전트 패널은 인스펙터 탭 후보(6.5절)입니다. 그래서 이 슬롯은 구조상의 자리만 제공합니다. 선택 사항이고, 넘겨도 처음에는 접힌 상태이며 툴바 버튼을 두지 않고 View 메뉴 항목만 만들 수 있습니다. 최종 배치는 XIV.13.5와 ADR-0005 후속 WBS가 정합니다.
+- **보조 패널 슬롯 삭제**: 캔버스 아래 보조 패널은 두지 않기로 했습니다(가이드 2.4, 결정 U1). Git 패널은 왼쪽 사이드바 변경 탭(가이드 6.4, O4 닫음), 에이전트 패널은 오른쪽 에이전트 탭(가이드 6.5)입니다. 그래서 `ShellAuxiliaryPanelSlot`, `auxiliary`, 보조 패널 토글은 UX.1.1에서 지웁니다. 탭은 사이드바·인스펙터 슬롯 안에서 만듭니다.
 
 ## 4. 데이터·명령 protocol
 
@@ -95,7 +96,8 @@ struct ShellFrameSlots {
 - data source 하나는 창 하나에 대응합니다. `snapshotHandler`는 구독자 하나만 받고 창 controller가 만들어질 때 덮어쓰므로, 창마다 별도 data source를 만듭니다.
 - `ShellFrameCommand`: `navigateBack`, `navigateForward`, `selectTool(id)`, `submitSearch(query:)`, `perform(id)`.
 - 명령 식별자(`ShellCommandID`)는 코어와 공유하는 문자열이며 셸은 해석하지 않습니다. [가이드 6.1] [계획 XII.6.5]
-- 사이드바·인스펙터·보조 패널 접기는 문서 의미가 아닌 창 상태이므로 명령으로 보내지 않습니다. [가이드 2.6] [아키텍처 §8.1]
+- UX 결정에 따른 바뀜: 뒤로·앞으로·프로젝트 검색(`navigation`, `searchPlaceholder`, `isSearchAvailable`, `navigateBack`, `navigateForward`, `submitSearch`)은 기능이 없으므로 UX.1.2에서 지웁니다(결정 U4). 더 보기 동작(`moreActions`)은 툴바 더 보기 메뉴가 아니라 제목 문서 메뉴에 둡니다(UX.1.4). `subtitle`은 Git 상태 문법(UX 명세 3.3절)을 따릅니다(UX.5.3).
+- 사이드바·인스펙터 접기는 문서 의미가 아닌 창 상태이므로 명령으로 보내지 않습니다. [가이드 2.6] [아키텍처 §8.1]
 - Rust 타입을 쓰지 않습니다. 코어 연결 시 FFI pull 이벤트(`stellar_runtime_poll_event`)로 받은 메시지를 snapshot으로 바꿔 메인 스레드에서 `snapshotHandler`로 넘기고, 명령은 command ID로 바꿔 보냅니다. [아키텍처 §8.2] [ADR-0009]
 
 ### 4.1 메인 스레드 규칙
@@ -126,10 +128,12 @@ struct ShellFrameSlots {
 |---|---|---|
 | 앞쪽 끝 | 사이드바 토글 | 시스템 `.toggleSidebar`, 사용자 구성에서 옮기거나 뺄 수 없음 |
 | 앞쪽 끝 | 사이드바 경계 추적 | 시스템 `.sidebarTrackingSeparator`, 고정 |
-| 앞쪽(내용 영역 시작) | 뒤로·앞으로 | `NSToolbarItemGroup`(버튼 두 개), `isNavigational = true`라 창 제목 앞에 놓임 |
-| 뒤쪽 | 프로젝트 검색 | `NSSearchToolbarItem`(AppKit 검색 필드) |
-| 뒤쪽 | 더 보기 | `NSMenuToolbarItem`, 표시 화살표 없음 |
+| 앞쪽 | 제목·부제목 | 창 제목은 프로젝트 이름, 누르면 문서 메뉴(Finder에서 보기, 프로젝트 신뢰… 또는 신뢰 철회, 프로젝트 닫기, UX.1.4). 부제목은 누를 수 없는 Git 상태 표시(UX.5.3) |
+| 뒤쪽 | 에이전트 상태 항목 | 세션·연결·승인 대기가 있을 때만 보임. 누르면 에이전트 탭을 엶(UX.10.3) |
+| 뒤쪽 | 줌 | `NSMenuToolbarItem`, provider(`ToolsToolbarController`)가 제공(14.2) |
 | 뒤쪽 끝 | 인스펙터 경계 추적, 인스펙터 토글 | 시스템 `.inspectorTrackingSeparator`, `.toggleInspector` |
+
+- 기준선 `02397601`의 뒤로·앞으로(`NSToolbarItemGroup`), 프로젝트 검색(`NSSearchToolbarItem`), 더 보기(`NSMenuToolbarItem`)는 기능이 없거나 다른 자리로 옮기므로 UX.1.2·UX.1.4에서 지웁니다. [가이드 6.1] [결정 U4]
 
 - 항목 위치는 시스템 식별자로만 정하고 직접 계산하지 않습니다. [가이드 6.1]
 - 상단 바에는 구분선을 두지 않고(`titlebarSeparatorStyle = .none`, 창과 모든 분할 항목) 블러 배경만 둡니다. 콘텐츠 영역의 상단 바 뒤에는 `NSVisualEffectView`(`.titlebar`, within-window)를 깝니다(2026-11-14 사용자 결정).
@@ -137,8 +141,9 @@ struct ShellFrameSlots {
 - 아이콘만 있는 항목에는 레이블, 도움말 태그, 이미지 접근성 설명을 모두 둡니다. 같은 묶음에서 텍스트 항목과 아이콘 항목을 섞지 않습니다. [가이드 5.4, 8.1]
 - 사용자 구성은 `allowsUserCustomization`과 `autosavesConfiguration`으로 AppKit이 저장합니다.
 - **사용자 구성 palette 사본**: AppKit은 Customize Toolbar palette에 보일 항목을 `toolbar(_:itemForItemIdentifier:willBeInsertedIntoToolbar:)`에 `false`를 넘겨 따로 만들고 palette를 닫으면 해제합니다. controller의 항목 참조(내비게이션·검색·더 보기)는 `true`로 만든 실제 항목에만 묶고, palette 사본에는 target·action을 달지 않습니다. 사본에 묶으면 palette를 닫은 뒤 weak 참조가 nil이 되어 snapshot 반영·활성 상태·"Search Project…" 검증이 실제 항목에 닿지 않습니다(리뷰에서 재현). 도구 막대는 툴바 항목이 아니라 controller가 직접 가지므로 palette 사본과 관계없습니다.
-- 툴바 아이콘(뒤로·앞으로)은 테두리 없이 둡니다(`isBordered = false`). 눌림·강조 표현은 시스템이 그립니다. [가이드 5.4]
-- 도구 막대는 placeholder입니다. 받은 도구 목록을 그리고 선택을 `selectTool`로 보낼 뿐이며, 도구 상태 기계는 XII.3.6, 생성 도구는 WBS 없음(가이드 10.4)입니다.
+- 툴바 아이콘 항목은 테두리 없이 둡니다(`isBordered = false`). 눌림·강조 표현은 시스템이 그립니다. [가이드 5.4]
+- 도구 막대는 도구 10종만 둡니다. 받은 도구 목록을 그리고 선택을 `selectTool`로 보내며, 선택·컨테이너·도형·내용·시점 그룹 사이는 간격으로만 나눕니다(UX.1.3). 도구 상태 기계는 XII.3.6, 생성 도구는 XII.10.26·XII.10.27·XII.10.33입니다. [가이드 6.1] [UX 명세 5.1]
+- 도구 막대 위에 한 줄 안내 자리를 둡니다. 내 조작의 즉시 결과를 2.5초 보여 주고 VoiceOver에 같은 문구를 알리며, 캔버스 렌더 결과에 넣지 않습니다(UX.2.8). [결정 U5]
 - Branch·Pull·Fetch 같은 Git 동작은 툴바에 두지 않습니다. [가이드 6.1]
 
 ### 6.2 pane 전환
@@ -146,32 +151,30 @@ struct ShellFrameSlots {
 - 사이드바·인스펙터 전환은 툴바 버튼, View 메뉴 항목, 단축키가 모두 같은 action(`toggleSidebar:`, `toggleInspector:`)으로 연결됩니다. [가이드 2.3]
 - first responder가 pane 안이면 split controller가 먼저 받고, 창 자체가 first responder이면 창 delegate(창 controller)가 split controller로 전달합니다.
 - 숨긴 pane은 캔버스에 공간을 돌려줍니다. 창 폭이 바뀌면 캔버스만 늘고 줄어듭니다(가운데 항목 holding priority가 가장 낮음).
-- 보조 패널은 `toggleAuxiliaryPanel:`로 전환합니다(슬롯이 있을 때만 활성).
+- 보조 패널 전환(`toggleAuxiliaryPanel:`)은 보조 패널과 함께 지웁니다(UX.1.1). 탭 전환은 오른쪽 ⌥⌘1–3이고, 왼쪽 탭 단축키는 왼쪽에 탭이 둘 이상 연결될 때 정합니다. [결정 U17]
 - 동작 줄이기가 켜져 있으면 접기·펼치기를 애니메이션 없이 즉시 합니다. 꺼져 있으면 시스템 애니메이션을 씁니다. [가이드 8.4, 8.5]
 
 ### 6.3 메뉴 막대 항목(`ShellFrameMenuItems`)
 
-메인 메뉴 구성은 XII.6.5 범위이므로 항목만 만들고 설치하지 않습니다. 모두 target 없는 action이고 툴바와 같은 메서드로 연결됩니다. 활성화 검사(`NSMenuItemValidation`)에서 숨기지 않고 비활성화하며, 표시 전환 항목 제목은 "Show …"/"Hide …"로 바뀝니다. [가이드 8.1]
+메인 메뉴 구성은 XII.6.5 범위이므로 항목만 만들고 설치하지 않습니다. 모두 target 없는 action이고 툴바와 같은 메서드로 연결됩니다. 기능이 연결된 항목만 두고, 잠깐 쓸 수 없는 항목만 활성화 검사(`NSMenuItemValidation`)에서 숨기지 않고 비활성화합니다. 표시 전환 항목 제목은 "Show …"/"Hide …"로 바뀝니다. [가이드 8.1]
 
 | 항목 | action | 단축키 |
 |---|---|---|
 | Show/Hide Sidebar | `toggleSidebar:` | Control-Command-S |
 | Show/Hide Inspector | `toggleInspector:` | Option-Command-I |
-| Show/Hide `<보조 패널 이름>` | `toggleAuxiliaryPanel:` | 없음(O8, XII.6.5에서 정함) |
-| Back | `navigateBack:` | 없음(⌘[는 Object ▸ Send Backward, tools_menus 6.1) |
-| Forward | `navigateForward:` | 없음(⌘]는 Object ▸ Bring Forward) |
-| Search Project… | `focusProjectSearch:` | 없음(XII.6.5에서 정함) |
-| 더 보기 동작(예: Show in Finder) | `performFrameAction:`(`representedObject` = 명령 ID) | 없음. 활성 창 snapshot의 더 보기 동작에 그 ID가 없으면 비활성 |
+| 문서 메뉴 동작(예: Show in Finder) | `performFrameAction:`(`representedObject` = 명령 ID) | 없음. 활성 창 snapshot의 문서 메뉴 동작에 그 ID가 없으면 비활성 |
 
-- 더 보기 메뉴와 도구 영역의 동작도 메뉴 막대에 있어야 합니다. command ID가 코어에서 오므로 XII.6.5에서 같은 ID로 메뉴를 만듭니다. [가이드 6.1]
+- 기준선의 Show/Hide 보조 패널(`toggleAuxiliaryPanel:`), Back·Forward(`navigateBack:`·`navigateForward:`), Search Project…(`focusProjectSearch:`) 항목은 UX.1.1·UX.1.2에서 지웁니다. 기능이 생기면 그 행이 다시 설계합니다. [결정 U1, U4]
+
+- 제목 문서 메뉴와 도구 막대의 동작도 메뉴 막대에 있어야 합니다. command ID가 코어에서 오므로 XII.6.5에서 같은 ID로 메뉴를 만듭니다. [가이드 6.1]
 - 시스템 키보드 탐색 단축키를 가로채지 않습니다. [가이드 8.1]
 
 ## 7. 접근성과 외형
 
-- VoiceOver: pane 영역 이름(Sidebar, Inspector, 보조 패널 이름), 캔버스 뷰(역할 layout area, 레이블 Canvas), 툴바 항목 레이블, 도구별 레이블, 검색 필드 레이블(Search Project), 상태 화면(그룹 레이블 = 제목, 진행 표시기 레이블 = 메시지). 장식 아이콘은 접근성 트리에서 숨깁니다. [가이드 8.3] [HIG Accessibility]
+- VoiceOver: pane 영역 이름(Sidebar, Inspector), 캔버스 뷰(역할 layout area, 레이블 Canvas), 툴바 항목 레이블, 도구별 레이블, 상태 화면(그룹 레이블 = 제목, 진행 표시기 레이블 = 메시지). 도구 막대 위 한 줄 안내는 같은 문구를 announcement로 알립니다. 장식 아이콘은 접근성 트리에서 숨깁니다. 기준선의 보조 패널 이름·검색 필드 레이블은 해당 UI와 함께 지웁니다. [가이드 8.3] [HIG Accessibility] [UX 명세 12.1]
 - 같은 이름을 두 번 읽지 않게 합니다: 캔버스 호스트 루트는 배치용 컨테이너라 접근성 요소가 아니고 "Canvas"는 캔버스 뷰에만 둡니다. 상태 화면 제목은 그룹 레이블로 전달하므로 제목 레이블 자체는 접근성 트리에서 뺍니다.
 - 캔버스의 선택·도구 상태 노출은 XII.8.1 범위입니다.
-- 키보드: `autorecalculatesKeyViewLoop`로 Tab·Shift-Tab이 사이드바 → 캔버스 → 인스펙터 순서로 이동합니다. 사용자 조작 없이 포커스를 옮기지 않습니다(검색 포커스는 명령으로만). [가이드 8.2]
+- 키보드: `autorecalculatesKeyViewLoop`로 Tab·Shift-Tab이 사이드바 → 캔버스 → 인스펙터 순서로 이동합니다. 사용자 조작 없이 포커스를 옮기지 않습니다. 텍스트 필드에서 Escape는 값 편집을 취소하고 포커스를 캔버스로 돌려줍니다. [가이드 8.2] [UX 명세 3.4]
 - 색: 시스템 의미 색(label 계층)만 씁니다. 하드코딩 색과 이미지 asset이 없습니다. [가이드 4.2, 5.4]
 - Light·Dark·대비 높이기·투명도 줄이기: 셸 프레임은 직접 그리는 반투명 표면, 직접 쓰는 glass, 커스텀 배경이 없으므로 표준 구성요소가 시스템 설정을 그대로 따릅니다. 직접 대응하는 것은 동작 줄이기(pane 전환 애니메이션)뿐입니다. [가이드 8.4]
 - 글꼴: 텍스트 스타일(title3, body, headline, callout)만 씁니다. [가이드 4.1]
@@ -180,12 +183,12 @@ struct ShellFrameSlots {
 
 | 이름 | 쓰임 |
 |---|---|
-| `chevron.backward`, `chevron.forward` | 뒤로·앞으로 |
-| `ellipsis` | 더 보기 메뉴 |
+| `chevron.backward`, `chevron.forward` | 뒤로·앞으로(기준선, UX.1.2에서 삭제) |
+| `ellipsis` | 더 보기 메뉴(기준선, UX.1.4에서 제목 문서 메뉴로 옮기며 삭제) |
 | `square.dashed` | 빈 상태 |
 | `exclamationmark.triangle` | 오류 상태 |
 | `cursorarrow`, `hand.raised`, `plus.magnifyingglass` | Stub 도구(Select, Pan, Zoom). 실제 이름은 코어 snapshot이 줌 |
-| `sidebar.left`, `sidebar.right`, `rectangle.bottomthird.inset.filled` | Stub 사이드바·인스펙터·보조 패널 placeholder |
+| `sidebar.left`, `sidebar.right`, `rectangle.bottomthird.inset.filled` | Stub 사이드바·인스펙터·보조 패널 placeholder(보조 패널 기호는 UX.1.1에서 삭제) |
 
 사이드바·인스펙터 토글과 검색 아이콘은 시스템 항목이 제공합니다.
 
@@ -197,7 +200,7 @@ struct ShellFrameSlots {
 |---|---|---|
 | 창 프레임 | `setFrameUsingName(_:)` + `setFrameAutosaveName(_:)`, 없으면 가운데, 복원 시 계단식 배치 끔 | `StellarMainWindow` |
 | 3열 pane 폭·접힘 | `NSSplitView.autosaveName`(view 로드 전 지정) | `StellarMainWindow.MainSplit` |
-| 보조 패널 높이·접힘 | `NSSplitView.autosaveName` | `StellarMainWindow.CenterSplit` |
+| 보조 패널 높이·접힘(기준선, UX.1.1에서 보조 패널과 함께 삭제. 창 크기 복원은 깨지지 않아야 함) | `NSSplitView.autosaveName` | `StellarMainWindow.CenterSplit` |
 | 툴바 사용자 구성 | `NSToolbar.autosavesConfiguration` | `StellarMainToolbar` |
 | 창 복원 | `isRestorable`, `identifier`, `restorationClass = ShellWindowRestoration` | `StellarMainWindow` |
 
@@ -216,7 +219,7 @@ struct ShellFrameSlots {
 | 사이드바 폭 | 200–360 |
 | 인스펙터 폭 | 240–400 |
 | 캔버스 최소 | 320 × 200 |
-| 보조 패널 높이 | 140–480 |
+| 보조 패널 높이(기준선, UX.1.1에서 삭제) | 140–480 |
 | 상태 안내문 최대 줄 폭 | 320 |
 | 상태 화면 요소 간격 | 8 |
 
@@ -228,7 +231,7 @@ struct ShellFrameSlots {
 
 ## 12. 검사(`ShellFrameUICheck`)
 
-`ShellFrameUICheck.run() -> Bool`은 Stub data source와 Stub 슬롯으로 창을 화면에 띄우지 않고 만들어 일반 크기(1200 × 760)로 layout한 뒤 다음을 확인합니다. 통합 시 `scripts/macos/smoke.sh`에 연결합니다.
+`ShellFrameUICheck.run() -> Bool`은 Stub data source와 Stub 슬롯으로 창을 화면에 띄우지 않고 만들어 일반 크기(1200 × 760)로 layout한 뒤 다음을 확인합니다. 통합 시 `scripts/macos/smoke.sh`에 연결합니다. 아래 목록의 보조 패널·내비게이션·검색 항목은 기준선 검사이며, 해당 UI를 지우는 행(UX.1.1·UX.1.2)이 검사 항목도 함께 지웁니다.
 
 - 창 크롬: full-size content, 표준 스타일 마스크, 툴바 스타일 automatic, 기본 툴바 항목 전체, 툴바에 도구 영역 없음, 상단 바 구분선 없음, 도구 막대가 콘텐츠 하단 가운데에 있고 치수가 도구 그룹과 같음, 툴바 구성 autosave, 내비게이션 그룹 navigational
 - 분할: 항목 3개, sidebar·inspector behavior, autosave 이름, 보조 패널 처음 접힘, pane 폭이 허용 범위 안, 창 폭 변경 시 캔버스만 변함, 캔버스가 툴바·사이드바·인스펙터와 겹치지 않음, drawable 크기 > 0
@@ -247,13 +250,13 @@ struct ShellFrameSlots {
 ## 13. 코어 연결과 통합에 남은 일
 
 - 끝난 일(14장): `AppDelegate`가 `CanvasWindowController` 대신 셸 프레임 창을 쓰고, `ShellWindowRestoration.windowProvider` 등록과 secure restorable state를 지원합니다. 메인 메뉴에 `ShellFrameMenuItems` 항목을 설치했습니다. 사이드바·인스펙터·보조 패널 슬롯에 실제 영역 view controller를 끼웠습니다(내용은 영역 data source Stub).
-- 프로젝트 창의 `ShellFrameDataSource`(`ShellProjectFrameDataSource`)는 코어 프로젝트 열기 결과만 씁니다. 코어 내비게이션·검색·페이지 이름 snapshot은 아직 없어 뒤로·앞으로·검색은 비활성입니다. [아키텍처 §8.2] [ADR-0009]
+- 프로젝트 창의 `ShellFrameDataSource`(`ShellProjectFrameDataSource`)는 코어 프로젝트 열기 결과만 씁니다. 코어 내비게이션·검색 snapshot이 없어 기준선의 뒤로·앞으로·검색은 늘 비활성이며, 영구 비활성 UI이므로 UX.1.2에서 지웁니다. [아키텍처 §8.2] [ADR-0009] [결정 U4]
 - 끝난 일(XII.2.2): 창 controller(`ShellWindowController.windowSession`)가 코어 `ProjectWindowSession` handle(`ShellWindowSessionHandle`) 하나를 소유합니다. 셸은 프로젝트 session을 연 뒤 창 session까지 열린 다음에 창을 ready로 두고, 창 session을 열지 못하면 프로젝트 session을 닫고 "The Project’s Design Couldn’t Be Loaded"로 안내합니다. 창을 닫으면 창 session → 프로젝트 session 순서로 한 번씩 닫습니다. 프로젝트 session handle(`ShellProjectSessionHandle`)은 그대로 data source가 소유합니다. [가이드 2.5] [계획 XII.2.1, XII.2.2] [ADR-0028]
 - `NativeFieldsPanel`(텍스트 입력 검증 fixture)은 `--text-input-check` 전용 창(`CanvasWindowController`)에 남아 있습니다. 셸 창의 텍스트 편집 중 Undo 경로는 `--tools-menus-ui-check`가 검사합니다. [가이드 10.1]
-- 선택 속성과 에이전트 세션을 연결하면 해당 영역의 `ShellAreaDataStubs`를 교체합니다. 사이드바의 활성 문서 트리와 Git 변경 목록은 창별 코어 데이터를 사용합니다. 보조 패널 노출 여부·위치는 가이드 2.4·O4·ADR-0005에 따릅니다.
+- 선택 속성과 에이전트 세션을 연결하면 해당 영역의 `ShellAreaDataStubs`를 교체합니다. 사이드바의 활성 문서 트리와 Git 변경 목록은 창별 코어 데이터를 사용합니다. 보조 패널은 두지 않고(가이드 2.4, 결정 U1), Git은 사이드바 변경 탭, 에이전트는 오른쪽 에이전트 탭입니다.
 - 다중 창(XII.2.4)에서 창별 `ShellWindowConfiguration` 이름 규칙을 정합니다. 지금은 모든 프로젝트 창이 `.standard` 이름을 써서 둘째 창부터 frame autosave가 걸리지 않고 split autosave는 서로 덮어씁니다.
 - 모든 프로젝트 창의 캔버스(`CanvasView`)가 앱의 코어 runtime handle 하나를 함께 씁니다. 코어에 창별 session·view state가 없어 창마다 보내는 drawable 크기(`stellar_runtime_set_drawable_size`)와 입력(`stellar_runtime_submit_mac_event`)이 같은 runtime으로 가므로, 프로젝트 창이 둘 이상이면 마지막으로 보낸 창의 drawable 크기가 남습니다. 코어 `ProjectWindowSession`·창별 view state가 생기면 캔버스 호스트가 창 session으로 보내도록 바꿉니다. [계획 XII.2.1, XII.2.5]
-- 툴바 스타일(O1), 캔버스 확장(O2), 배치 수치 확정(가이드 12장)을 XII.9.1에서 정합니다.
+- 툴바 스타일(O1)과 배치 수치 확정(가이드 12장)을 XII.9.1에서 정합니다. 캔버스 확장(O2)은 확장으로 정했고, 켜는 행에서 측정해 적용합니다(1장).
 - UI 문자열 현지화 표(String Catalog)는 아직 없습니다. 셸 프레임 문자열은 `ShellFrameStrings`에서 `String(localized:)`로 만들고, "Show/Hide \<pane>" 같은 상태 제목은 이어 붙이지 않고 형식 문자열 하나로 만듭니다. Stub 데이터 문자열은 코어가 줄 값의 표본이라 현지화 대상이 아닙니다.
 - 실제 창에서 Liquid Glass 재질, 키 창 강조, 대비 높이기·투명도 줄이기 조합을 눈으로 확인하는 작업은 XII.9.4 적합성 보고서에서 합니다.
 
@@ -272,6 +275,8 @@ AppDelegate ─ RuntimeHost(코어 runtime 1개)
                     ├ ShellWindowController(ShellProjectFrameDataSource ─ ShellProjectSessionHandle)
                     ├ 슬롯: 사이드바(SidebarViewController + 필터 accessory), 캔버스(ShellCanvasHostViewController),
                     │       인스펙터(InspectorViewController), 보조 패널(탭: GitPanelViewController, AgentPanelViewController)
+                    │       ※ 기준선 구성. 보조 패널은 UX.1.1에서 지우고, Git은 사이드바 변경 탭(UX.5.2),
+                    │         에이전트는 실행 경로가 연결된 뒤 오른쪽 에이전트 탭(UX.10.3)으로 붙입니다
                     ├ ShellWindowToolsModelStub → ShellCommandRouter(응답자 체인) → ToolsToolbarController(툴바 provider: 줌)
                     ├ ShellWindowToolsModelStub → ShellProjectFrameDataSource 도구 목록 → 하단 도구 막대(ShellToolBarView)
                     └ 캔버스 keyDownHandler(단일 키 도구)
@@ -287,9 +292,13 @@ AppDelegate ─ RuntimeHost(코어 runtime 1개)
 
 ### 14.2 툴바 조합
 
-`ShellToolbarController`는 `ShellToolbarItemProviding` provider(`ToolsToolbarController`)를 받으면 provider의 뒤쪽 항목(줌)을 검색 앞에 넣어 기본 항목을 다음 순서로 바꿉니다.
+`ShellToolbarController`는 `ShellToolbarItemProviding` provider(`ToolsToolbarController`)를 받으면 provider의 뒤쪽 항목(줌)을 검색 앞에 넣어 기준선의 기본 항목을 다음 순서로 바꿉니다.
 
 `[사이드바 토글] [사이드바 경계] [뒤로·앞으로] [유연] [줌] [검색] [더 보기] [인스펙터 경계] [유연] [인스펙터 토글]`
+
+목표 순서(UX.1.2·UX.1.4·UX.10.3 뒤)는 다음과 같습니다. 에이전트 상태 항목은 세션·연결·승인 대기가 있을 때만 보입니다.
+
+`[사이드바 토글] [사이드바 경계] [유연] [에이전트 상태] [줌] [인스펙터 경계] [유연] [인스펙터 토글]`
 
 - 캔버스 도구는 상단 툴바에 넣지 않습니다. 도구 영역은 캔버스 하단 가운데 도구 막대(`ShellToolBarView`, 6.1)에 있으므로(2026-11-14 사용자 결정) provider는 가운데 항목을 내주지 않고, 상단 툴바에는 가운데 고정 항목(`centeredItemIdentifiers`)이 없습니다. provider 항목(줌)의 생성·snapshot 반영·palette 사본은 provider가 맡습니다.
 - 하단 도구 막대에는 창 도구 모델(`ShellWindowToolsModelStub`)의 캔버스 도구 10개를 그립니다. `ShellProjectWindow`가 도구 목록과 현재 도구를 `ShellProjectFrameDataSource.setTools`로 셸 프레임 snapshot(`tools`, `activeToolID`, 명령 ID는 `tool.move` 같은 셸 명령 ID)에 보내고, 막대에서 고른 도구(`selectTool`)는 router로 창 도구 모델에 보냅니다. 선택 표시는 창 도구 모델 snapshot이 돌아올 때 바뀌고, 막대 활성 상태는 셸 프레임 상태(ready)로 정해집니다.
@@ -301,9 +310,9 @@ AppDelegate ─ RuntimeHost(코어 runtime 1개)
 
 ### 14.4 메뉴 막대에 더한 항목(`ShellMainMenuInstaller`)
 
-- View: Show/Hide Sidebar·Inspector 묶음에 Show/Hide Panels(보조 패널), 다음 묶음에 Back·Forward(단축키 없음)
-- Edit ▸ Find: Search Project…(코어 검색이 없어 비활성)
-- File: Show in Finder(더 보기 동작과 같은 명령 ID)
+- View: Show/Hide Sidebar·Inspector 묶음에 Show/Hide Panels(보조 패널), 다음 묶음에 Back·Forward(단축키 없음). 보조 패널·Back·Forward 항목은 UX.1.1·UX.1.2에서 지웁니다
+- Edit ▸ Find: Search Project…(코어 검색이 없어 비활성). 영구 비활성이라 UX.1.2에서 지웁니다
+- File: Show in Finder(제목 문서 메뉴 동작과 같은 명령 ID)
 - 메뉴 전체의 key equivalent는 명령 하나에만 있습니다(통합 검사).
 
 ### 14.5 영역 data source(Stub)
@@ -312,7 +321,7 @@ AppDelegate ─ RuntimeHost(코어 runtime 1개)
 
 ### 14.6 통합 검사(`--shell-integration-check`)
 
-실제 코어 runtime과 임시 fixture 프로젝트로 `ShellAppCoordinator`를 화면 밖에서 구동합니다. 프로젝트 창은 검사 전용 autosave 이름(`ShellCheckAutosave`, 접두어 `StellarShellIntegrationCheck`·`StellarProjectOpenCheck`)으로 만들고 시작·끝에 그 기록을 지웁니다. 앱의 실제 창 기록(`StellarMainWindow`, split, 툴바 구성)을 읽거나 바꾸지 않는지도 검사 전후로 비교합니다. 실제 기록을 쓰면 사용자가 펼친 보조 패널 같은 저장 상태에 따라 검사 결과가 달라지기 때문입니다.
+실제 코어 runtime과 임시 fixture 프로젝트로 `ShellAppCoordinator`를 화면 밖에서 구동합니다. 프로젝트 창은 검사 전용 autosave 이름(`ShellCheckAutosave`, 접두어 `StellarShellIntegrationCheck`·`StellarProjectOpenCheck`)으로 만들고 시작·끝에 그 기록을 지웁니다. 앱의 실제 창 기록(`StellarMainWindow`, split, 툴바 구성)을 읽거나 바꾸지 않는지도 검사 전후로 비교합니다. 실제 기록을 쓰면 사용자가 펼친 pane 같은 저장 상태에 따라 검사 결과가 달라지기 때문입니다. 아래 목록의 보조 패널·검색·제한 모드 부제목 항목은 기준선 검사이며, 해당 UI를 바꾸는 행(UX.1.1·UX.1.2·UX.5.3)이 함께 고칩니다.
 
 - 메뉴: Open Project…·Settings… 활성(앱 수준 router target), New·Clone Project 비활성, 셸 프레임 항목 설치, key equivalent 중복 없음
 - 시작 창 표시 → 시작 창 Open Project → 진행 표시 → 같은 폴더 중복 요청 없음 → 펌프 timer 켜짐·완료 후 꺼짐 → 창 1개, 시작 창 닫힘, 코어 프로젝트 session 1개
@@ -326,10 +335,8 @@ AppDelegate ─ RuntimeHost(코어 runtime 1개)
 
 ### 14.7 화면 확인(2026-11-14, macOS 27.2, Debug 앱)
 
-아래 프로젝트 창 기록은 도구 막대를 캔버스 하단으로 옮기기 전 구조(캔버스 도구 그룹이 상단 툴바 가운데)에서 본 것입니다.
+도구 막대를 캔버스 하단으로 옮기기 전 구조(캔버스 도구 그룹이 상단 툴바 가운데, 이전 앱 이름, Pen 포함 도구 11개)에서 본 프로젝트 창 기록은 지금 배치와 맞지 않아 지웠습니다(2026-11-15, UX.0.2). 지금 배치의 화면 확인은 UX.1 행에서 다시 합니다.
 
-- 프로젝트 창(`open -n -a StellarMac.app <fixture>`, 1200 × 760pt): 왼쪽 사이드바(필터 필드, Pages·Layers 머리글, "No View Selected" 빈 상태), 툴바 제목 "Sample Design Project"와 부제목 "Restricted Mode", 가운데 캔버스 도구 그룹 11개(Move 선택), 검색 버튼과 overflow 버튼(»; 줌·더 보기·뒤로·앞으로는 보이지 않음), 오른쪽 인스펙터 "No Selection", 인스펙터 토글. 캔버스는 빈 영역(렌더러 미연결, XII.4.1).
-- 같은 프로젝트 창을 저장된 프레임 1440 × 900pt로 다시 띄운 화면(키 창): overflow 없이 뒤로·앞으로(비활성), 제목·부제목, 캔버스 도구 그룹, 줌 "100%"(비활성, camera 미연결), 검색, 더 보기(…), 인스펙터 토글이 모두 보였습니다.
 - 시작 창(인자 없이 실행): 앱 아이콘, "Stellar", Version, New Project…·Open Project…·Clone Project… 버튼, "No Recent Projects".
 - 실행 기록: 셸(백그라운드 프로세스)에서 띄운 실행 일부에서 창이 만들어졌는데도 창 목록에 현재 화면 창으로 나오지 않았습니다(시작 창 1회, 프로젝트 창 1회. 프로젝트 창은 창 번호로는 캡처됐음). 다시 실행하면 표시된 경우도 있어 실행 환경(Space·활성화 양보)에 따른 것으로 보이나, 원인은 확인하지 못했습니다. Finder에서 실행하는 경로는 확인하지 않았습니다.
 

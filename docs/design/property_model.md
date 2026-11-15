@@ -6,7 +6,8 @@
   문법, 정규 텍스트 형식, 인스펙터 범주, Stellar 고유로 남는 부분
 - 구현: 계획 IX.11(CSS 기반 속성 체계)
 - 상위 기준: `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`(이하 "아키텍처"), ADR-0024,
-  `docs/design/ui/inspector.md`(이하 "인스펙터 명세"), `docs/design/macos-shell-design.md`(이하 "가이드")
+  `docs/design/ui/inspector.md`(이하 "인스펙터 명세"), `docs/design/macos-shell-design.md`(이하 "가이드"),
+  `docs/design/ux/stellar-ux-spec.md`(이하 "UX 명세") 6장
 
 근거 표기는 가이드 0.1절을 따릅니다. `[아키텍처 §n]`, `[ADR-000n]`, `[계획 ID]` 외에 `[CSS <명세>]`는
 W3C CSS 명세의 해당 모듈입니다(예: `[CSS Flexbox]`, `[CSS Grid]`, `[CSS Color 4]`). 코드 근거는
@@ -523,22 +524,32 @@ CSS custom property 상속은 트리 아래로 값을 공급하는 메커니즘�
 | Overflow | `overflow`, `clip-path` | Frame |
 | Typography | font longhand, `line-height`, `letter-spacing`, `text-align`, `white-space`, `color` | Text |
 | Background | `background-color` | Frame |
+| Fill·Stroke | `fill`, `stroke`, `stroke-width`(Fill·Stroke modifier, 9장) | Shape, Path |
 | Border | `border-*`, `border-*-radius` | Frame, Rectangle |
 | Transform | `translate`, `rotate`, `scale`, `transform`, `transform-origin`(migration된 노드의 회전·배율은 `transform` 행렬에서 계산한 표시 전용 값, 5장) | Frame |
-| Effects | modifier stack(9장) | 그래픽 노드 |
-| 종류별 | Shape geometry, Path, Image, Component Property·Slot | 해당 종류 |
+| Effects | `opacity`, `box-shadow`·`drop-shadow()`, `filter`, `mix-blend-mode`. 그 아래 "Stellar 전용" 묶음에 CSS 대응이 없는 modifier(Boolean·StrokeExpand·Corner 등, 9장) | 그래픽 노드 |
+| 종류별 | Shape geometry(Polygon 변 수, Line 끝점), Path, Image(`object-fit` 등), Component Property·Slot | 해당 종류 |
 
 편집 관례는 전문 UI 디자인 도구 사용자가 기대하는 동작을 참고합니다. 화면과 문구는 Stellar 고유로
 만듭니다.
 
-- sizing은 preset(4.3절)으로 바꾸고, preset으로 표현되지 않으면 Custom으로 보여 줍니다.
+- 노드 종류에 맞는 섹션만 보이고, 행은 코어가 받는 PropertyKey가 있는 longhand만 보입니다. 섹션 접힘 상태는
+  노드 종류별로 기억합니다. 칠하기와 선(`fill`·`stroke`)은 modifier를 추가하는 단계 없이 늘 있는 행입니다.
+  [UX 명세 6.2]
+- sizing은 preset(4.3절)으로 바꾸고, preset으로 표현되지 않으면 Custom으로 보여 줍니다. 화면에서 preset 선택지는
+  CSS 값 자체(`320px`, `fit-content`, `auto`, `100%`)로 보이고, 옆에 실제로 설정한 longhand를 흐리게 보여
+  줍니다(ADR-0024 결정 7). 4.3절의 Fixed·Percentage·HugContent·Fill은 코드 `SizingMode` 값 이름이며 화면
+  문구로 쓰지 않습니다. [UX 명세 6.4]
 - Flex 정렬은 `justify-content`와 `align-items`를 함께 바꾸는 3×3 위치 컨트롤로 편집할 수 있습니다.
   분배(`space-*`)를 고르면 main 축 위치 선택은 비활성이 됩니다.
 - 4변·4모서리 값은 묶어서(shorthand) 또는 풀어서(longhand) 편집합니다.
 - 수치 필드는 CSS 값 문법을 받습니다. 단위를 붙여 입력할 수 있고(`1.5turn` → `540deg`), 오류는 행
   진단으로 보여 줍니다(IX.11.14).
-- 행 레이블은 사람이 읽는 이름을 쓰고, CSS longhand 이름은 툴팁·접근성 도움말·복사 결과로 보여
-  줍니다. 레이블에 CSS 이름을 직접 쓸지는 15장 O9입니다.
+- 행 레이블은 CSS 속성 이름입니다(15장 O9 닫음). 소문자 CSS 이름(`width`, `background-color`)을 시스템
+  글꼴로 쓰고 고정폭 글꼴은 쓰지 않습니다. longhand가 여럿인 값은 shorthand 이름 한 행(`padding`,
+  `border-radius`, `border`)으로 묶고, 펼치면 longhand 행이 됩니다. 값 필드 안의 작은 위치 글리프로 변·모서리를
+  구분합니다. 툴팁에는 쉬운 설명("요소의 가로 크기"), longhand 이름, Target 진단을 둡니다. "CSS 이름으로 보기"
+  같은 전환 토글은 두지 않습니다. [UX 명세 6.3]
 - 캔버스의 padding·gap 직접 조작 핸들은 같은 longhand를 편집합니다. 캔버스 상호작용 세부는 캔버스
   편집 UX 문서가 정합니다.
 
@@ -585,7 +596,7 @@ CSS custom property 상속은 트리 아래로 값을 공급하는 메커니즘�
 | O6 | FrameBounds clip의 기준 box와 radius 반영 | 결정됨: border box와 바깥 radius(scene 코드 확인, 5장 `clipping` 행). IX.11.2가 registry에 기록 |
 | O7 | Shadow·Blur 반경과 CSS 표준편차 변환식 | XI.10.4 |
 | O8 | `text-decoration`·`text-transform`·`text-indent`·`text-overflow`·줄 수 제한 | Typography 확장 WBS |
-| O9 | 인스펙터 행 레이블에 CSS 이름을 직접 쓸지 | IX.11.17 |
+| O9 | 인스펙터 행 레이블에 CSS 이름을 직접 쓸지 | 결정됨(2026-11-15, UX 명세 결정 U3): CSS 속성 이름, 시스템 글꼴, shorthand 묶음 행과 펼침(12장). 구현은 IX.11.17·UX.2.5 |
 | O10 | Web Target Profile의 CSS 기준선(어떤 CSS 기능을 `native`로 볼지) | IX.10.2, IX.11.19 |
 | O11 | `grid-template-areas`, `repeat()`, `auto`·`fit-content()` track. `minmax()` 최솟값 `auto`는 IX.11.5가 다룹니다 | Grid 확장 WBS |
 | O12 | Text·Path의 merge 단위. Path command·point 목록은 CSS longhand가 아니므로(6장 `stellar-only`) ADR-0024 결정 4의 대상이 아니고 payload 전체(`PATH_DATA`)를 유지합니다. Text의 style 속성은 IX.11.11이 style 표 저장 형식과 longhand key를 정한 때부터 longhand 단위로 merge하고, 그 전까지는 `TEXT_PAYLOAD` 전체가 단위입니다. content의 텍스트 단위 merge는 XIV 규칙을 따릅니다 | IX.11.3, IX.11.11 |

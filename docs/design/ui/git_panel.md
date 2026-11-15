@@ -2,8 +2,9 @@
 
 - 정상 앱의 프로젝트 창은 신뢰 확인·승인·철회만 코어에 연결합니다. 변경 목록·Stage·Unstage·HEAD 표시는 코어 Git 패널 API(XIV.13.1·XIV.13.2) 연결 뒤 구현합니다.
 - 계획 XIV.13.5의 패널 UI 명세입니다. 정상 앱에서 Commit·Push와 나머지 코어 명령의 연결은 후속 범위입니다(11장).
+- 위치: 왼쪽 사이드바의 "변경" 탭(2장, UX 명세 8장). 2026-11-15 UX 명세 반영.
 - 코드: `apps/macos/Stellar/UI/Git/`
-- 기준: `docs/design/macos-shell-design.md`(이하 "가이드"), `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`(이하 "아키텍처"), Apple HIG.
+- 기준: `docs/design/macos-shell-design.md`(이하 "가이드"), `docs/design/ux/stellar-ux-spec.md`(이하 "UX 명세"), `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`(이하 "아키텍처"), Apple HIG. `UX.n.m`은 `docs/design/ux/ux-wbs-rows.md`의 행입니다.
 
 ## 1. 범위
 
@@ -12,20 +13,33 @@
 | 포함 | 근거 |
 |---|---|
 | Status, Semantic Diff(문서 → 객체 → 변경 묶음 목록과 변경 상세) | 아키텍처 §26.1, §26.2 |
-| 객체·속성 단위 Stage·Unstage(체크박스) | 아키텍처 §26.3 |
+| Stage·Unstage("커밋에 포함" 체크박스, 단계는 아래) | 아키텍처 §26.3 |
 | Commit(`NSTextView` 메시지) | 아키텍처 §11.2, 계획 XIV.8 |
 | Push(이미 등록된 remote, 강제 Push 없음) | 아키텍처 §25.3, 계획 XIV.9.5 |
 | Semantic Conflict 해결(항목별 Base·Ours·Theirs) | 아키텍처 §27.1, §27.2, 계획 XIV.12 |
 
-넣지 않은 것: Branch·Switch, Fetch·Pull, Merge·Rebase, Stash, Worktree 관리, Remote 관리, 강제 Push. 명령 enum(`GitPanelCommand`)에도 해당 case가 없습니다. merge·rebase continue와 commit 자동 실행도 하지 않습니다. [아키텍처 §24.4, §27.2] [계획 XIV.12.5, XIV.13.7]
+넣지 않은 것: Branch·Switch, Fetch·Pull, Merge·Rebase, Stash, Worktree 관리, Remote 관리, 강제 Push. 명령 enum(`GitPanelCommand`)에도 해당 case가 없습니다. merge·rebase continue와 commit 자동 실행도 하지 않습니다. 브랜치 계열을 당길지는 커밋 고리(UX.5) 뒤 다시 검토합니다. [아키텍처 §24.4, §27.2] [계획 XIV.12.5, XIV.13.7] [결정 U18]
+
+Stage는 단계적으로 엽니다. "커밋에 포함" 체크의 원본은 Git index이고, 터미널 `git status`와 늘 같아야 합니다. [아키텍처 §26.3] [UX 명세 2장 P7, 8.3]
+
+| 단계 | 여는 것 | 전제 |
+|---|---|---|
+| 1 | 원본(파일) 단위 포함: 컴포넌트 YAML 파일, View 원본 파일 묶음. View 원본이 generation(`design/current`, `design/objects/`)인 동안 View는 묶음 하나로만 포함하고, 그 사실을 행 보조 문구에 적습니다 | XIV.13.1·XIV.13.2(상태·Stage FFI), 실제 HEAD·identity 읽기(UX.5.1, UX.5.4) |
+| 2 | 객체·속성 단위 포함, 일부 포함 배지, 레이어·속성 행 변경 표시 | §26.3 텍스트 원본의 의미 Stage, V.10.7(View 원본의 텍스트 전환), UX.6.6 |
+
+- 아래 3장 이하의 객체·속성 단위 체크 동작은 2단계의 목표 동작입니다. 1단계에서는 원본 행의 체크만 엽니다.
 
 ## 2. 위치
 
-- 패널은 독립 `NSViewController`(`GitPanelViewController`)입니다. 사이드바 구획과 인스펙터 탭 중 어디에 둘지는 열린 결정 O4이므로 둘 다 넣을 수 있게 만들었습니다. 새 창 계층을 만들지 않습니다. [가이드 2.3, 6.4, 11장 O4]
+- 패널은 왼쪽 사이드바의 "변경" 탭입니다(가이드 O4 닫음). 인스펙터 탭으로 두지 않습니다. 변경을 검토하는 동안 변경 목록(왼쪽), 캔버스 변경 윤곽(가운데), 속성의 HEAD 값(오른쪽)을 동시에 보기 위해서입니다. 새 창 계층을 만들지 않습니다. [가이드 2.3, 6.4] [결정 U1] [UX 명세 3.1]
+- 패널은 독립 `NSViewController`(`GitPanelViewController`)로 유지하고 사이드바 탭에 붙입니다(UX.5.2). 기준선 `02397601`에서는 캔버스 아래 보조 패널의 탭에 있고, 보조 패널은 UX.1.1에서 지웁니다.
+- 변경 탭을 열면 캔버스 변경 윤곽이 켜지고 닫으면 꺼집니다(View 메뉴 "변경 윤곽 늘 보기"로 유지, UX.6.4). 탭 배지는 바뀐 객체 수와 충돌 글리프입니다(UX.5.2). [결정 U15] [UX 명세 3.4, 8.2]
 - 루트 뷰는 safe area 안에 배치해 full-size content 창의 툴바 아래로 들어가지 않습니다. [가이드 2.1]
-- 검증한 기본 크기는 폭 320pt, 높이 760pt입니다(일반 사이드바·인스펙터 폭 가정).
+- 검증한 기본 크기는 폭 320pt, 높이 760pt입니다. 사이드바 기본 너비 320pt에 그대로 들어갑니다. [UX 명세 3.2]
 
 ## 3. 화면 구성
+
+사이드바 탭에서는 핵심 동작을 탭 위쪽에 둡니다(사이드바 아래쪽에 핵심 동작을 두지 않음). 목표 순서는 머리 줄(브랜치, 보낼 커밋 수, 보낼 커밋이 있을 때만 [Push], 새로 고침) → 결과 머리 줄(커밋함 `a1b2c3d`, 외부 변경 반영 N개, 실패 이유) → 커밋 메시지와 [커밋] 버튼, identity가 없으면 그 위 이름·이메일 inline 줄 → 충돌 구획(있을 때만) → 변경 목록(원본 → 객체 → 속성, 기본으로 객체 행까지 펼침, "마지막 커밋 대비")입니다. Changes·Conflicts 화면 전환과 빈 Conflicts 화면은 두지 않습니다. 이 배치로 바꾸는 일은 UX.5.2·UX.5.5·UX.5.6이고, 아래 번호 목록은 기준선 구현의 구성입니다. [가이드 6.2, 6.4] [UX 명세 8.1]
 
 위에서 아래로 다음 순서입니다. 숨긴 요소는 `isHidden`으로 감춰 접근성 트리에서도 빠집니다.
 
@@ -52,16 +66,16 @@
 | 로딩 | 첫 `.status` 이벤트 전 | 목록 자리에 시스템 진행 표시 + "Loading Git status…", 머리 줄 "Loading…" |
 | 빈 상태(변경 없음) | `availability == .ready`, 변경 행 0 | 아이콘 + "No Changes" + 설명 + "Refresh Status" 버튼 [가이드 7.1] |
 | conflict 없음 | conflict 행 0 | "No Conflicts" + 설명 + "Refresh Status" |
-| 제한 모드 | `.restricted` | 목록 자리에 이유와 "Trust Project…" 버튼(host 동작). Commit·Push·적용 비활성. 브랜치는 `.unknown`이면 "Source Control"로 표시 [아키텍처 §24.3] [가이드 6.4] |
+| 제한 모드 | `.restricted` | 탭 전체가 설명 한 줄과 [프로젝트 신뢰…] 버튼(host 동작)으로 바뀜: "이 폴더에서 Git·hook·터미널·에이전트 실행이 꺼져 있습니다. 편집과 저장은 그대로 됩니다."(UX.5.7). Commit·Push·적용 비활성. 브랜치는 `.unknown`이면 "Source Control"로 표시 [아키텍처 §24.3] [가이드 6.4] [D1] [UX 명세 8.7] |
 | Git 없음 | `.gitMissing` | 이유와 "Show Git Installation Help…"(host 동작). 자동 설치 없음 [아키텍처 §24.1] |
 | 저장소 아님 | `.notRepository` | 이유만 표시(다음 동작은 프로젝트 흐름 WBS의 몫) |
 | semantic status 오류 | `semanticStatusError != nil` | 경고 배너 + "Refresh Status". raw 변경 행은 목록에 계속 표시 [계획 XIV.4.5] |
-| 저장 대기 편집 | `pendingAutosave` | 배너 "Some edits aren't saved yet…" + "Save Now" / "Use Saved Version". 자동 저장하지 않음 [계획 XIV.2.8] |
+| 저장 대기 편집 | `pendingAutosave` | 기준선: 배너 "Some edits aren't saved yet…" + "Save Now" / "Use Saved Version", 자동 저장하지 않음 [계획 XIV.2.8]. 목표: 배너 없이 커밋 직전에 대기 중인 자동 저장을 flush하고 상태를 다시 검증한 뒤 커밋(UX.5.5). 계획 XIV.2.8 문구와 맞추는 개정이 필요합니다 [UX 명세 8.4] |
 | 작업 진행 | `.operationProgress` 수신 ~ `.operationFinished` | 진행 배너(시스템 진행 표시 + 문구, 취소 가능하면 "Cancel"). 목록 조작과 Commit·Push·적용 비활성. Commit·Push·해결 적용·저장의 시작은 VoiceOver에 알림(보통 우선순위), 짧은 Stage·Unstage·새로고침은 알리지 않음 |
 | 실패 | `.operationFinished(.failed)` | 오류 배너(빨간 아이콘 + Git 결과 요약 + "Dismiss"). 아이콘 모양과 문구로도 전달 [가이드 4.2]. 같은 문구를 VoiceOver에 높은 우선순위로 알림 |
 | 사용자 동작 거부 | 사용자가 시작한 Commit·Push·해결 적용·필수 동반 변경 포함·저장 대기 선택(Save Now, Use Saved Version)의 `.commandRejected` | 실패와 같은 오류 배너에 "실행하지 않았다"는 문장과 이유 문장(다른 작업 진행 중, 그 사이 저장소가 바뀜, Git 사용 불가). 같은 문구를 VoiceOver에 높은 우선순위로 알림. 새 작업 결과가 오거나 "Dismiss"하면 사라짐. 미리 보여 준 값만 되돌리면 되는 거부(Stage 체크박스, 해결 선택, 페이지·상세 요청)와 취소 응답의 거부는 알리지 않음 |
 | 성공 | Commit·Push·해결 적용 성공 | 결과 배너 + "Dismiss", 같은 문구를 VoiceOver에 알림. Stage·Unstage 성공은 목록 변화로 충분하므로 배너·알림 없음 |
-| 필수 동반 변경 | `.dependencyPrompt` | 창이 보이면 `NSAlert` sheet, 아니면 배너. "Include N Related Changes" / "Cancel". 자동 포함 없음 [계획 XIV.5.3, XIV.7.2] [가이드 5.1] |
+| 필수 동반 변경 | `.dependencyPrompt` | 해당 행 아래 inline 확인 줄: "관련 변경 N개도 포함해야 합니다: 이유 · [함께 포함] [취소]". `NSAlert` sheet·배너를 쓰지 않습니다(기준선의 sheet·배너는 UX.5.4에서 바꿈). 자동 포함 없음 [계획 XIV.5.3, XIV.7.2] [가이드 6.4] [UX 명세 4장 흐름 4, 8.3] |
 
 ## 5. 상호작용
 
@@ -103,7 +117,7 @@
 - 버튼에서 실제로 멈추는지는 시스템 "키보드 탐색"(Full Keyboard Access) 설정을 따릅니다. 켜면 위 모든 컨트롤에 닿습니다.
 - 패널을 셸 창이 아닌 다른 창에 넣을 때도 그 창에 `autorecalculatesKeyViewLoop`를 켭니다. 배너 버튼처럼 나중에 계층에 들어오는 컨트롤이 고리에 들어가려면 필요합니다.
 - 목록 행 안 체크박스는 Tab 순서에 넣지 않습니다. 키보드는 Space·문맥 메뉴, VoiceOver는 행 custom action으로 같은 동작에 닿습니다.
-- Commit·Push·Apply는 통합 시 메뉴 막대 명령으로도 등록해야 합니다(11장). [가이드 6.1, 8.1]
+- Commit·Push·Apply는 메뉴 막대 Git 메뉴(변경 보기, 커밋, Push, 다음 충돌로 이동, 상태 새로 고침, 프로젝트 신뢰…)에도 둡니다(UX.5.8, 11장). [가이드 6.1, 8.1] [결정 U16]
 
 ## 7. 접근성과 외형
 
@@ -188,8 +202,9 @@ Stub: `GitPanelStubDataSource`(메인 스레드 adapter) + `GitStubBackend`(백�
 
 - FFI: status·change page(XIV.13.1), stage·unstage + 진행·결과 이벤트(XIV.13.2), commit·push(XIV.13.3), conflict·resolution(XIV.13.4). 이 패널의 `GitPanelDataSource`를 FFI adapter로 구현하고 Stub을 교체합니다.
 - 셸 runtime 이벤트 펌프: `stellar_runtime_poll_event`를 메인 런 루프에서 읽어 `onEventsAvailable`을 호출하는 경로.
-- 배치: 사이드바 구획 또는 인스펙터 탭(O4), 창 session과 연결(XII.2.2).
-- 메뉴 막대 명령(Commit, Push, Refresh, Apply Resolutions)과 command ID 공유(XII.6.5). 툴바에는 Branch·Pull·Fetch를 두지 않습니다(가이드 6.1).
+- 배치: 왼쪽 사이드바 변경 탭(O4 닫음, UX.5.2), 창 session과 연결(XII.2.2).
+- Git 메뉴 명령(변경 보기, 커밋, Push, 다음 충돌로 이동, 상태 새로 고침, 프로젝트 신뢰…)과 command ID 공유(XII.6.5, UX.5.8). 툴바에는 Git 동작을 두지 않습니다(가이드 6.1).
+- 실제 Git 상태: 기준선 `ShellGitDataSource`의 고정값(`head: .unknown`, `remotes: []`, `identityConfigured: false`)을 실제 HEAD·upstream·remote·identity로 바꿉니다(UX.5.1).
 - host 동작 화면: 신뢰 부여·철회 UI, Git identity 안내, Git 설치 안내(가이드 10.4 "전용 WBS 없음").
 - 캔버스 연결: `revealConflict`의 선택·카메라 이동과 Base·Ours·Theirs 캔버스 비교(아키텍처 §27.2).
 - GitHub 원격 연결(빈 저장소 URL 연결, 계획 XIV.9.2~XIV.9.4)은 이 패널 범위 밖입니다. Remote가 없으면 터미널을 안내합니다.
@@ -229,7 +244,8 @@ Stub: `GitPanelStubDataSource`(메인 스레드 adapter) + `GitStubBackend`(백�
 
 ## 13. 근거
 
-- 가이드: 1.2(원칙), 2.1·2.3(창·영역), 3.2(재질), 4.1\~4.4(글꼴·색·외형·간격), 5.1\~5.4(컨트롤·텍스트·AppKit 경계·아이콘), 6.1·6.4(툴바·Git 패널), 7.1\~7.2(빈 상태·흐름 안내), 8.1\~8.5(키보드·포커스·VoiceOver·접근성 설정·모션), 9장(성능), 11장 O4.
+- 가이드: 1.2(원칙), 2.1·2.3(창·영역), 3.2(재질), 4.1\~4.4(글꼴·색·외형·간격), 5.1\~5.4(컨트롤·텍스트·AppKit 경계·아이콘), 6.1·6.4·6.6(툴바·Git 패널·상태 표시), 7.1\~7.2(빈 상태·흐름 안내), 8.1\~8.5(키보드·포커스·VoiceOver·접근성 설정·모션), 9장(성능), 11장 O4(닫음).
+- UX 명세: 2장 P6·P7, 3.1·3.4, 4장 흐름 4, 8장.
 - 아키텍처: §6.3·§6.4(성능 계약), §8.1·§8.2(셸·코어 경계), §9.2(스레드), §11.2(UI 텍스트), §24.1\~§24.5(시스템 Git·신뢰·초기 UI·인증), §25.1·§25.3(identity·Push), §26(Status·Diff·Staging), §27.1\~§27.2(Merge·Conflict 해결 UI).
 - 계획: XIV.2.8, XIV.4.2, XIV.4.4, XIV.4.5, XIV.5.3, XIV.7.2, XIV.8.1\~XIV.8.5, XIV.9.1, XIV.9.5, XIV.9.6, XIV.11.4, XIV.12.1\~XIV.12.5, XIV.13.1\~XIV.13.5, XIV.13.7.
 - ADR-0009(FFI C ABI, pull 이벤트 큐).
