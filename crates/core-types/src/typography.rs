@@ -118,9 +118,8 @@ impl Default for Typography {
 const HEADER: &[u8; 5] = b"STTY\x01";
 const MAX_FAMILIES: usize = 64;
 const MAX_NAME_BYTES: usize = 4096;
-const MAX_AXES: usize = 64;
-// header+고정 longhand 및 family record(이름 길이·flag 5, face header 41, axis당 8).
-const MAX_RECORD_BYTES: usize = 64 + MAX_FAMILIES * (5 + MAX_NAME_BYTES + 41 + 8 * MAX_AXES);
+// header+고정 longhand 및 family record(이름 길이·flag 5, axis 없는 face 41).
+const MAX_RECORD_BYTES: usize = 64 + MAX_FAMILIES * (5 + MAX_NAME_BYTES + 41);
 
 fn scalar(reader: &mut ByteReader<'_>) -> Result<FiniteF32, TypographyError> {
     let raw = reader.take_array::<4>()?;
@@ -131,7 +130,10 @@ fn scalar(reader: &mut ByteReader<'_>) -> Result<FiniteF32, TypographyError> {
 }
 
 impl Typography {
-    /// 값과 길이 상한, empty/NUL family, canonical tag 규칙을 검증합니다.
+    /// 값과 길이 상한, empty/NUL family를 검증합니다.
+    ///
+    /// family의 고정 face는 파일 hash와 face index만 가리킵니다. variable axis 값은 font-weight·font-stretch와
+    /// run의 font-variation-settings가 정하므로, face 안에 variation을 넣은 record는 거부합니다.
     pub fn validate(&self) -> Result<(), TypographyError> {
         if self.families.len() > MAX_FAMILIES
             || !(1.0..=1000.0).contains(&self.weight.get())
@@ -144,7 +146,7 @@ impl Typography {
                     || f.name.contains('\0')
                     || f.face
                         .as_ref()
-                        .is_some_and(|face| face.variations().len() > MAX_AXES)
+                        .is_some_and(|face| !face.variations().is_empty())
             })
         {
             return Err(TypographyError);
@@ -241,7 +243,8 @@ impl Typography {
 
     /// 현재 버전의 canonical bytes만 해석합니다.
     pub fn decode(bytes: &[u8]) -> Result<Self, TypographyError> {
-        // 최대 크기를 먼저 검사해 face의 axis count도 bounded input에서만 읽습니다.
+        // 최대 크기를 먼저 검사해 face의 axis count도 bounded input에서만 읽습니다. axis가 있는 face는
+        // decode 뒤 validate가 거부합니다.
         if bytes.len() > MAX_RECORD_BYTES {
             return Err(TypographyError);
         }
@@ -373,5 +376,100 @@ mod tests {
         for len in 0..typed.as_bytes().len() {
             assert!(Typography::decode(&typed.as_bytes()[..len]).is_err());
         }
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn stty_v1_golden_bytes() {
+        // 저장 형식 계약입니다. 이 golden이 바뀌면 기존 Typography 값과 호환이 깨집니다.
+        assert_eq!(
+            hex(&Typography::default().encode().unwrap()),
+            "5354545901\
+             00000000\
+             00\
+             0000c843\
+             00\
+             0000c842\
+             00\
+             00"
+        );
+        assert_eq!(
+            TypographyValue::default().as_bytes(),
+            Typography::default().encode().unwrap().as_slice()
+        );
+        assert_eq!(
+            TypographyValue::default().record(),
+            Ok(Typography::default())
+        );
+        let record = Typography {
+            families: vec![Family {
+                name: "A".into(),
+                face: Some(FontFaceRef::new(
+                    FontSource::Project,
+                    FontFileHash::from_sha256_digest([4; 32]),
+                    2,
+                    vec![],
+                )),
+            }],
+            size: FontSize::Subpixels(1024),
+            weight: FiniteF32::new(700.).unwrap(),
+            style: FontStyle::Italic,
+            stretch_percent: FiniteF32::new(100.).unwrap(),
+            line_height: LineHeight::Number(FiniteF32::new(1.5).unwrap()),
+            letter_spacing: LetterSpacing::Px(FiniteF32::new(-0.5).unwrap()),
+        };
+        assert_eq!(
+            hex(&record.encode().unwrap()),
+            format!(
+                "5354545901\
+                 01000000 01000000 41 01 01{} 02000000 00000000\
+                 0100040000\
+                 00002f44\
+                 01\
+                 0000c842\
+                 010000c03f\
+                 01000000bf",
+                "04".repeat(32)
+            )
+            .replace(' ', "")
+        );
+    }
+
+    #[test]
+    fn pinned_face_with_variation_axes_is_rejected() {
+        let face = FontFaceRef::new(
+            FontSource::Project,
+            FontFileHash::from_sha256_digest([4; 32]),
+            0,
+            vec![crate::font::FontVariation {
+                tag: crate::font::OpenTypeTag::parse("wght").unwrap(),
+                value: FiniteF32::new(700.).unwrap(),
+            }],
+        );
+        let record = Typography {
+            families: vec![Family {
+                name: "Variable".into(),
+                face: Some(face),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(record.encode(), Err(TypographyError));
+        // 같은 bytes를 직접 만들어도 decode가 거부합니다.
+        let mut bytes = Typography::default().encode().unwrap();
+        let mut family = Vec::new();
+        family.extend(1u32.to_le_bytes());
+        family.extend(8u32.to_le_bytes());
+        family.extend(b"Variable");
+        family.push(1);
+        record.families[0]
+            .face
+            .as_ref()
+            .unwrap()
+            .encode_into(&mut family);
+        bytes.splice(5..9, family);
+        assert_eq!(Typography::decode(&bytes), Err(TypographyError));
     }
 }

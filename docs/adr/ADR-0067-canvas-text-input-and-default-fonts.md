@@ -50,6 +50,15 @@ Accepted (2026-11-15, Codex 작업 검토 묶음 B5)
   값입니다.
 - 소비자가 없던 `stellar_window_text_paint`(glyph마다 outline을 반복해 쓰는 형식)는 삭제합니다.
 
+### 3. Typography 기본값과 고정 face(core-types)
+
+- `TypographyValue::default()`는 빈 bytes가 아니라 CSS initial record입니다. 이전 기본값은 해석할 수 없어,
+  binding 안전값과 새 literal이 표시할 수 없는 값을 만들었습니다.
+  - binding 안전값 golden(`fallback_golden_corpus_v1.golden`)의 Typography 행이 이 값으로 바뀝니다.
+- Typography family의 고정 face에는 variation axis를 넣지 않습니다(ADR-0024에 규칙을 기록합니다).
+- `FontFaceRef`·`FontSource`·`FontFileHash`·`OpenTypeTag`의 형식 테스트는 정의가 있는 core-types로 옮깁니다.
+  `stellar-text`에는 다른 테스트가 쓰는 값 helper만 남깁니다.
+
 ## Alternatives
 
 - Document Font UI를 유지하고 face index 입력만 숨기기: 사용자가 정의하지 않은 UI이고, 라이선스 확인과 글꼴 asset
@@ -65,7 +74,9 @@ Accepted (2026-11-15, Codex 작업 검토 묶음 B5)
 
 - FFI: `stellar_window_set_document_font`를 제거합니다. 같은 저장소의 셸 외에 소비자가 없습니다.
 - command registry: 0x0051을 제거합니다. Codex 작업 중에만 쓰였고 배포된 journal이 없습니다.
-- 파일 포맷: 바꾸지 않습니다.
+- 파일 포맷: STTY v1 bytes는 바꾸지 않습니다. axis가 있는 고정 face는 이제 거부합니다. Codex 작업 중에만
+  만들 수 있었고 앱·CLI에는 그런 값을 만드는 경로가 없습니다.
+- binding 안전값: Typography 안전값이 빈 payload에서 CSS initial record로 바뀝니다.
 
 ## Performance
 

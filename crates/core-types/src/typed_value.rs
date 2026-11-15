@@ -59,8 +59,16 @@ impl EnumValue {
 }
 
 /// Typography type tag의 원본 bytes. 알 수 없는 기존 형식은 읽기와 저장 동안 그대로 유지합니다.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TypographyValue(Vec<u8>);
+
+/// 해석할 수 있는 CSS initial record(`Typography::default()`)입니다. 빈 bytes는 기본값이 아닙니다.
+impl Default for TypographyValue {
+    fn default() -> Self {
+        Self::from_record(&crate::typography::Typography::default())
+            .expect("CSS initial typography는 항상 유효합니다")
+    }
+}
 
 impl TypographyValue {
     /// 기존 또는 새 payload envelope의 원본 bytes.

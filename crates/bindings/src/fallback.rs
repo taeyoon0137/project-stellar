@@ -23,7 +23,7 @@
 //! | Color | sRGB (0, 0, 0, 0) 투명 |
 //! | Gradient | stop 없음 |
 //! | Shadow | offset 0·blur 0·투명 |
-//! | Typography | 빈 payload |
+//! | Typography | CSS initial record(`TypographyValue::default()`, ADR-0024) |
 //! | ResourceRef | NIL `StableId` |
 
 use std::collections::BTreeMap;

@@ -65,8 +65,8 @@ Accepted (소급, 2026-11-14). 이 ADR은 이미 구현된 결정을 소급 기�
 - 새 variant는 끝에 추가하고, 기존 tag는 재사용·변경하지 않습니다.
 - `from_bytes`는 입력 전체를 정확히 소비해야 하며 미지 tag·절단·비유한 float·비 UTF-8·비정상
   Boolean·trailing bytes를 구조화 오류로 거부합니다.
-- `Typography`는 tag 위치와 round-trip envelope만 고정한 불투명 placeholder입니다. 구조는
-  VI.7.2/X.8.1이 정합니다.
+- `Typography`의 내부 bytes는 ADR-0024 "Typography value v1"의 STTY record입니다. 해석할 수 없는 기존 blob은
+  원래 bytes를 보존합니다. 기본값은 CSS initial record입니다(ADR-0024, ADR-0067).
 
 그래픽 값:
 
@@ -122,4 +122,4 @@ Accepted (소급, 2026-11-14). 이 ADR은 이미 구현된 결정을 소급 기�
 ## Migration
 
 - 이미 구현된 상태를 기록하므로 데이터 마이그레이션은 없습니다.
-- `Typography` placeholder를 정식 구조로 바꿀 때 tag `0x0C`는 유지합니다(III.3.5).
+- `Typography`를 STTY v1 구조로 정할 때 tag `0x0C`와 외부 envelope는 유지했습니다(III.3.5, ADR-0024).

@@ -283,6 +283,12 @@ FontFaceRef는 X.8.1의 canonical bytes를 공유합니다. 이름마다 길이(
 normal line-height와 inline box별 CSS half-leading, normal letter-spacing과 명시적 0을 구분합니다.
 읽을 수 없는 버전·기존 blob은 원래 bytes를 갖고 `typography-unrecognized`를 반환합니다.
 
+- 고정 FontFaceRef는 파일 hash와 face index만 가리키고 variation axis를 담지 않습니다. axis 값은 font-weight·
+  font-stretch와 run의 font-variation-settings가 정하므로, axis가 있는 face는 encode와 decode가 모두 거부합니다.
+- `TypographyValue`의 기본값은 해석할 수 있는 CSS initial record(`Typography::default()`의 STTY bytes)입니다.
+  binding 안전값(VIII.8.3)과 새 literal도 이 값을 씁니다. 빈 bytes는 해석할 수 없는 값이라 기본값으로 쓰지 않습니다.
+- STTY v1 bytes는 `crates/core-types/src/typography.rs`의 golden 테스트로 고정합니다.
+
 ### 문서 스타일 표와 이전 generation
 
 스타일 표가 있는 문서는 DocumentManifest pointer schema 2를 사용합니다. 문서 정의 뒤에
