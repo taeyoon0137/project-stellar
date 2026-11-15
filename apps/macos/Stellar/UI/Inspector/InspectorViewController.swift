@@ -17,6 +17,10 @@ final class InspectorViewController: NSViewController {
     private let body = NSStackView()
     private var rowViews: [String: InspectorRowView] = [:]
     private var sectionViews: [InspectorSectionKind: InspectorSectionView] = [:]
+    /// 펼친 묶음 행(shorthand) 이름. 창 안에서만 기억합니다.
+    private var expandedGroups: Set<String> = []
+    /// 묶음 행 이름 → 그 longhand 행.
+    private var groupMembers: [String: [InspectorRowView]] = [:]
     private var appliedStructure: [String] = []
     private(set) var appliedSnapshot = InspectorSnapshot.empty
 
@@ -94,6 +98,16 @@ final class InspectorViewController: NSViewController {
         // 섹션은 코어 행의 섹션 순서(속성 모델 12장)대로, 행이 하나라도 있는 섹션만 둡니다.
         let classes = snapshot.classes
         let collapsed = InspectorCollapseMemory.collapsed(for: classes)
+        groupMembers.removeAll()
+        // 레이블 열은 가장 긴 CSS 이름에 맞춥니다(잘리지 않게, 패널 폭의 60% 상한).
+        let attributes: [NSAttributedString.Key: Any] = [.font: InspectorFonts.label]
+        let longest = snapshot.rows.map {
+            ceil(($0.name as NSString).size(withAttributes: attributes).width) + ($0.flags.contains(.longhand) ? 12 : 0)
+                + ($0.flags.contains(.group) ? 18 : 0)
+        }.max() ?? 0
+        let available = max(view.bounds.width - 2 * InspectorMetrics.panelInset, 260)
+        let labelWidth = min(max(longest + 4, 70), available * 0.6)
+        var currentGroup: String?
         for row in snapshot.rows {
             let section = sectionViews[row.section] ?? {
                 let view = InspectorSectionView(kind: row.section, collapsed: collapsed.contains(row.section))
@@ -103,13 +117,29 @@ final class InspectorViewController: NSViewController {
                 view.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
                 return view
             }()
-            let rowView = InspectorRowView(row: row)
+            let rowView = InspectorRowView(row: row, labelWidth: labelWidth, expanded: expandedGroups.contains(row.name))
             rowView.onEdit = { [weak self] name, input, phase, completion in
                 self?.dataSource.edit(name, input, phase: phase, completion: completion)
+            }
+            if row.flags.contains(.group) {
+                currentGroup = row.name
+                let name = row.name
+                rowView.onToggleGroup = { [weak self] expanded in self?.setGroup(name, expanded: expanded) }
+            } else if row.flags.contains(.longhand), let group = currentGroup {
+                groupMembers[group, default: []].append(rowView)
+                rowView.isHidden = !expandedGroups.contains(group)
+            } else {
+                currentGroup = nil
             }
             rowViews[row.name] = rowView
             section.add(rowView)
         }
+    }
+
+    /// 묶음 행을 펼치면 longhand 행이 보입니다(UX 명세 6.3).
+    private func setGroup(_ name: String, expanded: Bool) {
+        if expanded { expandedGroups.insert(name) } else { expandedGroups.remove(name) }
+        for member in groupMembers[name] ?? [] { member.isHidden = !expanded }
     }
 
     private func rememberCollapse(for classes: InspectorNodeClasses) {
