@@ -25,7 +25,7 @@
 - 캔버스 아래 보조 패널은 두지 않습니다. 기준선의 가운데 세로 `NSSplitViewController`(콘텐츠 / 보조 패널)와 그 토글은 UX.1.1에서 지웁니다. Git 패널은 사이드바 변경 탭(UX.5.2), 에이전트 패널은 오른쪽 에이전트 탭(UX.10.3)으로 갑니다. [가이드 2.4] [결정 U1]
 - 사이드바·인스펙터 슬롯 안의 탭은 기능이 연결된 탭만 만들고, 탭이 하나뿐이면 탭 줄을 그리지 않습니다. 앱이 패널을 자동으로 열거나 숨기거나 탭을 바꾸지 않습니다. [가이드 2.3] [UX 명세 3.2, 3.4]
 - 캔버스: 기존 `CanvasView`(II.5.4)를 수정 없이 생성해 감쌉니다(`ShellCanvasHostViewController`). drawable 크기 전달은 `CanvasView`의 기존 경로가 맡습니다. [가이드 2.3, 9장]
-- 캔버스는 사이드바·인스펙터 아래로 확장하기로 했습니다(O2 닫음). 확장을 켜는 구현 행에서 drawable·hit test·렌더 비용을 측정해 계약 안일 때만 켜고, 그 전까지는 safe area 안에 `automaticallyAdjustsSafeAreaInsets = false`로 두어 겹치지 않게 합니다. [가이드 2.3] [아키텍처 §6.2] [결정 U2]
+- 캔버스는 사이드바·인스펙터 아래로 확장하는 방향으로 정했습니다(O2는 측정 뒤 닫음). UX.3.10에서 drawable·hit test·렌더 비용을 Release로 측정해 계약 안일 때만 켜고, 그 전까지는 safe area 안에 `automaticallyAdjustsSafeAreaInsets = false`로 두어 겹치지 않게 합니다. [가이드 2.3] [아키텍처 §6.2] [결정 U2]
 - 툴바 스타일은 `.automatic`에서 시작합니다(이 창 구성에서는 통합 툴바로 표시됨). unified와 unified compact 중 선택은 열린 결정 O1입니다. [가이드 2.1]
 
 ## 2. 파일
@@ -256,7 +256,7 @@ struct ShellFrameSlots {
 - 선택 속성과 에이전트 세션을 연결하면 해당 영역의 `ShellAreaDataStubs`를 교체합니다. 사이드바의 활성 문서 트리와 Git 변경 목록은 창별 코어 데이터를 사용합니다. 보조 패널은 두지 않고(가이드 2.4, 결정 U1), Git은 사이드바 변경 탭, 에이전트는 오른쪽 에이전트 탭입니다.
 - 다중 창(XII.2.4)에서 창별 `ShellWindowConfiguration` 이름 규칙을 정합니다. 지금은 모든 프로젝트 창이 `.standard` 이름을 써서 둘째 창부터 frame autosave가 걸리지 않고 split autosave는 서로 덮어씁니다.
 - 모든 프로젝트 창의 캔버스(`CanvasView`)가 앱의 코어 runtime handle 하나를 함께 씁니다. 코어에 창별 session·view state가 없어 창마다 보내는 drawable 크기(`stellar_runtime_set_drawable_size`)와 입력(`stellar_runtime_submit_mac_event`)이 같은 runtime으로 가므로, 프로젝트 창이 둘 이상이면 마지막으로 보낸 창의 drawable 크기가 남습니다. 코어 `ProjectWindowSession`·창별 view state가 생기면 캔버스 호스트가 창 session으로 보내도록 바꿉니다. [계획 XII.2.1, XII.2.5]
-- 툴바 스타일(O1)과 배치 수치 확정(가이드 12장)을 XII.9.1에서 정합니다. 캔버스 확장(O2)은 확장으로 정했고, 켜는 행에서 측정해 적용합니다(1장).
+- 툴바 스타일(O1)과 배치 수치 확정(가이드 12장)을 XII.9.1에서 정합니다. 캔버스 확장(O2)은 확장 방향으로 정했고, UX.3.10에서 측정해 계약 안일 때 적용합니다(1장).
 - UI 문자열 현지화 표(String Catalog)는 아직 없습니다. 셸 프레임 문자열은 `ShellFrameStrings`에서 `String(localized:)`로 만들고, "Show/Hide \<pane>" 같은 상태 제목은 이어 붙이지 않고 형식 문자열 하나로 만듭니다. Stub 데이터 문자열은 코어가 줄 값의 표본이라 현지화 대상이 아닙니다.
 - 실제 창에서 Liquid Glass 재질, 키 창 강조, 대비 높이기·투명도 줄이기 조합을 눈으로 확인하는 작업은 XII.9.4 적합성 보고서에서 합니다.
 

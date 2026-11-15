@@ -87,7 +87,7 @@ Stellar macOS 셸이 운영체제 기본 구성요소 위에서 일관된 모습
 - 캔버스는 항상 남는 공간을 모두 차지합니다. 패널 폭 변경은 캔버스 폭만 바꾸며, 바뀐 drawable 크기는 기존 CanvasHost 경로로 코어에 전달합니다. [HIG Split views] [계획 II.5.4, XII.4.1]
 - 분할선은 얇은 스타일을 우선합니다. 각 pane에는 분할선이 사라지지 않도록 최소·최대 폭을 두고, 허용 범위는 코드 한곳에서 정의합니다. 값은 구현 작업에서 정합니다. [HIG Split views]
 - 사이드바와 인스펙터 표시 전환은 View 메뉴 항목(현재 상태를 반영한 제목), 표준 단축키, 툴바 버튼 세 경로를 모두 제공하고 같은 명령 하나로 연결합니다. 숨긴 pane은 캔버스에 공간을 돌려줍니다. [HIG Sidebars, HIG The menu bar]
-- 캔버스 영역은 사이드바·인스펙터 아래까지 확장합니다(`automaticallyAdjustsSafeAreaInsets`, 배경 확장 뷰 `NSBackgroundExtensionView`, 열린 결정 O2 닫음). 블러 상단 바·떠 있는 도구 막대와 시각 언어가 같고, 패널을 여닫아도 캔버스 내용이 밀리지 않기 때문입니다. 다만 겹치면 drawable 크기, hit test 영역, 렌더 비용 계산이 달라지므로, 확장을 켜는 구현 행에서 측정해 성능 계약 안일 때만 켭니다. 그 전까지는 지금처럼 다른 pane과 겹치지 않게 둡니다. [AppKit 문서 NSSplitViewItem, NSBackgroundExtensionView] [아키텍처 §6.2] [결정 U2]
+- 캔버스 영역은 사이드바·인스펙터 아래까지 확장하는 방향으로 정했습니다(`automaticallyAdjustsSafeAreaInsets`, 배경 확장 뷰 `NSBackgroundExtensionView`, 열린 결정 O2는 측정 뒤 닫음). 블러 상단 바·떠 있는 도구 막대와 시각 언어가 같고, 패널을 여닫아도 캔버스 내용이 밀리지 않기 때문입니다. 다만 겹치면 drawable 크기, hit test 영역, 렌더 비용 계산이 달라지므로, UX.3.10에서 Release로 측정해 성능 계약 안일 때만 켭니다. 그 전까지는 지금처럼 다른 pane과 겹치지 않게 둡니다. [AppKit 문서 NSSplitViewItem, NSBackgroundExtensionView] [아키텍처 §6.2] [결정 U2]
 - pane 하나에만 붙는 상단·하단 컨트롤(예: 레이어 필터 필드)은 `NSSplitViewItemAccessoryViewController`로 붙여 safe area와 scroll edge effect를 시스템이 처리하게 합니다. scroll edge effect 스타일 지정 API는 macOS 26.1부터이므로, 지원 하한이 macOS 26.0인 동안은 가용성 분기를 둡니다. [AppKit 문서 NSSplitViewItemAccessoryViewController, NSScrollEdgeEffectStyle] [ADR-0006]
 
 ### 2.4 하단·보조 패널
@@ -465,7 +465,7 @@ Stellar macOS 셸이 운영체제 기본 구성요소 위에서 일관된 모습
 | ID | 내용 | 정할 곳 |
 |---|---|---|
 | O1 | 툴바 스타일: unified와 unified compact 중 선택 | XII.9.1 시안 단계 |
-| O2 | 캔버스를 사이드바·인스펙터 아래로 확장할지, 배경 확장 뷰로 아트보드를 미러링해도 되는지 | 닫음(2026-11-15, 결정 U2, ADR-0073): 확장합니다. 켜는 구현 행에서 drawable·hit test·렌더 비용을 측정해 계약 안일 때만 켭니다(2.3절) |
+| O2 | 캔버스를 사이드바·인스펙터 아래로 확장할지, 배경 확장 뷰로 아트보드를 미러링해도 되는지 | 방향 결정(2026-11-15, 결정 U2, ADR-0073 결정 3): 확장 방향. UX.3.10에서 drawable·hit test·렌더 비용을 Release로 측정해 계약 안일 때 켜고 그때 닫습니다. 그 전까지 미적용(2.3절) |
 | O3 | `NSDocument` 구조 채택 여부 | ADR |
 | O4 | Git 패널 위치: 사이드바 구획과 인스펙터 탭 중 선택 | 닫음(2026-11-15, 결정 U1, ADR-0073): 왼쪽 사이드바 "변경" 탭(6.4절) |
 | O5 | 앱 전용 외형 강제 설정 제공 여부 | 제품 결정 |
