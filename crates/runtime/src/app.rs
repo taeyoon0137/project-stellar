@@ -103,7 +103,6 @@
 //! | `0x010A` | WindowSessionSaved | request u64, session u64, generation u64, written u8 |
 //! | `0x010B` | ProjectTrust | request u64, project u64, trusted u8 |
 //! | `0x010D` | ProjectCreated | request u64, git_state u32 |
-//! | `0x010E` | ComponentCreated | request u64, session u64, filename text |
 //!
 //! `document_id`는 작업 문서가 없으면(저장한 적 없는 프로젝트) NIL(0 16바이트)입니다. `0x010C`는 삭제한
 //! event 코드라 다시 쓰지 않습니다(ADR-0028).
@@ -184,8 +183,6 @@ pub mod event_kind {
     pub const PROJECT_TRUST: u32 = 0x010B;
     /// 새 프로젝트 디스크 생성이 끝났습니다.
     pub const PROJECT_CREATED: u32 = 0x010D;
-    /// 컴포넌트 파일 하나를 새로 기록했습니다.
-    pub const COMPONENT_CREATED: u32 = 0x010E;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,15 +346,6 @@ impl RequestFailure {
 /// 요청 완료 event. 요청마다 정확히 하나가 outbox에 쌓입니다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeEvent {
-    /// 열린 창에서 독립 컴포넌트 원본 한 개를 생성했습니다.
-    ComponentCreated {
-        /// 요청 ID.
-        request: RequestId,
-        /// 원본 파일을 생성한 창.
-        session: WindowSessionHandle,
-        /// 실제 생성한 파일 이름.
-        filename: String,
-    },
     /// 새 프로젝트·첫 저장 세대가 준비됐습니다. 프로젝트 session은 아직 열지 않았습니다.
     ProjectCreated {
         /// 요청 ID.
@@ -627,7 +615,6 @@ impl RuntimeEvent {
     /// event 종류 코드([`event_kind`]).
     pub fn kind(&self) -> u32 {
         match self {
-            RuntimeEvent::ComponentCreated { .. } => event_kind::COMPONENT_CREATED,
             RuntimeEvent::ProjectCreated { .. } => event_kind::PROJECT_CREATED,
             RuntimeEvent::ProjectOpened { .. } => event_kind::PROJECT_OPENED,
             RuntimeEvent::ProjectClosed { .. } => event_kind::PROJECT_CLOSED,
@@ -647,7 +634,6 @@ impl RuntimeEvent {
     pub fn request(&self) -> RequestId {
         match self {
             RuntimeEvent::ProjectOpened { request, .. }
-            | RuntimeEvent::ComponentCreated { request, .. }
             | RuntimeEvent::ProjectCreated { request, .. }
             | RuntimeEvent::ProjectTrust { request, .. }
             | RuntimeEvent::ProjectClosed { request, .. }
@@ -666,15 +652,6 @@ impl RuntimeEvent {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::new();
         match self {
-            RuntimeEvent::ComponentCreated {
-                request,
-                session,
-                filename,
-            } => {
-                w.u64(request.0);
-                w.u64(session.0);
-                w.text(filename);
-            }
             RuntimeEvent::ProjectCreated { request, git_state } => {
                 w.u64(request.0);
                 w.u32(*git_state);
@@ -792,11 +769,6 @@ impl RuntimeEvent {
             return Err(EventDecodeError::UnsupportedVersion(version));
         }
         let event = match kind {
-            event_kind::COMPONENT_CREATED => RuntimeEvent::ComponentCreated {
-                request: RequestId(r.u64()?),
-                session: WindowSessionHandle(r.u64()?),
-                filename: r.text()?,
-            },
             event_kind::PROJECT_CREATED => RuntimeEvent::ProjectCreated {
                 request: RequestId(r.u64()?),
                 git_state: r.u32()?,
@@ -1662,7 +1634,6 @@ pub enum EventPoll {
 struct AppShared {
     creating: std::sync::atomic::AtomicBool,
     cloning: Mutex<Option<(RequestId, stellar_git_porcelain::cancel::GitCancelToken)>>,
-    creating_component: std::sync::atomic::AtomicBool,
     importing_font: std::sync::atomic::AtomicBool,
     importing_image: std::sync::atomic::AtomicBool,
     outbox: Mutex<VecDeque<RuntimeEvent>>,
@@ -1770,7 +1741,6 @@ impl AppRuntime {
             shared: Arc::new(AppShared {
                 creating: false.into(),
                 cloning: Mutex::default(),
-                creating_component: false.into(),
                 importing_font: false.into(),
                 importing_image: false.into(),
                 outbox: Mutex::new(VecDeque::new()),

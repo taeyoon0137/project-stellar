@@ -76,7 +76,6 @@ enum MainMenuBuilder {
             [.command(.selectImageTool)],
         ]),
         ("Object", [
-            [.command(.componentFromSelection)],
             [.command(.group), .command(.ungroup), .command(.frameSelection)],
             [.command(.bringToFront), .command(.bringForward), .command(.sendBackward), .command(.sendToBack)],
             [

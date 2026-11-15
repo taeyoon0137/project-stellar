@@ -40,7 +40,7 @@ enum ShellDocumentRecoveryCheck {
             guard let rootID = canvas.frameHit(at: point)?.id else {return fail("precondition")}
             let hit = CanvasFrameHit(isInstance: false, isRectangle: false, id: rootID, revision: info.revision, viewID: UUID(uuid: camera.active_view), localToWorld: .identity, parentToWorld: .identity, worldToView: .identity)
             guard session.insertFrame(parent: hit, rect: CGRect(x: 31, y: 27, width: 199, height: 85), rectangle: false, completion: { _ in shell.refreshSessionCommands() }),
-                  pump.waitForPendingRequests(timeout: 15), let selection = shell.selectedComponentFrame,
+                  pump.waitForPendingRequests(timeout: 15), let selection = CoreRuntime.selectedFrame(handle: pump.runtimeHandle, session: session.session),
                   session.info?.has_unsaved_changes == 1 else {return fail("precondition")}
             say(UUID(uuid: selection.node).uuidString.lowercased())
             _ = readLine() // fixture는 체크포인트 atomic rename을 관찰한 뒤 SIGKILL합니다.
@@ -66,7 +66,7 @@ enum ShellDocumentRecoveryCheck {
                 let text = window.attachedSheet?.contentView?.subviews.description ?? "no sheet"
                 return fail("restore dirty: \(text)")
             }
-            guard let selection = shell.selectedComponentFrame,
+            guard let selection = CoreRuntime.selectedFrame(handle: pump.runtimeHandle, session: session.session),
                   shell.performSessionCommand(.saveNow), pump.waitForPendingRequests(timeout: 15),
                   session.info?.has_unsaved_changes == 0 else {return fail("precondition")}
             say(UUID(uuid: selection.node).uuidString.lowercased())

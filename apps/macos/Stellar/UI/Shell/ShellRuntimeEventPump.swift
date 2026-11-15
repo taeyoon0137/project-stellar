@@ -132,10 +132,6 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.projectTrust(handle: runtimeHandle, project: project, decision: decision), completion)
     }
 
-    func createComponent(session: UInt64, name: String, selection: StellarFrameSelection, completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
-        register(CoreRuntime.createComponent(handle: runtimeHandle, session: session, name: name, selection: selection), completion)
-    }
-
     func editSelection(target: StellarSelectionTarget, action: UInt32, ids: [UUID]?,
                        completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.editSelection(handle: runtimeHandle, target: target, action: action, ids: ids), completion)

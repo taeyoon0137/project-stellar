@@ -106,8 +106,6 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_EVENT_WINDOW_SESSION_SAVED 0x010a
 #define STELLAR_EVENT_PROJECT_TRUST 0x010b
 #define STELLAR_EVENT_PROJECT_CREATED 0x010d
-/* request u64, session u64, filename text */
-#define STELLAR_EVENT_COMPONENT_CREATED 0x010e
 
 /* 완료 event를 아직 꺼내지 않은 요청(실행 중 포함) 상한. 닿으면 새 요청은 STELLAR_QUEUE_FULL. */
 #define STELLAR_EVENT_CAPACITY 1024
@@ -304,8 +302,6 @@ typedef struct StellarFrameSelection { uint64_t revision; uint8_t view[16], node
 StellarStatus stellar_window_selected_frame(uint64_t handle, uint64_t session, StellarFrameSelection *out);
 /* 한 snapshot의 선택과 bounds 정규화 이전 TL/TR/BR/BL 값. */
 StellarStatus stellar_window_selected_frame_corners(uint64_t handle, uint64_t session, StellarFrameSelection *out, uint64_t *history_sequence, float radii[4]);
-/* 열린 신뢰 창의 선택 Frame subtree를 독립 컴포넌트 원본으로 복사. 완료는 COMPONENT_CREATED 또는 REQUEST_FAILED. */
-StellarStatus stellar_window_component_from_selection(uint64_t handle, uint64_t session, const uint8_t *name, size_t name_len, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint64_t *out_request);
 
 /* 프로젝트 session 닫기를 요청합니다(그 아래 문서도 닫음). */
 StellarStatus stellar_project_close(uint64_t handle, uint64_t project, uint64_t *out_request);

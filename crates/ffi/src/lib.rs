@@ -914,79 +914,6 @@ pub extern "C" fn stellar_project_clone_cancel(handle: u64, request: u64) -> Ste
     })
 }
 
-/// 이름 sheet가 표시한 선택과 같은 Frame subtree를 독립 원본으로 만드는 비동기 요청.
-/// # Safety
-/// view와 node는 각각 16바이트 UUID, name은 name_len개의 읽을 수 있는 UTF-8 바이트,
-/// out_request는 쓸 수 있는 u64여야 합니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_window_component_from_selection(
-    handle: u64,
-    session: u64,
-    name: *const u8,
-    name_len: usize,
-    view: *const [u8; 16],
-    node: *const [u8; 16],
-    revision: u64,
-    out_request: *mut u64,
-) -> StellarStatus {
-    if view.is_null() || node.is_null() {
-        if !out_request.is_null() {
-            unsafe { *out_request = 0 };
-        }
-        return StellarStatus::NullPointer;
-    }
-    let selection = unsafe {
-        (
-            StableId::from_bytes(*view),
-            StableId::from_bytes(*node),
-            revision,
-        )
-    };
-    unsafe { component_create_request(handle, session, name, name_len, selection, out_request) }
-}
-
-unsafe fn component_create_request(
-    handle: u64,
-    session: u64,
-    name: *const u8,
-    name_len: usize,
-    (view, node, revision): (StableId, StableId, u64),
-    out_request: *mut u64,
-) -> StellarStatus {
-    ffi_guard(move || {
-        if out_request.is_null() {
-            return StellarStatus::NullPointer;
-        }
-        unsafe {
-            *out_request = 0;
-        }
-        if name_len == 0 || name_len > 255 {
-            return StellarStatus::InvalidArgument;
-        }
-        let Ok(mut reg) = registry().lock() else {
-            return StellarStatus::Internal;
-        };
-        let Some(rt) = reg.live.get_mut(&handle) else {
-            return StellarStatus::InvalidHandle;
-        };
-        let name = match unsafe { decode_utf8_owned(name, name_len) } {
-            Ok(name) => name,
-            Err(status) => return status,
-        };
-        let result = match rt.app() {
-            Ok(app) => app.create_component_from_selection(
-                stellar_runtime::app::WindowSessionHandle(session),
-                name,
-                view,
-                stellar_core_types::revision::DocumentRevision(revision),
-                node,
-            ),
-            Err(status) => return status,
-        };
-        unsafe { rt.finish_request(result, out_request) }
-    })
-}
-
 unsafe fn project_path_request(
     handle: u64,
     path: *const u8,
@@ -1538,10 +1465,6 @@ mod tests {
         for (name, kind) in [
             ("STELLAR_EVENT_PROJECT_OPENED", event_kind::PROJECT_OPENED),
             ("STELLAR_EVENT_PROJECT_TRUST", event_kind::PROJECT_TRUST),
-            (
-                "STELLAR_EVENT_COMPONENT_CREATED",
-                event_kind::COMPONENT_CREATED,
-            ),
             ("STELLAR_EVENT_PROJECT_CREATED", event_kind::PROJECT_CREATED),
             ("STELLAR_EVENT_PROJECT_CLOSED", event_kind::PROJECT_CLOSED),
             ("STELLAR_EVENT_DOCUMENT_OPENED", event_kind::DOCUMENT_OPENED),

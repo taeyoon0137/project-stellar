@@ -267,15 +267,15 @@ TL·TR·BR·BL 입력을 표시합니다. 캔버스와 hit test에는 기존의 
   `stellar apply`의 `insert-component-instance` command로 옮겼습니다(`stellar_ops::apply`).
 - `stellar_window_component_create`: 정의되지 않은 **Insert → New Component…** 메뉴가 크기 0×0인 빈 컴포넌트를
   만드는 요청입니다. runtime `create_component` 래퍼와 함께 삭제했습니다. 선택에서 만드는
-  `stellar_window_component_from_selection`은 유지 여부가 사용자 결정(D3)에 걸려 있어 그대로 두며, 그 ABI 기록은
-  결정 뒤 텍스트 원본 묶음(B2)에서 합니다. 빈 컴포넌트는 CLI `component-source create`로 만듭니다.
+  `stellar_window_component_from_selection`은 사용자 결정 D3(당분간 제거)에 따라 B4에서 삭제했습니다(아래
+  "선택에서 컴포넌트 만들기 제거"). 빈 컴포넌트는 CLI `component-source create`로 만듭니다.
 - `stellar_window_selected_definition`: Component Library 창을 열 때 선택한 인스턴스의 정의 행으로 이동하려고
   창 상태 요약에 넣은 정의 ID 조회입니다. 창이 없어져 소비자가 없으므로 runtime 요약 필드
   `selected_definition`과 함께 삭제했습니다.
 
-이 계열에서 남는 창 ABI는 원본 감시(`stellar_window_component_watch_fd`), 캔버스 재읽기
-(`stellar_window_reload_component_canvas`), D3에 걸린 선택 생성(`stellar_window_component_from_selection`)입니다.
-앞의 두 ABI의 기록과 감시 구조 정리는 캔버스 렌더·입력·감시 묶음(B8)에서 합니다.
+이 계열에서 남는 창 ABI는 원본 감시(`stellar_window_component_watch_fd`)와 캔버스 재읽기
+(`stellar_window_reload_component_canvas`)입니다. 두 ABI의 기록과 감시 구조 정리는 캔버스 렌더·입력·감시
+묶음(B8)에서 합니다.
 
 ## 프로젝트 신뢰 확인·승인·철회 — XVI.7.2 (2026-11-15 소급 기록)
 
@@ -389,3 +389,12 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
   기록합니다. 잠긴 레이어(또는 잠긴 부모 아래)는 stale 문구가 아니라 잠금 문구로 거부합니다.
 - 헤더에서 레이어 페이지 주석이 Text 미리보기 선언 위에 붙어 있던 것을 해당 선언 위로 옮기고 이름 변경 주석을
   더했습니다. 검사 전용으로 셸 sidebar source에 둔 `isReadingLayers`와 그 교차 읽기 검사 시나리오는 지웠습니다.
+
+### 선택에서 컴포넌트 만들기 제거 (사용자 결정 D3)
+
+- 정의되지 않은 **Object ▸ Create Component from Selection…** 메뉴와 이름 시트를 지웠습니다. Text·도형·modifier가
+  든 Frame은 이름을 입력한 뒤 실패했고, 복사 방식이라 원본과 내용이 두 벌로 갈라졌습니다. 원본 형식이 Text와
+  Shape를 담을 수 있게 된 뒤 다시 설계합니다.
+- 삭제한 ABI: `stellar_window_component_from_selection`, 완료 event `STELLAR_EVENT_COMPONENT_CREATED`(0x010E,
+  다른 event가 쓰지 않는 번호로 남깁니다), runtime `create_component_from_selection`과 진행 플래그.
+  `stellar_project`의 `ComponentSource::from_selection`·`new_ids_vec` 정리는 텍스트 원본 묶음(B2)에서 합니다.

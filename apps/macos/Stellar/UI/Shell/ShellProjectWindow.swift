@@ -701,7 +701,6 @@ final class ShellProjectWindow {
         for command: ShellCommand in [.bringForward, .bringToFront, .sendBackward, .sendToBack] {
             if let flag = command.layerOrderFlag, displayedOrderFlags & flag != 0 { commands.insert(command) }
         }
-        if gitSource.trusted, selectedComponentFrame != nil { commands.insert(.componentFromSelection) }
         if (displayedSelection?.selection_count ?? 0) > 0 { commands.insert(.delete) }
         if displayedSelection?.selection_count == 1 { commands.formUnion([.duplicate, .copy]) }
         if let target = displayedSelection, target.selection_count <= 1 { commands.insert(.paste) }
