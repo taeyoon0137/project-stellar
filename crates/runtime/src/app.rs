@@ -1962,7 +1962,10 @@ impl AppRuntime {
 
     /// 열린 프로젝트의 사용자별 신뢰 상태를 다시 읽거나, 확인한 사용자의 결정을 기록합니다.
     /// 처음 여는 창은 제한 모드입니다. 결과가 신뢰가 아니거나(철회 포함) 확인에 실패하면, 같은 폴더
-    /// (symlink를 해석한 실제 target과 project ID)를 연 모든 프로젝트 session을 제한 모드로 낮춥니다.
+    /// (symlink를 해석한 실제 target과 project ID)를 연 모든 프로젝트 session을 제한 모드로 낮추고, 그 가운데
+    /// 신뢰였던 session의 창만 캔버스 라이브러리(외부 target을 읽었을 수 있는 정의)를 비웁니다. 셸이 다시 요청한
+    /// 읽기가 외부 target 없이 채웁니다(ADR-0061 결정 8). 이미 제한 모드였던 창은 외부 target을 읽은 적이 없으므로
+    /// 비우지 않습니다.
     pub fn project_trust(
         &self,
         project: ProjectSessionId,
@@ -1991,8 +1994,11 @@ impl AppRuntime {
                 } else if session.identity.project_id() == identity.project_id()
                     && session.identity.same_target(&identity)
                 {
+                    // 이미 제한 모드였던 session은 외부 target을 읽지 않았으므로 라이브러리를 비우지 않습니다.
+                    if session.trust == TrustStatus::Trusted {
+                        lowered.insert(*id);
+                    }
                     session.trust = TrustStatus::NotTrusted;
-                    lowered.insert(*id);
                 }
             }
             for window in sessions
