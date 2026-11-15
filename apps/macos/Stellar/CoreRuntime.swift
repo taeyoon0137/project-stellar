@@ -22,12 +22,6 @@ enum CoreRuntime {
 
     // MARK: - 프로젝트 session (XII.6.2)
 
-    /// 한 게시 snapshot의 선택과 단일 선택의 Inspector 값. core가 문서에서 읽습니다(document thread를 기다리지 않음).
-    static func selectedNode(handle: UInt64, session: UInt64) -> StellarSelectedNode? {
-        var node = StellarSelectedNode()
-        return stellar_window_selected_node(handle, session, &node) == STELLAR_OK ? node : nil
-    }
-
     static func createProject(handle: UInt64, path: String) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
         let bytes = Array(path.utf8)

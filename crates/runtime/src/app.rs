@@ -146,7 +146,6 @@ pub mod selection_menu;
 pub mod sidebar;
 /// 캔버스의 미확정 입력과 한 번의 본문 확정.
 pub mod text_input;
-pub use frame_move::{FrameValue, SelectedFrame, SelectedNode};
 pub use canvas_gesture::{
     CanvasEdit, CanvasNodeKind, CanvasPick, CanvasSelectionItem, PickPhase, RadiusHandles,
 };
@@ -958,8 +957,6 @@ pub struct WindowSessionSummary {
     pub selection_flags: u32,
     /// 표시 중인 primary 선택.
     pub primary_selection: Option<StableId>,
-    /// 확정된 단일 선택의 Inspector 값. 문서에서 읽으며 viewport 가시성과 독립적입니다.
-    pub selected: Option<SelectedNode>,
     /// 확정 선택의 속성 패널 행(UX.2.2).
     pub inspector: Arc<stellar_commands::inspector::InspectorSnapshot>,
     /// 저장되지 않은 문서 변경이 있는지(선택·viewport 제외).
@@ -1447,12 +1444,6 @@ fn window_summary(
     let inspector = inspector::snapshot(&mut entry.inspector, &entry.session);
     let session = &entry.session;
     let clamp = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    let selected = match session.view().selection().ids() {
-        [node] => session.document().and_then(|document| {
-            frame_move::selected_node(document.model(), session.tabs().active_view(), *node)
-        }),
-        _ => None,
-    };
     let canvas = entry.canvas.current(
         session,
         entry
@@ -1476,7 +1467,6 @@ fn window_summary(
         order_flags: node_order::capabilities(session),
         selection_flags: entry.selection_caps.get(session),
         primary_selection: session.view().displayed_selection().primary(),
-        selected,
         inspector,
         has_unsaved_changes: session.has_unsaved_changes(),
         tab_count: clamp(session.tabs().len()),

@@ -434,25 +434,6 @@ StellarStatus stellar_window_canvas_png(uint64_t handle, uint64_t session, uint6
  * 실행 시점의 선택에서 정한 목적지에 넣습니다. 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED입니다. */
 StellarStatus stellar_window_copy_selection(uint64_t handle, const StellarSelectionTarget *target, uint8_t *bytes, size_t capacity, size_t *out_len);
 StellarStatus stellar_window_paste_selection(uint64_t handle, const StellarSelectionTarget *target, const uint8_t *bytes, size_t len, uint64_t *out_request);
-/* 한 게시 snapshot의 선택과 단일 선택의 Inspector 값(고정 104 byte). core가 문서에서 읽습니다.
- * kind: NodeKind 저장 tag(단일 선택이 아니면 0), shape: ShapeKind tag(Shape가 아니면 0).
- * flags bit 0: width·height·radii(TL·TR·BR·BL)·background가 유효한 Frame, bit 1: Inspector 편집을 받을 수 있음.
- * 활성 View가 없으면 STELLAR_NO_ERROR와 0 값, 열려 있지 않은 창이면 STELLAR_INVALID_ARGUMENT입니다. */
-typedef struct StellarSelectedNode {
-    uint64_t revision, history_sequence, selection_count;
-    uint8_t view[16], node[16];
-    uint16_t kind; uint8_t shape, flags;
-    float width, height, radii[4];
-    StellarCanvasColor background;
-} StellarSelectedNode;
-#define STELLAR_SELECTED_FRAME 1
-#define STELLAR_SELECTED_EDITABLE 2
-StellarStatus stellar_window_selected_node(uint64_t handle, uint64_t session, StellarSelectedNode *out);
-/* Inspector가 Frame 속성 하나를 바꾸는 값. 길이 key는 length, BACKGROUND(0x0104)는 color(space 0 = 제거)를 씁니다. */
-typedef struct StellarFrameValue { float length; StellarCanvasColor color; } StellarFrameValue;
-/* 선택 Frame의 CSS longhand 하나: WIDTH 0x0108, HEIGHT 0x0109, 모서리 0x010a–0x010d, BACKGROUND 0x0104.
- * 표시한 View·revision·history_sequence가 실행 시점과 같고 편집 가능한 Frame일 때만 한 Undo 항목으로 기록합니다. */
-StellarStatus stellar_window_session_set_frame_property(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint64_t history_sequence, uint32_t property_key, StellarFrameValue value, uint64_t *out_request);
 /* 표시한 부모 Frame의 local rect에 자식 Free Frame을 삽입하고 한 history entry로 선택합니다. */
 StellarStatus stellar_window_session_insert_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, float x, float y, float width, float height, uint64_t *out_request);
 /* ADR-0071: 새 도형의 칠(D7). 셸이 앱 설정 값을 넘기며 코어는 기본 색을 두지 않습니다.

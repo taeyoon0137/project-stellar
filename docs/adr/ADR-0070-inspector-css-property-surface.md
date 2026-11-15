@@ -84,11 +84,11 @@ ADR-0024는 디자인 속성의 이름·값 문법을 CSS longhand로 정하고(
      `stellar_window_session_resize_frame`·`_set_frame_background`·`_set_frame_corner`·
      `stellar_window_selected_frame_corners`와 runtime 래퍼는 같은 시기의 정리 통합(Inspector 선택 snapshot과
      Frame 속성 편집)이 지우므로 여기서 다시 지우지 않습니다.
-   - 정리 통합이 더한 `stellar_window_selected_node`(`StellarSelectedNode`, runtime `SelectedNode`)와
-     `stellar_window_session_set_frame_property`(`StellarFrameValue`)는 두 함수와 역할이 겹칩니다. 두 변경을
-     합치는 diff에서 이 둘과 셸 호출자를 지우고, 셸 Inspector·닫기 검사는 `stellar_window_inspector` 값을
-     읽습니다. ADR-0028의 해당 절에는 이 ADR로 대체했다고 적습니다. 정리 통합이 먼저 들어가면 그 위에 이 변경을
-     다시 맞춥니다.
+   - 정리 통합이 더한 `stellar_window_selected_node`(`StellarSelectedNode`, runtime `SelectedNode`·`SelectedFrame`)와
+     `stellar_window_session_set_frame_property`(`StellarFrameValue`, runtime `FrameValue`·
+     `set_canvas_frame_property`)는 두 함수와 역할이 겹칩니다. 정리 통합 위에 UX 1단계를 합친 diff에서 이 둘과
+     셸 호출자(`CoreRuntime.selectedNode`, 이벤트 펌프 `editFrame`, `ShellFrameInspectorSource`)를 지웠습니다.
+     셸 Inspector는 `stellar_window_inspector` 값을 읽고, ADR-0028의 해당 절에 이 ADR로 대체했다고 적었습니다.
 7. **제스처 중 구성 고정(UX.2.12)**: 속성 패널은 캔버스 쪽 질의 하나(`CanvasView.frameGestureActive`)와 패널
    scrub 중인 행 집합으로 제스처 여부를 판단합니다. 캔버스의 새 제스처 상태(크기 조절 핸들, 영역 선택, 모서리
    반경 핸들)는 그 질의에 더합니다.
