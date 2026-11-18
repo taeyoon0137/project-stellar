@@ -35,6 +35,8 @@ enum InspectorPropertyCatalog {
         case "stroke": return String(localized: "Outline color. none removes the outline.")
         case "stroke-width": return String(localized: "Outline thickness.")
         case "border": return String(localized: "Border width, style, and color on all four sides.")
+        case "border-width": return String(localized: "Border thickness on all four sides.")
+        case "border-color": return String(localized: "Border color on all four sides. none removes the border.")
         case "border-radius": return String(localized: "Corner radius. One to four values: top-left, top-right, bottom-right, bottom-left.")
         case "border-top-left-radius": return String(localized: "Top-left corner radius.")
         case "border-top-right-radius": return String(localized: "Top-right corner radius.")

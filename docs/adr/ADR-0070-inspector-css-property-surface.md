@@ -154,3 +154,8 @@ ADR-0024는 디자인 속성의 이름·값 문법을 CSS longhand로 정하고(
 ## Migration
 
 - 데이터 migration은 없습니다. 셸은 Frame 전용 편집 함수 대신 새 함수를 씁니다.
+
+## 개정(2026-11-18, UX.2.13)
+
+- 속성 탭의 `border` 묶음 행 아래에 `border-width`·`border-color` 행을 노출합니다. 두 행은 현재 Frame의 네 변 공통 Border 값과 기존 `BORDER` key를 공유합니다. 변별 12개 속성과 저장 key 분할은 아직 구현하지 않았습니다.
+- 테두리가 없는 Frame에서는 묶음 행에 두께와 색을 함께 입력해야 합니다. 단일 longhand 입력으로 기본 색이나 두께를 만들지 않습니다. `border-color: none`은 테두리를 제거합니다.
