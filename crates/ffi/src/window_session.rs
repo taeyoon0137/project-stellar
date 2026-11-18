@@ -496,6 +496,7 @@ pub unsafe extern "C" fn stellar_window_edit_selection(
             6 => SelectionEdit::Reorder(SiblingOrder::Back),
             7 => SelectionEdit::ToggleVisibility,
             8 => SelectionEdit::ToggleLock,
+            9 => SelectionEdit::SelectAll,
             _ => return StellarStatus::InvalidArgument,
         };
         if ids.is_null() && count != 0 {

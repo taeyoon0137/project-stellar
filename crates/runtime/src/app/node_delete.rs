@@ -18,6 +18,8 @@ pub enum SelectionEdit {
     ToggleVisibility,
     /// 선택이 모두 잠겨 있으면 풀고, 하나라도 풀려 있으면 모두 잠급니다.
     ToggleLock,
+    /// 활성 View root의 보이고 잠기지 않은 직계 자식을 고릅니다.
+    SelectAll,
 }
 
 /// 하나의 게시 시점에 읽은 창·뷰·문서·선택 history 위치.
@@ -70,6 +72,17 @@ impl AppRuntime {
                 ));
             }
             match edit {
+                SelectionEdit::SelectAll => {
+                    let invalid = || {
+                        Failure::new(RequestFailure::UnknownView, "활성 View를 찾을 수 없습니다")
+                    };
+                    let model = window.document().ok_or_else(invalid)?.model();
+                    let root = super::sidebar::view_root(model, target.view).ok_or_else(invalid)?;
+                    let nodes = super::canvas_gesture::selectable_root_children(model, root);
+                    window
+                        .select(stellar_commands::selection::Selection::new(nodes, None))
+                        .map_err(view_failure)?;
+                }
                 SelectionEdit::Reorder(direction) => {
                     super::node_order::reorder(window, request, direction)?
                 }

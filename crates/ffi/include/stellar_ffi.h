@@ -390,6 +390,7 @@ typedef struct StellarSelectionTarget {
 /* 선택이 모두 켜져 있으면 끄고, 하나라도 꺼져 있으면 모두 켭니다. 잠긴 노드의 표시와 잠긴 조상 아래 노드는 거부합니다. */
 #define STELLAR_SELECTION_TOGGLE_VISIBILITY 7
 #define STELLAR_SELECTION_TOGGLE_LOCK 8
+#define STELLAR_SELECTION_SELECT_ALL 9
 /* 같은 게시 시점의 선택에 대한 코어 능력 mask(시점이 다르면 0). 메뉴 막대·캔버스·레이어 문맥 메뉴가 활성과 제목에 씁니다. */
 #define STELLAR_SELECTION_CAN_DELETE 1
 #define STELLAR_SELECTION_CAN_DUPLICATE 2

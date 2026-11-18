@@ -1023,15 +1023,10 @@ fn resolve_pick(
             )
             .ok_or_else(stale_view)?;
             let bounds = scene.map(world_bounds).unwrap_or_default();
-            let hits: Vec<StableId> = model
-                .children_in_order(root)
+            let hits: Vec<StableId> = selectable_root_children(model, root)
                 .into_iter()
                 .filter(|child| {
-                    let open = model
-                        .runtime_id(*child)
-                        .and_then(|id| model.columns().get(id))
-                        .is_some_and(|f| f.visible && !f.locked);
-                    open && bounds.get(child).is_some_and(|b| {
+                    bounds.get(child).is_some_and(|b| {
                         if contain {
                             b.min_x() >= area.min_x()
                                 && b.min_y() >= area.min_y()
@@ -1053,6 +1048,20 @@ fn resolve_pick(
             Ok((selection, None))
         }
     }
+}
+
+/// 영역 선택과 Select All이 공유하는 활성 View root의 선택 가능한 직계 자식.
+pub(super) fn selectable_root_children(model: &DocumentModel, root: StableId) -> Vec<StableId> {
+    model
+        .children_in_order(root)
+        .into_iter()
+        .filter(|child| {
+            model
+                .runtime_id(*child)
+                .and_then(|id| model.columns().get(id))
+                .is_some_and(|fields| fields.visible && !fields.locked)
+        })
+        .collect()
 }
 
 /// 문서 node별 world 경계. 같은 node의 행(인스턴스 투영)은 합칩니다.
