@@ -17,31 +17,6 @@ extension CanvasTool {
     /// 클릭만으로 기본 크기(100×100)를 만드는 도구. Line은 끝점이 필요해 드래그로만 만듭니다(UX 명세 5.1).
     fileprivate var createsOnClick: Bool { insertsBounds && self != .line }
 
-    /// 부모 local 공간의 그린 두 점. 클릭은 기본 크기, Shift는 정비례(Line은 45° 단위), Option은 누른 점 중심입니다.
-    fileprivate func endpoints(from anchor: CGPoint, to pointer: CGPoint, click: Bool,
-                               modifiers: NSEvent.ModifierFlags) -> (CGPoint, CGPoint) {
-        let centered = modifiers.contains(.option)
-        var dx = pointer.x - anchor.x, dy = pointer.y - anchor.y
-        if click {
-            dx = centered ? 50 : 100
-            dy = dx
-        } else if modifiers.contains(.shift) {
-            if self == .line {
-                let octant = Int((atan2(dy, dx) / (.pi / 4)).rounded())
-                let length = hypot(dx, dy)
-                let angle = CGFloat(octant) * .pi / 4
-                let x = cos(angle), y = sin(angle)
-                dx = length * (octant.isMultiple(of: 2) ? x.rounded() : x)
-                dy = length * (octant.isMultiple(of: 2) ? y.rounded() : y)
-            } else {
-                let extent = max(abs(dx), abs(dy))
-                dx = dx < 0 ? -extent : extent
-                dy = dy < 0 ? -extent : extent
-            }
-        }
-        let start = centered ? CGPoint(x: anchor.x - dx, y: anchor.y - dy) : anchor
-        return (start, CGPoint(x: anchor.x + dx, y: anchor.y + dy))
-    }
 }
 
 extension ShellProjectWindow {
@@ -107,9 +82,17 @@ extension ShellProjectWindow {
             let distance = hypot(point.x - drag.start.x, point.y - drag.start.y)
             if !release && distance >= 3 { frameDrag?.moved = true }
             let click = tool.createsOnClick && release && !drag.moved && distance < 3
-            let (start, end) = tool.endpoints(from: anchor, to: pointer, click: click, modifiers: event.modifierFlags)
-            let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
-                              width: abs(end.x - start.x), height: abs(end.y - start.y))
+            var flags: UInt32 = 0
+            if event.modifierFlags.contains(.shift) { flags |= 1 }
+            if event.modifierFlags.contains(.option) { flags |= 2 }
+            if click { flags |= 4 }
+            guard let result = CoreRuntime.gesturePreview(kind: tool == .line ? 5 : 4, handle: 0,
+                flags: flags, rect: CGRect(x: anchor.x, y: anchor.y, width: 0, height: 0), point: pointer)
+            else { return true }
+            let start = CGPoint(x: CGFloat(result.line.0), y: CGFloat(result.line.1))
+            let end = CGPoint(x: CGFloat(result.line.2), y: CGFloat(result.line.3))
+            let rect = CGRect(x: CGFloat(result.rect.0), y: CGFloat(result.rect.1),
+                              width: CGFloat(result.rect.2), height: CGFloat(result.rect.3))
             let a = start.applying(localToView), b = end.applying(localToView)
             let usable = tool == .line ? hypot(b.x - a.x, b.y - a.y) >= 3
                 : rect.width * hypot(localToView.a, localToView.b) >= 3 && rect.height * hypot(localToView.c, localToView.d) >= 3

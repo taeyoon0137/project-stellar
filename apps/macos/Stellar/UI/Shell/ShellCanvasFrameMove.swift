@@ -269,27 +269,27 @@ extension ShellProjectWindow {
                 let modifiers = event.modifierFlags
                 var preview = CanvasGesturePreview(id: drag.box.id, rect: drag.box.rect,
                                                    lineStart: drag.box.lineStart, lineEnd: drag.box.lineEnd)
+                let kind: UInt32
+                let handle: Int32
                 switch drag.handle {
-                case .resize(let index):
-                    preview.rect = drag.box.rect.resized(handle: index, to: local, keepRatio: modifiers.contains(.shift),
-                                                         fromCenter: modifiers.contains(.option))
-                case .lineEnd(let end):
-                    guard let other = end ? drag.box.lineStart : drag.box.lineEnd else { return true }
-                    var target = local
-                    if modifiers.contains(.shift) {
-                        // Shift는 다른 끝점 기준 45° 단위입니다.
-                        let dx = local.x - other.x, dy = local.y - other.y
-                        let angle = (atan2(dy, dx) / (.pi / 4)).rounded() * (.pi / 4)
-                        let length = hypot(dx, dy)
-                        target = CGPoint(x: other.x + length * cos(angle), y: other.y + length * sin(angle))
-                    }
-                    if end { preview.lineEnd = target } else { preview.lineStart = target }
-                case .radius(let index):
-                    // 기본은 네 모서리, Option은 그 모서리 longhand 하나입니다(Polygon은 값 하나). 미리보기도 확정과 같은
-                    // 반올림 값을 씁니다.
-                    let value = CanvasFrameScene.radius(handle: index, in: drag.box.rect, at: local).rounded()
-                    let single = index >= 0 && modifiers.contains(.option)
-                    preview.radii = drag.box.radii.enumerated().map { !single || $0.offset == index ? value : $0.element }
+                case .resize(let index): kind = 1; handle = Int32(index)
+                case .lineEnd(let end): kind = 2; handle = end ? 1 : 0
+                case .radius(let index): kind = 3; handle = Int32(index)
+                }
+                var flags: UInt32 = 0
+                if modifiers.contains(.shift) { flags |= 1 }
+                if modifiers.contains(.option) { flags |= 2 }
+                guard let result = CoreRuntime.gesturePreview(kind: kind, handle: handle, flags: flags,
+                    rect: drag.box.rect, line: (drag.box.lineStart ?? .zero, drag.box.lineEnd ?? .zero),
+                    radii: drag.box.radii, point: local) else { return true }
+                let (rx, ry, rw, rh) = result.rect
+                preview.rect = CGRect(x: CGFloat(rx), y: CGFloat(ry), width: CGFloat(rw), height: CGFloat(rh))
+                if kind == 2 {
+                    preview.lineStart = CGPoint(x: CGFloat(result.line.0), y: CGFloat(result.line.1))
+                    preview.lineEnd = CGPoint(x: CGFloat(result.line.2), y: CGFloat(result.line.3))
+                } else if kind == 3 {
+                    preview.radii = [CGFloat(result.radii.0), CGFloat(result.radii.1),
+                                     CGFloat(result.radii.2), CGFloat(result.radii.3)]
                 }
                 if event.type == .leftMouseDragged {
                     if hypot(point.x - drag.start.x, point.y - drag.start.y) >= 1 { canvas.gesturePreview = preview }
@@ -314,7 +314,8 @@ extension ShellProjectWindow {
                                            point: target, completion: done)
                     }
                 case .radius(let index):
-                    let value = CanvasFrameScene.radius(handle: index, in: drag.box.rect, at: local).rounded()
+                    guard let radii = preview.radii else { return true }
+                    let value = radii[index >= 0 ? index : 0]
                     let corner = index >= 0 && modifiers.contains(.option) ? index : nil
                     self.submitCanvasEdit { pump, session, done in
                         pump.canvasRadius(session: session, view: view, node: node, corner: corner, target: drag.target,

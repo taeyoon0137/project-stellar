@@ -6,6 +6,22 @@ import Foundation
 /// FFI 규칙(정수 handle, `StellarStatus` 반환, caller buffer 출력)을 그대로 따릅니다. 셸의 다른 파일은
 /// `stellar_` 함수를 직접 부르지 않고 이 헬퍼를 거칩니다(캔버스 drawable·입력 전달 `CanvasView` 제외).
 enum CoreRuntime {
+    /// 포인터 제스처를 코어의 순수 계산으로 해석합니다. 미리보기와 확정이 같은 반환값을 씁니다.
+    static func gesturePreview(kind: UInt32, handle: Int32, flags: UInt32, rect: CGRect,
+                               line: (CGPoint, CGPoint) = (.zero, .zero), radii: [CGFloat] = [],
+                               point: CGPoint) -> StellarGesturePreview? {
+        var input = StellarGesturePreview()
+        input.kind = kind
+        input.handle = handle
+        input.flags = flags
+        input.rect = (Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height))
+        input.line = (Float(line.0.x), Float(line.0.y), Float(line.1.x), Float(line.1.y))
+        input.radii = (Float(radii.first ?? 0), Float(radii.dropFirst().first ?? 0),
+                       Float(radii.dropFirst(2).first ?? 0), Float(radii.dropFirst(3).first ?? 0))
+        input.point = (Float(point.x), Float(point.y))
+        var output = StellarGesturePreview()
+        return stellar_canvas_gesture_preview(&input, &output) == STELLAR_OK ? output : nil
+    }
     /// 주어진 handle의 코어 버전 문자열을 읽습니다(길이 조회 → caller buffer 채우기).
     static func version(handle: UInt64) -> String? {
         var needed = 0

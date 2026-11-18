@@ -132,6 +132,7 @@ mod components;
 mod create;
 mod frame_insert;
 mod frame_move;
+pub mod gesture_math;
 mod image_place;
 pub use image_place::ImagePlacement;
 /// 속성 패널 행 게시와 CSS 값 편집(UX.2.2).

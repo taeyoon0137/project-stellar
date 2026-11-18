@@ -186,3 +186,7 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
   `stellar_window_canvas_line_end`는 누른 시점의 `revision: u64`와 `history_sequence: u64`를 node 뒤에 받습니다.
   document thread에서 현재 창 값과 다르면 적용 전 stale 오류로 거부합니다. 셸은 선택 핸들을 누를 때 읽은
   `StellarSelectionTarget`을 놓을 때까지 보관해 두 값을 전달합니다. 상대 이동 ABI는 그대로입니다.
+
+## 개정(2026-11-18, UX.3.8 편집 해석)
+
+`stellar_canvas_gesture_preview`는 문서 상태를 읽지 않는 순수 계산 ABI다. 입력은 핸들 종류·번호, local 포인터, Shift·Option·click flag, 시작 상자·끝점·반경이고 출력은 확정 요청에도 그대로 쓰는 상자·끝점·반경이다. 크기 핸들의 최소 1px·비율·중심, Line의 45도, 반경의 정수 반올림, 생성 클릭의 100px과 수식키를 코어가 계산한다. 기존 절대값 편집 ABI는 유지하되 셸에서 계산식을 제거하고 이 반환값을 보낸다. 스냅·가이드 입력은 다음 개정에서 다룬다.

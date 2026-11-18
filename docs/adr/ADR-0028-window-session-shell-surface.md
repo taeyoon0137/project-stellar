@@ -784,3 +784,7 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 
 - `stellar_window_layer_move`는 활성 View, 문서 revision, 단일 node, 대상 parent(null은 View root), 대상의 이동 전 표시 순서 index를 받습니다. 코어가 저장 OrderKey를 계산하고 `MoveNode`를 한 transaction에 적용해 Undo 한 번으로 기록합니다. stale View·revision, 잠금, root 이동, 잘못된 부모와 순서는 거부합니다.
 - 사이드바의 기존 드래그 대상 검증과 실제 창 공급자를 이 요청에 연결합니다. 여러 행을 함께 끄는 동작은 아직 거부합니다.
+
+## 개정(2026-11-18, UX.3.8 편집 해석)
+
+- `StellarGesturePreview`와 `stellar_canvas_gesture_preview`는 Rust의 순수 포인터 계산을 C ABI로 노출합니다. kind 1~5는 크기·Line 끝점·반경·일반 생성·Line 생성이고, flag 1·2·4는 Shift·Option·click입니다. 입력과 출력은 같은 POD 구조이며 문서 thread나 창 상태를 읽지 않습니다.

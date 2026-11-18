@@ -53,41 +53,6 @@ struct CanvasGesturePreview {
     var radii: [CGFloat]?
 }
 
-extension CGRect {
-    /// 크기 핸들 `handle`을 local 점 `point`로 끈 상자. Shift는 비율 유지, Option은 중심 기준입니다. 최소 1입니다.
-    func resized(handle: Int, to point: CGPoint, keepRatio: Bool, fromCenter: Bool) -> CGRect {
-        func axis(movesMin: Bool, movesMax: Bool, lo: CGFloat, hi: CGFloat, value: CGFloat)
-            -> (anchor: CGFloat, extent: CGFloat)? {
-            guard movesMin || movesMax else { return nil }
-            let anchor = fromCenter ? (lo + hi) / 2 : (movesMin ? hi : lo)
-            return (anchor, value - anchor)
-        }
-        let x = axis(movesMin: [0, 3, 7].contains(handle), movesMax: [1, 2, 5].contains(handle),
-                     lo: minX, hi: maxX, value: point.x)
-        let y = axis(movesMin: [0, 1, 4].contains(handle), movesMax: [2, 3, 6].contains(handle),
-                     lo: minY, hi: maxY, value: point.y)
-        let reference = CGSize(width: fromCenter ? width / 2 : width, height: fromCenter ? height / 2 : height)
-        var scale: CGFloat?
-        if keepRatio, reference.width > 0, reference.height > 0 {
-            scale = max(x.map { abs($0.extent) / reference.width } ?? 0, y.map { abs($0.extent) / reference.height } ?? 0)
-        }
-        func range(_ a: (anchor: CGFloat, extent: CGFloat)?, lo: CGFloat, hi: CGFloat, ref: CGFloat) -> (CGFloat, CGFloat) {
-            if let a {
-                var e = a.extent
-                if let scale { e = (e < 0 ? -1 : 1) * ref * scale }
-                let r = fromCenter ? (a.anchor - abs(e), a.anchor + abs(e)) : (min(a.anchor, a.anchor + e), max(a.anchor, a.anchor + e))
-                return (r.0, max(r.1, r.0 + 1))
-            }
-            guard let scale else { return (lo, hi) }
-            let mid = (lo + hi) / 2, half = max((hi - lo) * scale, 1) / 2
-            return (mid - half, mid + half)
-        }
-        let (x0, x1) = range(x, lo: minX, hi: maxX, ref: reference.width)
-        let (y0, y1) = range(y, lo: minY, hi: maxY, ref: reference.height)
-        return CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
-    }
-}
-
 struct CanvasFrameHit {
     var textQuery: StellarCanvasTextQuery? = nil
     var isText: Bool { textQuery != nil }
@@ -288,15 +253,6 @@ final class CanvasFrameScene {
         case 2: return (CGPoint(x: r.maxX, y: r.maxY), CGVector(dx: -1, dy: -1))
         default: return (CGPoint(x: r.minX, y: r.maxY), CGVector(dx: 1, dy: -1))
         }
-    }
-
-    /// 반경 핸들을 local 점 `point`로 끈 반경(0 ... 짧은 변의 절반).
-    static func radius(handle index: Int, in r: CGRect, at point: CGPoint) -> CGFloat {
-        let limit = min(r.width, r.height) / 2
-        guard index >= 0 else { return min(max(point.y - r.minY, 0), limit) }
-        let (corner, inward) = radiusCorner(index, in: r)
-        let along = ((point.x - corner.x) * inward.dx + (point.y - corner.y) * inward.dy) / 2
-        return min(max(along, 0), limit)
     }
 
     private func previewing(_ index: Int) -> Bool { previewRanges.contains { $0.contains(index) } }

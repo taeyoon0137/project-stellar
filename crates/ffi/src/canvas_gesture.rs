@@ -14,6 +14,57 @@ use stellar_runtime::app::{
 use crate::canvas::StellarCanvasColor;
 use crate::{ffi_guard, registry, StellarStatus};
 
+/// 저장 전 핸들·생성 포인터 해석. 문서나 창 상태를 읽지 않습니다.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct StellarGesturePreview {
+    kind: u32,
+    handle: i32,
+    flags: u32,
+    rect: [f32; 4],
+    line: [f32; 4],
+    radii: [f32; 4],
+    point: [f32; 2],
+}
+
+/// 셸이 미리보기와 확정에 함께 쓸 결과를 계산합니다.
+/// # Safety
+/// `input`은 한 구조체를 읽을 수 있어야 하고 `output`은 한 구조체를 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_canvas_gesture_preview(
+    input: *const StellarGesturePreview,
+    output: *mut StellarGesturePreview,
+) -> StellarStatus {
+    ffi_guard(|| {
+        if input.is_null() || output.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let value = unsafe { *input };
+        let Some(result) = stellar_runtime::app::gesture_math::preview(
+            stellar_runtime::app::gesture_math::GestureInput {
+                kind: value.kind,
+                handle: value.handle,
+                flags: value.flags,
+                rect: value.rect,
+                line: value.line,
+                radii: value.radii,
+                point: value.point,
+            },
+        ) else {
+            return StellarStatus::InvalidArgument;
+        };
+        unsafe {
+            *output = StellarGesturePreview {
+                rect: result.rect,
+                line: result.line,
+                radii: result.radii,
+                ..value
+            };
+        }
+        StellarStatus::Ok
+    })
+}
+
 /// 새 도형의 칠(D7). 셸이 앱 설정(Settings ▸ 캔버스)에서 읽어 넘깁니다. 색공간 0은 없음입니다.
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
