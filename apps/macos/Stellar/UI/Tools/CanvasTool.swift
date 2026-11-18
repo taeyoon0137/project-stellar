@@ -2,9 +2,7 @@ import AppKit
 
 /// 캔버스 도구 집합(툴바 도구 그룹·Insert/View 메뉴·캔버스 단일 키가 공유).
 ///
-/// 선언 순서가 하단 도구 막대의 순서입니다(10종). 지금은 현재 도구와 도구별 입력 해석(클릭 기본 크기, Shift·Option,
-/// 핸들 상자·반경 계산)을 셸이 갖고 있고, 생성·이동·크기 결과만 코어 command로 보냅니다. 이 해석을 코어 도구 상태
-/// 기계(XII.3.6, XII.10.1)로 옮기는 일은 UX WBS UX.3.8에서 합니다.
+/// 선언 순서가 하단 도구 막대와 코어 도구 tag(1부터)의 순서입니다(10종). 선택은 코어의 창별 View 상태에 기록합니다.
 enum CanvasTool: String, CaseIterable {
     case move
     case frame

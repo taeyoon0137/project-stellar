@@ -30,6 +30,16 @@ enum CoreRuntime {
         }
         return status == STELLAR_OK ? CGVector(dx: CGFloat(delta[0]), dy: CGFloat(delta[1])) : nil
     }
+
+    static func setCanvasTool(handle: UInt64, session: UInt64, view: UUID, tool: UInt8)
+        -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { bytes in
+            stellar_window_canvas_set_tool(handle, session, bytes.bindMemory(to: UInt8.self).baseAddress, tool, &request)
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
     /// 주어진 handle의 코어 버전 문자열을 읽습니다(길이 조회 → caller buffer 채우기).
     static func version(handle: UInt64) -> String? {
         var needed = 0

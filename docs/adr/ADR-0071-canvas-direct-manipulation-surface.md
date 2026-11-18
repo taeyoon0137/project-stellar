@@ -194,3 +194,7 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
 ## 개정(2026-11-18, UX.3.8 화살표 이동)
 
 `stellar_canvas_arrow_nudge`는 macOS 화살표 key code와 Shift를 받아 부모 공간 이동량 1px 또는 10px을 돌려준다. ⌘·Option·Control 조합의 단축키 충돌 검사는 셸에 남고, 이동량의 의미는 코어가 정한다.
+
+## 개정(2026-11-18, UX.3.8 도구 상태)
+
+`stellar_window_canvas_set_tool`은 활성 View ID와 도구 tag(1 Move부터 10 Zoom)를 받아 창별 View 도구 상태를 바꾼다. 상태는 문서와 history에 기록하지 않고, `StellarWindowSessionInfo.reserved`의 기존 32비트 공간에 현재 도구 tag를 게시한다. 셸은 낙관적 선택 뒤 코어 event가 오면 게시 값을 반영한다.

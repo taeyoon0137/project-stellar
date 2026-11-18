@@ -955,6 +955,8 @@ pub struct WindowSessionSummary {
     pub undo_label: u8,
     /// Redo 맨 위 동작 이름표(0은 없음).
     pub redo_label: u8,
+    /// 활성 View의 도구(1 Move ... 10 Zoom), 문서·history 밖 창 상태.
+    pub active_tool: u8,
     /// 선택된 node 수.
     pub selection_len: u32,
     /// Undo 스택 끝의 sequence. 문서 revision이 같은 선택 변경도 구분합니다.
@@ -1487,6 +1489,7 @@ fn window_summary(
         redo_depth: clamp(session.history().history().redo_entries().len()),
         undo_label: session.undo_label(),
         redo_label: session.redo_label(),
+        active_tool: entry.gesture.tool(session.tabs().active_view()),
         selection_len: clamp(session.view().selection().len()),
         history_sequence: session.history_sequence(),
         selection_flags: entry.selection_caps.get(session)

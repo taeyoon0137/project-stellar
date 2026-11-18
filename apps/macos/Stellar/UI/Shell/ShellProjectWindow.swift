@@ -419,7 +419,7 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
 ///   Save Now는 창 session에 작업 문서가 있을 때, 줌은 active view가 있고 배율이 경계(2%·25600%)에 닿지 않았을 때
 ///   활성입니다. Zoom to Fit은 현재 캔버스 크기를 코어에 보내며, 배율 표시는 코어 viewport 값입니다.
 /// - 프로젝트가 ready가 아니면 도구 선택도 비활성입니다.
-/// - 도구 선택은 코어로 보내지 않습니다. 다른 명령은 `commandHandler`(프로젝트 창)로 넘깁니다.
+/// - 도구 선택은 창 상태의 코어 요청으로 보냅니다. 다른 명령은 `commandHandler`(프로젝트 창)로 넘깁니다.
 final class ShellWindowToolsModelStub: ToolsMenuModel {
     /// ready 상태에서 항상 실행할 수 있는 명령(창 session 상태와 무관).
     static let readyCommands: Set<ShellCommand> = Set(CanvasTool.allCases.map(\.command)).union([.closeProject])
@@ -460,6 +460,14 @@ final class ShellWindowToolsModelStub: ToolsMenuModel {
             return
         }
         commandHandler?(command)
+    }
+
+    /// 코어 창 snapshot이 확정한 도구를 반영합니다. 다시 코어 요청을 보내지 않습니다.
+    func setCoreTool(_ tool: CanvasTool) {
+        guard tool != snapshot.activeTool else { return }
+        var next = snapshot
+        next.activeTool = tool
+        publish(next)
     }
 
     /// 지금 활성인 창 session 명령(ready일 때만 반영).
@@ -546,6 +554,7 @@ final class ShellProjectWindow {
     let windowController: ShellWindowController
     let dataSource: ShellProjectFrameDataSource
     let toolsModel: ShellWindowToolsModelStub
+    private var pendingCoreTool: CanvasTool?
     let router: ShellCommandRouter
     var canvasTextEditing: ShellCanvasTextEditing? {
         // 텍스트 편집에 들어가면 속성 탭의 Typography 섹션을 펼칩니다(UX.2.12).
@@ -625,8 +634,20 @@ final class ShellProjectWindow {
             toolbarItemProvider: toolsToolbar
         )
         toolsModel.toolChanged = { [weak self] tool in
-            _ = self?.canvasHost.canvasView.cancelFrameGesture?()
-            self?.imageToolChanged(tool)
+            guard let self else { return }
+            _ = self.canvasHost.canvasView.cancelFrameGesture?()
+            self.imageToolChanged(tool)
+            guard let session = self.windowController.windowSession, let view = session.viewInfo,
+                  view.has_view == 1, let pump = self.dataSource.session?.pump,
+                  let index = CanvasTool.allCases.firstIndex(of: tool) else { return }
+            self.pendingCoreTool = tool
+            let accepted = session.track({ pump.setCanvasTool(session: session.session, view: UUID(uuid: view.active_view),
+                tool: UInt8(index + 1), completion: $0) }) { [weak self] _ in
+                guard let self else { return }
+                if self.pendingCoreTool == tool { self.pendingCoreTool = nil }
+                self.refreshSessionCommands()
+            }
+            if !accepted { self.pendingCoreTool = nil; self.refreshSessionCommands() }
         }
         windowController.didBecomeKeyHandler = { [weak self] in
             // 다른 앱이 클립보드를 바꿨을 수 있어 Paste 활성을 다시 계산합니다.
@@ -837,6 +858,9 @@ final class ShellProjectWindow {
         refreshInspector()
         let view = session?.viewInfo
         let info = session?.info
+        if pendingCoreTool == nil, let info, (1...CanvasTool.allCases.count).contains(Int(info.reserved)) {
+            toolsModel.setCoreTool(CanvasTool.allCases[Int(info.reserved) - 1])
+        }
         displayedSelection = session?.selectionTarget
         if let target = displayedSelection, let handle = dataSource.session?.pump.runtimeHandle {
             displayedSelectionFlags = CoreRuntime.selectionFlags(handle: handle, target: target)

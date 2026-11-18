@@ -189,7 +189,7 @@ typedef struct StellarWindowSessionInfo {
     uint8_t window_id[16];    /* 창 편집 session id(UUID 바이트 순서) */
     uint8_t document_id[16];  /* 작업 문서 StableId(없으면 0) */
     uint32_t autosave;        /* STELLAR_AUTOSAVE_* (v3) */
-    uint32_t reserved;        /* 0 (v3) */
+    uint32_t reserved;        /* 활성 View 도구 tag: 1 Move ... 10 Zoom (기존 reserved 공간) */
 } StellarWindowSessionInfo;
 
 /* v1: 좌상단 원점 logical point. world/camera는 CGAffineTransform 순서 (a,b,c,d,tx,ty). */
@@ -497,6 +497,7 @@ typedef struct StellarCanvasSelectionItem { uint8_t id[16]; uint32_t kind, flags
 typedef struct StellarGesturePreview { uint32_t kind; int32_t handle; uint32_t flags; float rect[4], line[4], radii[4], point[2]; } StellarGesturePreview;
 StellarStatus stellar_canvas_gesture_preview(const StellarGesturePreview *input, StellarGesturePreview *output);
 StellarStatus stellar_canvas_arrow_nudge(uint16_t key_code, uint8_t shift, float out_delta[2]);
+StellarStatus stellar_window_canvas_set_tool(uint64_t handle, uint64_t session, const uint8_t view[16], uint8_t tool, uint64_t *out_request);
 /* 하나뿐인 선택 node의 상자를 지금 local 좌표 (x, y, w, h)로 바꿉니다(크기 핸들, Undo 한 번, 크기 > 0). */
 StellarStatus stellar_window_canvas_resize(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint64_t history_sequence, float x, float y, float width, float height, uint64_t *out_request);
 /* 하나뿐인 선택 node의 모서리 반경(corner -1 네 모서리, 0–3 tl tr br bl 하나). Frame·Rectangle은 border-*-radius, Polygon은 값 하나. */

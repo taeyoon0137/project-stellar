@@ -102,7 +102,7 @@ pub struct StellarWindowSessionInfo {
     pub document_id: [u8; 16],
     /// 자동 저장 상태([`autosave_state`], v3).
     pub autosave: u32,
-    /// 0(v3).
+    /// 활성 View의 도구 tag(1 Move ... 10 Zoom). 기존 reserved 공간.
     pub reserved: u32,
 }
 
@@ -937,7 +937,7 @@ pub unsafe extern "C" fn stellar_window_session_info(
             window_id: summary.window_id.stable_id().to_bytes(),
             document_id: summary.document_id.map_or([0; 16], |id| id.to_bytes()),
             autosave: autosave_code(summary.autosave),
-            reserved: 0,
+            reserved: u32::from(summary.active_tool),
         };
         unsafe { *out_info = info };
         StellarStatus::Ok
