@@ -26,14 +26,14 @@ use stellar_mcp::log::Logger;
 use stellar_mcp::protocol::ProtocolConfig;
 use stellar_mcp::server;
 
-const USAGE: &str = "사용법: stellar-mcp [--attach [--instance <id>] | --headless --project <절대 경로> | --connection-info]\n\n\
+const USAGE: &str = "사용법: stellar-mcp [--attach [--instance <id>] | --headless --project <절대 경로> | --connection-info --project <프로젝트 경로>]\n\n\
     인자 없이 실행하면 stdin/stdout으로 MCP JSON-RPC 2.0 메시지(한 줄에 하나)를 처리합니다.\n\
     stdout에는 protocol 메시지만 쓰고, 로그와 이 도움말은 stderr에 씁니다.\n\
     stdin이 닫히거나 실행한 부모 프로세스가 끝나면 스스로 종료합니다.\n\n\
     --attach           실행 중 Stellar 앱을 인증하고 연결한 뒤 MCP 세션을 시작합니다.\n\
     \x20                  앱이 여러 개이면 --instance <id>(소문자 16진수 16자)로 고릅니다.\n\
     --headless --project <절대 경로>  신뢰한 프로젝트 루트 하나로 읽기 세션을 시작합니다.\n\
-    --connection-info  MCP client 등록 정보(transport, command, args, env)를 JSON 한 줄로\n\
+    --connection-info --project <프로젝트 경로>  MCP client 등록 정보(transport, command, args, env)를 JSON 한 줄로\n\
     \x20                  stdout에 씁니다. 다른 도구의 설정은 바꾸지 않습니다.\n";
 
 /// 실행 방식.
@@ -45,7 +45,7 @@ enum Mode {
     /// 실행 인자로 고정한 신뢰 프로젝트 루트의 읽기 전용 세션(ADR-0005 §3).
     Headless(std::path::PathBuf),
     /// client 등록 정보 출력(XIX.9.8).
-    ConnectionInfo,
+    ConnectionInfo(std::path::PathBuf),
 }
 
 /// 인자를 해석합니다. 도움말이면 `Ok(None)`입니다.
@@ -57,7 +57,9 @@ fn parse_args(args: &[std::ffi::OsString]) -> Result<Option<Mode>, ()> {
     Ok(Some(match text.as_slice() {
         [] => Mode::Serve,
         ["--help" | "-h"] => return Ok(None),
-        [flag] if *flag == connection_info::FLAG => Mode::ConnectionInfo,
+        [flag, "--project", root] if *flag == connection_info::FLAG => {
+            Mode::ConnectionInfo(std::path::PathBuf::from(root))
+        }
         ["--attach"] => Mode::Attach(None),
         ["--headless", "--project", root] => Mode::Headless(std::path::PathBuf::from(root)),
         ["--attach", "--instance", id] => Mode::Attach(Some((*id).to_string())),
@@ -156,6 +158,7 @@ fn attach(_instance: Option<&str>, log: &mut Logger<io::Stderr>) -> Result<(), E
 
 /// client 등록 정보를 한 줄로 씁니다(XIX.9.8).
 fn print_connection_info(
+    project: &std::path::Path,
     config: &ProtocolConfig,
     out: &mut dyn Write,
     log: &mut Logger<io::Stderr>,
@@ -171,7 +174,24 @@ fn print_connection_info(
             return exit::IOERR;
         }
     };
-    let mut line = json::write(&connection_info::connection_info(&command, config));
+    let absolute = if project.is_absolute() {
+        project.to_path_buf()
+    } else {
+        match std::env::current_dir() {
+            Ok(current) => current.join(project),
+            Err(e) => {
+                log.error(&format!("프로젝트 절대 경로를 만들 수 없습니다: {e}"));
+                return exit::IOERR;
+            }
+        }
+    };
+    let Some(absolute) = absolute.to_str() else {
+        log.error("프로젝트 경로가 UTF-8이 아닙니다");
+        return exit::USAGE;
+    };
+    let mut line = json::write(&connection_info::connection_info_for_project(
+        &command, config, absolute,
+    ));
     line.push('\n');
     match out.write_all(line.as_bytes()).and_then(|()| out.flush()) {
         Ok(()) => exit::OK,
@@ -189,6 +209,11 @@ fn main() -> ExitCode {
 fn run() -> Exit {
     let mut log = Logger::new(io::stderr());
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if args.len() == 1 && args[0] == connection_info::FLAG {
+        let _ = io::stderr()
+            .write_all("--connection-info에는 --project <프로젝트 경로>가 필요합니다\n".as_bytes());
+        return exit::USAGE;
+    }
     let mode = match parse_args(&args) {
         Ok(Some(mode)) => mode,
         Ok(None) => {
@@ -214,7 +239,9 @@ fn run() -> Exit {
     let mut output = stdout.lock();
     let mut mcp_server = server::Server::new();
     let _app_session = match mode {
-        Mode::ConnectionInfo => return print_connection_info(&config, &mut output, &mut log),
+        Mode::ConnectionInfo(project) => {
+            return print_connection_info(&project, &config, &mut output, &mut log)
+        }
         Mode::Serve => None,
         Mode::Headless(project) => {
             match stellar_mcp::headless::Headless::select(&project) {

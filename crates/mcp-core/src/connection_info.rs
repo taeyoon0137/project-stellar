@@ -31,12 +31,37 @@ pub const FLAG: &str = "--connection-info";
 
 /// `command`(이 실행 파일의 절대 경로)로 등록 정보를 만듭니다.
 pub fn connection_info(command: &str, protocol: &ProtocolConfig) -> JsonValue {
+    connection_info_with_args(command, protocol, Vec::new())
+}
+
+/// 프로젝트에 고정한 headless 서버의 등록 정보를 만듭니다.
+pub fn connection_info_for_project(
+    command: &str,
+    protocol: &ProtocolConfig,
+    project: &str,
+) -> JsonValue {
+    connection_info_with_args(
+        command,
+        protocol,
+        vec![
+            JsonValue::string("--headless"),
+            JsonValue::string("--project"),
+            JsonValue::string(project),
+        ],
+    )
+}
+
+fn connection_info_with_args(
+    command: &str,
+    protocol: &ProtocolConfig,
+    args: Vec<JsonValue>,
+) -> JsonValue {
     JsonValue::object(vec![
         ("schema", JsonValue::string(SCHEMA_ID)),
         ("schemaVersion", JsonValue::int(SCHEMA_VERSION)),
         ("transport", JsonValue::string("stdio")),
         ("command", JsonValue::string(command)),
-        ("args", JsonValue::Array(Vec::new())),
+        ("args", JsonValue::Array(args)),
         ("env", JsonValue::Object(Vec::new())),
         (
             "serverInfo",

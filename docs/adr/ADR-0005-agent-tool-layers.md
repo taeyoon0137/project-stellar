@@ -86,6 +86,8 @@ Git merge driver 모드에서는 0이 아닌 코드가 모두 충돌로 취급�
 
 ### 3. L2: stellar-mcp
 
+등록 기본값은 headless와 지정 프로젝트 절대 경로다(2026-11-18 결정). `stellar-mcp --connection-info --project <프로젝트 경로>`가 해당 경로를 포함한 stdio 등록 인자를 반환한다. 앱이 종료돼 있어도 저장된 프로젝트를 읽으며, 쓰기 권한과 신뢰 경계는 기존 headless backend 규칙을 따른다.
+
 - **위치**
   - `tools/stellar-mcp` 실행 파일(XIX.1.1)은 진입점만 갖습니다.
   - 로직은 `crates/mcp-core`의 `stellar-mcp-core` library에 둡니다. 실행 파일 package `tools/stellar-mcp`는 실행 이름 `stellar-mcp`를 유지합니다.

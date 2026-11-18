@@ -197,12 +197,11 @@ stdout JSON에는 입력 경로를 넣지 않습니다. 의존성의 `repository
 아래 명령에서 파일이 `PATH`에 없으면 `target/debug/stellar-mcp`를 사용합니다.
 
 ```sh
-stellar-mcp --connection-info
+stellar-mcp --connection-info --project /path/to/project
 ```
 
 외부 MCP 클라이언트의 stdio 서버 설정에서 `command`는 이 명령이 출력한 실행 경로를 사용합니다.
-기본 `args: []`로 시작하면 프로젝트 리소스를 제공하지 않습니다. 읽을 프로젝트의 절대 경로로
-인자를 채웁니다.
+출력의 `args`에는 지정한 프로젝트의 절대 경로와 headless 모드 인자가 들어 있습니다.
 
 ```json
 ["--headless", "--project", "/path/to/project"]

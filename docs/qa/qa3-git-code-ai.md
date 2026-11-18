@@ -207,7 +207,7 @@ mcp '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"document.va
 # QA3-29 (앱에서 Revoke Project Trust를 고른 뒤)
 stellar-mcp --headless --project "$S" < /dev/null; echo "exit=$?"
 # QA3-30
-stellar-mcp --connection-info | jq -c .
+stellar-mcp --connection-info --project "$S" | jq -c .
 ```
 
 | ID | 해 볼 것 | 보여야 하는 것 |

@@ -445,7 +445,7 @@ headless와 resource catalog는 `crates/mcp-core`에 있습니다. 실행 파일
 사용하고 로그를 stderr에 씁니다. 기존 library 경로는 mcp-core의 모듈을 재노출합니다.
 
 인자 없이 실행하면 기본 MCP 세션을 시작합니다. `--attach [--instance <id>]`는 macOS에서 실행 중인
-앱을 인증·연결합니다. `--connection-info`는 클라이언트 등록 정보를 출력합니다.
+앱을 인증·연결합니다. `--connection-info --project <프로젝트 경로>`는 해당 프로젝트의 headless 클라이언트 등록 정보를 출력합니다.
 `--headless --project <절대 경로>`는 신뢰 등록된 프로젝트 루트 하나로 고정합니다. 이 모드에서 클라이언트는
 resource 목록·template을 조회하고 프로젝트 구조와 문서 트리를 읽을 수 있습니다. 문서 페이지는
 revision과 cursor로 이어 읽고, 쓰기 도구 목록은 비어 있습니다. 실제 stdio 요청·응답 검증은
