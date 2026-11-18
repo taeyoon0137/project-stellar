@@ -434,11 +434,11 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
         case .group: return .group(targets)
         case .ungroup: return .ungroup(targets)
         case .toggleVisibility:
-            // 모두 보이면 숨기고, 하나라도 숨겨져 있으면 모두 보입니다.
-            return .setVisible(targets, !rows.allSatisfy(\.isVisible))
+            // 실제 창은 value를 쓰지 않고 코어가 토글 방향을 정합니다.
+            return .setVisible(targets, false)
         case .toggleLock:
-            // 모두 잠겨 있으면 풀고, 하나라도 풀려 있으면 모두 잠급니다.
-            return .setLocked(targets, !rows.allSatisfy(\.isLocked))
+            // SidebarCommand의 Bool은 이전 stub 인터페이스와 호환하기 위해 남습니다.
+            return .setLocked(targets, false)
         }
     }
 

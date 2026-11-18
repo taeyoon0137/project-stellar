@@ -767,3 +767,8 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 ## Image object-fit 표시(2026-11-18)
 
 `StellarCanvasFrame`의 `fit: u8`은 이미지 행의 `object-fit` 값이다. 저장된 `FitMode`와 같은 tag로 fill=0, contain=1, cover=2, none=3을 쓴다. fill은 이미지를 상자에 늘리고, contain은 원본 비율로 상자 안에 가운데 배치한다. cover는 비율을 유지하며 상자를 덮고 상자 밖을 자른다. none은 원본 크기로 가운데 놓고 상자 밖을 자른다. 위치는 모두 50% 50%이다. 이미지 이외의 행은 기본 contain=1을 쓴다.
+
+## 레이어 토글과 순서 mask 통합(2026-11-18, UX.3.12)
+
+- `stellar_window_layer_set_flag`는 `value` 없이 노드 ID 배열과 `flag`만 받습니다. 대상 중 하나라도 꺼져 있으면 모두 켜고, 모두 켜져 있으면 모두 끕니다. 선택 메뉴와 같은 runtime `set_flags` 판정을 사용하며 한 transaction으로 기록합니다.
+- `stellar_window_layer_order_flags`는 제거합니다. 순서 가능·흐름 부모 bit는 `stellar_window_selection_flags`의 bit 8·9·10(`STELLAR_SELECTION_ORDER_*`)에 합칩니다. 셸은 같은 선택 snapshot의 mask 하나로 메뉴 활성과 흐름 안내를 정합니다.

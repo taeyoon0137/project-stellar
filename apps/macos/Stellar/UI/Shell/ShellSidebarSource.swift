@@ -36,7 +36,7 @@ final class ShellSidebarSource: SidebarDataProvider {
     var canEditSelection: ((ShellCommand) -> Bool)?
     var select: (([UUID]) -> Void)?
     var rename: ((_ view: UUID, _ revision: UInt64, _ id: UUID, _ name: String) -> Void)?
-    var setFlag: ((_ view: UUID, _ revision: UInt64, _ ids: [UUID], _ flag: ShellLayerFlag, _ value: Bool) -> Void)?
+    var toggleFlag: ((_ view: UUID, _ revision: UInt64, _ ids: [UUID], _ flag: ShellLayerFlag) -> Void)?
     /// 머리 줄 팝업에서 고른 View로 전환합니다.
     var openView: ((UUID) -> Void)?
     /// 창 작업 문서의 Page·View 목록과 그것을 읽은 창·revision. 머리 줄 팝업이 씁니다.
@@ -200,10 +200,10 @@ final class ShellSidebarSource: SidebarDataProvider {
         case .reload:
             reset()
             enqueue(Request(parent: nil, after: nil))
-        case .setVisible(let ids, let value):
-            setFlag(ids, value: value, flag: .visible, selectionCommand: .toggleVisibility)
-        case .setLocked(let ids, let value):
-            setFlag(ids, value: value, flag: .locked, selectionCommand: .toggleLock)
+        case .setVisible(let ids, _):
+            setFlag(ids, flag: .visible, selectionCommand: .toggleVisibility)
+        case .setLocked(let ids, _):
+            setFlag(ids, flag: .locked, selectionCommand: .toggleLock)
         case .activateView(let id):
             openView?(id.uuid)
         case .loadChildren(let id):
@@ -226,13 +226,13 @@ final class ShellSidebarSource: SidebarDataProvider {
         }
     }
 
-    /// 대상이 창 선택 전체이면 메뉴 막대와 같은 선택 토글(코어가 방향을 정함)로, 아니면 그 행들에 값을 보냅니다.
-    private func setFlag(_ ids: [SidebarStableID], value: Bool, flag: ShellLayerFlag, selectionCommand: ShellCommand) {
+    /// 대상이 창 선택 전체이면 메뉴 막대와 같은 선택 토글로, 아니면 그 행들을 코어에서 토글합니다.
+    private func setFlag(_ ids: [SidebarStableID], flag: ShellLayerFlag, selectionCommand: ShellCommand) {
         guard let display else { return }
         if matchesSelection(ids) {
             editSelection?(selectionCommand, display.target, ids.map(\.uuid))
         } else {
-            setFlag?(display.view, display.revision, ids.map(\.uuid), flag, value)
+            toggleFlag?(display.view, display.revision, ids.map(\.uuid), flag)
         }
     }
 

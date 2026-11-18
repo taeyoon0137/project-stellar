@@ -405,10 +405,6 @@ typedef struct StellarSelectionTarget {
 /* 선택이 모두 켜져 있으면 끄고, 하나라도 꺼져 있으면 모두 켭니다. 잠긴 노드의 표시와 잠긴 조상 아래 노드는 거부합니다. */
 #define STELLAR_SELECTION_TOGGLE_VISIBILITY 7
 #define STELLAR_SELECTION_TOGGLE_LOCK 8
-#define STELLAR_ORDER_CAN_FORWARD 1
-#define STELLAR_ORDER_CAN_BACKWARD 2
-#define STELLAR_ORDER_FLOW_PARENT 4
-uint32_t stellar_window_layer_order_flags(uint64_t handle, const StellarSelectionTarget *target);
 /* 같은 게시 시점의 선택에 대한 코어 능력 mask(시점이 다르면 0). 메뉴 막대·캔버스·레이어 문맥 메뉴가 활성과 제목에 씁니다. */
 #define STELLAR_SELECTION_CAN_DELETE 1
 #define STELLAR_SELECTION_CAN_DUPLICATE 2
@@ -420,6 +416,9 @@ uint32_t stellar_window_layer_order_flags(uint64_t handle, const StellarSelectio
 /* TOGGLE_VISIBILITY가 보이게 함(제목 Show), TOGGLE_LOCK이 잠금을 풂(제목 Unlock). */
 #define STELLAR_SELECTION_SHOWS 64
 #define STELLAR_SELECTION_UNLOCKS 128
+#define STELLAR_SELECTION_ORDER_CAN_FORWARD 256
+#define STELLAR_SELECTION_ORDER_CAN_BACKWARD 512
+#define STELLAR_SELECTION_ORDER_FLOW_PARENT 1024
 uint32_t stellar_window_selection_flags(uint64_t handle, const StellarSelectionTarget *target);
 /* 문맥 메뉴를 열기 전 선택: node(NULL은 빈 곳)나 그 조상(View root 제외)이 선택에 있으면 유지, 아니면 그 노드만 선택. */
 StellarStatus stellar_window_context_select(uint64_t handle, const StellarSelectionTarget *target, const uint8_t node[16], uint64_t *out_request);
@@ -520,8 +519,8 @@ StellarStatus stellar_window_canvas_selection(uint64_t handle, uint64_t session,
 StellarStatus stellar_window_layer_page(uint64_t handle, uint64_t session, const StellarLayerQuery *query, StellarLayerInfo *info, StellarLayerRow *rows, uint8_t *text, size_t capacity, uint64_t *out_history);
 #define STELLAR_LAYER_FLAG_VISIBLE 1
 #define STELLAR_LAYER_FLAG_LOCKED 2
-/* 표시한 레이어 행들의 flag를 value(0·1)로 한 transaction에 바꿉니다. 잠금 규칙은 STELLAR_SELECTION_TOGGLE_*와 같습니다. */
-StellarStatus stellar_window_layer_set_flag(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, const uint8_t *nodes, size_t count, uint32_t flag, uint32_t value, uint64_t *out_request);
+/* 표시한 레이어 행들의 flag를 한 transaction에 토글합니다. 방향은 코어가 정합니다. */
+StellarStatus stellar_window_layer_set_flag(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, const uint8_t *nodes, size_t count, uint32_t flag, uint64_t *out_request);
 /* Worker-only. 창 작업 문서의 Page·View를 정의 순서로 View마다 한 행(View 없는 Page는 view 0) 씁니다.
  * text는 행 순서로 Page 이름(그 Page의 첫 행만)과 View 이름입니다. 부족하면 BUFFER_TOO_SMALL과 필요한 행 수·길이를 씁니다. */
 typedef struct StellarViewOutlineRow { uint8_t page[16], view[16]; size_t page_name_len, view_name_len; } StellarViewOutlineRow;

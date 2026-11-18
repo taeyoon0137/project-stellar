@@ -228,10 +228,10 @@ final class ShellRuntimeEventPump {
                                          node: node, revision: revision, name: name), completion)
     }
 
-    func setLayerFlag(session: UInt64, view: UUID, revision: UInt64, nodes: [UUID], flag: ShellLayerFlag, value: Bool,
+    func toggleLayerFlag(session: UInt64, view: UUID, revision: UInt64, nodes: [UUID], flag: ShellLayerFlag,
                       completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
-        register(CoreRuntime.setLayerFlag(handle: runtimeHandle, session: session, view: view, revision: revision,
-                                          nodes: nodes, flag: flag, value: value), completion)
+        register(CoreRuntime.toggleLayerFlag(handle: runtimeHandle, session: session, view: view, revision: revision,
+                                             nodes: nodes, flag: flag), completion)
     }
 
     func openView(session: UInt64, view: UUID, completion: @escaping (CoreRuntimeEvent) -> Void)

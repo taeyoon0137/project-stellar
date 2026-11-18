@@ -560,7 +560,6 @@ final class ShellProjectWindow {
     var recoveryPrompt: NSAlert?
     let sidebarSource = ShellSidebarSource()
     private var displayedSelection: StellarSelectionTarget?
-    private var displayedOrderFlags: UInt32 = 0
     /// 표시한 선택에 대한 코어 능력 mask(`STELLAR_SELECTION_CAN_*`). 메뉴 막대·문맥 메뉴 활성과 Hide·Lock 제목에 씁니다.
     private(set) var displayedSelectionFlags: UInt32 = 0
     let inspectorSource = ShellInspectorSource()
@@ -815,9 +814,6 @@ final class ShellProjectWindow {
         let view = session?.viewInfo
         let info = session?.info
         displayedSelection = session?.selectionTarget
-        if let target = displayedSelection, target.selection_count == 1, let handle = dataSource.session?.pump.runtimeHandle {
-            displayedOrderFlags = CoreRuntime.layerOrderFlags(handle: handle, target: target)
-        } else { displayedOrderFlags = 0 }
         if let target = displayedSelection, let handle = dataSource.session?.pump.runtimeHandle {
             displayedSelectionFlags = CoreRuntime.selectionFlags(handle: handle, target: target)
         } else { displayedSelectionFlags = 0 }
@@ -832,7 +828,7 @@ final class ShellProjectWindow {
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
         if view?.has_view == 1 { commands.formUnion([.zoomToFit, .selectAll]) }
         for command: ShellCommand in [.bringForward, .bringToFront, .sendBackward, .sendToBack] {
-            if let flag = command.layerOrderFlag, displayedOrderFlags & flag != 0 { commands.insert(command) }
+            if let flag = command.layerOrderFlag, displayedSelectionFlags & flag != 0 { commands.insert(command) }
         }
         // 활성은 코어 능력 mask(View root·잠금 규칙 반영)로 정하고, Paste는 클립보드에 노드가 있을 때만 켭니다.
         // Cut은 Copy 뒤 delete라 Copy와 Delete가 함께 되는 선택에서만 켭니다. 복사는 잠긴 자손을 막지 않지만
@@ -901,7 +897,7 @@ final class ShellProjectWindow {
                 self.finishSessionCommand(command, event: event)
             }
         }
-        if let flag = command.layerOrderFlag, displayedOrderFlags & flag == 0 { return false }
+        if let flag = command.layerOrderFlag, displayedSelectionFlags & flag == 0 { return false }
         if command == .delete || command == .duplicate || command.layerOrderFlag != nil
             || command == .toggleVisibility || command == .toggleLock {
             guard let target = displayedSelection else { return false }
@@ -918,7 +914,7 @@ final class ShellProjectWindow {
 
     private func editSelection(_ command: ShellCommand, target: StellarSelectionTarget, ids: [UUID]?) -> Bool {
         guard !router.isTextEditing, let session = windowController.windowSession else { return false }
-        let affectsFlow = command.layerOrderFlag != nil && displayedOrderFlags & UInt32(STELLAR_ORDER_FLOW_PARENT) != 0
+        let affectsFlow = command.layerOrderFlag != nil && displayedSelectionFlags & UInt32(STELLAR_SELECTION_ORDER_FLOW_PARENT) != 0
         _ = canvasHost.canvasView.cancelFrameGesture?()
         return session.editSelection(target, command: command, ids: ids) { [weak self, weak session] event in
             guard let self, self.windowController.windowSession === session else { return }
@@ -1147,7 +1143,6 @@ final class ShellProjectWindow {
         inspectorSource.refresh(runtime: nil, session: nil)
         gitSource.attach(nil)
         displayedSelection = nil
-        displayedOrderFlags = 0
         displayedSelectionFlags = 0
         sidebarSource.refresh(runtime: nil, session: nil, target: nil)
         cancelPendingClose()
@@ -1165,7 +1160,6 @@ final class ShellProjectWindow {
         inspectorSource.refresh(runtime: nil, session: nil)
         gitSource.attach(nil)
         displayedSelection = nil
-        displayedOrderFlags = 0
         displayedSelectionFlags = 0
         sidebarSource.refresh(runtime: nil, session: nil, target: nil)
         cancelPendingClose()

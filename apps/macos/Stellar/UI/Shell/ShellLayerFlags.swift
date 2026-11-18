@@ -5,12 +5,12 @@ import Foundation
 // 셸은 그 값을 메뉴 활성과 제목에 옮기기만 합니다. 표시·잠금은 문서 편집이라 프로젝트 신뢰와 무관합니다(D1).
 extension ShellProjectWindow {
     func connectLayerFlags() {
-        sidebarSource.setFlag = { [weak self] view, revision, ids, flag, value in
+        sidebarSource.toggleFlag = { [weak self] view, revision, ids, flag in
             guard let self, let session = self.windowController.windowSession, !session.isClosed, !session.isClosing,
                   let pump = self.dataSource.session?.pump else { return }
             _ = self.canvasHost.canvasView.cancelFrameGesture?()
-            session.track({ pump.setLayerFlag(session: session.session, view: view, revision: revision, nodes: ids,
-                                              flag: flag, value: value, completion: $0) }) { [weak self, weak session] _ in
+            session.track({ pump.toggleLayerFlag(session: session.session, view: view, revision: revision, nodes: ids,
+                                                 flag: flag, completion: $0) }) { [weak self, weak session] _ in
                 guard let self, let session, self.windowController.windowSession === session else { return }
                 self.refreshSessionCommands()
             }

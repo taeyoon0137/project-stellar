@@ -26,16 +26,15 @@ enum ShellLayerFlag {
 
 extension CoreRuntime {
     /// 표시한 레이어 행들의 표시 또는 잠금을 한 transaction으로 바꾸는 요청을 접수합니다.
-    static func setLayerFlag(handle: UInt64, session: UInt64, view: UUID, revision: UInt64, nodes: [UUID],
-                             flag: ShellLayerFlag, value: Bool) -> Result<UInt64, CoreRuntimeCallError> {
+    static func toggleLayerFlag(handle: UInt64, session: UInt64, view: UUID, revision: UInt64, nodes: [UUID],
+                                flag: ShellLayerFlag) -> Result<UInt64, CoreRuntimeCallError> {
         guard !nodes.isEmpty else { return .failure(CoreRuntimeCallError(status: STELLAR_INVALID_ARGUMENT)) }
         var request: UInt64 = 0
         let ids = nodes.map(\.uuid)
         let status = withUnsafeBytes(of: view.uuid) { viewBytes in
             ids.withUnsafeBytes { nodeBytes in
                 stellar_window_layer_set_flag(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress, revision,
-                                              nodeBytes.bindMemory(to: UInt8.self).baseAddress, ids.count, flag.code,
-                                              value ? 1 : 0, &request)
+                                                 nodeBytes.bindMemory(to: UInt8.self).baseAddress, ids.count, flag.code, &request)
             }
         }
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
@@ -111,11 +110,6 @@ extension CoreRuntime {
         }
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
         return .success(request)
-    }
-
-    static func layerOrderFlags(handle: UInt64, target: StellarSelectionTarget) -> UInt32 {
-        var target = target
-        return stellar_window_layer_order_flags(handle, &target)
     }
 
     static func renameLayer(handle: UInt64, session: UInt64, view: UUID, node: UUID, revision: UInt64,

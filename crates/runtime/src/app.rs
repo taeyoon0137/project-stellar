@@ -955,7 +955,6 @@ pub struct WindowSessionSummary {
     /// Undo 스택 끝의 sequence. 문서 revision이 같은 선택 변경도 구분합니다.
     pub history_sequence: u64,
     /// 확정 단일 선택의 형제 이동 가능 방향(bit 0 앞, bit 1 뒤)과 흐름 부모(bit 2).
-    pub order_flags: u32,
     /// 확정 선택에 대한 편집 능력과 토글 방향([`selection_menu`]의 `CAN_*`·`HIDE_SHOWS`·`LOCK_UNLOCKS`).
     pub selection_flags: u32,
     /// 표시 중인 primary 선택.
@@ -1483,8 +1482,8 @@ fn window_summary(
         redo_depth: clamp(session.history().history().redo_entries().len()),
         selection_len: clamp(session.view().selection().len()),
         history_sequence: session.history_sequence(),
-        order_flags: node_order::capabilities(session),
-        selection_flags: entry.selection_caps.get(session),
+        selection_flags: entry.selection_caps.get(session)
+            | (node_order::capabilities(session) << 8),
         primary_selection: session.view().displayed_selection().primary(),
         inspector,
         has_unsaved_changes: session.has_unsaved_changes(),

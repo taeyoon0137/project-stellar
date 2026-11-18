@@ -188,7 +188,7 @@ pub unsafe extern "C" fn stellar_window_layer_rename(
     })
 }
 
-/// 표시한 레이어 행들의 표시(`flag` 1) 또는 잠금(`flag` 2)을 `value`(0·1)로 한 transaction에 바꿉니다.
+/// 표시한 레이어 행들의 표시(`flag` 1) 또는 잠금(`flag` 2)을 한 transaction에 토글합니다.
 /// # Safety
 /// view는 16바이트, nodes는 `count * 16`바이트를 읽을 수 있어야 합니다.
 /// out_request는 null이거나 u64 하나를 쓸 수 있어야 합니다.
@@ -201,7 +201,6 @@ pub unsafe extern "C" fn stellar_window_layer_set_flag(
     nodes: *const [u8; 16],
     count: usize,
     flag: u32,
-    value: u32,
     out_request: *mut u64,
 ) -> StellarStatus {
     ffi_guard(move || {
@@ -214,11 +213,6 @@ pub unsafe extern "C" fn stellar_window_layer_set_flag(
         let flag = match flag {
             1 => LayerFlag::Visible,
             2 => LayerFlag::Locked,
-            _ => return StellarStatus::InvalidArgument,
-        };
-        let value = match value {
-            0 => false,
-            1 => true,
             _ => return StellarStatus::InvalidArgument,
         };
         if count == 0 || count > isize::MAX as usize / 16 {
@@ -237,13 +231,12 @@ pub unsafe extern "C" fn stellar_window_layer_set_flag(
             return StellarStatus::InvalidHandle;
         };
         let result = match rt.app() {
-            Ok(app) => app.set_layer_flag(
+            Ok(app) => app.toggle_layer_flag(
                 WindowSessionHandle(session),
                 view,
                 DocumentRevision(revision),
                 nodes,
                 flag,
-                value,
             ),
             Err(status) => return status,
         };

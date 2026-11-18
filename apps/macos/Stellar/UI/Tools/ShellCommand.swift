@@ -257,8 +257,8 @@ enum ShellCommand: String, CaseIterable {
     /// 현재 창의 실제 형제 위치에 따라 필요한 이동 가능 방향입니다.
     var layerOrderFlag: UInt32? {
         switch self {
-        case .bringForward, .bringToFront: return UInt32(STELLAR_ORDER_CAN_FORWARD)
-        case .sendBackward, .sendToBack: return UInt32(STELLAR_ORDER_CAN_BACKWARD)
+        case .bringForward, .bringToFront: return UInt32(STELLAR_SELECTION_ORDER_CAN_FORWARD)
+        case .sendBackward, .sendToBack: return UInt32(STELLAR_SELECTION_ORDER_CAN_BACKWARD)
         default: return nil
         }
     }

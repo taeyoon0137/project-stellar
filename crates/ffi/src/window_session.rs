@@ -407,31 +407,6 @@ pub unsafe extern "C" fn stellar_window_selection_target(
     })
 }
 
-/// 주어진 선택 snapshot에서 형제 순서 이동 가능 방향과 흐름 부모 여부를 읽습니다.
-/// # Safety
-/// `target`은 읽을 수 있는 구조체 하나를 가리켜야 합니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_window_layer_order_flags(
-    handle: u64,
-    target: *const StellarSelectionTarget,
-) -> u32 {
-    std::panic::catch_unwind(|| {
-        let target = unsafe { target.as_ref() }?;
-        let reg = registry().lock().ok()?;
-        let state = reg.live.get(&handle)?.app.as_ref()?.state();
-        let window = state.window(WindowSessionHandle(target.session))?;
-        (window.active_view?.to_bytes() == target.view
-            && window.revision.0 == target.revision
-            && window.history_sequence == target.history_sequence
-            && target.selection_count == 1
-            && window.selection_len == 1)
-            .then_some(window.order_flags)
-    })
-    .ok()
-    .flatten()
-    .unwrap_or(0)
-}
-
 /// 주어진 선택 snapshot에 대한 코어 능력 mask(`STELLAR_SELECTION_CAN_*`, 토글 방향 `STELLAR_SELECTION_SHOWS`·
 /// `STELLAR_SELECTION_UNLOCKS`)를 읽습니다. 게시 시점이 다르면 0입니다. document thread를 기다리지 않습니다.
 /// # Safety

@@ -74,18 +74,17 @@ pub enum LayerFlag {
 
 impl AppRuntime {
     /// 표시한 레이어 행들의 표시 또는 잠금을 한 번의 Undo 가능한 transaction으로 바꿉니다.
-    pub fn set_layer_flag(
+    pub fn toggle_layer_flag(
         &self,
         session: WindowSessionHandle,
         view: StableId,
         revision: DocumentRevision,
         nodes: Vec<StableId>,
         flag: LayerFlag,
-        value: bool,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
             let window = window_mut(ctx, session)?;
-            set_flags(window, request, view, revision, &nodes, flag, Some(value))?;
+            set_flags(window, request, view, revision, &nodes, flag, None)?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
     }
