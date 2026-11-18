@@ -738,7 +738,9 @@ fn retarget(command: Command, target: StableId) -> Command {
 /// 이동 command와 같은 판정으로 `node`를 옮길 수 있는지.
 fn can_move(model: &DocumentModel, view: StableId, node: StableId) -> bool {
     let frame = matches!(model.payload(node), Some(NodePayload::Frame(_)));
-    editable_ancestry(model, view, node, !frame).is_some()
+    stellar_commands::lock::edit_permission(model, node, stellar_commands::lock::EditIntent::Move)
+        .is_ok()
+        && editable_ancestry(model, view, node, !frame).is_some()
         && Vec2::new(1.0, 0.0)
             .ok()
             .is_some_and(|probe| move_command(model, node, node, probe, None, &mut || node).is_ok())
@@ -804,6 +806,12 @@ fn move_selection(
     let mut copies = Vec::new();
     for &node in &roots {
         let frame = matches!(model.payload(node), Some(NodePayload::Frame(_)));
+        stellar_commands::lock::edit_permission(
+            model,
+            node,
+            stellar_commands::lock::EditIntent::Move,
+        )
+        .map_err(|_| stale_view())?;
         editable_ancestry(model, view, node, !frame).ok_or_else(stale_view)?;
         let local = if parent_space {
             delta

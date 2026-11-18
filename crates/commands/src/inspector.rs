@@ -8,7 +8,7 @@
 //!   longhand 4개를 펼친 shorthand이며 편집은 longhand 변경 집합 하나입니다(속성 모델 11장).
 //! - 다중 선택은 모든 node에 있는 속성만 내고, 값이 다르면 `MIXED`입니다. 편집은 선택 전체를 한 transaction으로
 //!   바꿉니다(Undo 한 번).
-//! - 잠긴 node(자신 또는 조상)는 `locked` 행 외에는 읽기 전용이고 편집을 거부합니다(D8, [`NodeLock`]).
+//! - 잠긴 node(자신 또는 조상)는 `locked` 행 외에는 읽기 전용이고 편집을 거부합니다(D8, [`edit_permission`]).
 //! - 이름·표시·잠금 편집은 Layers와 같은 command(`rename_node`·`set_visibility`·`set_locked`)입니다.
 //! - `fill`·`stroke`는 늘 있는 행입니다. 칠하기가 없으면 `none`이고, 값을 넣으면 modifier를 렌더 순서
 //!   (Transform → Fill → Stroke)에 맞춰 넣고, `none`이면 뺍니다. 선이 없는 node에 `stroke` 색을 넣으면
@@ -33,7 +33,7 @@ use stellar_document::shape::ShapeGeometry;
 use crate::change::node_keys;
 use crate::command::Command;
 use crate::css_value::{format, parse, CssGrammar, CssValue, CssValueError};
-use crate::lock::NodeLock;
+use crate::lock::{edit_permission, EditIntent, NodeLock};
 use crate::modifier_ops::{InsertModifier, RemoveModifier, SetModifierProperty};
 use crate::property::{read_property, PropertyValue, SetProperty};
 
@@ -492,15 +492,14 @@ fn paint(model: &DocumentModel, id: StableId) -> Paint {
 struct NodeView {
     record: NodeRecord,
     class: NodeClass,
-    lock: NodeLock,
     paint: Paint,
 }
 
 fn node_view(model: &DocumentModel, id: StableId) -> Option<NodeView> {
     let record = model.record(id)?;
+    NodeLock::of(model, id)?;
     Some(NodeView {
         class: NodeClass::of(&record.payload),
-        lock: NodeLock::of(model, id)?,
         paint: paint(model, id),
         record,
     })
@@ -653,7 +652,12 @@ pub fn inspector_rows(model: &DocumentModel, selection: &[StableId]) -> Inspecto
                 Some(previous) if !mixed && *previous != current => mixed = true,
                 Some(_) => {}
             }
-            read_only |= node.lock.blocks(property.key(node.class));
+            let intent = if property == P::Locked {
+                EditIntent::ToggleLock
+            } else {
+                EditIntent::Modify(property.key(node.class))
+            };
+            read_only |= edit_permission(model, node.record.id, intent).is_err();
         }
         if !readable {
             continue;
@@ -1056,7 +1060,12 @@ pub fn edit_commands(
                 property.name()
             )));
         }
-        if node.lock.blocks(property.key(node.class)) {
+        let intent = if property == P::Locked {
+            EditIntent::ToggleLock
+        } else {
+            EditIntent::Modify(property.key(node.class))
+        };
+        if edit_permission(model, *id, intent).is_err() {
             return Err(reject("잠긴 레이어는 바꿀 수 없습니다"));
         }
         let value = match input {

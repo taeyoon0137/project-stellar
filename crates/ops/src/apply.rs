@@ -607,28 +607,16 @@ fn locked_change(
     after: &stellar_document::records::DocumentRecords,
 ) -> Option<StableId> {
     use std::collections::HashMap;
-    let base: HashMap<_, _> = before.nodes.iter().map(|n| (n.id, n)).collect();
-    // 자기 자신(`include_self`)이나 조상이 잠겼는지. 순환 레코드는 잠긴 것으로 봅니다.
-    let protected = |id: StableId, include_self: bool| {
-        let mut current = if include_self {
-            Some(id)
-        } else {
-            base.get(&id).and_then(|n| n.parent)
-        };
-        let mut steps = 0;
-        while let Some(node) = current.and_then(|id| base.get(&id)) {
-            if node.locked || steps > base.len() {
-                return true;
-            }
-            current = node.parent;
-            steps += 1;
-        }
-        false
+    use stellar_commands::lock::{edit_permission, EditIntent};
+    let (model, _) = match stellar_document::model::DocumentModel::from_records(before.clone()) {
+        Ok(result) => result,
+        Err(_) => return before.nodes.first().map(|node| node.id),
     };
+    let base: HashMap<_, _> = before.nodes.iter().map(|n| (n.id, n)).collect();
     let next: HashMap<_, _> = after.nodes.iter().map(|n| (n.id, n)).collect();
     for old in &before.nodes {
         let Some(new) = next.get(&old.id) else {
-            if protected(old.id, true) {
+            if edit_permission(&model, old.id, EditIntent::Delete).is_err() {
                 return Some(old.id);
             }
             continue;
@@ -639,14 +627,40 @@ fn locked_change(
         let mut relocked = (*old).clone();
         relocked.locked = new.locked;
         let lock_only = relocked == **new;
-        if protected(old.id, !lock_only)
-            || (new.parent != old.parent && new.parent.is_some_and(|p| protected(p, true)))
+        let intent = if lock_only {
+            EditIntent::ToggleLock
+        } else {
+            EditIntent::Modify(stellar_commands::change::node_keys::DISPLAY_NAME)
+        };
+        if edit_permission(&model, old.id, intent).is_err()
+            || (new.parent != old.parent
+                && new.parent.is_some_and(|p| {
+                    base.contains_key(&p) && {
+                        edit_permission(
+                            &model,
+                            p,
+                            EditIntent::Modify(stellar_commands::change::node_keys::DISPLAY_NAME),
+                        )
+                        .is_err()
+                    }
+                }))
         {
             return Some(old.id);
         }
     }
     for new in &after.nodes {
-        if !base.contains_key(&new.id) && new.parent.is_some_and(|p| protected(p, true)) {
+        if !base.contains_key(&new.id)
+            && new.parent.is_some_and(|p| {
+                base.contains_key(&p) && {
+                    edit_permission(
+                        &model,
+                        p,
+                        EditIntent::Modify(stellar_commands::change::node_keys::DISPLAY_NAME),
+                    )
+                    .is_err()
+                }
+            })
+        {
             return Some(new.id);
         }
     }
@@ -656,7 +670,15 @@ fn locked_change(
         .keys()
         .chain(new_stacks.keys())
         .copied()
-        .find(|node| old_stacks.get(node) != new_stacks.get(node) && protected(*node, true))
+        .find(|node| {
+            old_stacks.get(node) != new_stacks.get(node)
+                && edit_permission(
+                    &model,
+                    *node,
+                    EditIntent::Modify(stellar_commands::change::node_keys::DISPLAY_NAME),
+                )
+                .is_err()
+        })
 }
 
 /// 잠금 거부를 처음 일으킨 입력 위치. 거부 경로에서만 앞에서부터 command를 하나씩 더 적용하며 같은 검사를 다시
@@ -753,6 +775,23 @@ pub fn apply(
         .map_err(|e| ApplyError::Document(DocumentReadError::Records(e.to_string())))?;
     before.sort_canonical();
     let commands = resolve_commands(planned, &snapshot, &model)?;
+
+    for (index, command) in commands.iter().enumerate() {
+        if let Command::DuplicateSubtree(duplicate) = command {
+            if stellar_commands::lock::edit_permission(
+                &model,
+                duplicate.source,
+                stellar_commands::lock::EditIntent::Duplicate,
+            )
+            .is_err()
+            {
+                return Err(ApplyError::Rejected {
+                    index,
+                    reason: format!("잠긴 노드 {}는 복제할 수 없습니다", duplicate.source),
+                });
+            }
+        }
+    }
 
     let mut state = DocumentState::new(model);
     let base = DocumentRevision(0);

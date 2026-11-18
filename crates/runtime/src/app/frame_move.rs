@@ -25,6 +25,14 @@ pub(super) fn editable_ancestry(
     node: StableId,
     modifier_target: bool,
 ) -> Option<()> {
+    stellar_commands::lock::edit_permission(
+        model,
+        node,
+        stellar_commands::lock::EditIntent::Modify(
+            stellar_commands::change::node_keys::DISPLAY_NAME,
+        ),
+    )
+    .ok()?;
     let root = model
         .definition()
         .pages
@@ -37,10 +45,7 @@ pub(super) fn editable_ancestry(
         let fields = model
             .runtime_id(current)
             .and_then(|id| model.columns().get(id))?;
-        if !fields.visible
-            || fields.locked
-            || (!(modifier_target && current == node) && model.modifier_stack(current).is_some())
-        {
+        if !(modifier_target && current == node) && model.modifier_stack(current).is_some() {
             return None;
         }
         match model.payload(current) {

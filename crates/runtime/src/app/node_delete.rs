@@ -155,13 +155,13 @@ pub(super) fn editable_selected_roots(
         )
     };
     let model = window.document().ok_or_else(invalid)?.model();
-    // A locked descendant must not disappear with an unlocked parent.
-    let mut pending = roots.clone();
-    while let Some(node) = pending.pop() {
-        if model.record(node).ok_or_else(invalid)?.locked {
-            return Err(invalid());
-        }
-        pending.extend(model.children_in_order(node));
+    for &node in &roots {
+        stellar_commands::lock::edit_permission(
+            model,
+            node,
+            stellar_commands::lock::EditIntent::Delete,
+        )
+        .map_err(|_| invalid())?;
     }
     Ok(roots)
 }
@@ -201,13 +201,16 @@ pub(super) fn unlocked_selected_roots(
         if node == root {
             return Err(invalid());
         }
+        stellar_commands::lock::edit_permission(
+            model,
+            node,
+            stellar_commands::lock::EditIntent::Duplicate,
+        )
+        .map_err(|_| invalid())?;
         let mut current = node;
         let mut covered = false;
         loop {
             let record = model.record(current).ok_or_else(invalid)?;
-            if record.locked {
-                return Err(invalid());
-            }
             if current == root {
                 break;
             }

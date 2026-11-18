@@ -165,20 +165,20 @@ fn rename(
         .get(model.runtime_id(node).ok_or_else(stale)?)
         .ok_or_else(stale)?;
     let unchanged = original.display_name == name;
-    let mut cursor = original;
-    loop {
-        if cursor.locked {
-            return Err(Failure::new(
-                RequestFailure::UnknownView,
-                "잠긴 레이어나 잠긴 부모 아래의 레이어는 이름을 바꿀 수 없습니다",
-            ));
-        }
-        if cursor.stable_id == root {
-            break;
-        }
-        cursor = columns
-            .get(cursor.parent.ok_or_else(stale)?)
-            .ok_or_else(stale)?;
+    if path_locked(model, node, root).ok_or_else(stale)?
+        || stellar_commands::lock::edit_permission(
+            model,
+            node,
+            stellar_commands::lock::EditIntent::Modify(
+                stellar_commands::change::node_keys::DISPLAY_NAME,
+            ),
+        )
+        .is_err()
+    {
+        return Err(Failure::new(
+            RequestFailure::UnknownView,
+            "잠긴 레이어나 잠긴 부모 아래의 레이어는 이름을 바꿀 수 없습니다",
+        ));
     }
     if unchanged {
         return Ok(());
@@ -241,8 +241,14 @@ pub(super) fn flag_targets(
             .parent
             .and_then(|id| model.stable_id(id))
             .ok_or(FlagDenied::Stale)?;
-        let inherited = path_locked(model, parent, root).ok_or(FlagDenied::Stale)?;
-        if inherited || (flag == LayerFlag::Visible && fields.locked) {
+        path_locked(model, parent, root).ok_or(FlagDenied::Stale)?;
+        let intent = match flag {
+            LayerFlag::Visible => stellar_commands::lock::EditIntent::Modify(
+                stellar_commands::change::node_keys::VISIBLE,
+            ),
+            LayerFlag::Locked => stellar_commands::lock::EditIntent::ToggleLock,
+        };
+        if stellar_commands::lock::edit_permission(model, node, intent).is_err() {
             return Err(FlagDenied::Locked);
         }
         let on = match flag {

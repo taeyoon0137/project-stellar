@@ -1,15 +1,97 @@
 //! node 잠금 판정 (D8).
 //!
 //! 자신이나 조상이 잠긴 node는 바꾸지 않습니다. `locked` 자체는 조상이 잠기지 않았을 때만 바꿀 수 있어, 잠금
-//! 해제는 그 node에 대한 명시 명령으로만 합니다. 지금 이 판정을 쓰는 곳은 속성 패널(`inspector`)뿐입니다. 캔버스
-//! (`runtime` `editable_ancestry`), Layers(`runtime` sidebar `path_locked`), CLI(`ops` apply `locked_change`)는 아직 각자
-//! 판정하고 규칙도 다릅니다(root·흐름 부모·숨김 조상). 한 판정으로 모으는 일은 UX WBS UX.3.11입니다(ADR-0070 결정 5).
+//! 해제는 그 node에 대한 명시 명령으로만 합니다. 숨김은 편집을 막지 않습니다.
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::property::PropertyKey;
 use stellar_document::model::DocumentModel;
 
 use crate::change::node_keys;
+
+/// 사용자 편집의 잠금·root 판정 종류.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditIntent {
+    /// 영속 속성 하나를 변경합니다.
+    Modify(PropertyKey),
+    /// 자신의 잠금 값을 변경합니다.
+    ToggleLock,
+    /// subtree를 삭제합니다.
+    Delete,
+    /// 위치를 변경합니다.
+    Move,
+    /// subtree를 복제합니다.
+    Duplicate,
+}
+
+/// 편집을 막는 이유.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Blocked {
+    /// 대상이 없습니다.
+    Missing,
+    /// 자신이나 조상이 잠겼습니다.
+    Locked,
+    /// root Frame에는 허용하지 않는 작업입니다.
+    Root,
+    /// 삭제할 subtree 안에 잠긴 노드가 있습니다.
+    LockedDescendant,
+    /// 흐름 레이아웃의 자식은 직접 배치할 수 없습니다.
+    FlowParent,
+}
+
+/// node와 조상의 편집 권한. 숨김 상태는 검사하지 않습니다.
+pub fn edit_permission(
+    model: &DocumentModel,
+    id: StableId,
+    intent: EditIntent,
+) -> Result<(), Blocked> {
+    let record = model.record(id).ok_or(Blocked::Missing)?;
+    let lock = NodeLock::of(model, id).ok_or(Blocked::Missing)?;
+    if matches!(
+        intent,
+        EditIntent::Delete | EditIntent::Move | EditIntent::Duplicate
+    ) && record.parent.is_none()
+    {
+        return Err(Blocked::Root);
+    }
+    let locked = match intent {
+        EditIntent::ToggleLock => lock.ancestor,
+        EditIntent::Modify(key) => lock.blocks(key),
+        _ => lock.any(),
+    };
+    if locked {
+        return Err(Blocked::Locked);
+    }
+    let position = match intent {
+        EditIntent::Move => true,
+        EditIntent::Modify(key) => {
+            key == stellar_document::frame::keys::TRANSFORM
+                || key == stellar_document::modifier_metadata::keys::TRANSFORM_MATRIX
+        }
+        _ => false,
+    };
+    if position && record.parent.is_some() {
+        let mut parent = record.parent;
+        while let Some(id) = parent {
+            let ancestor = model.record(id).ok_or(Blocked::Missing)?;
+            if matches!(&ancestor.payload, stellar_document::records::NodePayload::Frame(frame) if frame.layout_mode.is_some())
+            {
+                return Err(Blocked::FlowParent);
+            }
+            parent = ancestor.parent;
+        }
+    }
+    if matches!(intent, EditIntent::Delete) {
+        let mut pending = model.children_in_order(id);
+        while let Some(child) = pending.pop() {
+            if model.record(child).is_some_and(|record| record.locked) {
+                return Err(Blocked::LockedDescendant);
+            }
+            pending.extend(model.children_in_order(child));
+        }
+    }
+    Ok(())
+}
 
 /// node 하나의 잠금 상태.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
