@@ -142,6 +142,27 @@ extension CoreRuntime {
         return .success(request)
     }
 
+    static func moveLayer(handle: UInt64, session: UInt64, view: UUID, revision: UInt64, node: UUID,
+                          parent: UUID?, index: Int) -> Result<UInt64, CoreRuntimeCallError> {
+        guard index >= 0 else { return .failure(CoreRuntimeCallError(status: STELLAR_INVALID_ARGUMENT)) }
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
+            withUnsafeBytes(of: node.uuid) { nodeBytes in
+                if let parent {
+                    return withUnsafeBytes(of: parent.uuid) { parentBytes in
+                        stellar_window_layer_move(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
+                            revision, nodeBytes.bindMemory(to: UInt8.self).baseAddress,
+                            parentBytes.bindMemory(to: UInt8.self).baseAddress, index, &request)
+                    }
+                }
+                return stellar_window_layer_move(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
+                    revision, nodeBytes.bindMemory(to: UInt8.self).baseAddress, nil, index, &request)
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     static func layerPage(handle: UInt64, session: UInt64, view: UUID, revision: UInt64,
                           parent: SidebarStableID?, after: SidebarStableID?) -> WindowLayerPage? {
         precondition(!Thread.isMainThread)

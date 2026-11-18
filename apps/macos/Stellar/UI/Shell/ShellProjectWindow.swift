@@ -687,6 +687,21 @@ final class ShellProjectWindow {
                 }
             }
         }
+        sidebarSource.moveLayer = { [weak self] view, revision, node, parent, index in
+            guard let self, let session = self.windowController.windowSession, !session.isClosed, !session.isClosing,
+                  let pump = self.dataSource.session?.pump else { return }
+            session.track({ pump.moveLayer(session: session.session, view: view, revision: revision, node: node,
+                                           parent: parent, index: index, completion: $0) }) { [weak self, weak session] event in
+                guard let self, let session, self.windowController.windowSession === session else { return }
+                self.refreshSessionCommands()
+                if case .requestFailed(_, _, let message) = event {
+                    self.windowController.toolbarController.hintView.show(String(
+                        localized: "Couldn’t move the layer: \(message)",
+                        comment: "Hint when moving a layer fails; the argument is the reason"
+                    ))
+                }
+            }
+        }
         gitSource.trustCheckDidChange = { [weak self] checking in self?.dataSource.setTrustChecking(checking) }
         connectFrameInteractions()
         connectImageImport()

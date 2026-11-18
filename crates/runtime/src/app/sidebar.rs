@@ -73,6 +73,23 @@ pub enum LayerFlag {
 }
 
 impl AppRuntime {
+    /// 레이어 하나를 표시 순서 index로 이동합니다. 순서 key와 최종 유효성은 문서 스레드에서 판정합니다.
+    pub fn move_layer(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+        revision: DocumentRevision,
+        node: StableId,
+        parent: Option<StableId>,
+        index: usize,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            let window = window_mut(ctx, session)?;
+            move_layer(window, request, view, revision, node, parent, index)?;
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
+        })
+    }
+
     /// 표시한 레이어 행들의 표시 또는 잠금을 한 번의 Undo 가능한 transaction으로 바꿉니다.
     pub fn toggle_layer_flag(
         &self,
@@ -130,6 +147,87 @@ impl AppRuntime {
             read_page(&entry.session, view, revision, parent, after)
         })
     }
+}
+
+fn move_layer(
+    window: &mut ProjectWindowSession,
+    request: RequestId,
+    view: StableId,
+    revision: DocumentRevision,
+    node: StableId,
+    parent: Option<StableId>,
+    index: usize,
+) -> Result<(), Failure> {
+    use stellar_commands::{
+        command::Command, id::CommandOrigin, node_ops::MoveNode, transaction::CommandTransaction,
+    };
+    use stellar_core_types::order_key::OrderKey;
+    let stale = || {
+        Failure::new(
+            RequestFailure::UnknownView,
+            "뷰·레이어·편집 상태가 변경되었습니다",
+        )
+    };
+    if window.revision() != revision || window.tabs().active_view() != Some(view) {
+        return Err(stale());
+    }
+    let model = window.document().ok_or_else(stale)?.model();
+    let root = view_root(model, view).ok_or_else(stale)?;
+    let parent = parent.unwrap_or(root);
+    let source = model.record(node).ok_or_else(stale)?;
+    if node == root
+        || source.parent.is_none()
+        || path_locked(model, node, root) != Some(false)
+        || path_locked(model, parent, root) != Some(false)
+    {
+        return Err(stale());
+    }
+    let mut siblings = model
+        .children_front_to_back(parent, None, usize::MAX)
+        .ok_or_else(stale)?;
+    if index > siblings.len() {
+        return Err(stale());
+    }
+    // 드롭 index는 이동 대상을 제거하기 전의 표시 순서입니다.
+    let position = index;
+    let original_position = siblings.iter().position(|id| *id == node);
+    siblings.retain(|id| *id != node);
+    let position = if source.parent == Some(parent) {
+        let original = model
+            .children_front_to_back(parent, None, usize::MAX)
+            .ok_or_else(stale)?;
+        position - usize::from(original[..position].contains(&node))
+    } else {
+        position
+    };
+    if source.parent == Some(parent) && original_position == Some(position) {
+        return Ok(());
+    }
+    let key = |id: StableId| model.record(id).map(|record| record.order_key);
+    let lower = siblings.get(position).and_then(|id| key(*id));
+    let upper = position
+        .checked_sub(1)
+        .and_then(|i| siblings.get(i))
+        .and_then(|id| key(*id));
+    let order_key = OrderKey::between(lower.as_ref(), upper.as_ref());
+    if source.parent == Some(parent) && source.order_key == order_key {
+        return Ok(());
+    }
+    let tx = CommandTransaction::new(
+        super::frame_move::command_id(window.window(), request),
+        CommandOrigin::User,
+    )
+    .with_command(
+        window.revision(),
+        Command::MoveNode(MoveNode {
+            node,
+            new_parent: parent,
+            order_key,
+        }),
+    );
+    window.apply(&tx).map_err(view_failure)?;
+    window.label_current(crate::window_session::history_label::REORDER);
+    Ok(())
 }
 
 fn rename(

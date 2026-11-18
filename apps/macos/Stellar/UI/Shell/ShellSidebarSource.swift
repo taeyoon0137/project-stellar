@@ -37,6 +37,7 @@ final class ShellSidebarSource: SidebarDataProvider {
     var select: (([UUID]) -> Void)?
     var rename: ((_ view: UUID, _ revision: UInt64, _ id: UUID, _ name: String) -> Void)?
     var toggleFlag: ((_ view: UUID, _ revision: UInt64, _ ids: [UUID], _ flag: ShellLayerFlag) -> Void)?
+    var moveLayer: ((_ view: UUID, _ revision: UInt64, _ node: UUID, _ parent: UUID?, _ index: Int) -> Void)?
     /// 머리 줄 팝업에서 고른 View로 전환합니다.
     var openView: ((UUID) -> Void)?
     /// 창 작업 문서의 Page·View 목록과 그것을 읽은 창·revision. 머리 줄 팝업이 씁니다.
@@ -177,6 +178,33 @@ final class ShellSidebarSource: SidebarDataProvider {
             return .allowed
         case .setSelection(let ids, _):
             return display != nil && ids.allSatisfy { snapshot.layers.rows[$0] != nil } ? .allowed : .denied(.unknownNode)
+        case .move(let ids, let target):
+            guard display != nil, window?.isClosing == false, ids.count == 1, let id = ids.first,
+                  let row = snapshot.layers.rows[id], target.index >= 0 else { return .denied(.unsupported) }
+            let siblings: [SidebarStableID]
+            if let parent = target.parentID {
+                guard let parentRow = snapshot.layers.rows[parent],
+                      snapshot.layers.childIDs[parent] != nil || !parentRow.hasChildren else {
+                    return .denied(.unknownNode)
+                }
+                siblings = snapshot.layers.childIDs[parent] ?? []
+            } else {
+                siblings = snapshot.layers.topLevelIDs
+            }
+            guard target.index <= siblings.count else { return .denied(.unknownNode) }
+            var current = target.parentID
+            while let parent = current {
+                guard parent != id, let parentRow = snapshot.layers.rows[parent],
+                      parentRow.kind == .frame || parentRow.kind == .fragment,
+                      !parentRow.isLocked else { return .denied(.unsupported) }
+                current = parentRow.parentID
+            }
+            current = row.parentID
+            while let ancestor = current {
+                guard let parentRow = snapshot.layers.rows[ancestor], !parentRow.isLocked else { return .denied(.unsupported) }
+                current = parentRow.parentID
+            }
+            return row.isLocked ? .denied(.unsupported) : .allowed
         case .loadChildren(let id):
             return snapshot.layers.rows[id]?.hasChildren == true ? .allowed : .denied(.unknownNode)
         case .loadMore(let id):
@@ -221,6 +249,10 @@ final class ShellSidebarSource: SidebarDataProvider {
                 select?((ids.filter { $0 != primary } + [primary]).map(\.uuid))
             } else {
                 select?(ids.map(\.uuid))
+            }
+        case .move(let ids, let target):
+            if let display, let id = ids.first {
+                moveLayer?(display.view, display.revision, id.uuid, target.parentID?.uuid, target.index)
             }
         default: break
         }

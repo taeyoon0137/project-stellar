@@ -230,6 +230,12 @@ final class ShellRuntimeEventPump {
                                          node: node, revision: revision, name: name), completion)
     }
 
+    func moveLayer(session: UInt64, view: UUID, revision: UInt64, node: UUID, parent: UUID?, index: Int,
+                   completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.moveLayer(handle: runtimeHandle, session: session, view: view, revision: revision,
+                                       node: node, parent: parent, index: index), completion)
+    }
+
     func toggleLayerFlag(session: UInt64, view: UUID, revision: UInt64, nodes: [UUID], flag: ShellLayerFlag,
                       completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.toggleLayerFlag(handle: runtimeHandle, session: session, view: view, revision: revision,

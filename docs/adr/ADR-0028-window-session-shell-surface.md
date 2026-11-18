@@ -779,3 +779,8 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 
 - 창 세션은 앱 runtime이 확정한 history 항목에 `HistorySequence`별 동작 이름표를 붙입니다. 선택만 변경한 항목과 이전 세션에서 복구한 항목은 이름표가 0입니다. `crates/history`의 항목 형식은 바꾸지 않습니다.
 - `stellar_window_undo_label`·`stellar_window_redo_label`은 게시된 창 snapshot의 맨 위 항목 코드(u8)를 돌려줍니다. 0이면 셸 메뉴는 기존 `Undo`·`Redo`를 씁니다. 앱은 Insert, Paste, Delete, Cut, Duplicate, Move, Resize, Change Property, Rename, Reorder, Typing, Show/Hide, Lock/Unlock 이름을 기록합니다. Group·Ungroup·Convert 진입점은 아직 없습니다.
+
+## 개정(2026-11-18, UX.3.9)
+
+- `stellar_window_layer_move`는 활성 View, 문서 revision, 단일 node, 대상 parent(null은 View root), 대상의 이동 전 표시 순서 index를 받습니다. 코어가 저장 OrderKey를 계산하고 `MoveNode`를 한 transaction에 적용해 Undo 한 번으로 기록합니다. stale View·revision, 잠금, root 이동, 잘못된 부모와 순서는 거부합니다.
+- 사이드바의 기존 드래그 대상 검증과 실제 창 공급자를 이 요청에 연결합니다. 여러 행을 함께 끄는 동작은 아직 거부합니다.

@@ -464,6 +464,7 @@ StellarStatus stellar_text_content(uint64_t handle, uint64_t session, const uint
 /* 표시한 View·revision의 레이어 이름을 UTF-8로 바꿉니다. 코어가 View 소속과 조상 잠금을 확인하고 RenameNode 하나를
  * 창 history에 기록합니다. 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED입니다. */
 StellarStatus stellar_window_layer_rename(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, const uint8_t *name, size_t name_len, uint64_t *out_request);
+StellarStatus stellar_window_layer_move(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, const uint8_t node[16], const uint8_t parent[16], size_t index, uint64_t *out_request);
 
 /* ADR-0071 캔버스 직접 조작. 셸은 그린 행·world 값만 넘기고 선택·편집 의미는 코어가 정합니다. */
 #define STELLAR_PICK_TOGGLE 1

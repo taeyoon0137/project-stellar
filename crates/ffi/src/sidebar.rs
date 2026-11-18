@@ -188,6 +188,52 @@ pub unsafe extern "C" fn stellar_window_layer_rename(
     })
 }
 
+/// 레이어 하나를 활성 View의 표시 순서로 이동합니다. parent가 null이면 View root 직속입니다.
+/// # Safety
+/// view와 node는 16바이트를 읽을 수 있어야 하고, parent는 null 또는 16바이트를 읽을 수 있어야 합니다.
+/// out_request는 null이거나 u64 하나를 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_layer_move(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    revision: u64,
+    node: *const [u8; 16],
+    parent: *const [u8; 16],
+    index: usize,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() || node.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let view = StableId::from_bytes(unsafe { *view });
+        let node = StableId::from_bytes(unsafe { *node });
+        let parent = (!parent.is_null()).then(|| StableId::from_bytes(unsafe { *parent }));
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.move_layer(
+                WindowSessionHandle(session),
+                view,
+                DocumentRevision(revision),
+                node,
+                parent,
+                index,
+            ),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
 /// 표시한 레이어 행들의 표시(`flag` 1) 또는 잠금(`flag` 2)을 한 transaction에 토글합니다.
 /// # Safety
 /// view는 16바이트, nodes는 `count * 16`바이트를 읽을 수 있어야 합니다.
