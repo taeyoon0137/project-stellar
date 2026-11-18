@@ -25,6 +25,21 @@ enum ShellLayerFlag {
 }
 
 extension CoreRuntime {
+    static func historyActionName(_ code: UInt8) -> String? {
+        let names = ["", "Insert", "Paste", "Delete", "Cut", "Duplicate", "Move", "Resize",
+                     "Change Property", "Rename", "Reorder", "Group", "Ungroup", "Typing",
+                     "Show/Hide", "Lock/Unlock", "Convert"]
+        return code > 0 && Int(code) < names.count ? names[Int(code)] : nil
+    }
+
+    static func undoActionName(handle: UInt64, session: UInt64) -> String? {
+        historyActionName(stellar_window_undo_label(handle, session))
+    }
+
+    static func redoActionName(handle: UInt64, session: UInt64) -> String? {
+        historyActionName(stellar_window_redo_label(handle, session))
+    }
+
     /// 표시한 레이어 행들의 표시 또는 잠금을 한 transaction으로 바꾸는 요청을 접수합니다.
     static func toggleLayerFlag(handle: UInt64, session: UInt64, view: UUID, revision: UInt64, nodes: [UUID],
                                 flag: ShellLayerFlag) -> Result<UInt64, CoreRuntimeCallError> {

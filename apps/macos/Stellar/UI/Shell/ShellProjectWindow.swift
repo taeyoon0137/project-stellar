@@ -95,6 +95,7 @@ final class ShellWindowSessionHandle {
         let action: UInt32
         switch command {
         case .delete: action = UInt32(STELLAR_SELECTION_DELETE)
+        case .cut: action = UInt32(STELLAR_SELECTION_CUT)
         case .duplicate: action = UInt32(STELLAR_SELECTION_DUPLICATE)
         case .bringForward: action = UInt32(STELLAR_SELECTION_FORWARD)
         case .sendBackward: action = UInt32(STELLAR_SELECTION_BACKWARD)
@@ -507,8 +508,14 @@ final class ShellWindowToolsModelStub: ToolsMenuModel {
     }
 
     /// 창 session 명령 활성 상태와 배율 표시를 바꿉니다. `zoomScale`이 nil이면 마지막 배율 표시를 유지합니다.
-    func setSessionState(commands: Set<ShellCommand>, zoomScale: Double?) {
+    func setSessionState(commands: Set<ShellCommand>, zoomScale: Double?, undoName: String? = nil, redoName: String? = nil) {
         sessionCommands = commands
+        if snapshot.undoActionName != undoName || snapshot.redoActionName != redoName {
+            var next = snapshot
+            next.undoActionName = undoName
+            next.redoActionName = redoName
+            publish(next)
+        }
         if let zoomScale, zoomScale != snapshot.zoomScale {
             var next = snapshot
             next.zoomScale = zoomScale
@@ -843,7 +850,11 @@ final class ShellProjectWindow {
         if selection & UInt32(STELLAR_SELECTION_CAN_PASTE) != 0, hasSubtreeOnPasteboard {
             commands.insert(.paste)
         }
-        toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil })
+        let labelHandle = dataSource.session?.pump.runtimeHandle
+        let undoName = labelHandle.flatMap { handle in session.map { CoreRuntime.undoActionName(handle: handle, session: $0.session) } } ?? nil
+        let redoName = labelHandle.flatMap { handle in session.map { CoreRuntime.redoActionName(handle: handle, session: $0.session) } } ?? nil
+        toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil },
+                                   undoName: undoName, redoName: redoName)
         refreshLayerFlagCommands()
         refreshAutosaveStatus()
     }
@@ -879,7 +890,7 @@ final class ShellProjectWindow {
                     item.setData(data, forType: Self.subtreePasteboardType)
                     self.subtreePasteboard.clearContents()
                     self.subtreePasteboard.writeObjects([item])
-                    if command == .cut { _ = self.editSelection(.delete, target: target, ids: nil) }
+                    if command == .cut { _ = self.editSelection(.cut, target: target, ids: nil) }
                     self.refreshSessionCommands()
                 }
             }

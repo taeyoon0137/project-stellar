@@ -10,6 +10,8 @@ use stellar_commands::{
 pub enum SelectionEdit {
     /// 선택한 subtree를 함께 삭제합니다.
     Delete,
+    /// 클립보드 복사 뒤 선택 subtree를 삭제합니다.
+    Cut,
     /// 단일 선택 subtree를 복제합니다.
     Duplicate,
     /// 같은 부모 안에서 단일 선택의 저장 순서를 바꿉니다.
@@ -86,8 +88,11 @@ impl AppRuntime {
                 SelectionEdit::Reorder(direction) => {
                     super::node_order::reorder(window, request, direction)?
                 }
-                SelectionEdit::Delete => {
-                    delete_selected(window, request, target.view, target.revision)?
+                SelectionEdit::Delete | SelectionEdit::Cut => {
+                    delete_selected(window, request, target.view, target.revision)?;
+                    if matches!(edit, SelectionEdit::Cut) {
+                        window.label_current(crate::window_session::history_label::CUT);
+                    }
                 }
                 SelectionEdit::Duplicate => {
                     super::node_duplicate::duplicate_selected(
@@ -150,6 +155,7 @@ fn delete_selected(
         );
     }
     window.apply(&tx).map_err(view_failure)?;
+    window.label_current(crate::window_session::history_label::DELETE);
     Ok(())
 }
 

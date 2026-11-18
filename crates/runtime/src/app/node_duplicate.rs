@@ -35,6 +35,7 @@ pub(super) fn duplicate_selected(
     let tx = CommandTransaction::new(id, CommandOrigin::User)
         .with_command(revision, Command::DuplicateSubtree(command));
     window.insert_and_select(&tx, copy).map_err(view_failure)?;
+    window.label_current(crate::window_session::history_label::DUPLICATE);
     Ok(copy)
 }
 

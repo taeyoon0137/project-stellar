@@ -94,6 +94,7 @@ pub(super) fn reorder(
         }),
     );
     window.apply(&tx).map_err(view_failure)?;
+    window.label_current(crate::window_session::history_label::REORDER);
     Ok(())
 }
 

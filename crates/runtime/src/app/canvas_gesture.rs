@@ -436,6 +436,7 @@ fn apply_commands(
             tx.with_command(revision, c)
         });
     window.apply(&transaction).map_err(view_failure)?;
+    window.label_current(crate::window_session::history_label::RESIZE);
     Ok(())
 }
 
@@ -873,6 +874,11 @@ fn move_selection(
         window.apply(&transaction)
     }
     .map_err(view_failure)?;
+    window.label_current(if duplicate {
+        crate::window_session::history_label::DUPLICATE
+    } else {
+        crate::window_session::history_label::MOVE
+    });
     Ok(())
 }
 

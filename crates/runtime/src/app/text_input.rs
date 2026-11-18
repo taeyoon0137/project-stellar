@@ -397,6 +397,7 @@ fn commit(
     window
         .insert_grouped_and_select(&tx, key, node, &InputClock)
         .map_err(view_failure)?;
+    window.label_current(crate::window_session::history_label::TYPING);
     Ok(())
 }
 
@@ -428,6 +429,7 @@ fn replace(
     window
         .apply_grouped(&tx, key, &InputClock)
         .map_err(view_failure)?;
+    window.label_current(crate::window_session::history_label::TYPING);
     Ok(())
 }
 

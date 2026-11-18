@@ -94,6 +94,7 @@ fn paste_into(
     window
         .insert_and_select(&transaction, inserted)
         .map_err(view_failure)?;
+    window.label_current(crate::window_session::history_label::PASTE);
     Ok(inserted)
 }
 

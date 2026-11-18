@@ -242,6 +242,12 @@ fn edit_property(
         }
         PropertyEditPhase::Cancel => {}
     }
+    if matches!(
+        phase,
+        PropertyEditPhase::Commit | PropertyEditPhase::Repeat | PropertyEditPhase::Ended
+    ) {
+        window.label_current(crate::window_session::history_label::CHANGE_PROPERTY);
+    }
     Ok(())
 }
 

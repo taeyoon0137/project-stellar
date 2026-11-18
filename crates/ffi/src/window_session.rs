@@ -432,6 +432,46 @@ pub unsafe extern "C" fn stellar_window_selection_flags(
     .unwrap_or(0)
 }
 
+/// 창 Undo 맨 위 항목의 동작 이름표(0은 없음). 게시 snapshot에서 읽습니다.
+#[no_mangle]
+pub extern "C" fn stellar_window_undo_label(handle: u64, session: u64) -> u8 {
+    std::panic::catch_unwind(|| {
+        let reg = registry().lock().ok()?;
+        Some(
+            reg.live
+                .get(&handle)?
+                .app
+                .as_ref()?
+                .state()
+                .window(WindowSessionHandle(session))?
+                .undo_label,
+        )
+    })
+    .ok()
+    .flatten()
+    .unwrap_or(0)
+}
+
+/// 창 Redo 맨 위 항목의 동작 이름표(0은 없음). 게시 snapshot에서 읽습니다.
+#[no_mangle]
+pub extern "C" fn stellar_window_redo_label(handle: u64, session: u64) -> u8 {
+    std::panic::catch_unwind(|| {
+        let reg = registry().lock().ok()?;
+        Some(
+            reg.live
+                .get(&handle)?
+                .app
+                .as_ref()?
+                .state()
+                .window(WindowSessionHandle(session))?
+                .redo_label,
+        )
+    })
+    .ok()
+    .flatten()
+    .unwrap_or(0)
+}
+
 /// 문맥 메뉴를 열기 전 선택을 접수합니다. `node`(16바이트)나 그 조상이 이미 선택에 있으면 그대로 두고, 아니면 그 노드만
 /// 선택합니다. `node`가 null이면 선택을 비웁니다. 완료는 `WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`입니다.
 /// # Safety
@@ -497,6 +537,7 @@ pub unsafe extern "C" fn stellar_window_edit_selection(
             7 => SelectionEdit::ToggleVisibility,
             8 => SelectionEdit::ToggleLock,
             9 => SelectionEdit::SelectAll,
+            10 => SelectionEdit::Cut,
             _ => return StellarStatus::InvalidArgument,
         };
         if ids.is_null() && count != 0 {

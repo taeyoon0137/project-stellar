@@ -772,3 +772,8 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 
 - `stellar_window_layer_set_flag`는 `value` 없이 노드 ID 배열과 `flag`만 받습니다. 대상 중 하나라도 꺼져 있으면 모두 켜고, 모두 켜져 있으면 모두 끕니다. 선택 메뉴와 같은 runtime `set_flags` 판정을 사용하며 한 transaction으로 기록합니다.
 - `stellar_window_layer_order_flags`는 제거합니다. 순서 가능·흐름 부모 bit는 `stellar_window_selection_flags`의 bit 8·9·10(`STELLAR_SELECTION_ORDER_*`)에 합칩니다. 셸은 같은 선택 snapshot의 mask 하나로 메뉴 활성과 흐름 안내를 정합니다.
+
+## Undo·Redo 메뉴 이름(2026-11-18)
+
+- 창 세션은 앱 runtime이 확정한 history 항목에 `HistorySequence`별 동작 이름표를 붙입니다. 선택만 변경한 항목과 이전 세션에서 복구한 항목은 이름표가 0입니다. `crates/history`의 항목 형식은 바꾸지 않습니다.
+- `stellar_window_undo_label`·`stellar_window_redo_label`은 게시된 창 snapshot의 맨 위 항목 코드(u8)를 돌려줍니다. 0이면 셸 메뉴는 기존 `Undo`·`Redo`를 씁니다. 앱은 Insert, Paste, Delete, Cut, Duplicate, Move, Resize, Change Property, Rename, Reorder, Typing, Show/Hide, Lock/Unlock 이름을 기록합니다. Group·Ungroup·Convert 진입점은 아직 없습니다.

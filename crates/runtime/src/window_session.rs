@@ -56,7 +56,7 @@
 //! 열기·닫기·viewport 변경은 이 창의 [`WindowViewState`]만 바꾸고 문서 revision·history·저장 bytes에는 영향이
 //! 없습니다.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use stellar_commands::change::ChangeSet;
@@ -97,6 +97,23 @@ use stellar_storage::save::optimistic::{
     check_base_generation, check_base_manifest, BaseCheckError,
 };
 use stellar_storage::save::plan::{build_save_plan, SavePlanError};
+
+/// 창 메뉴의 history 동작 이름표. 값은 셸의 영어 이름 표와 같습니다.
+pub(crate) mod history_label {
+    pub const INSERT: u8 = 1;
+    pub const PASTE: u8 = 2;
+    pub const DELETE: u8 = 3;
+    pub const CUT: u8 = 4;
+    pub const DUPLICATE: u8 = 5;
+    pub const MOVE: u8 = 6;
+    pub const RESIZE: u8 = 7;
+    pub const CHANGE_PROPERTY: u8 = 8;
+    pub const RENAME: u8 = 9;
+    pub const REORDER: u8 = 10;
+    pub const TYPING: u8 = 13;
+    pub const SHOW_HIDE: u8 = 14;
+    pub const LOCK_UNLOCK: u8 = 15;
+}
 
 /// session 로드 실패.
 #[derive(Debug)]
@@ -352,6 +369,7 @@ pub struct ProjectWindowSession {
     window: WindowSessionId,
     pub(crate) document: Option<WindowDocument>,
     pub(crate) history: WindowHistory,
+    history_labels: BTreeMap<HistorySequence, u8>,
     pub(crate) loaded: Option<LoadedGeneration>,
     pub(crate) asset_chunks: std::sync::Arc<std::collections::BTreeMap<StableId, ContentHash>>,
     pub(crate) image_records:
@@ -448,6 +466,7 @@ impl ProjectWindowSession {
             window,
             document,
             history,
+            history_labels: BTreeMap::new(),
             loaded: Some(loaded),
             image_records: Default::default(),
         })
@@ -460,6 +479,7 @@ impl ProjectWindowSession {
             window,
             document: None,
             history: WindowHistory::new(window),
+            history_labels: BTreeMap::new(),
             loaded: None,
             asset_chunks: Default::default(),
             image_records: Default::default(),
@@ -499,6 +519,37 @@ impl ProjectWindowSession {
             .entries()
             .last()
             .map_or(0, |entry| entry.sequence.get())
+    }
+
+    /// 마지막 history 항목에 runtime 진입점이 정한 이름표를 붙입니다. 선택만 기록한 항목은 호출하지 않습니다.
+    pub(crate) fn label_current(&mut self, label: u8) {
+        if let Some(entry) = self.history.history().entries().last() {
+            self.history_labels.insert(entry.sequence, label);
+        }
+    }
+
+    /// Undo 맨 위 항목의 이름표. 세션 밖에서 만든 항목은 0입니다.
+    pub fn undo_label(&self) -> u8 {
+        self.history.history().entries().last().map_or(0, |entry| {
+            self.history_labels
+                .get(&entry.sequence)
+                .copied()
+                .unwrap_or(0)
+        })
+    }
+
+    /// Redo 맨 위 항목의 이름표.
+    pub fn redo_label(&self) -> u8 {
+        self.history
+            .history()
+            .redo_entries()
+            .last()
+            .map_or(0, |entry| {
+                self.history_labels
+                    .get(&entry.sequence)
+                    .copied()
+                    .unwrap_or(0)
+            })
     }
 
     /// 마지막 저장 뒤 문서가 바뀌었는지(O(1)). 선택·viewport는 문서 revision을 바꾸지 않습니다.

@@ -188,6 +188,7 @@ fn rename(
     )
     .with_command(revision, Command::rename_node(node, name));
     window.apply(&tx).map_err(view_failure)?;
+    window.label_current(crate::window_session::history_label::RENAME);
     Ok(())
 }
 
@@ -312,6 +313,10 @@ pub(super) fn set_flags(
     }
     if changed {
         window.apply(&tx).map_err(view_failure)?;
+        window.label_current(match flag {
+            LayerFlag::Visible => crate::window_session::history_label::SHOW_HIDE,
+            LayerFlag::Locked => crate::window_session::history_label::LOCK_UNLOCK,
+        });
     }
     Ok(())
 }

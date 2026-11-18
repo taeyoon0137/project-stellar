@@ -950,6 +950,10 @@ pub struct WindowSessionSummary {
     pub undo_depth: u32,
     /// redo stack 깊이.
     pub redo_depth: u32,
+    /// Undo 맨 위 동작 이름표(0은 없음).
+    pub undo_label: u8,
+    /// Redo 맨 위 동작 이름표(0은 없음).
+    pub redo_label: u8,
     /// 선택된 node 수.
     pub selection_len: u32,
     /// Undo 스택 끝의 sequence. 문서 revision이 같은 선택 변경도 구분합니다.
@@ -1480,6 +1484,8 @@ fn window_summary(
         generation: session.generation_number(),
         undo_depth: clamp(session.history().history().len()),
         redo_depth: clamp(session.history().history().redo_entries().len()),
+        undo_label: session.undo_label(),
+        redo_label: session.redo_label(),
         selection_len: clamp(session.view().selection().len()),
         history_sequence: session.history_sequence(),
         selection_flags: entry.selection_caps.get(session)

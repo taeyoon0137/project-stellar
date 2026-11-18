@@ -391,6 +391,7 @@ typedef struct StellarSelectionTarget {
 #define STELLAR_SELECTION_TOGGLE_VISIBILITY 7
 #define STELLAR_SELECTION_TOGGLE_LOCK 8
 #define STELLAR_SELECTION_SELECT_ALL 9
+#define STELLAR_SELECTION_CUT 10
 /* 같은 게시 시점의 선택에 대한 코어 능력 mask(시점이 다르면 0). 메뉴 막대·캔버스·레이어 문맥 메뉴가 활성과 제목에 씁니다. */
 #define STELLAR_SELECTION_CAN_DELETE 1
 #define STELLAR_SELECTION_CAN_DUPLICATE 2
@@ -406,6 +407,9 @@ typedef struct StellarSelectionTarget {
 #define STELLAR_SELECTION_ORDER_CAN_BACKWARD 512
 #define STELLAR_SELECTION_ORDER_FLOW_PARENT 1024
 uint32_t stellar_window_selection_flags(uint64_t handle, const StellarSelectionTarget *target);
+/* 0은 동작 이름 없음. 게시된 창의 Undo·Redo 맨 위 항목에서 읽습니다. */
+uint8_t stellar_window_undo_label(uint64_t handle, uint64_t session);
+uint8_t stellar_window_redo_label(uint64_t handle, uint64_t session);
 /* 문맥 메뉴를 열기 전 선택: node(NULL은 빈 곳)나 그 조상(View root 제외)이 선택에 있으면 유지, 아니면 그 노드만 선택. */
 StellarStatus stellar_window_context_select(uint64_t handle, const StellarSelectionTarget *target, const uint8_t node[16], uint64_t *out_request);
 /* 활성 View가 없으면 STELLAR_NO_ERROR, 열려 있지 않은 창이면 STELLAR_INVALID_ARGUMENT입니다. */

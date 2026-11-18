@@ -243,6 +243,7 @@ fn insert_item(
     window
         .insert_and_select(&transaction, node)
         .map_err(view_failure)?;
+    window.label_current(crate::window_session::history_label::INSERT);
     Ok(node)
 }
 

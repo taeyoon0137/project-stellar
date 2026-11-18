@@ -268,6 +268,7 @@ fn insert(
     )
     .with_command(input.target.revision, Command::InsertNode(command));
     window.insert_and_select(&tx, node).map_err(view_failure)?;
+    window.label_current(crate::window_session::history_label::INSERT);
     Arc::make_mut(&mut window.image_records).insert(asset, record);
     Ok(())
 }
