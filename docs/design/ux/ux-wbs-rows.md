@@ -226,6 +226,6 @@ UX.0.1을 시작하기 전에 통합 검토가 확인한 미충족 항목입니�
 - Image `object-fit`: 속성 탭은 `fill`·`contain`·`cover`·`none`을 내주지만, runtime `canvas/image.rs`는 `contain`이 아니면 표시 행을 만들지 않고 Swift `CanvasFrameScene`도 `contain`으로만 그립니다. 그래서 다른 값을 고르면 캔버스에서 이미지가 사라집니다. 표시 행에 fit을 실으려면 `crates/ffi` 표시 행을 바꿔야 해(보호 경로, ADR) UX.2.3 후속으로 둡니다. Metal 경로로 옮기는 XII.4.1에서는 scene의 `ImageFit`을 그대로 씁니다.
 - Undo·Redo 메뉴 제목에 동작 이름이 없습니다. 제품 경로가 `undoActionName`을 nil로 둡니다(`UI/Shell/ShellProjectWindow.swift`, `UI/Shell/ShellAppCoordinator.swift`). 이름은 코어 history 항목이 내줘야 하므로 ABI가 필요합니다. 행은 UX.0.1 결과 기록에서 정합니다.
 - 'Set Up the stellar Command…'(`WelcomeStrings.setUpCommandMenuItem`)는 문자열만 있고 어느 메뉴에도 연결되지 않아, Release에서도 명령 설치·제거로 가는 길이 없습니다. 행은 UX.0.1 결과 기록에서 정합니다.
-- 복구 sheet 설명문('Save when you are ready to write it to the project.', `UI/Shell/ShellDocumentRecovery.swift`)이 자동 저장(ADR-0072)과 맞는지는 QA2-77 실사용 피드백을 받은 뒤 정합니다.
+- 복구 sheet 설명문('Restored edits are saved to the project automatically.', `UI/Shell/ShellDocumentRecovery.swift`)은 복원 뒤 자동 저장(ADR-0072)을 알립니다.
 - UX 밖: `stellar-mcp --connection-info`는 `args: []`를 알려 주고, 인자 없는 serve 모드는 `tools/list`에 -32601로 답합니다. 등록 정보가 `--attach`와 `--headless --project` 가운데 무엇을 가리킬지는 ADR-0005 §3과 XIX.9.8 개정에서 정합니다. 바꾸면 `tools/stellar-mcp/tests/connection_info.rs`의 실행 검사도 그 mode에 맞춰야 합니다.
 - UX 밖: 컴포넌트 원본 YAML의 키·값(`background`, `clipping: frame-bounds`, transform 행렬, `srgb r g b a` 색)이 CSS 이름·문법이 아닙니다. `docs/spec/component-source-v1.md`가 이 형식을 고정하므로, D2('CSS longhand 한 속성 한 줄')와의 관계는 ADR-0061 개정과 계획 개정 기록 (1)의 V.10 하위 행에서 정합니다.

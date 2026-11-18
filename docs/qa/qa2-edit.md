@@ -95,7 +95,7 @@
 | QA2-74 | QA2-73처럼 저장이 실패한 상태에서 창 닫기(⌘W) | 선택 sheet에 Try Again(다시 시도), Close Without Saving(저장하지 않고 닫기), Cancel(취소) 세 버튼이 있습니다. 쓰기를 되돌린 뒤 Try Again이면 저장하고 닫히고, Close Without Saving이면 편집을 버리고 닫히고, Cancel이면 창이 그대로입니다(D6). |
 | QA2-75 | 앱이 연 상태에서 다른 프로세스가 같은 프로젝트를 먼저 저장(예: CLI `stellar apply`)한 뒤 앱에서 편집 | 1초쯤 뒤 부제목에 "⚠︎ Not Saved — Changed Elsewhere"가 보이고 자동 저장이 멈춥니다. 창을 닫으면 QA2-74의 sheet가 뜹니다. 두 선택지 sheet(이 창 버전으로 저장 / 디스크 버전 불러오기)는 **구현 대기**(UX.4.3). |
 | QA2-76 | 앱이 연 상태에서 터미널로 `git -C <샘플 폴더> checkout -- design` | 디스크 내용으로 다시 읽는 외부 변경 반영은 **구현 대기**(UX.4.1, XIII.3.1). |
-| QA2-77 | 테스트용 프로젝트에서 Frame을 편집하고 복구 체크포인트가 기록된 뒤 앱을 강제 종료 → 같은 프로젝트 다시 열기 | "Recover Unsaved Changes?" sheet에 Restore Changes·Discard Changes·Later. Restore Changes를 누르면 미저장 편집이 돌아오고, ⌘S 후 다시 열어 확인합니다. Discard Changes는 복구본을 버리고 저장된 상태로 둡니다. Later는 복구본을 남겨 다음에 열 때 다시 묻습니다. 의견 확인: 설명문은 "Save when you are ready…"이지만 복원 뒤 약 1초 안에 자동 저장됩니다. 어느 쪽이 맞는지 한 줄 남겨 주세요. |
+| QA2-77 | 테스트용 프로젝트에서 Frame을 편집하고 복구 체크포인트가 기록된 뒤 앱을 강제 종료 → 같은 프로젝트 다시 열기 | "Recover Unsaved Changes?" sheet에 Restore Changes·Discard Changes·Later. Restore Changes를 누르면 미저장 편집이 돌아오고, 약 1초 뒤 프로젝트에 자동 저장됩니다. Discard Changes는 복구본을 버리고 저장된 상태로 둡니다. Later는 복구본을 남겨 다음에 열 때 다시 묻습니다. 설명문은 "Restored edits are saved to the project automatically."라고 표시됩니다. |
 
 ## 9. Component
 

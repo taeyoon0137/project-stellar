@@ -29,7 +29,7 @@ extension ShellProjectWindow {
                     let canRestore = session.info?.has_unsaved_changes == 0
                     let prompt = NSAlert()
                     prompt.messageText = String(localized: "Recover Unsaved Changes?")
-                    prompt.informativeText = String(localized: "Restore the unsaved document from the previous session. Save when you are ready to write it to the project.")
+                    prompt.informativeText = String(localized: "Restore the unsaved document from the previous session. Restored edits are saved to the project automatically.")
                     if canRestore { prompt.addButton(withTitle: String(localized: "Restore Changes")) }
                     prompt.addButton(withTitle: String(localized: "Discard Changes"))
                     prompt.addButton(withTitle: String(localized: "Later"))
