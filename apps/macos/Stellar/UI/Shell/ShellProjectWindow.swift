@@ -564,6 +564,7 @@ final class ShellProjectWindow {
     /// Image 도구를 취소하면 돌아갈 도구(마지막으로 고른 Image 밖 도구).
     var imageReturnTool: CanvasTool = .move
     var imagePickGeneration: UInt64 = 0
+    var pendingImage: (url: URL, digest: Data)?
     var recoveryPrompt: NSAlert?
     let sidebarSource = ShellSidebarSource()
     private var displayedSelection: StellarSelectionTarget?
@@ -688,6 +689,7 @@ final class ShellProjectWindow {
         }
         gitSource.trustCheckDidChange = { [weak self] checking in self?.dataSource.setTrustChecking(checking) }
         connectFrameInteractions()
+        connectImageImport()
         connectLayerFlags()
         connectCanvasContextMenu()
         connectPagePath()
@@ -847,7 +849,7 @@ final class ShellProjectWindow {
         if selection & UInt32(STELLAR_SELECTION_CAN_COPY) != 0, selection & UInt32(STELLAR_SELECTION_CAN_DELETE) != 0 {
             commands.insert(.cut)
         }
-        if selection & UInt32(STELLAR_SELECTION_CAN_PASTE) != 0, hasSubtreeOnPasteboard {
+        if selection & UInt32(STELLAR_SELECTION_CAN_PASTE) != 0, hasSubtreeOnPasteboard || hasImageFileOnPasteboard {
             commands.insert(.paste)
         }
         let labelHandle = dataSource.session?.pump.runtimeHandle
@@ -899,14 +901,16 @@ final class ShellProjectWindow {
         if command == .paste {
             guard !router.isTextEditing,
                   let session = windowController.windowSession, let target = displayedSelection,
-                  target.session == session.session, session.pendingCommandCount == 0,
-                  let data = subtreePasteboard.data(forType: Self.subtreePasteboardType),
-                  !data.isEmpty, data.count <= 16 * 1024 * 1024 else { return false }
+                  target.session == session.session, session.pendingCommandCount == 0 else { return false }
             _ = canvasHost.canvasView.cancelFrameGesture?()
-            return session.pasteSubtree(data, target: target) { [weak self, weak session] event in
-                guard let self, self.windowController.windowSession === session else { return }
-                self.finishSessionCommand(command, event: event)
+            if let data = subtreePasteboard.data(forType: Self.subtreePasteboardType),
+               !data.isEmpty, data.count <= 16 * 1024 * 1024 {
+                return session.pasteSubtree(data, target: target) { [weak self, weak session] event in
+                    guard let self, self.windowController.windowSession === session else { return }
+                    self.finishSessionCommand(command, event: event)
+                }
             }
+            return pasteImageFile()
         }
         if let flag = command.layerOrderFlag, displayedSelectionFlags & flag == 0 { return false }
         if command == .delete || command == .duplicate || command.layerOrderFlag != nil

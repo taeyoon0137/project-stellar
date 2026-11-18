@@ -84,9 +84,10 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.openProject(handle: runtimeHandle, path: path), completion)
     }
 
-    func placePNG(_ image: PickedPNG, parent: UUID, at position: CGPoint,
+    func placePNG(_ image: PickedPNG, parent: UUID, at position: CGPoint, size: CGSize?,
                   completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.placePNG(handle: runtimeHandle, target: image.target, parent: parent, position: position,
+                                      size: size,
                                       path: image.url.path, digest: image.digest), completion)
     }
 

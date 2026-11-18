@@ -1,6 +1,9 @@
 //! 창의 검증된 이미지 원본 가져오기와 PNG 표시용 worker 읽기.
 use crate::{ffi_guard, registry, window_session::StellarSelectionTarget, StellarStatus};
-use stellar_core_types::{ids::StableId, value::Vec2};
+use stellar_core_types::{
+    ids::StableId,
+    value::{Size2, Vec2},
+};
 use stellar_runtime::app::{ImagePlacement, WindowSessionHandle};
 
 /// PNG 선택을 이미지 노드 하나로 배치합니다.
@@ -13,6 +16,8 @@ pub unsafe extern "C" fn stellar_window_place_png(
     parent: *const [u8; 16],
     x: f32,
     y: f32,
+    width: f32,
+    height: f32,
     path: *const u8,
     len: usize,
     digest: *const [u8; 32],
@@ -35,10 +40,19 @@ pub unsafe extern "C" fn stellar_window_place_png(
         let Ok(position) = Vec2::new(x, y) else {
             return StellarStatus::InvalidArgument;
         };
+        let size = if width == 0.0 && height == 0.0 {
+            None
+        } else {
+            match Size2::new(width, height) {
+                Ok(size) if !size.is_empty() => Some(size),
+                _ => return StellarStatus::InvalidArgument,
+            }
+        };
         let input = ImagePlacement {
             target: unsafe { *target }.runtime_target(),
             parent: StableId::from_bytes(unsafe { *parent }),
             position,
+            size,
             source: source.into(),
             digest: unsafe { *digest },
         };

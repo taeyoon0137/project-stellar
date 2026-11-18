@@ -41,6 +41,8 @@ pub struct ImagePlacement {
     pub parent: StableId,
     /// 부모 로컬 좌표.
     pub position: Vec2,
+    /// 드래그가 정한 크기. 클릭·Finder·붙여넣기는 PNG 원본 크기입니다.
+    pub size: Option<Size2>,
     /// 사용자가 고른 파일의 절대 경로.
     pub source: PathBuf,
     /// 플랫폼 디코더가 실제로 연 PNG의 SHA-256.
@@ -246,7 +248,10 @@ fn insert(
             .and_then(|s| s.to_str())
             .unwrap_or("Image")
             .to_owned(),
-        payload: NodePayload::Image(ImagePayload::new(AssetRef::new(asset), size)),
+        payload: NodePayload::Image(ImagePayload::new(
+            AssetRef::new(asset),
+            input.size.unwrap_or(size),
+        )),
     });
     let mut stack = ModifierStack::new(node);
     stack

@@ -110,13 +110,14 @@ extension ShellProjectWindow {
         var zoomDrag: (start: NSPoint, session: UInt64, camera: StellarWindowViewInfo, bounds: CGRect)?
         // 빈 곳(root 배경 또는 모든 Frame 밖)에서 시작한 영역 선택. leaf는 클릭으로 끝날 때 고를 행입니다.
         var marquee: (start: NSPoint, leaf: UUID?, view: UUID, session: UInt64, size: NSSize, moved: Bool)?
+        var imageDrag: (start: NSPoint, session: UInt64, size: NSSize)?
         // 선택 핸들 드래그. placement는 누른 시점의 local → 화면 변환입니다.
         var handleDrag: (box: CanvasSelectionBox, handle: CanvasHandle, start: NSPoint, session: UInt64, view: UUID,
                          size: NSSize, viewport: StellarWindowViewInfo, target: StellarSelectionTarget,
                          placement: CGAffineTransform)?
         // 진행 중인 캔버스 제스처 하나라도 있으면 true. 새 제스처 상태(크기 조절·영역 선택 등)도 여기에 더합니다.
         canvas.frameGestureActive = { [weak self] in
-            self?.frameDrag != nil || handDrag != nil || zoomDrag != nil || marquee != nil || handleDrag != nil
+            self?.frameDrag != nil || handDrag != nil || zoomDrag != nil || marquee != nil || handleDrag != nil || imageDrag != nil
         }
         canvas.hoverCursor = { [weak self, weak canvas] point in
             guard let self, let canvas, self.toolsModel.snapshot.activeTool == .move,
@@ -124,12 +125,13 @@ extension ShellProjectWindow {
             return Self.cursor(for: handle)
         }
         canvas.cancelFrameGesture = { [weak self, weak canvas] in
-            guard let self, self.frameDrag != nil || handDrag != nil || zoomDrag != nil || marquee != nil || handleDrag != nil
+            guard let self, self.frameDrag != nil || handDrag != nil || zoomDrag != nil || marquee != nil || handleDrag != nil || imageDrag != nil
                 || self.rejectedDraw
             else { return false }
             handDrag = nil
             zoomDrag = nil
             marquee = nil
+            imageDrag = nil
             handleDrag = nil
             canvas?.gesturePreview = nil
             self.frameDrag = nil
@@ -226,12 +228,28 @@ extension ShellProjectWindow {
             }
             if self.toolsModel.snapshot.activeTool == .image {
                 if event.type == .leftMouseDown {
-                    // root Frame 밖 빈 캔버스는 파일을 고르기 전에 거부하고 이유를 보입니다(UX 명세 5.2).
+                    // root Frame 밖 빈 캔버스는 배치하지 않습니다(UX 명세 5.2).
                     if self.windowController.windowSession?.viewInfo?.has_view == 1,
                        canvas.frameHit(at: point, onlyFrames: true) == nil {
                         return self.rejectDrawOutsideFrame(canvas)
                     }
-                    return self.placeImage(at: point, canvas: canvas)
+                    guard self.pendingImage != nil, let session = self.windowController.windowSession else { return true }
+                    imageDrag = (point, session.session, canvas.bounds.size)
+                    return true
+                }
+                if let drag = imageDrag, event.type == .leftMouseDragged || event.type == .leftMouseUp {
+                    guard canvas.bounds.size == drag.size, self.windowController.windowSession?.session == drag.session else {
+                        _ = canvas.cancelFrameGesture?()
+                        return true
+                    }
+                    if event.type == .leftMouseDragged {
+                        let rect = CGRect(x: min(drag.start.x, point.x), y: min(drag.start.y, point.y),
+                                          width: abs(point.x - drag.start.x), height: abs(point.y - drag.start.y))
+                        canvas.insertionOutline = rect.width >= 3 && rect.height >= 3 ? CGPath(rect: rect, transform: nil) : nil
+                    } else {
+                        _ = canvas.cancelFrameGesture?()
+                        return self.placeImage(from: drag.start, to: point, canvas: canvas)
+                    }
                 }
                 return true
             }

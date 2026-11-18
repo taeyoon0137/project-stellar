@@ -264,13 +264,14 @@ enum CoreRuntime {
     }
 
     static func placePNG(handle: UInt64, target: StellarSelectionTarget, parent: UUID, position: CGPoint,
-                         path: String, digest: Data) -> Result<UInt64, CoreRuntimeCallError> {
+                         size: CGSize?, path: String, digest: Data) -> Result<UInt64, CoreRuntimeCallError> {
         var target = target, request: UInt64 = 0
         let status = withUnsafeBytes(of: parent.uuid) { id in
             digest.withUnsafeBytes { digest in
                 Array(path.utf8).withUnsafeBufferPointer { path in
                     stellar_window_place_png(handle, &target, id.bindMemory(to: UInt8.self).baseAddress,
-                        Float(position.x), Float(position.y), path.baseAddress, path.count, digest.bindMemory(to: UInt8.self).baseAddress, &request)
+                        Float(position.x), Float(position.y), Float(size?.width ?? 0), Float(size?.height ?? 0),
+                        path.baseAddress, path.count, digest.bindMemory(to: UInt8.self).baseAddress, &request)
                 }
             }
         }

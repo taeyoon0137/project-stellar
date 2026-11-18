@@ -85,8 +85,26 @@ final class CanvasView: NSView {
     var frameGestureActive: (() -> Bool)?
     /// 우클릭·Control-클릭의 문맥 메뉴(UX.3.2). true면 그 누름과 짝 이벤트를 코어 입력으로 보내지 않습니다.
     var contextMenuHandler: ((NSEvent) -> Bool)?
+    /// Finder의 PNG 파일을 캔버스 위치로 가져옵니다.
+    var imageDropHandler: ((URL, NSPoint) -> Bool)?
     private var swallowsLeftMouse = false
     private var swallowsRightMouse = false
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        draggedPNG(sender) != nil && imageDropHandler != nil ? .copy : []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let url = draggedPNG(sender) else { return false }
+        return imageDropHandler?(url, convert(sender.draggingLocation, from: nil)) == true
+    }
+
+    private func draggedPNG(_ sender: NSDraggingInfo) -> URL? {
+        let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]) as? [URL]
+        guard let url = urls?.first, url.pathExtension.lowercased() == "png" else { return nil }
+        return url
+    }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if let window {
