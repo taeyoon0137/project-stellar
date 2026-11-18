@@ -356,12 +356,13 @@ enum CoreRuntime {
 
     /// 하나뿐인 선택 node의 상자를 지금 local 좌표 `rect`로 바꿉니다(크기 핸들, ADR-0071).
     static func canvasResize(handle: UInt64, session: UInt64, view: UUID, node: UUID,
-                             rect: CGRect) -> Result<UInt64, CoreRuntimeCallError> {
+                             target: StellarSelectionTarget, rect: CGRect) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
         let status = withUnsafeBytes(of: view.uuid) { viewBytes in
             withUnsafeBytes(of: node.uuid) { nodeBytes in
                 stellar_window_canvas_resize(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
-                                             nodeBytes.bindMemory(to: UInt8.self).baseAddress, Float(rect.minX), Float(rect.minY),
+                                             nodeBytes.bindMemory(to: UInt8.self).baseAddress, target.revision, target.history_sequence,
+                                             Float(rect.minX), Float(rect.minY),
                                              Float(rect.width), Float(rect.height), &request)
             }
         }
@@ -371,12 +372,13 @@ enum CoreRuntime {
 
     /// 하나뿐인 선택 node의 모서리 반경(corner nil이면 네 모서리, ADR-0071).
     static func canvasRadius(handle: UInt64, session: UInt64, view: UUID, node: UUID, corner: Int?,
-                             radius: CGFloat) -> Result<UInt64, CoreRuntimeCallError> {
+                             target: StellarSelectionTarget, radius: CGFloat) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
         let status = withUnsafeBytes(of: view.uuid) { viewBytes in
             withUnsafeBytes(of: node.uuid) { nodeBytes in
                 stellar_window_canvas_radius(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
-                                             nodeBytes.bindMemory(to: UInt8.self).baseAddress, Int32(corner ?? -1),
+                                             nodeBytes.bindMemory(to: UInt8.self).baseAddress, target.revision, target.history_sequence,
+                                             Int32(corner ?? -1),
                                              Float(radius), &request)
             }
         }
@@ -386,12 +388,13 @@ enum CoreRuntime {
 
     /// 하나뿐인 선택 Line의 끝점 하나를 local `point`로 옮깁니다(ADR-0071).
     static func canvasLineEnd(handle: UInt64, session: UInt64, view: UUID, node: UUID, end: Bool,
-                              point: CGPoint) -> Result<UInt64, CoreRuntimeCallError> {
+                              target: StellarSelectionTarget, point: CGPoint) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
         let status = withUnsafeBytes(of: view.uuid) { viewBytes in
             withUnsafeBytes(of: node.uuid) { nodeBytes in
                 stellar_window_canvas_line_end(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
-                                               nodeBytes.bindMemory(to: UInt8.self).baseAddress, end ? 1 : 0,
+                                               nodeBytes.bindMemory(to: UInt8.self).baseAddress, target.revision, target.history_sequence,
+                                               end ? 1 : 0,
                                                Float(point.x), Float(point.y), &request)
             }
         }

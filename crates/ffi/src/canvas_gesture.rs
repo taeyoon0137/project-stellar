@@ -289,6 +289,7 @@ fn submit_edit(
     session: u64,
     view: StableId,
     edit: CanvasEdit,
+    expected: Option<(DocumentRevision, u64)>,
     out_request: *mut u64,
 ) -> StellarStatus {
     let Ok(mut reg) = registry().lock() else {
@@ -298,7 +299,7 @@ fn submit_edit(
         return StellarStatus::InvalidHandle;
     };
     let result = match rt.app() {
-        Ok(app) => app.canvas_edit(WindowSessionHandle(session), view, edit),
+        Ok(app) => app.canvas_edit(WindowSessionHandle(session), view, edit, expected),
         Err(status) => return status,
     };
     unsafe { rt.finish_request(result, out_request) }
@@ -346,6 +347,7 @@ pub unsafe extern "C" fn stellar_window_canvas_move(
             session,
             StableId::from_bytes(unsafe { *view }),
             edit,
+            None,
             out_request,
         )
     })
@@ -364,6 +366,8 @@ pub unsafe extern "C" fn stellar_window_canvas_resize(
     session: u64,
     view: *const [u8; 16],
     node: *const [u8; 16],
+    revision: u64,
+    history_sequence: u64,
     x: f32,
     y: f32,
     width: f32,
@@ -393,6 +397,7 @@ pub unsafe extern "C" fn stellar_window_canvas_resize(
             session,
             StableId::from_bytes(unsafe { *view }),
             edit,
+            Some((DocumentRevision(revision), history_sequence)),
             out_request,
         )
     })
@@ -409,6 +414,8 @@ pub unsafe extern "C" fn stellar_window_canvas_line_end(
     session: u64,
     view: *const [u8; 16],
     node: *const [u8; 16],
+    revision: u64,
+    history_sequence: u64,
     end: u32,
     x: f32,
     y: f32,
@@ -437,6 +444,7 @@ pub unsafe extern "C" fn stellar_window_canvas_line_end(
             session,
             StableId::from_bytes(unsafe { *view }),
             edit,
+            Some((DocumentRevision(revision), history_sequence)),
             out_request,
         )
     })
@@ -453,6 +461,8 @@ pub unsafe extern "C" fn stellar_window_canvas_radius(
     session: u64,
     view: *const [u8; 16],
     node: *const [u8; 16],
+    revision: u64,
+    history_sequence: u64,
     corner: i32,
     radius: f32,
     out_request: *mut u64,
@@ -485,6 +495,7 @@ pub unsafe extern "C" fn stellar_window_canvas_radius(
             session,
             StableId::from_bytes(unsafe { *view }),
             edit,
+            Some((DocumentRevision(revision), history_sequence)),
             out_request,
         )
     })

@@ -242,9 +242,15 @@ impl AppRuntime {
         session: WindowSessionHandle,
         view: StableId,
         edit: CanvasEdit,
+        expected: Option<(DocumentRevision, u64)>,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
             let (entry, scene) = window_scene(ctx.app_sessions_mut(), session)?;
+            if expected.is_some_and(|(revision, history)| {
+                entry.session.revision() != revision || entry.session.history_sequence() != history
+            }) {
+                return Err(stale_view());
+            }
             entry.gesture.deferred = None;
             let scene = scene.ok_or_else(stale_view)?;
             apply_edit(&mut entry.session, &scene, request, view, edit)?;

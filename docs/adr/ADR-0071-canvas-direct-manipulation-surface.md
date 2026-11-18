@@ -182,3 +182,7 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
   없습니다.
 - 2026-11-15: UX.3.1이 팬 판정에서 Shift를 뺀 뒤 `crates/ffi/src/canvas.rs`의 수정자 배열이 rustfmt 형식과 달라
   `cargo xtask check-core`의 fmt 단계가 실패했습니다. 줄 맞춤만 고쳤고 C ABI·동작은 바뀌지 않습니다.
+- 2026-11-18(UX.3.14): `stellar_window_canvas_resize`·`stellar_window_canvas_radius`·
+  `stellar_window_canvas_line_end`는 누른 시점의 `revision: u64`와 `history_sequence: u64`를 node 뒤에 받습니다.
+  document thread에서 현재 창 값과 다르면 적용 전 stale 오류로 거부합니다. 셸은 선택 핸들을 누를 때 읽은
+  `StellarSelectionTarget`을 놓을 때까지 보관해 두 값을 전달합니다. 상대 이동 ABI는 그대로입니다.

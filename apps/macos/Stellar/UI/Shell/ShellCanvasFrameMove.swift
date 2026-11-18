@@ -112,7 +112,8 @@ extension ShellProjectWindow {
         var marquee: (start: NSPoint, leaf: UUID?, view: UUID, session: UInt64, size: NSSize, moved: Bool)?
         // 선택 핸들 드래그. placement는 누른 시점의 local → 화면 변환입니다.
         var handleDrag: (box: CanvasSelectionBox, handle: CanvasHandle, start: NSPoint, session: UInt64, view: UUID,
-                         size: NSSize, viewport: StellarWindowViewInfo, placement: CGAffineTransform)?
+                         size: NSSize, viewport: StellarWindowViewInfo, target: StellarSelectionTarget,
+                         placement: CGAffineTransform)?
         // 진행 중인 캔버스 제스처 하나라도 있으면 true. 새 제스처 상태(크기 조절·영역 선택 등)도 여기에 더합니다.
         canvas.frameGestureActive = { [weak self] in
             self?.frameDrag != nil || handDrag != nil || zoomDrag != nil || marquee != nil || handleDrag != nil
@@ -285,18 +286,20 @@ extension ShellProjectWindow {
                 case .resize:
                     // 크기 핸들 드래그 한 번이 Undo 한 번입니다. 어떤 longhand를 바꿀지는 코어가 정합니다.
                     self.submitCanvasEdit { pump, session, done in
-                        pump.canvasResize(session: session, view: view, node: node, rect: preview.rect, completion: done)
+                        pump.canvasResize(session: session, view: view, node: node, target: drag.target,
+                                          rect: preview.rect, completion: done)
                     }
                 case .lineEnd(let end):
                     guard let target = end ? preview.lineEnd : preview.lineStart else { return true }
                     self.submitCanvasEdit { pump, session, done in
-                        pump.canvasLineEnd(session: session, view: view, node: node, end: end, point: target, completion: done)
+                        pump.canvasLineEnd(session: session, view: view, node: node, end: end, target: drag.target,
+                                           point: target, completion: done)
                     }
                 case .radius(let index):
                     let value = CanvasFrameScene.radius(handle: index, in: drag.box.rect, at: local).rounded()
                     let corner = index >= 0 && modifiers.contains(.option) ? index : nil
                     self.submitCanvasEdit { pump, session, done in
-                        pump.canvasRadius(session: session, view: view, node: node, corner: corner,
+                        pump.canvasRadius(session: session, view: view, node: node, corner: corner, target: drag.target,
                                           radius: value, completion: done)
                     }
                 }
@@ -345,7 +348,10 @@ extension ShellProjectWindow {
                 canvas.window?.makeFirstResponder(canvas)
                 let view = UUID(uuid: viewport.active_view)
                 if let (box, handle) = canvas.selectionHandle(at: point) {
+                    guard let target = session.selectionTarget, UUID(uuid: target.view) == view,
+                          target.revision == session.info?.revision else { return false }
                     handleDrag = (box, handle, point, session.session, view, canvas.bounds.size, viewport,
+                                  target,
                                   canvas.selectionPlacement(box))
                     return true
                 }

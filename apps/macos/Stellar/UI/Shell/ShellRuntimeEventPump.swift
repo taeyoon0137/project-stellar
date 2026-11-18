@@ -199,21 +199,22 @@ final class ShellRuntimeEventPump {
                                             flags: flags), completion)
     }
 
-    func canvasResize(session: UInt64, view: UUID, node: UUID, rect: CGRect,
+    func canvasResize(session: UInt64, view: UUID, node: UUID, target: StellarSelectionTarget, rect: CGRect,
                       completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
-        register(CoreRuntime.canvasResize(handle: runtimeHandle, session: session, view: view, node: node, rect: rect), completion)
+        register(CoreRuntime.canvasResize(handle: runtimeHandle, session: session, view: view, node: node,
+                                          target: target, rect: rect), completion)
     }
 
-    func canvasRadius(session: UInt64, view: UUID, node: UUID, corner: Int?, radius: CGFloat,
+    func canvasRadius(session: UInt64, view: UUID, node: UUID, corner: Int?, target: StellarSelectionTarget, radius: CGFloat,
                       completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.canvasRadius(handle: runtimeHandle, session: session, view: view, node: node, corner: corner,
-                                          radius: radius), completion)
+                                          target: target, radius: radius), completion)
     }
 
-    func canvasLineEnd(session: UInt64, view: UUID, node: UUID, end: Bool, point: CGPoint,
+    func canvasLineEnd(session: UInt64, view: UUID, node: UUID, end: Bool, target: StellarSelectionTarget, point: CGPoint,
                        completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.canvasLineEnd(handle: runtimeHandle, session: session, view: view, node: node, end: end,
-                                           point: point), completion)
+                                           target: target, point: point), completion)
     }
 
     func canvasMove(session: UInt64, view: UUID, anchor: UUID?, delta: CGVector, flags: UInt32,
