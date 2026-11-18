@@ -511,6 +511,7 @@ StellarStatus stellar_window_canvas_move(uint64_t handle, uint64_t session, cons
 typedef struct StellarCanvasSelectionItem { uint8_t id[16]; uint32_t kind, flags; float world[6], rect[4], radii[4], line[4]; } StellarCanvasSelectionItem;
 typedef struct StellarGesturePreview { uint32_t kind; int32_t handle; uint32_t flags; float rect[4], line[4], radii[4], point[2]; } StellarGesturePreview;
 StellarStatus stellar_canvas_gesture_preview(const StellarGesturePreview *input, StellarGesturePreview *output);
+StellarStatus stellar_canvas_arrow_nudge(uint16_t key_code, uint8_t shift, float out_delta[2]);
 /* 하나뿐인 선택 node의 상자를 지금 local 좌표 (x, y, w, h)로 바꿉니다(크기 핸들, Undo 한 번, 크기 > 0). */
 StellarStatus stellar_window_canvas_resize(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint64_t history_sequence, float x, float y, float width, float height, uint64_t *out_request);
 /* 하나뿐인 선택 node의 모서리 반경(corner -1 네 모서리, 0–3 tl tr br bl 하나). Frame·Rectangle은 border-*-radius, Polygon은 값 하나. */

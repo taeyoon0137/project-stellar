@@ -788,3 +788,4 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 ## 개정(2026-11-18, UX.3.8 편집 해석)
 
 - `StellarGesturePreview`와 `stellar_canvas_gesture_preview`는 Rust의 순수 포인터 계산을 C ABI로 노출합니다. kind 1~5는 크기·Line 끝점·반경·일반 생성·Line 생성이고, flag 1·2·4는 Shift·Option·click입니다. 입력과 출력은 같은 POD 구조이며 문서 thread나 창 상태를 읽지 않습니다.
+- `stellar_canvas_arrow_nudge`는 key code와 Shift로 부모 공간 이동량 두 float를 씁니다. 지원하지 않는 key code는 invalid argument입니다.

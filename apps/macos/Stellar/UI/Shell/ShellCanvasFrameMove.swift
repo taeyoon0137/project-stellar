@@ -56,14 +56,7 @@ extension ShellProjectWindow {
     /// 화살표 키의 이동량(부모 공간 px). Shift는 10px입니다. ⌘·Option·Control이 있으면 nil입니다.
     static func arrowNudge(_ event: NSEvent) -> CGVector? {
         guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return nil }
-        let step: CGFloat = event.modifierFlags.contains(.shift) ? 10 : 1
-        switch event.keyCode {
-        case 123: return CGVector(dx: -step, dy: 0)
-        case 124: return CGVector(dx: step, dy: 0)
-        case 125: return CGVector(dx: 0, dy: step)
-        case 126: return CGVector(dx: 0, dy: -step)
-        default: return nil
-        }
+        return CoreRuntime.arrowNudge(keyCode: event.keyCode, shift: event.modifierFlags.contains(.shift))
     }
 
     /// 선택 전부를 옮깁니다(ADR-0071). 한 번이 Undo 한 번입니다.

@@ -65,6 +65,34 @@ pub unsafe extern "C" fn stellar_canvas_gesture_preview(
     })
 }
 
+/// macOS 화살표 key code와 Shift를 부모 공간 px 이동량으로 바꿉니다.
+/// # Safety
+/// `out_delta`는 float 두 개를 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_canvas_arrow_nudge(
+    key_code: u16,
+    shift: u8,
+    out_delta: *mut f32,
+) -> StellarStatus {
+    ffi_guard(|| {
+        if out_delta.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        if shift > 1 {
+            return StellarStatus::InvalidArgument;
+        }
+        let Some([dx, dy]) = stellar_runtime::app::gesture_math::arrow_nudge(key_code, shift != 0)
+        else {
+            return StellarStatus::InvalidArgument;
+        };
+        unsafe {
+            *out_delta = dx;
+            *out_delta.add(1) = dy;
+        }
+        StellarStatus::Ok
+    })
+}
+
 /// 새 도형의 칠(D7). 셸이 앱 설정(Settings ▸ 캔버스)에서 읽어 넘깁니다. 색공간 0은 없음입니다.
 #[derive(Clone, Copy, Default)]
 #[repr(C)]

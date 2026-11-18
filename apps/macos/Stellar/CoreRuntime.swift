@@ -22,6 +22,14 @@ enum CoreRuntime {
         var output = StellarGesturePreview()
         return stellar_canvas_gesture_preview(&input, &output) == STELLAR_OK ? output : nil
     }
+
+    static func arrowNudge(keyCode: UInt16, shift: Bool) -> CGVector? {
+        var delta: [Float] = [0, 0]
+        let status = delta.withUnsafeMutableBufferPointer { buffer in
+            stellar_canvas_arrow_nudge(keyCode, shift ? 1 : 0, buffer.baseAddress)
+        }
+        return status == STELLAR_OK ? CGVector(dx: CGFloat(delta[0]), dy: CGFloat(delta[1])) : nil
+    }
     /// 주어진 handle의 코어 버전 문자열을 읽습니다(길이 조회 → caller buffer 채우기).
     static func version(handle: UInt64) -> String? {
         var needed = 0
