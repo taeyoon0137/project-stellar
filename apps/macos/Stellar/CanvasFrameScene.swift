@@ -272,6 +272,34 @@ final class CanvasFrameScene {
     private(set) var worldToView = CGAffineTransform.identity
     private(set) var skipped: UInt32 = 0
 
+    /// 제스처 시작 때 부모와 직계 형제의 상자를 한 번 모읍니다. 화면 행은 코어 scene의 투영 결과입니다.
+    func snapCandidates(for id: UUID, asParent: Bool, worldToInput: CGAffineTransform,
+                        excluding: Set<UUID> = []) -> [StellarSnapCandidate] {
+        guard let index = indexByID[id], frames.indices.contains(index) else { return [] }
+        let parent = asParent ? index : frames[index].parent
+        guard let parent, frames.indices.contains(parent) else { return [] }
+        func candidate(_ frame: ProjectedFrame, kind: UInt32) -> StellarSnapCandidate? {
+            let rect = frame.worldBounds.applying(worldToInput)
+            guard rect.minX.isFinite, rect.minY.isFinite, rect.width.isFinite, rect.height.isFinite else { return nil }
+            var item = StellarSnapCandidate()
+            item.rect = (Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height))
+            item.kind = kind
+            return item
+        }
+        var result: [StellarSnapCandidate] = []
+        if let item = candidate(frames[parent], kind: 1) { result.append(item) }
+        for frame in frames where frame.parent == parent && !excluding.contains(frame.id) {
+            if let item = candidate(frame, kind: 2) { result.append(item) }
+            if result.count >= 4096 { break }
+        }
+        return result
+    }
+
+    func projectedBounds(of id: UUID) -> CGRect? {
+        guard let index = indexByID[id], frames.indices.contains(index) else { return nil }
+        return frames[index].worldBounds.applying(worldToView)
+    }
+
     /// 다음 `refresh`가 같은 revision이라도 행을 다시 읽게 합니다.
     func invalidateRows() { viewID = nil }
 

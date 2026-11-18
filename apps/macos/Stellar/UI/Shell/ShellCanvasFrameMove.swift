@@ -9,9 +9,31 @@ struct CanvasFrameDrag {
     let viewport: StellarWindowViewInfo
     let tool: CanvasTool
     var moved = false
+    var snapRect: CGRect = .zero
+    var snapCandidates: [StellarSnapCandidate] = []
 }
 
 extension ShellProjectWindow {
+    /// 제스처 시작의 후보와 화면 상자를 써서 이동 preview와 확정에 같은 스냅 이동량을 적용합니다.
+    func snappedMoveOffset(_ drag: CanvasFrameDrag, point: CGPoint, canvas: CanvasView,
+                           modifiers: NSEvent.ModifierFlags) -> CGVector {
+        let raw = CGVector(dx: point.x - drag.start.x, dy: point.y - drag.start.y)
+        guard !drag.snapRect.isNull, !drag.snapCandidates.isEmpty,
+              !modifiers.contains(.command), snapFlags != 0 else { canvas.snapOverlay = nil; return raw }
+        let moved = drag.snapRect.offsetBy(dx: raw.dx, dy: raw.dy)
+        let camera = canvas.worldToView
+        let zoom = hypot(camera.a, camera.b)
+        guard let result = CoreRuntime.snap(rect: moved, mode: 0, scale: 1,
+                                            pixelOrigin: CGPoint(x: camera.tx, y: camera.ty), pixelStep: zoom,
+                                            flags: snapFlags, candidates: drag.snapCandidates) else {
+            canvas.snapOverlay = nil
+            return raw
+        }
+        canvas.snapOverlay = showsSmartGuides
+            ? CanvasSnapOverlay(result: result, inputToView: .identity, distanceToCSS: zoom > 0 ? 1 / zoom : 1) : nil
+        return CGVector(dx: CGFloat(result.rect.0) - drag.snapRect.minX,
+                        dy: CGFloat(result.rect.1) - drag.snapRect.minY)
+    }
     /// 화면 중심 기준 `anchor` point를 고정하고 배율을 `factor`배 합니다(핀치·⌘ 스크롤). 문서·history는 그대로입니다.
     @discardableResult
     func zoomCanvas(by factor: Double, anchor: CGPoint) -> Bool {
@@ -107,7 +129,7 @@ extension ShellProjectWindow {
         // 선택 핸들 드래그. placement는 누른 시점의 local → 화면 변환입니다.
         var handleDrag: (box: CanvasSelectionBox, handle: CanvasHandle, start: NSPoint, session: UInt64, view: UUID,
                          size: NSSize, viewport: StellarWindowViewInfo, target: StellarSelectionTarget,
-                         placement: CGAffineTransform)?
+                         placement: CGAffineTransform, candidates: [StellarSnapCandidate])?
         // 진행 중인 캔버스 제스처 하나라도 있으면 true. 새 제스처 상태(크기 조절·영역 선택 등)도 여기에 더합니다.
         canvas.frameGestureActive = { [weak self] in
             self?.frameDrag != nil || handDrag != nil || zoomDrag != nil || marquee != nil || handleDrag != nil || imageDrag != nil
@@ -116,6 +138,28 @@ extension ShellProjectWindow {
             guard let self, let canvas, self.toolsModel.snapshot.activeTool == .move,
                   let (_, handle) = canvas.selectionHandle(at: point) else { return nil }
             return Self.cursor(for: handle)
+        }
+        canvas.hoverMeasureHandler = { [weak self, weak canvas] event in
+            guard let self, let canvas, canvas.frameGestureActive?() != true,
+                  event.modifierFlags.contains(.option), self.showsSmartGuides,
+                  let selected = canvas.selectionBoxes.first,
+                  let chosen = canvas.projectedBounds(of: selected.id),
+                  let hit = canvas.frameHit(at: CanvasInput.viewPoint(of: event, in: canvas)),
+                  hit.id != selected.id, let target = canvas.projectedBounds(of: hit.id) else {
+                canvas?.snapOverlay = nil
+                return
+            }
+            var candidate = StellarSnapCandidate()
+            candidate.rect = (Float(target.minX), Float(target.minY), Float(target.width), Float(target.height))
+            candidate.kind = 2
+            guard let result = CoreRuntime.snap(rect: chosen, mode: 0, scale: 1, flags: 0,
+                                                candidates: [candidate]), result.flags & 12 != 0 else {
+                canvas.snapOverlay = nil
+                return
+            }
+            let zoom = hypot(canvas.worldToView.a, canvas.worldToView.b)
+            canvas.snapOverlay = CanvasSnapOverlay(result: result, inputToView: .identity,
+                                                   distanceToCSS: zoom > 0 ? 1 / zoom : 1)
         }
         canvas.cancelFrameGesture = { [weak self, weak canvas] in
             guard let self, self.frameDrag != nil || handDrag != nil || zoomDrag != nil || marquee != nil || handleDrag != nil || imageDrag != nil
@@ -127,6 +171,7 @@ extension ShellProjectWindow {
             imageDrag = nil
             handleDrag = nil
             canvas?.gesturePreview = nil
+            canvas?.snapOverlay = nil
             self.frameDrag = nil
             if self.rejectedDraw {
                 self.rejectedDraw = false
@@ -277,6 +322,15 @@ extension ShellProjectWindow {
                     radii: drag.box.radii, point: local) else { return true }
                 let (rx, ry, rw, rh) = result.rect
                 preview.rect = CGRect(x: CGFloat(rx), y: CGFloat(ry), width: CGFloat(rw), height: CGFloat(rh))
+                if kind == 1, !modifiers.contains(.command), self.snapFlags != 0,
+                   let snapped = CoreRuntime.snap(rect: preview.rect, mode: 1, handle: handle,
+                       scale: hypot(drag.placement.a, drag.placement.b), flags: self.snapFlags,
+                       candidates: drag.candidates) {
+                    preview.rect = CGRect(x: CGFloat(snapped.rect.0), y: CGFloat(snapped.rect.1),
+                                          width: CGFloat(snapped.rect.2), height: CGFloat(snapped.rect.3))
+                    canvas.snapOverlay = self.showsSmartGuides
+                        ? CanvasSnapOverlay(result: snapped, inputToView: drag.placement) : nil
+                } else { canvas.snapOverlay = nil }
                 if kind == 2 {
                     preview.lineStart = CGPoint(x: CGFloat(result.line.0), y: CGFloat(result.line.1))
                     preview.lineEnd = CGPoint(x: CGFloat(result.line.2), y: CGFloat(result.line.3))
@@ -362,9 +416,12 @@ extension ShellProjectWindow {
                 if let (box, handle) = canvas.selectionHandle(at: point) {
                     guard let target = session.selectionTarget, UUID(uuid: target.view) == view,
                           target.revision == session.info?.revision else { return false }
+                    let placement = canvas.selectionPlacement(box)
+                    let candidates = CoreRuntime.preparedSnapCandidates(canvas.snapCandidates(for: box.id,
+                        worldToInput: canvas.worldToView.concatenating(placement.inverted()),
+                        excluding: Set(canvas.selectionBoxes.map(\.id))))
                     handleDrag = (box, handle, point, session.session, view, canvas.bounds.size, viewport,
-                                  target,
-                                  canvas.selectionPlacement(box))
+                                  target, placement, candidates)
                     return true
                 }
                 guard let hit = canvas.frameHit(at: point), hit.id != canvas.rootFrameID else {
@@ -382,6 +439,16 @@ extension ShellProjectWindow {
                 // Text·Image를 포함한 모든 node를 끌어 옮깁니다. 무엇을 옮길지는 놓을 때 코어 선택이 정합니다.
                 self.frameDrag = CanvasFrameDrag(hit: hit, start: point, session: session.session,
                                                  size: canvas.bounds.size, viewport: viewport, tool: .move)
+                let selected = canvas.selectionBoxes.filter { $0.has(STELLAR_CANVAS_ITEM_MOVABLE) }
+                let boxes = selected.isEmpty ? [] : selected.map {
+                    $0.rect.applying($0.world.concatenating(canvas.worldToView))
+                }
+                if let first = boxes.first {
+                    self.frameDrag?.snapRect = boxes.dropFirst().reduce(first) { $0.union($1) }
+                }
+                self.frameDrag?.snapCandidates = CoreRuntime.preparedSnapCandidates(
+                    canvas.snapCandidates(for: hit.id, worldToInput: canvas.worldToView,
+                        excluding: Set(selected.map(\.id))))
                 return true
             case .leftMouseDragged:
                 guard var drag = self.frameDrag else { return false }
@@ -389,12 +456,13 @@ extension ShellProjectWindow {
                     _ = canvas.cancelFrameGesture?()
                     return true
                 }
-                let offset = CGVector(dx: point.x - drag.start.x, dy: point.y - drag.start.y)
+                let raw = CGVector(dx: point.x - drag.start.x, dy: point.y - drag.start.y)
                 if !drag.moved {
-                    guard hypot(offset.dx, offset.dy) >= 3 else { return true }
+                    guard hypot(raw.dx, raw.dy) >= 3 else { return true }
                     drag.moved = true
                     self.frameDrag = drag
                 }
+                let offset = self.snappedMoveOffset(drag, point: point, canvas: canvas, modifiers: event.modifierFlags)
                 let moving = canvas.selectionBoxes.filter { $0.has(STELLAR_CANVAS_ITEM_MOVABLE) }
                 if event.modifierFlags.contains(.option) {
                     // Option: 원본은 그대로 두고 복제본 자리를 윤곽으로 보입니다.
@@ -428,7 +496,8 @@ extension ShellProjectWindow {
                       camera.zoom == drag.viewport.zoom else { return true }
                 // 화면 이동량을 world 벡터로 바꿔 보냅니다(벡터라 역변환의 translation은 쓰지 않음). 부모 공간 변환은 코어가 합니다.
                 let inverse = drag.hit.worldToView.inverted()
-                let dx = point.x - drag.start.x, dy = point.y - drag.start.y
+                let snapped = self.snappedMoveOffset(drag, point: point, canvas: canvas, modifiers: event.modifierFlags)
+                let dx = snapped.dx, dy = snapped.dy
                 let delta = CGVector(dx: inverse.a * dx + inverse.c * dy, dy: inverse.b * dx + inverse.d * dy)
                 guard delta.dx.isFinite, delta.dy.isFinite, delta != .zero else { return true }
                 let flags = event.modifierFlags.contains(.option) ? UInt32(STELLAR_MOVE_DUPLICATE) : 0

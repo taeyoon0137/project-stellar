@@ -42,6 +42,9 @@ enum ShellCommand: String, CaseIterable {
     case zoomOut = "view.zoom_out"
     case zoomToActualSize = "view.zoom_actual_size"
     case zoomToFit = "view.zoom_to_fit"
+    case toggleObjectSnap = "view.toggle_object_snap"
+    case togglePixelSnap = "view.toggle_pixel_snap"
+    case toggleSmartGuides = "view.toggle_smart_guides"
     case toggleFullScreen = "view.toggle_full_screen"
 
     // MARK: 도구(View·Insert 메뉴, 툴바 도구 그룹)
@@ -117,6 +120,9 @@ enum ShellCommand: String, CaseIterable {
         case .zoomOut: return "Zoom Out"
         case .zoomToActualSize: return "Actual Size"
         case .zoomToFit: return "Zoom to Fit"
+        case .toggleObjectSnap: return "Snap to Objects"
+        case .togglePixelSnap: return "Snap to Pixels"
+        case .toggleSmartGuides: return "Show Smart Guides"
         case .toggleFullScreen: return "Enter Full Screen"
         case .selectMoveTool: return "Move Tool"
         case .selectHandTool: return "Hand Tool"
@@ -164,6 +170,7 @@ enum ShellCommand: String, CaseIterable {
         case .about, .settings, .setUpCommand, .hideApp, .hideOthers, .showAll, .quit,
              .closeWindow,
              .customizeToolbar, .toggleSidebar, .toggleInspector,
+             .toggleObjectSnap, .togglePixelSnap, .toggleSmartGuides,
              .toggleFullScreen,
              .minimize, .minimizeAll, .zoomWindow, .bringAllToFront:
             return .shell
@@ -314,6 +321,9 @@ enum ShellCommand: String, CaseIterable {
         case .zoomOut: return "minus.magnifyingglass"
         case .zoomToActualSize: return "1.magnifyingglass"
         case .zoomToFit: return "arrow.up.left.and.arrow.down.right"
+        case .toggleObjectSnap: return "square.dashed"
+        case .togglePixelSnap: return "square.grid.3x3"
+        case .toggleSmartGuides: return "line.diagonal"
         case .toggleFullScreen: return "arrow.up.left.and.arrow.down.right.rectangle"
         case .bringToFront: return "square.3.layers.3d.top.filled"
         case .bringForward: return "square.2.layers.3d.top.filled"

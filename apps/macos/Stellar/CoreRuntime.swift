@@ -40,6 +40,34 @@ enum CoreRuntime {
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
         return .success(request)
     }
+
+    static func snap(rect: CGRect, mode: UInt32, handle: Int32 = 0, scale: CGFloat,
+                     pixelOrigin: CGPoint = .zero, pixelStep: CGFloat = 1,
+                     flags: UInt32, candidates: [StellarSnapCandidate]) -> StellarSnapResult? {
+        var values: [Float] = [Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)]
+        var result = StellarSnapResult()
+        let status = values.withUnsafeBufferPointer { rectBuffer in
+            candidates.withUnsafeBufferPointer { candidateBuffer in
+                stellar_canvas_snap(rectBuffer.baseAddress, mode, handle, Float(scale),
+                                    Float(pixelOrigin.x), Float(pixelOrigin.y), Float(pixelStep), flags,
+                                    candidateBuffer.baseAddress, candidateBuffer.count, &result)
+            }
+        }
+        return status == STELLAR_OK ? result : nil
+    }
+
+    static func preparedSnapCandidates(_ base: [StellarSnapCandidate]) -> [StellarSnapCandidate] {
+        guard base.count < 4096 else { return base }
+        var extra = [StellarSnapCandidate](repeating: StellarSnapCandidate(), count: 4096 - base.count)
+        var count = 0
+        let status = base.withUnsafeBufferPointer { input in
+            extra.withUnsafeMutableBufferPointer { output in
+                stellar_canvas_snap_intervals(input.baseAddress, input.count, output.baseAddress,
+                                              output.count, &count)
+            }
+        }
+        return status == STELLAR_OK ? base + Array(extra.prefix(count)) : base
+    }
     /// 주어진 handle의 코어 버전 문자열을 읽습니다(길이 조회 → caller buffer 채우기).
     static func version(handle: UInt64) -> String? {
         var needed = 0

@@ -198,3 +198,9 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
 ## 개정(2026-11-18, UX.3.8 도구 상태)
 
 `stellar_window_canvas_set_tool`은 활성 View ID와 도구 tag(1 Move부터 10 Zoom)를 받아 창별 View 도구 상태를 바꾼다. 상태는 문서와 history에 기록하지 않고, `StellarWindowSessionInfo.reserved`의 기존 32비트 공간에 현재 도구 tag를 게시한다. 셸은 낙관적 선택 뒤 코어 event가 오면 게시 값을 반영한다.
+
+## 개정(2026-11-18, UX.3.8 스냅)
+
+- `StellarSnapCandidate`(같은 좌표계의 부모·직계 형제 상자), `StellarSnapResult`(조정 상자·정렬선·CSS px 간격)와 `stellar_canvas_snap`을 추가한다. 셸은 제스처 시작 때 후보를 한 번 모으고 `stellar_canvas_snap_intervals`로 같은 간격 후보를 만든다. 드래그 중 Rust 계산은 화면 6pt 허용 오차를 좌표계 배율로 바꾸어 부모·형제 가장자리·중심, 형제 크기·간격, 정수 논리 px 순서로 평가한다. 픽셀 원점·간격도 ABI로 받아 화면 좌표의 픽셀 스냅을 논리 px 기준으로 만든다. ⌘를 누르면 셸은 스냅 호출을 건너뛴다.
+- View 메뉴의 객체·픽셀 스냅과 스마트 가이드 표시 값은 앱 설정에만 둔다. 정렬선과 px 간격은 캔버스 transient overlay로 그리고 문서·내보내기에는 넣지 않는다. 선택 후 Option hover의 형제 간격도 같은 코어 계산에서 읽는다.
+- View root Frame은 UX.3.11의 삭제·이동 금지 규칙을 유지한다. 포인터가 root 배경에서 시작하면 영역 선택으로 해석한다.

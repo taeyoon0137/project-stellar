@@ -422,7 +422,9 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
 /// - 도구 선택은 창 상태의 코어 요청으로 보냅니다. 다른 명령은 `commandHandler`(프로젝트 창)로 넘깁니다.
 final class ShellWindowToolsModelStub: ToolsMenuModel {
     /// ready 상태에서 항상 실행할 수 있는 명령(창 session 상태와 무관).
-    static let readyCommands: Set<ShellCommand> = Set(CanvasTool.allCases.map(\.command)).union([.closeProject])
+    static let readyCommands: Set<ShellCommand> = Set(CanvasTool.allCases.map(\.command)).union([
+        .closeProject, .toggleObjectSnap, .togglePixelSnap, .toggleSmartGuides,
+    ])
     /// ready가 아닐 때(열기 중·실패) 실행할 수 있는 명령.
     static let notReadyCommands: Set<ShellCommand> = [.closeProject]
 
@@ -555,6 +557,14 @@ final class ShellProjectWindow {
     let dataSource: ShellProjectFrameDataSource
     let toolsModel: ShellWindowToolsModelStub
     private var pendingCoreTool: CanvasTool?
+    private static let objectSnapKey = "canvas.snap.objects"
+    private static let pixelSnapKey = "canvas.snap.pixels"
+    private static let smartGuidesKey = "canvas.guides.smart"
+    var snapFlags: UInt32 {
+        ((UserDefaults.standard.object(forKey: Self.objectSnapKey) as? Bool ?? true) ? 1 : 0)
+            | ((UserDefaults.standard.object(forKey: Self.pixelSnapKey) as? Bool ?? true) ? 2 : 0)
+    }
+    var showsSmartGuides: Bool { UserDefaults.standard.object(forKey: Self.smartGuidesKey) as? Bool ?? true }
     let router: ShellCommandRouter
     var canvasTextEditing: ShellCanvasTextEditing? {
         // 텍스트 편집에 들어가면 속성 탭의 Typography 섹션을 펼칩니다(UX.2.12).
@@ -908,6 +918,19 @@ final class ShellProjectWindow {
     /// 메뉴·단축키는 응답자 체인으로 key 창의 router가 받으므로 여기 오는 명령은 언제나 이 창(활성 창)의 것입니다.
     @discardableResult
     func performSessionCommand(_ command: ShellCommand) -> Bool {
+        let setting: String?
+        switch command {
+        case .toggleObjectSnap: setting = Self.objectSnapKey
+        case .togglePixelSnap: setting = Self.pixelSnapKey
+        case .toggleSmartGuides: setting = Self.smartGuidesKey
+        default: setting = nil
+        }
+        if let setting {
+            let current = UserDefaults.standard.object(forKey: setting) as? Bool ?? true
+            UserDefaults.standard.set(!current, forKey: setting)
+            canvasHost.canvasView.snapOverlay = nil
+            return true
+        }
         if command == .zoomToFit { return fitRootFrame() }
         if command == .selectAll { return selectAllLayers() }
         // Cut = Copy 뒤 같은 선택을 코어 delete command로 지웁니다. 문서 변경은 delete 하나라 Undo 한 번이 되돌립니다.

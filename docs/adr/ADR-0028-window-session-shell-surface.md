@@ -790,3 +790,4 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 - `StellarGesturePreview`와 `stellar_canvas_gesture_preview`는 Rust의 순수 포인터 계산을 C ABI로 노출합니다. kind 1~5는 크기·Line 끝점·반경·일반 생성·Line 생성이고, flag 1·2·4는 Shift·Option·click입니다. 입력과 출력은 같은 POD 구조이며 문서 thread나 창 상태를 읽지 않습니다.
 - `stellar_canvas_arrow_nudge`는 key code와 Shift로 부모 공간 이동량 두 float를 씁니다. 지원하지 않는 key code는 invalid argument입니다.
 - `stellar_window_canvas_set_tool`은 활성 View의 도구 tag를 코어 창 상태에 기록합니다. 기존 `StellarWindowSessionInfo.reserved`는 현재 도구 tag(1~10)로 정의하고 구조체 크기는 바꾸지 않습니다.
+- `stellar_canvas_snap`은 동일 좌표계의 부모·형제 상자와 이동·크기 결과, 배율, 설정 flag를 받아 정렬선·거리와 조정 상자를 돌려줍니다. `stellar_canvas_snap_intervals`는 제스처 시작 때만 형제 간격 후보를 추가합니다. 두 ABI는 창·문서 상태를 읽지 않습니다.
