@@ -16,8 +16,7 @@ pub(super) fn project(
     locked: bool,
     builder: &mut SceneBuilder,
 ) -> Option<CanvasFrame> {
-    if image.fit != FitMode::Contain
-        || image.crop != CropRect::FULL
+    if image.crop != CropRect::FULL
         || image.sampling != SamplingMode::Linear
         || image.color_space_override.is_some()
     {
@@ -44,7 +43,12 @@ pub(super) fn project(
                 node,
                 asset: image.asset,
                 size: image.size,
-                fit: ImageFit::Contain,
+                fit: match image.fit {
+                    FitMode::Fill => ImageFit::Fill,
+                    FitMode::Contain => ImageFit::Contain,
+                    FitMode::Cover => ImageFit::Cover,
+                    FitMode::None => ImageFit::None,
+                },
                 crop: ImageCrop::new(0., 0., 1., 1.).ok()?,
                 sampling: ImageSampling::Linear,
                 color_space: None,
@@ -60,6 +64,7 @@ pub(super) fn project(
         path_shape: false,
         instance_frame: false,
         image_asset: Some(image.asset.id()),
+        image_fit: image.fit,
         text_node: false,
         id,
         parent,

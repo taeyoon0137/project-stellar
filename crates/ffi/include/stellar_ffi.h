@@ -197,7 +197,7 @@ typedef struct StellarCanvasColor { uint32_t space; float rgba[4]; } StellarCanv
 typedef struct StellarCanvasFrame {
     uint8_t id[16]; uint32_t parent, flags; /* parent: root UINT32_MAX, flags: bit0 clip children, bit1 hit target, bit2 Rectangle Shape, bit3 component instance, bit4 Text, bit5 Image, bit6 path Shape(Ellipse·Line·Polygon, stellar_canvas_shape_path) */
     float world[6], size[2], radii[4]; /* TL,TR,BR,BL */
-    StellarCanvasColor fill, border; float border_width;
+    StellarCanvasColor fill, border; float border_width; uint8_t fit; /* image object-fit: fill=0, contain=1, cover=2, none=3 */
 } StellarCanvasFrame;
 typedef struct StellarCanvasInfo {
     uint64_t revision; uint8_t view[16], primary[16]; float camera[6]; uint32_t count, skipped;

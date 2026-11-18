@@ -124,6 +124,7 @@ pub(super) fn project(
         instance_frame: false,
         text_node: false,
         image_asset: None,
+        image_fit: FitMode::Contain,
         id,
         parent,
         world,

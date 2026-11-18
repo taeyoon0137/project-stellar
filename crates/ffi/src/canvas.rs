@@ -143,6 +143,7 @@ pub struct StellarCanvasFrame {
     fill: StellarCanvasColor,
     border: StellarCanvasColor,
     border_width: f32,
+    fit: u8,
 }
 
 fn affine(t: Transform2D) -> [f32; 6] {
@@ -170,6 +171,7 @@ impl From<&CanvasFrame> for StellarCanvasFrame {
             fill: frame.background.into(),
             border: frame.border.map(|b| b.color).into(),
             border_width: frame.border.map_or(0.0, |b| b.thickness()),
+            fit: frame.image_fit as u8,
         }
     }
 }

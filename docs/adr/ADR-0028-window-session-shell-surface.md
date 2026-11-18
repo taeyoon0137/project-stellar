@@ -763,3 +763,7 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
   `rows`가 null이면 `count`만 쓰고, `capacity`가 모자라면 `STELLAR_BUFFER_TOO_SMALL`입니다.
 - 경로는 코어 SceneBuilder가 확정한 값이며 셸은 그대로 그립니다. 이 함수와 bit6은 위 임시 CG 경로의 일부라 Metal 이관 때
   다시 정합니다.
+
+## Image object-fit 표시(2026-11-18)
+
+`StellarCanvasFrame`의 `fit: u8`은 이미지 행의 `object-fit` 값이다. 저장된 `FitMode`와 같은 tag로 fill=0, contain=1, cover=2, none=3을 쓴다. fill은 이미지를 상자에 늘리고, contain은 원본 비율로 상자 안에 가운데 배치한다. cover는 비율을 유지하며 상자를 덮고 상자 밖을 자른다. none은 원본 크기로 가운데 놓고 상자 밖을 자른다. 위치는 모두 50% 50%이다. 이미지 이외의 행은 기본 contain=1을 쓴다.

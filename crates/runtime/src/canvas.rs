@@ -11,6 +11,7 @@ use stellar_core_types::ids::StableId;
 use stellar_core_types::revision::DocumentRevision;
 use stellar_core_types::value::Transform2D;
 use stellar_document::frame::Clipping;
+use stellar_document::image::FitMode;
 use stellar_document::model::DocumentModel;
 use stellar_document::records::NodePayload;
 use stellar_document::shape::RectangleParams;
@@ -40,6 +41,8 @@ pub struct CanvasFrame {
     pub instance_frame: bool,
     /// PNG asset 참조. 픽셀은 worker에서 검증·디코드합니다.
     pub image_asset: Option<StableId>,
+    /// 이미지 상자 안의 CSS object-fit 배치 방식.
+    pub image_fit: FitMode,
     /// 문서 node 식별자.
     pub id: StableId,
     /// 같은 목록의 Frame 부모 index.
@@ -324,6 +327,7 @@ impl CanvasScene {
             instance_frame: false,
             text_node: false,
             image_asset: None,
+            image_fit: FitMode::Contain,
             id,
             parent,
             world: spec.world_transform,
@@ -387,6 +391,7 @@ impl CanvasScene {
                     instance_frame: false,
                     text_node: true,
                     image_asset: None,
+                    image_fit: FitMode::Contain,
                     id,
                     parent,
                     world,

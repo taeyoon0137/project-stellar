@@ -205,6 +205,7 @@ private struct ProjectedFrame {
     var subtreeBounds: CGRect
     let isInstance: Bool
     let isImage: Bool
+    let imageFit: UInt8
     let isRectangle: Bool
     let clips: Bool
     let pickable: Bool
@@ -231,6 +232,7 @@ private struct ProjectedFrame {
         }
         subtreeBounds = worldBounds
         isImage = row.flags & 32 != 0
+        imageFit = row.fit
         isInstance = row.flags & 8 != 0
         isRectangle = row.flags & 4 != 0
         clips = row.flags & 1 != 0
@@ -645,8 +647,19 @@ final class CanvasFrameScene {
                         context.saveGState()
                         context.translateBy(x: 0, y: frame.localBounds.height)
                         context.scaleBy(x: 1, y: -1)
-                        let scale = min(frame.localBounds.width / CGFloat(image.width), frame.localBounds.height / CGFloat(image.height))
-                        let w = CGFloat(image.width) * scale, h = CGFloat(image.height) * scale
+                        let box = frame.localBounds
+                        if frame.imageFit == 2 || frame.imageFit == 3 { context.clip(to: box) }
+                        let sourceWidth = CGFloat(image.width), sourceHeight = CGFloat(image.height)
+                        let scale: CGFloat
+                        switch frame.imageFit {
+                        case 0: scale = 0
+                        case 1: scale = min(box.width / sourceWidth, box.height / sourceHeight)
+                        case 2: scale = max(box.width / sourceWidth, box.height / sourceHeight)
+                        case 3: scale = 1
+                        default: scale = 0
+                        }
+                        let w = frame.imageFit == 0 ? box.width : sourceWidth * scale
+                        let h = frame.imageFit == 0 ? box.height : sourceHeight * scale
                         context.draw(image, in: CGRect(x: (frame.localBounds.width - w)/2, y: (frame.localBounds.height - h)/2, width: w, height: h))
                         context.restoreGState()
                     }
