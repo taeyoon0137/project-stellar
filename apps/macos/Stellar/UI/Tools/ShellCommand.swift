@@ -10,6 +10,7 @@ enum ShellCommand: String, CaseIterable {
     // MARK: 앱 메뉴
     case about = "app.about"
     case settings = "app.settings"
+    case setUpCommand = "app.set_up_command"
     case hideApp = "app.hide"
     case hideOthers = "app.hide_others"
     case showAll = "app.show_all"
@@ -90,6 +91,7 @@ enum ShellCommand: String, CaseIterable {
         switch self {
         case .about: return "About \(MainMenuBuilder.applicationName)"
         case .settings: return "Settings…"
+        case .setUpCommand: return WelcomeStrings.setUpCommandMenuItem
         case .hideApp: return "Hide \(MainMenuBuilder.applicationName)"
         case .hideOthers: return "Hide Others"
         case .showAll: return "Show All"
@@ -140,7 +142,7 @@ enum ShellCommand: String, CaseIterable {
         switch self {
         // 도구 선택(Image 포함)은 모드 전환이라 그 자체로 추가 입력을 받지 않습니다. 이미지 파일 선택은 도구를
         // 쓰는 단계(캔버스 클릭)에서 열리므로 메뉴 제목에 말줄임표를 붙이지 않습니다.
-        case .settings, .newProject, .openProject, .cloneProject, .customizeToolbar:
+        case .settings, .setUpCommand, .newProject, .openProject, .cloneProject, .customizeToolbar:
             return true
         default:
             return false
@@ -149,7 +151,7 @@ enum ShellCommand: String, CaseIterable {
 
     var scope: Scope {
         switch self {
-        case .about, .settings, .hideApp, .hideOthers, .showAll, .quit,
+        case .about, .settings, .setUpCommand, .hideApp, .hideOthers, .showAll, .quit,
              .newProject, .openProject, .cloneProject, .bringAllToFront, .minimizeAll:
             return .application
         default:
@@ -159,7 +161,7 @@ enum ShellCommand: String, CaseIterable {
 
     var owner: Owner {
         switch self {
-        case .about, .settings, .hideApp, .hideOthers, .showAll, .quit,
+        case .about, .settings, .setUpCommand, .hideApp, .hideOthers, .showAll, .quit,
              .closeWindow,
              .customizeToolbar, .toggleSidebar, .toggleInspector,
              .toggleFullScreen,
@@ -286,6 +288,7 @@ enum ShellCommand: String, CaseIterable {
         switch self {
         case .about: return "info.circle"
         case .settings: return "gearshape"
+        case .setUpCommand: return "terminal"
         case .hideApp: return "eye.slash"
         case .hideOthers: return "rectangle.on.rectangle.slash"
         case .showAll: return "rectangle.on.rectangle"

@@ -43,7 +43,7 @@ enum MainMenuBuilder {
     private static let layout: [(title: String, groups: [[Entry]])] = [
         (applicationName, [
             [.command(.about)],
-            [.command(.settings)],
+            [.command(.settings), .command(.setUpCommand)],
             [.services],
             [.command(.hideApp), .command(.hideOthers), .command(.showAll)],
             [.command(.quit)],

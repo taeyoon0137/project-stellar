@@ -180,6 +180,9 @@ final class ShellAppCoordinator: NSObject {
             chooseProjectToOpen(origin: .application)
         case .settings:
             showSettings()
+        case .setUpCommand:
+            showWelcome()
+            welcomeController?.showStellarCommandSetup(nil)
         default:
             break
         }
@@ -714,7 +717,7 @@ final class ShellAppCoordinator: NSObject {
 ///
 /// 프로젝트를 만들거나 열 수 있고 설정 창을 열 수 있습니다.
 final class ShellApplicationCommandModel: ToolsMenuModel {
-    static let availableCommands: Set<ShellCommand> = [.newProject, .openProject, .cloneProject, .settings]
+    static let availableCommands: Set<ShellCommand> = [.newProject, .openProject, .cloneProject, .settings, .setUpCommand]
 
     let snapshot = ToolsMenuSnapshot(
         generation: 1,
