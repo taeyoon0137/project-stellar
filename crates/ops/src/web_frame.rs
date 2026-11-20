@@ -38,6 +38,8 @@ use crate::snapshot::ProjectSnapshot;
 pub struct HtmlDiagnostic {
     /// 실패를 일으키는 진단인지.
     pub error: bool,
+    /// 진단 대상 node. 선택·이동에 사용합니다.
+    pub node: StableId,
     /// 안정 분류.
     pub code: &'static str,
     /// 진단 문맥과 설명. 원본 텍스트·이름은 복사하지 않습니다.
@@ -55,6 +57,8 @@ pub enum HtmlError {
     Document(DocumentReadError),
     /// 그 문서에 요청 View가 없음.
     UnknownView(StableId),
+    /// 요청 Frame이 View 안에 없거나 Frame이 아님.
+    UnknownFrame(StableId),
 }
 
 impl std::fmt::Display for HtmlError {
@@ -68,6 +72,7 @@ impl std::fmt::Display for HtmlError {
             ),
             Self::Document(e) => write!(f, "{e}"),
             Self::UnknownView(id) => write!(f, "요청 문서에 View {id}가 없습니다"),
+            Self::UnknownFrame(id) => write!(f, "요청 View에 Frame {id}가 없습니다"),
         }
     }
 }
@@ -103,6 +108,7 @@ impl WebFrameHtml {
     ) {
         self.diagnostics.push(HtmlDiagnostic {
             error,
+            node,
             code,
             message: format!("node {node}: {message}"),
         });
@@ -139,6 +145,16 @@ pub fn export_web_frame(
     document: StableId,
     view: StableId,
 ) -> Result<WebFrameHtml, HtmlError> {
+    export_web_frame_node(snapshot, document, view, None)
+}
+
+/// 저장된 View 또는 그 안의 Frame 한 개를 HTML로 투영합니다.
+pub fn export_web_frame_node(
+    snapshot: &ProjectSnapshot,
+    document: StableId,
+    view: StableId,
+    frame: Option<StableId>,
+) -> Result<WebFrameHtml, HtmlError> {
     let generation = snapshot.generation().ok_or(HtmlError::Unsaved)?;
     if generation.manifest().schema_version != crate::migrate::CURRENT_SCHEMA_VERSION {
         return Err(HtmlError::UnsupportedSchema(
@@ -155,7 +171,31 @@ pub fn export_web_frame(
         .flat_map(|p| &p.views)
         .find(|v| v.id == view)
         .ok_or(HtmlError::UnknownView(view))?;
-    let root = selected.root_frame;
+    let root = if let Some(frame) = frame {
+        let mut current = frame;
+        let mut belongs = false;
+        loop {
+            if current == selected.root_frame {
+                belongs = true;
+                break;
+            }
+            let Some(parent) = model.record(current).and_then(|record| record.parent) else {
+                break;
+            };
+            current = parent;
+        }
+        if !belongs
+            || !matches!(
+                model.record(frame).map(|record| record.payload),
+                Some(NodePayload::Frame(_))
+            )
+        {
+            return Err(HtmlError::UnknownFrame(frame));
+        }
+        frame
+    } else {
+        selected.root_frame
+    };
     let mut result = WebFrameHtml {
         revision: snapshot.revision(),
         component_source_hash: None,

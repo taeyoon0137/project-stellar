@@ -313,6 +313,17 @@ typedef struct StellarInspectorInfo {
 } StellarInspectorInfo;
 typedef struct StellarInspectorRow { uint32_t key, flags, section, name_len, value_len, choices_len; } StellarInspectorRow;
 StellarStatus stellar_window_inspector(uint64_t handle, uint64_t session, StellarInspectorInfo *info, StellarInspectorRow *rows, size_t row_capacity, uint8_t *text, size_t text_capacity);
+
+/* 저장된 활성 View 또는 단일 선택 Frame의 HTML 투영. worker thread에서 호출합니다. */
+typedef struct StellarWebExportInfo {
+    size_t html_len, error_len, diagnostic_count, text_len;
+    uint32_t has_html;
+} StellarWebExportInfo;
+typedef struct StellarWebDiagnostic {
+    uint8_t node[16];
+    uint32_t error, code_len, message_len;
+} StellarWebDiagnostic;
+StellarStatus stellar_window_export_web(uint64_t handle, uint64_t session, StellarWebExportInfo *info, StellarWebDiagnostic *rows, size_t row_capacity, uint8_t *text, size_t text_capacity);
 /* 확정 선택 전체에 속성 하나를 적용합니다. mode 0은 CSS 값 텍스트, 1은 각 node 현재 값에 delta를 더함.
  * phase 0 확정, 1 연속 중간 값(포인터 scrub preview), 2 연속 끝(Undo 한 항목), 3 연속 취소(열린 preview를 늘 닫음),
  * 4 반복 입력(화살표·색, 바로 기록하고 같은 속성 0.5초 안 반복은 한 항목). 값 문법 오류는 요청 없이

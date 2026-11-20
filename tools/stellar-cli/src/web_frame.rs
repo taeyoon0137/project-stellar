@@ -48,6 +48,11 @@ pub fn run(args: &[String]) -> Result<Success, CliError> {
                 "unknown-view",
                 format!("문서 {document}에 View {id}가 없습니다"),
             ),
+            HtmlError::UnknownFrame(id) => CliError::new(
+                ExitStatus::NoInput,
+                "unknown-frame",
+                format!("View {view}에 Frame {id}가 없습니다"),
+            ),
         };
         error.with_context(path)
     })?;

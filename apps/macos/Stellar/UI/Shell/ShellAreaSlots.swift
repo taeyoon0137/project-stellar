@@ -35,9 +35,11 @@ final class ShellInspectorAreaSlot: ShellInspectorSlot {
     var paneTitle: String { String(localized: "Inspector", comment: "Accessibility name of the inspector") }
 
     /// 기능이 연결된 뒤에만 두 번째 탭을 만듭니다. 선택 상태는 각 controller가 그대로 소유합니다.
-    func installCodeTab(_ controller: NSViewController) {
-        tabs.installCodeTab(controller)
+    func installCodeTab(_ controller: NSViewController, onSelect: @escaping () -> Void) {
+        tabs.installCodeTab(controller, onSelect: onSelect)
     }
+
+    var isCodeSelected: Bool { tabs.isCodeSelected }
 }
 
 /// 오른쪽 영역의 기능 탭. 속성 하나만 있을 때는 탭 줄 없이 기존 화면을 그대로 채웁니다.
@@ -48,6 +50,8 @@ private final class ShellRightTabsViewController: NSViewController {
     private let selector = NSSegmentedControl()
     private let content = NSView()
     private var selectorHeight: NSLayoutConstraint?
+    private var onCodeSelected: (() -> Void)?
+    var isCodeSelected: Bool { code != nil && selector.selectedSegment == 1 }
 
     init(inspector: InspectorViewController) {
         self.inspector = inspector
@@ -86,9 +90,10 @@ private final class ShellRightTabsViewController: NSViewController {
         show(inspector)
     }
 
-    func installCodeTab(_ controller: NSViewController) {
+    func installCodeTab(_ controller: NSViewController, onSelect: @escaping () -> Void) {
         guard code == nil else { return }
         code = controller
+        onCodeSelected = onSelect
         loadViewIfNeeded()
         selectorHeight?.constant = 28
         selector.isHidden = false
@@ -96,6 +101,7 @@ private final class ShellRightTabsViewController: NSViewController {
 
     @objc private func selectTab(_ sender: NSSegmentedControl) {
         show(sender.selectedSegment == 1 ? (code ?? inspector) : inspector)
+        if isCodeSelected { onCodeSelected?() }
     }
 
     private func show(_ controller: NSViewController) {

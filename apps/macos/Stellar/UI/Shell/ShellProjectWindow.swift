@@ -574,6 +574,10 @@ final class ShellProjectWindow {
     let canvasHost: ShellCanvasHostViewController
     let sidebarSlot: ShellSidebarAreaSlot
     let inspectorSlot: ShellInspectorAreaSlot
+    let codeTab = ShellCodeTabViewController()
+    private var codeBasis: String?
+    private var codeRefreshInFlight = false
+    private var codeRefreshToken: UInt64 = 0
     /// Git 상태·신뢰의 원본. Git 패널은 캔버스 아래 보조 패널과 함께 빠졌고, 왼쪽 사이드바 변경 탭(UX.5.2)에서
     /// 이 data source로 다시 붙습니다.
     let gitSource = ShellGitDataSource()
@@ -643,6 +647,8 @@ final class ShellProjectWindow {
             slots: ShellFrameSlots(sidebar: sidebarSlot, content: canvasHost, inspector: inspectorSlot),
             toolbarItemProvider: toolsToolbar
         )
+        inspectorSlot.installCodeTab(codeTab) { [weak self] in self?.refreshCodeIfVisible(force: true) }
+        codeTab.onSelectNode = { [weak self] id in _ = self?.selectNodes([id]) }
         toolsModel.toolChanged = { [weak self] tool in
             guard let self else { return }
             _ = self.canvasHost.canvasView.cancelFrameGesture?()
@@ -908,6 +914,59 @@ final class ShellProjectWindow {
                                    undoName: undoName, redoName: redoName)
         refreshLayerFlagCommands()
         refreshAutosaveStatus()
+        refreshCodeIfVisible()
+    }
+
+    /// 코드 탭이 보일 때만 저장을 마친 뒤 worker에서 HTML을 생성합니다.
+    private func refreshCodeIfVisible(force: Bool = false) {
+        guard inspectorSlot.isCodeSelected, !codeRefreshInFlight,
+              let session = windowController.windowSession, !session.isClosed, !session.isClosing,
+              let info = session.info, info.has_document != 0,
+              let handle = dataSource.session?.pump.runtimeHandle,
+              let code = coreCommandIDs.coreCommandID(for: .saveNow) else { return }
+        if canvasHost.canvasView.frameGestureActive?() == true || router.isTextEditing { return }
+        let basis = "\(info.revision):\(info.generation):\(session.selectionTarget?.history_sequence ?? 0)"
+        if !force && codeBasis == basis { return }
+        codeRefreshInFlight = true
+        codeRefreshToken &+= 1
+        let token = codeRefreshToken
+        codeTab.showLoading()
+        let accepted = session.perform(coreCommand: code) { [weak self, weak session] event in
+            guard let self, let session, self.windowController.windowSession === session,
+                  self.codeRefreshToken == token else { return }
+            guard case .windowSessionSaved = event else {
+                self.codeRefreshInFlight = false
+                if case .requestFailed(_, _, let message) = event {
+                    self.codeTab.update(SavedWebExport(html: nil, error: message, diagnostics: []))
+                } else {
+                    self.codeTab.update(SavedWebExport(html: nil, error: "Couldn’t save before generating HTML.", diagnostics: []))
+                }
+                return
+            }
+            let sessionID = session.session
+            let savedRevision = session.info?.revision
+            let savedGeneration = session.info?.generation
+            let savedSelection = session.selectionTarget?.history_sequence
+            DispatchQueue.global(qos: .userInitiated).async {
+                let report = CoreRuntime.exportSavedWeb(handle: handle, session: sessionID)
+                DispatchQueue.main.async { [weak self, weak session] in
+                    guard let self, let session, self.windowController.windowSession === session,
+                          self.codeRefreshToken == token else { return }
+                    self.codeRefreshInFlight = false
+                    if session.info?.revision != savedRevision || session.info?.generation != savedGeneration ||
+                        session.selectionTarget?.history_sequence != savedSelection {
+                        self.refreshCodeIfVisible(force: true)
+                        return
+                    }
+                    self.codeBasis = "\(session.info?.revision ?? 0):\(session.info?.generation ?? 0):\(session.selectionTarget?.history_sequence ?? 0)"
+                    self.codeTab.update(report)
+                }
+            }
+        }
+        if !accepted {
+            codeRefreshInFlight = false
+            codeTab.update(SavedWebExport(html: nil, error: "Couldn’t start the save.", diagnostics: []))
+        }
     }
 
     /// 코어 command ID 표(XII.6.5). 코어가 공유 이름으로 알려 준 ID로만 명령을 보냅니다.
@@ -1233,6 +1292,9 @@ final class ShellProjectWindow {
 
     /// 창을 닫습니다: 창 session을 먼저, 그다음 프로젝트 session을 한 번씩 닫습니다.
     func closeSessions() {
+        codeRefreshToken &+= 1
+        codeRefreshInFlight = false
+        codeBasis = nil
         canvasHost.canvasView.frameSession = nil
         inspectorSource.refresh(runtime: nil, session: nil)
         gitSource.attach(nil)
