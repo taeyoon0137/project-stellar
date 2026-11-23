@@ -26,11 +26,18 @@
 
 use std::fmt;
 
+use stellar_commands::command::Command;
+use stellar_commands::id::{CommandId, CommandOrigin};
+use stellar_commands::modifier_ops::RemoveModifier;
+use stellar_commands::request::CommandRequest;
+use stellar_commands::transaction::CommandTransaction;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::property::PropertyPath;
+use stellar_core_types::revision::DocumentRevision;
+use stellar_document::modifier::ModifierId;
 use stellar_document::modifier_metadata::keys as modifier_keys;
 
-use crate::diagnostic::DiagnosticKind;
+use crate::diagnostic::{Diagnostic, DiagnosticKind};
 
 /// remediation action 식별자. 숫자 값은 저장 schema([`crate::codec`])의 일부입니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -170,6 +177,90 @@ impl fmt::Display for RemediationActionId {
     }
 }
 
+/// 프로젝트 설정 절.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ProjectSection {
+    /// 의존성(library).
+    Dependencies,
+    /// font.
+    Fonts,
+    /// Target Profile.
+    TargetProfiles,
+    /// schema migration.
+    Migration,
+}
+
+impl ProjectSection {
+    /// 안정 이름.
+    pub const fn name(self) -> &'static str {
+        match self {
+            ProjectSection::Dependencies => "dependencies",
+            ProjectSection::Fonts => "fonts",
+            ProjectSection::TargetProfiles => "target-profiles",
+            ProjectSection::Migration => "migration",
+        }
+    }
+}
+
+/// 명시 navigation 대상.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NavigationTarget {
+    /// 문서의 영속 객체.
+    Node {
+        /// 문서.
+        document: StableId,
+        /// 객체.
+        node: StableId,
+    },
+    /// 문서의 속성.
+    Property {
+        /// 문서.
+        document: StableId,
+        /// 속성 경로.
+        path: PropertyPath,
+    },
+    /// 프로젝트 설정 절.
+    Project(ProjectSection),
+}
+
+/// remediation 실행 계획. 이 두 variant 밖의 형태(script 등)는 없습니다.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RemediationPlan {
+    /// 명시 navigation.
+    Navigate(NavigationTarget),
+    /// 일반 CommandTransaction(실행은 호출자가 일반 편집 경로로).
+    Transaction(CommandTransaction),
+}
+
+/// 계획 오류.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemediationError {
+    /// 이 진단이 제공하지 않는 action.
+    NotOffered(RemediationActionId),
+    /// action에 필요한 문서·source·property가 진단에 없음.
+    MissingTarget(RemediationActionId),
+    /// command action의 조건(종류·속성)이 진단과 맞지 않음.
+    NotApplicable(RemediationActionId),
+}
+
+impl fmt::Display for RemediationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RemediationError::NotOffered(a) => {
+                write!(f, "이 진단은 {a} action을 제공하지 않습니다")
+            }
+            RemediationError::MissingTarget(a) => {
+                write!(f, "{a} action에 필요한 문서·대상이 진단에 없습니다")
+            }
+            RemediationError::NotApplicable(a) => {
+                write!(f, "{a} action을 이 진단에 적용할 수 없습니다")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RemediationError {}
+
 /// 진단 종류와 위치에서 제공할 action을 정합니다(생산자 변환이 부릅니다, inventory 순·중복 없음).
 pub fn actions_for(
     kind: DiagnosticKind,
@@ -208,3 +299,172 @@ fn is_dangling_modifier_source(path: &PropertyPath) -> bool {
         && matches!(path.keys(), [key] if *key == modifier_keys::MASK_SOURCE || *key == modifier_keys::CLIP_SOURCE)
 }
 
+/// 진단의 action 하나를 실행 계획으로 만듭니다. command 계획은 `base` revision 기준 요청 하나의 transaction이며
+/// 출처는 사용자입니다(사용자가 고른 action). 실행 전 검증은 일반 command 경로가 합니다.
+pub fn plan(
+    diagnostic: &Diagnostic,
+    action: RemediationActionId,
+    base: DocumentRevision,
+    id: CommandId,
+) -> Result<RemediationPlan, RemediationError> {
+    use RemediationActionId as A;
+    if !diagnostic.remediation.contains(&action) {
+        return Err(RemediationError::NotOffered(action));
+    }
+    let missing = || RemediationError::MissingTarget(action);
+    let navigate = |section| {
+        Ok(RemediationPlan::Navigate(NavigationTarget::Project(
+            section,
+        )))
+    };
+    match action {
+        A::RevealSource => Ok(RemediationPlan::Navigate(NavigationTarget::Node {
+            document: diagnostic.document().ok_or_else(missing)?,
+            node: diagnostic.source().ok_or_else(missing)?,
+        })),
+        A::RevealProperty => Ok(RemediationPlan::Navigate(NavigationTarget::Property {
+            document: diagnostic.document().ok_or_else(missing)?,
+            path: diagnostic.property().cloned().ok_or_else(missing)?,
+        })),
+        A::OpenDependencies => navigate(ProjectSection::Dependencies),
+        A::OpenFonts => navigate(ProjectSection::Fonts),
+        A::OpenTargetProfiles => navigate(ProjectSection::TargetProfiles),
+        A::OpenMigration => navigate(ProjectSection::Migration),
+        A::RemoveDanglingModifier => {
+            let owner = diagnostic.source().ok_or_else(missing)?;
+            let path = diagnostic.property().ok_or_else(missing)?;
+            if diagnostic.kind() != DiagnosticKind::MissingNode
+                || !is_dangling_modifier_source(path)
+            {
+                return Err(RemediationError::NotApplicable(action));
+            }
+            let command = Command::RemoveModifier(RemoveModifier {
+                node: owner,
+                modifier: ModifierId::new(path.root()),
+            });
+            Ok(RemediationPlan::Transaction(CommandTransaction::single(
+                id,
+                CommandOrigin::User,
+                CommandRequest::new(base, command),
+            )))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostic::{DiagnosticKey, Severity};
+
+    #[test]
+    fn inventory_is_complete_and_each_action_has_one_form() {
+        // 검증 기준(XXV.3.3): action inventory. 모든 id가 inventory에 정확히 한 번, 숫자·이름 고유.
+        assert_eq!(ACTION_INVENTORY.len(), RemediationActionId::ALL.len());
+        for (descriptor, id) in ACTION_INVENTORY.iter().zip(RemediationActionId::ALL) {
+            assert_eq!(descriptor.id, id);
+            assert_eq!(RemediationActionId::from_code(id.code()), Some(id));
+            assert_eq!(RemediationActionId::from_name(id.name()), Some(id));
+            assert!(!descriptor.summary.is_empty());
+        }
+        let commands: Vec<_> = ACTION_INVENTORY
+            .iter()
+            .filter(|d| d.form == ActionForm::Command)
+            .map(|d| d.id)
+            .collect();
+        assert_eq!(commands, vec![RemediationActionId::RemoveDanglingModifier]);
+    }
+
+    fn sid(n: u64) -> StableId {
+        StableId::new_v7(n, 0, n)
+    }
+
+    fn diagnostic(kind: DiagnosticKind, property: Option<PropertyPath>) -> Diagnostic {
+        let document = Some(sid(1));
+        let source = Some(sid(2));
+        Diagnostic {
+            remediation: actions_for(kind, document, source, property.as_ref()),
+            key: DiagnosticKey {
+                document,
+                kind,
+                source,
+                property,
+                code: "c".into(),
+                subject: String::new(),
+                origin: "t".into(),
+            },
+            severity: Severity::Warning,
+            message: String::new(),
+        }
+    }
+
+    #[test]
+    fn every_offered_action_plans_to_navigation_or_command_transaction() {
+        // 모든 종류 × 대표 위치에서 제공한 action은 계획이 성공하고, 형태가 inventory 형태와 같습니다.
+        let paths = [
+            None,
+            Some(PropertyPath::with_keys(
+                sid(3),
+                vec![modifier_keys::MASK_SOURCE],
+            )),
+            Some(
+                PropertyPath::with_keys(sid(3), vec![modifier_keys::BOOLEAN_OPERANDS])
+                    .with_index(1),
+            ),
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for kind in DiagnosticKind::ALL {
+            for path in &paths {
+                let d = diagnostic(kind, path.clone());
+                for action in &d.remediation {
+                    seen.insert(*action);
+                    let plan = plan(
+                        &d,
+                        *action,
+                        DocumentRevision(0),
+                        CommandId::from_stable_id(sid(9)),
+                    )
+                    .unwrap_or_else(|e| panic!("{kind} {action}: {e}"));
+                    let form = match plan {
+                        RemediationPlan::Navigate(_) => ActionForm::Navigation,
+                        RemediationPlan::Transaction(ref t) => {
+                            assert_eq!(t.requests.len(), 1);
+                            assert_eq!(t.origin, CommandOrigin::User);
+                            ActionForm::Command
+                        }
+                    };
+                    assert_eq!(form, action.descriptor().form, "{action}");
+                }
+            }
+        }
+        assert_eq!(
+            seen.len(),
+            RemediationActionId::ALL.len(),
+            "모든 action이 어떤 진단에 쓰임"
+        );
+    }
+
+    #[test]
+    fn boolean_operand_gets_no_command_and_unoffered_action_is_refused() {
+        let d = diagnostic(
+            DiagnosticKind::MissingNode,
+            Some(
+                PropertyPath::with_keys(sid(3), vec![modifier_keys::BOOLEAN_OPERANDS])
+                    .with_index(0),
+            ),
+        );
+        assert!(!d
+            .remediation
+            .contains(&RemediationActionId::RemoveDanglingModifier));
+        assert_eq!(
+            plan(
+                &d,
+                RemediationActionId::RemoveDanglingModifier,
+                DocumentRevision(0),
+                CommandId::from_stable_id(sid(9))
+            ),
+            Err(RemediationError::NotOffered(
+                RemediationActionId::RemoveDanglingModifier
+            ))
+        );
+    }
+}

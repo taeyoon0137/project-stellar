@@ -52,7 +52,7 @@ use stellar_text::registry::InMemoryFontRegistry;
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Severity};
 use crate::incremental::{origins, CheckContext, Contribution, IntegrityEngine};
 use crate::index::{DiagnosticFilter, DiagnosticIndex};
-use crate::remediation::RemediationActionId;
+use crate::remediation::{plan, RemediationActionId, RemediationPlan};
 use crate::sources;
 
 fn sid(n: u64) -> StableId {
@@ -586,6 +586,54 @@ fn unrelated_edit_recomputes_nothing_and_related_edit_rechecks_only_its_scope() 
         engine.index().summary().kind(DiagnosticKind::MissingNode),
         missing_nodes - 1
     );
+}
+
+#[test]
+fn remediation_runs_as_ordinary_transaction_and_undo_restores_diagnostic() {
+    // 검증 기준(XXV.3.3): command remediation은 일반 CommandTransaction, navigation은 문서를 바꾸지 않음.
+    let model = fixture();
+    let mut engine = full_engine(&model);
+    let mut state = DocumentState::new(model);
+    let document = sid(DOC);
+    let mask = engine
+        .index()
+        .iter()
+        .find(|d| d.source() == Some(sid(MASKED)) && d.kind() == DiagnosticKind::MissingNode)
+        .unwrap();
+    let RemediationPlan::Navigate(_) = plan(
+        &mask,
+        RemediationActionId::RevealProperty,
+        state.revision(),
+        CommandId::from_stable_id(sid(1)),
+    )
+    .unwrap() else {
+        panic!("navigation");
+    };
+    let RemediationPlan::Transaction(transaction) = plan(
+        &mask,
+        RemediationActionId::RemoveDanglingModifier,
+        state.revision(),
+        CommandId::from_stable_id(sid(60_000)),
+    )
+    .unwrap() else {
+        panic!("transaction");
+    };
+    let applied = state
+        .execute_transaction(&transaction)
+        .expect("일반 경로 실행");
+    assert!(state.model().modifier_stack(sid(MASKED)).is_none());
+    engine
+        .apply_changes(document, &applied.changes, state.model(), &context())
+        .unwrap();
+    assert!(
+        engine.index().get(&mask.key).is_none(),
+        "고친 진단은 사라짐"
+    );
+    let undo = state.execute_transaction(&applied.inverse).expect("undo");
+    engine
+        .apply_changes(document, &undo.changes, state.model(), &context())
+        .unwrap();
+    assert_eq!(engine.index().get(&mask.key), Some(mask));
 }
 
 #[test]
