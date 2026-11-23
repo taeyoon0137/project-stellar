@@ -2,7 +2,7 @@
 
 - WBS: XXIV.4.5
 - 작업명: headless 쓰기 경로에 프로젝트·Git 밖 OS 사용자 데이터의 프로젝트별 배타 잠금을 두고, 잠금을 잡은 뒤 generation 비교·교체, 사용 중이면 종료 코드 75
-- 상태: 부분 완료 (`[~]`) — 구현과 작업 행의 검증 기준은 모두 통과했으나, 선행 XXIV.4.4가 `[~]`입니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`가 아니면 완료로 두지 않음)에 따라 XXIV.4.4가 `[x]`가 될 때까지 `[~]`로 둡니다.
+- 상태: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 구현과 작업 행의 검증 기준은 모두 통과했으나, 선행 XXIV.4.4가 `[~]`입니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`가 아니면 완료로 두지 않음)에 따라 XXIV.4.4가 `[x]`가 될 때까지 `[~]`로 둡니다.
 - 선행: XXIV.4.4(이 lane에서 구현, `[~]`: 남은 일은 storage writer 종류 필드뿐이며 잠금이 쓰는 저장 경로는 모두 있음), IV.2.3(`[x]`)
 
 ## 필수 실행 환경
@@ -76,3 +76,26 @@
 - 동시 쓰기 test는 잠금이 직렬화한 결과의 손실 0을 확인하지만, 잠금 없이 손실이 나는 경합을 결정적으로 재현하지는 못합니다. 대신 V.5.2 optimistic check만으로 통과하지 않도록, 잠금이 감싸야 하는 계획 뒤 교체(`ConcurrentWrite`, CLI `concurrent-write`)가 한 번이라도 나오면 두 test 모두 실패합니다. base 불일치 재시도는 base를 잠금 밖에서 읽는 호출 방식 때문에 정상입니다.
 - 잠금 디렉터리의 상위 경로(`$HOME`, Application Support)는 symlink 여부를 검사하지 않습니다. 같은 사용자 `HOME` 안이라 위험이 낮습니다.
 - 기다리지 않는 정책이라 경합이 잦으면 호출자가 재시도해야 합니다(75는 재시도 가능 코드).
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 구현 판정 통과, 선행 미충족.
+- 근거: 교차 프로세스 잠금, 잠금 안 generation 비교·교체, 경합 exit 75, merge driver 모드 제외가 코드에 있습니다. 선행 XXIV.4.4가 `[~]`라 `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/ops/src/lock.rs`: 잠금은 `stellar_project::trust_store::os_user_data_base()`(macOS `$HOME/Library/Application Support`) 아래에 두고, 경합은 sysexits `EX_TEMPFAIL` 75로 끝냅니다.
+- `crates/ops/src/apply.rs`: 쓰기 모드는 잠금 획득 → snapshot 열기 → base 비교 → 저장 → 해제 순서입니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-ops` | 51 passed |
+| `cargo test -p stellar-cli` | output_fixtures 26 passed |
+
+### 남은 조건과 finding
+
+- XXIV.4.4의 writer 종류 기록이 끝나면 코드 변경 없이 다시 판정합니다.
