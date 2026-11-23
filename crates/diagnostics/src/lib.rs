@@ -24,6 +24,12 @@ pub mod trace_schema;
 /// 로컬 diagnostic store schema: crash·renderer error·performance·feature failure count (XVI.8.1, ADR-0109).
 pub mod store;
 
+/// 진단 번들 형식, 전송 전 preview와 수동 내보내기 (XVI.8.2, XVI.8.4, ADR-0109).
+pub mod bundle;
+
+/// 금지 필드 scanner (XVI.8.2, ADR-0109).
+pub mod scanner;
+
 /// 상호작용 성능 예산 reader (XVI.4.1).
 pub mod budget;
 

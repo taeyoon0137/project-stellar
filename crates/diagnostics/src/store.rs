@@ -165,6 +165,27 @@ closed_enum! {
     }
 }
 
+closed_enum! {
+    /// CPU 구조(진단 번들 `env` 줄).
+    Arch {
+        /// Apple silicon.
+        Arm64 => "arm64",
+        /// Intel.
+        X86_64 => "x86_64",
+    }
+}
+
+impl Arch {
+    /// 이 build의 CPU 구조.
+    pub const fn current() -> Arch {
+        if cfg!(target_arch = "x86_64") {
+            Arch::X86_64
+        } else {
+            Arch::Arm64
+        }
+    }
+}
+
 /// [`InteractionKind`] 저장 이름(`InteractionKind::ALL` 순서).
 pub const INTERACTION_NAMES: [&str; 14] = {
     let mut out = [""; 14];
@@ -811,6 +832,24 @@ pub fn decode_line(
         values.push(parse_value(spec.ty, text).ok_or_else(|| err(LineErrorKind::Value { index }))?);
     }
     Ok((schema, values))
+}
+
+/// schema 어휘 전체: tag, field 이름, 닫힌 enum 이름(중복 없이 정렬).
+///
+/// scanner는 이 어휘와 같은 문맥 값을 공개 어휘로 보고 비교에서 빼고(ADR-0109 결정 4), feature inventory는 이
+/// 어휘에 꺼진 기능의 단어가 없는지 봅니다(결정 8).
+pub fn schema_vocabulary(schemas: &[&RecordSchema]) -> Vec<&'static str> {
+    let mut words = std::collections::BTreeSet::new();
+    for schema in schemas {
+        words.insert(schema.tag);
+        for spec in schema.fields {
+            words.insert(spec.name);
+            if let FieldType::Name(names) = spec.ty {
+                words.extend(names.iter().copied());
+            }
+        }
+    }
+    words.into_iter().collect()
 }
 
 /// 보존 정책.
