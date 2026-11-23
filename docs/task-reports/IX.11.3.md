@@ -2,8 +2,7 @@
 
 - WBS: IX.11.3
 - 작업명: Shape·Path·Text·Image property metadata registry를 Frame registry와 같은 방식으로 두고 CSS 매핑을 채움, snapshot 전용 key를 문서 key로 교체
-- 상태: 완료 (`[x]`) — registry·CSS 매핑·key 할당, 값 하나인 snapshot 경로의 문서 key 교체, 값 여러 개를 한
-  경로에 담던 snapshot 투영의 longhand 경로 분할(2026-11-23 integration-followups 보완)까지 끝났습니다.
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록(ledger-refresh): `[~]`의 이유였던 남은 범위(값 여러 개를 한 경로에 담던 snapshot 투영)를 integration-followups lane이 끝냈고(아래 "후속 보완" 절), 선행 IX.11.1·IX.11.22도 `[x]`입니다. 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 원장이 근거 커밋을 찾지 못했습니다. 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 완료 (`[x]`) — registry·CSS 매핑·key 할당, 값 하나인 snapshot 경로의 문서 key 교체, 값 여러 개를 한 경로에 담던 snapshot 투영의 longhand 경로 분할(2026-11-23 integration-followups 보완)까지 끝났습니다.
 - 결정: ADR-0075 결정 4
 
 ## 필수 실행 환경
@@ -80,3 +79,11 @@
 - 검증: `build::tests::multi_value_fields_project_to_document_longhand_paths`(random 문서 200개에서 옛 경로 0, longhand
   값 하나, 원점 두 값), 기존 `projection_round_trips_records`(build→records→build 동일), status·stage test의
   기대 경로를 `shape_keys::WIDTH`로 갱신. `cargo test -p stellar-semantic-diff` 88 + fuzz 4 passed.
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(IX.11.3)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `f8b002ab` Feat: Shape·Path·Text·Image registry와 CSS 매핑 추가
+- `27ac2535` Feat: semantic snapshot의 다값 경로를 longhand 문서 key로 나누고 묶음 key 검사를 validator에 연결
+- `67aea861` Test: Git snapshot 통합 테스트가 Line 끝점 longhand 경로를 기대하게 함
