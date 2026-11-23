@@ -45,6 +45,8 @@ Accepted (2026-11-24). engine lane `agent-runtime-2`의 결정입니다. ADR-011
      효과도 냅니다.
    - bridge 결합·연결 종료는 I/O 요청(`Bound`, `Disconnected`)으로 들어와 앱 시작 세션이면 `BridgeBound`·`BridgeDisconnected`
      event가 됩니다. 재연결 유예는 상태 snapshot 게시마다 재연결 대기 세션에 `Tick`을 넣어 확인합니다(`tick_hosted`).
+     결합 응답(`AgentReply::Bound`)은 세션의 진행 중 편집 lease를 싣고 앞단이 새 연결에 그 lease를 기억하므로, 유예 안의
+     재결합은 같은 편집을 이어 갑니다. 유예가 지난 재결합은 세션을 끝내고(`Ended`) 앞단이 결합을 풉니다.
    - 편집 쪽 `EndReason`에 `UsageLimitReported`·`AuthErrorReported`를 더해 agent-host 이유와 손실 없이 대응합니다(진단 코드 같음).
    - 문서 변경은 document thread job 안에서 원자 실행되고 host event도 같은 스레드에서 실행되므로, event 시점에 적용 중인
      transaction은 없습니다. 그래서 runtime은 `TransactionStarted`·`TransactionSettled`를 넣지 않습니다.

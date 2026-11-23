@@ -125,8 +125,12 @@ pub enum AgentReply {
     Completed(CompletedEdit),
     /// 종료 절차(연결 종료에서 앱 시작 세션을 유지하면 `None`).
     Ended(Option<Box<SessionEndReport>>),
-    /// bridge 결합을 기록함.
-    Bound,
+    /// bridge 결합을 기록함. 재연결이면 세션의 진행 중 편집 lease를 함께 돌려줘 앞단이 이어서 쓰게 합니다
+    /// (재연결 유예 안에서 같은 편집을 계속함, ADR-0005 §4.2).
+    Bound {
+        /// 세션의 진행 중 편집 lease(없으면 `None`).
+        lease: Option<LeaseId>,
+    },
 }
 
 /// 에이전트 요청 실패. 어느 경우든 문서는 바뀌지 않았습니다.
@@ -265,11 +269,6 @@ fn prepare(request: AgentRequest) -> Result<Prepared, AgentIoError> {
     })
 }
 
-/// 문서 밖 effect만 내는 host event의 history 항목 id 자리(확정할 항목이 없음).
-fn entry_placeholder() -> CommandId {
-    CommandId::from_bytes([0; 16])
-}
-
 /// lease 요청·제안 전에 그 세션의 첫 연결 승인을 봅니다(XIX.3.3). 모르는 세션은 세션 절차의 오류로 넘깁니다.
 fn require_connection(
     window: &AgentWindow<'_>,
@@ -338,20 +337,26 @@ fn run(window: &mut AgentWindow<'_>, prepared: Prepared) -> Result<AgentReply, A
             .map_err(edit),
         Prepared::Bound { session } => {
             if let Some(host) = window.agent().hosted().host_of(session) {
-                window
+                let report = window
                     .host_event(
                         host,
                         SessionEvent::BridgeBound,
-                        entry_placeholder(),
+                        CommandId::from_stable_id(crate::agent_session::fresh_id()),
                         monotonic_ms(),
                     )
                     .map_err(edit)?;
+                // 유예가 지난 뒤의 재결합은 같은 세션으로 받지 않고 유예 초과로 끝냅니다(AgentSession 규칙).
+                if let Some(ended) = report.ended {
+                    return Ok(AgentReply::Ended(Some(ended)));
+                }
             } else if !window.agent().sessions().is_active(session) {
                 return Err(edit(AgentEditError::Session(SessionError::UnknownSession(
                     session,
                 ))));
             }
-            Ok(AgentReply::Bound)
+            Ok(AgentReply::Bound {
+                lease: window.agent().sessions().lease(session),
+            })
         }
         Prepared::Disconnected { session, entry_id } => {
             let now = monotonic_ms();

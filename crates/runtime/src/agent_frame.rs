@@ -123,14 +123,17 @@ impl AgentFrontEnd {
     }
 
     /// 앱이 시작한 세션(`AgentWindow::start_hosted`로 이미 등록)의 bridge 연결을 묶고, 결합을 AgentSession에 알리는
-    /// 요청(`Bound`)을 넣습니다.
+    /// 요청(`Bound`)을 넣어 결과를 기다립니다(최대 `deadline`). 재연결 유예 안의 재결합이면 세션의 진행 중 편집 lease를
+    /// 이 연결에 다시 기억해 같은 편집을 이어 갑니다(ADR-0005 §4.2). 유예가 지나 세션이 끝났거나 접수·처리가 실패하면
+    /// 결합을 풉니다.
     pub fn bind_hosted(
         &mut self,
         connection: AgentConnection,
         window: WindowSessionHandle,
         session: AgentSessionId,
         mode: SessionMode,
-    ) -> Result<AgentTicket, HostRefusal> {
+        deadline: Duration,
+    ) -> Result<AgentReply, HostRefusal> {
         self.host.bind(
             connection,
             BoundConnection {
@@ -141,12 +144,18 @@ impl AgentFrontEnd {
             },
         )?;
         self.open.insert(connection, Open::default());
-        self.host
+        let outcome = self
+            .host
             .submit(connection, AgentRequest::Bound { session })
-            .inspect_err(|_| {
+            .and_then(|ticket| wait_reply(ticket, deadline));
+        match &outcome {
+            Ok(reply @ AgentReply::Bound { .. }) => self.settle(connection, None, reply),
+            _ => {
                 self.host.unbind(connection);
                 self.open.remove(&connection);
-            })
+            }
+        }
+        outcome
     }
 
     /// frame 하나를 요청으로 바꿉니다(모듈 문서). 문서에 닿지 않고 연결 상태도 바꾸지 않습니다.
@@ -241,8 +250,9 @@ impl AgentFrontEnd {
         };
         match reply {
             AgentReply::LeaseRequested(_) => open.lease = converted_lease,
+            AgentReply::Bound { lease } => open.lease = *lease,
             AgentReply::Completed(_) | AgentReply::Ended(_) => open.lease = None,
-            AgentReply::Started(_) | AgentReply::Queued(_) | AgentReply::Bound => {}
+            AgentReply::Started(_) | AgentReply::Queued(_) => {}
         }
     }
 
@@ -297,17 +307,22 @@ impl AgentFrontEnd {
         deadline: Duration,
     ) -> Result<AgentReply, HostRefusal> {
         let converted = self.convert(connection, frame)?;
-        let mut ticket = self.host.submit(connection, converted.request)?;
-        let outcome = match ticket.wait_timeout(deadline.min(CALL_DEADLINE)) {
-            Ok(Some(Ok(result))) => result.map_err(|error| refusal(&error)),
-            Ok(Some(Err(job))) => Err(refusal(&AgentIoError::from(job))),
-            Ok(None) => Err(HostRefusal::new(ResultKind::Timeout, "timeout")),
-            Err(_) => Err(refusal(&AgentIoError::Stopped)),
-        };
+        let ticket = self.host.submit(connection, converted.request)?;
+        let outcome = wait_reply(ticket, deadline);
         if let Ok(reply) = &outcome {
             self.settle(connection, converted.lease, reply);
         }
         outcome
+    }
+}
+
+/// 접수한 요청의 결과를 기다립니다(최대 `deadline`, ADR-0085 `CALL_DEADLINE`을 넘지 않음).
+fn wait_reply(mut ticket: AgentTicket, deadline: Duration) -> Result<AgentReply, HostRefusal> {
+    match ticket.wait_timeout(deadline.min(CALL_DEADLINE)) {
+        Ok(Some(Ok(result))) => result.map_err(|error| refusal(&error)),
+        Ok(Some(Err(job))) => Err(refusal(&AgentIoError::from(job))),
+        Ok(None) => Err(HostRefusal::new(ResultKind::Timeout, "timeout")),
+        Err(_) => Err(refusal(&AgentIoError::Stopped)),
     }
 }
 
@@ -322,7 +337,7 @@ pub fn reply_frame(request: u64, outcome: Result<AgentReply, HostRefusal>) -> Fr
                 AgentReply::Queued(_) => "queued",
                 AgentReply::Completed(_) => "completed",
                 AgentReply::Ended(_) => "ended",
-                AgentReply::Bound => "bound",
+                AgentReply::Bound { .. } => "bound",
             },
         ),
         Err(refusal) => (refusal.kind.name(), refusal.code),

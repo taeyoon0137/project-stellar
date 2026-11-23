@@ -270,10 +270,10 @@ fn hosted_bridge_bind_and_disconnect_reach_the_agent_session() {
     });
     let mut front = AgentFrontEnd::new(AppAgentHost::new(f.app.agent_io()));
     let conn = AgentConnection(5);
-    let bound = front
-        .bind_hosted(conn, f.window, session, SessionMode::ReviewThenApply)
-        .unwrap();
-    assert_eq!(wait(bound), Ok(AgentReply::Bound));
+    assert_eq!(
+        front.bind_hosted(conn, f.window, session, SessionMode::ReviewThenApply, WAIT),
+        Ok(AgentReply::Bound { lease: None })
+    );
     let state = |f: &App| {
         job(f, |w| {
             let host = w.agent().hosted().host_ids()[0];
@@ -293,4 +293,68 @@ fn hosted_bridge_bind_and_disconnect_reach_the_agent_session() {
     );
     assert!(matches!(state(&f), SessionState::Reconnecting { .. }));
     assert!(job(&f, move |w| w.agent().sessions().is_active(session)));
+    // 유예 안에 다시 결합하면 같은 세션이 진행 중 편집 lease를 이어 갑니다(새 lease 요청 없이 제안 가능).
+    let lease = job(&f, move |w| w.agent().sessions().lease(session)).expect("진행 중 편집");
+    let again = AgentConnection(6);
+    assert_eq!(
+        front.bind_hosted(again, f.window, session, SessionMode::ReviewThenApply, WAIT),
+        Ok(AgentReply::Bound { lease: Some(lease) })
+    );
+    assert_eq!(front.lease(again), Some(lease));
+    assert_eq!(state(&f), SessionState::Running);
+    job(&f, move |w| {
+        w.approve_lease(lease, UserUiAction::from_user_interface())
+            .unwrap()
+    });
+    let base = job(&f, |w| project_revision(w.session()).to_string());
+    let queued = front.handle(again, rename_frame(2, &base, "재연결"), WAIT);
+    assert!(matches!(queued, Ok(AgentReply::Queued(_))), "{queued:?}");
+}
+
+#[test]
+fn hosted_rebind_after_the_session_ended_is_refused_and_unbound() {
+    use stellar_agent_host::session::{
+        AgentSession, AgentSessionId as HostSessionId, UserStartRequest,
+    };
+    use stellar_agent_host::start::{FirstConnectionApproval, StartedSession};
+    let f = app("agent-frame-hosted-late");
+    // 재연결 유예 0: 연결이 끊기면 다음 상태 게시의 Tick에서 끝납니다.
+    let session = job(&f, |w| {
+        let started = StartedSession {
+            session: AgentSession::start_by_user(UserStartRequest {
+                session: HostSessionId(31),
+                mode: SessionMode::ReviewThenApply,
+                now_ms: 0,
+                reconnect_grace_ms: 0,
+            }),
+            connection: FirstConnectionApproval {
+                project: crate::agent::project_key(w.session().identity()),
+                window: w.session().window(),
+                session: HostSessionId(31),
+                profile_id: "test-double".to_string(),
+                mode: SessionMode::ReviewThenApply,
+                approved_at_ms: 0,
+            },
+        };
+        w.start_hosted(started, "내장", UserUiAction::from_user_interface(), 0)
+            .unwrap()
+    });
+    let mut front = AgentFrontEnd::new(AppAgentHost::new(f.app.agent_io()));
+    let conn = AgentConnection(7);
+    assert_eq!(
+        front.bind_hosted(conn, f.window, session, SessionMode::ReviewThenApply, WAIT),
+        Ok(AgentReply::Bound { lease: None })
+    );
+    assert_eq!(
+        wait(front.disconnected(conn).unwrap()),
+        Ok(AgentReply::Ended(None))
+    );
+    let late = AgentConnection(8);
+    let refused = front.bind_hosted(late, f.window, session, SessionMode::ReviewThenApply, WAIT);
+    assert!(
+        matches!(&refused, Err(_) | Ok(AgentReply::Ended(Some(_)))),
+        "{refused:?}"
+    );
+    assert!(front.host().bound(late).is_none(), "결합 해제");
+    assert!(!job(&f, move |w| w.agent().sessions().is_active(session)));
 }
