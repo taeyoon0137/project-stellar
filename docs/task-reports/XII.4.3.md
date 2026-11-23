@@ -7,7 +7,7 @@
 
 - WBS: XII.4.3
 - 작업명: viewport pan/zoom matrix를 scene camera 입력으로 연결하고 document geometry는 변경하지 않습니다.
-- 상태: 부분 완료 (`[~]`) — 코어 계산·scene layer 생성까지 통합. 실제 CanvasHost 렌더 연결 미완료.
+- 상태: `[x]` 판정 — 통합 때 계획서 표기를 `[x]`로 바꿉니다(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 코어 계산·scene layer 생성까지 통합. 실제 CanvasHost 렌더 연결 미완료.
 - 선행: XII.2.5 (`[x]`, 이 lane `59f275d`), XI.2.2 (`[x]`)
 
 ## 변경 파일
@@ -98,3 +98,28 @@
 
 - 검증 기준(pan/zoom 후 save bytes 동일): `window_session::tests::pan_and_zoom_move_the_scene_camera_without_changing_saved_bytes` 통과.
 - 판정: `[~]` 유지. scene camera를 실제 캔버스 렌더가 소비하지 않습니다(XII.4.1).
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[x]` 판정 — 통합 때 계획서 표기를 `[x]`로 바꿉니다.
+- 근거: 행 지시(viewport pan/zoom matrix를 scene camera 입력으로 연결, document geometry 불변)와 검증 열(pan/zoom 후 save bytes 동일)이 코어 코드와 test로 충족됩니다. 이전 `[~]` 사유인 "CanvasHost 렌더 연결"은 XII.4.1(Metal 렌더)의 범위이고 이 행 정의에 없습니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/commands/src/view_tabs.rs` `CanvasViewport::world_to_view`·`panned`·`zoomed`.
+- `crates/runtime/src/window_session.rs` `camera`(665행): scene `Viewport`를 만듭니다. viewport는 창 session 상태이고 문서 command·history를 만들지 않습니다.
+- `window_session::tests::pan_and_zoom_move_the_scene_camera_without_changing_saved_bytes`(1968행): camera 변화로 가시 후보가 바뀌고, revision·history·직렬화 chunk·`design/` 파일 bytes가 같고 Save Now가 쓰지 않습니다. `app_window_tests::zoom_commands_and_pan_change_only_the_target_viewport`(400행).
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-runtime` | 202 passed, 0 failed |
+| `cargo test -p stellar-commands` | 123 passed |
+
+### 남은 조건과 finding
+
+- 이 판정으로 XII.4.4(선행 XI.3.5 `[x]`, XII.4.3)의 차단 사유가 사라집니다. XII.4.4 보고서를 다시 판정해야 합니다.
+- Swift CG 표시 경로는 UI 재설계 대상이며 이 판정과 무관합니다.
