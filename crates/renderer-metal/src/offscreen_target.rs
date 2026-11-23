@@ -8,13 +8,17 @@
 //!
 //! - **좌표**: device pixel `p`는 world `내보내기 영역 원점 + p / scale`입니다(CPU target과 같은 grid). 가장자리 부분
 //!   coverage는 축마다 [`SUPERSAMPLE`]배 supersampling으로 만들고, readback한 선형광 연관 알파 값을 output pixel마다
-//!   상자 평균합니다. blur σ는 배수를 낮추는 이유가 아닙니다. supersample device σ가 큰 효과는 frame plan이 효과만 낮은
-//!   해상도로 그립니다(ADR-0130 결정 2). 배수는 효과 여백을 더한 tile texture 한 변이 [`MAX_TILE_TEXTURE`]를 넘을 때만
-//!   넘지 않는 가장 큰 배수로 낮춥니다([`supersample_for`], 메모리 상한). 그 뒤 비연관으로 되돌려 출력 색공간 transfer로
-//!   encode하고 8-bit로 반올림합니다(CPU target과 같은 마지막 단계). 알파 0 pixel의 RGB는 0입니다.
-//! - **tile**: 출력을 [`TILE`] pixel 정사각 tile로 나눠 그립니다. tile마다 효과가 번지는 거리(shadow offset +
-//!   [`REACH_PER_SIGMA`]·σ, layer blur [`REACH_PER_SIGMA`]·σ의 경로 합, [`tile_margin`]) 이상 여백을 두고 그린 뒤 가운데만
-//!   씁니다. 그래서 tile 경계에서 blur·shadow가 끊기지 않습니다.
+//!   상자 평균합니다. 그 뒤 비연관으로 되돌려 출력 색공간 transfer로 encode하고 8-bit로 반올림합니다(CPU target과 같은
+//!   마지막 단계). 알파 0 pixel의 RGB는 0입니다.
+//! - **tile**: 출력을 [`TILE`] pixel 정사각 tile로 나눠 그립니다. compile viewport는 tile에 효과가 번지는 거리(shadow
+//!   offset + [`REACH_PER_SIGMA`]·σ, layer blur [`REACH_PER_SIGMA`]·σ의 경로 합, [`tile_margin`])만큼 여백을 둬 여백의
+//!   내용이 cull되지 않습니다. 그래서 tile 경계에서 blur·shadow가 끊기지 않습니다. target texture는 tile 출력 영역만
+//!   덮고(한 변 `tile × 배수`), 여백의 효과 원본은 효과 window(ADR-0136, `effects::window`)에 따로 그립니다. shadow 원본
+//!   window는 offset만큼 옮긴 자리라 offset이 커도 커지지 않고, 큰 σ 효과의 원본은 blur 해상도의 절반으로 그립니다.
+//! - **배수**: 배수 8로 그립니다. tile 하나에서 device σ가 상한(`render.effect.blur_too_large`)을 넘거나, 효과 window가
+//!   texture 한 변 상한([`MAX_TILE_TEXTURE`])을 blur 해상도로도 넘거나, 잰 GPU 메모리(lowering이 만든 texture·buffer와
+//!   graph transient의 Metal heap 크기)가 backend 메모리 예산의 남은 양을 넘으면 그 tile만 배수를 하나씩 낮춰 다시
+//!   그립니다. 배수 1로도 안 되면 실패합니다(근사하지 않음). [`MetalOffscreenTarget::render_measured`]가 측정을 돌려줍니다.
 //! - **색**: working space는 출력 profile 색공간 선형광이고 target은 `Rgba16Float`입니다. 배경이 있으면 clear 색입니다.
 //! - **효과 근사 거부**: frame plan에 효과 근사 진단(낮은 해상도로도 넘는 σ 상한, 기울임 blur)이 있으면 그리지 않고
 //!   실패합니다. 내보내기는
@@ -36,20 +40,24 @@ use stellar_export::raster::{
 use stellar_export::svg::text::{text_outlines, TextOutlineError, MAX_TEXT_OUTLINE_COMMANDS};
 use stellar_export::text::{ExportTextSource, GlyphOutline, GlyphOutlineError, GlyphOutlineKey};
 use stellar_renderer_core::backend::{
-    BackendKind, CheckedBackend, DeviceConfig, EncodeOutcome, FrameId, RendererBackend,
-    SurfaceConfig, SurfaceSize,
+    BackendError, BackendErrorKind, BackendKind, CheckedBackend, DeviceConfig, EncodeOutcome,
+    FrameId, RendererBackend, SurfaceConfig, SurfaceSize,
 };
 use stellar_renderer_core::clip_plan::ClipCapabilities;
 use stellar_renderer_core::color::{decode_pixel, to_working, WorkingColor};
 use stellar_renderer_core::effects::blur::{layer_blur_sigma, shadow_sigma, REACH_PER_SIGMA};
-use stellar_renderer_core::effects::fixture::ImageData;
-use stellar_renderer_core::effects::lower::{lower_ops, OpsTarget};
+use stellar_renderer_core::effects::fixture::{FixtureError, ImageData};
+use stellar_renderer_core::effects::lower::{lower_ops, LowerError, OpsTarget};
 use stellar_renderer_core::effects::scene::{encode_plan, EncodeError, FrameResources, GlyphShape};
+use stellar_renderer_core::effects::window::{Bounds, EffectSpace};
 use stellar_renderer_core::output_color::OutputColor;
+use stellar_renderer_core::pass_compiler::effects::EffectDiagnostic;
 use stellar_renderer_core::pass_compiler::{
     compile_frame, CompileInput, EffectBoundaries, LAYER_FORMAT,
 };
-use stellar_renderer_core::render_graph::{ClearColor, SampleCount, TextureFormat};
+use stellar_renderer_core::render_graph::{
+    AttachmentSize, ClearColor, CompiledRenderGraph, ResourceId, SampleCount, TextureFormat,
+};
 use stellar_scene::node::{ImagePrimitive, SceneNode, TextPrimitive, Visibility};
 use stellar_scene::stack::Paint;
 use stellar_scene::visibility::Viewport;
@@ -63,8 +71,8 @@ pub const SUPERSAMPLE: u32 = 8;
 /// tile 한 변(출력 pixel).
 pub const TILE: u32 = 128;
 
-/// supersample tile texture 한 변 상한(pixel). `Rgba16Float` 한 장 128 MiB입니다. 효과 여백이 커서 배수 8로 이 한 변을
-/// 넘으면 배수를 낮춥니다(메모리 상한, [`supersample_for`]).
+/// target·효과 window texture 한 변 상한(texel). `Rgba16Float` 한 장 128 MiB입니다. 효과 window가 넘으면 그 효과를
+/// 더 거친 해상도로 그리고, blur 해상도로도 넘으면 tile 배수를 낮춥니다(ADR-0136).
 pub const MAX_TILE_TEXTURE: u32 = 4096;
 
 /// target format(선형광 연관 알파 half float).
@@ -75,6 +83,7 @@ pub const TARGET_FORMAT: TextureFormat = LAYER_FORMAT;
 pub struct MetalOffscreenTarget {
     assets: Arc<dyn ExportAssetSource + Send + Sync>,
     text: Arc<dyn ExportTextSource + Send + Sync>,
+    memory_budget: Option<u64>,
 }
 
 impl std::fmt::Debug for MetalOffscreenTarget {
@@ -89,7 +98,18 @@ impl MetalOffscreenTarget {
         assets: Arc<dyn ExportAssetSource + Send + Sync>,
         text: Arc<dyn ExportTextSource + Send + Sync>,
     ) -> MetalOffscreenTarget {
-        MetalOffscreenTarget { assets, text }
+        MetalOffscreenTarget {
+            assets,
+            text,
+            memory_budget: None,
+        }
+    }
+
+    /// GPU 메모리 예산(byte)을 정합니다. `None`이면 device `recommendedMaxWorkingSetSize`입니다. 예산을 넘는 tile은
+    /// supersampling 배수를 낮춰 다시 그립니다(ADR-0136).
+    pub fn with_memory_budget(mut self, budget_bytes: Option<u64>) -> MetalOffscreenTarget {
+        self.memory_budget = budget_bytes;
+        self
     }
 }
 
@@ -284,7 +304,8 @@ fn effect_reach(export: &ConfirmedExport) -> f32 {
     reach
 }
 
-/// tile 효과 여백(출력 pixel): 효과가 번지는 거리 × 배율의 올림 + 1(소수 offset bilinear 한 pixel 포함).
+/// tile 효과 여백(출력 pixel): 효과가 번지는 거리 × 배율의 올림 + 1(소수 offset bilinear 한 pixel 포함). tile compile
+/// viewport가 이만큼 넓어 여백의 내용이 cull되지 않습니다. 여백은 target·texture 크기에 들어가지 않습니다(ADR-0136).
 pub fn tile_margin(export: &ConfirmedExport, scale: f64) -> u32 {
     let margin = (f64::from(effect_reach(export)) * scale).ceil();
     if margin.is_finite() && margin < f64::from(u32::MAX / 4) {
@@ -294,26 +315,59 @@ pub fn tile_margin(export: &ConfirmedExport, scale: f64) -> u32 {
     }
 }
 
-/// 내보내기의 supersampling 배수.
-///
-/// 효과 여백을 더한 tile texture 한 변(`(tile + 2·margin)·배수`)이 [`MAX_TILE_TEXTURE`]와 device 상한
-/// (`max_dimension`)을 넘지 않는 가장 큰 배수(1..=[`SUPERSAMPLE`])입니다. `tile`은 실제 tile 한 변(출력이 [`TILE`]보다
-/// 작으면 그 크기)입니다. 배수 1로도 넘으면 `None`(그리지 못함)입니다. blur σ는 배수에 영향이 없습니다(큰 σ는 효과만 낮은
-/// 해상도로 그림, ADR-0130 결정 2).
-pub fn supersample_for(margin: u32, tile: u32, max_dimension: u32) -> Option<u32> {
-    let limit = u64::from(MAX_TILE_TEXTURE.min(max_dimension));
-    let side = u64::from(tile.min(TILE)) + 2 * u64::from(margin);
-    (1..=SUPERSAMPLE)
-        .rev()
-        .find(|s| side * u64::from(*s) <= limit)
+/// 내보내기 GPU 메모리 측정(ADR-0136).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ExportMemoryReport {
+    /// 그린 tile 수.
+    pub tiles: u32,
+    /// tile supersampling 배수 최솟값.
+    pub supersample_min: u32,
+    /// tile supersampling 배수 최댓값.
+    pub supersample_max: u32,
+    /// tile 하나를 그릴 때 잰 GPU 메모리 최댓값(byte): lowering이 만든 target·upload texture·buffer(backend 할당 증가분)와
+    /// graph transient(alias slot마다 Metal heap 크기).
+    pub peak_frame_bytes: u64,
+    /// target·효과 texture 한 변 최댓값(texel).
+    pub largest_texture_side: u32,
+    /// GPU 메모리 예산(byte).
+    pub budget_bytes: u64,
 }
 
-impl OffscreenTarget for MetalOffscreenTarget {
-    fn render(
+/// tile 한 번 그리기의 실패.
+enum TileError {
+    /// 더 낮은 supersampling 배수로 다시 그릴 수 있습니다(σ 상한, window 상한, 메모리 예산).
+    Retry(String),
+    /// 다시 그려도 안 됩니다.
+    Fail(OffscreenError),
+}
+
+/// tile에 공통인 값.
+struct TileContext<'a> {
+    snapshot: &'a stellar_scene::SceneSnapshot,
+    resources: &'a Resources<'a>,
+    plan: stellar_renderer_core::output_color::OutputColorPlan,
+    clear: WorkingColor,
+    origin: [f64; 2],
+    scale: f64,
+    margin: u32,
+    stencil_bits: u8,
+    max_side: u32,
+}
+
+/// tile 한 번 그리기 결과.
+struct TileOutput {
+    bytes: Vec<u8>,
+    frame_bytes: u64,
+    largest_side: u32,
+}
+
+impl MetalOffscreenTarget {
+    /// [`OffscreenTarget::render`]와 같게 그리고 GPU 메모리 측정을 함께 돌려줍니다(ADR-0136).
+    pub fn render_measured(
         &self,
         request: &OffscreenRequest<'_>,
         cancel: &CancelToken,
-    ) -> Result<RgbaImage, OffscreenError> {
+    ) -> Result<(RgbaImage, ExportMemoryReport), OffscreenError> {
         let (width, height) = request.size()?;
         let export = request.export();
         let capture = export.capture();
@@ -337,7 +391,6 @@ impl OffscreenTarget for MetalOffscreenTarget {
         let grid = request.grid();
         let origin = grid.world_rect(&grid.canvas());
         let scale = grid.scale();
-        let margin = tile_margin(export, scale);
         let resources = Resources {
             export,
             assets: self.assets.as_ref(),
@@ -362,11 +415,27 @@ impl OffscreenTarget for MetalOffscreenTarget {
         if caps.backend != BackendKind::Metal {
             return Err(failed("Metal backend가 아닙니다"));
         }
+        if let Some(budget) = self.memory_budget {
+            backend.inner_mut().set_memory_budget(Some(budget));
+        }
+        let context = TileContext {
+            snapshot,
+            resources: &resources,
+            plan,
+            clear,
+            origin: [origin[0], origin[1]],
+            scale,
+            margin: tile_margin(export, scale),
+            stencil_bits: caps.stencil_bits,
+            max_side: MAX_TILE_TEXTURE.min(caps.max_texture_dimension),
+        };
         let space = request.profile().color_space();
         let mut pixels = vec![0u8; (width as usize) * (height as usize) * 4];
         let mut frame = 1u64;
-        let s = supersample_for(margin, width.max(height), caps.max_texture_dimension)
-            .ok_or_else(|| failed("효과 여백을 더한 tile이 texture 상한을 넘습니다"))?;
+        let mut report = ExportMemoryReport {
+            budget_bytes: backend.inner().memory_usage().budget_bytes,
+            ..ExportMemoryReport::default()
+        };
         for tile_y in (0..height).step_by(TILE as usize) {
             for tile_x in (0..width).step_by(TILE as usize) {
                 if cancel.is_cancelled() {
@@ -374,97 +443,220 @@ impl OffscreenTarget for MetalOffscreenTarget {
                 }
                 let tw = TILE.min(width - tile_x);
                 let th = TILE.min(height - tile_y);
-                let (sw, sh) = ((tw + 2 * margin) * s, (th + 2 * margin) * s);
-                if sw > caps.max_texture_dimension || sh > caps.max_texture_dimension {
-                    return Err(failed("효과 여백을 더한 tile이 texture 상한을 넘습니다"));
-                }
-                // world → tile supersample device.
-                let k = scale * f64::from(s);
-                let ox =
-                    (-origin[0] * scale - f64::from(tile_x) + f64::from(margin)) * f64::from(s);
-                let oy =
-                    (-origin[1] * scale - f64::from(tile_y) + f64::from(margin)) * f64::from(s);
-                let view = Transform2D::new(k as f32, 0.0, 0.0, k as f32, ox as f32, oy as f32)
-                    .map_err(|_| failed("변환 값이 유한하지 않습니다"))?;
-                let viewport = Viewport::new(
-                    Size2::new(sw as f32, sh as f32).map_err(|_| failed("tile 크기"))?,
-                    view,
-                )
-                .map_err(|_| failed("viewport를 만들지 못했습니다"))?;
-                let frame_plan = compile_frame(&CompileInput {
-                    snapshot,
-                    viewport: &viewport,
-                    visible: None,
-                    surface_format: TARGET_FORMAT,
-                    clear: ClearColor::TRANSPARENT,
-                    boundaries: EffectBoundaries::Minimal,
-                    clip_caps: ClipCapabilities {
-                        stencil_bits: caps.stencil_bits,
-                        samples: SampleCount::X4,
-                    },
-                })
-                .map_err(|error| failed(format!("frame compile 실패: {error}")))?;
-                if let Some(diagnostic) = frame_plan.effect_diagnostics.first() {
-                    return Err(failed(format!(
-                        "효과를 정확히 그릴 수 없습니다({})",
-                        diagnostic.code()
-                    )));
-                }
-                let ops = encode_plan(&frame_plan, &viewport, &resources).map_err(|error| {
-                    resources
-                        .error
-                        .borrow_mut()
-                        .take()
-                        .unwrap_or_else(|| failed(error.to_string()))
-                })?;
-                let lowered = lower_ops(
-                    &mut backend,
-                    &OpsTarget {
-                        plan,
-                        width: sw,
-                        height: sh,
-                        format: TARGET_FORMAT,
-                        clear,
-                    },
-                    &ops,
-                )
-                .map_err(|error| failed(format!("lowering 실패: {error}")))?;
-                let result = (|| {
-                    let EncodeOutcome::Encoded(encoded) =
-                        backend.encode(&lowered.request(FrameId(frame)))?
-                    else {
-                        return Err(stellar_renderer_core::backend::BackendError::new(
-                            stellar_renderer_core::backend::BackendErrorKind::Internal,
-                            "offscreen frame을 건너뛰었습니다",
-                        ));
-                    };
-                    backend.submit(encoded)?;
-                    backend.inner_mut().wait_idle()?;
-                    backend.inner_mut().read_texture(lowered.target)
-                })();
+                // 배수 8부터 그리고, σ 상한·window 상한·메모리 예산 때문에 못 그리면 배수를 하나씩 낮춥니다.
+                let mut s = SUPERSAMPLE;
+                let output = loop {
+                    match render_tile(&mut backend, &context, (tile_x, tile_y, tw, th), s, frame) {
+                        Ok(output) => break output,
+                        // 배수 1에서 남은 이유가 실패 메시지입니다.
+                        Err(TileError::Retry(_)) if s > 1 => s -= 1,
+                        Err(TileError::Retry(reason)) => return Err(failed(reason)),
+                        Err(TileError::Fail(error)) => return Err(error),
+                    }
+                    frame += 1;
+                };
                 frame += 1;
-                let release = lowered.release(&mut backend);
-                let bytes = result.map_err(|error| failed(format!("GPU 렌더 실패: {error}")))?;
-                release.map_err(|error| failed(format!("GPU resource 해제 실패: {error}")))?;
+                report.tiles += 1;
+                report.supersample_min = if report.tiles == 1 {
+                    s
+                } else {
+                    report.supersample_min.min(s)
+                };
+                report.supersample_max = report.supersample_max.max(s);
+                report.peak_frame_bytes = report.peak_frame_bytes.max(output.frame_bytes);
+                report.largest_texture_side = report.largest_texture_side.max(output.largest_side);
                 cancel.advance(1);
                 resolve_tile(
-                    &bytes,
-                    (sw, s, margin),
+                    &output.bytes,
+                    (tw * s, s),
                     (tile_x, tile_y, tw, th),
                     (width, space),
                     &mut pixels,
                 )?;
             }
         }
-        RgbaImage::new(width, height, request.profile(), pixels)
-            .ok_or_else(|| failed("출력 크기가 계약과 다릅니다"))
+        let image = RgbaImage::new(width, height, request.profile(), pixels)
+            .ok_or_else(|| failed("출력 크기가 계약과 다릅니다"))?;
+        Ok((image, report))
     }
 }
 
-/// supersample tile을 output pixel로 평균해 `pixels`에 씁니다(모듈 문서 "좌표").
+/// compile viewport 한 변 상한(device pixel). f32 좌표가 supersample device pixel의 1/8보다 촘촘해야 합니다(2^20에서
+/// 1/8).
+const MAX_CANVAS_SIDE: u64 = 1 << 20;
+
+/// tile 하나를 배수 `s`로 그려 readback byte를 돌려줍니다(모듈 문서 "tile").
+fn render_tile(
+    backend: &mut CheckedBackend<MetalBackend>,
+    context: &TileContext<'_>,
+    (tile_x, tile_y, tw, th): (u32, u32, u32, u32),
+    s: u32,
+    frame: u64,
+) -> Result<TileOutput, TileError> {
+    let fail = |error: OffscreenError| TileError::Fail(error);
+    let margin = context.margin;
+    let side = |n: u32| (u64::from(n) + 2 * u64::from(margin)) * u64::from(s);
+    let (sw, sh) = (side(tw), side(th));
+    if sw.max(sh) > MAX_CANVAS_SIDE {
+        return Err(TileError::Retry(
+            "효과 여백이 너무 커서 tile 좌표를 정확히 나타낼 수 없습니다".to_owned(),
+        ));
+    }
+    let (sw, sh) = (sw as u32, sh as u32);
+    // world → tile supersample device. tile 출력 영역은 device (margin·s, margin·s)에서 시작합니다.
+    let k = context.scale * f64::from(s);
+    let ox =
+        (-context.origin[0] * context.scale - f64::from(tile_x) + f64::from(margin)) * f64::from(s);
+    let oy =
+        (-context.origin[1] * context.scale - f64::from(tile_y) + f64::from(margin)) * f64::from(s);
+    let view = Transform2D::new(k as f32, 0.0, 0.0, k as f32, ox as f32, oy as f32)
+        .map_err(|_| fail(failed("변환 값이 유한하지 않습니다")))?;
+    let viewport = Viewport::new(
+        Size2::new(sw as f32, sh as f32).map_err(|_| fail(failed("tile 크기")))?,
+        view,
+    )
+    .map_err(|_| fail(failed("viewport를 만들지 못했습니다")))?;
+    let frame_plan = compile_frame(&CompileInput {
+        snapshot: context.snapshot,
+        viewport: &viewport,
+        visible: None,
+        surface_format: TARGET_FORMAT,
+        clear: ClearColor::TRANSPARENT,
+        boundaries: EffectBoundaries::Minimal,
+        clip_caps: ClipCapabilities {
+            stencil_bits: context.stencil_bits,
+            samples: SampleCount::X4,
+        },
+    })
+    .map_err(|error| fail(failed(format!("frame compile 실패: {error}"))))?;
+    if let Some(diagnostic) = frame_plan.effect_diagnostics.first() {
+        let message = format!("효과를 정확히 그릴 수 없습니다({})", diagnostic.code());
+        // σ 상한은 device σ(배수에 비례)라 배수를 낮추면 풀릴 수 있습니다. 기울임 blur는 배수와 무관합니다.
+        return Err(match diagnostic {
+            EffectDiagnostic::BlurTooLarge { .. } => TileError::Retry(message),
+            _ => TileError::Fail(failed(message)),
+        });
+    }
+    let resources = context.resources;
+    let ops = encode_plan(&frame_plan, &viewport, resources).map_err(|error| {
+        fail(
+            resources
+                .error
+                .borrow_mut()
+                .take()
+                .unwrap_or_else(|| failed(error.to_string())),
+        )
+    })?;
+    let (cw, ch) = (tw * s, th * s);
+    let core = i64::from(margin) * i64::from(s);
+    // 남은 transient를 놓고 이 tile이 새로 쓰는 메모리만 잽니다.
+    backend.inner_mut().purge_transients();
+    let before = backend.inner().memory_usage();
+    let lowered = lower_ops(
+        backend,
+        &OpsTarget {
+            plan: context.plan,
+            width: cw,
+            height: ch,
+            format: TARGET_FORMAT,
+            clear: context.clear,
+            origin: [core, core],
+            space: EffectSpace {
+                canvas: Bounds::of_size(sw, sh),
+                max_side: context.max_side,
+            },
+        },
+        &ops,
+    )
+    .map_err(|error| match error {
+        LowerError::Fixture(FixtureError::Window(error)) => TileError::Retry(error.to_string()),
+        LowerError::Backend(error) if error.kind() == BackendErrorKind::OutOfDeviceMemory => {
+            TileError::Retry(format!("GPU 메모리 예산을 넘습니다: {error}"))
+        }
+        error => TileError::Fail(failed(format!("lowering 실패: {error}"))),
+    })?;
+    let measured = (|| {
+        let transient = backend.inner().graph_transient_bytes(&lowered.graph)?;
+        let after = backend.inner().memory_usage();
+        Ok::<_, BackendError>(
+            after
+                .resident_bytes
+                .saturating_sub(before.resident_bytes)
+                .saturating_add(transient),
+        )
+    })();
+    let frame_bytes = match measured {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let _ = lowered.release(backend);
+            return Err(fail(failed(format!(
+                "GPU 메모리를 재지 못했습니다: {error}"
+            ))));
+        }
+    };
+    let available = before.budget_bytes.saturating_sub(before.resident_bytes);
+    if frame_bytes > available {
+        let _ = lowered.release(backend);
+        return Err(TileError::Retry(format!(
+            "tile GPU 메모리 {frame_bytes} byte가 메모리 예산 남은 {available} byte를 넘습니다"
+        )));
+    }
+    let largest_side = largest_side(&lowered.graph).max(cw).max(ch);
+    let result = (|| {
+        let EncodeOutcome::Encoded(encoded) = backend.encode(&lowered.request(FrameId(frame)))?
+        else {
+            return Err(BackendError::new(
+                BackendErrorKind::Internal,
+                "offscreen frame을 건너뛰었습니다",
+            ));
+        };
+        backend.submit(encoded)?;
+        backend.inner_mut().wait_idle()?;
+        backend.inner_mut().read_texture(lowered.target)
+    })();
+    let release = lowered.release(backend);
+    let bytes = result.map_err(|error| {
+        if error.kind() == BackendErrorKind::OutOfDeviceMemory {
+            TileError::Retry(format!("GPU 메모리 예산을 넘습니다: {error}"))
+        } else {
+            TileError::Fail(failed(format!("GPU 렌더 실패: {error}")))
+        }
+    })?;
+    release.map_err(|error| fail(failed(format!("GPU resource 해제 실패: {error}"))))?;
+    Ok(TileOutput {
+        bytes,
+        frame_bytes,
+        largest_side,
+    })
+}
+
+/// graph 고정 크기 resource 한 변 최댓값.
+fn largest_side(graph: &CompiledRenderGraph) -> u32 {
+    (0..)
+        .map_while(|id| graph.resource(ResourceId(id)))
+        .filter_map(|resource| match resource.desc.size {
+            AttachmentSize::Fixed { width, height } => Some(width.max(height)),
+            AttachmentSize::Surface => None,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+impl OffscreenTarget for MetalOffscreenTarget {
+    fn render(
+        &self,
+        request: &OffscreenRequest<'_>,
+        cancel: &CancelToken,
+    ) -> Result<RgbaImage, OffscreenError> {
+        self.render_measured(request, cancel)
+            .map(|(image, _)| image)
+    }
+}
+
+/// supersample tile(출력 영역만, 한 변 `tile × s`)을 output pixel로 평균해 `pixels`에 씁니다(모듈 문서 "좌표").
 fn resolve_tile(
     bytes: &[u8],
-    (stride, s, margin): (u32, u32, u32),
+    (stride, s): (u32, u32),
     (tile_x, tile_y, tw, th): (u32, u32, u32, u32),
     (width, space): (u32, ColorSpace),
     pixels: &mut [u8],
@@ -482,7 +674,7 @@ fn resolve_tile(
             let mut sum = [0.0f32; 4];
             for sy in 0..s {
                 for sx in 0..s {
-                    let c = texel((x + margin) * s + sx, (y + margin) * s + sy)?;
+                    let c = texel(x * s + sx, y * s + sy)?;
                     for (acc, v) in sum.iter_mut().zip(c.rgba) {
                         *acc += v;
                     }

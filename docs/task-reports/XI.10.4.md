@@ -115,3 +115,23 @@
 
 - 남은 한계: codegen은 Frame에서 Blur가 Shadow보다 앞이면 `drop-shadow()`로 내지만 scene이 효과 순서를 싣지 않아 renderer는
   Frame 그림자를 늘 상자 모양으로 그립니다(scene 변환 소유 후속). D3D12 비교는 Windows 재개 때입니다(ADR-0006).
+
+## 후속: 효과 pass window (lane render-effects-3, ADR-0136)
+
+- 그리기 목록의 pass가 모두 target 크기이던 것을, pass마다 window(device 원점·texel 크기·해상도)로 나눴습니다. 계획은
+  `effects::window::plan_layer` 하나이고 CPU 기준(`effects::raster::draw_ops_in`)과 GPU lowering(`effects::lower`)이 같이 씁니다.
+  layer blur는 부모 window를 번짐만큼 넓힌 window(내용 범위로 자름)에 쌓아 blur한 뒤 부모로 되돌리고, shadow 원본은 쌓는 window를
+  `−offset`만큼 옮긴 window에 그립니다. `e ≥ 2` 효과의 원본은 해상도 `e / 2`입니다(결정 1·2).
+- fixture는 target 전체가 바깥 window이고 window 원점이 blur 해상도의 배수라, `e ≤ 2`인 적합성 fixture 결과는 이전과 같습니다.
+- 변경 파일: `crates/renderer-core/src/effects/window.rs`(신규), `crates/renderer-core/src/effects/{raster,lower,fixture,mod}.rs`.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-renderer-core` | lib 238 passed, 실패 0 |
+| `cargo test -p stellar-renderer-metal` | 72 passed, 실패 0(적합성 fixture 전체 포함) |
+
+| 검사 | 결과 |
+|---|---|
+| 효과 없는 layer는 부모 window, 부모 window 밖 layer는 그리지 않음 / offset 600 shadow 원본 window는 옮긴 자리이고 크기는 출력 + 번짐 / σ 300 blur는 쌓기 step 4·blur step 8·원점 8의 배수, 상한이 작으면 step 8, 더 작으면 `TooLarge` / 내용 shadow는 쌓는 window 안이면 내용 pass 재사용(`effects::window::tests`) | 통과 |
+| CPU 기준: σ 300 layer blur를 해상도 4 window에 그려 줄인 값과 device 해상도 직접 blur의 차이가 8-bit 한 단계 미만(`blur_source_drawn_at_half_the_blur_resolution_matches_full_resolution_blur`) | 통과 |
+| Path 내용 shadow는 내용 alpha 모양(옮긴 삼각형, 옮긴 상자 안이어도 삼각형 밖은 없음)과 알파(내용 0.5 × 그림자 1)를 따르고 그림이 CPU 기준과 ±3(`path_shadow_follows_content_alpha_in_the_image`, renderer-metal, 그림 `target/render-conformance/png-export/path_shadow_srgb_1x_*.png`) | 통과 |

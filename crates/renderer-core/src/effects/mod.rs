@@ -11,6 +11,7 @@
 //! - [`gradient`]: gradient stop 값·기하·GPU ramp.
 //! - [`blur`]: blur 반경·kernel·shadow 수식.
 //! - [`scene`]: scene frame plan → 그리기 목록(제품 frame encoder, ADR-0116 결정 4).
+//! - [`window`]: 효과 pass마다 그리는 device 영역과 해상도(ADR-0136).
 
 /// 공통 shader ABI byte 배치.
 pub mod abi;
@@ -44,3 +45,6 @@ pub mod raster;
 
 /// scene frame plan → 그리기 목록 (ADR-0116 결정 4).
 pub mod scene;
+
+/// 효과 window (ADR-0136).
+pub mod window;

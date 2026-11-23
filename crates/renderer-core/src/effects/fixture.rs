@@ -493,6 +493,8 @@ pub enum FixtureError {
     Tessellation(TessellationError),
     /// gradient stop 오류.
     Gradient(GradientError),
+    /// 효과 window 계획 실패(ADR-0136).
+    Window(super::window::WindowError),
 }
 
 impl From<TessellationError> for FixtureError {
