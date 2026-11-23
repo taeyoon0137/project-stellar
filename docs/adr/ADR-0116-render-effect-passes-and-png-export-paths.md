@@ -51,7 +51,9 @@ Accepted (2026-11-23).
    - **layer blur**: layer pass 뒤 `GaussianBlur` 가로·세로 pass, 부모는 세로 결과를 읽습니다. σ = 반경.
    - **drop shadow**: shadow가 있는 내용 draw마다 node 자기 내용(shadow 제외)을 그리는 원본 pass 하나, shadow마다 가로(alpha를
      퍼뜨림)·세로(shadow 색을 곱함) blur pass입니다. target은 내용 draw 바로 아래에 offset만큼 옮긴 결과를 목록 순서(앞이 아래)로
-     합성합니다. σ = blur 반경 / 2. scene의 shadow는 node 자기 내용의 shadow입니다(자식 제외, Frame은 CSS `box-shadow`와 같음).
+     합성합니다. σ = blur 반경 / 2. scene의 shadow는 node 자기 내용(자식 제외)의 alpha에서 만든 drop shadow입니다. Frame은 배경이
+     불투명할 때 CSS `box-shadow`(테두리 상자 바깥)와 같고, 배경이 없거나 반투명하면 `box-shadow`와 다릅니다(`box-shadow`는
+     배경과 관계없이 상자 모양으로 그리고 상자 안을 비움). 이 차이는 shadow 원본을 상자 모양으로 바꾸는 후속입니다.
    - **clip mask**: clip 방식이 `ClipPlan::Mask`인 draw는 복합 clip coverage(나열한 clip의 곱)를 `R8Unorm`에 그리는 pass를
      두고 draw가 그것을 곱합니다. 같은 clip stack·같은 복합 clip 목록의 draw는 mask 하나를 같이 씁니다(형제 draw마다 화면 크기
      texture를 만들지 않음, 2만 node 구간 benchmark가 GPU 메모리 예산 안에 듦).
