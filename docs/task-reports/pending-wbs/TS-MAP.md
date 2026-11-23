@@ -5,7 +5,7 @@
 - WBS: TS-MAP(신규 행, UX.7.5 코어 부분)
 - 작업명: node StableId → 텍스트 원본 파일·줄 범위 core API와 CLI `stellar query --source-span`
 - 상태: 완료 (`[x]`)
-- 구현 커밋: `ae935137`(span table), `199fee64`(ops·CLI). 결정: [ADR-0077](../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md) 결정 6.
+- 구현 커밋: `ae935137`(span table), `199fee64`(ops·CLI). 결정: [ADR-0077](../../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md) 결정 6.
 
 ## 필수 실행 환경
 

@@ -5,7 +5,7 @@
 - WBS: TS-R2(신규 행, 계획서 등록은 통합 때)
 - 작업명: 컴포넌트·View 원본 쓰기 버전 v4(registry 이름·CSS 값 문법, v1~v3 읽기 전용)
 - 상태: 완료 (`[x]`)
-- 구현 커밋: `58709614`. 결정: [ADR-0077](../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md) 결정 2. 명세: [`text-source-v4.md`](../spec/text-source-v4.md).
+- 구현 커밋: `58709614`. 결정: [ADR-0077](../../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md) 결정 2. 명세: [`text-source-v4.md`](../../spec/text-source-v4.md).
 
 ## 필수 실행 환경
 
