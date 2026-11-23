@@ -1619,8 +1619,10 @@ impl ProjectWindowSession {
                     SourceMode::Text {
                         library: Some(library),
                         ..
-                    } => library.components.clone(),
-                    _ => crate::library::disk_components(self.identity.root_path()),
+                    } => std::borrow::Cow::Borrowed(&library.components),
+                    _ => std::borrow::Cow::Owned(crate::library::disk_components(
+                        self.identity.root_path(),
+                    )),
                 },
                 document.state.model(),
                 transaction,

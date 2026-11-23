@@ -1114,12 +1114,11 @@ pub fn apply(
     }
 
     // 외부 library component의 override 변경은 적용 전에 읽기 전용 정책으로 판정합니다(XV.5.3, ADR-0127 결정 3).
-    crate::library::guard_transaction(&snapshot, &model, &commands).map_err(
-        |(at, rejection)| ApplyError::Rejected {
+    crate::library::guard_transaction(snapshot.root(), library.as_ref(), &model, &commands)
+        .map_err(|(at, rejection)| ApplyError::Rejected {
             index: origins.get(at).copied().unwrap_or(request.commands.len()),
             reason: rejection.to_string(),
-        },
-    )?;
+        })?;
 
     // 복제는 원본을 바꾸지 않아 결과 비교로 잡히지 않으므로, 원본과 조상의 잠금을 적용 전에 봅니다(D8).
     for (index, command) in commands.iter().enumerate() {

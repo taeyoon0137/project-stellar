@@ -602,25 +602,25 @@ pub fn needs_guard(commands: &[Command]) -> bool {
 }
 
 /// headless 적용의 사전 검사: 대상 command가 있을 때만 OS 기본 cache로 library를 열고 [`check_commands`]로 판정합니다.
-/// 자기 component library를 읽지 못하면 빈 library로 봅니다(로컬 component는 미해결로 통과하고, library와 같은
-/// StableId인 로컬 component만 외부로 판정되어 fail closed).
+/// `own`은 호출자가 이미 읽은 자기 component library(`component_source::project_library`)입니다. 읽지 못했으면(`None`)
+/// 빈 library로 봅니다(로컬 component는 미해결로 통과하고, library와 같은 StableId인 로컬 component만 외부로 판정되어
+/// fail closed).
 pub fn guard_transaction(
-    snapshot: &crate::snapshot::ProjectSnapshot,
+    root: &Path,
+    own: Option<&ComponentLibrary>,
     model: &DocumentModel,
     commands: &[Command],
 ) -> Result<(), (usize, LibraryGuardRejection)> {
     if !needs_guard(commands) {
         return Ok(());
     }
-    let libraries = open_libraries_default(snapshot.root());
+    let libraries = open_libraries_default(root);
     let instance = libraries.instance();
     if instance.snapshots().next().is_none() {
         return Ok(());
     }
-    let own = crate::component_source::project_library(snapshot)
-        .map(|(library, _)| library)
-        .unwrap_or_default();
-    check_commands(&own, &instance, model, commands)
+    let empty = ComponentLibrary::new();
+    check_commands(own.unwrap_or(&empty), &instance, model, commands)
 }
 
 #[cfg(test)]

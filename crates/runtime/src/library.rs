@@ -13,6 +13,7 @@
 //! lock·cache가 바뀌어도 열린 창은 다시 로드하지 않습니다. 같은 창에서 다시 읽으려면 [`WindowLibraries::open`]을 다시
 //! 부릅니다(`ProjectWindowSession::reload_libraries`).
 
+use std::borrow::Cow;
 use std::fmt;
 use std::path::Path;
 
@@ -106,9 +107,10 @@ impl WindowLibraries {
     }
 
     /// `transaction`을 적용하기 전에 판정합니다. `own`은 검사가 필요할 때만 부르는 사용 프로젝트 component library입니다.
-    pub fn check(
+    /// 창이 이미 읽은 library는 빌려 쓰므로 편집마다 복사하지 않습니다.
+    pub fn check<'a>(
         &self,
-        own: impl FnOnce() -> ComponentLibrary,
+        own: impl FnOnce() -> Cow<'a, ComponentLibrary>,
         model: &DocumentModel,
         transaction: &CommandTransaction,
     ) -> Result<(), LibraryEditRefused> {
