@@ -1,4 +1,5 @@
-//! stellar-export — PNG·SVG 내보내기(Phase XX, ADR-0019). 의존: core-types, scene.
+//! stellar-export — PNG·SVG 내보내기(Phase XX, ADR-0019). 의존: core-types, scene, renderer-core(backend 중립 계산만,
+//! ADR-0103).
 //!
 //! 내보내기는 문서 모델과 GPU 객체를 직접 다루지 않고 불변 Scene Snapshot을 입력으로 받습니다
 //! (아키텍처 §8, §34).
@@ -17,6 +18,12 @@ pub mod text;
 
 /// SVG 벡터 변환 (XX.3).
 pub mod svg;
+
+/// 내보내기 offscreen 렌더 target (XX.2.1).
+pub mod raster;
+
+/// PNG 내보내기 (XX.2).
+pub mod png;
 
 /// 테스트 전용 scene fixture.
 #[cfg(test)]

@@ -252,6 +252,7 @@ name = "stellar-export"
 version = "0.0.0"
 dependencies = [
  "stellar-core-types",
+ "stellar-renderer-core",
  "stellar-scene",
 ]
 

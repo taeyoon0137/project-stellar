@@ -44,7 +44,7 @@
 | `stellar-target-profile` | core-types |
 | `stellar-accessibility` | core-types |
 | `stellar-diagnostics` | core-types |
-| `stellar-export` | core-types, scene |
+| `stellar-export` | core-types, scene, renderer-core |
 | `stellar-mcp` | mcp-core, core-types, diagnostics, local-ipc |
 | `stellar-mcp-core` | ops, agent-protocol, local-ipc, diagnostics |
 | `stellar-local-ipc` | core-types |
@@ -53,7 +53,7 @@
 | `stellar-terminal` | core-types |
 | `stellar-codegen` | core-types, target-profile, accessibility, layout |
 | `stellar-prototype` | core-types, expressions, document, bindings |
-| `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile, git-porcelain, integrity |
+| `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile, git-porcelain, integrity, export, scene |
 | `stellar-integrity` | core-types, document, commands, bindings, expressions, text, accessibility, dependencies, target-profile |
 | `stellar-cli` | ops, diagnostics |
 | `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, text, ops, git-porcelain |
@@ -113,6 +113,7 @@ graph TD
   export --> core_types
   local_ipc --> core_types
   export --> scene
+  export --> renderer_core
   terminal --> core_types
   codegen --> core_types
   codegen --> target_profile
@@ -135,6 +136,8 @@ graph TD
   ops --> target_profile
   ops --> git_porcelain
   ops --> integrity
+  ops --> export
+  ops --> scene
   integrity --> core_types
   integrity --> document
   integrity --> commands

@@ -8,6 +8,8 @@ publish = false
 [dependencies]
 stellar-core-types = { path = "../core-types" }
 stellar-scene = { path = "../scene" }
+# backend 중립 계산(출력 색 변환·stroke tessellation)만 씁니다. GPU backend에는 닿지 않습니다(ADR-0103).
+stellar-renderer-core = { path = "../renderer-core" }
 
 [lints]
 workspace = true
