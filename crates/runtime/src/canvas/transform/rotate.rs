@@ -129,7 +129,7 @@ impl RotateGesture {
         let model = window.document().ok_or(TransformError::Stale)?.model();
         let commands = self.commands(model, degrees, &mut || ids.fresh())?;
         ids.finish()?;
-        super::commit(window, commands, history_label::RESIZE)
+        super::commit(window, commands, history_label::CHANGE_PROPERTY)
     }
 }
 
