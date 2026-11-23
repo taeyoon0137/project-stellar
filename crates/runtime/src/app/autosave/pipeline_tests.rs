@@ -4,7 +4,9 @@
 use super::tests::next_solicited;
 use super::*;
 use crate::app_window_tests::{open_project, open_window};
-use crate::window_session::test_fixtures::{rename, saved_project, sid, TempDir};
+use crate::window_session::test_fixtures::{
+    cache_only_rename, rename, saved_project, sid, TempDir,
+};
 use crate::window_session::SaveOutcome;
 use stellar_ops::apply::{apply, ApplyMode, ApplyRequest, CommandInput};
 use stellar_ops::lock::LockPolicy;
@@ -332,13 +334,13 @@ fn autosave_writer_meeting_an_external_change_first_reconciles_and_saves_both() 
     // XIII.3.4(ADR-0110 결정 2): 감시 반영보다 자동 저장 writer가 먼저 외부 writer stale을 만나도, 쓰기 결과를 반영하는
     // 자리에서 병합하고 stale을 풀어 자동 저장이 병합 결과를 씁니다(두 선택지 alert 0).
     let project = saved_project("pipeline-reconcile-writer");
-    let locks = TempDir::new("pipeline-reconcile-writer-locks");
     let mut app = AppRuntime::start().unwrap();
     app.enable_autosave_with(policy(60_000, 60_000));
     let owner = open_project(&app, project.path());
     let (a, _, _) = open_window(&app, owner);
     edit(&app, a, 701, 12, "로컬");
-    cli_rename(&project, &locks, 11, "CLI 편집");
+    // 원본 파일 event가 없는 cache-only writer여야 감시 반영보다 writer가 먼저 만납니다(CLI는 원본도 씀, ADR-0113).
+    cache_only_rename(&project, 11, "CLI 편집");
     app.flush_autosave().unwrap();
     let saved_name = |node: u64| {
         open_snapshot(project.path())
