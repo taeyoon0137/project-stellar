@@ -57,3 +57,10 @@
 
 - `effects::fill`의 cubic 평탄화는 stroke tessellator 내부 평탄화와 별도입니다(ADR-0102 Consequences 후속).
 - PNG는 저장 byte(premultiplied)를 그대로 담습니다. 반투명 pixel의 보이는 색은 straight alpha 해석과 다릅니다.
+
+## 후속: 제품 frame encoder (lane render-pass-png, ADR-0116 결정 4)
+
+- scene → 그리기 목록 제품 frame encoder `effects::scene::encode_plan`이 생겼습니다. pass compiler frame plan의 draw·효과를 이
+  harness와 같은 그리기 목록으로 낮추므로, `SceneSnapshot` 입력이 같은 lowering(`effects::lower::lower_ops`)과 CPU 기준으로
+  그려집니다. PNG 내보내기 Metal offscreen target(XX.2.1)과 CPU·GPU 대조 test(XX.2.4)가 이 경로를 씁니다.
+- 검증: `cargo test -p stellar-renderer-core --lib effects::scene`(6 passed), `cargo test -p stellar-renderer-metal`(67 passed).

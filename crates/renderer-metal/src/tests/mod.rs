@@ -27,6 +27,8 @@ mod conformance;
 mod errors;
 mod geometry;
 mod graph;
+mod offscreen_target;
+mod png_golden;
 mod shaders;
 mod smoke;
 mod surface;

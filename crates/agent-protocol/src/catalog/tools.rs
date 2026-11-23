@@ -184,6 +184,19 @@ pub const EXPORT_WEB_FRAME: ToolDef = ToolDef {
     grant: Permission::Read,
 };
 
+/// 저장 View PNG 렌더(`stellar export png`와 같은 ops 경로, 파일을 쓰지 않음, ADR-0116 결정 5).
+pub const EXPORT_PNG: ToolDef = ToolDef {
+    name: "document.export_png",
+    title: "Export PNG",
+    description: "저장된 View를 앱과 같은 scene 변환과 CPU target으로 렌더한 PNG(base64)와 크기·profile·빠진 node·확인한 진단을 돌려줍니다(파일을 쓰지 않음, 빠진 node는 omit_skipped, 확인할 진단은 accept_issues로 확인)",
+    input_schema: r#"{"type":"object","additionalProperties":false,"required":["document","view"],"properties":{"document":{"type":"string"},"view":{"type":"string"},"scale":{"type":"number","minimum":0.01,"maximum":16},"profile":{"type":"string","enum":["srgb","display-p3"]},"background":{"type":"string","maxLength":64},"accept_issues":{"type":"boolean"},"omit_skipped":{"type":"boolean"}}}"#,
+    read_only: true,
+    destructive: false,
+    idempotent: true,
+    availability: Availability::All,
+    grant: Permission::Read,
+};
+
 /// node 속성의 CSS longhand 선언 블록 복사(`stellar css copy`).
 pub const COPY_CSS: ToolDef = ToolDef {
     name: "document.copy_css",
@@ -247,6 +260,7 @@ pub const DOCUMENT_TOOLS: &[ToolDef] = &[
     APPLY_COMMANDS,
     SOURCE_SPAN,
     EXPORT_WEB_FRAME,
+    EXPORT_PNG,
     COPY_CSS,
     PROPOSE_CSS_PASTE,
     PASTE_CSS,
@@ -509,6 +523,7 @@ mod tests {
                 "document.propose_commands",
                 "document.source_span",
                 "document.export_web_frame",
+                "document.export_png",
                 "document.copy_css",
                 "document.propose_css_paste",
                 "document.context",

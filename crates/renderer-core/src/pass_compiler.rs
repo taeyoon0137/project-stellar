@@ -166,9 +166,40 @@ pub struct FramePlan {
     pub passes: Vec<PassPlan>,
     /// offscreen layer.
     pub layers: Vec<EffectLayer>,
+    /// 효과 pass(layer blur, shadow 원본·blur, clip mask, 만든 순서, [`effects`]).
+    pub effect_passes: Vec<effects::EffectPass>,
+    /// draw별 효과와 합성 program(pass·depth 순).
+    pub draw_effects: Vec<effects::DrawEffects>,
+    /// layer별 효과(layer id 순).
+    pub layer_effects: Vec<effects::LayerEffects>,
+    /// 지원 목록 밖 blend mode 진단(`render.blend.unsupported_mode`, XI.10.2).
+    pub blend_diagnostics: Vec<crate::blend::BlendDiagnostic>,
+    /// 효과 근사 진단.
+    pub effect_diagnostics: Vec<effects::EffectDiagnostic>,
 }
 
 impl FramePlan {
+    /// `pass` 안 depth `depth` draw의 효과.
+    pub fn draw_effects(&self, pass: PassId, depth: u32) -> Option<&effects::DrawEffects> {
+        self.draw_effects
+            .binary_search_by_key(&(pass, depth), |effects| (effects.pass, effects.depth))
+            .ok()
+            .map(|index| &self.draw_effects[index])
+    }
+
+    /// layer 효과.
+    pub fn layer_effects(&self, layer: LayerId) -> Option<&effects::LayerEffects> {
+        self.layer_effects
+            .binary_search_by_key(&layer, |effects| effects.layer)
+            .ok()
+            .map(|index| &self.layer_effects[index])
+    }
+
+    /// 효과 pass.
+    pub fn effect_pass(&self, pass: PassId) -> Option<&effects::EffectPass> {
+        self.effect_passes.iter().find(|effect| effect.pass == pass)
+    }
+
     /// graph 실행 순서의 pass.
     pub fn passes_in_order(&self) -> impl Iterator<Item = &PassPlan> + '_ {
         self.graph
@@ -698,6 +729,7 @@ fn compile_with(
     let mut outputs: Vec<Option<ResourceVersion>> = vec![None; layers.len()];
     let mut effect_layers: Vec<EffectLayer> = Vec::new();
     let graph_error = FrameCompileError::Build;
+    let mut effect_builder = effects::EffectBuilder::new(input.viewport);
 
     // layer는 시작 순서(pre-order)로 id가 붙었으므로 역순이면 자식 layer가 부모보다 먼저입니다.
     for index in (0..layers.len()).rev() {
@@ -724,7 +756,15 @@ fn compile_with(
                 }
             }
         }
-        outputs[index] = Some(output);
+        effect_builder
+            .draws(&mut builder, pass, &draws)
+            .map_err(graph_error)?;
+        // layer blur가 있으면 부모는 blur 결과를 합성합니다(ADR-0116 결정 3).
+        outputs[index] = Some(
+            effect_builder
+                .layer(&mut builder, LayerId(index as u32), &draft.node, output)
+                .map_err(graph_error)?,
+        );
         passes.push(PassPlan {
             pass,
             class: PassClass::Effect,
@@ -759,6 +799,9 @@ fn compile_with(
         .map_err(graph_error)?;
     let depth_after_opaque = builder
         .depth_stencil(opaque_pass, depth, LoadOp::Clear, StoreOp::Store)
+        .map_err(graph_error)?;
+    effect_builder
+        .draws(&mut builder, opaque_pass, &opaque)
         .map_err(graph_error)?;
     passes.push(PassPlan {
         pass: opaque_pass,
@@ -795,6 +838,9 @@ fn compile_with(
                 }
             }
         }
+        effect_builder
+            .draws(&mut builder, transparent_pass, &transparent)
+            .map_err(graph_error)?;
         passes.push(PassPlan {
             pass: transparent_pass,
             class: PassClass::Transparent,
@@ -808,12 +854,30 @@ fn compile_with(
         .compile()
         .map_err(FrameCompileError::Graph)?;
     passes.sort_by_key(|plan| plan.pass);
+    let effects::EffectBuilder {
+        passes: effect_passes,
+        draws: mut draw_effects,
+        layers: mut layer_effects,
+        blend_diagnostics,
+        diagnostics: effect_diagnostics,
+        ..
+    } = effect_builder;
+    draw_effects.sort_by_key(|effects| (effects.pass, effects.depth));
+    layer_effects.sort_by_key(|effects| effects.layer);
     Ok(FramePlan {
         graph,
         passes,
         layers: effect_layers,
+        effect_passes,
+        draw_effects,
+        layer_effects,
+        blend_diagnostics,
+        effect_diagnostics,
     })
 }
+
+/// 효과 pass(layer blur, drop shadow, clip mask)와 합성 program (ADR-0116 결정 3).
+pub mod effects;
 
 /// 증분 frame compile 상태(ADR-0090).
 mod cache;

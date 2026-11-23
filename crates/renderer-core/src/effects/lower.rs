@@ -44,7 +44,6 @@ use super::abi::{
     blur_uniforms, draw_uniforms, push_solid_vertex, push_textured_vertex, DEFAULT_DEPTH,
     DRAW_UNIFORMS_SIZE, MODE_MASKED, MODE_PLAIN, UNIFORM_ALIGNMENT,
 };
-use super::blur::{layer_blur_sigma, shadow_sigma};
 use super::fixture::{
     ClipSpec, Coverage, CoverageShape, FillOp, Fixture, FixtureError, GlyphOp, ImageOp, LayerOp,
     Op, Paint, IMAGE_TEXTURE_FORMAT,
@@ -351,11 +350,11 @@ impl Recorder {
         if !layer.shadows.is_empty() {
             let mut colored = Vec::with_capacity(layer.shadows.len());
             for shadow in &layer.shadows {
-                let sigma = shadow_sigma(shadow.blur);
-                let alpha = self.blur_pass(content, sigma, [1.0, 0.0], true, [1.0; 4])?;
+                let [sigma_x, sigma_y] = shadow.sigmas();
+                let alpha = self.blur_pass(content, sigma_x, [1.0, 0.0], true, [1.0; 4])?;
                 let color = to_working(&self.plan, shadow.color).rgba;
                 colored.push((
-                    self.blur_pass(alpha, sigma, [0.0, 1.0], false, color)?,
+                    self.blur_pass(alpha, sigma_y, [0.0, 1.0], false, color)?,
                     shadow.offset,
                 ));
             }
@@ -373,10 +372,10 @@ impl Recorder {
                 rec.draw_graph_texture(pass, content, full, [1.0; 4])
             })?;
         }
-        let sigma = layer_blur_sigma(layer.blur);
-        if sigma > 0.0 {
-            let horizontal = self.blur_pass(group, sigma, [1.0, 0.0], false, [1.0; 4])?;
-            group = self.blur_pass(horizontal, sigma, [0.0, 1.0], false, [1.0; 4])?;
+        let [sigma_x, sigma_y] = layer.blur_sigmas();
+        if sigma_x > 0.0 || sigma_y > 0.0 {
+            let horizontal = self.blur_pass(group, sigma_x, [1.0, 0.0], false, [1.0; 4])?;
+            group = self.blur_pass(horizontal, sigma_y, [0.0, 1.0], false, [1.0; 4])?;
         }
         let mask = match (&layer.clip, layer.mask.is_empty()) {
             (Some(ClipSpec::Mask(shapes)), _) => Some(self.mask_pass(shapes)?),
@@ -832,22 +831,60 @@ pub fn lower<B: RendererBackend + ?Sized>(
     fixture: &Fixture,
 ) -> Result<LoweredFrame, LowerError> {
     fixture.validate()?;
-    let mut recorder = Recorder::new(fixture.plan(), fixture.width, fixture.height);
+    lower_ops(
+        backend,
+        &OpsTarget {
+            plan: fixture.plan(),
+            width: fixture.width,
+            height: fixture.height,
+            format: fixture.format,
+            clear: fixture.clear_working(),
+        },
+        &fixture.ops,
+    )
+}
+
+/// 그리기 목록 target(fixture 크기·format 제한 없음). 제품 offscreen 렌더(ADR-0116 결정 4)가 씁니다.
+#[derive(Debug, Clone, Copy)]
+pub struct OpsTarget {
+    /// 출력 색 변환 규칙(working space = surface 색공간).
+    pub plan: OutputColorPlan,
+    /// 너비.
+    pub width: u32,
+    /// 높이.
+    pub height: u32,
+    /// target format(sampled + render target).
+    pub format: TextureFormat,
+    /// clear 색(working).
+    pub clear: crate::color::WorkingColor,
+}
+
+/// 그리기 목록을 `target` 하나에 그리는 frame으로 바꿉니다. 값 계약은 fixture와 같습니다.
+pub fn lower_ops<B: RendererBackend + ?Sized>(
+    backend: &mut B,
+    target_desc: &OpsTarget,
+    ops: &[Op],
+) -> Result<LoweredFrame, LowerError> {
+    super::fixture::validate_ops(ops, &target_desc.plan)?;
+    if target_desc.width == 0 || target_desc.height == 0 {
+        return Err(LowerError::Fixture(FixtureError::InvalidSize));
+    }
+    let mut recorder = Recorder::new(target_desc.plan, target_desc.width, target_desc.height);
     let target = recorder.builder.import(
         "conformance target",
-        recorder.desc(fixture.format),
+        recorder.desc(target_desc.format),
         ImportKind::External,
     );
     let main = recorder.builder.pass("conformance main", PassKind::Raster);
     let mut record = PassRecord {
         id: main,
-        format: fixture.format,
+        format: target_desc.format,
         stencil: false,
         steps: Vec::new(),
     };
-    recorder.record_ops(&mut record, &fixture.ops)?;
-    let clear = fixture
-        .clear_working()
+    recorder.record_ops(&mut record, ops)?;
+    let clear = target_desc
+        .clear
         .to_clear()
         .ok_or(LowerError::Fixture(FixtureError::Invalid(
             "clear 색이 유한하지 않습니다",
@@ -859,13 +896,18 @@ pub fn lower<B: RendererBackend + ?Sized>(
     recorder.records.push(record);
     recorder.builder.set_output(written);
     let graph = std::mem::take(&mut recorder.builder).finish().compile()?;
-    finish(backend, fixture, recorder, graph)
+    finish(
+        backend,
+        (target_desc.width, target_desc.height, target_desc.format),
+        recorder,
+        graph,
+    )
 }
 
 /// buffer·texture를 만들고 step을 command로 바꿉니다.
 pub(crate) fn finish<B: RendererBackend + ?Sized>(
     backend: &mut B,
-    fixture: &Fixture,
+    (target_width, target_height, target_format): (u32, u32, TextureFormat),
     recorder: Recorder,
     graph: CompiledRenderGraph,
 ) -> Result<LoweredFrame, LowerError> {
@@ -916,9 +958,9 @@ pub(crate) fn finish<B: RendererBackend + ?Sized>(
                 uploaded.push(handle);
             }
             let target = backend.create_texture(&GpuTextureDesc {
-                width: fixture.width,
-                height: fixture.height,
-                format: fixture.format,
+                width: target_width,
+                height: target_height,
+                format: target_format,
                 mip_levels: 1,
                 samples: SampleCount::X1,
                 usage: TextureUsage {

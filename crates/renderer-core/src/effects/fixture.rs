@@ -262,6 +262,8 @@ pub struct LayerOp {
     pub shadows: Vec<ShadowSpec>,
     /// layer blur 반경(CSS `filter: blur()`, σ = 반경).
     pub blur: f32,
+    /// layer blur σ의 축별 배율(가로, 세로). 기본 `[1, 1]`(등방). device 변환이 축마다 다르게 늘인 blur에 씁니다.
+    pub blur_axis_scale: [f32; 2],
     /// clip(합성 단계에서 적용).
     pub clip: Option<ClipSpec>,
     /// mask coverage 도형(비면 mask 없음). clip의 [`ClipSpec::Mask`]와 함께 쓰지 않습니다.
@@ -277,6 +279,7 @@ impl LayerOp {
             opacity: 1.0,
             shadows: Vec::new(),
             blur: 0.0,
+            blur_axis_scale: [1.0, 1.0],
             clip: None,
             mask: Vec::new(),
         }
@@ -294,8 +297,43 @@ impl LayerOp {
             offset,
             blur,
             color,
+            axis_scale: [1.0, 1.0],
         });
         self
+    }
+
+    /// 축별 σ(가로, 세로, device pixel)로 drop shadow를 덧붙입니다.
+    pub fn with_shadow_sigmas(
+        mut self,
+        offset: [i32; 2],
+        sigmas: [f32; 2],
+        color: OutputColor,
+    ) -> LayerOp {
+        let (blur, axis_scale) = radius_and_scale(sigmas, 2.0);
+        self.shadows.push(ShadowSpec {
+            offset,
+            blur,
+            color,
+            axis_scale,
+        });
+        self
+    }
+
+    /// 축별 σ(가로, 세로, device pixel)로 layer blur를 둡니다.
+    pub fn with_blur_sigmas(mut self, sigmas: [f32; 2]) -> LayerOp {
+        let (blur, axis_scale) = radius_and_scale(sigmas, 1.0);
+        self.blur = blur;
+        self.blur_axis_scale = axis_scale;
+        self
+    }
+
+    /// layer blur 축별 σ.
+    pub fn blur_sigmas(&self) -> [f32; 2] {
+        let sigma = super::blur::layer_blur_sigma(self.blur);
+        [
+            sigma * self.blur_axis_scale[0],
+            sigma * self.blur_axis_scale[1],
+        ]
     }
 
     /// layer blur 반경.
@@ -326,6 +364,28 @@ pub struct ShadowSpec {
     pub blur: f32,
     /// 그림자 색.
     pub color: OutputColor,
+    /// σ의 축별 배율(가로, 세로). 기본 `[1, 1]`.
+    pub axis_scale: [f32; 2],
+}
+
+impl ShadowSpec {
+    /// 축별 σ(가로, 세로).
+    pub fn sigmas(&self) -> [f32; 2] {
+        let sigma = super::blur::shadow_sigma(self.blur);
+        [sigma * self.axis_scale[0], sigma * self.axis_scale[1]]
+    }
+}
+
+/// 축별 σ를 (반경, 축별 배율)로 나눕니다. 큰 축의 σ가 반경의 σ이고 다른 축은 그 비율입니다. `per_sigma`는 반경 / σ입니다.
+fn radius_and_scale(sigmas: [f32; 2], per_sigma: f32) -> (f32, [f32; 2]) {
+    let reference = sigmas[0].max(sigmas[1]);
+    if reference <= 0.0 || !reference.is_finite() {
+        return (0.0, [1.0, 1.0]);
+    }
+    (
+        reference * per_sigma,
+        [sigmas[0] / reference, sigmas[1] / reference],
+    )
 }
 
 /// coverage 도형(mask·clip mask).
@@ -517,14 +577,22 @@ fn validate_layer(layer: &LayerOp, plan: &OutputColorPlan) -> Result<(), Fixture
     if !(0.0..=1.0).contains(&layer.opacity) {
         return Err(FixtureError::Invalid("layer 불투명도는 [0, 1]입니다"));
     }
-    if !valid_sigma(layer_blur_sigma(layer.blur)) {
+    let scale_ok = |scale: [f32; 2]| {
+        scale
+            .iter()
+            .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+    };
+    if !valid_sigma(layer_blur_sigma(layer.blur))
+        || !scale_ok(layer.blur_axis_scale)
+        || !layer.blur_sigmas().iter().all(|s| valid_sigma(*s))
+    {
         return Err(FixtureError::Invalid("layer blur 반경이 범위 밖입니다"));
     }
-    if layer
-        .shadows
-        .iter()
-        .any(|shadow| !valid_sigma(shadow_sigma(shadow.blur)))
-    {
+    if layer.shadows.iter().any(|shadow| {
+        !valid_sigma(shadow_sigma(shadow.blur))
+            || !scale_ok(shadow.axis_scale)
+            || !shadow.sigmas().iter().all(|s| valid_sigma(*s))
+    }) {
         return Err(FixtureError::Invalid("shadow blur 반경이 범위 밖입니다"));
     }
     match &layer.clip {
@@ -543,7 +611,8 @@ fn validate_layer(layer: &LayerOp, plan: &OutputColorPlan) -> Result<(), Fixture
     validate_ops(&layer.content, plan)
 }
 
-fn validate_ops(ops: &[Op], plan: &OutputColorPlan) -> Result<(), FixtureError> {
+/// 그리기 목록 값 계약을 확인합니다.
+pub(crate) fn validate_ops(ops: &[Op], plan: &OutputColorPlan) -> Result<(), FixtureError> {
     for op in ops {
         match op {
             Op::Fill(fill) => {

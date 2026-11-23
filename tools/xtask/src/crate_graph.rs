@@ -49,9 +49,23 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         ("stellar-bindings", &[core, "stellar-expressions"]),
         ("stellar-layout", &[core]),
         ("stellar-text", &[core]),
-        ("stellar-scene", &[core]),
+        // 문서 → scene source 변환(`document` feature, ADR-0116 결정 1): 앱 runtime과 headless 도구가 같은 변환을 씁니다.
+        // renderer는 이 feature를 켜지 않습니다.
+        (
+            "stellar-scene",
+            &[core, "stellar-document", "stellar-commands"],
+        ),
         ("stellar-renderer-core", &["stellar-scene"]),
-        ("stellar-renderer-metal", &["stellar-renderer-core"]),
+        // PNG 내보내기 Metal offscreen target(ADR-0116 결정 4): export 렌더 계약·scene 값. test는 core-types 값을 씁니다.
+        (
+            "stellar-renderer-metal",
+            &[
+                "stellar-renderer-core",
+                "stellar-export",
+                "stellar-scene",
+                "stellar-core-types",
+            ],
+        ),
         ("stellar-renderer-d3d12", &["stellar-renderer-core"]),
         ("stellar-storage", &[core]),
         ("stellar-assets", &["stellar-storage", core]),
@@ -209,9 +223,11 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-diagnostics",
                 "stellar-git-porcelain",
                 "stellar-integrity",
-                // PNG 내보내기 실행·atomic 저장(ADR-0103). scene은 테스트 fixture가 씁니다.
+                // PNG 내보내기 실행·atomic 저장(ADR-0103). 저장 문서 → scene 변환(`document` feature)과 이미지 asset
+                // 내용 읽기는 `stellar export png`·MCP `document.export_png`가 씁니다(ADR-0116 결정 5).
                 "stellar-export",
                 "stellar-scene",
+                "stellar-assets",
             ],
         ),
         // 무결성 진단 집계(ADR-0095, `crates/integrity`): 생산자 crate의 공개 결과만 읽고 셸·앱 runtime에 의존하지 않습니다.

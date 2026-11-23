@@ -134,6 +134,7 @@ impl Headless {
                 n if n == tools::EXPORT_WEB_FRAME.name => {
                     operations::export_web_frame(cached, args)?
                 }
+                n if n == tools::EXPORT_PNG.name => operations::export_png(cached, args)?,
                 n if n == tools::COPY_CSS.name => operations::copy_css(cached, args)?,
                 n if n == tools::CONTEXT.name => context::read(cached, args)?,
                 n if n == tools::PROPOSE_CSS_PASTE.name => {

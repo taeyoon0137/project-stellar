@@ -10,6 +10,7 @@
 //! - [`inventory`]: 기능별 fixture 목록.
 //! - [`gradient`]: gradient stop 값·기하·GPU ramp.
 //! - [`blur`]: blur 반경·kernel·shadow 수식.
+//! - [`scene`]: scene frame plan → 그리기 목록(제품 frame encoder, ADR-0116 결정 4).
 
 /// 공통 shader ABI byte 배치.
 pub mod abi;
@@ -40,3 +41,6 @@ pub mod lower;
 
 /// CPU 기준 rasterizer (XI.11.1).
 pub mod raster;
+
+/// scene frame plan → 그리기 목록 (ADR-0116 결정 4).
+pub mod scene;

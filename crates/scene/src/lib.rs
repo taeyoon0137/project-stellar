@@ -71,6 +71,10 @@ pub mod interaction;
 /// selection overlay transient scene layer (XII.4.4).
 pub mod overlay;
 
+/// 문서 → 증분 scene source 변환 (XI.2.4, XI.2.5, ADR-0116 결정 1). `document` feature.
+#[cfg(any(feature = "document", test))]
+pub mod document;
+
 /// 테스트 전용 scene fixture 생성기 (XI.1.2).
 #[cfg(test)]
 mod fixtures;
@@ -81,3 +85,8 @@ pub use stack::{ClipStackRef, PaintStackRef};
 
 pub use stellar_core_types::color::ColorSpace;
 pub use stellar_core_types::value::{FiniteF32, NonFiniteError, Size2, Vec2};
+/// renderer frame encoder가 node 좌표·식별자를 다루도록 재노출합니다(ADR-0116 결정 4).
+pub use stellar_core_types::{
+    ids::StableId,
+    value::{Rect, Transform2D},
+};

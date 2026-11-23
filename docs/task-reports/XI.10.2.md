@@ -58,5 +58,6 @@
 
 - 처음에 8-bit 반올림 경계(sRGB 0.5 = 127.5)에 걸린 backdrop 색이 GPU(127)와 CPU(128)에서 갈라져 blend 뒤 2 LSB 차이가 났습니다. fixture
   색을 경계 밖으로 옮기고 `blend` class 채널 허용값을 2로 두었습니다.
-- 제품 pass compiler(XI.4.5)는 아직 `BlendComposite`를 만들지 않고 layer 합성 key의 blend만 기록합니다. 제품 frame encoder가 이 program을
-  쓰게 하는 연결은 후속입니다.
+- (해결, ADR-0116 결정 3·4) 제품 pass compiler가 모든 draw의 합성 mode를 `resolve_or_normal`로 풀어 `composite_program`·
+  `composite_blend_state`를 `FramePlan::draw_effects`에 두고, 목록 밖 tag 진단을 `FramePlan::blend_diagnostics`에 남깁니다. scene
+  frame encoder(`effects::scene`)가 그 mode로 layer를 합성하고 Metal offscreen target이 `BlendComposite`로 그립니다(XX.2.1 보고서).

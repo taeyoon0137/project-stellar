@@ -61,6 +61,9 @@ mod events;
 /// `RendererBackend` 구현.
 mod backend;
 
+/// PNG 내보내기 Metal offscreen target (XX.2.1, ADR-0116 결정 4).
+pub mod offscreen_target;
+
 pub use backend::{MemoryUsage, MetalBackend};
 pub use events::{classify_command_buffer_error, MetalEvent, MAX_EVENTS};
 pub use pipeline::{ShaderError, ShaderErrorStage};

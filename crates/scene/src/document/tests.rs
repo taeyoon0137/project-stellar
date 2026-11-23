@@ -2,7 +2,10 @@
 #![cfg(test)]
 
 use super::*;
-use crate::window_session::test_fixtures::{sample_document, sid};
+use crate::boolean::signed_area;
+use crate::dirty::{SceneDirtyKind, SceneDirtySet};
+use crate::incremental::IncrementalScene;
+use crate::node::SceneContent;
 use stellar_commands::command::Command;
 use stellar_commands::id::{CommandId, CommandOrigin};
 use stellar_commands::property::{PropertyValue, SetProperty};
@@ -24,10 +27,45 @@ use stellar_document::modifier::{ModifierEntry, ModifierId, ModifierStack};
 use stellar_document::node_kind::NodeKind;
 use stellar_document::records::NodeRecord;
 use stellar_document::shape::{RectangleParams, ShapeGeometry};
-use stellar_scene::boolean::signed_area;
-use stellar_scene::dirty::{SceneDirtyKind, SceneDirtySet};
-use stellar_scene::incremental::IncrementalScene;
-use stellar_scene::node::SceneContent;
+
+/// 결정론적 id.
+fn sid(n: u64) -> StableId {
+    StableId::new_v7(n, 0, n)
+}
+
+fn plain_frame(id: u64, parent: Option<u64>, key: u8) -> NodeRecord {
+    NodeRecord {
+        id: sid(id),
+        parent: parent.map(sid),
+        order_key: OrderKey::from_bytes(vec![key]).expect("key"),
+        visible: true,
+        locked: false,
+        display_name: format!("n{id}"),
+        payload: NodePayload::Frame(FramePayload::default()),
+    }
+}
+
+/// 문서(1): 페이지(2) 아래 View 3(root 10)·View 4(root 20). 10 아래 11·12.
+fn sample_document() -> DocumentModel {
+    use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
+    let mut definition = DocumentDefinition::new(sid(1), "문서".to_string());
+    let mut page = PageDefinition::new(sid(2), "페이지".to_string());
+    page.add_view(ViewDefinition::new(sid(3), "첫 화면".to_string(), sid(10)))
+        .unwrap();
+    page.add_view(ViewDefinition::new(
+        sid(4),
+        "둘째 화면".to_string(),
+        sid(20),
+    ))
+    .unwrap();
+    definition.add_page(page).unwrap();
+    let mut model = DocumentModel::new(definition);
+    model.insert_node(plain_frame(10, None, 0x10)).unwrap();
+    model.insert_node(plain_frame(11, Some(10), 0x10)).unwrap();
+    model.insert_node(plain_frame(12, Some(10), 0x20)).unwrap();
+    model.insert_node(plain_frame(20, None, 0x20)).unwrap();
+    model
+}
 
 fn color(r: f32, g: f32, b: f32) -> Color {
     Color::new(ColorSpace::Srgb, r, g, b, 1.0).unwrap()
@@ -755,4 +793,169 @@ fn virtual_skip_records_follow_their_instance() {
     assert_eq!(built.skipped.get(&b), None);
     assert_eq!(built.skipped, fresh.skipped);
     assert_eq!(built.source, fresh.source);
+}
+
+fn effect_entry(n: u64, order: u8, payload: ModifierPayload) -> ModifierEntry {
+    ModifierEntry {
+        id: ModifierId::new(sid(n)),
+        order: OrderKey::from_bytes(vec![order]).unwrap(),
+        kind: payload.kind(),
+        enabled: true,
+        payload,
+    }
+}
+
+fn stack_of(node: u64, entries: Vec<ModifierEntry>) -> ModifierStack {
+    let mut stack = ModifierStack::new(sid(node));
+    for entry in entries {
+        stack.insert(entry).unwrap();
+    }
+    stack
+}
+
+fn finite(v: f32) -> stellar_core_types::value::FiniteF32 {
+    stellar_core_types::value::FiniteF32::new(v).unwrap()
+}
+
+#[test]
+fn effect_modifiers_become_scene_compositing_effects() {
+    // ADR-0116 결정 2: Shadow·Blur·Blend·Opacity는 내용 modifier와 따로 평가합니다.
+    use stellar_document::modifier::BlendMode;
+    let mut model = document();
+    model
+        .set_modifier_stack(stack_of(
+            21,
+            vec![
+                effect_entry(301, 0x10, ModifierPayload::Opacity { value: finite(0.5) }),
+                effect_entry(
+                    302,
+                    0x20,
+                    ModifierPayload::Fill {
+                        color: color(1.0, 0.0, 0.0),
+                    },
+                ),
+                effect_entry(
+                    303,
+                    0x30,
+                    ModifierPayload::Shadow {
+                        color: color(0.0, 0.0, 0.0),
+                        offset: Vec2::new(2.0, 3.0).unwrap(),
+                        blur: finite(4.0),
+                    },
+                ),
+                effect_entry(
+                    304,
+                    0x40,
+                    ModifierPayload::Blend {
+                        mode: BlendMode::Multiply,
+                    },
+                ),
+                effect_entry(305, 0x50, ModifierPayload::Opacity { value: finite(0.5) }),
+                effect_entry(
+                    306,
+                    0x60,
+                    ModifierPayload::Blur {
+                        radius: finite(1.5),
+                    },
+                ),
+            ],
+        ))
+        .unwrap();
+    // Frame은 효과 modifier만 있으면 그립니다.
+    model
+        .set_modifier_stack(stack_of(
+            13,
+            vec![effect_entry(
+                311,
+                0x10,
+                ModifierPayload::Opacity {
+                    value: finite(0.25),
+                },
+            )],
+        ))
+        .unwrap();
+    let built = document_scene_source(&model, sid(10), options()).unwrap();
+    assert!(built.skipped.is_empty(), "{:?}", built.skipped);
+    let paint = &built
+        .source
+        .get(SceneKey::node(sid(21)))
+        .unwrap()
+        .kind
+        .node_input()
+        .unwrap()
+        .paint;
+    assert_eq!(paint.fills.len(), 1, "Fill은 내용 규칙 그대로");
+    assert_eq!(paint.opacity.get(), 0.25, "Opacity는 활성 항목의 곱");
+    assert_eq!(paint.blend, crate::stack::SceneBlendMode::Multiply);
+    assert_eq!(paint.layer_blur.get(), 1.5);
+    assert_eq!(paint.shadows.len(), 1);
+    assert_eq!(paint.shadows[0].blur().get(), 4.0);
+    assert_eq!(paint.shadows[0].offset(), Vec2::new(2.0, 3.0).unwrap());
+    let frame_paint = &built
+        .source
+        .get(SceneKey::node(sid(13)))
+        .unwrap()
+        .kind
+        .node_input()
+        .unwrap()
+        .paint;
+    assert_eq!(frame_paint.opacity.get(), 0.25);
+    // scene까지 그대로 갑니다.
+    let (scene, _) = IncrementalScene::build(built.source, DocumentRevision(1), &clock()).unwrap();
+    let node = scene
+        .snapshot()
+        .iter_preorder()
+        .find(|node| node.source() == sid(21))
+        .unwrap();
+    assert_eq!(
+        node.paint().get().blend,
+        crate::stack::SceneBlendMode::Multiply
+    );
+    assert_eq!(node.paint().get().shadows.len(), 1);
+}
+
+#[test]
+fn repeated_single_value_effects_and_non_effect_frame_modifiers_are_skipped() {
+    let mut model = document();
+    let blur = |n, order| {
+        effect_entry(
+            n,
+            order,
+            ModifierPayload::Blur {
+                radius: finite(1.0),
+            },
+        )
+    };
+    model
+        .set_modifier_stack(stack_of(21, vec![blur(321, 0x10), blur(322, 0x20)]))
+        .unwrap();
+    model
+        .set_modifier_stack(stack_of(
+            13,
+            vec![effect_entry(
+                331,
+                0x10,
+                ModifierPayload::Fill {
+                    color: color(0.0, 1.0, 0.0),
+                },
+            )],
+        ))
+        .unwrap();
+    let built = document_scene_source(&model, sid(10), options()).unwrap();
+    assert_eq!(
+        built.skipped.get(&SceneKey::node(sid(21))),
+        Some(&SkipReason::UnsupportedModifiers)
+    );
+    assert_eq!(
+        built.skipped.get(&SceneKey::node(sid(13))),
+        Some(&SkipReason::UnsupportedModifiers)
+    );
+    // 비활성 Blur 하나는 반복으로 세지 않습니다.
+    let mut second = blur(322, 0x20);
+    second.enabled = false;
+    model
+        .set_modifier_stack(stack_of(21, vec![blur(321, 0x10), second]))
+        .unwrap();
+    let built = document_scene_source(&model, sid(10), options()).unwrap();
+    assert!(!built.skipped.contains_key(&SceneKey::node(sid(21))));
 }

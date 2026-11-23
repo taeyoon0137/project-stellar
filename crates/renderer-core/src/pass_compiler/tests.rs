@@ -479,8 +479,10 @@ fn ordering_fixture_classifies_and_orders_passes() {
     assert_eq!(id_of(&plan.layers[0].node), 4);
     assert_eq!(plan.layers[0].parent, None);
     assert_eq!(plan.draw_count(), 11);
-    // graph: layer → opaque → transparent, output은 surface 최신 version.
-    assert_eq!(plan.graph.order().len(), 3);
+    // graph: layer → opaque → transparent와 node 12 shadow pass(원본 1 + blur 가로·세로 2, ADR-0116 결정 3),
+    // output은 surface 최신 version.
+    assert_eq!(plan.graph.order().len(), 6);
+    assert_eq!(plan.effect_passes.len(), 3);
     assert_eq!(plan.graph.output().map(|v| v.version), Some(2));
     assert_eq!(sim::execute(&plan), sim::reference(&scene));
 }

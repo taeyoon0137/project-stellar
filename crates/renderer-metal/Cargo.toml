@@ -7,6 +7,13 @@ publish = false
 
 [dependencies]
 stellar-renderer-core = { path = "../renderer-core" }
+# PNG 내보내기 Metal offscreen target(`offscreen_target`, ADR-0116 결정 4): export 렌더 계약과 scene 값.
+stellar-export = { path = "../export" }
+stellar-scene = { path = "../scene" }
+
+[dev-dependencies]
+# offscreen target test가 scene·내보내기 입력 값(색, asset 참조, revision)을 만듭니다.
+stellar-core-types = { path = "../core-types" }
 
 [lints]
 workspace = true

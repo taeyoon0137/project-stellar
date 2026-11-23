@@ -14,11 +14,8 @@ use stellar_document::frame::Clipping;
 use stellar_document::image::FitMode;
 use stellar_document::model::DocumentModel;
 use stellar_document::records::NodePayload;
-use stellar_document::shape::RectangleParams;
 use stellar_scene::bounds::Aabb;
-use stellar_scene::builder::{
-    BorderInput, FragmentInput, FrameClipInput, FrameInput, NodeInput, SceneBuilder,
-};
+use stellar_scene::builder::{FragmentInput, FrameClipInput, NodeInput, SceneBuilder};
 use stellar_scene::node::{CornerRadii, RectPrimitive, SceneContent};
 use stellar_storage::hash::ContentHash;
 
@@ -26,9 +23,10 @@ use crate::window_session::ProjectWindowSession;
 
 mod component;
 mod image;
-/// 문서 → 증분 scene source 변환 (XI.2.4, XI.2.5, XII.10.30).
-pub mod scene_source;
 pub use image::image_placement;
+/// 문서 → 증분 scene source 변환 (XI.2.4, XI.2.5, XII.10.30). 변환은 headless 도구와 같이 쓰도록 scene crate에
+/// 있습니다(ADR-0116 결정 1).
+pub use stellar_scene::document as scene_source;
 /// 변형 핸들 hit layer (XII.10.8, ADR-0104).
 pub mod handles;
 /// 선택 엔진의 hit 입력: 커서 아래 node 목록과 node world 상자 (XII.10.3, XII.10.5).
@@ -284,37 +282,9 @@ impl CanvasCache {
     }
 }
 
-/// 고정 Free Frame payload를 scene 입력으로 바꿉니다. 캔버스 행과 증분 scene source(ADR-0084)가 함께 씁니다.
-/// Path clip은 아직 그리지 않습니다(호출자가 거릅니다).
-pub(crate) fn frame_input(
-    id: StableId,
-    frame: &stellar_document::frame::FramePayload,
-    locked: bool,
-) -> Option<FrameInput> {
-    let radius = RectangleParams {
-        size: frame.size,
-        corner_radius: frame.corner_radius,
-    }
-    .effective_corner_radius();
-    let radii = CornerRadii::new(radius.0, radius.1, radius.2, radius.3).ok()?;
-    let mut node = NodeInput::new(id, frame.transform);
-    node.locked = locked;
-    Some(FrameInput {
-        node,
-        size: frame.size,
-        corner_radii: radii,
-        background: frame.background,
-        border: frame.border.map(|b| BorderInput {
-            color: b.color,
-            thickness: b.thickness(),
-        }),
-        clip: if frame.clipping == Clipping::FrameBounds {
-            FrameClipInput::Bounds
-        } else {
-            FrameClipInput::None
-        },
-    })
-}
+/// 고정 Free Frame payload를 scene 입력으로 바꿉니다. 캔버스 행과 증분 scene source(ADR-0084)가 함께 쓰는 scene
+/// crate 함수입니다(ADR-0116 결정 1).
+pub(crate) use stellar_scene::document::inputs::frame_input;
 
 impl CanvasScene {
     /// 활성 View의 root Frame(painter 순서 첫 행)을 창의 logical point 안에 배치합니다. 100%보다 키우지 않습니다.
