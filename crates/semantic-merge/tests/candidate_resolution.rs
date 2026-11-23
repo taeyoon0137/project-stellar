@@ -282,3 +282,44 @@ fn random_command_sequences_undo_to_the_original() {
         assert_eq!(c, c0, "seed {seed}");
     }
 }
+
+#[test]
+fn write_requires_zero_unresolved_and_no_new_violation() {
+    let base = world();
+    let ours = set_properties(&base, INNER, &[INNER_PROP_2]);
+    let path = override_path(INSTANCE, INNER_PROP);
+    let theirs = put(&base, &path, text("v"));
+    let mut c = candidate(&base, &ours, &theirs);
+    let conflict = c.conflicts()[0].clone();
+    let blocked = c.validate().unwrap_err();
+    assert_eq!(
+        blocked.unresolved,
+        vec![(conflict.object, conflict.target.clone())]
+    );
+    assert!(blocked.violations.is_empty());
+    c.apply(&CandidateCommand::Resolve {
+        object: conflict.object,
+        target: conflict.target.clone(),
+        resolution: Resolution::ChooseOurs,
+    })
+    .unwrap();
+    assert!(c.validate().is_ok());
+    // 지운 Property의 override를 B에서 다시 고르면 invalid candidate이므로 쓰기를 막습니다.
+    c.apply(&CandidateCommand::Select {
+        object: sid(INSTANCE),
+        target: ConflictTarget::Property(path.clone()),
+        side: Side::Theirs,
+    })
+    .unwrap();
+    let blocked = c.validate().unwrap_err();
+    assert!(blocked.unresolved.is_empty());
+    assert_eq!(blocked.violations.len(), 1, "{:?}", blocked.violations);
+    // base(Property 유지)로 해결을 바꾸면 다시 쓸 수 있습니다.
+    c.apply(&CandidateCommand::Resolve {
+        object: conflict.object,
+        target: conflict.target,
+        resolution: Resolution::ChooseBase,
+    })
+    .unwrap();
+    assert!(c.validate().is_ok());
+}

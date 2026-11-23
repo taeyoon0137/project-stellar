@@ -18,8 +18,12 @@
 //! 바꾸고 역 command를 돌려줍니다: `apply(inverse)`는 C를 이전과 같은 값으로 되돌립니다. C 밖(파일·index)은
 //! 건드리지 않습니다. Property 삭제 conflict(전용 종류 7·9)를 삭제 쪽으로 해결하면 C의 scene·정의 인스턴스에서
 //! 지운 Property를 가리키는 override도 함께 지웁니다(삭제 쪽 상태와 같음).
+//!
+//! **쓰기 조건(XIV.12.3)**: [`CandidateSnapshot::validate`]는 unresolved conflict가 0이고 C가 세 입력
+//! 어디에도 없던 snapshot 위반을 갖지 않을 때만 성공합니다.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fmt;
 
 use stellar_semantic_diff::change::{Position, SemanticChange};
@@ -28,6 +32,7 @@ use stellar_semantic_diff::diff::diff;
 use stellar_semantic_diff::keys;
 use stellar_semantic_diff::snapshot::SemanticSnapshot;
 use stellar_semantic_diff::validate::override_member;
+use stellar_semantic_diff::validate::{introduced_violations, SnapshotViolation};
 use stellar_semantic_diff::value::SemanticValue;
 
 use crate::merge::merge;
@@ -433,6 +438,28 @@ fn put_unit(
     }
 }
 
+/// 쓰기를 막는 이유(XIV.12.3, XXIII.2.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidateBlocked {
+    /// 해결하지 않은 conflict 단위(순서대로).
+    pub unresolved: Vec<UnitKey>,
+    /// C에 새로 생긴 snapshot 위반.
+    pub violations: BTreeSet<SnapshotViolation>,
+}
+
+impl fmt::Display for CandidateBlocked {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "해결하지 않은 conflict {}개, 새 snapshot 위반 {}개",
+            self.unresolved.len(),
+            self.violations.len()
+        )
+    }
+}
+
+impl std::error::Error for CandidateBlocked {}
+
 /// 병합 결과 candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CandidateSnapshot {
@@ -560,6 +587,27 @@ impl CandidateSnapshot {
         undo.resolutions.reverse();
         *self = next;
         Ok(CandidateCommand::Restore(undo))
+    }
+
+    /// 쓰기 조건 검사(XIV.12.3, XXIII.2.4): unresolved conflict 0과 새 snapshot 위반 0.
+    pub fn validate(&self) -> Result<(), CandidateBlocked> {
+        let unresolved: Vec<UnitKey> = self
+            .conflicts
+            .iter()
+            .map(|c| (c.object, c.target.clone()))
+            .filter(|key| !self.resolutions.contains_key(key))
+            .collect();
+        let input = &self.input;
+        let violations =
+            introduced_violations(&self.snapshot, &[&input.base, &input.ours, &input.theirs]);
+        if unresolved.is_empty() && violations.is_empty() {
+            Ok(())
+        } else {
+            Err(CandidateBlocked {
+                unresolved,
+                violations,
+            })
+        }
     }
 }
 
