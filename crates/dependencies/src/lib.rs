@@ -85,6 +85,9 @@ pub mod library_update;
 /// library resource Semantic Diff (XV.7.2).
 pub mod resource_diff;
 
+/// 후보 library 적용 전 외부 참조·instance override 검증 (XV.7.3).
+pub mod candidate_check;
+
 /// 다중 버전 경고 상세: 경로·예상 추가 용량·UI/telemetry 분리 (XV.8.3).
 pub mod duplicate_report;
 

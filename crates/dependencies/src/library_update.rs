@@ -13,6 +13,9 @@
 use std::fmt;
 
 use crate::cache_entry::{LibraryEntryStore, MaterializeError, Sha256Digest};
+use crate::candidate_check::{
+    check_candidate_usages, CandidateCheck, ExternalInstanceUsage, ExternalTokenUsage,
+};
 use crate::declaration::{
     CommitId, DependencyDeclaration, LogicalName, RepositoryUrl, VersionSelector,
 };
@@ -87,6 +90,20 @@ impl LibraryUpdateCandidate {
     /// 선택자가 lock의 선언 선택자와 다른지.
     pub fn selector_changed(&self) -> bool {
         self.candidate.requested != self.current.lock_entry.requested
+    }
+
+    /// 적용 전에 사용 프로젝트의 외부 참조·instance override를 후보 snapshot에 대어 봅니다(XV.7.3).
+    pub fn check_usages(
+        &self,
+        instances: &[ExternalInstanceUsage],
+        tokens: &[ExternalTokenUsage],
+    ) -> CandidateCheck {
+        check_candidate_usages(
+            &self.dependency,
+            &self.candidate.snapshot,
+            instances,
+            tokens,
+        )
     }
 }
 
