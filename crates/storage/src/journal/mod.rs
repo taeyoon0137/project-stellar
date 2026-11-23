@@ -413,8 +413,15 @@ struct Journal {
 }
 
 fn open_journal(root: &Path) -> Result<Journal, JournalError> {
+    let existed = existing_real_dirs(root, &JOURNAL_DIRS)
+        .map_err(|e| io_error(&join(root, &JOURNAL_DIRS), e))?
+        .is_some();
     let dirs = ensure_real_dirs(root, &JOURNAL_DIRS).map_err(|(path, e)| io_error(&path, e))?;
     let (path, identity) = dirs.last().cloned().expect("구성 요소 두 개");
+    if !existed {
+        // 새로 만든 `.stellar/`·`journal/` 항목을 내구화해야 거래 디렉터리가 재시작 뒤에도 보입니다.
+        sync_ancestors(root, &JOURNAL_DIRS).map_err(|(path, e)| io_error(&path, e))?;
+    }
     let lock = File::open(&path).map_err(|e| io_error(&path, e))?;
     match lock.try_lock() {
         Ok(()) => {}
@@ -510,6 +517,16 @@ fn join(root: &Path, components: &[&str]) -> PathBuf {
     let mut path = root.to_path_buf();
     path.extend(components);
     path
+}
+
+/// `root`와 `dirs`의 각 앞부분 디렉터리(마지막 디렉터리 자신은 제외)를 sync합니다. 새로 만든 디렉터리
+/// 항목은 그 부모를 sync해야 내구화됩니다. 깊은 쪽부터 sync합니다.
+fn sync_ancestors(root: &Path, dirs: &[&str]) -> Result<(), (PathBuf, io::Error)> {
+    for depth in (0..dirs.len()).rev() {
+        let dir = join(root, &dirs[..depth]);
+        sync_parent_dir(&dir).map_err(|e| (dir, e))?;
+    }
+    Ok(())
 }
 
 /// 대상의 현재 파일.
@@ -633,6 +650,8 @@ struct Staged<'a> {
     dirs: Vec<(PathBuf, FileIdentity)>,
     current: Option<Current>,
     bytes: Option<&'a [u8]>,
+    /// 부모 디렉터리 일부를 이 저장이 만들었습니다. marker 전에 조상 디렉터리도 sync합니다.
+    created_dirs: bool,
 }
 
 pub(crate) fn commit_observed(
@@ -682,8 +701,9 @@ pub(crate) fn commit_observed(
         };
         let (parents, _) = item.components.split_at(item.components.len() - 1);
         let parent = join(&root, parents);
+        let created_dirs = seen.dirs.is_none();
         let dirs = match (op, seen.dirs) {
-            (Op::Delete, Some(dirs)) => dirs,
+            (_, Some(dirs)) => dirs,
             _ => ensure_real_dirs(&root, parents).map_err(|(path, e)| io_error(&path, e))?,
         };
         let (_, parent_identity) =
@@ -707,6 +727,7 @@ pub(crate) fn commit_observed(
             dirs,
             current: seen.current,
             bytes,
+            created_dirs,
         });
     }
     let written = entries.iter().filter(|e| e.op == Op::Write).count();
@@ -802,7 +823,14 @@ fn stage_and_publish(
         }
     }
     step(observer, Step::SyncStaging, tx)?;
-    for dir in [tx.join(ORIG_DIR), tx.join(NEW_DIR), tx.to_path_buf()] {
+    // 거래 디렉터리 항목 자체는 journal 디렉터리를 sync해야 내구화됩니다. 대상을 건드리기 전에 필요합니다.
+    let journal_dir = tx.parent().unwrap_or(root).to_path_buf();
+    for dir in [
+        tx.join(ORIG_DIR),
+        tx.join(NEW_DIR),
+        tx.to_path_buf(),
+        journal_dir,
+    ] {
         sync_parent_dir(&dir).map_err(|e| io_error(&dir, e))?;
     }
 
@@ -819,6 +847,11 @@ fn stage_and_publish(
     for parent in parents {
         sync_parent_dir(parent).map_err(|e| io_error(parent, e))?;
     }
+    // 이 저장이 만든 부모 디렉터리 항목도 marker 전에 내구화합니다.
+    for item in staged.iter().filter(|s| s.created_dirs) {
+        let (dirs, _) = item.components.split_at(item.components.len() - 1);
+        sync_ancestors(root, dirs).map_err(|(path, e)| io_error(&path, e))?;
+    }
 
     let marker = tx.join(MARKER_FILE);
     step(observer, Step::WriteMarker, &marker)?;
@@ -826,6 +859,7 @@ fn stage_and_publish(
         // rename 뒤 디렉터리 sync 실패면 marker가 남습니다. 지워야 되돌림이 marker와 어긋나지 않습니다.
         if marker_present(tx).unwrap_or(true) {
             std::fs::remove_file(&marker).map_err(|e| io_error(&marker, e))?;
+            sync_parent_dir(tx).map_err(|e| io_error(tx, e))?;
         }
         return Err(io_error(&marker, e).into());
     }
@@ -999,8 +1033,15 @@ fn resolve(
                     conflicts.push(entry.path.clone());
                     continue;
                 }
+                let existed = existing_real_dirs(root, parent_components)
+                    .map_err(|e| io_error(&target, e))?
+                    .is_some();
                 ensure_real_dirs(root, parent_components)
                     .map_err(|(path, e)| io_error(&path, e))?;
+                if !existed {
+                    sync_ancestors(root, parent_components)
+                        .map_err(|(path, e)| io_error(&path, e))?;
+                }
                 if replace {
                     std::fs::rename(&source, &target).map_err(|e| io_error(&target, e))?;
                 } else {
