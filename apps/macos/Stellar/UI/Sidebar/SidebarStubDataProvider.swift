@@ -125,10 +125,13 @@ final class SidebarStubDataProvider: SidebarDataProvider {
             nodes[id]?.name = name
             // 필터가 켜져 있으면 이름 변경이 일치 집합을 바꿀 수 있습니다.
             commit(structural: !filterQuery.isEmpty)
-        case .setVisible(let ids, let visible):
+        case .setVisible(let ids, _):
+            // 실제 창과 같이 Bool을 쓰지 않고 코어 토글 규칙(하나라도 꺼져 있으면 모두 켬)을 흉내 냅니다.
+            let visible = !ids.allSatisfy { nodes[$0]?.isVisible ?? false }
             for id in ids { nodes[id]?.isVisible = visible }
             commit(structural: false)
-        case .setLocked(let ids, let locked):
+        case .setLocked(let ids, _):
+            let locked = !ids.allSatisfy { nodes[$0]?.isLocked ?? false }
             for id in ids { nodes[id]?.isLocked = locked }
             commit(structural: false)
         case .duplicate(let ids):

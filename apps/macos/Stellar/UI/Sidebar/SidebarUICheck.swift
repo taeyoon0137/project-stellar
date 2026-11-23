@@ -574,7 +574,8 @@ enum SidebarUICheck {
         let mark = harness.provider.performedCommands.count
         cell.visibilityButton.performClick(nil)
         cell.lockButton.performClick(nil)
-        try require(harness.commands(since: mark) == [.setVisible([dividerID], false), .setLocked([dividerID], true)],
+        // 토글 방향은 코어가 정하므로 command의 Bool은 늘 false입니다(ADR-0028 UX.3.12).
+        try require(harness.commands(since: mark) == [.setVisible([dividerID], false), .setLocked([dividerID], false)],
                     "토글 command 불일치: \(harness.commands(since: mark))")
         try require(harness.provider.snapshot.layers.structureRevision == structure, "토글이 구조 변경으로 처리됨")
         harness.refresh()
@@ -600,7 +601,7 @@ enum SidebarUICheck {
         guard let hiddenAX = harness.axCell(dividerID, in: layers.outline) else { throw Failure(message: "Divider AXCell 없음") }
         try require(hiddenAX.customActionNames.contains(SidebarStrings.show), "숨긴 뒤 custom action이 Show로 바뀌지 않음: \(hiddenAX.customActionNames)")
         try require(hiddenAX.performCustomAction(named: SidebarStrings.lock), "Lock custom action을 실행하지 못함")
-        try require(harness.commands(since: mark2) == [.setVisible([dividerID], false), .setLocked([dividerID], true)],
+        try require(harness.commands(since: mark2) == [.setVisible([dividerID], false), .setLocked([dividerID], false)],
                     "custom action command 불일치: \(harness.commands(since: mark2))")
         try require(layers.outline.selectedRowIndexes == selectionBefore, "custom action이 선택을 바꿈")
         harness.provider.perform(.setVisible([dividerID], true))

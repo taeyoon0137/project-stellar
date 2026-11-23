@@ -103,7 +103,7 @@ impl AppRuntime {
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
             let window = window_mut(ctx, session)?;
-            set_flags(window, request, view, revision, &nodes, flag, None)?;
+            set_flags(window, request, view, revision, &nodes, flag)?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
     }
@@ -365,9 +365,8 @@ pub(super) fn flag_targets(
     Ok(targets)
 }
 
-/// 대상 노드들의 표시 또는 잠금을 한 transaction으로 바꿉니다. 바뀌는 값이 없으면 기록하지 않습니다.
-///
-/// `value`가 없으면 대상이 모두 켜져 있을 때 모두 끄고, 아니면 모두 켭니다(선택 메뉴 명령).
+/// 대상 노드들의 표시 또는 잠금을 한 transaction으로 토글합니다. 대상이 모두 켜져 있으면 모두 끄고, 하나라도
+/// 꺼져 있으면 모두 켭니다(Layers 행 토글·선택 메뉴 공통, UX.3.12). 이미 목표 값인 노드는 command를 만들지 않습니다.
 pub(super) fn set_flags(
     window: &mut ProjectWindowSession,
     request: RequestId,
@@ -375,7 +374,6 @@ pub(super) fn set_flags(
     revision: DocumentRevision,
     nodes: &[StableId],
     flag: LayerFlag,
-    value: Option<bool>,
 ) -> Result<(), Failure> {
     use stellar_commands::{command::Command, id::CommandOrigin, transaction::CommandTransaction};
     let stale = || {
@@ -395,7 +393,7 @@ pub(super) fn set_flags(
             Failure::new(RequestFailure::NodeLocked, "잠긴 레이어는 바꿀 수 없습니다")
         }
     })?;
-    let value = value.unwrap_or_else(|| !targets.iter().all(|(_, on)| *on));
+    let value = !targets.iter().all(|(_, on)| *on);
     let mut tx = CommandTransaction::new(
         super::frame_move::command_id(window.window(), request),
         CommandOrigin::User,
@@ -686,10 +684,10 @@ mod tests {
         model.insert_node(child).unwrap();
         let dir = saved_project_with("layer-flags", &[&model]);
         let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
-        let set = |win: &mut ProjectWindowSession, nodes: &[u64], flag, value| {
+        let set = |win: &mut ProjectWindowSession, nodes: &[u64], flag| {
             let revision = win.revision();
             let nodes: Vec<_> = nodes.iter().map(|n| sid(*n)).collect();
-            set_flags(win, RequestId(7), sid(3), revision, &nodes, flag, value)
+            set_flags(win, RequestId(7), sid(3), revision, &nodes, flag)
         };
         let flags = |win: &ProjectWindowSession, n| {
             let record = win.document().unwrap().model().record(sid(n)).unwrap();
@@ -698,7 +696,7 @@ mod tests {
         let rev = session.revision();
         // 루트·다른 View·없는 노드·중복·오래된 revision은 거부합니다.
         for nodes in [&[10][..], &[20], &[999], &[11, 11], &[]] {
-            assert!(set(&mut session, nodes, LayerFlag::Visible, Some(false)).is_err());
+            assert!(set(&mut session, nodes, LayerFlag::Visible).is_err());
         }
         let next = DocumentRevision(rev.0 + 1);
         assert!(set_flags(
@@ -708,18 +706,15 @@ mod tests {
             next,
             &[sid(11)],
             LayerFlag::Visible,
-            Some(false)
         )
         .is_err());
         // 잠긴 노드의 표시와 잠긴 조상 아래 노드는 바꾸지 않습니다(D8).
-        assert!(set(&mut session, &[30], LayerFlag::Visible, Some(false)).is_err());
-        assert!(set(&mut session, &[31], LayerFlag::Locked, Some(true)).is_err());
-        // 같은 값은 기록하지 않습니다.
-        assert!(set(&mut session, &[11, 12], LayerFlag::Visible, Some(true)).is_ok());
+        assert!(set(&mut session, &[30], LayerFlag::Visible).is_err());
+        assert!(set(&mut session, &[31], LayerFlag::Locked).is_err());
         assert_eq!(session.revision(), rev);
-        // 두 노드 숨김은 history 한 항목입니다.
+        // 둘 다 보이면 둘 다 숨기고, history 한 항목입니다.
         let depth = session.history().history().len();
-        assert!(set(&mut session, &[11, 12], LayerFlag::Visible, Some(false)).is_ok());
+        assert!(set(&mut session, &[11, 12], LayerFlag::Visible).is_ok());
         assert_eq!(session.history().history().len(), depth + 1);
         assert_eq!(
             (flags(&session, 11), flags(&session, 12)),
@@ -730,14 +725,21 @@ mod tests {
             (flags(&session, 11), flags(&session, 12)),
             ((true, false), (true, false))
         );
+        // 하나만 숨겨져 있으면 모두 보이게 하고, 이미 보이는 노드는 command를 만들지 않습니다.
+        assert!(set(&mut session, &[11], LayerFlag::Visible).is_ok());
+        assert!(set(&mut session, &[11, 12], LayerFlag::Visible).is_ok());
+        assert_eq!(
+            (flags(&session, 11), flags(&session, 12)),
+            ((true, false), (true, false))
+        );
         // 잠금 해제는 그 노드의 잠금 명령으로 합니다. 토글은 하나라도 풀려 있으면 모두 잠급니다.
-        assert!(set(&mut session, &[30], LayerFlag::Locked, Some(false)).is_ok());
+        assert!(set(&mut session, &[30], LayerFlag::Locked).is_ok());
         assert_eq!(flags(&session, 30), (true, false));
-        assert!(set(&mut session, &[11, 30], LayerFlag::Locked, None).is_ok());
+        assert!(set(&mut session, &[11, 30], LayerFlag::Locked).is_ok());
         assert!(flags(&session, 11).1 && flags(&session, 30).1);
-        assert!(set(&mut session, &[11, 30], LayerFlag::Locked, None).is_ok());
+        assert!(set(&mut session, &[11, 30], LayerFlag::Locked).is_ok());
         assert!(!flags(&session, 11).1 && !flags(&session, 30).1);
-        assert!(set(&mut session, &[11], LayerFlag::Visible, None).is_ok());
+        assert!(set(&mut session, &[11], LayerFlag::Visible).is_ok());
         assert_eq!(flags(&session, 11), (false, false));
     }
 

@@ -222,7 +222,6 @@ mod tests {
             revision,
             &[sid(11)],
             LayerFlag::Visible,
-            None,
         )
         .is_ok());
         assert_ne!(cache.get(&session) & HIDE_SHOWS, 0);

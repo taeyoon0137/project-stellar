@@ -119,7 +119,6 @@ impl AppRuntime {
                         target.revision,
                         &nodes,
                         flag,
-                        None,
                     )?;
                 }
             }

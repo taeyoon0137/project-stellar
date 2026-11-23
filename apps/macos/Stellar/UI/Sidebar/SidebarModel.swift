@@ -188,9 +188,10 @@ enum SidebarCommand: Equatable {
     case setSelection([SidebarStableID], primary: SidebarStableID?)
     /// 이름 변경(VII.2.5 RenameNode). 값이 같으면 셸이 보내지 않습니다.
     case renameNode(SidebarStableID, name: String)
-    /// 표시 여부(VII.2.5 SetVisibility). 대상이 창 선택 전체이면 실제 provider는 방향을 코어 토글에 맡깁니다.
+    /// 표시 토글(VII.2.5 SetVisibility). 방향은 코어가 정합니다(하나라도 꺼져 있으면 모두 켬, ADR-0028).
+    /// Bool은 쓰지 않는 이전 인터페이스의 잔재이며 UI 재설계 때 지웁니다.
     case setVisible([SidebarStableID], Bool)
-    /// 잠금(VII.2.5 SetLocked). 방향 규칙은 `setVisible`과 같습니다.
+    /// 잠금 토글(VII.2.5 SetLocked). 방향 규칙은 `setVisible`과 같습니다.
     case setLocked([SidebarStableID], Bool)
     /// 복제(VII.2.8 DuplicateSubtree).
     case duplicate([SidebarStableID])
