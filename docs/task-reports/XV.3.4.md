@@ -2,7 +2,7 @@
 
 - WBS: XV.3.4
 - 작업명: cache entry를 ProjectProbe와 storage validator로 검증하고 일반 Git repo 또는 손상 library 거부
-- 상태: 부분 완료 (`[~]`) — 검증 순서·거부 정책·검증 결과 타입은 완료했지만, 실제 `ProjectProbe`(IV.5.1)·
+- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 검증 순서·거부 정책·검증 결과 타입은 완료했지만, 실제 `ProjectProbe`(IV.5.1)·
   generation loader(V.4.4) 연결과 실제 디렉터리 fixture 검증은 project crate 연결 작업이 필요합니다.
 - 선행: IV.5.1(`[x]`), V.4.4(`[x]`)
 
@@ -51,3 +51,25 @@
 - `ProjectProbe`는 root에 `.git`을 요구하지만 materialize된 cache entry(XIV.2.6 방식)는 `.git`이
   없습니다. project 연결 시 cache entry용 probe 모드(root `.git` 요구 생략)가 필요합니다.
 - cache entry materialize(XV.3.3)는 선행 XIV.2.6 미완료로 차단 상태입니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 남은 범위·결함 있음.
+- 근거: 검증 순서·거부 정책·결과 타입은 있지만 실제 `ProjectProbe`(IV.5.1)·generation loader(V.4.4) 연결과 실제 디렉터리 fixture가 없어 `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/dependencies/src/entry_validation.rs`: 검증 결과 타입과 순서. probe·loader는 fake로만 호출됩니다.
+- project·runtime·ops에서 `entry_validation`을 쓰는 곳이 없습니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-dependencies` | 96 passed, 0 failed |
+
+### 남은 조건과 finding
+
+- 결함 finding(dependencies·project 연결, 소유 lane 없음 → backlog): cache entry용 probe 모드(root `.git` 요구 생략)를 project crate에 두고 실제 일반 Git repo·손상 library 디렉터리 fixture로 거부를 확인합니다. XV.4.2·XV.4.4가 이 행을 선행으로 둡니다.
