@@ -28,6 +28,10 @@ stellar-target-profile = { path = "../../crates/target-profile" }
 stellar-bindings = { path = "../../crates/bindings" }
 stellar-layout = { path = "../../crates/layout" }
 stellar-export = { path = "../../crates/export" }
+# 초기 릴리스 종단 시나리오(XVI.11, ADR-0111): 앱 runtime·headless ops·외부 library 의존성 모델.
+stellar-runtime = { path = "../../crates/runtime" }
+stellar-ops = { path = "../../crates/ops" }
+stellar-dependencies = { path = "../../crates/dependencies" }
 
 [lints]
 workspace = true
