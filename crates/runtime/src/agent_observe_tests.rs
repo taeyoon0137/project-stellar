@@ -1,6 +1,6 @@
-//! 사용자 편집 관찰 test (XIX.6.7, ADR-0124 결정 4).
+//! 사용자 편집·외부 변경 관찰 test (XIX.6.7, XIX.7.2, ADR-0124 결정 4·5).
 
-use stellar_agent_edit::agent_history::SessionOrigin;
+use stellar_agent_edit::agent_history::{EndReason, SessionOrigin};
 use stellar_agent_edit::attached::edit::agent_transaction;
 use stellar_agent_edit::lease::{LeaseState, LeaseTargets};
 use stellar_agent_edit::permission::AgentSessionId;
@@ -9,10 +9,13 @@ use stellar_commands::agent_batch::AgentBatchId;
 use stellar_commands::command::Command;
 use stellar_commands::lock::lease::LeaseId;
 use stellar_core_types::ids::StableId;
+use stellar_ops::apply::{apply, ApplyMode, ApplyRequest, CommandInput};
+use stellar_ops::lock::LockPolicy;
+use stellar_ops::snapshot::open_snapshot;
 
 use super::*;
 use crate::window_session::test_fixtures::{identity, rename, saved_project, sid, window, TempDir};
-use crate::window_session::ProjectWindowSession;
+use crate::window_session::{ExternalSync, ProjectWindowSession};
 
 fn ui() -> UserUiAction {
     UserUiAction::from_user_interface()
@@ -27,8 +30,9 @@ fn lease() -> LeaseId {
 }
 
 struct Fixture {
-    _project: TempDir,
+    project: TempDir,
     _agent_locks: TempDir,
+    cli_locks: TempDir,
     session: ProjectWindowSession,
     agent: WindowAgentEdit,
 }
@@ -36,11 +40,13 @@ struct Fixture {
 fn fixture(tag: &str) -> Fixture {
     let project = saved_project(tag);
     let agent_locks = TempDir::new(&format!("{tag}-agent-locks"));
+    let cli_locks = TempDir::new(&format!("{tag}-cli-locks"));
     let session = ProjectWindowSession::load(identity(project.path()), window(1)).unwrap();
     let agent = WindowAgentEdit::with_lock_dir(agent_locks.path().to_path_buf());
     Fixture {
-        _project: project,
+        project,
         _agent_locks: agent_locks,
+        cli_locks,
         session,
         agent,
     }
@@ -81,6 +87,27 @@ fn display(window: &AgentWindow<'_>, batch: AgentBatchId) -> DisplayState {
 fn user_rename(window: &mut AgentWindow<'_>, command: u64, node: u64, name: &str) {
     let tx = rename(window.session().document().unwrap(), command, node, name);
     window.session.apply(&tx, 0).unwrap();
+}
+
+/// `stellar apply`(headless)로 node 이름을 바꿉니다(외부 writer).
+fn cli_rename(f: &Fixture, node: u64, name: &str) {
+    let request = ApplyRequest {
+        base_revision: open_snapshot(f.project.path()).unwrap().revision(),
+        document: sid(1),
+        commands: vec![CommandInput::Rename {
+            node: sid(node),
+            name: name.to_string(),
+        }],
+    };
+    apply(
+        f.project.path(),
+        &request,
+        ApplyMode::Write,
+        &LockPolicy::Required {
+            dir: f.cli_locks.path().to_path_buf(),
+        },
+    )
+    .unwrap();
 }
 
 #[test]
@@ -146,4 +173,81 @@ fn history_preview_is_observed_once_at_the_end() {
     assert_eq!(window.session.agent_watch.len(), 1, "끝에서 한 번");
     drain(&mut window);
     assert_eq!(display(&window, batch), DisplayState::ChangedLater);
+}
+
+#[test]
+fn overlapping_external_change_ends_the_session_and_keeps_agent_work() {
+    let mut f = fixture("agent-observe-external-overlap");
+    let batch = {
+        let mut window = AgentWindow::new(&mut f.session, &mut f.agent);
+        let batch = agent_batch(&mut window);
+        drain(&mut window);
+        assert!(
+            window.session.agent_watch.external,
+            "lease가 있으면 외부 관찰 켜짐"
+        );
+        batch
+    };
+    cli_rename(&f, 11, "외부");
+    let revision = f.session.revision();
+    let sync = f
+        .session
+        .sync_external(stellar_commands::id::CommandId::from_stable_id(
+            StableId::new_v7(70, 0x0e0e, 70),
+        ));
+    // 창과 외부가 같은 node를 바꿔 reconciliation은 두 선택지로 멈춥니다(semantic conflict 경로).
+    assert!(matches!(sync, ExternalSync::Stale { .. }), "{sync:?}");
+    let mut window = AgentWindow::new(&mut f.session, &mut f.agent);
+    let ended = drain(&mut window);
+    assert_eq!(ended.len(), 1);
+    assert_eq!(ended[0].reason, EndReason::LeaseConflict);
+    assert!(window.agent().lease_table().unwrap().is_empty(), "lease 0");
+    assert!(!window.agent().sessions().is_active(session_id()));
+    assert_eq!(window.session().revision(), revision, "자동 rollback 없음");
+    assert_eq!(
+        window
+            .session()
+            .document()
+            .unwrap()
+            .model()
+            .record(sid(11))
+            .unwrap()
+            .display_name,
+        "에이전트",
+        "에이전트 변경 자동 삭제 0"
+    );
+    assert!(window
+        .agent()
+        .provenance()
+        .get(batch)
+        .unwrap()
+        .display()
+        .is_shown());
+    assert!(!window.session.agent_watch.external, "lease가 없으면 꺼짐");
+}
+
+#[test]
+fn non_overlapping_external_change_keeps_the_session() {
+    let mut f = fixture("agent-observe-external-apart");
+    let batch = {
+        let mut window = AgentWindow::new(&mut f.session, &mut f.agent);
+        let batch = agent_batch(&mut window);
+        drain(&mut window);
+        batch
+    };
+    cli_rename(&f, 12, "외부");
+    let sync = f
+        .session
+        .sync_external(stellar_commands::id::CommandId::from_stable_id(
+            StableId::new_v7(71, 0x0e0e, 71),
+        ));
+    assert!(matches!(sync, ExternalSync::Applied { .. }), "{sync:?}");
+    let mut window = AgentWindow::new(&mut f.session, &mut f.agent);
+    assert!(drain(&mut window).is_empty());
+    assert!(
+        window.agent().sessions().is_active(session_id()),
+        "세션 유지"
+    );
+    assert_eq!(window.agent().lease_table().unwrap().len(), 1, "lease 유지");
+    assert_eq!(display(&window, batch), DisplayState::PendingReview);
 }

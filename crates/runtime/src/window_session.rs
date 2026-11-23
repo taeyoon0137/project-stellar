@@ -2202,6 +2202,11 @@ impl ProjectWindowSession {
                 return ExternalSync::Rejected(ExternalRejection::Records(error.to_string()))
             }
         };
+        // clean 창의 문서는 base와 같습니다(ADR-0124 결정 5: lease를 쥔 세션이 있을 때만 관찰값을 만듦).
+        let mut watch = std::mem::take(&mut self.agent_watch);
+        let current = self.model_of();
+        watch.note_external(|| Some((current.to_records().ok()?, incoming.records.clone())));
+        self.agent_watch = watch;
         self.adopt_external(disk, &incoming, command, true)
     }
 
@@ -2353,6 +2358,11 @@ impl ProjectWindowSession {
             ),
             (None, _) => Err("base generation이 없습니다".to_owned()),
         };
+        // 외부 변경 관찰값(ADR-0124 결정 5): 병합 결과와 관계없이 lease 겹침을 판정합니다.
+        if let (Ok(base), Some(model)) = (&base, disk.model.as_ref()) {
+            self.agent_watch
+                .note_external(|| Some((base.records.clone(), model.to_records().ok()?)));
+        }
         let merged = crate::reconcile::merge_window(base, self.model_of(), disk.model.as_ref());
         match merged {
             crate::reconcile::WindowMerge::Merged {
