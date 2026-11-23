@@ -3,7 +3,7 @@
 //! 메뉴 막대·캔버스 문맥 메뉴·레이어 문맥 메뉴는 이 mask 하나로 활성과 제목(Show·Unlock)을 정합니다. 실행 경로와 같은
 //! 규칙 함수(`editable_selected_roots`, `unlocked_selected_roots`, `flag_targets`, `paste_parent`)를 쓰므로 활성인 항목은 코어가 받습니다.
 use super::node_delete::{editable_selected_roots, unlocked_selected_roots, SelectionEditTarget};
-use super::sidebar::{flag_targets, path_locked, view_root, LayerFlag};
+use super::sidebar::{flag_targets, in_view, view_root, LayerFlag};
 use super::*;
 
 /// 선택 subtree를 삭제할 수 있습니다(View root가 아니고, 자신·조상·자손이 잠기지 않음).
@@ -131,7 +131,7 @@ fn context_selection(
     let model = window.document().ok_or_else(stale)?.model();
     let root = view_root(model, view).ok_or_else(stale)?;
     // 활성 View 트리 안의 노드인지 확인합니다.
-    path_locked(model, node, root).ok_or_else(stale)?;
+    in_view(model, node, root).ok_or_else(stale)?;
     if selected.contains(&node) {
         return Ok(None);
     }

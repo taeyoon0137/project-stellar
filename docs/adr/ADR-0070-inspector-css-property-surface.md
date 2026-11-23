@@ -160,6 +160,8 @@ ADR-0024는 디자인 속성의 이름·값 문법을 CSS longhand로 정하고(
 - `stellar_commands::lock::edit_permission`을 속성 탭, 캔버스 편집, Layers 토글·이름·삭제·복제, CLI apply가 공유합니다. 자신이나 조상이 잠기면 수정할 수 없고, 자신의 잠금 토글은 조상이 잠기지 않았을 때 허용합니다. 숨김은 편집을 막지 않습니다.
 - root Frame은 속성과 잠금·표시를 바꿀 수 있지만 삭제·이동·복제할 수 없습니다. 삭제는 잠긴 자손이 있으면 막고, 복제는 원본과 조상의 잠금만 확인합니다. CLI의 복제도 같은 원본 검사를 합니다.
 - 흐름 레이아웃의 자식은 위치 속성 변경과 캔버스 이동을 거부합니다. 활성 View 소속과 modifier·clipping 관련 캔버스 제약은 runtime에서 별도로 확인합니다.
+- 보완(2026-11-23): 잠금 규칙은 `EditIntent::blocked_by` 하나이고, 일반 편집은 특정 key를 대리로 쓰지 않고 `EditIntent::Edit`로 나타냅니다. 속성 탭은 node마다 `NodeAccess`(잠금·root·흐름 부모)를 한 번 계산해 행 판정에 다시 씁니다. CLI apply는 적용 전 레코드에서 `NodeLock::resolve`로 같은 규칙을 계산하며, 모델을 다시 만들지 않고, 이번 transaction이 새로 넣은 노드는 잠금 대상이 아니라 그 부모만 검사합니다. Layers의 View 소속 검사(`in_view`)는 잠금을 보지 않습니다.
+- 측정(2026-11-23, Apple M3 Max, Release `cargo test --release -p stellar-commands --lib measure_snapshot_10k_rectangles -- --ignored`, REF-MAC 판정 아님): Fill·Stroke·Transform이 있는 Rectangle 1만 개 선택 snapshot은 7회 중앙값 7.5ms입니다. 같은 측정에서 판정 통합 전(node별 `NodeLock` 재사용)은 7.1ms, 행×node마다 `edit_permission`을 부르던 2026-11-18 구현은 39.7ms였습니다.
 
 ## 개정(2026-11-18, UX.3.13)
 

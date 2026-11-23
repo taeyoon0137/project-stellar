@@ -125,7 +125,10 @@ pub(super) fn paste_parent(
     if !stellar_document::validate::can_have_children(target.kind()) {
         return None;
     }
-    (!super::sidebar::path_locked(model, parent, root)?).then_some(parent)
+    super::sidebar::in_view(model, parent, root)?;
+    stellar_commands::lock::edit_permission(model, parent, stellar_commands::lock::EditIntent::Edit)
+        .is_ok()
+        .then_some(parent)
 }
 
 #[cfg(test)]

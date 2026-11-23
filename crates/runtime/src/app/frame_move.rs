@@ -25,14 +25,8 @@ pub(super) fn editable_ancestry(
     node: StableId,
     modifier_target: bool,
 ) -> Option<()> {
-    stellar_commands::lock::edit_permission(
-        model,
-        node,
-        stellar_commands::lock::EditIntent::Modify(
-            stellar_commands::change::node_keys::DISPLAY_NAME,
-        ),
-    )
-    .ok()?;
+    stellar_commands::lock::edit_permission(model, node, stellar_commands::lock::EditIntent::Edit)
+        .ok()?;
     let root = model
         .definition()
         .pages

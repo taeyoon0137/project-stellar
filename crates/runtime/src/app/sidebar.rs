@@ -1,6 +1,8 @@
 //! 창의 메모리 문서에서 활성 View의 직계 자식 한 페이지만 읽습니다.
 use super::*;
 use crate::document_thread::JobTicket;
+use stellar_commands::change::node_keys;
+use stellar_commands::lock::{edit_permission, EditIntent, NodeLock};
 use stellar_document::{model::DocumentModel, records::NodePayload};
 
 /// 한 번의 disclosure 또는 다음 페이지 요청에서 내보낼 형제 수.
@@ -177,8 +179,10 @@ fn move_layer(
     let source = model.record(node).ok_or_else(stale)?;
     if node == root
         || source.parent.is_none()
-        || path_locked(model, node, root) != Some(false)
-        || path_locked(model, parent, root) != Some(false)
+        || in_view(model, node, root).is_none()
+        || in_view(model, parent, root).is_none()
+        || edit_permission(model, node, EditIntent::Move).is_err()
+        || edit_permission(model, parent, EditIntent::Edit).is_err()
     {
         return Err(stale());
     }
@@ -262,16 +266,8 @@ fn rename(
         .get(model.runtime_id(node).ok_or_else(stale)?)
         .ok_or_else(stale)?;
     let unchanged = original.display_name == name;
-    if path_locked(model, node, root).ok_or_else(stale)?
-        || stellar_commands::lock::edit_permission(
-            model,
-            node,
-            stellar_commands::lock::EditIntent::Modify(
-                stellar_commands::change::node_keys::DISPLAY_NAME,
-            ),
-        )
-        .is_err()
-    {
+    in_view(model, node, root).ok_or_else(stale)?;
+    if edit_permission(model, node, EditIntent::Modify(node_keys::DISPLAY_NAME)).is_err() {
         return Err(Failure::new(
             RequestFailure::UnknownView,
             "잠긴 레이어나 잠긴 부모 아래의 레이어는 이름을 바꿀 수 없습니다",
@@ -299,18 +295,22 @@ pub(super) enum FlagDenied {
     Locked,
 }
 
-/// `node`부터 View root까지(둘 다 포함) 잠긴 노드가 있는지. `node`가 root 아래에 없으면 `None`입니다.
-pub(super) fn path_locked(model: &DocumentModel, node: StableId, root: StableId) -> Option<bool> {
+/// `node`가 View root 자신이거나 그 아래에 있는지(오래된 표시 판정). 잠금은 보지 않습니다. 잠금은
+/// `stellar_commands::lock`의 판정 하나로 합니다.
+pub(super) fn in_view(model: &DocumentModel, node: StableId, root: StableId) -> Option<()> {
     let columns = model.columns();
-    let mut cursor = columns.get(model.runtime_id(node)?)?;
+    let root = model.runtime_id(root)?;
+    let mut cursor = model.runtime_id(node)?;
+    let mut remaining = columns.len();
     loop {
-        if cursor.locked {
-            return Some(true);
+        if cursor == root {
+            return Some(());
         }
-        if cursor.stable_id == root {
-            return Some(false);
+        if remaining == 0 {
+            return None;
         }
-        cursor = columns.get(cursor.parent?)?;
+        remaining -= 1;
+        cursor = columns.parent(cursor)?;
     }
 }
 
@@ -339,14 +339,12 @@ pub(super) fn flag_targets(
             .parent
             .and_then(|id| model.stable_id(id))
             .ok_or(FlagDenied::Stale)?;
-        path_locked(model, parent, root).ok_or(FlagDenied::Stale)?;
+        in_view(model, parent, root).ok_or(FlagDenied::Stale)?;
         let intent = match flag {
-            LayerFlag::Visible => stellar_commands::lock::EditIntent::Modify(
-                stellar_commands::change::node_keys::VISIBLE,
-            ),
-            LayerFlag::Locked => stellar_commands::lock::EditIntent::ToggleLock,
+            LayerFlag::Visible => EditIntent::Modify(node_keys::VISIBLE),
+            LayerFlag::Locked => EditIntent::ToggleLock,
         };
-        if stellar_commands::lock::edit_permission(model, node, intent).is_err() {
+        if edit_permission(model, node, intent).is_err() {
             return Err(FlagDenied::Locked);
         }
         let on = match flag {
@@ -471,7 +469,7 @@ fn read_page(
         cursor = ancestor(cursor)?;
     }
     // 한 페이지의 행은 부모가 같으므로 조상 잠금을 한 번만 봅니다.
-    let parent_locked = path_locked(model, parent, view.root_frame)?;
+    let parent_locked = NodeLock::of(model, parent)?.any();
     let mut ids = model.children_front_to_back(parent, after, PAGE_SIZE + 1)?;
     let more = ids.len() > PAGE_SIZE;
     ids.truncate(PAGE_SIZE);
@@ -500,6 +498,10 @@ fn read_page(
         .map(|id| {
             let handle = model.runtime_id(id)?;
             let fields = model.columns().get(handle)?;
+            let row_lock = NodeLock {
+                own: fields.locked,
+                ancestor: parent_locked,
+            };
             Some(LayerRow {
                 id,
                 name: fields.display_name,
@@ -510,8 +512,8 @@ fn read_page(
                 },
                 visible: fields.visible,
                 locked: fields.locked,
-                can_hide: !parent_locked && !fields.locked,
-                can_lock: !parent_locked,
+                can_hide: !EditIntent::Modify(node_keys::VISIBLE).blocked_by(row_lock),
+                can_lock: !EditIntent::ToggleLock.blocked_by(row_lock),
                 has_children: model.columns().child_count(handle)? != 0,
                 selection_order: selection_order.get(&id).copied(),
             })

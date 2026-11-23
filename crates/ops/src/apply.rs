@@ -601,22 +601,26 @@ pub(crate) fn rejected_input(
 /// 적용 전 문서에서 잠긴 노드(또는 잠긴 조상 아래 노드)를 바꾼 결과의 첫 노드(D8).
 ///
 /// 그 노드의 레코드·modifier stack 변경, 삭제, 그 아래로의 삽입·이동을 거부합니다. 예외는 조상이 잠기지 않은
-/// 노드의 `locked`만 바뀐 경우(잠금·잠금 해제 명령)입니다. 앱의 레이어 표시·잠금 토글과 같은 규칙입니다.
+/// 노드의 `locked`만 바뀐 경우(잠금·잠금 해제 명령)입니다. 판정은 앱과 같은 `EditIntent::blocked_by`이며, 잠금
+/// 상태는 적용 전 레코드에서 `NodeLock::resolve`로 계산합니다(모델을 다시 만들지 않음). 적용 전 문서에 없던
+/// 노드(이번 transaction이 삽입한 노드)는 잠금 대상이 아니고, 그 부모만 검사합니다.
 fn locked_change(
     before: &stellar_document::records::DocumentRecords,
     after: &stellar_document::records::DocumentRecords,
 ) -> Option<StableId> {
     use std::collections::HashMap;
-    use stellar_commands::lock::{edit_permission, EditIntent};
-    let (model, _) = match stellar_document::model::DocumentModel::from_records(before.clone()) {
-        Ok(result) => result,
-        Err(_) => return before.nodes.first().map(|node| node.id),
-    };
+    use stellar_commands::lock::{EditIntent, NodeLock};
     let base: HashMap<_, _> = before.nodes.iter().map(|n| (n.id, n)).collect();
+    let blocked = |id: StableId, intent: EditIntent| {
+        NodeLock::resolve(id, base.len(), |id| {
+            base.get(&id).map(|node| (node.locked, node.parent))
+        })
+        .is_some_and(|lock| intent.blocked_by(lock))
+    };
     let next: HashMap<_, _> = after.nodes.iter().map(|n| (n.id, n)).collect();
     for old in &before.nodes {
         let Some(new) = next.get(&old.id) else {
-            if edit_permission(&model, old.id, EditIntent::Delete).is_err() {
+            if blocked(old.id, EditIntent::Delete) {
                 return Some(old.id);
             }
             continue;
@@ -626,41 +630,20 @@ fn locked_change(
         }
         let mut relocked = (*old).clone();
         relocked.locked = new.locked;
-        let lock_only = relocked == **new;
-        let intent = if lock_only {
+        let intent = if relocked == **new {
             EditIntent::ToggleLock
         } else {
-            EditIntent::Modify(stellar_commands::change::node_keys::DISPLAY_NAME)
+            EditIntent::Edit
         };
-        if edit_permission(&model, old.id, intent).is_err()
+        if blocked(old.id, intent)
             || (new.parent != old.parent
-                && new.parent.is_some_and(|p| {
-                    base.contains_key(&p) && {
-                        edit_permission(
-                            &model,
-                            p,
-                            EditIntent::Modify(stellar_commands::change::node_keys::DISPLAY_NAME),
-                        )
-                        .is_err()
-                    }
-                }))
+                && new.parent.is_some_and(|p| blocked(p, EditIntent::Edit)))
         {
             return Some(old.id);
         }
     }
     for new in &after.nodes {
-        if !base.contains_key(&new.id)
-            && new.parent.is_some_and(|p| {
-                base.contains_key(&p) && {
-                    edit_permission(
-                        &model,
-                        p,
-                        EditIntent::Modify(stellar_commands::change::node_keys::DISPLAY_NAME),
-                    )
-                    .is_err()
-                }
-            })
-        {
+        if !base.contains_key(&new.id) && new.parent.is_some_and(|p| blocked(p, EditIntent::Edit)) {
             return Some(new.id);
         }
     }
@@ -671,13 +654,7 @@ fn locked_change(
         .chain(new_stacks.keys())
         .copied()
         .find(|node| {
-            old_stacks.get(node) != new_stacks.get(node)
-                && edit_permission(
-                    &model,
-                    *node,
-                    EditIntent::Modify(stellar_commands::change::node_keys::DISPLAY_NAME),
-                )
-                .is_err()
+            old_stacks.get(node) != new_stacks.get(node) && blocked(*node, EditIntent::Edit)
         })
 }
 
@@ -776,15 +753,12 @@ pub fn apply(
     before.sort_canonical();
     let commands = resolve_commands(planned, &snapshot, &model)?;
 
+    // 복제는 원본을 바꾸지 않아 결과 비교로 잡히지 않으므로, 원본과 조상의 잠금을 적용 전에 봅니다(D8).
     for (index, command) in commands.iter().enumerate() {
         if let Command::DuplicateSubtree(duplicate) = command {
-            if stellar_commands::lock::edit_permission(
-                &model,
-                duplicate.source,
-                stellar_commands::lock::EditIntent::Duplicate,
-            )
-            .is_err()
-            {
+            let locked = stellar_commands::lock::NodeLock::of(&model, duplicate.source)
+                .is_some_and(|lock| stellar_commands::lock::EditIntent::Duplicate.blocked_by(lock));
+            if locked {
                 return Err(ApplyError::Rejected {
                     index,
                     reason: format!("잠긴 노드 {}는 복제할 수 없습니다", duplicate.source),

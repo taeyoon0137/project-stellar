@@ -8,7 +8,8 @@
 //!   longhand 4개를 펼친 shorthand이며 편집은 longhand 변경 집합 하나입니다(속성 모델 11장).
 //! - 다중 선택은 모든 node에 있는 속성만 내고, 값이 다르면 `MIXED`입니다. 편집은 선택 전체를 한 transaction으로
 //!   바꿉니다(Undo 한 번).
-//! - 잠긴 node(자신 또는 조상)는 `locked` 행 외에는 읽기 전용이고 편집을 거부합니다(D8, [`edit_permission`]).
+//! - 잠긴 node(자신 또는 조상)는 `locked` 행 외에는 읽기 전용이고 편집을 거부합니다(D8, [`NodeAccess`]).
+//!   잠금·흐름 부모는 node마다 한 번 계산해 행 판정에 다시 씁니다.
 //! - 이름·표시·잠금 편집은 Layers와 같은 command(`rename_node`·`set_visibility`·`set_locked`)입니다.
 //! - `fill`·`stroke`는 늘 있는 행입니다. 칠하기가 없으면 `none`이고, 값을 넣으면 modifier를 렌더 순서
 //!   (Transform → Fill → Stroke)에 맞춰 넣고, `none`이면 뺍니다. 선이 없는 node에 `stroke` 색을 넣으면
@@ -33,7 +34,7 @@ use stellar_document::shape::ShapeGeometry;
 use crate::change::node_keys;
 use crate::command::Command;
 use crate::css_value::{format, parse, CssGrammar, CssValue, CssValueError};
-use crate::lock::{edit_permission, EditIntent, NodeLock};
+use crate::lock::{Blocked, EditIntent, NodeAccess};
 use crate::modifier_ops::{InsertModifier, RemoveModifier, SetModifierProperty};
 use crate::property::{read_property, PropertyValue, SetProperty};
 
@@ -478,14 +479,27 @@ fn paint(model: &DocumentModel, id: StableId) -> Paint {
 struct NodeView {
     record: NodeRecord,
     class: NodeClass,
+    access: NodeAccess,
     paint: Paint,
+}
+
+impl NodeView {
+    /// 이 속성 편집의 D8·흐름 부모 판정. 조상 정보는 [`node_view`]에서 계산한 값을 다시 씁니다.
+    fn permission(&self, property: InspectorProperty) -> Result<(), Blocked> {
+        let intent = if property == P::Locked {
+            EditIntent::ToggleLock
+        } else {
+            EditIntent::Modify(property.key(self.class))
+        };
+        self.access.permits(intent)
+    }
 }
 
 fn node_view(model: &DocumentModel, id: StableId) -> Option<NodeView> {
     let record = model.record(id)?;
-    NodeLock::of(model, id)?;
     Some(NodeView {
         class: NodeClass::of(&record.payload),
+        access: NodeAccess::of(model, id)?,
         paint: paint(model, id),
         record,
     })
@@ -630,12 +644,7 @@ pub fn inspector_rows(model: &DocumentModel, selection: &[StableId]) -> Inspecto
                 Some(previous) if !mixed && *previous != current => mixed = true,
                 Some(_) => {}
             }
-            let intent = if property == P::Locked {
-                EditIntent::ToggleLock
-            } else {
-                EditIntent::Modify(property.key(node.class))
-            };
-            read_only |= edit_permission(model, node.record.id, intent).is_err();
+            read_only |= node.permission(property).is_err();
         }
         if !readable {
             continue;
@@ -994,13 +1003,14 @@ pub fn edit_commands(
                 property.name()
             )));
         }
-        let intent = if property == P::Locked {
-            EditIntent::ToggleLock
-        } else {
-            EditIntent::Modify(property.key(node.class))
-        };
-        if edit_permission(model, *id, intent).is_err() {
-            return Err(reject("잠긴 레이어는 바꿀 수 없습니다"));
+        match node.permission(property) {
+            Ok(()) => {}
+            Err(Blocked::FlowParent) => {
+                return Err(reject(
+                    "흐름 레이아웃 안의 레이어는 위치를 바꿀 수 없습니다",
+                ))
+            }
+            Err(_) => return Err(reject("잠긴 레이어는 바꿀 수 없습니다")),
         }
         let value = match input {
             InspectorInput::Set(value) => value.clone(),
@@ -1019,6 +1029,7 @@ pub fn edit_commands(
 mod tests {
     use super::*;
     use crate::command::test_fixtures::sid;
+    use crate::lock::NodeLock;
     use crate::property::tests::seven_kind_model;
     use crate::state::DocumentState;
     use crate::transaction::CommandTransaction;
@@ -1054,6 +1065,59 @@ mod tests {
             transaction = transaction.with_command(state.revision(), command);
         }
         state.execute_transaction(&transaction).unwrap().inverse
+    }
+
+    #[test]
+    #[ignore = "release에서 Fill·Stroke·Transform이 있는 Rectangle 1만 개 선택의 snapshot 시간 측정"]
+    fn measure_snapshot_10k_rectangles() {
+        use stellar_core_types::order_key::OrderKey;
+        use stellar_core_types::value::Size2;
+        use stellar_document::shape::RectangleParams;
+        let mut model = DocumentModel::new(crate::command::test_fixtures::definition());
+        model
+            .insert_node(crate::command::test_fixtures::frame(10, None, 0x10))
+            .unwrap();
+        model
+            .insert_node(crate::command::test_fixtures::frame(11, Some(10), 0x10))
+            .unwrap();
+        let mut ids = Vec::with_capacity(10_000);
+        let mut key: Option<OrderKey> = None;
+        for index in 0..10_000u64 {
+            let mut record = crate::command::test_fixtures::frame(1_000 + index, Some(11), 0x10);
+            let next = OrderKey::between(key.as_ref(), None);
+            record.order_key = next.clone();
+            key = Some(next);
+            record.payload = NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
+                size: Size2::new(10., 10.).unwrap(),
+                corner_radius: Default::default(),
+            }));
+            ids.push(record.id);
+            model.insert_node(record).unwrap();
+        }
+        let mut state = DocumentState::new(model);
+        let mut fresh = new_ids(77);
+        for (property, text) in [
+            (P::Fill, "#ff0000"),
+            (P::Stroke, "#0000ff"),
+            (P::Left, "5px"),
+        ] {
+            let input = InspectorInput::Set(parse_input(property, text).unwrap());
+            let commands =
+                edit_commands(state.model(), &ids, property, &input, &mut fresh).unwrap();
+            apply(&mut state, commands);
+        }
+        let mut times = Vec::new();
+        for _ in 0..7 {
+            let started = std::time::Instant::now();
+            let snapshot = inspector_rows(state.model(), &ids);
+            times.push(started.elapsed());
+            assert_eq!(snapshot.count, 10_000);
+        }
+        times.sort();
+        eprintln!(
+            "inspector snapshot 1만 개: 중앙값 {:?} (최소 {:?}, 최대 {:?})",
+            times[3], times[0], times[6]
+        );
     }
 
     #[test]
