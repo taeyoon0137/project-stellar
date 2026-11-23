@@ -196,15 +196,15 @@ DEV-MAC release, 다른 lane이 동시에 돌던 부하 상태입니다. 자세�
 
 - 결정: [ADR-0131](../adr/ADR-0131-legacy-chunk-projects-to-text-source.md) 결정 3·4.
 - 변경 파일: `crates/project/src/{cache,cache_convert,cache_tests}.rs`, `crates/storage/src/location.rs`(보호 경로, `transfer_legacy_layout`·`LegacyPointer`·`LegacyTransfer`), `crates/ops/src/git_cache.rs`(`migrate_with`), `tools/stellar-cli/src/cache.rs`(신규, `cli.rs`에서 옮김), `tools/stellar-cli/tests/fixtures/help.txt`.
-- 변환: 작업 트리에 원본 없이 옛 배치만 있으면 열기 관찰(앱·CLI·MCP)과 `stellar cache migrate --convert`가 같은 함수 `cache::convert_legacy`로, 옛 파일의 읽기 전용 비공개 사본에서 generation 전체를 원본 의미로 옮기고 다시 읽은 의미가 같을 때만 저장 journal로 씁니다. 옛 배치는 cache에 복사만 하고 작업 트리에 남깁니다(변환 표시). 바꿀 수 없으면(모르는 chunk·제품 schema가 아님·의미 차이) 아무것도 쓰지 않고 거부합니다. `stellar cache status`와 `--convert` 없는 `migrate`는 지금처럼 거부합니다.
+- 변환: 작업 트리에 원본 없이 옛 배치만 있으면 열기 관찰(앱·CLI·MCP)과 `stellar cache migrate --convert`가 같은 함수 `cache::convert_legacy`로, 옛 파일의 읽기 전용 비공개 사본에서 generation 전체를 원본 의미로 옮기고 다시 읽은 의미가 같을 때만 저장 journal로 씁니다. 옛 배치는 cache에 복사만 하고 작업 트리에 남깁니다(변환 표시). 바꿀 수 없으면(모르는 chunk·제품 schema가 아님·의미 차이) 아무것도 쓰지 않고 거부합니다. `stellar cache status`·`rebuild`와 `--convert` 없는 `migrate`는 지금처럼 거부합니다. 변환 표시는 원본보다 먼저 써서, 원본만 있고 표시가 없는 순간에 동시 관찰이나 중단 뒤 열기가 옛 배치를 옮기지 않게 합니다(통합 전 검토에서 고침).
 - Git 전환: semantic Git stage·unstage·commit과 `stellar cache migrate`의 index 정리(`untrack_legacy`)가 변환 표시를 보면 새 원본을 `git add`하고 옛 경로를 index에서 뺀 뒤 옛 배치를 cache로 옮깁니다. 다음 commit 하나가 둘을 함께 담습니다. 그 전의 `git commit -a`는 옛 배치를 지우지 않습니다.
 - Forward 보호: 원본이 있는 작업 트리에서 옛 배치를 옮길 때 옛 pointer는 cache pointer를 바꾸지 않고 버립니다. Git이 `design/current`를 되살려도 원본 이후 cache에만 쓴 편집이 current에 남습니다. cache pointer 상태와 무관한 규칙이라 저장 잠금 없이 도는 관찰에서도 writer와 경쟁하지 않습니다(저장 잠금은 ops crate라 project의 관찰이 잡지 못함, ADR-0131 결정 4).
 
 | 명령 | 결과 |
 |---|---|
-| `cargo test -p stellar-project --lib cache_tests` | 5 passed: 변환·재열기·cache 다시 만들기·옛 pointer 변경 거부, 변환 불가 거부(작업 트리 불변), Forward 편집 보존, 추가 root 문서 보존, 실제 Git으로 `commit -a` 안전 → index 정리 → 원본만 담은 commit → clone 열기 같은 의미 |
+| `cargo test -p stellar-project --lib cache_tests` | 6 passed: 표시만 있고 원본이 없는 중간 상태가 다시 변환되고 옛 배치를 남김, 변환·재열기·cache 다시 만들기·옛 pointer 변경 거부, 변환 불가 거부(작업 트리 불변), Forward 편집 보존, 추가 root 문서 보존, 실제 Git으로 `commit -a` 안전 → index 정리 → 원본만 담은 commit → clone 열기 같은 의미 |
 | `cargo test -p stellar-storage --lib location` | 7 passed: Drop(옛 pointer가 cache pointer를 바꾸지 않음)·Copy(옛 파일 유지) |
-| `cargo test -p stellar-ops --lib git_cache` | 2 passed: `status`·`migrate` 거부, `migrate --convert` 변환 |
+| `cargo test -p stellar-ops --lib git_cache` | 2 passed: `status`·`rebuild`·`migrate` 거부, `migrate --convert` 변환 |
 | `cargo test -p stellar-cli --lib cache` | `--convert`는 `migrate`에만 |
 | `cargo test -p stellar-integration-tests --test git_cache_out` | 4 passed(옛 pointer를 cache pointer로 쓰지 않는 새 규칙으로 기대값 한 줄을 고침) |
 
