@@ -12,7 +12,7 @@
 //! | 캡처([`AutosaveSchedule::begin_save`]) | 그 revision까지는 진행 중인 저장이 맡습니다. 그 뒤 편집은 새 대기로 셉니다 |
 //! | 저장 성공 | 진행 중 표시와 실패 표시를 지웁니다. 저장 중에 들어온 편집은 대기로 남습니다 |
 //! | 저장 실패 | 실패로 표시하고 실패 시각 + `max_delay`에 다시 시도합니다. 그 사이 완료 편집이 오면 그 편집의 debounce 뒤입니다 |
-//! | stale(다른 창·프로세스가 먼저 저장) | clean이 될 때까지 멈춥니다(기술 아키텍처 22.2 "자동 저장을 일시 중단") |
+//! | stale(다른 창·프로세스가 먼저 저장) | clean이 될 때까지 멈춥니다(기술 아키텍처 22.2 "자동 저장을 일시 중단"). 알림은 stale 구간마다 한 번만 요청합니다([`AutosaveSchedule::take_stale_alert`], XII.7.7) |
 //! | clean 관찰(Save Now 성공, 다시 불러오기) | 대기·실패·stale을 모두 비웁니다. 이미 접수한 자동 저장은 쓰지 않습니다(Save Now와 합쳐짐) |
 //!
 //! flush(앱 비활성화)는 debounce를 기다리지 않지만 제스처 중이거나, 저장이 진행 중이거나, stale이면 쓰지 않습니다
@@ -81,6 +81,8 @@ pub struct AutosaveSchedule {
     saving: Option<DocumentRevision>,
     failed: bool,
     stale: bool,
+    /// 이번 stale 구간의 알림을 이미 요청했는지(XII.7.7). clean이 되면 지웁니다.
+    stale_alerted: bool,
 }
 
 impl AutosaveSchedule {
@@ -92,6 +94,7 @@ impl AutosaveSchedule {
             saving: None,
             failed: false,
             stale: false,
+            stale_alerted: false,
         }
     }
 
@@ -121,6 +124,7 @@ impl AutosaveSchedule {
             self.pending = None;
             self.failed = false;
             self.stale = false;
+            self.stale_alerted = false;
             return;
         }
         match &mut self.pending {
@@ -195,6 +199,23 @@ impl AutosaveSchedule {
         self.retry_from(now);
     }
 
+    /// 저장 밖에서(외부 변경 감시 등) stale을 발견했습니다. 진행 중인 저장은 그대로 두고 clean이 될 때까지
+    /// 새 저장을 멈춥니다.
+    pub fn mark_stale(&mut self) {
+        self.stale = true;
+    }
+
+    /// stale 알림을 요청할 차례이면 `true`를 한 번만 돌려줍니다(XII.7.7). 같은 stale 구간에서 다시 stale을
+    /// 발견해도 다시 요청하지 않으며, clean을 관찰한 뒤의 새 stale에서만 다시 요청합니다.
+    pub fn take_stale_alert(&mut self) -> bool {
+        if self.stale && !self.stale_alerted {
+            self.stale_alerted = true;
+            true
+        } else {
+            false
+        }
+    }
+
     fn retry_from(&mut self, now: Duration) {
         if let Some(revision) = self.saving.take() {
             if self.pending.is_none() {
@@ -229,6 +250,36 @@ mod tests {
 
     fn rev(n: u64) -> DocumentRevision {
         DocumentRevision(n)
+    }
+
+    #[test]
+    fn stale_alert_is_requested_once_per_stale_period_and_nothing_is_saved_before_a_choice() {
+        // XII.7.7: 반복 알림 없음, 선택 전 write 없음.
+        let mut s = AutosaveSchedule::new(policy());
+        assert!(!s.take_stale_alert(), "stale 전에는 알림 없음");
+        s.observe(ms(0), rev(1), true);
+        s.begin_save(rev(1));
+        s.stale(ms(100));
+        assert!(s.take_stale_alert());
+        for t in [200u64, 1_500, 30_000] {
+            // 편집이 이어지고 시간이 지나도 저장하지 않고 다시 알리지 않습니다.
+            s.observe(ms(t), rev(t), true);
+            assert_eq!(s.decide(ms(t), false), AutosaveDecision::Stale);
+            assert!(!s.should_flush(false));
+            assert!(!s.take_stale_alert());
+        }
+        // 같은 구간에서 stale을 다시 발견해도(감시 경로) 알림은 한 번입니다.
+        s.mark_stale();
+        assert!(!s.take_stale_alert());
+        assert_eq!(s.status(), AutosaveStatus::Stale);
+        // 선택(다시 불러오기·이 창 버전 저장)으로 clean이 되면 풀리고, 다음 stale은 다시 알립니다.
+        s.observe(ms(40_000), rev(9), false);
+        assert_eq!(s.status(), AutosaveStatus::Idle);
+        assert!(!s.take_stale_alert());
+        s.observe(ms(41_000), rev(10), true);
+        s.mark_stale();
+        assert!(s.take_stale_alert());
+        assert!(!s.take_stale_alert());
     }
 
     #[test]
