@@ -71,6 +71,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "copy <경로> <문서 id> <node id> | paste <경로> <문서 id> <node id,…> <입력 파일|-> [--dry-run]: node 속성을 CSS longhand 선언 블록으로 복사하거나, 선언 블록을 한 transaction으로 붙여넣습니다(받지 못한 선언은 이유와 함께 건너뜀)",
     ),
     (
+        "style-defaults",
+        "list <경로> | show <경로> [<세트>] | set <경로> <세트> | resolve <경로> <문서 id> <node id>: 기본값 세트 목록·값 표·선택(stellar.yaml 한 줄)과 node layout longhand 값의 출처(explicit·default(<세트>))",
+    ),
+    (
         "apply",
         "<경로> <입력 파일|-> [--dry-run]: CommandTransaction JSON(base revision 포함)을 검증해 세대 전환 저장으로 기록합니다(--dry-run: semantic diff만)",
     ),
@@ -183,6 +187,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("export-web", crate::web_frame::run(rest))
     } else if command == "css" {
         ("css", crate::css::run(rest))
+    } else if command == "style-defaults" {
+        ("style-defaults", crate::style_defaults::run(rest))
     } else if command == "apply" {
         ("apply", crate::apply::run(rest))
     } else if command == "validate" {
