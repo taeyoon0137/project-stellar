@@ -252,6 +252,31 @@ fn cache_setup_matches_observed_hits_and_misses() {
 }
 
 #[test]
+fn inputs_a_scenario_does_not_define_are_rejected() {
+    // 해석하지 않는 key나 시나리오가 정의하지 않은 commit 단계는 아무 일도 하지 않는 sample이 되므로 거부합니다.
+    let fixture = load_fixture(&SMALL).unwrap();
+    let mut undo = replay(ReplayScenario::Undo, &fixture);
+    let last = undo.events.last().unwrap().at_nanos;
+    undo.events.push(super::file::ReplayEvent {
+        at_nanos: last,
+        input: super::file::ReplayInput::Key {
+            key: "a".to_owned(),
+            modifiers: super::file::Modifiers::NONE,
+        },
+    });
+    let err = run_replay(&undo, &fixture).unwrap_err();
+    assert!(err.contains("해석하지 않는 key"), "{err}");
+    let mut pan = replay(ReplayScenario::Pan, &fixture);
+    let last = pan.events.last().unwrap().at_nanos;
+    pan.events.push(super::file::ReplayEvent {
+        at_nanos: last,
+        input: super::file::ReplayInput::Commit { step: 0 },
+    });
+    let err = run_replay(&pan, &fixture).unwrap_err();
+    assert!(err.contains("commit 단계를 정의하지 않습니다"), "{err}");
+}
+
+#[test]
 fn drag_commits_once_and_previews_keep_the_document_revision() {
     // 검증 기준(XII.3.7): drag 중 document revision 증가 없음, pointer up에서만 확정.
     let fixture = load_fixture(&SMALL).unwrap();

@@ -413,6 +413,7 @@ fn variant_sets(model: &DocumentModel, root: StableId) -> [VariantOverrideSet; 2
 
 /// 재생 상태.
 struct Pipeline {
+    scenario: ReplayScenario,
     state: DocumentState,
     history: History,
     view: WindowViewState,
@@ -507,6 +508,7 @@ impl Pipeline {
         };
         let window = WindowSessionId::from_stable_id(StableId::new_v7(1, 0, 1));
         let mut pipeline = Pipeline {
+            scenario,
             state,
             history: History::new(),
             view: WindowViewState::new(window),
@@ -852,13 +854,28 @@ impl Pipeline {
                 self.camera = self.camera.then(&pan).map_err(|_| "camera")?;
             }
             ReplayInput::Key { ref key, modifiers } => {
+                // 해석하지 않는 key는 아무 일도 하지 않는 sample이 되어 통계를 흐리므로 거부합니다.
                 if key == "z" && modifiers == UNDO {
                     history_step = Some(true);
                 } else if key == "z" && modifiers == REDO {
                     history_step = Some(false);
+                } else {
+                    return Err(format!(
+                        "core replay가 해석하지 않는 key입니다: {key} {}",
+                        modifiers.to_text()
+                    ));
                 }
             }
-            ReplayInput::Commit { step } => variant_step = Some(step),
+            ReplayInput::Commit { step } => {
+                // 확정 단계의 뜻은 시나리오가 정합니다. 지금은 Variant Change만 정의합니다.
+                if self.scenario != ReplayScenario::VariantChange {
+                    return Err(format!(
+                        "{} 시나리오는 commit 단계를 정의하지 않습니다",
+                        self.scenario.name()
+                    ));
+                }
+                variant_step = Some(step)
+            }
             ReplayInput::Text { .. } => {
                 return Err(
                     "text 입력은 core replay가 아직 실행할 수 없습니다(Text scene 입력 미연결)"

@@ -16,7 +16,7 @@
 //!   (`<scenario>.<cache>.replay`)을 `--dir`에 씁니다. 엔진 경로가 이어지지 않은 시나리오는 이유를 표준 오류에
 //!   적고 건너뜁니다.
 //! - `run`은 파일마다 fixture를 다시 만들고 content hash를 확인한 뒤 core replay를 실행합니다. 결과 JSON
-//!   (`stellar.performance-result.v1`)을 표준 출력이나 `--out`에 씁니다. `--gate`면 release gate 위반 때 종료
+//!   (`stellar.performance-result.v2`)을 표준 출력이나 `--out`에 씁니다. `--gate`면 release gate 위반 때 종료
 //!   코드 65입니다. release gate는 §38.1 시나리오 13개 각각의 warm·cold 결과가 모두 있어야 통과합니다. 실행에
 //!   없는 조합은 sample 0개 결과로 넣어 실패합니다(빼지 않음).
 //! - 환경 값은 인자로 주거나, 없으면 `git rev-parse HEAD`·`sysctl`·`sw_vers`에서 읽습니다. 읽지 못하면 `unknown`입니다.
