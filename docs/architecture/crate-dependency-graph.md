@@ -51,7 +51,8 @@
 | `stellar-agent-protocol` | core-types |
 | `stellar-terminal` | core-types |
 | `stellar-codegen` | core-types, target-profile, accessibility, layout |
-| `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile, git-porcelain |
+| `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile, git-porcelain, integrity |
+| `stellar-integrity` | core-types, document, commands, bindings, expressions, text, accessibility, dependencies, target-profile |
 | `stellar-cli` | ops, diagnostics |
 | `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, text, ops, git-porcelain |
 | `stellar-ffi` | core-types, runtime |
@@ -124,6 +125,16 @@ graph TD
   ops --> accessibility
   ops --> target_profile
   ops --> git_porcelain
+  ops --> integrity
+  integrity --> core_types
+  integrity --> document
+  integrity --> commands
+  integrity --> bindings
+  integrity --> expressions
+  integrity --> text
+  integrity --> accessibility
+  integrity --> dependencies
+  integrity --> target_profile
   stellar_cli --> ops
   stellar_cli --> diagnostics
   runtime --> core_types

@@ -1,0 +1,454 @@
+//! 생산자 전체 fixture(XXV.2.1), 증분 재검사(XXV.2.3), remediation 실행(XXV.3.3) test.
+
+use std::collections::BTreeMap;
+
+use stellar_accessibility::diagnostics::diagnose;
+use stellar_accessibility::node::{AccessibilityNode, AccessibilityRole};
+use stellar_accessibility::tree::AccessibilityTree;
+use stellar_bindings::binding::{BindingId, BindingSet, ScopeOwner, ValueBinding};
+use stellar_bindings::orphan::{BindingStore, BindingWorld};
+use stellar_core_types::font::{FontFaceRef, FontFileHash, FontSource};
+use stellar_core_types::ids::StableId;
+use stellar_core_types::order_key::OrderKey;
+use stellar_core_types::property::{PropertyKey, PropertyPath};
+use stellar_core_types::reference::{AssetRef, NodeRef, TokenRef};
+use stellar_core_types::typed_value::TypedValue;
+use stellar_core_types::value::{Length, Size2};
+use stellar_dependencies::declaration::{CommitId, LibraryId};
+use stellar_dependencies::graph::DependencyNodeKey;
+use stellar_dependencies::library_load::{LibraryUnavailableDiagnostic, UnavailableReason};
+use stellar_document::frame::{keys as frame_keys, Clipping, CornerRadius, FramePayload};
+use stellar_document::image::ImagePayload;
+use stellar_document::model::DocumentModel;
+use stellar_document::modifier::{
+    ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack,
+};
+use stellar_document::records::{DocumentRecords, NodePayload, NodeRecord};
+use stellar_document::shape::{RectangleParams, ShapeGeometry};
+use stellar_document::test_support::random_document::random_valid_document;
+use stellar_expressions::ast::{ExprNode, ExprNodeId, ExpressionAst, ReferenceTarget};
+use stellar_expressions::ops::BinaryOp;
+use stellar_expressions::types::{ExpressionType, TypeSpec};
+use stellar_target_profile::capability::{
+    CapabilityPropertyId, CapabilityStatus, CapabilitySubject, ElementKind,
+};
+use stellar_target_profile::profile::TargetProfileId;
+use stellar_target_profile::registry::ProfileRegistryVersion;
+use stellar_target_profile::validate::{
+    CapabilityDiagnosticCode, CapabilityFinding, MultiProfileReport, ProfileOutcome, ProfileReport,
+};
+use stellar_text::fallback::FontFallbackChain;
+use stellar_text::missing_font::{collect_missing_fonts, TextFontUsage};
+use stellar_text::registry::InMemoryFontRegistry;
+
+use crate::diagnostic::{Diagnostic, DiagnosticKind, Severity};
+use crate::incremental::{origins, CheckContext, Contribution};
+use crate::index::{DiagnosticFilter, DiagnosticIndex};
+use crate::remediation::RemediationActionId;
+use crate::sources;
+
+fn sid(n: u64) -> StableId {
+    StableId::new_v7(1_900_000_000_000 + n, 0, n)
+}
+
+const CLIP_FRAME: u64 = 1;
+const MASKED: u64 = 2;
+const MASK_MODIFIER: u64 = 3;
+const IMAGE: u64 = 4;
+const PLAIN: u64 = 5;
+const UNRELATED: u64 = 6;
+const MISSING_PATH: u64 = 100;
+const MISSING_MASK_SOURCE: u64 = 101;
+const MISSING_ASSET: u64 = 102;
+
+fn asset_exists(id: StableId) -> bool {
+    id != sid(MISSING_ASSET)
+}
+
+/// 무작위 유효 문서에 깨진 참조 3개(clip path, mask source, Image asset)와 무관한 Rectangle 하나를 더합니다.
+fn fixture() -> DocumentModel {
+    let mut records = random_valid_document(11).to_records().expect("records");
+    let root = records
+        .nodes
+        .iter()
+        .find(|n| n.parent.is_none() && matches!(n.payload, NodePayload::Frame(_)))
+        .map(|n| n.id)
+        .expect("root frame");
+    let mut last = records
+        .nodes
+        .iter()
+        .filter(|n| n.parent == Some(root))
+        .map(|n| n.order_key.clone())
+        .max();
+    let mut add = |id: u64, payload: NodePayload, records: &mut DocumentRecords| {
+        let order_key = OrderKey::between(last.as_ref(), None);
+        last = Some(order_key.clone());
+        records.nodes.push(NodeRecord {
+            id: sid(id),
+            parent: Some(root),
+            order_key,
+            visible: true,
+            locked: false,
+            display_name: format!("n{id}"),
+            payload,
+        });
+    };
+    let rect = || {
+        NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
+            size: Size2::new(10.0, 10.0).unwrap(),
+            corner_radius: CornerRadius::ZERO,
+        }))
+    };
+    add(
+        CLIP_FRAME,
+        NodePayload::Frame(FramePayload {
+            clipping: Clipping::Path(NodeRef::new(sid(MISSING_PATH))),
+            ..FramePayload::default()
+        }),
+        &mut records,
+    );
+    add(MASKED, rect(), &mut records);
+    add(
+        IMAGE,
+        NodePayload::Image(ImagePayload::new(
+            AssetRef::new(sid(MISSING_ASSET)),
+            Size2::new(4.0, 4.0).unwrap(),
+        )),
+        &mut records,
+    );
+    add(PLAIN, rect(), &mut records);
+    add(UNRELATED, rect(), &mut records);
+    let mut stack = ModifierStack::new(sid(MASKED));
+    stack
+        .insert(ModifierEntry {
+            id: ModifierId::new(sid(MASK_MODIFIER)),
+            order: OrderKey::between(None, None),
+            kind: ModifierKind::Mask,
+            enabled: true,
+            payload: ModifierPayload::Mask {
+                source: NodeRef::new(sid(MISSING_MASK_SOURCE)),
+            },
+        })
+        .expect("mask");
+    records.modifier_stacks.push(stack);
+    let (model, _) = DocumentModel::from_records(records).expect("유효 문서");
+    model
+}
+
+fn records_of(model: &DocumentModel) -> DocumentRecords {
+    let mut records = model.to_records().expect("records");
+    records.sort_canonical();
+    records
+}
+
+const DOC: u64 = 900;
+
+fn context() -> CheckContext<'static> {
+    CheckContext {
+        asset_exists: Some(&asset_exists),
+    }
+}
+
+/// 내장 checker 결과를 scope 단위로 index에 넣습니다.
+fn index_built_ins(index: &mut DiagnosticIndex, model: &DocumentModel) {
+    let records = records_of(model);
+    for checker in sources::built_in_checkers() {
+        let contribution = checker
+            .check(sid(DOC), &records, &context())
+            .expect("문맥 있음");
+        index.replace_scope(Some(sid(DOC)), checker.origin(), contribution.diagnostics);
+    }
+}
+
+/// 문서 변경 없이 같은 결과를 내는 baseline(무작위 문서 자체의 진단 수).
+fn baseline() -> BTreeMap<DiagnosticKind, usize> {
+    let mut index = DiagnosticIndex::new();
+    index_built_ins(&mut index, &random_valid_document(11));
+    DiagnosticKind::ALL
+        .into_iter()
+        .map(|k| (k, index.summary().kind(k)))
+        .collect()
+}
+
+// --- 외부 생산자 fixture ---
+
+fn length() -> TypeSpec {
+    TypeSpec::required(ExpressionType::Length)
+}
+
+fn token_ref() -> ReferenceTarget {
+    ReferenceTarget::Token(TokenRef::new(sid(1_001)))
+}
+
+fn plus_one(base: u64, target: ReferenceTarget) -> ExpressionAst {
+    let x = |n: u64| ExprNodeId::new(sid(n));
+    ExpressionAst::new(
+        x(base),
+        vec![
+            ExprNode::binary(x(base), BinaryOp::Add, x(base + 1), x(base + 2)),
+            ExprNode::reference(x(base + 1), target),
+            ExprNode::literal(
+                x(base + 2),
+                TypedValue::Length(Length::new(1.0).expect("유한")),
+            ),
+        ],
+    )
+    .expect("유효")
+}
+
+struct World {
+    targets: BTreeMap<PropertyPath, TypeSpec>,
+}
+
+impl BindingWorld for World {
+    fn target_type(&self, target: &PropertyPath) -> Option<TypeSpec> {
+        self.targets.get(target).copied()
+    }
+    fn reference_type(&self, _target: &ReferenceTarget) -> Option<TypeSpec> {
+        None // token이 모두 사라진 상태
+    }
+}
+
+/// binding 3개: PLAIN·IMAGE target은 token이 없어 orphan, 없는 node target은 target-missing orphan.
+fn binding_store() -> BindingStore {
+    let target = |node: u64| PropertyPath::new(sid(node)).push(PropertyKey(0x0101));
+    let mut live = BindingSet::new();
+    for (n, node) in [(1u64, PLAIN), (2, IMAGE), (3, 7_777)] {
+        live.insert(ValueBinding::new(
+            BindingId::new(sid(4_000 + n)),
+            target(node),
+            plus_one(10 * n + 2_000, token_ref()),
+            length(),
+            ScopeOwner::Node(NodeRef::new(sid(node))),
+        ))
+        .expect("binding");
+    }
+    let mut store = BindingStore::new(live);
+    let world = World {
+        targets: [(target(PLAIN), length()), (target(IMAGE), length())].into(),
+    };
+    assert_eq!(store.orphan_broken(&world).len(), 3);
+    store
+}
+
+fn missing_fonts() -> Vec<stellar_text::missing_font::MissingFontDiagnostic> {
+    let face = FontFaceRef::new(
+        FontSource::Project,
+        FontFileHash::from_sha256_digest([7; 32]),
+        0,
+        vec![],
+    );
+    let chain = FontFallbackChain::new(vec![face]).expect("chain");
+    let usages = [
+        TextFontUsage {
+            text_id: sid(PLAIN),
+            chain: &chain,
+        },
+        TextFontUsage {
+            text_id: sid(MASKED),
+            chain: &chain,
+        },
+    ];
+    collect_missing_fonts(&usages, &InMemoryFontRegistry::new())
+}
+
+fn accessibility_tree() -> AccessibilityTree {
+    let mut tree = AccessibilityTree::new();
+    tree.insert(AccessibilityNode::new(sid(IMAGE), AccessibilityRole::Image))
+        .expect("node");
+    tree.push_root(sid(IMAGE));
+    tree
+}
+
+fn target_report() -> MultiProfileReport {
+    let finding = |node: u64, code: CapabilityDiagnosticCode, status: Option<CapabilityStatus>| {
+        CapabilityFinding {
+            node: sid(node),
+            subject: CapabilitySubject::Property(CapabilityPropertyId(0x0101)),
+            path: Some(PropertyPath::with_keys(
+                sid(node),
+                vec![PropertyKey(0x0101)],
+            )),
+            status,
+            code,
+            replacement: None,
+        }
+    };
+    MultiProfileReport {
+        profiles: vec![ProfileReport {
+            profile: TargetProfileId::new("web").expect("id"),
+            outcome: ProfileOutcome::Validated {
+                registry_version: ProfileRegistryVersion::new(1).expect("version"),
+                findings: vec![
+                    finding(
+                        IMAGE,
+                        CapabilityDiagnosticCode::Unsupported,
+                        Some(CapabilityStatus::Unsupported),
+                    ),
+                    finding(
+                        IMAGE,
+                        CapabilityDiagnosticCode::Native,
+                        Some(CapabilityStatus::Native),
+                    ),
+                    CapabilityFinding {
+                        subject: CapabilitySubject::Element(ElementKind(6)),
+                        ..finding(
+                            IMAGE,
+                            CapabilityDiagnosticCode::Deprecated,
+                            Some(CapabilityStatus::Deprecated),
+                        )
+                    },
+                ],
+            },
+        }],
+        unknown_override_profiles: vec![],
+    }
+}
+
+fn unavailable_library() -> LibraryUnavailableDiagnostic {
+    LibraryUnavailableDiagnostic {
+        node: DependencyNodeKey::new(
+            LibraryId::from_stable_id(sid(8_000)),
+            "0123456789abcdef0123456789abcdef01234567"
+                .parse::<CommitId>()
+                .expect("commit"),
+        ),
+        paths: vec![],
+        reason: UnavailableReason::MissingCacheEntry,
+    }
+}
+
+/// 외부 생산자 결과: (문서 또는 프로젝트, 생산자, 결과).
+fn external_contributions() -> Vec<(Option<StableId>, &'static str, Contribution)> {
+    let document = sid(DOC);
+    let tree = accessibility_tree();
+    vec![
+        (
+            Some(document),
+            origins::BINDINGS,
+            sources::bindings(document, &binding_store()),
+        ),
+        (
+            Some(document),
+            origins::FONTS,
+            sources::fonts(document, &missing_fonts()),
+        ),
+        (
+            Some(document),
+            origins::ACCESSIBILITY,
+            sources::accessibility(document, &tree, &diagnose(&tree)),
+        ),
+        (
+            None,
+            origins::LIBRARIES,
+            sources::libraries(&[unavailable_library()]),
+        ),
+        (
+            Some(document),
+            origins::TARGET_PROFILES,
+            sources::target_profiles(document, &target_report()),
+        ),
+        (None, origins::MIGRATION, sources::migration(3, 4)),
+        (
+            Some(document),
+            origins::TOKENS,
+            sources::unresolved_refs(
+                document,
+                &[
+                    TokenRef::new(sid(1_002)).unresolved_at(PropertyPath::with_keys(
+                        sid(PLAIN),
+                        vec![PropertyKey(0x0101)],
+                    )),
+                ],
+            ),
+        ),
+    ]
+}
+
+/// 모든 생산자를 넣은 공통 index.
+fn full_index(model: &DocumentModel) -> DiagnosticIndex {
+    let mut index = DiagnosticIndex::new();
+    index_built_ins(&mut index, model);
+    for (document, origin, contribution) in external_contributions() {
+        index.replace_scope(document, origin, contribution.diagnostics);
+    }
+    index
+}
+
+#[test]
+fn fixture_counts_are_exact_per_kind_and_severity() {
+    // 검증 기준(XXV.2.1): fixture count 정확.
+    let base = baseline();
+    let index = full_index(&fixture());
+    let summary = index.summary();
+    let expected = [
+        (
+            DiagnosticKind::MissingNode,
+            base[&DiagnosticKind::MissingNode] + 2,
+        ),
+        (
+            DiagnosticKind::MissingAsset,
+            base[&DiagnosticKind::MissingAsset] + 1,
+        ),
+        (DiagnosticKind::OrphanedBinding, 3),
+        (DiagnosticKind::MissingFont, 2),
+        (DiagnosticKind::InvalidAccessibility, 1),
+        (DiagnosticKind::MissingLibrary, 1),
+        (DiagnosticKind::TargetUnsupported, 2),
+        (DiagnosticKind::MigrationWarning, 1),
+        (
+            DiagnosticKind::MissingToken,
+            base[&DiagnosticKind::MissingToken] + 1,
+        ),
+        (
+            DiagnosticKind::MissingComponent,
+            base[&DiagnosticKind::MissingComponent],
+        ),
+    ];
+    for (kind, count) in expected {
+        assert_eq!(summary.kind(kind), count, "{kind}");
+    }
+    assert_eq!(summary.total(), index.len());
+    let errors = DiagnosticFilter {
+        min_severity: Some(Severity::Error),
+        ..Default::default()
+    };
+    // 오류: 접근성 label 누락 1 + target unsupported 1.
+    assert_eq!(index.count(&errors), 2);
+    let all: Vec<Diagnostic> = index.iter().collect();
+    for d in &all {
+        assert!(!d.code().is_empty() && !d.key.origin.is_empty());
+        if d.document().is_some() {
+            assert!(
+                d.source().is_some() || d.kind() == DiagnosticKind::TargetUnsupported,
+                "{d:?}"
+            );
+        }
+    }
+    let mask = all
+        .iter()
+        .find(|d| d.source() == Some(sid(MASKED)) && d.kind() == DiagnosticKind::MissingNode)
+        .expect("mask 진단");
+    assert_eq!(
+        mask.remediation,
+        vec![
+            RemediationActionId::RevealSource,
+            RemediationActionId::RevealProperty,
+            RemediationActionId::RemoveDanglingModifier
+        ]
+    );
+    let clip = all
+        .iter()
+        .find(|d| d.source() == Some(sid(CLIP_FRAME)))
+        .expect("clip 진단");
+    assert_eq!(
+        clip.property(),
+        Some(&PropertyPath::with_keys(
+            sid(CLIP_FRAME),
+            vec![frame_keys::CLIPPING]
+        ))
+    );
+    assert!(!clip
+        .remediation
+        .contains(&RemediationActionId::RemoveDanglingModifier));
+}

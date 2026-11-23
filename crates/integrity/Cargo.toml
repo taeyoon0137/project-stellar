@@ -1,0 +1,36 @@
+[package]
+name = "stellar-integrity"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+# 프로젝트 무결성 진단 집계(Phase XXV.2·XXV.3 코어, ADR-0095).
+# 각 진단 생산자(문서 validator, binding orphan, text missing font, 접근성, library 부분 열기, Target Profile
+# capability)의 공개 결과를 공통 DiagnosticIndex로 모읍니다. 판정은 생산자 crate의 함수를 그대로 씁니다.
+[dependencies]
+stellar-core-types = { path = "../core-types" }
+# 미해결 참조·Image asset 해석(VI.10.1, VI.8.2)과 문서 레코드.
+stellar-document = { path = "../document" }
+# remediation CommandTransaction과 증분 재검사 입력 ChangeSet(VII.1.4).
+stellar-commands = { path = "../commands" }
+# OrphanedBinding(VIII.8.1).
+stellar-bindings = { path = "../bindings" }
+# missing font 진단(X.8.4, XIII.6.7).
+stellar-text = { path = "../text" }
+# 접근성 진단(IX.8.5).
+stellar-accessibility = { path = "../accessibility" }
+# library resource unavailable 진단(XV.5.5).
+stellar-dependencies = { path = "../dependencies" }
+# Target Profile capability 진단(IX.10.8).
+stellar-target-profile = { path = "../target-profile" }
+# binding source 참조 대상(ReferenceTarget) 해석.
+stellar-expressions = { path = "../expressions" }
+
+[dev-dependencies]
+# 무작위 유효 문서·command 생성기(증분 재검사와 전체 재검사 비교 test).
+stellar-document = { path = "../document", features = ["test-support"] }
+stellar-commands = { path = "../commands", features = ["test-support"] }
+
+[lints]
+workspace = true

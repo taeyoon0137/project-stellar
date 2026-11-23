@@ -160,6 +160,22 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-target-profile",
                 "stellar-diagnostics",
                 "stellar-git-porcelain",
+                "stellar-integrity",
+            ],
+        ),
+        // 무결성 진단 집계(ADR-0095, `crates/integrity`): 생산자 crate의 공개 결과만 읽고 셸·앱 runtime에 의존하지 않습니다.
+        (
+            "stellar-integrity",
+            &[
+                core,
+                "stellar-document",
+                "stellar-commands",
+                "stellar-bindings",
+                "stellar-expressions",
+                "stellar-text",
+                "stellar-accessibility",
+                "stellar-dependencies",
+                "stellar-target-profile",
             ],
         ),
     ];

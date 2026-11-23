@@ -298,6 +298,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-integrity"
+version = "0.0.0"
+dependencies = [
+ "stellar-accessibility",
+ "stellar-bindings",
+ "stellar-commands",
+ "stellar-core-types",
+ "stellar-dependencies",
+ "stellar-document",
+ "stellar-expressions",
+ "stellar-target-profile",
+ "stellar-text",
+]
+
+[[package]]
 name = "stellar-layout"
 version = "0.0.0"
 dependencies = [
