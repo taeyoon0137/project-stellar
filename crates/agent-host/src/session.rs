@@ -256,6 +256,8 @@ pub enum SessionEffect {
     ReleaseLeases(Vec<LeaseId>),
     /// 세션 권한과 세션 한정 승인 폐기.
     RevokeSessionPermissions,
+    /// 사용자가 모드를 낮춰 새 상한 밖이 된 권한만 폐기(XXIX.3.3). lease·요청·적용 변경은 그대로입니다.
+    RevokePermissions(Vec<Permission>),
     /// 응답 대기 요청을 거부로 닫음.
     RejectPendingRequests(Vec<RequestId>),
     /// 적용 전 제안 폐기.
@@ -268,6 +270,39 @@ pub enum SessionEffect {
     CleanupExecutionTraces,
     /// 진단 기록.
     RecordDiagnostic(SessionDiagnostic),
+}
+
+impl SessionEffect {
+    /// 고정 이름(시나리오·golden용).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            SessionEffect::TerminateProcess => "terminate",
+            SessionEffect::FinalizeInterruptedHistoryEntry { .. } => "interrupted-entry",
+            SessionEffect::ConfirmUndoEntry { .. } => "undo-entry",
+            SessionEffect::ReleaseLeases(_) => "release-leases",
+            SessionEffect::RevokeSessionPermissions => "revoke",
+            SessionEffect::RevokePermissions(_) => "revoke-some",
+            SessionEffect::RejectPendingRequests(_) => "reject-requests",
+            SessionEffect::DiscardProposals(_) => "discard-proposals",
+            SessionEffect::CloseApprovalUi => "close-ui",
+            SessionEffect::EndBridgeBinding => "end-binding",
+            SessionEffect::CleanupExecutionTraces => "cleanup",
+            SessionEffect::RecordDiagnostic(_) => "diagnostic",
+        }
+    }
+}
+
+impl SessionState {
+    /// 고정 이름(`running`, `ended:<이유 코드>` 등).
+    pub fn code(self) -> String {
+        match self {
+            SessionState::Starting => "starting".to_string(),
+            SessionState::Running => "running".to_string(),
+            SessionState::Reconnecting { .. } => "reconnecting".to_string(),
+            SessionState::Ending { reason } => format!("ending:{}", reason.code()),
+            SessionState::Ended { reason } => format!("ended:{}", reason.code()),
+        }
+    }
 }
 
 /// 허용되지 않는 전이.
@@ -473,7 +508,11 @@ impl AgentSession {
                 Ok(Vec::new())
             }
             SessionEvent::PermissionGranted(permission) if running => {
-                if !self.mode.cap().contains(&permission) {
+                // 세션 동안 유지하는 권한은 모드 상한 안의 문서 권한뿐입니다. GitCommit·GitPush는 실행 한 번
+                // 개별 확인이라 세션 권한이 아니고, Terminal·FileDelete는 내장 세션에서 제외합니다(XXIX.3.3).
+                if crate::mode::grant_route(self.mode, permission)
+                    != crate::mode::GrantRoute::Session
+                {
                     return Err(TransitionError::AboveModeCap(permission));
                 }
                 self.permissions.insert(permission);
@@ -565,6 +604,40 @@ impl AgentSession {
                 Ok(self.begin_end(reason, now_ms))
             }
         }
+    }
+
+    /// 사용자가 앱 UI에서 모드를 바꿉니다(XXIX.3.3, ADR-0005 Security). 에이전트 경로(MCP tool·CLI)에는
+    /// 이 함수를 부르는 수단이 없습니다(`tests/immutable_paths.rs`).
+    ///
+    /// 모드는 상한이라 올려도 권한을 주지 않습니다. 낮추면 새 상한 밖이 된 세션 권한만
+    /// [`SessionEffect::RevokePermissions`]로 폐기합니다. 끝나는 중이거나 끝난 세션은 바꾸지 않습니다.
+    pub fn change_mode_by_user(
+        &mut self,
+        mode: SessionMode,
+    ) -> Result<Vec<SessionEffect>, TransitionError> {
+        if matches!(self.state, SessionState::Ended { .. }) {
+            return Err(TransitionError::Ended);
+        }
+        if !self.is_active() {
+            return Err(TransitionError::Invalid {
+                state: state_name(self.state),
+                event: "mode-change",
+            });
+        }
+        self.mode = mode;
+        let dropped: Vec<Permission> = self
+            .permissions
+            .iter()
+            .copied()
+            .filter(|p| crate::mode::grant_route(mode, *p) != crate::mode::GrantRoute::Session)
+            .collect();
+        if dropped.is_empty() {
+            return Ok(Vec::new());
+        }
+        for p in &dropped {
+            self.permissions.remove(p);
+        }
+        Ok(vec![SessionEffect::RevokePermissions(dropped)])
     }
 
     fn begin_end(&mut self, reason: EndReason, now_ms: u64) -> Vec<SessionEffect> {

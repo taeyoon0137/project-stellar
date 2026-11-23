@@ -22,17 +22,29 @@
 //! | [`decoder`] | XXIX.2.11 | launch profile별 표시 전용 출력 디코더(fail closed) |
 //! | [`raw`] | XXIX.2.12 | 세션별 메모리 상한 원문 버퍼 |
 //! | [`output`] | XXIX.2.4·XXIX.2.13 | 수신 출력의 원문 보존·디코드·디코드 실패 연결 |
+//! | [`approval`] | XXIX.3.2 | ProjectIdentity 단위 승인 요청 저장(첫 응답만 유효, 기본 거부) |
+//! | [`mode`] | XXIX.3.3 | 모드 권한 상한과 내장 세션 카탈로그 |
+//! | [`start`] | XXIX.3.5 | 신뢰 capability 시작 확인, 약관 고지 기록, 신뢰 철회 |
+//! | [`assembly`] | XXIX.3.6 | 채팅 보기 조립(문서 효과는 승인·출처 기록에서만) |
+//! | [`scenario`] | XXIX.6.1 | 테스트 대역 기반 E2E 시나리오 정의 loader(headless·앱 실행기 공통) |
+//! | [`privacy`] | XXIX.6.4 | 진단·recovery·텔레메트리 금지 에이전트 필드 corpus |
 //! | `test-cli/main.rs` | XXIX.2.2 | 구독 CLI 테스트 대역 실행 파일(테스트 전용, library 미사용) |
 
+pub mod approval;
+pub mod assembly;
 pub mod chat;
 pub mod decoder;
 pub mod env;
 pub mod json;
+pub mod mode;
 pub mod output;
 pub mod preflight;
+pub mod privacy;
 pub mod process;
 pub mod profile;
 pub mod raw;
+pub mod scenario;
 pub mod session;
+pub mod start;
 pub mod status;
 pub mod target;

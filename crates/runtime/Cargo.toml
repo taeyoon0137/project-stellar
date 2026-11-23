@@ -26,6 +26,8 @@ stellar-text = { path = "../text" }
 # 선택 staging 후보의 저장 직렬화와 실제 Git 읽기 조합(XIV.5.5, ADR-0013).
 stellar-ops = { path = "../ops" }
 stellar-git-porcelain = { path = "../git-porcelain" }
+# 내장 에이전트 세션 시작 확인·승인 요청·채팅 조립(ADR-0005 §8, ADR-0101): 신뢰 capability 판정과 프로젝트 identity를 연결합니다.
+stellar-agent-host = { path = "../agent-host" }
 
 [dev-dependencies]
 stellar-text = { path = "../text", features = ["test-support"] }

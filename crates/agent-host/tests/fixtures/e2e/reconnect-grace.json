@@ -1,0 +1,35 @@
+{
+  "format": "stellar-agent-e2e-scenario/1",
+  "id": "reconnect-grace",
+  "title": "재연결 중 lease 유지와 유예 초과 시 중단됨 history entry 확정(자동 rollback 없음)",
+  "profile": "claude",
+  "mode": "apply-in-scope",
+  "double": [
+    "read-line",
+    "outfile decoder/claude-stream-json/normal.jsonl",
+    "hang"
+  ],
+  "steps": [
+    {"at": 0, "do": "start"},
+    {"at": 1, "do": "launch", "prompt": "제목 글자 크기를 한 단계 키워 줘"},
+    {"at": 2, "do": "bridge-bound"},
+    {"at": 3, "do": "grant", "permission": "read"},
+    {"at": 3, "do": "grant", "permission": "propose"},
+    {"at": 3, "do": "grant", "permission": "apply"},
+    {"at": 4, "do": "open-scope", "targets": 1},
+    {"at": 5, "do": "answer", "request": 1, "answer": "approve"},
+    {"at": 6, "do": "lease", "lease": 1},
+    {"at": 7, "do": "apply", "batch": 0, "history": 10},
+    {"at": 1000, "do": "bridge-disconnected"},
+    {"at": 1001, "do": "check", "state": "reconnecting", "leases": 1, "permissions": ["read", "propose", "apply"]},
+    {"at": 9000, "do": "tick"},
+    {"at": 9001, "do": "check", "state": "reconnecting", "leases": 1},
+    {"at": 10000, "do": "bridge-bound"},
+    {"at": 10001, "do": "check", "state": "running", "leases": 1, "applied": 1, "permissions": ["read", "propose", "apply"], "effects": []},
+    {"at": 20000, "do": "bridge-disconnected"},
+    {"at": 35000, "do": "tick"},
+    {"at": 35001, "do": "check", "state": "ended:reconnect-grace-expired", "leases": 0, "pending_requests": 0, "applied": 1,
+      "permissions": [], "effects": ["terminate", "interrupted-entry", "release-leases", "revoke", "reject-requests", "discard-proposals", "close-ui", "end-binding", "cleanup", "diagnostic"],
+      "app": ["applied-batches-kept", "provenance-shown", "no-auto-rollback"]}
+  ]
+}

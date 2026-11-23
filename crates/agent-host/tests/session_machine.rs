@@ -56,6 +56,7 @@ fn kinds(effects: &[SessionEffect]) -> Vec<&'static str> {
             SessionEffect::ConfirmUndoEntry { .. } => "undo-entry",
             SessionEffect::ReleaseLeases(_) => "release-leases",
             SessionEffect::RevokeSessionPermissions => "revoke",
+            SessionEffect::RevokePermissions(_) => "revoke-some",
             SessionEffect::RejectPendingRequests(_) => "reject-requests",
             SessionEffect::DiscardProposals(_) => "discard-proposals",
             SessionEffect::CloseApprovalUi => "close-ui",

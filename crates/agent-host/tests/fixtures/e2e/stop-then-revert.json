@@ -1,0 +1,39 @@
+{
+  "format": "stellar-agent-e2e-scenario/1",
+  "id": "stop-then-revert",
+  "title": "세션 중지 후 적용 변경 유지·출처 표시·lease 0·대기 제안 거부, 이어서 변경 단위·세션 단위 되돌리기",
+  "profile": "claude",
+  "mode": "review-then-apply",
+  "double": [
+    "read-line",
+    "outfile decoder/claude-stream-json/normal.jsonl",
+    "hang"
+  ],
+  "steps": [
+    {"at": 0, "do": "start"},
+    {"at": 1, "do": "launch", "prompt": "카드 두 개의 여백을 맞춰 줘"},
+    {"at": 2, "do": "bridge-bound"},
+    {"at": 3, "do": "grant", "permission": "read"},
+    {"at": 3, "do": "grant", "permission": "propose"},
+    {"at": 4, "do": "open-scope", "targets": 2},
+    {"at": 5, "do": "answer", "request": 1, "answer": "approve"},
+    {"at": 6, "do": "lease", "lease": 1},
+    {"at": 7, "do": "open-batch", "proposal": 1},
+    {"at": 8, "do": "answer", "request": 2, "answer": "approve"},
+    {"at": 9, "do": "apply", "batch": 0, "history": 41, "proposal": 1},
+    {"at": 10, "do": "open-batch", "proposal": 2},
+    {"at": 11, "do": "answer", "request": 3, "answer": "approve"},
+    {"at": 12, "do": "apply", "batch": 1, "history": 42, "proposal": 2},
+    {"at": 13, "do": "open-batch", "proposal": 3},
+    {"at": 14, "do": "stop"},
+    {"at": 15, "do": "check", "state": "ended:user-stopped", "leases": 0, "pending_requests": 0, "pending_proposals": 0,
+      "applied": 2, "permissions": [],
+      "effects": ["terminate", "interrupted-entry", "release-leases", "revoke", "reject-requests", "discard-proposals", "close-ui", "end-binding", "cleanup", "diagnostic"],
+      "outcomes": ["approved", "approved", "approved", "denied:session-ended"],
+      "app": ["applied-batches-kept", "provenance-shown", "provenance-matches-index", "no-auto-rollback"]},
+    {"at": 16, "do": "app", "action": "revert-batch", "batch": 1},
+    {"at": 17, "do": "check", "app": ["revert-batch-baseline"]},
+    {"at": 18, "do": "app", "action": "revert-session"},
+    {"at": 19, "do": "check", "app": ["revert-session-baseline"]}
+  ]
+}

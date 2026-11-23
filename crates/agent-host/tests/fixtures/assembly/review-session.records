@@ -1,0 +1,24 @@
+# 채팅 조립 기록 fixture (XXIX.3.6). 줄마다 사건 하나이며 순서대로 넣습니다.
+# session <id> <모드>                세션
+# prompt <문장>                      사용자 문장(CLI에 그대로 전달)
+# cli <decoder fixture>              CLI 출력 원문을 디코드한 item
+# open scope <대상> <외부> | open batch <제안> | open permission <권한>   승인 요청(번호는 연 순서)
+# answer <요청 번호> approve|deny     사용자 응답(승인 저장소)
+# expire <ms>                        응답 기한 초과 확정
+# batch <순번> <history> <제안|-> <node> <속성> <생성> <삭제>   출처 기록
+# end                                세션 종료(대기 요청 거부)
+session 1 review-then-apply
+prompt 버튼 색을 브랜드 색으로 바꿔 줘
+cli claude-stream-json/normal.jsonl
+open scope 1 0
+answer 1 approve
+open batch 1
+answer 2 approve
+batch 0 41 1 1 2 0 0
+open batch 2
+answer 3 deny
+open permission git-commit
+open batch 3
+expire 400000
+open batch 4
+end

@@ -119,6 +119,15 @@ pub enum TermsResult {
 }
 
 impl TermsResult {
+    /// 고정 이름(fixture 표기와 같음).
+    pub fn name(self) -> &'static str {
+        match self {
+            TermsResult::Allowed => "allowed",
+            TermsResult::Pending => "pending",
+            TermsResult::NotAllowed => "not-allowed",
+        }
+    }
+
     fn parse(text: &str) -> Option<TermsResult> {
         match text {
             "allowed" => Some(TermsResult::Allowed),

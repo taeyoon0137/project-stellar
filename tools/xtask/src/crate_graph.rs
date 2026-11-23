@@ -117,6 +117,8 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-text",
                 "stellar-ops",
                 "stellar-git-porcelain",
+                // ADR-0005 §8 runtime 허용 의존의 agent-host(ADR-0101: 시작 확인·승인 요청을 앱 runtime에 연결).
+                "stellar-agent-host",
             ],
         ),
         // 셸 경계는 runtime을 통해서만 문서·프로젝트 작업에 도달합니다(ADR-0013).

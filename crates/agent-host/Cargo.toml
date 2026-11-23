@@ -14,6 +14,10 @@ publish = false
 stellar-agent-protocol = { path = "../agent-protocol" }
 stellar-local-ipc = { path = "../local-ipc" }
 
+[dev-dependencies]
+# 진단 schema key에 에이전트 금지 필드가 없는지 확인합니다(XXIX.6.4, XVI.8.6).
+stellar-diagnostics = { path = "../diagnostics" }
+
 # 구독 CLI 테스트 대역(XXIX.2.2). 네트워크·실제 계정 없이 공급자 CLI 실행 경로를 재현하는 테스트 전용
 # 실행 파일이며 앱 번들에 넣지 않습니다(ADR-0092 결정 2).
 [[bin]]

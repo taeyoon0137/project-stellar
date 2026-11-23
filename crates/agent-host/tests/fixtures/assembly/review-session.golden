@@ -1,0 +1,22 @@
+{"kind":"user-prompt","text":{"text":"버튼 색을 브랜드 색으로 바꿔 줘","truncated":false}}
+{"kind":"session-started","model":{"text":"claude-test-model","truncated":false}}
+{"kind":"assistant-text","text":{"text":"레이어 구조를 읽겠습니다.","truncated":false}}
+{"kind":"tool-activity","call_id":{"text":"toolu_01","truncated":false},"tool":{"text":"mcp__stellar__read_document","truncated":false},"phase":"started"}
+{"kind":"tool-activity","call_id":{"text":"toolu_01","truncated":false},"tool":null,"phase":"succeeded"}
+{"kind":"tool-activity","call_id":{"text":"toolu_02","truncated":false},"tool":{"text":"mcp__stellar__propose_edit","truncated":false},"phase":"started"}
+{"kind":"tool-activity","call_id":{"text":"toolu_02","truncated":false},"tool":null,"phase":"failed"}
+{"kind":"assistant-text","text":{"text":"제안이 거부되었습니다. 🙂","truncated":false}}
+{"kind":"turn-completed","failed":false}
+{"effect":"approval-requested","request":1,"subject":"scope","targets":1,"externals":0}
+{"effect":"approval-resolved","request":1,"subject":"scope","targets":1,"externals":0,"outcome":"approved"}
+{"effect":"approval-requested","request":2,"subject":"batch","proposal":1}
+{"effect":"approval-resolved","request":2,"subject":"batch","proposal":1,"outcome":"approved"}
+{"effect":"batch-applied","batch":0,"history":41,"proposal":1,"nodes":1,"properties":2,"created":0,"deleted":0}
+{"effect":"approval-requested","request":3,"subject":"batch","proposal":2}
+{"effect":"approval-resolved","request":3,"subject":"batch","proposal":2,"outcome":"denied:user"}
+{"effect":"approval-requested","request":4,"subject":"permission","permission":"git-commit"}
+{"effect":"approval-requested","request":5,"subject":"batch","proposal":3}
+{"effect":"approval-resolved","request":4,"subject":"permission","permission":"git-commit","outcome":"denied:expired"}
+{"effect":"approval-resolved","request":5,"subject":"batch","proposal":3,"outcome":"denied:expired"}
+{"effect":"approval-requested","request":6,"subject":"batch","proposal":4}
+{"effect":"approval-resolved","request":6,"subject":"batch","proposal":4,"outcome":"denied:session-ended"}
