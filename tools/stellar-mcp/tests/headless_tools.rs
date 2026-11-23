@@ -99,7 +99,7 @@ fn every_listed_tool_runs_read_only_through_ops() {
     client.initialize();
     let ids = ids(&mut client);
     let names = listed(&mut client);
-    assert_eq!(names.len(), 11);
+    assert_eq!(names.len(), 12);
     for name in &names {
         let reply = client.tool(name, valid_arguments(name, &ids));
         if name == "document.export_png" {

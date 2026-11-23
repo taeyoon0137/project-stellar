@@ -534,8 +534,8 @@ pub fn source_semantic(
         records: &records,
         context: &context,
     }])
-        .map(Some)
-        .map_err(|e| e.0)
+    .map(Some)
+    .map_err(|e| e.0)
 }
 
 /// 원본에서 읽은 상태의 revision(모듈 문서 5번): 다음 cache generation 번호와 원본 revision hash. 원본을 읽지 못한

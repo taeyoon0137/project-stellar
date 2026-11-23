@@ -29,7 +29,7 @@ use stellar_project::document_io::session::{
     commit_files, decode_source, write_stamp, SourceBase, SourceCommitError, SourceLibrary, Stamp,
 };
 use stellar_project::document_io::source_v4::project::encode;
-use stellar_storage::chunk::kinds::{KIND_DOCUMENT_MANIFEST, KIND_VIEW_TREE};
+use stellar_storage::chunk::kinds::{KIND_CONTEXT_SET, KIND_DOCUMENT_MANIFEST, KIND_VIEW_TREE};
 use stellar_storage::chunk::planner::LogicalChunkState;
 use stellar_storage::generation::current::{read_current_pointer, CurrentPointerError};
 use stellar_storage::generation::loader::LoadedGeneration;
@@ -193,7 +193,13 @@ pub fn save_documents(
     let mut states: Vec<LogicalChunkState> = base
         .iter()
         .flat_map(|base| base.manifest.chunk_pointers.iter())
-        .filter(|p| p.kind != KIND_DOCUMENT_MANIFEST && p.kind != KIND_VIEW_TREE)
+        // 문서 Context chunk(context-set)도 문서마다 다시 직렬화하므로 base pointer를 재사용하지 않습니다(ADR-0114).
+        // Context가 비면 그 문서는 context-set chunk를 쓰지 않으므로 옛 chunk도 남기지 않습니다.
+        .filter(|p| {
+            p.kind != KIND_DOCUMENT_MANIFEST
+                && p.kind != KIND_VIEW_TREE
+                && p.kind != KIND_CONTEXT_SET
+        })
         .map(|p| LogicalChunkState::Clean {
             chunk_id: p.chunk_id,
         })
