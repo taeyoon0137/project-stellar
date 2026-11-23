@@ -376,3 +376,36 @@ fn removing_side_resolution_releases_drilling_binding() {
         Some(&SemanticValue::Id(sid(OUTER_PROP)))
     );
 }
+
+#[test]
+fn restore_is_opaque_and_bound_to_the_candidate_that_made_it() {
+    // 역 command는 apply 반환값으로만 생기고(필드·생성자 비공개), 만든 C와 그 사본에만 적용됩니다(ADR-0081 개정 4).
+    let mut c = mixed();
+    let original = c.clone();
+    let inverse = c
+        .apply(&CandidateCommand::Resolve {
+            object: sid(TOKEN),
+            target: token_value(),
+            resolution: Resolution::ChooseOurs,
+        })
+        .unwrap();
+    let CandidateCommand::Restore(restore) = &inverse else {
+        panic!("역 command는 Restore");
+    };
+    assert!(!restore.is_empty());
+    // 같은 입력으로 따로 만든 C는 내용이 같아도 다른 candidate입니다. 해결 기록을 옮겨 심을 수 없습니다.
+    let mut other = mixed();
+    assert_eq!(other, original);
+    assert_eq!(
+        other.apply(&inverse),
+        Err(ResolutionError::NotApplicable(
+            "다른 candidate가 만든 역 command입니다"
+        ))
+    );
+    assert_eq!(other, original, "거부 시 C 불변");
+    assert_eq!(other.unresolved_count(), original.unresolved_count());
+    // 만든 C의 사본에는 적용됩니다.
+    let mut copy = c.clone();
+    copy.apply(&inverse).unwrap();
+    assert_eq!(copy, original);
+}

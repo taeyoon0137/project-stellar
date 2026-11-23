@@ -161,3 +161,8 @@ XXIII.2, XXIV.2, XVI.6.6, XXVIII.2.3의 결정을 한 곳에 모읍니다. 기�
    규칙). `git add` 실패는 쓴 대상을 이전 bytes로 되돌리는 역 거래 하나를 commit합니다. CLI `resolve --apply`는 세션을
    열기 전에 남은 거래를 복구해, 세션이 복구된 작업 트리를 관찰하게 합니다. preview(`--apply` 없음)는 아무것도 쓰지
    않으므로 복구도 하지 않습니다.
+4. **결정 4 보완: 역 command는 불투명.** `CandidateCommand::Restore`의 내용 `Restore`는 필드·생성자를 공개하지 않아
+   `CandidateSnapshot::apply`의 반환값으로만 생깁니다. 또 역 command는 그것을 만든 C(같은 `from_result` 호출에서 나온 C와
+   그 사본)의 출처 번호를 지니고, 다른 C에 적용하면 `NotApplicable`로 거부합니다. 그래서 호출자가 해결 기록만 넣어
+   conflict를 resolved로 표시하거나, 한 단위의 역 command로 다른 단위의 해결 기록을 바꿀 수 없습니다. 출처 번호는 같은
+   프로세스 안 식별자라 C의 같음 비교와 직렬화에 넣지 않습니다. 쓰기 조건 검사(결정 4의 `ValidatedCandidate`)는 그대로입니다.

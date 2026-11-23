@@ -14,7 +14,9 @@
 //! ([`allowed_resolutions`]). 계획서의 `KeepModified`는 수정 쪽 선택과 같아 따로 두지 않습니다.
 //!
 //! **command(XXIII.2.3, XIV.12.2)**: [`CandidateCommand`]는 conflict 해결(`Resolve`), 임의 단위의 A·B·base
-//! 선택(`Select`), 역 command(`Restore`)입니다. [`CandidateSnapshot::apply`]는 C 사본에서 모두 성공할 때만 C를
+//! 선택(`Select`), 역 command(`Restore`)입니다. 역 command의 내용 [`Restore`]는 불투명 타입이라 [`CandidateSnapshot::apply`]의
+//! 반환값으로만 생기고, 그 역 command를 만든 C(또는 그 사본)에만 적용됩니다(ADR-0081 개정 4). 그래서 호출자가 해결 기록만
+//! 넣어 conflict를 resolved로 표시할 수 없습니다. [`CandidateSnapshot::apply`]는 C 사본에서 모두 성공할 때만 C를
 //! 바꾸고 역 command를 돌려줍니다: `apply(inverse)`는 C를 이전과 같은 값으로 되돌립니다. C 밖(파일·index)은
 //! 건드리지 않습니다. Property 삭제 conflict(전용 종류 7·9)를 삭제 쪽으로 해결하면 C의 scene·정의 인스턴스에서
 //! 지운 Property를 가리키는 override와, 값이 지운 Property를 담는 drilling binding도 함께 지웁니다(삭제 쪽
@@ -284,16 +286,37 @@ pub enum CandidateCommand {
     Restore(Restore),
 }
 
-/// [`CandidateCommand::Restore`]의 내용.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// [`CandidateCommand::Restore`]의 내용. 필드와 생성자가 공개되지 않아 [`CandidateSnapshot::apply`]만 만듭니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Restore {
+    /// 이 역 command를 만든 C의 출처 번호.
+    origin: u64,
     /// 되돌릴 단위 상태(앞에서부터 적용).
-    pub units: Vec<(UnitKey, SideState)>,
+    units: Vec<(UnitKey, SideState)>,
     /// 되돌릴 출처(`None` = 기록 없음).
-    pub sources: Vec<(UnitKey, Option<Source>)>,
+    sources: Vec<(UnitKey, Option<Source>)>,
     /// 되돌릴 해결 기록(`None` = 미해결).
-    pub resolutions: Vec<(UnitKey, Option<Resolution>)>,
+    resolutions: Vec<(UnitKey, Option<Resolution>)>,
 }
+
+impl Restore {
+    fn empty(origin: u64) -> Restore {
+        Restore {
+            origin,
+            units: Vec::new(),
+            sources: Vec::new(),
+            resolutions: Vec::new(),
+        }
+    }
+
+    /// 되돌릴 것이 없는지(적용해도 C가 바뀌지 않음).
+    pub fn is_empty(&self) -> bool {
+        self.units.is_empty() && self.sources.is_empty() && self.resolutions.is_empty()
+    }
+}
+
+/// C 출처 번호 발급기. 같은 프로세스 안에서 [`CandidateSnapshot::from_result`]마다 다릅니다.
+static NEXT_ORIGIN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// 적용 중인 C 사본과 역 command 기록.
 struct Edit<'a> {
@@ -516,14 +539,29 @@ impl<'a> ValidatedCandidate<'a> {
 }
 
 /// 병합 결과 candidate.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct CandidateSnapshot {
+    /// 출처 번호(역 command 결속용, 같음 비교에서 뺌).
+    origin: u64,
     input: MergeInput,
     snapshot: SemanticSnapshot,
     conflicts: Vec<SemanticConflict>,
     provenance: BTreeMap<UnitKey, Source>,
     resolutions: BTreeMap<UnitKey, Resolution>,
 }
+
+/// 같음은 내용(입력·C·conflict·출처·해결 기록)만 봅니다. 출처 번호는 역 command 결속용 식별자라 비교하지 않습니다.
+impl PartialEq for CandidateSnapshot {
+    fn eq(&self, other: &CandidateSnapshot) -> bool {
+        self.input == other.input
+            && self.snapshot == other.snapshot
+            && self.conflicts == other.conflicts
+            && self.provenance == other.provenance
+            && self.resolutions == other.resolutions
+    }
+}
+
+impl Eq for CandidateSnapshot {}
 
 impl CandidateSnapshot {
     /// 입력을 병합해 C를 만듭니다(XXIII.2.1).
@@ -536,6 +574,7 @@ impl CandidateSnapshot {
     pub fn from_result(input: MergeInput, result: MergeResult) -> CandidateSnapshot {
         let provenance = initial_provenance(&input, &result);
         CandidateSnapshot {
+            origin: NEXT_ORIGIN.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             input,
             snapshot: result.merged,
             conflicts: result.conflicts,
@@ -593,7 +632,7 @@ impl CandidateSnapshot {
         let mut next = self.clone();
         let mut edit = Edit {
             candidate: &mut next,
-            undo: Restore::default(),
+            undo: Restore::empty(self.origin),
         };
         match command {
             CandidateCommand::Resolve {
@@ -625,6 +664,11 @@ impl CandidateSnapshot {
                 }
             }
             CandidateCommand::Restore(restore) => {
+                if restore.origin != self.origin {
+                    return Err(ResolutionError::NotApplicable(
+                        "다른 candidate가 만든 역 command입니다",
+                    ));
+                }
                 for (key, state) in &restore.units {
                     edit.set_unit(key, state.clone())?;
                 }
