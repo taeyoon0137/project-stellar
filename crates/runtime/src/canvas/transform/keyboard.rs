@@ -68,9 +68,9 @@ pub enum KeyOutcome {
 }
 
 /// 흐름 자식의 주축 화살표가 흐름 순서에서 뒤(앞 그리기 순서)로 가는지. 교차축이면 `None`.
-fn flow_step(parent: FlowParent, arrow: Arrow, reverse: bool) -> Option<SiblingOrder> {
+fn flow_step(parent: FlowParent, arrow: Arrow) -> Option<SiblingOrder> {
     let forward = match parent {
-        FlowParent::Flex { row, .. } => {
+        FlowParent::Flex { row, reverse, .. } => {
             if arrow.horizontal() != row {
                 return None;
             }
@@ -106,29 +106,9 @@ pub fn arrow(
     let (model, _root, roots) = selection_roots(window)?;
     let set = model_style_set(model);
     let contexts: Vec<FlowParent> = roots.iter().map(|&n| flow_parent(model, &set, n)).collect();
-    if contexts.iter().any(|c| c.is_flow()) {
-        let reverse = roots.first().is_some_and(|&n| {
-            let parent = crate::app::canvas_gesture::parent_of(model, n);
-            parent.is_some_and(|p| {
-                let layout = model.payload(p).and_then(|payload| {
-                    stellar_document::css::style_defaults::resolve(
-                        &set,
-                        payload,
-                        model.layout_record(p),
-                    )
-                });
-                layout.is_some_and(|l| {
-                    matches!(
-                        l.get(stellar_document::layout_record::LayoutLonghand::FlexDirection)
-                            .value,
-                        stellar_document::layout_record::LayoutValue::Keyword(
-                            "row-reverse" | "column-reverse"
-                        )
-                    )
-                })
-            })
-        });
-        let Some(direction) = flow_step(contexts[0], arrow, reverse) else {
+    if let Some(context) = contexts.iter().copied().find(|c| c.is_flow()) {
+        // 주축 방향(`*-reverse`)은 Fragment를 건너뛴 흐름 컨테이너 기준으로 `flow_parent`가 이미 풀었습니다.
+        let Some(direction) = flow_step(context, arrow) else {
             return Ok(KeyOutcome::Unchanged);
         };
         let plan = order_commands(model, &set, &roots, direction)?;

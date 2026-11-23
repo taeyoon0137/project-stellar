@@ -245,6 +245,8 @@ pub enum FlowParent {
     Flex {
         /// 주축이 가로(`row`·`row-reverse`)인지.
         row: bool,
+        /// 주축이 뒤집혔는지(`row-reverse`·`column-reverse`). 흐름 순서와 화면 방향이 반대입니다.
+        reverse: bool,
         /// 교차축이 뒤집혔는지(`flex-wrap: wrap-reverse`).
         wrap_reverse: bool,
     },
@@ -320,6 +322,10 @@ pub fn flow_parent(model: &DocumentModel, set: &FlatSet, node: StableId) -> Flow
                 keyword(LayoutLonghand::FlexDirection),
                 "row" | "row-reverse"
             ),
+            reverse: matches!(
+                keyword(LayoutLonghand::FlexDirection),
+                "row-reverse" | "column-reverse"
+            ),
             wrap_reverse: keyword(LayoutLonghand::FlexWrap) == "wrap-reverse",
         },
         "grid" => FlowParent::Grid,
@@ -364,7 +370,9 @@ pub fn flow_align(model: &DocumentModel, set: &FlatSet, node: StableId, align: A
     match flow_parent(model, set, node) {
         FlowParent::Free => FlowAlign::Free,
         FlowParent::Legacy => FlowAlign::Disabled { hint: None },
-        FlowParent::Flex { row, wrap_reverse } => {
+        FlowParent::Flex {
+            row, wrap_reverse, ..
+        } => {
             if vertical != row {
                 // 주축 정렬은 컨테이너가 정합니다.
                 FlowAlign::Disabled {
@@ -569,5 +577,49 @@ mod tests {
             .unwrap();
         model.set_layout_record(own).unwrap();
         assert_eq!(flow_parent(&model, &set, sid(30)), FlowParent::Free);
+    }
+
+    #[test]
+    fn flow_parent_skips_fragments_and_reports_a_reversed_main_axis() {
+        let set = style_defaults::builtin("css").unwrap();
+        // 11(Frame) 아래 Fragment 40, 그 아래 Rectangle 41. 컨테이너는 Fragment가 아니라 11입니다.
+        let mut model = shapes();
+        model
+            .insert_node(record(
+                40,
+                Some(11),
+                0x10,
+                stellar_document::records::NodePayload::Fragment(
+                    stellar_document::fragment::FragmentPayload,
+                ),
+            ))
+            .unwrap();
+        model
+            .insert_node(record(41, Some(40), 0x10, rectangle(5.0, 5.0)))
+            .unwrap();
+        container(
+            &mut model,
+            &[
+                (LayoutLonghand::Display, "flex"),
+                (LayoutLonghand::FlexDirection, "column-reverse"),
+            ],
+        );
+        assert_eq!(
+            flow_parent(&model, &set, sid(41)),
+            FlowParent::Flex {
+                row: false,
+                reverse: true,
+                wrap_reverse: false,
+            }
+        );
+        container(&mut model, &[(LayoutLonghand::Display, "flex")]);
+        assert_eq!(
+            flow_parent(&model, &set, sid(41)),
+            FlowParent::Flex {
+                row: true,
+                reverse: false,
+                wrap_reverse: false,
+            }
+        );
     }
 }
