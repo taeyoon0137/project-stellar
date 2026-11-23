@@ -3537,6 +3537,204 @@
     "a": [0, 0, 9600, 1280],
     "b": [9600, 0, 9600, 1280]
    }
+  },
+  {
+   "name": "flex/baseline-text-items",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "Stack baseline fixture: text 첫 baseline 맞춤",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;width:300px;align-items:baseline;column-gap:4px", "content": null, "children": ["a", "b", "c"]},
+    {"id": "a", "parent": "root", "style": "", "content": {"width": 30, "height": 20, "baseline": 16}, "children": []},
+    {"id": "b", "parent": "root", "style": "", "content": {"width": 40, "height": 30, "baseline": 10}, "children": []},
+    {"id": "c", "parent": "root", "style": "", "content": {"width": 20, "height": 12, "baseline": 9}, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 19200, 2304],
+    "a": [0, 0, 1920, 1280],
+    "b": [2176, 384, 2560, 1920],
+    "c": [4992, 448, 1280, 768]
+   }
+  },
+  {
+   "name": "flex/baseline-mixed-text-image",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "baseline 없는 node(이미지·box)는 border box 아래 변으로 합성",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;width:300px;height:80px;align-items:baseline", "content": null, "children": ["text", "image", "box", "text2"]},
+    {"id": "text", "parent": "root", "style": "", "content": {"width": 30, "height": 20, "baseline": 15}, "children": []},
+    {"id": "image", "parent": "root", "style": "", "content": {"width": 40, "height": 30, "baseline": null}, "children": []},
+    {"id": "box", "parent": "root", "style": "width:20px;height:10px", "content": null, "children": []},
+    {"id": "text2", "parent": "root", "style": "", "content": {"width": 25, "height": 14, "baseline": 11}, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 19200, 5120],
+    "text": [0, 960, 1920, 1280],
+    "image": [1920, 0, 2560, 1920],
+    "box": [4480, 1280, 1280, 640],
+    "text2": [5760, 1216, 1600, 896]
+   }
+  },
+  {
+   "name": "flex/baseline-align-self-subset",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;width:300px;height:60px;align-items:center", "content": null, "children": ["a", "b", "c"]},
+    {"id": "a", "parent": "root", "style": "align-self:baseline", "content": {"width": 30, "height": 20, "baseline": 16}, "children": []},
+    {"id": "b", "parent": "root", "style": "align-self:baseline", "content": {"width": 40, "height": 30, "baseline": 10}, "children": []},
+    {"id": "c", "parent": "root", "style": "width:20px;height:10px", "content": null, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 19200, 3840],
+    "a": [0, 0, 1920, 1280],
+    "b": [1920, 384, 2560, 1920],
+    "c": [4480, 1600, 1280, 640]
+   }
+  },
+  {
+   "name": "flex/baseline-item-padding",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;width:300px;align-items:baseline", "content": null, "children": ["a", "b"]},
+    {"id": "a", "parent": "root", "style": "padding-top:7px", "content": {"width": 30, "height": 20, "baseline": 16}, "children": []},
+    {"id": "b", "parent": "root", "style": "padding:2px 0 9px 0", "content": {"width": 40, "height": 10, "baseline": 8}, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 19200, 2176],
+    "a": [0, 0, 1920, 1728],
+    "b": [1920, 832, 2560, 1344]
+   }
+  },
+  {
+   "name": "flex/baseline-nested-flex-item",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;width:300px;align-items:baseline", "content": null, "children": ["inner", "t2"]},
+    {"id": "inner", "parent": "root", "style": "display:flex;padding-top:5px;align-items:flex-end;height:40px", "content": null, "children": ["t1", "box"]},
+    {"id": "t1", "parent": "inner", "style": "", "content": {"width": 20, "height": 12, "baseline": 10}, "children": []},
+    {"id": "box", "parent": "inner", "style": "width:10px;height:30px", "content": null, "children": []},
+    {"id": "t2", "parent": "root", "style": "", "content": {"width": 30, "height": 18, "baseline": 14}, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 19200, 2688],
+    "inner": [0, 0, 1920, 2560],
+    "t1": [0, 1792, 1280, 768],
+    "box": [1280, 640, 640, 1920],
+    "t2": [1920, 1536, 1920, 1152]
+   }
+  },
+  {
+   "name": "flex/baseline-nested-block-item",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;width:300px;align-items:baseline", "content": null, "children": ["block", "t2"]},
+    {"id": "block", "parent": "root", "style": "width:50px", "content": null, "children": ["spacer", "t1"]},
+    {"id": "spacer", "parent": "block", "style": "height:12px", "content": null, "children": []},
+    {"id": "t1", "parent": "block", "style": "", "content": {"width": 20, "height": 12, "baseline": 9}, "children": []},
+    {"id": "t2", "parent": "root", "style": "", "content": {"width": 30, "height": 18, "baseline": 14}, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 19200, 1600],
+    "block": [0, 0, 3200, 1536],
+    "spacer": [0, 0, 3200, 768],
+    "t1": [0, 768, 3200, 768],
+    "t2": [3200, 448, 1920, 1152]
+   }
+  },
+  {
+   "name": "flex/baseline-wrap-lines",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;flex-wrap:wrap;width:100px;align-items:baseline;row-gap:3px", "content": null, "children": ["a", "b", "c", "d"]},
+    {"id": "a", "parent": "root", "style": "", "content": {"width": 40, "height": 20, "baseline": 15}, "children": []},
+    {"id": "b", "parent": "root", "style": "", "content": {"width": 40, "height": 30, "baseline": 8}, "children": []},
+    {"id": "c", "parent": "root", "style": "", "content": {"width": 50, "height": 12, "baseline": 10}, "children": []},
+    {"id": "d", "parent": "root", "style": "", "content": {"width": 30, "height": 25, "baseline": 20}, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 6400, 4160],
+    "a": [0, 0, 2560, 1280],
+    "b": [2560, 448, 2560, 1920],
+    "c": [0, 3200, 3200, 768],
+    "d": [3200, 2560, 1920, 1600]
+   }
+  },
+  {
+   "name": "flex/baseline-container-baseline-in-parent",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;width:300px;align-items:baseline", "content": null, "children": ["inner", "z"]},
+    {"id": "inner", "parent": "root", "style": "display:flex;align-items:baseline", "content": null, "children": ["x", "y"]},
+    {"id": "x", "parent": "inner", "style": "", "content": {"width": 20, "height": 30, "baseline": 25}, "children": []},
+    {"id": "y", "parent": "inner", "style": "", "content": {"width": 20, "height": 12, "baseline": 6}, "children": []},
+    {"id": "z", "parent": "root", "style": "", "content": {"width": 30, "height": 16, "baseline": 12}, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 19200, 1984],
+    "inner": [0, 0, 2560, 1984],
+    "x": [0, 0, 1280, 1920],
+    "y": [1280, 1216, 1280, 768],
+    "z": [2560, 832, 1920, 1024]
+   }
+  },
+  {
+   "name": "flex/baseline-column-is-start",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;flex-direction:column;width:200px;align-items:baseline", "content": null, "children": ["a", "b"]},
+    {"id": "a", "parent": "root", "style": "", "content": {"width": 30, "height": 20, "baseline": 16}, "children": []},
+    {"id": "b", "parent": "root", "style": "", "content": {"width": 40, "height": 30, "baseline": 10}, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 12800, 3200],
+    "a": [0, 0, 1920, 1280],
+    "b": [0, 1280, 2560, 1920]
+   }
+  },
+  {
+   "name": "flex/baseline-grid-item-container",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;width:300px;align-items:baseline", "content": null, "children": ["g", "t"]},
+    {"id": "g", "parent": "root", "style": "display:grid;grid-template-columns:30px 30px;align-items:start", "content": null, "children": ["g1", "g2"]},
+    {"id": "g1", "parent": "g", "style": "height:20px", "content": null, "children": []},
+    {"id": "g2", "parent": "g", "style": "", "content": {"width": 20, "height": 12, "baseline": 10}, "children": []},
+    {"id": "t", "parent": "root", "style": "", "content": {"width": 20, "height": 16, "baseline": 12}, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 19200, 1536],
+    "g": [0, 0, 3840, 1280],
+    "g1": [0, 0, 1920, 1280],
+    "g2": [1920, 0, 1920, 768],
+    "t": [3840, 512, 1280, 1024]
+   }
   }
  ]
 }

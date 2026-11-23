@@ -25,7 +25,9 @@
 //!    container에서 `column-gap`, column container에서 `row-gap`입니다.
 //! 7. **absolute 자식**: 유일한 flex item으로 놓았을 때의 위치를 static position으로 씁니다(§4.1).
 //!
-//! 첫 baseline은 첫 줄 첫 item의 baseline이고, item에 baseline이 없으면 그 border box 아래 변으로 합성합니다.
+//! `align-self: baseline`(X.3.6)은 row container의 line 안에서 item 첫 baseline(없으면 border box 아래 변)을 공유 baseline에
+//! 맞춥니다. line cross 크기는 최대 ascent + 최대 descent 이상입니다. column container에서는 시작 쪽 정렬입니다. 첫
+//! baseline은 첫 줄에 baseline 정렬 item이 있으면 그 공유 baseline, 없으면 첫 item의 baseline(없으면 아래 변)입니다.
 
 use crate::distribute::{distribute_equal, distribute_weighted};
 use crate::engine::{
@@ -79,6 +81,8 @@ struct Line {
     items: Vec<usize>,
     cross: LayoutUnit,
     position: LayoutUnit,
+    /// baseline 정렬 item의 최대 ascent(line cross 시작에서 공유 baseline까지). 없으면 baseline 정렬 item이 없음.
+    ascent: Option<LayoutUnit>,
 }
 
 /// cross 정렬 keyword를 flex-relative 값으로 바꿉니다.
@@ -446,6 +450,7 @@ pub(crate) fn layout(
                     items: std::mem::take(&mut current),
                     cross: LayoutUnit::ZERO,
                     position: LayoutUnit::ZERO,
+                    ascent: None,
                 });
                 current.push(n);
                 used = outer;
@@ -459,6 +464,7 @@ pub(crate) fn layout(
                 items: current,
                 cross: LayoutUnit::ZERO,
                 position: LayoutUnit::ZERO,
+                ascent: None,
             });
         }
     }
@@ -494,11 +500,27 @@ pub(crate) fn layout(
         item.request = item_req;
     }
     for line in &mut lines {
+        // baseline 정렬 item(CSS Flexbox §9.4 8): 공유 baseline까지의 최대 ascent + 최대 descent가 line cross 크기
+        // 하한입니다. baseline이 없는 item은 border box 아래 변으로 합성합니다(X.3.6).
         let mut cross_size = LayoutUnit::ZERO;
+        let mut ascent: Option<LayoutUnit> = None;
+        let mut descent = LayoutUnit::ZERO;
         for &n in &line.items {
-            cross_size = cross_size.max(items[n].cross);
+            let item = &items[n];
+            if item.align == CrossAlign::Baseline {
+                let up = item.baseline.unwrap_or(item.cross);
+                let down = item.cross.checked_sub(up).map_err(&err)?;
+                ascent = Some(ascent.map_or(up, |a| a.max(up)));
+                descent = descent.max(down);
+            } else {
+                cross_size = cross_size.max(item.cross);
+            }
+        }
+        if let Some(ascent) = ascent {
+            cross_size = cross_size.max(ascent.checked_add(descent).map_err(&err)?);
         }
         line.cross = cross_size;
+        line.ascent = ascent;
     }
     // container cross 크기.
     let inner_cross = match inner_cross {
@@ -598,9 +620,13 @@ pub(crate) fn layout(
             }
             let free = line.cross.checked_sub(item.cross).map_err(&err)?;
             let offset = match item.align {
-                CrossAlign::Stretch | CrossAlign::Start | CrossAlign::Baseline => LayoutUnit::ZERO,
+                CrossAlign::Stretch | CrossAlign::Start => LayoutUnit::ZERO,
                 CrossAlign::End => free,
                 CrossAlign::Center => free.checked_div_round(2).map_err(&err)?,
+                CrossAlign::Baseline => {
+                    let up = item.baseline.unwrap_or(item.cross);
+                    line.ascent.unwrap_or(up).checked_sub(up).map_err(&err)?
+                }
             };
             item.cross_position = line.position.checked_add(offset).map_err(&err)?;
         }
@@ -663,8 +689,21 @@ pub(crate) fn layout(
         let x = pad.left.checked_add(flow[0]).map_err(&err)?;
         let y = pad.top.checked_add(flow[1]).map_err(&err)?;
         if k == 0 {
-            let local = item.baseline.unwrap_or(size[1]);
-            first_baseline = Some(y.checked_add(local).map_err(&err)?);
+            // 첫 줄에 baseline 정렬 item이 있으면 그 공유 baseline, 없으면 첫 item의 baseline(없으면 아래 변).
+            let shared = lines
+                .first()
+                .and_then(|line| line.ascent)
+                .filter(|_| !wrap_reverse);
+            first_baseline = Some(match shared {
+                Some(ascent) => pad
+                    .top
+                    .checked_add(lines[0].position)
+                    .and_then(|v| v.checked_add(ascent))
+                    .map_err(&err)?,
+                None => y
+                    .checked_add(item.baseline.unwrap_or(size[1]))
+                    .map_err(&err)?,
+            });
         }
         if sizing.content_based[0]
             && matches!(
@@ -774,10 +813,14 @@ fn base_item(
     let id = prepared.id;
     let err = at(id);
     let request = item_request(context);
-    let align = cross_align(
+    let mut align = cross_align(
         prepared.align_self.resolve(container.align_items),
         wrap_reverse,
     );
+    // column container의 cross 축(가로)에는 가로 baseline이 없어 baseline 정렬은 시작 쪽입니다.
+    if align == CrossAlign::Baseline && main == Axis::Vertical {
+        align = CrossAlign::Start;
+    }
     let stretch = align == CrossAlign::Stretch && prepared.size[ci] == SizeP::Auto;
     let min_cross = engine.min_size(child, cross, request)?;
     let max_cross = engine.max_size(child, cross, request)?;

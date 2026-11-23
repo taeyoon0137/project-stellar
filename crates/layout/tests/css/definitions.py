@@ -920,5 +920,76 @@ fx(
     n("root", "display:flex;width:300px;height:20px", [c("a", 50, 10, None, "flex-grow:1;flex-basis:0px"), c("b", 100, 10, None, "flex-grow:1;flex-basis:0px")]),
     note="flex-basis 0 + grow에서 콘텐츠 최소(100) 위반 item은 freeze",
 )
+
+# --- baseline 정렬(X.3.6, X.10.4 공유) ---
+
+fx(
+    "flex/baseline-text-items",
+    "flex",
+    n("root", "display:flex;width:300px;align-items:baseline;column-gap:4px", [c("a", 30, 20, 16), c("b", 40, 30, 10), c("c", 20, 12, 9)]),
+    note="Stack baseline fixture: text 첫 baseline 맞춤",
+)
+fx(
+    "flex/baseline-mixed-text-image",
+    "flex",
+    n("root", "display:flex;width:300px;height:80px;align-items:baseline", [c("text", 30, 20, 15), c("image", 40, 30), n("box", "width:20px;height:10px"), c("text2", 25, 14, 11)]),
+    note="baseline 없는 node(이미지·box)는 border box 아래 변으로 합성",
+)
+fx(
+    "flex/baseline-align-self-subset",
+    "flex",
+    n("root", "display:flex;width:300px;height:60px;align-items:center", [c("a", 30, 20, 16, "align-self:baseline"), c("b", 40, 30, 10, "align-self:baseline"), n("c", "width:20px;height:10px")]),
+)
+fx(
+    "flex/baseline-item-padding",
+    "flex",
+    n("root", "display:flex;width:300px;align-items:baseline", [c("a", 30, 20, 16, "padding-top:7px"), c("b", 40, 10, 8, "padding:2px 0 9px 0")]),
+)
+fx(
+    "flex/baseline-nested-flex-item",
+    "flex",
+    n(
+        "root",
+        "display:flex;width:300px;align-items:baseline",
+        [n("inner", "display:flex;padding-top:5px;align-items:flex-end;height:40px", [c("t1", 20, 12, 10), n("box", "width:10px;height:30px")]), c("t2", 30, 18, 14)],
+    ),
+)
+fx(
+    "flex/baseline-nested-block-item",
+    "flex",
+    n(
+        "root",
+        "display:flex;width:300px;align-items:baseline",
+        [n("block", "width:50px", [n("spacer", "height:12px"), c("t1", 20, 12, 9)]), c("t2", 30, 18, 14)],
+    ),
+)
+fx(
+    "flex/baseline-wrap-lines",
+    "flex",
+    n("root", "display:flex;flex-wrap:wrap;width:100px;align-items:baseline;row-gap:3px", [c("a", 40, 20, 15), c("b", 40, 30, 8), c("c", 50, 12, 10), c("d", 30, 25, 20)]),
+)
+fx(
+    "flex/baseline-container-baseline-in-parent",
+    "flex",
+    n(
+        "root",
+        "display:flex;width:300px;align-items:baseline",
+        [n("inner", "display:flex;align-items:baseline", [c("x", 20, 30, 25), c("y", 20, 12, 6)]), c("z", 30, 16, 12)],
+    ),
+)
+fx(
+    "flex/baseline-column-is-start",
+    "flex",
+    n("root", "display:flex;flex-direction:column;width:200px;align-items:baseline", [c("a", 30, 20, 16), c("b", 40, 30, 10)]),
+)
+fx(
+    "flex/baseline-grid-item-container",
+    "flex",
+    n(
+        "root",
+        "display:flex;width:300px;align-items:baseline",
+        [n("g", "display:grid;grid-template-columns:30px 30px;align-items:start", [n("g1", "height:20px"), c("g2", 20, 12, 10)]), c("t", 20, 16, 12)],
+    ),
+)
 def all_fixtures():
     return FIXTURES

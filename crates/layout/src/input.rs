@@ -605,15 +605,11 @@ pub(crate) fn validate_in_parent(
     let baseline = s.align_self == SelfAlignment::Item(ItemAlignment::Baseline)
         || (s.align_self == SelfAlignment::Auto
             && parent.style.align_items == ItemAlignment::Baseline);
-    if baseline {
+    if baseline && grid {
         return Err(LayoutError::Unsupported {
             node: node.id,
             property: LayoutProperty::AlignSelf,
-            reason: if grid {
-                "grid item의 baseline 정렬은 받지 않습니다"
-            } else {
-                "baseline 정렬은 아직 받지 않습니다"
-            },
+            reason: "grid item의 baseline 정렬은 받지 않습니다",
         });
     }
     Ok(())
