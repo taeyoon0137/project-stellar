@@ -72,7 +72,7 @@ cargo run -q -p stellar-cli -- --help
 | `apply` | 없음 | `<경로> <입력 파일 또는 -> [--dry-run]` | transaction 검증·저장 또는 diff |
 | `component-source` | 없음 | `create <폴더> <이름> <id> <root-id>`, `check <폴더>`, `resize <파일> <원본 hash> <너비> <높이>`, `set-fill <파일> <원본 hash> none \| <srgb\|display-p3> <r> <g> <b> <a>`, `add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>` | 컴포넌트별 파일 생성·라이브러리 재조립·root Frame 크기 수정·root Frame 채우기 수정·중첩 Free Frame 추가. [컴포넌트 원본 형식](../spec/component-source-v1.md) |
 | `text-source` | 없음 | `export <프로젝트> <새 파일>`, `check <파일>` | 단일 View 텍스트 원본 생성·읽기 전용 검사. [문법과 지원 범위](../spec/text-view-source-v1.md) |
-| `export-web` | 없음 | `<경로> <문서 id> <View id>` | 고정 Free Frame·Rectangle HTML+CSS·revision·진단 |
+| `export-web` | 없음 | `<경로> <문서 id> <View id> [--frame <Frame id>]` | 고정 Free Frame·Rectangle HTML+CSS·revision·진단. `--frame`은 View 안 Frame 하나의 subtree만 투영 |
 
 명령이 없거나(`stellar`만 실행) 알 수 없는 명령이면 사용법 오류(64)입니다.
 

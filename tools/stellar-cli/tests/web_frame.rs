@@ -67,6 +67,64 @@ fn git(path: &Path, args: &[&str]) -> Vec<u8> {
     output.stdout
 }
 
+fn run_frame(path: &Path, view: u64, frame: u64) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_stellar"))
+        .args([
+            "export-web",
+            path.to_str().unwrap(),
+            &fixture::id(1).to_string(),
+            &fixture::id(view).to_string(),
+            "--frame",
+            &fixture::id(frame).to_string(),
+        ])
+        .env_clear()
+        .stdin(Stdio::null())
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn frame_option_projects_one_frame_subtree_and_rejects_frames_outside_the_view() {
+    let dir = TempDir::new("web-frame-option");
+    scaffold_project(&dir.path);
+    save_documents(&dir.path, &[&fixture::document()]);
+    // View 3 root(10) 안의 Frame 13 하나만 투영합니다.
+    let value = envelope(&run_frame(&dir.path, 3, 13), 0);
+    let result = value.get("result").unwrap();
+    assert_eq!(
+        result.get("root_frame").and_then(JsonValue::as_str),
+        Some(fixture::id(13).to_string().as_str())
+    );
+    let whole = export(&dir.path, 3);
+    assert_ne!(html(&value), html(&whole));
+    // 다른 View의 root(20)와 Frame이 아닌 Fragment(11)는 거부합니다.
+    for frame in [20, 11, 999] {
+        let value = envelope(&run_frame(&dir.path, 3, frame), 66);
+        assert_eq!(
+            value
+                .get("error")
+                .and_then(|e| e.get("code"))
+                .and_then(JsonValue::as_str),
+            Some("unknown-frame"),
+            "{frame}"
+        );
+    }
+    // 잘못된 옵션 모양은 사용법 오류입니다.
+    let output = Command::new(env!("CARGO_BIN_EXE_stellar"))
+        .args([
+            "export-web",
+            dir.path.to_str().unwrap(),
+            &fixture::id(1).to_string(),
+            &fixture::id(3).to_string(),
+            "--frame",
+        ])
+        .env_clear()
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(64));
+}
+
 #[test]
 fn two_selected_views_are_deterministic_and_leave_project_and_git_bytes_unchanged() {
     let dir = TempDir::new("web-two-views");

@@ -64,7 +64,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "export-web",
-        "<경로> <문서 id> <View id>: 고정 Free Frame·Fragment·Rectangle의 HTML+CSS와 revision·진단을 JSON으로 출력합니다(미지원 값은 실패)",
+        "<경로> <문서 id> <View id> [--frame <Frame id>]: 고정 Free Frame·Fragment·Rectangle의 HTML+CSS와 revision·진단을 JSON으로 출력합니다(--frame은 View 안 Frame 하나, 미지원 값은 실패)",
     ),
     (
         "apply",

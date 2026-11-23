@@ -1,24 +1,38 @@
-//! `export-web`: 저장된 View 하나의 고정 Free Frame HTML+CSS 문서를 JSON 결과에 담습니다.
+//! `export-web`: 저장된 View 하나(또는 그 안의 Frame 하나)의 고정 Free Frame HTML+CSS 문서를 JSON 결과에 담습니다.
+//! 앱과 같은 투영 함수(`stellar_ops::web_frame::export_web_frame_node`)를 씁니다.
 
 use std::path::Path;
 
 use stellar_ops::core_types::ids::StableId;
 use stellar_ops::snapshot::open_snapshot;
-use stellar_ops::web_frame::{export_web_frame, HtmlError};
+use stellar_ops::web_frame::{export_web_frame_node, HtmlError};
 
 use crate::exit::ExitStatus;
 use crate::json::JsonValue;
 use crate::output::{CliError, Diagnostic, Severity, Success};
 use crate::views;
 
-/// `export-web <프로젝트 경로> <문서 id> <View id>`.
+/// `export-web <프로젝트 경로> <문서 id> <View id> [--frame <Frame id>]`.
 pub fn run(args: &[String]) -> Result<Success, CliError> {
-    let [path, document, view] = args else {
-        return Err(CliError::usage(
-            "export-web에는 <프로젝트 경로> <문서 id> <View id>가 필요합니다",
-        ));
+    let (positional, frame) = match args {
+        [path, document, view, flag, frame] if flag == "--frame" => {
+            ([path, document, view], Some(frame))
+        }
+        [path, document, view] => ([path, document, view], None),
+        _ => {
+            if let Some(option) = args
+                .iter()
+                .find(|s| s.starts_with('-') && s.as_str() != "--frame")
+            {
+                return Err(CliError::usage(format!("알 수 없는 옵션: {option}")));
+            }
+            return Err(CliError::usage(
+                "export-web에는 <프로젝트 경로> <문서 id> <View id> [--frame <Frame id>]가 필요합니다",
+            ));
+        }
     };
-    if let Some(option) = args.iter().find(|s| s.starts_with('-')) {
+    let [path, document, view] = positional;
+    if let Some(option) = positional.iter().find(|s| s.starts_with('-')) {
         return Err(CliError::usage(format!("알 수 없는 옵션: {option}")));
     }
     let parse_id = |value: &str, kind: &str| -> Result<StableId, CliError> {
@@ -28,9 +42,10 @@ pub fn run(args: &[String]) -> Result<Success, CliError> {
     };
     let document = parse_id(document, "문서 id")?;
     let view = parse_id(view, "View id")?;
+    let frame = frame.map(|frame| parse_id(frame, "Frame id")).transpose()?;
     let snapshot =
         open_snapshot(Path::new(path)).map_err(|e| views::open_error(&e).with_context(path))?;
-    let report = export_web_frame(&snapshot, document, view).map_err(|e| {
+    let report = export_web_frame_node(&snapshot, document, view, frame).map_err(|e| {
         let error = match e {
             HtmlError::Unsaved => CliError::new(
                 ExitStatus::NoInput,

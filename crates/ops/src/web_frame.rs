@@ -501,7 +501,8 @@ pub fn export_web_frame_node(
             }
             nodes.push(ViewNode {
                 id,
-                parent: record.parent,
+                // 투영 root(View root 또는 `--frame`으로 고른 Frame)는 출력 트리 밖 부모를 갖지 않습니다.
+                parent: if id == root { None } else { record.parent },
                 element,
                 contracts: Vec::new(),
             });
