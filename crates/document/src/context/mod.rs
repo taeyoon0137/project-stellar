@@ -19,6 +19,9 @@ pub mod set;
 /// 가장 가까운 조상 provision 해석기와 값 평가 (XXX.7.4).
 pub mod resolve;
 
+/// Context validator (XXX.7.5).
+pub mod validate;
+
 /// 시험용 문서·컴포넌트 구성 도우미.
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixtures;
@@ -28,3 +31,6 @@ mod set_tests;
 
 #[cfg(test)]
 mod resolve_tests;
+
+#[cfg(test)]
+mod validate_tests;
