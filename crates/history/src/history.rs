@@ -223,6 +223,34 @@ impl History {
         Ok(applied.changes)
     }
 
+    /// 이미 적용된 문서 변경을 다시 실행하지 않고 한 항목으로 확정합니다(에이전트 작업 그룹·되돌리기 전용,
+    /// `crate::agent`, ADR-0100). 새 항목이 확정되므로 redo 갈래와 열린 grouping을 닫습니다. preview·재생
+    /// 중이면 거부하고 아무것도 바꾸지 않습니다.
+    pub(crate) fn push_applied_document(
+        &mut self,
+        origin: CommandOrigin,
+        forward: CommandTransaction,
+        inverse: CommandTransaction,
+    ) -> Result<HistorySequence, HistoryError> {
+        if self.replaying {
+            return Err(HistoryError::Replaying);
+        }
+        if self.preview.is_some() {
+            return Err(HistoryError::PreviewActive);
+        }
+        let sequence = self.sequences.allocate()?;
+        self.open_group = None;
+        self.redo.clear();
+        self.entries.push(HistoryEntry {
+            sequence,
+            origin,
+            grouping: None,
+            payload: HistoryPayload::Document { forward, inverse },
+            selection: None,
+        });
+        Ok(sequence)
+    }
+
     /// grouping key를 가진 연속 입력을 실행하고, 정책([`HistoryGroupingPolicy`])이 허락하면 마지막
     /// 항목에 합칩니다(VII.4.3~). 합치면 정방향은 뒤에 이어 붙이고 역방향은 앞에 붙여, 항목 하나의
     /// undo가 묶음 전체를 되돌립니다.
