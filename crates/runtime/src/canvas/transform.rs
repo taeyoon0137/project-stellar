@@ -29,6 +29,7 @@ use crate::canvas::CanvasScene;
 use crate::window_session::ProjectWindowSession;
 
 pub mod resize;
+pub mod rotate;
 
 #[cfg(test)]
 pub(crate) mod fixtures;
