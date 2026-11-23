@@ -186,7 +186,10 @@ fn refresh_operands(model: &DocumentModel, current: &mut DocumentSceneSource) {
     for (operand, hosts) in &current.operand_hosts {
         let mut parent = parent_of(model, *operand);
         while let Some(id) = parent {
-            ancestor_hosts.entry(id).or_default().extend(hosts.iter().copied());
+            ancestor_hosts
+                .entry(id)
+                .or_default()
+                .extend(hosts.iter().copied());
             parent = parent_of(model, id);
         }
     }
