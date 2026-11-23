@@ -70,3 +70,6 @@
 - 남은 위험: 문서 범위 경로(창 reconciliation, Git stage, 병합 해결 저장, Composer)는 requirement·Slot 공개 목록이 있는 문서를
   무손실 검사로 거부합니다. 그 경로에 컴포넌트 library를 넣는 후속이 필요합니다. agent 외부 변경 분석과 attached 미리보기
   diff(`mcp-core`)는 레코드만 비교합니다(소유 밖).
+- 검토 보완: 프로젝트 범위 투영(`add_contexts`, HEAD 단일 컴포넌트 비교)은 여러 문서가 같은 library 컴포넌트·Slot에
+  requirement·공개 목록을 두면 같은 속성을 두 번 넣어 투영 전체가 실패했습니다. 그 Component·Slot 객체에 합집합 하나로
+  붙이도록 고쳤습니다(`diff::tests::requirements_of_one_library_component_from_two_documents_project_as_one_union`).
