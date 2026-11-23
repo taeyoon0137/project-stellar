@@ -4,12 +4,28 @@
 
 - WBS: XII.10.33
 - 작업명: Text 도구 자동·고정 폭 생성, 편집 모드, 입력기 조합, 편집 중 typography 변경 코어
-- 상태: 부분 완료 (`[~]`) — 코어(공통 text buffer, runtime 편집기, 폭 규칙)와 검증 열 fixture는 끝났습니다. 셸 입력
+- 상태: 부분 완료 (`[~]`) — 코어(공통 text buffer, runtime 편집기, 폭 규칙)와 검증 열 fixture는 끝났습니다.
+  2026-11-24 text-instance-2 작업으로 빈 새 Text 정리와 앱 Text 입력 경로 하나로 합치기를 끝냈습니다. 셸 입력
   연결(`NSTextInputClient`), Text 상자 폭을 쓰는 scene 그리기가 남았고, 선행 XII.10.26이 `[ ]`입니다.
 - 선행: XII.10.32, XII.5.4, XII.5.6, X.10.3, XII.10.26
-- 결정: ADR-0118 결정 1·2·3·8
+- 결정: ADR-0118 결정 1·2·3, ADR-0129 결정 1·2(ADR-0118 결정 8 대체)
 
 ## 변경 파일
+
+2026-11-24 text-instance-2 작업:
+
+- `crates/runtime/src/canvas/text/edit.rs`(수정) — 기록 host trait `TextEditHost`와 코어 경로 `HistoryHost`. 편집기
+  기록 메서드가 host를 받습니다. `finish`가 이 편집에서 만든 Text가 비었으면 `delete-subtree` 항목 하나를 기록하고
+  `EditEnd::Removed`를 돌려줍니다.
+- `crates/runtime/src/canvas/text/edit_tests.rs`(수정) — host 인자 반영, 빈 새 Text 정리 fixture.
+- `crates/runtime/src/app/text_input.rs`(다시 씀) — 창마다 `CanvasTextEditor` 하나를 두고 `AppRuntime` Text 요청을
+  편집기 호출로 바꿉니다. 창 session host가 Undo 이름표(`TYPING`·`CHANGE_PROPERTY`·`DELETE`)를 붙입니다. 옛 별도
+  구현(조합 범위 직접 기록, `GroupingKey::TextInput` 직접 조립, 표시·잠금 직접 판정)을 지웠습니다. FFI가 쓰는 메서드
+  이름·인자는 그대로이고 `end_canvas_text`·`delete_canvas_text`·`move_canvas_caret`·`set_canvas_text_style`과
+  `TextTarget::Placement`를 더했습니다.
+- `docs/adr/ADR-0129-text-instance-editing-followups.md`(신규).
+
+2026-11-23 canvas-text-instance 작업:
 
 - `crates/text/src/edit.rs`(신규) — `TextEditBuffer`: 본문·선택·입력기 조합, grapheme 단위 삭제·caret 이동, 단어·문단
   이동, 외부 변경 뒤 본문 다시 읽기.
@@ -23,6 +39,16 @@
 - `docs/adr/ADR-0118-canvas-text-instance-keyboard-core.md`(신규), `docs/task-reports/XII.10.33.md`(신규).
 
 ## 명령과 종료 코드
+
+2026-11-24 text-instance-2 작업:
+
+| 명령 | 종료 코드 |
+|---|---|
+| `cargo test -p stellar-runtime --lib -- app::text_input canvas::text::edit` | 0 (20 passed) |
+| `cargo clippy -p stellar-document -p stellar-commands -p stellar-runtime -p stellar-ffi -p stellar-ops --all-targets --locked -- -D warnings` | 0 |
+| `cargo check -p stellar-ffi --tests` | 0 (FFI 무변경) |
+
+2026-11-23 canvas-text-instance 작업:
 
 | 명령 | 종료 코드 |
 |---|---|
@@ -71,9 +97,24 @@
   고정 폭(`width: <px>`, 높이 미설정)은 ADR-0118 결정 1로 정했습니다.
 - 편집 중 typography 변경은 표에 있는 문자 style 번호만 씁니다. style 표 항목을 만드는 command가 없습니다.
 
+## 테스트(2026-11-24 text-instance-2)
+
+- 빈 새 Text 정리(`emptied_new_text_is_removed_with_one_entry_and_existing_text_stays`): 새 Text에 "ab"를 넣고 두 번
+  지운 뒤 끝내면 `EditEnd::Removed`, 문서에서 사라지고 history가 1건 늘며 선택이 비워집니다. Undo 한 번이 빈 Text와
+  선택을 되살리고, 나머지 Undo가 문서를 처음으로 되돌립니다. 기존 Text는 비워도 남고 선택됩니다.
+- 앱 경로(`app::text_input::tests`, `AppRuntime` 요청과 완료 event로 확인):
+  - 한글 조합 미리보기 중 history·저장 상태 불변. 교체 확정과 이어지는 삽입이 입력 종류별로 묶이고 Undo 이름표가
+    `TYPING`.
+  - 같은 값 확정 무기록, 범위 밖·다른 View·낡은 revision·Text 아닌 node·잠긴 조상 거부.
+  - 새 Text 첫 확정 생성·선택, 입력 없이 끝내면 무생성.
+  - 고정 폭 새 Text를 비우고 끝내면 삭제 항목(`DELETE`) 하나. Undo가 되살리고 선택합니다.
+  - caret 이동·grapheme 삭제·조합 취소·style 변경(`CHANGE_PROPERTY`)·끝난 token 거부.
+  - 기본 Text style 없음 거부.
+
 ## 남은 위험
 
 - scene의 text layout이 Text `width`를 아직 쓰지 않습니다(`max_width` 없음). 고정 폭 줄바꿈은 layout 결과 그리기
   연결 뒤에 화면에 보입니다.
-- 옛 `app::text_input` 경로가 셸 재연결 전까지 함께 있습니다(ADR-0118 결정 8).
-- 새로 만든 Text를 입력한 뒤 모두 지우고 끝내면 빈 Text가 남습니다(ADR-0118 Consequences).
+- FFI Text ABI의 문서 주석(`crates/ffi/src/text_input.rs`)은 옛 의미(확정이 조합을 끝냄)로 적혀 있습니다. 셸 FFI를
+  바꾸지 않는 방향이라 고치지 않았습니다. 셸 재설계 때 `end_canvas_text`를 쓰는 ABI로 바꿔야 합니다.
+- 빈 Text 정리는 별도 Undo 항목입니다(ADR-0129 결정 1).

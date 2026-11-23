@@ -9,7 +9,10 @@
 //! 2. **root count**: 각 View의 root는 존재하는 부모 없는 Frame이고, View끼리 공유하지
 //!    않으며, 부모 없는 node는 반드시 어떤 View의 root임(root는 View당 정확히 하나).
 //! 3. **parent consistency**: 부모가 존재하고, 자식을 가질 수 있는 종류(Frame·Fragment,
-//!    §12.3·§12.4)이며, 부모 chain에 cycle이 없음.
+//!    §12.3·§12.4)이며, 부모 chain에 cycle이 없음. ComponentInstance의 자식은 그 인스턴스가 소유한 Slot
+//!    content이므로(IX.3.2, ADR-0129 결정 3) 그 인스턴스 payload의 slot override 하나에 정확히 한 번 투영돼야
+//!    하고, slot override가 가리키는 node는 모두 그 인스턴스의 자식이어야 합니다. slot 종류·개수 규칙은 컴포넌트
+//!    library가 있어야 알 수 있어 이 validator가 보지 않습니다(IX.3 검사기 몫).
 //! 4. **OrderKey uniqueness**: 같은 부모의 형제끼리 OrderKey가 다름.
 //! 5. **ref type**: 참조가 문서 안의 다른 종류 객체를 가리키지 않음(Frame clip은 Path
 //!    node, modifier 참조는 node). 대상이 없는 참조는 위반이 아니라 미해결 진단(III.2.4)
@@ -238,6 +241,20 @@ pub enum DocumentViolation {
         /// 부모 종류.
         parent_kind: NodeKind,
     },
+    /// ComponentInstance의 자식이 그 인스턴스의 어느 slot override에도 투영되지 않았습니다(IX.3.2).
+    UnprojectedInstanceChild {
+        /// 자식 node.
+        node: ViolationLocation,
+        /// 인스턴스 id.
+        instance: StableId,
+    },
+    /// slot override가 그 인스턴스의 자식을 두 번 투영합니다.
+    InvalidSlotContent {
+        /// 인스턴스 node.
+        instance: ViolationLocation,
+        /// 잘못 가리킨 node.
+        node: StableId,
+    },
     /// 같은 부모의 형제끼리 OrderKey가 같습니다.
     DuplicateOrderKey {
         /// 부모 id.
@@ -324,9 +341,11 @@ impl DocumentViolation {
             | DocumentViolation::MissingParent { node, .. }
             | DocumentViolation::ParentCycle { node, .. }
             | DocumentViolation::ParentNotContainer { node, .. }
+            | DocumentViolation::UnprojectedInstanceChild { node, .. }
             | DocumentViolation::DuplicateOrderKey { node, .. }
             | DocumentViolation::ModifierCycle { node, .. }
             | DocumentViolation::DepthExceeded { node, .. } => node.clone(),
+            DocumentViolation::InvalidSlotContent { instance, .. } => instance.clone(),
             DocumentViolation::ModifierOwnerMissing { stack }
             | DocumentViolation::DuplicateModifierStack { stack }
             | DocumentViolation::EmptyModifierStack { stack } => stack.clone(),
@@ -403,6 +422,13 @@ impl fmt::Display for DocumentViolation {
                 "{node}: 부모 {parent}({})는 자식을 가질 수 없습니다",
                 parent_kind.name()
             ),
+            DocumentViolation::UnprojectedInstanceChild { node, instance } => write!(
+                f,
+                "{node}: 인스턴스 {instance}의 자식이지만 어느 slot에도 투영되지 않았습니다"
+            ),
+            DocumentViolation::InvalidSlotContent { instance, node } => {
+                write!(f, "{instance}: slot content {node}가 두 번 투영됩니다")
+            }
             DocumentViolation::DuplicateOrderKey {
                 parent,
                 node,
@@ -478,9 +504,58 @@ pub struct DocumentDiagnostics {
     pub unresolved: Vec<UnresolvedRef>,
 }
 
-/// node가 자식을 가질 수 있는 종류인지(§12.3 Frame Children, §12.4 Fragment 자식 순서).
+/// node가 **자유 자식**을 가질 수 있는 종류인지(§12.3 Frame Children, §12.4 Fragment 자식 순서). 삽입·이동·붙여넣기가
+/// 아무 node나 자식으로 둘 수 있는 부모입니다.
+///
+/// ComponentInstance도 자식을 가질 수 있지만 그 자식은 slot override에 투영된 Slot content뿐입니다
+/// ([`can_own_slot_content`], ADR-0129 결정 3). 투영 없이 인스턴스 아래에 node를 두는 경로가 생기지 않도록 이 판정에는
+/// 넣지 않습니다.
 pub fn can_have_children(kind: NodeKind) -> bool {
     matches!(kind, NodeKind::Frame | NodeKind::Fragment)
+}
+
+/// node가 slot override로 투영하는 Slot content를 자식으로 소유할 수 있는 종류인지(IX.3.2, ADR-0129 결정 3).
+pub fn can_own_slot_content(kind: NodeKind) -> bool {
+    kind == NodeKind::ComponentInstance
+}
+
+/// 인스턴스 하나의 자식·slot override 투영 구조 문제(컴포넌트 library 없이 볼 수 있는 부분, IX.3.2).
+///
+/// `projected`는 slot override의 content id(slot 순서대로), `children`은 인스턴스의 실제 자식 id(자식 순서)입니다.
+/// 자식을 두 번 투영하면 [`ProjectionIssue::InvalidContent`](투영 순서), 어느 slot override에도 투영되지 않은 자식은
+/// [`ProjectionIssue::Unprojected`](자식 순서)입니다. 문제가 없으면 빈 목록입니다.
+///
+/// 자식이 아닌 node(없는 node 포함)를 가리키는 content는 문서 위반으로 보지 않습니다. 이 규칙 전에 저장된 문서의
+/// slot override는 모두 그런 참조였고(인스턴스 자식을 둘 수 없었음), 그 참조는 IX.3 투영 검사(컴포넌트 library 필요)가
+/// 진단합니다(ADR-0129 결정 3).
+pub fn instance_projection_issues<'a>(
+    projected: impl IntoIterator<Item = &'a StableId>,
+    children: &[StableId],
+) -> Vec<ProjectionIssue> {
+    let children_set: BTreeSet<StableId> = children.iter().copied().collect();
+    let mut seen = BTreeSet::new();
+    let mut issues = Vec::new();
+    for node in projected {
+        if children_set.contains(node) && !seen.insert(*node) {
+            issues.push(ProjectionIssue::InvalidContent(*node));
+        }
+    }
+    issues.extend(
+        children
+            .iter()
+            .filter(|c| !seen.contains(*c))
+            .map(|c| ProjectionIssue::Unprojected(*c)),
+    );
+    issues
+}
+
+/// [`instance_projection_issues`]의 문제 하나.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectionIssue {
+    /// slot override가 같은 자식을 두 번 투영합니다.
+    InvalidContent(StableId),
+    /// 어느 slot override에도 투영되지 않은 자식.
+    Unprojected(StableId),
 }
 
 /// 문서 전체를 검증합니다. 위반이 없으면 미해결 참조 진단을 반환합니다.
@@ -497,6 +572,7 @@ pub fn validate_document(
     validator.check_ids();
     validator.check_roots();
     validator.check_parents();
+    validator.check_slot_content();
     validator.check_order_keys();
     validator.check_depth();
     validator.check_references();
@@ -678,7 +754,9 @@ impl Validator<'_> {
                     node: self.node_location(index),
                     parent,
                 }),
-                Some(parent_kind) if !can_have_children(parent_kind) => {
+                Some(parent_kind)
+                    if !can_have_children(parent_kind) && !can_own_slot_content(parent_kind) =>
+                {
                     self.violations.push(DocumentViolation::ParentNotContainer {
                         node: self.node_location(index),
                         parent,
@@ -745,6 +823,49 @@ impl Validator<'_> {
             }
             for id in chain {
                 marks.insert(id, Mark::Done);
+            }
+        }
+    }
+
+    // 3b. ComponentInstance 자식 = 투영된 Slot content(ADR-0129 결정 3).
+    fn check_slot_content(&mut self) {
+        let records = self.records;
+        let mut children: BTreeMap<StableId, Vec<StableId>> = BTreeMap::new();
+        for node in &records.nodes {
+            if let Some(parent) = node.parent {
+                if self.kind_of(parent).is_some_and(can_own_slot_content) {
+                    children.entry(parent).or_default().push(node.id);
+                }
+            }
+        }
+        for (index, node) in records.nodes.iter().enumerate() {
+            let NodePayload::ComponentInstance(payload) = &node.payload else {
+                continue;
+            };
+            // 중복 id 레코드는 check_ids가 보고합니다. 첫 레코드만 봅니다.
+            if self.node_index.get(&node.id) != Some(&index) {
+                continue;
+            }
+            let owned = children.remove(&node.id).unwrap_or_default();
+            let projected = payload
+                .slot_overrides()
+                .flat_map(|(_, content)| content.content().iter());
+            for issue in instance_projection_issues(projected, &owned) {
+                let violation = match issue {
+                    ProjectionIssue::InvalidContent(target) => {
+                        DocumentViolation::InvalidSlotContent {
+                            instance: self.node_location(index),
+                            node: target,
+                        }
+                    }
+                    ProjectionIssue::Unprojected(child) => {
+                        DocumentViolation::UnprojectedInstanceChild {
+                            node: self.node_location(self.node_index[&child]),
+                            instance: node.id,
+                        }
+                    }
+                };
+                self.violations.push(violation);
             }
         }
     }
@@ -1448,6 +1569,80 @@ mod tests {
                 node: loc(&records, INNER),
                 cycle: vec![sid(INNER), sid(INNER)],
             }]
+        );
+    }
+
+    /// ComponentInstance 자식은 그 인스턴스 slot override에 정확히 한 번 투영된 Slot content만 허용합니다(ADR-0129
+    /// 결정 3).
+    #[test]
+    fn instance_children_must_be_projected_slot_content() {
+        use crate::component::definition::ComponentSlotId;
+        use crate::component::instance::{ComponentInstancePayload, SlotOverride};
+        use stellar_core_types::reference::ComponentRef;
+        const INSTANCE: u64 = 40;
+        const OWNED: u64 = 41;
+        const OTHER: u64 = 42;
+        let slot = |n: u64| ComponentSlotId::new(sid(n));
+        let with = |slots: &[(u64, &[u64])], children: &[u64]| {
+            let mut payload = ComponentInstancePayload::new(ComponentRef::new(sid(900)));
+            for (id, content) in slots {
+                payload.set_slot_override(
+                    slot(*id),
+                    SlotOverride::new(content.iter().map(|c| sid(*c)).collect()).unwrap(),
+                );
+            }
+            let mut records = fixture();
+            records.nodes.push(node(
+                INSTANCE,
+                Some(ROOT_A),
+                0x70,
+                NodePayload::ComponentInstance(payload),
+            ));
+            for (i, child) in children.iter().enumerate() {
+                records
+                    .nodes
+                    .push(node(*child, Some(INSTANCE), 0x10 + i as u8, frame()));
+            }
+            records
+        };
+        // 투영된 자식은 유효하고, 빈 override·자식 없는 인스턴스도 유효합니다.
+        assert!(validate_document(&with(&[(800, &[OWNED])], &[OWNED])).is_ok());
+        assert!(validate_document(&with(&[(800, &[])], &[])).is_ok());
+        // 투영되지 않은 자식.
+        let records = with(&[(800, &[OWNED])], &[OWNED, OTHER]);
+        assert_eq!(
+            violations(&records),
+            vec![DocumentViolation::UnprojectedInstanceChild {
+                node: loc(&records, OTHER),
+                instance: sid(INSTANCE),
+            }]
+        );
+        // 두 slot에 같은 자식을 투영하면 위반입니다. 자식이 아닌 node(다른 부모의 RECT, 없는 node)를 가리키는 옛 형식
+        // 참조는 문서 위반이 아닙니다(IX.3 투영 검사가 진단).
+        let records = with(&[(800, &[OWNED]), (801, &[OWNED, RECT, 4_321])], &[OWNED]);
+        assert_eq!(
+            violations(&records),
+            vec![DocumentViolation::InvalidSlotContent {
+                instance: loc(&records, INSTANCE),
+                node: sid(OWNED),
+            }]
+        );
+        assert!(validate_document(&with(&[(800, &[RECT, 4_321])], &[])).is_ok());
+        // leaf 부모는 여전히 container 위반이고, 자유 자식 판정은 인스턴스를 포함하지 않습니다.
+        assert!(!can_have_children(NodeKind::ComponentInstance));
+        assert!(can_own_slot_content(NodeKind::ComponentInstance));
+        assert!(!can_own_slot_content(NodeKind::Frame));
+        assert!(violations(&records)
+            .iter()
+            .all(|v| !matches!(v, DocumentViolation::ParentNotContainer { .. })));
+        assert_eq!(
+            violations(&records)[0].to_string(),
+            format!(
+                "node {}(#{}): slot content {}가 두 번 투영됩니다",
+                sid(INSTANCE),
+                index_of(&records, INSTANCE),
+                sid(OWNED)
+            )
         );
     }
 

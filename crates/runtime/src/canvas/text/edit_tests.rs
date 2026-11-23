@@ -94,7 +94,12 @@ fn hangul_composition_on_new_text_records_once_on_commit() {
     assert!(!doc.model().contains(node));
     // 입력기가 "한"을 확정: 새 Text를 만들고(자동 폭) 선택합니다.
     assert!(editor
-        .insert(&mut history, &mut doc, "한", id(1), &clock)
+        .insert(
+            &mut HistoryHost::new(&mut history, &mut doc),
+            "한",
+            id(1),
+            &clock
+        )
         .unwrap());
     assert_eq!(content(&doc, node).as_deref(), Some("한"));
     assert_eq!(
@@ -112,13 +117,13 @@ fn hangul_composition_on_new_text_records_once_on_commit() {
         .set_marked(&doc, "글", ScalarRange::caret(1))
         .unwrap();
     assert!(editor
-        .commit_composition(&mut history, &mut doc, id(2), &clock)
+        .commit_composition(&mut HistoryHost::new(&mut history, &mut doc), id(2), &clock)
         .unwrap());
     assert_eq!(content(&doc, node).as_deref(), Some("한글"));
     // 생성과 연속 입력이 history 한 항목입니다.
     assert_eq!(entries(&history), 1);
     let end = editor
-        .finish(&mut history, &mut doc, id(3), &clock)
+        .finish(&mut HistoryHost::new(&mut history, &mut doc), id(3), &clock)
         .unwrap();
     assert_eq!(
         end,
@@ -149,10 +154,10 @@ fn new_text_ended_without_input_records_nothing() {
     assert_eq!(editor.escape(), EscapeStep::End);
     // 지우기도 아무것도 만들지 않습니다.
     assert!(!editor
-        .delete_backward(&mut history, &mut doc, id(1), &clock)
+        .delete_backward(&mut HistoryHost::new(&mut history, &mut doc), id(1), &clock)
         .unwrap());
     let end = editor
-        .finish(&mut history, &mut doc, id(2), &clock)
+        .finish(&mut HistoryHost::new(&mut history, &mut doc), id(2), &clock)
         .unwrap();
     assert_eq!(end, EditEnd::CreationCancelled);
     assert_eq!(entries(&history), 0);
@@ -167,7 +172,12 @@ fn fixed_width_creation_and_edge_drag_turns_auto_into_fixed() {
         CanvasTextEditor::begin_new(&doc, placement(TextWidth::Fixed(80.)), sid(31), sid(32), 1)
             .unwrap();
     editor
-        .insert(&mut history, &mut doc, "abc", id(1), &clock)
+        .insert(
+            &mut HistoryHost::new(&mut history, &mut doc),
+            "abc",
+            id(1),
+            &clock,
+        )
         .unwrap();
     assert_eq!(
         text_width_mode(doc.model(), sid(31)),
@@ -175,8 +185,13 @@ fn fixed_width_creation_and_edge_drag_turns_auto_into_fixed() {
     );
     let mut auto =
         CanvasTextEditor::begin_new(&doc, placement(TextWidth::Auto), sid(41), sid(42), 2).unwrap();
-    auto.insert(&mut history, &mut doc, "x", id(2), &clock)
-        .unwrap();
+    auto.insert(
+        &mut HistoryHost::new(&mut history, &mut doc),
+        "x",
+        id(2),
+        &clock,
+    )
+    .unwrap();
     assert_eq!(
         text_width_mode(doc.model(), sid(41)),
         Some(TextWidthMode::Auto)
@@ -225,7 +240,7 @@ fn japanese_conversion_on_existing_text_is_one_replace() {
     assert_eq!(content(&doc, sid(TEXT)).as_deref(), Some("abcd"));
     // 바깥 클릭: 조합을 확정하고 끝냅니다. 선택이 비어 있었으므로 Text 선택을 기록합니다.
     let end = editor
-        .finish(&mut history, &mut doc, id(1), &clock)
+        .finish(&mut HistoryHost::new(&mut history, &mut doc), id(1), &clock)
         .unwrap();
     assert_eq!(content(&doc, sid(TEXT)).as_deref(), Some("a漢字d"));
     let EditEnd::Selected { node, selection } = end else {
@@ -245,12 +260,21 @@ fn typing_and_backspace_group_and_follow_undo() {
     let mut editor = CanvasTextEditor::begin_existing(&doc, sid(TEXT), None, 5).unwrap();
     for (i, c) in ["e", "f", "g"].into_iter().enumerate() {
         editor
-            .insert(&mut history, &mut doc, c, id(i as u64), &clock)
+            .insert(
+                &mut HistoryHost::new(&mut history, &mut doc),
+                c,
+                id(i as u64),
+                &clock,
+            )
             .unwrap();
     }
     assert_eq!(entries(&history), 1);
     editor
-        .delete_backward(&mut history, &mut doc, id(10), &clock)
+        .delete_backward(
+            &mut HistoryHost::new(&mut history, &mut doc),
+            id(10),
+            &clock,
+        )
         .unwrap();
     assert_eq!(content(&doc, sid(TEXT)).as_deref(), Some("abcdef"));
     assert_eq!(entries(&history), 2);
@@ -258,7 +282,12 @@ fn typing_and_backspace_group_and_follow_undo() {
     history.undo(&mut doc).unwrap();
     assert_eq!(content(&doc, sid(TEXT)).as_deref(), Some("abcdefg"));
     editor
-        .insert(&mut history, &mut doc, "!", id(11), &clock)
+        .insert(
+            &mut HistoryHost::new(&mut history, &mut doc),
+            "!",
+            id(11),
+            &clock,
+        )
         .unwrap();
     assert_eq!(content(&doc, sid(TEXT)).as_deref(), Some("abcdefg!"));
 }
@@ -290,7 +319,11 @@ fn typography_change_during_editing_is_one_transaction() {
     .unwrap();
     assert_eq!(
         editor
-            .apply_style(&mut history, &mut doc, Some(1), id(1))
+            .apply_style(
+                &mut HistoryHost::new(&mut history, &mut doc),
+                Some(1),
+                id(1)
+            )
             .unwrap(),
         StyleOutcome::Recorded
     );
@@ -304,7 +337,11 @@ fn typography_change_during_editing_is_one_transaction() {
         .set_marked(&doc, "xy", ScalarRange::caret(2))
         .unwrap();
     editor
-        .apply_style(&mut history, &mut doc, Some(1), id(2))
+        .apply_style(
+            &mut HistoryHost::new(&mut history, &mut doc),
+            Some(1),
+            id(2),
+        )
         .unwrap();
     assert_eq!(content(&doc, sid(TEXT)).as_deref(), Some("abcdxy"));
     assert_eq!(runs(&doc), vec![run(1, 3, 1), run(4, 6, 1)]);
@@ -315,13 +352,22 @@ fn typography_change_during_editing_is_one_transaction() {
     // 3) caret: 다음 확정 입력과 같은 transaction.
     assert_eq!(
         editor
-            .apply_style(&mut history, &mut doc, Some(1), id(3))
+            .apply_style(
+                &mut HistoryHost::new(&mut history, &mut doc),
+                Some(1),
+                id(3)
+            )
             .unwrap(),
         StyleOutcome::Pending
     );
     let before = entries(&history);
     editor
-        .insert(&mut history, &mut doc, "z", id(4), &clock)
+        .insert(
+            &mut HistoryHost::new(&mut history, &mut doc),
+            "z",
+            id(4),
+            &clock,
+        )
         .unwrap();
     assert_eq!(entries(&history), before + 1);
     assert_eq!(content(&doc, sid(TEXT)).as_deref(), Some("abcdz"));
@@ -333,7 +379,11 @@ fn typography_change_during_editing_is_one_transaction() {
         .move_caret(&doc, CaretMove::SelectAll, false)
         .unwrap();
     assert!(editor
-        .apply_style(&mut history, &mut doc, Some(9), id(5))
+        .apply_style(
+            &mut HistoryHost::new(&mut history, &mut doc),
+            Some(9),
+            id(5)
+        )
         .is_err());
     assert_eq!(
         editor.buffer().selection().range(),
@@ -349,12 +399,21 @@ fn style_before_creation_is_part_of_the_creating_entry() {
         CanvasTextEditor::begin_new(&doc, placement(TextWidth::Auto), sid(31), sid(32), 1).unwrap();
     assert_eq!(
         editor
-            .apply_style(&mut history, &mut doc, Some(1), id(1))
+            .apply_style(
+                &mut HistoryHost::new(&mut history, &mut doc),
+                Some(1),
+                id(1)
+            )
             .unwrap(),
         StyleOutcome::Pending
     );
     editor
-        .insert(&mut history, &mut doc, "ab", id(2), &clock)
+        .insert(
+            &mut HistoryHost::new(&mut history, &mut doc),
+            "ab",
+            id(2),
+            &clock,
+        )
         .unwrap();
     assert_eq!(entries(&history), 1);
     assert_eq!(
@@ -462,7 +521,11 @@ fn style_on_a_composition_equal_to_the_replaced_text_writes_only_the_style() {
         .unwrap();
     assert_eq!(
         editor
-            .apply_style(&mut history, &mut doc, Some(1), id(1))
+            .apply_style(
+                &mut HistoryHost::new(&mut history, &mut doc),
+                Some(1),
+                id(1)
+            )
             .unwrap(),
         StyleOutcome::Recorded
     );
@@ -488,12 +551,21 @@ fn failed_record_restores_the_buffer_and_drops_the_pending_style() {
     // caret뿐이라 표에 없는 번호도 다음 입력까지 미뤄지고, 그 입력의 transaction이 거부됩니다.
     assert_eq!(
         editor
-            .apply_style(&mut history, &mut doc, Some(9), id(1))
+            .apply_style(
+                &mut HistoryHost::new(&mut history, &mut doc),
+                Some(9),
+                id(1)
+            )
             .unwrap(),
         StyleOutcome::Pending
     );
     assert!(editor
-        .insert(&mut history, &mut doc, "z", id(2), &clock)
+        .insert(
+            &mut HistoryHost::new(&mut history, &mut doc),
+            "z",
+            id(2),
+            &clock
+        )
         .is_err());
     assert_eq!(editor.buffer().text(), "abcd");
     assert_eq!(editor.buffer().selection(), EditSelection::caret(4));
@@ -501,7 +573,12 @@ fn failed_record_restores_the_buffer_and_drops_the_pending_style() {
     assert_eq!(entries(&history), 0);
     // 실패한 style은 버려져 다음 입력은 기본 style로 기록됩니다.
     assert!(editor
-        .insert(&mut history, &mut doc, "y", id(3), &clock)
+        .insert(
+            &mut HistoryHost::new(&mut history, &mut doc),
+            "y",
+            id(3),
+            &clock
+        )
         .unwrap());
     assert_eq!(content(&doc, sid(TEXT)).as_deref(), Some("abcdy"));
     assert_eq!(entries(&history), 1);
@@ -510,16 +587,20 @@ fn failed_record_restores_the_buffer_and_drops_the_pending_style() {
         CanvasTextEditor::begin_new(&doc, placement(TextWidth::Auto), sid(31), sid(32), 6).unwrap();
     fresh.set_marked(&doc, "ㅎ", ScalarRange::caret(1)).unwrap();
     fresh
-        .apply_style(&mut history, &mut doc, Some(9), id(4))
+        .apply_style(
+            &mut HistoryHost::new(&mut history, &mut doc),
+            Some(9),
+            id(4),
+        )
         .unwrap();
     assert!(fresh
-        .commit_composition(&mut history, &mut doc, id(5), &clock)
+        .commit_composition(&mut HistoryHost::new(&mut history, &mut doc), id(5), &clock)
         .is_err());
     assert!(!fresh.exists());
     assert!(fresh.buffer().composition().is_some());
     assert!(!doc.model().contains(sid(31)));
     assert!(fresh
-        .commit_composition(&mut history, &mut doc, id(6), &clock)
+        .commit_composition(&mut HistoryHost::new(&mut history, &mut doc), id(6), &clock)
         .unwrap());
     assert_eq!(content(&doc, sid(31)).as_deref(), Some("ㅎ"));
 }
@@ -537,8 +618,72 @@ fn text_locked_during_editing_stops_further_input() {
     );
     history.record_document(&mut doc, &lock, None).unwrap();
     assert_eq!(
-        editor.insert(&mut history, &mut doc, "z", id(2), &clock),
+        editor.insert(
+            &mut HistoryHost::new(&mut history, &mut doc),
+            "z",
+            id(2),
+            &clock
+        ),
         Err(TextEditError::NotEditable)
     );
     assert_eq!(content(&doc, sid(TEXT)).as_deref(), Some("abcd"));
+}
+
+/// 이 편집에서 만든 Text를 모두 지우고 끝내면 빈 Text를 지우는 `delete-subtree` 항목 하나를 기록합니다. Undo 한 번은
+/// 빈 Text를 되살리고, 그다음 Undo들이 입력을 거꾸로 되돌립니다(ADR-0129 결정 1).
+#[test]
+fn emptied_new_text_is_removed_with_one_entry_and_existing_text_stays() {
+    let (mut history, mut doc) = rig(true);
+    let clock = ManualClock::new(0);
+    let before = doc.model().to_records().unwrap();
+    let mut editor =
+        CanvasTextEditor::begin_new(&doc, placement(TextWidth::Auto), sid(31), sid(32), 1).unwrap();
+    editor
+        .insert(
+            &mut HistoryHost::new(&mut history, &mut doc),
+            "ab",
+            id(1),
+            &clock,
+        )
+        .unwrap();
+    for n in 2..4 {
+        editor
+            .delete_backward(&mut HistoryHost::new(&mut history, &mut doc), id(n), &clock)
+            .unwrap();
+    }
+    assert_eq!(content(&doc, sid(31)).as_deref(), Some(""));
+    let typed = entries(&history);
+    let end = editor
+        .finish(&mut HistoryHost::new(&mut history, &mut doc), id(4), &clock)
+        .unwrap();
+    assert_eq!(end, EditEnd::Removed { node: sid(31) });
+    assert!(!doc.model().contains(sid(31)));
+    assert_eq!(entries(&history), typed + 1);
+    assert!(history.view().selection().is_empty());
+    history.undo(&mut doc).unwrap();
+    assert_eq!(content(&doc, sid(31)).as_deref(), Some(""));
+    assert_eq!(history.view().selection().ids(), [sid(31)]);
+    while !history.history().entries().is_empty() {
+        history.undo(&mut doc).unwrap();
+    }
+    assert_eq!(doc.model().to_records().unwrap(), before);
+    // 기존 Text는 비워도 지우지 않습니다.
+    let mut existing = CanvasTextEditor::begin_existing(
+        &doc,
+        sid(TEXT),
+        Some(EditSelection {
+            anchor: 0,
+            focus: 4,
+        }),
+        2,
+    )
+    .unwrap();
+    existing
+        .delete_backward(&mut HistoryHost::new(&mut history, &mut doc), id(5), &clock)
+        .unwrap();
+    let end = existing
+        .finish(&mut HistoryHost::new(&mut history, &mut doc), id(6), &clock)
+        .unwrap();
+    assert!(matches!(end, EditEnd::Selected { node, .. } if node == sid(TEXT)));
+    assert_eq!(content(&doc, sid(TEXT)).as_deref(), Some(""));
 }

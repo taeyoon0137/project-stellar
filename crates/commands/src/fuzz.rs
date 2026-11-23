@@ -171,7 +171,8 @@ mod tests {
     #[test]
     fn adr_0079_kinds_survive_mutation_fuzz() {
         // ADR-0079 종류를 종류별로 생성·변조해 decode·실행합니다. panic 없이, 성공한 실행 뒤 문서가 validator를
-        // 통과해야 합니다(execute_checked). 인스턴스가 없는 random document에서는 swap-instance가 생성되지 않습니다.
+        // 통과해야 합니다(execute_checked). 인스턴스가 없는 random document에서는 swap-instance와 인스턴스 구조
+        // command(detach-instance, place-slot-content)가 생성되지 않습니다.
         let kinds: Vec<CommandKind> = CommandKind::ALL
             .iter()
             .copied()
@@ -179,6 +180,7 @@ mod tests {
             .collect();
         // ADR-0079 종류 10개, ADR-0086 종류 3개(codec version 3), ADR-0099 Context 편집 1개(codec version 5),
         // ADR-0126 가이드·View 변수 편집 2개(codec version 7).
+        // ADR-0129 인스턴스 구조 2개(codec version 8).
         assert_eq!(kinds.len(), 16);
         // UnsetProperty는 명시 layout longhand가 있어야 생성되므로 SetLayoutProperty 뒤에 둡니다.
         let mut kinds = kinds;
@@ -211,7 +213,12 @@ mod tests {
             }
         }
         for kind in &kinds {
-            if *kind != CommandKind::SwapInstance {
+            if !matches!(
+                kind,
+                CommandKind::SwapInstance
+                    | CommandKind::DetachInstance
+                    | CommandKind::PlaceSlotContent
+            ) {
                 assert!(
                     executed.get(kind).copied().unwrap_or(0) > 0,
                     "{kind} 실행 0건"

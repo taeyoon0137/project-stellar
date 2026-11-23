@@ -544,6 +544,56 @@ pub fn generate(
                 payload,
             }))
         }
+        CommandKind::DetachInstance | CommandKind::PlaceSlotContent => {
+            // 인스턴스 구조 command(ADR-0129). Detach는 정의 library가 있어야 계획되므로 여기서는 구조 규칙만 쓰는
+            // 후보를 만듭니다: 인스턴스 → 빈 Frame(Detach), 다른 node 하나를 새 slot에 투영(Slot 배치).
+            let instances = nodes_where(model, |id| {
+                kind_of(model, id) == Some(NodeKind::ComponentInstance)
+            });
+            let node = pick(rng, &instances)?;
+            let mut record = model.record(node)?;
+            let NodePayload::ComponentInstance(current) = record.payload.clone() else {
+                return None;
+            };
+            let layout = model
+                .layout_record(node)
+                .cloned()
+                .unwrap_or_else(|| stellar_document::layout_record::LayoutRecord::new(node));
+            let mut moves = Vec::new();
+            if kind == CommandKind::DetachInstance {
+                record.payload = NodePayload::Frame(FramePayload::default());
+            } else {
+                let movable = nodes_where(model, |id| non_root(model, id) && id != node);
+                let content = pick(rng, &movable)?;
+                let mut payload = current;
+                payload.set_slot_override(
+                    stellar_document::component::definition::ComponentSlotId::new(ids.fresh()),
+                    stellar_document::component::instance::SlotOverride::new(vec![content]).ok()?,
+                );
+                record.payload = NodePayload::ComponentInstance(payload);
+                moves.push(crate::detach::NodePlacement {
+                    node: content,
+                    parent: node,
+                    order_key: model.next_child_order_key(node),
+                });
+            }
+            let restructure = crate::detach::InstanceRestructure {
+                node,
+                record,
+                layout,
+                stack: None,
+                insert: Vec::new(),
+                insert_stacks: Vec::new(),
+                insert_layouts: Vec::new(),
+                moves,
+                remove: Vec::new(),
+            };
+            Some(if kind == CommandKind::DetachInstance {
+                Command::DetachInstance(Box::new(restructure))
+            } else {
+                Command::PlaceSlotContent(Box::new(restructure))
+            })
+        }
         CommandKind::SetStyleDefaults => {
             let name = if model.style_defaults() == "css" {
                 "react-native"

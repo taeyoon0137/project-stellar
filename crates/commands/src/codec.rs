@@ -30,10 +30,12 @@ use stellar_core_types::ids::StableId;
 ///   version 5와 같습니다.
 /// - 7: ADR-0126이 더한 종류(가이드·레이아웃 그리드 `set-node-guides`, View 변수·Variant `edit-view-variants`)와
 ///   `apply-external-snapshot`의 가이드·View 변수 변경 tag 9·10. 그 종류·tag가 없는 command의 bytes는 version 6과 같습니다.
+/// - 8: ADR-0129가 더한 종류(인스턴스 Detach `detach-instance`, Slot content 배치 `place-slot-content`). 그 종류가 없는
+///   command의 bytes는 version 7과 같습니다.
 ///
 /// 각 종류가 처음 들어간 버전은 [`CommandKind::codec_version`]입니다. history journal header가 이 값을
 /// 기록하므로 옛 reader는 모르는 종류를 담은 journal의 복원만 포기하고 문서는 건드리지 않습니다.
-pub const COMMAND_CODEC_VERSION: u32 = 7;
+pub const COMMAND_CODEC_VERSION: u32 = 8;
 
 use crate::command::Command;
 use crate::convert::{ConvertFragmentToFrame, ConvertShapeToPath, RestoreNodeRecords};
@@ -335,6 +337,9 @@ fn encode_payload(command: &Command, out: &mut Writer) {
         Command::EditContext(command) => command.encode_into(out),
         Command::SetNodeGuides(command) => command.encode_into(out),
         Command::EditViewVariants(command) => command.encode_into(out),
+        Command::DetachInstance(command) | Command::PlaceSlotContent(command) => {
+            command.encode_into(out)
+        }
         #[cfg(test)]
         Command::TestProbe(probe) => {
             out.id(probe.node);
@@ -441,6 +446,10 @@ fn decode_payload(kind: CommandKind, input: &mut Reader<'_>) -> Result<Command, 
         }
         CommandKind::EditViewVariants => crate::guides::EditViewVariants::decode_from(input)
             .map(|command| Command::EditViewVariants(Box::new(command))),
+        CommandKind::DetachInstance => crate::detach::InstanceRestructure::decode_from(input)
+            .map(|command| Command::DetachInstance(Box::new(command))),
+        CommandKind::PlaceSlotContent => crate::detach::InstanceRestructure::decode_from(input)
+            .map(|command| Command::PlaceSlotContent(Box::new(command))),
         #[cfg(test)]
         CommandKind::TestProbe => Ok(Command::TestProbe(crate::command::TestProbe {
             node: input.id()?,

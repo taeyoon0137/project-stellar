@@ -530,16 +530,21 @@ impl RestoreNodeRecords {
                     })?;
                 }
             }
-            // 종류가 바뀌어도 node의 명시 layout record와 가이드 기록(Frame 전용, ADR-0126)은 그대로 남으므로 새 종류에
-            // 붙을 수 있어야 합니다.
-            if model.layout_record(record.id).is_some_and(|layout| {
-                !stellar_document::layout_record::record_violations(layout, &record.payload)
-                    .is_empty()
+            // 바뀐 종류·payload에 붙지 않는 명시 layout longhand가 남으면 안 됩니다(예: Fragment로 되돌릴 때의 item
+            // longhand, ADR-0086).
+            if let Some(violation) = model.layout_record(record.id).and_then(|layout| {
+                stellar_document::layout_record::record_violations(layout, &record.payload)
+                    .into_iter()
+                    .next()
             }) {
-                return Err(CommandError::InvalidRequest {
-                    reason: "복원할 종류에 붙을 수 없는 layout longhand가 있습니다",
-                });
+                return Err(CommandError::Model(
+                    stellar_document::model::ModelError::Layout {
+                        id: record.id,
+                        reason: violation.to_string(),
+                    },
+                ));
             }
+            // 가이드 기록(Frame 전용, ADR-0126)은 종류가 바뀌어도 남으므로 Frame이 아닌 종류로는 복원할 수 없습니다.
             if kind != NodeKind::Frame && model.node_guides(record.id).is_some() {
                 return Err(CommandError::InvalidRequest {
                     reason: "가이드·레이아웃 그리드가 있는 Frame은 다른 종류로 복원할 수 없습니다",
