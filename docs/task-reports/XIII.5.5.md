@@ -3,7 +3,7 @@
 - WBS: XIII.5.5
 - 작업명: `UpdateFromSource` — source metadata 경로를 다시 읽어 새 hash asset을 만들고
   AssetRecord 참조를 command로 변경
-- 상태: 부분 완료 (`[~]`) — 원본 재import·새 record·`AssetRecordUpdate`(apply/invert 값)와
+- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 원본 재import·새 record·`AssetRecordUpdate`(apply/invert 값)와
   "source 없으면 기존 asset 유지"는 구현·검증했지만, 참조 변경을 **command로** 적용하는 연결은
   command 타입이 아직 없어(Phase VII, `stellar-commands`는 골격) 하지 않았습니다.
 - 선행: XIII.5.2, Phase VII(phase 단위 선행 — 2026-11-14 사용자 지시에 따라 command 비의존
@@ -168,3 +168,26 @@
   경로를 바꿔도 다른 파일을 `assets/`로 복사하지 않습니다(`ImportError::SourceChanged`). 사용자가
   고른 경로(`update_from_selected_source`)는 고정하지 않습니다. 세부와 남은 한계는 XIII.5.2 후속 수정
   (TOCTOU 완화) 절에 있습니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 남은 범위·결함 있음.
+- 근거: 원본 재import·새 hash asset·`AssetRecordUpdate`(apply/invert 값)와 원본 없음 시 기존 유지는 있습니다. 행 지시의 "AssetRecord 참조를 command로 변경"이 없어 `[~]`를 유지합니다. Phase VII은 이제 VII.6.3만 남았으므로 command 연결을 막던 사유는 사라졌습니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/assets/src/update_source.rs`: `AssetRecordUpdate`, `AssetCatalog::apply_update`.
+- `crates/commands/src/`에 asset 참조 변경 command variant가 없습니다(`AssetRecordUpdate`를 쓰는 곳은 assets crate 안뿐).
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-assets` | 144 passed, 0 failed |
+
+### 남은 조건과 finding
+
+- 결함 finding(persistent-commands lane, `crates/commands/src/{kind,command,codec}.rs`): `AssetRecordUpdate`를 closed command enum variant로 감싸 validate·apply·invert와 history에 연결하고, 원본 없는 fixture에서 command가 거부되고 기존 asset이 남는지 확인해야 `[x]`입니다.
+- 선행 "Phase VII"는 VII.6.3이 이번에 `[x]` 판정되면 충족됩니다.
