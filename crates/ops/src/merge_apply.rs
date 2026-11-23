@@ -14,7 +14,7 @@
 /// 창 문서 하나의 3-way reconciliation(XIII.3.4).
 pub mod document;
 
-/// 결과 target 정의·검증(XXIII.3.1).
+/// 결과 target 정의·검증·생성(XXIII.3.1·XXIII.3.2).
 pub mod target;
 
 #[cfg(test)]

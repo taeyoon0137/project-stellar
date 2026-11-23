@@ -1,4 +1,4 @@
-//! Merge Composer 결과 target 정의·검증 (XXIII.3.1, ADR-0110 결정 4).
+//! Merge Composer 결과 target 정의·검증과 새 branch+worktree 생성 (XXIII.3.1·XXIII.3.2, ADR-0110 결정 3·4).
 //!
 //! | target | 뜻 | 검증 |
 //! |---|---|---|
@@ -6,7 +6,10 @@
 //! | [`ResultTarget::ExistingWorktree`] | `git worktree list`에 있는 다른 worktree의 같은 상대 경로 프로젝트 | 목록에 있음(bare·prunable 아님) + 위와 같음 |
 //! | [`ResultTarget::NewBranchWorktree`] | 새 branch를 만들어 새 경로에 checkout한 worktree | branch 이름 형식·미존재, 경로 미존재·부모 있음·다른 worktree 밖, 시작 commit이 그 프로젝트를 담음 |
 //!
-//! 검증은 읽기만 합니다(`rev-parse`·`worktree list`·`ls-tree`·`ls-files -u`). 아무것도 만들거나 바꾸지 않습니다.
+//! 검증은 읽기만 합니다(`rev-parse`·`worktree list`·`ls-tree`·`ls-files -u`). 새 branch·worktree는 검증과 source 재검사를
+//! 통과한 뒤 [`create_branch_worktree`]가 **시스템 Git `git worktree add -b <branch> -- <path> <start>` 하나로**
+//! 만듭니다(XXIII.3.2). `.git` 아래 파일을 직접 만들거나 고치지 않고, 실패해도 만든 것을 지우는 파괴적 명령을 부르지
+//! 않습니다(사용자가 결과를 보고 정리).
 //!
 //! 기존 target은 검증 시점의 프로젝트 revision을 기록합니다. 쓰기는 저장 잠금 안에서 그 revision을 다시 비교합니다
 //! (XXIII.3.3).
@@ -15,6 +18,8 @@ use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
 use stellar_git_porcelain::advanced::worktree::list_worktrees;
+use stellar_git_porcelain::advanced::worktree_ops::{plan_add, AddTarget};
+use stellar_git_porcelain::advanced::{execute_plan, PlanError};
 use stellar_git_porcelain::composer::{resolve_source, SourceError, SourceRef};
 use stellar_git_porcelain::location::worktree_root;
 use stellar_git_porcelain::object::ObjectId;
@@ -368,4 +373,43 @@ fn new_worktree_path(
         }
     }
     Ok(wanted)
+}
+
+/// 검증한 새 branch+worktree target을 시스템 Git으로 만들고(XXIII.3.2), 만든 프로젝트를 열어 revision을 정합니다.
+///
+/// 명령은 `git worktree add -b <branch> -- <path> <start>` 하나입니다. 다른 target이면 아무것도 하지 않고 그대로
+/// 돌려줍니다. 만든 뒤 프로젝트 확인이 실패해도 branch·worktree를 지우지 않습니다(오류가 경로를 알림).
+pub fn create_branch_worktree(
+    git: &GatedGitRunner,
+    project_root: &Path,
+    project_id: StableId,
+    validated: ValidatedTarget,
+) -> Result<ValidatedTarget, TargetError> {
+    let ResultTarget::NewBranchWorktree { branch, start, .. } = &validated.target else {
+        return Ok(validated);
+    };
+    let (current, _) = project_location(git, project_root)?;
+    let plan = plan_add(
+        &validated.worktree,
+        &AddTarget::NewBranch {
+            name: branch.clone(),
+            start: Some(start.as_str().to_owned()),
+        },
+    )
+    .map_err(plan_error)?;
+    execute_plan(git, &current, &plan, None).map_err(plan_error)?;
+    let expected = check_project(
+        git,
+        &validated.worktree,
+        &validated.project_root,
+        project_id,
+    )?;
+    Ok(ValidatedTarget {
+        expected: Some(expected),
+        ..validated
+    })
+}
+
+fn plan_error(e: PlanError) -> TargetError {
+    TargetError::Git(e.to_string())
 }
