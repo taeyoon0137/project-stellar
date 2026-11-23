@@ -12,6 +12,12 @@
 //! **해결(XIV.12.1, ADR-0081 결정 4)**: [`Resolution`]은 `ChooseBase`·`ChooseOurs`·`ChooseTheirs`·
 //! `CustomValue`·`Delete` 닫힌 enum입니다. 허용 action은 conflict 대상과 세 상태로 정합니다
 //! ([`allowed_resolutions`]). 계획서의 `KeepModified`는 수정 쪽 선택과 같아 따로 두지 않습니다.
+//!
+//! **command(XXIII.2.3, XIV.12.2)**: [`CandidateCommand`]는 conflict 해결(`Resolve`), 임의 단위의 A·B·base
+//! 선택(`Select`), 역 command(`Restore`)입니다. [`CandidateSnapshot::apply`]는 C 사본에서 모두 성공할 때만 C를
+//! 바꾸고 역 command를 돌려줍니다: `apply(inverse)`는 C를 이전과 같은 값으로 되돌립니다. C 밖(파일·index)은
+//! 건드리지 않습니다. Property 삭제 conflict(전용 종류 7·9)를 삭제 쪽으로 해결하면 C의 scene·정의 인스턴스에서
+//! 지운 Property를 가리키는 override도 함께 지웁니다(삭제 쪽 상태와 같음).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -19,10 +25,13 @@ use std::fmt;
 use stellar_semantic_diff::change::{Position, SemanticChange};
 use stellar_semantic_diff::core_types::ids::StableId;
 use stellar_semantic_diff::diff::diff;
+use stellar_semantic_diff::keys;
 use stellar_semantic_diff::snapshot::SemanticSnapshot;
+use stellar_semantic_diff::validate::override_member;
 use stellar_semantic_diff::value::SemanticValue;
 
 use crate::merge::merge;
+use crate::model::ConflictKind;
 use crate::model::{ConflictTarget, SideState};
 use crate::model::{MergeError, MergeInput, MergeResult, SemanticConflict};
 
@@ -54,6 +63,27 @@ impl Source {
             Source::B => "b",
             Source::Auto => "auto",
             Source::Custom => "custom",
+        }
+    }
+}
+
+/// 병합 입력의 한쪽.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Side {
+    /// 공통 조상.
+    Base,
+    /// Source A(ours).
+    Ours,
+    /// Source B(theirs).
+    Theirs,
+}
+
+impl Side {
+    fn source(self) -> Source {
+        match self {
+            Side::Base => Source::Base,
+            Side::Ours => Source::A,
+            Side::Theirs => Source::B,
         }
     }
 }
@@ -221,6 +251,188 @@ impl fmt::Display for ResolutionError {
 
 impl std::error::Error for ResolutionError {}
 
+/// C에 적용하는 command(XXIII.2.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CandidateCommand {
+    /// conflict 하나를 해결합니다.
+    Resolve {
+        /// conflict 객체.
+        object: StableId,
+        /// conflict 대상.
+        target: ConflictTarget,
+        /// 해결 action.
+        resolution: Resolution,
+    },
+    /// 임의 단위를 한 side의 상태로 둡니다. 그 단위가 conflict면 그 side 선택 해결과 같습니다.
+    Select {
+        /// 객체.
+        object: StableId,
+        /// 대상.
+        target: ConflictTarget,
+        /// 고를 side.
+        side: Side,
+    },
+    /// 역 command: 단위 상태·출처·해결 기록을 되돌립니다(적용 순서대로).
+    Restore(Restore),
+}
+
+/// [`CandidateCommand::Restore`]의 내용.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Restore {
+    /// 되돌릴 단위 상태(앞에서부터 적용).
+    pub units: Vec<(UnitKey, SideState)>,
+    /// 되돌릴 출처(`None` = 기록 없음).
+    pub sources: Vec<(UnitKey, Option<Source>)>,
+    /// 되돌릴 해결 기록(`None` = 미해결).
+    pub resolutions: Vec<(UnitKey, Option<Resolution>)>,
+}
+
+/// 적용 중인 C 사본과 역 command 기록.
+struct Edit<'a> {
+    candidate: &'a mut CandidateSnapshot,
+    undo: Restore,
+}
+
+impl Edit<'_> {
+    fn set_unit(&mut self, key: &UnitKey, state: SideState) -> Result<(), ResolutionError> {
+        let previous = unit_state(&self.candidate.snapshot, key);
+        put_unit(&mut self.candidate.snapshot, key, state)?;
+        self.undo.units.push((key.clone(), previous));
+        Ok(())
+    }
+
+    fn set_source(&mut self, key: &UnitKey, source: Option<Source>) {
+        let previous = match source {
+            Some(source) => self.candidate.provenance.insert(key.clone(), source),
+            None => self.candidate.provenance.remove(key),
+        };
+        self.undo.sources.push((key.clone(), previous));
+    }
+
+    fn set_resolution(&mut self, key: &UnitKey, resolution: Option<Resolution>) {
+        let previous = match resolution {
+            Some(resolution) => self.candidate.resolutions.insert(key.clone(), resolution),
+            None => self.candidate.resolutions.remove(key),
+        };
+        self.undo.resolutions.push((key.clone(), previous));
+    }
+
+    /// 단위 하나를 상태로 두고 출처를 기록합니다. 객체 단위면 그 객체의 위치·속성 출처 기록도 지웁니다(객체
+    /// 전체가 한 출처).
+    fn place(
+        &mut self,
+        key: &UnitKey,
+        state: SideState,
+        source: Source,
+    ) -> Result<(), ResolutionError> {
+        if key.1 == ConflictTarget::Object {
+            let stale: Vec<UnitKey> = self
+                .candidate
+                .provenance
+                .keys()
+                .filter(|(id, target)| *id == key.0 && *target != ConflictTarget::Object)
+                .cloned()
+                .collect();
+            for unit in stale {
+                self.set_source(&unit, None);
+            }
+        }
+        self.set_unit(key, state)?;
+        self.set_source(key, Some(source));
+        Ok(())
+    }
+
+    /// Property 삭제 쪽 해결(전용 종류 7·9) 뒤, C의 인스턴스에서 목록에 없는 Property를 가리키는 override를
+    /// 지웁니다.
+    fn release_overrides(
+        &mut self,
+        component: StableId,
+        source: Source,
+    ) -> Result<(), ResolutionError> {
+        let snapshot = &self.candidate.snapshot;
+        let Some(owner) = snapshot.get(component) else {
+            return Ok(());
+        };
+        let listed: Vec<StableId> = match owner.property(&owner.path(&[keys::COMPONENT_PROPERTIES]))
+        {
+            Some(SemanticValue::Ids(ids)) => ids.clone(),
+            _ => Vec::new(),
+        };
+        let reference = SemanticValue::Id(component);
+        let mut released = Vec::new();
+        for object in snapshot.objects() {
+            if object.property(&object.path(&[keys::instance::COMPONENT_REF])) != Some(&reference) {
+                continue;
+            }
+            for path in object.properties().keys() {
+                let is_override = path.keys().first() == Some(&keys::instance::PROPERTY_OVERRIDES);
+                if is_override
+                    && override_member(path).is_some_and(|(_, member)| !listed.contains(&member))
+                {
+                    released.push((object.id(), ConflictTarget::Property(path.clone())));
+                }
+            }
+        }
+        for key in released {
+            self.place(&key, SideState::Value(None), source)?;
+        }
+        Ok(())
+    }
+}
+
+/// 단위에 상태를 넣습니다.
+fn put_unit(
+    snapshot: &mut SemanticSnapshot,
+    (object, target): &UnitKey,
+    state: SideState,
+) -> Result<(), ResolutionError> {
+    match (target, state) {
+        (ConflictTarget::Object, SideState::Missing) => {
+            snapshot.remove(*object);
+            Ok(())
+        }
+        (ConflictTarget::Object, SideState::Object(value)) if value.id() == *object => {
+            snapshot.remove(*object);
+            snapshot
+                .insert(*value)
+                .map_err(|_| ResolutionError::NotApplicable("객체를 넣을 수 없음"))
+        }
+        (ConflictTarget::Position, SideState::Position(position)) => {
+            let mut found = snapshot
+                .remove(*object)
+                .ok_or(ResolutionError::NotApplicable("위치를 바꿀 객체가 없음"))?;
+            found.set_position(position.parent, position.order_key);
+            snapshot
+                .insert(found)
+                .map_err(|_| ResolutionError::NotApplicable("객체를 넣을 수 없음"))
+        }
+        (ConflictTarget::Property(path), SideState::Value(value)) => {
+            let mut found = snapshot
+                .remove(*object)
+                .ok_or(ResolutionError::NotApplicable("속성을 바꿀 객체가 없음"))?;
+            let outcome = match value {
+                Some(value) => found
+                    .set_property(path.clone(), value)
+                    .map(|_| ())
+                    .map_err(|_| ResolutionError::NotApplicable("속성 경로가 객체와 맞지 않음")),
+                None => {
+                    found.remove_property(path);
+                    Ok(())
+                }
+            };
+            snapshot
+                .insert(found)
+                .map_err(|_| ResolutionError::NotApplicable("객체를 넣을 수 없음"))?;
+            outcome
+        }
+        (ConflictTarget::Position, SideState::Missing)
+        | (ConflictTarget::Property(_), SideState::Missing) => {
+            Err(ResolutionError::NotApplicable("그 side에는 객체가 없음"))
+        }
+        _ => Err(ResolutionError::NotApplicable("대상과 상태 종류가 다름")),
+    }
+}
+
 /// 병합 결과 candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CandidateSnapshot {
@@ -228,6 +440,7 @@ pub struct CandidateSnapshot {
     snapshot: SemanticSnapshot,
     conflicts: Vec<SemanticConflict>,
     provenance: BTreeMap<UnitKey, Source>,
+    resolutions: BTreeMap<UnitKey, Resolution>,
 }
 
 impl CandidateSnapshot {
@@ -245,6 +458,7 @@ impl CandidateSnapshot {
             snapshot: result.merged,
             conflicts: result.conflicts,
             provenance,
+            resolutions: BTreeMap::new(),
         }
     }
 
@@ -265,7 +479,10 @@ impl CandidateSnapshot {
 
     /// 아직 해결하지 않은 conflict 수.
     pub fn unresolved_count(&self) -> usize {
-        self.conflicts.len()
+        self.conflicts
+            .iter()
+            .filter(|c| !self.resolutions.contains_key(&(c.object, c.target.clone())))
+            .count()
     }
 
     /// 단위의 출처(기록이 없으면 base 그대로).
@@ -279,6 +496,70 @@ impl CandidateSnapshot {
     /// 기록한 출처(단위 순서).
     pub fn provenance_entries(&self) -> impl Iterator<Item = (&UnitKey, Source)> + '_ {
         self.provenance.iter().map(|(key, source)| (key, *source))
+    }
+
+    /// conflict의 해결 기록(미해결이면 `None`).
+    pub fn resolution(&self, object: StableId, target: &ConflictTarget) -> Option<&Resolution> {
+        self.resolutions.get(&(object, target.clone()))
+    }
+
+    /// command를 적용하고 역 command를 돌려줍니다(XXIII.2.3). 실패하면 C는 그대로입니다.
+    pub fn apply(
+        &mut self,
+        command: &CandidateCommand,
+    ) -> Result<CandidateCommand, ResolutionError> {
+        let mut next = self.clone();
+        let mut edit = Edit {
+            candidate: &mut next,
+            undo: Restore::default(),
+        };
+        match command {
+            CandidateCommand::Resolve {
+                object,
+                target,
+                resolution,
+            } => resolve(&mut edit, &(*object, target.clone()), resolution)?,
+            CandidateCommand::Select {
+                object,
+                target,
+                side,
+            } => {
+                let key = (*object, target.clone());
+                let is_conflict = edit
+                    .candidate
+                    .conflicts
+                    .iter()
+                    .any(|c| c.object == *object && &c.target == target);
+                if is_conflict {
+                    let resolution = match side {
+                        Side::Base => Resolution::ChooseBase,
+                        Side::Ours => Resolution::ChooseOurs,
+                        Side::Theirs => Resolution::ChooseTheirs,
+                    };
+                    resolve(&mut edit, &key, &resolution)?;
+                } else {
+                    let state = unit_state(side_snapshot(&edit.candidate.input, *side), &key);
+                    edit.place(&key, state, side.source())?;
+                }
+            }
+            CandidateCommand::Restore(restore) => {
+                for (key, state) in &restore.units {
+                    edit.set_unit(key, state.clone())?;
+                }
+                for (key, source) in &restore.sources {
+                    edit.set_source(key, *source);
+                }
+                for (key, resolution) in &restore.resolutions {
+                    edit.set_resolution(key, resolution.clone());
+                }
+            }
+        }
+        let mut undo = edit.undo;
+        undo.units.reverse();
+        undo.sources.reverse();
+        undo.resolutions.reverse();
+        *self = next;
+        Ok(CandidateCommand::Restore(undo))
     }
 }
 
@@ -302,6 +583,63 @@ fn initial_provenance(input: &MergeInput, result: &MergeResult) -> BTreeMap<Unit
             .or_insert(Source::Base);
     }
     out
+}
+
+fn side_snapshot(input: &MergeInput, side: Side) -> &SemanticSnapshot {
+    match side {
+        Side::Base => &input.base,
+        Side::Ours => &input.ours,
+        Side::Theirs => &input.theirs,
+    }
+}
+
+/// conflict 하나를 해결합니다(XIV.12.1·XIV.12.2).
+fn resolve(
+    edit: &mut Edit<'_>,
+    key: &UnitKey,
+    resolution: &Resolution,
+) -> Result<(), ResolutionError> {
+    let conflict = edit
+        .candidate
+        .conflicts
+        .iter()
+        .find(|c| c.object == key.0 && c.target == key.1)
+        .cloned()
+        .ok_or(ResolutionError::UnknownConflict)?;
+    if !allowed_resolutions(&conflict).contains(&resolution.kind()) {
+        return Err(ResolutionError::NotAllowed(resolution.kind()));
+    }
+    let sides = [
+        (Source::Base, &conflict.base),
+        (Source::A, &conflict.ours),
+        (Source::B, &conflict.theirs),
+    ];
+    let (state, source) = match resolution {
+        Resolution::ChooseBase => (conflict.base.clone(), Source::Base),
+        Resolution::ChooseOurs => (conflict.ours.clone(), Source::A),
+        Resolution::ChooseTheirs => (conflict.theirs.clone(), Source::B),
+        Resolution::CustomValue(value) => (SideState::Value(Some(value.clone())), Source::Custom),
+        Resolution::Delete => {
+            let state = match key.1 {
+                ConflictTarget::Object => SideState::Missing,
+                _ => SideState::Value(None),
+            };
+            let source = sides
+                .iter()
+                .find(|(_, side)| **side == state)
+                .map_or(Source::Custom, |(source, _)| *source);
+            (state, source)
+        }
+    };
+    edit.place(key, state, source)?;
+    if matches!(
+        conflict.kind,
+        ConflictKind::ComponentPropertyRemovedVsOverride | ConflictKind::DrillingChainBreak
+    ) {
+        edit.release_overrides(key.0, source)?;
+    }
+    edit.set_resolution(key, Some(resolution.clone()));
+    Ok(())
 }
 
 #[cfg(test)]

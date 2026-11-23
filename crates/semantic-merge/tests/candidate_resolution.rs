@@ -134,3 +134,151 @@ fn allowed_actions_depend_on_target_and_states() {
         vec![ChooseBase, ChooseOurs, ChooseTheirs, CustomValue, Delete]
     );
 }
+
+#[test]
+fn resolve_applies_to_candidate_and_inverse_restores_it() {
+    let mut c = mixed();
+    let original = c.clone();
+    let inverse = c
+        .apply(&CandidateCommand::Resolve {
+            object: sid(TOKEN),
+            target: token_value(),
+            resolution: Resolution::ChooseTheirs,
+        })
+        .unwrap();
+    assert_eq!(c.unresolved_count(), 0);
+    assert_eq!(c.provenance(sid(TOKEN), &token_value()), Source::B);
+    let token = c.snapshot().get(sid(TOKEN)).unwrap();
+    assert_eq!(
+        token.property(&token.path(&[keys::TOKEN_VALUE])),
+        Some(&SemanticValue::Uint(2))
+    );
+    assert_eq!(c.input(), original.input(), "입력 A·B 미변경");
+    let redo = c.apply(&inverse).unwrap();
+    assert_eq!(c, original);
+    c.apply(&redo).unwrap();
+    assert_eq!(c.unresolved_count(), 0);
+}
+
+#[test]
+fn invalid_actions_are_rejected_without_change() {
+    let mut c = mixed();
+    let original = c.clone();
+    assert_eq!(
+        c.apply(&CandidateCommand::Resolve {
+            object: sid(TOKEN),
+            target: token_value(),
+            resolution: Resolution::Delete,
+        }),
+        Err(ResolutionError::NotAllowed(ResolutionKind::Delete))
+    );
+    assert_eq!(
+        c.apply(&CandidateCommand::Resolve {
+            object: sid(CHILD_A),
+            target: name_path(CHILD_A),
+            resolution: Resolution::ChooseBase,
+        }),
+        Err(ResolutionError::UnknownConflict)
+    );
+    assert_eq!(c, original);
+}
+
+#[test]
+fn custom_value_and_select_on_auto_merged_unit() {
+    let mut c = mixed();
+    c.apply(&CandidateCommand::Resolve {
+        object: sid(TOKEN),
+        target: token_value(),
+        resolution: Resolution::CustomValue(SemanticValue::Uint(9)),
+    })
+    .unwrap();
+    assert_eq!(c.provenance(sid(TOKEN), &token_value()), Source::Custom);
+    // 자동 병합된 A 변경을 base로 되돌립니다.
+    let before = c.clone();
+    let inverse = c
+        .apply(&CandidateCommand::Select {
+            object: sid(CHILD_A),
+            target: name_path(CHILD_A),
+            side: Side::Base,
+        })
+        .unwrap();
+    let child = c.snapshot().get(sid(CHILD_A)).unwrap();
+    assert_eq!(
+        child.property(&child.path(&[keys::DISPLAY_NAME])),
+        Some(&text("a"))
+    );
+    assert_eq!(
+        c.provenance(sid(CHILD_A), &name_path(CHILD_A)),
+        Source::Base
+    );
+    c.apply(&inverse).unwrap();
+    assert_eq!(c, before);
+}
+
+#[test]
+fn removing_side_resolution_releases_overrides() {
+    let base = world();
+    let ours = set_properties(&base, INNER, &[INNER_PROP_2]);
+    let path = override_path(INSTANCE, INNER_PROP);
+    let theirs = put(&base, &path, text("v"));
+    let mut c = candidate(&base, &ours, &theirs);
+    let conflict = c.conflicts()[0].clone();
+    assert_eq!(
+        conflict.kind,
+        ConflictKind::ComponentPropertyRemovedVsOverride
+    );
+    let original = c.clone();
+    let inverse = c
+        .apply(&CandidateCommand::Resolve {
+            object: conflict.object,
+            target: conflict.target.clone(),
+            resolution: Resolution::ChooseOurs,
+        })
+        .unwrap();
+    assert_eq!(
+        c.snapshot().get(sid(INSTANCE)).unwrap().property(&path),
+        None
+    );
+    assert_eq!(
+        c.provenance(sid(INSTANCE), &ConflictTarget::Property(path.clone())),
+        Source::A
+    );
+    c.apply(&inverse).unwrap();
+    assert_eq!(c, original);
+}
+
+#[test]
+fn random_command_sequences_undo_to_the_original() {
+    let c0 = mixed();
+    let units = [
+        (sid(TOKEN), token_value()),
+        (sid(CHILD_A), name_path(CHILD_A)),
+        (sid(CHILD_B), name_path(CHILD_B)),
+        (sid(ROOT), name_path(ROOT)),
+        (sid(CHILD_A), ConflictTarget::Position),
+        (sid(CHILD_B), ConflictTarget::Object),
+    ];
+    for seed in 0..64u64 {
+        let mut c = c0.clone();
+        let mut inverses = Vec::new();
+        let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        for _ in 0..6 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let (object, target) = units[(state % units.len() as u64) as usize].clone();
+            let side = [Side::Base, Side::Ours, Side::Theirs][(state >> 8) as usize % 3];
+            if let Ok(inverse) = c.apply(&CandidateCommand::Select {
+                object,
+                target,
+                side,
+            }) {
+                inverses.push(inverse);
+            }
+        }
+        while let Some(inverse) = inverses.pop() {
+            c.apply(&inverse).unwrap();
+        }
+        assert_eq!(c, c0, "seed {seed}");
+    }
+}
