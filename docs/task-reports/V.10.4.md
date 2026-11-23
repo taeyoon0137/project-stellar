@@ -57,5 +57,5 @@
 
 ## 후속: headless MCP 읽기 비교 (2026-11-24, ADR-0113)
 
-- MCP headless가 텍스트 원본 프로젝트를 원본 기준으로 읽습니다. `crates/mcp-core/src/headless/operations.rs`의 `reads_follow_a_source_only_edit_and_source_span_points_into_the_view_file`이 원본만 바꾼 값을 MCP 문서 page가 그대로 돌려주는지 확인합니다(`cargo test -p stellar-mcp-core --locked --lib text_source_tests`: 0, 1 passed).
+- MCP headless가 텍스트 원본 프로젝트를 원본 기준으로 읽습니다. `crates/mcp-core/src/headless/operations.rs`의 `reads_follow_a_source_only_edit_and_source_span_points_into_the_view_file`이 원본만 바꾼 값을 MCP 문서 page가 그대로 돌려주는지 확인합니다(`cargo test -p stellar-mcp-core --locked --lib headless::operations::tests`: 0, 1 passed).
 - 남은 범위: 컴포넌트 Property·Slot·상태 머신, 리터럴이 아닌 token 표현식 쓰기(표현식 텍스트 문법 결정 뒤), 공개 포맷 동결 전 검증.

@@ -54,7 +54,7 @@
 
 | 명령 | 결과 |
 |---|---|
-| `cargo test -p stellar-mcp-core --locked --lib text_source_tests` | 0 — 1 passed |
+| `cargo test -p stellar-mcp-core --locked --lib headless::operations::tests` | 0 — 1 passed |
 
 | 시험 | 확인 |
 |---|---|

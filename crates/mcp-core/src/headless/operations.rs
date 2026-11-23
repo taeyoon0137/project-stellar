@@ -762,7 +762,7 @@ pub(super) fn git_semantic_conflicts(cached: &CachedRead) -> Result<J, RpcError>
 }
 
 #[cfg(test)]
-mod text_source_tests {
+mod tests {
     //! headless MCP 읽기가 텍스트 원본(Git 원본)을 따릅니다(ADR-0113 결정 2): 원본만 바뀐 상태(Git pull)도 snapshot을
     //! 다시 열어 원본에서 읽고, `document.source_span`이 같은 원본의 줄 범위를 돌려줍니다.
     use super::super::Headless;
