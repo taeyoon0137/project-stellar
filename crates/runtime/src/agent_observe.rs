@@ -296,6 +296,14 @@ fn respond_library(window: &mut AgentWindow<'_>) -> Vec<SessionEndReport> {
     let Some(seen) = window.session.agent_watch.library.take() else {
         return Vec::new();
     };
+    // 의미 객체가 같으면(같은 `Arc`) 원본 hash 표를 복제하지 않고 바로 끝냅니다(ADR-0132 Performance). 대기열은 모든
+    // document thread job 뒤에 비우므로 이 경로가 대부분입니다.
+    if let (Some(old), Some(now)) = (&seen.library, window.session.source.library()) {
+        if Arc::ptr_eq(old, now) {
+            window.session.agent_watch.library = Some(seen);
+            return Vec::new();
+        }
+    }
     let current = LibrarySeen::of(window.session);
     let change = library_change(&seen, &current);
     window.session.agent_watch.library = Some(current);
