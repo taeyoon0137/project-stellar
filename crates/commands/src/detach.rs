@@ -28,9 +28,10 @@ use stellar_core_types::value::Transform2D;
 use stellar_document::component::definition::ComponentLibrary;
 use stellar_document::component::detach::{detach_instance, DetachError};
 use stellar_document::component::expansion::ScenePayloads;
+use stellar_document::component::instance::frame_instance_transform;
 use stellar_document::layout_record::{LayoutLonghand, LayoutRecord, LayoutValue};
 use stellar_document::model::DocumentModel;
-use stellar_document::modifier::ModifierStack;
+use stellar_document::modifier::{ModifierKind, ModifierStack};
 use stellar_document::node_columns::{NodeColumns, NodeFields};
 use stellar_document::node_kind::NodeKind;
 use stellar_document::record_codec::{
@@ -71,6 +72,9 @@ pub struct InstanceRestructure {
     pub record: NodeRecord,
     /// 대상 node의 바뀐 명시 layout record(빈 record = 명시 값 없음).
     pub layout: LayoutRecord,
+    /// 대상 node의 바뀐 modifier stack(`None` = 그대로, 빈 stack = 제거). Detach는 인스턴스 배치 Transform modifier를
+    /// Frame payload transform으로 옮기므로 이 값을 씁니다.
+    pub stack: Option<ModifierStack>,
     /// 새로 만들 node(전위 순서). 부모는 대상 node이거나 앞선 레코드입니다.
     pub insert: Vec<NodeRecord>,
     /// 만들 node의 modifier stack.
@@ -111,12 +115,23 @@ impl InstanceRestructure {
         if self.layout.node != self.node {
             return Err(invalid("대상 layout record의 소유 node가 다릅니다"));
         }
+        if self
+            .stack
+            .as_ref()
+            .is_some_and(|stack| stack.node != self.node)
+        {
+            return Err(invalid("대상 modifier stack의 소유 node가 다릅니다"));
+        }
         let changes_record = current != self.record
             || model
                 .layout_record(self.node)
                 .cloned()
                 .unwrap_or_else(|| LayoutRecord::new(self.node))
-                != self.layout;
+                != self.layout
+            || self
+                .stack
+                .as_ref()
+                .is_some_and(|stack| !same_stack(model, stack));
         if !changes_record
             && self.insert.is_empty()
             && self.moves.is_empty()
@@ -207,6 +222,12 @@ impl InstanceRestructure {
             .layout_record(self.node)
             .cloned()
             .unwrap_or_else(|| LayoutRecord::new(self.node));
+        let stack = self.stack.as_ref().map(|_| {
+            model
+                .modifier_stack(self.node)
+                .cloned()
+                .unwrap_or_else(|| ModifierStack::new(self.node))
+        });
         // 지운 node를 부모부터 되살립니다.
         let mut insert = Vec::with_capacity(self.remove.len());
         let mut insert_stacks = Vec::new();
@@ -243,6 +264,7 @@ impl InstanceRestructure {
             node: self.node,
             record,
             layout,
+            stack,
             insert,
             insert_stacks,
             insert_layouts,
@@ -276,6 +298,11 @@ impl InstanceRestructure {
         {
             ctx.set_layout_record(self.layout.clone())?;
             ctx.changes().structure(self.node);
+        }
+        if let Some(stack) = &self.stack {
+            if !same_stack(ctx.model(), stack) {
+                ctx.set_modifier_stack(stack.clone())?;
+            }
         }
         // 2. 만들기.
         for record in &self.insert {
@@ -338,6 +365,13 @@ impl InstanceRestructure {
         out.id(self.node);
         out.bytes(&encode_node_record(&self.record));
         out.bytes(&self.layout.encode());
+        match &self.stack {
+            None => out.u8(0),
+            Some(stack) => {
+                out.u8(1);
+                out.bytes(&stack.encode());
+            }
+        }
         out.len(self.insert.len());
         for record in &self.insert {
             out.bytes(&encode_node_record(record));
@@ -368,6 +402,14 @@ impl InstanceRestructure {
             decode_node_record(input.bytes()?).map_err(|_| malformed("잘못된 node 레코드"))?;
         let layout =
             LayoutRecord::decode(input.bytes()?).map_err(|_| malformed("잘못된 layout record"))?;
+        let stack = match input.u8()? {
+            0 => None,
+            1 => Some(
+                ModifierStack::decode(input.bytes()?)
+                    .map_err(|_| malformed("잘못된 modifier stack"))?,
+            ),
+            _ => return Err(malformed("잘못된 modifier stack 표지")),
+        };
         let count = input.len()?;
         let mut insert = Vec::new();
         for _ in 0..count {
@@ -405,12 +447,21 @@ impl InstanceRestructure {
             node,
             record,
             layout,
+            stack,
             insert,
             insert_stacks,
             insert_layouts: decode_layout_records(input)?,
             moves,
             remove,
         })
+    }
+}
+
+/// 대상의 지금 modifier stack이 `stack`과 같은지(빈 stack = stack 없음).
+fn same_stack(model: &DocumentModel, stack: &ModifierStack) -> bool {
+    match model.modifier_stack(stack.node) {
+        Some(current) => current == stack,
+        None => stack.entries().is_empty(),
     }
 }
 
@@ -517,8 +568,10 @@ fn scene_record(
 ///
 /// - 인스턴스 subtree 사본에 `component::detach::detach_instance`를 실행해 복제 node, 옮길 Slot content, 바뀐 인스턴스
 ///   레코드를 얻습니다. 인스턴스 StableId는 그대로이고 복제 node는 `generator`·`clock`으로 새 id를 받습니다.
-/// - 인스턴스 배치는 인스턴스 Transform modifier가 갖고 있으므로, 복제 root Frame의 payload transform은 정의의 선형
-///   부분만 남기고 이동을 0으로 둡니다(scene 투영 `placed_free_frame`과 같은 결과).
+/// - 인스턴스 배치는 인스턴스 Transform modifier가 갖고 있고, Frame 배치는 payload transform이 가집니다(Frame은 합성
+///   효과 modifier만 평가, ADR-0116 결정 2). 그래서 복제 root Frame의 payload transform은 정의의 선형 부분에 인스턴스
+///   배치(`frame_instance_transform`)를 합성한 값이고(scene 투영 `placed_free_frame`과 같은 그림), Transform modifier는
+///   stack에서 지웁니다. 다른 modifier는 그대로 둡니다.
 /// - 인스턴스 layout record의 명시 `width`·`height`가 `<length>`이면 Frame payload 크기로 옮기고(Frame 크기는 payload에
 ///   저장, ADR-0086), 그 밖의 크기 값은 지웁니다. 나머지 longhand는 그대로 둡니다.
 /// - Property override 값은 정의 node 속성과의 binding(VIII.6)이 문서에 없어 복제 node에 반영하지 않습니다.
@@ -533,6 +586,22 @@ pub fn plan_detach<C: MonotonicClock>(
     if current.kind() != NodeKind::ComponentInstance {
         return Err(DetachPlanError::NotInstance);
     }
+    // 인스턴스 배치(활성 Transform modifier 합성)와 Transform modifier를 뺀 stack.
+    let current_stack = model.modifier_stack(instance);
+    let mut placement_stack = current_stack
+        .cloned()
+        .unwrap_or_else(|| ModifierStack::new(instance));
+    let mut kept_stack = placement_stack.clone();
+    for entry in current_stack.into_iter().flat_map(ModifierStack::entries) {
+        let removed = if entry.kind == ModifierKind::Transform {
+            kept_stack.remove(entry.id)
+        } else {
+            placement_stack.remove(entry.id)
+        };
+        removed.map_err(|_| DetachPlanError::Payload { node: instance })?;
+    }
+    let placement = frame_instance_transform(Some(&placement_stack))
+        .ok_or(DetachPlanError::Payload { node: instance })?;
     let (mut columns, mut payloads) = instance_scene(model, instance)?;
     let detached = detach_instance(
         &mut columns,
@@ -556,6 +625,7 @@ pub fn plan_detach<C: MonotonicClock>(
     if let NodePayload::Frame(frame) = &mut payload {
         let (a, b, c, d, _, _) = frame.transform.components();
         frame.transform = Transform2D::new(a, b, c, d, 0., 0.)
+            .and_then(|linear| linear.then(&placement))
             .map_err(|_| DetachPlanError::Payload { node: instance })?;
         let width = layout.unset(LayoutLonghand::Width);
         let height = layout.unset(LayoutLonghand::Height);
@@ -597,6 +667,7 @@ pub fn plan_detach<C: MonotonicClock>(
         node: instance,
         record,
         layout,
+        stack: current_stack.map(|_| kept_stack),
         insert,
         insert_stacks: Vec::new(),
         insert_layouts: Vec::new(),

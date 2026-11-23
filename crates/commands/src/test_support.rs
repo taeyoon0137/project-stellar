@@ -581,6 +581,7 @@ pub fn generate(
                 node,
                 record,
                 layout,
+                stack: None,
                 insert: Vec::new(),
                 insert_stacks: Vec::new(),
                 insert_layouts: Vec::new(),

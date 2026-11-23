@@ -86,7 +86,7 @@ Accepted (2026-11-24). 계획 XII.10.33·XII.10.34의 코어 후속(Swift·FFI �
 1. `detach-instance`(0x0094)와 `place-slot-content`(0x0095)를 command registry에 등록합니다. command codec 버전은
    7입니다(두 종류의 첫 버전).
 2. 두 종류는 같은 payload `commands::detach::InstanceRestructure`를 씁니다: 대상 node 레코드 교체(id·부모·순서
-   고정), 대상 layout record, 만들 node(부모는 대상 또는 앞선 레코드)와 그 modifier stack·layout record, 옮길 node,
+   고정), 대상 layout record, 대상 modifier stack(없으면 그대로), 만들 node(부모는 대상 또는 앞선 레코드)와 그 modifier stack·layout record, 옮길 node,
    지울 node(자식부터). 적용 순서는 교체 → 만들기 → 옮기기 → 지우기입니다.
 3. 역 command는 같은 종류의 `InstanceRestructure`입니다(현재 레코드, 지운 node 복원, 원래 부모·순서, 만든 node
    지우기). history 이름은 종류 이름("인스턴스 분리", "Slot 콘텐츠 배치")입니다.
@@ -96,8 +96,10 @@ Accepted (2026-11-24). 계획 XII.10.33·XII.10.34의 코어 후속(Swift·FFI �
 5. Detach 계획(`commands::detach::plan_detach`)은 IX.2.6 함수 `component::detach::detach_instance`를 인스턴스 subtree
    사본(scene columns·payload bytes)에 실행해 만듭니다. Detach 규칙의 원본은 IX.2.6 함수 하나입니다.
    - 인스턴스 StableId는 그대로이고 복제 node는 새 id를 받습니다(`StableIdGenerator`·`MonotonicClock` 인자).
-   - 인스턴스 배치는 인스턴스 Transform modifier가 계속 가집니다. 그래서 복제 root Frame payload transform은 정의의
-     선형 부분만 남기고 이동을 0으로 둡니다(scene 투영 `placed_free_frame`과 같은 그림).
+   - 인스턴스 배치는 인스턴스 Transform modifier가 갖고, Frame 배치는 payload transform이 가집니다(Frame은 합성 효과
+     modifier만 평가, ADR-0116 결정 2). 그래서 복제 root Frame payload transform은 정의의 선형 부분에 인스턴스
+     배치(`frame_instance_transform`)를 합성한 값이고(scene 투영 `placed_free_frame`과 같은 그림), Transform modifier는
+     대상 stack에서 지웁니다. 다른 modifier는 그대로 둡니다.
    - 인스턴스 layout record의 명시 `width`·`height`가 `<length>`이면 Frame payload 크기로 옮깁니다(Frame 크기는
      payload에 저장, ADR-0086). 그 밖의 크기 값은 지웁니다. 나머지 longhand는 그대로 둡니다.
    - Property override 값은 정의 node 속성과의 binding(VIII.6)이 문서에 없어 복제 node에 반영하지 않습니다(IX.2.6

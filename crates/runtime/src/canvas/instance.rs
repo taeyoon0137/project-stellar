@@ -519,6 +519,7 @@ fn slot_command(
             .layout_record(instance)
             .cloned()
             .unwrap_or_else(|| LayoutRecord::new(instance)),
+        stack: None,
         insert,
         insert_stacks,
         insert_layouts,

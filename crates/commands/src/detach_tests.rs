@@ -118,6 +118,18 @@ fn modal_state() -> DocumentState {
             ),
         })
         .unwrap();
+    // 합성 효과 modifier(Opacity)는 Detach 뒤에도 Frame에 남습니다.
+    stack
+        .insert(stellar_document::modifier::ModifierEntry {
+            id: stellar_document::modifier::ModifierId::new(sid(131)),
+            order: OrderKey::between(stack.entries().last().map(|e| &e.order), None),
+            kind: stellar_document::modifier::ModifierKind::Opacity,
+            enabled: true,
+            payload: stellar_document::modifier::ModifierPayload::default_for(
+                stellar_document::modifier::ModifierKind::Opacity,
+            ),
+        })
+        .unwrap();
     model.set_modifier_stack(stack).unwrap();
     let mut layout = LayoutRecord::new(sid(30));
     layout
@@ -144,7 +156,8 @@ fn detach_replaces_the_instance_with_a_frame_copy_and_moves_slot_content() {
     let mut state = modal_state();
     let before = model_snapshot_json(state.model()).unwrap();
     let plan = plan(&state);
-    // 인스턴스 id·부모·순서·이름은 그대로, 종류는 정의 root(Frame), 배치는 modifier가 계속 가집니다.
+    // 인스턴스 id·부모·순서·이름은 그대로, 종류는 정의 root(Frame)입니다. Frame 배치는 payload transform이 가지므로
+    // 인스턴스 배치 (200, 100)이 정의 캔버스 원점 (2000, 0)을 대신하고, Transform modifier는 stack에서 빠집니다.
     assert_eq!(plan.record.id, sid(30));
     assert_eq!(plan.record.parent, Some(sid(10)));
     assert_eq!(plan.record.display_name, "확인 창");
@@ -152,7 +165,19 @@ fn detach_replaces_the_instance_with_a_frame_copy_and_moves_slot_content() {
         panic!("Frame");
     };
     let (_, _, _, _, e, f) = root.transform.components();
-    assert_eq!((e, f), (0., 0.));
+    assert_eq!((e, f), (200., 100.));
+    let kinds: Vec<_> = plan
+        .stack
+        .as_ref()
+        .unwrap()
+        .entries()
+        .iter()
+        .map(|entry| entry.kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![stellar_document::modifier::ModifierKind::Opacity]
+    );
     // 명시 width 320px는 Frame payload 크기로 옮기고 layout record에서 지웁니다.
     assert_eq!(root.size.width(), 320.);
     assert!(plan.layout.get(LayoutLonghand::Width).is_none());
@@ -185,7 +210,7 @@ fn detach_replaces_the_instance_with_a_frame_copy_and_moves_slot_content() {
     let model = state.model();
     assert_eq!(model.record(sid(30)).unwrap().kind(), NodeKind::Frame);
     assert_eq!(model.record(sid(31)).unwrap().parent, Some(body_copy));
-    assert!(model.modifier_stack(sid(30)).is_some());
+    assert_eq!(model.modifier_stack(sid(30)), plan.stack.as_ref());
     assert!(validate_document(&model.to_records().unwrap()).is_ok());
     // 역 command가 정확히 되돌립니다(같은 종류).
     assert!(matches!(outcome.inverse, Command::DetachInstance(_)));
@@ -238,6 +263,7 @@ fn restructure_refuses_unprojected_children_and_bad_shapes_without_changes() {
         node: sid(30),
         record: current.clone(),
         layout,
+        stack: None,
         insert: Vec::new(),
         insert_stacks: Vec::new(),
         insert_layouts: Vec::new(),
