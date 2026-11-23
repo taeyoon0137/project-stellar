@@ -2,7 +2,7 @@
 
 - WBS: IX.10.10
 - 작업명: 승인된 profile upgrade를 CommandTransaction과 manifest 변경으로 적용하고 자동 commit하지 않음
-- 상태: 부분 완료 (`[~]`) — 승인·적용·undo 계약과 원자 transaction 모델은 구현·검증했지만, 실제
+- 상태: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 승인·적용·undo 계약과 원자 transaction 모델은 구현·검증했지만, 실제
   `CommandTransaction`과 project 매니페스트 기록 경로를 거치지 않고 테스트 전용 host로만 검증했습니다(아래 상태 정정).
 - 선행: IX.10.9(이 lane `[x]`), Phase VII(단계 선행 — 완화 적용, `stellar-commands`의 `CommandTransaction` 존재)
 
@@ -97,3 +97,24 @@
 - IX.10.7·IX.10.8·IX.10.9도 지역 입력 모델(`ViewModel`·`VariantLayer`·`ProjectSnapshot`)을 씁니다. 다만 그 행들의 작업명·검증
   열은 resolver·validator·plan API와 fixture이고 실제 저장·command를 요구하지 않습니다. 그래서 `[x]`를 유지하고, 실제 입력
   연결은 이 행과 IX.10.3의 남은 범위로 둡니다(각 보고서에 같은 사실을 적음).
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 구현 판정 통과, 선행 미충족.
+- 근거: 승인·적용·undo 계약과 원자 transaction 모델은 있지만 실제 manifest 변경과 Git working tree fixture는 IX.10.3 연결에 달려 있습니다. 선행 IX.10.9가 `[~]`라 `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/target-profile/src/` 승인 upgrade 적용 모델. 자동 commit 경로 없음.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-target-profile` | 42 passed |
+
+### 남은 조건과 finding
+
+- IX.10.3 연결 뒤 실제 `stellar.yaml` 변경과 working tree change fixture로 다시 판정합니다.
