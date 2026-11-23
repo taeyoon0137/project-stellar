@@ -76,6 +76,11 @@ pub struct BoundaryPlan {
 }
 
 impl BoundaryPlan {
+    /// 결정들을 더합니다(같은 z면 나중 값).
+    pub(crate) fn extend(&mut self, decisions: &[(ZOrder, EffectDecision)]) {
+        self.decisions.extend(decisions.iter().copied());
+    }
+
     /// 효과 node의 결정(효과 없는 node는 `None`).
     pub fn decision(&self, z: ZOrder) -> Option<EffectDecision> {
         self.decisions.get(&z).copied()
@@ -277,17 +282,34 @@ fn decide(node: &SceneNode, units: &Units) -> EffectDecision {
 /// snapshot의 효과 node마다 접을지 layer 경계로 둘지 결정합니다.
 ///
 /// `drawn`은 node 자기 내용을 그릴지(가시성·culling) 판단합니다. compiler와 같은 판정을 넘겨야
-/// 결정이 실제 draw와 맞습니다.
+/// 결정이 실제 draw와 맞습니다. 결정은 효과 node의 subtree만 보므로 root마다 [`plan_subtree_boundaries`]를
+/// 부른 결과와 같습니다.
 pub fn plan_boundaries(
     snapshot: &SceneSnapshot,
     viewport: &Viewport,
     drawn: impl Fn(&SceneNode) -> bool,
 ) -> BoundaryPlan {
+    let mut plan = BoundaryPlan::default();
+    for root in snapshot.roots() {
+        plan.decisions
+            .extend(plan_subtree_boundaries(root, viewport, &drawn));
+    }
+    plan
+}
+
+/// `root` subtree 안 효과 node의 결정(역 pre-order, 자식이 부모보다 먼저).
+///
+/// 효과 node의 결정은 그 subtree의 unit만으로 정해지므로, 바깥 효과 node 하나의 subtree 결정은 snapshot
+/// 전체 계획의 그 부분과 같습니다. 증분 compile([`crate::pass_compiler::FrameCompiler`])은 효과 node를 처음
+/// 만날 때 이 함수로 그 subtree만 계획하고, 같은 node(같은 `Arc`)는 결과를 재사용합니다(ADR-0090).
+pub fn plan_subtree_boundaries(
+    root: &SceneNode,
+    viewport: &Viewport,
+    drawn: &dyn Fn(&SceneNode) -> bool,
+) -> Vec<(ZOrder, EffectDecision)> {
     // pre-order 목록과 부모 index(재귀 없음).
     let mut order: Vec<(&SceneNode, Option<usize>)> = Vec::new();
-    let mut stack: Vec<(&SceneNode, Option<usize>)> =
-        snapshot.roots().map(|root| (&**root, None)).collect();
-    stack.reverse();
+    let mut stack: Vec<(&SceneNode, Option<usize>)> = vec![(root, None)];
     while let Some((node, parent)) = stack.pop() {
         let index = order.len();
         order.push((node, parent));
@@ -297,7 +319,7 @@ pub fn plan_boundaries(
     }
 
     let mut pending: Vec<Units> = vec![Units::default(); order.len()];
-    let mut decisions: HashMap<ZOrder, EffectDecision> = HashMap::new();
+    let mut decisions: Vec<(ZOrder, EffectDecision)> = Vec::new();
     // 역 pre-order: 자식이 부모보다 먼저 처리됩니다.
     for index in (0..order.len()).rev() {
         let (node, parent) = order[index];
@@ -327,13 +349,13 @@ pub fn plan_boundaries(
                 EffectDecision::Boundary(_) => units.collapsed(blends),
                 EffectDecision::NothingToDraw => units,
             };
-            decisions.insert(node.z(), decision);
+            decisions.push((node.z(), decision));
         }
         if let Some(parent) = parent {
             pending[parent].append(units);
         }
     }
-    BoundaryPlan { decisions }
+    decisions
 }
 
 #[cfg(test)]

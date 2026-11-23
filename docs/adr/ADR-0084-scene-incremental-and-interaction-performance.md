@@ -4,6 +4,9 @@
 
 Accepted (2026-11-23, lane scene-incremental-perf 구현 기록)
 
+개정(2026-11-23, lane render-incremental): 결정 2에 operand 조상 전파, 결정 5에 가상 key skip 기록 정리, 결정 7에 host가
+skip될 때의 operand 처리를 더했습니다. render graph 증분 compile은 ADR-0090에 따로 정합니다.
+
 ## Context
 
 입력 성능 계약(아키텍처 §6)은 T0\~T5 단계마다 예산이 있고, 판정 기준은 p50≤5ms, p95≤7ms, p99≤9ms, 통제 가능 max≤10ms입니다.
@@ -56,6 +59,10 @@ Accepted (2026-11-23, lane scene-incremental-perf 구현 기록)
      Geometry입니다.
    - View Variant·컴포넌트 정의 교체는 Subtree입니다.
    - 다른 node geometry를 읽는 node(Boolean 결과)는 `SceneDependents`로 전파합니다.
+     - operand 자신의 geometry 이상 dirty는 host를 Geometry로 만듭니다. operand 자신의 paint만 바뀌면 전파하지 않습니다.
+     - operand 조상의 dirty는 종류와 무관하게 host를 Geometry로 만듭니다(`SceneDependents::descendant_dependents`). 조상이
+       움직이면 operand world geometry가 달라지는데, Frame transform처럼 문서 class가 paint인 변경도 있기 때문입니다.
+       operand는 scene tree에 없어서 builder의 scope 비교로는 잡히지 않습니다.
    - Paint와 Geometry의 구분은 집계와 Subtree 강제에만 씁니다. builder는 dirty node의 spec을 항상 다시 평가하고,
      자손에게 가는 영향은 scope 비교로 판단합니다. 그래서 Frame transform처럼 문서 class가 paint인 변경도 자손 world
      값이 맞습니다.
@@ -86,6 +93,8 @@ Accepted (2026-11-23, lane scene-incremental-perf 구현 기록)
      - 다른 property·구조·slot patch는 셉니다. 문서 계층에 `TypedValue → payload` 쓰기 함수가 없기 때문입니다. 따로
        해석하면 이중 경로가 됩니다.
      - Variant 교체는 Subtree 무효화입니다.
+   - 인스턴스 펼침에서 나온 skip 기록은 가상 key라 문서 node id로 찾을 수 없습니다. 기록마다 바깥 인스턴스를 함께
+     남기고, 인스턴스를 다시 변환하거나 지우면 그 기록을 지웁니다.
 6. **transient preview(XII.3.7).**
    - `IncrementalScene::set_preview`는 key별 대체 입력으로 snapshot을 만듭니다. document revision은 그대로 두고 scene
      revision만 올립니다.
@@ -105,6 +114,11 @@ Accepted (2026-11-23, lane scene-incremental-perf 구현 기록)
      4. 남은 선분을 NonZero loop로 잇습니다.
    - 같은 입력은 bit 단위로 같은 결과입니다.
    - 좌표 ±32,768 px, 선분 20,000개를 넘으면 거부합니다. scene은 그때 host geometry를 그리고 실패 수를 셉니다.
+   - host 자신이나 조상이 skip되어 scene에 Boolean 결과가 없으면, operand는 흡수된 채 아무것도 그리지 않습니다. operand를
+     단독으로 되살리지 않습니다. Subtract의 빼는 도형이 채운 도형으로 보이는 것처럼, 결과와 다른 그림이 되기 때문입니다.
+     평가 상한을 넘었을 때도 operand를 그리지 않는 것과 같은 규칙입니다. 대신 그 operand를 skip 이유
+     `BooleanHostSkipped`로 기록해 빠진 이유가 드러나게 합니다. operand가 다른 이유로 이미 기록되어 있으면 그 이유를
+     유지합니다.
    - host의 다른 modifier는 Boolean 항목을 뺀 stack으로 평가합니다.
 8. **상호작용 trace(XVI.1.1\~XVI.1.5).** `stellar_diagnostics::interaction`이 담당합니다.
    - event마다 `InteractionTraceId`를 발급하고 T0을 기록합니다.
@@ -199,7 +213,7 @@ Accepted (2026-11-23, lane scene-incremental-perf 구현 기록)
   - scene build p99는 0.6\~1.2ms로 §6.2 Scene Snapshot 예산(목표 1.00ms, 상한 1.75ms) 안입니다.
   - 지배 비용은 render graph compile·batching입니다. 화면의 모든 node(약 2만 2천)를 frame마다 다시 compile하므로
     p50이 약 3ms입니다. §6.2 Render Graph 예산(목표 0.75ms, 상한 1.25ms)을 넘습니다.
-  - render graph 증분 compile은 renderer-core 범위입니다. 이 lane 밖의 후속 과제로 남깁니다.
+  - render graph 증분 compile은 renderer-core 범위입니다. 후속 lane이 ADR-0090으로 구현했습니다.
   - Drag의 p99 상한 초과(11.7ms)는 한 번 측정한 값입니다. 같은 파일을 다시 재면 5.4\~5.9ms였습니다. 부하에 따른
     변동인지는 기준 장비에서 다시 확인해야 합니다.
 

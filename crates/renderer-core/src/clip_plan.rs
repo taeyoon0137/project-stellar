@@ -24,11 +24,15 @@
 //! layer 경계 node 바깥 clip을 layer 합성 단계에서 적용하므로 경계 안쪽 clip만 봅니다(blur 등 효과
 //! 뒤에 바깥 clip을 적용해야 하기 때문).
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use stellar_scene::bounds::Aabb;
 use stellar_scene::stack::{ClipShape, ClipStackRef};
 use stellar_scene::visibility::{clip_shape_world_bounds, Viewport};
 
 use crate::backend::{DeviceCapabilities, ScissorRect};
+use crate::pass_compiler::AddrBuild;
 use crate::render_graph::SampleCount;
 
 /// pixel 경계 판정 허용 오차(device pixel).
@@ -242,7 +246,7 @@ pub enum ClipPlan {
         /// 범위 제한 scissor.
         scissor: ScissorRect,
         /// stencil에 기록할 clip(바깥 → 안 index).
-        clips: Vec<usize>,
+        clips: Arc<[usize]>,
         /// 그리기 stencil reference(= 복합 clip 수).
         reference: u8,
     },
@@ -251,7 +255,7 @@ pub enum ClipPlan {
         /// 범위 제한 scissor.
         scissor: ScissorRect,
         /// mask에 그릴 clip(바깥 → 안 index).
-        clips: Vec<usize>,
+        clips: Arc<[usize]>,
     },
 }
 
@@ -267,17 +271,22 @@ impl ClipPlan {
     }
 }
 
-/// clip stack의 `from_depth`(바깥 → 안 index)부터를 분석합니다.
-pub fn analyze_clip(stack: &ClipStackRef, from_depth: usize, viewport: &Viewport) -> ClipAnalysis {
-    let view = viewport.view();
-    let clips = stack.to_outer_first();
-    let mut bounds: Option<Option<DeviceRect>> = None;
-    let mut complex = Vec::new();
-    let mut considered = 0;
-    for (index, clip) in clips.iter().enumerate().skip(from_depth) {
-        considered += 1;
+impl ClipAnalysis {
+    /// 고려한 clip이 없는 분석.
+    const fn empty() -> ClipAnalysis {
+        ClipAnalysis {
+            considered: 0,
+            bounds: None,
+            complex: Vec::new(),
+        }
+    }
+
+    /// 바깥 → 안 index `index`의 clip 하나를 더 고려합니다. [`analyze_clip`]은 이 단계를 바깥부터 차례로
+    /// 적용한 결과입니다.
+    fn push_clip(&mut self, index: usize, clip: &ClipShape, viewport: &Viewport) {
+        let view = &viewport.view();
         let device_bounds = clip_shape_world_bounds(clip)
-            .and_then(|world| world.transformed(&view))
+            .and_then(|world| world.transformed(view))
             .map(|aabb| DeviceRect::from_aabb(&aabb));
         let reason = match clip {
             ClipShape::Rect {
@@ -285,7 +294,7 @@ pub fn analyze_clip(stack: &ClipStackRef, from_depth: usize, viewport: &Viewport
                 radii,
                 transform,
             } => {
-                let device = transform.then(&view).ok().and_then(|to_device| {
+                let device = transform.then(view).ok().and_then(|to_device| {
                     let components = to_device.components();
                     axis_aligned_rect(
                         (
@@ -307,20 +316,82 @@ pub fn analyze_clip(stack: &ClipStackRef, from_depth: usize, viewport: &Viewport
             ClipShape::Path { .. } => Some(ComplexReason::Path),
         };
         if let Some(reason) = reason {
-            complex.push(ComplexClip { index, reason });
+            self.complex.push(ComplexClip { index, reason });
         }
-        let next = match (bounds, device_bounds) {
-            (_, None) => Some(None),
-            (None, Some(rect)) => Some(Some(rect)),
-            (Some(None), Some(_)) => Some(None),
-            (Some(Some(acc)), Some(rect)) => Some(acc.intersection(&rect)),
+        // 첫 clip은 그 bounds, 이후는 교집합. 한 번 비거나(교집합 없음) 비유한이면 끝까지 비어 있습니다.
+        self.bounds = match (self.considered, self.bounds, device_bounds) {
+            (0, _, bounds) => bounds,
+            (_, Some(acc), Some(rect)) => acc.intersection(&rect),
+            _ => None,
         };
-        bounds = next;
+        self.considered += 1;
     }
-    ClipAnalysis {
-        considered,
-        bounds: bounds.flatten(),
-        complex,
+}
+
+/// clip stack의 `from_depth`(바깥 → 안 index)부터를 분석합니다.
+pub fn analyze_clip(stack: &ClipStackRef, from_depth: usize, viewport: &Viewport) -> ClipAnalysis {
+    let mut analysis = ClipAnalysis::empty();
+    for (index, clip) in stack
+        .to_outer_first()
+        .into_iter()
+        .enumerate()
+        .skip(from_depth)
+    {
+        analysis.push_clip(index, clip, viewport);
+    }
+    analysis
+}
+
+/// prefix memo를 쓰는 clip stack 최대 깊이. 더 깊으면 [`analyze_clip`]으로 바로 분석합니다(memo 항목마다
+/// 복합 clip 목록을 복제하므로 깊이 제곱 비용을 막음).
+const MEMO_MAX_DEPTH: usize = 32;
+
+/// 한 viewport에서 clip stack 분석을 prefix 단위로 다시 쓰는 memo.
+///
+/// clip stack은 구조 공유 목록이라 형제 node는 같은 stack을, 자식은 부모 stack에 clip 하나를 더한 stack을
+/// 가집니다. `(stack 저장소 주소, from_depth)`별 분석을 남기면 node마다 가장 안쪽 clip 하나만 새로 분석합니다.
+/// 결과는 [`analyze_clip`]과 같습니다. 주소는 stack이 살아 있는 동안만 식별자이므로 memo는 snapshot 하나를
+/// compile하는 동안만 씁니다.
+#[derive(Debug, Default)]
+pub(crate) struct ClipAnalysisMemo {
+    analyses: HashMap<(usize, usize), ClipAnalysis, AddrBuild>,
+}
+
+impl ClipAnalysisMemo {
+    /// [`analyze_clip`]과 같은 분석.
+    pub(crate) fn analyze(
+        &mut self,
+        stack: &ClipStackRef,
+        from_depth: usize,
+        viewport: &Viewport,
+    ) -> ClipAnalysis {
+        if stack.depth() > MEMO_MAX_DEPTH {
+            return analyze_clip(stack, from_depth, viewport);
+        }
+        // 기록이 있는 prefix(또는 고려 시작 depth)까지 올라갑니다.
+        let mut chain: Vec<&ClipStackRef> = Vec::new();
+        let mut current = stack;
+        let mut analysis = loop {
+            if current.depth() <= from_depth {
+                break ClipAnalysis::empty();
+            }
+            if let Some(hit) = self.analyses.get(&(current.storage_addr(), from_depth)) {
+                break hit.clone();
+            }
+            chain.push(current);
+            match current.outer() {
+                Some(outer) => current = outer,
+                None => break ClipAnalysis::empty(),
+            }
+        };
+        for level in chain.into_iter().rev() {
+            if let Some(clip) = level.innermost() {
+                analysis.push_clip(level.depth() - 1, clip, viewport);
+            }
+            self.analyses
+                .insert((level.storage_addr(), from_depth), analysis.clone());
+        }
+        analysis
     }
 }
 
@@ -343,7 +414,7 @@ pub fn decide_clip(
     if analysis.complex.is_empty() {
         return ClipPlan::Scissor(scissor);
     }
-    let clips: Vec<usize> = analysis.complex.iter().map(|clip| clip.index).collect();
+    let clips: Arc<[usize]> = analysis.complex.iter().map(|clip| clip.index).collect();
     let stencil_ok = caps.samples == SampleCount::X4
         && caps.stencil_bits > 0
         && (clips.len() as u64) <= u64::from(caps.max_stencil_depth());
@@ -545,14 +616,14 @@ mod tests {
             else {
                 panic!("{reason:?}: MSAA에서는 stencil이어야 합니다: {stencil:?}");
             };
-            assert_eq!((clips, reference), (vec![0], 1));
+            assert_eq!((&*clips, reference), (&[0][..], 1));
             // scissor는 clip을 보수적으로 감쌉니다.
             assert!(bound.width > 0 && bound.height > 0);
             assert_eq!(
                 plan(vec![clip], IDENTITY, NO_MSAA),
                 ClipPlan::Mask {
                     scissor: bound,
-                    clips: vec![0]
+                    clips: vec![0].into()
                 }
             );
         }
@@ -573,7 +644,7 @@ mod tests {
             combined,
             ClipPlan::Stencil {
                 scissor: scissor(10, 10, 10, 30),
-                clips: vec![1],
+                clips: vec![1].into(),
                 reference: 1
             }
         );
@@ -594,7 +665,7 @@ mod tests {
         ];
         assert!(matches!(
             plan(two_rounded.clone(), IDENTITY, shallow),
-            ClipPlan::Mask { ref clips, .. } if clips == &vec![0, 1]
+            ClipPlan::Mask { ref clips, .. } if **clips == [0, 1]
         ));
         assert!(matches!(
             plan(two_rounded, IDENTITY, MSAA),
@@ -721,7 +792,7 @@ mod tests {
                     true,
                     ClipPlan::Stencil {
                         scissor: scissor(0, 0, 60, 60),
-                        clips: vec![0],
+                        clips: vec![0].into(),
                         reference: 1
                     }
                 ),
@@ -729,5 +800,60 @@ mod tests {
         );
         assert_eq!(plan.layers.len(), 1);
         assert_eq!(id_of(&plan.layers[0].node), 3);
+    }
+
+    #[test]
+    fn prefix_memo_matches_direct_analysis_on_shared_stacks() {
+        // 구조 공유 stack(형제는 같은 stack, 자식은 부모 stack + clip 하나)에서 memo 분석이 직접 분석과 같습니다.
+        let shapes: Vec<ClipShape> = [
+            rect_clip([0.0, 0.0, 80.0, 80.0]),
+            rounded(rect_clip([4.0, 4.0, 40.0, 40.0])),
+            rect_clip([10.25, 8.0, 20.0, 20.0]),
+            path_clip(&[[0.0, 0.0], [30.0, 0.0], [0.0, 30.0]]),
+            rect_clip([200.0, 200.0, 5.0, 5.0]),
+        ]
+        .into_iter()
+        .map(|clip| {
+            let mut node = rect(1, [0.0, 0.0, 4.0, 4.0], opaque(1.0, 0.0, 0.0));
+            node.clips = vec![clip];
+            let scene = snapshot(&[node]);
+            nodes(&scene)[0].clip().innermost().unwrap().clone()
+        })
+        .collect();
+        let mut stacks = vec![ClipStackRef::none()];
+        for (index, shape) in shapes.iter().enumerate() {
+            // 같은 바깥 stack에서 두 갈래(마지막 stack과 그 바깥 stack)로 자랍니다.
+            let last = stacks.last().unwrap().clone();
+            stacks.push(last.push(shape.clone()));
+            if index > 0 {
+                let outer = last.outer().unwrap().clone();
+                stacks.push(outer.push(shape.clone()));
+            }
+        }
+        // 깊이 상한을 넘는 stack은 직접 분석 경로를 탑니다.
+        let mut deep = stacks.last().unwrap().clone();
+        for index in 0..(MEMO_MAX_DEPTH + 3) {
+            deep = deep.push(shapes[index % shapes.len()].clone());
+        }
+        stacks.push(deep);
+        for view in [
+            IDENTITY,
+            [2.0, 0.0, 0.0, 2.0, 0.5, 0.0],
+            [0.0, 1.0, -1.0, 0.0, 90.0, 0.0],
+        ] {
+            let viewport = viewport_with(100.0, 100.0, view);
+            let mut memo = ClipAnalysisMemo::default();
+            // 깊은 stack부터 물어도, 얕은 stack부터 물어도 같습니다.
+            for stack in stacks.iter().rev().chain(stacks.iter()) {
+                for from in 0..=stack.depth() + 1 {
+                    assert_eq!(
+                        memo.analyze(stack, from, &viewport),
+                        analyze_clip(stack, from, &viewport),
+                        "depth {} from {from}",
+                        stack.depth()
+                    );
+                }
+            }
+        }
     }
 }

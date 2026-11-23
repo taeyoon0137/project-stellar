@@ -52,3 +52,13 @@
 - View Variant property·구조·slot patch는 적용하지 않습니다. 문서 계층에 `TypedValue → payload` 쓰기 함수가 없고, adapter가 따로 해석하면 이중 경로가 되기 때문입니다. 그 함수가 생기면 연결해야 합니다. 그래서 상태를 `[~]`로 둡니다.
 - 인스턴스 property override(예: Button label)는 binding(VIII) 연결 전이라 scene에 반영하지 않습니다.
 - 정의 node의 Text는 text layout hook이 없으면 건너뜁니다. 정의 tree에는 modifier stack이 없습니다.
+
+## 후속 보완 (2026-11-23, 가상 key skip 기록 정리)
+
+- 결함: 인스턴스 펼침에서 나온 skip 기록(가상 key)은 `scene_edits`가 다시 변환할 때 지우지 않았습니다. 정리 조건이 문서 node id만 봤는데, 가상 key의 id는 (인스턴스 chain, 정의 node)의 hash라 맞지 않았습니다. 인스턴스를 지워도 그 안의 skip 기록이 남았습니다.
+- 수정(ADR-0084 결정 5 개정):
+  - 변환이 인스턴스 펼침 skip 기록마다 바깥 인스턴스를 함께 남깁니다(`DocumentSceneSource`의 내부 표).
+  - 인스턴스를 다시 변환하거나 지우면 그 기록을 지웁니다.
+- 변경 파일: `crates/runtime/src/canvas/scene_source.rs`, `crates/runtime/src/canvas/scene_source/tests.rs`, `docs/adr/ADR-0084-…`.
+- 테스트: `scene_source::tests::virtual_skip_records_follow_their_instance`. 정의에 Text node를 둔 인스턴스 두 개는 가상 key마다 Text skip을 남깁니다. 인스턴스 하나를 지우면 그 기록만 사라지고, 증분 결과의 skip·source가 처음부터 변환한 결과와 같습니다.
+- 검증: `cargo test -p stellar-runtime --lib scene_source` 12 passed.

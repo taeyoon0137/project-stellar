@@ -39,7 +39,7 @@
 //!
 //! snapshot은 명시적 stack으로 순회하므로 깊은 tree에서도 호출 stack을 쓰지 않습니다.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -49,9 +49,10 @@ use stellar_scene::visibility::{DrawList, Viewport};
 use stellar_scene::{SceneContent, SceneNode, SceneSnapshot, ZOrder};
 
 use crate::clip_plan::{
-    analyze_clip, axis_aligned_rect, decide_clip, surface_extent, ClipCapabilities, ClipPlan,
+    analyze_clip, axis_aligned_rect, decide_clip, surface_extent, ClipAnalysisMemo,
+    ClipCapabilities, ClipPlan,
 };
-use crate::offscreen::{plan_boundaries, BoundaryPlan};
+use crate::offscreen::BoundaryPlan;
 use crate::render_graph::{
     ClearColor, CompiledRenderGraph, GraphBuildError, ImportKind, LoadOp, PassId, PassKind,
     RenderGraphBuilder, RenderGraphError, ResourceVersion, StoreOp, TextureDesc, TextureFormat,
@@ -265,6 +266,19 @@ pub fn classify_content(
     viewport: &Viewport,
     clip_from_depth: usize,
 ) -> PrimitiveClass {
+    classify_with_clip(
+        node,
+        viewport,
+        analyze_clip(node.clip(), clip_from_depth, viewport).is_scissor_exact(),
+    )
+}
+
+/// [`classify_content`]의 본문. clip 분석 결과(`scissor_exact`)는 호출자가 이미 계산한 값을 받습니다.
+fn classify_with_clip(
+    node: &SceneNode,
+    viewport: &Viewport,
+    scissor_exact: bool,
+) -> PrimitiveClass {
     let SceneContent::Rect(primitive) = node.content() else {
         return PrimitiveClass::Transparent;
     };
@@ -299,7 +313,7 @@ pub fn classify_content(
         && !has_compositing_effect(node)
         && primitive.radii.is_zero()
         && device_rect_aligned
-        && analyze_clip(node.clip(), clip_from_depth, viewport).is_scissor_exact();
+        && scissor_exact;
     if opaque {
         PrimitiveClass::Opaque
     } else {
@@ -387,7 +401,128 @@ fn ranked(draws: Vec<Collected>) -> Result<Vec<PlannedDraw>, FrameCompileError> 
 }
 
 /// snapshot을 frame plan으로 compile합니다.
+///
+/// 이전 frame을 기억하지 않는 한 번짜리 compile입니다. frame마다 compile하는 쪽은 바뀐 subtree만 다시 보는
+/// [`FrameCompiler`]를 씁니다. 두 경로는 같은 함수(`compile_with`)를 실행하고 결과가 같습니다(ADR-0090).
 pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompileError> {
+    FrameCompiler::one_shot().compile(input)
+}
+
+/// 한 compile 동안의 clip memo. key는 (clip stack 저장소 주소, 고려 시작 depth)이고, snapshot이 stack을 붙잡고
+/// 있는 동안만 씁니다.
+#[derive(Default)]
+struct ClipMemo {
+    /// clip 결정과 scissor 정확 여부.
+    plans: HashMap<(usize, usize), (ClipPlan, bool), AddrBuild>,
+    /// stack prefix 분석.
+    analyses: ClipAnalysisMemo,
+    /// 마지막 조회(연속한 형제는 같은 stack을 가짐).
+    last: Option<((usize, usize), (ClipPlan, bool))>,
+}
+
+/// compile 한 번의 고정 입력.
+struct FrameEnv<'i> {
+    viewport: &'i Viewport,
+    surface_width: u32,
+    surface_height: u32,
+    clip_caps: ClipCapabilities,
+}
+
+impl FrameEnv<'_> {
+    /// `node`의 clip을 `from_depth`부터 계획하고, scissor로 정확한지도 돌려줍니다. 같은 clip stack(구조 공유)과
+    /// 시작 depth는 결과가 같으므로 memo합니다.
+    fn clip(&self, memo: &mut ClipMemo, node: &SceneNode, from_depth: usize) -> (ClipPlan, bool) {
+        if node.clip().depth() <= from_depth {
+            // 고려할 clip이 없습니다(decision table 첫 행).
+            return (ClipPlan::None, true);
+        }
+        let key = (node.clip().storage_addr(), from_depth);
+        if let Some((last, value)) = &memo.last {
+            if *last == key {
+                return value.clone();
+            }
+        }
+        if let Some(hit) = memo.plans.get(&key) {
+            memo.last = Some((key, hit.clone()));
+            return hit.clone();
+        }
+        let analysis = memo
+            .analyses
+            .analyze(node.clip(), from_depth, self.viewport);
+        let value = (
+            decide_clip(
+                &analysis,
+                self.surface_width,
+                self.surface_height,
+                self.clip_caps,
+            ),
+            analysis.is_scissor_exact(),
+        );
+        memo.plans.insert(key, value.clone());
+        memo.last = Some((key, value.clone()));
+        value
+    }
+}
+
+/// 끝난 layer scope를 닫고 부모 target에 합성 draw를 남깁니다.
+fn close_scope(
+    scopes: &mut Vec<Scope>,
+    layers: &mut [LayerDraft],
+    env: &FrameEnv<'_>,
+    memo: &mut ClipMemo,
+) {
+    let Some(scope) = scopes.pop() else {
+        return;
+    };
+    let (Some(layer), Some((node, _))) = (scope.layer, scope.boundary) else {
+        return;
+    };
+    let Some(parent) = scopes.last_mut() else {
+        return;
+    };
+    // 경계 node 바깥 clip은 합성 draw에 적용합니다. 보이는 곳이 없으면 layer도 만들지 않습니다.
+    let (clip, _) = env.clip(memo, &node, parent.clip_depth);
+    if scope.draws.is_empty() || clip == ClipPlan::Culled {
+        // 그릴 것이 없는 layer는 만들지 않습니다(id는 비워 둠).
+        layers[layer.0 as usize].draws = Vec::new();
+        return;
+    }
+    layers[layer.0 as usize].draws = scope.draws;
+    // 경계 node를 감싸는 접힌 효과(부모 target 쪽)는 합성 draw에 접습니다.
+    let (opacity, blend) = folded(&parent.folds);
+    parent.draws.push(Collected {
+        z: node.z(),
+        class: PrimitiveClass::Transparent,
+        source: DrawSource::Layer {
+            layer,
+            node: Arc::clone(&node),
+        },
+        clip,
+        opacity,
+        blend,
+    });
+}
+
+/// pre-order 순회 단계.
+enum Visit<'a> {
+    /// node에 들어감.
+    Enter(&'a Arc<SceneNode>),
+    /// 자식이 있는 node의 subtree가 끝남. subtree가 효과 node 없이 한 target에만 draw를 남겼으면 그 구간을
+    /// 다음 frame용 segment로 남깁니다.
+    Exit {
+        node: &'a Arc<SceneNode>,
+        key: cache::SegmentKey,
+        start: usize,
+        effects: usize,
+    },
+}
+
+/// frame 하나를 compile합니다. `work`가 이전 frame의 재사용 가능한 결과를 들고 있으며, 비어 있으면 전체 compile과
+/// 같습니다.
+fn compile_with(
+    input: &CompileInput<'_>,
+    work: &mut cache::FrameWork<'_>,
+) -> Result<FramePlan, FrameCompileError> {
     let visible: Option<HashSet<ZOrder>> = input
         .visible
         .map(|list| list.items.iter().map(|item| item.z).collect());
@@ -396,24 +531,20 @@ pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompile
             && visible.as_ref().is_none_or(|set| set.contains(&node.z()))
     };
 
-    // 0. 효과 경계 결정(XI.4.4): 접을 수 있는 효과는 layer 없이 draw에 접습니다.
-    let boundary_plan = match input.boundaries {
-        EffectBoundaries::Conservative => None,
-        EffectBoundaries::Minimal => {
-            Some(plan_boundaries(input.snapshot, input.viewport, is_visible))
-        }
-    };
+    // 0. 효과 경계 결정(XI.4.4): 접을 수 있는 효과는 layer 없이 draw에 접습니다. 결정은 효과 node subtree만
+    //    보므로 바깥 효과 node를 처음 만날 때 그 subtree만 계획합니다(offscreen::plan_subtree_boundaries).
+    let minimal = input.boundaries == EffectBoundaries::Minimal;
+    let mut boundary_plan = BoundaryPlan::default();
 
     // 1. pre-order 순회로 draw를 target별로 모읍니다.
     let (surface_width, surface_height) = surface_extent(input.viewport);
-    let clip_for = |node: &SceneNode, from_depth: usize| {
-        decide_clip(
-            &analyze_clip(node.clip(), from_depth, input.viewport),
-            surface_width,
-            surface_height,
-            input.clip_caps,
-        )
+    let env = FrameEnv {
+        viewport: input.viewport,
+        surface_width,
+        surface_height,
+        clip_caps: input.clip_caps,
     };
+    let mut memo = ClipMemo::default();
     let mut layers: Vec<LayerDraft> = Vec::new();
     let mut scopes: Vec<Scope> = vec![Scope {
         layer: None,
@@ -422,49 +553,36 @@ pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompile
         folds: Vec::new(),
         draws: Vec::new(),
     }];
-    let close_scope = |scopes: &mut Vec<Scope>, layers: &mut Vec<LayerDraft>| {
-        let Some(scope) = scopes.pop() else {
-            return;
-        };
-        let (Some(layer), Some((node, _))) = (scope.layer, scope.boundary) else {
-            return;
-        };
-        let Some(parent) = scopes.last_mut() else {
-            return;
-        };
-        // 경계 node 바깥 clip은 합성 draw에 적용합니다. 보이는 곳이 없으면 layer도 만들지 않습니다.
-        let clip = clip_for(&node, parent.clip_depth);
-        if scope.draws.is_empty() || clip == ClipPlan::Culled {
-            // 그릴 것이 없는 layer는 만들지 않습니다(id는 비워 둠).
-            layers[layer.0 as usize].draws = Vec::new();
-            return;
-        }
-        layers[layer.0 as usize].draws = scope.draws;
-        // 경계 node를 감싸는 접힌 효과(부모 target 쪽)는 합성 draw에 접습니다.
-        let (opacity, blend) = folded(&parent.folds);
-        parent.draws.push(Collected {
-            z: node.z(),
-            class: PrimitiveClass::Transparent,
-            source: DrawSource::Layer {
-                layer,
-                node: Arc::clone(&node),
-            },
-            clip,
-            opacity,
-            blend,
-        });
-    };
+    // 지금까지 들어간 효과 node 수. subtree 앞뒤 값이 같으면 그 subtree에는 효과 node가 없습니다.
+    let mut effects_seen = 0usize;
 
-    let mut stack: Vec<&Arc<SceneNode>> = input.snapshot.roots().collect();
+    let mut stack: Vec<Visit<'_>> = input.snapshot.roots().map(Visit::Enter).collect();
     stack.reverse();
-    while let Some(node) = stack.pop() {
+    while let Some(visit) = stack.pop() {
+        let node = match visit {
+            Visit::Enter(node) => node,
+            Visit::Exit {
+                node,
+                key,
+                start,
+                effects,
+            } => {
+                if effects == effects_seen {
+                    if let Some(scope) = scopes.last() {
+                        work.store_segment(key, node, &scope.draws[start..]);
+                    }
+                }
+                continue;
+            }
+        };
+        work.reuse.visited_nodes += 1;
         // 이 node 앞에서 끝난 layer scope를 닫습니다(subtree 마지막 z < 현재 z).
         while scopes
             .last()
             .and_then(|scope| scope.boundary.as_ref())
             .is_some_and(|(_, last_z)| *last_z < node.z())
         {
-            close_scope(&mut scopes, &mut layers);
+            close_scope(&mut scopes, &mut layers, &env, &mut memo);
         }
         // 현재 target에서 끝난 접힌 효과를 뺍니다.
         if let Some(scope) = scopes.last_mut() {
@@ -476,9 +594,35 @@ pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompile
                 scope.folds.pop();
             }
         }
+        // 이전 frame과 같은 subtree(같은 `Arc`)를 같은 target 문맥(clip 시작 depth, 접힌 효과)에서 다시 만나면
+        // 이전 draw 구간을 그대로 씁니다. 효과 node가 없는 subtree만 segment가 있습니다.
+        let segment_key = (work.records() && node.child_count() > 0)
+            .then(|| scopes.last())
+            .flatten()
+            .map(|scope| {
+                let (opacity, blend) = folded(&scope.folds);
+                cache::SegmentKey::new(node, scope.clip_depth, opacity, blend)
+            });
+        if let Some(key) = &segment_key {
+            if let Some(draws) = work.reuse_segment(key, node) {
+                if let Some(scope) = scopes.last_mut() {
+                    scope.draws.extend(draws.iter().cloned());
+                }
+                continue;
+            }
+        }
+        let start = scopes.last().map_or(0, |scope| scope.draws.len());
+        let effects_before = effects_seen;
         let shown = node.hit().visibility == Visibility::Visible;
         let effect = shown && has_compositing_effect(node);
-        if effect && is_boundary(node, boundary_plan.as_ref()) {
+        if effect {
+            effects_seen += 1;
+            if minimal && boundary_plan.decision(node.z()).is_none() {
+                let decisions = work.subtree_boundaries(node, input.viewport, &is_visible);
+                boundary_plan.extend(&decisions);
+            }
+        }
+        if effect && is_boundary(node, minimal.then_some(&boundary_plan)) {
             let id = LayerId(layers.len() as u32);
             layers.push(LayerDraft {
                 node: Arc::clone(node),
@@ -505,14 +649,14 @@ pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompile
         }
         if is_visible(node) && draws_content(node) {
             if let Some(scope) = scopes.last_mut() {
-                let clip = clip_for(node, scope.clip_depth);
+                let (clip, scissor_exact) = env.clip(&mut memo, node, scope.clip_depth);
                 if clip != ClipPlan::Culled {
                     let (opacity, blend) = folded(&scope.folds);
                     // 접힌 효과가 걸린 draw는 불투명 덮어쓰기가 아닙니다.
                     let class = if opacity < Opacity::OPAQUE || blend != SceneBlendMode::Normal {
                         PrimitiveClass::Transparent
                     } else {
-                        classify_content(node, input.viewport, scope.clip_depth)
+                        classify_with_clip(node, input.viewport, scissor_exact)
                     };
                     scope.draws.push(Collected {
                         z: node.z(),
@@ -525,12 +669,20 @@ pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompile
                 }
             }
         }
-        let start = stack.len();
-        stack.extend(node.children());
-        stack[start..].reverse();
+        if let Some(key) = segment_key {
+            stack.push(Visit::Exit {
+                node,
+                key,
+                start,
+                effects: effects_before,
+            });
+        }
+        let first = stack.len();
+        stack.extend(node.children().map(Visit::Enter));
+        stack[first..].reverse();
     }
     while scopes.len() > 1 {
-        close_scope(&mut scopes, &mut layers);
+        close_scope(&mut scopes, &mut layers, &env, &mut memo);
     }
     let main = scopes.pop().map(|scope| scope.draws).unwrap_or_default();
 
@@ -662,6 +814,12 @@ pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompile
         layers: effect_layers,
     })
 }
+
+/// 증분 frame compile 상태(ADR-0090).
+mod cache;
+
+pub(crate) use cache::AddrBuild;
+pub use cache::{CompileReuse, FrameCompiler};
 
 #[cfg(test)]
 pub(crate) mod tests;

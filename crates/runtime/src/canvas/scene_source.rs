@@ -19,8 +19,9 @@
 //!   때까지 [`DocumentSceneSource::unapplied_variant_patches`]에 셉니다(ADR-0084 결정 5).
 //! - Boolean modifier(XII.10.30)를 가진 Shape·Path는 결과 host입니다. host의 다른 modifier는 Boolean 항목을 뺀
 //!   stack으로 평가합니다. operand node는 source에 넣지 않고(결과에 흡수), host local 좌표로 옮긴 geometry를 문서
-//!   pre-order(OrderKey 순) 순서로 host에 둡니다. operand의 geometry 변경은 host의 geometry dirty가 됩니다
-//!   ([`SceneDependents`]).
+//!   pre-order(OrderKey 순) 순서로 host에 둡니다. operand의 geometry 변경과 operand 조상의 변경은 host의 geometry
+//!   dirty가 됩니다([`SceneDependents`]). host가 skip되어 결과를 남기지 못하면 operand는 흡수된 채 그리지 않고
+//!   [`SkipReason::BooleanHostSkipped`]로 기록합니다(ADR-0084 결정 7).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -74,6 +75,9 @@ pub enum SkipReason {
     Instance,
     /// 값이 scene 규칙을 벗어났습니다(비유한 등).
     InvalidValue,
+    /// Boolean operand인데 결과를 그리는 host가 scene에 없습니다(host가 skip됨). operand는 결과에 흡수되므로 단독으로
+    /// 그리지 않습니다(ADR-0084 결정 7).
+    BooleanHostSkipped,
 }
 
 /// Text node를 scene 입력으로 바꾸는 hook(글꼴·layout은 text 엔진이 맡음).
@@ -106,11 +110,21 @@ pub struct DocumentSceneSource {
     root: StableId,
     /// root subtree pre-order 위치(Boolean operand 순서). 구조 변경 때만 다시 계산합니다.
     preorder: HashMap<StableId, usize>,
+    /// Boolean operand의 조상 → 그 operand를 읽는 host(정렬·중복 없음). 조상 이동이 host를 dirty로 만드는 데
+    /// 씁니다. dirty node마다 operand 전체를 훑지 않도록 조상 쪽으로 뒤집어 둡니다.
+    ancestor_hosts: HashMap<StableId, Vec<StableId>>,
+    /// instance 펼침에서 나온 skip 기록 → 그 instance. 가상 key는 문서 node id가 아니라서, 인스턴스를 다시 변환할 때
+    /// 이 표로 이전 기록을 지웁니다.
+    skip_owner: BTreeMap<SceneKey, StableId>,
 }
 
 impl SceneDependents for DocumentSceneSource {
     fn dependents_of(&self, node: StableId) -> Vec<StableId> {
         self.operand_hosts.get(&node).cloned().unwrap_or_default()
+    }
+
+    fn descendant_dependents(&self, node: StableId) -> Vec<StableId> {
+        self.ancestor_hosts.get(&node).cloned().unwrap_or_default()
     }
 }
 
@@ -134,6 +148,8 @@ struct Converter<'a, 'o> {
     /// instance expansion용 payload 색인(필요할 때만 만듦).
     payloads: Option<ScenePayloads>,
     skipped: BTreeMap<SceneKey, SkipReason>,
+    /// instance 펼침 skip 기록의 instance.
+    skip_owner: BTreeMap<SceneKey, StableId>,
 }
 
 /// 문서 View root subtree를 scene source로 바꿉니다.
@@ -147,14 +163,58 @@ pub fn document_scene_source<'a>(
     let mut nodes = Vec::new();
     let roots: Vec<SceneKey> = converter.subtree(root, &mut nodes).into_iter().collect();
     let source = SceneSource::from_nodes(roots, nodes)?;
-    Ok(DocumentSceneSource {
+    let mut built = DocumentSceneSource {
         source,
         skipped: converter.skipped,
         operand_hosts: converter.operand_hosts,
         unapplied_variant_patches: unapplied,
         root,
         preorder: converter.preorder,
-    })
+        ancestor_hosts: HashMap::new(),
+        skip_owner: converter.skip_owner,
+    };
+    refresh_operands(model, &mut built);
+    Ok(built)
+}
+
+/// operand 조상 표와 host 없는 operand의 skip 기록을 현재 source에 맞춥니다.
+///
+/// host가 scene에 Boolean 결과를 남기지 못하면(host 자신이나 조상이 skip됨) operand는 흡수된 채 아무것도 그리지
+/// 않습니다. 그 operand를 [`SkipReason::BooleanHostSkipped`]로 기록해 빠진 이유가 드러나게 합니다(ADR-0084 결정 7).
+fn refresh_operands(model: &DocumentModel, current: &mut DocumentSceneSource) {
+    let mut ancestor_hosts: HashMap<StableId, Vec<StableId>> = HashMap::new();
+    for (operand, hosts) in &current.operand_hosts {
+        let mut parent = parent_of(model, *operand);
+        while let Some(id) = parent {
+            ancestor_hosts
+                .entry(id)
+                .or_default()
+                .extend(hosts.iter().copied());
+            parent = parent_of(model, id);
+        }
+    }
+    for hosts in ancestor_hosts.values_mut() {
+        hosts.sort_unstable();
+        hosts.dedup();
+    }
+    current.ancestor_hosts = ancestor_hosts;
+    current
+        .skipped
+        .retain(|_, reason| *reason != SkipReason::BooleanHostSkipped);
+    for (operand, hosts) in &current.operand_hosts {
+        let drawn = hosts.iter().any(|host| {
+            current
+                .source
+                .get(SceneKey::node(*host))
+                .is_some_and(|node| node.boolean.is_some())
+        });
+        if !drawn {
+            current
+                .skipped
+                .entry(SceneKey::node(*operand))
+                .or_insert(SkipReason::BooleanHostSkipped);
+        }
+    }
 }
 
 impl<'a, 'o> Converter<'a, 'o> {
@@ -203,6 +263,7 @@ impl<'a, 'o> Converter<'a, 'o> {
             visibility,
             payloads: None,
             skipped: BTreeMap::new(),
+            skip_owner: BTreeMap::new(),
         }
     }
 
@@ -418,6 +479,7 @@ impl<'a, 'o> Converter<'a, 'o> {
         );
         for (k, reason) in skipped {
             self.skip(k, reason);
+            self.skip_owner.insert(k, id);
         }
         out.extend(virtual_nodes);
         let children = root.into_iter().collect();
@@ -874,11 +936,22 @@ pub fn scene_edits<'a>(
             stack.extend(model.children_in_order(id));
         }
     }
-    current
-        .skipped
-        .retain(|key, _| !reconverted.contains(&key.id()) && !removed.contains(&key.id()));
+    // instance 펼침에서 나온 기록(가상 key)은 그 instance를 다시 변환하거나 지웠을 때 지웁니다.
+    let stale = |key: &SceneKey, owner: &BTreeMap<SceneKey, StableId>| {
+        let gone = |id: &StableId| reconverted.contains(id) || removed.contains(id);
+        gone(&key.id()) || owner.get(key).is_some_and(gone)
+    };
+    let owner = std::mem::take(&mut current.skip_owner);
+    current.skipped.retain(|key, _| !stale(key, &owner));
+    current.skip_owner = owner
+        .iter()
+        .filter(|(key, _)| !stale(key, &owner))
+        .map(|(key, id)| (*key, *id))
+        .collect();
     current.skipped.extend(converter.skipped);
+    current.skip_owner.extend(converter.skip_owner);
     current.source.apply(&edits)?;
+    refresh_operands(model, current);
     Ok(edits)
 }
 
