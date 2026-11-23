@@ -9,6 +9,12 @@ pub mod structure;
 /// 토큰 Web 출력 계획 (XXII.2.3).
 pub mod tokens;
 
+/// IrExpr → CSS·JavaScript 식 (XXII.2.5, XXII.2.6).
+pub mod expr;
+
+/// Context → Web 출력 (XXII.2.5).
+pub mod context;
+
 /// 생성 JavaScript 값·식별자 표기 (XXII.2.3, XXII.5.1).
 pub mod js;
 

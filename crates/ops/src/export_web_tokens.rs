@@ -179,4 +179,4 @@ pub fn export_tokens(ir: &IrTree) -> WebTokens {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
