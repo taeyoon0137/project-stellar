@@ -456,13 +456,19 @@ mod tests {
         assert_eq!(length(&after, 2, LayoutLonghand::PaddingRight), Some(0.0));
         // padding 1px < border 3px인 아래쪽, 미설정(0)인 왼쪽은 보존하지 못한 차이를 보고합니다.
         assert_eq!(length(&after, 2, LayoutLonghand::PaddingBottom), Some(0.0));
-        assert_eq!(layout(&after, 2).unwrap().get(LayoutLonghand::PaddingLeft), None);
+        assert_eq!(
+            layout(&after, 2).unwrap().get(LayoutLonghand::PaddingLeft),
+            None
+        );
         let shortfall: Vec<(BorderSide, f32)> = report
             .padding_shortfall
             .iter()
             .map(|s| (s.side, s.lost))
             .collect();
-        assert_eq!(shortfall, [(BorderSide::Bottom, 2.0), (BorderSide::Left, 3.0)]);
+        assert_eq!(
+            shortfall,
+            [(BorderSide::Bottom, 2.0), (BorderSide::Left, 3.0)]
+        );
         // flow 자식(position 미설정)은 inset을 보정하지 않습니다.
         assert!(report.insets_adjusted.is_empty());
         assert!(report.payload_positioned.is_empty());

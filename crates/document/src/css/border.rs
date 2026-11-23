@@ -545,7 +545,10 @@ pub enum LonghandValue {
 }
 
 /// longhand 하나의 CSS 값 텍스트를 해석합니다. 길이·색은 문서 값 parser(`css::value::parse`)를 지납니다.
-pub fn parse_longhand(longhand: BorderLonghand, text: &str) -> Result<LonghandValue, CssValueError> {
+pub fn parse_longhand(
+    longhand: BorderLonghand,
+    text: &str,
+) -> Result<LonghandValue, CssValueError> {
     let trimmed = text.trim();
     match longhand.part {
         BorderPart::Width => match trimmed {
@@ -754,7 +757,10 @@ mod tests {
         let color = BorderLonghand::from_name("border-left-color").unwrap();
         let mut sides = BorderSides::INITIAL;
         assert_eq!(sides.set(width, "-1px").unwrap_err().code, "invalid-value");
-        assert_eq!(sides.set(width, "2em").unwrap_err().code, "unsupported-unit");
+        assert_eq!(
+            sides.set(width, "2em").unwrap_err().code,
+            "unsupported-unit"
+        );
         assert_eq!(
             sides.set(style, "dashed").unwrap_err().code,
             "unsupported-value"
@@ -772,10 +778,7 @@ mod tests {
             style: BorderStyle::Solid,
             color: Some(red()),
         });
-        assert_eq!(
-            solid.to_payload(),
-            Err(BorderSidesError::NotRepresentable)
-        );
+        assert_eq!(solid.to_payload(), Err(BorderSidesError::NotRepresentable));
         for side in BorderSide::ALL {
             solid.side_mut(side).style = BorderStyle::None;
         }

@@ -39,7 +39,11 @@ pub fn default_typography_id(document: StableId) -> StableId {
     let bytes = document.to_bytes();
     let tail = u64::from_be_bytes(bytes[8..16].try_into().expect("8 bytes"));
     // 문서 id와 같은 timestamp, 고정 rand_a, 문서 id 꼬리와 상수의 xor. 같은 문서 안 다른 id와 겹치지 않게 상수를 섞습니다.
-    StableId::new_v7(document.timestamp_ms(), 0x0575, tail ^ 0x5459_504f_4752_4150)
+    StableId::new_v7(
+        document.timestamp_ms(),
+        0x0575,
+        tail ^ 0x5459_504f_4752_4150,
+    )
 }
 
 /// 표가 비어 있는 문서에 기본 style 표를 만듭니다.

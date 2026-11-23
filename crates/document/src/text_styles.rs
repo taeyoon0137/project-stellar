@@ -17,9 +17,9 @@ use crate::text::{
 use std::collections::BTreeMap;
 use stellar_core_types::{
     color::Color,
+    font::FontSource,
     font::{ByteReader, FontFileHash, FontRecordError},
     ids::StableId,
-    font::FontSource,
     typed_value::TypographyValue,
     typography::{LetterSpacing, TypographyError},
     value::FiniteF32,
@@ -486,9 +486,15 @@ mod tests {
         // 검증 기준(IX.11.11): 생략값이 CSS initial value와 같음.
         let initial = Typography::default();
         assert!(initial.families.is_empty());
-        assert_eq!(initial.size, stellar_core_types::typography::FontSize::Medium);
+        assert_eq!(
+            initial.size,
+            stellar_core_types::typography::FontSize::Medium
+        );
         assert_eq!(initial.weight.get(), 400.0);
-        assert_eq!(initial.style, stellar_core_types::typography::FontStyle::Normal);
+        assert_eq!(
+            initial.style,
+            stellar_core_types::typography::FontStyle::Normal
+        );
         assert_eq!(initial.stretch_percent.get(), 100.0);
         assert_eq!(
             initial.line_height,
@@ -517,7 +523,9 @@ mod tests {
             .unwrap()
         };
         let mut table = DocumentTextStyles::initial(doc);
-        table.typography.insert(doc, value(1024, LetterSpacing::Normal));
+        table
+            .typography
+            .insert(doc, value(1024, LetterSpacing::Normal));
         let px = |v: f32| LetterSpacing::Px(FiniteF32::new(v).unwrap());
         table.typography.insert(para, value(1536, px(1.0)));
         table.typography.insert(run, value(2048, px(2.0)));
@@ -535,7 +543,13 @@ mod tests {
         spaced.letter_spacing = Some(LetterSpacing::Em(FiniteF32::new(0.25).unwrap()));
         table.runs.insert(2, spaced);
         let size = |p: u32, r: Option<u32>| {
-            table.resolve(p, r).unwrap().typography.record().unwrap().size
+            table
+                .resolve(p, r)
+                .unwrap()
+                .typography
+                .record()
+                .unwrap()
+                .size
         };
         use stellar_core_types::typography::FontSize::Subpixels;
         // run typography가 이깁니다.
@@ -545,8 +559,14 @@ mod tests {
         assert_eq!(size(0, Some(0)), Subpixels(1024));
         assert_eq!(size(0, None), Subpixels(1024));
         // letter-spacing: run 선택 필드 → 해석한 Typography 값. resource를 복제하지 않습니다.
-        assert_eq!(table.resolve(1, Some(1)).unwrap().letter_spacing(), Some(px(2.0)));
-        assert_eq!(table.resolve(1, Some(0)).unwrap().letter_spacing(), Some(px(1.0)));
+        assert_eq!(
+            table.resolve(1, Some(1)).unwrap().letter_spacing(),
+            Some(px(2.0))
+        );
+        assert_eq!(
+            table.resolve(1, Some(0)).unwrap().letter_spacing(),
+            Some(px(1.0))
+        );
         assert_eq!(
             table.resolve(1, Some(2)).unwrap().letter_spacing(),
             Some(LetterSpacing::Em(FiniteF32::new(0.25).unwrap()))
@@ -561,7 +581,9 @@ mod tests {
         use stellar_core_types::typography::Family;
         let [doc, blob, missing] = [1, 2, 3].map(|n| StableId::new_v7(n, 0, n));
         let mut table = DocumentTextStyles::initial(doc);
-        table.typography.insert(blob, TypographyValue::new(vec![0xde, 0xad]));
+        table
+            .typography
+            .insert(blob, TypographyValue::new(vec![0xde, 0xad]));
         let registered = FontFileHash::from_sha256_digest([7; 32]);
         let unregistered = FontFileHash::from_sha256_digest([9; 32]);
         table.fonts.insert(
@@ -585,7 +607,12 @@ mod tests {
                     family("Unresolved", None),
                     family(
                         "System",
-                        Some(FontFaceRef::new(FontSource::System, unregistered, 0, vec![])),
+                        Some(FontFaceRef::new(
+                            FontSource::System,
+                            unregistered,
+                            0,
+                            vec![],
+                        )),
                     ),
                 ],
                 ..Typography::default()

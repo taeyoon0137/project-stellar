@@ -27,9 +27,9 @@ use stellar_core_types::value::{
 };
 use stellar_document::component::definition::{ComponentPropertyId, ComponentSlotId};
 use stellar_document::component::instance::{ComponentInstancePayload, OverrideKey, SlotOverride};
+use stellar_document::css::border::{BorderLonghand, BorderSides};
 use stellar_document::fragment::FragmentPayload;
 use stellar_document::frame::keys as frame_keys;
-use stellar_document::css::border::{BorderLonghand, BorderSides};
 use stellar_document::frame::{Clipping, CornerRadius, FramePayload};
 use stellar_document::image::{CropRect, FitMode, ImagePayload, SamplingMode, IMAGE_PROP_ASSET};
 use stellar_document::layout_record::{format_value, LayoutLonghand, LayoutRecord};
