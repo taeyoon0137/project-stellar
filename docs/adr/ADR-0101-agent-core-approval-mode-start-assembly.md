@@ -47,6 +47,7 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
 ### 3. 시작 확인, 약관 고지, 신뢰 철회(XXIX.3.5, `stellar_agent_host::start`, `stellar_runtime::agent`)
 
 - 신뢰 판정은 runtime의 `mcp_capability(trust)`가 `capability_level(ProjectCapability::Mcp, trust)` 결과를 `McpCapability`로 넘깁니다. `Allowed`만 허용이고 제한·금지는 거부입니다. agent-host는 판정하지 않고 결과만 씁니다.
+- runtime의 `prepare_agent_start`·`confirm_agent_start`는 신뢰 상태를 값으로 받지 않고 같은 `ProjectIdentity`로 신뢰 저장소 조회 함수에서 읽습니다. 확인 단계는 확인 데이터의 대상 프로젝트가 그 identity와 다르면 `ProjectMismatch`로 시작하지 않습니다. 다른 프로젝트의 신뢰 상태로 확인이 통과하는 경로를 막습니다.
 - `prepare_start`는 신뢰와 profile 활성을 확인하고 시작 확인 데이터(`StartConfirmation`: 대상 프로젝트, 창, profile, CLI 이름, 모드, 고지 필요 여부)를 만듭니다. `confirm_start`는 사용자가 확인한 순간 신뢰·profile·고지를 다시 확인합니다. 통과하면 세션을 만들고 그 확인을 `FirstConnectionApproval`로 기록합니다. 이 기록은 결합된 bridge의 첫 연결 승인이며 Read 밖 권한을 주지 않습니다.
 - **약관 고지 기록**: 앱이 정한 OS 사용자 데이터 디렉터리 아래 `agent/terms-notices`에 둡니다.
   - 첫 줄은 `stellar-agent-terms-notice 1`이고, CLI마다 `<cli> <약관 검토 일자> <검토 결과>` 한 줄입니다.
@@ -61,7 +62,7 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
 - 문서 효과는 승인 기록(`Resolution`)과 출처 기록 요약(`BatchRecord`: XIX.6.7 출처 색인의 batch 요약)에서만 만듭니다. 받는 규칙은 다음과 같습니다.
   - 다른 세션의 기록은 받지 않습니다.
   - 요청 확정은 먼저 열린 같은 대상의 요청에만 붙고, 한 번만 받습니다.
-  - batch 적용은 순번이 늘어날 때만 받습니다. 제안이 있으면 그 batch 승인이 `approved`여야 하고, 제안 없는 적용은 승인 범위 내 바로 적용 모드에서만 받습니다.
+  - batch 적용은 순번이 늘어날 때만 받습니다. 제안이 있으면 그 batch 승인이 `approved`여야 하고, 승인 하나는 적용 표시 하나에만 씁니다(같은 제안으로 두 번째 batch를 표시하면 `ProposalAlreadyApplied`). 제안 없는 적용은 승인 범위 내 바로 적용 모드에서만 받습니다.
 - `verify(opened, resolutions, batches)`는 표시된 효과가 기록과 정확히 같은지 다시 확인합니다.
 - CLI 보고 item은 10,000개 상한(오래된 것부터 버림)입니다. 문서 효과는 검토 대기 출처 표시의 근거라 버리지 않습니다.
 - 세션 메모리에만 있고 직렬화·파일 경로가 없습니다.
