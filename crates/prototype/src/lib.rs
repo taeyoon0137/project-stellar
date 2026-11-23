@@ -20,6 +20,9 @@ pub mod plan;
 /// 포트 공개 plan (XXX.2.4).
 pub mod expose;
 
+/// 진단 → 그래프 node·socket 매핑 (XXX.2.5).
+pub mod diagnostics;
+
 /// 프리뷰 논리 시계 (XXX.3.1).
 pub mod clock;
 
