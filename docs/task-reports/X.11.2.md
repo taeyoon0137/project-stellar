@@ -2,7 +2,7 @@
 
 - WBS: X.11.2
 - 작업명: nested component, variant, token 조건이 포함된 layout fixture 20개 추가(expected rect golden)
-- 상태: 부분 완료 (`[~]`) — 리뷰 상태 정정(아래 "상태 정정"). 테스트 모델 기준 expected rect golden은 통과했지만, 실제 문서
+- 상태: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 리뷰 상태 정정(아래 "상태 정정"). 테스트 모델 기준 expected rect golden은 통과했지만, 실제 문서
   resolver 결과와 같은지는 확인하지 않았습니다.
 - 선행: IX.9(절 단위, IX.9.1~IX.9.4 모두 `[ ]`), X.7(절 단위)
   - **완화**: 절 단위 선행이므로 필요한 코드가 있으면 완화합니다. IX.9 통합 fixture는 미완이지만 이 행이 쓰는 계약 —
@@ -78,3 +78,24 @@
 - 이미 있는 증거(유지): 테스트 모델 기준 fixture 20개 golden 일치, 증분 전환 = 전체 계산, 가상 layout id 안정성.
 - `[x]` 조건: IX.9.1\~IX.9.3이 `[x]`가 되고, 상위 crate의 adapter(문서 → `LayoutSource`)로 같은 scene·조건을 실제
   resolver에서 펼쳐 이 golden(또는 IX.9 fixture에서 다시 만든 golden)과 같은 rect를 내는 테스트가 통과해야 합니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 구현 판정 통과, 선행 미충족.
+- 근거: layout fixture 20개와 테스트 모델 expected rect golden은 있지만 선행 IX.9(절 단위)의 IX.9.1·IX.9.2·IX.9.4가 `[x]`가 아니고, fixture가 실제 문서 레코드가 아니라 테스트 모델을 씁니다(이전 보고서 상태 정정). `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/layout/tests/component_layout_corpus.rs`와 golden `crates/layout/tests/fixtures/component_layout_v1.golden`(fixture 20개의 box rect·baseline). fixture 모델은 test 안의 `LayoutSource` 구현입니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-layout` | unit 173, component_layout_corpus 4 passed |
+
+### 남은 조건과 finding
+
+- IX.9.1의 영속 레코드 fixture가 생기면 같은 fixture를 문서 레코드에서 layout 입력으로 만들어 다시 확인합니다. X.11.3(양 플랫폼 비교 CI job)은 Windows 대기 목록입니다.
