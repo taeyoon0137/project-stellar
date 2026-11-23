@@ -20,7 +20,7 @@ use stellar_core_types::value::{FiniteF32, Vec2};
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{
     find_modifier_cycle, validate_modifier_owner, ModifierEntry, ModifierError, ModifierId,
-    ModifierPayload, ModifierStack,
+    ModifierKind, ModifierPayload, ModifierStack,
 };
 use stellar_document::modifier_metadata::{
     invalidation_of, keys as modifier_keys, kind_invalidation, modifier_property,
@@ -370,6 +370,55 @@ pub(crate) fn read_payload(payload: &ModifierPayload, key: PropertyKey) -> Optio
         }
         _ => return None,
     })
+}
+
+/// `kind` 기본 payload(`ModifierPayload::default_for`)에 `key` 값 하나를 쓴 payload. 조합이 맞지 않으면 `None`.
+pub(crate) fn payload_with(
+    kind: ModifierKind,
+    key: PropertyKey,
+    value: &PropertyValue,
+) -> Option<ModifierPayload> {
+    let mut payload = ModifierPayload::default_for(kind);
+    write_payload(&mut payload, key, value).then_some(payload)
+}
+
+/// CSS가 한 요소에 효과를 적용하는 고정 순서의 단계(속성 모델 9.1): transform → paint(`box-shadow`·fill·stroke) →
+/// `filter` → `clip-path` → `mask` → `opacity` → `mix-blend-mode`. Stellar 전용 modifier(Boolean·StrokeExpand·
+/// Corner)는 paint 단계로 봅니다.
+fn css_stage(kind: ModifierKind) -> u8 {
+    match kind {
+        ModifierKind::Transform => 0,
+        ModifierKind::Fill
+        | ModifierKind::Stroke
+        | ModifierKind::Shadow
+        | ModifierKind::Boolean
+        | ModifierKind::StrokeExpand
+        | ModifierKind::Corner => 1,
+        ModifierKind::Blur => 2,
+        ModifierKind::Clip => 3,
+        ModifierKind::Mask => 4,
+        ModifierKind::Opacity => 5,
+        ModifierKind::Blend => 6,
+    }
+}
+
+/// 선언 블록 붙여넣기가 `node`에 새 `kind` modifier를 넣을 순서 key: CSS 고정 순서(속성 모델 9.1)에서 같거나 앞
+/// 단계인 마지막 항목 뒤, 뒤 단계인 첫 항목 앞입니다. 그래서 CSS 순서를 지키던 stack은 넣은 뒤에도 지킵니다.
+pub(crate) fn css_insert_order(
+    model: &DocumentModel,
+    node: StableId,
+    kind: ModifierKind,
+) -> OrderKey {
+    let entries: &[ModifierEntry] = model.modifier_stack(node).map_or(&[], |s| s.entries());
+    let stage = css_stage(kind);
+    let split = entries
+        .iter()
+        .position(|e| css_stage(e.kind) > stage)
+        .unwrap_or(entries.len());
+    OrderKey::between(
+        split.checked_sub(1).map(|i| &entries[i].order),
+        entries.get(split).map(|e| &e.order),
+    )
 }
 
 /// payload 속성 값을 씁니다. key·값 조합이 맞지 않으면 `false`.

@@ -5,7 +5,9 @@
 //!
 //! **복사**([`copy_declarations`]): node 하나의 속성을 속성 패널과 같은 이름·정규 값으로 registry(표시) 순서의
 //! longhand 선언 목록으로 냅니다. 묶음 행(`border-radius`)은 longhand로 펼치고, 레이어 속성(`name`·`visible`·
-//! `locked`)은 넣지 않습니다. Stellar 전용 속성은 표시를 달아 함께 냅니다.
+//! `locked`)은 넣지 않습니다. Stellar 전용 속성은 표시를 달아 함께 냅니다. 속성 패널 행이 아직 없는 registry
+//! 속성(`transform` 선형 부분, `stroke-linecap`, `image-rendering`, Shadow·Blur·Blend·Opacity modifier 속성)도 그 뒤에
+//! registry 이름과 정규 값으로 냅니다(아래 "속성 패널 행이 없는 registry 속성" 절, ADR-0075 개정).
 //!
 //! **붙여넣기**([`paste_declarations`]): 선언 블록을 해석하고 shorthand를 longhand로 펼친 뒤, 받을 수 있는 선언을
 //! 속성 패널과 같은 command로 바꿔 **CommandTransaction 하나**에 담을 command 목록을 만듭니다. 알 수 없는 속성과
@@ -20,11 +22,30 @@ use stellar_document::model::DocumentModel;
 
 pub use stellar_document::css::value::*;
 
+use stellar_core_types::property::PropertyKey;
+use stellar_core_types::value::{FiniteF32, Transform2D};
+use stellar_document::css::mapping::is_known_longhand;
+use stellar_document::css::registry::{self, PropertyScope as RegistryScope, RegistryEntry};
+use stellar_document::frame::keys as frame_keys;
+use stellar_document::modifier::{ModifierEntry, ModifierId, ModifierKind, ModifierPayload};
+use stellar_document::modifier_metadata::{
+    keys as modifier_keys, modifier_property, ModifierPropertyType,
+};
+use stellar_document::payload_metadata::{image_keys, shape_keys};
+use stellar_document::records::NodePayload;
+use stellar_document::shape::ShapeGeometry;
+
 use crate::command::Command;
 use crate::id::{CommandId, CommandOrigin};
 use crate::inspector::{
-    edit_commands, flags, has_fill, inspector_rows, InspectorInput, InspectorProperty, NodeClass,
+    edit_commands, flags, has_fill, inspector_rows, position_modifier, InspectorInput,
+    InspectorProperty, NodeClass,
 };
+use crate::lock::{EditIntent, NodeAccess};
+use crate::modifier_ops::{
+    css_insert_order, payload_with, read_payload, InsertModifier, SetModifierProperty,
+};
+use crate::property::{blend_mode_from_tag, read_property, PropertyValue, SetProperty};
 use crate::request::CommandRequest;
 use crate::state::DocumentState;
 use crate::transaction::CommandTransaction;
@@ -76,6 +97,7 @@ pub fn copy_declarations(model: &DocumentModel, node: StableId) -> Option<Vec<Co
                 value: row.value,
                 stellar_only: row.flags & flags::STELLAR_ONLY != 0,
             })
+            .chain(copy_extras(model, node))
             .collect(),
     )
 }
@@ -242,6 +264,18 @@ pub fn paste_declarations(
         };
         for (name, value) in longhands {
             let Some(property) = InspectorProperty::from_name(&name) else {
+                if let Some(extra) = Extra::by_name(&name) {
+                    paste_extra(
+                        &mut plan,
+                        &mut scratch,
+                        selection,
+                        extra,
+                        (&name, &value),
+                        scope,
+                        new_id,
+                    );
+                    continue;
+                }
                 if registry_knows(&name) {
                     skip(
                         &mut plan,
@@ -340,6 +374,370 @@ pub fn paste_declarations(
         }
     }
     Ok(plan)
+}
+
+// ───────────── 속성 패널 행이 없는 registry 속성(IX.11.15 보완, ADR-0075 개정) ─────────────
+//
+// 속성 패널 행이 아직 없는 registry 속성도 같은 이름·정규 값으로 복사·붙여넣기합니다. 이름·값 문법은 registry
+// 항목(`css::registry`)에서 읽고, 값은 registry 값 문법의 parser·formatter를 씁니다.
+//
+// - payload keyword(`stroke-linecap`, `image-rendering`): `SetProperty`(registry key, keyword index).
+// - modifier 속성(`shadow-*`, `blur-radius`, `mix-blend-mode`, `opacity`): 그 종류의 첫 활성 modifier가 대상입니다.
+//   없으면 기본 payload에 값을 쓴 modifier를 CSS 고정 순서 위치(속성 모델 9.1)에 넣습니다. 같은 종류 modifier가
+//   여럿이면 첫 활성 하나만 선언으로 나타냅니다.
+// - `transform`: 선형 부분 `matrix(a, b, c, d, 0, 0)`만 다룹니다. 이동 성분은 위치(`left`·`top`)입니다(속성 모델 5장
+//   `transform` 행). Frame은 payload transform, 그 밖의 node는 위치 Transform modifier(`position_modifier`)의 선형
+//   부분이고 이동 성분은 그대로 둡니다. 이동 성분이 있는 값은 `unsupported-value`입니다.
+
+/// 속성 패널 행이 없는 registry 속성의 저장 위치.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Extra {
+    /// node payload keyword(registry 범위, key).
+    Payload(RegistryScope, PropertyKey),
+    /// modifier payload 속성(종류, key).
+    Modifier(ModifierKind, PropertyKey),
+    /// 선형 transform(Frame payload 또는 위치 Transform modifier).
+    Transform,
+}
+
+/// registry 순서(범위 순, key 순)의 추가 속성.
+const EXTRAS: [Extra; 10] = [
+    Extra::Transform,
+    Extra::Payload(RegistryScope::Shape, shape_keys::STROKE_LINECAP),
+    Extra::Payload(RegistryScope::Image, image_keys::IMAGE_RENDERING),
+    Extra::Modifier(ModifierKind::Shadow, modifier_keys::SHADOW_COLOR),
+    Extra::Modifier(ModifierKind::Shadow, modifier_keys::SHADOW_BLUR),
+    Extra::Modifier(ModifierKind::Shadow, modifier_keys::SHADOW_OFFSET_X),
+    Extra::Modifier(ModifierKind::Shadow, modifier_keys::SHADOW_OFFSET_Y),
+    Extra::Modifier(ModifierKind::Blur, modifier_keys::BLUR_RADIUS),
+    Extra::Modifier(ModifierKind::Blend, modifier_keys::BLEND_MODE),
+    Extra::Modifier(ModifierKind::Opacity, modifier_keys::OPACITY_VALUE),
+];
+
+impl Extra {
+    fn entry(self) -> RegistryEntry {
+        let (scope, key) = match self {
+            Extra::Payload(scope, key) => (scope, key),
+            Extra::Modifier(_, key) => (RegistryScope::Modifier, key),
+            Extra::Transform => (RegistryScope::Frame, frame_keys::TRANSFORM),
+        };
+        registry::entry(scope, key).expect("추가 속성은 registry 항목입니다")
+    }
+
+    fn name(self) -> &'static str {
+        self.entry().name
+    }
+
+    fn grammar(self) -> CssGrammar {
+        self.entry()
+            .css
+            .grammar
+            .expect("추가 속성은 값 문법을 가집니다")
+    }
+
+    fn by_name(name: &str) -> Option<Extra> {
+        EXTRAS.into_iter().find(|extra| extra.name() == name)
+    }
+
+    /// 이 node 종류에 저장 위치가 있는지.
+    fn applies(self, payload: &NodePayload) -> bool {
+        match self {
+            Extra::Payload(_, shape_keys::STROKE_LINECAP) => {
+                matches!(payload, NodePayload::Shape(ShapeGeometry::Line(_)))
+            }
+            Extra::Payload(_, _) => matches!(payload, NodePayload::Image(_)),
+            Extra::Transform => !matches!(payload, NodePayload::Fragment(_)),
+            Extra::Modifier(..) => true,
+        }
+    }
+
+    /// 권한 판정에 쓰는 key.
+    fn key(self, payload: &NodePayload) -> PropertyKey {
+        match (self, payload) {
+            (Extra::Payload(_, key) | Extra::Modifier(_, key), _) => key,
+            (Extra::Transform, NodePayload::Frame(_)) => frame_keys::TRANSFORM,
+            (Extra::Transform, _) => modifier_keys::TRANSFORM_MATRIX,
+        }
+    }
+}
+
+/// 첫 활성 `kind` modifier.
+fn first_enabled(
+    model: &DocumentModel,
+    node: StableId,
+    kind: ModifierKind,
+) -> Option<ModifierEntry> {
+    model
+        .modifier_stack(node)?
+        .entries()
+        .iter()
+        .find(|e| e.enabled && e.kind == kind)
+        .cloned()
+}
+
+fn linear(transform: Transform2D) -> [f32; 6] {
+    let (a, b, c, d, _, _) = transform.components();
+    [a, b, c, d, 0., 0.]
+}
+
+/// 저장 값을 CSS 값으로 읽습니다. 선언이 없으면(그 종류 modifier 없음, 종류 밖) `None`.
+fn read_extra(model: &DocumentModel, node: StableId, extra: Extra) -> Option<CssValue> {
+    let record = model.record(node)?;
+    if !extra.applies(&record.payload) {
+        return None;
+    }
+    match extra {
+        Extra::Payload(_, key) => match read_property(&record, key)? {
+            PropertyValue::Keyword(tag) => Some(CssValue::Keyword(usize::from(tag))),
+            _ => None,
+        },
+        // 위치 Transform modifier가 없으면 선형 부분은 단위 행렬(`none`)입니다.
+        Extra::Transform => Some(CssValue::Transform(match &record.payload {
+            NodePayload::Frame(frame) => linear(frame.transform),
+            _ => match position_modifier(model, node).map(|entry| entry.payload) {
+                Some(ModifierPayload::Transform(t)) => linear(t),
+                _ => linear(Transform2D::identity()),
+            },
+        })),
+        Extra::Modifier(kind, key) => {
+            let entry = first_enabled(model, node, kind)?;
+            Some(match read_payload(&entry.payload, key)? {
+                PropertyValue::UnitInterval(v) => CssValue::Number(v.get()),
+                PropertyValue::BlendMode(mode) => CssValue::Keyword(mode as usize),
+                PropertyValue::Color(color) => CssValue::Color(Some(color)),
+                PropertyValue::NonNegative(v) | PropertyValue::Number(v) => {
+                    CssValue::Length(v.get())
+                }
+                _ => return None,
+            })
+        }
+    }
+}
+
+/// 추가 속성 선언(registry 순서). 속성 패널 행 뒤에 붙습니다.
+fn copy_extras(model: &DocumentModel, node: StableId) -> Vec<CopiedDeclaration> {
+    EXTRAS
+        .into_iter()
+        .filter_map(|extra| {
+            let value = read_extra(model, node, extra)?;
+            let name = extra.name();
+            Some(CopiedDeclaration {
+                name,
+                value: format(&value, extra.grammar()),
+                stellar_only: !is_known_longhand(name),
+            })
+        })
+        .collect()
+}
+
+/// CSS 값을 modifier 속성 값으로 바꿉니다(registry 값 타입 기준).
+fn modifier_value(key: PropertyKey, value: &CssValue) -> Result<PropertyValue, String> {
+    let metadata = modifier_property(key).ok_or("registry에 없는 modifier 속성입니다")?;
+    let finite = |v: f32| FiniteF32::new(v).map_err(|_| "유한한 수가 아닙니다".to_string());
+    Ok(match (metadata.value_type, value) {
+        (ModifierPropertyType::UnitInterval, CssValue::Number(v)) => {
+            PropertyValue::UnitInterval(finite(*v)?)
+        }
+        (ModifierPropertyType::NonNegative, CssValue::Length(v)) if *v >= 0. => {
+            PropertyValue::NonNegative(finite(*v)?)
+        }
+        (ModifierPropertyType::Coordinate, CssValue::Length(v)) => {
+            PropertyValue::Number(finite(*v)?)
+        }
+        (ModifierPropertyType::Color, CssValue::Color(Some(color))) => PropertyValue::Color(*color),
+        (ModifierPropertyType::BlendMode, CssValue::Keyword(index)) => PropertyValue::BlendMode(
+            u8::try_from(*index)
+                .ok()
+                .and_then(blend_mode_from_tag)
+                .ok_or("알 수 없는 합성 방식입니다")?,
+        ),
+        _ => return Err("값이 이 속성의 문법과 맞지 않습니다".into()),
+    })
+}
+
+/// 한 node에 추가 속성 값을 쓰는 command(값이 같으면 빈 목록).
+fn extra_commands(
+    model: &DocumentModel,
+    node: StableId,
+    extra: Extra,
+    value: &CssValue,
+    new_id: &mut dyn FnMut() -> StableId,
+) -> Result<Vec<Command>, (&'static str, String)> {
+    let rejected = |message: String| ("rejected", message);
+    let record = model
+        .record(node)
+        .ok_or_else(|| rejected(format!("문서에 없는 레이어: {node}")))?;
+    let access = NodeAccess::of(model, node)
+        .ok_or_else(|| rejected(format!("문서에 없는 레이어: {node}")))?;
+    access
+        .permits(EditIntent::Modify(extra.key(&record.payload)))
+        .map_err(|blocked| rejected(format!("{blocked:?}: 이 레이어의 속성을 바꿀 수 없습니다")))?;
+    if read_extra(model, node, extra).as_ref() == Some(value) {
+        return Ok(Vec::new());
+    }
+    let set = |key, value| Command::SetProperty(SetProperty { node, key, value });
+    Ok(match (extra, value) {
+        (Extra::Payload(_, key), CssValue::Keyword(index)) => {
+            let tag = u8::try_from(*index).map_err(|_| rejected("keyword 범위 초과".into()))?;
+            vec![set(key, PropertyValue::Keyword(tag))]
+        }
+        (Extra::Transform, CssValue::Transform([a, b, c, d, e, f])) => {
+            if *e != 0. || *f != 0. {
+                return Err((
+                    "unsupported-value",
+                    "transform 이동 성분은 위치(left·top)로 지정하세요".into(),
+                ));
+            }
+            let with = |t: Transform2D| {
+                let (_, _, _, _, x, y) = t.components();
+                Transform2D::new(*a, *b, *c, *d, x, y)
+                    .map_err(|_| rejected("유한하지 않은 transform입니다".into()))
+            };
+            match &record.payload {
+                NodePayload::Frame(frame) => vec![set(
+                    frame_keys::TRANSFORM,
+                    PropertyValue::Transform(with(frame.transform)?),
+                )],
+                _ => match position_modifier(model, node) {
+                    Some(entry) => {
+                        let ModifierPayload::Transform(current) = entry.payload else {
+                            return Err(rejected("위치 modifier가 Transform이 아닙니다".into()));
+                        };
+                        vec![Command::SetModifierProperty(SetModifierProperty {
+                            node,
+                            modifier: entry.id,
+                            key: modifier_keys::TRANSFORM_MATRIX,
+                            value: PropertyValue::Transform(with(current)?),
+                        })]
+                    }
+                    None => vec![insert_modifier(
+                        model,
+                        node,
+                        ModifierPayload::Transform(with(Transform2D::identity())?),
+                        new_id,
+                    )],
+                },
+            }
+        }
+        (Extra::Modifier(kind, key), value) => {
+            let value = modifier_value(key, value).map_err(|m| ("invalid-value", m))?;
+            match first_enabled(model, node, kind) {
+                Some(entry) => vec![Command::SetModifierProperty(SetModifierProperty {
+                    node,
+                    modifier: entry.id,
+                    key,
+                    value,
+                })],
+                None => {
+                    let payload = payload_with(kind, key, &value)
+                        .ok_or_else(|| rejected("modifier 기본값에 값을 쓸 수 없습니다".into()))?;
+                    vec![insert_modifier(model, node, payload, new_id)]
+                }
+            }
+        }
+        _ => {
+            return Err((
+                "invalid-value",
+                "값이 이 속성의 문법과 맞지 않습니다".into(),
+            ))
+        }
+    })
+}
+
+/// CSS 고정 순서 위치에 새 활성 modifier를 넣는 command.
+fn insert_modifier(
+    model: &DocumentModel,
+    node: StableId,
+    payload: ModifierPayload,
+    new_id: &mut dyn FnMut() -> StableId,
+) -> Command {
+    let kind = payload.kind();
+    Command::InsertModifier(InsertModifier {
+        node,
+        entry: ModifierEntry {
+            id: ModifierId::new(new_id()),
+            order: css_insert_order(model, node, kind),
+            kind,
+            enabled: true,
+            payload,
+        },
+    })
+}
+
+/// 추가 속성 선언 하나를 모든 선택 node에 붙여넣습니다(사본 문서에 바로 적용).
+fn paste_extra(
+    plan: &mut PastePlan,
+    scratch: &mut DocumentState,
+    selection: &[StableId],
+    extra: Extra,
+    (name, value): (&str, &str),
+    scope: &dyn TokenScope,
+    new_id: &mut dyn FnMut() -> StableId,
+) {
+    for node in selection {
+        let applies = scratch
+            .model()
+            .payload(*node)
+            .is_some_and(|payload| extra.applies(payload));
+        if !applies {
+            let class = scratch.model().payload(*node).map(NodeClass::of);
+            skip(
+                plan,
+                name,
+                value,
+                "not-applicable",
+                format!("{class:?} 레이어에는 {name} 속성이 없습니다"),
+            );
+            return;
+        }
+    }
+    let grammar = extra.grammar();
+    let parsed = match parse_with(grammar, value, scope) {
+        Ok(CssValue::Var(var)) => {
+            skip(
+                plan,
+                name,
+                value,
+                "unsupported-value",
+                format!(
+                    "토큰 참조 {}는 아직 붙여넣기로 연결하지 않습니다(값 binding 필요)",
+                    var.name
+                ),
+            );
+            return;
+        }
+        Ok(parsed) => parsed,
+        Err(error) => {
+            skip(plan, name, value, error.code, error.message);
+            return;
+        }
+    };
+    let mut commands = Vec::new();
+    for node in selection {
+        match extra_commands(scratch.model(), *node, extra, &parsed, new_id) {
+            Ok(more) => commands.extend(more),
+            Err((code, message)) => {
+                skip(plan, name, value, code, message);
+                return;
+            }
+        }
+    }
+    if !commands.is_empty() {
+        let mut transaction =
+            CommandTransaction::new(CommandId::from_bytes([0; 16]), CommandOrigin::User);
+        for command in &commands {
+            transaction = transaction.with_command(scratch.revision(), command.clone());
+        }
+        if let Err(error) = scratch.execute_transaction(&transaction) {
+            skip(plan, name, value, "rejected", format!("{:?}", error.error));
+            return;
+        }
+        plan.commands.extend(commands);
+    }
+    plan.applied.push(AppliedDeclaration {
+        name: extra.name(),
+        value: format(&parsed, grammar),
+    });
 }
 
 #[cfg(test)]
@@ -443,6 +841,154 @@ mod tests {
             .execute_transaction(&undo.rebased(state.revision()))
             .unwrap();
         assert_eq!(model_snapshot_json(state.model()).unwrap(), before);
+    }
+
+    #[test]
+    fn registry_properties_without_panel_rows_round_trip_through_copy_and_paste() {
+        // IX.11.15 보완: opacity·mix-blend-mode·transform·stroke-linecap·image-rendering·shadow·blur도 같은 이름·정규
+        // 값으로 복사되고, 붙여넣으면 semantic snapshot이 복사 시점과 같아집니다.
+        let (model, ids) = seven_kind_model();
+        let (rect, ellipse, line, image) = (ids[1], ids[2], ids[3], ids[6]);
+        let mut state = DocumentState::new(model);
+        let effects =
+            "transform: matrix(0, 1, -1, 0, 0, 0); shadow-color: #ff000080; shadow-blur: 4px; \
+                       shadow-offset-x: 2px; shadow-offset-y: -3px; blur-radius: 1.5px; \
+                       mix-blend-mode: multiply; opacity: 0.25";
+        let plan = paste_declarations(state.model(), &[rect], effects, &NoTokens, &mut new_ids(20))
+            .unwrap();
+        assert!(plan.skipped.is_empty(), "{:?}", plan.skipped);
+        execute(&mut state, &plan);
+        // 새 modifier는 CSS 고정 순서(transform → paint → filter → opacity → mix-blend-mode)로 들어갑니다.
+        let kinds: Vec<ModifierKind> = state
+            .model()
+            .modifier_stack(rect)
+            .unwrap()
+            .entries()
+            .iter()
+            .map(|e| e.kind)
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ModifierKind::Transform,
+                ModifierKind::Shadow,
+                ModifierKind::Blur,
+                ModifierKind::Opacity,
+                ModifierKind::Blend,
+            ]
+        );
+        let copied = style_of(state.model(), rect);
+        for line in [
+            "transform: matrix(0, 1, -1, 0, 0, 0);",
+            "shadow-color: #ff000080;",
+            "shadow-blur: 4px;",
+            "shadow-offset-x: 2px;",
+            "shadow-offset-y: -3px;",
+            "blur-radius: 1.5px;",
+            "mix-blend-mode: multiply;",
+            "opacity: 0.25;",
+        ] {
+            assert!(copied.lines().any(|l| l == line), "{line}\n{copied}");
+        }
+        let stellar_only: Vec<&str> = copy_declarations(state.model(), rect)
+            .unwrap()
+            .into_iter()
+            .filter(|d| d.stellar_only)
+            .map(|d| d.name)
+            .collect();
+        assert!(stellar_only.contains(&"shadow-blur") && !stellar_only.contains(&"opacity"));
+        // 같은 node에 다시 붙이면 바꿀 것이 없습니다.
+        let again =
+            paste_declarations(state.model(), &[rect], &copied, &NoTokens, &mut new_ids(21))
+                .unwrap();
+        assert!(
+            again.skipped.is_empty() && again.commands.is_empty(),
+            "{again:?}"
+        );
+        // 값을 바꾼 뒤 복사해 둔 블록을 붙이면 semantic snapshot이 복사 시점과 같습니다.
+        let before = model_snapshot_json(state.model()).unwrap();
+        let change = paste_declarations(
+            state.model(),
+            &[rect],
+            "transform: none; shadow-blur: 0px; mix-blend-mode: normal; opacity: 1",
+            &NoTokens,
+            &mut new_ids(22),
+        )
+        .unwrap();
+        execute(&mut state, &change);
+        assert_ne!(model_snapshot_json(state.model()).unwrap(), before);
+        let restore =
+            paste_declarations(state.model(), &[rect], &copied, &NoTokens, &mut new_ids(23))
+                .unwrap();
+        assert!(restore.skipped.is_empty(), "{:?}", restore.skipped);
+        execute(&mut state, &restore);
+        assert_eq!(model_snapshot_json(state.model()).unwrap(), before);
+        // 효과 없는 다른 도형에 붙이면 같은 효과 선언이 생깁니다(도형 전용 행은 not-applicable).
+        let onto = paste_declarations(
+            state.model(),
+            &[ellipse],
+            &copied,
+            &NoTokens,
+            &mut new_ids(24),
+        )
+        .unwrap();
+        assert!(onto
+            .skipped
+            .iter()
+            .all(|s| s.code == "not-applicable" && s.name.starts_with("border-")));
+        execute(&mut state, &onto);
+        let effects_of = |model: &DocumentModel, node| {
+            copy_extras(model, node)
+                .into_iter()
+                .map(|d| (d.name, d.value))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            effects_of(state.model(), ellipse),
+            effects_of(state.model(), rect)
+        );
+        // payload keyword: Line `stroke-linecap`, Image `image-rendering`.
+        let rendering = Extra::by_name("image-rendering").unwrap();
+        let CssGrammar::Keyword(choices) = rendering.grammar() else {
+            panic!("keyword 문법");
+        };
+        let block = format!("image-rendering: {}", choices[1]);
+        let keyword =
+            paste_declarations(state.model(), &[image], &block, &NoTokens, &mut new_ids(25))
+                .unwrap();
+        assert!(keyword.skipped.is_empty(), "{:?}", keyword.skipped);
+        execute(&mut state, &keyword);
+        assert!(style_of(state.model(), image).contains(&format!("{block};\n")));
+        let cap = paste_declarations(
+            state.model(),
+            &[line],
+            "stroke-linecap: square",
+            &NoTokens,
+            &mut new_ids(26),
+        )
+        .unwrap();
+        execute(&mut state, &cap);
+        assert!(style_of(state.model(), line).contains("stroke-linecap: square;\n"));
+        let wrong = paste_declarations(
+            state.model(),
+            &[rect],
+            "stroke-linecap: round; transform: translate(4px)",
+            &NoTokens,
+            &mut new_ids(27),
+        )
+        .unwrap();
+        let codes: Vec<&str> = wrong.skipped.iter().map(|s| s.code).collect();
+        assert_eq!(codes, ["not-applicable", "unsupported-value"]);
+        // 효과 붙여넣기 transaction 하나는 undo 한 번으로 되돌아갑니다.
+        let mut fresh = DocumentState::new(seven_kind_model().0);
+        let original = model_snapshot_json(fresh.model()).unwrap();
+        let plan = paste_declarations(fresh.model(), &[rect], effects, &NoTokens, &mut new_ids(28))
+            .unwrap();
+        let inverse = execute(&mut fresh, &plan);
+        fresh
+            .execute_transaction(&inverse.rebased(fresh.revision()))
+            .unwrap();
+        assert_eq!(model_snapshot_json(fresh.model()).unwrap(), original);
     }
 
     #[test]
@@ -552,7 +1098,7 @@ mod tests {
                 ("object-fit", "not-applicable"),
                 ("name", "not-applicable"),
                 ("", "invalid-declaration"),
-                ("transform", "unsupported-property"),
+                ("transform", "unsupported-value"),
             ]
         );
         assert!(plan.skipped.iter().all(|s| !s.message.is_empty()));
@@ -564,11 +1110,13 @@ mod tests {
             }]
         );
         assert_eq!(plan.commands.len(), 1);
-        // Stellar가 저장하지만 붙여넣기 경로가 아직 없는 속성은 저장 위치가 없는 속성과 다른 코드입니다.
+        // 속성 패널 행이 없는 registry 속성도 붙여넣습니다. Stellar가 저장하지만 붙여넣기 경로가 아직 없는 속성은
+        // 저장 위치가 없는 속성과 다른 코드입니다.
         let stored = paste_declarations(
             &model,
             &[ids[3]],
-            "opacity: 0.5; mix-blend-mode: multiply; stroke-linecap: round; margin-top: 1px",
+            "opacity: 0.5; mix-blend-mode: multiply; stroke-linecap: round; transform-origin: 0 0; \
+             margin-top: 1px",
             &NoTokens,
             &mut new_ids(7),
         )
@@ -581,12 +1129,12 @@ mod tests {
         assert_eq!(
             codes,
             vec![
-                ("opacity", "unsupported-property"),
-                ("mix-blend-mode", "unsupported-property"),
-                ("stroke-linecap", "unsupported-property"),
+                ("transform-origin", "unsupported-property"),
                 ("margin-top", "unknown-property"),
             ]
         );
+        let applied: Vec<&str> = stored.applied.iter().map(|a| a.name).collect();
+        assert_eq!(applied, ["opacity", "mix-blend-mode", "stroke-linecap"]);
         // 블록 전체 오류는 command를 만들지 않습니다.
         let error = paste_declarations(&model, &[frame], "a { b: c", &NoTokens, &mut new_ids(6))
             .unwrap_err();

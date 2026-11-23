@@ -190,3 +190,25 @@ Accepted (2026-11-23)
   `css::registry::key_of(scope, name)`·`entry_by_name`처럼 범위를 주고, 범위 없는 `entries_named`는 모든 후보를 돌려
   줍니다. `PropertyNameRegistry`(III.2.1)는 범위마다 하나씩 만듭니다(`css::registry::name_registry(scope)`). 여러 범위를
   한 registry에 넣으면 역조회가 마지막 등록으로 덮이므로 그렇게 쓰지 않습니다.
+
+### 결정 6 보완: 속성 패널 행이 없는 registry 속성의 복사·붙여넣기(IX.11.15)
+
+- 선언 블록 복사·붙여넣기는 속성 패널 행 밖의 registry 속성도 다룹니다. 대상과 저장 위치:
+  - `transform`: 선형 부분만 `matrix(a, b, c, d, 0, 0)`(단위 행렬은 `none`)입니다. 이동 성분은 위치(`left`·`top`)이므로
+    이동이 있는 값은 `unsupported-value`입니다(속성 모델 5장 `transform` 행). Frame은 payload transform, 그 밖의 node
+    (Fragment 제외)는 위치 Transform modifier(`position_modifier`)이고 이동 성분은 그대로 둡니다. 위치 modifier가 없고
+    선형 부분이 단위 행렬이 아니면 Transform modifier를 새로 넣습니다.
+  - `stroke-linecap`(Line)·`image-rendering`(Image): node payload keyword `SetProperty`.
+  - `shadow-color`·`shadow-blur`·`shadow-offset-x`·`shadow-offset-y`·`blur-radius`·`mix-blend-mode`·`opacity`: 그 종류의
+    **첫 활성 modifier**의 속성입니다. 없으면 기본 payload(`ModifierPayload::default_for`)에 값을 쓴 활성 modifier를
+    새로 넣습니다. 같은 종류가 여럿이면 첫 활성 하나만 선언으로 나타냅니다(CSS longhand 하나에 값 하나).
+- 새 modifier 위치는 CSS 고정 적용 순서(속성 모델 9.1: transform → paint(fill·stroke·shadow, Stellar 전용) → filter(blur)
+  → clip-path → mask → opacity → mix-blend-mode)에서 같거나 앞 단계인 마지막 항목 바로 뒤입니다
+  (`modifier_ops::css_insert_order`). CSS 순서를 지키던 stack은 넣은 뒤에도 지킵니다. 속성 패널의 Fill·Stroke·위치
+  Transform 삽입 규칙(`inspector::paint_order`)은 이 개정에서 바꾸지 않았습니다. 그 규칙은 Stroke를 stack 끝에 넣어
+  Opacity·Blend 뒤에 올 수 있으므로, 속성 패널 행을 registry 기반으로 넓힐 때 이 순서 하나로 합칩니다.
+- 이름·값 문법은 registry 항목(`css::registry::entry`)에서 읽고, 값은 결정 5의 parser·formatter입니다. CSS longhand
+  inventory에 없는 이름(`shadow-*`, `blur-radius`)은 Stellar 전용 표시를 답니다.
+- 그래서 이 속성들을 가진 node에서도 copy → paste 왕복의 semantic snapshot이 같고, `stellar apply`의 `set-property`도
+  같은 경로로 이 속성을 받습니다. 저장 위치는 있지만 아직 경로가 없는 속성(`transform-origin`, `mask-image`,
+  `clip-path` 등)은 `unsupported-property`입니다.
