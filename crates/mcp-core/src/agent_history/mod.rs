@@ -52,6 +52,9 @@ use crate::permission::{
 };
 use crate::provenance::{AgentChangeProvenance, BatchOutcome, ProvenanceError, ProvenanceScope};
 
+/// 외부 변경 batch 판정과 반영 (XIX.7.1~XIX.7.3).
+pub mod external;
+
 #[cfg(test)]
 mod tests;
 

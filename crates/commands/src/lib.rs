@@ -89,6 +89,9 @@ pub mod agent_revert;
 /// 에이전트 작업 그룹과 창 history 연결 지점 (XIX.6.2, ADR-0100).
 pub mod agent_sink;
 
+/// 외부 변경 batch와 에이전트 lease 겹침 판정 (XIX.7.1, ADR-0100).
+pub mod agent_external;
+
 /// 원본과 독립적인 subtree 클립보드와 Paste 계획.
 pub mod paste;
 
