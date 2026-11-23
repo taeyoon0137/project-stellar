@@ -47,6 +47,8 @@ pub enum PlaceError {
     Unsupported(StableId),
     /// 결과가 유한하지 않거나 크기가 음수입니다.
     NonFinite(StableId),
+    /// 입력 값이 허용 범위 밖입니다(예: 비례 확대 비율 0.001~1000배 밖).
+    OutOfRange(StableId),
 }
 
 impl PlaceError {
@@ -57,6 +59,7 @@ impl PlaceError {
             PlaceError::Blocked(_) => "blocked",
             PlaceError::Unsupported(_) => "unsupported",
             PlaceError::NonFinite(_) => "non-finite",
+            PlaceError::OutOfRange(_) => "out-of-range",
         }
     }
 
@@ -66,7 +69,8 @@ impl PlaceError {
             PlaceError::Missing(id)
             | PlaceError::Blocked(id)
             | PlaceError::Unsupported(id)
-            | PlaceError::NonFinite(id) => id,
+            | PlaceError::NonFinite(id)
+            | PlaceError::OutOfRange(id) => id,
         }
     }
 }

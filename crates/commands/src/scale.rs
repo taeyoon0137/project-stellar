@@ -223,8 +223,11 @@ pub fn scale_commands(
     new_modifier: &mut dyn FnMut() -> StableId,
 ) -> Result<ScalePlan, PlaceError> {
     let first = targets.first().map(|t| t.node).unwrap_or(StableId::NIL);
-    if !(factor.is_finite() && (MIN_FACTOR..=MAX_FACTOR).contains(&factor)) {
+    if !factor.is_finite() {
         return Err(PlaceError::NonFinite(first));
+    }
+    if !(MIN_FACTOR..=MAX_FACTOR).contains(&factor) {
+        return Err(PlaceError::OutOfRange(first));
     }
     let mut plan = ScalePlan {
         commands: Vec::new(),
@@ -408,7 +411,17 @@ mod tests {
         );
         let (state, _) = apply(copy(&model), plan.commands);
         assert_eq!(translation(state.model(), 13), (40.0, 45.0));
-        assert!(scale_commands(&model, &[], 0.0, &mut ids).is_err());
-        assert!(scale_commands(&model, &[], f32::NAN, &mut ids).is_err());
+        assert!(matches!(
+            scale_commands(&model, &[], 0.0, &mut ids),
+            Err(PlaceError::OutOfRange(_))
+        ));
+        assert!(matches!(
+            scale_commands(&model, &[], 1001.0, &mut ids),
+            Err(PlaceError::OutOfRange(_))
+        ));
+        assert!(matches!(
+            scale_commands(&model, &[], f32::NAN, &mut ids),
+            Err(PlaceError::NonFinite(_))
+        ));
     }
 }
