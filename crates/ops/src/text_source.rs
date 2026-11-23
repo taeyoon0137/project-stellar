@@ -229,6 +229,13 @@ pub fn export_project(
     let model = snapshot
         .document_model(document.id)
         .map_err(TextSourceOperationError::Document)?;
+    // catalog가 등록 글꼴 record를 담으므로, 단일 View export와 같이 각 글꼴 객체의 hash·크기를 프로젝트
+    // asset 저장소에서 확인한 뒤에만 씁니다(맞지 않는 record를 원본으로 옮기지 않음).
+    stellar_project::fonts::document::verify_document_font_assets(
+        project,
+        &model.definition().text_styles,
+    )
+    .map_err(|error| TextSourceOperationError::Invalid(error.to_string()))?;
     let (yaml, _) = crate::component_source::project_library(&snapshot)?;
     let text = text_project::from_saved(generation, model, yaml)?;
     let encoded = text_project::encode(&text)?;
@@ -357,5 +364,33 @@ mod tests {
             assert!(!output.exists(), "case {case}");
             assert_eq!(file_digest(&dir.path), before, "case {case}");
         }
+    }
+
+    #[test]
+    fn export_project_rejects_font_records_that_do_not_match_the_asset_store() {
+        use stellar_document::text_styles::{DocumentFontAsset, DocumentTextStyles};
+        // 문서 style 표의 등록 글꼴이 프로젝트 asset 저장소의 객체와 맞지 않으면 catalog로 옮기지 않습니다.
+        let dir = TempDir::new("text-project-fonts");
+        let exports = TempDir::new("text-project-fonts-output");
+        scaffold_project(&dir.path);
+        let mut document = large_document(4);
+        let mut styles = DocumentTextStyles::initial(StableId::new_v7(77, 0, 77));
+        styles.fonts.insert(
+            crate::core_types::font::FontFileHash::from_sha256_digest([7; 32]),
+            DocumentFontAsset {
+                font_record: vec![1, 2, 3],
+                asset_record: vec![4, 5, 6],
+            },
+        );
+        document.replace_text_styles(styles);
+        save_documents(&dir.path, &[&document]);
+        let before = file_digest(&dir.path);
+        let output = exports.path.join("design");
+        assert!(matches!(
+            export_project(&dir.path, &output),
+            Err(TextSourceOperationError::Invalid(_))
+        ));
+        assert!(!output.exists());
+        assert_eq!(file_digest(&dir.path), before);
     }
 }
