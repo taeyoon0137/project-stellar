@@ -488,7 +488,8 @@ impl BorderSides {
                 3 => {
                     let raw: [u8; 4] = take(4)?.try_into().expect("4 bytes");
                     let value = f32::from_le_bytes(raw);
-                    if value < 0.0 {
+                    // 음수와 -0(0과 같은 값의 다른 bytes)은 거부합니다.
+                    if value.is_sign_negative() {
                         return Err(BorderDecodeError);
                     }
                     BorderWidth::Length(FiniteF32::new(value).map_err(|_| BorderDecodeError)?)
@@ -550,14 +551,16 @@ pub fn parse_longhand(
     text: &str,
 ) -> Result<LonghandValue, CssValueError> {
     let trimmed = text.trim();
+    // CSS keyword는 대소문자를 가리지 않습니다(`css::value::parse`와 같은 규칙).
+    let lower = trimmed.to_ascii_lowercase();
     match longhand.part {
-        BorderPart::Width => match trimmed {
+        BorderPart::Width => match lower.as_str() {
             "thin" => Ok(LonghandValue::Width(BorderWidth::Thin)),
             "medium" => Ok(LonghandValue::Width(BorderWidth::Medium)),
             "thick" => Ok(LonghandValue::Width(BorderWidth::Thick)),
             _ => match value::parse(LENGTH_NON_NEGATIVE, trimmed)? {
                 CssValue::Length(px) => Ok(LonghandValue::Width(BorderWidth::Length(
-                    FiniteF32::new(px).map_err(|_| {
+                    FiniteF32::new(px + 0.0).map_err(|_| {
                         CssValueError::new("invalid-value", "두께가 유한하지 않습니다")
                     })?,
                 ))),
@@ -567,19 +570,24 @@ pub fn parse_longhand(
                 )),
             },
         },
-        BorderPart::Style => match trimmed {
-            "none" => Ok(LonghandValue::Style(BorderStyle::None)),
-            "solid" => Ok(LonghandValue::Style(BorderStyle::Solid)),
-            other if UNSUPPORTED_STYLE_KEYWORDS.contains(&other) => Err(CssValueError::new(
-                "unsupported-value",
-                format!("{longhand}: {other}는 아직 그리지 않습니다(none·solid만 받습니다)"),
-            )),
-            other => Err(CssValueError::new(
-                "invalid-value",
-                format!("{longhand}: 알 수 없는 style {other}"),
-            )),
-        },
-        BorderPart::Color => match trimmed {
+        BorderPart::Style => {
+            if UNSUPPORTED_STYLE_KEYWORDS.contains(&lower.as_str()) {
+                return Err(CssValueError::new(
+                    "unsupported-value",
+                    format!("{longhand}: {lower}는 아직 그리지 않습니다(none·solid만 받습니다)"),
+                ));
+            }
+            // keyword 해석은 registry 문법 그대로 문서 값 parser가 합니다.
+            match value::parse(longhand.grammar(), trimmed) {
+                Ok(CssValue::Keyword(0)) => Ok(LonghandValue::Style(BorderStyle::None)),
+                Ok(CssValue::Keyword(1)) => Ok(LonghandValue::Style(BorderStyle::Solid)),
+                Ok(_) | Err(_) => Err(CssValueError::new(
+                    "invalid-value",
+                    format!("{longhand}: CSS border-style keyword가 아닙니다: {trimmed}"),
+                )),
+            }
+        }
+        BorderPart::Color => match lower.as_str() {
             "currentcolor" => Ok(LonghandValue::Color(None)),
             _ => match value::parse(longhand.grammar(), trimmed)? {
                 CssValue::Color(Some(color)) => Ok(LonghandValue::Color(Some(color))),
@@ -738,6 +746,15 @@ mod tests {
         let mut extra = bytes.clone();
         extra.push(0);
         assert!(BorderSides::decode(&extra).is_err());
+        // 왼쪽 0px를 -0으로 바꾼 bytes는 같은 값의 다른 bytes라 거부합니다.
+        let mut negative_zero = bytes.clone();
+        let zero = 0.0_f32.to_le_bytes();
+        let at = negative_zero
+            .windows(5)
+            .rposition(|w| w[0] == 3 && w[1..] == zero)
+            .unwrap();
+        negative_zero[at + 1..at + 5].copy_from_slice(&(-0.0_f32).to_le_bytes());
+        assert!(BorderSides::decode(&negative_zero).is_err());
         assert_eq!(sides.to_payload(), Err(BorderSidesError::NotUniform));
         assert_eq!(
             sides.layout_declarations(),
@@ -766,6 +783,13 @@ mod tests {
             "unsupported-value"
         );
         assert_eq!(sides.set(style, "wavy").unwrap_err().code, "invalid-value");
+        // CSS keyword는 대소문자를 가리지 않고 정규 표기(소문자)로 씁니다.
+        sides.set(style, "SOLID").unwrap();
+        assert_eq!(sides.format(style), "solid");
+        sides.set(width, "Thick").unwrap();
+        assert_eq!(sides.format(width), "thick");
+        sides.set(width, "-0px").unwrap();
+        assert_eq!(sides.format(width), "0px");
         assert!(sides.set(color, "url(x)").is_err());
         // 같은 해석 결과는 같은 정규 텍스트입니다.
         sides.set(color, "rgb(255 0 0)").unwrap();
