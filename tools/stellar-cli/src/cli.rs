@@ -109,7 +109,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "cache",
-        "status|rebuild|gc|migrate <프로젝트>: Git 밖 로컬 chunk cache(.stellar/cache/chunks)의 상태를 보고, 텍스트 원본에서 다시 만들고(clone 직후·pull 뒤), 보존 정책 밖 파일을 지우고, 옛 배치(design/current 등)를 cache로 옮겨 Git index에서 뺍니다(원본은 쓰지 않음)",
+        "status|rebuild|gc|migrate [--convert] <프로젝트>: Git 밖 로컬 chunk cache(.stellar/cache/chunks)의 상태를 보고, 텍스트 원본에서 다시 만들고(clone 직후·pull 뒤), 보존 정책 밖 파일을 지우고, 옛 배치(design/current 등)를 cache로 옮겨 Git index에서 뺍니다. --convert는 원본 없는 옛 chunk 프로젝트를 텍스트 원본으로 바꿔 Git index에 넣습니다(그 밖에는 원본을 쓰지 않음)",
     ),
     (
         "diagnostics",
@@ -248,7 +248,7 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     } else if command == "text-source" {
         ("text-source", crate::text_source::run(rest))
     } else if command == "cache" {
-        ("cache", cache_command(rest))
+        ("cache", crate::cache::run(rest))
     } else if command == "diagnostics" {
         ("diagnostics", crate::diagnostics::run(rest))
     } else if command == "merge-driver" {
@@ -257,120 +257,6 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         return usage_error(err, &format!("알 수 없는 명령: {command}"));
     };
     emit(name, outcome, out, err)
-}
-
-/// `cache status|rebuild|gc|migrate <프로젝트>`(ADR-0122). 동작은 `stellar_ops::git_cache`가 합니다.
-fn cache_command(args: &[String]) -> Result<Success, CliError> {
-    use crate::json::JsonValue;
-    use stellar_ops::git_cache::{self, CacheCommandError};
-    use stellar_ops::git_cache::{GcReport, Rebuild};
-    let usage = || CliError::usage("cache status|rebuild|gc|migrate <프로젝트>");
-    let [operation, project] = args else {
-        return Err(usage());
-    };
-    let root = std::path::Path::new(project);
-    let fail = |error: CacheCommandError| {
-        let message = error.to_string();
-        match error {
-            CacheCommandError::Lock(e) => crate::project_cmds::lock_error(&e),
-            CacheCommandError::Path(kind) => {
-                CliError::new(ExitStatus::from_io_kind(kind), "path", message)
-            }
-            CacheCommandError::Observe(_) | CacheCommandError::Cache(_) => {
-                CliError::new(ExitStatus::Failure, "cache-error", message)
-            }
-        }
-        .with_context(project.clone())
-    };
-    let lock = || -> Result<stellar_ops::lock::LockPolicy, CliError> {
-        Ok(stellar_ops::lock::LockPolicy::Required {
-            dir: stellar_ops::lock::default_lock_dir()
-                .map_err(|e| crate::project_cmds::lock_error(&e))?,
-        })
-    };
-    let count = |n: usize| JsonValue::int(i64::try_from(n).unwrap_or(i64::MAX));
-    let rebuild_json = |rebuild: Rebuild| match rebuild {
-        Rebuild::Fresh => JsonValue::string("fresh"),
-        Rebuild::NoTextSource => JsonValue::string("no-text-source"),
-        Rebuild::Rebuilt {
-            generation,
-            manifest,
-        } => JsonValue::object(vec![
-            (
-                "generation",
-                JsonValue::int(i64::try_from(generation).unwrap_or(i64::MAX)),
-            ),
-            ("manifest", JsonValue::string(manifest.to_string())),
-        ]),
-    };
-    let gc_json = |gc: &GcReport| {
-        JsonValue::object(vec![
-            ("retained", count(gc.retained.len())),
-            ("deleted", count(gc.deleted)),
-            ("kept_in_grace", count(gc.kept_in_grace)),
-            ("carry_over", count(gc.carry_over.len())),
-        ])
-    };
-    let result = match operation.as_str() {
-        "status" => {
-            let status = git_cache::status(root).map_err(fail)?;
-            JsonValue::object(vec![
-                ("operation", JsonValue::string("status")),
-                ("location", JsonValue::string(status.location)),
-                ("plan", JsonValue::string(status.plan)),
-                ("text_source", JsonValue::Bool(status.text_source)),
-                (
-                    "current",
-                    JsonValue::opt_string(status.current.map(|h| h.to_string()).as_deref()),
-                ),
-                ("generations", count(status.generations)),
-                ("legacy_moved", count(status.migrated.moved.moved)),
-            ])
-        }
-        "rebuild" => {
-            let rebuilt = git_cache::rebuild(root, &lock()?).map_err(fail)?;
-            JsonValue::object(vec![
-                ("operation", JsonValue::string("rebuild")),
-                ("rebuild", rebuild_json(rebuilt)),
-            ])
-        }
-        "gc" => {
-            let report =
-                git_cache::gc(root, &lock()?, std::time::SystemTime::now()).map_err(fail)?;
-            JsonValue::object(vec![
-                ("operation", JsonValue::string("gc")),
-                ("gc", gc_json(&report)),
-            ])
-        }
-        "migrate" => {
-            let report =
-                git_cache::migrate(root, &lock()?, std::time::SystemTime::now()).map_err(fail)?;
-            JsonValue::object(vec![
-                ("operation", JsonValue::string("migrate")),
-                ("legacy_moved", count(report.layout.moved.moved)),
-                (
-                    "untracked",
-                    match &report.untracked {
-                        Ok(paths) => JsonValue::Array(
-                            paths.iter().map(|p| JsonValue::string(p.clone())).collect(),
-                        ),
-                        Err(_) => JsonValue::Null,
-                    },
-                ),
-                (
-                    "git",
-                    JsonValue::opt_string(report.untracked.as_ref().err().map(String::as_str)),
-                ),
-                ("rebuild", rebuild_json(report.rebuilt)),
-                ("gc", gc_json(&report.gc)),
-            ])
-        }
-        _ => return Err(usage()),
-    };
-    Ok(Success {
-        result,
-        diagnostics: Vec::new(),
-    })
 }
 
 /// 명령 결과를 stdout(JSON)·stderr(진단)로 내보내고 종료 코드를 반환합니다.

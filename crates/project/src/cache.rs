@@ -5,7 +5,9 @@
 //!
 //! | 함수 | 하는 일 | 부르는 곳 |
 //! |---|---|---|
-//! | [`migrate_layout`] | 옛 배치(`design/current`·`generations/`·`objects/`)를 cache 위치로 옮김 | 열기 관찰(`document_io::session::observe`), Git snapshot, `stellar cache migrate` |
+//! | [`migrate_layout`] | 옛 배치(`design/current`·`generations/`·`objects/`)를 cache 위치로 옮김(옛 pointer가 cache pointer를 바꿈) | Git snapshot을 푼 비공개 폴더 |
+//! | [`migrate_working_tree`] | 작업 트리의 옛 배치: 원본이 있으면 옮기되 옛 pointer는 버리고, 없으면 원본으로 변환([`convert_legacy`]) | 열기 관찰(`document_io::session::observe`), semantic Git, `stellar cache status·migrate` |
+//! | [`convert_legacy`] | 원본 없는 옛 chunk 프로젝트를 텍스트 원본으로 바꾸고 cache에 복사(옛 배치는 Git에 들어갈 때까지 둠) | 열기 관찰, `stellar cache migrate --convert` |
 //! | [`rebuild_from_text`] | 원본과 짝이 아닌 cache를 원본에서 다시 만듦 | clone 직후·Git pull 뒤 `stellar cache rebuild`, materialize한 Git snapshot |
 //! | [`collect_garbage`] | 보존 정책 밖 manifest·chunk를 지움 | `stellar cache gc`, `stellar cache migrate` |
 //! | [`untrack_legacy`] | Git index에서 옛 배치 경로를 뺌(작업 트리·HEAD는 그대로) | semantic Git stage·unstage·commit, `stellar cache migrate` |
@@ -39,7 +41,15 @@ use stellar_storage::gc::sweep::sweep_unreferenced;
 use stellar_storage::generation::current::read_current_pointer;
 use stellar_storage::generation::loader::{load_current_generation, verify_generation};
 use stellar_storage::hash::ContentHash;
-use stellar_storage::location::{move_legacy_layout, LegacyMove, LegacyMoveError};
+use stellar_storage::location::{
+    move_legacy_layout, transfer_legacy_layout, LegacyMove, LegacyMoveError, LegacyPointer,
+    LegacyTransfer, CURRENT_FILE, GENERATIONS_DIR, LEGACY_DIR, OBJECTS_DIR,
+};
+
+pub use crate::cache_convert::{
+    clear_converted_marker, convert_legacy, converted_marker, legacy_pointer_digest,
+    LegacyConversion,
+};
 use stellar_storage::save::cancel::{run_save, CancelToken};
 use stellar_storage::save::commit::SavedGenerationState;
 use stellar_storage::save::plan::build_save_plan;
@@ -51,7 +61,8 @@ pub use stellar_storage::location::{
 
 use crate::document_io::serialize::serialize_document;
 use crate::document_io::session::{
-    decode_source, observe, read_source, write_stamp, OpenPlan, SourceLibrary, Stamp, STAMP_PATH,
+    decode_extra_documents, decode_source, observe, read_source, write_stamp, OpenPlan,
+    SourceLibrary, Stamp, STAMP_PATH,
 };
 use crate::identity::parse_project_id;
 use crate::manifest::Manifest;
@@ -81,9 +92,14 @@ pub enum CacheError {
     Write(String),
     /// Git을 실행할 수 없거나 실패했습니다.
     Git(String),
-    /// 작업 트리에 텍스트 원본 없이 옛 배치만 있습니다. 옮기면 Git에 그 프로젝트의 원본이 남지 않으므로 옮기지
-    /// 않습니다([`migrate_working_tree`]).
+    /// 작업 트리에 텍스트 원본 없이 옛 배치만 있고 변환을 고르지 않았습니다([`LegacyLayout::Refuse`]). 옮기면 Git에 그
+    /// 프로젝트의 원본이 남지 않으므로 옮기지 않습니다([`migrate_working_tree_with`]).
     LegacyWithoutSource,
+    /// 옛 배치를 텍스트 원본으로 정확히 옮길 수 없어 아무것도 바꾸지 않았습니다([`convert_legacy`]).
+    LegacyUnconvertible(String),
+    /// 변환한 뒤 아직 Git에 넣지 않은 사이 작업 트리의 옛 pointer가 바뀌었습니다(다른 commit checkout 등). 변환한 원본과
+    /// 옛 배치가 다른 상태를 가리키므로 아무것도 옮기지 않습니다.
+    LegacyChanged,
 }
 
 impl fmt::Display for CacheError {
@@ -96,8 +112,16 @@ impl fmt::Display for CacheError {
             CacheError::Git(error) => write!(f, "Git: {error}"),
             CacheError::LegacyWithoutSource => f.write_str(
                 "텍스트 원본(design/*.stellar.yaml) 없이 예전 저장 배치(design/current)만 있는 프로젝트입니다. \
-                 저장 cache를 Git 밖으로 옮기면 Git에 원본이 남지 않으므로 옮기지 않았습니다. 이 프로젝트는 먼저 \
-                 텍스트 원본으로 바꿔야 합니다",
+                 저장 cache를 Git 밖으로 옮기면 Git에 원본이 남지 않으므로 옮기지 않았습니다. \
+                 `stellar cache migrate --convert <프로젝트>`로 텍스트 원본으로 바꿀 수 있습니다",
+            ),
+            CacheError::LegacyUnconvertible(reason) => write!(
+                f,
+                "예전 저장 배치(design/current)를 텍스트 원본으로 정확히 바꿀 수 없어 아무것도 바꾸지 않았습니다: {reason}"
+            ),
+            CacheError::LegacyChanged => f.write_str(
+                "텍스트 원본으로 바꾼 뒤 Git에 넣기 전에 예전 저장 배치(design/current)가 바뀌었습니다. 바꾼 원본과 \
+                 예전 배치가 서로 다른 상태라 옮기지 않았습니다. 어느 쪽을 남길지 정한 뒤 다른 쪽을 지우십시오",
             ),
         }
     }
@@ -105,13 +129,27 @@ impl fmt::Display for CacheError {
 
 impl std::error::Error for CacheError {}
 
-/// [`migrate_layout`] 결과.
+/// [`migrate_layout`]·[`migrate_working_tree`] 결과.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LayoutMigration {
     /// 옛 배치 이동 결과.
     pub moved: LegacyMove,
     /// 옛 current pointer가 cache pointer를 바꿔 원본·cache 짝(stamp)을 지웠는지.
     pub stamp_cleared: bool,
+    /// 원본 없는 옛 chunk 프로젝트를 텍스트 원본으로 바꿨는지([`convert_legacy`]).
+    pub converted: Option<LegacyConversion>,
+    /// 변환한 원본이 아직 Git에 들어가지 않아 옛 배치를 작업 트리에 그대로 두었는지(ADR-0131 결정 4). Git을 아는
+    /// 호출자([`untrack_legacy`])가 원본을 index에 넣고 옛 배치를 뺄 때 옮깁니다.
+    pub held: bool,
+}
+
+/// 작업 트리의 옛 배치에 원본이 없을 때 할 일.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyLayout {
+    /// 텍스트 원본으로 바꿉니다([`convert_legacy`]). 열기 관찰과 semantic Git, `stellar cache migrate --convert`.
+    Convert,
+    /// 바꾸지 않고 [`CacheError::LegacyWithoutSource`]입니다. 원본을 쓰지 않는 `stellar cache status·migrate`.
+    Refuse,
 }
 
 fn stamp_path(root: &Path) -> PathBuf {
@@ -122,7 +160,8 @@ fn stamp_path(root: &Path) -> PathBuf {
 
 /// 옛 배치를 `.stellar/cache/chunks/`로 옮깁니다([`move_legacy_layout`]). 옛 pointer가 cache pointer를 바꿨으면
 /// 그 cache가 어느 원본과 짝인지 알 수 없으므로 stamp를 지웁니다(다음 열기는 원본이 있으면 원본에서 읽음). 옛 배치가
-/// 없으면 아무것도 하지 않습니다. Git index는 건드리지 않습니다([`untrack_legacy`]).
+/// 없으면 아무것도 하지 않습니다. Git index는 건드리지 않습니다([`untrack_legacy`]). Git snapshot을 푼 비공개
+/// 폴더처럼 다른 writer가 없는 곳에만 씁니다. 사용자 작업 트리는 [`migrate_working_tree`]입니다.
 pub fn migrate_layout(root: &Path) -> Result<LayoutMigration, CacheError> {
     let moved = move_legacy_layout(root).map_err(CacheError::Legacy)?;
     let mut stamp_cleared = false;
@@ -136,25 +175,72 @@ pub fn migrate_layout(root: &Path) -> Result<LayoutMigration, CacheError> {
     Ok(LayoutMigration {
         moved,
         stamp_cleared,
+        ..LayoutMigration::default()
     })
 }
 
-/// 작업 트리용 [`migrate_layout`]: 텍스트 원본이 없는데 옛 배치가 있으면 옮기지 않고
-/// [`CacheError::LegacyWithoutSource`]입니다(ADR-0122 개정 2026-11-24). 옛 배치는 그 프로젝트의 유일한 Git 원본일 수
-/// 있어, 옮긴 뒤 `git commit -a` 한 번으로 원본이 Git에서 사라지는 것을 막습니다. Git snapshot을 푼 임시 폴더는
-/// [`migrate_layout`]을 그대로 씁니다(작업 트리가 아님).
-pub fn migrate_working_tree(root: &Path) -> Result<LayoutMigration, CacheError> {
-    let legacy = ["current", "generations", "objects"]
+/// 작업 트리에 옛 배치(`design/current`·`generations/`·`objects/`)가 있는지.
+pub fn has_legacy_layout(root: &Path) -> bool {
+    [CURRENT_FILE, GENERATIONS_DIR, OBJECTS_DIR]
         .iter()
-        .any(|name| std::fs::symlink_metadata(root.join("design").join(name)).is_ok());
-    if legacy {
-        let text = crate::document_io::session::read_source(root)
-            .map_err(|e| CacheError::Source(e.to_string()))?;
-        if text.is_none() {
-            return Err(CacheError::LegacyWithoutSource);
+        .any(|name| std::fs::symlink_metadata(root.join(LEGACY_DIR).join(name)).is_ok())
+}
+
+/// [`migrate_working_tree_with`]`(root, LegacyLayout::Convert)`. 열기 관찰과 semantic Git이 씁니다.
+pub fn migrate_working_tree(root: &Path) -> Result<LayoutMigration, CacheError> {
+    migrate_working_tree_with(root, LegacyLayout::Convert)
+}
+
+/// 사용자 작업 트리의 옛 배치를 다룹니다(ADR-0122 개정 2026-11-24, ADR-0131 결정 3·4).
+///
+/// - 옛 배치가 없으면 아무것도 하지 않습니다.
+/// - 텍스트 원본이 있고 변환 표시([`converted_marker`])가 없으면 옛 배치를 cache로 옮기되 옛 pointer는 cache pointer로
+///   쓰지 않고 버립니다([`LegacyPointer::Drop`]). 원본이 Git 원본이라 옛 pointer는 새 정보가 아니고, cache pointer를
+///   바꾸면 원본 이후 cache에만 쓴 편집(Forward)이 빠지기 때문입니다. 결과가 cache pointer 상태와 무관해 저장 잠금이
+///   없어도 다른 writer와 경쟁하지 않습니다. stamp도 건드리지 않습니다.
+/// - 원본이 있고 변환 표시가 있으면(변환한 원본이 아직 Git에 없음) 옛 배치를 그대로 둡니다([`LayoutMigration::held`]).
+///   작업 트리의 옛 pointer가 변환 때와 다르면 [`CacheError::LegacyChanged`]입니다.
+/// - 원본이 없으면 `mode`가 [`LegacyLayout::Convert`]일 때 텍스트 원본으로 바꾸고([`convert_legacy`]), 바꿀 수 없으면
+///   [`CacheError::LegacyUnconvertible`]입니다. [`LegacyLayout::Refuse`]면 [`CacheError::LegacyWithoutSource`]입니다.
+///   어느 쪽이든 실패하면 작업 트리를 바꾸지 않습니다.
+///
+/// Git snapshot을 푼 임시 폴더는 작업 트리가 아니므로 [`migrate_layout`]을 그대로 씁니다.
+pub fn migrate_working_tree_with(
+    root: &Path,
+    mode: LegacyLayout,
+) -> Result<LayoutMigration, CacheError> {
+    if !has_legacy_layout(root) {
+        return Ok(LayoutMigration::default());
+    }
+    let text = read_source(root).map_err(|e| CacheError::Source(e.to_string()))?;
+    if text.is_some() {
+        if let Some(marker) = converted_marker(root) {
+            if legacy_pointer_digest(root) != Some(marker) {
+                return Err(CacheError::LegacyChanged);
+            }
+            return Ok(LayoutMigration {
+                held: true,
+                ..LayoutMigration::default()
+            });
+        }
+        let moved = transfer_legacy_layout(root, LegacyTransfer::Move, LegacyPointer::Drop)
+            .map_err(CacheError::Legacy)?;
+        return Ok(LayoutMigration {
+            moved,
+            ..LayoutMigration::default()
+        });
+    }
+    match mode {
+        LegacyLayout::Refuse => Err(CacheError::LegacyWithoutSource),
+        LegacyLayout::Convert => {
+            let converted = convert_legacy(root)?;
+            Ok(LayoutMigration {
+                converted: Some(converted),
+                held: true,
+                ..LayoutMigration::default()
+            })
         }
     }
-    migrate_layout(root)
 }
 
 /// `stellar.yaml`의 project id.
@@ -205,19 +291,29 @@ pub fn rebuild_from_text(root: &Path) -> Result<Rebuild, CacheError> {
     let (model, library) = SourceLibrary::split(
         decode_source(&files).map_err(|error| CacheError::Source(error.to_string()))?,
     );
-    let serialized =
-        serialize_document(&model).map_err(|error| CacheError::Source(error.to_string()))?;
-    let mut states = serialized.to_dirty_states();
-    let referenced: BTreeSet<StableId> = model
-        .to_records()
-        .map_err(|error| CacheError::Source(error.to_string()))?
-        .nodes
-        .iter()
-        .filter_map(|node| match &node.payload {
-            NodePayload::Image(image) => Some(image.asset.id()),
-            _ => None,
-        })
-        .collect();
+    // 추가 root 문서도 같은 generation에 담습니다(ADR-0131 결정 3, root 순서 = 원본 목록 순서).
+    let extras = decode_extra_documents(&files, model.document_id())
+        .map_err(|error| CacheError::Source(error.to_string()))?;
+    let mut states = Vec::new();
+    let mut referenced: BTreeSet<StableId> = BTreeSet::new();
+    let mut roots = Vec::new();
+    for document in std::iter::once(&model).chain(&extras) {
+        let serialized =
+            serialize_document(document).map_err(|error| CacheError::Source(error.to_string()))?;
+        states.extend(serialized.to_dirty_states());
+        roots.push(document.document_id());
+        referenced.extend(
+            document
+                .to_records()
+                .map_err(|error| CacheError::Source(error.to_string()))?
+                .nodes
+                .iter()
+                .filter_map(|node| match &node.payload {
+                    NodePayload::Image(image) => Some(image.asset.id()),
+                    _ => None,
+                }),
+        );
+    }
     let images: BTreeMap<_, _> = library
         .images
         .iter()
@@ -242,7 +338,7 @@ pub fn rebuild_from_text(root: &Path) -> Result<Rebuild, CacheError> {
         project_id,
         crate::migration::PRODUCT_SCHEMA_VERSION,
         &states,
-        vec![model.document_id()],
+        roots,
     )
     .map_err(|error| CacheError::Write(error.to_string()))?;
     let mut memory = SavedGenerationState::new(
@@ -290,36 +386,7 @@ pub fn legacy_view(root: &Path) -> Result<Option<crate::private_temp::PrivateTem
     {
         return Ok(None);
     }
-    let temp = crate::private_temp::PrivateTempDir::create_in(
-        &std::env::temp_dir(),
-        "stellar-legacy-view",
-    )
-    .map_err(|error| CacheError::Write(error.to_string()))?;
-    fn copy(from: &Path, to: &Path) -> io::Result<()> {
-        let meta = std::fs::symlink_metadata(from)?;
-        if meta.is_dir() {
-            std::fs::create_dir_all(to)?;
-            for entry in std::fs::read_dir(from)? {
-                let entry = entry?;
-                copy(&entry.path(), &to.join(entry.file_name()))?;
-            }
-        } else if meta.is_file() {
-            std::fs::copy(from, to)?;
-        }
-        Ok(())
-    }
-    for relative in LEGACY_PATHS {
-        let from = root.join(relative);
-        if std::fs::symlink_metadata(&from).is_ok() {
-            let to = temp.path().join(relative);
-            if let Some(parent) = to.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| CacheError::Write(e.to_string()))?;
-            }
-            copy(&from, &to).map_err(|e| CacheError::Write(e.to_string()))?;
-        }
-    }
-    migrate_layout(temp.path())?;
-    Ok(Some(temp))
+    crate::cache_convert::legacy_copy(root, &std::env::temp_dir()).map(Some)
 }
 
 /// 작업 트리 `root`의 `stellar.yaml`과 텍스트 원본만 `parent` 아래 비공개 임시 폴더로 복사하고 그 안에 cache를
@@ -455,6 +522,10 @@ pub fn collect_garbage(
 /// 작업 트리에 텍스트 원본이 있을 때만 뺍니다. 원본이 없으면 Git에 남은 옛 cache가 그 프로젝트의 유일한 Git
 /// 원본이라 그대로 둡니다(빈 목록). 돌려주는 값은 index에서 뺀 경로(프로젝트 root 기준 `/` 경로)입니다. `root`가
 /// 저장소 안 하위 폴더여도 Git pathspec은 `root` 기준으로 해석됩니다.
+///
+/// 옛 배치를 텍스트 원본으로 바꾼 직후([`converted_marker`]가 있음)에는 같은 index 갱신에서 원본 파일을 먼저 index에
+/// 넣습니다(`git add`). 그래야 다음 commit이 옛 배치 삭제와 새 원본을 함께 담아 Git 원본이 끊기지 않습니다. 그 뒤 변환
+/// 표시를 지우고 작업 트리의 옛 배치를 cache로 옮깁니다(옛 pointer는 버림, [`migrate_working_tree_with`]).
 pub fn untrack_legacy(git: &GatedGitRunner, root: &Path) -> Result<Vec<String>, CacheError> {
     let run = |args: Vec<&str>| -> Result<Vec<u8>, CacheError> {
         let output = git
@@ -467,20 +538,42 @@ pub fn untrack_legacy(git: &GatedGitRunner, root: &Path) -> Result<Vec<String>, 
         }
         Ok(output.stdout)
     };
+    let Some(source) = read_source(root).map_err(|error| CacheError::Source(error.to_string()))?
+    else {
+        return Ok(Vec::new());
+    };
+    let converted = converted_marker(root);
+    if let Some(marker) = converted {
+        if legacy_pointer_digest(root).is_some_and(|pointer| pointer != marker) {
+            return Err(CacheError::LegacyChanged);
+        }
+        let paths: Vec<String> = source
+            .files
+            .keys()
+            .map(|path| {
+                format!(
+                    ":(literal){}/{path}",
+                    crate::document_io::session::DESIGN_DIR
+                )
+            })
+            .collect();
+        let mut add = vec!["add", "--"];
+        add.extend(paths.iter().map(String::as_str));
+        run(add)?;
+    }
     let mut list = vec!["ls-files", "-z", "--cached", "--"];
     list.extend(LEGACY_PATHS);
     let listed = run(list)?;
-    if listed.is_empty() {
-        return Ok(Vec::new());
+    if !listed.is_empty() {
+        let mut remove = vec!["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--"];
+        remove.extend(LEGACY_PATHS);
+        run(remove)?;
     }
-    match read_source(root) {
-        Ok(Some(_)) => {}
-        Ok(None) => return Ok(Vec::new()),
-        Err(error) => return Err(CacheError::Source(error.to_string())),
+    if converted.is_some() {
+        clear_converted_marker(root).map_err(|error| CacheError::Write(error.to_string()))?;
+        transfer_legacy_layout(root, LegacyTransfer::Move, LegacyPointer::Drop)
+            .map_err(CacheError::Legacy)?;
     }
-    let mut remove = vec!["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--"];
-    remove.extend(LEGACY_PATHS);
-    run(remove)?;
     let mut paths: Vec<String> = listed
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
@@ -506,15 +599,17 @@ mod tests {
 mod working_tree_tests {
     use super::*;
 
-    /// 텍스트 원본 없이 옛 배치만 있으면 옮기지 않고 거부합니다. 옛 파일은 작업 트리에 그대로 남습니다.
+    /// 텍스트 원본 없이 옛 배치만 있으면, 변환을 고르지 않았을 때는 거부하고(Refuse) 변환할 수 없을 때도 거부합니다
+    /// (여기서는 읽을 수 없는 pointer). 어느 쪽이든 옛 파일은 작업 트리에 그대로 남습니다.
     #[test]
     fn legacy_layout_without_a_text_source_is_left_in_place() {
         let dir = std::env::temp_dir().join(format!("stellar-legacy-guard-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("design/generations")).unwrap();
         std::fs::write(dir.join("design/current"), b"legacy pointer").unwrap();
-        let error = migrate_working_tree(&dir).unwrap_err();
+        let error = migrate_working_tree_with(&dir, LegacyLayout::Refuse).unwrap_err();
         assert!(matches!(error, CacheError::LegacyWithoutSource), "{error}");
+        assert!(migrate_working_tree(&dir).is_err(), "변환할 수 없음");
         assert!(
             dir.join("design/current").is_file(),
             "옛 pointer가 그대로 남음"

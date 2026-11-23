@@ -4,10 +4,10 @@
 
 - WBS: V.10.7
 - 작업명: 검증된 변환 경로에서 기본 원본을 텍스트로 전환하고 chunk 저장을 로컬 cache로 내림
-- 상태: 부분 완료 (`[~]`) — 앱 창 session의 열기·저장·자동 저장·stale·외부 변경이 텍스트 원본을 기본으로 쓰고, chunk generation은 stamp 짝으로 관리하는 파생 cache가 되었습니다. 2026-11-24 `text-source-everywhere` lane이 CLI·MCP의 읽기·쓰기, semantic Git, 새 프로젝트의 첫 저장을 같은 원본 session으로 옮겼습니다(아래 "후속: CLI·MCP·Git과 첫 저장"). 같은 날 `git-cache-out` lane이 chunk cache를 Git 밖 `.stellar/cache/chunks/`로 옮기고 옛 배치 migration, 원본에서 다시 만들기, cache GC를 연결했습니다(아래 "후속: chunk cache를 Git 밖으로"). 기준 장비(REF-MAC) 실측·예산 판정은 하지 않았습니다(아래 차이). 원장 판정은 통합 때 `generate-ledger`로 정합니다.
+- 상태: 부분 완료 (`[~]`) — 앱 창 session의 열기·저장·자동 저장·stale·외부 변경이 텍스트 원본을 기본으로 쓰고, chunk generation은 stamp 짝으로 관리하는 파생 cache가 되었습니다. 2026-11-24 `text-source-everywhere` lane이 CLI·MCP의 읽기·쓰기, semantic Git, 새 프로젝트의 첫 저장을 같은 원본 session으로 옮겼습니다(아래 "후속: CLI·MCP·Git과 첫 저장"). 같은 날 `git-cache-out` lane이 chunk cache를 Git 밖 `.stellar/cache/chunks/`로 옮기고 옛 배치 migration, 원본에서 다시 만들기, cache GC를 연결했습니다(아래 "후속: chunk cache를 Git 밖으로"). 기준 장비(REF-MAC) 실측·예산 판정은 하지 않았습니다(아래 차이). 2026-11-24 `legacy-convert` lane이 원본 없는 옛 chunk 프로젝트를 텍스트 원본으로 바꾸는 변환과 옛 pointer가 Forward 편집을 덮지 않는 규칙을 더했습니다(아래 "후속: 옛 chunk 프로젝트 변환"). 원장 판정은 통합 때 `generate-ledger`로 정합니다.
 - 선행: V.10.6(같은 lane에서 앱 연결을 함께 마침, 보고서 V.10.6)
-- 결정: [ADR-0088](../adr/ADR-0088-text-source-default-and-chunk-cache.md), [ADR-0113](../adr/ADR-0113-headless-text-source-everywhere.md), [ADR-0122](../adr/ADR-0122-chunk-cache-out-of-git.md)
-- lane: `text-source-default`, `text-source-everywhere`, `git-cache-out`
+- 결정: [ADR-0088](../adr/ADR-0088-text-source-default-and-chunk-cache.md), [ADR-0113](../adr/ADR-0113-headless-text-source-everywhere.md), [ADR-0122](../adr/ADR-0122-chunk-cache-out-of-git.md), [ADR-0131](../adr/ADR-0131-legacy-chunk-projects-to-text-source.md)
+- lane: `text-source-default`, `text-source-everywhere`, `git-cache-out`, `legacy-convert`
 
 ## 후속: CLI·MCP·Git과 첫 저장 (2026-11-24, ADR-0113)
 
@@ -191,3 +191,21 @@ DEV-MAC release, 다른 lane이 동시에 돌던 부하 상태입니다. 자세�
 - 기본값 세트를 바꾼 저장에서 `stellar.yaml`을 되쓴 뒤 원본 journal이나 chunk 전용 generation 쓰기가 실패하면, 저장은 실패("아무것도 쓰지 않음")로 알리면서 `stellar.yaml`은 바뀐 채 남던 결함을 고쳤습니다. 실패하면 앞 값으로 되돌립니다(ADR-0088 결정 7).
 - 열 때 맞춤 쓰기가 실패하면 `reconcile_pending`을 세워 다음 자동 저장이 다시 맞추게 했습니다. 전에는 다음 편집 전까지 맞추지 않아 ADR의 "다음 저장이 다시 맞춤"과 달랐습니다.
 - cache로 연 창의 writer가 문서 밖 의미 파일만 바뀐 디스크 base 위에 저장하면, 창이 그 저장을 반영하지 않아(캡처 base 비교가 어긋남) dirty와 옛 base가 남고 다음 저장·판정이 자기 저장을 stale로 보던 결함을 고쳤습니다. 반영 비교는 캡처한 session base로 합니다.
+
+## 후속: 옛 chunk 프로젝트 변환 (2026-11-24, ADR-0131)
+
+- 결정: [ADR-0131](../adr/ADR-0131-legacy-chunk-projects-to-text-source.md) 결정 3·4.
+- 변경 파일: `crates/project/src/{cache,cache_convert,cache_tests}.rs`, `crates/storage/src/location.rs`(보호 경로, `transfer_legacy_layout`·`LegacyPointer`·`LegacyTransfer`), `crates/ops/src/git_cache.rs`(`migrate_with`), `tools/stellar-cli/src/cache.rs`(신규, `cli.rs`에서 옮김), `tools/stellar-cli/tests/fixtures/help.txt`.
+- 변환: 작업 트리에 원본 없이 옛 배치만 있으면 열기 관찰(앱·CLI·MCP)과 `stellar cache migrate --convert`가 같은 함수 `cache::convert_legacy`로, 옛 파일의 읽기 전용 비공개 사본에서 generation 전체를 원본 의미로 옮기고 다시 읽은 의미가 같을 때만 저장 journal로 씁니다. 옛 배치는 cache에 복사만 하고 작업 트리에 남깁니다(변환 표시). 바꿀 수 없으면(모르는 chunk·제품 schema가 아님·의미 차이) 아무것도 쓰지 않고 거부합니다. `stellar cache status`와 `--convert` 없는 `migrate`는 지금처럼 거부합니다.
+- Git 전환: semantic Git stage·unstage·commit과 `stellar cache migrate`의 index 정리(`untrack_legacy`)가 변환 표시를 보면 새 원본을 `git add`하고 옛 경로를 index에서 뺀 뒤 옛 배치를 cache로 옮깁니다. 다음 commit 하나가 둘을 함께 담습니다. 그 전의 `git commit -a`는 옛 배치를 지우지 않습니다.
+- Forward 보호: 원본이 있는 작업 트리에서 옛 배치를 옮길 때 옛 pointer는 cache pointer를 바꾸지 않고 버립니다. Git이 `design/current`를 되살려도 원본 이후 cache에만 쓴 편집이 current에 남습니다. cache pointer 상태와 무관한 규칙이라 저장 잠금 없이 도는 관찰에서도 writer와 경쟁하지 않습니다(저장 잠금은 ops crate라 project의 관찰이 잡지 못함, ADR-0131 결정 4).
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-project --lib cache_tests` | 5 passed: 변환·재열기·cache 다시 만들기·옛 pointer 변경 거부, 변환 불가 거부(작업 트리 불변), Forward 편집 보존, 추가 root 문서 보존, 실제 Git으로 `commit -a` 안전 → index 정리 → 원본만 담은 commit → clone 열기 같은 의미 |
+| `cargo test -p stellar-storage --lib location` | 7 passed: Drop(옛 pointer가 cache pointer를 바꾸지 않음)·Copy(옛 파일 유지) |
+| `cargo test -p stellar-ops --lib git_cache` | 2 passed: `status`·`migrate` 거부, `migrate --convert` 변환 |
+| `cargo test -p stellar-cli --lib cache` | `--convert`는 `migrate`에만 |
+| `cargo test -p stellar-integration-tests --test git_cache_out` | 4 passed(옛 pointer를 cache pointer로 쓰지 않는 새 규칙으로 기대값 한 줄을 고침) |
+
+- 남은 위험: 변환 뒤 Git에 넣기 전에 `.stellar/cache/`를 지우면 변환 표시가 사라져 다음 열기가 옛 배치를 옮깁니다(그때는 `git add design` 필요). 앱 창의 FromText 맞춤 쓰기는 cache가 없을 때 첫 문서만 generation에 씁니다(원본에는 모든 문서가 남음, `stellar cache rebuild`가 모두 다시 만듦). REF-MAC 실측·예산 판정은 여전히 하지 않았습니다.
