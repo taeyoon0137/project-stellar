@@ -175,6 +175,9 @@ pub struct CssLowering {
     pub apple: PlatformLowering,
     /// Android(Compose).
     pub android: PlatformLowering,
+    /// AppKit dialect 규칙(ADR-0121 결정 1). AppKit adapter가 낮추는 항목(layout longhand 40개와 local transform)만
+    /// 있고, 그 밖의 항목은 `None`입니다(AppKit dialect에 등록되지 않음).
+    pub appkit: Option<PlatformLowering>,
 }
 
 const N: CapabilityStatus = CapabilityStatus::Native;
@@ -200,7 +203,24 @@ const fn row(
             rule: android.1,
             template: android.2,
         },
+        appkit: None,
     }
+}
+
+const fn row_appkit(
+    scope: &'static str,
+    name: &'static str,
+    apple: (CapabilityStatus, Rule, &'static str),
+    android: (CapabilityStatus, Rule, &'static str),
+    appkit: (CapabilityStatus, Rule, &'static str),
+) -> CssLowering {
+    let mut out = row(scope, name, apple, android);
+    out.appkit = Some(PlatformLowering {
+        status: appkit.0,
+        rule: appkit.1,
+        template: appkit.2,
+    });
+    out
 }
 
 use Rule as R;
@@ -223,11 +243,21 @@ pub const CSS_LOWERINGS: &[CssLowering] = &[
         (N, R::GroupKey, ".frame(width:height:)"),
         (N, R::GroupKey, "Modifier.size()"),
     ),
-    row(
+    // local transform(layout 뒤 적용). AppKit에는 시각 이동 API가 없습니다(ADR-0107 결정 4).
+    row_appkit(
         "frame",
         "transform",
-        (N, R::TransformEffect, ".transformEffect({v})"),
-        (A, R::TransformEffect, "Modifier.graphicsLayer({v})"),
+        (
+            N,
+            R::TransformEffect,
+            ".offset(x:y:) + .transformEffect({v})",
+        ),
+        (
+            A,
+            R::TransformEffect,
+            "Modifier.offset() + drawWithContent { withTransform({v}) }",
+        ),
+        (U, R::NoOutput, ""),
     ),
     row(
         "frame",
@@ -722,247 +752,330 @@ pub const CSS_LOWERINGS: &[CssLowering] = &[
         (A, R::SrgbComposite, ".opacity({n})"),
         (A, R::SrgbComposite, "Modifier.alpha({n}f)"),
     ),
-    // layout item longhand(범위 node)
-    row(
+    // layout item longhand(범위 node)와 container longhand(범위 frame). 마지막 칸은 AppKit dialect 규칙입니다.
+    row_appkit(
         "node",
         "position",
-        (A, R::AbsoluteOffset, "ZStack + .position({v})"),
-        (A, R::AbsoluteOffset, "Box + Modifier.offset({v})"),
+        (
+            A,
+            R::AbsoluteOffset,
+            ".overlay(alignment: {v}) + .offset(x:y:)",
+        ),
+        (A, R::AbsoluteOffset, "Box + Modifier.align({v}).offset()"),
+        (A, R::AbsoluteOffset, "addSubview + anchor 제약({v})"),
     ),
-    row(
+    row_appkit(
         "node",
         "box-sizing",
         (N, R::ExplicitDefault, "border-box frame"),
         (N, R::ExplicitDefault, "border-box size"),
+        (N, R::ExplicitDefault, "border-box 크기 제약"),
     ),
-    row(
+    row_appkit(
         "node",
         "top",
         (A, R::AbsoluteOffset, ".offset(y: {n})"),
         (A, R::AbsoluteOffset, "Modifier.offset(y = {n}.dp)"),
+        (A, R::AbsoluteOffset, "topAnchor 제약(constant: {n})"),
     ),
-    row(
+    row_appkit(
         "node",
         "right",
         (A, R::AbsoluteOffset, ".offset(x: -{n})"),
         (A, R::AbsoluteOffset, "Modifier.offset(x = -{n}.dp)"),
+        (A, R::AbsoluteOffset, "trailingAnchor 제약(constant: -{n})"),
     ),
-    row(
+    row_appkit(
         "node",
         "bottom",
         (A, R::AbsoluteOffset, ".offset(y: -{n})"),
         (A, R::AbsoluteOffset, "Modifier.offset(y = -{n}.dp)"),
+        (A, R::AbsoluteOffset, "bottomAnchor 제약(constant: -{n})"),
     ),
-    row(
+    row_appkit(
         "node",
         "left",
         (A, R::AbsoluteOffset, ".offset(x: {n})"),
         (A, R::AbsoluteOffset, "Modifier.offset(x = {n}.dp)"),
+        (A, R::AbsoluteOffset, "leadingAnchor 제약(constant: {n})"),
     ),
-    row(
+    row_appkit(
         "node",
         "width",
         (N, R::FrameSize, ".frame(width: {n})"),
         (N, R::FrameSize, "Modifier.width({n}.dp)"),
+        (
+            N,
+            R::FrameSize,
+            "widthAnchor.constraint(equalToConstant: {n})",
+        ),
     ),
-    row(
+    row_appkit(
         "node",
         "height",
         (N, R::FrameSize, ".frame(height: {n})"),
         (N, R::FrameSize, "Modifier.height({n}.dp)"),
+        (
+            N,
+            R::FrameSize,
+            "heightAnchor.constraint(equalToConstant: {n})",
+        ),
     ),
-    row(
+    row_appkit(
         "node",
         "min-width",
         (N, R::FrameSize, ".frame(minWidth: {n})"),
         (N, R::FrameSize, "Modifier.widthIn(min = {n}.dp)"),
+        (
+            N,
+            R::FrameSize,
+            "widthAnchor.constraint(greaterThanOrEqualToConstant: {n})",
+        ),
     ),
-    row(
+    row_appkit(
         "node",
         "min-height",
         (N, R::FrameSize, ".frame(minHeight: {n})"),
         (N, R::FrameSize, "Modifier.heightIn(min = {n}.dp)"),
+        (
+            N,
+            R::FrameSize,
+            "heightAnchor.constraint(greaterThanOrEqualToConstant: {n})",
+        ),
     ),
-    row(
+    row_appkit(
         "node",
         "max-width",
         (N, R::FrameSize, ".frame(maxWidth: {n})"),
         (N, R::FrameSize, "Modifier.widthIn(max = {n}.dp)"),
+        (
+            N,
+            R::FrameSize,
+            "widthAnchor.constraint(lessThanOrEqualToConstant: {n})",
+        ),
     ),
-    row(
+    row_appkit(
         "node",
         "max-height",
         (N, R::FrameSize, ".frame(maxHeight: {n})"),
         (N, R::FrameSize, "Modifier.heightIn(max = {n}.dp)"),
+        (
+            N,
+            R::FrameSize,
+            "heightAnchor.constraint(lessThanOrEqualToConstant: {n})",
+        ),
     ),
-    row(
+    row_appkit(
         "node",
         "aspect-ratio",
-        (A, R::AspectRatio, ".aspectRatio({v})"),
+        (A, R::AspectRatio, ".aspectRatio({v}, contentMode: .fit)"),
         (A, R::AspectRatio, "Modifier.aspectRatio({v}f)"),
+        (
+            N,
+            R::FrameSize,
+            "widthAnchor.constraint(equalTo: heightAnchor, multiplier: {v})",
+        ),
     ),
-    row(
+    row_appkit(
         "node",
         "flex-grow",
         (A, R::FlexItem, ".frame(maxWidth: .infinity) priority {n}"),
         (A, R::FlexItem, "Modifier.weight({n}f)"),
+        (
+            A,
+            R::FlexItem,
+            "setContentHuggingPriority(.defaultLow) grow {n}",
+        ),
     ),
-    row(
+    row_appkit(
         "node",
         "flex-shrink",
-        (A, R::FlexItem, ".layoutPriority(-{n})"),
-        (A, R::FlexItem, "Modifier.weight({n}f, fill = false)"),
+        (A, R::FlexItem, ".fixedSize() shrink {n}"),
+        (A, R::FlexItem, "Row·Column 순차 측정 shrink {n}"),
+        (
+            A,
+            R::FlexItem,
+            "setContentCompressionResistancePriority shrink {n}",
+        ),
     ),
-    row(
+    row_appkit(
         "node",
         "flex-basis",
         (A, R::FlexItem, ".frame(idealWidth: {n})"),
         (A, R::FlexItem, "Modifier.width({n}.dp)"),
+        (A, R::FlexItem, "main 축 크기 제약(constant: {n})"),
     ),
-    row(
+    row_appkit(
         "node",
         "align-self",
-        (A, R::StackLayout, ".frame(alignment: {v})"),
+        (
+            A,
+            R::StackLayout,
+            ".frame(maxWidth: .infinity, alignment: {v})",
+        ),
         (N, R::StackLayout, "Modifier.align({v})"),
+        (A, R::StackLayout, "NSStackView.alignment({v})"),
     ),
-    row(
+    row_appkit(
         "node",
         "justify-self",
-        (A, R::GridLayout, ".gridColumnAlignment({v})"),
-        (A, R::GridLayout, "Modifier.align({v})"),
+        (A, R::GridLayout, ".gridCellAnchor({v})"),
+        (A, R::GridLayout, "Box(contentAlignment = {v})"),
+        (A, R::GridLayout, "NSGridCell.xPlacement({v})"),
     ),
-    row(
+    row_appkit(
         "node",
         "grid-column-start",
-        (A, R::GridLayout, ".gridCellColumns({v})"),
-        (A, R::GridLayout, "GridItemSpan({v})"),
+        (A, R::GridLayout, "GridRow 칸 열({v})"),
+        (A, R::GridLayout, "행 Row의 칸 열({v})"),
+        (A, R::GridLayout, "NSGridView 칸 열({v})"),
     ),
-    row(
+    row_appkit(
         "node",
         "grid-column-end",
         (A, R::GridLayout, ".gridCellColumns({v})"),
-        (A, R::GridLayout, "GridItemSpan({v})"),
+        (A, R::GridLayout, "span track 합({v})"),
+        (A, R::GridLayout, "mergeCells(inHorizontalRange: {v})"),
     ),
-    row(
+    row_appkit(
         "node",
         "grid-row-start",
-        (U, R::NoOutput, ""),
-        (U, R::NoOutput, ""),
+        (A, R::GridLayout, "GridRow 행({v})"),
+        (A, R::GridLayout, "행 Column의 행({v})"),
+        (A, R::GridLayout, "NSGridView 행({v})"),
     ),
-    row(
+    row_appkit(
         "node",
         "grid-row-end",
         (U, R::NoOutput, ""),
         (U, R::NoOutput, ""),
+        (U, R::NoOutput, ""),
     ),
-    // layout container longhand(범위 frame)
-    row(
+    row_appkit(
         "frame",
         "display",
         (N, R::StackLayout, "VStack/HStack/Grid({v})"),
-        (N, R::StackLayout, "Column/Row/LazyVerticalGrid({v})"),
+        (N, R::StackLayout, "Column/Row/FlowRow({v})"),
+        (N, R::StackLayout, "NSStackView/NSGridView({v})"),
     ),
-    row(
+    row_appkit(
         "frame",
         "padding-top",
         (N, R::Modifier, ".padding(.top, {n})"),
         (N, R::Modifier, "Modifier.padding(top = {n}.dp)"),
+        (N, R::Modifier, "edgeInsets.top = {n}"),
     ),
-    row(
+    row_appkit(
         "frame",
         "padding-right",
         (N, R::Modifier, ".padding(.trailing, {n})"),
         (N, R::Modifier, "Modifier.padding(end = {n}.dp)"),
+        (N, R::Modifier, "edgeInsets.right = {n}"),
     ),
-    row(
+    row_appkit(
         "frame",
         "padding-bottom",
         (N, R::Modifier, ".padding(.bottom, {n})"),
         (N, R::Modifier, "Modifier.padding(bottom = {n}.dp)"),
+        (N, R::Modifier, "edgeInsets.bottom = {n}"),
     ),
-    row(
+    row_appkit(
         "frame",
         "padding-left",
         (N, R::Modifier, ".padding(.leading, {n})"),
         (N, R::Modifier, "Modifier.padding(start = {n}.dp)"),
+        (N, R::Modifier, "edgeInsets.left = {n}"),
     ),
-    row(
+    row_appkit(
         "frame",
         "flex-direction",
         (N, R::StackLayout, "HStack/VStack({v})"),
         (N, R::StackLayout, "Row/Column({v})"),
+        (N, R::StackLayout, "NSStackView.orientation({v})"),
     ),
-    row(
+    row_appkit(
         "frame",
         "flex-wrap",
-        (A, R::StackLayout, "custom Layout wrap({v})"),
-        (A, R::StackLayout, "FlowRow({v})"),
+        (U, R::StackLayout, "한 줄 HStack/VStack({v})"),
+        (N, R::StackLayout, "FlowRow/FlowColumn({v})"),
+        (U, R::StackLayout, "한 줄 NSStackView({v})"),
     ),
-    row(
+    row_appkit(
         "frame",
         "justify-content",
         (A, R::StackLayout, "Spacer distribution({v})"),
         (N, R::StackLayout, "Arrangement.{v}"),
+        (A, R::StackLayout, "NSStackView.distribution({v})"),
     ),
-    row(
+    row_appkit(
         "frame",
         "align-content",
-        (U, R::NoOutput, ""),
+        (A, R::GridLayout, "Grid .frame(alignment: {v})"),
         (A, R::StackLayout, "FlowRow verticalArrangement({v})"),
+        (A, R::GridLayout, "NSGridView 시작 정렬({v})"),
     ),
-    row(
+    row_appkit(
         "frame",
         "align-items",
         (N, R::ExplicitDefault, "VStack(alignment: {v})"),
         (N, R::ExplicitDefault, "Alignment.{v}"),
+        (N, R::ExplicitDefault, "NSStackView.alignment = {v}"),
     ),
-    row(
+    row_appkit(
         "frame",
         "justify-items",
         (A, R::GridLayout, "GridRow(alignment: {v})"),
         (A, R::GridLayout, "Alignment.{v}"),
+        (A, R::GridLayout, "NSGridView.xPlacement = {v}"),
     ),
-    row(
+    row_appkit(
         "frame",
         "row-gap",
         (N, R::ExplicitDefault, "VStack(spacing: {n})"),
         (N, R::ExplicitDefault, "Arrangement.spacedBy({n}.dp)"),
+        (N, R::ExplicitDefault, "NSStackView.spacing = {n}"),
     ),
-    row(
+    row_appkit(
         "frame",
         "column-gap",
         (N, R::ExplicitDefault, "HStack(spacing: {n})"),
         (N, R::ExplicitDefault, "Arrangement.spacedBy({n}.dp)"),
+        (N, R::ExplicitDefault, "NSStackView.spacing = {n}"),
     ),
-    row(
+    row_appkit(
         "frame",
         "grid-template-columns",
         (A, R::GridLayout, "Grid columns({v})"),
-        (A, R::GridLayout, "GridCells.Fixed({v})"),
+        (A, R::GridLayout, "칸 width·weight({v})"),
+        (A, R::GridLayout, "NSGridColumn.width({v})"),
     ),
-    row(
+    row_appkit(
         "frame",
         "grid-template-rows",
         (A, R::GridLayout, "Grid rows({v})"),
-        (U, R::NoOutput, ""),
+        (A, R::GridLayout, "행 height({v})"),
+        (A, R::GridLayout, "NSGridRow.height({v})"),
     ),
-    row(
+    row_appkit(
         "frame",
         "grid-auto-columns",
-        (A, R::GridLayout, "GridItem(.flexible)({v})"),
-        (A, R::GridLayout, "GridCells.Adaptive({v})"),
+        (A, R::GridLayout, "암시 열 track({v})"),
+        (A, R::GridLayout, "암시 열 track({v})"),
+        (A, R::GridLayout, "암시 NSGridColumn({v})"),
     ),
-    row(
+    row_appkit(
         "frame",
         "grid-auto-rows",
-        (A, R::GridLayout, "GridItem(.flexible)({v})"),
-        (U, R::NoOutput, ""),
+        (A, R::GridLayout, "암시 행 track({v})"),
+        (A, R::GridLayout, "암시 행 track({v})"),
+        (A, R::GridLayout, "암시 NSGridRow({v})"),
     ),
-    row(
+    row_appkit(
         "frame",
         "grid-auto-flow",
-        (A, R::GridLayout, "LazyHGrid/LazyVGrid({v})"),
-        (A, R::GridLayout, "LazyHorizontalGrid/LazyVerticalGrid({v})"),
+        (A, R::GridLayout, "자동 배치 순서({v})"),
+        (A, R::GridLayout, "자동 배치 순서({v})"),
+        (A, R::GridLayout, "자동 배치 순서({v})"),
     ),
 ];
 

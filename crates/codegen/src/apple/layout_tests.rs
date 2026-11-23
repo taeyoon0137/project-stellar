@@ -258,16 +258,21 @@ fn layout_sources_match_golden_static_fixtures() {
 
 #[test]
 fn layout_rules_cover_every_longhand() {
-    // XXII.1.4 Apple 열 중 CSS layout longhand 부분: 모든 longhand에 SwiftUI·AppKit 규칙이 있습니다.
+    // XXII.1.4 Apple 열 중 CSS layout longhand 부분: 모든 longhand에 SwiftUI·AppKit 규칙이 matrix에 있고, adapter가
+    // 따로 정의한 표는 없습니다(ADR-0121 결정 1).
+    use crate::matrix::dialect::{lowering, rule_text, Dialect};
     let expected: BTreeSet<&str> = stellar_layout::declared::LONGHANDS
         .iter()
         .copied()
         .collect();
-    for rules in [&layout::SWIFTUI_RULES, &layout::APPKIT_RULES] {
-        let names: BTreeSet<&str> = rules.iter().map(|(name, _)| *name).collect();
-        assert_eq!(names, expected);
-        assert_eq!(names.len(), rules.len(), "중복 규칙");
-        assert!(rules.iter().all(|(_, rule)| !rule.is_empty()));
+    for dialect in [Dialect::SwiftUi, Dialect::AppKit] {
+        for name in &expected {
+            let scope = ["node", "frame"]
+                .into_iter()
+                .find(|scope| rule_text(scope, name, dialect).is_some())
+                .unwrap_or_else(|| panic!("{name} 규칙 문장 없음"));
+            assert!(lowering(scope, name, dialect).is_some(), "{name}");
+        }
     }
 }
 

@@ -65,3 +65,31 @@
   XXII.3.2·XXII.4.2 몫입니다.
 - 상태 판정(예: `font-stretch` Android Unsupported)은 기준 SDK 문서 확인 없이 API 존재 여부로 정했습니다. adapter
   compile fixture가 생기면 다시 대조해야 합니다.
+
+## 후속 작업 (2026-11-23, `lane/codegen-registry`, ADR-0121 결정 1·2·3)
+
+- Apple(SwiftUI·AppKit)·Android(Compose) adapter가 따로 두던 layout 규칙 표(`SWIFTUI_RULES`·`APPKIT_RULES`·`COMPOSE_RULES`)를
+  matrix에 등록하고 adapter 표를 지웠습니다.
+  - 항목 상태·규칙·template은 `CSS_LOWERINGS` 한 행입니다. AppKit 차이는 같은 행의 `appkit` 열입니다.
+  - 규칙 문장은 `matrix::dialect::DIALECT_TEXTS`, 값별 진단 상태는 `matrix::dialect::FINDINGS`입니다.
+- adapter는 `matrix::dialect::finding`으로 진단을 만들고 상태를 matrix에서 받습니다. 호출 지점에서 상태를 정하던
+  `approximated`·`unsupported` helper를 지웠습니다.
+- adapter 실제 출력과 어긋난 layout 행 상태를 고쳤습니다. 목록은 ADR-0121 결정 1입니다(`grid-row-start`, `flex-wrap`,
+  `align-content`, Compose grid 행 track).
+- 네이티브 출력 입력(`apple::native_input`)이 CSS 속성 사용을 채웁니다. 그래서 IR mapping에 이 matrix 판정이 붙습니다.
+  - 생략값과 다른 layout longhand, Frame 시각 이동(`frame/transform`)입니다.
+  - 상태·상태 머신·motion·Context는 `build_native_view_ir`가 받습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-codegen` | 통과(lib 135, one_way_api 2) |
+| `cargo test -p stellar-ops --lib` | 통과(140) |
+| `cargo test -p stellar-cli --test export_native` | 통과(2) |
+
+- 검증 대응:
+  - dialect 완전성: `matrix::dialect::tests::every_layout_longhand_has_a_rule_and_text_for_every_dialect`.
+  - 진단 등록: `findings_name_registered_items_and_are_unique`, `adapter_sources_only_emit_registered_findings`(소스 검사).
+    fixture 실행 경로는 debug_assert가 확인합니다.
+  - golden: `matrix_css.txt`·`matrix_rules.txt` 갱신, `matrix_dialect.txt` 신규.
+  - IR 입력: `apple::native_input::tests::native_input_fills_css_uses_and_behaviors`.
+- 남은 것: ops `export_native`가 문서 상태·`MotionSpec`·Context를 `build_native_view_ir`에 넘기는 연결(ops 소유)입니다.
