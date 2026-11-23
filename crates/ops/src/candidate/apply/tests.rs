@@ -191,8 +191,25 @@ fn fault_matrix_restores_the_working_tree_and_keeps_conflicts_unresolved() {
     let mut session = ConflictSession::open(&git, &root).unwrap();
     assert_eq!(session.units().len(), 2, "{:?}", session.unsupported());
     session.resolve(0, Resolution::ChooseTheirs).unwrap();
-    let writes = session.plan().unwrap().writes.len();
+    let plan = session.plan().unwrap();
+    let writes = plan.writes.len();
     assert!(writes >= 4, "원본 1 + chunk·manifest·current: {writes}");
+    // 세대 저장 순서: chunk가 manifest보다, manifest가 current pointer보다 먼저이고 pointer가 마지막입니다.
+    let order: Vec<&Path> = plan.writes.iter().map(|w| w.path.as_path()).collect();
+    assert_eq!(
+        order.last(),
+        Some(&Path::new("design/current")),
+        "{order:?}"
+    );
+    let first_manifest = order
+        .iter()
+        .position(|p| p.starts_with("design/generations"))
+        .unwrap();
+    let last_chunk = order
+        .iter()
+        .rposition(|p| p.starts_with("design/objects"))
+        .unwrap();
+    assert!(last_chunk < first_manifest, "{order:?}");
     let before = crate::test_support::file_digest(&root);
     let entries = git.entries.borrow().clone();
     // 쓰기 i번째 실패: 되돌린 뒤 작업 트리 bytes와 unmerged가 그대로이고 add는 부르지 않습니다.

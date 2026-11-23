@@ -523,7 +523,7 @@ pub struct PlannedWrite {
 /// 검증한 모든 단위의 쓰기 계획(XIV.12.4). 파일은 아직 쓰지 않았습니다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WritePlan {
-    /// 파일 쓰기(경로 순서).
+    /// 파일 쓰기(chunk → 컴포넌트 원본 → manifest → current pointer, 같은 등급은 경로 순서).
     pub writes: Vec<PlannedWrite>,
     /// resolved 처리할 경로(`git add`).
     pub add: Vec<PathBuf>,
@@ -609,13 +609,27 @@ impl ConflictSession {
         }
         add.sort();
         add.dedup();
-        Ok(WritePlan {
-            writes: writes
-                .into_iter()
-                .map(|(path, bytes)| PlannedWrite { path, bytes })
-                .collect(),
-            add,
-        })
+        let mut writes: Vec<PlannedWrite> = writes
+            .into_iter()
+            .map(|(path, bytes)| PlannedWrite { path, bytes })
+            .collect();
+        // 세대 저장 순서(chunk → manifest → current pointer)를 지킵니다. 경로 순서로 두면 `design/current`가 먼저
+        // 쓰여, 중간에 프로세스가 끝나면 pointer가 아직 없는 manifest를 가리킵니다.
+        writes.sort_by_key(|write| write_rank(&write.path));
+        Ok(WritePlan { writes, add })
+    }
+}
+
+/// 쓰기 순서 등급: chunk 0, 그 밖(컴포넌트 원본) 1, generation manifest 2, current pointer 3. 같은 등급은 경로 순서입니다.
+fn write_rank(path: &Path) -> u8 {
+    if path == Path::new(CURRENT_POINTER) {
+        3
+    } else if path.starts_with("design/generations") {
+        2
+    } else if path.starts_with("design/objects") {
+        0
+    } else {
+        1
     }
 }
 
