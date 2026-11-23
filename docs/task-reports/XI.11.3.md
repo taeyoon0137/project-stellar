@@ -3,7 +3,7 @@
 - WBS: XI.11.3
 - 작업명: Frame, Shape, Path, Text, Image, Modifier, clip, P3 fixture를 최소 100개 구성
 - 상태: 구현 완료. 선행 XI.7.4가 `[~]`(GPU 출력 판정 보류)라 marker는 통합 때 정합니다.
-- 선행: XI.10.4 (`[x]`, 이 lane), XI.7.4 (`[~]`), XI.6.6 (`[x]`)
+- 선행: XI.10.4 (이 lane에서 구현, marker는 통합 때 판정), XI.7.4 (`[~]`), XI.6.6 (`[x]`)
 - 결정 기록: ADR-0102 결정 6
 
 ## 필수 실행 환경
@@ -25,7 +25,10 @@
 - Text는 4×4 supersampling한 합성 glyph coverage(막대·고리·사선)로 glyph atlas 합성 경로를 봅니다. Image는 placeholder missing·decoding
   tile(XI.7.4 공통 data, repeat)을 포함합니다.
 - `check_inventory`는 전체·분류별 최소 수, 기능 포함, 이름 유일·형식(소문자·숫자·`-`), fixture 계약(`validate`), 허용 오차 class 존재,
-  기능 표시 유무를 검사해 문제 목록을 돌려줍니다.
+  기능 표시 유무, CPU 기준이 clear만 칠한 image와 같은지(검사하는 그리기 없음)를 검사해 문제 목록을 돌려줍니다.
+- 검토 보완: P3 surface·sRGB fallback 쌍(단색·이미지·gradient)과 `p3-linear-target`이 원색(0·1 채널)만 써서 두 경우 저장 byte가
+  같았습니다. 변환·encode를 빠뜨려도 통과하므로 원색이 아닌 값으로 바꿨고, test는 이 쌍의 byte가 다른지와 결과 image가 같은 fixture
+  쌍이 의도한 하나(`opacity-zero`·`clip-scissor-outside`, 둘 다 backdrop만 남음)뿐인지 확인합니다.
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)
 
@@ -38,6 +41,7 @@
 | 검사 | 결과 |
 |---|---|
 | inventory 검사 문제 0, 전체 121 ≥ 100, 분류마다 8개 이상, 모든 기능 포함, 모든 fixture CPU 기준 생성(`inventory_check_passes_with_required_categories_and_features`) | 통과 |
+| P3 surface·fallback 쌍과 선형 target의 저장 byte가 다름, 결과 중복 쌍은 의도한 하나뿐(`p3_surface_and_srgb_fallback_fixtures_store_different_bytes`, `inventory_check_passes_with_required_categories_and_features`) | 통과 |
 | 문제 종류별 보고(이름 형식·중복, 없는 class, 기능 표시 없음, 계약 위반, 전체·분류 수 부족)(`inventory_check_reports_each_problem_kind`) | 통과 |
 | inventory 121개를 Metal로 그려 CPU 기준과 class 허용 오차 안, reference raw·PNG 121쌍 기록(`full_inventory_matches_cpu_reference_on_metal`) | 통과 |
 
