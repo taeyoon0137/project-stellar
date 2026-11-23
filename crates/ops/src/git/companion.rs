@@ -22,6 +22,7 @@ use stellar_project::document_io::component_source::read_project_library;
 use stellar_project::document_io::source_v4::token;
 use stellar_project::path_resolver::ExternalAccess;
 use stellar_project::yaml::loader::MAX_INPUT_BYTES;
+use stellar_storage::source_file;
 
 use super::{CompanionReason, PrepareStageError, SourceUnit, COMPONENTS_DIR};
 use crate::core_types::ids::StableId;
@@ -117,11 +118,11 @@ pub(super) fn token_files(root: &Path) -> Result<TokenFiles, PrepareStageError> 
         if !meta.is_file() {
             return Err(invalid(format!("{name}: 정규 파일이 아닙니다")));
         }
-        if meta.len() > MAX_INPUT_BYTES as u64 {
-            return Err(invalid(format!("{name}: 상한을 넘습니다")));
-        }
-        let text = std::fs::read_to_string(entry.path())
+        // 텍스트 원본 reader(`source_v4::project::read_dir`)와 같은 제한 읽기: 열린 handle의 종류·크기를 상한까지 검사합니다.
+        let bytes = source_file::read(&entry.path(), MAX_INPUT_BYTES as u64)
             .map_err(|e| invalid(format!("{name}: {:?}", e.kind())))?;
+        let text = String::from_utf8(bytes)
+            .map_err(|_| invalid(format!("{name}: UTF-8이 아닌 텍스트 원본")))?;
         let set = token::decode(&text).map_err(|e| invalid(format!("{name}: {e}")))?;
         out.insert(
             GitPath::from_bytes(format!("{TOKENS_DIR}{name}").as_bytes()),
