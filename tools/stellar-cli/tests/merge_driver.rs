@@ -297,3 +297,120 @@ fn unresolved_conflicts_keep_ours_bytes_and_exit_nonzero() {
     // driver는 merge 상태를 끝내지 않습니다(MERGE_HEAD 유지).
     assert!(repo.root.join(".git/MERGE_HEAD").exists());
 }
+
+fn trust(repo: &Repo) {
+    use stellar_ops::test_support::{project_id, FileTrustStore, ProjectIdentity};
+    let data = repo
+        .home
+        .join("Library/Application Support/xyz.taeyoon.stellar");
+    FileTrustStore::open(&data)
+        .unwrap()
+        .grant(&ProjectIdentity::new(project_id(), &repo.root.canonicalize().unwrap()).unwrap())
+        .unwrap();
+}
+
+fn local_config(repo: &Repo) -> String {
+    let out = repo.git_output(&["config", "--local", "--get-regexp", "^merge\\."]);
+    String::from_utf8(out.stdout).unwrap()
+}
+
+#[test]
+fn registration_happens_only_through_the_install_command() {
+    let repo = Repo::new("driver-install");
+    let attributes = fs::read(repo.root.join(".gitattributes")).unwrap();
+    let global = fs::read(repo.home.join(".gitconfig")).unwrap();
+    // 동의 없는 명령(driver 실행, semantic-merge)은 config와 .gitattributes를 바꾸지 않습니다.
+    let file = repo.root.join(&repo.file);
+    let side = file.to_str().unwrap();
+    let ran = stellar(
+        &repo.root,
+        &repo.home,
+        &["merge-driver", side, side, side, &repo.file],
+    );
+    assert_eq!(ran.status.code(), Some(0));
+    let ran = stellar(&repo.root, &repo.home, &["semantic-merge", ".", ".", "."]);
+    assert_eq!(ran.status.code(), Some(0));
+    assert_eq!(local_config(&repo), "");
+    assert_eq!(
+        fs::read(repo.root.join(".gitattributes")).unwrap(),
+        attributes
+    );
+
+    // 신뢰하지 않은 프로젝트에서는 등록하지 않습니다.
+    let refused = stellar(&repo.root, &repo.home, &["merge-driver", "install", "."]);
+    let envelope = result(&refused, 77);
+    assert_eq!(
+        string(envelope.get("error").unwrap(), "code"),
+        "untrusted-project"
+    );
+    assert_eq!(local_config(&repo), "");
+    assert_eq!(
+        fs::read(repo.root.join(".gitattributes")).unwrap(),
+        attributes
+    );
+
+    trust(&repo);
+    let installed = result(
+        &stellar(&repo.root, &repo.home, &["merge-driver", "install", "."]),
+        0,
+    );
+    let report = installed.get("result").unwrap();
+    assert_eq!(report.get("attributes_added"), Some(&JsonValue::Bool(true)));
+    assert_eq!(
+        report
+            .get("config_changed")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let config = local_config(&repo);
+    assert!(
+        config.contains("merge.stellar.name Stellar semantic merge"),
+        "{config}"
+    );
+    assert!(config.contains("merge-driver %O %A %B %P"), "{config}");
+    let text = fs::read_to_string(repo.root.join(".gitattributes")).unwrap();
+    assert!(
+        text.ends_with("design/components/*.stellar.yaml merge=stellar\n"),
+        "{text}"
+    );
+    assert_eq!(
+        fs::read(repo.home.join(".gitconfig")).unwrap(),
+        global,
+        "전역 config 미변경"
+    );
+
+    // 다시 실행해도 같은 상태입니다.
+    let again = result(
+        &stellar(&repo.root, &repo.home, &["merge-driver", "install", "."]),
+        0,
+    );
+    let report = again.get("result").unwrap();
+    assert_eq!(
+        report.get("attributes_added"),
+        Some(&JsonValue::Bool(false))
+    );
+    assert!(report
+        .get("config_changed")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    // 등록한 driver로 같은 자리 자식 추가가 git merge만으로 병합됩니다.
+    repo.git(&["add", ".gitattributes"]);
+    repo.git(&["commit", "-qm", "install"]);
+    repo.branch("badge", |r| r.add_frame(BADGE, "Badge"));
+    repo.branch("tag", |r| r.add_frame(TAG, "Tag"));
+    repo.git(&["switch", "-q", "badge"]);
+    let merged = repo.git_output(&["merge", "--no-edit", "tag"]);
+    assert!(
+        merged.status.success(),
+        "{}",
+        String::from_utf8_lossy(&merged.stderr)
+    );
+    let text = String::from_utf8(repo.read()).unwrap();
+    assert!(text.contains("Badge") && text.contains("Tag"));
+}

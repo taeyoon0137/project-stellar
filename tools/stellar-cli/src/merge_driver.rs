@@ -9,22 +9,116 @@
 //!   conflict(unmerged)로 남깁니다.
 //!
 //! driver는 Git을 실행하지 않고 Git config·`.gitattributes`도 바꾸지 않습니다.
+//!
+//! 등록은 사용자가 명시적으로 부르는 `stellar merge-driver install <프로젝트>`만 합니다(XXIV.2.3). 신뢰한 프로젝트에서만
+//! 동작하고 저장소 로컬 config와 프로젝트 `.gitattributes` 한 줄만 바꿉니다. 전역·시스템 config는 바꾸지 않습니다.
+
+/// 시스템 Git adapter(ops `MergeGit` 포트 구현).
+mod system_git;
 
 use std::path::{Path, PathBuf};
 
 use stellar_ops::candidate::file_merge::{merge_semantic_file, FileMergeError, FileMergeOutcome};
+use stellar_ops::candidate::install::{install_driver, InstallError};
+use stellar_ops::trusted::TrustedProject;
 
 use crate::exit::ExitStatus;
 use crate::json::JsonValue;
 use crate::output::{CliError, Diagnostic, Severity, Success};
 use crate::project_cmds::conflict_json;
 
+use system_git::SystemGit;
+
 /// 한 입력 파일의 크기 상한(컴포넌트 원본 상한 1 MiB와 같음). 넘으면 읽지 않고 실패합니다.
 const MAX_SIDE_BYTES: u64 = 1024 * 1024;
 
 /// `merge-driver` 명령.
 pub fn run(args: &[String]) -> Result<Success, CliError> {
-    drive(args)
+    match args.first().map(String::as_str) {
+        Some("install") => install(&args[1..]),
+        _ => drive(args),
+    }
+}
+
+/// shell 한 단어로 감쌉니다(작은따옴표, 안의 작은따옴표는 `'\''`).
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+fn system_git() -> Result<SystemGit, CliError> {
+    SystemGit::discover().ok_or_else(|| {
+        CliError::new(
+            ExitStatus::Unavailable,
+            "git-unavailable",
+            "시스템 Git을 찾지 못했습니다",
+        )
+    })
+}
+
+/// 신뢰한 프로젝트 루트(절대 경로).
+fn trusted_root(path: &str) -> Result<PathBuf, CliError> {
+    let root = std::path::absolute(path)
+        .map_err(|e| CliError::new(ExitStatus::NoInput, "project-path", format!("경로: {e}")))?;
+    TrustedProject::select(&root).map_err(|_| {
+        CliError::new(
+            ExitStatus::NoPerm,
+            "untrusted-project",
+            "신뢰한 프로젝트에서만 Git 설정·index를 바꿉니다. 앱에서 프로젝트를 신뢰한 뒤 다시 실행하세요",
+        )
+        .with_context(path.to_owned())
+    })?;
+    Ok(root)
+}
+
+/// `merge-driver install <프로젝트>`(XXIV.2.3).
+fn install(args: &[String]) -> Result<Success, CliError> {
+    let [project] = args else {
+        return Err(CliError::usage(
+            "merge-driver install은 <프로젝트> 하나를 받습니다",
+        ));
+    };
+    let root = trusted_root(project)?;
+    let git = system_git()?;
+    let exe = std::env::current_exe().map_err(|e| {
+        CliError::new(
+            ExitStatus::Software,
+            "current-exe",
+            format!("실행 파일 경로: {e}"),
+        )
+    })?;
+    let command = format!(
+        "{} merge-driver %O %A %B %P",
+        shell_quote(&exe.to_string_lossy())
+    );
+    let report = install_driver(&git, &root, &command).map_err(|e| {
+        let status = match e {
+            InstallError::NotProject => ExitStatus::NoInput,
+            InstallError::Git(_) => ExitStatus::Unavailable,
+            InstallError::Io(_) => ExitStatus::IoErr,
+        };
+        CliError::new(status, "merge-driver-install", e.to_string()).with_context(project.clone())
+    })?;
+    Ok(Success {
+        result: JsonValue::object(vec![
+            ("driver", JsonValue::string(report.driver)),
+            (
+                "config_changed",
+                JsonValue::Array(
+                    report
+                        .config_changed
+                        .into_iter()
+                        .map(JsonValue::string)
+                        .collect(),
+                ),
+            ),
+            (
+                "attributes",
+                JsonValue::string(report.attributes_path.to_string_lossy()),
+            ),
+            ("attributes_added", JsonValue::Bool(report.attributes_added)),
+        ]),
+        diagnostics: Vec::new(),
+    })
 }
 
 fn read_side(path: &Path, side: &str) -> Result<Vec<u8>, CliError> {

@@ -198,5 +198,11 @@ pub mod component_file;
 /// 텍스트 의미 파일 하나의 3-way semantic merge (XXIV.2.1·XXIV.2.2, ADR-0081).
 pub mod file_merge;
 
+/// Semantic Merge 해결·등록이 쓰는 Git 접근 포트 (ADR-0081 결정 7).
+pub mod git_port;
+
+/// merge driver 저장소 로컬 등록 (XXIV.2.3, ADR-0081).
+pub mod install;
+
 #[cfg(test)]
 mod tests;
