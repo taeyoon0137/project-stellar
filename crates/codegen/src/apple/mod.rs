@@ -48,6 +48,9 @@ mod appkit;
 /// Context → SwiftUI Environment 값 출력 형태 (XXII.3.4 일부).
 pub mod context;
 
+/// 저장 View 투영 → CodegenIR 입력(CLI·MCP용, Apple·Android 공용).
+pub mod native_input;
+
 #[cfg(test)]
 mod tests;
 
