@@ -450,6 +450,26 @@ impl MotionSpec {
         // `-0`은 `0`으로 정규화합니다(저장 bytes 결정론).
         input.duration_ms += 0.0;
         input.delay_ms += 0.0;
+        input.timing = match input.timing {
+            TimingFunction::CubicBezier { x1, y1, x2, y2 } => TimingFunction::CubicBezier {
+                x1: x1 + 0.0,
+                y1: y1 + 0.0,
+                x2: x2 + 0.0,
+                y2: y2 + 0.0,
+            },
+            TimingFunction::Spring {
+                mass,
+                stiffness,
+                damping,
+                initial_velocity,
+            } => TimingFunction::Spring {
+                mass: mass + 0.0,
+                stiffness: stiffness + 0.0,
+                damping: damping + 0.0,
+                initial_velocity: initial_velocity + 0.0,
+            },
+            other => other,
+        };
         Ok(MotionSpec { input })
     }
 
@@ -637,8 +657,34 @@ mod tests {
     fn negative_zero_is_normalized() {
         let mut value = input();
         value.delay_ms = -0.0;
+        value.timing = TimingFunction::CubicBezier {
+            x1: -0.0,
+            y1: -0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
         let spec = MotionSpec::new(value).expect("유효");
         assert!(spec.delay_ms().is_sign_positive());
+        let TimingFunction::CubicBezier { x1, y1, .. } = spec.timing() else {
+            panic!("cubic-bezier");
+        };
+        assert!(x1.is_sign_positive() && y1.is_sign_positive());
+        let mut spring = input();
+        spring.timing = TimingFunction::Spring {
+            mass: 1.0,
+            stiffness: 100.0,
+            damping: -0.0,
+            initial_velocity: -0.0,
+        };
+        let TimingFunction::Spring {
+            damping,
+            initial_velocity,
+            ..
+        } = MotionSpec::new(spring).expect("유효").timing()
+        else {
+            panic!("spring");
+        };
+        assert!(damping.is_sign_positive() && initial_velocity.is_sign_positive());
     }
 
     #[test]
