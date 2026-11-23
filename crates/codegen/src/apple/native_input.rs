@@ -5,10 +5,19 @@
 //! [`stellar_layout::declared::style_from_declarations`]로만 엔진 입력이 됩니다(값 parser를 새로 두지 않음). 접근성은
 //! [`stellar_accessibility::generate`]로 만듭니다.
 //!
-//! 문서가 아직 복원하지 못하는 control contract·상태·token·Variant·target capability 속성은 채우지 않습니다(ADR-0049,
-//! XXII.1.1). 그래서 이 입력의 IR은 구조·layout·텍스트·기본 접근성만 담습니다.
+//! IR 입력은 다음을 채웁니다(ADR-0121 결정 3).
+//!
+//! - CSS 기반 속성 사용(`css_properties`): node마다 값이 엔진 생략값(`LayoutStyle::default()`)과 다른 layout
+//!   longhand, 0이 아닌 시각 이동(`frame/transform`). container longhand는 Frame·ComponentInstance만 씁니다. IR이 이
+//!   사용마다 XXII.1.4 matrix 판정(IR mapping)을 붙입니다.
+//! - 상태·상태 머신·`MotionSpec`·Context(`states`·`machines`·`motions`·`contexts`): 호출자가 [`NativeBehaviors`]로
+//!   넘긴 값을 그대로 씁니다. 문서 값 변환은 문서 계층(ops)이 하고(`ops::codegen::motion` 등), 이 함수는 다시 해석하지
+//!   않습니다. [`build_native_ir`]는 빈 [`NativeBehaviors`]입니다.
+//!
+//! 문서가 아직 복원하지 못하는 control contract·token·Variant·target capability 속성은 채우지 않습니다(ADR-0049,
+//! XXII.1.1).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use stellar_accessibility::generate::generate;
@@ -26,7 +35,13 @@ use stellar_target_profile::overrides::VariantLayer;
 use stellar_target_profile::spec::TargetProfile;
 use stellar_target_profile::validate::{PropertyCapabilityMap, ViewModel, ViewNode};
 
-use crate::ir::{build_ir, CodegenIr, CodegenSources, IrError};
+use crate::ir::context::IrContexts;
+use crate::ir::{
+    build_ir, CodegenIr, CodegenSources, CssPropertyUse, IrError, IrMotion, IrStateMachine,
+    StateDecl,
+};
+use stellar_layout::style::LayoutStyle;
+use stellar_target_profile::css_matrix::MappingInput;
 
 /// node 하나의 입력(문서 preorder, 형제는 문서 순서).
 #[derive(Debug, Clone, PartialEq)]
@@ -110,9 +125,80 @@ fn source_kind(element: ElementKind) -> SourceKind {
     }
 }
 
-/// 입력에서 IR을 만듭니다.
+/// 상태·상태 머신·`MotionSpec`·Context 입력. 문서 계층이 IR 타입으로 옮긴 값입니다.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NativeBehaviors {
+    /// 상태 변수 선언.
+    pub states: Vec<StateDecl>,
+    /// 선언형 상태 머신(XXII.1.5).
+    pub machines: Vec<IrStateMachine>,
+    /// `MotionSpec`(XXII.1.5).
+    pub motions: Vec<IrMotion>,
+    /// Context 해석 결과(XXII.1.6).
+    pub contexts: IrContexts,
+}
+
+/// node 하나의 CSS 기반 속성 사용(ADR-0121 결정 3). layout longhand는 CSS longhand 그대로라 매핑 상태가 `exact`입니다.
+///
+/// 생략값과 다른 longhand는 엔진의 [`LayoutStyle::declarations`]가 정합니다(필드 비교를 다시 두지 않음). 범위는 matrix
+/// 항목 표([`crate::matrix::css::find`])에 `node/<이름>` 항목이 있으면 item longhand(`node`), 없으면 container
+/// longhand(`frame`)입니다(item·container 목록을 따로 두지 않음).
+fn css_uses(
+    style: &LayoutStyle,
+    element: ElementKind,
+    translation: (f32, f32),
+) -> Vec<CssPropertyUse> {
+    let changed: BTreeSet<&'static str> = style
+        .declarations()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    let container = matches!(
+        element,
+        ElementKind::FRAME | ElementKind::COMPONENT_INSTANCE
+    );
+    let mut out: Vec<CssPropertyUse> = stellar_layout::declared::LONGHANDS
+        .iter()
+        .filter(|name| changed.contains(*name))
+        .filter_map(|name| {
+            let scope = if crate::matrix::css::find("node", name).is_some() {
+                "node"
+            } else if container {
+                "frame"
+            } else {
+                return None;
+            };
+            Some(CssPropertyUse {
+                scope,
+                name,
+                status: MappingInput::Exact,
+                path: None,
+            })
+        })
+        .collect();
+    if element == ElementKind::FRAME && translation != (0.0, 0.0) {
+        out.push(CssPropertyUse {
+            scope: "frame",
+            name: "transform",
+            status: MappingInput::Exact,
+            path: None,
+        });
+    }
+    out
+}
+
+/// 입력에서 IR을 만듭니다(상태·상태 머신·motion·Context 없음).
 pub fn build_native_ir(
     nodes: &[NativeNodeInput],
+    profile: &TargetProfile,
+) -> Result<CodegenIr, NativeInputError> {
+    build_native_view_ir(nodes, &NativeBehaviors::default(), profile)
+}
+
+/// 입력과 상태·상태 머신·motion·Context에서 IR을 만듭니다.
+pub fn build_native_view_ir(
+    nodes: &[NativeNodeInput],
+    behaviors: &NativeBehaviors,
     profile: &TargetProfile,
 ) -> Result<CodegenIr, NativeInputError> {
     let root = nodes.first().ok_or(NativeInputError::Empty)?.id;
@@ -144,6 +230,7 @@ pub fn build_native_ir(
     let mut source = SourceTree::new();
     source.push_root(root);
     let mut texts = BTreeMap::new();
+    let mut css_properties: BTreeMap<StableId, Vec<CssPropertyUse>> = BTreeMap::new();
     for node in nodes {
         let mut source_node = SourceNode::new(node.id, source_kind(node.element))
             .with_children(children.get(&node.id).cloned().unwrap_or_default());
@@ -167,6 +254,10 @@ pub fn build_native_ir(
                 node: node.id,
                 reason: e.to_string(),
             })?;
+        let uses = css_uses(&style, node.element, node.translation);
+        if !uses.is_empty() {
+            css_properties.insert(node.id, uses);
+        }
         let (tx, ty) = node.translation;
         let mut layout = LayoutNode::new(node.id).with_style(style).with_transform(
             Transform2D::new(1.0, 0.0, 0.0, 1.0, tx, ty).map_err(|_| {
@@ -205,15 +296,13 @@ pub fn build_native_ir(
         layout: &layout,
         accessibility: &accessibility,
         texts: &texts,
-        states: &[],
+        states: &behaviors.states,
         tokens: &[],
         token_bindings: &BTreeMap::new(),
-        // 네이티브 출력 입력은 layout·control 계약만 싣습니다. CSS 속성 사용·상태 머신·motion·Context 입력은
-        // 공용 IR registry(XXII.1.4~1.7)에서 Apple·Android 열을 등록할 때 채웁니다.
-        css_properties: &BTreeMap::new(),
-        machines: &[],
-        motions: &[],
-        contexts: &crate::ir::context::IrContexts::default(),
+        css_properties: &css_properties,
+        machines: &behaviors.machines,
+        motions: &behaviors.motions,
+        contexts: &behaviors.contexts,
     };
     build_ir(&sources, profile, &catalog).map_err(NativeInputError::Ir)
 }
@@ -316,5 +405,136 @@ mod tests {
             build_native_ir(&broken, &ios_profile()),
             Err(NativeInputError::Declarations { .. })
         ));
+    }
+
+    #[test]
+    fn native_input_fills_css_uses_and_behaviors() {
+        // ADR-0121 결정 3: 생략값과 다른 layout longhand와 시각 이동이 CSS 속성 사용이 되고, IR이 matrix 판정을
+        // 붙입니다. 상태·motion·Context 입력은 그대로 IR에 들어갑니다.
+        use crate::ir::{
+            IrMotionStart, IrOwner, IrReducedMotion, IrTiming, MappingSource, MappingSubject,
+        };
+        use crate::matrix::css_entry;
+        use stellar_core_types::typed_value::TypedValue;
+        use stellar_target_profile::css_matrix::RegistryInput;
+        use stellar_target_profile::profile::TargetProfileKind;
+
+        let nodes = vec![
+            NativeNodeInput {
+                id: sid(1),
+                parent: None,
+                element: ElementKind::FRAME,
+                declarations: declarations(&[
+                    ("display", "flex"),
+                    ("flex-direction", "column"),
+                    ("flex-wrap", "wrap"),
+                    ("width", "200px"),
+                ]),
+                translation: (2.0, 0.0),
+                text: None,
+                hidden: false,
+            },
+            NativeNodeInput {
+                id: sid(3),
+                parent: Some(sid(1)),
+                element: ElementKind::TEXT,
+                // Text의 container longhand(display)는 사용으로 보지 않습니다.
+                declarations: declarations(&[("display", "flex"), ("flex-grow", "1")]),
+                translation: (4.0, 0.0),
+                text: Some("안녕".to_string()),
+                hidden: false,
+            },
+        ];
+        let state = sid(40);
+        let behaviors = NativeBehaviors {
+            states: vec![StateDecl {
+                id: state,
+                name: "open".to_string(),
+                initial: TypedValue::Boolean(false),
+            }],
+            machines: Vec::new(),
+            motions: vec![crate::ir::IrMotion {
+                id: sid(41),
+                owner: IrOwner::View(sid(1)),
+                targets: vec![
+                    PropertyPath::new(sid(3)).push(stellar_core_types::property::PropertyKey(4))
+                ],
+                start: IrMotionStart::Changes { state },
+                duration_ms: 200.0,
+                delay_ms: 0.0,
+                timing: IrTiming::Linear,
+                reduced_motion: IrReducedMotion::Instant,
+            }],
+            contexts: IrContexts::default(),
+        };
+        for profile in [ios_profile(), crate::fixture::android_profile()] {
+            let ir = build_native_view_ir(&nodes, &behaviors, &profile).expect("IR");
+            assert_eq!(ir.states.len(), 1);
+            assert_eq!(ir.motions.len(), 1);
+            let names = |index: usize| -> Vec<&str> {
+                ir.nodes[index]
+                    .mappings
+                    .iter()
+                    .filter(|m| m.source == MappingSource::Matrix)
+                    .filter_map(|m| match m.subject {
+                        MappingSubject::Css { name, .. } => Some(name),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            // 엔진 생략값과 다른 longhand만 사용이고(`grid-row-end: auto` 같은 값은 아님), local transform registry
+            // 항목은 Frame(`frame/transform`)에만 있습니다. Text의 container longhand(display)는 사용이 아닙니다.
+            // `box-sizing`은 CSS 초기값(content-box)이 엔진 생략값(border-box)과 달라 사용입니다.
+            assert_eq!(
+                names(0),
+                [
+                    "display",
+                    "flex-direction",
+                    "flex-wrap",
+                    "transform",
+                    "box-sizing",
+                    "width"
+                ]
+            );
+            assert_eq!(names(1), ["box-sizing", "flex-grow"]);
+            // 판정은 matrix 그대로입니다(Apple은 flex-wrap Unsupported, Android는 Native).
+            let kind = profile.kind();
+            let wrap = ir.nodes[0]
+                .mappings
+                .iter()
+                .find(|m| {
+                    matches!(
+                        m.subject,
+                        MappingSubject::Css {
+                            name: "flex-wrap",
+                            ..
+                        }
+                    )
+                })
+                .expect("flex-wrap");
+            let expected = css_entry(
+                RegistryInput {
+                    scope: "frame",
+                    name: "flex-wrap",
+                    status: MappingInput::Exact,
+                },
+                kind,
+            );
+            assert_eq!(wrap.status, expected.status);
+            assert_eq!(wrap.rule, expected.rule);
+            assert_eq!(
+                wrap.status,
+                Some(match kind {
+                    TargetProfileKind::Android => {
+                        stellar_target_profile::capability::CapabilityStatus::Native
+                    }
+                    _ => stellar_target_profile::capability::CapabilityStatus::Unsupported,
+                })
+            );
+        }
+        // 빈 입력은 상태·motion이 없고 CSS 속성 사용은 그대로 채웁니다.
+        let plain = build_native_ir(&nodes, &ios_profile()).expect("IR");
+        assert!(plain.motions.is_empty());
+        assert!(!plain.nodes[0].mappings.is_empty());
     }
 }

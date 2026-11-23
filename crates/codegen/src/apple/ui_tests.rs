@@ -236,3 +236,41 @@ fn generated_views_typecheck_against_apple_sdks() {
         typecheck(&ui(input, &profile, dialect).source, name, sdk, &target);
     }
 }
+
+#[test]
+fn apple_output_is_a_generated_file_set() {
+    // XXII.5.1: Swift 출력은 생성 파일 집합의 `<접두어>View.swift` 하나이고 marker·LF·끝 줄바꿈 규칙을 따릅니다.
+    let fixture = Fixture::new();
+    for (profile, dialect) in [
+        (fx::ios_profile(), AppleDialect::SwiftUi),
+        (fx::mac_profile(), AppleDialect::AppKit),
+    ] {
+        let ir = fixture.ir(&profile);
+        let options = AppleOptions::new(dialect);
+        let (files, notes) = export_apple_files(&ir, &options).expect("files");
+        let (again, _) = export_apple_files(&ir, &options).expect("files");
+        assert_eq!(files.manifest_text(), again.manifest_text(), "byte 동일");
+        let paths: Vec<&str> = files.iter().map(|(p, _)| p).collect();
+        assert_eq!(paths, ["StellarView.swift"]);
+        let export = export_apple_ui(&ir, &options).expect("export");
+        assert_eq!(notes, export.notes);
+        let content = files.get(paths[0]).expect("내용");
+        let marker = crate::output::FileKind::Swift.marker();
+        assert_eq!(content, format!("{marker}\n{}", export.source));
+        assert!(!content.contains('\r') && !content.ends_with("\n\n"));
+        #[cfg(target_os = "macos")]
+        {
+            let (sdk, target) = sdk_target(&profile);
+            typecheck(content, &format!("files-{dialect:?}"), sdk, &target);
+        }
+    }
+    let ir = fixture.ir(&fx::ios_profile());
+    let bad = AppleOptions {
+        dialect: AppleDialect::SwiftUi,
+        type_prefix: "x/y".to_string(),
+    };
+    assert_eq!(
+        export_apple_files(&ir, &bad).map(|_| ()),
+        Err(AppleError::InvalidTypePrefix)
+    );
+}

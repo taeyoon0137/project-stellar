@@ -73,17 +73,15 @@ fn reading_order_needs_compose_ui_1_6() {
 
 #[test]
 fn compose_rules_cover_every_longhand() {
-    // XXII.1.4 Android 열 중 CSS layout longhand 부분: 모든 longhand에 Compose 규칙이 하나씩 있습니다.
-    let expected: BTreeSet<&str> = stellar_layout::declared::LONGHANDS
-        .iter()
-        .copied()
-        .collect();
-    let names: BTreeSet<&str> = layout::COMPOSE_RULES
-        .iter()
-        .map(|(name, _)| *name)
-        .collect();
-    assert_eq!(names, expected);
-    assert_eq!(names.len(), layout::COMPOSE_RULES.len(), "중복 규칙");
+    // XXII.1.4 Android 열 중 CSS layout longhand 부분: 모든 longhand에 Compose 규칙이 matrix에 하나씩 있습니다.
+    use crate::matrix::dialect::{lowering, rule_text, Dialect};
+    for name in stellar_layout::declared::LONGHANDS {
+        let scope = ["node", "frame"]
+            .into_iter()
+            .find(|scope| rule_text(scope, name, Dialect::Compose).is_some())
+            .unwrap_or_else(|| panic!("{name} 규칙 문장 없음"));
+        assert!(lowering(scope, name, Dialect::Compose).is_some(), "{name}");
+    }
 }
 
 #[test]

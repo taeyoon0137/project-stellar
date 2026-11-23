@@ -43,3 +43,22 @@
   합니다. 이 행은 그 일 전까지 부분 완료로 둡니다.
 - 매핑표 행 변경: OutsideStroke row가 vector가 됐고(XX.3.4), BlendMode row 설명을 래스터 이유로 고쳤습니다. 두 row의 CSS
   longhand 연결(`stroke`·`stroke-width`, `mix-blend-mode`)은 그대로입니다.
+
+## 후속 작업 (2026-11-23, `lane/codegen-registry`, ADR-0121 결정 7)
+
+- 매핑표 행마다 원천 registry 항목(범위, 이름)을 잇는 `SvgFeature::registry_items`를 더했습니다.
+  - Stellar 전용 원천 행도 이어집니다. 예: Text 본문 `text/text-content`, image crop `image/image-crop`, 색공간 override
+    `image/image-color-space`.
+  - 그래서 모든 행이 하나 이상의 항목에 이어집니다.
+- export는 document에 의존하지 않습니다. 그래서 registry 전체 항목을 담은 codegen matrix golden을 export test가 읽어
+  대조합니다(`matrix_css.txt`, ops test가 registry 전체와 대조).
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-export` | 통과(165, SVG golden bytes 불변) |
+| `cargo test -p stellar-integration-tests --test svg_registry_mapping` | 통과(3) |
+
+- 남은 것:
+  - formatter를 한 함수로 모으는 일은 수 표기를 core-types로 옮기는 결정이 필요합니다(ADR-0091 결정 6). 그래서 이 행은 부분
+    완료로 남습니다.
+  - 종단 test에 `registry_items` 대조를 더하는 일은 integration test 소유 작업입니다.

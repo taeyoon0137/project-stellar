@@ -11,7 +11,7 @@
 //! | Modal | 그 자리에 내용 container(노트) |
 //! | List·SingleSelectionGroup | 자식 layout container, 의미는 접근성 함수 |
 //!
-//! layout 규칙은 [`crate::apple::layout::APPKIT_RULES`]입니다.
+//! layout 규칙은 XXII.1.4 matrix의 AppKit 열([`crate::matrix::dialect`])입니다.
 
 use std::fmt::Write as _;
 
@@ -25,7 +25,7 @@ use stellar_target_profile::builtin::properties as p;
 use stellar_target_profile::capability::{CapabilityStatus, CapabilitySubject};
 
 use crate::apple::accessibility::{AccessibilityHook, StateNames, SwiftType};
-use crate::apple::layout::{appkit_stack_alignment, approximated, unsupported, LayoutFinding};
+use crate::apple::layout::{appkit_stack_alignment, LayoutFinding};
 use crate::apple::native::{
     grow_is_basis_zero, item_edge, justify_alignment, justify_edge, self_alignment, size, style,
     track_kind, Analysis, Axis, Container, Control, Edge, GridPlan, NodeInfo, TrackKind, ViewKind,
@@ -150,7 +150,7 @@ impl Generator<'_> {
                     FlexBasis::Length(length) => value = Size::Length(length),
                     FlexBasis::Percentage(_) => self.finding(
                         index,
-                        unsupported(
+                        matrix_finding(
                             "flex-basis",
                             "percent-size",
                             "AppKit 제약으로 부모 기준 백분율 크기를 내지 않습니다",
@@ -169,7 +169,7 @@ impl Generator<'_> {
                     Size::Auto | Size::MaxContent => {}
                     Size::FitContent => self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             name,
                             "fit-content",
                             "fit-content는 Auto Layout 고유 크기로 냅니다",
@@ -177,7 +177,7 @@ impl Generator<'_> {
                     ),
                     Size::MinContent | Size::Percentage(_) => self.finding(
                         index,
-                        unsupported(
+                        matrix_finding(
                             name,
                             "intrinsic-size",
                             "AppKit 제약으로 백분율·min-content 크기를 내지 않습니다",
@@ -198,7 +198,7 @@ impl Generator<'_> {
                 )),
                 _ => self.finding(
                     index,
-                    unsupported(
+                    matrix_finding(
                         min_name,
                         "intrinsic-limit",
                         "AppKit 제약으로 백분율·intrinsic 최소 크기를 내지 않습니다",
@@ -214,7 +214,7 @@ impl Generator<'_> {
                 )),
                 _ => self.finding(
                     index,
-                    unsupported(
+                    matrix_finding(
                         max_name,
                         "intrinsic-limit",
                         "AppKit 제약으로 백분율·intrinsic 최대 크기를 내지 않습니다",
@@ -236,7 +236,7 @@ impl Generator<'_> {
         {
             self.finding(
                 index,
-                unsupported(
+                matrix_finding(
                     "position",
                     "relative-offset",
                     "AppKit view에는 배치 뒤 시각 이동 API가 없어 relative inset을 내지 않습니다",
@@ -247,7 +247,7 @@ impl Generator<'_> {
             if layout.transform != stellar_core_types::value::Transform2D::identity() {
                 self.finding(
                     index,
-                    unsupported(
+                    matrix_finding(
                         "transform",
                         "transform",
                         "AppKit layer transform은 layout 때 다시 쓰일 수 있어 내지 않습니다",
@@ -317,7 +317,7 @@ impl Generator<'_> {
                 children.reverse();
                 self.finding(
                     index,
-                    approximated(
+                    matrix_finding(
                         "flex-direction",
                         "reverse-reading-order",
                         "reverse 방향은 자식 순서를 뒤집어 내므로 보조 기술 읽기 순서도 뒤집힙니다",
@@ -327,7 +327,7 @@ impl Generator<'_> {
             if s.flex_wrap != FlexWrap::NoWrap {
                 self.finding(
                     index,
-                    unsupported(
+                    matrix_finding(
                         "flex-wrap",
                         "wrap",
                         "NSStackView는 줄바꿈 배치가 없어 한 줄로 냅니다",
@@ -354,7 +354,7 @@ impl Generator<'_> {
                 if growing.len() > 1 {
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             "flex-grow",
                             "grow-distribution",
                             "NSStackView .fill은 남는 공간을 hugging priority가 가장 낮은 view 하나에 줍니다",
@@ -368,7 +368,7 @@ impl Generator<'_> {
                 ContentAlignment::SpaceAround | ContentAlignment::SpaceEvenly => {
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             "justify-content",
                             "spread",
                             "space-around·space-evenly는 NSStackView .equalCentering으로 근사합니다",
@@ -403,7 +403,7 @@ impl Generator<'_> {
                 if own != stack_edge {
                     self.finding(
                         *child,
-                        approximated(
+                        matrix_finding(
                             "align-self",
                             "align-self",
                             "NSStackView에는 item별 정렬이 없어 부모 정렬로 냅니다",
@@ -427,7 +427,7 @@ impl Generator<'_> {
                 } else if shrink != 1.0 {
                     self.finding(
                         *child,
-                        approximated(
+                        matrix_finding(
                             "flex-shrink",
                             "shrink-ratio",
                             "AppKit 압축은 비율을 받지 않아 flex-shrink 1처럼 냅니다",
@@ -443,7 +443,7 @@ impl Generator<'_> {
         if let Some(reason) = plan.fallback {
             self.finding(
                 index,
-                unsupported("grid-column-start", "grid-placement", reason),
+                matrix_finding("grid-column-start", "grid-placement", reason),
             );
         }
         let rows = plan
@@ -505,7 +505,7 @@ impl Generator<'_> {
         if flexible {
             self.finding(
                 index,
-                approximated(
+                matrix_finding(
                     "grid-template-columns",
                     "flexible-track",
                     "NSGridView에는 fr·백분율 track이 없어 콘텐츠 크기로 냅니다",
@@ -540,7 +540,7 @@ impl Generator<'_> {
         {
             self.finding(
                 index,
-                approximated(
+                matrix_finding(
                     "align-content",
                     "grid-content-alignment",
                     "NSGridView는 track 묶음 정렬이 없어 시작으로 냅니다",
@@ -717,7 +717,7 @@ impl Generator<'_> {
                     if matches!(value, LengthPercentageAuto::Percentage(_)) {
                         self.finding(
                             *child,
-                            unsupported(
+                            matrix_finding(
                                 longhand,
                                 "percent-inset",
                                 "AppKit 상수 제약으로 백분율 inset을 내지 않습니다",
@@ -743,7 +743,7 @@ impl Generator<'_> {
                 if !wrote {
                     self.finding(
                         *child,
-                        approximated(
+                        matrix_finding(
                             "position",
                             "static-position",
                             "inset이 모두 auto인 absolute box의 static position은 부모 content box 시작으로 냅니다",
@@ -1004,4 +1004,18 @@ impl Generator<'_> {
         out.push_str("}\n");
         out
     }
+}
+
+/// AppKit dialect 값별 진단. 상태는 XXII.1.4 matrix가 정합니다(ADR-0121 결정 2).
+fn matrix_finding(
+    longhand: &'static str,
+    code: &'static str,
+    reason: &'static str,
+) -> LayoutFinding {
+    crate::matrix::dialect::finding(
+        crate::matrix::dialect::Dialect::AppKit,
+        longhand,
+        code,
+        reason,
+    )
 }

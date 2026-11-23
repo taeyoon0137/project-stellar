@@ -12,7 +12,7 @@
 //! | Modal | 표시 상태가 IR에 없어 그 자리에 내용 container로 냄(노트) |
 //! | List·SingleSelectionGroup | 자식 layout container(SwiftUI `List`·`Picker`는 플랫폼 행 모양과 scroll을 강제해 디자인과 달라짐). 의미는 접근성 modifier |
 //!
-//! layout 규칙은 [`crate::apple::layout::SWIFTUI_RULES`]입니다.
+//! layout 규칙은 XXII.1.4 matrix의 SwiftUI 열([`crate::matrix::dialect`])입니다.
 
 use std::fmt::Write as _;
 
@@ -28,8 +28,7 @@ use stellar_target_profile::spec::{ApplePlatform, AppleProfile};
 
 use crate::apple::accessibility::{AccessibilityHook, StateNames, SwiftType};
 use crate::apple::layout::{
-    approximated, swiftui_alignment, swiftui_stack_alignment, swiftui_unit_point, unsupported,
-    LayoutFinding,
+    swiftui_alignment, swiftui_stack_alignment, swiftui_unit_point, LayoutFinding,
 };
 use crate::apple::native::{
     explicit_self, grow_is_basis_zero, is_stretch, item_edge, justify_alignment, justify_edge,
@@ -231,7 +230,7 @@ impl Generator<'_> {
                         }
                         stellar_layout::style::FlexBasis::Percentage(_) => self.finding(
                             index,
-                            unsupported(
+                            matrix_finding(
                                 "flex-basis",
                                 "percent-size",
                                 "SwiftUI에는 부모 기준 백분율 크기가 없어 자연 크기로 냅니다",
@@ -249,7 +248,7 @@ impl Generator<'_> {
             Size::FitContent => {
                 self.finding(
                     index,
-                    approximated(
+                    matrix_finding(
                         longhand,
                         "fit-content",
                         "fit-content는 SwiftUI 자연 크기(제안 크기 안의 이상 크기)로 냅니다",
@@ -260,7 +259,7 @@ impl Generator<'_> {
             Size::MinContent => {
                 self.finding(
                     index,
-                    unsupported(
+                    matrix_finding(
                         longhand,
                         "min-content",
                         "SwiftUI에는 min-content 크기가 없어 자연 크기로 냅니다",
@@ -271,7 +270,7 @@ impl Generator<'_> {
             Size::Percentage(_) => {
                 self.finding(
                     index,
-                    unsupported(
+                    matrix_finding(
                         longhand,
                         "percent-size",
                         "SwiftUI에는 부모 기준 백분율 크기가 없어 자연 크기로 냅니다",
@@ -302,7 +301,7 @@ impl Generator<'_> {
                 Size::Length(length) => parts.push(format!("min{label}: {}", px(length.get()))),
                 _ => self.finding(
                     index,
-                    unsupported(
+                    matrix_finding(
                         min_name,
                         "intrinsic-limit",
                         "SwiftUI frame은 백분율·intrinsic 최소 크기를 받지 않아 내지 않습니다",
@@ -314,7 +313,7 @@ impl Generator<'_> {
                 MaxSize::Length(length) => parts.push(format!("max{label}: {}", px(length.get()))),
                 _ => self.finding(
                     index,
-                    unsupported(
+                    matrix_finding(
                         max_name,
                         "intrinsic-limit",
                         "SwiftUI frame은 백분율·intrinsic 최대 크기를 받지 않아 내지 않습니다",
@@ -396,7 +395,7 @@ impl Generator<'_> {
         if let Some(ratio) = s.aspect_ratio {
             self.finding(
                 index,
-                approximated(
+                matrix_finding(
                     "aspect-ratio",
                     "aspect-ratio",
                     "SwiftUI aspectRatio(.fit)는 제안 크기 안에 맞추므로 CSS 비율 크기 해석과 다를 수 있습니다",
@@ -466,7 +465,7 @@ impl Generator<'_> {
             if percent(value) {
                 self.finding(
                     index,
-                    unsupported(
+                    matrix_finding(
                         name,
                         "percent-inset",
                         "SwiftUI offset은 부모 기준 백분율을 받지 않아 0으로 냅니다",
@@ -479,7 +478,7 @@ impl Generator<'_> {
                 if absolute {
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             "position",
                             "absolute-stretch",
                             "양쪽 inset으로 늘리는 absolute 크기는 낼 수 없어 시작 inset만 씁니다",
@@ -493,7 +492,7 @@ impl Generator<'_> {
             (LengthPercentageAuto::Auto, LengthPercentageAuto::Auto) if absolute => {
                 self.finding(
                     index,
-                    approximated(
+                    matrix_finding(
                         "position",
                         "static-position",
                         "inset이 모두 auto인 absolute box의 static position은 부모 content box 시작으로 냅니다",
@@ -551,7 +550,7 @@ impl Generator<'_> {
                 {
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             "align-self",
                             "column-baseline",
                             "column flex의 baseline 정렬은 SwiftUI에 없어 시작 정렬로 냅니다",
@@ -573,7 +572,7 @@ impl Generator<'_> {
                     if !equal {
                         self.finding(
                             index,
-                            approximated(
+                            matrix_finding(
                                 "flex-grow",
                                 "grow-distribution",
                                 "SwiftUI는 남은 공간을 채우는 형제에게 콘텐츠 크기와 무관하게 균등 분배합니다",
@@ -591,7 +590,7 @@ impl Generator<'_> {
                 } else if shrink != 1.0 {
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             "flex-shrink",
                             "shrink-ratio",
                             "SwiftUI 압축은 비율을 받지 않아 flex-shrink 1처럼 냅니다",
@@ -673,7 +672,7 @@ impl Generator<'_> {
                     children.reverse();
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             "flex-direction",
                             "reverse-reading-order",
                             "reverse 방향은 자식 출력 순서를 뒤집어 내므로 보조 기술 읽기 순서도 뒤집힙니다",
@@ -683,7 +682,7 @@ impl Generator<'_> {
                 if s.flex_wrap != FlexWrap::NoWrap {
                     self.finding(
                         index,
-                        unsupported(
+                        matrix_finding(
                             "flex-wrap",
                             "wrap",
                             "SwiftUI stack은 줄바꿈 배치가 없어 한 줄로 냅니다",
@@ -698,7 +697,7 @@ impl Generator<'_> {
                 if baseline && *main == Axis::Vertical {
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             "align-items",
                             "column-baseline",
                             "column flex의 baseline 정렬은 SwiftUI에 없어 시작 정렬로 냅니다",
@@ -720,7 +719,7 @@ impl Generator<'_> {
                             if gap != 0.0 {
                                 self.finding(
                                     index,
-                                    approximated(
+                                    matrix_finding(
                                         "justify-content",
                                         "spread-gap",
                                         "space-evenly와 gap을 함께 쓰면 사이 Spacer만 gap을 최소로 가져 양끝과 사이 간격이 CSS와 다릅니다",
@@ -732,7 +731,7 @@ impl Generator<'_> {
                         ContentAlignment::SpaceAround => {
                             self.finding(
                                 index,
-                                approximated(
+                                matrix_finding(
                                     "justify-content",
                                     "space-around",
                                     "space-around의 양끝 절반 간격은 Spacer로 낼 수 없어 space-evenly로 냅니다",
@@ -762,7 +761,7 @@ impl Generator<'_> {
                 if let Some(reason) = plan.fallback {
                     self.finding(
                         index,
-                        unsupported("grid-column-start", "grid-placement", reason),
+                        matrix_finding("grid-column-start", "grid-placement", reason),
                     );
                 }
                 self.grid_tracks_findings(index, plan);
@@ -778,7 +777,7 @@ impl Generator<'_> {
                 if !available {
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             "display",
                             "grid-unavailable",
                             "profile 최소 OS에 SwiftUI Grid가 없어 행·열 stack으로 냅니다",
@@ -854,7 +853,7 @@ impl Generator<'_> {
         if fr.windows(2).any(|pair| pair[0] != pair[1]) {
             self.finding(
                 index,
-                approximated(
+                matrix_finding(
                     "grid-template-columns",
                     "unequal-fr",
                     "SwiftUI Grid는 유연한 열을 균등하게 나눠 fr 비율을 지키지 못합니다",
@@ -866,7 +865,7 @@ impl Generator<'_> {
                 TrackKind::FlexibleAuto(_) => {
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             "grid-template-columns",
                             "fr-auto-minimum",
                             "최소 auto인 fr 열은 콘텐츠 최소 크기를 지키지 않고 남은 공간을 나눕니다",
@@ -877,7 +876,7 @@ impl Generator<'_> {
                 TrackKind::Other => {
                     self.finding(
                         index,
-                        unsupported(
+                        matrix_finding(
                             "grid-template-columns",
                             "track-size",
                             "백분율·섞인 minmax() 열은 SwiftUI Grid로 낼 수 없어 콘텐츠 크기로 냅니다",
@@ -896,7 +895,7 @@ impl Generator<'_> {
         }) {
             self.finding(
                 index,
-                approximated(
+                matrix_finding(
                     "grid-template-rows",
                     "row-track",
                     "SwiftUI Grid 행은 콘텐츠 크기라 fr·백분율 행 크기를 지키지 못합니다",
@@ -932,7 +931,7 @@ impl Generator<'_> {
                     if self.info(cell.child).fill.axes[0] {
                         self.finding(
                             cell.child,
-                            approximated(
+                            matrix_finding(
                                 "justify-items",
                                 "stretch-content-track",
                                 "콘텐츠 크기 열 안의 stretch는 열을 넓혀 CSS track 크기와 다를 수 있습니다",
@@ -969,7 +968,7 @@ impl Generator<'_> {
             } else {
                 self.finding(
                     grid,
-                    approximated(
+                    matrix_finding(
                         "grid-column-end",
                         "grid-span-unavailable",
                         "Grid가 없는 최소 OS에서는 열 span을 한 칸으로 냅니다",
@@ -1167,7 +1166,7 @@ impl Generator<'_> {
         if shrink {
             self.finding(
                 0,
-                approximated(
+                matrix_finding(
                     "flex-shrink",
                     "platform-compression",
                     "넘칠 때 SwiftUI stack의 압축 순서·자동 최소 크기(min-*: auto)는 CSS flex-shrink 1과 다를 수 있습니다",
@@ -1217,4 +1216,18 @@ impl Generator<'_> {
         out.push_str("}\n");
         out
     }
+}
+
+/// SwiftUi dialect 값별 진단. 상태는 XXII.1.4 matrix가 정합니다(ADR-0121 결정 2).
+fn matrix_finding(
+    longhand: &'static str,
+    code: &'static str,
+    reason: &'static str,
+) -> LayoutFinding {
+    crate::matrix::dialect::finding(
+        crate::matrix::dialect::Dialect::SwiftUi,
+        longhand,
+        code,
+        reason,
+    )
 }

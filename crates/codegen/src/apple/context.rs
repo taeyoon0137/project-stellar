@@ -6,7 +6,8 @@
 //!
 //! 이 module은 key 선언·공급·읽기의 Swift 형태만 정합니다. 어느 node가 어떤 값을 공급하고 소비 지점이 어느 provision을
 //! 읽는지는 CodegenIR의 Context 정보(XXII.1.6, XXX.7.4 해석 결과)가 정하며, 이 module이 다시 해석하지 않습니다.
-//! AppKit에는 Environment가 없어 [`ContextLoweringError::NoEnvironment`]입니다.
+//! AppKit에는 Environment가 없어 [`ContextLoweringError::NoEnvironment`]입니다. AppKit dialect의 Context 규칙은 IR이 해석한
+//! 값을 생성자로 주입하는 것입니다(XXII.1.7 matrix AppKit 열, ADR-0121 결정 4).
 
 use std::fmt;
 

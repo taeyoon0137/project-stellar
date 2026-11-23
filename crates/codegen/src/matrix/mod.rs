@@ -6,6 +6,8 @@
 //! - Web 항목은 IX.11.19 matrix(`stellar_target_profile::css_matrix::web_capability`)를 그대로 씁니다(다시 정의하지
 //!   않음).
 //! - Apple·Android 항목은 [`css`]의 명시 규칙 표가 정합니다(XXII.1.4). CSS 매핑 상태에서 유도하지 않습니다.
+//!   Apple 열은 SwiftUI dialect이고, AppKit dialect 차이는 같은 행의 `appkit` 열입니다. adapter의 규칙 문장과 값별
+//!   진단은 [`dialect`]에 등록되어 있고 adapter는 이 표만 읽습니다(ADR-0121 결정 1·2).
 //! - Context·`MotionSpec` 항목은 [`behavior`]가 Web·Apple·Android마다 정합니다(XXII.1.7). CSS 기반 속성 항목은
 //!   바꾸지 않습니다.
 
@@ -16,6 +18,9 @@ pub mod css;
 
 /// Context·`MotionSpec` 항목의 profile kind별 규칙 (XXII.1.7).
 pub mod behavior;
+
+/// Apple·Android adapter dialect 열(SwiftUI·AppKit·Compose)의 규칙 문장과 값별 진단 (XXII.1.4, ADR-0121).
+pub mod dialect;
 
 use stellar_target_profile::capability::CapabilityStatus;
 use stellar_target_profile::css_matrix::{web_capability, Basis, RegistryInput};

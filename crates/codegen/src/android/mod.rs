@@ -10,7 +10,7 @@
 //!   (`RowScope`·`ColumnScope`·`BoxScope`·Flow scope)를 receiver로 받아 `weight`·`align` 같은 item modifier를 씁니다.
 //!   node마다 함수를 두어 재귀 없이 씁니다.
 //!
-//! CSS layout longhand는 [`layout::COMPOSE_RULES`]로 낮춥니다. 구조 분석(채움·확정 크기·grid 칸)은 Apple adapter와 같은
+//! CSS layout longhand는 XXII.1.4 matrix의 Compose 열([`crate::matrix::dialect`])로 낮춥니다. 구조 분석(채움·확정 크기·grid 칸)은 Apple adapter와 같은
 //! [`crate::apple::native`]를 씁니다. 같은 IR과 옵션은 항상 같은 bytes를 만듭니다.
 
 use std::fmt;
@@ -21,6 +21,7 @@ use stellar_target_profile::spec::{AndroidProfile, ProfileSpec};
 use crate::apple::{ControlNote, LayoutFinding};
 use crate::facet::Facet;
 use crate::ir::CodegenIr;
+use crate::output::GeneratedFiles;
 use crate::text::identifier;
 
 /// Kotlin 소스 도우미.
@@ -40,6 +41,9 @@ pub(crate) mod compose;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod kotlin_check;
 
 #[cfg(test)]
 mod semantics_tests;
@@ -185,4 +189,29 @@ pub fn export_compose(
     notes.sort();
     notes.dedup();
     Ok(ComposeExport { source, notes })
+}
+
+/// Kotlin 출력 파일 경로(package 조각 디렉터리 + `<타입 접두어>View.kt`). Kotlin 관례대로 디렉터리가 package와 같습니다.
+pub fn compose_file_path(options: &ComposeOptions) -> String {
+    let mut path = options.package.replace('.', "/");
+    path.push('/');
+    path.push_str(&options.type_prefix);
+    path.push_str("View.kt");
+    path
+}
+
+/// [`export_compose`] 결과를 XXII.5.1 생성 파일 집합으로 냅니다(ADR-0121 결정 5).
+///
+/// 파일은 [`compose_file_path`] 하나이고 첫 줄이 생성 marker 주석이며 LF·끝 줄바꿈 하나입니다. 경로 조각은
+/// [`export_compose`]가 검사한 package 조각과 타입 접두어(ASCII 식별자)뿐입니다. 같은 IR과 옵션은 같은 bytes입니다.
+pub fn export_compose_files(
+    ir: &CodegenIr,
+    options: &ComposeOptions,
+) -> Result<(GeneratedFiles, Vec<AndroidNote>), ComposeError> {
+    let export = export_compose(ir, options)?;
+    let mut files = GeneratedFiles::new();
+    files
+        .insert(&compose_file_path(options), &export.source)
+        .expect("검사한 package·접두어의 상대 경로");
+    Ok((files, export.notes))
 }

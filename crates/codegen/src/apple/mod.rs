@@ -22,6 +22,7 @@ use stellar_target_profile::spec::{ApplePlatform, AppleProfile, ProfileSpec};
 
 use crate::facet::Facet;
 use crate::ir::CodegenIr;
+use crate::output::GeneratedFiles;
 use crate::text::identifier;
 
 /// Swift 소스 도우미.
@@ -255,6 +256,27 @@ fn finish(source: String, mut notes: Vec<AppleNote>) -> AppleExport {
 pub fn export_apple(ir: &CodegenIr, options: &AppleOptions) -> Result<AppleExport, AppleError> {
     let prepared = prepare(ir, options)?;
     Ok(finish(prepared.source, prepared.notes))
+}
+
+/// [`export_apple_ui`] 결과를 XXII.5.1 생성 파일 집합으로 냅니다(ADR-0121 결정 5).
+///
+/// 파일은 `<타입 접두어>View.swift` 하나이고 첫 줄이 생성 marker 주석이며 LF·끝 줄바꿈 하나입니다. 파일 이름은
+/// [`export_apple_ui`]가 검사한 ASCII 타입 접두어로만 만들어 escape가 필요 없습니다. 같은 IR과 옵션은 같은 bytes입니다.
+pub fn export_apple_files(
+    ir: &CodegenIr,
+    options: &AppleOptions,
+) -> Result<(GeneratedFiles, Vec<AppleNote>), AppleError> {
+    let export = export_apple_ui(ir, options)?;
+    let mut files = GeneratedFiles::new();
+    files
+        .insert(&apple_file_path(&options.type_prefix), &export.source)
+        .expect("검사한 ASCII 접두어의 상대 경로");
+    Ok((files, export.notes))
+}
+
+/// Swift 출력 파일 경로(`<타입 접두어>View.swift`).
+pub fn apple_file_path(type_prefix: &str) -> String {
+    format!("{type_prefix}View.swift")
 }
 
 /// 색·접근성에 view tree(Control contract·layout·상태)를 더한 Swift 소스를 내보냅니다(XXII.3.1·XXII.3.2).

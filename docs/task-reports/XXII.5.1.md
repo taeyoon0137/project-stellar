@@ -4,7 +4,7 @@
 
 - WBS: XXII.5.1
 - 작업명: 생성 파일 순서, 식별자 escape, formatting 고정
-- 상태: 부분 완료 (`[~]`) — Apple·Android 출력 파일 집합 연결이 남았습니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 `lane/codegen-registry`: Web·Apple·Android 출력이 모두 같은 생성 파일 규칙을 씁니다. 선행 XXII.2\~XXII.4가 `[x]`가 아니고, CLI·MCP가 파일 집합을 쓰는 연결이 남았습니다. 이전 기록: Apple·Android 출력 파일 집합 연결이 남았습니다.
 - 결정: ADR-0106 결정 8
 - 선행: XXII.2\~XXII.4
 
@@ -56,3 +56,21 @@
 - 접근성 entry가 없는 IR(fixture)에서는 접근성 mapper가 subtree를 숨김 처리합니다. 실제 View는 XXII.1.1 재개 뒤
   접근성 snapshot과 함께 들어옵니다.
 - Apple·Android 출력 파일 집합 연결은 XXII.3·XXII.4 몫입니다.
+
+## 후속 작업 (2026-11-23, `lane/codegen-registry`, ADR-0121 결정 5)
+
+- 생성 파일 집합에 Swift(`.swift`)·Kotlin(`.kt`) 형식을 더했습니다. marker 주석은 `//`입니다.
+- Apple·Android 출력도 같은 파일 집합으로 냅니다.
+  - `apple::export_apple_files`: `StellarView.swift`처럼 타입 접두어 + `View.swift`.
+  - `android::export_compose_files`: package 조각 디렉터리 + 타입 접두어 + `View.kt`(예: `stellar/generated/StellarView.kt`).
+  - 파일 이름은 adapter가 검사한 ASCII 식별자로만 만들어 상대 경로 규칙을 지킵니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-codegen` | 통과(lib 135) |
+
+- 검증 대응:
+  - same input byte-identical: `apple::ui_tests::apple_output_is_a_generated_file_set`(SwiftUI·AppKit, 생성 파일 내용 Swift
+    typecheck 포함), `android::tests::compose_output_is_a_generated_file_set`(Kotlin 문법 검사 포함).
+  - 경로 규칙: `output::tests::paths_formatting_and_order_are_fixed`.
+- 남은 것: CLI·MCP가 이 파일 집합을 쓰는 연결(ops·CLI 소유)과 XXII.5.2 쓰기입니다.

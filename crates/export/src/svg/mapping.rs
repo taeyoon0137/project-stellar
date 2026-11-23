@@ -168,6 +168,74 @@ impl fmt::Display for SvgFeature {
 }
 
 impl SvgFeature {
+    /// 이 기능의 원천인 속성 registry 항목(범위, 이름) 목록(IX.11.20, ADR-0121 결정 7).
+    ///
+    /// [`SvgFeature::css_longhands`]가 CSS longhand 이름으로 잇는다면, 이 목록은 그 값을 가진 registry 항목 자체(범위와
+    /// registry 이름, `stellar_document::css::registry::RegistryEntry`)를 가리킵니다. Stellar 전용 원천(Text 본문,
+    /// image asset·crop, 색공간 override)도 registry 항목이 있어 모든 행이 하나 이상의 항목에 이어집니다. 항목 이름이
+    /// registry에 있는지는 registry 전체 항목을 담은 코드 생성 matrix golden과 대조합니다(이 module test).
+    pub fn registry_items(self) -> &'static [(&'static str, &'static str)] {
+        const COLOR_SOURCES: &[(&str, &str)] = &[
+            ("frame", "background-color"),
+            ("modifier", "fill"),
+            ("modifier", "stroke"),
+            ("modifier", "shadow-color"),
+        ];
+        match self {
+            SvgFeature::RectContent => &[
+                ("frame", "width"),
+                ("frame", "height"),
+                ("frame", "background-color"),
+            ],
+            SvgFeature::RoundedRectContent => &[
+                ("frame", "border-top-left-radius"),
+                ("frame", "border-top-right-radius"),
+                ("frame", "border-bottom-right-radius"),
+                ("frame", "border-bottom-left-radius"),
+                ("shape", "border-top-left-radius"),
+                ("shape", "border-top-right-radius"),
+                ("shape", "border-bottom-right-radius"),
+                ("shape", "border-bottom-left-radius"),
+            ],
+            SvgFeature::PathContent => &[("path", "path-data")],
+            SvgFeature::EvenOddFill => &[("path", "fill-rule")],
+            SvgFeature::TextContent => &[("text", "text-content")],
+            SvgFeature::ImageContent => &[
+                ("image", "width"),
+                ("image", "height"),
+                ("image", "image-asset"),
+            ],
+            SvgFeature::ImageFitFill
+            | SvgFeature::ImageFitContain
+            | SvgFeature::ImageFitCover
+            | SvgFeature::ImageFitNone => &[("image", "object-fit")],
+            SvgFeature::ImageCrop => &[("image", "image-crop")],
+            SvgFeature::ImageNearestSampling => &[("image", "image-rendering")],
+            SvgFeature::ImageColorSpaceOverride => &[("image", "image-color-space")],
+            SvgFeature::SolidFill => &[("frame", "background-color"), ("modifier", "fill")],
+            SvgFeature::SrgbColor | SvgFeature::WideGamutColor => COLOR_SOURCES,
+            SvgFeature::TranslucentColor => COLOR_SOURCES,
+            SvgFeature::CenterStroke | SvgFeature::InsideStroke | SvgFeature::OutsideStroke => {
+                &[("modifier", "stroke"), ("modifier", "stroke-width")]
+            }
+            SvgFeature::RoundCap | SvgFeature::SquareCap => &[("shape", "stroke-linecap")],
+            SvgFeature::DropShadow => &[
+                ("modifier", "shadow-offset-x"),
+                ("modifier", "shadow-offset-y"),
+                ("modifier", "shadow-blur"),
+                ("modifier", "shadow-color"),
+            ],
+            SvgFeature::LayerBlur => &[("modifier", "blur-radius")],
+            SvgFeature::GroupOpacity => &[("modifier", "opacity")],
+            SvgFeature::BlendMode => &[("modifier", "mix-blend-mode")],
+            SvgFeature::RectClip | SvgFeature::RoundedRectClip => &[("frame", "clipping")],
+            SvgFeature::PathClip | SvgFeature::NestedClip => &[("modifier", "clip-path")],
+            SvgFeature::WorldTransform => &[("frame", "transform"), ("modifier", "transform")],
+            SvgFeature::HiddenNode => &[("node", "visible")],
+            SvgFeature::LinearGradient | SvgFeature::RadialGradient => &[("modifier", "fill")],
+        }
+    }
+
     /// 이 기능이 출력하는 값의 원천인 registry CSS longhand 이름(IX.11.20). 속성 registry
     /// (`stellar_document::css::registry`)의 CSS 매핑 longhand와 같은 이름이고, Stellar 전용 원천(Text 본문, image
     /// asset·crop, 색 표기 방식 등)은 빈 목록입니다. export crate는 document에 의존하지 않으므로 이름으로 잇고, 종단
@@ -638,6 +706,35 @@ pub fn first_unsupported(features: &BTreeSet<SvgFeature>) -> Option<SvgFeature> 
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn every_mapping_row_names_registry_items() {
+        // IX.11.20: 매핑표 모든 행이 하나 이상의 registry 항목에 이어지고, 그 항목은 registry에 있습니다. export는
+        // document에 의존하지 않으므로(crate 그래프) registry 전체 항목(범위/이름)을 담은 코드 생성 matrix golden
+        // (`crates/codegen/tests/fixtures/matrix_css.txt`, ops test가 registry 전체와 대조)을 읽어 확인합니다.
+        let golden = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("crates")
+                .join("codegen/tests/fixtures/matrix_css.txt"),
+        )
+        .expect("matrix golden");
+        let items: BTreeSet<&str> = golden
+            .lines()
+            .filter_map(|line| line.split(' ').next())
+            .collect();
+        for feature in SvgFeature::ALL {
+            let names = feature.registry_items();
+            assert!(!names.is_empty(), "{feature:?}에 registry 항목이 없습니다");
+            for (scope, name) in names {
+                let key = format!("{scope}/{name}");
+                assert!(
+                    items.contains(key.as_str()),
+                    "{feature:?}의 {key}는 registry 항목이 아닙니다"
+                );
+            }
+        }
+    }
 
     use stellar_core_types::reference::AssetRef;
     use stellar_core_types::shadow::{BlurRadius, Shadow};

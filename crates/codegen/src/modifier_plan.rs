@@ -1,6 +1,8 @@
 //! modifier stack → CSS 고정 적용 순서 선형화 계획 (IX.11.18, 속성 모델 3장·9.1절·9.2절).
 //!
-//! 파일을 쓰지 않는 core 계획 함수입니다. 실제 HTML·CSS 출력은 XXII.2가 이 계획을 읽어 합니다.
+//! 파일을 쓰지 않는 core 계획 함수입니다. [`render_plan`]이 계획을 읽어 HTML 요소 구조(wrapper·node·overlay·clip
+//! wrapper와 선언)로 냅니다. 그 DOM 배치는 기준 browser로 잰 결과 fixture로 확인합니다(ADR-0121 결정 8). 문서 node를
+//! 이 계획으로 잇는 Web 파일 출력 연결은 XXII.2 몫입니다.
 //!
 //! - CSS는 한 요소에 `transform` → paint(`box-shadow`, background, border, 내용) → `filter` 목록 → `clip-path` →
 //!   `mask` → `opacity` → `mix-blend-mode` 순서로 효과를 적용합니다.
@@ -436,6 +438,128 @@ pub fn plan_modifiers(input: &PlanInput) -> ModifierPlan {
     }
 }
 
+/// 계획 출력 오류.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanRenderError {
+    /// 계획이 래스터화를 요구합니다(요소 구조로 낼 수 없음, XX.4.1).
+    Rasterize,
+    /// 자리 표시(`<이름>`)의 값이 없습니다.
+    MissingValue(String),
+}
+
+impl std::fmt::Display for PlanRenderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PlanRenderError::Rasterize => f.write_str("래스터화가 필요한 계획입니다"),
+            PlanRenderError::MissingValue(name) => write!(f, "자리 표시 <{name}>의 값이 없습니다"),
+        }
+    }
+}
+
+impl std::error::Error for PlanRenderError {}
+
+/// 출력한 요소 위치.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlanSlots {
+    /// 가장 바깥 요소(부모에 붙인 요소).
+    pub outer: u32,
+    /// node 자신의 요소.
+    pub node: u32,
+    /// node 내용·자식을 붙일 요소(clip wrapper가 있으면 그것, 없으면 node 요소).
+    pub content: u32,
+}
+
+/// 자리 표시(`<이름>`)를 값으로 바꿉니다.
+fn resolve(
+    value: &str,
+    values: &dyn Fn(&str) -> Option<String>,
+) -> Result<String, PlanRenderError> {
+    let mut out = String::new();
+    let mut rest = value;
+    while let Some(start) = rest.find('<') {
+        let Some(end) = rest[start..].find('>') else {
+            break;
+        };
+        let name = &rest[start + 1..start + end];
+        out.push_str(&rest[..start]);
+        out.push_str(&values(name).ok_or_else(|| PlanRenderError::MissingValue(name.to_string()))?);
+        rest = &rest[start + end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+fn style_text(
+    declarations: &[(&'static str, String)],
+    values: &dyn Fn(&str) -> Option<String>,
+) -> Result<String, PlanRenderError> {
+    let mut parts = Vec::with_capacity(declarations.len());
+    for (name, value) in declarations {
+        parts.push(format!("{name}: {};", resolve(value, values)?));
+    }
+    Ok(parts.join(" "))
+}
+
+/// 계획을 HTML 요소 구조로 냅니다(IX.11.18 계획 출력기, ADR-0121 결정 8).
+///
+/// 바깥 wrapper(마지막 구간이 가장 바깥) → node 요소(`tag`) → 9.2절 overlay(node의 첫 자식) → clip wrapper(node의
+/// 자식, 내용은 그 안) 순서로 `document`에 요소를 만들고 `parent`(없으면 root)에 붙입니다. 요소 선언은 계획의 선언
+/// 그대로이고, node 요소에는 그 앞에 `node_declarations`(상자·layout longhand)를 둡니다. 선언 값의 자리 표시
+/// (`<fill>` 등)는 `values`가 채우며 값이 없으면 오류입니다. 같은 계획과 입력은 같은 요소 구조입니다.
+pub fn render_plan(
+    plan: &ModifierPlan,
+    document: &mut crate::web::html::HtmlDocument,
+    parent: Option<u32>,
+    tag: &'static str,
+    node_declarations: &[(&'static str, String)],
+    values: &dyn Fn(&str) -> Option<String>,
+) -> Result<PlanSlots, PlanRenderError> {
+    if plan.rasterize {
+        return Err(PlanRenderError::Rasterize);
+    }
+    let mut attach = parent;
+    let mut outer = None;
+    let mut node = None;
+    let mut content = None;
+    for element in &plan.elements {
+        let (element_tag, declarations) = match element.role {
+            ElementRole::Node => {
+                let mut all = node_declarations.to_vec();
+                all.extend(element.declarations.iter().cloned());
+                (tag, all)
+            }
+            _ => ("div", element.declarations.clone()),
+        };
+        let index = document.add(element_tag, None);
+        document.set_attr(index, "style", style_text(&declarations, values)?);
+        match element.role {
+            ElementRole::Wrapper => {}
+            ElementRole::Node => {
+                node = Some(index);
+                content = Some(index);
+            }
+            ElementRole::Overlay => {}
+            ElementRole::ClipWrapper => content = Some(index),
+        }
+        match attach {
+            Some(parent) => document.append(parent, index),
+            None => document.push_root(index),
+        }
+        outer.get_or_insert(index);
+        // wrapper는 다음 요소를 감싸고, overlay·clip wrapper는 node의 자식입니다.
+        attach = match element.role {
+            ElementRole::Wrapper | ElementRole::Node => Some(index),
+            ElementRole::Overlay | ElementRole::ClipWrapper => node,
+        };
+    }
+    let node = node.expect("계획에는 node 요소가 하나 있음");
+    Ok(PlanSlots {
+        outer: outer.unwrap_or(node),
+        node,
+        content: content.unwrap_or(node),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -627,5 +751,200 @@ mod tests {
             plan_modifiers(&node).elements[0].declarations[2].1,
             "matrix(0, 1, -1, 0, 10, 0)"
         );
+    }
+
+    fn values(name: &str) -> Option<String> {
+        Some(
+            match name {
+                "fill" => "rgb(0 128 255)",
+                "stroke" => "rgb(255 0 0)",
+                "stroke-width" => "2px",
+                "opacity" => "0.5",
+                "frame-clip" => "frame-clip-a",
+                _ => return None,
+            }
+            .to_string(),
+        )
+    }
+
+    fn decl(pairs: &[(&'static str, &str)]) -> Vec<(&'static str, String)> {
+        pairs.iter().map(|(n, v)| (*n, v.to_string())).collect()
+    }
+
+    /// DOM 배치 fixture 페이지: flex 컨테이너 안에 (A) border·Fill·Stroke가 있는 flex item이자 flex 컨테이너 Frame,
+    /// (B) absolute Frame, (C) 뒤 흐름 형제. A의 overlay containing block과 B·C stacking을 브라우저로 잽니다.
+    fn dom_page() -> String {
+        use crate::web::html::HtmlDocument;
+        use PlanModifier as M;
+        let mut doc = HtmlDocument::new();
+        let root = doc.add("div", None);
+        doc.set_attr(root, "data-probe", "root");
+        doc.set_attr(
+            root,
+            "style",
+            "display: flex; align-items: flex-start; width: 320px; height: 200px; position: relative; z-index: 0;",
+        );
+        doc.push_root(root);
+        let mut a = input(PlanNodeKind::Frame, &[M::Fill, M::Stroke]);
+        a.frame_border = 4.0;
+        a.frame_radius = [8.0, 8.0, 16.0, 16.0];
+        let plan_a = plan_modifiers(&a);
+        let slots = render_plan(
+            &plan_a,
+            &mut doc,
+            Some(root),
+            "div",
+            &decl(&[
+                ("display", "flex"),
+                ("box-sizing", "border-box"),
+                ("width", "120px"),
+                ("height", "80px"),
+                ("padding", "10px"),
+                ("border", "4px solid rgb(0 0 0)"),
+                ("border-radius", "8px 8px 16px 16px"),
+            ]),
+            &values,
+        )
+        .expect("A");
+        doc.set_attr(slots.node, "data-probe", "frame-a");
+        let overlay = doc.element(slots.node).children[0].clone();
+        if let crate::web::html::HtmlChild::Element(overlay) = overlay {
+            doc.set_attr(overlay, "data-probe", "overlay-a");
+        }
+        // 자식 Frame도 같은 규칙(stacking 선언)으로 냅니다.
+        let child = render_plan(
+            &plan_modifiers(&input(PlanNodeKind::Frame, &[])),
+            &mut doc,
+            Some(slots.content),
+            "div",
+            &decl(&[("width", "20px"), ("height", "20px")]),
+            &values,
+        )
+        .expect("A 자식");
+        doc.set_attr(child.node, "data-probe", "content-a");
+        let mut b = input(PlanNodeKind::Frame, &[M::Fill]);
+        b.absolute = true;
+        let slots = render_plan(
+            &plan_modifiers(&b),
+            &mut doc,
+            Some(root),
+            "div",
+            &decl(&[
+                ("position", "absolute"),
+                ("left", "150px"),
+                ("top", "10px"),
+                ("width", "40px"),
+                ("height", "40px"),
+            ]),
+            &values,
+        )
+        .expect("B");
+        doc.set_attr(slots.node, "data-probe", "frame-b");
+        let c = plan_modifiers(&input(PlanNodeKind::Frame, &[M::Fill]));
+        let slots = render_plan(
+            &c,
+            &mut doc,
+            Some(root),
+            "div",
+            &decl(&[("width", "100px"), ("height", "60px")]),
+            &values,
+        )
+        .expect("C");
+        doc.set_attr(slots.node, "data-probe", "sibling-c");
+        doc.to_html()
+    }
+
+    fn fnv(text: &str) -> u64 {
+        text.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+        })
+    }
+
+    #[test]
+    fn plan_renders_into_the_dom_structure_it_describes() {
+        use PlanModifier as M;
+        // wrapper → node → overlay·clip wrapper 순서와 자리 표시 치환.
+        let mut frame = input(PlanNodeKind::Frame, &[M::Opacity, M::Fill, M::Stroke]);
+        frame.frame_border = 2.0;
+        frame.frame_path_clip = true;
+        let plan = plan_modifiers(&frame);
+        let mut doc = crate::web::html::HtmlDocument::new();
+        let slots = render_plan(&plan, &mut doc, None, "section", &[], &values).expect("render");
+        let html = doc.to_html();
+        assert_eq!(doc.element(slots.outer).tag, "div");
+        assert_eq!(doc.element(slots.node).tag, "section");
+        assert_ne!(slots.content, slots.node, "clip wrapper가 내용 부모");
+        // Opacity 뒤 Fill은 순서를 거슬러 바깥 wrapper가 칠합니다. node 요소는 opacity, 내용 부모는 clip wrapper입니다.
+        assert!(html.starts_with("<div style=\"position: relative; z-index: 0; background-image: linear-gradient(rgb(0 128 255), rgb(0 128 255));"), "{html}");
+        assert!(html.contains("<section style=\"position: relative; z-index: 0; opacity: 0.5;\">"));
+        assert!(html.contains("clip-path: url(#frame-clip-a);"));
+        assert!(!html.contains("<fill>") && !html.contains("&lt;fill&gt;"));
+        let missing = plan_modifiers(&input(PlanNodeKind::Shape, &[M::Blur]));
+        assert_eq!(
+            render_plan(&missing, &mut doc, None, "div", &[], &values),
+            Err(PlanRenderError::MissingValue("blur".into()))
+        );
+        let raster = plan_modifiers(&input(PlanNodeKind::Frame, &[M::Boolean]));
+        assert_eq!(
+            render_plan(&raster, &mut doc, None, "div", &[], &values),
+            Err(PlanRenderError::Rasterize)
+        );
+    }
+
+    #[test]
+    fn rendered_plan_dom_placement_matches_the_browser_measurement() {
+        // IX.11.18 남은 검증: 계획 출력기가 만든 DOM을 기준 browser(Chrome 157, headless, DPR 1)로 잰 결과를
+        // 커밋했습니다(`tests/fixtures/modifier_plan_dom.expected.txt`, 생성 방법은 ADR-0121 결정 8). 페이지 bytes가 잰
+        // 페이지와 같은지 hash로 확인하고, 잰 값으로 불변식을 검사합니다.
+        let page = dom_page();
+        crate::fixture::check_golden("modifier_plan_dom.html", &page);
+        let expected = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/modifier_plan_dom.expected.txt"),
+        )
+        .expect("측정 결과");
+        let mut lines = expected.lines();
+        assert_eq!(
+            lines.next(),
+            Some(format!("page-fnv64 {:016x}", fnv(&page)).as_str()),
+            "측정한 페이지와 지금 출력이 다릅니다. 측정을 다시 하세요"
+        );
+        let mut probes = std::collections::BTreeMap::new();
+        let mut hits = std::collections::BTreeMap::new();
+        for line in lines {
+            let parts: Vec<&str> = line.split(' ').collect();
+            match parts.as_slice() {
+                ["hit", x, y, probe] => {
+                    hits.insert(format!("{x},{y}"), *probe);
+                }
+                [probe, rest @ ..] => {
+                    probes.insert(*probe, rest.join(" "));
+                }
+                [] => {}
+            }
+        }
+        let field = |probe: &str, key: &str| -> String {
+            probes[probe]
+                .split(' ')
+                .find_map(|kv| kv.strip_prefix(&format!("{key}=")))
+                .unwrap_or_else(|| panic!("{probe} {key}"))
+                .to_string()
+        };
+        // flex item인 flex 컨테이너 Frame의 overlay containing block은 그 Frame입니다: offsetParent가 Frame이고, overlay
+        // 상자가 Frame border box와 같으며, 바깥 radius가 같습니다.
+        assert_eq!(field("overlay-a", "offsetParent"), "frame-a");
+        assert_eq!(field("overlay-a", "rect"), field("frame-a", "rect"));
+        assert_eq!(field("overlay-a", "radius"), field("frame-a", "radius"));
+        // 내용은 padding·border 안쪽이고, overlay는 내용보다 먼저(아래) 칠합니다(내용 위 hit test가 내용).
+        assert_eq!(field("content-a", "rect"), "14,14,20,20");
+        assert_eq!(hits.get("24,24"), Some(&"content-a"));
+        // overlay는 border 위까지 덮습니다(border 위 hit test가 overlay).
+        assert_eq!(hits.get("2,40"), Some(&"overlay-a"));
+        // stacking: 모든 요소가 z-index 0 stacking context라 DOM 순서대로 그립니다. absolute B 위를 뒤 형제 C가 덮습니다.
+        assert_eq!(field("frame-b", "zIndex"), "0");
+        assert_eq!(field("sibling-c", "position"), "relative");
+        assert_eq!(field("sibling-c", "zIndex"), "0");
+        assert_eq!(field("sibling-c", "rect"), "120,0,100,60");
+        assert_eq!(hits.get("170,30"), Some(&"sibling-c"));
     }
 }

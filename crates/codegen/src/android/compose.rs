@@ -23,7 +23,6 @@ use stellar_target_profile::spec::AndroidProfile;
 
 use crate::android::kotlin::{dp, float, identifiers, string_literal};
 use crate::android::{AndroidNote, AndroidNoteKind, AndroidNoteSubject};
-use crate::apple::layout::{approximated, unsupported};
 use crate::apple::native::{
     grow_is_basis_zero, item_edge, justify_alignment, justify_edge, self_alignment, size, style,
     track_kind, Analysis, Axis, Container, Control, Edge, GridCell, GridPlan, NodeInfo, TrackKind,
@@ -449,7 +448,7 @@ impl<'a> Generator<'a> {
         if absolute_in_natural_box(self, parent) && s.position == Position::Absolute {
             self.finding(
                 index,
-                approximated(
+                matrix_finding(
                     "position",
                     "absolute-in-natural-box",
                     "Compose Box는 모든 자식 크기를 합쳐 크기를 정하므로 자연 크기 부모에서는 absolute 자식이 부모를 키울 수 있습니다",
@@ -475,7 +474,7 @@ impl<'a> Generator<'a> {
                     if !exact {
                         self.finding(
                             index,
-                            approximated(
+                            matrix_finding(
                                 "flex-grow",
                                 "grow-distribution",
                                 "Compose weight는 콘텐츠 크기를 빼지 않고 남은 공간을 비율로 나눕니다",
@@ -492,7 +491,7 @@ impl<'a> Generator<'a> {
                     } else {
                         self.finding(
                             index,
-                            approximated(
+                            matrix_finding(
                                 "align-self",
                                 "column-baseline",
                                 "column flex의 baseline 정렬은 Compose에 없어 시작 정렬로 냅니다",
@@ -513,7 +512,7 @@ impl<'a> Generator<'a> {
                 if shrink != 1.0 {
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             "flex-shrink",
                             "shrink-ratio",
                             "Compose Row·Column은 item별 압축 비율이 없어 순차 측정으로 냅니다",
@@ -538,7 +537,7 @@ impl<'a> Generator<'a> {
             if matches!(value, LengthPercentageAuto::Percentage(_)) {
                 self.finding(
                     index,
-                    unsupported(
+                    matrix_finding(
                         name,
                         "percent-inset",
                         "Compose offset은 부모 기준 백분율을 받지 않아 0으로 냅니다",
@@ -551,7 +550,7 @@ impl<'a> Generator<'a> {
                 if absolute {
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             "position",
                             "absolute-stretch",
                             "양쪽 inset으로 늘리는 absolute 크기는 낼 수 없어 시작 inset만 씁니다",
@@ -565,7 +564,7 @@ impl<'a> Generator<'a> {
             (LengthPercentageAuto::Auto, LengthPercentageAuto::Auto) if absolute => {
                 self.finding(
                     index,
-                    approximated(
+                    matrix_finding(
                         "position",
                         "static-position",
                         "inset이 모두 auto인 absolute box의 static position은 부모 content box 시작으로 냅니다",
@@ -590,7 +589,7 @@ impl<'a> Generator<'a> {
         if (a, b, c, d) != (1.0, 0.0, 0.0, 1.0) {
             self.finding(
                 index,
-                approximated(
+                matrix_finding(
                     "transform",
                     "draw-transform",
                     "선형 변환은 그리기 단계(drawWithContent)에만 적용되어 입력 hit test 영역은 바뀌지 않습니다",
@@ -630,7 +629,7 @@ impl<'a> Generator<'a> {
                 Size::Length(length) => parts.push(format!("min = {}", self.dp(length.get()))),
                 _ => self.finding(
                     index,
-                    unsupported(
+                    matrix_finding(
                         min_name,
                         "intrinsic-limit",
                         "Compose widthIn·heightIn은 백분율·intrinsic 최소 크기를 받지 않아 내지 않습니다",
@@ -642,7 +641,7 @@ impl<'a> Generator<'a> {
                 MaxSize::Length(length) => parts.push(format!("max = {}", self.dp(length.get()))),
                 _ => self.finding(
                     index,
-                    unsupported(
+                    matrix_finding(
                         max_name,
                         "intrinsic-limit",
                         "Compose widthIn·heightIn은 백분율·intrinsic 최대 크기를 받지 않아 내지 않습니다",
@@ -693,7 +692,7 @@ impl<'a> Generator<'a> {
                     FlexBasis::Length(length) => value = Size::Length(length),
                     FlexBasis::Percentage(_) => self.finding(
                         index,
-                        unsupported(
+                        matrix_finding(
                             "flex-basis",
                             "percent-size",
                             "Compose에는 부모 기준 백분율 flex-basis가 없어 자연 크기로 냅니다",
@@ -723,7 +722,7 @@ impl<'a> Generator<'a> {
                 }
                 Size::FitContent => self.finding(
                     index,
-                    approximated(
+                    matrix_finding(
                         name,
                         "fit-content",
                         "fit-content는 Compose 자연 크기(제약 안 콘텐츠 크기)로 냅니다",
@@ -732,7 +731,7 @@ impl<'a> Generator<'a> {
                 Size::Percentage(percentage) => {
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             name,
                             "percent-size",
                             "Compose fillMax*(비율)은 부모가 준 최대 제약 기준이라 CSS containing block 백분율과 다를 수 있습니다",
@@ -746,7 +745,7 @@ impl<'a> Generator<'a> {
         if let Some(ratio) = s.aspect_ratio {
             self.finding(
                 index,
-                approximated(
+                matrix_finding(
                     "aspect-ratio",
                     "aspect-ratio",
                     "Compose aspectRatio는 제약 안에 맞추므로 CSS 비율 크기 해석과 다를 수 있습니다",
@@ -809,7 +808,7 @@ impl<'a> Generator<'a> {
             if gap != 0.0 {
                 self.finding(
                     index,
-                    approximated(
+                    matrix_finding(
                         "justify-content",
                         "spread-gap",
                         "Compose Arrangement.Space*는 gap과 함께 쓸 수 없어 gap을 내지 않습니다",
@@ -900,7 +899,7 @@ impl<'a> Generator<'a> {
                     children.reverse();
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             "flex-direction",
                             "reverse-reading-order",
                             "reverse 방향은 자식 출력 순서를 뒤집어 내므로 접근성 순회 순서도 뒤집힙니다",
@@ -911,7 +910,7 @@ impl<'a> Generator<'a> {
                 if flow && !ui_at_least(self.android, 1, 4) {
                     self.finding(
                         index,
-                        unsupported(
+                        matrix_finding(
                             "flex-wrap",
                             "wrap-unavailable",
                             "profile Compose UI 버전에 FlowRow·FlowColumn이 없어 한 줄로 냅니다",
@@ -921,7 +920,7 @@ impl<'a> Generator<'a> {
                 if s.flex_wrap == FlexWrap::WrapReverse {
                     self.finding(
                         index,
-                        unsupported(
+                        matrix_finding(
                             "flex-wrap",
                             "wrap-reverse",
                             "Compose Flow에는 줄 순서 반전이 없어 wrap으로 냅니다",
@@ -938,7 +937,7 @@ impl<'a> Generator<'a> {
                 if s.align_items == ItemAlignment::Baseline && main == Axis::Vertical {
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             "align-items",
                             "column-baseline",
                             "column flex의 baseline 정렬은 Compose에 없어 시작 정렬로 냅니다",
@@ -1006,7 +1005,7 @@ impl<'a> Generator<'a> {
         if let Some(reason) = plan.fallback {
             self.finding(
                 index,
-                unsupported("grid-column-start", "grid-placement", reason),
+                matrix_finding("grid-column-start", "grid-placement", reason),
             );
         }
         for track in &plan.columns {
@@ -1014,7 +1013,7 @@ impl<'a> Generator<'a> {
                 TrackKind::FlexibleAuto(_) => {
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             "grid-template-columns",
                             "fr-auto-minimum",
                             "최소 auto인 fr 열은 콘텐츠 최소 크기를 지키지 않고 weight로 나눕니다",
@@ -1025,7 +1024,7 @@ impl<'a> Generator<'a> {
                 TrackKind::Content => {
                     self.finding(
                         index,
-                        approximated(
+                        matrix_finding(
                             "grid-template-columns",
                             "content-track",
                             "콘텐츠 크기 열은 행마다 칸 폭이 따로 정해져 열이 맞춰지지 않을 수 있습니다",
@@ -1036,7 +1035,7 @@ impl<'a> Generator<'a> {
                 TrackKind::Other => {
                     self.finding(
                         index,
-                        unsupported(
+                        matrix_finding(
                             "grid-template-columns",
                             "track-size",
                             "백분율·섞인 minmax() 열은 Compose로 낼 수 없어 콘텐츠 크기로 냅니다",
@@ -1055,7 +1054,7 @@ impl<'a> Generator<'a> {
         }) {
             self.finding(
                 index,
-                approximated(
+                matrix_finding(
                     "grid-template-rows",
                     "row-track",
                     "Compose 행은 콘텐츠 크기라 fr·백분율 행 크기를 지키지 못합니다",
@@ -1204,7 +1203,7 @@ impl<'a> Generator<'a> {
             if gap != 0.0 {
                 self.finding(
                     grid,
-                    approximated(
+                    matrix_finding(
                         "grid-column-end",
                         "grid-span-gap",
                         "gap이 있는 fr 열 span은 weight 합으로 내어 gap만큼 폭이 달라집니다",
@@ -1222,7 +1221,7 @@ impl<'a> Generator<'a> {
         }
         self.finding(
             grid,
-            approximated(
+            matrix_finding(
                 "grid-column-end",
                 "grid-span-mixed",
                 "고정·비율·콘텐츠 track이 섞인 열 span은 콘텐츠 크기로 냅니다",
@@ -1413,7 +1412,7 @@ impl<'a> Generator<'a> {
         if shrink {
             self.finding(
                 0,
-                approximated(
+                matrix_finding(
                     "flex-shrink",
                     "platform-compression",
                     "넘칠 때 Compose Row·Column의 순차 측정 압축과 자동 최소 크기(min-*: auto)는 CSS flex-shrink 1과 다를 수 있습니다",
@@ -1531,4 +1530,18 @@ fn absolute_in_natural_box(generator: &Generator<'_>, parent: u32) -> bool {
     [Axis::Horizontal, Axis::Vertical]
         .iter()
         .any(|axis| !info.fill.axes[axis.index()] && !matches!(size(s, *axis), Size::Length(_)))
+}
+
+/// Compose dialect 값별 진단. 상태는 XXII.1.4 matrix가 정합니다(ADR-0121 결정 2).
+fn matrix_finding(
+    longhand: &'static str,
+    code: &'static str,
+    reason: &'static str,
+) -> LayoutFinding {
+    crate::matrix::dialect::finding(
+        crate::matrix::dialect::Dialect::Compose,
+        longhand,
+        code,
+        reason,
+    )
 }

@@ -5,6 +5,8 @@
 //! - 파일마다 첫 줄에 생성 marker 주석을 씁니다(형식별 주석 문법). 사용자 파일과 구별하고, 생성 코드를 다시 가져오지
 //!   않는다는 경고를 담습니다(XXII.5.3 문서 경고와 같은 문구).
 //! - 경로는 `/`로 나눈 상대 경로이고 `..`·빈 조각·절대 경로를 받지 않습니다.
+//! - Web(HTML·CSS·JavaScript), Apple(Swift), Android(Kotlin) 출력이 모두 이 집합을 씁니다(ADR-0121 결정 5). 파일
+//!   이름은 adapter가 검사한 ASCII 식별자(타입 접두어, Kotlin package 조각)로만 만듭니다.
 
 use std::collections::BTreeMap;
 
@@ -21,6 +23,10 @@ pub enum FileKind {
     Css,
     /// JavaScript(`//`).
     JavaScript,
+    /// Swift(`//`).
+    Swift,
+    /// Kotlin(`//`).
+    Kotlin,
 }
 
 impl FileKind {
@@ -30,6 +36,8 @@ impl FileKind {
             "html" => FileKind::Html,
             "css" => FileKind::Css,
             "js" | "mjs" => FileKind::JavaScript,
+            "swift" => FileKind::Swift,
+            "kt" => FileKind::Kotlin,
             _ => return None,
         })
     }
@@ -39,7 +47,9 @@ impl FileKind {
         match self {
             FileKind::Html => format!("<!-- {GENERATED_NOTICE} -->"),
             FileKind::Css => format!("/* {GENERATED_NOTICE} */"),
-            FileKind::JavaScript => format!("// {GENERATED_NOTICE}"),
+            FileKind::JavaScript | FileKind::Swift | FileKind::Kotlin => {
+                format!("// {GENERATED_NOTICE}")
+            }
         }
     }
 }
@@ -191,6 +201,17 @@ mod tests {
         ] {
             assert!(files.insert(bad, "x").is_err(), "{bad}");
         }
+        files
+            .insert("Sources/StellarView.swift", "import SwiftUI\r\n")
+            .expect("swift");
+        assert_eq!(
+            files.get("Sources/StellarView.swift"),
+            Some(format!("{}\nimport SwiftUI\n", FileKind::Swift.marker()).as_str())
+        );
+        assert_eq!(FileKind::of("a/B.kt"), Some(FileKind::Kotlin));
+        assert!(FileKind::Kotlin
+            .marker()
+            .starts_with("// stellar:generated"));
         assert_eq!(
             files.insert("data.bin", "x"),
             Err(OutputError::UnknownKind("data.bin".into()))
