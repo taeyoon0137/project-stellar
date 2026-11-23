@@ -42,6 +42,8 @@ pub mod text_source;
 
 mod text_codec;
 
+/// 앱 창 session의 기본 원본(텍스트)과 로컬 chunk cache의 짝(V.10.7, ADR-0088).
+pub mod session;
 /// 텍스트 원본 쓰기 v4(ADR-0077).
 pub mod source_v4;
 
