@@ -28,6 +28,7 @@ use stellar_scene::bounds::Aabb;
 use crate::canvas::CanvasScene;
 use crate::window_session::ProjectWindowSession;
 
+pub mod radius;
 pub mod resize;
 pub mod rotate;
 
