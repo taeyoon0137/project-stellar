@@ -16,7 +16,7 @@ use stellar_core_types::reference::NodeRef;
 use stellar_core_types::typed_value::TypedValue;
 use stellar_core_types::value::Length;
 use stellar_document::component::definition::{
-    ComponentDefinition, ComponentLibrary, DefinitionNode, DefinitionTree,
+    ComponentDefinition, ComponentLibrary, ComponentPropertyId, DefinitionNode, DefinitionTree,
 };
 use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
 use stellar_document::frame::FramePayload;
@@ -32,6 +32,7 @@ use stellar_project::document_io::source_v4::project::{
     decode, encode, open_dir, read_dir, write_new, TextProject, SPLIT_CHILD_THRESHOLD,
 };
 use stellar_project::document_io::source_v4::token::{TokenSetSource, TokenSource};
+use stellar_project::document_io::text_source::TextSourceError;
 use stellar_storage::hash::ContentHash;
 
 fn sid(n: u64) -> StableId {
@@ -303,28 +304,34 @@ fn unreferenced_duplicate_or_unknown_files_and_fields_are_rejected() {
 
 #[test]
 fn unrepresentable_meaning_refuses_to_write() {
-    // 정의 root가 Frame이 아닌 컴포넌트와 리터럴로 쓰지 않는 값 타입의 token은 텍스트로 쓰지 않습니다.
+    // Property를 선언한 컴포넌트(표현식 문법 전이라 텍스트로 쓰지 않음, ADR-0077 결정 3)와 리터럴로 쓰지 않는
+    // 값 타입의 token은 텍스트로 쓰지 않습니다. 거부는 Unsupported여야 합니다.
     let mut bad = ComponentLibrary::new();
-    let definition = ComponentDefinition::new(sid(70), "Bad".into(), NodeRef::new(sid(71)));
+    let mut definition = ComponentDefinition::new(sid(70), "Bad".into(), NodeRef::new(sid(71)));
+    definition
+        .add_property(ComponentPropertyId::new(sid(72)))
+        .unwrap();
     let mut tree = DefinitionTree::new(definition.reference());
     tree.insert(DefinitionNode {
         id: sid(71),
-        kind: NodeKind::Text,
+        kind: NodeKind::Frame,
         parent: None,
         order_key: OrderKey::between(None, None),
         visible: true,
         locked: false,
         display_name: String::new(),
-        payload: encode_payload(&NodePayload::Text(TextPayload::empty(0))),
+        payload: encode_payload(&NodePayload::Frame(FramePayload::default())),
     })
     .unwrap();
-    if bad.insert(definition, tree).is_ok() {
-        let project = TextProject {
-            components: bad,
-            ..project(golden_document(0))
-        };
-        assert!(encode(&project).is_err());
-    }
+    bad.insert(definition, tree).unwrap();
+    let project_with_property = TextProject {
+        components: bad,
+        ..project(golden_document(0))
+    };
+    assert!(matches!(
+        encode(&project_with_property),
+        Err(TextSourceError::Unsupported(_))
+    ));
     let mut sets = tokens();
     sets[0].tokens[0].value = TypedValue::Typography(
         stellar_core_types::typed_value::TypographyValue::from_record(
@@ -336,7 +343,10 @@ fn unrepresentable_meaning_refuses_to_write() {
         token_sets: sets,
         ..project(golden_document(0))
     };
-    assert!(encode(&project).is_err());
+    assert!(matches!(
+        encode(&project),
+        Err(TextSourceError::Unsupported(_))
+    ));
 }
 
 #[test]
@@ -459,4 +469,97 @@ fn different_properties_of_one_frame_merge_cleanly_in_git() {
     };
     assert_eq!(frame.size.width(), 777.0);
     assert_eq!(frame.background.unwrap().g(), 1.0);
+}
+
+/// 서로 다른 View의 Frame을 두 clone이 각각 바꾸면(V.10.4 검증 열 "독립 View 변경의 Git 병합") 두 변경이 다른 파일에
+/// 있으므로 시스템 git merge가 충돌 없이 끝나고, 합친 원본은 두 변경을 모두 담습니다.
+#[test]
+fn independent_view_changes_merge_cleanly_in_git() {
+    if Command::new("git").arg("--version").output().is_err() {
+        return;
+    }
+    // View가 둘 이상인 corpus 문서를 고릅니다(없으면 corpus가 바뀐 것이므로 실패합니다).
+    let document = (0..120)
+        .map(random_valid_document)
+        .find(|document| {
+            let records = document.to_records().unwrap();
+            records
+                .definition
+                .pages
+                .iter()
+                .map(|page| page.views.len())
+                .sum::<usize>()
+                >= 2
+        })
+        .expect("View가 둘 이상인 corpus 문서");
+    let records = document.to_records().unwrap();
+    let roots: Vec<StableId> = records
+        .definition
+        .pages
+        .iter()
+        .flat_map(|page| page.views.iter().map(|view| view.root_frame))
+        .take(2)
+        .collect();
+    let seed_document = || DocumentModel::from_records(records.clone()).unwrap().0;
+    let original = project(seed_document());
+    let encoded = encode(&original).unwrap();
+    let dir = TempDir::new("text-project-git-views");
+    let base = dir.path.join("base");
+    std::fs::create_dir_all(&base).unwrap();
+    write_new(&base.join("design"), &encoded).unwrap();
+    git_ok(&base, &["init", "-q", "-b", "main"]);
+    git_ok(&base, &["add", "."]);
+    git_ok(&base, &["commit", "-qm", "base"]);
+    let resize = |name: &str, root: StableId, width: f32| {
+        let mut changed = original.document.to_records().unwrap();
+        let node = changed.nodes.iter_mut().find(|n| n.id == root).unwrap();
+        let NodePayload::Frame(frame) = &mut node.payload else {
+            panic!("View root는 Frame입니다")
+        };
+        frame.size = stellar_core_types::value::Size2::new(width, frame.size.height()).unwrap();
+        let model = DocumentModel::from_records(changed).unwrap().0;
+        let files = encode(&TextProject {
+            document: model,
+            ..project(seed_document())
+        })
+        .unwrap()
+        .files;
+        // 바뀐 파일은 그 View의 파일 하나뿐입니다.
+        let touched: Vec<String> = files
+            .iter()
+            .filter(|(path, text)| encoded.files.get(*path) != Some(*text))
+            .map(|(path, _)| path.clone())
+            .collect();
+        assert_eq!(touched.len(), 1, "{touched:?}");
+        git_ok(&base, &["switch", "-qc", name, "main"]);
+        for (path, text) in files {
+            std::fs::write(base.join("design").join(path), text).unwrap();
+        }
+        git_ok(&base, &["commit", "-qam", name]);
+        touched.into_iter().next().unwrap()
+    };
+    let first = resize("first", roots[0], 711.0);
+    let second = resize("second", roots[1], 733.0);
+    assert_ne!(first, second);
+    git_ok(&base, &["switch", "-q", "first"]);
+    let merged = git(&base, &["merge", "--no-edit", "second"]);
+    assert!(
+        merged.status.success(),
+        "{}",
+        String::from_utf8_lossy(&merged.stdout)
+    );
+    let (opened, _) = open_dir(&base.join("design")).unwrap();
+    let records = opened.document.to_records().unwrap();
+    for (root, width) in roots.iter().zip([711.0, 733.0]) {
+        let NodePayload::Frame(frame) = &records
+            .nodes
+            .iter()
+            .find(|n| n.id == *root)
+            .unwrap()
+            .payload
+        else {
+            panic!("View root는 Frame입니다")
+        };
+        assert_eq!(frame.size.width(), width);
+    }
 }
