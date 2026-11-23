@@ -15,7 +15,8 @@
 //!   `place-slot-content` 하나를 만듭니다.
 //!
 //! 역 command는 같은 종류의 [`InstanceRestructure`]입니다(현재 레코드, 지운 node 복원, 원래 부모·순서, 만든 node
-//! 지우기). 그래서 undo·redo가 정확합니다.
+//! 지우기). 그래서 undo·redo가 정확합니다. 만들 node의 layout record와 가이드·레이아웃 그리드 기록은 `insert-node`와
+//! 같은 끝 절로 담습니다(ADR-0133 결정 4).
 //!
 //! **검증.** 적용 전에 대상·id·부모 관계를 검사하고(문서 무변경), 적용 뒤 결과 문서 전체를 문서 validator(VI.10.1)로
 //! 다시 검사해 이 command가 새로 만든 위반(투영되지 않은 인스턴스 자식, OrderKey 충돌, layout record 위반 등)이 있으면
@@ -37,6 +38,8 @@ use stellar_document::component::expansion::ScenePayloads;
 use stellar_document::component::instance::{frame_instance_transform, OverrideKey, SlotOverride};
 use stellar_document::component::override_rules::check_override;
 use stellar_document::component::slot::SlotError;
+use stellar_document::guides::persist::check_records as check_guide_records;
+use stellar_document::guides::NodeGuides;
 use stellar_document::layout_record::{LayoutLonghand, LayoutRecord, LayoutValue};
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{ModifierKind, ModifierStack};
@@ -58,7 +61,8 @@ use crate::command::CommandError;
 use crate::edit::EditContext;
 use crate::lock::{edit_permission, EditIntent};
 use crate::node_ops::{
-    check_external_inbound, decode_layout_records, encode_layout_records, slot_content_owner,
+    apply_guides, check_external_inbound, decode_insert_tail, encode_insert_tail,
+    slot_content_owner,
 };
 use crate::property::{payload_property_info, write_property, PropertyValue, PropertyValueType};
 use crate::tree::{parent_of, ChildIndex};
@@ -94,6 +98,8 @@ pub struct InstanceRestructure {
     pub insert_stacks: Vec<ModifierStack>,
     /// 만들 node의 명시 layout record(소유 node StableId 순).
     pub insert_layouts: Vec<LayoutRecord>,
+    /// 만들 Frame의 가이드·레이아웃 그리드 기록(소유 node StableId 순).
+    pub insert_guides: Vec<NodeGuides>,
     /// 부모·순서를 바꿀 기존 node.
     pub moves: Vec<NodePlacement>,
     /// 지울 node(자식부터). 지울 때 자식이 없어야 하고, 부모는 대상 node이거나 함께 지우는 node입니다.
@@ -183,6 +189,26 @@ impl InstanceRestructure {
                 return Err(invalid("만들 node의 layout record가 아닙니다"));
             }
         }
+        // 만들 Frame의 가이드 기록: 소유 node 오름차순, 비어 있지 않음, Frame(문서 validator와 같은 판정).
+        if self
+            .insert_guides
+            .windows(2)
+            .any(|pair| pair[0].owner() >= pair[1].owner())
+            || !check_guide_records(
+                &self.insert_guides,
+                &[],
+                |id| {
+                    self.insert
+                        .iter()
+                        .find(|r| r.id == id)
+                        .map(NodeRecord::kind)
+                },
+                &BTreeSet::new(),
+            )
+            .is_empty()
+        {
+            return Err(invalid("만들 Frame의 가이드 기록이 아닙니다"));
+        }
         // 옮길 node: 있는 node, 대상·만들 node가 아님, 한 번씩. 같은 View tree 안에서 cycle 없이 옮깁니다.
         let target = handle(model, self.node)?;
         let mut moved = BTreeSet::new();
@@ -245,6 +271,7 @@ impl InstanceRestructure {
         let mut insert = Vec::with_capacity(self.remove.len());
         let mut insert_stacks = Vec::new();
         let mut insert_layouts = Vec::new();
+        let mut insert_guides = Vec::new();
         for id in self.remove.iter().rev() {
             insert.push(
                 model
@@ -257,8 +284,12 @@ impl InstanceRestructure {
             if let Some(layout) = model.layout_record(*id) {
                 insert_layouts.push(layout.clone());
             }
+            if let Some(guides) = model.node_guides(*id) {
+                insert_guides.push(guides.clone());
+            }
         }
         insert_layouts.sort_by_key(|l| l.node);
+        insert_guides.sort_by_key(NodeGuides::owner);
         let mut moves = Vec::with_capacity(self.moves.len());
         for placement in self.moves.iter().rev() {
             let current = model
@@ -281,6 +312,7 @@ impl InstanceRestructure {
             insert,
             insert_stacks,
             insert_layouts,
+            insert_guides,
             moves,
             remove: self.insert.iter().rev().map(|r| r.id).collect(),
         })
@@ -330,6 +362,7 @@ impl InstanceRestructure {
         for layout in &self.insert_layouts {
             ctx.set_layout_record(layout.clone())?;
         }
+        apply_guides(ctx, self.insert.iter().map(|r| r.id), &self.insert_guides)?;
         // 3. 옮기기.
         for placement in &self.moves {
             let mut record = ctx
@@ -403,7 +436,7 @@ impl InstanceRestructure {
         for id in &self.remove {
             out.id(*id);
         }
-        encode_layout_records(out, &self.insert_layouts);
+        encode_insert_tail(out, &self.insert_layouts, &self.insert_guides);
     }
 
     pub(crate) fn decode_from(
@@ -456,6 +489,7 @@ impl InstanceRestructure {
         for _ in 0..count {
             remove.push(input.id()?);
         }
+        let (insert_layouts, insert_guides) = decode_insert_tail(input)?;
         Ok(InstanceRestructure {
             node,
             record,
@@ -463,7 +497,8 @@ impl InstanceRestructure {
             stack,
             insert,
             insert_stacks,
-            insert_layouts: decode_layout_records(input)?,
+            insert_layouts,
+            insert_guides,
             moves,
             remove,
         })
@@ -729,6 +764,7 @@ pub fn plan_detach<C: MonotonicClock>(
         insert,
         insert_stacks: Vec::new(),
         insert_layouts: Vec::new(),
+        insert_guides: Vec::new(),
         moves,
         remove: Vec::new(),
     })
@@ -836,8 +872,8 @@ impl std::error::Error for SlotContentDeleteError {}
 /// content를 slot override 투영에서 빼고 그 subtree를 자식부터 지웁니다. 마지막 content를 지우면 `restore_default`일 때
 /// override를 지워 default content로 돌아가고, 아니면 빈 override(Slot 비움)로 남깁니다(runtime `plan_slot_take_out`과
 /// 같은 규칙). 남는 content는 Slot 종류·개수 규칙(`ComponentSlot::check_content`)을 지켜야 합니다. 삭제 정책은
-/// `delete-subtree`와 같습니다(subtree 밖 참조 거부). 역 command는 지운 node와 그 modifier·layout 기록, 원래 slot
-/// override를 되살립니다.
+/// `delete-subtree`와 같습니다(subtree 밖 참조 거부). 역 command는 지운 node와 그 modifier·layout·가이드 기록, 원래
+/// slot override를 되살립니다.
 pub fn plan_slot_content_delete(
     model: &DocumentModel,
     library: &ComponentLibrary,
@@ -899,6 +935,7 @@ pub fn plan_slot_content_delete(
         insert: Vec::new(),
         insert_stacks: Vec::new(),
         insert_layouts: Vec::new(),
+        insert_guides: Vec::new(),
         moves: Vec::new(),
         remove: subtree.into_iter().rev().collect(),
     })

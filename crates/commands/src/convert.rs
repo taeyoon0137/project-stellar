@@ -735,6 +735,7 @@ mod tests {
                 ],
                 modifier_stacks: Vec::new(),
                 layout_records: Vec::new(),
+                node_guides: Vec::new(),
             }),
         )
         .unwrap();
@@ -898,6 +899,7 @@ mod tests {
                 ],
                 modifier_stacks: Vec::new(),
                 layout_records: Vec::new(),
+                node_guides: Vec::new(),
             }),
         )
         .unwrap();
@@ -931,6 +933,7 @@ mod tests {
                 nodes: vec![record(40, 12, 0x10, rect)],
                 modifier_stacks: vec![stack],
                 layout_records: Vec::new(),
+                node_guides: Vec::new(),
             }),
         )
         .unwrap();
@@ -1004,6 +1007,7 @@ mod tests {
                 ],
                 modifier_stacks: Vec::new(),
                 layout_records: Vec::new(),
+                node_guides: Vec::new(),
             }),
         )
         .unwrap();

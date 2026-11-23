@@ -515,6 +515,7 @@ fn slot_command(
         insert,
         insert_stacks,
         insert_layouts,
+        insert_guides: Vec::new(),
         moves,
         remove: Vec::new(),
     })))

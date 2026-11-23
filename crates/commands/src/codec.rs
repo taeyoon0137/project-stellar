@@ -32,10 +32,12 @@ use stellar_core_types::ids::StableId;
 ///   `apply-external-snapshot`의 가이드·View 변수 변경 tag 9·10. 그 종류·tag가 없는 command의 bytes는 version 6과 같습니다.
 /// - 8: ADR-0129가 더한 종류(인스턴스 Detach `detach-instance`, Slot content 배치 `place-slot-content`). 그 종류가 없는
 ///   command의 bytes는 version 7과 같습니다.
+/// - 9: ADR-0133이 더한 payload 절(`insert-node`와 인스턴스 구조 command 끝의 선택 가이드·레이아웃 그리드 기록 절).
+///   가이드 기록이 없는 command의 bytes는 version 8과 같습니다.
 ///
 /// 각 종류가 처음 들어간 버전은 [`CommandKind::codec_version`]입니다. history journal header가 이 값을
 /// 기록하므로 옛 reader는 모르는 종류를 담은 journal의 복원만 포기하고 문서는 건드리지 않습니다.
-pub const COMMAND_CODEC_VERSION: u32 = 8;
+pub const COMMAND_CODEC_VERSION: u32 = 9;
 
 use crate::command::Command;
 use crate::convert::{ConvertFragmentToFrame, ConvertShapeToPath, RestoreNodeRecords};

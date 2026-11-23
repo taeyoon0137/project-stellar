@@ -585,6 +585,7 @@ pub fn generate(
                 insert: Vec::new(),
                 insert_stacks: Vec::new(),
                 insert_layouts: Vec::new(),
+                insert_guides: Vec::new(),
                 moves,
                 remove: Vec::new(),
             };

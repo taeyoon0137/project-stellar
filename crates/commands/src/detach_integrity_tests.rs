@@ -145,6 +145,37 @@ fn slot_content_delete_is_one_restructure_and_undoes_exactly() {
 }
 
 #[test]
+fn slot_content_delete_undo_restores_frame_guides_after_reopen() {
+    use stellar_document::guides::{GuideAxis, GuideEdit, RulerGuide};
+    // body Slot content를 가이드가 있는 Frame 31로 둡니다.
+    let mut model = modal_state().into_model();
+    let mut content = model.remove_leaf(sid(31)).unwrap();
+    content.payload = NodePayload::Frame(Default::default());
+    model.insert_node(content).unwrap();
+    let mut guides = NodeGuides::new(sid(31));
+    guides
+        .apply(&GuideEdit::Add(
+            RulerGuide::new(sid(710), GuideAxis::Y, 16.0).unwrap(),
+        ))
+        .unwrap();
+    model.set_node_guides(guides.clone()).unwrap();
+    let mut state = DocumentState::new(model);
+    let plan = plan_slot_content_delete(state.model(), &card_library(), sid(31), false).unwrap();
+    let undo = run(&mut state, Command::PlaceSlotContent(Box::new(plan))).unwrap();
+    let Command::PlaceSlotContent(inverse) = &undo else {
+        panic!("역은 place-slot-content");
+    };
+    assert_eq!(inverse.insert_guides, vec![guides.clone()]);
+    // history journal을 다시 연 것과 같이: 저장 레코드로 다시 만든 문서(남은 기록 없음)에 decode한 역을 적용합니다.
+    let undo = decode_command(&encode_command(&undo)).unwrap();
+    let (reopened, _) = DocumentModel::from_records(state.model().to_records().unwrap()).unwrap();
+    let mut state = DocumentState::new(reopened);
+    run(&mut state, undo).unwrap();
+    assert_eq!(state.model().node_guides(sid(31)), Some(&guides));
+    assert!(valid(&state));
+}
+
+#[test]
 fn slot_content_delete_refuses_non_content_locks_and_missing_definitions() {
     let library = card_library();
     let state = modal_state();
@@ -238,6 +269,7 @@ fn insert_rejects_instance_children_that_are_not_projected_exactly_once() {
             nodes,
             modifier_stacks: Vec::new(),
             layout_records: Vec::new(),
+            node_guides: Vec::new(),
         })
     };
     // 투영되지 않은 자식(62)이 있으면 거부합니다.

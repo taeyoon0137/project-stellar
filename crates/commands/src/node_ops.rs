@@ -9,7 +9,7 @@
 //! - [`DeleteSubtree`] (VII.2.2): subtree를 지웁니다. 역 command는 subtree와 내부 참조를 담은
 //!   InsertNode이고, 외부 inbound 참조가 있으면 정책 오류로 거부합니다. InsertNode의 역입니다. 역 InsertNode는
 //!   subtree의 layout record도 담으므로 history journal을 저장했다가 다시 연 뒤의 삭제 undo도 record를
-//!   되살립니다.
+//!   되살립니다. 가이드·레이아웃 그리드 기록(ADR-0126)도 layout record와 같은 규칙으로 담습니다(ADR-0133 결정 4).
 //!
 //! **인스턴스 Slot content(ADR-0133 결정 1).** ComponentInstance의 자식은 그 인스턴스 slot override에 투영된 Slot
 //! content입니다(ADR-0129 결정 3). 세 command는 slot override를 바꾸지 않으므로 투영을 깨뜨리는 변경을 거부합니다.
@@ -26,6 +26,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
 use stellar_document::frame::Clipping;
+use stellar_document::guides::persist::check_records as check_guide_records;
+use stellar_document::guides::NodeGuides;
 use stellar_document::layout_record::{check_records, LayoutRecord, LayoutRecordViolation};
 use stellar_document::model::{DocumentModel, ModelError};
 use stellar_document::modifier::{find_modifier_cycle, validate_modifier_owner, ModifierStack};
@@ -51,8 +53,12 @@ use crate::tree::{depth_of, id_use, kind_of, parent_of, path_element_ids, ChildI
 /// (ADR-0086). node마다 하나 이하이고 빈 record는 담지 않습니다. record가 없는 삽입 node는 명시 값이 없는
 /// 상태로 들어갑니다.
 ///
-/// binary 형식에서 `layout_records`는 끝의 선택 절입니다(record 수 `u32` 1 이상 + 길이 접두 record). record가
-/// 없으면 절을 쓰지 않으므로 그 bytes는 command codec version 3까지의 InsertNode와 같습니다.
+/// `node_guides`는 삽입하는 Frame의 가이드·레이아웃 그리드 기록입니다(ADR-0126, ADR-0133 결정 4). Frame마다 하나
+/// 이하이고 빈 기록은 담지 않습니다.
+///
+/// binary 형식에서 `layout_records`·`node_guides`는 끝의 선택 절입니다([`encode_insert_tail`]). 둘 다 없으면 절을
+/// 쓰지 않으므로 그 bytes는 command codec version 3까지의 InsertNode와 같고, 가이드 기록이 없으면 version 8까지와
+/// 같습니다.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InsertNode {
     /// 삽입할 node(pre-order, 첫 원소가 root).
@@ -61,6 +67,8 @@ pub struct InsertNode {
     pub modifier_stacks: Vec<ModifierStack>,
     /// 삽입하는 node의 명시 layout record(소유 node StableId 순).
     pub layout_records: Vec<LayoutRecord>,
+    /// 삽입하는 Frame의 가이드·레이아웃 그리드 기록(소유 node StableId 순).
+    pub node_guides: Vec<NodeGuides>,
 }
 
 impl InsertNode {
@@ -70,6 +78,7 @@ impl InsertNode {
             nodes: vec![record],
             modifier_stacks: Vec::new(),
             layout_records: Vec::new(),
+            node_guides: Vec::new(),
         }
     }
 
@@ -315,6 +324,31 @@ impl InsertNode {
             }
         }
 
+        // 8. 가이드 기록: 소유 node는 이 요청의 Frame, 소유자당 하나, 빈 기록 금지, 소유 node 오름차순(codec 절과 같은
+        //    canonical 규칙). 판정은 문서 validator와 같은 함수입니다(ADR-0126 결정 1).
+        if !self.node_guides.is_empty() {
+            if self
+                .node_guides
+                .windows(2)
+                .any(|pair| pair[0].owner() >= pair[1].owner())
+            {
+                return Err(CommandError::InvalidRequest {
+                    reason: "가이드 기록 소유 node가 오름차순이 아닙니다",
+                });
+            }
+            if !check_guide_records(
+                &self.node_guides,
+                &[],
+                |id| new_ids.get(&id).copied(),
+                &BTreeSet::new(),
+            )
+            .is_empty()
+            {
+                return Err(CommandError::InvalidRequest {
+                    reason: "가이드 기록은 삽입하는 Frame의 비어 있지 않은 기록이어야 합니다",
+                });
+            }
+        }
         Ok(())
     }
 
@@ -351,6 +385,7 @@ impl InsertNode {
                 ctx.set_layout_record(LayoutRecord::new(record.id))?;
             }
         }
+        apply_guides(ctx, self.nodes.iter().map(|r| r.id), &self.node_guides)?;
         if let Some(parent) = self.root().and_then(|root| root.parent) {
             ctx.changes().structure(parent);
         }
@@ -366,7 +401,7 @@ impl InsertNode {
         for stack in &self.modifier_stacks {
             out.bytes(&stack.encode());
         }
-        encode_layout_records(out, &self.layout_records);
+        encode_insert_tail(out, &self.layout_records, &self.node_guides);
     }
 
     pub(crate) fn decode_from(input: &mut Reader<'_>) -> Result<InsertNode, CommandCodecError> {
@@ -388,12 +423,117 @@ impl InsertNode {
                 }
             })?);
         }
+        let (layout_records, node_guides) = decode_insert_tail(input)?;
         Ok(InsertNode {
             nodes,
             modifier_stacks,
-            layout_records: decode_layout_records(input)?,
+            layout_records,
+            node_guides,
         })
     }
+}
+
+/// 만든 node의 가이드 기록을 넣고, 기록을 담지 않은 만든 node에 남은 기록(같은 id를 이 session에서 지운 적이 있으면
+/// 모델에 남음)을 지웁니다. layout record와 같은 규칙입니다(ADR-0133 결정 4).
+pub(crate) fn apply_guides(
+    ctx: &mut EditContext<'_>,
+    inserted: impl Iterator<Item = StableId>,
+    guides: &[NodeGuides],
+) -> Result<(), CommandError> {
+    for record in guides {
+        ctx.set_node_guides(record.clone())?;
+    }
+    for id in inserted {
+        if ctx.model().node_guides(id).is_some()
+            && guides.binary_search_by_key(&id, |g| g.owner()).is_err()
+        {
+            ctx.set_node_guides(NodeGuides::new(id))?;
+        }
+    }
+    Ok(())
+}
+
+/// node 생성 command 끝의 선택 절(layout record와 가이드 기록)을 씁니다.
+///
+/// - 둘 다 없으면 아무것도 쓰지 않습니다(command codec version 3까지와 같은 bytes).
+/// - 가이드 기록이 없으면 layout record 절만 씁니다(record 수 `u32` 1 이상 + 길이 접두 record, version 8까지와 같은
+///   bytes).
+/// - 가이드 기록이 있으면 layout record 절(record 수 0 허용)에 이어 가이드 절(기록 수 `u32` 1 이상 + 길이 접두
+///   [`NodeGuides::encode`])을 씁니다.
+pub(crate) fn encode_insert_tail(
+    out: &mut Writer,
+    layouts: &[LayoutRecord],
+    guides: &[NodeGuides],
+) {
+    if layouts.is_empty() && guides.is_empty() {
+        return;
+    }
+    out.len(layouts.len());
+    for record in layouts {
+        out.bytes(&record.encode());
+    }
+    if guides.is_empty() {
+        return;
+    }
+    out.len(guides.len());
+    for record in guides {
+        out.bytes(&record.encode());
+    }
+}
+
+/// [`encode_insert_tail`]의 역. 형식이 하나뿐이도록(canonical) layout record 수 0은 가이드 절이 따를 때만, 가이드 절은
+/// 기록이 1 이상일 때만 받고, 두 목록 모두 소유 node 오름차순이어야 합니다.
+pub(crate) fn decode_insert_tail(
+    input: &mut Reader<'_>,
+) -> Result<(Vec<LayoutRecord>, Vec<NodeGuides>), CommandCodecError> {
+    if input.remaining() == 0 {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let count = input.len()?;
+    let mut layouts: Vec<LayoutRecord> = Vec::new();
+    for _ in 0..count {
+        let record =
+            LayoutRecord::decode(input.bytes()?).map_err(|_| CommandCodecError::Malformed {
+                reason: "잘못된 layout record",
+            })?;
+        if layouts.last().is_some_and(|last| last.node >= record.node) {
+            return Err(CommandCodecError::Malformed {
+                reason: "layout record 소유 node가 오름차순이 아닙니다",
+            });
+        }
+        layouts.push(record);
+    }
+    if input.remaining() == 0 {
+        if count == 0 {
+            return Err(CommandCodecError::Malformed {
+                reason: "빈 layout record 절",
+            });
+        }
+        return Ok((layouts, Vec::new()));
+    }
+    let count = input.len()?;
+    if count == 0 {
+        return Err(CommandCodecError::Malformed {
+            reason: "빈 가이드 절",
+        });
+    }
+    let mut guides: Vec<NodeGuides> = Vec::new();
+    for _ in 0..count {
+        let record =
+            NodeGuides::decode(input.bytes()?).map_err(|_| CommandCodecError::Malformed {
+                reason: "잘못된 가이드 기록",
+            })?;
+        if guides
+            .last()
+            .is_some_and(|last| last.owner() >= record.owner())
+        {
+            return Err(CommandCodecError::Malformed {
+                reason: "가이드 기록 소유 node가 오름차순이 아닙니다",
+            });
+        }
+        guides.push(record);
+    }
+    Ok((layouts, guides))
 }
 
 /// 위반한 record의 소유 node.
@@ -405,48 +545,6 @@ fn violation_node(violation: &LayoutRecordViolation) -> StableId {
         | LayoutRecordViolation::NotApplicable { node, .. }
         | LayoutRecordViolation::SizeInPayload { node, .. } => *node,
     }
-}
-
-/// layout record 선택 절을 씁니다. record가 없으면 아무것도 쓰지 않습니다(command codec version 3까지와 같은
-/// bytes).
-pub(crate) fn encode_layout_records(out: &mut Writer, records: &[LayoutRecord]) {
-    if records.is_empty() {
-        return;
-    }
-    out.len(records.len());
-    for record in records {
-        out.bytes(&record.encode());
-    }
-}
-
-/// layout record 선택 절을 읽습니다. 남은 입력이 없으면 record가 없습니다. 절이 있으면 record 수는 1 이상이고
-/// 소유 node가 오름차순이어야 합니다(canonical 형식 하나).
-pub(crate) fn decode_layout_records(
-    input: &mut Reader<'_>,
-) -> Result<Vec<LayoutRecord>, CommandCodecError> {
-    if input.remaining() == 0 {
-        return Ok(Vec::new());
-    }
-    let count = input.len()?;
-    if count == 0 {
-        return Err(CommandCodecError::Malformed {
-            reason: "빈 layout record 절",
-        });
-    }
-    let mut records: Vec<LayoutRecord> = Vec::new();
-    for _ in 0..count {
-        let record =
-            LayoutRecord::decode(input.bytes()?).map_err(|_| CommandCodecError::Malformed {
-                reason: "잘못된 layout record",
-            })?;
-        if records.last().is_some_and(|last| last.node >= record.node) {
-            return Err(CommandCodecError::Malformed {
-                reason: "layout record 소유 node가 오름차순이 아닙니다",
-            });
-        }
-        records.push(record);
-    }
-    Ok(records)
 }
 
 /// 문서의 모든 modifier stack(소유 node StableId 순).
@@ -494,6 +592,7 @@ impl DeleteSubtree {
         let mut nodes = Vec::with_capacity(subtree.len());
         let mut modifier_stacks = Vec::new();
         let mut layout_records = Vec::new();
+        let mut node_guides = Vec::new();
         for id in subtree {
             nodes.push(model.record(id).ok_or(CommandError::UnknownNode { id })?);
             if let Some(stack) = model.modifier_stack(id) {
@@ -502,12 +601,17 @@ impl DeleteSubtree {
             if let Some(record) = model.layout_record(id) {
                 layout_records.push(record.clone());
             }
+            if let Some(record) = model.node_guides(id) {
+                node_guides.push(record.clone());
+            }
         }
         layout_records.sort_by_key(|record: &LayoutRecord| record.node);
+        node_guides.sort_by_key(NodeGuides::owner);
         Ok(InsertNode {
             nodes,
             modifier_stacks,
             layout_records,
+            node_guides,
         })
     }
 
@@ -925,6 +1029,7 @@ mod tests {
             nodes: nodes.clone(),
             modifier_stacks,
             layout_records: Vec::new(),
+            node_guides: Vec::new(),
         });
         let mut added_ids = vec![sid(20), sid(21), sid(60), sid(61)];
         added_ids.extend(path_element_ids(&nodes[1].payload));
@@ -982,6 +1087,7 @@ mod tests {
             nodes: vec![record.clone(), child],
             modifier_stacks: vec![stack],
             layout_records: Vec::new(),
+            node_guides: Vec::new(),
         });
         let inverse = run(&mut state, command.clone()).unwrap();
         assert_eq!(
@@ -1027,6 +1133,7 @@ mod tests {
             nodes: vec![frame(20, Some(10), 0x90), frame(20, Some(20), 0x10)],
             modifier_stacks: Vec::new(),
             layout_records: Vec::new(),
+            node_guides: Vec::new(),
         });
         assert_eq!(
             run(&mut state, dup),
@@ -1079,6 +1186,7 @@ mod tests {
             nodes: vec![frame(20, Some(10), 0x90), frame(21, Some(12), 0x10)],
             modifier_stacks: Vec::new(),
             layout_records: Vec::new(),
+            node_guides: Vec::new(),
         });
         assert_eq!(
             run(&mut state, orphan),
@@ -1091,6 +1199,7 @@ mod tests {
             nodes: Vec::new(),
             modifier_stacks: Vec::new(),
             layout_records: Vec::new(),
+            node_guides: Vec::new(),
         });
         assert!(matches!(
             run(&mut state, empty),
@@ -1119,6 +1228,7 @@ mod tests {
             ],
             modifier_stacks: Vec::new(),
             layout_records: Vec::new(),
+            node_guides: Vec::new(),
         });
         assert_eq!(
             run(&mut state, siblings),
@@ -1137,6 +1247,7 @@ mod tests {
             nodes: chain,
             modifier_stacks: Vec::new(),
             layout_records: Vec::new(),
+            node_guides: Vec::new(),
         });
         assert_eq!(
             run(&mut state, deep),
@@ -1179,6 +1290,7 @@ mod tests {
                     nodes: vec![fragment],
                     modifier_stacks: vec![stack],
                     layout_records: Vec::new(),
+                    node_guides: Vec::new(),
                 })
             ),
             Err(CommandError::Modifier { .. })
@@ -1203,6 +1315,7 @@ mod tests {
                     nodes: vec![frame(20, Some(10), 0x90)],
                     modifier_stacks: vec![stack],
                     layout_records: Vec::new(),
+                    node_guides: Vec::new(),
                 })
             ),
             Err(CommandError::ReferenceTypeMismatch {
@@ -1230,6 +1343,7 @@ mod tests {
                     nodes: vec![frame(20, Some(10), 0x90)],
                     modifier_stacks: vec![stack],
                     layout_records: Vec::new(),
+                    node_guides: Vec::new(),
                 })
             ),
             Err(CommandError::ModifierCycle(_))
@@ -1262,6 +1376,7 @@ mod tests {
             nodes: vec![frame(20, Some(11), 0x30), frame(21, Some(20), 0x10)],
             modifier_stacks: vec![stack],
             layout_records: Vec::new(),
+            node_guides: Vec::new(),
         });
         let bytes = encode_command(&command);
         assert_eq!(&bytes[..2], &[0x01, 0x00]);
@@ -1369,6 +1484,7 @@ mod tests {
                 ],
                 modifier_stacks: vec![stack],
                 layout_records: Vec::new(),
+                node_guides: Vec::new(),
             }),
         )
         .unwrap();
@@ -1532,6 +1648,7 @@ mod tests {
                 nodes: vec![frame(14, Some(13), 0x10)],
                 modifier_stacks: vec![stack.clone()],
                 layout_records: Vec::new(),
+                node_guides: Vec::new(),
             }),
         )
         .unwrap();
@@ -1631,6 +1748,7 @@ mod tests {
                 nodes: chain,
                 modifier_stacks: Vec::new(),
                 layout_records: Vec::new(),
+                node_guides: Vec::new(),
             }),
         )
         .unwrap();
@@ -1888,5 +2006,111 @@ mod layout_record_tests {
         let redo = run(&mut state, inverse).unwrap();
         run(&mut state, redo).unwrap();
         assert!(state.model().layout_record(sid(11)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod guide_tail_tests {
+    //! `insert-node` 끝 절의 가이드 기록(ADR-0133 결정 4): canonical 형식 하나, 옛 bytes 보존, 삽입 검증.
+    use super::*;
+    use crate::codec::{decode_command, encode_command};
+    use crate::command::test_fixtures::{frame, sid, small_model};
+    use crate::command::Command;
+    use crate::request::CommandRequest;
+    use crate::state::DocumentState;
+    use stellar_document::guides::{GuideAxis, GuideEdit, RulerGuide};
+    use stellar_document::layout_record::LayoutLonghand;
+
+    fn guides(owner: u64) -> NodeGuides {
+        let mut record = NodeGuides::new(sid(owner));
+        record
+            .apply(&GuideEdit::Add(
+                RulerGuide::new(sid(700 + owner), GuideAxis::X, 12.0).unwrap(),
+            ))
+            .unwrap();
+        record
+    }
+
+    fn bytes(insert: &InsertNode) -> Vec<u8> {
+        let mut out = Writer::new();
+        insert.encode_into(&mut out);
+        out.into_bytes()
+    }
+
+    fn two_frames() -> InsertNode {
+        let mut insert = InsertNode::single(frame(20, Some(10), 0x30));
+        insert.nodes.push(frame(21, Some(20), 0x10));
+        insert
+    }
+
+    #[test]
+    fn guide_section_round_trips_and_keeps_older_bytes_without_guides() {
+        // 가이드 기록이 없으면 bytes는 가이드 절 이전과 같습니다(layout 절만).
+        let mut layout_only = two_frames();
+        let mut record = LayoutRecord::new(sid(20));
+        record
+            .set(
+                LayoutLonghand::Display,
+                LayoutLonghand::Display.parse("grid").unwrap(),
+            )
+            .unwrap();
+        layout_only.layout_records = vec![record];
+        let mut expected = bytes(&two_frames());
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        let encoded = layout_only.layout_records[0].encode();
+        expected.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
+        expected.extend_from_slice(&encoded);
+        assert_eq!(bytes(&layout_only), expected);
+        // layout record 없이 가이드만, 둘 다 있는 경우 모두 왕복합니다.
+        for layouts in [Vec::new(), layout_only.layout_records.clone()] {
+            let mut insert = two_frames();
+            insert.layout_records = layouts;
+            insert.node_guides = vec![guides(20), guides(21)];
+            let command = Command::InsertNode(insert);
+            assert_eq!(decode_command(&encode_command(&command)).unwrap(), command);
+        }
+    }
+
+    #[test]
+    fn guide_section_must_be_canonical() {
+        let base = bytes(&two_frames());
+        // layout record 수 0 뒤에 가이드 절이 없으면 canonical이 아닙니다.
+        let mut zero_layouts = base.clone();
+        zero_layouts.extend_from_slice(&0u32.to_le_bytes());
+        assert!(InsertNode::decode_from(&mut Reader::new(&zero_layouts)).is_err());
+        // 빈 가이드 절.
+        let mut empty_guides = zero_layouts.clone();
+        empty_guides.extend_from_slice(&0u32.to_le_bytes());
+        assert!(InsertNode::decode_from(&mut Reader::new(&empty_guides)).is_err());
+        // 소유 node 내림차순.
+        let mut reversed = two_frames();
+        reversed.node_guides = vec![guides(21), guides(20)];
+        assert!(InsertNode::decode_from(&mut Reader::new(&bytes(&reversed))).is_err());
+    }
+
+    #[test]
+    fn insert_rejects_guides_outside_the_insert_or_on_non_frames() {
+        let mut state = DocumentState::new(small_model());
+        let run = |state: &mut DocumentState, insert: InsertNode| {
+            let request = CommandRequest::at(state, Command::InsertNode(insert));
+            state.execute(&request).map(|outcome| outcome.inverse)
+        };
+        let mut outside = two_frames();
+        outside.node_guides = vec![guides(11)];
+        assert!(run(&mut state, outside).is_err());
+        let mut text = two_frames();
+        text.nodes[1].payload = NodePayload::Text(stellar_document::text::TextPayload::empty(0));
+        text.node_guides = vec![guides(21)];
+        assert!(run(&mut state, text).is_err());
+        let mut empty = two_frames();
+        empty.node_guides = vec![NodeGuides::new(sid(20))];
+        assert!(run(&mut state, empty).is_err());
+        let mut good = two_frames();
+        good.node_guides = vec![guides(20)];
+        let undo = run(&mut state, good).unwrap();
+        assert_eq!(state.model().node_guides(sid(20)), Some(&guides(20)));
+        let request = CommandRequest::at(&state, undo);
+        state.execute(&request).unwrap();
+        assert_eq!(state.model().node_guides(sid(20)), None);
     }
 }

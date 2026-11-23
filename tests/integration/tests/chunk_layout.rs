@@ -357,6 +357,7 @@ fn catalog(editor: &mut Editor) {
                 nodes,
                 modifier_stacks: stacks,
                 layout_records: Vec::new(),
+                node_guides: Vec::new(),
             })],
             "섹션 삽입",
         );
@@ -791,6 +792,7 @@ fn product_serializer_splits_views_over_approved_threshold() {
             nodes,
             modifier_stacks: Vec::new(),
             layout_records: Vec::new(),
+            node_guides: Vec::new(),
         }));
     }
     editor.apply(commands, "큰 View");

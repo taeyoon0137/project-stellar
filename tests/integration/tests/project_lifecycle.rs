@@ -151,6 +151,7 @@ fn build_landing(editor: &mut Editor) -> (Timeline, StableId) {
         ],
         modifier_stacks: vec![bg_stack],
         layout_records: Vec::new(),
+        node_guides: Vec::new(),
     };
     let changes = editor.apply(
         vec![

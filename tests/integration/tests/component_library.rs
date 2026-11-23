@@ -271,6 +271,7 @@ fn component_library_chunk_round_trips_beside_documents() {
             ],
             modifier_stacks: Vec::new(),
             layout_records: Vec::new(),
+            node_guides: Vec::new(),
         })],
         "문서 구성",
     );

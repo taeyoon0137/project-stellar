@@ -304,6 +304,7 @@ fn restructure_refuses_unprojected_children_and_bad_shapes_without_changes() {
         insert: Vec::new(),
         insert_stacks: Vec::new(),
         insert_layouts: Vec::new(),
+        insert_guides: Vec::new(),
         moves: Vec::new(),
         remove: Vec::new(),
     };
