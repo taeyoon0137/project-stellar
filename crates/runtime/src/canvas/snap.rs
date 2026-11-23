@@ -31,8 +31,8 @@ use stellar_scene::spatial::{GridIndex, SpatialIndex};
 use crate::app::gesture_math::{Modifiers, ResizeHandle, MIN_SIZE};
 use crate::canvas::CanvasScene;
 
-/// 화면 허용 오차(pt). XII.10.2 값(ADR-0104)이 정해지면 그 값을 씁니다(지금은 잠정값).
-pub const DEFAULT_TOLERANCE_PT: f32 = 6.0;
+/// 화면 허용 오차(pt). XII.10.2 값(ADR-0104 결정 2 표)과 같은 정의입니다.
+pub const DEFAULT_TOLERANCE_PT: f32 = crate::canvas::tool_units::SNAP_TOLERANCE_PT;
 /// 형제 후보 상한. 넘으면 거부하지 않고 시작 상자에 가까운 형제만 남깁니다. 정렬 표·공간 인덱스로 update 비용이
 /// 후보 수에 거의 비례하지 않으므로 처음 값(4096)보다 크게 둡니다(ADR-0105 결정 3).
 pub const MAX_SIBLINGS: usize = 65_536;

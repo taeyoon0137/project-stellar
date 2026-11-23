@@ -55,6 +55,8 @@ pub mod snap;
 pub mod tool;
 /// 캔버스 이동·크기 단위와 핸들 숨김 기준 (XII.10.2, ADR-0104).
 pub mod tool_units;
+/// 스냅·표시 토글과 스냅 일시 해제 수식키 (XII.10.17, ADR-0117).
+pub mod view_options;
 /// 캔버스 변형·정렬 엔진 (XII.10.9~XII.10.16, XII.10.21, XII.10.23, XII.10.44, ADR-0105).
 pub mod transform;
 
