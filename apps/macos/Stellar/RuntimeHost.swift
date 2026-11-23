@@ -24,7 +24,15 @@ final class RuntimeHost {
     /// 소유한 handle의 코어 버전 문자열.
     func version() -> String? {
         guard created else { return nil }
-        return CoreRuntime.version(handle: handle)
+        var needed = 0
+        guard stellar_runtime_version(handle, nil, 0, &needed) == STELLAR_OK else { return nil }
+        var buffer = [UInt8](repeating: 0, count: needed)
+        var written = 0
+        let status = buffer.withUnsafeMutableBufferPointer { raw in
+            stellar_runtime_version(handle, raw.baseAddress, needed, &written)
+        }
+        guard status == STELLAR_OK else { return nil }
+        return String(decoding: buffer[0..<written], as: UTF8.self)
     }
 
     /// 앱 비활성화 flush(ADR-0072): 저장되지 않은 완료 편집을 debounce 없이 저장하도록 코어에 알립니다.

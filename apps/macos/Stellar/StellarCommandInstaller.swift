@@ -11,7 +11,7 @@ import Foundation
 // - 대체 이름 규칙(ADR-0005 §2): PATH에서 `stellar`가 다른 프로그램으로 먼저 해석되면(설치 위치에 있거나 PATH
 //   앞쪽에 있음) `stellar-cli`로 설치하고, `stellar-cli`도 다른 프로그램이 쓰면 아무것도 설치하지 않고 알립니다.
 // - 앱 번들 안 helper(`Contents/Helpers/stellar`, ADR-0005 §2·§7, 배치 확정은 XXIV.5.1)가 없으면 설치하지 않습니다.
-// 파일 I/O는 메인 스레드 밖에서 호출합니다(아키텍처 §6.4). 위치·안전 조건의 근거는 docs/design/ui/welcome.md 6장입니다.
+// 파일 I/O는 메인 스레드 밖에서 호출합니다(아키텍처 §6.4). 위치·안전 조건의 근거는 ADR-0005 §2·§7과 아키텍처 §37입니다.
 
 /// 경로 하나의 lstat 결과(마지막 심볼릭 링크를 따라가지 않음).
 enum StellarCommandFileEntry: Equatable {
@@ -537,7 +537,7 @@ struct StellarCommandInstallation: Equatable {
     var commandName: String { (linkPath as NSString).lastPathComponent }
 }
 
-/// 현재 설치 상태(XXIV.5.5). 판정 규칙은 docs/design/ui/welcome.md 6.5절입니다.
+/// 현재 설치 상태(XXIV.5.5). 판정 규칙은 아래 case 설명과 같습니다.
 enum StellarCommandInstallStatus: Equatable {
     enum UnsupportedLocation: Equatable {
         /// Gatekeeper App Translocation 임시 경로에서 실행 중입니다.
@@ -1042,5 +1042,21 @@ struct StellarCommandInstaller {
             }
         }
         return "/" + stack.joined(separator: "/")
+    }
+}
+
+/// `stellar` 명령 설치 상태 확인(XXIV.5.5). 설치기 생성(PATH 파일 읽기)과 판정을 `queue`에서 하고,
+/// 결과만 메인 스레드로 넘깁니다(아키텍처 §6.4, 메인 스레드 파일 조회 0).
+enum StellarCommandStatusCheck {
+    static func evaluate(
+        on queue: DispatchQueue,
+        makeInstaller: @escaping () -> StellarCommandInstaller,
+        completion: @escaping (StellarCommandInstaller, StellarCommandInstallStatus) -> Void
+    ) {
+        queue.async {
+            let installer = makeInstaller()
+            let status = installer.status()
+            DispatchQueue.main.async { completion(installer, status) }
+        }
     }
 }

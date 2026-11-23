@@ -91,7 +91,6 @@ git config core.hooksPath .githooks
 - [`docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md`](./docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md): 아키텍처 기준 문서를 원자적 작업 패키지(WBS)로 분해한 구현·검증 실행 계획입니다. 단계별 작업과 완료 게이트(G0\~G8)를 정의하며 초기 릴리스 범위는 Phase I\~XVII(G8)입니다.
 - [`docs/adr/`](./docs/adr/): 아키텍처 결정 기록(ADR)입니다. 예를 들어 [ADR-0006](./docs/adr/ADR-0006-windows-support-deferred.md)은 Windows 지원 보류와 macOS 우선 결정을 기록합니다.
 - [`docs/spec/`](./docs/spec/): Stellar 프로젝트 파일 포맷 명세, 버전 호환성, 보안 한도를 정의합니다.
-- [`docs/design/macos-shell-design.md`](./docs/design/macos-shell-design.md): macOS 셸 디자인 가이드입니다.
 - [`docs/architecture/`](./docs/architecture/): crate 의존 그래프, panic 정책, lockfile 정책 같은 세부 아키텍처 규칙입니다.
 - [`docs/status/`](./docs/status/): 저장소 기준선, 소스 inventory, 측정 결과 기록입니다.
 - [`docs/task-reports/`](./docs/task-reports/): WBS 작업별 완료·차단 보고서입니다.
@@ -111,8 +110,7 @@ git config core.hooksPath .githooks
 | :-------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------ |
 | `./scripts/readme_update.sh`            | `assets/docs/README.preset.md`와 `assets/docs/readme-hero.preset.svg`에서 `README.md`와 `assets/docs/readme-hero.svg`를 재생성합니다. |
 | `./scripts/source_inventory.sh`         | 추적 파일의 확장자별 수와 자동 생성물·vendored code를 집계해 `docs/status/source-inventory.md`를 재생성합니다.                        |
-| `./scripts/macos/smoke.sh`              | macOS 앱을 Debug로 빌드하고 FFI·수명주기·캔버스·텍스트 입력·입력 이벤트·업데이트 smoke 검사를 실행합니다.                             |
-| `./scripts/macos/qa.sh` | macOS 앱을 Debug로 빌드하고 임시 샘플 프로젝트에서 [실사용 QA 절차](./docs/qa/README.md)를 시작합니다. |
+| `./scripts/macos/smoke.sh`              | macOS 앱을 Debug로 빌드하고 FFI·수명주기·명령 설치기·업데이트 smoke 검사를 실행합니다.                             |
 | `./scripts/macos/release_build.sh`      | 서명하지 않은 arm64 Release 앱을 빌드하고 배포 구성과 번들 구조를 검사합니다.                                                         |
 | `./scripts/macos/bundle_check.sh`       | `Stellar.app`의 번들 구조·링크·rpath·코드 서명 구조를 검사하고 재배치 실행 smoke를 실행합니다.                                     |
 | `./scripts/macos/codesign_bundle.sh`    | 앱 번들을 안쪽 코드부터 Hardened Runtime으로 서명합니다.                                                                              |

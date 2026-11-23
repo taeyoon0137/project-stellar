@@ -43,6 +43,7 @@
 - **2026-11-23 — 근거 커밋 기록으로 `[x]` 승격:** 1차 엔진 배치 marker 반영의 (2) 묶음(구현·검증·선행 판정은 `[x]` 조건을 충족하지만 작업 커밋 제목이 `Feat:`·`Fix:`·`Test:`라 원장이 근거 커밋을 찾지 못한 행) IX.12.1, XII.10.28, XII.10.32, XIV.10.7, XIV.14.5, XXVIII.2.3, XIV.10.8, XIV.10.9, XIV.11.3, XIV.12.1, XIV.12.2, XIV.12.3, XIV.12.4, XIV.12.5, XIV.12.6, XVI.6.6, XXIII.2.1, XXIII.2.2, XXIII.2.3, XXIII.2.4, XXIV.2.1, XXIV.2.2, XXIV.2.3에 행마다 보고서 "근거 커밋" 절과 `Task(<ID>)` 기록 커밋을 남기고 `[x]`로 바꿨습니다. 이력은 다시 쓰지 않았습니다. 그 사슬 때문에 `[~]`였던 XXIV.1.3, XXIV.3.1도 기존 `Task` 커밋이 있어 `[x]`입니다.
 
 ---
+- **2026-11-23 — 셸 UI 초기화(ADR-0098):** 제품 책임자 지시로 macOS 셸 UI를 지우고 빈 창 껍데기만 남겼습니다. 셸 구현이 결과물이던 II.5.4(캔버스 host view), XII.2.2(창 controller의 창 session 소유), XII.3.2(NSEvent 입력 변환), XII.5.1(네이티브 텍스트 필드), XII.6.2(Open Project), XII.6.4(창 session Undo·Redo·Save Now 메뉴), XII.6.5(단축키), XXIV.5.6(첫 실행 설치 화면)을 `[ ]`로 되돌렸습니다. II.5.1은 앱 프로젝트가 남고 SwiftUI 설정 placeholder만 지워 `[~]`입니다. 명령 설치기(XXIV.5.3~XXIV.5.5)는 화면이 아닌 기능이라 남기고 검사를 `--command-install-check`로 옮겼습니다.
 
 ## 1. 원자적 구현·검증 실행 계획
 
@@ -279,10 +280,10 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| II.5.1 | `[x]` | `apps/macos`에 macOS 26, arm64 전용 AppKit 앱 프로젝트를 생성합니다. SwiftUI는 앱 설정 화면용 placeholder target만 두고 캔버스는 AppKit view로 둡니다. | `xcodebuild -project ... -scheme Stellar -configuration Debug CODE_SIGNING_ALLOWED=NO build` 통과. | II.4.6 |
+| II.5.1 | `[~]` | `apps/macos`에 macOS 26, arm64 전용 AppKit 앱 프로젝트를 생성합니다. SwiftUI는 앱 설정 화면용 placeholder target만 두고 캔버스는 AppKit view로 둡니다. | `xcodebuild -project ... -scheme Stellar -configuration Debug CODE_SIGNING_ALLOWED=NO build` 통과. | II.4.6 |
 | II.5.2 | `[x]` | Rust static 또는 dynamic library를 Debug 빌드에 연결하고 앱 시작 시 `stellar_runtime_version`을 호출해 로그에 기록합니다. | 앱 smoke test가 FFI 버전 문자열을 읽고 종료 코드 0. | II.5.1 |
 | II.5.3 | `[x]` | `NSApplicationDelegate`와 빈 `NSWindowController`를 추가합니다. 창 닫기·앱 종료 시 runtime destroy가 정확히 한 번 호출되게 합니다. | lifecycle UI test에서 create/destroy count가 1:1입니다. | II.5.2 |
-| II.5.4 | `[x]` | 최소 `NSView` CanvasHost를 추가하고 backing scale과 drawable size 변경 이벤트를 Rust core에 전달하는 구조만 만듭니다. 렌더링은 하지 않습니다. | resize fixture에서 pixel size가 point size×scale과 일치합니다. | II.5.3 |
+| II.5.4 | `[ ]` | 최소 `NSView` CanvasHost를 추가하고 backing scale과 drawable size 변경 이벤트를 Rust core에 전달하는 구조만 만듭니다. 렌더링은 하지 않습니다. | resize fixture에서 pixel size가 point size×scale과 일치합니다. | II.5.3 |
 
 ### II.6 Windows 셸 골격
 
@@ -1258,7 +1259,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XII.2.1 | `[x]` | `ProjectWindowSession` core type에 ProjectIdentity, WindowSessionId, 독립 document state, view state, history, loaded generation을 정의합니다. | 두 session이 서로 state를 공유하지 않습니다. | IV.2.3, VII.5.1, V.4.4 |
-| XII.2.2 | `[x]` | macOS `NSWindowController`가 한 ProjectWindowSession handle을 소유하도록 연결합니다. | 창 2개 open/close lifecycle 통과. | II.5.3, XII.2.1 |
+| XII.2.2 | `[ ]` | macOS `NSWindowController`가 한 ProjectWindowSession handle을 소유하도록 연결합니다. | 창 2개 open/close lifecycle 통과. | II.5.3, XII.2.1 |
 | XII.2.3 | `[!]` | Windows `MainWindow`가 한 ProjectWindowSession handle을 소유하도록 연결합니다. | 창 2개 open/close lifecycle 통과. | II.6.3, XII.2.1 |
 | XII.2.4 | `[ ]` | 같은 project path를 여러 창에서 열 수 있게 하되 각 창이 독립 base generation과 memory model을 로드하게 합니다. | 한 창 edit가 다른 창에 즉시 나타나지 않습니다. | XII.2.2 |
 | XII.2.5 | `[x]` | 창별 열린 tab, active view, viewport, selection을 WindowViewState에 연결합니다. | 창간 상태 격리. | VII.3.1, XII.2.1 |
@@ -1268,7 +1269,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XII.3.1 | `[x]` | 공통 `InputEvent`에 pointer, wheel, key, text composition, focus, resize를 정의하고 native timestamp를 monotonic domain으로 변환합니다. | 양 플랫폼 event fixture schema 동일. | II.3.3 |
-| XII.3.2 | `[x]` | macOS mouse/trackpad/keyboard 이벤트를 InputEvent로 변환합니다. | coordinate, modifiers, double click fixture 통과. | II.5.4, XII.3.1 |
+| XII.3.2 | `[ ]` | macOS mouse/trackpad/keyboard 이벤트를 InputEvent로 변환합니다. | coordinate, modifiers, double click fixture 통과. | II.5.4, XII.3.1 |
 | XII.3.3 | `[!]` | Windows pointer/mouse/keyboard 이벤트를 InputEvent로 변환합니다. | DPI scaling, modifiers, double click fixture 통과. | II.6.4, XII.3.1 |
 | XII.3.4 | `[x]` | 연속 pointer move/wheel event coalescing을 구현하되 pointer down/up과 key event 순서를 바꾸지 않습니다. | 10,000 move→최신 1개, down/up 보존. | XII.3.1 |
 | XII.3.5 | `[~]` | InputEvent 수신 T0 trace를 찍고 DocumentThread hit-test request까지 queue latency를 측정합니다. | trace에 T0/T1 후보 timestamp 존재. | XI.3.4, XII.1.2 |
@@ -1288,7 +1289,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XII.5.1 | `[x]` | macOS 레이어명·검색·일반 필드에 NSTextField/NSTextView를 사용하고 core text engine을 호출하지 않습니다. | native undo/IME smoke test. | II.5.3 |
+| XII.5.1 | `[ ]` | macOS 레이어명·검색·일반 필드에 NSTextField/NSTextView를 사용하고 core text engine을 호출하지 않습니다. | native undo/IME smoke test. | II.5.3 |
 | XII.5.2 | `[!]` | Windows 레이어명·검색·일반 필드에 TextBox/RichEditBox를 사용합니다. | native undo/IME smoke test. | II.6.3 |
 | XII.5.3 | `[ ]` | 캔버스 Text node 편집용 common editing session을 정의하고 native IME composition event만 받아 Phase X layout으로 표시합니다. | 한글 조합 중간·확정 fixture 통과. | X.10.3, XII.3.1 |
 | XII.5.4 | `[ ]` | macOS text input client adapter를 구현해 marked text, selection range, candidate rect를 common session과 연결합니다. | 한글·일본어 IME manual automation fixture 통과. | XII.5.3 |
@@ -1300,10 +1301,10 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XII.6.1 | `[!]` | New Project native command가 ProjectCreateRequest를 호출하고 폴더 선택+이름 입력 결과만 core에 전달합니다. 상세 UX는 구현하지 않습니다. | create integration test 통과. | IV.4.7, XII.2.2, XII.2.3 |
-| XII.6.2 | `[x]` | Open Project command가 folder를 선택하고 ProjectProbe 후 session을 엽니다. | invalid repo 안내 error mapping 통과. | IV.5.3 |
+| XII.6.2 | `[ ]` | Open Project command가 folder를 선택하고 ProjectProbe 후 session을 엽니다. | invalid repo 안내 error mapping 통과. | IV.5.3 |
 | XII.6.3 | `[~]` | Clone Project command가 URL과 target folder를 받아 clone-open pipeline을 호출합니다. | local fixture remote clone 통과. | IV.6.4 |
-| XII.6.4 | `[x]` | Undo/Redo/Save Now command를 active WindowSession에 연결합니다. | 창별 history와 save 호출 fixture 통과. | VII.5.3, V.5.4 |
-| XII.6.5 | `[~]` | 앱 메뉴 단축키를 macOS·Windows native convention으로 연결하되 command ID는 core에서 공유합니다. | key mapping smoke test. | XII.6.4 |
+| XII.6.4 | `[ ]` | Undo/Redo/Save Now command를 active WindowSession에 연결합니다. | 창별 history와 save 호출 fixture 통과. | VII.5.3, V.5.4 |
+| XII.6.5 | `[ ]` | 앱 메뉴 단축키를 macOS·Windows native convention으로 연결하되 command ID는 core에서 공유합니다. | key mapping smoke test. | XII.6.4 |
 
 ### XII.7 동일 프로젝트 다중 창 저장 충돌
 
@@ -2331,7 +2332,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XXIV.5.3 | `[~]` | 명령줄 설치 위치 결정을 구현합니다. 위치와 근거는 §37 보안 경계(최소 권한)와 Apple·각 셸 공식 문서를 근거로 정해 보고서에 기록하고(ADR-0005 §7), 계산은 UI·Document 스레드 밖에서 합니다. | `[DEV-MAC]` 위치 결정 fixture가 보고서 정의와 일치, UI 스레드 호출 0. | XXIV.5.1 |
 | XXIV.5.4 | `[~]` | `stellar` 명령 설치·제거 로직을 구현합니다(2026-11-14 제품 소유자 결정). 사용자 동의 뒤에만 파일을 바꾸고, PATH에서 `stellar`가 Stellar 자기 링크가 아닌 다른 프로그램으로 해석되면(설치 위치에 있거나 PATH 앞쪽에 있는 경우) 덮어쓰지 않고 `stellar-cli` 이름으로 설치하고, `stellar-cli`도 다른 프로그램이 쓰고 있으면 설치하지 않고 알립니다(ADR-0005 §2). 그 밖의 설치 방식과 안전 조건은 §37과 Apple·각 셸 공식 문서를 근거로 정해 보고서에 기록하며, 설치 상태는 OS 사용자 데이터에만 둡니다(ADR-0005 §7). | `[DEV-MAC]` 설치·제거 fixture 통과, 동의 없는 파일 변경 0, 다른 프로그램의 `stellar`가 설치 위치나 PATH 앞쪽에 있는 fixture에서 덮어쓰기 0·`stellar-cli` 설치, `stellar-cli`도 다른 프로그램인 fixture에서 설치 0·알림, Stellar 자기 링크만 있는 fixture에서 `stellar` 유지. | XXIV.5.3 |
 | XXIV.5.5 | `[~]` | 설치 상태 확인을 구현합니다. 확인 시점·방법과 확인 결과의 처리는 Apple 공식 문서와 각 셸 공식 문서를 근거로 정해 보고서에 기록하며, 처리는 XXIV.5.4와 같은 조건을 지킵니다. 확인은 UI 스레드 밖에서 합니다. | `[DEV-MAC]` 상태 fixture 판정이 보고서 정의와 일치, 동의 없는 파일 변경 0. | XXIV.5.4 |
-| XXIV.5.6 | `[~]` | macOS 첫 실행 명령줄 설치 화면을 구현합니다(2026-11-14 제품 소유자 결정). `stellar` helper를 포함한 빌드를 처음 실행하면 설치 화면을 제공하고, 사용자가 명시적으로 동의하기 전에는 파일을 만들거나 바꾸지 않습니다. 설치를 되돌리는 진입점도 제공하고, 실제로 설치한 명령 이름(`stellar` 또는 `stellar-cli`)을 보여 줍니다. 화면 구성과 진입점 배치는 HIG를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 첫 실행 설치 화면 표시, 동의 없는 파일 변경 0, 되돌리기 후 설치 항목 0, 키보드·VoiceOver smoke. | XXIV.5.5, XII.9.1, XII.6.5 |
+| XXIV.5.6 | `[ ]` | macOS 첫 실행 명령줄 설치 화면을 구현합니다(2026-11-14 제품 소유자 결정). `stellar` helper를 포함한 빌드를 처음 실행하면 설치 화면을 제공하고, 사용자가 명시적으로 동의하기 전에는 파일을 만들거나 바꾸지 않습니다. 설치를 되돌리는 진입점도 제공하고, 실제로 설치한 명령 이름(`stellar` 또는 `stellar-cli`)을 보여 줍니다. 화면 구성과 진입점 배치는 HIG를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 첫 실행 설치 화면 표시, 동의 없는 파일 변경 0, 되돌리기 후 설치 항목 0, 키보드·VoiceOver smoke. | XXIV.5.5, XII.9.1, XII.6.5 |
 
 ---
 

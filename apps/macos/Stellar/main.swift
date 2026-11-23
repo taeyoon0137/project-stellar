@@ -1,15 +1,10 @@
 import AppKit
 
-// Stellar 진입점.
+// Stellar 진입점. UI는 재설계 전까지 빈 창 하나만 있는 껍데기입니다(ADR-0098).
 
 // lifecycle 검사 모드: 코어 runtime create/destroy가 1:1인지 headless로 검증하고 종료(II.5.3).
 if CommandLine.arguments.contains("--lifecycle-check") {
     exit(LifecycleCheck.run() ? 0 : 1)
-}
-
-// canvas 검사 모드: drawable pixel == point × scale 및 코어 round-trip을 검증하고 종료(II.5.4).
-if CommandLine.arguments.contains("--canvas-check") {
-    exit(CanvasCheck.run() ? 0 : 1)
 }
 
 // update 검사 모드: 업데이트 구성, Stable/Beta 채널 격리, appcast 서명, 승인 전 다운로드 금지를 실제 Sparkle과
@@ -18,77 +13,11 @@ if CommandLine.arguments.contains("--update-check") {
     exit(UpdateCheck.run() ? 0 : 1)
 }
 
-#if DEBUG
-// text input 검사 모드: 네이티브 UI 텍스트 컨트롤의 undo/IME smoke를 headless로 검증하고 종료(XII.5.1).
-if CommandLine.arguments.contains("--text-input-check") {
-    exit(TextInputCheck.run() ? 0 : 1)
+// 명령 설치 검사 모드: `stellar` 명령 설치기의 위치 결정·설치·제거·상태 확인을 메모리·임시 폴더 fixture로 검증하고
+// 종료(XXIV.5.3~XXIV.5.5).
+if CommandLine.arguments.contains("--command-install-check") {
+    exit(CommandInstallCheck.run() ? 0 : 1)
 }
-
-// input 검사 모드: mouse·trackpad·keyboard NSEvent → 공통 InputEvent 변환을 headless로 검증하고 종료(XII.3.2).
-if CommandLine.arguments.contains("--input-check") {
-    exit(InputCheck.run() ? 0 : 1)
-}
-
-// 영역별 UI 검사 모드: 각 UI 영역을 화면 밖 창으로 만들어 검사하고 종료합니다(docs/design/ui/*.md 검사 절).
-// 인자 이름은 `--<영역>-ui-check`이고, scripts/macos/smoke.sh가 같은 순서로 모두 실행합니다.
-let areaUIChecks: [(argument: String, run: () -> Bool)] = [
-    ("--shell-frame-ui-check", ShellFrameUICheck.run),
-    ("--tools-menus-ui-check", ToolsUICheck.run),
-    ("--sidebar-ui-check", SidebarUICheck.run),
-    ("--git-panel-ui-check", GitPanelUICheck.run),
-    ("--welcome-ui-check", WelcomeUICheck.run),
-]
-for check in areaUIChecks where CommandLine.arguments.contains(check.argument) {
-    exit(check.run() ? 0 : 1)
-}
-
-// 셸 통합 검사 모드: 실제 앱 구성(메뉴, 시작 창, 코어로 프로젝트 열기, 프로젝트 창 영역·도구, 복원·닫기)을 화면 밖에서
-// 검사하고 종료합니다(docs/design/ui/shell_frame.md 통합 절).
-if let flag = CommandLine.arguments.firstIndex(of: "--canvas-move-check") {
-    guard CommandLine.arguments.indices.contains(flag + 2),
-          CommandLine.arguments[flag + 2] == ProcessInfo.processInfo.environment["HOME"] else { exit(1) }
-    let fixture = URL(fileURLWithPath: CommandLine.arguments[flag + 1], isDirectory: true)
-    exit(MainActor.assumeIsolated { ShellCanvasMoveCheck.run(fixture: fixture) } ? 0 : 1)
-}
-
-if CommandLine.arguments.contains("--shell-integration-check") {
-    exit(ShellIntegrationCheck.run() ? 0 : 1)
-}
-
-// Open Project 검사 모드: 폴더 선택 → 코어 열기(분류·안전 probe) → 창, 잘못된 폴더별 실패 코드 → 안내 대응을 실제 코어와
-// 임시 fixture로 검사하고 종료합니다(XII.6.2).
-if CommandLine.arguments.contains("--project-open-check") {
-    exit(ShellProjectOpenCheck.run() ? 0 : 1)
-}
-
-if let index = CommandLine.arguments.firstIndex(of: "--project-clone-check"),
-   CommandLine.arguments.indices.contains(index + 1), CommandLine.arguments[index + 1] == ProcessInfo.processInfo.environment["HOME"] {
-    let directory = URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)
-    exit(MainActor.assumeIsolated { ShellProjectOpenCheck.clone(in: directory) } ? 0 : 1)
-}
-
-// 창 session 검사 모드: 저장 프로젝트 fixture(다음 인자)를 복사한 두 프로젝트를 열고 닫으며 창 controller마다 코어 창
-// session handle 하나를 소유하는지 검사하고 종료합니다(XII.2.2).
-if CommandLine.arguments.contains("--window-session-check") {
-    exit(ShellWindowSessionCheck.run(arguments: CommandLine.arguments) ? 0 : 1)
-}
-
-// 창 session 명령 검사 모드: 메뉴 Undo·Redo·Save Now가 그 창의 코어 창 session에만 가는지 저장 프로젝트 fixture(다음
-// 인자)로 검사하고 종료합니다(XII.6.4).
-if CommandLine.arguments.contains("--session-commands-check") {
-    exit(ShellSessionCommandsCheck.run(arguments: CommandLine.arguments) ? 0 : 1)
-}
-
-if CommandLine.arguments.contains("--window-close-check") {
-    exit(ShellWindowCloseCheck.run(arguments: CommandLine.arguments) ? 0 : 1)
-}
-
-// 단축키 대응 검사 모드: 코어가 공유하는 command ID와 macOS 관례 단축키(⌘Z·⇧⌘Z·⌘S)의 대응, 메뉴 action이 창 session에
-// 도착하는지 저장 프로젝트 fixture(다음 인자)로 검사하고 종료합니다(XII.6.5).
-if CommandLine.arguments.contains("--key-mapping-check") {
-    exit(ShellKeyMappingCheck.run(arguments: CommandLine.arguments) ? 0 : 1)
-}
-#endif
 
 // smoke 모드: GUI를 띄우지 않고 FFI로 코어 버전을 읽어 출력한 뒤 종료합니다(II.5.2).
 if CommandLine.arguments.contains("--smoke") {
