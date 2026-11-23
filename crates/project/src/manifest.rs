@@ -472,6 +472,7 @@ pub(crate) mod fixtures {
             repository: RepositoryUrl::new(url).expect("url"),
             version: VersionSelector::Tag(RefName::new(tag).expect("tag")),
             local_override: None,
+            components: Default::default(),
         }
     }
 

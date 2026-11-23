@@ -127,5 +127,8 @@ pub mod library_open;
 /// 사용 프로젝트 instance의 외부 component 해석과 외부 참조 사용 수집 (XV.5.3·XV.7.3).
 pub mod library_refs;
 
+/// cache를 먼저 보는 library 매니페스트 공급자와 `stellar.yaml` 의존성 편집 (XV.4.3·XV.7.4, ADR-0137).
+pub mod library_resolve;
+
 /// 사용 프로젝트 component command의 library 읽기 전용 사전 검사 (XV.5.3).
 pub mod library_guard;

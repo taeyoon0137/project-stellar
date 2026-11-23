@@ -58,6 +58,9 @@ pub mod cache_privacy;
 /// resolver 그래프 → lock resolved entry 변환 (XV.4.1)과 entry validator (XV.4.2).
 pub mod lock;
 
+/// lockfile가 있으면 선택자가 바뀌지 않은 의존성은 network 없이 lock commit 사용 (XV.4.3, ADR-0137).
+pub mod lock_preference;
+
 /// lockfile content hash와 cache entry 무결성 검사 (XV.4.4).
 pub mod lock_integrity;
 
@@ -69,6 +72,9 @@ pub mod library_snapshot;
 
 /// 외부 library component·token 참조 (XV.5.2).
 pub mod external_ref;
+
+/// 사용 프로젝트가 저장한 외부 component 참조 표 (XV.5.2, ADR-0137).
+pub mod component_imports;
 
 /// 사용 프로젝트의 library resource 읽기 전용 정책 (XV.5.3).
 pub mod read_only;

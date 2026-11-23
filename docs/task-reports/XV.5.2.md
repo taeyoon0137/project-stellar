@@ -61,3 +61,44 @@
   없어(crate graph) 문서 chunk에 canonical 텍스트로 넣는 통합 작업이 필요하고, 그 작업이 문서 저장·읽기
   왕복을 검증해야 합니다. 해석할 수 없는 참조는 참조 전체를 보존하는 `UnresolvedExternalRef`(XV.5.5 리뷰
   수정 P1)로 남깁니다.
+
+## 작업 (2026-11-24, library-materialize): 사용 프로젝트가 외부 component 참조를 저장
+
+- 결정: [ADR-0137](../adr/ADR-0137-library-stored-refs-and-materialize-commands.md) 결정 1. "차이"와 "상태 검토"의 남은 일(문서가
+  참조를 저장하지 않음)을 처리했습니다.
+- 저장 위치: 사용 프로젝트 `stellar.yaml` 의존성 선언의 `components`(component StableId 시퀀스). 한 항목이 `ExternalComponentRef`의 세
+  값(선언 이름 = 매핑 키, LibraryId = `library_id`, StableId = 항목)을 이룹니다. document crate는 dependencies에 의존할 수 없어 instance
+  payload 대신 의존성 선언 옆에 둡니다(같은 저장 값, ADR-0027 결정 7).
+- 판정: `classify_component`가 저장된 참조를 먼저 봅니다(하나면 외부, 둘 이상이면 모호). 저장되지 않은 instance는 이전 프로젝트 호환
+  읽기(`ComponentOrigin::Undeclared`)이고 진단 `library-ref/undeclared`가 저장을 알립니다. 저장된 참조는 snapshot이 없어도 외부라 offline
+  override 설정이 `LibraryUnavailable`로 거부됩니다.
+- 저장 명령: `stellar library add … --component <id>`, `stellar library import <경로> <이름> <id>... [--remove]`.
+
+### 변경 파일
+
+- `crates/dependencies/src/declaration.rs`(`components` 필드·parser·writer), `crates/dependencies/src/node.rs`(`ValueError` 3개),
+  `crates/dependencies/src/component_imports.rs`(신규), `crates/dependencies/src/ref_resolution.rs`(`with_imports`·`imports`),
+  `crates/dependencies/src/lib.rs`
+- `crates/project/src/library_open.rs`(매니페스트 읽기·`declared_only`·`ManifestInvalid`), `crates/project/src/library_refs.rs`
+  (판정 순서·`Undeclared`·`ExternalUsages::undeclared`), `crates/project/src/library_guard.rs`
+- `crates/ops/src/library.rs`(`has_external`, 매니페스트 문제 진단, lock 없을 때도 저장 참조 유지), `crates/runtime/src/library.rs`
+- 구조체 literal 컴파일 보정: `crates/project/src/manifest.rs`(fixture), `crates/project/tests/restricted_yaml_fuzz.rs`
+- `docs/spec/stellar-format.md`(형식 표), `docs/adr/ADR-0137-library-stored-refs-and-materialize-commands.md`(신규)
+
+### 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-dependencies --lib declaration` | 0 — 저장 참조 왕복·정규화·거부 시험 포함 통과 |
+| `cargo test -p stellar-dependencies --lib component_imports` | 0 — 1 passed |
+| `cargo test -p stellar-ops --lib library_materialize::tests::stored_refs_decide_external_components_and_document_diagnostics` | 0 — 1 passed(제품 명령 커밋 이후) |
+
+| 검사 | 결과 |
+|---|---|
+| **문서 저장·읽기 왕복**: `components`는 StableId 오름차순으로 쓰고 입력 순서를 정규화, 비면 키 없음, 대문자 UUID·중복·4096개 초과·시퀀스 아님 거부(경로 포함) | 통과 |
+| 저장된 참조가 없으면 `Undeclared`, import 뒤 `External(ds)`, 저장된 참조는 offline에서도 외부라 override 설정 거부 | 통과 |
+
+### 남은 위험 / 한계
+
+- 같은 component를 instance마다 다른 의존성(같은 library 두 버전)에서 쓰는 경우는 표현하지 않습니다(모호 진단).
+- 외부 token 참조는 아직 문서에 저장 위치가 없습니다(binding 표현식 쪽, 이 작업 범위 밖).

@@ -294,11 +294,12 @@ impl<'a> ResolvedTarget<'a> {
     }
 }
 
-/// 한 dependency graph instance: scope 표와 node별 읽기 전용 snapshot.
+/// 한 dependency graph instance: scope 표와 node별 읽기 전용 snapshot, 사용 프로젝트가 저장한 외부 component 참조.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LibraryGraphInstance {
     scopes: DependencyScopes,
     snapshots: BTreeMap<DependencyNodeKey, LibrarySnapshot>,
+    imports: crate::component_imports::ComponentImports,
 }
 
 impl LibraryGraphInstance {
@@ -313,7 +314,22 @@ impl LibraryGraphInstance {
                 .into_iter()
                 .map(|s| (s.node().clone(), s))
                 .collect(),
+            imports: Default::default(),
         }
+    }
+
+    /// 사용 프로젝트 `stellar.yaml`이 저장한 외부 component 참조를 붙입니다(ADR-0137 결정 1).
+    pub fn with_imports(
+        mut self,
+        imports: crate::component_imports::ComponentImports,
+    ) -> LibraryGraphInstance {
+        self.imports = imports;
+        self
+    }
+
+    /// 사용 프로젝트가 저장한 외부 component 참조.
+    pub fn imports(&self) -> &crate::component_imports::ComponentImports {
+        &self.imports
     }
 
     /// scope 표.

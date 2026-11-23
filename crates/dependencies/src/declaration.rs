@@ -18,15 +18,24 @@
 //!     version:
 //!       branch: main             # 또는 commit: <40/64자리 hex>
 //!     local_override: ../icons
+//!     components:                # 이 프로젝트가 쓰는 외부 component(StableId, ADR-0137)
+//!       - 0195c530-3acd-7bc1-8414-c213f61cb9a0
 //! ```
 //!
 //! tag는 canonical 형식에서 스칼라로, branch·commit은 한 키짜리 매핑으로 기록합니다. 입력에서는
 //! `version: {tag: ...}` 매핑도 받아 스칼라로 정규화합니다. 알 수 없는 키는 거부합니다.
+//!
+//! `components`는 사용 프로젝트 문서의 instance가 가리키는 외부 component 참조를 저장합니다(ADR-0137 결정 1).
+//! 한 항목은 [`ExternalComponentRef`](crate::external_ref::ExternalComponentRef)의 세 값(선언 이름 = 매핑 키, LibraryId
+//! = `library_id`, component StableId = 항목) 가운데 StableId입니다. canonical 형식은 StableId 오름차순이고 비어 있으면
+//! 키를 쓰지 않습니다. 입력의 중복·canonical이 아닌 UUID 표기는 거부하고 순서는 정규화합니다.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::str::FromStr;
 
 use stellar_core_types::ids::StableId;
+use stellar_core_types::reference::ComponentRef;
 
 use crate::node::{
     expect_mapping, expect_scalar, invalid, join, optional, reject_unknown, require, DeclNode,
@@ -41,6 +50,8 @@ pub const MAX_REPOSITORY_URL_LEN: usize = 4096;
 pub const MAX_REF_NAME_LEN: usize = 255;
 /// local override 경로 최대 byte 수.
 pub const MAX_LOCAL_OVERRIDE_LEN: usize = 4096;
+/// 의존성 하나가 저장하는 외부 component 참조 최대 수(ADR-0137 결정 1).
+pub const MAX_COMPONENT_IMPORTS: usize = 4096;
 
 /// 라이브러리 식별자: 라이브러리 프로젝트 `stellar.yaml`의 `project.id`(UUID).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -441,6 +452,8 @@ pub struct DependencyDeclaration {
     pub version: VersionSelector,
     /// 선택적 local override.
     pub local_override: Option<LocalOverridePath>,
+    /// 사용 프로젝트가 이 의존성에서 쓰는 외부 component(저장된 외부 참조, ADR-0137 결정 1).
+    pub components: BTreeSet<ComponentRef>,
 }
 
 /// entry 매핑의 허용 키(canonical 기록 순서).
@@ -450,7 +463,44 @@ const ENTRY_KEYS: &[&str] = &[
     "repository",
     "version",
     "local_override",
+    "components",
 ];
+
+/// `components` 항목 하나(canonical 소문자 UUID).
+fn parse_component_id(text: &str, path: &str) -> Result<ComponentRef, SchemaError> {
+    let id = text
+        .parse::<StableId>()
+        .map_err(|_| invalid(path, ValueError::InvalidComponentId))?;
+    if id.to_string() != text {
+        return Err(invalid(path, ValueError::InvalidComponentId));
+    }
+    Ok(ComponentRef::new(id))
+}
+
+/// `components` 시퀀스를 읽습니다. 중복·상한 초과·잘못된 UUID를 거부합니다.
+fn parse_components(node: &DeclNode, path: &str) -> Result<BTreeSet<ComponentRef>, SchemaError> {
+    let items = node.as_sequence().ok_or_else(|| SchemaError::WrongType {
+        path: path.to_string(),
+        expected: "sequence",
+    })?;
+    if items.len() > MAX_COMPONENT_IMPORTS {
+        return Err(invalid(
+            path,
+            ValueError::TooManyEntries {
+                max: MAX_COMPONENT_IMPORTS,
+            },
+        ));
+    }
+    let mut out = BTreeSet::new();
+    for (index, item) in items.iter().enumerate() {
+        let item_path = format!("{path}[{index}]");
+        let text = expect_scalar(item, &item_path)?;
+        if !out.insert(parse_component_id(text, &item_path)?) {
+            return Err(invalid(&item_path, ValueError::DuplicateEntry));
+        }
+    }
+    Ok(out)
+}
 
 impl DependencyDeclaration {
     /// entry를 `(logical name, 매핑)` 쌍으로 변환합니다(키 순서 고정).
@@ -471,6 +521,17 @@ impl DependencyDeclaration {
             pairs.push((
                 "local_override".to_string(),
                 DeclNode::scalar(path.reveal()),
+            ));
+        }
+        if !self.components.is_empty() {
+            pairs.push((
+                "components".to_string(),
+                DeclNode::Sequence(
+                    self.components
+                        .iter()
+                        .map(|c| DeclNode::scalar(c.id().to_string()))
+                        .collect(),
+                ),
             ));
         }
         (self.name.as_str().to_string(), DeclNode::Mapping(pairs))
@@ -516,6 +577,11 @@ impl DependencyDeclaration {
             }
         };
 
+        let components = match optional(pairs, "components") {
+            None => BTreeSet::new(),
+            Some(value) => parse_components(value, &join(&path, "components"))?,
+        };
+
         Ok(DependencyDeclaration {
             name: logical,
             library_id,
@@ -523,6 +589,7 @@ impl DependencyDeclaration {
             repository,
             version,
             local_override,
+            components,
         })
     }
 }
@@ -577,6 +644,7 @@ pub(crate) mod fixtures {
             repository: RepositoryUrl::new(url).expect("url"),
             version: VersionSelector::Tag(RefName::new(tag).expect("tag")),
             local_override: None,
+            components: BTreeSet::new(),
         }
     }
 }
@@ -831,5 +899,92 @@ mod tests {
         let (name, body) = decl("lib", 1, "https://e/x", "v1").to_node_entry();
         let node = DeclNode::Mapping(vec![(name.clone(), body.clone()), (name, body)]);
         assert_eq!(dependencies_from_node(&node).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn component_imports_round_trip_in_canonical_order_and_reject_bad_items() {
+        let a = ComponentRef::new(StableId::new_v7(0x0195_c530_3acd, 0x0bc1, 2));
+        let b = ComponentRef::new(StableId::new_v7(0x0195_c530_3acd, 0x0bc1, 1));
+        let mut d = decl("ds", 1, "https://e.com/ds.git", "v1");
+        d.components = [a, b].into_iter().collect();
+        let (name, body) = d.to_node_entry();
+        let items = body
+            .get("components")
+            .and_then(DeclNode::as_sequence)
+            .unwrap();
+        // StableId 오름차순(b < a)으로 씁니다.
+        assert_eq!(
+            items,
+            [
+                DeclNode::scalar(b.id().to_string()),
+                DeclNode::scalar(a.id().to_string())
+            ]
+        );
+        let node = DeclNode::Mapping(vec![(name.clone(), body.clone())]);
+        assert_eq!(dependencies_from_node(&node).unwrap(), vec![d.clone()]);
+
+        // 입력 순서는 정규화합니다.
+        let mut reversed = body.clone();
+        if let DeclNode::Mapping(pairs) = &mut reversed {
+            let last = pairs.last_mut().unwrap();
+            last.1 = DeclNode::Sequence(vec![
+                DeclNode::scalar(a.id().to_string()),
+                DeclNode::scalar(b.id().to_string()),
+            ]);
+        }
+        let parsed =
+            dependencies_from_node(&DeclNode::Mapping(vec![(name.clone(), reversed)])).unwrap();
+        assert_eq!(dependencies_to_node(&parsed), node);
+
+        // 비어 있으면 키를 쓰지 않습니다.
+        let (_, plain) = decl("ds", 1, "https://e.com/ds.git", "v1").to_node_entry();
+        assert!(plain.get("components").is_none());
+
+        let with = |items: DeclNode| {
+            let mut body = plain.clone();
+            if let DeclNode::Mapping(pairs) = &mut body {
+                pairs.push(("components".to_string(), items));
+            }
+            dependencies_from_node(&DeclNode::Mapping(vec![("ds".to_string(), body)]))
+        };
+        let upper = a.id().to_string().to_ascii_uppercase();
+        assert_eq!(
+            with(DeclNode::Sequence(vec![DeclNode::scalar(upper)])),
+            Err(SchemaError::InvalidValue {
+                path: "dependencies.ds.components[0]".to_string(),
+                error: ValueError::InvalidComponentId
+            })
+        );
+        assert_eq!(
+            with(DeclNode::Sequence(vec![
+                DeclNode::scalar(a.id().to_string()),
+                DeclNode::scalar(a.id().to_string())
+            ])),
+            Err(SchemaError::InvalidValue {
+                path: "dependencies.ds.components[1]".to_string(),
+                error: ValueError::DuplicateEntry
+            })
+        );
+        assert_eq!(
+            with(DeclNode::scalar("x")),
+            Err(SchemaError::WrongType {
+                path: "dependencies.ds.components".to_string(),
+                expected: "sequence"
+            })
+        );
+        let many = DeclNode::Sequence(
+            (0..=MAX_COMPONENT_IMPORTS as u64)
+                .map(|n| DeclNode::scalar(StableId::new_v7(1, 1, n).to_string()))
+                .collect(),
+        );
+        assert_eq!(
+            with(many),
+            Err(SchemaError::InvalidValue {
+                path: "dependencies.ds.components".to_string(),
+                error: ValueError::TooManyEntries {
+                    max: MAX_COMPONENT_IMPORTS
+                }
+            })
+        );
     }
 }

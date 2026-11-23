@@ -205,3 +205,39 @@
 - 문서가 외부 참조를 저장하지 않아(XV.5.2 차이) 사용할 수 없는 library의 resource를 가리키는 문서 참조 진단(`sources::library_refs`)은
   만들지 않습니다. 프로젝트 단위 node 진단만 있습니다.
 - 제품 materialize 명령(lock 쓰기·cache 받기)은 아직 없습니다. 시험은 제품 keyer로 entry store를 직접 materialize합니다.
+
+## 작업 (2026-11-24, library-materialize): 문서 참조 단위 library 진단
+
+- 결정: [ADR-0137](../adr/ADR-0137-library-stored-refs-and-materialize-commands.md) 결정 2. "남은 위험"의 문서 참조 진단과 자동
+  재로드(결정 6, XV.7.4 보고서)를 처리했습니다.
+- `stellar_project::library_refs::document_ref_issues`가 문서 instance마다 출처(저장된 참조 우선)와 해석(`LoadedLibraries::resolve`)을
+  보고, 해석된 instance의 override는 후보 검증과 같은 `check_candidate_usages`로 현재 snapshot에 대어 봅니다. 사용할 수 없는 library의
+  참조는 integrity 생산자 `sources::library_refs`(code `library-resource-unavailable`)가 바꾸고, 나머지(`library-ref/not-locked`·
+  `unresolved`·`undeclared`·`ambiguous`·`orphan-override`)는 `stellar_ops::library::document_ref_contribution`이 같은 origin
+  `library-refs`·footprint 규칙으로 더합니다.
+- 호출자: `diagnose_snapshot`(CLI `stellar diagnose`·MCP `document.diagnostics`, `stellar_ops::library::submit_snapshot`)과 창 session
+  (`WindowLibraries::document_diagnostics`).
+
+### 변경 파일
+
+- `crates/project/src/library_refs.rs`(`DocumentRefIssue`·`document_ref_issues`), `crates/ops/src/library.rs`(`document_contribution`·
+  `submit_document`·`document_ref_contribution`·`submit_snapshot`·`loaded`), `crates/ops/src/lib.rs`(`diagnose_snapshot`이
+  `submit_snapshot`을 부름)
+
+### 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-ops --lib library_materialize::tests::stored_refs_decide_external_components_and_document_diagnostics` | 0 — 1 passed(제품 명령 커밋 이후) |
+| `cargo test -p stellar-cli --test library` | 0 — 1 passed(CLI 커밋 이후, `stellar diagnose` 출력) |
+
+| 검사 | 결과 |
+|---|---|
+| **offline missing fixture partial open**: 빈 cache 기기에서 저장된 Card 참조는 `library-resource-unavailable`(instance가 source), 저장되지 않은 Badge는 snapshot이 없어 library 진단 아님, 문서는 그대로 열림 | 통과 |
+| lock 없음 = `library-ref/not-locked`, 저장 참조가 library에 없는 component = `library-ref/unresolved`, 저장되지 않은 참조 = `library-ref/undeclared` | 통과 |
+| CLI `stellar diagnose`: add 직후 `library-ref/undeclared`, import 뒤 0, update(Card 삭제) 승인 뒤 `library-ref/unresolved` | 통과 |
+
+### 남은 위험 / 한계
+
+- 앱 진단 index·UI 표시 연결은 UI 재설계 때 합니다.
+- 외부 token 참조는 문서에 저장 위치가 없어 문서 참조 진단에 들어가지 않습니다.

@@ -493,6 +493,8 @@ pub fn git_error(error: &GitError) -> CliError {
                                     JsonValue::object(vec![
                                         ("unit", JsonValue::string(r.unit.to_string())),
                                         ("component", views::id(r.component)),
+                                        // token 의존이면 끊기는 token(ADR-0127 결정 4), 정의 참조면 null.
+                                        ("token", views::opt_id(r.token)),
                                     ])
                                 })
                                 .collect(),
@@ -541,5 +543,48 @@ pub fn git_error(error: &GitError) -> CliError {
             )
         }
         _ => CliError::new(ExitStatus::Failure, "git-error", message),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use stellar_ops::core_types::ids::StableId;
+    use stellar_ops::git::{CompanionReason, GitError, SourceUnit};
+
+    use super::git_error;
+    use crate::json;
+
+    #[test]
+    fn companion_reasons_carry_the_token_field() {
+        let component = StableId::new_v7(1, 1, 1);
+        let token = StableId::new_v7(1, 1, 2);
+        let error = GitError::CompanionRequired {
+            changes: Default::default(),
+            units: [SourceUnit::Generation].into_iter().collect(),
+            reasons: vec![
+                CompanionReason {
+                    unit: SourceUnit::Generation,
+                    component,
+                    token: Some(token),
+                },
+                CompanionReason {
+                    unit: SourceUnit::Generation,
+                    component,
+                    token: None,
+                },
+            ],
+        };
+        let cli = git_error(&error);
+        let text = json::write(cli.result.as_deref().expect("result"));
+        assert!(
+            text.contains(&format!(
+                "\"component\":\"{component}\",\"token\":\"{token}\""
+            )),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!("\"component\":\"{component}\",\"token\":null")),
+            "{text}"
+        );
     }
 }

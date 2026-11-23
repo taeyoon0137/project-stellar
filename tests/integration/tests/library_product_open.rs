@@ -39,11 +39,15 @@ fn window_and_headless_open_report_the_same_missing_library_diagnostic() {
         .index()
         .page(&Default::default(), None, 100)
         .unwrap();
-    let library: Vec<_> = page
+    // 문서의 ds Card instance는 stellar.yaml에 참조를 저장하지 않은 호환 읽기라 문서 단위 진단이 하나 더 있습니다
+    // (origin `library-refs`, ADR-0137 결정 2). 프로젝트 단위 진단(origin `libraries`)만 비교합니다.
+    let (library, refs): (Vec<_>, Vec<_>) = page
         .items
         .into_iter()
         .filter(|d| d.kind() == DiagnosticKind::MissingLibrary)
-        .collect();
+        .partition(|d| d.key.origin == "libraries");
+    let ref_codes: Vec<&str> = refs.iter().map(|d| d.code()).collect();
+    assert_eq!(ref_codes, ["library-ref/undeclared"], "{refs:?}");
     assert_eq!(library.len(), 1, "{library:?}");
     assert_eq!(library[0].code(), "library-unavailable/missing-cache-entry");
     assert_eq!(library[0].severity, Severity::Warning);
@@ -63,8 +67,8 @@ fn window_and_headless_open_report_the_same_missing_library_diagnostic() {
             .index()
             .summary()
             .kind(DiagnosticKind::MissingLibrary),
-        1,
-        "진단 index 집계 수"
+        2,
+        "진단 index 집계 수(프로젝트 단위 1 + 문서 참조 1)"
     );
 
     // 창 session 열기: ds만 로드하고 같은 진단을 냅니다. 문서는 열립니다.
