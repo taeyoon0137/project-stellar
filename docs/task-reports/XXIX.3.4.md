@@ -82,3 +82,37 @@
 - lease가 문서 대부분을 덮으면 `LeaseTable::snapshot`(commands `lock::lease`, 이 lane 소유 밖)이 batch마다 약 10 ms입니다. 변경 node의 조상만 보는 판정으로 바꾸는 일이 필요합니다. 그 lease가 있는 동안 lease 판정을 거치는 사용자 편집도 같은 비용입니다.
 - bridge 쪽(mcp-core attached backend, XIX.9.4)이 frame을 쓰고, 앱 연결 감시(`stellar_local_ipc::session`)가 data를 받으면 닫는 대신 앞단 `serve`로 넘기는 연결이 남았습니다.
 - 사용자 입력 지연 증가는 재지 않았습니다. 처리 전 요청 상한(64)과 batch 크기(512)는 위 측정만 근거입니다. 기준 장비(M1 16GB)에서 다시 재야 합니다.
+
+## 추가 작업 1: 변경 node의 조상만 보는 lease 판정 (ADR-0132 결정 1, lane `agent-lease-perf`)
+
+위 "남은 위험" 첫 항목을 고쳤습니다. 상태는 부분 완료(`[~]`) 그대로입니다(사용자 입력 지연 증가는 앱 입력 경로가 없어 재지 못함).
+
+### 변경 파일
+
+- `crates/commands/src/lock/lease.rs`: `LeaseTable::snapshot(before, changes)`가 바뀐·삭제 node의 조상 사슬만 걸어 적용 전 소속을 만듭니다. lease root의 진조상은 부모·순서 변경이 있을 때만 걷습니다. `execute_leased`는 적용 뒤 역 transaction을 `TransactionGuard` 안에서 적용해 적용 전 문서를 잠깐 되살리고, 소속을 기록한 뒤 guard journal로 되돌립니다(문서 복제 없음). 그 단계가 실패하면 판정하지 않고 거부합니다(`ViolationReason::Unjudged`). 미리보기는 손대지 않은 원본 문서로 소속을 만듭니다.
+- `crates/commands/src/lock/lease_tests.rs`: 옛 subtree 걷기 판정을 비교 기준으로 둔 전수 대조 test.
+- `crates/agent-edit/src/occupancy_trace.rs`: 새 판정 입력, 512 command batch, lease 안 사용자 편집 거부 측정을 더했습니다.
+
+### 단일 점유 측정 (20만 node, release, 개발 장비, 다른 lane 빌드가 함께 도는 부하 상태)
+
+`cargo test --release -p stellar-agent-edit --lib occupancy_trace -- --ignored --nocapture`를 여섯 번 돌린 값입니다. 부하로 크게 튄 값(같은 실행의 다른 항목보다 2배 이상, 예: 4096 command 14 ms)은 범위에서 뺐습니다. group 400개 판정 입력은 진조상을 부모·순서 변경 때만 걷도록 고친 뒤 두 번 잰 값입니다(고치기 전 279–353 µs).
+
+| 측정 | 전(위 표) | 후 |
+|---|---|---|
+| lease 판정 입력(lease root = 문서 root, 변경 node 1개) | 10.9–11.0 ms(subtree 전체) | 23–104 µs |
+| lease 판정 입력(group 400개, 변경 node 1개) | 13.5–13.6 ms | 53–64 µs |
+| batch 적용 + 출처 기록, lease = 문서 root: 1 / 512 / 1024 / 4096 command | 10.6 / – / 11.9 / 16.5 ms | 0.03–0.11 / 1.1–1.2 / 2.2–2.4 / 8.8–9.3 ms |
+| batch 적용 + 출처 기록, lease = group 하나(500 node): 64 / 256 / 499 command | 114 / 379 / 694 µs | 127–148 / 520–566 / 980–1,100 µs |
+| lease 안 사용자 편집 하나(이름 변경, 거부: 적용·판정·되돌리기) | 약 11 ms(snapshot) | 71 µs |
+
+- 문서 전체 lease에서도 분할 단위(`PROPOSAL_BATCH_COMMANDS` 512) batch job 하나가 약 1.1–1.2 ms로 단일 점유 상한 2 ms 안입니다. 판정 비용이 batch 크기에 비례하므로 분할로 해결됩니다.
+- 역 transaction을 guard 안에서 한 번 더 적용하므로 작은 lease의 batch는 약 1.4–1.6배가 됐습니다(499 command 0.69 → 0.98–1.10 ms). 상한 안이고 분할 단위를 바꾸지 않았습니다.
+
+### 검증
+
+| 명령 / test | 결과 |
+|---|---|
+| `cargo test -p stellar-commands --lib lock::` | 통과 |
+| `ancestor_walk_judgement_matches_the_subtree_walk_for_every_case` | 통과: lease 배치 12가지 × command(이름·삭제·이동·추가·여러 command 묶음) × 주체 4가지(사용자, 두 lease, 없는 lease) 1,000건 이상에서 판정 결과·거부 뒤 문서·revision이 옛 판정과 같고, 소속 표가 옛 표의 변경 node 부분과 같음 |
+| 기존 lease test(사용자 편집 matrix, 범위 밖 거부, 새 자손 자동 잠금, 시스템 출처 touched_leases, 미리보기) | 통과 |
+| `occupancy_trace_200k`(release) | 위 표 |

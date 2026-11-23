@@ -14,6 +14,10 @@
 //! (XIX.5.2)가 같은 함수를 쓰며, 둘 다 transaction 실행 결과의 [`ChangeSet`](바뀐·추가·삭제 node, 속성 경로)을
 //! 봅니다. command 종류별로 대상을 따로 계산하지 않습니다.
 //!
+//! 판정 비용(ADR-0132 결정 1): 적용 전 소속([`LeaseSnapshot`])은 바뀐·삭제 node와 lease root의 조상 사슬만 걸어
+//! 만들므로, 비용은 (변경 node 수 + lease root 수) × 깊이이고 잠긴 subtree 크기와 관계없습니다. 적용 전 문서는
+//! [`execute_leased`]가 역 transaction을 guard 안에서 적용해 잠깐 되살리고 journal로 되돌려 얻습니다(문서 복제 없음).
+//!
 //! - 사용자([`Actor::User`]): 바뀐 node가 적용 전이나 적용 후 어느 lease에 속하면 거부합니다. lease root의
 //!   조상을 옮기거나(부모·순서 변경) 삭제하는 것도 거부합니다. 조회·선택은 command가 아니므로 막지 않습니다.
 //! - 에이전트([`Actor::Agent`]): 바뀐 node는 적용 전과 후 모두(존재하는 쪽) 자기 lease에 속해야 합니다. 자기
@@ -26,6 +30,7 @@ use stellar_core_types::ids::StableId;
 use stellar_document::model::DocumentModel;
 
 use crate::change::{node_keys, ChangeSet};
+use crate::guard::TransactionGuard;
 use crate::id::CommandOrigin;
 use crate::state::DocumentState;
 use crate::transaction::{AppliedTransaction, CommandTransaction, TransactionError};
@@ -321,6 +326,8 @@ pub enum ViolationReason {
     RemovesLeaseRoot,
     /// 판정 주체의 lease가 없습니다(끝났거나 승인 전).
     UnknownLease(LeaseId),
+    /// 적용 전 소속을 만들 수 없어 판정하지 못했습니다(내부 불일치, fail closed로 거부, ADR-0132 결정 1).
+    Unjudged,
     /// 잠그지 않은 전역 resource를 바꿉니다(XIX.4.4).
     ExternalNotLocked(ExternalKind),
     /// 다른 lease가 잠근 전역 resource를 바꿉니다.
@@ -343,6 +350,9 @@ impl fmt::Display for LeaseViolation {
                 write!(f, "lease root {node}는 lease 안에서 지울 수 없습니다")
             }
             ViolationReason::UnknownLease(lease) => write!(f, "lease {lease}가 없습니다"),
+            ViolationReason::Unjudged => {
+                f.write_str("적용 전 lease 소속을 확인할 수 없어 거부했습니다")
+            }
             ViolationReason::ExternalNotLocked(kind) => write!(
                 f,
                 "전역 resource {} {node}는 따로 잠그지 않았습니다",
@@ -363,12 +373,12 @@ pub struct LeaseTable {
     leases: BTreeMap<LeaseId, Lease>,
 }
 
-/// 적용 전 문서의 lease 소속(판정 입력). 비용은 잠긴 subtree 크기에 비례합니다.
+/// 적용 전 문서에서 본 lease 소속(판정 입력, [`LeaseTable::snapshot`]). 변경 node와 lease root의 조상 사슬만 담습니다.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LeaseSnapshot {
-    /// 잠긴 subtree의 node → lease.
+    /// 바뀐·삭제 node 가운데 적용 전에 잠긴 subtree에 있던 node → lease.
     covered: BTreeMap<StableId, LeaseId>,
-    /// lease root의 진조상 → lease.
+    /// 적용 전 lease root의 진조상 → lease.
     ancestors: BTreeMap<StableId, LeaseId>,
 }
 
@@ -489,28 +499,42 @@ impl LeaseTable {
         }
     }
 
-    /// 적용 전 문서의 lease 소속을 기록합니다.
-    pub fn snapshot(&self, model: &DocumentModel) -> LeaseSnapshot {
+    /// 적용 전 문서(`before`)에서 `changes`의 바뀐·삭제 node 소속과 lease root의 진조상을 기록합니다. 각 node는
+    /// 조상을 따라 올라가며 lease root를 찾으므로(XIX.4.2) 비용은 (변경 node 수 + lease root 수) × 깊이입니다. 잠긴
+    /// subtree를 걷지 않습니다(ADR-0132 결정 1).
+    pub fn snapshot(&self, before: &DocumentModel, changes: &ChangeSet) -> LeaseSnapshot {
+        let roots = self.roots(before.document_id());
         let mut snapshot = LeaseSnapshot::default();
-        for (root, lease) in self.roots(model.document_id()) {
-            if !model.contains(root) {
+        if roots.is_empty() {
+            return snapshot;
+        }
+        for node in changes
+            .changed_nodes()
+            .into_iter()
+            .chain(changes.removed_nodes())
+        {
+            if !before.contains(node) {
                 continue;
             }
-            let mut pending = vec![root];
-            while let Some(node) = pending.pop() {
-                if snapshot.covered.insert(node, lease).is_none() {
-                    pending.extend(model.children_in_order(node));
-                }
+            if let Some(lease) = holder_in(&roots, before, node) {
+                snapshot.covered.insert(node, lease);
             }
-            for ancestor in proper_ancestors(model, root) {
-                snapshot.ancestors.insert(ancestor, lease);
+        }
+        // lease root의 진조상은 부모·순서 변경 판정에만 씁니다(`judge`). 그런 변경이 없으면 걷지 않습니다.
+        if changes.changed_properties().iter().any(positioned) {
+            for (root, lease) in &roots {
+                if before.contains(*root) {
+                    for ancestor in proper_ancestors(before, *root) {
+                        snapshot.ancestors.insert(ancestor, *lease);
+                    }
+                }
             }
         }
         snapshot
     }
 
-    /// transaction 결과를 판정합니다(모듈 문서 규칙). `before`는 같은 문서의 적용 전 [`LeaseTable::snapshot`],
-    /// `after`는 적용 후 모델입니다.
+    /// transaction 결과를 판정합니다(모듈 문서 규칙). `before`는 같은 문서의 적용 전 문서와 같은 `changes`로 만든
+    /// [`LeaseTable::snapshot`], `after`는 적용 후 모델입니다.
     pub fn judge(
         &self,
         before: &LeaseSnapshot,
@@ -550,9 +574,7 @@ impl LeaseTable {
         if actor == Actor::User {
             let mut after_ancestors: Option<BTreeMap<StableId, LeaseId>> = None;
             for path in changes.changed_properties() {
-                let positioned =
-                    path.keys() == [node_keys::PARENT] || path.keys() == [node_keys::ORDER_KEY];
-                if !positioned {
+                if !positioned(&path) {
                     continue;
                 }
                 let node = path.root();
@@ -667,6 +689,11 @@ fn holder_in(
     }
 }
 
+/// 부모·순서 변경 경로인지(lease root 조상의 이동 판정 대상).
+fn positioned(path: &stellar_core_types::property::PropertyPath) -> bool {
+    path.keys() == [node_keys::PARENT] || path.keys() == [node_keys::ORDER_KEY]
+}
+
 fn proper_ancestors(model: &DocumentModel, node: StableId) -> Vec<StableId> {
     SubtreeLock::capture(model, node).map_or_else(Vec::new, |lock| lock.ancestors)
 }
@@ -704,9 +731,11 @@ impl std::error::Error for LeasedExecutionError {}
 /// lease 판정을 거쳐 transaction을 실행합니다(XIX.4.3 user command validator, XIX.5.2 범위 검사).
 ///
 /// 판정 주체는 transaction 출처입니다([`Actor::of`]). 시스템·migration 출처이거나, 사용자 편집인데 이 문서에
-/// lease가 없으면 판정 없이 [`DocumentState::execute_transaction`]과 같습니다. 판정할 때는 같은 실행 경로로
+/// lease가 없으면 판정 없이 [`DocumentState::execute_transaction`]과 같습니다. /// 판정할 때는 같은 실행 경로로
 /// 적용한 뒤 결과 [`ChangeSet`]을 [`LeaseTable::judge`]로 보고, 거부하면 역 transaction으로 되돌리고
-/// revision을 실행 전 값으로 돌립니다. 거부된 실행은 밖에서 관찰되지 않으므로(change set·역 transaction을
+/// revision을 실행 전 값으로 돌립니다. 적용 전 소속([`LeaseSnapshot`])은 역 transaction을 guard 안에서 적용한 문서로
+/// 만들고 guard journal로 적용 후 문서로 되돌립니다(ADR-0132 결정 1). 그 과정이 실패하면 판정하지 않고 거부합니다
+/// ([`ViolationReason::Unjudged`]). 거부된 실행은 밖에서 관찰되지 않으므로(change set·역 transaction을
 /// 내보내지 않음) 문서는 실행 전과 같은 의미 상태·revision입니다.
 pub fn execute_leased(
     state: &mut DocumentState,
@@ -723,12 +752,18 @@ pub fn execute_leased(
             .execute_transaction(transaction)
             .map_err(LeasedExecutionError::Transaction);
     }
-    let before = table.snapshot(state.model());
     let start = state.revision;
     let applied = state
         .execute_transaction(transaction)
         .map_err(LeasedExecutionError::Transaction)?;
-    match table.judge(&before, state.model(), &applied.changes, actor) {
+    let verdict = match snapshot_before(state, table, &applied) {
+        Some(before) => table.judge(&before, state.model(), &applied.changes, actor),
+        None => Err(LeaseViolation {
+            node: StableId::NIL,
+            reason: ViolationReason::Unjudged,
+        }),
+    };
+    match verdict {
         Ok(()) => Ok(applied),
         Err(violation) => {
             let restored = state.execute_transaction(&applied.inverse);
@@ -739,6 +774,28 @@ pub fn execute_leased(
             }
         }
     }
+}
+
+/// 적용 후 `state`에서 적용 전 소속을 만듭니다. 이 문서에 lease root가 없으면 문서를 건드리지 않습니다. 있으면 역
+/// transaction의 command를 guard 안에서 적용해(검증 없이, undo와 같은 primitive) 적용 전 문서를 잠깐 만들고, 소속을
+/// 기록한 뒤 guard를 되돌립니다. 비용은 transaction이 바꾼 primitive 수에 비례합니다. 실패하면 `None`이고 문서는
+/// 적용 후 상태입니다(guard가 되돌림).
+fn snapshot_before(
+    state: &mut DocumentState,
+    table: &LeaseTable,
+    applied: &AppliedTransaction,
+) -> Option<LeaseSnapshot> {
+    if table.roots(state.model().document_id()).is_empty() {
+        return Some(LeaseSnapshot::default());
+    }
+    let mut guard = TransactionGuard::begin(&mut state.model);
+    for request in &applied.inverse.requests {
+        // 실패하면 guard drop이 journal로 되돌립니다.
+        request.command.apply(guard.ctx()).ok()?;
+    }
+    let snapshot = table.snapshot(guard.ctx().model(), &applied.changes);
+    guard.rollback().ok()?;
+    Some(snapshot)
 }
 
 /// 승인 전 미리보기 결과(XIX.5.3).
@@ -776,6 +833,7 @@ impl std::error::Error for PreviewError {}
 
 /// transaction을 문서 사본에 적용해 결과와 lease 판정을 만듭니다. `state`는 읽기만 하므로 문서 상태와
 /// revision은 바뀌지 않습니다(XIX.5.3). 시스템·migration 출처는 판정하지 않습니다(`scope`는 `Ok`).
+/// 적용 전 소속은 손대지 않은 `state`로 만듭니다(ADR-0132 결정 1).
 pub fn preview(
     state: &DocumentState,
     transaction: &CommandTransaction,
@@ -788,13 +846,15 @@ pub fn preview(
     before.sort_canonical();
     let (copy, _) = DocumentModel::from_records(before.clone())
         .map_err(|e| PreviewError::Copy(format!("{e:?}")))?;
-    let snapshot = table.snapshot(state.model());
     let mut scratch = DocumentState::with_revision(copy, state.revision());
     let applied = scratch
         .execute_transaction(transaction)
         .map_err(PreviewError::Transaction)?;
     let scope = match Actor::of(transaction.origin) {
-        Some(actor) => table.judge(&snapshot, scratch.model(), &applied.changes, actor),
+        Some(actor) => {
+            let snapshot = table.snapshot(state.model(), &applied.changes);
+            table.judge(&snapshot, scratch.model(), &applied.changes, actor)
+        }
         None => Ok(()),
     };
     let mut after = scratch
