@@ -77,7 +77,14 @@ Accepted (2026-11-23)
 - 복사는 선택 node의 속성을 registry 순서의 `property: value;` 줄로 냅니다. 붙여넣기는 선언 블록을 해석해
   shorthand를 펼치고, 받을 수 있는 선언을 command로 바꿔 **CommandTransaction 하나**로 적용합니다. 알 수 없는
   속성과 받을 수 없는 값은 이유 코드와 함께 건너뛴 목록으로 돌려줍니다(부분 실패 없음, 조용히 버리지 않음).
-- 클립보드 연결은 셸이 맡습니다. CLI `stellar css copy|paste`가 같은 core API를 씁니다.
+- 건너뜀 이유 코드는 값 오류 코드(5절)와 `invalid-declaration`, `unknown-property`(저장 위치 없음),
+  `not-applicable`(선택 node 종류에 없음, 레이어 속성), `rejected`(잠금 등 편집 규칙)입니다. 복사는 속성 패널과 같은
+  이름·정규 값이고 레이어 속성(`name`·`visible`·`locked`)은 넣지 않으며, Stellar 전용 속성은 표시를 달아 함께
+  냅니다. `var()`는 값 binding 저장 경로가 생기기 전까지 건너뜁니다.
+- shorthand는 펼친 longhand가 모두 저장 위치를 가지면 longhand로(`border-radius`), 아니면 같은 이름의 묶음 행으로
+  (`border`·`overflow`, Stellar가 아직 한 값으로 저장) 적용합니다. 선언은 문서 사본에서 순서대로 적용해 뒤 선언이
+  이기고, 결과 command는 한 transaction입니다.
+- 클립보드 연결은 셸이 맡습니다. CLI `stellar css copy|paste`가 같은 core API를 씁니다(`stellar_ops::css`).
 
 ### 7. CSS custom property 이름(IX.11.16)
 
