@@ -10,9 +10,11 @@
 //! - [`value`]: registry 값 문법별 formatter·parser(IX.11.13·IX.11.14).
 //! - [`shorthand`]: shorthand → longhand 확장(IX.11.14).
 //! - [`custom_property`]: 토큰·ContextKey의 CSS custom property 이름과 선언 텍스트(IX.11.16).
+//! - [`declaration`]: 선언 블록 텍스트 해석·정규 출력(IX.11.15).
 
 pub mod bundle;
 pub mod custom_property;
+pub mod declaration;
 pub mod grammar;
 pub mod mapping;
 pub mod registry;

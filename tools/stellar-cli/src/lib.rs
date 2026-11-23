@@ -42,4 +42,7 @@ pub mod views;
 /// `export-web`: 저장된 고정 Free Frame View의 HTML+CSS.
 pub mod web_frame;
 
+/// `css`: CSS 선언 블록 복사·붙여넣기 (IX.11.15).
+pub mod css;
+
 mod component_source;

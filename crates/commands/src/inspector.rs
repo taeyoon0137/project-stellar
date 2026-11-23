@@ -833,6 +833,8 @@ fn node_commands(
                             .map_err(|_| reject("위치가 유한하지 않습니다"))?;
                         out.push(set_modifier(id, entry, key, PropertyValue::Transform(next)));
                     }
+                    // 값이 같으면 빈 이동 modifier를 넣지 않습니다(빈 변경을 history에 남기지 않음).
+                    None if dx == 0. && dy == 0. => {}
                     None => {
                         let t = Transform2D::new(1., 0., 0., 1., dx, dy)
                             .map_err(|_| reject("위치가 유한하지 않습니다"))?;
@@ -892,6 +894,9 @@ fn node_commands(
                 PropertyValue::OptionalBorder(Some(next)),
             ));
         }
+        // Text `color`가 칠하기 없이 문서 기본 글자색을 물려받고 있으면, 같은 색을 넣어도 바꾸지 않습니다(빈 변경 없음).
+        (P::Color, CssValue::Color(Some(color)))
+            if node.paint.fill.is_none() && *color == text_default_color(model) => {}
         (P::Color | P::Fill, CssValue::Color(color)) => match (color, &node.paint.fill) {
             (Some(color), Some(entry)) => {
                 out.push(set_modifier(id, entry, key, PropertyValue::Color(*color)))
