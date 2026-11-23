@@ -23,6 +23,7 @@ use crate::objc::{sel, Id};
 use crate::sys::MTLCreateSystemDefaultDevice;
 
 mod color;
+mod conformance;
 mod errors;
 mod geometry;
 mod graph;

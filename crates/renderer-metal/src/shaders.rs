@@ -13,7 +13,8 @@
 //! - 색은 working space 값입니다: surface primaries 선형광, premultiplied alpha
 //!   (`stellar_renderer_core::color`, XI.10.1). fragment는 encode하지 않고, attachment format이 저장 방식을
 //!   정합니다(`*UnormSrgb`는 하드웨어 transfer encode, 나머지는 선형 그대로).
-//! - `DrawUniforms { float4 tint; float depth; float pad[3]; }` = 32 byte. clip z = depth.
+//! - byte 배치는 공통 ABI(`stellar_renderer_core::effects::abi`)가 소유합니다.
+//!   `DrawUniforms { float4 tint; float depth; float mode; float2 param; }` = 32 byte. clip z = depth.
 //!
 //! | program | vertex layout(stride) | fragment 출력 | texture 0 |
 //! |---|---|---|---|
@@ -25,21 +26,22 @@
 //! | `BlendComposite`·`GaussianBlur` | — | 미구현(XI.10.2·XI.10.4, `Unsupported`) | — |
 
 use stellar_renderer_core::backend::ShaderProgram;
+use stellar_renderer_core::effects::abi;
 
-/// `DrawUniforms` byte 크기.
-pub(crate) const DRAW_UNIFORMS_SIZE: u32 = 32;
+/// `DrawUniforms` byte 크기(공통 ABI, `stellar_renderer_core::effects::abi`).
+pub(crate) const DRAW_UNIFORMS_SIZE: u32 = abi::DRAW_UNIFORMS_SIZE;
 
 /// uniform 범위 offset 정렬(byte). `float4` 정렬과 같습니다.
-pub(crate) const UNIFORM_OFFSET_ALIGNMENT: u64 = 16;
+pub(crate) const UNIFORM_OFFSET_ALIGNMENT: u64 = abi::UNIFORM_ALIGNMENT;
 
 /// vertex·index buffer offset 정렬(byte).
 pub(crate) const VERTEX_OFFSET_ALIGNMENT: u64 = 4;
 
 /// position·color vertex stride(byte).
-pub(crate) const SOLID_VERTEX_STRIDE: u32 = 24;
+pub(crate) const SOLID_VERTEX_STRIDE: u32 = abi::SOLID_VERTEX_STRIDE;
 
 /// position·uv vertex stride(byte).
-pub(crate) const TEXTURED_VERTEX_STRIDE: u32 = 16;
+pub(crate) const TEXTURED_VERTEX_STRIDE: u32 = abi::TEXTURED_VERTEX_STRIDE;
 
 /// fragment texture slot 수.
 pub(crate) const MAX_TEXTURE_SLOTS: u8 = 4;
@@ -50,7 +52,7 @@ pub(crate) const BUILTIN_SOURCE: &str = r#"
 using namespace metal;
 
 struct TargetUniforms { float2 size; };
-struct DrawUniforms { float4 tint; float depth; float pad0; float pad1; float pad2; };
+struct DrawUniforms { float4 tint; float depth; float mode; float2 param; };
 
 static float4 stellar_clip(float2 px, float depth, constant TargetUniforms& target) {
     float2 ndc = float2(px.x / target.size.x * 2.0 - 1.0, 1.0 - px.y / target.size.y * 2.0);
