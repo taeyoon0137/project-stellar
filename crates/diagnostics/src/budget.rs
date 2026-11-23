@@ -136,10 +136,12 @@ pub struct InteractionBudget {
     pub hover_target_us: u64,
     /// Hover·선택·핸들 표시 상한(§6.4).
     pub hover_limit_us: u64,
+    /// release gate가 시나리오마다 요구하는 최소 판정 sample 수(XVI.2.5, ADR-0096 결정 6).
+    pub scenario_min_samples: u64,
 }
 
 /// 단계 외 key(순서 고정).
-const SCALAR_KEYS: [&str; 11] = [
+const SCALAR_KEYS: [&str; 12] = [
     "total_target_us",
     "total_limit_us",
     "p50_us",
@@ -151,6 +153,7 @@ const SCALAR_KEYS: [&str; 11] = [
     "thread_occupancy_max_us",
     "hover_target_us",
     "hover_limit_us",
+    "scenario_min_samples",
 ];
 
 impl InteractionBudget {
@@ -204,6 +207,7 @@ impl InteractionBudget {
             thread_occupancy_max_us: s[8],
             hover_target_us: s[9],
             hover_limit_us: s[10],
+            scenario_min_samples: s[11],
         };
         budget.check()?;
         Ok(budget)
@@ -233,6 +237,11 @@ impl InteractionBudget {
         {
             return Err(BudgetError::Inconsistent {
                 reason: "p50 ≤ p95 ≤ p99 ≤ controllable_max가 아닙니다",
+            });
+        }
+        if self.scenario_min_samples == 0 {
+            return Err(BudgetError::Inconsistent {
+                reason: "scenario_min_samples는 1 이상입니다",
             });
         }
         if self.hover_target_us > self.hover_limit_us {
@@ -518,6 +527,15 @@ mod tests {
             Err(BudgetError::MissingKey {
                 key: "p95_us".to_owned()
             })
+        );
+        let zero = good.replace("scenario_min_samples: 1000", "scenario_min_samples: 0");
+        assert!(matches!(
+            InteractionBudget::parse(&zero),
+            Err(BudgetError::Inconsistent { .. })
+        ));
+        assert_eq!(
+            InteractionBudget::parse(good).unwrap().scenario_min_samples,
+            1_000
         );
         let sum = good.replace("total_target_us: 5950", "total_target_us: 6000");
         assert!(matches!(

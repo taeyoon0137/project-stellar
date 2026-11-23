@@ -49,3 +49,19 @@
 ## 남은 위험 / 한계
 
 - storage·autosave reader와 같은 엄격 형식을 이 crate 안에서 따로 구현했습니다. diagnostics는 storage에 의존할 수 없기 때문입니다.
+
+## 2026-11-23 interaction-trace 후속: 시나리오 최소 sample 수 (ADR-0096 결정 6)
+
+- `config/performance-budgets.yaml` `interaction:` 절에 `scenario_min_samples: 1000`을 더했습니다(계획 XVI.2.5의 1,000).
+  보호 경로 변경이라 ADR-0096에 근거를 적었습니다. 단계 목표·상한 등 아키텍처 6장 수치는 바꾸지 않았습니다.
+- reader(`budget.rs`)는 새 key를 필수로 읽고 0을 거부합니다. release gate(XVI.4.4)가 이 값을 씁니다.
+
+| 테스트 | 확인 |
+|---|---|
+| `config_matches_architecture_section_six` | 6장 표와 config 값 비교 통과(변경 없음) |
+| `rejects_malformed_sections` | `scenario_min_samples: 0` 거부, 파일 값 1,000 읽음 |
+
+### 근거 커밋
+
+- `0de2d78c` Feat: T0\~T5 상호작용 예산을 performance-budgets에 기록하고 reader 추가 (XVI.4.1, ADR-0084 신규)
+- 이 커밋(`Task(XVI.4.1)`): 시나리오 최소 sample 수 항목.

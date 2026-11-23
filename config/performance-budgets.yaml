@@ -7,7 +7,7 @@
 #   color: 색공간 transfer 함수(encode/decode) 정확도 예산 (III.4.2 / ADR-0002)
 #   storage: chunk 분할 임계치 (V.6.4 / ADR-0012)
 #   autosave: 지연 자동 저장 시점과 flush 제한 시간 (XIII.1.1 / ADR-0072)
-#   interaction: T0~T5 상호작용 단계 예산과 판정 기준 (XVI.4.1 / ADR-0084)
+#   interaction: T0~T5 상호작용 단계 예산과 판정 기준 (XVI.4.1 / ADR-0084, 시나리오 sample 수 ADR-0096)
 
 color:
   # sRGB 계열 transfer 함수의 reference 대비 및 encode↔decode round-trip 절대 오차
@@ -72,3 +72,6 @@ interaction:
   # Hover·선택·핸들 표시(6.4).
   hover_target_us: 5000
   hover_limit_us: 8000
+  # 시나리오마다 판정에 쓰는 sample 최소 개수(계획 XVI.2.5). 이보다 적은 required 시나리오는 release gate에서
+  # 실패합니다. p99를 nearest-rank로 셀 때 상위 1%가 10개 이상이 되는 크기입니다. 근거: ADR-0096 결정 6.
+  scenario_min_samples: 1000
