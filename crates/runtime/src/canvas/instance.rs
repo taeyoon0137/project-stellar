@@ -9,31 +9,40 @@
 //!   문서는 바뀌지 않습니다. nested instance 안 값은 직접 편집하지 않습니다(IX.4.2, drilling 필요).
 //! - **기록.** override Set·속성별 Reset·전체 Reset은 모두 인스턴스 payload 교체 command(`swap-instance`,
 //!   ADR-0118 결정 5) 하나입니다. 동작마다 history 1건입니다.
-//! - **Slot 끌어 놓기는 아직 없습니다.** 문서 모델은 ComponentInstance가 자식을 갖는 것을 허용하지 않아
-//!   (`validate::can_have_children`, 문서 validator `ParentNotContainer`) 인스턴스 소유 Slot content를 문서에 둘 수
-//!   없습니다. 그 규칙을 여는 결정이 먼저 필요합니다(ADR-0118 결과).
-//! - **문맥 동작.** [`instance_actions`]가 속성별·전체 Reset, Detach(IX.2.6), 정의로 이동의 사용 가능 여부를 정합니다.
-//!   Detach 실행 command는 command registry에 아직 없습니다(ADR-0118 결과).
+//! - **Slot 끌어 놓기.** 인스턴스 자식은 그 인스턴스 slot override에 투영된 Slot content입니다(문서 validator,
+//!   ADR-0129 결정 3). [`plan_slot_drop`]은 node를 공개 Slot(컴포넌트가 선언한 Slot)에 넣는 `place-slot-content`
+//!   command 하나를 만들고, [`plan_slot_take_out`]은 반대로 꺼냅니다. slot 종류·개수·가림 규칙은 IX.3 함수
+//!   (`ComponentSlot::check_content`, `check_hidden_slot_content`)를 그대로 씁니다.
+//! - **문맥 동작.** [`instance_actions`]가 속성별·전체 Reset, Detach(IX.2.6), 정의로 이동의 사용 가능 여부를 정하고,
+//!   [`InstanceAction`]이 그 동작의 코어 command ID(메뉴 막대·문맥 메뉴가 같은 이름)를 정합니다. Detach 실행은
+//!   [`plan_detach_instance`]가 `detach-instance` command 하나로 만듭니다(ADR-0129 결정 4·5).
 
 use stellar_commands::command::Command;
+use stellar_commands::detach::{plan_detach, DetachPlanError, InstanceRestructure, NodePlacement};
 use stellar_commands::lock::{edit_permission, EditIntent};
 use stellar_commands::swap::SwapInstance;
-use stellar_core_types::ids::StableId;
+use stellar_core_types::clock::MonotonicClock;
+use stellar_core_types::ids::{StableId, StableIdGenerator};
+use stellar_core_types::order_key::OrderKey;
 use stellar_core_types::property::PropertyKey;
 use stellar_core_types::reference::{ComponentRef, NodeRef};
 use stellar_core_types::typed_value::TypedValue;
 use stellar_core_types::value::{Transform2D, Vec2};
 use stellar_document::component::definition::{
-    ComponentEntry, ComponentLibrary, ComponentPropertyId,
+    ComponentEntry, ComponentLibrary, ComponentPropertyId, ComponentSlotId,
 };
 use stellar_document::component::instance::{
-    placed_free_frame, ComponentInstancePayload, OverrideKey,
+    placed_free_frame, ComponentInstancePayload, OverrideKey, SlotOverride,
 };
 use stellar_document::component::override_rules::{check_override, PropertyOverrideError};
+use stellar_document::component::slot::SlotError;
+use stellar_document::component::slot_override::{check_hidden_slot_content, SlotOverrideError};
 use stellar_document::frame::Clipping;
+use stellar_document::layout_record::LayoutRecord;
 use stellar_document::model::DocumentModel;
+use stellar_document::modifier::ModifierStack;
 use stellar_document::node_kind::NodeKind;
-use stellar_document::records::NodePayload;
+use stellar_document::records::{NodePayload, NodeRecord};
 
 use super::CanvasScene;
 
@@ -156,6 +165,16 @@ pub enum InstanceEditRefusal {
     Rule(PropertyOverrideError),
     /// 되돌릴 override가 없습니다.
     NotOverridden,
+    /// 인스턴스 컴포넌트가 선언하지 않은 Slot입니다.
+    UnknownSlot,
+    /// Slot 종류·개수 규칙 위반(IX.3.1).
+    SlotRule(SlotError),
+    /// 가려진 Slot(override된 바깥 Slot 안)에는 content를 둘 수 없습니다(IX.3.1).
+    HiddenSlot(SlotOverrideError),
+    /// 옮길 수 없는 content입니다(없는 node, View root, 인스턴스 자신·조상, 잠김, 그 Slot의 content가 아님).
+    ContentNotMovable,
+    /// Detach 계획 실패(IX.2.6 규칙).
+    Detach(DetachPlanError),
 }
 
 /// 거부 결과: 이유와 Detach로 자유 편집할 수 있는지.
@@ -184,6 +203,13 @@ impl std::fmt::Display for Refused {
             }
             InstanceEditRefusal::Rule(error) => error.to_string(),
             InstanceEditRefusal::NotOverridden => "되돌릴 override가 없습니다".to_string(),
+            InstanceEditRefusal::UnknownSlot => "컴포넌트에 없는 Slot입니다".to_string(),
+            InstanceEditRefusal::SlotRule(error) => error.to_string(),
+            InstanceEditRefusal::HiddenSlot(error) => error.to_string(),
+            InstanceEditRefusal::ContentNotMovable => {
+                "이 node는 Slot으로 옮기거나 Slot에서 꺼낼 수 없습니다".to_string()
+            }
+            InstanceEditRefusal::Detach(error) => error.to_string(),
         };
         if self.detach {
             write!(
@@ -347,6 +373,286 @@ pub fn instance_actions(
         detach: detach_available(model, library, instance),
         definition: entry.map(|e| (payload.component(), e.definition().root)),
     })
+}
+
+/// 인스턴스 편집 Object 동작. 메뉴 막대 Object 메뉴·캔버스 문맥 메뉴·단축키 정책이 [`InstanceAction::name`]을 공유
+/// command ID로 씁니다(ADR-0129 결정 5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum InstanceAction {
+    /// 모든 Property override Reset(Reset Overrides).
+    ResetOverrides,
+    /// Property 하나의 override Reset(문맥 메뉴 하위 항목, 대상은 [`InstanceActions::reset_properties`]).
+    ResetOverride,
+    /// Detach Instance.
+    DetachInstance,
+    /// 정의로 이동.
+    GoToDefinition,
+}
+
+impl InstanceAction {
+    /// 전체 동작(메뉴 순서).
+    pub const ALL: [InstanceAction; 4] = [
+        InstanceAction::ResetOverrides,
+        InstanceAction::ResetOverride,
+        InstanceAction::DetachInstance,
+        InstanceAction::GoToDefinition,
+    ];
+
+    /// 메뉴 명령과 공유하는 command ID.
+    pub const fn name(self) -> &'static str {
+        match self {
+            InstanceAction::ResetOverrides => "object.reset_overrides",
+            InstanceAction::ResetOverride => "object.reset_override",
+            InstanceAction::DetachInstance => "object.detach_instance",
+            InstanceAction::GoToDefinition => "object.go_to_definition",
+        }
+    }
+
+    /// command ID로 찾습니다.
+    pub fn from_name(name: &str) -> Option<InstanceAction> {
+        InstanceAction::ALL.into_iter().find(|a| a.name() == name)
+    }
+}
+
+impl InstanceActions {
+    /// 동작을 지금 쓸 수 있는지(메뉴 항목 활성).
+    pub fn enabled(&self, action: InstanceAction) -> bool {
+        match action {
+            InstanceAction::ResetOverrides => self.reset_all,
+            InstanceAction::ResetOverride => !self.reset_properties.is_empty(),
+            InstanceAction::DetachInstance => self.detach,
+            InstanceAction::GoToDefinition => self.definition.is_some(),
+        }
+    }
+}
+
+/// 인스턴스 Detach 실행 command(`detach-instance`, IX.2.6). 잠긴 인스턴스·미해결 정의는 거부합니다. 복제 node id는
+/// `generator`·`clock`이 정합니다.
+pub fn plan_detach_instance<C: MonotonicClock>(
+    model: &DocumentModel,
+    library: &ComponentLibrary,
+    instance: StableId,
+    generator: &mut StableIdGenerator,
+    clock: &C,
+) -> Result<Command, Refused> {
+    editable(model, library, instance)?;
+    plan_detach(model, library, instance, generator, clock)
+        .map(|plan| Command::DetachInstance(Box::new(plan)))
+        .map_err(|error| Refused {
+            reason: InstanceEditRefusal::Detach(error),
+            detach: false,
+        })
+}
+
+/// Slot에 넣을 content.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SlotContent {
+    /// 문서에 있는 node를 옮깁니다(캔버스·레이어에서 끌어 놓기).
+    Existing(StableId),
+    /// 새 subtree를 만듭니다(전위 순서, 첫 레코드가 content root이고 부모는 인스턴스).
+    New {
+        /// node 레코드.
+        nodes: Vec<NodeRecord>,
+        /// 만들 node의 modifier stack.
+        modifier_stacks: Vec<ModifierStack>,
+        /// 만들 node의 명시 layout record(소유 node StableId 순).
+        layout_records: Vec<LayoutRecord>,
+    },
+}
+
+fn not_movable() -> Refused {
+    Refused {
+        reason: InstanceEditRefusal::ContentNotMovable,
+        detach: false,
+    }
+}
+
+/// `node`가 `instance` 자신이거나 그 조상인지.
+fn is_self_or_ancestor(model: &DocumentModel, node: StableId, instance: StableId) -> bool {
+    let mut current = Some(instance);
+    while let Some(id) = current {
+        if id == node {
+            return true;
+        }
+        current = model.record(id).and_then(|r| r.parent);
+    }
+    false
+}
+
+/// 만들 node·옮길 node 목록.
+type SlotInsert = (Vec<NodeRecord>, Vec<ModifierStack>, Vec<LayoutRecord>);
+
+/// 새 payload가 Slot 규칙(종류·개수·가림)을 지키는지 확인하고 `place-slot-content` command를 만듭니다.
+fn slot_command(
+    model: &DocumentModel,
+    entry: &ComponentEntry,
+    instance: StableId,
+    payload: ComponentInstancePayload,
+    kinds: &dyn Fn(StableId) -> Option<NodeKind>,
+    insert: SlotInsert,
+    moves: Vec<NodePlacement>,
+) -> Result<Command, Refused> {
+    let refuse = |reason| Refused {
+        reason,
+        detach: true,
+    };
+    for (slot_id, content) in payload.slot_overrides() {
+        let slot = entry
+            .slot(slot_id)
+            .ok_or(refuse(InstanceEditRefusal::UnknownSlot))?;
+        let mut checked = Vec::with_capacity(content.len());
+        for node in content.content() {
+            checked.push((*node, kinds(*node).ok_or_else(not_movable)?));
+        }
+        slot.check_content(checked)
+            .map_err(|e| refuse(InstanceEditRefusal::SlotRule(e)))?;
+    }
+    check_hidden_slot_content(entry, &payload, instance)
+        .map_err(|e| refuse(InstanceEditRefusal::HiddenSlot(e)))?;
+    let mut record = model.record(instance).ok_or_else(not_movable)?;
+    record.payload = NodePayload::ComponentInstance(payload);
+    let (insert, insert_stacks, insert_layouts) = insert;
+    Ok(Command::PlaceSlotContent(Box::new(InstanceRestructure {
+        node: instance,
+        record,
+        layout: model
+            .layout_record(instance)
+            .cloned()
+            .unwrap_or_else(|| LayoutRecord::new(instance)),
+        insert,
+        insert_stacks,
+        insert_layouts,
+        moves,
+        remove: Vec::new(),
+    })))
+}
+
+/// 공개 Slot(인스턴스 컴포넌트가 선언한 Slot) `slot`의 `index` 자리(투영 순서, 개수보다 크면 끝)에 content를 넣는
+/// command 하나(끌어 놓기, history 1건). override가 없던 Slot은 이 content 하나짜리 override가 됩니다(default content
+/// 대신 보임). 같은 인스턴스의 다른 Slot에 있던 content면 그 Slot에서 빠집니다.
+pub fn plan_slot_drop(
+    model: &DocumentModel,
+    library: &ComponentLibrary,
+    instance: StableId,
+    slot: ComponentSlotId,
+    index: usize,
+    content: SlotContent,
+) -> Result<Command, Refused> {
+    let (payload, entry) = editable(model, library, instance)?;
+    if entry.slot(slot).is_none() {
+        return Err(Refused {
+            reason: InstanceEditRefusal::UnknownSlot,
+            detach: true,
+        });
+    }
+    let mut next = payload.clone();
+    let (root, insert, moves): (StableId, SlotInsert, Vec<NodePlacement>) = match content {
+        SlotContent::Existing(node) => {
+            let record = model.record(node).ok_or_else(not_movable)?;
+            let parent = record.parent.ok_or_else(not_movable)?;
+            if is_self_or_ancestor(model, node, instance)
+                || edit_permission(model, node, EditIntent::Move).is_err()
+                || edit_permission(model, parent, EditIntent::Edit).is_err()
+            {
+                return Err(not_movable());
+            }
+            let moves = if parent == instance {
+                // 같은 인스턴스 안 이동: 원래 Slot에서 뺍니다(부모는 그대로).
+                let from: Vec<_> = next
+                    .slot_overrides()
+                    .filter(|(_, c)| c.content().contains(&node))
+                    .map(|(id, c)| (id, c.content().to_vec()))
+                    .collect();
+                for (id, list) in from {
+                    let kept = list.into_iter().filter(|n| *n != node).collect();
+                    next.set_slot_override(id, SlotOverride::new(kept).map_err(|_| not_movable())?);
+                }
+                Vec::new()
+            } else {
+                vec![NodePlacement {
+                    node,
+                    parent: instance,
+                    order_key: model.next_child_order_key(instance),
+                }]
+            };
+            (node, (Vec::new(), Vec::new(), Vec::new()), moves)
+        }
+        SlotContent::New {
+            nodes,
+            modifier_stacks,
+            layout_records,
+        } => {
+            let root = nodes.first().ok_or_else(not_movable)?;
+            if root.parent != Some(instance) {
+                return Err(not_movable());
+            }
+            (
+                root.id,
+                (nodes, modifier_stacks, layout_records),
+                Vec::new(),
+            )
+        }
+    };
+    let mut list = next
+        .slot_override(slot)
+        .map(|c| c.content().to_vec())
+        .unwrap_or_default();
+    list.insert(index.min(list.len()), root);
+    next.set_slot_override(slot, SlotOverride::new(list).map_err(|_| not_movable())?);
+    let new_kinds: Vec<(StableId, NodeKind)> = insert.0.iter().map(|r| (r.id, r.kind())).collect();
+    let kinds = |id: StableId| {
+        new_kinds
+            .iter()
+            .find(|(n, _)| *n == id)
+            .map(|(_, k)| *k)
+            .or_else(|| model.record(id).map(|r| r.kind()))
+    };
+    slot_command(model, entry, instance, next, &kinds, insert, moves)
+}
+
+/// Slot content 하나를 Slot에서 꺼내 `parent` 아래 `order_key` 자리로 옮기는 command 하나(끌어 내기). 마지막 content를
+/// 빼면 `restore_default`일 때 override를 지워 default content로 돌아가고, 아니면 빈 override(Slot 비움)로 남깁니다.
+pub fn plan_slot_take_out(
+    model: &DocumentModel,
+    library: &ComponentLibrary,
+    instance: StableId,
+    node: StableId,
+    parent: StableId,
+    order_key: OrderKey,
+    restore_default: bool,
+) -> Result<Command, Refused> {
+    let (payload, entry) = editable(model, library, instance)?;
+    let (slot, list) = payload
+        .slot_overrides()
+        .find(|(_, c)| c.content().contains(&node))
+        .map(|(id, c)| (id, c.content().to_vec()))
+        .ok_or_else(not_movable)?;
+    if edit_permission(model, node, EditIntent::Move).is_err()
+        || edit_permission(model, parent, EditIntent::Edit).is_err()
+    {
+        return Err(not_movable());
+    }
+    let kept: Vec<StableId> = list.into_iter().filter(|n| *n != node).collect();
+    let mut next = payload.clone();
+    if kept.is_empty() && restore_default {
+        next.remove_slot_override(slot);
+    } else {
+        next.set_slot_override(slot, SlotOverride::new(kept).map_err(|_| not_movable())?);
+    }
+    let kinds = |id: StableId| model.record(id).map(|r| r.kind());
+    slot_command(
+        model,
+        entry,
+        instance,
+        next,
+        &kinds,
+        (Vec::new(), Vec::new(), Vec::new()),
+        vec![NodePlacement {
+            node,
+            parent,
+            order_key,
+        }],
+    )
 }
 
 #[cfg(test)]

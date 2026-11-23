@@ -242,3 +242,277 @@ fn unlinked_private_nested_and_locked_edits_are_refused_with_detach_path() {
     let actions = instance_actions(&locked, &library, sid(30)).unwrap();
     assert!(!actions.detach && !actions.reset_all);
 }
+
+fn body_content(doc: &DocumentState) -> Option<Vec<StableId>> {
+    payload_of(doc.model(), sid(31))
+        .and_then(|p| p.slot_override(body()))
+        .map(|c| c.content().to_vec())
+}
+
+fn valid(doc: &DocumentState) -> bool {
+    stellar_document::validate::validate_document(&doc.model().to_records().unwrap()).is_ok()
+}
+
+/// 공개 Slot 끌어 놓기·꺼내기는 동작마다 `place-slot-content` 한 건이고 undo가 정확합니다(ADR-0129 결정 3·4).
+#[test]
+fn slot_drop_and_take_out_are_one_entry_each_and_undo_exactly() {
+    let (library, mut doc, mut history) = rig();
+    let before = model_snapshot_json(doc.model()).unwrap();
+    // Frame 11을 Modal 31 body slot 맨 앞에 넣습니다.
+    let drop = plan_slot_drop(
+        doc.model(),
+        &library,
+        sid(31),
+        body(),
+        0,
+        SlotContent::Existing(sid(11)),
+    )
+    .unwrap();
+    assert_eq!(drop.kind().name(), "place-slot-content");
+    record_one(&mut history, &mut doc, vec![drop]);
+    assert_eq!(history.history().entries().len(), 1);
+    assert_eq!(body_content(&doc), Some(vec![sid(11), sid(32)]));
+    assert_eq!(doc.model().record(sid(11)).unwrap().parent, Some(sid(31)));
+    assert!(valid(&doc));
+    // 같은 인스턴스 안 순서 바꾸기: 11을 끝으로(부모는 그대로).
+    let reorder = plan_slot_drop(
+        doc.model(),
+        &library,
+        sid(31),
+        body(),
+        9,
+        SlotContent::Existing(sid(11)),
+    )
+    .unwrap();
+    record_one(&mut history, &mut doc, vec![reorder]);
+    assert_eq!(body_content(&doc), Some(vec![sid(32), sid(11)]));
+    // 꺼내기: 11을 root 10 아래로, Slot은 Text 32만 남습니다.
+    let out = plan_slot_take_out(
+        doc.model(),
+        &library,
+        sid(31),
+        sid(11),
+        sid(10),
+        OrderKey::from_bytes(vec![0x05]).unwrap(),
+        false,
+    )
+    .unwrap();
+    record_one(&mut history, &mut doc, vec![out]);
+    assert_eq!(body_content(&doc), Some(vec![sid(32)]));
+    assert_eq!(doc.model().record(sid(11)).unwrap().parent, Some(sid(10)));
+    assert!(valid(&doc));
+    // 마지막 content를 restore_default로 꺼내면 override가 없어져 default content로 돌아갑니다.
+    let last = plan_slot_take_out(
+        doc.model(),
+        &library,
+        sid(31),
+        sid(32),
+        sid(10),
+        OrderKey::from_bytes(vec![0x06]).unwrap(),
+        true,
+    )
+    .unwrap();
+    record_one(&mut history, &mut doc, vec![last]);
+    assert_eq!(body_content(&doc), None);
+    assert_eq!(history.history().entries().len(), 4);
+    for _ in 0..4 {
+        history.undo(&mut doc).unwrap();
+    }
+    assert_eq!(model_snapshot_json(doc.model()).unwrap(), before);
+}
+
+#[test]
+fn slot_drop_refuses_rule_violations_without_changing_the_document() {
+    use stellar_document::shape::{RectangleParams, ShapeGeometry};
+    let (library, doc, _) = rig();
+    let model = doc.model();
+    let drop = |instance: u64, slot: ComponentSlotId, content: SlotContent| {
+        plan_slot_drop(model, &library, sid(instance), slot, 0, content)
+            .unwrap_err()
+            .reason
+    };
+    // 인스턴스의 조상(View root)은 넣을 수 없습니다.
+    assert_eq!(
+        drop(31, body(), SlotContent::Existing(sid(10))),
+        InstanceEditRefusal::ContentNotMovable
+    );
+    // 컴포넌트에 없는 Slot.
+    assert_eq!(
+        drop(
+            31,
+            ComponentSlotId::new(sid(4_444)),
+            SlotContent::Existing(sid(11))
+        ),
+        InstanceEditRefusal::UnknownSlot
+    );
+    // body는 Frame·Text만 받습니다(IX.3.1 종류 규칙).
+    let rectangle = record(
+        60,
+        31,
+        0x60,
+        NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
+            size: stellar_core_types::value::Size2::new(4., 4.).unwrap(),
+            corner_radius: Default::default(),
+        })),
+    );
+    assert!(matches!(
+        drop(
+            31,
+            body(),
+            SlotContent::New {
+                nodes: vec![rectangle],
+                modifier_stacks: Vec::new(),
+                layout_records: Vec::new(),
+            }
+        ),
+        InstanceEditRefusal::SlotRule(SlotError::DisallowedKind { .. })
+    ));
+    // 새 content의 root 부모는 인스턴스여야 합니다.
+    assert_eq!(
+        drop(
+            31,
+            body(),
+            SlotContent::New {
+                nodes: vec![record(
+                    61,
+                    10,
+                    0x61,
+                    NodePayload::Text(stellar_document::text::TextPayload::empty(0))
+                )],
+                modifier_stacks: Vec::new(),
+                layout_records: Vec::new(),
+            }
+        ),
+        InstanceEditRefusal::ContentNotMovable
+    );
+    // Slot content가 아닌 node는 꺼낼 수 없습니다.
+    assert_eq!(
+        plan_slot_take_out(
+            model,
+            &library,
+            sid(31),
+            sid(11),
+            sid(10),
+            OrderKey::from_bytes(vec![0x05]).unwrap(),
+            false
+        )
+        .unwrap_err()
+        .reason,
+        InstanceEditRefusal::ContentNotMovable
+    );
+}
+
+/// Detach 실행은 `detach-instance` 한 건이고, Undo 한 번이 인스턴스와 Slot content 자리를 되돌립니다.
+#[test]
+fn detach_instance_is_one_entry_and_undoes_once() {
+    use stellar_core_types::clock::ManualClock;
+    use stellar_core_types::reference::NodeRef;
+    use stellar_document::component::definition::{
+        ComponentDefinition, DefinitionNode, DefinitionTree,
+    };
+    use stellar_document::component::slot::{ComponentSlot, SlotCardinality};
+    use stellar_document::frame::FramePayload;
+    use stellar_document::record_codec::encode_payload;
+    let card = ComponentRef::new(sid(900));
+    let slot = ComponentSlotId::new(sid(940));
+    let mut tree = DefinitionTree::new(card);
+    for (id, parent, key, name) in [(901, None, 0x40, "card"), (902, Some(901), 0x40, "body")] {
+        tree.insert(DefinitionNode {
+            id: sid(id),
+            kind: NodeKind::Frame,
+            parent: parent.map(sid),
+            order_key: OrderKey::from_bytes(vec![key]).unwrap(),
+            visible: true,
+            locked: false,
+            display_name: name.into(),
+            payload: encode_payload(&NodePayload::Frame(FramePayload::default())),
+        })
+        .unwrap();
+    }
+    let mut definition = ComponentDefinition::new(sid(900), "Card".into(), NodeRef::new(sid(901)));
+    definition.add_slot(slot).unwrap();
+    let mut library = ComponentLibrary::new();
+    library.insert(definition, tree).unwrap();
+    library
+        .add_slot(
+            card,
+            ComponentSlot::new(
+                slot,
+                NodeRef::new(sid(902)),
+                [NodeKind::Frame],
+                SlotCardinality::new(0, None).unwrap(),
+                Vec::new(),
+            ),
+        )
+        .unwrap();
+    let mut model = crate::window_session::test_fixtures::sample_document();
+    let mut payload = ComponentInstancePayload::new(card);
+    payload.set_slot_override(slot, SlotOverride::new(vec![sid(51)]).unwrap());
+    model
+        .insert_node(record(
+            50,
+            10,
+            0x50,
+            NodePayload::ComponentInstance(payload),
+        ))
+        .unwrap();
+    model
+        .insert_node(record(
+            51,
+            50,
+            0x10,
+            NodePayload::Frame(FramePayload::default()),
+        ))
+        .unwrap();
+    let mut doc = DocumentState::new(model);
+    let mut history = WindowHistory::new(window(1));
+    let before = model_snapshot_json(doc.model()).unwrap();
+    let actions = instance_actions(doc.model(), &library, sid(50)).unwrap();
+    assert!(actions.enabled(InstanceAction::DetachInstance));
+    let detach = plan_detach_instance(
+        doc.model(),
+        &library,
+        sid(50),
+        &mut StableIdGenerator::new(3),
+        &ManualClock::new(10),
+    )
+    .unwrap();
+    assert_eq!(detach.kind().name(), "detach-instance");
+    record_one(&mut history, &mut doc, vec![detach]);
+    assert_eq!(history.history().entries().len(), 1);
+    assert_eq!(doc.model().record(sid(50)).unwrap().kind(), NodeKind::Frame);
+    let host = doc.model().record(sid(51)).unwrap().parent.unwrap();
+    assert_eq!(doc.model().record(host).unwrap().display_name, "body");
+    assert!(valid(&doc));
+    history.undo(&mut doc).unwrap();
+    assert_eq!(model_snapshot_json(doc.model()).unwrap(), before);
+    // 미해결 정의는 Detach를 거부합니다.
+    assert!(plan_detach_instance(
+        doc.model(),
+        &ComponentLibrary::new(),
+        sid(50),
+        &mut StableIdGenerator::new(3),
+        &ManualClock::new(10),
+    )
+    .is_err());
+}
+
+/// 인스턴스 편집 Object 동작의 코어 command ID는 겹치지 않고 이름으로 되찾을 수 있습니다.
+#[test]
+fn instance_action_command_ids_are_unique_and_follow_availability() {
+    let names: std::collections::BTreeSet<&str> =
+        InstanceAction::ALL.iter().map(|a| a.name()).collect();
+    assert_eq!(names.len(), InstanceAction::ALL.len());
+    for action in InstanceAction::ALL {
+        assert!(action.name().starts_with("object."));
+        assert_eq!(InstanceAction::from_name(action.name()), Some(action));
+    }
+    assert_eq!(InstanceAction::from_name("object.unknown"), None);
+    let (library, doc, _) = rig();
+    // override 없는 Button: Reset 불가, Detach·정의로 이동 가능.
+    let actions = instance_actions(doc.model(), &library, sid(30)).unwrap();
+    assert!(!actions.enabled(InstanceAction::ResetOverrides));
+    assert!(!actions.enabled(InstanceAction::ResetOverride));
+    assert!(actions.enabled(InstanceAction::DetachInstance));
+    assert!(actions.enabled(InstanceAction::GoToDefinition));
+}

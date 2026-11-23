@@ -341,6 +341,10 @@ pub enum Command {
     SetLayoutProperty(crate::style_defaults::SetLayoutProperty),
     /// Component Context 편집(XXX.7.8, ADR-0099).
     EditContext(Box<crate::context::ContextCommand>),
+    /// 인스턴스 Detach 실행(XII.10.34, ADR-0129).
+    DetachInstance(Box<crate::detach::InstanceRestructure>),
+    /// Slot content 넣기·꺼내기(XII.10.34, ADR-0129).
+    PlaceSlotContent(Box<crate::detach::InstanceRestructure>),
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -392,6 +396,8 @@ impl Command {
             Command::UnsetProperty(_) => CommandKind::UnsetProperty,
             Command::SetLayoutProperty(_) => CommandKind::SetLayoutProperty,
             Command::EditContext(_) => CommandKind::EditContext,
+            Command::DetachInstance(_) => CommandKind::DetachInstance,
+            Command::PlaceSlotContent(_) => CommandKind::PlaceSlotContent,
             #[cfg(test)]
             Command::TestProbe(_) => CommandKind::TestProbe,
         }
@@ -427,6 +433,9 @@ impl Command {
             Command::UnsetProperty(command) => command.validate(model),
             Command::SetLayoutProperty(command) => command.validate(model),
             Command::EditContext(command) => command.validate(model),
+            Command::DetachInstance(command) | Command::PlaceSlotContent(command) => {
+                command.validate(model)
+            }
             #[cfg(test)]
             Command::TestProbe(probe) => probe.validate(model),
         }
@@ -480,6 +489,12 @@ impl Command {
             Command::EditContext(command) => command
                 .invert(model)
                 .map(|inverse| Command::EditContext(Box::new(inverse))),
+            Command::DetachInstance(command) => command
+                .invert(model)
+                .map(|inverse| Command::DetachInstance(Box::new(inverse))),
+            Command::PlaceSlotContent(command) => command
+                .invert(model)
+                .map(|inverse| Command::PlaceSlotContent(Box::new(inverse))),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
         }
@@ -515,6 +530,9 @@ impl Command {
             Command::UnsetProperty(command) => command.apply(ctx),
             Command::SetLayoutProperty(command) => command.apply(ctx),
             Command::EditContext(command) => command.apply(ctx),
+            Command::DetachInstance(command) | Command::PlaceSlotContent(command) => {
+                command.apply(ctx)
+            }
             #[cfg(test)]
             Command::TestProbe(probe) => probe.apply(ctx),
         }

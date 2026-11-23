@@ -50,6 +50,9 @@ pub mod node_ops;
 /// 인스턴스 교체(swap)와 인스턴스 payload 교체 command (XII.10.35).
 pub mod swap;
 
+/// 인스턴스 구조 command: Detach 실행과 Slot content 배치 (XII.10.34, ADR-0129).
+pub mod detach;
+
 /// `SetProperty` command와 속성 값 (VII.2.4).
 pub mod property;
 

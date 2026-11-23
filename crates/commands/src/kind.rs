@@ -67,6 +67,10 @@ pub enum CommandKind {
     SetLayoutProperty,
     /// Component Context 편집 (XXX.7.8, ADR-0099).
     EditContext,
+    /// 인스턴스 Detach 실행 (XII.10.34, IX.2.6, ADR-0129).
+    DetachInstance,
+    /// Slot content 넣기·꺼내기 (XII.10.34, IX.3.3, ADR-0129).
+    PlaceSlotContent,
     /// 테스트 전용 probe(fault injection). 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe,
@@ -101,6 +105,8 @@ impl CommandKind {
         CommandKind::SetStyleDefaults,
         CommandKind::UnsetProperty,
         CommandKind::SetLayoutProperty,
+        CommandKind::DetachInstance,
+        CommandKind::PlaceSlotContent,
         CommandKind::EditContext,
     ];
 
@@ -136,6 +142,8 @@ impl CommandKind {
             CommandKind::SetStyleDefaults => 0x0091,
             CommandKind::UnsetProperty => 0x0092,
             CommandKind::SetLayoutProperty => 0x0093,
+            CommandKind::DetachInstance => 0x0094,
+            CommandKind::PlaceSlotContent => 0x0095,
             CommandKind::EditContext => 0x00A0,
             #[cfg(test)]
             CommandKind::TestProbe => 0xFFF0,
@@ -183,6 +191,8 @@ impl CommandKind {
             CommandKind::SetStyleDefaults => "set-style-defaults",
             CommandKind::UnsetProperty => "unset-property",
             CommandKind::SetLayoutProperty => "set-layout-property",
+            CommandKind::DetachInstance => "detach-instance",
+            CommandKind::PlaceSlotContent => "place-slot-content",
             CommandKind::EditContext => "edit-context",
             #[cfg(test)]
             CommandKind::TestProbe => "test-probe",
@@ -222,6 +232,7 @@ impl CommandKind {
             | CommandKind::UnsetProperty
             | CommandKind::SetLayoutProperty => 3,
             CommandKind::EditContext => 5,
+            CommandKind::DetachInstance | CommandKind::PlaceSlotContent => 7,
             #[cfg(test)]
             CommandKind::TestProbe => 1,
         }
@@ -257,6 +268,8 @@ impl CommandKind {
             CommandKind::SetStyleDefaults => "기본값 세트 변경",
             CommandKind::UnsetProperty => "속성 초기화",
             CommandKind::SetLayoutProperty => "레이아웃 속성 변경",
+            CommandKind::DetachInstance => "인스턴스 분리",
+            CommandKind::PlaceSlotContent => "Slot 콘텐츠 배치",
             CommandKind::EditContext => "Context 변경",
             #[cfg(test)]
             CommandKind::TestProbe => "test probe",
@@ -325,6 +338,8 @@ mod tests {
                 (0x0091, "set-style-defaults"),
                 (0x0092, "unset-property"),
                 (0x0093, "set-layout-property"),
+                (0x0094, "detach-instance"),
+                (0x0095, "place-slot-content"),
                 (0x00A0, "edit-context"),
             ]
         );

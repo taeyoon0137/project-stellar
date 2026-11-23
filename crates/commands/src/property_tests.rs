@@ -40,7 +40,10 @@ fn command_round_trip(kind: CommandKind) -> usize {
         let mut state = DocumentState::new(random_valid_document(seed));
         let mut rng = SplitMix64::new(seed.wrapping_mul(0x9E37) ^ u64::from(kind.as_u16()));
         let mut ids = FreshIds::new(seed);
-        if kind == CommandKind::SwapInstance {
+        if matches!(
+            kind,
+            CommandKind::SwapInstance | CommandKind::DetachInstance | CommandKind::PlaceSlotContent
+        ) {
             // random document는 인스턴스를 만들지 않으므로 대상 인스턴스를 하나 넣습니다.
             seed_instance(&mut state, &mut ids);
         }
@@ -252,6 +255,8 @@ round_trip_property! {
     unset_property_round_trip => Registered::Command(CommandKind::UnsetProperty), min 120;
     set_layout_property_round_trip => Registered::Command(CommandKind::SetLayoutProperty), min 120;
     edit_context_round_trip => Registered::Command(CommandKind::EditContext), min 120;
+    detach_instance_round_trip => Registered::Command(CommandKind::DetachInstance), min 120;
+    place_slot_content_round_trip => Registered::Command(CommandKind::PlaceSlotContent), min 60;
     set_selection_round_trip => Registered::Selection, min 120;
 }
 
