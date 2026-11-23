@@ -153,6 +153,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-agent-host"
+version = "0.0.0"
+dependencies = [
+ "stellar-agent-protocol",
+ "stellar-local-ipc",
+]
+
+[[package]]
 name = "stellar-agent-protocol"
 version = "0.0.0"
 dependencies = [

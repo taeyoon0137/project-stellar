@@ -1,0 +1,19 @@
+[package]
+name = "stellar-agent-host"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+# L3 구독 CLI 호스트 코어(ADR-0005 §4·§6·§8, ADR-0092): 실행 대상 확인, launch profile, 허용 목록 환경
+# 실행기, 연결 상태 판정, 실행 전 확인, AgentSession 상태 기계, 채팅 item, 표시 전용 출력 디코더, 원문 버퍼.
+# 허용 직접 의존은 core-types·agent-protocol·local-ipc·diagnostics뿐이고 document·commands·history·storage·
+# ops에는 전이적으로도 도달하지 않습니다(`cargo xtask validate-crate-graph`). 외부 crate와 network API를
+# 쓰지 않습니다.
+[dependencies]
+stellar-agent-protocol = { path = "../agent-protocol" }
+stellar-local-ipc = { path = "../local-ipc" }
+
+
+[lints]
+workspace = true
