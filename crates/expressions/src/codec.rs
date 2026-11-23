@@ -20,6 +20,7 @@
 //!                        | 0x02 ++ blob(PropertyPath canonical bytes)
 //!                        | 0x03 ++ component_property_id[16]
 //!                        | 0x04 ++ environment_key:u32
+//!                        | 0x05 ++ context_key_id[16]   (XXX.7.3, ADR-0099)
 //!            | Match     : pattern_count:u32 ++ blob(TypedValue)*
 //!            | 그 외      : 없음
 //! type      := value_tag:u8 (TypedValue type tag 0x01~0x0D) [++ enum_type:u32 (Enum일 때)]
@@ -345,6 +346,7 @@ fn write_reference(out: &mut Vec<u8>, target: &ReferenceTarget) -> Result<(), Co
         ReferenceTarget::Property(path) => write_blob(out, &path.to_canonical_bytes())?,
         ReferenceTarget::ComponentProperty(id) => out.extend_from_slice(&id.to_bytes()),
         ReferenceTarget::Environment(key) => out.extend_from_slice(&key.raw().to_le_bytes()),
+        ReferenceTarget::Context(key) => out.extend_from_slice(&key.to_bytes()),
     }
     Ok(())
 }
@@ -356,6 +358,9 @@ fn read_reference(reader: &mut Reader<'_>) -> Result<ReferenceTarget, CodecError
         0x02 => ReferenceTarget::Property(decode_property_path(reader.blob()?)?),
         0x03 => ReferenceTarget::ComponentProperty(reader.stable_id()?),
         0x04 => ReferenceTarget::Environment(EnvironmentKey::new(reader.u32()?)),
+        stellar_core_types::reserved::context::REFERENCE_TARGET_CONTEXT_TAG => {
+            ReferenceTarget::Context(reader.stable_id()?)
+        }
         other => return Err(CodecError::UnknownReferenceKind(other)),
     })
 }
@@ -1056,5 +1061,18 @@ mod ast_tests {
         );
         let bytes = unexpected.to_bytes().expect("직렬화");
         assert_eq!(ExprNode::from_bytes(&bytes), Ok(unexpected));
+    }
+
+    #[test]
+    fn context_reference_uses_reserved_tag_and_round_trips() {
+        // XXX.7.3(ADR-0099 결정 3): Context 참조 payload는 tag 0x05 + key StableId 16 bytes. 기존 tag bytes는 그대로입니다.
+        let key = StableId::new_v7(7, 7, 7);
+        let node = ExprNode::reference(id(30), ReferenceTarget::Context(key));
+        let bytes = node.to_bytes().expect("직렬화");
+        let tail = &bytes[bytes.len() - 21..];
+        assert_eq!(tail[0], 0x05);
+        assert_eq!(&tail[1..17], &key.to_bytes());
+        assert_eq!(ExprNode::from_bytes(&bytes), Ok(node));
+        assert_eq!(ReferenceTarget::Context(key).tag(), 0x05);
     }
 }

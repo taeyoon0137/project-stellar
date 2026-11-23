@@ -199,6 +199,9 @@ pub enum ReferenceTarget {
     ComponentProperty(StableId),
     /// 환경 입력(플랫폼·상태 등).
     Environment(EnvironmentKey),
+    /// Component Context key(`ContextKey` StableId, XXX.7.3·ADR-0099). 값은 소비 지점에서 가장 가까운 조상
+    /// provision 또는 key default로 해석합니다(ADR-0025 결정 3.5).
+    Context(StableId),
 }
 
 impl ReferenceTarget {
@@ -209,6 +212,10 @@ impl ReferenceTarget {
             ReferenceTarget::Property(_) => 0x02,
             ReferenceTarget::ComponentProperty(_) => 0x03,
             ReferenceTarget::Environment(_) => 0x04,
+            // IX.12.1 예약 번호(`stellar_core_types::reserved::context::REFERENCE_TARGET_CONTEXT_TAG`).
+            ReferenceTarget::Context(_) => {
+                stellar_core_types::reserved::context::REFERENCE_TARGET_CONTEXT_TAG
+            }
         }
     }
 }
@@ -220,6 +227,7 @@ impl fmt::Display for ReferenceTarget {
             ReferenceTarget::Property(path) => write!(f, "property {}", path.root()),
             ReferenceTarget::ComponentProperty(id) => write!(f, "component property {id}"),
             ReferenceTarget::Environment(key) => write!(f, "environment {}", key.raw()),
+            ReferenceTarget::Context(key) => write!(f, "context {key}"),
         }
     }
 }
