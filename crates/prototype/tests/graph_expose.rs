@@ -8,7 +8,7 @@ use stellar_document::component::event::EventKind;
 use stellar_document::component::state_machine::{SemanticActionId, TransitionId};
 use stellar_expressions::types::ExpressionType;
 use stellar_prototype::edit::{PrototypeDocument, PrototypeTransaction};
-use stellar_prototype::expose::{plan_expose, ExposeRequest};
+use stellar_prototype::expose::{plan_expose, ExposeRequest, ExposedItem};
 use stellar_prototype::plan::{Endpoint, GraphEdit, PlanError, Planner};
 use support::*;
 
@@ -107,9 +107,53 @@ fn expose_port_is_atomic_and_rejects_nested_internal_edges() {
         plan_expose(
             &doc,
             &ExposeRequest::ContextRequirement {
-                component: toggle()
+                component: toggle(),
+                key: sid(540),
             }
         ),
-        Err(PlanError::Unsupported(_))
+        Err(PlanError::Missing(_))
+    ));
+}
+
+#[test]
+fn exposing_a_context_port_declares_the_requirement_atomically() {
+    // 검증 기준(XXX.2.4 남은 범위): ContextRequirement 생성 plan, 미리보기, 한 transaction, fault injection 시 생성 0.
+    let mut doc = context_document();
+    let request = ExposeRequest::ContextRequirement {
+        component: toggle(),
+        key: context_key(),
+    };
+    let plan = plan_expose(&doc, &request).expect("plan");
+    assert_eq!(
+        plan.preview,
+        vec![ExposedItem::ContextRequirement(context_key())]
+    );
+    let before = doc.state_bytes();
+    assert!(plan
+        .transaction
+        .apply_with_fault(&mut doc, Some(0))
+        .is_err());
+    assert_eq!(doc.state_bytes(), before);
+    assert!(doc.context.requirements(toggle().id()).is_empty(), "생성 0");
+    let applied = plan.transaction.apply(&mut doc).expect("적용");
+    assert!(doc
+        .context
+        .requirements(toggle().id())
+        .contains(&context_key()));
+    assert!(matches!(
+        plan_expose(&doc, &request),
+        Err(PlanError::InUse(_))
+    ));
+    applied.inverse.apply(&mut doc).expect("Undo");
+    assert_eq!(doc.state_bytes(), before, "Undo 1회로 동작 전 상태");
+    assert!(matches!(
+        plan_expose(
+            &doc,
+            &ExposeRequest::ContextRequirement {
+                component: toggle(),
+                key: sid(999),
+            }
+        ),
+        Err(PlanError::Missing(_))
     ));
 }

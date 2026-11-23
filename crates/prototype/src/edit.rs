@@ -1,7 +1,8 @@
 //! 프로토타입 문서 상태와 원자 transaction (XXX.2.3, ADR-0025 결정 2.4, ADR-0094 결정 4).
 //!
 //! 그래프 편집은 새 원본을 만들지 않고 기존 command로 낮춥니다. [`PrototypeStep`]은 binding command(VIII.6.6),
-//! MotionSpec command(XXX.1.6), Component Property command(IX.1.3), 상태 머신 교체(IX.5), 배치 hint 고정입니다.
+//! MotionSpec command(XXX.1.6), Component Property command(IX.1.3), 상태 머신 교체(IX.5), 배치 hint 고정, Context
+//! requirement 추가·삭제(XXX.7.8의 `AddRequirement`·`RemoveRequirement`와 같은 `ContextSet` 연산)입니다.
 //! [`PrototypeTransaction`]은 사용자 동작 하나에 해당하며 전부 적용되거나 전부 되돌아갑니다. 적용 결과의 inverse
 //! transaction 하나를 적용하면(Undo 1회) 동작 전 상태로 돌아갑니다.
 //!
@@ -25,6 +26,7 @@ use stellar_document::component::property_commands::{PropertyCommand, PropertyCo
 use stellar_document::component::state_machine::{
     state_reference, PropertyScope, StateMachine, StateMachineError,
 };
+use stellar_document::context::set::ContextSet;
 use stellar_document::motion::{
     LibraryWorld, MotionCommand, MotionCommandError, MotionOwner, MotionSet,
 };
@@ -49,6 +51,8 @@ pub struct PrototypeDocument {
     pub motions: MotionSet,
     /// 소유자별 배치 hint.
     pub hints: BTreeMap<MotionOwner, LayoutHints>,
+    /// 문서 Component Context(key·provision·requirement·Slot 공개 목록, ADR-0099).
+    pub context: ContextSet,
 }
 
 impl PrototypeDocument {
@@ -65,6 +69,7 @@ impl PrototypeDocument {
             out.extend(owner.id().to_bytes());
             out.extend(hints.encode());
         }
+        out.extend(self.context.encode());
         out
     }
 
@@ -172,6 +177,15 @@ pub enum PrototypeStep {
         /// 좌표.
         point: Option<HintPoint>,
     },
+    /// Context requirement 추가(`add`) 또는 삭제(inverse는 반대 연산).
+    ContextRequirement {
+        /// 컴포넌트.
+        component: ComponentRef,
+        /// key.
+        key: StableId,
+        /// 추가인지.
+        add: bool,
+    },
 }
 
 /// step 실패.
@@ -185,6 +199,8 @@ pub enum StepError {
     Property(PropertyCommandError),
     /// 상태 머신 교체.
     StateMachine(StateMachineError),
+    /// Context requirement 연산(이미 있는 추가·없는 삭제).
+    Context(&'static str),
     /// 시험용 주입 실패.
     InjectedFault,
 }
@@ -196,6 +212,7 @@ impl fmt::Display for StepError {
             StepError::Motion(e) => write!(f, "motion: {e}"),
             StepError::Property(e) => write!(f, "property: {e:?}"),
             StepError::StateMachine(e) => write!(f, "상태 머신: {e:?}"),
+            StepError::Context(reason) => write!(f, "Context: {reason}"),
             StepError::InjectedFault => f.write_str("주입된 실패"),
         }
     }
@@ -313,6 +330,29 @@ fn apply_step(
                 owner: *owner,
                 node: *node,
                 point: previous,
+            })
+        }
+        PrototypeStep::ContextRequirement {
+            component,
+            key,
+            add,
+        } => {
+            let changed = if *add {
+                doc.context.add_requirement(component.id(), *key)
+            } else {
+                doc.context.remove_requirement(component.id(), *key)
+            };
+            if !changed {
+                return Err(StepError::Context(if *add {
+                    "requirement가 이미 있습니다"
+                } else {
+                    "requirement가 없습니다"
+                }));
+            }
+            Ok(PrototypeStep::ContextRequirement {
+                component: *component,
+                key: *key,
+                add: !*add,
             })
         }
     }

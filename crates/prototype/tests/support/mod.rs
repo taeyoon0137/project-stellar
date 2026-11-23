@@ -351,3 +351,45 @@ pub fn document() -> PrototypeDocument {
         ..PrototypeDocument::default()
     }
 }
+
+pub const CONTEXT_KEY: u64 = 700;
+pub const CONTEXT_READ: u64 = 711;
+pub const CONTEXT_BINDING: u64 = 710;
+
+pub fn context_key() -> StableId {
+    sid(CONTEXT_KEY)
+}
+
+/// fixture에 Color key 하나와, knob 배경이 그 key를 읽는 binding을 더한 문서.
+pub fn context_document() -> PrototypeDocument {
+    let mut doc = document();
+    doc.context
+        .insert_key(
+            stellar_document::context::key::ContextKey::new(
+                context_key(),
+                "accent",
+                stellar_document::context::key::ContextScope::Project,
+                TypeSpec::required(ExpressionType::Color),
+                literal_ast(701, green()),
+            )
+            .expect("key"),
+        )
+        .expect("insert");
+    doc.bindings
+        .insert(ValueBinding::new(
+            BindingId::new(sid(CONTEXT_BINDING)),
+            background(KNOB),
+            ExpressionAst::new(
+                x(CONTEXT_READ),
+                vec![ExprNode::reference(
+                    x(CONTEXT_READ),
+                    ReferenceTarget::Context(context_key()),
+                )],
+            )
+            .expect("AST"),
+            TypeSpec::required(ExpressionType::Color),
+            ScopeOwner::Component(toggle()),
+        ))
+        .expect("binding");
+    doc
+}

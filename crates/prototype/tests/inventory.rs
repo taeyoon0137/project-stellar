@@ -16,6 +16,7 @@ const ENGINE: &[(&str, &str)] = &[
     ("timing.rs", include_str!("../src/timing.rs")),
     ("gesture.rs", include_str!("../src/gesture.rs")),
     ("session.rs", include_str!("../src/session.rs")),
+    ("context.rs", include_str!("../src/context.rs")),
     (
         "document motion/spec.rs",
         include_str!("../../document/src/motion/spec.rs"),
