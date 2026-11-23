@@ -33,6 +33,9 @@ pub mod mipmap;
 /// 공통 cache budget manager와 cache priority (XVI.5.2).
 pub mod cache;
 
+/// glyph atlas·tessellation·이미지 mipmap cache의 budget manager 등록 (XVI.5.3).
+pub mod cache_adapters;
+
 /// backend 독립 Render Graph (XI.4.1).
 pub mod render_graph;
 
