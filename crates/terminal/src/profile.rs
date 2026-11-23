@@ -200,30 +200,30 @@ pub struct TerminalProfile {
     pub name: ProfileName,
     /// 실행 명령.
     pub command: ProfileCommand,
-    /// child 환경 정책.
+    /// child 환경 명시 지정(상속 환경과 식별 변수 위에 마지막으로 적용, ADR-0023 결정 5).
     pub environment: EnvironmentPolicy,
     /// 작업 디렉터리 선택.
     pub cwd: CwdSelection,
 }
 
 impl TerminalProfile {
-    /// 기본 셸·기본 환경·프로젝트 루트 cwd profile.
+    /// 기본 셸·명시 지정 없음·프로젝트 루트 cwd profile.
     pub fn default_shell(name: ProfileName) -> TerminalProfile {
         TerminalProfile {
             name,
             command: ProfileCommand::DefaultShell,
-            environment: EnvironmentPolicy::with_defaults(),
+            environment: EnvironmentPolicy::empty(),
             cwd: CwdSelection::ProjectRoot,
         }
     }
 
-    /// argv 명령·기본 환경·프로젝트 루트 cwd profile. 외부 CLI 에이전트를 포함한 임의 명령에 쓰며
+    /// argv 명령·명시 지정 없음·프로젝트 루트 cwd profile. 외부 CLI 에이전트를 포함한 임의 명령에 쓰며
     /// 명령 종류에 따라 다르게 다루지 않습니다(XVIII.5.1).
     pub fn command(name: ProfileName, command: ArgvCommand) -> TerminalProfile {
         TerminalProfile {
             name,
             command: ProfileCommand::Argv(command),
-            environment: EnvironmentPolicy::with_defaults(),
+            environment: EnvironmentPolicy::empty(),
             cwd: CwdSelection::ProjectRoot,
         }
     }
@@ -298,7 +298,7 @@ mod tests {
         let profile = TerminalProfile::command(ProfileName::new("agent").unwrap(), command.clone());
         assert_eq!(profile.command, ProfileCommand::Argv(command));
         assert_eq!(profile.cwd, CwdSelection::ProjectRoot);
-        assert_eq!(profile.environment, EnvironmentPolicy::with_defaults());
+        assert_eq!(profile.environment, EnvironmentPolicy::empty());
     }
 
     #[test]
@@ -306,6 +306,6 @@ mod tests {
         let profile = TerminalProfile::default_shell(ProfileName::new("기본").unwrap());
         assert_eq!(profile.command, ProfileCommand::DefaultShell);
         assert_eq!(profile.cwd, CwdSelection::ProjectRoot);
-        assert_eq!(profile.environment, EnvironmentPolicy::with_defaults());
+        assert_eq!(profile.environment, EnvironmentPolicy::empty());
     }
 }

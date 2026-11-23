@@ -163,7 +163,7 @@ mod tests {
         use crate::emulator::Terminal;
         use crate::profile::{ArgvCommand, ProfileName, TerminalProfile};
         use crate::pty::PtyLauncher;
-        use crate::registry::tests::{fake_env, sh, window, NO_SHELL_SOURCE};
+        use crate::registry::tests::{sh, test_identity, window, NO_SHELL_SOURCE};
         use crate::registry::{LaunchEnvironment, TerminalRegistry};
         use crate::size::TerminalSize;
         use crate::state::{TerminalExitStatus, TerminalProcessState, TerminationReason};
@@ -190,7 +190,7 @@ mod tests {
             cwd: &context,
             shell: &shell,
             shell_source: &NO_SHELL_SOURCE,
-            env_lookup: fake_env,
+            identity: &test_identity(),
             size: TerminalSize::new(30, 100).unwrap(),
         };
         let mut launcher = PtyLauncher::with_grace(Duration::from_millis(300));
@@ -257,7 +257,7 @@ mod tests {
         // 시스템 명령도 같은 profile 경로로 실행합니다.
         let cases: [(&str, &[&str], &str); 4] = [
             ("echo", &["arbitrary", "cli"], "arbitrary cli"),
-            ("env", &[], "COLORTERM=truecolor"),
+            ("printenv", &["COLORTERM"], "truecolor"),
             ("tput", &["lines"], "30"),
             ("ls", &["-1", "bin"], "agent-cli"),
         ];

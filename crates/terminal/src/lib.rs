@@ -5,7 +5,7 @@
 //!
 //! - [`id`]: 세션 메모리 전용 식별자.
 //! - [`profile`]: argv 배열 명령·환경·cwd를 묶은 profile.
-//! - [`env`]: child 환경 변수 허용 목록.
+//! - [`env`]: 대화형 child 환경(상속 + 식별 변수·`SHELL`·명시 지정, ADR-0023).
 //! - [`cwd`]: 작업 디렉터리 선택·preset·검증.
 //! - [`state`]: child process 상태.
 //! - [`registry`]: 프로젝트 창별 다중 세션 registry와 시작 gate.

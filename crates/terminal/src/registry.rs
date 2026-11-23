@@ -11,7 +11,7 @@
 //! - **시작 gate**([`TerminalRegistry::start`]): 신뢰된 프로젝트 창의 [`TerminalCapability`]를
 //!   가장 먼저 확인합니다. token이 없거나 다른 창의 것이면 cwd·명령·환경을 보지도 않고, 실행기를
 //!   호출하지 않습니다(untrusted spawn 0). 그다음 cwd 검증(XVIII.1.3), 셸 해석(XVIII.2.2)·명령·환경
-//!   구성(`TERM`·`COLORTERM` 기본값 포함, XVIII.4.1), 실행 순입니다.
+//!   변경 구성(상속 환경 + 식별 변수·`SHELL`·profile 명시 지정, XVIII.2.5·ADR-0023), 실행 순입니다.
 //! - 닫기([`TerminalRegistry::close`])는 실행 중인 child를 종료한 뒤 세션을 제거합니다.
 //! - **프로세스 tree 정리**(XVIII.2.4): child 스스로 종료·외부 신호 종료는 [`TerminalRegistry::poll`]이
 //!   비차단으로 정리하고 세션을 `Finished{ChildExited}`로 남깁니다. 취소([`TerminalRegistry::cancel`])는
@@ -20,14 +20,13 @@
 //!   비슷합니다. 터미널은 복원하지 않습니다(기술 아키텍처 32 "창 종료 시 프로세스 종료").
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::fmt;
 
 use stellar_core_types::ids::WindowSessionId;
 
 use crate::capability::{TerminalCapability, TerminalNotTrusted};
 use crate::cwd::{CwdContext, CwdError, ResolvedCwd};
-use crate::emulator::{COLORTERM, TERM_NAME};
+use crate::env::{interactive_env, TerminalIdentity};
 use crate::header::{HeaderCommand, TerminalHeader};
 use crate::id::{SessionIdAllocator, TerminalSessionId};
 use crate::launch::{
@@ -154,23 +153,10 @@ pub struct LaunchEnvironment<'a> {
     pub shell: &'a ShellSettings,
     /// 사용자 기본 셸 후보 공급자(실제 앱은 [`SystemShellSource`](crate::shell::SystemShellSource)).
     pub shell_source: &'a dyn UserShellSource,
-    /// 상속 허용 변수의 현재 값을 읽는 함수(앱 프로세스 환경이면 [`process_env`]).
-    pub env_lookup: fn(&str) -> Option<OsString>,
+    /// 터미널 식별 변수 값(`TERM`·`COLORTERM`·`TERM_PROGRAM`·`TERM_PROGRAM_VERSION`, ADR-0023 결정 4).
+    pub identity: &'a TerminalIdentity,
     /// PTY 초기 크기(터미널 view 크기).
     pub size: TerminalSize,
-}
-
-/// 앱 프로세스 환경에서 변수 값을 읽습니다.
-pub fn process_env(name: &str) -> Option<OsString> {
-    std::env::var_os(name)
-}
-
-/// 이름 순 환경 목록에 값을 넣거나 바꿉니다.
-fn set_env(env: &mut Vec<(OsString, OsString)>, name: &str, value: &std::ffi::OsStr) {
-    match env.binary_search_by(|(key, _)| key.as_os_str().cmp(std::ffi::OsStr::new(name))) {
-        Ok(index) => env[index].1 = value.to_os_string(),
-        Err(index) => env.insert(index, (OsString::from(name), value.to_os_string())),
-    }
 }
 
 /// registry 안의 세션 하나.
@@ -323,22 +309,10 @@ impl TerminalRegistry {
             .cwd
             .resolve(&session.profile.cwd)
             .map_err(StartError::Cwd)?;
-        let mut env = session.profile.environment.resolve(environment.env_lookup);
-        // child가 보는 터미널 종류는 이 crate의 emulator가 해석하는 sequence 집합입니다(XVIII.4.1).
-        // 앱 프로세스에서 상속한 값보다 우선하고, profile이 명시한 값은 그대로 둡니다.
-        for (name, value) in [("TERM", TERM_NAME), ("COLORTERM", COLORTERM)] {
-            if session.profile.environment.assignment(name).is_none() {
-                set_env(&mut env, name, std::ffi::OsStr::new(value));
-            }
-        }
         let (program, args, arg0) = match &session.profile.command {
             ProfileCommand::DefaultShell => {
                 let shell = resolve_shell(environment.shell, environment.shell_source)
                     .map_err(StartError::Shell)?;
-                // profile이 SHELL을 명시하지 않았으면 실제로 실행하는 셸을 알려 줍니다.
-                if session.profile.environment.assignment("SHELL").is_none() {
-                    set_env(&mut env, "SHELL", shell.program().as_os_str());
-                }
                 (
                     shell.program().to_path_buf(),
                     Vec::new(),
@@ -351,6 +325,10 @@ impl TerminalRegistry {
                 None,
             ),
         };
+        // 상속 환경 위의 변경: 식별 변수 → 기본 셸이면 실제로 실행하는 셸의 SHELL → profile 명시 지정(ADR-0023).
+        let shell = matches!(session.profile.command, ProfileCommand::DefaultShell)
+            .then_some(program.as_path());
+        let env = interactive_env(environment.identity, shell, &session.profile.environment);
         // token을 요청에 소비합니다. 요청은 이 경로에서만 만들어지고 실행기에 값으로 넘어갑니다.
         let request = LaunchRequest::new(
             capability,
@@ -539,6 +517,7 @@ pub(crate) mod tests {
     use crate::shell::{ShellChoice, ShellMode, ShellPathProblem};
     use crate::state::{StartFailure, TerminalExitStatus};
     use crate::test_support::TempDir;
+    use std::ffi::OsString;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -671,13 +650,22 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn fake_env(name: &str) -> Option<OsString> {
-        match name {
-            "PATH" => Some("/usr/bin:/bin".into()),
-            "HOME" => Some("/Users/example".into()),
-            "SECRET_TOKEN" => Some("must-not-leak".into()),
-            _ => None,
-        }
+    /// 시험용 식별 변수 값(앱 버전 `0.0.0-test`).
+    pub(crate) fn test_identity() -> TerminalIdentity {
+        TerminalIdentity::stellar("0.0.0-test").unwrap()
+    }
+
+    /// 요청의 변경을 가짜 상속 환경에 적용한 결과(이름 순).
+    fn child_env(request: &LaunchRequest) -> Vec<(OsString, OsString)> {
+        crate::env::apply_env_changes(
+            [
+                ("PATH", "/usr/bin:/bin"),
+                ("HOME", "/Users/example"),
+                ("SECRET_TOKEN", "app-env-only"),
+            ]
+            .map(|(n, v)| (OsString::from(n), OsString::from(v))),
+            request.env_changes(),
+        )
     }
 
     pub(crate) fn sh() -> ShellSettings {
@@ -705,7 +693,7 @@ pub(crate) mod tests {
             cwd: &context,
             shell: &shell,
             shell_source: &NO_SHELL_SOURCE,
-            env_lookup: fake_env,
+            identity: &test_identity(),
             size: TerminalSize::DEFAULT,
         };
         let mut launcher = FakeLauncher::default();
@@ -749,7 +737,7 @@ pub(crate) mod tests {
             cwd: &context,
             shell: &shell,
             shell_source: &NO_SHELL_SOURCE,
-            env_lookup: fake_env,
+            identity: &test_identity(),
             size: TerminalSize::DEFAULT,
         };
         let mut launcher = FakeLauncher::default();
@@ -758,7 +746,10 @@ pub(crate) mod tests {
         agent.command =
             ProfileCommand::Argv(ArgvCommand::new("/usr/bin/env", ["a b", "--flag"]).unwrap());
         agent.cwd = CwdSelection::WorktreeRoot(worktree.clone());
-        agent.environment.set("TERM_PROGRAM", "Stellar").unwrap();
+        agent
+            .environment
+            .set("TERM_PROGRAM", "agent-profile")
+            .unwrap();
         let shell_id = registry.create(profile("shell")).unwrap();
         let agent_id = registry.create(agent).unwrap();
 
@@ -781,14 +772,24 @@ pub(crate) mod tests {
         assert_eq!(shell_request.arg0(), Some(&OsString::from("-sh")));
         assert!(shell_request.args().is_empty());
         assert_eq!(shell_request.cwd(), dir.path());
+        // 상속 환경은 그대로이고(허용 목록 밖 변수 포함), 식별 변수 4개와 기본 셸의 SHELL만 더합니다.
         assert_eq!(
-            shell_request.env(),
+            child_env(shell_request),
             [
                 (OsString::from("COLORTERM"), OsString::from("truecolor")),
                 (OsString::from("HOME"), OsString::from("/Users/example")),
                 (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
+                (
+                    OsString::from("SECRET_TOKEN"),
+                    OsString::from("app-env-only")
+                ),
                 (OsString::from("SHELL"), OsString::from("/bin/sh")),
                 (OsString::from("TERM"), OsString::from("xterm-256color")),
+                (OsString::from("TERM_PROGRAM"), OsString::from("Stellar")),
+                (
+                    OsString::from("TERM_PROGRAM_VERSION"),
+                    OsString::from("0.0.0-test")
+                ),
             ]
         );
 
@@ -799,14 +800,12 @@ pub(crate) mod tests {
         );
         assert_eq!(agent_request.args(), ["a b", "--flag"]);
         assert_eq!(agent_request.cwd(), worktree);
-        assert!(agent_request
-            .env()
+        // profile 명시 지정이 식별 변수보다 이기고, argv profile은 SHELL을 바꾸지 않습니다.
+        let agent_env = child_env(agent_request);
+        assert!(agent_env
             .iter()
-            .any(|(name, value)| name == "TERM_PROGRAM" && value == "Stellar"));
-        assert!(agent_request
-            .env()
-            .iter()
-            .all(|(name, _)| name != "SECRET_TOKEN"));
+            .any(|(name, value)| name == "TERM_PROGRAM" && value == "agent-profile"));
+        assert!(agent_env.iter().all(|(name, _)| name != "SHELL"));
         assert_eq!(
             registry.session(agent_id).unwrap().cwd().unwrap().path(),
             worktree
@@ -840,7 +839,7 @@ pub(crate) mod tests {
             cwd: &context,
             shell: &shell,
             shell_source: &NO_SHELL_SOURCE,
-            env_lookup: fake_env,
+            identity: &test_identity(),
             size: TerminalSize::DEFAULT,
         };
         let mut launcher = FakeLauncher::default();
@@ -898,7 +897,7 @@ pub(crate) mod tests {
             cwd: &context,
             shell: &shell,
             shell_source: &NO_SHELL_SOURCE,
-            env_lookup: fake_env,
+            identity: &test_identity(),
             size: TerminalSize::DEFAULT,
         };
         let mut launcher = FakeLauncher::default();
@@ -929,7 +928,7 @@ pub(crate) mod tests {
             cwd: &context,
             shell: &shell,
             shell_source: &NO_SHELL_SOURCE,
-            env_lookup: fake_env,
+            identity: &test_identity(),
             size: TerminalSize::DEFAULT,
         };
         let mut launcher = FakeLauncher::default();
@@ -1061,7 +1060,7 @@ pub(crate) mod tests {
             cwd: &context,
             shell: &custom,
             shell_source: &NO_SHELL_SOURCE,
-            env_lookup: fake_env,
+            identity: &test_identity(),
             size: TerminalSize::DEFAULT,
         };
         assert_eq!(
@@ -1105,13 +1104,12 @@ pub(crate) mod tests {
         registry
             .start(explicit_id, trusted(&registry), &environment, &mut launcher)
             .unwrap();
-        assert!(launcher.requests[1]
-            .env()
+        let explicit_env = child_env(&launcher.requests[1]);
+        assert!(explicit_env
             .iter()
             .any(|(name, value)| name == "SHELL" && value == "/custom/shell"));
         // profile이 정한 TERM은 기본값으로 바꾸지 않습니다.
-        let terms: Vec<&OsString> = launcher.requests[1]
-            .env()
+        let terms: Vec<&OsString> = explicit_env
             .iter()
             .filter(|(name, _)| name == "TERM")
             .map(|(_, value)| value)
@@ -1141,7 +1139,7 @@ pub(crate) mod tests {
                 cwd: &context,
                 shell: &settings,
                 shell_source: &NO_SHELL_SOURCE,
-                env_lookup: fake_env,
+                identity: &test_identity(),
                 size: TerminalSize::DEFAULT,
             };
             let mut shell_profile = profile("sh");
@@ -1183,7 +1181,7 @@ pub(crate) mod tests {
             cwd: &context,
             shell: &shell,
             shell_source: &NO_SHELL_SOURCE,
-            env_lookup: fake_env,
+            identity: &test_identity(),
             size: TerminalSize::new(30, 90).unwrap(),
         };
         let mut launcher = FakeLauncher::default();
@@ -1236,7 +1234,7 @@ pub(crate) mod tests {
             cwd: &context,
             shell: &shell,
             shell_source: &NO_SHELL_SOURCE,
-            env_lookup: fake_env,
+            identity: &test_identity(),
             size: TerminalSize::DEFAULT,
         };
         let mut launcher = PtyLauncher::with_grace(std::time::Duration::from_millis(300));
@@ -1329,7 +1327,7 @@ pub(crate) mod tests {
             cwd: &context,
             shell: &shell,
             shell_source: &NO_SHELL_SOURCE,
-            env_lookup: fake_env,
+            identity: &test_identity(),
             size: TerminalSize::DEFAULT,
         };
         let mut launcher = PtyLauncher::with_grace(std::time::Duration::from_millis(300));
@@ -1386,7 +1384,7 @@ pub(crate) mod tests {
             cwd: &context,
             shell: &shell,
             shell_source: &NO_SHELL_SOURCE,
-            env_lookup: fake_env,
+            identity: &test_identity(),
             size: TerminalSize::DEFAULT,
         };
         let mut launcher = FakeLauncher::default();

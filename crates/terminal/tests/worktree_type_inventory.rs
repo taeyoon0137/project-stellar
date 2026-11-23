@@ -344,7 +344,6 @@ fn system_git_worktrees_become_cwd_presets() {
 /// preset cwd에서 `/bin/pwd`를 일반 profile로 실행해 출력 첫 줄을 돌려줍니다.
 #[cfg(target_os = "macos")]
 fn start_pwd_in(context: &CwdContext, preset: &CwdPreset) -> String {
-    use std::ffi::OsString;
     use std::io::Read;
     use std::time::{Duration, Instant};
 
@@ -355,10 +354,6 @@ fn start_pwd_in(context: &CwdContext, preset: &CwdPreset) -> String {
     use stellar_terminal::registry::{LaunchEnvironment, TerminalRegistry};
     use stellar_terminal::shell::{ShellSettings, SystemShellSource};
     use stellar_terminal::size::TerminalSize;
-
-    fn env_lookup(name: &str) -> Option<OsString> {
-        (name == "PATH").then(|| OsString::from("/usr/bin:/bin"))
-    }
 
     let window = WindowSessionId::from_stable_id(StableId::from_bytes([53; 16]));
     let mut registry = TerminalRegistry::new(window);
@@ -373,7 +368,7 @@ fn start_pwd_in(context: &CwdContext, preset: &CwdPreset) -> String {
         cwd: context,
         shell: &shell,
         shell_source: &SystemShellSource,
-        env_lookup,
+        identity: &stellar_terminal::env::TerminalIdentity::stellar("0.0.0-test").unwrap(),
         size: TerminalSize::DEFAULT,
     };
     let capability = TerminalCapability::grant(window, TerminalTrust::Trusted).unwrap();
