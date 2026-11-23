@@ -25,9 +25,11 @@
 //! | [`approval`] | XXIX.3.2 | ProjectIdentity 단위 승인 요청 저장(첫 응답만 유효, 기본 거부) |
 //! | [`mode`] | XXIX.3.3 | 모드 권한 상한과 내장 세션 카탈로그 |
 //! | [`start`] | XXIX.3.5 | 신뢰 capability 시작 확인, 약관 고지 기록, 신뢰 철회 |
+//! | [`assembly`] | XXIX.3.6 | 채팅 보기 조립(문서 효과는 승인·출처 기록에서만) |
 //! | `test-cli/main.rs` | XXIX.2.2 | 구독 CLI 테스트 대역 실행 파일(테스트 전용, library 미사용) |
 
 pub mod approval;
+pub mod assembly;
 pub mod chat;
 pub mod decoder;
 pub mod env;
