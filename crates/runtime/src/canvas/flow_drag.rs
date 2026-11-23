@@ -3,8 +3,11 @@
 //! - 삽입 위치([`insertion_index`])는 끄는 node를 뺀 형제의 화면 상자(게시된 scene)를 흐름 순서로 보고, 교차축으로
 //!   겹치는 상자를 한 줄로 묶어 pointer가 있는 줄에서 주축 중심이 pointer보다 앞인 형제 수를 셉니다. `flex-wrap`의
 //!   여러 줄과 Grid 자동 배치(읽는 순서)를 같은 규칙으로 다룹니다.
-//! - preview([`reflow_preview`])는 흐름 순서 permutation reflow입니다. runtime은 layout crate를 부를 수 없어 같은 크기
-//!   항목에서 정확하고 크기가 다르면 근사입니다. 놓은 뒤 화면은 실제 layout이 정합니다.
+//! - 상자는 layout 결과로 그린 scene source([`CanvasLayout`], ADR-0125)에서 읽습니다. 흐름 자식의 화면 위치는 layout
+//!   결과이므로 저장 transform이 아니라 이 상자로 셉니다.
+//! - preview는 실제 layout을 다시 배치한 결과입니다([`CanvasLayout::reorder_preview`]): 흐름 순서를 바꾼 입력을 증분
+//!   layout에 넣고, 상자가 바뀐 형제의 scene 대체 입력(`ScenePreview`)과 world 상자를 냅니다. 크기가 다른 항목,
+//!   `justify-content` 분배, wrap도 놓은 뒤 화면과 같습니다.
 //! - 확정([`FlowDrag::commit`])은 같은 부모 안이면 OrderKey만 바꾸는 `MoveNode` 하나(history 한 항목)입니다. 밖으로
 //!   끌어내면 다른 흐름 컨테이너에는 그 삽입 index로, 자유 배치 Frame에는 world 위치를 지키는 재부모화(ADR-0105)로
 //!   옮깁니다.
@@ -24,10 +27,12 @@ use stellar_document::records::NodePayload;
 
 use crate::app::canvas_gesture::parent_of;
 use crate::app::RequestId;
+use crate::canvas::scene_layout::CanvasLayout;
 use crate::canvas::transform::drag::{DragUpdate, DropTarget, MoveDrag};
-use crate::canvas::transform::{node_geometry, selection_roots, TransformError};
+use crate::canvas::transform::{selection_roots, TransformError};
 use crate::canvas::CanvasScene;
 use crate::window_session::{history_label, ProjectWindowSession};
+use stellar_scene::incremental::ScenePreview;
 
 /// 상자(x, y, width, height).
 pub type Box4 = [f32; 4];
@@ -116,72 +121,6 @@ pub fn insertion_index(items: &[Box4], axes: FlowAxes, pointer: [f32; 2]) -> usi
     first + before
 }
 
-/// 순서를 바꾼 흐름의 preview 상자. `items`는 끄는 node를 포함한 원래 흐름 순서 상자, `from`은 끄는 node index,
-/// `to`는 끄는 node를 뺀 목록의 삽입 index입니다. 결과는 새 흐름 순서의 (원래 index, preview 상자)입니다.
-///
-/// 원래 줄마다 항목 수·주축 시작점(뒤집힘이면 끝점)·관측 간격(이웃 사이 평균)을 지키고, 새 순서 항목을 앞 줄부터
-/// 같은 수만큼 채워 크기대로 다시 늘어놓습니다. 교차축은 항목의 원래 줄 안 위치를 새 줄에 옮깁니다.
-pub fn reflow_preview(
-    items: &[Box4],
-    axes: FlowAxes,
-    from: usize,
-    to: usize,
-) -> Vec<(usize, Box4)> {
-    if from >= items.len() {
-        return items.iter().copied().enumerate().collect();
-    }
-    let (m, c) = (axes.main, 1 - axes.main);
-    let original = lines(items, axes);
-    let line_of = |i: usize| {
-        original
-            .iter()
-            .position(|(a, b, _)| (*a..*b).contains(&i))
-            .expect("모든 항목이 줄에 있음")
-    };
-    let mut order: Vec<usize> = (0..items.len()).filter(|&i| i != from).collect();
-    order.insert(to.min(order.len()), from);
-    let mut out = Vec::with_capacity(items.len());
-    let mut cursor = 0;
-    for (start, end, cross_range) in &original {
-        let slots = &items[*start..*end];
-        let count = end - start;
-        let gap = if count > 1 {
-            let mut sorted: Vec<&Box4> = slots.iter().collect();
-            sorted.sort_by(|a, b| a[m].total_cmp(&b[m]));
-            sorted
-                .windows(2)
-                .map(|w| w[1][m] - (w[0][m] + w[0][m + 2]))
-                .sum::<f32>()
-                / (count - 1) as f32
-        } else {
-            0.0
-        };
-        let line_start = slots.iter().map(|r| r[m]).fold(f32::INFINITY, f32::min);
-        let line_end = slots
-            .iter()
-            .map(|r| r[m] + r[m + 2])
-            .fold(f32::NEG_INFINITY, f32::max);
-        let mut along = if axes.reverse { line_end } else { line_start };
-        for &index in &order[cursor..cursor + count] {
-            let r = items[index];
-            let home = original[line_of(index)].2;
-            let mut placed = r;
-            placed[c] = cross_range.0 + (r[c] - home.0);
-            if axes.reverse {
-                along -= r[m + 2];
-                placed[m] = along;
-                along -= gap;
-            } else {
-                placed[m] = along;
-                along += r[m + 2] + gap;
-            }
-            out.push((index, placed));
-        }
-        cursor += count;
-    }
-    out
-}
-
 /// 흐름 순서의 node가 Grid 명시 배치(줄 번호)인지.
 fn explicit_grid_placement(model: &DocumentModel, set: &FlatSet, node: StableId) -> bool {
     let Some(payload) = model.payload(node) else {
@@ -218,7 +157,7 @@ impl FlowSiblings {
     fn read(
         model: &DocumentModel,
         set: &FlatSet,
-        scene: &CanvasScene,
+        layout: &CanvasLayout,
         parent: StableId,
         axes: FlowAxes,
         skip: StableId,
@@ -228,7 +167,7 @@ impl FlowSiblings {
             .into_iter()
             .filter(|&id| id != skip)
             .filter_map(|id| {
-                let rect = node_geometry(scene, id)?.world_bounds;
+                let rect = layout.world_box(id)?;
                 Some((
                     id,
                     order_key(model, id)?,
@@ -276,8 +215,10 @@ pub enum FlowUpdate {
         index: usize,
         /// 삽입 표시(world, 폭 또는 높이 0인 상자).
         marker: Box4,
-        /// 새 흐름 순서의 (node, preview 상자). 끄는 node도 들어 있습니다.
+        /// 새 흐름 순서의 (node, preview world 상자). 끄는 node도 들어 있습니다.
         preview: Vec<(StableId, Box4)>,
+        /// 상자가 바뀐 node의 scene 대체 입력(`IncrementalScene::set_preview`에 넘김).
+        scene: ScenePreview,
     },
     /// 다른 흐름 컨테이너 위: 그 컨테이너의 삽입 index.
     OtherFlow {
@@ -296,8 +237,10 @@ pub struct FlowDrag {
     node: StableId,
     start: [f32; 2],
     own: FlowSiblings,
-    /// 끄는 node를 포함한 원래 자동 배치 흐름(preview 기준): (id, 상자)와 끄는 node index.
-    original: (Vec<(StableId, Box4)>, usize),
+    /// 끄는 node의 원래 자동 배치 흐름 index(끄는 node를 넣은 목록 기준).
+    from: usize,
+    /// 상자를 가진 흐름 컨테이너(Fragment 부모면 그 위 첫 상자).
+    container: StableId,
     container_bounds: Box4,
     outer: MoveDrag,
 }
@@ -308,9 +251,11 @@ fn inside(r: Box4, p: [f32; 2]) -> bool {
 
 impl FlowDrag {
     /// 지금 선택(흐름 자식 하나)으로 시작합니다. `pointer`는 누른 world 점, `visible`은 가시 world 영역입니다.
+    /// 상자는 `layout`(layout 결과로 그린 source)에서, 인스턴스 투영 행과 끌어내기 대상은 `scene`에서 읽습니다.
     pub fn begin(
         window: &ProjectWindowSession,
         scene: &CanvasScene,
+        layout: &CanvasLayout,
         pointer: [f32; 2],
         visible: Option<Box4>,
     ) -> Result<FlowDrag, TransformError> {
@@ -339,38 +284,43 @@ impl FlowDrag {
         }
         let parent = parent_of(model, node).ok_or(TransformError::Stale)?;
         let container = flow_container(model, parent);
-        let container_bounds = node_geometry(scene, container)
-            .ok_or(TransformError::Stale)?
-            .world_bounds;
-        let own = FlowSiblings::read(model, &set, scene, parent, axes, node);
-        let dragged = node_geometry(scene, node)
-            .ok_or(TransformError::Stale)?
-            .world_bounds;
+        let container_bounds = layout.world_box(container).ok_or(TransformError::Stale)?;
+        let own = FlowSiblings::read(model, &set, layout, parent, axes, node);
+        layout.world_box(node).ok_or(TransformError::Stale)?;
         let key = order_key(model, node).ok_or(TransformError::Stale)?;
-        let mut original: Vec<(StableId, Box4)> = Vec::new();
-        let mut from = None;
-        for (id, k, rect, explicit) in &own.all {
-            if from.is_none() && *k > key {
-                from = Some(original.len());
-                original.push((node, dragged));
-            }
-            if !explicit {
-                original.push((*id, *rect));
-            }
-        }
-        let from = from.unwrap_or_else(|| {
-            original.push((node, dragged));
-            original.len() - 1
-        });
+        let from = own
+            .all
+            .iter()
+            .filter(|s| !s.3)
+            .take_while(|s| s.1 < key)
+            .count();
         let outer = MoveDrag::begin(window, scene, None, pointer, false, visible)?;
         Ok(FlowDrag {
             node,
             start: pointer,
             own,
-            original: (original, from),
+            from,
+            container,
             container_bounds,
             outer,
         })
+    }
+
+    /// 자동 형제 index `index` 자리에 끄는 node를 둔 layout 자식 순서. 다음 자동 형제 바로 앞, 없으면 끝입니다.
+    fn reordered(&self, layout: &CanvasLayout, index: usize) -> Vec<StableId> {
+        let mut order: Vec<StableId> = layout
+            .layout()
+            .layout_children(self.container)
+            .into_iter()
+            .filter(|id| *id != self.node)
+            .collect();
+        let auto = self.own.auto();
+        let at = auto
+            .get(index)
+            .and_then(|(i, _)| order.iter().position(|id| *id == self.own.all[*i].0))
+            .unwrap_or(order.len());
+        order.insert(at, self.node);
+        order
     }
 
     /// 끄는 node.
@@ -383,24 +333,43 @@ impl FlowDrag {
         &self,
         window: &ProjectWindowSession,
         scene: &CanvasScene,
+        layout: &CanvasLayout,
         pointer: [f32; 2],
     ) -> FlowUpdate {
+        let model = window.document().map(|d| d.model());
         if inside(self.container_bounds, pointer) {
             let (index, _) = self.own.slot(pointer);
-            let (items, from) = &self.original;
-            let boxes: Vec<Box4> = items.iter().map(|i| i.1).collect();
-            let preview = reflow_preview(&boxes, self.own.axes, *from, index)
+            let order = self.reordered(layout, index);
+            let flow = model.and_then(|m| layout.reorder_preview(m, self.container, &order));
+            let auto: std::collections::HashSet<StableId> = self
+                .own
+                .auto()
                 .into_iter()
-                .map(|(i, r)| (items[i].0, r))
+                .map(|(i, _)| self.own.all[i].0)
+                .chain(std::iter::once(self.node))
+                .collect();
+            let preview = order
+                .iter()
+                .filter(|id| auto.contains(id))
+                .filter_map(|id| {
+                    let rect = flow
+                        .as_ref()
+                        .and_then(|f| layout.preview_box(f, *id))
+                        .or_else(|| layout.world_box(*id))?;
+                    Some((*id, rect))
+                })
                 .collect();
             return FlowUpdate::Inside {
                 index,
                 marker: self.marker(index),
                 preview,
+                scene: flow.map(|f| f.preview).unwrap_or_default(),
             };
         }
-        if let Some(model) = window.document().map(|d| d.model()) {
-            if let Some((parent, siblings)) = other_flow_at(model, scene, pointer, self.node) {
+        if let Some(model) = model {
+            if let Some((parent, siblings)) =
+                other_flow_at(model, scene, layout, pointer, self.node)
+            {
                 let (index, _) = siblings.slot(pointer);
                 return FlowUpdate::OtherFlow { parent, index };
             }
@@ -445,12 +414,13 @@ impl FlowDrag {
         &self,
         window: &mut ProjectWindowSession,
         scene: &CanvasScene,
+        layout: &CanvasLayout,
         pointer: [f32; 2],
         request: RequestId,
     ) -> Result<bool, TransformError> {
-        match self.update(window, scene, pointer) {
+        match self.update(window, scene, layout, pointer) {
             FlowUpdate::Inside { index, .. } => {
-                if index == self.original.1 {
+                if index == self.from {
                     return Ok(false);
                 }
                 let (_, key) = self.own.slot(pointer);
@@ -463,7 +433,7 @@ impl FlowDrag {
             }
             FlowUpdate::OtherFlow { parent, .. } => {
                 let model = window.document().ok_or(TransformError::Stale)?.model();
-                let (_, siblings) = other_flow_at(model, scene, pointer, self.node)
+                let (_, siblings) = other_flow_at(model, scene, layout, pointer, self.node)
                     .filter(|(p, _)| *p == parent)
                     .ok_or(TransformError::Stale)?;
                 let (_, key) = siblings.slot(pointer);
@@ -502,6 +472,7 @@ fn flow_container(model: &DocumentModel, mut parent: StableId) -> StableId {
 fn other_flow_at(
     model: &DocumentModel,
     scene: &CanvasScene,
+    layout: &CanvasLayout,
     pointer: [f32; 2],
     moving: StableId,
 ) -> Option<(StableId, FlowSiblings)> {
@@ -514,10 +485,10 @@ fn other_flow_at(
         if !matches!(model.payload(row.id), Some(NodePayload::Frame(_))) {
             continue;
         }
-        let Some(geometry) = node_geometry(scene, row.id) else {
+        let Some(bounds) = layout.world_box(row.id) else {
             continue;
         };
-        if !inside(geometry.world_bounds, pointer) {
+        if !inside(bounds, pointer) {
             continue;
         }
         let mut current = Some(row.id);
@@ -535,7 +506,7 @@ fn other_flow_at(
         let axes = container_axes(model, &set, row.id)?;
         return Some((
             row.id,
-            FlowSiblings::read(model, &set, scene, row.id, axes, moving),
+            FlowSiblings::read(model, &set, layout, row.id, axes, moving),
         ));
     }
     None
@@ -596,7 +567,14 @@ pub(crate) fn flow_insert_key(
 ) -> Option<OrderKey> {
     let set = model_style_set(model);
     let axes = container_axes(model, &set, container)?;
-    let siblings = FlowSiblings::read(model, &set, scene, container, axes, StableId::NIL);
+    // 형제 상자는 layout 결과 위치입니다. 이 한 번의 삽입을 위해 컨테이너가 든 View를 변환합니다. Text 크기는 게시한
+    // 행 목록이 layout한 값을 씁니다.
+    let mut root = container;
+    while let Some(up) = parent_of(model, root) {
+        root = up;
+    }
+    let layout = CanvasLayout::for_scene(model, root, None, scene).ok()?;
+    let siblings = FlowSiblings::read(model, &set, &layout, container, axes, StableId::NIL);
     Some(siblings.slot(pointer).1)
 }
 

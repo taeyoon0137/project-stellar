@@ -35,6 +35,8 @@ pub mod create;
 pub mod edit_replay;
 /// 흐름 컨테이너 안 드래그 (XII.10.24, ADR-0117).
 pub mod flow_drag;
+/// `position: absolute` 자식의 inset 이동 (XII.10.24, ADR-0125).
+pub mod flow_inset;
 /// 변형 핸들 hit layer (XII.10.8, ADR-0104).
 pub mod handles;
 /// 선택 엔진의 hit 입력: 커서 아래 node 목록과 node world 상자 (XII.10.3, XII.10.5).
@@ -51,6 +53,8 @@ pub mod navigate;
 pub mod path_edit;
 /// 눈금자 눈금과 가이드 제스처 (XII.10.19, ADR-0117).
 pub mod ruler;
+/// layout 결과로 그린 활성 View scene source (ADR-0125).
+pub mod scene_layout;
 /// 캔버스 클릭 선택과 편집 범위 (XII.10.3, ADR-0104).
 pub mod select;
 /// 영역 선택(마퀴) (XII.10.6, ADR-0104).

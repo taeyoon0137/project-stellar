@@ -8,8 +8,13 @@
 //! # 규칙
 //!
 //! - 숨긴 node도 넣습니다(scene은 숨김을 `Visibility::Hidden`으로 남겨 표시 전환이 구조 변경이 되지 않음).
-//! - Free가 아닌 layout Frame(`layout_mode`)은 배치 결과 연결 전이라 subtree를 넣지 않습니다
-//!   ([`SkipReason::LayoutNotEvaluated`]). Path clip Frame과 modifier가 있는 Frame도 같은 이유로 뺍니다.
+//! - 위치·크기는 [`layout::DocumentLayout`] 결과 하나로 정합니다(ADR-0125). 흐름 컨테이너(flex·grid) 자식과 layout
+//!   record에 `position`을 명시한 node는 layout 결과 위치·크기로, 그 밖의 옛 자유 배치 node는 저장 transform·payload
+//!   크기로 그립니다([`layout::PlacementRule`]). layout 결과가 없으면(입력·계산 실패) Layout 규칙 node는
+//!   [`SkipReason::LayoutNotEvaluated`]로 뺍니다. Text는 layout content box 너비(풀린 `width`가 `max-content`면 줄바꿈
+//!   없음)로 Text hook을 부릅니다.
+//! - 옛 layout 정의 참조 Frame(`layout_mode`)은 subtree를 넣지 않습니다([`SkipReason::LayoutNotEvaluated`]). Path clip
+//!   Frame과 modifier가 있는 Frame도 뺍니다.
 //! - ComponentInstance는 문서에 복제하지 않고 expansion view(IX.2.2)의 가상 subtree를 펼칩니다. 인스턴스 key는
 //!   Fragment(scene node 없음)이고 그 아래 정의 root의 가상 투영이 옵니다. 가상 node key는
 //!   `SceneKey::virtual_node(인스턴스 chain, 정의 node)`, scene `source`는 바깥 인스턴스입니다(hit test는 인스턴스를
@@ -26,9 +31,11 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::boolean::{BooleanOp as SceneBooleanOp, BooleanOperand};
+use crate::bounds::Aabb;
 use crate::builder::{FragmentInput, NodeInput, PathInput, StrokeInput, TextInput};
 use crate::dirty::{InvalidationClasses, InvalidationOrigin, SceneDependents, SceneInvalidation};
 use crate::geometry::{FillRule, PathGeometry};
+use crate::incremental::ScenePreview;
 use crate::source::{
     BooleanSource, SceneKey, SceneSource, SourceEdit, SourceError, SourceKind, SourceNode,
 };
@@ -56,10 +63,15 @@ use stellar_document::text::TextPayload;
 /// 문서 node payload → scene builder 입력.
 pub mod inputs;
 
+/// 문서 → layout 입력 → scene 배치 (ADR-0125).
+pub mod layout;
+
 /// 문서 효과 modifier → scene 합성 효과 (ADR-0116 결정 2).
 pub mod effects;
 
 use inputs::{frame_input, image_input, scene_command, shape_source, shape_style};
+use layout::{DocumentLayout, LayoutInputs, Placed};
+use stellar_layout::intrinsic::TextLayoutHook;
 
 /// source에 넣지 않은 node의 이유.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -99,9 +111,10 @@ impl SkipReason {
     }
 }
 
-/// Text node를 scene 입력으로 바꾸는 hook(글꼴·layout은 text 엔진이 맡음).
-pub type TextHook<'a> =
-    dyn FnMut(StableId, &TextPayload, Option<&ModifierStack>, bool) -> Option<TextInput> + 'a;
+/// Text node를 scene 입력으로 바꾸는 hook(글꼴·layout은 text 엔진이 맡음). 마지막 인자는 줄 너비(px)이고 `None`이면
+/// 줄바꿈하지 않습니다(max-content).
+pub type TextHook<'a> = dyn FnMut(StableId, &TextPayload, Option<&ModifierStack>, bool, Option<f32>) -> Option<TextInput>
+    + 'a;
 
 /// 변환 옵션.
 #[derive(Default)]
@@ -112,6 +125,8 @@ pub struct SceneSourceOptions<'a> {
     pub text: Option<&'a mut TextHook<'a>>,
     /// 해석한 View Variant override(IX.7.6).
     pub variant: Option<&'a VariantOverrideSet>,
+    /// layout의 Text 줄바꿈 측정 hook(X.10.4). 없으면 Text hook이 낸 줄바꿈 없는 크기로 잽니다(ADR-0125).
+    pub text_measure: Option<&'a dyn TextLayoutHook>,
 }
 
 /// 변환 결과.
@@ -135,6 +150,8 @@ pub struct DocumentSceneSource {
     /// instance 펼침에서 나온 skip 기록 → 그 instance. 가상 key는 문서 node id가 아니라서, 인스턴스를 다시 변환할 때
     /// 이 표로 이전 기록을 지웁니다.
     skip_owner: BTreeMap<SceneKey, StableId>,
+    /// View root subtree의 layout 결과(ADR-0125).
+    layout: DocumentLayout,
 }
 
 impl SceneDependents for DocumentSceneSource {
@@ -152,12 +169,119 @@ impl DocumentSceneSource {
     pub const fn root(&self) -> StableId {
         self.root
     }
+
+    /// layout 결과.
+    pub const fn layout(&self) -> &DocumentLayout {
+        &self.layout
+    }
+
+    /// source node의 world 경계(축 정렬). `preview`의 대체 입력이 있으면 그 값으로 셉니다. Fragment·없는 key는
+    /// `None`입니다.
+    pub fn world_bounds(&self, key: SceneKey, preview: Option<&ScenePreview>) -> Option<Aabb> {
+        let kind_of = |key: SceneKey| -> Option<&SourceKind> {
+            preview
+                .and_then(|p| p.get(key))
+                .or_else(|| self.source.get(key).map(|n| &n.kind))
+        };
+        let rect = match kind_of(key)? {
+            SourceKind::Frame(input) => Rect::new(Vec2::ZERO, input.size),
+            SourceKind::Shape(input) => input.layout_rect,
+            SourceKind::Path(input) => input.layout_rect,
+            SourceKind::Text(input) => Rect::new(Vec2::ZERO, input.size),
+            SourceKind::Image(input) => Rect::new(Vec2::ZERO, input.size),
+            SourceKind::Fragment(_) => return None,
+        };
+        Aabb::from_rect(rect).transformed(&self.world_transform(key, preview)?)
+    }
+
+    /// source node의 local → world transform(Fragment는 항등). `preview`의 대체 입력이 있으면 그 값으로 셉니다.
+    pub fn world_transform(
+        &self,
+        key: SceneKey,
+        preview: Option<&ScenePreview>,
+    ) -> Option<Transform2D> {
+        let kind_of = |key: SceneKey| -> Option<&SourceKind> {
+            preview
+                .and_then(|p| p.get(key))
+                .or_else(|| self.source.get(key).map(|n| &n.kind))
+        };
+        let mut world = kind_of(key)?
+            .node_input()
+            .map_or_else(Transform2D::identity, |input| input.transform);
+        let mut current = self.source.parent(key);
+        while let Some(parent) = current {
+            if let Some(input) = kind_of(parent).and_then(SourceKind::node_input) {
+                world = world.then(&input.transform).ok()?;
+            }
+            current = self.source.parent(parent);
+        }
+        Some(world)
+    }
+
+    /// 흐름 컨테이너 `container`의 layout 자식 순서를 `order`로 바꾼 preview(XII.10.24). 실제 layout으로 다시 배치해
+    /// 상자가 바뀐 node의 대체 입력을 만듭니다. 문서·이 source는 바꾸지 않습니다.
+    pub fn reorder_preview<'a>(
+        &self,
+        model: &'a DocumentModel,
+        container: StableId,
+        order: &[StableId],
+        mut options: SceneSourceOptions<'a>,
+    ) -> Result<FlowPreview, stellar_layout::error::LayoutError> {
+        let layout = self
+            .layout
+            .reorder_preview(container, order, options.text_measure)?;
+        let changed = self.layout.changed_boxes(&layout);
+        let visibility = variant_visibility(options.variant);
+        let mut converter = Converter::with_index(
+            model,
+            &mut options,
+            &layout,
+            self.preorder.clone(),
+            self.operand_hosts.clone(),
+            visibility,
+            HashMap::new(),
+        );
+        let mut preview = ScenePreview::new();
+        for id in &changed {
+            let key = SceneKey::node(*id);
+            let Some(current) = self.source.get(key) else {
+                continue;
+            };
+            let mut nodes = Vec::new();
+            converter.subtree(*id, &mut nodes);
+            if let Some((_, node)) = nodes.into_iter().find(|(k, _)| *k == key) {
+                if node.kind != current.kind {
+                    preview.set(key, node.kind);
+                }
+            }
+        }
+        Ok(FlowPreview {
+            changed,
+            preview,
+            layout,
+        })
+    }
+}
+
+/// 흐름 순서 preview 결과.
+#[derive(Debug, Clone)]
+pub struct FlowPreview {
+    /// 상자가 바뀐 node.
+    pub changed: BTreeSet<StableId>,
+    /// `IncrementalScene::set_preview`에 넘길 대체 입력.
+    pub preview: ScenePreview,
+    /// preview layout 결과.
+    pub layout: DocumentLayout,
 }
 
 /// 변환 상태.
 struct Converter<'a, 'o> {
     model: &'a DocumentModel,
     options: &'o mut SceneSourceOptions<'a>,
+    /// layout 결과.
+    layout: &'o DocumentLayout,
+    /// layout 측정에서 만든 줄바꿈 없는 Text 입력(같은 너비로 그리면 다시 씀).
+    measured: HashMap<StableId, TextInput>,
     /// Boolean operand → host.
     operand_hosts: BTreeMap<StableId, Vec<StableId>>,
     /// root subtree pre-order 위치.
@@ -177,20 +301,47 @@ pub fn document_scene_source<'a>(
     root: StableId,
     mut options: SceneSourceOptions<'a>,
 ) -> Result<DocumentSceneSource, SourceError> {
-    let mut converter = Converter::new(model, root, &mut options);
+    let (preorder, operand_hosts) = tree_index(model, root);
+    let visibility = variant_visibility(options.variant);
+    let operands: HashSet<StableId> = operand_hosts.keys().copied().collect();
+    let mut measured = HashMap::new();
+    let layout = {
+        let inputs = LayoutInputs {
+            visibility: &visibility,
+            operands: &operands,
+            library: options.library,
+            text_measure: options.text_measure,
+        };
+        let mut texts = |id| measure_text(model, &mut options, id, &mut measured);
+        DocumentLayout::build(model, root, &inputs, &mut texts)
+    };
+    let mut converter = Converter::with_index(
+        model,
+        &mut options,
+        &layout,
+        preorder,
+        operand_hosts,
+        visibility,
+        measured,
+    );
     let unapplied = converter.unapplied_variant_patches();
     let mut nodes = Vec::new();
     let roots: Vec<SceneKey> = converter.subtree(root, &mut nodes).into_iter().collect();
     let source = SceneSource::from_nodes(roots, nodes)?;
+    let skipped = converter.skipped;
+    let operand_hosts = converter.operand_hosts;
+    let preorder = converter.preorder;
+    let skip_owner = converter.skip_owner;
     let mut built = DocumentSceneSource {
         source,
-        skipped: converter.skipped,
-        operand_hosts: converter.operand_hosts,
+        skipped,
+        operand_hosts,
         unapplied_variant_patches: unapplied,
         root,
-        preorder: converter.preorder,
+        preorder,
         ancestor_hosts: HashMap::new(),
-        skip_owner: converter.skip_owner,
+        skip_owner,
+        layout,
     };
     refresh_operands(model, &mut built);
     Ok(built)
@@ -236,47 +387,80 @@ fn refresh_operands(model: &DocumentModel, current: &mut DocumentSceneSource) {
     }
 }
 
-impl<'a, 'o> Converter<'a, 'o> {
-    fn new(
-        model: &'a DocumentModel,
-        root: StableId,
-        options: &'o mut SceneSourceOptions<'a>,
-    ) -> Converter<'a, 'o> {
-        let mut preorder = HashMap::new();
-        let mut operand_hosts: BTreeMap<StableId, Vec<StableId>> = BTreeMap::new();
-        let mut stack = vec![root];
-        while let Some(id) = stack.pop() {
-            preorder.insert(id, preorder.len());
-            for (_, operands) in boolean_modifiers(model.modifier_stack(id)) {
-                for operand in operands {
-                    operand_hosts.entry(operand).or_default().push(id);
+/// root subtree pre-order 위치와 Boolean operand → host 색인.
+fn tree_index(
+    model: &DocumentModel,
+    root: StableId,
+) -> (HashMap<StableId, usize>, BTreeMap<StableId, Vec<StableId>>) {
+    let mut preorder = HashMap::new();
+    let mut operand_hosts: BTreeMap<StableId, Vec<StableId>> = BTreeMap::new();
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        preorder.insert(id, preorder.len());
+        for (_, operands) in boolean_modifiers(model.modifier_stack(id)) {
+            for operand in operands {
+                operand_hosts.entry(operand).or_default().push(id);
+            }
+        }
+        stack.extend(model.children_in_order(id).into_iter().rev());
+    }
+    (preorder, operand_hosts)
+}
+
+/// View Variant 표시 여부 patch(IX.7.6).
+fn variant_visibility(variant: Option<&VariantOverrideSet>) -> HashMap<StableId, bool> {
+    let mut visibility = HashMap::new();
+    if let Some(variant) = variant {
+        for (path, value) in variant.property_patches() {
+            if path.keys() == [node_keys::VISIBLE] {
+                if let TypedValue::Boolean(visible) = value {
+                    visibility.insert(path.root(), *visible);
                 }
             }
-            stack.extend(model.children_in_order(id).into_iter().rev());
         }
-        Converter::with_index(model, options, preorder, operand_hosts)
     }
+    visibility
+}
 
-    /// 이미 계산한 pre-order·operand 색인으로 만듭니다(구조가 바뀌지 않은 편집).
+/// layout 측정용 Text 크기: Text hook을 줄바꿈 없이 부르고 결과를 다시 쓰도록 남깁니다.
+fn measure_text(
+    model: &DocumentModel,
+    options: &mut SceneSourceOptions<'_>,
+    id: StableId,
+    measured: &mut HashMap<StableId, TextInput>,
+) -> Option<Size2> {
+    let Some(NodePayload::Text(text)) = model.payload(id) else {
+        return None;
+    };
+    let locked = model
+        .runtime_id(id)
+        .and_then(|r| model.columns().get(r))?
+        .locked;
+    let hook = options.text.as_mut()?;
+    let filtered = content_stack(id, model.modifier_stack(id));
+    let input = hook(id, text, filtered.as_ref(), locked, None)?;
+    let size = input.size;
+    measured.insert(id, input);
+    Some(size)
+}
+
+impl<'a, 'o> Converter<'a, 'o> {
+    /// 이미 계산한 pre-order·operand 색인과 layout 결과로 만듭니다.
+    #[allow(clippy::too_many_arguments)]
     fn with_index(
         model: &'a DocumentModel,
         options: &'o mut SceneSourceOptions<'a>,
+        layout: &'o DocumentLayout,
         preorder: HashMap<StableId, usize>,
         operand_hosts: BTreeMap<StableId, Vec<StableId>>,
+        visibility: HashMap<StableId, bool>,
+        measured: HashMap<StableId, TextInput>,
     ) -> Converter<'a, 'o> {
-        let mut visibility = HashMap::new();
-        if let Some(variant) = options.variant {
-            for (path, value) in variant.property_patches() {
-                if path.keys() == [node_keys::VISIBLE] {
-                    if let TypedValue::Boolean(visible) = value {
-                        visibility.insert(path.root(), *visible);
-                    }
-                }
-            }
-        }
         Converter {
             model,
             options,
+            layout,
+            measured,
             operand_hosts,
             preorder,
             visibility,
@@ -284,6 +468,13 @@ impl<'a, 'o> Converter<'a, 'o> {
             skipped: BTreeMap::new(),
             skip_owner: BTreeMap::new(),
         }
+    }
+
+    /// Layout 규칙 node의 배치. `Ok(None)`이면 저장 값으로 그립니다.
+    fn place(&self, id: StableId, stored: &Transform2D) -> Result<Option<Placed>, SkipReason> {
+        self.layout
+            .placement(self.model, id, stored)
+            .map_err(|()| SkipReason::LayoutNotEvaluated)
     }
 
     fn unapplied_variant_patches(&self) -> usize {
@@ -321,7 +512,17 @@ impl<'a, 'o> Converter<'a, 'o> {
         };
         let kind = match payload {
             NodePayload::ComponentInstance(instance) => {
-                let placement = frame_instance_transform(stack);
+                let placement = match frame_instance_transform(stack) {
+                    Some(stored) => match self.place(id, &stored) {
+                        Ok(Some(placed)) => Some(placed.transform),
+                        Ok(None) => Some(stored),
+                        Err(reason) => {
+                            self.skip(key, reason);
+                            return None;
+                        }
+                    },
+                    None => None,
+                };
                 return self.instance(id, visible, locked, placement, instance, out);
             }
             NodePayload::Frame(frame) => {
@@ -342,6 +543,21 @@ impl<'a, 'o> Converter<'a, 'o> {
                     Ok(node_effects) => node_effects,
                     Err(error) => {
                         self.skip(key, effect_skip(error));
+                        return None;
+                    }
+                };
+                let placed_frame;
+                let frame = match self.place(id, &frame.transform) {
+                    Ok(Some(placed)) => {
+                        let mut copy = frame.clone();
+                        copy.transform = placed.transform;
+                        copy.size = placed.size;
+                        placed_frame = copy;
+                        &placed_frame
+                    }
+                    Ok(None) => frame,
+                    Err(reason) => {
+                        self.skip(key, reason);
                         return None;
                     }
                 };
@@ -392,30 +608,69 @@ impl<'a, 'o> Converter<'a, 'o> {
         let node_effects = effects::evaluate_effects(stack).map_err(effect_skip)?;
         let filtered = content_stack(id, stack);
         let stack = filtered.as_ref();
+        // Layout 규칙 node는 결과 상자 원점 뒤에 저장 transform을 합성하고 크기를 결과 크기로 둡니다(ADR-0125).
+        let placed = self.place(id, &Transform2D::identity())?;
+        let at = |stored: &Transform2D| -> Result<Transform2D, SkipReason> {
+            match placed {
+                Some(_) => self
+                    .layout
+                    .layout_box(id)
+                    .and_then(|b| layout::placed_transform(&b, stored))
+                    .ok_or(SkipReason::InvalidValue),
+                None => Ok(*stored),
+            }
+        };
         let mut node = match payload {
             NodePayload::Shape(shape) => {
+                let resized;
+                let shape = match placed {
+                    Some(placed) => {
+                        resized =
+                            resized_shape(shape, placed.size).ok_or(SkipReason::InvalidValue)?;
+                        &resized
+                    }
+                    None => shape,
+                };
                 let source = shape_source(id, shape, stack, locked)
                     .ok_or(SkipReason::UnsupportedModifiers)?;
                 let mut input = source.input;
                 input.node.visible = visible;
+                input.node.transform = at(&input.node.transform)?;
                 SourceNode::leaf(SourceKind::Shape(input))
             }
             NodePayload::Path(path) => {
                 let style = shape_style(stack).ok_or(SkipReason::UnsupportedModifiers)?;
-                let input = path_input(id, path.data(), &style, visible, locked)
+                let mut input = path_input(id, path.data(), &style, visible, locked)
                     .ok_or(SkipReason::InvalidValue)?;
+                input.node.transform = at(&input.node.transform)?;
                 SourceNode::leaf(SourceKind::Path(input))
             }
             NodePayload::Image(image) => {
                 let mut input = image_input(id, image, stack, locked)
                     .ok_or(SkipReason::UnsupportedModifiers)?;
                 input.node.visible = visible;
+                input.node.transform = at(&input.node.transform)?;
+                if let Some(placed) = placed {
+                    input.size = placed.size;
+                }
                 SourceNode::leaf(SourceKind::Image(input))
             }
             NodePayload::Text(text) => {
-                let hook = self.options.text.as_mut().ok_or(SkipReason::Text)?;
-                let mut input = hook(id, text, stack, locked).ok_or(SkipReason::Text)?;
+                let width = placed.and_then(|p| self.layout.text_width(self.model, id, &p));
+                let cached = match width {
+                    None => self.measured.remove(&id),
+                    Some(_) => None,
+                };
+                let mut input = match cached {
+                    Some(input) => input,
+                    None => {
+                        let hook = self.options.text.as_mut().ok_or(SkipReason::Text)?;
+                        hook(id, text, stack, locked, width).ok_or(SkipReason::Text)?
+                    }
+                };
                 input.node.visible = visible;
+                input.node.locked = locked;
+                input.node.transform = at(&input.node.transform)?;
                 SourceNode::leaf(SourceKind::Text(input))
             }
             _ => return Err(SkipReason::Payload),
@@ -453,7 +708,7 @@ impl<'a, 'o> Converter<'a, 'o> {
             .collect();
         ordered.sort_by_key(|id| self.preorder[id]);
         ordered.dedup();
-        let host_world = world_transform(model, host);
+        let host_world = world_transform(model, self.layout, host);
         let to_host = host_world.and_then(|world| world.inverse());
         let mut out = Vec::new();
         for operand in ordered {
@@ -461,7 +716,7 @@ impl<'a, 'o> Converter<'a, 'o> {
                 self.skip(SceneKey::node(operand), SkipReason::UnsupportedModifiers);
                 continue;
             };
-            let transform = world_transform_with(model, operand, local)
+            let transform = world_transform_with(model, self.layout, operand, local)
                 .zip(to_host)
                 .and_then(|(world, inverse)| world.then(&inverse).ok());
             let Some(transform) = transform else {
@@ -768,8 +1023,8 @@ fn operand_geometry(
     }
 }
 
-/// node 자신의 local transform(Frame transform, 도형·path·image의 modifier Transform).
-fn local_transform(model: &DocumentModel, id: StableId) -> Option<Transform2D> {
+/// node 자신의 저장 local transform(Frame transform, 도형·path·image의 modifier Transform).
+fn stored_transform(model: &DocumentModel, id: StableId) -> Option<Transform2D> {
     let stack = model.modifier_stack(id);
     match model.payload(id)? {
         NodePayload::Frame(frame) => Some(frame.transform),
@@ -784,23 +1039,80 @@ fn local_transform(model: &DocumentModel, id: StableId) -> Option<Transform2D> {
     }
 }
 
-/// 조상 local transform을 합성한 world transform.
-fn world_transform(model: &DocumentModel, id: StableId) -> Option<Transform2D> {
-    world_transform_with(model, id, local_transform(model, id)?)
+/// scene에 그리는 local transform: Layout 규칙 node는 layout 결과 위치를 합성합니다(ADR-0125).
+fn local_transform(
+    model: &DocumentModel,
+    layout: &DocumentLayout,
+    id: StableId,
+) -> Option<Transform2D> {
+    let stored = stored_transform(model, id)?;
+    placed_local(model, layout, id, stored)
 }
 
+fn placed_local(
+    model: &DocumentModel,
+    layout: &DocumentLayout,
+    id: StableId,
+    stored: Transform2D,
+) -> Option<Transform2D> {
+    match layout.placement(model, id, &stored) {
+        Ok(Some(placed)) => Some(placed.transform),
+        Ok(None) => Some(stored),
+        Err(()) => None,
+    }
+}
+
+/// 조상 local transform을 합성한 world transform.
+fn world_transform(
+    model: &DocumentModel,
+    layout: &DocumentLayout,
+    id: StableId,
+) -> Option<Transform2D> {
+    let local = stored_transform(model, id)?;
+    world_transform_with(model, layout, id, local)
+}
+
+/// `local`(저장 local transform)에서 시작해 조상을 합성한 world transform.
 fn world_transform_with(
     model: &DocumentModel,
+    layout: &DocumentLayout,
     id: StableId,
     local: Transform2D,
 ) -> Option<Transform2D> {
-    let mut world = local;
+    let mut world = placed_local(model, layout, id, local)?;
     let mut current = parent_of(model, id);
     while let Some(parent) = current {
-        world = world.then(&local_transform(model, parent)?).ok()?;
+        world = world.then(&local_transform(model, layout, parent)?).ok()?;
         current = parent_of(model, parent);
     }
     Some(world)
+}
+
+/// 도형 payload를 layout 결과 크기로 바꿉니다. 원점(Ellipse·Polygon bounds 원점)과 Line geometry는 그대로입니다.
+fn resized_shape(
+    shape: &stellar_document::shape::ShapeGeometry,
+    size: Size2,
+) -> Option<stellar_document::shape::ShapeGeometry> {
+    use stellar_document::shape::{EllipseParams, PolygonParams, RectangleParams, ShapeGeometry};
+    Some(match shape {
+        ShapeGeometry::Rectangle(rect) => ShapeGeometry::Rectangle(RectangleParams {
+            size,
+            corner_radius: rect.corner_radius,
+        }),
+        ShapeGeometry::Ellipse(ellipse) => ShapeGeometry::Ellipse(EllipseParams {
+            bounds: Rect::new(ellipse.bounds.origin(), size),
+        }),
+        ShapeGeometry::Polygon(polygon) => ShapeGeometry::Polygon(
+            PolygonParams::new(
+                Rect::new(polygon.bounds().origin(), size),
+                polygon.sides(),
+                stellar_core_types::value::Angle::new(polygon.rotation_degrees()).ok()?,
+                polygon.corner_radius(),
+            )
+            .ok()?,
+        ),
+        ShapeGeometry::Line(_) => *shape,
+    })
 }
 
 fn parent_of(model: &DocumentModel, id: StableId) -> Option<StableId> {
@@ -852,6 +1164,10 @@ pub fn scene_invalidations(model: &DocumentModel, changes: &ChangeSet) -> Vec<Sc
 /// 바뀐 node, 삽입·삭제된 node의 부모, 바뀐 operand의 Boolean host를 subtree 단위로 다시 변환하고, 이전 source와
 /// 다른 node만 Upsert, 사라진 node는 Remove합니다. 편집은 `current.source`에도 적용해 다음 change set의 비교 기준을
 /// 맞추고, operand·skip 정보도 갱신합니다. 같은 편집을 `IncrementalScene::update`에 넘깁니다.
+///
+/// layout은 같은 change set으로 증분 갱신하고([`DocumentLayout::update`]), 결과 상자가 바뀐 node(형제 이동 등)도 다시
+/// 변환합니다. 그래서 흐름 자식 하나의 크기 변경이 비켜난 형제의 Upsert까지 이어지고, `IncrementalScene::update`는
+/// 그 Upsert를 geometry dirty로 봅니다(ADR-0125).
 pub fn scene_edits<'a>(
     model: &'a DocumentModel,
     current: &mut DocumentSceneSource,
@@ -888,8 +1204,8 @@ pub fn scene_edits<'a>(
     // 구조가 바뀌면 pre-order·operand 색인을 다시 만들고, 아니면 바뀐 node의 Boolean operand만 다시 읽습니다
     // (전체 tree를 걷지 않음).
     let structural = !changes.inserted_nodes().is_empty() || !removed.is_empty();
-    let mut converter = if structural {
-        Converter::new(model, root, &mut options)
+    let (preorder, operand_hosts) = if structural {
+        tree_index(model, root)
     } else {
         let mut operand_hosts = std::mem::take(&mut current.operand_hosts);
         for hosts in operand_hosts.values_mut() {
@@ -903,13 +1219,50 @@ pub fn scene_edits<'a>(
             }
         }
         operand_hosts.retain(|_, hosts| !hosts.is_empty());
-        Converter::with_index(
-            model,
-            &mut options,
-            std::mem::take(&mut current.preorder),
-            operand_hosts,
-        )
+        (std::mem::take(&mut current.preorder), operand_hosts)
     };
+    // layout 증분 갱신: 결과 상자가 바뀐 node도 다시 변환합니다.
+    let visibility = variant_visibility(options.variant);
+    let operands: HashSet<StableId> = operand_hosts.keys().copied().collect();
+    let mut measured = HashMap::new();
+    let mut layout = std::mem::take(&mut current.layout);
+    let moved = {
+        let inputs = LayoutInputs {
+            visibility: &visibility,
+            operands: &operands,
+            library: options.library,
+            text_measure: options.text_measure,
+        };
+        let mut texts = |id| measure_text(model, &mut options, id, &mut measured);
+        layout.update(model, changes, &inputs, &mut texts)
+    };
+    let moved: BTreeSet<StableId> = moved
+        .into_iter()
+        .filter(|id| preorder.contains_key(id) && model.payload(*id).is_some())
+        .collect();
+    if !moved.is_empty() {
+        affected.extend(moved.iter().copied());
+        // layout으로 움직인 host·operand(또는 조상)의 Boolean 결과도 다시 계산합니다.
+        let mut hosts_to_refresh = Vec::new();
+        for (operand, hosts) in &operand_hosts {
+            let touched = std::iter::once(*operand)
+                .chain(hosts.iter().copied())
+                .any(|node| self_or_ancestor_in(model, node, &moved));
+            if touched {
+                hosts_to_refresh.extend(hosts.iter().copied());
+            }
+        }
+        affected.extend(hosts_to_refresh);
+    }
+    let mut converter = Converter::with_index(
+        model,
+        &mut options,
+        &layout,
+        preorder,
+        operand_hosts,
+        visibility,
+        measured,
+    );
     // operand 여부가 바뀐 node(Boolean 참조 추가·삭제)는 부모 목록에서 빠지거나 다시 들어갑니다.
     for operand in
         old_operands.symmetric_difference(&converter.operand_hosts.keys().copied().collect())
@@ -992,6 +1345,7 @@ pub fn scene_edits<'a>(
         .collect();
     current.skipped.extend(converter.skipped);
     current.skip_owner.extend(converter.skip_owner);
+    current.layout = layout;
     current.source.apply(&edits)?;
     refresh_operands(model, current);
     Ok(edits)
