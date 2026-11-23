@@ -111,13 +111,13 @@ pub enum TypedValue {
     String(String),
     /// 열거형 값.
     Enum(EnumValue),
-    /// 길이.
+    /// 길이(CSS `px`).
     Length(Length),
-    /// 백분율.
+    /// 백분율(CSS `%`, 저장 50 = 50%).
     Percentage(Percentage),
-    /// 각도.
+    /// 각도(CSS `deg`).
     Angle(Angle),
-    /// 지속 시간.
+    /// 지속 시간(CSS `ms`).
     Duration(Duration),
     /// 색상(III.4.1).
     Color(Color),

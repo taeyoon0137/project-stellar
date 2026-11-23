@@ -1,0 +1,60 @@
+node 0x0001 visible | converted | display | boolean | -
+node 0x0002 locked | stellar-only | - | boolean | -
+node 0x0003 name | stellar-only | - | string | -
+frame 0x0101 size | converted | width, height | - | -
+frame 0x0102 transform | converted [initial-differs] | transform, transform-origin | transform-list | -
+frame 0x0103 clipping | converted [initial-differs] | overflow-x, overflow-y, overflow-clip-margin, clip-path | - | disabled=exact, frame-bounds=converted, path=converted
+frame 0x0104 background-color | exact | background-color | color | -
+frame 0x0105 border | converted [subset] | border-top-width, border-right-width, border-bottom-width, border-left-width, border-top-style, border-right-style, border-bottom-style, border-left-style, border-top-color, border-right-color, border-bottom-color, border-left-color | border | -
+frame 0x0106 border-radius | exact [subset] | border-top-left-radius, border-top-right-radius, border-bottom-right-radius, border-bottom-left-radius | border-radius | -
+frame 0x0107 layout-mode | stellar-only | - | - | -
+frame 0x0108 width | exact [subset] | width | length | -
+frame 0x0109 height | exact [subset] | height | length | -
+frame 0x010a border-top-left-radius | exact [subset] | border-top-left-radius | length | -
+frame 0x010b border-top-right-radius | exact [subset] | border-top-right-radius | length | -
+frame 0x010c border-bottom-right-radius | exact [subset] | border-bottom-right-radius | length | -
+frame 0x010d border-bottom-left-radius | exact [subset] | border-bottom-left-radius | length | -
+shape 0x0301 width | converted | width | length | -
+shape 0x0302 height | converted | height | length | -
+shape 0x0303 border-top-left-radius | exact [subset] | border-top-left-radius | length | -
+shape 0x0304 border-top-right-radius | exact [subset] | border-top-right-radius | length | -
+shape 0x0305 border-bottom-right-radius | exact [subset] | border-bottom-right-radius | length | -
+shape 0x0306 border-bottom-left-radius | exact [subset] | border-bottom-left-radius | length | -
+shape 0x0307 x1 | stellar-only | - | length | -
+shape 0x0308 y1 | stellar-only | - | length | -
+shape 0x0309 x2 | stellar-only | - | length | -
+shape 0x030a y2 | stellar-only | - | length | -
+shape 0x030b stroke-linecap | exact | stroke-linecap | keyword | -
+shape 0x030c polygon-sides | stellar-only | - | integer | -
+shape 0x030d polygon-rotation | stellar-only | - | angle | -
+shape 0x030e polygon-corner-radius | stellar-only | - | length | -
+path 0x0401 path-data | converted | d | - | -
+path 0x0402 fill-rule | exact | fill-rule | keyword | -
+text 0x0501 text-content | stellar-only | - | - | -
+image 0x0601 image-asset | stellar-only | - | - | -
+image 0x0602 width | converted | width | length | -
+image 0x0603 height | converted | height | length | -
+image 0x0604 object-fit | exact [initial-differs, subset] | object-fit | keyword | -
+image 0x0605 image-rendering | approximated | image-rendering | keyword | -
+image 0x0606 image-crop | stellar-only | - | - | -
+image 0x0607 image-color-space | stellar-only | - | - | -
+modifier 0x1001 enabled | stellar-only | - | boolean | -
+modifier 0x1002 modifier-order | stellar-only | - | - | -
+modifier 0x1011 transform | converted | transform | transform-list | -
+modifier 0x1021 boolean-operation | stellar-only | - | keyword | -
+modifier 0x1022 boolean-operands | stellar-only | - | - | -
+modifier 0x1031 stroke-expand-width | stellar-only | - | length | -
+modifier 0x1041 corner-radius | stellar-only | - | length | -
+modifier 0x1051 mask-image | approximated | mask-image, mask-type | - | -
+modifier 0x1061 clip-path | converted | clip-path | - | -
+modifier 0x1071 fill | converted | fill, background-image | color | -
+modifier 0x1081 stroke | converted | stroke, box-shadow | color | -
+modifier 0x1082 stroke-width | converted | stroke-width, box-shadow | length | -
+modifier 0x1091 shadow-color | approximated | box-shadow, filter | color | -
+modifier 0x1092 shadow-offset | approximated | box-shadow, filter | - | -
+modifier 0x1093 shadow-blur | approximated | box-shadow, filter | length | -
+modifier 0x1094 shadow-offset-x | approximated | box-shadow, filter | length | -
+modifier 0x1095 shadow-offset-y | approximated | box-shadow, filter | length | -
+modifier 0x10a1 blur-radius | approximated | filter | length | -
+modifier 0x10b1 mix-blend-mode | approximated [subset] | mix-blend-mode, isolation | keyword | -
+modifier 0x10c1 opacity | exact | opacity | alpha-value | -

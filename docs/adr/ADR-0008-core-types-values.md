@@ -41,6 +41,11 @@ Accepted (소급, 2026-11-14). 이 ADR은 이미 구현된 결정을 소급 기�
 - `Length`·`Percentage`·`Angle`·`Duration`·`Scalar`는 `FiniteF32`를 감싸는 별도 newtype입니다.
   `Add`·`Sub`는 같은 단위끼리만 구현하고, 오버플로는 유한 범위(`f32::MAX`/`MIN`)로 saturate합니다
   (III.3.2).
+- **단위 계약(개정 2026-11-23, IX.11.1, ADR-0075 결정 2)**: 저장 값의 단위는 CSS 정규 단위입니다.
+  `Length`=`px`(Stellar 논리 픽셀 = CSS px), `Angle`=`deg`, `Duration`=`ms`, `Percentage`=`%`(저장 50 =
+  50%, 0..1 비율이 아님), `Scalar`=단위 없는 `<number>`입니다. 다른 단위 입력(`rad`, `grad`, `turn`, `s`)은
+  parser가 이 단위로 정규화한 뒤 저장합니다. 지금까지 저장·표시한 값이 이미 이 단위라 저장 bytes의 뜻은
+  바뀌지 않습니다. 길이·백분율 혼합(`<length-percentage>`)은 아직 값 타입이 아닙니다(속성 모델 15장 O3).
 
 기하:
 
@@ -123,4 +128,5 @@ Accepted (소급, 2026-11-14). 이 ADR은 이미 구현된 결정을 소급 기�
 ## Migration
 
 - 이미 구현된 상태를 기록하므로 데이터 마이그레이션은 없습니다.
+- 단위 계약 개정(2026-11-23)은 문서 주석과 이 ADR만 바꾸며 저장 bytes와 golden은 그대로입니다.
 - `Typography`를 STTY v1 구조로 정할 때 tag `0x0C`와 외부 envelope는 유지했습니다(III.3.5, ADR-0024).

@@ -67,6 +67,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "<경로> <문서 id> <View id> [--frame <Frame id>]: 고정 Free Frame·Fragment·Rectangle의 HTML+CSS와 revision·진단을 JSON으로 출력합니다(--frame은 View 안 Frame 하나, 미지원 값은 실패)",
     ),
     (
+        "css",
+        "copy <경로> <문서 id> <node id> | paste <경로> <문서 id> <node id,…> <입력 파일|-> [--dry-run]: node 속성을 CSS longhand 선언 블록으로 복사하거나, 선언 블록을 한 transaction으로 붙여넣습니다(받지 못한 선언은 이유와 함께 건너뜀)",
+    ),
+    (
         "apply",
         "<경로> <입력 파일|-> [--dry-run]: CommandTransaction JSON(base revision 포함)을 검증해 세대 전환 저장으로 기록합니다(--dry-run: semantic diff만)",
     ),
@@ -170,6 +174,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("query", commands::query(rest))
     } else if command == "export-web" {
         ("export-web", crate::web_frame::run(rest))
+    } else if command == "css" {
+        ("css", crate::css::run(rest))
     } else if command == "apply" {
         ("apply", crate::apply::run(rest))
     } else if command == "validate" {

@@ -2,6 +2,12 @@
 //!
 //! 모든 float 값은 [`FiniteF32`]를 거쳐 NaN·±Infinity를 생성·직렬화 단계에서 거부하고,
 //! `-0.0`을 `0.0`으로 정규화합니다. 덕분에 값 타입은 전순서(`Ord`)와 `Eq`/`Hash`를 가질 수 있습니다.
+//!
+//! **단위 계약(IX.11.1, ADR-0008 개정, ADR-0075 결정 2)**: 저장 값의 단위는 CSS 정규 단위입니다.
+//! [`Length`]는 CSS `px`(Stellar 논리 픽셀 = CSS px), [`Angle`]은 `deg`, [`Duration`]은 `ms`,
+//! [`Percentage`]는 `%`(저장 50 = 50%)입니다. [`Scalar`]는 단위 없는 CSS `<number>`입니다. 다른 단위의 입력
+//! (`rad`, `turn`, `s` …)은 parser가 이 단위로 정규화한 뒤 저장합니다. 이 계약은 기존 저장 bytes의 뜻을
+//! 바꾸지 않습니다(이미 이 단위로 저장하고 표시해 왔습니다).
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -148,11 +154,26 @@ macro_rules! define_unit {
     };
 }
 
-define_unit!(Length, "길이(논리 픽셀 등). 같은 단위끼리만 산술 가능.");
-define_unit!(Percentage, "백분율. 같은 단위끼리만 산술 가능.");
-define_unit!(Angle, "각도. 같은 단위끼리만 산술 가능.");
-define_unit!(Duration, "지속 시간. 같은 단위끼리만 산술 가능.");
-define_unit!(Scalar, "무차원 스칼라. 같은 단위끼리만 산술 가능.");
+define_unit!(
+    Length,
+    "길이. 단위는 CSS `px`(Stellar 논리 픽셀 = CSS px)입니다. 같은 단위끼리만 산술 가능."
+);
+define_unit!(
+    Percentage,
+    "백분율. 단위는 CSS `%`이며 저장 50은 50%입니다(0..1 비율이 아님). 같은 단위끼리만 산술 가능."
+);
+define_unit!(
+    Angle,
+    "각도. 단위는 CSS `deg`입니다. 같은 단위끼리만 산술 가능."
+);
+define_unit!(
+    Duration,
+    "지속 시간. 단위는 CSS `ms`입니다. 같은 단위끼리만 산술 가능."
+);
+define_unit!(
+    Scalar,
+    "무차원 스칼라(CSS `<number>`). 같은 단위끼리만 산술 가능."
+);
 
 /// 서로 다른 단위는 더할 수 없습니다(컴파일 실패).
 ///

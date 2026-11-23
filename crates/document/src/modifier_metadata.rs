@@ -20,6 +20,8 @@
 
 use stellar_core_types::property::{PropertyKey, PropertyNameRegistry};
 
+use crate::css::grammar::{CssGrammar, LENGTH_NON_NEGATIVE, LENGTH_SIGNED};
+use crate::css::mapping::CssMapping;
 use crate::frame_metadata::Invalidation;
 use crate::modifier::{ModifierKind, ModifierPayload};
 
@@ -144,10 +146,17 @@ pub mod keys {
     pub const STROKE_WIDTH: PropertyKey = PropertyKey(0x1082);
     /// Shadow: 색.
     pub const SHADOW_COLOR: PropertyKey = PropertyKey(0x1091);
-    /// Shadow: 오프셋.
+    /// Shadow: 이전 SetModifierProperty와 journal의 오프셋 x·y 묶음(IX.11.22). 새 편집은
+    /// [`SHADOW_OFFSET_X`]·[`SHADOW_OFFSET_Y`]를 씁니다. 번호는 재사용하지 않습니다.
     pub const SHADOW_OFFSET: PropertyKey = PropertyKey(0x1092);
     /// Shadow: blur 반경.
     pub const SHADOW_BLUR: PropertyKey = PropertyKey(0x1093);
+    /// Shadow: 오프셋 x(px, 음수 허용, IX.11.22).
+    pub const SHADOW_OFFSET_X: PropertyKey = PropertyKey(0x1094);
+    /// Shadow: 오프셋 y(px, 음수 허용, IX.11.22).
+    pub const SHADOW_OFFSET_Y: PropertyKey = PropertyKey(0x1095);
+    /// [`SHADOW_OFFSET`] 묶음이 나뉜 longhand(x, y 순).
+    pub const SHADOW_OFFSET_LONGHANDS: [PropertyKey; 2] = [SHADOW_OFFSET_X, SHADOW_OFFSET_Y];
     /// Blur: 반경.
     pub const BLUR_RADIUS: PropertyKey = PropertyKey(0x10A1);
     /// Blend: mode.
@@ -175,8 +184,10 @@ pub enum ModifierPropertyType {
     NonNegative,
     /// 색.
     Color,
-    /// 2D 오프셋.
+    /// 2D 오프셋(묶음 key 전용).
     Offset,
+    /// 부호 있는 finite 길이(px).
+    Coordinate,
     /// 0..=1 범위 값.
     UnitInterval,
     /// blend mode.
@@ -200,7 +211,8 @@ pub struct ModifierPropertyMetadata {
     pub key: PropertyKey,
     /// 소유 modifier 종류. `None`이면 모든 종류에 공통인 항목입니다.
     pub owner: Option<ModifierKind>,
-    /// 사람이 읽는 이름(식별에 사용 금지 — key가 식별자).
+    /// CSS longhand 이름 또는 CSS 대응이 없을 때의 Stellar 이름(IX.11.2). 식별에 쓰지 않습니다(key가
+    /// 식별자).
     pub name: &'static str,
     /// 값 타입.
     pub value_type: ModifierPropertyType,
@@ -208,6 +220,32 @@ pub struct ModifierPropertyMetadata {
     pub default: &'static str,
     /// 무효화 규칙.
     pub invalidation: InvalidationRule,
+    /// 묶음 key(IX.11.22)가 나뉜 longhand key. 비어 있으면 longhand 하나인 보통 항목입니다. 묶음 key는
+    /// 이전 command bytes·journal의 decode·실행에만 쓰고 새 편집은 longhand를 씁니다.
+    pub longhands: &'static [PropertyKey],
+    /// CSS 매핑(속성 모델 9장, IX.11.2).
+    pub css: CssMapping,
+}
+
+impl ModifierPropertyMetadata {
+    /// 묶음 key인지.
+    pub const fn is_bundle(&self) -> bool {
+        !self.longhands.is_empty()
+    }
+
+    /// 표시 문자열: 보통 항목은 `name`, 묶음 key는 대응 longhand 이름 목록입니다.
+    pub fn display_label(&self) -> String {
+        if self.is_bundle() {
+            self.longhands
+                .iter()
+                .filter_map(|key| modifier_property(*key))
+                .map(|m| m.name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        } else {
+            self.name.to_string()
+        }
+    }
 }
 
 const fn common(
@@ -215,6 +253,7 @@ const fn common(
     name: &'static str,
     value_type: ModifierPropertyType,
     default: &'static str,
+    css: CssMapping,
 ) -> ModifierPropertyMetadata {
     ModifierPropertyMetadata {
         key,
@@ -223,6 +262,8 @@ const fn common(
         value_type,
         default,
         invalidation: InvalidationRule::KindUnion,
+        longhands: &[],
+        css,
     }
 }
 
@@ -233,6 +274,7 @@ const fn field(
     value_type: ModifierPropertyType,
     default: &'static str,
     invalidation: InvalidationSet,
+    css: CssMapping,
 ) -> ModifierPropertyMetadata {
     ModifierPropertyMetadata {
         key,
@@ -241,151 +283,231 @@ const fn field(
         value_type,
         default,
         invalidation: InvalidationRule::Fixed(invalidation),
+        longhands: &[],
+        css,
     }
+}
+
+const fn bundle(
+    field: ModifierPropertyMetadata,
+    longhands: &'static [PropertyKey],
+) -> ModifierPropertyMetadata {
+    ModifierPropertyMetadata { longhands, ..field }
 }
 
 const GP: InvalidationSet = InvalidationSet::GEOMETRY_AND_PAINT;
 const P: InvalidationSet = InvalidationSet::PAINT;
 
-/// modifier 속성 registry. 순서는 key 오름차순입니다.
-pub const MODIFIER_PROPERTIES: [ModifierPropertyMetadata; 18] = [
-    common(keys::ENABLED, "enabled", ModifierPropertyType::Bool, "true"),
+const BOOLEAN_OPS: &[&str] = &["union", "subtract", "intersect", "exclude"];
+const BLEND_MODES: &[&str] = &[
+    "normal", "multiply", "screen", "overlay", "darken", "lighten",
+];
+const SHADOW_TARGETS: &[&str] = &["box-shadow", "filter"];
+const SHADOW_NOTE: &str = "Frame은 box-shadow, 그 밖은 filter: drop-shadow()입니다. spread·inset이 없고 blur 반경과 CSS 표준편차의 관계는 XI.10.4에서 고정합니다";
+
+/// modifier 속성 registry. 순서는 key 오름차순입니다. 이름은 CSS longhand이거나 CSS 대응이 없을 때의
+/// Stellar 이름입니다(IX.11.2, 속성 모델 9장).
+pub const MODIFIER_PROPERTIES: [ModifierPropertyMetadata; 20] = [
+    common(
+        keys::ENABLED,
+        "enabled",
+        ModifierPropertyType::Bool,
+        "true",
+        CssMapping::stellar_only(Some(CssGrammar::Bool)).note("비활성 항목은 출력하지 않습니다"),
+    ),
     common(
         keys::ORDER,
-        "order",
+        "modifier-order",
         ModifierPropertyType::OrderKey,
         "stack 끝(push_back)",
+        CssMapping::stellar_only(None)
+            .note("stack 순서입니다. Web export는 CSS 고정 순서로 선형화합니다(속성 모델 9.1절)"),
     ),
     field(
         keys::TRANSFORM_MATRIX,
         ModifierKind::Transform,
-        "transform.matrix",
+        "transform",
         ModifierPropertyType::Transform,
         "identity",
         GP,
+        CssMapping::converted(&["transform"], Some(CssGrammar::Transform)).note(
+            "행렬 원점은 border box 좌상단입니다. export는 transform-origin o에 대해 translate(-o) matrix() translate(o)로 감쌉니다",
+        ),
     ),
     field(
         keys::BOOLEAN_OP,
         ModifierKind::Boolean,
-        "boolean.op",
+        "boolean-operation",
         ModifierPropertyType::BooleanOp,
         "union",
         GP,
+        CssMapping::stellar_only(Some(CssGrammar::Keyword(BOOLEAN_OPS)))
+            .note("export에서 path로 굽습니다"),
     ),
     field(
         keys::BOOLEAN_OPERANDS,
         ModifierKind::Boolean,
-        "boolean.operands",
+        "boolean-operands",
         ModifierPropertyType::NodeRefList,
         "[]",
         GP,
+        CssMapping::stellar_only(None).note("node 참조 목록입니다"),
     ),
     field(
         keys::STROKE_EXPAND_WIDTH,
         ModifierKind::StrokeExpand,
-        "stroke-expand.width",
+        "stroke-expand-width",
         ModifierPropertyType::NonNegative,
         "1",
         GP,
+        CssMapping::stellar_only(Some(LENGTH_NON_NEGATIVE)).note("export에서 path로 굽습니다"),
     ),
     field(
         keys::CORNER_RADIUS,
         ModifierKind::Corner,
-        "corner.radius",
+        "corner-radius",
         ModifierPropertyType::NonNegative,
         "0",
         GP,
+        CssMapping::stellar_only(Some(LENGTH_NON_NEGATIVE)).note(
+            "path 모서리 처리입니다. Frame·Rectangle 반경은 border-*-radius가 맡습니다",
+        ),
     ),
     // mask·clip 원본은 보이는 영역(visual bounds)을 바꿉니다.
     field(
         keys::MASK_SOURCE,
         ModifierKind::Mask,
-        "mask.source",
+        "mask-image",
         ModifierPropertyType::NodeRef,
         "nil",
         GP,
+        CssMapping::approximated(&["mask-image", "mask-type"], None).note(
+            "inline SVG mask를 url(#id)로 참조합니다. alpha·luminance mode가 정해지기 전(속성 모델 15장 O14)이라 approximated입니다",
+        ),
     ),
     field(
         keys::CLIP_SOURCE,
         ModifierKind::Clip,
-        "clip.source",
+        "clip-path",
         ModifierPropertyType::NodeRef,
         "nil",
         GP,
+        CssMapping::converted(&["clip-path"], None)
+            .note("inline SVG clipPath를 url(#id)로 참조합니다"),
     ),
     field(
         keys::FILL_COLOR,
         ModifierKind::Fill,
-        "fill.color",
+        "fill",
         ModifierPropertyType::Color,
         "srgb(0, 0, 0, 1)",
         P,
+        CssMapping::converted(&["fill", "background-image"], Some(CssGrammar::Color { allow_none: false }))
+            .note("Shape·Path는 fill, Frame은 배경 layer입니다. Frame border가 있으면 overlay 요소로 냅니다(approximated, 속성 모델 9.2절)"),
     ),
     field(
         keys::STROKE_COLOR,
         ModifierKind::Stroke,
-        "stroke.color",
+        "stroke",
         ModifierPropertyType::Color,
         "srgb(0, 0, 0, 1)",
         P,
+        CssMapping::converted(&["stroke", "box-shadow"], Some(CssGrammar::Color { allow_none: false }))
+            .note("Shape·Path는 stroke(가운데 정렬), Frame은 box-shadow: inset(안쪽 정렬)입니다"),
     ),
     // 두께는 stroke 외곽 geometry와 visual bounds를 바꿉니다.
     field(
         keys::STROKE_WIDTH,
         ModifierKind::Stroke,
-        "stroke.width",
+        "stroke-width",
         ModifierPropertyType::NonNegative,
         "1",
         GP,
+        CssMapping::converted(&["stroke-width", "box-shadow"], Some(LENGTH_NON_NEGATIVE)),
     ),
     field(
         keys::SHADOW_COLOR,
         ModifierKind::Shadow,
-        "shadow.color",
+        "shadow-color",
         ModifierPropertyType::Color,
         "srgb(0, 0, 0, 1)",
         P,
+        CssMapping::approximated(SHADOW_TARGETS, Some(CssGrammar::Color { allow_none: false }))
+            .note(SHADOW_NOTE),
     ),
     // 오프셋·blur는 그림자 overflow(visual bounds)를 바꿉니다.
-    field(
-        keys::SHADOW_OFFSET,
-        ModifierKind::Shadow,
-        "shadow.offset",
-        ModifierPropertyType::Offset,
-        "(0, 0)",
-        GP,
+    bundle(
+        field(
+            keys::SHADOW_OFFSET,
+            ModifierKind::Shadow,
+            "shadow-offset",
+            ModifierPropertyType::Offset,
+            "(0, 0)",
+            GP,
+            CssMapping::approximated(SHADOW_TARGETS, None).note(
+                "이전 command·journal의 offset x·y 묶음 key. 새 편집은 shadow-offset-x·y를 씁니다",
+            ),
+        ),
+        &keys::SHADOW_OFFSET_LONGHANDS,
     ),
     field(
         keys::SHADOW_BLUR,
         ModifierKind::Shadow,
-        "shadow.blur",
+        "shadow-blur",
         ModifierPropertyType::NonNegative,
         "0",
         GP,
+        CssMapping::approximated(SHADOW_TARGETS, Some(LENGTH_NON_NEGATIVE)).note(SHADOW_NOTE),
+    ),
+    field(
+        keys::SHADOW_OFFSET_X,
+        ModifierKind::Shadow,
+        "shadow-offset-x",
+        ModifierPropertyType::Coordinate,
+        "0",
+        GP,
+        CssMapping::approximated(SHADOW_TARGETS, Some(LENGTH_SIGNED)).note(SHADOW_NOTE),
+    ),
+    field(
+        keys::SHADOW_OFFSET_Y,
+        ModifierKind::Shadow,
+        "shadow-offset-y",
+        ModifierPropertyType::Coordinate,
+        "0",
+        GP,
+        CssMapping::approximated(SHADOW_TARGETS, Some(LENGTH_SIGNED)).note(SHADOW_NOTE),
     ),
     field(
         keys::BLUR_RADIUS,
         ModifierKind::Blur,
-        "blur.radius",
+        "blur-radius",
         ModifierPropertyType::NonNegative,
         "0",
         GP,
+        CssMapping::approximated(&["filter"], Some(LENGTH_NON_NEGATIVE)).note(
+            "filter: blur()입니다. 합성 색공간과 반경 정의가 다릅니다(속성 모델 8.2절, XI.10.4)",
+        ),
     ),
     field(
         keys::BLEND_MODE,
         ModifierKind::Blend,
-        "blend.mode",
+        "mix-blend-mode",
         ModifierPropertyType::BlendMode,
         "normal",
         P,
+        CssMapping::approximated(&["mix-blend-mode", "isolation"], Some(CssGrammar::Keyword(BLEND_MODES)))
+            .subset()
+            .note("keyword는 같고 합성 색공간이 다릅니다(선형 공간 합성, 14장 E1)"),
     ),
     field(
         keys::OPACITY_VALUE,
         ModifierKind::Opacity,
-        "opacity.value",
+        "opacity",
         ModifierPropertyType::UnitInterval,
         "1",
         P,
+        CssMapping::exact(&["opacity"], CssGrammar::UnitInterval)
+            .note("그룹 opacity입니다. 겹침 합성 색공간은 속성 모델 8.2절"),
     ),
 ];
 
@@ -394,11 +516,11 @@ pub fn modifier_property(key: PropertyKey) -> Option<&'static ModifierPropertyMe
     MODIFIER_PROPERTIES.iter().find(|m| m.key == key)
 }
 
-/// `kind` modifier가 가진 속성(공통 항목 포함, key 순).
+/// `kind` modifier가 새 편집에서 받는 속성(공통 항목 포함, key 순). 묶음 key는 빠집니다.
 pub fn properties_of(kind: ModifierKind) -> Vec<&'static ModifierPropertyMetadata> {
     MODIFIER_PROPERTIES
         .iter()
-        .filter(|m| m.owner.is_none_or(|owner| owner == kind))
+        .filter(|m| m.owner.is_none_or(|owner| owner == kind) && !m.is_bundle())
         .collect()
 }
 
@@ -451,16 +573,22 @@ pub fn modifier_payload_keys(payload: &ModifierPayload) -> Vec<PropertyKey> {
             color: _,
             offset: _,
             blur: _,
-        } => vec![keys::SHADOW_COLOR, keys::SHADOW_OFFSET, keys::SHADOW_BLUR],
+        } => vec![
+            keys::SHADOW_COLOR,
+            keys::SHADOW_OFFSET_X,
+            keys::SHADOW_OFFSET_Y,
+            keys::SHADOW_BLUR,
+        ],
         ModifierPayload::Blur { radius: _ } => vec![keys::BLUR_RADIUS],
         ModifierPayload::Blend { mode: _ } => vec![keys::BLEND_MODE],
         ModifierPayload::Opacity { value: _ } => vec![keys::OPACITY_VALUE],
     }
 }
 
-/// modifier 속성 이름을 이름 registry(III.2.1)에 등록합니다.
+/// modifier 속성 이름을 이름 registry(III.2.1)에 등록합니다. 묶음 key(Shadow offset 0x1092)는 등록하지 않습니다
+/// (ADR-0075 결정 1).
 pub fn register_modifier_property_names(registry: &mut PropertyNameRegistry) {
-    for metadata in &MODIFIER_PROPERTIES {
+    for metadata in MODIFIER_PROPERTIES.iter().filter(|m| !m.is_bundle()) {
         registry.register(metadata.key, metadata.name);
     }
 }
@@ -487,12 +615,20 @@ mod tests {
                 assert_eq!(metadata.owner, Some(kind), "{}", metadata.name);
             }
             // registry(이 종류 소유) → payload 필드.
-            let registered: Vec<PropertyKey> = MODIFIER_PROPERTIES
+            let mut registered: Vec<PropertyKey> = MODIFIER_PROPERTIES
                 .iter()
-                .filter(|m| m.owner == Some(kind))
+                .filter(|m| m.owner == Some(kind) && !m.is_bundle())
                 .map(|m| m.key)
                 .collect();
-            assert_eq!(registered, field_keys, "{}: registry↔필드 1:1", kind.name());
+            let mut sorted_fields = field_keys.clone();
+            registered.sort_unstable();
+            sorted_fields.sort_unstable();
+            assert_eq!(
+                registered,
+                sorted_fields,
+                "{}: registry↔필드 1:1",
+                kind.name()
+            );
         }
         // 모든 kind-소유 항목은 어떤 kind의 payload 필드입니다(고아 항목 없음).
         let all_field_keys: BTreeSet<u32> = ModifierKind::ALL
@@ -500,7 +636,10 @@ mod tests {
             .flat_map(|k| modifier_payload_keys(&ModifierPayload::default_for(k)))
             .map(|k| k.0)
             .collect();
-        for metadata in MODIFIER_PROPERTIES.iter().filter(|m| m.owner.is_some()) {
+        for metadata in MODIFIER_PROPERTIES
+            .iter()
+            .filter(|m| m.owner.is_some() && !m.is_bundle())
+        {
             assert!(
                 all_field_keys.contains(&metadata.key.0),
                 "payload에 없는 registry 항목: {}",
@@ -524,6 +663,29 @@ mod tests {
             let fields = modifier_payload_keys(&ModifierPayload::default_for(kind));
             assert_eq!(props.len(), 2 + fields.len(), "{}", kind.name());
         }
+    }
+
+    #[test]
+    fn bundle_keys_split_into_registered_longhands_in_the_same_band() {
+        // 검증 기준(IX.11.22): 묶음 key → longhand 대응, 묶음 key는 새 편집 목록에서 빠짐.
+        let bundles: Vec<&ModifierPropertyMetadata> = MODIFIER_PROPERTIES
+            .iter()
+            .filter(|m| m.is_bundle())
+            .collect();
+        assert_eq!(bundles.len(), 1);
+        let offset = bundles[0];
+        assert_eq!(offset.key, keys::SHADOW_OFFSET);
+        assert_eq!(offset.longhands, &keys::SHADOW_OFFSET_LONGHANDS);
+        for longhand in offset.longhands {
+            let metadata = modifier_property(*longhand).unwrap();
+            assert_eq!(metadata.owner, offset.owner);
+            assert!(!metadata.is_bundle());
+            assert_eq!(longhand.0 >> 4, offset.key.0 >> 4, "같은 대역");
+            assert_eq!(metadata.invalidation, offset.invalidation);
+        }
+        assert!(!properties_of(ModifierKind::Shadow)
+            .iter()
+            .any(|m| m.key == keys::SHADOW_OFFSET));
     }
 
     #[test]
@@ -607,6 +769,8 @@ mod tests {
         );
         assert_eq!(default(keys::SHADOW_OFFSET), "(0, 0)");
         assert_eq!(ty(keys::SHADOW_OFFSET), ModifierPropertyType::Offset);
+        assert_eq!(default(keys::SHADOW_OFFSET_X), "0");
+        assert_eq!(ty(keys::SHADOW_OFFSET_Y), ModifierPropertyType::Coordinate);
         assert_eq!(
             ModifierPayload::default_for(ModifierKind::Blend),
             ModifierPayload::Blend {
@@ -738,8 +902,13 @@ mod tests {
     fn names_register_into_property_name_registry() {
         let mut registry = PropertyNameRegistry::new();
         register_modifier_property_names(&mut registry);
-        assert_eq!(registry.name_of(keys::MASK_SOURCE), Some("mask.source"));
-        assert_eq!(registry.key_of("opacity.value"), Some(keys::OPACITY_VALUE));
+        assert_eq!(registry.name_of(keys::MASK_SOURCE), Some("mask-image"));
+        assert_eq!(registry.key_of("opacity"), Some(keys::OPACITY_VALUE));
+        assert_eq!(registry.key_of("shadow-offset"), None, "묶음 key");
+        assert_eq!(
+            registry.key_of("shadow-offset-x"),
+            Some(keys::SHADOW_OFFSET_X)
+        );
         // Frame 속성 key와 충돌하지 않습니다.
         crate::frame_metadata::register_frame_property_names(&mut registry);
         assert_eq!(registry.name_of(keys::ENABLED), Some("enabled"));

@@ -216,3 +216,195 @@ fn every_phase_vii_command_is_registered() {
         "등록 목록 = CommandKind::ALL + 선택 event"
     );
 }
+
+/// 합성 key의 longhand 분할(IX.11.22): 옛 묶음 key bytes는 그대로 decode·실행되고, 결과는 longhand 묶음과 같습니다.
+mod key_split {
+    use stellar_core_types::color::{Color, ColorSpace};
+    use stellar_core_types::order_key::OrderKey;
+    use stellar_core_types::value::{FiniteF32, Vec2};
+    use stellar_document::css::bundle::bundle_longhands;
+    use stellar_document::frame::keys as frame_keys;
+    use stellar_document::modifier::{ModifierEntry, ModifierId, ModifierKind, ModifierPayload};
+    use stellar_document::modifier_metadata::keys as modifier_keys;
+
+    use crate::codec::{decode_command, encode_command};
+    use crate::command::test_fixtures::{sid, small_model};
+    use crate::command::Command;
+    use crate::modifier_ops::{InsertModifier, SetModifierProperty};
+    use crate::property::{node_property_keys, PropertyValue};
+    use crate::request::CommandRequest;
+    use crate::state::DocumentState;
+
+    fn with_shadow() -> DocumentState {
+        let mut state = DocumentState::new(small_model());
+        let black = Color::new(ColorSpace::Srgb, 0., 0., 0., 1.).unwrap();
+        let insert = Command::InsertModifier(InsertModifier {
+            node: sid(11),
+            entry: ModifierEntry {
+                id: ModifierId::new(sid(61)),
+                order: OrderKey::from_bytes(vec![0x20]).unwrap(),
+                kind: ModifierKind::Shadow,
+                enabled: true,
+                payload: ModifierPayload::Shadow {
+                    color: black,
+                    offset: Vec2::new(1., 1.).unwrap(),
+                    blur: FiniteF32::ZERO,
+                },
+            },
+        });
+        state.execute(&CommandRequest::at(&state, insert)).unwrap();
+        state
+    }
+
+    fn shadow_offset(state: &DocumentState) -> Vec2 {
+        match &state.model().modifier_stack(sid(11)).unwrap().entries()[0].payload {
+            ModifierPayload::Shadow { offset, .. } => *offset,
+            other => panic!("Shadow가 아님: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn legacy_shadow_offset_bytes_apply_like_both_longhands() {
+        // SetModifierProperty(0x0023), 길이 45, node, modifier, offset 묶음 key(0x1092), Offset tag(15), x, y.
+        let mut bytes = vec![0x23, 0, 45, 0, 0, 0];
+        bytes.extend_from_slice(&sid(11).to_bytes());
+        bytes.extend_from_slice(&sid(61).to_bytes());
+        bytes.extend_from_slice(&[0x92, 0x10, 0, 0, 15]);
+        bytes.extend_from_slice(&6.5f32.to_le_bytes());
+        bytes.extend_from_slice(&(-3.0f32).to_le_bytes());
+        let legacy = decode_command(&bytes).unwrap();
+        assert_eq!(encode_command(&legacy), bytes, "옛 bytes는 그대로 왕복");
+        let mut old = with_shadow();
+        old.execute(&CommandRequest::at(&old, legacy)).unwrap();
+
+        let mut split = with_shadow();
+        for (key, value) in modifier_keys::SHADOW_OFFSET_LONGHANDS
+            .into_iter()
+            .zip([6.5f32, -3.0])
+        {
+            let command = Command::SetModifierProperty(SetModifierProperty {
+                node: sid(11),
+                modifier: ModifierId::new(sid(61)),
+                key,
+                value: PropertyValue::Number(FiniteF32::new(value).unwrap()),
+            });
+            assert_eq!(decode_command(&encode_command(&command)).unwrap(), command);
+            split.execute(&CommandRequest::at(&split, command)).unwrap();
+        }
+        assert_eq!(shadow_offset(&old), shadow_offset(&split));
+        assert_eq!(shadow_offset(&split), Vec2::new(6.5, -3.0).unwrap());
+    }
+
+    #[test]
+    fn one_offset_longhand_keeps_the_other_axis_and_undoes() {
+        let mut state = with_shadow();
+        let command = Command::SetModifierProperty(SetModifierProperty {
+            node: sid(11),
+            modifier: ModifierId::new(sid(61)),
+            key: modifier_keys::SHADOW_OFFSET_Y,
+            value: PropertyValue::Number(FiniteF32::new(9.).unwrap()),
+        });
+        let outcome = state.execute(&CommandRequest::at(&state, command)).unwrap();
+        assert_eq!(shadow_offset(&state), Vec2::new(1., 9.).unwrap());
+        state
+            .execute(&CommandRequest::at(&state, outcome.inverse))
+            .unwrap();
+        assert_eq!(shadow_offset(&state), Vec2::new(1., 1.).unwrap());
+    }
+
+    #[test]
+    fn new_edit_key_lists_never_offer_bundle_keys() {
+        let model = small_model();
+        let keys = node_property_keys(model.payload(sid(11)).unwrap());
+        assert!(keys.iter().all(|k| bundle_longhands(*k).is_none()));
+        assert!(keys.contains(&frame_keys::WIDTH));
+        assert!(!keys.contains(&frame_keys::SIZE));
+        assert!(!keys.contains(&frame_keys::CORNER_RADIUS));
+    }
+}
+
+/// registry 일관성(IX.11.3): command 공통 key와 문서 registry, 속성 패널 행 문법과 registry 문법.
+mod registry_consistency {
+    use stellar_document::css::grammar::CssGrammar;
+    use stellar_document::css::registry::{entries, PropertyScope};
+    use stellar_document::payload_metadata::node_keys as document_node_keys;
+
+    use crate::change::node_keys;
+    use crate::inspector::{InspectorProperty, NodeClass};
+
+    #[test]
+    fn common_node_keys_match_the_document_registry() {
+        assert_eq!(node_keys::VISIBLE, document_node_keys::VISIBLE);
+        assert_eq!(node_keys::LOCKED, document_node_keys::LOCKED);
+        assert_eq!(node_keys::DISPLAY_NAME, document_node_keys::DISPLAY_NAME);
+    }
+
+    #[test]
+    fn inspector_rows_with_one_registry_key_use_the_registry_name_and_grammar() {
+        let scope_of = |class: NodeClass| match class {
+            NodeClass::Frame => Some(PropertyScope::Frame),
+            NodeClass::Rectangle | NodeClass::Ellipse | NodeClass::Line | NodeClass::Polygon => {
+                Some(PropertyScope::Shape)
+            }
+            NodeClass::Image => Some(PropertyScope::Image),
+            _ => None,
+        };
+        let classes = [
+            NodeClass::Frame,
+            NodeClass::Rectangle,
+            NodeClass::Ellipse,
+            NodeClass::Line,
+            NodeClass::Polygon,
+            NodeClass::Image,
+        ];
+        let mut checked = 0;
+        for property in InspectorProperty::all() {
+            // 위치(transform 이동 성분), 칠하기·선 색(없음을 none으로 다루는 행), 묶음 행은 registry key 하나와
+            // 1:1이 아닙니다.
+            if matches!(
+                property,
+                InspectorProperty::Left
+                    | InspectorProperty::Top
+                    | InspectorProperty::Fill
+                    | InspectorProperty::Stroke
+                    | InspectorProperty::Color
+                    | InspectorProperty::BorderRadius
+            ) {
+                continue;
+            }
+            for class in classes {
+                if !property.applies(class) {
+                    continue;
+                }
+                let key = property.key(class);
+                let scopes = [
+                    scope_of(class),
+                    Some(PropertyScope::Node),
+                    Some(PropertyScope::Modifier),
+                ];
+                let Some(entry) = entries()
+                    .into_iter()
+                    .find(|e| e.key == key && scopes.contains(&Some(e.scope)))
+                else {
+                    panic!(
+                        "{} {class:?}: registry에 key 0x{:04x} 없음",
+                        property.name(),
+                        key.0
+                    );
+                };
+                let row = property.grammar();
+                if entry.name == "clipping" {
+                    // Frame clipping은 행에서 overflow keyword로 고르고 registry는 변형 규칙으로 냅니다.
+                    assert_eq!(property.name(), "overflow");
+                    assert!(matches!(row, CssGrammar::Keyword(_)));
+                } else {
+                    assert_eq!(entry.name, property.name(), "{class:?}");
+                    let registry = entry.css.grammar.expect("행이 있는 속성은 값 문법이 있음");
+                    assert_eq!(row, registry, "{} {class:?}", property.name());
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked >= 20, "확인한 행 {checked}");
+    }
+}

@@ -1,781 +1,634 @@
-//! 속성 패널 값의 CSS 값 문법 parser·formatter (UX.2.2, 속성 모델 2장·8장, ADR-0024 결정 5).
+//! CSS 값 parser·formatter 재수출과 선언 블록 복사·붙여넣기 core API (UX.2.2, IX.11.13·IX.11.14·IX.11.15).
 //!
-//! 입력은 속성 모델 2장의 형태만 받고, 그 밖은 구조화한 진단 코드(`unsupported-unit`, `unsupported-value`,
-//! `unknown-token`, `forbidden-value`, `invalid-value`)로 거부합니다. 문법은 재귀가 없고 입력 길이에 상한이
-//! 있습니다. 출력은 속성 모델 8.2·8.3절 정규 형식입니다(가장 짧은 왕복 10진, `px`·`deg` 단위, 소문자 hex 또는
-//! `color()`).
+//! 값 문법 구현은 registry와 같은 crate의 `stellar_document::css::value`에 있습니다(ADR-0075 결정 5). 속성 패널·
+//! 선언 블록·CLI·MCP가 같은 parser·formatter를 쓰도록 여기서 그대로 다시 내보냅니다.
 //!
-//! 문서 모델이 아직 고정 px만 저장하는 속성(`width` 등)에 `%`·`fit-content`·`var()`를 넣으면 문법은
-//! 알아보되 적용하지 않고 이유를 진단합니다. 저장 형식은 IX.11.6(크기 방식)·토큰 연결이 정합니다.
+//! **복사**([`copy_declarations`]): node 하나의 속성을 속성 패널과 같은 이름·정규 값으로 registry(표시) 순서의
+//! longhand 선언 목록으로 냅니다. 묶음 행(`border-radius`)은 longhand로 펼치고, 레이어 속성(`name`·`visible`·
+//! `locked`)은 넣지 않습니다. Stellar 전용 속성은 표시를 달아 함께 냅니다.
+//!
+//! **붙여넣기**([`paste_declarations`]): 선언 블록을 해석하고 shorthand를 longhand로 펼친 뒤, 받을 수 있는 선언을
+//! 속성 패널과 같은 command로 바꿔 **CommandTransaction 하나**에 담을 command 목록을 만듭니다. 알 수 없는 속성과
+//! 받을 수 없는 값은 이유 코드와 함께 [`PastePlan::skipped`]에 남기고 조용히 버리지 않습니다(부분 실패 없음:
+//! 받은 선언은 모두 같은 transaction이고 건너뛴 선언은 문서를 바꾸지 않음). 클립보드 연결은 셸이 맡습니다.
 
-use std::fmt;
+use stellar_core_types::ids::StableId;
+use stellar_core_types::revision::DocumentRevision;
+use stellar_document::css::declaration::{format_block, parse_block, BlockItem};
+use stellar_document::css::shorthand;
+use stellar_document::model::DocumentModel;
 
-use stellar_core_types::color::{Color, ColorSpace};
+pub use stellar_document::css::value::*;
 
-/// 입력 길이 상한(byte).
-pub const MAX_INPUT_LEN: usize = 256;
+use crate::command::Command;
+use crate::id::{CommandId, CommandOrigin};
+use crate::inspector::{
+    edit_commands, flags, has_fill, inspector_rows, InspectorInput, InspectorProperty, NodeClass,
+};
+use crate::request::CommandRequest;
+use crate::state::DocumentState;
+use crate::transaction::CommandTransaction;
 
-/// 구조화한 값 오류.
+/// 복사한 선언 하나.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CssValueError {
-    /// 진단 코드(속성 모델 2장).
+pub struct CopiedDeclaration {
+    /// CSS longhand 이름(Stellar 전용 속성은 registry 이름).
+    pub name: &'static str,
+    /// 정규 값 텍스트.
+    pub value: String,
+    /// CSS 대응이 없는 Stellar 전용 속성인지(Web 붙여넣기에서는 무시됨).
+    pub stellar_only: bool,
+}
+
+/// registry가 저장 위치를 가진 이름인지(registry 이름이거나 매핑 대상 CSS longhand). 속성 패널 행이 없어
+/// 붙여넣기 경로가 아직 없는 속성(`opacity`·`transform`·`stroke-linecap` …)을 `unknown-property`와 구분합니다.
+fn registry_knows(name: &str) -> bool {
+    stellar_document::css::registry::entries()
+        .iter()
+        .any(|e| e.name == name || e.css.longhands.contains(&name))
+}
+
+/// 레이어 메타데이터 속성(복사·붙여넣기 대상 아님).
+fn is_layer_property(property: InspectorProperty) -> bool {
+    matches!(
+        property,
+        InspectorProperty::Name | InspectorProperty::Visible | InspectorProperty::Locked
+    )
+}
+
+/// node 하나의 속성을 선언 목록으로 복사합니다. 문서에 없는 node면 `None`.
+pub fn copy_declarations(model: &DocumentModel, node: StableId) -> Option<Vec<CopiedDeclaration>> {
+    let snapshot = inspector_rows(model, &[node]);
+    if snapshot.count == 0 {
+        return None;
+    }
+    // Text `color`는 Fill이 없으면 문서 기본 글자색을 물려받은 표시 값이라 명시 선언이 아닙니다. 복사는 명시 값만
+    // 내므로 넣지 않습니다(붙여넣은 쪽에서 기본값과 같은 색을 명시로 바꾸지 않음, ADR-0082 결정 5).
+    let inherited_color = !has_fill(model, node);
+    Some(
+        snapshot
+            .rows
+            .into_iter()
+            .filter(|row| !is_layer_property(row.property) && row.flags & flags::GROUP == 0)
+            .filter(|row| !(row.property == InspectorProperty::Color && inherited_color))
+            .map(|row| CopiedDeclaration {
+                name: row.property.name(),
+                value: row.value,
+                stellar_only: row.flags & flags::STELLAR_ONLY != 0,
+            })
+            .collect(),
+    )
+}
+
+/// 복사한 선언 목록의 선언 블록 텍스트(`property: value;` 한 줄에 하나).
+pub fn declaration_block_text(declarations: &[CopiedDeclaration]) -> String {
+    format_block(declarations.iter().map(|d| (d.name, d.value.as_str())))
+}
+
+/// 건너뛴 선언 하나.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedDeclaration {
+    /// 속성 이름(형식이 틀린 조각이면 빈 문자열).
+    pub name: String,
+    /// 값 텍스트(형식이 틀린 조각이면 원문).
+    pub value: String,
+    /// 이유 코드: 값 오류 코드(`unsupported-unit`·`unsupported-value`·`unknown-token`·`forbidden-value`·
+    /// `invalid-value`), `invalid-declaration`, `unknown-property`(Stellar에 저장 위치가 없음),
+    /// `unsupported-property`(저장 위치는 있지만 붙여넣기 경로가 아직 없음),
+    /// `not-applicable`(선택한 node 종류에 없는 속성이거나 레이어 속성), `rejected`(편집 규칙이 거부).
     pub code: &'static str,
     /// 사람이 읽는 이유.
     pub message: String,
 }
 
-impl CssValueError {
-    fn new(code: &'static str, message: impl Into<String>) -> CssValueError {
-        CssValueError {
-            code,
-            message: message.into(),
+/// 적용한 선언 하나(shorthand는 펼친 longhand).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedDeclaration {
+    /// longhand 이름.
+    pub name: &'static str,
+    /// 정규 값 텍스트.
+    pub value: String,
+}
+
+/// 붙여넣기 결과.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PastePlan {
+    /// 한 transaction에 순서대로 담을 command.
+    pub commands: Vec<Command>,
+    /// 적용한 선언(입력 순서).
+    pub applied: Vec<AppliedDeclaration>,
+    /// 건너뛴 선언(입력 순서).
+    pub skipped: Vec<SkippedDeclaration>,
+}
+
+impl PastePlan {
+    /// command를 CommandTransaction 하나로 묶습니다. 바꿀 것이 없으면 `None`.
+    pub fn transaction(
+        &self,
+        id: CommandId,
+        origin: CommandOrigin,
+        base: DocumentRevision,
+    ) -> Option<CommandTransaction> {
+        if self.commands.is_empty() {
+            return None;
         }
-    }
-
-    fn invalid(message: impl Into<String>) -> CssValueError {
-        CssValueError::new("invalid-value", message)
-    }
-}
-
-impl fmt::Display for CssValueError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.code, self.message)
+        let mut transaction = CommandTransaction::new(id, origin);
+        for command in &self.commands {
+            transaction = transaction.with_request(CommandRequest::new(base, command.clone()));
+        }
+        Some(transaction)
     }
 }
 
-impl std::error::Error for CssValueError {}
-
-/// 속성 하나가 받는 값 문법.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CssGrammar {
-    /// `<length>`(px). `non_negative`이면 음수 거부. `sizing`이면 크기 keyword(`auto`, `fit-content` …)를
-    /// 알아보고 아직 저장할 수 없다고 진단합니다.
-    Length {
-        /// 음수 거부.
-        non_negative: bool,
-        /// 크기 속성(`width`·`height`).
-        sizing: bool,
-    },
-    /// `<angle>`(deg로 정규화).
-    Angle,
-    /// 정수 개수.
-    Count {
-        /// 최솟값.
-        min: u32,
-        /// 최댓값.
-        max: u32,
-    },
-    /// `<color>`. `none`을 받으면 `Color(None)`.
-    Color {
-        /// `none` 허용.
-        allow_none: bool,
-    },
-    /// keyword 하나.
-    Keyword(&'static [&'static str]),
-    /// `true`·`false`.
-    Bool,
-    /// 임의 문자열.
-    Text,
-    /// `border` shorthand: `none` 또는 `<length> [solid] <color>`(순서 무관).
-    Border,
-    /// `border-radius` shorthand: 길이 1–4개.
-    Corners,
+/// 붙여넣기 전체 실패(블록 형식, 선택 없음, 문서 복제 실패).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PasteError {
+    /// 진단 코드.
+    pub code: &'static str,
+    /// 이유.
+    pub message: String,
 }
 
-impl CssGrammar {
-    /// 수치 조절(화살표·scrub)을 받는 문법인지.
-    pub fn is_numeric(self) -> bool {
-        matches!(
-            self,
-            CssGrammar::Length { .. }
-                | CssGrammar::Angle
-                | CssGrammar::Count { .. }
-                | CssGrammar::Corners
-        )
+fn paste_error(code: &'static str, message: impl Into<String>) -> PasteError {
+    PasteError {
+        code,
+        message: message.into(),
     }
 }
 
-/// 해석한 값.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CssValue {
-    /// 길이(px).
-    Length(f32),
-    /// 각도(deg).
-    Angle(f32),
-    /// 개수.
-    Count(u32),
-    /// 색(없음 = `None`).
-    Color(Option<Color>),
-    /// keyword의 목록 index.
-    Keyword(usize),
-    /// bool.
-    Bool(bool),
-    /// 문자열.
-    Text(String),
-    /// 테두리(두께 px, 색). 없음 = `None`.
-    Border(Option<(f32, Color)>),
-    /// 두께나 색 하나만 적은 `border`(빠진 쪽은 편집 대상의 지금 테두리 값을 이어 씁니다).
-    BorderParts(Option<f32>, Option<Color>),
-    /// 모서리 반경 TL, TR, BR, BL(px).
-    Corners([f32; 4]),
+fn skip(plan: &mut PastePlan, name: &str, value: &str, code: &'static str, message: String) {
+    plan.skipped.push(SkippedDeclaration {
+        name: name.to_string(),
+        value: value.to_string(),
+        code,
+        message,
+    });
 }
 
-const FORBIDDEN: [&str; 4] = ["url(", "@import", "image(", "image-set("];
-const MATH: [&str; 4] = ["calc(", "min(", "max(", "clamp("];
-const GLOBAL_KEYWORDS: [&str; 5] = ["inherit", "initial", "unset", "revert", "revert-layer"];
-const SIZING_KEYWORDS: [&str; 5] = [
-    "auto",
-    "fit-content",
-    "min-content",
-    "max-content",
-    "stretch",
-];
-const UNSUPPORTED_UNITS: [&str; 16] = [
-    "em", "rem", "vw", "vh", "vmin", "vmax", "svw", "svh", "lvw", "lvh", "dvw", "dvh", "cqw",
-    "cqh", "ch", "ex",
-];
-
-/// `text`를 `grammar`로 해석합니다.
-pub fn parse(grammar: CssGrammar, text: &str) -> Result<CssValue, CssValueError> {
-    if text.len() > MAX_INPUT_LEN {
-        return Err(CssValueError::invalid("값이 너무 깁니다"));
+/// `selection`에 선언 블록 `text`를 붙여넣을 command를 만듭니다. `scope`는 `var(--name)`을 문서 토큰으로 풉니다.
+///
+/// 선언은 입력 순서대로 문서 사본 위에서 하나씩 적용해 다음 선언의 기준 상태로 씁니다(같은 속성이 두 번 오면
+/// CSS처럼 뒤 선언이 이기고, 새 modifier 순서 key가 겹치지 않습니다). `new_id`는 새 modifier(Fill·Stroke·위치
+/// Transform) ID 공급자입니다. 사본은 문서 레코드에서 만들므로 비용은 문서 크기에 선형입니다.
+pub fn paste_declarations(
+    model: &DocumentModel,
+    selection: &[StableId],
+    text: &str,
+    scope: &dyn TokenScope,
+    new_id: &mut dyn FnMut() -> StableId,
+) -> Result<PastePlan, PasteError> {
+    if selection.is_empty() {
+        return Err(paste_error("empty-selection", "선택한 레이어가 없습니다"));
     }
-    if grammar == CssGrammar::Text {
-        return Ok(CssValue::Text(text.to_string()));
-    }
-    let lower = text.trim().to_ascii_lowercase();
-    if lower.is_empty() {
-        return Err(CssValueError::invalid("값이 비어 있습니다"));
-    }
-    if FORBIDDEN.iter().any(|f| lower.contains(f)) {
-        return Err(CssValueError::new(
-            "forbidden-value",
-            "외부 리소스를 읽는 값은 받지 않습니다",
-        ));
-    }
-    if let Some(rest) = lower.strip_prefix("var(") {
-        let name = rest
-            .trim_end_matches(')')
-            .split(',')
-            .next()
-            .unwrap_or("")
-            .trim();
-        return Err(CssValueError::new(
-            "unknown-token",
-            format!("문서에 토큰 {name}이 없습니다"),
-        ));
-    }
-    if MATH.iter().any(|f| lower.starts_with(f)) {
-        return Err(CssValueError::new(
-            "unsupported-value",
-            "계산식은 아직 저장하지 못합니다",
-        ));
-    }
-    if GLOBAL_KEYWORDS.contains(&lower.as_str()) {
-        return Err(CssValueError::new(
-            "unsupported-value",
-            "문서 모델에는 cascade가 없어 전역 keyword를 받지 않습니다",
-        ));
-    }
-    match grammar {
-        CssGrammar::Length {
-            non_negative,
-            sizing,
-        } => {
-            if sizing && SIZING_KEYWORDS.contains(&lower.as_str()) {
-                return Err(CssValueError::new(
-                    "unsupported-value",
-                    format!("{lower} 크기 방식은 아직 저장하지 못합니다. 고정 px 값을 넣으세요"),
-                ));
+    let items = parse_block(text).map_err(|e| paste_error(e.code, e.message))?;
+    let records = model
+        .to_records()
+        .map_err(|e| paste_error("document-error", format!("{e:?}")))?;
+    let (scratch, _) = DocumentModel::from_records(records)
+        .map_err(|e| paste_error("document-error", format!("{e:?}")))?;
+    let mut scratch = DocumentState::new(scratch);
+    let classes: Vec<NodeClass> = selection
+        .iter()
+        .map(|id| {
+            scratch
+                .model()
+                .payload(*id)
+                .map(NodeClass::of)
+                .ok_or_else(|| paste_error("unknown-node", format!("문서에 없는 레이어: {id}")))
+        })
+        .collect::<Result<_, _>>()?;
+    let mut plan = PastePlan::default();
+    for item in items {
+        let declaration = match item {
+            BlockItem::Malformed(malformed) => {
+                plan.skipped.push(SkippedDeclaration {
+                    name: String::new(),
+                    value: malformed.text,
+                    code: malformed.code,
+                    message: malformed.message,
+                });
+                continue;
             }
-            let value = parse_length(&lower)?;
-            if non_negative && value < 0.0 {
-                return Err(CssValueError::invalid("음수는 받지 않습니다"));
-            }
-            Ok(CssValue::Length(value))
-        }
-        CssGrammar::Angle => parse_angle(&lower).map(CssValue::Angle),
-        CssGrammar::Count { min, max } => {
-            let (number, unit) = split_number(&lower)?;
-            if !unit.is_empty() {
-                return Err(CssValueError::new(
-                    "unsupported-unit",
-                    "개수에는 단위를 붙이지 않습니다",
-                ));
-            }
-            if number.fract() != 0.0 || number < min as f32 || number > max as f32 {
-                return Err(CssValueError::invalid(format!(
-                    "{min}–{max} 사이의 정수를 넣으세요"
-                )));
-            }
-            Ok(CssValue::Count(number as u32))
-        }
-        CssGrammar::Color { allow_none } => {
-            if lower == "none" {
-                return if allow_none {
-                    Ok(CssValue::Color(None))
-                } else {
-                    Err(CssValueError::invalid("이 속성은 none을 받지 않습니다"))
-                };
-            }
-            parse_color(&lower).map(|color| CssValue::Color(Some(color)))
-        }
-        CssGrammar::Keyword(choices) => choices
-            .iter()
-            .position(|choice| *choice == lower)
-            .map(CssValue::Keyword)
-            .ok_or_else(|| {
-                CssValueError::new(
-                    "unsupported-value",
-                    format!("{} 중 하나를 넣으세요", choices.join(", ")),
-                )
-            }),
-        CssGrammar::Bool => match lower.as_str() {
-            "true" => Ok(CssValue::Bool(true)),
-            "false" => Ok(CssValue::Bool(false)),
-            _ => Err(CssValueError::invalid("true 또는 false를 넣으세요")),
-        },
-        CssGrammar::Text => unreachable!("앞에서 처리"),
-        CssGrammar::Border => parse_border(&lower),
-        CssGrammar::Corners => parse_corners(&lower),
-    }
-}
-
-/// 부호·소수·지수가 있는 수와 나머지 단위로 나눕니다.
-fn split_number(text: &str) -> Result<(f32, &str), CssValueError> {
-    let bytes = text.as_bytes();
-    let mut end = 0;
-    if matches!(bytes.first(), Some(b'+' | b'-')) {
-        end = 1;
-    }
-    let digits_start = end;
-    while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'.') {
-        end += 1;
-    }
-    if end == digits_start {
-        return Err(CssValueError::invalid(format!("{text}은 수가 아닙니다")));
-    }
-    // 지수(입력에서만): e 뒤에 숫자가 올 때만. `em` 단위와 구분합니다.
-    if end + 1 < bytes.len() && matches!(bytes[end], b'e') {
-        let mut exp = end + 1;
-        if matches!(bytes.get(exp), Some(b'+' | b'-')) {
-            exp += 1;
-        }
-        if bytes.get(exp).is_some_and(u8::is_ascii_digit) {
-            while exp < bytes.len() && bytes[exp].is_ascii_digit() {
-                exp += 1;
-            }
-            end = exp;
-        }
-    }
-    let number: f32 = text[..end]
-        .parse()
-        .map_err(|_| CssValueError::invalid(format!("{text}은 수가 아닙니다")))?;
-    if !number.is_finite() {
-        return Err(CssValueError::invalid("수가 너무 큽니다"));
-    }
-    Ok((number, text[end..].trim()))
-}
-
-fn parse_length(text: &str) -> Result<f32, CssValueError> {
-    let (number, unit) = split_number(text)?;
-    match unit {
-        "" | "px" => Ok(number),
-        "%" => Err(CssValueError::new(
-            "unsupported-value",
-            "이 속성은 아직 % 값을 저장하지 못합니다",
-        )),
-        unit if UNSUPPORTED_UNITS.contains(&unit) => Err(CssValueError::new(
-            "unsupported-unit",
-            format!("{unit} 단위는 아직 받지 않습니다. px를 쓰세요"),
-        )),
-        unit => Err(CssValueError::new(
-            "unsupported-unit",
-            format!("{unit}은 길이 단위가 아닙니다"),
-        )),
-    }
-}
-
-fn parse_angle(text: &str) -> Result<f32, CssValueError> {
-    let (number, unit) = split_number(text)?;
-    let degrees = match unit {
-        "" | "deg" => number,
-        "rad" => number.to_degrees(),
-        "grad" => number * 0.9,
-        "turn" => number * 360.0,
-        unit => {
-            return Err(CssValueError::new(
-                "unsupported-unit",
-                format!("{unit}은 각도 단위가 아닙니다"),
-            ))
-        }
-    };
-    if degrees.is_finite() {
-        Ok(degrees)
-    } else {
-        Err(CssValueError::invalid("각도가 너무 큽니다"))
-    }
-}
-
-fn parse_corners(text: &str) -> Result<CssValue, CssValueError> {
-    if text.contains('/') {
-        return Err(CssValueError::new(
-            "unsupported-value",
-            "타원 모서리(/)는 받지 않습니다",
-        ));
-    }
-    let mut values = Vec::new();
-    for part in text.split_whitespace() {
-        let value = parse_length(part)?;
-        if value < 0.0 {
-            return Err(CssValueError::invalid("음수는 받지 않습니다"));
-        }
-        values.push(value);
-    }
-    let corners = match values.as_slice() {
-        [a] => [*a; 4],
-        [a, b] => [*a, *b, *a, *b],
-        [a, b, c] => [*a, *b, *c, *b],
-        [a, b, c, d] => [*a, *b, *c, *d],
-        _ => return Err(CssValueError::invalid("길이를 1–4개 넣으세요")),
-    };
-    Ok(CssValue::Corners(corners))
-}
-
-fn parse_border(text: &str) -> Result<CssValue, CssValueError> {
-    if text == "none" {
-        return Ok(CssValue::Border(None));
-    }
-    let mut width = None;
-    let mut color = None;
-    // 색 함수 안의 공백을 보존하려고 괄호 깊이로 나눕니다.
-    let mut parts = Vec::new();
-    let (mut depth, mut start) = (0i32, 0usize);
-    for (index, ch) in text.char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => depth -= 1,
-            c if c.is_whitespace() && depth == 0 => {
-                if start < index {
-                    parts.push(&text[start..index]);
-                }
-                start = index + c.len_utf8();
-            }
-            _ => {}
-        }
-    }
-    if start < text.len() {
-        parts.push(&text[start..]);
-    }
-    for part in parts {
-        match part {
-            "solid" => {}
-            "none" | "dashed" | "dotted" | "double" | "groove" | "ridge" | "inset" | "outset"
-            | "hidden" => {
-                return Err(CssValueError::new(
-                    "unsupported-value",
-                    "테두리 모양은 solid만 받습니다",
-                ))
-            }
-            part if part
-                .starts_with(|c: char| c.is_ascii_digit() || c == '.' || c == '-' || c == '+') =>
-            {
-                let value = parse_length(part)?;
-                if value < 0.0 {
-                    return Err(CssValueError::invalid("음수는 받지 않습니다"));
-                }
-                width = Some(value);
-            }
-            part => color = Some(parse_color(part)?),
-        }
-    }
-    // 빠진 쪽의 기본값(두께·색)은 여기서 정하지 않습니다. 편집 대상의 지금 테두리 값을 이어 쓰거나 거부합니다(D7).
-    match (width, color) {
-        (None, None) => Err(CssValueError::invalid("두께나 색을 넣으세요")),
-        (Some(width), Some(color)) => Ok(CssValue::Border(Some((width, color)))),
-        (width, color) => Ok(CssValue::BorderParts(width, color)),
-    }
-}
-
-const NAMED: [(&str, [u8; 3]); 18] = [
-    ("black", [0, 0, 0]),
-    ("white", [255, 255, 255]),
-    ("red", [255, 0, 0]),
-    ("green", [0, 128, 0]),
-    ("blue", [0, 0, 255]),
-    ("yellow", [255, 255, 0]),
-    ("cyan", [0, 255, 255]),
-    ("magenta", [255, 0, 255]),
-    ("gray", [128, 128, 128]),
-    ("grey", [128, 128, 128]),
-    ("silver", [192, 192, 192]),
-    ("orange", [255, 165, 0]),
-    ("purple", [128, 0, 128]),
-    ("pink", [255, 192, 203]),
-    ("brown", [165, 42, 42]),
-    ("navy", [0, 0, 128]),
-    ("teal", [0, 128, 128]),
-    ("lime", [0, 255, 0]),
-];
-
-fn srgb(r: f32, g: f32, b: f32, a: f32) -> Result<Color, CssValueError> {
-    Color::new(ColorSpace::Srgb, r, g, b, a)
-        .map_err(|_| CssValueError::invalid("색 값이 범위를 벗어났습니다"))
-}
-
-/// CSS 색을 해석합니다(속성 모델 2장: hex, `rgb()`, `color(srgb …)`, `color(display-p3 …)`, `transparent`,
-/// 이름 색).
-pub fn parse_color(text: &str) -> Result<Color, CssValueError> {
-    let text = text.trim();
-    if text == "transparent" {
-        return srgb(0., 0., 0., 0.);
-    }
-    if let Some((_, [r, g, b])) = NAMED.iter().find(|(name, _)| *name == text) {
-        return srgb(
-            f32::from(*r) / 255.,
-            f32::from(*g) / 255.,
-            f32::from(*b) / 255.,
-            1.,
-        );
-    }
-    if let Some(hex) = text.strip_prefix('#') {
-        return parse_hex(hex);
-    }
-    if let Some(body) = text
-        .strip_prefix("rgba(")
-        .or_else(|| text.strip_prefix("rgb("))
-        .and_then(|rest| rest.strip_suffix(')'))
-    {
-        let (channels, alpha) = split_alpha(body)?;
-        let [r, g, b] = channels.map(rgb_channel);
-        return srgb(r?, g?, b?, alpha);
-    }
-    if let Some(body) = text
-        .strip_prefix("color(")
-        .and_then(|rest| rest.strip_suffix(')'))
-    {
-        let body = body.trim();
-        let (space, rest) = if let Some(rest) = body.strip_prefix("srgb") {
-            (ColorSpace::Srgb, rest)
-        } else if let Some(rest) = body.strip_prefix("display-p3") {
-            (ColorSpace::DisplayP3, rest)
-        } else {
-            return Err(CssValueError::new(
-                "unsupported-value",
-                "color()는 srgb와 display-p3만 받습니다",
-            ));
+            BlockItem::Declaration(declaration) => declaration,
         };
-        let (channels, alpha) = split_alpha(rest)?;
-        let [r, g, b] = channels.map(unit_channel);
-        return Color::new(space, r?, g?, b?, alpha)
-            .map_err(|_| CssValueError::invalid("색 값이 범위를 벗어났습니다"));
-    }
-    if text.starts_with("hsl")
-        || text.starts_with("hwb")
-        || text.starts_with("lab")
-        || text.starts_with("lch")
-        || text.starts_with("oklab")
-        || text.starts_with("oklch")
-    {
-        return Err(CssValueError::new(
-            "unsupported-value",
-            "hex, rgb(), color(srgb …), color(display-p3 …)를 쓰세요",
-        ));
-    }
-    Err(CssValueError::invalid(format!("{text}은 색이 아닙니다")))
-}
-
-fn parse_hex(hex: &str) -> Result<Color, CssValueError> {
-    let digit = |c: u8| (c as char).to_digit(16).map(|d| d as f32);
-    let bytes = hex.as_bytes();
-    let nibble =
-        |i: usize| digit(bytes[i]).ok_or_else(|| CssValueError::invalid("hex 숫자가 아닙니다"));
-    let pair = |i: usize| Ok::<f32, CssValueError>((nibble(i)? * 16. + nibble(i + 1)?) / 255.);
-    let short = |i: usize| Ok::<f32, CssValueError>(nibble(i)? * 17. / 255.);
-    match bytes.len() {
-        3 => srgb(short(0)?, short(1)?, short(2)?, 1.),
-        4 => srgb(short(0)?, short(1)?, short(2)?, short(3)?),
-        6 => srgb(pair(0)?, pair(2)?, pair(4)?, 1.),
-        8 => srgb(pair(0)?, pair(2)?, pair(4)?, pair(6)?),
-        _ => Err(CssValueError::invalid("hex 색은 3·4·6·8자리입니다")),
-    }
-}
-
-/// `r g b / a` 또는 `r, g, b, a`를 채널 3개와 alpha로 나눕니다.
-fn split_alpha(body: &str) -> Result<([&str; 3], f32), CssValueError> {
-    let (channels, alpha) = match body.split_once('/') {
-        Some((channels, alpha)) => (channels, Some(alpha.trim())),
-        None => (body, None),
-    };
-    let parts: Vec<&str> = channels
-        .split(|c: char| c == ',' || c.is_whitespace())
-        .filter(|p| !p.is_empty())
-        .collect();
-    let (rgb, alpha) = match (parts.as_slice(), alpha) {
-        ([r, g, b], alpha) => ([*r, *g, *b], alpha),
-        ([r, g, b, a], None) => ([*r, *g, *b], Some(*a)),
-        _ => return Err(CssValueError::invalid("채널 3개(와 alpha)를 넣으세요")),
-    };
-    let alpha = match alpha {
-        None => 1.0,
-        Some(alpha) => unit_channel(alpha)?,
-    };
-    if !(0.0..=1.0).contains(&alpha) {
-        return Err(CssValueError::invalid("alpha는 0–1입니다"));
-    }
-    Ok((rgb, alpha))
-}
-
-fn rgb_channel(text: &str) -> Result<f32, CssValueError> {
-    let (number, unit) = split_number(text)?;
-    match unit {
-        "" => Ok(number / 255.),
-        "%" => Ok(number / 100.),
-        _ => Err(CssValueError::new(
-            "unsupported-unit",
-            "rgb() 채널은 수 또는 %입니다",
-        )),
-    }
-}
-
-fn unit_channel(text: &str) -> Result<f32, CssValueError> {
-    let (number, unit) = split_number(text)?;
-    match unit {
-        "" => Ok(number),
-        "%" => Ok(number / 100.),
-        _ => Err(CssValueError::new(
-            "unsupported-unit",
-            "채널은 수 또는 %입니다",
-        )),
-    }
-}
-
-/// f32를 왕복하는 가장 짧은 10진 표기(지수 없음, `-0`은 `0`).
-pub fn format_number(value: f32) -> String {
-    if value == 0.0 {
-        return "0".into();
-    }
-    format!("{value}")
-}
-
-/// `<n>px`.
-pub fn format_length(value: f32) -> String {
-    format!("{}px", format_number(value))
-}
-
-/// `<n>deg`.
-pub fn format_angle(value: f32) -> String {
-    format!("{}deg", format_number(value))
-}
-
-/// 속성 모델 8.2절 정규 색 표기.
-pub fn format_color(color: Color) -> String {
-    let channels = [color.r(), color.g(), color.b(), color.alpha()];
-    let byte = |v: f32| (v * 255.0).round();
-    let exact = color.space() == ColorSpace::Srgb
-        && channels
-            .iter()
-            .all(|v| (0.0..=1.0).contains(v) && byte(*v) / 255.0 == *v);
-    if exact {
-        let mut out = String::from("#");
-        for v in &channels[..3] {
-            out.push_str(&format!("{:02x}", byte(*v) as u8));
+        // shorthand는 펼친 longhand가 모두 속성 패널 속성이면 longhand로 적용합니다(`border-radius` → 4 모서리).
+        // 그렇지 않고 같은 이름의 속성 패널 행이 있으면(`border`, `overflow` 등 Stellar가 묶어 저장하는 값) 그 행으로
+        // 적용하고, 둘 다 아니면 펼친 longhand를 하나씩 판정해 저장 위치가 없는 것을 건너뜁니다.
+        let expanded = shorthand::expand(&declaration.name, &declaration.value);
+        let direct = InspectorProperty::from_name(&declaration.name).is_some();
+        let longhands: Vec<(String, String)> = match expanded {
+            Some(Ok(expanded))
+                if expanded
+                    .iter()
+                    .all(|l| InspectorProperty::from_name(l.name).is_some())
+                    || !direct =>
+            {
+                expanded
+                    .into_iter()
+                    .map(|l| (l.name.to_string(), l.value))
+                    .collect()
+            }
+            Some(Err(error)) if !direct => {
+                skip(
+                    &mut plan,
+                    &declaration.name,
+                    &declaration.value,
+                    error.code,
+                    error.message,
+                );
+                continue;
+            }
+            _ => vec![(declaration.name.clone(), declaration.value.clone())],
+        };
+        for (name, value) in longhands {
+            let Some(property) = InspectorProperty::from_name(&name) else {
+                if registry_knows(&name) {
+                    skip(
+                        &mut plan,
+                        &name,
+                        &value,
+                        "unsupported-property",
+                        format!("{name}은 Stellar가 저장하지만 선언 블록 붙여넣기로는 아직 받지 않는 속성입니다"),
+                    );
+                } else {
+                    skip(
+                        &mut plan,
+                        &name,
+                        &value,
+                        "unknown-property",
+                        format!("{name}은 Stellar에 저장 위치가 없는 속성입니다"),
+                    );
+                }
+                continue;
+            };
+            if is_layer_property(property) {
+                skip(
+                    &mut plan,
+                    &name,
+                    &value,
+                    "not-applicable",
+                    "레이어 속성(이름·표시·잠금)은 붙여넣지 않습니다".into(),
+                );
+                continue;
+            }
+            if let Some(class) = classes.iter().find(|c| !property.applies(**c)) {
+                skip(
+                    &mut plan,
+                    &name,
+                    &value,
+                    "not-applicable",
+                    format!("{class:?} 레이어에는 {name} 속성이 없습니다"),
+                );
+                continue;
+            }
+            let parsed = match parse_with(property.grammar(), &value, scope) {
+                Ok(CssValue::Var(var)) => {
+                    skip(
+                        &mut plan,
+                        &name,
+                        &value,
+                        "unsupported-value",
+                        format!(
+                            "토큰 참조 {}는 아직 붙여넣기로 연결하지 않습니다(값 binding 필요)",
+                            var.name
+                        ),
+                    );
+                    continue;
+                }
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    skip(&mut plan, &name, &value, error.code, error.message);
+                    continue;
+                }
+            };
+            let canonical = format(&parsed, property.grammar());
+            let commands = match edit_commands(
+                scratch.model(),
+                selection,
+                property,
+                &InspectorInput::Set(parsed),
+                new_id,
+            ) {
+                Ok(commands) => commands,
+                Err(error) => {
+                    skip(&mut plan, &name, &value, "rejected", error.0);
+                    continue;
+                }
+            };
+            if !commands.is_empty() {
+                let mut transaction =
+                    CommandTransaction::new(CommandId::from_bytes([0; 16]), CommandOrigin::User);
+                for command in &commands {
+                    transaction = transaction.with_command(scratch.revision(), command.clone());
+                }
+                if let Err(error) = scratch.execute_transaction(&transaction) {
+                    skip(
+                        &mut plan,
+                        &name,
+                        &value,
+                        "rejected",
+                        format!("{:?}", error.error),
+                    );
+                    continue;
+                }
+                plan.commands.extend(commands);
+            }
+            plan.applied.push(AppliedDeclaration {
+                name: property.name(),
+                value: canonical,
+            });
         }
-        if color.alpha() != 1.0 {
-            out.push_str(&format!("{:02x}", byte(color.alpha()) as u8));
-        }
-        return out;
     }
-    let space = match color.space() {
-        ColorSpace::Srgb => "srgb",
-        ColorSpace::DisplayP3 => "display-p3",
-    };
-    let [r, g, b, a] = channels.map(format_number);
-    if color.alpha() == 1.0 {
-        format!("color({space} {r} {g} {b})")
-    } else {
-        format!("color({space} {r} {g} {b} / {a})")
-    }
-}
-
-/// `border-radius` 4값을 CSS 최소 shorthand로 씁니다.
-pub fn format_corners([tl, tr, br, bl]: [f32; 4]) -> String {
-    let parts: Vec<String> = if tl == tr && tr == br && br == bl {
-        vec![format_length(tl)]
-    } else if tl == br && tr == bl {
-        vec![format_length(tl), format_length(tr)]
-    } else if tr == bl {
-        vec![format_length(tl), format_length(tr), format_length(br)]
-    } else {
-        [tl, tr, br, bl].map(format_length).to_vec()
-    };
-    parts.join(" ")
-}
-
-/// 정규 값 텍스트.
-pub fn format(value: &CssValue, grammar: CssGrammar) -> String {
-    match value {
-        CssValue::Length(v) => format_length(*v),
-        CssValue::Angle(v) => format_angle(*v),
-        CssValue::Count(v) => v.to_string(),
-        CssValue::Color(None) => "none".into(),
-        CssValue::Color(Some(color)) => format_color(*color),
-        CssValue::Keyword(index) => match grammar {
-            CssGrammar::Keyword(choices) => choices.get(*index).copied().unwrap_or("").into(),
-            _ => String::new(),
-        },
-        CssValue::Bool(v) => v.to_string(),
-        CssValue::Text(text) => text.clone(),
-        CssValue::Border(None) => "none".into(),
-        CssValue::Border(Some((width, color))) => {
-            format!("{} solid {}", format_length(*width), format_color(*color))
-        }
-        CssValue::BorderParts(width, color) => {
-            let mut parts: Vec<String> = width.iter().map(|w| format_length(*w)).collect();
-            parts.push("solid".into());
-            parts.extend(color.iter().map(|c| format_color(*c)));
-            parts.join(" ")
-        }
-        CssValue::Corners(corners) => format_corners(*corners),
-    }
+    Ok(plan)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::property::tests::seven_kind_model;
+    use stellar_document::test_support::semantic_snapshot::model_snapshot_json;
 
-    const WIDTH: CssGrammar = CssGrammar::Length {
-        non_negative: true,
-        sizing: true,
-    };
-
-    fn ok(grammar: CssGrammar, text: &str) -> String {
-        format(&parse(grammar, text).unwrap(), grammar)
-    }
-
-    fn code(grammar: CssGrammar, text: &str) -> &'static str {
-        parse(grammar, text).unwrap_err().code
-    }
-
-    #[test]
-    fn lengths_and_angles_normalize() {
-        assert_eq!(ok(WIDTH, "320"), "320px");
-        assert_eq!(ok(WIDTH, " 12.50PX "), "12.5px");
-        assert_eq!(ok(WIDTH, "0"), "0px");
-        assert_eq!(ok(WIDTH, "1e2"), "100px");
-        assert_eq!(ok(CssGrammar::Angle, "1.5turn"), "540deg");
-        assert_eq!(ok(CssGrammar::Angle, "200grad"), "180deg");
-        assert_eq!(ok(CssGrammar::Angle, "-0"), "0deg");
-        assert_eq!(ok(CssGrammar::Count { min: 3, max: 1000 }, "8"), "8");
-        assert_eq!(ok(CssGrammar::Corners, "12"), "12px");
-        assert_eq!(ok(CssGrammar::Corners, "1px 2px"), "1px 2px");
-        assert_eq!(
-            parse(CssGrammar::Corners, "1 2 3").unwrap(),
-            CssValue::Corners([1., 2., 3., 2.])
-        );
-    }
-
-    #[test]
-    fn unsupported_inputs_return_structured_codes() {
-        assert_eq!(code(WIDTH, "50%"), "unsupported-value");
-        assert_eq!(code(WIDTH, "fit-content"), "unsupported-value");
-        assert_eq!(code(WIDTH, "var(--space-2)"), "unknown-token");
-        assert_eq!(code(WIDTH, "2rem"), "unsupported-unit");
-        assert_eq!(code(WIDTH, "2em"), "unsupported-unit");
-        assert_eq!(code(WIDTH, "calc(100% - 4px)"), "unsupported-value");
-        assert_eq!(code(WIDTH, "inherit"), "unsupported-value");
-        assert_eq!(code(WIDTH, "-4"), "invalid-value");
-        assert_eq!(code(WIDTH, "abc"), "invalid-value");
-        assert_eq!(
-            code(CssGrammar::Color { allow_none: true }, "url(x.png)"),
-            "forbidden-value"
-        );
-        assert_eq!(code(CssGrammar::Corners, "4px / 2px"), "unsupported-value");
-        assert_eq!(
-            code(CssGrammar::Count { min: 3, max: 1000 }, "2"),
-            "invalid-value"
-        );
-        assert_eq!(code(WIDTH, &"9".repeat(MAX_INPUT_LEN + 1)), "invalid-value");
-    }
-
-    #[test]
-    fn colors_round_trip_in_canonical_form() {
-        let color = CssGrammar::Color { allow_none: true };
-        assert_eq!(ok(color, "#3366FF"), "#3366ff");
-        assert_eq!(ok(color, "#36f"), "#3366ff");
-        assert_eq!(ok(color, "rgb(51, 102, 255)"), "#3366ff");
-        assert_eq!(
-            ok(color, "rgb(51 102 255 / 50%)"),
-            "color(srgb 0.2 0.4 1 / 0.5)"
-        );
-        assert_eq!(ok(color, "#00000080"), "#00000080");
-        assert_eq!(ok(color, "none"), "none");
-        assert_eq!(ok(color, "white"), "#ffffff");
-        assert_eq!(
-            ok(color, "color(display-p3 1 0 0)"),
-            "color(display-p3 1 0 0)"
-        );
-        for text in [
-            "#d9d9d9",
-            "#000000",
-            "color(srgb 0.1 0.2 0.3)",
-            "color(display-p3 0.5 0.25 1 / 0.75)",
-        ] {
-            let parsed = parse(color, text).unwrap();
-            assert_eq!(format(&parsed, color), text);
-            assert_eq!(parse(color, &format(&parsed, color)).unwrap(), parsed);
+    fn new_ids(base: u64) -> impl FnMut() -> StableId {
+        let mut n = 0;
+        move || {
+            n += 1;
+            StableId::new_v7(base * 1_000 + n, 0, n)
         }
-        assert_eq!(
-            code(CssGrammar::Color { allow_none: false }, "none"),
-            "invalid-value"
-        );
-        assert_eq!(code(color, "hsl(0 100% 50%)"), "unsupported-value");
+    }
+
+    fn execute(state: &mut DocumentState, plan: &PastePlan) -> CommandTransaction {
+        let transaction = plan
+            .transaction(
+                CommandId::from_bytes([7; 16]),
+                CommandOrigin::User,
+                state.revision(),
+            )
+            .expect("바꿀 것이 있음");
+        state.execute_transaction(&transaction).unwrap().inverse
+    }
+
+    /// node 하나의 속성(레이어 속성 제외) 선언 블록.
+    fn style_of(model: &DocumentModel, node: StableId) -> String {
+        declaration_block_text(&copy_declarations(model, node).unwrap())
+    }
+
+    fn copy_model(model: &DocumentModel) -> DocumentState {
+        DocumentState::new(
+            DocumentModel::from_records(model.to_records().unwrap())
+                .unwrap()
+                .0,
+        )
     }
 
     #[test]
-    fn border_shorthand_accepts_any_order() {
-        let a = parse(CssGrammar::Border, "2px solid #ff0000").unwrap();
-        let b = parse(CssGrammar::Border, "red 2").unwrap();
-        assert_eq!(a, b);
-        assert_eq!(format(&a, CssGrammar::Border), "2px solid #ff0000");
-        assert_eq!(ok(CssGrammar::Border, "none"), "none");
-        assert_eq!(
-            ok(CssGrammar::Border, "color(srgb 1 0 0 / 0.5)"),
-            "solid color(srgb 1 0 0 / 0.5)"
-        );
-        assert_eq!(
-            parse(CssGrammar::Border, "3px solid").unwrap(),
-            CssValue::BorderParts(Some(3.0), None)
-        );
-        assert_eq!(
-            code(CssGrammar::Border, "1px dashed red"),
-            "unsupported-value"
-        );
+    fn copy_emits_longhands_in_registry_order() {
+        let (model, ids) = seven_kind_model();
+        let rect = copy_declarations(&model, ids[1]).unwrap();
+        let names: Vec<&str> = rect.iter().map(|d| d.name).collect();
+        assert!(names.contains(&"border-top-left-radius"));
+        assert!(!names.contains(&"border-radius"), "묶음 행은 longhand로");
+        assert!(!names.contains(&"name") && !names.contains(&"locked"));
+        let text = declaration_block_text(&rect);
+        assert!(text.contains("width: 80px;\n"), "{text}");
+        assert!(text.lines().all(|l| l.ends_with(';')));
+        let polygon = copy_declarations(&model, ids[4]).unwrap();
+        assert!(polygon
+            .iter()
+            .any(|d| d.name == "polygon-sides" && d.stellar_only));
+        assert!(copy_declarations(&model, StableId::new_v7(99, 9, 99)).is_none());
     }
 
     #[test]
-    fn number_format_round_trips_f32() {
-        for value in [
-            0.1f32,
-            1.0 / 3.0,
-            123456.79,
-            -0.000_123,
-            16777217.0,
-            f32::MIN_POSITIVE,
-        ] {
-            let text = format_number(value);
-            assert!(!text.contains('e'), "{text}");
-            assert_eq!(text.parse::<f32>().unwrap(), value);
+    fn copy_paste_round_trip_reproduces_the_style_and_undoes_once() {
+        // 검증 기준(IX.11.15): copy→paste 왕복 후 semantic snapshot 동일, undo 한 번으로 전체 복원.
+        let (model, ids) = seven_kind_model();
+        let mut state = DocumentState::new(model);
+        // 같은 node에 붙여넣으면 아무것도 바뀌지 않습니다(건너뜀 0, command 0).
+        for id in ids {
+            let text = style_of(state.model(), id);
+            let plan = paste_declarations(state.model(), &[id], &text, &NoTokens, &mut new_ids(1))
+                .unwrap();
+            assert!(plan.skipped.is_empty(), "{id}: {:?}", plan.skipped);
+            assert!(plan.commands.is_empty(), "{id}: 같은 값은 command 없음");
         }
-        assert_eq!(format_number(-0.0), "0");
+        let source = ids[1];
+        let copied = style_of(state.model(), source);
+        let before = model_snapshot_json(state.model()).unwrap();
+        let edit = paste_declarations(
+            state.model(),
+            &[source],
+            "width: 200px; border-radius: 9px; fill: #00ff00; left: 7px",
+            &NoTokens,
+            &mut new_ids(2),
+        )
+        .unwrap();
+        assert!(edit.skipped.is_empty(), "{:?}", edit.skipped);
+        let undo = execute(&mut state, &edit);
+        assert_ne!(style_of(state.model(), source), copied);
+        // 복사해 둔 블록을 다시 붙이면 style이 복사 시점과 같아집니다.
+        let mut pasted = copy_model(state.model());
+        let restore = paste_declarations(
+            pasted.model(),
+            &[source],
+            &copied,
+            &NoTokens,
+            &mut new_ids(3),
+        )
+        .unwrap();
+        assert!(restore.skipped.is_empty(), "{:?}", restore.skipped);
+        execute(&mut pasted, &restore);
+        assert_eq!(style_of(pasted.model(), source), copied);
+        // undo 한 번(transaction 하나)으로 semantic snapshot 전체가 처음과 같습니다.
+        state
+            .execute_transaction(&undo.rebased(state.revision()))
+            .unwrap();
+        assert_eq!(model_snapshot_json(state.model()).unwrap(), before);
     }
 
     #[test]
-    fn keywords_are_case_insensitive() {
-        let fit = CssGrammar::Keyword(&["fill", "contain", "cover", "none"]);
-        assert_eq!(ok(fit, "COVER"), "cover");
-        assert_eq!(code(fit, "scale-down"), "unsupported-value");
-        assert_eq!(ok(CssGrammar::Bool, "TRUE"), "true");
-        assert_eq!(ok(CssGrammar::Text, " 카드 "), " 카드 ");
+    fn inherited_text_color_is_not_copied_but_an_explicit_equal_color_stays_explicit() {
+        // ADR-0082 결정 5: 명시한 값은 기본값과 같아도 명시로 남고, 복사는 명시 값만 냅니다.
+        let (model, ids) = seven_kind_model();
+        let text = ids[5];
+        let mut state = DocumentState::new(model);
+        let copied = copy_declarations(state.model(), text).unwrap();
+        assert!(
+            copied.iter().all(|d| d.name != "color"),
+            "물려받은 글자색은 선언이 아님: {copied:?}"
+        );
+        // 기본 글자색(검정)과 같은 색을 붙여넣어도 명시 Fill이 생깁니다.
+        let plan = paste_declarations(
+            state.model(),
+            &[text],
+            "color: #000000",
+            &NoTokens,
+            &mut new_ids(9),
+        )
+        .unwrap();
+        assert!(plan.skipped.is_empty(), "{:?}", plan.skipped);
+        assert_eq!(plan.commands.len(), 1, "명시 Fill 추가");
+        assert!(matches!(plan.commands[0], Command::InsertModifier(_)));
+        execute(&mut state, &plan);
+        let copied = copy_declarations(state.model(), text).unwrap();
+        assert!(copied
+            .iter()
+            .any(|d| d.name == "color" && d.value == "#000000"));
+        // 같은 블록을 다시 붙이면 바꿀 것이 없습니다.
+        let again = paste_declarations(
+            state.model(),
+            &[text],
+            &declaration_block_text(&copied),
+            &NoTokens,
+            &mut new_ids(10),
+        )
+        .unwrap();
+        assert!(
+            again.commands.is_empty() && again.skipped.is_empty(),
+            "{copied:?} {:?} {:?}",
+            again.commands,
+            again.skipped
+        );
+    }
+
+    #[test]
+    fn style_copied_from_one_shape_applies_to_another() {
+        let (model, ids) = seven_kind_model();
+        let mut state = DocumentState::new(model);
+        let text = style_of(state.model(), ids[1]);
+        // Rectangle style을 Polygon에 붙이면 모서리 반경은 Polygon에 없어 건너뜁니다.
+        let plan = paste_declarations(state.model(), &[ids[4]], &text, &NoTokens, &mut new_ids(4))
+            .unwrap();
+        assert!(plan
+            .skipped
+            .iter()
+            .any(|s| s.name == "border-top-left-radius" && s.code == "not-applicable"));
+        if !plan.commands.is_empty() {
+            execute(&mut state, &plan);
+        }
+        let polygon = style_of(state.model(), ids[4]);
+        let rect = style_of(state.model(), ids[1]);
+        for line in rect.lines().filter(|l| !l.contains("radius")) {
+            assert!(polygon.contains(line), "{line} ∉ {polygon}");
+        }
+    }
+
+    #[test]
+    fn skipped_declarations_are_reported_with_reasons() {
+        // 검증 기준(IX.11.15): 건너뜀 보고 fixture. Constraint CenterX 형태(calc(50% + offset))도 건너뜀.
+        let (model, ids) = seven_kind_model();
+        let frame = ids[0];
+        let token = StableId::new_v7(70, 0, 70);
+        let scope: std::collections::BTreeMap<String, StableId> =
+            [("--brand".to_string(), token)].into();
+        let plan = paste_declarations(
+            &model,
+            &[frame],
+            "left: calc(50% + 4px); padding: 4px; margin: 0; width: 2rem; \
+             background-color: var(--brand); background-color: var(--missing); \
+             border-radius: 4px / 2px; object-fit: cover; name: x; junk; \
+             transform: rotate(30deg); width: 120px",
+            &scope,
+            &mut new_ids(5),
+        )
+        .unwrap();
+        let skipped: Vec<(&str, &str)> = plan
+            .skipped
+            .iter()
+            .map(|s| (s.name.as_str(), s.code))
+            .collect();
+        assert_eq!(
+            skipped,
+            vec![
+                ("left", "unsupported-value"),
+                ("padding-top", "unknown-property"),
+                ("padding-right", "unknown-property"),
+                ("padding-bottom", "unknown-property"),
+                ("padding-left", "unknown-property"),
+                ("margin", "unknown-property"),
+                ("width", "unsupported-unit"),
+                ("background-color", "unsupported-value"),
+                ("background-color", "unknown-token"),
+                ("border-radius", "unsupported-value"),
+                ("object-fit", "not-applicable"),
+                ("name", "not-applicable"),
+                ("", "invalid-declaration"),
+                ("transform", "unsupported-property"),
+            ]
+        );
+        assert!(plan.skipped.iter().all(|s| !s.message.is_empty()));
+        assert_eq!(
+            plan.applied,
+            vec![AppliedDeclaration {
+                name: "width",
+                value: "120px".into()
+            }]
+        );
+        assert_eq!(plan.commands.len(), 1);
+        // Stellar가 저장하지만 붙여넣기 경로가 아직 없는 속성은 저장 위치가 없는 속성과 다른 코드입니다.
+        let stored = paste_declarations(
+            &model,
+            &[ids[3]],
+            "opacity: 0.5; mix-blend-mode: multiply; stroke-linecap: round; margin-top: 1px",
+            &NoTokens,
+            &mut new_ids(7),
+        )
+        .unwrap();
+        let codes: Vec<(&str, &str)> = stored
+            .skipped
+            .iter()
+            .map(|s| (s.name.as_str(), s.code))
+            .collect();
+        assert_eq!(
+            codes,
+            vec![
+                ("opacity", "unsupported-property"),
+                ("mix-blend-mode", "unsupported-property"),
+                ("stroke-linecap", "unsupported-property"),
+                ("margin-top", "unknown-property"),
+            ]
+        );
+        // 블록 전체 오류는 command를 만들지 않습니다.
+        let error = paste_declarations(&model, &[frame], "a { b: c", &NoTokens, &mut new_ids(6))
+            .unwrap_err();
+        assert_eq!(error.code, "invalid-declaration-block");
+        assert_eq!(
+            paste_declarations(&model, &[], "width: 1px", &NoTokens, &mut new_ids(6))
+                .unwrap_err()
+                .code,
+            "empty-selection"
+        );
+    }
+
+    #[test]
+    fn later_declarations_win_and_modifier_inserts_do_not_collide() {
+        let (model, ids) = seven_kind_model();
+        let mut state = DocumentState::new(model);
+        let ellipse = ids[2];
+        let plan = paste_declarations(
+            state.model(),
+            &[ellipse],
+            "fill: red; stroke: blue; stroke-width: 3px; left: 5px; fill: #00ff00",
+            &NoTokens,
+            &mut new_ids(8),
+        )
+        .unwrap();
+        assert!(plan.skipped.is_empty(), "{:?}", plan.skipped);
+        execute(&mut state, &plan);
+        let style = style_of(state.model(), ellipse);
+        assert!(style.contains("fill: #00ff00;"), "{style}");
+        assert!(style.contains("stroke: #0000ff;"));
+        assert!(style.contains("stroke-width: 3px;"));
+        assert!(style.contains("left: 5px;"));
+        // Fill·Stroke·Transform modifier가 있는 node에 같은 블록을 다시 붙이면 빈 변경 command가 없습니다.
+        let again = paste_declarations(
+            state.model(),
+            &[ellipse],
+            &style,
+            &NoTokens,
+            &mut new_ids(11),
+        )
+        .unwrap();
+        assert!(again.skipped.is_empty(), "{:?}", again.skipped);
+        assert!(again.commands.is_empty(), "{:?}", again.commands);
     }
 }

@@ -500,23 +500,28 @@ pub fn node_property_info(kind: NodeKind, key: PropertyKey) -> Option<PropertyIn
         _ if kind == NodeKind::Shape => ShapeKind::ALL
             .into_iter()
             .find_map(|shape| shape_property(shape, key))
-            .map(payload_info),
-        _ if kind == NodeKind::Image => image_property(key).map(payload_info),
+            .and_then(payload_info),
+        _ if kind == NodeKind::Image => image_property(key).and_then(payload_info),
         _ => None,
     }
 }
 
-fn payload_info(metadata: &PayloadPropertyMetadata) -> PropertyInfo {
-    PropertyInfo {
+/// payload registry 항목의 command 값 타입. 구조 값(asset·crop·색공간·path·text 단위)은 `SetProperty`
+/// 대상이 아니라 `None`입니다.
+fn payload_info(metadata: &PayloadPropertyMetadata) -> Option<PropertyInfo> {
+    Some(PropertyInfo {
         value_type: match metadata.value_type {
             PayloadPropertyType::Dimension => PropertyValueType::NonNegative,
             PayloadPropertyType::Coordinate
             | PayloadPropertyType::Angle
             | PayloadPropertyType::Count => PropertyValueType::Number,
             PayloadPropertyType::Keyword => PropertyValueType::Keyword,
+            PayloadPropertyType::Bool => PropertyValueType::Bool,
+            PayloadPropertyType::Text => PropertyValueType::Text,
+            PayloadPropertyType::Structured => return None,
         },
         invalidation: InvalidationSet::from(metadata.invalidation),
-    }
+    })
 }
 
 /// `payload`를 가진 node에서 `key`의 metadata(도형 종류까지 확인).
@@ -526,7 +531,7 @@ pub fn payload_property_info(payload: &NodePayload, key: PropertyKey) -> Option<
             node_keys::VISIBLE | node_keys::LOCKED | node_keys::DISPLAY_NAME => {
                 node_property_info(NodeKind::Shape, key)
             }
-            _ => shape_property(shape.kind(), key).map(payload_info),
+            _ => shape_property(shape.kind(), key).and_then(payload_info),
         },
         _ => node_property_info(payload.kind(), key),
     }
@@ -545,11 +550,16 @@ pub fn node_property_keys(payload: &NodePayload) -> Vec<PropertyKey> {
         NodePayload::Frame(_) => keys.extend(
             stellar_document::frame_metadata::FRAME_PROPERTIES
                 .iter()
-                .map(|m| m.key)
-                .filter(|k| *k != frame_keys::SIZE && *k != frame_keys::CORNER_RADIUS),
+                .filter(|m| !m.is_bundle())
+                .map(|m| m.key),
         ),
         NodePayload::Shape(shape) => keys.extend_from_slice(shape_kind_keys(shape.kind())),
-        NodePayload::Image(_) => keys.extend(IMAGE_PROPERTIES.iter().map(|m| m.key)),
+        NodePayload::Image(_) => keys.extend(
+            IMAGE_PROPERTIES
+                .iter()
+                .filter(|m| m.is_settable())
+                .map(|m| m.key),
+        ),
         _ => {}
     }
     keys

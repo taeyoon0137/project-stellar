@@ -71,6 +71,9 @@ pub mod text_source;
 /// 저장된 고정 Free Frame View 하나의 HTML+CSS 투영.
 pub mod web_frame;
 
+/// CSS 선언 블록 복사·붙여넣기 (IX.11.15).
+pub mod css;
+
 /// 테스트 전용 프로젝트 fixture 생성기. 프로덕션 경로에서 사용하지 않습니다.
 #[doc(hidden)]
 pub mod test_support;

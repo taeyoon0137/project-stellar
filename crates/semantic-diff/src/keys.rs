@@ -6,6 +6,10 @@
 //! - Frame `0x01xx`([`frame`]), Image asset `0x0601`([`IMAGE_ASSET`]),
 //!   ComponentInstance `0x0Axx`([`instance`]), Modifier `0x10xx`([`modifier`]).
 //!
+//! Shape·Path·Text·Image 필드 가운데 값 하나를 담는 경로는 문서 registry key(IX.11.3, `payload_metadata`)를
+//! 씁니다. 값 여러 개를 한 경로에 담는 Rectangle size·corner radius, Line 끝점, Ellipse·Polygon bounds, Image
+//! size와 도형 종류 tag는 snapshot 투영(`build.rs`)이 longhand 경로로 나뉠 때까지 전용 key를 유지합니다.
+//!
 //! 문서 crate에 아직 key가 없는 필드는 **semantic snapshot 전용 대역 `0xE0xx`~`0xEFxx`**에
 //! 둡니다. 이 대역은 저장 포맷이 아니라 diff·merge 식별용이며(snapshot은 저장하지 않음),
 //! 문서 crate가 같은 필드의 공식 key를 정하면 그 key로 교체합니다. 문서 crate의 node 종류
@@ -24,6 +28,8 @@ pub use stellar_document::modifier_metadata::keys as modifier;
 
 /// Image asset 참조(문서 crate, VI.8.2).
 pub const IMAGE_ASSET: PropertyKey = stellar_document::image::IMAGE_PROP_ASSET;
+
+use stellar_document::payload_metadata::{image_keys, path_keys, shape_keys, text_keys};
 
 // --- 공통 node·정의 필드 (0xE0xx) ---
 
@@ -95,38 +101,38 @@ pub const ELLIPSE_BOUNDS: PropertyKey = PropertyKey(0xE321);
 pub const LINE_START: PropertyKey = PropertyKey(0xE331);
 /// Line 끝점.
 pub const LINE_END: PropertyKey = PropertyKey(0xE332);
-/// Line cap tag.
-pub const LINE_CAP: PropertyKey = PropertyKey(0xE333);
+/// Line cap tag(문서 key `stroke-linecap`, IX.11.3).
+pub const LINE_CAP: PropertyKey = shape_keys::STROKE_LINECAP;
 /// Polygon bounds.
 pub const POLYGON_BOUNDS: PropertyKey = PropertyKey(0xE341);
-/// Polygon 변 수.
-pub const POLYGON_SIDES: PropertyKey = PropertyKey(0xE342);
-/// Polygon 회전(도).
-pub const POLYGON_ROTATION: PropertyKey = PropertyKey(0xE343);
-/// Polygon corner radius.
-pub const POLYGON_CORNER_RADIUS: PropertyKey = PropertyKey(0xE344);
+/// Polygon 변 수(문서 key `polygon-sides`, IX.11.3).
+pub const POLYGON_SIDES: PropertyKey = shape_keys::POLYGON_SIDES;
+/// Polygon 회전(도, 문서 key `polygon-rotation`).
+pub const POLYGON_ROTATION: PropertyKey = shape_keys::POLYGON_ROTATION;
+/// Polygon corner radius(문서 key `polygon-corner-radius`).
+pub const POLYGON_CORNER_RADIUS: PropertyKey = shape_keys::POLYGON_CORNER_RADIUS;
 
-// --- Path·Text (0xE4xx) ---
+// --- Path·Text (문서 payload 단위 key, IX.11.3) ---
 
-/// Path payload 전체(command·point id, 문서 canonical 인코딩).
-pub const PATH_DATA: PropertyKey = PropertyKey(0xE401);
-/// Text payload 전체(content·paragraph·style run, 문서 canonical 인코딩).
+/// Path payload 전체(command·point id, 문서 canonical 인코딩, 문서 key `path-data`).
+pub const PATH_DATA: PropertyKey = path_keys::PATH_DATA;
+/// Text payload 전체(content·paragraph·style run, 문서 canonical 인코딩, 문서 key `text-content`).
 ///
 /// style run은 content offset을 가리키므로 content와 분리하면 병합이 의미를 깨뜨립니다.
-pub const TEXT_PAYLOAD: PropertyKey = PropertyKey(0xE402);
+pub const TEXT_PAYLOAD: PropertyKey = text_keys::TEXT_CONTENT;
 
 // --- Image (0xE6xx, asset 참조는 문서 key 0x0601) ---
 
 /// Image 상자 크기.
 pub const IMAGE_SIZE: PropertyKey = PropertyKey(0xE601);
-/// Image fit tag.
-pub const IMAGE_FIT: PropertyKey = PropertyKey(0xE602);
-/// Image crop `(x, y, width, height)`.
-pub const IMAGE_CROP: PropertyKey = PropertyKey(0xE603);
-/// Image sampling tag.
-pub const IMAGE_SAMPLING: PropertyKey = PropertyKey(0xE604);
-/// Image 색공간 override tag.
-pub const IMAGE_COLOR_SPACE: PropertyKey = PropertyKey(0xE605);
+/// Image fit tag(문서 key `object-fit`, IX.11.3).
+pub const IMAGE_FIT: PropertyKey = image_keys::OBJECT_FIT;
+/// Image crop `(x, y, width, height)`(문서 key `image-crop`).
+pub const IMAGE_CROP: PropertyKey = image_keys::IMAGE_CROP;
+/// Image sampling tag(문서 key `image-rendering`).
+pub const IMAGE_SAMPLING: PropertyKey = image_keys::IMAGE_RENDERING;
+/// Image 색공간 override tag(문서 key `image-color-space`).
+pub const IMAGE_COLOR_SPACE: PropertyKey = image_keys::IMAGE_COLOR_SPACE;
 
 // --- Component 정의·Slot (0xE7xx) ---
 
@@ -186,6 +192,12 @@ pub const VARIANT_SLOT_CHANGE: PropertyKey = PropertyKey(0xEB03);
 /// 값이 asset 참조인 속성 key. 이 key의 변경은 `AssetRefChange`로 분류합니다.
 pub const ASSET_REFERENCE_KEYS: [PropertyKey; 1] = [IMAGE_ASSET];
 
+/// semantic diff 표시 문자열(IX.11.2): 문서 registry의 CSS longhand 또는 Stellar 이름이고, 묶음 key는 대응
+/// longhand 이름 목록입니다. 문서 registry에 없는 snapshot 전용 key는 `None`(호출자는 숫자 key를 씁니다).
+pub fn display_name(key: PropertyKey) -> Option<String> {
+    stellar_document::css::registry::display_label(key)
+}
+
 /// key가 asset 참조 속성인지.
 pub fn is_asset_reference(key: PropertyKey) -> bool {
     ASSET_REFERENCE_KEYS.contains(&key)
@@ -228,6 +240,9 @@ mod tests {
             ("instance.property_overrides", instance::PROPERTY_OVERRIDES),
             ("instance.slot_overrides", instance::SLOT_OVERRIDES),
             ("modifier.enabled", modifier::ENABLED),
+            ("modifier.shadow_offset", modifier::SHADOW_OFFSET),
+            ("modifier.shadow_offset_x", modifier::SHADOW_OFFSET_X),
+            ("modifier.shadow_offset_y", modifier::SHADOW_OFFSET_Y),
             ("visible", VISIBLE),
             ("locked", LOCKED),
             ("display_name", DISPLAY_NAME),
@@ -302,20 +317,91 @@ mod tests {
 
     #[test]
     fn snapshot_only_keys_stay_in_reserved_band() {
-        // 문서 crate key(0x01xx·0x06xx·0x0Axx·0x10xx)를 제외한 전용 key는 0xE0xx~0xEFxx.
+        // 전용 대역(0xE0xx~0xEFxx) 밖의 key는 문서 crate가 정한 key여야 합니다(registry 또는 instance key).
         for (name, key) in all_keys() {
-            let reused = name.starts_with("frame.")
-                || name.starts_with("instance.")
-                || name.starts_with("modifier.")
-                || name == "image.asset";
-            if !reused {
-                assert!(
-                    (0xE000..=0xEFFF).contains(&key.0),
-                    "{name}=0x{:04X}가 전용 대역 밖입니다",
-                    key.0
-                );
+            if (0xE000..=0xEFFF).contains(&key.0) {
+                continue;
             }
+            let documented = stellar_document::css::registry::display_label(key).is_some()
+                || name.starts_with("instance.");
+            assert!(
+                documented,
+                "{name}=0x{:04X}가 전용 대역 밖인데 문서 key가 아닙니다",
+                key.0
+            );
         }
+    }
+
+    #[test]
+    fn shape_path_text_image_fields_with_a_document_key_do_not_use_snapshot_only_keys() {
+        // 검증 기준(IX.11.3): 문서 key가 생긴 필드의 snapshot 전용 key 사용 0. 남은 0xE3xx·0xE6xx는 값 여러
+        // 개를 한 경로에 담는 투영(build.rs 소유 범위가 longhand 경로로 나눌 때 교체)과 도형 종류 tag뿐입니다.
+        let remaining: Vec<&str> = all_keys()
+            .into_iter()
+            .filter(|(_, key)| (0xE300..=0xE6FF).contains(&key.0))
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(
+            remaining,
+            [
+                "shape.kind",
+                "rect.size",
+                "rect.corner_radius",
+                "ellipse.bounds",
+                "line.start",
+                "line.end",
+                "polygon.bounds",
+                "image.size",
+            ]
+        );
+        for key in [
+            LINE_CAP,
+            POLYGON_SIDES,
+            POLYGON_ROTATION,
+            POLYGON_CORNER_RADIUS,
+            PATH_DATA,
+            TEXT_PAYLOAD,
+            IMAGE_FIT,
+            IMAGE_CROP,
+            IMAGE_SAMPLING,
+            IMAGE_COLOR_SPACE,
+        ] {
+            assert!(display_name(key).is_some(), "0x{:04x}", key.0);
+        }
+    }
+
+    #[test]
+    fn display_names_follow_the_document_registry() {
+        assert_eq!(
+            display_name(frame::BACKGROUND).as_deref(),
+            Some("background-color")
+        );
+        assert_eq!(display_name(frame::WIDTH).as_deref(), Some("width"));
+        assert_eq!(display_name(frame::SIZE).as_deref(), Some("width, height"));
+        assert_eq!(display_name(modifier::FILL_COLOR).as_deref(), Some("fill"));
+        assert_eq!(
+            display_name(modifier::OPACITY_VALUE).as_deref(),
+            Some("opacity")
+        );
+        assert_eq!(display_name(VISIBLE), None);
+    }
+
+    #[test]
+    fn reserved_context_snapshot_keys_are_unused_and_in_the_snapshot_band() {
+        // 검증 기준(IX.12.1): 예약한 snapshot key·대역이 지금 key와 겹치지 않음.
+        use stellar_core_types::reserved::context::{
+            SNAPSHOT_COMPONENT_CONTEXT_REQUIREMENTS, SNAPSHOT_CONTEXT_BAND,
+            SNAPSHOT_SLOT_CONTEXT_KEYS,
+        };
+        let used: Vec<u32> = all_keys().iter().map(|(_, k)| k.0).collect();
+        for reserved in [
+            SNAPSHOT_COMPONENT_CONTEXT_REQUIREMENTS,
+            SNAPSHOT_SLOT_CONTEXT_KEYS,
+        ] {
+            assert!(!used.contains(&reserved), "0x{reserved:04X}");
+            assert!((0xE000..=0xEFFF).contains(&reserved));
+        }
+        assert!(used.iter().all(|k| k >> 8 != SNAPSHOT_CONTEXT_BAND >> 8));
     }
 
     #[test]
@@ -323,5 +409,56 @@ mod tests {
         assert!(is_asset_reference(IMAGE_ASSET));
         assert!(!is_asset_reference(IMAGE_SIZE));
         assert!(!is_asset_reference(frame::SIZE));
+    }
+
+    #[test]
+    fn frame_snapshot_uses_longhand_keys_so_corner_edits_touch_disjoint_paths() {
+        // 검증 기준(IX.11.22) 일부: 서로 다른 모서리를 바꾼 두 편집은 서로 다른 snapshot 경로만 바꿉니다.
+        // 그래서 3-way merge가 같은 경로를 두 번 바꾸는 conflict를 만들 근거가 없습니다(merge 실행 test는
+        // semantic-merge crate 범위).
+        use stellar_core_types::ids::StableId;
+        use stellar_core_types::order_key::OrderKey;
+        use stellar_core_types::property::PropertyPath;
+        use stellar_document::frame::{CornerRadius, FramePayload};
+        use stellar_document::records::{NodePayload, NodeRecord};
+
+        let id = StableId::new_v7(3, 0, 3);
+        let record = |radius: CornerRadius| NodeRecord {
+            id,
+            parent: None,
+            order_key: OrderKey::between(None, None),
+            visible: true,
+            locked: false,
+            display_name: "card".into(),
+            payload: NodePayload::Frame(FramePayload {
+                corner_radius: radius,
+                ..FramePayload::default()
+            }),
+        };
+        let document = StableId::new_v7(1, 0, 1);
+        let project =
+            |radius| crate::build::project_document_node(document, &record(radius)).unwrap();
+        let base = project(CornerRadius::ZERO);
+        let ours = project(CornerRadius::new(4., 0., 0., 0.).unwrap());
+        let theirs = project(CornerRadius::new(0., 0., 8., 0.).unwrap());
+        let changed = |other: &crate::snapshot::SemanticObject| -> Vec<PropertyPath> {
+            base.properties()
+                .iter()
+                .filter(|(path, value)| other.property(path) != Some(value))
+                .map(|(path, _)| path.clone())
+                .collect()
+        };
+        let path = |key| PropertyPath::with_keys(id, vec![key]);
+        assert_eq!(changed(&ours), vec![path(frame::BORDER_TOP_LEFT_RADIUS)]);
+        assert_eq!(
+            changed(&theirs),
+            vec![path(frame::BORDER_BOTTOM_RIGHT_RADIUS)]
+        );
+        assert!(
+            base.property(&path(frame::CORNER_RADIUS)).is_none(),
+            "묶음 key 경로 없음"
+        );
+        assert!(base.property(&path(frame::SIZE)).is_none());
+        assert!(base.property(&path(frame::WIDTH)).is_some());
     }
 }
