@@ -25,7 +25,7 @@ use crate::placeholder::{TextureFilter, TextureWrap};
 use crate::render_graph::TextureFormat;
 
 use super::artifact::RgbaImage;
-use super::blur::{kernel, layer_blur_sigma, shadow_sigma};
+use super::blur::kernel;
 use super::fixture::{
     ClipSpec, Coverage, CoverageShape, FillOp, Fixture, FixtureError, GlyphOp, ImageData, ImageOp,
     LayerOp, Op, Paint, IMAGE_TEXTURE_FORMAT,
@@ -248,15 +248,21 @@ fn draw_layer(canvas: &mut Canvas, layer: &LayerOp, plan: &OutputColorPlan) {
     if !layer.shadows.is_empty() {
         let mut stacked = layer_canvas(canvas, plan);
         for shadow in &layer.shadows {
-            let sigma = shadow_sigma(shadow.blur);
+            let [sigma_x, sigma_y] = shadow.sigmas();
             let alpha = blur_pass(
                 &group,
-                sigma,
+                sigma_x,
                 [1, 0],
                 true,
                 WorkingColor::premultiplied([1.0; 4]),
             );
-            let colored = blur_pass(&alpha, sigma, [0, 1], false, to_working(plan, shadow.color));
+            let colored = blur_pass(
+                &alpha,
+                sigma_y,
+                [0, 1],
+                false,
+                to_working(plan, shadow.color),
+            );
             let [ox, oy] = shadow.offset.map(i64::from);
             for y in 0..stacked.height {
                 for x in 0..stacked.width {
@@ -273,11 +279,11 @@ fn draw_layer(canvas: &mut Canvas, layer: &LayerOp, plan: &OutputColorPlan) {
         }
         group = stacked;
     }
-    let sigma = layer_blur_sigma(layer.blur);
-    if sigma > 0.0 {
+    let [sigma_x, sigma_y] = layer.blur_sigmas();
+    if sigma_x > 0.0 || sigma_y > 0.0 {
         let unit = WorkingColor::premultiplied([1.0; 4]);
-        let horizontal = blur_pass(&group, sigma, [1, 0], false, unit);
-        group = blur_pass(&horizontal, sigma, [0, 1], false, unit);
+        let horizontal = blur_pass(&group, sigma_x, [1, 0], false, unit);
+        group = blur_pass(&horizontal, sigma_y, [0, 1], false, unit);
     }
     let (w, h) = (canvas.width, canvas.height);
     // clip·mask coverage(scissor·stencil은 0/1, mask는 저장한 8-bit coverage).

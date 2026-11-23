@@ -85,3 +85,8 @@ pub use stack::{ClipStackRef, PaintStackRef};
 
 pub use stellar_core_types::color::ColorSpace;
 pub use stellar_core_types::value::{FiniteF32, NonFiniteError, Size2, Vec2};
+/// renderer frame encoder가 node 좌표·식별자를 다루도록 재노출합니다(ADR-0116 결정 4).
+pub use stellar_core_types::{
+    ids::StableId,
+    value::{Rect, Transform2D},
+};
