@@ -61,3 +61,12 @@
 ## 남은 위험 / 한계
 
 - 없음.
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(XVI.7.3)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `b14ea25f` Feat: 의미 단위 Git 엔진을 ops에 두고 commit 직전 재검증을 더함
+- `7753af02` Test: Git 엔진 통합 시나리오와 작업 보고서 추가
+- `81d24096` Feat: stellar git status·stage·unstage·commit 명령 추가
+- `dd1a871f` Fix: index 게시에서 격리 작업 트리와 hook 차단 제거

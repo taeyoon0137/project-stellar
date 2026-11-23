@@ -2,7 +2,7 @@
 
 - WBS: XI.2.5
 - 작업명: dirty subtree만 재빌드하고 변경되지 않은 scene node/resource refs를 공유
-- 상태: 완료 (`[x]`)
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록(ledger-refresh): 행 지시·검증 열을 코드와 테스트로 확인했고 선행이 모두 `[x]`입니다. 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 원장이 근거 커밋을 찾지 못했습니다(scene-incremental-perf lane). 선행 XI.2.1도 같은 판정으로 `[x]`입니다. 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 완료 (`[x]`)
 - 결정: ADR-0084 결정 3
 - 선행: XI.1.4(`[x]`), XI.2.1(이 lane)
 
@@ -54,3 +54,13 @@
 
 - 삽입·삭제는 뒤쪽 node의 z를 다시 매기므로 O(뒤쪽 node 수)의 node 할당이 남습니다(ADR-0084 Consequences).
 - 앱의 캔버스 행(`CanvasScene`)은 아직 이 경로를 쓰지 않습니다(UI 재설계 때 연결).
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(XI.2.5)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `201c908b` Feat: dirty subtree만 다시 만드는 증분 scene build 추가 (XI.2.5)
+- `2acacac5` Feat: 증분 snapshot의 공유 subtree를 건너뛰는 공간 인덱스 갱신 추가 (XI.2.5)
+- `f588acbc` Fix: 구조가 그대로인 change set은 scene source 색인을 다시 만들지 않음
+- `194d1211` Fix: 부모나 root가 아직 가리키는 node를 지우는 scene source 편집을 거부함
+- `e0081d50` Fix: scene source 증분 변환이 operand 조상 이동·operand 전환·포함 여부 변화를 놓치지 않게 함

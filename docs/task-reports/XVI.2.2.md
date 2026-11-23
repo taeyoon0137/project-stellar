@@ -2,7 +2,7 @@
 
 - WBS: XVI.2.2
 - 작업명: core-only replay runner로 UI 없이 command/layout/scene 단계까지 재생
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 ledger-refresh 판정: 선행 미충족(계획 1.2 규칙 4)과 남은 범위: 선행 XVI.2.1(`[~]`)이 `[x]`가 아니고, 재생 layout 변환이 Free node만 따로 다루는 경로라 문서 → layout 입력 연결로 바꿔야 합니다(아래 "남은 위험"). 이전 기록: 완료 (`[x]`)
 - 결정: ADR-0084 결정 6·9
 - 선행: XVI.2.1(이 lane)
 

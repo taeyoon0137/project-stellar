@@ -2,7 +2,7 @@
 
 - WBS: XVI.1.4
 - 작업명: interaction kind, document size bucket, visible node bucket, cache state만 dimension으로 허용
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 ledger-refresh 판정: 구현 판정 통과, 선행 미충족(계획 1.2 규칙 4): 선행 XVI.1.3(`[~]`)이 `[x]`가 아닙니다(XVI.1.2 사슬). 이전 기록: 완료 (`[x]`)
 - 결정: ADR-0084 결정 8
 - 선행: II.3.2(`[x]`), XVI.1.3(이 lane)
 

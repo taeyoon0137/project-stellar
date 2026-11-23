@@ -77,3 +77,11 @@
   cli-mcp-git-cleanup 2).
 - staged 재검증은 generation만 읽고 텍스트 원본(`design/**.stellar.yaml`) 정합은 보지 않습니다. 텍스트 원본이 기본 저장이
   되는 V.10.7 전환 때 넣습니다(ADR-0080 개정 integration-followups 결정 2).
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(XIV.8.1)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `b14ea25f` Feat: 의미 단위 Git 엔진을 ops에 두고 commit 직전 재검증을 더함
+- `7753af02` Test: Git 엔진 통합 시나리오와 작업 보고서 추가
+- `2ac9bd6f` Refactor: staged 재검증이 stellar validate의 문서 판정 함수를 쓰고 텍스트 원본을 원본 단위로 나눔

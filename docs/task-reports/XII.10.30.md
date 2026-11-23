@@ -2,7 +2,7 @@
 
 - WBS: XII.10.30
 - 작업명: Boolean modifier geometry 평가를 결정론적 순수 함수로 구현하고 scene builder에 연결
-- 상태: 완료 (`[x]`)
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록(ledger-refresh): 행 지시·검증 열을 코드와 테스트로 확인했고 선행이 모두 `[x]`입니다. 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 원장이 근거 커밋을 찾지 못했습니다(scene-incremental-perf lane). operand 단독 표시와 operand 순서 규칙은 ADR-0084 결정 7에 있습니다. 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 완료 (`[x]`)
 - 결정: ADR-0084 결정 7(Accepted)
 - 선행: VI.9.4(`[x]`), VI.5.6(`[x]`), XI.2.2(`[x]`)
 
@@ -76,3 +76,9 @@
 - 변경 파일: `crates/runtime/src/canvas/scene_source.rs`, `crates/runtime/src/canvas/scene_source/tests.rs`, `docs/adr/ADR-0084-…`.
 - 테스트: `scene_source::tests::operands_of_a_skipped_host_stay_absorbed_and_are_recorded`. host에 StrokeExpand를 더하면 host는 UnsupportedModifiers, operand는 BooleanHostSkipped이고 scene은 root만 남습니다. 지우면 기록이 사라지고 결과가 돌아옵니다. 매 단계 증분 결과(source·skip·scene hash)가 처음부터 변환한 결과와 같습니다.
 - 검증: `cargo test -p stellar-runtime --lib scene_source` 11 passed.
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(XII.10.30)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `31a5c338` Feat: Boolean modifier geometry를 결정론적 순수 함수로 평가 (XII.10.30)

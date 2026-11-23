@@ -2,7 +2,7 @@
 
 - WBS: XIX.9.10
 - 작업명: MCP 경로의 자원 사용(호출량, payload 크기, 대기 시간)에 상한을 두고 넘으면 거부하거나 busy로 응답
-- 상태: 구현 완료, 원장 판정 보류 (`[~]`) — 선행 XIX.9.4(attached backend, `[ ]`)가 이 lane 범위 밖이라 `[x]`로 올리지 않습니다. headless 경로의 상한은 모두 구현했고 attached backend도 같은 서버 판정을 거칩니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 ledger-refresh 판정: 구현 판정 통과, 선행 미충족(계획 1.2 규칙 4): 선행 XIX.9.4(attached backend, `[ ]`)가 `[x]`가 아닙니다. 이전 기록: 구현 완료, 원장 판정 보류 (`[~]`) — 선행 XIX.9.4(attached backend, `[ ]`)가 이 lane 범위 밖이라 `[x]`로 올리지 않습니다. headless 경로의 상한은 모두 구현했고 attached backend도 같은 서버 판정을 거칩니다.
 - 선행: XIX.9.4 `[ ]`
 
 ## 필수 실행 환경

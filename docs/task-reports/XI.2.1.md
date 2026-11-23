@@ -2,7 +2,7 @@
 
 - WBS: XI.2.1
 - 작업명: layout/binding/modifier invalidation을 scene dirty set으로 변환
-- 상태: 완료 (`[x]`)
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록(ledger-refresh): 행 지시·검증 열을 코드와 테스트로 확인했고 선행이 모두 `[x]`입니다. 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 원장이 근거 커밋을 찾지 못했습니다(scene-incremental-perf lane). binding 출처 무효화는 `InvalidationOrigin::Binding`으로 같은 변환을 거치며, 그 출처를 만드는 binding 재평가 연결은 VIII 행 몫입니다. 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 완료 (`[x]`)
 - 결정: ADR-0084 결정 2
 - 선행: VII.1.4(`[x]`), X.7.1(`[x]`), VI.9.7(`[x]`)
 
@@ -64,3 +64,9 @@
   - `scene_source::tests::ancestor_move_of_an_operand_puts_the_host_in_the_dirty_set`: 실제 Frame transform command에서 Frame은 Paint, host는 Geometry.
 - 검증: `cargo test -p stellar-scene dirty` 6 passed, `cargo test -p stellar-runtime --lib scene_source` 10 passed.
 - 검토 보완: operand 조상 표를 "operand → 조상 목록"에서 "조상 → host 목록"으로 뒤집었습니다. 이전 구현은 dirty node마다 operand 전체와 그 조상 목록을 훑어(dirty 수 × operand 수 × 깊이) 많은 node를 한 번에 옮길 때 scene 단계 비용이 커질 수 있었습니다. 이제 `descendant_dependents`는 표 조회 한 번입니다. 결과는 같고, 위 두 테스트가 그대로 통과합니다.
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(XI.2.1)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `894dce8b` Feat: layout·binding·modifier 무효화를 scene dirty set으로 바꿈 (XI.2.1)

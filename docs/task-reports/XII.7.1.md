@@ -4,7 +4,7 @@
 
 - WBS: XII.7.1
 - 작업명: 창 session base generation·hash 유지와 저장 전 디스크 비교
-- 상태: 완료 (`[x]`) 원장 판정은 통합 때 `generate-ledger`로 정합니다.
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록(ledger-refresh): 행 지시·검증 열을 코드와 테스트로 확인했고 선행이 모두 `[x]`입니다. 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 원장이 근거 커밋을 찾지 못했습니다(window-session-stale lane). 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 완료 (`[x]`) 원장 판정은 통합 때 `generate-ledger`로 정합니다.
 - 선행: XII.2.4, V.5.2
 - 결정: [ADR-0083](../adr/ADR-0083-window-session-stale-and-external-sync.md)
 - lane: `window-session-stale`
@@ -45,3 +45,9 @@
 ## 남은 위험
 
 - writer 출처는 이 프로세스의 앱 창 저장 기록입니다. 앱 재시작 뒤 처음 보는 다른 창 generation은 외부로 봅니다(ADR-0083 결정 2).
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(XII.7.1)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `75f2b026` Feat: 창 session의 stale 두 선택 실행과 외부 변경 command 반영 추가 (XII.7.1·XII.7.5·XII.7.6·UX.4.1)

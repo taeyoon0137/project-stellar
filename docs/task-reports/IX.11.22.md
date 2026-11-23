@@ -2,9 +2,7 @@
 
 - WBS: IX.11.22
 - 작업명: Frame `size`·`corner_radius`, modifier Shadow offset 합성 key를 longhand key로 나누고 옛 key를 묶음 key로 남김
-- 상태: 완료 (`[x]`) — registry·command·묶음 key 진단·decode 동등성, snapshot의 Shadow offset longhand 투영,
-  서로 다른 모서리·offset 축 3-way merge conflict 0 실행 test, Variant·binding validator의 묶음 key 검사 연결까지
-  끝났습니다(2026-11-23 integration-followups 보완).
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록(ledger-refresh): `[~]`의 이유였던 남은 범위(다값 snapshot 경로, Shadow offset 투영, variant validator 연결)를 integration-followups lane이 끝냈습니다(아래 "후속 보완" 절). 선행이 모두 `[x]`입니다. 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 원장이 근거 커밋을 찾지 못했습니다. 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 완료 (`[x]`) — registry·command·묶음 key 진단·decode 동등성, snapshot의 Shadow offset longhand 투영, 서로 다른 모서리·offset 축 3-way merge conflict 0 실행 test, Variant·binding validator의 묶음 key 검사 연결까지 끝났습니다(2026-11-23 integration-followups 보완).
 - 결정: ADR-0075 결정 1
 
 ## 필수 실행 환경
@@ -85,3 +83,12 @@
   `bundle_key_reference`를 넘겨야 합니다.
 - 소유 밖 변경: `crates/document/src/component/variant_override.rs`(검사 호출과 오류 variant, test),
   `crates/semantic-diff/src/stage.rs`·`status.rs`(test 기대 경로만).
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(IX.11.22)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `4418ae50` Feat: 합성 속성 key를 longhand key로 나누고 묶음 key 진단 추가
+- `ac1df8a5` Refactor: 묶음 key를 공유하던 border-width·border-color 행을 되돌림
+- `9110a55e` Fix: 이름으로 속성 key를 찾을 때 묶음 key를 고르지 않게 함
+- `27ac2535` Feat: semantic snapshot의 다값 경로를 longhand 문서 key로 나누고 묶음 key 검사를 validator에 연결
