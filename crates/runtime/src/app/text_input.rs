@@ -224,7 +224,10 @@ fn finish(entry: &mut WindowEntry, request: RequestId) -> Result<Option<EditEnd>
         .map_err(edit_failure)
 }
 
-/// 편집을 시작합니다. `ids`는 새 Text가 쓸 node·Transform modifier ID입니다.
+/// 편집을 시작하고 그 편집의 token을 돌려줍니다. `ids`는 새 Text가 쓸 node·Transform modifier ID입니다. 같은 Text의
+/// 편집이 이어질 때 `retoken`이면 token을 이 요청 ID로 바꾸고(`begin_canvas_text`), 아니면 셸이 쥔 token을
+/// 그대로 둡니다(`replace_canvas_text`).
+#[allow(clippy::too_many_arguments)]
 fn begin(
     entry: &mut WindowEntry,
     request: RequestId,
@@ -233,7 +236,8 @@ fn begin(
     target: TextTarget,
     replacement: TextRange,
     ids: Option<[StableId; 2]>,
-) -> Result<StableId, Failure> {
+    retoken: bool,
+) -> Result<u64, Failure> {
     if entry.session.revision() != revision || entry.session.tabs().active_view() != Some(view) {
         return Err(stale());
     }
@@ -253,9 +257,11 @@ fn begin(
             live.editor
                 .set_selection(doc, selection_of(replacement))
                 .map_err(edit_failure)?;
-            live.token = token;
+            if retoken {
+                live.token = token;
+            }
             live.refresh(&entry.session);
-            return Ok(node);
+            return Ok(live.token);
         }
     }
     // 다른 대상의 편집이 남아 있으면 먼저 끝냅니다.
@@ -296,7 +302,6 @@ fn begin(
         }
         (_, None) => return Err(stale()),
     };
-    let node = editor.node();
     let mut composition = TextComposition {
         token,
         view,
@@ -306,7 +311,7 @@ fn begin(
     };
     composition.refresh(&entry.session);
     entry.text = Some(composition);
-    Ok(node)
+    Ok(token)
 }
 
 /// 진행 중 편집기 하나에 일을 시킵니다. 대상이 사라졌거나 잠겼으면 편집기를 버립니다.
@@ -364,7 +369,16 @@ impl AppRuntime {
         };
         self.submit(move |ctx, request| {
             let entry = entry_mut(ctx, session)?;
-            begin(entry, request, view, revision, target, replacement, ids)?;
+            begin(
+                entry,
+                request,
+                view,
+                revision,
+                target,
+                replacement,
+                ids,
+                true,
+            )?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
         .map(|request| (request, node))
@@ -497,7 +511,8 @@ impl AppRuntime {
     }
 
     /// 조합 없는 입력(타이핑·삭제·붙여넣기) 한 번: Text의 `range`(그 revision의 본문 기준)를 `text`로 바꾸는 확정
-    /// 입력으로 기록합니다. 그 Text의 편집이 없으면 편집을 시작해 이어 둡니다(token은 이 요청 ID).
+    /// 입력으로 기록합니다. 그 Text의 편집이 이어지고 있으면 그 편집(token 그대로)에 기록하고, 없으면 편집을 시작해
+    /// 이어 둡니다(token은 이 요청 ID).
     pub fn replace_canvas_text(
         &self,
         session: WindowSessionHandle,
@@ -509,7 +524,7 @@ impl AppRuntime {
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
             let entry = entry_mut(ctx, session)?;
-            begin(
+            let token = begin(
                 entry,
                 request,
                 view,
@@ -517,9 +532,10 @@ impl AppRuntime {
                 TextTarget::Node(node),
                 range,
                 None,
+                false,
             )?;
             let id = command_id(entry.session.window(), request);
-            with_editor(entry, request.0, |editor, host| {
+            with_editor(entry, token, |editor, host| {
                 editor.insert(host, &text, id, &InputClock)
             })?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
@@ -674,6 +690,9 @@ mod tests {
             "!".into(),
         )));
         assert_eq!(rig.content(sid(11)).unwrap(), "🎨한글!\n끝");
+        // 직접 입력 뒤에도 시작 token으로 편집이 이어집니다.
+        assert!(rig.done(rig.app.mark_canvas_text(rig.window, token, "?".into())));
+        assert!(rig.done(rig.app.cancel_canvas_text(rig.window, token)));
         let summary = rig.summary();
         assert_eq!(summary.undo_depth, depth + 2);
         assert_eq!(summary.undo_label, history_label::TYPING);
