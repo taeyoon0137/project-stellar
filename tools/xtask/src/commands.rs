@@ -32,10 +32,11 @@ pub const EXIT_POLICY: i32 = 65;
 pub const EXIT_INTERNAL: i32 = 70;
 
 /// 등록된 명령 이름(help 포함).
-pub const COMMANDS: [&str; 17] = [
+pub const COMMANDS: [&str; 18] = [
     "help",
     "generate-ledger",
     "generate-ffi-header",
+    "generate-command-schema",
     "validate-task-status",
     "validate-task-report",
     "validate-pr-body",
@@ -83,6 +84,7 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
             .map(|count| println!("planning/task-status.yaml 생성 완료: {count} tasks"))
             .map_err(|e| internal(&e)),
         "generate-ffi-header" => cmd_generate_ffi_header(repo_root, rest),
+        "generate-command-schema" => cmd_generate_command_schema(repo_root, rest),
         "validate-task-status" => cmd_validate_task_status(repo_root, rest),
         "validate-task-report" => cmd_validate_task_report(repo_root, rest),
         "validate-pr-body" => cmd_validate_pr_body(repo_root, rest),
@@ -364,6 +366,25 @@ fn cmd_validate_crate_graph(repo_root: &Path) -> Result<(), i32> {
                 .map(|v| v.message.clone())
                 .collect::<Vec<_>>(),
         ))
+    }
+}
+
+fn cmd_generate_command_schema(repo_root: &Path, rest: &[String]) -> Result<(), i32> {
+    let path = crate::command_schema::SCHEMA_PATH;
+    let check = rest.iter().any(|a| a == "--check");
+    match crate::command_schema::generate_file(repo_root, check) {
+        Ok(true) if check => {
+            println!("CommandTransaction schema drift 없음: {path}");
+            Ok(())
+        }
+        Ok(false) => Err(policy_err(&[format!(
+            "CommandTransaction schema drift: {path}가 생성 결과와 다릅니다. `cargo xtask generate-command-schema`로 재생성하세요."
+        )])),
+        Ok(_) => {
+            println!("CommandTransaction schema 생성 완료: {path}");
+            Ok(())
+        }
+        Err(e) => Err(internal(&e)),
     }
 }
 

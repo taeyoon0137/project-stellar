@@ -21,6 +21,8 @@
 
 use std::io::{self, BufRead, Write};
 
+use stellar_agent_protocol::instructions;
+
 use crate::framing::{read_frame, write_frame, Frame};
 use crate::json::{self, JsonLimits, JsonValue};
 use crate::jsonrpc::{classify, codes, response_err, response_ok, Incoming, RpcError};
@@ -265,6 +267,15 @@ impl Server {
                     ("name", JsonValue::string(SERVER_NAME)),
                     ("version", JsonValue::string(env!("CARGO_PKG_VERSION"))),
                 ]),
+            ),
+            // MCP Lifecycle `InitializeResult.instructions`(XIX.9.2): 고정 안내만 넣고 프로젝트 문자열은 넣지 않습니다.
+            (
+                "instructions",
+                JsonValue::string(if self.headless.is_some() {
+                    instructions::HEADLESS_INSTRUCTIONS
+                } else {
+                    instructions::BRIDGE_INSTRUCTIONS
+                }),
             ),
         ]))
     }

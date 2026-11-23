@@ -6,8 +6,8 @@
 //!   기본 비활성 (XIX.2.4).
 //! - [`scope`]: 요청 URI·tool 인자·응답 payload의 승인 프로젝트·세션 범위 제한 (XIX.2.5).
 //!
-//! 이 모듈은 정의와 순수 판정만 담습니다. headless backend(XIX.9.3)는 구현한 구조·문서 resource와 저장 문서 검증 tool을
-//! 이 정의에서 골라 광고합니다. 나머지 연결과 agent-protocol로의 이동(XIX.9.2)은 후속입니다.
+//! resource·tool 정의는 `stellar-agent-protocol`에 있고(XIX.9.2), [`resources`]·[`tools`]는 그 정의에서 MCP
+//! 목록 JSON을 만듭니다. headless backend(XIX.9.3)는 정의의 `availability`로 목록을 고릅니다.
 
 /// read resource 정의 (XIX.2.1).
 pub mod resources;
@@ -66,10 +66,7 @@ pub fn catalog_snapshot() -> JsonValue {
             ));
             fields.push((
                 "enabledByDefault".to_string(),
-                JsonValue::Bool(
-                    tools::ToolNamespace::of(tool.name)
-                        .is_some_and(|n| tools::EnabledNamespaces::default().includes(n)),
-                ),
+                JsonValue::Bool(tools::EnabledNamespaces::default().shows(tool)),
             ));
             JsonValue::Object(fields)
         })

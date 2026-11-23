@@ -13,3 +13,12 @@ pub use stellar_core_types as core_types;
 
 /// 권한 어휘 Read·Propose·Apply·Terminal·FileDelete·GitCommit·GitPush (XIX.3.1).
 pub mod permission;
+
+/// MCP resource·tool catalog 정의 (XIX.2, XIX.9.2).
+pub mod catalog;
+
+/// xtask가 생성한 schema 산출물 (XIX.9.2).
+pub mod schema;
+
+/// MCP `initialize`의 사용 안내 (XIX.9.2).
+pub mod instructions;

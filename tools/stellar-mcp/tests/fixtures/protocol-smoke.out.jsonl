@@ -1,6 +1,6 @@
 {"jsonrpc":"2.0","id":0,"result":{}}
 {"jsonrpc":"2.0","id":1,"error":{"code":-32002,"message":"initialize 전에는 ping만 허용합니다"}}
-{"jsonrpc":"2.0","id":2,"result":{"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"stellar-mcp","version":"0.0.0"}}}
+{"jsonrpc":"2.0","id":2,"result":{"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"stellar-mcp","version":"0.0.0"},"instructions":"Stellar MCP bridge입니다. 이 세션에는 선택된 프로젝트 backend가 없어 ping만 제공합니다. 프로젝트를 읽으려면 `stellar-mcp --headless --project <절대 경로>`로 실행합니다."}}
 {"jsonrpc":"2.0","id":"s-3","result":{}}
 {"jsonrpc":"2.0","id":4,"error":{"code":-32601,"message":"알 수 없는 method입니다","data":{"method":"no/such/method"}}}
 {"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"JSON 파싱 실패(unexpected-end)","data":{"offset":11}}}
