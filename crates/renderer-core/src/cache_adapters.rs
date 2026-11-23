@@ -12,6 +12,7 @@
 //!
 //! 썸네일 cache는 runtime(`stellar_runtime::cache::thumbnail`)에 있습니다.
 
+use std::any::Any;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
 use std::sync::Arc;
@@ -152,6 +153,51 @@ impl<K: Clone + Eq + Hash> LruBudget<K> {
     }
 }
 
+/// 지운 값을 [`ReleaseQueue`]에 모을 때 한 묶음의 크기.
+const RELEASE_BATCH: usize = 256;
+
+/// 지웠지만 아직 해제하지 않은 값(XVI.5.4). [`BudgetedCache::take_released`] 구현용입니다.
+///
+/// 고정 크기 묶음에 넣어, chunk 안에서 큰 `Vec`을 다시 할당(복사·새 memory region)하지 않습니다.
+#[derive(Debug)]
+pub struct ReleaseQueue<T> {
+    current: Vec<T>,
+    full: Vec<Vec<T>>,
+}
+
+impl<T> Default for ReleaseQueue<T> {
+    fn default() -> ReleaseQueue<T> {
+        ReleaseQueue {
+            current: Vec::new(),
+            full: Vec::new(),
+        }
+    }
+}
+
+impl<T: Send + 'static> ReleaseQueue<T> {
+    /// 값 하나를 넣습니다.
+    pub fn push(&mut self, value: T) {
+        if self.current.capacity() == 0 {
+            self.current = Vec::with_capacity(RELEASE_BATCH);
+        }
+        self.current.push(value);
+        if self.current.len() == RELEASE_BATCH {
+            self.full.push(std::mem::take(&mut self.current));
+        }
+    }
+
+    /// 모은 값을 한 묶음으로 꺼냅니다(비었으면 없음).
+    pub fn take(&mut self) -> Vec<Box<dyn Any + Send>> {
+        if !self.current.is_empty() {
+            self.full.push(std::mem::take(&mut self.current));
+        }
+        if self.full.is_empty() {
+            return Vec::new();
+        }
+        vec![Box::new(std::mem::take(&mut self.full))]
+    }
+}
+
 /// mesh가 차지하는 byte(vertex `Vec2` 8 byte + index `u32` 4 byte).
 pub fn mesh_bytes(mesh: &FillMesh) -> u64 {
     (mesh.vertices().len() as u64) * 8 + (mesh.indices().len() as u64) * 4
@@ -162,6 +208,8 @@ pub fn mesh_bytes(mesh: &FillMesh) -> u64 {
 pub struct BudgetedTessellationCache {
     inner: TessellationCache,
     budget: LruBudget<TessellationKey>,
+    /// 지웠지만 아직 해제하지 않은 mesh(XVI.5.4, worker thread에서 버림).
+    released: ReleaseQueue<Arc<FillMesh>>,
 }
 
 impl BudgetedTessellationCache {
@@ -248,11 +296,17 @@ impl BudgetedCache for BudgetedTessellationCache {
     fn evict_one(&mut self, priority: CachePriority) -> u64 {
         match self.budget.pop_lru(priority) {
             Some((key, bytes)) => {
-                self.inner.remove(&key);
+                if let Some(mesh) = self.inner.remove(&key) {
+                    self.released.push(mesh);
+                }
                 bytes
             }
             None => 0,
         }
+    }
+
+    fn take_released(&mut self) -> Vec<Box<dyn Any + Send>> {
+        self.released.take()
     }
 }
 
@@ -261,6 +315,8 @@ impl BudgetedCache for BudgetedTessellationCache {
 pub struct BudgetedMipmapCache {
     inner: TextureCache<MipChain>,
     budget: LruBudget<TextureCacheKey>,
+    /// 지웠지만 아직 해제하지 않은 mip chain(XVI.5.4, worker thread에서 버림).
+    released: ReleaseQueue<Arc<MipChain>>,
 }
 
 impl BudgetedMipmapCache {
@@ -332,11 +388,17 @@ impl BudgetedCache for BudgetedMipmapCache {
     fn evict_one(&mut self, priority: CachePriority) -> u64 {
         match self.budget.pop_lru(priority) {
             Some((key, bytes)) => {
-                self.inner.remove(&key);
+                if let Some(chain) = self.inner.remove(&key) {
+                    self.released.push(chain);
+                }
                 bytes
             }
             None => 0,
         }
+    }
+
+    fn take_released(&mut self) -> Vec<Box<dyn Any + Send>> {
+        self.released.take()
     }
 }
 

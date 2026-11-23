@@ -19,7 +19,7 @@ pub mod worker_pool;
 /// worker result 출처(source revision·input hash)와 stale result 거부 (XII.1.5).
 pub mod worker_result;
 
-/// cache 예산: 문서 썸네일 cache (XVI.5.3).
+/// cache 예산: memory pressure 증분 제거와 썸네일 cache (XVI.5.3·XVI.5.4).
 pub mod cache;
 
 pub mod input_trace;

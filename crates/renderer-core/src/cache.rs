@@ -164,6 +164,10 @@ impl CacheUsage {
 /// `priority`의 가장 오래 쓰지 않은 단위 하나를 지우고 줄어든 byte를 돌려줍니다. 지울 것이 없거나 지금 지울 수 없는
 /// 단위(현재 frame·GPU 진행 중)만 남았으면 0입니다. manager는 [`CachePriority::DocumentScene`]에 대해 `evict_one`을
 /// 부르지 않습니다. 한 번 호출은 짧아야 합니다(증분 제거의 단위, XVI.5.4).
+///
+/// 지운 resource의 메모리 반환(큰 buffer의 해제)은 UI thread chunk 안에서 하지 않습니다. cache는 지운 값을 들고 있다가
+/// [`BudgetedCache::take_released`]로 내주고, 호출자가 그 묶음([`ReleasedResources`])을 worker thread로 보내 버립니다.
+/// 사용량은 지운 즉시 줄어든 것으로 봅니다.
 pub trait BudgetedCache: Any {
     /// cache 종류.
     fn kind(&self) -> CacheKind;
@@ -171,6 +175,39 @@ pub trait BudgetedCache: Any {
     fn usage(&self) -> CacheUsage;
     /// `priority`의 단위 하나를 지우고 줄어든 byte를 돌려줍니다.
     fn evict_one(&mut self, priority: CachePriority) -> u64;
+    /// 지운 뒤 아직 메모리를 돌려주지 않은 값을 꺼냅니다. 기본은 없음(지울 때 바로 해제하는 cache).
+    fn take_released(&mut self) -> Vec<Box<dyn Any + Send>> {
+        Vec::new()
+    }
+}
+
+/// 지운 resource 묶음. 버리면(drop) 메모리를 돌려주므로 UI thread가 아닌 thread에서 버립니다(XVI.5.4).
+#[derive(Default)]
+pub struct ReleasedResources(Vec<Box<dyn Any + Send>>);
+
+impl ReleasedResources {
+    /// 다른 묶음을 뒤에 붙입니다.
+    pub fn append(&mut self, mut other: ReleasedResources) {
+        self.0.append(&mut other.0);
+    }
+
+    /// 묶음 안 값 수.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// 비었으면 `true`.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl std::fmt::Debug for ReleasedResources {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("ReleasedResources")
+            .field(&self.0.len())
+            .finish()
+    }
 }
 
 /// 제거 없이 사용량만 보고하는 항목(현재 문서 모델·Scene Snapshot처럼 manager가 지우지 않는 resource).
@@ -361,6 +398,17 @@ impl CacheBudgetManager {
         self.caches
             .iter()
             .fold(CacheUsage::new(), |sum, cache| sum.plus(cache.usage()))
+    }
+
+    /// 모든 cache가 지운 뒤 아직 메모리를 돌려주지 않은 값을 모읍니다. 호출자는 이 묶음을 worker thread에서 버립니다
+    /// (XVI.5.4: 큰 buffer 해제를 UI thread chunk 밖으로).
+    pub fn take_released(&mut self) -> ReleasedResources {
+        ReleasedResources(
+            self.caches
+                .iter_mut()
+                .flat_map(|cache| cache.take_released())
+                .collect(),
+        )
     }
 
     /// 다음에 지울 (cache, priority). 낮은 priority → 종류 순서 → 등록 순서.

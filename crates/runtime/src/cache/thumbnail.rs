@@ -4,12 +4,13 @@
 //! 사용량을 보고합니다(가장 먼저 지움). 지우는 순서는 가장 오래 보지 않은 썸네일부터입니다. 썸네일은 다시 그릴 수
 //! 있는 파생 값이라 지워도 문서 내용은 그대로입니다.
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use stellar_core_types::ids::StableId;
 use stellar_renderer_core::cache::{BudgetedCache, CacheKind, CachePriority, CacheUsage};
-use stellar_renderer_core::cache_adapters::LruBudget;
+use stellar_renderer_core::cache_adapters::{LruBudget, ReleaseQueue};
 
 /// 썸네일 key: 문서와 pixel 크기.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -62,6 +63,8 @@ impl Thumbnail {
 pub struct ThumbnailCache {
     entries: HashMap<ThumbnailKey, Thumbnail>,
     budget: LruBudget<ThumbnailKey>,
+    /// 지웠지만 아직 해제하지 않은 썸네일(XVI.5.4, worker thread에서 버림).
+    released: ReleaseQueue<Thumbnail>,
 }
 
 impl ThumbnailCache {
@@ -113,11 +116,17 @@ impl BudgetedCache for ThumbnailCache {
     fn evict_one(&mut self, priority: CachePriority) -> u64 {
         match self.budget.pop_lru(priority) {
             Some((key, bytes)) => {
-                self.entries.remove(&key);
+                if let Some(thumbnail) = self.entries.remove(&key) {
+                    self.released.push(thumbnail);
+                }
                 bytes
             }
             None => 0,
         }
+    }
+
+    fn take_released(&mut self) -> Vec<Box<dyn Any + Send>> {
+        self.released.take()
     }
 }
 
