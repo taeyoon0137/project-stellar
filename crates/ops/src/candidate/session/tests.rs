@@ -61,6 +61,7 @@ impl MergeGit for MemoryGit {
         Ok(())
     }
     fn operation(&self, _: &Path) -> Result<GitOperation, GitPortError> {
+        self.calls.borrow_mut().push("operation".into());
         Ok(self.operation.unwrap_or(GitOperation::Merge))
     }
     fn local_config(&self, _: &Path, _: &str) -> Result<Option<String>, GitPortError> {
@@ -151,7 +152,11 @@ fn conflict_paths_map_to_semantic_objects() {
         ),
         stellar_semantic_merge::candidate::Source::B
     );
-    assert_eq!(git.calls.borrow().as_slice(), ["unmerged"], "읽기만");
+    assert_eq!(
+        git.calls.borrow().as_slice(),
+        ["unmerged", "operation"],
+        "읽기만"
+    );
 }
 
 #[test]

@@ -229,6 +229,28 @@ fn resolve(args: &[String]) -> Result<Success, CliError> {
                     ("added", paths(&report.added)),
                 ]),
             ));
+            // Git 상태만 돌려주고 이어 가기·commit은 사용자가 합니다(XIV.12.5).
+            fields.push((
+                "git".into(),
+                JsonValue::object(vec![
+                    (
+                        "operation",
+                        report
+                            .operation
+                            .map_or(JsonValue::Null, |o| JsonValue::string(o.name())),
+                    ),
+                    (
+                        "remaining_unmerged",
+                        report.remaining.as_deref().map_or(JsonValue::Null, paths),
+                    ),
+                    (
+                        "next",
+                        JsonValue::string(
+                            "Stellar는 merge·rebase·cherry-pick을 이어 가거나 commit하지 않습니다. 결과를 확인한 뒤 직접 실행하세요",
+                        ),
+                    ),
+                ]),
+            ));
         }
     }
     Ok(Success {

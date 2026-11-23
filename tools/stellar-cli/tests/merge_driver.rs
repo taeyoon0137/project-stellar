@@ -585,6 +585,7 @@ fn component_and_generation_conflict(label: &str) -> (Repo, Vec<String>) {
 #[test]
 fn resolve_apply_writes_validated_files_and_marks_them_resolved() {
     let (repo, kids) = component_and_generation_conflict("resolve-apply");
+    let head_before = repo.git(&["rev-parse", "HEAD"]);
     let preview = result(
         &stellar(&repo.root, &repo.home, &["merge-driver", "resolve", "."]),
         0,
@@ -628,6 +629,16 @@ fn resolve_apply_writes_validated_files_and_marks_them_resolved() {
         .map(|p| p.as_str().unwrap().to_owned())
         .collect::<Vec<_>>();
     assert!(added.contains(&repo.file) && added.contains(&"design/current".to_owned()));
+    let state = applied.get("result").unwrap().get("git").unwrap();
+    assert_eq!(string(state, "operation"), "merge");
+    assert!(state
+        .get("remaining_unmerged")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .is_empty());
+    // continue·commit을 하지 않았으므로 HEAD는 merge 전 commit 그대로입니다(XIV.12.5).
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]), head_before);
     // unmerged entry가 없어지고 프로젝트가 열리며 두 이름 변경과 theirs 폭이 모두 있습니다.
     assert!(repo.git(&["ls-files", "-u"]).is_empty());
     result(&stellar(&repo.root, &repo.home, &["validate", "."]), 0);
