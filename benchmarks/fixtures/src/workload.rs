@@ -9,7 +9,7 @@
 //! | [`DocumentWorkload::TextHeavy`] | 문서 | node당 text scalar 수, text payload bytes 비중, style run 수 |
 //! | [`DocumentWorkload::ImageHeavy`] | 문서 | Image node 비중, 서로 다른 asset 수, 배치 pixel 면적 |
 //! | [`DocumentWorkload::EffectHeavy`] | 문서 | node당 effect modifier 수(Shadow·Blur·Blend·Opacity), geometry 무효화 modifier 수 |
-//! | constraint-heavy([`constraint_heavy`]) | 레이아웃 입력(`stellar_layout`) | node당 constraint 등식 수, sibling 참조 연결 요소 크기, 엔진 배치 결과 |
+//! | constraint-heavy([`constraint_heavy`]) | 레이아웃 입력(`stellar_layout`, CSS longhand) | node당 위치·크기 longhand 수, 형제 흐름 의존 chain 길이, 엔진 배치 결과 |
 //!
 //! **token-heavy는 아직 만들 수 없습니다**: 토큰 모델·registry·dependency graph(VIII.5)가
 //! 구현되지 않아 토큰을 담을 원본 표현이 없습니다([`UNAVAILABLE_WORKLOADS`]). 문서 레코드에도
@@ -31,10 +31,11 @@ use stellar_document::node_kind::NodeKind;
 use stellar_document::record_codec::encode_payload;
 use stellar_document::records::{DocumentRecords, NodePayload};
 use stellar_document::text::{scalar_len, Paragraph, StyleRun, TextPayload, TextRange};
-use stellar_layout::constraint::{AnchorEdge, AnchorTarget, Constraint};
 use stellar_layout::engine::compute_layout;
-use stellar_layout::input::{ContainerLayout, LayoutInput, LayoutNode};
-use stellar_layout::sizing::SizingMode;
+use stellar_layout::input::{LayoutInput, LayoutNode};
+use stellar_layout::style::{
+    Display, FlexDirection, LayoutStyle, LengthPercentageAuto, Position, Size,
+};
 use stellar_storage::hash::ContentHash;
 
 use crate::build::{self, finish_document, BuiltDocument, Quarter};
@@ -457,23 +458,19 @@ fn length(value: f32) -> Length {
     Length::new(value).unwrap_or(Length::from_raw(stellar_core_types::value::FiniteF32::ZERO))
 }
 
-fn parent(edge: AnchorEdge, target: AnchorEdge, offset: f32) -> Constraint {
-    Constraint::new(edge, AnchorTarget::Parent(target), length(offset))
+fn px(value: f32) -> Size {
+    Size::Length(length(value))
 }
 
-fn sibling(edge: AnchorEdge, node: StableId, target: AnchorEdge, offset: f32) -> Constraint {
-    Constraint::new(
-        edge,
-        AnchorTarget::Sibling { node, edge: target },
-        length(offset),
-    )
+fn inset(value: f32) -> LengthPercentageAuto {
+    LengthPercentageAuto::Length(length(value))
 }
 
-/// node가 정확히 `nodes`개인 constraint-heavy 레이아웃 입력을 만듭니다.
+/// node가 정확히 `nodes`개인 constraint-heavy 레이아웃 입력을 만듭니다(CSS longhand, ADR-0076).
 ///
-/// root(Constraint container) ← panel(Constraint container, 부모 기준 위치) ← item chain. 첫 item은
-/// 부모 top에, 다음 item은 바로 앞 item의 bottom에 sibling constraint로 매달려 panel마다 길이
-/// 32의 의존 chain(연결 요소)이 생깁니다. item 너비는 `Fill`이고 Left·Right 두 등식으로 정합니다.
+/// root(px 크기 block) ← panel(`position: absolute`, `left`·`top`·`width`·`height`, 세로 flex, `row-gap`) ← item chain.
+/// item은 앞 item 바로 아래에 흐름으로 놓여(형제 의존 chain) panel마다 길이 32의 연결 요소가 생깁니다. item 너비는
+/// `auto`(cross 축 stretch)이고 `position: relative`의 `left`로 앞 item보다 조금씩 들여 씁니다.
 pub fn constraint_heavy(seed: u64, nodes: usize) -> Result<ConstraintFixture, FixtureError> {
     if !(2..=MAX_WORKLOAD_NODES).contains(&nodes) {
         return Err(FixtureError::InvalidSpec {
@@ -486,12 +483,11 @@ pub fn constraint_heavy(seed: u64, nodes: usize) -> Result<ConstraintFixture, Fi
     let panels = (nodes - 1).div_ceil(CHAIN_ITEMS + 1);
     let rows = panels.div_ceil(PANEL_COLS);
     let mut layout_nodes: Vec<LayoutNode> = Vec::with_capacity(nodes);
-    let mut root_node = LayoutNode::new(root)
-        .with_container(ContainerLayout::Constraint)
-        .with_fixed_size(
-            length(PANEL_COLS as f32 * (PANEL_W + 20.0)),
-            length(rows as f32 * (PANEL_H + 20.0)),
-        );
+    let mut root_node = LayoutNode::new(root).with_style(LayoutStyle {
+        width: px(PANEL_COLS as f32 * (PANEL_W + 20.0)),
+        height: px(rows as f32 * (PANEL_H + 20.0)),
+        ..LayoutStyle::default()
+    });
     let panel_keys = OrderKey::evenly_spaced(panels);
     let mut remaining = nodes - 1;
     for (p, key) in panel_keys.into_iter().enumerate() {
@@ -499,40 +495,34 @@ pub fn constraint_heavy(seed: u64, nodes: usize) -> Result<ConstraintFixture, Fi
         root_node = root_node.with_child(panel, key);
         let col = (p % PANEL_COLS) as f32;
         let row = (p / PANEL_COLS) as f32;
-        let mut panel_node = LayoutNode::new(panel)
-            .with_container(ContainerLayout::Constraint)
-            .with_fixed_size(length(PANEL_W), length(PANEL_H))
-            .with_constraint(parent(
-                AnchorEdge::Left,
-                AnchorEdge::Left,
-                col * (PANEL_W + 20.0),
-            ))
-            .with_constraint(parent(
-                AnchorEdge::Top,
-                AnchorEdge::Top,
-                row * (PANEL_H + 20.0),
-            ));
+        let mut panel_node = LayoutNode::new(panel).with_style(LayoutStyle {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            row_gap: length(ITEM_GAP),
+            padding: stellar_core_types::value::Insets::new(8.0, 8.0, 8.0, 8.0)
+                .unwrap_or_else(|_| LayoutStyle::default().padding),
+            position: Position::Absolute,
+            left: inset(col * (PANEL_W + 20.0)),
+            top: inset(row * (PANEL_H + 20.0)),
+            width: px(PANEL_W),
+            height: px(PANEL_H),
+            ..LayoutStyle::default()
+        });
         remaining -= 1;
         let items = remaining.min(CHAIN_ITEMS);
         remaining -= items;
-        let mut previous: Option<StableId> = None;
+        let mut offset = 0.0f32;
         for key in OrderKey::evenly_spaced(items) {
             let item = ids.next_id();
             panel_node = panel_node.with_child(item, key);
-            let inset = (rng.below(4) * 4) as f32;
-            let mut node = LayoutNode::new(item)
-                .with_sizing(SizingMode::Fill, SizingMode::Fixed(length(ITEM_H)))
-                .with_constraint(parent(AnchorEdge::Right, AnchorEdge::Right, -8.0));
-            node = match previous {
-                None => node
-                    .with_constraint(parent(AnchorEdge::Left, AnchorEdge::Left, 8.0 + inset))
-                    .with_constraint(parent(AnchorEdge::Top, AnchorEdge::Top, 8.0)),
-                Some(prev) => node
-                    .with_constraint(sibling(AnchorEdge::Left, prev, AnchorEdge::Left, inset))
-                    .with_constraint(sibling(AnchorEdge::Top, prev, AnchorEdge::Bottom, ITEM_GAP)),
-            };
-            layout_nodes.push(node);
-            previous = Some(item);
+            offset += (rng.below(4) * 4) as f32;
+            layout_nodes.push(LayoutNode::new(item).with_style(LayoutStyle {
+                height: px(ITEM_H),
+                flex_shrink: stellar_core_types::value::FiniteF32::ZERO,
+                position: Position::Relative,
+                left: inset(offset),
+                ..LayoutStyle::default()
+            }));
         }
         layout_nodes.push(panel_node);
     }
@@ -553,13 +543,13 @@ pub fn constraint_heavy(seed: u64, nodes: usize) -> Result<ConstraintFixture, Fi
 pub struct ConstraintProfile {
     /// 입력 node 수.
     pub nodes: usize,
-    /// constraint를 가진 node 수.
+    /// 위치·크기 longhand(inset, `<length>` `width`·`height`)를 가진 node 수.
     pub constrained_nodes: usize,
-    /// constraint 등식 합.
+    /// 위치·크기 longhand 합.
     pub constraints: usize,
-    /// sibling target 등식 수.
+    /// 앞 형제 바로 뒤 흐름 위치에 놓이는(앞 형제에 의존하는) in-flow node 수.
     pub sibling_constraints: usize,
-    /// sibling 참조로 이어진 가장 큰 형제 연결 요소 크기.
+    /// 형제 흐름 의존으로 이어진 가장 긴 chain 크기.
     pub max_component: usize,
     /// 레이아웃 엔진이 배치한 box 수.
     pub laid_out: usize,
@@ -582,44 +572,31 @@ pub fn profile_constraints(fixture: &ConstraintFixture) -> Result<ConstraintProf
         nodes: input.nodes.len(),
         ..ConstraintProfile::default()
     };
-    // sibling 참조 graph의 연결 요소(union-find, 반복).
-    let index: HashMap<StableId, usize> = input
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.id, i))
-        .collect();
-    let mut parent_of: Vec<usize> = (0..input.nodes.len()).collect();
-    fn find(parents: &mut [usize], mut i: usize) -> usize {
-        while parents[i] != i {
-            parents[i] = parents[parents[i]];
-            i = parents[i];
-        }
-        i
-    }
-    for (i, node) in input.nodes.iter().enumerate() {
-        if !node.constraints.is_empty() {
+    let by_id: HashMap<StableId, &LayoutNode> = input.nodes.iter().map(|n| (n.id, n)).collect();
+    for node in &input.nodes {
+        let style = &node.style;
+        let declared = [style.top, style.right, style.bottom, style.left]
+            .iter()
+            .filter(|i| **i != LengthPercentageAuto::Auto)
+            .count()
+            + [style.width, style.height]
+                .iter()
+                .filter(|s| matches!(s, Size::Length(_)))
+                .count();
+        if declared > 0 {
             profile.constrained_nodes += 1;
         }
-        for constraint in &node.constraints {
-            profile.constraints += 1;
-            if let AnchorTarget::Sibling { node: target, .. } = constraint.target {
-                profile.sibling_constraints += 1;
-                if let Some(&j) = index.get(&target) {
-                    let (a, b) = (find(&mut parent_of, i), find(&mut parent_of, j));
-                    if a != b {
-                        parent_of[a] = b;
-                    }
-                }
-            }
-        }
+        profile.constraints += declared;
+        // in-flow 자식은 앞 in-flow 형제 뒤에 놓입니다(흐름 의존 chain).
+        let flow: Vec<&LayoutNode> = node
+            .children
+            .iter()
+            .filter_map(|c| by_id.get(&c.id).copied())
+            .filter(|c| c.is_in_flow())
+            .collect();
+        profile.sibling_constraints += flow.len().saturating_sub(1);
+        profile.max_component = profile.max_component.max(flow.len());
     }
-    let mut sizes: HashMap<usize, usize> = HashMap::new();
-    for i in 0..input.nodes.len() {
-        let r = find(&mut parent_of, i);
-        *sizes.entry(r).or_default() += 1;
-    }
-    profile.max_component = sizes.values().copied().max().unwrap_or(0);
     let result = compute_layout(input).map_err(FixtureError::Layout)?;
     profile.laid_out = result.len();
     profile.diagnostics = result.diagnostics().len();
