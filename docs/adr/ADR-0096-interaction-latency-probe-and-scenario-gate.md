@@ -38,7 +38,8 @@ runner, 예산 config, analyzer와 release gate를 정했습니다. 다음 일�
      병합할 수 없습니다.
    - `finish`는 validator(XVI.1.2)를 통과한 trace와 병합된 trace를 ring buffer store(XVI.1.5)에 넣습니다. 빠진
      stage가 있으면 오류이고 trace는 진행 중으로 남습니다.
-   - 진행 중 trace는 256개까지입니다. 넘으면 가장 오래된 진행 중 trace를 버리고 셉니다(memory bound).
+   - 진행 중 trace는 병합된 event의 trace까지 합쳐 256개까지입니다. 넘으면 가장 오래된 진행 중 event(병합된 event 포함)를
+     버리고 셉니다(memory bound). 병합된 event가 있는 trace의 T1은 병합된 event의 T0보다 이를 수 없습니다.
    - frame 없이 취소된 event(`cancel`)는 latency가 없으므로 sample이 아니며 따로 셉니다. 측정한 sample을 빼는 일이
      아닙니다(XVI.4.3).
    - runtime은 diagnostics에 의존하지 않습니다(ADR-0084 결정 8). 앱 연결 때 shell 또는 앱 진단 계층이 probe를 갖고

@@ -14,8 +14,9 @@
 //! - **clock domain**(XVI.1.3): CPU stage 시각은 [`ProbeStamp`]로만 받습니다. 이 값은 probe 시계([`Stamper`])만 만들 수
 //!   있어 GPU timestamp나 운영체제 event 시각을 stage에 넣을 수 없습니다(타입으로 강제). GPU 실행 시간은
 //!   [`InteractionProbe::set_gpu`]로 따로 기록하고 Logical Interaction Latency에 더하지 않습니다.
-//! - **memory bound**: 진행 중 trace는 [`MAX_IN_FLIGHT_TRACES`]개까지입니다. 넘으면 가장 오래된 진행 중 trace를
-//!   버리고 [`ProbeCounters::abandoned`]에 셉니다. 완료 trace는 고정 용량 [`TraceStore`]에 들어갑니다.
+//! - **memory bound**: 진행 중 trace는 병합된 event의 trace까지 합쳐 [`MAX_IN_FLIGHT_TRACES`]개까지입니다. 넘으면
+//!   가장 오래된 진행 중 event(거기에 병합된 event 포함)를 버리고 [`ProbeCounters::abandoned`]에 셉니다. 병합은 trace
+//!   수를 바꾸지 않으므로 병합이 이어져도 상한을 넘지 않습니다. 완료 trace는 고정 용량 [`TraceStore`]에 들어갑니다.
 //! - 취소된 event([`InteractionProbe::cancel`], 예: frame 없이 취소된 제스처)는 frame이 없어 latency가 없으므로
 //!   sample이 아니고 [`ProbeCounters::cancelled`]에만 셉니다.
 
@@ -30,7 +31,7 @@ use crate::interaction::{
 };
 use crate::trace_store::TraceStore;
 
-/// 동시에 진행 중일 수 있는 trace 수 상한.
+/// 동시에 진행 중일 수 있는 trace 수 상한(병합된 event의 trace 포함).
 pub const MAX_IN_FLIGHT_TRACES: usize = 256;
 
 /// probe 시계 시각(CPU monotonic domain, ns). [`Stamper`]만 만들 수 있습니다.
@@ -140,6 +141,8 @@ pub struct InteractionProbe<C> {
     stamper: Stamper<C>,
     ids: InteractionTraceIds,
     open: VecDeque<InFlight>,
+    /// `open`이 가진 trace 수(병합된 trace 포함).
+    tracked: usize,
     store: TraceStore,
     counters: ProbeCounters,
 }
@@ -151,6 +154,7 @@ impl<C: MonotonicClock + Clone> InteractionProbe<C> {
             stamper: Stamper { clock },
             ids: InteractionTraceIds::new(),
             open: VecDeque::new(),
+            tracked: 0,
             store,
             counters: ProbeCounters::default(),
         }
@@ -179,18 +183,19 @@ impl<C: MonotonicClock + Clone> InteractionProbe<C> {
         received: ProbeStamp,
     ) -> InteractionTraceId {
         let id = self.ids.issue();
-        if self.open.len() == MAX_IN_FLIGHT_TRACES {
-            if let Some(oldest) = self.open.pop_front() {
-                self.counters.abandoned = self
-                    .counters
-                    .abandoned
-                    .saturating_add(1 + oldest.merged.len() as u64);
-            }
+        while self.tracked >= MAX_IN_FLIGHT_TRACES {
+            let Some(oldest) = self.open.pop_front() else {
+                break;
+            };
+            let traces = 1 + oldest.merged.len();
+            self.tracked -= traces;
+            self.counters.abandoned = self.counters.abandoned.saturating_add(traces as u64);
         }
         self.open.push_back(InFlight {
             trace: InteractionTrace::begin(id, dimensions, received.0),
             merged: Vec::new(),
         });
+        self.tracked += 1;
         self.counters.begun = self.counters.begun.saturating_add(1);
         id
     }
@@ -238,6 +243,9 @@ impl<C: MonotonicClock + Clone> InteractionProbe<C> {
     }
 
     /// stage를 다른 스레드가 찍은 시각으로 기록합니다(XVI.1.2). 한 stage는 한 번, 시각은 감소하지 않아야 합니다.
+    ///
+    /// 병합된 event도 T1부터 이 시각을 받으므로, T1은 병합된 event의 T0보다 이를 수 없습니다. 그런 T1은 거부해서
+    /// `finish`가 병합된 trace를 완성하지 못해 trace가 영영 진행 중으로 남는 일을 막습니다.
     pub fn mark_at(
         &mut self,
         id: InteractionTraceId,
@@ -245,7 +253,19 @@ impl<C: MonotonicClock + Clone> InteractionProbe<C> {
         at: ProbeStamp,
     ) -> Result<(), ProbeError> {
         let index = self.position(id)?;
-        self.open[index].trace.mark(stage, at.0)?;
+        let entry = &mut self.open[index];
+        if stage == Stage::T1 {
+            if let Some(latest) = entry.merged.iter().filter_map(|t| t.stamp(Stage::T0)).max() {
+                if latest > at.0 {
+                    return Err(ProbeError::Trace(TraceError::OutOfOrder {
+                        stage,
+                        previous: latest,
+                        at: at.0,
+                    }));
+                }
+            }
+        }
+        entry.trace.mark(stage, at.0)?;
         Ok(())
     }
 
@@ -286,7 +306,9 @@ impl<C: MonotonicClock + Clone> InteractionProbe<C> {
             }
             followers.push(trace.validate()?);
         }
-        self.open.remove(index);
+        if let Some(entry) = self.open.remove(index) {
+            self.tracked -= 1 + entry.merged.len();
+        }
         for trace in followers.into_iter().chain(std::iter::once(done)) {
             self.store.push(trace);
             self.counters.completed = self.counters.completed.saturating_add(1);
@@ -298,6 +320,7 @@ impl<C: MonotonicClock + Clone> InteractionProbe<C> {
     pub fn cancel(&mut self, id: InteractionTraceId) -> Result<(), ProbeError> {
         let index = self.position(id)?;
         if let Some(entry) = self.open.remove(index) {
+            self.tracked -= 1 + entry.merged.len();
             self.counters.cancelled = self
                 .counters
                 .cancelled
@@ -306,9 +329,9 @@ impl<C: MonotonicClock + Clone> InteractionProbe<C> {
         Ok(())
     }
 
-    /// 진행 중 trace 수.
+    /// 진행 중 trace 수(병합된 event의 trace 포함).
     pub fn in_flight(&self) -> usize {
-        self.open.len()
+        self.tracked
     }
 
     /// 집계.
@@ -394,7 +417,8 @@ mod tests {
         clock.advance(2_000);
         let second = probe.begin(dims());
         probe.coalesce(second, first).unwrap();
-        assert_eq!(probe.in_flight(), 1);
+        // 병합된 event도 진행 중 trace로 셉니다(memory bound).
+        assert_eq!(probe.in_flight(), 2);
         assert_eq!(
             probe.mark(second, Stage::T1),
             Err(ProbeError::UnknownTrace { id: second })
@@ -532,6 +556,58 @@ mod tests {
                 .sum();
             assert_eq!(spans, trace.logical_latency_nanos());
         }
+    }
+
+    #[test]
+    fn coalesced_events_count_toward_the_in_flight_bound() {
+        // 검증 기준(XVI.1.5): T1 전에 병합이 계속 이어져도 진행 중 trace는 상한을 넘지 않습니다.
+        let clock = TestClock::default();
+        let mut probe = probe(&clock);
+        let survivor = probe.begin(dims());
+        for _ in 0..(MAX_IN_FLIGHT_TRACES * 4) {
+            clock.advance(1);
+            let next = probe.begin(dims());
+            assert!(probe.in_flight() <= MAX_IN_FLIGHT_TRACES);
+            if probe.coalesce(next, survivor).is_err() {
+                // 살아남은 event가 상한 때문에 버려졌습니다.
+                break;
+            }
+        }
+        assert!(probe.in_flight() <= MAX_IN_FLIGHT_TRACES);
+        assert!(probe.counters().abandoned > 0);
+        assert_eq!(
+            probe.mark(survivor, Stage::T1),
+            Err(ProbeError::UnknownTrace { id: survivor })
+        );
+    }
+
+    #[test]
+    fn t1_before_a_merged_receipt_is_rejected_and_finish_still_works() {
+        // 병합된 event는 T1부터 살아남은 event의 시각을 받으므로 자기 T0보다 이른 T1은 거부합니다.
+        let clock = TestClock::default();
+        let mut probe = probe(&clock);
+        let stamper = probe.stamper();
+        let first = probe.begin(dims());
+        clock.advance(100);
+        let early = stamper.stamp();
+        clock.advance(100);
+        let second = probe.begin(dims());
+        probe.coalesce(second, first).unwrap();
+        assert_eq!(
+            probe.mark_at(first, Stage::T1, early),
+            Err(ProbeError::Trace(TraceError::OutOfOrder {
+                stage: Stage::T1,
+                previous: 200,
+                at: 100,
+            }))
+        );
+        for stage in &Stage::ALL[1..] {
+            clock.advance(10);
+            probe.mark(first, *stage).unwrap();
+        }
+        probe.finish(first).unwrap();
+        assert_eq!(probe.in_flight(), 0);
+        assert_eq!(probe.store().len(), 2);
     }
 
     #[test]

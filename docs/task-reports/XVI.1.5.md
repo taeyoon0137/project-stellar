@@ -51,6 +51,7 @@
 
 | 테스트 | 확인 |
 |---|---|
+| `coalesced_events_count_toward_the_in_flight_bound` | T1 전 병합이 이어져도 진행 중 trace(병합 포함)가 256을 넘지 않고 가장 오래된 event를 버림 |
 | `in_flight_and_stored_traces_stay_bounded` | 266개 시작 → 진행 중 256 유지·가장 오래된 10개 버림, 256개 완료 → store 16개 유지·240개 지움, 할당 bytes 상한 유지 |
 
 ### 근거 커밋
