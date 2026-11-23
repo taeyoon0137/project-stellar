@@ -799,6 +799,80 @@ fn memory_budget_lowers_supersampling_when_a_tile_does_not_fit() {
     );
 }
 
+/// Path 내용의 shadow는 CSS `drop-shadow()`처럼 내용 alpha를 따릅니다(상자 모양이 아님, ADR-0130 결정 1). 삼각형 path를
+/// 반투명(alpha 0.5)으로 칠하고 blur 0 그림자를 (12, 0)만큼 옮기면, 그림자는 옮긴 삼각형 모양이고 알파는 내용 alpha ×
+/// 그림자 alpha입니다. 그림을 `path_shadow_srgb_*`로 남깁니다.
+#[test]
+fn path_shadow_follows_content_alpha_in_the_image() {
+    let root = frame(1, 0.0, 0.0, 40.0, 24.0, srgb(1.0, 1.0, 1.0, 1.0));
+    let roots = scene(&root, |b, s| {
+        let mut node = NodeInput::new(id(2), translate(4.0, 4.0));
+        node.paint
+            .fills
+            .push(Paint::Solid(srgb(0.0, 0.6, 0.0, 0.5)));
+        node.paint.shadows.push(Shadow::new(
+            p(12.0, 0.0),
+            BlurRadius::ZERO,
+            srgb(0.0, 0.0, 1.0, 1.0),
+        ));
+        // 오른쪽 위가 직각인 삼각형: 왼쪽 아래 절반은 비어 있습니다.
+        b.build_path(
+            s,
+            &PathInput {
+                node,
+                layout_rect: stellar_core_types::value::Rect::new(
+                    p(0.0, 0.0),
+                    Size2::new(16.0, 16.0).unwrap(),
+                ),
+                geometry: PathGeometry::new(vec![
+                    PathCommand::MoveTo(p(0.0, 0.0)),
+                    PathCommand::LineTo(p(16.0, 0.0)),
+                    PathCommand::LineTo(p(16.0, 16.0)),
+                    PathCommand::Close,
+                ])
+                .unwrap(),
+                fill_rule: FillRule::NonZero,
+            },
+        )
+        .unwrap();
+    });
+    let export = confirmed(roots, 1.0, ExportBackground::Transparent);
+    let (actual, report) = measured(&export, &metal()).unwrap();
+    assert_eq!(report.supersample_min, SUPERSAMPLE);
+    let expected = cpu_reference_of(&export, SUPERSAMPLE);
+    write_artifact("path_shadow_srgb_1x_metal", &actual, OutputProfile::Srgb);
+    write_artifact(
+        "path_shadow_srgb_1x_reference",
+        &expected,
+        OutputProfile::Srgb,
+    );
+    let (over, worst) = associated_diff(&expected, &actual, 3);
+    assert_eq!(over, 0, "최대 차이 {worst}");
+    let origin = root_origin(&actual);
+    let pixel = |x: u32, y: u32| {
+        let at = (((origin.1 + y) * actual.width + origin.0 + x) * 4) as usize;
+        [actual.rgba[at], actual.rgba[at + 1], actual.rgba[at + 2]]
+    };
+    // 흰 배경 위: 그림자만 있는 곳(옮긴 삼각형 안, 내용 밖)은 파랑 50%(R·G 약 188, B 255).
+    let shadow_only = pixel(4 + 12 + 14, 4 + 4);
+    assert!(
+        shadow_only[2] == 255 && (180..=196).contains(&shadow_only[0]),
+        "{shadow_only:?}"
+    );
+    // 옮긴 상자 안이지만 옮긴 삼각형 밖(왼쪽 아래)은 그림자가 없습니다(상자 모양이 아님).
+    let outside = pixel(4 + 12 + 1, 4 + 14);
+    assert_eq!(outside, [255, 255, 255], "{outside:?}");
+    // 내용만 있는 곳(삼각형 안, 옮긴 삼각형 밖)은 초록 50%, 파랑 없음.
+    let content_only = pixel(4 + 8, 4 + 1);
+    assert!(
+        content_only[1] > content_only[2] && content_only[2] > 150,
+        "{content_only:?}"
+    );
+    // 겹친 곳: 반투명 초록이 파랑 그림자 위에 있습니다(그림자가 내용 아래).
+    let both = pixel(4 + 15, 4 + 2);
+    assert!(both[0] < shadow_only[0] && both[1] > both[0], "{both:?}");
+}
+
 #[test]
 fn selection_and_cancel_are_reported() {
     let roots = shared_roots();
