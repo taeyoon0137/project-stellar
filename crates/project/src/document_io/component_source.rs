@@ -250,8 +250,37 @@ impl ComponentSource {
         Ok(source)
     }
 
-    /// 쓰기 v4 텍스트.
-    pub(crate) fn to_text(&self) -> Result<String, TextSourceError> {
+    /// 정의와 정의 tree 레코드(root 포함)로 원본을 만듭니다. tree가 정의와 맞지 않으면 거부합니다. semantic merge
+    /// 결과처럼 레코드에서 다시 쓸 때 씁니다(ADR-0081 결정 1).
+    pub fn from_records(
+        definition: ComponentDefinition,
+        nodes: impl IntoIterator<Item = NodeRecord>,
+    ) -> Result<Self, TextSourceError> {
+        let root_id = definition.root.id();
+        let mut root = None;
+        let mut children = BTreeMap::new();
+        for record in nodes {
+            if record.id == root_id {
+                if root.replace(record).is_some() {
+                    return Err(invalid("정의 tree에 root가 둘입니다"));
+                }
+            } else if let Some(previous) = children.insert(record.id, record) {
+                return Err(invalid(format!("중복 node {}", previous.id)));
+            }
+        }
+        let root = root.ok_or_else(|| invalid("정의 tree에 root가 없습니다"))?;
+        check_root(&root.payload)?;
+        let source = Self {
+            definition,
+            root,
+            children,
+        };
+        source.definition_tree()?;
+        Ok(source)
+    }
+
+    /// 유일한 쓰기 버전 v4의 canonical 텍스트(ADR-0077 결정 2).
+    pub fn to_text(&self) -> Result<String, TextSourceError> {
         self.to_yaml()
     }
 

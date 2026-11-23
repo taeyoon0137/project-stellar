@@ -678,7 +678,7 @@ fn resolve_apply_writes_validated_files_and_marks_them_resolved() {
     assert_eq!(node_name(&repo, &kids[0]), "ours-name");
     assert_eq!(node_name(&repo, &kids[1]), "theirs-name");
     let text = String::from_utf8(repo.read()).unwrap();
-    assert!(text.contains("width: \"128\""), "{text}");
+    assert!(text.contains("width: \"128px\""), "{text}");
     // merge 상태는 유지되고 commit은 사용자가 합니다.
     assert!(repo.root.join(".git/MERGE_HEAD").exists());
     repo.git(&["commit", "--no-edit", "-q"]);

@@ -90,7 +90,7 @@ fn adjacent_line_edits_merge_by_property() {
     };
     let text = String::from_utf8(bytes).unwrap();
     assert!(
-        text.contains("Badge") && text.contains("srgb 1 0 0 1"),
+        text.contains("Badge") && text.contains("background-color: \"color(srgb 1 0 0)\""),
         "{text}"
     );
 }

@@ -61,7 +61,7 @@ XXIII.2, XXIV.2, XVI.6.6, XXVIII.2.3의 결정을 한 곳에 모읍니다. 기�
    적용한 결과를 보여 주고 아무것도 쓰지 않습니다.
 6. **WorkingTree 쓰기(XIV.12.4\~XIV.12.6).**
    - 모든 단위의 C가 검증된 뒤 쓰기는 한 번만 합니다. 쓰기 전에 unmerged 목록과 대상 파일 hash가 세션을 연 때와 같은지
-     확인하고(stale이면 쓰지 않음), 파일마다 임시 파일 뒤 rename으로 씁니다. 컴포넌트 원본은 v3 encoder 결과, generation은
+     확인하고(stale이면 쓰지 않음), 파일마다 임시 파일 뒤 rename으로 씁니다. 컴포넌트 원본은 codec v4 encoder 결과, generation은
      기존 project save API 경로(문서 레코드 → chunk 직렬화 → save plan, ours 세대 기준)로 만든 chunk·manifest·
      `design/current`입니다. 그래서 텍스트 기본 저장 전환(V.10.7) 전후 모두 같은 저장 API를 거칩니다.
    - 쓰기 도중이나 `git add` 실패 시 이미 쓴 파일을 원래 bytes로 되돌리고(새로 만든 파일은 지움) unresolved 상태와 복구
@@ -78,8 +78,9 @@ XXIII.2, XXIV.2, XVI.6.6, XXVIII.2.3의 결정을 한 곳에 모읍니다. 기�
    - 대상은 텍스트 의미 파일 단위이며 지금은 컴포넌트 원본(`design/components/*.stellar.yaml`)입니다. 세 bytes를 같은
      codec으로 읽어(빈 base는 정의 없음) snapshot으로 올리고 엔진으로 병합합니다.
    - conflict가 없고 결과 검증과 codec 재해석 검증(쓴 bytes를 project decoder로 다시 읽어 같은 snapshot인지)을 통과하면
-     `%A`에 결과 bytes를 쓰고 0을 반환합니다. 결과 bytes는 이 기준 커밋의 유일한 쓰기 버전(컴포넌트 v3)입니다. 텍스트 원본
-     v4(ADR-0077)가 들어오면 codec의 공개 encoder로 바꾸며, 그 전에도 재해석 검증이 형식 불일치를 실패로 막습니다.
+     `%A`에 결과 bytes를 쓰고 0을 반환합니다. 결과 bytes는 컴포넌트 원본의 유일한 쓰기 버전 v4(ADR-0077)이며, project
+     codec의 공개 encoder(`ComponentSource::from_records`·`to_text`)가 씁니다(2026-11-23 통합 보완: lane 시점의 자체 v3
+     encoder를 없앰). 재해석 검증은 그대로 둡니다.
    - conflict가 있으면 1(`unresolved-conflicts`), 병합 결과가 정의 삭제면 1(`merge-deleted`), 지원하지 않는 파일은 69,
      입력 없음은 66, 읽기·검증 실패는 65를 반환하고 어느 경우도 `%A`를 바꾸지 않습니다(CLI 종료 코드 표 XXIV.1.2). conflict 목록은
      프로젝트의 `.stellar/merge/`(자기 자신을 무시하는 `.gitignore`를 둠)에 JSON으로 남기고, Git 밖이므로 commit에 들어가지

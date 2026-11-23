@@ -6,19 +6,17 @@
 //!
 //! - 읽기는 bytes를 비공개 임시 폴더에 원래 파일명으로 둔 뒤 codec의 폴더 읽기로 엽니다. 빈 bytes는 파일이 없는
 //!   쪽(그 정의 없음)입니다.
-//! - 쓰기는 이 기준 커밋의 유일한 쓰기 버전(컴포넌트 v3, ADR-0061 결정 4)의 canonical YAML입니다. 레코드 역투영은
-//!   semantic-diff `component_records`, Frame 속성 줄은 codec의 `frame_source_properties`, 출력은 재파싱 검증 writer를
-//!   씁니다. 쓴 bytes는 반드시 codec으로 다시 읽어 같은 snapshot인지 확인하고, 다르면 실패합니다(형식이 바뀌어도
-//!   조용히 잘못된 파일을 쓰지 않음). 텍스트 원본 v4(ADR-0077)의 공개 encoder가 생기면 이 encoder를 바꿉니다.
+//! - 쓰기는 컴포넌트 원본의 유일한 쓰기 버전 v4(ADR-0077 결정 2)입니다. 레코드 역투영은 semantic-diff
+//!   `component_records`이고, bytes는 project codec의 공개 encoder(`ComponentSource::from_records`·`to_text`)가 씁니다.
+//!   merge 쪽에 따로 encoder를 두지 않습니다. 쓴 bytes는 반드시 codec으로 다시 읽어 같은 snapshot인지 확인하고, 다르면
+//!   실패합니다(형식이 바뀌어도 조용히 잘못된 파일을 쓰지 않음).
 
 use std::ffi::OsStr;
 use std::fmt;
 use std::path::Path;
 
-use stellar_document::records::{NodePayload, NodeRecord};
-use stellar_project::document_io::component_source::{frame_source_properties, read_library};
+use stellar_project::document_io::component_source::{read_library, ComponentSource};
 use stellar_project::private_temp::PrivateTempDir;
-use stellar_project::yaml::{write_canonical_checked, YamlValue};
 use stellar_semantic_diff::build::SnapshotBuilder;
 use stellar_semantic_diff::records::component_records;
 use stellar_semantic_diff::snapshot::{ObjectKind, SemanticSnapshot};
@@ -109,48 +107,6 @@ pub fn decode_component_file(
     Ok(builder.finish())
 }
 
-fn scalar(value: impl fmt::Display) -> YamlValue {
-    YamlValue::scalar(value.to_string())
-}
-
-fn mapping(fields: Vec<(&str, YamlValue)>) -> YamlValue {
-    YamlValue::Mapping(fields.into_iter().map(|(k, v)| (scalar(k), v)).collect())
-}
-
-/// v3 node 표현(codec의 node 줄 순서와 같음).
-fn node(record: &NodeRecord) -> Result<YamlValue, ComponentFileError> {
-    let (kind, payload) = match &record.payload {
-        NodePayload::Frame(frame) => ("frame", frame_source_properties(frame)),
-        NodePayload::Fragment(_) => ("fragment", scalar("none")),
-        other => {
-            return Err(ComponentFileError::Unsupported(format!(
-                "node {}: {} payload",
-                record.id,
-                other.kind().name()
-            )))
-        }
-    };
-    let order_key: String = record
-        .order_key
-        .as_bytes()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    Ok(mapping(vec![
-        ("id", scalar(record.id)),
-        (
-            "parent",
-            record.parent.map_or_else(|| scalar("none"), scalar),
-        ),
-        ("order_key", scalar(order_key)),
-        ("visible", scalar(record.visible)),
-        ("locked", scalar(record.locked)),
-        ("display_name", scalar(&record.display_name)),
-        ("kind", scalar(kind)),
-        ("payload", payload),
-    ]))
-}
-
 /// snapshot의 컴포넌트 정의 하나를 원본 bytes로 씁니다. 정의가 없으면 `None`(파일 삭제)입니다.
 fn encode_snapshot(snapshot: &SemanticSnapshot) -> Result<Option<Vec<u8>>, ComponentFileError> {
     let components: Vec<StableId> = snapshot
@@ -174,37 +130,8 @@ fn encode_snapshot(snapshot: &SemanticSnapshot) -> Result<Option<Vec<u8>>, Compo
     };
     let projection = component_records(snapshot, component)
         .map_err(|e| ComponentFileError::Unsupported(e.to_string()))?;
-    let root_id = projection.definition.root.id();
-    let root = projection
-        .nodes
-        .iter()
-        .find(|n| n.id == root_id)
-        .ok_or_else(|| ComponentFileError::Unsupported("root Frame이 없습니다".into()))?;
-    let children: Vec<&NodeRecord> = projection
-        .nodes
-        .iter()
-        .filter(|n| n.id != root_id)
-        .collect();
-    let mut fields = vec![
-        (scalar("format"), scalar("stellar-component")),
-        (scalar("schema_version"), scalar(3)),
-        (
-            scalar("component"),
-            mapping(vec![
-                ("id", scalar(component)),
-                ("name", scalar(projection.definition.display_name())),
-                ("root", scalar(root_id)),
-            ]),
-        ),
-        (scalar("root_node"), node(root)?),
-    ];
-    if !children.is_empty() {
-        fields.push((
-            scalar("children"),
-            YamlValue::Sequence(children.into_iter().map(node).collect::<Result<_, _>>()?),
-        ));
-    }
-    let text = write_canonical_checked(&YamlValue::Mapping(fields))
+    let text = ComponentSource::from_records(projection.definition, projection.nodes)
+        .and_then(|source| source.to_text())
         .map_err(|e| ComponentFileError::Unsupported(e.to_string()))?;
     Ok(Some(text.into_bytes()))
 }
