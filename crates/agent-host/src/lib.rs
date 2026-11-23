@@ -25,4 +25,5 @@
 //! | `src/bin/test_cli.rs` | XXIX.2.2 | 구독 CLI 테스트 대역 실행 파일(테스트 전용, library 미사용) |
 
 pub mod chat;
+pub mod decoder;
 pub mod json;
