@@ -28,6 +28,10 @@ enum Tamper {
     WrongSize,
     Jpeg,
     Fail,
+    /// 선언 크기는 맞지만 bytes IHDR 크기가 다릅니다.
+    LyingHeader,
+    /// PNG라고 선언했지만 PNG bytes가 아닙니다.
+    NotPngBytes,
 }
 
 /// 영역 첫 root의 첫 칠하기 색(없으면 투명)을 RGBA8로.
@@ -78,6 +82,14 @@ impl ExportRasterizer for FakeRaster {
                 return Err(RasterizeError::Failed {
                     message: "장치 없음".to_string(),
                 })
+            }
+            Some(Tamper::LyingHeader) => {
+                let png = png::solid(width + 1, height, first_fill(request));
+                return Ok(EncodedImage::new(media, Arc::from(png), width, height).unwrap());
+            }
+            Some(Tamper::NotPngBytes) => {
+                let bytes = b"\xFF\xD8\xFF not a png".to_vec();
+                return Ok(EncodedImage::new(media, Arc::from(bytes), width, height).unwrap());
             }
         }
         let png = png::solid(width, height, first_fill(request));
@@ -409,6 +421,8 @@ fn raster_contract_violations_are_errors() {
         (Tamper::WrongSize, "크기"),
         (Tamper::Jpeg, "PNG"),
         (Tamper::Fail, "장치 없음"),
+        (Tamper::LyingHeader, "IHDR 크기"),
+        (Tamper::NotPngBytes, "signature"),
     ] {
         let raster = FakeRaster {
             tamper: Some(tamper),

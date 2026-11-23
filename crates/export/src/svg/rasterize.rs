@@ -153,13 +153,44 @@ impl ExportRasterizer for NoRasterizer {
     }
 }
 
-/// rasterizer 출력이 계약(PNG, 요청 pixel 크기)을 지키는지 검사합니다.
+/// PNG signature(8 byte).
+const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
+
+/// PNG bytes의 첫 chunk가 IHDR이면 그 (너비, 높이)를 돌려줍니다. signature나 IHDR가 없으면 `None`입니다.
+fn png_header_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    // signature 8 + 길이 4 + "IHDR" 4 + 너비 4 + 높이 4.
+    let header = bytes.get(..24)?;
+    if header[..8] != PNG_SIGNATURE || &header[12..16] != b"IHDR" {
+        return None;
+    }
+    let read = |at: usize| {
+        u32::from_be_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
+    };
+    Some((read(16), read(20)))
+}
+
+/// rasterizer 출력이 계약(PNG, 요청 pixel 크기)을 지키는지 검사합니다. 선언한 형식·크기만 믿지 않고 bytes의 PNG
+/// signature와 IHDR 크기도 확인합니다.
 pub(crate) fn check_output(image: &EncodedImage, pixels: PixelRect) -> Result<(), RasterizeError> {
     let width_ok = i64::from(image.pixel_width()) == pixels.width();
     let height_ok = i64::from(image.pixel_height()) == pixels.height();
     if image.media() != ImageMedia::Png {
         return Err(RasterizeError::Failed {
             message: format!("PNG가 아닌 출력({})", image.media().mime()),
+        });
+    }
+    let Some((width, height)) = png_header_size(image.bytes()) else {
+        return Err(RasterizeError::Failed {
+            message: "PNG signature·IHDR가 없는 출력".to_string(),
+        });
+    };
+    if (width, height) != (image.pixel_width(), image.pixel_height()) {
+        return Err(RasterizeError::Failed {
+            message: format!(
+                "PNG IHDR 크기 {width}×{height}가 선언한 크기 {}×{}와 다릅니다",
+                image.pixel_width(),
+                image.pixel_height()
+            ),
         });
     }
     if !(width_ok && height_ok) {
