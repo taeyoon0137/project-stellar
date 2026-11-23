@@ -426,6 +426,7 @@ dependencies = [
 name = "stellar-runtime"
 version = "0.0.0"
 dependencies = [
+ "stellar-agent-host",
  "stellar-assets",
  "stellar-commands",
  "stellar-core-types",

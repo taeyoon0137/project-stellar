@@ -24,6 +24,7 @@
 //! | [`output`] | XXIX.2.4·XXIX.2.13 | 수신 출력의 원문 보존·디코드·디코드 실패 연결 |
 //! | [`approval`] | XXIX.3.2 | ProjectIdentity 단위 승인 요청 저장(첫 응답만 유효, 기본 거부) |
 //! | [`mode`] | XXIX.3.3 | 모드 권한 상한과 내장 세션 카탈로그 |
+//! | [`start`] | XXIX.3.5 | 신뢰 capability 시작 확인, 약관 고지 기록, 신뢰 철회 |
 //! | `test-cli/main.rs` | XXIX.2.2 | 구독 CLI 테스트 대역 실행 파일(테스트 전용, library 미사용) |
 
 pub mod approval;
@@ -38,5 +39,6 @@ pub mod process;
 pub mod profile;
 pub mod raw;
 pub mod session;
+pub mod start;
 pub mod status;
 pub mod target;

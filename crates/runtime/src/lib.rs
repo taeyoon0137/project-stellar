@@ -36,6 +36,9 @@ pub mod app_command;
 /// 실제 index에서 선택 staging용 임시 후보를 준비합니다(XIV.5.5).
 pub mod staging;
 
+/// 내장 에이전트 세션의 프로젝트 identity·신뢰 판정 연결 (XXIX.3.2·XXIX.3.5, ADR-0101).
+pub mod agent;
+
 /// 창 session을 앱 runtime 경계로 다루는 테스트.
 #[cfg(test)]
 mod app_window_tests;
