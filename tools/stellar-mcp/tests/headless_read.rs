@@ -685,7 +685,7 @@ payload:
     for (entry, (object, path)) in
         changes
             .into_iter()
-            .zip([(ROOT, "0x0108"), (CHILD, "0x0108"), (CHILD, "0x0109")])
+            .zip([(ROOT, "width"), (CHILD, "width"), (CHILD, "height")])
     {
         assert_eq!(entry.get("document"), Some(&J::Null));
         assert_eq!(entry.get("component").map(text), Some(ID));

@@ -141,7 +141,7 @@ fn git_and_semantic_merge_of_two_clones_separate_frame_width_and_background() {
         })
         .collect();
     paths.sort();
-    assert_eq!(paths, ["0x0104", "0x0108"]);
+    assert_eq!(paths, ["background-color", "width"]);
     for (repo, branch) in [(&ours, "width"), (&theirs, "height")] {
         git(repo, &["switch", "-qc", branch]);
         git(repo, &["add", "--", file]);
@@ -198,7 +198,7 @@ fn git_and_semantic_merge_of_two_clones_separate_frame_width_and_background() {
     let conflicts = conflicted.get("conflicts").unwrap().as_array().unwrap();
     assert_eq!(conflicts.len(), 1);
     assert_eq!(value(&conflicts[0], "object"), AR);
-    assert_eq!(value(&conflicts[0], "path"), "0x0108");
+    assert_eq!(value(&conflicts[0], "path"), "width");
     git(&theirs, &["add", "--", file]);
     git(&theirs, &["commit", "-qm", "conflicting width"]);
     git(
@@ -306,7 +306,10 @@ fn frame_corners_merge_by_line_in_git_and_by_property_in_semantic_merge() {
     let merged = run(&fixture.path, &home, "semantic-merge", &args, 0);
     assert_eq!(
         changes(&merged),
-        [("0x010a".into(), number(11)), ("0x010d".into(), number(23))]
+        [
+            ("border-top-left-radius".into(), number(11)),
+            ("border-bottom-left-radius".into(), number(23))
+        ]
     );
     assert!(git_merge("separate"));
     let combined = git(&base, &["show", &format!("separate:{file}")]);
@@ -319,7 +322,10 @@ fn frame_corners_merge_by_line_in_git_and_by_property_in_semantic_merge() {
     let merged = run(&fixture.path, &home, "semantic-merge", &args, 0);
     assert_eq!(
         changes(&merged),
-        [("0x010a".into(), number(11)), ("0x010b".into(), number(17))]
+        [
+            ("border-top-left-radius".into(), number(11)),
+            ("border-top-right-radius".into(), number(17))
+        ]
     );
     assert!(!git_merge("adjacent"));
 
@@ -329,8 +335,11 @@ fn frame_corners_merge_by_line_in_git_and_by_property_in_semantic_merge() {
     let unresolved = run(&fixture.path, &home, "semantic-merge", &args, 1);
     let conflicts = unresolved.get("conflicts").unwrap().as_array().unwrap();
     assert_eq!(conflicts.len(), 1);
-    assert_eq!(value(&conflicts[0], "path"), "0x010a");
-    assert_eq!(changes(&unresolved), [("0x010d".into(), number(23))]);
+    assert_eq!(value(&conflicts[0], "path"), "border-top-left-radius");
+    assert_eq!(
+        changes(&unresolved),
+        [("border-bottom-left-radius".into(), number(23))]
+    );
 }
 
 #[test]
@@ -979,7 +988,7 @@ fn semantic_diff_compares_project_components_across_git_worktrees() {
         .filter(|e| value(e, "object") == AR)
         .map(|e| value(e, "path"))
         .collect();
-    assert_eq!(dimensions, ["0x0108", "0x0109"]);
+    assert_eq!(dimensions, ["width", "height"]);
     for (id, kind, owner) in [
         (A, "set-property", A),
         (AR, "set-property", A),
@@ -1035,7 +1044,7 @@ fn semantic_diff_compares_project_components_across_git_worktrees() {
     );
     let conflicts = merge.get("conflicts").unwrap().as_array().unwrap();
     assert_eq!(conflicts.len(), 2);
-    for (conflict, axis) in conflicts.iter().zip(["0x0108", "0x0109"]) {
+    for (conflict, axis) in conflicts.iter().zip(["width", "height"]) {
         assert_eq!(value(conflict, "object"), AR);
         assert_eq!(value(conflict, "component"), A);
         assert_eq!(value(conflict, "kind"), "property-value");

@@ -134,13 +134,15 @@ fn css_copy_reports_longhand_names_and_paste_applies_one_transaction() {
     assert!(text.contains("width: 333px;\n"), "{text}");
     assert!(text.contains("border-top-right-radius: 2px;\n"), "{text}");
 
-    // `stellar query node`의 속성 경로는 longhand key(0x0108 width, 0x010b 모서리)이고 묶음 key(0x0101·0x0106)가
-    // 아닙니다.
+    // `stellar query node`의 속성 경로는 registry longhand 이름이고 numeric key(0x0108 width, 0x010b 모서리)는
+    // 보조 필드 `key`입니다. 묶음 key(0x0101·0x0106)는 나오지 않습니다(ADR-0075 개정).
     let node = envelope(&stellar(&["query", path, "node", &document, &frame]), 0);
     let rendered = format!("{node:?}");
-    assert!(rendered.contains("0x0108"), "{rendered}");
-    assert!(rendered.contains("0x010b"));
+    assert!(rendered.contains("\"width\""), "{rendered}");
+    assert!(rendered.contains("\"border-top-right-radius\""));
+    assert!(rendered.contains("0x0108") && rendered.contains("0x010b"));
     assert!(!rendered.contains("\"0x0101\"") && !rendered.contains("\"0x0106\""));
+    assert!(!rendered.contains("\"size\"") && !rendered.contains("\"border-radius\""));
 }
 
 #[test]

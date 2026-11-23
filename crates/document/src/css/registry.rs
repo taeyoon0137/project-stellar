@@ -7,7 +7,7 @@
 //! [`snapshot_text`]는 registry 전체를 결정론적 텍스트로 냅니다. golden(`registry_snapshot.txt`)과 속성 모델
 //! 표(`docs/design/property_model.md` 5장·9장)가 이 텍스트와 맞는지 test가 확인합니다.
 
-use stellar_core_types::property::PropertyKey;
+use stellar_core_types::property::{PropertyKey, PropertyNameRegistry};
 
 use super::mapping::CssMapping;
 use crate::frame_metadata::FRAME_PROPERTIES;
@@ -146,6 +146,39 @@ pub fn entry_by_name(scope: PropertyScope, name: &str) -> Option<RegistryEntry> 
         .find(|e| e.scope == scope && e.name == name && e.bundle.is_empty())
 }
 
+/// `scope`에서 이름이 `name`인 편집 key([`entry_by_name`]의 key). 이름은 범위 안에서만 유일합니다(예: `transform`은
+/// Frame 0x0102와 Transform modifier 0x1011). 이름으로 key를 찾는 경로는 항상 범위를 줍니다.
+pub fn key_of(scope: PropertyScope, name: &str) -> Option<PropertyKey> {
+    entry_by_name(scope, name).map(|e| e.key)
+}
+
+/// 이름이 `name`인 모든 범위의 편집 항목(범위 순). 둘 이상이면 범위 없이 key를 정할 수 없습니다.
+pub fn entries_named(name: &str) -> Vec<RegistryEntry> {
+    entries()
+        .into_iter()
+        .filter(|e| e.name == name && e.bundle.is_empty())
+        .collect()
+}
+
+/// key의 registry 이름(묶음 key 포함). key는 범위와 무관하게 유일한 대역 규칙을 씁니다. 모르는 key는 `None`.
+pub fn name_of(key: PropertyKey) -> Option<&'static str> {
+    entries().into_iter().find(|e| e.key == key).map(|e| e.name)
+}
+
+/// `scope` 하나의 편집 항목 이름을 담은 이름 registry(III.2.1). 범위마다 registry를 따로 만듭니다. 여러 범위를 한
+/// registry에 넣으면 `transform`처럼 범위마다 다른 key를 가진 이름의 역조회가 마지막 등록으로 덮여 모호해집니다.
+/// 묶음 key는 이름으로 찾지 않으므로 넣지 않습니다(ADR-0075 결정 1).
+pub fn name_registry(scope: PropertyScope) -> PropertyNameRegistry {
+    let mut registry = PropertyNameRegistry::new();
+    for entry in entries()
+        .into_iter()
+        .filter(|e| e.scope == scope && e.bundle.is_empty())
+    {
+        registry.register(entry.key, entry.name);
+    }
+    registry
+}
+
 /// key의 표시 문자열(범위와 무관하게 key가 유일한 대역 규칙을 씁니다). 모르는 key는 `None`.
 pub fn display_label(key: PropertyKey) -> Option<String> {
     entries()
@@ -196,6 +229,56 @@ pub fn snapshot_text() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn name_lookup_is_scoped_and_unique_within_each_scope() {
+        // `transform`은 Frame과 Transform modifier에 모두 있습니다. 범위 없는 조회는 둘을 모두 돌려주고, 범위 있는
+        // 조회와 범위별 이름 registry는 각자 자기 key를 돌려줍니다.
+        let named: Vec<(PropertyScope, PropertyKey)> = entries_named("transform")
+            .into_iter()
+            .map(|e| (e.scope, e.key))
+            .collect();
+        assert_eq!(
+            named,
+            vec![
+                (PropertyScope::Frame, crate::frame::keys::TRANSFORM),
+                (
+                    PropertyScope::Modifier,
+                    crate::modifier_metadata::keys::TRANSFORM_MATRIX
+                ),
+            ]
+        );
+        assert_eq!(
+            key_of(PropertyScope::Frame, "transform"),
+            Some(crate::frame::keys::TRANSFORM)
+        );
+        assert_eq!(
+            key_of(PropertyScope::Modifier, "transform"),
+            Some(crate::modifier_metadata::keys::TRANSFORM_MATRIX)
+        );
+        for scope in PropertyScope::ALL {
+            let registry = name_registry(scope);
+            let mut seen = BTreeSet::new();
+            for entry in entries()
+                .into_iter()
+                .filter(|e| e.scope == scope && e.bundle.is_empty())
+            {
+                assert!(seen.insert(entry.name), "{scope:?}: {} 중복", entry.name);
+                assert_eq!(registry.key_of(entry.name), Some(entry.key));
+                assert_eq!(registry.name_of(entry.key), Some(entry.name));
+                assert_eq!(name_of(entry.key), Some(entry.name));
+            }
+        }
+        // 묶음 key는 이름 registry에 없지만 key로 이름을 읽을 수 있습니다(옛 bytes 표시용).
+        assert_eq!(
+            name_registry(PropertyScope::Frame).key_of("border-radius"),
+            None
+        );
+        assert_eq!(
+            name_of(crate::frame::keys::CORNER_RADIUS),
+            Some("border-radius")
+        );
+    }
     use crate::css::mapping::MappingStatus;
     use crate::css::mapping::{is_css_property_name, is_known_longhand, shorthand_longhands};
     use std::collections::{BTreeMap, BTreeSet};

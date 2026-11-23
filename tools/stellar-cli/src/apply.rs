@@ -21,6 +21,7 @@
 //! | `delete-subtree` | `root` |
 //! | `move-node` | `node`, `new_parent`, `order_key`(OrderKey bytes 16진수) |
 //! | `insert-component-instance` | `parent`, `component`, `source_hash`(정의 원본 파일 hash), `x`, `y`(유한 f32 JSON 숫자) |
+//! | `set-property` | `node`, `property`(registry 이름 `opacity`·`border-top-left-radius` 또는 numeric key `0x0303`), `value`(CSS 값 텍스트) |
 //! | 그 밖의 closed enum 종류 이름(`insert-node` 등, VII.1.2) | `canonical`(commands canonical bytes 16진수) |
 //!
 //! 모든 object는 표에 있는 key만 가질 수 있습니다. 등록되지 않은 `kind`는 `unknown-command`(65)로
@@ -31,6 +32,11 @@
 //! `stellar query . components`가 보고한 그 정의 원본 파일의 hash이며, 적용할 때 원본이 없거나 hash가
 //! 다르면 `component-source-changed`(65)로 거부하고 아무것도 쓰지 않습니다. 다른 command와 같은
 //! transaction에 들어가 함께 적용되거나 함께 거부됩니다.
+//!
+//! `set-property`는 속성 패널·`stellar css paste`와 같은 선언 붙여넣기 경로로 앞 command까지 적용한 문서에서
+//! command가 됩니다. 받지 못한 값·속성은 그 이유 코드(`unsupported-value`, `not-applicable` 등)와 함께
+//! `invalid-command`(65)이고, 묶음 key(`0x0106` 등)는 `bundle-key-reference`입니다. 값이 이미 같으면 command가
+//! 없고 저장하지 않습니다.
 //!
 //! 잠긴 노드와 잠긴 조상 아래 노드를 바꾸는 요청은 앱과 같은 규칙으로 `rejected-command`이고 아무것도
 //! 쓰지 않습니다(D8). 잠금 해제는 그 노드의 `set-locked`로 하며, 같은 요청에서 그 노드의 다른 값은 바꾸지
@@ -343,6 +349,14 @@ fn command_input(value: &JsonValue, index: usize) -> Result<CommandInput, CliErr
                 position,
             })
         }
+        "set-property" => {
+            only_keys(value, &["kind", "node", "property", "value"], &at)?;
+            CommandInput::SetProperty {
+                node: id_field(value, "node", &at)?,
+                property: text_field(value, "property", &at)?.to_string(),
+                value: text_field(value, "value", &at)?.to_string(),
+            }
+        }
         other => {
             if value.get("canonical").is_none() {
                 return Err(CliError::new(
@@ -627,5 +641,27 @@ mod tests {
         });
         assert_eq!(changed.status, ExitStatus::DataErr);
         assert_eq!(changed.code, "component-source-changed");
+        // set-property는 registry 이름·numeric key와 CSS 값 텍스트를 그대로 받습니다.
+        let request = parse(format!(
+            r#"{{"kind":"set-property","node":"{id}","property":"0x0303","value":"4px"}}"#
+        ))
+        .unwrap();
+        assert_eq!(
+            request.commands,
+            [CommandInput::SetProperty {
+                node: id,
+                property: "0x0303".into(),
+                value: "4px".into(),
+            }]
+        );
+        for bad in [
+            format!(r#"{{"kind":"set-property","node":"{id}","property":"width"}}"#),
+            format!(r#"{{"kind":"set-property","node":"{id}","property":"width","value":1}}"#),
+            format!(
+                r#"{{"kind":"set-property","node":"{id}","property":"width","value":"1px","key":"0x0108"}}"#
+            ),
+        ] {
+            assert_eq!(parse(bad).unwrap_err().code, "invalid-transaction");
+        }
     }
 }

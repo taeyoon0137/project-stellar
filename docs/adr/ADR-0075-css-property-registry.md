@@ -173,3 +173,20 @@ Accepted (2026-11-23)
   `BindingContext::targets`(`TargetCheck`)로 호출자가 넘기고, `check_binding`이 type·cycle보다 먼저 부릅니다
   (`BindingCommandError::Target`). 문서와 bindings를 함께 보는 제품 호출자는 아직 없어, 그 호출자를 만들 때 이
   검사에 `bundle_key_reference`를 넘깁니다.
+
+### 결정 4 보완: CLI·MCP 속성 경로 표기와 범위 있는 이름 조회
+
+- headless 출력의 속성 경로(`stellar_ops::query::property_path_label`: `query node`의 `properties[].path`, diff·apply·
+  semantic-merge·git 변경 항목의 `path`, MCP diff)는 key마다 registry 이름(`css::registry::name_of`)을 씁니다. 예:
+  `width`, `border-top-left-radius`, `border[1]`. registry에 없는 key(semantic snapshot 전용 `0xE0xx`, 인스턴스
+  override 등)는 4자리 16진수입니다. key 번호는 범위와 무관하게 유일하므로(대역 규칙) 이름 표기는 key 하나로 정해집니다.
+  numeric 표기는 보조 필드 `key`(`property_key_label`, 예: `0x0108`)로 함께 냅니다(`query node` 속성, diff 변경 항목).
+  conflict 목록은 `path`(이름)만 냅니다. 대상 객체가 같이 나오므로 이름에서 key가 정해집니다.
+- 입력은 이름과 숫자를 모두 받습니다. `stellar apply`의 `set-property`(`node`, `property`, `value`)는 registry 이름 또는
+  `0x` key를 받아 이름으로 풀고, 묶음 key는 `bundle-key-reference`로 거부합니다. command는 결정 6의 선언 붙여넣기
+  (`paste_declarations`)로 만들고, 앞 command까지 적용한 사본 문서 위에서 계산합니다. 그래서 속성 패널·`stellar css`·
+  `apply`가 같은 parser·적용 규칙을 씁니다. 값에 `;`·`{`·`}`가 있으면(선언 둘 이상) 거부합니다.
+- 이름은 범위 안에서만 유일합니다(`transform`은 Frame 0x0102와 Transform modifier 0x1011). 이름으로 key를 찾는 경로는
+  `css::registry::key_of(scope, name)`·`entry_by_name`처럼 범위를 주고, 범위 없는 `entries_named`는 모든 후보를 돌려
+  줍니다. `PropertyNameRegistry`(III.2.1)는 범위마다 하나씩 만듭니다(`css::registry::name_registry(scope)`). 여러 범위를
+  한 registry에 넣으면 역조회가 마지막 등록으로 덮이므로 그렇게 쓰지 않습니다.

@@ -89,6 +89,14 @@ Text 레이어 본문은 `replace-text`(`node`, Unicode scalar 정수 `start`와
 `component`와 `source_hash`는 `stellar query . components`가 보고한 정의 ID와 그 원본 파일의 hash입니다.
 인스턴스는 `parent`의 마지막 자식이 되고, 위치 `(x, y)`는 부모 좌표계의 평행이동으로 저장됩니다.
 적용할 때 정의가 없거나 원본 hash가 다르면 `component-source-changed`(65)로 거부하고 아무것도 쓰지 않습니다.
+registry 속성 하나는 `set-property`(`node`, `property`, `value`)로 CSS 값 그대로 바꿉니다. `property`는 registry 이름
+(`width`, `background-color`, `border-top-left-radius`) 또는 numeric key(`0x010a`)이고, `value`는 CSS 값 텍스트(`12px`,
+`#ff0000`)입니다. `stellar css paste`와 같은 경로로 command가 되며, 받지 못한 값·속성은 이유 코드(`unsupported-unit`,
+`not-applicable` 등)와 함께, 묶음 key(`0x0101` 등)는 `bundle-key-reference`와 함께 거부합니다.
+
+`query node`의 `properties[].path`와 `semantic-diff`·`apply` 변경 항목의 `path`는 registry 이름(CSS longhand 또는
+Stellar 이름)이고, `key`는 같은 경로의 numeric key(`0x0108`)입니다. registry에 없는 semantic 전용 key(`0xe001` 표시
+여부 등)는 `path`도 numeric입니다.
 
 잠긴 node는 앱과 같은 D8 잠금 규칙(잠긴 node·잠긴 조상 아래 수정 거부, 해제는 `set-locked`)으로 보호합니다(사용자
 결정 D8). root Frame·흐름 부모·숨긴 조상 처리는 앱과 다를 수 있습니다(아래 마지막 항목). 판정은 요청을 시작할 때의
