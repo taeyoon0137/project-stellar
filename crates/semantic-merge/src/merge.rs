@@ -738,7 +738,7 @@ fn id_set(value: Option<&SemanticValue>) -> BTreeSet<StableId> {
 /// 값의 canonical bytes가 `ids` 중 하나의 16바이트 StableId를 담는지(보수적 scan, dependency graph와
 /// 같은 방식). StableId는 전역 유일 값이라 우연 일치는 사실상 없고, 일치하면 conflict가 늘어나는
 /// 방향입니다.
-fn mentions(value: &SemanticValue, ids: &BTreeSet<StableId>) -> bool {
+pub(crate) fn mentions(value: &SemanticValue, ids: &BTreeSet<StableId>) -> bool {
     let windows: BTreeSet<[u8; 16]> = ids.iter().map(StableId::to_bytes).collect();
     value.to_canonical_bytes().windows(16).any(|window| {
         let mut key = [0u8; 16];

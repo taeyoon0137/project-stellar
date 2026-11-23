@@ -331,3 +331,48 @@ fn write_requires_zero_unresolved_and_no_new_violation() {
         Some(&text("v"))
     );
 }
+
+#[test]
+fn removing_side_resolution_releases_drilling_binding() {
+    // 바깥 Property 삭제 대 그 Property를 참조하는 drilling binding(drilling-chain-break). 삭제 쪽으로 해결하면
+    // 지운 Property를 가리키는 binding도 C에 남지 않아야 합니다(삭제 쪽 상태와 같음).
+    let base = world();
+    let ours = set_properties(&base, OUTER, &[]);
+    let path = override_path(NESTED, INNER_PROP);
+    let theirs = put(&base, &path, SemanticValue::Id(sid(OUTER_PROP)));
+    let mut c = candidate(&base, &ours, &theirs);
+    let conflict = c.conflicts()[0].clone();
+    assert_eq!(conflict.kind, ConflictKind::DrillingChainBreak);
+    let original = c.clone();
+    let inverse = c
+        .apply(&CandidateCommand::Resolve {
+            object: conflict.object,
+            target: conflict.target.clone(),
+            resolution: Resolution::ChooseOurs,
+        })
+        .unwrap();
+    let nested = c.snapshot().get(sid(NESTED)).unwrap();
+    assert_eq!(
+        nested.property(&path),
+        ours.get(sid(NESTED)).unwrap().property(&path),
+        "binding은 삭제 쪽 상태"
+    );
+    assert_eq!(
+        c.provenance(sid(NESTED), &ConflictTarget::Property(path.clone())),
+        Source::A
+    );
+    assert!(c.validate().is_ok());
+    c.apply(&inverse).unwrap();
+    assert_eq!(c, original);
+    // Property를 유지하는 쪽(theirs)으로 해결하면 binding을 그대로 둡니다.
+    c.apply(&CandidateCommand::Resolve {
+        object: conflict.object,
+        target: conflict.target,
+        resolution: Resolution::ChooseTheirs,
+    })
+    .unwrap();
+    assert_eq!(
+        c.snapshot().get(sid(NESTED)).unwrap().property(&path),
+        Some(&SemanticValue::Id(sid(OUTER_PROP)))
+    );
+}

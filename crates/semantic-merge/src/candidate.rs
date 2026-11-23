@@ -17,7 +17,8 @@
 //! 선택(`Select`), 역 command(`Restore`)입니다. [`CandidateSnapshot::apply`]는 C 사본에서 모두 성공할 때만 C를
 //! 바꾸고 역 command를 돌려줍니다: `apply(inverse)`는 C를 이전과 같은 값으로 되돌립니다. C 밖(파일·index)은
 //! 건드리지 않습니다. Property 삭제 conflict(전용 종류 7·9)를 삭제 쪽으로 해결하면 C의 scene·정의 인스턴스에서
-//! 지운 Property를 가리키는 override도 함께 지웁니다(삭제 쪽 상태와 같음).
+//! 지운 Property를 가리키는 override와, 값이 지운 Property를 담는 drilling binding도 함께 지웁니다(삭제 쪽
+//! 상태와 같음).
 //!
 //! **쓰기 조건(XIV.12.3)**: [`CandidateSnapshot::validate`]는 unresolved conflict가 0이고 C가 세 입력
 //! 어디에도 없던 snapshot 위반을 갖지 않을 때만 성공합니다.
@@ -37,7 +38,7 @@ use stellar_semantic_diff::validate::override_member;
 use stellar_semantic_diff::validate::{introduced_violations, SnapshotViolation};
 use stellar_semantic_diff::value::SemanticValue;
 
-use crate::merge::merge;
+use crate::merge::{mentions, merge};
 use crate::model::ConflictKind;
 use crate::model::{ConflictTarget, SideState};
 use crate::model::{MergeError, MergeInput, MergeResult, SemanticConflict};
@@ -349,13 +350,20 @@ impl Edit<'_> {
         Ok(())
     }
 
-    /// Property 삭제 쪽 해결(전용 종류 7·9) 뒤, C의 인스턴스에서 목록에 없는 Property를 가리키는 override를
-    /// 지웁니다.
+    /// Property 삭제 쪽 해결(전용 종류 7·9) 뒤, C에서 목록에 없는 Property를 가리키는 사용을 지웁니다.
+    ///
+    /// - 그 컴포넌트 인스턴스의 override 경로 member가 목록에 없으면 그 override를 지웁니다.
+    /// - 다른 객체의 속성 값이 conflict 세 상태의 목록에는 있었지만 C 목록에서 빠진 Property StableId를 담으면
+    ///   (drilling binding, 엔진의 drilling-chain-break 판정과 같은 scan) 그 속성을 `source` side 값으로 되돌리고,
+    ///   그 값도 빠진 Property를 담으면 지웁니다.
+    ///
+    /// 그래서 삭제 쪽 해결 결과에는 지운 Property를 가리키는 override·binding이 남지 않습니다.
     fn release_overrides(
         &mut self,
-        component: StableId,
+        conflict: &SemanticConflict,
         source: Source,
     ) -> Result<(), ResolutionError> {
+        let component = conflict.object;
         let snapshot = &self.candidate.snapshot;
         let Some(owner) = snapshot.get(component) else {
             return Ok(());
@@ -365,23 +373,50 @@ impl Edit<'_> {
             Some(SemanticValue::Ids(ids)) => ids.clone(),
             _ => Vec::new(),
         };
+        let removed: BTreeSet<StableId> = [&conflict.base, &conflict.ours, &conflict.theirs]
+            .into_iter()
+            .filter_map(|state| match state {
+                SideState::Value(Some(SemanticValue::Ids(ids))) => Some(ids),
+                _ => None,
+            })
+            .flatten()
+            .copied()
+            .filter(|id| !listed.contains(id))
+            .collect();
+        let side = match source {
+            Source::Base => Some(&self.candidate.input.base),
+            Source::A => Some(&self.candidate.input.ours),
+            Source::B => Some(&self.candidate.input.theirs),
+            Source::Auto | Source::Custom => None,
+        };
         let reference = SemanticValue::Id(component);
         let mut released = Vec::new();
         for object in snapshot.objects() {
-            if object.property(&object.path(&[keys::instance::COMPONENT_REF])) != Some(&reference) {
-                continue;
-            }
-            for path in object.properties().keys() {
+            let is_instance =
+                object.property(&object.path(&[keys::instance::COMPONENT_REF])) == Some(&reference);
+            for (path, value) in object.properties() {
                 let is_override = path.keys().first() == Some(&keys::instance::PROPERTY_OVERRIDES);
-                if is_override
+                if is_instance
+                    && is_override
                     && override_member(path).is_some_and(|(_, member)| !listed.contains(&member))
                 {
-                    released.push((object.id(), ConflictTarget::Property(path.clone())));
+                    released.push((object.id(), path.clone(), None));
+                } else if object.id() != component && mentions(value, &removed) {
+                    let restored = side
+                        .and_then(|side| side.get(object.id()))
+                        .and_then(|o| o.property(path))
+                        .filter(|value| !mentions(value, &removed))
+                        .cloned();
+                    released.push((object.id(), path.clone(), restored));
                 }
             }
         }
-        for key in released {
-            self.place(&key, SideState::Value(None), source)?;
+        for (object, path, value) in released {
+            self.place(
+                &(object, ConflictTarget::Property(path)),
+                SideState::Value(value),
+                source,
+            )?;
         }
         Ok(())
     }
@@ -704,7 +739,7 @@ fn resolve(
         conflict.kind,
         ConflictKind::ComponentPropertyRemovedVsOverride | ConflictKind::DrillingChainBreak
     ) {
-        edit.release_overrides(key.0, source)?;
+        edit.release_overrides(&conflict, source)?;
     }
     edit.set_resolution(key, Some(resolution.clone()));
     Ok(())
