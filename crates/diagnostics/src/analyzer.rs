@@ -7,6 +7,8 @@
 //!   제거 금지).
 //! - **release gate**(XVI.4.4): required scenario가 모두 `p50 ≤ 5`, `p95 ≤ 7`, `p99 ≤ 9`, `controllable max ≤ 10`
 //!   ms를 지켜야 통과입니다. 경계값(같음)은 통과입니다. sample이 하나도 없는 required scenario는 실패입니다.
+//!   판정 sample이 `scenario_min_samples`(1,000)보다 적거나, 선언한 cache setup이 실제 hit·miss와 맞지 않는 required
+//!   scenario도 실패입니다(ADR-0096 결정 5·6). 통계가 그 scenario를 대표하지 못하기 때문입니다.
 
 use std::fmt;
 
@@ -131,6 +133,10 @@ pub enum GateMetric {
     P99,
     /// 통제 가능한 최댓값.
     ControllableMax,
+    /// 판정 sample이 `scenario_min_samples`보다 적음.
+    TooFewSamples,
+    /// 선언한 cache setup과 실제 hit·miss가 다름.
+    CacheSetup,
 }
 
 impl GateMetric {
@@ -142,11 +148,13 @@ impl GateMetric {
             GateMetric::P95 => "p95",
             GateMetric::P99 => "p99",
             GateMetric::ControllableMax => "controllable_max",
+            GateMetric::TooFewSamples => "too_few_samples",
+            GateMetric::CacheSetup => "cache_setup",
         }
     }
 }
 
-/// gate 위반 하나.
+/// gate 위반 하나. sample 수 지표는 `value_nanos`·`limit_nanos`에 ns 대신 개수를, cache setup은 0을 씁니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GateViolation {
     /// scenario index.
@@ -161,6 +169,22 @@ pub struct GateViolation {
 
 impl fmt::Display for GateViolation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.metric {
+            GateMetric::TooFewSamples => {
+                return write!(
+                    f,
+                    "scenario {} {} sample {}개 < {}개",
+                    self.scenario,
+                    self.metric.name(),
+                    self.value_nanos,
+                    self.limit_nanos
+                )
+            }
+            GateMetric::NoSamples | GateMetric::CacheSetup => {
+                return write!(f, "scenario {} {}", self.scenario, self.metric.name())
+            }
+            _ => {}
+        }
         write!(
             f,
             "scenario {} {} {}ns > {}ns",
@@ -179,6 +203,8 @@ pub struct GateScenario {
     pub required: bool,
     /// 통계.
     pub stats: LatencyStats,
+    /// 선언한 cache setup이 실제 hit·miss와 맞는지([`crate::latency_scenario::check_cache_setup`]).
+    pub cache_consistent: bool,
 }
 
 /// release gate(XVI.4.4). 위반 목록이 비어 있으면 통과입니다.
@@ -189,6 +215,14 @@ pub fn release_gate(scenarios: &[GateScenario], budget: &InteractionBudget) -> V
             continue;
         }
         let stats = &scenario.stats;
+        if !scenario.cache_consistent {
+            violations.push(GateViolation {
+                scenario: index,
+                metric: GateMetric::CacheSetup,
+                value_nanos: 0,
+                limit_nanos: 0,
+            });
+        }
         if stats.count == 0 {
             violations.push(GateViolation {
                 scenario: index,
@@ -197,6 +231,14 @@ pub fn release_gate(scenarios: &[GateScenario], budget: &InteractionBudget) -> V
                 limit_nanos: 0,
             });
             continue;
+        }
+        if stats.count < budget.scenario_min_samples {
+            violations.push(GateViolation {
+                scenario: index,
+                metric: GateMetric::TooFewSamples,
+                value_nanos: stats.count,
+                limit_nanos: budget.scenario_min_samples,
+            });
         }
         for (metric, value, limit_us) in [
             (GateMetric::P50, stats.p50_nanos, budget.p50_us),
@@ -289,7 +331,7 @@ mod tests {
         // 검증 기준(XVI.4.4): threshold boundary fixture. 경계값은 통과, 1ns 넘으면 실패.
         let budget = budget();
         let at = LatencyStats {
-            count: 10,
+            count: 1_000,
             p50_nanos: ms(5.0),
             p95_nanos: ms(7.0),
             p99_nanos: ms(9.0),
@@ -299,6 +341,7 @@ mod tests {
         let pass = GateScenario {
             required: true,
             stats: at,
+            cache_consistent: true,
         };
         assert!(release_gate(&[pass], &budget).is_empty());
         for (metric, bump) in [
@@ -337,6 +380,7 @@ mod tests {
                     GateScenario {
                         required: true,
                         stats: bump,
+                        cache_consistent: true,
                     },
                 ],
                 &budget,
@@ -352,15 +396,95 @@ mod tests {
                 p50_nanos: ms(50.0),
                 ..at
             },
+            cache_consistent: false,
         };
         assert!(release_gate(&[slow], &budget).is_empty());
         let empty = GateScenario {
             required: true,
             stats: LatencyStats::default(),
+            cache_consistent: true,
         };
         assert_eq!(
             release_gate(&[empty], &budget)[0].metric,
             GateMetric::NoSamples
         );
+        // sample 수 경계: scenario_min_samples(1,000)는 통과, 하나 적으면 실패.
+        let few = GateScenario {
+            stats: LatencyStats { count: 999, ..at },
+            ..pass
+        };
+        let violations = release_gate(&[few], &budget);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].metric, GateMetric::TooFewSamples);
+        assert_eq!(
+            (violations[0].value_nanos, violations[0].limit_nanos),
+            (999, 1_000)
+        );
+        // cache setup이 실제와 다르면 통계가 좋아도 실패.
+        let mismatched = GateScenario {
+            cache_consistent: false,
+            ..pass
+        };
+        let violations = release_gate(&[mismatched], &budget);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].metric, GateMetric::CacheSetup);
+    }
+
+    #[test]
+    fn thousand_sample_reference_and_limit_boundary() {
+        // 검증 기준(XVI.4.2): 통계 reference fixture(1,000 sample)와 통제 가능 10ms 초과 count 경계.
+        let mut samples: Vec<LatencySample> = (1..=1_000u64)
+            .rev()
+            .map(|us| LatencySample::controllable(us * 1_000))
+            .collect();
+        let stats = analyze(&samples, &budget());
+        assert_eq!(stats.count, 1_000);
+        assert_eq!(stats.p50_nanos, 500_000);
+        assert_eq!(stats.p95_nanos, 950_000);
+        assert_eq!(stats.p99_nanos, 990_000);
+        assert_eq!(stats.max_nanos, 1_000_000);
+        assert_eq!(stats.over_limit, 0);
+        // 10ms와 같은 값은 초과가 아니고 1ns 넘으면 초과입니다.
+        samples.push(LatencySample::controllable(ms(10.0)));
+        assert_eq!(analyze(&samples, &budget()).over_limit, 0);
+        samples.push(LatencySample::controllable(ms(10.0) + 1));
+        let stats = analyze(&samples, &budget());
+        assert_eq!(stats.over_limit, 1);
+        assert_eq!(stats.max_nanos, ms(10.0) + 1);
+        // 입력 순서와 무관합니다.
+        samples.reverse();
+        assert_eq!(analyze(&samples, &budget()), stats);
+    }
+
+    #[test]
+    fn excluded_samples_do_not_fill_the_sample_requirement() {
+        // 검증 기준(XVI.4.3): 제외는 사전 정의 코드로만 하고, 제외한 sample은 판정 sample 수에 들지 않습니다.
+        let budget = budget();
+        let mut samples: Vec<LatencySample> = (0..999)
+            .map(|_| LatencySample::controllable(ms(2.0)))
+            .collect();
+        for code in ExclusionCode::ALL {
+            samples.push(LatencySample {
+                latency_nanos: ms(1.0),
+                exclusion: Some(code),
+            });
+        }
+        let stats = analyze(&samples, &budget);
+        assert_eq!(stats.count, 999);
+        assert_eq!(stats.excluded, [1, 1, 1, 1]);
+        let violations = release_gate(
+            &[GateScenario {
+                required: true,
+                stats,
+                cache_consistent: true,
+            }],
+            &budget,
+        );
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].metric, GateMetric::TooFewSamples);
+        // 코드 이름은 서로 다른 고정 이름입니다.
+        let names: std::collections::BTreeSet<&str> =
+            ExclusionCode::ALL.iter().map(|c| c.name()).collect();
+        assert_eq!(names.len(), ExclusionCode::ALL.len());
     }
 }

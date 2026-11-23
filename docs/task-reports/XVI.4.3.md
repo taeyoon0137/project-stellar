@@ -41,3 +41,20 @@
 ## 남은 위험 / 한계
 
 - 코드를 sample에 붙이는 감지(운영체제 선점·장치 상실 이벤트 연결)는 앱·renderer 경로 몫입니다. core replay sample은 모두 통제 가능으로 봅니다.
+
+## 2026-11-23 interaction-trace 후속: 제외 sample과 sample 수 요구 (ADR-0096 결정 2·4·6)
+
+- 제외한 sample은 판정 sample 수에 들지 않습니다. 그래서 제외 코드로 sample 수 요구(1,000)를 채울 수 없습니다.
+- 다음 두 가지는 측정한 sample을 빼는 일이 아닙니다. 둘 다 latency가 생기기 전에 정해집니다.
+  - 재생 파일의 `measure-from` setup event: 실행 전에 파일에 적힌 값입니다.
+  - 연결 지점 probe의 `cancel`: frame 없이 끝난 event라 latency가 없습니다.
+
+| 테스트 | 확인 |
+|---|---|
+| `excluded_samples_do_not_fill_the_sample_requirement` | 통제 가능 999개 + 코드별 제외 4개 → count 999, 코드별 1개씩, gate `too_few_samples` |
+| `only_predefined_codes_exclude_samples`(기존) | 코드 없는 500ms sample은 제외되지 않음 |
+
+### 근거 커밋
+
+- `e1b2454f` Feat: 성능 sample analyzer·제외 코드·release gate 추가 (XVI.4.2\~XVI.4.4)
+- 이 커밋(`Task(XVI.4.3)`): 제외 sample과 sample 수 요구 검사.

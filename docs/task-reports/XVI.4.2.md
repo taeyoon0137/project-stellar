@@ -41,3 +41,14 @@
 ## 남은 위험 / 한계
 
 - 없음.
+
+## 2026-11-23 interaction-trace 후속: 1,000 sample reference와 10ms 경계
+
+| 테스트 | 확인 |
+|---|---|
+| `thousand_sample_reference_and_limit_boundary` | 1\~1,000µs 1,000개에서 p50 500µs·p95 950µs·p99 990µs·max 1ms, 10ms와 같은 값은 초과 아님, 1ns 넘으면 초과, 입력 순서 무관 |
+
+### 근거 커밋
+
+- `e1b2454f` Feat: 성능 sample analyzer·제외 코드·release gate 추가 (XVI.4.2\~XVI.4.4)
+- 이 커밋(`Task(XVI.4.2)`): 1,000 sample reference와 경계 검사.

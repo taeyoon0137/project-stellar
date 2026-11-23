@@ -45,3 +45,22 @@
 ## 남은 위험 / 한계
 
 - 없음.
+
+## 2026-11-23 interaction-trace 후속 (ADR-0096 결정 3)
+
+- `InteractionKind`를 아키텍처 §38.1 시나리오 13개와 1:1로 맞췄습니다. `token_edit`은 `token_propagation`, `undo_redo`는
+  `undo`·`redo`로 나눴고 `component_update`·`variant_change`를 더했습니다. 단일 속성 변경 `property_edit`은 남깁니다.
+- 값은 여전히 닫힌 enum의 고정 이름(소문자·밑줄)입니다. `kind_names_are_unique_fixed_names`가 이름이 서로 다르고 허용
+  문자만 쓰는지 검사합니다. 기존 privacy schema test(`trace_line_uses_only_allowed_keys`, compile_fail doctest)도
+  통과합니다.
+- `InteractionTrace::gpu`(기록한 GPU 시각 읽기)를 더했습니다. 앱 연결 지점 probe가 병합된 event에 GPU 시간을 복사할 때
+  씁니다(XVI.1.3).
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-diagnostics` | 통과(이 lane 최종 검증 절은 XVI.2.5 보고서) |
+
+### 근거 커밋
+
+- `d25a69c9` Feat: 상호작용 trace T0\~T5 ID·stage·구간·dimension 추가 (XVI.1.1\~XVI.1.4)
+- 이 커밋(`Task(XVI.1.4)`): 시나리오와 1:1인 dimension 종류와 검사.

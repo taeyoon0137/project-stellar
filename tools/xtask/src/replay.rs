@@ -1,17 +1,24 @@
-//! `cargo xtask replay` — 성능 입력 재생 CLI (XVI.2.1, XVI.2.2, XXIV.3.3, ADR-0084 결정 9·11).
+//! `cargo xtask replay` — 성능 입력 재생 CLI (XVI.2.1, XVI.2.2, XVI.2.5, XVI.2.6, XXIV.3.3, ADR-0084 결정 9·11,
+//! ADR-0096).
 //!
 //! ```text
-//! cargo xtask replay record <pan|drag|resize> --out <file> [--seed N] [--size N]
+//! cargo xtask replay record <scenario> --out <file> [--seed N] [--size N] [--samples N] [--cache warm|cold]
+//! cargo xtask replay record-suite --dir <dir> [--seed N] [--size N] [--samples N]
 //! cargo xtask replay run <file>... [--out <result.json>] [--gate]
 //!     [--commit <hex>] [--hardware-model <s>] [--hardware-cpu <s>] [--memory-gib <n>]
 //!     [--os-build <s>] [--app-build <s>]
 //! ```
 //!
 //! - `record`는 synthetic fixture(`visible-nodes`, 기본 seed 1, 가시 node 20,000)를 만들어 표준 scenario의 재생
-//!   파일을 씁니다. 파일은 프로젝트 밖 아무 경로에나 둡니다.
+//!   파일을 씁니다. 판정 sample은 `--samples`(기본 1,000)개 이상, cache setup은 `--cache`(기본 warm)입니다. 파일은
+//!   프로젝트 밖 아무 경로에나 둡니다.
+//! - `record-suite`는 core replay가 실행할 수 있는 시나리오마다 warm·cold 재생 파일
+//!   (`<scenario>.<cache>.replay`)을 `--dir`에 씁니다. 엔진 경로가 이어지지 않은 시나리오는 이유를 표준 오류에
+//!   적고 건너뜁니다.
 //! - `run`은 파일마다 fixture를 다시 만들고 content hash를 확인한 뒤 core replay를 실행합니다. 결과 JSON
-//!   (`stellar.performance-result.v1`)을 표준 출력이나 `--out`에 씁니다. `--gate`면 release gate 위반 때 종료
-//!   코드 65입니다.
+//!   (`stellar.performance-result.v2`)을 표준 출력이나 `--out`에 씁니다. `--gate`면 release gate 위반 때 종료
+//!   코드 65입니다. release gate는 §38.1 시나리오 13개 각각의 warm·cold 결과가 모두 있어야 통과합니다. 실행에
+//!   없는 조합은 sample 0개 결과로 넣어 실패합니다(빼지 않음).
 //! - 환경 값은 인자로 주거나, 없으면 `git rev-parse HEAD`·`sysctl`·`sw_vers`에서 읽습니다. 읽지 못하면 `unknown`입니다.
 //!   기준 장비(reference runner)에서 같은 명령을 실행하면 같은 schema의 결과가 나옵니다.
 
@@ -26,14 +33,15 @@ use stellar_diagnostics::analyzer::{
     analyze, percentile, release_gate, GateScenario, LatencySample,
 };
 use stellar_diagnostics::budget::InteractionBudget;
-use stellar_diagnostics::interaction::StageSpan;
+use stellar_diagnostics::interaction::{CacheState, StageSpan};
+use stellar_diagnostics::latency_scenario::{CacheObservation, CoreReplay};
 use stellar_diagnostics::result::{
     BuildProfile, FixtureIdentity, FixtureName, HardwareProfile, PerformanceResult,
     ResultEnvironment, ScenarioResult,
 };
 
 use file::{FixtureSpec, ReplayFile, ReplayScenario};
-use runner::{load_fixture, run_replay, standard_replay, ReplayRun};
+use runner::{load_fixture, run_replay, standard_replay, ReplayRun, DEFAULT_SAMPLES};
 
 /// 기본 fixture: 가시 node 20,000(아키텍처 §5.3).
 pub const DEFAULT_FIXTURE: FixtureSpec = FixtureSpec {
@@ -123,12 +131,50 @@ pub fn summarize(run: &ReplayRun, budget: &InteractionBudget) -> ScenarioResult 
     }
     ScenarioResult {
         kind: run.scenario.kind(),
-        required: true,
+        required: run.scenario.required(),
         latency,
         span_p99_nanos,
         traces: run.traces.len() as u64,
         scene_hash: run.scene_hash,
+        cache: run.cache,
+        cache_observation: run.cache_observation,
+        cache_consistent: run.cache_consistent,
+        setup_events: run.setup_events as u64,
     }
+}
+
+/// 두 cache setup.
+pub const CACHE_STATES: [CacheState; 2] = [CacheState::Warm, CacheState::Cold];
+
+/// 실행에 없는 required (시나리오, cache) 조합의 sample 0개 결과(gate에서 NoSamples로 실패).
+fn missing_required(scenarios: &[ScenarioResult]) -> Vec<ScenarioResult> {
+    let mut out = Vec::new();
+    for scenario in ReplayScenario::ALL {
+        if !scenario.required() {
+            continue;
+        }
+        for cache in CACHE_STATES {
+            if scenarios
+                .iter()
+                .any(|s| s.kind == scenario.kind() && s.cache == cache)
+            {
+                continue;
+            }
+            out.push(ScenarioResult {
+                kind: scenario.kind(),
+                required: true,
+                latency: Default::default(),
+                span_p99_nanos: [0; 5],
+                traces: 0,
+                scene_hash: 0,
+                cache,
+                cache_observation: CacheObservation::default(),
+                cache_consistent: true,
+                setup_events: 0,
+            });
+        }
+    }
+    out
 }
 
 /// 여러 재생 결과로 결과 문서를 만듭니다.
@@ -138,12 +184,16 @@ pub fn build_result(
     runs: &[ReplayRun],
     budget: &InteractionBudget,
 ) -> PerformanceResult {
-    let scenarios: Vec<ScenarioResult> = runs.iter().map(|run| summarize(run, budget)).collect();
+    let mut scenarios: Vec<ScenarioResult> =
+        runs.iter().map(|run| summarize(run, budget)).collect();
+    let missing = missing_required(&scenarios);
+    scenarios.extend(missing);
     let gate: Vec<GateScenario> = scenarios
         .iter()
         .map(|s| GateScenario {
             required: s.required,
             stats: s.latency,
+            cache_consistent: s.cache_consistent,
         })
         .collect();
     PerformanceResult {
@@ -176,37 +226,64 @@ pub fn run_cli(args: &[String], repo_root: &Path) -> Result<(), (i32, String)> {
     let usage = || {
         (
             USAGE,
-            "사용법: cargo xtask replay record <pan|drag|resize> --out <file> [--seed N] [--size N]\n\
+            "사용법: cargo xtask replay record <scenario> --out <file> [--seed N] [--size N] [--samples N] \
+             [--cache warm|cold]\n\
+             \x20      cargo xtask replay record-suite --dir <dir> [--seed N] [--size N] [--samples N]\n\
              \x20      cargo xtask replay run <file>... [--out <result.json>] [--gate] [--commit <hex>] \
              [--hardware-model <s>] [--hardware-cpu <s>] [--memory-gib <n>] [--os-build <s>] [--app-build <s>]"
                 .to_owned(),
         )
     };
     match args.first().map(String::as_str) {
-        Some("record") => {
-            let scenario = args
-                .get(1)
-                .and_then(|s| ReplayScenario::parse(s))
-                .ok_or_else(usage)?;
+        Some(command @ ("record" | "record-suite")) => {
+            let suite = command == "record-suite";
+            let scenario = if suite {
+                None
+            } else {
+                Some(
+                    args.get(1)
+                        .and_then(|s| ReplayScenario::parse(s))
+                        .ok_or_else(usage)?,
+                )
+            };
             let mut spec = DEFAULT_FIXTURE;
             let mut out = None;
-            let mut i = 2;
+            let mut samples = DEFAULT_SAMPLES;
+            let mut cache = CacheState::Warm;
+            let mut i = if suite { 1 } else { 2 };
+            let number = |text: &str, flag: &str| {
+                text.parse::<u64>()
+                    .map_err(|_| (USAGE, format!("{flag}는 정수입니다")))
+            };
             while i < args.len() {
                 match args[i].as_str() {
-                    "--out" => {
-                        out = Some(flag_value(args, &mut i, "--out").map_err(|e| (USAGE, e))?)
+                    flag @ ("--out" | "--dir") if (flag == "--dir") == suite => {
+                        out = Some(flag_value(args, &mut i, flag).map_err(|e| (USAGE, e))?)
                     }
                     "--seed" => {
-                        spec.seed = flag_value(args, &mut i, "--seed")
-                            .map_err(|e| (USAGE, e))?
-                            .parse()
-                            .map_err(|_| (USAGE, "--seed는 정수입니다".to_owned()))?;
+                        spec.seed = number(
+                            flag_value(args, &mut i, "--seed").map_err(|e| (USAGE, e))?,
+                            "--seed",
+                        )?
                     }
                     "--size" => {
-                        spec.size = flag_value(args, &mut i, "--size")
-                            .map_err(|e| (USAGE, e))?
-                            .parse()
-                            .map_err(|_| (USAGE, "--size는 정수입니다".to_owned()))?;
+                        spec.size = number(
+                            flag_value(args, &mut i, "--size").map_err(|e| (USAGE, e))?,
+                            "--size",
+                        )?
+                    }
+                    "--samples" => {
+                        samples = number(
+                            flag_value(args, &mut i, "--samples").map_err(|e| (USAGE, e))?,
+                            "--samples",
+                        )?
+                    }
+                    "--cache" if !suite => {
+                        cache = match flag_value(args, &mut i, "--cache").map_err(|e| (USAGE, e))? {
+                            "warm" => CacheState::Warm,
+                            "cold" => CacheState::Cold,
+                            _ => return Err((USAGE, "--cache는 warm·cold입니다".to_owned())),
+                        }
                     }
                     _ => return Err(usage()),
                 }
@@ -214,9 +291,39 @@ pub fn run_cli(args: &[String], repo_root: &Path) -> Result<(), (i32, String)> {
             }
             let out = out.ok_or_else(usage)?;
             let fixture = load_fixture(&spec).map_err(|e| (INTERNAL, e))?;
-            let file = standard_replay(scenario, spec, &fixture).map_err(|e| (INTERNAL, e))?;
-            std::fs::write(out, file.to_text()).map_err(|e| (INTERNAL, format!("{out}: {e}")))?;
-            println!("재생 파일 기록 완료: {out} ({} event)", file.events.len());
+            let write = |path: &Path, file: &ReplayFile| {
+                std::fs::write(path, file.to_text())
+                    .map_err(|e| (INTERNAL, format!("{}: {e}", path.display())))
+            };
+            match scenario {
+                Some(scenario) => {
+                    let file = standard_replay(scenario, spec, &fixture, samples, cache)
+                        .map_err(|e| (USAGE, e))?;
+                    write(Path::new(out), &file)?;
+                    println!("재생 파일 기록 완료: {out} ({} event)", file.events.len());
+                }
+                None => {
+                    let dir = Path::new(out);
+                    std::fs::create_dir_all(dir)
+                        .map_err(|e| (INTERNAL, format!("{}: {e}", dir.display())))?;
+                    let mut written = 0;
+                    for scenario in ReplayScenario::ALL {
+                        if let CoreReplay::NotConnected { missing } = scenario.core_replay() {
+                            eprintln!("{}: 건너뜀({missing})", scenario.name());
+                            continue;
+                        }
+                        for cache in CACHE_STATES {
+                            let file = standard_replay(scenario, spec, &fixture, samples, cache)
+                                .map_err(|e| (INTERNAL, e))?;
+                            let path =
+                                dir.join(format!("{}.{}.replay", scenario.name(), cache.name()));
+                            write(&path, &file)?;
+                            written += 1;
+                        }
+                    }
+                    println!("재생 파일 {written}개 기록 완료: {out}");
+                }
+            }
             Ok(())
         }
         Some("run") => {
@@ -288,8 +395,9 @@ pub fn run_cli(args: &[String], repo_root: &Path) -> Result<(), (i32, String)> {
             for run in &runs {
                 // 구간 T3→T4 안의 scene build와 render graph 시간(진단용, 결과 schema 밖).
                 eprintln!(
-                    "{}: scene build p99 {}ns, render graph p99 {}ns, scene build {}회",
+                    "{}.{}: scene build p99 {}ns, render graph p99 {}ns, scene build {}회",
                     run.scenario.name(),
+                    run.cache.name(),
                     run.scene_build_p99_nanos,
                     run.graph_compile_p99_nanos,
                     run.scene_builds
