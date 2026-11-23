@@ -33,6 +33,7 @@
 - **2026-11-15 — Codex 작업 검토 상태 기준의 적용 범위:** 위 '(상태)' 개정의 기준(선행이 `[x]`가 아니면 진척 표시를 두지 않음, 계획 1.2 규칙 4)은 Codex 작업 시간(2026-11-14 오후 이후)에 바뀐 행에만 적용했습니다. 그 전에 Claude 레인이 올린 진척 표시 중 선행이 `[x]`가 아닌 행이 남아 있습니다. 같은 선행 XXIV.1.3(`[~]`)을 둔 V.10.3은 `[!]`, XXIV.3.1은 `[~]`인 것처럼 같은 상황의 행이 다르게 표시되어 있습니다. 해당 행: IV.3.1·IV.3.7·VI.1.1·VIII.3.3·VIII.5.4·VIII.5.5·VIII.6.4·VIII.6.6·VIII.8.4·VIII.9.3·IX.1.1·IX.1.3·IX.2.4·IX.2.6·IX.3.3·IX.7.8·IX.10.4·IX.10.9·IX.10.10·X.1.1·XI.1.1·XII.1.1·XII.3.6·XIII.1.1·XIII.2.1·XIII.2.4·XIII.2.5·XIII.4.4·XIII.5.5·XIII.6.7·XV.1.1·XV.4.2·XV.4.4·XVI.3.3·XVI.5.1·XVI.6.7·XVI.9.1·XVI.9.3·XVI.9.4·XVI.9.5·XVIII.4.1·XX.1.1·XXIII.1.1·XXIV.1.3·XXIV.3.1·XXIV.4.3·XXIV.4.4·XXIV.4.5·XXIV.5.3·XXIV.5.4·XXIV.5.5·XXIV.5.6·XXV.1.1·XXVI.1.1·XXVI.2.1·XXVI.2.3·XXVI.4.1·XXVIII.1.2·XXVIII.1.3(선행이 Phase 전체인 행 포함). 이 중 XXIV.5.3과 XXIV.5.6은 선행(XXIV.5.1, XII.9.1)이 미착수 `[ ]`라 근거가 가장 약합니다. 이 행들은 사용자 승인 아래 Codex 이전에 검토된 작업이라 이번 Codex 작업 검토에서 다시 판정하지 않았고, 같은 규칙으로 모든 행을 다시 판정하는 별도 상태 정리에서 XXIV.5.3\~XXIV.5.6부터 `[!]`와 차단 보고서로 바꿀지 정합니다.
 - **2026-11-23 — 1차 엔진 배치 재판정 반영(ledger-verification):** 사용자 방향(2026-11-23: 지금은 엔진·기능만 만들고 UI는 나중에 처음부터 재설계)에 따른 1차 엔진 배치의 재판정 결과를 계획서에 반영합니다. 판정 근거는 각 행의 작업 보고서 "재판정" 절이고, 판정 기준은 행 지시·검증 열의 불변식을 코드에서 확인하는 것입니다(테스트 통과는 보조). XXIV.4.2·XXIV.4.3·XII.4.3·XIX.1.8·XIX.2.5·VII.6.3을 `[x]`로 바꿨습니다. XII.4.3이 `[x]`가 되어 차단 사유가 사라진 XII.4.4를 다시 판정해 `[x]`로 바꿨습니다(transient layer 생성과 project snapshot 불변은 코어에 있고, 화면 렌더 연결은 선행이 아닌 XII.4.1 범위, `docs/task-reports/XII.4.4.md`). XXIV.4.2 행의 ops 허용 의존 문구는 ADR-0049와 ADR-0080이 개정한 ADR-0005 §8 표(12개)에 맞췄습니다. 행 정의의 범위는 바꾸지 않았습니다.
 - **2026-11-23 — crate 의존 그래프 문서 갱신(XXIX.1.1):** `docs/architecture/crate-dependency-graph.md`에 XXIX.1.1 보고서가 남긴 문안을 반영했습니다. 첫 문단을 허용 직접 의존과 전이 도달 금지 규칙으로 바꾸고, "검사 범위" 절과 "전이 도달 금지(ADR-0005 §8)" 절(mcp-core 규칙 포함)을 더했으며, `allowed_edges()`에 이미 있던 ops→git-porcelain 간선(ADR-0080)을 표와 Mermaid에 넣었습니다. 남은 범위가 문서 한 절뿐이던 XXIX.1.1을 `[x]`로 바꿨습니다. 이것으로 XIX.9.1의 선행(XIX.1.3, XXIV.4.2, XXIX.1.1)이 모두 `[x]`입니다.
+- **2026-11-23 — macOS 행의 Windows 선행 제거(ADR-0006):** 2026-11-14 "새 macOS 행의 Windows `[!]` 선행 사슬 기록"과 ledger-verification 재판정이 넘긴 재작성안을 반영합니다. macOS 경로만으로 행 목적이 서는 행의 선행에서 Windows `[!]` 행을 뺐습니다. XII.2.4와 XIII.8.3은 XII.2.3(Windows MainWindow)을, XI.10.1은 XI.9.4를, XI.11.1·XI.11.4·XVI.1.2는 XI.9.5를 빼고 Metal 경로(XI.8.4·XI.8.5)만 둡니다. XVI.2.5는 XVI.2.4(Windows replay)를, XVIII.4.6은 XVIII.4.4(Windows terminal view)를, XIII.2.4·XIII.4.4는 XIII.2.3(Windows watcher)을, XIII.6.5는 XIII.6.3(Windows font discovery)을 뺐습니다. XI.11.1의 "양 backend"는 Metal backend로 고치고 D3D12 harness는 Windows 재개 때 XI.9 행과 함께 더합니다(ADR-0006 결정 4). 양 플랫폼 CI 비교만 하는 X.11.3은 macOS 부분이 X.11.2 golden과 같으므로 `[!]`(Windows 재개 대기)로 바꿨습니다. 선행이 모두 `[x]`가 된 XIII.2.4와 XIII.6.5는 재판정 결과(구현 판정 통과)대로 `[x]`로 바꿨습니다. XIII.4.4는 남은 범위(ExternalTargetSync 미연결) 때문에 `[~]`입니다. 빠진 Windows 검증은 각 Windows 행(XII.2.3, XI.9.4, XI.9.5, XVI.2.4, XVIII.4.4, XIII.2.3, XIII.6.3)의 검증에 더합니다. 같은 사슬의 XII.9.3(XII.9.2), XII.5.6(XII.5.5)은 셸 UI 행이라 UI 재설계 때 다시 정의하며 이번에 바꾸지 않았습니다. XIV.14.1은 macOS·Windows 동일 scenario가 완료 기준이라 판정 보류(`[~]`)로 둡니다.
 
 ---
 
@@ -1086,7 +1087,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | X.11.1 | `[x]` | Free, Stack, Grid, Overlay, Constraint 각각 최소 50개 fixture를 생성하는 schema와 runner를 작성합니다. | fixture count와 schema 검증 통과. | X.2~X.6 |
 | X.11.2 | `[~]` | nested component, variant, token 조건이 포함된 layout fixture 20개를 추가합니다. | expected rect golden 통과. | IX.9, X.7 |
-| X.11.3 | `[ ]` | 양 플랫폼에서 logical layout result를 비교하는 CI job을 추가합니다. | 모든 rect/baseline bytes 동일. | X.10.7, X.11.2 |
+| X.11.3 | `[!]` | 양 플랫폼에서 logical layout result를 비교하는 CI job을 추가합니다. Windows 실행 환경이 있어야 하는 비교라 ADR-0006으로 Windows 재개까지 차단합니다. macOS의 결정론 golden은 X.11.2가 맡습니다. | 모든 rect/baseline bytes 동일. | X.10.7, X.11.2 |
 
 **Phase X 완료 조건:** 공통 레이아웃과 텍스트 논리 결과가 양 플랫폼에서 동일하고 증분 benchmark가 방문 범위를 보고합니다.
 
@@ -1196,7 +1197,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XI.10.1 | `[ ]` | shader 입력 색을 linear working space로 변환하고 output target에 맞춰 encode하는 공통 수식을 문서화·구현합니다. | CPU reference와 GPU pixel 허용 오차 통과. | III.4.2, XI.8.4, XI.9.4 |
+| XI.10.1 | `[ ]` | shader 입력 색을 linear working space로 변환하고 output target에 맞춰 encode하는 공통 수식을 문서화·구현합니다. | CPU reference와 GPU pixel 허용 오차 통과. | III.4.2, XI.8.4 |
 | XI.10.2 | `[ ]` | alpha compositing과 지원 blend mode의 수식을 고정합니다. 초기 지원 목록 밖 mode는 diagnostic입니다. | blend reference image 통과. | XI.10.1 |
 | XI.10.3 | `[ ]` | gradient 렌더링을 구현하고 stop tie-order를 Phase III 규칙대로 적용합니다. | gradient pixel fixture 통과. | III.4.3, XI.10.1 |
 | XI.10.4 | `[ ]` | clip, mask, opacity, shadow, blur를 순차적으로 구현하고 각 기능마다 독립 image fixture를 추가합니다. | 기능별 Metal/D3D12 비교 통과. | XI.4.4, XI.10.1 |
@@ -1207,10 +1208,10 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XI.11.1 | `[ ]` | common scene fixture를 offscreen render해 PNG-like raw RGBA reference를 생성하는 테스트 harness를 양 backend에 구현합니다. 제품 export 기능은 아닙니다. | 동일 fixture raw image 생성. | XI.8.5, XI.9.5 |
+| XI.11.1 | `[ ]` | common scene fixture를 offscreen render해 PNG-like raw RGBA reference를 생성하는 테스트 harness를 Metal backend에 구현합니다. D3D12 backend harness는 Windows 재개 때 XI.9 행과 함께 더합니다(ADR-0006 결정 4). 제품 export 기능은 아닙니다. | 동일 fixture raw image 생성. | XI.8.5 |
 | XI.11.2 | `[ ]` | image comparison에 per-channel/structural 허용 오차를 config로 정의하고 초과 pixel 위치를 diff artifact로 남깁니다. | known equal/different fixture 판정 정확. | XI.11.1 |
 | XI.11.3 | `[ ]` | Frame, Shape, Path, Text, Image, Modifier, clip, P3 fixture를 최소 100개 구성합니다. | fixture inventory 검사 통과. | XI.10.4, XI.7.4, XI.6.6 |
-| XI.11.4 | `[ ]` | 2만 가시 node scene에서 scene build, render graph encode, submit까지 구간 benchmark를 추가합니다. | 단계별 p50/p95/p99 JSON 생성. | XI.2.6, XI.4.6, XI.8.5, XI.9.5 |
+| XI.11.4 | `[ ]` | 2만 가시 node scene에서 scene build, render graph encode, submit까지 구간 benchmark를 추가합니다. | 단계별 p50/p95/p99 JSON 생성. | XI.2.6, XI.4.6, XI.8.5 |
 | XI.11.5 | `[x]` | Present queue depth와 dropped stale frame count를 benchmark 결과에 포함합니다. | queue depth≤1 assertion. | XI.5.5 |
 | XI.11.6 | `[ ]` | Metal/D3D12 conformance CI에서 모든 fixture와 smoke benchmark를 실행합니다. | G6 통과. | XI.11.3~XI.11.5 |
 
@@ -1238,7 +1239,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XII.2.1 | `[x]` | `ProjectWindowSession` core type에 ProjectIdentity, WindowSessionId, 독립 document state, view state, history, loaded generation을 정의합니다. | 두 session이 서로 state를 공유하지 않습니다. | IV.2.3, VII.5.1, V.4.4 |
 | XII.2.2 | `[x]` | macOS `NSWindowController`가 한 ProjectWindowSession handle을 소유하도록 연결합니다. | 창 2개 open/close lifecycle 통과. | II.5.3, XII.2.1 |
 | XII.2.3 | `[!]` | Windows `MainWindow`가 한 ProjectWindowSession handle을 소유하도록 연결합니다. | 창 2개 open/close lifecycle 통과. | II.6.3, XII.2.1 |
-| XII.2.4 | `[ ]` | 같은 project path를 여러 창에서 열 수 있게 하되 각 창이 독립 base generation과 memory model을 로드하게 합니다. | 한 창 edit가 다른 창에 즉시 나타나지 않습니다. | XII.2.2, XII.2.3 |
+| XII.2.4 | `[ ]` | 같은 project path를 여러 창에서 열 수 있게 하되 각 창이 독립 base generation과 memory model을 로드하게 합니다. | 한 창 edit가 다른 창에 즉시 나타나지 않습니다. | XII.2.2 |
 | XII.2.5 | `[x]` | 창별 열린 tab, active view, viewport, selection을 WindowViewState에 연결합니다. | 창간 상태 격리. | VII.3.1, XII.2.1 |
 
 ### XII.3 Canvas 입력 파이프라인
@@ -1388,7 +1389,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XIII.2.1 | `[x]` | 플랫폼 독립 `ProjectFileWatcher` event에 create, modify, remove, rename, overflow를 정의합니다. | event model round-trip. | Phase XII |
 | XIII.2.2 | `[x]` | macOS watcher adapter를 구현하고 프로젝트 root, 외부 symlink target allowlist를 감시합니다. | create/modify/delete/rename fixture 통과. | XIII.2.1 |
 | XIII.2.3 | `[!]` | Windows watcher adapter를 구현하고 동일 의미 event로 normalize합니다. | create/modify/delete/rename fixture 통과. | XIII.2.1 |
-| XIII.2.4 | `[~]` | Stellar 자신의 save가 만든 filesystem event를 generation/hash로 식별해 외부 변경으로 재처리하지 않게 합니다. | autosave 후 reload loop 0. | V.5.4, XIII.2.2, XIII.2.3 |
+| XIII.2.4 | `[x]` | Stellar 자신의 save가 만든 filesystem event를 generation/hash로 식별해 외부 변경으로 재처리하지 않게 합니다. | autosave 후 reload loop 0. | V.5.4, XIII.2.2 |
 | XIII.2.5 | `[x]` | 짧은 시간의 다중 파일 event를 root manifest current pointer 변경 단위로 coalesce합니다. 개별 chunk event만으로 reload하지 않습니다. | 한 save가 한 external change batch. | V.4.3, XIII.2.4 |
 | XIII.2.6 | `[x]` | watcher overflow 시 전체 project current pointer와 tracked files rescan을 요청합니다. 임의로 상태를 clean 처리하지 않습니다. | overflow fixture에서 rescan 실행. | XIII.2.1 |
 
@@ -1409,7 +1410,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XIII.4.1 | `[x]` | 파일·디렉터리 symlink를 그대로 허용하는 path resolver를 구현합니다. 내부·외부 target 모두 허용합니다. | internal/external link read fixture 통과. | IV.2.3 |
 | XIII.4.2 | `[x]` | symlink cycle과 최대 hop을 검사해 무한 순회를 차단합니다. | self/two-node/deep cycle fixture 오류. | XIII.4.1 |
 | XIII.4.3 | `[x]` | broken symlink는 삭제하지 않고 diagnostic으로 표시합니다. | broken link open 시 project의 다른 데이터 정상. | XIII.4.1 |
-| XIII.4.4 | `[~]` | 외부 symlink target 변경을 watcher에 동적으로 등록·해제합니다. | target replace 후 event 수신. | XIII.2.2, XIII.2.3, XIII.4.1 |
+| XIII.4.4 | `[~]` | 외부 symlink target 변경을 watcher에 동적으로 등록·해제합니다. | target replace 후 event 수신. | XIII.2.2, XIII.4.1 |
 | XIII.4.5 | `[x]` | 신뢰되지 않은 프로젝트에서는 외부 symlink target을 읽지 않고 target path metadata만 제한적으로 표시합니다. | target content access syscall 없음. | IV.5.3, XIII.4.1 |
 
 ### XIII.5 에셋 저장소
@@ -1432,7 +1433,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XIII.6.2 | `[x]` | macOS system font discovery adapter를 구현하고 실제 file/face를 FontRegistry에 등록합니다. 프로젝트에 복사하지 않습니다. | 알려진 system face 조회 smoke. | X.8.2, II.5.3 |
 | XIII.6.3 | `[!]` | Windows DirectWrite 또는 승인 API로 system font discovery adapter를 구현합니다. | 알려진 system face 조회 smoke. | X.8.2, II.6.3 |
 | XIII.6.4 | `[x]` | External Font는 관리형 패키지의 고정 hash/face를 참조하는 인터페이스만 구현하고 다운로드 서비스는 제공하지 않습니다. | missing external package diagnostic. | X.8.1 |
-| XIII.6.5 | `[~]` | font file hash가 예상과 다르면 같은 family name이어도 다른 face로 처리하고 재현성 경고를 생성합니다. | same name/different hash fixture 통과. | XIII.6.1~XIII.6.4 |
+| XIII.6.5 | `[x]` | font file hash가 예상과 다르면 같은 family name이어도 다른 face로 처리하고 재현성 경고를 생성합니다. | same name/different hash fixture 통과. | XIII.6.1, XIII.6.2, XIII.6.4 |
 | XIII.6.6 | `[x]` | 라이선스·임베딩 상태는 Unknown, Allowed, Restricted, UserConfirmed로 저장하고 Stellar가 법적 판정을 자동 확정하지 않게 합니다. | 상태 transition fixture 통과. | XIII.6.1 |
 | XIII.6.7 | `[x]` | missing font에서 명시 fallback chain만 적용하고 줄바꿈 변경 진단을 생성합니다. | missing face fixture expected fallback. | X.8.3, XIII.6.2, XIII.6.3 |
 
@@ -1452,7 +1453,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XIII.8.1 | `[ ]` | dirty document revision이 바뀔 때 recovery snapshot write를 debounce해 OS app data에 기록합니다. project Git 폴더에는 기록하지 않습니다. | `git status` 변화 없음. | V.9.2, XIII.1.3 |
 | XIII.8.2 | `[ ]` | recovery snapshot write는 autosave와 독립적이지만 같은 immutable memory snapshot을 공유합니다. | duplicate document serialization count≤1. | XIII.1.4, V.9.2 |
-| XIII.8.3 | `[ ]` | 앱 시작 시 최신 snapshot probe 결과를 shell에 반환하고 사용자가 복구 또는 폐기를 선택하게 합니다. | 두 선택 fixture 통과. | V.9.3, XII.2.2, XII.2.3 |
+| XIII.8.3 | `[ ]` | 앱 시작 시 최신 snapshot probe 결과를 shell에 반환하고 사용자가 복구 또는 폐기를 선택하게 합니다. | 두 선택 fixture 통과. | V.9.3, XII.2.2 |
 | XIII.8.4 | `[ ]` | 복구 선택 시 새 in-memory WindowSession을 만들고 disk current를 즉시 덮어쓰지 않습니다. 다음 autosave/save에서 일반 working tree 변경으로 기록합니다. | open 직후 disk bytes 미변경. | XIII.8.3 |
 | XIII.8.5 | `[ ]` | macOS state restoration과 앱 종료 통지를 연결해 창·탭 metadata 복원을 지원합니다. 실제 document state는 Stellar snapshot에서 읽습니다. | crash/relaunch automation 통과. | XIII.8.3, II.5.3 |
 | XIII.8.6 | `[!]` | Windows Application Recovery/Restart callback을 연결해 준비된 snapshot flush를 시도합니다. callback에서 무거운 full serialization은 금지합니다. | forced crash integration test에서 snapshot 발견. | XIII.8.2, II.6.3 |
@@ -1719,7 +1720,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XVI.1.1 | `[ ]` | `InteractionTraceId`를 pointer/key event마다 생성하고 T0 입력 수신 시각을 기록합니다. | 한 event당 trace ID 하나. | XII.3.5 |
-| XVI.1.2 | `[ ]` | T1 hit test 완료, T2 command commit, T3 binding/layout 완료, T4 scene/render graph 완료, T5 submit/present 예약 시각을 같은 trace에 기록합니다. | 누락 stage를 오류로 표시하는 trace validator 통과. | VII.1.4, X.7.3, XI.2.6, XI.8.5, XI.9.5 |
+| XVI.1.2 | `[ ]` | T1 hit test 완료, T2 command commit, T3 binding/layout 완료, T4 scene/render graph 완료, T5 submit/present 예약 시각을 같은 trace에 기록합니다. | 누락 stage를 오류로 표시하는 trace validator 통과. | VII.1.4, X.7.3, XI.2.6, XI.8.5 |
 | XVI.1.3 | `[ ]` | stage별 duration과 총 Logical Interaction Latency를 계산합니다. clock domain이 다른 GPU timestamp는 CPU T0~T5와 직접 합산하지 않습니다. | ManualClock reference fixture 통과. | XVI.1.2, II.3.3 |
 | XVI.1.4 | `[ ]` | interaction kind, document size bucket, visible node bucket, cache state만 trace dimension으로 허용하고 object name/text/path를 금지합니다. | privacy schema test 통과. | II.3.2, XVI.1.3 |
 | XVI.1.5 | `[ ]` | ring buffer 기반 로컬 trace store를 구현하고 용량 초과 시 가장 오래된 trace부터 삭제합니다. | memory bound 유지. | XVI.1.4 |
@@ -1732,7 +1733,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XVI.2.2 | `[ ]` | core-only replay runner를 구현해 UI 없이 command/layout/scene 단계까지 재생합니다. | 동일 replay 두 번 semantic/trace event count 동일. | XVI.2.1 |
 | XVI.2.3 | `[ ]` | macOS full replay runner를 구현해 native input injection 또는 app test bridge로 T5까지 측정합니다. | 결과 JSON 생성. | XVI.2.2, XII.4.1 |
 | XVI.2.4 | `[!]` | Windows full replay runner를 구현합니다. | 결과 JSON 생성. | XVI.2.2, XII.4.2 |
-| XVI.2.5 | `[ ]` | Pan, Zoom, Drag, Resize, Rotate, Hover, Select, Text Edit, Token Propagation, Component Update, Variant Change, Undo, Redo replay를 각각 만듭니다. | 모든 scenario 최소 1,000 sample 생성. | XVI.2.3, XVI.2.4 |
+| XVI.2.5 | `[ ]` | Pan, Zoom, Drag, Resize, Rotate, Hover, Select, Text Edit, Token Propagation, Component Update, Variant Change, Undo, Redo replay를 각각 만듭니다. | 모든 scenario 최소 1,000 sample 생성. | XVI.2.3 |
 | XVI.2.6 | `[ ]` | warm cache와 cold cache setup을 분리하고 결과 metadata에 명시합니다. | cache setup이 실제 hit/miss count와 일치. | XI.6.5, XI.7.3, XVI.2.5 |
 
 ### XVI.3 기준 프로젝트 Fixture
@@ -1943,7 +1944,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XVIII.4.3 | `[ ]` | macOS terminal view가 screen buffer를 표시하고 keyboard/IME input을 PTY로 전달합니다. | interactive smoke. | XVIII.2.3, XVIII.4.2 |
 | XVIII.4.4 | `[!]` | Windows terminal view를 연결합니다. | interactive smoke. | XVIII.3.3, XVIII.4.2 |
 | XVIII.4.5 | `[x]` | 일반 terminal과 특정 worktree terminal의 header metadata를 분리 표시할 data model을 추가합니다. | wrong cwd session 경고. | XVIII.1.3 |
-| XVIII.4.6 | `[ ]` | 창 종료 시 terminal을 복원하지 않고 종료하며 recovery snapshot에 output/process를 넣지 않는 검사를 추가합니다. | crash/relaunch 후 process 재연결 없음. | XIII.8.2, XVIII.4.3, XVIII.4.4 |
+| XVIII.4.6 | `[ ]` | 창 종료 시 terminal을 복원하지 않고 종료하며 recovery snapshot에 output/process를 넣지 않는 검사를 추가합니다. | crash/relaunch 후 process 재연결 없음. | XIII.8.2, XVIII.4.3 |
 | XVIII.4.7 | `[ ]` | macOS terminal view에 Stellar 테마를 적용합니다(ADR-0023 결정 7). ANSI 16색, 기본 전경·배경, 선택 영역, cursor 색·모양·깜박임, 글꼴 family·크기를 asset catalog의 Light·Dark·대비 높이기 변형으로 정의하고 ShellTheme 이벤트로 실행 중에 바꿉니다. 동작 줄이기가 켜져 있으면 cursor 깜박임을 끕니다. 기본 전경·배경 색 질의에는 현재 테마 값으로 응답합니다. 테마 변경은 표시만 바꾸며 셸 프로세스 재시작, 환경 변수 변경, 사용자 셸 설정 파일 쓰기를 하지 않습니다. 테마·글꼴 설정은 앱 사용자 설정이며 프로젝트 파일에 넣지 않습니다. | `[DEV-MAC]` Light·Dark·대비 높이기 snapshot fixture 3종 golden 일치, 기본 전경·배경 대비가 Light·Dark에서 4.5:1 이상·대비 높이기에서 7:1 이상, 테마 전환 전후 셸 pid와 child 환경 동일, 세션 전후 사용자 rc·profile 파일 hash 동일, 색 질의 응답이 현재 테마 값과 일치, 프로젝트 파일 쓰기 0. | XVIII.4.3, XII.9.3 |
 
 ### XVIII.5 CLI 에이전트 실행
