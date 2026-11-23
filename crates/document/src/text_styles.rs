@@ -1,5 +1,15 @@
 //! 문서의 Text style 표. Text 노드가 가진 원래 u32 index를 변경하지 않습니다.
-//! Typography resource는 stable id로 참조합니다. 구버전 문서는 표가 없어 미해결 상태로 유지합니다.
+//! Typography resource는 stable id로 참조합니다. 구버전 문서(표가 없음)는 제품 schema 1→2 step이 기본 style 표로
+//! 옮깁니다(`stellar_project::migration::steps::text_styles`, IX.11.11).
+//!
+//! - 상속: run `TextStyle.typography` → 문단 `ParagraphStyle.typography` → 문서 기본 `default_typography` 순서로
+//!   찾습니다([`DocumentTextStyles::resolve`]). 문서 기본의 저장 위치는 이 표의 `default_typography`입니다.
+//! - `letter-spacing`: run의 선택 필드가 있으면 그 값, 없으면 해석한 Typography 값입니다
+//!   ([`ResolvedTextStyle::letter_spacing`]). Typography resource를 복제하지 않습니다.
+//! - `line-height`: 저장 값은 CSS 의미입니다(`crate::text::LineHeight`, `crate::css::typography`).
+//! - 진단([`DocumentTextStyles::diagnostics`]): 새 encoding으로 해석되지 않는 typography bytes는 그대로 보존하고
+//!   `typography-unrecognized`, 고정 face가 없거나 문서 글꼴 표에 없는 project 글꼴을 가리키는 family는
+//!   `missing-font`, 표에 없는 typography를 가리키는 참조는 `typography-missing`입니다.
 
 use crate::text::{
     LineHeight, OpenTypeTag, ParagraphStyle, TextAlignment, TextStyle, WrappingMode,
@@ -9,24 +19,16 @@ use stellar_core_types::{
     color::Color,
     font::{ByteReader, FontFileHash, FontRecordError},
     ids::StableId,
+    font::FontSource,
     typed_value::TypographyValue,
-    typography::LetterSpacing,
+    typography::{LetterSpacing, TypographyError},
     value::FiniteF32,
 };
 
-/// Typography CSS longhand의 영속 PropertyKey. 순서는 Typography::longhand_bytes와 같습니다.
+/// Typography CSS longhand의 PropertyKey(IX.11.11). 원본은 [`crate::css::typography::keys`]입니다. 순서는
+/// font-family, font-size, font-weight, font-style, font-stretch, line-height, letter-spacing입니다.
 pub mod keys {
-    use stellar_core_types::property::PropertyKey;
-    /// font-family, font-size, font-weight, font-style, font-stretch, line-height, letter-spacing.
-    pub const LONGHANDS: [PropertyKey; 7] = [
-        PropertyKey(0x0501),
-        PropertyKey(0x0502),
-        PropertyKey(0x0503),
-        PropertyKey(0x0504),
-        PropertyKey(0x0505),
-        PropertyKey(0x0506),
-        PropertyKey(0x0507),
-    ];
+    pub use crate::css::typography::keys::LONGHANDS;
 }
 
 /// 프로젝트 계층에서 검증한 ProjectFontRecord와 AssetRecord의 canonical bytes.
@@ -268,6 +270,89 @@ impl DocumentTextStyles {
     }
 }
 
+/// `typography-unrecognized` 진단 코드(bytes는 보존).
+pub const TYPOGRAPHY_UNRECOGNIZED: &str = TypographyError::CODE;
+/// `missing-font` 진단 코드.
+pub const MISSING_FONT: &str = "missing-font";
+/// `typography-missing` 진단 코드.
+pub const TYPOGRAPHY_MISSING: &str = "typography-missing";
+
+/// style 표 진단 하나.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextStyleDiagnostic {
+    /// 진단 코드.
+    pub code: &'static str,
+    /// 관련 typography resource.
+    pub typography: StableId,
+    /// 관련 family 이름(`missing-font`).
+    pub family: Option<String>,
+    /// 참조한 곳(`typography-missing`: `default`, `paragraph <index>`, `run <index>`).
+    pub referrer: Option<String>,
+}
+
+impl DocumentTextStyles {
+    /// 표의 진단(typography id 순, 같은 resource 안에서는 family 순, 그 뒤 참조 순). 표를 바꾸지 않습니다.
+    pub fn diagnostics(&self) -> Vec<TextStyleDiagnostic> {
+        let mut out = Vec::new();
+        for (id, value) in &self.typography {
+            let record = match value.record() {
+                Ok(record) => record,
+                Err(_) => {
+                    out.push(TextStyleDiagnostic {
+                        code: TYPOGRAPHY_UNRECOGNIZED,
+                        typography: *id,
+                        family: None,
+                        referrer: None,
+                    });
+                    continue;
+                }
+            };
+            for family in &record.families {
+                let missing = match &family.face {
+                    None => true,
+                    Some(face) => {
+                        face.source() == FontSource::Project
+                            && !self.fonts.contains_key(&face.file_hash())
+                    }
+                };
+                if missing {
+                    out.push(TextStyleDiagnostic {
+                        code: MISSING_FONT,
+                        typography: *id,
+                        family: Some(family.name.clone()),
+                        referrer: None,
+                    });
+                }
+            }
+        }
+        let references = self
+            .default_typography
+            .map(|id| (id, "default".to_string()))
+            .into_iter()
+            .chain(
+                self.paragraphs
+                    .iter()
+                    .filter_map(|(i, p)| p.typography.map(|id| (id, format!("paragraph {i}")))),
+            )
+            .chain(
+                self.runs
+                    .iter()
+                    .filter_map(|(i, r)| r.typography.map(|id| (id, format!("run {i}")))),
+            );
+        for (id, referrer) in references {
+            if !self.typography.contains_key(&id) {
+                out.push(TextStyleDiagnostic {
+                    code: TYPOGRAPHY_MISSING,
+                    typography: id,
+                    family: None,
+                    referrer: Some(referrer),
+                });
+            }
+        }
+        out
+    }
+}
+
 /// 하나의 scalar 구간에 실제로 적용할 문서 값.
 pub struct ResolvedTextStyle<'a> {
     /// run → paragraph → 문서 기본 순서로 찾은 값.
@@ -278,6 +363,16 @@ pub struct ResolvedTextStyle<'a> {
     pub run: Option<&'a TextStyle>,
     /// 문단 설정.
     pub paragraph: &'a ParagraphStyle,
+}
+
+impl ResolvedTextStyle<'_> {
+    /// run의 CSS `letter-spacing`: run 선택 필드, 없으면 Typography 값. Typography bytes를 해석할 수 없으면 `None`
+    /// (그 값은 `typography-unrecognized` 진단 대상이고 다른 값으로 대체하지 않습니다).
+    pub fn letter_spacing(&self) -> Option<LetterSpacing> {
+        self.run
+            .and_then(|run| run.letter_spacing)
+            .or_else(|| self.typography.record().ok().map(|t| t.letter_spacing))
+    }
 }
 /// style table 형식 오류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -384,5 +479,149 @@ mod tests {
         let mut future = bytes;
         future[4] = 2;
         assert!(DocumentTextStyles::decode(&future).is_err());
+    }
+
+    #[test]
+    fn omitted_typography_longhands_are_css_initial_values() {
+        // 검증 기준(IX.11.11): 생략값이 CSS initial value와 같음.
+        let initial = Typography::default();
+        assert!(initial.families.is_empty());
+        assert_eq!(initial.size, stellar_core_types::typography::FontSize::Medium);
+        assert_eq!(initial.weight.get(), 400.0);
+        assert_eq!(initial.style, stellar_core_types::typography::FontStyle::Normal);
+        assert_eq!(initial.stretch_percent.get(), 100.0);
+        assert_eq!(
+            initial.line_height,
+            stellar_core_types::typography::LineHeight::Normal
+        );
+        assert_eq!(initial.letter_spacing, LetterSpacing::Normal);
+        assert_eq!(ParagraphStyle::default().line_height, LineHeight::Auto);
+        let table = DocumentTextStyles::initial(StableId::new_v7(1, 0, 1));
+        assert!(table.diagnostics().is_empty());
+        assert_eq!(
+            table.resolve(0, Some(0)).unwrap().letter_spacing(),
+            Some(LetterSpacing::Normal)
+        );
+    }
+
+    #[test]
+    fn run_then_paragraph_then_document_default_inheritance() {
+        // 검증 기준(IX.11.11): run→문단→문서 기본 상속 순서 fixture.
+        let [doc, para, run] = [1, 2, 3].map(|n| StableId::new_v7(n, 0, n));
+        let value = |size: u32, spacing: LetterSpacing| {
+            TypographyValue::from_record(&Typography {
+                size: stellar_core_types::typography::FontSize::Subpixels(size),
+                letter_spacing: spacing,
+                ..Typography::default()
+            })
+            .unwrap()
+        };
+        let mut table = DocumentTextStyles::initial(doc);
+        table.typography.insert(doc, value(1024, LetterSpacing::Normal));
+        let px = |v: f32| LetterSpacing::Px(FiniteF32::new(v).unwrap());
+        table.typography.insert(para, value(1536, px(1.0)));
+        table.typography.insert(run, value(2048, px(2.0)));
+        table.paragraphs.insert(
+            1,
+            ParagraphStyle {
+                typography: Some(para),
+                ..Default::default()
+            },
+        );
+        table
+            .runs
+            .insert(1, TextStyle::new(Some(run), None, vec![], vec![]));
+        let mut spaced = TextStyle::new(None, None, vec![], vec![]);
+        spaced.letter_spacing = Some(LetterSpacing::Em(FiniteF32::new(0.25).unwrap()));
+        table.runs.insert(2, spaced);
+        let size = |p: u32, r: Option<u32>| {
+            table.resolve(p, r).unwrap().typography.record().unwrap().size
+        };
+        use stellar_core_types::typography::FontSize::Subpixels;
+        // run typography가 이깁니다.
+        assert_eq!(size(1, Some(1)), Subpixels(2048));
+        // run에 typography가 없으면 문단, 문단에도 없으면 문서 기본입니다.
+        assert_eq!(size(1, Some(0)), Subpixels(1536));
+        assert_eq!(size(0, Some(0)), Subpixels(1024));
+        assert_eq!(size(0, None), Subpixels(1024));
+        // letter-spacing: run 선택 필드 → 해석한 Typography 값. resource를 복제하지 않습니다.
+        assert_eq!(table.resolve(1, Some(1)).unwrap().letter_spacing(), Some(px(2.0)));
+        assert_eq!(table.resolve(1, Some(0)).unwrap().letter_spacing(), Some(px(1.0)));
+        assert_eq!(
+            table.resolve(1, Some(2)).unwrap().letter_spacing(),
+            Some(LetterSpacing::Em(FiniteF32::new(0.25).unwrap()))
+        );
+        assert_eq!(table.typography.len(), 3);
+    }
+
+    #[test]
+    fn opaque_blobs_and_missing_fonts_are_diagnosed_and_bytes_preserved() {
+        // 검증 기준(IX.11.11): 불투명 blob 진단과 bytes 보존, missing font diagnostic fixture.
+        use stellar_core_types::font::{FontFaceRef, FontFileHash};
+        use stellar_core_types::typography::Family;
+        let [doc, blob, missing] = [1, 2, 3].map(|n| StableId::new_v7(n, 0, n));
+        let mut table = DocumentTextStyles::initial(doc);
+        table.typography.insert(blob, TypographyValue::new(vec![0xde, 0xad]));
+        let registered = FontFileHash::from_sha256_digest([7; 32]);
+        let unregistered = FontFileHash::from_sha256_digest([9; 32]);
+        table.fonts.insert(
+            registered,
+            DocumentFontAsset {
+                font_record: vec![1],
+                asset_record: vec![2],
+            },
+        );
+        let family = |name: &str, face: Option<FontFaceRef>| Family {
+            name: name.into(),
+            face,
+        };
+        let project = |hash| Some(FontFaceRef::new(FontSource::Project, hash, 0, vec![]));
+        table.typography.insert(
+            missing,
+            TypographyValue::from_record(&Typography {
+                families: vec![
+                    family("Present", project(registered)),
+                    family("Gone", project(unregistered)),
+                    family("Unresolved", None),
+                    family(
+                        "System",
+                        Some(FontFaceRef::new(FontSource::System, unregistered, 0, vec![])),
+                    ),
+                ],
+                ..Typography::default()
+            })
+            .unwrap(),
+        );
+        table.paragraphs.insert(
+            4,
+            ParagraphStyle {
+                typography: Some(StableId::new_v7(9, 0, 9)),
+                ..Default::default()
+            },
+        );
+        let found: Vec<(&str, StableId, Option<String>, Option<String>)> = table
+            .diagnostics()
+            .into_iter()
+            .map(|d| (d.code, d.typography, d.family, d.referrer))
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                (TYPOGRAPHY_UNRECOGNIZED, blob, None, None),
+                (MISSING_FONT, missing, Some("Gone".into()), None),
+                (MISSING_FONT, missing, Some("Unresolved".into()), None),
+                (
+                    TYPOGRAPHY_MISSING,
+                    StableId::new_v7(9, 0, 9),
+                    None,
+                    Some("paragraph 4".into())
+                ),
+            ]
+        );
+        assert_eq!(TYPOGRAPHY_UNRECOGNIZED, "typography-unrecognized");
+        // 진단은 표를 바꾸지 않고, 해석할 수 없는 bytes는 저장 왕복에서 그대로입니다.
+        let decoded = DocumentTextStyles::decode(&table.encode()).unwrap();
+        assert_eq!(decoded.typography[&blob].as_bytes(), &[0xde, 0xad]);
+        assert_eq!(decoded, table);
     }
 }

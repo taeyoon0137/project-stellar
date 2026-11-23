@@ -127,6 +127,7 @@ pub fn entries() -> Vec<RegistryEntry> {
         .chain(payload_entries(PropertyScope::Shape, &SHAPE_PROPERTIES))
         .chain(payload_entries(PropertyScope::Path, &PATH_PROPERTIES))
         .chain(payload_entries(PropertyScope::Text, &TEXT_PROPERTIES))
+        .chain(super::typography::registry_entries())
         .chain(payload_entries(PropertyScope::Image, &IMAGE_PROPERTIES))
         .chain(modifier)
         .collect()

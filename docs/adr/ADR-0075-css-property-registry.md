@@ -261,3 +261,34 @@ Accepted (2026-11-23)
 | key 순서를 `border-*-width` 넷, `-style` 넷, `-color` 넷 | 텍스트 원본 v4가 이미 변마다 세 줄 순서로 씁니다. registry 순서를 파일 순서와 다르게 두면 파일 bytes가 바뀝니다. 미선택 |
 | `FramePayload::border` 타입을 이번에 4변 구조로 교체 | 이 필드를 읽는 crate가 열 곳이 넘고(semantic-diff·scene·runtime·codegen·ops·commands·ffi) 대부분 다른 lane 소유입니다. 값 모델·저장 형식·step을 먼저 고정하고 타입 교체는 1→2 등록 작업에 둡니다. 미선택 |
 | 묶음 값 없음을 `0px none currentcolor`로 읽기 | CSS initial(`medium`)과 다르고 기존 v4 파일 bytes(`medium`)와 달라집니다. computed 두께는 어느 쪽이든 0입니다. 미선택 |
+
+### 결정 11. Typography record와 Text style longhand(IX.11.11)
+
+- **record.** Typography는 CSS longhand 일곱 개(`font-family`, `font-size`, `font-weight`, `font-style`, `font-stretch`,
+  `line-height`, `letter-spacing`)의 묶음 값이고, `TypedValue::Typography` tag의 payload는 기존 canonical record(`STTY` v1,
+  `stellar_core_types::typography`)입니다. 이 개정은 그 encoding을 바꾸지 않습니다(보호 경로 `crates/core-types` 변경 없음).
+  생략값은 CSS initial value입니다(`Typography::default`, test로 고정).
+- **key.** 일곱 longhand에 Text 대역 빈 번호 `0x0510`\~`0x0516`을 둡니다(`stellar_document::css::typography`, registry Text
+  범위). 이전 표의 snapshot 경로 key `0x0501`\~`0x0507`은 Text payload key `text-content`(0x0501)와 번호가 겹쳤으므로 쓰지
+  않습니다. 그 key는 semantic snapshot 경로 안에서만 쓰였고 snapshot은 저장하지 않으므로 파일 migration은 없습니다.
+  semantic snapshot의 Text style 경로(`crates/semantic-diff/src/text_styles.rs`)는 `text_styles::keys::LONGHANDS`를 그대로
+  읽어 새 번호를 씁니다. 같은 Text의 서로 다른 longhand(`font-size`와 `letter-spacing`)를 두 branch가 바꾸면 conflict 없이
+  합쳐집니다(`crates/ops/tests/typography_merge.rs`).
+- **style 표 저장 위치.** Text style 표는 Text payload가 아니라 문서 Text style 표(`DocumentTextStyles`, 문서 manifest, 텍스트
+  원본에서는 asset catalog, ADR-0077 결정 1)입니다. Text payload는 문단·run style index만 저장합니다. 문서 기본 typography의
+  저장 위치는 이 표의 `default_typography`입니다.
+- **상속.** run `TextStyle.typography` → 문단 `ParagraphStyle.typography`(root inline box strut의 글꼴 출처) → 문서 기본
+  순서입니다(`DocumentTextStyles::resolve`). `letter-spacing`은 run 선택 필드가 있으면 그 값, 없으면 해석한 Typography 값이고
+  resource를 복제하지 않습니다(`ResolvedTextStyle::letter_spacing`).
+- **`line-height`의 뜻.** 저장 값(Typography `line-height`, 문단 `line_height`)은 처음부터 CSS 의미입니다. inline box마다 자기
+  글꼴 metric에 half-leading을 적용하고, `<number>`는 그 inline box 자신의 font-size에 곱합니다. 문서 주석
+  (`crate::text::LineHeight`, `css::typography`)에 적었습니다. text 엔진은 결정 12에서 이 의미를 따르며 저장 bytes의 뜻은
+  바뀌지 않습니다.
+- **진단.** `DocumentTextStyles::diagnostics`가 새 encoding으로 해석되지 않는 typography(bytes 보존, `typography-unrecognized`),
+  고정 face가 없거나 문서 글꼴 표에 없는 project 글꼴을 가리키는 family(`missing-font`), 표에 없는 typography 참조
+  (`typography-missing`)를 냅니다. 시스템·외부 글꼴은 실행 환경마다 다르므로 문서 단계가 아니라 text 엔진의 누락 글꼴
+  진단(X.8.3)이 맡습니다.
+- **옛 문서.** 표가 비어 있는 schema 1 문서는 1→2 묶음 step(`stellar_project::migration::steps::text_styles`)이 기본 style 표를
+  만듭니다. 문서 기본 typography 하나(CSS initial, id는 문서 id에서 결정론적으로 만듦)와, Text가 쓰는 문단·run index마다
+  상속만 하는 기본 style입니다. 표가 이미 있는 문서는 바꾸지 않고, 표에 없는 index는 대체하지 않고 보고합니다. Text payload
+  bytes는 바뀌지 않습니다.

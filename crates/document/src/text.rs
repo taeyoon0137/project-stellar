@@ -410,15 +410,20 @@ pub enum TextAlignment {
     Justify = 3,
 }
 
-/// 줄 높이. 기본은 Auto(글꼴 metric 기반, layout이 결정).
+/// 문단 CSS `line-height`(IX.11.11, ADR-0075 개정 결정 11). 기본은 Auto(`normal`).
+///
+/// 저장 값의 뜻은 처음부터 CSS입니다(속성 모델 7장). 줄 상자의 inline box(run)마다 **자기 글꼴**의 ascent·descent에
+/// 이 값으로 half-leading을 적용하고, 문단 root inline box의 strut(문단 typography의 첫 사용 가능 글꼴과 font-size)도
+/// 같은 규칙으로 줄 상자에 들어갑니다. 줄 상자 높이는 baseline 위·아래로 가장 많이 나온 inline box가 정하므로, 크기가
+/// 섞인 줄은 지정값보다 클 수 있습니다. text 엔진은 이 의미를 따릅니다(IX.11.12, `stellar_text::text_layout`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LineHeight {
-    /// 글꼴 metric 기반.
+    /// `line-height: normal`: inline box마다 자기 글꼴 metric(ascent + descent + line gap).
     #[default]
     Auto,
-    /// 글꼴 크기 배수(0 < 값 ≤ [`MAX_LINE_HEIGHT_MULTIPLIER`]).
+    /// `line-height: <number>`: inline box마다 **자기** font-size × 값(0 < 값 ≤ [`MAX_LINE_HEIGHT_MULTIPLIER`]).
     Multiplier(FiniteF32),
-    /// 고정 논리 픽셀(0 < 값 ≤ [`MAX_FIXED_LINE_HEIGHT`]).
+    /// `line-height: <length>`: inline box마다 같은 논리 px(0 < 값 ≤ [`MAX_FIXED_LINE_HEIGHT`]).
     Fixed(FiniteF32),
 }
 

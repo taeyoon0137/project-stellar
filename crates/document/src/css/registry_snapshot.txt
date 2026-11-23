@@ -43,6 +43,13 @@ shape 0x030e polygon-corner-radius | stellar-only | - | length | -
 path 0x0401 path-data | converted | d | - | -
 path 0x0402 fill-rule | exact | fill-rule | keyword | -
 text 0x0501 text-content | stellar-only | - | - | -
+text 0x0510 font-family | converted | font-family | string | -
+text 0x0511 font-size | exact | font-size | length | -
+text 0x0512 font-weight | exact [subset] | font-weight | number | -
+text 0x0513 font-style | exact | font-style | keyword | -
+text 0x0514 font-stretch | exact [subset] | font-stretch | percentage | -
+text 0x0515 line-height | exact | line-height | number | normal=approximated, number=exact, length=exact
+text 0x0516 letter-spacing | exact | letter-spacing | length | -
 image 0x0601 image-asset | stellar-only | - | - | -
 image 0x0602 width | converted | width | length | -
 image 0x0603 height | converted | height | length | -

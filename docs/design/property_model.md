@@ -301,19 +301,26 @@ IX.11.12는 저장 bytes의 뜻을 바꾸지 않고 파일 migration을 만들�
 | `TextStyle.fill` | `color` | `exact` | 없으면 상속하는 규칙이 CSS `color` 상속과 같습니다 | `rename` |
 | `TextStyle.features` | `font-feature-settings` | `exact` | | `rename` |
 | `TextStyle.variations` | `font-variation-settings` | `exact` | | `rename` |
-| `TextStyle.typography` | Typography record | 미정 | 지금은 불투명 placeholder입니다. IX.11.11이 아래 longhand로 정의합니다. 없으면 문단 typography, 그다음 문서 기본 typography를 상속합니다(`TextStyle.typography` 주석의 "없으면 paragraph/문서 기본") | `schema`(IX.11.11) |
+| `TextStyle.typography` | Typography record | `exact`(longhand별, 아래 표) | IX.11.11이 CSS longhand 일곱 개(0x0510\~0x0516)의 묶음 값으로 정의했습니다(`crates/core-types/src/typography.rs`). 없으면 문단 typography, 그다음 문서 기본 typography(`DocumentTextStyles.default_typography`)를 상속합니다. 해석할 수 없는 bytes는 보존하고 `typography-unrecognized`, 고정 face가 없거나 문서 글꼴 표에 없는 project 글꼴은 `missing-font`로 진단합니다 | `schema`(IX.11.11) |
 | (없음) 문단 typography | 문단 요소 자신의 `font-*` | 없음 | `ParagraphStyle`에 Typography 참조를 추가합니다. CSS에서 root inline box strut의 글꼴은 block container 자신의 글꼴이므로, 줄 높이 계산의 strut 글꼴 출처가 됩니다 | `schema`(IX.11.11) |
 | `ParagraphStyle.alignment` | `text-align: start \| center \| end \| justify` | `exact` | 마지막 줄 처리도 CSS 기본과 같습니다 | `rename` |
 | `line_height` Auto | `line-height: normal` | `approximated` | CSS `normal`은 UA가 정합니다. Stellar는 font metric + half-leading입니다 | `rename` |
 | `line_height` Multiplier | `line-height: <number>` | 다름 | Stellar는 줄 안 최대 글꼴 크기 × 배율, CSS는 inline box마다 자기 font-size × 배율입니다. 혼합 크기 run에서 결과가 다릅니다. CSS 의미에는 root inline box strut가 필요하고, strut는 문단 typography의 첫 사용 가능 글꼴과 font-size로 만듭니다 | `semantic`(IX.11.12) |
 | `line_height` Fixed | `line-height: <length>` | 다름 | Stellar는 run 크기와 관계없이 줄 높이를 고정하고 줄 안 최대 ascent·descent로 baseline을 정합니다(`crates/text/src/text_layout.rs`). CSS는 inline box마다 자기 글꼴의 ascent+descent에 half-leading을 적용한 뒤 baseline을 맞추므로, 크기가 섞인 줄에서는 line box가 지정값보다 커질 수 있습니다. Multiplier와 같은 종류의 차이라 같은 strut 규칙으로 고칩니다 | `semantic`(IX.11.12) |
-| `letter_spacing_em` | `letter-spacing: <number>em` | 다름 | Stellar는 paragraph 단위, CSS는 inline(run) 단위입니다. text 엔진이 아직 이 값을 쓰지 않습니다. run `TextStyle`의 선택 필드(없으면 Typography 값)로 옮기고 Typography resource를 복제하지 않습니다. 저장된 값이 없어 파일 migration은 없습니다 | `none`(IX.11.11 타입 변경) |
+| `TextStyle.letter_spacing` | `letter-spacing` | `exact` | run 단위 선택 필드이고 없으면 Typography 값입니다(`ResolvedTextStyle::letter_spacing`). Typography resource를 복제하지 않습니다. text 엔진은 run마다 typographic character unit 뒤에 더합니다(IX.11.12) | `none`(IX.11.11 타입 변경) |
 | `wrapping` Wrap | `white-space: pre-wrap` + `overflow-wrap: break-word` | `converted` | 문서 모델이 공백을 보존하므로 CSS 기본(`normal`, 공백 접기)과 다릅니다. export는 항상 명시합니다 | `rename` |
 | `wrapping` NoWrap | `white-space: pre` | `converted` | 강제 줄바꿈은 유지합니다 | `rename` |
 | text 엔진 `paragraph_spacing` | — | `stellar-only` | 문서 필드가 없습니다. 필요하면 문단 사이 `margin-block`으로 근사합니다 | — |
 | text 엔진 세로 정렬 | `align-content`(block container) | `approximated` | 문서 필드가 없습니다. Web profile capability로 판정합니다 | — |
 
 Typography record(IX.11.11)는 다음 CSS longhand로 정의합니다. 생략값은 CSS initial value입니다.
+
+Typography longhand key는 Text 대역 `0x0510`\~`0x0516`입니다(`crates/document/src/css/typography.rs`, ADR-0075 개정).
+
+| key | CSS | 상태 | 차이·비고 | migration |
+|---|---|---|---|---|
+| `font-family`(0x0510) | `font-family` | `converted` | 해석 결과를 `FontFaceRef`로 고정하고 누락 글꼴은 `missing-font`로 진단합니다 | `key`(IX.11.11) |
+| `font-size`(0x0511)\~`letter-spacing`(0x0516) | `font-size`, `font-weight`, `font-style`, `font-stretch`, `line-height`, `letter-spacing` | `exact`, `line-height: normal`은 `approximated` | 생략값은 CSS initial value입니다. semantic snapshot과 merge는 longhand마다 경로 하나입니다 | `key`(IX.11.11) |
 
 | longhand | 값 | 비고 |
 |---|---|---|
