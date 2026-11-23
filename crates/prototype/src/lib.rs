@@ -17,6 +17,9 @@ pub mod edit;
 /// 그래프 편집 → command plan (XXX.2.3, XXX.1.2).
 pub mod plan;
 
+/// 포트 공개 plan (XXX.2.4).
+pub mod expose;
+
 /// 프리뷰 논리 시계 (XXX.3.1).
 pub mod clock;
 
