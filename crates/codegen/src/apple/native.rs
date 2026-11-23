@@ -426,7 +426,8 @@ fn span_of(start: GridLine, end: GridLine) -> Option<u16> {
 }
 
 const GRID_MIXED: &str = "명시 line 배치와 자동 배치가 섞인 grid는 배치 규칙을 다시 구현하지 않고 문서 순서 자동 배치로 냅니다";
-const GRID_AUTO_SPAN: &str = "자동 배치 item의 열 span은 줄 넘김 배치 규칙을 다시 구현하지 않고 span 1로 냅니다";
+const GRID_AUTO_SPAN: &str =
+    "자동 배치 item의 열 span은 줄 넘김 배치 규칙을 다시 구현하지 않고 span 1로 냅니다";
 const GRID_LINES: &str =
     "음수 line, row span, 끝 line만 명시한 배치는 대상 grid API로 낼 수 없어 문서 순서 자동 배치로 냅니다";
 
