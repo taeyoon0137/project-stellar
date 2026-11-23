@@ -2,7 +2,7 @@
 
 #![cfg(test)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use stellar_accessibility::diagnostics::diagnose;
 use stellar_accessibility::node::{AccessibilityNode, AccessibilityRole};
@@ -562,10 +562,36 @@ fn unrelated_edit_recomputes_nothing_and_related_edit_rechecks_only_its_scope() 
         stale.contains(&origins::BINDINGS.to_string()),
         "PLAIN은 binding target"
     );
-    assert!(
-        !stale.contains(&origins::ACCESSIBILITY.to_string()),
-        "PLAIN은 접근성 tree 밖"
+    // PLAIN은 지금 접근성 tree 밖이지만 표시 여부·label 변경으로 tree에 들어올 수 있으므로 stale입니다.
+    assert!(stale.contains(&origins::ACCESSIBILITY.to_string()));
+    assert_eq!(engine.check_runs(), before_runs);
+
+    // 어떤 외부 진단에도 나오지 않는 node의 실제 속성 변경도 문서 전체를 보는 외부 생산자를 stale로 만듭니다
+    // (지금 진단이 없는 node에 새 missing font·접근성 문제·미해결 token 참조가 생길 수 있음). 내장 checker는 실행하지
+    // 않고, binding처럼 지정 node만 보는 생산자는 stale이 되지 않습니다.
+    // 호출자가 생산자를 다시 실행해 넣으면 stale이 풀립니다.
+    for (document, origin, contribution) in external_contributions() {
+        engine.submit(document, origin, contribution);
+    }
+    assert!(engine.stale_scopes().is_empty());
+    let changes = execute(
+        &mut state,
+        Command::SetProperty(SetProperty {
+            node: sid(UNRELATED),
+            key: node_keys::VISIBLE,
+            value: PropertyValue::Bool(false),
+        }),
+        12,
     );
+    let report = engine
+        .apply_changes(document, &changes, state.model(), &context())
+        .unwrap();
+    assert!(report.rechecked.is_empty());
+    let stale: BTreeSet<String> = report.stale.iter().map(|(_, o)| o.clone()).collect();
+    for origin in [origins::FONTS, origins::ACCESSIBILITY, origins::TOKENS] {
+        assert!(stale.contains(origin), "{origin}: {stale:?}");
+    }
+    assert!(!stale.contains(origins::BINDINGS), "{stale:?}");
     assert_eq!(engine.check_runs(), before_runs);
 
     // clip을 풀면 참조 checker만 다시 계산하고 clip 진단 하나가 사라집니다.

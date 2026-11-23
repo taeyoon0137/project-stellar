@@ -118,9 +118,14 @@ fn from_unresolved(
 }
 
 /// 호출자가 모은 미해결 참조(token registry alias, 외부 표현식 등)를 진단으로 바꿉니다. source는 참조 위치의 root입니다.
-/// footprint는 위치 root와 원래 대상 ID입니다.
+/// footprint는 위치 root와 원래 대상 ID, 그리고 편집 전용 필드를 뺀 모든 key와 node 삽입입니다. 호출자가 어느 속성에서
+/// 참조를 모았는지 이 함수는 모르므로, 지금 진단이 없는 node에 새 미해결 참조가 생기는 편집도 stale로 잡아야 합니다.
 pub fn unresolved_refs(document: StableId, refs: &[UnresolvedRef]) -> Contribution {
-    let mut footprint = Footprint::default();
+    let mut footprint = Footprint {
+        nodes: BTreeSet::new(),
+        keys: KeyInterest::Any,
+        inserts: true,
+    };
     let diagnostics = refs
         .iter()
         .map(|r| {
@@ -340,12 +345,14 @@ pub fn bindings(document: StableId, store: &BindingStore) -> Contribution {
     }
 }
 
-/// missing font 진단(face별)을 영향받는 Text마다 하나씩 바꿉니다. footprint는 영향받는 Text와 새 node 삽입입니다
-/// (새 Text의 fallback chain은 호출자가 다시 모아야 함).
+/// missing font 진단(face별)을 영향받는 Text마다 하나씩 바꿉니다. footprint는 영향받는 Text, 편집 전용 필드를 뺀 모든
+/// key, 새 node 삽입입니다. 지금 진단이 없는 Text의 font·style 변경도 새 missing font를 만들 수 있으므로 영향받는
+/// Text만 보면 결과를 바꾸는 변경을 놓칩니다(새 Text의 fallback chain도 호출자가 다시 모아야 함).
 pub fn fonts(document: StableId, missing: &[MissingFontDiagnostic]) -> Contribution {
     let mut footprint = Footprint {
+        nodes: BTreeSet::new(),
+        keys: KeyInterest::Any,
         inserts: true,
-        ..Footprint::default()
     };
     let mut diagnostics = Vec::new();
     for diagnostic in missing {
@@ -375,8 +382,9 @@ pub fn fonts(document: StableId, missing: &[MissingFontDiagnostic]) -> Contribut
     }
 }
 
-/// 접근성 진단을 바꿉니다. footprint는 접근성 tree의 모든 source node와 node 삽입입니다(접근성 규칙은 조상·형제
-/// 문맥을 보므로 tree 안 어느 node가 바뀌어도 다시 계산).
+/// 접근성 진단을 바꿉니다. footprint는 접근성 tree의 모든 source node, 편집 전용 필드를 뺀 모든 key, node 삽입입니다.
+/// 접근성 규칙은 조상·형제 문맥을 보고, tree 밖 node(숨김 subtree, 장식, label 없는 Graphic, Fragment)도 표시 여부·
+/// label·kind가 바뀌면 tree에 들어오므로 tree 안 node만 보면 결과를 바꾸는 변경을 놓칩니다.
 pub fn accessibility(
     document: StableId,
     tree: &AccessibilityTree,
@@ -384,7 +392,7 @@ pub fn accessibility(
 ) -> Contribution {
     let footprint = Footprint {
         nodes: tree.nodes().map(|n| n.source).collect(),
-        keys: KeyInterest::Nothing,
+        keys: KeyInterest::Any,
         inserts: true,
     };
     let diagnostics = issues
@@ -452,9 +460,14 @@ pub fn libraries(unavailable: &[LibraryUnavailableDiagnostic]) -> Contribution {
     }
 }
 
-/// 사용할 수 없는 library의 resource를 가리키는 문서 참조를 바꿉니다. footprint는 참조 위치 root입니다.
+/// 사용할 수 없는 library의 resource를 가리키는 문서 참조를 바꿉니다. footprint는 참조 위치 root, 편집 전용 필드를 뺀
+/// 모든 key, node 삽입입니다(지금 진단이 없는 node에 새 외부 참조가 생기는 편집도 결과를 바꿈).
 pub fn library_refs(document: StableId, refs: &[UnresolvedExternalRef]) -> Contribution {
-    let mut footprint = Footprint::default();
+    let mut footprint = Footprint {
+        nodes: BTreeSet::new(),
+        keys: KeyInterest::Any,
+        inserts: true,
+    };
     let diagnostics = refs
         .iter()
         .map(|r| {

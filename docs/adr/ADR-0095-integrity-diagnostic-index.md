@@ -55,6 +55,10 @@ Accepted (2026-11-23).
    - **외부 생산자**(문서 밖 상태를 읽음)는 걸리면 stale로 표시해 보고하고, 호출자가 생산자를 다시 실행해 결과를
      넣으면 풀립니다. 그 사이 기존 진단은 남습니다.
    - 편집 전용 공통 필드(잠금·표시 이름)는 "모든 key" 관심에서도 빼서 어떤 scope도 다시 계산하지 않습니다.
+   - 문서 전체에서 새 진단이 생길 수 있는 외부 생산자(missing font, 접근성, 호출자가 모은 미해결 token 참조, library
+     resource 참조, Target Profile)의 footprint는 "모든 key"와 node 삽입입니다. 지금 진단이 있는 node만 보면 진단이 없던
+     node에 새 문제가 생기는 편집(Text font 변경, 숨김 subtree 표시, 새 token 참조)을 놓칩니다. binding orphan은 binding
+     저장소가 정한 target·source node만 봅니다.
    - 미해결 참조 checker의 footprint는 validator가 읽는 참조 위치(Frame clip path, Boolean operand, Mask·Clip
      source)와 같은 목록을 씁니다. 목록이 어긋나면 무작위 command 열에서 증분 결과와 전체 재검사를 비교하는 test가
      실패합니다.
