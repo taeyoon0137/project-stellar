@@ -31,3 +31,6 @@ pub mod timing;
 
 /// 포인터 제스처 판정과 release velocity (XXX.1.4).
 pub mod gesture;
+
+/// 프리뷰 세션과 tick 처리 순서 (XXX.3.3~XXX.3.6).
+pub mod session;
