@@ -469,6 +469,12 @@ impl SaveCapture {
         let mut memory = SavedGenerationState::new(
             base.map(|base| (base.manifest.generation, base.manifest_hash)),
         );
+        // 앱 창이 쓰는 generation임을 current pointer를 바꾸기 **전에** 기록합니다. 다른 창의 감시가 pointer 변화를
+        // 먼저 보고 이 저장을 외부 writer로 오판하지 않게 합니다(ADR-0083 결정 2). 쓰기가 실패해 current가 되지
+        // 못한 hash가 남아도 판정에 쓰이지 않습니다.
+        if let Ok((_, manifest_hash)) = plan.manifest.encode_with_hash() {
+            record_app_window_save(root, manifest_hash);
+        }
         run_save(root, &plan, &mut memory, &CancelToken::new())
             .map_err(WindowSessionSaveError::Run)?;
         // commit(V.5.4)이 성공하면 메모리 상태에 새 (generation, manifest hash)가 들어 있습니다. 없으면 디스크에서
@@ -481,8 +487,7 @@ impl SaveCapture {
             None => load_current_generation(root, self.identity.project_id())
                 .map_err(WindowSessionSaveError::Reload)?,
         };
-        // 앱 창이 쓴 generation임을 기록합니다. 다른 창의 stale 판정이 이 기록으로 두 선택지와 reconciliation
-        // 대기를 가릅니다(ADR-0083 결정 2).
+        // 미리 기록한 hash와 같아야 합니다. manifest encode가 실패했던 경우를 위해 실제 hash도 기록합니다(중복은 무시).
         record_app_window_save(root, loaded.manifest_hash);
         Ok(written(Some((loaded, new_chunks))))
     }
@@ -1313,6 +1318,15 @@ impl ProjectWindowSession {
     pub fn stale_state(
         &self,
     ) -> Result<Option<(WriterProvenance, StaleResolution)>, CurrentPointerError> {
+        Ok(self
+            .stale_judgement()?
+            .map(|(_, writer, resolution)| (writer, resolution)))
+    }
+
+    /// [`ProjectWindowSession::stale_state`]와 같고, 판정한 디스크 current manifest hash를 함께 돌려줍니다.
+    fn stale_judgement(
+        &self,
+    ) -> Result<Option<(ContentHash, WriterProvenance, StaleResolution)>, CurrentPointerError> {
         let root = self.identity.canonical_target();
         let current = match read_current_pointer(root) {
             Ok(current) => current,
@@ -1323,7 +1337,7 @@ impl ProjectWindowSession {
             return Ok(None);
         }
         let writer = writer_provenance(root, &current);
-        Ok(Some((writer, StaleResolution::for_writer(writer))))
+        Ok(Some((current, writer, StaleResolution::for_writer(writer))))
     }
 
     /// stale 저장의 사용자 선택을 실행합니다(XII.7.5·XII.7.6, ADR-0083 결정 1).
@@ -1343,19 +1357,21 @@ impl ProjectWindowSession {
         choice: StaleSaveChoice,
         lock_dir: impl FnOnce() -> Result<std::path::PathBuf, LockError>,
     ) -> Result<StaleResolved, StaleResolveError> {
-        let state = self.stale_state().map_err(|error| {
+        let state = self.stale_judgement().map_err(|error| {
             StaleResolveError::Load(WindowSessionLoadError::Generation(LazyLoadError::Load(
                 LoadError::CurrentPointer(error),
             )))
         })?;
         match state {
             None => Err(StaleResolveError::NotStale),
-            Some((_, StaleResolution::ReconciliationPending)) => {
+            Some((_, _, StaleResolution::ReconciliationPending)) => {
                 Err(StaleResolveError::ReconciliationRequired)
             }
-            Some((_, StaleResolution::Choose)) => match choice {
+            // UseCurrentWindow는 writer 출처를 판정한 그 generation 위에서만 씁니다. 판정 뒤 다른 writer(외부 포함)가
+            // 저장했으면 다시 stale입니다(ADR-0083 결정 1·2).
+            Some((judged, _, StaleResolution::Choose)) => match choice {
                 StaleSaveChoice::UseCurrentWindow => self
-                    .save_over_latest_with_lock_dir(lock_dir)
+                    .save_over_latest_with_lock_dir(judged, lock_dir)
                     .map(StaleResolved::Saved)
                     .map_err(StaleResolveError::Save),
                 StaleSaveChoice::UseLatestDisk => self
@@ -1374,12 +1390,13 @@ impl ProjectWindowSession {
     /// chunk는 이 창 문서로 바뀝니다. 쓰기는 일반 저장과 같은 잠금·base 검사를 거치므로, 최신 generation을 읽은
     /// 뒤 commit 전에 다른 저장이 끝나면 다시 [`WindowSessionSaveError::Stale`]이고 아무것도 쓰지 않습니다.
     /// 성공하면 디스크 current의 이 문서는 창 문서와 같고, history는 그대로 남습니다.
-    pub fn save_over_latest_disk(&mut self) -> Result<SaveOutcome, WindowSessionSaveError> {
-        self.save_over_latest_with_lock_dir(default_lock_dir)
-    }
-
+    ///
+    /// `judged`는 [`ProjectWindowSession::resolve_stale`]이 writer 출처를 판정한 디스크 generation입니다. 다시 읽은
+    /// 최신 generation이 그것과 다르면(판정 뒤 다른 저장이 끝남) 쓰지 않고 다시 stale입니다. 그래서 외부 writer의
+    /// generation을 두 선택지 경로로 덮어쓰지 않습니다(결정 2). 공개 진입점은 `resolve_stale` 하나입니다.
     pub(crate) fn save_over_latest_with_lock_dir(
         &mut self,
+        judged: ContentHash,
         lock_dir: impl FnOnce() -> Result<std::path::PathBuf, LockError>,
     ) -> Result<SaveOutcome, WindowSessionSaveError> {
         let Some(document) = self.document.as_ref() else {
@@ -1407,6 +1424,13 @@ impl ProjectWindowSession {
             }
             Err(error) => return Err(WindowSessionSaveError::Rebase(Box::new(error))),
         };
+        let found = disk.as_ref().map(|disk| disk.loaded.manifest_hash);
+        if found != Some(judged) {
+            return Err(WindowSessionSaveError::Stale(BaseCheckError::StaleBase {
+                expected: Some(judged),
+                found,
+            }));
+        }
         let (base, owned_chunks) = match disk {
             Some(disk) => (
                 Some(disk.loaded),

@@ -25,12 +25,14 @@ Accepted (2026-11-23). engine lane `window-session-stale`의 결정입니다. AD
 - `stellar_project::window_session::StaleSaveChoice`는 `UseCurrentWindow`·`UseLatestDisk` 두 값뿐입니다. 안정 code
   (`use-current-window`·`use-latest-disk`)와 셸 경계 숫자(1·2, 0은 쓰지 않음)를 golden test로 고정합니다. merge·시각
   diff 선택지는 없습니다.
-- **UseCurrentWindow**(`ProjectWindowSession::save_over_latest_disk`): 디스크 최신 generation을 다시 읽어 새 base로
+- **UseCurrentWindow**(`ProjectWindowSession::resolve_stale`의 `UseCurrentWindow`): 디스크 최신 generation을 다시 읽어 새 base로
   삼고, 다른 문서·에셋 chunk는 최신 것을 잇고 이 창 문서가 최신 generation에서 차지한 chunk만 창 문서로 바꿉니다.
   쓰기는 일반 저장과 같은 `SaveCapture::write`이므로 공용 저장 잠금 안에서 base를 **commit 직전에 다시 확인**합니다.
   최신을 읽은 뒤 commit 전에 다른 저장이 끝나면 `Stale`이고 아무것도 쓰지 않습니다(다시 stale). 성공하면 디스크의
   이 문서는 창 snapshot과 같고 history는 그대로 둡니다. 최신 generation에서 이 문서가 지워졌으면 창 문서를 새 root로
-  더합니다.
+  더합니다. 다시 읽은 최신 generation이 `resolve_stale`이 writer 출처를 판정한 generation과 다르면(판정 뒤 CLI 등
+  다른 writer가 저장함) 쓰지 않고 `Stale`입니다. 그래서 외부 writer의 generation을 두 선택지 경로로 덮어쓰지 않습니다.
+  이 쓰기의 공개 진입점은 `resolve_stale` 하나이며, 출처 판정 없이 최신 위에 덮어쓰는 공개 API는 두지 않습니다.
 - **UseLatestDisk**(`ProjectWindowSession::reload_latest_disk`): 최신 generation을 검증하고 이 창 문서를 끝까지 읽은
   **뒤에만** 미저장 편집·history·선택을 버립니다. 읽기에 실패하면 메모리 편집과 history를 그대로 둡니다. 문서
   revision은 앞으로만 움직여(이전 + 1) revision 기반 cache가 무효화됩니다. 열린 탭은 새 문서에 남은 View만 viewport와
@@ -40,8 +42,9 @@ Accepted (2026-11-23). engine lane `window-session-stale`의 결정입니다. AD
 
 ### 2. writer 출처는 이 프로세스의 앱 창 저장 기록으로 가른다
 
-- 앱 창 저장(`SaveCapture::write`, Save Now·자동 저장·UseCurrentWindow 모두)은 current pointer를 바꾼 직후
-  `record_app_window_save(canonical root, manifest hash)`를 부릅니다. stale을 본 창은 `writer_provenance`로 디스크
+- 앱 창 저장(`SaveCapture::write`, Save Now·자동 저장·UseCurrentWindow 모두)은 공용 저장 잠금 안에서 current
+  pointer를 바꾸기 직전에 `record_app_window_save(canonical root, manifest hash)`를 부릅니다. pointer 변화를 다른 창의
+  감시가 먼저 보고 앱 창 저장을 외부로 오판하지 않게 하려는 순서입니다. stale을 본 창은 `writer_provenance`로 디스크
   generation이 앱 창 것인지(`AppWindow`) 아닌지(`External`: CLI·MCP·Git·다른 프로세스) 가릅니다. 기록은 프로세스
   메모리의 최근 4,096개(root + hash 쌍)입니다.
 - 앱 창이 쓴 generation이면 두 선택지(`StaleResolution::Choose`), 외부 writer와 dirty가 겹치면 두 선택지가 아니라
@@ -163,7 +166,7 @@ worker가 `OnceLock`으로 한 번만 합니다. 자동 저장 캡처와 복구 
 
 - 파일 포맷·generation manifest·journal 형식·C ABI·FFI 헤더를 바꾸지 않습니다. 보호 경로 변경이 없습니다.
 - 공개 Rust API 추가: `StaleSaveChoice`·`WriterProvenance`·`StaleResolution`, `autosave::{flush, trace}`,
-  `external_change::source`, runtime `ProjectWindowSession::{stale_state, resolve_stale, save_over_latest_disk,
+  `external_change::source`, runtime `ProjectWindowSession::{stale_state, resolve_stale,
   reload_latest_disk, sync_external}`, `AppRuntime::{take_stale_alerts, resolve_stale, sync_external_changes,
   external_status, autosave_traces, flush_for_close, flush_for_deactivate, git_ui_preflight, prepare_git_ui}`,
   `RuntimeThreads`·`ShutdownStage`.

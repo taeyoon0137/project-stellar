@@ -194,6 +194,37 @@ fn use_current_window_rechecks_the_base_just_before_commit() {
 }
 
 #[test]
+fn use_current_window_does_not_overwrite_an_external_save_after_the_judgement() {
+    // ADR-0083 결정 1·2: 두 선택지는 앱 창 writer로 판정한 generation 위에서만 씁니다. 판정 뒤 CLI가 저장했으면
+    // 그 generation을 덮어쓰지 않고 다시 stale이며, 다시 판정하면 reconciliation 대기입니다.
+    let (project, locks, _a, mut b) = two_windows("use-current-external-after-judgement");
+    let judged = read_current_pointer(project.path()).unwrap();
+    assert_eq!(
+        b.stale_state().unwrap(),
+        Some((WriterProvenance::AppWindow, StaleResolution::Choose))
+    );
+    cli_rename(&project, &locks, 11, "CLI 편집");
+    let before = current_bytes(project.path());
+    let dir = locks.path().to_path_buf();
+    assert!(matches!(
+        b.save_over_latest_with_lock_dir(judged, move || Ok(dir)),
+        Err(WindowSessionSaveError::Stale(_))
+    ));
+    assert_eq!(
+        current_bytes(project.path()),
+        before,
+        "CLI 저장을 덮지 않음"
+    );
+    assert_eq!(name_of(&reopened(&project), 11), "CLI 편집");
+    assert!(b.has_unsaved_changes());
+    assert_eq!(b.generation_number(), 1, "B base는 그대로");
+    assert!(matches!(
+        b.resolve_stale(StaleSaveChoice::UseCurrentWindow),
+        Err(StaleResolveError::ReconciliationRequired)
+    ));
+}
+
+#[test]
 fn use_latest_disk_discards_local_edits_and_history() {
     // XII.7.6: reload 후 local changes·history 없음, 문서 = 최신 디스크.
     let (project, _locks, _a, mut b) = two_windows("use-latest");

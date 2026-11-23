@@ -11,7 +11,7 @@
 
 ## 변경 파일
 
-- `crates/runtime/src/window_session.rs`: `save_over_latest_disk`·`resolve_stale`
+- `crates/runtime/src/window_session.rs`: `resolve_stale`(UseCurrentWindow, 내부 `save_over_latest_with_lock_dir`)
 
 ## 명령과 종료 코드
 
@@ -32,6 +32,7 @@
 |---|---|
 | `window_session::stale_tests::use_current_window_writes_the_window_snapshot_over_the_latest_disk` | 통과 — 선택 후 디스크 문서 = 창 snapshot, 다른 root 문서 유지, history 유지 |
 | `window_session::stale_tests::use_current_window_rechecks_the_base_just_before_commit` | 통과 — 최신을 읽은 뒤 commit 전 다른 저장이 끝나면 다시 stale, 쓰기 0 |
+| `window_session::stale_tests::use_current_window_does_not_overwrite_an_external_save_after_the_judgement` | 통과 — writer 출처 판정 뒤 CLI가 저장하면 그 generation을 덮지 않고 다시 stale, 재판정은 reconciliation 대기 |
 | `app::autosave::pipeline_tests::stale_autosave_requests_one_alert_and_writes_nothing_before_a_choice` | 통과 — 앱 runtime 경로 |
 
 ## 성능
