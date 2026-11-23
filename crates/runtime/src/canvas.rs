@@ -33,6 +33,8 @@ pub use image::image_placement;
 pub mod handles;
 /// 선택 엔진의 hit 입력: 커서 아래 node 목록과 node world 상자 (XII.10.3, XII.10.5).
 pub mod hit;
+/// Frame 레이아웃 그리드 스냅 선·표시와 픽셀 그리드 (XII.10.20, ADR-0117).
+pub mod layout_grid;
 /// 눈금자 눈금과 가이드 제스처 (XII.10.19, ADR-0117).
 pub mod ruler;
 /// 캔버스 클릭 선택과 편집 범위 (XII.10.3, ADR-0104).
