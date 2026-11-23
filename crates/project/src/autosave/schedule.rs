@@ -252,6 +252,46 @@ mod tests {
         DocumentRevision(n)
     }
 
+    /// XIII.1.3 ManualClock fixture: 연속 command가 debounce를 다시 시작하고, 입력이 이어져도 최대 지연에
+    /// 캡처합니다. 시각은 [`ManualClock`]의 단조 nanoseconds를 그대로 넣습니다.
+    #[test]
+    fn manual_clock_fixture_debounces_and_caps_with_the_max_delay() {
+        use stellar_core_types::clock::{ManualClock, MonotonicClock};
+        let now = |clock: &ManualClock| Duration::from_nanos(clock.now_nanos());
+        let mut clock = ManualClock::new(5_000_000);
+        let mut s = AutosaveSchedule::new(policy());
+        let start = now(&clock);
+        let mut revision = 0u64;
+        let mut captures = Vec::new();
+        // 60 ms마다 완료 command(debounce 100 ms보다 짧음)를 1.5초 동안 보냅니다.
+        while now(&clock) < start + ms(1_500) {
+            revision += 1;
+            s.observe(now(&clock), rev(revision), true);
+            if s.decide(now(&clock), false) == AutosaveDecision::Save {
+                captures.push(now(&clock) - start);
+                s.begin_save(rev(revision));
+                s.saved();
+            }
+            clock.advance(60_000_000);
+        }
+        // debounce만 보면 한 번도 저장하지 않지만, 최대 지연(1초)이 입력 중에도 캡처하게 합니다.
+        assert_eq!(captures.len(), 1, "{captures:?}");
+        assert!(
+            captures[0] >= ms(1_000) && captures[0] < ms(1_060),
+            "{captures:?}"
+        );
+        // 입력이 멈추면 마지막 command 뒤 debounce에 저장합니다.
+        let last = now(&clock);
+        s.observe(last, rev(revision + 1), true);
+        clock.advance(99_000_000);
+        assert!(matches!(
+            s.decide(now(&clock), false),
+            AutosaveDecision::Wait { .. }
+        ));
+        clock.advance(1_000_000);
+        assert_eq!(s.decide(now(&clock), false), AutosaveDecision::Save);
+    }
+
     #[test]
     fn stale_alert_is_requested_once_per_stale_period_and_nothing_is_saved_before_a_choice() {
         // XII.7.7: 반복 알림 없음, 선택 전 write 없음.

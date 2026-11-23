@@ -381,3 +381,40 @@ fn external_change_waits_for_the_gesture_to_end() {
     ));
     assert_eq!(name_of(&b, 11), "CLI 편집");
 }
+
+#[test]
+fn worker_write_on_an_outdated_base_is_discarded_without_switching_the_pointer() {
+    // XIII.1.4: 직렬화·쓰기는 worker에서 하고, base가 오래된 결과는 current pointer로 전환하지 않습니다.
+    let project = saved_project("worker-stale-discard");
+    let locks = TempDir::new("worker-stale-discard-locks");
+    let mut w = ProjectWindowSession::load(identity(project.path()), window(5)).unwrap();
+    w.apply(&rename(w.document().unwrap(), 1, 11, "첫 편집"), 0)
+        .unwrap();
+    let first = w.capture_save().unwrap().unwrap();
+    // 같은 base(generation 1) 위의 둘째 캡처. 첫 쓰기가 먼저 끝나면 이 쓰기의 base는 오래됩니다.
+    w.apply(&rename(w.document().unwrap(), 2, 12, "둘째 편집"), 0)
+        .unwrap();
+    let second = w.capture_save().unwrap().unwrap();
+    let dir = locks.path().to_path_buf();
+    let (written, timings) = std::thread::spawn(move || first.write_timed(move || Ok(dir)))
+        .join()
+        .unwrap();
+    assert!(timings.write > std::time::Duration::ZERO);
+    let outcome = w.apply_save(written.unwrap());
+    assert!(outcome.written);
+    let after_first = current_bytes(project.path());
+    let dir = locks.path().to_path_buf();
+    let stale = std::thread::spawn(move || second.write(move || Ok(dir)))
+        .join()
+        .unwrap();
+    assert!(matches!(stale, Err(WindowSessionSaveError::Stale(_))));
+    assert_eq!(
+        current_bytes(project.path()),
+        after_first,
+        "오래된 base 결과는 current pointer를 바꾸지 않음"
+    );
+    // 둘째 편집은 dirty로 남아 다음 저장이 새 base 위에서 씁니다.
+    assert!(w.has_unsaved_changes());
+    assert!(save(&mut w, &locks).written);
+    assert_eq!(name_of(&reopened(&project), 12), "둘째 편집");
+}
