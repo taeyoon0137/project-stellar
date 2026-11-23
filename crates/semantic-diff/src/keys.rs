@@ -186,6 +186,12 @@ pub const VARIANT_SLOT_CHANGE: PropertyKey = PropertyKey(0xEB03);
 /// 값이 asset 참조인 속성 key. 이 key의 변경은 `AssetRefChange`로 분류합니다.
 pub const ASSET_REFERENCE_KEYS: [PropertyKey; 1] = [IMAGE_ASSET];
 
+/// semantic diff 표시 문자열(IX.11.2): 문서 registry의 CSS longhand 또는 Stellar 이름이고, 묶음 key는 대응
+/// longhand 이름 목록입니다. 문서 registry에 없는 snapshot 전용 key는 `None`(호출자는 숫자 key를 씁니다).
+pub fn display_name(key: PropertyKey) -> Option<String> {
+    stellar_document::css::registry::display_label(key)
+}
+
 /// key가 asset 참조 속성인지.
 pub fn is_asset_reference(key: PropertyKey) -> bool {
     ASSET_REFERENCE_KEYS.contains(&key)
@@ -319,6 +325,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn display_names_follow_the_document_registry() {
+        assert_eq!(
+            display_name(frame::BACKGROUND).as_deref(),
+            Some("background-color")
+        );
+        assert_eq!(display_name(frame::WIDTH).as_deref(), Some("width"));
+        assert_eq!(display_name(frame::SIZE).as_deref(), Some("width, height"));
+        assert_eq!(display_name(modifier::FILL_COLOR).as_deref(), Some("fill"));
+        assert_eq!(
+            display_name(modifier::OPACITY_VALUE).as_deref(),
+            Some("opacity")
+        );
+        assert_eq!(display_name(VISIBLE), None);
     }
 
     #[test]

@@ -244,6 +244,7 @@ longhand로 바꾸는 근거입니다.
 | Stellar 속성(key) | CSS | 상태 | 차이·비고 | migration |
 |---|---|---|---|---|
 | `size`(0x0101) | `width`, `height` | `converted` | Fixed 크기만 표현합니다. 합성 key라 `width`·`height` key로 나누고 0x0101은 묶음 key로 남깁니다(ADR-0024 결정 14). 영속 layout record가 sizing longhand를 가지면 Frame size를 그 Fixed 경우로 흡수합니다. 방식은 IX.11.6 ADR이 정하되, `width`·`height` longhand의 PropertyKey는 IX.11.22가 할당한 key를 그대로 씁니다(PropertyKey는 payload bytes에 담기지 않으므로 저장 위치와 독립) | `key`(IX.11.22), `schema`(IX.11.6) |
+| `width`(0x0108)·`height`(0x0109) | `width`, `height` | `exact`, `subset` | IX.11.22가 `size`(0x0101)에서 나눈 longhand입니다. 지금은 고정 px만 저장합니다(`%`·`auto`·`fit-content`는 IX.11.6). 새 편집은 이 key를 씁니다 | `key`(IX.11.22) |
 | `transform`(0x0102) 이동 성분 | 위치(Free 자식 `left`·`top`, flow 자식 `translate`) | 다름 | 지금 인스펙터는 위치 X·Y를 transform 이동 성분으로 편집합니다(인스펙터 명세 5.2). CSS에서 위치는 레이아웃 속성입니다. migration은 이동 성분만 옮깁니다. 지금 저장 형식에는 layout 정의 record가 없어(`frame.rs` `layout_mode` 주석) 모든 자식이 Free 자식입니다. 부모가 없는 Frame(View root Frame, ComponentDefinition root)의 이동 성분은 페이지 캔버스 배치이므로 위치 longhand로 옮기지 않고, x·y 두 longhand로 된 stellar-only 캔버스 배치 속성으로 옮깁니다(4.6절). Web export는 이 속성을 출력하지 않습니다. 화면 위치는 layout 반올림 때문에 1 LayoutUnit 안에서 보존됩니다 | `schema`(IX.11.9), `key` |
 | `transform`(0x0102) 선형 부분 | `transform: matrix(a, b, c, d, 0, 0)`, `transform-origin` | `converted` | migration은 선형 부분을 bit 그대로 행렬로 보존하고 `rotate`·`scale`로 분해하지 않습니다. 분해에 쓰는 atan2·sin·cos는 플랫폼 의존 결과입니다(ADR-0006). 인스펙터의 회전·배율 표시는 행렬에서 계산한 표시 전용 파생값이며 저장하지 않습니다. 새 편집은 `rotate`·`scale`·`translate` longhand를 씁니다. 지금 원점은 border box 좌상단(`0 0`)이고 CSS initial value는 `50% 50%`입니다. migration된 노드는 `0 0`을 명시 저장합니다. 0x0102는 묶음 key로 남고 migration 이후 새 command로 받지 않습니다 | `schema`(IX.11.9), `key` |
 | `clipping`(0x0103) Disabled | `overflow: visible` | `exact` | `clipping`은 CSS longhand로 나누지 않는 Stellar 고유 이름의 단일 속성입니다(ADR-0024 결정 14). Stellar clip은 하나라 `overflow-x`·`overflow-y`를 따로 바꿀 수 없고, 아래 세 변형은 서로 다른 CSS longhand 조합으로 나갑니다. merge·semantic diff 단위는 key 하나이고, 값에 NodeRef가 있어 대응 `ExpressionType`이 없으므로 포트·binding 대상이 아닙니다 | `rename` |
@@ -252,6 +253,7 @@ longhand로 바꾸는 근거입니다.
 | `background`(0x0104) | `background-color`(없음 = `transparent`) | `exact` | 한 겹 단색만 있습니다. gradient·image layer는 15장 O2 | `rename` |
 | `border`(0x0105) | `border-{top,right,bottom,left}-{width,style,color}` | `converted` | 4변 같은 값, style `solid` 하나, 없음 = `none`입니다. 지금은 레이아웃 공간을 차지하지 않습니다(scene에서 Inside로 그림). CSS처럼 border box 안쪽을 padding box로 만듭니다. 지금 저장 형식에는 layout record가 없어 모든 자식이 Free 자식이고, migration은 Free 자식의 `left`·`top`에서 부모 border 두께를 빼 화면 위치를 보존합니다. 영속 layout record(IX.11.6)가 있는 중간 schema 입력에서 border가 있는 flow 부모(Stack·Grid·Overlay)는 각 변 `padding-*`에서 그 변 border 두께를 빼 content box 위치와 Hug 크기를 보존하고, padding이 border 두께보다 작은 변은 `0px`로 두고 보존하지 못한 차이를 migration 보고서에 노드별로 기록합니다(IX.11.10). 12개 longhand에 key를 나누고 0x0105는 묶음 key로 남깁니다 | `schema`(IX.11.10), `key` |
 | `corner_radius`(0x0106) | `border-{top-left,top-right,bottom-right,bottom-left}-radius` | `exact` | px 원형 반경만 받습니다(타원 x/y·`%`는 `subset`). bounds를 넘으면 모든 반경을 같은 비율로 줄이는 규칙은 CSS와 같습니다. 지금은 4 모서리를 key 하나와 semantic snapshot 경로 하나에 둡니다(`crates/semantic-diff/src/build.rs`). 모서리마다 key를 나누고 0x0106은 묶음 key로 남깁니다 | `key`(IX.11.22) |
+| `border-top-left-radius`(0x010a)\~`border-bottom-left-radius`(0x010d) | `border-{top-left,top-right,bottom-right,bottom-left}-radius` | `exact`, `subset` | IX.11.22가 `corner_radius`(0x0106)에서 나눈 모서리별 longhand입니다(TL, TR, BR, BL 순 key). semantic snapshot도 모서리마다 경로 하나입니다 | `key`(IX.11.22) |
 | `layout_mode`(0x0107) | `display` + container longhand 묶음 | `stellar-only`(참조 구조) | 참조하는 layout 정의 resource는 CSS class와 비슷합니다. 저장 위치는 IX.11.6 ADR이 정합니다 | `schema`(IX.11.6) |
 
 ## 6. Shape·Path·Image
@@ -375,6 +377,13 @@ type tag는 유지하고 payload를 Typography canonical encoding으로 정의�
 modifier stack은 Stellar 고유 구조로 유지합니다. 파라미터 이름과 값 문법은 CSS를 따릅니다.
 [ADR-0024 결정 9]
 
+registry 이름(`modifier_metadata.rs`, IX.11.2)은 CSS longhand가 하나로 대응하면 그 이름이고(`transform`, `fill`,
+`stroke`, `stroke-width`, `mask-image`, `clip-path`, `mix-blend-mode`, `opacity`), 그렇지 않으면 Stellar 이름입니다
+(`enabled`, `modifier-order`, `boolean-operation`, `boolean-operands`, `stroke-expand-width`, `corner-radius`,
+`shadow-color`, `shadow-offset-x`, `shadow-offset-y`, `shadow-blur`, `blur-radius`). 묶음 key `shadow-offset`(0x1092)의
+표시 문자열은 `shadow-offset-x, shadow-offset-y`입니다. 상태 열은 registry 매핑 상태와 같아야 합니다
+(`crates/document/src/css/registry.rs` test).
+
 | Modifier(key) | CSS | 상태 | 차이·비고 | migration |
 |---|---|---|---|---|
 | 공통 enabled(0x1001) | — | `stellar-only` | 비활성 항목은 출력하지 않습니다 | `none` |
@@ -383,11 +392,11 @@ modifier stack은 Stellar 고유 구조로 유지합니다. 파라미터 이름�
 | Boolean(0x1021, 0x1022) | — | `stellar-only` | Union·Subtract·Intersect·Exclude. export에서 path로 굽습니다 | `none` |
 | StrokeExpand(0x1031) | — | `stellar-only` | path로 굽습니다 | `none` |
 | Corner(0x1041) | — | `stellar-only` | Frame·Rectangle 반경은 `border-*-radius`가 맡습니다. path 모서리 처리는 굽습니다 | `none` |
-| Mask(0x1051) | `mask-image: url(#id)` | 미정 | Web은 inline SVG `mask`를 참조합니다. Stellar mask가 alpha와 luminance 중 무엇을 쓰는지는 코드에 정해져 있지 않습니다(`modifier.rs` `Mask`는 원본 NodeRef만 가짐). SVG `<mask>`의 기본 `mask-type`은 luminance입니다. mode가 정해지면(15장 O14) alpha는 `mask-type: alpha`를 함께 출력하고 luminance는 기본값을 씁니다. 정하기 전에는 registry 매핑 상태를 `approximated`로 기록합니다(IX.11.2) | `none` |
+| Mask(0x1051) | `mask-image: url(#id)` | `approximated` | Web은 inline SVG `mask`를 참조합니다. Stellar mask가 alpha와 luminance 중 무엇을 쓰는지는 코드에 정해져 있지 않습니다(`modifier.rs` `Mask`는 원본 NodeRef만 가짐). SVG `<mask>`의 기본 `mask-type`은 luminance입니다. mode가 정해지면(15장 O14) alpha는 `mask-type: alpha`를 함께 출력하고 luminance는 기본값을 씁니다. 정하기 전에는 registry 매핑 상태를 `approximated`로 기록합니다(IX.11.2) | `none` |
 | Clip(0x1061) | `clip-path: url(#id)` | `converted` | | `none` |
 | Fill(0x1071) | Frame: 배경 layer(`background-image: linear-gradient(c, c)`), Shape·Path: `fill` | `converted`, Frame border가 있으면 `approximated`(overlay) | 단색만 있습니다. Stellar Frame은 배경 → 테두리 → modifier Fill → modifier Stroke → 자식 순서로 칠하므로(`crates/scene/src/builder.rs` `paint_stack`) Fill이 테두리 위에 옵니다. CSS background layer는 border 아래라 border가 없을 때만 같습니다. border가 있으면 9.2절 overlay 요소에 칠합니다 | `rename` |
 | Stroke(0x1081, 0x1082) | Shape·Path: `stroke`, `stroke-width`, Frame: `box-shadow: inset 0 0 0 <w> <c>` | `converted`, Frame border가 있으면 `approximated`(overlay) | 정렬은 node 종류로 정해집니다(Frame=Inside, Shape·Path=Center). Stellar Frame stroke는 border box 가장자리 안쪽에 테두리 위·자식 아래로 칠합니다. CSS inset `box-shadow`는 padding edge 안쪽에 border 아래로 그려지므로 border가 없을 때만 같고, border가 있으면 9.2절 overlay 요소에 냅니다. `outline`은 자식 위에 그려져 쓰지 않습니다. `stroke-linejoin`·`stroke-dasharray`·`stroke-miterlimit`는 이름만 예약합니다 [계획 XI.6.2] | `rename` |
-| Shadow(0x1091\~0x1093) | Frame: `box-shadow`, 그 밖: `filter: drop-shadow()` | `approximated` | spread·inset이 없습니다. Stellar blur 반경과 CSS 표준편차의 관계는 렌더러 효과 구현(XI.10.4)에서 고정합니다. CSS는 `box-shadow` blur를 반경(표준편차의 2배)으로, `blur()`를 표준편차로 정의합니다. offset(0x1092)은 x·y를 담은 합성 key라 offset x·y key로 나누고 0x1092는 묶음 key로 남깁니다 | `rename`, `key`(IX.11.22) |
+| Shadow(0x1091\~0x1095) | Frame: `box-shadow`, 그 밖: `filter: drop-shadow()` | `approximated` | spread·inset이 없습니다. Stellar blur 반경과 CSS 표준편차의 관계는 렌더러 효과 구현(XI.10.4)에서 고정합니다. CSS는 `box-shadow` blur를 반경(표준편차의 2배)으로, `blur()`를 표준편차로 정의합니다. offset(0x1092)은 x·y를 담은 합성 key라 `shadow-offset-x`(0x1094)·`shadow-offset-y`(0x1095)로 나누고 0x1092는 묶음 key로 남깁니다(IX.11.22) | `rename`, `key`(IX.11.22) |
 | Blur(0x10A1) | `filter: blur()` | `approximated` | 같음 | `rename` |
 | Blend(0x10B1) | `mix-blend-mode: normal \| multiply \| screen \| overlay \| darken \| lighten` | `approximated` | keyword는 같고 합성 색공간이 다릅니다. CSS 16종 중 나머지는 추가 후보입니다. 그룹 경계는 `isolation: isolate`로 냅니다 | `rename` |
 | Opacity(0x10C1) | `opacity`(0\~1) | `exact` | 그룹 opacity입니다. 겹침 합성 색공간은 8.2절 | `rename` |
