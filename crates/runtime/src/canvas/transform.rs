@@ -29,6 +29,7 @@ use crate::canvas::CanvasScene;
 use crate::window_session::ProjectWindowSession;
 
 pub mod drag;
+pub mod keyboard;
 pub mod radius;
 pub mod resize;
 pub mod rotate;
