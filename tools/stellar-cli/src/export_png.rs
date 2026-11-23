@@ -6,12 +6,15 @@
 //! - 변환이 넣지 못한 node(예: headless Text layout 없음)가 있으면 실패합니다. `--omit-skipped`는 그 node를 빼고 그리는 것을
 //!   확인합니다.
 //! - 확인이 필요한 사전 진단(없는 이미지, 검사하지 못한 target profile)이 있으면 실패합니다. `--accept-issues`로 확인합니다.
-//! - CPU target이 아직 그리지 않는 효과(drop shadow, layer blur, Normal이 아닌 blend)는 렌더 실패이고 파일을 쓰지 않습니다.
+//! - CPU target이 아직 그리지 않는 효과(drop shadow, layer blur, Normal이 아닌 blend)는 렌더 실패(`png-unsupported`, 종료
+//!   1)이고 파일을 쓰지 않습니다. 출력 파일을 쓰지 못한 경우만 `png-write-failed`(종료 73)입니다.
 
 use std::path::{Path, PathBuf};
 
 use stellar_ops::core_types::ids::StableId;
-use stellar_ops::export_png::view::{export_view_png, SkippedNode, ViewPngError, ViewPngRequest};
+use stellar_ops::export_png::view::{
+    export_view_png, SaveFailure, SkippedNode, ViewPngError, ViewPngRequest,
+};
 use stellar_ops::snapshot::open_snapshot;
 
 use crate::exit::ExitStatus;
@@ -60,7 +63,7 @@ fn absolute(path: &str) -> Result<PathBuf, CliError> {
 
 fn error(error: ViewPngError, path: &str) -> CliError {
     let message = error.to_string();
-    let failed = match error {
+    let failed = match &error {
         ViewPngError::Unsaved => CliError::new(ExitStatus::NoInput, "unsaved", message),
         ViewPngError::Document(_) => CliError::new(ExitStatus::DataErr, "document", message),
         ViewPngError::UnknownView(_) => CliError::new(ExitStatus::NoInput, "unknown-view", message),
@@ -68,7 +71,7 @@ fn error(error: ViewPngError, path: &str) -> CliError {
         ViewPngError::Scene(_) => CliError::new(ExitStatus::DataErr, "png-scene", message),
         ViewPngError::SkippedNodes(nodes) => {
             CliError::new(ExitStatus::Failure, "png-skipped-nodes", message)
-                .with_result(JsonValue::object(vec![("skipped", skipped_json(&nodes))]))
+                .with_result(JsonValue::object(vec![("skipped", skipped_json(nodes))]))
         }
         ViewPngError::UnsupportedImage { .. } => {
             CliError::new(ExitStatus::Failure, "png-unsupported-image", message)
@@ -76,11 +79,20 @@ fn error(error: ViewPngError, path: &str) -> CliError {
         ViewPngError::Capture(_) => CliError::new(ExitStatus::Failure, "png-capture", message),
         ViewPngError::ConfirmationRequired(issues) => {
             CliError::new(ExitStatus::Failure, "png-confirmation-required", message)
-                .with_result(JsonValue::object(vec![("issues", strings(&issues))]))
+                .with_result(JsonValue::object(vec![("issues", strings(issues))]))
         }
         ViewPngError::Rejected(_) => CliError::new(ExitStatus::Failure, "png-rejected", message),
         ViewPngError::Save(_) => {
-            CliError::new(ExitStatus::CantCreate, "png-export-failed", message)
+            // 출력 파일을 쓰지 못한 경우만 `EX_CANTCREAT`입니다. target이 그리지 못하는 효과·크기 초과는 도메인 실패입니다.
+            let failure = error.save_failure().unwrap_or(SaveFailure::Render);
+            let status = match failure {
+                SaveFailure::Write => ExitStatus::CantCreate,
+                SaveFailure::Render => ExitStatus::Software,
+                SaveFailure::Unsupported | SaveFailure::TooLarge | SaveFailure::Cancelled => {
+                    ExitStatus::Failure
+                }
+            };
+            CliError::new(status, failure.code(), message)
         }
     };
     failed.with_context(path)

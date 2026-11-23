@@ -176,11 +176,12 @@ fn skipped_nodes_and_unsupported_effects_fail_without_writing() {
             "--output",
             out.to_str().unwrap(),
         ]),
-        73,
+        1,
     );
+    // 그리지 못하는 효과는 도메인 실패이고, 출력 파일을 만들 수 없다는 `EX_CANTCREAT`(73)가 아닙니다.
     assert_eq!(
         value.get("error").unwrap().get("code").unwrap().as_str(),
-        Some("png-export-failed")
+        Some("png-unsupported")
     );
     assert!(!out.exists());
 }

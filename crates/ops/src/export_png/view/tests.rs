@@ -100,6 +100,7 @@ fn unsupported_cpu_effects_fail_without_writing() {
     let snapshot = open_snapshot(&dir.path).unwrap();
     let error = export_view_png(&snapshot, &request(&dir, 1.0)).unwrap_err();
     assert!(error.to_string().contains("shadow"), "{error}");
+    assert_eq!(error.save_failure(), Some(SaveFailure::Unsupported));
     assert!(!dir.path.join("out.png").exists());
 }
 
@@ -126,4 +127,5 @@ fn missing_inputs_are_reported() {
         export_view_png(&snapshot, &req),
         Err(ViewPngError::InvalidRequest(_))
     ));
+    assert_eq!(ViewPngError::Unsaved.save_failure(), None);
 }

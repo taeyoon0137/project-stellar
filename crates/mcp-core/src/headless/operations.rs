@@ -14,7 +14,7 @@ use stellar_ops::css::{copy, paste, CssError};
 use stellar_ops::diff::DiffReport;
 use stellar_ops::export_css::export_react_native;
 use stellar_ops::export_png::view::{
-    png_base64, render_view_png, unwritten_output_path, ViewPngError, ViewPngRequest,
+    png_base64, render_view_png, unwritten_output_path, SaveFailure, ViewPngError, ViewPngRequest,
 };
 use stellar_ops::git::{change_id_text, GitError, GitSession, GitStatusReport, StatusRequest};
 use stellar_ops::lock::LockPolicy;
@@ -366,7 +366,7 @@ pub(super) fn export_png(cached: &CachedRead, args: &J) -> Result<J, RpcError> {
         accept_issues: flag("accept_issues")?,
         omit_skipped: flag("omit_skipped")?,
     };
-    let rendered = render_view_png(&cached.snapshot, &request).map_err(|error| match error {
+    let rendered = render_view_png(&cached.snapshot, &request).map_err(|error| match &error {
         ViewPngError::Unsaved => fail(Kind::NotFound, "저장된 generation이 없습니다"),
         ViewPngError::Document(_) => fail(Kind::NotFound, "대상 문서를 읽을 수 없습니다"),
         ViewPngError::UnknownView(_) => fail(Kind::NotFound, "문서에 View가 없습니다"),
@@ -390,10 +390,17 @@ pub(super) fn export_png(cached: &CachedRead, args: &J) -> Result<J, RpcError> {
             Kind::Unavailable,
             "보이는 내용이 없거나 내보내기 범위를 정하지 못했습니다",
         ),
-        ViewPngError::Scene(_) | ViewPngError::Rejected(_) | ViewPngError::Save(_) => fail(
-            Kind::Unavailable,
-            "이 View를 PNG로 렌더하지 못했습니다(지원하지 않는 효과 등)",
+        ViewPngError::Save(_) if error.save_failure() == Some(SaveFailure::TooLarge) => fail(
+            Kind::TooLarge,
+            "출력 pixel 크기가 상한을 넘습니다(scale을 줄이세요)",
         ),
+        ViewPngError::Save(_) if error.save_failure() == Some(SaveFailure::Unsupported) => fail(
+            Kind::Unavailable,
+            "이 View에 PNG 내보내기가 그리지 못하는 효과·형식이 있습니다",
+        ),
+        ViewPngError::Scene(_) | ViewPngError::Rejected(_) | ViewPngError::Save(_) => {
+            fail(Kind::Unavailable, "이 View를 PNG로 렌더하지 못했습니다")
+        }
     })?;
     if rendered.file.bytes().len() > MAX_PNG_RESPONSE_BYTES {
         return Err(fail(

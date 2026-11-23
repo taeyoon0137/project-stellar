@@ -184,6 +184,60 @@ impl fmt::Display for ViewPngError {
 
 impl std::error::Error for ViewPngError {}
 
+/// 렌더·encode·저장 실패([`ViewPngError::Save`])의 종류. CLI 종료 code와 MCP 실패 종류가 같은 분류를 씁니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveFailure {
+    /// target이 그리지 못하는 기능(예: CPU target의 drop shadow·layer blur·Normal이 아닌 blend, 이미지 형식).
+    Unsupported,
+    /// 출력 pixel 크기가 상한을 넘습니다.
+    TooLarge,
+    /// 출력 파일을 쓰지 못했습니다.
+    Write,
+    /// 취소되었습니다.
+    Cancelled,
+    /// 그 밖의 렌더·encode 실패.
+    Render,
+}
+
+impl SaveFailure {
+    /// 안정 code(CLI·MCP 보고용).
+    pub const fn code(self) -> &'static str {
+        match self {
+            SaveFailure::Unsupported => "png-unsupported",
+            SaveFailure::TooLarge => "png-too-large",
+            SaveFailure::Write => "png-write-failed",
+            SaveFailure::Cancelled => "png-cancelled",
+            SaveFailure::Render => "png-render-failed",
+        }
+    }
+}
+
+impl ViewPngError {
+    /// 렌더·encode·저장 실패의 종류. [`ViewPngError::Save`]가 아니면 `None`입니다.
+    pub fn save_failure(&self) -> Option<SaveFailure> {
+        use stellar_export::png::PngExportError;
+        use stellar_export::raster::OffscreenError;
+        let ViewPngError::Save(error) = self else {
+            return None;
+        };
+        Some(match error {
+            PngSaveError::Write { .. } => SaveFailure::Write,
+            PngSaveError::Cancelled => SaveFailure::Cancelled,
+            PngSaveError::Export(PngExportError::Cancelled)
+            | PngSaveError::Export(PngExportError::Render(OffscreenError::Cancelled)) => {
+                SaveFailure::Cancelled
+            }
+            PngSaveError::Export(PngExportError::Render(OffscreenError::Unsupported {
+                ..
+            })) => SaveFailure::Unsupported,
+            PngSaveError::Export(PngExportError::Render(OffscreenError::TooLarge { .. })) => {
+                SaveFailure::TooLarge
+            }
+            PngSaveError::Export(_) => SaveFailure::Render,
+        })
+    }
+}
+
 /// generation의 이미지 asset 내용(asset id → metadata chunk hash).
 struct GenerationAssets {
     root: PathBuf,

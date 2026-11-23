@@ -47,7 +47,8 @@
   읽고, PNG가 아닌 asset은 렌더 전에 거부합니다.
 - **CLI** `stellar export png <경로> <문서 id> <View id> --output <파일> [--scale] [--profile] [--background] [--accept-issues]
   [--omit-skipped]`: worker 렌더 후 temp + atomic rename 저장, 결과 JSON(경로·byte 수·크기·profile·gamut·빠진 node·확인한
-  진단). 실패 code는 `png-skipped-nodes`·`png-confirmation-required`·`png-export-failed` 등입니다.
+  진단). 실패 code는 `png-skipped-nodes`·`png-confirmation-required`·`png-unsupported`(그리지 못하는 효과, 종료 1)·`png-too-large`·
+  `png-write-failed`(종료 73) 등입니다.
 - **MCP** `document.export_png`(headless 읽기, 파일을 쓰지 않음): 같은 ops 함수로 렌더한 PNG를 base64로 돌려줍니다. 512 KiB를
   넘으면 `too-large`입니다.
 
