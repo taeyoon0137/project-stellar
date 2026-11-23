@@ -153,6 +153,9 @@ fn every_listed_tool_runs_read_only_through_ops() {
     let git = resource_body(&client.read("stellar://git/status"));
     assert_eq!(git.get("branch").map(text), Some("main"));
     assert_eq!(git.get("clean"), Some(&J::Bool(true)));
+    // staged·unstaged는 semantic 변경 수입니다(XIX.2.1 정의).
+    assert_eq!(git.get("staged"), Some(&J::int(0)));
+    assert_eq!(git.get("unstaged"), Some(&J::int(0)));
     client.finish();
     // 검증 기준: 실행 전후 프로젝트 파일 hash 동일(dry-run·Git 읽기 포함).
     assert_eq!(file_digest(&fx.temp.path), before);
@@ -280,4 +283,37 @@ fn support_ids_with_kind(client: &mut Client) -> J {
             ),
         ]),
     )
+}
+
+#[test]
+fn git_status_resource_counts_semantic_changes_like_the_tool() {
+    // XIX.2.1 정의: `stellar://git/status`의 staged·unstaged는 semantic 변경 수입니다.
+    // 같은 저장 파일 안의 이름 변경 세 개는 경로 하나지만 semantic 변경 세 개입니다.
+    let fx = Fixture::new("mcp-tools-git-summary");
+    let mut document = committed_project(&fx, 3);
+    for (index, node) in document.to_records().unwrap().nodes.iter().enumerate() {
+        document
+            .set_display_name(node.id, format!("Renamed {index}"))
+            .unwrap();
+    }
+    save_documents(&fx.project, &[&document]);
+    fx.grant();
+    let mut client = fx.launch();
+    client.initialize();
+    let tool = tool_body(&client.tool("git.status", J::object(vec![("limit", J::int(5))])));
+    let semantic = tool.get("semantic").unwrap();
+    let unstaged = semantic.get("unstaged_total").unwrap().clone();
+    assert_ne!(unstaged, J::int(0), "{tool:?}");
+    let paths = tool.get("counts").unwrap().get("unstaged").unwrap().clone();
+    let summary = resource_body(&client.read("stellar://git/status"));
+    assert_eq!(summary.get("unstaged"), Some(&unstaged), "{summary:?}");
+    assert_eq!(
+        summary.get("staged"),
+        semantic.get("staged_total"),
+        "{summary:?}"
+    );
+    assert_eq!(summary.get("clean"), Some(&J::Bool(false)));
+    // 경로 수와 semantic 수가 다른 fixture인지 기록합니다(같으면 이 test가 두 정의를 구분하지 못함).
+    assert_ne!(Some(&paths), summary.get("unstaged"), "{tool:?}");
+    client.finish();
 }

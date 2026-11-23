@@ -7,7 +7,7 @@ use stellar_ops::git::StatusRequest;
 use stellar_ops::query::tokens;
 
 use super::operations::read_git_status;
-use super::{count, revision, uint, CachedRead};
+use super::{count, fail, revision, uint, CachedRead, Kind};
 use crate::json::JsonValue as J;
 use crate::jsonrpc::RpcError;
 
@@ -47,6 +47,10 @@ pub(super) fn read_target_profiles(cached: &CachedRead) -> J {
 }
 
 /// `stellar://git/status`: 작업 트리 Git 상태 요약(경로·URL 없음). index를 바꾸지 않습니다.
+///
+/// 정의(XIX.2.1)대로 `staged`·`unstaged`는 semantic 변경 수(`git.status`의 `semantic.*_total`과 같은 값)이고,
+/// `conflicted`는 conflict 경로 수, `clean`은 작업 트리 전체(추적 안 함 포함)가 깨끗한지입니다. semantic 상태를
+/// 읽지 못하면 경로 수로 대신하지 않고 `unavailable`입니다.
 pub(super) fn read_git_summary(cached: &CachedRead) -> Result<J, RpcError> {
     let report = read_git_status(
         cached,
@@ -63,6 +67,12 @@ pub(super) fn read_git_summary(cached: &CachedRead) -> Result<J, RpcError> {
         }
         stellar_ops::git::HeadState::Detached { .. } => J::Null,
     };
+    let semantic = report.semantic.as_ref().map_err(|_| {
+        fail(
+            Kind::Unavailable,
+            "semantic 변경 상태를 읽을 수 없습니다. git.status tool의 진단을 확인하세요",
+        )
+    })?;
     let clean = counts.staged == 0
         && counts.unstaged == 0
         && counts.untracked == 0
@@ -71,8 +81,8 @@ pub(super) fn read_git_summary(cached: &CachedRead) -> Result<J, RpcError> {
         ("revision", revision(cached.snapshot.revision())),
         ("branch", branch),
         ("clean", J::Bool(clean)),
-        ("staged", uint(counts.staged)),
-        ("unstaged", uint(counts.unstaged)),
+        ("staged", count(semantic.staged_total)),
+        ("unstaged", count(semantic.unstaged_total)),
         ("conflicted", uint(counts.conflicted)),
     ]))
 }
