@@ -24,4 +24,5 @@
 //! | [`output`] | XXIX.2.4·XXIX.2.13 | 수신 출력의 원문 보존·디코드·디코드 실패 연결 |
 //! | `src/bin/test_cli.rs` | XXIX.2.2 | 구독 CLI 테스트 대역 실행 파일(테스트 전용, library 미사용) |
 
+pub mod chat;
 pub mod json;
