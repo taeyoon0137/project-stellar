@@ -145,6 +145,8 @@ pub enum SessionDiagnostic {
     },
     /// 포인터 입력 tick 순서 오류.
     OutOfOrder(OutOfOrder),
+    /// binding 재평가 실패(그 tick의 표시 값은 앞 값을 유지).
+    Scheduler(SchedulerError),
 }
 
 /// 진행 중인 motion.
@@ -383,9 +385,27 @@ impl<'a> PreviewSession<'a> {
         &self.trace
     }
 
-    /// 환경 key `reduced_motion`을 바꿉니다. 그 key를 읽는 binding만 재평가합니다.
+    /// 환경 key `reduced_motion`을 바꿉니다. 그 key를 읽는 binding만 재평가합니다. 켜면 진행 중인 motion 중 대체 동작이
+    /// `instant`인 것은 끝값으로 바로 바꿉니다.
     pub fn set_reduced_motion(&mut self, on: bool) -> usize {
         self.config.reduced_motion = on;
+        if on {
+            let motions = &self.motions;
+            let instant: Vec<(PropertyPath, TypedValue)> = self
+                .active
+                .iter()
+                .filter(|(_, active)| {
+                    motions.iter().any(|m| {
+                        m.id() == active.motion && m.reduced_motion() == ReducedMotion::Instant
+                    })
+                })
+                .map(|(target, active)| (target.clone(), active.end.clone()))
+                .collect();
+            for (target, end) in instant {
+                self.active.remove(&target);
+                self.displayed.insert(target, Some(end));
+            }
+        }
         let Some(key) = reduced_motion_key() else {
             return 0;
         };
@@ -402,7 +422,19 @@ impl<'a> PreviewSession<'a> {
         evaluated
     }
 
+    /// 끝값이 바뀐 진행 중 motion을 취소하고, motion이 없는 대상의 표시 값을 binding 값으로 맞춥니다.
     fn refresh_unanimated(&mut self) {
+        let stale: Vec<PropertyPath> = self
+            .active
+            .iter()
+            .filter(|(target, motion)| {
+                base_value(&self.evaluator, target).as_ref() != Some(&motion.end)
+            })
+            .map(|(target, _)| target.clone())
+            .collect();
+        for target in stale {
+            self.active.remove(&target);
+        }
         for target in &self.targets {
             if !self.active.contains_key(target) {
                 self.displayed
@@ -552,8 +584,9 @@ impl<'a> PreviewSession<'a> {
             .filter(|(node, _)| self.evaluator.graph().index_of(node).is_some())
             .collect();
         if !updates.is_empty() {
-            if let Ok(update) = self.evaluator.update_sources(updates) {
-                report.binding_evaluations = update.evaluated;
+            match self.evaluator.update_sources(updates) {
+                Ok(update) => report.binding_evaluations = update.evaluated,
+                Err(error) => report.diagnostics.push(SessionDiagnostic::Scheduler(error)),
             }
         }
         for (motion, target, start) in pending {
@@ -593,7 +626,9 @@ impl<'a> PreviewSession<'a> {
                 }
             }
         }
-        // motion 없이 값이 바뀐 대상은 바로 바꿉니다.
+        // motion 없이 값이 바뀐 대상은 바로 바꿉니다. 진행 중인 motion의 끝값이 바뀌었는데 이 tick에 새 motion이 시작되지
+        // 않았으면 그 motion을 취소하고 새 값으로 바로 바꿉니다(CSS transition: 끝값이 바뀌고 새 transition이 없으면 진행
+        // 중인 transition은 취소됩니다).
         if report.binding_evaluations > 0 {
             self.refresh_unanimated();
         }

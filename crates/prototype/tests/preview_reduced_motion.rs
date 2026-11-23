@@ -51,3 +51,19 @@ fn reduced_motion_uses_fallback() {
     toggled.advance(vec![activate()]);
     assert_eq!(length_of(toggled.displayed(&left(KNOB))), 24.0);
 }
+
+#[test]
+fn turning_reduced_motion_on_finishes_running_instant_motion() {
+    // 검증 기준(XXX.3.5): 세션 중 켜면 진행 중인 `instant` motion은 끝값으로 바로 바뀝니다.
+    let doc = document();
+    let mut s = session(&doc, SessionConfig::default());
+    s.advance(vec![activate()]);
+    for _ in 0..6 {
+        s.advance(Vec::new());
+    }
+    let mid = length_of(s.displayed(&left(KNOB)));
+    assert!(mid > 0.0 && mid < 24.0, "{mid}");
+    s.set_reduced_motion(true);
+    assert_eq!(length_of(s.displayed(&left(KNOB))), 24.0);
+    assert_eq!(s.advance(Vec::new()).active_motions, 0);
+}

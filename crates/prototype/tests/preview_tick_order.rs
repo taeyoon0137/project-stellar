@@ -107,3 +107,40 @@ fn drag_gesture_reaches_state_machine_as_axis_events() {
     assert_eq!(report.dispatched, 3, "dragEndX, dragEndY, pointerUp");
     assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
 }
+
+#[test]
+fn end_value_change_without_new_motion_cancels_running_motion() {
+    // CSS transition 규칙: 끝값이 바뀌었는데 새 motion이 시작되지 않으면 진행 중인 motion을 취소하고 새 값으로 바로
+    // 바꿉니다. `on`이 true가 될 때만 시작하는 motion에서, 진행 중에 false로 되돌리면 표시 값은 바로 0입니다.
+    use stellar_document::motion::{MotionSet, MotionSpec, StartCondition};
+    let mut doc = document();
+    let mut input = motion(200.0, stellar_document::motion::ReducedMotion::Instant).to_input();
+    input.start = StartCondition::Becomes {
+        variable: on(),
+        value: stellar_core_types::typed_value::TypedValue::Boolean(true),
+    };
+    let mut motions = MotionSet::new();
+    motions
+        .insert(MotionSpec::new(input).expect("motion"))
+        .expect("insert");
+    doc.motions = motions;
+    let mut s = session(&doc, SessionConfig::default());
+    s.advance(vec![activate()]);
+    for _ in 0..6 {
+        s.advance(Vec::new());
+    }
+    let mid = length_of(s.displayed(&left(KNOB)));
+    assert!(mid > 0.0 && mid < 24.0, "{mid}");
+    let report = s.advance(vec![activate()]);
+    assert!(report.motions_started.is_empty(), "becomes true가 아님");
+    assert_eq!(report.active_motions, 0, "진행 중 motion 취소");
+    assert_eq!(length_of(s.displayed(&left(KNOB))), 0.0);
+    for _ in 0..40 {
+        s.advance(Vec::new());
+    }
+    assert_eq!(
+        length_of(s.displayed(&left(KNOB))),
+        0.0,
+        "옛 끝값으로 가지 않음"
+    );
+}
