@@ -165,7 +165,8 @@ fn head_index_and_working_tree_snapshots_diff_and_round_trip() {
         property_targets(&staged),
         BTreeSet::from([
             path(CARD, keys::DISPLAY_NAME),
-            path(DIVIDER, keys::LINE_END)
+            // 구분선 끝점은 longhand `x2` 한 경로입니다(IX.11.3, 끝점 x만 바뀜).
+            path(DIVIDER, stellar_document::payload_metadata::shape_keys::X2)
         ]),
         "staged 변경은 카드 이름·구분선 끝점뿐"
     );
