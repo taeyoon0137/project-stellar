@@ -78,3 +78,48 @@
 - `stellar-agent-host` `AgentSession` 종료 효과를 이 세션 관리자에 잇는 일, 두 `AgentSessionId`(u64와 StableId)의 대응, `FirstConnectionApproval`을 권한 저장소 첫 연결 응답으로 넣는 일이 남았습니다.
 - IPC frame에서 `BeginAgentEdit`·proposal을 앱 입력(`LeaseTargets`, `ApplyRequest`)으로 바꾸는 앞단이 없습니다.
 - 되돌리기 미리보기 validation의 컴포넌트 정의 목록은 호출자가 줍니다. 창 컴포넌트 원본 cache와의 연결은 후속입니다.
+
+## 추가 작업: 앱 시작 세션 연결과 host trait (ADR-0124 결정 1·2, lane `agent-runtime-2`)
+
+위 "남은 위험"의 앞 세 항목(AgentSession 종료 효과 연결, 두 `AgentSessionId` 대응, `FirstConnectionApproval` 기록)과 runtime의 agent-protocol host trait 구현을 했습니다. 셸 FFI는 여전히 범위 밖이라 행은 부분 완료입니다.
+
+### 변경 파일
+
+- `crates/runtime/src/agent_session.rs`·`agent_session_tests.rs`(신규): `HostedSessions`(agent-host id ↔ 편집 id, AgentSession 상태), `AgentWindow::{start_hosted, host_event, change_hosted_mode, take_host_effects}`, `end_reason`, `end_event`, `fresh_id`, `new_edit_session_id`, `LinkError`, `HostEffectReport`
+- `crates/runtime/src/agent_edit.rs`: `WindowAgentEdit.hosted`, `AgentEditError::Link`, 창 닫기에서 앱 시작 세션은 `UserStop` event로 끝냄
+- `crates/agent-edit/src/agent_history/mod.rs`: `EndReason::{UsageLimitReported, AuthErrorReported}`
+- `crates/agent-edit/src/permission.rs`·`permission_tests.rs`: `PermissionStore::revoke`
+- `crates/agent-protocol/src/host.rs`(신규): `AttachedHost`, `HostRefusal`
+- `crates/runtime/src/agent_attached.rs`·`agent_attached_tests.rs`(신규): `AppAgentHost`(`AttachedHost` 구현), `AgentConnection`, `BoundConnection`, `refusal`
+- `crates/runtime/Cargo.toml`, `Cargo.lock`, `tools/xtask/src/crate_graph.rs`, `docs/architecture/crate-dependency-graph.md`: runtime 직접 의존 agent-protocol·local-ipc
+- `docs/adr/ADR-0124-agent-runtime-host-link-frames-and-observation.md`(신규)
+
+### 구현 요약
+
+- **id 대응**: 창의 `HostedSessions` 한 표가 agent-host `AgentSessionId(u64)`와 편집 `AgentSessionId(StableId)`를 1:1로 잇습니다. 편집 id는 `new_edit_session_id`(UUIDv7)가 만듭니다.
+- **시작과 첫 연결 승인**: `start_hosted`가 시작 확인(`StartedSession`)의 프로젝트·창을 이 창과 대조하고, 편집 세션을 `AppStarted`로 시작한 뒤 `FirstConnectionApproval`을 권한 저장소의 첫 연결 승인으로 기록합니다.
+- **효과 실행**: 종료 효과 묶음은 세션 관리자의 종료 절차 하나로, 정상 완료 효과는 `complete` 하나로, 모드 낮춤은 `PermissionStore::revoke`로 실행합니다. 효과의 batch 수·lease 목록은 쓰지 않고 편집 쪽 기록을 기준으로 합니다. 프로세스 종료·실행 흔적 정리·승인 화면 닫기·결합 해제·진단은 창 대기열로 넘깁니다. 편집 쪽이 먼저 끝낸 세션은 같은 이유의 event로 AgentSession 상태를 맞춥니다.
+- **host trait**: `AttachedHost`(`listed_tools`, `permits`, `submit`, 기본 `callable_tool`)를 runtime `AppAgentHost`가 구현합니다. 내장 세션은 agent-host `builtin_tools`·`grant_route`(모드 상한, 터미널·파일 삭제 제외), 외부 클라이언트는 attached catalog이고, 접수는 `AgentIo::submit`입니다. 거부는 ADR-0085 결과 종류입니다.
+
+### 검증
+
+| 명령 / test | 결과 |
+|---|---|
+| `cargo test -p stellar-runtime --lib agent_` | 통과 |
+| `cargo test -p stellar-agent-edit` | 통과 |
+| `cargo xtask validate-crate-graph` | 종료 코드 0 |
+| `cargo test -p xtask --lib crate_graph` | 통과 |
+| `start_records_first_connection_and_maps_both_ids` | 통과(첫 연결 승인 기록, 양방향 대응, 중복 연결 거부) |
+| `start_for_another_project_or_window_changes_nothing` | 통과 |
+| `process_exit_runs_the_session_end_procedure_once` | 통과(중단됨 항목 1, lease 0, 권한 폐기, 자동 rollback 없음, 문서 밖 효과 대기열, 끝난 세션 재실행 없음) |
+| `edit_completed_and_mode_lowering_reach_the_session_manager` | 통과 |
+| `closing_the_window_stops_hosted_sessions_with_process_termination` | 통과 |
+| `reasons_map_with_the_same_diagnostic_codes` | 통과 |
+| `builtin_sessions_follow_the_mode_cap`, `external_clients_use_the_attached_catalog_and_unbound_is_refused`, `refusals_use_the_result_kinds` | 통과 |
+| FFI smoke 세션 handle 누수 0 | 확인 안 함(FFI 범위 밖) |
+
+### 남은 위험
+
+- 셸 FFI 확장(세션·승인·채팅·출처·되돌리기 함수, 에이전트 event message)은 사용자 방향(2026-11-23)에 따라 하지 않았습니다.
+- 문서 밖 효과 대기열(`take_host_effects`)을 꺼내 프로세스를 끝내는 호출자(프로세스 관리자)와 승인 화면은 아직 없습니다.
+- 모드 변경은 document thread(`change_hosted_mode`)와 연결 I/O 쪽 host(`AppAgentHost::set_mode`)에 각각 알려야 합니다. 둘을 함께 부르는 앱 UI 동작은 UI 재설계 때 만듭니다.
