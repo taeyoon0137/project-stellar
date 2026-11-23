@@ -30,6 +30,8 @@ mod image;
 pub mod scene_source;
 pub use image::image_placement;
 pub(crate) mod shape;
+/// 스냅 엔진: 가이드·그리드·부모·형제·같은 간격·같은 크기·픽셀 후보 (XII.10.15, ADR-0105).
+pub mod snap;
 
 /// painter 순서의 사각형 하나. parent는 투명한 Fragment를 펼친 뒤의 가장 가까운 Frame입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
