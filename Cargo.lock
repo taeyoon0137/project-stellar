@@ -342,6 +342,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-plugin-host"
+version = "0.0.0"
+dependencies = [
+ "stellar-ops",
+ "stellar-project",
+]
+
+[[package]]
 name = "stellar-project"
 version = "0.0.0"
 dependencies = [

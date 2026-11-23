@@ -1,0 +1,11 @@
+manifest_version: 1
+id: xyz.taeyoon.fixture.hello
+version: 1.0.0
+name: Hello fixture
+entry: ui/index.html
+host_api: 1
+permissions:
+  - document.read
+  - git.read
+wasm:
+  - path: wasm/add.wasm

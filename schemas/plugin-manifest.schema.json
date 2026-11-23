@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stellar.taeyoon.xyz/schemas/plugin-manifest.schema.json",
+  "title": "Stellar plugin.yaml (manifest_version 1)",
+  "description": "생성 파일입니다. crates/plugin-host/src/manifest.rs의 상수에서 stellar-plugin-bindgen이 만듭니다(ADR-0097).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest_version", "id", "version", "name", "entry", "host_api", "permissions"],
+  "properties": {
+    "manifest_version": { "const": 1 },
+    "id": { "type": "string", "maxLength": 128, "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$" },
+    "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "entry": { "$ref": "#/$defs/packagePath", "pattern": "\\.html$" },
+    "host_api": { "type": "integer", "minimum": 1 },
+    "permissions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["document.read", "document.apply", "git.read", "file", "network", "terminal", "clipboard"] }
+    },
+    "wasm": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path"],
+        "properties": { "path": { "$ref": "#/$defs/packagePath", "pattern": "\\.wasm$" } }
+      }
+    }
+  },
+  "$defs": {
+    "packagePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))(?!.*//)[^\\\\:\\u0000-\\u001f]+$"
+    }
+  }
+}
