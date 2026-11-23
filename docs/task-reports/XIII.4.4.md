@@ -2,7 +2,7 @@
 
 - WBS: XIII.4.4
 - 작업명: 외부 symlink target 변경을 watcher에 동적으로 등록·해제
-- 상태: 부분 완료 (`[~]`) — macOS adapter로 구현·검증 완료, 선행 XIII.2.3(Windows adapter)은 ADR-0006으로
+- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — macOS adapter로 구현·검증 완료, 선행 XIII.2.3(Windows adapter)은 ADR-0006으로
   `[!]`
 - 선행: XIII.2.2(이 lane에서 완료), XIII.2.3(`[!]`, ADR-0006), XIII.4.1
 
@@ -63,3 +63,27 @@
 - 외부 target 디렉터리 자체가 이동·삭제되면 FSEvents의 root 변화(넘침)로 보고되며, 그 뒤 rescan
   (XIII.2.6)과 재동기화가 필요합니다.
 - Windows 재개 시 같은 E2E를 Windows adapter로 다시 검증해야 합니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 남은 범위·결함 있음.
+- 근거: 동적 등록·해제 API와 실제 FSEvents E2E는 있습니다. 그러나 제품 감시 경로가 이 API를 부르지 않고, 선행 XIII.2.3이 `[!]`라 `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/project/src/watcher/targets.rs`: `desired_external_targets`, `ExternalTargetSync::sync`, `needs_resync`, 비신뢰 프로젝트는 빈 target.
+- `crates/project/src/watcher/fsevents.rs` `add_external_target`·`remove_external_target`.
+- `ExternalTargetSync`·`desired_external_targets`를 부르는 곳이 `targets.rs` 밖에 없습니다(`crates/project/src/external_change.rs`·`window_session.rs`·runtime 모두 미사용).
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-project` | 392 passed, 0 failed |
+
+### 남은 조건과 finding
+
+- 결함 finding(window-session-stale lane 소유 경로 `crates/project/src/{external_change,window_session}.rs`, `watcher/`): 창 session의 외부 변경 감시 loop가 넘침·링크 변화 event 뒤 `ExternalTargetSync::sync`를 불러야 제품에서 외부 symlink target 변경을 받습니다.
+- Windows 선행 재작성안: XIII.4.4의 선행에서 XIII.2.3을 빼고 "XIII.2.2, XIII.4.1"로 둡니다.
