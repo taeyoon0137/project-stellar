@@ -1,7 +1,7 @@
 # 작업 보고서: XII.3.5 입력 T0 수신 trace와 요청 지연
 
 - WBS: XII.3.5
-- 상태: `[~]` — 수신·대기열·요청 trace 구현과 Rust 검증 완료, 정상 앱의 DocumentThread 전달 미연결
+- 상태: `[~]` 유지 — 판정 보류(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: `[~]` — 수신·대기열·요청 trace 구현과 Rust 검증 완료, 정상 앱의 DocumentThread 전달 미연결
 - 선행: XI.3.4 `[x]`, XII.1.2 `[x]`
 ## 필수 실행 환경
 
@@ -91,3 +91,25 @@ trace에는 입력 위치·키·문자열을 담지 않습니다. C ABI와 직�
 
 - `tests::mac_input::submitted_events_carry_t0_into_document_thread_hit_test_trace` 통과.
 - 판정: `[~]` 유지. 정상 앱은 아직 hit-test 요청을 DocumentThread로 보내지 않아 실제 앱 경로의 trace 증거가 없습니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 판정 보류.
+- 근거: 판정 보류(셸·FFI 연결). 코어 trace(T0/T1 후보와 지연 계산)는 있지만 정상 앱에서 DocumentThread 전달까지 잇는 일은 셸·FFI 경로입니다. 사용자 방향(2026-11-23)으로 지금 셸·FFI를 고치지 않습니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/runtime/src/input_trace.rs`: receipt·병합 시 최초 시각 유지·포화 뺄셈 지연.
+- `crates/ffi/src/input_queue.rs`: 수신 시각 기록(보호 경로, 이번에 수정하지 않음).
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-runtime` | 202 passed, 0 failed, 2 ignored |
+
+### 남은 조건과 finding
+
+- scene-incremental-perf lane(`crates/runtime/src/input_trace.rs` 소유)이나 UI 재설계 때 다시 판정합니다.
