@@ -13,6 +13,7 @@
 //! - [`rpc`]: RPC 오류·상한(XXI.4.3).
 //! - [`session`]: 비동기 request/response·batch session과 호출량 상한(XXI.4.3).
 //! - [`grants`]: 플러그인별 권한 승인·저장(XXI.4.5).
+//! - [`process`]: 외부 process 플러그인 IPC 계약과 heartbeat·timeout·철회 수명(XXI.5.1·XXI.5.2).
 //!
 //! 의존 방향: ops(Host API가 부르는 L1 공용 진입점)와 project(제한 YAML loader)만 직접 의존합니다. MCP·agent
 //! crate와 FFI에는 도달하지 않습니다. 앱 프로세스에 플러그인 native library를 적재하지 않습니다(기술 아키텍처 §33.1).
@@ -61,6 +62,9 @@ pub mod session;
 
 /// 권한 승인 저장.
 pub mod grants;
+
+/// 외부 process 플러그인.
+pub mod process;
 
 /// 생성 파일 목록(schema·binding). bindgen과 drift test가 같은 표를 씁니다.
 pub mod generated_files;

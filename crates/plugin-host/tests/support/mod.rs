@@ -2,6 +2,8 @@
 
 #![allow(dead_code)]
 
+pub mod process;
+
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
