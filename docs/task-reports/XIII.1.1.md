@@ -3,7 +3,7 @@
 - WBS: XIII.1.1
 - 작업명: `AutosavePolicy`에 debounce, 최대 지연, 앱 비활성화 flush, 창 닫기 flush를 정의하고 값은
   `config/performance-budgets.yaml`에서 읽음
-- 상태: 부분 완료 (`[~]`) — 정책 타입·config 읽기·거부 규칙 구현과 검증 완료. `config/performance-budgets.yaml`에
+- 상태: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 정책 타입·config 읽기·거부 규칙 구현과 검증 완료. `config/performance-budgets.yaml`에
   넣을 **수치는 아직 정해지지 않아** 기록하지 않았습니다(아래 "차이").
 - 선행: Phase XII(완화 — 아래 "차이"), V.5.4
 
@@ -63,3 +63,27 @@
 
 - 수치 결정(벤치마크) 전까지 자동 저장 scheduler(XIII.1.3~)는 실제 config로 시작할 수 없습니다.
 - 테스트의 700/5000/2000/3000ms는 형식 검증용 입력일 뿐 제품 값이 아닙니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 구현 판정 통과, 선행 미충족.
+- 근거: 이전 `[~]` 사유(config 수치 미기록)는 해소되었습니다. `config/performance-budgets.yaml`에 `autosave` 절이 ADR-0072와 함께 있고 저장소 파일을 실제로 읽는 test가 있습니다. 남은 사유는 선행 "Phase XII"(`[ ]` 61행)뿐입니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/project/src/autosave.rs` `AutosavePolicy::from_budgets_yaml`·`load`: 누락 절·키는 기본값 없이 거부, 0 이하·`max_delay_ms < debounce_ms`·범위 밖은 `OutOfRange`. `repository_budget_file_is_well_formed`가 저장소 config를 읽습니다.
+- `config/performance-budgets.yaml` `autosave`: debounce 1000, max delay 10000, 앱 비활성화 flush 2000, 창 닫기 flush 10000(ms). 근거 ADR-0072.
+- `crates/runtime/src/app/autosave.rs`가 같은 파일을 `include_str!`로 읽습니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-project` | 392 passed, 0 failed, 1 ignored |
+
+### 남은 조건과 finding
+
+- 선행 재작성안(통합 세션 판단): 정책 타입과 config 읽기는 셸·창 코드가 필요 없으므로 "Phase XII, V.5.4"를 "V.5.4"로 바꿉니다. 그러면 이 행은 `[x]`이고, XIII.1.3(선행 XIII.1.1, XII.1.1 `[x]`)이 착수 가능해집니다.
+- XIII.1.3은 `[ ]`이지만 지연 자동 저장 trigger가 이미 들어와 있습니다(`b9392f8b`, `crates/project/src/autosave/schedule.rs`). XIII.1.3 착수 때 이 코드를 기준으로 판정해야 합니다.
