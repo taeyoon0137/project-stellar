@@ -55,6 +55,7 @@ fun StellarView(
 private fun Node00000000000000000000000000000001(state: StellarState, onAction: (String) -> Unit) {
     Column(
         modifier = Modifier
+            .semantics { isTraversalGroup = true }
             .width(390.dp)
             .height(844.dp)
             .padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 24.dp),
@@ -74,13 +75,17 @@ private fun Node00000000000000000000000000000001(state: StellarState, onAction: 
 
 @Composable
 private fun ColumnScope.Node00000000000000000000000000000002(state: StellarState, onAction: (String) -> Unit) {
-    BasicText(text = "설정")
+    BasicText(
+        text = "설정",
+        modifier = Modifier.semantics { traversalIndex = 1f },
+    )
 }
 
 @Composable
 private fun ColumnScope.Node00000000000000000000000000000004(state: StellarState, onAction: (String) -> Unit) {
     Box(
         modifier = Modifier
+            .semantics { role = Role.Image; contentDescription = "프로필 사진"; traversalIndex = 0f }
             .width(64.dp)
             .height(64.dp),
     )
@@ -90,6 +95,7 @@ private fun ColumnScope.Node00000000000000000000000000000004(state: StellarState
 private fun ColumnScope.Node00000000000000000000000000000005(state: StellarState, onAction: (String) -> Unit) {
     Box(
         modifier = Modifier
+            .clearAndSetSemantics {}
             .fillMaxWidth()
             .height(1.dp),
     )
@@ -98,7 +104,10 @@ private fun ColumnScope.Node00000000000000000000000000000005(state: StellarState
 @Composable
 private fun ColumnScope.Node00000000000000000000000000000006(state: StellarState, onAction: (String) -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .selectableGroup()
+            .semantics { contentDescription = "크기"; traversalIndex = 2f }
+            .fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.Start),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -123,6 +132,7 @@ private fun RowScope.Node00000000000000000000000000000008(state: StellarState, o
     Row(
         modifier = Modifier
             .weight(1f)
+            .selectable(selected = state.selectedSize == "00000000-0000-0000-0000-000000000008", interactionSource = remember { MutableInteractionSource() }, indication = null, role = Role.RadioButton) { onAction("00000000-0000-0000-0000-00000000003d"); state.selectedSize = "00000000-0000-0000-0000-000000000008" }
             .height(IntrinsicSize.Max)
             .padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 12.dp),
         horizontalArrangement = Arrangement.Center,
@@ -145,6 +155,8 @@ private fun RowScope.Node0000000000000000000000000000000a(state: StellarState, o
     Box(
         modifier = Modifier
             .weight(1f)
+            .selectable(selected = state.selectedSize == "00000000-0000-0000-0000-00000000000a", interactionSource = remember { MutableInteractionSource() }, indication = null, role = Role.RadioButton) { onAction("00000000-0000-0000-0000-00000000003e"); state.selectedSize = "00000000-0000-0000-0000-00000000000a" }
+            .semantics(mergeDescendants = true) { contentDescription = "크게" }
             .padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 12.dp),
     )
 }
@@ -155,6 +167,7 @@ private fun ColumnScope.Node0000000000000000000000000000000b(state: StellarState
         value = state.memo,
         onValueChange = { state.memo = it },
         modifier = Modifier
+            .semantics { contentDescription = "메모"; traversalIndex = 3f }
             .fillMaxWidth()
             .height(44.dp)
             .padding(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 8.dp),
@@ -172,6 +185,8 @@ private fun ColumnScope.Node0000000000000000000000000000000b(state: StellarState
 private fun ColumnScope.Node0000000000000000000000000000000c(state: StellarState, onAction: (String) -> Unit) {
     Box(
         modifier = Modifier
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = !(state.isSaving), role = Role.Button) { onAction("00000000-0000-0000-0000-00000000003c") }
+            .semantics(mergeDescendants = true) { contentDescription = "저장"; traversalIndex = 4f }
             .widthIn(min = 120.dp)
             .fillMaxWidth()
             .height(48.dp),
@@ -181,7 +196,9 @@ private fun ColumnScope.Node0000000000000000000000000000000c(state: StellarState
 @Composable
 private fun ColumnScope.Node0000000000000000000000000000000d(state: StellarState, onAction: (String) -> Unit) {
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .semantics { traversalIndex = 5f }
+            .fillMaxWidth(),
         verticalArrangement = Arrangement.Top,
     ) {
         Row(
@@ -222,6 +239,7 @@ private fun BoxScope.Node0000000000000000000000000000000f(state: StellarState, o
 private fun BoxScope.Node00000000000000000000000000000012(state: StellarState, onAction: (String) -> Unit) {
     Box(
         modifier = Modifier
+            .clearAndSetSemantics {}
             .width(24.dp)
             .height(24.dp),
     )
@@ -231,6 +249,7 @@ private fun BoxScope.Node00000000000000000000000000000012(state: StellarState, o
 private fun ColumnScope.Node00000000000000000000000000000010(state: StellarState, onAction: (String) -> Unit) {
     Box(
         modifier = Modifier
+            .semantics { contentDescription = "알림"; paneTitle = "알림"; dismiss { onAction("00000000-0000-0000-0000-00000000003f"); true }; traversalIndex = 6f }
             .width(320.dp)
             .height(120.dp),
     ) {

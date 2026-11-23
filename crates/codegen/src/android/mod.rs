@@ -38,6 +38,9 @@ pub(crate) mod compose;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod semantics_tests;
+
 /// 내보내기 옵션.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComposeOptions {

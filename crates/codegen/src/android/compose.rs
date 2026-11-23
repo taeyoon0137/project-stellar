@@ -34,6 +34,9 @@ use crate::facet::Facet;
 use crate::ir::snapshot::id_hex;
 use crate::ir::{CodegenIr, ResolvedBinding};
 
+/// Control 의미·접근성 → Compose semantics.
+mod semantics;
+
 /// 이름 → import 경로.
 pub(crate) const IMPORTS: &[(&str, &str)] = &[
     ("Alignment", "androidx.compose.ui.Alignment"),
@@ -177,6 +180,7 @@ pub(crate) struct Generator<'a> {
     used: BTreeSet<&'static str>,
     scopes: Vec<Scope>,
     flow_used: bool,
+    semantics: semantics::SemanticsPlan,
 }
 
 fn px(value: f32) -> String {
@@ -269,6 +273,7 @@ impl<'a> Generator<'a> {
             used: BTreeSet::new(),
             scopes: vec![Scope::None; ir.nodes.len()],
             flow_used: false,
+            semantics: semantics::SemanticsPlan::default(),
         }
     }
 
@@ -713,6 +718,10 @@ impl<'a> Generator<'a> {
     fn modifiers(&mut self, index: u32, with_padding: bool) -> Vec<String> {
         let mut out = self.item_modifiers(index);
         out.extend(self.transform_modifiers(index));
+        // 상호작용·접근성은 크기 modifier 바깥에 두어 box 전체가 눌림 영역이 됩니다.
+        let plan = std::mem::take(&mut self.semantics);
+        out.extend(self.semantics_modifiers(index, &plan));
+        self.semantics = plan;
         out.extend(self.box_modifiers(index, with_padding));
         out
     }
@@ -1390,6 +1399,7 @@ impl<'a> Generator<'a> {
         self.use_name("Composable");
         self.use_name("remember");
         let mut functions = String::new();
+        self.semantics = self.semantics_plan();
         if self.info(0).emitted {
             self.root_findings();
         }

@@ -112,7 +112,11 @@ pub(crate) fn static_check(source: &str) {
         );
     }
     for (name, _) in compose::IMPORTS {
-        // scope 멤버(weight 등)는 import 표에 없습니다. 표에 있는 이름을 쓰면 import가 있어야 합니다.
+        // scope 멤버(weight 등)는 import 표에 없습니다. 표에 있는 이름을 쓰면 import가 있어야 합니다. `role`·`selected`는
+        // `clickable`·`selectable`의 이름 있는 인자와 철자가 같아 이 방향 검사에서 뺍니다.
+        if matches!(*name, "role" | "selected") {
+            continue;
+        }
         if used.contains(*name) {
             assert!(
                 imports.contains(name),
@@ -146,7 +150,7 @@ fn compose_output_hoists_state_and_maps_elements() {
     assert!(source.contains(
         "private fun ColumnScope.Node00000000000000000000000000000002(state: StellarState, onAction: (String) -> Unit)"
     ));
-    assert!(source.contains("    BasicText(text = \"설정\")\n"));
+    assert!(source.contains("    BasicText(\n        text = \"설정\","));
     // TextInput은 상태를 읽고 쓰는 BasicTextField와 placeholder.
     assert!(
         source.contains("    value = state.memo,\n        onValueChange = { state.memo = it },")
