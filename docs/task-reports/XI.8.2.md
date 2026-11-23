@@ -2,7 +2,7 @@
 
 - WBS: XI.8.2
 - 작업명: resize와 drawable acquisition 구현, drawable 없음은 frame skip으로 처리
-- 상태: 부분 완료 (`[~]`)
+- 상태: `[~]` 유지 — 판정 보류(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`)
   - 구현과 backend 처리 경로 테스트는 DEV-MAC 실제 GPU에서 통과했습니다.
   - 검증 열 "minimized/occluded window crash 없음"을 실제 창이 아니라 재현(0 크기 resize, `#[cfg(test)]`
     nil drawable 주입)으로만 확인했습니다. 계획 §1.3 규칙 5에 따라 모방한 증거로 `[x]`를 두지 않습니다
@@ -84,3 +84,24 @@
   `nextDrawable` timeout은 실행하지 않았습니다.
 - 같은 리뷰에서 Metal device가 없는 환경의 GPU 테스트가 검증 없이 통과하던 것을 고쳤습니다(`ded1435`,
   기본 실패, `STELLAR_ALLOW_MISSING_METAL=1`일 때만 건너뜀). 이 행의 테스트 결과는 그대로입니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 판정 보류.
+- 근거: 판정 보류(실제 창). resize·drawable 획득·nil drawable skip은 실제 GPU test로 확인했지만, 검증 열 "minimized/occluded window crash 없음"은 실제 앱 창이 필요합니다. 사용자 방향(2026-11-23, UI 재설계 전 셸 작업 없음)에 따라 지금 판정하지 않습니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/renderer-metal/src/backend.rs` `resize`·`acquire_drawable`, `crates/renderer-metal/src/surface.rs` `SurfaceStats`.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-renderer-metal` | 54 passed, 0 failed |
+
+### 남은 조건과 finding
+
+- UI 재설계 뒤 새 셸 창에서 최소화·가림 확인을 하거나, 행 검증 기준을 "backend 재현 fixture"로 바꾸는 계획 개정이 필요합니다(통합 세션 판단).
