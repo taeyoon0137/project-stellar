@@ -4,7 +4,7 @@
 
 - WBS: XII.7.7
 - 작업명: 자동 저장 stale 감지 시 중지와 알림 한 번
-- 상태: 완료 (`[x]`) 원장 판정은 통합 때 `generate-ledger`로 정합니다.
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록(ledger-refresh): 행 지시·검증 열을 코드와 테스트로 확인했고 선행이 모두 `[x]`입니다. 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 원장이 근거 커밋을 찾지 못했습니다(window-session-stale lane). 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 완료 (`[x]`) 원장 판정은 통합 때 `generate-ledger`로 정합니다.
 - 선행: XII.7.1
 - 결정: [ADR-0083](../adr/ADR-0083-window-session-stale-and-external-sync.md)
 - lane: `window-session-stale`
@@ -47,3 +47,11 @@
 ## 남은 위험
 
 - clean 창은 다른 창 저장을 외부 변경으로 받으므로(ADR-0083 결정 3) 기존 stale 시험의 순서를 바꿨습니다.
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(XII.7.7)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `516ce4d9` Feat: 자동 저장 stale 알림을 stale 구간마다 한 번만 요청 (XII.7.7)
+- `ba9dc68e` Feat: 앱 runtime에 stale 선택·외부 변경 감시 반영·닫기와 Git UI flush·trace 연결 (XII.7.7·UX.4.1·UX.4.4·XIII.1.6·XIV.2.8·XIII.1.7)
+- `958506e3` Fix: 자동 저장 없는 runtime에서 stale 알림을 꺼내도 stale 상태를 유지
