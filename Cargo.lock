@@ -345,6 +345,7 @@ dependencies = [
 name = "stellar-plugin-host"
 version = "0.0.0"
 dependencies = [
+ "stellar-git-porcelain",
  "stellar-ops",
  "stellar-project",
  "stellar-storage",

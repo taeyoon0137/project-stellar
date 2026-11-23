@@ -144,7 +144,15 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         ("stellar-local-ipc", &[core]),
         // 플러그인 코어(Phase XXI, ADR-0097, `crates/plugin-host`): Host API는 ops 공개 진입점만 부르고
         // manifest는 project의 제한 YAML loader로 읽습니다. MCP·agent·FFI에는 도달하지 않습니다.
-        ("stellar-plugin-host", &["stellar-ops", "stellar-project", "stellar-storage"]),
+        (
+            "stellar-plugin-host",
+            &[
+                "stellar-ops",
+                "stellar-project",
+                "stellar-storage",
+                "stellar-git-porcelain",
+            ],
+        ),
         // L1 headless 조회·편집 공용 library(XXIV.4.2, ADR-0005 §8, `crates/ops`).
         // local-ipc·agent-protocol·mcp-core·agent-host·ffi는 직접 edge가 없고 전이 도달도
         // `reach::FORBIDDEN_REACH`가 막습니다.

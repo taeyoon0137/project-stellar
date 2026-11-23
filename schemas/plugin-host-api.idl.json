@@ -159,7 +159,8 @@
       "name": "GitHead",
       "fields": [
         { "name": "state", "type": "string" },
-        { "name": "branch", "type": "string", "optional": true }
+        { "name": "branch", "type": "string", "optional": true },
+        { "name": "commit", "type": "string", "optional": true }
       ]
     },
     {

@@ -139,6 +139,7 @@ export interface ApplyResult {
 export interface GitHead {
   state: string;
   branch: string | null;
+  commit: string | null;
 }
 
 export interface GitChange {

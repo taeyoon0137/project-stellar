@@ -22,7 +22,8 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
 ## Decision
 
 1. **crate와 생성 파일.** 새 crate `crates/plugin-host`(`stellar-plugin-host`)를 둡니다. 허용 직접 의존은 `stellar-ops`(Host API가
-   부르는 L1 진입점), `stellar-project`(제한 YAML loader 재사용), `stellar-storage`(package digest용 `ContentHash`)뿐입니다.
+   부르는 L1 진입점), `stellar-project`(제한 YAML loader 재사용), `stellar-storage`(package digest용 `ContentHash`), `stellar-git-porcelain`(Git 신뢰 gate `GatedGitRunner`)뿐입니다.
+   `git.status`는 session이 이미 확인한 신뢰(`TrustedProject`)로 gate를 열고 `ops::git::GitSession`을 부릅니다.
    - `plugin.yaml` JSON Schema(`schemas/plugin-manifest.schema.json`)는 `manifest.rs` 상수에서 생성합니다. Host API는 IDL
      `schemas/plugin-host-api.idl.json`이 원본이고 Rust(`crates/plugin-host/src/generated/host_api.rs`)·TypeScript
      (`crates/plugin-host/bindings/stellar-host-api.ts`) binding을 생성합니다.
