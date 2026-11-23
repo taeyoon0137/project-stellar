@@ -767,11 +767,20 @@ pub fn scene_edits<'a>(
             affected.insert(parent.id());
         }
     }
-    for node in affected.clone() {
-        if let Some(hosts) = current.operand_hosts.get(&node) {
-            affected.extend(hosts.iter().copied());
+    // operand나 host 자신·조상이 바뀌면(조상 transform 포함) host local 좌표의 operand 값이 달라질 수 있습니다.
+    // 지운 operand도 host 결과에서 빠져야 합니다.
+    let mut hosts_to_refresh = Vec::new();
+    for (operand, hosts) in &current.operand_hosts {
+        let touched = removed.contains(operand)
+            || std::iter::once(*operand)
+                .chain(hosts.iter().copied())
+                .any(|node| self_or_ancestor_in(model, node, &affected));
+        if touched {
+            hosts_to_refresh.extend(hosts.iter().copied());
         }
     }
+    affected.extend(hosts_to_refresh);
+    let old_operands: BTreeSet<StableId> = current.operand_hosts.keys().copied().collect();
     // 구조가 바뀌면 pre-order·operand 색인을 다시 만들고, 아니면 바뀐 node의 Boolean operand만 다시 읽습니다
     // (전체 tree를 걷지 않음).
     let structural = !changes.inserted_nodes().is_empty() || !removed.is_empty();
@@ -797,44 +806,55 @@ pub fn scene_edits<'a>(
             operand_hosts,
         )
     };
-    // 조상이 함께 바뀐 node는 조상 subtree 변환에 들어갑니다.
-    let tops: Vec<StableId> = affected
-        .iter()
-        .copied()
-        .filter(|id| {
-            let mut current = parent_of(model, *id);
-            while let Some(parent) = current {
-                if affected.contains(&parent) {
-                    return false;
-                }
-                current = parent_of(model, parent);
-            }
-            converter.preorder.contains_key(id)
-        })
-        .collect();
-    let mut edits = Vec::new();
-    let mut keep: HashSet<SceneKey> = HashSet::new();
-    let mut old_keys: Vec<SceneKey> = Vec::new();
-    for top in &tops {
-        collect_keys(&current.source, SceneKey::node(*top), &mut old_keys);
-        let mut nodes = Vec::new();
-        let key = converter.subtree(*top, &mut nodes);
-        if key.is_none() && *top == root {
-            continue;
-        }
-        for (key, node) in nodes {
-            keep.insert(key);
-            if current.source.get(key) != Some(&node) {
-                edits.push(SourceEdit::upsert(key, node));
-            }
+    // operand 여부가 바뀐 node(Boolean 참조 추가·삭제)는 부모 목록에서 빠지거나 다시 들어갑니다.
+    for operand in
+        old_operands.symmetric_difference(&converter.operand_hosts.keys().copied().collect())
+    {
+        if let Some(parent) = parent_of(model, *operand) {
+            affected.insert(parent);
         }
     }
+    // source에 들어가는지가 바뀐 subtree root(지원하지 않는 modifier 추가 등)는 부모 목록도 바뀌므로 부모를 다시
+    // 변환합니다. 부모를 더하면 처음부터 다시 셉니다(깊이만큼 반복).
+    let (tops, edits_and_keys) = loop {
+        let tops = subtree_tops(model, &affected, &converter.preorder);
+        let mut edits = Vec::new();
+        let mut keep: HashSet<SceneKey> = HashSet::new();
+        let mut old_keys: Vec<SceneKey> = Vec::new();
+        let mut parents_to_add = Vec::new();
+        for top in &tops {
+            collect_keys(&current.source, SceneKey::node(*top), &mut old_keys);
+            let mut nodes = Vec::new();
+            let key = converter.subtree(*top, &mut nodes);
+            let was_present = current.source.get(SceneKey::node(*top)).is_some();
+            if key.is_some() != was_present && *top != root {
+                if let Some(parent) = parent_of(model, *top) {
+                    parents_to_add.push(parent);
+                }
+            }
+            if key.is_none() && *top == root {
+                continue;
+            }
+            for (key, node) in nodes {
+                keep.insert(key);
+                if current.source.get(key) != Some(&node) {
+                    edits.push(SourceEdit::upsert(key, node));
+                }
+            }
+        }
+        let before = affected.len();
+        affected.extend(parents_to_add);
+        if affected.len() == before {
+            break (tops, (edits, keep, old_keys));
+        }
+    };
+    let (mut edits, keep, old_keys) = edits_and_keys;
     for key in old_keys {
         if !keep.contains(&key) {
             edits.push(SourceEdit::Remove(key));
         }
     }
-    for node in removed {
+    for node in removed.iter().copied() {
         let key = SceneKey::node(node);
         if current.source.get(key).is_some()
             && !keep.contains(&key)
@@ -845,9 +865,55 @@ pub fn scene_edits<'a>(
     }
     current.operand_hosts = converter.operand_hosts;
     current.preorder = converter.preorder;
+    // 다시 변환한 subtree의 이전 skip 기록은 이번 결과로 바꿉니다(다시 들어간 node가 skip으로 남지 않게).
+    let mut reconverted: HashSet<StableId> = HashSet::new();
+    for top in &tops {
+        let mut stack = vec![*top];
+        while let Some(id) = stack.pop() {
+            reconverted.insert(id);
+            stack.extend(model.children_in_order(id));
+        }
+    }
+    current
+        .skipped
+        .retain(|key, _| !reconverted.contains(&key.id()) && !removed.contains(&key.id()));
     current.skipped.extend(converter.skipped);
     current.source.apply(&edits)?;
     Ok(edits)
+}
+
+/// 조상이 `affected`에 없는 `affected` node(View root subtree 안). 조상이 함께 바뀐 node는 조상 subtree 변환에 들어갑니다.
+fn subtree_tops(
+    model: &DocumentModel,
+    affected: &BTreeSet<StableId>,
+    preorder: &HashMap<StableId, usize>,
+) -> Vec<StableId> {
+    affected
+        .iter()
+        .copied()
+        .filter(|id| {
+            let mut current = parent_of(model, *id);
+            while let Some(parent) = current {
+                if affected.contains(&parent) {
+                    return false;
+                }
+                current = parent_of(model, parent);
+            }
+            preorder.contains_key(id)
+        })
+        .collect()
+}
+
+/// `node` 자신이나 조상이 `set`에 있는지.
+fn self_or_ancestor_in(model: &DocumentModel, node: StableId, set: &BTreeSet<StableId>) -> bool {
+    let mut current = Some(node);
+    while let Some(id) = current {
+        if set.contains(&id) {
+            return true;
+        }
+        current = parent_of(model, id);
+    }
+    false
 }
 
 fn collect_keys(source: &SceneSource, key: SceneKey, out: &mut Vec<SceneKey>) {

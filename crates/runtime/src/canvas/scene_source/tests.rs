@@ -251,7 +251,7 @@ fn boolean_operands_are_absorbed_into_the_host_result() {
             node: sid(31),
             key: stellar_document::payload_metadata::shape_keys::WIDTH,
             value: PropertyValue::NonNegative(
-                stellar_core_types::value::FiniteF32::new(20.).unwrap(),
+                stellar_core_types::value::FiniteF32::new(2.).unwrap(),
             ),
         }),
     );
@@ -262,8 +262,8 @@ fn boolean_operands_are_absorbed_into_the_host_result() {
     scene
         .update(state.revision(), &edits, &dirty, &clock())
         .unwrap();
-    // A − B: 100 − 겹침(5 × 5) = 75. 폭 20이어도 겹침은 같습니다.
-    assert_eq!(area(&scene), 75.0);
+    // A − B: B가 (5, 5)에서 폭 2가 되면 겹침은 2 × 5 = 10이므로 100 − 10 = 90입니다.
+    assert_eq!(area(&scene), 90.0);
 }
 
 fn component_library() -> (ComponentLibrary, ComponentRef) {
@@ -454,4 +454,149 @@ fn ix9_component_fixture_expands_structurally() {
     }
     assert!(keys > 5);
     assert_eq!(reasons, BTreeSet::from([SkipReason::Payload]));
+}
+
+/// change set 하나를 증분 경로로 반영하고, 처음부터 변환·build한 결과와 같은지 확인합니다.
+fn apply_and_compare(
+    state: &mut DocumentState,
+    built: &mut DocumentSceneSource,
+    scene: &mut IncrementalScene,
+    command: Command,
+) {
+    let changes = execute(state, command);
+    let dirty =
+        SceneDirtySet::from_invalidations(&scene_invalidations(state.model(), &changes), &*built);
+    let edits = scene_edits(state.model(), built, &changes, options()).unwrap();
+    scene
+        .update(state.revision(), &edits, &dirty, &clock())
+        .unwrap();
+    let fresh = document_scene_source(state.model(), sid(10), options()).unwrap();
+    assert_eq!(built.source, fresh.source);
+    assert_eq!(built.operand_hosts, fresh.operand_hosts);
+    assert_eq!(built.skipped, fresh.skipped);
+    let (full, _) = IncrementalScene::build(fresh.source, state.revision(), &clock()).unwrap();
+    assert_eq!(
+        scene.snapshot().semantic_hash(),
+        full.snapshot().semantic_hash()
+    );
+}
+
+fn modifier(id: u64, kind: ModifierKind, payload: ModifierPayload) -> ModifierEntry {
+    ModifierEntry {
+        id: ModifierId::new(sid(id)),
+        order: OrderKey::from_bytes(vec![0x50]).unwrap(),
+        kind,
+        enabled: true,
+        payload,
+    }
+}
+
+#[test]
+fn operand_moved_by_an_ancestor_frame_updates_the_boolean_host() {
+    // operand 31을 Frame 11 아래로 옮긴 문서. Frame 11의 이동은 operand world 위치를 바꾸므로 host 결과가 바뀝니다.
+    let mut model = boolean_document();
+    model
+        .insert_node(record(
+            11,
+            10,
+            0x30,
+            true,
+            NodePayload::Frame(frame(100., 100., 0., 0.)),
+        ))
+        .unwrap();
+    let mut state = DocumentState::new(model);
+    execute(
+        &mut state,
+        Command::MoveNode(stellar_commands::node_ops::MoveNode {
+            node: sid(31),
+            new_parent: sid(11),
+            order_key: OrderKey::from_bytes(vec![0x10]).unwrap(),
+        }),
+    );
+    let mut built = document_scene_source(state.model(), sid(10), options()).unwrap();
+    let (mut scene, _) =
+        IncrementalScene::build(built.source.clone(), state.revision(), &clock()).unwrap();
+    apply_and_compare(
+        &mut state,
+        &mut built,
+        &mut scene,
+        Command::SetProperty(SetProperty {
+            node: sid(11),
+            key: frame_keys::TRANSFORM,
+            value: PropertyValue::Transform(Transform2D::new(1., 0., 0., 1., 2., 0.).unwrap()),
+        }),
+    );
+}
+
+#[test]
+fn adding_a_boolean_modifier_absorbs_an_existing_node() {
+    // Shape 21에 Shape 22를 operand로 둔 Boolean을 더하면 22는 단독 표시에서 빠집니다.
+    let mut state = DocumentState::new(document());
+    let mut built = document_scene_source(state.model(), sid(10), options()).unwrap();
+    let (mut scene, _) =
+        IncrementalScene::build(built.source.clone(), state.revision(), &clock()).unwrap();
+    apply_and_compare(
+        &mut state,
+        &mut built,
+        &mut scene,
+        Command::InsertModifier(stellar_commands::modifier_ops::InsertModifier {
+            node: sid(21),
+            entry: modifier(
+                60,
+                ModifierKind::Boolean,
+                ModifierPayload::Boolean {
+                    op: BooleanOp::Union,
+                    operands: vec![NodeRef::new(sid(22))],
+                },
+            ),
+        }),
+    );
+    assert!(built.source.get(SceneKey::node(sid(22))).is_none());
+    // 지우면 다시 나타납니다.
+    apply_and_compare(
+        &mut state,
+        &mut built,
+        &mut scene,
+        Command::RemoveModifier(stellar_commands::modifier_ops::RemoveModifier {
+            node: sid(21),
+            modifier: ModifierId::new(sid(60)),
+        }),
+    );
+    assert!(built.source.get(SceneKey::node(sid(22))).is_some());
+}
+
+#[test]
+fn a_node_that_becomes_unsupported_leaves_its_parent_list() {
+    // Frame 13에 modifier를 더하면 source에서 빠지고(UnsupportedModifiers), 부모 목록도 함께 바뀝니다.
+    let mut state = DocumentState::new(document());
+    let mut built = document_scene_source(state.model(), sid(10), options()).unwrap();
+    let (mut scene, _) =
+        IncrementalScene::build(built.source.clone(), state.revision(), &clock()).unwrap();
+    apply_and_compare(
+        &mut state,
+        &mut built,
+        &mut scene,
+        Command::InsertModifier(stellar_commands::modifier_ops::InsertModifier {
+            node: sid(13),
+            entry: modifier(
+                61,
+                ModifierKind::Transform,
+                ModifierPayload::Transform(Transform2D::identity()),
+            ),
+        }),
+    );
+    assert_eq!(
+        built.skipped.get(&SceneKey::node(sid(13))),
+        Some(&SkipReason::UnsupportedModifiers)
+    );
+    apply_and_compare(
+        &mut state,
+        &mut built,
+        &mut scene,
+        Command::RemoveModifier(stellar_commands::modifier_ops::RemoveModifier {
+            node: sid(13),
+            modifier: ModifierId::new(sid(61)),
+        }),
+    );
+    assert!(built.skipped.is_empty());
 }
