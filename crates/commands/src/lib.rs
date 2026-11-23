@@ -47,6 +47,9 @@ pub(crate) mod tree;
 /// node 구조 command: InsertNode·DeleteSubtree (VII.2.1~).
 pub mod node_ops;
 
+/// 인스턴스 교체(swap)와 인스턴스 payload 교체 command (XII.10.35).
+pub mod swap;
+
 /// `SetProperty` command와 속성 값 (VII.2.4).
 pub mod property;
 
