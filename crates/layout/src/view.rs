@@ -78,6 +78,67 @@ pub trait LayoutSource {
 
     /// box node의 layout id. Fragment에는 호출하지 않습니다.
     fn layout_id(&self, key: &Self::Key) -> StableId;
+
+    /// Fragment면 `Some(표시 여부)`, box node면 `None`.
+    ///
+    /// [`flatten_children`]이 자식 종류만 알면 되는 증분 경로에서 box node 내용([`LayoutSource::node`])을 만들지
+    /// 않도록 원천이 싸게 답할 수 있습니다. 기본 구현은 [`LayoutSource::node`]를 읽습니다.
+    fn fragment(&self, key: &Self::Key) -> Result<Option<bool>, Self::Error> {
+        Ok(match self.node(key)? {
+            SourceNode::Fragment { visible } => Some(visible),
+            SourceNode::Node(_) => None,
+        })
+    }
+}
+
+/// box node `host`의 자식을 Fragment를 펼쳐 visual order로 모읍니다(X.1.2 증분 경로).
+///
+/// 결과는 (box 자식 key, Fragment 조상이 모두 보이는지)입니다. [`build_layout_tree`]와 같은 펼치기 규칙이며, 숨긴
+/// Fragment 아래 box는 `false`입니다(view는 그 node를 `display: none`으로 둠). `fragments`에는 지나간 Fragment key를
+/// 넣습니다. 반복·상한 검사는 하지 않으므로 호출자가 결과를 [`crate::incremental::IncrementalLayout`]처럼 tree를
+/// 검증하는 곳에 넘겨야 합니다.
+pub fn flatten_children<S: LayoutSource>(
+    source: &S,
+    host: &S::Key,
+    fragments: &mut Vec<S::Key>,
+) -> Result<Vec<(S::Key, bool)>, S::Error> {
+    flatten_core(
+        host,
+        |key| source.children(key),
+        |key, _| source.fragment(key),
+        |key| fragments.push(key.clone()),
+    )
+}
+
+/// Fragment 펼치기 규칙 하나(X.1.2). `classify`는 key가 Fragment면 `Some(표시 여부)`, box면 `None`이고, 두 번째
+/// 인자는 아직 꺼내지 않은 key 수입니다(상한 검사용). 결과는 (box key, Fragment 조상이 모두 보이는지)입니다.
+fn flatten_core<K: Clone, E>(
+    host: &K,
+    children: impl Fn(&K) -> Result<Vec<K>, E>,
+    mut classify: impl FnMut(&K, usize) -> Result<Option<bool>, E>,
+    mut on_fragment: impl FnMut(&K),
+) -> Result<Vec<(K, bool)>, E> {
+    let first = children(host)?;
+    // (key, Fragment 조상 표시 여부). 뒤에서 꺼내므로 역순으로 넣습니다.
+    let mut pending: Vec<(K, bool)> = first.into_iter().rev().map(|key| (key, true)).collect();
+    let mut flat = Vec::new();
+    while let Some((key, inherited)) = pending.pop() {
+        match classify(&key, pending.len())? {
+            Some(visible) => {
+                on_fragment(&key);
+                let grand = children(&key)?;
+                let shown = inherited && visible;
+                pending.extend(grand.into_iter().rev().map(|child| (child, shown)));
+            }
+            None => flat.push((key, inherited)),
+        }
+    }
+    Ok(flat)
+}
+
+/// 펼친 자식 수만큼의 view 전용 순서 key(균등 분포). [`build_layout_tree`]와 증분 경로가 같은 key를 씁니다.
+pub fn view_order_keys(count: usize) -> Vec<OrderKey> {
+    OrderKey::evenly_spaced(count)
 }
 
 /// view 구성 오류 (X.1.2).
@@ -250,38 +311,51 @@ impl<S: LayoutSource> Builder<'_, S> {
         Ok(id)
     }
 
-    /// `host` box의 자식을 Fragment를 펼쳐 visual order로 모읍니다.
+    /// `host` box의 자식을 Fragment를 펼쳐 visual order로 모읍니다([`flatten_core`] 규칙).
     fn flatten(
         &mut self,
         host: &PendingBox<S::Key>,
     ) -> Result<Vec<PendingBox<S::Key>>, SourceViewError<S>> {
-        let children = self.source.children(&host.key).map_err(ViewError::Source)?;
-        // (key, Fragment 조상 표시 여부). 뒤에서 꺼내므로 역순으로 넣습니다.
-        self.check_pending(children.len())?;
-        let mut pending: Vec<(S::Key, bool)> =
-            children.into_iter().rev().map(|key| (key, true)).collect();
-        let mut flat = Vec::new();
-        while let Some((key, inherited)) = pending.pop() {
-            self.visit(&key)?;
-            match self.source.node(&key).map_err(ViewError::Source)? {
-                SourceNode::Fragment { visible } => {
-                    self.fragments.insert(key.clone(), host.id);
-                    let grand = self.source.children(&key).map_err(ViewError::Source)?;
-                    self.check_pending(pending.len().saturating_add(grand.len()))?;
-                    let shown = inherited && visible;
-                    pending.extend(grand.into_iter().rev().map(|child| (child, shown)));
-                }
-                SourceNode::Node(node) => {
-                    let mut node = *node;
-                    if !inherited {
-                        node.style.display = Display::None;
+        let source = self.source;
+        let first = source.children(&host.key).map_err(ViewError::Source)?;
+        self.check_pending(first.len())?;
+        let mut nodes: HashMap<S::Key, LayoutNode> = HashMap::new();
+        let mut fragments = Vec::new();
+        let builder = std::cell::RefCell::new(&mut *self);
+        let flat = flatten_core(
+            &host.key,
+            |key| {
+                let grand = source.children(key).map_err(ViewError::Source)?;
+                builder.borrow().check_pending(grand.len())?;
+                Ok(grand)
+            },
+            |key, pending| {
+                let mut b = builder.borrow_mut();
+                b.check_pending(pending)?;
+                b.visit(key)?;
+                match source.node(key).map_err(ViewError::Source)? {
+                    SourceNode::Fragment { visible } => Ok(Some(visible)),
+                    SourceNode::Node(node) => {
+                        nodes.insert(key.clone(), *node);
+                        Ok(None)
                     }
-                    let id = self.register(&key)?;
-                    flat.push(PendingBox { key, node, id });
                 }
-            }
+            },
+            |key| fragments.push(key.clone()),
+        )?;
+        for key in fragments {
+            self.fragments.insert(key, host.id);
         }
-        Ok(flat)
+        let mut out = Vec::with_capacity(flat.len());
+        for (key, shown) in flat {
+            let mut node = nodes.remove(&key).expect("box node는 classify에서 읽음");
+            if !shown {
+                node.style.display = Display::None;
+            }
+            let id = self.register(&key)?;
+            out.push(PendingBox { key, node, id });
+        }
+        Ok(out)
     }
 }
 
@@ -314,7 +388,7 @@ pub fn build_layout_tree<S: LayoutSource>(
     while let Some(entry) = work.pop() {
         let flat = builder.flatten(&entry)?;
         let PendingBox { node, id, .. } = entry;
-        let keys = OrderKey::evenly_spaced(flat.len());
+        let keys = view_order_keys(flat.len());
         let children = flat
             .iter()
             .zip(keys)

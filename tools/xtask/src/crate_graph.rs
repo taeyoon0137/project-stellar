@@ -50,10 +50,15 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         ("stellar-layout", &[core]),
         ("stellar-text", &[core]),
         // 문서 → scene source 변환(`document` feature, ADR-0116 결정 1): 앱 runtime과 headless 도구가 같은 변환을 씁니다.
-        // renderer는 이 feature를 켜지 않습니다.
+        // renderer는 이 feature를 켜지 않습니다. 변환은 layout 결과 위치·크기로 그립니다(layout, ADR-0125).
         (
             "stellar-scene",
-            &[core, "stellar-document", "stellar-commands"],
+            &[
+                core,
+                "stellar-document",
+                "stellar-commands",
+                "stellar-layout",
+            ],
         ),
         ("stellar-renderer-core", &["stellar-scene"]),
         // PNG 내보내기 Metal offscreen target(ADR-0116 결정 4): export 렌더 계약·scene 값. test는 core-types 값을 씁니다.

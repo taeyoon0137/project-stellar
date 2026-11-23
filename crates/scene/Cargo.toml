@@ -10,15 +10,18 @@ stellar-core-types = { path = "../core-types" }
 # 문서 → scene source 변환(`document` feature, ADR-0116 결정 1). 앱 runtime과 ops가 켜고 renderer는 켜지 않습니다.
 stellar-document = { path = "../document", optional = true }
 stellar-commands = { path = "../commands", optional = true }
+# 문서 scene 변환이 layout 결과 위치·크기로 그립니다(`document` feature, ADR-0125).
+stellar-layout = { path = "../layout", optional = true }
 
 [features]
 # 문서 모델·command change set을 scene source로 바꾸는 `document` 모듈.
-document = ["dep:stellar-document", "dep:stellar-commands"]
+document = ["dep:stellar-document", "dep:stellar-commands", "dep:stellar-layout"]
 
 [dev-dependencies]
 # `document` 모듈 test가 문서 fixture(IX.9 component library)를 씁니다.
 stellar-document = { path = "../document", features = ["test-support"] }
 stellar-commands = { path = "../commands" }
+stellar-layout = { path = "../layout" }
 
 [lints]
 workspace = true

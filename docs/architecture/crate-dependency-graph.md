@@ -30,7 +30,7 @@
 | `stellar-bindings` | core-types, expressions |
 | `stellar-layout` | core-types |
 | `stellar-text` | core-types |
-| `stellar-scene` | core-types, document, commands(`document` feature, ADR-0116) |
+| `stellar-scene` | core-types, document, commands, layout(`document` feature, ADR-0116, ADR-0125) |
 | `stellar-renderer-core` | scene |
 | `stellar-renderer-metal` | renderer-core, export, scene, core-types(test) |
 | `stellar-renderer-d3d12` | renderer-core |

@@ -474,6 +474,7 @@ dependencies = [
  "stellar-commands",
  "stellar-core-types",
  "stellar-document",
+ "stellar-layout",
 ]
 
 [[package]]
