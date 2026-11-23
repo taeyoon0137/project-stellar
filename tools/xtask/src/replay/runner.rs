@@ -95,7 +95,6 @@ use stellar_scene::transient::{hit_test_canvas, CanvasHit, HandleMetrics, Transi
 use stellar_scene::visibility::Viewport;
 
 use super::file::{FixtureSpec, Modifiers, ReplayEvent, ReplayFile, ReplayInput, ReplayScenario};
-use super::layout::ReplayLayout;
 
 /// 프로세스 단조 시계(실제 경과 측정).
 #[derive(Debug, Clone, Copy)]
@@ -420,7 +419,6 @@ struct Pipeline {
     root: StableId,
     source: DocumentSceneSource,
     scene: IncrementalScene,
-    layout: ReplayLayout,
     index: SceneSpatialIndex,
     camera: Transform2D,
     size: Size2,
@@ -500,7 +498,6 @@ impl Pipeline {
         let (scene, first) =
             IncrementalScene::build(source.source.clone(), state.revision(), &wall)
                 .map_err(|e| format!("scene build: {e}"))?;
-        let (layout, _) = ReplayLayout::new(&source.source)?;
         let index = SceneSpatialIndex::build(scene.snapshot());
         let size = Size2::new(viewport.0, viewport.1).map_err(|_| "viewport 크기".to_owned())?;
         let tool = match scenario {
@@ -517,7 +514,6 @@ impl Pipeline {
             root,
             source,
             scene,
-            layout,
             index,
             camera: Transform2D::identity(),
             size,
@@ -934,17 +930,20 @@ impl Pipeline {
             };
             let edits = scene_edits(model, &mut self.source, changes, options)
                 .map_err(|e| format!("scene edits: {e}"))?;
-            let changed: Vec<SceneKey> = edits.iter().filter_map(SourceEdit::key).collect();
+            // 증분 layout은 scene_edits가 같은 change set으로 갱신했습니다(ADR-0125 결정 6).
             if !self.cold_pending {
-                let (_, layout_invalidations) = self.layout.apply(&self.source.source, &changed)?;
-                invalidations.extend(layout_invalidations);
+                invalidations.extend(super::layout::invalidations(&self.source));
             }
             let dirty = SceneDirtySet::from_invalidations(&invalidations, &self.source);
             commit = Some((edits, dirty));
         }
         if self.cold_pending {
             // cold: 이전 layout 결과를 버리고 처음부터 배치합니다.
-            self.layout = ReplayLayout::new(&self.source.source)?.0;
+            let options = SceneSourceOptions {
+                variant: self.variant.map(|i| &self.variants[i]),
+                ..SceneSourceOptions::default()
+            };
+            super::layout::rebuild(&mut self.source, self.state.model(), options);
         }
         trace.mark(Stage::T3, elapsed(&self.wall)).map_err(err)?;
         // T4: scene·render graph.

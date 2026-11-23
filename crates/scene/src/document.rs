@@ -175,6 +175,26 @@ impl DocumentSceneSource {
         &self.layout
     }
 
+    /// layout을 처음부터 다시 계산합니다(cache를 버린 측정). 결과 상자는 증분 결과와 같으므로 source는 바꾸지
+    /// 않습니다. 바뀐 상자는 [`DocumentLayout::rect_changes`]에 남습니다.
+    pub fn rebuild_layout<'a>(
+        &mut self,
+        model: &'a DocumentModel,
+        mut options: SceneSourceOptions<'a>,
+    ) -> BTreeSet<StableId> {
+        let visibility = variant_visibility(options.variant);
+        let operands: HashSet<StableId> = self.operand_hosts.keys().copied().collect();
+        let mut measured = HashMap::new();
+        let inputs = LayoutInputs {
+            visibility: &visibility,
+            operands: &operands,
+            library: options.library,
+            text_measure: options.text_measure,
+        };
+        let mut texts = |id| measure_text(model, &mut options, id, &mut measured);
+        self.layout.rebuild(model, &inputs, &mut texts)
+    }
+
     /// source node의 world 경계(축 정렬). `preview`의 대체 입력이 있으면 그 값으로 셉니다. Fragment·없는 key는
     /// `None`입니다.
     pub fn world_bounds(&self, key: SceneKey, preview: Option<&ScenePreview>) -> Option<Aabb> {

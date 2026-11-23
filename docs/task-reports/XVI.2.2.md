@@ -78,3 +78,22 @@
 - 마지막 scene semantic hash는 이전과 같습니다. 세부와 p99는 ADR-0090 Performance입니다.
 - 검증: `cargo test -p xtask replay` 7 passed. `cargo xtask replay run`(release) 3 scenario 결과 JSON 생성, gate 통과.
 - 남은 한계: Pan은 frame마다 viewport가 바뀌어 전체 compile이며 §6.2 Render Graph 목표(0.75ms)를 넘습니다(ADR-0090 Consequences). 기준 장비(M1 16GB) 측정이 남았습니다.
+
+## 후속 보완 (2026-11-24, 재생 layout을 문서 layout 결과 하나로)
+
+- 이전 "남은 위험" 첫 항목(재생 layout 변환이 Free node만 따로 다루는 이중 경로)을 닫았습니다(ADR-0134 결정 5).
+- 변경 파일:
+  - `tools/xtask/src/replay/layout.rs`: Free node → absolute box 변환과 별도 `IncrementalLayout`을 지웠습니다. 재생은
+    `scene_edits`가 같은 change set으로 갱신한 `DocumentSceneSource::layout()`의 바뀐 상자를 `LayoutRect` 무효화로 옮기고,
+    cold 측정은 `DocumentSceneSource::rebuild_layout`으로 처음부터 다시 배치합니다.
+  - `tools/xtask/src/replay/runner.rs`: `ReplayLayout` 상태를 지우고 위 두 함수를 부릅니다.
+  - `crates/scene/src/document/layout.rs`: `DocumentLayout::rect_changes`·`rect_invalidations`(마지막 갱신에서 위치·크기가
+    바뀐 상자), `DocumentLayout::rebuild`.
+  - `crates/scene/src/document.rs`: `DocumentSceneSource::rebuild_layout`.
+- 흐름 컨테이너 자식·`position`을 명시한 node도 재생 layout 단계가 scene과 같은 배치를 씁니다. 이전 변환은 scene
+  source 위치를 다시 layout 입력으로 넣어 흐름 배치를 보지 못했습니다.
+- 검증: `cargo test -p xtask --lib replay` 12 passed. `cargo test -p stellar-scene --lib document::layout` 16 passed(1 ignored,
+  새 test `rect_changes_name_moved_and_resized_boxes_of_the_last_update`: 너비 변경의 크기·위치 변경 상자, 다시 계산 결과
+  동일).
+- 남은 한계: 선행 XVI.2.1이 `[~]`입니다. 재생 측정값은 다시 재지 않았습니다(T3 구간의 layout 시간은 이제 `scene_edits` 안에
+  포함됩니다).

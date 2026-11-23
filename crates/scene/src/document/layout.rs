@@ -347,8 +347,43 @@ pub struct DocumentLayout {
     /// 입력에 쓴 View Variant 표시 patch.
     visibility: HashMap<StableId, bool>,
     last: UpdateStats,
+    /// 마지막 갱신에서 위치·크기가 바뀐 상자(scene layout rect 무효화의 원천).
+    last_rects: Vec<LayoutRectChange>,
     /// 전체 다시 계산 횟수.
     rebuilds: u64,
+}
+
+/// 마지막 갱신에서 상자가 바뀐 node 하나(`SceneInvalidation::LayoutRect`의 원천).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayoutRectChange {
+    /// node.
+    pub node: StableId,
+    /// border box 원점(부모 좌표)이 바뀌었는지. 상자가 생기거나 사라졌으면 참입니다.
+    pub moved: bool,
+    /// border box 크기가 바뀌었는지. 상자가 생기거나 사라졌으면 참입니다.
+    pub resized: bool,
+}
+
+impl LayoutRectChange {
+    /// 이전·이후 상자 비교. 그리는 위치·크기가 같으면 `None`입니다.
+    fn between(node: StableId, before: Option<&LayoutBox>, after: Option<&LayoutBox>) -> Option<Self> {
+        let (moved, resized) = match (before, after) {
+            (Some(a), Some(b)) => {
+                let (ra, rb) = (a.local_rect(), b.local_rect());
+                let moved = ra.x() != rb.x() || ra.y() != rb.y();
+                let resized = ra.size() != rb.size();
+                // content box만 바뀐 상자(padding 변경)는 크기 변경으로 봅니다(내용 다시 그림).
+                (moved, resized || (!moved && a.content_rect() != b.content_rect()))
+            }
+            (None, None) => (false, false),
+            _ => (true, true),
+        };
+        (moved || resized).then_some(LayoutRectChange {
+            node,
+            moved,
+            resized,
+        })
+    }
 }
 
 impl PartialEq for DocumentLayout {
@@ -375,6 +410,7 @@ impl Default for DocumentLayout {
             fragment_hidden: HashSet::new(),
             visibility: HashMap::new(),
             last: UpdateStats::default(),
+            last_rects: Vec::new(),
             rebuilds: 0,
         }
     }
@@ -638,10 +674,42 @@ impl DocumentLayout {
                 moved.insert(*id);
             }
         }
+        let rects = moved
+            .iter()
+            .filter_map(|id| LayoutRectChange::between(*id, self.boxes.get(id), next.boxes.get(id)))
+            .collect();
         let rebuilds = self.rebuilds + 1;
         *self = next;
         self.rebuilds = rebuilds;
+        self.last_rects = rects;
         moved
+    }
+
+    /// 처음부터 다시 계산합니다(cache를 버린 측정 등). 상자가 바뀐 node를 돌려주고 [`Self::rect_changes`]를 채웁니다.
+    pub fn rebuild(
+        &mut self,
+        model: &DocumentModel,
+        inputs: &LayoutInputs<'_>,
+        texts: &mut TextSizes<'_>,
+    ) -> BTreeSet<StableId> {
+        self.replace(DocumentLayout::build(model, self.root, inputs, texts))
+    }
+
+    /// 마지막 갱신([`Self::update`]·[`Self::rebuild`])에서 위치·크기가 바뀐 상자(node 순).
+    pub fn rect_changes(&self) -> &[LayoutRectChange] {
+        &self.last_rects
+    }
+
+    /// 마지막 갱신의 scene layout rect 무효화(`SceneInvalidation::LayoutRect`).
+    pub fn rect_invalidations(&self) -> Vec<crate::dirty::SceneInvalidation> {
+        self.last_rects
+            .iter()
+            .map(|change| crate::dirty::SceneInvalidation::LayoutRect {
+                node: change.node,
+                moved: change.moved,
+                resized: change.resized,
+            })
+            .collect()
     }
 
     fn update_incremental(
@@ -899,6 +967,7 @@ impl DocumentLayout {
         }
         if edits.is_empty() {
             self.visibility = inputs.visibility.clone();
+            self.last_rects.clear();
             return Ok(BTreeSet::new());
         }
         // 표시 여부가 바뀐 box는 자손 상자도 확인합니다(숨김 subtree는 상자가 없음).
@@ -950,10 +1019,12 @@ impl DocumentLayout {
             }
         }
         let mut moved: BTreeSet<StableId> = build;
+        let mut rects = Vec::new();
         for id in check {
             let now = session.layout_box(id);
             let before = self.boxes.get(&id).copied();
             if now != before {
+                rects.extend(LayoutRectChange::between(id, before.as_ref(), now.as_ref()));
                 // baseline·overflow만 바뀐 상자는 그리기와 무관하므로 다시 변환하지 않습니다.
                 if !same_place(now.as_ref(), before.as_ref()) {
                     moved.insert(id);
@@ -968,6 +1039,7 @@ impl DocumentLayout {
                 }
             }
         }
+        self.last_rects = rects;
         Ok(moved)
     }
 
