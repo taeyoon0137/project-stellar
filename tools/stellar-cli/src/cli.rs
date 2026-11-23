@@ -76,6 +76,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     ("component-source", "create <폴더> <이름> <id> <root-id> | check <폴더> | resize <파일> <원본 hash> <너비> <높이> | set-fill <파일> <원본 hash> <none 또는 색 공간과 RGBA> | add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>: 컴포넌트별 Free Frame 트리"),
     (
+        "git",
+        "status <경로> [--cursor <c>] [--limit <n>] | stage|unstage <경로> <대상>... [--with <대상>]... | commit <경로> -m <메시지>: 신뢰한 프로젝트의 의미 단위 Git 상태·stage·commit(push 없음, 필수 동반 변경은 자동 포함하지 않음)",
+    ),
+    (
         "text-source",
         "export <프로젝트> <새 파일> | check <파일>: 단일 View 텍스트 원본을 opt-in으로 내보내거나 읽기 전용 검사합니다",
     ),
@@ -194,6 +198,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("diff-summary", crate::summary::run(rest))
     } else if command == "component-source" {
         ("component-source", crate::component_source::run(rest))
+    } else if command == "git" {
+        ("git", crate::git::run(rest))
     } else if command == "text-source" {
         ("text-source", crate::text_source::run(rest))
     } else {

@@ -27,6 +27,9 @@ pub mod summary;
 /// `text-source`: opt-in 단일 View 텍스트 export·읽기 전용 검사 (ADR-0059).
 pub mod text_source;
 
+/// `git status|stage|unstage|commit`: 의미 단위 Git 엔진 (ADR-0080).
+pub mod git;
+
 /// 종료 코드 (XXIV.1.2).
 pub mod exit;
 

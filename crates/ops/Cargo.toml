@@ -26,6 +26,7 @@ stellar-semantic-merge = { path = "../semantic-merge" }
 stellar-codegen = { path = "../codegen" }
 stellar-accessibility = { path = "../accessibility" }
 stellar-target-profile = { path = "../target-profile" }
+stellar-git-porcelain = { path = "../git-porcelain" }
 
 [features]
 # 테스트 전용 fixture 생성기를 상위 도구(stellar-cli)의 테스트에 노출합니다. 기본값은 꺼져 있고
