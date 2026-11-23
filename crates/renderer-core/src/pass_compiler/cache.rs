@@ -16,11 +16,14 @@
 //! ## 무효화
 //!
 //! 재사용 결과는 viewport(크기·world → device 변환), 가시 후보 목록, 효과 경계 방식, clip capability가 앞
-//! frame과 bit 단위로 같을 때만 씁니다. 하나라도 다르면 이번 frame은 전체 compile이고, 그 결과로 다음 frame
-//! 재사용 상태를 새로 만듭니다(Pan·Zoom은 frame마다 전체 compile).
+//! frame과 bit 단위로 같을 때만 씁니다. 하나라도 다르면 이번 frame은 전체 compile이고 다음 frame용 상태도
+//! 남기지 않습니다. 문맥이 같은 다음 frame이 전체 compile하며 상태를 새로 만듭니다(Pan·Zoom은 frame마다 전체
+//! compile).
 //!
 //! cache는 직전 frame에서 쓰거나 만든 항목만 남깁니다. 항목은 subtree `Arc`를 붙잡고 있어 주소가 다른 node에 다시
-//! 쓰이지 않습니다. 그래서 메모리는 직전 frame scene 크기에 비례하고 계속 늘지 않습니다.
+//! 쓰이지 않습니다. 그래서 frame이 이어져도 계속 늘지 않습니다. 기록하는 frame은 자식 있는 subtree마다 draw 구간을
+//! 따로 복사하므로 그 frame의 상태는 draw 수 × subtree 깊이에 비례하고, 다음 재사용 frame에서 쓰이지 않은 안쪽
+//! 구간이 정리됩니다.
 
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};

@@ -56,8 +56,9 @@ Graph 예산(목표 0.75ms, 상한 1.25ms)을 넘었고, 상호작용 지연의 
    - 다음 frame용 상태는 문맥이 직전과 같은 frame에서만 남깁니다. Pan·Zoom처럼 frame마다 문맥이 바뀌는 동안에는 남겨도
      쓰이지 않기 때문입니다. 그래서 문맥이 바뀐 뒤 첫 frame과 그다음 frame은 전체 compile이고, 세 번째 frame부터
      재사용합니다.
-   - 상태에는 직전 frame에서 쓰거나 만든 항목만 남습니다(frame 번호 표시 후 정리). 메모리는 직전 scene 크기에 비례하고
-     계속 늘지 않습니다.
+   - 상태에는 직전 frame에서 쓰거나 만든 항목만 남습니다(frame 번호 표시 후 정리). 그래서 frame이 이어져도 계속
+     늘지 않습니다. 다만 기록하는 frame은 자식 있는 subtree마다 자기 draw 구간을 따로 복사하므로, 그 frame의 상태는
+     draw 수 × subtree 깊이에 비례합니다. 다음 재사용 frame에서 쓰이지 않은 안쪽 구간이 정리되면 바깥 구간만 남습니다.
    - compile이 실패하면 상태를 모두 버립니다.
 6. **재사용 집계.** `FrameCompiler::last_reuse()`가 `CompileReuse`를 돌려줍니다. 값은 들어간 node 수, 재사용한 subtree·draw
    수, 재사용한 경계 결정 수, 문맥 변경 여부입니다. trace schema는 바꾸지 않았으므로 trace에는 넣지 않습니다.
