@@ -74,6 +74,9 @@ pub mod text_source;
 /// 저장된 고정 Free Frame View 하나의 HTML+CSS 투영.
 pub mod web_frame;
 
+/// 저장 View 내보내기의 CSS layout 계획과 React Native 스타일 객체 출력 (IX.11.30, ADR-0089).
+pub mod export_css;
+
 /// CSS 선언 블록 복사·붙여넣기 (IX.11.15).
 pub mod css;
 

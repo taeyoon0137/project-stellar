@@ -12,5 +12,8 @@ pub mod check;
 /// 고정 Free Frame의 CSS 출력 값과 formatter.
 pub mod frame;
 
+/// 기본값 세트 차이의 특이도 0 기반 규칙과 layout 선언 블록 (IX.11.30, ADR-0089).
+pub mod layout;
+
 #[cfg(test)]
 mod tests;

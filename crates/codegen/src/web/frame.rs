@@ -1,4 +1,5 @@
-//! 저장된 고정 Free Frame의 CSS 값 출력. 문서·속성 key·layout record를 정의하지 않습니다.
+//! 저장된 Frame의 CSS 값 출력. 문서·속성 key·layout record를 정의하지 않습니다. 고정 Free Frame 출력이
+//! 아니면 layout longhand 선언은 상위(ops)가 [`super::layout`]으로 내고, 이 모듈은 나머지 선언만 냅니다.
 //! 트리는 기존 IrTree → HTML/ARIA mapper가 담당하고, 이 모듈은 요소 하나의 값만 받습니다.
 
 use std::fmt::Write as _;
@@ -72,6 +73,8 @@ impl FrameStyle {
     }
 
     /// 정수 위치는 layout에 두고 소수 이동은 같은 부모 좌표계의 matrix에 두어 확대 전 반올림을 피합니다.
+    ///
+    /// 고정 Free Frame 출력(layout record가 없고 활성 세트가 `css`인 출력, ADR-0089 결정 2)의 전체 선언입니다.
     pub fn declarations(&self) -> String {
         let mut out = String::new();
         let mut declaration = |name: &str, value: String| {
@@ -94,21 +97,65 @@ impl FrameStyle {
         declaration("z-index", "0".into());
         declaration("width", format!("{}px", num(self.size.width())));
         declaration("height", format!("{}px", num(self.size.height())));
-        let (a, b, c, d, x, y) = self.transform.components();
-        if let Some(border) = self.parent_border {
-            for (name, value) in [("left", x), ("top", y)] {
-                declaration(
-                    name,
-                    format!("calc({}px - {}px)", num(value.trunc()), num(border.get())),
-                );
+        if self.parent_border.is_some() {
+            for (name, value) in self.free_position() {
+                declaration(name, value);
             }
         }
-        declaration("transform-origin", "0px 0px".into());
-        let (tx, ty) = if self.parent_border.is_some() {
-            (x.fract(), y.fract())
+        let translation = if self.parent_border.is_some() {
+            self.free_translation()
         } else {
             (0.0, 0.0)
         };
+        self.paint(&mut out, translation);
+        out
+    }
+
+    /// Free 배치(부모 기준 `position: absolute`)의 `left`·`top`: 이동의 정수부에서 가장 가까운 Frame 부모의
+    /// border 두께를 뺍니다. 부모가 없으면 border 0으로 봅니다.
+    pub fn free_position(&self) -> [(&'static str, String); 2] {
+        let (_, _, _, _, x, y) = self.transform.components();
+        let border = self.parent_border.map_or(0.0, |b| b.get());
+        [("left", x), ("top", y)].map(|(name, value)| {
+            (
+                name,
+                format!("calc({}px - {}px)", num(value.trunc()), num(border)),
+            )
+        })
+    }
+
+    /// Free 배치에서 matrix에 남기는 이동의 소수부.
+    pub fn free_translation(&self) -> (f32, f32) {
+        let (_, _, _, _, x, y) = self.transform.components();
+        (x.fract(), y.fract())
+    }
+
+    /// 저장 affine의 이동 성분 전체.
+    pub fn translation(&self) -> (f32, f32) {
+        let (_, _, _, _, x, y) = self.transform.components();
+        (x, y)
+    }
+
+    /// 선형 부분이 단위 행렬인지.
+    pub fn linear_is_identity(&self) -> bool {
+        let (a, b, c, d, _, _) = self.transform.components();
+        a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0
+    }
+
+    /// layout longhand를 뺀 선언: stacking(`z-index`), transform, clip, 배경, 테두리, 반경. layout 출력
+    /// (ADR-0089 결정 3)이 layout longhand 선언 뒤에 붙입니다. `translation`은 matrix의 이동 값입니다.
+    pub fn paint_declarations(&self, translation: (f32, f32)) -> String {
+        let mut out = String::from("  z-index: 0;\n");
+        self.paint(&mut out, translation);
+        out
+    }
+
+    fn paint(&self, out: &mut String, (tx, ty): (f32, f32)) {
+        let mut declaration = |name: &str, value: String| {
+            let _ = writeln!(out, "  {name}: {value};");
+        };
+        let (a, b, c, d, _, _) = self.transform.components();
+        declaration("transform-origin", "0px 0px".into());
         declaration(
             "transform",
             format!(
@@ -169,7 +216,6 @@ impl FrameStyle {
                 format!("{}px", num(radius.get())),
             );
         }
-        out
     }
 }
 

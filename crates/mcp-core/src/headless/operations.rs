@@ -12,6 +12,7 @@ use stellar_ops::compare::{ConflictEntry, SideView};
 use stellar_ops::core_types::ids::StableId;
 use stellar_ops::css::{copy, paste, CssError};
 use stellar_ops::diff::DiffReport;
+use stellar_ops::export_css::export_react_native;
 use stellar_ops::git::{change_id_text, GitError, GitSession, GitStatusReport, StatusRequest};
 use stellar_ops::lock::LockPolicy;
 use stellar_ops::mcp_merge::{semantic_conflicts, SemanticConflictsError};
@@ -20,7 +21,7 @@ use stellar_ops::query::{
 };
 use stellar_ops::revision::ProjectRevision;
 use stellar_ops::text_source::source_span;
-use stellar_ops::web_frame::{export_web_frame_node, HtmlError};
+use stellar_ops::web_frame::{export_web_frame_node, HtmlDiagnostic, HtmlError};
 
 use super::comparison::{diff_entry, diff_position, opt_value};
 use super::{count, fail, id, opt_id, revision, uint, CachedRead, Kind, WithDetail};
@@ -326,14 +327,26 @@ pub(super) fn propose_css_paste(cached: &CachedRead, args: &J) -> Result<J, RpcE
 
 /// `document.export_web_frame`: `stellar export-web [--frame]`과 같은 [`export_web_frame_node`]. 파일을 쓰지
 /// 않습니다. 오류 진단이 있으면 `exported`가 거짓이고 HTML은 `null`입니다.
+///
+/// `target: "react-native"`이면 `stellar export-styles --target react-native`와 같은 [`export_react_native`]
+/// 결과(`react_native` StyleSheet 모듈)를 더합니다(ADR-0089 결정 8). `styles`는 두 대상 모두 요소별 layout 계획입니다.
 pub(super) fn export_web_frame(cached: &CachedRead, args: &J) -> Result<J, RpcError> {
-    let report = export_web_frame_node(
-        &cached.snapshot,
+    let react_native = match args.get("target").map(|t| t.as_str()) {
+        None | Some(Some("web")) => false,
+        Some(Some("react-native")) => true,
+        _ => {
+            return Err(fail(
+                Kind::InvalidArguments,
+                "target은 web 또는 react-native입니다",
+            ))
+        }
+    };
+    let (document, view, frame) = (
         arg_id(args, "document")?,
         arg_id(args, "view")?,
         opt_arg_id(args, "frame")?,
-    )
-    .map_err(|e| match e {
+    );
+    let html_failure = |e| match e {
         HtmlError::Unsaved => fail(Kind::NotFound, "저장된 generation이 없습니다"),
         HtmlError::UnsupportedSchema(_) => fail(
             Kind::Unavailable,
@@ -342,13 +355,64 @@ pub(super) fn export_web_frame(cached: &CachedRead, args: &J) -> Result<J, RpcEr
         HtmlError::Document(_) => fail(Kind::NotFound, "대상 문서를 읽을 수 없습니다"),
         HtmlError::UnknownView(_) => fail(Kind::NotFound, "문서에 View가 없습니다"),
         HtmlError::UnknownFrame(_) => fail(Kind::NotFound, "View에 Frame이 없습니다"),
-    })?;
-    let fields = vec![
+    };
+    let (report, source, extra) = if react_native {
+        let rn =
+            export_react_native(&cached.snapshot, document, view, frame).map_err(html_failure)?;
+        (rn.web, Some(rn.source), rn.diagnostics)
+    } else {
+        (
+            export_web_frame_node(&cached.snapshot, document, view, frame).map_err(html_failure)?,
+            None,
+            Vec::new(),
+        )
+    };
+    let diagnostic = |d: &HtmlDiagnostic| {
+        J::object(vec![
+            (
+                "severity",
+                J::string(if d.error { "error" } else { "warning" }),
+            ),
+            ("code", J::string(d.code)),
+            ("node", id(d.node)),
+            ("message", J::string(d.message.clone())),
+        ])
+    };
+    let styles = J::Array(
+        report
+            .styles
+            .iter()
+            .map(|s| {
+                J::object(vec![
+                    ("node", id(s.node)),
+                    ("element", J::string(s.element.clone())),
+                    ("class", J::string(s.class.name())),
+                    ("placement", J::string(s.placement.name())),
+                    (
+                        "declarations",
+                        J::Array(
+                            s.declarations
+                                .iter()
+                                .map(|d| {
+                                    J::object(vec![
+                                        ("name", J::string(d.name)),
+                                        ("value", J::string(d.value.clone())),
+                                        ("origin", J::string(d.origin.name())),
+                                    ])
+                                })
+                                .collect(),
+                        ),
+                    ),
+                ])
+            })
+            .collect(),
+    );
+    let mut fields = vec![
         ("revision", revision(report.revision)),
         ("document", id(report.document)),
         ("view", id(report.view)),
         ("root_frame", id(report.root_frame)),
-        ("format", J::string("fixed-free-frame-html")),
+        ("format", J::string(report.format)),
         ("exported", J::Bool(report.html.is_some())),
         ("html", report.html.as_ref().map_or(J::Null, J::string)),
         (
@@ -357,27 +421,24 @@ pub(super) fn export_web_frame(cached: &CachedRead, args: &J) -> Result<J, RpcEr
                 .component_source_hash
                 .map_or(J::Null, |h| J::string(h.to_string())),
         ),
+        ("style_defaults", J::string(report.style_defaults.clone())),
+        ("base_rules", J::string(report.base_rules.clone())),
+        ("styles", styles),
         (
             "diagnostics",
             J::Array(
                 report
                     .diagnostics
                     .iter()
-                    .map(|d| {
-                        J::object(vec![
-                            (
-                                "severity",
-                                J::string(if d.error { "error" } else { "warning" }),
-                            ),
-                            ("code", J::string(d.code)),
-                            ("node", id(d.node)),
-                            ("message", J::string(d.message.clone())),
-                        ])
-                    })
+                    .chain(&extra)
+                    .map(diagnostic)
                     .collect(),
             ),
         ),
     ];
+    if let Some(source) = source {
+        fields.push(("react_native", source.map_or(J::Null, J::string)));
+    }
     Ok(J::object(fields))
 }
 

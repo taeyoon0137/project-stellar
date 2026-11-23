@@ -12,6 +12,33 @@ use crate::json::JsonValue;
 use crate::output::{CliError, Diagnostic, Severity, Success};
 use crate::views;
 
+/// 내보내기 입력 오류 → CLI 오류(`export-web`·`export-styles` 공용).
+pub(crate) fn html_error(e: HtmlError, document: StableId, view: StableId) -> CliError {
+    match e {
+        HtmlError::Unsaved => CliError::new(
+            ExitStatus::NoInput,
+            "unsaved-project",
+            "저장된 generation이 없습니다",
+        ),
+        HtmlError::UnsupportedSchema(version) => CliError::new(
+            ExitStatus::DataErr,
+            "unsupported-schema",
+            format!("generation schema {version}은 지원하지 않습니다"),
+        ),
+        HtmlError::Document(e) => views::document_error(&e),
+        HtmlError::UnknownView(id) => CliError::new(
+            ExitStatus::NoInput,
+            "unknown-view",
+            format!("문서 {document}에 View {id}가 없습니다"),
+        ),
+        HtmlError::UnknownFrame(id) => CliError::new(
+            ExitStatus::NoInput,
+            "unknown-frame",
+            format!("View {view}에 Frame {id}가 없습니다"),
+        ),
+    }
+}
+
 /// `export-web <프로젝트 경로> <문서 id> <View id> [--frame <Frame id>]`.
 pub fn run(args: &[String]) -> Result<Success, CliError> {
     let (positional, frame) = match args {
@@ -45,38 +72,14 @@ pub fn run(args: &[String]) -> Result<Success, CliError> {
     let frame = frame.map(|frame| parse_id(frame, "Frame id")).transpose()?;
     let snapshot =
         open_snapshot(Path::new(path)).map_err(|e| views::open_error(&e).with_context(path))?;
-    let report = export_web_frame_node(&snapshot, document, view, frame).map_err(|e| {
-        let error = match e {
-            HtmlError::Unsaved => CliError::new(
-                ExitStatus::NoInput,
-                "unsaved-project",
-                "저장된 generation이 없습니다",
-            ),
-            HtmlError::UnsupportedSchema(version) => CliError::new(
-                ExitStatus::DataErr,
-                "unsupported-schema",
-                format!("generation schema {version}은 지원하지 않습니다"),
-            ),
-            HtmlError::Document(e) => views::document_error(&e),
-            HtmlError::UnknownView(id) => CliError::new(
-                ExitStatus::NoInput,
-                "unknown-view",
-                format!("문서 {document}에 View {id}가 없습니다"),
-            ),
-            HtmlError::UnknownFrame(id) => CliError::new(
-                ExitStatus::NoInput,
-                "unknown-frame",
-                format!("View {view}에 Frame {id}가 없습니다"),
-            ),
-        };
-        error.with_context(path)
-    })?;
+    let report = export_web_frame_node(&snapshot, document, view, frame)
+        .map_err(|e| html_error(e, document, view).with_context(path))?;
     let mut fields = vec![
         ("revision", views::revision(report.revision)),
         ("document", views::id(report.document)),
         ("view", views::id(report.view)),
         ("root_frame", views::id(report.root_frame)),
-        ("format", JsonValue::string("fixed-free-frame-html")),
+        ("format", JsonValue::string(report.format)),
         (
             "html",
             report

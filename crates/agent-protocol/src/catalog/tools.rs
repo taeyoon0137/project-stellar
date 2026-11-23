@@ -152,12 +152,13 @@ pub const SOURCE_SPAN: ToolDef = ToolDef {
     grant: Permission::Read,
 };
 
-/// 저장 View의 HTML+CSS 투영(`stellar export-web [--frame]`). 파일을 쓰지 않고 결과만 돌려줍니다.
+/// 저장 View의 HTML+CSS 투영(`stellar export-web [--frame]`, `target`은 `stellar export-styles --target`). 파일을
+/// 쓰지 않고 결과만 돌려줍니다.
 pub const EXPORT_WEB_FRAME: ToolDef = ToolDef {
     name: "document.export_web_frame",
     title: "Export web frame",
-    description: "저장된 고정 Free Frame View(또는 그 안 Frame 하나)의 HTML+CSS와 진단을 돌려줍니다(파일을 쓰지 않음)",
-    input_schema: r#"{"type":"object","additionalProperties":false,"required":["document","view"],"properties":{"document":{"type":"string"},"view":{"type":"string"},"frame":{"type":"string"}}}"#,
+    description: "저장된 View(또는 그 안 Frame 하나)의 HTML+CSS, 요소별 layout 선언, 진단을 돌려줍니다(target react-native면 StyleSheet 모듈도, 파일을 쓰지 않음)",
+    input_schema: r#"{"type":"object","additionalProperties":false,"required":["document","view"],"properties":{"document":{"type":"string"},"view":{"type":"string"},"frame":{"type":"string"},"target":{"type":"string","enum":["web","react-native"]}}}"#,
     read_only: true,
     destructive: false,
     idempotent: true,

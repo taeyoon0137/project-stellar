@@ -361,7 +361,7 @@ const GLOBAL_ARIA: &[&str] = &[
 /// tag별 HTML 속성(전역 `id`·`role`·`tabindex`·`autofocus`·`data-*` 제외).
 fn html_attribute_allowed(tag: &str, attribute: &str) -> bool {
     match attribute {
-        "id" | "role" | "tabindex" | "autofocus" => true,
+        "id" | "class" | "role" | "tabindex" | "autofocus" => true,
         "type" => matches!(tag, "button" | "input"),
         "disabled" => matches!(tag, "button" | "input"),
         "readonly" | "value" => tag == "input",

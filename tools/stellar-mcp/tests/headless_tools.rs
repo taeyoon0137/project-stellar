@@ -142,6 +142,24 @@ fn every_listed_tool_runs_read_only_through_ops() {
             _ => {}
         }
     }
+    // ADR-0089 결정 8: 기존 export tool의 대상 확장(`stellar export-styles --target react-native`와 같은 ops 함수).
+    let mut arguments = match valid_arguments("document.export_web_frame", &ids) {
+        J::Object(fields) => fields,
+        _ => unreachable!(),
+    };
+    arguments.push(("target".to_string(), J::string("react-native")));
+    let body = tool_body(&client.tool("document.export_web_frame", J::Object(arguments)));
+    assert!(body.get("format").is_some());
+    assert_eq!(body.get("style_defaults").map(text), Some("css"));
+    assert!(body.get("styles").is_some_and(|s| !array(s).is_empty()));
+    assert!(body.get("react_native").is_some());
+    let mut arguments = match valid_arguments("document.export_web_frame", &ids) {
+        J::Object(fields) => fields,
+        _ => unreachable!(),
+    };
+    arguments.push(("target".to_string(), J::string("android")));
+    let reply = client.tool("document.export_web_frame", J::Object(arguments));
+    assert_eq!(failure_kind(&reply), "invalid-arguments");
     for uri in [
         "stellar://tokens",
         "stellar://target-profiles",
