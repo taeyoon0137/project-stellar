@@ -4,7 +4,8 @@
 //! resolved View를 플랫폼 중립 IR([`ir::CodegenIr`])로 바꾸고, Web·Apple·Android adapter가 IR만 읽어 코드를
 //! 만듭니다. 문서 모델·binding graph는 직접 읽지 않고 하위 crate의 지역 모델(ViewModel, LayoutInput,
 //! AccessibilitySnapshot)을 입력으로 받습니다. 생성 코드를 IR이나 문서로 되읽는 API는 두지 않습니다
-//! (기술 아키텍처 §17.3).
+//! (기술 아키텍처 §17.3). 생성 source를 읽는 parser·import API를 만들지 않으며(XXII.1.3), `tests/one_way_api.rs`가
+//! 이 crate와 ops 코드 생성 module의 공개 API inventory로 검사합니다.
 
 /// 중립 코드 생성 IR (XXII.1.1).
 pub mod ir;
