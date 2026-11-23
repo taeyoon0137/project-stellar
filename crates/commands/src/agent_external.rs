@@ -96,6 +96,8 @@ pub enum RecordTarget {
     Layout(StableId),
     /// 문서 Text style 표.
     TextStyles,
+    /// 문서 Component Context(한 단위, ADR-0114).
+    Context,
 }
 
 impl RecordTarget {
@@ -109,6 +111,7 @@ impl RecordTarget {
             RecordChange::ModifierStack { node, .. } => RecordTarget::ModifierStack(*node),
             RecordChange::Layout { node, .. } => RecordTarget::Layout(*node),
             RecordChange::TextStyles { .. } => RecordTarget::TextStyles,
+            RecordChange::Context { .. } => RecordTarget::Context,
         }
     }
 }

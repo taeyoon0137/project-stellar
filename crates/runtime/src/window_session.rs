@@ -2201,7 +2201,11 @@ impl ProjectWindowSession {
             .document
             .as_mut()
             .expect("반영 대상 창에는 작업 문서가 있음");
-        let apply = match ApplyExternalSnapshot::between(document.state.model(), &incoming.records) {
+        let apply = match ApplyExternalSnapshot::between_with_context(
+            document.state.model(),
+            &incoming.records,
+            &incoming.context,
+        ) {
             Ok(apply) => apply,
             Err(error) => return ExternalSync::Rejected(ExternalRejection::Snapshot(error)),
         };

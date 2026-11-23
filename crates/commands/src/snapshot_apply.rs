@@ -7,9 +7,12 @@
 //!   담습니다. 각 변경은 이전 값과 새 값을 함께 가지므로 역은 두 값을 바꾼 같은 command입니다(역집합이
 //!   Undo).
 //! - 레코드 단위는 문서 모델이 소유하는 것입니다: 문서 이름, 페이지, View, node, modifier stack, node의 명시
-//!   layout record(ADR-0086), 문서 Text style resource 표. 레코드는 StableId로만 짝지으며 이름·geometry 유사도는 쓰지 않습니다(semantic diff
-//!   XIV.3.3과 같은 식별 규칙). 컴포넌트 정의·token은 문서 모델 밖(project library)이라 이 command의 대상이
-//!   아닙니다(ADR-0079 결정 2).
+//!   layout record(ADR-0086), 문서 Text style resource 표, 문서 Component Context(ADR-0099, 한 단위). 레코드는
+//!   StableId로만 짝지으며 이름·geometry 유사도는 쓰지 않습니다(semantic diff XIV.3.3과 같은 식별 규칙). 컴포넌트
+//!   정의·token은 문서 모델 밖(project library)이라 이 command의 대상이 아닙니다(ADR-0079 결정 2).
+//! - Context는 레코드 밖 거울이라 [`ApplyExternalSnapshot::between_with_context`]가 외부 원본의 영속 Context
+//!   (`ContextSet::live`)를 따로 받습니다. 변경의 이전 값은 모델 거울 전체(삭제한 provider의 provision 포함)라 Undo가
+//!   그 거울을 그대로 되살립니다(ADR-0114 결정 1).
 //! - 검증: 각 변경의 이전 값이 현재 문서와 같아야 하고(낡은 변경 집합 거부), 적용 결과가 전체 validator
 //!   (VI.10.1)에서 새 위반을 만들지 않아야 합니다.
 //! - 출처: [`ApplyExternalSnapshot::ORIGIN`]([`CommandOrigin::System`])입니다. 외부 출처는 command 종류
@@ -18,13 +21,14 @@
 //!
 //! 적용 순서: 지울 node와 부모·순서·종류가 바뀌는 node를 (현재 자손과 함께) 자손부터 떼어 내고, 문서 정의를
 //! 한 번에 바꾼 뒤, 새 tree의 부모부터 다시 넣고, 제자리 변경(표시·잠금·이름·payload)과 modifier stack,
-//! layout record를 적용합니다.
+//! layout record, Context를 적용합니다.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::property::PropertyPath;
 use stellar_core_types::revision::DocumentRevision;
+use stellar_document::context::set::ContextSet;
 use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
 use stellar_document::layout_record::LayoutRecord;
 use stellar_document::model::DocumentModel;
@@ -131,6 +135,13 @@ pub enum RecordChange {
         /// 새 표.
         after: Box<DocumentTextStyles>,
     },
+    /// 문서 Component Context 교체(ADR-0099·ADR-0114). 이전 값은 모델 거울 전체입니다.
+    Context {
+        /// 이전 Context.
+        before: Box<ContextSet>,
+        /// 새 Context.
+        after: Box<ContextSet>,
+    },
 }
 
 impl RecordChange {
@@ -178,6 +189,10 @@ impl RecordChange {
                 before: after,
                 after: before,
             },
+            RecordChange::Context { before, after } => RecordChange::Context {
+                before: after,
+                after: before,
+            },
         }
     }
 
@@ -191,6 +206,7 @@ impl RecordChange {
             RecordChange::ModifierStack { node, .. } => (TAG_STACK, *node),
             RecordChange::Layout { node, .. } => (TAG_LAYOUT, *node),
             RecordChange::TextStyles { .. } => (TAG_TEXT_STYLES, StableId::NIL),
+            RecordChange::Context { .. } => (TAG_CONTEXT, StableId::NIL),
         }
     }
 }
@@ -204,6 +220,8 @@ const TAG_STACK: u8 = 5;
 const TAG_TEXT_STYLES: u8 = 6;
 /// command codec version 4(ADR-0086 개정).
 const TAG_LAYOUT: u8 = 7;
+/// command codec version 6(ADR-0114).
+const TAG_CONTEXT: u8 = 8;
 
 /// 외부에서 바뀐 문서 원본을 반영하는 command.
 #[derive(Debug, Clone, PartialEq)]
@@ -261,6 +279,54 @@ fn diff_maps<T: Clone + PartialEq>(
     }
 }
 
+/// Context 교체가 바꾼 key·provision·requirement·Slot 공개 목록 항목마다 무효화를 보고합니다(key는 key 경로,
+/// provision은 이전·새 provider의 값 경로, 목록 항목은 소유자의 key 경로).
+fn report_context_changes(ctx: &mut EditContext<'_>, before: &ContextSet, after: &ContextSet) {
+    use crate::context::{CONTEXT_INVALIDATION, CONTEXT_KEY_PATH};
+    let keys: BTreeSet<StableId> = before.keys().chain(after.keys()).map(|k| k.id()).collect();
+    for key in keys {
+        if before.key(key) != after.key(key) {
+            ctx.changes().property(
+                key,
+                PropertyPath::with_keys(key, vec![CONTEXT_KEY_PATH]),
+                CONTEXT_INVALIDATION,
+            );
+        }
+    }
+    let provisions: BTreeSet<StableId> = before
+        .provisions()
+        .chain(after.provisions())
+        .map(|p| p.id())
+        .collect();
+    for id in provisions {
+        let (old, new) = (before.provision(id), after.provision(id));
+        if old == new {
+            continue;
+        }
+        for provision in old.into_iter().chain(new) {
+            ctx.changes().property(
+                provision.provider(),
+                provision.value_path(),
+                CONTEXT_INVALIDATION,
+            );
+        }
+    }
+    let members = |set: &ContextSet| -> BTreeSet<(StableId, StableId)> {
+        set.all_requirements()
+            .chain(set.all_slot_keys())
+            .flat_map(|(owner, keys)| keys.iter().map(move |key| (owner, *key)))
+            .collect()
+    };
+    for (owner, key) in members(before).symmetric_difference(&members(after)) {
+        ctx.changes().property(
+            *owner,
+            PropertyPath::with_keys(*owner, vec![CONTEXT_KEY_PATH])
+                .with_key_segment(&key.to_string()),
+            CONTEXT_INVALIDATION,
+        );
+    }
+}
+
 fn stale() -> CommandError {
     CommandError::InvalidRequest {
         reason: "외부 변경의 이전 값이 현재 문서와 다릅니다",
@@ -279,7 +345,46 @@ impl ApplyExternalSnapshot {
 
     /// 현재 문서 `model`과 새 원본 레코드 `incoming`의 레코드 변경 집합을 계산합니다. 같은 문서여야 합니다.
     /// 바뀐 것이 없으면 빈 command입니다([`ApplyExternalSnapshot::is_empty`]).
+    ///
+    /// Context는 비교하지 않습니다(현재 Context 그대로). 외부 원본 전체를 반영하는 제품 경로는
+    /// [`ApplyExternalSnapshot::between_with_context`]나 [`ApplyExternalSnapshot::between_models`]를 씁니다.
     pub fn between(
+        model: &DocumentModel,
+        incoming: &DocumentRecords,
+    ) -> Result<ApplyExternalSnapshot, CommandError> {
+        ApplyExternalSnapshot::between_records(model, incoming)
+    }
+
+    /// 현재 문서와 외부 원본 문서 모델(레코드 + 영속 Context)의 변경 집합입니다.
+    pub fn between_models(
+        model: &DocumentModel,
+        incoming: &DocumentModel,
+    ) -> Result<ApplyExternalSnapshot, CommandError> {
+        ApplyExternalSnapshot::between_with_context(
+            model,
+            &incoming.to_records()?,
+            &incoming.context().live(incoming),
+        )
+    }
+
+    /// 레코드 변경 집합에 Context 변경을 더합니다. `context`는 외부 원본의 영속 Context(`ContextSet::live` 결과)이고,
+    /// 현재 모델의 영속 Context와 다를 때만 변경 하나(이전 값 = 모델 거울 전체)를 더합니다(ADR-0114 결정 1).
+    pub fn between_with_context(
+        model: &DocumentModel,
+        incoming: &DocumentRecords,
+        context: &ContextSet,
+    ) -> Result<ApplyExternalSnapshot, CommandError> {
+        let mut command = ApplyExternalSnapshot::between_records(model, incoming)?;
+        if model.context().live(model) != *context {
+            command.changes.push(RecordChange::Context {
+                before: Box::new(model.context().clone()),
+                after: Box::new(context.clone()),
+            });
+        }
+        Ok(command)
+    }
+
+    fn between_records(
         model: &DocumentModel,
         incoming: &DocumentRecords,
     ) -> Result<ApplyExternalSnapshot, CommandError> {
@@ -427,7 +532,8 @@ impl ApplyExternalSnapshot {
                 }
                 RecordChange::Node { .. }
                 | RecordChange::ModifierStack { .. }
-                | RecordChange::Layout { .. } => {}
+                | RecordChange::Layout { .. }
+                | RecordChange::Context { .. } => {}
             }
         }
         let mut ordered: Vec<(u32, StableId, String)> = pages
@@ -503,7 +609,9 @@ impl ApplyExternalSnapshot {
                 }
                 RecordChange::Page { before, after, .. } => before.is_some() || after.is_some(),
                 RecordChange::View { before, after, .. } => before.is_some() || after.is_some(),
-                RecordChange::DocumentName { .. } | RecordChange::TextStyles { .. } => true,
+                RecordChange::DocumentName { .. }
+                | RecordChange::TextStyles { .. }
+                | RecordChange::Context { .. } => true,
             };
             if !consistent {
                 return Err(CommandError::InvalidRequest {
@@ -530,6 +638,7 @@ impl ApplyExternalSnapshot {
                 RecordChange::Layout { node, before, .. } => {
                     model.layout_record(*node) == before.as_ref()
                 }
+                RecordChange::Context { before, .. } => model.context() == before.as_ref(),
                 _ => true,
             };
             if !current {
@@ -799,6 +908,15 @@ impl ApplyExternalSnapshot {
                 }
             }
         }
+
+        // 8. Context. 바뀐 key·provision·requirement·Slot 공개 목록마다 Context 편집 command와 같은 무효화를
+        //    보고합니다.
+        for change in &self.changes {
+            if let RecordChange::Context { before, after } = change {
+                ctx.replace_context((**after).clone())?;
+                report_context_changes(ctx, before, after);
+            }
+        }
         Ok(())
     }
 
@@ -876,6 +994,11 @@ impl ApplyExternalSnapshot {
                     out.bytes(&before.encode());
                     out.bytes(&after.encode());
                 }
+                RecordChange::Context { before, after } => {
+                    out.u8(TAG_CONTEXT);
+                    out.bytes(&before.encode());
+                    out.bytes(&after.encode());
+                }
             }
         }
     }
@@ -929,6 +1052,13 @@ impl ApplyExternalSnapshot {
                     reason: "잘못된 Text style 표",
                 })
         }
+        fn context(input: &mut Reader<'_>) -> Result<Box<ContextSet>, CommandCodecError> {
+            ContextSet::decode(input.bytes()?)
+                .map(Box::new)
+                .map_err(|_| CommandCodecError::Malformed {
+                    reason: "잘못된 Context",
+                })
+        }
         let count = input.len()?;
         let mut changes = Vec::with_capacity(count);
         for _ in 0..count {
@@ -965,6 +1095,10 @@ impl ApplyExternalSnapshot {
                 TAG_TEXT_STYLES => RecordChange::TextStyles {
                     before: styles(input)?,
                     after: styles(input)?,
+                },
+                TAG_CONTEXT => RecordChange::Context {
+                    before: context(input)?,
+                    after: context(input)?,
                 },
                 _ => {
                     return Err(CommandCodecError::Malformed {
@@ -1236,9 +1370,14 @@ mod tests {
         let mut incoming = external_version();
         incoming.definition.text_styles = DocumentTextStyles::initial(sid(90));
         incoming.layout_records.push(layout(11, "grid"));
-        let command = ApplyExternalSnapshot::between(state.model(), &incoming).unwrap();
+        let command = ApplyExternalSnapshot::between_with_context(
+            state.model(),
+            &incoming,
+            &context_with(&[(500, "theme", Some(13))]),
+        )
+        .unwrap();
         let tags: BTreeSet<u8> = command.changes.iter().map(|c| c.target().0).collect();
-        assert_eq!(tags, (1..=7).collect());
+        assert_eq!(tags, (1..=8).collect());
         let command = Command::ApplyExternalSnapshot(command);
         let bytes = encode_command(&command);
         assert_eq!(&bytes[..2], &0x0070u16.to_le_bytes());
@@ -1277,6 +1416,136 @@ mod tests {
             !outcome.changes.changed_nodes().contains(&sid(11)),
             "Text 아닌 node는 그대로"
         );
+    }
+
+    /// key(번호, 이름)와 그 key의 View provision(provider 번호, 없으면 provision 없음)을 담은 Context.
+    fn context_with(items: &[(u64, &str, Option<u64>)]) -> ContextSet {
+        use stellar_core_types::typed_value::TypedValue;
+        use stellar_core_types::value::FiniteF32;
+        use stellar_document::context::key::{ContextKey, ContextScope};
+        use stellar_document::context::provision::{ContextOwner, ContextProvision};
+        use stellar_document::expressions::ast::{ExprNode, ExprNodeId, ExpressionAst};
+        use stellar_document::expressions::types::{ExpressionType, TypeSpec};
+        let number = |seed: u64, value: f32| {
+            let id = ExprNodeId::new(sid(seed));
+            ExpressionAst::new(
+                id,
+                vec![ExprNode::literal(
+                    id,
+                    TypedValue::Number(FiniteF32::new(value).unwrap()),
+                )],
+            )
+            .unwrap()
+        };
+        let mut set = ContextSet::new();
+        for (key, name, provider) in items {
+            set.insert_key(
+                ContextKey::new(
+                    sid(*key),
+                    (*name).to_owned(),
+                    ContextScope::Document(sid(1)),
+                    TypeSpec::required(ExpressionType::Number),
+                    number(key + 1, 1.0),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            if let Some(provider) = provider {
+                set.insert_provision(
+                    ContextProvision::new(
+                        sid(key + 2),
+                        ContextOwner::View(sid(3)),
+                        sid(*provider),
+                        sid(*key),
+                        number(key + 3, 2.0),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            }
+        }
+        set
+    }
+
+    #[test]
+    fn external_context_change_is_applied_and_undone_with_the_whole_mirror() {
+        // 밖에서 바꾼 Context 원본(ADR-0114 결정 1): 열린 창에 반영되고 Undo 한 번으로 거울 전체가 돌아옵니다.
+        let mut model = small_model();
+        model.replace_context(context_with(&[
+            (500, "theme", Some(13)),
+            (510, "size", Some(12)),
+        ]));
+        let mut state = DocumentState::new(model);
+        // 창에서 12를 지우면 그 provision은 거울에만 남습니다(삭제 undo용).
+        state
+            .execute(&crate::request::CommandRequest::at(
+                &state,
+                Command::DeleteSubtree(crate::node_ops::DeleteSubtree { root: sid(12) }),
+            ))
+            .unwrap();
+        let mirror = state.model().context().clone();
+        assert!(mirror.provision(sid(512)).is_some(), "거울에는 남음");
+        assert!(state
+            .model()
+            .context()
+            .live(state.model())
+            .provision(sid(512))
+            .is_none());
+        let incoming_records = state.model().to_records().unwrap();
+        // 같은 영속 Context면 변경이 없습니다(거울에만 있는 provision은 비교하지 않음).
+        let same = state.model().context().live(state.model());
+        assert!(ApplyExternalSnapshot::between_with_context(
+            state.model(),
+            &incoming_records,
+            &same
+        )
+        .unwrap()
+        .is_empty());
+        // 외부: theme key 이름 변경과 provision 13 삭제, size key 삭제, 새 key gap과 provision 11.
+        let incoming = context_with(&[(500, "brand", None), (520, "gap", Some(11))]);
+        let command = ApplyExternalSnapshot::between_with_context(
+            state.model(),
+            &incoming_records,
+            &incoming,
+        )
+        .unwrap();
+        assert_eq!(command.changes.len(), 1);
+        let transaction =
+            command.into_transaction(CommandId::from_stable_id(sid(902)), state.revision());
+        let applied = state.execute_transaction(&transaction).unwrap();
+        assert_eq!(state.model().context(), &incoming);
+        let changed = applied.changes.changed_nodes();
+        for object in [sid(500), sid(510), sid(520), sid(13), sid(11)] {
+            assert!(changed.contains(&object), "{object} 무효화 보고");
+        }
+        state.execute_transaction(&applied.inverse).unwrap();
+        assert_eq!(
+            state.model().context(),
+            &mirror,
+            "Undo가 거울 전체를 되살림"
+        );
+    }
+
+    #[test]
+    fn external_context_change_checks_the_previous_mirror() {
+        let mut model = small_model();
+        model.replace_context(context_with(&[(500, "theme", Some(13))]));
+        let state = DocumentState::new(model);
+        let stale_change = ApplyExternalSnapshot {
+            changes: vec![RecordChange::Context {
+                before: Box::new(ContextSet::new()),
+                after: Box::new(context_with(&[(530, "x", None)])),
+            }],
+        };
+        assert_eq!(stale_change.validate(state.model()), Err(stale()));
+        // 모델 둘 사이 계산(레코드 + 영속 Context)도 같은 변경을 냅니다.
+        let mut other = small_model();
+        other.replace_context(context_with(&[(530, "x", None)]));
+        let command = ApplyExternalSnapshot::between_models(state.model(), &other).unwrap();
+        assert!(matches!(
+            command.changes.as_slice(),
+            [RecordChange::Context { after, .. }] if **after == context_with(&[(530, "x", None)])
+        ));
     }
 
     fn request_len(request: &crate::request::CommandRequest) -> usize {
