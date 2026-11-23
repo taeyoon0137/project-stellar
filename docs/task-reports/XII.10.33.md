@@ -118,3 +118,31 @@
 - FFI Text ABI의 문서 주석(`crates/ffi/src/text_input.rs`)은 옛 의미(확정이 조합을 끝냄)로 적혀 있습니다. 셸 FFI를
   바꾸지 않는 방향이라 고치지 않았습니다. 셸 재설계 때 `end_canvas_text`를 쓰는 ABI로 바꿔야 합니다.
 - 빈 Text 정리는 별도 Undo 항목입니다(ADR-0129 결정 1).
+
+## 후속 수정 (2026-11-24 instance-integrity: 한 요청의 끝내기·입력 CommandId 분리, ADR-0133 결정 5)
+
+### 배경
+
+`app::text_input`의 `begin()`은 다른 대상의 남은 편집을 끝낼 때(빈 새 Text 정리, 남은 조합 확정) 요청 ID로 만든
+CommandId를 썼고, 같은 요청의 이어지는 입력(`replace_canvas_text`)도 같은 CommandId를 썼습니다. 또 끝내기 뒤에 요청
+revision을 다시 비교해, 끝내기가 무엇을 기록하면 그 요청은 끝내기만 남기고 stale로 실패했습니다. 새 Text를 입력했다가 모두
+지운 채 다른 Text에 바로 입력하는 첫 요청이 실패했습니다.
+
+### 변경 파일
+
+- `crates/runtime/src/app/text_input.rs` — `end_command_id`(요청 CommandId + 용도 표지 `text-end`), `finish`가 CommandId를
+  인자로 받음, 끝내기 뒤 revision 비교를 빼고 새 대상 확인을 끝내기 뒤 문서로 함.
+- `docs/adr/ADR-0133-instance-structure-integrity.md` 결정 5.
+
+### 실행한 명령
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-runtime --lib app::text_input` | 통과(7 passed) |
+| `cargo clippy -p stellar-runtime --all-targets --locked -- -D warnings` | 통과 |
+
+### 테스트
+
+- `ending_a_previous_edit_and_typing_in_one_request_use_distinct_command_ids`: 새 Text에 "a"를 입력하고 지운 뒤 다른 Text
+  11에 바로 입력하는 `replace_canvas_text` 요청 하나가 성공하고, 빈 새 Text 정리와 입력 두 history 항목을 서로 다른
+  CommandId로 기록합니다(창 history의 모든 문서 항목 CommandId가 서로 다름). 고치기 전에는 이 요청이 stale로 실패했습니다.

@@ -22,9 +22,10 @@ Consequences의 "Frame 복제·붙여넣기 때 가이드·그리드가 따라�
 - 가이드·레이아웃 그리드 기록(ADR-0126)은 소유 Frame StableId로 문서 모델에 있습니다. `insert-node`·`duplicate-subtree`·
   붙여넣기는 이 기록을 옮기지 않았고, 삭제 undo는 같은 session 모델에 남은 기록에 기대어 history journal을 다시 연
   뒤에는 기록을 잃었습니다. layout record(ADR-0086)는 같은 문제를 `insert-node` 끝 절로 풀었습니다.
-- 앱 Text 입력(`app::text_input`, ADR-0129 결정 2)의 `begin()`은 남은 편집을 끝낼 때(빈 새 Text 정리) 요청 ID로 만든
-  CommandId를 쓰고, 같은 요청의 이어지는 입력(`replace_canvas_text`)도 같은 CommandId를 썼습니다. 한 요청이 history
-  항목 둘을 같은 CommandId로 기록했습니다.
+- 앱 Text 입력(`app::text_input`, ADR-0129 결정 2)의 `begin()`은 남은 편집을 끝낼 때(빈 새 Text 정리, 남은 조합 확정)
+  요청 ID로 만든 CommandId를 쓰고, 같은 요청의 이어지는 입력(`replace_canvas_text`)도 같은 CommandId를 썼습니다. 또 끝내기
+  뒤에 요청 revision과 문서 revision이 같은지 다시 봐서, 끝내기가 무엇을 기록하면(revision이 오름) 그 요청은 끝내기만
+  남기고 실패했습니다(다른 Text를 바로 고르거나 입력하는 첫 요청이 실패).
 - 제약: 사용자 방향(2026-11-23) — 엔진·기능만 만들고 셸 FFI·Swift UI는 바꾸지 않습니다. command 적용은 문서 모델만
   봅니다(컴포넌트 library는 계획 단계에만 있음).
 
@@ -94,10 +95,13 @@ Consequences의 "Frame 복제·붙여넣기 때 가이드·그리드가 따라�
 
 ### 5. 한 요청의 history 항목은 서로 다른 CommandId를 씁니다(앱 Text 입력)
 
-1. `app::text_input`의 `begin()`이 다른 대상의 남은 편집을 끝낼 때(빈 새 Text 정리 기록) 쓰는 CommandId는 요청 ID와
-   용도 표지 `text-end`에서 만듭니다. 같은 요청의 입력 기록은 이전과 같이 `frame_move::command_id(창, 요청)`입니다.
-2. 같은 요청 안에서 두 기록이 생기는 경로는 `begin()`의 끝내기 뒤 입력 하나뿐입니다(`begin_canvas_text`는 끝내기만,
-   `replace_canvas_text`는 끝내기와 입력). `end_canvas_text`의 끝내기는 그 요청의 유일한 기록이라 요청 CommandId를 씁니다.
+1. `app::text_input`의 `begin()`이 다른 대상의 남은 편집을 끝낼 때(빈 새 Text 정리 또는 조합 확정 기록) 쓰는 CommandId는
+   요청 CommandId와 용도 표지 `text-end`에서 만듭니다(`end_command_id`). 같은 요청의 입력 기록은 이전과 같이
+   `frame_move::command_id(창, 요청)`입니다.
+2. 요청 revision은 끝내기 전에 한 번 확인합니다. 끝내기가 올린 revision은 이 요청이 만든 변화이고 끝내는 편집의 대상(다른
+   node)만 바꾸므로, 끝내기 뒤에는 revision 비교 대신 새 대상 확인(편집 가능, 범위, 부모 View)을 끝내기 뒤 문서로 합니다.
+   그래서 `replace_canvas_text`는 끝내기와 입력을 한 요청에서 서로 다른 CommandId로 기록합니다.
+3. `end_canvas_text`의 끝내기는 그 요청의 유일한 기록이라 요청 CommandId를 씁니다.
 
 ### 6. 인스턴스 자식이 있는 문서의 경로 확인
 

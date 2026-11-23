@@ -10,6 +10,8 @@
 //!   않습니다(D1).
 //! - 편집은 [`AppRuntime::end_canvas_text`]로 끝냅니다. 이 편집에서 만든 Text를 모두 지우고 끝내면 빈 Text를 지우는
 //!   항목 하나를 기록합니다(ADR-0129 결정 1).
+//! - 한 요청이 남은 편집 끝내기와 입력을 함께 기록하면(`begin`이 다른 대상의 편집을 먼저 끝냄) 끝내기 항목은 요청 ID와
+//!   용도 표지에서 만든 별도 CommandId를 씁니다([`end_command_id`], ADR-0133 결정 5).
 use super::frame_move::command_id;
 use super::sidebar::{in_view, view_root};
 use super::*;
@@ -20,6 +22,7 @@ use crate::canvas::text::TextPreview;
 use crate::document_thread::JobTicket;
 use crate::window_session::history_label;
 use stellar_commands::{
+    id::CommandId,
     lock::{edit_permission, EditIntent},
     selection::Selection,
     state::DocumentState,
@@ -211,12 +214,24 @@ fn selection_of(range: TextRange) -> EditSelection {
     }
 }
 
-/// 진행 중 편집을 끝냅니다(남은 조합 확정, 빈 새 Text 정리, Text 선택). 편집기는 버립니다.
-fn finish(entry: &mut WindowEntry, request: RequestId) -> Result<Option<EditEnd>, Failure> {
+/// `begin`이 남은 편집을 끝낼 때 그 기록의 CommandId. 같은 요청의 입력 기록(`command_id(창, 요청)`)과 겹치지 않도록
+/// 요청 CommandId와 용도 표지 `text-end`에서 만듭니다(ADR-0133 결정 5).
+fn end_command_id(window: WindowSessionId, request: RequestId) -> CommandId {
+    let mut key = [0; 24];
+    key[..16].copy_from_slice(&command_id(window, request).to_bytes());
+    key[16..].copy_from_slice(b"text-end");
+    let digest = stellar_storage::hash::ContentHash::compute(&key);
+    let mut raw = [0; 16];
+    raw.copy_from_slice(&digest.digest()[..16]);
+    CommandId::from_bytes(raw)
+}
+
+/// 진행 중 편집을 끝냅니다(남은 조합 확정, 빈 새 Text 정리, Text 선택). 편집기는 버립니다. `id`는 끝내기가 기록하는
+/// 항목(조합 확정 또는 빈 Text 정리, 둘 중 하나)의 CommandId입니다.
+fn finish(entry: &mut WindowEntry, id: CommandId) -> Result<Option<EditEnd>, Failure> {
     let Some(composition) = entry.text.take() else {
         return Ok(None);
     };
-    let id = command_id(entry.session.window(), request);
     composition
         .editor
         .finish(&mut SessionHost(&mut entry.session), id, &InputClock)
@@ -264,11 +279,10 @@ fn begin(
             return Ok(live.token);
         }
     }
-    // 다른 대상의 편집이 남아 있으면 먼저 끝냅니다.
-    finish(entry, request)?;
-    if entry.session.revision() != revision {
-        return Err(stale());
-    }
+    // 다른 대상의 편집이 남아 있으면 먼저 끝냅니다. 같은 요청이 이어서 입력을 기록할 수 있어 별도 CommandId를 씁니다.
+    // 요청 revision은 위에서 확인했습니다. 끝내기가 올린 revision은 이 요청이 만든 변화이고 다른 대상만 바꾸므로(빈 새 Text
+    // 정리 또는 그 Text의 조합 확정) 대상 확인(편집 가능·범위·부모)을 끝내기 뒤 문서로 다시 합니다(ADR-0133 결정 5).
+    finish(entry, end_command_id(entry.session.window(), request))?;
     let window = &entry.session;
     let doc = window.document().ok_or_else(stale)?;
     let placement = match target {
@@ -504,7 +518,8 @@ impl AppRuntime {
         self.submit(move |ctx, request| {
             let entry = entry_mut(ctx, session)?;
             if entry.text.as_ref().is_some_and(|c| c.token == token) {
-                finish(entry, request)?;
+                let id = command_id(entry.session.window(), request);
+                finish(entry, id)?;
             }
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
@@ -808,6 +823,72 @@ mod tests {
         assert!(rig.done(rig.app.end_canvas_text(rig.window, token)));
         assert!(rig.contains(sid(11)));
         assert_eq!(rig.content(sid(11)).as_deref(), Some(""));
+    }
+
+    /// 한 요청이 남은 편집 끝내기(빈 새 Text 정리)와 입력을 함께 기록해도 두 항목의 CommandId는 다릅니다(ADR-0133
+    /// 결정 5).
+    #[test]
+    fn ending_a_previous_edit_and_typing_in_one_request_use_distinct_command_ids() {
+        let rig = Rig::new("text-input-ids", false);
+        let placement = TextPlacement {
+            parent: sid(10),
+            origin: Vec2::new(5., 6.).unwrap(),
+            width: TextWidth::Fixed(80.),
+        };
+        let (token, node) = rig
+            .begin(TextTarget::Placement(placement), range(0, 0))
+            .unwrap();
+        assert!(rig.done(rig.app.commit_canvas_text(rig.window, token, "a".into())));
+        assert!(rig.done(rig.app.delete_canvas_text(rig.window, token, false)));
+        let window = rig.window;
+        let ids = move |app: &AppRuntime| {
+            app.sender
+                .submit(move |ctx| {
+                    let session = &ctx.app_sessions().windows.get(&window)?.session;
+                    Some(
+                        session
+                            .history()
+                            .history()
+                            .entries()
+                            .iter()
+                            .filter_map(|entry| match &entry.payload {
+                                stellar_history::entry::HistoryPayload::Document {
+                                    forward,
+                                    ..
+                                } => Some(forward.id),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .unwrap()
+                .wait()
+                .unwrap()
+                .unwrap()
+        };
+        let before = ids(&rig.app).len();
+        // 다른 Text에 바로 입력하는 요청 하나가 빈 새 Text 정리와 입력을 함께 기록합니다.
+        let revision = rig.revision();
+        assert!(rig.done(rig.app.replace_canvas_text(
+            rig.window,
+            sid(VIEW),
+            revision,
+            sid(11),
+            range(0, 0),
+            "x".into(),
+        )));
+        assert!(!rig.contains(node));
+        let after = ids(&rig.app);
+        assert_eq!(after.len(), before + 2, "빈 Text 정리 + 입력");
+        assert_ne!(after[before], after[before + 1]);
+        let mut unique = after.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            after.len(),
+            "history 항목의 CommandId는 서로 다릅니다"
+        );
     }
 
     #[test]
