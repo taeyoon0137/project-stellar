@@ -40,6 +40,7 @@
 - **2026-11-23 — 크기 방식 preset 행 삭제와 비CSS 크기 어휘 정리(ADR-0074):** ADR-0074 결정 7이 UX WBS UX.0.3에 맡긴 계획 개정 가운데 행 삭제와 문구 정리를 했습니다. 목적이 사라진 세 행을 3장 규칙대로 폐기 표기 없이 계획서와 원장에서 지웠습니다. IX.11.7(sizing preset ↔ longhand 변환 함수), XII.10.22(등간격 다중 선택의 간격·자리 바꾸기 핸들), XII.10.25(padding·gap 캔버스 핸들)입니다. 세 행을 선행으로 둔 IX.11.17, XII.10.9, XII.10.43의 선행에서 빼고 행 문구도 고쳤습니다. IX.11.17은 sizing preset 대신 CSS 값 입력으로 바꿨습니다. XII.10.9는 흐름 자식 크기 조절이 `width`·`height` px 값만 쓰고 더블클릭 전환을 두지 않게 했고(ADR-0074 결정 4), XII.10.43에서는 padding 핸들 scenario를 뺐습니다. IX.11.17·XII.10.9·XII.10.43은 셸 UI 행이라 UI 재설계 때 다시 정의합니다. 미착수·진행 행의 Fixed·Fill·HugContent·Percentage·Hug·Stack 같은 엔진 고유 어휘는 CSS 값과 CSS 레이아웃 이름으로 바꿨습니다. 대상은 IX.11.4, IX.11.5, IX.11.8, IX.11.10, IX.11.18, XII.10.21, XII.10.24입니다. IX.11.5의 영속 record 생략값은 ADR-0082 기본값 세트로 맞췄습니다. 완료 행(X.2\~X.6, X.11.1 등)은 고치지 않고, Phase X 머리말에 그 어휘가 완료 당시 엔진 내부 어휘이며 IX.11.4·IX.11.5에서 CSS 값 입력으로 바뀌었다는 해석 규칙을 두었습니다. UX.0.3의 나머지(XIII.3.1, XIV.13.5, XVI.11.8, XIV.2.8, XII.10.1, 아키텍처 §24.3, UX 행 등록)는 UI 재설계 대상이라 이번에 하지 않았습니다. 원자 작업 수는 1160개입니다.
 - **2026-11-23 — plan-revision 검토 보완(XXIX.1.1 재판정):** 위 "crate 의존 그래프 문서 갱신"에서 `[x]`로 바꾼 XXIX.1.1을 `[~]`로 되돌렸습니다. ADR-0005 §8 crate 배치 표의 "전이적으로도 도달 금지" 열에는 `stellar-runtime` → mcp-core 규칙이 있는데, 검사기의 `FORBIDDEN_REACH`(`tools/xtask/src/crate_graph/reach.rs`)에는 이 규칙이 없습니다. 검사기 주석과 crate 의존 그래프 문서가 이 표를 그 열의 인코딩이라고 적으므로, 지정한 crate 쌍의 전이 도달 금지가 다 들어가지 않은 남은 범위입니다(지금 runtime은 mcp-core에 도달하지 않아 위반은 없습니다). `FORBIDDEN_REACH`에 runtime 규칙과 위반 fixture를 더하면 `[x]`입니다. 같은 이유로 선행 XXIX.1.1이 `[x]`가 아니게 된 XIX.9.1은 `[ ]`에서 `[!]`로 되돌렸고 차단 보고서(`docs/task-reports/XIX.9.1-blocked.md`)의 선행 상태를 고쳤습니다. crate 의존 그래프 문서의 "전이 도달 금지" 절에는 빠진 규칙을 적었습니다. UX WBS의 코어·셸 분할도 고쳤습니다. UX.4.1 코어는 runtime 창 연결이 검증 열에 남아 있어 "완료"가 아니라 command 부분 완료로 적고, UX.5.1 코어·UX.5.4 코어의 FFI 선행(XIV.13.1, XIV.13.2)은 FFI를 쓰는 셸 행으로 옮겼습니다.
 - **2026-11-23 — 통합 보완(XXIX.1.1 완료):** `FORBIDDEN_REACH`에 `stellar-runtime` → mcp-core 전이 도달 금지 규칙과 위반 fixture를 더하고 crate 의존 그래프 문서 표에 그 행을 넣었습니다(`Task(XXIX.1.1)` 커밋). XXIX.1.1을 `[x]`로, 선행이 모두 `[x]`가 된 XIX.9.1을 `[!]`에서 `[ ]`로 바꿨습니다. XIX.9.1의 기존 부분 구현은 다음 판정에서 행 지시·검증 열로 다시 봅니다.
+- **2026-11-23 — 근거 커밋 기록으로 `[x]` 승격:** 1차 엔진 배치 marker 반영의 (2) 묶음(구현·검증·선행 판정은 `[x]` 조건을 충족하지만 작업 커밋 제목이 `Feat:`·`Fix:`·`Test:`라 원장이 근거 커밋을 찾지 못한 행) IX.12.1, XII.10.28, XII.10.32, XIV.10.7, XIV.14.5, XXVIII.2.3, XIV.10.8, XIV.10.9, XIV.11.3, XIV.12.1, XIV.12.2, XIV.12.3, XIV.12.4, XIV.12.5, XIV.12.6, XVI.6.6, XXIII.2.1, XXIII.2.2, XXIII.2.3, XXIII.2.4, XXIV.2.1, XXIV.2.2, XXIV.2.3에 행마다 보고서 "근거 커밋" 절과 `Task(<ID>)` 기록 커밋을 남기고 `[x]`로 바꿨습니다. 이력은 다시 쓰지 않았습니다. 그 사슬 때문에 `[~]`였던 XXIV.1.3, XXIV.3.1도 기존 `Task` 커밋이 있어 `[x]`입니다.
 
 ---
 
@@ -988,7 +989,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| IX.12.1 | `[~]` | Component Context 저장에 쓸 numeric 번호와 확장 위치를 예약하는 ADR을 작성하고 registry 예약 상수로 고정합니다. 대상은 ReferenceTarget의 Context tag(현재 tag는 `crates/expressions/src/ast.rs`의 0x01\~0x04), `ContextKey`·`ContextProvision` record를 담을 chunk kind(현재 `crates/storage/src/chunk/kinds.rs`의 1\~6이며 모르는 required kind는 V.2.7 규칙으로 오류) 또는 기존 chunk 안의 record kind, ComponentDefinition 공개 인터페이스의 `ContextRequirement` 목록과 Slot의 공개 Context key 목록(ADR-0025 결정 3.11)이 들어갈 확장 위치입니다. 예약 번호는 다른 용도로 쓰지 않습니다. encoder·decoder 동작은 바꾸지 않습니다. | ADR 존재, 예약 번호가 기존 번호와 겹치지 않는 golden test, 기존 golden bytes 불변, `cargo xtask validate-adr` 통과. | VIII.2.2, V.6.1, IX.1.1, IX.3.1 |
+| IX.12.1 | `[x]` | Component Context 저장에 쓸 numeric 번호와 확장 위치를 예약하는 ADR을 작성하고 registry 예약 상수로 고정합니다. 대상은 ReferenceTarget의 Context tag(현재 tag는 `crates/expressions/src/ast.rs`의 0x01\~0x04), `ContextKey`·`ContextProvision` record를 담을 chunk kind(현재 `crates/storage/src/chunk/kinds.rs`의 1\~6이며 모르는 required kind는 V.2.7 규칙으로 오류) 또는 기존 chunk 안의 record kind, ComponentDefinition 공개 인터페이스의 `ContextRequirement` 목록과 Slot의 공개 Context key 목록(ADR-0025 결정 3.11)이 들어갈 확장 위치입니다. 예약 번호는 다른 용도로 쓰지 않습니다. encoder·decoder 동작은 바꾸지 않습니다. | ADR 존재, 예약 번호가 기존 번호와 겹치지 않는 golden test, 기존 golden bytes 불변, `cargo xtask validate-adr` 통과. | VIII.2.2, V.6.1, IX.1.1, IX.3.1 |
 
 **IX.12 완료 조건:** Context 저장 번호와 확장 위치가 ADR과 golden test로 고정되고, 기존 저장 bytes가 바뀌지 않습니다.
 
@@ -1368,11 +1369,11 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XII.10.24 | `[ ]` | 흐름 컨테이너(flex·grid) 안 드래그를 구현합니다. 끄는 동안 삽입 위치 표시를 그리고 형제를 증분 레이아웃 preview로 비키게 하며, 놓으면 OrderKey를 바꾸는 MoveNode 하나를 만듭니다. 밖으로 끌어내면 대상 부모 규칙으로 옮기고, 흐름에서 빠진 자식(`position: absolute`)은 inset 편집으로 움직이며, ComponentInstance 내부 재정렬은 거부합니다. 흐름 순서는 OrderKey로, inset은 IX.11.6 영속 record 값으로 씁니다. Grid 명시 배치 자식 처리(캔버스 명세 C6)를 이 행에서 정합니다. | flex 가로·세로·wrap과 Grid 자동 배치 fixture에서 삽입 index 정확, 끌어내기·instance 거부 fixture, C6 결정과 근거가 보고서에 있고 Grid 명시 배치 자식 drag fixture가 고른 규칙과 일치, gesture당 history 1건. | X.1.2, X.3.2, X.4.4, XII.10.13, IX.11.6 |
 | XII.10.26 | `[ ]` | Frame·Rectangle·Ellipse·Line·Polygon 생성 도구를 구현합니다. 드래그는 영역 생성(Shift 정비례·45도, Option 중심 기준, 드래그 중 Space는 시작점 이동), 클릭은 기본 크기 생성이며, 흐름 컨테이너 위에서 만들면 pointer 위치의 흐름 순서에 넣습니다. InsertNode와 새 선택을 한 entry로 묶고 생성 후 도구는 Move로 돌아갑니다. | 도구별 드래그·클릭·수식키 fixture, 흐름 삽입 index fixture, 생성 1회 history 1건. | XII.10.1, VII.2.1, XII.10.9 |
 | XII.10.27 | `[ ]` | Image 도구를 구현합니다. `NSOpenPanel`로 고른 파일을 XIII.5.2 import로 asset에 넣고 Image node를 삽입하며, 취소하면 이전 도구로 돌아갑니다. 캔버스로 파일을 끌어 놓는 경로도 같은 import를 씁니다. | import 성공·취소·지원하지 않는 형식 fixture, 같은 파일 두 번 import 시 asset dedup. | XII.10.26, XIII.5.2 |
-| XII.10.28 | `[~]` | Path point 편집 command를 추가합니다. point 삽입·이동·삭제, handle 이동, handle 대칭 모드 전환, subpath 닫기·열기를 closed enum으로 정의하고 point StableId를 유지합니다. CommandKind registry 변경이므로 전역 mutex 작업입니다. | command별 apply/inverse fixture, point 삽입 후 기존 point ID 유지, VII.6.1 property test 등록. | VI.6.3, VII.1.6, VII.6.1 |
+| XII.10.28 | `[x]` | Path point 편집 command를 추가합니다. point 삽입·이동·삭제, handle 이동, handle 대칭 모드 전환, subpath 닫기·열기를 closed enum으로 정의하고 point StableId를 유지합니다. CommandKind registry 변경이므로 전역 mutex 작업입니다. | command별 apply/inverse fixture, point 삽입 후 기존 point ID 유지, VII.6.1 property test 등록. | VI.6.3, VII.1.6, VII.6.1 |
 | XII.10.29 | `[ ]` | 기존 Path의 벡터 편집 모드를 구현합니다. Path에서 Return·더블클릭으로 진입하고 Escape로 나옵니다. Shape는 명시적 Convert to Path(VII.2.7) 뒤에만 들어가며, 분기형 vector network는 지원하지 않습니다. | 기존 Path의 point 드래그가 해당 Path command와 history 1건으로 기록되고, Shape 더블클릭이 Path로 변환하지 않음. | XII.10.28, XII.10.1, XII.10.8, VII.2.7 |
 | XII.10.30 | `[ ]` | Boolean modifier geometry 평가를 결정론적 순수 함수로 구현합니다. 먼저 operand로 참조된 node의 단독 표시 여부와 operand 순서 규칙을 ADR로 정한 뒤, Union·Subtract·Intersect·Exclude 결과 Path를 scene builder에 연결합니다. | 4개 연산 analytic fixture 허용 오차 통과, 같은 입력 bit-stable 결과, ADR Accepted. | VI.9.4, VI.5.6, XI.2.2 |
 | XII.10.31 | `[ ]` | Boolean 명령을 Object 메뉴와 문맥 메뉴에 연결합니다. 메뉴 막대 Object 메뉴에 Boolean 하위 메뉴(연산 4종)를 추가하고 `docs/design/ui/tools_menus.md` 3.2·6.1절 표와 `ShortcutPolicy`를 함께 갱신합니다. 같은 부모의 Shape·Path 둘 이상을 선택하면 맨 뒤 node에 Boolean modifier를 넣고 나머지를 operand로 연결하며, 연산 종류 변경과 operand 분리를 지원합니다. Path로 굽는 평탄화는 별도 명시 명령으로만 실행합니다. | 선택 조건 위반 거부 fixture, 연산 변경·분리 apply/inverse, 평탄화 전후 렌더 geometry 동일, `ShortcutPolicy.audit()` 문제 0건. | XII.10.30, VII.2.6, XII.6.5 |
-| XII.10.32 | `[~]` | Text 내용·style 범위 편집 command를 추가합니다. text range 교체와 범위 style 설정을 VI.7.5 helper로 구현하고 입력 종류와 caret 정보를 VII.4.3 grouping key로 넘깁니다. CommandKind registry 변경이므로 전역 mutex 작업입니다. | 삽입·삭제·교체·범위 style apply/inverse fixture, 한글 조합 확정 fixture, 연속 입력 merge fixture. | VI.7.5, VII.4.3, VII.1.6 |
+| XII.10.32 | `[x]` | Text 내용·style 범위 편집 command를 추가합니다. text range 교체와 범위 style 설정을 VI.7.5 helper로 구현하고 입력 종류와 caret 정보를 VII.4.3 grouping key로 넘깁니다. CommandKind registry 변경이므로 전역 mutex 작업입니다. | 삽입·삭제·교체·범위 style apply/inverse fixture, 한글 조합 확정 fixture, 연속 입력 merge fixture. | VI.7.5, VII.4.3, VII.1.6 |
 | XII.10.33 | `[ ]` | 캔버스 텍스트 편집을 구현합니다. Text 도구 클릭은 자동 폭, 드래그는 고정 폭 Text를 만들고, 더블클릭·Return은 편집 모드, Escape와 바깥 클릭은 편집을 끝내고 Text node 선택으로 돌아갑니다. 조합 중 문자열은 transient로 그리고 확정 때만 XII.10.32 command를 만들며, 새로 만든 Text를 입력 없이 끝내면 생성을 취소합니다. 상자 변 드래그는 자동 폭을 고정 폭으로 바꿉니다(`docs/design/property_model.md`). | 한글·일본어 조합 중간·확정 fixture, 빈 생성 취소 시 history 0건, 편집 중 glyph source가 common text engine. | XII.10.32, XII.5.4, XII.5.6, X.10.3, XII.10.26 |
 | XII.10.34 | `[ ]` | ComponentInstance 캔버스 편집을 구현합니다. 인스턴스 안 깊은 선택은 읽기 전용 윤곽으로 보이고 공개 Property에 연결된 값 편집만 PropertyOverrideCommand Set으로 보내며, 허용되지 않은 편집은 적용하지 않고 이유와 Detach 경로를 보입니다. 문맥 메뉴로 속성별·전체 Reset, Detach(IX.2.6), 정의로 이동을 제공하고 공개 Slot에는 끌어 놓기로 콘텐츠를 넣습니다. Reset Overrides·Detach Instance·정의로 이동은 메뉴 막대 Object 메뉴에도 추가하고 `docs/design/ui/tools_menus.md` 3.2·6.1절 표와 `ShortcutPolicy`를 함께 갱신합니다. | override·reset·detach·slot 삽입 fixture, 비공개·nested 직접 편집 거부 fixture, 동작마다 history 1건, `ShortcutPolicy.audit()` 문제 0건. | IX.2.4, IX.2.6, IX.3.3, IX.4.2, XII.10.4, XII.6.5 |
 | XII.10.35 | `[~]` | 인스턴스 교체(swap) command를 추가합니다. ComponentRef를 바꾸면서 이름과 TypeSpec이 같은 공개 Property의 override를 보존하고, 보존하지 못하는 override 목록을 적용 전 preview로 반환합니다. 크기는 새 정의 기본 크기를 쓰고 현재 크기 유지 선택지를 둡니다. 메뉴 막대 Object 메뉴에 Swap… 항목을 추가하고 `docs/design/ui/tools_menus.md` 3.2·6.1절 표와 `ShortcutPolicy`를 함께 갱신합니다. CommandKind registry 변경이므로 전역 mutex 작업입니다. | 보존·탈락 matrix fixture, undo 후 원래 ComponentRef와 override 복원, 같은 입력 같은 preview, `ShortcutPolicy.audit()` 문제 0건. | IX.2.4, IX.1.2, VII.1.6, XII.6.5 |
@@ -1594,9 +1595,9 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XIV.10.4 | `[x]` | same property different value conflict를 생성하고 base/ours/theirs 값을 모두 보존합니다. | conflict record 정확. | XIV.10.2 |
 | XIV.10.5 | `[x]` | delete-vs-modify, delete-vs-move, type-change-vs-value-change conflict를 각각 다른 kind로 분류합니다. | conflict matrix fixture 통과. | XIV.10.1 |
 | XIV.10.6 | `[x]` | OrderKey independent insertion을 자동 병합하고 같은 child conflicting reorder를 conflict로 분류합니다. | Phase III fixture 통과. | III.5.4, XIV.10.2 |
-| XIV.10.7 | `[~]` | component property 삭제 vs instance override 추가, token type 변경 vs value 변경, drilling chain break를 전용 conflict로 분류합니다. | fixture corpus 통과. | IX.1.3, IX.4.6, VIII.5.5 |
-| XIV.10.8 | `[~]` | conflict 없는 merged snapshot을 full validator로 검증합니다. invalid result는 자동 merge 성공으로 반환하지 않습니다. | invalid cross-ref fixture conflict/error. | XIV.10.2~XIV.10.7, VI.10.1 |
-| XIV.10.9 | `[~]` | merge 결과와 conflict 순서를 deterministic sort합니다. | input map 순서 변경에도 동일 bytes. | XIV.10.8 |
+| XIV.10.7 | `[x]` | component property 삭제 vs instance override 추가, token type 변경 vs value 변경, drilling chain break를 전용 conflict로 분류합니다. | fixture corpus 통과. | IX.1.3, IX.4.6, VIII.5.5 |
+| XIV.10.8 | `[x]` | conflict 없는 merged snapshot을 full validator로 검증합니다. invalid result는 자동 merge 성공으로 반환하지 않습니다. | invalid cross-ref fixture conflict/error. | XIV.10.2~XIV.10.7, VI.10.1 |
+| XIV.10.9 | `[x]` | merge 결과와 conflict 순서를 deterministic sort합니다. | input map 순서 변경에도 동일 bytes. | XIV.10.8 |
 
 ### XIV.11 Git unmerged index materialization
 
@@ -1604,19 +1605,19 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XIV.11.1 | `[x]` | `git ls-files -u -z`를 읽어 stage 1(base), 2(ours), 3(theirs) blob과 mode를 path별로 수집합니다. | text/binary/rename conflict fixture parse. | XIV.2.5 |
 | XIV.11.2 | `[x]` | conflict 관련 Stellar project 파일의 세 stage를 각각 virtual project snapshot으로 materialize합니다. conflict 없는 path는 current index/working 상태와 결합합니다. | base/ours/theirs project open. | XIV.2.6, XIV.11.1 |
-| XIV.11.3 | `[~]` | 세 snapshot을 Semantic Merge engine에 전달하고 raw file conflict와 semantic conflict mapping을 유지합니다. | conflict path→object mapping fixture 정확. | XIV.10.9, XIV.11.2 |
+| XIV.11.3 | `[x]` | 세 snapshot을 Semantic Merge engine에 전달하고 raw file conflict와 semantic conflict mapping을 유지합니다. | conflict path→object mapping fixture 정확. | XIV.10.9, XIV.11.2 |
 | XIV.11.4 | `[x]` | Stellar 파일이 아닌 conflict는 raw Git conflict로 표시하고 Semantic Merge로 해석하지 않습니다. | README conflict raw 유지. | XIV.11.1 |
 
 ### XIV.12 Conflict Resolution 모델
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIV.12.1 | `[~]` | conflict별 resolution을 ChooseBase, ChooseOurs, ChooseTheirs, CustomValue, Delete, KeepModified로 정의하고 허용 action은 conflict kind별로 제한합니다. | invalid action 거부. | XIV.10.4~XIV.10.7 |
-| XIV.12.2 | `[~]` | resolution apply는 candidate merged snapshot에만 적용하고 WorkingTree/Index를 즉시 수정하지 않습니다. | preview 중 disk/index hash 동일. | XIV.12.1 |
-| XIV.12.3 | `[~]` | 모든 semantic conflict 해결 후 candidate snapshot full validation을 실행합니다. | unresolved count 0 + validator pass 필요. | XIV.12.2, VI.10.1 |
-| XIV.12.4 | `[~]` | validated snapshot을 WorkingTree project files로 generation save하고 관련 path를 시스템 Git `git add`로 resolved 처리합니다. | unmerged entries 제거, project open 성공. | XIV.12.3, V.5.4 |
-| XIV.12.5 | `[~]` | merge/rebase/cherry-pick 진행 상태를 자동 continue하거나 commit하지 않습니다. UI에는 Git 상태만 반환합니다. | continue command spawn 0. | XIV.12.4 |
-| XIV.12.6 | `[~]` | conflict resolution apply 전체에 fault rollback을 구현합니다. WorkingTree write 성공 후 git add 실패 시 unresolved 상태와 복구 안내를 반환하고 자동 commit하지 않습니다. | fault matrix 통과. | XIV.12.4 |
+| XIV.12.1 | `[x]` | conflict별 resolution을 ChooseBase, ChooseOurs, ChooseTheirs, CustomValue, Delete, KeepModified로 정의하고 허용 action은 conflict kind별로 제한합니다. | invalid action 거부. | XIV.10.4~XIV.10.7 |
+| XIV.12.2 | `[x]` | resolution apply는 candidate merged snapshot에만 적용하고 WorkingTree/Index를 즉시 수정하지 않습니다. | preview 중 disk/index hash 동일. | XIV.12.1 |
+| XIV.12.3 | `[x]` | 모든 semantic conflict 해결 후 candidate snapshot full validation을 실행합니다. | unresolved count 0 + validator pass 필요. | XIV.12.2, VI.10.1 |
+| XIV.12.4 | `[x]` | validated snapshot을 WorkingTree project files로 generation save하고 관련 path를 시스템 Git `git add`로 resolved 처리합니다. | unmerged entries 제거, project open 성공. | XIV.12.3, V.5.4 |
+| XIV.12.5 | `[x]` | merge/rebase/cherry-pick 진행 상태를 자동 continue하거나 commit하지 않습니다. UI에는 Git 상태만 반환합니다. | continue command spawn 0. | XIV.12.4 |
+| XIV.12.6 | `[x]` | conflict resolution apply 전체에 fault rollback을 구현합니다. WorkingTree write 성공 후 git add 실패 시 unresolved 상태와 복구 안내를 반환하고 자동 commit하지 않습니다. | fault matrix 통과. | XIV.12.4 |
 
 ### XIV.13 최소 Git UI bridge
 
@@ -1638,7 +1639,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XIV.14.2 | `[~]` | partial same-chunk property staging, unstage, commit scenario를 fixture로 만듭니다. | HEAD/Index/WT expected values 일치. | XIV.6.6, XIV.7.3, XIV.8.4 |
 | XIV.14.3 | `[~]` | component/token dependency staging scenario를 만듭니다. | invalid partial 차단, dependency 승인 후 성공. | XIV.5.4 |
 | XIV.14.4 | `[ ]` | branch merge conflict를 시스템 Git으로 만든 뒤 Semantic Conflict 해결·git add까지 통합 실행합니다. | unmerged entries 0, merge state 유지. | XIV.12.5 |
-| XIV.14.5 | `[~]` | linked worktree에서 open/status/stage/commit을 실행해 common git dir과 per-worktree index가 올바른지 검증합니다. | 다른 worktree index 변경 없음. | XIV.1.2, XIV.6.6 |
+| XIV.14.5 | `[x]` | linked worktree에서 open/status/stage/commit을 실행해 common git dir과 per-worktree index가 올바른지 검증합니다. | 다른 worktree index 변경 없음. | XIV.1.2, XIV.6.6 |
 | XIV.14.6 | `[x]` | non-UTF8 path, symlink, executable, LFS pointer, corrupt project scenario를 추가합니다. | 각 정책 결과 정확. | XIV.1.5, XIII.4, XIII.7.5 |
 
 **Phase XIV 완료 조건:** G7 통과.
@@ -1797,7 +1798,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XVI.6.3 | `[x]` | document loader/validator fuzz target을 추가합니다. | invalid refs/cycles 처리, panic 0. | VI.10.3 |
 | XVI.6.4 | `[x]` | expression AST/typechecker/evaluator fuzz target을 추가합니다. | instruction budget 작동, panic 0. | VIII.4.5 |
 | XVI.6.5 | `[x]` | Semantic Diff/apply/inverse fuzz target을 추가합니다. | valid A/B에서 apply(diff)==B. | XIV.3.10 |
-| XVI.6.6 | `[~]` | Semantic Merge fuzz target을 추가해 결과 valid 또는 명시 conflict/error만 허용합니다. | invalid silent merge 0. | XIV.10.8 |
+| XVI.6.6 | `[x]` | Semantic Merge fuzz target을 추가해 결과 valid 또는 명시 conflict/error만 허용합니다. | invalid silent merge 0. | XIV.10.8 |
 | XVI.6.7 | `[x]` | command sequence fuzz target의 장기 실행 진입점을 추가합니다(`cargo test -p stellar-commands sequence_fuzz_nightly -- --ignored`, seed 범위·단계 수·실행 시간·artifact 경로는 환경 변수). 제품 테스트를 CI에 넣지 않는 2026-11-14 개정에 따라 정기 job은 두지 않고, 장기 실행은 로컬에서 이 진입점으로 합니다. | crash seed 자동 artifact 저장. | VII.6.3 |
 
 ### XVI.7 프로젝트 신뢰와 외부 실행 보안
@@ -2265,10 +2266,10 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXIII.2.1 | `[~]` | SemanticMergeEngine 결과를 독립 `CandidateSnapshot C`로 생성합니다. | A/B bytes 미변경. | XIV.10.9, XXIII.1.3 |
-| XXIII.2.2 | `[~]` | object/property별 A, B, auto, custom source provenance를 C에 기록합니다. | provenance fixture. | XXIII.2.1 |
-| XXIII.2.3 | `[~]` | C에서 A/B object·property를 선택하는 resolution command를 구현합니다. | apply/inverse. | XXIII.2.2 |
-| XXIII.2.4 | `[~]` | C full validation과 unresolved conflict count가 0일 때만 write 가능하게 합니다. | invalid candidate 차단. | XXIII.2.3, VI.10.1 |
+| XXIII.2.1 | `[x]` | SemanticMergeEngine 결과를 독립 `CandidateSnapshot C`로 생성합니다. | A/B bytes 미변경. | XIV.10.9, XXIII.1.3 |
+| XXIII.2.2 | `[x]` | object/property별 A, B, auto, custom source provenance를 C에 기록합니다. | provenance fixture. | XXIII.2.1 |
+| XXIII.2.3 | `[x]` | C에서 A/B object·property를 선택하는 resolution command를 구현합니다. | apply/inverse. | XXIII.2.2 |
+| XXIII.2.4 | `[x]` | C full validation과 unresolved conflict count가 0일 때만 write 가능하게 합니다. | invalid candidate 차단. | XXIII.2.3, VI.10.1 |
 
 ### XXIII.3 결과 적용
 
@@ -2290,22 +2291,22 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XXIV.1.1 | `[x]` | `stellar-cli`를 app UI와 분리된 binary로 생성하고 core crate만 사용합니다. | headless machine에서 help 실행. | G8 |
 | XXIV.1.2 | `[x]` | exit code와 machine-readable JSON output schema를 정의합니다. stdout/stderr 역할을 분리합니다. | success/error fixture. | XXIV.1.1 |
-| XXIV.1.3 | `[~]` | `validate`, `semantic-diff`, `semantic-merge`, `migrate` 명령을 구현합니다. | fixture corpus 통과. | XIV.3.1\~XIV.3.10, XIV.10.1\~XIV.10.9, V.8.6 |
+| XXIV.1.3 | `[x]` | `validate`, `semantic-diff`, `semantic-merge`, `migrate` 명령을 구현합니다. | fixture corpus 통과. | XIV.3.1\~XIV.3.10, XIV.10.1\~XIV.10.9, V.8.6 |
 | XXIV.1.4 | `[ ]` | Phase XX 이후 `render/export` 명령을 추가합니다. | golden output. | Phase XX |
 
 ### XXIV.2 Git custom driver
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXIV.2.1 | `[~]` | Git custom merge driver가 base/ours/theirs/result path를 받아 Semantic Merge를 실행하는 noninteractive mode를 구현합니다. | conflict 없는 fixture exit 0. | XXIV.1.3 |
-| XXIV.2.2 | `[~]` | unresolved semantic conflict가 있으면 원본을 보존하고 nonzero exit로 앱에서 해결해야 함을 표시합니다. | unresolved fixture exit code 정확. | XXIV.2.1 |
-| XXIV.2.3 | `[~]` | `.gitattributes`/Git config 등록은 사용자 승인 명령으로만 수행합니다. 전역 config를 자동 변경하지 않습니다. | no-consent config unchanged. | XXIV.2.1 |
+| XXIV.2.1 | `[x]` | Git custom merge driver가 base/ours/theirs/result path를 받아 Semantic Merge를 실행하는 noninteractive mode를 구현합니다. | conflict 없는 fixture exit 0. | XXIV.1.3 |
+| XXIV.2.2 | `[x]` | unresolved semantic conflict가 있으면 원본을 보존하고 nonzero exit로 앱에서 해결해야 함을 표시합니다. | unresolved fixture exit code 정확. | XXIV.2.1 |
+| XXIV.2.3 | `[x]` | `.gitattributes`/Git config 등록은 사용자 승인 명령으로만 수행합니다. 전역 config를 자동 변경하지 않습니다. | no-consent config unchanged. | XXIV.2.1 |
 
 ### XXIV.3 CI 도구
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXIV.3.1 | `[~]` | lockfile resolve check, project validation, migration-required check를 CI mode로 제공합니다. | invalid project CI failure. | XXIV.1.3 |
+| XXIV.3.1 | `[x]` | lockfile resolve check, project validation, migration-required check를 CI mode로 제공합니다. | invalid project CI failure. | XXIV.1.3 |
 | XXIV.3.2 | `[x]` | semantic diff summary를 artifact로 생성하되 project text/name/path redaction option을 기본으로 합니다. | privacy fixture. | XIV.3.8, XXIV.1.2 |
 | XXIV.3.3 | `[ ]` | performance replay CLI를 reference runner에서 실행할 수 있게 합니다. | result schema identical. | XVI.2.2 |
 
@@ -2439,7 +2440,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XXVIII.2.1 | `[~]` | valid/invalid binary/YAML golden corpus를 라이선스와 함께 공개 가능한 형태로 정리합니다. project content는 synthetic만 사용합니다. | corpus manifest 완전. | XXVIII.1.2 |
 | XXVIII.2.2 | `[ ]` | parser/writer conformance runner와 expected result schema를 제공합니다. | official implementation 통과. | XXVIII.2.1 |
-| XXVIII.2.3 | `[~]` | semantic diff/merge conformance corpus와 runner를 제공합니다. | official implementation 통과. | XXVIII.1.3 |
+| XXVIII.2.3 | `[x]` | semantic diff/merge conformance corpus와 runner를 제공합니다. | official implementation 통과. | XXVIII.1.3 |
 | XXVIII.2.4 | `[x]` | version compatibility matrix와 deprecation policy를 공개합니다. | historical fixture 검증. | V.8.6 |
 
 ### XXVIII.3 첫 공개 버전
