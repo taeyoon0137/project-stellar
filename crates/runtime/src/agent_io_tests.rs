@@ -576,12 +576,36 @@ fn large_approved_proposal_is_applied_in_batch_jobs() {
         panic!("제안 대기");
     };
     let before = revision(&f);
-    let result = f
+    // batch 사이에 다른 job이 끼어드는지 봅니다: document thread를 막고 적용(첫 batch job)을 넣은 뒤, 사용자 입력 job과
+    // 그 뒤의 일반 command job을 넣습니다. 입력은 첫 batch보다 먼저, 일반 job은 첫 batch 뒤·둘째 batch 앞에 실행됩니다.
+    let release = block_document_thread(&f.app);
+    let applying = f
         .app
         .apply_agent_proposal(f.window, session(), proposal, ui())
-        .unwrap()
-        .recv_timeout(WAIT)
         .unwrap();
+    let window = f.window;
+    let publisher = f.app.job_publisher();
+    let batches_seen = |options: SubmitOptions| {
+        publisher
+            .try_submit(options, move |ctx| {
+                ctx.app_sessions_mut().windows[&window]
+                    .agent
+                    .provenance()
+                    .session_batches(session())
+                    .count()
+            })
+            .unwrap()
+    };
+    let mut between = batches_seen(SubmitOptions::command());
+    let mut input = batches_seen(SubmitOptions::input());
+    release.send(()).unwrap();
+    assert_eq!(input.wait_timeout(WAIT).unwrap(), Some(0), "입력이 먼저");
+    assert_eq!(
+        between.wait_timeout(WAIT).unwrap(),
+        Some(1),
+        "다음 batch는 lane 뒤에 다시 들어가 그 사이 job이 실행됨"
+    );
+    let result = applying.recv_timeout(WAIT).unwrap();
     assert_eq!(result.error, None);
     assert_eq!(result.applied.len(), 3, "512 + 512 + 76");
     assert!(revision(&f) > before);
