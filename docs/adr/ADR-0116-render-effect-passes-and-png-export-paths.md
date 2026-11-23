@@ -26,6 +26,16 @@ Accepted (2026-11-23).
      export는 feature를 켜지 않으므로 renderer는 문서 계층을 빌드하지 않습니다. 순환은 없습니다(document·commands는 scene에
      의존하지 않음).
    - 변환 규칙(숨김 유지, layout Frame·Path clip skip, instance 펼침, Boolean host, View Variant 표시 patch)은 ADR-0084 그대로입니다.
+2. **문서 효과 modifier를 scene 합성 효과로 평가합니다(`stellar_scene::document::effects`).** Shadow·Blur·Blend·Opacity
+   modifier는 node 합성 결과에 걸리는 CSS 효과(`box-shadow`·`filter: drop-shadow()`, `filter: blur()`, `mix-blend-mode`,
+   `opacity`)라 내용 모양(transform·fill·stroke)과 따로 평가합니다. 변환은 이 종류를 stack에서 떼어 scene
+   `ModifierPaint`의 `shadows`·`opacity`·`blend`·`layer_blur`에 넣고, 나머지 stack은 기존 입력 함수가 그대로 평가합니다.
+   도형 modifier 규칙(`evaluate_shape_modifiers`)과 캔버스 행의 동작은 바뀌지 않습니다.
+   - Opacity는 활성 항목의 곱(`ModifierStack::effective_opacity`, 문서 규칙)입니다. Shadow는 활성 항목 전부이고 OrderKey
+     순서가 scene 목록 순서(앞이 아래)입니다. Blur·Blend는 CSS 속성 하나에 대응하므로 활성 항목이 둘 이상이면 평가하지
+     않고 `SkipReason::UnsupportedModifiers`로 남깁니다(근사하지 않음). blend tag는 문서·scene이 같습니다.
+   - Frame은 효과 modifier만 가진 stack을 평가합니다. 다른 종류가 있으면 전처럼 skip합니다. Boolean operand의 효과는
+     결과에 흡수되어 쓰지 않습니다. 효과 적용 순서는 renderer가 정합니다(ADR-0102 결정 5).
 
 ## Alternatives
 

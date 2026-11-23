@@ -56,6 +56,9 @@ use stellar_document::text::TextPayload;
 /// 문서 node payload → scene builder 입력.
 pub mod inputs;
 
+/// 문서 효과 modifier → scene 합성 효과 (ADR-0116 결정 2).
+pub mod effects;
+
 use inputs::{frame_input, image_input, scene_command, shape_source, shape_style};
 
 /// source에 넣지 않은 node의 이유.
@@ -314,15 +317,24 @@ impl<'a, 'o> Converter<'a, 'o> {
                     self.skip(key, SkipReason::PathClip);
                     return None;
                 }
-                if stack.is_some_and(|s| !s.entries().is_empty()) {
+                // Frame은 합성 효과 modifier만 평가합니다(ADR-0116 결정 2). 그 밖의 종류는 비활성이어도 skip합니다.
+                if stack.is_some_and(|s| s.entries().iter().any(|e| !effects::is_effect(e.kind))) {
                     self.skip(key, SkipReason::UnsupportedModifiers);
                     return None;
                 }
+                let node_effects = match effects::evaluate_effects(stack) {
+                    Ok(node_effects) => node_effects,
+                    Err(error) => {
+                        self.skip(key, effect_skip(error));
+                        return None;
+                    }
+                };
                 let Some(mut input) = frame_input(id, frame, locked) else {
                     self.skip(key, SkipReason::InvalidValue);
                     return None;
                 };
                 input.node.visible = visible;
+                node_effects.apply(&mut input.node.paint);
                 SourceKind::Frame(input)
             }
             NodePayload::Fragment(_) => SourceKind::Fragment(FragmentInput {
@@ -360,8 +372,10 @@ impl<'a, 'o> Converter<'a, 'o> {
         locked: bool,
     ) -> Result<SourceNode, SkipReason> {
         let booleans = boolean_modifiers(stack);
-        let filtered = booleans.first().map(|_| without_booleans(id, stack));
-        let stack = filtered.as_ref().map_or(stack, Some);
+        // 합성 효과는 따로 평가하고(ADR-0116 결정 2), 내용 입력 함수에는 효과·Boolean을 뗀 stack을 넘깁니다.
+        let node_effects = effects::evaluate_effects(stack).map_err(effect_skip)?;
+        let filtered = content_stack(id, stack);
+        let stack = filtered.as_ref();
         let mut node = match payload {
             NodePayload::Shape(shape) => {
                 let source = shape_source(id, shape, stack, locked)
@@ -390,6 +404,16 @@ impl<'a, 'o> Converter<'a, 'o> {
             }
             _ => return Err(SkipReason::Payload),
         };
+        if !node_effects.is_empty() {
+            let paint = match &mut node.kind {
+                SourceKind::Shape(input) => &mut input.node.paint,
+                SourceKind::Path(input) => &mut input.node.paint,
+                SourceKind::Image(input) => &mut input.node.paint,
+                SourceKind::Text(input) => &mut input.node.paint,
+                SourceKind::Frame(_) | SourceKind::Fragment(_) => return Err(SkipReason::Payload),
+            };
+            node_effects.apply(paint);
+        }
         if let Some((op, operands)) = booleans.into_iter().next() {
             if !matches!(node.kind, SourceKind::Shape(_) | SourceKind::Path(_)) {
                 return Err(SkipReason::UnsupportedModifiers);
@@ -640,16 +664,19 @@ fn boolean_modifiers(stack: Option<&ModifierStack>) -> Vec<(BooleanOp, Vec<Stabl
         .collect()
 }
 
-/// Boolean 항목을 뺀 stack.
-fn without_booleans(node: StableId, stack: Option<&ModifierStack>) -> ModifierStack {
-    let mut filtered = ModifierStack::new(node);
-    for entry in stack.into_iter().flat_map(ModifierStack::entries) {
-        if entry.kind != ModifierKind::Boolean {
-            // 원래 stack의 항목이라 id·순서가 겹치지 않습니다.
-            let _ = filtered.insert(entry.clone());
-        }
+/// node 내용 입력 함수가 평가할 stack: Boolean과 합성 효과 항목을 뺍니다(ADR-0084 결정 7, ADR-0116 결정 2).
+fn content_stack(node: StableId, stack: Option<&ModifierStack>) -> Option<ModifierStack> {
+    effects::retain_kinds(node, stack, |kind| {
+        kind != ModifierKind::Boolean && !effects::is_effect(kind)
+    })
+}
+
+/// 효과 평가 실패의 skip 이유.
+fn effect_skip(error: effects::EffectError) -> SkipReason {
+    match error {
+        effects::EffectError::Repeated(_) => SkipReason::UnsupportedModifiers,
+        effects::EffectError::InvalidValue(_) => SkipReason::InvalidValue,
     }
-    filtered
 }
 
 fn scene_boolean_op(op: BooleanOp) -> SceneBooleanOp {
@@ -700,12 +727,13 @@ fn path_input(
     })
 }
 
-/// operand node의 local geometry·채우기 규칙·local transform.
+/// operand node의 local geometry·채우기 규칙·local transform. operand의 합성 효과는 결과에 흡수되며 쓰지 않습니다.
 fn operand_geometry(
     model: &DocumentModel,
     id: StableId,
 ) -> Option<(PathGeometry, FillRule, Transform2D)> {
-    let stack = model.modifier_stack(id);
+    let content = effects::without_effects(id, model.modifier_stack(id));
+    let stack = content.as_ref();
     match model.payload(id)? {
         NodePayload::Shape(shape) => {
             let source = shape_source(id, shape, stack, false)?;
@@ -735,8 +763,7 @@ fn local_transform(model: &DocumentModel, id: StableId) -> Option<Transform2D> {
         | NodePayload::Path(_)
         | NodePayload::Image(_)
         | NodePayload::Text(_) => {
-            let filtered = without_booleans(id, stack);
-            shape_style(Some(&filtered)).map(|style| style.transform)
+            shape_style(content_stack(id, stack).as_ref()).map(|style| style.transform)
         }
     }
 }
