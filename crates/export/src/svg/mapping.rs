@@ -166,6 +166,51 @@ impl fmt::Display for SvgFeature {
     }
 }
 
+impl SvgFeature {
+    /// 이 기능이 출력하는 값의 원천인 registry CSS longhand 이름(IX.11.20). 속성 registry
+    /// (`stellar_document::css::registry`)의 CSS 매핑 longhand와 같은 이름이고, Stellar 전용 원천(Text 본문, image
+    /// asset·crop, 색 표기 방식 등)은 빈 목록입니다. export crate는 document에 의존하지 않으므로 이름으로 잇고, 종단
+    /// test가 registry와 대조합니다(`tests/integration/tests/svg_registry_mapping.rs`).
+    pub fn css_longhands(self) -> &'static [&'static str] {
+        match self {
+            SvgFeature::RectContent => &["width", "height", "background-color"],
+            SvgFeature::RoundedRectContent => &[
+                "border-top-left-radius",
+                "border-top-right-radius",
+                "border-bottom-right-radius",
+                "border-bottom-left-radius",
+            ],
+            SvgFeature::PathContent => &["d"],
+            SvgFeature::EvenOddFill => &["fill-rule"],
+            SvgFeature::TextContent => &[],
+            SvgFeature::ImageContent => &["width", "height"],
+            SvgFeature::ImageFitFill
+            | SvgFeature::ImageFitContain
+            | SvgFeature::ImageFitCover
+            | SvgFeature::ImageFitNone => &["object-fit"],
+            SvgFeature::ImageCrop => &[],
+            SvgFeature::ImageNearestSampling => &["image-rendering"],
+            SvgFeature::ImageColorSpaceOverride => &[],
+            SvgFeature::SolidFill => &["fill", "background-color"],
+            SvgFeature::SrgbColor | SvgFeature::WideGamutColor => &[],
+            SvgFeature::TranslucentColor => &["fill", "stroke"],
+            SvgFeature::CenterStroke | SvgFeature::InsideStroke | SvgFeature::OutsideStroke => {
+                &["stroke", "stroke-width"]
+            }
+            SvgFeature::RoundCap | SvgFeature::SquareCap => &["stroke-linecap"],
+            SvgFeature::DropShadow => &["box-shadow", "filter"],
+            SvgFeature::LayerBlur => &["filter"],
+            SvgFeature::GroupOpacity => &["opacity"],
+            SvgFeature::BlendMode => &["mix-blend-mode"],
+            SvgFeature::RectClip | SvgFeature::RoundedRectClip => &["overflow-x", "overflow-y"],
+            SvgFeature::PathClip | SvgFeature::NestedClip => &["clip-path"],
+            SvgFeature::WorldTransform => &["transform"],
+            SvgFeature::HiddenNode => &["display"],
+            SvgFeature::LinearGradient | SvgFeature::RadialGradient => &["background-image"],
+        }
+    }
+}
+
 /// SVG 지원 상태.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SvgSupport {

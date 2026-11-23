@@ -25,6 +25,7 @@ stellar-expressions = { path = "../../crates/expressions", features = ["test-sup
 stellar-renderer-core = { path = "../../crates/renderer-core", features = ["test-support"] }
 stellar-target-profile = { path = "../../crates/target-profile" }
 stellar-layout = { path = "../../crates/layout" }
+stellar-export = { path = "../../crates/export" }
 
 [lints]
 workspace = true
