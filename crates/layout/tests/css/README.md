@@ -44,10 +44,10 @@ STELLAR_CHROME=/path/to/chrome python3 crates/layout/tests/css/generate.py
 
 | suite | fixture 수 | 최소(IX.11.8) |
 |---|---|---|
-| `flex` | 102 | 60 |
-| `grid` | 56 | 40 |
-| `positioning` | 33 | 30 |
-| `block` | 10 | — |
+| `flex` | 124 | 60 |
+| `grid` | 75 | 40 |
+| `positioning` | 43 | 30 |
+| `block` | 15 | — |
 
 필수 범주는 `css_conformance.rs`의 `required_fixture_categories_exist`가 이름으로 검사합니다: 두 축 indefinite
 `aspect-ratio`, 한 축만 definite인 `aspect-ratio` 안 넘치는 콘텐츠(`min-height: 0px` 명시 포함), 음수 남는 공간의
