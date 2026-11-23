@@ -292,3 +292,45 @@ Accepted (2026-11-23)
   만듭니다. 문서 기본 typography 하나(CSS initial, id는 문서 id에서 결정론적으로 만듦)와, Text가 쓰는 문단·run index마다
   상속만 하는 기본 style입니다. 표가 이미 있는 문서는 바꾸지 않고, 표에 없는 index는 대체하지 않고 보고합니다. Text payload
   bytes는 바뀌지 않습니다.
+
+### 결정 12. text 엔진의 CSS `line-height`·`letter-spacing`(IX.11.12)
+
+- **줄 상자.** `stellar_text::text_layout`이 CSS 2 §10.8 규칙을 따릅니다. 줄에 걸친 glyph run(글꼴이 있는 것)마다 inline box
+  하나를 만들고, 자기 글꼴의 ascent `A`·depth `D`와 자기 line-height `L`(normal은 `A + D + line gap`, `<number>`는 자기
+  font-size × 배율, `<length>`는 고정값)로 leading `L − (A + D)`를 위(내림 절반)·아래(나머지)에 더합니다. 문단 root inline
+  box의 strut(`Strut`, 문단 typography의 첫 사용 가능 글꼴과 font-size)도 같은 inline box입니다. 줄 높이는 baseline 위
+  최댓값과 아래 최댓값의 합이고 baseline은 위 최댓값입니다. 그래서 `line-height: 20px`에 10px·40px run이 섞인 줄은 20px보다
+  큽니다.
+- **strut 출처.** `lay_out_paragraph_with_strut`가 호출자에게서 문단 typography의 strut를 받습니다. `lay_out_paragraph`는
+  shaping 결과의 기본값(첫 span style의 첫 사용 가능 face와 크기)을 strut로 씁니다. 기존 호출자와 cache key는 그대로입니다.
+- **letter-spacing.** `ShapedParagraph::with_letter_spacing`이 run style마다 값을 받아 typographic character unit(grapheme
+  cluster) 하나 뒤에 간격 하나를 더합니다. 간격은 shaping cluster의 마지막 glyph advance에 그 cluster가 덮는 grapheme 수만큼
+  더하고 줄 나누기가 같은 폭을 보도록 segment advance에도 더합니다. `em`은 run 자신의 글꼴 크기 기준이고 값은 1/64 px로
+  반올림합니다. ligature는 끄지 않습니다(브라우저는 0이 아닌 letter-spacing에서 선택 ligature를 끌 수 있음, 폭은 같음).
+- **저장 bytes와 golden.** 저장 값의 뜻은 결정 11에서 이미 CSS이므로 파일 migration은 없습니다. 크기가 하나이고 run과 strut의
+  글꼴이 같은 문단의 결과는 이전과 같습니다(test). 글꼴이 섞인 줄(Latin strut와 CJK·emoji fallback run)의 X.10 golden
+  (`crates/text/tests/golden/logical_layout_v1.txt`)은 inline box마다 half-leading을 적용하고 strut가 항상 들어가도록 바뀌어
+  갱신했습니다. 예: Latin 16px와 CJK 16px가 섞인 `normal` 줄은 1208에서 1157 subpixel이 됩니다(이전은 최대 ascent·descent·
+  line gap을 따로 모아 더함). CJK만 있는 줄은 Latin strut의 depth가 들어가 1126에서 1157이 됩니다.
+
+### 개정의 결과(Consequences)
+
+- 테두리·typography longhand 이름과 key, 레이아웃 입력, text 엔진의 줄 상자가 CSS 한 의미로 맞춰집니다. 텍스트 원본 v4는 테두리
+  값을 같은 함수로 읽고 씁니다.
+- 남은 연결(이 개정을 따르는 소유 작업):
+  - Frame payload 타입(`frame.rs`)을 4변 구조로 바꾸고 schema 2 테두리 절을 chunk에 연결, `frame_metadata` 0x0105를 묶음 key로
+    지정, `FramePayload::border`를 읽는 semantic-diff·scene·runtime·codegen·ops·commands·ffi 갱신.
+  - 레이아웃 엔진(`crates/layout`)에 변별 `border-*-width` 입력을 더하고(`BorderSides::layout_declarations`), 기본값 세트에 테두리
+    longhand의 `css` initial을 더할지 결정.
+  - 1→2 묶음 step 등록: IX.11.9 `frame_position` → IX.11.10 `frame_border` → IX.11.11 `text_styles` 순서로 `PRODUCT_STEPS`에 한 항목.
+  - runtime의 Text 그리기(`crates/runtime/src/canvas/text/document.rs`)가 `ResolvedTextStyle::letter_spacing`을
+    `with_letter_spacing`에, 문단 typography의 strut를 `lay_out_paragraph_with_strut`에 넘기기.
+  - semantic-diff·semantic-merge·ops apply/css가 테두리 longhand key로 투영·편집(그 lane 소유).
+
+### 개정의 호환성·성능·보안
+
+- 저장 bytes: 바뀌지 않습니다(테두리 묶음 값, STTY, STTS, 텍스트 원본 v4 bytes 그대로). schema 2 테두리 절과 step은 아직 쓰이지
+  않습니다. semantic snapshot의 typography 경로 key가 바뀌었지만 snapshot은 저장하지 않습니다. FFI·보호 경로 변경은 없습니다.
+- 성능: 줄마다 inline box 계산은 그 줄에 걸친 run 수에 비례합니다(이전과 같은 run 순회 한 번). letter-spacing 적용은 glyph 수
+  n에 대해 O(n log n)입니다(cluster 정렬, segment 이분 탐색).
+- 보안: 새 parser 입력은 테두리 longhand 값 하나이고 기존 값 parser의 길이 상한·외부 리소스 거부를 지납니다.

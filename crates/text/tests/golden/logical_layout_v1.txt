@@ -29,73 +29,73 @@ line p=0 l=2 r=18..24 top=2048 h=1024 base=2867 x=0 w=2764
   g id=70 c=23 x=2252 adv=512 j=0 dx=0 dy=0
 # fixture cjk-ja-kinsoku
 fonts 40837cd7cab8aba921522f4d0fb593d9 259bb3c31307793a3d75aab630de6c16
-digest 78a2eaac804d06746c1efaf21575cec9
-box w=4096 h=4504 content_h=4504 top=0
-line p=0 l=0 r=0..12 top=0 h=1126 base=952 x=0 w=4096
+digest 448ca13506227c8387180f0df6eca1a5
+box w=4096 h=4628 content_h=4628 top=0
+line p=0 l=0 r=0..12 top=0 h=1157 base=952 x=0 w=4096
   g id=6375 c=0 x=0 adv=1024 j=0 dx=0 dy=0
   g id=6702 c=3 x=1024 adv=1024 j=0 dx=0 dy=0
   g id=15776 c=6 x=2048 adv=1024 j=0 dx=0 dy=0
   g id=112 c=9 x=3072 adv=1024 j=0 dx=0 dy=0
-line p=0 l=1 r=12..24 top=1126 h=1126 base=2078 x=0 w=4096
+line p=0 l=1 r=12..24 top=1157 h=1157 base=2109 x=0 w=4096
   g id=6281 c=12 x=0 adv=1024 j=0 dx=0 dy=0
   g id=11746 c=15 x=1024 adv=1024 j=0 dx=0 dy=0
   g id=4 c=18 x=2048 adv=1024 j=0 dx=0 dy=0
   g id=105 c=21 x=3072 adv=1024 j=0 dx=0 dy=0
-line p=0 l=2 r=24..36 top=2252 h=1126 base=3204 x=0 w=4096
+line p=0 l=2 r=24..36 top=2314 h=1157 base=3266 x=0 w=4096
   g id=91 c=24 x=0 adv=1024 j=0 dx=0 dy=0
   g id=4 c=27 x=1024 adv=1024 j=0 dx=0 dy=0
   g id=175 c=30 x=2048 adv=1024 j=0 dx=0 dy=0
   g id=229 c=33 x=3072 adv=1024 j=0 dx=0 dy=0
-line p=0 l=3 r=36..42 top=3378 h=1126 base=4330 x=0 w=2048
+line p=0 l=3 r=36..42 top=3471 h=1157 base=4423 x=0 w=2048
   g id=197 c=36 x=0 adv=1024 j=0 dx=0 dy=0
   g id=202 c=39 x=1024 adv=1024 j=0 dx=0 dy=0
 # fixture hangul-normal
 fonts 40837cd7cab8aba921522f4d0fb593d9 259bb3c31307793a3d75aab630de6c16
-digest 05459d024b03deaca682e3b152ea6045
-box w=3328 h=5876 content_h=5876 top=0
-line p=0 l=0 r=0..10 top=0 h=1208 base=952 x=0 w=3072
+digest 30e6ea1684bd48c9dc16f8c690ce6bec
+box w=3328 h=5785 content_h=5785 top=0
+line p=0 l=0 r=0..10 top=0 h=1157 base=952 x=0 w=3072
   g id=31838 c=0 x=0 adv=1024 j=0 dx=0 dy=0
   g id=21615 c=3 x=1024 adv=1024 j=0 dx=0 dy=0
   g id=27830 c=6 x=2048 adv=1024 j=0 dx=0 dy=0
   g id=1 c=9 x=3072 adv=256 j=0 dx=0 dy=0
-line p=0 l=1 r=10..20 top=1208 h=1208 base=2160 x=0 w=3072
+line p=0 l=1 r=10..20 top=1157 h=1157 base=2109 x=0 w=3072
   g id=30799 c=10 x=0 adv=1024 j=0 dx=0 dy=0
   g id=27046 c=13 x=1024 adv=1024 j=0 dx=0 dy=0
   g id=31162 c=16 x=2048 adv=1024 j=0 dx=0 dy=0
   g id=1 c=19 x=3072 adv=256 j=0 dx=0 dy=0
-line p=0 l=2 r=20..29 top=2416 h=1126 base=3368 x=0 w=3072
+line p=0 l=2 r=20..29 top=2314 h=1157 base=3266 x=0 w=3072
   g id=24330 c=20 x=0 adv=1024 j=0 dx=0 dy=0
   g id=28278 c=23 x=1024 adv=1024 j=0 dx=0 dy=0
   g id=27718 c=26 x=2048 adv=1024 j=0 dx=0 dy=0
-line p=0 l=3 r=29..39 top=3542 h=1208 base=4494 x=0 w=3328
+line p=0 l=3 r=29..39 top=3471 h=1157 base=4423 x=0 w=3328
   g id=28101 c=29 x=0 adv=1024 j=0 dx=0 dy=0
   g id=1 c=32 x=1024 adv=256 j=0 dx=0 dy=0
   g id=21426 c=33 x=1280 adv=1024 j=0 dx=0 dy=0
   g id=28439 c=36 x=2304 adv=1024 j=0 dx=0 dy=0
-line p=0 l=4 r=39..42 top=4750 h=1126 base=5702 x=0 w=1024
+line p=0 l=4 r=39..42 top=4628 h=1157 base=5580 x=0 w=1024
   g id=24418 c=39 x=0 adv=1024 j=0 dx=0 dy=0
 # fixture hangul-keep-all
 fonts 40837cd7cab8aba921522f4d0fb593d9 259bb3c31307793a3d75aab630de6c16
-digest ace26a0f0dc65bb63a8b5ed34786c755
-box w=3072 h=5876 content_h=5876 top=0
-line p=0 l=0 r=0..10 top=0 h=1208 base=952 x=0 w=3072
+digest 74e7a8065e18987c3917a0a343e5a808
+box w=3072 h=5785 content_h=5785 top=0
+line p=0 l=0 r=0..10 top=0 h=1157 base=952 x=0 w=3072
   g id=31838 c=0 x=0 adv=1024 j=0 dx=0 dy=0
   g id=21615 c=3 x=1024 adv=1024 j=0 dx=0 dy=0
   g id=27830 c=6 x=2048 adv=1024 j=0 dx=0 dy=0
   g id=1 c=9 x=3072 adv=256 j=0 dx=0 dy=0
-line p=0 l=1 r=10..20 top=1208 h=1208 base=2160 x=0 w=3072
+line p=0 l=1 r=10..20 top=1157 h=1157 base=2109 x=0 w=3072
   g id=30799 c=10 x=0 adv=1024 j=0 dx=0 dy=0
   g id=27046 c=13 x=1024 adv=1024 j=0 dx=0 dy=0
   g id=31162 c=16 x=2048 adv=1024 j=0 dx=0 dy=0
   g id=1 c=19 x=3072 adv=256 j=0 dx=0 dy=0
-line p=0 l=2 r=20..29 top=2416 h=1126 base=3368 x=0 w=3072
+line p=0 l=2 r=20..29 top=2314 h=1157 base=3266 x=0 w=3072
   g id=24330 c=20 x=0 adv=1024 j=0 dx=0 dy=0
   g id=28278 c=23 x=1024 adv=1024 j=0 dx=0 dy=0
   g id=27718 c=26 x=2048 adv=1024 j=0 dx=0 dy=0
-line p=0 l=3 r=29..33 top=3542 h=1208 base=4494 x=0 w=1024
+line p=0 l=3 r=29..33 top=3471 h=1157 base=4423 x=0 w=1024
   g id=28101 c=29 x=0 adv=1024 j=0 dx=0 dy=0
   g id=1 c=32 x=1024 adv=256 j=0 dx=0 dy=0
-line p=0 l=4 r=33..42 top=4750 h=1126 base=5702 x=0 w=3072
+line p=0 l=4 r=33..42 top=4628 h=1157 base=5580 x=0 w=3072
   g id=21426 c=33 x=0 adv=1024 j=0 dx=0 dy=0
   g id=28439 c=36 x=1024 adv=1024 j=0 dx=0 dy=0
   g id=24418 c=39 x=2048 adv=1024 j=0 dx=0 dy=0
@@ -162,9 +162,9 @@ line p=1 l=0 r=0..17 top=2304 h=1024 base=3123 x=1438 w=6042
   g id=185 c=0 x=7019 adv=461 j=0 dx=0 dy=0
 # fixture emoji-cjk-fallback
 fonts 40837cd7cab8aba921522f4d0fb593d9 259bb3c31307793a3d75aab630de6c16 c4582de458e7f0764a5b93f9e0ffb9e3
-digest f87b68ab6889c8736e85e4b96d948c24
-box w=7629 h=1331 content_h=1331 top=0
-line p=0 l=0 r=0..27 top=0 h=1331 base=1024 x=0 w=7629
+digest 5a189b03301464781b02daefc69180a1
+box w=7629 h=1229 content_h=1229 top=0
+line p=0 l=0 r=0..27 top=0 h=1229 base=973 x=0 w=7629
   g id=41 c=0 x=0 adv=512 j=0 dx=0 dy=0
   g id=74 c=1 x=512 adv=307 j=0 dx=0 dy=0
   g id=1 c=2 x=819 adv=256 j=0 dx=0 dy=0
