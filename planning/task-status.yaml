@@ -12004,10 +12004,15 @@ tasks:
       - DEV-MAC
   - id: "XXIX.1.1"
     title: "crate graph 검사기를 확장합니다. `[dependencies]` 외에 `[target.*.dependencies]`, `[build-dependencies]`, `[dev-dependencies]`의 내부 의존을 읽고, 지정한 crate 쌍 사이의 전이 도달을 금지하는 규칙(예: agent-host에서 commands·document 도달 금지)을 추가합니다. crate 의존 그래프 문서도 함께 갱신합니다."
-    status: reported_done
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIX.1.1.md"
+    commit: "8faa0cb9030687600a4c68d1db641670b5a54364"
     report: "docs/task-reports/XXIX.1.1.md"
+    verified_at: "2026-11-14T03:11:59+09:00"
   - id: "XXIX.1.2"
     title: "XXIV.4, XIX.9, XXIX에 필요한 외부 crate(JSON 직렬화, JSON-RPC 프레이밍, IPC 상대 인증용 macOS binding, 필요하면 표시 서식 해석)를 `config/dependencies.yaml` 승인 항목으로 등록하고 `validate-dependencies` 검사 범위를 workspace 전체 직접 의존으로 넓힙니다."
     status: verified

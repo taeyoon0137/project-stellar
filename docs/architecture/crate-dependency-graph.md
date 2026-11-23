@@ -1,8 +1,22 @@
 # Crate 의존 그래프 (II.2.8)
 
-제품 crate 간 허용된 **직접** 의존 방향입니다. 이 문서는 사람용 기준이고, 강제는
-`cargo xtask validate-crate-graph`(정책: `tools/xtask/src/crate_graph.rs`)가 수행합니다.
-역방향·금지 edge는 CI에서 실패합니다.
+제품 crate 간 허용 직접 의존과 전이 도달 금지 규칙입니다. 이 문서는 사람용 기준이고, 강제는
+`cargo xtask validate-crate-graph`가 수행합니다. 허용 직접 의존 정책은 `tools/xtask/src/crate_graph.rs`의
+`allowed_edges()`, 전이 도달 금지 정책은 `tools/xtask/src/crate_graph/reach.rs`의 `FORBIDDEN_REACH`에 있습니다.
+역방향·금지 edge와 금지 도달은 이 검사에서 실패합니다(로컬 `cargo xtask check-core`가 함께 실행).
+
+## 검사 범위
+
+- 검사 대상 manifest: `crates/*/Cargo.toml`, `tools/stellar-*/Cargo.toml`, 그리고 Cargo workspace member 전체입니다.
+  workspace member는 루트 `[workspace].members`(`dir/*` glob만 펼침), 루트가 package이면 루트 자신, path 의존으로
+  생기는 자동 member(재귀)를 Cargo 규칙대로 모으고 `[workspace].exclude`를 반영합니다.
+- 읽는 의존 표: `[dependencies]`, `[build-dependencies]`, `[dev-dependencies]`, `[target.<spec>.*]`입니다. 하위 표
+  (`[dependencies.<name>]`), dotted key(`<name>.path = ...`), inline table 형태, `package = "..."` 이름 변경,
+  `workspace = true` 상속을 모두 실제 package 이름으로 해석하고, 모든 표를 같은 허용 표로 검사합니다. 해석할 수
+  없는 구문은 거부합니다(fail closed).
+- 제외: `tools/xtask`, `benchmarks/fixtures`(ADR-0019), crate 사이 종단 시나리오 테스트 crate `tests/integration`.
+  제외 crate의 path 의존으로 생기는 자동 member는 검사합니다.
+- 정책 표에 없는 package는 이름이 `stellar-`로 시작하지 않아도, 의존이 없어도 `unknown-crate`로 거부합니다.
 
 ## 허용 의존 표
 
@@ -36,7 +50,7 @@
 | `stellar-local-ipc` | core-types |
 | `stellar-terminal` | core-types |
 | `stellar-codegen` | core-types, target-profile, accessibility, layout |
-| `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile |
+| `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile, git-porcelain |
 | `stellar-cli` | ops, diagnostics |
 | `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, text, ops, git-porcelain |
 | `stellar-ffi` | core-types, runtime |
@@ -107,6 +121,7 @@ graph TD
   ops --> diagnostics
   ops --> accessibility
   ops --> target_profile
+  ops --> git_porcelain
   stellar_cli --> ops
   stellar_cli --> diagnostics
   runtime --> core_types
@@ -125,12 +140,32 @@ graph TD
   ffi --> runtime
 ```
 
+## 전이 도달 금지(ADR-0005 §8)
+
+ADR-0005 §8 crate 배치 표의 "전이적으로도 도달 금지" 열입니다. crate X의 도달 집합은 X 자신의 모든 의존 표(dev
+포함)에서 시작하고, 그 뒤로는 의존 crate를 빌드할 때 함께 빌드되는 normal·build 의존(target 한정 포함)만
+따라갑니다. 위반은 `forbidden-reach`로 최단 경로와 함께 보고합니다. 아직 workspace에 없는 crate의 규칙은 그 crate가
+생기는 순간부터 적용됩니다.
+
+| crate | 전이적으로도 도달 금지 |
+|---|---|
+| `stellar-mcp-core` | agent-host, runtime, ffi |
+| `stellar-ops` | local-ipc, agent-protocol, mcp-core, mcp, agent-host, ffi |
+| `stellar-cli` | local-ipc, agent-protocol, mcp-core, mcp, agent-host |
+| `stellar-local-ipc` | document, commands, ops |
+| `stellar-agent-protocol` | commands, document, ops, agent-host |
+| `stellar-mcp` | agent-host, ffi |
+| `stellar-agent-host` | document, commands, history, storage, ops |
+
+- `stellar-ffi`는 이 열 대신 타입 변환 금지 inventory로 보완하므로 규칙이 없습니다.
+
 ## 규칙
 
 - 선택 staging 후보(XIV.5.5)는 `ops`의 무손실 저장 직렬화와 `git-porcelain`의 index·임시 tree API를
   `runtime`에서 조합합니다(ADR-0013). `ops`의 직접 의존과 `git-porcelain`·`semantic-diff`의 경계는 유지합니다.
 
 - `document`·`bindings`는 표현식 AST를 저장·평가 입력으로 쓰므로 `expressions`에 의존합니다. `project`는 Command 단위 자동 저장·복구를 위해 `commands`·`history`에 의존하고, 프로젝트·시스템 폰트 등록(XIII.6)을 위해 `text`에 의존합니다(2026-11-14, 순환 없음).
+- `ops`는 `stellar git` 명령(ADR-0080)의 Git 경로를 위해 `git-porcelain`에 직접 의존합니다(ADR-0005 §8 표 개정, 순환 없음).
 - `codegen`(ADR-0049)은 문서·binding 계층에 의존하지 않고 target-profile·accessibility·layout의 지역 모델로 만든
   IR만 읽습니다. 생성 코드를 되읽는 crate는 없습니다(단방향, 2026-11-14).
 - 셸 경계(`ffi`)는 문서·프로젝트 작업에 `runtime`을 통해서만 도달합니다(ADR-0013, 2026-11-14).
