@@ -1,0 +1,6 @@
+{"kind":"assistant-text","text":{"text":"사용 한도에 도달했습니다.","truncated":false}}
+{"kind":"cli-error","error":"usage-limit","text":{"text":"rate_limit","truncated":false}}
+{"kind":"cli-error","error":"other","text":{"text":"rate limited","truncated":false}}
+{"kind":"turn-completed","failed":true}
+signal usage-limit
+ok

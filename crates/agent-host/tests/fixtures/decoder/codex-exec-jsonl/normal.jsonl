@@ -1,0 +1,10 @@
+{"type":"thread.started","thread_id":"00000000-0000-4000-8000-00000000aaaa"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"reasoning","text":"..."}}
+{"type":"item.started","item":{"id":"item_1","type":"mcp_tool_call","server":"stellar","tool":"read_document","status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"stellar","tool":"read_document","status":"completed"}}
+{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"ls","status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"ls","status":"failed","exit_code":1}}
+{"type":"item.updated","item":{"id":"item_3","type":"agent_message","text":"부분"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"문서를 읽었습니다."}}
+{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}

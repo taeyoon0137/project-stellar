@@ -1,0 +1,2 @@
+{"type":"turn.started"}
+{"type":"turn.failed","error":{"message":"요청이 실패했습니다"}}

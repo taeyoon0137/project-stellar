@@ -1,0 +1,3 @@
+{"type":"assistant","uuid":"00000000-0000-4000-8000-000000000001","session_id":"00000000-0000-4000-8000-00000000aaaa","parent_tool_use_id":null,"message":{"role":"assistant","content":[{"type":"text","text":"앞"}]}}
+{"type":"assistant",
+{"type":"result","subtype":"success","is_error":false}

@@ -1,0 +1,3 @@
+{"kind":"cli-error","error":"other","text":{"text":"요청이 실패했습니다","truncated":false}}
+{"kind":"turn-completed","failed":true}
+ok
