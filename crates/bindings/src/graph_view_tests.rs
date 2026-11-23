@@ -87,7 +87,7 @@ impl ReferenceTypes for World<'_> {
         match target {
             ReferenceTarget::Token(token) => self.0.token_type_of(*token).map(|t| t.type_spec()),
             ReferenceTarget::Property(_) | ReferenceTarget::Environment(_) => Some(number()),
-            ReferenceTarget::ComponentProperty(_) => None,
+            ReferenceTarget::ComponentProperty(_) | ReferenceTarget::Context(_) => None,
         }
     }
 }

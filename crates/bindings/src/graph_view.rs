@@ -93,7 +93,12 @@ impl<'a> BindingGraphView<'a> {
                 .bindings
                 .by_target(path)
                 .map(|binding| Producer::Binding(binding.id())),
-            DependencyNode::ComponentProperty(_) | DependencyNode::Environment(_) => None,
+            // 토큰·binding 저장소로 만든 전체 graph([`DependencyGraph::build`])에서도 Context node는 producer와 간선이
+            // 없습니다. Context 해석 간선은 해석 정보로 만든 graph(crate::context)에만 있습니다.
+            DependencyNode::ComponentProperty(_)
+            | DependencyNode::Environment(_)
+            | DependencyNode::ContextKey(_)
+            | DependencyNode::ContextProvision(_) => None,
         }
     }
 
@@ -108,7 +113,12 @@ impl<'a> BindingGraphView<'a> {
                 .bindings
                 .by_target(path)
                 .map(|binding| binding.references()),
-            DependencyNode::ComponentProperty(_) | DependencyNode::Environment(_) => None,
+            // 토큰·binding 저장소로 만든 전체 graph([`DependencyGraph::build`])에서도 Context node는 producer와 간선이
+            // 없습니다. Context 해석 간선은 해석 정보로 만든 graph(crate::context)에만 있습니다.
+            DependencyNode::ComponentProperty(_)
+            | DependencyNode::Environment(_)
+            | DependencyNode::ContextKey(_)
+            | DependencyNode::ContextProvision(_) => None,
         };
         references
             .unwrap_or_default()

@@ -214,6 +214,10 @@ pub(crate) fn layout_fixture() -> Fixture {
         states: Vec::new(),
         tokens: Vec::new(),
         token_bindings: BTreeMap::new(),
+        css_properties: BTreeMap::new(),
+        machines: Vec::new(),
+        motions: Vec::new(),
+        contexts: Default::default(),
         catalog: builtin::catalog().expect("catalog"),
     }
 }

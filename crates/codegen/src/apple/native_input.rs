@@ -208,6 +208,12 @@ pub fn build_native_ir(
         states: &[],
         tokens: &[],
         token_bindings: &BTreeMap::new(),
+        // 네이티브 출력 입력은 layout·control 계약만 싣습니다. CSS 속성 사용·상태 머신·motion·Context 입력은
+        // 공용 IR registry(XXII.1.4~1.7)에서 Apple·Android 열을 등록할 때 채웁니다.
+        css_properties: &BTreeMap::new(),
+        machines: &[],
+        motions: &[],
+        contexts: &crate::ir::context::IrContexts::default(),
     };
     build_ir(&sources, profile, &catalog).map_err(NativeInputError::Ir)
 }
