@@ -214,3 +214,42 @@ fn corpus_format_rejects_broken_files() {
     assert!(matches!(load_corpus(&dir), Err(CorpusError::Incomplete(_))));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// 기대 bytes는 공식 구현이 기록한 값이므로, 사례 이름이 뜻하는 분류를 따로 확인합니다(구현 출력을 그대로 믿지
+/// 않음): clean 사례는 conflict가 없고, 나머지는 이름의 conflict 종류만 냅니다.
+#[test]
+fn corpus_results_match_case_meaning() {
+    use stellar_semantic_merge::model::ConflictKind as K;
+    let expected_kinds = |name: &str| -> Vec<K> {
+        match name {
+            "clean-different-objects" | "clean-identical-edit" | "independent-insertions" => {
+                vec![]
+            }
+            "property-value" => vec![K::PropertyValue],
+            "delete-vs-modify" => vec![K::DeleteVsModify],
+            "conflicting-reorder" => vec![K::ConflictingReorder],
+            "token-type-vs-value" => vec![K::TokenTypeVsValue],
+            "component-property-removed-vs-override" => vec![K::ComponentPropertyRemovedVsOverride],
+            "drilling-chain-break" => vec![K::DrillingChainBreak],
+            "invalid-result-dangling-reference" => vec![K::InvalidResult],
+            other => panic!("의미를 정하지 않은 corpus 사례: {other}"),
+        }
+    };
+    for case in load_corpus(&corpus_dir()).unwrap() {
+        let result = MergeResult::from_canonical_bytes(&case.result).unwrap();
+        let mut kinds: Vec<K> = result.conflicts.iter().map(|c| c.kind).collect();
+        kinds.dedup();
+        assert_eq!(kinds, expected_kinds(&case.name), "{}", case.name);
+        let input = &case.input;
+        assert!(
+            stellar_semantic_diff::validate::introduced_violations(
+                &result.merged,
+                &[&input.base, &input.ours, &input.theirs]
+            )
+            .is_empty()
+                || !result.is_clean(),
+            "{}: clean 결과에 새 위반",
+            case.name
+        );
+    }
+}
