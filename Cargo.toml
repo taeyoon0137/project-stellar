@@ -1,7 +1,7 @@
 # 제품 workspace (II.1.2).
 [workspace]
 resolver = "2"
-members = ["tools/xtask", "crates/core-types", "crates/document", "crates/commands", "crates/history", "crates/expressions", "crates/bindings", "crates/layout", "crates/text", "crates/scene", "crates/renderer-core", "crates/renderer-metal", "crates/renderer-d3d12", "crates/storage", "crates/project", "crates/assets", "crates/dependencies", "crates/semantic-diff", "crates/semantic-merge", "crates/git-porcelain", "crates/target-profile", "crates/accessibility", "crates/diagnostics", "crates/ffi", "tools/stellar-cli", "tools/stellar-mcp", "crates/local-ipc", "crates/runtime", "crates/export", "crates/terminal", "benchmarks/fixtures", "tests/integration", "crates/ops", "crates/codegen", "crates/prototype", "crates/mcp-core", "crates/agent-protocol", "crates/agent-host"]
+members = ["tools/xtask", "crates/core-types", "crates/document", "crates/commands", "crates/history", "crates/expressions", "crates/bindings", "crates/layout", "crates/text", "crates/scene", "crates/renderer-core", "crates/renderer-metal", "crates/renderer-d3d12", "crates/storage", "crates/project", "crates/assets", "crates/dependencies", "crates/semantic-diff", "crates/semantic-merge", "crates/git-porcelain", "crates/target-profile", "crates/accessibility", "crates/diagnostics", "crates/ffi", "tools/stellar-cli", "tools/stellar-mcp", "crates/local-ipc", "crates/runtime", "crates/export", "crates/terminal", "benchmarks/fixtures", "tests/integration", "crates/ops", "crates/codegen", "crates/prototype", "crates/mcp-core", "crates/agent-protocol", "crates/agent-host", "crates/integrity"]
 
 # 공통 package metadata. member는 `<field>.workspace = true`로 상속할 수 있습니다.
 [workspace.package]

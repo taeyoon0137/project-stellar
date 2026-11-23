@@ -111,6 +111,24 @@ pub const VALIDATE_DOCUMENT: ToolDef = ToolDef {
     grant: Permission::Read,
 };
 
+/// 무결성 진단 page(`stellar diagnose`와 같은 ops 수집·필터, ADR-0095).
+pub const DIAGNOSTICS: ToolDef = ToolDef {
+    name: "document.diagnostics",
+    title: "Integrity diagnostics",
+    description:
+        "저장 프로젝트의 무결성 진단(미해결 참조·migration 등)을 종류·심각도·문서·source로 필터해 페이지로 읽습니다",
+    input_schema: concat!(
+        r#"{"type":"object","additionalProperties":false,"properties":{"document":{"type":"string"},"project_only":{"type":"boolean"},"kinds":{"type":"array","maxItems":16,"items":{"type":"string","enum":["orphaned-binding","missing-token","missing-font","missing-asset","missing-library","missing-node","missing-component","invalid-accessibility","target-unsupported","migration-warning"]}},"min_severity":{"type":"string","enum":["info","warning","error"]},"source":{"type":"string"},"#,
+        page_args!(),
+        r#"}}"#
+    ),
+    read_only: true,
+    destructive: false,
+    idempotent: true,
+    availability: Availability::All,
+    grant: Permission::Read,
+};
+
 /// closed enum command 묶음 dry-run(`stellar apply --dry-run`과 같은 ops 경로).
 pub const PROPOSE_COMMANDS: ToolDef = ToolDef {
     name: "document.propose_commands",
@@ -211,6 +229,7 @@ pub const DOCUMENT_TOOLS: &[ToolDef] = &[
     SEMANTIC_DIFF,
     RENDER_PREVIEW,
     VALIDATE_DOCUMENT,
+    DIAGNOSTICS,
     PROPOSE_COMMANDS,
     APPLY_COMMANDS,
     SOURCE_SPAN,
@@ -472,6 +491,7 @@ mod tests {
             [
                 "document.semantic_diff",
                 "document.validate",
+                "document.diagnostics",
                 "document.propose_commands",
                 "document.source_span",
                 "document.export_web_frame",

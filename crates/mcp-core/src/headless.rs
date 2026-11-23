@@ -9,6 +9,7 @@
 //! - 프로젝트 파일을 만들거나 바꾸지 않습니다. ops의 dry-run·읽기 함수만 부릅니다.
 mod comparison;
 mod components;
+mod integrity;
 mod operations;
 mod resources_extra;
 mod validation;
@@ -45,6 +46,7 @@ struct CachedRead {
     snapshot: ProjectSnapshot,
     tree: Option<(StableId, DocumentTree)>,
     validation: Option<validation::FindingsPage>,
+    diagnostics: Option<integrity::DiagnosticsPage>,
     comparison: Option<comparison::DiffPage>,
     components: Option<stellar_ops::component_source::ProjectComponents>,
     component: Option<stellar_ops::component_source::ComponentDetail>,
@@ -123,6 +125,7 @@ impl Headless {
                     comparison::page(&self.project, cached, args, &request)?
                 }
                 n if n == VALIDATE_DOCUMENT.name => validation::page(cached, args, &request)?,
+                n if n == tools::DIAGNOSTICS.name => integrity::page(cached, args, &request)?,
                 n if n == tools::PROPOSE_COMMANDS.name => {
                     operations::propose_commands(cached, args)?
                 }
@@ -173,6 +176,7 @@ impl Headless {
                 snapshot: self.project.snapshot().map_err(read_error)?,
                 tree: None,
                 validation: None,
+                diagnostics: None,
                 comparison: None,
                 components: None,
                 component: None,

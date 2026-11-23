@@ -22,6 +22,11 @@ fn valid_arguments(name: &str, ids: &Ids) -> J {
     match name {
         "document.semantic_diff" | "git.status" => J::object(vec![("limit", J::int(5))]),
         "document.validate" => J::object(vec![("document", s(&ids.document))]),
+        "document.diagnostics" => J::object(vec![
+            ("document", s(&ids.document)),
+            ("kinds", J::Array(vec![s("missing-node")])),
+            ("min_severity", s("warning")),
+        ]),
         "document.propose_commands" => J::object(vec![
             ("base_revision", s(&ids.revision)),
             ("document", s(&ids.document)),
@@ -85,7 +90,7 @@ fn every_listed_tool_runs_read_only_through_ops() {
     client.initialize();
     let ids = ids(&mut client);
     let names = listed(&mut client);
-    assert_eq!(names.len(), 9);
+    assert_eq!(names.len(), 10);
     for name in &names {
         let reply = client.tool(name, valid_arguments(name, &ids));
         if name == "document.source_span" {

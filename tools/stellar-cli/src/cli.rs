@@ -43,6 +43,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "<경로>: 저장된 모든 문서를 문서 validator로 다시 검증합니다(오류가 있으면 종료 코드 1)",
     ),
     (
+        "diagnose",
+        "<경로> [--kind <종류>]... [--severity info|warning|error] [--document <id>|--project] [--source <id>] [--limit <n>] [--cursor <c>]: 무결성 진단(미해결 참조·migration 등)을 종류·심각도·문서로 필터해 page로 출력합니다(진단이 있어도 종료 코드 0)",
+    ),
+    (
         "semantic-diff",
         "<base 경로> <target 경로>: 같은 프로젝트 두 상태의 semantic diff를 출력합니다",
     ),
@@ -199,6 +203,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("apply", crate::apply::run(rest))
     } else if command == "validate" {
         ("validate", crate::project_cmds::validate(rest))
+    } else if command == "diagnose" {
+        ("diagnose", crate::diagnose::run(rest))
     } else if command == "semantic-diff" {
         ("semantic-diff", crate::project_cmds::semantic_diff(rest))
     } else if command == "semantic-merge" {

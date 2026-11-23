@@ -103,3 +103,51 @@ pub mod mcp_command_input;
 
 /// 진행 중 merge의 semantic conflict 읽기 전용 진입점: L2 MCP가 쓰는 얇은 경로 (XIX.9.3, ADR-0085).
 pub mod mcp_merge;
+
+/// 무결성 진단(ADR-0095): 공통 DiagnosticIndex·필터·pagination·remediation(`stellar-integrity`)과 저장 snapshot 수집.
+/// `stellar diagnose`와 MCP `document.diagnostics`가 같은 수집 함수를 씁니다.
+pub mod integrity {
+    pub use stellar_integrity::*;
+
+    use crate::core_types::ids::StableId;
+    use crate::snapshot::ProjectSnapshot;
+    use stellar_integrity::incremental::{origins, CheckContext, IntegrityEngine};
+    use stellar_project::migration::SchemaDecision;
+
+    /// 저장 snapshot 진단 결과.
+    #[derive(Debug)]
+    pub struct SnapshotDiagnostics {
+        /// 진단 index를 가진 엔진.
+        pub engine: IntegrityEngine,
+        /// 검사한 문서 수.
+        pub documents_checked: usize,
+        /// 읽지 못한 문서와 이유(진단에 넣지 않고 따로 보고, `stellar validate`의 `document-load`와 같은 원인).
+        pub unreadable: Vec<(StableId, String)>,
+    }
+
+    /// 저장 snapshot에서 앱 상태 없이 계산할 수 있는 진단을 모읍니다: 모든 문서의 미해결 참조(내장 checker)와 메모리
+    /// migration 상태. asset store·font registry·접근성 tree·Target Profile·library cache가 필요한 생산자는 headless
+    /// snapshot에 그 입력이 없어 실행하지 않습니다(ADR-0095 결정 7).
+    pub fn diagnose_snapshot(snapshot: &ProjectSnapshot) -> SnapshotDiagnostics {
+        let mut engine = IntegrityEngine::new();
+        let mut unreadable = Vec::new();
+        let mut documents_checked = 0;
+        if let SchemaDecision::MigrateInMemory { from, to } = snapshot.schema() {
+            engine.submit(None, origins::MIGRATION, sources::migration(from, to));
+        }
+        for definition in snapshot.documents() {
+            match snapshot.document_records(definition.id) {
+                Ok(records) => {
+                    documents_checked += 1;
+                    engine.check_document(definition.id, &records, &CheckContext::default());
+                }
+                Err(e) => unreadable.push((definition.id, e.to_string())),
+            }
+        }
+        SnapshotDiagnostics {
+            engine,
+            documents_checked,
+            unreadable,
+        }
+    }
+}

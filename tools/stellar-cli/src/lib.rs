@@ -21,6 +21,9 @@ pub mod apply;
 /// `validate`, `semantic-diff`, `semantic-merge`, `migrate` (XXIV.1.3), `ci` (XXIV.3.1).
 pub mod project_cmds;
 
+/// `diagnose`: 무결성 진단 필터·page (XXV.3.1, ADR-0095).
+pub mod diagnose;
+
 /// `diff-summary`: redaction 기본 semantic diff 요약 artifact (XXIV.3.2).
 pub mod summary;
 
