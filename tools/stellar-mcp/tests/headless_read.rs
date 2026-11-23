@@ -366,6 +366,7 @@ fn approved_snapshot_lists_only_implemented_resources_and_pages_without_writes()
             "document.propose_commands",
             "document.source_span",
             "document.export_web_frame",
+            "document.export_png",
             "document.copy_css",
             "document.propose_css_paste",
             "git.status",

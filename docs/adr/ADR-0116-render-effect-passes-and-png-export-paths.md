@@ -37,9 +37,28 @@ Accepted (2026-11-23).
    - Frame은 효과 modifier만 가진 stack을 평가합니다. 다른 종류가 있으면 전처럼 skip합니다. Boolean operand의 효과는
      결과에 흡수되어 쓰지 않습니다. 효과 적용 순서는 renderer가 정합니다(ADR-0102 결정 5).
 
+5. **`stellar export png`와 MCP `document.export_png`(ADR-0103 결정 8을 풂).** 두 경로 모두
+   `stellar_ops::export_png::view`의 한 함수(`prepare_view_png`)를 씁니다. 저장 generation의 문서 View → 결정 1의 scene 변환 →
+   `IncrementalScene` snapshot → `ExportCapture` → `ExportPreflight` → `ConfirmedExport` → CPU target(`SoftwareTarget`)입니다.
+   - 입력은 저장 generation뿐입니다(미저장 편집·활성 Variant 제외). asset·font revision은 generation 번호로 고정합니다.
+   - **빠진 node**: 변환이 넣지 못한 node(`SkipReason`, 예: headless에는 Text layout hook이 없음, layout Frame)는 기본
+     거부입니다. CLI `--omit-skipped`·MCP `omit_skipped`로 빼고 그리는 것을 확인합니다. 결과에 node와 이유 code를 남깁니다.
+   - **사전 진단**: 확인이 필요한 진단(없는 이미지, 검사하지 못한 target profile)은 기본 거부이고 `--accept-issues`·
+     `accept_issues`로 확인합니다. headless scene은 target profile을 평가하지 않으므로 profile key는 `base`이고,
+     `stellar.yaml`에 target profile이 있으면 검사하지 못한 profile로 진단합니다(조용히 통과시키지 않음).
+   - **이미지**: generation의 asset metadata chunk와 asset content store(symlink를 따르지 않는 읽기)에서 PNG 내용을 읽습니다.
+     이를 위해 `stellar-ops → stellar-assets`를 허용합니다. PNG가 아닌 asset은 CPU target이 해석하지 못하므로 렌더 전에
+     거부합니다.
+   - **CLI**는 temp + atomic rename으로 저장합니다(`PngExport`, ADR-0103 결정 6). **MCP**는 파일을 쓰지 않는 읽기 tool이며
+     PNG를 base64(SVG data URI와 같은 encoder)로 돌려줍니다. 요청 계약상 필요한 출력 경로는 쓰지 않는 이름입니다. 응답이
+     JSON-RPC 메시지 상한 안에 들도록 PNG는 512 KiB까지이고, 넘으면 `too-large`입니다.
+   - 배경 색은 문서 CSS 색 parser(`css::value::parse_color`)로 읽습니다.
+
 ## Alternatives
 
 - ops에 별도 변환: 이중 경로라 탈락했습니다.
+- MCP tool이 파일을 씀: headless backend는 프로젝트 파일을 바꾸지 않는 읽기·dry-run만 제공하므로(ADR-0005 §3) 탈락했습니다.
+- 빠진 node를 조용히 생략: 결과가 화면과 달라지는데 알리지 않게 되어 탈락했습니다.
 - 새 crate(`stellar-scene-source`): crate 하나와 정책 행이 더 생기지만 얻는 경계가 feature 한정 의존과 같아 탈락했습니다.
 - scene이 무조건 document에 의존: renderer-core와 GPU backend가 문서 계층을 빌드하게 되어 탈락했습니다.
 

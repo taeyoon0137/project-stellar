@@ -83,6 +83,22 @@ pub enum SkipReason {
     BooleanHostSkipped,
 }
 
+impl SkipReason {
+    /// 안정 code(CLI·MCP 보고용).
+    pub const fn code(self) -> &'static str {
+        match self {
+            SkipReason::LayoutNotEvaluated => "layout-not-evaluated",
+            SkipReason::PathClip => "path-clip",
+            SkipReason::UnsupportedModifiers => "unsupported-modifiers",
+            SkipReason::Text => "text-layout-unavailable",
+            SkipReason::Payload => "payload",
+            SkipReason::Instance => "instance",
+            SkipReason::InvalidValue => "invalid-value",
+            SkipReason::BooleanHostSkipped => "boolean-host-skipped",
+        }
+    }
+}
+
 /// Text node를 scene 입력으로 바꾸는 hook(글꼴·layout은 text 엔진이 맡음).
 pub type TextHook<'a> =
     dyn FnMut(StableId, &TextPayload, Option<&ModifierStack>, bool) -> Option<TextInput> + 'a;

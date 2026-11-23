@@ -10,9 +10,8 @@
 //!   부분 파일이 최종 경로에 생기지 않습니다(rename이 마지막 변경 단계).
 //! - 출력 디렉터리는 만들지 않습니다. 없으면 쓰기 오류입니다.
 //!
-//! 이 모듈은 장면(scene) snapshot을 만들지 않습니다. 저장 문서에서 scene을 만드는 일은 앱 runtime의 canvas scene
-//! source가 하며, headless CLI·MCP가 그 경로에 닿으려면 scene source가 ops가 쓸 수 있는 crate로 옮겨져야 합니다
-//! (ADR-0103 결정 7).
+//! 저장 문서 View에서 scene을 만들어 내보내는 경로는 [`view`]입니다(`stellar export png`·MCP `document.export_png`,
+//! ADR-0116 결정 5). scene 변환은 앱과 같은 `stellar_scene::document`입니다.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -172,6 +171,13 @@ impl PngExport {
         }
     }
 }
+
+/// 저장 View → PNG 내보내기(ADR-0116 결정 5).
+pub mod view;
+
+/// PNG 내보내기 테스트 fixture(`test-support`).
+#[cfg(any(test, feature = "test-support"))]
+pub mod fixture;
 
 #[cfg(test)]
 mod tests;

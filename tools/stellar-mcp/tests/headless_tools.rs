@@ -43,6 +43,12 @@ fn valid_arguments(name: &str, ids: &Ids) -> J {
         "document.export_web_frame" => {
             J::object(vec![("document", s(&ids.document)), ("view", s(&ids.view))])
         }
+        "document.export_png" => J::object(vec![
+            ("document", s(&ids.document)),
+            ("view", s(&ids.view)),
+            ("accept_issues", J::Bool(true)),
+            ("omit_skipped", J::Bool(true)),
+        ]),
         "document.copy_css" => {
             J::object(vec![("document", s(&ids.document)), ("node", s(&ids.root))])
         }
@@ -90,9 +96,14 @@ fn every_listed_tool_runs_read_only_through_ops() {
     client.initialize();
     let ids = ids(&mut client);
     let names = listed(&mut client);
-    assert_eq!(names.len(), 10);
+    assert_eq!(names.len(), 11);
     for name in &names {
         let reply = client.tool(name, valid_arguments(name, &ids));
+        if name == "document.export_png" {
+            // 이 fixture의 Frame은 크기 0이라 보이는 내용이 없습니다. 렌더 성공 경로는 `export_png_renders_saved_view`.
+            assert_eq!(failure_kind(&reply), "unavailable", "{reply:?}");
+            continue;
+        }
         if name == "document.source_span" {
             // 이 fixture에는 다중 파일 텍스트 원본이 없습니다.
             assert_eq!(failure_kind(&reply), "unavailable", "{reply:?}");
@@ -127,6 +138,14 @@ fn every_listed_tool_runs_read_only_through_ops() {
             "document.export_web_frame" => {
                 assert_eq!(body.get("view").map(text), Some(ids.view.as_str()));
                 assert!(body.get("exported").is_some());
+            }
+            "document.export_png" => {
+                // 파일을 쓰지 않고 PNG를 base64로 돌려줍니다(ADR-0116 결정 5).
+                assert_eq!(body.get("view").map(text), Some(ids.view.as_str()));
+                assert!(body
+                    .get("png_base64")
+                    .map(text)
+                    .is_some_and(|png| png.starts_with("iVBORw0KGgo")));
             }
             "git.status" => {
                 assert_eq!(
@@ -339,4 +358,46 @@ fn git_status_resource_counts_semantic_changes_like_the_tool() {
     // 경로 수와 semantic 수가 다른 fixture인지 기록합니다(같으면 이 test가 두 정의를 구분하지 못함).
     assert_ne!(Some(&paths), summary.get("unstaged"), "{tool:?}");
     client.finish();
+}
+
+#[test]
+fn export_png_renders_saved_view() {
+    // ADR-0116 결정 5: `stellar export png`와 같은 ops 경로, 파일을 쓰지 않음.
+    use stellar_mcp::test_support::export_png::{document, document_id, view_id, Variant};
+    let fx = Fixture::new("mcp-export-png");
+    save_documents(&fx.project, &[&document(Variant::Plain)]);
+    fx.git(&["init", "-q", "-b", "main"]);
+    fx.git(&["add", "-A"]);
+    fx.git(&["commit", "-qm", "base"]);
+    fx.grant();
+    let before = file_digest(&fx.temp.path);
+    let mut client = fx.launch();
+    client.initialize();
+    let arguments = J::object(vec![
+        ("document", J::string(document_id().to_string())),
+        ("view", J::string(view_id().to_string())),
+        ("scale", J::int(2)),
+    ]);
+    let body = tool_body(&client.tool("document.export_png", arguments));
+    assert_eq!(body.get("width"), Some(&J::int(80)));
+    assert_eq!(body.get("height"), Some(&J::int(40)));
+    assert_eq!(body.get("profile").map(text), Some("srgb"));
+    assert!(body
+        .get("png_base64")
+        .map(text)
+        .is_some_and(|png| png.starts_with("iVBORw0KGgo")));
+    drop(client);
+    assert_eq!(file_digest(&fx.temp.path), before, "파일을 쓰지 않습니다");
+    // 빠진 node가 있는 View는 확인 없이 거부합니다.
+    save_documents(&fx.project, &[&document(Variant::WithText)]);
+    let mut client = fx.launch();
+    client.initialize();
+    let reply = client.tool(
+        "document.export_png",
+        J::object(vec![
+            ("document", J::string(document_id().to_string())),
+            ("view", J::string(view_id().to_string())),
+        ]),
+    );
+    assert_eq!(failure_kind(&reply), "rejected", "{reply:?}");
 }

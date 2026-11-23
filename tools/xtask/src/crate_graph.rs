@@ -205,9 +205,11 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-diagnostics",
                 "stellar-git-porcelain",
                 "stellar-integrity",
-                // PNG 내보내기 실행·atomic 저장(ADR-0103). scene은 테스트 fixture가 씁니다.
+                // PNG 내보내기 실행·atomic 저장(ADR-0103). 저장 문서 → scene 변환(`document` feature)과 이미지 asset
+                // 내용 읽기는 `stellar export png`·MCP `document.export_png`가 씁니다(ADR-0116 결정 5).
                 "stellar-export",
                 "stellar-scene",
+                "stellar-assets",
             ],
         ),
         // 무결성 진단 집계(ADR-0095, `crates/integrity`): 생산자 crate의 공개 결과만 읽고 셸·앱 runtime에 의존하지 않습니다.

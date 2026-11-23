@@ -363,6 +363,7 @@ name = "stellar-ops"
 version = "0.0.0"
 dependencies = [
  "stellar-accessibility",
+ "stellar-assets",
  "stellar-codegen",
  "stellar-commands",
  "stellar-document",

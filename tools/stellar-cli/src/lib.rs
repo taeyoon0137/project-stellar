@@ -54,6 +54,9 @@ pub mod export_styles;
 /// `export swiftui|appkit|compose`: 저장 View의 SwiftUI·AppKit·Compose 소스 (XXII.3·XXII.4).
 pub mod export_native;
 
+/// `export png`: 저장 View의 PNG 파일 (XX.2.3, ADR-0116).
+pub mod export_png;
+
 /// `css`: CSS 선언 블록 복사·붙여넣기 (IX.11.15).
 pub mod css;
 

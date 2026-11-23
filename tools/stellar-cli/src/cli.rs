@@ -76,7 +76,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "export",
-        "swiftui|appkit|compose <경로> <문서 id> <View id> [--frame <Frame id>] [--platform ios|macos]: 저장 View를 export-web과 같은 투영으로 SwiftUI·AppKit·Compose 소스로 출력합니다(구조·layout·기본 접근성, 미지원 node는 실패)",
+        "swiftui|appkit|compose <경로> <문서 id> <View id> [--frame <Frame id>] [--platform ios|macos] | png <경로> <문서 id> <View id> --output <파일> [--scale <배율>] [--profile srgb|display-p3] [--background <CSS 색>] [--accept-issues] [--omit-skipped]: 저장 View를 export-web과 같은 투영으로 SwiftUI·AppKit·Compose 소스로 출력하거나(구조·layout·기본 접근성, 미지원 node는 실패), 앱과 같은 scene 변환으로 렌더해 PNG 파일로 저장합니다(빠진 node·확인할 진단이 있으면 확인 옵션 필요)",
     ),
     (
         "css",

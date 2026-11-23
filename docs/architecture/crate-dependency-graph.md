@@ -53,7 +53,7 @@
 | `stellar-terminal` | core-types |
 | `stellar-codegen` | core-types, target-profile, accessibility, layout |
 | `stellar-prototype` | core-types, expressions, document, bindings |
-| `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile, git-porcelain, integrity, export, scene |
+| `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile, git-porcelain, integrity, export, scene, assets |
 | `stellar-integrity` | core-types, document, commands, bindings, expressions, text, accessibility, dependencies, target-profile |
 | `stellar-cli` | ops, diagnostics |
 | `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, text, ops, git-porcelain, agent-host |
@@ -140,6 +140,7 @@ graph TD
   ops --> integrity
   ops --> export
   ops --> scene
+  ops --> assets
   integrity --> core_types
   integrity --> document
   integrity --> commands
@@ -209,5 +210,7 @@ ADR-0005 §8 crate 배치 표의 "전이적으로도 도달 금지" 열입니다
 - `git-porcelain`은 `document`를 직접 의존하지 않고 snapshot 인터페이스(빈 trait)에만 의존합니다.
 - `scene`은 `document` feature에서만 `document`·`commands`에 의존합니다. 문서 → scene source 변환을 앱 runtime과 headless
   도구(`ops`·CLI·MCP)가 함께 쓰기 위해서입니다. `renderer-core`·`export`는 feature를 켜지 않습니다(ADR-0116 결정 1, 순환 없음).
+- `ops`는 PNG 내보내기의 이미지 asset 내용(asset metadata record와 content store)을 읽으려고 `assets`에 직접 의존합니다
+  (ADR-0116 결정 5).
 - 플랫폼 backend(`renderer-metal`/`renderer-d3d12`)는 공통 backend(`renderer-core`)를 역참조하지 않습니다.
 - 표에 없는 edge는 금지이며 `validate-crate-graph`가 `forbidden-edge`로 거부합니다.

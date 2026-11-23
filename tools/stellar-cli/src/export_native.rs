@@ -36,6 +36,10 @@ pub fn run(args: &[String]) -> Result<Success, CliError> {
     let Some((kind, rest)) = args.split_first() else {
         return Err(CliError::usage(USAGE));
     };
+    if kind == "png" {
+        // 같은 `export` 명령 아래 PNG 내보내기(ADR-0116 결정 5).
+        return crate::export_png::run(rest);
+    }
     let mut positional = Vec::new();
     let mut frame = None;
     // `--platform macos`면 true.

@@ -13,6 +13,9 @@ use stellar_ops::core_types::ids::StableId;
 use stellar_ops::css::{copy, paste, CssError};
 use stellar_ops::diff::DiffReport;
 use stellar_ops::export_css::export_react_native;
+use stellar_ops::export_png::view::{
+    png_base64, render_view_png, unwritten_output_path, ViewPngError, ViewPngRequest,
+};
 use stellar_ops::git::{change_id_text, GitError, GitSession, GitStatusReport, StatusRequest};
 use stellar_ops::lock::LockPolicy;
 use stellar_ops::mcp_merge::{semantic_conflicts, SemanticConflictsError};
@@ -322,6 +325,109 @@ pub(super) fn propose_css_paste(cached: &CachedRead, args: &J) -> Result<J, RpcE
         ("skipped", J::Array(skipped)),
         ("command_count", command_count),
         ("changes", changes),
+    ]))
+}
+
+/// PNG 응답 상한(base64 전 byte). JSON-RPC 메시지 상한(1 MiB) 안에 base64와 나머지 field가 들어가게 합니다.
+pub const MAX_PNG_RESPONSE_BYTES: usize = 512 * 1024;
+
+/// `document.export_png`: `stellar export png`와 같은 [`render_view_png`]. 파일을 쓰지 않고 PNG를 base64로 돌려줍니다
+/// (ADR-0116 결정 5). 빠진 node·확인할 진단은 `omit_skipped`·`accept_issues`가 없으면 실패입니다.
+pub(super) fn export_png(cached: &CachedRead, args: &J) -> Result<J, RpcError> {
+    let flag = |key: &str| -> Result<bool, RpcError> {
+        match args.get(key) {
+            None => Ok(false),
+            Some(J::Bool(value)) => Ok(*value),
+            Some(_) => Err(fail(Kind::InvalidArguments, "확인 인자는 boolean입니다")),
+        }
+    };
+    let scale = match args.get("scale") {
+        None => 1.0,
+        Some(J::Number(number)) => number
+            .as_str()
+            .parse::<f32>()
+            .map_err(|_| fail(Kind::InvalidArguments, "scale은 수입니다"))?,
+        Some(_) => return Err(fail(Kind::InvalidArguments, "scale은 수입니다")),
+    };
+    let text = |key: &str| -> Result<Option<String>, RpcError> {
+        match args.get(key) {
+            None => Ok(None),
+            Some(J::String(value)) => Ok(Some(value.clone())),
+            Some(_) => Err(fail(Kind::InvalidArguments, "문자열 인자가 필요합니다")),
+        }
+    };
+    let request = ViewPngRequest {
+        document: arg_id(args, "document")?,
+        view: arg_id(args, "view")?,
+        scale,
+        profile: text("profile")?.unwrap_or_else(|| "srgb".to_string()),
+        background: text("background")?,
+        output: unwritten_output_path(cached.snapshot.root()),
+        accept_issues: flag("accept_issues")?,
+        omit_skipped: flag("omit_skipped")?,
+    };
+    let rendered = render_view_png(&cached.snapshot, &request).map_err(|error| match error {
+        ViewPngError::Unsaved => fail(Kind::NotFound, "저장된 generation이 없습니다"),
+        ViewPngError::Document(_) => fail(Kind::NotFound, "대상 문서를 읽을 수 없습니다"),
+        ViewPngError::UnknownView(_) => fail(Kind::NotFound, "문서에 View가 없습니다"),
+        ViewPngError::InvalidRequest(_) => fail(
+            Kind::InvalidArguments,
+            "배율·profile·배경 인자가 잘못되었습니다",
+        ),
+        ViewPngError::SkippedNodes(_) => fail(
+            Kind::Rejected,
+            "그리지 못하는 node가 있습니다(omit_skipped로 확인)",
+        ),
+        ViewPngError::ConfirmationRequired(_) => fail(
+            Kind::Rejected,
+            "확인이 필요한 사전 진단이 있습니다(accept_issues로 확인)",
+        ),
+        ViewPngError::UnsupportedImage { .. } => fail(
+            Kind::Unavailable,
+            "PNG 내보내기가 해석하지 못하는 이미지 형식입니다",
+        ),
+        ViewPngError::Capture(_) => fail(
+            Kind::Unavailable,
+            "보이는 내용이 없거나 내보내기 범위를 정하지 못했습니다",
+        ),
+        ViewPngError::Scene(_) | ViewPngError::Rejected(_) | ViewPngError::Save(_) => fail(
+            Kind::Unavailable,
+            "이 View를 PNG로 렌더하지 못했습니다(지원하지 않는 효과 등)",
+        ),
+    })?;
+    if rendered.file.bytes().len() > MAX_PNG_RESPONSE_BYTES {
+        return Err(fail(
+            Kind::TooLarge,
+            "PNG가 응답 상한을 넘습니다(scale을 줄이거나 stellar export png를 쓰세요)",
+        ));
+    }
+    let skipped = rendered
+        .skipped
+        .iter()
+        .map(|node| {
+            J::object(vec![
+                ("node", id(node.node)),
+                ("reason", J::string(node.reason.code())),
+            ])
+        })
+        .collect();
+    let gamut = rendered.file.gamut();
+    Ok(J::object(vec![
+        ("revision", revision(cached.snapshot.revision())),
+        ("document", id(request.document)),
+        ("view", id(request.view)),
+        ("width", uint(u64::from(rendered.file.width()))),
+        ("height", uint(u64::from(rendered.file.height()))),
+        ("profile", J::string(rendered.profile)),
+        ("bytes", count(rendered.file.bytes().len())),
+        ("clipped_colors", uint(gamut.clipped_colors)),
+        ("extended_colors", uint(gamut.extended_colors)),
+        ("skipped", J::Array(skipped)),
+        (
+            "accepted_issues",
+            J::Array(rendered.accepted.iter().cloned().map(J::string).collect()),
+        ),
+        ("png_base64", J::string(png_base64(&rendered.file))),
     ]))
 }
 
