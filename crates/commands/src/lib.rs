@@ -77,6 +77,9 @@ pub mod snapshot_apply;
 /// Path point 편집 command (XII.10.28, ADR-0079).
 pub mod path_edit;
 
+/// Component Context 편집 command (XXX.7.8, ADR-0099).
+pub mod context;
+
 /// 기본값 세트 선택과 명시 layout longhand command (SD.4, ADR-0086).
 pub mod style_defaults;
 

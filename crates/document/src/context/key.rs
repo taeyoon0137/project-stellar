@@ -125,6 +125,22 @@ pub(crate) fn check_name(name: &str) -> Result<(), ContextKeyError> {
     Ok(())
 }
 
+/// TypeSpec canonical bytes(nullable u8 + 값 타입 tag u8 [+ Enum이면 enum id u32 LE]). key bytes 안의 형식과 같고 command
+/// codec(XXX.7.8)이 같은 함수를 씁니다.
+pub fn type_spec_bytes(spec: TypeSpec) -> Vec<u8> {
+    let mut buf = Vec::new();
+    put_type_spec(&mut buf, spec);
+    buf
+}
+
+/// [`type_spec_bytes`]를 읽습니다. 남는 bytes가 있거나 모르는 tag면 `None`.
+pub fn type_spec_from_bytes(bytes: &[u8]) -> Option<TypeSpec> {
+    let mut reader = Reader::new(bytes);
+    let spec = reader.type_spec().ok()?;
+    reader.expect_end().ok()?;
+    Some(spec)
+}
+
 /// `ContextKey` resource.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextKey {

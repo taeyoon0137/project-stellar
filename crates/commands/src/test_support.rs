@@ -612,6 +612,7 @@ pub fn generate(
                 },
             ))
         }
+        CommandKind::EditContext => crate::context::random_edit(model, rng, ids),
         CommandKind::EditPathPoint => {
             let paths = nodes_where(model, |id| kind_of(model, id) == Some(NodeKind::Path));
             let node = pick(rng, &paths)?;

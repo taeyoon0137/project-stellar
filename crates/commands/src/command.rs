@@ -339,6 +339,8 @@ pub enum Command {
     UnsetProperty(crate::style_defaults::UnsetProperty),
     /// 명시 layout longhand 두기 (SD.4).
     SetLayoutProperty(crate::style_defaults::SetLayoutProperty),
+    /// Component Context 편집(XXX.7.8, ADR-0099).
+    EditContext(crate::context::ContextCommand),
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -389,6 +391,7 @@ impl Command {
             Command::SetStyleDefaults(_) => CommandKind::SetStyleDefaults,
             Command::UnsetProperty(_) => CommandKind::UnsetProperty,
             Command::SetLayoutProperty(_) => CommandKind::SetLayoutProperty,
+            Command::EditContext(_) => CommandKind::EditContext,
             #[cfg(test)]
             Command::TestProbe(_) => CommandKind::TestProbe,
         }
@@ -423,6 +426,7 @@ impl Command {
             Command::SetStyleDefaults(command) => command.validate(model),
             Command::UnsetProperty(command) => command.validate(model),
             Command::SetLayoutProperty(command) => command.validate(model),
+            Command::EditContext(command) => command.validate(model),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.validate(model),
         }
@@ -473,6 +477,7 @@ impl Command {
             }
             Command::UnsetProperty(command) => command.invert(model),
             Command::SetLayoutProperty(command) => command.invert(model),
+            Command::EditContext(command) => command.invert(model).map(Command::EditContext),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
         }
@@ -507,6 +512,7 @@ impl Command {
             Command::SetStyleDefaults(command) => command.apply(ctx),
             Command::UnsetProperty(command) => command.apply(ctx),
             Command::SetLayoutProperty(command) => command.apply(ctx),
+            Command::EditContext(command) => command.apply(ctx),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.apply(ctx),
         }
