@@ -194,6 +194,81 @@ component:
 nodes: [...]               # root 포함, StableId 오름차순, modifiers 없음
 ```
 
+## 다중 파일 원본(프로젝트 전체 의미)
+
+`stellar text-source export-project <프로젝트> <새 design 폴더>`가 저장된 generation 전체를 아래 배치로 내보내고, `check-project <design 폴더>`가 읽기 전용으로 검사합니다. 구현은 [`source_v4/project.rs`](../../crates/project/src/document_io/source_v4/project.rs)입니다.
+
+```text
+design/
+  document.stellar.yaml                       문서·페이지·View 목록과 참조
+  pages/<page>/<view>.stellar.yaml            View 하나와 node
+  pages/<page>/<view>/<frame>.stellar.yaml    큰 Frame 하위 파일($ref)
+  components/<이름>-<hash12>.stellar.yaml     컴포넌트 정의 하나
+  tokens/<set>.stellar.yaml                   token set 하나
+  assets/catalog.stellar.yaml                 이미지·글꼴·Text style 표
+```
+
+```yaml
+# document.stellar.yaml
+format: stellar-document
+schema_version: "4"
+document:
+  id: "<StableId>"
+  display_name: "..."
+pages:
+  -
+    id: "<StableId>"
+    display_name: "..."
+    views:
+      - "pages/home/main.stellar.yaml"
+```
+
+```yaml
+# pages/home/main.stellar.yaml
+format: stellar-view
+schema_version: "4"
+view:
+  id: "<StableId>"
+  display_name: Main
+  root_frame: "<StableId>"
+nodes:
+  - ...                                # node, StableId 오름차순
+  -
+    "$ref": main/grid.stellar.yaml     # 하위 파일, 경로 오름차순, node 뒤
+```
+
+```yaml
+# pages/home/main/grid.stellar.yaml
+format: stellar-frame
+schema_version: "4"
+frame: "<이 파일 root Frame StableId>"
+nodes: [...]
+```
+
+- 파일 이름(페이지·View·분할 Frame·token set)은 표시 이름의 ASCII slug(소문자·숫자·`-`, 최대 64자)입니다. 비면 종류 이름이고, 같은 폴더에서 겹치면 겹친 항목 모두에 StableId SHA-256 앞 12자리를 붙입니다. 정체성은 파일 안의 StableId입니다.
+- 직계 자식이 2,000개를 넘는 Frame은 하위 파일로 나눕니다. 파일이 1 MiB를 넘으면 그 파일 안에서 하위 tree가 가장 큰 Frame(64 KiB 이상)부터 나눕니다.
+- 파일 안의 node는 부모가 같은 파일에 있어야 합니다. 하위 파일 root의 부모만 참조한 파일에 있습니다.
+- `$ref`는 참조 파일 기준 아래쪽 상대 경로입니다. 참조하지 않은 파일, 두 번 참조한 파일, 모르는 경로, symlink는 거부합니다. 전체 읽기는 64 MiB, 파일 4,096개까지입니다.
+- 문서는 Text style 표를 담지 않고 catalog 항목을 참조합니다. root 문서는 하나입니다.
+- export는 generation의 chunk 전체(문서 chunk, component library, asset metadata)를 소비하고, 다시 읽은 의미가 같을 때만 씁니다. 프로젝트 루트 안으로는 내보내지 않습니다(기본 저장 전환 V.10.7 전 이중 원본 방지).
+
+### token set
+
+```yaml
+format: stellar-tokens
+schema_version: "4"
+set:
+  id: "<StableId>"
+  name: "Brand"
+tokens:                     # id 오름차순, 이름은 set 안에서 유일
+  -
+    id: "<TokenRef>"
+    name: "space/4"
+    expression: "<기본 표현식 리터럴 node id>"
+    type: length
+    value: "16px"
+```
+
 ## asset catalog
 
 `design/assets/catalog.stellar.yaml` 하나가 이미지 asset record, 등록 글꼴, 문서별 Text style 표의 원본입니다. 문서·View·컴포넌트는 asset StableId·글꼴 file hash·style index로 참조만 합니다.
@@ -232,6 +307,10 @@ text-styles:                 # 문서 StableId 오름차순, 각 항목은 위 T
 ```
 
 읽은 글꼴·asset 값은 binary record로 다시 인코딩해 원본 bytes와 같은지 확인합니다. 보존된 unknown optional field가 있는 record, 문서마다 다른 record를 가진 같은 file hash, 값이 문자열 `none`인 이름·라이선스 field는 쓰지 않습니다.
+
+## node 위치(source span)
+
+`stellar query <design 폴더> --source-span <node StableId>`는 node 항목의 파일(`design/` 기준)과 시작·끝 줄(1부터, 끝 포함)을 돌려줍니다. 줄 범위는 `nodes` 목록에서 `  -`로 시작하는 항목입니다.
 
 ## Git 병합
 

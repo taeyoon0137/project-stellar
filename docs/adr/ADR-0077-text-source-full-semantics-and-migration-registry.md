@@ -31,12 +31,18 @@ Accepted (2026-11-23). 엔진 lane `text-source-codec`(V.10.3·V.10.4·IX.11.21�
    - 큰 Frame은 하위 파일 `pages/<page-slug>/<view-slug>/<frame-slug>.stellar.yaml`로 나누고 부모 파일의 `nodes`에
      `$ref: <참조 파일 기준 상대 경로>` 항목을 둡니다. 분할 임계값은 **직계 자식 2,000개** 또는 **파일 1 MiB**입니다.
      직계 자식이 2,000개를 넘는 Frame은 항상 나누고, 파일이 1 MiB를 넘으면 그 파일 안에서 하위 tree가 가장 큰
-     Frame부터 나눕니다. 결과는 모델만의 함수입니다.
-   - `components/<slug>.stellar.yaml`: 컴포넌트 정의 하나 = 파일 하나.
-   - `tokens/<slug>.stellar.yaml`: token set 하나 = 파일 하나.
+     Frame부터 나눕니다. 하위 tree가 64 KiB 미만인 Frame은 1 MiB 때문에 나누지 않습니다(작은 Frame을 하나씩 떼어
+     파일이 폭증하지 않게). 그런 Frame만 남은 1 MiB 초과 파일은 쓰기를 거부합니다. 결과는 모델만의 함수입니다.
+   - `components/<이름>-<hash12>.stellar.yaml`: 컴포넌트 정의 하나 = 파일 하나. 컴포넌트는 ADR-0061 결정 5의 파일
+     이름(표시 이름 + StableId SHA-256 앞 12자리)을 그대로 씁니다. CLI `component-source create`는 다른 파일을
+     옮기지 않고 한 파일만 만드는 증분 명령이라, 이름이 겹쳐도 다른 파일 이름을 바꿀 필요가 없는 이 규칙이 맞습니다.
+     이름을 바꾸면 이 파일 하나가 옮겨져 Git rename이 됩니다.
+   - `tokens/<slug>.stellar.yaml`: token set 하나 = 파일 하나. token 모델(`stellar-bindings`)은 crate 정책상
+     project가 의존할 수 없어, 파일 의미는 core 값(token id·이름·기본 표현식 node id·리터럴 값)으로 정의합니다.
+     `TokenSet`과의 변환은 bindings를 쓰는 계층이 맡습니다(현재 제품 generation에는 token chunk가 없습니다).
    - `assets/catalog.stellar.yaml`: 이미지 asset record, 등록 글꼴(ProjectFontRecord와 글꼴 파일 AssetRecord), 문서별
      Text style 표의 유일한 원본. 문서·View·컴포넌트는 asset StableId·글꼴 file hash·style index로 참조만 합니다.
-   - 파일 이름은 표시 이름의 slug이고 정체성은 파일 안의 StableId입니다. slug는 ASCII 소문자·숫자·`-`(최대 64자)만
+   - 페이지·View·분할 Frame·token set 파일 이름은 표시 이름의 slug이고 정체성은 파일 안의 StableId입니다. slug는 ASCII 소문자·숫자·`-`(최대 64자)만
      쓰며(파일 시스템·Git의 Unicode 정규화 차이 방지), 비면 종류 이름(`page`, `view`, `frame`, `component`,
      `tokens`)입니다. 같은 폴더에서 slug가 겹치면 겹친 항목 모두에 StableId SHA-256 앞 12자리를 붙입니다. 이름을
      바꾸면 그 파일 하나만 옮겨 Git rename이 됩니다. reader는 파일 이름을 식별에 쓰지 않습니다.
@@ -112,7 +118,7 @@ Accepted (2026-11-23). 엔진 lane `text-source-codec`(V.10.3·V.10.4·IX.11.21�
 
 - 파일 포맷: View·컴포넌트 원본 쓰기 버전이 v4로 바뀝니다. 커밋된 View v1·v2, 컴포넌트 v1~v3은 계속 읽습니다.
   공개 포맷 동결 전이라 외부 호환 약속은 없습니다.
-- 컴포넌트 파일 이름: 새 파일은 slug 이름입니다. 기존 `<이름>-<hash12>` 파일은 이름 그대로 읽습니다.
+- 컴포넌트 파일 이름: ADR-0061 결정 5 규칙을 그대로 씁니다.
 - 공개 API: `SavedProjectError`에 `Schema`·`Migration`이 추가되었고, 새 schema generation은 열기 단계에서 거부됩니다.
   CLI·MCP 조회 JSON은 바뀌지 않습니다.
 - FFI·보호 경로(`crates/core-types`, `crates/storage`, `crates/ffi`, schemas, 성능 예산)는 바꾸지 않습니다.

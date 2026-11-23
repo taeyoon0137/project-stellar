@@ -155,6 +155,95 @@ pub fn export(
     })
 }
 
+/// 다중 파일 원본 export·검사 결과(V.10.4). 경로와 내용은 포함하지 않습니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextProjectOutcome {
+    /// root 문서 StableId.
+    pub document: StableId,
+    /// 파일 수.
+    pub file_count: usize,
+    /// 파일 이름·bytes 집합의 hash.
+    pub source_hash: ContentHash,
+    /// 문서 node 수.
+    pub node_count: usize,
+    /// 컴포넌트 정의 수.
+    pub component_count: usize,
+    /// 이미지 asset record 수.
+    pub image_count: usize,
+}
+
+fn set_hash(files: &std::collections::BTreeMap<String, String>) -> ContentHash {
+    let mut input = Vec::new();
+    for (path, text) in files {
+        for part in [path.as_bytes(), text.as_bytes()] {
+            input.extend_from_slice(&(part.len() as u64).to_le_bytes());
+            input.extend_from_slice(part);
+        }
+    }
+    ContentHash::compute(&input)
+}
+
+fn project_outcome(
+    project: &stellar_project::document_io::source_v4::project::TextProject,
+    files: &std::collections::BTreeMap<String, String>,
+) -> TextProjectOutcome {
+    TextProjectOutcome {
+        document: project.document.document_id(),
+        file_count: files.len(),
+        source_hash: set_hash(files),
+        node_count: project.document.node_count(),
+        component_count: project.components.len(),
+        image_count: project.images.len(),
+    }
+}
+
+/// 저장된 프로젝트 전체(문서·컴포넌트·이미지·Text style 표)를 새 `design` 폴더의 다중 파일 원본으로 내보냅니다.
+///
+/// generation의 모든 chunk를 소비하고, 다시 읽은 의미가 원본과 같을 때만 씁니다. 기본 저장 전환(V.10.7) 전에는
+/// generation이 원본이므로 프로젝트 루트 안으로의 출력은 두 번째 원본이 되어 거부합니다. 원본 generation은 바꾸지
+/// 않습니다.
+pub fn export_project(
+    project: &Path,
+    output: &Path,
+) -> Result<TextProjectOutcome, TextSourceOperationError> {
+    use stellar_project::document_io::source_v4::project as text_project;
+    let snapshot = open_snapshot(project).map_err(TextSourceOperationError::Open)?;
+    if inside_project(project, output)? {
+        return Err(TextSourceOperationError::Unsupported(
+            "프로젝트 루트 안으로 내보내면 generation과 함께 두 번째 원본이 됩니다".into(),
+        ));
+    }
+    let generation = snapshot.generation().ok_or_else(|| {
+        TextSourceOperationError::Unsupported("저장된 generation이 필요합니다".into())
+    })?;
+    if generation.manifest().schema_version != crate::migrate::CURRENT_SCHEMA_VERSION {
+        return Err(TextSourceOperationError::Unsupported(
+            "지원하는 generation 스키마가 필요합니다".into(),
+        ));
+    }
+    let [document] = snapshot.documents() else {
+        return Err(TextSourceOperationError::Unsupported(
+            "정확히 한 문서가 필요합니다".into(),
+        ));
+    };
+    let model = snapshot
+        .document_model(document.id)
+        .map_err(TextSourceOperationError::Document)?;
+    let (yaml, _) = crate::component_source::project_library(&snapshot)?;
+    let text = text_project::from_saved(generation, model, yaml)?;
+    let encoded = text_project::encode(&text)?;
+    text_project::write_new(output, &encoded)?;
+    Ok(project_outcome(&text, &encoded.files))
+}
+
+/// 다중 파일 원본 `design` 폴더를 읽기 전용으로 검사합니다.
+pub fn check_project(design: &Path) -> Result<TextProjectOutcome, TextSourceOperationError> {
+    use stellar_project::document_io::source_v4::project as text_project;
+    let files = text_project::read_dir(design)?;
+    let project = text_project::decode(&files)?;
+    Ok(project_outcome(&project, &files))
+}
+
 /// 텍스트 원본을 읽기 전용으로 열고 문서 불변식을 검사합니다.
 pub fn check(path: &Path) -> Result<TextSourceOutcome, TextSourceOperationError> {
     let opened = text_source::open(path)?;

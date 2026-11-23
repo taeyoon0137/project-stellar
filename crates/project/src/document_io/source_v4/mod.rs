@@ -14,8 +14,16 @@ pub(crate) mod css;
 pub(crate) mod keys;
 /// node·modifier 레코드.
 pub(crate) mod node;
+/// 프로젝트 전체 의미의 다중 파일 원본(V.10.4).
+pub mod project;
+/// 파일 이름 slug.
+pub(crate) mod slug;
+/// node → 파일·줄 범위(TS-MAP).
+pub mod span;
 /// 문서 Text style 표.
 pub(crate) mod styles;
+/// token set 원본.
+pub mod token;
 /// 단일 View 원본.
 pub(crate) mod view;
 

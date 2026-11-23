@@ -13,7 +13,7 @@ use stellar_core_types::{
 use stellar_document::component::definition::{
     ComponentDefinition, ComponentLibrary, DefinitionNode, DefinitionTree,
 };
-use stellar_document::frame::{Clipping, FramePayload};
+use stellar_document::frame::FramePayload;
 use stellar_document::record_codec::encode_payload;
 use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_storage::{hash::ContentHash, source_file};
@@ -58,15 +58,11 @@ pub struct ComponentSource {
     children: BTreeMap<StableId, NodeRecord>,
 }
 
-fn check_frame(payload: &NodePayload) -> Result<(), TextSourceError> {
-    let NodePayload::Frame(frame) = payload else {
+/// 정의 root는 Frame이어야 합니다. 자식은 v4가 쓰는 모든 node 종류를 받습니다(ADR-0077 결정 2).
+fn check_root(payload: &NodePayload) -> Result<(), TextSourceError> {
+    if !matches!(payload, NodePayload::Frame(_)) {
         return Err(TextSourceError::Unsupported(
-            "컴포넌트는 Free Frame만 지원합니다".into(),
-        ));
-    };
-    if frame.layout_mode.is_some() || matches!(frame.clipping, Clipping::Path(_)) {
-        return Err(TextSourceError::Unsupported(
-            "외부 layout 또는 Path 참조".into(),
+            "컴포넌트 정의 root는 Frame이어야 합니다".into(),
         ));
     }
     Ok(())
@@ -181,7 +177,9 @@ impl ComponentSource {
                     "component와 Frame에는 서로 다른 StableId가 필요합니다",
                 ));
             }
-            check_frame(&record.payload)?;
+            if record.id == self.root.id {
+                check_root(&record.payload)?;
+            }
             tree.insert(DefinitionNode {
                 id: record.id,
                 kind: record.kind(),
@@ -208,7 +206,64 @@ impl ComponentSource {
         source_filename(self.definition.display_name(), self.definition.id)
     }
 
-    fn add_to(&self, library: &mut ComponentLibrary) -> Result<(), TextSourceError> {
+    /// library 항목을 원본으로 옮깁니다. Property·Slot·상태 머신은 표현식 문법이 정해지기 전이라 거부합니다
+    /// (ADR-0077 결정 3).
+    pub fn from_entry(
+        entry: &stellar_document::component::definition::ComponentEntry,
+    ) -> Result<Self, TextSourceError> {
+        let definition = entry.definition();
+        if !definition.properties().is_empty()
+            || !definition.slots().is_empty()
+            || entry.slots().next().is_some()
+            || !entry.state_machine().is_empty()
+        {
+            return Err(TextSourceError::Unsupported(format!(
+                "컴포넌트 {}의 Property·Slot·상태 머신",
+                definition.id
+            )));
+        }
+        let mut root = None;
+        let mut children = BTreeMap::new();
+        for node in entry.tree().iter() {
+            let record = NodeRecord {
+                id: node.id,
+                parent: node.parent,
+                order_key: node.order_key.clone(),
+                visible: node.visible,
+                locked: node.locked,
+                display_name: node.display_name.clone(),
+                payload: stellar_document::record_codec::decode_payload(node.kind, &node.payload)
+                    .map_err(invalid)?,
+            };
+            if record.id == definition.root.id() {
+                root = Some(record);
+            } else {
+                children.insert(record.id, record);
+            }
+        }
+        let source = Self {
+            definition: definition.clone(),
+            root: root.ok_or_else(|| invalid("정의 tree에 root가 없습니다"))?,
+            children,
+        };
+        source.definition_tree()?;
+        Ok(source)
+    }
+
+    /// 쓰기 v4 텍스트.
+    pub(crate) fn to_text(&self) -> Result<String, TextSourceError> {
+        self.to_yaml()
+    }
+
+    /// 원본 텍스트를 읽습니다(v1~v4).
+    pub(crate) fn from_text(text: &str) -> Result<Self, TextSourceError> {
+        let source = Self::decode(text)?;
+        source.definition_tree()?;
+        Ok(source)
+    }
+
+    /// 정의와 tree를 library에 등록합니다.
+    pub(crate) fn add_to(&self, library: &mut ComponentLibrary) -> Result<(), TextSourceError> {
         library
             .insert(self.definition.clone(), self.definition_tree()?)
             .map_err(invalid)
@@ -788,7 +843,7 @@ mod tests {
     use super::*;
     use stellar_core_types::color::{Color, ColorSpace};
     use stellar_core_types::value::Transform2D;
-    use stellar_document::frame::{Border, CornerRadius};
+    use stellar_document::frame::{Border, Clipping, CornerRadius};
 
     #[test]
     fn project_read_preserves_budget_and_first_error() {
