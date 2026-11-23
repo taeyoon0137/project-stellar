@@ -15,7 +15,9 @@ use stellar_ops::diff::DiffReport;
 use stellar_ops::git::{change_id_text, GitError, GitSession, GitStatusReport, StatusRequest};
 use stellar_ops::lock::LockPolicy;
 use stellar_ops::mcp_merge::{semantic_conflicts, SemanticConflictsError};
-use stellar_ops::query::{node_layout, property_path_label, LayoutUnavailable, NodeLayout};
+use stellar_ops::query::{
+    node_layout, property_path_label, LayoutUnavailable, NodeLayout, QueryError,
+};
 use stellar_ops::revision::ProjectRevision;
 use stellar_ops::text_source::source_span;
 use stellar_ops::web_frame::{export_web_frame_node, HtmlError};
@@ -220,8 +222,10 @@ pub(super) fn copy_css(cached: &CachedRead, args: &J) -> Result<J, RpcError> {
     let node = arg_id(args, "node")?;
     let copied = copy(cached.snapshot.root(), document, node).map_err(|e| css_failure(&e))?;
     ensure_current(cached, copied.revision)?;
-    let layout = node_layout(&cached.snapshot, document, node)
-        .map_err(|_| fail(Kind::NotFound, "문서에 node가 없습니다"))?;
+    let layout = node_layout(&cached.snapshot, document, node).map_err(|e| match e {
+        QueryError::UnknownNode { .. } => fail(Kind::NotFound, "문서에 node가 없습니다"),
+        _ => fail(Kind::NotFound, "대상 문서를 읽을 수 없습니다"),
+    })?;
     Ok(J::object(vec![
         ("revision", revision(copied.revision)),
         ("document", id(copied.document)),
