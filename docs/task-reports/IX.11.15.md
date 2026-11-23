@@ -18,8 +18,10 @@
   값, 묶음 행은 longhand로, 레이어 속성 제외, Stellar 전용 표시), `paste_declarations`·`PastePlan`·
   `SkippedDeclaration`·`AppliedDeclaration`·`PasteError`(shorthand 펼침, 문서 사본에서 선언을 순서대로 적용해 뒤
   선언이 이기고 새 modifier 순서 key가 겹치지 않음, 결과는 transaction 하나), test.
-- `crates/commands/src/inspector.rs` — 같은 값이면 빈 이동 Transform modifier를 넣지 않음, 칠하기 없이 문서
-  기본 글자색을 물려받는 Text에 같은 `color`를 넣으면 바꾸지 않음(둘 다 "값이 같으면 command 없음" 규칙의 누락).
+- `crates/commands/src/inspector.rs` — 같은 값이면 빈 이동 Transform modifier를 넣지 않음, 값이 같은
+  `SetModifierProperty`를 빼는 규칙("값이 같으면 command 없음"의 누락, 검토 보완). 물려받은 Text 글자색과 같은 색을
+  넣어도 명시 Fill을 만듭니다(ADR-0082 결정 5, 검토 보완에서 처음 구현의 억제 규칙을 되돌림).
+- `crates/commands/src/modifier_ops.rs`(소유 밖, 최소 변경) — payload 읽기 함수를 crate 안에 공개.
 - `crates/ops/src/css.rs`(신규) — headless `copy`·`paste`(붙여넣기는 `apply`의 base revision 검사·저장 잠금·세대
   전환 저장 한 transaction). `crates/ops/src/lib.rs` 등록.
 - `tools/stellar-cli/src/css.rs`(신규) — `stellar css copy|paste [--dry-run]`, 건너뜀은 결과 `skipped`와 경고
@@ -29,7 +31,8 @@
 ## 구현 요약
 
 - 건너뜀 이유 코드: 값 오류 코드(`unsupported-unit`·`unsupported-value`·`unknown-token`·`forbidden-value`·
-  `invalid-value`), `invalid-declaration`, `unknown-property`(저장 위치 없음, 예: `padding`·`margin`), `not-applicable`
+  `invalid-value`), `invalid-declaration`, `unknown-property`(저장 위치 없음, 예: `padding`·`margin`), `unsupported-property`(registry에
+  저장 위치가 있지만 속성 패널 행이 없어 붙여넣기 경로가 아직 없음, 예: `opacity`·`transform`·`stroke-linecap`), `not-applicable`
   (선택 node 종류에 없는 속성, 레이어 속성), `rejected`(잠금·D7 등 편집 규칙). Constraint CenterX·CenterY가
   내는 `calc(50% + <offset>)`는 parser가 받지 않아 `unsupported-value`로 건너뜁니다.
 - `var(--name)`은 해석은 하지만 값 binding 저장 경로가 없어 `unsupported-value`로 건너뜁니다(조용히 버리지 않음).
@@ -61,7 +64,11 @@
 ## 차이(작업 지시와 다른 점)
 
 - `stellar query`·`stellar apply` JSON의 속성 경로는 숫자 key 표기이며 이 lane 소유 밖이라 이름 표기로 바꾸지 않았습니다. 대신 경로가 longhand key(0x0108·0x010b)인지 CLI 통합 test로 확인하고, CSS 이름은 새 `stellar css`가 냅니다.
-- 속성 패널 편집 규칙 두 곳(빈 이동 modifier, 물려받은 Text 색)을 "값이 같으면 command 없음"에 맞게 고쳤습니다. 왕복 test가 찾은 누락입니다.
+- 속성 패널 편집 규칙(빈 이동 modifier, 같은 값 modifier 편집)을 "값이 같으면 command 없음"에 맞게 고쳤습니다.
+  물려받은 Text 색은 편집 규칙을 바꾸지 않고 복사가 명시 값만 내도록 했습니다(ADR-0082 결정 5).
+- 복사·붙여넣기 범위는 속성 패널 행이 있는 속성입니다. `opacity`·`mix-blend-mode`·`transform`·`stroke-linecap`·
+  `image-rendering`·shadow·blur는 복사에 나오지 않으므로, 이 속성이 있는 node의 copy→paste 왕복은 semantic snapshot
+  전체가 아니라 속성 패널 속성 범위에서만 같습니다.
 
 ## 남은 위험 / 한계
 
