@@ -4874,7 +4874,7 @@ tasks:
       - DEV-MAC
     report: "docs/task-reports/IX.11.3.md"
   - id: "IX.11.4"
-    title: "layout 엔진 Stack 의미를 CSS Flexbox에 맞춥니다. `flex-shrink` 기본 1, `align-items`·`align-content` 생략값 `normal`(stretch), 자식별 `align-self`, 축 고정 `row-gap`·`column-gap` 입력, stretch 대상 제한을 구현합니다. stretch(`normal` 포함)는 cross 크기가 `auto`인 자식(속성 모델 4.3절 Fill)만 늘리고, HugContent(`fit-content`)·Fixed·Percentage 자식은 `flex-start`처럼 놓습니다. 지금 엔진은 `Stretch`에서 cross 축이 HugContent인 자식도 늘립니다(`crates/layout/src/stack.rs` `child_constraint`). flex item 자동 최소 크기는 IX.11.23이 맡습니다. 바뀐 X.11.1 corpus 기대값은 다섯 변경별로 나눠 fixture별 변경 이유와 함께 갱신합니다."
+    title: "layout 엔진의 flex 배치 의미를 CSS Flexbox에 맞춥니다. `flex-shrink` 기본 1, `align-items`·`align-content` 생략값 `normal`(stretch), 자식별 `align-self`, 축 고정 `row-gap`·`column-gap` 입력, stretch 대상 제한을 구현합니다. stretch(`normal` 포함)는 cross 크기가 `auto`인 자식만 늘리고, cross 크기가 `fit-content`·`<length>`·`<percentage>`인 자식은 `flex-start`처럼 놓습니다. 작성 당시 엔진은 stretch에서 cross 크기가 `fit-content`인 자식도 늘렸습니다. flex item 자동 최소 크기는 IX.11.23이 맡습니다. 바뀐 X.11.1 corpus 기대값은 다섯 변경별로 나눠 fixture별 변경 이유와 함께 갱신합니다."
     status: reported_done
     depends_on:
       - "IX.11.1"
@@ -4884,7 +4884,7 @@ tasks:
       - DEV-MAC
     report: "docs/task-reports/IX.11.4.md"
   - id: "IX.11.5"
-    title: "Grid·Free·Overlay 의미를 CSS에 맞춥니다. grid item 생략 정렬을 `normal`(stretch)로 하고 `justify-self`·`align-self`를 추가합니다. grid item stretch도 크기가 `auto`인 축만 영역 크기로 늘리고 크기가 `auto`가 아닌 자식(Fixed·Percentage·HugContent)은 시작 쪽에 놓습니다. track 최솟값 `auto`(item 최소 기여)를 추가해 bare `fr`을 CSS `minmax(auto, <n>fr)`로 해석하고, 기존 `TrackSize::Fraction`은 `minmax(0, <n>fr)`과 같게 둡니다. fr 크기 계산은 CSS 규칙으로 맞춥니다. fr 가중치 합이 1보다 작으면 1로 나누고, 가용 크기가 indefinite이면 factor가 1 이하인 track은 base나 기여를 factor로 나누지 않습니다. 지금 엔진은 합과 관계없이 남는 공간 전체를 비례 분배합니다(`crates/layout/src/grid_tracks.rs` 규칙 4, 속성 모델 4.4절). Free containing block을 padding box로 바꾸고 백분율 위치·크기의 기준도 content rect(X.2.3)에서 padding box로 바꾸며, anchor 없는 축은 시작 anchor 0으로 해석합니다. absolute 자식이 부모 Hug 크기에 기여하지 않게 합니다. Overlay 정렬 이름을 `justify-items`·`align-items`로 맞추고, `OverlayAlignment`(지금 Start·Center·End, `crates/layout/src/overlay.rs`)에 stretch를 더해 생략값을 CSS initial value(`normal`, stretch)로 바꿉니다. stretch는 크기가 `auto`인 축만 영역 크기로 늘리고 크기가 `auto`가 아닌 자식(Fixed·Percentage·HugContent)은 시작 쪽에 놓습니다. `grid-auto-rows`의 CSS initial value `auto`는 지금 track 어휘로 표현할 수 없으므로(엔진 기본 `TrackSize::MaxContent`, 속성 모델 4.4절 `implicit_row` 행) `auto` track을 추가할지, 영속 record가 `grid-auto-rows`를 생략 없이 명시 `max-content`로 저장할지를 이 행에서 정해 보고서에 기록하고 IX.11.6이 따릅니다. 영속 record 생략값은 CSS initial value, 새 노드 생성 preset은 명시 값입니다."
+    title: "Grid와 작성 당시 엔진의 자유 배치·겹침 배치 의미를 CSS(Grid, positioning)에 맞춥니다. grid item 생략 정렬을 `normal`(stretch)로 하고 `justify-self`·`align-self`를 추가합니다. grid item stretch도 크기가 `auto`인 축만 영역 크기로 늘리고 크기가 `auto`가 아닌 자식(`<length>`·`<percentage>`·`fit-content`)은 시작 쪽에 놓습니다. track 최솟값 `auto`(item 최소 기여)를 추가해 bare `fr`을 CSS `minmax(auto, <n>fr)`로 해석하고, 기존 `TrackSize::Fraction`은 `minmax(0, <n>fr)`과 같게 둡니다. fr 크기 계산은 CSS 규칙으로 맞춥니다. fr 가중치 합이 1보다 작으면 1로 나누고, 가용 크기가 indefinite이면 factor가 1 이하인 track은 base나 기여를 factor로 나누지 않습니다. 지금 엔진은 합과 관계없이 남는 공간 전체를 비례 분배합니다(`crates/layout/src/grid_tracks.rs` 규칙 4, 속성 모델 4.4절). 자유 배치의 containing block을 padding box로 바꾸고 백분율 위치·크기의 기준도 content rect(X.2.3)에서 padding box로 바꾸며, anchor 없는 축은 시작 anchor 0으로 해석합니다. absolute 자식이 부모의 내용 기반 크기(`fit-content` 등)에 기여하지 않게 합니다. 겹침 배치(Overlay) 정렬 이름을 `justify-items`·`align-items`로 맞추고, `OverlayAlignment`(지금 Start·Center·End, `crates/layout/src/overlay.rs`)에 stretch를 더해 생략값을 CSS initial value(`normal`, stretch)로 바꿉니다. stretch는 크기가 `auto`인 축만 영역 크기로 늘리고 크기가 `auto`가 아닌 자식(`<length>`·`<percentage>`·`fit-content`)은 시작 쪽에 놓습니다. `grid-auto-rows`의 CSS initial value `auto`는 지금 track 어휘로 표현할 수 없으므로(엔진 기본 `TrackSize::MaxContent`, 속성 모델 4.4절 `implicit_row` 행) `auto` track을 추가할지, 영속 record가 `grid-auto-rows`를 생략 없이 명시 `max-content`로 저장할지를 이 행에서 정해 보고서에 기록하고 IX.11.6이 따릅니다. 영속 record의 생략값은 활성 기본값 세트로 풀고(ADR-0082, 기본 세트 `css`는 CSS initial value), 새 노드를 만들 때 쓰는 값은 명시 값입니다."
     status: reported_done
     depends_on:
       - "IX.11.1"
@@ -4906,15 +4906,8 @@ tasks:
       - "V.8.6"
     required_environments:
       - DEV-MAC
-  - id: "IX.11.7"
-    title: "sizing preset(Fixed·Percentage·HugContent·Fill)과 longhand 사이의 순수 변환 함수를 구현합니다. preset→longhand는 속성 모델 4.3절 표를 따르고, longhand→preset은 표와 정확히 일치할 때만 preset을 돌려주며 아니면 Custom입니다."
-    status: not_started
-    depends_on:
-      - "IX.11.6"
-    required_environments:
-      - DEV-MAC
   - id: "IX.11.8"
-    title: "CSS 레이아웃 적합성 fixture를 추가합니다. Flexbox 60개, Grid 40개, positioning 30개 이상이며 각 fixture는 CSS 선언과 기대 border box rect를 가집니다. 기대값은 Chromium 계열 고정 버전 브라우저 하나(1/64 px LayoutUnit, 속성 모델 1.3절)로 생성한 JSON을 커밋하고, 생성 절차와 브라우저 버전을 fixture README에 기록합니다. 브라우저와 생성 스크립트는 빌드·테스트 의존성이 아닌 개발 도구이며, 도입 전에 `config/dependencies.yaml` 승인 절차(계획 1장 14번)를 거칩니다. 테스트는 브라우저를 실행하지 않습니다. 텍스트는 고정 intrinsic 크기 대체 요소로 둡니다. 기본 fixture는 남는 공간이 1/64 px 격자에서 나누어떨어지는 입력만 쓰고, 잔여 분배·가운데 정렬 반올림 차이는 별도 `distribution` 묶음으로 둡니다. 두 축 indefinite `aspect-ratio`, 한 축만 definite인 `aspect-ratio` Frame 안 넘치는 콘텐츠(14장 E10, 비율 축 `min-*: 0px`을 명시한 선언은 일치), 음수 남는 공간의 `space-around`·`space-evenly`, bare `fr`, fr 합이 1보다 작은 Grid, 기본 Stack(`align-items: normal`) 안 `fit-content` 자식, flex item 자동 최소 크기 fixture를 포함합니다."
+    title: "CSS 레이아웃 적합성 fixture를 추가합니다. Flexbox 60개, Grid 40개, positioning 30개 이상이며 각 fixture는 CSS 선언과 기대 border box rect를 가집니다. 기대값은 Chromium 계열 고정 버전 브라우저 하나(1/64 px LayoutUnit, 속성 모델 1.3절)로 생성한 JSON을 커밋하고, 생성 절차와 브라우저 버전을 fixture README에 기록합니다. 브라우저와 생성 스크립트는 빌드·테스트 의존성이 아닌 개발 도구이며, 도입 전에 `config/dependencies.yaml` 승인 절차(계획 1장 14번)를 거칩니다. 테스트는 브라우저를 실행하지 않습니다. 텍스트는 고정 intrinsic 크기 대체 요소로 둡니다. 기본 fixture는 남는 공간이 1/64 px 격자에서 나누어떨어지는 입력만 쓰고, 잔여 분배·가운데 정렬 반올림 차이는 별도 `distribution` 묶음으로 둡니다. 두 축 indefinite `aspect-ratio`, 한 축만 definite인 `aspect-ratio` Frame 안 넘치는 콘텐츠(14장 E10, 비율 축 `min-*: 0px`을 명시한 선언은 일치), 음수 남는 공간의 `space-around`·`space-evenly`, bare `fr`, fr 합이 1보다 작은 Grid, 기본 flex 컨테이너(`align-items: normal`) 안 `fit-content` 자식, flex item 자동 최소 크기 fixture를 포함합니다."
     status: reported_done
     depends_on:
       - "IX.11.4"
@@ -4936,7 +4929,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.10"
-    title: "Frame border를 4변 `border-*-width`·`-style`·`-color` longhand로 바꾸는 migration을 IX.11.21 registry step으로 구현합니다. 기존 `Border{color, thickness}`는 4변 같은 값과 style `solid`로, 없음은 `none`으로 옮기고, 12개 longhand에 ADR-0024 결정 14로 key를 할당하며 0x0105는 묶음 key로 남기되 이 schema 이후 새 command로 받지 않습니다. border가 CSS처럼 padding box를 줄이도록 layout 입력에 border 두께를 넣고, 화면 위치를 보존하려고 border가 있는 부모의 Free 자식 `left`·`top`에서 부모 border 두께를 뺍니다(IX.11.9 뒤 적용). IX.11.6 이전 schema에서 온 입력에는 layout record가 없어 모든 자식이 Free 자식입니다. 입력 schema에 영속 layout record(IX.11.6)가 있어 border가 있는 부모가 flow 방식(Stack·Grid·Overlay)이면, 부모의 각 변 `padding-*`에서 그 변 border 두께를 빼 flow 자식의 위치와 부모 Hug 크기를 보존합니다. padding이 border 두께보다 작은 변은 padding을 `0px`로 두고 보존하지 못한 차이를 노드별로 migration 보고서에 기록합니다(속성 모델 5장 `border` 행). 이런 중간 schema 입력의 Free 자식은 지정된 `right`·`bottom`도 그 변 border 두께로 같은 방식으로 보정하고, 백분율 inset·크기처럼 길이 보정으로 보존할 수 없는 값은 보고서에 기록합니다. 0x0105를 가리키는 저장 참조(index segment 포함)는 IX.11.9와 같은 규칙으로 값 변환 없이 보존·보고합니다. Frame payload schema 변경은 storage format 변경이므로(I.3.5) 같은 diff에서 ADR을 작성하거나 ADR-0024를 개정합니다."
+    title: "Frame border를 4변 `border-*-width`·`-style`·`-color` longhand로 바꾸는 migration을 IX.11.21 registry step으로 구현합니다. 기존 `Border{color, thickness}`는 4변 같은 값과 style `solid`로, 없음은 `none`으로 옮기고, 12개 longhand에 ADR-0024 결정 14로 key를 할당하며 0x0105는 묶음 key로 남기되 이 schema 이후 새 command로 받지 않습니다. border가 CSS처럼 padding box를 줄이도록 layout 입력에 border 두께를 넣고, 화면 위치를 보존하려고 border가 있는 부모의 Free 자식 `left`·`top`에서 부모 border 두께를 뺍니다(IX.11.9 뒤 적용). IX.11.6 이전 schema에서 온 입력에는 layout record가 없어 모든 자식이 Free 자식입니다. 입력 schema에 영속 layout record(IX.11.6)가 있어 border가 있는 부모가 flow 방식(flex·grid 컨테이너)이면, 부모의 각 변 `padding-*`에서 그 변 border 두께를 빼 flow 자식의 위치와 부모의 내용 기반 크기를 보존합니다. padding이 border 두께보다 작은 변은 padding을 `0px`로 두고 보존하지 못한 차이를 노드별로 migration 보고서에 기록합니다(속성 모델 5장 `border` 행). 이런 중간 schema 입력의 Free 자식은 지정된 `right`·`bottom`도 그 변 border 두께로 같은 방식으로 보정하고, 백분율 inset·크기처럼 길이 보정으로 보존할 수 없는 값은 보고서에 기록합니다. 0x0105를 가리키는 저장 참조(index segment 포함)는 IX.11.9와 같은 규칙으로 값 변환 없이 보존·보고합니다. Frame payload schema 변경은 storage format 변경이므로(I.3.5) 같은 diff에서 ADR을 작성하거나 ADR-0024를 개정합니다."
     status: not_started
     depends_on:
       - "IX.11.6"
@@ -5004,12 +4997,11 @@ tasks:
       - DEV-MAC
     report: "docs/task-reports/IX.11.16.md"
   - id: "IX.11.17"
-    title: "macOS 인스펙터 섹션을 속성 모델 12장 CSS 범주로 재구성합니다. `InspectorPropertyCatalog`와 `docs/design/ui/inspector.md`를 갱신하고, sizing preset, 4변·4모서리 묶음 편집(longhand key 변경 집합으로 적용), CSS 값 입력·오류 표시, longhand 이름 툴팁을 연결합니다. migration된 노드의 회전·배율은 `transform` 행렬에서 계산한 표시 전용 값으로 보여 주고, 그 값을 편집할 때의 규칙(행렬 갱신 또는 `rotate`·`scale` 사용)을 이 행에서 정합니다. 외형은 가이드와 인스펙터 명세를 따릅니다."
+    title: "macOS 인스펙터 섹션을 속성 모델 12장 CSS 범주로 재구성합니다. `InspectorPropertyCatalog`와 `docs/design/ui/inspector.md`를 갱신하고, 크기는 CSS 값(`width`·`height`와 `flex-*`·`align-self` 각 한 행, ADR-0074 결정 1)으로 입력하며, 4변·4모서리 묶음 편집(longhand key 변경 집합으로 적용), CSS 값 입력·오류 표시, longhand 이름 툴팁을 연결합니다. migration된 노드의 회전·배율은 `transform` 행렬에서 계산한 표시 전용 값으로 보여 주고, 그 값을 편집할 때의 규칙(행렬 갱신 또는 `rotate`·`scale` 사용)을 이 행에서 정합니다. 외형은 가이드와 인스펙터 명세를 따릅니다."
     status: not_started
     depends_on:
       - "IX.11.2"
       - "IX.11.3"
-      - "IX.11.7"
       - "IX.11.9"
       - "IX.11.14"
     required_environments:
@@ -7150,7 +7142,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.9"
-    title: "크기 조절 제스처를 구현합니다. Shift는 비율 유지(비율 고정 속성이 켜져 있으면 일시 해제), Option은 중심 기준, 반대편을 넘으면 뒤집기(Text는 0에서 멈춤), 다중 선택은 선택 bounds 기준 비례 배치입니다. 뒤집기는 node local 축 기준(핸들이 local 좌표, XII.10.8)으로 Frame의 그 축 `scale` 부호를 바꾸고(캔버스 명세 5.6절), `scale` longhand가 없는 node 종류는 XII.10.44가 정한 반전 표현을 씁니다. 저장된 `transform-origin`은 바꾸지 않고, 고정된 반대편 변의 world 위치가 그대로 남도록 위치(위치 지정 자식은 inset, 흐름 자식은 `translate`)를 보정합니다. 흐름 컨테이너 자식은 조절한 축을 Fixed preset으로 바꾸고 변 핸들 더블클릭은 그 축을 HugContent preset(`width: fit-content` 등)으로 바꾸며, preset과 longhand 변환은 IX.11.7 함수를 씁니다. 크기 longhand는 IX.11.6 영속 record와 IX.11.3 Shape·Image·Text PropertyKey로 씁니다. 속성 이름과 저장 필드 대응은 `docs/design/property_model.md`를 따르며 pointer up에서 CommandTransaction 하나를 확정합니다."
+    title: "크기 조절 제스처를 구현합니다. Shift는 비율 유지(비율 고정 속성이 켜져 있으면 일시 해제), Option은 중심 기준, 반대편을 넘으면 뒤집기(Text는 0에서 멈춤), 다중 선택은 선택 bounds 기준 비례 배치입니다. 뒤집기는 node local 축 기준(핸들이 local 좌표, XII.10.8)으로 Frame의 그 축 `scale` 부호를 바꾸고(캔버스 명세 5.6절), `scale` longhand가 없는 node 종류는 XII.10.44가 정한 반전 표현을 씁니다. 저장된 `transform-origin`은 바꾸지 않고, 고정된 반대편 변의 world 위치가 그대로 남도록 위치(위치 지정 자식은 inset, 흐름 자식은 `translate`)를 보정합니다. 흐름 컨테이너 자식도 조절한 축의 `width`·`height`에 px 값만 쓰고 `flex-*`·`align-self`는 바꾸지 않으며, 변 핸들 더블클릭으로 값을 바꾸는 숨은 전환은 두지 않습니다(ADR-0074 결정 4). 크기 longhand는 IX.11.6 영속 record와 IX.11.3 Shape·Image·Text PropertyKey로 씁니다. 속성 이름과 저장 필드 대응은 `docs/design/property_model.md`를 따르며 pointer up에서 CommandTransaction 하나를 확정합니다."
     status: not_started
     depends_on:
       - "XII.10.8"
@@ -7159,7 +7151,6 @@ tasks:
       - "XII.10.2"
       - "IX.11.3"
       - "IX.11.6"
-      - "IX.11.7"
       - "IX.11.9"
       - "XII.10.44"
     required_environments:
@@ -7267,7 +7258,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.21"
-    title: "정렬 6종, 분배 2종, 행·열 정리(Arrange in Rows and Columns, 선택을 같은 간격 행·열로 재배치하며 흐름 컨테이너를 만들지 않음)를 구현합니다. 단일 선택은 부모 기준, 다중 선택은 선택 bounds 기준이며 primary selection을 기준 객체로 쓸 수 있고, 분배는 가장 바깥 두 객체를 고정합니다. 흐름 밖 node는 위치 longhand(Frame은 IX.11.9, 그 밖의 node는 IX.11.6 item record)를 바꿉니다. 흐름 자식은 캔버스 명세 8장 규칙을 따릅니다. Stack 자식의 주축 정렬은 비활성화하고 컨테이너 `justify-content` 안내를 도움말로 보이며, 교차축 정렬은 자식 `align-self`를 바꿉니다. Grid 자식은 `justify-self`·`align-self`를 바꾸고, Overlay 자식의 정렬과 모든 흐름 자식의 분배·행·열 정리는 비활성화합니다. 결과는 CommandTransaction 하나입니다. 메뉴 막대에 없는 행·열 정리는 Object 메뉴에 항목을 추가하고 `docs/design/ui/tools_menus.md` 3.2·6.1절 표와 `ShortcutPolicy`를 함께 갱신합니다."
+    title: "정렬 6종, 분배 2종, 행·열 정리(Arrange in Rows and Columns, 선택을 같은 간격 행·열로 재배치하며 흐름 컨테이너를 만들지 않음)를 구현합니다. 단일 선택은 부모 기준, 다중 선택은 선택 bounds 기준이며 primary selection을 기준 객체로 쓸 수 있고, 분배는 가장 바깥 두 객체를 고정합니다. 흐름 밖 node는 위치 longhand(Frame은 IX.11.9, 그 밖의 node는 IX.11.6 item record)를 바꿉니다. 흐름 자식은 캔버스 명세 8장 규칙을 따릅니다. flex 자식의 주축 정렬은 비활성화하고 컨테이너 `justify-content` 안내를 도움말로 보이며, 교차축 정렬은 자식 `align-self`를 바꿉니다. Grid 자식은 `justify-self`·`align-self`를 바꾸고, Overlay 자식의 정렬과 모든 흐름 자식의 분배·행·열 정리는 비활성화합니다. 결과는 CommandTransaction 하나입니다. 메뉴 막대에 없는 행·열 정리는 Object 메뉴에 항목을 추가하고 `docs/design/ui/tools_menus.md` 3.2·6.1절 표와 `ShortcutPolicy`를 함께 갱신합니다."
     status: not_started
     depends_on:
       - "VII.1.6"
@@ -7278,17 +7269,6 @@ tasks:
       - "IX.11.6"
       - "IX.11.9"
       - "XII.6.5"
-    required_environments:
-      - DEV-MAC
-  - id: "XII.10.22"
-    title: "같은 간격으로 놓인 다중 선택에 간격 핸들과 자리 바꾸기 핸들을 표시합니다. 간격 핸들 드래그는 모든 간격을 함께 바꾸고, 가운데 핸들 드래그는 이웃과 위치를 바꿉니다."
-    status: not_started
-    depends_on:
-      - "XII.10.21"
-      - "XII.10.8"
-      - "XII.10.15"
-      - "IX.11.6"
-      - "IX.11.9"
     required_environments:
       - DEV-MAC
   - id: "XII.10.23"
@@ -7303,23 +7283,13 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.24"
-    title: "흐름 컨테이너(Stack·Grid) 안 드래그를 구현합니다. 끄는 동안 삽입 위치 표시를 그리고 형제를 증분 레이아웃 preview로 비키게 하며, 놓으면 OrderKey를 바꾸는 MoveNode 하나를 만듭니다. 밖으로 끌어내면 대상 부모 규칙으로 옮기고, 흐름에서 빠진 자식(`position: absolute`)은 inset 편집으로 움직이며, ComponentInstance 내부 재정렬은 거부합니다. 흐름 순서는 OrderKey로, inset은 IX.11.6 영속 record 값으로 씁니다. Grid 명시 배치 자식 처리(캔버스 명세 C6)를 이 행에서 정합니다."
+    title: "흐름 컨테이너(flex·grid) 안 드래그를 구현합니다. 끄는 동안 삽입 위치 표시를 그리고 형제를 증분 레이아웃 preview로 비키게 하며, 놓으면 OrderKey를 바꾸는 MoveNode 하나를 만듭니다. 밖으로 끌어내면 대상 부모 규칙으로 옮기고, 흐름에서 빠진 자식(`position: absolute`)은 inset 편집으로 움직이며, ComponentInstance 내부 재정렬은 거부합니다. 흐름 순서는 OrderKey로, inset은 IX.11.6 영속 record 값으로 씁니다. Grid 명시 배치 자식 처리(캔버스 명세 C6)를 이 행에서 정합니다."
     status: not_started
     depends_on:
       - "X.1.2"
       - "X.3.2"
       - "X.4.4"
       - "XII.10.13"
-      - "IX.11.6"
-    required_environments:
-      - DEV-MAC
-  - id: "XII.10.25"
-    title: "padding·gap 캔버스 핸들을 구현합니다. 선택한 흐름 컨테이너에 hover하면 네 변 padding 핸들과 자식 사이 gap 핸들을 보입니다. padding 드래그는 `padding-top`·`padding-right`·`padding-bottom`·`padding-left`를 바꿉니다. gap 핸들은 자기 축의 longhand 하나만 바꿉니다. Stack 주축 핸들은 `flex-direction`이 `row` 계열이면 `column-gap`, `column` 계열이면 `row-gap`이고, 줄바꿈 Stack의 줄 사이 핸들은 다른 하나, Grid는 열 사이 `column-gap`·행 사이 `row-gap`입니다. `gap` shorthand는 쓰지 않습니다(속성 모델 11장, ADR-0024 결정 4). 값은 IX.11.6 영속 record에 씁니다. Shift는 큰 단위, Option은 마주 보는 padding 변을 함께 바꿉니다. gap은 음수가 되지 않고, 남는 공간 분배가 켜진 축의 gap 핸들은 표시만 하며, 핸들 클릭은 그 핸들 longhand의 `NSPopover`와 `NSTextField` 숫자 입력을 엽니다."
-    status: not_started
-    depends_on:
-      - "XII.10.8"
-      - "X.3.1"
-      - "X.1.2"
       - "IX.11.6"
     required_environments:
       - DEV-MAC
@@ -7492,7 +7462,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.43"
-    title: "캔버스 편집 성능 replay를 추가합니다. hover, 클릭 선택, 마퀴, 스냅 포함 이동, Stack 안 크기 조절, 회전, padding 핸들, Path point 드래그, IME 조합 입력 scenario를 2만 가시 node fixture(XVI.3.2)로 만들고, hover·선택·핸들 표시는 목표 5ms·상한 8ms, 나머지는 Present 예약 10ms 이하로 판정합니다."
+    title: "캔버스 편집 성능 replay를 추가합니다. hover, 클릭 선택, 마퀴, 스냅 포함 이동, flex 컨테이너 안 크기 조절, 회전, Path point 드래그, IME 조합 입력 scenario를 2만 가시 node fixture(XVI.3.2)로 만들고, hover·선택·핸들 표시는 목표 5ms·상한 8ms, 나머지는 Present 예약 10ms 이하로 판정합니다."
     status: not_started
     depends_on:
       - "XVI.2.3"
@@ -7500,7 +7470,6 @@ tasks:
       - "XVI.3.2"
       - "XII.10.7"
       - "XII.10.16"
-      - "XII.10.25"
       - "XII.10.33"
     required_environments:
       - DEV-MAC
