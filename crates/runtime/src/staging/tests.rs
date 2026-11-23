@@ -1,10 +1,18 @@
 use super::*;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 use stellar_document::model::DocumentModel;
 use stellar_git_porcelain::fixture::GitFixture;
+use stellar_git_porcelain::object::FileModeKind;
+use stellar_git_porcelain::snapshot::materialize_snapshot;
+use stellar_git_porcelain::snapshot::read_index_snapshot;
+use stellar_git_porcelain::trust::GatedGitRunner;
+use stellar_ops::candidate::{saved_semantic_snapshot, CandidateStorageError, SemanticDiff};
 use stellar_ops::candidate::{ChangeId, StageSelectionRequest};
 use stellar_ops::test_support::{
     file_digest, large_document, random_valid_document, save_documents, scaffold_project,
 };
+use stellar_project::saved_project::SavedProjectLoader;
 
 #[test]
 fn selected_property_round_trips_without_changing_working_bytes_or_real_index() {
@@ -687,11 +695,7 @@ fn actual_index_semantic_mismatch_restores_original_tree() {
         .filter(|(p, _)| !p.starts_with(".git/"))
         .collect();
     // 검증 후 내부 후보 대응이 잘못된 경우를 주입해 실제 publish 이후 비교·복원까지 실행합니다.
-    let wrong = PreparedStageCandidate {
-        head: None,
-        tree: selected.tree,
-        semantic: unchanged.semantic,
-    };
+    let wrong = selected.with_semantic_for_test(unchanged.semantic);
     let result = apply_stage_candidate(
         &fx.gated(),
         fx.work(),
@@ -835,7 +839,7 @@ fn rejected_cancelled_and_restored_stage_preserve_working_tree_and_document_revi
                 worktree.push("nested");
                 std::fs::create_dir(&worktree).unwrap();
             }
-            "mismatch" => prepared.semantic = unchanged.semantic,
+            "mismatch" => prepared = prepared.with_semantic_for_test(unchanged.semantic),
             _ => unreachable!(),
         }
         let index_before = read_index_snapshot(&fx.gated(), fx.work()).unwrap();

@@ -56,6 +56,9 @@ pub mod compare;
 /// 선택 staging 후보의 무손실 검사와 기존 generation 파일 직렬화(XIV.5.5).
 pub mod candidate;
 
+/// Git 엔진: 상태·선택 stage·재검증 commit (ADR-0080).
+pub mod git;
+
 /// 저장 스키마 migration (XXIV.1.3).
 pub mod migrate;
 
