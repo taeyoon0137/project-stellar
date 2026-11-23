@@ -262,7 +262,15 @@ pub fn export_native(
                     export
                         .notes
                         .iter()
-                        .map(|n| (subject_id(&n.subject), format!("{:?}", n.kind)))
+                        .map(|n| {
+                            let message = match &n.kind {
+                                stellar_codegen::apple::AppleNoteKind::Layout(finding) => {
+                                    layout_message(finding)
+                                }
+                                other => format!("{other:?}"),
+                            };
+                            (subject_id(&n.subject), message)
+                        })
                         .collect(),
                 ),
                 Err(error) => {
@@ -277,7 +285,15 @@ pub fn export_native(
                 export
                     .notes
                     .iter()
-                    .map(|n| (android_subject_id(&n.subject), format!("{:?}", n.kind)))
+                    .map(|n| {
+                        let message = match &n.kind {
+                            stellar_codegen::android::AndroidNoteKind::Layout(finding) => {
+                                layout_message(finding)
+                            }
+                            other => format!("{other:?}"),
+                        };
+                        (android_subject_id(&n.subject), message)
+                    })
                     .collect(),
             ),
             Err(error) => {
@@ -291,6 +307,14 @@ pub fn export_native(
     }
     result.source = Some(source);
     Ok(result)
+}
+
+/// layout 규칙 진단은 CSS longhand·상태·code·이유를 그대로 읽을 수 있게 냅니다(Rust Debug 표기가 아님).
+fn layout_message(finding: &stellar_codegen::apple::LayoutFinding) -> String {
+    format!(
+        "{} {:?}({}): {}",
+        finding.longhand, finding.status, finding.code, finding.reason
+    )
 }
 
 fn subject_id(subject: &stellar_codegen::apple::AppleNoteSubject) -> StableId {
@@ -330,6 +354,23 @@ mod tests {
             let errors: Vec<_> = first.diagnostics.iter().filter(|d| d.error).collect();
             assert!(errors.is_empty(), "{errors:?}");
             let source = first.source.clone().expect("source");
+            // layout 규칙 진단은 longhand·상태·code·이유로 읽히고 Rust Debug 구조체 표기가 아닙니다.
+            let notes: Vec<_> = first
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == "native-note")
+                .collect();
+            assert!(
+                notes
+                    .iter()
+                    .any(|d| d.message.contains(if target == NativeTarget::AppKit {
+                        "transform Unsupported(transform): "
+                    } else {
+                        "flex-shrink Approximated(platform-compression): "
+                    })),
+                "{notes:?}"
+            );
+            assert!(notes.iter().all(|d| !d.message.contains("LayoutFinding")));
             assert!(source.contains(marker), "{source}");
             assert_eq!(
                 first,
