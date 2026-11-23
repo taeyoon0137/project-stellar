@@ -239,6 +239,20 @@ impl PayloadPreview {
     pub fn records(&self) -> usize {
         self.records
     }
+
+    /// 저장해 둔 payload(전송 대기열 파일)를 다시 검사해 되살립니다.
+    pub(crate) fn revalidate(bytes: Vec<u8>) -> Result<PayloadPreview, PreviewRejected> {
+        let report = scan_bundle(&bytes, &ScanContext::new());
+        if !report.is_clean() {
+            return Err(PreviewRejected { report });
+        }
+        let records = decode_bundle(&bytes)
+            .map(|(_, store)| store.len())
+            .map_err(|_| PreviewRejected {
+                report: ScanReport::default(),
+            })?;
+        Ok(PayloadPreview { bytes, records })
+    }
 }
 
 /// 금지 정보가 있어 preview를 거부했습니다. 탐지에는 찾은 문자열이 없습니다.
@@ -402,6 +416,24 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), preview.bytes());
         assert_eq!(read_bundle(&path).unwrap().1.records(), store().records());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn stored_payloads_are_rescanned() {
+        // 문맥 값이 번들에 나오지 않으면 통과합니다.
+        let ctx = ScanContext::new().with(crate::scanner::ForbiddenCategory::ProjectName, "acme");
+        let preview = preview_payload(&environment(), &store(), &ctx).unwrap();
+        assert_eq!(
+            PayloadPreview::revalidate(preview.bytes().to_vec()).unwrap(),
+            preview
+        );
+        // 저장된 bytes가 바뀌어 금지 정보가 들어오면 되살리지 않습니다.
+        let tampered = String::from_utf8(preview.bytes().to_vec())
+            .unwrap()
+            .replace("thread=document", "thread=/home/alice");
+        let rejected = PayloadPreview::revalidate(tampered.into_bytes()).unwrap_err();
+        assert!(!rejected.report.is_clean());
+        assert!(!rejected.to_string().contains("alice"));
     }
 
     #[test]

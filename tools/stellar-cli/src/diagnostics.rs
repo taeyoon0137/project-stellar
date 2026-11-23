@@ -1,4 +1,5 @@
-//! `diagnostics`: 로컬 진단 store의 전송 전 preview, 수동 번들 내보내기, 금지 필드 검사 (XVI.8, ADR-0109).
+//! `diagnostics`: 로컬 진단 store의 전송 전 preview, 수동 번들 내보내기, 금지 필드 검사, 텔레메트리 동의와 전송
+//! 대기열 (XVI.8, ADR-0109).
 //!
 //! 모든 판정은 `stellar_diagnostics`(store·bundle·scanner·consent)가 합니다. 이 module은 인자를 해석하고 결과를
 //! envelope JSON으로 옮길 뿐, 형식·검사 규칙을 따로 두지 않습니다.
@@ -13,7 +14,10 @@ use std::path::{Path, PathBuf};
 use stellar_diagnostics::bundle::{
     export_bundle, preview_payload, BundleEnvironment, PayloadPreview,
 };
-use stellar_diagnostics::consent::{read_consent, ConsentLoad, CONSENT_FILE};
+use stellar_diagnostics::consent::{
+    read_consent, ConsentEvent, ConsentLoad, TransitionError, CONSENT_FILE,
+};
+use stellar_diagnostics::consent_gate::{OpenedGate, TelemetryGate, UploadBlocked};
 use stellar_diagnostics::scanner::{scan_bundle, ForbiddenCategory, ScanContext, ScanReport};
 use stellar_diagnostics::store::{
     DiagnosticStore, StoreError, Version3, DIAGNOSTICS_DIR, MAX_DIAGNOSTIC_BYTES, STORE_FILE,
@@ -24,7 +28,7 @@ use crate::json::JsonValue;
 use crate::output::{CliError, Success};
 use crate::views;
 
-const USAGE: &str = "diagnostics에는 preview | export --output <파일> | scan <파일> 중 하나와 선택 [--data-dir <디렉터리>] [--project <경로>]...가 필요합니다";
+const USAGE: &str = "diagnostics에는 preview | export --output <파일> | scan <파일> | consent [show|grant|decline|revoke] | enqueue 중 하나와 선택 [--data-dir <디렉터리>] [--project <경로>]...가 필요합니다";
 
 /// 공통 옵션.
 #[derive(Default)]
@@ -176,11 +180,7 @@ fn preview(args: &[String]) -> Result<Success, CliError> {
         ("consent", JsonValue::string(consent.record().state.name())),
         (
             "consent_file",
-            JsonValue::string(match consent {
-                ConsentLoad::Missing => "missing",
-                ConsentLoad::Loaded(_) => "loaded",
-                ConsentLoad::Unreadable => "unreadable",
-            }),
+            JsonValue::string(consent_file_name(consent)),
         ),
         (
             "automatic_upload",
@@ -272,6 +272,122 @@ fn read_input(path: &Path) -> Result<Vec<u8>, CliError> {
     Ok(bytes)
 }
 
+fn consent_file_name(load: ConsentLoad) -> &'static str {
+    match load {
+        ConsentLoad::Missing => "missing",
+        ConsentLoad::Loaded(_) => "loaded",
+        ConsentLoad::Unreadable => "unreadable",
+    }
+}
+
+fn open_gate(dir: &Path) -> Result<OpenedGate, CliError> {
+    TelemetryGate::open(dir).map_err(|e| {
+        CliError::new(
+            ExitStatus::from_io_kind(e.kind()),
+            "outbox-unreadable",
+            format!("전송 대기열을 열지 못했습니다: {}", e.kind()),
+        )
+        .with_context(dir.display().to_string())
+    })
+}
+
+fn save_gate(gate: &TelemetryGate, dir: &Path) -> Result<(), CliError> {
+    gate.save(dir).map_err(|e| {
+        CliError::new(
+            ExitStatus::from_io_kind(e.kind()),
+            "consent-write-failed",
+            format!("동의 상태나 전송 대기열을 쓰지 못했습니다: {}", e.kind()),
+        )
+        .with_context(dir.display().to_string())
+    })
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// `diagnostics consent [show|grant|decline|revoke]`: 동의 상태를 보거나 바꿉니다. `Granted`를 떠나면 대기열을
+/// 버립니다(XVI.8.5).
+fn consent(args: &[String]) -> Result<Success, CliError> {
+    let options = parse_options(args, false)?;
+    if !options.projects.is_empty() {
+        return Err(CliError::usage("consent는 --project를 받지 않습니다"));
+    }
+    let event = match options.positional.as_slice() {
+        [] => None,
+        [action] if action == "show" => None,
+        [action] => Some(ConsentEvent::from_name(action).ok_or_else(|| {
+            CliError::usage(format!(
+                "consent 동작은 show|grant|decline|revoke입니다: {action}"
+            ))
+        })?),
+        [_, extra, ..] => return Err(CliError::usage(format!("인자가 너무 많습니다: {extra}"))),
+    };
+    let dir = data_dir(&options)?;
+    let mut opened = open_gate(&dir)?;
+    let previous = opened.gate.consent().state;
+    let mut discarded = opened.discarded_without_consent + opened.discarded_invalid;
+    let mut changed = false;
+    if let Some(event) = event {
+        let change = opened.gate.apply(event, now_ms()).map_err(|e| match e {
+            TransitionError::NothingToRevoke => {
+                CliError::new(ExitStatus::Failure, "nothing-to-revoke", e.to_string())
+            }
+        })?;
+        changed = change.transition.changed();
+        discarded += change.discarded;
+        save_gate(&opened.gate, &dir)?;
+    }
+    let state = opened.gate.consent().state;
+    Ok(Success {
+        result: JsonValue::object(vec![
+            ("state", JsonValue::string(state.name())),
+            ("previous", JsonValue::string(previous.name())),
+            ("changed", JsonValue::Bool(changed)),
+            (
+                "consent_file",
+                JsonValue::string(consent_file_name(opened.consent_load)),
+            ),
+            (
+                "automatic_upload",
+                JsonValue::Bool(state.allows_automatic_upload()),
+            ),
+            ("queued", views::count(opened.gate.queued())),
+            ("discarded", views::count(discarded)),
+        ]),
+        diagnostics: Vec::new(),
+    })
+}
+
+/// `diagnostics enqueue`: preview를 자동 전송 대기열에 넣습니다(`Granted`에서만). 보내지는 않습니다.
+fn enqueue(args: &[String]) -> Result<Success, CliError> {
+    let options = parse_options(args, false)?;
+    if let Some(extra) = options.positional.first() {
+        return Err(CliError::usage(format!(
+            "enqueue는 위치 인자를 받지 않습니다: {extra}"
+        )));
+    }
+    let (dir, preview) = build_preview(&options)?;
+    let mut opened = open_gate(&dir)?;
+    let mut result = preview_json(&preview);
+    opened.gate.enqueue(preview).map_err(|e| match e {
+        UploadBlocked::NoConsent(_) => {
+            CliError::new(ExitStatus::NoPerm, "no-consent", e.to_string())
+        }
+        UploadBlocked::QueueFull => {
+            CliError::new(ExitStatus::TempFail, "queue-full", e.to_string())
+        }
+    })?;
+    save_gate(&opened.gate, &dir)?;
+    result.insert(0, ("queued", views::count(opened.gate.queued())));
+    Ok(Success {
+        result: JsonValue::object(result),
+        diagnostics: Vec::new(),
+    })
+}
+
 /// `diagnostics <하위 명령> ...`.
 pub fn run(args: &[String]) -> Result<Success, CliError> {
     let Some((sub, rest)) = args.split_first() else {
@@ -281,6 +397,8 @@ pub fn run(args: &[String]) -> Result<Success, CliError> {
         "preview" => preview(rest),
         "export" => export(rest),
         "scan" => scan(rest),
+        "consent" => consent(rest),
+        "enqueue" => enqueue(rest),
         other => Err(CliError::usage(format!(
             "알 수 없는 diagnostics 하위 명령: {other}. {USAGE}"
         ))),
@@ -468,6 +586,75 @@ mod tests {
         assert!(!text.contains("alice") && !text.contains("acme"), "{text}");
     }
 
+    fn state(doc: &JsonValue, key: &str) -> String {
+        result(doc).get(key).unwrap().as_str().unwrap().to_owned()
+    }
+
+    fn number(doc: &JsonValue, key: &str) -> i64 {
+        result(doc).get(key).unwrap().as_i64().unwrap()
+    }
+
+    #[test]
+    fn consent_revoke_discards_queue_and_keeps_store() {
+        // 검증 기준(XVI.8.5) CLI 경로: 동의 → 대기열 2개 → 철회 → 대기열 0, 이후 넣기 거부, store 유지.
+        let dir = Dir::new("revoke");
+        write_store(&dir);
+        let store_bytes = std::fs::read(dir.0.join(STORE_FILE)).unwrap();
+        let (code, doc, _) = cli(&["consent", "--data-dir", &dir.arg()]);
+        assert_eq!(code, 0);
+        assert_eq!(state(&doc, "state"), "not_asked");
+        // 동의 전에는 넣을 수 없습니다(77).
+        let (code, doc, _) = cli(&["enqueue", "--data-dir", &dir.arg()]);
+        assert_eq!(code, 77);
+        assert_eq!(
+            doc.get("error")
+                .and_then(|e| e.get("code"))
+                .and_then(JsonValue::as_str),
+            Some("no-consent")
+        );
+        // 철회할 동의가 없으면 1.
+        let (code, _, _) = cli(&["consent", "revoke", "--data-dir", &dir.arg()]);
+        assert_eq!(code, 1);
+
+        let (code, doc, _) = cli(&["consent", "grant", "--data-dir", &dir.arg()]);
+        assert_eq!(code, 0);
+        assert_eq!(state(&doc, "state"), "granted");
+        assert_eq!(result(&doc).get("changed").unwrap().as_bool(), Some(true));
+        for expected in [1, 2] {
+            let (code, doc, err) = cli(&["enqueue", "--data-dir", &dir.arg()]);
+            assert_eq!(code, 0, "{err}");
+            assert_eq!(number(&doc, "queued"), expected);
+        }
+        let (_, preview_doc, _) = cli(&["preview", "--data-dir", &dir.arg()]);
+        let (gate_bytes, payload) = {
+            let opened = TelemetryGate::open(&dir.0).unwrap();
+            let bytes: Vec<Vec<u8>> = opened.gate.pending().map(|p| p.bytes().to_vec()).collect();
+            (bytes, state(&preview_doc, "payload"))
+        };
+        // 대기열에 든 bytes = preview로 본 bytes.
+        assert_eq!(gate_bytes, vec![payload.as_bytes().to_vec(); 2]);
+
+        let (code, doc, _) = cli(&["consent", "revoke", "--data-dir", &dir.arg()]);
+        assert_eq!(code, 0);
+        assert_eq!(state(&doc, "state"), "declined");
+        assert_eq!(number(&doc, "discarded"), 2);
+        assert_eq!(number(&doc, "queued"), 0);
+        assert!(!dir
+            .0
+            .join(stellar_diagnostics::consent_gate::OUTBOX_FILE)
+            .exists());
+        let (code, _, _) = cli(&["enqueue", "--data-dir", &dir.arg()]);
+        assert_eq!(code, 77);
+        assert_eq!(std::fs::read(dir.0.join(STORE_FILE)).unwrap(), store_bytes);
+        let (code, doc, _) = cli(&["consent", "show", "--data-dir", &dir.arg()]);
+        assert_eq!(code, 0);
+        assert_eq!(state(&doc, "consent_file"), "loaded");
+        assert_eq!(
+            result(&doc).get("automatic_upload").unwrap().as_bool(),
+            Some(false)
+        );
+    }
+
     #[test]
     fn corrupt_store_and_usage_errors() {
         let dir = Dir::new("corrupt");
@@ -499,6 +686,10 @@ mod tests {
             &["scan", "a", "b"][..],
             &["scan", "a", "--data-dir", "d"][..],
             &["scan", "a", "--bogus"][..],
+            &["consent", "maybe"][..],
+            &["consent", "grant", "extra"][..],
+            &["consent", "--project", "p"][..],
+            &["enqueue", "extra"][..],
         ] {
             let (code, doc, err) = cli(args);
             assert_eq!(code, 64, "{args:?}");
