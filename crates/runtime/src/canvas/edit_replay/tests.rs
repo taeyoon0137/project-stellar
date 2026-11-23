@@ -201,7 +201,7 @@ fn grid_point(i: usize) -> [f32; 2] {
         (k % 200) as f32 * 100. + 520.,
         (k / 200) as f32 * 100. + 520.,
     );
-    if i % 2 == 0 {
+    if i.is_multiple_of(2) {
         [x, y]
     } else {
         [x + 50., y + 50.]
@@ -331,7 +331,9 @@ fn measure_canvas_edit_replay_20k() {
         S::Rotate,
         measure(|i| {
             let a = i as f32 * 0.01;
-            std::hint::black_box(rotate.update([a.cos() * 300., a.sin() * 300.], i % 2 == 0));
+            std::hint::black_box(
+                rotate.update([a.cos() * 300., a.sin() * 300.], i.is_multiple_of(2)),
+            );
         }),
     ));
 
@@ -381,7 +383,7 @@ fn measure_canvas_edit_replay_20k() {
         measure(|i| {
             let input = NavigationInput::Magnify {
                 phase: GesturePhase::Changed,
-                magnification: if i % 2 == 0 { 0.05 } else { -0.048 },
+                magnification: if i.is_multiple_of(2) { 0.05 } else { -0.048 },
                 location: [700.0, 400.0],
             };
             if let Some(next) = nav.apply(viewport, size, input, None) {
