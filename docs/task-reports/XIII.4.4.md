@@ -2,7 +2,7 @@
 
 - WBS: XIII.4.4
 - 작업명: 외부 symlink target 변경을 watcher에 동적으로 등록·해제
-- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — macOS adapter로 구현·검증 완료, 선행 XIII.2.3(Windows adapter)은 ADR-0006으로
+- 상태: 완료 (`[x]`) — 2026-11-23 library-finish, 아래 "작업 (2026-11-23, library-finish)" 절. 이전 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — macOS adapter로 구현·검증 완료, 선행 XIII.2.3(Windows adapter)은 ADR-0006으로
   `[!]`
 - 선행: XIII.2.2(이 lane에서 완료), XIII.2.3(`[!]`, ADR-0006), XIII.4.1
 
@@ -87,3 +87,24 @@
 
 - 결함 finding(window-session-stale lane 소유 경로 `crates/project/src/{external_change,window_session}.rs`, `watcher/`): 창 session의 외부 변경 감시 loop가 넘침·링크 변화 event 뒤 `ExternalTargetSync::sync`를 불러야 제품에서 외부 symlink target 변경을 받습니다.
 - Windows 선행 재작성안: XIII.4.4의 선행에서 XIII.2.3을 빼고 "XIII.2.2, XIII.4.1"로 둡니다.
+
+## 작업 (2026-11-23, library-finish): 제품 감시 경로 연결 재판정
+
+### 한 일
+
+- 코드는 바꾸지 않았습니다(문서만 변경). 재판정 당시 결함이었던 "제품 감시 경로가 `ExternalTargetSync::sync`를 부르지 않음"은
+  `stellar-runtime` 외부 변경 감시(`crates/runtime/src/app/autosave/external.rs`, 커밋 `ba9dc68e`·`734b8314`)가 해소했습니다:
+  `ProjectWatch::start`가 처음 열 때 `resync_targets`로 맞추고, `poll`이 `needs_resync`(넘침·링크 변화) 뒤 다시 맞춥니다. 비신뢰
+  프로젝트는 resolver가 빈 target을 줍니다.
+- 계획서·원장 선행은 XIII.2.2, XIII.4.1뿐이고(XIII.2.3 없음) 둘 다 `[x]`입니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-project watcher::targets` | `replaced_target_is_watched_after_dynamic_registration` 포함 통과 |
+
+| 검사 | 결과 |
+|---|---|
+| **target replace 후 event 수신**(실제 FSEvents, 기존 시험) | 통과 |
+| 제품 경로 호출 확인: `external.rs`의 `ExternalTargetSync::new()`·`sync`·`needs_resync` 호출(코드 읽기) | 확인 |
