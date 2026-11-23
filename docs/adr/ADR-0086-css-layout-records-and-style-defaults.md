@@ -209,6 +209,8 @@ Consequences에 적은 한계 가운데 편집·동기화 경로의 것을 닫�
      record, node 종류에 붙지 않는 longhand를 거부합니다.
    - binary 형식에서 record 목록은 payload 끝의 선택 절입니다(record 수 `u32` 1 이상 + 길이 접두 `LayoutRecord`).
      record가 없으면 절을 쓰지 않아 bytes가 예전과 같습니다. 빈 절과 소유 node가 오름차순이 아닌 절은 거부합니다.
+     같은 순서 규칙을 적용 전 검증에서도 봅니다. 순서가 어긋난 command는 history journal에 쓴 뒤 다시 읽을 수 없기
+     때문입니다.
    - `DeleteSubtree`의 역 `InsertNode`는 subtree의 record를 담습니다. 그래서 history journal을 저장했다가 다시 연
      뒤의 삭제 undo도 record를 되살립니다. 결정 5의 "모델이 StableId로 record를 들고 있음"은 같은 session 안에서만
      성립하기 때문입니다.
@@ -257,6 +259,8 @@ Consequences에 적은 한계 가운데 편집·동기화 경로의 것을 닫�
        선언을 그대로 속성 패널 경로에 넘깁니다. 기존 선언의 결과는 바뀌지 않습니다.
      - `inset`은 `top`·`left`가 transform, `right`·`bottom`이 record로 나뉩니다. IX.11.9가 위치를 record로 옮기면 하나가
        됩니다.
+     - 빈 선택과 문서에 없는 레이어는 모든 선언이 record로 가도 속성 패널 경로와 같은 `empty-selection`·
+       `unknown-node` 오류입니다.
      - 잠금은 `commands::lock`의 `NodeAccess::permits`로 봅니다. record 결과(command·적용·건너뜀)는 속성 패널 경로
        결과 뒤에 붙습니다.
    - `stellar css copy`·MCP `document.copy_css`는 같은 이름 규칙으로 명시 record 값을 함께 냅니다. 복사한 블록을 다시
