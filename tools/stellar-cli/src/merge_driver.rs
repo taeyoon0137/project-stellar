@@ -1,14 +1,15 @@
 //! `stellar merge-driver` — Git custom merge driver (XXIV.2, ADR-0081 결정 8).
 //!
 //! Git이 `merge.stellar.driver = stellar merge-driver %O %A %B %P`로 부릅니다(`%O` base, `%A` ours이자 결과,
-//! `%B` theirs 임시 파일, `%P` 저장소 기준 경로). 텍스트 의미 파일(지금은 컴포넌트 원본)의 세 bytes를 semantic
-//! snapshot으로 올려 병합하고:
+//! `%B` theirs 임시 파일, `%P` 저장소 기준 경로). 텍스트 의미 파일(컴포넌트 원본, 그리고 텍스트 원본의 문서·View·
+//! catalog·Context·token 파일, ADR-0113 결정 5)의 세 bytes를 semantic snapshot으로 올려 병합하고:
 //!
 //! - conflict가 없고 검증을 통과하면 `%A`에 결과 bytes를 쓰고 0으로 끝납니다.
 //! - conflict가 있거나 지원하지 않는 파일·읽기·검증 실패면 `%A`를 바꾸지 않고 nonzero로 끝납니다. Git은 그 경로를
 //!   conflict(unmerged)로 남깁니다.
 //!
-//! driver는 Git을 실행하지 않고 Git config·`.gitattributes`도 바꾸지 않습니다.
+//! driver는 Git을 실행하지 않고 Git config·`.gitattributes`도 바꾸지 않습니다. 텍스트 원본 파일은 그 파일만으로 해석할 수
+//! 없어, merge 중 작업 트리(= ours)의 나머지 원본 파일을 세 쪽 공통 문맥으로 읽습니다(`stellar_ops::merge_text`).
 //!
 //! 등록은 사용자가 명시적으로 부르는 `stellar merge-driver install <프로젝트>`만 합니다(XXIV.2.3). 신뢰한 프로젝트에서만
 //! 동작하고 저장소 로컬 config와 프로젝트 `.gitattributes` 한 줄만 바꿉니다. 전역·시스템 config는 바꾸지 않습니다.
@@ -20,6 +21,7 @@ use stellar_ops::candidate::file_merge::{merge_semantic_file, FileMergeError, Fi
 use stellar_ops::candidate::git_port::GatedMergeGit;
 use stellar_ops::candidate::install::{install_driver, InstallError};
 use stellar_ops::candidate::session::{parse_resolution, ConflictSession, PlanError};
+use stellar_ops::merge_text::{design_relative, is_text_source_path, merge_text_file};
 use stellar_ops::trusted::TrustedProject;
 
 use crate::exit::ExitStatus;
@@ -397,6 +399,28 @@ fn clear_record(relative: &Path) {
     }
 }
 
+/// 텍스트 원본 파일 하나(`relative`, 저장소 기준)를 작업 트리의 나머지 원본을 문맥으로 병합합니다.
+fn merge_text_path(
+    relative: &Path,
+    base: &[u8],
+    ours: &[u8],
+    theirs: &[u8],
+) -> Result<Result<FileMergeOutcome, FileMergeError>, CliError> {
+    let fail = |code: &'static str, message: String| {
+        CliError::new(ExitStatus::DataErr, code, message)
+            .with_context(relative.to_string_lossy().into_owned())
+    };
+    let root = project_root_of(relative)
+        .ok_or_else(|| fail("merge-failed", "stellar.yaml을 찾지 못했습니다".into()))?;
+    let within = relative.strip_prefix(&root).unwrap_or(relative);
+    let design_path = design_relative(within)
+        .ok_or_else(|| fail("merge-failed", "텍스트 원본 경로가 아닙니다".into()))?;
+    let context = stellar_ops::merge_text::read_context(&root)
+        .map_err(|e| fail("merge-input", format!("작업 트리 텍스트 원본: {e}")))?;
+    Ok(merge_text_file(&context, &design_path, base, ours, theirs)
+        .map_err(|e| FileMergeError::Merge(e.to_string())))
+}
+
 /// driver 실행(`%O %A %B %P`).
 fn drive(args: &[String]) -> Result<Success, CliError> {
     let [base, ours, theirs, path] = args else {
@@ -409,7 +433,12 @@ fn drive(args: &[String]) -> Result<Success, CliError> {
     let ours_bytes = read_side(Path::new(ours), "ours(%A)")?;
     let theirs_bytes = read_side(Path::new(theirs), "theirs(%B)")?;
     let path_json = JsonValue::string(path.as_str());
-    match merge_semantic_file(relative, &base_bytes, &ours_bytes, &theirs_bytes) {
+    let outcome = if is_text_source_path(relative) {
+        merge_text_path(relative, &base_bytes, &ours_bytes, &theirs_bytes)?
+    } else {
+        merge_semantic_file(relative, &base_bytes, &ours_bytes, &theirs_bytes)
+    };
+    match outcome {
         Ok(FileMergeOutcome::Merged(bytes)) => {
             std::fs::write(ours, &bytes).map_err(|e| {
                 CliError::new(

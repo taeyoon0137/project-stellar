@@ -6,6 +6,7 @@
 //! |---|---|
 //! | `design/components/*.stellar.yaml` | 컴포넌트 원본 파일 하나(세 stage blob을 codec으로 읽음) |
 //! | `design/current` | generation 문서 전체(세 stage pointer가 가리키는 세대를 작업 트리 파일에서 읽음) |
+//! | 텍스트 원본 `design/{document,pages/**,assets/catalog,context,tokens/*}.stellar.yaml` | 텍스트 원본 문서 하나(그 경로 전체가 한 단위, ADR-0113 결정 5). 세 쪽 원본 파일 집합은 작업 트리의 나머지 원본과 unmerged 경로의 stage blob으로 만듭니다. 텍스트 원본이 있으면 `design/current`(로컬 cache)는 따로 병합하지 않고 이 단위의 결과로 다시 씁니다 |
 //! | 그 밖의 `stellar.yaml`·`design/` 경로 | 의미 병합하지 않는 Stellar 경로(이유와 함께 보고) |
 //! | 그 밖의 경로 | raw Git conflict(XIV.11.4, Semantic Merge로 해석하지 않음) |
 //!
@@ -34,6 +35,11 @@ use super::component_file::{decode_component_file, is_component_source_path};
 use super::git_port::{GitOperation, GitPortError, MergeGit, UnmergedEntry};
 use crate::compare::ConflictEntry;
 use crate::core_types::ids::StableId;
+use crate::merge_text::{
+    design_relative, is_text_source_path, prepare_text_merge, TextMergeBase, TextSides,
+    DESIGN_PREFIX,
+};
+use stellar_project::document_io::source_v4::project::DOCUMENT_PATH as DOCUMENT_FILE;
 
 /// 한 stage blob의 크기 상한(컴포넌트 원본·pointer 모두 이 안).
 const MAX_STAGE_BYTES: u64 = 1024 * 1024;
@@ -47,6 +53,8 @@ pub enum UnitKind {
     ComponentSource,
     /// generation 문서(`design/current`).
     Generation,
+    /// 텍스트 원본 문서(ADR-0113 결정 5).
+    TextSource,
 }
 
 impl UnitKind {
@@ -55,6 +63,7 @@ impl UnitKind {
         match self {
             UnitKind::ComponentSource => "component-source",
             UnitKind::Generation => "generation",
+            UnitKind::TextSource => "text-source",
         }
     }
 }
@@ -76,6 +85,16 @@ pub struct SessionUnit {
     objects: BTreeSet<StableId>,
     observed: Option<ContentHash>,
     pub(crate) generation: Option<GenerationBase>,
+    pub(crate) text: Option<TextUnit>,
+}
+
+/// 텍스트 원본 단위의 쓰기 기준(ADR-0113 결정 5).
+#[derive(Debug)]
+pub(crate) struct TextUnit {
+    /// 결과를 원본으로 쓰는 데 필요한 병합한 문서 밖 의미와 ours 파일 집합.
+    pub(crate) base: TextMergeBase,
+    /// 이 단위가 resolved 처리하는 unmerged 경로(텍스트 원본, 그리고 cache `design/current`).
+    pub(crate) paths: Vec<PathBuf>,
 }
 
 impl SessionUnit {
@@ -313,8 +332,64 @@ impl ConflictSession {
         let mut units = Vec::new();
         let mut raw = Vec::new();
         let mut unsupported = Vec::new();
+        let text_paths: Vec<PathBuf> = entries
+            .iter()
+            .map(|entry| entry.path.clone())
+            .filter(|path| is_text_source_path(path))
+            .collect();
+        let mut text_generation = false;
+        // 텍스트 원본 프로젝트에서 cache pointer만 conflict여도(원본은 driver나 Git이 깨끗이 병합) 원본 결과로 cache를
+        // 다시 씁니다(ADR-0113 결정 5).
+        let text_project = root.join(DESIGN_PREFIX).join(DOCUMENT_FILE).is_file();
+        let cache_conflict = entries
+            .iter()
+            .any(|entry| entry.path == Path::new(CURRENT_POINTER));
+        if !text_paths.is_empty() || (text_project && cache_conflict) {
+            match Self::text_source(git, root, &entries)? {
+                Ok((input, base)) => {
+                    let mut paths = text_paths.clone();
+                    let mut generation = None;
+                    if let Some(entry) = entries
+                        .iter()
+                        .find(|entry| entry.path == Path::new(CURRENT_POINTER))
+                    {
+                        text_generation = true;
+                        match Self::generation(git, root, entry)? {
+                            Ok((_, ours)) => {
+                                generation = Some(ours);
+                                paths.push(entry.path.clone());
+                            }
+                            Err(reason) => unsupported.push((
+                                entry.path.clone(),
+                                format!("텍스트 원본의 로컬 cache를 다시 쓸 수 없음: {reason}"),
+                            )),
+                        }
+                    }
+                    let path = text_paths
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| PathBuf::from(CURRENT_POINTER));
+                    let mut unit = Self::unit(root, path, UnitKind::TextSource, input, generation)?;
+                    unit.text = Some(TextUnit { base, paths });
+                    units.push(unit);
+                }
+                Err(reason) => {
+                    for path in &text_paths {
+                        unsupported.push((path.clone(), reason.clone()));
+                    }
+                    if text_paths.is_empty() {
+                        text_generation = true;
+                        unsupported.push((PathBuf::from(CURRENT_POINTER), reason));
+                    }
+                }
+            }
+        }
         for entry in &entries {
             let path = entry.path.clone();
+            if is_text_source_path(&path) || (text_generation && path == Path::new(CURRENT_POINTER))
+            {
+                continue;
+            }
             if is_component_source_path(&path) {
                 let name = path.file_name().unwrap_or_default();
                 let mut sides = Vec::new();
@@ -380,7 +455,52 @@ impl ConflictSession {
             candidate,
             objects,
             generation,
+            text: None,
         })
+    }
+
+    /// 텍스트 원본 단위의 세 쪽 파일 집합: 작업 트리의 원본(unmerged 경로 제외)에 unmerged 텍스트 원본·컴포넌트 원본의
+    /// stage blob을 더합니다(ADR-0113 결정 5).
+    #[allow(clippy::type_complexity)]
+    fn text_source(
+        git: &dyn MergeGit,
+        root: &Path,
+        entries: &[UnmergedEntry],
+    ) -> Result<Result<(MergeInput, TextMergeBase), String>, SessionError> {
+        let design = root.join(DESIGN_PREFIX.trim_end_matches('/'));
+        let mut context = match stellar_project::document_io::session::read_source_dir(&design) {
+            Ok(files) => files,
+            Err(e) => return Ok(Err(format!("작업 트리 텍스트 원본을 읽을 수 없음: {e}"))),
+        };
+        let mut sides = TextSides::default();
+        let unmerged: Vec<(String, &UnmergedEntry)> = entries
+            .iter()
+            .filter_map(|entry| design_relative(&entry.path).map(|relative| (relative, entry)))
+            .collect();
+        for (relative, _) in &unmerged {
+            context.remove(relative);
+        }
+        sides.base = context.clone();
+        sides.ours = context.clone();
+        sides.theirs = context;
+        for (relative, entry) in unmerged {
+            for (stage, files) in [&mut sides.base, &mut sides.ours, &mut sides.theirs]
+                .into_iter()
+                .enumerate()
+            {
+                if entry.stages[stage].is_none() {
+                    continue;
+                }
+                let bytes = stage_bytes(git, root, entry, stage)?;
+                match String::from_utf8(bytes) {
+                    Ok(text) => {
+                        files.insert(relative.clone(), text);
+                    }
+                    Err(_) => return Ok(Err(format!("UTF-8이 아닌 원본 stage: {relative}"))),
+                }
+            }
+        }
+        Ok(prepare_text_merge(&sides).map_err(|e| e.to_string()))
     }
 
     #[allow(clippy::type_complexity)]
@@ -603,6 +723,50 @@ impl ConflictSession {
                     for (path, bytes) in files {
                         add.push(path.clone());
                         writes.insert(path, Some(bytes));
+                    }
+                }
+                UnitKind::TextSource => {
+                    let text = unit
+                        .text
+                        .as_ref()
+                        .ok_or_else(|| encode("텍스트 원본 기준이 없음".into()))?;
+                    let files = text
+                        .base
+                        .encode(validated.snapshot())
+                        .map_err(|e| encode(e.to_string()))?;
+                    let project_path =
+                        |relative: &str| PathBuf::from(format!("{DESIGN_PREFIX}{relative}"));
+                    for (relative, content) in &files {
+                        let path = project_path(relative);
+                        let unmerged = text.paths.contains(&path);
+                        let current = std::fs::read(self.root.join(&path)).ok();
+                        if unmerged || current.as_deref() != Some(content.as_bytes()) {
+                            writes.insert(path.clone(), Some(content.clone().into_bytes()));
+                            add.push(path);
+                        }
+                    }
+                    for relative in text.base.ours().keys() {
+                        let path = project_path(relative);
+                        if !files.contains_key(relative)
+                            && !relative.starts_with("components/")
+                            && self.root.join(&path).exists()
+                        {
+                            writes.insert(path.clone(), None);
+                            add.push(path);
+                        }
+                    }
+                    for path in &text.paths {
+                        add.push(path.clone());
+                    }
+                    if let Some(base) = &unit.generation {
+                        // 로컬 cache(generation)도 같은 결과로 다시 씁니다. 원본이 Git 원본이라 cache는 따로 병합하지
+                        // 않습니다.
+                        let cache = super::serialize_merged_generation(&base.ours, validated)
+                            .map_err(|e| encode(format!("로컬 cache: {e}")))?;
+                        for (path, bytes) in cache {
+                            add.push(path.clone());
+                            writes.insert(path, Some(bytes));
+                        }
                     }
                 }
             }

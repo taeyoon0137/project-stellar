@@ -1,7 +1,9 @@
-//! 텍스트 원본(Git 원본)을 CLI 편집이 쓰고 다시 읽는 시나리오(ADR-0113).
+//! 텍스트 원본(Git 원본)을 CLI 편집·merge driver·conflict 세션이 함께 쓰는 시나리오(ADR-0113).
 //!
 //! `stellar text-source adopt`로 chunk 프로젝트를 텍스트 원본으로 옮긴 뒤, `stellar apply`는 원본과 로컬 cache를 함께
-//! 쓰고, 원본만 바뀐 상태(Git pull)는 `stellar query`가 원본에서 읽습니다.
+//! 쓰고, 원본만 바뀐 상태(Git pull)는 `stellar query`가 원본에서 읽습니다. 두 branch가 같은 View 파일의 이웃한 줄을
+//! 바꾸면 Git 텍스트 merge는 충돌하지만 driver는 의미 단위로 병합하고, 남은 cache pointer conflict는
+//! `merge-driver resolve --apply`가 원본 결과로 다시 써서 unmerged가 0이 됩니다.
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -162,6 +164,37 @@ impl Repo {
             .unwrap()
     }
 
+    fn trust_and_install(&self) {
+        use stellar_ops::test_support::{project_id, FileTrustStore, ProjectIdentity};
+        let data = self
+            .home
+            .join("Library/Application Support/xyz.taeyoon.stellar");
+        FileTrustStore::open(&data)
+            .unwrap()
+            .grant(&ProjectIdentity::new(project_id(), &self.root.canonicalize().unwrap()).unwrap())
+            .unwrap();
+        result(&self.stellar(&["merge-driver", "install", "."]), 0);
+        let attributes = fs::read_to_string(self.root.join(".gitattributes")).unwrap();
+        assert!(
+            attributes.contains("design/pages/**/*.stellar.yaml merge=stellar"),
+            "{attributes}"
+        );
+        self.git(&["add", ".gitattributes"]);
+        self.git(&["commit", "-qm", "driver"]);
+    }
+
+    fn branch(&self, name: &str, label: &str, command: &str) {
+        self.git(&["switch", "-q", "main"]);
+        self.git(&["switch", "-qc", name]);
+        self.apply(label, command);
+        self.git(&["add", "-A"]);
+        self.git(&["commit", "-qm", name]);
+    }
+
+    fn unmerged(&self) -> Vec<String> {
+        let text = self.git(&["diff", "--name-only", "--diff-filter=U"]);
+        text.lines().map(str::to_owned).collect()
+    }
 }
 
 fn kids() -> Vec<String> {
@@ -212,4 +245,134 @@ fn cli_edits_write_the_text_source_and_a_pulled_source_is_read_from_text() {
     fs::write(&view, text.replace("from-cli", "pulled")).unwrap();
     assert_eq!(string(&repo.node(kid), "name"), "pulled");
     assert_ne!(repo.revision(), before);
+}
+
+#[test]
+fn adjacent_line_edits_in_one_view_file_merge_through_the_driver_and_resolve_clears_the_cache_conflict(
+) {
+    let repo = Repo::new("text-driver");
+    repo.trust_and_install();
+    let kid = kids()[0].clone();
+    repo.branch(
+        "renamed",
+        "rename",
+        &format!(r#"{{"kind":"rename","node":"{kid}","name":"renamed"}}"#),
+    );
+    repo.branch(
+        "locked",
+        "lock",
+        &format!(r#"{{"kind":"set-locked","node":"{kid}","locked":true}}"#),
+    );
+    // 대조군: driver 없는 Git 텍스트 merge는 이웃한 두 줄(locked·display_name) 변경을 충돌로 남깁니다.
+    let view_path = repo
+        .view_file()
+        .strip_prefix(&repo.root)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let sides = repo.home.join("sides");
+    fs::create_dir_all(&sides).unwrap();
+    for (name, rev) in [("base", "main"), ("ours", "renamed"), ("theirs", "locked")] {
+        let bytes = repo
+            .git_output(&["show", &format!("{rev}:{view_path}")])
+            .stdout;
+        fs::write(sides.join(name), bytes).unwrap();
+    }
+    let textual = repo.git_output(&[
+        "merge-file",
+        "-p",
+        sides.join("ours").to_str().unwrap(),
+        sides.join("base").to_str().unwrap(),
+        sides.join("theirs").to_str().unwrap(),
+    ]);
+    assert_ne!(textual.status.code(), Some(0), "텍스트 merge는 충돌");
+
+    repo.git(&["switch", "-q", "renamed"]);
+    let merged = repo.git_output(&["merge", "--no-edit", "locked"]);
+    assert_eq!(merged.status.code(), Some(1), "cache pointer는 conflict");
+    // View 파일은 driver가 의미 단위로 병합했고, 남은 것은 로컬 cache pointer뿐입니다.
+    assert_eq!(repo.unmerged(), vec!["design/current".to_owned()]);
+    let view = fs::read_to_string(repo.view_file()).unwrap();
+    assert!(!view.contains("<<<<<<<"), "{view}");
+    assert!(view.contains("renamed"));
+
+    let resolved = result(
+        &repo.stellar(&["merge-driver", "resolve", ".", "--apply"]),
+        0,
+    );
+    let resolved = resolved.get("result").unwrap();
+    let unit = &resolved.get("units").unwrap().as_array().unwrap()[0];
+    assert_eq!(string(unit, "kind"), "text-source");
+    assert_eq!(
+        resolved
+            .get("git")
+            .unwrap()
+            .get("remaining_unmerged")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert!(repo.unmerged().is_empty());
+    let node = repo.node(&kid);
+    assert_eq!(string(&node, "name"), "renamed");
+    assert_eq!(node.get("locked"), Some(&JsonValue::Bool(true)));
+    // merge 상태는 그대로이고 작업 트리와 index가 같습니다.
+    assert!(repo
+        .git_output(&["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+        .status
+        .success());
+    assert_eq!(repo.git(&["diff", "--name-only"]), "");
+}
+
+#[test]
+fn a_real_text_source_conflict_is_listed_and_resolved_to_theirs() {
+    let repo = Repo::new("text-conflict");
+    repo.trust_and_install();
+    let kid = kids()[0].clone();
+    repo.branch(
+        "ours",
+        "ours",
+        &format!(r#"{{"kind":"rename","node":"{kid}","name":"ours-name"}}"#),
+    );
+    repo.branch(
+        "theirs",
+        "theirs",
+        &format!(r#"{{"kind":"rename","node":"{kid}","name":"theirs-name"}}"#),
+    );
+    repo.git(&["switch", "-q", "ours"]);
+    let merged = repo.git_output(&["merge", "--no-edit", "theirs"]);
+    assert_eq!(merged.status.code(), Some(1));
+    let unmerged = repo.unmerged();
+    assert!(
+        unmerged.iter().any(|p| p.starts_with("design/pages/")),
+        "{unmerged:?}"
+    );
+    let listed = result(&repo.stellar(&["merge-driver", "resolve", "."]), 0);
+    let unit = &listed
+        .get("result")
+        .unwrap()
+        .get("units")
+        .unwrap()
+        .as_array()
+        .unwrap()[0];
+    assert_eq!(string(unit, "kind"), "text-source");
+    assert_eq!(unit.get("conflicts").unwrap().as_array().unwrap().len(), 1);
+    assert_eq!(unit.get("writable"), Some(&JsonValue::Bool(false)));
+
+    result(
+        &repo.stellar(&[
+            "merge-driver",
+            "resolve",
+            ".",
+            "--resolve",
+            "0=theirs",
+            "--apply",
+        ]),
+        0,
+    );
+    assert!(repo.unmerged().is_empty());
+    assert_eq!(string(&repo.node(&kid), "name"), "theirs-name");
+    assert_eq!(repo.git(&["diff", "--name-only"]), "");
 }
