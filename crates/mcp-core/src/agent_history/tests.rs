@@ -4,10 +4,15 @@ use super::*;
 use crate::permission::Confirmation;
 use crate::provenance_fixture::*;
 use stellar_ops::commands::command::Command;
-use stellar_ops::commands::lock::lease::ViolationReason;
+use stellar_ops::commands::lock::lease::{LeaseTable, ViolationReason};
 use stellar_ops::diff::diff_records;
+use stellar_ops::validate::Definitions;
 
 use crate::provenance_fixture::world::{World, L, S};
+
+fn no_definitions<'a>() -> Definitions<'a> {
+    Definitions::Failed("정의 없음")
+}
 
 #[test]
 fn thousand_command_batch_inverse_restores_baseline_semantic_snapshot() {
@@ -224,6 +229,55 @@ fn external_client_disconnect_ends_but_app_started_waits_for_grace() {
     assert_eq!(app.permissions.connection(&key(S)), None);
     assert_eq!(app.history.entries[0].kind, "interrupted");
     assert_eq!(name(&app.history.doc, 13), "a");
+}
+
+#[test]
+fn cancel_keeps_batches_and_cancel_with_revert_opens_preview_without_change() {
+    let mut world = World::new(SessionOrigin::ExternalClient);
+    world.apply(100, vec![Command::rename_node(sid(13), "a")]);
+    world.apply(101, vec![Command::rename_node(sid(14), "b")]);
+    let revision = world.history.doc.revision();
+    let (report, preview) = {
+        let (mut ctx, sessions, history) = world.ctx();
+        sessions
+            .cancel_and_preview_revert(
+                session(S),
+                &mut ctx,
+                history,
+                id(4000),
+                5_000,
+                &LeaseTable::new(),
+                no_definitions,
+            )
+            .unwrap()
+    };
+    assert_eq!(report.reason, EndReason::UserStopped);
+    assert_eq!(report.interrupted_batches, 2);
+    assert!(world.table().is_empty(), "lease 0");
+    assert_eq!(world.history.entries.len(), 1, "중단 history entry 1");
+    let preview = preview.expect("세션 되돌리기 미리보기");
+    assert_eq!(
+        world.history.doc.revision(),
+        revision,
+        "미리보기 승인 전 revision 변화 0"
+    );
+    assert_eq!(name(&world.history.doc, 13), "a");
+    assert_eq!(preview.plan.restored.len(), 2);
+    assert!(!preview.blocked_by_lease());
+
+    // 승인하면 비충돌 속성이 baseline과 같아집니다.
+    let table = LeaseTable::new();
+    crate::attached::revert::apply_revert(
+        &preview,
+        &mut world.history,
+        &table,
+        &mut world.provenance,
+        id(4100),
+        crate::provenance::UserUiAction::from_user_interface(),
+    )
+    .unwrap();
+    assert_eq!(name(&world.history.doc, 13), "n13");
+    assert_eq!(name(&world.history.doc, 14), "n14");
 }
 
 #[test]

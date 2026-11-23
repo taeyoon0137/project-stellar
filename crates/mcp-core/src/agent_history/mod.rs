@@ -33,6 +33,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use stellar_ops::commands::agent_batch::AgentBatchId;
+use stellar_ops::commands::agent_revert::RevertItem;
 use stellar_ops::commands::agent_sink::{
     AgentGroup, AgentGroupOutcome, AgentHistorySink, AgentSinkError,
 };
@@ -40,15 +41,16 @@ use stellar_ops::commands::id::{AgentProvenance, CommandId, CommandOrigin};
 use stellar_ops::commands::lock::lease::{LeaseId, LeaseTable};
 use stellar_ops::commands::state::DocumentState;
 use stellar_ops::commands::transaction::CommandTransaction;
+use stellar_ops::validate::Definitions;
 
 use crate::agent_protocol::permission::Permission;
 use crate::attached::edit::{apply_approved, AttachedEditError};
-use crate::attached::revert::RevertFlowError;
+use crate::attached::revert::{preview_revert, RevertFlowError, RevertPreview};
 use crate::lease::{AgentEditLeases, LeaseServiceError};
 use crate::permission::{
     AgentSessionId, Confirmation, ConnectionApproval, PermissionKey, PermissionStore, RequestId,
 };
-use crate::provenance::{AgentChangeProvenance, BatchOutcome, ProvenanceError};
+use crate::provenance::{AgentChangeProvenance, BatchOutcome, ProvenanceError, ProvenanceScope};
 
 #[cfg(test)]
 mod tests;
@@ -426,6 +428,41 @@ impl AgentEditSessions {
         now_ms: u64,
     ) -> Result<SessionEndReport, SessionError> {
         self.end(id, EndReason::UserStopped, ctx, history, entry_id, now_ms)
+    }
+
+    /// 중지하고 되돌리기(XIX.6.3): 종료 절차를 마친 뒤 그 세션의 세션 단위 되돌리기 미리보기를 만듭니다. 미리보기는
+    /// 문서를 바꾸지 않으며, 사용자가 승인하면 `attached::revert::apply_revert`로 적용합니다. 별도 rollback 경로는
+    /// 없습니다. 되돌릴 표시 batch가 없으면 미리보기는 `None`입니다.
+    #[allow(clippy::too_many_arguments)]
+    pub fn cancel_and_preview_revert<'d>(
+        &mut self,
+        id: AgentSessionId,
+        ctx: &mut SessionContext<'_>,
+        history: &mut dyn AgentHistorySink,
+        entry_id: CommandId,
+        now_ms: u64,
+        table: &LeaseTable,
+        definitions: impl FnOnce() -> Definitions<'d>,
+    ) -> Result<(SessionEndReport, Option<RevertPreview>), SessionError> {
+        let report = self.cancel(id, ctx, history, entry_id, now_ms)?;
+        let scope = ProvenanceScope::Session(id);
+        if ctx
+            .provenance
+            .revertible(scope)
+            .map_or(true, |records| records.is_empty())
+        {
+            return Ok((report, None));
+        }
+        let preview = preview_revert(
+            history.state(),
+            ctx.provenance,
+            scope,
+            &std::collections::BTreeSet::<RevertItem>::new(),
+            table,
+            definitions,
+        )
+        .map_err(SessionError::Revert)?;
+        Ok((report, Some(preview)))
     }
 
     /// bridge 연결 종료를 알립니다. 외부 클라이언트 세션은 종료 절차(`McpDisconnected`)를 실행하고, 앱이 시작한 세션은
