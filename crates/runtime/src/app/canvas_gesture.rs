@@ -668,6 +668,7 @@ fn parent_vector(
     .ok()
 }
 
+#[cfg(test)]
 fn translated(current: Transform2D, delta: Vec2) -> Option<Transform2D> {
     let (a, b, c, d, x, y) = current.components();
     Transform2D::new(a, b, c, d, x + delta.x(), y + delta.y()).ok()
@@ -685,7 +686,8 @@ fn position_transform(model: &DocumentModel, node: StableId) -> Option<(Modifier
 /// `source`를 `delta`(부모 공간)만큼 옮기는 command를 `target`(복제본이면 remap 적용)에 대해 만듭니다.
 ///
 /// Frame은 `transform`, 배치한 인스턴스는 배치가 기록한 Transform 하나, 그 밖의 node는 속성 탭 `left`·`top`과 같은
-/// 위치 Transform modifier(없으면 맨 앞에 새로)를 바꿉니다. 옮길 수 없는 node는 `Err`입니다.
+/// 위치 Transform modifier(없으면 맨 앞에 새로)를 바꿉니다. 이 저장 규칙은 캔버스 변형 엔진과 같은
+/// `stellar_commands::arrange::place` 한 곳에 있습니다(ADR-0105 결정 1). 옮길 수 없는 node는 `Err`입니다.
 fn move_command(
     model: &DocumentModel,
     source: StableId,
@@ -694,63 +696,42 @@ fn move_command(
     remap: Option<&std::collections::BTreeMap<StableId, StableId>>,
     new_modifier: &mut dyn FnMut() -> StableId,
 ) -> Result<Option<Command>, Failure> {
-    use stellar_commands::document::frame::keys;
-    let modifier_of = |id: ModifierId| -> Result<ModifierId, Failure> {
-        match remap {
-            None => Ok(id),
-            Some(map) => map
-                .get(&id.stable_id())
-                .map(|&copy| ModifierId::new(copy))
-                .ok_or_else(stale_view),
-        }
+    if !matches!(
+        model.payload(source).ok_or_else(stale_view)?,
+        NodePayload::Frame(_)
+            | NodePayload::ComponentInstance(_)
+            | NodePayload::Shape(_)
+            | NodePayload::Text(_)
+            | NodePayload::Image(_)
+    ) {
+        return Err(stale_view());
+    }
+    let Some(command) = stellar_commands::arrange::place::translate(
+        model,
+        source,
+        delta.x(),
+        delta.y(),
+        new_modifier,
+    )
+    .map_err(|_| stale_view())?
+    else {
+        return Ok(None);
     };
-    let position = match model.payload(source).ok_or_else(stale_view)? {
-        NodePayload::Frame(frame) => {
-            let next = translated(frame.transform, delta).ok_or_else(stale_view)?;
-            if next == frame.transform {
-                return Ok(None);
+    // 복제본의 modifier는 remap된 id이고, 새 modifier 자리는 원본 stack과 같습니다(DuplicateSubtree가 순서를 그대로 복사).
+    let command = match command {
+        Command::SetProperty(mut set) => {
+            set.node = target;
+            Command::SetProperty(set)
+        }
+        Command::SetModifierProperty(mut set) => {
+            if let Some(map) = remap {
+                let copy = map.get(&set.modifier.stable_id()).ok_or_else(stale_view)?;
+                set.modifier = ModifierId::new(*copy);
             }
-            return Ok(Some(set_property(
-                target,
-                keys::TRANSFORM,
-                PropertyValue::Transform(next),
-            )));
+            Command::SetModifierProperty(set)
         }
-        NodePayload::ComponentInstance(instance) => {
-            // 배치가 기록한 이동 하나만 바꿉니다. 별도 변환·override에는 손대지 않습니다.
-            let stack = model.modifier_stack(source).ok_or_else(stale_view)?;
-            let [entry] = stack.entries() else {
-                return Err(stale_view());
-            };
-            let ModifierPayload::Transform(matrix) = entry.payload else {
-                return Err(stale_view());
-            };
-            let (a, b, c, d, _, _) = matrix.components();
-            if !instance.has_no_overrides() || !entry.enabled || (a, b, c, d) != (1., 0., 0., 1.) {
-                return Err(stale_view());
-            }
-            Some((entry.id, matrix))
-        }
-        NodePayload::Shape(_) | NodePayload::Text(_) | NodePayload::Image(_) => {
-            position_transform(model, source)
-        }
-        _ => return Err(stale_view()),
+        other => other,
     };
-    let (modifier, next) = match position {
-        Some((modifier, current)) => {
-            let next = translated(current, delta).ok_or_else(stale_view)?;
-            if next == current {
-                return Ok(None);
-            }
-            (Some(modifier_of(modifier)?), next)
-        }
-        None => (
-            None,
-            translated(Transform2D::identity(), delta).ok_or_else(stale_view)?,
-        ),
-    };
-    // 복제본의 새 modifier 자리는 원본 stack과 같습니다(DuplicateSubtree가 순서를 그대로 복사).
-    let command = transform_command(model, source, modifier, next, new_modifier);
     Ok(Some(retarget(command, target)))
 }
 
