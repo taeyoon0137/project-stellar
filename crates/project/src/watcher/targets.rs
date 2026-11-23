@@ -376,12 +376,75 @@ mod tests {
         let _ = &fx.dir;
     }
 
+    /// `pred`를 만족하는 event가 올 때까지(최대 10초) 모읍니다. 링크 변화가 보이면 등록을 다시 맞춥니다.
+    #[cfg(target_os = "macos")]
+    fn pump(
+        watcher: &mut crate::watcher::fsevents::FsEventsWatcher,
+        sync: &mut ExternalTargetSync,
+        resolver: &PathResolver,
+        seen: &mut Vec<FileWatchEvent>,
+        pred: impl Fn(&crate::watcher::fsevents::FsEventsWatcher, &[FileWatchEvent]) -> bool,
+    ) -> bool {
+        use crate::watcher::ProjectFileWatcher;
+        use std::time::{Duration, Instant};
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            watcher.flush();
+            let events = watcher.wait(Duration::from_millis(100));
+            if sync.needs_resync(&events, watcher.roots()) {
+                sync.sync(watcher, resolver).unwrap();
+            }
+            seen.extend(events);
+            if pred(watcher, seen) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 새로 시작한 stream이 실제로 알림을 받을 때까지 기다립니다.
+    ///
+    /// `kFSEventStreamEventIdSinceNow` stream은 `FSEventStreamStart`가 돌아온 직후의 변화를 놓칠 수 있습니다
+    /// (fseventsd 등록 지연). 그래서 root마다 표지 파일의 생성·삭제가 그 root로 보일 때까지 기다린 뒤에 검사할
+    /// 변화를 만듭니다. 기다리지 않으면 부하가 큰 병렬 실행에서 검사 변화가 등록 전에 일어나 10초 대기 끝에
+    /// 실패합니다.
+    #[cfg(target_os = "macos")]
+    fn settle(
+        watcher: &mut crate::watcher::fsevents::FsEventsWatcher,
+        sync: &mut ExternalTargetSync,
+        resolver: &PathResolver,
+        root: WatchRootId,
+        dir: &Path,
+    ) {
+        const MARKER: &str = ".settle-marker";
+        let marker = dir.join(MARKER);
+        let in_root = move |e: &FileWatchEvent| {
+            e.paths()
+                .iter()
+                .any(|p| p.root() == root && p.relative().ends_with(MARKER))
+        };
+        std::fs::write(&marker, b"s").unwrap();
+        let mut seen = Vec::new();
+        assert!(
+            pump(watcher, sync, resolver, &mut seen, |_, e| e.iter().any(
+                |e| !matches!(e, FileWatchEvent::Removed(_)) && in_root(e)
+            )),
+            "settle {root:?}: {seen:?}"
+        );
+        std::fs::remove_file(&marker).unwrap();
+        let mut seen = Vec::new();
+        assert!(
+            pump(watcher, sync, resolver, &mut seen, |_, e| e.iter().any(
+                |e| matches!(e, FileWatchEvent::Removed(_)) && in_root(e)
+            )),
+            "settle remove {root:?}: {seen:?}"
+        );
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn replaced_target_is_watched_after_dynamic_registration() {
         use crate::watcher::fsevents::FsEventsWatcher;
-        use crate::watcher::ProjectFileWatcher;
-        use std::time::{Duration, Instant};
 
         let fx = fixture();
         let link = fx.project.join("assets");
@@ -392,29 +455,14 @@ mod tests {
         let first = sync.sync(&mut watcher, &resolver).unwrap();
         let a_root = first.added[0].0;
         assert_eq!(watcher.watched_roots(), vec![WatchRootId::PROJECT, a_root]);
-
-        /// `pred`를 만족하는 event가 올 때까지 모읍니다. 링크 변화가 보이면 등록을 다시 맞춥니다.
-        fn pump(
-            watcher: &mut FsEventsWatcher,
-            sync: &mut ExternalTargetSync,
-            resolver: &PathResolver,
-            seen: &mut Vec<FileWatchEvent>,
-            pred: impl Fn(&FsEventsWatcher, &[FileWatchEvent]) -> bool,
-        ) -> bool {
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while Instant::now() < deadline {
-                watcher.flush();
-                let events = watcher.wait(Duration::from_millis(100));
-                if sync.needs_resync(&events, watcher.roots()) {
-                    sync.sync(watcher, resolver).unwrap();
-                }
-                seen.extend(events);
-                if pred(watcher, seen) {
-                    return true;
-                }
-            }
-            false
-        }
+        settle(
+            &mut watcher,
+            &mut sync,
+            &resolver,
+            WatchRootId::PROJECT,
+            &fx.project,
+        );
+        settle(&mut watcher, &mut sync, &resolver, a_root, &fx.a);
 
         // 처음 target 안의 변화.
         let mut seen = Vec::new();
@@ -446,6 +494,7 @@ mod tests {
             .expect("새 target 등록");
         assert!(watcher.roots().get(a_root).is_none(), "이전 target 해제");
         assert_eq!(watcher.watched_roots(), vec![WatchRootId::PROJECT, b_root]);
+        settle(&mut watcher, &mut sync, &resolver, b_root, &fx.b);
 
         // 새 target의 변화 수신, 이전 target 변화는 수신하지 않음.
         let mut seen = Vec::new();
