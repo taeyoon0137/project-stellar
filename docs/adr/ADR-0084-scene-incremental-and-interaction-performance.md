@@ -33,6 +33,11 @@ Accepted (2026-11-23, lane scene-incremental-perf 구현 기록)
      - px 크기이고 keyword min·max가 없는 축의 가용 공간을 지웁니다. 가로 축은 너비 질의 여부만 남깁니다.
    - in-run memo를 node별 목록으로 바꿉니다. 전체 계산은 node 수만큼 미리 두고, 증분 계산은 방문한 node만 담습니다.
    - 배치 함수가 `Prepared`를 빌려 씁니다.
+   - 증분 레이아웃은 편집 앞뒤 모두 두 축 inset이 정해진 absolute node(표시 상태 유지)를 바꿀 때 부모를 다시
+     배치하지 않습니다. 부모 배치(block·flex·grid)는 absolute 자식의 크기·baseline을 읽지 않고 static position도 쓰지
+     않으므로, 부모의 이전 border-box 크기로 그 node 위치만 다시 구해 부모 최종 배치의 해당 자리만 바꿉니다.
+     이전에는 자식이 많은 부모 전체를 다시 배치했습니다. 2만 가시 node 재생의 확정 edit 하나에서 layout 구간이
+     약 6.0ms에서 약 1.6ms가 되었습니다. 남은 비용은 부모의 subtree hash·overflow 재계산이며, 자식 수에 비례합니다.
    - 결과: 같은 부하에서 번갈아 3회 잰 값입니다.
 
      | 엔진 | 전체 배치 | 증분 세션 생성 | 단일 leaf edit p50 |
@@ -62,8 +67,11 @@ Accepted (2026-11-23, lane scene-incremental-perf 구현 기록)
    - z-order는 기존 builder와 같은 pre-order 연속 번호입니다. 그래서 증분 결과와 전체 build 결과의 semantic hash가
      같습니다. 간격을 둔 z 번호는 canonical bytes가 build 순서에 따라 달라지므로 채택하지 않았습니다.
    - source 편집은 바뀐 node·자식·조상 chain만 검사하고, 실패하면 편집 전으로 되돌립니다.
+   - 공간 인덱스는 `SceneSpatialIndex::refresh`로 갱신합니다. 같은 z에 같은 `Arc`가 있는 subtree는 건너뛰므로 단일
+     편집은 바뀐 path만 다시 색인합니다.
    - runtime `canvas::scene_source`가 문서를 source로 바꿉니다. node 종류별 입력은 캔버스 행과 같은 함수로 만듭니다.
-     command change set은 subtree 단위로 다시 변환한 뒤 달라진 node만 편집으로 냅니다.
+     command change set은 subtree 단위로 다시 변환한 뒤 달라진 node만 편집으로 냅니다. Boolean operand 순서에 쓰는
+     pre-order 색인은 삽입·삭제가 있을 때만 다시 만듭니다.
 4. **scene build trace(XI.2.6).** `SceneBuildTrace`는 정적 event `scene.build`와 숫자 field 13개만 냅니다. field는
    revision·시각·node 수·rebuilt·copied·renumbered·shared·dirty 종류별 수·full입니다.
    `stellar_diagnostics::trace_schema`가 같은 이름 목록으로 검사합니다. 두 목록이 같은지는 xtask replay 테스트가
@@ -82,8 +90,9 @@ Accepted (2026-11-23, lane scene-incremental-perf 구현 기록)
    - `IncrementalScene::set_preview`는 key별 대체 입력으로 snapshot을 만듭니다. document revision은 그대로 두고 scene
      revision만 올립니다.
    - preview는 source·history에 들어가지 않습니다.
-   - pointer up에서 호출자가 `CommandTransaction` 하나를 확정하고 source 편집을 반영한 뒤 preview를 지웁니다. 취소는
-     preview만 지웁니다.
+   - pointer up에서 호출자가 `CommandTransaction` 하나를 확정합니다. `IncrementalScene::commit`이 preview를 지우고
+     source 편집을 같은 build로 반영합니다. 그래서 확정 frame 사이에 원래 위치가 비치지 않습니다. 취소는 preview만
+     지웁니다.
    - 앱(AppKit) 입력 연결은 UI 재설계 때 합니다. 지금은 core replay가 같은 순서를 구동합니다.
 7. **Boolean geometry(XII.10.30).**
    - operand node는 결과에 흡수되어 단독 표시하지 않습니다. 결과는 host의 paint로 칠합니다.
@@ -176,10 +185,23 @@ Accepted (2026-11-23, lane scene-incremental-perf 구현 기록)
 
 ## Performance
 
-- 결정 1의 수치를 참조합니다.
-- 증분 scene의 수치는 `cargo xtask replay` 결과 JSON과 작업 보고서(XVI.2.2)에 기록합니다. 대상은 2만 가시 node
-  fixture의 Pan·Drag·Resize입니다.
-- 이 결과는 개발 장비에서 잰 값입니다. 기준 장비(M1 16GB) 판정이 아닙니다.
+- 레이아웃은 결정 1의 수치를 참조합니다.
+- `cargo xtask replay`(release)를 2만 가시 node fixture에서 돌렸습니다. scenario는 Pan·Drag·Resize이고 각 62 event입니다.
+  측정 장비는 개발 장비(Apple M3 Max)이고, 다른 lane 5개가 동시에 돌아 부하가 컸습니다. 기준 장비(M1 16GB) 판정이
+  아닙니다.
+
+  | scenario | p50 | p99(3회 범위) | T3→T4 p99 |
+  |---|---:|---:|---:|
+  | Pan | 3.1ms | 3.5\~8.6ms | 3.5\~8.6ms |
+  | Drag | 3.6ms | 5.4\~11.7ms | 3.9\~5.9ms |
+  | Resize | 3.4ms | 5.3\~6.8ms | 3.7\~4.4ms |
+
+  - scene build p99는 0.6\~1.2ms로 §6.2 Scene Snapshot 예산(목표 1.00ms, 상한 1.75ms) 안입니다.
+  - 지배 비용은 render graph compile·batching입니다. 화면의 모든 node(약 2만 2천)를 frame마다 다시 compile하므로
+    p50이 약 3ms입니다. §6.2 Render Graph 예산(목표 0.75ms, 상한 1.25ms)을 넘습니다.
+  - render graph 증분 compile은 renderer-core 범위입니다. 이 lane 밖의 후속 과제로 남깁니다.
+  - Drag의 p99 상한 초과(11.7ms)는 한 번 측정한 값입니다. 같은 파일을 다시 재면 5.4\~5.9ms였습니다. 부하에 따른
+    변동인지는 기준 장비에서 다시 확인해야 합니다.
 
 ## Security
 
