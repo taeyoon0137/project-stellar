@@ -70,7 +70,9 @@ Accepted (2026-11-23). engine lane `window-session-stale`의 결정입니다. AD
 - 앱 runtime 감시 thread(`stellar-external-watch`)가 열린 프로젝트마다 FSEvents와 coalescer(XIII.2.5)를 두고, 조용한
   구간마다 current pointer 변화가 있으면 그 프로젝트 창들의 반영 job을 command lane에 보냅니다. coalescer 자기 저장
   기록은 비워 두고 판정은 창의 hash 비교가 합니다. 감시를 붙이기 전의 변화를 놓치지 않게 첫 poll에서 한 번 반영합니다.
-  제스처·진행 중인 쓰기로 미룬 반영은 다음 상태 게시(`build_state`의 관찰)에서 다시 실행합니다. 신뢰 프로젝트의 외부
+  진행 중인 쓰기로 미룬 반영은 그 쓰기 결과를 반영하는 자리(collect)에서 실행하고 그 창에 요청 없는 표시 변경을
+  알립니다. 제스처로 미룬 반영은 다음 상태 게시(`build_state`의 관찰)에서 실행하며, 제스처를 끝낸 요청의 표시 변경
+  event가 그 결과를 셸에 알립니다. 신뢰 프로젝트의 외부
   symlink target 감시 root는 `ExternalTargetSync::sync`로 시작 때와 넘침·링크 변화 event 때 맞춥니다(XIII.4.4).
   감시기를 만들 수 없으면 같은 주기로 current pointer bytes를 비교합니다.
 - 반영을 거부한 진단은 창 상태에 남기고(`AppRuntime::external_status`), 텍스트 원본은 결정 7의 파일·줄 진단을 냅니다.
