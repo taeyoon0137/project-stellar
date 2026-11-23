@@ -628,15 +628,16 @@ impl SessionProcess {
         self.supervisor.as_ref().is_none_or(JoinHandle::is_finished)
     }
 
-    /// 끝날 때까지 기다립니다. stdin을 닫고 reader·writer를 정리한 뒤 결과를 돌려줍니다.
+    /// 끝날 때까지 기다립니다. 먼저 stdin을 닫고(EOF), CLI가 끝나면 reader·writer를 정리한 뒤 결과를
+    /// 돌려줍니다. stream 입력 CLI는 stdin EOF를 받아야 끝나므로 stdin을 닫기 전에 기다리면 멈춥니다.
     pub fn wait(mut self) -> ProcessEnd {
+        self.input = None;
         let end = self
             .supervisor
             .take()
             .expect("supervisor")
             .join()
             .expect("supervisor 스레드 panic");
-        self.input = None;
         if let Some(writer) = self.writer.take() {
             let _ = writer.join();
         }

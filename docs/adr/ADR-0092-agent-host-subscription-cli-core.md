@@ -75,7 +75,7 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
   - CLI가 끝나면 group에 SIGKILL을 보내 하위 프로세스를 남기지 않습니다.
   - 기본값은 version 5 s, status 10 s, startup 60 s, grace 3 s입니다. startup 60 s는 Claude Code `--mcp-config`가 `-p`에서 MCP 서버 연결을 최대 `MCP_TIMEOUT` 30 s(문서 기본값)까지 기다리는 시간의 두 배입니다.
 - reader 스레드가 stdout·stderr를 64 KiB 단위로 바로 출력 수신처에 넘기므로 UI가 느려도 수신이 멈추지 않습니다.
-- stdin은 전용 writer 스레드가 쓰고, 파이프 fd에 `F_SETNOSIGPIPE`를 켭니다.
+- stdin은 전용 writer 스레드가 쓰고, 파이프 fd에 `F_SETNOSIGPIPE`를 켭니다. 프로세스 종료를 기다릴 때는 stdin을 먼저 닫습니다.
 - 입력 방식은 둘입니다.
   - Claude Code는 `--input-format stream-json` user message 줄로 여러 turn을 보냅니다.
   - Codex는 첫 메시지를 stdin에 쓰고 닫습니다(한 turn).

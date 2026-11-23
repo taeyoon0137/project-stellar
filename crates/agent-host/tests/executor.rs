@@ -240,6 +240,47 @@ fn stdin_once_profile_rejects_follow_up_and_stream_profile_accepts() {
 }
 
 #[test]
+fn wait_closes_stream_stdin_so_eof_reading_cli_finishes() {
+    // stream 입력 CLI는 stdin EOF를 받아야 끝납니다. wait가 stdin을 먼저 닫지 않으면 멈춥니다.
+    let probe = TempDir::new("exec-eof");
+    let dump = probe.join("stdin.txt");
+    let s = setup(
+        "exec-eof",
+        "claude",
+        &format!(
+            "{OK_PROBES}[session]\nout {{}}\\n\nread-all\nstdin-dump {}\nexit 0\n",
+            dump.display()
+        ),
+    );
+    let verifier = FixtureVerifier::accepting();
+    let pass = run_preflight(&s.profile, &s.target, &verifier, &s.home, &s.scratch).unwrap();
+    let process = pass
+        .launch("첫째".into(), Some(mcp()), output_for(&s.profile))
+        .unwrap();
+    process.send_user_message("둘째").unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(process.wait());
+    });
+    let end = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("stdin을 닫으면 CLI가 끝나야 함");
+    assert_eq!(end.reason, ProcessEndReason::Exited);
+    assert_eq!(
+        end.exit,
+        Some(stellar_agent_host::process::ExitKind::Code(0))
+    );
+    let lines: Vec<String> = std::fs::read_to_string(&dump)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].contains("첫째") && lines[1].contains("둘째"));
+    assert_eq!(std::fs::read_dir(&s.scratch).unwrap().count(), 0);
+}
+
+#[test]
 fn mcp_config_carries_binding_only_in_server_env_with_private_mode() {
     use std::os::unix::fs::PermissionsExt;
     let probe = TempDir::new("exec-mcp");

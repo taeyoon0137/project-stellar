@@ -27,7 +27,7 @@
 - **timeout·취소**: 취소 또는 시작 timeout(첫 stdout byte까지 `startup_ms`)이면 group에 SIGTERM, `terminate_grace_ms` 뒤 SIGKILL. 확인 명령(`run_capture`)은 전체 timeout에 SIGKILL.
   - 값: version 5 s·status 10 s(로컬 명령, 대역 실측 수 ms), startup 60 s(Claude Code CLI reference: `-p`와 `--mcp-config`이면 MCP 서버 연결을 `MCP_TIMEOUT` 기본 30 s까지 기다림 → 두 배), grace 3 s.
 - **수신 정지 없음(ADR-0005 §6)**: stdout·stderr마다 reader 스레드가 64 KiB씩 읽어 바로 `OutputSink`에 넘깁니다. `SessionOutput`은 lock을 조각 처리 동안만 잡고 UI는 증분만 가져갑니다.
-- **stdin**: 전용 writer 스레드. 파이프 fd에 macOS `F_SETNOSIGPIPE`(`fcntl(2)`)를 켜 앱이 SIGPIPE로 죽지 않게 합니다. Claude Code는 `--input-format stream-json` user message 줄(여러 turn), Codex는 첫 메시지를 쓰고 닫음.
+- **stdin**: 전용 writer 스레드. 파이프 fd에 macOS `F_SETNOSIGPIPE`(`fcntl(2)`)를 켜 앱이 SIGPIPE로 죽지 않게 합니다. Claude Code는 `--input-format stream-json` user message 줄(여러 turn), Codex는 첫 메시지를 쓰고 닫음. `SessionProcess::wait`는 stdin을 먼저 닫고(EOF) 기다립니다. stream 입력 CLI는 EOF를 받아야 끝나기 때문입니다(test `wait_closes_stream_stdin_so_eof_reading_cli_finishes`).
 - 세션 실행은 `PreflightPass::launch`로만 부를 수 있습니다(XXIX.2.7). 실행 직전 실행 파일 지문을 다시 봅니다.
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)
