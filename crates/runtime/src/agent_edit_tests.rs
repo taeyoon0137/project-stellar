@@ -313,3 +313,101 @@ fn another_session_batch_on_the_same_property_is_changed_later() {
     assert_eq!(display(&window, first), DisplayState::ChangedLater);
     assert_eq!(display(&window, second), DisplayState::PendingReview);
 }
+
+/// 같은 디스크 상태에서 headless snapshot(CLI·MCP)이 보는 프로젝트 revision.
+fn headless_revision(root: &std::path::Path) -> ProjectRevision {
+    stellar_ops::snapshot::open_snapshot(root)
+        .unwrap()
+        .revision()
+}
+
+/// 사용자 세트 파일 하나를 씁니다.
+fn write_set(root: &std::path::Path, name: &str, text: &str) {
+    let dir = root.join(stellar_project::manifest_style_defaults::STYLE_DEFAULTS_DIR);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(format!("{name}.stellar.yaml")), text).unwrap();
+}
+
+#[test]
+fn window_revision_matches_the_headless_revision_for_each_style_defaults_choice() {
+    // ADR-0135 결정 3: 창 revision과 headless revision은 같은 디스크 상태에서 같은 표기입니다. 기본 세트, 내장
+    // 세트, 사용자 세트(파일 편집 포함) 모두 봅니다.
+    let f = fixture("agent-edit-revision-css");
+    let root = f.session.identity().canonical_target().to_path_buf();
+    let css = project_revision(&f.session);
+    assert_eq!(css, headless_revision(&root));
+    assert_eq!(css.generation(), f.session.generation_number());
+    assert_eq!(
+        css.hash(),
+        f.session.loaded_generation().map(|g| g.manifest_hash),
+        "기본 세트 cache 상태는 manifest hash 그대로"
+    );
+    drop(f);
+
+    let project = saved_project("agent-edit-revision-rn");
+    stellar_project::manifest_style_defaults::set_active(project.path(), "react-native").unwrap();
+    let session = ProjectWindowSession::load(identity(project.path()), window(2)).unwrap();
+    assert_eq!(session.saved_style_defaults(), "react-native");
+    let rn = project_revision(&session);
+    assert_eq!(rn, headless_revision(project.path()));
+    assert_ne!(
+        rn.hash(),
+        session.loaded_generation().map(|g| g.manifest_hash)
+    );
+    drop(session);
+
+    let project = saved_project("agent-edit-revision-user");
+    write_set(
+        project.path(),
+        "brand",
+        "extends: react-native\nrow-gap: 4px\n",
+    );
+    stellar_project::manifest_style_defaults::set_active(project.path(), "brand").unwrap();
+    let session = ProjectWindowSession::load(identity(project.path()), window(3)).unwrap();
+    let first = project_revision(&session);
+    assert_eq!(first, headless_revision(project.path()));
+    // 세트 파일 값을 바꾸면 두 경로 모두 바뀌고 여전히 같습니다(낡은 base revision은 맞지 않음).
+    write_set(
+        project.path(),
+        "brand",
+        "extends: react-native\nrow-gap: 8px\n",
+    );
+    let edited = project_revision(&session);
+    assert_ne!(edited, first);
+    assert_eq!(edited, headless_revision(project.path()));
+}
+
+#[test]
+fn window_revision_matches_the_headless_revision_while_the_cache_lags_the_source() {
+    // ADR-0135 결정 3: 창이 외부 원본 변경을 반영하고 cache 맞춤 쓰기를 남긴 동안 headless는 원본에서 읽습니다
+    // (FromText). 두 revision은 같은 text revision이고, 맞춤 쓰기 뒤에는 둘 다 새 cache generation입니다.
+    let mut f = fixture("agent-edit-revision-text");
+    let root = f.session.identity().canonical_target().to_path_buf();
+    let opened = project_revision(&f.session);
+    assert_eq!(opened, headless_revision(&root));
+
+    let mut text =
+        stellar_project::external_change::source::TextSourceSession::open(&root, window(77))
+            .unwrap();
+    let tx = rename(text.document(), 911, 11, "외부 원본");
+    text.apply(&tx).unwrap();
+    text.save().unwrap();
+    assert!(matches!(
+        f.session.sync_external(id(70)),
+        crate::window_session::ExternalSync::Applied { .. }
+    ));
+    assert!(f.session.reconcile_pending());
+    let lagging = project_revision(&f.session);
+    assert_ne!(lagging, opened);
+    assert_eq!(lagging, headless_revision(&root));
+    assert_eq!(lagging.generation(), f.session.generation_number() + 1);
+
+    assert!(f.session.save_now().unwrap().written);
+    assert!(!f.session.reconcile_pending());
+    let reconciled = project_revision(&f.session);
+    assert_eq!(reconciled, headless_revision(&root));
+    assert_eq!(
+        reconciled.hash(),
+        f.session.loaded_generation().map(|g| g.manifest_hash)
+    );
+}

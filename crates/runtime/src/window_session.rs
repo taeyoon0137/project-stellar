@@ -1589,6 +1589,11 @@ impl ProjectWindowSession {
         self.loaded.as_ref()
     }
 
+    /// 열 때·마지막 저장 때 `stellar.yaml`의 활성 기본값 세트 이름. 모델 거울의 저장 전 선택이 아닙니다.
+    pub fn saved_style_defaults(&self) -> &str {
+        &self.style_defaults_base
+    }
+
     /// loaded generation 번호(없으면 0).
     pub fn generation_number(&self) -> u64 {
         self.loaded

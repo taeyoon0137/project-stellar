@@ -42,8 +42,10 @@ use stellar_commands::id::CommandId;
 use stellar_commands::lock::lease::{LeaseId, LeaseTable};
 use stellar_commands::transaction::CommandTransaction;
 use stellar_history::agent::{AgentEntryLabels, WindowAgentHistory};
-use stellar_ops::revision::ProjectRevision;
+use stellar_ops::revision::{ProjectRevision, StyleDefaultsKey};
+use stellar_ops::snapshot::text_revision;
 use stellar_ops::validate::Definitions;
+use stellar_project::document_io::session::OpenPlan;
 
 use crate::app::{AppRuntime, JobPublisher, WindowSessionHandle};
 use crate::command_queue::SubmitOptions;
@@ -578,15 +580,41 @@ impl<'a> AgentWindow<'a> {
     }
 }
 
-/// 창이 열어 둔 저장 generation의 프로젝트 revision(`stellar_ops::revision` 표기, 저장한 적 없으면 `g0`). 에이전트
-/// proposal의 `base_revision`을 이 값과 대조합니다(ADR-0093 Consequences, ADR-0112 결정 5).
+/// 창이 기준으로 삼은 디스크 상태의 프로젝트 revision(`stellar_ops::revision` 표기). 에이전트 proposal의
+/// `base_revision`을 이 값과 대조합니다(ADR-0093 Consequences, ADR-0112 결정 5).
+///
+/// 같은 디스크 상태에서 headless snapshot(`stellar_ops::snapshot::open_snapshot`, CLI·MCP)의 revision과 같은
+/// 표기입니다(ADR-0135 결정 3).
+///
+/// 1. 원본·cache 부분: 창이 연 cache generation(저장한 적 없으면 `g0`)입니다. 창이 텍스트 원본만 반영하고 cache 맞춤
+///    쓰기를 남겼으면(원본이 cache보다 앞선 상태, headless는 FromText로 엶) 같은 `text_revision`입니다. cache가 원본보다
+///    앞서거나(Forward) 원본이 없는(Migrate) 상태의 남은 맞춤 쓰기는 headless도 cache를 읽으므로 cache generation입니다.
+/// 2. 세트 부분: 창이 열 때·마지막 저장 때 맞춘 `stellar.yaml` 선택에 같은 [`StyleDefaultsKey`] 규칙을 더합니다.
+///    사용자 세트를 고른 창은 세트 파일 내용을 들고 있지 않으므로 부를 때 세트 파일을 읽습니다(내장 세트면 읽지
+///    않음).
 pub fn project_revision(session: &ProjectWindowSession) -> ProjectRevision {
-    session
+    let cache = session
         .loaded_generation()
         .map_or(ProjectRevision::Unsaved, |loaded| ProjectRevision::Saved {
             generation: loaded.manifest.generation,
             hash: loaded.manifest_hash,
-        })
+        });
+    let source_ahead = session.reconcile_pending()
+        && !matches!(session.open_plan(), OpenPlan::Forward | OpenPlan::Migrate);
+    let storage = match session.source_base() {
+        Some(base) if source_ahead => text_revision(
+            cache.generation(),
+            session
+                .loaded_generation()
+                .map(|loaded| loaded.manifest_hash),
+            Some(base),
+        ),
+        _ => cache,
+    };
+    storage.with_style_defaults(&StyleDefaultsKey::load(
+        session.identity().canonical_target(),
+        session.saved_style_defaults(),
+    ))
 }
 
 /// runtime 단조 시각(ms, 프로세스 안에서만 비교). 세션 시작·종료 시각과 진단 duration에 씁니다.
