@@ -83,6 +83,9 @@ pub mod css;
 /// 문서 값 → 코드 생성 IR 입력 (XXII.1, ADR-0106).
 pub mod codegen;
 
+/// 토큰 → Web CSS custom property·생성 상수 (XXII.2.3, ADR-0106).
+pub mod export_web_tokens;
+
 /// 기본값 세트(ADR-0082, ADR-0086): 세트 표·해석 함수(document)와 프로젝트 선택·사용자 세트 파일(project)을
 /// 상위 도구가 같은 구현으로 쓰도록 다시 냅니다.
 pub mod style_defaults {

@@ -52,10 +52,11 @@ use stellar_target_profile::spec::{
 use stellar_target_profile::validate::{PropertyCapabilityMap, ViewModel, ViewNode};
 
 use crate::ir::{
-    build_ir, CodegenIr, CodegenSources, CssPropertyUse, IrAction, IrContextConsumption,
-    IrContextKey, IrContextProvision, IrContextSource, IrContexts, IrExpr, IrMotion, IrMotionStart,
-    IrOwner, IrReducedMotion, IrSemanticAction, IrSlotCrossing, IrSlotHost, IrStateMachine,
-    IrTiming, IrTransition, IrTrigger, StateDecl, TokenDecl,
+    build_ir, CodegenIr, CodegenSources, CssPropertyUse, IrAction, IrColorScheme,
+    IrContextConsumption, IrContextKey, IrContextProvision, IrContextSource, IrContexts,
+    IrEnvironmentValue, IrExpr, IrInteractionState, IrMotion, IrMotionStart, IrOwner,
+    IrReducedMotion, IrSemanticAction, IrSlotCrossing, IrSlotHost, IrStateMachine, IrTiming,
+    IrTokenVariant, IrTransition, IrTrigger, StateDecl, TokenDecl,
 };
 
 /// ContextKey accent(Color).
@@ -789,20 +790,26 @@ impl Fixture {
             },
         ];
         let tokens = vec![
+            TokenDecl::new(
+                sid(TOKEN_SPACING),
+                "spacing.md",
+                TypedValue::Length(len(16.0)),
+            ),
             TokenDecl {
-                id: sid(TOKEN_SPACING),
-                name: "spacing.md".to_string(),
-                value: TypedValue::Length(len(16.0)),
+                variants: vec![IrTokenVariant {
+                    when: vec![IrEnvironmentValue::ColorScheme(IrColorScheme::Dark)],
+                    value: p3(0.1, 0.1, 0.12, 1.0),
+                }],
+                ..TokenDecl::new(sid(TOKEN_SURFACE), "surface", p3(0.96, 0.96, 0.98, 1.0))
             },
             TokenDecl {
-                id: sid(TOKEN_SURFACE),
-                name: "surface".to_string(),
-                value: p3(0.96, 0.96, 0.98, 1.0),
-            },
-            TokenDecl {
-                id: sid(TOKEN_ACCENT),
-                name: "accent".to_string(),
-                value: srgb(0.0, 0.48, 1.0, 1.0),
+                variants: vec![IrTokenVariant {
+                    when: vec![IrEnvironmentValue::InteractionState(
+                        IrInteractionState::Hover,
+                    )],
+                    value: srgb(0.0, 0.4, 0.9, 1.0),
+                }],
+                ..TokenDecl::new(sid(TOKEN_ACCENT), "accent", srgb(0.0, 0.48, 1.0, 1.0))
             },
         ];
         let mut token_bindings = BTreeMap::new();

@@ -13,7 +13,9 @@ use stellar_target_profile::validate::{validate_profiles, ProfileOutcome, ViewNo
 
 use super::behavior_build;
 use super::mapping;
+use super::token_env::normalize_when;
 use super::IrContexts;
+use super::IrTokenVariant;
 use super::{
     CodegenIr, CodegenSources, IrAccessibilityEntry, IrError, IrLayout, IrNode, IrProperty,
     IrState, IrTarget, IrToken, IrTree, MAX_IR_NODES,
@@ -389,15 +391,41 @@ fn declared_tokens(sources: &CodegenSources<'_>) -> Result<Vec<IrToken>, IrError
         if decl.name.trim().is_empty() {
             return Err(IrError::EmptyTokenName(decl.id));
         }
+        let mut variants = Vec::with_capacity(decl.variants.len());
+        for variant in &decl.variants {
+            let when = normalize_when(&variant.when)
+                .filter(|when| !when.is_empty())
+                .ok_or(IrError::InvalidTokenCondition(decl.id))?;
+            variants.push(IrTokenVariant {
+                when,
+                value: variant.value.clone(),
+            });
+        }
+        variants.sort_by(|a, b| a.when.cmp(&b.when));
+        if variants.windows(2).any(|w| w[0].when == w[1].when) {
+            return Err(IrError::InvalidTokenCondition(decl.id));
+        }
         tokens.push(IrToken {
             id: decl.id,
             name: decl.name.clone(),
             value: decl.value.clone(),
+            alias: decl.alias,
+            variants,
         });
     }
     tokens.sort_by_key(|token| token.id);
     if let Some(pair) = tokens.windows(2).find(|pair| pair[0].id == pair[1].id) {
         return Err(IrError::DuplicateToken(pair[0].id));
+    }
+    for token in &tokens {
+        if let Some(alias) = token.alias {
+            if alias == token.id || tokens.binary_search_by(|t| t.id.cmp(&alias)).is_err() {
+                return Err(IrError::UnknownToken {
+                    node: token.id,
+                    token: alias,
+                });
+            }
+        }
     }
     Ok(tokens)
 }

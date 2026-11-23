@@ -1069,3 +1069,79 @@ fn context_reference_errors_are_rejected() {
         );
     }
 }
+
+#[test]
+fn tree_from_nodes_checks_preorder_parent_links() {
+    let fixture = Fixture::new();
+    let ir = build(&fixture, &fx::web_profile()).expect("IR");
+    let mut nodes = ir.nodes.clone();
+    for node in &mut nodes {
+        node.semantics = None;
+    }
+    let tree = IrTree::from_nodes(nodes.clone()).expect("tree");
+    assert_eq!(tree.node_index(sid(12)), ir.node_index(sid(12)));
+    assert!(tree.accessibility.is_empty() && tree.tokens.is_empty());
+    let mut broken = nodes.clone();
+    broken[1].depth = 5;
+    assert_eq!(
+        IrTree::from_nodes(broken).unwrap_err(),
+        IrError::Unreachable(sid(2))
+    );
+    let mut duplicate = nodes.clone();
+    duplicate[2].id = sid(2);
+    assert_eq!(
+        IrTree::from_nodes(duplicate).unwrap_err(),
+        IrError::DuplicateNode(sid(2))
+    );
+    assert_eq!(
+        IrTree::from_nodes(Vec::new()).unwrap_err(),
+        IrError::EmptyView
+    );
+    // 접근성 entry를 가리키는 node는 받지 않습니다(접근성 entry가 없음).
+    assert!(IrTree::from_nodes(ir.nodes.clone()).is_err());
+}
+
+#[test]
+fn token_alias_and_conditions_are_normalized_and_checked() {
+    let mut fixture = Fixture::new();
+    fixture.tokens[0].alias = Some(sid(fx::TOKEN_ACCENT));
+    fixture.tokens[1].variants.push(IrTokenVariant {
+        when: vec![
+            IrEnvironmentValue::ReducedMotion(false),
+            IrEnvironmentValue::Contrast(IrContrast::High),
+        ],
+        value: fx::srgb(0.0, 0.0, 0.0, 1.0),
+    });
+    let ir = build(&fixture, &fx::web_profile()).expect("IR");
+    let surface = ir.token(sid(fx::TOKEN_SURFACE)).expect("surface");
+    // 기본 값 조건은 빠지고 조건 순으로 정렬됩니다.
+    assert_eq!(
+        surface.variants[0].when,
+        vec![IrEnvironmentValue::ColorScheme(IrColorScheme::Dark)]
+    );
+    assert_eq!(
+        surface.variants[1].when,
+        vec![IrEnvironmentValue::Contrast(IrContrast::High)]
+    );
+    assert!(ir
+        .semantic_snapshot()
+        .contains("alias=00000000-0000-0000-0000-000000000047"));
+    let mut bad = Fixture::new();
+    bad.tokens[0].alias = Some(sid(99));
+    assert!(matches!(
+        build(&bad, &fx::web_profile()).unwrap_err(),
+        IrError::UnknownToken { .. }
+    ));
+    let mut twice = Fixture::new();
+    twice.tokens[0].variants.push(IrTokenVariant {
+        when: vec![
+            IrEnvironmentValue::ColorScheme(IrColorScheme::Dark),
+            IrEnvironmentValue::ColorScheme(IrColorScheme::Light),
+        ],
+        value: fx::srgb(0.0, 0.0, 0.0, 1.0),
+    });
+    assert_eq!(
+        build(&twice, &fx::web_profile()).unwrap_err(),
+        IrError::InvalidTokenCondition(sid(fx::TOKEN_SPACING))
+    );
+}

@@ -76,6 +76,9 @@ pub mod behavior;
 /// Context 선언·provision·소비 (XXII.1.6).
 pub mod context;
 
+/// 토큰 alias와 환경 조건부 값 (XXII.2.3).
+pub mod token_env;
+
 /// semantic snapshot 텍스트와 안정 이름 표기.
 pub mod snapshot;
 
@@ -93,6 +96,9 @@ pub use context::{
     IrSlotCrossing, IrSlotHost,
 };
 pub use mapping::{CssPropertyUse, IrMapping, MappingSource, MappingSubject};
+pub use token_env::{
+    IrColorScheme, IrContrast, IrEnvironmentValue, IrInteractionState, IrTokenVariant,
+};
 
 /// IR을 만들 수 있는 최대 View node 수.
 pub const MAX_IR_NODES: usize = 1_000_000;
@@ -115,8 +121,25 @@ pub struct TokenDecl {
     pub id: StableId,
     /// token 이름(비어 있으면 안 됨).
     pub name: String,
-    /// 선택 profile로 해석한 값.
+    /// 선택 profile·기본 환경으로 해석한 값.
     pub value: TypedValue,
+    /// default expression이 다른 토큰 참조 하나뿐이면 그 토큰(alias, XXII.2.3).
+    pub alias: Option<StableId>,
+    /// 환경 조건 조합별 값(기본 환경과 다른 조합만, XXII.2.3).
+    pub variants: Vec<IrTokenVariant>,
+}
+
+impl TokenDecl {
+    /// alias·조건부 값이 없는 선언.
+    pub fn new(id: StableId, name: impl Into<String>, value: TypedValue) -> TokenDecl {
+        TokenDecl {
+            id,
+            name: name.into(),
+            value,
+            alias: None,
+            variants: Vec::new(),
+        }
+    }
 }
 
 /// IR 변환 입력. 모든 값은 IR을 만들 Target Profile로 이미 해석된 것입니다(layout·텍스트·token 값 포함).
@@ -283,8 +306,23 @@ pub struct IrToken {
     pub id: StableId,
     /// 이름.
     pub name: String,
-    /// 해석 값.
+    /// 기본 환경 해석 값.
     pub value: TypedValue,
+    /// alias 대상 토큰.
+    pub alias: Option<StableId>,
+    /// 환경 조건부 값(조건 정규화, 조건 순).
+    pub variants: Vec<IrTokenVariant>,
+}
+
+impl IrToken {
+    /// `interaction_state` 조건이 있는 값이 있는지(XXII.2.3: 토큰 선언에서 뺌).
+    pub fn depends_on_interaction(&self) -> bool {
+        self.variants.iter().any(|v| {
+            v.when
+                .iter()
+                .any(|e| matches!(e, IrEnvironmentValue::InteractionState(s) if *s != IrInteractionState::Default))
+        })
+    }
 }
 
 /// 중립 코드 생성 IR.
@@ -332,6 +370,59 @@ pub struct IrTree {
 }
 
 impl IrTree {
+    /// adapter 입력용으로 node 목록에서 tree를 만듭니다(상태·토큰·머신·motion·Context는 빈 값, 공개 field로 채움).
+    ///
+    /// node는 preorder여야 합니다: `nodes[0]`이 root(부모 없음, 깊이 0), 부모 index가 자기보다 앞, 깊이 = 부모 깊이 + 1,
+    /// 부모의 `children`이 자식 index를 문서 순서로 담고, StableId가 겹치지 않아야 합니다. 접근성 entry는 없습니다.
+    /// 전체 코드 생성 IR은 [`build_ir`]가 만듭니다.
+    pub fn from_nodes(nodes: Vec<IrNode>) -> Result<IrTree, IrError> {
+        if nodes.is_empty() {
+            return Err(IrError::EmptyView);
+        }
+        if nodes.len() > MAX_IR_NODES {
+            return Err(IrError::TooManyNodes);
+        }
+        let mut index = BTreeMap::new();
+        for (position, node) in nodes.iter().enumerate() {
+            if index.insert(node.id, position as u32).is_some() {
+                return Err(IrError::DuplicateNode(node.id));
+            }
+            let consistent = match node.parent {
+                None => position == 0 && node.depth == 0,
+                Some(parent) => {
+                    (parent as usize) < position
+                        && nodes[parent as usize].depth + 1 == node.depth
+                        && nodes[parent as usize].children.contains(&(position as u32))
+                }
+            };
+            if !consistent || (position > 0 && node.parent.is_none()) {
+                return Err(IrError::Unreachable(node.id));
+            }
+            if node.semantics.is_some() {
+                return Err(IrError::AccessibilityOutsideView(node.id));
+            }
+        }
+        for (position, node) in nodes.iter().enumerate() {
+            if node
+                .children
+                .iter()
+                .any(|c| nodes.get(*c as usize).and_then(|n| n.parent) != Some(position as u32))
+            {
+                return Err(IrError::Unreachable(node.id));
+            }
+        }
+        Ok(IrTree {
+            nodes,
+            accessibility: Vec::new(),
+            states: Vec::new(),
+            tokens: Vec::new(),
+            machines: Vec::new(),
+            motions: Vec::new(),
+            contexts: IrContexts::default(),
+            index,
+        })
+    }
+
     /// StableId의 IR node index.
     pub fn node_index(&self, id: StableId) -> Option<u32> {
         self.index.get(&id).copied()
@@ -594,6 +685,8 @@ pub enum IrError {
     },
     /// 같은 속성 경로의 소비가 둘 이상입니다.
     DuplicateConsumption(StableId),
+    /// 토큰 조건부 값의 조건이 잘못되었습니다(같은 key 두 번, 같은 조합 두 번, 빈 조건).
+    InvalidTokenCondition(StableId),
 }
 
 impl fmt::Display for IrError {
@@ -713,6 +806,9 @@ impl fmt::Display for IrError {
             ),
             IrError::DuplicateConsumption(id) => {
                 write!(f, "node {id}의 같은 속성에 Context 소비가 둘 이상입니다")
+            }
+            IrError::InvalidTokenCondition(id) => {
+                write!(f, "토큰 {id}의 조건부 값 조건이 잘못되었습니다")
             }
         }
     }

@@ -2,7 +2,9 @@ codegen-ir v3
 target site web baseline=2024 capability_set=1 registry=1
 tokens 3
   token 00000000-0000-0000-0000-000000000046 "surface" = display-p3(0.96 0.96 0.98 / 1)
+    when [color_scheme=dark] = display-p3(0.1 0.1 0.12 / 1)
   token 00000000-0000-0000-0000-000000000047 "accent" = srgb(0 0.48 1 / 1)
+    when [interaction_state=hover] = srgb(0 0.4 0.9 / 1)
   token 00000000-0000-0000-0000-000000000048 "spacing.md" = 16px
 states 3
   state 00000000-0000-0000-0000-000000000032 "selectedSize" = "00000000-0000-0000-0000-000000000008"

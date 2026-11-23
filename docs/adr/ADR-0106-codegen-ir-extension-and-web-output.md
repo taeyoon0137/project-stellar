@@ -114,10 +114,13 @@ contract가 둘 이상이면 contract 번호 오름차순 첫 contract가 tag를
   수 없습니다. 등록 문법은 literal 값 variant로 정하고(등록 타입은 literal variant와 선언 타입이 같아야 하므로 같은
   결과), 문서 함수와 문법 표·규칙 template이 같은지 ops test가 문서 소스와 대조합니다.
 - media 조건부 값: `color_scheme`·`contrast`·`reduced_motion` 조건 조합마다 `:root`를 감싼 `@media` 블록을 냅니다.
-  블록 순서는 조건 수 오름차순, 같은 수면 key 번호·값 순서이고, cascade 결과가 바뀌지 않는 블록은 내지 않습니다.
+  key마다 기본이 아닌 값이 하나뿐이라 조합은 key 부분집합입니다. 조건에 나온 key 집합의 부분집합만 보고(평가기는 식이
+  읽는 key만 바꿔 평가하므로 그 밖의 key는 값을 바꾸지 않음), 값이 없는 부분집합은 기본 값입니다. 블록 순서는 조건 수
+  오름차순, 같은 수면 key 순서이고, 그때까지의 cascade 결과와 같은 블록은 내지 않습니다.
   `viewport_*`·`density`·`locale` 조건은 지금 표현하지 않고 `token-environment-unsupported` 진단을 냅니다.
-- 등록하지 않는 타입(String·Gradient·Shadow·Typography): CSS 값 텍스트가 있으면 등록하지 않은 custom property,
-  없으면 생성 상수(`tokens.js`)입니다. Boolean·Enum은 생성 상수입니다.
+- CSS 값 텍스트가 없는 토큰(문서 `literal_text`가 `None`: String·Gradient·Shadow·Typography·Boolean·Enum·
+  ResourceRef)은 생성 상수(`tokens.js`)입니다. 문서 formatter가 이 타입들의 CSS 텍스트를 내지 않으므로 등록하지 않은
+  custom property로는 내지 않습니다. 상수는 기본 환경 값만 내고, 조건부 값이 있으면 진단합니다.
 - `interaction_state`에 따라 값이 달라지는 토큰은 `:root`·`@media` 선언에서 빼고 결정 7이 낸다.
 
 ### 6. Context의 Web 출력(XXII.2.5)

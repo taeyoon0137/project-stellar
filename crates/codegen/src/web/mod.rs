@@ -6,6 +6,12 @@ pub mod html;
 /// IR node → HTML semantic 구조 (XXII.2.1).
 pub mod structure;
 
+/// 토큰 Web 출력 계획 (XXII.2.3).
+pub mod tokens;
+
+/// 생성 JavaScript 값·식별자 표기 (XXII.2.3, XXII.5.1).
+pub mod js;
+
 /// 접근성 tree → HTML/ARIA 매핑 (XXII.2.4).
 pub mod aria;
 

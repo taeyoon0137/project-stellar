@@ -7,7 +7,8 @@
 //! codegen-ir v3
 //! target <profile id> <kind> <spec> registry=<release>
 //! tokens <n>
-//!   token <id> <name> = <value>
+//!   token <id> <name> = <value> [alias=<id>]
+//!     when [<환경 조건>,..] = <value>
 //! states <n>
 //!   state <id> <name> = <initial>
 //! nodes <n>
@@ -73,13 +74,26 @@ impl CodegenIr {
         );
         let _ = writeln!(out, "tokens {}", self.tokens.len());
         for token in &self.tokens {
-            let _ = writeln!(
+            let _ = write!(
                 out,
                 "  token {} {:?} = {}",
                 token.id,
                 token.name,
                 value_text(&token.value)
             );
+            if let Some(alias) = token.alias {
+                let _ = write!(out, " alias={alias}");
+            }
+            out.push('\n');
+            for variant in &token.variants {
+                let when: Vec<String> = variant.when.iter().map(|e| e.text()).collect();
+                let _ = writeln!(
+                    out,
+                    "    when [{}] = {}",
+                    when.join(","),
+                    value_text(&variant.value)
+                );
+            }
         }
         let _ = writeln!(out, "states {}", self.states.len());
         for state in &self.states {
