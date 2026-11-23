@@ -1808,23 +1808,6 @@ pub struct AppRuntime {
     document: DocumentThread,
 }
 
-/// 저장된 generation의 HTML 투영. 호출자는 worker에서 실행해야 합니다.
-/// 창 상태와 경로를 읽은 뒤에는 document thread나 FFI registry 잠금을 잡지 않습니다.
-pub fn export_saved_web(
-    root: &std::path::Path,
-    document: StableId,
-    view: StableId,
-    frame: Option<StableId>,
-    expected_generation: u64,
-) -> Result<stellar_ops::web_frame::WebFrameHtml, String> {
-    let snapshot = stellar_ops::snapshot::open_snapshot(root).map_err(|error| error.to_string())?;
-    if snapshot.revision().generation() != expected_generation {
-        return Err("저장 generation이 창의 기준과 달라 HTML을 만들지 않았습니다".into());
-    }
-    stellar_ops::web_frame::export_web_frame_node(&snapshot, document, view, frame)
-        .map_err(|error| error.to_string())
-}
-
 impl Drop for AppRuntime {
     fn drop(&mut self) {
         if let Some((_, token)) = self

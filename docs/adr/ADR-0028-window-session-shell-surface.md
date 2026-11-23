@@ -792,8 +792,7 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 - `stellar_window_canvas_set_tool`은 활성 View의 도구 tag를 코어 창 상태에 기록합니다. 기존 `StellarWindowSessionInfo.reserved`는 현재 도구 tag(1~10)로 정의하고 구조체 크기는 바꾸지 않습니다.
 - `stellar_canvas_snap`은 동일 좌표계의 부모·형제 상자와 이동·크기 결과, 배율, 설정 flag를 받아 정렬선·거리와 조정 상자를 돌려줍니다. `stellar_canvas_snap_intervals`는 제스처 시작 때만 형제 간격 후보를 추가합니다. 두 ABI는 창·문서 상태를 읽지 않습니다.
 
-## 개정(2026-11-20, UX.7.4)
+## 철회(2026-11-23, UX.7.4 코드 탭)
 
-- `stellar_window_export_web`은 창의 활성 View와 단일 선택 Frame을 저장된 generation에서 읽어 `crates/ops`의 Web 투영 결과를 복사합니다. 호출자는 worker thread이며 파일 읽기·코드 생성 동안 FFI registry 잠금을 유지하지 않습니다. 선택이 없으면 활성 View를 대상으로 하고, 디스크 generation 번호가 창 기준과 다르면 결과를 거부합니다.
-- `StellarWebExportInfo`는 HTML·오류·진단 텍스트 길이와 HTML 유무를, `StellarWebDiagnostic`은 node ID·오류 flag·code·message 길이를 전달합니다. 텍스트 순서는 HTML, 오류, 각 진단의 code·message입니다. 버퍼가 작으면 필요한 길이를 적고 `STELLAR_BUFFER_TOO_SMALL`을 돌려줍니다.
-- 코드 탭은 Save Now 완료 뒤 이 함수를 호출해 저장 generation 기준 결과를 보여 줍니다. 파일 오류는 문서를 바꾸지 않고 탭에 표시합니다.
+- 2026-11-20 개정의 `stellar_window_export_web`·`StellarWebExportInfo`·`StellarWebDiagnostic`과 runtime `export_saved_web`을 제거합니다. 코드 탭이 보일 때 상태가 바뀔 때마다 Save Now를 강제해 읽기 전용 보기가 디스크 generation과 Git 변경을 만들었고, autosave debounce(ADR-0072)를 우회했습니다. 창의 live 선택과 디스크 snapshot을 섞어 저장 전 Frame을 찾지 못했고, 오류를 분류 없는 문자열로만 넘겼습니다.
+- Frame 단위 HTML 투영(`stellar_ops::web_frame::export_web_frame_node`)은 유지하며 CLI `stellar web-frame --frame`으로 앱 밖에서도 같은 함수를 씁니다. 앱 코드 보기가 다시 필요하면 저장을 강제하지 않고 창의 메모리 DocumentModel에서 투영하는 코어 API와 분류된 오류 enum으로 새로 정합니다. 오른쪽 영역의 탭 구조는 UI 재설계 명세에서 정합니다.
