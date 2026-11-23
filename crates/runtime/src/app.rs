@@ -134,6 +134,8 @@ mod frame_insert;
 mod frame_move;
 pub mod gesture_math;
 mod image_place;
+/// 이동·크기 조절 스냅 계산과 후보 수집(UX.3.8).
+pub mod snap;
 pub use image_place::ImagePlacement;
 /// 속성 패널 행 게시와 CSS 값 편집(UX.2.2).
 pub mod inspector;

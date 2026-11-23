@@ -256,6 +256,23 @@ impl AppRuntime {
         })
     }
 
+    /// 제스처 시작 때 `nodes`(한 부모를 공유하는 이동·크기 조절 대상)의 스냅 후보를 문서 thread에서 모읍니다.
+    /// 후보는 게시한 캔버스 scene의 부모 local 좌표(CSS px)이며 셸은 상자를 고르지 않습니다(ADR-0071 보완).
+    /// UI는 이 ticket을 기다리지 않습니다. 창이 없거나 scene이 없거나 부모가 다르면 `None`입니다.
+    pub fn canvas_snap_candidates(
+        &self,
+        session: WindowSessionHandle,
+        nodes: Vec<StableId>,
+    ) -> Result<
+        crate::document_thread::JobTicket<Option<super::snap::SnapCandidates>>,
+        crate::document_thread::SubmitError,
+    > {
+        self.sender.submit(move |ctx| {
+            let (_, scene) = window_scene(ctx.app_sessions_mut(), session).ok()?;
+            super::snap::collect(scene?.as_ref(), &nodes)
+        })
+    }
+
     /// 화면 중심에서 `anchor` point인 점을 고정하고 배율을 `factor`배 합니다(핀치, ⌘ 스크롤).
     ///
     /// 배율 상하한은 viewport가 정합니다. 문서·history·저장 상태는 바뀌지 않습니다.

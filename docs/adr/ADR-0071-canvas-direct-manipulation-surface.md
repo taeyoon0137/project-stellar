@@ -215,3 +215,12 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
 ## 철회(2026-11-23, UX.3.8 스냅 연결)
 
 2026-11-18 스냅 개정 중 셸 연결 부분을 제거한다. `StellarSnapCandidate`·`StellarSnapResult`·`stellar_canvas_snap`·`stellar_canvas_snap_intervals`는 셸이 화면 투영 scene에서 고른 부모·형제 상자를 그대로 믿었고(회전 노드는 AABB, 다중 선택은 첫 hit의 형제만), 이동은 화면 좌표·크기 조절은 부모 local 좌표로 좌표계가 섞였다. View 메뉴 토글 세 개, 정렬선·px 라벨 overlay, Option hover 측정은 재설계 대상 UI라 함께 지웠다. 스냅 계산(`gesture_math::snap`)은 엔진으로 남기며 후보 수집을 코어로 옮기는 보완은 다음 절에 적는다. 스냅 설정 값을 앱 설정에 둔다는 결정과 ⌘로 일시 해제하는 관례는 UI 재설계에서도 유지한다.
+
+## 보완(2026-11-23, UX.3.8 스냅 엔진)
+
+- 스냅 계산은 `stellar_runtime::app::snap`에 둔다. 좌표는 모두 대상 부모 local CSS px 하나다. 셸은 화면 허용 오차(pt)와 부모 local 1px의 화면 배율만 넘기고 `snap::tolerance`가 px로 바꾼다. 허용 오차 6pt(`DEFAULT_TOLERANCE_PT`)는 XII.10.2 값이 정해질 때까지의 잠정값이다.
+- 후보 수집은 코어가 한다. `AppRuntime::canvas_snap_candidates(session, nodes)`가 게시한 캔버스 scene에서 대상 부모 상자와 움직이지 않는 직계 형제의 부모 local 경계 상자(회전·기울임 반영)를 모으고 형제 간격을 한 번 계산한다. 대상이 한 부모를 공유하지 않으면 스냅하지 않는다. 형제가 4096개를 넘으면 거부하지 않고 시작 상자에 가까운 4096개만 남긴다.
+- 우선순위는 축마다 부모 가장자리·중심 → 형제 가장자리·중심 → 형제와 같은 크기(크기 조절) → 같은 간격(이동) → 정수 px다. 형제와 같은 크기는 정렬선이 아닌 `size_match` 결과로 낸다.
+- 크기 조절 수식키: Option(중심 기준)은 반대 변도 같은 거리만큼 옮겨 중심을 지킨다. Shift(비율 유지)는 한 축을 맞추면 비율이 깨지므로 스냅하지 않는다.
+- 측정(2026-11-23, Apple M3 Max, Release `cargo test --release -p stellar-runtime --lib measure_snap_with_max_siblings -- --ignored`, REF-MAC 판정 아님): 형제 4096개 후보에서 이동 스냅 한 번은 101회 중앙값 약 61µs로 0.75ms 예산 안이다.
+- 새 셸 연결(ABI 모양, overlay 그리기)은 UI 재설계 때 정한다.
