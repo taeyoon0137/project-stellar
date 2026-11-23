@@ -243,7 +243,9 @@ impl CanvasGeometry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::canvas::select_fixtures::{nested, scene_of, sid, view_point};
+    use crate::canvas::select_fixtures::{
+        add_frame, add_rectangle, nested, scene_of, set_flags, sid, view_point,
+    };
     use stellar_scene::narrow_phase::LayoutBoxesOnly;
 
     #[test]
@@ -284,5 +286,45 @@ mod tests {
             (300.0, 20.0, 420.0, 140.0)
         );
         assert!(geometry.boxes(sid(12)).is_empty());
+    }
+
+    #[test]
+    fn children_of_a_locked_container_pass_through_like_the_container() {
+        // 잠긴 Frame 22의 자식 23도 잠김으로 표시되어 클릭이 아래 13까지 통과합니다.
+        let mut fixture = nested();
+        add_frame(&mut fixture.model, 22, 11, 0x50, (10., 10., 100., 100.));
+        set_flags(&mut fixture.model, 22, true, true);
+        add_rectangle(&mut fixture.model, 23, 22, 0x10, (0., 0., 80., 80.));
+        let scene = scene_of(&fixture.model, fixture.root);
+        let tree = SelectTree::new(&fixture.model, fixture.root);
+        let stack = point_stack(
+            &scene.index,
+            &scene.viewport,
+            view_point(130.0, 130.0),
+            &NarrowPhaseOptions::EXACT,
+            &LayoutBoxesOnly,
+        );
+        let ids: Vec<(StableId, bool)> =
+            stack.entries().iter().map(|e| (e.node, e.locked)).collect();
+        assert_eq!(
+            ids,
+            vec![
+                (sid(23), true),
+                (sid(22), true),
+                (sid(15), true),
+                (sid(13), false),
+                (sid(11), false),
+                (sid(10), false)
+            ]
+        );
+        assert_eq!(stack.leaf(), Some(sid(13)), "잠긴 컨테이너의 자식도 통과");
+        let change = crate::canvas::select::resolve_click(
+            &tree,
+            crate::canvas::select::EditingScope::at(&tree, sid(11)),
+            &stellar_commands::selection::Selection::empty(),
+            &stack,
+            crate::canvas::tool::Modifiers::NONE,
+        );
+        assert_eq!(change.selection.ids(), &[sid(13)]);
     }
 }
