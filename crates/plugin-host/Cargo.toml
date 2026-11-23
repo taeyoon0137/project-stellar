@@ -7,10 +7,12 @@ publish = false
 
 # 플러그인 코어(Phase XXI, ADR-0097): `.stellar-plugin` package·`plugin.yaml` 검증, 적재 gate, versioned Host API
 # IDL과 생성 binding, async·batch RPC 코어. WebView·셸 연결은 두지 않습니다.
-# 허용 직접 의존: ops(Host API가 부르는 L1 공용 진입점), project(제한 YAML loader 재사용).
+# 허용 직접 의존: ops(Host API가 부르는 L1 공용 진입점), project(제한 YAML loader 재사용), storage(package digest).
 [dependencies]
 stellar-ops = { path = "../ops" }
 stellar-project = { path = "../project" }
+# package digest(`ContentHash`, ADR-0004).
+stellar-storage = { path = "../storage" }
 
 [features]
 # 테스트 fixture(임시 신뢰 프로젝트)를 상위 crate 테스트에 노출합니다. 기본값은 꺼져 있습니다.
