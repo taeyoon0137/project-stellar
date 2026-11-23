@@ -12,6 +12,7 @@
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use stellar_git_porcelain::trust::{GatedGitRunner, GitTrust};
 use stellar_ops::apply::{apply, ApplyError, ApplyMode, ApplyRequest, MAX_COMMANDS};
@@ -70,6 +71,10 @@ pub struct Dispatcher {
     plugin: AdmittedPlugin,
     permissions: BTreeSet<Permission>,
     config: HostConfig,
+    /// 신뢰 확인 뒤 처음 연 snapshot의 프로젝트 root. `TrustedProject`는 root를 고정하고 매 call마다
+    /// [`TrustedProject::check`]로 같은 실제 경로인지 확인하므로, file·apply·Git이 root만 얻으려고 snapshot 전체를
+    /// 다시 열지 않습니다.
+    root: OnceLock<PathBuf>,
 }
 
 fn count(n: usize) -> J {
@@ -92,7 +97,14 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// IDL `PropertyValue`.
+/// f32를 Rust 최단 왕복 표기의 JSON 숫자로 둡니다(JSON 숫자는 원문 문자열을 보존하므로 손실 없음). 유한하지 않은
+/// 값은 `null`입니다. `stellar` CLI·MCP의 값 표기와 같습니다.
+fn float(value: f32) -> J {
+    crate::json::parse(&value.to_string(), crate::json::JsonLimits::default()).unwrap_or(J::Null)
+}
+
+/// IDL `PropertyValue`. `value` 본문은 `stellar` CLI(`views::value_inner`)·MCP의 표기와 같습니다: 숫자 배열은 JSON
+/// 숫자, typed 값은 `{"type_tag","hex"}`, bytes는 `{"hex"}`. 같은 속성 값이 진입점마다 다른 모양이 되지 않게 합니다.
 fn property_value(value: &OpsValue) -> J {
     let inner = match value {
         OpsValue::Bool(v) => J::Bool(*v),
@@ -100,13 +112,15 @@ fn property_value(value: &OpsValue) -> J {
         OpsValue::Text(v) => J::string(v.clone()),
         OpsValue::Id(v) => id(*v),
         OpsValue::Ids(v) => J::Array(v.iter().map(|x| id(*x)).collect()),
-        // f32 표기는 Rust 최단 왕복 표기를 문자열로 둡니다(JSON 숫자 원문 규칙과 무관하게 손실 없음).
-        OpsValue::Floats(v) => J::Array(v.iter().map(|x| J::string(x.to_string())).collect()),
+        OpsValue::Floats(v) => J::Array(v.iter().copied().map(float).collect()),
         OpsValue::Typed { type_tag, bytes } => J::object(vec![
-            ("type_tag", J::int(i64::from(*type_tag))),
-            ("bytes", J::string(hex(bytes))),
+            (
+                "type_tag",
+                J::Number(JsonNumber::from_u64(u64::from(*type_tag))),
+            ),
+            ("hex", J::string(hex(bytes))),
         ]),
-        OpsValue::Bytes(v) => J::string(hex(v)),
+        OpsValue::Bytes(v) => J::object(vec![("hex", J::string(hex(v)))]),
     };
     J::object(vec![
         ("type", J::string(value.type_name())),
@@ -389,6 +403,7 @@ impl Dispatcher {
             plugin,
             permissions,
             config,
+            root: OnceLock::new(),
         }
     }
 
@@ -605,13 +620,18 @@ impl Dispatcher {
         ])
     }
 
+    /// 프로젝트 root. 호출 앞에서 [`TrustedProject::check`]를 이미 통과했습니다.
     fn root(&self) -> Result<PathBuf, RpcError> {
-        Ok(self
+        if let Some(root) = self.root.get() {
+            return Ok(root.clone());
+        }
+        let root = self
             .project
             .snapshot()
             .map_err(trust_failure)?
             .root()
-            .to_path_buf())
+            .to_path_buf();
+        Ok(self.root.get_or_init(|| root).clone())
     }
 
     fn data(&self) -> Result<PluginData, RpcError> {

@@ -71,6 +71,8 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
      `query::node_detail`, `query::tokens`, `query::components`, `apply::apply`(command 해석은
      `mcp_command_input::command_input`), `git::GitSession::status`. plugin host에 판정·해석 사본을 두지 않습니다.
    - 매개변수 검사는 생성 표(`ParamSpec`)로 dispatcher가 한 번 합니다(모르는 key, 필수 누락, 형식).
+   - 속성 값(`PropertyValue.value`) 본문은 `stellar` CLI·MCP와 같은 표기입니다(floats는 JSON 숫자, typed는
+     `{"type_tag","hex"}`, bytes는 `{"hex"}`). 같은 값이 진입점마다 다른 모양이 되지 않게 합니다.
    - 고빈도 namespace(`pointer`, `render`, `frame`, `input`, `animation`)는 IDL에 둘 수 없습니다(IDL lint test).
    - TypeScript binding은 type 선언과 `createHostClient(transport)`(id 부여, 응답 대응, batch, chunk 재조립)를 냅니다.
 7. **RPC(XXI.4.3).** 메시지는 JSON object입니다.

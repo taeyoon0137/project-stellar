@@ -110,6 +110,34 @@ fn every_method_result_matches_idl() {
         )
         .unwrap();
     result_conforms(&idl, Method::QueryNode, &detail);
+    // 속성 값 본문은 CLI·MCP 표기와 같습니다: floats는 JSON 숫자, typed는 {type_tag, hex}, bytes는 {hex}.
+    let properties = detail
+        .get("properties")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+    let mut floats = 0;
+    for property in properties {
+        let value = property.get("value").unwrap();
+        let inner = value.get("value").unwrap();
+        match value.get("type").and_then(JsonValue::as_str).unwrap() {
+            "floats" => {
+                floats += 1;
+                for item in inner.as_array().unwrap() {
+                    assert!(matches!(item, JsonValue::Number(_)), "floats 항목은 숫자");
+                }
+            }
+            "typed" => {
+                assert!(inner.get("type_tag").and_then(JsonValue::as_i64).is_some());
+                assert!(inner.get("hex").and_then(JsonValue::as_str).is_some());
+            }
+            "bytes" => assert!(inner.get("hex").and_then(JsonValue::as_str).is_some()),
+            _ => {}
+        }
+    }
+    assert!(
+        floats > 0,
+        "fixture node에 floats 속성이 있어야 표기를 검사합니다"
+    );
     for (method, name) in [
         (Method::QueryTokens, "query.tokens"),
         (Method::QueryComponents, "query.components"),
@@ -215,6 +243,10 @@ fn revoked_project_trust_stops_project_methods() {
     assert!(dispatcher
         .call("document.read_snapshot", &json("{}"))
         .is_ok());
+    // file.*는 root를 기억해 두지만 신뢰 재확인은 매 call 합니다.
+    assert!(dispatcher
+        .call("file.write", &json(r#"{"path":"a.txt","text":"x"}"#))
+        .is_ok());
     stellar_ops::test_support::FileTrustStore::open(&fx.data)
         .unwrap()
         .revoke(
@@ -228,6 +260,13 @@ fn revoked_project_trust_stops_project_methods() {
     assert_eq!(
         dispatcher
             .call("document.read_snapshot", &json("{}"))
+            .unwrap_err()
+            .code,
+        "not-trusted"
+    );
+    assert_eq!(
+        dispatcher
+            .call("file.read", &json(r#"{"path":"a.txt"}"#))
             .unwrap_err()
             .code,
         "not-trusted"
