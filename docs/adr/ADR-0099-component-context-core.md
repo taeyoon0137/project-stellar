@@ -65,10 +65,13 @@ XXX.7.1\~XXX.7.11과 XXX.7.13의 엔진 부분입니다. macOS 인스펙터 연�
   `DependencyNode::ContextProvision{provision, instances}`(provision 하나가 인스턴스 chain 한 곳에서 내는 값, producer
   `Producer::ContextProvision`)를 공통 node로 둡니다. 정의 tree node의 provision은 인스턴스마다 값이 달라질 수 있어 chain을
   식별에 넣습니다.
-- 소비 binding의 `Context(K)` 읽기는 소비 지점의 해석 결과로 연결합니다: producer별 경로표(`ContextRoutes`: key →
+- 소비 binding의 `Context(K)` 읽기는 소비 지점의 해석 결과로 연결합니다: producer별 경로표(`ContextRoute`: key →
   provision node 또는 key node)를 `BindingEvaluator::from_specs_with_context`에 넘기면 의존 간선·평가·타입 조회·provenance가
-  모두 같은 경로표를 씁니다. 경로표가 없으면 key node(default)입니다. provision 값 식이 같은 key를 읽으면 경로표가 바깥 조상
-  해석을 가리킵니다. 서로 다른 key가 서로를 읽는 cycle은 이 graph의 cycle 검사(VIII.6.3)가 거부합니다.
+  모두 같은 경로표를 씁니다(`BindingEvaluator::with_context`는 `ContextGraph` 입력으로 만듭니다). 경로표가 없으면 key
+  node(default)입니다. provision 값 식이 같은 key를 읽으면 경로표가 바깥 조상 해석을 가리킵니다. 서로 다른 key가 서로를 읽는
+  cycle은 이 graph의 cycle 검사(VIII.6.3)가 거부합니다.
+- 문서 해석 결과를 `ContextGraph`로 옮기는 일은 document와 bindings를 함께 쓰는 쪽이 합니다. 두 crate는 서로 의존하지 않고
+  ops도 bindings에 의존하지 않으므로, 지금은 종단 시험(`tests/integration/tests/context_common`)이 그 변환을 정의합니다.
 
 ### 4. 해석기(XXX.7.4)
 
@@ -96,27 +99,34 @@ XXX.7.1\~XXX.7.11과 XXX.7.13의 엔진 부분입니다. macOS 인스펙터 연�
 | 쓰지 않는 requirement | 경고 |
 | default로 해석됨, shadowing | 정보 |
 
-View 최상위 트리의 소비는 선언이 필요 없습니다. K1↔K2 cycle은 provision 값 식끼리의 해석 graph에서 찾아 오류로 내고, 저장
-경로는 같은 판정을 binding graph cycle 검사로 거부합니다.
+View 최상위 트리의 소비는 선언이 필요 없습니다. K1↔K2 cycle은 모든 site의 provision 값을 평가해 순환을 찾는 오류
+(`ProvisionCycle`)이고, 같은 Context를 binding graph로 만들면 graph cycle 검사(VIII.6.3)가 `SchedulerError::Cycle`로 거부합니다.
+문서 저장 경로에 이 validator를 거는 일은 저장 경로가 컴포넌트 library와 소비 binding을 함께 아는 시점(binding 저장 형식)의
+후속입니다.
 
 ### 6. 증분 재평가(XXX.7.6)
 
 `ContextChange`(provision 추가·삭제·값 변경, key default 변경, node reparent·이동·삭제, instance ComponentRef 교체, slot 콘텐츠
 삽입·삭제·재정렬, Slot 공개 목록 변경, View Variant 구조 patch 적용·해제, Fragment 묶기·풀기)마다 영향받는 소비 지점은
 "그 변경이 해석 경로에 들어가는 지점"입니다. 문서 쪽 `affected_consumers`가 변경 대상 node의 작성 subtree(인스턴스 펼침
-포함)에 있는 소비 지점, 그 key를 읽는 지점, 그 provision을 해석 결과로 쓰는 지점을 고르고, bindings 쪽
-`ContextEvaluator::apply_routes`가 그 소비 binding만 경로를 바꾼 뒤 위상 순서로 다시 평가합니다. 무관한 subtree의 소비는
-평가하지 않습니다.
+포함)에 있는 소비 지점, 그 key를 읽는 지점, 그 provision을 해석 결과로 쓰는 지점을 footprint로 고르고, bindings 쪽
+`BindingEvaluator::apply_context_change`가 바뀐 key·provision producer와 고른 소비 binding의 경로표만 바꾼 뒤 graph 간선을
+다시 만들고, 값은 그대로 둔 채 바뀐 producer에서 위상 순서로 영향받는 producer만 다시 평가합니다. 무관한 subtree의 소비는
+평가하지 않습니다. 새 graph에 cycle이 있으면 아무것도 바꾸지 않습니다.
 
 ### 7. provenance(XXX.7.7)
 
-`ContextEvaluator::context_provenance`는 VIII.6.5 chain에 Context 단계(`ContextHop`: 읽은 key, 출처 provision StableId·provider
+`BindingEvaluator::context_provenance`는 VIII.6.5 chain에 Context 단계(`ContextHop`: 읽은 key, 출처 provision StableId·provider
 node·인스턴스 chain 또는 default, 공개 목록을 지난 Slot)를 붙입니다.
 
 ### 8. command(XXX.7.8)
 
-`CommandKind::EditContext`(`0x00A0`, `edit-context`) 하나에 `ContextEdit` 연산(key 생성·rename·default 변경·삭제, provision
-생성·값 변경·삭제, requirement 추가·삭제, Slot 공개 목록 추가·삭제)을 담습니다. inner tag는 1\~11 고정입니다. 역연산은 같은
+`CommandKind::EditContext`(`0x00A0`, `edit-context`, command codec version 5) 하나(`stellar_commands::context::ContextCommand`,
+`Command::EditContext`는 Box로 담음)에 `ContextEdit` 연산(key 생성·rename·default 변경·삭제, provision 생성·값 변경·삭제,
+requirement 추가·삭제, Slot 공개 목록 추가·삭제, key 복원)을 담습니다. inner tag는 1\~12 고정입니다(12 = 복원). 적용은
+`EditContext::replace_context` primitive(journal `UndoOp::Context`)라 transaction rollback·Undo가 같은 경로입니다. View owner
+provision은 command가 모델로 owner 범위를 검사하고, 컴포넌트 owner provision의 범위와 provision 읽기 cycle은 library를 아는
+validator(결정 5)가 검사합니다. 역연산은 같은
 종류의 반대 연산이며, key 삭제의 역은 key와 함께 지운 provision·requirement·공개 목록 항목을 되살리는 복원 연산입니다. 소비가
 있는 key를 지우면 문서는 key를 지우고, binding 쪽 orphan validator(VIII.8.1)가 `Context(K)` 참조의 타입을 찾지 못해 소비
 binding을 `OrphanedBinding`으로 바꿉니다(`SourceMissing`). provision만 지우면 다음 해석이 default로 갑니다(orphan 아님).
@@ -126,22 +136,37 @@ binding을 `OrphanedBinding`으로 바꿉니다(`SourceMissing`). provision만 �
 provision 값의 PropertyPath는 `(provision StableId, [PROVISION_VALUE = 0xEC10])`입니다. 리터럴 값 provision은 이 경로로 View
 Variant(IX.7.3)·Target Profile override(IX.10.7)의 공통값이 되고, 우선순위는 `stellar_target_profile::overrides::
 resolve_for_profile`의 기존 규칙(공통값 → profile override → variant override → profile × variant)을 그대로 씁니다. 같은
-구체성 Variant 충돌은 variant resolver의 `VariantConflict`를 Context 진단으로 옮깁니다. ops `context::resolve_overrides`가 이
-두 resolver를 잇습니다(document는 target-profile에 의존할 수 없음).
+구체성 Variant 충돌은 variant resolver의 `VariantConflict`를 Context 진단으로 옮기고 그 provision에는 Variant 값을 적용하지
+않습니다. `stellar_ops::context::resolve_context_overrides`가 이 두 resolver를 잇습니다(document는 target-profile에 의존할 수
+없음). override 값 타입이 key 타입과 다르면 거부합니다.
 
 ### 10. Semantic Diff·Merge(XXX.7.10)
 
+- 투영은 `stellar_semantic_diff::build::context`(`SnapshotBuilder::add_context`, 역투영 `context_from_snapshot`)입니다.
 - 객체 종류 `ObjectKind::ContextKey`(`0x0801`)·`ObjectKind::ContextProvision`(`0x0802`), 속성 key는 `0xEC01`(이름)·`0xEC02`
   (scope)·`0xEC03`(값 타입)·`0xEC04`(default bytes)·`0xEC11`(owner)·`0xEC12`(provider)·`0xEC13`(key)·`0xEC10`(값 bytes)입니다.
   requirement는 Component 객체의 `0xE705`, Slot 공개 목록은 Slot 객체의 `0xE716`(Ids, 정렬)입니다.
 - merge 전용 conflict: `ContextProvisionRemovedVsConsume`(11, 한쪽 provision 삭제 대 다른 쪽이 그 provider subtree에서 같은
-  key 소비 추가), `ContextKeyTypeVsProvisionValue`(12, 한쪽 key 값 타입 변경 대 다른 쪽 그 key provision 값 변경).
+  key 소비 추가), `ContextKeyTypeVsProvisionValue`(12, 한쪽 key 값 타입 변경 대 다른 쪽 그 key provision 값 변경·추가).
+  11은 소비 객체가 scene tree에 놓이지 않았으면(binding 소유 expression node 등) 같은 문서 안에서 보수적으로 conflict입니다.
+  12는 key의 타입과 default가 함께 바뀌므로 key 객체의 변경 전체와 provision 값 변경을 받아들이지 않고 key 객체(대상
+  Object)와 provision 값 속성 각각에 conflict를 남깁니다.
 
 ### 11. 조회 API(XXX.7.11)
 
 `stellar_document::context::query`: 선택 속성 binding이 Context 소비면 key·해석 값·provider node 경로를, Value Binding 선택기
-후보로 그 위치에서 소비 가능한 key(이름·StableId 순)와 선언 필요 여부를 돌려줍니다. 셸 FFI는 만들지 않습니다. headless는
-`stellar_ops::context`가 같은 함수를 씁니다.
+후보로 그 위치에서 소비 가능한 key(이름·StableId 순)와 선언 필요 여부를 돌려줍니다. 다른 문서 scope의 key는 후보에서
+뺍니다. 셸 FFI는 만들지 않습니다. CLI·MCP 연결은 후속입니다(binding이 아직 문서 원본에 저장되지 않아 headless 경로에서 소비
+binding을 읽을 곳이 없음).
+
+### 12. crate 경계 보조
+
+- `stellar_document`는 `stellar_expressions`를 `stellar_document::expressions`로 재수출합니다. project·commands·semantic-diff가
+  expressions에 직접 의존하지 않고 Context 값 식 타입을 이름 붙이기 위해서입니다(crate graph 허용 edge는 바꾸지 않음).
+- TypeSpec·scope·owner bytes는 문서 crate 함수(`type_spec_bytes`, `ContextScope::to_bytes`, `ContextOwner::to_bytes`)
+  하나로 쓰고 읽습니다. command codec과 snapshot 투영이 같은 함수를 씁니다.
+- `context-set` chunk kind는 storage registry(보호 경로)에 등록하지 않고 core-types 예약 상수로 씁니다. 제품 경로는 kind
+  registry로 chunk를 거르지 않기 때문입니다. storage `INITIAL_KINDS`에 더하는 일은 storage 변경 ADR과 함께 합니다.
 
 ## Alternatives
 
