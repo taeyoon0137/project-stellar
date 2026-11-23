@@ -12,6 +12,8 @@ pub mod interaction;
 /// ring buffer 로컬 trace store (XVI.1.5).
 pub mod trace_store;
 
+/// 단계 trace record schema (XI.2.6).
+pub mod trace_schema;
 
 
 
