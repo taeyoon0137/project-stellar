@@ -96,10 +96,7 @@ fn a_paired_source_opens_from_the_cache_and_apply_writes_source_cache_and_stamp(
     let snapshot = open_snapshot(&root).unwrap();
     assert_eq!(snapshot.open_plan(), OpenPlan::Cache);
     assert!(!snapshot.reads_from_text());
-    assert_eq!(
-        snapshot.revision().manifest_hash(),
-        snapshot.current_manifest()
-    );
+    assert_eq!(snapshot.revision().hash(), snapshot.current_manifest());
     let node = child(&model);
     let view = view_file(&root);
     let before = std::fs::read_to_string(&view).unwrap();

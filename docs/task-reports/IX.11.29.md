@@ -132,3 +132,48 @@
 |---|---|
 | `cargo test -p stellar-ops --lib` | 통과(165) |
 | `cargo test -p stellar-cli --test style_defaults` | 통과(6) |
+
+## 후속 작업 (2026-11-24, `lane/style-revision-2`, ADR-0135)
+
+- ADR-0128 Consequences의 한계 세 가지와 revision 표기 계약을 정리했습니다. 행 범위는 그대로입니다.
+  - revision hash 이름: `ProjectRevision::Saved`의 필드·메서드와 CLI·MCP JSON revision object의 키를 `manifest_hash`에서
+    `hash`로 바꿨습니다(결정 1). 원본에서 읽은 상태와 세트를 고른 프로젝트에서는 manifest hash가 아니기 때문입니다.
+  - 사용자 세트 파일: 사용자 세트를 고르면 `flatten_named`로 푼 사슬과 값의 hash를 revision에 더합니다
+    (`revision::StyleDefaultsKey`, 결정 2). 세트 파일 편집 뒤 낡은 base 쓰기는 `base-revision-mismatch`입니다. 뜻이 같은
+    편집과 사슬 밖 세트 파일은 revision을 바꾸지 않습니다. MCP snapshot 재사용 판정도 세트 파일 변경을 봅니다.
+  - 창 revision: runtime `agent_edit::project_revision`이 같은 디스크 상태의 headless revision과 같은 값을 냅니다
+    (결정 3). 세트 선택과 사용자 세트 내용을 더하고, 원본이 cache보다 앞선 동안은 같은 `text_revision`입니다.
+  - schema: MCP resource revision과 CommandTransaction `base_revision` pattern이 `g0:<hash>`를 받습니다(결정 4).
+- 위 "남은 위험"의 runtime `project_revision` 항목은 해소됐습니다.
+
+### 변경 파일
+
+- 소유: `crates/ops/src/revision.rs`, `crates/ops/src/snapshot.rs`, `crates/ops/src/snapshot/save.rs`,
+  `crates/ops/src/snapshot/text_tests.rs`, `crates/runtime/src/agent_edit.rs`, `crates/runtime/src/agent_edit_tests.rs`,
+  `crates/mcp-core/src/headless.rs`.
+- 소유 밖(이름 변경·signature 변경에 따른 최소 수정): `crates/ops/src/apply.rs`, `crates/ops/src/migrate.rs`,
+  `crates/ops/src/compare.rs`, `crates/agent-edit/src/attached/edit_tests.rs`, `tools/stellar-cli/src/views.rs`,
+  `crates/runtime/src/window_session.rs`(`saved_style_defaults` 접근자 하나), `crates/agent-protocol/src/catalog/resources.rs`,
+  `tools/xtask/src/command_schema.rs`, `schemas/command-transaction.schema.json`(생성), CLI 결과 fixture 25개와 MCP
+  fixture 2개(`STELLAR_CLI_BLESS`·`STELLAR_MCP_BLESS`로 갱신, 키 이름과 pattern만 바뀜을 스크립트로 대조).
+- `docs/adr/ADR-0135-project-revision-hash-name-user-sets-and-window-parity.md`.
+
+### 검증 (`DEV-MAC`)
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-ops --lib` | 통과(183) |
+| `cargo test -p stellar-runtime --lib agent_` | 통과(32, 창·headless revision 일치 test 2개 포함) |
+| `cargo test -p stellar-cli --test output_fixtures` | 통과(26) |
+| `cargo test -p stellar-mcp --test catalog_fixtures --test trust_boundary` | 통과 |
+| `cargo xtask generate-command-schema --check`, `cargo xtask generate-ffi-header --check` | drift 없음 |
+| `cargo xtask validate-adr --base eb09bb43` | 통과(exit 0) |
+| `STELLAR_CHECK_BASE=eb09bb43 cargo xtask check-core` | 통과(exit 0) |
+
+### 남은 위험 / 한계
+
+- 창 저장이 원본은 썼지만 cache stamp를 쓰지 못한 상태(`cache_stale`)는 창 메모리에 표시가 없어 창과 headless
+  revision이 다릅니다. 다음 저장이 맞춥니다.
+- 창은 사용자 세트 내용을 반영하지 않으므로(활성 세트 거울 연결 작업 범위), 외부 세트 편집 뒤 창 revision은 바뀌지만
+  창의 생략값 해석은 그대로입니다.
+- JSON 키 변경으로 CLI·MCP fixture가 한 줄씩 바뀝니다. 같은 fixture를 바꾼 다른 작업과 통합할 때 다시 bless합니다.

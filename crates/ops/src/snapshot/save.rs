@@ -179,7 +179,9 @@ pub fn save_documents_selecting(
     selection: &str,
 ) -> Result<SaveOutcome, SaveError> {
     let mut outcome = write_documents(snapshot, roots, models)?;
-    outcome.revision = outcome.revision.with_style_defaults(selection);
+    outcome.revision = outcome
+        .revision
+        .with_style_defaults(&snapshot.style_defaults_key(selection));
     Ok(outcome)
 }
 
@@ -306,7 +308,7 @@ fn write_documents(
     let mut cache_stale = false;
     let mut revision = ProjectRevision::Saved {
         generation,
-        manifest_hash,
+        hash: manifest_hash,
     };
     if let Some(new_base) = &new_base {
         let stamp = Stamp {
