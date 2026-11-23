@@ -6,6 +6,14 @@
 /// CPU/GPU 메모리 예산 provider와 정규화 bucket (XVI.5.1).
 pub mod memory;
 
+/// 상호작용 지연 trace T0~T5 (XVI.1.1~XVI.1.4).
+pub mod interaction;
+
+
+
+
+
+
 /// 민감 데이터(프로젝트 내용·텍스트·경로) 래퍼.
 ///
 /// telemetry 기본 필드에 직접 넣을 수 없고, [`SensitiveDiagnostic`]를 통해서만 다룹니다.
