@@ -66,22 +66,23 @@ impl ProvenanceChain {
     }
 }
 
-struct Values<'a>(&'a BindingEvaluator);
+/// producer `.1`의 참조를 그 producer의 Context 경로표로 해석해 현재 값을 읽는 view.
+struct Values<'a>(&'a BindingEvaluator, NodeIndex);
 
 impl ReferenceValues for Values<'_> {
     fn reference_value(&self, target: &ReferenceTarget) -> Option<Option<TypedValue>> {
         let graph = self.0.graph();
-        let index = graph.index_of(&DependencyNode::from_target(target))?;
+        let index = graph.index_of(&self.0.reference_node(self.1, target))?;
         self.0.value_at(index).as_ref().ok().cloned()
     }
 }
 
-struct Types<'a>(&'a BindingEvaluator);
+struct Types<'a>(&'a BindingEvaluator, NodeIndex);
 
 impl ReferenceTypes for Types<'_> {
     fn reference_type(&self, target: &ReferenceTarget) -> Option<TypeSpec> {
         let graph = self.0.graph();
-        let index = graph.index_of(&DependencyNode::from_target(target))?;
+        let index = graph.index_of(&self.0.reference_node(self.1, target))?;
         self.0.type_at(index)
     }
 }
@@ -99,10 +100,14 @@ impl BindingEvaluator {
             let mut reads = Vec::new();
             let mut branches = Vec::new();
             if let (Some(_), Some(expression)) = (producer, self.expression_at(index)) {
-                let (_, path) =
-                    evaluate_ast_traced(expression, &Types(self), &Values(self), self.limits());
+                let (_, path) = evaluate_ast_traced(
+                    expression,
+                    &Types(self, index),
+                    &Values(self, index),
+                    self.limits(),
+                );
                 for read in path.reads {
-                    let read_node = DependencyNode::from_target(&read.target);
+                    let read_node = self.reference_node(index, &read.target);
                     if let Some(read_index) = graph.index_of(&read_node) {
                         if seen.insert(read_index) {
                             queue.push_back(read_index);

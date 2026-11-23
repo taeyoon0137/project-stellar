@@ -44,3 +44,6 @@ pub mod orphan_commands;
 
 /// 대규모 synthetic token/binding graph 생성기 (VIII.9.1).
 pub mod synthetic;
+
+/// Component Context 소비의 binding graph 연결·provenance·orphan world (XXX.7.3·XXX.7.6~XXX.7.8, ADR-0099).
+pub mod context;
