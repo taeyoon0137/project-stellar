@@ -12,6 +12,9 @@
 //!   적용이고 단계마다 layer 정밀도로 저장합니다. 큰 σ는 GPU와 같은 낮은 해상도 단계(2×2 상자 줄이기 → blur → bilinear
 //!   키우기, ADR-0130 결정 2)를 거칩니다. shadow는 소수 offset quad에 bilinear로 합성하고, 상자 shadow
 //!   ([`ShadowSource::Box`])는 불투명 상자를 원본으로 쓰고 상자 안을 비웁니다(ADR-0130 결정 1·3). clip·mask coverage는 scissor·stencil 0/1, mask는 8-bit 저장 값입니다.
+//! - **window(ADR-0136)**: 그리기 목록 좌표는 device pixel이고 canvas 하나는 [`Window`] 하나(device 영역과 해상도)를
+//!   덮습니다. layer의 내용·shadow 원본·blur canvas는 GPU와 같은 계획([`plan_layer`])의 window입니다. [`draw_ops`]는 canvas
+//!   전체(원점 0, 해상도 1) window이고 [`draw_ops_in`]은 호출자 window입니다.
 //! - **겹침**: [`Coverage::Disjoint`] mesh는 삼각형마다 합성하고(GPU draw 순서와 같음), [`Coverage::Union`]은 pixel마다
 //!   한 번만 합성합니다.
 //! - **이미지**: texture에 올리는 byte([`ImageData::texture_bytes`])를 decode한 값으로 sampling합니다. Nearest는
@@ -33,6 +36,7 @@ use super::fixture::{
     LayerOp, Op, Paint, ShadowSource, ShadowSpec, IMAGE_TEXTURE_FORMAT,
 };
 use super::gradient::GradientRamp;
+use super::window::{plan_layer, EffectSpace, ShadowPlan, Window};
 
 /// working 값 canvas. 쓸 때마다 target format 저장 정밀도로 맞춥니다(GPU attachment가 draw마다 저장 값을 남기고 다음
 /// blend가 그 값을 읽는 것과 같게).
@@ -218,39 +222,78 @@ pub(crate) fn sample(
     }
 }
 
-/// 그리기 목록을 canvas에 그립니다.
-pub fn draw_ops(canvas: &mut Canvas, ops: &[Op], plan: &OutputColorPlan) {
-    for op in ops {
-        match op {
-            Op::Fill(fill) => draw_fill(canvas, fill, plan),
-            Op::Image(image) => draw_image(canvas, image, plan),
-            Op::Glyphs(glyph) => draw_glyph(canvas, glyph, plan),
-            Op::Layer(layer) => draw_layer(canvas, layer, plan),
-        }
-    }
+/// 그리기 목록을 canvas 전체(원점 0, 해상도 1 window)에 그립니다.
+pub fn draw_ops(
+    canvas: &mut Canvas,
+    ops: &[Op],
+    plan: &OutputColorPlan,
+) -> Result<(), FixtureError> {
+    let window = Window::full(canvas.width, canvas.height);
+    let space = EffectSpace::full(canvas.width, canvas.height);
+    draw_ops_in(canvas, &window, ops, plan, &space)
 }
 
-/// layer canvas(GPU layer format 저장 정밀도).
-pub(crate) fn layer_canvas(parent: &Canvas, plan: &OutputColorPlan) -> Canvas {
+/// 그리기 목록(device 좌표)을 `window`를 덮는 canvas에 그립니다(ADR-0136). canvas 크기는 window 크기입니다.
+pub fn draw_ops_in(
+    canvas: &mut Canvas,
+    window: &Window,
+    ops: &[Op],
+    plan: &OutputColorPlan,
+    space: &EffectSpace,
+) -> Result<(), FixtureError> {
+    for op in ops {
+        match op {
+            Op::Fill(fill) => draw_fill(canvas, window, fill, plan),
+            Op::Image(image) => draw_image(canvas, window, image, plan),
+            Op::Glyphs(glyph) => draw_glyph(canvas, window, glyph, plan),
+            Op::Layer(layer) => draw_layer(canvas, window, layer, plan, space)?,
+        }
+    }
+    Ok(())
+}
+
+/// `window` 크기 layer canvas(GPU layer format 저장 정밀도).
+pub(crate) fn layer_canvas(window: &Window, plan: &OutputColorPlan) -> Canvas {
     Canvas::stored(
-        parent.width,
-        parent.height,
+        window.width,
+        window.height,
         WorkingColor::TRANSPARENT,
         LAYER_FORMAT,
         plan.surface(),
     )
 }
 
-/// layer를 효과 순서(ADR-0102 결정 5)대로 그린 뒤 부모에 합성합니다.
+/// layer를 효과 순서(ADR-0102 결정 5)대로 그린 뒤 부모에 합성합니다. pass마다 window는 [`plan_layer`]입니다(ADR-0136).
 ///
 /// 내용 → shadow(내용 아래) → layer blur → clip → mask → opacity → blend.
-fn draw_layer(canvas: &mut Canvas, layer: &LayerOp, plan: &OutputColorPlan) {
-    let mut group = layer_canvas(canvas, plan);
-    draw_ops(&mut group, &layer.content, plan);
+fn draw_layer(
+    canvas: &mut Canvas,
+    parent: &Window,
+    layer: &LayerOp,
+    plan: &OutputColorPlan,
+    space: &EffectSpace,
+) -> Result<(), FixtureError> {
+    let Some(windows) = plan_layer(layer, parent, space).map_err(FixtureError::Window)? else {
+        return Ok(());
+    };
+    let group_window = windows.group;
+    let mut content = layer_canvas(&group_window, plan);
+    draw_ops_in(&mut content, &group_window, &layer.content, plan, space)?;
+    let mut group = content;
     if !layer.shadows.is_empty() {
-        let mut stacked = layer_canvas(canvas, plan);
-        for shadow in &layer.shadows {
-            draw_shadow(&mut stacked, &group, shadow, plan);
+        let mut stacked = layer_canvas(&group_window, plan);
+        for (shadow, shadow_plan) in layer.shadows.iter().zip(&windows.shadows) {
+            if let Some(shadow_plan) = shadow_plan {
+                draw_shadow(
+                    &mut stacked,
+                    &group_window,
+                    &group,
+                    layer,
+                    (shadow, shadow_plan),
+                    plan,
+                    space,
+                )?;
+            }
         }
         for y in 0..stacked.height {
             for x in 0..stacked.width {
@@ -260,30 +303,27 @@ fn draw_layer(canvas: &mut Canvas, layer: &LayerOp, plan: &OutputColorPlan) {
         }
         group = stacked;
     }
-    let [sigma_x, sigma_y] = layer.blur_sigmas();
-    if sigma_x > 0.0 || sigma_y > 0.0 {
+    if let Some(blur) = windows.blur {
         let unit = WorkingColor::premultiplied([1.0; 4]);
-        let d = layer.blur_downsample().unwrap_or(1);
-        let low = downsample(&group, d, plan);
-        let horizontal = blur_pass(&low, sigma_x / d as f32, [1, 0], false, unit);
-        let blurred = blur_pass(&horizontal, sigma_y / d as f32, [0, 1], false, unit);
-        group = if d > 1 {
-            let mut full = layer_canvas(canvas, plan);
-            resample_quad(
-                &mut full,
+        let low = downsample(&group, blur.factor, plan);
+        let horizontal = blur_pass(&low, blur.sigma[0], [1, 0], false, unit);
+        let blurred = blur_pass(&horizontal, blur.sigma[1], [0, 1], false, unit);
+        group = if blur.resolve {
+            let mut resolved = layer_canvas(parent, plan);
+            resample_rect(
+                &mut resolved,
                 &blurred,
-                [0.0, 0.0],
-                d,
+                parent.rect_of(&blur.blurred),
                 None,
                 |canvas, x, y, src| canvas.set(x, y, src),
             );
-            full
+            resolved
         } else {
             blurred
         };
     }
     let (w, h) = (canvas.width, canvas.height);
-    // clip·mask coverage(scissor·stencil은 0/1, mask는 저장한 8-bit coverage).
+    // clip·mask coverage(scissor·stencil은 0/1, mask는 저장한 8-bit coverage). 부모 window 좌표입니다.
     let mut coverage = vec![1.0f32; (w * h) as usize];
     let mut apply = |mask: &Canvas| {
         for (c, m) in coverage.iter_mut().zip(mask.pixels.iter()) {
@@ -299,24 +339,27 @@ fn draw_layer(canvas: &mut Canvas, layer: &LayerOp, plan: &OutputColorPlan) {
             height,
         }) => {
             let mut mask = Canvas::new(w, h, WorkingColor::TRANSPARENT);
-            for py in *y..(y.saturating_add(*height)).min(h) {
-                for px in *x..(x.saturating_add(*width)).min(w) {
-                    mask.set(px, py, WorkingColor::premultiplied([0.0, 0.0, 0.0, 1.0]));
+            if let Some([sx, sy, sw, sh]) = parent.map_scissor(*x, *y, *width, *height) {
+                for py in sy..sy + sh {
+                    for px in sx..sx + sw {
+                        mask.set(px, py, WorkingColor::premultiplied([0.0, 0.0, 0.0, 1.0]));
+                    }
                 }
             }
             apply(&mask);
         }
         Some(ClipSpec::Stencil(mesh)) => {
             let mut mask = Canvas::new(w, h, WorkingColor::TRANSPARENT);
+            let mesh = parent.map_mesh(mesh);
             raster_mesh(&mesh.positions, Coverage::Union, w, h, |x, y| {
                 mask.set(x, y, WorkingColor::premultiplied([0.0, 0.0, 0.0, 1.0]))
             });
             apply(&mask);
         }
-        Some(ClipSpec::Mask(shapes)) => apply(&coverage_canvas(shapes, w, h, plan)),
+        Some(ClipSpec::Mask(shapes)) => apply(&coverage_canvas(shapes, parent, plan)),
     }
     if !layer.mask.is_empty() {
-        apply(&coverage_canvas(&layer.mask, w, h, plan));
+        apply(&coverage_canvas(&layer.mask, parent, plan));
     }
     for y in 0..h {
         for x in 0..w {
@@ -331,61 +374,76 @@ fn draw_layer(canvas: &mut Canvas, layer: &LayerOp, plan: &OutputColorPlan) {
             canvas.set(x, y, composite(layer.blend, src, dst));
         }
     }
+    Ok(())
 }
 
-/// shadow 하나를 `stacked`에 합성합니다(ADR-0102 결정 5, ADR-0130 결정 1·2·3).
+/// shadow 하나를 `stacked`(`group` window)에 합성합니다(ADR-0102 결정 5, ADR-0130 결정 1·2·3, ADR-0136).
 ///
-/// 원본(내용 alpha 또는 불투명 상자) → `d`배 줄이기 → 가로(alpha 퍼뜨림)·세로(shadow 색) blur(σ / d) → offset 자리 quad에
-/// bilinear로 키워 over. 상자 shadow는 상자 안(pixel 중심 판정)을 그리지 않습니다.
+/// 원본(내용 alpha 또는 불투명 상자, 원본 window) → `factor`배 줄이기 → 가로(alpha 퍼뜨림)·세로(shadow 색) blur → offset
+/// 자리 사각형에 bilinear로 키워 over. 상자 shadow는 상자 안(pixel 중심 판정)을 그리지 않습니다.
 fn draw_shadow(
     stacked: &mut Canvas,
+    group: &Window,
     content: &Canvas,
-    shadow: &ShadowSpec,
+    layer: &LayerOp,
+    (shadow, windows): (&ShadowSpec, &ShadowPlan),
     plan: &OutputColorPlan,
-) {
+    space: &EffectSpace,
+) -> Result<(), FixtureError> {
     let (w, h) = (stacked.width, stacked.height);
-    let boxed;
+    let drawn;
     let (source, knockout) = match &shadow.source {
-        ShadowSource::Content => (content, None),
+        ShadowSource::Content if windows.reuse_content => (content, None),
+        ShadowSource::Content => {
+            let mut own = layer_canvas(&windows.source, plan);
+            draw_ops_in(&mut own, &windows.source, &layer.content, plan, space)?;
+            drawn = own;
+            (&drawn, None)
+        }
         ShadowSource::Box(mesh) => {
-            let mut shape = layer_canvas(stacked, plan);
+            let mut shape = layer_canvas(&windows.source, plan);
             let opaque = WorkingColor::premultiplied([1.0; 4]);
-            raster_mesh(&mesh.positions, Coverage::Union, w, h, |x, y| {
-                shape.set(x, y, opaque)
-            });
+            let local = windows.source.map_mesh(mesh);
+            raster_mesh(
+                &local.positions,
+                Coverage::Union,
+                shape.width,
+                shape.height,
+                |x, y| shape.set(x, y, opaque),
+            );
             let mut inside = vec![false; (w * h) as usize];
-            raster_mesh(&mesh.positions, Coverage::Union, w, h, |x, y| {
+            let in_group = group.map_mesh(mesh);
+            raster_mesh(&in_group.positions, Coverage::Union, w, h, |x, y| {
                 inside[(y * w + x) as usize] = true
             });
-            boxed = shape;
-            (&boxed, Some(inside))
+            drawn = shape;
+            (&drawn, Some(inside))
         }
     };
-    let d = shadow.downsample().unwrap_or(1);
-    let [sigma_x, sigma_y] = shadow.sigmas();
-    let low = downsample(source, d, plan);
+    let low = downsample(source, windows.factor, plan);
     let alpha = blur_pass(
         &low,
-        sigma_x / d as f32,
+        windows.sigma[0],
         [1, 0],
         true,
         WorkingColor::premultiplied([1.0; 4]),
     );
     let colored = blur_pass(
         &alpha,
-        sigma_y / d as f32,
+        windows.sigma[1],
         [0, 1],
         false,
         to_working(plan, shadow.color),
     );
-    resample_quad(
+    let b = windows.blurred.bounds().shift(shadow.offset);
+    resample_rect(
         stacked,
         &colored,
-        shadow.offset,
-        d,
+        group.map_rect([b.x0, b.y0, b.x1, b.y1]),
         knockout.as_deref(),
         |canvas, x, y, src| canvas.over(x, y, src),
     );
+    Ok(())
 }
 
 /// `source`를 `d`배(2의 거듭제곱) 줄입니다. 한 단계마다 `ceil(n / 2)` 크기에 2×2 상자 평균(bilinear 표본 하나, 가장자리
@@ -425,20 +483,16 @@ pub(crate) fn downsample(source: &Canvas, d: u32, plan: &OutputColorPlan) -> Can
     current
 }
 
-/// `source`(`d`배 줄인 효과 결과)를 `target`의 quad `[ox, oy, ox + w·d, oy + h·d]`에 bilinear(가장자리 clamp)로 읽어
-/// `write`합니다. pixel 중심이 quad 안인 pixel만(top-left 규칙)이고, `skip`이 참인 pixel은 건너뜁니다.
-fn resample_quad(
+/// `source`(효과 결과)를 `target`의 사각형 `rect`(target texel 좌표, x0, y0, x1, y1)에 bilinear(가장자리 clamp)로 읽어
+/// `write`합니다. pixel 중심이 사각형 안인 pixel만(top-left 규칙)이고, `skip`이 참인 pixel은 건너뜁니다.
+fn resample_rect(
     target: &mut Canvas,
     source: &Canvas,
-    offset: [f32; 2],
-    d: u32,
+    [x0, y0, x1, y1]: [f32; 4],
     skip: Option<&[bool]>,
     mut write: impl FnMut(&mut Canvas, u32, u32, WorkingColor),
 ) {
-    let [ox, oy] = offset;
-    let qw = (source.width * d) as f32;
-    let qh = (source.height * d) as f32;
-    let quad = super::fixture::Mesh::rect(ox, oy, ox + qw, oy + qh);
+    let quad = super::fixture::Mesh::rect(x0, y0, x1, y1);
     let (w, h) = (target.width, target.height);
     let mut covered = Vec::new();
     raster_mesh(&quad.positions, Coverage::Disjoint, w, h, |x, y| {
@@ -448,8 +502,8 @@ fn resample_quad(
         if skip.is_some_and(|skip| skip[(y * w + x) as usize]) {
             continue;
         }
-        let u = (f64::from(x) + 0.5 - f64::from(ox)) / f64::from(qw);
-        let v = (f64::from(y) + 0.5 - f64::from(oy)) / f64::from(qh);
+        let u = (f64::from(x) + 0.5 - f64::from(x0)) / f64::from(x1 - x0);
+        let v = (f64::from(y) + 0.5 - f64::from(y0)) / f64::from(y1 - y0);
         let src = sample(
             &source.pixels,
             source.width,
@@ -464,7 +518,8 @@ fn resample_quad(
 }
 
 /// coverage 도형을 R8 coverage canvas에 합집합으로 그립니다(GPU `ClipMask` + premultiplied over와 같음).
-fn coverage_canvas(shapes: &[CoverageShape], w: u32, h: u32, plan: &OutputColorPlan) -> Canvas {
+fn coverage_canvas(shapes: &[CoverageShape], window: &Window, plan: &OutputColorPlan) -> Canvas {
+    let (w, h) = window.size();
     let mut mask = Canvas::stored(
         w,
         h,
@@ -474,7 +529,8 @@ fn coverage_canvas(shapes: &[CoverageShape], w: u32, h: u32, plan: &OutputColorP
     );
     for shape in shapes {
         let value = WorkingColor::premultiplied([0.0, 0.0, 0.0, shape.coverage]);
-        raster_mesh(&shape.mesh.positions, Coverage::Disjoint, w, h, |x, y| {
+        let mesh = window.map_mesh(&shape.mesh);
+        raster_mesh(&mesh.positions, Coverage::Disjoint, w, h, |x, y| {
             mask.over(x, y, value)
         });
     }
@@ -517,40 +573,32 @@ pub(crate) fn blur_pass(
     out
 }
 
-fn draw_fill(canvas: &mut Canvas, fill: &FillOp, plan: &OutputColorPlan) {
+fn draw_fill(canvas: &mut Canvas, window: &Window, fill: &FillOp, plan: &OutputColorPlan) {
     let (width, height) = (canvas.width, canvas.height);
+    let mesh = window.map_mesh(&fill.mesh);
     match &fill.paint {
         Paint::Solid(color) => {
             let working = to_working(plan, *color);
-            raster_mesh(
-                &fill.mesh.positions,
-                fill.coverage,
-                width,
-                height,
-                |x, y| canvas.over(x, y, working),
-            );
+            raster_mesh(&mesh.positions, fill.coverage, width, height, |x, y| {
+                canvas.over(x, y, working)
+            });
         }
         Paint::Gradient { geometry, stops } => {
             let Ok(ramp) = GradientRamp::resolve(plan, stops) else {
                 return;
             };
-            raster_mesh(
-                &fill.mesh.positions,
-                fill.coverage,
-                width,
-                height,
-                |x, y| {
-                    let t = geometry.parameter([x as f32 + 0.5, y as f32 + 0.5]);
-                    canvas.over(x, y, ramp.evaluate(t))
-                },
-            );
+            raster_mesh(&mesh.positions, fill.coverage, width, height, |x, y| {
+                // gradient 매개변수는 device 좌표의 함수입니다.
+                let t = geometry.parameter(window.center(x, y));
+                canvas.over(x, y, ramp.evaluate(t))
+            });
         }
     }
 }
 
-fn draw_image(canvas: &mut Canvas, image: &ImageOp, plan: &OutputColorPlan) {
+fn draw_image(canvas: &mut Canvas, window: &Window, image: &ImageOp, plan: &OutputColorPlan) {
     let texels = decoded_texels(&image.image, plan);
-    let [x0, y0, x1, y1] = image.rect;
+    let [x0, y0, x1, y1] = window.map_rect(image.rect);
     let [u0, v0, u1, v1] = image.uv.map(f64::from);
     let (w, h) = (canvas.width, canvas.height);
     let mesh = super::fixture::Mesh::rect(x0, y0, x1, y1);
@@ -574,19 +622,29 @@ fn draw_image(canvas: &mut Canvas, image: &ImageOp, plan: &OutputColorPlan) {
     }
 }
 
-fn draw_glyph(canvas: &mut Canvas, glyph: &GlyphOp, plan: &OutputColorPlan) {
+/// glyph mask(device 정수 원점에 1:1)를 그립니다. texel 중심의 device 점이 놓인 mask texel을 읽습니다(Nearest). window
+/// 해상도가 1이면 mask를 그대로 놓는 것과 같습니다.
+fn draw_glyph(canvas: &mut Canvas, window: &Window, glyph: &GlyphOp, plan: &OutputColorPlan) {
     let color = to_working(plan, glyph.color);
     let mask = &glyph.mask;
-    for my in 0..mask.height {
-        for mx in 0..mask.width {
-            let x = i64::from(glyph.origin[0]) + i64::from(mx);
-            let y = i64::from(glyph.origin[1]) + i64::from(my);
-            if x < 0 || y < 0 || x >= i64::from(canvas.width) || y >= i64::from(canvas.height) {
-                continue;
-            }
-            let coverage = f32::from(mask.data[(my * mask.width + mx) as usize]) / 255.0;
-            canvas.over(x as u32, y as u32, color.scale(coverage));
-        }
+    let [ox, oy] = glyph.origin.map(|v| v as f32);
+    let [x0, y0, x1, y1] =
+        window.map_rect([ox, oy, ox + mask.width as f32, oy + mask.height as f32]);
+    let quad = super::fixture::Mesh::rect(x0, y0, x1, y1);
+    let mut covered = Vec::new();
+    raster_mesh(
+        &quad.positions,
+        Coverage::Disjoint,
+        canvas.width,
+        canvas.height,
+        |x, y| covered.push((x, y)),
+    );
+    for (x, y) in covered {
+        let [px, py] = window.center(x, y);
+        let mx = ((px - ox).floor() as i64).clamp(0, i64::from(mask.width) - 1) as u32;
+        let my = ((py - oy).floor() as i64).clamp(0, i64::from(mask.height) - 1) as u32;
+        let coverage = f32::from(mask.data[(my * mask.width + mx) as usize]) / 255.0;
+        canvas.over(x, y, color.scale(coverage));
     }
 }
 
@@ -616,7 +674,7 @@ pub fn render_reference(fixture: &Fixture) -> Result<RgbaImage, FixtureError> {
         fixture.format,
         plan.surface(),
     );
-    draw_ops(&mut canvas, &fixture.ops, &plan);
+    draw_ops(&mut canvas, &fixture.ops, &plan)?;
     Ok(encode_canvas(&canvas, fixture))
 }
 
@@ -723,7 +781,7 @@ mod tests {
         // σ 80(상한 64 초과): 2배 줄여 σ 40으로 blur하고 bilinear로 키운 값이 device 해상도 σ 80 blur와 거의 같습니다
         // (ADR-0130 결정 2).
         let plan = plan();
-        let mut source = layer_canvas(&Canvas::new(400, 64, WorkingColor::TRANSPARENT), &plan);
+        let mut source = layer_canvas(&Window::full(400, 64), &plan);
         for y in 0..64 {
             for x in 150..250 {
                 source.set(x, y, WorkingColor::premultiplied([0.2, 0.4, 0.6, 1.0]));
@@ -736,10 +794,9 @@ mod tests {
         let low = downsample(&source, d, &plan);
         assert_eq!((low.width, low.height), (200, 32));
         let blurred = blur_pass(&low, 40.0, [1, 0], false, unit);
-        let mut full = layer_canvas(&source, &plan);
-        resample_quad(&mut full, &blurred, [0.0, 0.0], d, None, |c, x, y, v| {
-            c.set(x, y, v)
-        });
+        let mut full = layer_canvas(&Window::full(400, 64), &plan);
+        let rect = Window::full(400, 64).rect_of(&Window::full(400, 64).downsampled(d));
+        resample_rect(&mut full, &blurred, rect, None, |c, x, y, v| c.set(x, y, v));
         let mut worst = 0.0f32;
         for y in [0i64, 31, 63] {
             for x in 0..400i64 {
@@ -750,6 +807,40 @@ mod tests {
             }
         }
         // 8-bit 한 단계(1/255)보다 작습니다.
+        assert!(worst < 1.0 / 255.0, "최대 차이 {worst}");
+    }
+
+    #[test]
+    fn blur_source_drawn_at_half_the_blur_resolution_matches_full_resolution_blur() {
+        // σ 300 → e 8: layer 내용을 device 4 pixel 해상도 window에 그려 8로 줄이고 blur한 뒤 부모로 되돌립니다(ADR-0136).
+        // 같은 내용을 device 해상도에 그려 σ 300으로 직접 blur한 값과 8-bit 한 단계보다 덜 다릅니다. 가장자리는 window
+        // 격자와 어긋나게(601, 999) 둡니다.
+        let plan = plan();
+        let (w, h) = (1800u32, 16u32);
+        let content = || vec![rect(601.0, 0.0, 999.0, 16.0, srgb(0.2, 0.4, 0.6, 1.0))];
+        let layer = LayerOp::new(content(), SceneBlendMode::Normal).with_blur(300.0);
+        let windows = plan_layer(&layer, &Window::full(w, h), &EffectSpace::full(w, h))
+            .unwrap()
+            .unwrap();
+        assert_eq!(windows.group.step, 4);
+        assert_eq!(windows.blur.unwrap().blurred.step, 8);
+        let mut windowed = layer_canvas(&Window::full(w, h), &plan);
+        draw_ops(&mut windowed, &[Op::Layer(Box::new(layer))], &plan).unwrap();
+        let mut direct = layer_canvas(&Window::full(w, h), &plan);
+        draw_ops(&mut direct, &content(), &plan).unwrap();
+        let unit = WorkingColor::premultiplied([1.0; 4]);
+        let horizontal = blur_pass(&direct, 300.0, [1, 0], false, unit);
+        let direct = blur_pass(&horizontal, 300.0, [0, 1], false, unit);
+        let mut worst = 0.0f32;
+        for y in [0i64, 8, 15] {
+            for x in 0..i64::from(w) {
+                let (a, b) = (direct.get(x, y), windowed.get(x, y));
+                for c in 0..4 {
+                    worst = worst.max((a.rgba[c] - b.rgba[c]).abs());
+                }
+            }
+        }
+        assert!(direct.get(800, 8).alpha() > 0.005);
         assert!(worst < 1.0 / 255.0, "최대 차이 {worst}");
     }
 

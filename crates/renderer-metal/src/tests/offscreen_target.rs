@@ -51,7 +51,7 @@ use stellar_scene::revision::SceneRevisionMap;
 use stellar_scene::stack::{Opacity, Paint, SceneBlendMode};
 use stellar_scene::{ColorSpace, StableId, Transform2D, Vec2};
 
-use crate::offscreen_target::MetalOffscreenTarget;
+use crate::offscreen_target::{ExportMemoryReport, MetalOffscreenTarget, SUPERSAMPLE};
 
 pub(super) const PINS: ResourcePins = ResourcePins {
     fonts: FontRevision(1),
@@ -323,7 +323,7 @@ fn effect_roots() -> Vec<Arc<SceneNode>> {
 }
 
 /// 흔한 크기의 box-shadow(blur 40 → σ 20)와 layer blur(반경 12): 배수 8이면 supersample σ가 상한(64)을 넘어 효과만 낮은
-/// 해상도로 그립니다(ADR-0130 결정 2).
+/// 해상도로 그립니다(ADR-0130 결정 2, ADR-0136).
 fn large_blur_roots() -> Vec<Arc<SceneNode>> {
     let root = frame(1, 0.0, 0.0, 120.0, 90.0, srgb(0.95, 0.95, 0.9, 1.0));
     scene(&root, |b, s| {
@@ -412,15 +412,8 @@ pub(super) fn write_artifact(name: &str, image: &DecodedPng, profile: OutputProf
     }
 }
 
-/// Metal target이 쓰는 supersampling 배수(Apple GPU texture 한 변 상한 16384).
-fn export_supersample(export: &ConfirmedExport, side: u32) -> u32 {
-    let request = OffscreenRequest::new(export, OutputProfile::Srgb);
-    let margin = crate::offscreen_target::tile_margin(export, request.grid().scale());
-    crate::offscreen_target::supersample_for(margin, side, 16_384).unwrap()
-}
-
 /// effect scene을 Metal target과 같은 경로(frame plan → 그리기 목록)로 CPU 기준 rasterizer에 그립니다(tile 하나).
-fn cpu_reference_of(export: &ConfirmedExport) -> DecodedPng {
+fn cpu_reference_of(export: &ConfirmedExport, s: u32) -> DecodedPng {
     use stellar_renderer_core::clip_plan::ClipCapabilities;
     use stellar_renderer_core::color::decode_pixel;
     use stellar_renderer_core::effects::fixture::{Category, Fixture};
@@ -437,7 +430,6 @@ fn cpu_reference_of(export: &ConfirmedExport) -> DecodedPng {
     let (width, height) = request.size().unwrap();
     let grid = request.grid();
     let origin = grid.world_rect(&grid.canvas());
-    let s = export_supersample(export, width.max(height));
     let k = (grid.scale() * f64::from(s)) as f32;
     let view = Transform2D::new(
         k,
@@ -505,7 +497,7 @@ fn cpu_reference_of(export: &ConfirmedExport) -> DecodedPng {
         fixture.format,
         color_plan.surface(),
     );
-    draw_ops(&mut canvas, &ops, &color_plan);
+    draw_ops(&mut canvas, &ops, &color_plan).unwrap();
     let image = encode_canvas(&canvas, &fixture);
     // 4×4 상자 평균 → 비연관 → encode(Metal target과 같은 마지막 단계).
     let mut rgba = vec![0u8; (width * height * 4) as usize];
@@ -553,7 +545,7 @@ fn metal_target_draws_effects_like_the_cpu_reference() {
         Err(OffscreenError::Unsupported { .. })
     ));
     let actual = png(&export, &metal(), OutputProfile::Srgb);
-    let expected = cpu_reference_of(&export);
+    let expected = cpu_reference_of(&export, SUPERSAMPLE);
     write_artifact("effects_srgb_1x_metal", &actual, OutputProfile::Srgb);
     write_artifact("effects_srgb_1x_reference", &expected, OutputProfile::Srgb);
     let mut over = 0;
@@ -585,69 +577,82 @@ fn associated(p: &[u8]) -> [i32; 4] {
     ]
 }
 
-/// 큰 blur도 supersampling 배수 8로 그립니다. 효과만 낮은 해상도로 그리므로(ADR-0130 결정 2) 배수를 낮추던 장면(σ 20 →
-/// 배수 3)과 출력 pixel σ가 64를 넘는 장면(배율 4, σ 80)을 확인합니다.
+/// 두 image의 연관 값 차이가 `tolerance`를 넘는 pixel 수와 최대 차이.
+fn associated_diff(a: &DecodedPng, b: &DecodedPng, tolerance: u32) -> (usize, u32) {
+    assert_eq!((a.width, a.height), (b.width, b.height));
+    let mut over = 0;
+    let mut worst = 0;
+    for (pa, pb) in a.rgba.chunks(4).zip(b.rgba.chunks(4)) {
+        let (ea, eb) = (associated(pa), associated(pb));
+        let diff = ea.iter().zip(eb).map(|(x, y)| x.abs_diff(y)).max().unwrap();
+        worst = worst.max(diff);
+        if diff > tolerance {
+            over += 1;
+        }
+    }
+    (over, worst)
+}
+
+/// Metal target으로 그려 PNG decode 결과와 메모리 측정을 돌려줍니다.
+fn measured(
+    export: &ConfirmedExport,
+    target: &MetalOffscreenTarget,
+) -> Result<(DecodedPng, ExportMemoryReport), OffscreenError> {
+    let request = OffscreenRequest::new(export, OutputProfile::Srgb);
+    let (image, report) = target.render_measured(&request, &CancelToken::new())?;
+    let bytes = encode_png(&image, 1.0, &CancelToken::new()).unwrap();
+    Ok((decode_png(&bytes, DecodeLimits::default()).unwrap(), report))
+}
+
+/// 불투명 pixel이 처음 나오는 자리(root 왼쪽 위). 내보내기 영역은 그림자 번짐만큼 root보다 넓습니다.
+fn root_origin(image: &DecodedPng) -> (u32, u32) {
+    image
+        .rgba
+        .chunks(4)
+        .position(|p| p[3] == 255)
+        .map(|i| (i as u32 % image.width, i as u32 / image.width))
+        .unwrap()
+}
+
+/// 큰 blur도 supersampling 배수 8로 그립니다. 효과만 낮은 해상도로 그리고(ADR-0130 결정 2) 효과 여백은 target에 넣지 않고
+/// 효과 window에 그리므로(ADR-0136) 배율 4(출력 σ 80, 여백 약 250 pixel)도 배수 8입니다.
 #[test]
 fn large_blur_keeps_supersampling_and_draws_effects_at_low_resolution() {
     let export = confirmed(large_blur_roots(), 1.0, ExportBackground::Transparent);
-    let request = OffscreenRequest::new(&export, OutputProfile::Srgb);
-    let (width, height) = request.size().unwrap();
+    let (actual, report) = measured(&export, &metal()).unwrap();
     assert_eq!(
-        export_supersample(&export, width.max(height)),
-        crate::offscreen_target::SUPERSAMPLE
+        (report.supersample_min, report.supersample_max),
+        (SUPERSAMPLE, SUPERSAMPLE)
     );
-    let actual = png(&export, &metal(), OutputProfile::Srgb);
-    let expected = cpu_reference_of(&export);
+    eprintln!("large blur 1x: {report:?}");
+    let expected = cpu_reference_of(&export, SUPERSAMPLE);
     write_artifact("large_blur_srgb_1x_metal", &actual, OutputProfile::Srgb);
     write_artifact(
         "large_blur_srgb_1x_reference",
         &expected,
         OutputProfile::Srgb,
     );
-    let mut over = 0;
-    let mut worst = 0;
-    for (pa, pb) in expected.rgba.chunks(4).zip(actual.rgba.chunks(4)) {
-        let (ea, eb) = (associated(pa), associated(pb));
-        let diff = ea.iter().zip(eb).map(|(x, y)| x.abs_diff(y)).max().unwrap();
-        worst = worst.max(diff);
-        // CPU 기준의 8-bit layer 저장과 GPU half float의 차이가 두 blur 단계와 bilinear 키우기에서 쌓입니다.
-        if diff > 4 {
-            over += 1;
-        }
-    }
+    // CPU 기준은 출력 전체를 window 하나로 그리고 Metal은 tile마다 효과 window를 따로 잡습니다. 낮은 해상도 격자는 같고
+    // (ADR-0136 "정렬"), 8-bit layer 저장과 half float 차이가 blur 단계와 bilinear 키우기에서 쌓입니다.
+    let (over, worst) = associated_diff(&expected, &actual, 4);
     assert_eq!(over, 0, "최대 차이 {worst}");
     // 그림자가 카드 밖으로 번졌는지: 카드 오른쪽 아래 바깥 pixel은 배경(sRGB 약 242)보다 어둡고, 멀리 떨어진 왼쪽 위
     // 모서리는 배경 그대로입니다.
-    // 내보내기 영역은 그림자 번짐만큼 root보다 넓으므로 root 기준 좌표에 영역 원점(root 왼쪽 위 pixel)을 더합니다.
-    let origin = actual
-        .rgba
-        .chunks(4)
-        .position(|p| p[3] == 255)
-        .map(|i| (i as u32 % actual.width, i as u32 / actual.width))
-        .unwrap();
+    let origin = root_origin(&actual);
     let red =
         |x: u32, y: u32| actual.rgba[(((origin.1 + y) * actual.width + origin.0 + x) * 4) as usize];
     assert!(red(64, 56) < 236, "{}", red(64, 56));
     assert!(red(0, 89).abs_diff(red(119, 0)) <= 1);
 
-    // 배율 4: 출력 pixel σ 80(상한 64 초과)도 그립니다. 여백이 커서 tile texture 한 변 상한으로 배수만 낮아집니다.
+    // 배율 4: 출력 pixel σ 80(device σ 640)도 배수 8입니다(ADR-0130까지는 여백 때문에 배수 2~7).
     let zoomed = confirmed(large_blur_roots(), 4.0, ExportBackground::Transparent);
-    let request = OffscreenRequest::new(&zoomed, OutputProfile::Srgb);
-    let (zw, zh) = request.size().unwrap();
-    let s = export_supersample(&zoomed, zw.max(zh));
-    assert!(
-        (2..crate::offscreen_target::SUPERSAMPLE).contains(&s),
-        "{s}"
-    );
-    let image = png(&zoomed, &metal(), OutputProfile::Srgb);
+    let (image, report) = measured(&zoomed, &metal()).unwrap();
+    eprintln!("large blur 4x: {report:?}");
+    assert_eq!(report.supersample_min, SUPERSAMPLE);
+    assert!(report.largest_texture_side <= crate::offscreen_target::MAX_TILE_TEXTURE);
     write_artifact("large_blur_srgb_4x_metal", &image, OutputProfile::Srgb);
     // 카드 오른쪽 아래 바깥(그림자)은 같은 줄 먼 곳보다 어둡습니다.
-    let origin = image
-        .rgba
-        .chunks(4)
-        .position(|p| p[3] == 255)
-        .map(|i| (i as u32 % image.width, i as u32 / image.width))
-        .unwrap();
+    let origin = root_origin(&image);
     let at =
         |x: u32, y: u32| image.rgba[(((origin.1 + y) * image.width + origin.0 + x) * 4) as usize];
     assert!(
@@ -656,35 +661,113 @@ fn large_blur_keeps_supersampling_and_draws_effects_at_low_resolution() {
         at(256, 224),
         at(4, 224)
     );
+    // 같은 장면 1배와 4배는 같은 자리(출력 pixel 기준)에서 가깝습니다(그림자가 tile 경계에서 끊기지 않음).
+    let one = |x: u32, y: u32| {
+        actual.rgba[(((root_origin(&actual).1 + y) * actual.width + root_origin(&actual).0 + x) * 4)
+            as usize]
+    };
+    for (x, y) in [(64u32, 56u32), (30, 60), (100, 20)] {
+        assert!(one(x, y).abs_diff(at(x * 4 + 2, y * 4 + 2)) <= 6, "{x} {y}");
+    }
+}
 
-    // 효과 여백이 배수 1로도 tile texture 한 변 상한을 넘으면 그리지 않고 실패합니다(근사하지 않음).
-    assert_eq!(
-        crate::offscreen_target::supersample_for(
-            crate::offscreen_target::MAX_TILE_TEXTURE,
-            crate::offscreen_target::TILE,
-            16_384
-        ),
-        None
-    );
-    let huge = {
-        let root = frame(1, 0.0, 0.0, 40.0, 30.0, srgb(0.95, 0.95, 0.9, 1.0));
+/// 여백이 출력 1984 pixel을 넘어 ADR-0130 규칙으로는 실패하던 blur 1300(σ 650)도 그립니다. 배수 8이면 device σ가 상한
+/// 4096을 넘으므로 tile 배수만 6으로 낮춥니다. 배수 1로도 σ 상한을 넘으면 실패합니다(근사하지 않음).
+///
+/// 출력을 작게 두려고 root가 자기 상자로 자르고, 그 안에 배경 없는 큰 Frame(box-shadow, 상자 안 비움)의 왼쪽 가장자리를
+/// 둡니다. 그림자는 상자 밖(root 왼쪽)에만 보입니다.
+#[test]
+fn huge_blur_lowers_supersampling_only_for_the_sigma_limit() {
+    let huge = |blur: f32| {
+        let mut root = frame(1, 0.0, 0.0, 40.0, 30.0, srgb(0.0, 0.0, 0.0, 0.0));
+        root.background = None;
+        root.clip = FrameClipInput::Bounds;
         scene(&root, |b, s| {
-            let mut card = frame(2, 10.0, 10.0, 20.0, 10.0, srgb(1.0, 1.0, 1.0, 1.0));
+            let mut card = frame(2, 20.0, -2000.0, 4000.0, 4000.0, srgb(0.0, 0.0, 0.0, 0.0));
+            card.background = None;
             card.node.paint.shadows.push(Shadow::new(
                 p(0.0, 0.0),
-                BlurRadius::new(1300.0).unwrap(),
+                BlurRadius::new(blur).unwrap(),
                 srgb(0.0, 0.0, 0.0, 0.5),
             ));
             leaf(b, s, &card);
         })
     };
-    let huge = confirmed(huge, 1.0, ExportBackground::Transparent);
-    let request = OffscreenRequest::new(&huge, OutputProfile::Srgb);
+    let export = confirmed(huge(1300.0), 1.0, ExportBackground::Transparent);
+    let (image, report) = measured(&export, &metal()).unwrap();
+    eprintln!(
+        "huge blur 1300: {}x{} {report:?}",
+        image.width, image.height
+    );
+    assert_eq!(report.supersample_max, 6, "{report:?}");
+    assert!(report.largest_texture_side <= crate::offscreen_target::MAX_TILE_TEXTURE);
+    write_artifact("huge_blur_srgb_1x_metal", &image, OutputProfile::Srgb);
+    // 상자 밖(왼쪽)은 상자 가장자리 그림자(알파 약 0.5 × 0.5), 상자 안(오른쪽)은 비어 있습니다.
+    let alpha = |x: u32, y: u32| image.rgba[((y * image.width + x) * 4 + 3) as usize];
+    let y = image.height / 2;
+    assert!((50..=80).contains(&alpha(10, y)), "{}", alpha(10, y));
+    assert!(alpha(0, y).abs_diff(alpha(19, y)) <= 2);
+    assert_eq!(alpha(30, y), 0);
+
+    // σ 8193(blur 16386): 배수 1에서도 device σ 상한(4096)을 넘습니다.
+    let export = confirmed(huge(16_386.0), 1.0, ExportBackground::Transparent);
+    let request = OffscreenRequest::new(&export, OutputProfile::Srgb);
     let result = metal().render(&request, &CancelToken::new());
     assert!(
-        matches!(&result, Err(OffscreenError::Failed { message }) if message.contains("texture 상한")),
+        matches!(&result, Err(OffscreenError::Failed { message }) if message.contains("blur_too_large")),
         "{result:?}"
     );
+}
+
+/// 큰 offset 그림자: ADR-0130 규칙은 여백에 |offset|을 넣어 tile texture가 커졌고 offset 300이면 배수가 5로
+/// 내려갔습니다(퇴행). 이제 원본 window를 offset만큼 옮겨 그리므로 배수 8이고 CPU 기준과 같습니다(ADR-0136).
+#[test]
+fn large_offset_shadow_keeps_supersampling() {
+    let root = frame(1, 0.0, 0.0, 30.0, 20.0, srgb(0.95, 0.95, 0.9, 1.0));
+    let roots = scene(&root, |b, s| {
+        let mut card = frame(2, 4.0, 4.0, 12.0, 10.0, srgb(0.2, 0.5, 0.9, 1.0));
+        card.node.paint.shadows.push(Shadow::new(
+            p(300.0, 3.0),
+            BlurRadius::new(3.0).unwrap(),
+            srgb(0.3, 0.0, 0.0, 0.8),
+        ));
+        leaf(b, s, &card);
+    });
+    let export = confirmed(roots, 1.0, ExportBackground::Transparent);
+    let request = OffscreenRequest::new(&export, OutputProfile::Srgb);
+    let margin = crate::offscreen_target::tile_margin(&export, request.grid().scale());
+    // ADR-0130 규칙(여백을 더한 tile texture 한 변 ≤ 4096)이면 배수 5였습니다.
+    let old = (1..=SUPERSAMPLE)
+        .rev()
+        .find(|s| (128 + 2 * margin) * s <= crate::offscreen_target::MAX_TILE_TEXTURE)
+        .unwrap();
+    assert!(old < SUPERSAMPLE, "{old}");
+    let (actual, report) = measured(&export, &metal()).unwrap();
+    eprintln!("large offset: margin {margin}, {report:?}");
+    assert_eq!(report.supersample_min, SUPERSAMPLE);
+    let expected = cpu_reference_of(&export, SUPERSAMPLE);
+    write_artifact("large_offset_srgb_1x_metal", &actual, OutputProfile::Srgb);
+    write_artifact(
+        "large_offset_srgb_1x_reference",
+        &expected,
+        OutputProfile::Srgb,
+    );
+    let (over, worst) = associated_diff(&expected, &actual, 3);
+    assert_eq!(over, 0, "최대 차이 {worst}");
+    // 그림자는 카드에서 300 pixel 오른쪽에 있고, 카드와 그림자 사이는 비어 있습니다(root 밖은 투명).
+    let origin = root_origin(&actual);
+    let pixel = |x: u32, y: u32| {
+        let at = (((origin.1 + y) * actual.width + origin.0 + x) * 4) as usize;
+        [
+            actual.rgba[at],
+            actual.rgba[at + 1],
+            actual.rgba[at + 2],
+            actual.rgba[at + 3],
+        ]
+    };
+    let shadow = pixel(4 + 300 + 6, 4 + 3 + 5);
+    assert!(shadow[3] > 150 && shadow[0] > shadow[2], "{shadow:?}");
+    assert_eq!(pixel(160, 10)[3], 0);
 }
 
 #[test]
