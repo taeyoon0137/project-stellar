@@ -248,7 +248,14 @@ fn set_goes_through_the_ops_write_path_and_changes_one_manifest_line() {
 
     // base revision 불일치: 아무것도 쓰지 않습니다.
     let stale = envelope(
-        &stellar(&["style-defaults", "set", path, "react-native", "--base", "g0"]),
+        &stellar(&[
+            "style-defaults",
+            "set",
+            path,
+            "react-native",
+            "--base",
+            "g0",
+        ]),
         65,
     );
     assert_eq!(error_code(&stale), Some("base-revision-mismatch"));

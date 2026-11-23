@@ -219,9 +219,8 @@ fn run_set(args: &[String]) -> Result<Success, CliError> {
     let _lock = if dry_run {
         None
     } else {
-        let lock_error = |e: stellar_ops::lock::LockError| {
-            crate::apply::apply_error(&ApplyError::Lock(e))
-        };
+        let lock_error =
+            |e: stellar_ops::lock::LockError| crate::apply::apply_error(&ApplyError::Lock(e));
         let dir = default_lock_dir().map_err(lock_error)?;
         Some(SaveLock::try_acquire(&dir, opened.project_id(), opened.root()).map_err(lock_error)?)
     };

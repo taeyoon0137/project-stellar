@@ -1175,7 +1175,11 @@ mod tests {
             .unwrap_or_else(|e| panic!("{kind:?}: {e:?}"));
         }
         let stack = state.model().modifier_stack(sid(11)).unwrap();
-        let ranks: Vec<u8> = stack.entries().iter().map(|e| insert_rank(e.kind)).collect();
+        let ranks: Vec<u8> = stack
+            .entries()
+            .iter()
+            .map(|e| insert_rank(e.kind))
+            .collect();
         let mut sorted = ranks.clone();
         sorted.sort();
         assert_eq!(ranks, sorted);

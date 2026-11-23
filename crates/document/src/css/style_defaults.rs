@@ -322,8 +322,20 @@ pub fn payload_entries() -> &'static [PayloadEntry] {
         payload(C, Frame, frame::BACKGROUND, "#00000000", CssInitial),
         payload(C, Frame, frame::BORDER_TOP_LEFT_RADIUS, "0px", CssInitial),
         payload(C, Frame, frame::BORDER_TOP_RIGHT_RADIUS, "0px", CssInitial),
-        payload(C, Frame, frame::BORDER_BOTTOM_RIGHT_RADIUS, "0px", CssInitial),
-        payload(C, Frame, frame::BORDER_BOTTOM_LEFT_RADIUS, "0px", CssInitial),
+        payload(
+            C,
+            Frame,
+            frame::BORDER_BOTTOM_RIGHT_RADIUS,
+            "0px",
+            CssInitial,
+        ),
+        payload(
+            C,
+            Frame,
+            frame::BORDER_BOTTOM_LEFT_RADIUS,
+            "0px",
+            CssInitial,
+        ),
         // `border-*-width` initial은 `medium`이지만 style이 `none`이면 계산값이 0입니다.
         payload(C, Frame, border::BORDER_TOP_WIDTH, "0px", CssComputed),
         payload(C, Frame, border::BORDER_TOP_STYLE, "none", CssInitial),
@@ -334,14 +346,32 @@ pub fn payload_entries() -> &'static [PayloadEntry] {
         payload(C, Frame, border::BORDER_RIGHT_COLOR, "#000000", CssComputed),
         payload(C, Frame, border::BORDER_BOTTOM_WIDTH, "0px", CssComputed),
         payload(C, Frame, border::BORDER_BOTTOM_STYLE, "none", CssInitial),
-        payload(C, Frame, border::BORDER_BOTTOM_COLOR, "#000000", CssComputed),
+        payload(
+            C,
+            Frame,
+            border::BORDER_BOTTOM_COLOR,
+            "#000000",
+            CssComputed,
+        ),
         payload(C, Frame, border::BORDER_LEFT_WIDTH, "0px", CssComputed),
         payload(C, Frame, border::BORDER_LEFT_STYLE, "none", CssInitial),
         payload(C, Frame, border::BORDER_LEFT_COLOR, "#000000", CssComputed),
         payload(C, Shape, shape::BORDER_TOP_LEFT_RADIUS, "0px", CssInitial),
         payload(C, Shape, shape::BORDER_TOP_RIGHT_RADIUS, "0px", CssInitial),
-        payload(C, Shape, shape::BORDER_BOTTOM_RIGHT_RADIUS, "0px", CssInitial),
-        payload(C, Shape, shape::BORDER_BOTTOM_LEFT_RADIUS, "0px", CssInitial),
+        payload(
+            C,
+            Shape,
+            shape::BORDER_BOTTOM_RIGHT_RADIUS,
+            "0px",
+            CssInitial,
+        ),
+        payload(
+            C,
+            Shape,
+            shape::BORDER_BOTTOM_LEFT_RADIUS,
+            "0px",
+            CssInitial,
+        ),
         payload(C, Shape, shape::STROKE_LINECAP, "butt", CssInitial),
         payload(C, Path, path::FILL_RULE, "nonzero", CssInitial),
         // `font-family` initial은 UA가 정합니다. 기본 표준 글꼴은 serif 계열입니다.
@@ -357,10 +387,34 @@ pub fn payload_entries() -> &'static [PayloadEntry] {
         payload(C, Image, image::OBJECT_FIT, "fill", CssInitial),
         payload(C, Image, image::IMAGE_RENDERING, "auto", CssInitial),
         // React Native View: 테두리 style 기본이 실선이라 `borderWidth`만 주어도 그립니다.
-        payload(R, Frame, border::BORDER_TOP_STYLE, "solid", ReactNativeSource),
-        payload(R, Frame, border::BORDER_RIGHT_STYLE, "solid", ReactNativeSource),
-        payload(R, Frame, border::BORDER_BOTTOM_STYLE, "solid", ReactNativeSource),
-        payload(R, Frame, border::BORDER_LEFT_STYLE, "solid", ReactNativeSource),
+        payload(
+            R,
+            Frame,
+            border::BORDER_TOP_STYLE,
+            "solid",
+            ReactNativeSource,
+        ),
+        payload(
+            R,
+            Frame,
+            border::BORDER_RIGHT_STYLE,
+            "solid",
+            ReactNativeSource,
+        ),
+        payload(
+            R,
+            Frame,
+            border::BORDER_BOTTOM_STYLE,
+            "solid",
+            ReactNativeSource,
+        ),
+        payload(
+            R,
+            Frame,
+            border::BORDER_LEFT_STYLE,
+            "solid",
+            ReactNativeSource,
+        ),
         // React Native Text: 플랫폼 시스템 글꼴, 기본 글자 크기 14.
         payload(R, Text, typo::FONT_FAMILY, "system-ui", ReactNativeSource),
         payload(R, Text, typo::FONT_SIZE, "14px", ReactNativeSource),
@@ -377,12 +431,15 @@ fn chain_payload_value(
     scope: PropertyScope,
     key: PropertyKey,
 ) -> Option<&'static str> {
-    chain.iter().filter(|link| is_builtin(link)).find_map(|link| {
-        payload_entries()
-            .iter()
-            .find(|e| e.set == link.as_str() && e.scope == scope && e.key == key)
-            .map(|e| e.value)
-    })
+    chain
+        .iter()
+        .filter(|link| is_builtin(link))
+        .find_map(|link| {
+            payload_entries()
+                .iter()
+                .find(|e| e.set == link.as_str() && e.scope == scope && e.key == key)
+                .map(|e| e.value)
+        })
 }
 
 /// payload longhand 값이 registry 값 문법으로 읽히는지와 정규 텍스트인지 봅니다. 문법 parser가 받지 않는 값은
@@ -916,7 +973,12 @@ pub fn payload_snapshot_text() -> String {
 pub const CONFORMANCE_FIXTURE: &str = include_str!("style_defaults_conformance.txt");
 
 /// css 줄 출처 접두사. `chrome:`만 관측값과 기대값이 같고, 나머지는 다른 이유입니다.
-const CSS_SOURCES: [&str; 4] = ["chrome:", "stellar-mapping:", "css-computed:", "user-agent:"];
+const CSS_SOURCES: [&str; 4] = [
+    "chrome:",
+    "stellar-mapping:",
+    "css-computed:",
+    "user-agent:",
+];
 /// react-native 줄 출처 접두사.
 const RN_SOURCES: [&str; 4] = ["rn-docs:", "rn-source:", "yoga:", "inherits:"];
 
@@ -993,7 +1055,9 @@ pub fn conformance_mismatches(fixture: &str, css: &FlatSet, rn: &FlatSet) -> Vec
             continue;
         };
         if !seen.insert((set_name, class, longhand.to_string())) {
-            problems.push(format!("{line_no}: {set_name} {class_name} {longhand}가 두 번 있습니다"));
+            problems.push(format!(
+                "{line_no}: {set_name} {class_name} {longhand}가 두 번 있습니다"
+            ));
         }
         if value != expected {
             problems.push(format!(
@@ -1001,7 +1065,9 @@ pub fn conformance_mismatches(fixture: &str, css: &FlatSet, rn: &FlatSet) -> Vec
             ));
         }
         let Some(prefix) = prefixes.iter().find(|p| source.starts_with(**p)) else {
-            problems.push(format!("{line_no}: 출처가 없거나 접두사가 맞지 않습니다: {source}"));
+            problems.push(format!(
+                "{line_no}: 출처가 없거나 접두사가 맞지 않습니다: {source}"
+            ));
             continue;
         };
         if source.len() <= prefix.len() + 1 {
@@ -1032,14 +1098,21 @@ pub fn conformance_mismatches(fixture: &str, css: &FlatSet, rn: &FlatSet) -> Vec
         for class in NodeClass::ALL {
             for longhand in LayoutLonghand::ALL {
                 if !seen.contains(&(set_name, class, longhand.name().to_string())) {
-                    problems.push(format!("{set_name} {} {longhand} 줄이 없습니다", class.name()));
+                    problems.push(format!(
+                        "{set_name} {} {longhand} 줄이 없습니다",
+                        class.name()
+                    ));
                 }
             }
         }
         for entry in &payload {
             let class = scope_class(entry.scope).expect("payload 범위");
             if !seen.contains(&(set_name, class, entry.name.to_string())) {
-                problems.push(format!("{set_name} {} {} 줄이 없습니다", class.name(), entry.name));
+                problems.push(format!(
+                    "{set_name} {} {} 줄이 없습니다",
+                    class.name(),
+                    entry.name
+                ));
             }
         }
     }
@@ -1377,10 +1450,20 @@ mod tests {
             "object-fit",
             "image-rendering",
         ] {
-            assert!(names.contains(&expected), "{expected}가 payload longhand에 없음");
+            assert!(
+                names.contains(&expected),
+                "{expected}가 payload longhand에 없음"
+            );
         }
         // payload 크기와 stellar-only 항목은 payload longhand가 아닙니다(layout 표·세트 밖).
-        for excluded in ["width", "height", "x1", "polygon-sides", "text-content", "path-data"] {
+        for excluded in [
+            "width",
+            "height",
+            "x1",
+            "polygon-sides",
+            "text-content",
+            "path-data",
+        ] {
             assert!(!names.contains(&excluded), "{excluded}");
         }
         for set in BUILTIN_SETS {
@@ -1462,11 +1545,17 @@ mod tests {
     fn payload_values_reject_non_canonical_or_unparsable_text() {
         let background = registry::entry_by_name(PropertyScope::Frame, "background-color").unwrap();
         assert!(check_payload_value(&background, "#00000000").is_ok());
-        assert!(check_payload_value(&background, "transparent").is_err(), "정규 표기가 아님");
+        assert!(
+            check_payload_value(&background, "transparent").is_err(),
+            "정규 표기가 아님"
+        );
         assert!(check_payload_value(&background, "TRANSPARENT").is_err());
         assert!(check_payload_value(&background, "currentcolor").is_err());
         let line_height = registry::entry_by_name(PropertyScope::Text, "line-height").unwrap();
-        assert!(check_payload_value(&line_height, "normal").is_ok(), "값 변형 규칙");
+        assert!(
+            check_payload_value(&line_height, "normal").is_ok(),
+            "값 변형 규칙"
+        );
         assert!(check_payload_value(&line_height, "1.5").is_ok());
         let letter = registry::entry_by_name(PropertyScope::Text, "letter-spacing").unwrap();
         assert!(check_payload_value(&letter, "normal").is_err());
@@ -1507,7 +1596,10 @@ mod tests {
         );
         // payload longhand가 아닌 항목.
         assert_eq!(
-            css.payload_value(PropertyScope::Node, crate::payload_metadata::node_keys::VISIBLE),
+            css.payload_value(
+                PropertyScope::Node,
+                crate::payload_metadata::node_keys::VISIBLE
+            ),
             None
         );
         for basis in Basis::ALL {
