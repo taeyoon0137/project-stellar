@@ -43,6 +43,8 @@ use stellar_storage::generation::loader::{load_current_generation, LoadError};
 
 use crate::document_io::component_source;
 use crate::document_io::session;
+use crate::document_io::source_v4::token::TokenSetSource;
+use crate::document_io::text_source::TextSourceError;
 use crate::identity::parse_project_id;
 use crate::manifest::Manifest;
 use crate::path_resolver::ExternalAccess;
@@ -151,16 +153,55 @@ fn probe_cache_entry(root: &Path) -> Result<Manifest, LibraryProbeFailure> {
 }
 
 /// library 저장 데이터(chunk generation·텍스트 원본)를 검증합니다.
+///
+/// export 공급자([`SourceExports`](crate::library_exports::SourceExports))와 같은 reader
+/// ([`read_library_root`])를 씁니다.
 pub fn validate_library_storage(
     root: &Path,
     project_id: LibraryId,
 ) -> Result<(), StorageValidationFailure> {
-    let generation = generation_components(root, project_id)?;
-    let text = validate_text_source(root)?;
-    if generation.is_some_and(|g| !g.is_empty()) && !text.is_empty() {
-        return Err(StorageValidationFailure::TextSource);
+    read_library_root(root, project_id)
+        .map(|_| ())
+        .map_err(|error| match error {
+            LibraryRootError::Storage(failure) => failure,
+            LibraryRootError::Text(_) | LibraryRootError::Conflict => {
+                StorageValidationFailure::TextSource
+            }
+        })
+}
+
+/// library root 저장 데이터 읽기 실패.
+#[derive(Debug)]
+pub enum LibraryRootError {
+    /// chunk generation(current pointer·manifest·chunk) 검증 실패.
+    Storage(StorageValidationFailure),
+    /// 텍스트 원본을 해석할 수 없음.
+    Text(TextSourceError),
+    /// generation component library와 텍스트 컴포넌트 원본이 함께 정의를 담음.
+    Conflict,
+}
+
+/// library root의 컴포넌트 정의와 token set을 검증하며 읽습니다.
+///
+/// storage validator와 export 공급자가 이 함수 하나를 씁니다(판정 정책을 두 곳에 두지 않음). 정의는 generation
+/// component library chunk([`generation_components`])와 텍스트 원본 가운데 정의를 담은 쪽에서 읽습니다. 둘 다 담으면
+/// 어느 쪽이 맞는지 정할 수 없으므로 [`LibraryRootError::Conflict`]입니다(텍스트 원본 변환 규칙
+/// `source_v4::project::from_saved`와 같은 정책). token set은 텍스트 원본에서 읽습니다.
+pub fn read_library_root(
+    root: &Path,
+    project_id: LibraryId,
+) -> Result<(ComponentLibrary, Vec<TokenSetSource>), LibraryRootError> {
+    let generation = generation_components(root, project_id).map_err(LibraryRootError::Storage)?;
+    let (text_components, token_sets) = read_text_source(root).map_err(LibraryRootError::Text)?;
+    match generation {
+        Some(library) if !library.is_empty() => {
+            if !text_components.is_empty() {
+                return Err(LibraryRootError::Conflict);
+            }
+            Ok((library, token_sets))
+        }
+        _ => Ok((text_components, token_sets)),
     }
-    Ok(())
 }
 
 /// current generation을 검증하며 읽고 component library chunk(있으면)를 해석합니다.
@@ -196,10 +237,7 @@ fn read_generation(
     Ok(library)
 }
 
-/// library root의 component 정의를 읽습니다(검증 포함): generation component library chunk와 텍스트 컴포넌트 원본.
-///
-/// 둘 다 정의를 담으면 어느 쪽이 맞는지 정할 수 없으므로 손상으로 거부합니다(텍스트 원본 변환 규칙
-/// `source_v4::project::from_saved`와 같은 정책).
+/// generation component library chunk를 검증하며 읽습니다. `design/current`가 없으면 `None`입니다.
 pub fn generation_components(
     root: &Path,
     project_id: LibraryId,
@@ -212,17 +250,20 @@ pub fn generation_components(
     read_generation(root, id)
 }
 
-/// 텍스트 원본을 해석하고 원본이 담은 component 정의를 돌려줍니다.
-fn validate_text_source(root: &Path) -> Result<ComponentLibrary, StorageValidationFailure> {
-    let invalid =
-        |_: crate::document_io::text_source::TextSourceError| StorageValidationFailure::TextSource;
-    match session::read_source(root).map_err(invalid)? {
-        Some(files) => session::decode_source(&files)
-            .map(|project| project.components)
-            .map_err(invalid),
+/// 텍스트 원본을 해석해 원본이 담은 component 정의와 token set을 돌려줍니다.
+///
+/// `design/document.stellar.yaml`이 있으면 원본 파일 집합 전체를, 없으면 컴포넌트 원본(`design/components/`)만
+/// 해석합니다(외부 symlink 내용은 읽지 않음).
+fn read_text_source(
+    root: &Path,
+) -> Result<(ComponentLibrary, Vec<TokenSetSource>), TextSourceError> {
+    match session::read_source(root)? {
+        Some(files) => {
+            let project = session::decode_source(&files)?;
+            Ok((project.components, project.token_sets))
+        }
         None => component_source::read_project_library(root, ExternalAccess::MetadataOnly)
-            .map(|(library, _)| library)
-            .map_err(invalid),
+            .map(|(library, _)| (library, Vec::new())),
     }
 }
 
