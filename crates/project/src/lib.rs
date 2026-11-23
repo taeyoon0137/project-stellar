@@ -95,3 +95,6 @@ pub mod conflict_open;
 
 /// 프로젝트·시스템·외부 폰트 (XIII.6).
 pub mod fonts;
+
+/// 제품 문서 migration registry와 고정 decoder (IX.11.21).
+pub mod migration;
