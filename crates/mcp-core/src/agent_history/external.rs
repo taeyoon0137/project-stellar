@@ -21,6 +21,7 @@ use stellar_ops::commands::agent_external::{
     overlapping_leases, partition_external, ExternalPartition, ExternalTarget, RecordTarget,
 };
 use stellar_ops::commands::agent_sink::AgentHistorySink;
+use stellar_ops::commands::document::definitions::DocumentDefinition;
 use stellar_ops::commands::document::model::DocumentModel;
 use stellar_ops::commands::document::records::DocumentRecords;
 use stellar_ops::commands::id::CommandId;
@@ -126,19 +127,45 @@ fn targets(
             out.push(ExternalTarget::Node(owner));
             continue;
         }
-        for model in models {
-            for page in &model.definition().pages {
-                for view in &page.views {
-                    if view.id == id || page.id == id {
-                        out.push(ExternalTarget::View {
-                            root_frame: view.root_frame,
-                        });
-                    }
-                }
-            }
-        }
+        let definitions = models.map(DocumentModel::definition);
+        out.extend(
+            changed_view_roots(id, definitions)
+                .into_iter()
+                .map(|root_frame| ExternalTarget::View { root_frame }),
+        );
     }
     out
+}
+
+/// 페이지·View 객체 `id`의 변경이 바꾼 View root Frame. View가 한쪽에만 있거나(추가·삭제), 다른 페이지로 옮겨졌거나,
+/// root Frame이 바뀐 경우만 그 root Frame(양쪽 모두)을 돌려줍니다. 이름·View 순서처럼 lease subtree의 진조상 속성만
+/// 바뀐 경우는 비어 있습니다(사용자 편집 판정과 같이 겹침이 아님, ADR-0100 결정 8).
+fn changed_view_roots(id: StableId, definitions: [&DocumentDefinition; 2]) -> BTreeSet<StableId> {
+    let view_ids: BTreeSet<StableId> = definitions
+        .iter()
+        .flat_map(|d| d.pages.iter())
+        .flat_map(|page| {
+            page.views
+                .iter()
+                .filter(move |view| view.id == id || page.id == id)
+                .map(|view| view.id)
+        })
+        .collect();
+    let mut roots = BTreeSet::new();
+    for view in view_ids {
+        let [before, after] = definitions.map(|d| {
+            d.pages.iter().find_map(|page| {
+                page.views
+                    .iter()
+                    .find(|v| v.id == view)
+                    .map(|v| (page.id, v.root_frame))
+            })
+        });
+        if before != after {
+            roots.extend(before.into_iter().chain(after).map(|(_, root)| root));
+        }
+    }
+    roots
 }
 
 fn conflict_candidates(

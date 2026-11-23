@@ -138,3 +138,37 @@ fn overlapping_external_change_ends_session_without_deleting_agent_change() {
     assert_eq!(name(&world.history.doc, 12), "external");
     assert_eq!(name(&world.history.doc, 13), "agent");
 }
+
+#[test]
+fn page_and_view_rename_is_not_lease_overlap() {
+    // lease root의 진조상(페이지·View) 이름 변경은 사용자 편집 판정과 같이 겹침이 아닙니다(ADR-0100 결정 8).
+    let world = World::new(SessionOrigin::ExternalClient);
+    let base = state().model().to_records().unwrap();
+    let mut incoming = base.clone();
+    incoming.definition.pages[0].rename("외부 페이지".to_string());
+    incoming.definition.pages[0].views[0].rename("외부 View".to_string());
+    let analysis =
+        analyze_external(world.history.doc.model(), &base, &incoming, &world.table()).unwrap();
+    assert_eq!(analysis.diff.entries.len(), 2, "{:?}", analysis.diff);
+    assert!(!analysis.overlaps_any(), "{:?}", analysis.overlaps);
+}
+
+#[test]
+fn view_root_frame_swap_or_removal_targets_both_roots() {
+    let base = state().model().to_records().unwrap();
+    let mut swapped = base.clone();
+    swapped.definition.pages[0].views[0].root_frame = sid(12);
+    assert_eq!(
+        changed_view_roots(sid(3), [&base.definition, &swapped.definition]),
+        BTreeSet::from([sid(10), sid(12)])
+    );
+    let mut removed = base.clone();
+    removed.definition.pages[0].views.clear();
+    assert_eq!(
+        changed_view_roots(sid(2), [&base.definition, &removed.definition]),
+        BTreeSet::from([sid(10)])
+    );
+    let mut renamed = base.clone();
+    renamed.definition.pages[0].views[0].rename("x".to_string());
+    assert!(changed_view_roots(sid(3), [&base.definition, &renamed.definition]).is_empty());
+}
