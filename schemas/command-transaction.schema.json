@@ -286,6 +286,197 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "required": ["kind", "key", "name", "scope", "value_type", "default"],
+            "properties": {
+              "kind": {
+                "const": "create-context-key"
+              },
+              "key": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "name": {
+                "$ref": "#/$defs/text"
+              },
+              "scope": {
+                "$ref": "#/$defs/text"
+              },
+              "value_type": {
+                "$ref": "#/$defs/text"
+              },
+              "default": {
+                "$ref": "#/$defs/text"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "key", "name"],
+            "properties": {
+              "kind": {
+                "const": "rename-context-key"
+              },
+              "key": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "name": {
+                "$ref": "#/$defs/text"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "key", "value_type", "default"],
+            "properties": {
+              "kind": {
+                "const": "set-context-key-default"
+              },
+              "key": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "value_type": {
+                "$ref": "#/$defs/text"
+              },
+              "default": {
+                "$ref": "#/$defs/text"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "key"],
+            "properties": {
+              "kind": {
+                "const": "delete-context-key"
+              },
+              "key": {
+                "$ref": "#/$defs/stable-id"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "provision", "owner", "provider", "key", "value"],
+            "properties": {
+              "kind": {
+                "const": "create-context-provision"
+              },
+              "provision": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "owner": {
+                "$ref": "#/$defs/text"
+              },
+              "provider": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "key": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "value": {
+                "$ref": "#/$defs/text"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "provision", "value"],
+            "properties": {
+              "kind": {
+                "const": "set-context-provision-value"
+              },
+              "provision": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "value": {
+                "$ref": "#/$defs/text"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "provision"],
+            "properties": {
+              "kind": {
+                "const": "delete-context-provision"
+              },
+              "provision": {
+                "$ref": "#/$defs/stable-id"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "component", "key"],
+            "properties": {
+              "kind": {
+                "const": "add-context-requirement"
+              },
+              "component": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "key": {
+                "$ref": "#/$defs/stable-id"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "component", "key"],
+            "properties": {
+              "kind": {
+                "const": "remove-context-requirement"
+              },
+              "component": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "key": {
+                "$ref": "#/$defs/stable-id"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "slot", "key"],
+            "properties": {
+              "kind": {
+                "const": "add-slot-context-key"
+              },
+              "slot": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "key": {
+                "$ref": "#/$defs/stable-id"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "slot", "key"],
+            "properties": {
+              "kind": {
+                "const": "remove-slot-context-key"
+              },
+              "slot": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "key": {
+                "$ref": "#/$defs/stable-id"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
             "required": ["kind", "canonical"],
             "properties": {
               "kind": {

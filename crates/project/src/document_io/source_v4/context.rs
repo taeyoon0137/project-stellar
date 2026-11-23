@@ -30,7 +30,8 @@ pub const CONTEXT_PATH: &str = "context.stellar.yaml";
 /// 파일 형식 이름.
 pub const CONTEXT_FORMAT: &str = "stellar-context";
 
-fn type_name(spec: TypeSpec) -> String {
+/// 값 타입 이름([`parse_type`]의 역, CLI·MCP 조회 출력 공용).
+pub fn type_name(spec: TypeSpec) -> String {
     let base = match spec.value_type() {
         ExpressionType::Boolean => "boolean".to_owned(),
         ExpressionType::Number => "number".to_owned(),
@@ -53,7 +54,9 @@ fn type_name(spec: TypeSpec) -> String {
     }
 }
 
-fn parse_type(name: &str) -> Result<TypeSpec, TextSourceError> {
+/// 값 타입 이름(`number`, `color?`, `enum(3)` …)을 읽습니다. 원본 `type` 필드 문법이며 CLI·MCP Context 편집 입력도 이
+/// 함수를 씁니다(ADR-0114 결정 3).
+pub fn parse_type(name: &str) -> Result<TypeSpec, TextSourceError> {
     let (base, optional) = match name.strip_suffix('?') {
         Some(base) => (base, true),
         None => (name, false),
@@ -86,7 +89,8 @@ fn parse_type(name: &str) -> Result<TypeSpec, TextSourceError> {
     })
 }
 
-fn scope_text(scope: ContextScope) -> String {
+/// scope 문장([`parse_scope`]의 역).
+pub fn scope_text(scope: ContextScope) -> String {
     match scope {
         ContextScope::Project => "project".to_owned(),
         ContextScope::Library(id) => format!("library {}", css::id(id)),
@@ -94,7 +98,8 @@ fn scope_text(scope: ContextScope) -> String {
     }
 }
 
-fn parse_scope(value: &str) -> Result<ContextScope, TextSourceError> {
+/// scope 문장(`project`, `library <id>`, `document <id>`)을 읽습니다(원본 문법, CLI·MCP 입력 공용).
+pub fn parse_scope(value: &str) -> Result<ContextScope, TextSourceError> {
     if value == "project" {
         return Ok(ContextScope::Project);
     }
@@ -105,14 +110,16 @@ fn parse_scope(value: &str) -> Result<ContextScope, TextSourceError> {
     }
 }
 
-fn owner_text(owner: ContextOwner) -> String {
+/// provision owner 문장([`parse_owner`]의 역).
+pub fn owner_text(owner: ContextOwner) -> String {
     match owner {
         ContextOwner::View(id) => format!("view {}", css::id(id)),
         ContextOwner::Component(id) => format!("component {}", css::id(id)),
     }
 }
 
-fn parse_owner(value: &str) -> Result<ContextOwner, TextSourceError> {
+/// provision owner 문장(`view <id>`, `component <id>`)을 읽습니다(원본 문법, CLI·MCP 입력 공용).
+pub fn parse_owner(value: &str) -> Result<ContextOwner, TextSourceError> {
     match value.split_once(' ') {
         Some(("view", id)) => Ok(ContextOwner::View(css::parse_id(id)?)),
         Some(("component", id)) => Ok(ContextOwner::Component(css::parse_id(id)?)),
@@ -141,15 +148,62 @@ fn expression_fields(
     Ok(vec![("ast", scalar(css::hex(&bytes)))])
 }
 
+/// 리터럴 하나의 expression: root id `root`, 값 종류 `kind`와 리터럴 `value`(token 원본과 같은 리터럴 문법).
+pub fn literal_expression(
+    root: StableId,
+    kind: &str,
+    value: &str,
+) -> Result<ExpressionAst, TextSourceError> {
+    let root = ExprNodeId::new(root);
+    let value = parse_typed_value(kind, value)?;
+    ExpressionAst::new(root, vec![ExprNode::literal(root, value)]).map_err(invalid)
+}
+
+/// 값 하나의 리터럴 문장 `<타입> <리터럴>`(텍스트 원본 리터럴 문법). 리터럴로 쓰지 않는 타입이면 `None`입니다.
+pub fn value_text(value: &stellar_core_types::typed_value::TypedValue) -> Option<String> {
+    typed_value(value)
+        .ok()
+        .map(|(kind, text)| format!("{kind} {text}"))
+}
+
+/// 식의 입력 문장(CLI·MCP Context 편집 입력 문법, ADR-0114 결정 3): 리터럴 하나면 `<타입> <리터럴>`, key 읽기 하나면
+/// `context <key>`, 그 밖이면 `ast <hex>`.
+pub fn expression_text(ast: &ExpressionAst) -> String {
+    if ast.len() == 1 {
+        match ast.node(ast.root()).map(ExprNode::payload) {
+            Some(NodePayload::Literal(Literal::Value(value))) => {
+                if let Some(text) = value_text(value) {
+                    return text;
+                }
+            }
+            Some(NodePayload::Reference(
+                stellar_document::expressions::ast::ReferenceTarget::Context(key),
+            )) => return format!("context {}", css::id(*key)),
+            _ => {}
+        }
+    }
+    format!(
+        "ast {}",
+        css::hex(&ast.to_canonical_bytes().unwrap_or_default())
+    )
+}
+
+/// canonical AST bytes의 hex(원본 `ast` 필드 문법).
+pub fn ast_expression(hex: &str) -> Result<ExpressionAst, TextSourceError> {
+    let bytes = css::parse_hex(hex)?;
+    ExpressionAst::from_canonical_bytes(&bytes).map_err(invalid)
+}
+
 fn parse_expression(item: &YamlValue) -> Result<ExpressionAst, TextSourceError> {
     let present = |key| field(item, key).is_ok();
     if present("ast") {
-        let bytes = css::parse_hex(text(field(item, "ast")?)?)?;
-        return ExpressionAst::from_canonical_bytes(&bytes).map_err(invalid);
+        return ast_expression(text(field(item, "ast")?)?);
     }
-    let root = ExprNodeId::new(css::parse_id(text(field(item, "expression")?)?)?);
-    let value = parse_typed_value(text(field(item, "type")?)?, text(field(item, "value")?)?)?;
-    ExpressionAst::new(root, vec![ExprNode::literal(root, value)]).map_err(invalid)
+    literal_expression(
+        css::parse_id(text(field(item, "expression")?)?)?,
+        text(field(item, "type")?)?,
+        text(field(item, "value")?)?,
+    )
 }
 
 fn expression_keys(item: &YamlValue) -> &'static [&'static str] {

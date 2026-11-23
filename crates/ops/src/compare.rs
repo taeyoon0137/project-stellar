@@ -20,7 +20,8 @@ use stellar_storage::hash::ContentHash;
 
 use crate::core_types::ids::StableId;
 use crate::diff::{
-    add_contexts, diff_snapshots, object_kind_name, DiffPosition, DiffReport, DocumentSource,
+    add_contexts, diff_snapshots, object_kind_name, projectable_context, DiffPosition, DiffReport,
+    DocumentSource,
 };
 use crate::error::{DocumentReadError, OpenError};
 use crate::query::{property_path_label, OpsValue};
@@ -103,8 +104,12 @@ fn open_side(path: &Path, side: &'static str) -> Result<Side, CompareError> {
     builder
         .add_project_component_library(&library)
         .map_err(|error| CompareError::Projection(error.to_string()))?;
-    add_contexts(&mut builder, documents.iter().map(DocumentSource::input))
-        .map_err(|error| CompareError::Projection(error.0))?;
+    add_contexts(
+        &mut builder,
+        documents.iter().map(DocumentSource::input),
+        Some(&library),
+    )
+    .map_err(|error| CompareError::Projection(error.0))?;
     Ok(Side {
         snapshot,
         semantic: builder.finish(),
@@ -242,8 +247,12 @@ impl HeadDiffBase {
         builder
             .add_project_component_library(base.components())
             .map_err(|_| unavailable())?;
-        add_contexts(&mut builder, documents.iter().map(DocumentSource::input))
-            .map_err(|error| CompareError::Projection(error.0))?;
+        add_contexts(
+            &mut builder,
+            documents.iter().map(DocumentSource::input),
+            Some(base.components()),
+        )
+        .map_err(|error| CompareError::Projection(error.0))?;
         Ok(Self {
             commit: head.commit().into(),
             root: target.root().into(),
@@ -318,8 +327,12 @@ impl HeadDiffBase {
         working
             .add_project_component_library(&library)
             .map_err(|e| CompareError::Projection(e.to_string()))?;
-        add_contexts(&mut working, documents.iter().map(DocumentSource::input))
-            .map_err(|error| CompareError::Projection(error.0))?;
+        add_contexts(
+            &mut working,
+            documents.iter().map(DocumentSource::input),
+            Some(&library),
+        )
+        .map_err(|error| CompareError::Projection(error.0))?;
         let source_hash = source_set_hash(files.into_values()).map_err(|error| {
             CompareError::ComponentSource {
                 side: "target",
@@ -345,37 +358,14 @@ impl HeadDiffBase {
                     side: "target",
                     error: error.into(),
                 })?;
-        let project = || -> Result<SnapshotBuilder, CompareError> {
-            let mut builder = SnapshotBuilder::new();
-            builder
-                .add_project_component_library(&library)
-                .map_err(|e| CompareError::Projection(e.to_string()))?;
-            Ok(builder)
-        };
+        let mut builder = SnapshotBuilder::new();
+        builder
+            .add_project_component_library(&library)
+            .map_err(|e| CompareError::Projection(e.to_string()))?;
         // 문서가 HEAD와 같으므로 문서 Context의 requirement·Slot 공개 목록도 같습니다. 이 컴포넌트 투영에 남은
-        // Component·Slot 객체에 다시 붙여 base와 같은 범위로 비교합니다(목록이 있을 때만 투영을 한 번 더 만듦).
-        let mut builder = project()?;
-        let present = if self.members.is_empty() {
-            SemanticSnapshot::new()
-        } else {
-            project()?.finish()
-        };
+        // Component·Slot 객체에 다시 붙여 base와 같은 범위로 비교합니다.
         for (document, members) in &self.members {
-            let mut mine = ContextSet::new();
-            for (component, keys) in members.all_requirements() {
-                if present.get(component).is_some() {
-                    for key in keys {
-                        mine.add_requirement(component, *key);
-                    }
-                }
-            }
-            for (slot, keys) in members.all_slot_keys() {
-                if present.get(slot).is_some() {
-                    for key in keys {
-                        mine.add_slot_key(slot, *key);
-                    }
-                }
-            }
+            let mine = projectable_context(members, Some(&library));
             if !mine.is_empty() {
                 builder
                     .add_context(*document, &mine)

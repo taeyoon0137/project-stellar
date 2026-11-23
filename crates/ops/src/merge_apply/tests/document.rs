@@ -171,7 +171,7 @@ fn context_changes_merge_and_conflict_like_other_objects() {
         merge_document(&base, &ours, &other).unwrap(),
         DocumentMerge::Conflicted { .. }
     ));
-    // 문서 범위에 넣을 수 없는 requirement는 조용히 잃지 않고 투영 오류입니다.
+    // 문서 범위에 넣지 않는 requirement는 조용히 잃지 않고 무손실 검사가 거부합니다.
     let mut required = base.clone();
     required.context.add_requirement(
         StableId::new_v7(9200, 0, 9200),
@@ -179,6 +179,6 @@ fn context_changes_merge_and_conflict_like_other_objects() {
     );
     assert!(matches!(
         merge_document(&required, &required, &required),
-        Err(DocumentMergeError::Projection(_))
+        Err(DocumentMergeError::Lossy { side: "base" })
     ));
 }

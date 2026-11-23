@@ -8,14 +8,17 @@
 //!
 //! - **문서 범위**([`snapshot_of`]): 컴포넌트 library를 투영하지 않는 snapshot(창 reconciliation, Git stage, 병합 결과
 //!   저장). Context key·provision 객체를 넣습니다. requirement·Slot 공개 목록은 Component·Slot 객체에 붙는 속성이라
-//!   이 범위에서는 표현할 수 없어, 그런 항목이 있는 문서는 투영 오류입니다(조용히 잃지 않음).
-//! - **프로젝트 범위**([`add_contexts`]): library 투영 뒤에 Context 전체(requirement·Slot 공개 목록 포함)를 넣습니다
-//!   (`stellar diff`·compare·HEAD 비교).
+//!   이 범위에서는 투영하지 않습니다. 그래서 그런 항목이 있는 문서는 무손실 왕복 검사(병합·stage·저장 경로)가
+//!   거부합니다(조용히 잃지 않음).
+//! - **프로젝트 범위**([`add_contexts`]에 library): library 투영 뒤에 Context를 넣습니다. requirement·Slot 공개 목록은
+//!   그 컴포넌트·Slot이 library에 있을 때만 투영합니다(없는 대상의 항목은 validator의 orphan 진단 대상이고 diff에는
+//!   나타나지 않음, [`projectable_context`]). `stellar diff`·compare·HEAD 비교·`stellar apply` dry-run이 씁니다.
 //! - 역투영([`document_from_snapshot`])은 레코드와 Context를 함께 되돌립니다(병합 결과 반영).
 
 use std::collections::BTreeMap;
 use std::fmt;
 
+use stellar_document::component::definition::ComponentLibrary;
 use stellar_document::context::set::ContextSet;
 use stellar_document::model::DocumentModel;
 use stellar_document::records::DocumentRecords;
@@ -210,21 +213,58 @@ pub fn records_only(records: &DocumentRecords) -> DocumentInput<'_> {
     }
 }
 
-/// 이미 문서·library를 넣은 builder에 문서마다 Context를 넣습니다(프로젝트 범위, requirement·Slot 공개 목록 포함).
-/// library를 넣지 않은 builder면 requirement·Slot 공개 목록이 있는 문서에서 오류입니다.
+/// snapshot에 넣을 수 있는 Context: key·provision 전부와, `library`에 있는 컴포넌트·Slot의 requirement·공개 목록.
+/// `library`가 없으면(문서 범위) requirement·공개 목록은 넣지 않습니다.
+pub fn projectable_context(set: &ContextSet, library: Option<&ComponentLibrary>) -> ContextSet {
+    let mut out = ContextSet::new();
+    for key in set.keys() {
+        let _ = out.insert_key(key.clone());
+    }
+    for provision in set.provisions() {
+        let _ = out.insert_provision(provision.clone());
+    }
+    let Some(library) = library else {
+        return out;
+    };
+    for (component, keys) in set.all_requirements() {
+        if library
+            .get(crate::core_types::reference::ComponentRef::new(component))
+            .is_some()
+        {
+            for key in keys {
+                out.add_requirement(component, *key);
+            }
+        }
+    }
+    for (slot, keys) in set.all_slot_keys() {
+        let present = library
+            .iter()
+            .any(|entry| entry.slots().any(|s| s.id.stable_id() == slot));
+        if present {
+            for key in keys {
+                out.add_slot_key(slot, *key);
+            }
+        }
+    }
+    out
+}
+
+/// 이미 문서(와 프로젝트 범위면 library)를 넣은 builder에 문서마다 [`projectable_context`]를 넣습니다.
 pub fn add_contexts<'a>(
     builder: &mut SnapshotBuilder,
     documents: impl IntoIterator<Item = DocumentInput<'a>>,
+    library: Option<&ComponentLibrary>,
 ) -> Result<(), ProjectionError> {
     for document in documents {
-        if document.context.is_empty() {
+        let set = projectable_context(document.context, library);
+        if set.is_empty() {
             continue;
         }
         builder
-            .add_context(document.records.definition.id, document.context)
+            .add_context(document.records.definition.id, &set)
             .map_err(|e| {
                 ProjectionError(format!(
-                    "문서 {}의 Context: {e} (requirement·Slot 공개 목록은 컴포넌트 library를 함께 투영해야 합니다)",
+                    "문서 {}의 Context: {e}",
                     document.records.definition.id
                 ))
             })?;
@@ -240,7 +280,25 @@ pub fn snapshot_of(documents: &[DocumentInput<'_>]) -> Result<SemanticSnapshot, 
             .add_document(document.records)
             .map_err(|e| ProjectionError(e.to_string()))?;
     }
-    add_contexts(&mut builder, documents.iter().copied())?;
+    add_contexts(&mut builder, documents.iter().copied(), None)?;
+    Ok(builder.finish())
+}
+
+/// 문서들과 프로젝트 컴포넌트 library의 semantic snapshot(프로젝트 범위, 모듈 문서).
+pub fn project_snapshot_of(
+    documents: &[DocumentInput<'_>],
+    library: &ComponentLibrary,
+) -> Result<SemanticSnapshot, ProjectionError> {
+    let mut builder = SnapshotBuilder::new();
+    for document in documents {
+        builder
+            .add_document(document.records)
+            .map_err(|e| ProjectionError(e.to_string()))?;
+    }
+    builder
+        .add_project_component_library(library)
+        .map_err(|e| ProjectionError(e.to_string()))?;
+    add_contexts(&mut builder, documents.iter().copied(), Some(library))?;
     Ok(builder.finish())
 }
 
@@ -289,12 +347,18 @@ pub fn diff_snapshots(base: &SemanticSnapshot, target: &SemanticSnapshot) -> Dif
     DiffReport { diff, entries }
 }
 
-/// 두 문서 집합(레코드 + Context)의 semantic diff(문서 범위).
+/// 두 문서 집합(레코드 + Context)의 semantic diff. `library`가 있으면 프로젝트 범위(requirement·Slot 공개 목록
+/// 포함), 없으면 문서 범위입니다. library 객체는 양쪽에 같으므로 diff에 나타나지 않습니다.
 pub fn diff_documents(
     base: &[DocumentInput<'_>],
     target: &[DocumentInput<'_>],
+    library: Option<&ComponentLibrary>,
 ) -> Result<DiffReport, ProjectionError> {
-    Ok(diff_snapshots(&snapshot_of(base)?, &snapshot_of(target)?))
+    let snapshot = |documents| match library {
+        Some(library) => project_snapshot_of(documents, library),
+        None => snapshot_of(documents),
+    };
+    Ok(diff_snapshots(&snapshot(base)?, &snapshot(target)?))
 }
 
 /// 두 문서 레코드 집합의 semantic diff. Context는 비교하지 않습니다(Context를 다루는 호출자는 [`diff_documents`]).
@@ -304,7 +368,7 @@ pub fn diff_records(
 ) -> Result<DiffReport, ProjectionError> {
     let base: Vec<DocumentInput<'_>> = base.iter().map(|r| records_only(r)).collect();
     let target: Vec<DocumentInput<'_>> = target.iter().map(|r| records_only(r)).collect();
-    diff_documents(&base, &target)
+    diff_documents(&base, &target, None)
 }
 
 #[cfg(test)]
