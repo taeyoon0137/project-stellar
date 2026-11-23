@@ -11,12 +11,16 @@
 //! [`crate::incremental`]).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::ops::Bound;
 
 use stellar_core_types::ids::StableId;
 
 use crate::diagnostic::{Diagnostic, DiagnosticKey, DiagnosticKind, Severity};
 use crate::remediation::RemediationActionId;
+
+/// page 크기 상한.
+pub const MAX_PAGE_LIMIT: usize = 10_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Stored {
@@ -50,6 +54,75 @@ impl DiagnosticFilter {
     fn counts_only(&self) -> bool {
         self.document.is_none() && self.source.is_none()
     }
+}
+
+/// pagination cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cursor {
+    revision: u64,
+    after: DiagnosticKey,
+}
+
+impl Cursor {
+    /// 문자열 token(`<revision hex>.<key hex>`).
+    pub fn token(&self) -> String {
+        let bytes = self.after.to_bytes();
+        let mut out = format!("{:x}.", self.revision);
+        for b in bytes {
+            out.push_str(&format!("{b:02x}"));
+        }
+        out
+    }
+
+    /// token을 읽습니다.
+    pub fn parse(token: &str) -> Option<Cursor> {
+        let (revision, key) = token.split_once('.')?;
+        let revision = u64::from_str_radix(revision, 16).ok()?;
+        if key.len() % 2 != 0 || !key.is_ascii() {
+            return None;
+        }
+        let bytes = (0..key.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&key[i..i + 2], 16).ok())
+            .collect::<Option<Vec<u8>>>()?;
+        let after = crate::codec::read_key(&bytes).ok()?;
+        Some(Cursor { revision, after })
+    }
+}
+
+/// page 오류.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PageError {
+    /// limit이 0이거나 상한을 넘음.
+    InvalidLimit(usize),
+    /// cursor 이후 index가 바뀜.
+    Stale,
+}
+
+impl fmt::Display for PageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PageError::InvalidLimit(n) => {
+                write!(f, "page 크기 {n}은 1..={MAX_PAGE_LIMIT} 범위여야 합니다")
+            }
+            PageError::Stale => {
+                f.write_str("cursor 이후 진단이 바뀌었습니다. 처음부터 다시 읽으세요")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PageError {}
+
+/// 진단 한 page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticPage {
+    /// 진단(key 순).
+    pub items: Vec<Diagnostic>,
+    /// 다음 page cursor(마지막 page면 `None`).
+    pub next: Option<Cursor>,
+    /// 읽은 index revision.
+    pub revision: u64,
 }
 
 /// 종류×심각도 개수 요약.
@@ -334,6 +407,43 @@ impl DiagnosticIndex {
         self.matching(filter, None).count()
     }
 
+    /// 필터에 맞는 진단 한 page(XXV.3.1). `cursor`는 이전 page의 `next`입니다.
+    pub fn page(
+        &self,
+        filter: &DiagnosticFilter,
+        cursor: Option<&Cursor>,
+        limit: usize,
+    ) -> Result<DiagnosticPage, PageError> {
+        if limit == 0 || limit > MAX_PAGE_LIMIT {
+            return Err(PageError::InvalidLimit(limit));
+        }
+        if cursor.is_some_and(|c| c.revision != self.revision) {
+            return Err(PageError::Stale);
+        }
+        let mut items: Vec<Diagnostic> = Vec::with_capacity(limit);
+        let mut more = false;
+        for (key, stored) in self.matching(filter, cursor.map(|c| &c.after)) {
+            if items.len() == limit {
+                more = true;
+                break;
+            }
+            items.push(Self::materialize(key, stored));
+        }
+        let next = if more {
+            items.last().map(|d| Cursor {
+                revision: self.revision,
+                after: d.key.clone(),
+            })
+        } else {
+            None
+        };
+        Ok(DiagnosticPage {
+            items,
+            next,
+            revision: self.revision,
+        })
+    }
+
     /// 전체 진단(key 순).
     pub fn iter(&self) -> impl Iterator<Item = Diagnostic> + '_ {
         self.entries.iter().map(|(k, s)| Self::materialize(k, s))
@@ -371,6 +481,90 @@ mod tests {
         }
     }
 
+    fn read_all(
+        index: &DiagnosticIndex,
+        filter: &DiagnosticFilter,
+        limit: usize,
+    ) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        let mut cursor = None;
+        loop {
+            let page = index.page(filter, cursor.as_ref(), limit).expect("page");
+            assert!(page.items.len() <= limit);
+            out.extend(page.items);
+            match page.next {
+                Some(next) => {
+                    let parsed = Cursor::parse(&next.token()).expect("token 왕복");
+                    assert_eq!(parsed, next);
+                    cursor = Some(parsed);
+                }
+                None => return out,
+            }
+        }
+    }
+
+    fn fixture() -> DiagnosticIndex {
+        let mut index = DiagnosticIndex::new();
+        for n in 0..200u64 {
+            let kind = DiagnosticKind::ALL[(n % 10) as usize];
+            let severity = Severity::ALL[(n % 3) as usize];
+            let document = if n % 7 == 0 { None } else { Some(n % 4) };
+            index.insert(diag(document, kind, n, severity));
+        }
+        index
+    }
+
+    #[test]
+    fn filtered_pages_equal_filtered_scan_in_key_order() {
+        let index = fixture();
+        let all: Vec<Diagnostic> = index.iter().collect();
+        let filters = [
+            DiagnosticFilter::default(),
+            DiagnosticFilter {
+                kinds: [DiagnosticKind::MissingFont, DiagnosticKind::OrphanedBinding].into(),
+                ..Default::default()
+            },
+            DiagnosticFilter {
+                min_severity: Some(Severity::Warning),
+                document: Some(Some(sid(2))),
+                ..Default::default()
+            },
+            DiagnosticFilter {
+                document: Some(None),
+                ..Default::default()
+            },
+            DiagnosticFilter {
+                kinds: [DiagnosticKind::MigrationWarning].into(),
+                min_severity: Some(Severity::Error),
+                ..Default::default()
+            },
+            DiagnosticFilter {
+                source: Some(sid(17)),
+                ..Default::default()
+            },
+        ];
+        for filter in &filters {
+            let expected: Vec<Diagnostic> = all
+                .iter()
+                .filter(|d| {
+                    (filter.kinds.is_empty() || filter.kinds.contains(&d.kind()))
+                        && filter.min_severity.is_none_or(|m| d.severity >= m)
+                        && filter.document.is_none_or(|doc| doc == d.document())
+                        && filter.source.is_none_or(|s| d.source() == Some(s))
+                })
+                .cloned()
+                .collect();
+            for limit in [1, 3, 64, 1000] {
+                assert_eq!(
+                    read_all(&index, filter, limit),
+                    expected,
+                    "{filter:?} {limit}"
+                );
+            }
+            assert_eq!(index.count(filter), expected.len(), "{filter:?}");
+        }
+    }
+
     #[test]
     fn summary_tracks_insert_replace_remove() {
         let mut index = DiagnosticIndex::new();
@@ -386,5 +580,136 @@ mod tests {
         assert!(index.remove(&b.key));
         assert!(index.is_empty());
         assert_eq!(index.summary().total(), 0);
+    }
+
+    #[test]
+    fn replace_scope_touches_only_that_scope_and_stale_cursor_is_rejected() {
+        let mut index = DiagnosticIndex::new();
+        let mut other = diag(Some(1), DiagnosticKind::MissingFont, 9, Severity::Warning);
+        other.key.origin = "fonts".into();
+        index.insert(other.clone());
+        assert!(index.replace_scope(
+            Some(sid(1)),
+            "references",
+            vec![
+                diag(Some(1), DiagnosticKind::MissingNode, 1, Severity::Error),
+                diag(Some(1), DiagnosticKind::MissingNode, 2, Severity::Error),
+            ],
+        ));
+        assert_eq!(index.scope_len(Some(sid(1)), "references"), 2);
+        let first = index.page(&DiagnosticFilter::default(), None, 1).unwrap();
+        let cursor = first.next.clone().unwrap();
+        assert!(index.replace_scope(
+            Some(sid(1)),
+            "references",
+            vec![diag(
+                Some(1),
+                DiagnosticKind::MissingNode,
+                2,
+                Severity::Error
+            )],
+        ));
+        assert!(
+            !index.replace_scope(
+                Some(sid(1)),
+                "references",
+                vec![diag(
+                    Some(1),
+                    DiagnosticKind::MissingNode,
+                    2,
+                    Severity::Error
+                )],
+            ),
+            "같은 내용 교체는 변경 없음"
+        );
+        assert_eq!(index.scope_len(Some(sid(1)), "references"), 1);
+        assert_eq!(index.get(&other.key), Some(other));
+        assert_eq!(
+            index.page(&DiagnosticFilter::default(), Some(&cursor), 1),
+            Err(PageError::Stale)
+        );
+        assert_eq!(
+            index.page(&DiagnosticFilter::default(), None, 0),
+            Err(PageError::InvalidLimit(0))
+        );
+        assert!(Cursor::parse("zz").is_none());
+        assert!(Cursor::parse("1.0").is_none());
+    }
+
+    #[test]
+    fn million_diagnostics_paginate_with_filters() {
+        // 검증 기준(XXV.3.1): 100만 diagnostic pagination. 전체를 page로 읽어 개수·순서·중복 없음을 확인하고,
+        // 문서·종류 필터 page는 범위 탐색이라 앞 page를 다시 훑지 않습니다.
+        let mut index = DiagnosticIndex::new();
+        let documents: Vec<StableId> = (1..=8).map(sid).collect();
+        for n in 0..1_000_000u64 {
+            let kind = DiagnosticKind::ALL[(n % 10) as usize];
+            let severity = Severity::ALL[(n % 3) as usize];
+            index.put(Diagnostic {
+                key: DiagnosticKey {
+                    document: Some(documents[(n % 8) as usize]),
+                    kind,
+                    source: Some(StableId::from_bytes((n as u128).to_be_bytes())),
+                    property: None,
+                    code: String::new(),
+                    subject: String::new(),
+                    origin: "bulk".into(),
+                },
+                severity,
+                message: String::new(),
+                remediation: Vec::new(),
+            });
+        }
+        assert_eq!(index.len(), 1_000_000);
+        assert_eq!(index.count(&DiagnosticFilter::default()), 1_000_000);
+        let mut cursor: Option<Cursor> = None;
+        let mut seen = 0usize;
+        let mut last: Option<DiagnosticKey> = None;
+        loop {
+            let page = index
+                .page(
+                    &DiagnosticFilter::default(),
+                    cursor.as_ref(),
+                    MAX_PAGE_LIMIT,
+                )
+                .unwrap();
+            for item in &page.items {
+                if let Some(prev) = &last {
+                    assert!(prev < &item.key);
+                }
+                last = Some(item.key.clone());
+            }
+            seen += page.items.len();
+            match page.next {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+        assert_eq!(seen, 1_000_000);
+        let filter = DiagnosticFilter {
+            kinds: [DiagnosticKind::MissingAsset].into(),
+            document: Some(Some(documents[3])),
+            min_severity: Some(Severity::Warning),
+            ..Default::default()
+        };
+        let expected = index.count(&filter);
+        assert!(expected > 0);
+        let mut cursor: Option<Cursor> = None;
+        let mut total = 0;
+        loop {
+            let page = index.page(&filter, cursor.as_ref(), 500).unwrap();
+            assert!(page
+                .items
+                .iter()
+                .all(|d| d.kind() == DiagnosticKind::MissingAsset
+                    && d.document() == Some(documents[3])
+                    && d.severity >= Severity::Warning));
+            total += page.items.len();
+            match page.next {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+        assert_eq!(total, expected);
     }
 }

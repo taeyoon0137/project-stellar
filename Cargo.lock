@@ -349,6 +349,7 @@ dependencies = [
  "stellar-commands",
  "stellar-document",
  "stellar-git-porcelain",
+ "stellar-integrity",
  "stellar-project",
  "stellar-semantic-diff",
  "stellar-semantic-merge",

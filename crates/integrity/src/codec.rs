@@ -224,6 +224,16 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// key 하나의 canonical bytes([`DiagnosticKey::to_bytes`])를 읽습니다(cursor token).
+pub(crate) fn read_key(bytes: &[u8]) -> Result<DiagnosticKey, CodecError> {
+    let mut reader = Reader { bytes };
+    let key = reader.key()?;
+    if !reader.bytes.is_empty() {
+        return Err(CodecError::TrailingBytes);
+    }
+    Ok(key)
+}
+
 /// schema v1 bytes를 진단 목록으로 읽습니다.
 pub fn decode(bytes: &[u8]) -> Result<Vec<Diagnostic>, CodecError> {
     let mut reader = Reader { bytes };

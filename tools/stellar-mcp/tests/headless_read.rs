@@ -362,6 +362,7 @@ fn approved_snapshot_lists_only_implemented_resources_and_pages_without_writes()
         [
             "document.semantic_diff",
             "document.validate",
+            "document.diagnostics",
             "document.propose_commands",
             "document.source_span",
             "document.export_web_frame",
