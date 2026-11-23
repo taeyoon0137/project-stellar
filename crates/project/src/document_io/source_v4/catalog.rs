@@ -1,4 +1,4 @@
-//! 텍스트 asset catalog(TS-ASSET, ADR-0077 결정 1·3).
+//! 텍스트 asset catalog(V.10.9, ADR-0077 결정 1·3).
 //!
 //! `design/assets/catalog.stellar.yaml` 한 파일이 이미지 asset record, 등록 글꼴(ProjectFontRecord와 그
 //! AssetRecord), 문서별 Text style 표의 원본입니다. 문서·View·컴포넌트 원본은 여기 항목을 StableId·file hash·

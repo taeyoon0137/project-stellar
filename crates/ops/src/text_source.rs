@@ -251,7 +251,7 @@ pub fn check_project(design: &Path) -> Result<TextProjectOutcome, TextSourceOper
     Ok(project_outcome(&project, &files))
 }
 
-/// 다중 파일 원본에서 node의 파일·줄 범위(TS-MAP).
+/// 다중 파일 원본에서 node의 파일·줄 범위(V.10.10).
 pub fn source_span(
     design: &Path,
     node: StableId,

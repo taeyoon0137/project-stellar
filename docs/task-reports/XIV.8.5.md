@@ -2,7 +2,7 @@
 
 - WBS: XIV.8.5
 - 작업명: trusted에서만 commit, hook 실패 우회 없음
-- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 XIV.8.4(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]` 후보)
+- 상태: 완료 (`[x]`) — 2026-11-23 cli-mcp-git-cleanup 재판정: 선행 XIV.1.1·XIV.8.4가 `[x]`입니다(XIV.8.4는 같은 날 XIV.8.1 사슬이 풀려 `[x]`). 이전 판정: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 XIV.8.4(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]` 후보)
 - 선행: XIV.1.1, XIV.8.4
 - 결정: ADR-0080
 
@@ -44,6 +44,17 @@
 ## 차이(작업 지시와 다른 점)
 
 - 셸 FFI와 Swift UI는 사용자 방향(2026-11-23)에 따라 다루지 않았습니다. 엔진은 Rust 테스트와 `stellar git` CLI로 검증했습니다.
+
+## 2026-11-23 재판정 (cli-mcp-git-cleanup)
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-runtime --lib staging` | 19개 통과 |
+| `cargo test -p stellar-cli --test git` | 4개 통과 |
+| `cargo test -p stellar-ops` | 83개 통과 |
+
+- commit 인자는 `commit --file=- --cleanup=verbatim`(`stellar_git_porcelain::commit::COMMIT_FROM_STDIN_ARGS`)이고 `--no-verify`·`commit-tree` 호출이 코드에 없음을 다시 확인했습니다.
+- `failing_hook_blocks_commit_and_result_is_returned_as_is`를 다시 실행해 통과했습니다.
 
 ## 남은 위험 / 한계
 

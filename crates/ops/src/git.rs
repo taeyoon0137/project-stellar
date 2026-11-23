@@ -1894,8 +1894,9 @@ pub struct CommitOutcome {
 impl GitSession {
     /// staged snapshot이 유효한 Stellar 프로젝트인지 전체 validator로 다시 검사합니다(XIV.8.1).
     ///
-    /// 저장소 무결성(loader), 문서 validator, 저장 무손실 왕복, semantic 무결성, 컴포넌트 원본을 봅니다.
-    /// 컴포넌트 정의가 없는 인스턴스는 `stellar validate`와 같이 경고입니다. index·작업 트리를 쓰지 않습니다.
+    /// 저장소 무결성(loader), 문서 판정, 저장 무손실 왕복, semantic 구조 무결성, 컴포넌트 원본을 봅니다.
+    /// 문서 판정은 `stellar validate`와 같은 [`crate::validate::validate_loaded_document`]라 같은 tree의 문서 진단이
+    /// 같습니다. 미해결 참조와 정의 없는 인스턴스는 경고이고 commit을 막지 않습니다. index·작업 트리를 쓰지 않습니다.
     pub fn validate_staged(&self) -> Result<StagedValidation, GitError> {
         let index = read_index_snapshot(&self.git, &self.root)?;
         let mut findings = Vec::new();
@@ -1939,52 +1940,43 @@ impl GitSession {
                     Err(e.to_string())
                 }
             };
-        let mut records = Vec::new();
         match project.document_ids() {
             Ok(ids) => {
                 for id in ids {
-                    match project.load_document(id).map(|d| d.model.to_records()) {
-                        Ok(Ok(mut r)) => {
+                    let loaded = project
+                        .load_document(id)
+                        .map_err(|e| e.to_string())
+                        .and_then(|d| d.model.to_records().map_err(|e| e.to_string()))
+                        .map(|mut r| {
                             r.sort_canonical();
-                            // 문서 판정은 `stellar validate`와 같은 함수입니다(ops::validate, 이중 구현 없음).
-                            findings.extend(
-                                crate::validate::validate_records(id, &r, || match &definitions {
-                                    Ok(ids) => crate::validate::Definitions::Known(ids),
-                                    Err(reason) => crate::validate::Definitions::Failed(reason),
-                                })
-                                .into_iter()
-                                .map(StagedFinding::from),
-                            );
-                            records.push(r);
-                        }
-                        Ok(Err(e)) => findings.push(StagedFinding::error(
-                            "document-load",
-                            Some(id),
-                            e.to_string(),
-                        )),
-                        Err(e) => findings.push(StagedFinding::error(
-                            "document-load",
-                            Some(id),
-                            e.to_string(),
-                        )),
-                    }
+                            r
+                        });
+                    // 문서 판정은 `stellar validate`와 같은 함수입니다(ops::validate, 이중 구현 없음). 두 경로는
+                    // 문서를 어디서 읽는지만 다릅니다.
+                    let judged = crate::validate::validate_loaded_document(
+                        id,
+                        loaded.as_ref().map_err(String::as_str),
+                        || match &definitions {
+                            Ok(ids) => crate::validate::Definitions::Known(ids),
+                            Err(reason) => crate::validate::Definitions::Failed(reason),
+                        },
+                    );
+                    findings.extend(judged.findings.into_iter().map(StagedFinding::from));
                 }
             }
             Err(e) => findings.push(StagedFinding::error("document-load", None, e.to_string())),
         }
         match saved_semantic_snapshot(&project) {
             Ok(semantic) => {
-                // 컴포넌트 정의는 문서 snapshot 밖 텍스트 원본이므로 인스턴스의 정의 참조는 위의 문서 판정이 봅니다.
-                let instance_targets = component_refs(records.iter());
+                // 참조 대상이 있는지는 위의 문서 판정(`validate_records`)만 봅니다. 미해결 참조(III.2.4)와 정의 없는
+                // 인스턴스는 `stellar validate`처럼 경고이고, 같은 사실을 semantic 무결성에서 다시 판정해 오류로
+                // 만들지 않습니다. semantic 무결성은 구조(parent·순서·소속·interface)만 봅니다.
                 for violation in stellar_semantic_diff::validate::validate_snapshot(&semantic)
                     .into_iter()
                     .filter(|v| {
                         !matches!(
                             v,
-                            stellar_semantic_diff::validate::SnapshotViolation::DanglingReference {
-                                target,
-                                ..
-                            } if instance_targets.contains(target)
+                            stellar_semantic_diff::validate::SnapshotViolation::DanglingReference { .. }
                         )
                     })
                 {
@@ -2195,5 +2187,81 @@ mod tests {
             Err(GitError::NotTrusted)
         ));
         assert_eq!(runner.spawn_count(), 0);
+    }
+
+    /// staged 재검증과 `stellar validate`는 같은 tree의 문서를 같은 진단으로 판정합니다(ADR-0080 개정).
+    /// 미해결 참조와 정의 없는 인스턴스는 둘 다 경고라 commit을 막지 않습니다. 이미지 node의 asset은 staged
+    /// semantic snapshot(문서만 담음)에 없지만, 그 사실만으로 commit을 막지 않습니다.
+    #[test]
+    fn staged_judgment_matches_project_validation() {
+        use crate::core_types::reference::{AssetRef, ComponentRef};
+        use crate::core_types::value::Size2;
+        use crate::test_support::{
+            document_with_unresolved_clips, save_documents, scaffold_project,
+        };
+        use stellar_document::component::instance::ComponentInstancePayload;
+        use stellar_document::image::ImagePayload;
+        use stellar_document::records::NodeRecord;
+        use stellar_git_porcelain::fixture::GitFixture;
+
+        let Some(fx) = GitFixture::with_system_git("ops-staged-judgment").unwrap() else {
+            panic!("system Git required");
+        };
+        scaffold_project(fx.work());
+        // 미해결 clip 참조와 정의 없는 인스턴스를 함께 가진 문서.
+        let mut instance = document_with_unresolved_clips(2);
+        let root = instance.definition().pages[0].views[0].root_frame;
+        instance
+            .insert_node(NodeRecord {
+                id: StableId::new_v7(1_960_000_000_000, 0, 1),
+                parent: Some(root),
+                order_key: instance.next_child_order_key(root),
+                visible: true,
+                locked: false,
+                display_name: "Placed".into(),
+                payload: NodePayload::ComponentInstance(ComponentInstancePayload::new(
+                    ComponentRef::new(StableId::new_v7(1_960_000_000_000, 0, 2)),
+                )),
+            })
+            .unwrap();
+        instance
+            .insert_node(NodeRecord {
+                id: StableId::new_v7(1_960_000_000_000, 0, 3),
+                parent: Some(root),
+                order_key: instance.next_child_order_key(root),
+                visible: true,
+                locked: false,
+                display_name: "Photo".into(),
+                payload: NodePayload::Image(ImagePayload::new(
+                    AssetRef::new(StableId::new_v7(1_960_000_000_000, 0, 4)),
+                    Size2::new(4.0, 4.0).unwrap(),
+                )),
+            })
+            .unwrap();
+        save_documents(fx.work(), &[&instance]);
+        fx.git(["add", "-A"]).unwrap();
+
+        let project = crate::validate::validate_project(fx.work()).unwrap();
+        assert!(project.is_valid(), "{project:?}");
+        let expected: Vec<StagedFinding> = project
+            .documents
+            .into_iter()
+            .flat_map(|d| d.findings)
+            .map(StagedFinding::from)
+            .collect();
+        assert!(expected.iter().any(|f| f.code == "unresolved-reference"));
+        assert!(expected
+            .iter()
+            .any(|f| f.code == "missing-component-definition"));
+
+        let session = GitSession::open(fx.gated(), fx.work()).unwrap();
+        let staged = session.validate_staged().unwrap();
+        let mut found = staged.findings.clone();
+        let mut expected = expected;
+        let key = |f: &StagedFinding| (f.document, f.code, f.message.clone());
+        found.sort_by_key(key);
+        expected.sort_by_key(key);
+        assert_eq!(found, expected);
+        assert!(staged.is_valid());
     }
 }

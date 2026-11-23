@@ -1,4 +1,4 @@
-//! node → 파일·줄 범위 표(TS-MAP, ADR-0077 결정 6).
+//! node → 파일·줄 범위 표(V.10.10, ADR-0077 결정 6).
 //!
 //! codec이 쓴 텍스트에서 `nodes` 목록 항목의 줄 범위를 찾습니다. canonical writer는 최상위 `nodes:` 아래 항목을
 //! `  -` 한 줄로 시작하고 첫 키 `    id: "<StableId>"`를 쓰며, 문자열은 항상 한 줄로 escape합니다. 그래서 같은

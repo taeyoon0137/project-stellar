@@ -996,37 +996,63 @@ mod tests {
 
     /// 인증을 통과한 상대가 HELLO를 1 byte씩 늦게 보내도 다른 bridge의 handshake가 막히지
     /// 않습니다(IPC-03).
+    ///
+    /// I/O loop를 step 단위로 직접 돌리고, 각 step 전에 준비된 fd를 확인합니다. 벽시계 시간을 재지
+    /// 않으므로 코드 서명 검사(시스템 Security 서비스 왕복)가 부하로 느려져도 판정이 바뀌지 않습니다.
+    /// 막히는 구현이라면 느린 상대가 먼저 accept됐으므로 그 HELLO가 끝나거나 기한이 지나기 전에는 bridge가
+    /// WELCOME을 받지 못합니다. 여기서는 느린 상대가 아직 줄을 끝내지 않은 같은 step에서 bridge가 연결됩니다.
     #[test]
     fn slow_authenticated_peer_does_not_block_other_handshakes() {
         let tmp = TempDir::new();
         let policy = PeerPolicy::for_current_process().unwrap();
-        let app = listener(&tmp, policy.clone());
-        let endpoint = Endpoint {
-            instance: id(1),
-            socket_path: app.socket_path().to_path_buf(),
-        };
-        let mut slow = UnixStream::connect(app.socket_path()).unwrap();
-        // 앱 측 timeout(5초)보다 짧은 간격으로 한 byte씩 보냅니다.
-        std::thread::spawn(move || {
-            for byte in PROTOCOL_TAG.bytes() {
-                if slow.write_all(&[byte]).is_err() {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(700));
-            }
-        });
-        std::thread::sleep(Duration::from_millis(200));
-        let started = std::time::Instant::now();
-        let session = connect(&endpoint, &policy, &mut NonceLedger::new());
-        let elapsed = started.elapsed();
-        let session =
-            session.unwrap_or_else(|e| panic!("정상 bridge handshake: {e:?} ({elapsed:?})"));
-        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
-        let ListenerEvent::Connected { connection, .. } = app.events().recv_timeout(WAIT).unwrap()
+        let registry = Registry::at(tmp.path.join("r"), os::current_uid());
+        let endpoint = AppEndpoint::bind(&registry, id(1)).unwrap();
+        endpoint.listener.set_nonblocking(true).unwrap();
+        let socket_path = endpoint.endpoint().socket_path.clone();
+        // 느린 상대가 backlog에서 먼저 accept되도록 먼저 연결합니다.
+        let mut slow = UnixStream::connect(&socket_path).unwrap();
+        let mut bridge = UnixStream::connect(&socket_path).unwrap();
+        authenticate(&bridge, &policy).unwrap();
+        set_timeouts(&bridge, DEFAULT_TIMEOUT).unwrap();
+        let (_waker, wake_rx) = UnixStream::pair().unwrap();
+        let (mut io_loop, events) = test_io_loop(endpoint, policy, wake_rx, DEFAULT_TIMEOUT);
+        let readable = |fd| os::poll_readable(&[fd], Some(Duration::ZERO)).unwrap()[0];
+
+        // 두 연결 모두 실제 인증을 거쳐 HELLO를 기다리는 목록에 들어갑니다.
+        let tag = PROTOCOL_TAG.as_bytes();
+        slow.write_all(&tag[..1]).unwrap();
+        assert!(readable(io_loop.endpoint.listener.as_raw_fd()));
+        assert!(io_loop.accept_ready().is_ok());
+        assert_eq!(io_loop.pending.len(), 2);
+        let slow_fd = io_loop.pending[0].stream.as_raw_fd();
+        let bridge_fd = io_loop.pending[1].stream.as_raw_fd();
+
+        // 느린 상대의 부분 줄과 bridge의 완전한 HELLO가 같은 step에 준비됩니다.
+        let client = Nonce::from_bytes([31; 16]);
+        write_message(&mut bridge, &Message::Hello { client }).unwrap();
+        assert!(readable(slow_fd) && readable(bridge_fd));
+        assert!(io_loop.step(Instant::now()).is_ok());
+        assert_eq!(io_loop.pending.len(), 1, "느린 상대만 남음");
+        assert_eq!(io_loop.pending[0].stream.as_raw_fd(), slow_fd);
+        assert_eq!(io_loop.pending[0].line, &tag[..1]);
+        let Message::Welcome { client: echoed, .. } =
+            Message::decode(&read_line(&mut bridge).unwrap()).unwrap()
         else {
+            panic!("bridge는 느린 상대를 기다리지 않고 WELCOME을 받음")
+        };
+        assert_eq!(echoed, client);
+        let ListenerEvent::Connected { connection, .. } = events.try_recv().unwrap() else {
             panic!("정상 연결이 먼저 전달됨")
         };
-        assert_eq!(connection.client_nonce(), session.client_nonce());
+        assert_eq!(connection.client_nonce(), client);
+
+        // 느린 상대가 1 byte 더 보내도 줄이 끝나지 않았으므로 이벤트 없이 계속 기다립니다.
+        slow.write_all(&tag[1..2]).unwrap();
+        assert!(readable(slow_fd));
+        assert!(io_loop.step(Instant::now()).is_ok());
+        assert_eq!(io_loop.pending.len(), 1);
+        assert_eq!(io_loop.pending[0].line, &tag[..2]);
+        assert!(matches!(events.try_recv(), Err(mpsc::TryRecvError::Empty)));
     }
 
     /// HELLO 한 줄 전체에 기한이 있습니다: timeout보다 짧은 간격으로 1 byte씩 보내도 기한이 지나면

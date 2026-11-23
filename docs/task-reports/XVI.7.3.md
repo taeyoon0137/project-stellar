@@ -2,7 +2,7 @@
 
 - WBS: XVI.7.3
 - 작업명: hook·filter는 시스템 Git이 trusted에서만 실행
-- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 XIV.8.5(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]` 후보)
+- 상태: 완료 (`[x]`) — 2026-11-23 cli-mcp-git-cleanup 재판정: 선행 XIV.8.5·XVI.7.1이 `[x]`입니다(XIV.8.5는 같은 날 XIV.8.1 사슬이 풀려 `[x]`). 이전 판정: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 XIV.8.5(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]` 후보)
 - 선행: XIV.8.5, XVI.7.1
 - 결정: ADR-0080
 
@@ -46,6 +46,17 @@
 ## 차이(작업 지시와 다른 점)
 
 - 셸 FFI와 Swift UI는 사용자 방향(2026-11-23)에 따라 다루지 않았습니다. 엔진은 Rust 테스트와 `stellar git` CLI로 검증했습니다.
+
+## 2026-11-23 재판정 (cli-mcp-git-cleanup)
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-runtime --lib staging` | 19개 통과 |
+| `cargo test -p stellar-cli --test git` | 4개 통과 |
+| `cargo test -p stellar-ops` | 83개 통과 |
+
+- Rust 코드에서 `.git/hooks` 아래 파일을 직접 실행하는 곳이 없음을 다시 확인했습니다(검색 결과는 test fixture가 hook 파일을 만드는 곳뿐).
+- `untrusted_project_spawns_no_git_for_any_operation`, `untrusted_project_is_refused_without_changes`, `ops::git::tests::untrusted_session_spawns_nothing`을 다시 실행해 통과했습니다.
 
 ## 남은 위험 / 한계
 
