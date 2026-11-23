@@ -137,3 +137,53 @@
 - 새 command 번호 0x0094·0x0095와 codec 버전 7은 registry 전역 변경입니다. 동시에 다른 작업이 같은 번호를 쓰면 통합 때
   맞춰야 합니다.
 - nested instance 정의 node는 scene 투영이 아직 그리지 않아 깊은 선택으로도 고를 수 없습니다.
+
+## 후속 수정 (2026-11-24 instance-integrity, ADR-0133)
+
+위 "남은 위험"의 "인스턴스 자식이 있는 문서를 scene 그리기·semantic diff·codegen 경로로 확인하지 않았습니다"와 ADR-0129
+Consequences의 같은 항목을 확인했습니다. 같은 날 함께 끝낸 인스턴스 구조 무결성 작업은 각 행 보고서에 적었습니다.
+
+- 일반 구조 command와 Slot content 투영, Slot content 지우기 계획: IX.3.3 보고서(ADR-0133 결정 1·2). 이로써 Slot content를
+  `delete-subtree`로 지워 인스턴스에 stale slot 참조가 남고 그 인스턴스의 `swap-instance`가 항상 실패하던 경로가 막혔습니다.
+- Detach의 Property override 반영: IX.2.6 보고서(결정 3). 위 "차이(2026-11-24)"의 "Detach는 Property override 값을 복제
+  node에 반영하지 않습니다"를 해소했습니다(`plan_detach_instance`가 연결 목록을 받음).
+- 가이드·그리드 복제: XII.10.19 보고서(결정 4).
+- Text 입력 CommandId: XII.10.33 보고서(결정 5).
+
+### 변경 파일
+
+- `tests/integration/tests/instance_slot_content_paths.rs`(신규) — 경로 확인 시험.
+- `tests/integration/Cargo.toml`(등록) — `stellar-scene`(`document` feature)과 `stellar-ops`의 `test-support` feature.
+  `Cargo.lock`(등록 한 줄).
+- `docs/adr/ADR-0133-instance-structure-integrity.md` 결정 6(확인 결과).
+
+### 실행한 명령
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-integration-tests --test instance_slot_content_paths` | 통과(5 passed) |
+
+### 테스트와 결과
+
+- scene(`scene_projects_slot_content_once_and_incremental_edits_match_a_rebuild`): View root 아래 Card 인스턴스 30(배치
+  (200, 100))의 body Slot에 투영한 Frame 31(자식 32)이 slot host 가상 node 아래 한 번, 32는 31 아래에 들어가고 skip이
+  없습니다. 31의 폭 변경, 32의 숨김, Slot content 지우기 뒤 증분 편집 결과가 새 전체 변환과 같습니다.
+- scene(`scene_incremental_edits_match_a_rebuild_for_slot_drop_and_detach`): root의 Frame 50을 Slot에 끌어 놓는
+  `place-slot-content`, 이어서 Detach 뒤 증분 편집 결과가 새 전체 변환과 같고, Detach 뒤 content는 복제 slot host 아래입니다.
+- semantic diff(`semantic_snapshot_round_trips_instance_children_and_diffs_slot_content_removal`): snapshot 역투영 레코드가
+  원래와 같고, Slot content 지우기 diff에 인스턴스·content·안쪽 node가 모두 나오며 `apply(base, diff) = target`입니다.
+- 텍스트 원본·chunk(`text_source_and_chunks_round_trip_instance_children`): View v4 원본 쓰기·열기·다시 쓰기(같은 hash),
+  chunk 저장·다시 열기가 원래 레코드와 같습니다.
+- codegen(`web_export_refuses_instances_with_slot_content_instead_of_dropping_it`): 제품 저장 경로로 저장한 프로젝트의
+  Web 내보내기가 HTML 없이 인스턴스 30에 blocking `unsupported-component-instance`를 냅니다.
+
+### 결과 판정
+
+scene·semantic diff·텍스트 원본·chunk는 고칠 것이 없었습니다. codegen은 Slot content 투영 출력을 지원하지 않고 정직하게
+거부합니다. 투영 출력은 codegen 작업이 Property override 출력과 함께 할 일로 남깁니다.
+
+### 남은 위험
+
+- 메뉴 막대·문맥 메뉴·`ShortcutPolicy`(셸)는 그대로 남았습니다(사용자 방향 2026-11-23).
+- runtime 선택 삭제·끌어 내기 제스처를 Slot content 계획으로 보내는 연결은 UI 재설계 때 합니다.
+- Web·native codegen의 Slot content 투영 출력은 없습니다(위 판정).

@@ -105,9 +105,18 @@ Consequences의 "Frame 복제·붙여넣기 때 가이드·그리드가 따라�
 
 ### 6. 인스턴스 자식이 있는 문서의 경로 확인
 
-scene 그리기(전체 변환·증분 편집), semantic diff, codegen, 텍스트 원본 codec을 Slot content가 있는 문서로 확인하는
-통합 시험(`tests/integration/tests/instance_slot_content_paths.rs`)을 둡니다. 확인 결과와 고친 내용은 작업 보고서
-XII.10.34에 적습니다.
+Slot content가 있는 문서를 각 경로로 보내는 통합 시험(`tests/integration/tests/instance_slot_content_paths.rs`)을 둡니다.
+확인 결과(2026-11-24):
+
+1. scene 그리기: 전체 변환에서 content는 slot host 가상 node 아래에 한 번 들어갑니다(ADR-0084 결정 3의 투영 그대로).
+   content·안쪽 node 편집, Slot content 지우기, 끌어 놓기, Detach의 증분 편집(`scene_edits`)이 새 전체 변환과 같습니다.
+   고칠 것이 없었습니다.
+2. semantic diff: snapshot → 문서 레코드 역투영이 원래 레코드와 같고, Slot content 지우기의 diff(content subtree 삭제 +
+   인스턴스 slot override 변경)를 적용하면 결과 snapshot과 같습니다. 고칠 것이 없었습니다.
+3. 텍스트 원본 codec(View v4)과 저장 chunk: 쓰고 다시 읽은 레코드가 같고 다시 쓴 bytes가 같습니다. 고칠 것이 없었습니다.
+4. codegen(Web 내보내기): Slot content 투영 출력은 지원하지 않습니다. 인스턴스에 소유 자식이 있으면 blocking 진단
+   `unsupported-component-instance`로 거부하고 HTML을 내지 않습니다(content를 조용히 빼지 않음). 이 거부를 시험으로
+   고정합니다. 투영 출력(정의 slot host 아래 content 배치)은 codegen 작업이 Property override 출력과 함께 정합니다.
 
 ## Alternatives
 
