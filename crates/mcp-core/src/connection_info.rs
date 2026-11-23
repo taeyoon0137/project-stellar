@@ -8,7 +8,8 @@
 //!
 //! - Transports "stdio": client가 서버를 subprocess로 실행하고 stdin/stdout으로 메시지를
 //!   주고받습니다. 그래서 등록에 필요한 것은 실행 파일(`command`)·인자(`args`)·추가 환경 변수(`env`)
-//!   이고, transport는 `"stdio"`입니다. 이 서버는 인자와 환경 변수를 요구하지 않습니다.
+//!   이고, transport는 `"stdio"`입니다. 등록 기본값은 지정 프로젝트의 headless 서버라 인자는
+//!   `--headless --project <절대 경로>`이고 추가 환경 변수는 없습니다(ADR-0005 §3).
 //! - Lifecycle "Version Negotiation": 지원 protocol version 목록(`protocolVersions`)을 참고용으로
 //!   함께 줍니다. 실제 version은 initialize에서 협상합니다.
 //! - Lifecycle "Initialization": `serverInfo`(`name`, `version`)는 initialize 응답의 값과 같습니다.
@@ -29,12 +30,8 @@ pub const SCHEMA_VERSION: i64 = 1;
 /// 실행 flag.
 pub const FLAG: &str = "--connection-info";
 
-/// `command`(이 실행 파일의 절대 경로)로 등록 정보를 만듭니다.
-pub fn connection_info(command: &str, protocol: &ProtocolConfig) -> JsonValue {
-    connection_info_with_args(command, protocol, Vec::new())
-}
-
-/// 프로젝트에 고정한 headless 서버의 등록 정보를 만듭니다.
+/// `command`(이 실행 파일의 절대 경로)와 정규화한 프로젝트 절대 경로로, 그 프로젝트에 고정한 headless 서버의
+/// 등록 정보를 만듭니다.
 pub fn connection_info_for_project(
     command: &str,
     protocol: &ProtocolConfig,
@@ -91,12 +88,16 @@ mod tests {
     #[test]
     fn connection_info_has_fixed_keys_and_values() {
         let config = ProtocolConfig::builtin().unwrap();
-        let info = connection_info("/Applications/Stellar.app/x/stellar-mcp", &config);
+        let info = connection_info_for_project(
+            "/Applications/Stellar.app/x/stellar-mcp",
+            &config,
+            "/Users/me/Design",
+        );
         assert_eq!(
             write(&info),
             "{\"schema\":\"stellar-mcp/connection-info\",\"schemaVersion\":1,\
              \"transport\":\"stdio\",\"command\":\"/Applications/Stellar.app/x/stellar-mcp\",\
-             \"args\":[],\"env\":{},\"serverInfo\":{\"name\":\"stellar-mcp\",\"version\":\"0.0.0\"},\
+             \"args\":[\"--headless\",\"--project\",\"/Users/me/Design\"],\"env\":{},\"serverInfo\":{\"name\":\"stellar-mcp\",\"version\":\"0.0.0\"},\
              \"protocolVersions\":[\"2025-11-25\",\"2025-06-18\"]}"
         );
     }
@@ -104,9 +105,10 @@ mod tests {
     #[test]
     fn command_path_is_escaped_as_json_string() {
         let config = ProtocolConfig::builtin().unwrap();
-        let info = connection_info("/tmp/a \"b\"\n", &config);
+        let info = connection_info_for_project("/tmp/a \"b\"\n", &config, "/tmp/p \"q\"");
         let text = write(&info);
         assert!(text.contains(r#""command":"/tmp/a \"b\"\n""#), "{text}");
+        assert!(text.contains(r#""/tmp/p \"q\"""#), "{text}");
         assert!(!text.contains('\n'));
     }
 

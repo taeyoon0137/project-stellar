@@ -26,6 +26,9 @@ use stellar_mcp::log::Logger;
 use stellar_mcp::protocol::ProtocolConfig;
 use stellar_mcp::server;
 
+/// 프로젝트 루트의 manifest 파일 이름.
+const MANIFEST: &str = "stellar.yaml";
+
 const USAGE: &str = "사용법: stellar-mcp [--attach [--instance <id>] | --headless --project <절대 경로> | --connection-info --project <프로젝트 경로>]\n\n\
     인자 없이 실행하면 stdin/stdout으로 MCP JSON-RPC 2.0 메시지(한 줄에 하나)를 처리합니다.\n\
     stdout에는 protocol 메시지만 쓰고, 로그와 이 도움말은 stderr에 씁니다.\n\
@@ -48,22 +51,34 @@ enum Mode {
     ConnectionInfo(std::path::PathBuf),
 }
 
+/// 인자 해석 실패.
+#[derive(Debug, PartialEq, Eq)]
+enum ArgError {
+    /// 알 수 없는 인자 조합.
+    Unknown,
+    /// `--connection-info`에 등록할 프로젝트가 없습니다.
+    ConnectionInfoNeedsProject,
+}
+
 /// 인자를 해석합니다. 도움말이면 `Ok(None)`입니다.
-fn parse_args(args: &[std::ffi::OsString]) -> Result<Option<Mode>, ()> {
+fn parse_args(args: &[std::ffi::OsString]) -> Result<Option<Mode>, ArgError> {
     let text: Option<Vec<&str>> = args.iter().map(|a| a.to_str()).collect();
     let Some(text) = text else {
-        return Err(());
+        return Err(ArgError::Unknown);
     };
     Ok(Some(match text.as_slice() {
         [] => Mode::Serve,
         ["--help" | "-h"] => return Ok(None),
+        [flag] if *flag == connection_info::FLAG => {
+            return Err(ArgError::ConnectionInfoNeedsProject)
+        }
         [flag, "--project", root] if *flag == connection_info::FLAG => {
             Mode::ConnectionInfo(std::path::PathBuf::from(root))
         }
         ["--attach"] => Mode::Attach(None),
         ["--headless", "--project", root] => Mode::Headless(std::path::PathBuf::from(root)),
         ["--attach", "--instance", id] => Mode::Attach(Some((*id).to_string())),
-        _ => return Err(()),
+        _ => return Err(ArgError::Unknown),
     }))
 }
 
@@ -174,17 +189,22 @@ fn print_connection_info(
             return exit::IOERR;
         }
     };
-    let absolute = if project.is_absolute() {
-        project.to_path_buf()
-    } else {
-        match std::env::current_dir() {
-            Ok(current) => current.join(project),
-            Err(e) => {
-                log.error(&format!("프로젝트 절대 경로를 만들 수 없습니다: {e}"));
-                return exit::IOERR;
-            }
+    // `.`·상대 경로·symlink를 실제 절대 경로로 정규화합니다. 신뢰 확인은 headless 시작 때 하므로 여기서는
+    // 프로젝트 manifest가 있는지만 봅니다.
+    let absolute = match std::fs::canonicalize(project) {
+        Ok(path) => path,
+        Err(e) => {
+            log.error(&format!("프로젝트 경로를 확인할 수 없습니다: {e}"));
+            return exit::USAGE;
         }
     };
+    if !absolute.join(MANIFEST).is_file() {
+        log.error(&format!(
+            "{}에 {MANIFEST}가 없어 Stellar 프로젝트가 아닙니다",
+            absolute.display()
+        ));
+        return exit::USAGE;
+    }
     let Some(absolute) = absolute.to_str() else {
         log.error("프로젝트 경로가 UTF-8이 아닙니다");
         return exit::USAGE;
@@ -209,18 +229,17 @@ fn main() -> ExitCode {
 fn run() -> Exit {
     let mut log = Logger::new(io::stderr());
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
-    if args.len() == 1 && args[0] == connection_info::FLAG {
-        let _ = io::stderr()
-            .write_all("--connection-info에는 --project <프로젝트 경로>가 필요합니다\n".as_bytes());
-        return exit::USAGE;
-    }
     let mode = match parse_args(&args) {
         Ok(Some(mode)) => mode,
         Ok(None) => {
             let _ = io::stderr().write_all(USAGE.as_bytes());
             return exit::OK;
         }
-        Err(()) => {
+        Err(ArgError::ConnectionInfoNeedsProject) => {
+            log.error("--connection-info에는 --project <프로젝트 경로>가 필요합니다");
+            return exit::USAGE;
+        }
+        Err(ArgError::Unknown) => {
             log.error("알 수 없는 인자입니다. `stellar-mcp --help`로 사용법을 확인하세요.");
             return exit::USAGE;
         }

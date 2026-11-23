@@ -1,1 +1,1 @@
-{"schema":"stellar-mcp/connection-info","schemaVersion":1,"transport":"stdio","command":"<COMMAND>","args":[],"env":{},"serverInfo":{"name":"stellar-mcp","version":"0.0.0"},"protocolVersions":["2025-11-25","2025-06-18"]}
+{"schema":"stellar-mcp/connection-info","schemaVersion":1,"transport":"stdio","command":"<COMMAND>","args":["--headless","--project","<PROJECT>"],"env":{},"serverInfo":{"name":"stellar-mcp","version":"0.0.0"},"protocolVersions":["2025-11-25","2025-06-18"]}
