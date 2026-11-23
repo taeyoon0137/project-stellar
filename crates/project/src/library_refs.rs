@@ -281,8 +281,11 @@ pub fn document_ref_issues(
             _ => None,
         })
         .collect();
+    // instance 수에 선형으로 둡니다(ADR-0137 Performance).
+    let undeclared: std::collections::BTreeSet<StableId> =
+        usages.undeclared.iter().copied().collect();
     for usage in &usages.instances {
-        if usages.undeclared.contains(&usage.instance) {
+        if undeclared.contains(&usage.instance) {
             issues.push(DocumentRefIssue::Undeclared {
                 instance: usage.instance,
                 reference: usage.component.clone(),
