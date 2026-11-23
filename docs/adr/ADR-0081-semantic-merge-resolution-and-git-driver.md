@@ -151,3 +151,13 @@ XXIII.2, XXIV.2, XVI.6.6, XXVIII.2.3의 결정을 한 곳에 모읍니다. 기�
    바꾸지 않았습니다.
 2. **driver 결과 bytes 확인.** 시스템 Git merge driver 통합 test가 병합 결과 파일이 컴포넌트 원본 v4
    (`schema_version: "4"`)인지 확인합니다.
+3. **결정 6 이행: WorkingTree 쓰기는 다중 파일 journal 거래 하나.** `crates/ops/src/candidate/apply.rs`의 프로세스 내부
+   되돌리기와 `DiskFiles::write`(fsync 없는 임시 파일 rename)를 지우고, 계획한 모든 대상(chunk → 컴포넌트 원본 →
+   manifest → `design/current`)을 `stellar_storage::journal::commit` 거래 하나로 씁니다(ADR-0078). 반영 순서는 계획
+   순서 그대로라 chunk → manifest → current가 유지됩니다. 대상마다 기대 hash(CAS)를 걸어 세션 뒤 외부에서 바뀐 파일은
+   쓰지 않고 `Stale`로 끝냅니다. 쓰기 도중 실패하면 journal이 모두 앞 세대로 되돌리고, 프로세스가 죽으면 다음 적용
+   (`recover_interrupted`, `apply_session` 시작, 또는 다음 journal 저장)이 marker 유무로 앞·새 세대 한쪽으로 맞춥니다.
+   journal 오류 뒤에는 실제 파일을 다시 읽어 새 세대로 확정됐으면 성공으로 이어 갑니다(ADR-0078의 marker 뒤 오류
+   규칙). `git add` 실패는 쓴 대상을 이전 bytes로 되돌리는 역 거래 하나를 commit합니다. CLI `resolve --apply`는 세션을
+   열기 전에 남은 거래를 복구해, 세션이 복구된 작업 트리를 관찰하게 합니다. preview(`--apply` 없음)는 아무것도 쓰지
+   않으므로 복구도 하지 않습니다.

@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use stellar_ops::candidate::apply::{apply_session, ApplyError, DiskFiles};
+use stellar_ops::candidate::apply::{apply_session, recover_interrupted, ApplyError};
 use stellar_ops::candidate::file_merge::{merge_semantic_file, FileMergeError, FileMergeOutcome};
 use stellar_ops::candidate::git_port::GatedMergeGit;
 use stellar_ops::candidate::install::{install_driver, InstallError};
@@ -183,6 +183,13 @@ fn resolve(args: &[String]) -> Result<Success, CliError> {
     let args = resolve_args(args)?;
     let root = trusted_root(&args.project)?;
     let git = merge_git(&root)?;
+    if args.apply {
+        // 쓰기 전에 중단된 저장 거래를 먼저 맞춰 세션이 복구된 작업 트리를 관찰하게 합니다(ADR-0078).
+        recover_interrupted(&root).map_err(|e| {
+            CliError::new(ExitStatus::IoErr, "journal-recover", e.to_string())
+                .with_context(args.project.clone())
+        })?;
+    }
     let mut session = ConflictSession::open(&git, &root).map_err(|e| {
         CliError::new(ExitStatus::Unavailable, "conflict-session", e.to_string())
             .with_context(args.project.clone())
@@ -196,7 +203,7 @@ fn resolve(args: &[String]) -> Result<Success, CliError> {
     }
     let mut result = session_json(&session);
     if args.apply {
-        let report = apply_session(&git, &DiskFiles, &session).map_err(|e| {
+        let report = apply_session(&git, &session).map_err(|e| {
             let (status, code) = match &e {
                 ApplyError::Plan(PlanError::Blocked { .. }) => {
                     (ExitStatus::Failure, "unresolved-conflicts")
@@ -204,6 +211,7 @@ fn resolve(args: &[String]) -> Result<Success, CliError> {
                 ApplyError::Plan(_) => (ExitStatus::DataErr, "merge-plan"),
                 ApplyError::Stale(_) => (ExitStatus::TempFail, "stale-session"),
                 ApplyError::Git(_) => (ExitStatus::Unavailable, "git"),
+                ApplyError::Recover(_) => (ExitStatus::IoErr, "journal-recover"),
                 ApplyError::Write { .. } => (ExitStatus::IoErr, "merge-write"),
                 ApplyError::Add { .. } => (ExitStatus::Unavailable, "git-add"),
             };
