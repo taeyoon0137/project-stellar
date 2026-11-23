@@ -621,3 +621,32 @@ pub fn seeded_edit(model: &DocumentModel, seed: u64) -> (DocumentModel, StableId
     });
     (edited, target)
 }
+
+/// 프로젝트를 텍스트 원본(`design/`, ADR-0088)으로 씁니다. 바뀐 파일만 쓰고 사라진 파일은 지웁니다(앱 저장과 같은 결과
+/// 파일 집합). 반환: `design/` 기준 경로 → 내용.
+pub fn write_text_project(
+    root: &Path,
+    project: &stellar_project::document_io::source_v4::project::TextProject,
+) -> std::collections::BTreeMap<String, String> {
+    use stellar_project::document_io::source_v4::project::{encode, read_dir};
+    let encoded = encode(project).expect("텍스트 원본 encode");
+    let design = root.join("design");
+    let existing = if design.exists() {
+        read_dir(&design).expect("텍스트 원본 읽기")
+    } else {
+        Default::default()
+    };
+    for relative in existing.keys() {
+        if !encoded.files.contains_key(relative) {
+            std::fs::remove_file(design.join(relative)).unwrap();
+        }
+    }
+    for (relative, text) in &encoded.files {
+        if existing.get(relative) != Some(text) {
+            let path = design.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+    }
+    encoded.files
+}
