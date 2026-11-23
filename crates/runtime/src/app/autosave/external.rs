@@ -6,9 +6,15 @@
 //! [`ProjectWindowSession::sync_external`]이 합니다. 그래서 감시는 "무언가 바뀌었다"만 알리면 되고, coalescer의
 //! 자기 저장 기록은 비워 둡니다(자기 저장도 job 하나를 만들지만 hash 비교에서 `Unchanged`).
 //!
+//! 텍스트 원본(`design/**/*.stellar.yaml`)은 Git 원본이라 그 파일 event([`FileWatchEvent::affects_text_source`])도
+//! 반영 job을 만듭니다(V.10.6·V.10.7, ADR-0088). 저장 journal 한 거래의 여러 파일 event는 마지막 event 뒤 조용한
+//! 구간([`QUIET`])이 지나면 하나로 보냅니다. 자기 저장도 job 하나를 만들지만 창이 파일 hash로 걸러냅니다.
+//!
 //! 신뢰된 프로젝트는 외부 symlink target 감시 root를 [`ExternalTargetSync::sync`]로 맞춥니다(XIII.4.4). 처음 열 때
 //! 한 번, 그 뒤에는 넘침·링크 변화 event에서 다시 맞춥니다. 파일 감시기를 만들 수 없는 플랫폼·상황에서는 같은
-//! 주기로 current pointer bytes만 비교합니다.
+//! 주기로 current pointer bytes와 원본 파일 metadata(경로·크기·수정 시각)만 비교합니다.
+//!
+//! [`FileWatchEvent::affects_text_source`]: stellar_project::watcher::FileWatchEvent::affects_text_source
 
 use super::*;
 use std::collections::BTreeMap;
@@ -80,6 +86,11 @@ struct ProjectWatch {
     targets: ExternalTargetSync,
     /// 감시기가 없을 때 비교하는 마지막 current pointer.
     last_pointer: Option<ContentHash>,
+    /// 감시기가 없을 때 비교하는 마지막 원본 metadata 지문.
+    last_source: Option<ContentHash>,
+    /// 아직 보내지 않은 원본 event의 마지막 시각.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    source_pending: Option<Duration>,
     /// 감시를 시작하기 전(창을 연 뒤 감시가 붙기까지)의 변화를 놓치지 않도록 첫 poll에서 한 번 반영합니다.
     initial: bool,
 }
@@ -109,6 +120,8 @@ impl ProjectWatch {
             ledger: OwnSaveLedger::new(),
             targets: ExternalTargetSync::new(),
             last_pointer: pointer,
+            last_source: source_fingerprint(&root),
+            source_pending: None,
             initial: true,
             root,
         };
@@ -136,6 +149,9 @@ impl ProjectWatch {
             let events = watcher.drain();
             if !events.is_empty() {
                 let resync = self.targets.needs_resync(&events, watcher.roots());
+                if events.iter().any(|event| event.affects_text_source()) {
+                    self.source_pending = Some(now);
+                }
                 self.coalescer.push(&events, nanos(now));
                 if resync {
                     self.resync_targets();
@@ -146,15 +162,65 @@ impl ProjectWatch {
                 .poll(nanos(now), &self.ledger)
                 .iter()
                 .any(|change| !matches!(change, ExternalChange::Files { .. }));
-            return changed || initial;
+            let source = self
+                .source_pending
+                .is_some_and(|last| now.saturating_sub(last) >= QUIET);
+            if source {
+                self.source_pending = None;
+            }
+            return changed || source || initial;
         }
         let pointer = read_current_pointer(&self.root).ok();
-        if pointer != self.last_pointer {
+        let source = source_fingerprint(&self.root);
+        if pointer != self.last_pointer || source != self.last_source {
             self.last_pointer = pointer;
+            self.last_source = source;
             return true;
         }
         initial
     }
+}
+
+/// 감시기가 없을 때의 원본 변화 지문: `design/` 아래 `.stellar.yaml`의 경로·크기·수정 시각. 내용은 읽지 않습니다.
+/// 폴더가 없으면 `None`입니다.
+fn source_fingerprint(root: &std::path::Path) -> Option<ContentHash> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<u8>, budget: &mut usize) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            if *budget == 0 {
+                return;
+            }
+            *budget -= 1;
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            let path = entry.path();
+            if meta.is_dir() {
+                walk(&path, out, budget);
+            } else if path.to_string_lossy().ends_with(".stellar.yaml") {
+                out.extend_from_slice(path.to_string_lossy().as_bytes());
+                out.extend_from_slice(&meta.len().to_le_bytes());
+                if let Ok(modified) = meta.modified() {
+                    if let Ok(since) = modified.duration_since(std::time::UNIX_EPOCH) {
+                        out.extend_from_slice(&since.as_nanos().to_le_bytes());
+                    }
+                }
+            }
+        }
+    }
+    let design = root.join(stellar_project::document_io::session::DESIGN_DIR);
+    if !design.is_dir() {
+        return None;
+    }
+    let mut out = Vec::new();
+    // 원본 파일 수 상한(4,096)보다 넉넉한 항목 수만 봅니다.
+    let mut budget = 16_384;
+    walk(&design, &mut out, &mut budget);
+    Some(ContentHash::compute(&out))
 }
 
 fn supervise(stop: &AtomicBool, sender: &DocumentSender, shared: &Weak<AppShared>) {

@@ -434,3 +434,96 @@ fn the_active_style_defaults_set_is_mirrored_on_open_and_written_back_on_save() 
         stellar_document::css::style_defaults::CSS
     );
 }
+
+fn git(repo: &Path, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .args([
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .ok()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Some(String::from_utf8(out.stdout).unwrap())
+}
+
+#[test]
+fn cli_dry_run_then_window_save_and_reopen_show_one_view_file_in_git_diff() {
+    // V.10.6 검증 열: CLI dry-run → 저장 → 재열기 → Git diff.
+    let project = saved_project("source-git-diff");
+    let locks = TempDir::new("source-git-diff-locks");
+    std::fs::remove_dir(project.path().join(".git")).unwrap();
+    drop(open(&project, &locks, 1));
+    if git(project.path(), &["init", "-q", "-b", "main"]).is_none() {
+        eprintln!("시스템 Git이 없어 Git diff 단계를 건너뜁니다");
+        return;
+    }
+    git(project.path(), &["add", "."]);
+    git(project.path(), &["commit", "-qm", "base"]);
+
+    let snapshot = open_snapshot(project.path()).unwrap();
+    let request = ApplyRequest {
+        base_revision: snapshot.revision(),
+        document: sid(1),
+        commands: vec![CommandInput::Rename {
+            node: sid(11),
+            name: "dry".into(),
+        }],
+    };
+    apply(
+        project.path(),
+        &request,
+        ApplyMode::DryRun,
+        &LockPolicy::Required {
+            dir: locks.path().to_path_buf(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        git(project.path(), &["status", "--porcelain"]).unwrap(),
+        "",
+        "dry-run은 쓰지 않음"
+    );
+
+    let mut a = open(&project, &locks, 2);
+    assert_eq!(a.open_plan(), OpenPlan::Cache);
+    a.apply(&rename(a.document().unwrap(), 30, 11, "Git에 보일 이름"), 0)
+        .unwrap();
+    assert_eq!(a.save_now().unwrap().source_files, 1);
+    let reopened = open(&project, &locks, 3);
+    assert_eq!(reopened.open_plan(), OpenPlan::Cache);
+    assert_eq!(name_of(&reopened, 11), "Git에 보일 이름");
+
+    let names = git(project.path(), &["diff", "--name-only"]).unwrap();
+    let sources: Vec<&str> = names
+        .lines()
+        .filter(|name| name.ends_with(".stellar.yaml"))
+        .collect();
+    assert_eq!(sources.len(), 1, "{names}");
+    assert!(sources[0].starts_with("design/pages/"), "{names}");
+    let diff = git(project.path(), &["diff", "--", sources[0]]).unwrap();
+    assert!(diff.contains("Git에 보일 이름"), "{diff}");
+    let untracked = git(
+        project.path(),
+        &["status", "--porcelain", "--untracked-files=all"],
+    )
+    .unwrap();
+    assert!(
+        !untracked.contains(".stellar/"),
+        "stamp·journal은 Git 밖: {untracked}"
+    );
+}

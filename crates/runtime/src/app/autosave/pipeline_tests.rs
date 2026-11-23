@@ -248,6 +248,49 @@ fn watcher_applies_a_cli_apply_to_a_clean_window_as_one_undoable_command() {
 }
 
 #[test]
+fn watcher_applies_an_external_text_source_edit_and_rebuilds_the_cache() {
+    // V.10.6·V.10.7(ADR-0088): 원본 파일 event가 반영 job을 만들고, clean 창은 Undo 가능한 항목 하나로 받으며 cache
+    // generation을 원본에 맞춥니다. 자기 저장 event는 걸러집니다.
+    let project = saved_project("pipeline-watch-source");
+    let mut app = AppRuntime::start().unwrap();
+    app.enable_autosave_with(policy(60_000, 60_000));
+    let owner = open_project(&app, project.path());
+    let (a, _, _) = open_window(&app, owner);
+    assert!(
+        stellar_project::document_io::session::read_source(project.path())
+            .unwrap()
+            .is_some(),
+        "열기가 원본으로 옮김"
+    );
+    // 열기 뒤 자기 원본 쓰기 event가 가라앉을 때까지 기다립니다.
+    std::thread::sleep(Duration::from_millis(200));
+    let mut text = stellar_project::external_change::source::TextSourceSession::open(
+        project.path(),
+        crate::window_session::test_fixtures::window(77),
+    )
+    .unwrap();
+    let tx = rename(text.document(), 900, 11, "Git pull");
+    text.apply(&tx).unwrap();
+    text.save().unwrap();
+    assert!(
+        wait_for(|| name_of(&app, a, 11) == "Git pull"),
+        "감시 thread가 외부 원본을 반영"
+    );
+    assert!(!dirty(&app, a));
+    // cache 맞춤 쓰기는 자동 저장 writer가 합니다(debounce 없이 flush).
+    app.flush_autosave().unwrap();
+    assert!(wait_for(|| generation(&app, a) == 2), "cache를 원본에 맞춤");
+    let request = app.undo(a).unwrap();
+    assert!(matches!(
+        next_solicited(&app),
+        RuntimeEvent::HistoryReplayed { request: got, applied: true, .. } if got == request
+    ));
+    assert_eq!(name_of(&app, a, 11), "n11");
+    assert!(dirty(&app, a));
+    app.shutdown().unwrap();
+}
+
+#[test]
 fn external_change_over_a_dirty_window_waits_for_reconciliation_without_writing() {
     // ADR-0083 결정 2·4: 외부 writer와 dirty가 겹치면 두 선택지가 아니라 reconciliation 대기이고 자동 저장이 멈춤.
     let project = saved_project("pipeline-reconcile");
