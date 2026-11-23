@@ -2,7 +2,7 @@
 
 - WBS: IX.10.9
 - 작업명: old/new capability registry의 semantic diff와 영향받는 nodes/properties를 반환하는 upgrade plan, 적용 전 project 무변경
-- 상태: 부분 완료 (`[~]`) — 구현과 검증 열(upgrade preview fixture revision unchanged)은 충족했지만 엄격 선행
+- 상태: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 구현과 검증 열(upgrade preview fixture revision unchanged)은 충족했지만 엄격 선행
   IX.10.4가 `[~]`입니다(아래 "상태 정정").
 - 선행: IX.10.4(작성 당시 이 lane `[x]`, 리뷰 정정 후 `[~]`), IX.10.8(이 lane `[x]`), XIV.3.2(`[x]`)
 
@@ -87,3 +87,24 @@ upgrade preview fixture가 그대로 통과합니다. 사용 수집(`collect_usa
 - **`[x]` 복원 조건**: IX.10.4가 `[x]`가 된 뒤(IX.10.3의 project 연결로 실제 `stellar.yaml`에 pin을 저장하고 bytes·해석
   결과 불변을 확인한 뒤) 이 행의 upgrade preview fixture(`upgrade_preview_leaves_project_unchanged`, `plan_errors`)를 그
   기준에서 다시 통과시키고 `verify-task IX.10.9`가 종료 코드 0이면 `[x]`로 되돌리고 ledger를 다시 만듭니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 구현 판정 통과, 선행 미충족.
+- 근거: upgrade plan(old/new capability registry diff와 영향 node·property)과 적용 전 revision 불변은 검증 열대로 있습니다. 선행 IX.10.4가 `[~]`라 `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/target-profile/src/`의 upgrade plan 계산(프로젝트를 쓰지 않음).
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-target-profile` | 42 passed |
+
+### 남은 조건과 finding
+
+- IX.10.3·IX.10.4 사슬이 풀리면 코드 변경 없이 다시 판정합니다.
