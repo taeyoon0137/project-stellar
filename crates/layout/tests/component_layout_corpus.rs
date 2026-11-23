@@ -150,8 +150,8 @@ const NO_VARIANT: VariantSelection = VariantSelection {
 /// def·scene node 본문.
 #[derive(Debug, Clone, PartialEq)]
 enum Body {
-    /// 가로·세로 Stack(gap, 세로 padding, 가로 padding, 너비, 높이).
-    Stack {
+    /// 가로·세로 `display: flex` container(gap, 세로 padding, 가로 padding, 너비, 높이).
+    Flex {
         axis: Axis,
         gap: Tok,
         pad: (Tok, Tok),
@@ -171,8 +171,8 @@ enum Body {
         props: Vec<(&'static str, &'static str)>,
         variant: VariantSelection,
     },
-    /// scene root Free(Fixed 크기).
-    FreeRoot(f32, f32),
+    /// scene root block(`<length>` 너비·높이).
+    BlockRoot(f32, f32),
     /// scene root grid(열 2개 fr, 행 콘텐츠 크기).
     GridRoot,
 }
@@ -244,7 +244,7 @@ fn placed(mut n: Node, place: Place) -> Node {
 }
 
 fn row(gap: Tok, pad: (Tok, Tok), width: Size, height: Size, center: bool) -> Body {
-    Body::Stack {
+    Body::Flex {
         axis: Axis::Horizontal,
         gap,
         pad,
@@ -255,7 +255,7 @@ fn row(gap: Tok, pad: (Tok, Tok), width: Size, height: Size, center: bool) -> Bo
 }
 
 fn column(gap: Tok, pad: (Tok, Tok), width: Size, height: Size) -> Body {
-    Body::Stack {
+    Body::Flex {
         axis: Axis::Vertical,
         gap,
         pad,
@@ -540,7 +540,7 @@ fn scenes() -> Vec<(&'static str, u64, BTreeMap<u64, Node>)> {
             "button",
             1,
             BTreeMap::from([
-                (1, node("root", Body::FreeRoot(400.0, 200.0), &[2, 3, 4])),
+                (1, node("root", Body::BlockRoot(400.0, 200.0), &[2, 3, 4])),
                 (
                     2,
                     placed(
@@ -624,7 +624,7 @@ fn scenes() -> Vec<(&'static str, u64, BTreeMap<u64, Node>)> {
             "card",
             1,
             BTreeMap::from([
-                (1, node("root", Body::FreeRoot(600.0, 400.0), &[2])),
+                (1, node("root", Body::BlockRoot(600.0, 400.0), &[2])),
                 (
                     2,
                     placed(
@@ -881,7 +881,7 @@ impl Fixture<'_> {
             ..LayoutStyle::default()
         };
         let mut out = match &node.body {
-            Body::Stack {
+            Body::Flex {
                 axis,
                 gap,
                 pad,
@@ -954,7 +954,7 @@ impl Fixture<'_> {
                 .with_content(LayoutContent::Measured(MeasuredContent::ComponentInstance(
                     Default::default(),
                 ))),
-            Body::FreeRoot(w, h) => LayoutNode::new(order_id(0)).with_style(LayoutStyle {
+            Body::BlockRoot(w, h) => LayoutNode::new(order_id(0)).with_style(LayoutStyle {
                 width: CssSize::Length(length(*w)),
                 height: CssSize::Length(length(*h)),
                 ..base.clone()

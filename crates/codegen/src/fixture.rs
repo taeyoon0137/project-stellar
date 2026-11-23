@@ -620,7 +620,7 @@ pub fn sid32(n: u32) -> StableId {
 /// 큰 목록 fixture 항목 StableId의 시작값(상태 id와 겹치지 않음).
 const LIST_ITEM_BASE: u32 = 0x0100_0000;
 
-/// root Frame(세로 Stack, 이름 "목록"인 단일 선택 List) 아래 선택 가능한 ListItem Frame `items`개를 둔 fixture입니다.
+/// root Frame(세로 `display: flex`, 이름 "목록"인 단일 선택 List) 아래 선택 가능한 ListItem Frame `items`개를 둔 fixture입니다.
 /// 항목 selected는 상태 `STATE_SIZE`가 항목 StableId와 같은지이고 select 동작이 그 상태를 씁니다(adapter 시간 상한
 /// 검사용).
 pub fn list_fixture(items: u32) -> Fixture {

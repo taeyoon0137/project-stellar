@@ -363,7 +363,7 @@ mod tests {
     /// 원천 node 정의.
     #[derive(Debug, Clone, PartialEq)]
     enum Def {
-        /// 가로 Stack(gap) container.
+        /// 가로 `display: flex`(`column-gap`) container.
         Row { gap: f32, children: Vec<Key> },
         /// 고정 크기 leaf.
         Leaf { width: f32, visible: bool },
@@ -602,7 +602,7 @@ mod tests {
         assert_eq!(view.fragment_host(&scene(10)), Some(id(1)));
         assert_eq!(view.fragment_host(&scene(11)), Some(id(1)));
         assert_eq!(view.fragment_host(&scene(2)), None);
-        // 레이아웃 결과: 가로 Stack에서 x가 visual order로 증가(gap 2).
+        // 레이아웃 결과: 가로 flex container에서 x가 visual order로 증가(gap 2).
         let result = compute_layout(view.input()).unwrap();
         let xs: Vec<i32> = before
             .iter()
