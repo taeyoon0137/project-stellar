@@ -3,7 +3,7 @@
 - WBS: XIII.5.5
 - 작업명: `UpdateFromSource` — source metadata 경로를 다시 읽어 새 hash asset을 만들고
   AssetRecord 참조를 command로 변경
-- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 원본 재import·새 record·`AssetRecordUpdate`(apply/invert 값)와
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 library-finish, 아래 "작업 (2026-11-23, library-finish)" 절. 이전 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 원본 재import·새 record·`AssetRecordUpdate`(apply/invert 값)와
   "source 없으면 기존 asset 유지"는 구현·검증했지만, 참조 변경을 **command로** 적용하는 연결은
   command 타입이 아직 없어(Phase VII, `stellar-commands`는 골격) 하지 않았습니다.
 - 선행: XIII.5.2, Phase VII(phase 단위 선행 — 2026-11-14 사용자 지시에 따라 command 비의존
@@ -191,3 +191,28 @@
 
 - 결함 finding(persistent-commands lane, `crates/commands/src/{kind,command,codec}.rs`): `AssetRecordUpdate`를 closed command enum variant로 감싸 validate·apply·invert와 history에 연결하고, 원본 없는 fixture에서 command가 거부되고 기존 asset이 남는지 확인해야 `[x]`입니다.
 - 선행 "Phase VII"는 VII.6.3이 이번에 `[x]` 판정되면 충족됩니다.
+
+## 작업 (2026-11-23, library-finish): AssetRecord command 본체
+
+### 한 일
+
+- `crates/assets/src/record_command.rs`(신규): `AssetRecordCommand::Update`(closed enum)가 validate(AssetId 존재, 현재 record =
+  `previous`, `next` content가 저장소에 실제로 있음 — 이름·크기·재hash)와 apply(inverse command 반환)를 갖습니다. 원본이 없으면
+  `Update from Source`가 command를 만들지 않아 기존 asset이 남습니다(ADR-0119 결정 9).
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-assets` | 146 passed, 0 failed |
+| `cargo clippy -p stellar-assets --all-targets -- -D warnings` | 경고 0 |
+
+| 검사 | 결과 |
+|---|---|
+| 원본 변경 → command 적용으로 새 hash record, 재적용 `StaleUpdate`, inverse 적용으로 정확히 복원(이전 content 유지)(`update_from_source_changes_record_through_command_and_undo_restores_it`) | 통과 |
+| **source 없으면 기존 asset 유지**: 원본 삭제·정책 거부는 command 없음, content 없는 record로 바꾸는 command·없는 AssetId 거부(catalog 불변)(`missing_source_or_content_keeps_existing_asset`) | 통과 |
+
+### 남은 조건
+
+- `stellar-commands` closed enum(`CommandKind`)·codec·창 history에 이 command 갈래를 등록하는 일이 남았습니다(commands crate 소유, 이
+  작업 소유 밖). 등록하면 `[x]`입니다.

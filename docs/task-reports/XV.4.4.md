@@ -2,7 +2,7 @@
 
 - WBS: XV.4.4
 - 작업명: lockfile content hash와 cache entry가 다르면 corruption으로 처리하고 자동으로 다른 commit을 선택하지 않음
-- 상태: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 완료 (`[x]`)
+- 상태: 완료 (`[x]`) — 2026-11-23 library-finish, 아래 "작업 (2026-11-23, library-finish)" 절. 이전 기록: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 완료 (`[x]`)
 - 선행: XV.4.2(이 lane에서 완료)
 
 ## 필수 실행 환경
@@ -78,3 +78,27 @@
 ### 남은 조건과 finding
 
 - XV.3.4 → XV.4.2 사슬이 풀리면 다시 판정합니다.
+
+## 작업 (2026-11-23, library-finish): 열기 경로의 bytes 재해시와 실제 변조 fixture
+
+### 한 일
+
+- `LibraryEntryStore::verify_entry_bytes`(신규)가 연 entry의 디스크 bytes에서 content hash를 다시 계산합니다. 제품 cache 읽기
+  경로(`load_cached_snapshot`)가 export를 읽기 전에 부르고, 다르면 `SnapshotLoadError::Corrupted`입니다. 부분 열기 진단은
+  `UnavailableReason::ContentHashMismatch`입니다. 다른 commit을 찾는 경로는 없습니다(ADR-0119 결정 1).
+- 선행 XV.4.2가 이 작업에서 완료되었습니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-dependencies` | 101 passed, 0 failed; doctest 1 passed |
+| `cargo test -p stellar-project --lib library_` | library_entry·library_git 단위 시험 통과, 0 failed |
+| `cargo clippy -p stellar-dependencies -p stellar-project -p stellar-assets -p stellar-integration-tests --all-targets -- -D warnings` | 경고 0 |
+| `cargo xtask validate-adr --base 0c226a06` | 종료 코드 0 |
+| `cargo test -p stellar-integration-tests --test library_lock_integrity` | 1 passed |
+
+| 검사 | 결과 |
+|---|---|
+| **tampered cache fixture 실패**: 실제 materialize한 C v1 entry의 원본 파일을 변조 → 제품 `verify_lock_against_cache`가 `Corrupted(C v1)`, 제품 열기(`open_project_libraries`)가 C v1을 `ContentHashMismatch` 진단으로 남김 | 통과 |
+| 같은 library의 다른 commit(C v2)이 cache에 있어도 고르지 않음(C v1·v2 snapshot 모두 없음), A는 그대로 열림 | 통과 |

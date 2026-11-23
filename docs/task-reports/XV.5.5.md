@@ -2,7 +2,7 @@
 
 - WBS: XV.5.5
 - 작업명: missing cache/offline entry는 library resource unavailable diagnostic을 만들고 project 기본 데이터는 읽기 가능
-- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — library 부분 로드와 진단은 완료했지만 프로젝트 열기 경로에 연결하지 않았습니다(9A 리뷰 P2).
+- 상태: 부분 완료 (`[~]`) — 2026-11-24 library-finish 비판 검토, 아래 "검토 (2026-11-24, library-finish 비판 검토)" 절: `open_project_libraries`는 생겼지만 제품 열기 경로(창 session·CLI·MCP)가 아직 부르지 않아 재판정 finding이 남았습니다. 이전 기록: 완료 (`[x]`) — 2026-11-23 library-finish, 아래 "작업 (2026-11-23, library-finish)" 절. 이전 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — library 부분 로드와 진단은 완료했지만 프로젝트 열기 경로에 연결하지 않았습니다(9A 리뷰 P2).
 - 선행: XV.3.3(`[x]`), III.2.4(`[x]`)
 
 ## 필수 실행 환경
@@ -119,3 +119,44 @@
 ### 남은 조건과 finding
 
 - 결함 finding(소유 lane 없음 → backlog): 프로젝트 열기 경로에 연결하고 offline missing fixture로 프로젝트 기본 데이터가 열리고 누락 library가 진단으로 남는지 확인합니다.
+
+## 작업 (2026-11-23, library-finish): 프로젝트 library 열기 함수와 offline fixture
+
+### 한 일
+
+- `crates/project/src/library_open.rs`(신규): `open_project_libraries`가 `stellar.lock.yaml`을 loader 상한까지 읽어 제품 lock parser로
+  검증하고, 제품 검증기·export 공급자로 `load_locked_libraries`를 부릅니다. 실패하지 않습니다: lock 없음은 의존성 없는 프로젝트,
+  lock 문제는 `LibraryOpenProblem`, node 문제는 unavailable 진단입니다(ADR-0119 결정 6).
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-dependencies` | 101 passed, 0 failed; doctest 1 passed |
+| `cargo test -p stellar-project --lib library_` | library_entry·library_git 단위 시험 통과, 0 failed |
+| `cargo clippy -p stellar-dependencies -p stellar-project -p stellar-assets -p stellar-integration-tests --all-targets -- -D warnings` | 경고 0 |
+| `cargo xtask validate-adr --base 0c226a06` | 종료 코드 0 |
+| `cargo test -p stellar-integration-tests --test library_partial_open` | 1 passed |
+
+| 검사 | 결과 |
+|---|---|
+| **offline missing fixture partial open**: 사용 프로젝트가 a·b를 lock, offline cache에 a만 있음, library 저장소를 지운 뒤(Git·network 불가) 열기 → b만 `MissingCacheEntry` 진단(URL 원문 없음), a resource는 해석, b resource는 `ResourceResolution::Unavailable` | 통과 |
+| 프로젝트 기본 데이터(텍스트 원본 문서)는 같은 상태에서 제품 원본 reader로 열리고 semantic snapshot이 같음 | 통과 |
+| lock 손상 → `LockInvalid`만 남고 문서는 열림, lock 없음 → 빈 library | 통과 |
+
+### 남은 위험
+
+- 창 session·CLI·MCP 열기는 아직 이 함수를 부르지 않습니다. 문서가 외부 참조를 저장하지 않아 그 결과를 쓸 소비자가 없기 때문입니다.
+  외부 참조 저장과 함께 그 열기 경로에서 부르게 해야 합니다.
+
+## 검토 (2026-11-24, library-finish 비판 검토)
+
+- 판정: `[~]` — 구현자 보고의 `[x]`를 받지 않습니다.
+- 근거: 재판정 finding은 "프로젝트 열기 경로에 연결"이었습니다. `crates/project/src/library_open.rs`의 `open_project_libraries`는
+  lock 기준 로드·부분 열기 진단을 제품 검증기·공급자로 하는 진입점이지만, `crates/runtime`(창 session 열기)·`crates/ops`·
+  `tools/stellar-cli`·`tools/stellar-mcp` 어디에서도 부르지 않습니다(`grep -rn open_project_libraries crates tools`). 그래서 실제로
+  프로젝트를 열 때 누락 library 진단은 만들어지지 않습니다.
+- 확인한 것: offline missing fixture(`tests/integration/tests/library_partial_open.rs`)는 이 함수와 제품 원본 reader를 따로 불러
+  부분 열기 계약을 확인합니다. 계약 자체는 맞습니다.
+- 남은 조건: 창 session(`stellar-runtime`)과 CLI·MCP 열기 경로가 문서를 연 뒤 `open_project_libraries`를 부르고, 그 진단을 열기 결과
+  (진단 index, XXV.2.1)에 싣습니다. 소유 경로(runtime·ops·tools)는 이 lane 밖입니다.

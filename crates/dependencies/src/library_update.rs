@@ -13,12 +13,13 @@
 use std::fmt;
 
 use crate::cache_entry::{LibraryEntryStore, MaterializeError, Sha256Digest};
+use crate::candidate_check::{
+    check_candidate_usages, CandidateCheck, ExternalInstanceUsage, ExternalTokenUsage,
+};
 use crate::declaration::{
     CommitId, DependencyDeclaration, LogicalName, RepositoryUrl, VersionSelector,
 };
-use crate::entry_validation::{
-    validate_library_entry, LibraryEntryRejection, LibraryProjectValidator,
-};
+use crate::entry_validation::{LibraryEntryRejection, LibraryProjectValidator};
 use crate::git::GitCommandRunner;
 use crate::git_refs::FetchedRefs;
 use crate::graph::{DependencyNodeKey, DependencyPath};
@@ -89,6 +90,20 @@ impl LibraryUpdateCandidate {
     /// 선택자가 lock의 선언 선택자와 다른지.
     pub fn selector_changed(&self) -> bool {
         self.candidate.requested != self.current.lock_entry.requested
+    }
+
+    /// 적용 전에 사용 프로젝트의 외부 참조·instance override를 후보 snapshot에 대어 봅니다(XV.7.3).
+    pub fn check_usages(
+        &self,
+        instances: &[ExternalInstanceUsage],
+        tokens: &[ExternalTokenUsage],
+    ) -> CandidateCheck {
+        check_candidate_usages(
+            &self.dependency,
+            &self.candidate.snapshot,
+            instances,
+            tokens,
+        )
     }
 }
 
@@ -279,6 +294,7 @@ where
                 node: &node,
                 expected_content_hash: Some(&entry.content_hash),
             },
+            self.validator,
             self.exports,
             &self.limits,
             self.now_unix_ms,
@@ -300,8 +316,7 @@ where
                 self.now_unix_ms,
             )
             .map_err(CandidateLoadError::Materialize)?;
-        validate_library_entry(&materialized.dir, node.library_id, self.validator)
-            .map_err(CandidateLoadError::Rejected)?;
+        // entry 검증(ProjectProbe·storage validator)과 디스크 bytes 재해시는 cache 읽기 경로 하나가 합니다.
         load_cached_snapshot(
             self.store,
             SnapshotRequest {
@@ -309,11 +324,15 @@ where
                 node,
                 expected_content_hash: Some(&materialized.content_hash),
             },
+            self.validator,
             self.exports,
             &self.limits,
             self.now_unix_ms,
         )
-        .map_err(CandidateLoadError::Load)
+        .map_err(|error| match error {
+            SnapshotLoadError::Rejected(rejection) => CandidateLoadError::Rejected(rejection),
+            other => CandidateLoadError::Load(other),
+        })
     }
 }
 
@@ -353,16 +372,23 @@ pub(crate) mod fixtures {
         }
     }
 
-    /// 모든 root를 `project_id`의 library로 판정하는 검증기.
+    /// 첫 release(`schema_version: 1`, lock의 현재 버전)는 `current_id`, 그 밖의 release는 `project_id`의 library로
+    /// 판정하는 검증기. 후보 저장소만 다른 library인 경우를 만듭니다.
     pub(crate) struct FixedValidator {
+        pub(crate) current_id: LibraryId,
         pub(crate) project_id: LibraryId,
     }
 
     impl LibraryProjectValidator for FixedValidator {
         fn probe(&mut self, root: &Path) -> Result<ProbedLibrary, LibraryProbeFailure> {
-            if root.join("stellar.yaml").is_file() {
+            if let Ok(text) = std::fs::read_to_string(root.join("stellar.yaml")) {
+                let project_id = if text.starts_with("schema_version: 1\n") {
+                    self.current_id
+                } else {
+                    self.project_id
+                };
                 Ok(ProbedLibrary {
-                    project_id: self.project_id,
+                    project_id,
                     schema_version: 1,
                 })
             } else {
@@ -492,6 +518,7 @@ mod tests {
             FnvKeyer::new(4),
         );
         let mut validator = FixedValidator {
+            current_id: library(1),
             project_id: library(validator_id),
         };
         let mut exports = ManifestEchoSource::default();

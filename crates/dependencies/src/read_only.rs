@@ -17,7 +17,7 @@
 //! 정책상 이 crate에 의존할 수 없습니다. 그래서 외부 참조를 대상으로 하는 command의 사전 검사는 이 crate와
 //! document·commands를 함께 쓰는 project crate(또는 project를 거쳐 command를 실행하는 runtime) 계층이 맡습니다. 그
 //! 계층이 command를 이 분류로 바꿔 transaction 적용 전에 [`check_library_edits`]를 호출하고, 한 건이라도 거부되면
-//! transaction 전체를 거부합니다. 이 연결은 아직 없습니다(XV.5.3 `[~]`, 작업 보고서 "상태 정정").
+//! transaction 전체를 거부합니다. 연결은 `stellar_project::library_guard`입니다(ADR-0119 결정 4).
 
 use std::fmt;
 
@@ -288,7 +288,7 @@ pub fn check_library_edit(
                     property: *property,
                 });
             }
-            if declared.type_signature != *value_type {
+            if !override_type_accepted(&declared.type_signature, value_type) {
                 return Err(LibraryEditRejection::OverrideTypeMismatch {
                     component: key,
                     property: *property,
@@ -301,6 +301,22 @@ pub fn check_library_edit(
             })
         }
     }
+}
+
+/// override 값 타입 표기 `value_type`(값이 있는 override이므로 항상 비-nullable 표기 `T`)을 property 타입 표기
+/// `declared`가 받는지 판정합니다.
+///
+/// 타입 표기는 expressions `TypeSpec`의 표시 형식(`T`, `Optional<T>`)입니다(ADR-0119 결정 3). `T` 값은 `T`와
+/// `Optional<T>` property 모두에 둘 수 있습니다(`TypeSpec::accepts`와 같은 규칙). library update 전 검증(XV.7.3)도
+/// 이 함수로 판정합니다.
+pub fn override_type_accepted(declared: &str, value_type: &str) -> bool {
+    if declared == value_type {
+        return true;
+    }
+    declared
+        .strip_prefix("Optional<")
+        .and_then(|rest| rest.strip_suffix('>'))
+        .is_some_and(|inner| inner == value_type)
 }
 
 /// reset 허용 결과(snapshot을 읽지 않음).
@@ -401,6 +417,15 @@ mod tests {
             property: rid(property),
             value_type: value_type.to_string(),
         }
+    }
+
+    #[test]
+    fn override_type_follows_type_spec_display() {
+        assert!(override_type_accepted("String", "String"));
+        assert!(override_type_accepted("Optional<Number>", "Number"));
+        assert!(!override_type_accepted("Number", "Optional<Number>"));
+        assert!(!override_type_accepted("Optional<Number>", "String"));
+        assert!(!override_type_accepted("Optional<Number", "Number"));
     }
 
     #[test]

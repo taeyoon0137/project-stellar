@@ -41,3 +41,6 @@ pub mod gc;
 
 /// 에셋 import 정책 — 허용 media type·최대 크기·unknown type 처리 (XIII.5.7).
 pub mod policy;
+
+/// AssetRecord 참조 변경 command — validate·apply·inverse (XIII.5.5).
+pub mod record_command;

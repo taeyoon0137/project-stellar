@@ -17,7 +17,8 @@ use std::fmt;
 use stellar_core_types::property::PropertyPath;
 use stellar_core_types::reference::{ExpectedRefType, UnresolvedRef};
 
-use crate::cache_entry::{LibraryEntryStore, Sha256Digest};
+use crate::cache_entry::{EntryCorruption, LibraryEntryStore, Sha256Digest};
+use crate::entry_validation::LibraryProjectValidator;
 use crate::external_ref::ExternalResourceRef;
 use crate::graph::{DependencyNodeKey, DependencyPath};
 use crate::library_snapshot::{
@@ -36,7 +37,8 @@ use crate::ref_resolution::{
 pub enum UnavailableReason {
     /// cache에 entry가 없음(offline·미 materialize·정리됨).
     MissingCacheEntry,
-    /// cache entry content hash가 lock 값과 다름(손상, 다른 commit을 고르지 않음).
+    /// cache entry content hash가 lock 값과 다르거나, 디스크 bytes에서 다시 계산한 hash가 entry 주소(= lock 값)와
+    /// 다름(손상, XV.4.4). 다른 commit을 고르지 않습니다.
     ContentHashMismatch,
     /// 같은 node의 lock entry들이 content hash·schema version·전이 의존성에서 서로 다름(손상).
     InconsistentLockEntries,
@@ -73,6 +75,14 @@ impl UnavailableReason {
             SnapshotLoadError::MissingEntry => UnavailableReason::MissingCacheEntry,
             SnapshotLoadError::ContentHashMismatch { .. } => UnavailableReason::ContentHashMismatch,
             SnapshotLoadError::Cache(_) => UnavailableReason::CacheFailure,
+            SnapshotLoadError::Corrupted(EntryCorruption::Io { .. }) => {
+                UnavailableReason::CacheFailure
+            }
+            // 디스크 bytes가 entry 주소(= lock content hash)와 다름: lock content hash 불일치와 같은 손상입니다.
+            SnapshotLoadError::Corrupted(_) => UnavailableReason::ContentHashMismatch,
+            SnapshotLoadError::Rejected(e) => {
+                UnavailableReason::ExportUnreadable(ExportReadFailure::InvalidLibrary(e))
+            }
             SnapshotLoadError::Export(e) => UnavailableReason::ExportUnreadable(e),
             SnapshotLoadError::Invalid(e) => UnavailableReason::InvalidExports(e),
         }
@@ -318,6 +328,7 @@ impl LoadedLibraries {
 pub fn load_locked_libraries<H: Sha256Digest, K: RepositoryKeyer>(
     lock: &LockDocument,
     store: &LibraryEntryStore<H, K>,
+    validator: &mut dyn LibraryProjectValidator,
     source: &mut dyn LibraryExportSource,
     limits: &SnapshotLimits,
     now_unix_ms: u64,
@@ -344,7 +355,7 @@ pub fn load_locked_libraries<H: Sha256Digest, K: RepositoryKeyer>(
                 node: &node,
                 expected_content_hash: Some(&entry.content_hash),
             };
-            match load_cached_snapshot(store, request, source, limits, now_unix_ms) {
+            match load_cached_snapshot(store, request, validator, source, limits, now_unix_ms) {
                 Ok(snapshot) => {
                     outcome = Ok(snapshot);
                     break;
@@ -405,6 +416,8 @@ mod tests {
     use crate::declaration::{
         CommitId, LogicalName, RefName, RepositoryUrl, SourceKind, VersionSelector,
     };
+    use crate::entry_validation::fake::TableValidator;
+    use crate::entry_validation::ProbedLibrary;
     use crate::external_ref::fixtures::{component_ref, token_ref};
     use crate::library_snapshot::fixtures::{component, rid, token, token_set, TableExportSource};
     use crate::library_snapshot::{LibraryExports, LibraryResourceKey};
@@ -490,6 +503,7 @@ mod tests {
         store: LibraryEntryStore<FakeSha256, FnvKeyer>,
         runner: SystemGit,
         source: TableExportSource,
+        validator: TableValidator,
         lock: LockDocument,
         a: DependencyNodeKey,
         b: DependencyNodeKey,
@@ -556,11 +570,22 @@ mod tests {
                 vec![],
             ),
         ]);
+        let mut validator = TableValidator::default();
+        for (dir, lib) in [(&a_entry.dir, 1), (&b_entry.dir, 2)] {
+            validator.probes.insert(
+                dir.clone(),
+                Ok(ProbedLibrary {
+                    project_id: library(lib),
+                    schema_version: 1,
+                }),
+            );
+        }
         Some(Fixture {
             _tmp: tmp,
             store,
             runner,
             source,
+            validator,
             lock,
             a: a_key,
             b: b_key,
@@ -579,6 +604,7 @@ mod tests {
         let loaded = load_locked_libraries(
             &f.lock,
             &f.store,
+            &mut f.validator,
             &mut f.source,
             &SnapshotLimits::default(),
             5,
@@ -680,6 +706,7 @@ mod tests {
         let loaded = load_locked_libraries(
             &tampered,
             &f.store,
+            &mut f.validator,
             &mut f.source,
             &SnapshotLimits::default(),
             6,
@@ -705,6 +732,7 @@ mod tests {
         let loaded = load_locked_libraries(
             &f.lock,
             &f.store,
+            &mut f.validator,
             &mut f.source,
             &SnapshotLimits::default(),
             7,
@@ -726,6 +754,68 @@ mod tests {
             loaded.resolve(&RefScope::Project, &badge),
             ResourceResolution::Unavailable(_)
         ));
+    }
+
+    #[test]
+    fn tampered_bytes_and_rejected_entries_are_diagnostics_without_other_commit() {
+        let Some(mut f) = fixture() else {
+            return;
+        };
+        // b entry를 ProjectProbe가 일반 Git 저장소로 거부 → InvalidLibrary, export를 읽지 않음.
+        f.validator.probes.insert(
+            f.b_dir.clone(),
+            Err(crate::entry_validation::LibraryProbeFailure::NotAStellarProject),
+        );
+        let loaded = load_locked_libraries(
+            &f.lock,
+            &f.store,
+            &mut f.validator,
+            &mut f.source,
+            &SnapshotLimits::default(),
+            10,
+        )
+        .unwrap();
+        let reason = loaded.unavailable().find(|d| d.node == f.b).unwrap();
+        assert_eq!(
+            reason.reason,
+            UnavailableReason::ExportUnreadable(ExportReadFailure::InvalidLibrary(
+                crate::entry_validation::LibraryEntryRejection::NotAStellarProject
+            ))
+        );
+        assert!(!f.source.calls.iter().any(|(root, _)| root == &f.b_dir));
+        assert!(loaded.instance().snapshot(&f.a).is_some());
+
+        // b entry의 디스크 bytes를 바꿈 → 다시 계산한 hash가 주소와 달라 손상. 다른 commit을 찾지 않음.
+        f.validator.probes.insert(
+            f.b_dir.clone(),
+            Ok(ProbedLibrary {
+                project_id: library(2),
+                schema_version: 1,
+            }),
+        );
+        let chunk = f.b_dir.join("design/chunk");
+        let mut perms = std::fs::metadata(&chunk).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        std::fs::set_permissions(&chunk, perms).unwrap();
+        std::fs::write(&chunk, b"tampered").unwrap();
+        let calls_before = f.validator.storage_calls.len();
+        let loaded = load_locked_libraries(
+            &f.lock,
+            &f.store,
+            &mut f.validator,
+            &mut f.source,
+            &SnapshotLimits::default(),
+            11,
+        )
+        .unwrap();
+        let reason = loaded.unavailable().find(|d| d.node == f.b).unwrap();
+        assert_eq!(reason.reason, UnavailableReason::ContentHashMismatch);
+        assert!(reason.to_string().contains("손상"));
+        assert!(loaded.instance().snapshot(&f.b).is_none());
+        assert!(loaded.instance().snapshot(&f.a).is_some());
+        // b는 검증기까지 가지 않음(a만 storage 검증).
+        assert_eq!(f.validator.storage_calls.len(), calls_before + 1);
     }
 
     #[test]
@@ -761,6 +851,7 @@ mod tests {
             let loaded = load_locked_libraries(
                 &lock,
                 &f.store,
+                &mut f.validator,
                 &mut f.source,
                 &SnapshotLimits::default(),
                 8,
@@ -792,6 +883,7 @@ mod tests {
         let loaded = load_locked_libraries(
             &lock_of(entries),
             &f.store,
+            &mut f.validator,
             &mut f.source,
             &SnapshotLimits::default(),
             9,

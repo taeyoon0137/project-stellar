@@ -2,7 +2,7 @@
 
 - WBS: XV.3.4
 - 작업명: cache entry를 ProjectProbe와 storage validator로 검증하고 일반 Git repo 또는 손상 library 거부
-- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 검증 순서·거부 정책·검증 결과 타입은 완료했지만, 실제 `ProjectProbe`(IV.5.1)·
+- 상태: 완료 (`[x]`) — 2026-11-23 library-finish, 아래 "작업 (2026-11-23, library-finish)" 절. 이전 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 검증 순서·거부 정책·검증 결과 타입은 완료했지만, 실제 `ProjectProbe`(IV.5.1)·
   generation loader(V.4.4) 연결과 실제 디렉터리 fixture 검증은 project crate 연결 작업이 필요합니다.
 - 선행: IV.5.1(`[x]`), V.4.4(`[x]`)
 
@@ -73,3 +73,50 @@
 ### 남은 조건과 finding
 
 - 결함 finding(dependencies·project 연결, 소유 lane 없음 → backlog): cache entry용 probe 모드(root `.git` 요구 생략)를 project crate에 두고 실제 일반 Git repo·손상 library 디렉터리 fixture로 거부를 확인합니다. XV.4.2·XV.4.4가 이 행을 선행으로 둡니다.
+
+## 작업 (2026-11-23, library-finish): 제품 ProjectProbe·storage validator 연결
+
+### 한 일
+
+- `crates/project/src/library_entry.rs`(신규): `ProjectLibraryValidator`가 `LibraryProjectValidator`의 제품 구현입니다.
+  cache entry probe는 `stellar.yaml` 정규 파일(symlink 거부)을 loader 상한까지 읽어 제한 loader·`Manifest::from_yaml`로
+  해석합니다(materialize한 entry에는 `.git`이 없어 IV.5.1의 `.git` 요구만 뺌). Git 작업 폴더 probe는 `probe_project` 그대로입니다.
+  storage validator는 `design/current`가 있으면 current pointer → manifest → **모든 chunk를 읽어 hash 확인**하고 component
+  library chunk를 해석하며, 텍스트 원본(ADR-0088)을 해석합니다. generation과 텍스트 원본이 둘 다 컴포넌트 정의를 담으면 손상입니다.
+- `crates/dependencies/src/library_snapshot.rs`: `load_cached_snapshot`이 entry read lock 아래에서 bytes 재해시(XV.4.4) →
+  `validate_library_entry`(XV.3.4)를 통과한 entry에서만 export를 읽습니다(`SnapshotLoadError::{Corrupted, Rejected}`). lock 기준
+  열기와 update 후보가 이 경로 하나를 씁니다(`CacheUpdateSource`의 별도 검증 호출은 지움).
+- `crates/project/src/library_exports.rs`(신규): 제품 `LibraryExportSource`(`SourceExports`). `crates/project/src/library_git.rs`(신규):
+  시스템 Git 실행기(`SystemGitCommands`)와 저장 SHA-256(`StorageSha256`).
+- `StorageValidationFailure::TextSource`, `ExportReadFailure::InvalidLibrary`를 더했습니다. 결정: ADR-0119 결정 1·2.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-dependencies` | 101 passed, 0 failed; doctest 1 passed |
+| `cargo test -p stellar-project --lib library_` | library_entry·library_git 단위 시험 통과, 0 failed |
+| `cargo clippy -p stellar-dependencies -p stellar-project -p stellar-assets -p stellar-integration-tests --all-targets -- -D warnings` | 경고 0 |
+| `cargo xtask validate-adr --base 0c226a06` | 종료 코드 0 |
+| `cargo test -p stellar-integration-tests --test library_cache_entries` | 1 passed |
+
+| 검사 | 결과 |
+|---|---|
+| **invalid library fixture 실패**(실제 Git 저장소): 일반 Git 저장소는 materialize와 두 probe 모두 거부, 다른 library id는 `LibraryIdMismatch`, 텍스트 원본 손상은 `CorruptStorage(TextSource)`, 제품 cache 읽기 경로도 손상 entry를 `Rejected`로 거부(`cache_entries_are_validated_by_probe_and_storage_before_exports_are_read`) | 통과 |
+| 정상 entry: `.git` 없는 entry를 cache entry probe가 받고, 제품 export 공급자가 generation component library chunk에서 Card·property 타입 표기(`String`, `Optional<Number>`)·공개 여부와 token을 읽음 | 통과 |
+| bytes 변조·검증 거부 entry는 검증기·export를 부르지 않음(`library_snapshot::tests::tampered_or_rejected_entry_is_not_read`, `library_load::tests::tampered_bytes_and_rejected_entries_are_diagnostics_without_other_commit`) | 통과 |
+| cache entry probe 단위 시험(`library_entry::tests` 2건) | 통과 |
+
+### 남은 위험
+
+- 열 때마다 entry 전체를 다시 hash합니다(ADR-0119 Performance). 큰 library에서 문제가 되면 검증 기록 최적화를 따로 정합니다.
+
+## 검토 (2026-11-24, library-finish 비판 검토)
+
+- 판정: `[x]` 유지.
+- 고친 결함(이중 판정): "generation component library와 텍스트 원본이 함께 정의를 담으면 손상" 판정이 storage validator
+  (`validate_library_storage`)와 export 공급자(`read_library_resources`)에 따로 있었습니다. `library_entry::read_library_root` 하나로
+  모으고 두 경로는 오류 분류만 옮깁니다(커밋 `1fe5cb21`).
+- 더한 시험: `tests/integration/tests/library_cache_entries.rs`의 `generation_and_text_component_definitions_together_are_corrupt`가 텍스트
+  원본만 있으면 통과, 같은 root에 generation component library를 더하면 storage validator `CorruptStorage(TextSource)`와 export 공급자
+  `Corrupt`를 확인합니다(커밋 `550b4565`).

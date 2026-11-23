@@ -2,7 +2,7 @@
 
 - WBS: XV.6.2
 - 작업명: local path가 일반 repo 또는 잘못된 library id이면 거부
-- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 위치 재검사(symlink 해석)·거부 정책은 실제 디렉터리 fixture로 완료했지만,
+- 상태: 완료 (`[x]`) — 2026-11-23 library-finish, 아래 "작업 (2026-11-23, library-finish)" 절. 이전 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 위치 재검사(symlink 해석)·거부 정책은 실제 디렉터리 fixture로 완료했지만,
   "일반 repo" 판정 자체는 project crate의 `ProjectProbe`(IV.5.1) 연결이 필요합니다(현재 테스트는 표
   기반 probe fake).
 - 선행: XV.6.1(이 lane에서 완료), IV.5.1(`[x]`)
@@ -70,3 +70,25 @@
 ### 남은 조건과 finding
 
 - 결함 finding(소유 lane 없음 → backlog): XV.3.4와 같은 probe 연결로 실제 일반 repo·잘못된 library id fixture를 확인합니다.
+
+## 작업 (2026-11-23, library-finish): 실제 ProjectProbe로 local override 검증
+
+### 한 일
+
+- `crates/project/src/library_overrides.rs`(신규): `validate_project_local_overrides`가 선언 매핑과 대상 검증을 제품 검증기
+  `ProjectLibraryValidator::checkout`(실제 `probe_project`)으로 실행하고 override마다 결과를 돌려줍니다(ADR-0119 결정 7).
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-dependencies` | 101 passed, 0 failed; doctest 1 passed |
+| `cargo test -p stellar-project --lib library_` | library_entry·library_git 단위 시험 통과, 0 failed |
+| `cargo clippy -p stellar-dependencies -p stellar-project -p stellar-assets -p stellar-integration-tests --all-targets -- -D warnings` | 경고 0 |
+| `cargo xtask validate-adr --base 0c226a06` | 종료 코드 0 |
+| `cargo test -p stellar-integration-tests --test library_local_override` | 1 passed |
+
+| 검사 | 결과 |
+|---|---|
+| **fixture 실패**: 실제 폴더로 일반 Git 저장소(`stellar.yaml` 없음)·`.git` 없는 Stellar 폴더는 `NotAStellarProject`, 다른 library id는 `LibraryIdMismatch`, 손상 매니페스트는 `CorruptManifest`, 없는 경로는 `Unavailable(NotFound)`, symlink로 사용 프로젝트 안을 가리키면 `InsideProject` | 통과 |
+| 정상 Stellar 작업 폴더는 통과(library id·schema version 4), 거부 문장에 경로 원문 없음 | 통과 |

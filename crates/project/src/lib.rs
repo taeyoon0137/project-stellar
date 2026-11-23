@@ -101,3 +101,24 @@ pub mod fonts;
 
 /// 제품 문서 migration registry와 고정 decoder (IX.11.21).
 pub mod migration;
+
+/// library root 검증기: ProjectProbe·storage validator 제품 구현 (XV.3.4, XV.6.2).
+pub mod library_entry;
+
+/// library 텍스트 원본 export index 공급자 (XV.5.1 제품 공급자).
+pub mod library_exports;
+
+/// library 의존성 엔진의 시스템 Git·SHA-256 연결 (XV.3).
+pub mod library_git;
+
+/// 사용 프로젝트 local override 대상 검증 (XV.6.2).
+pub mod library_overrides;
+
+/// 프로젝트 열기 때 lock 기준 library 로드와 부분 열기 (XV.5.5).
+pub mod library_open;
+
+/// 사용 프로젝트 instance의 외부 component 해석과 외부 참조 사용 수집 (XV.5.3·XV.7.3).
+pub mod library_refs;
+
+/// 사용 프로젝트 component command의 library 읽기 전용 사전 검사 (XV.5.3).
+pub mod library_guard;

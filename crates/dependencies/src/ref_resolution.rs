@@ -169,6 +169,17 @@ impl DependencyScopes {
         self.children.get(&(scope.clone(), name.clone()))
     }
 
+    /// `scope`가 직접 선언한 (선언 이름, node)(이름 순).
+    pub fn children_of<'a>(
+        &'a self,
+        scope: &'a RefScope,
+    ) -> impl Iterator<Item = (&'a LogicalName, &'a DependencyNodeKey)> + 'a {
+        self.children
+            .iter()
+            .filter(move |((owner, _), _)| owner == scope)
+            .map(|((_, name), node)| (name, node))
+    }
+
     /// 표에 나오는 모든 node(정렬, 중복 제거).
     pub fn nodes(&self) -> BTreeSet<DependencyNodeKey> {
         self.children.values().cloned().collect()
