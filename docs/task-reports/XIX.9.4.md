@@ -2,7 +2,7 @@
 
 - WBS: XIX.9.4
 - 작업명: attached backend(endpoint 실시간 검증으로 backend 선택, WindowSessionId 결합, 모든 쓰기를 앱의 lease·승인·DocumentThread 경로로)
-- 상태: 미완료 (`[ ]`) — 앱 연결의 frame 왕복(bridge 쪽 frame 쓰기, 앱 쪽 연결 감시가 앞단으로 넘김)만 했습니다. backend 선택 matrix, MCP 서버 루프 연결, 다중 창 fixture는 남았고 선행 XIX.9.3이 `[x]`가 아닙니다.
+- 상태: 부분 완료 (`[~]`) — 앱 연결의 frame 왕복(bridge 쪽 frame 쓰기, 앱 쪽 연결 감시가 앞단으로 넘김)만 했습니다. backend 선택 matrix, MCP 서버 루프 연결, 다중 창 fixture는 남았고 선행 XIX.9.3이 `[x]`가 아닙니다.
 - 선행: XIX.9.3, XIX.1.7, XIX.1.8, XIX.5.4, XII.2.1
 - 결정: [ADR-0132](../adr/ADR-0132-agent-lease-judgement-cost-bridge-link-and-fail-closed-observation.md) 결정 2·3, [ADR-0124](../adr/ADR-0124-agent-runtime-host-link-frames-and-observation.md) 결정 3
 
@@ -34,6 +34,10 @@
 |---|---|
 | backend 선택 matrix(앱 없음, 검증 실패, 검증 성공) fixture | 하지 않음(서버 루프·진입점 연결 전) |
 | 다중 창에서 결합 창 외 history 변화 0 | 하지 않음 |
+
+## 차이(작업 지시와 다른 점)
+
+- 행 전체(backend 선택, MCP 서버 루프 연결, 다중 창 fixture)가 아니라 attached 쓰기 경로의 앱 연결 frame 왕복만 했습니다. 서버 루프·진입점은 이 작업 소유 밖입니다.
 
 ## 남은 위험 / 한계
 
