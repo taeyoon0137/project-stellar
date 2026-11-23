@@ -29,7 +29,30 @@ mod image;
 /// 문서 → 증분 scene source 변환 (XI.2.4, XI.2.5, XII.10.30).
 pub mod scene_source;
 pub use image::image_placement;
+/// 변형 핸들 hit layer (XII.10.8, ADR-0104).
+pub mod handles;
+/// 선택 엔진의 hit 입력: 커서 아래 node 목록과 node world 상자 (XII.10.3, XII.10.5).
+pub mod hit;
+/// 캔버스 클릭 선택과 편집 범위 (XII.10.3, ADR-0104).
+pub mod select;
+/// 영역 선택(마퀴) (XII.10.6, ADR-0104).
+pub mod select_area;
+mod select_fixtures;
+/// 한 제스처 한 history (XII.10.40, ADR-0104).
+pub mod select_gesture;
+/// hover 미리보기 (XII.10.7, ADR-0104).
+pub mod select_hover;
+/// 깊은 선택과 편집 범위 이동 (XII.10.4, ADR-0104).
+pub mod select_navigate;
+/// 창별 캔버스 선택 입력 처리 (ADR-0104).
+pub mod select_session;
+/// select-through와 겹친 레이어 목록 (XII.10.5, ADR-0104).
+pub mod select_through;
 pub(crate) mod shape;
+/// 캔버스 도구 10종과 도구 상태 기계 (XII.10.1, ADR-0104).
+pub mod tool;
+/// 캔버스 이동·크기 단위와 핸들 숨김 기준 (XII.10.2, ADR-0104).
+pub mod tool_units;
 
 /// painter 순서의 사각형 하나. parent는 투명한 Fragment를 펼친 뒤의 가장 가까운 Frame입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
