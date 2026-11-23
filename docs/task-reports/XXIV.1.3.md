@@ -2,7 +2,7 @@
 
 - WBS: XXIV.1.3
 - 작업명: headless `stellar`에 프로젝트 검증, 프로젝트 사이 semantic diff, 3-way semantic merge, 저장 스키마 migration 명령을 추가
-- 상태: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 네 명령과 fixture corpus는 통과했으나, 선행 "Phase XIV"에 `[ ]` 행이 남아 있습니다(XIV.10.7~XIV.10.9, XIV.12.3, XIV.12.4 등). 계획서 §1.2 규칙 4에 따라 Phase XIV가 모두 `[x]`가 될 때까지 `[~]`로 둡니다. 또 `semantic-merge`는 병합 결과를 프로젝트에 쓰지 못하고(XIV.12.4 없음) `migrate`에는 제품 migration step이 없습니다(아래 "차이").
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 XIV.10.7(`[~]`), XIV.10.8(`[~]`), XIV.10.9(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 네 명령과 fixture corpus는 통과했으나, 선행 "Phase XIV"에 `[ ]` 행이 남아 있습니다(XIV.10.7~XIV.10.9, XIV.12.3, XIV.12.4 등). 계획서 §1.2 규칙 4에 따라 Phase XIV가 모두 `[x]`가 될 때까지 `[~]`로 둡니다. 또 `semantic-merge`는 병합 결과를 프로젝트에 쓰지 못하고(XIV.12.4 없음) `migrate`에는 제품 migration step이 없습니다(아래 "차이").
 - 선행: Phase XIV(semantic diff XIV.3·merge XIV.10 엔진 코드 있음, 일부 행 `[ ]`), V.8.6(`[x]`)
 
 ## 필수 실행 환경

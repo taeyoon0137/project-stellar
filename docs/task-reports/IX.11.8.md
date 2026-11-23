@@ -2,7 +2,7 @@
 
 - WBS: IX.11.8
 - 작업명: CSS 레이아웃 적합성 fixture(Flexbox 60, Grid 40, positioning 30 이상, CSS 선언과 기대 border box rect)
-- 상태: 부분 완료 (`[~]`) — fixture·runner·판정은 끝났고, 완료 기준 중 `space-around`·`space-evenly` 확인 결과의
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 남은 범위가 있음(아래 본문); 선행 IX.11.4(`[~]`), IX.11.5(`[~]`), IX.11.23(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 부분 완료 (`[~]`) — fixture·runner·판정은 끝났고, 완료 기준 중 `space-around`·`space-evenly` 확인 결과의
   속성 모델 4.2절 기록과 `config/dependencies.yaml` 승인 절차가 이 lane 소유 경로 밖이라 남았습니다(아래 "차이").
   상태 표기는 통합 때 ledger가 정합니다.
 - 결정: ADR-0076 결정 9

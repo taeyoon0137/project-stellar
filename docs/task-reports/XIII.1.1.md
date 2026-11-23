@@ -3,9 +3,9 @@
 - WBS: XIII.1.1
 - 작업명: `AutosavePolicy`에 debounce, 최대 지연, 앱 비활성화 flush, 창 닫기 flush를 정의하고 값은
   `config/performance-budgets.yaml`에서 읽음
-- 상태: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 정책 타입·config 읽기·거부 규칙 구현과 검증 완료. `config/performance-budgets.yaml`에
+- 상태: 완료 (`[x]`) — 2026-11-23 plan-revision이 선행 "Phase XII, V.5.4"를 재판정의 재작성안대로 "V.5.4"로 좁혀 계획서에 반영했습니다. 재판정 기록: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 정책 타입·config 읽기·거부 규칙 구현과 검증 완료. `config/performance-budgets.yaml`에
   넣을 **수치는 아직 정해지지 않아** 기록하지 않았습니다(아래 "차이").
-- 선행: Phase XII(완화 — 아래 "차이"), V.5.4
+- 선행: V.5.4(2026-11-23 개정으로 "Phase XII"를 뺌. 이전 기록: Phase XII(완화 — 아래 "차이"), V.5.4)
 
 ## 필수 실행 환경
 

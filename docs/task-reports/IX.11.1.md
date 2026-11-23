@@ -2,7 +2,7 @@
 
 - WBS: IX.11.1
 - 작업명: registry 항목별 CSS 매핑 metadata 타입, CSS longhand 이름 inventory, `core-types` 단위 계약
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 IX.11.22(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`)
 - 결정: ADR-0075 결정 2·4, ADR-0008 개정(단위 계약)
 
 ## 필수 실행 환경

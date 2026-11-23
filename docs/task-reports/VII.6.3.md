@@ -2,7 +2,7 @@
 
 - WBS: VII.6.3
 - 작업명: command 실행 중 panic·out-of-bounds가 없는 fuzz target 추가
-- 상태: `[x]` 판정 — 통합 때 계획서 표기를 `[x]`로 바꿉니다(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — fuzz target과 로컬 smoke는 통과하지만, 검증 기준의 "CI fuzz smoke duration"은 CI에 등록하지 않았습니다
+- 상태: `[x]` 판정 — 계획서 표기를 `[x]`로 바꿨습니다(2026-11-23 재판정, 아래 "재판정" 절. 계획서 반영은 plan-revision). 이전 기록: 부분 완료 (`[~]`) — fuzz target과 로컬 smoke는 통과하지만, 검증 기준의 "CI fuzz smoke duration"은 CI에 등록하지 않았습니다
   (CI 파일 수정은 이번 작업 범위 밖).
 - 선행: VII.1.5
 

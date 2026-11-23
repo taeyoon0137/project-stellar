@@ -2,7 +2,7 @@
 
 - WBS: X.10.4
 - 작업명: Text intrinsic width/height와 baseline을 layout intrinsic hook에 연결
-- 상태: 부분 완료 (`[~]`) — layout 쪽 hook·전파·검증은 끝났고, `stellar-text` 구현체 연결은 crate graph 결정이 남았습니다
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 남은 범위가 있음(아래 본문). 보고 당시 기록: 부분 완료 (`[~]`) — layout 쪽 hook·전파·검증은 끝났고, `stellar-text` 구현체 연결은 crate graph 결정이 남았습니다
   (아래 "남은 위험"). 상태 표기는 통합 때 ledger가 정합니다.
 - 결정: ADR-0076 결정 6(X.10.4·X.3.6 항목)
 - 선행: X.10.2(`[x]`), X.6.4(`[x]`). 이전 차단 보고서(`X.10.4-blocked.md`)의 첫 원인(X.6.4 미완료)은 해소되었습니다.

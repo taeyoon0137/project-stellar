@@ -2,7 +2,7 @@
 
 - WBS: IX.11.16
 - 작업명: TokenName·ContextKey 이름에서 CSS custom property 이름을 결정론적으로 파생, `@property`·`:root` 선언 텍스트, parser `var()` 연결
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 IX.11.13(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`)
 - 결정: ADR-0075 결정 7, 속성 모델 10장
 
 ## 필수 실행 환경

@@ -4,7 +4,7 @@
 
 - WBS: V.10.5
 - 작업명: 여러 의미 파일의 temp/fsync/rename 저장 journal과 앞/새 세대 한쪽 복구
-- 상태: 완료 (`[x]`) — 이 행의 구현과 DEV-MAC 검증 기준입니다. 계획서·원장 상태와 선행 V.10.4 판정은 통합 때 `generate-ledger`로 정합니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 V.10.4(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`) — 이 행의 구현과 DEV-MAC 검증 기준입니다. 계획서·원장 상태와 선행 V.10.4 판정은 통합 때 `generate-ledger`로 정합니다.
 - 선행: V.10.4. journal API는 codec과 독립인 bytes 수준이라 V.10.4를 기다리지 않고 구현했습니다(ADR-0078 결정 1). 선행 완료 판정은 통합 때 따릅니다.
 - 결정: [ADR-0078](../adr/ADR-0078-multi-file-save-journal.md).
 

@@ -1,5 +1,8 @@
 # Stellar UX 구현 WBS 초안
 
+- **UI 재설계 대상(2026-11-23 사용자 방향):** 지금은 엔진·기능만 만들고, 셸 UI(`apps/macos/Stellar/**`)와 셸 FFI(`crates/ffi`, `stellar_ffi.h`)는 새로 만들거나 다듬지 않습니다. UI는 나중에 처음부터 다시 설계하므로, 이 문서의 셸·FFI 행과 행의 셸 부분은 그 재설계 때 다시 정의합니다. 기능은 Rust 테스트·CLI·MCP로 검증합니다.
+- 코어 부분이 끝난 행은 코어와 셸로 나눠 적었습니다(UX.4.1, UX.5.1, UX.5.4, UX.12.1, UX.7.5). 코어 행의 근거는 계획서 행·ADR·작업 보고서이며, 셸 행은 UI 재설계 대상입니다. 다른 행의 선행 칸에 나눈 행의 ID만 적혀 있으면(예: `UX.4.1`) 코어와 셸 둘 다를 뜻합니다.
+- UX.0.3 중 ADR-0074 행 삭제(IX.11.7, XII.10.22, XII.10.25)와 IX.11.17·XII.10.9·XII.10.43 문구 정리는 2026-11-23 계획 개정에서 했습니다(계획서 개정 기록 "크기 방식 preset 행 삭제와 비CSS 크기 어휘 정리"). 나머지 UX.0.3 항목은 UI 재설계 때 합니다.
 - 상태: 초안(계획서 등록 전). 행 ID `UX.n.m`은 임시 번호이고, `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md`에 등록할 때 정식 ID를 받습니다. 커밋 제목은 정식 ID로 `Task(<WBS-ID>): …` 형식을 씁니다.
 - 명세: `stellar-ux-spec.md`(이하 "명세"). 행의 "명세 n절"은 그 문서의 절입니다.
 - 착수 전제: 정리 통합(되돌림 결과 `02397601` 위의 수정 묶음)이 main에 들어간 뒤입니다. 선행 칸의 "정리"는 이 전제를 뜻합니다.
@@ -88,7 +91,8 @@ lane(병렬 단위, crate가 겹치지 않게 나눔)
 
 | ID | 작업 | 검증 기준 | 선행 | 관련 파일 | lane |
 |---|---|---|---|---|---|
-| UX.4.1 | 미저장 편집이 없는 창에서 외부의 새 원본(View·컴포넌트)을 다시 읽어 Synthetic Command 하나로 적용합니다. 자기 저장이 만든 event는 무시합니다. 진행 중인 제스처가 끝난 뒤 반영하고 선택은 StableId로 보존합니다 | 앱을 연 채 `stellar apply`로 값을 바꾸면 캔버스와 속성 탭이 갱신되고 ⌘Z로 되돌아감. 자기 autosave 뒤 reload loop 0 | UX.2.11, UX.0.3, XIII.2.4, V.10.6 | `crates/project/src/external_change.rs`, `crates/runtime/src/`, `crates/ffi/` | R |
+| UX.4.1 코어 | 외부의 새 원본을 Synthetic Command 하나로 적용하는 코어 command `ApplyExternalSnapshot`(0x0070)을 둡니다. 전체 snapshot이 아니라 문서 이름·Page·View·node·modifier stack·Text style 표 레코드의 변경 집합(이전 값·새 값)을 담고, 역 command는 두 값을 바꾼 같은 command이며, 적용 전 이전 값 일치와 결과 validator를 검사합니다. history journal은 schema 2(header에 command codec version)입니다. **command 부분 완료(2026-11-23, persistent-commands lane, ADR-0079).** 남은 범위는 runtime 창 연결(watcher → command 발행, 자기 저장 event 무시, 진행 중인 제스처 뒤 반영, StableId 선택 보존)이며, 엔진 범위로 window-session-stale lane이 V.10.6·XIII.3 경로와 함께 맡습니다. 검증 열의 runtime 연결 항목과 선행 V.10.6이 끝나야 이 코어 행이 끝납니다 | command apply/inverse fixture, 기준 commit writer가 만든 schema 1 journal decode, 모르는 command journal을 `unknown-command`로 봉인(문서 무손상), Undo 메뉴 이름이 `HistoryEntry::action_name`. runtime 연결: 외부 `stellar apply` 뒤 창 문서가 갱신되고 Undo 한 번으로 되돌아감, 자기 autosave 뒤 reload loop 0(Rust 테스트) | XIII.2.4, V.10.6 | `crates/commands/`, `crates/history/`, `crates/project/src/external_change.rs`, `crates/runtime/src/` | C·R |
+| UX.4.1 셸 | 캔버스·속성 탭이 외부 반영 결과를 다시 그리고 ⌘Z가 반영을 되돌리는 흐름을 앱에서 끝까지 연결합니다. UI 재설계 대상입니다 | 앱을 연 채 `stellar apply`로 값을 바꾸면 캔버스와 속성 탭이 갱신되고 ⌘Z로 되돌아감 | UX.4.1 코어, UX.2.11, UX.0.3 | `crates/ffi/`, `UI/` | S |
 | UX.4.2 | 반영 표시: 바뀐 노드 0.6초 윤곽 강조(동작 줄이기면 생략), Undo 메뉴 이름 "외부 변경 반영 실행 취소", 변경 탭 머리 줄(탭이 없으면 도구 막대 위 한 줄), VoiceOver 알림, 세션 동안 '외부' 출처 표시 | 강조가 렌더 결과에 없음. 알림 문구가 VoiceOver로 읽힘 | UX.4.1, UX.2.8 | `UI/Shell/`, `UI/Sidebar/` | S |
 | UX.4.3 | 같은 프로젝트를 연 다른 Stellar 창이 먼저 저장한 경우 두 선택지 sheet를 띄우고, 미저장 편집 + 외부 writer 변경도 reconciliation 전까지 같은 sheet로 처리합니다. 확인 버튼 하나뿐인 Save Now 실패 alert를 없앱니다. 지금 runtime에는 창 문서를 디스크 generation으로 다시 불러오는 경로와 새 base 위에 이 창 버전을 쓰는 경로가 없어, stale이면 자동 저장이 멈추고 부제목 경고(ADR-0072 7절)만 보입니다. 두 경로를 먼저 runtime에 둡니다 | 두 창 동시 편집에서 두 번째 저장이 sheet를 띄우고 선택별 결과가 XII.7.5·7.6과 같음. 자동 저장 중 stale면 sheet 한 번만 | UX.4.1, U20, XII.7.1, XII.7.2, XII.7.3, XII.7.7 | `UI/Shell/ShellProjectWindow.swift`, `crates/runtime/src/` | S·R |
 | UX.4.4 | 잘못된 외부 파일은 반영하지 않고 파일·줄·원인과 [편집기에서 열기]를 보입니다 | 깨진 YAML을 써도 캔버스가 그대로이고 경로·줄이 보임 | UX.4.1 | `crates/project/src/document_io/`, `UI/Shell/` | R·S |
@@ -100,11 +104,13 @@ lane(병렬 단위, crate가 겹치지 않게 나눔)
 
 | ID | 작업 | 검증 기준 | 선행 | 관련 파일 | lane |
 |---|---|---|---|---|---|
-| UX.5.1 | Git 상태 고정값(`head: .unknown`, `remotes: []`, `identityConfigured: false`)을 실제 HEAD·upstream·remote·identity로 바꿉니다. Git은 worker에서만 실행합니다 | identity가 설정된 저장소에서 "identity 없음"이 나오지 않음. 메인 스레드 Git 실행 0 | UX.4.1, XIV.13.1 | `UI/Shell/ShellGitDataSource.swift`, `crates/runtime/src/`, `crates/git-porcelain/` | G·S |
-| UX.5.2 | 기존 Git 패널을 왼쪽 사이드바 "변경" 탭으로 옮깁니다. 핵심 동작(메시지·커밋·Push)을 탭 위쪽에 둡니다. 탭 배지(바뀐 객체 수, 충돌 글리프) | 320pt 폭에서 잘림 0. 변경 탭을 열면 캔버스 변경 윤곽 자리(UX.6.3 전에는 없음)를 건드리지 않음 | UX.1.1, UX.5.1, U1 | `UI/Git/GitPanelViewController.swift`, `UI/Git/`, `UI/Sidebar/` | S |
-| UX.5.3 | 부제목을 Git 상태 문법으로 바꿉니다(명세 3.3절). "Restricted Mode" 상시 표시를 없앱니다 | 깨끗함·변경·보낼 커밋·제한 모드·저장 실패 상태별 문구가 표와 같음. 부제목이 눌리지 않음 | UX.5.1, U4 | `UI/Shell/ShellProjectWindow.swift` | S |
-| UX.5.4 | 원본 단위 "커밋에 포함"을 Git index와 연결합니다. View가 generation이면 View 묶음 하나로만 포함하고 그 사실을 보조 문구에 적습니다. 필수 동반 변경은 inline 확인(자동 포함 없음) | 체크 상태가 `git status`와 같고 앱을 다시 열어도 유지. 터미널 `git add` 결과가 앱에 반영 | UX.5.2, XIV.13.2 | `UI/Git/`, `crates/runtime/src/staging.rs`, `crates/ffi/` | G·S |
-| UX.5.5 | 커밋: 메시지 칸, ⌘↩, 커밋 직전 flush, identity 없으면 같은 자리 inline 입력(U9 범위), 성공 머리 줄 "커밋함 `a1b2c3d`" | 흐름 2의 편집을 앱에서 커밋하고 `git log`에 보임. "Save Now / Use Saved Version" 배너 0 | UX.5.4, UX.0.3(XIV.2.8 개정), U9, XIV.13.3 | `UI/Git/`, `crates/runtime/src/`, `crates/git-porcelain/` | G·S |
+| UX.5.1 코어 | 실제 HEAD·upstream·remote·identity·원본 단위·semantic page·revision을 담은 `GitStatusReport`와, 이를 worker에서 만드는 runtime 경로(`submit_git_status`)를 둡니다. **완료(2026-11-23, git-engine lane, ADR-0080).** Git 전용 WorkerClass가 없어 CacheGeneration worker class를 씁니다 | 실제 저장소 fixture에서 HEAD·upstream·remote·identity 값이 Git과 같음, Git 실행이 worker 경로에서만 일어남(Rust 테스트) | 없음 | `crates/ops/src/git.rs`, `crates/runtime/src/`, `crates/git-porcelain/` | G |
+| UX.5.1 셸 | 셸 Git 상태 고정값(`head: .unknown`, `remotes: []`, `identityConfigured: false`)을 코어 `GitStatusReport`로 바꿉니다. UI 재설계 대상입니다 | identity가 설정된 저장소에서 "identity 없음"이 나오지 않음. 메인 스레드 Git 실행 0 | UX.5.1 코어, UX.4.1 셸, XIV.13.1 | `UI/Shell/ShellGitDataSource.swift`, `crates/ffi/` | S |
+| UX.5.2 | 기존 Git 패널을 왼쪽 사이드바 "변경" 탭으로 옮깁니다. 핵심 동작(메시지·커밋·Push)을 탭 위쪽에 둡니다. 탭 배지(바뀐 객체 수, 충돌 글리프) | 320pt 폭에서 잘림 0. 변경 탭을 열면 캔버스 변경 윤곽 자리(UX.6.3 전에는 없음)를 건드리지 않음 | UX.1.1, UX.5.1 셸, U1 | `UI/Git/GitPanelViewController.swift`, `UI/Git/`, `UI/Sidebar/` | S |
+| UX.5.3 | 부제목을 Git 상태 문법으로 바꿉니다(명세 3.3절). "Restricted Mode" 상시 표시를 없앱니다 | 깨끗함·변경·보낼 커밋·제한 모드·저장 실패 상태별 문구가 표와 같음. 부제목이 눌리지 않음 | UX.5.1 셸, U4 | `UI/Shell/ShellProjectWindow.swift` | S |
+| UX.5.4 코어 | 원본 단위(`SourceUnit`: generation 묶음 또는 파일) stage·unstage와 컴포넌트 정의 동반 판정(고정점까지 계산, 자동 포함 없음)을 둡니다. View가 generation이면 View 묶음 하나로만 포함합니다. **완료(2026-11-23, git-engine lane, ADR-0080).** 텍스트 원본 파일이 `design/` 아래에 생기면 단위 분류(`SourceUnit::of_path`)를 의미 단위로 다시 나눕니다(integration-followups lane) | 원본 단위 stage 뒤 index가 `git status`와 같음, 동반 변경이 필요한 stage는 승인 전 거부·승인 뒤 성공(엔진·CLI 테스트) | 없음 | `crates/ops/src/git.rs`, `crates/runtime/src/staging/` | G |
+| UX.5.4 셸 | "커밋에 포함" 체크와 보조 문구(generation View 묶음), 필수 동반 변경의 inline 확인을 앱에 연결합니다. UI 재설계 대상입니다 | 체크 상태가 `git status`와 같고 앱을 다시 열어도 유지. 터미널 `git add` 결과가 앱에 반영 | UX.5.4 코어, UX.5.2, XIV.13.2 | `UI/Git/`, `crates/ffi/` | S |
+| UX.5.5 | 커밋: 메시지 칸, ⌘↩, 커밋 직전 flush, identity 없으면 같은 자리 inline 입력(U9 범위), 성공 머리 줄 "커밋함 `a1b2c3d`" | 흐름 2의 편집을 앱에서 커밋하고 `git log`에 보임. "Save Now / Use Saved Version" 배너 0 | UX.5.4 셸, UX.0.3(XIV.2.8 개정), U9, XIV.13.3 | `UI/Git/`, `crates/runtime/src/`, `crates/git-porcelain/` | G·S |
 | UX.5.6 | Push: 보낼 커밋이 있을 때만 [Push], 등록된 remote만, 강제 Push 없음, 실패 이유를 머리 줄에 | 테스트 remote로 Push 성공. 거부 시 Git 메시지와 다음 행동 안내 | UX.5.5, XIV.13.3 | `UI/Git/`, `crates/git-porcelain/` | G·S |
 | UX.5.7 | 제한 모드 변경 탭: 설명 한 줄과 [프로젝트 신뢰…] | 제한 모드에서 변경 탭으로 신뢰 부여 후 Git 상태가 채워짐. 편집은 신뢰 전에도 됨 | UX.5.2, UX.1.4 | `UI/Git/` | S |
 | UX.5.8 | 메뉴 막대 Git 메뉴(변경 보기, 커밋, Push, 다음 충돌로 이동, 상태 새로 고침, 프로젝트 신뢰…) | 모든 항목이 동작하거나 일시 조건 하나로만 비활성 | UX.5.6, U16, XII.6.5 | `UI/Tools/MainMenuBuilder.swift` | S |
@@ -131,7 +137,8 @@ lane(병렬 단위, crate가 겹치지 않게 나눔)
 | UX.7.2 | 선택 노드의 CSS longhand 선언을 섹션 순서로 보이고 줄마다 진단 글리프를 붙입니다. [CSS로 복사] | 속성 탭 값과 줄 값이 같음. 복사 결과가 IX.11.15 출력과 같음 | UX.7.1, IX.11.13, IX.11.15, IX.11.19 | `crates/ffi/`, `UI/` 새 코드 탭 파일 | C·S |
 | UX.7.3 | Edit ▸ CSS로 복사와 캔버스 문맥 메뉴 항목 | 메뉴·문맥 메뉴·탭 버튼이 같은 command ID | UX.7.2, UX.3.2 | `UI/Tools/MainMenuBuilder.swift` | S |
 | UX.7.4 | View·Frame 선택 시 HTML 구획: flush 뒤 worker에서 `crates/ops/src/web_frame.rs`로 생성, 진단 목록(누르면 노드로 이동), [HTML 복사]·[저장…] | 저장된 View의 고정 Frame·Rectangle HTML이 CLI `export-web` 결과와 같음. 미지원 노드는 이유가 보이고 빈 결과처럼 보이지 않음 | UX.7.1, UX.2.11 | `crates/ops/src/web_frame.rs`, `crates/ffi/`, `UI/` | C·S |
-| UX.7.5 | 원본 구획: 노드의 저장 파일 경로와 줄, [Finder에서 보기], [편집기에서 열기] | 경로·줄이 실제 파일과 같음. 외부에서 고치면 흐름 3으로 반영 | UX.7.2, UX.4.1, 노드→줄 범위 코어 API(신규) | `crates/project/src/document_io/`, `UI/` | R·S |
+| UX.7.5 코어 | 노드 → 텍스트 원본 파일·줄 범위 core API와 CLI `stellar query <design 폴더> --source-span <node>`. 계획서 V.10.10(임시 번호 TS-MAP)으로 등록했습니다. **구현 완료(2026-11-23, text-source-codec lane, ADR-0077 결정 6)**, 계획서 상태는 V.10.10 행을 따릅니다 | V.10.10 검증 열 | V.10.4 | `crates/project/src/document_io/source_v4/span.rs`, `crates/ops/src/text_source.rs` | R |
+| UX.7.5 셸 | 원본 구획: 노드의 저장 파일 경로와 줄, [Finder에서 보기], [편집기에서 열기]. UI 재설계 대상입니다 | 경로·줄이 실제 파일과 같음. 외부에서 고치면 흐름 3으로 반영 | UX.7.2, UX.4.1 셸, UX.7.5 코어 | `UI/` | S |
 | UX.7.6 | HEAD 대비 줄 추가·삭제 표시 | `git diff`의 해당 노드 줄과 같음 | UX.7.5, V.10.7 | `UI/`, `crates/git-porcelain/` | G·S |
 
 ## UX.8 CSS 레이아웃(흐름 6)
@@ -187,8 +194,9 @@ lane(병렬 단위, crate가 겹치지 않게 나눔)
 
 | ID | 작업 | 검증 기준 | 선행 | 관련 파일 | lane |
 |---|---|---|---|---|---|
-| UX.12.1 | 코어에 View·Page 추가·이름 변경 Command를 추가하고 FFI로 노출합니다(ADR 기록) | 추가가 Undo 한 번. View 원본 파일 단위(ADR-0059)와 맞음 | UX.3.5 | `crates/commands/`, `crates/document/`, `crates/ffi/` | C |
-| UX.12.2 | 사이드바 머리 줄 팝업에 "새 View"·"새 Page"를 둡니다 | 새 View가 active View가 되고 레이어·캔버스가 바뀜 | UX.12.1 | `UI/Shell/ShellSidebarSource.swift` | S |
+| UX.12.1 코어 | 코어에 Page·View 추가·삭제·이름 변경 command(`AddPage`·`RemovePage`·`RenamePage`·`AddView`·`RemoveView`·`RenameView`, 0x0060\~0x0065)를 추가합니다. **완료(2026-11-23, persistent-commands lane, ADR-0079).** `stellar apply` canonical 입력으로 적용·재열기를 확인합니다 | 각 command가 Undo 한 번, `stellar apply`로 AddView·RenamePage 적용 뒤 재열기 결과 일치(CLI 통합 테스트), View 원본 파일 단위(ADR-0059)와 맞음 | 없음 | `crates/commands/`, `crates/document/` | C |
+| UX.12.1 셸 | Page·View command의 FFI 노출. UI 재설계 대상이며, 노출 방식은 재설계 때 정합니다 | FFI로 추가가 Undo 한 번 | UX.12.1 코어, UX.3.5 | `crates/ffi/` | C |
+| UX.12.2 | 사이드바 머리 줄 팝업에 "새 View"·"새 Page"를 둡니다 | 새 View가 active View가 되고 레이어·캔버스가 바뀜 | UX.12.1 셸 | `UI/Shell/ShellSidebarSource.swift` | S |
 | UX.12.3 | (결정 뒤) 한 Page에 여러 View를 나란히 렌더하고 빈 캔버스 Frame = 새 View로 바꿉니다 | ADR 결정과 일치. hit test·카메라가 여러 root를 다룸 | UX.12.2, U7(ADR) | `crates/runtime/src/canvas.rs`, `crates/commands/src/view_tabs.rs` | R·C |
 
 ## UX.13 브랜치(사용자 결정 뒤)
@@ -228,4 +236,4 @@ UX.0.1을 시작하기 전에 통합 검토가 확인한 미충족 항목입니�
 - 'Set Up the stellar Command…'(`WelcomeStrings.setUpCommandMenuItem`)는 문자열만 있고 어느 메뉴에도 연결되지 않아, Release에서도 명령 설치·제거로 가는 길이 없습니다. 행은 UX.0.1 결과 기록에서 정합니다.
 - 복구 sheet 설명문('Restored edits are saved to the project automatically.', `UI/Shell/ShellDocumentRecovery.swift`)은 복원 뒤 자동 저장(ADR-0072)을 알립니다.
 - UX 밖: `stellar-mcp --connection-info --project <프로젝트 경로>`는 앱 없이 동작하는 headless 프로젝트 등록 인자를 알려 줍니다(ADR-0005 §3). 기존 `tools/stellar-mcp/tests/connection_info.rs`의 인자 없는 호출은 후속 검증에서 갱신해야 합니다.
-- UX 밖: 컴포넌트 원본 YAML의 키·값(`background`, `clipping: frame-bounds`, transform 행렬, `srgb r g b a` 색)이 CSS 이름·문법이 아닙니다. `docs/spec/component-source-v1.md`가 이 형식을 고정하므로, D2('CSS longhand 한 속성 한 줄')와의 관계는 ADR-0061 개정과 계획 개정 기록 (1)의 V.10 하위 행에서 정합니다.
+- UX 밖(2026-11-23 해소, 계획서 V.10.8): 컴포넌트·View 원본 쓰기 v4가 registry의 CSS 이름과 CSS 값 문법을 씁니다(ADR-0077 결정 2, `docs/spec/text-source-v4.md`). 아래는 v1\~v3 기록입니다. 컴포넌트 원본 YAML의 키·값(`background`, `clipping: frame-bounds`, transform 행렬, `srgb r g b a` 색)이 CSS 이름·문법이 아닙니다. `docs/spec/component-source-v1.md`가 이 형식을 고정하므로, D2('CSS longhand 한 속성 한 줄')와의 관계는 ADR-0061 개정과 계획 개정 기록 (1)의 V.10 하위 행에서 정합니다.

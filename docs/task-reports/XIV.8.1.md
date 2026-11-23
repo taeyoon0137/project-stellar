@@ -2,7 +2,7 @@
 
 - WBS: XIV.8.1
 - 작업명: staged snapshot commit 전 재검증
-- 상태: 완료 (`[x]` 후보)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 판정 이중 경로가 남아 있음: `crates/ops/src/git.rs`의 `validate_staged`가 `crates/ops/src/validate.rs`와 같은 검증(`validate_document` 호출 등)을 따로 조합합니다. 행 지시는 충족하지만 같은 판정을 두 곳에서 하지 않는다는 설계 규칙에 어긋나므로, integration-followups lane이 ops validate 판정을 records·definitions 입력 함수로 노출해 합치면 `[x]`. 보고 당시 기록: 완료 (`[x]` 후보)
 - 선행: XIV.6.5, VI.10.1
 - 결정: ADR-0080
 

@@ -2,7 +2,7 @@
 
 - WBS: XIV.14.5
 - 작업명: linked worktree open·status·stage·commit
-- 상태: 완료 (`[x]` 후보)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 계획 1.1의 "올바른 커밋"이 없음: 구현 커밋이 `Feat:`·`Fix:`·`Test:` 제목이라 `Task(<ID>)` 제목 커밋이 없고, 원장(`cargo xtask generate-ledger`)이 근거 커밋과 검증 시각을 채우지 못합니다. 구현·검증과 선행 판정은 `[x]` 조건을 충족합니다. 보고 당시 기록: 완료 (`[x]` 후보)
 - 선행: XIV.1.2, XIV.6.6
 - 결정: ADR-0080
 

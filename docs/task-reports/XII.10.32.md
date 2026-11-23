@@ -2,7 +2,7 @@
 
 - WBS: XII.10.32
 - 작업명: text range 교체와 범위 style 설정 command, 입력 종류·caret grouping key
-- 상태: 완료 (`[x]`) — 코어 command·history grouping까지. 캔버스 텍스트 편집 연결은 XII.10.33의 몫입니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 계획 1.1의 "올바른 커밋"이 없음: 구현 커밋이 `Feat:`·`Fix:`·`Test:` 제목이라 `Task(<ID>)` 제목 커밋이 없고, 원장(`cargo xtask generate-ledger`)이 근거 커밋과 검증 시각을 채우지 못합니다. 구현·검증과 선행 판정은 `[x]` 조건을 충족합니다. 보고 당시 기록: 완료 (`[x]`) — 코어 command·history grouping까지. 캔버스 텍스트 편집 연결은 XII.10.33의 몫입니다.
 - 선행: VI.7.5, VII.4.3, VII.1.6
 - 결정: ADR-0079 결정 1
 

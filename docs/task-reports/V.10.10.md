@@ -1,11 +1,13 @@
-# 작업 보고서: TS-MAP node → 파일·줄 범위
+# 작업 보고서: V.10.10 node → 파일·줄 범위
 
 ## WBS
 
-- WBS: TS-MAP(신규 행, UX.7.5 코어 부분)
+- WBS: V.10.10
+- 등록: 2026-11-23 plan-revision이 임시 번호 TS-MAP를 이 ID로 계획서에 등록하고 보고서를 `docs/task-reports/pending-wbs/TS-MAP.md`에서 옮김
 - 작업명: node StableId → 텍스트 원본 파일·줄 범위 core API와 CLI `stellar query --source-span`
-- 상태: 완료 (`[x]`)
-- 구현 커밋: `ae935137`(span table), `199fee64`(ops·CLI). 결정: [ADR-0077](../../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md) 결정 6.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 계획 1.1의 "올바른 커밋"이 없음: 구현 커밋이 `Feat:`·`Fix:` 제목이라 `Task(<ID>)` 제목 커밋이 없고, 원장이 근거 커밋을 채우지 못합니다; 선행 V.10.4(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`)
+- 선행: V.10.4 `[~]`
+- 구현 커밋: `ae935137`(span table), `199fee64`(ops·CLI). 결정: [ADR-0077](../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md) 결정 6.
 
 ## 필수 실행 환경
 

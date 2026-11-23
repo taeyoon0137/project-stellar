@@ -2,7 +2,7 @@
 
 - WBS: XII.10.35
 - 작업명: ComponentRef 교체와 override 보존·탈락 preview
-- 상태: 부분 완료 (`[~]`) — 코어 command와 preview는 완료. 메뉴 막대 Swap… 항목·`ShortcutPolicy`·현재 크기 유지는 남았습니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 남은 범위가 있음(아래 본문); 선행 XII.6.5(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 부분 완료 (`[~]`) — 코어 command와 preview는 완료. 메뉴 막대 Swap… 항목·`ShortcutPolicy`·현재 크기 유지는 남았습니다.
 - 선행: IX.2.4, IX.1.2, VII.1.6, XII.6.5
 - 결정: ADR-0079 결정 1·6
 

@@ -4,7 +4,7 @@
 
 - WBS: V.10.3
 - 작업명: 기존 generation의 명시적 export/check 연결, 전체 pointer 집합 비교로 미지원 chunk 거부
-- 상태: 부분 완료 (`[~]`) — 검증 열을 다시 실행했습니다. `[x]` 판정은 선행 XXIV.1.3의 `[x]` 여부(ledger-verification lane)와 check-core의 무관한 타이밍 실패 정리에 따릅니다. 차단 보고서 [V.10.3-blocked.md](V.10.3-blocked.md)의 재개 조건 가운데 검증 열 재실행에 해당합니다.
+- 상태: 완료 (`[x]`) — 2026-11-23 plan-revision이 1차 배치 보고서와 검토 결과로 계획서에 반영했습니다. 보고 당시 기록: 부분 완료 (`[~]`) — 검증 열을 다시 실행했습니다. `[x]` 판정은 선행 XXIV.1.3의 `[x]` 여부(ledger-verification lane)와 check-core의 무관한 타이밍 실패 정리에 따릅니다. 차단 보고서 [V.10.3-blocked.md](V.10.3-blocked.md)의 재개 조건 가운데 검증 열 재실행에 해당합니다.
 - 선행: V.10.2 `[x]`, XXIV.1.3(`reported_done`)
 - 관련 커밋: `58709614`(쓰기 버전 v4), `ae935137`(다중 파일 export·check). 기본 열기·저장은 바꾸지 않았습니다.
 
