@@ -48,7 +48,7 @@
 
 - 결함: 정상 저장·닫기의 삭제가 실패하면 기준 세대가 current와 같은 복구본(닫으며 버린 편집)이 다음 시작에 다시 제안됐습니다. 위 시험은 기준 세대가 낡은 경우만 확인했습니다.
 - 수정: 삭제는 `stellar_project::recovery_shutdown::discard_snapshot`이 맡고, 지울 bytes의 hash를 폐기 표식에 먼저 씁니다. probe 판정(`judge_stored_snapshot`)은 표식과 같은 bytes를 `StaleReason::Discarded`로 제안하지 않습니다([ADR-0120](../adr/ADR-0120-recovery-probe-git-scenarios-terminal-env.md) 결정 2).
-- 선행 XIII.8.3을 같은 lane에서 완료했으므로 이 행은 `[x]` 후보입니다(원장 판정은 통합 때).
+- 선행 XIII.8.3의 엔진 부분을 같은 lane에서 마쳤지만, XIII.8.3이 선행 XII.2.2(`[ ]`, UI) 때문에 `[~]`이므로 이 행도 `[~]`입니다. 이 행 자체의 구현·검증은 끝났습니다(원장 판정은 통합 때).
 
 | 테스트 | 결과 |
 |---|---|

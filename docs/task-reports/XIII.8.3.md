@@ -4,8 +4,10 @@
 
 - WBS: XIII.8.3
 - 작업명: 앱 시작 시 최신 snapshot probe 결과를 shell에 반환하고 사용자가 복구 또는 폐기를 선택
-- 상태: 완료 (`[x]`) 후보 — 엔진 코어 API와 두 선택 fixture를 마쳤습니다. 셸 prompt UI는 사용자 방향(2026-11-23)에 따라
-  UI 재설계 때 이 API에 연결합니다. 원장 판정은 통합 때 `generate-ledger`로 정합니다.
+- 상태: 부분 완료 (`[~]`) — 엔진 코어 API와 두 선택 fixture는 마쳤지만 선행 XII.2.2(macOS 창 controller의 창 session
+  소유, ADR-0098로 `[ ]`)가 `[x]`가 아닙니다(계획 1.2 규칙 4). 셸 prompt UI는 사용자 방향(2026-11-23)에 따라 UI 재설계 때
+  이 API에 연결합니다. 원장 판정은 통합 때 `generate-ledger`로 정합니다. 보고 당시 기록: 완료 (`[x]`) 후보(검토에서
+  선행 미충족으로 정정).
 - 선행: V.9.3, XII.2.2
 - 결정: [ADR-0120](../adr/ADR-0120-recovery-probe-git-scenarios-terminal-env.md) 결정 1·2, [ADR-0083](../adr/ADR-0083-window-session-stale-and-external-sync.md)
 - lane: `recovery-git-terminal`

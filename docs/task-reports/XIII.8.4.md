@@ -46,7 +46,7 @@
 
 ## 후속 (2026-11-23, lane `recovery-git-terminal`)
 
-- 선행 XIII.8.3을 완료했습니다. 복원 경로는 그대로이고, 이제 셸이 쓰는 공개 경로(`AppRuntime::recovery_probe` → `AppRuntime::recover_checkpoint(Restore)`)로도 디스크 불변을 확인합니다. 이 행은 `[x]` 후보입니다(원장 판정은 통합 때).
+- 선행 XIII.8.3의 엔진 부분을 마쳤습니다. 복원 경로는 그대로이고, 이제 셸이 쓰는 공개 경로(`AppRuntime::recovery_probe` → `AppRuntime::recover_checkpoint(Restore)`)로도 디스크 불변을 확인합니다. XIII.8.3은 선행 XII.2.2(`[ ]`, UI) 때문에 `[~]`이므로 이 행도 `[~]`입니다. 이 행 자체의 구현·검증은 끝났고, XIII.8.3이 `[x]`가 되면 근거 커밋 기록만으로 `[x]`입니다(원장 판정은 통합 때).
 - 결정: [ADR-0120](../adr/ADR-0120-recovery-probe-git-scenarios-terminal-env.md) 결정 1
 
 | 테스트 | 결과 |
