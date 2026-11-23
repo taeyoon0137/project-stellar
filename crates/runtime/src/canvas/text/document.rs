@@ -35,7 +35,7 @@ use stellar_text::{
     font_runs::{LoadedFaces, ShapingStyle},
     incremental::{IncrementalTextLayout, LayoutRequest, ParagraphSpec},
     itemize::StyleSpan,
-    line_break::LineBreakOptions,
+    line_break::{line_break_opportunities, LineBreakOptions},
     line_layout::WrapMode,
     paragraph::TextStyleSpec,
     registry::InMemoryFontRegistry,
@@ -59,6 +59,11 @@ fn initial_text_color() -> Color {
 struct ParagraphOffsets {
     start: u32,
     bytes: Vec<usize>,
+}
+
+/// 문서 Text 배치의 줄바꿈 옵션(배치와 min-content가 같이 씀).
+fn line_break_options() -> Option<LineBreakOptions> {
+    Some(LineBreakOptions::new(LanguageTag::parse("und").ok()?))
 }
 
 /// glyph paint와 동일한 layout에서 가져온 caret과 줄 영역.
@@ -137,6 +142,45 @@ impl DocumentText {
             Vec2::new(px(rect.x), px(rect.top)).ok()?,
             Size2::new(0., px(rect.height)).ok()?,
         ))
+    }
+
+    /// 첫 줄 baseline(text box 위쪽 기준 px). 줄이 없으면 `None`입니다.
+    pub(crate) fn first_baseline(&self) -> Option<f32> {
+        self.layout.first_baseline().map(px)
+    }
+
+    /// CSS min-content 너비(px). 이 배치는 줄 너비 0으로 한 결과여야 합니다(ADR-0134 결정 1).
+    ///
+    /// text 엔진은 기회 사이 구간이 줄보다 넓으면 비상 줄바꿈(`overflow-wrap: break-word`)을 합니다. CSS에서 이 비상
+    /// 줄바꿈은 min-content에 들어가지 않으므로, 줄바꿈 기회(같은 엔진의 [`line_break_opportunities`], 배치와 같은 옵션)에서
+    /// 끝나지 않은 줄을 다음 줄과 이어 붙인 단위 중 가장 넓은 것을 돌려줍니다. `content`는 배치한 Text 내용입니다.
+    pub(crate) fn min_content_width(&self, content: &str) -> Option<f32> {
+        let options = line_break_options()?;
+        let paragraphs: Vec<&str> = content.split('\n').collect();
+        let mut opportunities: Option<(usize, std::collections::HashSet<usize>)> = None;
+        let (mut widest, mut unit) = (0i64, 0i64);
+        for line in &self.layout.lines {
+            let text = paragraphs.get(line.paragraph)?;
+            if opportunities.as_ref().map(|(p, _)| *p) != Some(line.paragraph) {
+                widest = widest.max(unit);
+                unit = 0;
+                let offsets = line_break_opportunities(text, &options)
+                    .into_iter()
+                    .map(|b| b.offset)
+                    .collect();
+                opportunities = Some((line.paragraph, offsets));
+            }
+            unit += i64::from(line.width.raw());
+            let ends_unit = line.range.end >= text.len()
+                || opportunities
+                    .as_ref()
+                    .is_some_and(|(_, o)| o.contains(&line.range.end));
+            if ends_unit {
+                widest = widest.max(unit);
+                unit = 0;
+            }
+        }
+        Some(px(TextUnit::from_i64(widest.max(unit)).ok()?))
     }
 
     /// 문단 경계를 넘는 selection을 visual rect로 반환합니다.
@@ -285,6 +329,22 @@ impl FontCache {
         table: &DocumentTextStyles,
         modifiers: Option<&ModifierStack>,
         engine: &mut IncrementalTextLayout,
+    ) -> Option<(DocumentText, Size2, Transform2D)> {
+        self.layout_input_width(root, id, payload, table, modifiers, engine, None)
+    }
+
+    /// [`Self::layout_input`]에 줄 너비(`max_width`, 없으면 줄바꿈 없음)를 더한 것입니다. layout 흐름의 Text 측정과
+    /// 그리기가 이 함수 하나를 씁니다(ADR-0134 결정 1).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn layout_input_width(
+        &mut self,
+        root: &Path,
+        id: StableId,
+        payload: &TextPayload,
+        table: &DocumentTextStyles,
+        modifiers: Option<&ModifierStack>,
+        engine: &mut IncrementalTextLayout,
+        max_width: Option<TextUnit>,
     ) -> Option<(DocumentText, Size2, Transform2D)> {
         let mut transform = Transform2D::identity();
         let mut modifier_fill = None;
@@ -467,9 +527,9 @@ impl FontCache {
         let request = LayoutRequest {
             paragraphs: &specs,
             styles: &styles,
-            line_break: &LineBreakOptions::new(LanguageTag::parse("und").ok()?),
+            line_break: &line_break_options()?,
             target_profile: TargetProfileKey(0),
-            max_width: None,
+            max_width,
             paragraph_spacing: TextUnit::ZERO,
             text_box: TextBox::default(),
         };

@@ -109,7 +109,7 @@ fn dropping_inside_reorders_with_one_move_node() {
     let (_dir, mut w) = flow_window("flow-reorder", "flex");
     select(&mut w, &[30]);
     let s = scene(&w);
-    let l = CanvasLayout::current(&w).unwrap();
+    let l = CanvasLayout::current(&w, &mut crate::canvas::CanvasCache::default()).unwrap();
     assert_eq!(l.world_box(sid(31)), Some([30., 20., 20., 20.]));
     let before = history_len(&w);
     let drag = FlowDrag::begin(&w, &s, &l, [20., 30.], None).unwrap();
@@ -155,7 +155,7 @@ fn dropping_inside_reorders_with_one_move_node() {
     // 같은 자리에 놓으면 기록하지 않습니다.
     select(&mut w, &[31]);
     let s = scene(&w);
-    let l = CanvasLayout::current(&w).unwrap();
+    let l = CanvasLayout::current(&w, &mut crate::canvas::CanvasCache::default()).unwrap();
     let after_select = history_len(&w);
     let drag = FlowDrag::begin(&w, &s, &l, [20., 30.], None).unwrap();
     assert!(!drag
@@ -170,7 +170,7 @@ fn dragging_out_reparents_to_a_free_frame_and_rejects_instances() {
     let (_dir, mut w) = flow_window("flow-out", "flex");
     select(&mut w, &[31]);
     let s = scene(&w);
-    let l = CanvasLayout::current(&w).unwrap();
+    let l = CanvasLayout::current(&w, &mut crate::canvas::CanvasCache::default()).unwrap();
     let drag = FlowDrag::begin(&w, &s, &l, [40., 30.], None).unwrap();
     // Frame 12(200,50 60×40)는 자유 배치 Frame입니다.
     assert_eq!(
@@ -212,7 +212,7 @@ fn grid_explicit_placement_children_are_rejected_and_skipped() {
     crate::canvas::transform::commit(&mut w, explicit, 0).unwrap();
     select(&mut w, &[31]);
     let s = scene(&w);
-    let l = CanvasLayout::current(&w).unwrap();
+    let l = CanvasLayout::current(&w, &mut crate::canvas::CanvasCache::default()).unwrap();
     assert_eq!(
         FlowDrag::begin(&w, &s, &l, [50., 30.], None).unwrap_err(),
         TransformError::Disabled("grid-explicit-placement")
@@ -220,7 +220,7 @@ fn grid_explicit_placement_children_are_rejected_and_skipped() {
     // 자동 배치 30을 끌면 명시 배치 31은 index 계산에서 빠집니다: 자동 형제는 32 하나.
     select(&mut w, &[30]);
     let s = scene(&w);
-    let l = CanvasLayout::current(&w).unwrap();
+    let l = CanvasLayout::current(&w, &mut crate::canvas::CanvasCache::default()).unwrap();
     let drag = FlowDrag::begin(&w, &s, &l, [20., 30.], None).unwrap();
     let FlowUpdate::Inside { index, .. } = drag.update(&w, &s, &l, [105., 65.]) else {
         panic!("컨테이너 안")
@@ -242,7 +242,7 @@ fn free_children_are_not_flow_drags() {
     let (_dir, mut w) = open("flow-free", &canvas_document());
     select(&mut w, &[13]);
     let s = scene(&w);
-    let l = CanvasLayout::current(&w).unwrap();
+    let l = CanvasLayout::current(&w, &mut crate::canvas::CanvasCache::default()).unwrap();
     assert_eq!(
         FlowDrag::begin(&w, &s, &l, [40., 110.], None).unwrap_err(),
         TransformError::Disabled("not-flow-child")
@@ -312,4 +312,17 @@ fn flow_insertion_counts_text_siblings_with_the_published_text_size() {
     let text_key = order_key(&doc, sid(29)).unwrap();
     let rect_key = order_key(&doc, sid(30)).unwrap();
     assert!(text_key < key && key < rect_key, "{key:?}");
+    // 순서를 바꾼 preview도 같은 행 목록 Text 크기로 Text를 다시 그립니다(Text가 옛 자리에 남지 않음, ADR-0134 결정 1).
+    let mut order = doc.children_in_order(sid(11));
+    order.retain(|id| *id != sid(29));
+    order.insert(1, sid(29));
+    let preview = layout.reorder_preview(&doc, sid(11), &order).unwrap();
+    assert_eq!(
+        layout.preview_box(&preview, sid(30)),
+        Some([10., 20., 20., 20.])
+    );
+    assert_eq!(
+        layout.preview_box(&preview, sid(29)),
+        Some([30., 20., 40., 10.])
+    );
 }

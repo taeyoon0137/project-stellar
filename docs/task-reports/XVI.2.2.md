@@ -78,3 +78,29 @@
 - 마지막 scene semantic hash는 이전과 같습니다. 세부와 p99는 ADR-0090 Performance입니다.
 - 검증: `cargo test -p xtask replay` 7 passed. `cargo xtask replay run`(release) 3 scenario 결과 JSON 생성, gate 통과.
 - 남은 한계: Pan은 frame마다 viewport가 바뀌어 전체 compile이며 §6.2 Render Graph 목표(0.75ms)를 넘습니다(ADR-0090 Consequences). 기준 장비(M1 16GB) 측정이 남았습니다.
+
+## 후속 보완 (2026-11-24, 재생 layout을 문서 layout 결과 하나로)
+
+- 이전 "남은 위험" 첫 항목(재생 layout 변환이 Free node만 따로 다루는 이중 경로)을 닫았습니다(ADR-0134 결정 5).
+- 변경 파일:
+  - `tools/xtask/src/replay/layout.rs`: Free node → absolute box 변환과 별도 `IncrementalLayout`을 지웠습니다. 재생은
+    `scene_edits`가 같은 change set으로 갱신한 `DocumentSceneSource::layout()`의 바뀐 상자를 `LayoutRect` 무효화로 옮기고,
+    cold 측정은 `DocumentSceneSource::rebuild_layout`으로 처음부터 다시 배치합니다.
+  - `tools/xtask/src/replay/runner.rs`: `ReplayLayout` 상태를 지우고 위 두 함수를 부릅니다.
+  - `crates/scene/src/document/layout.rs`: `DocumentLayout::rect_changes`·`rect_invalidations`(마지막 갱신에서 위치·크기가
+    바뀐 상자), `DocumentLayout::rebuild`.
+  - `crates/scene/src/document.rs`: `DocumentSceneSource::rebuild_layout`.
+- 흐름 컨테이너 자식·`position`을 명시한 node도 재생 layout 단계가 scene과 같은 배치를 씁니다. 이전 변환은 scene
+  source 위치를 다시 layout 입력으로 넣어 흐름 배치를 보지 못했습니다.
+- 검증: `cargo test -p xtask --lib replay` 12 passed. `cargo test -p stellar-scene --lib document::layout` 16 passed(1 ignored,
+  새 test `rect_changes_name_moved_and_resized_boxes_of_the_last_update`: 너비 변경의 크기·위치 변경 상자, 다시 계산 결과
+  동일).
+- 남은 한계: 선행 XVI.2.1이 `[~]`입니다. T3 구간의 layout 시간은 이제 `scene_edits` 안에 포함됩니다.
+- 검토 재측정(2026-11-24, 다른 작업이 동시에 도는 부하 상태, 기준 장비 아님): `cargo run --release -p xtask -- replay
+  record-suite`로 만든 20개 파일을 시작 커밋(eb09bb43)과 이 작업 head에서 `replay run --gate`로 돌렸습니다.
+  - 26개 scenario 모두 마지막 scene semantic hash가 시작 커밋과 같습니다.
+  - warm scenario의 p50은 시작 커밋과 같은 범위입니다.
+  - cold scenario는 첫 event의 최대값이 약 100ms에서 약 185\~200ms로 늘었습니다. 첫 cold event가 이제 문서 layout을
+    처음부터 계산하기 때문입니다(이전 재생은 Free node를 absolute box로만 넣은 가벼운 layout이었습니다).
+  - gate는 두 커밋 모두 같은 scenario에서 실패합니다(cold `controllable_max`, variant-change p50, 재생 파일이 없는 3종의
+    `no_samples`). 이 작업이 새로 깬 gate 항목은 없습니다.

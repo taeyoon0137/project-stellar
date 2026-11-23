@@ -47,6 +47,8 @@ pub mod instance;
 pub mod keyboard;
 /// Frame 레이아웃 그리드 스냅 선·표시와 픽셀 그리드 (XII.10.20, ADR-0117).
 pub mod layout_grid;
+/// 활성 View layout의 Text 측정·그리기 hook과 컴포넌트 정의 연결 (ADR-0134 결정 1).
+pub mod layout_text;
 /// 줌·팬 입력을 camera에 연결 (XII.10.37, ADR-0117).
 pub mod navigate;
 /// 기존 Path의 벡터 편집 모드 (XII.10.29, ADR-0117).
@@ -145,8 +147,9 @@ type SceneKey = (DocumentRevision, StableId, Option<(u64, u64)>);
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct LibraryOrder(pub(crate) u64);
 
+/// 창별 캔버스 cache: 글꼴, 저장 Text layout, 게시한 행 목록, 컴포넌트 정의 집합(document thread 전용).
 #[derive(Debug)]
-pub(crate) struct CanvasCache {
+pub struct CanvasCache {
     fonts: text::document::FontCache,
     saved_text: text::saved::SavedTextLayouts,
     library_order: LibraryOrder,

@@ -7,8 +7,10 @@
 //!
 //! # 규칙
 //!
-//! - 활성 항목만 OrderKey 순서로 읽습니다. 위치(앞뒤 순서)는 결과에 영향이 없습니다. 효과 적용 순서는 renderer가
-//!   정합니다(ADR-0102 결정 5).
+//! - 활성 항목만 OrderKey 순서로 읽습니다. Shadow·Blur의 CSS 자리(`box-shadow` 또는 `filter` 목록 항목)는 Web 코드
+//!   생성과 같은 규칙 하나(`stellar_layout::effect_order::effect_slots`)로 정해 [`NodeEffects::order`]에 싣습니다(ADR-0134
+//!   결정 3). Frame은 앞에 filter 효과가 없는 Shadow만 `box-shadow`이고, 그 밖의 node Shadow는 `drop-shadow()`입니다.
+//!   합성 pass의 실제 적용 순서는 renderer가 정합니다(ADR-0102 결정 5).
 //! - Opacity: 활성 항목의 곱([`ModifierStack::effective_opacity`], 문서 규칙 그대로).
 //! - Shadow: 활성 항목 전부, OrderKey 순서가 scene 목록 순서(앞이 아래)입니다.
 //! - Blur·Blend: CSS 속성 하나에 대응하므로 활성 항목이 둘 이상이면 평가하지 않습니다([`EffectError::Repeated`]).
@@ -17,6 +19,8 @@
 use stellar_core_types::ids::StableId;
 use stellar_core_types::shadow::{BlurRadius, Shadow};
 use stellar_document::modifier::{ModifierKind, ModifierPayload, ModifierStack};
+
+use stellar_layout::effect_order::{effect_slots, EffectSlot, FilterEffect};
 
 use crate::builder::ModifierPaint;
 use crate::stack::{Opacity, SceneBlendMode};
@@ -45,6 +49,8 @@ pub struct NodeEffects {
     pub blend: SceneBlendMode,
     /// 합성 결과 blur.
     pub layer_blur: BlurRadius,
+    /// 활성 Shadow·Blur의 stack 순서와 CSS 자리(코드 생성과 같은 규칙). Shadow 항목은 `shadows` 순서와 같습니다.
+    pub order: Vec<(FilterEffect, EffectSlot)>,
 }
 
 impl Default for NodeEffects {
@@ -54,6 +60,7 @@ impl Default for NodeEffects {
             opacity: Opacity::OPAQUE,
             blend: SceneBlendMode::Normal,
             layer_blur: BlurRadius::ZERO,
+            order: Vec::new(),
         }
     }
 }
@@ -71,6 +78,12 @@ impl NodeEffects {
     pub fn is_empty(&self) -> bool {
         *self == NodeEffects::default()
     }
+
+    /// `drop-shadow()`(filter 목록 항목)로 놓이는 Shadow가 있는지. Frame에서는 Blur 뒤 Shadow입니다.
+    pub fn has_drop_shadow(&self) -> bool {
+        self.order
+            .contains(&(FilterEffect::Shadow, EffectSlot::Filter))
+    }
 }
 
 /// 효과 modifier 평가 실패.
@@ -82,14 +95,18 @@ pub enum EffectError {
     InvalidValue(ModifierKind),
 }
 
-/// `stack`의 활성 효과 modifier를 평가합니다.
-pub fn evaluate_effects(stack: Option<&ModifierStack>) -> Result<NodeEffects, EffectError> {
+/// `stack`의 활성 효과 modifier를 평가합니다. `boxed`는 상자 요소(Frame)인지입니다(Shadow의 CSS 자리).
+pub fn evaluate_effects(
+    stack: Option<&ModifierStack>,
+    boxed: bool,
+) -> Result<NodeEffects, EffectError> {
     let mut effects = NodeEffects::default();
     let Some(stack) = stack else {
         return Ok(effects);
     };
     let mut blurs = Vec::new();
     let mut blends = Vec::new();
+    let mut filters = Vec::new();
     for entry in stack.active_entries() {
         match entry.payload {
             ModifierPayload::Shadow {
@@ -100,8 +117,12 @@ pub fn evaluate_effects(stack: Option<&ModifierStack>) -> Result<NodeEffects, Ef
                 let radius = BlurRadius::new(blur.get())
                     .map_err(|_| EffectError::InvalidValue(ModifierKind::Shadow))?;
                 effects.shadows.push(Shadow::new(offset, radius, color));
+                filters.push(FilterEffect::Shadow);
             }
-            ModifierPayload::Blur { radius } => blurs.push(radius),
+            ModifierPayload::Blur { radius } => {
+                blurs.push(radius);
+                filters.push(FilterEffect::Blur);
+            }
             ModifierPayload::Blend { mode } => blends.push(mode),
             _ => {}
         }
@@ -123,6 +144,8 @@ pub fn evaluate_effects(stack: Option<&ModifierStack>) -> Result<NodeEffects, Ef
         effects.blend = SceneBlendMode::from_tag(*mode as u8)
             .ok_or(EffectError::InvalidValue(ModifierKind::Blend))?;
     }
+    let slots = effect_slots(filters.iter().copied(), boxed);
+    effects.order = filters.into_iter().zip(slots).collect();
     Ok(effects)
 }
 
@@ -146,4 +169,79 @@ pub fn retain_kinds(
 /// 효과 modifier를 뗀 stack(node 내용 입력 함수가 평가할 부분).
 pub fn without_effects(node: StableId, stack: Option<&ModifierStack>) -> Option<ModifierStack> {
     retain_kinds(node, stack, |kind| !is_effect(kind))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use stellar_core_types::color::{Color, ColorSpace};
+    use stellar_core_types::order_key::OrderKey;
+    use stellar_core_types::value::{FiniteF32, Vec2};
+    use stellar_document::modifier::{ModifierEntry, ModifierId};
+
+    fn sid(n: u64) -> StableId {
+        StableId::new_v7(n, 0, n)
+    }
+
+    fn stack(payloads: Vec<ModifierPayload>) -> ModifierStack {
+        let mut stack = ModifierStack::new(sid(1));
+        for (i, payload) in payloads.into_iter().enumerate() {
+            stack
+                .insert(ModifierEntry {
+                    id: ModifierId::new(sid(100 + i as u64)),
+                    order: OrderKey::from_bytes(vec![0x10 + i as u8]).unwrap(),
+                    kind: payload.kind(),
+                    enabled: true,
+                    payload,
+                })
+                .unwrap();
+        }
+        stack
+    }
+
+    fn shadow() -> ModifierPayload {
+        ModifierPayload::Shadow {
+            color: Color::new(ColorSpace::Srgb, 0., 0., 0., 1.).unwrap(),
+            offset: Vec2::new(2., 3.).unwrap(),
+            blur: FiniteF32::new(4.).unwrap(),
+        }
+    }
+
+    fn blur() -> ModifierPayload {
+        ModifierPayload::Blur {
+            radius: FiniteF32::new(1.5).unwrap(),
+        }
+    }
+
+    #[test]
+    fn effect_order_follows_the_codegen_rule() {
+        // ADR-0134 결정 3: Frame Shadow는 앞에 filter 효과가 없을 때만 box-shadow이고, Blur 뒤면 drop-shadow입니다.
+        let before = evaluate_effects(Some(&stack(vec![shadow(), blur()])), true).unwrap();
+        assert_eq!(
+            before.order,
+            [
+                (FilterEffect::Shadow, EffectSlot::BoxShadow),
+                (FilterEffect::Blur, EffectSlot::Filter)
+            ]
+        );
+        assert!(!before.has_drop_shadow());
+        let after = evaluate_effects(Some(&stack(vec![blur(), shadow()])), true).unwrap();
+        assert_eq!(
+            after.order,
+            [
+                (FilterEffect::Blur, EffectSlot::Filter),
+                (FilterEffect::Shadow, EffectSlot::Filter)
+            ]
+        );
+        assert!(after.has_drop_shadow());
+        // 상자 요소가 아니면 Shadow는 언제나 drop-shadow입니다.
+        let leaf = evaluate_effects(Some(&stack(vec![shadow(), blur()])), false).unwrap();
+        assert!(leaf.has_drop_shadow());
+        // 순서는 정해진 규칙 함수 하나의 결과와 같습니다.
+        assert_eq!(
+            after.order.iter().map(|e| e.1).collect::<Vec<_>>(),
+            effect_slots([FilterEffect::Blur, FilterEffect::Shadow], true)
+        );
+        assert!(evaluate_effects(None, true).unwrap().order.is_empty());
+    }
 }

@@ -439,6 +439,64 @@ fn component_instances_expand_to_virtual_scene_nodes() {
 }
 
 #[test]
+fn flow_child_instances_have_layout_boxes_in_world_bounds() {
+    // ADR-0134 결정 2: 흐름 컨테이너 자식 ComponentInstance는 layout 결과 위치(저장 배치는 뒤 translate)와 크기로 정의
+    // root를 그리고, Fragment인 인스턴스 key의 world 경계는 그 상자입니다.
+    use stellar_document::layout_record::{LayoutLonghand, LayoutRecord};
+    let (library, component) = component_library();
+    let mut model = instance_document(component);
+    let mut record = LayoutRecord::new(sid(10));
+    for (name, value) in [("display", "flex"), ("align-items", "flex-start")] {
+        let longhand = LayoutLonghand::from_name(name).unwrap();
+        record
+            .set(longhand, longhand.parse(value).unwrap())
+            .unwrap();
+    }
+    model.set_layout_record(record).unwrap();
+    fn options(library: &ComponentLibrary) -> SceneSourceOptions<'_> {
+        SceneSourceOptions {
+            library: Some(library),
+            ..SceneSourceOptions::default()
+        }
+    }
+    let built = document_scene_source(&model, sid(10), options(&library)).unwrap();
+    assert!(built.skipped.is_empty(), "{:?}", built.skipped);
+    let bounds = |id: u64| {
+        let b = built.world_bounds(SceneKey::node(sid(id)), None).unwrap();
+        [b.min_x(), b.min_y(), b.width(), b.height()]
+    };
+    // 정의 root 60×30이 intrinsic 크기입니다. 60은 흐름 위치 0, 61은 60에 놓이고 저장 배치 (n, 100)이 translate로 더해집니다.
+    assert_eq!(bounds(60), [60., 100., 60., 30.]);
+    assert_eq!(bounds(61), [121., 100., 60., 30.]);
+    // 교차축 stretch(기본 align-items)는 인스턴스 상자를 늘리고 정의 root도 그 크기로 그립니다(Frame과 같은 규칙).
+    let mut record = model.layout_record(sid(10)).cloned().unwrap();
+    let align = LayoutLonghand::from_name("align-items").unwrap();
+    record.set(align, align.parse("stretch").unwrap()).unwrap();
+    drop(built);
+    model.set_layout_record(record).unwrap();
+    let built = document_scene_source(&model, sid(10), options(&library)).unwrap();
+    let b = built.world_bounds(SceneKey::node(sid(60)), None).unwrap();
+    assert_eq!([b.width(), b.height()], [60., 600.]);
+    match &built
+        .source
+        .get(SceneKey::virtual_node(&[sid(60)], sid(501)))
+        .unwrap()
+        .kind
+    {
+        SourceKind::Frame(input) => assert_eq!(input.size, Size2::new(60., 600.).unwrap()),
+        other => panic!("{other:?}"),
+    }
+    // 자유 배치 인스턴스(흐름 밖)는 저장 배치와 정의 root 크기 그대로입니다.
+    let plain = instance_document(component);
+    let free = document_scene_source(&plain, sid(10), options(&library)).unwrap();
+    let b = free.world_bounds(SceneKey::node(sid(60)), None).unwrap();
+    assert_eq!(
+        [b.min_x(), b.min_y(), b.width(), b.height()],
+        [60., 100., 60., 30.]
+    );
+}
+
+#[test]
 fn variant_visibility_patches_apply_and_others_are_counted() {
     // XI.2.4: View Variant 결과 중 표시 여부 patch를 적용합니다.
     use stellar_core_types::property::PropertyPath;

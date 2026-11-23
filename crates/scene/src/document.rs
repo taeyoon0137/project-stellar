@@ -175,8 +175,28 @@ impl DocumentSceneSource {
         &self.layout
     }
 
-    /// source node의 world 경계(축 정렬). `preview`의 대체 입력이 있으면 그 값으로 셉니다. Fragment·없는 key는
-    /// `None`입니다.
+    /// layout을 처음부터 다시 계산합니다(cache를 버린 측정). 결과 상자는 증분 결과와 같으므로 source는 바꾸지
+    /// 않습니다. 바뀐 상자는 [`DocumentLayout::rect_changes`]에 남습니다.
+    pub fn rebuild_layout<'a>(
+        &mut self,
+        model: &'a DocumentModel,
+        mut options: SceneSourceOptions<'a>,
+    ) -> BTreeSet<StableId> {
+        let visibility = variant_visibility(options.variant);
+        let operands: HashSet<StableId> = self.operand_hosts.keys().copied().collect();
+        let mut measured = HashMap::new();
+        let inputs = LayoutInputs {
+            visibility: &visibility,
+            operands: &operands,
+            library: options.library,
+            text_measure: options.text_measure,
+        };
+        let mut texts = |id| measure_text(model, &mut options, id, &mut measured);
+        self.layout.rebuild(model, &inputs, &mut texts)
+    }
+
+    /// source node의 world 경계(축 정렬). `preview`의 대체 입력이 있으면 그 값으로 셉니다. Fragment(ComponentInstance
+    /// 포함)는 자식 경계의 합이고 자식이 없으면 `None`, 없는 key도 `None`입니다.
     pub fn world_bounds(&self, key: SceneKey, preview: Option<&ScenePreview>) -> Option<Aabb> {
         let kind_of = |key: SceneKey| -> Option<&SourceKind> {
             preview
@@ -189,7 +209,16 @@ impl DocumentSceneSource {
             SourceKind::Path(input) => input.layout_rect,
             SourceKind::Text(input) => Rect::new(Vec2::ZERO, input.size),
             SourceKind::Image(input) => Rect::new(Vec2::ZERO, input.size),
-            SourceKind::Fragment(_) => return None,
+            // Fragment(문서 Fragment, ComponentInstance)는 자기 상자가 없어 자식 경계를 합칩니다. 인스턴스는 정의 root
+            // 하나가 자식이라 그 상자(layout 결과 위치·크기)가 인스턴스 상자입니다(ADR-0134 결정 2).
+            SourceKind::Fragment(_) => {
+                let node = self.source.get(key)?;
+                return node
+                    .children
+                    .iter()
+                    .filter_map(|child| self.world_bounds(*child, preview))
+                    .reduce(|a, b| a.union(&b));
+            }
         };
         Aabb::from_rect(rect).transformed(&self.world_transform(key, preview)?)
     }
@@ -512,18 +541,19 @@ impl<'a, 'o> Converter<'a, 'o> {
         };
         let kind = match payload {
             NodePayload::ComponentInstance(instance) => {
-                let placement = match frame_instance_transform(stack) {
+                // Layout 규칙 인스턴스는 layout 결과 위치와 크기로 정의 root를 그립니다(Frame과 같은 규칙, ADR-0134 결정 2).
+                let (placement, size) = match frame_instance_transform(stack) {
                     Some(stored) => match self.place(id, &stored) {
-                        Ok(Some(placed)) => Some(placed.transform),
-                        Ok(None) => Some(stored),
+                        Ok(Some(placed)) => (Some(placed.transform), Some(placed.size)),
+                        Ok(None) => (Some(stored), None),
                         Err(reason) => {
                             self.skip(key, reason);
                             return None;
                         }
                     },
-                    None => None,
+                    None => (None, None),
                 };
-                return self.instance(id, visible, locked, placement, instance, out);
+                return self.instance(id, visible, locked, placement, size, instance, out);
             }
             NodePayload::Frame(frame) => {
                 if frame.layout_mode.is_some() {
@@ -539,7 +569,7 @@ impl<'a, 'o> Converter<'a, 'o> {
                     self.skip(key, SkipReason::UnsupportedModifiers);
                     return None;
                 }
-                let node_effects = match effects::evaluate_effects(stack) {
+                let node_effects = match effects::evaluate_effects(stack, true) {
                     Ok(node_effects) => node_effects,
                     Err(error) => {
                         self.skip(key, effect_skip(error));
@@ -605,7 +635,7 @@ impl<'a, 'o> Converter<'a, 'o> {
     ) -> Result<SourceNode, SkipReason> {
         let booleans = boolean_modifiers(stack);
         // 합성 효과는 따로 평가하고(ADR-0116 결정 2), 내용 입력 함수에는 효과·Boolean을 뗀 stack을 넘깁니다.
-        let node_effects = effects::evaluate_effects(stack).map_err(effect_skip)?;
+        let node_effects = effects::evaluate_effects(stack, false).map_err(effect_skip)?;
         let filtered = content_stack(id, stack);
         let stack = filtered.as_ref();
         // Layout 규칙 node는 결과 상자 원점 뒤에 저장 transform을 합성하고 크기를 결과 크기로 둡니다(ADR-0125).
@@ -735,13 +765,16 @@ impl<'a, 'o> Converter<'a, 'o> {
         }
     }
 
-    /// ComponentInstance의 가상 subtree. 인스턴스 key는 Fragment입니다.
+    /// ComponentInstance의 가상 subtree. 인스턴스 key는 Fragment입니다. `size`가 있으면 정의 root를 그 크기(layout 결과)로
+    /// 그립니다.
+    #[allow(clippy::too_many_arguments)]
     fn instance(
         &mut self,
         id: StableId,
         visible: bool,
         locked: bool,
         placement: Option<Transform2D>,
+        size: Option<Size2>,
         _payload: &stellar_document::component::instance::ComponentInstancePayload,
         out: &mut Vec<(SceneKey, SourceNode)>,
     ) -> Option<SceneKey> {
@@ -763,11 +796,12 @@ impl<'a, 'o> Converter<'a, 'o> {
         };
         let mut virtual_nodes = Vec::new();
         let mut skipped = Vec::new();
-        let root = expand(
+        let root = expand_node(
             &expansion,
             &expansion.root(),
             id,
             Some(placement),
+            size,
             &mut virtual_nodes,
             &mut skipped,
         );
@@ -801,6 +835,19 @@ pub fn expand(
     out: &mut Vec<(SceneKey, SourceNode)>,
     skipped: &mut Vec<(SceneKey, SkipReason)>,
 ) -> Option<SceneKey> {
+    expand_node(expansion, id, instance, placement, None, out, skipped)
+}
+
+/// [`expand`]에 정의 root 크기 대체(`root_size`, 인스턴스 layout 결과 크기)를 더한 것.
+fn expand_node(
+    expansion: &InstanceExpansion<'_>,
+    id: &ExpandedNodeId,
+    instance: StableId,
+    placement: Option<Transform2D>,
+    root_size: Option<Size2>,
+    out: &mut Vec<(SceneKey, SourceNode)>,
+    skipped: &mut Vec<(SceneKey, SkipReason)>,
+) -> Option<SceneKey> {
     let key = match id {
         ExpandedNodeId::Virtual { instances, source } => SceneKey::virtual_node(instances, *source),
         ExpandedNodeId::Owned(node) => SceneKey::node(*node),
@@ -826,7 +873,12 @@ pub fn expand(
             // 정의 root는 정의의 캔버스 원점을 인스턴스 배치로 바꿉니다(캔버스 행과 같은 규칙).
             let frame = match node.definition_node() {
                 Some(definition) => match placed_free_frame(definition, placement) {
-                    Some(frame) => frame,
+                    Some(mut frame) => {
+                        if let Some(size) = root_size {
+                            frame.size = size;
+                        }
+                        frame
+                    }
                     None => {
                         skipped.push((key, SkipReason::LayoutNotEvaluated));
                         return None;
@@ -935,8 +987,10 @@ fn boolean_modifiers(stack: Option<&ModifierStack>) -> Vec<(BooleanOp, Vec<Stabl
         .collect()
 }
 
-/// node 내용 입력 함수가 평가할 stack: Boolean과 합성 효과 항목을 뺍니다(ADR-0084 결정 7, ADR-0116 결정 2).
-fn content_stack(node: StableId, stack: Option<&ModifierStack>) -> Option<ModifierStack> {
+/// node 내용 입력 함수가 평가할 stack: Boolean과 합성 효과 항목을 뺍니다(ADR-0084 결정 7, ADR-0116 결정 2). Text hook이
+/// 받는 stack이 이것이므로, node id로 Text를 재는 측정 hook(`SceneSourceOptions::text_measure`)도 이 함수로 같은 stack을
+/// 만듭니다.
+pub fn content_stack(node: StableId, stack: Option<&ModifierStack>) -> Option<ModifierStack> {
     effects::retain_kinds(node, stack, |kind| {
         kind != ModifierKind::Boolean && !effects::is_effect(kind)
     })

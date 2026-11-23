@@ -57,7 +57,7 @@ fn start_anchor_inset_moves_with_one_history_entry() {
         &[("position", "absolute"), ("left", "15px"), ("top", "5px")],
     );
     select(&mut w, &[30]);
-    let layout = CanvasLayout::current(&w).unwrap();
+    let layout = CanvasLayout::current(&w, &mut crate::canvas::CanvasCache::default()).unwrap();
     // layout 결과 위치: 부모 원점(10, 20) + inset(15, 5).
     assert_eq!(layout.world_box(sid(30)), Some([25., 25., 20., 20.]));
     let drag = InsetDrag::begin(&w, &layout).unwrap();
@@ -71,7 +71,7 @@ fn start_anchor_inset_moves_with_one_history_entry() {
     assert_eq!(record_value(&w, "left"), Some(LayoutValue::Length(25.)));
     assert_eq!(record_value(&w, "top"), Some(LayoutValue::Length(9.)));
     assert_eq!(record_value(&w, "right"), None);
-    let after = CanvasLayout::current(&w).unwrap();
+    let after = CanvasLayout::current(&w, &mut crate::canvas::CanvasCache::default()).unwrap();
     assert_eq!(after.world_box(sid(30)), Some([35., 29., 20., 20.]));
     // 저장 transform은 바꾸지 않았습니다(이동은 inset만).
     let stack = model(&w).modifier_stack(sid(30)).unwrap();
@@ -90,7 +90,7 @@ fn end_stretch_and_percentage_anchors_follow_css_directions() {
     // 끝 anchor: right는 반대 방향, top·bottom 모두 auto면 static position에서 top px.
     let (_dir, mut w) = inset_window("inset-end", &[("position", "absolute"), ("right", "10px")]);
     select(&mut w, &[30]);
-    let layout = CanvasLayout::current(&w).unwrap();
+    let layout = CanvasLayout::current(&w, &mut crate::canvas::CanvasCache::default()).unwrap();
     let drag = InsetDrag::begin(&w, &layout).unwrap();
     assert!(drag.commit(&mut w, [5., 3.]).unwrap());
     assert_eq!(record_value(&w, "right"), Some(LayoutValue::Length(5.)));
@@ -107,7 +107,7 @@ fn end_stretch_and_percentage_anchors_follow_css_directions() {
         ],
     );
     select(&mut w, &[30]);
-    let layout = CanvasLayout::current(&w).unwrap();
+    let layout = CanvasLayout::current(&w, &mut crate::canvas::CanvasCache::default()).unwrap();
     let drag = InsetDrag::begin(&w, &layout).unwrap();
     assert!(drag.commit(&mut w, [10., 0.]).unwrap());
     assert_eq!(record_value(&w, "left"), Some(LayoutValue::Percentage(20.)));
@@ -118,7 +118,7 @@ fn end_stretch_and_percentage_anchors_follow_css_directions() {
 fn nodes_without_explicit_absolute_position_are_not_inset_drags() {
     let (_dir, mut w) = inset_window("inset-free", &[("left", "5px")]);
     select(&mut w, &[30]);
-    let layout = CanvasLayout::current(&w).unwrap();
+    let layout = CanvasLayout::current(&w, &mut crate::canvas::CanvasCache::default()).unwrap();
     assert_eq!(
         InsetDrag::begin(&w, &layout).unwrap_err(),
         TransformError::Disabled("not-absolute")
