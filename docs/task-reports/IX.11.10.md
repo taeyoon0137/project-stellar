@@ -54,6 +54,8 @@
 - `FramePayload::border`(`crates/document/src/frame.rs`)를 4변 구조로 바꾸는 일과 chunk 연결, `frame_metadata`의 0x0105 `longhands` 지정은 이 lane 소유 밖입니다. 이 필드를 읽는 crate(semantic-diff·scene·runtime·codegen·ops·commands·ffi)도 함께 바뀌어야 합니다.
 - 레이아웃 엔진 border 입력: `stellar_layout`은 `border: 0`을 고정 값으로 둡니다. `BorderSides::layout_declarations`가 변별 computed `border-*-width` 선언을 주지만 엔진·`style_from_declarations`가 받지 않습니다(`crates/layout` 소유 밖).
 - 기본값 세트(`css::style_defaults`)에 테두리 longhand 항목이 없습니다. 테두리는 payload 값이 언제나 명시 값이라 지금은 필요 없지만, 희소 저장으로 바꾸면 `css` 세트 initial(`medium none currentcolor`)을 더해야 합니다.
+  - (2026-11-23 style-defaults-finish 갱신) 세트 표에 테두리 열두 longhand가 들어갔습니다(IX.11.24, ADR-0115 결정 1). 값은 저자 스타일이 없을 때의 계산값(`0px none #000000`)이고 `react-native`는 style `solid`입니다.
+  - step 등록 조건은 ADR-0115 결정 5입니다(scene의 레이아웃 결과 그리기, Frame payload 4변 타입 교체).
 - step은 `PRODUCT_STEPS`에 등록하지 않았습니다(IX.11.9와 같은 시점에 1→2 묶음으로 등록).
 
 ## 남은 위험

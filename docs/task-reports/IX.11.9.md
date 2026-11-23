@@ -42,6 +42,8 @@
 
 - step을 `PRODUCT_STEPS`에 넣지 않았습니다. scene이 아직 layout 결과 위치로 그리지 않아, 켜면 옮긴 Frame이 원점에
   그려집니다.
+  - (2026-11-23 style-defaults-finish 재확인) `crates/scene`은 여전히 `stellar-layout`에 의존하지 않습니다. 등록 조건과
+    1→2 묶음 순서는 ADR-0115 결정 5에 적었습니다.
 
 ## 남은 위험 / 한계
 
