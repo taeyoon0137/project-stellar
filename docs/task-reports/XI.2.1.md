@@ -63,3 +63,4 @@
   - `dirty::tests::ancestor_geometry_of_an_operand_dirties_the_boolean_result`: 조상 geometry·layout 이동, 조상 paint class, operand 자신의 paint.
   - `scene_source::tests::ancestor_move_of_an_operand_puts_the_host_in_the_dirty_set`: 실제 Frame transform command에서 Frame은 Paint, host는 Geometry.
 - 검증: `cargo test -p stellar-scene dirty` 6 passed, `cargo test -p stellar-runtime --lib scene_source` 10 passed.
+- 검토 보완: operand 조상 표를 "operand → 조상 목록"에서 "조상 → host 목록"으로 뒤집었습니다. 이전 구현은 dirty node마다 operand 전체와 그 조상 목록을 훑어(dirty 수 × operand 수 × 깊이) 많은 node를 한 번에 옮길 때 scene 단계 비용이 커질 수 있었습니다. 이제 `descendant_dependents`는 표 조회 한 번입니다. 결과는 같고, 위 두 테스트가 그대로 통과합니다.
