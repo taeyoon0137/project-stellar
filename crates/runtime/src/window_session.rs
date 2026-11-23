@@ -981,6 +981,8 @@ pub struct ProjectWindowSession {
     /// 외부 writer 변경과 로컬 편집을 병합하지 못한 디스크 관찰값과 그 이유(XIII.3.4, ADR-0110 결정 2). 같은 디스크
     /// 관찰값이면 stale 다음 할 일이 두 선택지입니다.
     external_conflict: Option<(DiskMark, crate::reconcile::ExternalConflict)>,
+    /// 문서를 연 뒤 lock 기준으로 로드한 외부 library(XV.5.5, ADR-0127 결정 1).
+    libraries: std::sync::Arc<crate::library::WindowLibraries>,
 }
 
 /// 저장 잠금 디렉터리 공급자. 기본은 OS 사용자 데이터의 공용 잠금 디렉터리입니다.
@@ -1145,6 +1147,8 @@ impl ProjectWindowSession {
         let mut session = ProjectWindowSession::empty(identity, window);
         session.lock_dir = lock_dir;
         session.adopt(disk, DocumentRevision(0), None);
+        // 문서를 연 뒤 외부 library를 로드합니다. 실패하지 않으며 문제는 진단으로 남습니다(XV.5.5).
+        session.reload_libraries();
         if reconcile {
             if let Err(error) = session.reconcile() {
                 eprintln!("Stellar text source reconcile: {error}");
@@ -1218,6 +1222,7 @@ impl ProjectWindowSession {
             lock_dir: LockDir::default(),
             reconcile_pending: false,
             external_conflict: None,
+            libraries: Default::default(),
         }
     }
 
@@ -1581,6 +1586,23 @@ impl ProjectWindowSession {
         self.loaded
             .as_ref()
             .map_or(0, |loaded| loaded.manifest.generation)
+    }
+
+    /// 문서를 연 뒤 로드한 외부 library(열기 진단·사전 검사, XV.5.5).
+    pub fn libraries(&self) -> &crate::library::WindowLibraries {
+        &self.libraries
+    }
+
+    /// 외부 library를 OS 기본 cache에서 다시 로드합니다(lock·cache가 바뀐 뒤).
+    pub fn reload_libraries(&mut self) {
+        self.libraries = std::sync::Arc::new(crate::library::WindowLibraries::open(
+            self.identity.root_path(),
+        ));
+    }
+
+    /// 지정한 library 상태를 씁니다(시험·cache 위치를 아는 호출자).
+    pub fn set_libraries(&mut self, libraries: crate::library::WindowLibraries) {
+        self.libraries = std::sync::Arc::new(libraries);
     }
 
     /// 작업 문서에 transaction을 실행하고 이 창 history에 기록합니다. 작업 문서가 없으면

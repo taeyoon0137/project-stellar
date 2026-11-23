@@ -375,6 +375,7 @@ dependencies = [
  "stellar-assets",
  "stellar-codegen",
  "stellar-commands",
+ "stellar-dependencies",
  "stellar-document",
  "stellar-export",
  "stellar-git-porcelain",

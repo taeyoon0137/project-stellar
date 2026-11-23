@@ -2,7 +2,7 @@
 
 - WBS: XV.5.5
 - 작업명: missing cache/offline entry는 library resource unavailable diagnostic을 만들고 project 기본 데이터는 읽기 가능
-- 상태: 부분 완료 (`[~]`) — 2026-11-24 library-finish 비판 검토, 아래 "검토 (2026-11-24, library-finish 비판 검토)" 절: `open_project_libraries`는 생겼지만 제품 열기 경로(창 session·CLI·MCP)가 아직 부르지 않아 재판정 finding이 남았습니다. 이전 기록: 완료 (`[x]`) — 2026-11-23 library-finish, 아래 "작업 (2026-11-23, library-finish)" 절. 이전 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — library 부분 로드와 진단은 완료했지만 프로젝트 열기 경로에 연결하지 않았습니다(9A 리뷰 P2).
+- 상태: 완료 (`[x]`) 후보 — 2026-11-24 library-wire, 아래 "작업 (2026-11-24, library-wire)" 절: 창 session·CLI·MCP 열기 경로가 `open_project_libraries`를 부르고 진단을 진단 index에 싣습니다. 원장 판정은 통합 때 정합니다. 이전 기록: 부분 완료 (`[~]`) — 2026-11-24 library-finish 비판 검토, 아래 "검토 (2026-11-24, library-finish 비판 검토)" 절: `open_project_libraries`는 생겼지만 제품 열기 경로(창 session·CLI·MCP)가 아직 부르지 않아 재판정 finding이 남았습니다. 이전 기록: 완료 (`[x]`) — 2026-11-23 library-finish, 아래 "작업 (2026-11-23, library-finish)" 절. 이전 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — library 부분 로드와 진단은 완료했지만 프로젝트 열기 경로에 연결하지 않았습니다(9A 리뷰 P2).
 - 선행: XV.3.3(`[x]`), III.2.4(`[x]`)
 
 ## 필수 실행 환경
@@ -160,3 +160,48 @@
   부분 열기 계약을 확인합니다. 계약 자체는 맞습니다.
 - 남은 조건: 창 session(`stellar-runtime`)과 CLI·MCP 열기 경로가 문서를 연 뒤 `open_project_libraries`를 부르고, 그 진단을 열기 결과
   (진단 index, XXV.2.1)에 싣습니다. 소유 경로(runtime·ops·tools)는 이 lane 밖입니다.
+
+## 작업 (2026-11-24, library-wire): 창 session·CLI·MCP 열기 경로 연결과 진단 index
+
+- 결정: [ADR-0127](../adr/ADR-0127-library-product-paths-token-companion.md) 결정 1·2·6.
+- 제품 cache·keyer: `crates/ops/src/library.rs`의 `LibraryCache::os_default`가 OS 사용자 데이터 `xyz.taeyoon.stellar/library-cache`를
+  제품 keyer(`ProductKeyer`: cache root 비밀 key 파일의 HMAC-SHA256, 소유자 전용 `0600`)로 엽니다. 읽기 열기는 파일을 만들지 않습니다.
+- 열기: `open_libraries`·`open_libraries_default`는 lock을 먼저 읽고(없으면 cache를 건드리지 않음) `open_project_libraries`를
+  부릅니다. 실패하지 않습니다. `ProductLibraries::contribution`이 사용할 수 없는 library node(`sources::libraries`)와 lock·cache 문제를
+  진단 index 기여 하나(origin `libraries`, `MissingLibrary`)로 바꿉니다.
+- CLI `stellar diagnose`·MCP `document.diagnostics`: 둘이 같이 쓰는 `stellar_ops::integrity::diagnose_snapshot`이 문서 진단 뒤
+  `open_libraries_default(snapshot.root()).submit_to(engine)`을 부릅니다(`crates/ops/src/lib.rs` 한 줄).
+- 창 session: `ProjectWindowSession::load`가 문서를 연 뒤 `reload_libraries`로 `stellar_runtime::library::WindowLibraries`를 만들고
+  `libraries()`로 냅니다(`crates/runtime/src/library.rs`, `window_session.rs` 필드·열기 한 줄·접근자). `WindowLibraries::diagnostics`는
+  CLI·MCP와 같은 기여입니다.
+- crate graph: `stellar-ops` 허용 의존에 `stellar-dependencies`를 더했습니다(`tools/xtask/src/crate_graph.rs`,
+  `docs/architecture/crate-dependency-graph.md`).
+
+### 변경 파일
+
+- `crates/ops/src/library.rs`(신규), `crates/ops/src/lib.rs`, `crates/ops/Cargo.toml`, `Cargo.lock`
+- `crates/runtime/src/library.rs`(신규), `crates/runtime/src/lib.rs`, `crates/runtime/src/window_session.rs`
+- `tools/xtask/src/crate_graph.rs`, `docs/architecture/crate-dependency-graph.md`
+- `tests/integration/tests/library_common/product.rs`(신규), `tests/integration/tests/library_common/mod.rs`,
+  `tests/integration/tests/library_product_open.rs`(신규)
+
+### 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-ops --lib library::` | 0 — 5 passed(HMAC RFC 4231 벡터 2개, key 생성·재사용·`0600`·손상 거부, 읽기 열기가 파일을 만들지 않음, lock 없음 = 진단 0, 손상 lock = `library-lock/invalid` 오류 1건) |
+| `cargo test -p stellar-integration-tests --test library_product_open` | 0 — 1 passed |
+| `cargo xtask validate-crate-graph` | 0 |
+
+| 검사 | 결과 |
+|---|---|
+| offline 기기(lock: ds·chips, 제품 기본 cache: ds만): `diagnose_snapshot` 문서 1개 검사·읽기 실패 0, `MissingLibrary` 1건(`library-unavailable/missing-cache-entry`, 경고, 프로젝트 단위, origin `libraries`, subject에 chips id, URL 원문 없음), index 집계 1 | 통과 |
+| 창 session 열기: 문서 열림, ds snapshot 1개, chips `MissingCacheEntry` 1건, `diagnostics()`가 CLI·MCP 진단과 같음 | 통과 |
+| lock 손상: 두 경로 모두 문서는 열리고 library 0개, 진단은 `library-lock/invalid` 하나 | 통과 |
+
+### 남은 위험 / 한계
+
+- 앱 진단 index·UI 표시 연결은 UI 재설계 때 합니다. 열린 창은 lock·cache 변경을 자동으로 다시 로드하지 않습니다(`reload_libraries`).
+- 문서가 외부 참조를 저장하지 않아(XV.5.2 차이) 사용할 수 없는 library의 resource를 가리키는 문서 참조 진단(`sources::library_refs`)은
+  만들지 않습니다. 프로젝트 단위 node 진단만 있습니다.
+- 제품 materialize 명령(lock 쓰기·cache 받기)은 아직 없습니다. 시험은 제품 keyer로 entry store를 직접 materialize합니다.

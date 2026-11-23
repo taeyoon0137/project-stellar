@@ -2,7 +2,7 @@
 
 - WBS: XXV.2.1
 - 작업명: OrphanedBinding, missing token·font·asset·library, invalid accessibility, target unsupported, migration warning을 공통 DiagnosticIndex로 집계
-- 상태: 구현 완료. 선행 XV.5.5가 `[~]`라 통합 판정 때 계획 1.2 규칙 4를 적용해야 합니다.
+- 상태: 구현 완료 — 2026-11-24 library-wire, 아래 "작업 (2026-11-24, library-wire)" 절: library cache 생산자를 `diagnose_snapshot`과 창 session에 연결했습니다. 선행 XV.5.5 판정은 통합 때 정합니다. 이전 기록: 구현 완료. 선행 XV.5.5가 `[~]`라 통합 판정 때 계획 1.2 규칙 4를 적용해야 합니다.
 - 결정: ADR-0095 결정 1·2·7
 
 ## 필수 실행 환경
@@ -68,3 +68,13 @@
   cache·binding 저장소 입력을 snapshot에서 만드는 경로가 생기면 `stellar_ops::integrity::diagnose_snapshot`에 연결해야
   합니다(ADR-0095 결정 7).
 - 앱 runtime(문서 thread)에는 아직 연결하지 않았습니다(UI 재설계 때).
+
+## 작업 (2026-11-24, library-wire): library cache 생산자 연결
+
+- 결정: [ADR-0127](../adr/ADR-0127-library-product-paths-token-companion.md) 결정 2. "남은 위험"의 library cache 항목을 처리했습니다.
+- `stellar_ops::integrity::diagnose_snapshot`(CLI `stellar diagnose`·MCP `document.diagnostics`)이 OS 기본 library cache로 lock 기준
+  부분 열기를 실행하고 그 결과(`ProductLibraries::contribution`: 사용할 수 없는 library node, lock·cache 문제)를 프로젝트 단위 scope
+  `libraries`로 진단 index에 넣습니다. 창 session(`stellar_runtime::library::WindowLibraries::diagnostics`)도 같은 기여입니다.
+- 검증: `cargo test -p stellar-integration-tests --test library_product_open` 통과 — offline missing fixture에서 `MissingLibrary`
+  집계 1(`summary().kind`), 손상 lock은 `library-lock/invalid` 1(XV.5.5 보고서 "작업 (2026-11-24, library-wire)" 절).
+- 남은 일: asset store·font registry·접근성 tree·Target Profile 입력과 앱 runtime 진단 index 연결은 그대로 남았습니다.
