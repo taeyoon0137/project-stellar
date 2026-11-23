@@ -18,6 +18,8 @@ pub mod trace_schema;
 /// 상호작용 성능 예산 reader (XVI.4.1).
 pub mod budget;
 
+/// 성능 sample analyzer와 release gate (XVI.4.2~XVI.4.4).
+pub mod analyzer;
 
 
 /// 민감 데이터(프로젝트 내용·텍스트·경로) 래퍼.
