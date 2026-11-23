@@ -240,7 +240,7 @@ mod tests {
     use super::*;
     use crate::engine::compute_layout;
     use crate::input::LayoutNode;
-    use crate::test_support::{id, key, len};
+    use crate::test_support::{fixed, id, key};
 
     /// 너비 `width`인 자식 하나를 가진 입력.
     fn input(width: f32) -> LayoutInput {
@@ -248,9 +248,9 @@ mod tests {
             id(1),
             vec![
                 LayoutNode::new(id(1))
-                    .with_fixed_size(len(100.0), len(50.0))
+                    .with_style(fixed(100.0, 50.0))
                     .with_child(id(2), key(1)),
-                LayoutNode::new(id(2)).with_fixed_size(len(width), len(10.0)),
+                LayoutNode::new(id(2)).with_style(fixed(width, 10.0)),
             ],
         )
     }

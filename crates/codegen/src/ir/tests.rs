@@ -55,12 +55,17 @@ fn ir_carries_layout_semantics_state_tokens_and_capability() {
         .filter(|n| n.id != sid(3))
         .all(|n| n.layout.is_some()));
 
-    // layout: root Stack 세로, 자식은 Fragment를 펼친 순서.
+    // layout: root는 세로 flex, 자식은 Fragment를 펼친 순서.
     let root = ir.root();
-    assert!(matches!(
-        root.layout.as_ref().map(|l| &l.container),
-        Some(ContainerLayout::Stack(_))
-    ));
+    assert_eq!(
+        root.layout
+            .as_ref()
+            .map(|l| (l.style.display, l.style.flex_direction)),
+        Some((
+            stellar_layout::style::Display::Flex,
+            stellar_layout::style::FlexDirection::Column
+        ))
+    );
     // ios는 13을 제외: 2, 3(Fragment), 6, 11, 12, 16.
     assert_eq!(root.children.len(), 6);
 

@@ -9,7 +9,7 @@
 //!   bounds. 항상 자신의 bounds `(0, 0, width, height)`를 포함합니다.
 //!
 //! 값은 모두 [`LayoutUnit`] 정수라 유한하며, [`LayoutResult::encode`] bytes가 플랫폼 간 비교
-//! 단위입니다(magic `SLYR`, version 1).
+//! 단위입니다(magic `SLYR`, version 2).
 
 use std::collections::HashMap;
 
@@ -23,12 +23,10 @@ use crate::rounding::LayoutUnit;
 /// 결과 canonical bytes magic.
 const RESULT_MAGIC: &[u8; 4] = b"SLYR";
 /// 결과 canonical bytes version.
-const RESULT_VERSION: u16 = 1;
+const RESULT_VERSION: u16 = 2;
 
 /// 진단 tag.
-const DIAGNOSTIC_MISSING_TARGET: u8 = 0;
-const DIAGNOSTIC_UNDERDETERMINED: u8 = 1;
-const DIAGNOSTIC_HUG_CYCLE: u8 = 2;
+const DIAGNOSTIC_CYCLIC_PERCENTAGE: u8 = 0;
 
 fn decode_axis(r: &mut Reader<'_>) -> Result<Axis, LayoutError> {
     match r.u8()? {
@@ -40,30 +38,16 @@ fn decode_axis(r: &mut Reader<'_>) -> Result<Axis, LayoutError> {
     }
 }
 
-/// 레이아웃을 실패시키지 않는 진단 (X.5.2).
+/// 레이아웃을 실패시키지 않는 진단 (ADR-0076).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LayoutDiagnostic {
-    /// constraint의 sibling target이 같은 부모의 표시되는 자식이 아니어서 그 constraint를 제외했습니다.
-    MissingAnchorTarget {
-        /// constraint를 가진 node.
-        node: StableId,
-        /// 찾지 못한 target.
-        target: StableId,
-    },
-    /// constraint가 한 축의 위치·크기를 다 정하지 못해 fallback(콘텐츠 크기, 위치 0)을 썼습니다(X.5.4).
-    UnderdeterminedConstraint {
-        /// 대상 node.
-        node: StableId,
-        /// 축.
-        axis: Axis,
-    },
-    /// HugContent 순환(X.6.5): `node`의 `Percentage` 크기가 콘텐츠 크기 조상 `ancestor`의 크기에
-    /// 비례하는데 `ancestor`의 크기는 다시 `node`의 측정 기여로 정해집니다(무한 상호 의존).
-    /// 엔진은 `node`가 콘텐츠 크기로 기여하게 해 순환을 끊습니다(백분율 기준이 기여와 달라짐).
-    HugContentCycle {
-        /// 콘텐츠로 크기가 정해지는 조상(Hug node 또는 콘텐츠 기반 track을 가진 Grid).
+    /// 순환 백분율(CSS Sizing 3 §5.2.1, IX.11.5): `node`의 백분율 크기 기준인 `ancestor`의 그 축 크기가 콘텐츠로
+    /// 정해졌습니다. CSS처럼 `ancestor`의 크기 계산에서는 `node`의 백분율을 `auto`로 보고, 정해진 크기로 백분율을
+    /// 다시 해석했습니다. 그래서 `node`가 `ancestor`를 넘치거나 남는 공간이 생길 수 있습니다.
+    CyclicPercentage {
+        /// 크기가 콘텐츠로 정해진 containing block(또는 grid container).
         ancestor: StableId,
-        /// `Percentage` 크기 node.
+        /// 백분율 크기 node.
         node: StableId,
         /// 축.
         axis: Axis,
@@ -73,21 +57,13 @@ pub enum LayoutDiagnostic {
 impl std::fmt::Display for LayoutDiagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LayoutDiagnostic::MissingAnchorTarget { node, target } => write!(
-                f,
-                "node {node}의 anchor target {target}이 같은 부모의 표시되는 형제가 아니라 제외했습니다"
-            ),
-            LayoutDiagnostic::UnderdeterminedConstraint { node, axis } => write!(
-                f,
-                "node {node}의 {axis} constraint가 부족해 fallback 위치·크기를 사용했습니다"
-            ),
-            LayoutDiagnostic::HugContentCycle {
+            LayoutDiagnostic::CyclicPercentage {
                 ancestor,
                 node,
                 axis,
             } => write!(
                 f,
-                "node {node}의 {axis} 백분율 크기와 콘텐츠 크기 조상 {ancestor}가 서로 의존해 콘텐츠 크기로 순환을 끊었습니다"
+                "node {node}의 {axis} 백분율 크기 기준 {ancestor}의 크기가 콘텐츠로 정해져, 백분율을 auto로 보고 측정한 뒤 다시 해석했습니다"
             ),
         }
     }
@@ -178,7 +154,7 @@ impl LayoutResult {
         LayoutResult::with_diagnostics(boxes, Vec::new())
     }
 
-    /// box 목록과 진단으로 결과를 만듭니다(X.5.4). 같은 node의 box가 둘 이상이면 오류입니다.
+    /// box 목록과 진단으로 결과를 만듭니다. 같은 node의 box가 둘 이상이면 오류입니다.
     pub fn with_diagnostics(
         boxes: Vec<LayoutBox>,
         diagnostics: Vec<LayoutDiagnostic>,
@@ -245,22 +221,12 @@ impl LayoutResult {
         w.len(self.diagnostics.len());
         for diagnostic in &self.diagnostics {
             match diagnostic {
-                LayoutDiagnostic::MissingAnchorTarget { node, target } => {
-                    w.u8(DIAGNOSTIC_MISSING_TARGET);
-                    w.id(*node);
-                    w.id(*target);
-                }
-                LayoutDiagnostic::UnderdeterminedConstraint { node, axis } => {
-                    w.u8(DIAGNOSTIC_UNDERDETERMINED);
-                    w.id(*node);
-                    w.u8(axis.index() as u8);
-                }
-                LayoutDiagnostic::HugContentCycle {
+                LayoutDiagnostic::CyclicPercentage {
                     ancestor,
                     node,
                     axis,
                 } => {
-                    w.u8(DIAGNOSTIC_HUG_CYCLE);
+                    w.u8(DIAGNOSTIC_CYCLIC_PERCENTAGE);
                     w.id(*ancestor);
                     w.id(*node);
                     w.u8(axis.index() as u8);
@@ -292,20 +258,11 @@ impl LayoutResult {
         let mut diagnostics = Vec::with_capacity(count);
         for _ in 0..count {
             let diagnostic = match r.u8()? {
-                DIAGNOSTIC_MISSING_TARGET => LayoutDiagnostic::MissingAnchorTarget {
-                    node: r.id()?,
-                    target: r.id()?,
-                },
-                DIAGNOSTIC_UNDERDETERMINED => {
-                    let node = r.id()?;
-                    let axis = decode_axis(&mut r)?;
-                    LayoutDiagnostic::UnderdeterminedConstraint { node, axis }
-                }
-                DIAGNOSTIC_HUG_CYCLE => {
+                DIAGNOSTIC_CYCLIC_PERCENTAGE => {
                     let ancestor = r.id()?;
                     let node = r.id()?;
                     let axis = decode_axis(&mut r)?;
-                    LayoutDiagnostic::HugContentCycle {
+                    LayoutDiagnostic::CyclicPercentage {
                         ancestor,
                         node,
                         axis,

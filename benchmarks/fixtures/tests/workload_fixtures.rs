@@ -94,12 +94,12 @@ fn constraint_heavy_is_solved_by_layout_engine_with_long_chains() {
     let fixture = constraint_heavy(1, NODES).expect("fixture 생성");
     let profile = profile_constraints(&fixture).expect("계측");
     assert_eq!(profile.nodes, NODES);
-    // root 외 모든 node가 constraint로 배치되고 node당 등식이 2.5개 이상.
-    assert_eq!(profile.constrained_nodes, NODES - 1);
-    assert!(profile.constraints_per_node() >= 2.5);
-    // panel마다 길이 32의 sibling 의존 chain(연결 요소).
+    // 모든 node가 위치·크기 longhand를 갖고 node당 2개 이상(CSS 입력, ADR-0076).
+    assert_eq!(profile.constrained_nodes, NODES);
+    assert!(profile.constraints_per_node() >= 2.0);
+    // panel마다 길이 32의 형제 흐름 의존 chain.
     assert!(profile.max_component >= 32);
-    assert!(profile.sibling_constraints >= NODES);
+    assert!(profile.sibling_constraints >= NODES * 31 / 34);
     // 레이아웃 엔진이 모두 배치했고 진단(미해결·underdetermined)이 없습니다.
     assert_eq!(profile.laid_out, NODES);
     assert_eq!(profile.diagnostics, 0);

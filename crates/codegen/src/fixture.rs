@@ -1,7 +1,7 @@
 //! 테스트 전용 resolved View fixture(XXII.1.1~XXII.4.2 공용).
 //!
 //! ```text
-//! 1 Frame(Stack 세로) "화면"                  fill = token surface(P3)
+//! 1 Frame(flex column) "화면"                fill = token surface(P3)
 //! ├ 2 Text "설정"                              text color: 공통 → variant 100 → android×variant 100
 //! ├ 3 Fragment
 //! │ ├ 4 Image(label = 속성 4.3, 읽기 순서 1)   SF Symbol 속성(Apple native)
@@ -12,7 +12,7 @@
 //! │   └ 10 Frame Button("크게")
 //! ├ 11 Frame TextInput(placeholder "메모")
 //! ├ 12 Frame Button("저장", disabled = state 52)  radius 8(ios 12), fill = token accent
-//! ├ 13 Frame(Grid 2열) — ios에서 제외         fill = 확장 범위 sRGB
+//! ├ 13 Frame(grid 2열) — ios에서 제외         fill = 확장 범위 sRGB
 //! │ ├ 15 Text "새 기능"
 //! │ └ 18 Shape(장식)
 //! └ 16 Frame Modal("알림", dismiss 63)
@@ -34,16 +34,12 @@ use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
 use stellar_core_types::property::{PropertyKey, PropertyPath};
 use stellar_core_types::typed_value::TypedValue;
-use stellar_core_types::value::{FiniteF32, Insets, Length, Scalar};
-use stellar_layout::flex::FlexItem;
-use stellar_layout::geometry::Axis;
-use stellar_layout::grid::{GridItem, GridLayout, TrackSize};
-use stellar_layout::input::{
-    ContainerLayout, IntrinsicContent, LayoutContent, LayoutInput, LayoutNode, SizingMode,
+use stellar_core_types::value::{FiniteF32, Insets, Length};
+use stellar_layout::input::{IntrinsicContent, LayoutContent, LayoutInput, LayoutNode};
+use stellar_layout::style::{
+    ContentAlignment, Display, FlexDirection, GridLine, ItemAlignment, LayoutStyle,
+    LengthPercentageAuto, Position, Size, TrackSize,
 };
-use stellar_layout::overlay::{OverlayAlignment, OverlayLayout};
-use stellar_layout::sizing::SizeLimits;
-use stellar_layout::stack::{CrossAlignment, MainAlignment, StackLayout};
 use stellar_target_profile::builtin::{self, properties as p};
 use stellar_target_profile::capability::{CapabilityPropertyId, ContractCode, ElementKind};
 use stellar_target_profile::overrides::{OverrideScope, VariantLayer};
@@ -303,40 +299,33 @@ fn intrinsic(width: f32, height: f32) -> LayoutContent {
     })
 }
 
-fn hug(node: LayoutNode) -> LayoutNode {
-    node.with_sizing(SizingMode::HugContent, SizingMode::HugContent)
+/// CSS 생략값에서 `f`로 바꾼 style.
+fn css(f: impl FnOnce(&mut LayoutStyle)) -> LayoutStyle {
+    let mut style = LayoutStyle::default();
+    f(&mut style);
+    style
 }
 
-fn grow(node: LayoutNode) -> LayoutNode {
-    node.with_flex(FlexItem {
-        grow: Scalar::new(1.0).expect("유한"),
-        shrink: Scalar::new(1.0).expect("유한"),
-        ..FlexItem::default()
-    })
+fn px(value: f32) -> Size {
+    Size::Length(len(value))
 }
 
 fn layout() -> LayoutInput {
-    let mut root_stack = StackLayout::new(Axis::Vertical);
-    root_stack.gap = len(16.0);
-    root_stack.cross_alignment = CrossAlignment::Stretch;
-    let mut row = StackLayout::new(Axis::Horizontal);
-    row.gap = len(8.0);
-    row.cross_alignment = CrossAlignment::Center;
-    let mut chip = StackLayout::new(Axis::Horizontal);
-    chip.main_alignment = MainAlignment::Center;
-    let mut grid = GridLayout::new(
-        vec![
-            TrackSize::Fraction(Scalar::new(1.0).expect("유한")),
-            TrackSize::Fraction(Scalar::new(1.0).expect("유한")),
-        ],
-        Vec::new(),
-    );
-    grid.column_gap = len(8.0);
-
-    let root = LayoutNode::new(sid(1))
-        .with_container(ContainerLayout::Stack(root_stack))
-        .with_padding(inset(24.0, 24.0, 24.0, 24.0))
-        .with_fixed_size(len(390.0), len(844.0));
+    let one = stellar_core_types::value::FiniteF32::new(1.0).expect("유한");
+    let fr = TrackSize::fr_from_zero(one);
+    let row = |s: &mut LayoutStyle| {
+        s.display = Display::Flex;
+        s.column_gap = len(8.0);
+        s.align_items = ItemAlignment::Center;
+    };
+    let root = LayoutNode::new(sid(1)).with_style(css(|s| {
+        s.display = Display::Flex;
+        s.flex_direction = FlexDirection::Column;
+        s.row_gap = len(16.0);
+        s.padding = inset(24.0, 24.0, 24.0, 24.0);
+        s.width = px(390.0);
+        s.height = px(844.0);
+    }));
     let root = [2u8, 4, 5, 6, 11, 12, 13, 16]
         .into_iter()
         .enumerate()
@@ -345,54 +334,83 @@ fn layout() -> LayoutInput {
         });
     let nodes = vec![
         root,
-        hug(LayoutNode::new(sid(2))).with_content(intrinsic(48.0, 28.0)),
-        LayoutNode::new(sid(4)).with_fixed_size(len(64.0), len(64.0)),
-        LayoutNode::new(sid(5)).with_sizing(SizingMode::Fill, SizingMode::Fixed(len(1.0))),
+        LayoutNode::new(sid(2))
+            .with_style(css(|s| {
+                s.align_self = stellar_layout::style::SelfAlignment::Item(ItemAlignment::FlexStart)
+            }))
+            .with_content(intrinsic(48.0, 28.0)),
+        LayoutNode::new(sid(4)).with_style(css(|s| {
+            s.width = px(64.0);
+            s.height = px(64.0);
+        })),
+        LayoutNode::new(sid(5)).with_style(css(|s| s.height = px(1.0))),
         LayoutNode::new(sid(6))
-            .with_container(ContainerLayout::Stack(row))
-            .with_sizing(SizingMode::Fill, SizingMode::HugContent)
+            .with_style(css(row))
             .with_child(sid(7), key(1)),
         LayoutNode::new(sid(7))
-            .with_container(ContainerLayout::Stack(row))
-            .with_sizing(SizingMode::Fill, SizingMode::HugContent)
+            .with_style(css(|s| {
+                row(s);
+                s.flex_grow = one;
+            }))
             .with_child(sid(8), key(1))
             .with_child(sid(10), key(2)),
-        grow(hug(LayoutNode::new(sid(8))))
-            .with_container(ContainerLayout::Stack(chip))
-            .with_padding(inset(12.0, 16.0, 12.0, 16.0))
-            .with_child(sid(9), key(1)),
-        hug(LayoutNode::new(sid(9))).with_content(intrinsic(32.0, 20.0)),
-        grow(hug(LayoutNode::new(sid(10)))).with_padding(inset(12.0, 16.0, 12.0, 16.0)),
-        LayoutNode::new(sid(11))
-            .with_sizing(SizingMode::Fill, SizingMode::Fixed(len(44.0)))
-            .with_padding(inset(8.0, 12.0, 8.0, 12.0)),
-        LayoutNode::new(sid(12))
-            .with_container(ContainerLayout::Overlay(OverlayLayout {
-                horizontal: OverlayAlignment::Center,
-                vertical: OverlayAlignment::Center,
+        LayoutNode::new(sid(8))
+            .with_style(css(|s| {
+                s.display = Display::Flex;
+                s.justify_content = ContentAlignment::Center;
+                s.padding = inset(12.0, 16.0, 12.0, 16.0);
+                s.flex_grow = one;
             }))
-            .with_sizing(SizingMode::Fill, SizingMode::Fixed(len(48.0)))
-            .with_limits(SizeLimits {
-                min_width: Some(len(120.0)),
-                ..SizeLimits::default()
-            }),
+            .with_child(sid(9), key(1)),
+        LayoutNode::new(sid(9)).with_content(intrinsic(32.0, 20.0)),
+        LayoutNode::new(sid(10)).with_style(css(|s| {
+            s.padding = inset(12.0, 16.0, 12.0, 16.0);
+            s.flex_grow = one;
+        })),
+        LayoutNode::new(sid(11)).with_style(css(|s| {
+            s.height = px(44.0);
+            s.padding = inset(8.0, 12.0, 8.0, 12.0);
+        })),
+        LayoutNode::new(sid(12)).with_style(css(|s| {
+            s.height = px(48.0);
+            s.min_width = px(120.0);
+            s.display = Display::Grid;
+            s.justify_items = ItemAlignment::Center;
+            s.align_items = ItemAlignment::Center;
+        })),
         LayoutNode::new(sid(13))
-            .with_container(ContainerLayout::Grid(grid))
-            .with_sizing(SizingMode::Fill, SizingMode::HugContent)
+            .with_style(css(|s| {
+                s.display = Display::Grid;
+                s.grid_template_columns = vec![fr, fr];
+                s.column_gap = len(8.0);
+            }))
             .with_child(sid(15), key(1))
             .with_child(sid(18), key(2)),
-        hug(LayoutNode::new(sid(15)))
-            .with_content(intrinsic(56.0, 20.0))
-            .with_grid(GridItem::at(1, 1, 1, 1)),
-        LayoutNode::new(sid(18))
-            .with_fixed_size(len(24.0), len(24.0))
-            .with_grid(GridItem::at(2, 1, 1, 1)),
+        LayoutNode::new(sid(15))
+            .with_style(css(|s| {
+                s.grid_column_start = GridLine::Line(1);
+                s.grid_row_start = GridLine::Line(1);
+            }))
+            .with_content(intrinsic(56.0, 20.0)),
+        LayoutNode::new(sid(18)).with_style(css(|s| {
+            s.width = px(24.0);
+            s.height = px(24.0);
+            s.grid_column_start = GridLine::Line(2);
+            s.grid_row_start = GridLine::Line(1);
+        })),
         LayoutNode::new(sid(16))
-            .with_sizing(SizingMode::Fixed(len(320.0)), SizingMode::Fixed(len(120.0)))
+            .with_style(css(|s| {
+                s.width = px(320.0);
+                s.height = px(120.0);
+            }))
             .with_child(sid(17), key(1)),
-        hug(LayoutNode::new(sid(17)))
-            .with_content(intrinsic(120.0, 20.0))
-            .with_position(len(16.0), len(16.0)),
+        LayoutNode::new(sid(17))
+            .with_style(css(|s| {
+                s.position = Position::Absolute;
+                s.left = LengthPercentageAuto::Length(len(16.0));
+                s.top = LengthPercentageAuto::Length(len(16.0));
+            }))
+            .with_content(intrinsic(120.0, 20.0)),
     ];
     LayoutInput::new(sid(1), nodes)
 }
@@ -602,7 +620,7 @@ pub fn sid32(n: u32) -> StableId {
 /// 큰 목록 fixture 항목 StableId의 시작값(상태 id와 겹치지 않음).
 const LIST_ITEM_BASE: u32 = 0x0100_0000;
 
-/// root Frame(세로 Stack, 이름 "목록"인 단일 선택 List) 아래 선택 가능한 ListItem Frame `items`개를 둔 fixture입니다.
+/// root Frame(세로 `display: flex`, 이름 "목록"인 단일 선택 List) 아래 선택 가능한 ListItem Frame `items`개를 둔 fixture입니다.
 /// 항목 selected는 상태 `STATE_SIZE`가 항목 StableId와 같은지이고 select 동작이 그 상태를 씁니다(adapter 시간 상한
 /// 검사용).
 pub fn list_fixture(items: u32) -> Fixture {
@@ -620,8 +638,10 @@ pub fn list_fixture(items: u32) -> Fixture {
         nodes,
         ..ViewModel::default()
     };
-    let mut root_layout = LayoutNode::new(root)
-        .with_container(ContainerLayout::Stack(StackLayout::new(Axis::Vertical)));
+    let mut root_layout = LayoutNode::new(root).with_style(css(|s| {
+        s.display = Display::Flex;
+        s.flex_direction = FlexDirection::Column;
+    }));
     for (order, id) in ids.iter().enumerate() {
         root_layout = root_layout.with_child(*id, key(order as u32 + 1));
     }

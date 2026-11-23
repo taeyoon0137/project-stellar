@@ -18,20 +18,22 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 
 use stellar_core_types::ids::StableId;
-use stellar_core_types::value::{Insets, Length, Scalar};
+use stellar_core_types::value::{FiniteF32, Insets, Length};
 use stellar_layout::engine::compute_layout;
 use stellar_layout::geometry::Axis;
-use stellar_layout::grid::{GridItem, GridLayout, TrackSize};
 use stellar_layout::incremental::{IncrementalLayout, LayoutEdit};
-use stellar_layout::input::{ContainerLayout, LayoutContent, LayoutInput, LayoutNode, SizingMode};
+use stellar_layout::input::{LayoutContent, LayoutInput, LayoutNode};
 use stellar_layout::intrinsic::{DefaultMeasurer, MeasuredContent, TextIntrinsic};
 use stellar_layout::output::LayoutResult;
-use stellar_layout::stack::{CrossAlignment, StackLayout};
+use stellar_layout::style::{
+    Display, FlexDirection, GridLine, ItemAlignment, LayoutStyle, LengthPercentageAuto, Position,
+    Size as CssSize, TrackSize,
+};
 use stellar_layout::view::{build_layout_tree, virtual_layout_id, LayoutSource, SourceNode};
 
-const GOLDEN: &str = include_str!("fixtures/component_layout_v1.golden");
+const GOLDEN: &str = include_str!("fixtures/component_layout_v2.golden");
 
-/// fixture 수(검증 기준: 20개).
+/// fixture 수(scene 5 × token 조건 4).
 const FIXTURE_COUNT: usize = 20;
 
 // --- token ---
@@ -115,8 +117,8 @@ impl Condition {
 enum Size {
     Px(f32),
     Tok(Tok),
-    Hug,
-    Fill,
+    Content,
+    Stretch,
 }
 
 /// Button variant 차원.
@@ -129,7 +131,7 @@ enum ButtonSize {
 /// variant 값: 고정 또는 바깥 인스턴스 property에서 drilling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VariantValue<T> {
-    Fixed(Option<T>),
+    Given(Option<T>),
     Prop(&'static str),
 }
 
@@ -141,15 +143,15 @@ struct VariantSelection {
 }
 
 const NO_VARIANT: VariantSelection = VariantSelection {
-    size: VariantValue::Fixed(None),
-    icon_only: VariantValue::Fixed(None),
+    size: VariantValue::Given(None),
+    icon_only: VariantValue::Given(None),
 };
 
 /// def·scene node 본문.
 #[derive(Debug, Clone, PartialEq)]
 enum Body {
-    /// 가로·세로 Stack(gap, 세로 padding, 가로 padding, 너비, 높이).
-    Stack {
+    /// 가로·세로 `display: flex` container(gap, 세로 padding, 가로 padding, 너비, 높이).
+    Flex {
         axis: Axis,
         gap: Tok,
         pad: (Tok, Tok),
@@ -169,9 +171,9 @@ enum Body {
         props: Vec<(&'static str, &'static str)>,
         variant: VariantSelection,
     },
-    /// scene root Free(Fixed 크기).
-    FreeRoot(f32, f32),
-    /// scene root Grid(열 2개 fr, 행 Hug).
+    /// scene root block(`<length>` 너비·높이).
+    BlockRoot(f32, f32),
+    /// scene root grid(열 2개 fr, 행 콘텐츠 크기).
     GridRoot,
 }
 
@@ -242,7 +244,7 @@ fn placed(mut n: Node, place: Place) -> Node {
 }
 
 fn row(gap: Tok, pad: (Tok, Tok), width: Size, height: Size, center: bool) -> Body {
-    Body::Stack {
+    Body::Flex {
         axis: Axis::Horizontal,
         gap,
         pad,
@@ -253,7 +255,7 @@ fn row(gap: Tok, pad: (Tok, Tok), width: Size, height: Size, center: bool) -> Bo
 }
 
 fn column(gap: Tok, pad: (Tok, Tok), width: Size, height: Size) -> Body {
-    Body::Stack {
+    Body::Flex {
         axis: Axis::Vertical,
         gap,
         pad,
@@ -298,7 +300,7 @@ fn definitions() -> HashMap<Comp, Definition> {
                         row(
                             Tok::SpaceS,
                             (Tok::SpaceXs, Tok::SpaceM),
-                            Size::Hug,
+                            Size::Content,
                             Size::Tok(Tok::Control),
                             true,
                         ),
@@ -351,7 +353,7 @@ fn definitions() -> HashMap<Comp, Definition> {
             ],
         },
     );
-    // Toolbar: 너비 Fill, Fragment(leading: back, forward) + title + menu(icon-only).
+    // Toolbar: 너비 채움, Fragment(leading: back, forward) + title + menu(icon-only).
     defs.insert(
         Comp::Toolbar,
         Definition {
@@ -364,8 +366,8 @@ fn definitions() -> HashMap<Comp, Definition> {
                         row(
                             Tok::SpaceM,
                             (Tok::SpaceS, Tok::SpaceS),
-                            Size::Fill,
-                            Size::Hug,
+                            Size::Stretch,
+                            Size::Content,
                             true,
                         ),
                         &[201, 204, 205],
@@ -384,8 +386,8 @@ fn definitions() -> HashMap<Comp, Definition> {
                             Comp::Button,
                             &[("label", "$next")],
                             VariantSelection {
-                                size: VariantValue::Fixed(Some(ButtonSize::Small)),
-                                icon_only: VariantValue::Fixed(None),
+                                size: VariantValue::Given(Some(ButtonSize::Small)),
+                                icon_only: VariantValue::Given(None),
                             },
                         ),
                         &[],
@@ -401,7 +403,7 @@ fn definitions() -> HashMap<Comp, Definition> {
                             &[("label", "Menu")],
                             VariantSelection {
                                 size: VariantValue::Prop("menuSize"),
-                                icon_only: VariantValue::Fixed(Some(true)),
+                                icon_only: VariantValue::Given(Some(true)),
                             },
                         ),
                         &[],
@@ -426,7 +428,7 @@ fn definitions() -> HashMap<Comp, Definition> {
                             Tok::SpaceM,
                             (Tok::SpaceL, Tok::SpaceL),
                             Size::Px(360.0),
-                            Size::Hug,
+                            Size::Content,
                         ),
                         &[301, 302, 303],
                     ),
@@ -447,8 +449,8 @@ fn definitions() -> HashMap<Comp, Definition> {
                         row(
                             Tok::SpaceS,
                             (Tok::SpaceXs, Tok::SpaceXs),
-                            Size::Hug,
-                            Size::Hug,
+                            Size::Content,
+                            Size::Content,
                             false,
                         ),
                         &[304, 305],
@@ -470,8 +472,8 @@ fn definitions() -> HashMap<Comp, Definition> {
                             Comp::Button,
                             &[("label", "$confirm")],
                             VariantSelection {
-                                size: VariantValue::Fixed(Some(ButtonSize::Large)),
-                                icon_only: VariantValue::Fixed(None),
+                                size: VariantValue::Given(Some(ButtonSize::Large)),
+                                icon_only: VariantValue::Given(None),
                             },
                         ),
                         &[],
@@ -499,8 +501,8 @@ fn definitions() -> HashMap<Comp, Definition> {
                         row(
                             Tok::SpaceS,
                             (Tok::SpaceS, Tok::SpaceS),
-                            Size::Fill,
-                            Size::Hug,
+                            Size::Stretch,
+                            Size::Content,
                             true,
                         ),
                         &[401, 402, 403],
@@ -516,7 +518,7 @@ fn definitions() -> HashMap<Comp, Definition> {
                             Comp::Button,
                             &[("label", "$action")],
                             VariantSelection {
-                                size: VariantValue::Fixed(Some(ButtonSize::Small)),
+                                size: VariantValue::Given(Some(ButtonSize::Small)),
                                 icon_only: VariantValue::Prop("actionIconOnly"),
                             },
                         ),
@@ -538,7 +540,7 @@ fn scenes() -> Vec<(&'static str, u64, BTreeMap<u64, Node>)> {
             "button",
             1,
             BTreeMap::from([
-                (1, node("root", Body::FreeRoot(400.0, 200.0), &[2, 3, 4])),
+                (1, node("root", Body::BlockRoot(400.0, 200.0), &[2, 3, 4])),
                 (
                     2,
                     placed(
@@ -555,8 +557,8 @@ fn scenes() -> Vec<(&'static str, u64, BTreeMap<u64, Node>)> {
                                 Comp::Button,
                                 &[],
                                 VariantSelection {
-                                    size: VariantValue::Fixed(Some(ButtonSize::Large)),
-                                    icon_only: VariantValue::Fixed(Some(true)),
+                                    size: VariantValue::Given(Some(ButtonSize::Large)),
+                                    icon_only: VariantValue::Given(Some(true)),
                                 },
                             ),
                             &[],
@@ -573,8 +575,8 @@ fn scenes() -> Vec<(&'static str, u64, BTreeMap<u64, Node>)> {
                                 Comp::Button,
                                 &[],
                                 VariantSelection {
-                                    size: VariantValue::Fixed(Some(ButtonSize::Small)),
-                                    icon_only: VariantValue::Fixed(Some(true)),
+                                    size: VariantValue::Given(Some(ButtonSize::Small)),
+                                    icon_only: VariantValue::Given(Some(true)),
                                 },
                             ),
                             &[],
@@ -596,7 +598,7 @@ fn scenes() -> Vec<(&'static str, u64, BTreeMap<u64, Node>)> {
                             Tok::SpaceM,
                             (Tok::SpaceM, Tok::SpaceM),
                             Size::Px(480.0),
-                            Size::Hug,
+                            Size::Content,
                         ),
                         &[2, 3],
                     ),
@@ -622,7 +624,7 @@ fn scenes() -> Vec<(&'static str, u64, BTreeMap<u64, Node>)> {
             "card",
             1,
             BTreeMap::from([
-                (1, node("root", Body::FreeRoot(600.0, 400.0), &[2])),
+                (1, node("root", Body::BlockRoot(600.0, 400.0), &[2])),
                 (
                     2,
                     placed(
@@ -651,7 +653,7 @@ fn scenes() -> Vec<(&'static str, u64, BTreeMap<u64, Node>)> {
                             Tok::SpaceXs,
                             (Tok::SpaceS, Tok::SpaceS),
                             Size::Px(320.0),
-                            Size::Hug,
+                            Size::Content,
                         ),
                         &[2, 3, 4],
                     ),
@@ -799,7 +801,7 @@ impl Fixture<'_> {
             values.insert(name, lookup(value));
         }
         let size = match variant.size {
-            VariantValue::Fixed(value) => value,
+            VariantValue::Given(value) => value,
             VariantValue::Prop(name) => match outer.get(name).map(String::as_str) {
                 Some("small") => Some(ButtonSize::Small),
                 Some("large") => Some(ButtonSize::Large),
@@ -807,7 +809,7 @@ impl Fixture<'_> {
             },
         };
         let icon_only = match variant.icon_only {
-            VariantValue::Fixed(value) => value,
+            VariantValue::Given(value) => value,
             VariantValue::Prop(name) => match outer.get(name).map(String::as_str) {
                 Some("") | None => None,
                 Some(_) => Some(true),
@@ -834,12 +836,14 @@ impl Fixture<'_> {
         Ok(resolved)
     }
 
-    fn size(&self, size: Size) -> SizingMode {
+    /// fixture 크기 지정을 CSS 값으로 바꿉니다(속성 모델 4.3절): px·token은 `<length>`, 콘텐츠 크기는
+    /// `fit-content`, 채움은 `auto`(block 부모 안에서 늘어남).
+    fn size(&self, size: Size) -> CssSize {
         match size {
-            Size::Px(px) => SizingMode::Fixed(length(px)),
-            Size::Tok(tok) => SizingMode::Fixed(length(self.condition.token(tok))),
-            Size::Hug => SizingMode::HugContent,
-            Size::Fill => SizingMode::Fill,
+            Size::Px(px) => CssSize::Length(length(px)),
+            Size::Tok(tok) => CssSize::Length(length(self.condition.token(tok))),
+            Size::Content => CssSize::FitContent,
+            Size::Stretch => CssSize::Auto,
         }
     }
 
@@ -871,8 +875,13 @@ impl Fixture<'_> {
             Key::Scene(_) => None,
         };
         let token = |tok: Tok| length(self.condition.token(tok));
+        // 이전 엔진의 flex item 생략값(줄어들지 않음)을 그대로 쓰려고 모든 node에 flex-shrink 0을 둡니다.
+        let base = LayoutStyle {
+            flex_shrink: FiniteF32::ZERO,
+            ..LayoutStyle::default()
+        };
         let mut out = match &node.body {
-            Body::Stack {
+            Body::Flex {
                 axis,
                 gap,
                 pad,
@@ -880,24 +889,34 @@ impl Fixture<'_> {
                 height,
                 center,
             } => {
-                let stack = StackLayout {
-                    gap: token(*gap),
-                    cross_alignment: if *center {
-                        CrossAlignment::Center
-                    } else {
-                        CrossAlignment::Start
-                    },
-                    ..StackLayout::new(*axis)
-                };
                 let (v, h) = (self.condition.token(pad.0), self.condition.token(pad.1));
-                LayoutNode::new(order_id(0))
-                    .with_sizing(self.size(*width), self.size(*height))
-                    .with_padding(Insets::new(v, h, v, h).map_err(|_| "padding")?)
-                    .with_container(ContainerLayout::Stack(stack))
+                let mut style = LayoutStyle {
+                    display: Display::Flex,
+                    flex_direction: match axis {
+                        Axis::Horizontal => FlexDirection::Row,
+                        Axis::Vertical => FlexDirection::Column,
+                    },
+                    align_items: if *center {
+                        ItemAlignment::Center
+                    } else {
+                        ItemAlignment::FlexStart
+                    },
+                    width: self.size(*width),
+                    height: self.size(*height),
+                    padding: Insets::new(v, h, v, h).map_err(|_| "padding")?,
+                    ..base.clone()
+                };
+                match axis {
+                    Axis::Horizontal => style.column_gap = token(*gap),
+                    Axis::Vertical => style.row_gap = token(*gap),
+                }
+                LayoutNode::new(order_id(0)).with_style(style)
             }
-            Body::Square(tok) => {
-                LayoutNode::new(order_id(0)).with_fixed_size(token(*tok), token(*tok))
-            }
+            Body::Square(tok) => LayoutNode::new(order_id(0)).with_style(LayoutStyle {
+                width: CssSize::Length(token(*tok)),
+                height: CssSize::Length(token(*tok)),
+                ..base.clone()
+            }),
             Body::Text(prop) => {
                 let text = match &resolved {
                     Some(resolved) => resolved.props.get(prop).cloned().unwrap_or_default(),
@@ -911,7 +930,11 @@ impl Fixture<'_> {
                     .map(|word| length(word.chars().count() as f32 * char_width))
                     .collect();
                 LayoutNode::new(order_id(0))
-                    .with_sizing(SizingMode::HugContent, SizingMode::HugContent)
+                    .with_style(LayoutStyle {
+                        width: CssSize::FitContent,
+                        height: CssSize::FitContent,
+                        ..base.clone()
+                    })
                     .with_content(LayoutContent::Measured(MeasuredContent::Text(
                         TextIntrinsic {
                             words,
@@ -923,45 +946,59 @@ impl Fixture<'_> {
             }
             Body::Fragment => return Err("Fragment는 box가 아님"),
             Body::Instance { .. } => LayoutNode::new(order_id(0))
-                .with_sizing(SizingMode::HugContent, SizingMode::HugContent)
+                .with_style(LayoutStyle {
+                    width: CssSize::FitContent,
+                    height: CssSize::FitContent,
+                    ..base.clone()
+                })
                 .with_content(LayoutContent::Measured(MeasuredContent::ComponentInstance(
                     Default::default(),
                 ))),
-            Body::FreeRoot(w, h) => {
-                LayoutNode::new(order_id(0)).with_fixed_size(length(*w), length(*h))
-            }
+            Body::BlockRoot(w, h) => LayoutNode::new(order_id(0)).with_style(LayoutStyle {
+                width: CssSize::Length(length(*w)),
+                height: CssSize::Length(length(*h)),
+                ..base.clone()
+            }),
             Body::GridRoot => {
-                let fr = TrackSize::Fraction(Scalar::new(1.0).map_err(|_| "fr")?);
-                let grid = GridLayout {
+                // 이전 Fraction은 export와 같은 minmax(0px, 1fr)이고 이전 행 MaxContent는 max-content입니다.
+                let fr = TrackSize::fr_from_zero(FiniteF32::new(1.0).map_err(|_| "fr")?);
+                LayoutNode::new(order_id(0)).with_style(LayoutStyle {
+                    display: Display::Grid,
+                    grid_template_columns: vec![fr, fr],
+                    grid_template_rows: vec![TrackSize::MAX_CONTENT, TrackSize::MAX_CONTENT],
                     column_gap: token(Tok::SpaceL),
                     row_gap: token(Tok::SpaceM),
-                    ..GridLayout::new(
-                        vec![fr, fr],
-                        vec![TrackSize::MaxContent, TrackSize::MaxContent],
-                    )
-                };
-                LayoutNode::new(order_id(0))
-                    .with_sizing(SizingMode::Fixed(length(900.0)), SizingMode::HugContent)
-                    .with_container(ContainerLayout::Grid(grid))
+                    width: CssSize::Length(length(900.0)),
+                    height: CssSize::FitContent,
+                    ..base.clone()
+                })
             }
         };
         match node.place {
             Place::None => {}
-            Place::At(x, y) => out = out.with_position(length(x), length(y)),
-            Place::Cell(column, row) => out = out.with_grid(GridItem::at(column, row, 1, 1)),
+            Place::At(x, y) => {
+                out.style.position = Position::Absolute;
+                out.style.left = LengthPercentageAuto::Length(length(x));
+                out.style.top = LengthPercentageAuto::Length(length(y));
+            }
+            Place::Cell(column, row) => {
+                out.style.grid_column_start = GridLine::Line(column as i16);
+                out.style.grid_column_end = GridLine::Span(1);
+                out.style.grid_row_start = GridLine::Line(row as i16);
+                out.style.grid_row_end = GridLine::Span(1);
+            }
         }
-        // 인스턴스 node 자신(scene 또는 nested)은 그 component root가 아니라 instance box입니다. variant patch는 def
-        // node(이름)에 적용합니다.
         if let Some(resolved) = &resolved {
             for patch in self.patches(resolved, node.name) {
                 match patch {
                     Patch::Pad(tok) => {
-                        let (top, _, bottom, _) = out.padding.components();
+                        let (top, _, bottom, _) = out.style.padding.components();
                         let h = self.condition.token(tok);
-                        out.padding = Insets::new(top, h, bottom, h).map_err(|_| "padding")?;
+                        out.style.padding =
+                            Insets::new(top, h, bottom, h).map_err(|_| "padding")?;
                     }
-                    Patch::Height(tok) => out.height = SizingMode::Fixed(token(tok)),
-                    Patch::Hide => out.visible = false,
+                    Patch::Height(tok) => out.style.height = CssSize::Length(token(tok)),
+                    Patch::Hide => out.style.display = Display::None,
                 }
             }
         }
@@ -1116,7 +1153,7 @@ fn twenty_component_variant_token_fixtures_match_expected_rect_golden() {
         }
     }
     assert_eq!(results.len(), FIXTURE_COUNT);
-    // 20개 fixture의 결과는 서로 다릅니다(조건·variant가 실제로 레이아웃을 바꿈).
+    // fixture 결과는 서로 다릅니다(조건·variant가 실제로 레이아웃을 바꿈).
     for (i, a) in results.iter().enumerate() {
         for b in &results[i + 1..] {
             assert_ne!(a, b);
@@ -1148,19 +1185,25 @@ fn fixtures_cover_nesting_variants_and_tokens() {
     let id = view.layout_id(&label).expect("3단계 virtual node");
     assert_eq!(fixture.label(&label), "order/header/menu/label");
     // menu는 icon-only(label 숨김)이고 drilling된 menuSize=large로 구체 조합 padding(M)을 받습니다.
-    assert!(!view.input().node(id).unwrap().visible);
+    assert_eq!(view.input().node(id).unwrap().style.display, Display::None);
     let menu_root = view
         .layout_id(&Key::Virtual(vec![2, 301, 205], 100))
         .unwrap();
-    let padding = view.input().node(menu_root).unwrap().padding.components();
+    let padding = view
+        .input()
+        .node(menu_root)
+        .unwrap()
+        .style
+        .padding
+        .components();
     assert_eq!(padding.1, Condition::ALL[0].token(Tok::SpaceM));
     // forward는 small 일반 variant(높이 ControlSmall), label은 바깥 property drilling(next 기본값 Next).
     let forward = view
         .layout_id(&Key::Virtual(vec![2, 301, 203], 100))
         .unwrap();
     assert_eq!(
-        view.input().node(forward).unwrap().height,
-        SizingMode::Fixed(length(Condition::ALL[0].token(Tok::ControlSmall)))
+        view.input().node(forward).unwrap().style.height,
+        CssSize::Length(length(Condition::ALL[0].token(Tok::ControlSmall)))
     );
     // Toolbar title은 Card title("Order")을 drilling합니다.
     let title_words = match &view

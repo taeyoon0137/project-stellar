@@ -4,7 +4,7 @@
 //! 최단 왕복 10진 표기(지수 없음), 문자열은 escape한 따옴표 표기, StableId는 하이픈 표기입니다.
 //!
 //! ```text
-//! codegen-ir v1
+//! codegen-ir v2
 //! target <profile id> <kind> <spec> registry=<release>
 //! tokens <n>
 //!   token <id> <name> = <value>
@@ -12,7 +12,7 @@
 //!   state <id> <name> = <initial>
 //! nodes <n>
 //!   [i] <id> <element> contracts=[..] semantics=a11y[j]     (깊이마다 두 칸 들여쓰기)
-//!     layout <container> w=<sizing> h=<sizing> padding=t,r,b,l [기본값이 아닌 facet...]
+//!     layout {<CSS 생략값과 다른 longhand; ...>} [transform=..] [content=..]
 //!     text <string>
 //!     property <path> = <value> origin=<origin> [token=<id>] [capability=<name>]
 //!     capability <subject> <status> [replacement=<subject>] [path=<path>]
@@ -28,17 +28,8 @@ use stellar_core_types::ids::StableId;
 use stellar_core_types::property::{PathSegment, PropertyPath};
 use stellar_core_types::typed_value::TypedValue;
 use stellar_core_types::value::Transform2D;
-use stellar_layout::constraint::{AnchorEdge, AnchorTarget};
-use stellar_layout::flex::FlexBasis;
-use stellar_layout::free::{AxisAnchors, Offset};
-use stellar_layout::geometry::Axis;
-use stellar_layout::grid::{GridPlacement, TrackBreadth, TrackSize};
-use stellar_layout::input::{ContainerLayout, LayoutContent, SizingMode};
+use stellar_layout::input::LayoutContent;
 use stellar_layout::intrinsic::MeasuredContent;
-use stellar_layout::overlay::OverlayAlignment;
-use stellar_layout::stack::{
-    CrossAlignment, LineAlignment, MainAlignment, StackDirection, StackWrap,
-};
 use stellar_target_profile::builtin::property_name;
 use stellar_target_profile::capability::{CapabilitySubject, ContractCode, ElementKind};
 use stellar_target_profile::overrides::ValueOrigin;
@@ -48,7 +39,7 @@ use super::{CodegenIr, IrLayout};
 use crate::text::num;
 
 /// snapshot 형식 머리.
-pub const SNAPSHOT_HEADER: &str = "codegen-ir v1";
+pub const SNAPSHOT_HEADER: &str = "codegen-ir v2";
 
 impl CodegenIr {
     /// 결정론 semantic snapshot 텍스트(모듈 문서 형식).
@@ -331,170 +322,6 @@ fn target_text(target: ActionTarget) -> String {
     }
 }
 
-fn sizing_text(sizing: SizingMode) -> String {
-    match sizing {
-        SizingMode::Fixed(length) => num(length.get()),
-        SizingMode::Fill => "fill".to_string(),
-        SizingMode::HugContent => "hug".to_string(),
-        SizingMode::Percentage(percentage) => format!("{}%", num(percentage.get())),
-    }
-}
-
-fn axis_name(axis: Axis) -> &'static str {
-    match axis {
-        Axis::Horizontal => "horizontal",
-        Axis::Vertical => "vertical",
-    }
-}
-
-fn main_name(alignment: MainAlignment) -> &'static str {
-    match alignment {
-        MainAlignment::Start => "start",
-        MainAlignment::Center => "center",
-        MainAlignment::End => "end",
-        MainAlignment::SpaceBetween => "space_between",
-        MainAlignment::SpaceAround => "space_around",
-        MainAlignment::SpaceEvenly => "space_evenly",
-    }
-}
-
-fn cross_name(alignment: CrossAlignment) -> &'static str {
-    match alignment {
-        CrossAlignment::Start => "start",
-        CrossAlignment::Center => "center",
-        CrossAlignment::End => "end",
-        CrossAlignment::Stretch => "stretch",
-    }
-}
-
-fn line_name(alignment: LineAlignment) -> &'static str {
-    match alignment {
-        LineAlignment::Start => "start",
-        LineAlignment::Center => "center",
-        LineAlignment::End => "end",
-        LineAlignment::SpaceBetween => "space_between",
-        LineAlignment::SpaceAround => "space_around",
-        LineAlignment::SpaceEvenly => "space_evenly",
-        LineAlignment::Stretch => "stretch",
-    }
-}
-
-fn overlay_name(alignment: OverlayAlignment) -> &'static str {
-    match alignment {
-        OverlayAlignment::Start => "start",
-        OverlayAlignment::Center => "center",
-        OverlayAlignment::End => "end",
-    }
-}
-
-fn breadth_text(breadth: TrackBreadth) -> String {
-    match breadth {
-        TrackBreadth::Fixed(length) => num(length.get()),
-        TrackBreadth::Fraction(fr) => format!("{}fr", num(fr.get())),
-        TrackBreadth::MinContent => "min-content".to_string(),
-        TrackBreadth::MaxContent => "max-content".to_string(),
-    }
-}
-
-fn track_text(track: TrackSize) -> String {
-    match track {
-        TrackSize::Fixed(length) => num(length.get()),
-        TrackSize::Fraction(fr) => format!("{}fr", num(fr.get())),
-        TrackSize::MinContent => "min-content".to_string(),
-        TrackSize::MaxContent => "max-content".to_string(),
-        TrackSize::MinMax(min, max) => {
-            format!("minmax({},{})", breadth_text(min), breadth_text(max))
-        }
-    }
-}
-
-fn tracks_text(tracks: &[TrackSize]) -> String {
-    let parts: Vec<String> = tracks.iter().map(|t| track_text(*t)).collect();
-    parts.join(" ")
-}
-
-fn container_text(container: &ContainerLayout) -> String {
-    match container {
-        ContainerLayout::Free => "free".to_string(),
-        ContainerLayout::Stack(stack) => {
-            let direction = match stack.direction {
-                StackDirection::Forward => "forward",
-                StackDirection::Reverse => "reverse",
-            };
-            let wrap = match stack.wrap {
-                StackWrap::NoWrap => "nowrap",
-                StackWrap::Wrap => "wrap",
-            };
-            format!(
-                "stack(axis={} direction={direction} gap={} main={} cross={} wrap={wrap} cross_gap={} lines={})",
-                axis_name(stack.axis),
-                num(stack.gap.get()),
-                main_name(stack.main_alignment),
-                cross_name(stack.cross_alignment),
-                num(stack.cross_gap.get()),
-                line_name(stack.line_alignment)
-            )
-        }
-        ContainerLayout::Grid(grid) => format!(
-            "grid(columns=[{}] rows=[{}] column_gap={} row_gap={} implicit_row={})",
-            tracks_text(&grid.columns),
-            tracks_text(&grid.rows),
-            num(grid.column_gap.get()),
-            num(grid.row_gap.get()),
-            track_text(grid.implicit_row)
-        ),
-        ContainerLayout::Overlay(overlay) => format!(
-            "overlay(horizontal={} vertical={})",
-            overlay_name(overlay.horizontal),
-            overlay_name(overlay.vertical)
-        ),
-        ContainerLayout::Constraint => "constraint".to_string(),
-    }
-}
-
-fn offset_text(offset: Option<Offset>) -> String {
-    match offset {
-        None => "-".to_string(),
-        Some(Offset::Length(length)) => num(length.get()),
-        Some(Offset::Percentage(percentage)) => format!("{}%", num(percentage.get())),
-    }
-}
-
-fn anchors_text(anchors: &AxisAnchors) -> String {
-    format!(
-        "{}..{}",
-        offset_text(anchors.start),
-        offset_text(anchors.end)
-    )
-}
-
-fn placement_text(placement: GridPlacement) -> String {
-    match placement {
-        GridPlacement::Auto { span } => format!("auto/{span}"),
-        GridPlacement::Span { start, span } => format!("{start}/span{span}"),
-        GridPlacement::Lines { start, end } => format!("{start}/{end}"),
-    }
-}
-
-fn edge_name(edge: AnchorEdge) -> &'static str {
-    match edge {
-        AnchorEdge::Left => "left",
-        AnchorEdge::Right => "right",
-        AnchorEdge::CenterX => "center_x",
-        AnchorEdge::Top => "top",
-        AnchorEdge::Bottom => "bottom",
-        AnchorEdge::CenterY => "center_y",
-        AnchorEdge::Baseline => "baseline",
-    }
-}
-
-fn anchor_target_text(target: AnchorTarget) -> String {
-    match target {
-        AnchorTarget::Parent(edge) => format!("parent.{}", edge_name(edge)),
-        AnchorTarget::Sibling { node, edge } => format!("{node}.{}", edge_name(edge)),
-    }
-}
-
 fn content_text(content: &LayoutContent) -> Option<String> {
     match content {
         LayoutContent::None => None,
@@ -529,79 +356,7 @@ fn content_text(content: &LayoutContent) -> Option<String> {
 }
 
 fn layout_text(layout: &IrLayout) -> String {
-    let (top, right, bottom, left) = layout.padding.components();
-    let mut out = format!(
-        "{} w={} h={} padding={},{},{},{}",
-        container_text(&layout.container),
-        sizing_text(layout.width),
-        sizing_text(layout.height),
-        num(top),
-        num(right),
-        num(bottom),
-        num(left)
-    );
-    let position = layout.position;
-    if position.horizontal != AxisAnchors::NONE || position.vertical != AxisAnchors::NONE {
-        let _ = write!(
-            out,
-            " position=x({}),y({})",
-            anchors_text(&position.horizontal),
-            anchors_text(&position.vertical)
-        );
-    }
-    let flex = layout.flex;
-    if flex != stellar_layout::flex::FlexItem::default() {
-        let basis = match flex.basis {
-            FlexBasis::Auto => "auto".to_string(),
-            FlexBasis::Length(length) => num(length.get()),
-            FlexBasis::Percentage(percentage) => format!("{}%", num(percentage.get())),
-        };
-        let _ = write!(
-            out,
-            " flex={},{},{basis}",
-            num(flex.grow.get()),
-            num(flex.shrink.get())
-        );
-    }
-    if layout.grid != stellar_layout::grid::GridItem::default() {
-        let _ = write!(
-            out,
-            " grid={},{}",
-            placement_text(layout.grid.column),
-            placement_text(layout.grid.row)
-        );
-    }
-    for constraint in &layout.constraints {
-        let _ = write!(
-            out,
-            " constraint({}={}+{})",
-            edge_name(constraint.edge),
-            anchor_target_text(constraint.target),
-            num(constraint.offset.get())
-        );
-    }
-    let limits = layout.limits;
-    let limit = |value: Option<stellar_core_types::value::Length>| {
-        value.map_or("-".to_string(), |length| num(length.get()))
-    };
-    if limits != stellar_layout::sizing::SizeLimits::default() {
-        let _ = write!(
-            out,
-            " limits=w[{}..{}],h[{}..{}]",
-            limit(limits.min_width),
-            limit(limits.max_width),
-            limit(limits.min_height),
-            limit(limits.max_height)
-        );
-    }
-    if let Some(ratio) = layout.aspect_ratio {
-        let _ = write!(
-            out,
-            " aspect={}:{}",
-            num(ratio.width.get()),
-            num(ratio.height.get())
-        );
-    }
+    let mut out = format!("{{{}}}", layout.style.declaration_text());
     if layout.transform != Transform2D::identity() {
         let (a, b, c, d, tx, ty) = layout.transform.components();
         let _ = write!(
@@ -614,9 +369,6 @@ fn layout_text(layout: &IrLayout) -> String {
             num(tx),
             num(ty)
         );
-    }
-    if !layout.visible {
-        out.push_str(" hidden");
     }
     if let Some(content) = content_text(&layout.content) {
         let _ = write!(out, " content={content}");

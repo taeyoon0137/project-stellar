@@ -1,55 +1,39 @@
-//! 레이아웃 입력 (X.1.1).
+//! 레이아웃 입력 (X.1.1, ADR-0076).
 //!
-//! [`LayoutInput`]은 레이아웃 엔진이 읽는 node tree 하나입니다. 문서 모델과 분리된 레이아웃
-//! 전용 값만 담으며(문서를 수정하지 않음), 모든 float은 [`Length`]·[`Insets`] 등 finite 타입이라
-//! NaN·±무한대를 담을 수 없습니다. [`LayoutInput::validate`]는 구조(tree)와 값 범위를 검사합니다.
+//! [`LayoutInput`]은 레이아웃 엔진이 읽는 node tree 하나입니다. node 하나는 CSS longhand 묶음
+//! [`LayoutStyle`]과 leaf 콘텐츠, local transform을 가집니다. 문서 모델과 분리된 레이아웃 전용 값만 담으며
+//! (문서를 수정하지 않음), 모든 float은 finite 타입이라 NaN·±무한대를 담을 수 없습니다.
+//! [`LayoutInput::validate`]는 구조(tree)와 값 범위, 받아들이는 CSS 부분집합을 검사합니다.
 //!
 //! # 자식 순서
 //!
 //! 자식은 [`LayoutChild::order_key`] 오름차순(같은 키는 `StableId` tie-break, III.5)으로 정렬한
-//! **visual order**로 배치합니다. 입력 목록의 삽입 순서는 결과에 영향을 주지 않습니다.
+//! **visual order**(= DOM 순서)로 배치합니다. 입력 목록의 삽입 순서는 결과에 영향을 주지 않습니다.
 //!
 //! # canonical bytes
 //!
 //! [`LayoutInput::encode`]/[`LayoutInput::decode`]는 runtime·fixture 비교용 little-endian 형식
-//! (magic `SLYI`, version 1)입니다. 저장 포맷이 아니며, 디코딩은 비유한 float과 비정규
-//! OrderKey를 거부합니다.
+//! (magic `SLYI`, version 2)입니다. 저장 포맷이 아니며, 디코딩은 비유한 float과 비정규 OrderKey를 거부합니다.
 
 use std::collections::HashMap;
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
-use stellar_core_types::value::{Insets, Length, Percentage, Transform2D};
+use stellar_core_types::value::{FiniteF32, Length, Percentage, Transform2D};
 
 use crate::codec::{Reader, Writer};
-use crate::constraint::{decode_constraints, encode_constraints, validate_constraints, Constraint};
 use crate::error::LayoutError;
-use crate::flex::{decode_flex, encode_flex, prepare_flex, validate_flex_combination, FlexItem};
-use crate::free::{
-    decode_position, encode_position, validate_anchor_combination, validate_position_values,
-    AxisAnchors, FreePosition,
-};
-use crate::geometry::Axis;
-use crate::grid::{
-    decode_grid, decode_item, encode_grid, encode_item, validate_grid, validate_item, GridItem,
-    GridLayout,
-};
 use crate::intrinsic::{
     decode_measured, encode_measured, validate_measured, IntrinsicMeasure, MeasuredContent,
 };
-use crate::overlay::{decode_overlay, encode_overlay, OverlayLayout};
 use crate::property::LayoutProperty;
 use crate::rounding::LayoutUnit;
-use crate::sizing::{
-    decode_limits, decode_ratio, encode_limits, encode_ratio, prepare_limits, prepare_ratio,
-    AspectRatio, SizeLimits,
+use crate::style::{
+    Display, FlexBasis, GridLine, ItemAlignment, LayoutStyle, LengthPercentage,
+    LengthPercentageAuto, MaxSize, MaxTrackSize, MinTrackSize, Position, SelfAlignment, Size,
+    TrackSize,
 };
-use crate::sizing::{validate_sizing, SIZING_FILL, SIZING_FIXED, SIZING_HUG, SIZING_PERCENTAGE};
-use crate::stack::{
-    decode_stack, decode_stack_wrap, encode_stack, encode_stack_wrap, validate_stack, StackLayout,
-};
-
-pub use crate::sizing::SizingMode;
+use crate::style_codec::{decode_style, encode_style};
 
 /// 레이아웃 재귀가 허용하는 최대 tree 깊이(root = 0).
 ///
@@ -58,10 +42,13 @@ pub use crate::sizing::SizingMode;
 /// 호출 thread의 stack 크기·빌드 설정(debug/release)과 무관하게 stack overflow 없이 끝납니다.
 pub const MAX_LAYOUT_DEPTH: usize = 256;
 
+/// 한 축의 grid track 최대 수(명시 + 암시, line 1~65535).
+pub const MAX_GRID_TRACKS: usize = 65_534;
+
 /// 입력 canonical bytes magic.
 const INPUT_MAGIC: &[u8; 4] = b"SLYI";
 /// 입력 canonical bytes version.
-const INPUT_VERSION: u16 = 1;
+const INPUT_VERSION: u16 = 2;
 
 /// 부모가 가진 자식 참조 하나.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -72,26 +59,10 @@ pub struct LayoutChild {
     pub order_key: OrderKey,
 }
 
-/// 자식 배치 방식 (X.1.1).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
-pub enum ContainerLayout {
-    /// 자유 배치(자식 local position·size 사용).
-    #[default]
-    Free,
-    /// 한 축을 따라 차례로 배치(X.3).
-    Stack(StackLayout),
-    /// 열·행 track 격자 배치(X.4).
-    Grid(GridLayout),
-    /// 모든 자식이 같은 containing block을 쓰는 겹침 배치(X.5.1).
-    Overlay(OverlayLayout),
-    /// 자식 anchor·constraint 등식으로 배치(X.5).
-    Constraint,
-}
-
-/// leaf 콘텐츠의 intrinsic 크기와 baseline (X.1.1).
+/// leaf 콘텐츠의 고정 intrinsic 크기와 baseline (X.1.1).
 ///
-/// Text·Image 등 콘텐츠 측정 결과를 레이아웃 입력으로 전달합니다. baseline은 콘텐츠 top에서의
-/// 거리입니다.
+/// min-content·max-content 너비가 모두 `width`이고 콘텐츠 높이가 `height`인 상자 안 콘텐츠입니다(줄바꿈 없는
+/// 텍스트 한 줄, 고정 크기 그림 등). baseline은 콘텐츠 top에서의 거리입니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IntrinsicContent {
     /// intrinsic 너비(비음수).
@@ -132,111 +103,29 @@ pub struct LayoutNode {
     pub id: StableId,
     /// 자식(삽입 순서 무관, visual order는 OrderKey).
     pub children: Vec<LayoutChild>,
-    /// 자식 배치 방식.
-    pub container: ContainerLayout,
-    /// 안쪽 여백(비음수).
-    pub padding: Insets,
-    /// 너비 sizing.
-    pub width: SizingMode,
-    /// 높이 sizing.
-    pub height: SizingMode,
+    /// CSS 레이아웃 longhand.
+    pub style: LayoutStyle,
     /// 콘텐츠.
     pub content: LayoutContent,
-    /// Free 부모 안에서의 위치 anchor(X.2.1, X.2.2). 다른 배치 방식의 자식에서는 무시합니다.
-    pub position: FreePosition,
     /// local transform(X.2.4). 레이아웃 계산에 참여하지 않고 layout rect 확정 뒤 적용합니다.
     pub transform: Transform2D,
-    /// Stack 부모 main 축의 grow·shrink·basis(X.3.3). 다른 배치 방식의 자식에서는 무시합니다.
-    pub flex: FlexItem,
-    /// 표시 여부(X.3.5). `false`면 부모 배치에서 제외되고 subtree가 결과에 포함되지 않습니다.
-    /// root에는 적용하지 않습니다(root는 항상 배치).
-    pub visible: bool,
-    /// Grid 부모 안의 열·행 위치(X.4.3). 다른 배치 방식의 자식에서는 무시합니다.
-    pub grid: GridItem,
-    /// Constraint 부모 안의 필수 등식 제약(X.5.2). 다른 배치 방식의 자식에서는 무시합니다.
-    pub constraints: Vec<Constraint>,
-    /// 축별 최소·최대 크기(X.6.2). 모든 배치 방식의 최종 크기에 적용합니다.
-    pub limits: SizeLimits,
-    /// 너비 : 높이 비율(X.6.3). 한 축만 definite일 때 다른 축을 정합니다.
-    pub aspect_ratio: Option<AspectRatio>,
 }
 
 impl LayoutNode {
-    /// 기본값(자식 없음, Free, padding 0, 0×0 고정, 콘텐츠 없음) node를 만듭니다.
+    /// CSS 생략값 style, 자식 없음, 콘텐츠 없음 node를 만듭니다.
     pub fn new(id: StableId) -> LayoutNode {
         LayoutNode {
             id,
             children: Vec::new(),
-            container: ContainerLayout::default(),
-            padding: zero_insets(),
-            width: SizingMode::default(),
-            height: SizingMode::default(),
+            style: LayoutStyle::default(),
             content: LayoutContent::None,
-            position: FreePosition::default(),
             transform: Transform2D::identity(),
-            flex: FlexItem::default(),
-            visible: true,
-            grid: GridItem::default(),
-            constraints: Vec::new(),
-            limits: SizeLimits::default(),
-            aspect_ratio: None,
         }
     }
 
-    /// 너비 : 높이 비율을 지정합니다.
-    pub fn with_aspect_ratio(mut self, ratio: AspectRatio) -> LayoutNode {
-        self.aspect_ratio = Some(ratio);
-        self
-    }
-
-    /// 축별 최소·최대 크기를 지정합니다.
-    pub fn with_limits(mut self, limits: SizeLimits) -> LayoutNode {
-        self.limits = limits;
-        self
-    }
-
-    /// Constraint 부모 안의 제약을 추가합니다.
-    pub fn with_constraint(mut self, constraint: Constraint) -> LayoutNode {
-        self.constraints.push(constraint);
-        self
-    }
-
-    /// Grid 부모 안의 열·행 위치를 지정합니다.
-    pub fn with_grid(mut self, grid: GridItem) -> LayoutNode {
-        self.grid = grid;
-        self
-    }
-
-    /// 표시 여부를 지정합니다.
-    pub fn with_visible(mut self, visible: bool) -> LayoutNode {
-        self.visible = visible;
-        self
-    }
-
-    /// Stack 부모 main 축의 grow·shrink·basis를 지정합니다.
-    pub fn with_flex(mut self, flex: FlexItem) -> LayoutNode {
-        self.flex = flex;
-        self
-    }
-
-    /// local transform을 지정합니다.
-    pub fn with_transform(mut self, transform: Transform2D) -> LayoutNode {
-        self.transform = transform;
-        self
-    }
-
-    /// Free 부모 안에서의 local position(시작 anchor `(x, y)`)을 지정합니다.
-    pub fn with_position(mut self, x: Length, y: Length) -> LayoutNode {
-        self.position = FreePosition::at(x, y);
-        self
-    }
-
-    /// Free 부모 안에서의 위치 anchor를 지정합니다.
-    pub fn with_anchors(mut self, horizontal: AxisAnchors, vertical: AxisAnchors) -> LayoutNode {
-        self.position = FreePosition {
-            horizontal,
-            vertical,
-        };
+    /// style을 지정합니다.
+    pub fn with_style(mut self, style: LayoutStyle) -> LayoutNode {
+        self.style = style;
         self
     }
 
@@ -246,42 +135,22 @@ impl LayoutNode {
         self
     }
 
-    /// 고정 크기를 지정합니다.
-    pub fn with_fixed_size(mut self, width: Length, height: Length) -> LayoutNode {
-        self.width = SizingMode::Fixed(width);
-        self.height = SizingMode::Fixed(height);
-        self
-    }
-
-    /// 두 축 sizing을 지정합니다.
-    pub fn with_sizing(mut self, width: SizingMode, height: SizingMode) -> LayoutNode {
-        self.width = width;
-        self.height = height;
-        self
-    }
-
-    /// padding을 지정합니다.
-    pub fn with_padding(mut self, padding: Insets) -> LayoutNode {
-        self.padding = padding;
-        self
-    }
-
-    /// 자식 배치 방식을 지정합니다.
-    pub fn with_container(mut self, container: ContainerLayout) -> LayoutNode {
-        self.container = container;
-        self
-    }
-
     /// 콘텐츠를 지정합니다.
     pub fn with_content(mut self, content: LayoutContent) -> LayoutNode {
         self.content = content;
         self
     }
-}
 
-/// 0 inset.
-fn zero_insets() -> Insets {
-    Insets::new(0.0, 0.0, 0.0, 0.0).expect("0은 유한")
+    /// local transform을 지정합니다.
+    pub fn with_transform(mut self, transform: Transform2D) -> LayoutNode {
+        self.transform = transform;
+        self
+    }
+
+    /// 부모 flow에 참여하는지 여부([`LayoutStyle::is_in_flow`]).
+    pub fn is_in_flow(&self) -> bool {
+        self.style.is_in_flow()
+    }
 }
 
 /// 레이아웃 입력 tree (X.1.1).
@@ -304,8 +173,7 @@ pub(crate) struct TreeIndex {
     pub(crate) children: Vec<Vec<usize>>,
     /// root index.
     pub(crate) root: usize,
-    /// tree 최대 깊이(root = 0, [`MAX_LAYOUT_DEPTH`] 이하). 증분 레이아웃(X.7.3)은 구조 edit마다 node별 깊이
-    /// 표로 실제 최대 깊이를 유지합니다(삭제·이동으로 얕아지면 줄어듦). 계산 thread 선택에만 쓰입니다.
+    /// tree 최대 깊이(root = 0, [`MAX_LAYOUT_DEPTH`] 이하). 계산 thread 선택에만 쓰입니다.
     pub(crate) depth: usize,
 }
 
@@ -359,12 +227,10 @@ impl LayoutInput {
                 parent[child_index] = Some(position);
                 ordered.push((&child.order_key, child.id, child_index));
             }
-            // visual order: OrderKey 오름차순, 같은 키는 StableId tie-break(III.5).
             ordered.sort_by(|a, b| a.0.cmp(b.0).then(a.1.cmp(&b.1)));
             children.push(ordered.into_iter().map(|(_, _, i)| i).collect());
         }
 
-        // root에서 반복 DFS로 도달 가능성과 깊이를 검사합니다.
         let mut visited = vec![false; self.nodes.len()];
         let mut stack = vec![(root, 0usize)];
         let mut max_depth = 0usize;
@@ -395,7 +261,7 @@ impl LayoutInput {
         for (position, node) in self.nodes.iter().enumerate() {
             validate_node_values(node, position == root)?;
             if let Some(parent_index) = parent[position] {
-                validate_in_parent(node, &self.nodes[parent_index].container)?;
+                validate_in_parent(node, &self.nodes[parent_index])?;
             }
         }
         Ok(TreeIndex {
@@ -461,102 +327,317 @@ pub(crate) fn length_unit(
     LayoutUnit::from_length(value).map_err(|_| LayoutError::OutOfRange { node, property })
 }
 
-/// 자식 node의 속성이 부모 배치 방식과 맞는지 검증합니다(anchor·flex·grid item 조합).
-pub(crate) fn validate_in_parent(
-    node: &LayoutNode,
-    parent: &ContainerLayout,
+/// 백분율 값 범위(비음수 여부)를 검사합니다.
+fn check_percentage(
+    node: StableId,
+    property: LayoutProperty,
+    value: Percentage,
+    allow_negative: bool,
 ) -> Result<(), LayoutError> {
-    match parent {
-        ContainerLayout::Free => validate_anchor_combination(node),
-        ContainerLayout::Stack(stack) => validate_flex_combination(node, stack.axis),
-        ContainerLayout::Grid(grid) => validate_item(node.id, &node.grid, grid),
-        ContainerLayout::Overlay(_) | ContainerLayout::Constraint => Ok(()),
+    if !allow_negative && value.get() < 0.0 {
+        return Err(LayoutError::NegativeValue { node, property });
+    }
+    // 1e6%를 넘는 값은 어떤 기준 길이에서도 LayoutUnit 범위를 넘을 수 있어 거부합니다.
+    if value.get().abs() > 1_000_000.0 {
+        return Err(LayoutError::OutOfRange { node, property });
+    }
+    Ok(())
+}
+
+/// flex·grid 가중치(`flex-grow`·`flex-shrink`·`fr`) 값을 1/64 단위 정수 가중치로 바꿉니다.
+///
+/// 음수는 `NegativeValue`, 0이 아닌데 1/64 격자에서 0이 되는 값(1/128 미만)은 `BelowResolution`입니다.
+pub(crate) fn weight(
+    node: StableId,
+    property: LayoutProperty,
+    value: FiniteF32,
+) -> Result<u64, LayoutError> {
+    if value.get() < 0.0 {
+        return Err(LayoutError::NegativeValue { node, property });
+    }
+    let unit =
+        LayoutUnit::from_px(value).map_err(|_| LayoutError::OutOfRange { node, property })?;
+    if unit.raw() == 0 && value.get() != 0.0 {
+        return Err(LayoutError::BelowResolution { node, property });
+    }
+    Ok(u64::try_from(unit.raw()).unwrap_or(0))
+}
+
+fn check_size(node: StableId, property: LayoutProperty, value: Size) -> Result<(), LayoutError> {
+    match value {
+        Size::Length(length) => length_unit(node, property, length, false).map(|_| ()),
+        Size::Percentage(percent) => check_percentage(node, property, percent, false),
+        Size::Auto | Size::MinContent | Size::MaxContent | Size::FitContent => Ok(()),
+    }
+}
+
+fn check_max(node: StableId, property: LayoutProperty, value: MaxSize) -> Result<(), LayoutError> {
+    match value {
+        MaxSize::Length(length) => length_unit(node, property, length, false).map(|_| ()),
+        MaxSize::Percentage(percent) => check_percentage(node, property, percent, false),
+        MaxSize::None | MaxSize::MinContent | MaxSize::MaxContent | MaxSize::FitContent => Ok(()),
+    }
+}
+
+fn check_inset(
+    node: StableId,
+    property: LayoutProperty,
+    value: LengthPercentageAuto,
+) -> Result<(), LayoutError> {
+    match value {
+        LengthPercentageAuto::Auto => Ok(()),
+        LengthPercentageAuto::Length(length) => {
+            length_unit(node, property, length, true).map(|_| ())
+        }
+        LengthPercentageAuto::Percentage(percent) => {
+            check_percentage(node, property, percent, true)
+        }
+    }
+}
+
+fn check_tracks(
+    node: StableId,
+    property: LayoutProperty,
+    tracks: &[TrackSize],
+) -> Result<(), LayoutError> {
+    if tracks.len() > MAX_GRID_TRACKS {
+        return Err(LayoutError::InvalidValue {
+            node,
+            property,
+            reason: "track 수가 상한을 넘습니다",
+        });
+    }
+    for track in tracks {
+        match track.min {
+            MinTrackSize::Length(length) => {
+                length_unit(node, property, length, false)?;
+            }
+            MinTrackSize::Percentage(percent) => check_percentage(node, property, percent, false)?,
+            MinTrackSize::Auto | MinTrackSize::MinContent | MinTrackSize::MaxContent => {}
+        }
+        match track.max {
+            MaxTrackSize::Length(length) => {
+                length_unit(node, property, length, false)?;
+            }
+            MaxTrackSize::Percentage(percent) => check_percentage(node, property, percent, false)?,
+            MaxTrackSize::Fraction(factor) => {
+                weight(node, property, factor)?;
+            }
+            MaxTrackSize::FitContent(LengthPercentage::Length(length)) => {
+                length_unit(node, property, length, false)?;
+            }
+            MaxTrackSize::FitContent(LengthPercentage::Percentage(percent)) => {
+                check_percentage(node, property, percent, false)?
+            }
+            MaxTrackSize::Auto | MaxTrackSize::MinContent | MaxTrackSize::MaxContent => {}
+        }
+    }
+    Ok(())
+}
+
+fn check_line(node: StableId, property: LayoutProperty, line: GridLine) -> Result<(), LayoutError> {
+    match line {
+        GridLine::Auto => Ok(()),
+        GridLine::Line(0) => Err(LayoutError::InvalidValue {
+            node,
+            property,
+            reason: "grid line 번호는 0일 수 없습니다",
+        }),
+        GridLine::Line(n) if usize::from(n.unsigned_abs()) > MAX_GRID_TRACKS + 1 => {
+            Err(LayoutError::InvalidValue {
+                node,
+                property,
+                reason: "grid line 번호가 track 상한을 넘습니다",
+            })
+        }
+        GridLine::Span(0) => Err(LayoutError::InvalidValue {
+            node,
+            property,
+            reason: "span은 1 이상이어야 합니다",
+        }),
+        GridLine::Span(n) if usize::from(n) > MAX_GRID_TRACKS => Err(LayoutError::InvalidValue {
+            node,
+            property,
+            reason: "span이 track 상한을 넘습니다",
+        }),
+        GridLine::Line(_) | GridLine::Span(_) => Ok(()),
     }
 }
 
 /// node 하나의 값 범위와 속성 조합을 검증합니다.
 pub(crate) fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutError> {
-    let (top, right, bottom, left) = node.padding.components();
-    for value in [top, right, bottom, left] {
-        let length = Length::new(value).map_err(|_| LayoutError::OutOfRange {
-            node: node.id,
-            property: LayoutProperty::Padding,
-        })?;
-        length_unit(node.id, LayoutProperty::Padding, length, false)?;
+    let id = node.id;
+    let s = &node.style;
+    if is_root && s.display == Display::None {
+        return Err(LayoutError::InvalidValue {
+            node: id,
+            property: LayoutProperty::Display,
+            reason: "root는 display: none일 수 없습니다",
+        });
     }
-    match &node.container {
-        ContainerLayout::Free => {}
-        ContainerLayout::Stack(stack) => validate_stack(node.id, stack)?,
-        ContainerLayout::Grid(grid) => validate_grid(node.id, grid)?,
-        ContainerLayout::Overlay(_) | ContainerLayout::Constraint => {}
+    let (top, right, bottom, left) = s.padding.components();
+    for (property, value) in [
+        (LayoutProperty::PaddingTop, top),
+        (LayoutProperty::PaddingRight, right),
+        (LayoutProperty::PaddingBottom, bottom),
+        (LayoutProperty::PaddingLeft, left),
+    ] {
+        let length =
+            Length::new(value).map_err(|_| LayoutError::OutOfRange { node: id, property })?;
+        length_unit(id, property, length, false)?;
     }
-    validate_sizing(node.id, Axis::Horizontal, node.width, is_root)?;
-    validate_sizing(node.id, Axis::Vertical, node.height, is_root)?;
-    prepare_limits(node.id, &node.limits)?;
-    prepare_ratio(node.id, node.aspect_ratio)?;
+    for (property, value) in [
+        (LayoutProperty::Top, s.top),
+        (LayoutProperty::Right, s.right),
+        (LayoutProperty::Bottom, s.bottom),
+        (LayoutProperty::Left, s.left),
+    ] {
+        check_inset(id, property, value)?;
+    }
+    check_size(id, LayoutProperty::Width, s.width)?;
+    check_size(id, LayoutProperty::Height, s.height)?;
+    check_size(id, LayoutProperty::MinWidth, s.min_width)?;
+    check_size(id, LayoutProperty::MinHeight, s.min_height)?;
+    check_max(id, LayoutProperty::MaxWidth, s.max_width)?;
+    check_max(id, LayoutProperty::MaxHeight, s.max_height)?;
+    if let Some(ratio) = s.aspect_ratio {
+        for component in [ratio.width, ratio.height] {
+            if component.get() <= 0.0 {
+                return Err(LayoutError::InvalidValue {
+                    node: id,
+                    property: LayoutProperty::AspectRatio,
+                    reason: "aspect-ratio 성분은 양수여야 합니다",
+                });
+            }
+            weight(id, LayoutProperty::AspectRatio, component)?;
+        }
+    }
+    length_unit(id, LayoutProperty::RowGap, s.row_gap, false)?;
+    length_unit(id, LayoutProperty::ColumnGap, s.column_gap, false)?;
+    weight(id, LayoutProperty::FlexGrow, s.flex_grow)?;
+    weight(id, LayoutProperty::FlexShrink, s.flex_shrink)?;
+    match s.flex_basis {
+        FlexBasis::Length(length) => {
+            length_unit(id, LayoutProperty::FlexBasis, length, false)?;
+        }
+        FlexBasis::Percentage(percent) => {
+            check_percentage(id, LayoutProperty::FlexBasis, percent, false)?
+        }
+        FlexBasis::Auto | FlexBasis::Content => {}
+    }
+    if s.justify_items == ItemAlignment::Baseline
+        || s.justify_self == SelfAlignment::Item(ItemAlignment::Baseline)
+    {
+        return Err(LayoutError::Unsupported {
+            node: id,
+            property: if s.justify_items == ItemAlignment::Baseline {
+                LayoutProperty::JustifyItems
+            } else {
+                LayoutProperty::JustifySelf
+            },
+            reason: "가로 축 baseline 정렬은 받지 않습니다",
+        });
+    }
+    check_tracks(
+        id,
+        LayoutProperty::GridTemplateColumns,
+        &s.grid_template_columns,
+    )?;
+    check_tracks(id, LayoutProperty::GridTemplateRows, &s.grid_template_rows)?;
+    check_tracks(id, LayoutProperty::GridAutoColumns, &s.grid_auto_columns)?;
+    check_tracks(id, LayoutProperty::GridAutoRows, &s.grid_auto_rows)?;
+    for (property, tracks) in [
+        (LayoutProperty::GridAutoColumns, &s.grid_auto_columns),
+        (LayoutProperty::GridAutoRows, &s.grid_auto_rows),
+    ] {
+        if tracks.is_empty() {
+            return Err(LayoutError::InvalidValue {
+                node: id,
+                property,
+                reason: "암시 track pattern은 비어 있을 수 없습니다",
+            });
+        }
+    }
+    check_line(id, LayoutProperty::GridColumnStart, s.grid_column_start)?;
+    check_line(id, LayoutProperty::GridColumnEnd, s.grid_column_end)?;
+    check_line(id, LayoutProperty::GridRowStart, s.grid_row_start)?;
+    check_line(id, LayoutProperty::GridRowEnd, s.grid_row_end)?;
     match &node.content {
         LayoutContent::None => {}
         LayoutContent::Intrinsic(content) => {
-            length_unit(node.id, LayoutProperty::Content, content.width, false)?;
-            length_unit(node.id, LayoutProperty::Content, content.height, false)?;
+            length_unit(id, LayoutProperty::Content, content.width, false)?;
+            length_unit(id, LayoutProperty::Content, content.height, false)?;
             if let Some(baseline) = content.baseline {
-                length_unit(node.id, LayoutProperty::Content, baseline, true)?;
+                length_unit(id, LayoutProperty::Content, baseline, true)?;
             }
         }
-        LayoutContent::Measured(content) => validate_measured(node.id, content)?,
+        LayoutContent::Measured(content) => validate_measured(id, content)?,
     }
-    validate_position_values(node)?;
-    prepare_flex(node)?;
-    validate_constraints(node)?;
+    Ok(())
+}
+
+/// 자식 node의 속성이 부모 배치 방식과 맞는지 검증합니다(받아들이는 부분집합).
+pub(crate) fn validate_in_parent(
+    node: &LayoutNode,
+    parent: &LayoutNode,
+) -> Result<(), LayoutError> {
+    let s = &node.style;
+    if s.display == Display::None {
+        return Ok(());
+    }
+    let grid = parent.style.display == Display::Grid;
+    if s.position == Position::Absolute {
+        let lines = [
+            s.grid_column_start,
+            s.grid_column_end,
+            s.grid_row_start,
+            s.grid_row_end,
+        ];
+        if grid && lines.iter().any(|line| *line != GridLine::Auto) {
+            return Err(LayoutError::Unsupported {
+                node: node.id,
+                property: LayoutProperty::GridColumnStart,
+                reason: "grid 안 absolute 자식의 명시 line 배치는 받지 않습니다",
+            });
+        }
+        return Ok(());
+    }
+    let baseline = s.align_self == SelfAlignment::Item(ItemAlignment::Baseline)
+        || (s.align_self == SelfAlignment::Auto
+            && parent.style.align_items == ItemAlignment::Baseline);
+    if baseline && grid {
+        return Err(LayoutError::Unsupported {
+            node: node.id,
+            property: LayoutProperty::AlignSelf,
+            reason: "grid item의 baseline 정렬은 받지 않습니다",
+        });
+    }
     Ok(())
 }
 
 // --- canonical bytes ---
 
-const CONTAINER_FREE: u8 = 0;
-const CONTAINER_STACK: u8 = 1;
-const CONTAINER_GRID: u8 = 2;
-const CONTAINER_OVERLAY: u8 = 3;
-const CONTAINER_CONSTRAINT: u8 = 4;
-
 const CONTENT_NONE: u8 = 0;
 const CONTENT_INTRINSIC: u8 = 1;
 const CONTENT_MEASURED: u8 = 2;
 
-/// node 하나의 canonical bytes([`LayoutInput::encode`]의 node 부분, X.7.2 측정 key용).
-pub(crate) fn node_bytes(node: &LayoutNode) -> Vec<u8> {
+/// node 하나의 **레이아웃 입력** bytes(transform 제외, X.7.2 측정 key용).
+///
+/// transform은 레이아웃 결과에 영향을 주지 않으므로(X.2.4) cache key에서 뺍니다.
+pub(crate) fn node_layout_bytes(node: &LayoutNode) -> Vec<u8> {
     let mut w = Writer::new();
-    encode_node(&mut w, node);
+    encode_layout_part(&mut w, node);
     w.finish()
 }
 
-fn encode_node(w: &mut Writer, node: &LayoutNode) {
+fn encode_layout_part(w: &mut Writer, node: &LayoutNode) {
     w.id(node.id);
     w.len(node.children.len());
     for child in &node.children {
         w.id(child.id);
         w.order_key(&child.order_key);
     }
-    match &node.container {
-        ContainerLayout::Free => w.u8(CONTAINER_FREE),
-        ContainerLayout::Stack(stack) => {
-            w.u8(CONTAINER_STACK);
-            encode_stack(w, stack);
-            encode_stack_wrap(w, stack);
-        }
-        ContainerLayout::Grid(grid) => {
-            w.u8(CONTAINER_GRID);
-            encode_grid(w, grid);
-        }
-        ContainerLayout::Overlay(overlay) => {
-            w.u8(CONTAINER_OVERLAY);
-            encode_overlay(w, overlay);
-        }
-        ContainerLayout::Constraint => w.u8(CONTAINER_CONSTRAINT),
-    }
-    w.insets(&node.padding);
-    encode_sizing(w, node.width);
-    encode_sizing(w, node.height);
+    encode_style(w, &node.style);
     match &node.content {
         LayoutContent::None => w.u8(CONTENT_NONE),
         LayoutContent::Intrinsic(content) => {
@@ -576,25 +657,13 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
             encode_measured(w, content);
         }
     }
-    encode_position(w, &node.position);
+}
+
+fn encode_node(w: &mut Writer, node: &LayoutNode) {
+    encode_layout_part(w, node);
     let (a, b, c, d, tx, ty) = node.transform.components();
     for component in [a, b, c, d, tx, ty] {
         w.bytes(&component.to_le_bytes());
-    }
-    encode_flex(w, &node.flex);
-    w.bool(node.visible);
-    encode_item(w, &node.grid);
-    encode_constraints(w, &node.constraints);
-    encode_limits(w, &node.limits);
-    encode_ratio(w, node.aspect_ratio);
-}
-
-fn encode_sizing(w: &mut Writer, mode: SizingMode) {
-    w.u8(mode.tag());
-    match mode {
-        SizingMode::Fixed(length) => w.length(length),
-        SizingMode::Percentage(percent) => w.finite(percent.raw()),
-        SizingMode::Fill | SizingMode::HugContent => {}
     }
 }
 
@@ -610,25 +679,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
             order_key,
         });
     }
-    let container = match r.u8()? {
-        CONTAINER_FREE => ContainerLayout::Free,
-        CONTAINER_STACK => {
-            let mut stack = decode_stack(r)?;
-            decode_stack_wrap(r, &mut stack)?;
-            ContainerLayout::Stack(stack)
-        }
-        CONTAINER_GRID => ContainerLayout::Grid(decode_grid(r)?),
-        CONTAINER_OVERLAY => ContainerLayout::Overlay(decode_overlay(r)?),
-        CONTAINER_CONSTRAINT => ContainerLayout::Constraint,
-        _ => {
-            return Err(LayoutError::Malformed {
-                reason: "알 수 없는 container tag",
-            })
-        }
-    };
-    let padding = r.insets("padding")?;
-    let width = decode_sizing(r, "width")?;
-    let height = decode_sizing(r, "height")?;
+    let style = decode_style(r)?;
     let content = match r.u8()? {
         CONTENT_NONE => LayoutContent::None,
         CONTENT_INTRINSIC => {
@@ -652,7 +703,6 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
             })
         }
     };
-    let position = decode_position(r)?;
     let mut components = [0.0f32; 6];
     for component in &mut components {
         *component = r.finite("transform")?.get();
@@ -660,65 +710,45 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
     let [a, b, c, d, tx, ty] = components;
     let transform = Transform2D::new(a, b, c, d, tx, ty)
         .map_err(|_| LayoutError::NonFinite { field: "transform" })?;
-    let flex = decode_flex(r)?;
-    let visible = r.bool("visible flag")?;
-    let grid = decode_item(r)?;
-    let constraints = decode_constraints(r)?;
-    let limits = decode_limits(r)?;
-    let aspect_ratio = decode_ratio(r)?;
     Ok(LayoutNode {
         id,
         children,
-        container,
-        padding,
-        width,
-        height,
+        style,
         content,
-        position,
         transform,
-        flex,
-        visible,
-        grid,
-        constraints,
-        limits,
-        aspect_ratio,
     })
-}
-
-fn decode_sizing(r: &mut Reader<'_>, field: &'static str) -> Result<SizingMode, LayoutError> {
-    match r.u8()? {
-        SIZING_FIXED => Ok(SizingMode::Fixed(r.length(field)?)),
-        SIZING_FILL => Ok(SizingMode::Fill),
-        SIZING_HUG => Ok(SizingMode::HugContent),
-        SIZING_PERCENTAGE => Ok(SizingMode::Percentage(Percentage::from_raw(
-            r.finite(field)?,
-        ))),
-        _ => Err(LayoutError::Malformed {
-            reason: "알 수 없는 sizing tag",
-        }),
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::{Size, TrackSize};
     use crate::test_support::{id, key, len};
+    use stellar_core_types::value::Insets;
 
     fn sample_input() -> LayoutInput {
         let root = LayoutNode::new(id(1))
-            .with_fixed_size(len(200.0), len(100.0))
-            .with_padding(Insets::new(4.0, 8.0, 4.0, 8.0).unwrap())
+            .with_style(LayoutStyle {
+                width: Size::Length(len(200.0)),
+                height: Size::Length(len(100.0)),
+                padding: Insets::new(4.0, 8.0, 4.0, 8.0).unwrap(),
+                grid_template_columns: vec![TrackSize::length(len(3.0))],
+                ..LayoutStyle::default()
+            })
             .with_child(id(3), key(2))
             .with_child(id(2), key(1));
-        let text = LayoutNode::new(id(2))
-            .with_fixed_size(len(50.0), len(20.0))
-            .with_content(LayoutContent::Intrinsic(IntrinsicContent {
+        let text =
+            LayoutNode::new(id(2)).with_content(LayoutContent::Intrinsic(IntrinsicContent {
                 width: len(48.5),
                 height: len(18.25),
                 baseline: Some(len(14.0)),
             }));
         let image = LayoutNode::new(id(3))
-            .with_fixed_size(len(1.0 / 3.0), len(0.0))
+            .with_style(LayoutStyle {
+                width: Size::Length(len(1.0 / 3.0)),
+                position: Position::Absolute,
+                ..LayoutStyle::default()
+            })
             .with_content(LayoutContent::Intrinsic(IntrinsicContent {
                 width: len(640.0),
                 height: len(480.0),
@@ -735,7 +765,6 @@ mod tests {
         assert_eq!(&bytes[..4], b"SLYI");
         let decoded = LayoutInput::decode(&bytes).unwrap();
         assert_eq!(decoded, input);
-        // 재인코딩도 같은 bytes(canonical).
         assert_eq!(decoded.encode(), bytes);
         decoded.validate().unwrap();
     }
@@ -744,10 +773,9 @@ mod tests {
     fn decode_rejects_non_finite_and_malformed_bytes() {
         let input = sample_input();
         let bytes = input.encode();
-        // root width Fixed 값(f32)을 NaN·+∞로 바꾸면 거부. 위치: magic4+ver2+root16+count4
-        // + node id16 + child count4 + 자식 2개(id16+key len4+key4)*2 + container1 + padding16
-        // + sizing tag1.
-        let width_offset = 4 + 2 + 16 + 4 + 16 + 4 + (16 + 4 + 4) * 2 + 1 + 16 + 1;
+        // root width 값(f32) 위치: magic4+ver2+root16+count4 + node id16 + child count4
+        // + 자식 2개(id16+key len4+key4)*2 + display1 + position1 + inset 4개(auto 1byte) + width tag1.
+        let width_offset = 4 + 2 + 16 + 4 + 16 + 4 + (16 + 4 + 4) * 2 + 1 + 1 + 4 + 1;
         assert_eq!(
             f32::from_le_bytes(bytes[width_offset..width_offset + 4].try_into().unwrap()),
             200.0
@@ -780,59 +808,80 @@ mod tests {
     }
 
     #[test]
-    fn value_validation_rejects_negative_and_out_of_range() {
-        let negative = LayoutInput::new(
-            id(1),
-            vec![LayoutNode::new(id(1)).with_fixed_size(len(-1.0), len(1.0))],
-        );
+    fn value_validation_rejects_negative_out_of_range_and_invalid_css() {
+        let single = |style: LayoutStyle| {
+            LayoutInput::new(id(1), vec![LayoutNode::new(id(1)).with_style(style)])
+        };
         assert_eq!(
-            negative.validate(),
+            single(LayoutStyle {
+                width: Size::Length(len(-1.0)),
+                ..LayoutStyle::default()
+            })
+            .validate(),
             Err(LayoutError::NegativeValue {
                 node: id(1),
                 property: LayoutProperty::Width
             })
         );
-        // 2^25 px는 LayoutUnit(i32 subpixel) 범위 밖.
-        let huge = LayoutInput::new(
-            id(1),
-            vec![LayoutNode::new(id(1)).with_fixed_size(len(1.0), len(33_554_432.0))],
-        );
         assert_eq!(
-            huge.validate(),
+            single(LayoutStyle {
+                height: Size::Length(len(33_554_432.0)),
+                ..LayoutStyle::default()
+            })
+            .validate(),
             Err(LayoutError::OutOfRange {
                 node: id(1),
                 property: LayoutProperty::Height
             })
         );
-        let padding = LayoutInput::new(
-            id(1),
-            vec![LayoutNode::new(id(1)).with_padding(Insets::new(0.0, -2.0, 0.0, 0.0).unwrap())],
-        );
         assert_eq!(
-            padding.validate(),
+            single(LayoutStyle {
+                padding: Insets::new(0.0, -2.0, 0.0, 0.0).unwrap(),
+                ..LayoutStyle::default()
+            })
+            .validate(),
             Err(LayoutError::NegativeValue {
                 node: id(1),
-                property: LayoutProperty::Padding
+                property: LayoutProperty::PaddingRight
             })
         );
-        // baseline은 음수 허용, intrinsic 크기는 비음수.
-        let content = |baseline: f32, width: f32| {
-            LayoutInput::new(
-                id(1),
-                vec![
-                    LayoutNode::new(id(1)).with_content(LayoutContent::Intrinsic(
-                        IntrinsicContent {
-                            width: len(width),
-                            height: len(1.0),
-                            baseline: Some(len(baseline)),
-                        },
-                    )),
-                ],
-            )
-        };
-        assert!(content(-3.0, 1.0).validate().is_ok());
-        assert!(content(1.0, -1.0).validate().is_err());
-        // 비유한 값은 core-types 생성 단계에서 거부되어 입력에 들어올 수 없습니다.
+        // inset은 음수 허용.
+        assert!(single(LayoutStyle {
+            left: LengthPercentageAuto::Length(len(-5.0)),
+            ..LayoutStyle::default()
+        })
+        .validate()
+        .is_ok());
+        assert_eq!(
+            single(LayoutStyle {
+                flex_grow: FiniteF32::new(0.001).unwrap(),
+                ..LayoutStyle::default()
+            })
+            .validate(),
+            Err(LayoutError::BelowResolution {
+                node: id(1),
+                property: LayoutProperty::FlexGrow
+            })
+        );
+        assert!(matches!(
+            single(LayoutStyle {
+                grid_row_start: GridLine::Line(0),
+                ..LayoutStyle::default()
+            })
+            .validate(),
+            Err(LayoutError::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            single(LayoutStyle {
+                display: Display::None,
+                ..LayoutStyle::default()
+            })
+            .validate(),
+            Err(LayoutError::InvalidValue {
+                property: LayoutProperty::Display,
+                ..
+            })
+        ));
         assert!(Length::new(f32::NAN).is_err());
         assert!(Insets::new(f32::INFINITY, 0.0, 0.0, 0.0).is_err());
     }
@@ -840,18 +889,15 @@ mod tests {
     #[test]
     fn structure_validation_errors() {
         let leaf = |n: u64| LayoutNode::new(id(n));
-        // 중복 node.
         let dup = LayoutInput::new(id(1), vec![leaf(1), leaf(1)]);
         assert_eq!(
             dup.validate(),
             Err(LayoutError::DuplicateNode { node: id(1) })
         );
-        // root 없음.
         assert_eq!(
             LayoutInput::new(id(9), vec![leaf(1)]).validate(),
             Err(LayoutError::MissingRoot { root: id(9) })
         );
-        // 없는 자식.
         let missing = LayoutInput::new(id(1), vec![leaf(1).with_child(id(2), key(1))]);
         assert_eq!(
             missing.validate(),
@@ -860,7 +906,6 @@ mod tests {
                 child: id(2)
             })
         );
-        // 두 부모.
         let two = LayoutInput::new(
             id(1),
             vec![
@@ -874,7 +919,6 @@ mod tests {
             two.validate(),
             Err(LayoutError::MultipleParents { node: id(4) })
         );
-        // root가 자식 → 순환.
         let root_child = LayoutInput::new(
             id(1),
             vec![
@@ -886,7 +930,6 @@ mod tests {
             root_child.validate(),
             Err(LayoutError::Cycle { node: id(1) })
         );
-        // root와 분리된 순환.
         let detached = LayoutInput::new(
             id(1),
             vec![
@@ -896,13 +939,11 @@ mod tests {
             ],
         );
         assert_eq!(detached.validate(), Err(LayoutError::Cycle { node: id(2) }));
-        // 도달 불가.
         let orphan = LayoutInput::new(id(1), vec![leaf(1), leaf(2)]);
         assert_eq!(
             orphan.validate(),
             Err(LayoutError::Unreachable { node: id(2) })
         );
-        // intrinsic leaf + 자식.
         let content_leaf = LayoutInput::new(
             id(1),
             vec![
@@ -950,7 +991,6 @@ mod tests {
     fn visual_order_follows_order_key_not_insertion() {
         let input = sample_input();
         let tree = input.tree().unwrap();
-        // 삽입 순서는 (3, 2)지만 key(1) < key(2)라 visual order는 (2, 3).
         let visual: Vec<StableId> = tree.children[tree.root]
             .iter()
             .map(|&i| input.nodes[i].id)
