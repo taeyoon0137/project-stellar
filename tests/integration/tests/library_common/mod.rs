@@ -296,6 +296,7 @@ pub fn token_set(space: u64, name: &str, value: TypedValue) -> TokenSetSource {
             expression: sid(space, 802),
             value,
         }],
+        computed: Vec::new(),
     }
 }
 

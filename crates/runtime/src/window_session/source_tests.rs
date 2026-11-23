@@ -594,6 +594,7 @@ fn token_file(project: &TempDir) -> (String, String) {
             expression: sid(3_002),
             value: TypedValue::Length(Length::new(16.0).unwrap()),
         }],
+        computed: Vec::new(),
     });
     let encoded = encode(&text).unwrap().files;
     let (path, content) = encoded

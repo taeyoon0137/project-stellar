@@ -128,7 +128,7 @@ pub fn parse_owner(value: &str) -> Result<ContextOwner, TextSourceError> {
 }
 
 /// expression 필드: 리터럴 형식 또는 `ast` hex.
-fn expression_fields(
+pub(crate) fn expression_fields(
     ast: &ExpressionAst,
 ) -> Result<Vec<(&'static str, YamlValue)>, TextSourceError> {
     if ast.len() == 1 {
@@ -194,7 +194,7 @@ pub fn ast_expression(hex: &str) -> Result<ExpressionAst, TextSourceError> {
     ExpressionAst::from_canonical_bytes(&bytes).map_err(invalid)
 }
 
-fn parse_expression(item: &YamlValue) -> Result<ExpressionAst, TextSourceError> {
+pub(crate) fn parse_expression(item: &YamlValue) -> Result<ExpressionAst, TextSourceError> {
     let present = |key| field(item, key).is_ok();
     if present("ast") {
         return ast_expression(text(field(item, "ast")?)?);
@@ -206,7 +206,7 @@ fn parse_expression(item: &YamlValue) -> Result<ExpressionAst, TextSourceError> 
     )
 }
 
-fn expression_keys(item: &YamlValue) -> &'static [&'static str] {
+pub(crate) fn expression_keys(item: &YamlValue) -> &'static [&'static str] {
     if field(item, "ast").is_ok() {
         &["ast"]
     } else {

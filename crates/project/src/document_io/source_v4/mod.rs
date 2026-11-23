@@ -12,6 +12,10 @@ pub mod catalog;
 pub mod context;
 /// CSS 값 문법.
 pub(crate) mod css;
+/// 추가 root 문서(ADR-0131 결정 3).
+pub mod documents;
+/// 컴포넌트 Property·Slot·상태 머신 원본(ADR-0131 결정 1).
+pub mod interface;
 /// registry 기반 파일 키.
 pub(crate) mod keys;
 /// node·modifier 레코드.
@@ -34,5 +38,8 @@ pub mod view_data;
 /// 텍스트 원본의 쓰기 버전.
 pub const VERSION: &str = "4";
 
+/// 공개 포맷 동결 전 검증(V.10.4, ADR-0131 결정 5).
+#[cfg(test)]
+pub(crate) mod freeze_tests;
 #[cfg(test)]
 mod tests;

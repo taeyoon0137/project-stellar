@@ -135,6 +135,30 @@ pub struct LegacyMove {
     /// 옛 current pointer가 새 current pointer를 바꿨는지. 바뀐 cache는 원본과의 짝(stamp)을 알 수 없으므로
     /// 호출자가 stamp를 지웁니다.
     pub current_replaced: bool,
+    /// [`LegacyPointer::Drop`]으로 옛 current pointer를 cache pointer로 쓰지 않고 지웠는지(ADR-0131 결정 4).
+    pub current_dropped: bool,
+}
+
+/// 옛 current pointer를 어떻게 다룰지(ADR-0131 결정 4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyPointer {
+    /// 옛 pointer가 cache pointer를 바꿉니다(ADR-0122 결정 3). Git snapshot을 푼 비공개 폴더와 텍스트 원본이 없는
+    /// 옛 프로젝트의 변환이 씁니다.
+    Replace,
+    /// 옛 pointer를 cache pointer로 쓰지 않습니다. 텍스트 원본이 있는 작업 트리가 씁니다. 원본이 Git 원본이라 옛
+    /// pointer는 새 정보가 아니고, cache pointer를 바꾸면 원본 이후 cache에만 쓴 편집(Forward)이 빠지기 때문입니다.
+    /// 그 세대의 manifest·chunk는 다른 파일처럼 cache로 옮깁니다(GC가 정리).
+    Drop,
+}
+
+/// 옛 배치 파일을 옮길지 복사할지(ADR-0131 결정 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyTransfer {
+    /// 작업 트리에서 옮깁니다(옛 파일이 사라짐).
+    Move,
+    /// cache에 복사하고 옛 파일은 그대로 둡니다. 텍스트 원본으로 변환한 뒤 그 원본이 Git에 들어가기 전까지 옛
+    /// 배치가 Git 원본으로 남도록 합니다.
+    Copy,
 }
 
 /// 옛 배치 이동 실패.
@@ -181,6 +205,7 @@ fn move_file(
     from: &Path,
     to: &Path,
     relative: String,
+    transfer: LegacyTransfer,
     outcome: &mut LegacyMove,
 ) -> Result<(), LegacyMoveError> {
     match FileIdentity::lstat(from) {
@@ -191,12 +216,31 @@ fn move_file(
         Err(error) => return Err(fail(from)(error)),
     }
     match FileIdentity::lstat(to) {
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            match std::fs::rename(from, to) {
+        Err(error) if error.kind() == ErrorKind::NotFound => match transfer {
+            LegacyTransfer::Move => match std::fs::rename(from, to) {
                 Ok(()) => outcome.moved += 1,
                 // 다른 writer가 먼저 옮김.
                 Err(error) if error.kind() == ErrorKind::NotFound => {}
                 Err(error) => return Err(fail(from)(error)),
+            },
+            LegacyTransfer::Copy => {
+                let limit = std::fs::metadata(from).map_err(fail(from))?.len();
+                let bytes = read_regular_file(from, limit, Link::NoFollow).map_err(fail(from))?;
+                write_file_atomic(to, &bytes).map_err(fail(to))?;
+                outcome.moved += 1;
+            }
+        },
+        Ok(_) if transfer == LegacyTransfer::Copy => {
+            // 내용 주소 파일이 이미 있으면 복사하지 않습니다(다르면 옛 파일을 남겨 둠).
+            let limit = std::fs::metadata(from).map_err(fail(from))?.len();
+            let old = read_regular_file(from, limit, Link::NoFollow).map_err(fail(from))?;
+            let same = read_regular_file(to, limit, Link::NoFollow)
+                .map(|new| new == old)
+                .unwrap_or(false);
+            if same {
+                outcome.deduplicated += 1;
+            } else {
+                outcome.kept.push(relative);
             }
         }
         Ok(_) => {
@@ -226,6 +270,7 @@ fn move_area(
     legacy: &Path,
     area: &[&str],
     relative: &str,
+    transfer: LegacyTransfer,
     outcome: &mut LegacyMove,
 ) -> Result<(), LegacyMoveError> {
     if real_dir(legacy).map_err(fail(legacy))? != Some(true) {
@@ -245,11 +290,14 @@ fn move_area(
             &legacy.join(&name),
             &target.join(&name),
             format!("{relative}/{text}"),
+            transfer,
             outcome,
         )?;
     }
     // 비었을 때만 지웁니다(옮기지 않은 파일·다른 항목은 남김).
-    let _ = std::fs::remove_dir(legacy);
+    if transfer == LegacyTransfer::Move {
+        let _ = std::fs::remove_dir(legacy);
+    }
     Ok(())
 }
 
@@ -266,6 +314,21 @@ fn move_area(
 /// 여러 프로세스가 함께 불러도 안전합니다(rename이 먼저 끝난 쪽이 이기고 나머지는 없는 파일을 건너뜀). Git
 /// index는 건드리지 않습니다.
 pub fn move_legacy_layout(root: &Path) -> Result<LegacyMove, LegacyMoveError> {
+    transfer_legacy_layout(root, LegacyTransfer::Move, LegacyPointer::Replace)
+}
+
+/// [`move_legacy_layout`]의 일반형: 옮길지 복사할지(`transfer`)와 옛 current pointer를 어떻게 다룰지(`pointer`)를
+/// 고릅니다(ADR-0131 결정 3·4).
+///
+/// - [`LegacyPointer::Drop`]: 옛 pointer는 cache pointer를 바꾸지 않습니다. `Move`면 옛 pointer 파일을 지우고
+///   ([`LegacyMove::current_dropped`]), `Copy`면 그대로 둡니다. cache pointer 상태와 관계없이 같은 결과라 저장 잠금이
+///   없어도 다른 writer의 pointer 교체와 경쟁하지 않습니다.
+/// - [`LegacyTransfer::Copy`]: 옛 파일을 지우지 않습니다. 새 위치에 없는 파일만 원자 쓰기로 복사합니다.
+pub fn transfer_legacy_layout(
+    root: &Path,
+    transfer: LegacyTransfer,
+    pointer: LegacyPointer,
+) -> Result<LegacyMove, LegacyMoveError> {
     let mut outcome = LegacyMove::default();
     let design = root.join(LEGACY_DIR);
     if real_dir(&design).map_err(fail(&design))? != Some(true) {
@@ -295,19 +358,48 @@ pub fn move_legacy_layout(root: &Path) -> Result<LegacyMove, LegacyMoveError> {
                 &objects.join(name),
                 &[OBJECTS_DIR, name],
                 &format!("design/objects/{name}"),
+                transfer,
                 &mut outcome,
             )?;
         }
-        let _ = std::fs::remove_dir(&objects);
+        if transfer == LegacyTransfer::Move {
+            let _ = std::fs::remove_dir(&objects);
+        }
     }
     move_area(
         root,
         &generations,
         &[GENERATIONS_DIR],
         "design/generations",
+        transfer,
         &mut outcome,
     )?;
     match FileIdentity::lstat(&current) {
+        Ok((meta, _)) if meta.is_file() && pointer == LegacyPointer::Drop => {
+            if transfer == LegacyTransfer::Move {
+                match std::fs::remove_file(&current) {
+                    Ok(()) => outcome.current_dropped = true,
+                    Err(error) if error.kind() == ErrorKind::NotFound => {}
+                    Err(error) => return Err(fail(&current)(error)),
+                }
+            }
+        }
+        Ok((meta, _)) if meta.is_file() && transfer == LegacyTransfer::Copy => {
+            let dirs = ensure_real_dirs(root, &CACHE_DIR)
+                .map_err(|(path, source)| LegacyMoveError { path, source })?;
+            let (dir, _) = dirs.last().expect("구성 요소가 있음");
+            let target = dir.join(CURRENT_FILE);
+            let previous = read_regular_file(&target, 1024, Link::NoFollow).ok();
+            let legacy =
+                read_regular_file(&current, 1024, Link::NoFollow).map_err(fail(&current))?;
+            if previous.as_deref() == Some(&legacy[..]) {
+                outcome.deduplicated += 1;
+            } else {
+                write_file_atomic(&target, &legacy).map_err(fail(&target))?;
+                outcome.moved += 1;
+                outcome.current_replaced = previous.is_some();
+            }
+        }
         Ok((meta, _)) if meta.is_file() => {
             let dirs = ensure_real_dirs(root, &CACHE_DIR)
                 .map_err(|(path, source)| LegacyMoveError { path, source })?;
@@ -431,6 +523,70 @@ mod tests {
             std::fs::read(cache.join("objects/ab/sha256-ab.starchunk")).unwrap(),
             b"c"
         );
+    }
+
+    /// 텍스트 원본이 있는 작업 트리(Drop): 옛 pointer는 cache pointer를 바꾸지 않고 지워집니다. cache에만 쓴 편집을
+    /// 가리키는 pointer가 그대로 남습니다(ADR-0131 결정 4).
+    #[test]
+    fn dropped_legacy_pointer_never_replaces_the_cache_pointer() {
+        let dir = TempDir::new("legacy-drop");
+        let root = &dir.path;
+        let cache = cache_dir(root);
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("current"), b"forward\n").unwrap();
+        std::fs::create_dir_all(root.join("design/generations")).unwrap();
+        std::fs::write(root.join("design/generations/sha256-g.starmanifest"), b"m").unwrap();
+        std::fs::write(root.join("design/current"), b"restored-by-git\n").unwrap();
+        let moved =
+            transfer_legacy_layout(root, LegacyTransfer::Move, LegacyPointer::Drop).unwrap();
+        assert!(moved.found);
+        assert!(moved.current_dropped);
+        assert!(!moved.current_replaced);
+        assert_eq!(std::fs::read(cache.join("current")).unwrap(), b"forward\n");
+        assert!(!root.join("design/current").exists());
+        assert_eq!(
+            std::fs::read(cache.join("generations/sha256-g.starmanifest")).unwrap(),
+            b"m"
+        );
+        // cache pointer가 없어도 옛 pointer를 쓰지 않습니다(원본에서 다시 만듦).
+        std::fs::remove_file(cache.join("current")).unwrap();
+        std::fs::write(root.join("design/current"), b"again\n").unwrap();
+        let moved =
+            transfer_legacy_layout(root, LegacyTransfer::Move, LegacyPointer::Drop).unwrap();
+        assert!(moved.current_dropped);
+        assert!(!cache.join("current").exists());
+    }
+
+    /// 변환(Copy): 옛 파일은 작업 트리에 그대로 남고 cache에는 같은 bytes가 생깁니다. 다시 불러도 같은 결과입니다.
+    #[test]
+    fn copied_legacy_layout_stays_in_the_working_tree() {
+        let dir = TempDir::new("legacy-copy");
+        let root = &dir.path;
+        std::fs::create_dir_all(root.join("design/objects/ab")).unwrap();
+        std::fs::create_dir_all(root.join("design/generations")).unwrap();
+        std::fs::write(root.join("design/objects/ab/sha256-ab.starchunk"), b"c").unwrap();
+        std::fs::write(root.join("design/generations/sha256-g.starmanifest"), b"m").unwrap();
+        std::fs::write(root.join("design/current"), b"p\n").unwrap();
+        let copied =
+            transfer_legacy_layout(root, LegacyTransfer::Copy, LegacyPointer::Replace).unwrap();
+        assert_eq!(copied.moved, 3);
+        let cache = cache_dir(root);
+        assert_eq!(std::fs::read(cache.join("current")).unwrap(), b"p\n");
+        assert_eq!(
+            std::fs::read(cache.join("objects/ab/sha256-ab.starchunk")).unwrap(),
+            b"c"
+        );
+        for path in [
+            "design/current",
+            "design/generations/sha256-g.starmanifest",
+            "design/objects/ab/sha256-ab.starchunk",
+        ] {
+            assert!(root.join(path).is_file(), "{path}");
+        }
+        let again =
+            transfer_legacy_layout(root, LegacyTransfer::Copy, LegacyPointer::Replace).unwrap();
+        assert_eq!(again.moved, 0);
+        assert_eq!(again.deduplicated, 3);
     }
 
     #[cfg(unix)]

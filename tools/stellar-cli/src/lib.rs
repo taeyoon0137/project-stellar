@@ -72,5 +72,7 @@ pub mod style_defaults;
 /// `diagnostics`: 로컬 진단 preview·수동 번들 내보내기·금지 필드 검사·동의 (XVI.8, ADR-0109).
 pub mod diagnostics;
 
+/// `cache`: Git 밖 chunk cache 명령과 옛 배치 변환 (ADR-0122, ADR-0131).
+mod cache;
 mod component_source;
 mod merge_driver;

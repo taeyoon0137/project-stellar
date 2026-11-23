@@ -77,6 +77,7 @@ fn brand_tokens() -> TokenSetSource {
             expression: nid(BRAND_TOKEN + 1),
             value: TypedValue::String("blue".into()),
         }],
+        computed: Vec::new(),
     }
 }
 

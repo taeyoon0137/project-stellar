@@ -252,7 +252,8 @@ fn legacy_tracked_cache_is_moved_on_open_and_untracked_before_commit() {
     // 열기 관찰이 작업 트리의 옛 배치를 cache 위치로 옮깁니다(의미는 같음).
     let before = name_of(&work, ICON);
     assert!(!work.join("design/current").exists());
-    assert!(current_pointer_path(&work).is_file());
+    // 원본이 있는 작업 트리에서 옛 pointer는 cache pointer로 쓰지 않습니다(ADR-0131 결정 4). 원본으로 읽습니다.
+    assert!(!current_pointer_path(&work).is_file());
     assert_eq!(before, "아이콘");
 
     // stage·commit 전 정리: 원본이 있으므로 옛 경로를 index에서 뺍니다.

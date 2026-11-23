@@ -1,0 +1,4 @@
+format: stellar-documents
+schema_version: "4"
+documents:
+  - "documents/document/document.stellar.yaml"
