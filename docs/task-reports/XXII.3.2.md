@@ -60,6 +60,9 @@
   냅니다. node마다 내면 모든 flex item에 같은 진단이 붙기 때문입니다.
 - grid 배치는 모든 item이 명시 line이거나 모두 자동 배치일 때만 칸을 정합니다. 섞이면 배치 규칙을 다시 구현하지 않고
   Unsupported로 진단합니다(layout 엔진의 배치 함수는 crate 비공개).
+- 검토 보완: SwiftUI stack `spacing`이 Spacer 양옆에도 붙어 `space-between`과 gap을 함께 쓰면 사이 간격이 최소 2배
+  gap이 되던 결함을 고쳤습니다. spread가 있으면 stack spacing은 0이고 gap은 사이 `Spacer(minLength:)`입니다. 이 결함을
+  고정하던 test 기대값과 golden을 바로잡았습니다.
 
 ## 남은 위험
 

@@ -55,6 +55,9 @@
 - dialog·modal은 Compose에 대응 역할이 없어 `paneTitle`로 근사합니다(노트).
 - compile fixture 대신 static fixture(golden + 정적 구조 검사)입니다. 검증 기준이 compile/static fixture라 static으로 충족했지만
   Kotlin 컴파일 확인은 남았습니다.
+- 검토 보완: semantics·`clickable`·`selectable`·`Role`·`MutableInteractionSource` 등 24개 이름이 import 표에 없어
+  생성 Kotlin 파일에 import 줄이 빠졌습니다(컴파일되지 않는 출력). 정적 검사도 표에 있는 이름만 보아 놓쳤습니다. 표에
+  이름을 더하고 표에 없는 이름을 쓰면 debug assert로 실패하게 했습니다.
 
 ## 남은 위험
 
