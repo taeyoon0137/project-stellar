@@ -507,6 +507,23 @@ impl Drop for Staging {
     }
 }
 
+/// 디스크의 entry bytes가 entry 주소와 맞지 않음(XV.4.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EntryCorruption {
+    /// 디스크 bytes에서 다시 계산한 content hash가 entry 주소와 다름.
+    ContentMismatch {
+        /// 다시 계산한 값.
+        found: ContentHashText,
+    },
+    /// 일반 파일·디렉터리가 아닌 항목(symlink 등)이 생김.
+    UnexpectedEntry,
+    /// 읽기 실패.
+    Io {
+        /// io 오류 종류.
+        kind: std::io::ErrorKind,
+    },
+}
+
 /// 디스크 entry 재계산 실패.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryScanError {
@@ -801,6 +818,20 @@ impl<H: Sha256Digest, K: RepositoryKeyer> LibraryEntryStore<H, K> {
             size_bytes: hit.size_bytes,
             _read_lock: guard,
         }))
+    }
+
+    /// 연 entry의 디스크 bytes에서 content hash를 다시 계산해 entry 주소(content hash)와 비교합니다(XV.4.4).
+    ///
+    /// entry는 immutable이므로 주소와 다르면 손상입니다. 예상하지 않은 항목(symlink 등)이 생긴 entry도
+    /// 손상으로 봅니다(fail closed). 읽기 실패는 [`EntryScanError::Io`]입니다. read lock을 잡은 [`OpenedEntry`]만
+    /// 받으므로 검사하는 동안 entry가 정리되지 않습니다.
+    pub fn verify_entry_bytes(&self, opened: &OpenedEntry) -> Result<(), EntryCorruption> {
+        match recompute_entry_hash(opened.dir(), &self.hasher) {
+            Ok((hash, _, _)) if &hash == opened.content_hash() => Ok(()),
+            Ok((hash, _, _)) => Err(EntryCorruption::ContentMismatch { found: hash }),
+            Err(EntryScanError::UnexpectedEntry) => Err(EntryCorruption::UnexpectedEntry),
+            Err(EntryScanError::Io { kind }) => Err(EntryCorruption::Io { kind }),
+        }
     }
 
     fn git<R: GitCommandRunner + ?Sized>(

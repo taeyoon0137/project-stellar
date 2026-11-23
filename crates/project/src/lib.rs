@@ -101,3 +101,12 @@ pub mod fonts;
 
 /// 제품 문서 migration registry와 고정 decoder (IX.11.21).
 pub mod migration;
+
+/// library root 검증기: ProjectProbe·storage validator 제품 구현 (XV.3.4, XV.6.2).
+pub mod library_entry;
+
+/// library 텍스트 원본 export index 공급자 (XV.5.1 제품 공급자).
+pub mod library_exports;
+
+/// library 의존성 엔진의 시스템 Git·SHA-256 연결 (XV.3).
+pub mod library_git;

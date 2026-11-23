@@ -5,7 +5,8 @@
 //! 1. **ProjectProbe**(IV.5.1): root 구조·`stellar.yaml` 파싱·스키마. 일반 Git 저장소(`stellar.yaml`
 //!    없음)와 손상 매니페스트를 거부합니다. probe의 `project.id`가 선언한 [`LibraryId`]와 같아야
 //!    합니다.
-//! 2. **storage validator**(V.4.4): current pointer → generation manifest → chunk 순 검증.
+//! 2. **storage validator**(V.4.4): current pointer → generation manifest → chunk 순 검증. 텍스트 원본이 Git
+//!    원본인 library(ADR-0088)는 원본 해석도 이 단계입니다(ADR-0119 결정 1).
 //!
 //! 두 검증기는 project·storage crate에 있으므로 [`LibraryProjectValidator`] trait으로 받습니다.
 //! 비싼 storage 검증은 probe와 id 확인을 통과한 뒤에만 실행합니다. 검증을 통과한 결과는
@@ -51,6 +52,8 @@ pub enum StorageValidationFailure {
     Chunk,
     /// 저장소 내부 project id가 매니페스트와 다름.
     ProjectIdMismatch,
+    /// 텍스트 원본(`design/**/*.stellar.yaml`, ADR-0088)을 해석할 수 없음.
+    TextSource,
 }
 
 /// project·storage 검증기(project crate가 ProjectProbe·generation loader로 구현).

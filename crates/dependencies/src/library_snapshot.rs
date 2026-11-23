@@ -18,7 +18,8 @@
 //!   StableId 중복을 거부합니다. 상한은 [`LibraryExportSource`]에도 전달되어 공급자가 읽는 동안 멈출 수
 //!   있습니다(읽기 중 메모리 상한은 공급자 책임, snapshot 생성은 같은 상한을 다시 검사).
 //! - **cache 읽기**: [`load_cached_snapshot`]은 cache entry를 공유 read lock(XV.3.6)을 잡은 채
-//!   읽고, snapshot을 만든 뒤 lock을 풉니다. snapshot은 cache 파일을 참조하지 않으므로 이후 entry
+//!   디스크 bytes의 content hash를 다시 계산하고(XV.4.4), ProjectProbe·storage validator(XV.3.4)를 통과한
+//!   entry에서만 export를 읽은 뒤 lock을 풉니다(ADR-0119 결정 1). snapshot은 cache 파일을 참조하지 않으므로 이후 entry
 //!   정리(XV.8)와 무관합니다.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -28,9 +29,12 @@ use std::path::Path;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::reference::{ComponentRef, TokenRef};
 
-use crate::cache_entry::{LibraryEntryStore, MaterializeError, Sha256Digest};
+use crate::cache_entry::{EntryCorruption, LibraryEntryStore, MaterializeError, Sha256Digest};
 use crate::content_hash::ContentHashText;
 use crate::declaration::{CommitId, LibraryId, RepositoryUrl};
+use crate::entry_validation::{
+    validate_library_entry, LibraryEntryRejection, LibraryProjectValidator,
+};
 use crate::external_ref::ExternalResourceRef;
 use crate::graph::DependencyNodeKey;
 use crate::mirror::RepositoryKeyer;
@@ -798,6 +802,9 @@ pub enum ExportReadFailure {
     UnsupportedSchema,
     /// 읽는 동안 [`SnapshotLimits`]를 넘어 읽기를 멈춤.
     LimitExceeded,
+    /// entry가 ProjectProbe·storage validator를 통과하지 못해 export를 읽지 않음(일반 Git 저장소·손상 library,
+    /// XV.3.4).
+    InvalidLibrary(LibraryEntryRejection),
     /// 읽기 실패.
     Io {
         /// io 오류 종류.
@@ -815,6 +822,7 @@ impl fmt::Display for ExportReadFailure {
             ExportReadFailure::LimitExceeded => {
                 f.write_str("library export가 상한을 넘어 읽기를 멈췄습니다")
             }
+            ExportReadFailure::InvalidLibrary(e) => write!(f, "{e}"),
             ExportReadFailure::Io { kind } => write!(f, "library export 읽기 실패: {kind:?}"),
         }
     }
@@ -866,6 +874,10 @@ pub enum SnapshotLoadError {
     },
     /// cache index·lock 실패.
     Cache(MaterializeError),
+    /// 디스크 entry bytes가 entry 주소(content hash)와 다름(손상, XV.4.4). 다른 commit을 고르지 않습니다.
+    Corrupted(EntryCorruption),
+    /// entry가 ProjectProbe·storage validator를 통과하지 못함(일반 Git 저장소·손상 library, XV.3.4).
+    Rejected(LibraryEntryRejection),
     /// export 읽기 실패.
     Export(ExportReadFailure),
     /// export 검증 실패.
@@ -881,6 +893,17 @@ impl fmt::Display for SnapshotLoadError {
                 "cache entry content hash {found}가 기대 값 {expected}와 다릅니다"
             ),
             SnapshotLoadError::Cache(e) => write!(f, "library cache 오류: {e}"),
+            SnapshotLoadError::Corrupted(EntryCorruption::ContentMismatch { found }) => write!(
+                f,
+                "cache entry 내용이 손상되었습니다(다시 계산한 content hash {found})"
+            ),
+            SnapshotLoadError::Corrupted(EntryCorruption::UnexpectedEntry) => {
+                f.write_str("cache entry에 예상하지 않은 항목이 있습니다(손상)")
+            }
+            SnapshotLoadError::Corrupted(EntryCorruption::Io { kind }) => {
+                write!(f, "cache entry를 읽지 못했습니다: {kind:?}")
+            }
+            SnapshotLoadError::Rejected(e) => write!(f, "{e}"),
             SnapshotLoadError::Export(e) => write!(f, "{e}"),
             SnapshotLoadError::Invalid(e) => write!(f, "library export 검증 실패: {e}"),
         }
@@ -891,12 +914,19 @@ impl std::error::Error for SnapshotLoadError {}
 
 /// materialize된 cache entry에서 snapshot을 읽습니다.
 ///
-/// entry 공유 read lock을 잡은 동안만 export를 읽고, snapshot을 만든 뒤 lock을 풉니다. Git·network를
-/// 쓰지 않습니다(offline에서도 cache만 있으면 동작). 기대 content hash와 다르면 export를 읽지 않고
-/// 실패합니다.
+/// entry 공유 read lock을 잡은 동안 아래 순서로 검사하고, 모두 통과한 entry에서만 export를 읽습니다. snapshot을
+/// 만든 뒤 lock을 풉니다. Git·network를 쓰지 않습니다(offline에서도 cache만 있으면 동작).
+///
+/// 1. 기대 content hash(lock 값)와 entry 주소가 다르면 [`SnapshotLoadError::ContentHashMismatch`].
+/// 2. 디스크 bytes에서 다시 계산한 content hash가 entry 주소와 다르면 [`SnapshotLoadError::Corrupted`](XV.4.4).
+/// 3. ProjectProbe → library id → storage validator([`validate_library_entry`], XV.3.4)가 거부하면
+///    [`SnapshotLoadError::Rejected`].
+///
+/// 어느 실패에서도 다른 commit의 entry를 찾지 않습니다(ADR-0119 결정 1).
 pub fn load_cached_snapshot<H: Sha256Digest, K: RepositoryKeyer>(
     store: &LibraryEntryStore<H, K>,
     request: SnapshotRequest<'_>,
+    validator: &mut dyn LibraryProjectValidator,
     source: &mut dyn LibraryExportSource,
     limits: &SnapshotLimits,
     now_unix_ms: u64,
@@ -913,6 +943,11 @@ pub fn load_cached_snapshot<H: Sha256Digest, K: RepositoryKeyer>(
             });
         }
     }
+    store
+        .verify_entry_bytes(&opened)
+        .map_err(SnapshotLoadError::Corrupted)?;
+    validate_library_entry(opened.dir(), request.node.library_id, validator)
+        .map_err(SnapshotLoadError::Rejected)?;
     let exports = source
         .read_exports(opened.dir(), request.node.library_id, limits)
         .map_err(SnapshotLoadError::Export)?;
@@ -1021,6 +1056,8 @@ mod tests {
     use crate::cache_lock::{CacheLockError, CacheLocks};
     use crate::cache_root::LibraryCacheRoot;
     use crate::declaration::fixtures::{commit, library};
+    use crate::entry_validation::fake::TableValidator;
+    use crate::entry_validation::ProbedLibrary;
     use crate::mirror::MirrorCache;
     use crate::test_support::{FakeSha256, FnvKeyer, SystemGit, TempDir};
 
@@ -1477,6 +1514,7 @@ mod tests {
         let mut runner = SystemGit::find(tmp.path()).unwrap();
         let node = DependencyNodeKey::new(library(7), head.clone());
         let limits = SnapshotLimits::default();
+        let mut v = TableValidator::default();
 
         // materialize 전: entry 없음(offline·미 cache) → export를 읽지 않음.
         let mut table = TableExportSource::default();
@@ -1486,7 +1524,7 @@ mod tests {
             expected_content_hash: None,
         };
         assert_eq!(
-            load_cached_snapshot(&store, request, &mut table, &limits, 1),
+            load_cached_snapshot(&store, request, &mut v, &mut table, &limits, 1),
             Err(SnapshotLoadError::MissingEntry)
         );
         assert!(table.calls.is_empty());
@@ -1494,6 +1532,13 @@ mod tests {
         let entry = store
             .materialize(&mut runner, &mut mirrors, &url, &head, 2)
             .unwrap();
+        v.probes.insert(
+            entry.dir.clone(),
+            Ok(ProbedLibrary {
+                project_id: library(7),
+                schema_version: 1,
+            }),
+        );
         let mut probe = LockProbeSource {
             locks: store.locks(),
             hash: entry.content_hash.clone(),
@@ -1507,6 +1552,7 @@ mod tests {
                 expected_content_hash: Some(&entry.content_hash),
                 ..request
             },
+            &mut v,
             &mut probe,
             &limits,
             3,
@@ -1534,6 +1580,7 @@ mod tests {
                     expected_content_hash: Some(&other),
                     ..request
                 },
+                &mut v,
                 &mut table,
                 &limits,
                 4,
@@ -1548,7 +1595,7 @@ mod tests {
         // export 읽기 실패·검증 실패는 구조화 오류.
         let mut table = TableExportSource::default();
         assert_eq!(
-            load_cached_snapshot(&store, request, &mut table, &limits, 5),
+            load_cached_snapshot(&store, request, &mut v, &mut table, &limits, 5),
             Err(SnapshotLoadError::Export(ExportReadFailure::Corrupt))
         );
         assert_eq!(table.calls, [(entry.dir.clone(), library(7))]);
@@ -1560,7 +1607,7 @@ mod tests {
             },
         );
         assert_eq!(
-            load_cached_snapshot(&store, request, &mut table, &limits, 6),
+            load_cached_snapshot(&store, request, &mut v, &mut table, &limits, 6),
             Err(SnapshotLoadError::Invalid(
                 SnapshotError::DuplicateResource { id: rid(1) }
             ))
@@ -1577,14 +1624,127 @@ mod tests {
             seen_limits: Vec::new(),
         };
         assert_eq!(
-            load_cached_snapshot(&store, request, &mut streaming, &tight, 7),
+            load_cached_snapshot(&store, request, &mut v, &mut streaming, &tight, 7),
             Err(SnapshotLoadError::Export(ExportReadFailure::LimitExceeded))
         );
         assert_eq!(streaming.seen_limits, [tight]);
         assert_eq!(streaming.produced, 2);
         // 상한 안이면 같은 공급자로 snapshot 생성.
         streaming.available = 2;
-        let snap = load_cached_snapshot(&store, request, &mut streaming, &tight, 8).unwrap();
+        let snap =
+            load_cached_snapshot(&store, request, &mut v, &mut streaming, &tight, 8).unwrap();
         assert_eq!(snap.components().count(), 2);
+    }
+
+    #[test]
+    fn tampered_or_rejected_entry_is_not_read() {
+        let tmp = TempDir::new("library-snapshot-verify");
+        let Some(mut git) = SystemGit::find(tmp.path()) else {
+            return;
+        };
+        let lib = tmp.path().join("lib");
+        std::fs::create_dir_all(lib.join("design")).unwrap();
+        git.ok(&lib, ["init", "-q", "-b", "main"]);
+        git.ok(&lib, ["config", "user.name", "Fixture"]);
+        git.ok(&lib, ["config", "user.email", "fixture@example.com"]);
+        git.ok(&lib, ["config", "commit.gpgsign", "false"]);
+        std::fs::write(lib.join("stellar.yaml"), "schema_version: 1\n").unwrap();
+        std::fs::write(lib.join("design/chunk"), [1u8, 2, 3]).unwrap();
+        git.ok(&lib, ["add", "-A"]);
+        git.ok(&lib, ["commit", "-q", "-m", "v1"]);
+        let head: CommitId = git.ok(&lib, ["rev-parse", "HEAD"]).trim().parse().unwrap();
+        let url = RepositoryUrl::new(lib.to_str().unwrap()).unwrap();
+        let root = LibraryCacheRoot::in_app_data(&tmp.path().join("app")).unwrap();
+        let mut store = LibraryEntryStore::new(root.clone(), FakeSha256, FnvKeyer::new(6));
+        let mut mirrors = MirrorCache::new(
+            root.clone(),
+            SystemGit::find(tmp.path()).unwrap(),
+            FnvKeyer::new(6),
+        );
+        let mut runner = SystemGit::find(tmp.path()).unwrap();
+        let entry = store
+            .materialize(&mut runner, &mut mirrors, &url, &head, 1)
+            .unwrap();
+        let node = DependencyNodeKey::new(library(7), head.clone());
+        let request = SnapshotRequest {
+            repository: &url,
+            node: &node,
+            expected_content_hash: Some(&entry.content_hash),
+        };
+        let limits = SnapshotLimits::default();
+        let mut table = TableExportSource::default();
+        table
+            .by_root
+            .insert(entry.dir.clone(), version_exports("Button", b"#f00"));
+
+        // ProjectProbe 거부(일반 Git 저장소): export를 읽지 않음.
+        let mut plain = TableValidator::default();
+        assert_eq!(
+            load_cached_snapshot(&store, request, &mut plain, &mut table, &limits, 2),
+            Err(SnapshotLoadError::Rejected(
+                LibraryEntryRejection::NotAStellarProject
+            ))
+        );
+        // storage validator 거부(chunk 손상).
+        let mut broken = TableValidator::default();
+        broken.probes.insert(
+            entry.dir.clone(),
+            Ok(ProbedLibrary {
+                project_id: library(7),
+                schema_version: 1,
+            }),
+        );
+        broken.storage.insert(
+            entry.dir.clone(),
+            crate::entry_validation::StorageValidationFailure::Chunk,
+        );
+        assert_eq!(
+            load_cached_snapshot(&store, request, &mut broken, &mut table, &limits, 3),
+            Err(SnapshotLoadError::Rejected(
+                LibraryEntryRejection::CorruptStorage(
+                    crate::entry_validation::StorageValidationFailure::Chunk
+                )
+            ))
+        );
+        assert!(table.calls.is_empty());
+
+        // 디스크 bytes 변조: 다시 계산한 hash가 entry 주소와 달라 손상(검증기·export를 부르지 않음).
+        let chunk = entry.dir.join("design/chunk");
+        set_writable(&chunk);
+        std::fs::write(&chunk, [9u8, 9, 9]).unwrap();
+        let mut good = TableValidator::default();
+        good.probes.insert(
+            entry.dir.clone(),
+            Ok(ProbedLibrary {
+                project_id: library(7),
+                schema_version: 1,
+            }),
+        );
+        let result = load_cached_snapshot(&store, request, &mut good, &mut table, &limits, 4);
+        assert!(
+            matches!(
+                result,
+                Err(SnapshotLoadError::Corrupted(
+                    EntryCorruption::ContentMismatch { .. }
+                ))
+            ),
+            "{result:?}"
+        );
+        assert!(good.storage_calls.is_empty());
+        assert!(table.calls.is_empty());
+    }
+
+    /// 읽기 전용(0444) entry 파일을 변조 시험용으로 쓰기 가능하게 합니다.
+    fn set_writable(path: &Path) {
+        let mut perms = std::fs::metadata(path).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        std::fs::set_permissions(path, perms).unwrap();
+        if let Some(parent) = path.parent() {
+            let mut perms = std::fs::metadata(parent).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            perms.set_readonly(false);
+            std::fs::set_permissions(parent, perms).unwrap();
+        }
     }
 }
