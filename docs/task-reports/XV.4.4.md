@@ -2,7 +2,7 @@
 
 - WBS: XV.4.4
 - 작업명: lockfile content hash와 cache entry가 다르면 corruption으로 처리하고 자동으로 다른 commit을 선택하지 않음
-- 상태: 완료 (`[x]`)
+- 상태: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 완료 (`[x]`)
 - 선행: XV.4.2(이 lane에서 완료)
 
 ## 필수 실행 환경
@@ -57,3 +57,24 @@
 ## 상태 유지(deps_wiring lane, 2026-11-14)
 
 - `[~]` 유지: 엄격 선행 XV.4.2가 `[~]`입니다(위 XV.4.2 사유).
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 구현 판정 통과, 선행 미충족.
+- 근거: lockfile content hash와 cache entry가 다르면 corruption으로 처리하고 다른 commit을 자동 선택하지 않는 판정이 있습니다. 선행 XV.4.2가 `[~]`라 `[~]`를 유지합니다. 보고서 상태 줄이 `[x]`였던 것을 바로잡습니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/dependencies/src/lock_integrity.rs` `verify_lock_against_cache`(85행): cache entry 내용에서 content hash를 다시 계산해 lock 값과 비교하고, 다르면 `Corrupted`, 없으면 `MissingEntry`를 반환합니다. 다른 commit을 고르는 경로가 없습니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-dependencies` | 96 passed |
+
+### 남은 조건과 finding
+
+- XV.3.4 → XV.4.2 사슬이 풀리면 다시 판정합니다.
