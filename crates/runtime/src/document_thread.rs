@@ -853,6 +853,180 @@ fn run_loop(inbox: Arc<Inbox>) -> Result<DocumentLoopStats, DocumentThreadError>
     Ok(stats)
 }
 
+// ---------------------------------------------------------------------------
+// thread별 종료 순서 (XII.1.6)
+// ---------------------------------------------------------------------------
+
+/// 앱 runtime thread 종료 단계(XII.1.6, ADR-0083 결정 6). [`ShutdownStage::ORDER`] 순서로만 실행합니다.
+///
+/// - UI stop: 셸이 새 입력·요청을 보내지 않게 합니다(호출자가 넘긴 정지 동작).
+/// - command drain/cancel: document thread 접수를 닫고 남은 job을 실행합니다. 제한 시간을 넘기면 시작하지 않은
+///   job을 버립니다([`JobError::Lost`]). render·worker가 아직 살아 있으므로 drain 중 job이 render publish나 worker
+///   제출을 해도 막히지 않습니다.
+/// - render stop: 더 이상 새 frame이 오지 않으므로 render thread를 멈춥니다.
+/// - worker stop: document job이 더 제출하지 않으므로 worker pool을 닫고 join합니다.
+/// - runtime destroy: 남은 공유 상태를 버립니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ShutdownStage {
+    /// UI 입력·요청 정지.
+    UiStop,
+    /// command 수신 종료와 남은 job 실행(제한 시간을 넘기면 취소).
+    CommandDrain,
+    /// render thread 정지.
+    RenderStop,
+    /// worker pool 정지.
+    WorkerStop,
+    /// runtime 공유 상태 해제.
+    RuntimeDestroy,
+}
+
+impl ShutdownStage {
+    /// 고정 순서.
+    pub const ORDER: [ShutdownStage; 5] = [
+        ShutdownStage::UiStop,
+        ShutdownStage::CommandDrain,
+        ShutdownStage::RenderStop,
+        ShutdownStage::WorkerStop,
+        ShutdownStage::RuntimeDestroy,
+    ];
+
+    /// 안정 문자열 code.
+    pub fn code(self) -> &'static str {
+        match self {
+            ShutdownStage::UiStop => "ui-stop",
+            ShutdownStage::CommandDrain => "command-drain",
+            ShutdownStage::RenderStop => "render-stop",
+            ShutdownStage::WorkerStop => "worker-stop",
+            ShutdownStage::RuntimeDestroy => "runtime-destroy",
+        }
+    }
+}
+
+/// [`RuntimeThreads::shutdown`] 결과.
+#[derive(Debug)]
+pub struct ShutdownReport {
+    /// 실행한 단계(항상 [`ShutdownStage::ORDER`]).
+    pub stages: Vec<ShutdownStage>,
+    /// document thread 종료 결과.
+    pub document: Result<DocumentLoopStats, DocumentThreadError>,
+    /// render thread 종료 결과(없었으면 `None`).
+    pub render: Option<
+        Result<crate::render_thread::RenderLoopStats, crate::render_thread::RenderThreadError>,
+    >,
+    /// worker pool 종료 결과(없었으면 `None`).
+    pub workers: Option<crate::worker_pool::WorkerPoolShutdown>,
+}
+
+/// UI 정지 동작.
+type UiStop = Box<dyn FnOnce() + Send>;
+
+/// 앱 runtime thread 묶음. 종료는 [`RuntimeThreads::shutdown`] 하나로만 하며 순서는 [`ShutdownStage::ORDER`]입니다.
+/// drop도 같은 순서로 종료합니다.
+pub struct RuntimeThreads<S: Send + 'static> {
+    ui_stop: Option<UiStop>,
+    document: Option<DocumentThread>,
+    render: Option<crate::render_thread::RenderThread<S>>,
+    workers: Option<crate::worker_pool::WorkerPool>,
+    /// runtime destroy 단계에서 버리는 공유 상태.
+    shared: Option<Box<dyn Send>>,
+}
+
+impl<S: Send + 'static> fmt::Debug for RuntimeThreads<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RuntimeThreads")
+            .field("document", &self.document)
+            .field("render", &self.render)
+            .field("workers", &self.workers.is_some())
+            .finish()
+    }
+}
+
+impl<S: Send + 'static> RuntimeThreads<S> {
+    /// document thread와 선택적 render thread·worker pool을 묶습니다.
+    pub fn new(
+        document: DocumentThread,
+        render: Option<crate::render_thread::RenderThread<S>>,
+        workers: Option<crate::worker_pool::WorkerPool>,
+    ) -> RuntimeThreads<S> {
+        RuntimeThreads {
+            ui_stop: None,
+            document: Some(document),
+            render,
+            workers,
+            shared: None,
+        }
+    }
+
+    /// UI stop 단계에서 실행할 동작(셸 입력 정지)을 정합니다.
+    pub fn with_ui_stop(mut self, stop: impl FnOnce() + Send + 'static) -> RuntimeThreads<S> {
+        self.ui_stop = Some(Box::new(stop));
+        self
+    }
+
+    /// runtime destroy 단계에서 버릴 공유 상태를 맡깁니다.
+    pub fn with_shared(mut self, shared: impl Send + 'static) -> RuntimeThreads<S> {
+        self.shared = Some(Box::new(shared));
+        self
+    }
+
+    /// document thread 접수 handle.
+    pub fn sender(&self) -> Option<DocumentSender> {
+        self.document.as_ref().map(DocumentThread::sender)
+    }
+
+    /// worker pool.
+    pub fn workers(&self) -> Option<&crate::worker_pool::WorkerPool> {
+        self.workers.as_ref()
+    }
+
+    /// 고정 순서로 종료합니다. `drain_timeout`은 command drain 단계가 기다리는 상한입니다(`None`이면 끝까지).
+    pub fn shutdown(mut self, drain_timeout: Option<Duration>) -> ShutdownReport {
+        self.stop(drain_timeout)
+    }
+
+    fn stop(&mut self, drain_timeout: Option<Duration>) -> ShutdownReport {
+        let mut stages = Vec::with_capacity(ShutdownStage::ORDER.len());
+        stages.push(ShutdownStage::UiStop);
+        if let Some(stop) = self.ui_stop.take() {
+            stop();
+        }
+        stages.push(ShutdownStage::CommandDrain);
+        let document = match self.document.take() {
+            Some(mut document) => document.stop_within(drain_timeout),
+            None => Ok(DocumentLoopStats::default()),
+        };
+        stages.push(ShutdownStage::RenderStop);
+        let render = self
+            .render
+            .take()
+            .map(crate::render_thread::RenderThread::shutdown);
+        stages.push(ShutdownStage::WorkerStop);
+        let workers = self
+            .workers
+            .take()
+            .map(crate::worker_pool::WorkerPool::shutdown);
+        stages.push(ShutdownStage::RuntimeDestroy);
+        drop(self.shared.take());
+        ShutdownReport {
+            stages,
+            document,
+            render,
+            workers,
+        }
+    }
+}
+
+impl<S: Send + 'static> Drop for RuntimeThreads<S> {
+    fn drop(&mut self) {
+        if self.document.is_some() || self.render.is_some() || self.workers.is_some() {
+            let _ = self.stop(None);
+        }
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;

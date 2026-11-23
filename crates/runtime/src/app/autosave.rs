@@ -752,6 +752,10 @@ impl AppRuntime {
     /// 자동 저장 시계를 멈추고 document thread를 종료한 뒤(`timeout`까지), 진행 중인 자동 저장 쓰기가 끝나기를
     /// 기다립니다. 시계를 먼저 멈춰 종료 중에 새 저장을 접수하지 않습니다. document thread가 제때 끝나지 않았으면
     /// writer도 기다리지 않습니다.
+    ///
+    /// 순서는 XII.1.6의 고정 순서([`crate::document_thread::ShutdownStage::ORDER`])를 따릅니다: 셸이 입력을 멈춘 뒤
+    /// (UI stop) 감시·시계가 새 job을 내지 않게 하고 document thread가 남은 command를 실행하며(command drain/cancel),
+    /// 그다음 worker(writer)를 기다립니다(worker stop). 앱 runtime은 render thread를 소유하지 않습니다.
     pub(super) fn stop_with_autosave(
         &mut self,
         timeout: Option<Duration>,
