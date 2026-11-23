@@ -12,6 +12,8 @@
 //! 호출자(runtime `canvas::transform`, 이후 CLI·MCP)가 넘깁니다.
 
 pub mod align;
+pub mod group;
+pub mod order;
 pub mod place;
 pub mod plan;
 
