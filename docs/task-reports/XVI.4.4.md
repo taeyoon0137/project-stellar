@@ -43,3 +43,28 @@
 ## 남은 위험 / 한계
 
 - GPU p99(4ms)·present 대기열 깊이 판정은 GPU 경로가 없어 gate에 넣지 않았습니다. config에만 기록합니다.
+
+## 2026-11-23 interaction-trace 후속: gate 보강 (ADR-0096 결정 6)
+
+- required scenario는 다음도 지켜야 통과합니다.
+  - 판정 sample이 `scenario_min_samples`(1,000) 이상(`too_few_samples`).
+  - 선언한 cache setup과 실제 hit·miss가 일치(`cache_setup`, XVI.2.6).
+- `cargo xtask replay run --gate`는 §38.1 시나리오 13개 각각의 warm·cold 결과가 모두 있어야 통과합니다. 실행에 없는
+  조합은 sample 0개 결과로 넣어 `no_samples`로 실패합니다(빼지 않음).
+- sample 수 위반은 `value_ns`·`limit_ns`에 ns 대신 개수를 씁니다. 사람이 읽는 메시지는 "sample 999개 < 1000개"입니다.
+
+| 테스트 | 확인 |
+|---|---|
+| `gate_threshold_boundaries` | 기존 경계(5·7·9·10ms) + sample 1,000 통과·999 실패 + cache 불일치 실패 |
+| `result_schema_is_identical_across_runs`(xtask) | 2개만 실행하면 없는 조합 24개가 `no_samples`, 작은 실행은 `too_few_samples` |
+
+### 측정
+
+- XVI.2.5 보고서의 release 측정(20개 재생 파일, `--gate`)을 보십시오. Text Edit·Token Propagation·Component Update는
+  엔진 경로가 이어지지 않아 sample 0개로 실패합니다.
+
+### 근거 커밋
+
+- `e1b2454f` Feat: 성능 sample analyzer·제외 코드·release gate 추가 (XVI.4.2\~XVI.4.4)
+- XVI.2.5 작업 커밋(`Task(XVI.2.5)`, gate 보강 포함)
+- 이 커밋(`Task(XVI.4.4)`): 보고서 기록.
