@@ -52,12 +52,20 @@ pub struct ResizeUpdate {
     pub flip: [bool; 2],
 }
 
-/// node에 명시 `aspect-ratio`(auto 아님)가 있는지.
+/// node의 `aspect-ratio`가 `auto`가 아닌지. 생략값은 활성 기본값 세트로 풉니다(ADR-0082).
 fn ratio_locked(model: &DocumentModel, node: StableId) -> bool {
+    let set = model_style_set(model);
     model
-        .layout_record(node)
-        .and_then(|r| r.get(LayoutLonghand::AspectRatio).cloned())
-        .is_some_and(|v| !matches!(v, LayoutValue::Keyword("auto")))
+        .payload(node)
+        .and_then(|payload| {
+            stellar_document::css::style_defaults::resolve(&set, payload, model.layout_record(node))
+        })
+        .is_some_and(|layout| {
+            !matches!(
+                layout.get(LayoutLonghand::AspectRatio).value,
+                LayoutValue::Keyword("auto")
+            )
+        })
 }
 
 impl ResizeGesture {
