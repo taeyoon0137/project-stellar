@@ -2,7 +2,7 @@
 
 - WBS: XIV.8.4
 - 작업명: commit 뒤 HEAD·index·status 재조회, 자동 push 없음
-- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 XIV.8.1(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]` 후보)
+- 상태: 완료 (`[x]`) — 2026-11-23 cli-mcp-git-cleanup 재판정: 선행 XIV.8.1·XIV.8.2·XIV.8.3이 모두 `[x]`입니다(XIV.8.1은 같은 날 판정 이중 경로를 합쳐 `[x]`). 이전 판정: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 XIV.8.1(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]` 후보)
 - 선행: XIV.8.1~XIV.8.3
 - 결정: ADR-0080
 
@@ -45,6 +45,18 @@
 ## 차이(작업 지시와 다른 점)
 
 - 셸 FFI와 Swift UI는 사용자 방향(2026-11-23)에 따라 다루지 않았습니다. 엔진은 Rust 테스트와 `stellar git` CLI로 검증했습니다.
+
+## 2026-11-23 재판정 (cli-mcp-git-cleanup)
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-runtime --lib staging` | 19개 통과 |
+| `cargo test -p stellar-cli --test git` | 4개 통과 |
+| `cargo test -p stellar-ops` | 83개 통과 |
+
+- commit 경로(`GitSession::commit`)는 재검증 뒤 `git commit` 실행, HEAD·index·status 재조회 순서 그대로입니다. 재검증 판정만 바뀌었고 재조회 코드는 바뀌지 않았습니다.
+- push 경로 없음을 다시 확인했습니다: `crates/ops/src/git.rs`와 `tools/stellar-cli/src/git.rs`에 push·remote 쓰기 호출이 없고 모듈 문서가 그렇게 적습니다.
+- `partial_same_chunk_property_stage_unstage_commit`을 다시 실행해 통과했습니다(HEAD 바뀜, `staged_remaining` 0, bare 저장소에 `main` ref 없음).
 
 ## 남은 위험 / 한계
 
