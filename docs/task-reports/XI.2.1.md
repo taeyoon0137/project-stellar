@@ -2,7 +2,7 @@
 
 - WBS: XI.2.1
 - 작업명: layout/binding/modifier invalidation을 scene dirty set으로 변환
-- 상태: 완료 (`[x]`)
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록(ledger-refresh): 행 지시·검증 열을 코드와 테스트로 확인했고 선행이 모두 `[x]`입니다. 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 원장이 근거 커밋을 찾지 못했습니다(scene-incremental-perf lane). binding 출처 무효화는 `InvalidationOrigin::Binding`으로 같은 변환을 거치며, 그 출처를 만드는 binding 재평가 연결은 VIII 행 몫입니다. 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 완료 (`[x]`)
 - 결정: ADR-0084 결정 2
 - 선행: VII.1.4(`[x]`), X.7.1(`[x]`), VI.9.7(`[x]`)
 
@@ -49,3 +49,9 @@
 ## 남은 위험 / 한계
 
 - binding 재평가(VIII) 출처의 무효화는 아직 하류 연결이 없습니다. `InvalidationOrigin::Binding`으로 받을 수 있게만 두었습니다.
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(XI.2.1)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `894dce8b` Feat: layout·binding·modifier 무효화를 scene dirty set으로 바꿈 (XI.2.1)
