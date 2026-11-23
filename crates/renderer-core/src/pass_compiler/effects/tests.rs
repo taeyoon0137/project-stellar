@@ -194,6 +194,8 @@ fn skewed_or_huge_blur_is_reported() {
     let rotated = viewport_with(32.0, 32.0, [0.0, 2.0, -2.0, 0.0, 16.0, 0.0]);
     let plan = compile_frame(&input(&skewed, &rotated, EffectBoundaries::Minimal)).unwrap();
     assert!(plan.effect_diagnostics.is_empty());
+    // σ 100은 상한(64)을 넘지만 낮은 해상도(배수 2, σ 50)로 정확히 그립니다(ADR-0130 결정 2): 진단 없음, 줄이기 → blur
+    // 2개(줄인 크기) → 키우기 pass.
     let huge = snapshot(&[group(
         1,
         [0.0, 0.0, 8.0, 8.0],
@@ -202,12 +204,97 @@ fn skewed_or_huge_blur_is_reported() {
     .with_blur(100.0)]);
     let identity = viewport_with(32.0, 32.0, IDENTITY);
     let plan = compile_frame(&input(&huge, &identity, EffectBoundaries::Minimal)).unwrap();
+    assert!(
+        plan.effect_diagnostics.is_empty(),
+        "{:?}",
+        plan.effect_diagnostics
+    );
+    let effects = plan.layer_effects(LayerId(0)).unwrap();
+    let blur = effects.blur.unwrap();
+    assert_eq!((blur.sigma_x, blur.downsample), (100.0, 2));
+    let steps: Vec<&EffectStep> = plan.effect_passes.iter().map(|p| &p.step).collect();
+    assert!(matches!(
+        steps[..],
+        [
+            EffectStep::Downsample { factor: 2, .. },
+            EffectStep::Blur { sigma: 50.0, .. },
+            EffectStep::Blur { sigma: 50.0, .. },
+            EffectStep::Upsample { factor: 2, .. },
+        ]
+    ));
+    let low = plan.effect_passes[1].output;
+    let desc = plan.graph.resource(low.resource).unwrap().desc;
+    assert_eq!(
+        desc.size,
+        crate::render_graph::AttachmentSize::Fixed {
+            width: 16,
+            height: 16
+        }
+    );
+    assert_eq!(effects.blurred, Some(plan.effect_passes[3].output));
+    // 낮은 해상도 상한(σ 64 × 64)을 넘으면 상한으로 그리고 진단합니다.
+    let beyond = snapshot(&[group(
+        1,
+        [0.0, 0.0, 8.0, 8.0],
+        vec![rect(2, [1.0, 1.0, 4.0, 4.0], opaque(1.0, 0.0, 0.0))],
+    )
+    .with_blur(100.0)]);
+    let zoomed = viewport_with(32.0, 32.0, [50.0, 0.0, 0.0, 50.0, 0.0, 0.0]);
+    let plan = compile_frame(&input(&beyond, &zoomed, EffectBoundaries::Minimal)).unwrap();
     let blur = plan.layer_effects(LayerId(0)).unwrap().blur.unwrap();
-    assert_eq!(blur.sigma_x, MAX_SIGMA);
+    assert_eq!(
+        (blur.sigma_x, blur.downsample),
+        (MAX_DEVICE_SIGMA, MAX_DOWNSAMPLE)
+    );
     assert!(plan
         .effect_diagnostics
         .iter()
-        .any(|d| matches!(d, EffectDiagnostic::BlurTooLarge { sigma, .. } if *sigma == 100.0)));
+        .any(|d| matches!(d, EffectDiagnostic::BlurTooLarge { sigma, .. } if *sigma == 5000.0)));
+}
+
+#[test]
+fn frame_shadow_is_a_border_box_and_other_content_is_alpha() {
+    // Frame(사각형 내용)은 CSS box-shadow, text는 drop-shadow()입니다(ADR-0130 결정 1).
+    let shadow = ShadowFx {
+        offset: [1.5, 0.25],
+        blur: 2.0,
+        color: [0.0, 0.0, 0.0, 0.5],
+    };
+    let scene = snapshot(&[
+        group(1, [0.0, 0.0, 8.0, 8.0], Vec::new()).with_shadow(shadow),
+        rect(2, [10.0, 0.0, 8.0, 8.0], opaque(1.0, 1.0, 1.0))
+            .with_content(crate::test_scene::ContentFx::Text {
+                key: 1,
+                bounds: [10.0, 0.0, 8.0, 8.0],
+            })
+            .with_shadow(shadow),
+    ]);
+    let viewport = viewport_with(32.0, 32.0, IDENTITY);
+    let plan = compile_frame(&input(&scene, &viewport, EffectBoundaries::Minimal)).unwrap();
+    let sources: Vec<(u8, ShadowShape)> = plan
+        .effect_passes
+        .iter()
+        .filter_map(|p| match &p.step {
+            EffectStep::ShadowSource { node, shape } => Some((id_of(node), *shape)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        sources,
+        vec![(1, ShadowShape::BorderBox), (2, ShadowShape::ContentAlpha)]
+    );
+    let pass = transparent(&plan);
+    for draw in &pass.draws {
+        let effects = plan.draw_effects(pass.pass, draw.depth).unwrap();
+        let expected = if id_of(draw.source.node()) == 1 {
+            ShadowShape::BorderBox
+        } else {
+            ShadowShape::ContentAlpha
+        };
+        assert_eq!(effects.shadows[0].shape, expected);
+        // offset은 반올림하지 않은 device 값입니다.
+        assert_eq!(effects.shadows[0].offset, [1.5, 0.25]);
+    }
 }
 
 #[test]

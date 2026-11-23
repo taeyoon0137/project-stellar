@@ -55,7 +55,7 @@
 
 ## 남은 위험 / 한계
 
-- Frame `box-shadow`는 fill alpha와 무관하지만 이 구현은 `drop-shadow()` 의미(내용 alpha)입니다. 반투명 Frame fill의 shadow는 CSS
+- (해결, ADR-0130 결정 1) Frame `box-shadow`는 fill alpha와 무관하지만 이 구현은 `drop-shadow()` 의미(내용 alpha)입니다. 반투명 Frame fill의 shadow는 CSS
   `box-shadow`보다 옅습니다. document 쪽 note(SHADOW_NOTE)와 맞추는 일은 export·document 소유 작업입니다.
 - (해결, ADR-0116 결정 3) 제품 pass compiler가 shadow·layer blur·clip mask 효과 pass와 합성 program(`resolve_or_normal`)을 만듭니다.
   아래 "후속: 제품 pass compiler 연결" 절을 봅니다.
@@ -81,3 +81,37 @@
 | shadow: 원본 1 + shadow마다 blur 2, 축별 배율 (2, 3)에서 offset·σ 변환, 1단계 alpha 퍼뜨림·2단계 색 곱, target이 결과를 읽음(`shadows_get_source_and_blur_passes_in_device_units`) | 통과 |
 | 기울임 변환은 근사 진단, 회전 + 균일 배율은 진단 없음, σ 100은 상한 64와 진단(`skewed_or_huge_blur_is_reported`) | 통과 |
 | MSAA 없는 둥근 clip은 `R8Unorm` mask pass와 draw read(`mask_clip_draws_get_a_mask_pass`) | 통과 |
+
+## 후속: Frame 상자 그림자, 큰 σ 낮은 해상도, 소수 offset (lane render-shadow-quality, ADR-0130 결정 1·2·3)
+
+- 위 "남은 위험"의 Frame `box-shadow` 차이를 해결했습니다. pass compiler가 `SceneContent::Rect`(Frame) shadow를
+  `ShadowShape::BorderBox`로 정하고, 원본은 테두리 상자를 불투명하게 칠한 모양, 합성은 상자 안을 비웁니다. 그 밖의 내용은
+  `ShadowShape::ContentAlpha`(`drop-shadow()`)입니다.
+- device σ가 64를 넘으면 효과 입력을 2배씩 줄여(`effect_downsample`, 2×2 상자 평균) σ / d로 blur하고 bilinear로 키웁니다.
+  σ 상한 진단은 64 × 64를 넘을 때만입니다.
+- shadow offset은 소수 device pixel 그대로이고 합성 quad를 Linear로 읽습니다.
+- 변경 파일: `crates/renderer-core/src/effects/{blur,fixture,raster,lower,scene,inventory}.rs`, `effects/scene/tests.rs`,
+  `crates/renderer-core/src/pass_compiler/effects.rs`, `pass_compiler/effects/tests.rs`,
+  `docs/adr/ADR-0130-render-shadow-box-shape-and-low-resolution-effects.md`.
+- 새 적합성 fixture: `shadow-box-no-background`, `shadow-box-translucent-rounded`, `shadow-subpixel-offset`(32 pixel),
+  `shadow-large-blur-downsampled`(blur 150, 배수 2), `blur-large-downsampled`(반경 140, 배수 4)(192 pixel). 모두 inventory에
+  들어가 Metal 적합성 test가 CPU 기준과 비교합니다(허용 오차 class `blur`).
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-renderer-core` | lib 232 passed, 실패 0 |
+| `cargo test -p stellar-renderer-metal` | 68 passed, 실패 0 |
+| `cargo clippy -p stellar-renderer-core -p stellar-renderer-metal --all-targets --locked -- -D warnings` | 경고 0 |
+
+| 검사 | 결과 |
+|---|---|
+| Frame은 `BorderBox`, text는 `ContentAlpha`, offset은 반올림 없는 device 값(`frame_shadow_is_a_border_box_and_other_content_is_alpha`) | 통과 |
+| σ 100은 진단 없이 배수 2(줄이기 → blur 2개(σ 50, 16 pixel 고정 크기) → 키우기), 배율 50의 σ 5000은 상한 4096과 진단(`skewed_or_huge_blur_is_reported`) | 통과 |
+| 배경 없는 Frame: 상자 안 비움, 상자 밖 shadow 색 / 반투명 배경 Frame: 상자 안은 배경만, 상자 밖 shadow는 불투명(`frame_box_shadow_ignores_background_alpha_and_stays_outside_the_box`) | 통과 |
+| 소수 offset 0.5: 상자 오른쪽 바로 밖 pixel이 절반 덮임(`fractional_shadow_offset_is_not_rounded`) | 통과 |
+| CPU 기준: σ 80을 2배 줄여 그린 값과 device 해상도 직접 blur의 차이가 8-bit 한 단계 미만(`low_resolution_blur_matches_full_resolution_blur`) | 통과 |
+| CPU 기준: 반투명 내용이어도 상자 shadow는 불투명 상자 모양, 상자 안은 내용만(`box_shadow_source_is_the_opaque_box_and_skips_its_inside`) | 통과 |
+| Metal 적합성: 새 fixture 5개 포함 inventory 전체가 CPU 기준과 허용 오차 안(`full_inventory_matches_cpu_reference_on_metal`), 확대 이미지 눈 검사(상자 안 비움, 둥근 상자 그림자) | 통과 |
+
+- 남은 한계: codegen은 Frame에서 Blur가 Shadow보다 앞이면 `drop-shadow()`로 내지만 scene이 효과 순서를 싣지 않아 renderer는
+  Frame 그림자를 늘 상자 모양으로 그립니다(scene 변환 소유 후속). D3D12 비교는 Windows 재개 때입니다(ADR-0006).

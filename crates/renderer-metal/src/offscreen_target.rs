@@ -7,14 +7,17 @@
 //! # 규칙
 //!
 //! - **좌표**: device pixel `p`는 world `내보내기 영역 원점 + p / scale`입니다(CPU target과 같은 grid). 가장자리 부분
-//!   coverage는 축마다 [`SUPERSAMPLE`]배 supersampling으로 만들고(blur가 커서 supersample device σ가 [`MAX_SIGMA`]를 넘으면
-//!   넘지 않는 가장 큰 배수로 낮춤, [`supersample_for`]), readback한 선형광 연관 알파 값을 output pixel마다
-//!   상자 평균합니다. 그 뒤 비연관으로 되돌려 출력 색공간 transfer로 encode하고 8-bit로 반올림합니다(CPU target과 같은
-//!   마지막 단계). 알파 0 pixel의 RGB는 0입니다.
-//! - **tile**: 출력을 [`TILE`] pixel 정사각 tile로 나눠 그립니다. tile마다 효과가 번지는 거리(shadow offset + 3σ, layer
-//!   blur 3σ의 경로 합) 이상 여백을 두고 그린 뒤 가운데만 씁니다. 그래서 tile 경계에서 blur·shadow가 끊기지 않습니다.
+//!   coverage는 축마다 [`SUPERSAMPLE`]배 supersampling으로 만들고, readback한 선형광 연관 알파 값을 output pixel마다
+//!   상자 평균합니다. blur σ는 배수를 낮추는 이유가 아닙니다. supersample device σ가 큰 효과는 frame plan이 효과만 낮은
+//!   해상도로 그립니다(ADR-0130 결정 2). 배수는 효과 여백을 더한 tile texture 한 변이 [`MAX_TILE_TEXTURE`]를 넘을 때만
+//!   넘지 않는 가장 큰 배수로 낮춥니다([`supersample_for`], 메모리 상한). 그 뒤 비연관으로 되돌려 출력 색공간 transfer로
+//!   encode하고 8-bit로 반올림합니다(CPU target과 같은 마지막 단계). 알파 0 pixel의 RGB는 0입니다.
+//! - **tile**: 출력을 [`TILE`] pixel 정사각 tile로 나눠 그립니다. tile마다 효과가 번지는 거리(shadow offset +
+//!   [`REACH_PER_SIGMA`]·σ, layer blur [`REACH_PER_SIGMA`]·σ의 경로 합, [`tile_margin`]) 이상 여백을 두고 그린 뒤 가운데만
+//!   씁니다. 그래서 tile 경계에서 blur·shadow가 끊기지 않습니다.
 //! - **색**: working space는 출력 profile 색공간 선형광이고 target은 `Rgba16Float`입니다. 배경이 있으면 clear 색입니다.
-//! - **효과 근사 거부**: frame plan에 효과 근사 진단(σ 상한, 기울임 blur)이 있으면 그리지 않고 실패합니다. 내보내기는
+//! - **효과 근사 거부**: frame plan에 효과 근사 진단(낮은 해상도로도 넘는 σ 상한, 기울임 blur)이 있으면 그리지 않고
+//!   실패합니다. 내보내기는
 //!   근사하지 않습니다(ADR-0103 결정 2 원칙).
 //! - **범위**: View 내보내기(capture root가 snapshot root 전체)를 그립니다. selection은 조상 clip·합성 효과를 빼야 하는데
 //!   pass compiler가 아직 subtree 시작을 받지 않아 실패합니다(근사하지 않음).
@@ -38,7 +41,7 @@ use stellar_renderer_core::backend::{
 };
 use stellar_renderer_core::clip_plan::ClipCapabilities;
 use stellar_renderer_core::color::{decode_pixel, to_working, WorkingColor};
-use stellar_renderer_core::effects::blur::{layer_blur_sigma, shadow_sigma, MAX_SIGMA};
+use stellar_renderer_core::effects::blur::{layer_blur_sigma, shadow_sigma, REACH_PER_SIGMA};
 use stellar_renderer_core::effects::fixture::ImageData;
 use stellar_renderer_core::effects::lower::{lower_ops, OpsTarget};
 use stellar_renderer_core::effects::scene::{encode_plan, EncodeError, FrameResources, GlyphShape};
@@ -59,6 +62,10 @@ pub const SUPERSAMPLE: u32 = 8;
 
 /// tile 한 변(출력 pixel).
 pub const TILE: u32 = 128;
+
+/// supersample tile texture 한 변 상한(pixel). `Rgba16Float` 한 장 128 MiB입니다. 효과 여백이 커서 배수 8로 이 한 변을
+/// 넘으면 배수를 낮춥니다(메모리 상한, [`supersample_for`]).
+pub const MAX_TILE_TEXTURE: u32 = 4096;
 
 /// target format(선형광 연관 알파 half float).
 pub const TARGET_FORMAT: TextureFormat = LAYER_FORMAT;
@@ -265,10 +272,10 @@ fn effect_reach(export: &ConfirmedExport) -> f32 {
                 .iter()
                 .map(|s| {
                     let (x, y) = (s.offset().x(), s.offset().y());
-                    (x * x + y * y).sqrt() + 1.5 * s.blur().get()
+                    (x * x + y * y).sqrt() + REACH_PER_SIGMA * shadow_sigma(s.blur().get())
                 })
                 .fold(0.0f32, f32::max);
-            let own = (shadow + 3.0 * paint.layer_blur.get()) * scale;
+            let own = (shadow + REACH_PER_SIGMA * layer_blur_sigma(paint.layer_blur.get())) * scale;
             let total = above + if own.is_finite() { own } else { 0.0 };
             reach = reach.max(total);
             stack.extend(node.children().map(|child| (&**child, total)));
@@ -277,37 +284,28 @@ fn effect_reach(export: &ConfirmedExport) -> f32 {
     reach
 }
 
+/// tile 효과 여백(출력 pixel): 효과가 번지는 거리 × 배율의 올림 + 1(소수 offset bilinear 한 pixel 포함).
+pub fn tile_margin(export: &ConfirmedExport, scale: f64) -> u32 {
+    let margin = (f64::from(effect_reach(export)) * scale).ceil();
+    if margin.is_finite() && margin < f64::from(u32::MAX / 4) {
+        margin as u32 + 1
+    } else {
+        u32::MAX / 4
+    }
+}
+
 /// 내보내기의 supersampling 배수.
 ///
-/// 효과 σ는 supersample device 단위로 그리므로 배수만큼 커집니다. 출력 pixel 단위 최대 σ(축별 배율 포함)에 배수를 곱해도
-/// [`MAX_SIGMA`]를 넘지 않는 가장 큰 배수(1..=[`SUPERSAMPLE`])를 씁니다. 배수 1에서도 넘으면 1이고, 그때는 frame plan이
-/// σ 상한 진단을 남겨 렌더가 실패합니다(근사하지 않음). 배수를 낮추면 가장자리 coverage 단계만 거칠어지고 효과 수식은
-/// 같습니다.
-pub fn supersample_for(export: &ConfirmedExport, scale: f64) -> u32 {
-    let mut sigma = 0.0f32;
-    for root in export.capture().roots() {
-        let mut stack: Vec<&SceneNode> = vec![root.node()];
-        while let Some(node) = stack.pop() {
-            if node.hit().visibility == Visibility::Hidden {
-                continue;
-            }
-            let paint = node.paint().get();
-            let own = paint
-                .shadows
-                .iter()
-                .map(|s| shadow_sigma(s.blur().get()))
-                .fold(layer_blur_sigma(paint.layer_blur.get()), f32::max);
-            let device = f64::from(own * axis_scale(&node.world_transform())) * scale;
-            if device.is_finite() {
-                sigma = sigma.max(device as f32);
-            }
-            stack.extend(node.children().map(|child| &**child));
-        }
-    }
-    if sigma <= 0.0 {
-        return SUPERSAMPLE;
-    }
-    ((MAX_SIGMA / sigma).floor() as u32).clamp(1, SUPERSAMPLE)
+/// 효과 여백을 더한 tile texture 한 변(`(tile + 2·margin)·배수`)이 [`MAX_TILE_TEXTURE`]와 device 상한
+/// (`max_dimension`)을 넘지 않는 가장 큰 배수(1..=[`SUPERSAMPLE`])입니다. `tile`은 실제 tile 한 변(출력이 [`TILE`]보다
+/// 작으면 그 크기)입니다. 배수 1로도 넘으면 `None`(그리지 못함)입니다. blur σ는 배수에 영향이 없습니다(큰 σ는 효과만 낮은
+/// 해상도로 그림, ADR-0130 결정 2).
+pub fn supersample_for(margin: u32, tile: u32, max_dimension: u32) -> Option<u32> {
+    let limit = u64::from(MAX_TILE_TEXTURE.min(max_dimension));
+    let side = u64::from(tile.min(TILE)) + 2 * u64::from(margin);
+    (1..=SUPERSAMPLE)
+        .rev()
+        .find(|s| side * u64::from(*s) <= limit)
 }
 
 impl OffscreenTarget for MetalOffscreenTarget {
@@ -339,7 +337,7 @@ impl OffscreenTarget for MetalOffscreenTarget {
         let grid = request.grid();
         let origin = grid.world_rect(&grid.canvas());
         let scale = grid.scale();
-        let margin = (f64::from(effect_reach(export)) * scale).ceil() as u32 + 1;
+        let margin = tile_margin(export, scale);
         let resources = Resources {
             export,
             assets: self.assets.as_ref(),
@@ -367,7 +365,8 @@ impl OffscreenTarget for MetalOffscreenTarget {
         let space = request.profile().color_space();
         let mut pixels = vec![0u8; (width as usize) * (height as usize) * 4];
         let mut frame = 1u64;
-        let s = supersample_for(export, scale);
+        let s = supersample_for(margin, width.max(height), caps.max_texture_dimension)
+            .ok_or_else(|| failed("효과 여백을 더한 tile이 texture 상한을 넘습니다"))?;
         for tile_y in (0..height).step_by(TILE as usize) {
             for tile_x in (0..width).step_by(TILE as usize) {
                 if cancel.is_cancelled() {

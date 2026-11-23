@@ -9,7 +9,9 @@
 //!   GPU blend가 draw마다 저장된 값을 다시 읽는 것과 같습니다.
 //! - **layer**: 내용을 투명 layer canvas(`pass_compiler::LAYER_FORMAT` 정밀도)에 그린 뒤 효과 순서(내용 → shadow → layer
 //!   blur → clip → mask → opacity → blend, ADR-0102 결정 5)대로 target 전체에 합성합니다. blur는 GPU와 같은 두 단계 분리
-//!   적용이고 단계마다 layer 정밀도로 저장합니다. clip·mask coverage는 scissor·stencil 0/1, mask는 8-bit 저장 값입니다.
+//!   적용이고 단계마다 layer 정밀도로 저장합니다. 큰 σ는 GPU와 같은 낮은 해상도 단계(2×2 상자 줄이기 → blur → bilinear
+//!   키우기, ADR-0130 결정 2)를 거칩니다. shadow는 소수 offset quad에 bilinear로 합성하고, 상자 shadow
+//!   ([`ShadowSource::Box`])는 불투명 상자를 원본으로 쓰고 상자 안을 비웁니다(ADR-0130 결정 1·3). clip·mask coverage는 scissor·stencil 0/1, mask는 8-bit 저장 값입니다.
 //! - **겹침**: [`Coverage::Disjoint`] mesh는 삼각형마다 합성하고(GPU draw 순서와 같음), [`Coverage::Union`]은 pixel마다
 //!   한 번만 합성합니다.
 //! - **이미지**: texture에 올리는 byte([`ImageData::texture_bytes`])를 decode한 값으로 sampling합니다. Nearest는
@@ -28,7 +30,7 @@ use super::artifact::RgbaImage;
 use super::blur::kernel;
 use super::fixture::{
     ClipSpec, Coverage, CoverageShape, FillOp, Fixture, FixtureError, GlyphOp, ImageData, ImageOp,
-    LayerOp, Op, Paint, IMAGE_TEXTURE_FORMAT,
+    LayerOp, Op, Paint, ShadowSource, ShadowSpec, IMAGE_TEXTURE_FORMAT,
 };
 use super::gradient::GradientRamp;
 
@@ -248,28 +250,7 @@ fn draw_layer(canvas: &mut Canvas, layer: &LayerOp, plan: &OutputColorPlan) {
     if !layer.shadows.is_empty() {
         let mut stacked = layer_canvas(canvas, plan);
         for shadow in &layer.shadows {
-            let [sigma_x, sigma_y] = shadow.sigmas();
-            let alpha = blur_pass(
-                &group,
-                sigma_x,
-                [1, 0],
-                true,
-                WorkingColor::premultiplied([1.0; 4]),
-            );
-            let colored = blur_pass(
-                &alpha,
-                sigma_y,
-                [0, 1],
-                false,
-                to_working(plan, shadow.color),
-            );
-            let [ox, oy] = shadow.offset.map(i64::from);
-            for y in 0..stacked.height {
-                for x in 0..stacked.width {
-                    let src = colored.get(i64::from(x) - ox, i64::from(y) - oy);
-                    stacked.over(x, y, src);
-                }
-            }
+            draw_shadow(&mut stacked, &group, shadow, plan);
         }
         for y in 0..stacked.height {
             for x in 0..stacked.width {
@@ -282,8 +263,24 @@ fn draw_layer(canvas: &mut Canvas, layer: &LayerOp, plan: &OutputColorPlan) {
     let [sigma_x, sigma_y] = layer.blur_sigmas();
     if sigma_x > 0.0 || sigma_y > 0.0 {
         let unit = WorkingColor::premultiplied([1.0; 4]);
-        let horizontal = blur_pass(&group, sigma_x, [1, 0], false, unit);
-        group = blur_pass(&horizontal, sigma_y, [0, 1], false, unit);
+        let d = layer.blur_downsample().unwrap_or(1);
+        let low = downsample(&group, d, plan);
+        let horizontal = blur_pass(&low, sigma_x / d as f32, [1, 0], false, unit);
+        let blurred = blur_pass(&horizontal, sigma_y / d as f32, [0, 1], false, unit);
+        group = if d > 1 {
+            let mut full = layer_canvas(canvas, plan);
+            resample_quad(
+                &mut full,
+                &blurred,
+                [0.0, 0.0],
+                d,
+                None,
+                |canvas, x, y, src| canvas.set(x, y, src),
+            );
+            full
+        } else {
+            blurred
+        };
     }
     let (w, h) = (canvas.width, canvas.height);
     // clip·mask coverage(scissor·stencil은 0/1, mask는 저장한 8-bit coverage).
@@ -333,6 +330,136 @@ fn draw_layer(canvas: &mut Canvas, layer: &LayerOp, plan: &OutputColorPlan) {
             let dst = canvas.get(i64::from(x), i64::from(y));
             canvas.set(x, y, composite(layer.blend, src, dst));
         }
+    }
+}
+
+/// shadow 하나를 `stacked`에 합성합니다(ADR-0102 결정 5, ADR-0130 결정 1·2·3).
+///
+/// 원본(내용 alpha 또는 불투명 상자) → `d`배 줄이기 → 가로(alpha 퍼뜨림)·세로(shadow 색) blur(σ / d) → offset 자리 quad에
+/// bilinear로 키워 over. 상자 shadow는 상자 안(pixel 중심 판정)을 그리지 않습니다.
+fn draw_shadow(
+    stacked: &mut Canvas,
+    content: &Canvas,
+    shadow: &ShadowSpec,
+    plan: &OutputColorPlan,
+) {
+    let (w, h) = (stacked.width, stacked.height);
+    let boxed;
+    let (source, knockout) = match &shadow.source {
+        ShadowSource::Content => (content, None),
+        ShadowSource::Box(mesh) => {
+            let mut shape = layer_canvas(stacked, plan);
+            let opaque = WorkingColor::premultiplied([1.0; 4]);
+            raster_mesh(&mesh.positions, Coverage::Union, w, h, |x, y| {
+                shape.set(x, y, opaque)
+            });
+            let mut inside = vec![false; (w * h) as usize];
+            raster_mesh(&mesh.positions, Coverage::Union, w, h, |x, y| {
+                inside[(y * w + x) as usize] = true
+            });
+            boxed = shape;
+            (&boxed, Some(inside))
+        }
+    };
+    let d = shadow.downsample().unwrap_or(1);
+    let [sigma_x, sigma_y] = shadow.sigmas();
+    let low = downsample(source, d, plan);
+    let alpha = blur_pass(
+        &low,
+        sigma_x / d as f32,
+        [1, 0],
+        true,
+        WorkingColor::premultiplied([1.0; 4]),
+    );
+    let colored = blur_pass(
+        &alpha,
+        sigma_y / d as f32,
+        [0, 1],
+        false,
+        to_working(plan, shadow.color),
+    );
+    resample_quad(
+        stacked,
+        &colored,
+        shadow.offset,
+        d,
+        knockout.as_deref(),
+        |canvas, x, y, src| canvas.over(x, y, src),
+    );
+}
+
+/// `source`를 `d`배(2의 거듭제곱) 줄입니다. 한 단계마다 `ceil(n / 2)` 크기에 2×2 상자 평균(bilinear 표본 하나, 가장자리
+/// clamp)이고 layer 정밀도로 저장합니다. `d = 1`이면 그대로 복사합니다.
+pub(crate) fn downsample(source: &Canvas, d: u32, plan: &OutputColorPlan) -> Canvas {
+    let mut current = source.clone();
+    let mut d = d.max(1);
+    while d > 1 {
+        let (pw, ph) = (current.width, current.height);
+        let (nw, nh) = (pw.div_ceil(2), ph.div_ceil(2));
+        let mut next = Canvas::stored(
+            nw,
+            nh,
+            WorkingColor::TRANSPARENT,
+            LAYER_FORMAT,
+            plan.surface(),
+        );
+        for y in 0..nh {
+            for x in 0..nw {
+                let u = f64::from(2 * x + 1) / f64::from(pw);
+                let v = f64::from(2 * y + 1) / f64::from(ph);
+                let c = sample(
+                    &current.pixels,
+                    pw,
+                    ph,
+                    u,
+                    v,
+                    TextureFilter::Linear,
+                    TextureWrap::ClampToEdge,
+                );
+                next.set(x, y, c);
+            }
+        }
+        current = next;
+        d /= 2;
+    }
+    current
+}
+
+/// `source`(`d`배 줄인 효과 결과)를 `target`의 quad `[ox, oy, ox + w·d, oy + h·d]`에 bilinear(가장자리 clamp)로 읽어
+/// `write`합니다. pixel 중심이 quad 안인 pixel만(top-left 규칙)이고, `skip`이 참인 pixel은 건너뜁니다.
+fn resample_quad(
+    target: &mut Canvas,
+    source: &Canvas,
+    offset: [f32; 2],
+    d: u32,
+    skip: Option<&[bool]>,
+    mut write: impl FnMut(&mut Canvas, u32, u32, WorkingColor),
+) {
+    let [ox, oy] = offset;
+    let qw = (source.width * d) as f32;
+    let qh = (source.height * d) as f32;
+    let quad = super::fixture::Mesh::rect(ox, oy, ox + qw, oy + qh);
+    let (w, h) = (target.width, target.height);
+    let mut covered = Vec::new();
+    raster_mesh(&quad.positions, Coverage::Disjoint, w, h, |x, y| {
+        covered.push((x, y))
+    });
+    for (x, y) in covered {
+        if skip.is_some_and(|skip| skip[(y * w + x) as usize]) {
+            continue;
+        }
+        let u = (f64::from(x) + 0.5 - f64::from(ox)) / f64::from(qw);
+        let v = (f64::from(y) + 0.5 - f64::from(oy)) / f64::from(qh);
+        let src = sample(
+            &source.pixels,
+            source.width,
+            source.height,
+            u,
+            v,
+            TextureFilter::Linear,
+            TextureWrap::ClampToEdge,
+        );
+        write(target, x, y, src);
     }
 }
 
@@ -589,6 +716,66 @@ mod tests {
         // 겹친 곳은 내용이 shadow 위입니다.
         let both = working(&fixture, 7, 7);
         assert!((both.alpha() - 0.75).abs() < 0.01);
+    }
+
+    #[test]
+    fn low_resolution_blur_matches_full_resolution_blur() {
+        // σ 80(상한 64 초과): 2배 줄여 σ 40으로 blur하고 bilinear로 키운 값이 device 해상도 σ 80 blur와 거의 같습니다
+        // (ADR-0130 결정 2).
+        let plan = plan();
+        let mut source = layer_canvas(&Canvas::new(400, 64, WorkingColor::TRANSPARENT), &plan);
+        for y in 0..64 {
+            for x in 150..250 {
+                source.set(x, y, WorkingColor::premultiplied([0.2, 0.4, 0.6, 1.0]));
+            }
+        }
+        let unit = WorkingColor::premultiplied([1.0; 4]);
+        let direct = blur_pass(&source, 80.0, [1, 0], false, unit);
+        let d = crate::effects::blur::effect_downsample(80.0).unwrap();
+        assert_eq!(d, 2);
+        let low = downsample(&source, d, &plan);
+        assert_eq!((low.width, low.height), (200, 32));
+        let blurred = blur_pass(&low, 40.0, [1, 0], false, unit);
+        let mut full = layer_canvas(&source, &plan);
+        resample_quad(&mut full, &blurred, [0.0, 0.0], d, None, |c, x, y, v| {
+            c.set(x, y, v)
+        });
+        let mut worst = 0.0f32;
+        for y in [0i64, 31, 63] {
+            for x in 0..400i64 {
+                let (a, b) = (direct.get(x, y), full.get(x, y));
+                for c in 0..4 {
+                    worst = worst.max((a.rgba[c] - b.rgba[c]).abs());
+                }
+            }
+        }
+        // 8-bit 한 단계(1/255)보다 작습니다.
+        assert!(worst < 1.0 / 255.0, "최대 차이 {worst}");
+    }
+
+    #[test]
+    fn box_shadow_source_is_the_opaque_box_and_skips_its_inside() {
+        use crate::effects::fixture::Mesh;
+        let mut fixture = Fixture::new("box", Category::Modifier, 16, 16);
+        fixture.clear = srgb(0.0, 0.0, 0.0, 0.0);
+        fixture.format = crate::render_graph::TextureFormat::Rgba8Unorm;
+        // 반투명 내용(alpha 0.25)이어도 상자 shadow는 불투명 상자 모양입니다.
+        fixture.ops = vec![effect(
+            LayerOp::new(
+                vec![rect(4.0, 4.0, 10.0, 10.0, srgb(1.0, 1.0, 1.0, 0.25))],
+                SceneBlendMode::Normal,
+            )
+            .with_box_shadow(
+                [2.0, 2.0],
+                0.0,
+                srgb(0.0, 0.0, 1.0, 1.0),
+                Mesh::rect(4.0, 4.0, 10.0, 10.0),
+            ),
+        )];
+        assert!((working(&fixture, 11, 11).alpha() - 1.0).abs() < 0.01);
+        // 상자 안: 내용만(alpha 0.25), shadow는 비침 없음.
+        let inside = working(&fixture, 8, 8);
+        assert!((inside.alpha() - 0.25).abs() < 0.01 && inside.rgba[2] < 0.26);
     }
 
     fn count(tri: [[f32; 2]; 3], w: u32, h: u32) -> Vec<(u32, u32)> {

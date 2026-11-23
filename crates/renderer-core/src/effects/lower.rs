@@ -17,7 +17,10 @@
 //!   version을 읽어 target 전체 quad로 합성합니다. program·blend state는 [`crate::blend::composite_program`]입니다.
 //!   layer pass는 부모보다 먼저 끝나므로 기록 목록에서 앞에 옵니다(graph가 resource 흐름으로 순서를 정함).
 //! - layer 효과(ADR-0102 결정 5): shadow마다 `GaussianBlur` 두 pass(가로는 alpha를 퍼뜨리고, 세로는 shadow 색을 곱함)를 만들고
-//!   shadow·내용을 쌓는 pass에 offset quad로 그립니다. layer blur는 `GaussianBlur` 가로·세로 pass입니다. 합성 단계에서 scissor clip은
+//!   shadow·내용을 쌓는 pass에 소수 offset quad(Linear)로 그립니다. 상자 shadow는 불투명 상자 원본 pass를 blur하고, 쌓는
+//!   pass에서 상자를 stencil로 표시해 상자 밖에만 그립니다. σ가 `MAX_SIGMA`를 넘으면 원본을 2배씩 줄이는 pass(`LayerComposite`
+//!   Linear 표본 하나 = 2×2 상자 평균)를 거쳐 낮은 해상도에서 blur하고, shadow quad·layer blur 키우기 pass가 Linear로 다시
+//!   키웁니다(ADR-0130 결정 1·2·3). layer blur는 `GaussianBlur` 가로·세로 pass입니다. 합성 단계에서 scissor clip은
 //!   `SetScissor`, path clip은 `ClipStencil`(`IncrementWhereEqual`) → 합성(`TestEqual` reference 1) → `DecrementWhereEqual`로 되돌림,
 //!   mask·mask clip은 `R8Unorm` coverage pass(`ClipMask` + premultiplied over)를 slot 1에 bind하고 `DrawUniforms.mode = 1`, 불투명도는
 //!   tint입니다.
@@ -46,7 +49,7 @@ use super::abi::{
 };
 use super::fixture::{
     ClipSpec, Coverage, CoverageShape, FillOp, Fixture, FixtureError, GlyphOp, ImageOp, LayerOp,
-    Op, Paint, IMAGE_TEXTURE_FORMAT,
+    Mesh, Op, Paint, ShadowSource, IMAGE_TEXTURE_FORMAT,
 };
 use super::gradient::{GradientRamp, RAMP_WIDTH};
 use crate::blend::{composite_blend_state, composite_program};
@@ -343,39 +346,121 @@ impl Recorder {
     /// 내용 pass → (shadow마다 alpha blur 가로·색 blur 세로 pass) → shadow·내용 쌓기 pass → (layer blur 가로·세로 pass)
     /// → (mask coverage pass) → 부모에 clip·mask·opacity·blend 합성.
     fn record_layer(&mut self, parent: &mut PassRecord, layer: &LayerOp) -> Result<(), LowerError> {
-        let content = self.layer_pass("conformance layer", LAYER_FORMAT, |rec, pass| {
+        let full = (self.width, self.height);
+        let content = self.layer_pass("conformance layer", LAYER_FORMAT, full, |rec, pass| {
             rec.record_ops(pass, &layer.content)
         })?;
         let mut group = content;
         if !layer.shadows.is_empty() {
             let mut colored = Vec::with_capacity(layer.shadows.len());
+            // 같은 상자 mesh의 원본 pass는 하나만 그립니다.
+            let mut boxes: Vec<(&Mesh, ResourceVersion)> = Vec::new();
             for shadow in &layer.shadows {
+                let (source, knockout) = match &shadow.source {
+                    ShadowSource::Content => (content, None),
+                    ShadowSource::Box(mesh) => {
+                        let found = boxes.iter().find(|(m, _)| *m == &**mesh).map(|(_, v)| *v);
+                        let version = match found {
+                            Some(version) => version,
+                            None => {
+                                let version = self.box_source_pass(mesh)?;
+                                boxes.push((mesh, version));
+                                version
+                            }
+                        };
+                        (version, Some(&**mesh))
+                    }
+                };
+                let d = shadow
+                    .downsample()
+                    .ok_or(LowerError::Fixture(FixtureError::Invalid(
+                        "shadow blur 반경이 범위 밖입니다",
+                    )))?;
                 let [sigma_x, sigma_y] = shadow.sigmas();
-                let alpha = self.blur_pass(content, sigma_x, [1.0, 0.0], true, [1.0; 4])?;
+                let (low, size) = self.downsample_passes(source, d)?;
+                let alpha =
+                    self.blur_pass(low, size, sigma_x / d as f32, [1.0, 0.0], true, [1.0; 4])?;
                 let color = to_working(&self.plan, shadow.color).rgba;
-                colored.push((
-                    self.blur_pass(alpha, sigma_y, [0.0, 1.0], false, color)?,
-                    shadow.offset,
-                ));
+                let blurred =
+                    self.blur_pass(alpha, size, sigma_y / d as f32, [0.0, 1.0], false, color)?;
+                let [ox, oy] = shadow.offset;
+                let rect = [ox, oy, ox + (size.0 * d) as f32, oy + (size.1 * d) as f32];
+                colored.push((blurred, rect, knockout));
             }
-            group = self.layer_pass("conformance shadow stack", LAYER_FORMAT, |rec, pass| {
-                for (shadow, [ox, oy]) in &colored {
-                    let rect = [
-                        *ox as f32,
-                        *oy as f32,
-                        (*ox + rec.width as i32) as f32,
-                        (*oy + rec.height as i32) as f32,
-                    ];
-                    rec.draw_graph_texture(pass, *shadow, rect, [1.0; 4])?;
-                }
-                let full = rec.full_rect();
-                rec.draw_graph_texture(pass, content, full, [1.0; 4])
-            })?;
+            let full = self.full_rect();
+            let size = (self.width, self.height);
+            group = self.layer_pass(
+                "conformance shadow stack",
+                LAYER_FORMAT,
+                size,
+                |rec, pass| {
+                    for (shadow, rect, knockout) in &colored {
+                        match knockout {
+                            // 상자 shadow: 상자를 stencil 1로 표시하고 0인 곳(상자 밖)에만 그린 뒤 되돌립니다.
+                            Some(mesh) => {
+                                rec.stencil_mesh(pass, mesh, StencilMode::IncrementWhereEqual);
+                                pass.steps.push(Step::StencilReference(0));
+                                rec.draw_graph_texture(
+                                    pass,
+                                    *shadow,
+                                    *rect,
+                                    TextureFilter::Linear,
+                                    StencilMode::TestEqual,
+                                )?;
+                                rec.stencil_mesh(pass, mesh, StencilMode::DecrementWhereEqual);
+                            }
+                            None => rec.draw_graph_texture(
+                                pass,
+                                *shadow,
+                                *rect,
+                                TextureFilter::Linear,
+                                StencilMode::Disabled,
+                            )?,
+                        }
+                    }
+                    rec.draw_graph_texture(
+                        pass,
+                        content,
+                        full,
+                        TextureFilter::Nearest,
+                        StencilMode::Disabled,
+                    )
+                },
+            )?;
         }
         let [sigma_x, sigma_y] = layer.blur_sigmas();
         if sigma_x > 0.0 || sigma_y > 0.0 {
-            let horizontal = self.blur_pass(group, sigma_x, [1.0, 0.0], false, [1.0; 4])?;
-            group = self.blur_pass(horizontal, sigma_y, [0.0, 1.0], false, [1.0; 4])?;
+            let d = layer
+                .blur_downsample()
+                .ok_or(LowerError::Fixture(FixtureError::Invalid(
+                    "layer blur 반경이 범위 밖입니다",
+                )))?;
+            let (low, size) = self.downsample_passes(group, d)?;
+            let horizontal =
+                self.blur_pass(low, size, sigma_x / d as f32, [1.0, 0.0], false, [1.0; 4])?;
+            group = self.blur_pass(
+                horizontal,
+                size,
+                sigma_y / d as f32,
+                [0.0, 1.0],
+                false,
+                [1.0; 4],
+            )?;
+            if d > 1 {
+                let blurred = group;
+                let rect = [0.0, 0.0, (size.0 * d) as f32, (size.1 * d) as f32];
+                let full = (self.width, self.height);
+                group =
+                    self.layer_pass("conformance upsample", LAYER_FORMAT, full, |rec, pass| {
+                        rec.draw_graph_texture(
+                            pass,
+                            blurred,
+                            rect,
+                            TextureFilter::Linear,
+                            StencilMode::Disabled,
+                        )
+                    })?;
+            }
         }
         let mask = match (&layer.clip, layer.mask.is_empty()) {
             (Some(ClipSpec::Mask(shapes)), _) => Some(self.mask_pass(shapes)?),
@@ -456,14 +541,23 @@ impl Recorder {
         [0.0, 0.0, self.width as f32, self.height as f32]
     }
 
-    /// 새 transient에 그리는 pass를 기록하고 생산한 version을 돌려줍니다(투명 clear).
+    /// 새 `size` transient에 그리는 pass를 기록하고 생산한 version을 돌려줍니다(투명 clear). pass 안 좌표는 그 attachment
+    /// pixel 좌표입니다.
     fn layer_pass(
         &mut self,
         label: &'static str,
         format: TextureFormat,
+        (width, height): (u32, u32),
         record: impl FnOnce(&mut Recorder, &mut PassRecord) -> Result<(), LowerError>,
     ) -> Result<ResourceVersion, LowerError> {
-        let texture = self.builder.transient(label, self.desc(format));
+        let texture = self.builder.transient(
+            label,
+            TextureDesc {
+                format,
+                size: AttachmentSize::Fixed { width, height },
+                samples: SampleCount::X1,
+            },
+        );
         let id = self.builder.pass(label, PassKind::Raster);
         let mut pass = PassRecord {
             id,
@@ -484,27 +578,42 @@ impl Recorder {
         Ok(written)
     }
 
-    /// graph texture를 `rect`에 premultiplied over로 그립니다(`LayerComposite`, Nearest 1:1).
+    /// graph texture를 `rect`에 premultiplied over로 그립니다(`LayerComposite`, uv 0..1, `filter`로 읽음, `stencil`
+    /// 판정). 1:1 정수 자리면 Nearest·Linear 결과가 같습니다.
     fn draw_graph_texture(
         &mut self,
         pass: &mut PassRecord,
         source: ResourceVersion,
         rect: [f32; 4],
-        tint: [f32; 4],
+        filter: TextureFilter,
+        stencil: StencilMode,
+    ) -> Result<(), LowerError> {
+        self.draw_graph_quad(pass, source, rect, [0.0, 0.0, 1.0, 1.0], filter, stencil)
+    }
+
+    /// graph texture를 `rect`·`uv` quad로 premultiplied over합니다(`LayerComposite`).
+    fn draw_graph_quad(
+        &mut self,
+        pass: &mut PassRecord,
+        source: ResourceVersion,
+        rect: [f32; 4],
+        uv: [f32; 4],
+        filter: TextureFilter,
+        stencil: StencilMode,
     ) -> Result<(), LowerError> {
         self.builder.read(pass.id, source)?;
-        let (first, count) = self.textured_quad(rect, [0.0, 0.0, 1.0, 1.0]);
-        let (uniform_offset, uniform_size) = self.tint(tint);
+        let (first, count) = self.textured_quad(rect, uv);
+        let (uniform_offset, uniform_size) = self.tint([1.0; 4]);
         pass.steps.push(Step::Pipeline(key(
             ShaderProgram::LayerComposite,
             BlendState::PremultipliedOver,
-            StencilMode::Disabled,
+            stencil,
             pass.format,
         )));
         pass.steps.push(Step::Texture {
             slot: 0,
             texture: TexRef::Graph(source),
-            sampler: clamp_sampler(TextureFilter::Nearest),
+            sampler: clamp_sampler(filter),
         });
         pass.steps.push(Step::Draw {
             stream: Stream::Textured,
@@ -516,18 +625,106 @@ impl Recorder {
         Ok(())
     }
 
-    /// 한 방향 gaussian blur pass(`GaussianBlur`, ADR-0102 결정 5).
+    /// mesh를 stencil에 그립니다(`ClipStencil`, reference 0). pass에 stencil attachment를 붙입니다.
+    fn stencil_mesh(&mut self, pass: &mut PassRecord, mesh: &Mesh, mode: StencilMode) {
+        pass.stencil = true;
+        let (first, count) = self.solid_vertices(&mesh.positions, [0.0; 4]);
+        let (uniform_offset, uniform_size) = self.tint([1.0; 4]);
+        pass.steps.push(Step::Pipeline(key(
+            ShaderProgram::ClipStencil,
+            BlendState::Replace,
+            mode,
+            pass.format,
+        )));
+        pass.steps.push(Step::StencilReference(0));
+        pass.steps.push(Step::Draw {
+            stream: Stream::Solid,
+            first,
+            count,
+            uniform_offset,
+            uniform_size,
+        });
+    }
+
+    /// 상자 shadow 원본: mesh를 불투명 흰색으로 칠한 layer(ADR-0130 결정 1).
+    fn box_source_pass(&mut self, mesh: &Mesh) -> Result<ResourceVersion, LowerError> {
+        let full = (self.width, self.height);
+        self.layer_pass("conformance box shadow", LAYER_FORMAT, full, |rec, pass| {
+            if mesh.positions.is_empty() {
+                return Ok(());
+            }
+            let (first, count) = rec.solid_vertices(&mesh.positions, [1.0; 4]);
+            let (uniform_offset, uniform_size) = rec.tint([1.0; 4]);
+            pass.steps.push(Step::Pipeline(key(
+                ShaderProgram::SolidFill,
+                BlendState::PremultipliedOver,
+                StencilMode::Disabled,
+                pass.format,
+            )));
+            pass.steps.push(Step::Draw {
+                stream: Stream::Solid,
+                first,
+                count,
+                uniform_offset,
+                uniform_size,
+            });
+            Ok(())
+        })
+    }
+
+    /// `source`(target 크기)를 `d`배 줄입니다(ADR-0130 결정 2). 한 단계마다 `ceil(n / 2)` 크기 pass에 bilinear 표본 하나
+    /// (2×2 상자 평균, 가장자리 clamp)입니다. 결과 version과 크기를 돌려줍니다.
+    fn downsample_passes(
+        &mut self,
+        source: ResourceVersion,
+        d: u32,
+    ) -> Result<(ResourceVersion, (u32, u32)), LowerError> {
+        let mut current = source;
+        let (mut width, mut height) = (self.width, self.height);
+        let mut d = d.max(1);
+        while d > 1 {
+            let (nw, nh) = (width.div_ceil(2), height.div_ceil(2));
+            let uv = [
+                0.0,
+                0.0,
+                (2 * nw) as f32 / width as f32,
+                (2 * nh) as f32 / height as f32,
+            ];
+            let input = current;
+            current = self.layer_pass(
+                "conformance downsample",
+                LAYER_FORMAT,
+                (nw, nh),
+                |rec, pass| {
+                    rec.draw_graph_quad(
+                        pass,
+                        input,
+                        [0.0, 0.0, nw as f32, nh as f32],
+                        uv,
+                        TextureFilter::Linear,
+                        StencilMode::Disabled,
+                    )
+                },
+            )?;
+            (width, height) = (nw, nh);
+            d /= 2;
+        }
+        Ok((current, (width, height)))
+    }
+
+    /// 한 방향 gaussian blur pass(`GaussianBlur`, ADR-0102 결정 5). source와 같은 `size`입니다.
     fn blur_pass(
         &mut self,
         source: ResourceVersion,
+        size: (u32, u32),
         sigma: f32,
         direction: [f32; 2],
         source_alpha: bool,
         tint: [f32; 4],
     ) -> Result<ResourceVersion, LowerError> {
-        self.layer_pass("conformance blur", LAYER_FORMAT, |rec, pass| {
+        self.layer_pass("conformance blur", LAYER_FORMAT, size, |rec, pass| {
             rec.builder.read(pass.id, source)?;
-            let full = rec.full_rect();
+            let full = [0.0, 0.0, size.0 as f32, size.1 as f32];
             let (first, count) = rec.textured_quad(full, [0.0, 0.0, 1.0, 1.0]);
             let (uniform_offset, uniform_size) =
                 rec.uniform(blur_uniforms(tint, sigma, direction, source_alpha));
@@ -555,29 +752,35 @@ impl Recorder {
 
     /// coverage 도형을 `R8Unorm` mask에 합집합으로 그립니다(`ClipMask` + premultiplied over).
     fn mask_pass(&mut self, shapes: &[CoverageShape]) -> Result<ResourceVersion, LowerError> {
-        self.layer_pass("conformance mask", TextureFormat::R8Unorm, |rec, pass| {
-            for shape in shapes {
-                if shape.mesh.positions.is_empty() {
-                    continue;
+        let full = (self.width, self.height);
+        self.layer_pass(
+            "conformance mask",
+            TextureFormat::R8Unorm,
+            full,
+            |rec, pass| {
+                for shape in shapes {
+                    if shape.mesh.positions.is_empty() {
+                        continue;
+                    }
+                    let (first, count) = rec.solid_vertices(&shape.mesh.positions, [0.0; 4]);
+                    let (uniform_offset, uniform_size) = rec.tint([shape.coverage; 4]);
+                    pass.steps.push(Step::Pipeline(key(
+                        ShaderProgram::ClipMask,
+                        BlendState::PremultipliedOver,
+                        StencilMode::Disabled,
+                        pass.format,
+                    )));
+                    pass.steps.push(Step::Draw {
+                        stream: Stream::Solid,
+                        first,
+                        count,
+                        uniform_offset,
+                        uniform_size,
+                    });
                 }
-                let (first, count) = rec.solid_vertices(&shape.mesh.positions, [0.0; 4]);
-                let (uniform_offset, uniform_size) = rec.tint([shape.coverage; 4]);
-                pass.steps.push(Step::Pipeline(key(
-                    ShaderProgram::ClipMask,
-                    BlendState::PremultipliedOver,
-                    StencilMode::Disabled,
-                    pass.format,
-                )));
-                pass.steps.push(Step::Draw {
-                    stream: Stream::Solid,
-                    first,
-                    count,
-                    uniform_offset,
-                    uniform_size,
-                });
-            }
-            Ok(())
-        })
+                Ok(())
+            },
+        )
     }
 
     /// graph texture 전체를 부모 target에 합성합니다: 불투명도 tint, mask(slot 1), blend program(ADR-0102 결정 3·5).

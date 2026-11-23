@@ -72,10 +72,34 @@
 
 - selection 내보내기는 Metal target이 아직 그리지 않습니다(pass compiler가 subtree 시작과 조상 clip 제외를 받아야 함).
 - 축 정렬이 아닌 이미지 변환은 미지원 오류입니다(GPU 이미지 quad가 축 정렬 사각형만 받음).
-- shadow offset은 supersample device pixel 정수로 반올림합니다(배수 8이면 출력 1/16 pixel 이하, 큰 blur로 배수를 낮추면
+- (해결, ADR-0130 결정 3) shadow offset은 supersample device pixel 정수로 반올림합니다(배수 8이면 출력 1/16 pixel 이하, 큰 blur로 배수를 낮추면
   최대 1/2 pixel 오차).
-- 큰 blur로 배수를 낮추면 그 내보내기 전체의 가장자리 coverage 단계가 거칠어집니다(배수 3이면 9단계). 효과만 낮은 해상도로
+- (해결, ADR-0130 결정 2·4) 큰 blur로 배수를 낮추면 그 내보내기 전체의 가장자리 coverage 단계가 거칠어집니다(배수 3이면 9단계). 효과만 낮은 해상도로
   그리는 분리는 후속입니다.
 - 둥근 사각형 path 작성(`rounded_rect_path`)이 export CPU target의 비공개 함수와 같은 식으로 따로 있습니다. scene crate 공용 함수로
   합치는 정리가 후속입니다.
 - 앱 화면 frame encoder(창 drawable)는 같은 encoder로 붙일 수 있지만 이번에 연결하지 않았습니다(UI 재설계 때).
+
+## 후속: supersampling 배수를 blur σ와 뗌 (lane render-shadow-quality, ADR-0130 결정 2·3·4)
+
+- 위 "남은 위험"의 두 항목을 해결했습니다. shadow offset은 반올림하지 않고 소수 device pixel로 합성하고, 큰 blur는 효과만
+  낮은 해상도로 그리므로 supersampling 배수는 8입니다. 배수는 효과 여백을 더한 tile texture 한 변이 4096
+  (`MAX_TILE_TEXTURE`)을 넘을 때만 낮춥니다(`supersample_for(margin, tile, max_dimension)`, `tile_margin`). 출력 pixel σ가 64를
+  넘어도 그립니다.
+- Frame 그림자는 CSS `box-shadow`처럼 상자 모양이고 상자 안을 비웁니다(XI.10.4 후속 절).
+- 변경 파일: `crates/renderer-metal/src/offscreen_target.rs`, `crates/renderer-metal/src/tests/offscreen_target.rs`(renderer-core
+  변경은 XI.10.4 후속 절).
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-renderer-metal` | 68 passed, 실패 0 |
+
+| 검사(테스트) | 결과 |
+|---|---|
+| blur 40 그림자·반경 12 layer blur 장면이 배수 8(이전 3)이고, 같은 배수의 CPU 기준과 연관 값 ±4 안, 그림자가 카드 밖으로 번짐(`large_blur_keeps_supersampling_and_draws_effects_at_low_resolution`) | 통과 |
+| 같은 장면 배율 4(출력 σ 80, 이전에는 실패): 배수 2\~7로 그리고 카드 오른쪽 아래 그림자가 먼 곳보다 어두움 | 통과 |
+| 여백이 배수 1로도 tile texture 한 변 상한을 넘으면(blur 1300) `texture 상한` 실패 | 통과 |
+| 효과 장면에 배경 없는 Frame의 상자 그림자(둥근 모서리, 소수 offset)를 더해 CPU 기준과 ±3(`metal_target_draws_effects_like_the_cpu_reference`), 확대 이미지에서 상자 안이 비어 있음 | 통과 |
+
+- 남은 한계: 여백이 출력 128 pixel을 넘는 큰 효과는 메모리 상한 때문에 배수가 8보다 낮아집니다(효과가 아닌 tile 크기 이유).
+  margin 영역까지 supersample하지 않는 분리(효과 원본만 낮은 해상도 viewport로 그리기)는 후속입니다.

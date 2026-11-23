@@ -291,23 +291,43 @@ impl LayerOp {
         self
     }
 
-    /// drop shadow를 덧붙입니다.
+    /// drop shadow(내용 alpha)를 덧붙입니다.
     pub fn with_shadow(mut self, offset: [i32; 2], blur: f32, color: OutputColor) -> LayerOp {
+        self.shadows.push(ShadowSpec {
+            offset: offset.map(|v| v as f32),
+            blur,
+            color,
+            axis_scale: [1.0, 1.0],
+            source: ShadowSource::Content,
+        });
+        self
+    }
+
+    /// 상자 shadow(CSS `box-shadow`)를 덧붙입니다: `shape`의 불투명 모양을 blur하고 `shape` 안은 비웁니다.
+    pub fn with_box_shadow(
+        mut self,
+        offset: [f32; 2],
+        blur: f32,
+        color: OutputColor,
+        shape: Mesh,
+    ) -> LayerOp {
         self.shadows.push(ShadowSpec {
             offset,
             blur,
             color,
             axis_scale: [1.0, 1.0],
+            source: ShadowSource::Box(Arc::new(shape)),
         });
         self
     }
 
-    /// 축별 σ(가로, 세로, device pixel)로 drop shadow를 덧붙입니다.
+    /// 축별 σ(가로, 세로, device pixel)와 소수 offset으로 shadow를 덧붙입니다.
     pub fn with_shadow_sigmas(
         mut self,
-        offset: [i32; 2],
+        offset: [f32; 2],
         sigmas: [f32; 2],
         color: OutputColor,
+        source: ShadowSource,
     ) -> LayerOp {
         let (blur, axis_scale) = radius_and_scale(sigmas, 2.0);
         self.shadows.push(ShadowSpec {
@@ -315,6 +335,7 @@ impl LayerOp {
             blur,
             color,
             axis_scale,
+            source,
         });
         self
     }
@@ -336,6 +357,12 @@ impl LayerOp {
         ]
     }
 
+    /// layer blur 낮은 해상도 배수(큰 축 σ 기준, ADR-0130 결정 2). σ가 상한 밖이면 `None`입니다.
+    pub fn blur_downsample(&self) -> Option<u32> {
+        let [x, y] = self.blur_sigmas();
+        super::blur::effect_downsample(x.max(y))
+    }
+
     /// layer blur 반경.
     pub fn with_blur(mut self, radius: f32) -> LayerOp {
         self.blur = radius;
@@ -355,17 +382,34 @@ impl LayerOp {
     }
 }
 
-/// drop shadow(CSS `drop-shadow()` 의미: 내용 alpha의 blur).
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// shadow 원본 모양(ADR-0130 결정 1).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ShadowSource {
+    /// layer 내용의 alpha(CSS `filter: drop-shadow()`).
+    Content,
+    /// 상자 모양(CSS `box-shadow`): mesh를 불투명하게 칠한 모양을 blur하고, 합성할 때 mesh 안(offset 전 자리)은 비웁니다.
+    /// 내용 배경이 없거나 반투명해도 상자 모양 그대로입니다. 비우기는 pixel 중심 판정입니다(stencil clip과 같음).
+    Box(Arc<Mesh>),
+}
+
+/// layer shadow(내용 아래, 앞이 아래).
+///
+/// - 원본([`ShadowSource`])을 blur해 shadow 색을 곱하고 offset만큼 옮겨 합성합니다.
+/// - device σ가 [`super::blur::MAX_SIGMA`]를 넘으면 [`super::blur::effect_downsample`] 배수로 줄인 해상도에서 blur하고
+///   bilinear로 키웁니다(ADR-0130 결정 2).
+/// - offset은 소수 pixel입니다. 합성 quad를 offset 자리에 두고 bilinear로 읽습니다(정수 offset이면 texel 그대로).
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShadowSpec {
-    /// 정수 pixel offset(harness는 정수 offset만 씁니다).
-    pub offset: [i32; 2],
+    /// pixel offset(소수 허용).
+    pub offset: [f32; 2],
     /// blur 반경(σ = 반경 / 2).
     pub blur: f32,
     /// 그림자 색.
     pub color: OutputColor,
     /// σ의 축별 배율(가로, 세로). 기본 `[1, 1]`.
     pub axis_scale: [f32; 2],
+    /// 원본 모양.
+    pub source: ShadowSource,
 }
 
 impl ShadowSpec {
@@ -373,6 +417,12 @@ impl ShadowSpec {
     pub fn sigmas(&self) -> [f32; 2] {
         let sigma = super::blur::shadow_sigma(self.blur);
         [sigma * self.axis_scale[0], sigma * self.axis_scale[1]]
+    }
+
+    /// 낮은 해상도 배수(큰 축 σ 기준, ADR-0130 결정 2). σ가 상한 밖이면 `None`입니다.
+    pub fn downsample(&self) -> Option<u32> {
+        let [x, y] = self.sigmas();
+        super::blur::effect_downsample(x.max(y))
     }
 }
 
@@ -573,7 +623,7 @@ fn validate_coverage(shapes: &[CoverageShape]) -> Result<(), FixtureError> {
 }
 
 fn validate_layer(layer: &LayerOp, plan: &OutputColorPlan) -> Result<(), FixtureError> {
-    use super::blur::{layer_blur_sigma, shadow_sigma, valid_sigma};
+    use super::blur::{layer_blur_sigma, shadow_sigma};
     if !(0.0..=1.0).contains(&layer.opacity) {
         return Err(FixtureError::Invalid("layer 불투명도는 [0, 1]입니다"));
     }
@@ -582,18 +632,27 @@ fn validate_layer(layer: &LayerOp, plan: &OutputColorPlan) -> Result<(), Fixture
             .iter()
             .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
     };
-    if !valid_sigma(layer_blur_sigma(layer.blur))
+    // σ는 유한·비음수이고 낮은 해상도 배수로 그릴 수 있어야 합니다(device σ 상한, ADR-0130 결정 2).
+    let sigma_ok = |sigma: f32| sigma.is_finite() && sigma >= 0.0;
+    if !sigma_ok(layer_blur_sigma(layer.blur))
         || !scale_ok(layer.blur_axis_scale)
-        || !layer.blur_sigmas().iter().all(|s| valid_sigma(*s))
+        || layer.blur_downsample().is_none()
     {
         return Err(FixtureError::Invalid("layer blur 반경이 범위 밖입니다"));
     }
-    if layer.shadows.iter().any(|shadow| {
-        !valid_sigma(shadow_sigma(shadow.blur))
+    for shadow in &layer.shadows {
+        if !sigma_ok(shadow_sigma(shadow.blur))
             || !scale_ok(shadow.axis_scale)
-            || !shadow.sigmas().iter().all(|s| valid_sigma(*s))
-    }) {
-        return Err(FixtureError::Invalid("shadow blur 반경이 범위 밖입니다"));
+            || shadow.downsample().is_none()
+        {
+            return Err(FixtureError::Invalid("shadow blur 반경이 범위 밖입니다"));
+        }
+        if !shadow.offset.iter().all(|v| v.is_finite()) {
+            return Err(FixtureError::Invalid("shadow offset이 유한하지 않습니다"));
+        }
+        if let ShadowSource::Box(mesh) = &shadow.source {
+            validate_mesh(mesh)?;
+        }
     }
     match &layer.clip {
         None | Some(ClipSpec::Scissor { .. }) => {}
