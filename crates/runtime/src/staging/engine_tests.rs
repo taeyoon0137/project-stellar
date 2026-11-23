@@ -387,6 +387,59 @@ fn component_definition_is_a_required_companion_unit_not_auto_included() {
 }
 
 #[test]
+fn staging_definition_removal_requires_generation_companion_not_dangling_error() {
+    let fx = fixture("engine-component-removal");
+    scaffold_project(fx.work());
+    let file = write_component(fx.work());
+    save_documents(fx.work(), &[&web_frame::placed_components("")]);
+    fx.commit_all("baseline").unwrap();
+    // 작업 트리에서 정의와 그 인스턴스를 함께 지웁니다.
+    std::fs::remove_file(fx.work().join(&file)).unwrap();
+    save_documents(fx.work(), &[&web_frame::document()]);
+    let s = session(&fx);
+    let file_unit = SourceUnit::File(stellar_git_porcelain::decode::GitPath::from_bytes(
+        file.to_str().unwrap().as_bytes(),
+    ));
+    let index_before = std::fs::read(fx.work().join(".git/index")).unwrap();
+    // 정의 파일만 stage하면 index 인스턴스가 끊기므로 generation 묶음을 동반 단위로 돌려줍니다.
+    match s.stage(vec![GitItem::Unit(file_unit.clone())], vec![]) {
+        Err(GitError::CompanionRequired {
+            changes,
+            units,
+            reasons,
+        }) => {
+            assert!(changes.is_empty());
+            assert_eq!(units, BTreeSet::from([SourceUnit::Generation]));
+            assert_eq!(reasons.len(), 1);
+            assert_eq!(reasons[0].component, web_frame::id(70));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        std::fs::read(fx.work().join(".git/index")).unwrap(),
+        index_before,
+        "자동 포함 없음: index 불변"
+    );
+    s.stage(
+        vec![GitItem::Unit(file_unit)],
+        vec![GitItem::Unit(SourceUnit::Generation)],
+    )
+    .unwrap();
+    let validation = s.validate_staged().unwrap();
+    assert!(validation.is_valid(), "{:?}", validation.findings);
+    assert!(
+        validation.findings.is_empty(),
+        "끊긴 인스턴스 없음: {:?}",
+        validation.findings
+    );
+    let report = status(&s);
+    assert!(area(&report, StatusArea::Unstaged).is_empty());
+    assert!(report.units.iter().all(|u| !u.unstaged && !u.untracked));
+    s.commit("정의와 인스턴스 제거\n").unwrap();
+    assert!(git_text(&fx, fx.work(), &["status", "--porcelain"]).is_empty());
+}
+
+#[test]
 fn linked_worktree_uses_its_own_index_and_leaves_main_index_alone() {
     let (fx, model) = baseline("engine-worktree");
     let wt = fx.add_worktree("linked", "HEAD").unwrap();

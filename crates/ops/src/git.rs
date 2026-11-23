@@ -605,7 +605,6 @@ fn candidate_definitions(
 }
 
 struct CompanionInputs<'a> {
-    operation: SelectionOperation,
     has_changes: bool,
     base_refs: &'a BTreeSet<StableId>,
     selection_refs: &'a BTreeSet<StableId>,
@@ -641,10 +640,10 @@ fn companion_closure(
             }
             let needed = match inputs.source_defs.iter().find(|(_, def)| *def == id) {
                 Some((path, _)) => SourceUnit::File(path.clone()),
-                None if inputs.operation == SelectionOperation::Unstage
-                    && !inputs.has_changes
-                    && !units.contains(&SourceUnit::Generation) =>
-                {
+                // 정의 원본이 원천에 없으면 인스턴스 쪽(View generation 묶음)을 원천과 맞춰야 합니다.
+                // stage(작업 트리에서 정의와 인스턴스를 함께 지움)와 unstage 모두 같습니다. 원천에도
+                // 인스턴스가 남아 있으면 다음 반복에서 해결할 수 없는 오류가 됩니다.
+                None if !inputs.has_changes && !units.contains(&SourceUnit::Generation) => {
                     SourceUnit::Generation
                 }
                 None => return Err(PrepareStageError::DanglingComponent(*id)),
@@ -797,7 +796,6 @@ fn prepare_selection(
     let index_defs = component_files(base_tree.root())?;
     let source_defs = component_files(source_root)?;
     let inputs = CompanionInputs {
-        operation: request.operation,
         has_changes,
         base_refs: &base_refs,
         selection_refs: &selection_refs,
