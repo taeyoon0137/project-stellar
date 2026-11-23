@@ -57,12 +57,21 @@ fn command_round_trip(kind: CommandKind) -> usize {
                 continue;
             }
             let before = model_snapshot_json(state.model()).expect("snapshot");
+            // semantic snapshot은 layout record와 활성 기본값 세트를 담지 않으므로 따로 비교합니다(ADR-0086).
+            let before_layout = layout_state(&state);
             let request = CommandRequest::at(&state, command);
             let outcome = state
                 .execute(&request)
                 .unwrap_or_else(|e| panic!("{kind} seed {seed}: validate 통과 후 실행 실패: {e}"));
             validate_document(&state.model().to_records().expect("records"))
                 .unwrap_or_else(|e| panic!("{kind} seed {seed}: forward 후 문서 무효: {e}"));
+            if LAYOUT_KINDS.contains(&kind) {
+                assert_ne!(
+                    layout_state(&state),
+                    before_layout,
+                    "{kind} seed {seed}: forward가 layout record·세트를 바꾸지 않았습니다"
+                );
+            }
             let inverse = CommandRequest::at(&state, outcome.inverse);
             state
                 .execute(&inverse)
@@ -72,11 +81,33 @@ fn command_round_trip(kind: CommandKind) -> usize {
                 before,
                 "{kind} seed {seed}: apply(forward); apply(inverse) ≠ 원본"
             );
+            assert_eq!(
+                layout_state(&state),
+                before_layout,
+                "{kind} seed {seed}: apply(forward); apply(inverse)의 layout record·세트 ≠ 원본"
+            );
             applied += 1;
             break;
         }
     }
     applied
+}
+
+/// 명시 layout longhand·기본값 세트만 바꾸는 종류(forward가 반드시 그 상태를 바꿔야 함).
+const LAYOUT_KINDS: [CommandKind; 3] = [
+    CommandKind::SetStyleDefaults,
+    CommandKind::UnsetProperty,
+    CommandKind::SetLayoutProperty,
+];
+
+/// semantic snapshot 밖의 상태: 영속 layout record와 활성 기본값 세트 이름.
+fn layout_state(
+    state: &DocumentState,
+) -> (Vec<stellar_document::layout_record::LayoutRecord>, String) {
+    (
+        state.model().to_records().expect("records").layout_records,
+        state.model().style_defaults().to_string(),
+    )
 }
 
 /// root 아래에 override 하나를 가진 인스턴스를 넣습니다(SwapInstance 왕복용).
