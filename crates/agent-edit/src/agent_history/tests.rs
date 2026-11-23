@@ -350,3 +350,96 @@ fn interrupted_diagnostic_has_only_session_duration_and_code() {
         assert!(!text.contains(forbidden), "{text} contains {forbidden}");
     }
 }
+
+#[test]
+fn large_proposal_is_applied_in_batches_and_completes_as_one_entry() {
+    // XXIX.3.4 큰 batch 분할(ADR-0124 결정 6): 제안 하나를 batch 여러 개로 나눠 적용해도 완료는 history 항목 하나입니다.
+    let mut world = World::new(SessionOrigin::ExternalClient);
+    let commands: Vec<Command> = (0..5u32)
+        .map(|i| Command::rename_node(sid([13, 14][i as usize % 2]), format!("이름 {i}")))
+        .collect();
+    let tx = proposal(&world.history.doc, lease_id(L), 100, commands);
+    let proposal_id = world.sessions.queue_proposal(session(S), tx).unwrap();
+    let table = world.table();
+    let mut batches = Vec::new();
+    let mut ids = std::collections::BTreeSet::new();
+    loop {
+        let chunk = world
+            .sessions
+            .apply_proposal_chunk(
+                session(S),
+                proposal_id,
+                2,
+                &mut world.history.doc,
+                &table,
+                &mut world.provenance,
+            )
+            .unwrap();
+        let record = &world.provenance.get(chunk.batch).unwrap().record;
+        assert!(record.forward.requests.len() <= 2);
+        assert!(
+            ids.insert(record.forward.id),
+            "batch transaction id 중복 없음"
+        );
+        batches.push(chunk.batch);
+        if chunk.remaining == 0 {
+            break;
+        }
+        assert_eq!(
+            world.sessions.pending_proposals(session(S)),
+            1,
+            "남은 부분 대기"
+        );
+    }
+    assert_eq!(batches.len(), 3, "2 + 2 + 1");
+    assert_eq!(world.sessions.pending_proposals(session(S)), 0);
+    assert_eq!(name(&world.history.doc, 13), "이름 4");
+    assert_eq!(name(&world.history.doc, 14), "이름 3");
+    let completed = {
+        let (mut ctx, sessions, history) = world.ctx();
+        sessions
+            .complete(session(S), &mut ctx, history, id(3000))
+            .unwrap()
+    };
+    assert_eq!(completed.batches, 3);
+    assert_eq!(world.history.entries.len(), 1, "Undo 한 번이 제안 전체");
+}
+
+#[test]
+fn rejected_batch_drops_the_rest_and_keeps_earlier_batches() {
+    // 거부된 batch는 적용하지 않고 남은 부분을 버립니다. 앞 batch는 출처 표시와 함께 남습니다.
+    let mut world = World::new(SessionOrigin::ExternalClient);
+    let commands = vec![
+        Command::rename_node(sid(13), "안"),
+        Command::rename_node(sid(12), "밖"),
+        Command::rename_node(sid(14), "안 2"),
+    ];
+    let tx = proposal(&world.history.doc, lease_id(L), 100, commands);
+    let proposal_id = world.sessions.queue_proposal(session(S), tx).unwrap();
+    let table = world.table();
+    let apply = |world: &mut World| {
+        world.sessions.apply_proposal_chunk(
+            session(S),
+            proposal_id,
+            1,
+            &mut world.history.doc,
+            &table,
+            &mut world.provenance,
+        )
+    };
+    let first = apply(&mut world).unwrap();
+    assert_eq!(first.remaining, 2);
+    let revision = world.history.doc.revision();
+    assert!(matches!(
+        apply(&mut world),
+        Err(SessionError::Apply(AttachedEditError::OutOfScope(_)))
+    ));
+    assert_eq!(world.history.doc.revision(), revision, "거부 batch 미적용");
+    assert_eq!(
+        world.sessions.pending_proposals(session(S)),
+        0,
+        "남은 부분 버림"
+    );
+    assert_eq!(name(&world.history.doc, 13), "안");
+    assert!(world.provenance.shown_nodes().contains(&sid(13)));
+}

@@ -521,3 +521,100 @@ fn revert_through_the_runtime_job_is_autosaved() {
         Some("에이전트 변경 되돌리기")
     );
 }
+
+#[test]
+fn large_approved_proposal_is_applied_in_batch_jobs() {
+    // 검증 기준(XXIX.3.4, ADR-0124 결정 6): 큰 제안은 batch 하나가 job 하나로 나뉘어 적용되고, 완료는 history 항목 하나입니다.
+    let f = app("agent-io-batches");
+    let io = f.app.agent_io();
+    let send = |request: AgentRequest| reply(io.submit(f.window, request).unwrap());
+    send(AgentRequest::Start {
+        session: session(),
+        origin: SessionOrigin::ExternalClient,
+        name: "외부".into(),
+    })
+    .unwrap();
+    approve_connection(&f, session());
+    send(AgentRequest::BeginEdit {
+        session: session(),
+        lease: lease(),
+        targets: LeaseTargets {
+            document: sid(1),
+            targets: vec![sid(11)],
+            externals: Vec::new(),
+        },
+    })
+    .unwrap();
+    let ui = UserUiAction::from_user_interface;
+    let mut approved = f
+        .app
+        .with_agent_edit(f.window, move |agent| agent.approve_lease(lease(), ui()))
+        .unwrap();
+    approved
+        .wait_timeout(WAIT)
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let count = 2 * crate::agent_edit::PROPOSAL_BATCH_COMMANDS + 76;
+    let request = ApplyRequest {
+        base_revision: base(&f),
+        document: sid(1),
+        commands: (0..count)
+            .map(|i| CommandInput::Rename {
+                node: sid(11),
+                name: format!("이름 {i}"),
+            })
+            .collect(),
+    };
+    let Ok(AgentReply::Queued(proposal)) = send(AgentRequest::Propose {
+        session: session(),
+        lease: lease(),
+        id: command_id(1),
+        request,
+    }) else {
+        panic!("제안 대기");
+    };
+    let before = revision(&f);
+    let result = f
+        .app
+        .apply_agent_proposal(f.window, session(), proposal, ui())
+        .unwrap()
+        .recv_timeout(WAIT)
+        .unwrap();
+    assert_eq!(result.error, None);
+    assert_eq!(result.applied.len(), 3, "512 + 512 + 76");
+    assert!(revision(&f) > before);
+    let applied = result.applied.clone();
+    let mut sizes = f
+        .app
+        .with_agent_edit(f.window, move |agent| {
+            applied
+                .iter()
+                .map(|batch| {
+                    agent
+                        .agent()
+                        .provenance()
+                        .get(*batch)
+                        .unwrap()
+                        .record
+                        .forward
+                        .requests
+                        .len()
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    assert_eq!(
+        sizes.wait_timeout(WAIT).unwrap().unwrap().unwrap(),
+        vec![512, 512, 76]
+    );
+    let Ok(AgentReply::Completed(completed)) = send(AgentRequest::Complete {
+        session: session(),
+        entry_id: command_id(2),
+    }) else {
+        panic!("완료");
+    };
+    assert_eq!(completed.batches, 3);
+    assert!(completed.history_sequence.is_some(), "history 항목 하나");
+}

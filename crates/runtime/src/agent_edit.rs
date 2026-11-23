@@ -20,8 +20,8 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use stellar_agent_edit::agent_history::{
-    AgentEditSessions, CompletedEdit, EndReason, ProposalId, SessionContext, SessionEndReport,
-    SessionError, SessionOrigin,
+    AgentEditSessions, ChunkApplied, CompletedEdit, EndReason, ProposalId, SessionContext,
+    SessionEndReport, SessionError, SessionOrigin,
 };
 use stellar_agent_edit::attached::revert::{
     apply_revert, preview_revert, RevertFlowError, RevertPreview,
@@ -383,8 +383,22 @@ impl<'a> AgentWindow<'a> {
         &mut self,
         id: AgentSessionId,
         proposal: ProposalId,
-        _ui: UserUiAction,
+        ui: UserUiAction,
     ) -> Result<AgentBatchId, AgentEditError> {
+        self.apply_proposal_chunk(id, proposal, usize::MAX, ui)
+            .map(|chunk| chunk.batch)
+    }
+
+    /// 승인한 제안의 앞 command 최대 `max_commands`개를 한 batch로 적용합니다(앱 사용자 UI 전용, ADR-0124 결정 6). 남은
+    /// command는 같은 제안으로 대기에 남습니다. 큰 제안은 [`AppRuntime::apply_agent_proposal`]이 batch마다 job 하나로
+    /// 나눠 부릅니다.
+    pub fn apply_proposal_chunk(
+        &mut self,
+        id: AgentSessionId,
+        proposal: ProposalId,
+        max_commands: usize,
+        _ui: UserUiAction,
+    ) -> Result<ChunkApplied, AgentEditError> {
         let table = self.agent.lease_table()?;
         let WindowAgentEdit {
             sessions,
@@ -396,15 +410,22 @@ impl<'a> AgentWindow<'a> {
             .document
             .as_mut()
             .ok_or(AgentEditError::NoDocument)?;
-        let batch = sessions
-            .apply_proposal(id, proposal, &mut document.state, &table, provenance)
+        let chunk = sessions
+            .apply_proposal_chunk(
+                id,
+                proposal,
+                max_commands,
+                &mut document.state,
+                &table,
+                provenance,
+            )
             .map_err(AgentEditError::Session)?;
         // 다른 세션의 표시된 batch에 닿았는지 다시 판정합니다(같은 세션 batch는 `observe`가 건너뜀).
-        if let Some(record) = provenance.get(batch).map(|b| &b.record) {
+        if let Some(record) = provenance.get(chunk.batch).map(|b| &b.record) {
             let (changes, origin) = (record.changes.clone(), record.forward.origin);
             provenance.observe(&changes, origin, document.state.model());
         }
-        Ok(batch)
+        Ok(chunk)
     }
 
     /// 정상 완료(CompleteAgentEdit, XIX.6.2): 적용 batch를 "에이전트 편집" 항목 하나로 확정하고 lease를 풉니다.
@@ -650,6 +671,31 @@ impl AppRuntime {
         submit_window_job(&self.job_publisher(), SubmitOptions::command(), window, job)
     }
 
+    /// 사용자가 승인한 제안을 batch 여러 개로 나눠 적용합니다(XXIX.3.4, ADR-0124 결정 6). batch 하나([`PROPOSAL_BATCH_COMMANDS`]
+    /// command)가 document thread job 하나이고, 남으면 다음 batch job을 `Command` lane 뒤에 다시 넣어 그 사이 사용자
+    /// 입력(`Input` lane)이 먼저 처리됩니다. 마지막 batch 뒤(또는 실패하면 그때) 결과를 한 번 보냅니다.
+    pub fn apply_agent_proposal(
+        &self,
+        window: WindowSessionHandle,
+        session: AgentSessionId,
+        proposal: ProposalId,
+        ui: UserUiAction,
+    ) -> Result<std::sync::mpsc::Receiver<ProposalApplied>, AgentJobError> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        submit_batch(
+            self.job_publisher(),
+            BatchJob {
+                window,
+                session,
+                proposal,
+                ui,
+                applied: Vec::new(),
+                sender,
+            },
+        )?;
+        Ok(receiver)
+    }
+
     /// 창의 Undo·Redo 메뉴 동작 이름(에이전트 항목은 `AgentEntryLabels` 이름).
     pub fn agent_history_names(
         &self,
@@ -657,6 +703,90 @@ impl AppRuntime {
     ) -> Result<JobTicket<Result<HistoryNames, AgentJobError>>, AgentJobError> {
         self.with_agent_edit(window, |agent| agent.history_names())
     }
+}
+
+/// 큰 제안을 나눠 적용할 때 batch 하나의 최대 command 수(ADR-0124 결정 6). 20만 node 문서 release 측정에서 command 하나의
+/// 적용과 출처 기록이 약 1.4 µs라 512개가 약 0.7 ms이고, document thread 단일 점유 상한 2 ms(아키텍처 §6.3) 안에 상태 게시
+/// 여유를 남깁니다(측정값은 `docs/task-reports/XXIX.3.4.md`).
+pub const PROPOSAL_BATCH_COMMANDS: usize = 512;
+
+/// [`AppRuntime::apply_agent_proposal`] 결과.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProposalApplied {
+    /// 적용한 batch(순서대로).
+    pub applied: Vec<AgentBatchId>,
+    /// 실패했으면 그 원인(그 batch와 남은 부분은 적용되지 않음).
+    pub error: Option<AgentApplyError>,
+}
+
+/// 나눠 적용하는 중의 실패.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AgentApplyError {
+    /// batch 적용 실패.
+    Edit(AgentEditError),
+    /// 다음 batch job을 넣지 못했습니다.
+    Job(AgentJobError),
+}
+
+struct BatchJob {
+    window: WindowSessionHandle,
+    session: AgentSessionId,
+    proposal: ProposalId,
+    ui: UserUiAction,
+    applied: Vec<AgentBatchId>,
+    sender: std::sync::mpsc::Sender<ProposalApplied>,
+}
+
+fn submit_batch(publisher: JobPublisher, job: BatchJob) -> Result<(), AgentJobError> {
+    let next = publisher.clone();
+    let window = job.window;
+    submit_window_job(
+        &publisher,
+        SubmitOptions::command(),
+        window,
+        move |agent: &mut AgentWindow<'_>| {
+            let BatchJob {
+                window,
+                session,
+                proposal,
+                ui,
+                mut applied,
+                sender,
+            } = job;
+            let error =
+                match agent.apply_proposal_chunk(session, proposal, PROPOSAL_BATCH_COMMANDS, ui) {
+                    Ok(chunk) => {
+                        applied.push(chunk.batch);
+                        if chunk.remaining == 0 {
+                            None
+                        } else {
+                            let job = BatchJob {
+                                window,
+                                session,
+                                proposal,
+                                ui,
+                                applied,
+                                sender,
+                            };
+                            let fallback = (job.applied.clone(), job.sender.clone());
+                            match submit_batch(next, job) {
+                                Ok(()) => return,
+                                Err(error) => {
+                                    let _ = fallback.1.send(ProposalApplied {
+                                        applied: fallback.0,
+                                        error: Some(AgentApplyError::Job(error)),
+                                    });
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    Err(error) => Some(AgentApplyError::Edit(error)),
+                };
+            let _ = sender.send(ProposalApplied { applied, error });
+        },
+    )
+    .map(|_ticket| ())
 }
 
 #[cfg(test)]
