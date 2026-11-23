@@ -20,3 +20,5 @@ pub use status_worker::{submit_git_status, GitStatusJob, GitStatusResult, Reject
 #[cfg(all(test, unix))]
 mod tests;
 
+#[cfg(all(test, unix))]
+mod engine_tests;
