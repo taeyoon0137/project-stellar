@@ -215,3 +215,57 @@ fn cache_entries_are_validated_by_probe_and_storage_before_exports_are_read() {
         ))
     );
 }
+
+/// generation component library와 텍스트 컴포넌트 원본이 함께 정의를 담으면 storage validator와 export 공급자가 같은
+/// reader(`read_library_root`)로 손상 판정합니다.
+#[test]
+fn generation_and_text_component_definitions_together_are_corrupt() {
+    let Some(gate) = trusted_git() else {
+        eprintln!("시스템 Git 없음: 건너뜀");
+        return;
+    };
+    let dir = TempDir::new("library-entries-conflict");
+    let repo = library_repo(&gate, &dir.path.join("libraries"), "both");
+    let id = library_id(6);
+    std::fs::write(
+        repo.dir.join("stellar.yaml"),
+        manifest_text(id, "Both", &[]),
+    )
+    .unwrap();
+    // 텍스트 원본에 property 없는 컴포넌트 하나(텍스트로 쓸 수 있는 정의).
+    let mut text_components = ComponentLibrary::new();
+    stellar_document::context::fixtures::ComponentBuilder::new(
+        sid(SPACE, 50),
+        "Badge",
+        sid(SPACE, 51),
+    )
+    .register(&mut text_components);
+    let project = stellar_project::document_io::source_v4::project::TextProject {
+        document: empty_document(SPACE),
+        components: text_components,
+        token_sets: vec![],
+        images: Default::default(),
+    };
+    let encoded =
+        stellar_project::document_io::source_v4::project::encode(&project).expect("encode");
+    stellar_project::document_io::source_v4::project::write_new(&repo.dir.join("design"), &encoded)
+        .expect("텍스트 원본 쓰기");
+    let mut validator = ProjectLibraryValidator::cache_entry();
+    assert_eq!(
+        validate_library_entry(&repo.dir, id, &mut validator).map(|_| ()),
+        Ok(()),
+        "텍스트 원본만 있으면 정상"
+    );
+    // 같은 root에 generation component library도 씁니다.
+    write_component_generation(&repo.dir, id, &card_library());
+    assert_eq!(
+        validate_library_entry(&repo.dir, id, &mut validator).map(|_| ()),
+        Err(LibraryEntryRejection::CorruptStorage(
+            StorageValidationFailure::TextSource
+        ))
+    );
+    assert_eq!(
+        stellar_project::library_exports::read_library_resources(&repo.dir, id).map(|_| ()),
+        Err(stellar_dependencies::library_snapshot::ExportReadFailure::Corrupt)
+    );
+}
