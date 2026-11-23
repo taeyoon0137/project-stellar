@@ -715,6 +715,7 @@ mod tests {
                     hidden,
                 ],
                 modifier_stacks: Vec::new(),
+                layout_records: Vec::new(),
             }),
         )
         .unwrap();
@@ -877,6 +878,7 @@ mod tests {
                     record(32, 30, 0x20, NodePayload::Text(TextPayload::empty(0))),
                 ],
                 modifier_stacks: Vec::new(),
+                layout_records: Vec::new(),
             }),
         )
         .unwrap();
@@ -909,6 +911,7 @@ mod tests {
             Command::InsertNode(InsertNode {
                 nodes: vec![record(40, 12, 0x10, rect)],
                 modifier_stacks: vec![stack],
+                layout_records: Vec::new(),
             }),
         )
         .unwrap();
@@ -981,6 +984,7 @@ mod tests {
                     record(32, 30, 0x20, NodePayload::Shape(hostile)),
                 ],
                 modifier_stacks: Vec::new(),
+                layout_records: Vec::new(),
             }),
         )
         .unwrap();

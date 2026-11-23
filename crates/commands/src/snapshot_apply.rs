@@ -6,8 +6,8 @@
 //! - 전체 snapshot을 담지 않습니다. 현재 문서와 새 원본의 **레코드 변경 집합**([`RecordChange`] 목록)만
 //!   담습니다. 각 변경은 이전 값과 새 값을 함께 가지므로 역은 두 값을 바꾼 같은 command입니다(역집합이
 //!   Undo).
-//! - 레코드 단위는 문서 모델이 소유하는 것입니다: 문서 이름, 페이지, View, node, modifier stack, 문서 Text
-//!   style resource 표. 레코드는 StableId로만 짝지으며 이름·geometry 유사도는 쓰지 않습니다(semantic diff
+//! - 레코드 단위는 문서 모델이 소유하는 것입니다: 문서 이름, 페이지, View, node, modifier stack, node의 명시
+//!   layout record(ADR-0086), 문서 Text style resource 표. 레코드는 StableId로만 짝지으며 이름·geometry 유사도는 쓰지 않습니다(semantic diff
 //!   XIV.3.3과 같은 식별 규칙). 컴포넌트 정의·token은 문서 모델 밖(project library)이라 이 command의 대상이
 //!   아닙니다(ADR-0079 결정 2).
 //! - 검증: 각 변경의 이전 값이 현재 문서와 같아야 하고(낡은 변경 집합 거부), 적용 결과가 전체 validator
@@ -17,8 +17,8 @@
 //!   ("외부 변경 반영")이 정합니다.
 //!
 //! 적용 순서: 지울 node와 부모·순서·종류가 바뀌는 node를 (현재 자손과 함께) 자손부터 떼어 내고, 문서 정의를
-//! 한 번에 바꾼 뒤, 새 tree의 부모부터 다시 넣고, 제자리 변경(표시·잠금·이름·payload)과 modifier stack을
-//! 적용합니다.
+//! 한 번에 바꾼 뒤, 새 tree의 부모부터 다시 넣고, 제자리 변경(표시·잠금·이름·payload)과 modifier stack,
+//! layout record를 적용합니다.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -26,6 +26,7 @@ use stellar_core_types::ids::StableId;
 use stellar_core_types::property::PropertyPath;
 use stellar_core_types::revision::DocumentRevision;
 use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
+use stellar_document::layout_record::LayoutRecord;
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::ModifierStack;
 use stellar_document::modifier_metadata::InvalidationSet;
@@ -114,6 +115,15 @@ pub enum RecordChange {
         /// 새 stack.
         after: Option<ModifierStack>,
     },
+    /// node의 명시 layout record 교체(빈 record는 `None`, ADR-0086).
+    Layout {
+        /// 소유 node.
+        node: StableId,
+        /// 이전 record.
+        before: Option<LayoutRecord>,
+        /// 새 record.
+        after: Option<LayoutRecord>,
+    },
     /// 문서 Text style resource 표 교체.
     TextStyles {
         /// 이전 표.
@@ -155,6 +165,15 @@ impl RecordChange {
                 before: after,
                 after: before,
             },
+            RecordChange::Layout {
+                node,
+                before,
+                after,
+            } => RecordChange::Layout {
+                node,
+                before: after,
+                after: before,
+            },
             RecordChange::TextStyles { before, after } => RecordChange::TextStyles {
                 before: after,
                 after: before,
@@ -170,6 +189,7 @@ impl RecordChange {
             RecordChange::View { id, .. } => (TAG_VIEW, *id),
             RecordChange::Node { id, .. } => (TAG_NODE, *id),
             RecordChange::ModifierStack { node, .. } => (TAG_STACK, *node),
+            RecordChange::Layout { node, .. } => (TAG_LAYOUT, *node),
             RecordChange::TextStyles { .. } => (TAG_TEXT_STYLES, StableId::NIL),
         }
     }
@@ -182,6 +202,8 @@ const TAG_VIEW: u8 = 3;
 const TAG_NODE: u8 = 4;
 const TAG_STACK: u8 = 5;
 const TAG_TEXT_STYLES: u8 = 6;
+/// command codec version 4(ADR-0086 개정).
+const TAG_LAYOUT: u8 = 7;
 
 /// 외부에서 바뀐 문서 원본을 반영하는 command.
 #[derive(Debug, Clone, PartialEq)]
@@ -312,6 +334,24 @@ impl ApplyExternalSnapshot {
                 })
             },
         );
+        let layouts = |records: &[LayoutRecord]| -> BTreeMap<StableId, LayoutRecord> {
+            records
+                .iter()
+                .filter(|r| !r.is_empty())
+                .map(|r| (r.node, r.clone()))
+                .collect()
+        };
+        diff_maps(
+            &layouts(&records.layout_records),
+            &layouts(&incoming.layout_records),
+            |node, before, after| {
+                changes.push(RecordChange::Layout {
+                    node,
+                    before,
+                    after,
+                })
+            },
+        );
         if current.text_styles != next.text_styles {
             changes.push(RecordChange::TextStyles {
                 before: Box::new(current.text_styles.clone()),
@@ -385,7 +425,9 @@ impl ApplyExternalSnapshot {
                     }
                     text_styles = (**after).clone();
                 }
-                RecordChange::Node { .. } | RecordChange::ModifierStack { .. } => {}
+                RecordChange::Node { .. }
+                | RecordChange::ModifierStack { .. }
+                | RecordChange::Layout { .. } => {}
             }
         }
         let mut ordered: Vec<(u32, StableId, String)> = pages
@@ -449,6 +491,16 @@ impl ApplyExternalSnapshot {
                     };
                     ok(before) && ok(after) && (before.is_some() || after.is_some())
                 }
+                RecordChange::Layout {
+                    node,
+                    before,
+                    after,
+                } => {
+                    let ok = |r: &Option<LayoutRecord>| {
+                        r.as_ref().is_none_or(|r| r.node == *node && !r.is_empty())
+                    };
+                    ok(before) && ok(after) && (before.is_some() || after.is_some())
+                }
                 RecordChange::Page { before, after, .. } => before.is_some() || after.is_some(),
                 RecordChange::View { before, after, .. } => before.is_some() || after.is_some(),
                 RecordChange::DocumentName { .. } | RecordChange::TextStyles { .. } => true,
@@ -475,6 +527,9 @@ impl ApplyExternalSnapshot {
                 RecordChange::ModifierStack { node, before, .. } => {
                     model.modifier_stack(*node) == before.as_ref()
                 }
+                RecordChange::Layout { node, before, .. } => {
+                    model.layout_record(*node) == before.as_ref()
+                }
                 _ => true,
             };
             if !current {
@@ -495,6 +550,11 @@ impl ApplyExternalSnapshot {
                 .drain(..)
                 .map(|s| (s.node, s))
                 .collect();
+            let mut layouts: BTreeMap<StableId, LayoutRecord> = records
+                .layout_records
+                .drain(..)
+                .map(|r| (r.node, r))
+                .collect();
             for change in &self.changes {
                 match change {
                     RecordChange::Node { id, after, .. } => match after {
@@ -513,12 +573,22 @@ impl ApplyExternalSnapshot {
                             stacks.remove(node);
                         }
                     },
+                    RecordChange::Layout { node, after, .. } => match after {
+                        Some(record) => {
+                            layouts.insert(*node, record.clone());
+                        }
+                        None => {
+                            layouts.remove(node);
+                        }
+                    },
                     _ => {}
                 }
             }
             // 지운 node의 stack이 남으면 validator가 소유자 없는 stack으로 거부합니다.
             records.nodes = nodes.into_values().collect();
             records.modifier_stacks = stacks.into_values().collect();
+            // 지운 node의 record가 남으면 validator가 소유자 없는 record로 거부합니다.
+            records.layout_records = layouts.into_values().collect();
             Ok(())
         })
     }
@@ -534,6 +604,7 @@ impl ApplyExternalSnapshot {
         self.check_preconditions(ctx.model())?;
         let mut node_after: BTreeMap<StableId, Option<&NodeRecord>> = BTreeMap::new();
         let mut stack_after: BTreeMap<StableId, Option<&ModifierStack>> = BTreeMap::new();
+        let mut layout_after: BTreeMap<StableId, Option<&LayoutRecord>> = BTreeMap::new();
         for change in &self.changes {
             match change {
                 RecordChange::Node { id, after, .. } => {
@@ -541,6 +612,9 @@ impl ApplyExternalSnapshot {
                 }
                 RecordChange::ModifierStack { node, after, .. } => {
                     stack_after.insert(*node, after.as_ref());
+                }
+                RecordChange::Layout { node, after, .. } => {
+                    layout_after.insert(*node, after.as_ref());
                 }
                 _ => {}
             }
@@ -690,7 +764,29 @@ impl ApplyExternalSnapshot {
             ctx.changes().structure(*node);
         }
 
-        // 6. 문서 Text style 표(글꼴 등록·문자·문단 style)가 바뀌면 모든 Text node의 layout·그리기가
+        // 6. layout record. 떼어 냈다 다시 넣은 node는 모델이 StableId로 들고 있던 record를 그대로 되찾습니다
+        //    (ADR-0086 결정 5). 새로 넣은 node에 이 session에서 지운 같은 id의 record가 남아 있으면, 외부 원본에
+        //    없는 값이므로 지웁니다. 변경 집합에 있는 record는 그 값으로 바꿉니다. 지운 node의 record는 모델에만
+        //    남고 영속 레코드에는 나오지 않습니다.
+        for id in &inserted {
+            if !detached.contains_key(id)
+                && !layout_after.contains_key(id)
+                && ctx.model().layout_record(*id).is_some()
+            {
+                ctx.set_layout_record(LayoutRecord::new(*id))?;
+            }
+        }
+        for (node, after) in &layout_after {
+            if !ctx.model().contains(*node) {
+                // validate가 소유자 없는 record를 거부하므로 여기 오는 변경의 새 값은 언제나 `None`입니다.
+                continue;
+            }
+            let record = after.cloned().unwrap_or_else(|| LayoutRecord::new(*node));
+            ctx.set_layout_record(record)?;
+            ctx.changes().structure(*node);
+        }
+
+        // 7. 문서 Text style 표(글꼴 등록·문자·문단 style)가 바뀌면 모든 Text node의 layout·그리기가
         //    달라질 수 있으므로 Text node마다 구조 무효화를 보고합니다(외부 반영은 드문 동작이라 O(N) 허용).
         if self
             .changes
@@ -728,6 +824,7 @@ impl ApplyExternalSnapshot {
         };
         let node = |out: &mut Writer, record: &NodeRecord| out.bytes(&encode_node_record(record));
         let stack = |out: &mut Writer, stack: &ModifierStack| out.bytes(&stack.encode());
+        let layout = |out: &mut Writer, record: &LayoutRecord| out.bytes(&record.encode());
         out.len(self.changes.len());
         for change in &self.changes {
             match change {
@@ -763,6 +860,16 @@ impl ApplyExternalSnapshot {
                     out.id(*owner);
                     opt(out, before, stack);
                     opt(out, after, stack);
+                }
+                RecordChange::Layout {
+                    node: owner,
+                    before,
+                    after,
+                } => {
+                    out.u8(TAG_LAYOUT);
+                    out.id(*owner);
+                    opt(out, before, layout);
+                    opt(out, after, layout);
                 }
                 RecordChange::TextStyles { before, after } => {
                     out.u8(TAG_TEXT_STYLES);
@@ -810,6 +917,11 @@ impl ApplyExternalSnapshot {
                 reason: "잘못된 modifier stack",
             })
         }
+        fn layout(input: &mut Reader<'_>) -> Result<LayoutRecord, CommandCodecError> {
+            LayoutRecord::decode(input.bytes()?).map_err(|_| CommandCodecError::Malformed {
+                reason: "잘못된 layout record",
+            })
+        }
         fn styles(input: &mut Reader<'_>) -> Result<Box<DocumentTextStyles>, CommandCodecError> {
             DocumentTextStyles::decode(input.bytes()?)
                 .map(Box::new)
@@ -845,6 +957,11 @@ impl ApplyExternalSnapshot {
                     before: opt(input, stack)?,
                     after: opt(input, stack)?,
                 },
+                TAG_LAYOUT => RecordChange::Layout {
+                    node: input.id()?,
+                    before: opt(input, layout)?,
+                    after: opt(input, layout)?,
+                },
                 TAG_TEXT_STYLES => RecordChange::TextStyles {
                     before: styles(input)?,
                     after: styles(input)?,
@@ -875,6 +992,121 @@ mod tests {
 
     fn snapshot(model: &DocumentModel) -> String {
         model_snapshot_json(model).unwrap()
+    }
+
+    /// `display` 하나를 명시한 Frame layout record.
+    fn layout(node: u64, display: &str) -> LayoutRecord {
+        use stellar_document::layout_record::LayoutLonghand;
+        let mut record = LayoutRecord::new(sid(node));
+        record
+            .set(
+                LayoutLonghand::Display,
+                LayoutLonghand::Display.parse(display).unwrap(),
+            )
+            .unwrap();
+        record
+    }
+
+    fn layouts(model: &DocumentModel) -> Vec<LayoutRecord> {
+        model.to_records().unwrap().layout_records
+    }
+
+    #[test]
+    fn external_layout_record_changes_are_applied_and_undone() {
+        let mut current = small_model();
+        current.set_layout_record(layout(11, "flex")).unwrap();
+        current.set_layout_record(layout(12, "block")).unwrap();
+        let mut state = DocumentState::new(current);
+        let original = layouts(state.model());
+        // 외부: 11 값 변경, 12 record 삭제, 13을 root 아래로 옮기고 record 추가, 새 node 20과 그 record.
+        let mut incoming = state.model().to_records().unwrap();
+        incoming.layout_records = vec![layout(11, "grid"), layout(13, "flex"), layout(20, "grid")];
+        for node in &mut incoming.nodes {
+            if node.id == sid(13) {
+                node.parent = Some(sid(10));
+                node.order_key = OrderKey::from_bytes(vec![0x30]).unwrap();
+            }
+        }
+        incoming.nodes.push(frame(20, Some(10), 0x40));
+        incoming.sort_canonical();
+        let command = ApplyExternalSnapshot::between(state.model(), &incoming).unwrap();
+        let layout_changes = command
+            .changes
+            .iter()
+            .filter(|c| matches!(c, RecordChange::Layout { .. }))
+            .count();
+        assert_eq!(layout_changes, 4);
+        let transaction =
+            command.into_transaction(CommandId::from_stable_id(sid(901)), state.revision());
+        let applied = state.execute_transaction(&transaction).unwrap();
+        assert_eq!(layouts(state.model()), incoming.layout_records);
+        assert_eq!(state.model().to_records().unwrap(), incoming);
+        state.execute_transaction(&applied.inverse).unwrap();
+        assert_eq!(layouts(state.model()), original);
+    }
+
+    #[test]
+    fn external_layout_changes_check_previous_values_and_owners() {
+        let mut current = small_model();
+        current.set_layout_record(layout(11, "flex")).unwrap();
+        let mut state = DocumentState::new(current);
+        // 이전 값이 다르면 낡은 변경입니다.
+        let stale_change = ApplyExternalSnapshot {
+            changes: vec![RecordChange::Layout {
+                node: sid(11),
+                before: Some(layout(11, "grid")),
+                after: None,
+            }],
+        };
+        assert_eq!(stale_change.validate(state.model()), Err(stale()));
+        // 소유 node가 없는 record는 결과 검사가 거부합니다.
+        let orphan = ApplyExternalSnapshot {
+            changes: vec![RecordChange::Layout {
+                node: sid(77),
+                before: None,
+                after: Some(layout(77, "flex")),
+            }],
+        };
+        assert!(matches!(
+            orphan.validate(state.model()),
+            Err(CommandError::InvalidResult(_))
+        ));
+        // 소유 node와 다른 record, 빈 record는 형식 오류입니다.
+        for bad in [
+            RecordChange::Layout {
+                node: sid(11),
+                before: Some(layout(11, "flex")),
+                after: Some(layout(12, "flex")),
+            },
+            RecordChange::Layout {
+                node: sid(11),
+                before: Some(layout(11, "flex")),
+                after: Some(LayoutRecord::new(sid(11))),
+            },
+        ] {
+            assert!(ApplyExternalSnapshot { changes: vec![bad] }
+                .validate(state.model())
+                .is_err());
+        }
+        // 이 session에서 지운 node와 같은 id를 외부가 record 없이 다시 만들면 남은 record가 보이지 않습니다.
+        state
+            .execute(&crate::request::CommandRequest::at(
+                &state,
+                Command::DeleteSubtree(crate::node_ops::DeleteSubtree { root: sid(11) }),
+            ))
+            .unwrap();
+        let mut incoming = state.model().to_records().unwrap();
+        incoming.nodes.push(frame(11, Some(10), 0x10));
+        incoming.sort_canonical();
+        let command = ApplyExternalSnapshot::between(state.model(), &incoming).unwrap();
+        state
+            .execute(&crate::request::CommandRequest::at(
+                &state,
+                Command::ApplyExternalSnapshot(command),
+            ))
+            .unwrap();
+        assert!(state.model().layout_record(sid(11)).is_none());
+        assert_eq!(state.model().to_records().unwrap(), incoming);
     }
 
     /// 다른 프로세스가 쓴 새 원본: 이름·삭제·이동·추가·modifier·페이지/View 변경을 섞습니다.
@@ -1003,9 +1235,10 @@ mod tests {
         let mut state = DocumentState::new(small_model());
         let mut incoming = external_version();
         incoming.definition.text_styles = DocumentTextStyles::initial(sid(90));
+        incoming.layout_records.push(layout(11, "grid"));
         let command = ApplyExternalSnapshot::between(state.model(), &incoming).unwrap();
         let tags: BTreeSet<u8> = command.changes.iter().map(|c| c.target().0).collect();
-        assert_eq!(tags, (1..=6).collect());
+        assert_eq!(tags, (1..=7).collect());
         let command = Command::ApplyExternalSnapshot(command);
         let bytes = encode_command(&command);
         assert_eq!(&bytes[..2], &0x0070u16.to_le_bytes());
