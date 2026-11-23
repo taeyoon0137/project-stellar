@@ -7,7 +7,9 @@
 //! - **합성**: premultiplied source-over와 blend mode([`crate::blend`], ADR-0102 결정 3).
 //! - **저장 정밀도**: canvas는 쓸 때마다 target format 저장 값으로 맞춥니다(8-bit target은 양자화, layer는 half float).
 //!   GPU blend가 draw마다 저장된 값을 다시 읽는 것과 같습니다.
-//! - **layer**: 내용을 투명 layer canvas(`pass_compiler::LAYER_FORMAT` 정밀도)에 그린 뒤 target 전체에 합성합니다.
+//! - **layer**: 내용을 투명 layer canvas(`pass_compiler::LAYER_FORMAT` 정밀도)에 그린 뒤 효과 순서(내용 → shadow → layer
+//!   blur → clip → mask → opacity → blend, ADR-0102 결정 5)대로 target 전체에 합성합니다. blur는 GPU와 같은 두 단계 분리
+//!   적용이고 단계마다 layer 정밀도로 저장합니다. clip·mask coverage는 scissor·stencil 0/1, mask는 8-bit 저장 값입니다.
 //! - **겹침**: [`Coverage::Disjoint`] mesh는 삼각형마다 합성하고(GPU draw 순서와 같음), [`Coverage::Union`]은 pixel마다
 //!   한 번만 합성합니다.
 //! - **이미지**: texture에 올리는 byte([`ImageData::texture_bytes`])를 decode한 값으로 sampling합니다. Nearest는
@@ -23,9 +25,10 @@ use crate::placeholder::TextureFilter;
 use crate::render_graph::TextureFormat;
 
 use super::artifact::RgbaImage;
+use super::blur::{kernel, layer_blur_sigma, shadow_sigma};
 use super::fixture::{
-    Coverage, FillOp, Fixture, FixtureError, GlyphOp, ImageData, ImageOp, LayerOp, Op, Paint,
-    IMAGE_TEXTURE_FORMAT,
+    ClipSpec, Coverage, CoverageShape, FillOp, Fixture, FixtureError, GlyphOp, ImageData, ImageOp,
+    LayerOp, Op, Paint, IMAGE_TEXTURE_FORMAT,
 };
 use super::gradient::GradientRamp;
 
@@ -232,17 +235,149 @@ pub(crate) fn layer_canvas(parent: &Canvas, plan: &OutputColorPlan) -> Canvas {
     )
 }
 
-/// layer를 투명 canvas에 그린 뒤 부모에 합성합니다.
+/// layer를 효과 순서(ADR-0102 결정 5)대로 그린 뒤 부모에 합성합니다.
+///
+/// 내용 → shadow(내용 아래) → layer blur → clip → mask → opacity → blend.
 fn draw_layer(canvas: &mut Canvas, layer: &LayerOp, plan: &OutputColorPlan) {
-    let mut content = layer_canvas(canvas, plan);
-    draw_ops(&mut content, &layer.content, plan);
-    for y in 0..canvas.height {
-        for x in 0..canvas.width {
-            let src = content.get(i64::from(x), i64::from(y));
+    let mut group = layer_canvas(canvas, plan);
+    draw_ops(&mut group, &layer.content, plan);
+    if !layer.shadows.is_empty() {
+        let mut stacked = layer_canvas(canvas, plan);
+        for shadow in &layer.shadows {
+            let sigma = shadow_sigma(shadow.blur);
+            let alpha = blur_pass(
+                &group,
+                sigma,
+                [1, 0],
+                true,
+                WorkingColor::premultiplied([1.0; 4]),
+            );
+            let colored = blur_pass(&alpha, sigma, [0, 1], false, to_working(plan, shadow.color));
+            let [ox, oy] = shadow.offset.map(i64::from);
+            for y in 0..stacked.height {
+                for x in 0..stacked.width {
+                    let src = colored.get(i64::from(x) - ox, i64::from(y) - oy);
+                    stacked.over(x, y, src);
+                }
+            }
+        }
+        for y in 0..stacked.height {
+            for x in 0..stacked.width {
+                let src = group.get(i64::from(x), i64::from(y));
+                stacked.over(x, y, src);
+            }
+        }
+        group = stacked;
+    }
+    let sigma = layer_blur_sigma(layer.blur);
+    if sigma > 0.0 {
+        let unit = WorkingColor::premultiplied([1.0; 4]);
+        let horizontal = blur_pass(&group, sigma, [1, 0], false, unit);
+        group = blur_pass(&horizontal, sigma, [0, 1], false, unit);
+    }
+    let (w, h) = (canvas.width, canvas.height);
+    // clip·mask coverage(scissor·stencil은 0/1, mask는 저장한 8-bit coverage).
+    let mut coverage = vec![1.0f32; (w * h) as usize];
+    let mut apply = |mask: &Canvas| {
+        for (c, m) in coverage.iter_mut().zip(mask.pixels.iter()) {
+            *c *= m.alpha();
+        }
+    };
+    match &layer.clip {
+        None => {}
+        Some(ClipSpec::Scissor {
+            x,
+            y,
+            width,
+            height,
+        }) => {
+            let mut mask = Canvas::new(w, h, WorkingColor::TRANSPARENT);
+            for py in *y..(y.saturating_add(*height)).min(h) {
+                for px in *x..(x.saturating_add(*width)).min(w) {
+                    mask.set(px, py, WorkingColor::premultiplied([0.0, 0.0, 0.0, 1.0]));
+                }
+            }
+            apply(&mask);
+        }
+        Some(ClipSpec::Stencil(mesh)) => {
+            let mut mask = Canvas::new(w, h, WorkingColor::TRANSPARENT);
+            raster_mesh(&mesh.positions, Coverage::Union, w, h, |x, y| {
+                mask.set(x, y, WorkingColor::premultiplied([0.0, 0.0, 0.0, 1.0]))
+            });
+            apply(&mask);
+        }
+        Some(ClipSpec::Mask(shapes)) => apply(&coverage_canvas(shapes, w, h, plan)),
+    }
+    if !layer.mask.is_empty() {
+        apply(&coverage_canvas(&layer.mask, w, h, plan));
+    }
+    for y in 0..h {
+        for x in 0..w {
+            let k = coverage[(y * w + x) as usize];
+            if k <= 0.0 {
+                continue;
+            }
+            let src = group
+                .get(i64::from(x), i64::from(y))
+                .scale(layer.opacity * k);
             let dst = canvas.get(i64::from(x), i64::from(y));
             canvas.set(x, y, composite(layer.blend, src, dst));
         }
     }
+}
+
+/// coverage 도형을 R8 coverage canvas에 합집합으로 그립니다(GPU `ClipMask` + premultiplied over와 같음).
+fn coverage_canvas(shapes: &[CoverageShape], w: u32, h: u32, plan: &OutputColorPlan) -> Canvas {
+    let mut mask = Canvas::stored(
+        w,
+        h,
+        WorkingColor::TRANSPARENT,
+        TextureFormat::R8Unorm,
+        plan.surface(),
+    );
+    for shape in shapes {
+        let value = WorkingColor::premultiplied([0.0, 0.0, 0.0, shape.coverage]);
+        raster_mesh(&shape.mesh.positions, Coverage::Disjoint, w, h, |x, y| {
+            mask.over(x, y, value)
+        });
+    }
+    mask
+}
+
+/// 한 방향 gaussian blur(모듈 [`super::blur`] 이산화). `source_alpha`면 texel alpha를 모든 채널로 퍼뜨려 읽습니다.
+/// 결과는 `tint`를 곱해 source와 같은 저장 정밀도 canvas에 씁니다.
+pub(crate) fn blur_pass(
+    source: &Canvas,
+    sigma: f32,
+    direction: [i64; 2],
+    source_alpha: bool,
+    tint: WorkingColor,
+) -> Canvas {
+    let weights = kernel(sigma);
+    let radius = (weights.len() / 2) as i64;
+    let mut out = source.clone();
+    for y in 0..source.height {
+        for x in 0..source.width {
+            let mut sum = [0.0f32; 4];
+            for (k, w) in weights.iter().enumerate() {
+                let i = k as i64 - radius;
+                let v = source.get(
+                    i64::from(x) + direction[0] * i,
+                    i64::from(y) + direction[1] * i,
+                );
+                let v = if source_alpha { [v.alpha(); 4] } else { v.rgba };
+                for c in 0..4 {
+                    sum[c] += w * v[c];
+                }
+            }
+            out.set(
+                x,
+                y,
+                WorkingColor::premultiplied(std::array::from_fn(|c| sum[c] * tint.rgba[c])),
+            );
+        }
+    }
+    out
 }
 
 fn draw_fill(canvas: &mut Canvas, fill: &FillOp, plan: &OutputColorPlan) {
@@ -350,6 +485,100 @@ pub fn render_reference(fixture: &Fixture) -> Result<RgbaImage, FixtureError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::effects::fixture::{srgb, Category, Fixture, LayerOp, SceneBlendMode};
+    use crate::effects::inventory::{effect, rect};
+
+    fn plan() -> OutputColorPlan {
+        Fixture::new("plan", Category::Modifier, 1, 1).plan()
+    }
+
+    fn working(fixture: &Fixture, x: u32, y: u32) -> WorkingColor {
+        let image = render_reference(fixture).unwrap();
+        decode_pixel(&image.pixel(x, y), fixture.format, fixture.plan().surface()).unwrap()
+    }
+
+    #[test]
+    fn group_opacity_composites_once_over_overlap() {
+        // 겹친 영역은 위 사각형(파랑)만 보이는 그룹을 한 번 0.5로 합성합니다(개별 불투명도와 다름).
+        let content = vec![
+            rect(0.0, 0.0, 6.0, 6.0, srgb(1.0, 0.0, 0.0, 1.0)),
+            rect(2.0, 2.0, 8.0, 8.0, srgb(0.0, 0.0, 1.0, 1.0)),
+        ];
+        let mut fixture = Fixture::new("group", Category::Modifier, 8, 8);
+        fixture.clear = srgb(1.0, 1.0, 1.0, 1.0);
+        fixture.ops = vec![effect(
+            LayerOp::new(content, SceneBlendMode::Normal).with_opacity(0.5),
+        )];
+        let plan = plan();
+        let blue = to_working(&plan, srgb(0.0, 0.0, 1.0, 1.0)).scale(0.5);
+        let white = to_working(&plan, srgb(1.0, 1.0, 1.0, 1.0));
+        let expected = source_over(blue, white);
+        let actual = working(&fixture, 4, 4);
+        for c in 0..4 {
+            assert!(
+                (actual.rgba[c] - expected.rgba[c]).abs() < 0.01,
+                "{actual:?} {expected:?}"
+            );
+        }
+        // 빨강 성분이 남지 않습니다(개별 불투명도면 빨강이 비쳐 보임).
+        assert!(actual.rgba[0] < 0.51);
+    }
+
+    #[test]
+    fn blur_preserves_energy_and_runs_before_clip() {
+        let content = || vec![rect(12.0, 12.0, 20.0, 20.0, srgb(0.0, 0.0, 0.0, 1.0))];
+        let mut blurred = Fixture::new("energy", Category::Modifier, 32, 32);
+        blurred.clear = srgb(0.0, 0.0, 0.0, 0.0);
+        blurred.format = crate::render_graph::TextureFormat::Rgba8Unorm;
+        blurred.ops = vec![effect(
+            LayerOp::new(content(), SceneBlendMode::Normal).with_blur(2.0),
+        )];
+        let image = render_reference(&blurred).unwrap();
+        let total: f32 = image
+            .pixels
+            .chunks_exact(4)
+            .map(|p| f32::from(p[3]) / 255.0)
+            .sum();
+        assert!((total - 64.0).abs() < 1.0, "alpha 합 {total}");
+        // blur 뒤 clip: clip 밖은 비고, clip 안 가장자리에는 clip 밖 내용이 번진 값이 있습니다.
+        let mut clipped = blurred.clone();
+        clipped.ops = vec![effect(
+            LayerOp::new(content(), SceneBlendMode::Normal)
+                .with_blur(2.0)
+                .with_clip(crate::effects::fixture::ClipSpec::Scissor {
+                    x: 20,
+                    y: 0,
+                    width: 12,
+                    height: 32,
+                }),
+        )];
+        assert_eq!(working(&clipped, 19, 16).alpha(), 0.0);
+        assert!(working(&clipped, 20, 16).alpha() > 0.1);
+    }
+
+    #[test]
+    fn shadow_follows_content_alpha_offset_and_color() {
+        let mut fixture = Fixture::new("shadow", Category::Modifier, 16, 16);
+        fixture.clear = srgb(0.0, 0.0, 0.0, 0.0);
+        fixture.format = crate::render_graph::TextureFormat::Rgba8Unorm;
+        fixture.ops = vec![effect(
+            LayerOp::new(
+                vec![rect(2.0, 2.0, 8.0, 8.0, srgb(1.0, 1.0, 1.0, 0.5))],
+                SceneBlendMode::Normal,
+            )
+            .with_shadow([4, 4], 0.0, srgb(0.0, 0.0, 1.0, 1.0)),
+        )];
+        // blur 0 shadow는 내용 alpha(0.5) × 색, offset (4, 4): (10, 10)은 shadow만, (3, 3)은 내용만.
+        let shadow_only = working(&fixture, 10, 10);
+        assert!((shadow_only.alpha() - 0.5).abs() < 0.01);
+        assert!((shadow_only.rgba[2] - 0.5).abs() < 0.01 && shadow_only.rgba[0] < 0.01);
+        let content_only = working(&fixture, 3, 3);
+        assert!((content_only.rgba[0] - 0.5).abs() < 0.01);
+        // 겹친 곳은 내용이 shadow 위입니다.
+        let both = working(&fixture, 7, 7);
+        assert!((both.alpha() - 0.75).abs() < 0.01);
+    }
 
     fn count(tri: [[f32; 2]; 3], w: u32, h: u32) -> Vec<(u32, u32)> {
         let mut out = Vec::new();

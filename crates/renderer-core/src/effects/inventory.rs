@@ -4,8 +4,8 @@
 //! 목록 전체에서 유일해야 합니다.
 
 use super::fixture::{
-    fill_mesh, linear_gradient, p3, solid, srgb, Category, Coverage, Feature, FillRule, Fixture,
-    LayerOp, Mesh, Op, PathBuilder, SceneBlendMode,
+    fill_mesh, linear_gradient, p3, solid, srgb, Category, ClipSpec, Coverage, CoverageShape,
+    Feature, FillRule, Fixture, LayerOp, Mesh, Op, PathBuilder, SceneBlendMode,
 };
 use super::gradient::GradientStop;
 use crate::color::ColorSpace;
@@ -266,6 +266,339 @@ pub fn gradient_fixtures() -> Vec<Fixture> {
     linear.format = crate::render_graph::TextureFormat::Rgba8Unorm;
     out.push(linear);
     out
+}
+
+/// 효과 layer 그리기.
+pub fn effect(layer: LayerOp) -> Op {
+    Op::Layer(Box::new(layer))
+}
+
+fn effect_fixture(name: &str, feature: Feature, tolerance: &'static str, ops: Vec<Op>) -> Fixture {
+    let category = match feature {
+        Feature::ScissorClip | Feature::StencilClip | Feature::MaskClip => Category::Clip,
+        _ => Category::Modifier,
+    };
+    let mut fixture = Fixture::new(name, category, 32, 32).feature(feature);
+    fixture.tolerance = tolerance;
+    fixture.ops = ops;
+    fixture
+}
+
+/// 겹치는 두 사각형(그룹 불투명도와 개별 불투명도가 다른 내용).
+fn overlapping() -> Vec<Op> {
+    vec![
+        rect(4.0, 4.0, 20.0, 20.0, srgb(0.9, 0.2, 0.1, 1.0)),
+        rect(12.0, 12.0, 28.0, 28.0, srgb(0.1, 0.3, 0.9, 1.0)),
+    ]
+}
+
+/// 배경 줄무늬(효과가 backdrop과 섞이는지 보이게).
+fn stripes() -> Vec<Op> {
+    (0..4)
+        .map(|i| {
+            let x = i as f32 * 8.0;
+            rect(x, 0.0, x + 4.0, 32.0, srgb(0.2, 0.2, 0.2, 1.0))
+        })
+        .collect()
+}
+
+fn with_backdrop(mut ops: Vec<Op>) -> Vec<Op> {
+    let mut all = stripes();
+    all.append(&mut ops);
+    all
+}
+
+fn star_mesh(cx: f32, cy: f32, r: f32) -> Mesh {
+    let points: Vec<[f32; 2]> = (0..5)
+        .map(|i| {
+            let a =
+                std::f32::consts::PI * 2.0 * (i as f32 * 2.0) / 5.0 - std::f32::consts::FRAC_PI_2;
+            [cx + r * a.cos(), cy + r * a.sin()]
+        })
+        .collect();
+    fill_mesh(
+        &PathBuilder::new().polygon(&points).build().expect("star"),
+        FillRule::NonZero,
+    )
+    .expect("star mesh")
+}
+
+/// clip·mask·opacity·shadow·blur 기능별 독립 fixture(XI.10.4).
+pub fn effect_fixtures() -> Vec<Fixture> {
+    let base = || LayerOp::new(overlapping(), SceneBlendMode::Normal);
+    let rounded = fill_mesh(
+        &PathBuilder::new()
+            .rounded_rect(6.0, 6.0, 26.0, 26.0, 6.0)
+            .build()
+            .expect("rounded"),
+        FillRule::NonZero,
+    )
+    .expect("rounded mesh");
+    let ellipse = fill_mesh(
+        &PathBuilder::new()
+            .ellipse(16.0, 16.0, 12.0, 8.0)
+            .build()
+            .expect("ellipse"),
+        FillRule::NonZero,
+    )
+    .expect("ellipse mesh");
+    let shadow_color = srgb(0.0, 0.0, 0.0, 0.6);
+    vec![
+        // --- opacity ---
+        effect_fixture(
+            "opacity-group-half",
+            Feature::Opacity,
+            "default",
+            with_backdrop(vec![effect(base().with_opacity(0.5))]),
+        ),
+        effect_fixture(
+            "opacity-group-quarter",
+            Feature::Opacity,
+            "default",
+            with_backdrop(vec![effect(base().with_opacity(0.25))]),
+        ),
+        effect_fixture(
+            "opacity-zero",
+            Feature::Opacity,
+            "default",
+            with_backdrop(vec![effect(base().with_opacity(0.0))]),
+        ),
+        effect_fixture(
+            "opacity-nested",
+            Feature::Opacity,
+            "default",
+            with_backdrop(vec![effect(
+                LayerOp::new(
+                    vec![
+                        rect(2.0, 2.0, 30.0, 12.0, srgb(0.1, 0.7, 0.3, 1.0)),
+                        effect(base().with_opacity(0.5)),
+                    ],
+                    SceneBlendMode::Normal,
+                )
+                .with_opacity(0.6),
+            )]),
+        ),
+        // --- scissor clip ---
+        effect_fixture(
+            "clip-scissor-rect",
+            Feature::ScissorClip,
+            "default",
+            with_backdrop(vec![effect(base().with_clip(ClipSpec::Scissor {
+                x: 8,
+                y: 6,
+                width: 14,
+                height: 18,
+            }))]),
+        ),
+        effect_fixture(
+            "clip-scissor-outside",
+            Feature::ScissorClip,
+            "default",
+            with_backdrop(vec![effect(base().with_clip(ClipSpec::Scissor {
+                x: 30,
+                y: 30,
+                width: 8,
+                height: 8,
+            }))]),
+        ),
+        // --- stencil path clip ---
+        effect_fixture(
+            "clip-stencil-rounded-rect",
+            Feature::StencilClip,
+            "curve",
+            with_backdrop(vec![effect(
+                base().with_clip(ClipSpec::Stencil(rounded.clone())),
+            )]),
+        ),
+        effect_fixture(
+            "clip-stencil-star",
+            Feature::StencilClip,
+            "curve",
+            with_backdrop(vec![effect(
+                base().with_clip(ClipSpec::Stencil(star_mesh(16.0, 16.0, 14.0))),
+            )]),
+        ),
+        effect_fixture(
+            "clip-stencil-nested",
+            Feature::StencilClip,
+            "curve",
+            with_backdrop(vec![effect(
+                LayerOp::new(
+                    vec![effect(base().with_clip(ClipSpec::Stencil(ellipse.clone())))],
+                    SceneBlendMode::Normal,
+                )
+                .with_clip(ClipSpec::Stencil(Mesh::rect(10.0, 0.0, 32.0, 32.0))),
+            )]),
+        ),
+        // --- mask clip(coverage) ---
+        effect_fixture(
+            "clip-mask-soft",
+            Feature::MaskClip,
+            "default",
+            with_backdrop(vec![effect(base().with_clip(ClipSpec::Mask(vec![
+                CoverageShape {
+                    mesh: Mesh::rect(0.0, 0.0, 16.0, 32.0),
+                    coverage: 1.0,
+                },
+                CoverageShape {
+                    mesh: Mesh::rect(16.0, 0.0, 32.0, 32.0),
+                    coverage: 0.4,
+                },
+            ])))]),
+        ),
+        effect_fixture(
+            "clip-mask-overlap-union",
+            Feature::MaskClip,
+            "curve",
+            with_backdrop(vec![effect(base().with_clip(ClipSpec::Mask(vec![
+                CoverageShape {
+                    mesh: ellipse.clone(),
+                    coverage: 0.5,
+                },
+                CoverageShape {
+                    mesh: Mesh::rect(8.0, 8.0, 24.0, 24.0),
+                    coverage: 0.5,
+                },
+            ])))]),
+        ),
+        // --- mask ---
+        effect_fixture(
+            "mask-stripes",
+            Feature::Mask,
+            "default",
+            with_backdrop(vec![effect(
+                base()
+                    .with_mask(Mesh::rect(0.0, 0.0, 32.0, 10.0), 1.0)
+                    .with_mask(Mesh::rect(0.0, 10.0, 32.0, 20.0), 0.3)
+                    .with_mask(Mesh::rect(0.0, 20.0, 32.0, 32.0), 0.7),
+            )]),
+        ),
+        effect_fixture(
+            "mask-with-opacity",
+            Feature::Mask,
+            "default",
+            with_backdrop(vec![effect(
+                base().with_mask(rounded.clone(), 0.8).with_opacity(0.7),
+            )]),
+        ),
+        // --- shadow ---
+        effect_fixture(
+            "shadow-offset-blur",
+            Feature::Shadow,
+            "blur",
+            vec![effect(
+                LayerOp::new(
+                    vec![rect(8.0, 8.0, 20.0, 20.0, srgb(0.9, 0.6, 0.1, 1.0))],
+                    SceneBlendMode::Normal,
+                )
+                .with_shadow([3, 4], 6.0, shadow_color),
+            )],
+        ),
+        effect_fixture(
+            "shadow-hard",
+            Feature::Shadow,
+            "blur",
+            vec![effect(
+                LayerOp::new(
+                    vec![rect(6.0, 6.0, 18.0, 18.0, srgb(0.2, 0.6, 0.9, 1.0))],
+                    SceneBlendMode::Normal,
+                )
+                .with_shadow([5, 5], 0.0, srgb(0.4, 0.0, 0.4, 0.8)),
+            )],
+        ),
+        effect_fixture(
+            "shadow-two-stacked",
+            Feature::Shadow,
+            "blur",
+            vec![effect(
+                LayerOp::new(
+                    vec![rect(10.0, 10.0, 22.0, 22.0, srgb(0.95, 0.95, 0.95, 1.0))],
+                    SceneBlendMode::Normal,
+                )
+                .with_shadow([-4, -3], 4.0, srgb(0.9, 0.1, 0.1, 0.7))
+                .with_shadow([4, 3], 4.0, srgb(0.1, 0.1, 0.9, 0.7)),
+            )],
+        ),
+        effect_fixture(
+            "shadow-translucent-content",
+            Feature::Shadow,
+            "blur",
+            vec![effect(
+                LayerOp::new(
+                    vec![
+                        rect(6.0, 6.0, 26.0, 16.0, srgb(0.1, 0.7, 0.3, 0.4)),
+                        rect(6.0, 16.0, 26.0, 26.0, srgb(0.1, 0.7, 0.3, 1.0)),
+                    ],
+                    SceneBlendMode::Normal,
+                )
+                .with_shadow([2, 2], 3.0, shadow_color),
+            )],
+        ),
+        effect_fixture(
+            "shadow-of-curve",
+            Feature::Shadow,
+            "blur",
+            vec![effect(
+                LayerOp::new(
+                    vec![solid(
+                        ellipse.clone(),
+                        srgb(0.9, 0.3, 0.5, 1.0),
+                        Coverage::Disjoint,
+                    )],
+                    SceneBlendMode::Normal,
+                )
+                .with_shadow([0, 3], 5.0, shadow_color),
+            )],
+        ),
+        // --- layer blur ---
+        effect_fixture(
+            "blur-sigma-1",
+            Feature::Blur,
+            "blur",
+            with_backdrop(vec![effect(base().with_blur(1.0))]),
+        ),
+        effect_fixture(
+            "blur-sigma-3",
+            Feature::Blur,
+            "blur",
+            with_backdrop(vec![effect(base().with_blur(3.0))]),
+        ),
+        effect_fixture(
+            "blur-edge-content",
+            Feature::Blur,
+            "blur",
+            vec![effect(
+                LayerOp::new(
+                    vec![rect(0.0, 0.0, 10.0, 32.0, srgb(0.1, 0.3, 0.9, 1.0))],
+                    SceneBlendMode::Normal,
+                )
+                .with_blur(2.0),
+            )],
+        ),
+        effect_fixture(
+            "blur-with-opacity",
+            Feature::Blur,
+            "blur",
+            with_backdrop(vec![effect(base().with_blur(2.0).with_opacity(0.6))]),
+        ),
+        // --- 조합: 효과 순서(shadow → blur → clip → mask → opacity → blend) ---
+        effect_fixture(
+            "effects-combined-order",
+            Feature::Shadow,
+            "blur",
+            with_backdrop(vec![effect(
+                LayerOp::new(overlapping(), SceneBlendMode::Multiply)
+                    .with_shadow([2, 2], 4.0, shadow_color)
+                    .with_blur(1.0)
+                    .with_clip(ClipSpec::Stencil(rounded))
+                    .with_opacity(0.8),
+            )]),
+        )
+        .feature(Feature::Blur)
+        .feature(Feature::StencilClip)
+        .feature(Feature::Opacity)
+        .feature(Feature::Blend),
+    ]
 }
 
 #[cfg(test)]

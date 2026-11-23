@@ -26,13 +26,16 @@
 //! | `GlyphMask` | position·uv(16) | `tint × sample.r`(coverage) | 필요 |
 //! | `ClipStencil` | position·color(24) | 없음(color write mask 0, stencil만) | — |
 //! | `ClipMask` | position·color(24) | `tint.a`(coverage, 모든 채널) | — |
-//! | `GaussianBlur` | — | 미구현(XI.10.4, `Unsupported`) | — |
+//! | `GaussianBlur` | position·uv(16) | 한 방향 gaussian blur × tint(48 byte `BlurUniforms`) | 필요(`read`, sampler 미사용) |
 //!
 //! - `mask`는 `DrawUniforms.mode`가 1이면 texture 1의 `.r`, 아니면 1입니다. mask를 쓰지 않는 draw에서도 slot 1이 비지 않도록
 //!   backend가 slot 0 texture를 slot 1에 함께 bind합니다(`commands`).
 //! - `BlendComposite`는 Apple GPU framebuffer fetch(`[[color(0)]]`, 선형 working 값)로 backdrop을 읽어
 //!   `stellar_renderer_core::blend` 식(W3C separable, ADR-0102 결정 3)으로 합성합니다. shader가 합성을 끝내므로 pipeline
 //!   blend state는 `Replace`여야 합니다(`PremultipliedOver`는 `InvalidUsage`).
+//! - `GaussianBlur`(ADR-0102 결정 5): fragment pixel 좌표에서 `direction` 방향 정수 offset `[−R, R]`(`R = ceil(3σ)`) texel을
+//!   `read`로 읽고 가중치 `exp(−i²/(2σ²))`로 평균합니다. texture 밖은 투명, σ = 0이면 texel 하나입니다. `source_alpha`가 1이면 texel
+//!   alpha를 모든 채널로 퍼뜨립니다(shadow). source와 target은 같은 크기여야 합니다(harness·pass compiler layer 규칙).
 
 use stellar_renderer_core::backend::ShaderProgram;
 use stellar_renderer_core::blend::SceneBlendMode;
@@ -180,6 +183,33 @@ STELLAR_BLEND_FRAGMENT(stellar_blend_overlay_fragment, 3)
 STELLAR_BLEND_FRAGMENT(stellar_blend_darken_fragment, 4)
 STELLAR_BLEND_FRAGMENT(stellar_blend_lighten_fragment, 5)
 
+struct BlurUniforms { float4 tint; float depth; float sigma; float2 direction; float source_alpha; float pad0; float pad1; float pad2; };
+
+fragment float4 stellar_blur_fragment(TexturedOut in [[stage_in]],
+                                      constant BlurUniforms& blur [[buffer(1)]],
+                                      texture2d<float> source [[texture(0)]]) {
+    int2 size = int2(source.get_width(), source.get_height());
+    int2 p = int2(floor(in.position.xy));
+    int radius = blur.sigma > 0.0 ? int(ceil(3.0 * blur.sigma)) : 0;
+    int2 dir = int2(blur.direction);
+    float4 sum = float4(0.0);
+    float total = 0.0;
+    for (int i = -radius; i <= radius; ++i) {
+        float w = radius == 0 ? 1.0 : exp(-float(i * i) / (2.0 * blur.sigma * blur.sigma));
+        int2 q = p + dir * i;
+        float4 v = float4(0.0);
+        if (q.x >= 0 && q.y >= 0 && q.x < size.x && q.y < size.y) {
+            v = source.read(uint2(q));
+        }
+        if (blur.source_alpha > 0.5) {
+            v = float4(v.a);
+        }
+        sum += w * v;
+        total += w;
+    }
+    return sum / total * blur.tint;
+}
+
 fragment float4 stellar_glyph_fragment(TexturedOut in [[stage_in]],
                                        constant DrawUniforms& draw [[buffer(1)]],
                                        texture2d<float> source [[texture(0)]],
@@ -209,7 +239,7 @@ pub(crate) struct ProgramLayout {
     pub(crate) shader_blend: bool,
 }
 
-/// program의 shader 변형. 아직 구현하지 않은 program은 `None`.
+/// program의 shader 변형. 아직 구현하지 않은 program은 `None`(지금은 모든 program을 구현했습니다).
 pub(crate) const fn program_layout(program: ShaderProgram) -> Option<ProgramLayout> {
     const fn solid(fragment: &'static str, writes_color: bool) -> ProgramLayout {
         ProgramLayout {
@@ -260,6 +290,9 @@ pub(crate) const fn program_layout(program: ShaderProgram) -> Option<ProgramLayo
             true,
         )),
         ShaderProgram::GlyphMask => Some(textured("stellar_glyph_fragment")),
-        ShaderProgram::GaussianBlur => None,
+        ShaderProgram::GaussianBlur => Some(ProgramLayout {
+            uniform_size: abi::BLUR_UNIFORMS_SIZE,
+            ..textured("stellar_blur_fragment")
+        }),
     }
 }

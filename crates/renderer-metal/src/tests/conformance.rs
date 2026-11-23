@@ -310,3 +310,15 @@ fn gradient_pixel_fixtures_match_cpu_formula() {
         &stellar_renderer_core::effects::inventory::gradient_fixtures(),
     );
 }
+
+#[test]
+fn effect_fixtures_match_cpu_reference_per_feature() {
+    // 검증 기준(XI.10.4): clip·mask·opacity·shadow·blur 기능별 Metal 비교 통과(D3D12는 Windows 재개 때).
+    if !metal_available() {
+        return;
+    }
+    run_group(
+        "effects",
+        &stellar_renderer_core::effects::inventory::effect_fixtures(),
+    );
+}

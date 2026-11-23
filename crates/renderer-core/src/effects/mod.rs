@@ -9,12 +9,16 @@
 //! - [`compare`]: 채널·structural 허용 오차 비교와 diff artifact.
 //! - [`inventory`]: 기능별 fixture 목록.
 //! - [`gradient`]: gradient stop 값·기하·GPU ramp.
+//! - [`blur`]: blur 반경·kernel·shadow 수식.
 
 /// 공통 shader ABI byte 배치.
 pub mod abi;
 
 /// reference image와 raw RGBA·PNG artifact (XI.11.1).
 pub mod artifact;
+
+/// blur·shadow 수식 (XI.10.4).
+pub mod blur;
 
 /// image 비교·허용 오차 config·diff artifact (XI.11.2).
 pub mod compare;

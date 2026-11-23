@@ -16,6 +16,11 @@
 //! - layer: 내용을 자기 pass의 `Rgba16Float` transient(`pass_compiler::LAYER_FORMAT`, 투명 clear)에 그리고, 부모 pass가 그
 //!   version을 읽어 target 전체 quad로 합성합니다. program·blend state는 [`crate::blend::composite_program`]입니다.
 //!   layer pass는 부모보다 먼저 끝나므로 기록 목록에서 앞에 옵니다(graph가 resource 흐름으로 순서를 정함).
+//! - layer 효과(ADR-0102 결정 5): shadow마다 `GaussianBlur` 두 pass(가로는 alpha를 퍼뜨리고, 세로는 shadow 색을 곱함)를 만들고
+//!   shadow·내용을 쌓는 pass에 offset quad로 그립니다. layer blur는 `GaussianBlur` 가로·세로 pass입니다. 합성 단계에서 scissor clip은
+//!   `SetScissor`, path clip은 `ClipStencil`(`IncrementWhereEqual`) → 합성(`TestEqual` reference 1) → `DecrementWhereEqual`로 되돌림,
+//!   mask·mask clip은 `R8Unorm` coverage pass(`ClipMask` + premultiplied over)를 slot 1에 bind하고 `DrawUniforms.mode = 1`, 불투명도는
+//!   tint입니다.
 //! - 정점·uniform byte 배치는 [`super::abi`]입니다.
 
 use std::fmt;
@@ -23,8 +28,8 @@ use std::fmt;
 use crate::backend::{
     BackendError, BlendState, BufferDesc, BufferHandle, BufferUsage, DepthMode, DrawCommand,
     FrameEncodeRequest, FrameId, GpuTextureDesc, ImportBinding, ImportTarget, PassCommands,
-    PipelineKey, RendererBackend, ShaderProgram, StencilMode, TextureHandle, TextureRegion,
-    TextureSource, TextureUsage,
+    PipelineKey, RendererBackend, ScissorRect, ShaderProgram, StencilMode, TextureHandle,
+    TextureRegion, TextureSource, TextureUsage,
 };
 use crate::color::{encode_pixel, to_working};
 use crate::output_color::OutputColorPlan;
@@ -36,12 +41,13 @@ use crate::render_graph::{
 };
 
 use super::abi::{
-    draw_uniforms, push_solid_vertex, push_textured_vertex, DEFAULT_DEPTH, DRAW_UNIFORMS_SIZE,
-    MODE_PLAIN, UNIFORM_ALIGNMENT,
+    blur_uniforms, draw_uniforms, push_solid_vertex, push_textured_vertex, DEFAULT_DEPTH,
+    DRAW_UNIFORMS_SIZE, MODE_MASKED, MODE_PLAIN, UNIFORM_ALIGNMENT,
 };
+use super::blur::{layer_blur_sigma, shadow_sigma};
 use super::fixture::{
-    Coverage, FillOp, Fixture, FixtureError, GlyphOp, ImageOp, LayerOp, Op, Paint,
-    IMAGE_TEXTURE_FORMAT,
+    ClipSpec, Coverage, CoverageShape, FillOp, Fixture, FixtureError, GlyphOp, ImageOp, LayerOp,
+    Op, Paint, IMAGE_TEXTURE_FORMAT,
 };
 use super::gradient::{GradientRamp, RAMP_WIDTH};
 use crate::blend::{composite_blend_state, composite_program};
@@ -162,6 +168,7 @@ pub(crate) enum TexRef {
 pub(crate) enum Step {
     Pipeline(PipelineKey),
     StencilReference(u8),
+    Scissor(Option<ScissorRect>),
     Texture {
         slot: u8,
         texture: TexRef,
@@ -332,19 +339,140 @@ impl Recorder {
         Ok(())
     }
 
-    /// layer 내용을 자기 offscreen pass에 그리고 부모 pass에 합성합니다.
+    /// layer를 효과 순서(ADR-0102 결정 5)대로 offscreen pass에 그리고 부모 pass에 합성합니다.
+    ///
+    /// 내용 pass → (shadow마다 alpha blur 가로·색 blur 세로 pass) → shadow·내용 쌓기 pass → (layer blur 가로·세로 pass)
+    /// → (mask coverage pass) → 부모에 clip·mask·opacity·blend 합성.
     fn record_layer(&mut self, parent: &mut PassRecord, layer: &LayerOp) -> Result<(), LowerError> {
-        let texture = self
-            .builder
-            .transient("conformance layer", self.desc(LAYER_FORMAT));
-        let id = self.builder.pass("conformance layer", PassKind::Raster);
-        let mut child = PassRecord {
+        let content = self.layer_pass("conformance layer", LAYER_FORMAT, |rec, pass| {
+            rec.record_ops(pass, &layer.content)
+        })?;
+        let mut group = content;
+        if !layer.shadows.is_empty() {
+            let mut colored = Vec::with_capacity(layer.shadows.len());
+            for shadow in &layer.shadows {
+                let sigma = shadow_sigma(shadow.blur);
+                let alpha = self.blur_pass(content, sigma, [1.0, 0.0], true, [1.0; 4])?;
+                let color = to_working(&self.plan, shadow.color).rgba;
+                colored.push((
+                    self.blur_pass(alpha, sigma, [0.0, 1.0], false, color)?,
+                    shadow.offset,
+                ));
+            }
+            group = self.layer_pass("conformance shadow stack", LAYER_FORMAT, |rec, pass| {
+                for (shadow, [ox, oy]) in &colored {
+                    let rect = [
+                        *ox as f32,
+                        *oy as f32,
+                        (*ox + rec.width as i32) as f32,
+                        (*oy + rec.height as i32) as f32,
+                    ];
+                    rec.draw_graph_texture(pass, *shadow, rect, [1.0; 4])?;
+                }
+                let full = rec.full_rect();
+                rec.draw_graph_texture(pass, content, full, [1.0; 4])
+            })?;
+        }
+        let sigma = layer_blur_sigma(layer.blur);
+        if sigma > 0.0 {
+            let horizontal = self.blur_pass(group, sigma, [1.0, 0.0], false, [1.0; 4])?;
+            group = self.blur_pass(horizontal, sigma, [0.0, 1.0], false, [1.0; 4])?;
+        }
+        let mask = match (&layer.clip, layer.mask.is_empty()) {
+            (Some(ClipSpec::Mask(shapes)), _) => Some(self.mask_pass(shapes)?),
+            (_, false) => Some(self.mask_pass(&layer.mask)?),
+            _ => None,
+        };
+        self.builder.read(parent.id, group)?;
+        if let Some(mask) = mask {
+            self.builder.read(parent.id, mask)?;
+        }
+        let stencil = match &layer.clip {
+            Some(ClipSpec::Scissor {
+                x,
+                y,
+                width,
+                height,
+            }) => {
+                parent.steps.push(Step::Scissor(Some(ScissorRect {
+                    x: *x,
+                    y: *y,
+                    width: *width,
+                    height: *height,
+                })));
+                StencilMode::Disabled
+            }
+            Some(ClipSpec::Stencil(mesh)) => {
+                parent.stencil = true;
+                let (first, count) = self.solid_vertices(&mesh.positions, [0.0; 4]);
+                let (uniform_offset, uniform_size) = self.tint([1.0; 4]);
+                let draw = Step::Draw {
+                    stream: Stream::Solid,
+                    first,
+                    count,
+                    uniform_offset,
+                    uniform_size,
+                };
+                parent.steps.push(Step::Pipeline(key(
+                    ShaderProgram::ClipStencil,
+                    BlendState::Replace,
+                    StencilMode::IncrementWhereEqual,
+                    parent.format,
+                )));
+                parent.steps.push(Step::StencilReference(0));
+                parent.steps.push(draw);
+                parent.steps.push(Step::StencilReference(1));
+                StencilMode::TestEqual
+            }
+            Some(ClipSpec::Mask(_)) | None => StencilMode::Disabled,
+        };
+        self.composite(parent, group, layer.blend, layer.opacity, mask, stencil);
+        match &layer.clip {
+            Some(ClipSpec::Scissor { .. }) => parent.steps.push(Step::Scissor(None)),
+            Some(ClipSpec::Stencil(mesh)) => {
+                let (first, count) = self.solid_vertices(&mesh.positions, [0.0; 4]);
+                let (uniform_offset, uniform_size) = self.tint([1.0; 4]);
+                parent.steps.push(Step::Pipeline(key(
+                    ShaderProgram::ClipStencil,
+                    BlendState::Replace,
+                    StencilMode::DecrementWhereEqual,
+                    parent.format,
+                )));
+                parent.steps.push(Step::StencilReference(0));
+                parent.steps.push(Step::Draw {
+                    stream: Stream::Solid,
+                    first,
+                    count,
+                    uniform_offset,
+                    uniform_size,
+                });
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// target 전체 사각형.
+    fn full_rect(&self) -> [f32; 4] {
+        [0.0, 0.0, self.width as f32, self.height as f32]
+    }
+
+    /// 새 transient에 그리는 pass를 기록하고 생산한 version을 돌려줍니다(투명 clear).
+    fn layer_pass(
+        &mut self,
+        label: &'static str,
+        format: TextureFormat,
+        record: impl FnOnce(&mut Recorder, &mut PassRecord) -> Result<(), LowerError>,
+    ) -> Result<ResourceVersion, LowerError> {
+        let texture = self.builder.transient(label, self.desc(format));
+        let id = self.builder.pass(label, PassKind::Raster);
+        let mut pass = PassRecord {
             id,
-            format: LAYER_FORMAT,
+            format,
             stencil: false,
             steps: Vec::new(),
         };
-        self.record_ops(&mut child, &layer.content)?;
+        record(self, &mut pass)?;
         let written = self.builder.color(
             id,
             texture,
@@ -352,29 +480,133 @@ impl Recorder {
             crate::render_graph::ClearColor::TRANSPARENT,
             StoreOp::Store,
         )?;
-        self.attach_stencil(&child)?;
-        self.records.push(child);
-        self.builder.read(parent.id, written)?;
-        self.composite(parent, written, layer.blend);
+        self.attach_stencil(&pass)?;
+        self.records.push(pass);
+        Ok(written)
+    }
+
+    /// graph texture를 `rect`에 premultiplied over로 그립니다(`LayerComposite`, Nearest 1:1).
+    fn draw_graph_texture(
+        &mut self,
+        pass: &mut PassRecord,
+        source: ResourceVersion,
+        rect: [f32; 4],
+        tint: [f32; 4],
+    ) -> Result<(), LowerError> {
+        self.builder.read(pass.id, source)?;
+        let (first, count) = self.textured_quad(rect, [0.0, 0.0, 1.0, 1.0]);
+        let (uniform_offset, uniform_size) = self.tint(tint);
+        pass.steps.push(Step::Pipeline(key(
+            ShaderProgram::LayerComposite,
+            BlendState::PremultipliedOver,
+            StencilMode::Disabled,
+            pass.format,
+        )));
+        pass.steps.push(Step::Texture {
+            slot: 0,
+            texture: TexRef::Graph(source),
+            sampler: clamp_sampler(TextureFilter::Nearest),
+        });
+        pass.steps.push(Step::Draw {
+            stream: Stream::Textured,
+            first,
+            count,
+            uniform_offset,
+            uniform_size,
+        });
         Ok(())
     }
 
-    /// graph texture 전체를 부모 target에 `mode`로 합성합니다(ADR-0102 결정 3).
+    /// 한 방향 gaussian blur pass(`GaussianBlur`, ADR-0102 결정 5).
+    fn blur_pass(
+        &mut self,
+        source: ResourceVersion,
+        sigma: f32,
+        direction: [f32; 2],
+        source_alpha: bool,
+        tint: [f32; 4],
+    ) -> Result<ResourceVersion, LowerError> {
+        self.layer_pass("conformance blur", LAYER_FORMAT, |rec, pass| {
+            rec.builder.read(pass.id, source)?;
+            let full = rec.full_rect();
+            let (first, count) = rec.textured_quad(full, [0.0, 0.0, 1.0, 1.0]);
+            let (uniform_offset, uniform_size) =
+                rec.uniform(blur_uniforms(tint, sigma, direction, source_alpha));
+            pass.steps.push(Step::Pipeline(key(
+                ShaderProgram::GaussianBlur,
+                BlendState::Replace,
+                StencilMode::Disabled,
+                pass.format,
+            )));
+            pass.steps.push(Step::Texture {
+                slot: 0,
+                texture: TexRef::Graph(source),
+                sampler: clamp_sampler(TextureFilter::Nearest),
+            });
+            pass.steps.push(Step::Draw {
+                stream: Stream::Textured,
+                first,
+                count,
+                uniform_offset,
+                uniform_size,
+            });
+            Ok(())
+        })
+    }
+
+    /// coverage 도형을 `R8Unorm` mask에 합집합으로 그립니다(`ClipMask` + premultiplied over).
+    fn mask_pass(&mut self, shapes: &[CoverageShape]) -> Result<ResourceVersion, LowerError> {
+        self.layer_pass("conformance mask", TextureFormat::R8Unorm, |rec, pass| {
+            for shape in shapes {
+                if shape.mesh.positions.is_empty() {
+                    continue;
+                }
+                let (first, count) = rec.solid_vertices(&shape.mesh.positions, [0.0; 4]);
+                let (uniform_offset, uniform_size) = rec.tint([shape.coverage; 4]);
+                pass.steps.push(Step::Pipeline(key(
+                    ShaderProgram::ClipMask,
+                    BlendState::PremultipliedOver,
+                    StencilMode::Disabled,
+                    pass.format,
+                )));
+                pass.steps.push(Step::Draw {
+                    stream: Stream::Solid,
+                    first,
+                    count,
+                    uniform_offset,
+                    uniform_size,
+                });
+            }
+            Ok(())
+        })
+    }
+
+    /// graph texture 전체를 부모 target에 합성합니다: 불투명도 tint, mask(slot 1), blend program(ADR-0102 결정 3·5).
     fn composite(
         &mut self,
         parent: &mut PassRecord,
         source: ResourceVersion,
         mode: SceneBlendMode,
+        opacity: f32,
+        mask: Option<ResourceVersion>,
+        stencil: StencilMode,
     ) {
-        let (first, count) = self.textured_quad(
-            [0.0, 0.0, self.width as f32, self.height as f32],
-            [0.0, 0.0, 1.0, 1.0],
-        );
-        let (uniform_offset, uniform_size) = self.tint([1.0; 4]);
+        let full = self.full_rect();
+        let (first, count) = self.textured_quad(full, [0.0, 0.0, 1.0, 1.0]);
+        let (uniform_offset, uniform_size) = self.uniform(draw_uniforms(
+            [opacity; 4],
+            DEFAULT_DEPTH,
+            if mask.is_some() {
+                MODE_MASKED
+            } else {
+                MODE_PLAIN
+            },
+            [0.0; 2],
+        ));
         parent.steps.push(Step::Pipeline(key(
             composite_program(mode),
             composite_blend_state(mode),
-            StencilMode::Disabled,
+            stencil,
             parent.format,
         )));
         parent.steps.push(Step::Texture {
@@ -382,6 +614,13 @@ impl Recorder {
             texture: TexRef::Graph(source),
             sampler: clamp_sampler(TextureFilter::Nearest),
         });
+        if let Some(mask) = mask {
+            parent.steps.push(Step::Texture {
+                slot: 1,
+                texture: TexRef::Graph(mask),
+                sampler: clamp_sampler(TextureFilter::Nearest),
+            });
+        }
         parent.steps.push(Step::Draw {
             stream: Stream::Textured,
             first,
@@ -693,6 +932,7 @@ pub(crate) fn finish<B: RendererBackend + ?Sized>(
                         Step::StencilReference(reference) => {
                             commands.push(DrawCommand::SetStencilReference(reference))
                         }
+                        Step::Scissor(rect) => commands.push(DrawCommand::SetScissor(rect)),
                         Step::Texture {
                             slot,
                             texture,

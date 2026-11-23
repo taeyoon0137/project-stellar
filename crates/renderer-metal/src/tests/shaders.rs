@@ -463,6 +463,10 @@ fn texture_binding_and_program_rules_are_checked() {
             ..target_desc(4, 4, TextureFormat::Rgba8Unorm)
         })
         .expect("render-only");
+    let sampled_target = env
+        .backend
+        .create_texture(&sampled(4, 4, TextureFormat::Rgba8Unorm))
+        .expect("sampled");
     let graph = single_pass(4, LoadOp::Clear, unit_clear([false; 4]));
     let base = |program| {
         vec![
@@ -515,6 +519,9 @@ fn texture_binding_and_program_rules_are_checked() {
         offset: 0,
         size: 16,
     };
+    let mut blur_short = base(ShaderProgram::GaussianBlur);
+    blur_short.push(bind(0, TextureSource::Handle(sampled_target)));
+    blur_short.push(draw);
     let mut depth_key = base(ShaderProgram::SolidFill);
     depth_key[0] = DrawCommand::SetPipeline(PipelineKey {
         depth: DepthMode::TestAndWrite,
@@ -529,10 +536,8 @@ fn texture_binding_and_program_rules_are_checked() {
         (depth_key, BackendErrorKind::InvalidUsage),
         (blend_over, BackendErrorKind::InvalidUsage),
         (short_uniforms, BackendErrorKind::InvalidUsage),
-        (
-            base(ShaderProgram::GaussianBlur),
-            BackendErrorKind::Unsupported,
-        ),
+        // GaussianBlur는 48 byte BlurUniforms가 필요합니다(XI.10.4).
+        (blur_short, BackendErrorKind::InvalidUsage),
     ];
     for (commands, kind) in cases {
         let error = env.try_render(&graph, commands.clone()).unwrap_err();

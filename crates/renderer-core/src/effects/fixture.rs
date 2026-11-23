@@ -92,6 +92,20 @@ pub enum Feature {
     Blend,
     /// gradient fill(XI.10.3).
     Gradient,
+    /// 합성 불투명도(XI.10.4).
+    Opacity,
+    /// scissor clip(XI.10.4).
+    ScissorClip,
+    /// stencil path clip(XI.10.4).
+    StencilClip,
+    /// coverage mask clip(XI.10.4).
+    MaskClip,
+    /// mask(XI.10.4).
+    Mask,
+    /// drop shadow(XI.10.4).
+    Shadow,
+    /// layer blur(XI.10.4).
+    Blur,
 }
 
 /// mesh 겹침 처리.
@@ -240,13 +254,105 @@ pub struct LayerOp {
     pub content: Vec<Op>,
     /// 합성 blend mode.
     pub blend: SceneBlendMode,
+    /// 합성 불투명도(`[0, 1]`).
+    pub opacity: f32,
+    /// drop shadow(앞이 아래, XI.10.4).
+    pub shadows: Vec<ShadowSpec>,
+    /// layer blur 반경(CSS `filter: blur()`, σ = 반경).
+    pub blur: f32,
+    /// clip(합성 단계에서 적용).
+    pub clip: Option<ClipSpec>,
+    /// mask coverage 도형(비면 mask 없음). clip의 [`ClipSpec::Mask`]와 함께 쓰지 않습니다.
+    pub mask: Vec<CoverageShape>,
 }
 
 impl LayerOp {
-    /// `content`를 `blend`로 합성하는 layer.
+    /// `content`를 `blend`로 합성하는 layer(불투명도 1, 효과 없음).
     pub fn new(content: Vec<Op>, blend: SceneBlendMode) -> LayerOp {
-        LayerOp { content, blend }
+        LayerOp {
+            content,
+            blend,
+            opacity: 1.0,
+            shadows: Vec::new(),
+            blur: 0.0,
+            clip: None,
+            mask: Vec::new(),
+        }
     }
+
+    /// 불투명도.
+    pub fn with_opacity(mut self, opacity: f32) -> LayerOp {
+        self.opacity = opacity;
+        self
+    }
+
+    /// drop shadow를 덧붙입니다.
+    pub fn with_shadow(mut self, offset: [i32; 2], blur: f32, color: OutputColor) -> LayerOp {
+        self.shadows.push(ShadowSpec {
+            offset,
+            blur,
+            color,
+        });
+        self
+    }
+
+    /// layer blur 반경.
+    pub fn with_blur(mut self, radius: f32) -> LayerOp {
+        self.blur = radius;
+        self
+    }
+
+    /// clip.
+    pub fn with_clip(mut self, clip: ClipSpec) -> LayerOp {
+        self.clip = Some(clip);
+        self
+    }
+
+    /// mask 도형을 덧붙입니다.
+    pub fn with_mask(mut self, mesh: Mesh, coverage: f32) -> LayerOp {
+        self.mask.push(CoverageShape { mesh, coverage });
+        self
+    }
+}
+
+/// drop shadow(CSS `drop-shadow()` 의미: 내용 alpha의 blur).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShadowSpec {
+    /// 정수 pixel offset(harness는 정수 offset만 씁니다).
+    pub offset: [i32; 2],
+    /// blur 반경(σ = 반경 / 2).
+    pub blur: f32,
+    /// 그림자 색.
+    pub color: OutputColor,
+}
+
+/// coverage 도형(mask·clip mask).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CoverageShape {
+    /// 도형(삼각형이 겹치지 않음).
+    pub mesh: Mesh,
+    /// coverage(`[0, 1]`).
+    pub coverage: f32,
+}
+
+/// layer clip.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClipSpec {
+    /// device pixel 사각형 scissor.
+    Scissor {
+        /// 왼쪽.
+        x: u32,
+        /// 위.
+        y: u32,
+        /// 너비.
+        width: u32,
+        /// 높이.
+        height: u32,
+    },
+    /// path stencil(pixel 중심 판정, 삼각형이 겹치지 않는 mesh).
+    Stencil(Mesh),
+    /// coverage mask clip(도형마다 coverage, 겹치면 합집합).
+    Mask(Vec<CoverageShape>),
 }
 
 /// 그리기 하나.
@@ -384,16 +490,62 @@ impl Fixture {
     }
 }
 
+fn validate_mesh(mesh: &Mesh) -> Result<(), FixtureError> {
+    if !mesh.positions.len().is_multiple_of(3) {
+        return Err(FixtureError::Invalid("mesh 정점 수가 3의 배수가 아닙니다"));
+    }
+    if mesh.positions.iter().flatten().any(|v| !v.is_finite()) {
+        return Err(FixtureError::Invalid("mesh 좌표가 유한하지 않습니다"));
+    }
+    Ok(())
+}
+
+fn validate_coverage(shapes: &[CoverageShape]) -> Result<(), FixtureError> {
+    for shape in shapes {
+        validate_mesh(&shape.mesh)?;
+        if !(0.0..=1.0).contains(&shape.coverage) {
+            return Err(FixtureError::Invalid("coverage는 [0, 1]입니다"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_layer(layer: &LayerOp, plan: &OutputColorPlan) -> Result<(), FixtureError> {
+    use super::blur::{layer_blur_sigma, shadow_sigma, valid_sigma};
+    if !(0.0..=1.0).contains(&layer.opacity) {
+        return Err(FixtureError::Invalid("layer 불투명도는 [0, 1]입니다"));
+    }
+    if !valid_sigma(layer_blur_sigma(layer.blur)) {
+        return Err(FixtureError::Invalid("layer blur 반경이 범위 밖입니다"));
+    }
+    if layer
+        .shadows
+        .iter()
+        .any(|shadow| !valid_sigma(shadow_sigma(shadow.blur)))
+    {
+        return Err(FixtureError::Invalid("shadow blur 반경이 범위 밖입니다"));
+    }
+    match &layer.clip {
+        None | Some(ClipSpec::Scissor { .. }) => {}
+        Some(ClipSpec::Stencil(mesh)) => validate_mesh(mesh)?,
+        Some(ClipSpec::Mask(shapes)) => {
+            validate_coverage(shapes)?;
+            if !layer.mask.is_empty() {
+                return Err(FixtureError::Invalid(
+                    "mask clip과 mask를 함께 쓰지 않습니다",
+                ));
+            }
+        }
+    }
+    validate_coverage(&layer.mask)?;
+    validate_ops(&layer.content, plan)
+}
+
 fn validate_ops(ops: &[Op], plan: &OutputColorPlan) -> Result<(), FixtureError> {
     for op in ops {
         match op {
             Op::Fill(fill) => {
-                if fill.mesh.positions.len() % 3 != 0 {
-                    return Err(FixtureError::Invalid("mesh 정점 수가 3의 배수가 아닙니다"));
-                }
-                if fill.mesh.positions.iter().flatten().any(|v| !v.is_finite()) {
-                    return Err(FixtureError::Invalid("mesh 좌표가 유한하지 않습니다"));
-                }
+                validate_mesh(&fill.mesh)?;
                 if let Paint::Gradient { stops, .. } = &fill.paint {
                     super::gradient::GradientRamp::resolve(plan, stops)
                         .map_err(FixtureError::Gradient)?;
@@ -422,7 +574,7 @@ fn validate_ops(ops: &[Op], plan: &OutputColorPlan) -> Result<(), FixtureError> 
                     ));
                 }
             }
-            Op::Layer(layer) => validate_ops(&layer.content, plan)?,
+            Op::Layer(layer) => validate_layer(layer, plan)?,
         }
     }
     Ok(())
