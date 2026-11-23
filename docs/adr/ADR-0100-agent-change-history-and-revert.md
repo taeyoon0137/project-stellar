@@ -32,7 +32,7 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
 4. **세션 절차**(XIX.6.2\~XIX.6.4, `stellar_mcp::agent_history::AgentEditSessions`).
    - 세션 하나는 한 번에 lease(작업 그룹) 하나만 진행합니다(`begin_edit`가 두 번째를 `EditInProgress`로 거부). 그래서 "중단됨" 항목은 세션마다 많아야 하나입니다.
    - 정상 완료: 진행 중 batch를 `Completed` 그룹으로 확정하고 lease를 풉니다. 세션과 권한은 남습니다. history 확정이 실패하면 lease를 풀지 않고 오류입니다.
-   - 종료 절차(`end`, 이유 `EndReason`): (1) 진행 중 batch를 `Interrupted` 그룹 하나로 확정, batch와 표시 유지 (2) lease(대기 요청 포함) 해제 (3) 응답 대기 확인 요청을 거부로 보고하고 세션 권한 폐기(`PermissionStore::end_session`) (4) 적용 전 제안 폐기 (5) 진단 `InterruptedAgentTask`. history 확정이 실패해도 (2)\~(5)는 반드시 실행하고 실패를 보고서에 적습니다. 확정하지 못한 batch는 진행 중으로 남습니다.
+   - 종료 절차(`end`, 이유 `EndReason`): (1) 진행 중 batch를 `Interrupted` 그룹 하나로 확정, batch와 표시 유지 (2) lease(대기 요청 포함) 해제 (3) 응답 대기 확인 요청을 거부로 보고하고 세션 권한 폐기(`PermissionStore::end_session`) (4) 적용 전 제안 폐기 (5) 진단 `InterruptedAgentTask`. history 확정이 실패해도 (2)\~(5)는 반드시 실행하고 실패를 보고서에 적습니다. 확정하지 못한 batch는 진행 중으로 남고, 다음 확정 기회(예: preview가 끝난 뒤)에 `confirm_interrupted`가 같은 경로로 "중단됨" 항목 하나로 확정합니다(끝난 세션만 받음).
    - 문서 변경은 DocumentThread에서 transaction 단위로 원자 실행되므로 종료 절차는 transaction 경계에서만 실행됩니다. 적용 중인 transaction은 이미 전부 적용 또는 전부 미적용입니다.
    - 외부 클라이언트 세션은 bridge 연결 종료가 곧 종료(`McpDisconnected`)입니다. 앱 시작 세션은 `on_bridge_disconnected`가 유지하고, 유예 판정은 AgentSession이 하며 넘기면 `ReconnectGraceExpired`로 같은 `end`를 부릅니다. 유예 시간 판정을 두 곳에 두지 않습니다.
    - 사용자 중지(`cancel`)는 `UserStopped` 종료입니다. "중지하고 되돌리기"(`cancel_and_preview_revert`)는 종료 절차를 마친 뒤 세션 단위 되돌리기 미리보기를 만들 뿐이고 문서를 바꾸지 않습니다. 별도 rollback 경로는 없습니다.
@@ -52,7 +52,7 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
    - "유지"와 되돌리기 확정은 `UserUiAction` 표식을 받습니다. MCP catalog에 이 색인을 바꾸는 tool이 없음을 test가 확인합니다(ADR-0005 §3). 표식은 문서화된 약속이고 타입으로 막지는 못합니다. 전체 쓰기 경로 inventory는 XIX.9.7입니다.
    - 세션 단위 되돌리기의 "남은 batch"는 표시 중(검토 대기·이후 변경됨)인 batch입니다. 유지·실행 취소·되돌림 batch는 넣지 않습니다.
 8. **외부 변경**(XIX.7.1\~XIX.7.3, `stellar_commands::agent_external`, `stellar_mcp::agent_history::external`).
-   - 외부 변경 batch는 창이 마지막으로 맞춘 원본(base)과 외부 원본(incoming)의 semantic diff(ops `diff_records`)입니다. 바뀐 객체를 대상(node, 위치가 바뀐 node, View root)으로 바꿔 `overlapping_leases`가 판정합니다: 창 문서나 외부 원본에서 lease 소속(`LeaseTable::holder`)이면 겹침, 위치가 바뀐 node·View root가 lease subtree를 품으면(`SubtreeLock::overlaps`) 겹침입니다. lease root의 진조상 속성 변경은 겹침이 아닙니다(사용자 편집 판정과 같음).
+   - 외부 변경 batch는 창이 마지막으로 맞춘 원본(base)과 외부 원본(incoming)의 semantic diff(ops `diff_records`)입니다. 바뀐 객체를 대상(node, 위치가 바뀐 node, View root)으로 바꿔 `overlapping_leases`가 판정합니다: 창 문서나 외부 원본에서 lease 소속(`LeaseTable::holder`)이면 겹침, 위치가 바뀐 node·View root가 lease subtree를 품으면(`SubtreeLock::overlaps`) 겹침입니다. lease root의 진조상 속성 변경은 겹침이 아닙니다(사용자 편집 판정과 같음). 페이지·View 객체 변경은 View 추가·삭제, 다른 페이지로 이동, root Frame 교체일 때만 View root 대상이고, 페이지·View 이름이나 View 순서만 바뀐 경우는 대상이 아닙니다.
    - 반영은 레코드 단위로 나눕니다(`partition_external`). base→incoming 변경 중 창에서 바뀌지 않은 레코드만 System 출처 `ApplyExternalSnapshot`으로 적용합니다. 창과 외부가 모두 바꾼 레코드는 적용하지 않고 reconciliation 입력(`divergent`)으로 넘깁니다. 그래서 에이전트·사용자의 저장 전 변경을 덮어쓰지 않습니다.
    - 겹치면 이 창의 그 lease 세션을 `LeaseConflict` 종료 절차로 끝내고(자동 rollback 없음), 적용된 에이전트 변경은 표시를 유지한 로컬 변경으로 남깁니다. 창(base→current)과 외부가 같은 객체·속성을 다르게 바꾼 항목은 semantic conflict 후보입니다. 후보와 `divergent`를 실제 병합·Semantic Conflict 화면으로 처리하는 일은 XIII.3.4입니다. 다른 프로세스가 쥔 lease는 그 프로세스가 같은 외부 변경을 보고 끝냅니다.
    - 겹치지 않으면 세션과 lease를 유지하고 같은 분할로 외부 변경을 적용합니다.

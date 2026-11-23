@@ -38,6 +38,7 @@
 |---|---|
 | non-overlap(lease 밖 이름 변경) 겹침 0, overlap(lease root 자손) 겹침(`external_batch_semantic_diff_and_lease_overlap`) | 통과 |
 | lease root 진조상 속성 변경은 겹침 아님, 위치 변경·View root는 겹침(`overlap_is_lease_subtree_or_moved_ancestor`) | 통과 |
+| 페이지·View 이름 변경은 겹침 아님(`page_and_view_rename_is_not_lease_overlap`), View root 교체·삭제는 두 root 대상(`view_root_frame_swap_or_removal_targets_both_roots`) — 검토 보완 | 통과 |
 
 ## 차이(작업 지시와 다른 점)
 

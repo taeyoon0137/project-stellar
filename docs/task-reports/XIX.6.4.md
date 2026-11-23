@@ -18,7 +18,7 @@
 ## 구현 요약
 
 - 종료 이유(MCP 연결 종료, process 종료, 사용자 중지, 재연결 유예 초과, 비정상 종료, 신뢰 철회, lease 겹침 외부 변경, 사용자의 lease 해제)마다 같은 절차를 실행합니다: 진행 중 batch를 "중단됨" entry 하나로 확정, batch·출처 표시 유지, lease와 대기 요청 해제, 응답 대기 확인 요청 거부 보고와 세션 권한 폐기, 적용 전 제안 폐기, 내용 없는 진단.
-- history 확정이 실패해도 lease·권한 해제는 반드시 실행합니다.
+- history 확정이 실패해도 lease·권한 해제는 반드시 실행합니다. 확정하지 못한 batch는 진행 중으로 남고, 끝난 세션에 대해 `confirm_interrupted`가 다음 확정 기회에 같은 경로로 "중단됨" entry 하나로 확정합니다(검토 보완).
 - 앱 시작 세션의 재연결 유예는 AgentSession(XXIX.2.8)이 판정하고, 이 관리자는 bridge 끊김에서 세션을 유지하다가 유예 초과 이유로 같은 절차를 실행합니다.
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)
@@ -40,7 +40,7 @@
 | kill fixture: 적용 batch 유지, 출처 표시 존재, lease 0, permission 0, 대기 요청 0, history entry 1(중단)(`kill_fixture_keeps_batches_and_clears_lease_permission_and_pending`) | 통과 |
 | 앱 시작 세션 bridge disconnect: 유예 안 세션·lease 유지, 유예 초과 후 같은 종료 결과(`external_client_disconnect_ends_but_app_started_waits_for_grace`) | 통과 |
 | batch 없는 종료는 entry 0, lease 해제(`end_without_batches_creates_no_entry_and_still_releases`) | 통과 |
-| history 거부 시에도 lease·권한 해제(`history_refusal_still_releases_lease_and_permission`) | 통과 |
+| history 거부 시에도 lease·권한 해제, 이후 `confirm_interrupted`로 남은 batch를 entry 하나로 확정·끝나지 않은 세션 거부(`history_refusal_still_releases_lease_and_permission`) | 통과 |
 
 ## 차이(작업 지시와 다른 점)
 
