@@ -132,18 +132,13 @@ pub fn exit_to_parent(
     if current.is_empty() {
         return Navigation::Unchanged;
     }
-    let lifted: Vec<StableId> = current
-        .ids()
-        .iter()
-        .map(|id| match tree.parent(*id) {
-            Some(parent) if parent != tree.root() && tree.selectable(parent) => parent,
-            _ => *id,
-        })
-        .collect();
-    let primary = current
-        .primary()
-        .and_then(|p| tree.parent(p))
-        .filter(|p| lifted.contains(p));
+    let lift = |id: StableId| match tree.parent(id) {
+        Some(parent) if parent != tree.root() && tree.selectable(parent) => parent,
+        _ => id,
+    };
+    let lifted: Vec<StableId> = current.ids().iter().map(|id| lift(*id)).collect();
+    // primary는 primary를 올린 node입니다(올리지 못한 최상위 node면 그 node 그대로).
+    let primary = current.primary().map(lift);
     let selection = Selection::new(lifted, primary);
     if selection.ids() == current.ids() {
         return Navigation::Unchanged;
@@ -284,6 +279,20 @@ mod tests {
             exit_to_parent(&tree, top, &Selection::empty()),
             Navigation::Unchanged
         );
+        // 섞인 깊이: 최상위 12가 primary면 올린 뒤에도 12가 primary입니다.
+        let mixed = change(exit_to_parent(
+            &tree,
+            top,
+            &Selection::new([sid(12), sid(13)], Some(sid(12))),
+        ));
+        assert_eq!(ids(&mixed), vec![sid(12), sid(11)]);
+        assert_eq!(mixed.selection.primary(), Some(sid(12)));
+        let mixed = change(exit_to_parent(
+            &tree,
+            top,
+            &Selection::new([sid(13), sid(12)], Some(sid(13))),
+        ));
+        assert_eq!(mixed.selection.primary(), Some(sid(11)));
         // 컨테이너 몸체 더블클릭은 선택 없이 범위만 들어갑니다.
         let body = change(double_click(
             &tree,
