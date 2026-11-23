@@ -1,0 +1,11 @@
+page-fnv64 7e530080ccfe2d56
+# Google Chrome 157.0.8103.79, headless, DPR 1
+root rect=0,0,320,200 radius=0px/0px/0px/0px position=relative zIndex=0 offsetParent=-
+frame-a rect=0,0,120,80 radius=8px/8px/16px/16px position=relative zIndex=0 offsetParent=root
+overlay-a rect=0,0,120,80 radius=8px/8px/16px/16px position=absolute zIndex=0 offsetParent=frame-a
+content-a rect=14,14,20,20 radius=0px/0px/0px/0px position=relative zIndex=0 offsetParent=frame-a
+frame-b rect=150,10,40,40 radius=0px/0px/0px/0px position=absolute zIndex=0 offsetParent=root
+sibling-c rect=120,0,100,60 radius=0px/0px/0px/0px position=relative zIndex=0 offsetParent=root
+hit 24 24 content-a
+hit 2 40 overlay-a
+hit 170 30 sibling-c
