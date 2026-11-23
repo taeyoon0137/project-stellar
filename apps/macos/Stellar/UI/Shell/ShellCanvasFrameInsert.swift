@@ -62,10 +62,6 @@ extension ShellProjectWindow {
             canvas.window?.makeFirstResponder(canvas)
             frameDrag = CanvasFrameDrag(hit: parent, start: point, session: session.session, size: canvas.bounds.size,
                 viewport: viewport, tool: tool)
-            let placement = parent.localToWorld.concatenating(parent.worldToView)
-            frameDrag?.snapCandidates = CoreRuntime.preparedSnapCandidates(
-                canvas.snapCandidates(for: parent.id, asParent: true,
-                    worldToInput: canvas.worldToView.concatenating(placement.inverted())))
             return true
         case .leftMouseDragged, .leftMouseUp:
             guard let drag = frameDrag else { return false }
@@ -93,25 +89,10 @@ extension ShellProjectWindow {
             guard let result = CoreRuntime.gesturePreview(kind: tool == .line ? 5 : 4, handle: 0,
                 flags: flags, rect: CGRect(x: anchor.x, y: anchor.y, width: 0, height: 0), point: pointer)
             else { return true }
-            var start = CGPoint(x: CGFloat(result.line.0), y: CGFloat(result.line.1))
-            var end = CGPoint(x: CGFloat(result.line.2), y: CGFloat(result.line.3))
-            var rect = CGRect(x: CGFloat(result.rect.0), y: CGFloat(result.rect.1),
+            let start = CGPoint(x: CGFloat(result.line.0), y: CGFloat(result.line.1))
+            let end = CGPoint(x: CGFloat(result.line.2), y: CGFloat(result.line.3))
+            let rect = CGRect(x: CGFloat(result.rect.0), y: CGFloat(result.rect.1),
                               width: CGFloat(result.rect.2), height: CGFloat(result.rect.3))
-            if tool != .line, !event.modifierFlags.contains(.command), snapFlags != 0 {
-                let handle: Int32 = end.x < start.x ? (end.y < start.y ? 0 : 3) : (end.y < start.y ? 1 : 2)
-                let scale = hypot(localToView.a, localToView.b)
-                if let snapped = CoreRuntime.snap(rect: rect, mode: 1, handle: handle, scale: scale,
-                                                  flags: snapFlags, candidates: drag.snapCandidates) {
-                    rect = CGRect(x: CGFloat(snapped.rect.0), y: CGFloat(snapped.rect.1),
-                                  width: CGFloat(snapped.rect.2), height: CGFloat(snapped.rect.3))
-                    if end.x < start.x { end.x = rect.minX; start.x = rect.maxX }
-                    else { end.x = rect.maxX; start.x = rect.minX }
-                    if end.y < start.y { end.y = rect.minY; start.y = rect.maxY }
-                    else { end.y = rect.maxY; start.y = rect.minY }
-                    canvas.snapOverlay = showsSmartGuides
-                        ? CanvasSnapOverlay(result: snapped, inputToView: localToView) : nil
-                }
-            } else { canvas.snapOverlay = nil }
             let a = start.applying(localToView), b = end.applying(localToView)
             let usable = tool == .line ? hypot(b.x - a.x, b.y - a.y) >= 3
                 : rect.width * hypot(localToView.a, localToView.b) >= 3 && rect.height * hypot(localToView.c, localToView.d) >= 3

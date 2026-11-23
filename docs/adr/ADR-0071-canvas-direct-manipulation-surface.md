@@ -211,3 +211,7 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
 
 - Select All은 활성 View root의 보이고 잠기지 않은 직계 자식을 코어(`SelectionEdit::SelectAll`)에서 골라 창 선택 history에 기록한다. 영역 선택과 같은 자식 필터(`selectable_root_children`)를 쓰고, 셸은 레이어 페이지를 순회하지 않는다. 요청은 `stellar_window_edit_selection`의 View·revision·history 위치 검사를 거친다.
 - 보완(2026-11-23): 고를 자식이 없으면 지금 선택을 그대로 두고 기록하지 않는다. 지금 선택과 같으면 새 history 항목을 만들지 않는다. 처음 문단은 Inspector 표면 ADR-0070에 있었으나 선택 표면이라 이 ADR로 옮겼다.
+
+## 철회(2026-11-23, UX.3.8 스냅 연결)
+
+2026-11-18 스냅 개정 중 셸 연결 부분을 제거한다. `StellarSnapCandidate`·`StellarSnapResult`·`stellar_canvas_snap`·`stellar_canvas_snap_intervals`는 셸이 화면 투영 scene에서 고른 부모·형제 상자를 그대로 믿었고(회전 노드는 AABB, 다중 선택은 첫 hit의 형제만), 이동은 화면 좌표·크기 조절은 부모 local 좌표로 좌표계가 섞였다. View 메뉴 토글 세 개, 정렬선·px 라벨 overlay, Option hover 측정은 재설계 대상 UI라 함께 지웠다. 스냅 계산(`gesture_math::snap`)은 엔진으로 남기며 후보 수집을 코어로 옮기는 보완은 다음 절에 적는다. 스냅 설정 값을 앱 설정에 둔다는 결정과 ⌘로 일시 해제하는 관례는 UI 재설계에서도 유지한다.

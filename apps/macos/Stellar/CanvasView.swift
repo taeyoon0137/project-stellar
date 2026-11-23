@@ -1,13 +1,5 @@
 import AppKit
 
-/// 문서와 내보내기에 들어가지 않는 드래그 중 정렬선·CSS px 간격.
-struct CanvasSnapOverlay {
-    let result: StellarSnapResult
-    let inputToView: CGAffineTransform
-    /// 입력 좌표의 거리 하나가 뜻하는 CSS px.
-    var distanceToCSS: CGFloat = 1
-}
-
 /// AppKit 캔버스 호스트(II.5.4, XII.3.2).
 ///
 /// 창의 active View scene을 그리고, backing scale과 drawable 픽셀 크기 변경을
@@ -69,11 +61,6 @@ final class CanvasView: NSView {
     var rootFrameID: UUID? { frameScene.rootID }
     /// 문서 → 화면 변환.
     var worldToView: CGAffineTransform { frameScene.worldToView }
-    func snapCandidates(for id: UUID, asParent: Bool = false, worldToInput: CGAffineTransform,
-                        excluding: Set<UUID> = []) -> [StellarSnapCandidate] {
-        frameScene.snapCandidates(for: id, asParent: asParent, worldToInput: worldToInput, excluding: excluding)
-    }
-    func projectedBounds(of id: UUID) -> CGRect? { frameScene.projectedBounds(of: id) }
     /// 화면 점 아래의 선택 핸들.
     func selectionHandle(at point: NSPoint) -> (box: CanvasSelectionBox, handle: CanvasHandle)? { frameScene.handle(at: point) }
     /// 선택 상자의 local → 화면 변환.
@@ -85,11 +72,9 @@ final class CanvasView: NSView {
     }
     /// 버튼 없이 움직일 때 보일 커서(핸들 위 등). nil이면 기본 커서입니다.
     var hoverCursor: ((NSPoint) -> NSCursor?)?
-    var hoverMeasureHandler: ((NSEvent) -> Void)?
     private var showsHoverCursor = false
 
     var insertionOutline: CGPath? { didSet { needsDisplay = true } }
-    var snapOverlay: CanvasSnapOverlay? { didSet { needsDisplay = true } }
 
     func frameHit(at point: NSPoint, onlyFrames: Bool = false) -> CanvasFrameHit? { frameScene.hit(at: point, onlyFrames: onlyFrames) }
 
@@ -207,34 +192,6 @@ final class CanvasView: NSView {
             context.drawPath(using: .fillStroke)
             context.restoreGState()
         }
-        if let overlay = snapOverlay {
-            let result = overlay.result
-            context.saveGState()
-            context.concatenate(overlay.inputToView)
-            context.setStrokeColor(NSColor.controlAccentColor.cgColor)
-            context.setLineWidth(NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 2 : 1)
-            if result.flags & 1 != 0 {
-                context.move(to: CGPoint(x: CGFloat(result.guide_x), y: -100_000))
-                context.addLine(to: CGPoint(x: CGFloat(result.guide_x), y: 100_000))
-            }
-            if result.flags & 2 != 0 {
-                context.move(to: CGPoint(x: -100_000, y: CGFloat(result.guide_y)))
-                context.addLine(to: CGPoint(x: 100_000, y: CGFloat(result.guide_y)))
-            }
-            context.strokePath()
-            context.restoreGState()
-            let origin = CGPoint(x: CGFloat(result.rect.0), y: CGFloat(result.rect.1)).applying(overlay.inputToView)
-            let labels = [result.flags & 4 != 0 ? "\(Int((CGFloat(result.distance_x) * overlay.distanceToCSS).rounded()))px" : nil,
-                          result.flags & 8 != 0 ? "\(Int((CGFloat(result.distance_y) * overlay.distanceToCSS).rounded()))px" : nil].compactMap { $0 }
-            if !labels.isEmpty {
-                let text = NSAttributedString(string: labels.joined(separator: " · "), attributes: [
-                    .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-                    .foregroundColor: NSColor.controlAccentColor,
-                    .backgroundColor: NSColor.windowBackgroundColor,
-                ])
-                text.draw(at: CGPoint(x: origin.x + 8, y: origin.y + 8))
-            }
-        }
     }
 
     // MARK: - 입력 (XII.3.2)
@@ -269,7 +226,6 @@ final class CanvasView: NSView {
         if framePointerHandler?(event) != true { submitInput(event) }
     }
     override func mouseMoved(with event: NSEvent) {
-        hoverMeasureHandler?(event)
         if !isSpaceHeld, let hoverCursor {
             if let cursor = hoverCursor(CanvasInput.viewPoint(of: event, in: self)) {
                 cursor.set()
@@ -334,7 +290,6 @@ final class CanvasView: NSView {
     }
 
     override func flagsChanged(with event: NSEvent) {
-        hoverMeasureHandler?(event)
         submitInput(event)
         super.flagsChanged(with: event)
     }

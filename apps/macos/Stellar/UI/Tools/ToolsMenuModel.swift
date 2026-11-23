@@ -108,14 +108,6 @@ struct ShellCommandPresentation: Equatable {
             title = snapshot.selectionIsLocked ? "Unlock" : "Lock"
         case .toggleVisibility:
             title = snapshot.selectionIsHidden ? "Show" : "Hide"
-        case .toggleObjectSnap, .togglePixelSnap, .toggleSmartGuides:
-            let key: String
-            switch command {
-            case .toggleObjectSnap: key = "canvas.snap.objects"
-            case .togglePixelSnap: key = "canvas.snap.pixels"
-            default: key = "canvas.guides.smart"
-            }
-            isOn = UserDefaults.standard.object(forKey: key) as? Bool ?? true
         default:
             if let tool = command.canvasTool {
                 isOn = snapshot.activeTool == tool

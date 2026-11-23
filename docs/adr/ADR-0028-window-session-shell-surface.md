@@ -805,3 +805,7 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 ## 철회(2026-11-23, UX.3.8 화살표 이동)
 
 - `stellar_canvas_arrow_nudge`를 제거합니다. 사유는 ADR-0071 같은 날짜 철회 절에 적습니다.
+
+## 철회(2026-11-23, UX.3.8 스냅 연결)
+
+- `stellar_canvas_snap`·`stellar_canvas_snap_intervals`와 두 POD를 제거합니다. 사유와 엔진 쪽 보완은 ADR-0071 같은 날짜 절에 적습니다.
