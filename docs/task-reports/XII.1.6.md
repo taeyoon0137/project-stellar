@@ -4,7 +4,7 @@
 
 - WBS: XII.1.6
 - 작업명: thread별 shutdown 순서 고정
-- 상태: 완료 (`[x]`) 원장 판정은 통합 때 `generate-ledger`로 정합니다.
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록(ledger-refresh): 행 지시·검증 열을 코드와 테스트로 확인했고 선행이 모두 `[x]`입니다. 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 원장이 근거 커밋을 찾지 못했습니다(window-session-stale lane). 앱 runtime(`AppRuntime`)은 render thread를 소유하지 않아 같은 고정 순서의 부분으로 종료합니다(ADR-0083 결정 6). 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 완료 (`[x]`) 원장 판정은 통합 때 `generate-ledger`로 정합니다.
 - 선행: XII.1.1\~XII.1.5
 - 결정: [ADR-0083](../adr/ADR-0083-window-session-stale-and-external-sync.md)
 - lane: `window-session-stale`
@@ -47,3 +47,9 @@
 ## 남은 위험
 
 - 누수 검사는 공유 Arc 참조 수 기준입니다(OS thread 수 직접 계수 아님).
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(XII.1.6)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `b2461c33` Feat: runtime thread 종료 순서를 UI→command→render→worker→destroy로 고정 (XII.1.6)
