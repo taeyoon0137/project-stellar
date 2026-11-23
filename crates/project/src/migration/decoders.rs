@@ -218,7 +218,13 @@ mod tests {
     use stellar_core_types::text::UserText;
     use stellar_document::record_codec::encode_payload;
     use stellar_document::shape::{RectangleParams, ShapeGeometry};
-    use stellar_document::text::TextPayload;
+    use stellar_document::text::{Paragraph, StyleRun, TextPayload, TextRange};
+
+    /// schema 1 Rectangle golden bytes.
+    const RECTANGLE_V1_GOLDEN: &str = "010000404000008040000000000000803f000000000000803f";
+    /// schema 1 Text golden bytes(두 문단, style run 하나).
+    const TEXT_V1_GOLDEN: &str =
+        "03000000610a6202000000000000000200000001000000000000000300000001000000";
 
     /// schema 1 Frame golden bytes(경로 clipping·배경·테두리·반경·layout 참조). 이 bytes는 고정입니다.
     const FRAME_V1_GOLDEN: &str = concat!(
@@ -277,17 +283,27 @@ mod tests {
     }
 
     #[test]
-    fn other_schema_1_payloads_are_frozen_by_golden_round_trip() {
+    fn other_schema_1_payloads_are_frozen_by_golden_bytes() {
+        // Frame 밖 schema 1 payload는 현재 decoder로 읽습니다. 그 전제(현재 encoder·decoder가 schema 1 bytes와
+        // 같음)를 고정 bytes로 묶어, 현재 형식이 바뀌면 이 테스트가 깨져 그 kind의 고정 사본을 두게 합니다.
         let rectangle = NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
             size: Size2::new(3.0, 4.0).unwrap(),
             corner_radius: CornerRadius::new(0.0, 1.0, 0.0, 1.0).unwrap(),
         }));
         let text = NodePayload::Text(
-            TextPayload::new(UserText::new("a\nb"), vec![], vec![])
-                .unwrap_or_else(|_| TextPayload::empty(0)),
+            TextPayload::new(
+                UserText::new("a\nb"),
+                vec![Paragraph { style: 0 }, Paragraph { style: 2 }],
+                vec![StyleRun {
+                    range: TextRange::new(0, 3).unwrap(),
+                    style: 1,
+                }],
+            )
+            .unwrap(),
         );
-        for payload in [rectangle, text] {
-            let bytes = encode_payload(&payload);
+        for (payload, golden) in [(rectangle, RECTANGLE_V1_GOLDEN), (text, TEXT_V1_GOLDEN)] {
+            let bytes = hex(golden);
+            assert_eq!(encode_payload(&payload), bytes, "{:?}", payload.kind());
             assert_eq!(
                 decode_node_payload(1, payload.kind(), &bytes).unwrap(),
                 payload
