@@ -9,7 +9,8 @@
 //! | CurrentMemory | 창의 메모리 문서 |
 //! | ExternalDisk | 디스크의 새 원본·cache(`read_disk_state`, 열기와 같은 경로) |
 //!
-//! 병합 판정과 역투영은 [`stellar_ops::merge_apply::document::merge_document`] 하나입니다(새 병합 규칙 없음). 결과:
+//! 병합 판정과 역투영은 [`stellar_ops::merge_apply::document::merge_document`] 하나입니다(새 병합 규칙 없음). Component
+//! Context(requirement·Slot 공개 목록 포함, ADR-0123 결정 1)도 같은 snapshot으로 병합합니다. 결과:
 //!
 //! - **쓸 수 있는 결과**: 창 session이 결과를 `ApplyExternalSnapshot` transaction 하나로 history에 기록하고 base를
 //!   ExternalDisk로 바꿉니다. Undo 한 번이 병합 반영 전체를 되돌립니다. 결과가 디스크 문서와 같으면 clean, 다르면

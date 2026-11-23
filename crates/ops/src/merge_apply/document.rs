@@ -6,8 +6,11 @@
 //!
 //! **무손실 조건**: 세 입력 모두 "문서 → snapshot → 문서" 왕복이 같아야 합니다. snapshot에 없는 필드가 있는
 //! 입력을 병합하면 결과에서 그 필드가 조용히 사라지므로, 왕복이 다르면 병합하지 않고 [`DocumentMergeError::Lossy`]
-//! 입니다. 병합 결과도 다시 snapshot으로 올린 값이 병합 snapshot과 같아야 합니다. 문서 범위 snapshot에는 Context
-//! requirement·Slot 공개 목록을 넣을 수 없어 그런 항목이 있는 입력은 투영 오류입니다.
+//! 입니다. 병합 결과도 다시 snapshot으로 올린 값이 병합 snapshot과 같아야 합니다. Context requirement·Slot 공개 목록은
+//! 문서 범위 snapshot에서 Document 객체 속성이라(ADR-0123 결정 1) 그런 항목이 있는 문서도 왕복이 무손실입니다.
+//!
+//! 텍스트 원본 merge driver([`crate::merge_text`])도 문서마다 같은 [`lossless_snapshot`]·[`project_documents`]를 씁니다
+//! (Context 병합 경로 하나, ADR-0123 결정 2).
 //!
 //! 이 모듈은 파일을 읽거나 쓰지 않습니다. 결과 레코드를 창 history에 반영하는 일은 runtime이 합니다.
 
@@ -82,7 +85,7 @@ impl fmt::Display for DocumentMergeError {
 impl std::error::Error for DocumentMergeError {}
 
 /// 문서의 snapshot(레코드 + Context). 왕복이 다르면 [`DocumentMergeError::Lossy`]입니다.
-fn lossless_snapshot(
+pub(crate) fn lossless_snapshot(
     document: &DocumentSource,
     side: &'static str,
 ) -> Result<SemanticSnapshot, DocumentMergeError> {

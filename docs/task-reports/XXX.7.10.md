@@ -2,7 +2,7 @@
 
 - WBS: XXX.7.10
 - 작업명: ContextKey·provision·requirement·Slot 공개 목록의 StableId 단위 diff와 전용 merge conflict.
-- 상태: 부분 완료 (`[~]` 후보) — 투영·역투영·전용 conflict와 검증 기준 시험은 있지만 제품 snapshot 조립(`stellar diff`·compare·merge)이 아직 Context를 넣지 않습니다(아래, 통합 검토에서 확인). 보고 당시 기록: 완료(`[x]` 후보).
+- 상태: 완료 (`[x]` 후보) — 2026-11-24 후속 보완 두 번으로 제품 snapshot 조립과 문서 범위 경로·텍스트 원본 merge가 모두 Context를 같은 경로로 병합합니다(아래). 이전 기록: 부분 완료(`[~]` 후보, 제품 snapshot 조립 누락), 보고 당시 완료(`[x]` 후보).
 - 결정: ADR-0099 결정 10, 아키텍처 27.1
 - 선행: XXX.7.8, XIV.3.7, XIV.10.5
 
@@ -73,3 +73,28 @@
 - 검토 보완: 프로젝트 범위 투영(`add_contexts`, HEAD 단일 컴포넌트 비교)은 여러 문서가 같은 library 컴포넌트·Slot에
   requirement·공개 목록을 두면 같은 속성을 두 번 넣어 투영 전체가 실패했습니다. 그 Component·Slot 객체에 합집합 하나로
   붙이도록 고쳤습니다(`diff::tests::requirements_of_one_library_component_from_two_documents_project_as_one_union`).
+
+## 후속 보완 (2026-11-24, Context 병합 경로 하나)
+
+- 결정: [ADR-0123](../adr/ADR-0123-context-merge-single-path.md) 결정 1·2.
+- 문서 범위 투영이 requirement·Slot 공개 목록을 잃지 않습니다. Component·Slot 객체가 snapshot에 없으면 목록은 소유 문서의
+  Document 객체 `0xE705`·`0xE716` 경로에 대상 id map key segment로 붙고(`SnapshotBuilder::add_context`),
+  `context_from_snapshot`이 되돌립니다. `stellar_ops::diff`의 문서 범위(`snapshot_of`·`projectable_context(_, None)`)는
+  Context 전부를 넣습니다. 그래서 창 reconciliation, Git semantic stage, 병합 해결 저장, Merge Composer가 그런 문서를
+  무손실 검사로 거부하지 않고, 목록 변경이 다른 속성처럼 병합·충돌합니다.
+- 텍스트 원본 merge driver(`merge_text`)의 Context 단위 3-way를 지웠습니다. 세 쪽 문서(레코드 + Context)를 창
+  reconciliation과 같은 `lossless_snapshot`·`project_documents`로 병합합니다(Context 병합 경로 하나).
+- provision 삭제 대 소비 추가 conflict는 requirement·Slot 공개 목록 속성을 소비로 세지 않습니다(semantic-merge
+  `context.rs`).
+- 시험:
+  - `semantic-diff` `context::tests::lists_without_their_component_attach_to_the_document_object_and_round_trip`,
+    `lists_with_their_component_stay_on_the_component_object`.
+  - `ops` `merge_apply::tests::document::requirement_and_slot_lists_merge_in_document_scope`(세 쪽 같음 왕복, 서로 다른 목록
+    자동 병합, 같은 컴포넌트 목록 충돌), `adding_a_requirement_is_not_a_new_consumption_of_a_removed_provision`(semantic-merge
+    판정을 되돌리면 실패하는 것을 확인함).
+  - `ops` `merge_text::tests::different_context_items_from_both_sides_merge_through_the_snapshot`(옛 규칙이 거부하던 양쪽
+    서로 다른 Context 변경 병합, driver 한 경로 결과 일치), `the_same_context_item_changed_differently_is_an_engine_conflict`.
+  - `ops` `merge_apply::tests::composer::a_composition_keeps_context_requirements_and_slot_keys`(시스템 Git fixture).
+  - `runtime` `reconcile::tests::a_document_with_context_requirements_and_slot_keys_is_reconciled`.
+- 남은 위험: Git stage(`candidate.rs`)는 같은 투영 함수를 쓰지만 requirement가 있는 문서의 stage 전용 시험은 더하지
+  않았습니다(소유 밖 시험 파일). 프로젝트 범위 snapshot에서 문서별 목록을 되돌리는 역투영은 없습니다(쓰는 경로 없음).

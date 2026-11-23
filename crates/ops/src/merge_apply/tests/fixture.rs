@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use stellar_document::context::set::ContextSet;
 use stellar_git_porcelain::composer::SourceRef;
 use stellar_git_porcelain::fixture::GitFixture;
 use stellar_git_porcelain::object::ObjectId;
@@ -41,12 +42,18 @@ pub(super) fn rename(root: &Path, document: StableId, node: StableId, name: &str
 ///                                    └─ b: 둘째 자식(`b_same_node`면 첫 자식) 이름 = `from-b`
 /// 끝에 `main`을 checkout합니다.
 pub(super) fn repo(tag: &str, b_same_node: bool) -> Option<Repo> {
+    repo_with_context(tag, b_same_node, ContextSet::new())
+}
+
+/// [`repo`]와 같고 base 문서에 Component Context `context`를 둡니다(두 branch는 Context를 바꾸지 않음).
+pub(super) fn repo_with_context(tag: &str, b_same_node: bool, context: ContextSet) -> Option<Repo> {
     let fx = GitFixture::with_system_git(tag).unwrap()?;
     fx.write("README.md", b"fixture\n").unwrap();
     let before_project = fx.commit_all("readme").unwrap();
     let work = fx.work().to_path_buf();
     scaffold_project(&work);
-    let model = random_valid_document(7);
+    let mut model = random_valid_document(7);
+    model.replace_context(context);
     save_documents(&work, &[&model]);
     let children: Vec<StableId> = model
         .to_records()

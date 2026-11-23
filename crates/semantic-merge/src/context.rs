@@ -8,11 +8,15 @@
 //!   바꾸고 다른 쪽이 K provision의 값을 바꾸거나 K provision을 더하면, 따로 받아들이면 타입과 값이 어긋나므로 두 변경을
 //!   모두 되돌리고 key·provision 각각에 conflict를 남깁니다. key는 타입과 default가 함께 바뀌므로 key 객체의 변경 전체를
 //!   되돌리고 대상은 key 객체입니다.
+//!
+//! requirement·Slot 공개 목록 속성(`0xE705`·`0xE716`, Component·Slot 객체 또는 문서 범위의 Document 객체, ADR-0123 결정
+//! 1)은 key를 담지만 소비가 아닙니다(값을 읽는 binding이 아니라 공개 interface 선언). 그래서 소비 추가 판정에서 뺍니다.
 
 use std::collections::BTreeSet;
 
 use stellar_semantic_diff::build::context::{
-    CONTEXT_KEY_TYPE, CONTEXT_PROVISION_KEY, CONTEXT_PROVISION_PROVIDER, CONTEXT_PROVISION_VALUE,
+    COMPONENT_CONTEXT_REQUIREMENTS, CONTEXT_KEY_TYPE, CONTEXT_PROVISION_KEY,
+    CONTEXT_PROVISION_PROVIDER, CONTEXT_PROVISION_VALUE, SLOT_CONTEXT_KEYS,
 };
 
 use super::*;
@@ -46,7 +50,12 @@ fn under(snapshot: &SemanticSnapshot, object: StableId, provider: StableId) -> O
     placed.then_some(false)
 }
 
-/// `changes` 가운데 `key`를 새로 읽는 변경의 대상 객체(Context 객체 자신 제외).
+/// requirement·Slot 공개 목록 속성 경로인지(소비가 아님, 모듈 문서).
+fn is_membership(path: &PropertyPath) -> bool {
+    matches!(path.keys().first(), Some(&key) if key == COMPONENT_CONTEXT_REQUIREMENTS || key == SLOT_CONTEXT_KEYS)
+}
+
+/// `changes` 가운데 `key`를 새로 읽는 변경의 대상 객체(Context 객체 자신과 requirement·Slot 공개 목록 제외).
 fn new_reads(changes: &SemanticDiff, base: &SemanticSnapshot, key: StableId) -> Vec<StableId> {
     let ids = BTreeSet::from([key]);
     let is_context =
@@ -55,7 +64,11 @@ fn new_reads(changes: &SemanticDiff, base: &SemanticSnapshot, key: StableId) -> 
     for change in changes.iter() {
         match change {
             SemanticChange::AddObject(c) if !is_context(c.object.kind()) => {
-                if c.object.properties().values().any(|v| mentions(v, &ids)) {
+                if c.object
+                    .properties()
+                    .iter()
+                    .any(|(path, v)| !is_membership(path) && mentions(v, &ids))
+                {
                     out.push(c.object.id());
                 }
             }
@@ -65,7 +78,9 @@ fn new_reads(changes: &SemanticDiff, base: &SemanticSnapshot, key: StableId) -> 
                 else {
                     continue;
                 };
-                if base.get(path.root()).is_some_and(|o| is_context(o.kind())) {
+                if is_membership(path)
+                    || base.get(path.root()).is_some_and(|o| is_context(o.kind()))
+                {
                     continue;
                 }
                 if mentions(new, &ids) && !old.is_some_and(|old| mentions(old, &ids)) {

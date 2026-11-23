@@ -7,9 +7,9 @@
 //! 문서 하나의 투영 입력은 영속 레코드와 레코드 밖 Component Context([`DocumentInput`], ADR-0099·ADR-0114 결정 2)입니다.
 //!
 //! - **문서 범위**([`snapshot_of`]): 컴포넌트 library를 투영하지 않는 snapshot(창 reconciliation, Git stage, 병합 결과
-//!   저장). Context key·provision 객체를 넣습니다. requirement·Slot 공개 목록은 Component·Slot 객체에 붙는 속성이라
-//!   이 범위에서는 투영하지 않습니다. 그래서 그런 항목이 있는 문서는 무손실 왕복 검사(병합·stage·저장 경로)가
-//!   거부합니다(조용히 잃지 않음).
+//!   저장, 텍스트 원본 merge driver). Context key·provision 객체와 requirement·Slot 공개 목록 전부를 넣습니다. 목록은
+//!   Component·Slot 객체가 없으므로 문서의 Document 객체에 대상 id map key로 붙습니다(ADR-0123 결정 1). 그래서 이
+//!   범위도 "문서 → snapshot → 문서" 왕복이 무손실이고, 목록 변경도 병합·stage 단위입니다.
 //! - **프로젝트 범위**([`add_contexts`]에 library): library 투영 뒤에 Context를 넣습니다. requirement·Slot 공개 목록은
 //!   그 컴포넌트·Slot이 library에 있을 때만 투영합니다(없는 대상의 항목은 validator의 orphan 진단 대상이고 diff에는
 //!   나타나지 않음, [`projectable_context`]). `stellar diff`·compare·HEAD 비교·`stellar apply` dry-run이 씁니다.
@@ -214,13 +214,16 @@ pub fn records_only(records: &DocumentRecords) -> DocumentInput<'_> {
 }
 
 /// snapshot에 넣을 수 있는 Context: key·provision 전부와, `library`에 있는 컴포넌트·Slot의 requirement·공개 목록.
-/// `library`가 없으면(문서 범위) requirement·공개 목록은 넣지 않습니다.
+/// `library`가 없으면(문서 범위) 전부입니다(목록은 Document 객체에 붙음, ADR-0123 결정 1).
 pub fn projectable_context(set: &ContextSet, library: Option<&ComponentLibrary>) -> ContextSet {
-    let mut out = declarations(set);
-    if let Some(library) = library {
-        add_library_members(&mut out, set, library);
+    match library {
+        Some(library) => {
+            let mut out = declarations(set);
+            add_library_members(&mut out, set, library);
+            out
+        }
+        None => set.clone(),
     }
-    out
 }
 
 /// key·provision만 담은 사본.
@@ -259,8 +262,8 @@ fn add_library_members(out: &mut ContextSet, set: &ContextSet, library: &Compone
     }
 }
 
-/// 이미 문서(와 프로젝트 범위면 library)를 넣은 builder에 문서마다 Context key·provision을 넣고, 프로젝트 범위면
-/// requirement·Slot 공개 목록을 넣습니다([`projectable_context`]의 범위).
+/// 이미 문서(와 프로젝트 범위면 library)를 넣은 builder에 문서마다 Context key·provision을 넣고 requirement·Slot 공개
+/// 목록을 넣습니다([`projectable_context`]의 범위). 문서 범위면 목록은 그 문서의 Document 객체에 붙습니다.
 ///
 /// requirement·공개 목록은 프로젝트 library의 Component·Slot 객체 하나에 붙는 속성이라 문서별로 따로 붙일 수 없습니다.
 /// 여러 문서가 같은 컴포넌트·Slot에 항목을 두면 합집합 하나로 붙입니다(문서마다 붙이면 같은 속성이 두 번 들어가
@@ -278,7 +281,10 @@ pub fn add_contexts<'a>(
             add_library_members(&mut members, document.context, library);
             anchor.get_or_insert(id);
         }
-        let set = declarations(document.context);
+        let set = match library {
+            Some(_) => declarations(document.context),
+            None => document.context.clone(),
+        };
         if set.is_empty() {
             continue;
         }
@@ -297,7 +303,7 @@ pub fn add_contexts<'a>(
     Ok(())
 }
 
-/// 문서들의 semantic snapshot(문서 범위: 레코드와 Context key·provision, 모듈 문서).
+/// 문서들의 semantic snapshot(문서 범위: 레코드와 Context 전부, 모듈 문서).
 pub fn snapshot_of(documents: &[DocumentInput<'_>]) -> Result<SemanticSnapshot, ProjectionError> {
     let mut builder = SnapshotBuilder::new();
     for document in documents {

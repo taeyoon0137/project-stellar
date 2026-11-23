@@ -4,7 +4,7 @@ use stellar_git_porcelain::composer::SourceRef;
 use stellar_semantic_merge::candidate::{CandidateCommand, Resolution};
 use stellar_semantic_merge::model::ConflictTarget;
 
-use super::fixture::{branches, git_state, name_of, rename, repo, scratch};
+use super::fixture::{branches, git_state, name_of, rename, repo, repo_with_context, scratch};
 use crate::lock::LockPolicy;
 use crate::merge_apply::composer::{apply_composition, compose, ComposerApplyError};
 use crate::merge_apply::target::{validate_target, ResultTarget};
@@ -297,4 +297,59 @@ fn unresolved_conflict_blocks_until_resolved() {
     )
     .unwrap();
     assert_eq!(name_of(&work, repo.document, repo.children[0]), "from-b");
+}
+
+#[test]
+fn a_composition_keeps_context_requirements_and_slot_keys() {
+    // 검증 기준(ADR-0123 결정 1): requirement·Slot 공개 목록이 있는 문서도 Composer 결과 저장(문서 범위 무손실 검사)을
+    // 통과하고 결과 generation의 Context에 남습니다.
+    use stellar_document::context::fixtures::{literal, rgb, sid};
+    use stellar_document::context::key::{ContextKey, ContextScope};
+    use stellar_document::context::set::ContextSet;
+    use stellar_document::expressions::types::{ExpressionType, TypeSpec};
+    let probe = crate::test_support::random_valid_document(7).document_id();
+    let mut set = ContextSet::new();
+    set.insert_key(
+        ContextKey::new(
+            sid(900),
+            "theme",
+            ContextScope::Document(probe),
+            TypeSpec::required(ExpressionType::Color),
+            literal(901, rgb(1.0, 1.0, 1.0)),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    set.add_requirement(sid(950), sid(900));
+    set.add_slot_key(sid(960), sid(900));
+    let Some(repo) = repo_with_context("merge-apply-context", false, set.clone()) else {
+        return;
+    };
+    let work = repo.fx.work().to_path_buf();
+    let git = repo.fx.gated();
+    let (a, b) = branches();
+    let composition = compose(&git, &work, &a, &b, &scratch(&repo)).unwrap();
+    assert_eq!(composition.candidate().unresolved_count(), 0);
+    let target = validate_target(
+        &git,
+        &work,
+        composition.project_id(),
+        &ResultTarget::CurrentWorktree,
+    )
+    .unwrap();
+    apply_composition(
+        &git,
+        &composition,
+        target,
+        &LockPolicy::None,
+        &scratch(&repo),
+    )
+    .unwrap();
+    assert_eq!(name_of(&work, repo.document, repo.children[0]), "from-a");
+    assert_eq!(name_of(&work, repo.document, repo.children[1]), "from-b");
+    let model = crate::snapshot::open_snapshot(&work)
+        .unwrap()
+        .document_model(repo.document)
+        .unwrap();
+    assert_eq!(model.context().live(&model), set);
 }
