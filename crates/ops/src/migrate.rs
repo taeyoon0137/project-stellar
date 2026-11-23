@@ -184,7 +184,7 @@ pub fn migrate(
                     generation: outcome.to_generation,
                     hash: outcome.new_manifest_hash,
                 }
-                .with_style_defaults(snapshot.style_defaults_name()),
+                .with_style_defaults(&snapshot.style_defaults_key(snapshot.style_defaults_name())),
                 migrated: true,
             })
         }

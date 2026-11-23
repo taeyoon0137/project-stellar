@@ -1214,7 +1214,9 @@ pub fn apply(
         return Ok(ApplyOutcome {
             mode,
             base_revision,
-            revision: snapshot.storage_revision().with_style_defaults(&selected),
+            revision: snapshot
+                .storage_revision()
+                .with_style_defaults(&snapshot.style_defaults_key(&selected)),
             document: request.document,
             command_count: request.commands.len(),
             diff,
@@ -2507,7 +2509,7 @@ mod tests {
             outcome.revision,
             opened
                 .storage_revision()
-                .with_style_defaults("react-native")
+                .with_style_defaults(&opened.style_defaults_key("react-native"))
         );
         // 옛 base로는 쓸 수 없습니다(다른 writer의 세트 변경을 base revision이 잡음).
         assert!(matches!(
@@ -2601,7 +2603,7 @@ mod tests {
             reopened.revision(),
             reopened
                 .storage_revision()
-                .with_style_defaults("react-native")
+                .with_style_defaults(&reopened.style_defaults_key("react-native"))
         );
         assert_ne!(reopened.revision(), reopened.storage_revision());
     }

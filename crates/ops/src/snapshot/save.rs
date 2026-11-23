@@ -179,7 +179,9 @@ pub fn save_documents_selecting(
     selection: &str,
 ) -> Result<SaveOutcome, SaveError> {
     let mut outcome = write_documents(snapshot, roots, models)?;
-    outcome.revision = outcome.revision.with_style_defaults(selection);
+    outcome.revision = outcome
+        .revision
+        .with_style_defaults(&snapshot.style_defaults_key(selection));
     Ok(outcome)
 }
 

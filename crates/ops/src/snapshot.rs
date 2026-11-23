@@ -23,7 +23,8 @@
 //!    바뀌므로, Git pull 전에 받은 revision으로 쓰면 [`crate::apply::ApplyError::BaseRevisionMismatch`]입니다.
 //!    프로젝트 revision([`ProjectSnapshot::revision`])은 이 원본·cache revision([`ProjectSnapshot::storage_revision`])에
 //!    `stellar.yaml` 활성 기본값 세트 선택을 더한 값입니다([`ProjectRevision::with_style_defaults`], ADR-0128 결정 2).
-//!    세트만 바꾸는 쓰기는 generation을 쓰지 않으므로, 다른 writer의 세트 변경도 base revision 비교가 잡습니다.
+//!    사용자 세트를 고르면 그 세트를 평탄화한 값도 더합니다([`StyleDefaultsKey`], ADR-0135 결정 2). 세트만 바꾸는
+//!    쓰기와 세트 파일 편집은 generation을 쓰지 않으므로, 다른 writer의 세트 변경도 base revision 비교가 잡습니다.
 //! 6. 활성 기본값 세트(ADR-0082 결정 4)를 `stellar.yaml` `style_defaults`와 `design/style-defaults/` 사용자 세트로
 //!    한 번 평탄화해 둡니다([`ProjectSnapshot::style_defaults`]). 세트 파일 오류는 열기를 막지 않고 세트를 쓰는
 //!    조회에서만 오류입니다. [`ProjectSnapshot::document_model`]은 연 세트 이름을 모델 거울에 넣습니다(ADR-0087).
@@ -47,7 +48,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use stellar_document::context::set::ContextSet;
-use stellar_document::css::style_defaults::FlatSet;
+use stellar_document::css::style_defaults::{FlatSet, UserSets};
 use stellar_document::definitions::DocumentDefinition;
 use stellar_document::model::DocumentModel;
 use stellar_document::records::DocumentRecords;
@@ -60,7 +61,9 @@ use stellar_project::document_io::session::{
 use stellar_project::external_change::source::{diagnose, SourceDiagnostic};
 use stellar_project::identity::parse_project_id;
 use stellar_project::manifest::Manifest;
-use stellar_project::manifest_style_defaults::{active_name, active_set, StyleDefaultsFileError};
+use stellar_project::manifest_style_defaults::{
+    active_name, flatten_named, load_user_sets, StyleDefaultsFileError,
+};
 use stellar_project::migration::{decide, MigratedGeneration, MigrationPolicy, SchemaDecision};
 use stellar_project::probe::{probe_project, ProbeError};
 use stellar_project::root::GitLink;
@@ -72,7 +75,7 @@ use stellar_storage::hash::ContentHash;
 
 use crate::core_types::ids::StableId;
 use crate::error::{DocumentReadError, OpenError};
-use crate::revision::ProjectRevision;
+use crate::revision::{ProjectRevision, StyleDefaultsKey};
 
 /// generation에 기록된 chunk kind별 개수.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +131,10 @@ pub struct ProjectSnapshot {
     schema: SchemaDecision,
     /// 열 때 평탄화한 활성 기본값 세트(실패하면 그 오류).
     style_defaults: Result<FlatSet, StyleDefaultsFileError>,
+    /// 열 때 읽은 사용자 세트. 읽지 못했으면 `None`이고 그 오류는 `style_defaults`에 있습니다.
+    user_sets: Option<UserSets>,
+    /// revision에 더한 활성 세트 상태.
+    style_defaults_key: StyleDefaultsKey,
     /// 열기 계획.
     plan: OpenPlan,
     /// 열 때 본 current manifest hash.
@@ -168,6 +175,16 @@ impl ProjectSnapshot {
     /// 계산할 때 씁니다([`ProjectRevision::with_style_defaults`]).
     pub fn storage_revision(&self) -> ProjectRevision {
         self.storage_revision
+    }
+
+    /// 열 때 읽은 사용자 세트로 `name` 세트를 푼 revision용 세트 상태(ADR-0135 결정 2). 열 때 고른 세트면
+    /// [`Self::revision`]에 더한 값과 같습니다. 같은 쓰기에서 세트를 바꾸는 경로가 결과 revision에 새 세트를 더할 때
+    /// 씁니다.
+    pub fn style_defaults_key(&self, name: &str) -> StyleDefaultsKey {
+        if name == self.style_defaults_key.name() {
+            return self.style_defaults_key.clone();
+        }
+        resolve_key(name, self.user_sets.as_ref(), &self.style_defaults)
     }
 
     /// 문서 정의. cache에서 읽으면 DocumentManifest chunk 순서(chunk id 오름차순), 원본에서 읽으면 원본의 root
@@ -229,14 +246,17 @@ impl ProjectSnapshot {
         }
     }
 
-    /// 디스크의 원본·cache가 열 때와 같은지(MCP snapshot 재사용 판정, ADR-0113 결정 2). 원본 파일 bytes를 다시
-    /// 읽어 hash를 비교합니다. 읽을 수 없으면 `false`입니다.
+    /// 디스크의 원본·cache와 활성 사용자 세트가 열 때와 같은지(MCP snapshot 재사용 판정, ADR-0113 결정 2). 원본
+    /// 파일 bytes를 다시 읽어 hash를 비교하고, 사용자 세트를 골랐으면 세트 파일을 다시 풀어 revision용 세트 상태를
+    /// 비교합니다(ADR-0135 결정 2). 읽을 수 없으면 `false`입니다. `stellar.yaml` 비교는 호출자 몫입니다.
     pub fn disk_unchanged(&self) -> bool {
         match observe(&self.root) {
             Ok(disk) => {
                 disk.current == self.current
                     && disk.text.as_ref().map(|text| &text.base)
                         == self.source.as_ref().map(|text| &text.base)
+                    && StyleDefaultsKey::load(&self.root, self.style_defaults_key.name())
+                        == self.style_defaults_key
             }
             Err(_) => false,
         }
@@ -506,10 +526,22 @@ pub fn open_snapshot(path: &Path) -> Result<ProjectSnapshot, OpenError> {
         cache_revision
     };
 
-    let style_defaults = active_set(&probe.root, &probe.manifest);
-    let selected = revision.with_style_defaults(active_name(&probe.manifest));
+    // 활성 세트 평탄화는 `active_set`과 같은 두 단계(사용자 세트 읽기 → 평탄화)입니다. 다른 이름의 revision용 세트
+    // 상태를 만들 수 있도록 읽은 사용자 세트를 둡니다.
+    let selection = active_name(&probe.manifest);
+    let (user_sets, style_defaults) = match load_user_sets(&probe.root) {
+        Ok(sets) => {
+            let flat = flatten_named(selection, &sets);
+            (Some(sets), flat)
+        }
+        Err(error) => (None, Err(error)),
+    };
+    let style_defaults_key = resolve_key(selection, user_sets.as_ref(), &style_defaults);
+    let selected = revision.with_style_defaults(&style_defaults_key);
     Ok(ProjectSnapshot {
         style_defaults,
+        user_sets,
+        style_defaults_key,
         root: probe.root,
         git_link: probe.git_link,
         manifest: probe.manifest,
@@ -553,9 +585,25 @@ pub fn source_semantic(
     .map_err(|e| e.0)
 }
 
+/// 열 때 읽은 사용자 세트(`sets`, 읽지 못했으면 `None`이고 그 오류는 `active`에 있음)로 `name`의 revision용 세트
+/// 상태를 만듭니다.
+fn resolve_key(
+    name: &str,
+    sets: Option<&UserSets>,
+    active: &Result<FlatSet, StyleDefaultsFileError>,
+) -> StyleDefaultsKey {
+    match (sets, active) {
+        (Some(sets), _) => StyleDefaultsKey::resolve(name, Ok(sets)),
+        (None, Err(error)) => StyleDefaultsKey::resolve(name, Err(error)),
+        // 열기 순서상 사용자 세트를 읽지 못하면 활성 세트도 그 오류입니다. 닿지 않는 경우라 빈 세트로 풉니다.
+        (None, Ok(_)) => StyleDefaultsKey::resolve(name, Ok(&UserSets::new())),
+    }
+}
+
 /// 원본에서 읽은 상태의 revision(모듈 문서 5번): 다음 cache generation 번호와 원본 revision hash. 원본을 읽지 못한
-/// 상태는 빈 원본으로 계산합니다(읽을 수 있게 되면 값이 바뀜).
-pub(crate) fn text_revision(
+/// 상태는 빈 원본으로 계산합니다(읽을 수 있게 되면 값이 바뀜). 세트 선택은 더하지 않습니다. 앱 창이 원본만 반영하고
+/// cache 맞춤 쓰기를 남긴 상태의 revision도 이 함수로 만듭니다(ADR-0135 결정 3).
+pub fn text_revision(
     cache_generation: u64,
     current: Option<ContentHash>,
     base: Option<&SourceBase>,
@@ -603,13 +651,153 @@ mod tests {
         assert_eq!(snapshot.storage_revision(), ProjectRevision::Unsaved);
         assert_eq!(
             snapshot.revision(),
-            ProjectRevision::Unsaved.with_style_defaults("react-native")
+            ProjectRevision::Unsaved
+                .with_style_defaults(&snapshot.style_defaults_key("react-native"))
         );
         assert!(snapshot.revision().token().starts_with("g0:sha256:"));
         stellar_project::manifest_style_defaults::set_active(&dir.path, "css").unwrap();
         assert_eq!(
             open_snapshot(&dir.path).unwrap().revision(),
             ProjectRevision::Unsaved
+        );
+    }
+
+    #[test]
+    fn revision_includes_the_flattened_user_set_and_reuse_sees_set_file_edits() {
+        // ADR-0135 결정 2: 사용자 세트를 고르면 세트 파일의 뜻이 바뀔 때 revision이 바뀝니다. 사슬 밖 파일과 뜻이
+        // 같은 편집은 revision을 바꾸지 않습니다. MCP 재사용 판정(disk_unchanged)도 같은 기준입니다.
+        let dir = TempDir::new("user-set");
+        scaffold_project(&dir.path);
+        save_documents(&dir.path, &[&random_valid_document(31)]);
+        let sets = dir.path.join("design/style-defaults");
+        std::fs::create_dir_all(&sets).unwrap();
+        let write = |name: &str, text: &str| {
+            std::fs::write(sets.join(format!("{name}.stellar.yaml")), text).unwrap()
+        };
+        write("brand", "extends: react-native\nrow-gap: 4px\n");
+        let css = open_snapshot(&dir.path).unwrap();
+        // 세트를 고르기 전에는 세트 파일이 revision에 들지 않습니다.
+        assert_eq!(css.revision(), css.storage_revision());
+
+        stellar_project::manifest_style_defaults::set_active(&dir.path, "brand").unwrap();
+        let first = open_snapshot(&dir.path).unwrap();
+        assert_eq!(first.storage_revision(), css.storage_revision());
+        assert_ne!(first.revision(), first.storage_revision());
+        assert_ne!(
+            first.revision(),
+            first
+                .storage_revision()
+                .with_style_defaults(&first.style_defaults_key("react-native"))
+        );
+        assert_eq!(
+            first.revision(),
+            first
+                .storage_revision()
+                .with_style_defaults(&first.style_defaults_key("brand"))
+        );
+        // 앱 창이 쓰는 디스크 읽기 경로와 같은 값입니다.
+        assert_eq!(
+            first.style_defaults_key("brand"),
+            StyleDefaultsKey::load(&dir.path, "brand")
+        );
+        assert!(first.disk_unchanged());
+
+        // 사슬 밖 세트 파일: revision 그대로, 재사용 가능.
+        write("other", "extends: css\ncolumn-gap: 2px\n");
+        assert_eq!(
+            open_snapshot(&dir.path).unwrap().revision(),
+            first.revision()
+        );
+        assert!(first.disk_unchanged());
+
+        // 값 편집: revision이 바뀌고 재사용하지 않습니다.
+        write("brand", "extends: react-native\nrow-gap: 8px\n");
+        let edited = open_snapshot(&dir.path).unwrap();
+        assert_ne!(edited.revision(), first.revision());
+        assert_eq!(edited.storage_revision(), first.storage_revision());
+        assert!(!first.disk_unchanged());
+        assert!(edited.disk_unchanged());
+
+        // 깨진 세트 파일도 revision이 정해지고, 되돌리면 처음 값입니다.
+        write("brand", "extends: brand\n");
+        let broken = open_snapshot(&dir.path).unwrap();
+        assert!(broken.style_defaults().is_err());
+        assert_ne!(broken.revision(), edited.revision());
+        write("brand", "extends: react-native\nrow-gap: 4px\n");
+        assert_eq!(
+            open_snapshot(&dir.path).unwrap().revision(),
+            first.revision()
+        );
+    }
+
+    #[test]
+    fn a_set_file_edit_by_another_writer_is_caught_by_the_base_revision() {
+        // ADR-0135 결정 2: 사용자 세트 파일 편집은 generation을 쓰지 않지만 revision이 바뀌므로 낡은 base로 한 쓰기는
+        // 거부됩니다. 사용자 세트를 고르는 쓰기의 결과 revision은 다시 연 revision과 같습니다.
+        use crate::apply::{apply, ApplyError, ApplyMode, ApplyRequest, CommandInput};
+        use crate::lock::LockPolicy;
+        use stellar_commands::command::Command;
+
+        let tmp = TempDir::new("set-file-base");
+        let root = tmp.path.join("project");
+        let locks = LockPolicy::Required {
+            dir: tmp.path.join("locks"),
+        };
+        scaffold_project(&root);
+        let model = random_valid_document(41);
+        save_documents(&root, &[&model]);
+        let sets = root.join("design/style-defaults");
+        std::fs::create_dir_all(&sets).unwrap();
+        std::fs::write(
+            sets.join("brand.stellar.yaml"),
+            "extends: react-native\nrow-gap: 4px\n",
+        )
+        .unwrap();
+        let select = |base_revision, name: &str| {
+            let command =
+                Command::SetStyleDefaults(stellar_commands::style_defaults::SetStyleDefaults {
+                    name: name.into(),
+                });
+            ApplyRequest {
+                base_revision,
+                document: model.document_id(),
+                commands: vec![CommandInput::Canonical {
+                    kind: command.kind().name().to_string(),
+                    bytes: stellar_commands::codec::encode_command(&command),
+                }],
+            }
+        };
+
+        let base = open_snapshot(&root).unwrap().revision();
+        let selected = apply(&root, &select(base, "brand"), ApplyMode::Write, &locks).unwrap();
+        let reopened = open_snapshot(&root).unwrap();
+        assert_eq!(reopened.style_defaults_name(), "brand");
+        assert_eq!(selected.revision, reopened.revision());
+        assert_ne!(selected.revision, base);
+
+        // 다른 writer(편집기·Git pull)가 세트 파일 값을 바꿉니다.
+        std::fs::write(
+            sets.join("brand.stellar.yaml"),
+            "extends: react-native\nrow-gap: 8px\n",
+        )
+        .unwrap();
+        let stale = apply(
+            &root,
+            &select(selected.revision, "css"),
+            ApplyMode::Write,
+            &locks,
+        );
+        assert!(
+            matches!(stale, Err(ApplyError::BaseRevisionMismatch { .. })),
+            "{stale:?}"
+        );
+        let fresh = open_snapshot(&root).unwrap().revision();
+        assert_ne!(fresh, selected.revision);
+        let back = apply(&root, &select(fresh, "css"), ApplyMode::Write, &locks).unwrap();
+        assert_eq!(back.revision, open_snapshot(&root).unwrap().revision());
+        assert_eq!(
+            back.revision,
+            open_snapshot(&root).unwrap().storage_revision()
         );
     }
 
