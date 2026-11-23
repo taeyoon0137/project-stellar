@@ -10,3 +10,9 @@ pub mod socket;
 
 /// 프로토타입 node 종류 registry(닫힌 집합).
 pub mod node_kind;
+
+/// 희소 배치 hint.
+pub mod layout_hint;
+
+/// 프로토타입 텍스트 원본 v1(MotionSpec·배치 hint).
+pub mod source;

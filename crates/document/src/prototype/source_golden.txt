@@ -1,0 +1,25 @@
+stellar-prototype: 1
+owner: component 00000000-0008-7abc-8000-000000000008
+motion 00000000-0064-7abc-8000-000000000064
+  transition-property: 00000000-00c8-7abc-8000-0000000000c8/0104 00000000-012c-7abc-8000-00000000012c/0016
+  transition-duration: 150ms
+  transition-delay: 0ms
+  transition-timing-function: linear
+  start: 00000000-01f4-7abc-8000-0000000001f4 becomes color(display-p3 0.25 0.5 1 / 0.75)
+  reduced-motion: instant
+motion 00000000-0065-7abc-8000-000000000065
+  transition-property: 00000000-00c9-7abc-8000-0000000000c9/0104 00000000-012d-7abc-8000-00000000012d/0016
+  transition-duration: 200ms
+  transition-delay: -40ms
+  transition-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1)
+  start: 00000000-01f5-7abc-8000-0000000001f5 changes
+  reduced-motion: instant
+motion 00000000-0066-7abc-8000-000000000066
+  transition-property: 00000000-00ca-7abc-8000-0000000000ca/0104 00000000-012e-7abc-8000-00000000012e/0016
+  transition-duration: 250ms
+  transition-delay: 0ms
+  transition-timing-function: steps(4, jump-both)
+  start: 00000000-01f4-7abc-8000-0000000001f4 becomes color(display-p3 0.25 0.5 1 / 0.75)
+  reduced-motion: play
+hint 00000000-0384-7abc-8000-000000000384 12.5 -3
+hint 00000000-0385-7abc-8000-000000000385 0 40
