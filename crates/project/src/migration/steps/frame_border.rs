@@ -6,16 +6,23 @@
 //! 부모의 자식 화면 위치와 부모의 내용 기반 크기가 바뀌지 않도록 이 step이 layout record를 보정합니다.
 //!
 //! - **값**: 옛 묶음 값은 값 변환 없이 longhand로 읽힙니다(`BorderSides::from_payload`: 있으면 네 변 같은 두께·`solid`·
-//!   색, 없으면 `medium none currentcolor`). payload bytes는 바꾸지 않습니다.
-//! - **Free 자식**(`position: absolute`): containing block이 부모 padding box가 되므로 지정된 길이 inset에서 그 변의
-//!   computed border 두께를 뺍니다(`left`·`top`·`right`·`bottom`). IX.11.6 이전 schema에는 layout record가 없어 모든
+//!   색, 없으면 `medium none currentcolor`). 테두리 값 bytes는 바꾸지 않습니다(바뀌는 payload 필드는 아래 content-box
+//!   크기 보정뿐입니다).
+//! - **해석 기준**: `display`·`position`·`box-sizing`·`padding-*`·inset은 명시 값이 없으면 문서의 활성 기본값 세트
+//!   (ADR-0082) 값입니다(`style_defaults::resolve`). `css` 세트의 Frame은 `display: block`, `react-native` 세트는
+//!   `display: flex`이고 둘 다 flow 컨테이너입니다(block도 in-flow 자식을 content box에 놓음, ADR-0076).
+//! - **Free 자식**(`position: absolute`): containing block이 부모 padding box가 되므로 길이 inset에서 그 변의 computed
+//!   border 두께를 뺍니다(`left`·`top`·`right`·`bottom`). IX.11.6 이전 schema에는 layout record가 없어 모든 Frame
 //!   자식이 Free 자식이고, IX.11.9 step([`super::frame_position`])이 위치를 `left`·`top`으로 옮긴 뒤 이 step을
 //!   적용합니다. 백분율 inset·크기는 기준(padding box)이 줄어 길이 보정으로 보존할 수 없으므로 보고서에 남깁니다.
-//! - **flow 부모**(명시 `display: flex|grid`): 각 변 `padding-*`(길이)에서 그 변 border 두께를 빼 flow 자식 위치와
-//!   부모의 내용 기반 크기를 보존합니다. padding이 두께보다 작은 변(미설정 포함)은 `0px`로 두고 보존하지 못한 차이를
-//!   노드·변별로 보고합니다. 백분율 padding은 보고합니다.
-//! - **위치가 payload에 있는 자식**: layout record에 inset이 없는 자식(IX.11.9가 옮기지 않는 Frame이 아닌 node의 bounds
-//!   원점 등)은 레이아웃 입력이 아니므로(ADR-0086 결정 3) 보정하지 않고 보고합니다.
+//! - **테두리가 있는 Frame 자신**: 각 변 `padding-*`(길이)이 그 변 두께를 흡수합니다(padding − 두께, 0 아래로 가지
+//!   않음). 그래서 in-flow 자식 위치(content box 원점)와 내용 기반 크기가 보존됩니다. padding이 두께보다 작은 변은
+//!   in-flow 자식이 있으면 보존하지 못한 차이를 노드·변별로 보고합니다. 백분율 padding은 보고합니다.
+//!   `box-sizing: content-box`(`css` 세트 기본)이면 border box = `width` + padding + border이므로, padding이 흡수하지
+//!   못한 두께만큼 payload 크기(`width`·`height`, ADR-0086 결정 2)를 줄여 schema 1 border box 크기를 지킵니다.
+//!   `border-box`이면 크기는 그대로입니다.
+//! - **위치가 payload에 있는 자식**: layout record가 없는 Frame이 아닌 in-flow 자식(IX.11.9가 옮기지 않는 node의
+//!   bounds 원점 등)은 위치가 레이아웃 입력이 아니므로(ADR-0086 결정 3) 보정하지 않고 보고합니다.
 //! - **0x0105 참조**: schema 2에서 0x0105는 묶음 key입니다. 저장 참조(ValueBinding target, Variant property patch)는
 //!   IX.11.9·IX.11.22와 같은 규칙으로 값 변환 없이 보존하고 보고합니다([`border_bundle_references`]).
 //!
@@ -27,7 +34,9 @@ use std::collections::BTreeMap;
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::property::{PropertyKey, PropertyPath};
+use stellar_core_types::value::Size2;
 use stellar_document::css::border::{self as border_css, BorderSide, BorderSides};
+use stellar_document::css::style_defaults::{self, FlatSet, ResolvedLayout};
 use stellar_document::layout_record::{LayoutLonghand, LayoutRecord, LayoutValue};
 use stellar_document::records::{DocumentRecords, NodePayload};
 
@@ -81,6 +90,8 @@ pub struct FrameBorderReport {
     pub unpreserved: Vec<Unpreserved>,
     /// 위치가 payload에 있어 보정하지 않은 자식.
     pub payload_positioned: Vec<StableId>,
+    /// content-box라 padding이 흡수하지 못한 두께만큼 payload 크기(`width`·`height`)를 줄인 Frame.
+    pub size_adjusted: Vec<StableId>,
 }
 
 /// 변환 오류.
@@ -110,27 +121,30 @@ fn side_index(side: BorderSide) -> usize {
     BorderSide::ALL.iter().position(|s| *s == side).expect("변")
 }
 
-fn is_flow_container(record: Option<&LayoutRecord>) -> bool {
-    matches!(
-        record.and_then(|r| r.get(LayoutLonghand::Display)),
-        Some(LayoutValue::Keyword("flex" | "grid"))
-    )
+fn resolved(
+    set: &FlatSet,
+    payload: &NodePayload,
+    layout: &BTreeMap<StableId, LayoutRecord>,
+    id: StableId,
+) -> Option<ResolvedLayout> {
+    style_defaults::resolve(set, payload, layout.get(&id))
 }
 
-fn is_free(record: Option<&LayoutRecord>) -> bool {
-    matches!(
-        record.and_then(|r| r.get(LayoutLonghand::Position)),
-        Some(LayoutValue::Keyword("absolute"))
-    )
-}
-
-fn has_inset(record: Option<&LayoutRecord>) -> bool {
-    record.is_some_and(|r| INSETS.iter().any(|(l, _)| r.get(*l).is_some()))
+fn keyword(resolved: &ResolvedLayout, longhand: LayoutLonghand) -> Option<&'static str> {
+    match resolved.get(longhand).value {
+        LayoutValue::Keyword(k) => Some(k),
+        _ => None,
+    }
 }
 
 /// 레코드의 테두리를 CSS longhand 의미로 옮기고 padding box 보정을 적용합니다. IX.11.9 step 뒤에 적용합니다.
+///
+/// `set`은 문서의 활성 기본값 세트(ADR-0082, ADR-0086 결정 7)입니다. `display`·`position`·`box-sizing`·`padding-*`·
+/// inset은 명시 값이 없으면 이 세트 값으로 풉니다(`style_defaults::resolve`). 그래서 `css` 세트의 `display: block`
+/// 부모와 `react-native` 세트의 `display: flex` 부모도 flow 부모입니다.
 pub fn split_frame_border(
     mut records: DocumentRecords,
+    set: &FlatSet,
 ) -> Result<(DocumentRecords, FrameBorderReport), FrameBorderError> {
     let mut report = FrameBorderReport::default();
     // 테두리가 있는 Frame → 변별 computed 두께.
@@ -151,92 +165,140 @@ pub fn split_frame_border(
         .collect();
     let error = |node: StableId, reason: String| FrameBorderError { node, reason };
 
-    // flow 부모의 padding 보정.
-    for (&parent, w) in &widths {
-        if !is_flow_container(layout.get(&parent)) {
+    // 자식 분류(보정 전 값 기준): Free 자식(`position: absolute`)과 in-flow 자식.
+    let mut free_children: Vec<usize> = Vec::new();
+    let mut has_in_flow: BTreeMap<StableId, bool> = BTreeMap::new();
+    for (index, node) in records.nodes.iter().enumerate() {
+        let Some(parent) = node.parent else {
+            continue;
+        };
+        if !widths.contains_key(&parent) {
             continue;
         }
-        let record = layout
-            .entry(parent)
-            .or_insert_with(|| LayoutRecord::new(parent));
+        // Fragment는 상자가 없습니다.
+        let Some(child) = resolved(set, &node.payload, &layout, node.id) else {
+            continue;
+        };
+        if keyword(&child, LayoutLonghand::Position) == Some("absolute") {
+            free_children.push(index);
+            continue;
+        }
+        has_in_flow.insert(parent, true);
+        if !layout.contains_key(&node.id) && !matches!(node.payload, NodePayload::Frame(_)) {
+            // layout record가 없는 Frame이 아닌 자식: schema 1 위치가 payload에 있습니다(ADR-0086 결정 3).
+            report.payload_positioned.push(node.id);
+        }
+    }
+
+    // 테두리가 있는 Frame 자신: padding이 두께를 흡수하고, content-box면 흡수하지 못한 두께만큼 크기를 줄입니다.
+    let mut sizes: BTreeMap<StableId, (f32, f32)> = BTreeMap::new();
+    for node in &records.nodes {
+        let Some(w) = widths.get(&node.id) else {
+            continue;
+        };
+        let own = resolved(set, &node.payload, &layout, node.id).expect("Frame은 상자가 있습니다");
+        let content_box = keyword(&own, LayoutLonghand::BoxSizing) == Some("content-box");
+        let in_flow = has_in_flow.get(&node.id).copied().unwrap_or(false);
+        let mut residual = [0.0_f32; 4];
         let mut changed = false;
         for (longhand, side) in PADDINGS {
             let border = w[side_index(side)];
             if border <= 0.0 {
                 continue;
             }
-            let padding = match record.get(longhand) {
-                None => 0.0,
-                Some(LayoutValue::Length(value)) => *value,
-                Some(_) => {
+            let padding = match own.get(longhand).value {
+                LayoutValue::Length(value) => value,
+                _ => {
                     report.unpreserved.push(Unpreserved {
-                        node: parent,
+                        node: node.id,
                         longhand,
                         reason: "백분율 padding은 border 두께를 길이로 뺄 수 없습니다",
                     });
+                    residual[side_index(side)] = border;
                     continue;
                 }
             };
-            let next = padding - border;
-            if next < 0.0 {
+            let absorbed = padding.min(border).max(0.0);
+            residual[side_index(side)] = border - absorbed;
+            if absorbed > 0.0 {
+                layout
+                    .entry(node.id)
+                    .or_insert_with(|| LayoutRecord::new(node.id))
+                    .set(longhand, LayoutValue::Length(padding - absorbed + 0.0))
+                    .map_err(|e| error(node.id, e.to_string()))?;
+                changed = true;
+            }
+            if padding < border && in_flow {
+                // content box 원점이 이 차이만큼 옮겨져 in-flow 자식 위치를 보존하지 못합니다.
                 report.padding_shortfall.push(PaddingShortfall {
-                    node: parent,
+                    node: node.id,
                     side,
                     border,
                     padding,
                     lost: border - padding,
                 });
-                if record.get(longhand).is_some() {
-                    record
-                        .set(longhand, LayoutValue::Length(0.0))
-                        .map_err(|e| error(parent, e.to_string()))?;
-                    changed = true;
-                }
-            } else {
-                record
-                    .set(longhand, LayoutValue::Length(next + 0.0))
-                    .map_err(|e| error(parent, e.to_string()))?;
-                changed = true;
             }
         }
         if changed {
-            report.padding_adjusted.push(parent);
+            report.padding_adjusted.push(node.id);
+        }
+        if content_box {
+            // content-box의 border box = width + padding + border. schema 1(border가 공간을 차지하지 않음)의
+            // border box를 지키려면 padding이 흡수하지 못한 두께만큼 width·height(payload 크기)를 줄입니다.
+            let NodePayload::Frame(frame) = &node.payload else {
+                continue;
+            };
+            let horizontal =
+                residual[side_index(BorderSide::Left)] + residual[side_index(BorderSide::Right)];
+            let vertical =
+                residual[side_index(BorderSide::Top)] + residual[side_index(BorderSide::Bottom)];
+            if horizontal > 0.0 || vertical > 0.0 {
+                let width = frame.size.width() - horizontal;
+                let height = frame.size.height() - vertical;
+                for (value, longhand) in [
+                    (width, LayoutLonghand::Width),
+                    (height, LayoutLonghand::Height),
+                ] {
+                    if value < 0.0 {
+                        report.unpreserved.push(Unpreserved {
+                            node: node.id,
+                            longhand,
+                            reason: "content-box 크기가 border 두께보다 작아 border box 크기를 보존할 수 없습니다",
+                        });
+                    }
+                }
+                sizes.insert(node.id, (width.max(0.0) + 0.0, height.max(0.0) + 0.0));
+            }
+        }
+    }
+    for node in &mut records.nodes {
+        if let (Some((width, height)), NodePayload::Frame(frame)) =
+            (sizes.get(&node.id), &mut node.payload)
+        {
+            frame.size = Size2::new(*width, *height).map_err(|e| error(node.id, e.to_string()))?;
+            report.size_adjusted.push(node.id);
         }
     }
 
-    // Free 자식의 inset 보정. 부모 순서와 무관하게 자식마다 한 번입니다.
-    for node in &records.nodes {
-        let Some(parent) = node.parent else {
-            continue;
-        };
-        let Some(w) = widths.get(&parent) else {
-            continue;
-        };
-        let flow_parent = is_flow_container(layout.get(&parent));
-        let record = layout.get(&node.id);
-        let free = is_free(record) || (!flow_parent && has_inset(record));
-        if !free {
-            if !flow_parent && !matches!(node.payload, NodePayload::Fragment(_)) {
-                // flow가 아닌 부모의 위치 longhand 없는 자식: 위치가 payload에 있습니다.
-                report.payload_positioned.push(node.id);
-            }
-            continue;
-        }
-        let record = layout
-            .get_mut(&node.id)
-            .expect("Free 자식은 layout record가 있습니다");
+    // Free 자식의 inset 보정: containing block이 부모 padding box(border box 안쪽)가 됩니다.
+    for index in free_children {
+        let node = &records.nodes[index];
+        let parent = node.parent.expect("자식");
+        let w = widths[&parent];
+        let child = resolved(set, &node.payload, &layout, node.id).expect("상자가 있는 자식");
         let mut changed = false;
         for (longhand, side) in INSETS {
             let border = w[side_index(side)];
-            match record.get(longhand) {
-                Some(LayoutValue::Length(value)) if border > 0.0 => {
-                    let next = *value - border + 0.0;
-                    record
-                        .set(longhand, LayoutValue::Length(next))
+            match child.get(longhand).value {
+                LayoutValue::Length(value) if border > 0.0 => {
+                    layout
+                        .entry(node.id)
+                        .or_insert_with(|| LayoutRecord::new(node.id))
+                        .set(longhand, LayoutValue::Length(value - border + 0.0))
                         .map_err(|e| error(node.id, e.to_string()))?;
                     changed = true;
                 }
-                Some(LayoutValue::Percentage(_)) => report.unpreserved.push(Unpreserved {
+                LayoutValue::Percentage(_) => report.unpreserved.push(Unpreserved {
                     node: node.id,
                     longhand,
                     reason: "백분율 inset의 기준(padding box)이 border 두께만큼 줄어듭니다",
@@ -252,7 +314,7 @@ pub fn split_frame_border(
             LayoutLonghand::MaxWidth,
             LayoutLonghand::MaxHeight,
         ] {
-            if matches!(record.get(longhand), Some(LayoutValue::Percentage(_))) {
+            if matches!(child.get(longhand).value, LayoutValue::Percentage(_)) {
                 report.unpreserved.push(Unpreserved {
                     node: node.id,
                     longhand,
@@ -366,6 +428,46 @@ mod tests {
         )
     }
 
+    fn css() -> FlatSet {
+        style_defaults::builtin("css").unwrap()
+    }
+
+    fn react_native() -> FlatSet {
+        style_defaults::builtin("react-native").unwrap()
+    }
+
+    fn size(records: &DocumentRecords, id: u64) -> (f32, f32) {
+        let node = records.nodes.iter().find(|n| n.id == sid(id)).unwrap();
+        match &node.payload {
+            NodePayload::Frame(frame) => (frame.size.width(), frame.size.height()),
+            _ => panic!("Frame"),
+        }
+    }
+
+    /// schema 2 border box 크기: content-box면 width + padding + border, border-box면 width(ADR-0086 결정 8).
+    fn border_box(
+        records: &DocumentRecords,
+        id: u64,
+        border: [f32; 4],
+        content_box: bool,
+    ) -> (f32, f32) {
+        let (w, h) = size(records, id);
+        if !content_box {
+            return (w, h);
+        }
+        let pad = |l| length(records, id, l).unwrap_or(0.0);
+        (
+            w + pad(LayoutLonghand::PaddingLeft)
+                + pad(LayoutLonghand::PaddingRight)
+                + border[1]
+                + border[3],
+            h + pad(LayoutLonghand::PaddingTop)
+                + pad(LayoutLonghand::PaddingBottom)
+                + border[0]
+                + border[2],
+        )
+    }
+
     #[test]
     fn free_children_of_a_bordered_parent_keep_their_screen_position() {
         // 검증 기준(IX.11.10): border가 있는 부모의 Free 자식 화면 위치 보존 fixture(IX.11.9 뒤 적용).
@@ -377,7 +479,7 @@ mod tests {
             rect(5, 2),
         ]);
         let (positioned, _) = split_frame_position(before).unwrap();
-        let (after, report) = split_frame_border(positioned.clone()).unwrap();
+        let (after, report) = split_frame_border(positioned.clone(), &css()).unwrap();
         validate_document(&after).unwrap();
         assert_eq!(report.bordered, [sid(2), sid(4)]);
         assert_eq!(report.insets_adjusted, [sid(3), sid(4)]);
@@ -389,17 +491,40 @@ mod tests {
             length(&after, 2, LayoutLonghand::Left),
             length(&positioned, 2, LayoutLonghand::Left)
         );
-        // 위치가 payload에 있는 Rectangle은 보정하지 않고 보고합니다.
+        // 위치가 payload에 있는 Rectangle은 보정하지 않고 보고합니다. 그 자식은 in-flow라 padding 0인 부모 2의 차이도
+        // 보고합니다.
         assert_eq!(report.payload_positioned, [sid(5)]);
-        // payload(테두리 묶음 값)는 bytes 그대로입니다.
+        assert_eq!(report.padding_shortfall.len(), 4);
+        assert!(report
+            .padding_shortfall
+            .iter()
+            .all(|s| s.node == sid(2) && s.lost == 4.0));
+        // css 세트(content-box): border box 크기(schema 1 = payload 크기)를 지키도록 payload 크기를 줄입니다.
+        assert_eq!(report.size_adjusted, [sid(2), sid(4)]);
+        assert_eq!(size(&after, 2), (92.0, 72.0));
+        assert_eq!(border_box(&after, 2, [4.0; 4], true), (100.0, 80.0));
+        assert_eq!(border_box(&after, 4, [1.0; 4], true), (100.0, 80.0));
+        // 테두리 값(묶음 값)과 다른 payload 필드는 그대로입니다.
         for (a, b) in positioned.nodes.iter().zip(&after.nodes) {
-            assert_eq!(a.payload, b.payload);
+            match (&a.payload, &b.payload) {
+                (NodePayload::Frame(a), NodePayload::Frame(b)) => {
+                    assert_eq!(a.border, b.border);
+                    assert_eq!(a.transform, b.transform);
+                }
+                (a, b) => assert_eq!(a, b),
+            }
         }
+        // border-box 세트(react-native)는 크기를 바꾸지 않고 inset만 보정합니다.
+        let (rn, rn_report) = split_frame_border(positioned.clone(), &react_native()).unwrap();
+        assert!(rn_report.size_adjusted.is_empty());
+        assert_eq!(size(&rn, 2), (100.0, 80.0));
+        assert_eq!(screen_after(&rn, 3, [4.0; 4]), (12.5, -3.0));
     }
 
     #[test]
     fn right_bottom_and_percentages_of_intermediate_schema_free_children() {
-        // 중간 schema(layout record 있음): 지정된 right·bottom도 보정하고 백분율은 보고합니다.
+        // 중간 schema(layout record 있음): 지정된 right·bottom도 보정하고 백분율은 보고합니다. Frame의 width·height는
+        // payload 크기라 record에 둘 수 없습니다(ADR-0086 결정 2).
         let mut records = document(vec![
             frame(1, None, None, 0.0, 0.0),
             frame(2, Some(1), Some(2.0), 0.0, 0.0),
@@ -411,21 +536,24 @@ mod tests {
             (LayoutLonghand::Right, LayoutValue::Length(10.0)),
             (LayoutLonghand::Bottom, LayoutValue::Length(1.0)),
             (LayoutLonghand::Left, LayoutValue::Percentage(50.0)),
-            (LayoutLonghand::Width, LayoutValue::Percentage(25.0)),
+            (LayoutLonghand::MaxWidth, LayoutValue::Percentage(25.0)),
         ] {
             child.set(l, v).unwrap();
         }
         records.layout_records.push(child);
-        let (after, report) = split_frame_border(records).unwrap();
+        let (after, report) = split_frame_border(records, &css()).unwrap();
+        validate_document(&after).unwrap();
         assert_eq!(length(&after, 3, LayoutLonghand::Right), Some(8.0));
         assert_eq!(length(&after, 3, LayoutLonghand::Bottom), Some(-1.0));
         let unpreserved: Vec<LayoutLonghand> =
             report.unpreserved.iter().map(|u| u.longhand).collect();
         assert_eq!(
             unpreserved,
-            [LayoutLonghand::Left, LayoutLonghand::Width],
+            [LayoutLonghand::Left, LayoutLonghand::MaxWidth],
             "백분율 inset·크기는 보고서에 남습니다"
         );
+        // in-flow 자식이 없으므로 padding 차이는 잃는 것이 없어 보고하지 않습니다.
+        assert!(report.padding_shortfall.is_empty());
     }
 
     #[test]
@@ -447,12 +575,12 @@ mod tests {
             parent.set(l, v).unwrap();
         }
         records.layout_records.push(parent);
-        let (after, report) = split_frame_border(records.clone()).unwrap();
+        let (after, report) = split_frame_border(records.clone(), &css()).unwrap();
+        validate_document(&after).unwrap();
         assert_eq!(report.padding_adjusted, [sid(2)]);
         // content box 원점(border + padding)과 내용 기반 크기(content + padding + border)는 padding이 두께 이상인 변에서
         // schema 1(padding만)과 같습니다.
         assert_eq!(length(&after, 2, LayoutLonghand::PaddingTop), Some(5.0));
-        assert_eq!(3.0 + 5.0, 8.0);
         assert_eq!(length(&after, 2, LayoutLonghand::PaddingRight), Some(0.0));
         // padding 1px < border 3px인 아래쪽, 미설정(0)인 왼쪽은 보존하지 못한 차이를 보고합니다.
         assert_eq!(length(&after, 2, LayoutLonghand::PaddingBottom), Some(0.0));
@@ -469,9 +597,42 @@ mod tests {
             shortfall,
             [(BorderSide::Bottom, 2.0), (BorderSide::Left, 3.0)]
         );
+        // content-box: padding이 흡수하지 못한 두께(가로 3, 세로 2)만큼 크기를 줄여 border box를 지킵니다.
+        // schema 1 border box = 100 + 0 + 3, 80 + 8 + 1.
+        assert_eq!(size(&after, 2), (97.0, 78.0));
+        assert_eq!(border_box(&after, 2, [3.0; 4], true), (103.0, 89.0));
         // flow 자식(position 미설정)은 inset을 보정하지 않습니다.
         assert!(report.insets_adjusted.is_empty());
         assert!(report.payload_positioned.is_empty());
+    }
+
+    #[test]
+    fn default_set_display_makes_block_and_react_native_parents_flow_parents() {
+        // 명시 display가 없는 부모도 기본값 세트 값으로 풉니다: css는 block, react-native는 flex(둘 다 flow).
+        let mut records = document(vec![
+            frame(1, None, None, 0.0, 0.0),
+            frame(2, Some(1), Some(2.0), 0.0, 0.0),
+            frame(3, Some(2), None, 0.0, 0.0),
+        ]);
+        let mut parent = LayoutRecord::new(sid(2));
+        parent
+            .set(LayoutLonghand::PaddingLeft, LayoutValue::Length(6.0))
+            .unwrap();
+        records.layout_records.push(parent);
+        for set in [css(), react_native()] {
+            let (after, report) = split_frame_border(records.clone(), &set).unwrap();
+            assert_eq!(report.padding_adjusted, [sid(2)], "{}", set.name());
+            assert_eq!(length(&after, 2, LayoutLonghand::PaddingLeft), Some(4.0));
+            let sides: Vec<BorderSide> = report.padding_shortfall.iter().map(|s| s.side).collect();
+            assert_eq!(
+                sides,
+                [BorderSide::Top, BorderSide::Right, BorderSide::Bottom]
+            );
+        }
+        // react-native 세트(border-box)는 크기를 바꾸지 않습니다.
+        let (rn, report) = split_frame_border(records, &react_native()).unwrap();
+        assert!(report.size_adjusted.is_empty());
+        assert_eq!(size(&rn, 2), (100.0, 80.0));
     }
 
     #[test]

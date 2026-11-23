@@ -25,7 +25,7 @@
 
 - 열두 longhand의 순서는 변마다 width·style·color이고 registry 순서가 텍스트 원본 줄 순서와 같습니다.
 - 옛 `Border{color, thickness}`는 값 변환 없이 4변 같은 두께·`solid`·색으로, 없음은 `medium none currentcolor`로 읽힙니다. 묶음 값으로 되돌릴 수 없는 조합은 `unsupported-value`로 거부합니다(조용히 바꾸지 않음).
-- step `split_frame_border`(IX.11.9 step 뒤 적용): 테두리 있는 부모의 Free 자식 길이 inset(`left`·`top`·`right`·`bottom`)에서 그 변 두께를 빼고, 명시 `display: flex|grid` 부모의 `padding-*`에서 두께를 뺍니다. padding이 모자라는 변은 `0px`(미설정이면 그대로)로 두고 노드·변별로 보고합니다. 백분율 inset·크기·padding과 위치가 payload에 있는 자식은 보고합니다. payload bytes는 바꾸지 않습니다.
+- step `split_frame_border(records, set)`(IX.11.9 step 뒤 적용): `display`·`position`·`box-sizing`·`padding-*`·inset은 명시 값이 없으면 활성 기본값 세트 값으로 풉니다(`css` 세트 block 부모, `react-native` 세트 flex 부모 모두 flow 부모). 테두리 있는 부모의 Free 자식(`position: absolute`) 길이 inset에서 그 변 두께를 빼고, 테두리 있는 Frame의 `padding-*`이 두께를 흡수합니다. padding이 모자라는 변은 in-flow 자식이 있을 때 노드·변별로 보고합니다. `content-box`면 흡수하지 못한 두께만큼 payload 크기를 줄여 border box 크기를 지킵니다(`size_adjusted`). 백분율 inset·크기·padding과 위치가 payload에 있는 자식은 보고합니다. 테두리 값 bytes는 바꾸지 않습니다.
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)
 
@@ -59,4 +59,4 @@
 ## 남은 위험
 
 - step을 같은 입력에 두 번 적용하면 두께를 두 번 뺍니다. schema step으로 한 번만 실행되어야 합니다.
-- 명시 `display`가 없는 부모는 flow 부모로 보지 않습니다. 활성 기본값 세트가 `display: flex`를 주는 경우(react-native 세트)의 flow 자식은 보정하지 않습니다.
+- (검토 보완) 처음 구현은 명시 `display: flex|grid`만 flow 부모로 보고, content-box Frame의 크기 증가와 `position`이 absolute가 아닌 자식의 inset 보정을 다루지 않았습니다. 검토에서 기본값 세트 해석과 content-box 크기 보정으로 고쳤습니다.

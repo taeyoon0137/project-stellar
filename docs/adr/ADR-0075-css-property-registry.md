@@ -248,11 +248,18 @@ Accepted (2026-11-23)
   부분입니다(ADR-0077 결정 4의 묶음 규칙, IX.11.9 step 뒤 적용).
   - 테두리가 있는 부모의 Free 자식(`position: absolute`, IX.11.6 이전 schema에서는 IX.11.9가 위치를 옮긴 모든 Frame 자식)은
     길이 inset `left`·`top`·`right`·`bottom`에서 그 변 computed 두께를 빼 화면 위치를 보존합니다.
-  - 명시 `display: flex|grid` 부모는 각 변 `padding-*`에서 그 변 두께를 빼 flow 자식 위치와 내용 기반 크기를 보존합니다.
-    padding이 두께보다 작은 변(미설정 포함)은 `0px`(미설정이면 그대로)로 두고 차이를 노드·변별로 보고합니다.
+  - `display`·`position`·`box-sizing`·`padding-*`·inset은 명시 값이 없으면 문서의 활성 기본값 세트(ADR-0082) 값으로
+    풉니다(`style_defaults::resolve`, step 입력 `FlatSet`). 그래서 `css` 세트의 `display: block` 부모와 `react-native`
+    세트의 `display: flex` 부모도 flow 부모입니다(block도 in-flow 자식을 content box에 놓음, ADR-0076).
+  - 테두리가 있는 Frame은 각 변 `padding-*`이 그 변 두께를 흡수합니다(padding − 두께, 0 아래로 가지 않음). in-flow 자식
+    위치와 내용 기반 크기가 보존됩니다. padding이 두께보다 작은 변은 in-flow 자식이 있을 때 차이를 노드·변별로 보고합니다
+    (in-flow 자식이 없으면 잃는 위치가 없음).
+  - `box-sizing: content-box`(`css` 세트 기본)면 border box가 `width` + padding + border이므로, padding이 흡수하지 못한
+    두께만큼 Frame payload 크기(`width`·`height` 저장 위치, ADR-0086 결정 2)를 줄여 schema 1 border box 크기를 지킵니다.
+    `border-box`면 크기는 그대로입니다. 크기가 두께보다 작아 0 아래로 가는 축은 0으로 두고 보고합니다.
   - 백분율 inset·크기·padding, 위치가 payload에 있는 자식(layout 입력이 아님, ADR-0086 결정 3)은 보정하지 않고 보고합니다.
-  - payload bytes는 바꾸지 않습니다. step은 아직 `PRODUCT_STEPS`에 등록하지 않습니다(IX.11.9와 같은 이유: scene·layout이
-    테두리 longhand와 layout 결과로 그리기 전에 켜면 화면이 바뀝니다).
+  - 테두리 값 bytes는 바꾸지 않습니다(바뀌는 payload 필드는 content-box 크기 보정뿐). step은 아직 `PRODUCT_STEPS`에 등록하지
+    않습니다(IX.11.9와 같은 이유: scene·layout이 테두리 longhand와 layout 결과로 그리기 전에 켜면 화면이 바뀝니다).
 
 ### 결정 10의 대안
 
@@ -260,6 +267,8 @@ Accepted (2026-11-23)
 |---|---|
 | key 순서를 `border-*-width` 넷, `-style` 넷, `-color` 넷 | 텍스트 원본 v4가 이미 변마다 세 줄 순서로 씁니다. registry 순서를 파일 순서와 다르게 두면 파일 bytes가 바뀝니다. 미선택 |
 | `FramePayload::border` 타입을 이번에 4변 구조로 교체 | 이 필드를 읽는 crate가 열 곳이 넘고(semantic-diff·scene·runtime·codegen·ops·commands·ffi) 대부분 다른 lane 소유입니다. 값 모델·저장 형식·step을 먼저 고정하고 타입 교체는 1→2 등록 작업에 둡니다. 미선택 |
+| 명시 `display: flex\|grid`만 flow 부모로 보기 | 기본값 세트가 `display`를 정합니다(`css`는 block, `react-native`는 flex). block도 flow 배치이므로 명시 값만 보면 대부분의 부모를 놓칩니다. 미선택 |
+| content-box Frame의 크기를 그대로 두기 | schema 2에서 border가 공간을 차지해 border box가 두께만큼 커집니다(외형 변경). 미선택 |
 | 묶음 값 없음을 `0px none currentcolor`로 읽기 | CSS initial(`medium`)과 다르고 기존 v4 파일 bytes(`medium`)와 달라집니다. computed 두께는 어느 쪽이든 0입니다. 미선택 |
 
 ### 결정 11. Typography record와 Text style longhand(IX.11.11)
