@@ -13,7 +13,7 @@
 //! ├─ 12 Fragment
 //! │  ├─ 18 Rectangle (300,20) 60×60
 //! │  └─ 19 Rectangle (360,80) 60×60
-//! └─ 21 ComponentInstance (500,300)
+//! └─ 21 ComponentInstance (500,300), 정의 900: root 901 Frame 100×80 └─ 902 Frame (10,10) 40×40
 //! ```
 //!
 //! 형제 순서(OrderKey)는 위 나열 순서이며 뒤 형제가 위에 그려집니다.
@@ -25,9 +25,12 @@ use stellar_commands::state::DocumentState;
 use stellar_core_types::clock::ManualClock;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
-use stellar_core_types::reference::ComponentRef;
+use stellar_core_types::reference::{ComponentRef, NodeRef};
 use stellar_core_types::revision::DocumentRevision;
 use stellar_core_types::value::{Size2, Transform2D, Vec2};
+use stellar_document::component::definition::{
+    ComponentDefinition, ComponentLibrary, DefinitionNode, DefinitionTree,
+};
 use stellar_document::component::instance::ComponentInstancePayload;
 use stellar_document::fragment::FragmentPayload;
 use stellar_document::frame::FramePayload;
@@ -35,7 +38,8 @@ use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{
     ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack,
 };
-use stellar_document::record_codec::encode_node_record;
+use stellar_document::node_kind::NodeKind;
+use stellar_document::record_codec::{encode_node_record, encode_payload};
 use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_document::shape::{RectangleParams, ShapeGeometry};
 use stellar_scene::incremental::IncrementalScene;
@@ -47,6 +51,34 @@ use crate::window_session::test_fixtures::sample_document;
 pub(crate) use crate::window_session::test_fixtures::sid;
 
 use super::scene_source::{document_scene_source, SceneSourceOptions};
+
+/// 인스턴스 21의 정의 900: root 901 Frame 100×80 아래 Frame 902 (10,10) 40×40.
+pub(crate) fn nested_library() -> ComponentLibrary {
+    let component = ComponentRef::new(sid(900));
+    let mut tree = DefinitionTree::new(component);
+    let node = |id: u64, parent: Option<u64>, payload: NodePayload| DefinitionNode {
+        id: sid(id),
+        kind: NodeKind::Frame,
+        parent: parent.map(sid),
+        order_key: OrderKey::from_bytes(vec![0x40]).unwrap(),
+        visible: true,
+        locked: false,
+        display_name: format!("d{id}"),
+        payload: encode_payload(&payload),
+    };
+    tree.insert(node(901, None, frame_payload(0., 0., 100., 80.)))
+        .unwrap();
+    tree.insert(node(902, Some(901), frame_payload(10., 10., 40., 40.)))
+        .unwrap();
+    let mut library = ComponentLibrary::new();
+    library
+        .insert(
+            ComponentDefinition::new(sid(900), "카드".to_string(), NodeRef::new(sid(901))),
+            tree,
+        )
+        .unwrap();
+    library
+}
 
 /// fixture 문서와 View root.
 pub(crate) struct Fixture {
@@ -163,6 +195,19 @@ pub(crate) fn nested() -> Fixture {
             )))),
         ))
         .unwrap();
+    let mut placement = ModifierStack::new(sid(21));
+    placement
+        .insert(ModifierEntry {
+            id: ModifierId::new(sid(21 + 10_000)),
+            order: OrderKey::from_bytes(vec![0x40]).unwrap(),
+            kind: ModifierKind::Transform,
+            enabled: true,
+            payload: ModifierPayload::Transform(
+                Transform2D::new(1., 0., 0., 1., 500., 300.).unwrap(),
+            ),
+        })
+        .unwrap();
+    model.set_modifier_stack(placement).unwrap();
     set_flags(&mut model, 15, true, true);
     set_flags(&mut model, 16, false, false);
     Fixture {
@@ -173,7 +218,17 @@ pub(crate) fn nested() -> Fixture {
 
 /// 문서 View root subtree의 scene과 항등 camera.
 pub(crate) fn scene_of(model: &DocumentModel, root: StableId) -> Scene {
-    let built = document_scene_source(model, root, SceneSourceOptions::default()).unwrap();
+    let library = nested_library();
+    let built = document_scene_source(
+        model,
+        root,
+        SceneSourceOptions {
+            library: Some(&library),
+            ..SceneSourceOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(built.skipped.is_empty(), "{:?}", built.skipped);
     let (scene, _) =
         IncrementalScene::build(built.source, DocumentRevision(1), &ManualClock::new(0)).unwrap();
     let snapshot = Arc::new(scene.snapshot().clone());

@@ -40,7 +40,7 @@
 
 | 검사 | 결과 |
 |---|---|
-| 문서 → scene → 공간 인덱스로 만든 hit 목록에서 클릭 위치·범위·수식키별 선택과 범위 10건(`nested_fixture_click_matrix_from_scene_hits`) | 통과 |
+| 문서 → scene → 공간 인덱스로 만든 hit 목록에서 클릭 위치·범위·수식키별 선택과 범위 13건(인스턴스 가상 node 3건 포함, `nested_fixture_click_matrix_from_scene_hits`) | 통과 |
 | 인스턴스 한 덩어리(⌘에서도), 잠김·숨김·root 선택 불가, 잠긴 node 위 클릭 통과(`instance_is_one_block_and_hidden_locked_never_selected`) | 통과 |
 | Shift 토글·Option primary·빈 곳 해제 event 1건·같은 선택 event 없음·⌘A·다른 깊이 Shift 추가의 범위(`shift_toggles_option_sets_primary_and_select_all_takes_scope_children`) | 통과 |
 | 클릭 1회 history 1건, Escape 순서(제스처 취소 → 도구 복귀 → 해제), 해제 1건, 빈 선택 Escape 없음(`top_scope_escape_deselects_once_and_records_one_entry`) | 통과 |
@@ -51,8 +51,8 @@
 - 캔버스 명세 3.2·3.3·8장은 ADR-0098로 지워져 계획서 문구와 ADR-0104 결정 3으로 규칙을 정했습니다.
 - 범위 자신·조상 몸체 클릭은 그 node를 고르는 규칙으로 정했습니다(View root 몸체만 빈 곳). 지운 명세에 다른 규칙이 있었다면
   UI 재설계 때 ADR로 바꿉니다.
-- `canvas/select-scope-nested` fixture의 ComponentInstance는 component library가 없어 scene에 그려지지 않으므로, 인스턴스 hit은
-  scene source 규칙(인스턴스 안 node의 source는 인스턴스)대로 만든 hit 목록으로 검증했습니다.
+- `canvas/select-scope-nested` fixture의 ComponentInstance 21은 정의 900(Frame 901 아래 Frame 902)을 component library로 펼쳐
+  scene에 그립니다. 인스턴스 hit은 펼친 가상 node를 누른 scene hit 목록으로 검증합니다(검토 보완).
 
 ## 남은 위험 / 한계
 

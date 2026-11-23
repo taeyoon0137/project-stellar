@@ -429,7 +429,7 @@ mod tests {
         let inside_11 = EditingScope::at(&tree, sid(11));
         // (클릭 위치, 범위, 수식키) → (선택, 범위).
         type Case<'a> = ((f32, f32), EditingScope, Modifiers, &'a [u64], u64);
-        let cases: [Case<'_>; 9] = [
+        let cases: [Case<'_>; 12] = [
             // 최상위: Rectangle 13 위를 눌러도 범위 직계 자식 Frame 11.
             ((130., 130.), top, NONE, &[11], 10),
             ((220., 220.), top, NONE, &[11], 10),
@@ -445,6 +445,10 @@ mod tests {
             ((310., 30.), inside_11, NONE, &[12], 10),
             // ⌘ 깊은 선택: 잠긴 15를 통과한 가장 깊은 node.
             ((220., 220.), top, Modifiers::COMMAND, &[17], 14),
+            // ComponentInstance는 한 덩어리: 펼친 가상 node(정의 902 위)를 눌러도, ⌘여도 인스턴스 21.
+            ((520., 320.), top, NONE, &[21], 10),
+            ((520., 320.), top, Modifiers::COMMAND, &[21], 10),
+            ((515., 375.), inside_11, NONE, &[21], 10),
         ];
         for ((x, y), scope, modifiers, selected, scope_after) in cases {
             let change = resolve_click(&tree, scope, &Selection::empty(), &at(x, y), modifiers);
