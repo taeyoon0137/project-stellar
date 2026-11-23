@@ -41,6 +41,10 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
 10. **독립 확인**(XIX.3.4): Read를 뺀 권한은 권한마다 확인 요청 id와 상태를 따로 가집니다. 한 응답은 그 요청의 권한 하나만 바꾸고 첫 응답만 유효합니다. Propose·Apply·Terminal·FileDelete 승인은 세션 동안 유지하고, GitCommit·GitPush 승인은 실행 한 번에만 씁니다(§31.3 개별 확인). 응답 함수는 앱 사용자 UI만 부릅니다(ADR-0005 §3 변경 불가 경로).
 11. **승인 전 미리보기**(XIX.5.3): `stellar_commands::lock::lease::preview`가 문서 레코드로 사본을 만들어 적용하고 lease 판정을 붙입니다. 원본 상태는 읽기만 하므로 문서와 revision이 바뀌지 않습니다. `stellar_mcp::attached::edit::preview`는 그 결과에 ops의 `diff_records`(semantic diff)와 `validate_records`(`stellar validate`와 같은 진단)를 붙입니다. 범위 밖 proposal도 미리보기는 만들고 `scope`가 위반입니다. 승인된 적용(`apply_approved`)은 `execute_leased`로 같은 판정을 다시 합니다.
 
+12. **배치.** 판정·실행·조정자처럼 앱 runtime·CLI·MCP 브리지가 모두 써야 하는 부분은 세 쪽이 모두 닿는 commands crate(`stellar_commands::lock::{lease, coordinator}`)에 둡니다. 권한 저장소, `BeginAgentEdit` 해석과 요청 관리, attached proposal 미리보기·적용은 mcp-core(`stellar_mcp::{permission, lease, attached}`)에 둡니다.
+    - mcp-core는 commands에 직접 의존하지 않고 ops의 재수출(`stellar_ops::commands`)로 같은 함수를 씁니다. 이 재수출은 원래 test-support feature에서만 켜져 있었고, 이 결정으로 상시 공개합니다(ops `lib.rs` 한 줄).
+    - ADR-0005 §8에 따라 runtime은 mcp-core에 닿을 수 없습니다. 앱이 권한 저장소·요청 관리를 소유하게 되면(XXIX.3.1의 에이전트 편집 구현 crate) mcp-core의 이 세 module은 그 crate로 옮깁니다. 옮길 때 판정 함수는 이미 commands에 있으므로 바뀌지 않습니다.
+
 ## Alternatives
 
 - **command 종류별 대상 계산(정적 판정)**: Command enum마다 바꿀 node를 따로 계산해야 하고 실제 적용 결과와 어긋날 수 있습니다(이중 판정). 채택하지 않습니다.
