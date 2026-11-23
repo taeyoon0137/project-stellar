@@ -56,7 +56,14 @@ fn web_entry(input: RegistryInput<'_>) -> MatrixEntry {
             },
         ),
         Basis::Extension(id) => (extension_rule(id), Some("css-extension")),
-        Basis::Capability(_) => ("css-capability-condition", None),
+        // baseline이 그 기능을 지원하면 Native(진단 없음), 지원하지 않으면 Approximated(근거 진단).
+        Basis::Capability(_) => (
+            "css-capability-condition",
+            match capability.status {
+                CapabilityStatus::Native => None,
+                _ => Some("css-capability-approximated"),
+            },
+        ),
         Basis::StellarOnlyRule(_) => ("css-structural-output", Some("css-structural-output")),
         Basis::NoOutput => ("css-no-output", Some("css-no-output")),
     };
@@ -165,5 +172,15 @@ mod tests {
         );
         assert_eq!(none.status, Some(CapabilityStatus::Unsupported));
         assert_eq!(none.diagnostic, Some("css-no-output"));
+        // capability 조건 항목: Native이면 진단 없음, Approximated이면 근거 진단(ADR-0106 결정 3).
+        let clip = css_entry(
+            input("frame", "clipping", MappingInput::Converted),
+            TargetProfileKind::Web,
+        );
+        assert_eq!(clip.rule, "css-capability-condition");
+        assert_eq!(
+            clip.diagnostic.is_none(),
+            clip.status == Some(CapabilityStatus::Native)
+        );
     }
 }
