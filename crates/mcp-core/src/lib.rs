@@ -15,6 +15,12 @@ pub mod catalog;
 /// MCP client 등록 정보 (XIX.9.8).
 pub mod connection_info;
 
+/// 실행 인자 해석과 bridge 세션 실행. 실행 파일은 이 진입점만 부릅니다 (XIX.9.1).
+pub mod entry;
+
+/// L2 공용 정의(catalog·권한·schema·상한) crate (XIX.9.1, ADR-0005 §8).
+pub use stellar_agent_protocol as agent_protocol;
+
 /// 종료 코드: XXIV.1.2 표와 같은 값·이름 (XIX.1.7).
 pub mod exit;
 

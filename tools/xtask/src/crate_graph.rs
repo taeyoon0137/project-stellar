@@ -133,6 +133,9 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-diagnostics",
             ],
         ),
+        // L2 공용 정의(XIX.9.1, ADR-0005 §8, `crates/agent-protocol`): core-types만 허용합니다.
+        // commands·document·ops·agent-host에는 전이적으로도 도달하지 않습니다(`reach::FORBIDDEN_REACH`).
+        ("stellar-agent-protocol", &[core]),
         // bridge↔app 로컬 IPC(ADR-0005 §8, `crates/local-ipc`): core-types만 허용합니다.
         // document·commands·ops에 도달하지 않습니다.
         ("stellar-local-ipc", &[core]),
@@ -304,6 +307,55 @@ mod tests {
             .map(|v| v.code)
             .collect();
         assert_eq!(codes, vec!["forbidden-edge"]);
+    }
+
+    #[test]
+    fn agent_protocol_and_mcp_core_follow_adr_0005() {
+        // XIX.9.1: agent-protocol은 core-types만, mcp-core는 ops·agent-protocol·local-ipc·diagnostics만.
+        let agent = format!(
+            "{}/../../crates/agent-protocol/Cargo.toml",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let parsed = manifest::parse_manifest(&std::fs::read_to_string(agent).unwrap()).unwrap();
+        assert_eq!(parsed.package.as_deref(), Some("stellar-agent-protocol"));
+        let edges: Vec<(String, String)> = parsed
+            .deps
+            .iter()
+            .map(|dep| dep.resolved_name(&std::collections::BTreeMap::new()))
+            .filter(|dep| dep.starts_with(manifest::INTERNAL_PREFIX))
+            .map(|dep| ("stellar-agent-protocol".to_string(), dep))
+            .collect();
+        assert_eq!(
+            edges,
+            [edge("stellar-agent-protocol", "stellar-core-types")]
+        );
+        for forbidden in [
+            "stellar-commands",
+            "stellar-document",
+            "stellar-ops",
+            "stellar-local-ipc",
+            "stellar-mcp-core",
+            "stellar-agent-host",
+        ] {
+            let codes: Vec<&str> = check_crate_graph(&[edge("stellar-agent-protocol", forbidden)])
+                .iter()
+                .map(|v| v.code)
+                .collect();
+            assert_eq!(codes, vec!["forbidden-edge"], "{forbidden}");
+        }
+        assert!(check_crate_graph(&tool_edges("../crates/mcp-core")).is_empty());
+        for forbidden in [
+            "stellar-runtime",
+            "stellar-ffi",
+            "stellar-commands",
+            "stellar-cli",
+        ] {
+            let codes: Vec<&str> = check_crate_graph(&[edge("stellar-mcp-core", forbidden)])
+                .iter()
+                .map(|v| v.code)
+                .collect();
+            assert_eq!(codes, vec!["forbidden-edge"], "{forbidden}");
+        }
     }
 
     #[test]

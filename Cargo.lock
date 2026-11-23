@@ -153,6 +153,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-agent-protocol"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+]
+
+[[package]]
 name = "stellar-assets"
 version = "0.0.0"
 dependencies = [
@@ -311,6 +318,7 @@ dependencies = [
 name = "stellar-mcp-core"
 version = "0.0.0"
 dependencies = [
+ "stellar-agent-protocol",
  "stellar-local-ipc",
  "stellar-ops",
 ]

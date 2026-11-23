@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 stellar-ops = { path = "../ops" }
 stellar-local-ipc = { path = "../local-ipc" }
+stellar-agent-protocol = { path = "../agent-protocol" }
 
 [features]
 test-support = ["stellar-ops/test-support"]
