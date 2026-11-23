@@ -97,3 +97,8 @@ impl RpcError {
         J::object(fields)
     }
 }
+
+/// 직렬화한 응답을 보낼 메시지 목록으로 바꿉니다.
+pub fn chunk_reply(_id: &J, reply: String, _chunk_bytes: usize) -> Vec<String> {
+    vec![reply]
+}
