@@ -29,7 +29,10 @@ use stellar_project::library_entry::ProjectLibraryValidator;
 use stellar_project::library_exports::SourceExports;
 use stellar_project::library_git::StorageSha256;
 use stellar_project::library_open::{open_project_libraries, read_lock};
-use stellar_project::library_refs::check_update_candidate;
+use stellar_project::library_refs::{
+    check_update_candidate, document_ref_issues, DocumentRefIssue,
+};
+use stellar_project::library_resolve::ManifestEdit;
 
 const SPACE: u64 = 5;
 const CARD: u64 = 1;
@@ -247,4 +250,60 @@ fn removed_property_override_is_orphan_diagnostic_before_candidate_is_applied() 
         .unwrap(),
     );
     assert!(same.is_clean(), "{:?}", same.diagnostics());
+
+    // 문서 참조 진단(ADR-0137 결정 2): 참조를 stellar.yaml에 저장하면 v1 lock에서는 문제가 없습니다.
+    let mut edit = ManifestEdit::open(&project).unwrap();
+    edit.declarations_mut()[0].components = [
+        stellar_core_types::reference::ComponentRef::new(sid(SPACE, CARD)),
+        stellar_core_types::reference::ComponentRef::new(sid(SPACE, NOTICE)),
+    ]
+    .into();
+    edit.write(&project, &edit.encoded().unwrap().unwrap())
+        .unwrap();
+    let stored = open_project_libraries(&project, &store, &SnapshotLimits::default(), 4);
+    assert!(
+        document_ref_issues(&model, &own, &stored.instance(), stored.loaded()).is_empty(),
+        "v1에서는 모든 override가 유효"
+    );
+
+    // 승인 뒤 lock을 v2로 바꾸면 같은 override StableId가 새 snapshot에 다시 대어집니다: title은 그대로 유효하고, 사라진
+    // badge·타입이 바뀐 tone만 orphan override, 사라진 Notice는 해석 실패입니다. 문서는 다시 쓰지 않습니다.
+    let mut edit = ManifestEdit::open(&project).unwrap();
+    edit.declarations_mut()[0].version = VersionSelector::Tag(RefName::new("v2").unwrap());
+    edit.write(&project, &edit.encoded().unwrap().unwrap())
+        .unwrap();
+    let graph = resolve(&cache, &work, edit.declarations());
+    materialize_and_lock(&mut store, &cache, &graph, &project);
+    let updated = open_project_libraries(&project, &store, &SnapshotLimits::default(), 5);
+    assert!(updated.is_complete());
+    let issues = document_ref_issues(&model, &own, &updated.instance(), updated.loaded());
+    let orphans: Vec<CandidateIssue> = issues
+        .iter()
+        .filter_map(|issue| match issue {
+            DocumentRefIssue::OrphanOverride(d) => Some(d.issue.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        orphans,
+        [
+            CandidateIssue::OrphanOverride {
+                instance: sid(SPACE, CARD_INSTANCE),
+                property: sid(SPACE, BADGE),
+                cause: OrphanCause::PropertyRemoved,
+            },
+            CandidateIssue::OrphanOverride {
+                instance: sid(SPACE, CARD_INSTANCE),
+                property: sid(SPACE, TONE),
+                cause: OrphanCause::PropertyRetyped,
+            },
+        ],
+        "title override는 v2에서도 같은 StableId로 유효"
+    );
+    assert!(issues.iter().any(|issue| matches!(
+        issue,
+        DocumentRefIssue::Unresolved { instance, .. } if *instance == sid(SPACE, NOTICE_INSTANCE)
+    )));
+    assert_eq!(issues.len(), 3, "{issues:?}");
+    assert_eq!(model_snapshot_json(&model).unwrap(), before);
 }

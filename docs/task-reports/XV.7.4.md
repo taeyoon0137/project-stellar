@@ -30,6 +30,7 @@
 | `cargo test -p stellar-ops --lib library_materialize` | 0 |
 | `cargo test -p stellar-ops --lib library_watch` | 0 — 1 passed |
 | `cargo test -p stellar-runtime --lib library::tests` | 0 — 1 passed |
+| `cargo test -p stellar-integration-tests --test library_update_orphans` | 0 — 1 passed |
 | `cargo clippy -p stellar-ops -p stellar-runtime --all-targets --features stellar-ops/test-support -- -D warnings` | 0 |
 
 ## 환경과 증거
@@ -43,6 +44,8 @@
 |---|---|
 | **update 후 snapshot 기대값**: v1 → v2 dry-run은 이전·새 commit·diff(added 1)·orphan 0을 내고 파일 불변. 적용하면 lock commit = v2, `stellar.yaml` 선택자 = v2, 저장된 Card 참조 유지. 다시 연 library는 v2 snapshot이고 Card 참조가 같은 StableId로 해석되어 문서 참조 진단 0(`update_reviews_then_applies_and_reapplies_stored_refs_by_stable_id`) | 통과 |
 | v3(Card 삭제)는 승인 없이 `OrphansBlocked`(ComponentRemoved, Card instance), 승인하면 적용하고 끊긴 참조는 `library-ref/unresolved` 진단 | 통과 |
+| 이 의존성의 것일 수 있는 모호한 instance(두 선언이 같은 Card를 저장)는 검증하지 못하므로 승인 없이 `OrphansBlocked`(ambiguous)로 거부하고 파일 불변, 모호함에 끼지 않은 의존성 update는 막지 않음, 승인하면 적용(`update_refuses_unverifiable_ambiguous_instances_without_approval`) | 통과 |
+| **override StableId 재적용**: generation library(Property 있음)로 v1 lock에서 저장된 Card·Notice 참조의 문서 참조 문제 0, lock을 v2로 바꾸면 같은 override StableId가 새 snapshot에 대어져 title은 유효하고 badge(삭제)·tone(타입 변경)만 orphan override, Notice는 해석 실패, 문서 불변(`tests/integration/tests/library_update_orphans.rs`) | 통과 |
 | **in-memory snapshot 갱신**: 열린 창(`WindowLibraries::open_in_app_data`)은 바뀐 것이 없으면(다른 열기가 cache index 최근 사용 시각만 바꿔도) 다시 로드하지 않고, 다른 프로세스의 update 뒤 다음 사용 때 v2 snapshot, import 뒤 새 저장 참조, 빈 cache 기기는 fetch 뒤 완전한 로드. 위치를 모르는 library는 다시 로드하지 않음(`open_window_reloads_when_lock_manifest_or_cache_changes`) | 통과 |
 | 지문: lock·`stellar.yaml`·entry 공개는 바뀜, cache index는 완전한 로드에서 무시하고 불완전할 때만 봄(`library_watch::tests`) | 통과 |
 
@@ -59,7 +62,7 @@
   UI 재설계 때 `UpdateReport`(dry-run)를 입력으로 씁니다.
 - "override StableId 재적용": override는 이미 property StableId로 저장되어 있어 문서를 다시 쓰지 않습니다. 새 snapshot에 같은 StableId로
   다시 대어지는지를 진단·사전 검사 경로로 확인했습니다. 텍스트 원본 library가 Property를 아직 담지 못해(ADR-0088 결정 2) property
-  override가 있는 fixture는 이 시험에 없습니다(override 판정 자체는 XV.7.3 시험이 generation library로 확인).
+  override가 있는 재적용은 generation library를 쓰는 통합 시험(`library_update_orphans`)에서 문서 참조 진단으로 확인했습니다.
 
 ## 남은 위험
 
