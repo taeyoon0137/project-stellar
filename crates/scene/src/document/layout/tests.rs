@@ -616,18 +616,15 @@ fn text_measure_hook_lets_flex_shrink_wrap_text() {
         .unwrap();
     set_layout(&mut model, 11, &[("display", "flex")]);
     let widths: RefCell<Vec<Option<f32>>> = RefCell::new(Vec::new());
-    let mut hook = |id: StableId,
-                    _: &TextPayload,
-                    _: Option<&ModifierStack>,
-                    _: bool,
-                    width: Option<f32>| {
-        widths.borrow_mut().push(width);
-        Some(TextInput {
-            node: NodeInput::new(id, Transform2D::identity()),
-            layout: crate::node::TextLayoutKey::from_bytes(id.to_bytes()),
-            size: Size2::new(width.unwrap_or(90.0).min(90.0), 12.0).unwrap(),
-        })
-    };
+    let mut hook =
+        |id: StableId, _: &TextPayload, _: Option<&ModifierStack>, _: bool, width: Option<f32>| {
+            widths.borrow_mut().push(width);
+            Some(TextInput {
+                node: NodeInput::new(id, Transform2D::identity()),
+                layout: crate::node::TextLayoutKey::from_bytes(id.to_bytes()),
+                size: Size2::new(width.unwrap_or(90.0).min(90.0), 12.0).unwrap(),
+            })
+        };
     let measure = Words;
     let built = document_scene_source(
         &model,
@@ -660,14 +657,10 @@ fn variant_visibility_patch_is_a_layout_input() {
     use stellar_document::component::variant_override::VariantOverrideSet;
     let model = flex_model();
     let mut variant = VariantOverrideSet::new();
-    variant
-        .set_property(
-            stellar_core_types::property::PropertyPath::with_keys(
-                sid(21),
-                vec![node_keys::VISIBLE],
-            ),
-            TypedValue::Boolean(false),
-        );
+    variant.set_property(
+        stellar_core_types::property::PropertyPath::with_keys(sid(21), vec![node_keys::VISIBLE]),
+        TypedValue::Boolean(false),
+    );
     let built = document_scene_source(
         &model,
         sid(10),
