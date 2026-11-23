@@ -83,9 +83,17 @@ Accepted (2026-11-23). 엔진 lane `text-source-codec`(V.10.3·V.10.4·IX.11.21�
      묶습니다. step은 옛 bytes를 schema version별 고정 decoder 사본으로 읽습니다. schema 1 Frame은 현재 타입과 독립된
      `FrameV1` 사본이고, 다른 payload는 현재 decoder와 bytes가 같아 golden 테스트로 고정합니다.
    - `SavedProjectLoader::open`은 V.8.1 판정을 적용합니다: 같은 schema는 편집 가능, 낮은 schema는 경로가 있으면
-     메모리에서만 migration한 읽기 전용, 경로가 없거나 높은 schema는 거부. 열기는 디스크를 쓰지 않고 결과를 자동
-     commit하지 않습니다. Git snapshot(HEAD·Index·commit·merge base)도 이 경로로 열려 메모리에서 최신 schema로
-     맞춰집니다. 디스크에 새 generation을 쓰는 일은 명시 `stellar migrate`(V.8.4 경로)만 합니다.
+     메모리에서만 migration한 읽기 전용, 경로가 없거나 높은 schema는 거부. generation manifest에는 schema version만
+     있고 `minimum_reader_version`·`minimum_writer_version` 선언이 없으므로, 높은 schema를 읽기 전용으로 열 근거가
+     없어 거부합니다. 이 loader는 디스크를 쓰지 않습니다. 이 loader를 쓰는 곳은 읽기·비교 소비자(Git
+     snapshot HEAD·Index·commit·merge base, staging 후보, 충돌 열기)이며 메모리에서 최신 schema로 맞춰집니다.
+   - 편집하려고 여는 경로(앱 창 session 열기)는 아키텍처 §36과 IX.11.21 행 정의대로 V.8.4 경로(temp generation, 검증
+     뒤 current 전환)로 디스크에 migration하고, 결과는 Working Tree 변경으로 남기며 Git commit은 하지 않습니다. 원본
+     세대는 그대로 남습니다. 이 연결은 `crates/runtime`의 창 session 열기(`ProjectWindowSession::load`)와 headless
+     읽기(`crates/ops`의 `open_snapshot`)가 맡으며 이 lane의 소유 범위 밖입니다. 두 경로는 지금 schema 판정 없이
+     current generation을 직접 엽니다. 제품 step이 아직 없어(schema 1뿐) 지금 도달하는 경우는 없지만, 첫 제품
+     step(1 → 2)과 함께 두 경로를 이 판정에 연결해야 합니다. 그 전까지 디스크에 새 generation을 쓰는 일은 명시
+     `stellar migrate`(V.8.4 경로)만 합니다.
 5. **기본 열기·저장 전환(V.10.7) 조건.** 이 lane은 전환하지 않습니다. 전환은 (가) 기존 generation fixture 전체의
    semantic snapshot 동일성 corpus 통과, (나) 다중 파일 저장 journal(V.10.5) 연결, (다) 외부 변경 반영(V.10.6)
    연결 뒤에 합니다. 전환 뒤 generation은 읽기·이전 전용이고 chunk는 원본 hash 키로 된 `.stellar/cache/` 파생물입니다.
@@ -103,7 +111,7 @@ Accepted (2026-11-23). 엔진 lane `text-source-codec`(V.10.3·V.10.4·IX.11.21�
 | 파일 이름에 항상 StableId 접미사 | 이름 변경마다 diff가 커지고 읽기 어렵습니다. 충돌 때만 붙입니다. 미선택 |
 | Unicode slug | 같은 이름이 NFC·NFD 두 경로가 될 수 있습니다. 미선택 |
 | migration을 storage crate에 두기 | storage는 document에 의존하지 않아 node record를 해석하지 못합니다. 미선택 |
-| 열 때 옛 schema를 디스크에 바로 migration | 사용자가 원하지 않은 변경·자동 commit 위험. 메모리 migration만 합니다. 미선택 |
+| 모든 열기(읽기·비교 소비자 포함)에서 옛 schema를 디스크에 migration | Git snapshot·staging 후보·충돌 열기 같은 읽기 소비자가 Working Tree를 바꾸게 됩니다. 읽기 소비자는 메모리 migration만 하고, 디스크 migration은 편집 열기(V.8.4 경로)와 명시 `stellar migrate`만 합니다. 미선택 |
 
 ## Consequences
 

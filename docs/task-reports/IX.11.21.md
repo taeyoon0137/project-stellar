@@ -54,3 +54,4 @@
 
 - 제품 step이 아직 없어 메모리 migration은 시험용 정책으로만 실행됩니다. 첫 제품 step(1→2)에서 고정 decoder 사본과 xtask fixture 전환이 함께 필요합니다.
 - `SavedProject.generation`을 직접 읽는 호출자는 옛 schema일 때 원본 bytes를 봅니다. 문서 읽기는 `load_document`·`document_ids`를 써야 합니다.
+- (검토 보완) 앱 창 session 열기(`crates/runtime` `ProjectWindowSession::load`)와 headless 읽기(`crates/ops` `open_snapshot`)는 `SavedProjectLoader`를 거치지 않고 current generation을 직접 열어 schema 판정이 없습니다. 지금은 schema 1뿐이라 도달하지 않지만, 첫 제품 step과 함께 두 경로를 판정에 연결해야 합니다. 편집 열기는 아키텍처 §36·행 정의대로 V.8.4 경로로 디스크에 migration하고 Git commit은 하지 않습니다(ADR-0077 결정 4). 두 파일 모두 이 lane 소유 밖입니다.
