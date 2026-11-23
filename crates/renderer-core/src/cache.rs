@@ -21,8 +21,17 @@
 //! [`CacheBudgetManager::evict_chunk`]는 [`EvictionDeadline`]이 허락하는 동안만 한 단위씩 지우고 돌아옵니다. 진행 상태
 //! ([`EvictionPass`])는 호출자가 들고 다음 chunk에서 이어 갑니다. UI thread 2 ms chunk 정책과 memory pressure 단계 →
 //! 목표 사용량 변환은 runtime(`stellar_runtime::cache`)이 정합니다.
+//!
+//! ## GPU OOM (XVI.5.6)
+//!
+//! [`with_oom_retry`]는 GPU 메모리 부족 오류([`BackendErrorKind::OutOfDeviceMemory`](crate::backend::BackendErrorKind)·
+//! `OutOfHostMemory`)가 나면 GPU에 올라가는 cache를 비우고([`CacheBudgetManager::purge_gpu`]) 작업을 **한 번만** 다시 합니다.
+//! 다시 실패해도 반복하지 않습니다. 판단은 XI.5.4 [`RecoveryTracker`]의 `PurgeCachesAndRetry` 정책을 그대로 씁니다.
 
 use std::any::Any;
+
+use crate::backend::recovery::{Recovery, RecoveryAction, RecoveryTracker};
+use crate::backend::BackendError;
 
 /// cache 보존 priority(XVI.5.2). 값이 작을수록 먼저 지웁니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -97,6 +106,14 @@ impl CacheKind {
             CacheKind::SceneSnapshot => 4,
             CacheKind::DocumentModel => 5,
         }
+    }
+
+    /// GPU 메모리에 올라가는 resource를 가진 cache면 `true`(GPU OOM purge 대상).
+    pub const fn gpu_resident(self) -> bool {
+        matches!(
+            self,
+            CacheKind::ImageMipmap | CacheKind::Tessellation | CacheKind::GlyphAtlas
+        )
     }
 }
 
@@ -470,6 +487,91 @@ impl CacheBudgetManager {
                 bytes,
             });
         }
+    }
+
+    /// GPU에 올라가는 cache([`CacheKind::gpu_resident`])의 지울 수 있는 단위를 모두 지우고 줄어든 byte를 돌려줍니다
+    /// (XVI.5.6 GPU OOM 직전 purge). Document/CurrentScene과 GPU 밖 cache는 그대로 둡니다. 바로 다시 할당하므로 지운
+    /// 값은 미루지 않고 여기서 해제합니다.
+    pub fn purge_gpu(&mut self) -> u64 {
+        let mut freed = 0u64;
+        for priority in CachePriority::EVICTION_ORDER {
+            for cache in self
+                .caches
+                .iter_mut()
+                .filter(|cache| cache.kind().gpu_resident())
+            {
+                loop {
+                    let bytes = cache.evict_one(priority);
+                    if bytes == 0 {
+                        break;
+                    }
+                    freed = freed.saturating_add(bytes);
+                }
+            }
+        }
+        for cache in self
+            .caches
+            .iter_mut()
+            .filter(|cache| cache.kind().gpu_resident())
+        {
+            drop(cache.take_released());
+        }
+        freed
+    }
+}
+
+/// [`with_oom_retry`] 결과.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OomRetry<T> {
+    /// 작업 결과(재시도도 실패하면 마지막 오류).
+    pub result: Result<T, BackendError>,
+    /// GPU OOM 때문에 다시 한 횟수(0 또는 1).
+    pub retries: u32,
+    /// purge로 줄어든 byte.
+    pub purged_bytes: u64,
+}
+
+/// GPU 메모리 할당 작업 `operation`을 실행하고, 메모리 부족이면 GPU cache를 비운 뒤 **한 번만** 다시 합니다(XVI.5.6).
+///
+/// 판단은 [`RecoveryTracker::on_error`]입니다: 첫 메모리 부족은 `PurgeCachesAndRetry`(purge 후 재시도), 그 재시도도
+/// 메모리 부족이면 `SkipFrame`(반복하지 않고 오류 반환)입니다. 메모리 부족이 아닌 오류는 재시도하지 않고 그대로
+/// 돌려줍니다(그 오류의 복구는 호출자가 같은 tracker로 정함). 성공하면 tracker에 알려 다음 OOM이 다시 한 번의
+/// 재시도를 받게 합니다.
+pub fn with_oom_retry<T>(
+    tracker: &mut RecoveryTracker,
+    caches: &mut CacheBudgetManager,
+    mut operation: impl FnMut() -> Result<T, BackendError>,
+) -> OomRetry<T> {
+    let mut retries = 0u32;
+    let mut purged_bytes = 0u64;
+    loop {
+        let error = match operation() {
+            Ok(value) => {
+                tracker.operation_succeeded();
+                return OomRetry {
+                    result: Ok(value),
+                    retries,
+                    purged_bytes,
+                };
+            }
+            Err(error) => error,
+        };
+        let retry = error.recovery() == Recovery::PurgeCachesAndRetryOnce
+            && retries == 0
+            && tracker.on_error(&error) == RecoveryAction::PurgeCachesAndRetry;
+        if !retry {
+            if error.recovery() == Recovery::PurgeCachesAndRetryOnce && retries > 0 {
+                // 재시도도 메모리 부족: tracker에 알려 frame을 버리게 합니다(SkipFrame). 다시 반복하지 않습니다.
+                tracker.on_error(&error);
+            }
+            return OomRetry {
+                result: Err(error),
+                retries,
+                purged_bytes,
+            };
+        }
+        purged_bytes = purged_bytes.saturating_add(caches.purge_gpu());
+        retries += 1;
     }
 }
 
