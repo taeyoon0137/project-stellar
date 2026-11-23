@@ -2,7 +2,7 @@
 
 - WBS: XV.5.3
 - 작업명: library resource를 수정하는 command를 사용 project에서 거부, instance 공개 override만 허용
-- 상태: 완료 (`[x]`) — 2026-11-23 library-finish, 아래 "작업 (2026-11-23, library-finish)" 절. 이전 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 판정 정책은 완료했지만 실제 command가 이 판정을 거치지 않습니다(9A 리뷰 P2).
+- 상태: 부분 완료 (`[~]`) — 2026-11-24 library-finish 비판 검토, 아래 "검토 (2026-11-24, library-finish 비판 검토)" 절: 사전 검사 함수 `check_component_edits`는 생겼지만 command를 적용하는 제품 경로(창 history·CLI·MCP transaction)가 아직 부르지 않습니다. 이전 기록: 완료 (`[x]`) — 2026-11-23 library-finish, 아래 "작업 (2026-11-23, library-finish)" 절. 이전 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 판정 정책은 완료했지만 실제 command가 이 판정을 거치지 않습니다(9A 리뷰 P2).
 - 선행: XV.5.2(`[x]`, 이 lane), IX.2.4(`[x]`)
 
 ## 필수 실행 환경
@@ -133,3 +133,16 @@
 - 외부 component 판정은 문서가 외부 참조를 저장하기 전까지의 추론 규칙입니다. 저장 형식이 생기면 `classify_component`만 바뀝니다.
 - `stellar-commands` CommandTransaction(Phase VII closed enum)에는 component command 갈래가 아직 없어, 사전 검사 진입점은 document
   command 묶음입니다.
+
+## 검토 (2026-11-24, library-finish 비판 검토)
+
+- 판정: `[~]` — 구현자 보고의 `[x]`를 받지 않습니다.
+- 근거: 재판정 finding은 "transaction 적용 전에 `check_library_edits`를 부르고"였습니다. `crates/project/src/library_guard.rs`의
+  `check_component_edits`는 실제 document command를 판정하지만, document command를 적용하는 제품 경로(`stellar-runtime` 창
+  history, `stellar-ops` command 실행, CLI·MCP)는 이 함수를 부르지 않습니다(`grep -rn check_component_edits crates tools`). 제품에서
+  library 정의 편집 command가 거부되는 경로는 아직 없습니다(지금은 문서가 외부 component를 저장하지 않아 그런 command가 만들어지지도
+  않음).
+- 확인한 것: `tests/integration/tests/library_read_only_commands.rs`의 정의 편집 거부·공개 override 성공(실제 command 적용)·혼합
+  transaction 전체 거부·모호 대상 거부는 의미대로 판정합니다.
+- 남은 조건: 문서가 외부 참조를 저장하는 작업(XV.5.2 차이) 뒤, component command를 적용하는 runtime·ops 경로가 transaction 적용 전에
+  `check_component_edits`를 부르고 거부를 사용자 오류로 돌려줍니다. 소유 경로(runtime·ops·commands)는 이 lane 밖입니다.

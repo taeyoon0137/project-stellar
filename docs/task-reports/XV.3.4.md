@@ -110,3 +110,13 @@
 ### 남은 위험
 
 - 열 때마다 entry 전체를 다시 hash합니다(ADR-0119 Performance). 큰 library에서 문제가 되면 검증 기록 최적화를 따로 정합니다.
+
+## 검토 (2026-11-24, library-finish 비판 검토)
+
+- 판정: `[x]` 유지.
+- 고친 결함(이중 판정): "generation component library와 텍스트 원본이 함께 정의를 담으면 손상" 판정이 storage validator
+  (`validate_library_storage`)와 export 공급자(`read_library_resources`)에 따로 있었습니다. `library_entry::read_library_root` 하나로
+  모으고 두 경로는 오류 분류만 옮깁니다(커밋 `1fe5cb21`).
+- 더한 시험: `tests/integration/tests/library_cache_entries.rs`의 `generation_and_text_component_definitions_together_are_corrupt`가 텍스트
+  원본만 있으면 통과, 같은 root에 generation component library를 더하면 storage validator `CorruptStorage(TextSource)`와 export 공급자
+  `Corrupt`를 확인합니다(커밋 `550b4565`).
