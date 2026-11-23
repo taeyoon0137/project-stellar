@@ -36,6 +36,21 @@ pub enum ContextScope {
 }
 
 impl ContextScope {
+    /// canonical bytes(key bytes 안 scope 형식). semantic snapshot 투영(XXX.7.10)이 같은 형식을 씁니다.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        self.encode_into(&mut buf);
+        buf
+    }
+
+    /// [`ContextScope::to_bytes`]를 읽습니다.
+    pub fn from_bytes(bytes: &[u8]) -> Option<ContextScope> {
+        let mut reader = Reader::new(bytes);
+        let scope = ContextScope::decode_from(&mut reader).ok()?;
+        reader.expect_end().ok()?;
+        Some(scope)
+    }
+
     pub(crate) fn encode_into(&self, buf: &mut Vec<u8>) {
         match self {
             ContextScope::Project => put_u8(buf, 0x01),

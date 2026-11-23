@@ -93,6 +93,8 @@ pub fn object_kind_name(kind: ObjectKind) -> String {
         ObjectKind::Asset => "asset".to_string(),
         ObjectKind::ExpressionNode => "expression-node".to_string(),
         ObjectKind::Variant => "variant".to_string(),
+        ObjectKind::ContextKey => "context-key".to_string(),
+        ObjectKind::ContextProvision => "context-provision".to_string(),
     }
 }
 

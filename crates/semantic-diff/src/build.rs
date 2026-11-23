@@ -148,6 +148,10 @@ pub struct AssetEntry {
     pub media_type: String,
 }
 
+/// Component Context 투영(XXX.7.10, ADR-0099 결정 10). builder 내부 객체를 고쳐야 해서 이 모듈의 하위 모듈입니다.
+#[path = "context.rs"]
+pub mod context;
+
 /// [`SemanticSnapshot`] builder.
 #[derive(Debug, Default)]
 pub struct SnapshotBuilder {

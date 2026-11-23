@@ -51,6 +51,10 @@ pub enum ObjectKind {
     ExpressionNode,
     /// View Variant override 묶음.
     Variant,
+    /// Component Context key(XXX.7.10, ADR-0099).
+    ContextKey,
+    /// Component Context provision(XXX.7.10, ADR-0099).
+    ContextProvision,
 }
 
 impl ObjectKind {
@@ -69,6 +73,8 @@ impl ObjectKind {
             ObjectKind::Asset => 0x0501,
             ObjectKind::ExpressionNode => 0x0601,
             ObjectKind::Variant => 0x0701,
+            ObjectKind::ContextKey => 0x0801,
+            ObjectKind::ContextProvision => 0x0802,
         }
     }
 
@@ -89,6 +95,8 @@ impl ObjectKind {
                 0x0501 => Some(ObjectKind::Asset),
                 0x0601 => Some(ObjectKind::ExpressionNode),
                 0x0701 => Some(ObjectKind::Variant),
+                0x0801 => Some(ObjectKind::ContextKey),
+                0x0802 => Some(ObjectKind::ContextProvision),
                 _ => None,
             },
         }
@@ -165,6 +173,11 @@ pub enum SnapshotError {
         /// 소유 node.
         node: StableId,
     },
+    /// Context requirement·Slot 공개 목록의 컴포넌트·Slot 객체가 snapshot에 없습니다(XXX.7.10).
+    ContextOwnerMissing {
+        /// 컴포넌트 또는 Slot.
+        owner: StableId,
+    },
     /// 컴포넌트 정의 node payload를 해석할 수 없습니다.
     DefinitionPayload {
         /// 정의 node.
@@ -191,6 +204,12 @@ impl fmt::Display for SnapshotError {
             }
             SnapshotError::LayoutOwnerMissing { node } => {
                 write!(f, "layout record의 node {node}가 문서에 없습니다")
+            }
+            SnapshotError::ContextOwnerMissing { owner } => {
+                write!(
+                    f,
+                    "Context 목록의 컴포넌트·Slot {owner}가 snapshot에 없습니다"
+                )
             }
             SnapshotError::DefinitionPayload { node, kind, reason } => write!(
                 f,
@@ -442,6 +461,8 @@ mod tests {
             ObjectKind::Asset,
             ObjectKind::ExpressionNode,
             ObjectKind::Variant,
+            ObjectKind::ContextKey,
+            ObjectKind::ContextProvision,
         ];
         kinds.extend(NodeKind::ALL.into_iter().map(ObjectKind::Node));
         kinds.extend(ModifierKind::ALL.into_iter().map(ObjectKind::Modifier));
