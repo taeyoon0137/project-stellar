@@ -42,6 +42,9 @@ pub mod tree_stats;
 /// Frame payload (VI.3.1).
 pub mod frame;
 
+/// Frame 소유 눈금자 가이드·레이아웃 그리드 값 (XII.10.18~XII.10.20, ADR-0117).
+pub mod guides;
+
 /// Frame property metadata registry (VI.3.5).
 pub mod frame_metadata;
 

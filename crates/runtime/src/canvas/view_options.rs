@@ -164,7 +164,9 @@ impl CanvasViewOptions {
 mod tests {
     use super::*;
     use crate::canvas::select_fixtures::save_bytes;
-    use crate::canvas::snap::{snap, CandidateKind, SnapCandidate, SnapCandidates, SnapLines, SnapMode};
+    use crate::canvas::snap::{
+        snap, CandidateKind, SnapCandidate, SnapCandidates, SnapLines, SnapMode,
+    };
     use crate::canvas::transform::drag::MoveDrag;
     use crate::canvas::transform::fixtures::{canvas_document, open, scene, select};
 
@@ -180,7 +182,11 @@ mod tests {
                 .lines()
                 .find(|l| l.contains(&format!("`{}`", toggle.name())))
                 .unwrap_or_else(|| panic!("ADR-0117 표에 {} 없음", toggle.name()));
-            let expected = if defaults.get(toggle) { "| 켬 |" } else { "| 끔 |" };
+            let expected = if defaults.get(toggle) {
+                "| 켬 |"
+            } else {
+                "| 끔 |"
+            };
             assert!(line.ends_with(expected), "{line}");
             assert_eq!(ViewToggle::from_name(toggle.name()), Some(toggle));
         }

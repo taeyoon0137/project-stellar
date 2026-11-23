@@ -57,7 +57,7 @@ C1(눈금자 표현)과 C6(Grid 명시 배치 자식 drag)을 이 ADR에서 닫�
      Frame local CSS px이고 유한값, 절댓값 1e7 이하입니다.
    - `LayoutGrid { kind: columns|rows|square, count, size, gap, margin, align, visible }` — CSS 이름을 씁니다.
      `count`(1–1000, `square`는 없음), `size`(`auto` = 남는 폭을 나눠 늘림, 또는 px; `square`는 칸 한 변 px),
-     `gap`(트랙 사이 px), `margin`(시작·끝 바깥 여백 px, `align: stretch`에서만 의미), `align`(`stretch`|`start`|
+     `gap`(트랙 사이 px), `margin`(정렬 기준 가장자리에서의 바깥 여백 px, `center`는 쓰지 않음), `align`(`stretch`|`start`|
      `center`|`end`, CSS `justify-content`/`align-content` 키워드). 레이아웃 그리드는 설계 기준이라 자식 배치(flex·grid
      layout 입력)에 들어가지 않습니다(ADR-0074: 비CSS 배치 개념을 만들지 않음).
    - `NodeGuides { owner, guides, grids }` — Frame 하나의 기록. guide는 id 순서 무관 집합(직렬화는 id 오름차순),
@@ -83,8 +83,8 @@ C1(눈금자 표현)과 C6(Grid 명시 배치 자식 drag)을 이 ADR에서 닫�
    scene layer로 그리지 않는 이유: 눈금자는 camera와 함께 움직이지 않는 화면 크롬이고, 같은 viewport 값에서 계산하면
    camera와 어긋날 수 없습니다(fixture가 world→view 변환과 같은 값을 확인). 라벨 글꼴은 셸 시스템 UI 글꼴입니다
    (ADR-0105 C2와 같음).
-2. 큰 눈금 간격은 1·2·5×10ⁿ CSS px 중 화면 간격이 64pt 이상인 가장 작은 값이고, 작은 눈금은 큰 간격을 10(1·2 계열은
-   2·5 계열과 같게 5)등분합니다. 라벨은 원점 기준 CSS px 정수(소수 배율에서는 필요한 만큼의 소수) 표기입니다.
+2. 큰 눈금 간격은 1·2·5×10ⁿ CSS px 중 화면 간격이 64pt 이상인 가장 작은 값이고, 작은 눈금은 큰 간격을 5등분(2 계열은
+   4등분)합니다. 라벨은 원점 기준 CSS px 정수(소수 배율에서는 필요한 만큼의 소수) 표기입니다.
 3. 눈금 원점은 primary 선택(없으면 첫 선택)의 최상위 Frame(View root의 직계 Frame 조상) local 원점이고, 선택이 없거나
    최상위 Frame이 없으면 View root 원점입니다. 최상위 Frame이 회전·기울어져 있으면 축이 맞지 않으므로 View root
    원점을 씁니다.
@@ -97,8 +97,8 @@ C1(눈금자 표현)과 C6(Grid 명시 배치 자식 drag)을 이 ADR에서 닫�
 
 ### 4. 레이아웃 그리드와 픽셀 그리드 (XII.10.20)
 
-1. 트랙 계산은 `stellar_document::guides::LayoutGrid::tracks(length)` 하나입니다. `stretch`+`auto`는 `margin`을 뺀
-   길이에서 `gap`을 빼고 `count`로 나눕니다. 고정 `size`는 `align`에 따라 시작·가운데·끝에 놓습니다(`stretch`+고정
+1. 트랙 계산은 `stellar_document::guides::LayoutGrid::tracks(width, height)` 하나입니다. `auto` 크기는 정렬과 관계없이
+   늘림이고, 양쪽 `margin`을 뺀 길이에서 `gap`을 빼고 `count`로 나눕니다. 고정 `size`는 `align`에 따라 시작·가운데·끝에 놓습니다(`stretch`+고정
    `size`는 `start`처럼 margin 뒤부터). `square`는 원점부터 `size`+`gap` 간격으로 상자를 채웁니다.
 2. 스냅 선은 트랙의 시작·끝 가장자리입니다(`canvas::layout_grid::grid_snap_lines`). 표시 여부(`visible`, 토글)와
    관계없이 스냅은 설정(객체 스냅이 아니라 그리드 선 후보 자체)을 따르며, Control 일시 해제는 따릅니다.

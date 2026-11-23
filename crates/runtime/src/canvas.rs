@@ -33,6 +33,8 @@ pub use image::image_placement;
 pub mod handles;
 /// 선택 엔진의 hit 입력: 커서 아래 node 목록과 node world 상자 (XII.10.3, XII.10.5).
 pub mod hit;
+/// 눈금자 눈금과 가이드 제스처 (XII.10.19, ADR-0117).
+pub mod ruler;
 /// 캔버스 클릭 선택과 편집 범위 (XII.10.3, ADR-0104).
 pub mod select;
 /// 영역 선택(마퀴) (XII.10.6, ADR-0104).
@@ -55,10 +57,10 @@ pub mod snap;
 pub mod tool;
 /// 캔버스 이동·크기 단위와 핸들 숨김 기준 (XII.10.2, ADR-0104).
 pub mod tool_units;
-/// 스냅·표시 토글과 스냅 일시 해제 수식키 (XII.10.17, ADR-0117).
-pub mod view_options;
 /// 캔버스 변형·정렬 엔진 (XII.10.9~XII.10.16, XII.10.21, XII.10.23, XII.10.44, ADR-0105).
 pub mod transform;
+/// 스냅·표시 토글과 스냅 일시 해제 수식키 (XII.10.17, ADR-0117).
+pub mod view_options;
 
 /// painter 순서의 사각형 하나. parent는 투명한 Fragment를 펼친 뒤의 가장 가까운 Frame입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
