@@ -3,7 +3,7 @@
 - WBS: IX.11.4
 - 작업명: layout 엔진 Stack 의미를 CSS Flexbox에 맞춤(`flex-shrink` 기본 1, `align-items`·`align-content` 생략값
   `normal`, 자식별 `align-self`, 축 고정 `row-gap`·`column-gap`, stretch 대상 제한)
-- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 IX.11.1(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`)
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록(ledger-refresh): 이 행의 남은 범위가 없고, `[~]`의 이유였던 선행 사슬(IX.11.22 → IX.11.1)이 풀렸습니다. IX.11.22는 integration-followups lane이 다값 snapshot 경로·Shadow offset 투영·variant validator 연결을 끝내 `[x]`입니다. 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 원장이 근거 커밋을 찾지 못했습니다. 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 IX.11.1(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`)
 - 결정: ADR-0074 결정 6, ADR-0076
 - 선행: IX.11.1, X.3.5, X.6.4. 이 lane 결정(ADR-0076 결정 1)대로 엔진 입력 타입은 `crates/layout` 안에 두고 document
   registry에 의존하지 않으므로 IX.11.1을 기다리지 않고 착수했습니다.
@@ -179,3 +179,10 @@ IX.11.23 보고서(자동 최소 크기 적용 전후)에 다시 기록합니다
   결정 9).
 - corpus 변경 이유 분류는 바뀐 node의 선언으로 판정한 것이라 한 fixture에 여러 이유가 붙고, 이유별로 따로 끄고 켠 결과는
   아닙니다(변경 5만 F1로 분리).
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(IX.11.4)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `4861c510` Feat: 레이아웃 엔진 입력을 CSS 값으로 바꾸고 Flexbox 의미를 CSS에 맞춤 (IX.11.4)
+- `fc9bd661` Fix: constraint-heavy workload fixture를 CSS 레이아웃 입력으로 옮김
