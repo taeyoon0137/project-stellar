@@ -177,14 +177,15 @@ C1(눈금자 표현)과 C6(Grid 명시 배치 자식 drag)을 이 ADR에서 닫�
 ### 9. 캔버스 클립보드 (XII.10.38)
 
 1. pasteboard 형식은 두 가지입니다. Stellar 전용 type `app.stellar.canvas-subtree.v1`(bytes = `canvas::clipboard::
-   CanvasClipboard` 봉투: 형식 header, 출처 프로젝트·문서·View id, 선택 root별 `ClipboardSubtree` bytes와 world 상자,
+   CanvasClipboard` 봉투: 형식 header, 출처 프로젝트·문서·View id, 선택 root별 원본 id·부모 id·`ClipboardSubtree` bytes와 world 상자,
    참조한 Component 정의·asset id 목록)과 일반 텍스트(선택 subtree의 Text node 내용을 문서 순서로 줄바꿈 이어 붙임,
    Text가 없으면 쓰지 않음)입니다. 플랫폼 pasteboard 접근은 셸이 합니다.
 2. Copy는 다른 선택의 자손을 뺀 root들(선택 순서)을 담고 잠긴 node도 복사합니다. Cut은 Copy 뒤 잠기지 않은 root의
    `DeleteSubtree`를 한 항목으로 기록합니다(잠긴 root가 있으면 Cut 전체 거부).
-3. Paste 위치: (1) 선택이 자식을 가질 수 있는 잠기지 않은 Frame 하나면 그 안(원래 local 위치 유지), (2) 아니면 같은
-   문서의 같은 View이고 원본 world 상자 합이 지금 화면에 보이면 원래 부모 아래 원래 위치(원래 부모가 없으면 View
-   root), (3) 아니면 View root 아래 화면 가운데(상자 합의 중심이 화면 중심)입니다. 흐름 컨테이너 안이면 마지막 흐름
+3. Paste 위치: (1) 선택이 자식을 가질 수 있는 잠기지 않은 Frame 하나이고 복사한 root 자신이 아니면 그 안(원래 local
+   위치 유지; Copy 직후 그대로 Paste하면 자기 안에 넣지 않음), (2) 아니면 같은 문서의 같은 View이고 원본 world 상자
+   합이 지금 화면에 보이며 모든 root의 원래 부모가 남아 있는 잠기지 않은 Frame이면 원래 부모 아래 원래 위치(원래
+   부모 local 좌표를 다른 부모에 옮겨 쓰면 위치가 틀어지므로, 한 root라도 원래 부모가 없거나 잠겼으면 (3)), (3) 아니면 View root 아래 화면 가운데(상자 합의 중심이 화면 중심)입니다. 흐름 컨테이너 안이면 마지막 흐름
    순서에 넣습니다. 새 ID는 `ClipboardSubtree::plan_with`(IdRemapTable)로 받고, 붙여 넣은 root 전체를 새 선택으로 한
    history 항목에 기록합니다.
 4. 다른 문서·다른 프로젝트에서 온 봉투: 지금 `ClipboardSubtree`는 같은 문서 subtree만 받습니다. 붙여넣기 전에

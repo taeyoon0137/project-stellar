@@ -120,6 +120,44 @@ fn same_window_paste_places_by_rule_with_fresh_ids() {
 }
 
 #[test]
+fn paste_right_after_copy_does_not_nest_the_frame_in_itself() {
+    // Frame 11을 선택한 채 Copy·Paste: 자기 안이 아니라 같은 부모·같은 위치.
+    let (_dir, mut w) = open("clip-self", &with_text());
+    select(&mut w, &[11]);
+    let s = scene(&w);
+    let copied = copy(&w, &s).unwrap();
+    let pasted = paste(&mut w, &s, &copied.envelope, VISIBLE, &yes, &yes).unwrap();
+    assert_eq!(pasted.placement, PastePlacement::SamePlace);
+    assert_eq!(parent_of(model(&w), pasted.roots[0]), Some(sid(10)));
+    assert!(!model(&w)
+        .children_in_order(sid(11))
+        .contains(&pasted.roots[0]));
+    no_duplicate_ids(model(&w));
+}
+
+#[test]
+fn paste_falls_back_to_the_view_center_when_an_original_parent_is_gone() {
+    // Frame 12 안의 Rectangle을 복사한 뒤 Frame 12를 지우면 원래 부모 local 좌표를 쓸 곳이 없어 화면 가운데입니다.
+    let mut doc = with_text();
+    let mut record = doc.record(sid(13)).unwrap();
+    record.id = sid(70);
+    record.parent = Some(sid(12));
+    record.order_key = doc.next_child_order_key(sid(12));
+    doc.insert_node(record).unwrap();
+    let (_dir, mut w) = open("clip-gone", &doc);
+    select(&mut w, &[70]);
+    let copied = copy(&w, &scene(&w)).unwrap();
+    let delete = vec![Command::DeleteSubtree(DeleteSubtree { root: sid(12) })];
+    crate::canvas::transform::commit(&mut w, delete, 0).unwrap();
+    select(&mut w, &[13]);
+    let s = scene(&w);
+    let pasted = paste(&mut w, &s, &copied.envelope, VISIBLE, &yes, &yes).unwrap();
+    assert_eq!(pasted.placement, PastePlacement::ViewCenter);
+    assert_eq!(parent_of(model(&w), pasted.roots[0]), Some(sid(10)));
+    no_duplicate_ids(model(&w));
+}
+
+#[test]
 fn other_window_of_the_same_project_pastes_and_other_project_is_rejected() {
     // 검증 기준(XII.10.38): 다른 창·다른 프로젝트 paste fixture.
     let doc = with_text();

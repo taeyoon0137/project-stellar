@@ -81,6 +81,8 @@ impl From<TransformError> for ClipboardError {
 /// 봉투의 root 하나.
 #[derive(Clone, Debug)]
 pub struct ClipboardRoot {
+    /// 복사한 원본 root id(같은 문서에서 자기 자신 안에 붙여 넣지 않게 하는 판정에 씀).
+    pub id: StableId,
     /// 복사할 때의 부모.
     pub parent: StableId,
     /// 복사할 때의 world 경계(scene에 없던 node는 `None`).
@@ -181,6 +183,7 @@ impl CanvasClipboard {
             let subtree =
                 ClipboardSubtree::capture(model, root).map_err(|_| TransformError::Stale)?;
             list.push(ClipboardRoot {
+                id: root,
                 parent: parent_of(model, root).ok_or(TransformError::Stale)?,
                 bounds: node_geometry(scene, root).map(|g| g.world_bounds),
                 subtree,
@@ -205,6 +208,7 @@ impl CanvasClipboard {
         }
         out.extend_from_slice(&(self.roots.len() as u32).to_le_bytes());
         for root in &self.roots {
+            out.extend_from_slice(&root.id.to_bytes());
             out.extend_from_slice(&root.parent.to_bytes());
             match root.bounds {
                 Some(bounds) => {
@@ -248,6 +252,7 @@ impl CanvasClipboard {
         }
         let mut roots = Vec::with_capacity(count);
         for _ in 0..count {
+            let id = input.id()?;
             let parent = input.id()?;
             let bounds = match input.take(1)?[0] {
                 0 => None,
@@ -267,6 +272,7 @@ impl CanvasClipboard {
             let subtree = ClipboardSubtree::decode(input.take(len)?)
                 .map_err(|_| ClipboardError::Malformed("subtree"))?;
             roots.push(ClipboardRoot {
+                id,
                 parent,
                 bounds,
                 subtree,
@@ -432,8 +438,12 @@ pub fn paste(
     };
     let selected = window.view().selection().ids();
     let union_bounds = union(clipboard.roots.iter().filter_map(|r| r.bounds));
+    // 복사한 Frame을 그대로 선택한 채 붙여 넣으면(Copy 직후 Paste) 그 안이 아니라 규칙 (2)·(3)을 따릅니다.
+    let copied_root = |id: StableId| clipboard.roots.iter().any(|r| r.id == id);
     let placement = match selected {
-        [one] if editable_frame(*one) => PastePlacement::InsideSelection(*one),
+        [one] if editable_frame(*one) && !copied_root(*one) => {
+            PastePlacement::InsideSelection(*one)
+        }
         _ if clipboard.view == view
             && union_bounds.is_some_and(|b| overlaps(b, visible))
             && clipboard.roots.iter().all(|r| editable_frame(r.parent)) =>
