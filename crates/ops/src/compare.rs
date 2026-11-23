@@ -154,7 +154,7 @@ fn context_members(documents: &[DocumentSource]) -> Vec<(StableId, ContextSet)> 
                     members.add_slot_key(slot, *key);
                 }
             }
-            (!members.is_empty()).then(|| (document.records.definition.id, members))
+            (!members.is_empty()).then_some((document.records.definition.id, members))
         })
         .collect()
 }
