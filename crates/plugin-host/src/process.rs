@@ -13,7 +13,8 @@
 //!   `{"stellar_process":1,"type":"heartbeat-ack","seq":n}`으로 답합니다.
 //! - 다음이면 Host가 process를 끝내고(kill) session을 닫습니다: heartbeat 응답이 [`ProcessConfig::heartbeat_timeout`] 안에
 //!   없음, JSON이 아니거나 너무 긴 줄(protocol 위반), 권한 철회([`ProcessPlugin::revoke`]), Host 쪽 종료(drop).
-//!   process가 스스로 끝나거나 죽어도 Host process에는 영향이 없고 session만 닫힙니다.
+//!   process가 스스로 끝나거나 죽어도 Host process에는 영향이 없고 session만 닫힙니다. Host가 끝낸 경우에는 queue에
+//!   남은 요청을 실행하지 않습니다([`HostSession::abort`]).
 //!
 //! 수명 관리는 [`ProcessPlugin::pump`]를 부르는 thread 하나에서 합니다(앱은 plugin supervisor thread에서 부릅니다).
 
@@ -189,7 +190,13 @@ impl ProcessPlugin {
         let _ = self.child.wait();
         self.stdin = None;
         if let Some(mut session) = self.session.take() {
-            session.close();
+            // Host가 끝낸 process(멈춤·위반·철회·drop)의 queue에 남은 요청은 실행하지 않습니다. 철회한 권한으로 쓰기가
+            // 뒤늦게 적용되지 않게 합니다. 스스로 끝난 process는 이미 받은 요청을 끝까지 처리합니다.
+            if matches!(state, ProcessState::Killed(_)) {
+                session.abort();
+            } else {
+                session.close();
+            }
         }
         self.state = state;
         state

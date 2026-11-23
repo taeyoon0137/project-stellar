@@ -288,22 +288,125 @@ fn malformed_envelopes_are_rejected_with_fixed_codes() {
     assert_eq!(session.submit(&huge), Submitted::Rejected("too-large"));
 }
 
-#[test]
-fn permission_changes_apply_after_queued_requests() {
-    let fx = Fixture::new("plugin-rpc-revoke", 1);
-    let session = session(&fx, Arc::new(ManualClock::default()));
-    let read =
-        |id: u64| format!(r#"{{"stellar_rpc":1,"id":{id},"method":"document.read_snapshot"}}"#);
-    assert_eq!(session.submit(&read(1)), Submitted::Queued);
-    session.set_permissions(BTreeSet::new());
-    assert_eq!(session.submit(&read(2)), Submitted::Queued);
-    assert!(recv(&session).get("result").is_some());
-    let denied = recv(&session);
-    assert_eq!(
-        denied
-            .get("error")
-            .and_then(|e| e.get("code"))
-            .and_then(JsonValue::as_str),
-        Some("permission-denied")
+/// 시작을 알리고 해제할 때까지 막히는 network port.
+struct SignalingNetwork {
+    started: Mutex<Sender<()>>,
+    wait: Mutex<Receiver<()>>,
+}
+
+impl NetworkPort for SignalingNetwork {
+    fn get(&self, _url: &str) -> Result<(u16, String), String> {
+        self.started
+            .lock()
+            .unwrap()
+            .send(())
+            .map_err(|e| e.to_string())?;
+        self.wait
+            .lock()
+            .unwrap()
+            .recv()
+            .map_err(|e| e.to_string())?;
+        Ok((204, String::new()))
+    }
+}
+
+/// network port 하나로 worker를 붙잡아 두고(실행 시작까지 기다림), 뒤에 queue에 쌓인 요청이 어떻게 처리되는지 봅니다.
+fn blocked_session(fx: &Fixture) -> (HostSession, Sender<()>) {
+    let (release, wait): (Sender<()>, Receiver<()>) = channel();
+    let (started_tx, started): (Sender<()>, Receiver<()>) = channel();
+    let config = HostConfig {
+        lock: fx.config().lock,
+        network: Some(Box::new(SignalingNetwork {
+            started: Mutex::new(started_tx),
+            wait: Mutex::new(wait),
+        })),
+    };
+    let granted: BTreeSet<Permission> = Permission::ALL.into_iter().collect();
+    let dispatcher = Dispatcher::new(
+        select_trusted_project(&fx.project, fx.data.clone()).unwrap(),
+        fx.plugin(),
+        &granted,
+        config,
     );
+    let session = HostSession::spawn(dispatcher, Arc::new(ManualClock::default()));
+    let fetch = r#"{"stellar_rpc":1,"id":1,"method":"network.fetch","params":{"url":"https://example.com/"}}"#;
+    assert_eq!(session.submit(fetch), Submitted::Queued);
+    started.recv_timeout(WAIT).expect("fetch 실행 시작");
+    (session, release)
+}
+
+fn code(reply: &JsonValue) -> Option<&str> {
+    reply
+        .get("error")
+        .and_then(|e| e.get("code"))
+        .and_then(JsonValue::as_str)
+}
+
+#[test]
+fn revocation_applies_to_requests_already_queued() {
+    let fx = Fixture::new("plugin-rpc-revoke", 1);
+    let (session, release) = blocked_session(&fx);
+    // worker가 network.fetch에 붙잡힌 동안 쓰기·읽기를 queue에 넣고 권한을 모두 철회합니다.
+    let write =
+        r#"{"stellar_rpc":1,"id":2,"method":"file.write","params":{"path":"late.txt","text":"x"}}"#;
+    let read = r#"{"stellar_rpc":1,"id":3,"method":"document.read_snapshot"}"#;
+    assert_eq!(session.submit(write), Submitted::Queued);
+    assert_eq!(session.submit(read), Submitted::Queued);
+    session.set_permissions(BTreeSet::new());
+    release.send(()).unwrap();
+    // 이미 실행 중이던 method는 끝까지 갑니다.
+    let fetched = recv(&session);
+    assert_eq!(fetched.get("id").and_then(JsonValue::as_i64), Some(1));
+    assert!(fetched.get("result").is_some());
+    // queue에 있던 요청은 철회한 권한으로 실행되지 않습니다.
+    for id in [2, 3] {
+        let reply = recv(&session);
+        assert_eq!(reply.get("id").and_then(JsonValue::as_i64), Some(id));
+        assert_eq!(code(&reply), Some("permission-denied"));
+    }
+    assert!(!fx.project.join("plugins").exists(), "철회 뒤 쓰기 없음");
+}
+
+#[test]
+fn abort_does_not_run_queued_requests() {
+    let fx = Fixture::new("plugin-rpc-abort", 1);
+    let (mut session, release) = blocked_session(&fx);
+    let write =
+        r#"{"stellar_rpc":1,"id":2,"method":"file.write","params":{"path":"late.txt","text":"x"}}"#;
+    assert_eq!(session.submit(write), Submitted::Queued);
+    let releaser = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        release.send(()).unwrap();
+    });
+    session.abort();
+    releaser.join().unwrap();
+    assert!(recv(&session).get("result").is_some(), "실행 중이던 fetch");
+    let skipped = recv(&session);
+    assert_eq!(skipped.get("id").and_then(JsonValue::as_i64), Some(2));
+    assert_eq!(code(&skipped), Some("closed"));
+    assert!(!fx.project.join("plugins").exists(), "abort 뒤 쓰기 없음");
+    assert_eq!(session.submit(&info(9)), Submitted::Rejected("closed"));
+}
+
+#[test]
+fn malformed_message_flood_is_rate_limited_too() {
+    let fx = Fixture::new("plugin-rpc-garbage-rate", 1);
+    let session = session(&fx, Arc::new(ManualClock::default()));
+    let mut limited = 0;
+    for _ in 0..30 {
+        if session.submit("not json") == Submitted::Rejected("rate-limited") {
+            limited += 1;
+        }
+        recv(&session);
+    }
+    assert_eq!(
+        limited, 10,
+        "형식 오류 메시지도 1초 창 20개 안에서만 답합니다"
+    );
+    assert_eq!(
+        session.submit(&info(1)),
+        Submitted::Rejected("rate-limited")
+    );
+    let reply = recv(&session);
+    assert_eq!(reply.get("id").and_then(JsonValue::as_i64), Some(1));
 }

@@ -11,11 +11,15 @@
 //! - 응답 `{"stellar_rpc":1,"id":…,"result":…}` 또는 `{"stellar_rpc":1,"id":…,"error":{"code","message","data"?}}`,
 //!   batch 응답 `{"stellar_rpc":1,"id":…,"batch":[{"result":…}|{"error":…},…]}`
 //!
-//! 호출량은 1초 창의 메시지 수로 셉니다(batch는 1개). 60Hz pointer·render loop처럼 매 frame 부르는 호출은 첫 1초 안에
+//! 호출량은 1초 창의 메시지 수로 셉니다(batch는 1개). 형식이 틀려 거부한 메시지도 셉니다(거부 응답도 비용이므로
+//! 잘못된 메시지 홍수가 상한을 비켜 가지 못합니다). 60Hz pointer·render loop처럼 매 frame 부르는 호출은 첫 1초 안에
 //! `rate-limited`가 됩니다. 시간은 주입한 [`Clock`]으로 재므로 fixture가 결정적입니다.
+//!
+//! 권한 변경([`HostSession::set_permissions`])은 아직 시작하지 않은 모든 요청에 바로 적용됩니다(이미 실행 중인 method
+//! 하나만 예전 권한으로 끝납니다). [`HostSession::abort`]는 queue에 남은 요청을 실행하지 않고 `closed`로 답합니다.
 
 use std::collections::{BTreeSet, VecDeque};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -69,8 +73,18 @@ pub enum Submitted {
 enum Job {
     Call { id: J, method: String, params: J },
     Batch { id: J, items: Vec<J> },
-    SetPermissions(BTreeSet<Permission>),
 }
+
+impl Job {
+    fn id(&self) -> &J {
+        match self {
+            Job::Call { id, .. } | Job::Batch { id, .. } => id,
+        }
+    }
+}
+
+/// worker가 다음 요청 전에 적용할 권한 변경.
+type PendingPermissions = Arc<Mutex<Option<BTreeSet<Permission>>>>;
 
 struct Admission {
     recent: VecDeque<Duration>,
@@ -83,6 +97,8 @@ pub struct HostSession {
     reply: Sender<String>,
     admission: Mutex<Admission>,
     in_flight: Arc<AtomicUsize>,
+    permissions: PendingPermissions,
+    aborted: Arc<AtomicBool>,
     clock: Arc<dyn Clock>,
     limits: RpcLimits,
     worker: Option<JoinHandle<()>>,
@@ -160,27 +176,40 @@ impl HostSession {
         let in_flight = Arc::new(AtomicUsize::new(0));
         let worker_reply = reply.clone();
         let worker_in_flight = Arc::clone(&in_flight);
+        let permissions: PendingPermissions = Arc::new(Mutex::new(None));
+        let worker_permissions = Arc::clone(&permissions);
+        let aborted = Arc::new(AtomicBool::new(false));
+        let worker_aborted = Arc::clone(&aborted);
         let chunk_bytes = limits.chunk_bytes;
         let worker = std::thread::Builder::new()
             .name("stellar-plugin-host".to_owned())
             .spawn(move || {
                 for job in inbox {
-                    let messages = match job {
-                        Job::SetPermissions(granted) => {
-                            dispatcher.set_permissions(&granted);
-                            continue;
-                        }
-                        Job::Call { id, method, params } => {
-                            let reply = match dispatcher.call(&method, &params) {
-                                Ok(result) => envelope(&id, ("result", result)),
-                                Err(error) => error_reply(&id, &error),
-                            };
-                            crate::rpc::chunk_reply(&id, reply, chunk_bytes)
-                        }
-                        Job::Batch { id, items } => {
-                            let results = items.iter().map(|i| run_item(&dispatcher, i)).collect();
-                            let reply = envelope(&id, ("batch", J::Array(results)));
-                            crate::rpc::chunk_reply(&id, reply, chunk_bytes)
+                    if let Some(granted) =
+                        worker_permissions.lock().expect("permission lock").take()
+                    {
+                        dispatcher.set_permissions(&granted);
+                    }
+                    let messages = if worker_aborted.load(Ordering::SeqCst) {
+                        vec![error_reply(
+                            job.id(),
+                            &RpcError::new("closed", "session이 닫혔습니다"),
+                        )]
+                    } else {
+                        match job {
+                            Job::Call { id, method, params } => {
+                                let reply = match dispatcher.call(&method, &params) {
+                                    Ok(result) => envelope(&id, ("result", result)),
+                                    Err(error) => error_reply(&id, &error),
+                                };
+                                crate::rpc::chunk_reply(&id, reply, chunk_bytes)
+                            }
+                            Job::Batch { id, items } => {
+                                let results =
+                                    items.iter().map(|i| run_item(&dispatcher, i)).collect();
+                                let reply = envelope(&id, ("batch", J::Array(results)));
+                                crate::rpc::chunk_reply(&id, reply, chunk_bytes)
+                            }
                         }
                     };
                     worker_in_flight.fetch_sub(1, Ordering::SeqCst);
@@ -200,6 +229,8 @@ impl HostSession {
                 recent: VecDeque::new(),
             }),
             in_flight,
+            permissions,
+            aborted,
             clock,
             limits,
             worker: Some(worker),
@@ -222,9 +253,44 @@ impl HostSession {
         Submitted::Rejected(code)
     }
 
+    /// 1초 창에 자리가 있으면 차지합니다. 없으면 다시 시도할 때까지 남은 시간입니다.
+    fn take_rate_slot(&self) -> Result<(), Duration> {
+        let now = self.clock.now();
+        let mut admission = self.admission.lock().expect("admission lock");
+        while admission
+            .recent
+            .front()
+            .is_some_and(|t| now.saturating_sub(*t) >= RATE_WINDOW)
+        {
+            admission.recent.pop_front();
+        }
+        if admission.recent.len() >= self.limits.max_messages_per_second {
+            let oldest = *admission.recent.front().expect("비어 있지 않음");
+            return Err((oldest + RATE_WINDOW).saturating_sub(now));
+        }
+        admission.recent.push_back(now);
+        Ok(())
+    }
+
+    fn rate_limited(retry: Duration) -> RpcError {
+        RpcError::new(
+            "rate-limited",
+            "호출량 상한을 넘었습니다. 고빈도 loop에서 Host RPC를 부르지 말고 batch로 묶으세요",
+        )
+        .with_data(J::object(vec![(
+            "retry_after_ms",
+            J::Number(JsonNumber::from_u64(retry.as_millis().max(1) as u64)),
+        )]))
+    }
+
     /// 메시지 하나를 제출합니다. 바로 돌아옵니다.
     pub fn submit(&self, message: &str) -> Submitted {
+        // 형식 검사보다 먼저 셉니다. 거부한 메시지도 1초 창 자리를 씁니다.
+        let rate = self.take_rate_slot();
         if message.len() > self.limits.max_message_bytes {
+            if let Err(retry) = rate {
+                return self.reject(&J::Null, Self::rate_limited(retry));
+            }
             return self.reject(
                 &J::Null,
                 RpcError::new("too-large", "메시지 크기 상한을 넘습니다"),
@@ -237,12 +303,19 @@ impl HostSession {
                 ..JsonLimits::default()
             },
         ) else {
+            if let Err(retry) = rate {
+                return self.reject(&J::Null, Self::rate_limited(retry));
+            }
             return self.reject(
                 &J::Null,
                 RpcError::new("invalid-request", "JSON이 아닙니다"),
             );
         };
         let id = value.get("id").cloned().unwrap_or(J::Null);
+        if let Err(retry) = rate {
+            let id = if valid_id(&id) { id } else { J::Null };
+            return self.reject(&id, Self::rate_limited(retry));
+        }
         if !valid_id(&id) {
             return self.reject(
                 &J::Null,
@@ -318,41 +391,18 @@ impl HostSession {
             }
         };
 
+        let max_in_flight = self.limits.max_in_flight;
+        if self
+            .in_flight
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                (n < max_in_flight).then_some(n + 1)
+            })
+            .is_err()
         {
-            let now = self.clock.now();
-            let mut admission = self.admission.lock().expect("admission lock");
-            while admission
-                .recent
-                .front()
-                .is_some_and(|t| now.saturating_sub(*t) >= RATE_WINDOW)
-            {
-                admission.recent.pop_front();
-            }
-            if admission.recent.len() >= self.limits.max_messages_per_second {
-                let oldest = *admission.recent.front().expect("비어 있지 않음");
-                let retry = (oldest + RATE_WINDOW).saturating_sub(now);
-                drop(admission);
-                return self.reject(
-                    &id,
-                    RpcError::new(
-                        "rate-limited",
-                        "호출량 상한을 넘었습니다. 고빈도 loop에서 Host RPC를 부르지 말고 batch로 묶으세요",
-                    )
-                    .with_data(J::object(vec![(
-                        "retry_after_ms",
-                        J::Number(JsonNumber::from_u64(retry.as_millis().max(1) as u64)),
-                    )])),
-                );
-            }
-            if self.in_flight.load(Ordering::SeqCst) >= self.limits.max_in_flight {
-                drop(admission);
-                return self.reject(
-                    &id,
-                    RpcError::new("too-many-in-flight", "처리 중 요청 수 상한을 넘었습니다"),
-                );
-            }
-            admission.recent.push_back(now);
-            self.in_flight.fetch_add(1, Ordering::SeqCst);
+            return self.reject(
+                &id,
+                RpcError::new("too-many-in-flight", "처리 중 요청 수 상한을 넘었습니다"),
+            );
         }
         match self.jobs.as_ref().map(|jobs| jobs.send(job)) {
             Some(Ok(())) => Submitted::Queued,
@@ -363,11 +413,9 @@ impl HostSession {
         }
     }
 
-    /// 유효 권한을 바꿉니다(승인·철회). 이미 queue에 있는 요청 뒤에 반영됩니다.
+    /// 유효 권한을 바꿉니다(승인·철회). 아직 시작하지 않은 요청(queue에 있는 요청 포함)부터 새 권한으로 검사합니다.
     pub fn set_permissions(&self, granted: BTreeSet<Permission>) {
-        if let Some(jobs) = &self.jobs {
-            let _ = jobs.send(Job::SetPermissions(granted));
-        }
+        *self.permissions.lock().expect("permission lock") = Some(granted);
     }
 
     /// 응답 하나를 기다립니다.
@@ -378,6 +426,13 @@ impl HostSession {
     /// 기다리지 않고 응답 하나를 가져옵니다.
     pub fn try_recv(&self) -> Option<String> {
         self.responses.try_recv().ok()
+    }
+
+    /// 새 요청을 받지 않고, queue에 남은 요청은 실행하지 않고 `closed`로 답한 뒤 worker를 멈춥니다(실행 중인
+    /// method 하나는 끝까지 갑니다). 권한 철회·강제 종료에 씁니다.
+    pub fn abort(&mut self) {
+        self.aborted.store(true, Ordering::SeqCst);
+        self.close();
     }
 
     /// 새 요청을 받지 않고 남은 요청을 끝낸 뒤 worker를 멈춥니다.

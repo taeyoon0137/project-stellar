@@ -24,16 +24,17 @@
   바로 검사하고 즉시 돌아옵니다. 거부도 같은 응답 channel로 id를 붙여 보냅니다.
 - 통과한 메시지는 session worker thread 하나가 제출 순서대로 실행합니다. batch 항목은 순서대로 실행하고 앞 항목 실패가 뒤 항목을
   막지 않습니다.
-- 호출량: 1초 창 메시지 20개(batch는 1개). 넘으면 `rate-limited`와 `retry_after_ms`입니다. 처리 중 16개를 넘으면
+- 호출량: 1초 창 메시지 20개(batch는 1개, 형식 오류로 거부한 메시지도 셈). 넘으면 `rate-limited`와 `retry_after_ms`입니다. 처리 중 16개를 넘으면
   `too-many-in-flight`입니다. 시간은 주입한 `Clock`으로 잽니다.
 - 고빈도 namespace(`pointer`, `render`, `frame`, `input`, `animation`)는 IDL 검사가 거부하므로 그런 method가 없습니다(XXI.4.1).
-- 권한 변경(`set_permissions`)은 이미 queue에 있는 요청 뒤에 반영됩니다.
+- 권한 변경(`set_permissions`)은 아직 시작하지 않은 요청(queue에 있는 요청 포함)부터 적용합니다. `abort`는 queue에 남은
+  요청을 실행하지 않고 `closed`로 답합니다(검토 보완).
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)
 
 | 명령 | 결과 |
 |---|---|
-| `cargo test -p stellar-plugin-host --test rpc_session` | 6 passed |
+| `cargo test -p stellar-plugin-host --test rpc_session` | 8 passed(검토 보완 뒤) |
 | `cargo clippy -p stellar-plugin-host --all-targets -- -D warnings` | 경고 0 |
 
 | 검사(rate/batch fixture) | 결과 |
@@ -45,6 +46,9 @@
 | 창이 지난 뒤 64항목 batch 20개(1,280 호출)를 받고 21번째 메시지는 거부 | 통과 |
 | 처리 중 상한 2에서 세 번째 요청 거부, worker가 끝나면 다시 받음 | 통과 |
 | 잘못된 envelope 7종과 1 MiB 초과 메시지 거부 | 통과 |
+| 형식 오류 메시지 30개 중 21번째부터 `rate-limited`, 뒤이은 정상 요청도 거부 | 통과 |
+| worker가 실행 중일 때 쌓인 쓰기·읽기가 권한 철회 뒤 `permission-denied`, 파일 쓰기 없음 | 통과 |
+| `abort` 뒤 queue의 쓰기는 `closed`, 파일 쓰기 없음 | 통과 |
 
 ## 차이(작업 지시와 다른 점)
 

@@ -61,6 +61,8 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
      `plugins/grants.json`이며 plugin id별로 승인 권한과 승인 당시 package digest를 적습니다. digest가 바뀐(업데이트된) package는
      저장 승인을 쓰지 못하고 다시 승인받아야 합니다. 쓰기는 임시 파일 뒤 rename입니다.
    - 권한 검사는 method 실행 전에 dispatcher 한 곳에서만 합니다. 권한이 필요한 method는 IDL에 적고 생성 Rust가 표로 냅니다.
+   - session의 권한 변경은 아직 시작하지 않은 요청(queue에 있는 요청 포함)부터 적용합니다. 철회 전에 쌓아 둔 요청이 철회한
+     권한으로 실행되지 않게 하기 위해서입니다. 이미 실행 중인 method 하나만 예전 권한으로 끝납니다.
 6. **Host API IDL(XXI.4.1·XXI.4.2).** IDL은 JSON 문서입니다: `idl_version`, `host_api_version`, 이름 붙은 record type,
    namespace별 method(이름, 권한, 매개변수 이름·형식·필수 여부, 결과 type).
    - v1 namespace: `host`(info, 권한 없음), `document`(read_snapshot), `query`(tree_page, node, tokens, components), `command`
@@ -78,7 +80,8 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
    - 비동기: `HostSession::spawn`이 session마다 worker thread 하나를 두고 `submit`은 즉시 돌아옵니다. 응답은 channel로
      받습니다. 한 session 안의 실행 순서는 제출 순서입니다(쓰기 순서 결정성).
    - 상한: 메시지 1 MiB, batch 64항목, 처리 중 메시지 16개, 1초 창에 메시지 20개(batch는 1개로 셈). 넘으면 즉시
-     `rate-limited`(`retry_after_ms`)나 `too-many-in-flight`입니다. 1초 20개는 60Hz pointer·render loop가 첫 1초 안에 막히는
+     `rate-limited`(`retry_after_ms`)나 `too-many-in-flight`입니다. 형식이 틀려 거부한 메시지도 1초 창에 셉니다(거부 응답
+     홍수로 상한을 비켜 가지 못함). 1초 20개는 60Hz pointer·render loop가 첫 1초 안에 막히는
      값입니다. 시간은 주입 가능한 `Clock`으로 재서 fixture가 결정적입니다.
 8. **대용량 응답(XXI.4.4의 macOS 부분).** 직렬화한 응답이 256 KiB를 넘으면 `{"stellar_rpc":1,"id":…,"chunk":{"index","count","data"}}`
    조각으로 나눠 보냅니다. 조각은 UTF-8 경계에서 자르고 JS client가 이어 붙여 해석합니다. WKWebView reply handler 연결과
@@ -95,6 +98,8 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
       `{"stellar_process":1,"type":"heartbeat","seq":n}`이고 플러그인은 `{"stellar_process":1,"type":"heartbeat-ack","seq":n}`로
       답합니다.
     - heartbeat 응답이 제한 시간 안에 없거나 process가 끝나면 kill하고 session을 닫습니다. 권한 철회는 process를 끝냅니다.
+    - Host가 끝낸 경우(멈춤·protocol 위반·철회·drop)에는 session queue에 남은 요청을 실행하지 않고 `closed`로 버립니다
+      (`HostSession::abort`). 스스로 끝난 process는 이미 받은 요청을 끝까지 처리합니다.
 
 ## Alternatives
 
