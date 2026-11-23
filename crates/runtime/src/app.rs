@@ -161,6 +161,8 @@ pub use stellar_document::shape::ShapeKind;
 mod autosave;
 pub use autosave::{ExternalStatus, StaleAlert, TRACE_LIMIT};
 pub use stellar_project::autosave::schedule::AutosaveStatus;
+/// 유휴 chunk cache GC 일정(ADR-0138 결정 2).
+pub mod gc;
 
 use crate::app_command::AppCommand;
 use crate::command_queue::QueueCapacity;
