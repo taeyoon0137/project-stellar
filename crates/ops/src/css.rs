@@ -15,6 +15,7 @@
 //! 선언 블록 크기 상한은 [`MAX_DECLARATION_BYTES`] 하나이며 CLI·MCP가 이 값을 씁니다.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
@@ -79,7 +80,7 @@ fn plan_layout(
     nodes: &[StableId],
     longhand: LayoutLonghand,
     value: &str,
-    pending: &mut Vec<LayoutRecord>,
+    pending: &mut BTreeMap<StableId, LayoutRecord>,
 ) -> Result<AppliedDeclaration, SkippedDeclaration> {
     let name = longhand.name();
     let parsed = longhand
@@ -122,18 +123,12 @@ fn plan_layout(
             })?;
     }
     for node in nodes {
-        let record = match pending.iter_mut().find(|r| r.node == *node) {
-            Some(record) => record,
-            None => {
-                pending.push(
-                    model
-                        .layout_record(*node)
-                        .cloned()
-                        .unwrap_or_else(|| LayoutRecord::new(*node)),
-                );
-                pending.last_mut().expect("방금 넣음")
-            }
-        };
+        let record = pending.entry(*node).or_insert_with(|| {
+            model
+                .layout_record(*node)
+                .cloned()
+                .unwrap_or_else(|| LayoutRecord::new(*node))
+        });
         record
             .set(longhand, parsed.clone())
             .map_err(|e| skipped(name, value, "invalid-value", e.to_string()))?;
@@ -155,6 +150,20 @@ pub fn paste_plan(
     text: &str,
     new_id: &mut dyn FnMut() -> StableId,
 ) -> Result<PastePlan, PasteError> {
+    // 선택 검사는 속성 패널 경로와 같은 code입니다. 모든 선언이 layout record로 가서 그 경로를 부르지 않아도
+    // 빈 선택·없는 레이어를 성공으로 보고하지 않습니다.
+    if nodes.is_empty() {
+        return Err(PasteError {
+            code: "empty-selection",
+            message: "선택한 레이어가 없습니다".to_string(),
+        });
+    }
+    if let Some(node) = nodes.iter().find(|node| model.payload(**node).is_none()) {
+        return Err(PasteError {
+            code: "unknown-node",
+            message: format!("문서에 없는 레이어: {node}"),
+        });
+    }
     let items = parse_block(text).map_err(|e| PasteError {
         code: e.code,
         message: e.message,
@@ -162,7 +171,7 @@ pub fn paste_plan(
     let mut rest: Vec<(String, String)> = Vec::new();
     let mut applied = Vec::new();
     let mut skips = Vec::new();
-    let mut pending: Vec<LayoutRecord> = Vec::new();
+    let mut pending: BTreeMap<StableId, LayoutRecord> = BTreeMap::new();
     for item in items {
         let declaration = match item {
             BlockItem::Declaration(declaration) => declaration,
@@ -207,8 +216,7 @@ pub fn paste_plan(
         let block = format_block(rest.iter().map(|(n, v)| (n.as_str(), v.as_str())));
         paste_declarations(model, nodes, &block, &NoTokens, new_id)?
     };
-    pending.sort_by_key(|record| record.node);
-    for record in pending {
+    for record in pending.into_values() {
         let current = model.layout_record(record.node);
         for (longhand, value) in record.iter() {
             if current.and_then(|c| c.get(longhand)) != Some(value) {
@@ -526,5 +534,20 @@ mod tests {
         let copied = copy(&root, document, text).unwrap();
         assert!(copied.text.contains("width: 120px;\n"), "{}", copied.text);
         assert!(copied.text.contains("flex-grow: 2;\n"), "{}", copied.text);
+        // layout longhand만 있는 블록도 빈 선택·없는 레이어는 속성 패널 경로와 같은 오류입니다.
+        let mut ids = || StableId::NIL;
+        assert_eq!(
+            paste_plan(&reopened, &[], "display: flex", &mut ids)
+                .unwrap_err()
+                .code,
+            "empty-selection"
+        );
+        let missing = StableId::new_v7(1_900_000_000_900, 0x0123, 900);
+        assert_eq!(
+            paste_plan(&reopened, &[frame, missing], "display: flex", &mut ids)
+                .unwrap_err()
+                .code,
+            "unknown-node"
+        );
     }
 }
