@@ -26,7 +26,7 @@ stellar-ops = { path = "../ops", features = ["test-support"] }
 [[bin]]
 # IDL(`schemas/plugin-host-api.idl.json`)에서 TypeScript·Rust binding을 다시 씁니다(XXI.4.1).
 name = "stellar-plugin-bindgen"
-path = "src/bin/bindgen.rs"
+path = "src/bindgen_cli.rs"
 
 [lints]
 workspace = true
