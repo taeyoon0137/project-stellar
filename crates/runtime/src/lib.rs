@@ -24,6 +24,9 @@ pub mod cache;
 
 pub mod input_trace;
 
+/// 캔버스 탐색 입력: 확대 제스처·smart magnify·스크롤·Hand·Zoom 도구 (XII.10.36, ADR-0117).
+pub mod input_gesture;
+
 /// 셸 경계용 앱 runtime: 프로젝트·문서 session, 완료 event, 상태 snapshot.
 pub mod app;
 
