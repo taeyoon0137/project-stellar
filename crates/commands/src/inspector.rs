@@ -273,6 +273,11 @@ impl InspectorProperty {
         }
     }
 
+    /// 모든 속성(표시 순서).
+    pub fn all() -> &'static [InspectorProperty] {
+        &ORDER
+    }
+
     /// 이름으로 찾습니다.
     pub fn from_name(name: &str) -> Option<InspectorProperty> {
         ORDER.into_iter().find(|p| p.name() == name)

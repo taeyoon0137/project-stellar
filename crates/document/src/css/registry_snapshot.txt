@@ -1,3 +1,6 @@
+node 0x0001 visible | converted | display | boolean | -
+node 0x0002 locked | stellar-only | - | boolean | -
+node 0x0003 name | stellar-only | - | string | -
 frame 0x0101 size | converted | width, height | - | -
 frame 0x0102 transform | converted [initial-differs] | transform, transform-origin | transform-list | -
 frame 0x0103 clipping | converted [initial-differs] | overflow-x, overflow-y, overflow-clip-margin, clip-path | - | disabled=exact, frame-bounds=converted, path=converted
@@ -11,6 +14,30 @@ frame 0x010a border-top-left-radius | exact [subset] | border-top-left-radius | 
 frame 0x010b border-top-right-radius | exact [subset] | border-top-right-radius | length | -
 frame 0x010c border-bottom-right-radius | exact [subset] | border-bottom-right-radius | length | -
 frame 0x010d border-bottom-left-radius | exact [subset] | border-bottom-left-radius | length | -
+shape 0x0301 width | converted | width | length | -
+shape 0x0302 height | converted | height | length | -
+shape 0x0303 border-top-left-radius | exact [subset] | border-top-left-radius | length | -
+shape 0x0304 border-top-right-radius | exact [subset] | border-top-right-radius | length | -
+shape 0x0305 border-bottom-right-radius | exact [subset] | border-bottom-right-radius | length | -
+shape 0x0306 border-bottom-left-radius | exact [subset] | border-bottom-left-radius | length | -
+shape 0x0307 x1 | stellar-only | - | length | -
+shape 0x0308 y1 | stellar-only | - | length | -
+shape 0x0309 x2 | stellar-only | - | length | -
+shape 0x030a y2 | stellar-only | - | length | -
+shape 0x030b stroke-linecap | exact | stroke-linecap | keyword | -
+shape 0x030c polygon-sides | stellar-only | - | integer | -
+shape 0x030d polygon-rotation | stellar-only | - | angle | -
+shape 0x030e polygon-corner-radius | stellar-only | - | length | -
+path 0x0401 path-data | converted | d | - | -
+path 0x0402 fill-rule | exact | fill-rule | keyword | -
+text 0x0501 text-content | stellar-only | - | - | -
+image 0x0601 image-asset | stellar-only | - | - | -
+image 0x0602 width | converted | width | length | -
+image 0x0603 height | converted | height | length | -
+image 0x0604 object-fit | exact [initial-differs, subset] | object-fit | keyword | -
+image 0x0605 image-rendering | approximated | image-rendering | keyword | -
+image 0x0606 image-crop | stellar-only | - | - | -
+image 0x0607 image-color-space | stellar-only | - | - | -
 modifier 0x1001 enabled | stellar-only | - | boolean | -
 modifier 0x1002 modifier-order | stellar-only | - | - | -
 modifier 0x1011 transform | converted | transform | transform-list | -

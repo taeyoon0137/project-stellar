@@ -12,24 +12,67 @@ use stellar_core_types::property::PropertyKey;
 use super::mapping::CssMapping;
 use crate::frame_metadata::FRAME_PROPERTIES;
 use crate::modifier_metadata::MODIFIER_PROPERTIES;
+use crate::payload_metadata::{
+    PayloadPropertyMetadata, IMAGE_PROPERTIES, NODE_PROPERTIES, PATH_PROPERTIES, SHAPE_PROPERTIES,
+    TEXT_PROPERTIES,
+};
 
 /// 속성이 속한 범위.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PropertyScope {
+    /// 모든 node의 공통 필드(`0x00xx`).
+    Node,
     /// Frame payload(`0x01xx`).
     Frame,
+    /// Shape payload(`0x03xx`).
+    Shape,
+    /// Path payload(`0x04xx`).
+    Path,
+    /// Text payload(`0x05xx`).
+    Text,
+    /// Image payload(`0x06xx`).
+    Image,
     /// modifier(`0x10xx`).
     Modifier,
 }
 
 impl PropertyScope {
+    /// 정의된 모든 범위(표시 순).
+    pub const ALL: [PropertyScope; 7] = [
+        PropertyScope::Node,
+        PropertyScope::Frame,
+        PropertyScope::Shape,
+        PropertyScope::Path,
+        PropertyScope::Text,
+        PropertyScope::Image,
+        PropertyScope::Modifier,
+    ];
+
     /// 표기 이름.
     pub fn name(self) -> &'static str {
         match self {
+            PropertyScope::Node => "node",
             PropertyScope::Frame => "frame",
+            PropertyScope::Shape => "shape",
+            PropertyScope::Path => "path",
+            PropertyScope::Text => "text",
+            PropertyScope::Image => "image",
             PropertyScope::Modifier => "modifier",
         }
     }
+}
+
+fn payload_entries(
+    scope: PropertyScope,
+    table: &'static [PayloadPropertyMetadata],
+) -> impl Iterator<Item = RegistryEntry> {
+    table.iter().map(move |m| RegistryEntry {
+        scope,
+        key: m.key,
+        name: m.name,
+        css: m.css,
+        bundle: &[],
+    })
 }
 
 /// registry 항목 하나.
@@ -64,6 +107,7 @@ impl RegistryEntry {
 
 /// 모든 registry 항목(범위 순, 범위 안 key 순).
 pub fn entries() -> Vec<RegistryEntry> {
+    let node = payload_entries(PropertyScope::Node, &NODE_PROPERTIES);
     let frame = FRAME_PROPERTIES.iter().map(|m| RegistryEntry {
         scope: PropertyScope::Frame,
         key: m.key,
@@ -78,7 +122,13 @@ pub fn entries() -> Vec<RegistryEntry> {
         css: m.css,
         bundle: m.longhands,
     });
-    frame.chain(modifier).collect()
+    node.chain(frame)
+        .chain(payload_entries(PropertyScope::Shape, &SHAPE_PROPERTIES))
+        .chain(payload_entries(PropertyScope::Path, &PATH_PROPERTIES))
+        .chain(payload_entries(PropertyScope::Text, &TEXT_PROPERTIES))
+        .chain(payload_entries(PropertyScope::Image, &IMAGE_PROPERTIES))
+        .chain(modifier)
+        .collect()
 }
 
 /// `scope`의 `key` 항목.
@@ -152,6 +202,8 @@ mod tests {
     /// CSS 이름이 아닌 Stellar 이름을 쓰는 항목(이름 이유: CSS 속성 하나로 대응하지 않음). 상태가
     /// `stellar-only`인 항목과 묶음 key는 따로 허용합니다.
     const STELLAR_NAMED: &[&str] = &[
+        "visible",
+        "path-data",
         "clipping",
         "shadow-color",
         "shadow-blur",
@@ -288,7 +340,8 @@ mod tests {
 
     #[test]
     fn property_model_tables_agree_with_registry_status() {
-        // 검증 기준(IX.11.2): 속성 모델 표(5장 Frame, 9장 Modifier)와 registry 일치. 표의 상태 열(셋째 열)에
+        // 검증 기준(IX.11.2·IX.11.3): 속성 모델 표(3장 공통, 5장 Frame, 6장 Shape·Path·Image, 7장 Text, 9장
+        // Modifier)와 registry 일치. 표의 상태 열(셋째 열)에
         // 적힌 상태 가운데 registry 상태(또는 변형 규칙 상태)가 있어야 하고, registry key는 모두 표에 있어야 합니다.
         let model = include_str!("../../../../docs/design/property_model.md");
         let mut statuses: BTreeMap<u32, BTreeSet<String>> = BTreeMap::new();
@@ -302,7 +355,7 @@ mod tests {
                     .unwrap_or(0);
                 continue;
             }
-            if !(section == 5 || section == 9) || !line.starts_with('|') {
+            if ![3, 5, 6, 7, 9].contains(&section) || !line.starts_with('|') {
                 continue;
             }
             // code span 안의 `\|`는 열 구분이 아닙니다.

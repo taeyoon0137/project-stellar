@@ -105,9 +105,9 @@ W3C CSS 명세의 해당 모듈입니다(예: `[CSS Flexbox]`, `[CSS Grid]`, `[C
 
 | Stellar 속성 | CSS | 상태 | 차이·비고 | migration |
 |---|---|---|---|---|
-| `visible` | `visible = false` → `display: none` | `converted` | flow에서 빠지므로 `visibility: hidden`이 아닙니다 [계획 X.3.5] | `none` |
-| `locked` | — | `stellar-only` | 편집 메타데이터 | `none` |
-| `display_name` | — | `stellar-only` | 레이어 이름. export는 주석·식별자 힌트로만 씁니다 | `none` |
+| `visible`(0x0001) | `visible = false` → `display: none` | `converted` | flow에서 빠지므로 `visibility: hidden`이 아닙니다 [계획 X.3.5] | `none` |
+| `locked`(0x0002) | — | `stellar-only` | 편집 메타데이터 | `none` |
+| `display_name`(0x0003, 이름 `name`) | — | `stellar-only` | 레이어 이름. export는 주석·식별자 힌트로만 씁니다 | `none` |
 | StableId | — | `stellar-only` | 참조 식별자. Web export의 `id`·class는 StableId에서 결정론적으로 만듭니다 [계획 XX.3.3] | `none` |
 | 자식 순서(`OrderKey`) | DOM 순서 = paint 순서 | `subset` | CSS `order`와 `z-index`를 따로 쓰지 않습니다. DOM 순서로 출력하는 것만으로는 paint 순서가 같지 않으므로 아래 stacking 규칙으로 냅니다. 14장 E3 | `none` |
 
@@ -258,29 +258,32 @@ longhand로 바꾸는 근거입니다.
 
 ## 6. Shape·Path·Image
 
-Shape·Path에는 fill·stroke 필드가 없고 칠하기는 modifier가 맡습니다(9장). Shape·Path·Text 속성에는
-아직 `PropertyKey`가 없습니다. IX.11.3이 key와 CSS 매핑을 함께 정의합니다. key는 longhand마다 하나이고
-(ADR-0024 결정 14, 예: Rectangle `width`·`height`), semantic diff가 임시로 쓰는 snapshot 전용 key
-(`0xE3xx`·`0xE4xx`·`0xE6xx`, `crates/semantic-diff/src/keys.rs`)를 대체합니다. IX.11.6이 sizing longhand를
+Shape·Path에는 fill·stroke 필드가 없고 칠하기는 modifier가 맡습니다(9장). Shape(`0x03xx`)·Path(`0x04xx`)·
+Text(`0x05xx`)·Image(`0x06xx`) key와 CSS 매핑은 `crates/document/src/payload_metadata.rs`에 있습니다(IX.11.3).
+key는 longhand마다 하나이고(ADR-0024 결정 14, 예: Rectangle `width`·`height`), Path command·point 목록과 Text
+content는 payload 단위 key 하나입니다(15장 O12). semantic diff가 임시로 쓰던 snapshot 전용 key
+(`0xE3xx`·`0xE4xx`·`0xE6xx`, `crates/semantic-diff/src/keys.rs`) 가운데 값 하나인 key는 문서 key로 바꿨고,
+값 여러 개를 한 경로에 담는 Rectangle size·corner radius, Line 끝점, Ellipse·Polygon bounds, Image size는
+snapshot 투영(`build.rs`)을 longhand 경로로 나눌 때 문서 key로 바꿉니다. IX.11.6이 sizing longhand를
 NodeRecord 공통 필드와 node별 item record 중 어디에 저장하든, 이미 할당한 `width`·`height` key는 그대로
 씁니다. 그래서 같은 노드의 `width`에 key가 둘 생기지 않습니다.
 
 | Stellar 속성 | CSS·SVG 표현 | 상태 | 차이·비고 | migration |
 |---|---|---|---|---|
-| Rectangle `size` | `width`, `height` | `converted` | | `rename` |
-| Rectangle `corner_radius` | `border-*-radius` | `exact` | SVG `rect`는 반경 하나만 받으므로 SVG에서는 path로 냅니다 | `rename` |
+| Rectangle `size`(0x0301·0x0302) | `width`, `height` | `converted` | | `rename` |
+| Rectangle `corner_radius`(0x0303\~0x0306) | `border-*-radius` | `exact` | SVG `rect`는 반경 하나만 받으므로 SVG에서는 path로 냅니다 | `rename` |
 | Ellipse `bounds` | 요소 크기 + `border-radius: 50%` 또는 SVG `ellipse` | `converted` | | `rename` |
-| Line `start`·`end` | SVG `x1`·`y1`·`x2`·`y2` | `stellar-only` | CSS 상자 속성이 아닙니다 | `none` |
-| Line `cap` | `stroke-linecap: butt \| round \| square` | `exact` | | `rename` |
-| Polygon `sides`·`rotation_degrees`·`corner_radius` | — | `stellar-only` | export에서 path로 굽습니다 | `none` |
-| Path command | SVG `d`, CSS `path()` | `converted` | MoveTo·LineTo·CubicTo·Close | `none` |
-| Path `winding` | `fill-rule: nonzero \| evenodd` | `exact` | | `rename` |
-| Image `asset` | export에서 `<img src>` | `stellar-only` | AssetRef 참조 | `none` |
-| Image `size` | `width`, `height` | `converted` | | `rename` |
-| Image `fit` | `object-fit: fill \| contain \| cover \| none` | `exact`, `initial-differs` | 기본값 Contain, CSS initial value `fill`. `scale-down`·`object-position`은 없습니다 | `rename` |
-| Image `crop` | — | `stellar-only` | export는 wrapper + `object-position`·크기로 근사합니다(`approximated`) | `none` |
-| Image `sampling` | `image-rendering: auto \| pixelated` | `approximated` | `auto`가 선형 보간을 보장하지 않습니다 | `rename` |
-| Image `color_space_override` | — | `stellar-only` | export에서 래스터화합니다 | `none` |
+| Line `start`·`end`(0x0307\~0x030a) | SVG `x1`·`y1`·`x2`·`y2` | `stellar-only` | CSS 상자 속성이 아닙니다 | `none` |
+| Line `cap`(0x030b) | `stroke-linecap: butt \| round \| square` | `exact` | | `rename` |
+| Polygon `sides`·`rotation_degrees`·`corner_radius`(0x030c\~0x030e) | — | `stellar-only` | export에서 path로 굽습니다 | `none` |
+| Path command·point(0x0401, 이름 `path-data`) | SVG `d`, CSS `path()` | `converted` | MoveTo·LineTo·CubicTo·Close | `none` |
+| Path `winding`(0x0402) | `fill-rule: nonzero \| evenodd` | `exact` | | `rename` |
+| Image `asset`(0x0601, 이름 `image-asset`) | export에서 `<img src>` | `stellar-only` | AssetRef 참조 | `none` |
+| Image `size`(0x0602·0x0603) | `width`, `height` | `converted` | | `rename` |
+| Image `fit`(0x0604) | `object-fit: fill \| contain \| cover \| none` | `exact`, `initial-differs` | 기본값 Contain, CSS initial value `fill`. `scale-down`·`object-position`은 없습니다 | `rename` |
+| Image `crop`(0x0606, 이름 `image-crop`) | — | `stellar-only` | export는 wrapper + `object-position`·크기로 근사합니다(`approximated`) | `none` |
+| Image `sampling`(0x0605) | `image-rendering: auto \| pixelated` | `approximated` | `auto`가 선형 보간을 보장하지 않습니다 | `rename` |
+| Image `color_space_override`(0x0607, 이름 `image-color-space`) | — | `stellar-only` | export에서 래스터화합니다 | `none` |
 
 ## 7. Text와 Typography
 
@@ -293,7 +296,7 @@ IX.11.12는 저장 bytes의 뜻을 바꾸지 않고 파일 migration을 만들�
 
 | Stellar 속성(`text.rs`) | CSS | 상태 | 차이·비고 | migration |
 |---|---|---|---|---|
-| `content` | 텍스트 내용 | `stellar-only` | UserText. SVG export는 outline path입니다 [계획 XX.3.2] | `none` |
+| `content`(0x0501, 이름 `text-content`) | 텍스트 내용 | `stellar-only` | UserText. SVG export는 outline path입니다 [계획 XX.3.2] | `none` |
 | `TextStyle.fill` | `color` | `exact` | 없으면 상속하는 규칙이 CSS `color` 상속과 같습니다 | `rename` |
 | `TextStyle.features` | `font-feature-settings` | `exact` | | `rename` |
 | `TextStyle.variations` | `font-variation-settings` | `exact` | | `rename` |

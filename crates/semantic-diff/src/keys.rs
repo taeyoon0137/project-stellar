@@ -6,6 +6,10 @@
 //! - Frame `0x01xx`([`frame`]), Image asset `0x0601`([`IMAGE_ASSET`]),
 //!   ComponentInstance `0x0Axx`([`instance`]), Modifier `0x10xx`([`modifier`]).
 //!
+//! Shape·Path·Text·Image 필드 가운데 값 하나를 담는 경로는 문서 registry key(IX.11.3, `payload_metadata`)를
+//! 씁니다. 값 여러 개를 한 경로에 담는 Rectangle size·corner radius, Line 끝점, Ellipse·Polygon bounds, Image
+//! size와 도형 종류 tag는 snapshot 투영(`build.rs`)이 longhand 경로로 나뉠 때까지 전용 key를 유지합니다.
+//!
 //! 문서 crate에 아직 key가 없는 필드는 **semantic snapshot 전용 대역 `0xE0xx`~`0xEFxx`**에
 //! 둡니다. 이 대역은 저장 포맷이 아니라 diff·merge 식별용이며(snapshot은 저장하지 않음),
 //! 문서 crate가 같은 필드의 공식 key를 정하면 그 key로 교체합니다. 문서 crate의 node 종류
@@ -24,6 +28,8 @@ pub use stellar_document::modifier_metadata::keys as modifier;
 
 /// Image asset 참조(문서 crate, VI.8.2).
 pub const IMAGE_ASSET: PropertyKey = stellar_document::image::IMAGE_PROP_ASSET;
+
+use stellar_document::payload_metadata::{image_keys, path_keys, shape_keys, text_keys};
 
 // --- 공통 node·정의 필드 (0xE0xx) ---
 
@@ -95,38 +101,38 @@ pub const ELLIPSE_BOUNDS: PropertyKey = PropertyKey(0xE321);
 pub const LINE_START: PropertyKey = PropertyKey(0xE331);
 /// Line 끝점.
 pub const LINE_END: PropertyKey = PropertyKey(0xE332);
-/// Line cap tag.
-pub const LINE_CAP: PropertyKey = PropertyKey(0xE333);
+/// Line cap tag(문서 key `stroke-linecap`, IX.11.3).
+pub const LINE_CAP: PropertyKey = shape_keys::STROKE_LINECAP;
 /// Polygon bounds.
 pub const POLYGON_BOUNDS: PropertyKey = PropertyKey(0xE341);
-/// Polygon 변 수.
-pub const POLYGON_SIDES: PropertyKey = PropertyKey(0xE342);
-/// Polygon 회전(도).
-pub const POLYGON_ROTATION: PropertyKey = PropertyKey(0xE343);
-/// Polygon corner radius.
-pub const POLYGON_CORNER_RADIUS: PropertyKey = PropertyKey(0xE344);
+/// Polygon 변 수(문서 key `polygon-sides`, IX.11.3).
+pub const POLYGON_SIDES: PropertyKey = shape_keys::POLYGON_SIDES;
+/// Polygon 회전(도, 문서 key `polygon-rotation`).
+pub const POLYGON_ROTATION: PropertyKey = shape_keys::POLYGON_ROTATION;
+/// Polygon corner radius(문서 key `polygon-corner-radius`).
+pub const POLYGON_CORNER_RADIUS: PropertyKey = shape_keys::POLYGON_CORNER_RADIUS;
 
-// --- Path·Text (0xE4xx) ---
+// --- Path·Text (문서 payload 단위 key, IX.11.3) ---
 
-/// Path payload 전체(command·point id, 문서 canonical 인코딩).
-pub const PATH_DATA: PropertyKey = PropertyKey(0xE401);
-/// Text payload 전체(content·paragraph·style run, 문서 canonical 인코딩).
+/// Path payload 전체(command·point id, 문서 canonical 인코딩, 문서 key `path-data`).
+pub const PATH_DATA: PropertyKey = path_keys::PATH_DATA;
+/// Text payload 전체(content·paragraph·style run, 문서 canonical 인코딩, 문서 key `text-content`).
 ///
 /// style run은 content offset을 가리키므로 content와 분리하면 병합이 의미를 깨뜨립니다.
-pub const TEXT_PAYLOAD: PropertyKey = PropertyKey(0xE402);
+pub const TEXT_PAYLOAD: PropertyKey = text_keys::TEXT_CONTENT;
 
 // --- Image (0xE6xx, asset 참조는 문서 key 0x0601) ---
 
 /// Image 상자 크기.
 pub const IMAGE_SIZE: PropertyKey = PropertyKey(0xE601);
-/// Image fit tag.
-pub const IMAGE_FIT: PropertyKey = PropertyKey(0xE602);
-/// Image crop `(x, y, width, height)`.
-pub const IMAGE_CROP: PropertyKey = PropertyKey(0xE603);
-/// Image sampling tag.
-pub const IMAGE_SAMPLING: PropertyKey = PropertyKey(0xE604);
-/// Image 색공간 override tag.
-pub const IMAGE_COLOR_SPACE: PropertyKey = PropertyKey(0xE605);
+/// Image fit tag(문서 key `object-fit`, IX.11.3).
+pub const IMAGE_FIT: PropertyKey = image_keys::OBJECT_FIT;
+/// Image crop `(x, y, width, height)`(문서 key `image-crop`).
+pub const IMAGE_CROP: PropertyKey = image_keys::IMAGE_CROP;
+/// Image sampling tag(문서 key `image-rendering`).
+pub const IMAGE_SAMPLING: PropertyKey = image_keys::IMAGE_RENDERING;
+/// Image 색공간 override tag(문서 key `image-color-space`).
+pub const IMAGE_COLOR_SPACE: PropertyKey = image_keys::IMAGE_COLOR_SPACE;
 
 // --- Component 정의·Slot (0xE7xx) ---
 
@@ -311,19 +317,56 @@ mod tests {
 
     #[test]
     fn snapshot_only_keys_stay_in_reserved_band() {
-        // 문서 crate key(0x01xx·0x06xx·0x0Axx·0x10xx)를 제외한 전용 key는 0xE0xx~0xEFxx.
+        // 전용 대역(0xE0xx~0xEFxx) 밖의 key는 문서 crate가 정한 key여야 합니다(registry 또는 instance key).
         for (name, key) in all_keys() {
-            let reused = name.starts_with("frame.")
-                || name.starts_with("instance.")
-                || name.starts_with("modifier.")
-                || name == "image.asset";
-            if !reused {
-                assert!(
-                    (0xE000..=0xEFFF).contains(&key.0),
-                    "{name}=0x{:04X}가 전용 대역 밖입니다",
-                    key.0
-                );
+            if (0xE000..=0xEFFF).contains(&key.0) {
+                continue;
             }
+            let documented = stellar_document::css::registry::display_label(key).is_some()
+                || name.starts_with("instance.");
+            assert!(
+                documented,
+                "{name}=0x{:04X}가 전용 대역 밖인데 문서 key가 아닙니다",
+                key.0
+            );
+        }
+    }
+
+    #[test]
+    fn shape_path_text_image_fields_with_a_document_key_do_not_use_snapshot_only_keys() {
+        // 검증 기준(IX.11.3): 문서 key가 생긴 필드의 snapshot 전용 key 사용 0. 남은 0xE3xx·0xE6xx는 값 여러
+        // 개를 한 경로에 담는 투영(build.rs 소유 범위가 longhand 경로로 나눌 때 교체)과 도형 종류 tag뿐입니다.
+        let remaining: Vec<&str> = all_keys()
+            .into_iter()
+            .filter(|(_, key)| (0xE300..=0xE6FF).contains(&key.0))
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(
+            remaining,
+            [
+                "shape.kind",
+                "rect.size",
+                "rect.corner_radius",
+                "ellipse.bounds",
+                "line.start",
+                "line.end",
+                "polygon.bounds",
+                "image.size",
+            ]
+        );
+        for key in [
+            LINE_CAP,
+            POLYGON_SIDES,
+            POLYGON_ROTATION,
+            POLYGON_CORNER_RADIUS,
+            PATH_DATA,
+            TEXT_PAYLOAD,
+            IMAGE_FIT,
+            IMAGE_CROP,
+            IMAGE_SAMPLING,
+            IMAGE_COLOR_SPACE,
+        ] {
+            assert!(display_name(key).is_some(), "0x{:04x}", key.0);
         }
     }
 

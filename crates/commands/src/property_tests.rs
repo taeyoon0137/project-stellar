@@ -263,3 +263,89 @@ mod key_split {
         assert!(!keys.contains(&frame_keys::CORNER_RADIUS));
     }
 }
+
+/// registry 일관성(IX.11.3): command 공통 key와 문서 registry, 속성 패널 행 문법과 registry 문법.
+mod registry_consistency {
+    use stellar_document::css::grammar::CssGrammar;
+    use stellar_document::css::registry::{entries, PropertyScope};
+    use stellar_document::payload_metadata::node_keys as document_node_keys;
+
+    use crate::change::node_keys;
+    use crate::inspector::{InspectorProperty, NodeClass};
+
+    #[test]
+    fn common_node_keys_match_the_document_registry() {
+        assert_eq!(node_keys::VISIBLE, document_node_keys::VISIBLE);
+        assert_eq!(node_keys::LOCKED, document_node_keys::LOCKED);
+        assert_eq!(node_keys::DISPLAY_NAME, document_node_keys::DISPLAY_NAME);
+    }
+
+    #[test]
+    fn inspector_rows_with_one_registry_key_use_the_registry_name_and_grammar() {
+        let scope_of = |class: NodeClass| match class {
+            NodeClass::Frame => Some(PropertyScope::Frame),
+            NodeClass::Rectangle | NodeClass::Ellipse | NodeClass::Line | NodeClass::Polygon => {
+                Some(PropertyScope::Shape)
+            }
+            NodeClass::Image => Some(PropertyScope::Image),
+            _ => None,
+        };
+        let classes = [
+            NodeClass::Frame,
+            NodeClass::Rectangle,
+            NodeClass::Ellipse,
+            NodeClass::Line,
+            NodeClass::Polygon,
+            NodeClass::Image,
+        ];
+        let mut checked = 0;
+        for property in InspectorProperty::all() {
+            // 위치(transform 이동 성분), 칠하기·선 색(없음을 none으로 다루는 행), 묶음 행은 registry key 하나와
+            // 1:1이 아닙니다.
+            if matches!(
+                property,
+                InspectorProperty::Left
+                    | InspectorProperty::Top
+                    | InspectorProperty::Fill
+                    | InspectorProperty::Stroke
+                    | InspectorProperty::Color
+                    | InspectorProperty::BorderRadius
+            ) {
+                continue;
+            }
+            for class in classes {
+                if !property.applies(class) {
+                    continue;
+                }
+                let key = property.key(class);
+                let scopes = [
+                    scope_of(class),
+                    Some(PropertyScope::Node),
+                    Some(PropertyScope::Modifier),
+                ];
+                let Some(entry) = entries()
+                    .into_iter()
+                    .find(|e| e.key == key && scopes.contains(&Some(e.scope)))
+                else {
+                    panic!(
+                        "{} {class:?}: registry에 key 0x{:04x} 없음",
+                        property.name(),
+                        key.0
+                    );
+                };
+                let row = property.grammar();
+                if entry.name == "clipping" {
+                    // Frame clipping은 행에서 overflow keyword로 고르고 registry는 변형 규칙으로 냅니다.
+                    assert_eq!(property.name(), "overflow");
+                    assert!(matches!(row, CssGrammar::Keyword(_)));
+                } else {
+                    assert_eq!(entry.name, property.name(), "{class:?}");
+                    let registry = entry.css.grammar.expect("행이 있는 속성은 값 문법이 있음");
+                    assert_eq!(row, registry, "{} {class:?}", property.name());
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked >= 20, "확인한 행 {checked}");
+    }
+}
