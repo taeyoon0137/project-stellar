@@ -12,6 +12,7 @@ use super::fixture::{
     Mesh, Op, PathBuilder, SceneBlendMode, StrokeCap,
 };
 use super::gradient::GradientStop;
+use super::raster::render_reference;
 use crate::color::ColorSpace;
 use crate::output_color::OutputColor;
 use crate::placeholder::{placeholder_texture, PlaceholderKind, TextureFilter, TextureWrap};
@@ -241,8 +242,8 @@ pub fn gradient_fixtures() -> Vec<Fixture> {
         "gradient-p3-on-p3-surface",
         Category::P3,
         vec![horizontal(vec![
-            stop(0.0, p3(1.0, 0.0, 0.0, 1.0)),
-            stop(1.0, p3(0.0, 1.0, 0.0, 1.0)),
+            stop(0.0, p3(0.9, 0.25, 0.15, 1.0)),
+            stop(1.0, p3(0.2, 0.75, 0.3, 1.0)),
         ])],
     )
     .feature(Feature::DisplayP3);
@@ -253,8 +254,8 @@ pub fn gradient_fixtures() -> Vec<Fixture> {
         "gradient-p3-on-srgb-surface",
         Category::P3,
         vec![horizontal(vec![
-            stop(0.0, p3(1.0, 0.0, 0.0, 1.0)),
-            stop(1.0, p3(0.0, 1.0, 0.0, 1.0)),
+            stop(0.0, p3(0.9, 0.25, 0.15, 1.0)),
+            stop(1.0, p3(0.2, 0.75, 0.3, 1.0)),
         ])],
     )
     .feature(Feature::DisplayP3);
@@ -1396,8 +1397,9 @@ pub fn image_fixtures() -> Vec<Fixture> {
     let p3_image = checker_image(
         8,
         8,
-        [255, 0, 0, 255],
-        [0, 255, 0, 255],
+        // 원색이 아닌 값: P3 surface와 sRGB surface의 저장 byte가 달라야 변환 누락을 잡습니다.
+        [230, 60, 40, 255],
+        [40, 200, 80, 255],
         ColorSpace::DisplayP3,
     );
     let mut on_srgb = i(
@@ -1452,7 +1454,8 @@ pub fn p3_fixtures() -> Vec<Fixture> {
         p3(1.0, 0.0, 0.0, 1.0),
         p3(0.0, 1.0, 0.0, 1.0),
         p3(0.0, 0.0, 1.0, 1.0),
-        p3(1.0, 1.0, 0.0, 1.0),
+        // 원색이 아닌 gamut 밖 색: 원색은 sRGB로 잘라도 같은 byte라 P3 surface와 fallback을 구별하지 못합니다.
+        p3(0.85, 0.35, 0.15, 1.0),
     ];
     let mut out = vec![
         pr("p3-saturated-on-p3-surface", true, swatches(saturated)),
@@ -1513,7 +1516,17 @@ pub fn p3_fixtures() -> Vec<Fixture> {
         )
         .feature(Feature::StrokeUnion),
     ];
-    let mut linear = pr("p3-linear-target", true, swatches(saturated));
+    // 중간 밝기 값: 0·1 채널만 있으면 선형 저장과 transfer encode 저장이 같은 byte라 target encode를 검사하지 못합니다.
+    let mut linear = pr(
+        "p3-linear-target",
+        true,
+        swatches([
+            p3(0.5, 0.5, 0.5, 1.0),
+            p3(0.8, 0.3, 0.2, 1.0),
+            p3(0.2, 0.6, 0.9, 1.0),
+            p3(0.1, 0.1, 0.1, 1.0),
+        ]),
+    );
     linear.format = crate::render_graph::TextureFormat::Rgba8Unorm;
     out.push(linear);
     out[5].tolerance = "blend";
@@ -1573,7 +1586,19 @@ pub const ALL_FEATURES: [Feature; 14] = [
     Feature::Blur,
 ];
 
-/// inventory를 검사합니다: 전체 수·분류별 최소 수, 모든 기능 포함, 이름 유일, fixture 계약, 허용 오차 class 존재.
+/// CPU 기준 image가 그리기 없는 같은 fixture(clear만)와 같으면 참입니다. 이런 fixture는 backend가 아무것도 그리지 않아도
+/// 통과하므로 검사가 아닙니다.
+fn draws_nothing(fixture: &Fixture) -> bool {
+    let mut blank = fixture.clone();
+    blank.ops.clear();
+    match (render_reference(fixture), render_reference(&blank)) {
+        (Ok(image), Ok(clear)) => image == clear,
+        _ => false,
+    }
+}
+
+/// inventory를 검사합니다: 전체 수·분류별 최소 수, 모든 기능 포함, 이름 유일, fixture 계약, 그리기 결과가 clear와 다름,
+/// 허용 오차 class 존재.
 pub fn check_inventory(fixtures: &[Fixture], tolerances: &ToleranceConfig) -> InventoryReport {
     let mut problems = Vec::new();
     let mut names = std::collections::BTreeSet::new();
@@ -1591,6 +1616,11 @@ pub fn check_inventory(fixtures: &[Fixture], tolerances: &ToleranceConfig) -> In
         }
         if let Err(error) = fixture.validate() {
             problems.push(format!("{}: {error:?}", fixture.name));
+        } else if draws_nothing(fixture) {
+            problems.push(format!(
+                "{}: CPU 기준이 clear만 칠한 image와 같음(검사하는 그리기 없음)",
+                fixture.name
+            ));
         }
         if tolerances.get(fixture.tolerance).is_none() {
             problems.push(format!(
@@ -1644,7 +1674,6 @@ mod tests {
     use super::*;
     use crate::blend::composite;
     use crate::color::{decode_pixel, to_working};
-    use crate::effects::raster::render_reference;
 
     #[test]
     fn blend_reference_pixels_follow_blend_formula() {
@@ -1695,12 +1724,58 @@ mod tests {
             assert!(*count >= MIN_PER_CATEGORY, "{category:?} {count}");
         }
         assert!(report.per_feature.iter().all(|(_, count)| *count > 0));
-        // 모든 fixture의 CPU 기준을 만들 수 있습니다.
+        // 모든 fixture의 CPU 기준을 만들 수 있고, 결과 image가 같은 fixture 쌍은 의도한 것뿐입니다(같은 결과면 둘 중
+        // 하나는 다른 것을 검사하지 않음).
+        let mut seen = std::collections::BTreeMap::new();
+        let mut duplicates = Vec::new();
         for fixture in &fixtures {
             let image =
                 render_reference(fixture).unwrap_or_else(|e| panic!("{}: {e:?}", fixture.name));
             assert!(image.is_well_formed());
+            let key = (image.width, image.height, image.pixels);
+            if let Some(previous) = seen.insert(key, fixture.name.clone()) {
+                duplicates.push((previous, fixture.name.clone()));
+            }
         }
+        // scissor가 layer 밖이면 그리지 않고 opacity 0도 그리지 않습니다: 둘 다 backdrop만 남는 것이 기대 결과입니다.
+        assert_eq!(
+            duplicates,
+            vec![("opacity-zero".to_owned(), "clip-scissor-outside".to_owned())]
+        );
+    }
+
+    #[test]
+    fn p3_surface_and_srgb_fallback_fixtures_store_different_bytes() {
+        // P3 surface는 P3 값을, fallback은 sRGB로 바꾼 값을 저장해야 합니다. 같은 byte면 변환을 빠뜨려도 통과합니다.
+        let fixtures = inventory();
+        let image = |name: &str| {
+            let fixture = fixtures
+                .iter()
+                .find(|f| f.name == name)
+                .unwrap_or_else(|| panic!("{name}"));
+            render_reference(fixture).unwrap()
+        };
+        for (on_p3, fallback) in [
+            (
+                "p3-saturated-on-p3-surface",
+                "p3-saturated-on-srgb-fallback",
+            ),
+            ("image-p3-on-p3-surface", "image-p3-on-srgb-surface"),
+            ("gradient-p3-on-p3-surface", "gradient-p3-on-srgb-surface"),
+        ] {
+            assert_ne!(image(on_p3), image(fallback), "{on_p3} vs {fallback}");
+        }
+        // 선형 target은 transfer encode target과 다른 byte를 저장합니다.
+        let mut encoded = fixtures
+            .iter()
+            .find(|f| f.name == "p3-linear-target")
+            .unwrap()
+            .clone();
+        encoded.format = crate::render_graph::TextureFormat::Rgba8UnormSrgb;
+        assert_ne!(
+            image("p3-linear-target"),
+            render_reference(&encoded).unwrap()
+        );
     }
 
     #[test]
