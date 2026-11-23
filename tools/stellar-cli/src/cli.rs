@@ -95,6 +95,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "text-source",
         "export <프로젝트> <새 파일> | check <파일>: 단일 View 텍스트 원본을 opt-in으로 내보내거나 읽기 전용 검사합니다",
     ),
+    (
+        "diagnostics",
+        "preview | export --output <파일> | scan <파일> [--data-dir <디렉터리>] [--project <경로>]...: 로컬 진단 store의 전송 예정 bytes를 보여 주고, 같은 bytes를 진단 번들로 내보내고, 파일의 수집 금지 정보를 검사합니다(네트워크 전송 없음, 탐지가 있으면 종료 코드 1)",
+    ),
     ("merge-driver", "<%O> <%A> <%B> <%P> | install <프로젝트> | resolve <프로젝트> [--resolve <번호>=<action>]... [--apply]: Git merge driver로 컴포넌트 원본을 semantic merge합니다(conflict가 있으면 %A를 바꾸지 않고 nonzero). install은 신뢰한 프로젝트의 저장소 로컬 config와 .gitattributes에만 등록하고, resolve는 unmerged 경로의 semantic conflict와 해결 결과를 보여 주고 --apply면 검증한 결과를 쓰고 git add합니다(continue·commit은 하지 않음)"),
 ];
 
@@ -221,6 +225,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("git", crate::git::run(rest))
     } else if command == "text-source" {
         ("text-source", crate::text_source::run(rest))
+    } else if command == "diagnostics" {
+        ("diagnostics", crate::diagnostics::run(rest))
     } else if command == "merge-driver" {
         ("merge-driver", crate::merge_driver::run(rest))
     } else {

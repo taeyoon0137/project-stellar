@@ -398,6 +398,9 @@ pub const RECORD_SCHEMAS: [&RecordSchema; 4] = [
 /// store 파일 첫 줄.
 pub const STORE_HEADER: &str = "stellar.diagnostic-store v1";
 
+/// 진단 디렉터리 이름(운영체제 사용자 데이터의 앱 디렉터리 `xyz.taeyoon.stellar` 아래).
+pub const DIAGNOSTICS_DIR: &str = "diagnostics";
+
 /// store 파일 이름(운영체제 사용자 데이터의 진단 디렉터리 아래).
 pub const STORE_FILE: &str = "store.stldiag";
 

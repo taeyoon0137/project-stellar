@@ -12,8 +12,18 @@
 //! ```
 //!
 //! 줄 codec과 record schema는 store와 같은 것을 씁니다. `end` 줄의 `records`는 `meta`를 뺀 record 줄 수입니다.
+//!
+//! # 전송 전 preview와 수동 내보내기 (XVI.8.4)
+//!
+//! [`preview_payload`]가 store로 번들 bytes를 만들고 금지 필드 scanner로 검사합니다. 탐지가 있으면 거부합니다.
+//! 통과한 bytes는 [`PayloadPreview`]에 담기고, 이 타입은 이 module만 만들 수 있습니다. 사용자에게 보여 주는 bytes,
+//! 수동 내보내기 파일([`export_bundle`]), 전송 대기열([`crate::consent_gate`])이 보내는 bytes가 모두 이 값 하나입니다.
 
+use std::fmt;
+use std::io::{self, Write as _};
 use std::path::Path;
+
+use crate::scanner::{scan_bundle, ScanContext, ScanReport};
 
 use crate::store::{
     checked_text, decode_line, encode_line, strip_final_newline, Arch, DiagnosticStore, FieldSpec,
@@ -188,6 +198,110 @@ pub fn decode_bundle(bytes: &[u8]) -> Result<(BundleEnvironment, DiagnosticStore
     Ok((environment, store))
 }
 
+/// 검사를 통과한 전송·내보내기 payload. [`preview_payload`]만 만들 수 있습니다.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PayloadPreview {
+    bytes: Vec<u8>,
+    records: usize,
+}
+
+impl fmt::Debug for PayloadPreview {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PayloadPreview")
+            .field("bytes", &self.bytes.len())
+            .field("records", &self.records)
+            .finish()
+    }
+}
+
+impl PayloadPreview {
+    /// 사용자에게 보여 주고 그대로 보내거나 내보낼 bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// UTF-8 text. scanner를 통과한 번들은 ASCII입니다.
+    pub fn text(&self) -> &str {
+        std::str::from_utf8(&self.bytes).unwrap_or_default()
+    }
+
+    /// bytes 길이.
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// 비어 있는지(번들은 머리 줄이 있어 비지 않습니다).
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// `meta`를 뺀 record 수.
+    pub fn records(&self) -> usize {
+        self.records
+    }
+}
+
+/// 금지 정보가 있어 preview를 거부했습니다. 탐지에는 찾은 문자열이 없습니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewRejected {
+    /// scanner 결과.
+    pub report: ScanReport,
+}
+
+impl fmt::Display for PreviewRejected {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "진단 번들에 수집 금지 정보가 있어 거부했습니다({}건)",
+            self.report.findings.len()
+        )
+    }
+}
+
+impl std::error::Error for PreviewRejected {}
+
+/// 전송·내보내기 전 payload를 만듭니다. `context`는 앱이 아는 금지 값입니다(열린 프로젝트 이름·경로 등).
+///
+/// store record에는 문자열 field가 없어 정상 store는 언제나 통과합니다. 검사는 형식이 바뀌거나 코드가 잘못돼
+/// 금지 정보가 섞이는 경우를 막는 두 번째 방어선입니다.
+pub fn preview_payload(
+    environment: &BundleEnvironment,
+    store: &DiagnosticStore,
+    context: &ScanContext,
+) -> Result<PayloadPreview, PreviewRejected> {
+    let bytes = encode_bundle(environment, store);
+    let report = scan_bundle(&bytes, context);
+    if !report.is_clean() {
+        return Err(PreviewRejected { report });
+    }
+    Ok(PayloadPreview {
+        bytes,
+        records: store.len(),
+    })
+}
+
+/// 수동 내보내기: preview bytes를 새 파일에 소유자 전용 권한으로 씁니다. 이미 있는 파일은 덮어쓰지 않습니다.
+///
+/// 사용자가 직접 하는 로컬 쓰기라 동의 상태와 무관합니다.
+pub fn export_bundle(preview: &PayloadPreview, path: &Path) -> io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    let result = file
+        .write_all(preview.bytes())
+        .and_then(|()| file.sync_all());
+    if result.is_err() {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+    }
+    result
+}
+
 /// 번들 파일을 읽습니다.
 pub fn read_bundle(path: &Path) -> Result<(BundleEnvironment, DiagnosticStore), StoreError> {
     decode_bundle(&crate::store::read_limited(path)?)
@@ -256,6 +370,38 @@ mod tests {
         ] {
             assert!(decode_bundle(bad.as_bytes()).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn preview_is_scanned_and_export_writes_the_same_bytes() {
+        let preview = preview_payload(&environment(), &store(), &ScanContext::new()).unwrap();
+        assert_eq!(
+            preview.bytes(),
+            encode_bundle(&environment(), &store()).as_slice()
+        );
+        assert_eq!(preview.records(), 2);
+        assert_eq!(preview.text().as_bytes(), preview.bytes());
+        assert!(!format!("{preview:?}").contains("crash"));
+        let dir = std::env::temp_dir().join(format!("stellar-bundle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bundle.stldiag");
+        export_bundle(&preview, &path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), preview.bytes());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // 이미 있는 파일은 덮어쓰지 않습니다.
+        assert_eq!(
+            export_bundle(&preview, &path).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), preview.bytes());
+        assert_eq!(read_bundle(&path).unwrap().1.records(), store().records());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

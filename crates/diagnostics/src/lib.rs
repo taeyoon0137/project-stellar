@@ -33,6 +33,9 @@ pub mod scanner;
 /// 텔레메트리 동의 상태 NotAsked·Declined·Granted (XVI.8.3, ADR-0109).
 pub mod consent;
 
+/// 동의에 묶인 전송 대기열과 철회 (XVI.8.4, XVI.8.5, ADR-0109).
+pub mod consent_gate;
+
 /// 상호작용 성능 예산 reader (XVI.4.1).
 pub mod budget;
 

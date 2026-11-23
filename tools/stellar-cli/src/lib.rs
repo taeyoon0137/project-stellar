@@ -57,5 +57,8 @@ pub mod css;
 /// `style-defaults`: 기본값 세트 목록·값 표·선택과 값 출처 (SD.5·SD.6, ADR-0086).
 pub mod style_defaults;
 
+/// `diagnostics`: 로컬 진단 preview·수동 번들 내보내기·금지 필드 검사·동의 (XVI.8, ADR-0109).
+pub mod diagnostics;
+
 mod component_source;
 mod merge_driver;
