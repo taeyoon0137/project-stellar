@@ -49,3 +49,4 @@ pub mod web_frame;
 pub mod css;
 
 mod component_source;
+mod merge_driver;

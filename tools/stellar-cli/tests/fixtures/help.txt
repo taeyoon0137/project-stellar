@@ -20,6 +20,7 @@ stellar — Project Stellar headless 도구
     component-source  create <폴더> <이름> <id> <root-id> | check <폴더> | resize <파일> <원본 hash> <너비> <높이> | set-fill <파일> <원본 hash> <none 또는 색 공간과 RGBA> | add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>: 컴포넌트별 Free Frame 트리
     git               status <경로> [--cursor <c>] [--limit <n>] | stage|unstage <경로> <대상>... [--with <대상>]... | commit <경로> -m <메시지>: 신뢰한 프로젝트의 의미 단위 Git 상태·stage·commit(push 없음, 필수 동반 변경은 자동 포함하지 않음)
     text-source       export <프로젝트> <새 파일> | check <파일>: 단일 View 텍스트 원본을 opt-in으로 내보내거나 읽기 전용 검사합니다
+    merge-driver      <%O> <%A> <%B> <%P> | install <프로젝트> | resolve <프로젝트> [--resolve <번호>=<action>]... [--apply]: Git merge driver로 컴포넌트 원본을 semantic merge합니다(conflict가 있으면 %A를 바꾸지 않고 nonzero). install은 신뢰한 프로젝트의 저장소 로컬 config와 .gitattributes에만 등록하고, resolve는 unmerged 경로의 semantic conflict와 해결 결과를 보여 주고 --apply면 검증한 결과를 쓰고 git add합니다(continue·commit은 하지 않음)
 
 query 대상:
     project

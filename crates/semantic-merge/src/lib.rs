@@ -9,3 +9,9 @@ pub mod model;
 
 /// 3-way merge 엔진 (XIV.10.2~).
 pub mod merge;
+
+/// 독립 CandidateSnapshot C와 해결 모델 (XXIII.2, XIV.12).
+pub mod candidate;
+
+/// Semantic Diff/Merge conformance corpus runner (XXVIII.2.3).
+pub mod conformance;

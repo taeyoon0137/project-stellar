@@ -192,5 +192,94 @@ pub fn serialize_candidate(
     Ok(files)
 }
 
+/// 검증한 병합 candidate(XXIII.2.4)의 문서를 ours 세대 위의 다음 generation 파일로 직렬화합니다(XIV.12.4,
+/// ADR-0081 결정 6).
+///
+/// 기존 save API 경로(문서 역투영 → `serialize_records` → `build_save_plan` → envelope)를 그대로 씁니다. 결과는
+/// 프로젝트 상대 경로와 bytes이며(chunk·manifest·`design/current`), 파일을 쓰지 않습니다. 병합 문서 집합이 ours와
+/// 다르면(문서 추가·삭제) Unsupported입니다. 직렬화할 레코드를 다시 snapshot으로 올린 값이 candidate와 다르면
+/// 무손실이 아니므로 거부합니다.
+pub fn serialize_merged_generation(
+    ours: &SavedProject,
+    validated: stellar_semantic_merge::candidate::ValidatedCandidate<'_>,
+) -> Result<BTreeMap<PathBuf, Vec<u8>>, CandidateStorageError> {
+    let merged = validated.snapshot();
+    let ours_documents = records(ours)?;
+    let ids = stellar_semantic_diff::records::documents(merged);
+    if ids != ours_documents.keys().copied().collect::<Vec<_>>() {
+        return Err(CandidateStorageError::Unsupported("문서 추가·삭제 병합"));
+    }
+    let mut documents = BTreeMap::new();
+    for id in ids {
+        documents.insert(id, document_records(merged, id).map_err(invalid)?.records);
+    }
+    let actual = snapshot_of(&documents.values().collect::<Vec<_>>()).map_err(invalid)?;
+    if &actual != merged {
+        return Err(CandidateStorageError::Unsupported(
+            "문서 레코드 밖 semantic 데이터",
+        ));
+    }
+    let manifest = ours.generation.manifest();
+    if manifest.generation == u64::MAX {
+        return Err(CandidateStorageError::Unsupported("generation 번호 소진"));
+    }
+    let (_, manifest_hash) = manifest.encode_with_hash().map_err(invalid)?;
+    let base = LoadedGeneration {
+        manifest_hash,
+        manifest: manifest.clone(),
+    };
+    let mut states = Vec::new();
+    for record in documents.values() {
+        states.extend(
+            serialize_records(record)
+                .map_err(invalid)?
+                .to_dirty_states(),
+        );
+    }
+    let plan = build_save_plan(
+        Some(&base),
+        ours.project_id,
+        manifest.schema_version,
+        &states,
+        manifest.root_document_ids.clone(),
+    )
+    .map_err(invalid)?;
+    let mut files = BTreeMap::new();
+    for chunk in plan.dirty_chunks {
+        let envelope = ChunkEnvelope::for_payload(chunk.kind, &chunk.payload);
+        let mut bytes = envelope.encode().map_err(invalid)?;
+        bytes.extend_from_slice(&chunk.payload);
+        files.insert(
+            ChunkObjectPath::for_hash(&envelope.payload_hash).to_relative_path(),
+            bytes,
+        );
+    }
+    let (bytes, hash) = plan.manifest.encode_with_hash().map_err(invalid)?;
+    files.insert(manifest_path(Path::new(""), &hash), bytes);
+    files.insert(
+        PathBuf::from("design/current"),
+        format!("{hash}\n").into_bytes(),
+    );
+    Ok(files)
+}
+
+/// 컴포넌트 원본 파일 하나의 bytes ↔ semantic snapshot (XXIV.2.1, ADR-0081).
+pub mod component_file;
+
+/// 텍스트 의미 파일 하나의 3-way semantic merge (XXIV.2.1·XXIV.2.2, ADR-0081).
+pub mod file_merge;
+
+/// Semantic Merge 해결·등록이 쓰는 Git 접근 포트 (ADR-0081 결정 7).
+pub mod git_port;
+
+/// merge driver 저장소 로컬 등록 (XXIV.2.3, ADR-0081).
+pub mod install;
+
+/// Git conflict 세션: unmerged 세 stage → Semantic Merge, raw 경로 ↔ 객체 대응 (XIV.11.3, ADR-0081).
+pub mod session;
+
+/// 검증한 해결 결과의 WorkingTree 쓰기와 resolved 처리 (XIV.12.4~XIV.12.6, ADR-0081).
+pub mod apply;
+
 #[cfg(test)]
 mod tests;

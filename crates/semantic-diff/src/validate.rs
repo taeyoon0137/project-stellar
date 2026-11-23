@@ -155,8 +155,10 @@ fn id(object: &SemanticObject, key: PropertyKey) -> Option<StableId> {
     }
 }
 
-/// override 경로 segment의 마지막 부분(Property·Slot id).
-fn override_member(path: &PropertyPath) -> Option<(bool, StableId)> {
+/// override 경로 segment의 마지막 부분(Property·Slot id)과 nested 여부(경로에 `/`가 있음).
+///
+/// semantic-merge의 interface member 삭제 대 사용 분류(XIV.10.7)도 같은 해석을 씁니다.
+pub fn override_member(path: &PropertyPath) -> Option<(bool, StableId)> {
     let Some(PathSegment::Key(text)) = path.tail() else {
         return None;
     };
