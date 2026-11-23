@@ -8,6 +8,7 @@
 use std::fmt;
 
 use stellar_core_types::ids::StableId;
+use stellar_document::context::set::ContextSet;
 use stellar_document::model::{DocumentModel, ModelError};
 use stellar_document::record_codec::PartitionError;
 use stellar_document::records::DocumentRecords;
@@ -46,6 +47,8 @@ pub struct SerializedDocument {
     pub view_trees: Vec<SerializedChunk>,
     /// subtree 내용 chunk(View 정의 순서, View 안에서는 subtree 순서).
     pub subtrees: Vec<SerializedChunk>,
+    /// Component Context `context-set` chunk(XXX.7, ADR-0099 결정 2). 문서에 Context가 없으면 `None`.
+    pub context: Option<SerializedChunk>,
 }
 
 impl SerializedDocument {
@@ -54,6 +57,7 @@ impl SerializedDocument {
         std::iter::once(&self.manifest)
             .chain(self.view_trees.iter())
             .chain(self.subtrees.iter())
+            .chain(self.context.iter())
             .collect()
     }
 
@@ -114,6 +118,8 @@ enum ChunkFamily {
     ViewTree = 2,
     /// subtree 내용.
     Subtree = 3,
+    /// Component Context `context-set`(XXX.7).
+    Context = 4,
 }
 
 /// `SHA-256(domain ‖ family ‖ 문서 id ‖ 객체 id)`의 앞 16바이트를 RFC 9562 UUIDv8(사용자
@@ -154,6 +160,15 @@ pub fn subtree_chunk_id(document: StableId, root_node: StableId) -> ChunkId {
     derive_chunk_id(ChunkFamily::Subtree, document, root_node)
 }
 
+/// `context-set` chunk의 논리 id(Context 계열, 문서 StableId에서 유도).
+pub fn context_chunk_id(document: StableId) -> ChunkId {
+    derive_chunk_id(ChunkFamily::Context, document, document)
+}
+
+/// `context-set` chunk kind(IX.12.1 예약 `0x8000_0007`, required).
+pub const KIND_CONTEXT_SET: ChunkKindCode =
+    ChunkKindCode(stellar_core_types::reserved::context::CHUNK_KIND_CONTEXT_SET);
+
 fn chunk(chunk_id: ChunkId, kind: ChunkKindCode, payload: Vec<u8>) -> SerializedChunk {
     SerializedChunk {
         chunk_id,
@@ -164,13 +179,23 @@ fn chunk(chunk_id: ChunkId, kind: ChunkKindCode, payload: Vec<u8>) -> Serialized
 }
 
 /// 런타임 문서 모델을 chunk model로 직렬화합니다.
+///
+/// 모델의 Component Context(살아 있는 provider의 것만, [`ContextSet::live`])가 비어 있지 않으면 `context-set` chunk를 더합니다.
 pub fn serialize_document(model: &DocumentModel) -> Result<SerializedDocument, SerializeError> {
     let records = model.to_records().map_err(SerializeError::Model)?;
-    serialize_records(&records)
+    serialize_records_with_context(&records, &model.context().live(model))
 }
 
-/// 영속 레코드를 검증한 뒤 chunk model로 직렬화합니다.
+/// 영속 레코드를 검증한 뒤 chunk model로 직렬화합니다(Context 없음).
 pub fn serialize_records(records: &DocumentRecords) -> Result<SerializedDocument, SerializeError> {
+    serialize_records_with_context(records, &ContextSet::new())
+}
+
+/// 영속 레코드와 문서 Context를 chunk model로 직렬화합니다. Context가 비면 [`serialize_records`]와 같은 bytes입니다.
+pub fn serialize_records_with_context(
+    records: &DocumentRecords,
+    context: &ContextSet,
+) -> Result<SerializedDocument, SerializeError> {
     validate_document(records).map_err(SerializeError::Invalid)?;
     let document_id = records.definition.id;
     let mut view_trees = Vec::new();
@@ -197,9 +222,17 @@ pub fn serialize_records(records: &DocumentRecords) -> Result<SerializedDocument
             chunk: tree_id,
         });
     }
+    let context_chunk = (!context.is_empty()).then(|| {
+        chunk(
+            context_chunk_id(document_id),
+            KIND_CONTEXT_SET,
+            context.encode(),
+        )
+    });
     let manifest = DocumentManifestChunk {
         definition: records.definition.clone(),
         view_trees: refs,
+        context: context_chunk.as_ref().map(|c| c.chunk_id),
     };
     let version = manifest.schema_version();
     let mut manifest = chunk(
@@ -213,5 +246,6 @@ pub fn serialize_records(records: &DocumentRecords) -> Result<SerializedDocument
         manifest,
         view_trees,
         subtrees,
+        context: context_chunk,
     })
 }

@@ -111,5 +111,9 @@ pub mod motion;
 /// 노드 기반 프로토타이핑의 문서 쪽 정의 (XXX.1.2~XXX.1.5, ADR-0094).
 pub mod prototype;
 
+/// 표현식 AST·타입(Context 값 식, XXX.7). crate 정책상 expressions에 직접 의존하지 않는 하위 crate(project 등)가 Context
+/// 원본을 읽고 쓸 때 같은 타입을 이름 붙이도록 재수출합니다.
+pub use stellar_expressions as expressions;
+
 /// Component Context: `ContextKey`·provision·requirement·Slot 공개 목록, 해석·진단 (XXX.7, ADR-0025 결정 3, ADR-0099).
 pub mod context;

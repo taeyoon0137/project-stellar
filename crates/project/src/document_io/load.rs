@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use stellar_core_types::ids::StableId;
+use stellar_document::context::set::{ContextSet, ContextSetError};
 use stellar_document::model::{DocumentModel, LoadModelError};
 use stellar_document::record_codec::{RecordCodecError, SubtreeRecords};
 use stellar_document::records::DocumentRecords;
@@ -144,6 +145,13 @@ pub enum LoadDocumentError {
     },
     /// 합친 레코드가 문서 불변식을 위반하거나 모델을 만들지 못했습니다.
     Model(LoadModelError),
+    /// `context-set` chunk payload 오류(XXX.7).
+    Context {
+        /// chunk.
+        chunk: ChunkId,
+        /// 원인.
+        error: ContextSetError,
+    },
 }
 
 impl fmt::Display for LoadDocumentError {
@@ -175,6 +183,9 @@ impl fmt::Display for LoadDocumentError {
                 "subtree chunk {chunk}: root {found}가 ViewTree의 {expected}와 다릅니다"
             ),
             LoadDocumentError::Model(e) => write!(f, "{e}"),
+            LoadDocumentError::Context { chunk, error } => {
+                write!(f, "context-set chunk {chunk}: {error}")
+            }
         }
     }
 }
@@ -241,9 +252,22 @@ pub fn load_document(
             subtrees.push(subtree);
         }
     }
+    let context = match manifest.context {
+        Some(chunk) => {
+            let payload = source.read_chunk(chunk).map_err(LoadDocumentError::Read)?;
+            Some(
+                ContextSet::decode(&payload)
+                    .map_err(|error| LoadDocumentError::Context { chunk, error })?,
+            )
+        }
+        None => None,
+    };
     let records = DocumentRecords::from_subtrees(manifest.definition, subtrees);
-    let (model, diagnostics) =
+    let (mut model, diagnostics) =
         DocumentModel::from_records(records).map_err(LoadDocumentError::Model)?;
+    if let Some(context) = context {
+        model.replace_context(context);
+    }
     Ok(LoadedDocument { model, diagnostics })
 }
 
