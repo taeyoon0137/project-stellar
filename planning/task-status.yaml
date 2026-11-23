@@ -2342,7 +2342,8 @@ tasks:
     status: blocked
     depends_on:
       - "V.10.2"
-      - "XXIV.1.3"
+      - "XXIV.4.2"
+      - "V.8.6"
     required_environments:
       - DEV-MAC
   - id: "V.10.4"
@@ -7393,12 +7394,17 @@ tasks:
       - DEV-MAC
   - id: "XIII.1.1"
     title: "`AutosavePolicy`에 debounce, 최대 지연, 앱 비활성화 flush, 창 닫기 flush를 정의하고 값은 `config/performance-budgets.yaml`에서 읽습니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "V.5.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.1.1.md"
+    commit: "9124d621ae0740f3893d7b7f4b7916af9f698b22"
     report: "docs/task-reports/XIII.1.1.md"
+    verified_at: "2026-11-14T02:08:54+09:00"
   - id: "XIII.1.2"
     title: "완료된 document CommandTransaction만 autosave dirty state를 만들고 Selection·viewport·preview event는 만들지 않게 합니다."
     status: verified
@@ -9757,13 +9763,18 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XVI.6.7"
-    title: "command sequence fuzz target을 장기 nightly job으로 추가합니다."
-    status: reported_done
+    title: "command sequence fuzz target의 장기 실행 진입점을 추가합니다(`cargo test -p stellar-commands sequence_fuzz_nightly -- --ignored`, seed 범위·단계 수·실행 시간·artifact 경로는 환경 변수). 제품 테스트를 CI에 넣지 않는 2026-11-14 개정에 따라 정기 job은 두지 않고, 장기 실행은 로컬에서 이 진입점으로 합니다."
+    status: verified
     depends_on:
       - "VII.6.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.6.7.md"
+    commit: "5d00fc1b677f1ae27d59942a082c97744d1d130a"
     report: "docs/task-reports/XVI.6.7.md"
+    verified_at: "2026-11-14T09:54:53+09:00"
   - id: "XVI.7.1"
     title: "untrusted mode capability matrix를 코드로 정의합니다: 문서 제한 읽기 허용, Git/terminal/future MCP/external filter/external symlink read 금지."
     status: verified

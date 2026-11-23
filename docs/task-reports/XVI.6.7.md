@@ -2,7 +2,7 @@
 
 - WBS: XVI.6.7
 - 작업명: command sequence fuzz target을 장기 nightly job으로 추가(crash seed 자동 artifact 저장)
-- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 결정론적 seed harness, 장기 실행 진입점, crash seed artifact 저장은 구현·검증했으나 **nightly CI job 등록은 하지 않았습니다**
+- 상태: 완료 (`[x]`) — 2026-11-23 plan-revision이 행 지시의 "장기 nightly job"을 재판정의 개정 제안대로 장기 실행 진입점으로 고쳐 계획서에 반영했습니다. 재판정 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 결정론적 seed harness, 장기 실행 진입점, crash seed artifact 저장은 구현·검증했으나 **nightly CI job 등록은 하지 않았습니다**
   (아래 "차이" 참조). 선행 VII.6.3도 `[~]`입니다.
 - 선행: VII.6.3(`[~]` — CI fuzz 등록만 미완, harness `fuzz_one`과 로컬 smoke는 통과)
 

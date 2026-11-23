@@ -34,6 +34,7 @@
 - **2026-11-23 — 1차 엔진 배치 재판정 반영(ledger-verification):** 사용자 방향(2026-11-23: 지금은 엔진·기능만 만들고 UI는 나중에 처음부터 재설계)에 따른 1차 엔진 배치의 재판정 결과를 계획서에 반영합니다. 판정 근거는 각 행의 작업 보고서 "재판정" 절이고, 판정 기준은 행 지시·검증 열의 불변식을 코드에서 확인하는 것입니다(테스트 통과는 보조). XXIV.4.2·XXIV.4.3·XII.4.3·XIX.1.8·XIX.2.5·VII.6.3을 `[x]`로 바꿨습니다. XII.4.3이 `[x]`가 되어 차단 사유가 사라진 XII.4.4를 다시 판정해 `[x]`로 바꿨습니다(transient layer 생성과 project snapshot 불변은 코어에 있고, 화면 렌더 연결은 선행이 아닌 XII.4.1 범위, `docs/task-reports/XII.4.4.md`). XXIV.4.2 행의 ops 허용 의존 문구는 ADR-0049와 ADR-0080이 개정한 ADR-0005 §8 표(12개)에 맞췄습니다. 행 정의의 범위는 바꾸지 않았습니다.
 - **2026-11-23 — crate 의존 그래프 문서 갱신(XXIX.1.1):** `docs/architecture/crate-dependency-graph.md`에 XXIX.1.1 보고서가 남긴 문안을 반영했습니다. 첫 문단을 허용 직접 의존과 전이 도달 금지 규칙으로 바꾸고, "검사 범위" 절과 "전이 도달 금지(ADR-0005 §8)" 절(mcp-core 규칙 포함)을 더했으며, `allowed_edges()`에 이미 있던 ops→git-porcelain 간선(ADR-0080)을 표와 Mermaid에 넣었습니다. 남은 범위가 문서 한 절뿐이던 XXIX.1.1을 `[x]`로 바꿨습니다. 이것으로 XIX.9.1의 선행(XIX.1.3, XXIV.4.2, XXIX.1.1)이 모두 `[x]`입니다.
 - **2026-11-23 — macOS 행의 Windows 선행 제거(ADR-0006):** 2026-11-14 "새 macOS 행의 Windows `[!]` 선행 사슬 기록"과 ledger-verification 재판정이 넘긴 재작성안을 반영합니다. macOS 경로만으로 행 목적이 서는 행의 선행에서 Windows `[!]` 행을 뺐습니다. XII.2.4와 XIII.8.3은 XII.2.3(Windows MainWindow)을, XI.10.1은 XI.9.4를, XI.11.1·XI.11.4·XVI.1.2는 XI.9.5를 빼고 Metal 경로(XI.8.4·XI.8.5)만 둡니다. XVI.2.5는 XVI.2.4(Windows replay)를, XVIII.4.6은 XVIII.4.4(Windows terminal view)를, XIII.2.4·XIII.4.4는 XIII.2.3(Windows watcher)을, XIII.6.5는 XIII.6.3(Windows font discovery)을 뺐습니다. XI.11.1의 "양 backend"는 Metal backend로 고치고 D3D12 harness는 Windows 재개 때 XI.9 행과 함께 더합니다(ADR-0006 결정 4). 양 플랫폼 CI 비교만 하는 X.11.3은 macOS 부분이 X.11.2 golden과 같으므로 `[!]`(Windows 재개 대기)로 바꿨습니다. 선행이 모두 `[x]`가 된 XIII.2.4와 XIII.6.5는 재판정 결과(구현 판정 통과)대로 `[x]`로 바꿨습니다. XIII.4.4는 남은 범위(ExternalTargetSync 미연결) 때문에 `[~]`입니다. 빠진 Windows 검증은 각 Windows 행(XII.2.3, XI.9.4, XI.9.5, XVI.2.4, XVIII.4.4, XIII.2.3, XIII.6.3)의 검증에 더합니다. 같은 사슬의 XII.9.3(XII.9.2), XII.5.6(XII.5.5)은 셸 UI 행이라 UI 재설계 때 다시 정의하며 이번에 바꾸지 않았습니다. XIV.14.1은 macOS·Windows 동일 scenario가 완료 기준이라 판정 보류(`[~]`)로 둡니다.
+- **2026-11-23 — 막힌 선행 사슬 재작성과 판정 보류 목록:** ledger-verification 재판정이 넘긴 선행 재작성안을 반영합니다. 행이 실제로 쓰는 범위로 선행을 좁혔고 행 지시는 바꾸지 않았습니다. (a) V.10.3의 선행 XXIV.1.3을 "XXIV.4.2, V.8.6"으로 바꿨습니다. text_source가 쓰는 것은 ops snapshot, `ApplyError`, `CURRENT_SCHEMA_VERSION`뿐입니다. (b) XXIV.1.3의 "Phase XIV"를 "XIV.3.1\~XIV.3.10, XIV.10.1\~XIV.10.9"로 좁혔습니다. 재판정은 merged snapshot 검증(XIV.10.8)이 없으면 clean 판정이 무효일 수 있다며 선행을 통째로 없애는 안을 권하지 않았으므로 XIV.10은 그대로 둡니다. (c) XIII.1.1의 "Phase XII, V.5.4"를 "V.5.4"로 바꾸고, 남은 사유가 선행뿐이던 이 행을 `[x]`로 바꿨습니다. 이제 XIII.1.3은 착수 가능하고, 이미 들어온 지연 trigger(`b9392f8b`)를 기준으로 판정합니다. (d) XVI.3.3의 "Phase X, Phase XI"를 실제로 쓰는 "X.1\~X.9, VIII.5"로 좁혔습니다. token-heavy fixture가 없어 이 행은 `[~]`입니다. (e) XVI.6.7의 "장기 nightly job"은 제품 테스트를 CI에 넣지 않는 2026-11-14 개정과 충돌하므로 장기 실행 진입점(`sequence_fuzz_nightly`, 환경 변수로 범위·시간·artifact 경로)으로 고쳤습니다. 선행 VII.6.3이 `[x]`가 되었으므로 `[x]`로 바꿨습니다. 판정 보류 목록(상태는 `[~]` 그대로이고, 이 lane 범위에서 판정하지 않음): GPU 출력 XI.7.4, 실제 창 XI.8.2, 셸·FFI 연결 XII.3.5, Windows Git XIV.14.1, corpus 라이선스 XXVIII.2.1(제품 소유자 결정)입니다. 재판정 대상 밖의 `[~]` 행 중 Windows·플랫폼 비교 행 VIII.4.6, VIII.9.3, X.10.7, UI 행 XII.6.3, XII.6.5, 패키징 행 XVI.9.2\~XVI.9.5, 명령줄 설치·UI 행 XXIV.5.3\~XXIV.5.6도 같은 목록에 둡니다. 이 가운데 XXIV.5.3과 XXIV.5.6은 선행 XXIV.5.1·XII.9.1이 `[ ]`라 근거가 가장 약하며, UI 재설계 때 다시 정의합니다.
 
 ---
 
@@ -533,7 +534,7 @@ V.10.1~V.10.3은 단일 View 텍스트 원본이라는 한 제품 개선입니�
 |---|---|---|---|---|
 | V.10.1 | `[x]` | `crates/storage/src/{source_file,atomic_file,lib}.rs`에서 제한 handle 읽기·기대 hash 확인·단일 파일 원자 저장·권한 보존·파생 cache 교체를 제공합니다. 기존 정책을 유지하고 실패 시 원본을 보호합니다. | `[DEV-MAC]` 생성 충돌·stale hash·rename 전 fault·권한 보존·fsync 후 오류 의미 검사, storage 테스트와 전체 Rust 검증. | V.2.5 |
 | V.10.2 | `[x]` | `crates/project/src/document_io/{text_source,text_codec,mod}.rs`에서 단일 문서·페이지·View 및 Frame/Fragment 전체 속성·StableId의 제한 YAML 왕복과 선택적 chunk cache 재생성을 구현합니다. 미지원 의미를 거부하고 ADR-0059·문법·호환 절차를 갱신합니다. | `[DEV-MAC]` 실제 모델 편집→저장→재열기→Git diff, 미지원 필드·외부 변경 보존, 캐시 없음·손상·I/O 실패, 문서 예시 검증. | V.10.1, VI.10.3 |
-| V.10.3 | `[!]` | `crates/ops/src/{text_source,lib}.rs`와 `tools/stellar-cli/src/{text_source,cli,lib}.rs`에 명시적 export/check를 연결합니다. 기존 generation 전체 pointer 집합을 비교해 미지원 chunk를 거부합니다. 기본 열기·저장은 바꾸지 않습니다. | `[DEV-MAC]` 실제 CLI export→check→재export 거부, 기존 generation bytes 보존, unknown optional·미사용 chunk 거부, `cargo xtask check-core`. | V.10.2, XXIV.1.3 |
+| V.10.3 | `[!]` | `crates/ops/src/{text_source,lib}.rs`와 `tools/stellar-cli/src/{text_source,cli,lib}.rs`에 명시적 export/check를 연결합니다. 기존 generation 전체 pointer 집합을 비교해 미지원 chunk를 거부합니다. 기본 열기·저장은 바꾸지 않습니다. | `[DEV-MAC]` 실제 CLI export→check→재export 거부, 기존 generation bytes 보존, unknown optional·미사용 chunk 거부, `cargo xtask check-core`. | V.10.2, XXIV.4.2, V.8.6 |
 | V.10.4 | `[ ]` | 전체 영속 의미(모든 node·modifier·component·token·resource)를 텍스트화하고 문서·페이지·View·큰 Frame 파일 참조 및 이름/StableId 규칙을 완성합니다. 미지원 필드·레코드는 보존하거나 쓰기를 거부합니다. 기존 generation 변환은 전체 semantic snapshot이 같을 때만 성공합니다. | `[DEV-MAC]` 전체 golden 의미 왕복·미지원 입력 보존·독립 View 변경의 Git 병합; 공개 포맷 동결 전 검증. | V.10.3 |
 | V.10.5 | `[ ]` | 여러 의미 파일의 temp/fsync/rename 저장 journal과 앞/새 세대 한쪽 복구를 구현합니다. 삭제·rename·디스크 오류도 원본과 미저장 작업을 보호합니다. | `[DEV-MAC]` 단계별 종료·오류 fault matrix, 재열기에서 섞인 세대 0건. | V.10.4 |
 | V.10.6 | `[ ]` | 텍스트 원본을 파일 감시·외부 변경·명령 저장 및 재열기 경로에 연결합니다. 열린 뒤 외부 편집이나 git pull이 있으면 dirty 편집을 보존하고 재로드·병합합니다. | `[DEV-MAC]` CLI dry-run→저장→재열기→Git diff, clean/dirty 외부 변경 및 cache 무효화 통합 시나리오. | V.10.5, XIII.3.1 |
@@ -1374,7 +1375,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIII.1.1 | `[~]` | `AutosavePolicy`에 debounce, 최대 지연, 앱 비활성화 flush, 창 닫기 flush를 정의하고 값은 `config/performance-budgets.yaml`에서 읽습니다. | config 누락·범위 밖 값 거부. | Phase XII, V.5.4 |
+| XIII.1.1 | `[x]` | `AutosavePolicy`에 debounce, 최대 지연, 앱 비활성화 flush, 창 닫기 flush를 정의하고 값은 `config/performance-budgets.yaml`에서 읽습니다. | config 누락·범위 밖 값 거부. | V.5.4 |
 | XIII.1.2 | `[x]` | 완료된 document CommandTransaction만 autosave dirty state를 만들고 Selection·viewport·preview event는 만들지 않게 합니다. | 선택 1,000회 후 save plan 없음. | VII.3.2, V.5.1 |
 | XIII.1.3 | `[ ]` | 연속 command 후 debounce timer를 재설정하고 최대 지연에 도달하면 입력이 이어져도 snapshot을 캡처합니다. 캡처는 document thread에서 짧게 수행합니다. | ManualClock fixture 통과. | XIII.1.1, XII.1.1 |
 | XIII.1.4 | `[ ]` | serialization과 chunk write는 worker에서 수행하고 base revision이 오래되면 결과를 current pointer로 전환하지 않습니다. | stale save result discard. | XII.1.4, V.5.2 |
@@ -1742,7 +1743,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XVI.3.1 | `[x]` | 1만, 20만, 프로젝트 전체 100만 node synthetic fixture generator를 구현합니다. 파일을 직접 Git에 대량 저장하지 않고 seed+generator version으로 재현합니다. | 같은 seed content hash 동일. | VI.10.5, V.6.4 |
 | XVI.3.2 | `[x]` | 2만 visible node, 5만 component instance, 중첩 64 fixture를 각각 생성합니다. | validator pass. | IX.2.2, VI.10.1 |
-| XVI.3.3 | `[~]` | text-heavy, image-heavy, effect-heavy, token-heavy, constraint-heavy fixture를 분리합니다. | 각 fixture가 목표 병목 특성을 계측값으로 확인. | Phase X, Phase XI |
+| XVI.3.3 | `[~]` | text-heavy, image-heavy, effect-heavy, token-heavy, constraint-heavy fixture를 분리합니다. | 각 fixture가 목표 병목 특성을 계측값으로 확인. | X.1~X.9, VIII.5 |
 | XVI.3.4 | `[x]` | project asset 20GB는 CI에 실제 포함하지 않고 sparse synthetic asset provider와 별도 reference device test data manifest로 구성합니다. | provider가 size/stream behavior 재현. | XIII.5.2 |
 
 ### XVI.4 성능 판정기
@@ -1780,7 +1781,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XVI.6.4 | `[x]` | expression AST/typechecker/evaluator fuzz target을 추가합니다. | instruction budget 작동, panic 0. | VIII.4.5 |
 | XVI.6.5 | `[x]` | Semantic Diff/apply/inverse fuzz target을 추가합니다. | valid A/B에서 apply(diff)==B. | XIV.3.10 |
 | XVI.6.6 | `[ ]` | Semantic Merge fuzz target을 추가해 결과 valid 또는 명시 conflict/error만 허용합니다. | invalid silent merge 0. | XIV.10.8 |
-| XVI.6.7 | `[~]` | command sequence fuzz target을 장기 nightly job으로 추가합니다. | crash seed 자동 artifact 저장. | VII.6.3 |
+| XVI.6.7 | `[x]` | command sequence fuzz target의 장기 실행 진입점을 추가합니다(`cargo test -p stellar-commands sequence_fuzz_nightly -- --ignored`, seed 범위·단계 수·실행 시간·artifact 경로는 환경 변수). 제품 테스트를 CI에 넣지 않는 2026-11-14 개정에 따라 정기 job은 두지 않고, 장기 실행은 로컬에서 이 진입점으로 합니다. | crash seed 자동 artifact 저장. | VII.6.3 |
 
 ### XVI.7 프로젝트 신뢰와 외부 실행 보안
 
@@ -2272,7 +2273,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XXIV.1.1 | `[x]` | `stellar-cli`를 app UI와 분리된 binary로 생성하고 core crate만 사용합니다. | headless machine에서 help 실행. | G8 |
 | XXIV.1.2 | `[x]` | exit code와 machine-readable JSON output schema를 정의합니다. stdout/stderr 역할을 분리합니다. | success/error fixture. | XXIV.1.1 |
-| XXIV.1.3 | `[~]` | `validate`, `semantic-diff`, `semantic-merge`, `migrate` 명령을 구현합니다. | fixture corpus 통과. | Phase XIV, V.8.6 |
+| XXIV.1.3 | `[~]` | `validate`, `semantic-diff`, `semantic-merge`, `migrate` 명령을 구현합니다. | fixture corpus 통과. | XIV.3.1\~XIV.3.10, XIV.10.1\~XIV.10.9, V.8.6 |
 | XXIV.1.4 | `[ ]` | Phase XX 이후 `render/export` 명령을 추가합니다. | golden output. | Phase XX |
 
 ### XXIV.2 Git custom driver
