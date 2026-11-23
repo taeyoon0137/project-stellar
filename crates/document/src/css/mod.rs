@@ -7,8 +7,10 @@
 //! - [`grammar`]: 값 문법 종류(IX.11.1).
 //! - [`mapping`]: registry 항목별 CSS 매핑 metadata와 longhand 이름 inventory(IX.11.1).
 //! - [`registry`]: 종류별 registry의 통합 view, 표시 문자열, snapshot(IX.11.2·IX.11.3).
+//! - [`value`]: registry 값 문법별 formatter·parser(IX.11.13·IX.11.14).
 
 pub mod bundle;
 pub mod grammar;
 pub mod mapping;
 pub mod registry;
+pub mod value;
