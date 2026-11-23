@@ -45,6 +45,8 @@ use crate::request::CommandRequest;
 use crate::snapshot_apply::ApplyExternalSnapshot;
 use crate::state::DocumentState;
 use crate::tree::{depth_of, node_ids, order_key_of, parent_of, ChildIndex};
+use stellar_core_types::reference::ComponentRef;
+use stellar_document::component::instance::ComponentInstancePayload;
 use stellar_document::path::{HandleMode, PathCommand, PathEdit, PathHandleId, PathPointId};
 
 /// 문서에서 쓰이지 않는 새 StableId 공급기(문서 생성기 id 대역 밖의 timestamp 사용).
@@ -521,6 +523,26 @@ pub fn generate(
             let incoming = edited.model().to_records().ok()?;
             let command = ApplyExternalSnapshot::between(model, &incoming).ok()?;
             (!command.is_empty()).then_some(Command::ApplyExternalSnapshot(command))
+        }
+        CommandKind::SwapInstance => {
+            let instances = nodes_where(model, |id| {
+                kind_of(model, id) == Some(NodeKind::ComponentInstance)
+            });
+            let node = pick(rng, &instances)?;
+            let NodePayload::ComponentInstance(current) = model.payload(node)? else {
+                return None;
+            };
+            // override를 일부만 옮긴 다른 컴포넌트 참조.
+            let mut payload = ComponentInstancePayload::new(ComponentRef::new(ids.fresh()));
+            for (key, value) in current.property_overrides() {
+                if rng.one_in(2) {
+                    payload.set_property_override(key.clone(), value.clone());
+                }
+            }
+            Some(Command::SwapInstance(crate::node_ops::SwapInstance {
+                node,
+                payload,
+            }))
         }
         CommandKind::EditPathPoint => {
             let paths = nodes_where(model, |id| kind_of(model, id) == Some(NodeKind::Path));

@@ -57,6 +57,8 @@ pub enum CommandKind {
     ApplyExternalSnapshot,
     /// Path point 편집 (XII.10.28, ADR-0079).
     EditPathPoint,
+    /// 인스턴스 교체 (XII.10.35, ADR-0079).
+    SwapInstance,
     /// 테스트 전용 probe(fault injection). 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe,
@@ -87,6 +89,7 @@ impl CommandKind {
         CommandKind::RenameView,
         CommandKind::ApplyExternalSnapshot,
         CommandKind::EditPathPoint,
+        CommandKind::SwapInstance,
     ];
 
     /// 영구 예약 값(유효한 종류가 아님).
@@ -117,6 +120,7 @@ impl CommandKind {
             CommandKind::RenameView => 0x0065,
             CommandKind::ApplyExternalSnapshot => 0x0070,
             CommandKind::EditPathPoint => 0x0080,
+            CommandKind::SwapInstance => 0x0090,
             #[cfg(test)]
             CommandKind::TestProbe => 0xFFF0,
         }
@@ -159,6 +163,7 @@ impl CommandKind {
             CommandKind::RenameView => "rename-view",
             CommandKind::ApplyExternalSnapshot => "apply-external-snapshot",
             CommandKind::EditPathPoint => "edit-path-point",
+            CommandKind::SwapInstance => "swap-instance",
             #[cfg(test)]
             CommandKind::TestProbe => "test-probe",
         }
@@ -191,7 +196,8 @@ impl CommandKind {
             | CommandKind::RemoveView
             | CommandKind::RenameView
             | CommandKind::ApplyExternalSnapshot
-            | CommandKind::EditPathPoint => 2,
+            | CommandKind::EditPathPoint
+            | CommandKind::SwapInstance => 2,
             #[cfg(test)]
             CommandKind::TestProbe => 1,
         }
@@ -223,6 +229,7 @@ impl CommandKind {
             CommandKind::RenameView => "View 이름 변경",
             CommandKind::ApplyExternalSnapshot => "외부 변경 반영",
             CommandKind::EditPathPoint => "Path point 편집",
+            CommandKind::SwapInstance => "인스턴스 교체",
             #[cfg(test)]
             CommandKind::TestProbe => "test probe",
         }
@@ -286,6 +293,7 @@ mod tests {
                 (0x0065, "rename-view"),
                 (0x0070, "apply-external-snapshot"),
                 (0x0080, "edit-path-point"),
+                (0x0090, "swap-instance"),
             ]
         );
     }

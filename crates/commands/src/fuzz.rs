@@ -167,4 +167,51 @@ mod tests {
         assert!(stats.decoded > 1_000, "변조 디코딩 {stats:?}");
         assert!(stats.rejected > 500, "거부 {stats:?}");
     }
+
+    #[test]
+    fn adr_0079_kinds_survive_mutation_fuzz() {
+        // ADR-0079 종류를 종류별로 생성·변조해 decode·실행합니다. panic 없이, 성공한 실행 뒤 문서가 validator를
+        // 통과해야 합니다(execute_checked). 인스턴스가 없는 random document에서는 swap-instance가 생성되지 않습니다.
+        let kinds: Vec<CommandKind> = CommandKind::ALL
+            .iter()
+            .copied()
+            .filter(|kind| kind.codec_version() >= 2)
+            .collect();
+        assert_eq!(kinds.len(), 10);
+        let mut executed = std::collections::BTreeMap::new();
+        let mut stats = FuzzStats::default();
+        for seed in 0..80u64 {
+            let mut state = DocumentState::new(random_valid_document(seed));
+            let mut rng = SplitMix64::new(seed ^ 0xAD_0079);
+            let mut ids = FreshIds::new(seed ^ 0x79);
+            for kind in &kinds {
+                let Some(command) = generate(*kind, state.model(), &mut rng, &mut ids) else {
+                    continue;
+                };
+                let bytes = encode_command(&command);
+                let before = stats.executed;
+                for flip in 0..6 {
+                    let mut mutated = bytes.clone();
+                    let at = rng.below(mutated.len() as u64) as usize;
+                    mutated[at] ^= 1 << flip;
+                    if let Ok(decoded) = decode_command(&mutated) {
+                        execute_checked(&mut state, decoded, &mut stats);
+                    }
+                    let _ = decode_command(&mutated[..at]);
+                }
+                execute_checked(&mut state, command, &mut stats);
+                if stats.executed > before {
+                    *executed.entry(*kind).or_insert(0usize) += 1;
+                }
+            }
+        }
+        for kind in &kinds {
+            if *kind != CommandKind::SwapInstance {
+                assert!(
+                    executed.get(kind).copied().unwrap_or(0) > 0,
+                    "{kind} 실행 0건"
+                );
+            }
+        }
+    }
 }

@@ -331,6 +331,8 @@ pub enum Command {
     ApplyExternalSnapshot(crate::snapshot_apply::ApplyExternalSnapshot),
     /// Path point 편집 (XII.10.28).
     EditPathPoint(crate::path_edit::EditPathPoint),
+    /// 인스턴스 교체 (XII.10.35).
+    SwapInstance(crate::node_ops::SwapInstance),
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -377,6 +379,7 @@ impl Command {
             Command::RenameView(_) => CommandKind::RenameView,
             Command::ApplyExternalSnapshot(_) => CommandKind::ApplyExternalSnapshot,
             Command::EditPathPoint(_) => CommandKind::EditPathPoint,
+            Command::SwapInstance(_) => CommandKind::SwapInstance,
             #[cfg(test)]
             Command::TestProbe(_) => CommandKind::TestProbe,
         }
@@ -407,6 +410,7 @@ impl Command {
             Command::RenameView(command) => command.validate(model),
             Command::ApplyExternalSnapshot(command) => command.validate(model),
             Command::EditPathPoint(command) => command.validate(model),
+            Command::SwapInstance(command) => command.validate(model),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.validate(model),
         }
@@ -451,6 +455,7 @@ impl Command {
             Command::EditPathPoint(command) => {
                 command.invert(model).map(Command::RestoreNodeRecords)
             }
+            Command::SwapInstance(command) => command.invert(model).map(Command::SwapInstance),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
         }
@@ -481,6 +486,7 @@ impl Command {
             Command::RenameView(command) => command.apply(ctx),
             Command::ApplyExternalSnapshot(command) => command.apply(ctx),
             Command::EditPathPoint(command) => command.apply(ctx),
+            Command::SwapInstance(command) => command.apply(ctx),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.apply(ctx),
         }
