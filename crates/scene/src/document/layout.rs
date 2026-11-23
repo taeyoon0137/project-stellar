@@ -366,14 +366,21 @@ pub struct LayoutRectChange {
 
 impl LayoutRectChange {
     /// 이전·이후 상자 비교. 그리는 위치·크기가 같으면 `None`입니다.
-    fn between(node: StableId, before: Option<&LayoutBox>, after: Option<&LayoutBox>) -> Option<Self> {
+    fn between(
+        node: StableId,
+        before: Option<&LayoutBox>,
+        after: Option<&LayoutBox>,
+    ) -> Option<Self> {
         let (moved, resized) = match (before, after) {
             (Some(a), Some(b)) => {
                 let (ra, rb) = (a.local_rect(), b.local_rect());
                 let moved = ra.x() != rb.x() || ra.y() != rb.y();
                 let resized = ra.size() != rb.size();
                 // content box만 바뀐 상자(padding 변경)는 크기 변경으로 봅니다(내용 다시 그림).
-                (moved, resized || (!moved && a.content_rect() != b.content_rect()))
+                (
+                    moved,
+                    resized || (!moved && a.content_rect() != b.content_rect()),
+                )
             }
             (None, None) => (false, false),
             _ => (true, true),
