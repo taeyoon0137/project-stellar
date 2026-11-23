@@ -845,6 +845,94 @@ mod tests {
     }
 
     #[test]
+    fn tile_windows_match_the_crop_of_the_full_canvas() {
+        // window 계획과 무관한 불변식(ADR-0136): 같은 그리기 목록을 작은 출력 window(내보내기 tile)마다 그린 값은 canvas
+        // 전체에 한 번 그린 값의 같은 자리와 같습니다. 큰 offset shadow(원본 window를 옮김), 소수 offset 상자 shadow, 쌓는
+        // window 밖이 필요한 내용 shadow, 중첩 layer, layer blur(e 1·2), scissor·stencil clip을 섞습니다. e ≤ 2면 효과 원본
+        // 해상도가 1이라 값이 같아야 합니다(저장 정밀도 반올림만 다름).
+        use crate::effects::fixture::{ClipSpec, Mesh};
+        let plan = plan();
+        let (w, h) = (320u32, 96u32);
+        let nested = LayerOp::new(
+            vec![rect(150.0, 30.0, 170.0, 50.0, srgb(0.9, 0.1, 0.1, 0.8))],
+            SceneBlendMode::Normal,
+        )
+        .with_shadow([-40, 6], 6.0, srgb(0.0, 0.2, 0.0, 0.6));
+        let ops = vec![
+            Op::Layer(Box::new(
+                LayerOp::new(
+                    vec![rect(20.0, 20.0, 60.0, 60.0, srgb(0.2, 0.4, 0.9, 0.7))],
+                    SceneBlendMode::Normal,
+                )
+                .with_shadow([180, 10], 6.0, srgb(0.3, 0.0, 0.0, 0.8))
+                .with_box_shadow(
+                    [3.5, 2.25],
+                    8.0,
+                    srgb(0.0, 0.0, 0.0, 0.5),
+                    Mesh::rect(20.0, 20.0, 60.0, 60.0),
+                ),
+            )),
+            Op::Layer(Box::new(
+                LayerOp::new(
+                    vec![
+                        rect(120.0, 10.0, 200.0, 70.0, srgb(0.1, 0.8, 0.3, 1.0)),
+                        Op::Layer(Box::new(nested)),
+                    ],
+                    SceneBlendMode::Multiply,
+                )
+                .with_blur(5.0)
+                .with_clip(ClipSpec::Scissor {
+                    x: 110,
+                    y: 0,
+                    width: 100,
+                    height: 80,
+                }),
+            )),
+            Op::Layer(Box::new(
+                LayerOp::new(
+                    vec![rect(230.0, 30.0, 300.0, 60.0, srgb(0.9, 0.9, 0.1, 1.0))],
+                    SceneBlendMode::Normal,
+                )
+                .with_blur(100.0)
+                .with_clip(ClipSpec::Stencil(Mesh::rect(215.0, 5.0, 318.0, 90.0))),
+            )),
+        ];
+        let space = EffectSpace::full(w, h);
+        let mut full = layer_canvas(&Window::full(w, h), &plan);
+        draw_ops(&mut full, &ops, &plan).unwrap();
+        assert!(
+            full.get(220, 45).alpha() > 0.01,
+            "큰 blur가 번지지 않았습니다"
+        );
+        let mut worst = 0.0f32;
+        for wy in (0..h).step_by(32) {
+            for wx in (0..w).step_by(64) {
+                let window = Window {
+                    x: i64::from(wx),
+                    y: i64::from(wy),
+                    width: 64,
+                    height: 32,
+                    step: 1,
+                };
+                let mut tile = layer_canvas(&window, &plan);
+                draw_ops_in(&mut tile, &window, &ops, &plan, &space).unwrap();
+                for y in 0..32u32 {
+                    for x in 0..64u32 {
+                        let (a, b) = (
+                            full.get(i64::from(wx + x), i64::from(wy + y)),
+                            tile.get(i64::from(x), i64::from(y)),
+                        );
+                        for c in 0..4 {
+                            worst = worst.max((a.rgba[c] - b.rgba[c]).abs());
+                        }
+                    }
+                }
+            }
+        }
+        assert!(worst < 2e-3, "최대 차이 {worst}");
+    }
+
+    #[test]
     fn box_shadow_source_is_the_opaque_box_and_skips_its_inside() {
         use crate::effects::fixture::Mesh;
         let mut fixture = Fixture::new("box", Category::Modifier, 16, 16);
