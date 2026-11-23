@@ -2,7 +2,7 @@
 
 - WBS: XIX.1.8
 - 작업명: 앱이 시작한 bridge를 그 세션에만 결합하고, 세션 종료 시 결합 수단을 무효화하며, 결합이 권한을 주지 않게 함
-- 상태: 부분 완료 (`[~]`) — 결합 수단·검증·무효화·거부와 bridge 측 전달은 구현·검증했으나, 작업 지시의 "각 CLI 공식 문서 근거"는 Claude Code 문서만 이번 실행에서 확인했고 다른 공급자 CLI와 Apple 문서 근거는 확인하지 못했습니다. 앱 runtime이 이 결합을 쓰도록 연결하는 일은 이 lane 경로(`crates/runtime`) 밖입니다.
+- 상태: `[x]` 판정 — 통합 때 계획서 표기를 `[x]`로 바꿉니다(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 결합 수단·검증·무효화·거부와 bridge 측 전달은 구현·검증했으나, 작업 지시의 "각 CLI 공식 문서 근거"는 Claude Code 문서만 이번 실행에서 확인했고 다른 공급자 CLI와 Apple 문서 근거는 확인하지 못했습니다. 앱 runtime이 이 결합을 쓰도록 연결하는 일은 이 lane 경로(`crates/runtime`) 밖입니다.
 - 선행: XIX.1.3(`[x]`), XVI.7.5(`[x]`)
 
 ## 필수 실행 환경
@@ -61,3 +61,29 @@
 - 결합 token은 세션이 살아 있는 동안 여러 번 쓸 수 있습니다. `SessionBindings::verify`는 활성 token을 찾기만 하고 사용 표시를 남기지 않으며, listener는 검증을 통과한 연결을 모두 받습니다. 그래서 token이 새면 두 번째 bridge도 같은 세션에 결합할 수 있습니다. 결합은 권한을 주지 않으므로 지금은 받아들이되, 앱 runtime 연결(XXIX.2.x) 때 세션당 살아 있는 결합 연결을 하나로 제한하거나 첫 결합에서 token을 소비할지 정해야 합니다(재연결 정책 XIX.1.4와 함께).
 - 같은 OS 사용자의 다른 프로세스는 환경 변수를 읽을 수 있습니다. 그 경계는 같은 사용자 신뢰(아키텍처 §37)와 peer 코드 서명 인증(XIX.1.6·XIX.1.7)이 담당하며, token만으로 다른 사용자의 세션에 붙을 수는 없습니다.
 - `libc` 승인 항목(`planned_for: XIX.1.8, XXIX.2.3`)은 이 작업에서 쓰지 않았습니다(std와 기존 최소 extern으로 충분).
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[x]` 판정 — 통합 때 계획서 표기를 `[x]`로 바꿉니다.
+- 근거: 결합 수단·검증·무효화·거부는 코드에 있고, 이전 `[~]` 사유였던 공식 문서 근거를 이번에 확인해 아래에 기록했습니다. 다른 세션·종료 세션 결합 거부와 결합만으로 얻는 권한 0을 코드로 확인했습니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/local-ipc/src/binding.rs`: 256 bit token, 상수 시간 비교, `SessionBindings::end` 즉시 무효, 끝난 token 기억 상한. 결합 결과 `BindingSession`에는 권한 field가 없습니다.
+- `crates/local-ipc/src/listener.rs` `spawn_with_bindings`: peer 인증(`crates/local-ipc/src/auth.rs`, `getpeereid(3)`·코드 서명)과 nonce를 통과한 연결에서만 token을 보고, Unknown·Ended·Unsupported는 `REJECT binding-rejected`.
+- `tools/stellar-mcp/src/attach.rs`: 환경 변수 `STELLAR_MCP_SESSION_BINDING`, 거부 77·형식 오류 78.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-local-ipc` | 59 passed(샌드박스 해제) |
+| `cargo test -p stellar-mcp` | attach_auth 4, connection_info 5, session_lifecycle 3 등 전 통합 test passed |
+
+### 남은 조건과 finding
+
+- 공식 문서 근거(2026-11-23 확인): Claude Code MCP 문서의 stdio 서버 `env`와 `claude mcp add --env`(이전 기록). OpenAI Codex 문서(`developers.openai.com/codex/mcp`가 `learn.chatgpt.com/docs/extend/mcp?surface=cli`로 이동)는 `[mcp_servers.<name>.env]`와 `codex mcp add <name> --env VAR=VALUE -- <command>`를 문서화합니다. Gemini CLI 문서(`geminicli.com/docs/tools/mcp-server/`)는 `mcpServers.<name>.env`와 `gemini mcp add -e KEY=value`를 문서화합니다. 세 CLI 모두 환경 변수로 token을 넘길 수 있어 다른 전달 수단이 필요 없습니다.
+- Apple 근거: macOS `getpeereid(3)` man page는 Unix domain socket 상대의 effective uid를 커널이 기록하며 상대가 바꿀 수 없다고 적습니다. 다른 OS 사용자는 peer uid 검사에서 먼저 거부되므로 결합 보안은 환경 변수 비공개에 기대지 않습니다. `ps(1)` man page의 `-E`는 환경을 보이는 옵션일 뿐 다른 사용자 프로세스의 가시성은 문서화하지 않으므로, 이전 보고서의 "다른 사용자는 환경을 읽을 수 없음" 근거는 공식 문서로 확인되지 않은 관찰로 낮춥니다(DEV-MAC에서 `ps -E -p 1`은 환경을 보이지 않음).
+- 앱이 세션 시작 때 `SessionBindings::issue`와 `spawn_with_bindings`를 쓰는 연결은 XXIX.2.x(agent-session-core lane)의 범위입니다. 그 연결 때 세션당 결합 연결 수 제한을 함께 정해야 합니다(이전 보고서 남은 위험).
