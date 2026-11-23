@@ -9,6 +9,9 @@ pub mod request;
 /// 내보내기 입력 고정: scene snapshot·resource revision (XX.1.2).
 pub mod capture;
 
+/// 내보내기 사전 진단과 사용자 확인 (XX.1.3).
+pub mod preflight;
+
 /// 텍스트 glyph 입력: glyph run과 outline 조회 (XX.3.2).
 pub mod text;
 
@@ -22,6 +25,10 @@ mod test_fixtures;
 pub use capture::{
     AssetRevision, CaptureError, EncodedImage, ExportAssetSource, ExportCapture, ExportRoot,
     FontRevision, ImageMedia, ResourcePins, SceneSource,
+};
+pub use preflight::{
+    ConfirmedExport, ExportConfirmation, ExportPreflight, PreflightInput, PreflightIssue,
+    PreflightRejection,
 };
 pub use request::{
     ExportBackground, ExportFormat, ExportRequest, ExportRequestError, ExportScale, ExportSource,

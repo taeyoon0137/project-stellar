@@ -276,7 +276,12 @@ fn text_capture(snapshot: SceneSnapshot, fonts: u64) -> ExportCapture {
 }
 
 fn write_text(capture: &ExportCapture, fonts: &Fonts) -> Result<SvgDocument, SvgExportError> {
-    write_svg(capture, &assets(), fonts, &SvgWriteOptions::default())
+    write_svg(
+        &confirmed(capture),
+        &assets(),
+        fonts,
+        &SvgWriteOptions::default(),
+    )
 }
 
 /// 텍스트를 글꼴·텍스트 요소로 넣지 않았는지 확인합니다.
@@ -513,7 +518,7 @@ fn text_output_respects_the_size_limit() {
     for limit in [64, 400, full.as_bytes().len() - 1] {
         assert_eq!(
             write_svg(
-                &capture,
+                &confirmed(&capture),
                 &assets(),
                 &fonts,
                 &SvgWriteOptions {
@@ -527,7 +532,7 @@ fn text_output_respects_the_size_limit() {
         max_output_bytes: full.as_bytes().len(),
     };
     assert_eq!(
-        write_svg(&capture, &assets(), &fonts, &exact).unwrap(),
+        write_svg(&confirmed(&capture), &assets(), &fonts, &exact).unwrap(),
         full
     );
 }

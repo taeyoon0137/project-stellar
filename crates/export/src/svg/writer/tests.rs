@@ -26,6 +26,7 @@ use crate::capture::{
     AssetRevision, EncodedImage, ExportAssetSource, FontRevision, ImageMedia, ResourcePins,
     SceneSource,
 };
+use crate::preflight::ConfirmedExport;
 use crate::request::{
     ExportBackground, ExportRequest, ExportScale, ExportSource, OutputPath, TargetProfileKey,
 };
@@ -78,12 +79,22 @@ fn capture(snapshot: SceneSnapshot, request: ExportRequest) -> ExportCapture {
     .unwrap()
 }
 
+/// writer 동작만 보는 테스트용 진행 허가(진단은 preflight 테스트가 검사합니다).
+fn confirmed(capture: &ExportCapture) -> ConfirmedExport {
+    ConfirmedExport::assume_confirmed(capture.clone())
+}
+
 fn svg_request() -> ExportRequest {
     fx::view_request(ExportFormat::Svg)
 }
 
 fn write(capture: &ExportCapture) -> Result<SvgDocument, SvgExportError> {
-    write_svg(capture, &assets(), &NoText, &SvgWriteOptions::default())
+    write_svg(
+        &confirmed(capture),
+        &assets(),
+        &NoText,
+        &SvgWriteOptions::default(),
+    )
 }
 
 fn write_snapshot(snapshot: SceneSnapshot) -> Result<SvgDocument, SvgExportError> {
@@ -214,7 +225,13 @@ fn edits_during_export_do_not_change_the_document() {
         (fx::asset(1), AssetRevision(4)),
         EncodedImage::new(ImageMedia::Png, Arc::from(b"replaced".to_vec()), 60, 40).unwrap(),
     );
-    let after = write_svg(&pinned, &store, &NoText, &SvgWriteOptions::default()).unwrap();
+    let after = write_svg(
+        &confirmed(&pinned),
+        &store,
+        &NoText,
+        &SvgWriteOptions::default(),
+    )
+    .unwrap();
     assert_eq!(after.as_bytes(), before.as_bytes());
     let fresh = write(&capture(edited, svg_request())).unwrap();
     assert_ne!(fresh.as_bytes(), before.as_bytes());
@@ -499,7 +516,7 @@ fn missing_assets_and_wrong_format_are_errors() {
     let pinned = capture(fx::basic_snapshot(&Basic::default()), svg_request());
     assert!(matches!(
         write_svg(
-            &pinned,
+            &confirmed(&pinned),
             &other_revision,
             &NoText,
             &SvgWriteOptions::default()
@@ -526,13 +543,13 @@ fn output_limit_is_enforced() {
         max_output_bytes: full.as_bytes().len(),
     };
     assert_eq!(
-        write_svg(&pinned, &assets(), &NoText, &exact).unwrap(),
+        write_svg(&confirmed(&pinned), &assets(), &NoText, &exact).unwrap(),
         full
     );
     for limit in [0, 100, full.as_bytes().len() - 1] {
         assert_eq!(
             write_svg(
-                &pinned,
+                &confirmed(&pinned),
                 &assets(),
                 &NoText,
                 &SvgWriteOptions {
@@ -551,7 +568,7 @@ fn output_limit_is_enforced() {
     );
     assert_eq!(
         write_svg(
-            &pinned,
+            &confirmed(&pinned),
             &huge,
             &NoText,
             &SvgWriteOptions {

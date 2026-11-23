@@ -1,9 +1,11 @@
 //! SVG 문서 writer (XX.3.3).
 //!
-//! [`write_svg`]는 [`ExportCapture`]만 읽어 SVG 문서 하나를 만듭니다. 출력은 입력의 **값**에만
-//! 의존합니다: 같은 snapshot 내용·요청·고정 asset 내용이면 `Arc` 공유 구조, 생성 순서, scene
-//! revision과 무관하게 byte 단위로 같은 문서가 됩니다.
+//! [`write_svg`]는 사전 진단을 통과했거나 사용자가 진단을 확인한 capture([`ConfirmedExport`], XX.1.3)만 읽어
+//! SVG 문서 하나를 만듭니다. 출력은 입력의 **값**에만 의존합니다: 같은 snapshot 내용·요청·고정 asset 내용이면
+//! `Arc` 공유 구조, 생성 순서, scene revision과 무관하게 byte 단위로 같은 문서가 됩니다.
 //!
+//! - missing resource: 사용자가 확인한 missing image·text layout·font만 생략합니다(이미지 pixel, Text glyph,
+//!   그 폰트 glyph). 확인하지 않은 resource가 없으면(진단 뒤 host가 내용을 잃음) 오류입니다.
 //! - 순회: 최상위 node를 paint 순서로, 각 subtree를 명시적 stack pre-order로 걷습니다(재귀 없음).
 //!   숨긴 node는 subtree째 생략합니다.
 //! - 구조: node마다 `<g id>` 하나(world 좌표, 변환 없음). 그 안에 content 고유 모습(image 픽셀, text run
@@ -32,6 +34,7 @@ use stellar_scene::node::{SceneContent, SceneNode, TextLayoutKey, Visibility};
 use stellar_scene::stack::{ClipShape, Paint, PaintLayer, StrokeAlign};
 
 use crate::capture::{ExportAssetSource, ExportCapture, ExportRoot};
+use crate::preflight::ConfirmedExport;
 use crate::request::{ExportBackground, ExportFormat};
 use crate::svg::element::{
     write_background, write_clip_def, write_fill, write_geometry_clip_def, write_group_close,
@@ -202,19 +205,21 @@ impl From<SvgIdError> for SvgExportError {
     }
 }
 
-/// capture를 SVG 문서로 씁니다. 이미지 내용은 `assets`에서 고정 asset revision으로, text glyph는 `text`에서
-/// 고정 font revision으로 읽습니다.
+/// 진행 허가를 받은 capture를 SVG 문서로 씁니다. 이미지 내용은 `assets`에서 고정 asset revision으로, text glyph는
+/// `text`에서 고정 font revision으로 읽습니다.
 pub fn write_svg(
-    capture: &ExportCapture,
+    export: &ConfirmedExport,
     assets: &dyn ExportAssetSource,
     text: &dyn ExportTextSource,
     options: &SvgWriteOptions,
 ) -> Result<SvgDocument, SvgExportError> {
+    let capture = export.capture();
     let requested = capture.request().format();
     if requested != ExportFormat::Svg {
         return Err(SvgExportError::FormatMismatch { requested });
     }
     let mut writer = Writer {
+        export,
         capture,
         assets,
         text,
@@ -289,6 +294,7 @@ enum Step<'a> {
 }
 
 struct Writer<'a> {
+    export: &'a ConfirmedExport,
     capture: &'a ExportCapture,
     assets: &'a dyn ExportAssetSource,
     text: &'a dyn ExportTextSource,
@@ -414,23 +420,35 @@ impl<'a> Writer<'a> {
         layout: TextLayoutKey,
     ) -> Result<PathGeometry, SvgExportError> {
         let source = node.source();
-        let glyphs = self.capture.glyph_layout(self.text, layout).ok_or(
-            SvgExportError::MissingTextLayout {
+        let Some(glyphs) = self.capture.glyph_layout(self.text, layout) else {
+            if self.export.omits_text_layout(layout) {
+                // 사용자가 확인한 missing layout: glyph 없이 진행합니다.
+                return Ok(PathGeometry::empty());
+            }
+            return Err(SvgExportError::MissingTextLayout {
                 node: source,
                 layout,
-            },
-        )?;
+            });
+        };
         // command 하나는 출력에 최소 2 byte("Z" + 구분자)이므로 남은 출력 예산의 절반이 command 상한입니다.
         let budget = self
             .limit
             .saturating_sub(self.defs.len().saturating_add(self.body.len()))
             / 2;
-        let (capture, text, cache) = (self.capture, self.text, &mut self.outlines);
+        let (export, capture, text, cache) =
+            (self.export, self.capture, self.text, &mut self.outlines);
         let mut lookup = |key: &GlyphOutlineKey| {
-            cache
+            let outline = cache
                 .entry(key.clone())
                 .or_insert_with(|| capture.glyph_outline(text, key))
-                .clone()
+                .clone();
+            match outline {
+                // 사용자가 확인한 missing font: 그 폰트 glyph를 생략합니다.
+                Err(GlyphOutlineError::FontUnavailable) if export.omits_font(key.font) => {
+                    Ok(GlyphOutline::Empty)
+                }
+                other => other,
+            }
         };
         let outlines = match text_outlines(&glyphs, &mut lookup, budget) {
             Ok(outlines) => outlines,
@@ -465,15 +483,21 @@ impl<'a> Writer<'a> {
         let source = node.source();
         let transform = node.world_transform();
         if let SceneContent::Image(image) = node.content() {
-            let encoded = self.capture.encoded_image(self.assets, image.asset).ok_or(
-                SvgExportError::MissingImage {
-                    node: source,
-                    asset: image.asset,
-                },
-            )?;
-            self.check_size(base64_len(encoded.bytes().len()).unwrap_or(usize::MAX))?;
-            write_image(&mut self.body, image, &transform, &encoded)
-                .map_err(value_error(source))?;
+            match self.capture.encoded_image(self.assets, image.asset) {
+                Some(encoded) => {
+                    self.check_size(base64_len(encoded.bytes().len()).unwrap_or(usize::MAX))?;
+                    write_image(&mut self.body, image, &transform, &encoded)
+                        .map_err(value_error(source))?;
+                }
+                // 사용자가 확인한 missing image: pixel 없이 칠하기 layer만 씁니다.
+                None if self.export.omits_image(image.asset) => {}
+                None => {
+                    return Err(SvgExportError::MissingImage {
+                        node: source,
+                        asset: image.asset,
+                    })
+                }
+            }
         }
         let text_geometry = match node.content() {
             SceneContent::Text(text) => Some(self.write_text(node, text.layout)?),
