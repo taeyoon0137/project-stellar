@@ -11,7 +11,9 @@
 //! 계산은 셸·scene 없이 문서 모델과 호출자가 준 상자만 읽습니다. 화면 상자(Text layout 결과 등)가 필요한 값은
 //! 호출자(runtime `canvas::transform`, 이후 CLI·MCP)가 넘깁니다.
 
+pub mod align;
 pub mod place;
+pub mod plan;
 
 #[cfg(test)]
 pub(crate) mod test_fixtures {
