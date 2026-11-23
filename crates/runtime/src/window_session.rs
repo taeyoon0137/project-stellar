@@ -684,6 +684,18 @@ impl SaveCapture {
             stellar_project::manifest_style_defaults::set_active(root, style_now)
                 .map_err(|error| WindowSessionSaveError::StyleDefaults(error.to_string()))?;
         }
+        // 뒤 쓰기(원본·chunk 전용 generation)가 실패해 저장 전체가 실패하면 되쓴 `stellar.yaml`을 되돌립니다. 실패
+        // 오류는 "아무것도 쓰지 않았습니다"를 뜻하기 때문입니다(되돌리기 실패는 로그만 남김).
+        let fail = |error: WindowSessionSaveError| {
+            if !style_unchanged {
+                if let Err(undo) =
+                    stellar_project::manifest_style_defaults::set_active(root, style_base)
+                {
+                    eprintln!("Stellar style defaults rollback: {undo}");
+                }
+            }
+            Err(error)
+        };
         let mut files = 0;
         if let (Some(source), Some(next)) = (&source, &next_source) {
             // 앱 창이 쓰는 원본임을 쓰기 **전에** 기록합니다(다른 창 감시가 이 저장을 외부 writer로 오판하지 않게).
@@ -691,9 +703,9 @@ impl SaveCapture {
             let commit = match commit_files(root, &source.capture.base, &source.files) {
                 Ok(commit) => commit,
                 Err(SourceCommitError::Stale { paths }) => {
-                    return Err(WindowSessionSaveError::SourceStale { paths })
+                    return fail(WindowSessionSaveError::SourceStale { paths })
                 }
-                Err(error) => return Err(source_error(error)),
+                Err(error) => return fail(source_error(error)),
             };
             files = commit.written + commit.deleted;
         }
@@ -710,7 +722,7 @@ impl SaveCapture {
                 eprintln!("Stellar cache generation: {error}");
                 return Ok(finish(None, source, files, true));
             }
-            Err(error) => return Err(error),
+            Err(error) => return fail(error),
         };
         let mut cache_stale = false;
         if let Some(next) = &next_source {

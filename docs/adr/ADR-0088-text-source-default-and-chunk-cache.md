@@ -113,7 +113,9 @@ journal)·ADR-0083(창 session stale·외부 변경)을 앱 runtime 기본 경�
 
 열 때 `stellar.yaml`의 활성 세트 이름(`document_io::session::active_style_defaults`, 매니페스트 해석은
 `manifest_style_defaults::active_name`)을 모델 거울(`DocumentModel::set_style_defaults`)에 넣습니다. 저장 때 거울이 열 때·
-마지막 저장 때의 값과 다르면 같은 잠금 안에서 `manifest_style_defaults::set_active`로 되씁니다. 바꾸지 않은 창은 다른
+마지막 저장 때의 값과 다르면 같은 잠금 안에서 `manifest_style_defaults::set_active`로 되씁니다. 되쓴 뒤 원본 journal
+(또는 chunk 전용 session의 generation) 쓰기가 실패해 저장 전체가 실패하면 같은 함수로 앞 값을 되돌립니다. 저장 실패
+오류는 "아무것도 쓰지 않았습니다"를 뜻하기 때문입니다. 되돌리기가 실패하면 로그만 남깁니다. 바꾸지 않은 창은 다른
 쓰기가 바꾼 `stellar.yaml`을 되돌리지 않습니다. 외부에서 바뀐 활성 세트는 clean 창에서도 거울에 반영하지 않고 다시 열 때
 읽습니다(거울은 레코드 밖이라 `ApplyExternalSnapshot` 변경 집합에 들지 않음).
 

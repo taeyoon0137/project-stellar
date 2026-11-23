@@ -436,6 +436,40 @@ fn the_active_style_defaults_set_is_mirrored_on_open_and_written_back_on_save() 
 }
 
 #[test]
+fn a_save_that_fails_on_the_source_does_not_leave_the_style_defaults_choice_written() {
+    let project = saved_project("source-style-rollback");
+    let locks = TempDir::new("source-style-rollback-locks");
+    let mut a = open(&project, &locks, 1);
+    let tx = CommandTransaction::new(command(6), stellar_commands::id::CommandOrigin::User)
+        .with_command(
+            a.revision(),
+            stellar_commands::command::Command::SetStyleDefaults(
+                stellar_commands::style_defaults::SetStyleDefaults {
+                    name: stellar_document::css::style_defaults::REACT_NATIVE.into(),
+                },
+            ),
+        );
+    a.apply(&tx, 0).unwrap();
+    a.apply(&rename(a.document().unwrap(), 7, 11, "창 편집"), 0)
+        .unwrap();
+    // 같은 문서 파일을 외부(Git pull·편집기)가 먼저 바꿉니다. 창 저장은 원본 journal에서 stale입니다.
+    text_rename(&project, 11, "외부 원본");
+    let manifest_before = std::fs::read(project.path().join("stellar.yaml")).unwrap();
+    let error = a.save_now().unwrap_err();
+    assert!(error.is_stale(), "{error}");
+    // 실패한 저장은 아무것도 쓰지 않았다는 뜻이므로 먼저 되쓴 stellar.yaml도 되돌립니다.
+    assert_eq!(
+        stellar_project::document_io::session::active_style_defaults(project.path()).unwrap(),
+        stellar_document::css::style_defaults::CSS
+    );
+    assert_eq!(
+        std::fs::read(project.path().join("stellar.yaml")).unwrap(),
+        manifest_before
+    );
+    assert!(a.has_unsaved_changes(), "창 편집은 그대로 dirty");
+}
+
+#[test]
 fn opening_recovers_an_interrupted_source_save_before_reading_the_source() {
     let project = saved_project("source-recover");
     let locks = TempDir::new("source-recover-locks");
