@@ -40,6 +40,14 @@ pub struct CopiedDeclaration {
     pub stellar_only: bool,
 }
 
+/// registry가 저장 위치를 가진 이름인지(registry 이름이거나 매핑 대상 CSS longhand). 속성 패널 행이 없어
+/// 붙여넣기 경로가 아직 없는 속성(`opacity`·`transform`·`stroke-linecap` …)을 `unknown-property`와 구분합니다.
+fn registry_knows(name: &str) -> bool {
+    stellar_document::css::registry::entries()
+        .iter()
+        .any(|e| e.name == name || e.css.longhands.contains(&name))
+}
+
 /// 레이어 메타데이터 속성(복사·붙여넣기 대상 아님).
 fn is_layer_property(property: InspectorProperty) -> bool {
     matches!(
@@ -86,6 +94,7 @@ pub struct SkippedDeclaration {
     pub value: String,
     /// 이유 코드: 값 오류 코드(`unsupported-unit`·`unsupported-value`·`unknown-token`·`forbidden-value`·
     /// `invalid-value`), `invalid-declaration`, `unknown-property`(Stellar에 저장 위치가 없음),
+    /// `unsupported-property`(저장 위치는 있지만 붙여넣기 경로가 아직 없음),
     /// `not-applicable`(선택한 node 종류에 없는 속성이거나 레이어 속성), `rejected`(편집 규칙이 거부).
     pub code: &'static str,
     /// 사람이 읽는 이유.
@@ -233,13 +242,23 @@ pub fn paste_declarations(
         };
         for (name, value) in longhands {
             let Some(property) = InspectorProperty::from_name(&name) else {
-                skip(
-                    &mut plan,
-                    &name,
-                    &value,
-                    "unknown-property",
-                    format!("{name}은 Stellar에 저장 위치가 없는 속성입니다"),
-                );
+                if registry_knows(&name) {
+                    skip(
+                        &mut plan,
+                        &name,
+                        &value,
+                        "unsupported-property",
+                        format!("{name}은 Stellar가 저장하지만 선언 블록 붙여넣기로는 아직 받지 않는 속성입니다"),
+                    );
+                } else {
+                    skip(
+                        &mut plan,
+                        &name,
+                        &value,
+                        "unknown-property",
+                        format!("{name}은 Stellar에 저장 위치가 없는 속성입니다"),
+                    );
+                }
                 continue;
             };
             if is_layer_property(property) {
@@ -533,7 +552,7 @@ mod tests {
                 ("object-fit", "not-applicable"),
                 ("name", "not-applicable"),
                 ("", "invalid-declaration"),
-                ("transform", "unknown-property"),
+                ("transform", "unsupported-property"),
             ]
         );
         assert!(plan.skipped.iter().all(|s| !s.message.is_empty()));
@@ -545,6 +564,29 @@ mod tests {
             }]
         );
         assert_eq!(plan.commands.len(), 1);
+        // Stellar가 저장하지만 붙여넣기 경로가 아직 없는 속성은 저장 위치가 없는 속성과 다른 코드입니다.
+        let stored = paste_declarations(
+            &model,
+            &[ids[3]],
+            "opacity: 0.5; mix-blend-mode: multiply; stroke-linecap: round; margin-top: 1px",
+            &NoTokens,
+            &mut new_ids(7),
+        )
+        .unwrap();
+        let codes: Vec<(&str, &str)> = stored
+            .skipped
+            .iter()
+            .map(|s| (s.name.as_str(), s.code))
+            .collect();
+        assert_eq!(
+            codes,
+            vec![
+                ("opacity", "unsupported-property"),
+                ("mix-blend-mode", "unsupported-property"),
+                ("stroke-linecap", "unsupported-property"),
+                ("margin-top", "unknown-property"),
+            ]
+        );
         // 블록 전체 오류는 command를 만들지 않습니다.
         let error = paste_declarations(&model, &[frame], "a { b: c", &NoTokens, &mut new_ids(6))
             .unwrap_err();
