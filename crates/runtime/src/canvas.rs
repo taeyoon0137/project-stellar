@@ -39,6 +39,8 @@ pub mod handles;
 pub mod hit;
 /// Frame 레이아웃 그리드 스냅 선·표시와 픽셀 그리드 (XII.10.20, ADR-0117).
 pub mod layout_grid;
+/// 줌·팬 입력을 camera에 연결 (XII.10.37, ADR-0117).
+pub mod navigate;
 /// 기존 Path의 벡터 편집 모드 (XII.10.29, ADR-0117).
 pub mod path_edit;
 /// 눈금자 눈금과 가이드 제스처 (XII.10.19, ADR-0117).
