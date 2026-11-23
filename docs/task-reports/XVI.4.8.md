@@ -33,7 +33,7 @@
   index는 내용에서 결정적으로 정해지므로 `PartialEq`(같은 내용 ⇒ 같은 index)도 그대로 성립합니다.
 - 판정 결과는 바꾸지 않았습니다.
 
-## 측정 (`DEV-MAC`, release)
+## 성능
 
 `cargo test -p stellar-bindings --release store_bench -- --ignored --nocapture`. synthetic fixture(VIII.9.1, 토큰 1,000 +
 binding 1,000·10,000, 모두 Number). 다른 작업 12개가 동시에 도는 부하 상태에서 잰 값입니다.
@@ -52,7 +52,7 @@ binding 1,000·10,000, 모두 Number). 다른 작업 12개가 동시에 도는 �
   참조 타입(옛 선형 검색 경로)을 실제로 지나게 했습니다. index와 이전 방식의 해석 결과(진단)는 같습니다.
 - open 전체가 binding 수에 비례하는 것은 평가기가 모든 binding을 평가하기 때문입니다(이 행이 바꾸는 조회가 아님).
 
-## 검증
+## 실행한 명령 / 검증 (`DEV-MAC`)
 
 | 명령 | 결과 |
 |---|---|
@@ -62,12 +62,18 @@ binding 1,000·10,000, 모두 Number). 다른 작업 12개가 동시에 도는 �
 | `cargo clippy -p stellar-bindings -p stellar-integrity -p stellar-prototype --all-targets -- -D warnings` | 경고 0 |
 | `cargo fmt -p stellar-bindings -- --check` | 통과 |
 
+## 테스트
+
 | 검사 | 결과 |
 |---|---|
 | random 편집(seed 60 × 80단계: live 추가, live → orphan, orphan 재연결·삭제, 같은 ID orphan 교체) 뒤 index 조회가 전체 순회 결과와 같고, 같은 내용으로 다시 만든 저장소와 같음(`indexes_match_full_scans_after_random_edits`) | 통과 |
 | 기존 VIII.5.5(token_commands), VIII.8.2·VIII.8.3(fallback, golden corpus), VIII.8.4(orphan_commands) test | 통과 |
 
-## 남은 한계
+## 차이(작업 지시와 다른 점)
+
+작업 지시와 다른 점은 아래 "남은 위험 / 한계"에 함께 적었습니다.
+
+## 남은 위험 / 한계
 
 - 토큰 inbound 검사의 토큰 쪽(`TokenRegistry::referrers`)은 토큰 수에 비례합니다. registry가 토큰 역참조를 증분 유지해야
   없앨 수 있고, 이 행의 범위(binding 저장소 조회)와 소유 범위 밖입니다.

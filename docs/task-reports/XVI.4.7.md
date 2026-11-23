@@ -48,7 +48,7 @@ property test(`scoped_restore_validation_never_accepts_what_the_full_validator_r
 같은 id를 node와 다른 영속 id가 함께 쓰는 문서(이미 validator 위반)에서는 node 종류를 우선합니다. 옛 map은 삽입
 순서에 따라 달랐습니다.
 
-## 측정 (`DEV-MAC`, release)
+## 성능
 
 `cargo test -p stellar-commands --release index_tests::measure -- --ignored --nocapture`. 문서는 root ← group 100개 ←
 leaf Frame(VII.2.7 사후 수정 측정과 같은 모양), 이름만 바꾸는 RestoreNodeRecords 1건의 `validate` 2,000회. 다른 작업
@@ -63,7 +63,7 @@ leaf Frame(VII.2.7 사후 수정 측정과 같은 모양), 이름만 바꾸는 R
 50,000 node 값 0.3 µs로 기준 1 ms 이하(아키텍처 6.3 단일 점유 2 ms, 6.4 Undo/Redo 10 ms 안)를 만족합니다. 시험은
 평균이 1 ms를 넘으면 실패합니다.
 
-## 검증
+## 실행한 명령 / 검증 (`DEV-MAC`)
 
 | 명령 | 결과 |
 |---|---|
@@ -72,6 +72,8 @@ leaf Frame(VII.2.7 사후 수정 측정과 같은 모양), 이름만 바꾸는 R
 | `cargo clippy -p stellar-commands --all-targets -- -D warnings` | 경고 0 |
 | `cargo fmt -p stellar-commands -- --check` | 통과 |
 
+## 테스트
+
 | 검사 | 결과 |
 |---|---|
 | random command sequence(문서 40개 × 40단계, 셋 중 하나는 직전 역 command 적용) 뒤 증분 index(id 종류·자식·참조)가 전체 재구성 index와 같음(`incremental_indexes_match_full_rebuilds_after_random_command_sequences`, 적용 900건·역 적용 200건 이상 확인) | 통과 |
@@ -79,7 +81,11 @@ leaf Frame(VII.2.7 사후 수정 측정과 같은 모양), 이름만 바꾸는 R
 | typography id가 영속 id 공간에 들고 clip 대상이면 거부(`typography_ids_occupy_the_id_space_like_the_document_validator`) | 통과 |
 | 기존 index 비교(`insert_indexes_match_full_rebuilds_after_command_sequences`) | 통과 |
 
-## 남은 한계
+## 차이(작업 지시와 다른 점)
+
+작업 지시와 다른 점은 아래 "남은 위험 / 한계"에 함께 적었습니다.
+
+## 남은 위험 / 한계
 
 - `InsertNode`가 modifier stack을 함께 넣을 때 쓰는 `existing_stacks`(문서의 모든 modifier stack 복사, modifier 참조
   cycle 검사)는 이 행의 세 index 밖이라 O(N) 그대로입니다. modifier 의존 graph를 모델이 증분 유지해야 없앨 수 있습니다.

@@ -34,7 +34,7 @@
   묶음을 worker thread에서 버립니다. 사용량은 지운 즉시 줄어든 것으로 봅니다. 목표가 바뀌어 pass가 사라져도 모은 묶음은 다음
   `run_chunk`로 한 번 나옵니다.
 
-## 측정 (`DEV-MAC`, release)
+## 성능
 
 `cargo test -p stellar-runtime --release --lib cache::tests::measure -- --ignored --nocapture`. 썸네일 200,000개(각 1 KiB)를 Critical에서
 모두 지우며 실제 시계로 chunk 시간을 잽니다. 다른 작업 12개가 동시에 도는 부하 상태(load average 10\~50)에서 잰 값입니다.
@@ -51,7 +51,7 @@
   수천 배라 부하 상태의 OS 선점으로 봅니다. deadline은 단위 사이에서만 멈출 수 있어 선점(아키텍처 6.3이 따로 분류하는 통제
   불가 지연)은 막지 못합니다. 기준 장비(M1 16 GB) 무부하 측정은 하지 않았습니다.
 
-## 검증
+## 실행한 명령 / 검증 (`DEV-MAC`)
 
 | 명령 | 결과 |
 |---|---|
@@ -61,6 +61,8 @@
 | `cargo clippy -p stellar-runtime -p stellar-renderer-core --all-targets -- -D warnings` | 경고 0 |
 | `cargo fmt -p stellar-runtime -p stellar-renderer-core -- --check` | 통과 |
 
+## 테스트
+
 | 검사 | 결과 |
 |---|---|
 | simulated pressure: 가짜 시계(단위 비용 5\~100 µs 결정적 난수)로 Normal → Warning → Critical을 차례로 주면 모든 chunk가 2 ms 이하, 한 번에 끝내지 않고 여러 chunk로 나뉨, 지우는 priority가 낮은 것부터 단조 증가, Normal·Warning 목표 도달, Critical 뒤 Document/CurrentScene만 남음(`simulated_pressure_evicts_incrementally_within_ui_chunk_budget`) | 통과 |
@@ -69,7 +71,11 @@
 | 해제 묶음은 pass 도중 내주지 않고, pass가 사라져도 한 번 내줌(`released_resources_are_handed_over_once_when_the_pass_ends`) | 통과 |
 | 썸네일 cache를 evictor로 줄이고 해제 묶음이 한 번 나옴(`pressure_evictor_drives_thumbnail_eviction`) | 통과 |
 
-## 남은 한계
+## 차이(작업 지시와 다른 점)
+
+작업 지시와 다른 점은 아래 "남은 위험 / 한계"에 함께 적었습니다.
+
+## 남은 위험 / 한계
 
 - 앱 연결(OS memory pressure 알림 → `on_pressure`, UI tick → `run_chunk`, 해제 묶음 → worker pool `CacheGeneration`)은 UI 재설계
   때 합니다. glyph atlas는 page를 지운 직후 page 상한을 스스로 되돌리므로 압박 해제 때 따로 부를 것이 없습니다.

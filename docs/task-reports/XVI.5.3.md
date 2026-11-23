@@ -36,7 +36,7 @@
 - Document/CurrentScene은 `ReportedUsage`(XVI.5.2)로 사용량만 등록합니다. 문서 모델·scene 크기를 재는 일은 연결하는 쪽이
   넘깁니다.
 
-## 검증
+## 실행한 명령 / 검증 (`DEV-MAC`)
 
 | 명령 | 결과 |
 |---|---|
@@ -45,6 +45,8 @@
 | `cargo clippy -p stellar-runtime -p stellar-renderer-core --all-targets -- -D warnings` | 경고 0 |
 | `cargo fmt -p stellar-runtime -p stellar-renderer-core -- --check` | 통과 |
 
+## 테스트
+
 | 검사 | 결과 |
 |---|---|
 | total usage 일치: 문서·scene 보고값 + glyph atlas page byte(3 × 64²) + tessellation mesh byte(같은 tessellator로 다시 계산) + mip chain byte(같은 이미지로 다시 생성) + 썸네일 byte가 manager 합계·cache별 합계와 같고, priority 이동·삭제 뒤에도 따라감(`total_usage_matches_registered_caches`) | 통과 |
@@ -52,7 +54,15 @@
 | tessellation 안 LRU: 다시 쓴 entry가 남고 목표에서 멈춤(`eviction_stops_at_target_and_keeps_lru_order_within_a_cache`) | 통과 |
 | 썸네일 cache 사용량 등록·같은 key 교체·LRU 제거(`thumbnail_cache_registers_usage_and_evicts_least_recent_first`) | 통과 |
 
-## 남은 한계
+## 성능
+
+이 행은 따로 성능을 측정하지 않았습니다. 완료 기준이 동작 판정이고, 측정이 필요한 부분은 남은 위험에 적었습니다.
+
+## 차이(작업 지시와 다른 점)
+
+작업 지시와 다른 점은 아래 "남은 위험 / 한계"에 함께 적었습니다.
+
+## 남은 위험 / 한계
 
 - 썸네일을 그리는 경로(비활성 문서 render)와, 앱 render thread가 감싼 cache를 실제로 쓰도록 바꾸는 연결은 아직 없습니다.
   지금 제품 경로의 cache 사용처는 UI 재설계 때 이 타입으로 연결합니다(ADR-0108 결정 5).

@@ -79,9 +79,42 @@ fn violations(files: &[PathBuf]) -> Vec<String> {
     found
 }
 
+/// 앱 사용자 되돌리기·출처 module로, ADR-0100 결정 3에 따라 앱 쪽 에이전트 편집 crate가 생길 때까지 mcp-core 안에
+/// 임시로 둔 파일입니다. 이 파일들은 검사에서 빼는 대신, 에이전트 경로의 다른 파일이 이 module을 부르지 않는지
+/// [`agent_paths_do_not_call_the_app_revert_modules`]가 따로 봅니다. 옮기면 이 목록을 지웁니다.
+const APP_SIDE_MODULES: [&str; 6] = [
+    "crates/mcp-core/src/provenance.rs",
+    "crates/mcp-core/src/provenance_fixture.rs",
+    "crates/mcp-core/src/provenance_tests.rs",
+    "crates/mcp-core/src/agent_history/",
+    "crates/mcp-core/src/attached/revert.rs",
+    "crates/mcp-core/src/attached/revert_tests.rs",
+];
+
+fn is_app_side(file: &std::path::Path) -> bool {
+    let text = file.to_string_lossy().replace('\\', "/");
+    APP_SIDE_MODULES.iter().any(|m| text.contains(m))
+}
+
+#[test]
+fn agent_paths_do_not_call_the_app_revert_modules() {
+    let files: Vec<PathBuf> = sources_in(&AGENT_PATHS)
+        .into_iter()
+        .filter(|f| !is_app_side(f))
+        .collect();
+    let found = hits(
+        &files,
+        &["provenance::", "agent_history::", "attached::revert", "revert::"],
+    );
+    assert!(found.is_empty(), "{found:#?}");
+}
+
 #[test]
 fn agent_paths_cannot_write_immutable_state() {
-    let files = sources_in(&AGENT_PATHS);
+    let files: Vec<PathBuf> = sources_in(&AGENT_PATHS)
+        .into_iter()
+        .filter(|f| !is_app_side(f))
+        .collect();
     assert!(
         files.len() > 30,
         "검사 대상이 비어 있지 않음: {}",

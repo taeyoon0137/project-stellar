@@ -33,7 +33,7 @@
 - 토큰 view의 간선은 전체 graph와 같은 규칙(registry에 있거나 tombstone이 있는 대상만)입니다.
 - cycle·참조 판정은 바꾸지 않았습니다.
 
-## 측정 (`DEV-MAC`, release)
+## 성능
 
 `cargo test -p stellar-bindings --release --lib graph_view_tests -- --ignored --nocapture`. synthetic fixture(VIII.9.1, 토큰
 1,000 + binding 1,000·10,000). 다른 작업 12개가 동시에 도는 부하 상태에서 잰 값입니다. "이전"은 같은 검사를 호출마다 전체
@@ -50,7 +50,7 @@ graph를 다시 만들어 한 값(graph 구성 + cycle 질의만, type 검사 �
 2배를 넘으면 실패합니다. cycle 검사 비용은 새 참조가 도달하는 subgraph 크기에 비례합니다. 도달 범위가 큰 편집(긴 binding
 사슬 끝을 읽는 source)은 그만큼 더 걸리며, 전체 graph 재구성 비용을 넘지 않습니다.
 
-## 검증
+## 실행한 명령 / 검증 (`DEV-MAC`)
 
 | 명령 | 결과 |
 |---|---|
@@ -60,13 +60,19 @@ graph를 다시 만들어 한 값(graph 구성 + cycle 질의만, type 검사 �
 | `cargo clippy -p stellar-bindings -p stellar-prototype -p stellar-integrity --all-targets -- -D warnings` | 경고 0 |
 | `cargo fmt -p stellar-bindings -- --check` | 통과 |
 
+## 테스트
+
 | 검사 | 결과 |
 |---|---|
 | random command sequence(seed 30 × 토큰·binding command 40단계 + orphan command 20단계, cycle 거부 20건 이상 포함) 뒤 view의 모든 node 간선·producer, 토큰 간선이 전체 재구성 graph와 같고, 단계마다 random cycle 질의 12개(graph 밖 node 포함)의 결과·경로가 같음(`views_match_full_rebuilds_after_random_command_sequences`) | 통과 |
 | 변이 확인: 토큰 view가 tombstone 대상 간선을 빠뜨리게 바꾸면 위 시험이 실패함 | 확인 후 원복 |
 | 기존 VIII.5.5(token_commands·token_graph), VIII.6.6(binding_commands·graph), VIII.8.4(orphan_commands) test | 통과 |
 
-## 남은 한계
+## 차이(작업 지시와 다른 점)
+
+작업 지시와 다른 점은 아래 "남은 위험 / 한계"에 함께 적었습니다.
+
+## 남은 위험 / 한계
 
 - 저장 전 전체 검증(`validate_for_save`의 `find_cycle`)과 평가기(`BindingEvaluator`)는 graph 전체가 필요한 작업이라 전체
   graph를 그대로 만듭니다(command 검증 경로가 아님).

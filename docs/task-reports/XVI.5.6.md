@@ -29,7 +29,7 @@
 - "OOM 직전"은 Metal backend가 예산을 넘는 할당을 Metal에 요청하기 전에 `OutOfDeviceMemory`로 거부하는 경로(XI.8.7
   `MemoryBudget`)와 Metal 자체 거부를 모두 같은 오류 종류로 받으므로 같은 함수로 처리됩니다.
 
-## 검증
+## 실행한 명령 / 검증 (`DEV-MAC`)
 
 | 명령 | 결과 |
 |---|---|
@@ -37,12 +37,22 @@
 | `cargo clippy -p stellar-renderer-core --all-targets -- -D warnings` | 경고 0 |
 | `cargo fmt -p stellar-renderer-core -- --check` | 통과 |
 
+## 테스트
+
 | 검사 | 결과 |
 |---|---|
 | mock OOM(항상 메모리 부족): 작업 호출 2회(처음 + 재시도 1회), `retries` = 1, 오류 반환, GPU cache만 비고 Document/CurrentScene·썸네일·atlas 마지막 page는 남음, purge byte = 줄어든 사용량, 다음 작업도 다시 한 번만 재시도(`mock_gpu_oom_retries_exactly_once`) | 통과 |
 | purge 뒤 성공(재시도 1회), Host 메모리 부족도 같은 정책, 처음부터 성공하면 purge 없음, 메모리 부족이 아닌 오류(`DeviceLost`)는 재시도 없음(`oom_retry_succeeds_once_and_non_memory_errors_are_not_retried`) | 통과 |
 
-## 남은 한계
+## 성능
+
+이 행은 따로 성능을 측정하지 않았습니다. 완료 기준이 동작 판정이고, 측정이 필요한 부분은 남은 위험에 적었습니다.
+
+## 차이(작업 지시와 다른 점)
+
+작업 지시와 다른 점은 아래 "남은 위험 / 한계"에 함께 적었습니다.
+
+## 남은 위험 / 한계
 
 - Metal backend의 실제 할당 호출(`create_texture`·`create_buffer`·upload)을 `with_oom_retry`로 감싸는 연결은 render thread가
   manager를 소유하게 될 때(UI 재설계와 함께) 합니다. 지금 renderer-metal은 오류를 돌려주고 event만 남깁니다.

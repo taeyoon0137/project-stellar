@@ -29,7 +29,7 @@
 - **제거 단위 실행**: `evict_chunk`는 전체 사용량이 목표 이하가 될 때까지 deadline이 허락하는 만큼 한 단위씩 지우고, 진행
   상태(`EvictionPass`)를 호출자가 들고 다음 chunk에서 이어 갑니다. 시간 예산과 압박 단계 정책은 XVI.5.4입니다.
 
-## 검증
+## 실행한 명령 / 검증 (`DEV-MAC`)
 
 | 명령 | 결과 |
 |---|---|
@@ -37,12 +37,22 @@
 | `cargo clippy -p stellar-renderer-core --all-targets -- -D warnings` | 경고 0 |
 | `cargo fmt -p stellar-renderer-core -- --check` | 통과 |
 
+## 테스트
+
 | 검사 | 결과 |
 |---|---|
 | eviction order fixture: 문서·scene(비축출), §10.4 순서와 반대로 등록한 glyph·tessellation·mipmap·썸네일 cache 둘, 지울 수 없다고 답하는 cache를 목표 0으로 지우면 순서가 썸네일(등록 순) → NearViewport(mipmap → tessellation) → Visible(mipmap → tessellation → glyph)이고 Document/CurrentScene과 보호 단위만 남음(`eviction_order_fixture`) | 통과 |
 | 목표에 닿으면 멈추고 chunk 사이에 이어 감(`eviction_stops_at_the_target_and_resumes_across_chunks`) | 통과 |
 
-## 남은 한계
+## 성능
+
+이 행은 따로 성능을 측정하지 않았습니다. 완료 기준이 동작 판정이고, 측정이 필요한 부분은 남은 위험에 적었습니다.
+
+## 차이(작업 지시와 다른 점)
+
+작업 지시와 다른 점은 아래 "남은 위험 / 한계"에 함께 적었습니다.
+
+## 남은 위험 / 한계
 
 - 실제 cache 등록(XVI.5.3), 압박 단계와 2 ms chunk(XVI.5.4), GPU OOM purge(XVI.5.6)는 각 행 보고서에 있습니다.
 - 앱 render thread가 manager를 소유하고 viewport 이동마다 entry priority를 바꾸는 연결은 UI 재설계 때 합니다(엔진 API만 있음).
