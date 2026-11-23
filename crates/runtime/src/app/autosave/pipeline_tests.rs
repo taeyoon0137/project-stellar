@@ -172,7 +172,8 @@ fn stale_autosave_requests_one_alert_and_writes_nothing_before_a_choice() {
         resolved,
         StaleResolved::Saved(SaveOutcome {
             generation: 3,
-            written: true
+            written: true,
+            ..
         })
     ));
     assert!(wait_for(|| status(&app, b) == AutosaveStatus::Idle));
@@ -247,6 +248,49 @@ fn watcher_applies_a_cli_apply_to_a_clean_window_as_one_undoable_command() {
 }
 
 #[test]
+fn watcher_applies_an_external_text_source_edit_and_rebuilds_the_cache() {
+    // V.10.6·V.10.7(ADR-0088): 원본 파일 event가 반영 job을 만들고, clean 창은 Undo 가능한 항목 하나로 받으며 cache
+    // generation을 원본에 맞춥니다. 자기 저장 event는 걸러집니다.
+    let project = saved_project("pipeline-watch-source");
+    let mut app = AppRuntime::start().unwrap();
+    app.enable_autosave_with(policy(60_000, 60_000));
+    let owner = open_project(&app, project.path());
+    let (a, _, _) = open_window(&app, owner);
+    assert!(
+        stellar_project::document_io::session::read_source(project.path())
+            .unwrap()
+            .is_some(),
+        "열기가 원본으로 옮김"
+    );
+    // 열기 뒤 자기 원본 쓰기 event가 가라앉을 때까지 기다립니다.
+    std::thread::sleep(Duration::from_millis(200));
+    let mut text = stellar_project::external_change::source::TextSourceSession::open(
+        project.path(),
+        crate::window_session::test_fixtures::window(77),
+    )
+    .unwrap();
+    let tx = rename(text.document(), 900, 11, "Git pull");
+    text.apply(&tx).unwrap();
+    text.save().unwrap();
+    assert!(
+        wait_for(|| name_of(&app, a, 11) == "Git pull"),
+        "감시 thread가 외부 원본을 반영"
+    );
+    assert!(!dirty(&app, a));
+    // cache 맞춤 쓰기는 자동 저장 writer가 합니다(debounce 없이 flush).
+    app.flush_autosave().unwrap();
+    assert!(wait_for(|| generation(&app, a) == 2), "cache를 원본에 맞춤");
+    let request = app.undo(a).unwrap();
+    assert!(matches!(
+        next_solicited(&app),
+        RuntimeEvent::HistoryReplayed { request: got, applied: true, .. } if got == request
+    ));
+    assert_eq!(name_of(&app, a, 11), "n11");
+    assert!(dirty(&app, a));
+    app.shutdown().unwrap();
+}
+
+#[test]
 fn external_change_over_a_dirty_window_waits_for_reconciliation_without_writing() {
     // ADR-0083 결정 2·4: 외부 writer와 dirty가 겹치면 두 선택지가 아니라 reconciliation 대기이고 자동 저장이 멈춤.
     let project = saved_project("pipeline-reconcile");
@@ -298,6 +342,34 @@ fn broken_external_generation_reports_a_diagnostic_and_applies_nothing() {
     app.shutdown().unwrap();
 }
 
+/// `.stellar/journal`을 파일로 막은 상태. [`BlockedJournal::restore`]가 되돌립니다.
+pub(crate) struct BlockedJournal {
+    journal: std::path::PathBuf,
+    backup: Option<std::path::PathBuf>,
+}
+
+impl BlockedJournal {
+    pub(crate) fn restore(self) {
+        std::fs::remove_file(&self.journal).unwrap();
+        if let Some(backup) = &self.backup {
+            std::fs::rename(backup, &self.journal).unwrap();
+        }
+    }
+}
+
+/// 텍스트 원본 저장 journal 자리를 파일로 막아 원본 쓰기가 실패하게 합니다.
+pub(crate) fn block_journal(root: &std::path::Path) -> BlockedJournal {
+    let journal = root.join(".stellar").join("journal");
+    let backup = root.join("journal-backup");
+    let moved = std::fs::rename(&journal, &backup).is_ok();
+    std::fs::create_dir_all(journal.parent().unwrap()).unwrap();
+    std::fs::write(&journal, b"blocked").unwrap();
+    BlockedJournal {
+        journal,
+        backup: moved.then_some(backup),
+    }
+}
+
 #[test]
 fn close_flush_returns_a_decision_state_and_never_discards_edits() {
     // XIII.1.6: timeout·failure fixture.
@@ -310,21 +382,17 @@ fn close_flush_returns_a_decision_state_and_never_discards_edits() {
         FlushOutcome::Clean
     );
 
-    // 실패: design/objects를 파일로 막습니다.
+    // 실패: 텍스트 원본 저장 journal(.stellar/journal)을 파일로 막습니다(원본이 Git 원본, ADR-0088).
     edit(&app, a, 700, 11, "닫기 전 편집");
-    let objects = project.path().join("design").join("objects");
-    let backup = project.path().join("objects-backup");
-    std::fs::rename(&objects, &backup).unwrap();
-    std::fs::write(&objects, b"blocked").unwrap();
+    let blocked = block_journal(project.path());
     let outcome = app.flush_for_close(a, Duration::from_secs(5));
     assert!(
-        matches!(&outcome, FlushOutcome::Blocked(FlushBlock::Failed(code)) if code == "write"),
+        matches!(&outcome, FlushOutcome::Blocked(FlushBlock::Failed(code)) if code == "source"),
         "{outcome:?}"
     );
     assert!(!outcome.may_close());
     assert!(dirty(&app, a), "실패해도 편집은 메모리에 남음");
-    std::fs::remove_file(&objects).unwrap();
-    std::fs::rename(&backup, &objects).unwrap();
+    blocked.restore();
 
     // 시간 초과: document thread가 바쁘면 제한 시간 안에 끝나지 않습니다. 넘긴 flush는 취소하지 않고 끝까지
     // 실행되어 편집을 저장합니다(버리지 않음).

@@ -308,7 +308,7 @@ pub(super) fn observe(ctx: &mut DocumentContext) {
             .schedule
             .get_or_insert_with(|| AutosaveSchedule::new(setup.policy));
         let window = &entry.session;
-        schedule.observe(now, window.revision(), window.has_unsaved_changes());
+        schedule.observe(now, window.revision(), window.needs_write());
         let due = match schedule.decide(now, gesture_active(window)) {
             AutosaveDecision::Wait { until } => until,
             AutosaveDecision::Save => now,
@@ -338,7 +338,7 @@ fn finish(entry: &mut WindowEntry, (result, timings): SlotResult, now: Duration)
     let trace_result = match &result {
         Ok(written) if written.wrote() => AutosaveTraceResult::Saved,
         Ok(_) => AutosaveTraceResult::Unchanged,
-        Err(WindowSessionSaveError::Stale(_)) => AutosaveTraceResult::Stale,
+        Err(error) if error.is_stale() => AutosaveTraceResult::Stale,
         Err(WindowSessionSaveError::Interrupted) => AutosaveTraceResult::Interrupted,
         Err(_) => AutosaveTraceResult::Failed,
     };
@@ -360,7 +360,7 @@ fn finish(entry: &mut WindowEntry, (result, timings): SlotResult, now: Duration)
             entry.session.apply_save(written);
             schedule.saved();
         }
-        Err(WindowSessionSaveError::Stale(_)) => {
+        Err(error) if error.is_stale() => {
             schedule.stale(now);
             entry.autosave.stale = Some(stale_resolution(&entry.session));
         }
@@ -586,7 +586,7 @@ fn run(ctx: &mut DocumentContext, shared: &AppShared, flush: bool) {
         let Some(schedule) = entry.autosave.schedule.as_mut() else {
             continue;
         };
-        if !window.has_unsaved_changes() {
+        if !window.needs_write() {
             schedule.observe(now, window.revision(), false);
             continue;
         }
@@ -1044,6 +1044,9 @@ fn save_failure_code(error: &WindowSessionSaveError) -> &'static str {
         WindowSessionSaveError::Reload(_) => "reload",
         WindowSessionSaveError::Interrupted => "interrupted",
         WindowSessionSaveError::Rebase(_) => "rebase",
+        WindowSessionSaveError::SourceStale { .. } => "stale",
+        WindowSessionSaveError::Source(_) => "source",
+        WindowSessionSaveError::StyleDefaults(_) => "style-defaults",
     }
 }
 
@@ -1074,7 +1077,7 @@ fn flush_window(ctx: &mut DocumentContext, session: WindowSessionHandle) -> Flus
     let Some(entry) = sessions.windows.get_mut(&session) else {
         return FlushOutcome::Clean;
     };
-    if !entry.session.has_unsaved_changes() {
+    if !entry.session.needs_write() {
         return FlushOutcome::Clean;
     }
     if gesture_active(&entry.session) {
@@ -1085,7 +1088,7 @@ fn flush_window(ctx: &mut DocumentContext, session: WindowSessionHandle) -> Flus
             if let (Some(schedule), Some(now)) = (entry.autosave.schedule.as_mut(), now) {
                 schedule.observe(now, entry.session.revision(), false);
             }
-            if outcome.written {
+            if outcome.wrote_anything() {
                 FlushOutcome::Saved {
                     generation: outcome.generation,
                 }
@@ -1093,7 +1096,7 @@ fn flush_window(ctx: &mut DocumentContext, session: WindowSessionHandle) -> Flus
                 FlushOutcome::Clean
             }
         }
-        Err(WindowSessionSaveError::Stale(_)) => {
+        Err(error) if error.is_stale() => {
             let resolution = stale_resolution(&entry.session);
             entry.autosave.stale = Some(resolution);
             if let Some(schedule) = entry.autosave.schedule.as_mut() {
@@ -1311,11 +1314,8 @@ mod tests {
         let mut app = AppRuntime::start().unwrap();
         app.enable_autosave_with(policy(40, 400));
         let (a, _, _) = open_window(&app, open_project(&app, project.path()));
-        // design/objects를 파일로 막아 실제 writer가 실패하게 합니다.
-        let objects = project.path().join("design").join("objects");
-        let backup = project.path().join("objects-backup");
-        std::fs::rename(&objects, &backup).unwrap();
-        std::fs::write(&objects, b"blocked").unwrap();
+        // 텍스트 원본 저장 journal을 파일로 막아 실제 writer가 실패하게 합니다(ADR-0088).
+        let blocked = super::pipeline_tests::block_journal(project.path());
         edit(&app, a, 700, "실패");
         assert!(wait_for(|| status(&app, a) == AutosaveStatus::Failed));
         assert!(
@@ -1324,8 +1324,7 @@ mod tests {
         );
         assert_eq!(generation(&app, a), 1);
         // 편집 없이도 실패 시각 + 최대 지연에 다시 시도해 성공하면 풀립니다.
-        std::fs::remove_file(&objects).unwrap();
-        std::fs::rename(&backup, &objects).unwrap();
+        blocked.restore();
         assert!(wait_for(|| status(&app, a) == AutosaveStatus::Idle));
         assert_eq!(generation(&app, a), 2);
         assert!(!app.state().window(a).unwrap().has_unsaved_changes);

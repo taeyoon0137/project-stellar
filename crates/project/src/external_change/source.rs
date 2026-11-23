@@ -29,17 +29,16 @@ use stellar_document::component::definition::ComponentLibrary;
 use stellar_document::model::DocumentModel;
 use stellar_history::entry::HistoryError;
 use stellar_history::window::WindowHistory;
-use stellar_storage::hash::ContentHash;
-use stellar_storage::journal::{self, JournalChange, JournalError, RecoveryReport};
+use stellar_storage::journal::{self, JournalError, RecoveryReport};
 
-use crate::document_io::source_v4::project::{decode, encode, read_dir, TextProject};
+use crate::document_io::session::{self as source_session, SourceBase, SourceCommitError};
+use crate::document_io::source_v4::project::{decode, TextProject};
 use crate::document_io::source_v4::token::TokenSetSource;
 use crate::document_io::text_source::TextSourceError;
 use crate::yaml::load_restricted;
-use crate::yaml::loader::MAX_INPUT_BYTES;
 
 /// 프로젝트 root 기준 텍스트 원본 폴더.
-pub const DESIGN_DIR: &str = crate::watcher::event::TEXT_SOURCE_DIR;
+pub use crate::document_io::session::DESIGN_DIR;
 
 /// 깨진 외부 원본의 진단(UX.4.4). 원본을 반영하지 않은 이유를 파일·줄 단위로 알립니다.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,27 +195,9 @@ pub struct TextSourceSession {
     components: ComponentLibrary,
     token_sets: Vec<TokenSetSource>,
     images: BTreeMap<StableId, AssetRecord>,
-    /// `design/` 기준 경로 → 마지막으로 읽거나 쓴 bytes hash.
-    base: BTreeMap<String, ContentHash>,
+    /// 마지막으로 읽거나 쓴 원본 파일 hash.
+    base: SourceBase,
     recovered: RecoveryReport,
-}
-
-fn hashes(files: &BTreeMap<String, String>) -> BTreeMap<String, ContentHash> {
-    files
-        .iter()
-        .map(|(path, text)| (path.clone(), ContentHash::compute(text.as_bytes())))
-        .collect()
-}
-
-fn changed_paths(
-    base: &BTreeMap<String, ContentHash>,
-    now: &BTreeMap<String, ContentHash>,
-) -> BTreeSet<String> {
-    base.keys()
-        .chain(now.keys())
-        .filter(|path| base.get(*path) != now.get(*path))
-        .cloned()
-        .collect()
 }
 
 impl TextSourceSession {
@@ -227,7 +208,7 @@ impl TextSourceSession {
     ) -> Result<TextSourceSession, TextSessionError> {
         let recovered = journal::recover(root).map_err(TextSessionError::Journal)?;
         let design = root.join(DESIGN_DIR);
-        let files = read_dir(&design).map_err(|error| {
+        let files = source_session::read_source_dir(&design).map_err(|error| {
             TextSessionError::Source(diagnose(&BTreeMap::new(), &BTreeSet::new(), &error))
         })?;
         let project = decode(&files).map_err(|error| {
@@ -243,7 +224,7 @@ impl TextSourceSession {
             components: project.components,
             token_sets: project.token_sets,
             images: project.images,
-            base: hashes(&files),
+            base: SourceBase::of(&files),
             recovered,
         })
     }
@@ -318,58 +299,33 @@ impl TextSourceSession {
             return Ok(TextSave::Clean);
         }
         let revision = self.document.revision();
-        let encoded = encode(&self.project()?).map_err(TextSessionError::Encode)?;
-        let next = hashes(&encoded.files);
-        let mut changes = Vec::new();
-        for (path, text) in &encoded.files {
-            if self.base.get(path) == next.get(path) {
-                continue;
+        let commit = match source_session::commit(&self.root, &self.base, &self.project()?) {
+            Ok(commit) => commit,
+            Err(SourceCommitError::Stale { paths }) => {
+                return Err(TextSessionError::Stale { paths })
             }
-            changes.push(JournalChange::write(
-                format!("{DESIGN_DIR}/{path}"),
-                text.as_bytes().to_vec(),
-                self.base.get(path).copied(),
-            ));
-        }
-        for (path, hash) in &self.base {
-            if !encoded.files.contains_key(path) {
-                changes.push(JournalChange::delete(format!("{DESIGN_DIR}/{path}"), *hash));
-            }
-        }
-        let report = match journal::commit(&self.root, &changes, MAX_INPUT_BYTES as u64) {
-            Ok(report) => report,
-            Err(JournalError::Stale { paths }) => {
-                return Err(TextSessionError::Stale {
-                    paths: paths
-                        .into_iter()
-                        .map(|path| {
-                            path.strip_prefix(&format!("{DESIGN_DIR}/"))
-                                .map_or(path.clone(), str::to_owned)
-                        })
-                        .collect(),
-                })
-            }
-            Err(error) => return Err(TextSessionError::Journal(error)),
+            Err(SourceCommitError::Encode(error)) => return Err(TextSessionError::Encode(error)),
+            Err(SourceCommitError::Journal(error)) => return Err(TextSessionError::Journal(error)),
         };
-        self.base = next;
+        self.base = commit.base;
         self.saved_revision = revision;
         Ok(TextSave::Saved {
-            written: report.written,
-            deleted: report.deleted,
+            written: commit.written,
+            deleted: commit.deleted,
         })
     }
 
     /// 디스크의 외부 변경을 확인하고 규칙대로 반영합니다(모듈 문서). `command`는 반영 transaction id입니다.
     pub fn poll_external(&mut self, command: CommandId) -> TextExternal {
         let design = self.root.join(DESIGN_DIR);
-        let files = match read_dir(&design) {
+        let files = match source_session::read_source_dir(&design) {
             Ok(files) => files,
             Err(error) => {
                 return TextExternal::Rejected(diagnose(&BTreeMap::new(), &BTreeSet::new(), &error))
             }
         };
-        let now = hashes(&files);
-        let changed = changed_paths(&self.base, &now);
+        let now = SourceBase::of(&files);
+        let changed = self.base.changed_paths(&now);
         if changed.is_empty() {
             return TextExternal::Unchanged;
         }

@@ -123,13 +123,14 @@ fn use_current_window_writes_the_window_snapshot_over_the_latest_disk() {
     let resolved = b
         .resolve_stale_with_lock_dir(StaleSaveChoice::UseCurrentWindow, move || Ok(dir))
         .unwrap();
-    assert_eq!(
+    assert!(matches!(
         resolved,
         StaleResolved::Saved(SaveOutcome {
             generation: 3,
-            written: true
+            written: true,
+            ..
         })
-    );
+    ));
     let disk = reopened(&project);
     assert_eq!(
         json(&disk),
@@ -330,7 +331,6 @@ fn clean_window_applies_a_cli_apply_as_one_undoable_command() {
     assert_eq!(generation, 2);
     assert_eq!(changes.changed_nodes(), vec![sid(11)], "cache 무효화 입력");
     assert_eq!(name_of(&b, 11), "CLI 편집");
-    assert_eq!(json(&b), json(&reopened(&project)));
     assert!(!b.has_unsaved_changes(), "반영 결과는 디스크와 같음");
     assert_eq!(b.view().selection().ids(), &[sid(11), sid(12)], "선택 보존");
     let entry = b.history().history().entries().last().unwrap();
@@ -341,6 +341,8 @@ fn clean_window_applies_a_cli_apply_as_one_undoable_command() {
         b.sync_external(command(2)),
         ExternalSync::Unchanged
     ));
+    // 새로 연 창도 같은 의미입니다(그 열기가 원본을 cache에 맞춰 쓰므로 위 확인 뒤에 엽니다, ADR-0088).
+    assert_eq!(json(&b), json(&reopened(&project)));
 
     // Undo 한 번이 외부 변경 전체를 되돌립니다. 결과는 디스크와 다르므로 dirty입니다.
     assert!(b.undo().unwrap());

@@ -23,6 +23,16 @@ pub(crate) fn next_event(app: &AppRuntime) -> RuntimeEvent {
     }
 }
 
+/// 다음 요청 완료 event를 기다립니다. 그 사이의 요청 없는 표시 변경(글꼴 읽기 완료 등)은 건너뜁니다.
+pub(crate) fn next_solicited(app: &AppRuntime) -> RuntimeEvent {
+    loop {
+        let event = next_event(app);
+        if event.request() != RequestId(0) {
+            return event;
+        }
+    }
+}
+
 pub(crate) fn open_project(app: &AppRuntime, root: &Path) -> ProjectSessionId {
     let request = app.open_project(root).unwrap();
     match next_event(app) {
@@ -44,7 +54,17 @@ pub(crate) fn open_window(
     project: ProjectSessionId,
 ) -> (WindowSessionHandle, StableId, u64) {
     let request = app.open_window_session(project).unwrap();
-    match next_event(app) {
+    // 글꼴 읽기 완료 같은 요청 없는 표시 변경은 언제든 올 수 있습니다(ADR-0067 §5). 열기 완료 event까지 건너뜁니다.
+    let event = loop {
+        match next_event(app) {
+            RuntimeEvent::WindowViewChanged {
+                request: RequestId(0),
+                ..
+            } => continue,
+            event => break event,
+        }
+    };
+    match event {
         RuntimeEvent::WindowSessionOpened {
             request: got,
             project: owner,

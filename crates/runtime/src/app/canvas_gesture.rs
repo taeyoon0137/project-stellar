@@ -1228,7 +1228,7 @@ pub(super) fn resize_transform(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_window_tests::{next_event, open_project, open_window};
+    use crate::app_window_tests::{next_event, next_solicited, open_project, open_window};
     use crate::canvas::CanvasCache;
     use crate::window_session::test_fixtures::{
         identity, sample_document, saved_project_with, sid, window,
@@ -1926,7 +1926,7 @@ mod tests {
         let camera = before.viewport.unwrap();
         app.zoom_viewport_by(session, [40.0, -20.0], 1.25).unwrap();
         assert!(matches!(
-            next_event(&app),
+            next_solicited(&app),
             RuntimeEvent::WindowViewChanged { .. }
         ));
         let after = app.state().window(session).unwrap().clone();
@@ -1945,7 +1945,7 @@ mod tests {
         );
         app.zoom_viewport_by(session, [0.0, 0.0], 1e9).unwrap();
         assert!(matches!(
-            next_event(&app),
+            next_solicited(&app),
             RuntimeEvent::WindowViewChanged { .. }
         ));
         assert_eq!(
