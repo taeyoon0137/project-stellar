@@ -20,14 +20,17 @@
 //! 영향 판정은 보수적입니다: footprint에 걸린 변경이 결과를 바꾸지 않을 수는 있지만, footprint에 걸리지 않은 변경이
 //! 결과를 바꾸면 안 됩니다. 내장 checker는 무작위 command 열에서 증분 결과가 전체 재검사와 같은지 test합니다.
 
-use std::collections::BTreeSet;
+use std::cell::OnceCell;
+use std::collections::{BTreeMap, BTreeSet};
 
 use stellar_commands::change::{node_keys, ChangeSet};
 use stellar_core_types::ids::StableId;
 use stellar_core_types::property::{PropertyKey, PropertyPath};
+use stellar_document::model::{DocumentModel, ModelError};
 use stellar_document::records::DocumentRecords;
 
 use crate::diagnostic::Diagnostic;
+use crate::index::DiagnosticIndex;
 
 /// 생산자 이름(진단 key의 origin). 내장·변환 생산자 이름은 [`origins`]에 있습니다.
 pub type SourceId = &'static str;
@@ -159,6 +162,232 @@ pub trait DocumentChecker: Send + Sync {
         records: &DocumentRecords,
         context: &CheckContext<'_>,
     ) -> Option<Contribution>;
+}
+
+/// scope 식별자: (문서, 생산자).
+pub type ScopeKey = (Option<StableId>, String);
+
+#[derive(Debug, Clone)]
+struct ScopeState {
+    footprint: Footprint,
+    built_in: bool,
+    stale: bool,
+}
+
+/// 증분 재검사 결과.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecheckReport {
+    /// 다시 계산한 내장 checker.
+    pub rechecked: Vec<SourceId>,
+    /// 새로 stale이 된 외부 생산자 scope.
+    pub stale: Vec<ScopeKey>,
+    /// index가 바뀌었는지.
+    pub changed: bool,
+}
+
+/// 진단 index와 scope footprint를 함께 관리하는 증분 엔진.
+pub struct IntegrityEngine {
+    index: DiagnosticIndex,
+    checkers: Vec<Box<dyn DocumentChecker>>,
+    scopes: BTreeMap<ScopeKey, ScopeState>,
+    runs: u64,
+}
+
+impl std::fmt::Debug for IntegrityEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IntegrityEngine")
+            .field("diagnostics", &self.index.len())
+            .field("scopes", &self.scopes.len())
+            .field("runs", &self.runs)
+            .finish()
+    }
+}
+
+impl Default for IntegrityEngine {
+    fn default() -> Self {
+        IntegrityEngine::new()
+    }
+}
+
+impl IntegrityEngine {
+    /// 내장 checker(미해결 참조, Image asset)를 가진 엔진.
+    pub fn new() -> IntegrityEngine {
+        IntegrityEngine::with_checkers(crate::sources::built_in_checkers())
+    }
+
+    /// 주어진 내장 checker를 가진 엔진.
+    pub fn with_checkers(checkers: Vec<Box<dyn DocumentChecker>>) -> IntegrityEngine {
+        IntegrityEngine {
+            index: DiagnosticIndex::new(),
+            checkers,
+            scopes: BTreeMap::new(),
+            runs: 0,
+        }
+    }
+
+    /// 공통 진단 index.
+    pub fn index(&self) -> &DiagnosticIndex {
+        &self.index
+    }
+
+    /// 지금까지 내장 checker를 실행한 횟수(증분 검증용 계측).
+    pub fn check_runs(&self) -> u64 {
+        self.runs
+    }
+
+    /// stale인 외부 scope.
+    pub fn stale_scopes(&self) -> Vec<ScopeKey> {
+        self.scopes
+            .iter()
+            .filter(|(_, s)| s.stale)
+            .map(|(k, _)| k.clone())
+            .collect()
+    }
+
+    fn run(
+        &mut self,
+        index: usize,
+        document: StableId,
+        records: &DocumentRecords,
+        context: &CheckContext<'_>,
+    ) -> bool {
+        self.runs += 1;
+        let checker = &self.checkers[index];
+        let origin = checker.origin();
+        let key: ScopeKey = (Some(document), origin.to_string());
+        match checker.check(document, records, context) {
+            Some(contribution) => {
+                self.scopes.insert(
+                    key,
+                    ScopeState {
+                        footprint: contribution.footprint,
+                        built_in: true,
+                        stale: false,
+                    },
+                );
+                self.index
+                    .replace_scope(Some(document), origin, contribution.diagnostics)
+            }
+            None => {
+                self.scopes.remove(&key);
+                self.index.replace_scope(Some(document), origin, Vec::new())
+            }
+        }
+    }
+
+    /// 문서 하나를 내장 checker 전부로 검사합니다(처음 열 때·문맥이 바뀔 때).
+    pub fn check_document(
+        &mut self,
+        document: StableId,
+        records: &DocumentRecords,
+        context: &CheckContext<'_>,
+    ) -> bool {
+        let mut changed = false;
+        for index in 0..self.checkers.len() {
+            changed |= self.run(index, document, records, context);
+        }
+        changed
+    }
+
+    /// 문서 하나의 내장 checker 하나만 다시 검사합니다(예: asset store가 바뀜).
+    pub fn recheck_origin(
+        &mut self,
+        document: StableId,
+        origin: &str,
+        records: &DocumentRecords,
+        context: &CheckContext<'_>,
+    ) -> bool {
+        match self.checkers.iter().position(|c| c.origin() == origin) {
+            Some(index) => self.run(index, document, records, context),
+            None => false,
+        }
+    }
+
+    /// command 결과로 영향받는 scope만 다시 검사하거나 stale로 표시합니다. 문서 레코드는 다시 계산할 내장 checker가
+    /// 있을 때만 `model`에서 만듭니다.
+    pub fn apply_changes(
+        &mut self,
+        document: StableId,
+        changes: &ChangeSet,
+        model: &DocumentModel,
+        context: &CheckContext<'_>,
+    ) -> Result<RecheckReport, ModelError> {
+        let mut report = RecheckReport::default();
+        if changes.is_empty() {
+            return Ok(report);
+        }
+        for (key, scope) in self.scopes.iter_mut() {
+            if key.0 == Some(document)
+                && !scope.built_in
+                && !scope.stale
+                && scope.footprint.affected_by(changes)
+            {
+                scope.stale = true;
+                report.stale.push(key.clone());
+            }
+        }
+        let affected: Vec<usize> = (0..self.checkers.len())
+            .filter(|&i| {
+                let key: ScopeKey = (Some(document), self.checkers[i].origin().to_string());
+                // 아직 검사한 적 없는 scope는 열 때 check_document로 계산하므로 여기서 새로 만들지 않습니다.
+                self.scopes
+                    .get(&key)
+                    .is_some_and(|s| s.footprint.affected_by(changes))
+            })
+            .collect();
+        if affected.is_empty() {
+            return Ok(report);
+        }
+        let records = OnceCell::new();
+        for index in affected {
+            let records = match records.get() {
+                Some(r) => r,
+                None => {
+                    let mut built = model.to_records()?;
+                    built.sort_canonical();
+                    records.get_or_init(|| built)
+                }
+            };
+            report.rechecked.push(self.checkers[index].origin());
+            report.changed |= self.run(index, document, records, context);
+        }
+        Ok(report)
+    }
+
+    /// 외부 생산자 결과를 scope 단위로 넣습니다(문서 단위면 `document`, 프로젝트 단위면 `None`). stale이 풀립니다.
+    pub fn submit(
+        &mut self,
+        document: Option<StableId>,
+        origin: &str,
+        contribution: Contribution,
+    ) -> bool {
+        self.scopes.insert(
+            (document, origin.to_string()),
+            ScopeState {
+                footprint: contribution.footprint,
+                built_in: false,
+                stale: false,
+            },
+        );
+        self.index
+            .replace_scope(document, origin, contribution.diagnostics)
+    }
+
+    /// 문서를 닫거나 지웠을 때 그 문서의 scope와 진단을 모두 뺍니다.
+    pub fn remove_document(&mut self, document: StableId) -> bool {
+        let keys: Vec<ScopeKey> = self
+            .scopes
+            .keys()
+            .filter(|k| k.0 == Some(document))
+            .cloned()
+            .collect();
+        let mut changed = false;
+        for key in keys {
+            self.scopes.remove(&key);
+            changed |= self.index.replace_scope(key.0, &key.1, Vec::new());
+        }
+        changed
+    }
 }
 
 #[cfg(test)]

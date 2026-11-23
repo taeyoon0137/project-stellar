@@ -7,6 +7,14 @@ use stellar_accessibility::node::{AccessibilityNode, AccessibilityRole};
 use stellar_accessibility::tree::AccessibilityTree;
 use stellar_bindings::binding::{BindingId, BindingSet, ScopeOwner, ValueBinding};
 use stellar_bindings::orphan::{BindingStore, BindingWorld};
+use stellar_commands::change::node_keys;
+use stellar_commands::command::Command;
+use stellar_commands::id::{CommandId, CommandOrigin};
+use stellar_commands::property::{PropertyValue, SetProperty};
+use stellar_commands::request::CommandRequest;
+use stellar_commands::state::DocumentState;
+use stellar_commands::test_support::{random_valid_request, FreshIds};
+use stellar_commands::transaction::CommandTransaction;
 use stellar_core_types::font::{FontFaceRef, FontFileHash, FontSource};
 use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
@@ -25,7 +33,7 @@ use stellar_document::modifier::{
 };
 use stellar_document::records::{DocumentRecords, NodePayload, NodeRecord};
 use stellar_document::shape::{RectangleParams, ShapeGeometry};
-use stellar_document::test_support::random_document::random_valid_document;
+use stellar_document::test_support::random_document::{random_valid_document, SplitMix64};
 use stellar_expressions::ast::{ExprNode, ExprNodeId, ExpressionAst, ReferenceTarget};
 use stellar_expressions::ops::BinaryOp;
 use stellar_expressions::types::{ExpressionType, TypeSpec};
@@ -42,7 +50,7 @@ use stellar_text::missing_font::{collect_missing_fonts, TextFontUsage};
 use stellar_text::registry::InMemoryFontRegistry;
 
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Severity};
-use crate::incremental::{origins, CheckContext, Contribution};
+use crate::incremental::{origins, CheckContext, Contribution, IntegrityEngine};
 use crate::index::{DiagnosticFilter, DiagnosticIndex};
 use crate::remediation::RemediationActionId;
 use crate::sources;
@@ -456,4 +464,179 @@ fn fixture_counts_are_exact_per_kind_and_severity() {
     assert!(!clip
         .remediation
         .contains(&RemediationActionId::RemoveDanglingModifier));
+}
+
+/// 모든 생산자를 넣은 증분 엔진.
+fn full_engine(model: &DocumentModel) -> IntegrityEngine {
+    let mut engine = IntegrityEngine::new();
+    engine.check_document(sid(DOC), &records_of(model), &context());
+    for (document, origin, contribution) in external_contributions() {
+        engine.submit(document, origin, contribution);
+    }
+    engine
+}
+
+fn execute(
+    state: &mut DocumentState,
+    command: Command,
+    n: u64,
+) -> stellar_commands::change::ChangeSet {
+    let transaction = CommandTransaction::single(
+        CommandId::from_stable_id(sid(50_000 + n)),
+        CommandOrigin::User,
+        CommandRequest::at(state, command),
+    );
+    state
+        .execute_transaction(&transaction)
+        .expect("실행")
+        .changes
+}
+
+#[test]
+fn unrelated_edit_recomputes_nothing_and_related_edit_rechecks_only_its_scope() {
+    // 검증 기준(XXV.2.3): unrelated edit recompute 0.
+    let model = fixture();
+    let mut engine = full_engine(&model);
+    // 엔진 전체 검사 결과는 생산자 결과를 index에 직접 넣은 것과 같습니다.
+    assert_eq!(
+        engine.index().iter().collect::<Vec<_>>(),
+        full_index(&model).iter().collect::<Vec<_>>()
+    );
+    let mut state = DocumentState::new(model);
+    let document = sid(DOC);
+    let before_runs = engine.check_runs();
+    let before: Vec<Diagnostic> = engine.index().iter().collect();
+    let revision = engine.index().revision();
+    // 편집 전용 필드(표시 이름·잠금)는 어느 scope에도 걸리지 않습니다.
+    let unrelated = sid(UNRELATED);
+    for (i, (key, value)) in [
+        (
+            node_keys::DISPLAY_NAME,
+            PropertyValue::Text("바뀐 이름".into()),
+        ),
+        (node_keys::LOCKED, PropertyValue::Bool(true)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let changes = execute(
+            &mut state,
+            Command::SetProperty(SetProperty {
+                node: unrelated,
+                key,
+                value,
+            }),
+            i as u64,
+        );
+        let report = engine
+            .apply_changes(document, &changes, state.model(), &context())
+            .unwrap();
+        assert!(
+            report.rechecked.is_empty() && report.stale.is_empty(),
+            "{report:?}"
+        );
+    }
+    assert_eq!(engine.check_runs(), before_runs, "recompute 0");
+    assert_eq!(engine.index().revision(), revision);
+    assert_eq!(engine.index().iter().collect::<Vec<_>>(), before);
+
+    // 표시 여부는 Target Profile(모든 key 관심)만 stale로 만들고 내장 checker는 실행하지 않습니다.
+    let changes = execute(
+        &mut state,
+        Command::SetProperty(SetProperty {
+            node: sid(PLAIN),
+            key: node_keys::VISIBLE,
+            value: PropertyValue::Bool(false),
+        }),
+        10,
+    );
+    let report = engine
+        .apply_changes(document, &changes, state.model(), &context())
+        .unwrap();
+    assert!(report.rechecked.is_empty());
+    let stale: Vec<String> = report.stale.iter().map(|(_, o)| o.clone()).collect();
+    assert!(stale.contains(&origins::TARGET_PROFILES.to_string()));
+    assert!(
+        stale.contains(&origins::BINDINGS.to_string()),
+        "PLAIN은 binding target"
+    );
+    assert!(
+        !stale.contains(&origins::ACCESSIBILITY.to_string()),
+        "PLAIN은 접근성 tree 밖"
+    );
+    assert_eq!(engine.check_runs(), before_runs);
+
+    // clip을 풀면 참조 checker만 다시 계산하고 clip 진단 하나가 사라집니다.
+    let changes = execute(
+        &mut state,
+        Command::SetProperty(SetProperty {
+            node: sid(CLIP_FRAME),
+            key: frame_keys::CLIPPING,
+            value: PropertyValue::Clipping(Clipping::FrameBounds),
+        }),
+        11,
+    );
+    let missing_nodes = engine.index().summary().kind(DiagnosticKind::MissingNode);
+    let report = engine
+        .apply_changes(document, &changes, state.model(), &context())
+        .unwrap();
+    assert_eq!(report.rechecked, vec![origins::REFERENCES]);
+    assert_eq!(engine.check_runs(), before_runs + 1);
+    assert_eq!(
+        engine.index().summary().kind(DiagnosticKind::MissingNode),
+        missing_nodes - 1
+    );
+}
+
+#[test]
+fn incremental_result_equals_full_recheck_on_random_command_sequences() {
+    // footprint가 결과를 바꾸는 변경을 놓치지 않는지: 무작위 유효 command 열에서 증분 결과 = 전체 재검사.
+    let odd_missing = |id: StableId| !id.to_bytes()[15].is_multiple_of(3);
+    let ctx = CheckContext {
+        asset_exists: Some(&odd_missing),
+    };
+    let document = sid(DOC);
+    let mut skipped = 0u64;
+    let mut steps = 0u64;
+    for seed in 0..12u64 {
+        let mut state = DocumentState::new(random_valid_document(seed));
+        let mut engine = IntegrityEngine::new();
+        engine.check_document(document, &records_of(state.model()), &ctx);
+        let mut rng = SplitMix64::new(seed);
+        let mut ids = FreshIds::new(seed);
+        for step in 0..40u64 {
+            let Some(request) = random_valid_request(&state, &mut rng, &mut ids, 64) else {
+                break;
+            };
+            let transaction = CommandTransaction::single(
+                CommandId::from_stable_id(sid(70_000 + seed * 100 + step)),
+                CommandOrigin::User,
+                request,
+            );
+            let Ok(applied) = state.execute_transaction(&transaction) else {
+                continue;
+            };
+            let runs = engine.check_runs();
+            engine
+                .apply_changes(document, &applied.changes, state.model(), &ctx)
+                .unwrap();
+            if engine.check_runs() == runs {
+                skipped += 1;
+            }
+            steps += 1;
+            let mut fresh = IntegrityEngine::new();
+            fresh.check_document(document, &records_of(state.model()), &ctx);
+            assert_eq!(
+                engine.index().iter().collect::<Vec<_>>(),
+                fresh.index().iter().collect::<Vec<_>>(),
+                "seed {seed} step {step}: {:?}",
+                transaction.requests[0].command
+            );
+        }
+    }
+    assert!(steps > 100, "충분한 command 실행 {steps}");
+    assert!(
+        skipped > 0,
+        "일부 변경은 재검사 없이 지나감 {skipped}/{steps}"
+    );
 }
