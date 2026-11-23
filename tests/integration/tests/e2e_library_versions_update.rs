@@ -481,7 +481,6 @@ fn two_versions_warning_update_and_removed_override_property() {
         &mut source,
     )
     .expect("update 후보");
-    drop(source);
     assert_eq!(candidate.current_commit(), &a_v1);
     assert_eq!(candidate.candidate_commit(), &a_v2);
     assert!(candidate.selector_changed() && !candidate.is_same_commit());
