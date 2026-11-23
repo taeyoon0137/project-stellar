@@ -5,6 +5,9 @@
 //!
 //! - glyph마다 outline([`GlyphOutline::Path`], pen 원점 기준 px)을 pen 원점(1/64 px)만큼 옮겨 text local 좌표
 //!   path로 만듭니다. 크기·variation은 outline key에 이미 들어 있으므로 다시 scale하지 않습니다.
+//! - 단 key 크기 상한을 넘는 run은 상한 크기 outline을
+//!   [`RunSize::outline_scale`](crate::text::RunSize::outline_scale)배 합니다([`crate::text`] "큰 글자").
+//!   상한 이하 run의 배율은 정확히 1이라 결과가 바뀌지 않습니다.
 //! - run마다 한 path([`RunOutline`])를 만듭니다. run 고유 색(`fill`)이 있으면 그 색으로 칠합니다.
 //! - 모든 run의 path를 이은 [`TextOutlines::combined`]가 Text content의 칠하기 기하입니다. paint layer
 //!   (Fill·Stroke modifier)는 이 기하를 run 색 **위**에 칠합니다(scene builder paint 순서 규칙).
@@ -102,16 +105,27 @@ fn px(subpixels: i32) -> f32 {
     subpixels as f32 / 64.0
 }
 
-fn translated(p: Vec2, dx: f32, dy: f32) -> Result<Vec2, TextOutlineError> {
-    Vec2::new(p.x() + dx, p.y() + dy).map_err(|_| TextOutlineError::NonFinite)
-}
-
-/// `outline` command를 `(dx, dy)`만큼 옮겨 `out`에 덧붙입니다.
-fn push_translated(
-    out: &mut Vec<PathCommand>,
-    outline: &PathGeometry,
+/// glyph 배치: outline 배율과 pen 원점 이동.
+#[derive(Clone, Copy)]
+struct Placement {
+    scale: f32,
     dx: f32,
     dy: f32,
+}
+
+impl Placement {
+    /// `p × scale + (dx, dy)`. `scale`이 1이면 곱셈이 정확해 이동만 한 값과 같습니다.
+    fn apply(self, p: Vec2) -> Result<Vec2, TextOutlineError> {
+        Vec2::new(p.x() * self.scale + self.dx, p.y() * self.scale + self.dy)
+            .map_err(|_| TextOutlineError::NonFinite)
+    }
+}
+
+/// `outline` command를 `placement`로 옮겨 `out`에 덧붙입니다.
+fn push_placed(
+    out: &mut Vec<PathCommand>,
+    outline: &PathGeometry,
+    placement: Placement,
     limit: usize,
 ) -> Result<(), TextOutlineError> {
     if out.len().saturating_add(outline.commands().len()) > limit {
@@ -119,12 +133,12 @@ fn push_translated(
     }
     for command in outline.commands() {
         out.push(match *command {
-            PathCommand::MoveTo(p) => PathCommand::MoveTo(translated(p, dx, dy)?),
-            PathCommand::LineTo(p) => PathCommand::LineTo(translated(p, dx, dy)?),
+            PathCommand::MoveTo(p) => PathCommand::MoveTo(placement.apply(p)?),
+            PathCommand::LineTo(p) => PathCommand::LineTo(placement.apply(p)?),
             PathCommand::CubicTo { c1, c2, to } => PathCommand::CubicTo {
-                c1: translated(c1, dx, dy)?,
-                c2: translated(c2, dx, dy)?,
-                to: translated(to, dx, dy)?,
+                c1: placement.apply(c1)?,
+                c2: placement.apply(c2)?,
+                to: placement.apply(to)?,
             },
             PathCommand::Close => PathCommand::Close,
         });
@@ -150,6 +164,7 @@ pub fn text_outlines(
     let mut combined: Vec<PathCommand> = Vec::new();
     let mut runs = Vec::with_capacity(layout.runs.len());
     for run in &layout.runs {
+        let scale = run.size.outline_scale();
         let mut commands: Vec<PathCommand> = Vec::new();
         for placed in &run.glyphs {
             let key = run.key(placed.glyph);
@@ -161,13 +176,12 @@ pub fn text_outlines(
             match glyph {
                 GlyphOutline::Empty => {}
                 GlyphOutline::Path(path) => {
-                    push_translated(
-                        &mut commands,
-                        &path,
-                        px(placed.x),
-                        px(placed.y),
-                        max_commands,
-                    )?;
+                    let placement = Placement {
+                        scale,
+                        dx: px(placed.x),
+                        dy: px(placed.y),
+                    };
+                    push_placed(&mut commands, &path, placement, max_commands)?;
                 }
                 GlyphOutline::NoOutline => {
                     return Err(TextOutlineError::NoOutline {
@@ -200,7 +214,9 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::test_fixtures as fx;
-    use crate::text::{AxisTag, GlyphRun, GlyphSize, GlyphVariations, PlacedGlyph};
+    use crate::text::{
+        AxisTag, GlyphRun, GlyphVariations, PlacedGlyph, RunSize, MAX_GLYPH_PX, MAX_RUN_PX,
+    };
 
     fn square(size: f32) -> PathGeometry {
         PathGeometry::new(vec![
@@ -220,7 +236,7 @@ mod tests {
     fn run(font: u8, size: f32, fill: Option<Color>, glyphs: &[(u32, i32, i32)]) -> GlyphRun {
         GlyphRun {
             font: face(font),
-            size: GlyphSize::from_px(size).unwrap(),
+            size: RunSize::from_px(size).unwrap(),
             variations: GlyphVariations::none(),
             fill,
             glyphs: glyphs
@@ -339,6 +355,41 @@ mod tests {
         ] {
             assert!(!error.to_string().is_empty());
         }
+    }
+
+    #[test]
+    fn runs_above_the_key_limit_scale_the_capped_outline() {
+        // key 상한(4096 px)을 넘는 run도 text engine 상한(10,000 px)까지 outline으로 씁니다.
+        let mut keys: Vec<GlyphOutlineKey> = Vec::new();
+        let mut recording = |key: &GlyphOutlineKey| {
+            keys.push(key.clone());
+            source(key)
+        };
+        let layout = TextGlyphLayout {
+            runs: vec![
+                run(1, 8192.0, None, &[(1, 640, 64_000)]),
+                run(1, MAX_RUN_PX, None, &[(1, 0, 0)]),
+            ],
+        };
+        let outlines = text_outlines(&layout, &mut recording, usize::MAX).unwrap();
+        // 두 run 모두 상한 크기 key 하나로 조회합니다.
+        assert_eq!(keys.len(), 2);
+        assert!(keys.iter().all(|k| k.size.px() == MAX_GLYPH_PX));
+        // 8192 px: 상한 outline(한 변 2048)의 2배 = 같은 glyph를 8192 px로 직접 만든 사각형(한 변 4096).
+        assert_eq!(
+            points(&outlines.runs[0].geometry),
+            vec![
+                (10.0, -3096.0),
+                (4106.0, -3096.0),
+                (4106.0, 1000.0),
+                (10.0, 1000.0)
+            ]
+        );
+        // 10,000 px: 배율 2.44140625(정확), 한 변 5000.
+        assert_eq!(
+            points(&outlines.runs[1].geometry),
+            vec![(0.0, -5000.0), (5000.0, -5000.0), (5000.0, 0.0), (0.0, 0.0)]
+        );
     }
 
     #[test]

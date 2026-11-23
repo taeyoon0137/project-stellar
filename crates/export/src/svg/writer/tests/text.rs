@@ -15,7 +15,7 @@ use stellar_scene::geometry::PathCommand;
 use super::*;
 use crate::text::{
     AxisTag, ExportFontFace, ExportTextSource, GlyphOutline, GlyphOutlineError, GlyphOutlineKey,
-    GlyphRun, GlyphSize, GlyphVariations, PlacedGlyph, TextGlyphLayout,
+    GlyphRun, GlyphVariations, PlacedGlyph, RunSize, TextGlyphLayout,
 };
 
 const TEXT_GOLDEN: &str = include_str!("../../../../tests/fixtures/text_view_v1.svg");
@@ -158,7 +158,7 @@ fn glyph_run(
 ) -> GlyphRun {
     GlyphRun {
         font,
-        size: GlyphSize::from_px(size).unwrap(),
+        size: RunSize::from_px(size).unwrap(),
         variations: match weight {
             Some(w) => GlyphVariations::new([(AxisTag::parse("wght").unwrap(), w)]).unwrap(),
             None => GlyphVariations::none(),

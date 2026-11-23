@@ -82,6 +82,29 @@
   다뤄야 합니다.
 - 내보내기 영역(capture bounds)은 scene bounds(layout 상자 + stroke)라 layout 상자 밖으로 넘친 glyph는 viewBox에서 잘립니다.
   glyph ink bounds를 영역에 넣으려면 scene bounds 계약(XI.3.1)과 함께 정해야 합니다.
-- glyph 크기 상한은 renderer key와 같은 4096 px입니다. text engine 상한(10,000 px)과 사이의 크기는 key를 만들 수 없어 host가
-  거부해야 합니다.
+- outline key 크기 상한은 renderer key와 같은 4096 px이고, 그보다 큰 run(text engine 상한 10,000 px까지)은 상한 크기
+  outline을 배율로 키웁니다(후속 수정 1). host outline이 em 크기에 선형(hinting 없음)이라는 가정에 기댑니다.
 - glyph outline 좌표는 f32입니다. pen 원점 |값| ≥ 2²⁴ subpixel(262,144 px)이면 1/64 px 정밀도를 잃습니다.
+
+## 후속 수정 (리뷰 반영)
+
+### 1. 4096 px를 넘는 Text도 outline으로 기록
+
+`Fix: 4096 px를 넘는 glyph run을 상한 크기 outline 배율로 SVG에 기록` 커밋에서 고쳤습니다.
+
+- **문제**: run 크기를 outline key 크기 타입(`GlyphSize`, renderer key 상한 4096 px)으로 받아, text engine이 허용하는
+  (4096, 10000] px Text는 glyph run을 만들 수 없었습니다. 행 지시 "모든 Text glyph run"과 맞지 않았습니다.
+- **변경**: run 크기 타입 `RunSize`(`(0, MAX_RUN_PX = 10000]` px, 1/64 px)를 두고 `GlyphRun.size`를 이 타입으로 바꿨습니다.
+  outline key 크기는 `RunSize::outline_size`(4096 px에서 자름)이고, 자른 만큼은 `RunSize::outline_scale`(run ÷ 4096)을
+  outline 좌표에 곱합니다. Outline mode outline은 bitmap atlas를 쓰지 않고 em 크기에 선형이라 배율 결과가 run 크기 outline과
+  같습니다. 4096 px 이하 run의 배율은 정확히 1이라 기존 출력이 bit 단위로 같습니다(golden 그대로).
+- **검증**: `runs_above_the_key_limit_scale_the_capped_outline`(8192 px와 10,000 px run이 4096 px key 하나로 조회하고, 결과가
+  run 크기로 직접 만든 사각형과 같음), `run_sizes_reach_the_text_engine_limit`(범위·양자화·배율). 수정 전에는
+  `GlyphSize::from_px(8192.0)`가 `InvalidSize`라 run을 만들 수 없었습니다(`size_quantizes_like_the_renderer_key`가 확인하는
+  기존 동작).
+
+| 명령(후속 수정 1) | 결과 |
+|---|---|
+| `cargo test -p stellar-export` | 93 passed, 0 failed |
+| `cargo clippy -p stellar-export --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-export -- --check` | 통과 |

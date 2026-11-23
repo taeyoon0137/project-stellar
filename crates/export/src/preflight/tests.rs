@@ -25,8 +25,7 @@ use crate::request::ExportSource;
 use crate::svg::{write_svg, SvgExportError, SvgWriteOptions};
 use crate::test_fixtures as fx;
 use crate::text::{
-    GlyphOutline, GlyphOutlineKey, GlyphRun, GlyphSize, GlyphVariations, PlacedGlyph,
-    TextGlyphLayout,
+    GlyphOutline, GlyphOutlineKey, GlyphRun, GlyphVariations, PlacedGlyph, RunSize, TextGlyphLayout,
 };
 
 const PINS: ResourcePins = ResourcePins {
@@ -106,7 +105,7 @@ impl ExportTextSource for Text {
 fn glyph_run(font: ExportFontFace, x: i32) -> GlyphRun {
     GlyphRun {
         font,
-        size: GlyphSize::from_px(10.0).unwrap(),
+        size: RunSize::from_px(10.0).unwrap(),
         variations: GlyphVariations::none(),
         fill: Some(fx::srgb(0.0, 0.0, 0.0, 1.0)),
         glyphs: vec![PlacedGlyph {

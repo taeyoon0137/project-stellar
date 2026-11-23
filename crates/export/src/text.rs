@@ -11,7 +11,9 @@
 //! ADR-0019). 그래서 host는 renderer의 outline rasterizer(`GlyphRenderMode::Outline`)에 그대로 위임할 수 있습니다.
 //!
 //! - 폰트 face: 파일 SHA-256 + collection face index(text `FontFileHash`·face index, renderer `FontHash`).
-//! - 크기: em 크기를 1/64 px(26.6 고정소수점)로 양자화한 값, `(0, 4096]` px.
+//! - 크기: em 크기를 1/64 px(26.6 고정소수점)로 양자화한 값, `(0, 4096]` px(renderer key 상한). run 크기
+//!   ([`RunSize`])는 text engine 글꼴 크기 상한 [`MAX_RUN_PX`]까지이며, key 상한을 넘는 run은 상한 크기 outline을
+//!   배율로 키웁니다(아래 "큰 글자").
 //! - variation: OpenType axis 좌표. tag 오름차순, 같은 tag는 마지막 값, `-0.0`→`0.0`(text
 //!   `canonical_variations`, renderer `VariationCoords`와 같은 규칙). shaping에 쓴 좌표(X.9.6)를 run에 그대로
 //!   두므로 variable font의 outline이 shaping 결과와 같은 instance입니다.
@@ -21,6 +23,14 @@
 //! glyph pen 원점([`PlacedGlyph`])은 text local 좌표(layout 상자 좌상단 기준, y 아래 방향)의 1/64 px 정수입니다
 //! (text `TextUnit`과 같은 격자). outline은 pen 원점 기준 px 좌표(y 아래 방향)이며 renderer outline
 //! (`GlyphImage::Outline`)과 같은 규약입니다.
+//!
+//! ## 큰 글자
+//!
+//! outline key 크기 상한은 renderer key와 같은 [`MAX_GLYPH_PX`]이고, text engine은 [`MAX_RUN_PX`]까지 허용합니다.
+//! outline은 bitmap atlas를 쓰지 않으므로 상한이 필요 없습니다. 그래서 상한을 넘는 run은 상한 크기 key로 outline을
+//! 받고 [`RunSize::outline_scale`]배 합니다. Outline mode outline은 hinting 없이 em 크기에 선형이라(variation 좌표는
+//! run 값 그대로) 배율을 곱한 결과가 run 크기 outline과 같습니다. host는 이 선형성을 지켜야 합니다. 상한 이하 run의
+//! 배율은 정확히 1이라 결과가 배율 없는 계산과 bit 단위로 같습니다.
 
 use std::fmt;
 use std::sync::Arc;
@@ -34,6 +44,9 @@ use crate::capture::FontRevision;
 /// glyph em 크기 상한(px, renderer XI.6.4와 같음).
 pub const MAX_GLYPH_PX: f32 = 4096.0;
 
+/// glyph run em 크기 상한(px, text engine `MAX_FONT_SIZE_PX`와 같음).
+pub const MAX_RUN_PX: f32 = 10_000.0;
+
 /// variation axis 최대 수(renderer XI.6.4와 같음).
 pub const MAX_VARIATION_AXES: usize = 64;
 
@@ -42,6 +55,8 @@ pub const MAX_VARIATION_AXES: usize = 64;
 pub enum GlyphValueError {
     /// 크기가 유한한 `(0, MAX_GLYPH_PX]`가 아니거나 1/64 px로 양자화하면 0입니다.
     InvalidSize,
+    /// run 크기가 유한한 `(0, MAX_RUN_PX]`가 아니거나 1/64 px로 양자화하면 0입니다.
+    InvalidRunSize,
     /// OpenType tag가 출력 가능한 ASCII 4바이트가 아닙니다.
     InvalidTag,
     /// variation 값이 유한하지 않습니다.
@@ -56,6 +71,10 @@ impl fmt::Display for GlyphValueError {
             GlyphValueError::InvalidSize => write!(
                 f,
                 "glyph 크기는 1/64 px 이상 {MAX_GLYPH_PX} px 이하의 유한한 값이어야 합니다"
+            ),
+            GlyphValueError::InvalidRunSize => write!(
+                f,
+                "glyph run 크기는 1/64 px 이상 {MAX_RUN_PX} px 이하의 유한한 값이어야 합니다"
             ),
             GlyphValueError::InvalidTag => {
                 f.write_str("OpenType tag는 출력 가능한 ASCII 4바이트여야 합니다")
@@ -148,6 +167,77 @@ impl GlyphSize {
     /// px 값.
     pub fn px(&self) -> f32 {
         self.sixty_fourths as f32 / 64.0
+    }
+}
+
+/// 1/64 px로 양자화한 glyph run em 크기, `(0, MAX_RUN_PX]` px(text engine 글꼴 크기 범위).
+///
+/// outline key 크기([`RunSize::outline_size`])는 [`MAX_GLYPH_PX`]에서 자르고, 자른 만큼은
+/// [`RunSize::outline_scale`]로 키웁니다(모듈 문서 "큰 글자").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RunSize {
+    sixty_fourths: u32,
+}
+
+/// outline key 크기 상한(1/64 px).
+const MAX_GLYPH_SIXTY_FOURTHS: u32 = (MAX_GLYPH_PX as u32) * 64;
+
+impl RunSize {
+    /// px 크기를 가장 가까운 1/64 px로 양자화합니다.
+    pub fn from_px(px: f32) -> Result<RunSize, GlyphValueError> {
+        if !px.is_finite() || px <= 0.0 || px > MAX_RUN_PX {
+            return Err(GlyphValueError::InvalidRunSize);
+        }
+        // px ≤ 10000이므로 × 64 ≤ 640000은 f32에서 정확한 정수 범위입니다.
+        let scaled = (px * 64.0).round();
+        if scaled < 1.0 {
+            return Err(GlyphValueError::InvalidRunSize);
+        }
+        Ok(RunSize {
+            sixty_fourths: scaled as u32,
+        })
+    }
+
+    /// 1/64 px 단위 정수로 만듭니다(0과 상한 초과는 거부). text `FontSize` raw 값을 그대로 넘길 수 있습니다.
+    pub fn from_sixty_fourths(value: u32) -> Result<RunSize, GlyphValueError> {
+        if value == 0 || value > (MAX_RUN_PX as u32) * 64 {
+            return Err(GlyphValueError::InvalidRunSize);
+        }
+        Ok(RunSize {
+            sixty_fourths: value,
+        })
+    }
+
+    /// 1/64 px 단위 값.
+    pub const fn sixty_fourths(&self) -> u32 {
+        self.sixty_fourths
+    }
+
+    /// px 값.
+    pub fn px(&self) -> f32 {
+        self.sixty_fourths as f32 / 64.0
+    }
+
+    /// outline key 크기: run 크기를 [`MAX_GLYPH_PX`]에서 자른 값.
+    pub const fn outline_size(&self) -> GlyphSize {
+        GlyphSize {
+            sixty_fourths: if self.sixty_fourths < MAX_GLYPH_SIXTY_FOURTHS {
+                self.sixty_fourths
+            } else {
+                MAX_GLYPH_SIXTY_FOURTHS
+            },
+        }
+    }
+
+    /// key 크기 outline을 run 크기로 키우는 배율. key 상한 이하 run은 정확히 `1.0`입니다.
+    pub fn outline_scale(&self) -> f32 {
+        let key = self.outline_size().sixty_fourths;
+        if key == self.sixty_fourths {
+            1.0
+        } else {
+            // 두 값 모두 2²⁴ 미만 정수라 정확히 표현되고, 나눗셈 한 번(IEEE 반올림)이라 플랫폼 간 같은 값입니다.
+            self.sixty_fourths as f32 / key as f32
+        }
     }
 }
 
@@ -277,8 +367,8 @@ pub struct PlacedGlyph {
 pub struct GlyphRun {
     /// 폰트 face(fallback이 적용된 실제 face).
     pub font: ExportFontFace,
-    /// em 크기.
-    pub size: GlyphSize,
+    /// em 크기(text engine 범위). outline key 크기는 [`RunSize::outline_size`]입니다.
+    pub size: RunSize,
     /// variation 좌표(shaping에 쓴 값).
     pub variations: GlyphVariations,
     /// run 고유 색(document text style fill). `None`이면 고유 색 없이 paint layer만 칠합니다.
@@ -288,12 +378,12 @@ pub struct GlyphRun {
 }
 
 impl GlyphRun {
-    /// glyph의 outline key.
+    /// glyph의 outline key. 크기는 [`RunSize::outline_size`]입니다.
     pub fn key(&self, glyph: u32) -> GlyphOutlineKey {
         GlyphOutlineKey {
             font: self.font,
             glyph,
-            size: self.size,
+            size: self.size.outline_size(),
             variations: self.variations.clone(),
         }
     }
@@ -405,6 +495,39 @@ mod tests {
     }
 
     #[test]
+    fn run_sizes_reach_the_text_engine_limit() {
+        // text engine 상한(10,000 px)까지 run을 만들 수 있습니다.
+        assert_eq!(RunSize::from_px(12.0).unwrap().sixty_fourths(), 768);
+        assert_eq!(RunSize::from_px(MAX_RUN_PX).unwrap().px(), 10_000.0);
+        for bad in [0.0, -1.0, 10_000.5, f32::NAN, f32::INFINITY, 0.001] {
+            assert_eq!(RunSize::from_px(bad), Err(GlyphValueError::InvalidRunSize));
+        }
+        assert!(RunSize::from_sixty_fourths(10_000 * 64).is_ok());
+        assert_eq!(
+            RunSize::from_sixty_fourths(10_000 * 64 + 1),
+            Err(GlyphValueError::InvalidRunSize)
+        );
+        assert_eq!(
+            RunSize::from_sixty_fourths(0),
+            Err(GlyphValueError::InvalidRunSize)
+        );
+        // key 상한 이하: key 크기 = run 크기, 배율 정확히 1.
+        for px in [0.5, 12.0, 4096.0] {
+            let run = RunSize::from_px(px).unwrap();
+            assert_eq!(run.outline_size(), GlyphSize::from_px(px).unwrap());
+            assert_eq!(run.outline_scale(), 1.0);
+        }
+        // key 상한 초과: key는 4096 px, 배율 = run / 4096.
+        let big = RunSize::from_px(8192.0).unwrap();
+        assert_eq!(big.outline_size().px(), MAX_GLYPH_PX);
+        assert_eq!(big.outline_scale(), 2.0);
+        let max = RunSize::from_px(MAX_RUN_PX).unwrap();
+        assert_eq!(max.outline_size().px(), MAX_GLYPH_PX);
+        assert_eq!(max.outline_scale(), MAX_RUN_PX / MAX_GLYPH_PX);
+        assert_eq!(max.outline_size().px() * max.outline_scale(), MAX_RUN_PX);
+    }
+
+    #[test]
     fn variations_are_canonical() {
         let a = GlyphVariations::new([(tag("wght"), 700.0), (tag("opsz"), 12.0)]).unwrap();
         let b = GlyphVariations::new([
@@ -455,7 +578,7 @@ mod tests {
     fn run_keys_carry_font_size_and_variations() {
         let run = GlyphRun {
             font: ExportFontFace::new([7; 32], 2),
-            size: GlyphSize::from_px(20.0).unwrap(),
+            size: RunSize::from_px(20.0).unwrap(),
             variations: GlyphVariations::new([(tag("wght"), 650.0)]).unwrap(),
             fill: None,
             glyphs: vec![PlacedGlyph {
@@ -474,6 +597,7 @@ mod tests {
             .ends_with("abab#1"));
         for error in [
             GlyphValueError::InvalidSize,
+            GlyphValueError::InvalidRunSize,
             GlyphValueError::InvalidTag,
             GlyphValueError::NonFiniteVariation,
             GlyphValueError::TooManyAxes,

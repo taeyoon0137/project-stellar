@@ -36,5 +36,5 @@ pub use request::{
 };
 pub use text::{
     ExportFontFace, ExportTextSource, GlyphOutline, GlyphOutlineError, GlyphOutlineKey, GlyphRun,
-    GlyphSize, GlyphVariations, PlacedGlyph, TextGlyphLayout,
+    GlyphSize, GlyphVariations, PlacedGlyph, RunSize, TextGlyphLayout,
 };
