@@ -58,6 +58,7 @@
 
 - MCP 세션 cache의 최신 판정이 사용자 세트 파일 변경을 보지 않습니다. 같은 세션에서 세트 파일만 바뀌면 `layout`이
   옛 세트로 남을 수 있습니다(`ops::trusted` 소유 후속).
-- `stellar style-defaults resolve`는 같은 공개 함수를 직접 부릅니다. `node_layout`으로 옮기는 일이 남았습니다(CLI
-  소유 후속).
+- (2026-11-23 style-defaults-finish 갱신) `stellar style-defaults resolve`는 이제 `ops::query::node_layout` 결과를
+  그대로 냅니다. `query … node`의 `layout.values`와 같은지 CLI test(`set_goes_through_the_ops_write_path_and_changes_one_manifest_line`)가
+  확인합니다. 이 항목은 닫혔습니다.
 - 앱 runtime 열기·저장 연결은 ADR-0087 결정 4 사용법대로 runtime 작업이 합니다.
