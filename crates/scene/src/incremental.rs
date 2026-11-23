@@ -339,6 +339,28 @@ impl IncrementalScene {
         self.run(document, &dirty, false, clock)
     }
 
+    /// pointer up 확정: preview를 지우고 확정한 command의 source 편집을 한 build로 반영합니다(XII.3.7).
+    ///
+    /// preview를 먼저 지운 snapshot을 따로 만들지 않으므로 확정 frame 사이에 원래 위치가 비치지 않습니다.
+    pub fn commit(
+        &mut self,
+        document: DocumentRevision,
+        edits: &[SourceEdit],
+        dirty: &SceneDirtySet,
+        clock: &dyn MonotonicClock,
+    ) -> Result<SceneBuildTrace, IncrementalError> {
+        let mut dirty = dirty.clone();
+        for key in self.preview.keys() {
+            dirty.insert(key.id(), SceneDirtyKind::Geometry);
+        }
+        let previous = std::mem::take(&mut self.preview);
+        let result = self.update(document, edits, &dirty, clock);
+        if result.is_err() {
+            self.preview = previous;
+        }
+        result
+    }
+
     /// transient preview를 주입한 snapshot을 만듭니다(document revision 유지).
     pub fn set_preview(
         &mut self,

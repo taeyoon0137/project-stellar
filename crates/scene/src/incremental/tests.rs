@@ -603,3 +603,30 @@ fn random_edit_sequence_matches_full_build() {
         assert_eq!(scene.snapshot().semantic_hash(), fresh_hash(&scene));
     }
 }
+
+#[test]
+fn commit_clears_preview_and_applies_the_confirmed_edit_in_one_build() {
+    // XII.3.7: pointer up에서 확정한 command만 문서 revision을 올립니다.
+    let mut scene = built();
+    let target = leaf(0, 0);
+    let mut preview = ScenePreview::new();
+    preview.set(
+        key(target),
+        SourceKind::Shape(shape_input(target, 33.0, 0.5)),
+    );
+    scene.set_preview(preview, &clock()).unwrap();
+    let revision = scene.snapshot().scene_revision();
+    let trace = scene
+        .commit(
+            DocumentRevision(2),
+            &[upsert_shape(target, shape_input(target, 33.0, 0.5))],
+            &SceneDirtySet::new(),
+            &clock(),
+        )
+        .unwrap();
+    assert!(scene.preview().is_empty());
+    assert_eq!(scene.snapshot().document_revision(), DocumentRevision(2));
+    assert_eq!(scene.snapshot().scene_revision().0, revision.0 + 1);
+    assert_eq!(trace.stats.rebuilt, 1);
+    assert_eq!(scene.snapshot().semantic_hash(), fresh_hash(&scene));
+}
