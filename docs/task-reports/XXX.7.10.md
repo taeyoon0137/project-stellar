@@ -115,5 +115,6 @@
   - `ops` `candidate::tests::staging_one_requirement_list_keeps_the_other_context_lists_as_they_were`(generation 직렬화 경로).
   - `semantic-diff` `context::tests::project_scope_lists_are_split_back_per_document`, `ops`
     `candidate::tests::project_scope_context_lists_are_split_back_from_the_ops_projection`(제품 `project_snapshot_of` 투영 기준).
-- 남은 위험: 프로젝트 범위 역투영은 합집합에 새로 생긴 항목을 그 대상에 목록을 둔 문서 모두에 더합니다(합집합만으로는 어느
-  문서의 변경인지 구별할 수 없음).
+- 새로 생긴 항목은 그 key를 선언한 문서에 둡니다(다른 문서에 두면 그 문서 validator의 orphan). 검토 보완에서 고쳤습니다.
+- 남은 위험: 프로젝트 범위 역투영은 합집합에 새로 생긴 항목 중 어느 문서도 선언하지 않은 key(외부 library key 등)를 그 대상에
+  목록을 둔 문서 모두에 더합니다(합집합만으로는 어느 문서의 변경인지 구별할 수 없음).

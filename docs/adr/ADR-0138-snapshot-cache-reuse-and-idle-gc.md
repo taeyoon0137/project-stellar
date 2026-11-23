@@ -90,8 +90,9 @@ ADR-0123 Consequences("Git stage의 requirement·Slot 목록 전용 시험이 �
 
 - key·provision·Document 객체 목록은 그 문서 것(`context_from_snapshot`).
 - library 대상(출처 `Origin::ProjectComponent`인 Component·Slot 객체) `T`의 목록 `M`: `base`에서 `T`에 목록을 둔 문서는 각자
-  `기존 ∩ M`, `M`에서 어느 문서에도 없던 항목은 그 문서 모두에 더하고, `T`에 목록을 둔 문서가 없으면 `base` 첫 문서(투영
-  기준 문서)에 둡니다.
+  `기존 ∩ M`을 갖습니다. `M`에서 어느 문서에도 없던 항목은 그 key를 선언한 문서에 더합니다(다른 문서에 두면 그 문서
+  validator가 orphan requirement·Slot key로 봄). 선언한 문서가 없으면(외부 library key 등) `T`에 목록을 둔 문서 모두에,
+  그런 문서도 없으면 `base` 첫 문서(투영 기준 문서)에 둡니다.
 - snapshot library에 없는 대상의 `base` 목록(투영이 넣지 않는 orphan)은 그대로 둡니다.
 - 성질: 바꾸지 않은 snapshot은 `base` 그대로이고, 결과를 다시 투영하면 같은 snapshot입니다(대상마다 합집합이 `M`). 지금 병합
   결과를 쓰는 경로는 모두 문서 범위라 제품 호출자는 없습니다. 프로젝트 범위 결과를 쓰는 경로가 생기면 이 함수를 씁니다.
@@ -133,8 +134,9 @@ ADR-0123 Consequences("Git stage의 requirement·Slot 목록 전용 시험이 �
   끝난 뒤 처리됩니다. 정리가 잠금을 쥔 동안 다른 프로세스(CLI·MCP)의 쓰기는 `Busy`입니다(지금 저장 경합과 같은 처리).
 - 부정: 유휴 GC는 앱 runtime이 `start_idle_gc`를 불러야 켜집니다. 셸 UI 재설계 때 자동 저장과 함께 켜는 연결이 남습니다(지금
   셸은 빈 창, 사용자 방향).
-- 부정: 프로젝트 범위 역투영은 합집합에 새로 생긴 항목을 그 대상에 목록을 둔 문서 모두에 더합니다. 한 문서에만 더한 변경도
-  다른 문서에 퍼집니다(합집합에서는 구별할 수 없음). 제품 호출자는 아직 없습니다.
+- 부정: 프로젝트 범위 역투영은 합집합에 새로 생긴 항목 중 어느 문서도 선언하지 않은 key(외부 library key 등)를 그 대상에
+  목록을 둔 문서 모두에 더합니다. 한 문서에만 더한 변경도 다른 문서에 퍼집니다(합집합에서는 구별할 수 없음). 문서가 선언한
+  key는 그 문서에만 갑니다. 제품 호출자는 아직 없습니다.
 
 ## Compatibility
 

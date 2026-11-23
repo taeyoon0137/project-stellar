@@ -308,8 +308,9 @@ pub fn context_from_snapshot(
 ///
 /// - key·provision과 Document 객체에 붙은 목록은 그 문서 것을 그대로 되돌립니다([`context_from_snapshot`]).
 /// - library 대상(출처가 [`Origin::ProjectComponent`]인 Component·Slot 객체) `T`의 목록 `M`: `base`에서 `T`에 목록을 둔
-///   문서는 각자 `기존 목록 ∩ M`을 갖고, `M`에서 어느 문서에도 없던 항목은 `T`에 목록을 둔 문서 모두에 더합니다.
-///   `T`에 목록을 둔 문서가 없으면 `base`의 첫 문서(투영의 기준 문서)에 둡니다.
+///   문서는 각자 `기존 목록 ∩ M`을 갖습니다. `M`에서 어느 문서에도 없던 항목은 그 key를 선언한 문서에 더합니다(다른
+///   문서에 두면 그 문서 validator의 orphan). 선언한 문서가 없으면(외부 library key 등) `T`에 목록을 둔 문서 모두에,
+///   그런 문서도 없으면 `base`의 첫 문서(투영의 기준 문서)에 둡니다.
 /// - snapshot library에 없는 대상의 `base` 목록은 그대로 둡니다. 프로젝트 범위 투영은 그런 목록(validator의 orphan)을
 ///   snapshot에 넣지 않으므로 snapshot이 바꿀 수 없는 값입니다.
 ///
@@ -380,6 +381,25 @@ pub fn project_contexts_from_snapshot(
             .flat_map(|(_, list)| list.iter().copied())
             .collect();
         let added: BTreeSet<StableId> = merged.difference(&known).copied().collect();
+        // 새 항목은 그 key를 선언한 문서에 둡니다(다른 문서에 두면 그 문서 validator의 orphan). 선언한 문서가
+        // 없으면(외부 library key 등) 대상에 목록을 둔 문서 모두에, 그런 문서도 없으면 첫 문서에 둡니다.
+        let declared: Vec<(StableId, BTreeSet<StableId>)> = base
+            .iter()
+            .map(|(document, _)| {
+                let set = &out[document];
+                let members: BTreeSet<StableId> = added
+                    .iter()
+                    .copied()
+                    .filter(|member| set.key(*member).is_some())
+                    .collect();
+                (*document, members)
+            })
+            .collect();
+        let undeclared: BTreeSet<StableId> = added
+            .iter()
+            .copied()
+            .filter(|member| !declared.iter().any(|(_, members)| members.contains(member)))
+            .collect();
         let mut give = |document: StableId, members: &BTreeSet<StableId>| {
             let set = out.get_mut(&document).expect("base 문서는 모두 out에 있음");
             for member in members {
@@ -390,14 +410,19 @@ pub fn project_contexts_from_snapshot(
                 }
             }
         };
-        if owners.is_empty() {
-            give(*anchor, &added);
-            continue;
-        }
         for (document, list) in &owners {
-            let mut kept: BTreeSet<StableId> = list.intersection(&merged).copied().collect();
-            kept.extend(added.iter().copied());
+            let kept: BTreeSet<StableId> = list.intersection(&merged).copied().collect();
             give(*document, &kept);
+        }
+        for (document, members) in &declared {
+            give(*document, members);
+        }
+        if owners.is_empty() {
+            give(*anchor, &undeclared);
+        } else {
+            for (document, _) in &owners {
+                give(*document, &undeclared);
+            }
         }
     }
     Ok(out)
@@ -619,10 +644,15 @@ mod tests {
             Some(vec![sid(900), sid(910), sid(920)]),
         );
         edit(60, SLOT_CONTEXT_KEYS, None);
-        edit(52, COMPONENT_CONTEXT_REQUIREMENTS, Some(vec![sid(930)]));
+        // badge의 910은 둘째 문서가 선언한 key라 둘째 문서에, 어디에도 선언되지 않은 930은 첫 문서에 갑니다.
+        edit(
+            52,
+            COMPONENT_CONTEXT_REQUIREMENTS,
+            Some(vec![sid(910), sid(930)]),
+        );
         let back = project_contexts_from_snapshot(&merged, &base).unwrap();
         let (one_back, two_back) = (&back[&sid(1)], &back[&sid(101)]);
-        // 새 항목은 그 대상에 목록을 둔 문서 모두에, 대상에 목록이 없던 항목은 첫 문서에 갑니다.
+        // 어디에도 선언되지 않은 새 항목은 그 대상에 목록을 둔 문서 모두에, 대상에 목록이 없던 항목은 첫 문서에 갑니다.
         assert_eq!(
             one_back.requirements(sid(50)),
             &BTreeSet::from([sid(900), sid(920)])
@@ -633,7 +663,7 @@ mod tests {
         );
         assert!(one_back.slot_keys(sid(60)).is_empty());
         assert_eq!(one_back.requirements(sid(52)), &BTreeSet::from([sid(930)]));
-        assert!(two_back.requirements(sid(52)).is_empty());
+        assert_eq!(two_back.requirements(sid(52)), &BTreeSet::from([sid(910)]));
         assert_eq!(two_back.requirements(sid(51)), &BTreeSet::from([sid(910)]));
         assert!(one_back.key(sid(900)).is_some() && two_back.key(sid(910)).is_some());
         // 다시 투영하면 같은 snapshot입니다.
