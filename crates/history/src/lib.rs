@@ -16,6 +16,9 @@ pub mod grouping;
 /// 창별 history (VII.5).
 pub mod window;
 
+/// 에이전트 작업 그룹 확정과 되돌리기 기록 (XIX.6.2, XIX.6.4, XIX.6.8, ADR-0100).
+pub mod agent;
+
 /// random command sequence undo/redo property test (VII.6.2).
 #[cfg(test)]
 mod sequence_property;

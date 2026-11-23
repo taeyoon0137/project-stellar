@@ -81,6 +81,9 @@ pub mod provenance;
 #[cfg(test)]
 pub(crate) mod provenance_fixture;
 
+/// 에이전트 편집 세션의 완료·중지·종료 절차와 외부 변경 처리 (XIX.6.2~XIX.6.6, XIX.7, ADR-0100).
+pub mod agent_history;
+
 /// 실행 인자로 고정한 신뢰 프로젝트 루트의 읽기 전용 backend (XIX.9.3).
 pub mod headless;
 
