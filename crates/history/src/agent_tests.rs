@@ -177,3 +177,35 @@ fn revert_overlapping_other_lease_or_stale_is_rejected_without_effect() {
     assert_eq!(error, AgentSinkError::Stale);
     assert_eq!(window.history().len(), 1);
 }
+
+#[test]
+fn session_revert_failing_in_the_middle_has_no_effect() {
+    let mut doc = small_state();
+    let mut window = window();
+    let mut labels = AgentEntryLabels::new();
+    let first = agent_batch(&mut doc, 1, vec![Command::rename_node(sid(11), "a")]);
+    let second = agent_batch(&mut doc, 2, vec![Command::rename_node(sid(12), "b")]);
+    let plan = plan_revert(&doc, &[&first, &second], &BTreeSet::new()).unwrap();
+    let mut transaction = plan
+        .transaction(CommandId::from_stable_id(sid(3000)))
+        .unwrap();
+    assert_eq!(transaction.requests.len(), 2);
+    // 두 역 command 사이에 적용할 수 없는 command를 끼워 중간 실패를 만듭니다.
+    transaction.requests.insert(
+        1,
+        CommandRequest::new(doc.revision(), Command::rename_node(sid(999), "없음")),
+    );
+    let before = doc.model().to_records().unwrap();
+    let revision = doc.revision();
+    let error = WindowAgentHistory {
+        window: &mut window,
+        doc: &mut doc,
+        labels: &mut labels,
+    }
+    .apply_revert(&transaction, &LeaseTable::new())
+    .unwrap_err();
+    assert!(matches!(error, AgentSinkError::Transaction(_)), "{error:?}");
+    assert_eq!(doc.revision(), revision);
+    assert_eq!(doc.model().to_records().unwrap(), before, "효과 0");
+    assert!(window.history().is_empty());
+}
