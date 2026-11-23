@@ -189,7 +189,8 @@ style_defaults: react-native
 - 이 키를 모르는 옛 앱은 매니페스트의 모르는 키 거부 규칙대로 프로젝트를 열지 않습니다(ADR-0082 Compatibility).
 - 바꾸는 방법은 두 가지입니다.
   - 앱 편집 history: `SetStyleDefaults` command입니다. undo 한 번으로 되돌립니다.
-  - headless: `stellar style-defaults set <프로젝트> <세트>`입니다. Git diff에서 한 줄로 보입니다.
+  - headless: `stellar style-defaults set <프로젝트> <세트> [--base <revision>] [--dry-run]`입니다. 저장 잠금을 잡고
+    base revision을 확인한 뒤 `stellar.yaml` 한 줄만 씁니다(ADR-0115 결정 4). Git diff에서 한 줄로 보입니다.
 
 ## 4. 사용자 세트 파일
 
@@ -227,7 +228,8 @@ text:
 
 - 명시한 값이 세트 값과 같아도 `explicit`입니다. 저장할 때 자동으로 지우지 않습니다.
 - 명시를 지우는 일은 `UnsetProperty` command입니다.
-- CLI: `stellar style-defaults resolve <프로젝트> <문서 id> <node id>`
+- CLI: `stellar style-defaults resolve <프로젝트> <문서 id> <node id>`와 `stellar query <프로젝트> node <문서 id> <node id>`의
+  `layout`. 두 결과는 같은 `ops::query::node_layout`입니다.
 
 ## 6. codegen 차이 출력
 
