@@ -62,7 +62,7 @@ Accepted (2026-11-24).
 6. **증분 전파.** `scene_edits`는 같은 change set으로 `DocumentLayout::update`를 먼저 부릅니다.
    - 다시 만들 layout node: 바뀐·삽입된 node, 표시 patch가 바뀐 node. 경로 없는 구조 변경·부모·순서·표시 변경은 box
      부모의 자식 목록을 다시 펼치고, container longhand(`0x0110`–`0x0121`) 변경은 자식 전체를 다시 만듭니다(흐름 여부가
-     바뀜). 활성 기본값 세트 이름이나 측정 hook 유무가 바뀌면 전체를 다시 계산합니다.
+     바뀜). Frame의 옛 `layout_mode` 변경도 같게 다룹니다(자식이 layout 입력에 들어가는지가 바뀜). 활성 기본값 세트 이름이나 측정 hook 유무가 바뀌면 전체를 다시 계산합니다.
    - `IncrementalLayout::apply` 뒤 다시 배치한 node와 그 자식, 다시 만든 node, 표시가 바뀐 subtree의 상자를 비교합니다.
      border box·content box가 바뀐 node는 scene에서 다시 변환합니다(baseline·overflow만 바뀐 상자는 다시 변환하지 않음).
      그래서 흐름 자식 하나의 크기 변경이 change set에 없는 형제의 Upsert로 이어지고, `IncrementalScene::update`는 그
@@ -80,7 +80,8 @@ Accepted (2026-11-24).
    - 백분율 inset은 containing block(부모 padding box) 기준 백분율로 둡니다. world 이동량은 부모 world 선형 부분의 역으로
      부모 local로 바꿉니다. 한 gesture가 한 transaction입니다.
 9. **runtime source.** `runtime::canvas::scene_layout::CanvasLayout`은 활성 View를 `document_scene_source`로 변환한
-   source를 보관하고 world 상자·preview를 냅니다. 옛 캔버스 행 목록(`CanvasScene`, `canvas.rs`)은 저장 transform으로
+   source를 보관하고 world 상자·preview를 냅니다. `CanvasLayout::for_scene`은 게시한 캔버스 행 목록이 이미 layout한
+   Text 크기를 Text 입력으로 써서 Text 흐름 자식도 크기와 상자를 갖게 합니다(생성 도구의 흐름 삽입 위치가 씀). 옛 캔버스 행 목록(`CanvasScene`, `canvas.rs`)은 저장 transform으로
    그리는 이전 경로로 남습니다. UI 재설계 때 화면은 이 source를 그립니다.
 
 ## Alternatives
