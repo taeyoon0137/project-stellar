@@ -125,6 +125,11 @@ impl FileIdentity {
         }
     }
 
+    /// 항목이 있는 장치(`st_dev`). 같은 장치 안에서만 rename이 원자적입니다(journal, ADR-0078).
+    pub(crate) fn dev(&self) -> u64 {
+        self.dev
+    }
+
     /// 경로를 `lstat`해(따라가지 않음) metadata와 identity를 돌려줍니다.
     pub(crate) fn lstat(path: &Path) -> io::Result<(Metadata, FileIdentity)> {
         let metadata = std::fs::symlink_metadata(path)?;
@@ -264,6 +269,34 @@ pub(crate) fn ensure_real_dirs(
         dirs.push((path.clone(), identity));
     }
     Ok(dirs)
+}
+
+/// `root` 아래 `components`가 모두 실제 디렉터리인지 만들지 않고 확인합니다.
+///
+/// 모두 있으면 각 경로와 identity, 어느 구성 요소가 없으면 `None`입니다. symlink면 따라가지 않고
+/// [`Refusal::SymlinkDirectory`], 디렉터리가 아니면 [`Refusal::NotDirectory`]입니다. 기대 hash 검사처럼
+/// 아무것도 쓰면 안 되는 단계가 씁니다(journal, ADR-0078).
+pub(crate) fn existing_real_dirs(
+    root: &Path,
+    components: &[&str],
+) -> io::Result<Option<Vec<(PathBuf, FileIdentity)>>> {
+    let mut path = root.to_path_buf();
+    let mut dirs = Vec::with_capacity(components.len());
+    for component in components {
+        path.push(component);
+        let (metadata, identity) = match FileIdentity::lstat(&path) {
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+            other => other?,
+        };
+        if metadata.file_type().is_symlink() {
+            return Err(Refusal::SymlinkDirectory.into_io());
+        }
+        if !metadata.is_dir() {
+            return Err(Refusal::NotDirectory.into_io());
+        }
+        dirs.push((path.clone(), identity));
+    }
+    Ok(Some(dirs))
 }
 
 /// 실제 디렉터리 하나를 보장합니다([`ensure_real_dirs`]).
@@ -522,6 +555,31 @@ mod tests {
             std::fs::read_dir(&outside.path).unwrap().count(),
             0,
             "symlink 대상 밖에 아무것도 만들지 않음"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_real_dirs_checks_without_creating() {
+        let dir = TempDir::new("dirs-existing");
+        let outside = TempDir::new("dirs-existing-outside");
+        assert_eq!(existing_real_dirs(&dir.path, &["a", "b"]).unwrap(), None);
+        assert!(!dir.path.join("a").exists(), "만들지 않음");
+        let created = ensure_real_dirs(&dir.path, &["a", "b"]).unwrap();
+        assert_eq!(
+            existing_real_dirs(&dir.path, &["a", "b"]).unwrap(),
+            Some(created)
+        );
+        assert_eq!(existing_real_dirs(&dir.path, &[]).unwrap(), Some(vec![]));
+        std::os::unix::fs::symlink(&outside.path, dir.path.join("a/link")).unwrap();
+        std::fs::write(dir.path.join("a/file"), b"x").unwrap();
+        assert_eq!(
+            refusal(existing_real_dirs(&dir.path, &["a", "link", "c"])),
+            Refusal::SymlinkDirectory
+        );
+        assert_eq!(
+            refusal(existing_real_dirs(&dir.path, &["a", "file", "c"])),
+            Refusal::NotDirectory
         );
     }
 

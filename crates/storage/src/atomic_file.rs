@@ -127,15 +127,16 @@ fn create_new_temp(names: impl IntoIterator<Item = PathBuf>) -> std::io::Result<
     ))
 }
 
-/// 부모 디렉터리를 sync합니다(POSIX 전용, Windows는 no-op).
+/// 부모 디렉터리를 sync합니다(POSIX 전용, Windows는 no-op). journal(ADR-0078)도 rename·삭제 항목의
+/// 내구성에 씁니다.
 #[cfg(unix)]
-fn sync_parent_dir(parent: &Path) -> std::io::Result<()> {
+pub(crate) fn sync_parent_dir(parent: &Path) -> std::io::Result<()> {
     std::fs::File::open(parent)?.sync_all()
 }
 
 /// 부모 디렉터리를 sync합니다(POSIX 전용, Windows는 no-op).
 #[cfg(not(unix))]
-fn sync_parent_dir(_parent: &Path) -> std::io::Result<()> {
+pub(crate) fn sync_parent_dir(_parent: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
