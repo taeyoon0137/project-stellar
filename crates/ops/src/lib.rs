@@ -50,6 +50,14 @@ pub mod lock;
 /// 외부 library 제품 경로 (XV.5.5·XV.5.3, ADR-0127).
 pub mod library;
 
+/// 외부 library 제품 명령: 의존성 추가·update·cache 받기·외부 component 참조 저장 (XV.4.3·XV.7.4·XV.7.5, ADR-0137).
+pub mod library_materialize;
+
+/// 외부 library 제품 명령 시험 fixture(ADR-0137). 프로덕션 경로에서 쓰지 않습니다.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub mod library_fixture;
+
 /// 프로젝트 검증 (XXIV.1.3).
 pub mod validate;
 

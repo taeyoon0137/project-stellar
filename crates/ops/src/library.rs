@@ -230,6 +230,7 @@ impl std::error::Error for LibraryCacheError {}
 /// 공용 library cache(제품 keyer로 연 entry store).
 pub struct LibraryCache {
     store: ProductEntryStore,
+    keyer: ProductKeyer,
 }
 
 impl fmt::Debug for LibraryCache {
@@ -257,7 +258,8 @@ impl LibraryCache {
         }
         .map_err(|e| LibraryCacheError::Key { kind: e.kind() })?;
         Ok(LibraryCache {
-            store: LibraryEntryStore::new(root, StorageSha256, keyer),
+            store: LibraryEntryStore::new(root, StorageSha256, keyer.clone()),
+            keyer,
         })
     }
 
@@ -268,8 +270,21 @@ impl LibraryCache {
         let keyer = ProductKeyer::load_or_create(&root)
             .map_err(|e| LibraryCacheError::Key { kind: e.kind() })?;
         Ok(LibraryCache {
-            store: LibraryEntryStore::new(root, StorageSha256, keyer),
+            store: LibraryEntryStore::new(root, StorageSha256, keyer.clone()),
+            keyer,
         })
+    }
+
+    /// OS 사용자 데이터 `<base>/xyz.taeyoon.stellar` 아래 cache를 materialize용으로 엽니다(디렉터리·key 파일 생성).
+    pub fn create_os_default() -> Result<LibraryCache, LibraryCacheError> {
+        let base = stellar_project::trust_store::os_user_data_base()
+            .ok_or(LibraryCacheError::NoUserDataDir)?;
+        LibraryCache::create_in_app_data(&base.join(APP_DATA_DIR))
+    }
+
+    /// mirror·매니페스트 공급자가 entry store와 같은 이름을 쓰도록 같은 keyer를 냅니다.
+    pub fn keyer(&self) -> &ProductKeyer {
+        &self.keyer
     }
 
     /// entry store.
