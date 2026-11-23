@@ -7,7 +7,8 @@
 //!    의미(컴포넌트·token·이미지 record)는 원본에서 읽은 것을 씁니다(FromText는 열 때 해석한 것, 아니면 열 때 본 원본
 //!    bytes를 해석). 텍스트 원본이 없는 chunk 프로젝트(Migrate)와 root 문서가 하나가 아닌 snapshot은 chunk 전용
 //!    저장입니다([`SourceWrite::ChunkOnly`], 원본을 쓰지 않음). 원본 전환은 앱 창 열기의 검증된 변환(ADR-0088 결정 2,
-//!    `session::convert_saved`)과 새 프로젝트 생성이 합니다.
+//!    `session::convert_saved`)과 새 프로젝트 생성이 합니다. 원본이 있는데 읽거나 해석할 수 없으면 chunk 전용으로
+//!    물러서지 않고 아무것도 쓰지 않습니다([`SaveError::Source`]).
 //! 2. 결과 문서를 원본으로 인코딩합니다. 원본이 담을 수 없는 결과는 아무것도 쓰지 않고 [`SaveError::Encode`]입니다
 //!    (Git 원본과 cache가 갈라지지 않게 함).
 //! 3. current pointer가 열 때와 같은지 확인합니다(다르면 [`SaveError::ConcurrentWrite`], 아무것도 쓰지 않음).
@@ -79,6 +80,9 @@ pub enum SaveError {
     ConcurrentWrite,
     /// 결과를 텍스트 원본으로 쓸 수 없습니다.
     Encode(String),
+    /// 텍스트 원본이 있지만 읽거나 해석할 수 없습니다(파일·줄 진단). cache만 쓰면 Git 원본과 cache가 갈라지므로
+    /// 아무것도 쓰지 않습니다.
+    Source(String),
     /// 문서 상태를 만들거나 직렬화할 수 없습니다.
     Invalid(String),
     /// 파일 쓰기 실패.
@@ -92,6 +96,7 @@ impl fmt::Display for SaveError {
                 "연 뒤 다른 writer가 원본이나 current generation을 바꿨습니다(아무것도 쓰지 않음)",
             ),
             SaveError::Encode(e) => write!(f, "결과를 텍스트 원본으로 쓸 수 없습니다: {e}"),
+            SaveError::Source(e) => write!(f, "텍스트 원본을 읽을 수 없습니다: {e}"),
             SaveError::Invalid(e) => write!(f, "{e}"),
             SaveError::Write(e) => write!(f, "{e}"),
         }
@@ -110,32 +115,38 @@ pub fn root_order(snapshot: &ProjectSnapshot) -> Vec<StableId> {
     }
 }
 
-/// 원본 대상: base와 문서 밖 의미. `Err`는 chunk 전용 이유입니다.
+/// 원본 대상: base와 문서 밖 의미. 안쪽 `Err`는 chunk 전용 이유입니다. 원본이 있는데 읽거나 해석할 수 없으면 chunk
+/// 전용으로 물러서지 않고 [`SaveError::Source`]입니다(cache만 앞서 Git 원본과 갈라지지 않게 함).
+#[allow(clippy::type_complexity)]
 fn source_target(
     snapshot: &ProjectSnapshot,
     models: &[DocumentModel],
-) -> Result<(SourceBase, SourceLibrary), String> {
+) -> Result<Result<(SourceBase, SourceLibrary), String>, SaveError> {
     if let Some(diagnostic) = snapshot.source_diagnostic() {
-        return Err(format!("텍스트 원본을 읽을 수 없습니다: {diagnostic}"));
+        return Err(SaveError::Source(diagnostic.to_string()));
     }
-    if models.len() != 1 {
-        return Err("텍스트 원본은 root 문서 하나만 담습니다".into());
-    }
-    match snapshot.source_files() {
-        Some(files) => {
-            let library = match snapshot.decoded_library() {
-                Some(library) => library.clone(),
-                None => {
-                    let project = decode_source(files).map_err(|e| e.to_string())?;
-                    SourceLibrary::split(project).1
-                }
-            };
-            Ok((files.base.clone(), library))
-        }
+    let Some(files) = snapshot.source_files() else {
         // 텍스트 원본이 없는 chunk 프로젝트는 chunk 전용으로 씁니다. 원본 전환은 앱 창 열기의 검증된 변환
         // (ADR-0088 결정 2)이나 새 프로젝트 생성이 합니다(ADR-0113 결정 3).
-        None => Err("텍스트 원본이 없는 chunk 프로젝트입니다".into()),
+        return Ok(Err("텍스트 원본이 없는 chunk 프로젝트입니다".into()));
+    };
+    if models.len() != 1 {
+        return Ok(Err("텍스트 원본은 root 문서 하나만 담습니다".into()));
     }
+    let library = match snapshot.decoded_library() {
+        Some(library) => library.clone(),
+        None => {
+            let project = decode_source(files).map_err(|e| {
+                let all = files.files.keys().cloned().collect();
+                SaveError::Source(
+                    stellar_project::external_change::source::diagnose(&files.files, &all, &e)
+                        .to_string(),
+                )
+            })?;
+            SourceLibrary::split(project).1
+        }
+    };
+    Ok(Ok((files.base.clone(), library)))
 }
 
 fn write_error(error: SaveRunError) -> SaveError {
@@ -155,7 +166,7 @@ pub fn save_documents(
 ) -> Result<SaveOutcome, SaveError> {
     let root = snapshot.root();
     // 1·2. 원본 대상과 인코딩(쓰기 전).
-    let text = match source_target(snapshot, &models) {
+    let text = match source_target(snapshot, &models)? {
         Ok((base, library)) => {
             let model = models.first().expect("source_target이 문서 하나를 확인함");
             let records = model

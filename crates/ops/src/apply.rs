@@ -1168,6 +1168,9 @@ pub fn apply(
         SaveError::Encode(e) => {
             ApplyError::InvalidResult(format!("텍스트 원본으로 쓸 수 없습니다: {e}"))
         }
+        SaveError::Source(e) => ApplyError::Document(DocumentReadError::Records(format!(
+            "텍스트 원본을 읽을 수 없습니다: {e}"
+        ))),
         SaveError::Invalid(e) => ApplyError::InvalidResult(e),
         SaveError::Write(e) => ApplyError::Save(e),
     })?;

@@ -56,7 +56,8 @@ Accepted (2026-11-24). engine lane `text-source-everywhere`의 결정입니다. 
 유일한 쓰기 경로입니다. 저장 잠금 안에서:
 
 1. 원본 대상: snapshot이 원본을 봤으면(Cache·Forward·FromText) 열 때의 원본 base 위에 씁니다. 문서 밖 의미(컴포넌트·
-   token·이미지 record)는 원본 것입니다(FromText는 열 때 해석한 것, 아니면 열 때 본 원본 bytes를 해석).
+   token·이미지 record)는 원본 것입니다(FromText는 열 때 해석한 것, 아니면 열 때 본 원본 bytes를 해석). 원본이 있는데
+   읽거나 해석할 수 없으면 chunk 전용으로 물러서지 않고 원본 진단으로 거부합니다(cache만 앞서면 Git 원본과 갈라짐).
 2. 결과 문서를 원본으로 인코딩합니다. 원본이 담을 수 없는 결과는 아무것도 쓰지 않고 거부합니다(원본과 cache를 가르지
    않음).
 3. current pointer가 열 때와 같은지 확인합니다.

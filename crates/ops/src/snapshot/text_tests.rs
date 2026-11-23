@@ -351,3 +351,21 @@ fn a_chunk_project_without_source_stays_chunk_only_on_write() {
     assert_eq!(read_stamp(&root), None);
     let _ = SourceBase::default();
 }
+
+#[test]
+fn a_write_over_an_unreadable_source_is_refused_instead_of_falling_back_to_the_cache() {
+    // 원본이 있는데 읽을 수 없으면 cache만 쓰지 않습니다(Git 원본과 cache가 갈라지지 않게 함, ADR-0113 결정 3).
+    let (_tmp, root, model) = text_project("text-broken-save");
+    std::fs::write(view_file(&root), "format: [\n").unwrap();
+    let snapshot = open_snapshot(&root).unwrap();
+    assert!(snapshot.source_diagnostic().is_some());
+    let digest = file_digest(&root);
+    let error =
+        super::save::save_documents(&snapshot, save::root_order(&snapshot), vec![copy(&model)])
+            .unwrap_err();
+    assert!(
+        matches!(&error, super::save::SaveError::Source(message) if message.contains("pages/")),
+        "{error:?}"
+    );
+    assert_eq!(file_digest(&root), digest);
+}
