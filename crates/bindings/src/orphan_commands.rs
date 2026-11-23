@@ -21,7 +21,8 @@ use stellar_expressions::ast::ExpressionAst;
 use stellar_expressions::types::TypeSpec;
 
 use crate::binding::{BindingId, BindingSetError};
-use crate::graph::{BindingCycle, DependencyGraph, DependencyNode};
+use crate::graph::{BindingCycle, DependencyNode};
+use crate::graph_view::BindingGraphView;
 use crate::orphan::{break_cause, BindingStore, BindingWorld, OrphanCause, OrphanedBinding};
 use crate::registry::TokenRegistry;
 
@@ -132,7 +133,7 @@ impl OrphanCommand {
                     .iter()
                     .map(DependencyNode::from_target)
                     .collect();
-                if let Some(cycle) = DependencyGraph::build(tokens, store.live())
+                if let Some(cycle) = BindingGraphView::new(tokens, store.live())
                     .cycle_if_dependencies(&node, &dependencies)
                 {
                     return Err(OrphanCommandError::Cycle(cycle));
@@ -187,7 +188,7 @@ impl OrphanCommand {
                     .remove_orphan(binding)
                     .ok_or(OrphanCommandError::UnknownOrphan(binding))?;
                 let next = orphan.binding().with_source(source, expected_type);
-                if let Err(error) = store.live_mut().insert(next) {
+                if let Err(error) = store.insert_live(next) {
                     store.insert_orphan(orphan);
                     return Err(OrphanCommandError::Set(error));
                 }
@@ -201,8 +202,7 @@ impl OrphanCommand {
             }
             OrphanCommand::Orphanize(orphan) => {
                 let live = store
-                    .live_mut()
-                    .remove(orphan.id())
+                    .remove_live(orphan.id())
                     .ok_or(OrphanCommandError::UnknownLive(orphan.id()))?;
                 let inverse = OrphanCommand::Reconnect {
                     binding: orphan.id(),

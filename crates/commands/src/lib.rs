@@ -126,6 +126,10 @@ pub mod test_support;
 #[cfg(test)]
 mod property_tests;
 
+/// command 검증 증분 index 시험과 release 측정 (XVI.4.7).
+#[cfg(test)]
+mod index_tests;
+
 /// 테스트 전용 command 실행 fuzz target (VII.6.3). 프로덕션 경로에서 사용하지 않습니다.
 #[doc(hidden)]
 #[cfg(any(test, feature = "test-support"))]

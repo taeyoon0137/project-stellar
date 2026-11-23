@@ -419,38 +419,14 @@ impl DependencyGraph {
             });
         }
         let target = self.index_of(node)?;
-        let mut parent: BTreeMap<NodeIndex, Option<NodeIndex>> = BTreeMap::new();
-        let mut queue: std::collections::VecDeque<NodeIndex> = std::collections::VecDeque::new();
-        for dep in new_dependencies {
-            if let Some(index) = self.index_of(dep) {
-                if parent.insert(index, None).is_none() {
-                    queue.push_back(index);
-                }
-            }
-        }
-        while let Some(current) = queue.pop_front() {
-            for &dep in self.dependencies(current) {
-                if dep == target {
-                    let mut chain = vec![current];
-                    let mut at = current;
-                    while let Some(Some(up)) = parent.get(&at) {
-                        chain.push(*up);
-                        at = *up;
-                    }
-                    chain.reverse();
-                    let mut path = Vec::with_capacity(chain.len() + 2);
-                    path.push(node.clone());
-                    path.extend(chain.into_iter().map(|i| self.node(i).clone()));
-                    path.push(node.clone());
-                    return Some(BindingCycle { path });
-                }
-                if let std::collections::btree_map::Entry::Vacant(slot) = parent.entry(dep) {
-                    slot.insert(Some(current));
-                    queue.push_back(dep);
-                }
-            }
-        }
-        None
+        // 판정·경로는 저장소 view(XVI.4.9)와 같은 BFS를 씁니다.
+        let starts = new_dependencies.iter().filter_map(|dep| self.index_of(dep));
+        let path = crate::graph_view::first_cycle_path(&target, starts, |current| {
+            self.dependencies(*current).iter().copied()
+        })?;
+        Some(BindingCycle {
+            path: path.into_iter().map(|i| self.node(i).clone()).collect(),
+        })
     }
 }
 

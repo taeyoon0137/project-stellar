@@ -112,7 +112,7 @@ fn finite(value: f32) -> FiniteF32 {
 /// 부모의 자식 사이 무작위 위치의 새 OrderKey.
 fn key_among(
     model: &DocumentModel,
-    index: &ChildIndex,
+    index: &ChildIndex<'_>,
     parent: StableId,
     rng: &mut SplitMix64,
     skip: Option<StableId>,

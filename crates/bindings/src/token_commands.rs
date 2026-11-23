@@ -23,17 +23,18 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use stellar_core_types::reference::TokenRef;
-use stellar_expressions::ast::{ExpressionAst, ReferenceTarget};
+use stellar_expressions::ast::ExpressionAst;
 use stellar_expressions::typecheck::ReferenceTypes;
 
 use crate::binding::BindingId;
+use crate::graph_view::TokenGraphView;
 use crate::orphan::BindingStore;
 use crate::registry::{ReferenceIssue, RegistryError, TokenRegistry, TokenScope, TokenTombstone};
 use crate::token::{
     check_expression, TokenDefinition, TokenName, TokenReferenceTypes, TokenSetError, TokenType,
     TokenTypeError,
 };
-use crate::token_graph::{TokenCycle, TokenDependencyGraph};
+use crate::token_graph::TokenCycle;
 
 /// inbound 참조가 있는 토큰 삭제를 허용하는 명시 계획. 참조를 끊지 않고 orphan 상태로 둡니다.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -51,16 +52,10 @@ impl TokenOrphanPlan {
         bindings: &BindingStore,
         token: TokenRef,
     ) -> TokenOrphanPlan {
-        let target = ReferenceTarget::Token(token);
-        let live = bindings.live().iter();
-        let orphaned = bindings.orphans().map(|orphan| orphan.binding());
+        // binding 쪽은 저장소의 토큰 역참조 index로 그 토큰을 읽는 binding만 봅니다(XVI.4.8).
         TokenOrphanPlan {
             referrers: registry.referrers(token),
-            bindings: live
-                .chain(orphaned)
-                .filter(|binding| binding.refers_to(&target))
-                .map(|binding| binding.id())
-                .collect(),
+            bindings: bindings.bindings_reading(token),
         }
     }
 
@@ -238,9 +233,7 @@ fn check_new_expression(
             }
         }
     }
-    if let Some(cycle) =
-        TokenDependencyGraph::build(registry).cycle_if_references(token, &references)
-    {
+    if let Some(cycle) = TokenGraphView::new(registry).cycle_if_references(token, &references) {
         return Err(TokenCommandError::Cycle(cycle));
     }
     let types = TokenReferenceTypes {

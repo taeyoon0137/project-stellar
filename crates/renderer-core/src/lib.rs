@@ -30,6 +30,12 @@ pub mod texture_cache;
 /// mipmap 생성과 texture upload task (XI.7.2).
 pub mod mipmap;
 
+/// 공통 cache budget manager·priority·증분 제거·GPU OOM 재시도 (XVI.5.2·XVI.5.4·XVI.5.6).
+pub mod cache;
+
+/// glyph atlas·tessellation·이미지 mipmap cache의 budget manager 등록 (XVI.5.3).
+pub mod cache_adapters;
+
 /// backend 독립 Render Graph (XI.4.1).
 pub mod render_graph;
 

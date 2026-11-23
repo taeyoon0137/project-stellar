@@ -21,6 +21,13 @@ pub mod binding;
 /// 토큰·속성·Component Property·환경 입력 통합 dependency graph (VIII.6.2).
 pub mod graph;
 
+/// 저장소가 편집과 함께 유지하는 토큰·통합 dependency graph view (XVI.4.9).
+pub mod graph_view;
+
+/// 저장소 graph view 시험과 release 측정 (XVI.4.9).
+#[cfg(test)]
+mod graph_view_tests;
+
 /// 영향받는 binding만 위상 순서로 재평가하는 scheduler (VIII.6.4).
 pub mod scheduler;
 
@@ -35,6 +42,13 @@ pub mod environment_index;
 
 /// Orphaned Binding validator와 binding 저장소 (VIII.8.1).
 pub mod orphan;
+
+/// live·orphan binding 저장소와 토큰 역참조·orphan target index (VIII.8.1, XVI.4.8).
+pub mod store;
+
+/// binding 저장소 index release 측정 (XVI.4.8).
+#[cfg(test)]
+mod store_bench;
 
 /// orphan binding 선언 기본값 fallback (VIII.8.2).
 pub mod fallback;

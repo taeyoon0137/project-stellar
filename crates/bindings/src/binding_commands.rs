@@ -30,7 +30,8 @@ use stellar_expressions::types::TypeSpec;
 use crate::binding::{
     check_source, BindingId, BindingSet, BindingSetError, BindingTypeError, ValueBinding,
 };
-use crate::graph::{BindingCycle, DependencyGraph, DependencyNode};
+use crate::graph::{BindingCycle, DependencyNode};
+use crate::graph_view::BindingGraphView;
 use crate::registry::TokenRegistry;
 use crate::token::TokenTypes;
 
@@ -160,7 +161,7 @@ fn check_binding(
         .map(DependencyNode::from_target)
         .collect();
     if let Some(cycle) =
-        DependencyGraph::build(context.tokens, bindings).cycle_if_dependencies(&node, &dependencies)
+        BindingGraphView::new(context.tokens, bindings).cycle_if_dependencies(&node, &dependencies)
     {
         return Err(BindingCommandError::Cycle(cycle));
     }
