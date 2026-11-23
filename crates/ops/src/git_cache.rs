@@ -116,10 +116,12 @@ pub fn status(root: &Path) -> Result<CacheStatus, CacheCommandError> {
     })
 }
 
-/// 원본과 짝이 아닌 cache를 원본에서 다시 만듭니다(저장 잠금 안).
+/// 원본과 짝이 아닌 cache를 원본에서 다시 만듭니다(저장 잠금 안). 원본 파일은 쓰지 않으므로 원본 없는 옛 배치는
+/// 바꾸지 않고 [`CacheError::LegacyWithoutSource`]입니다(`rebuild_from_text`의 열기 관찰이 변환하기 전에 막음).
 pub fn rebuild(root: &Path, lock: &LockPolicy) -> Result<Rebuild, CacheCommandError> {
     let root = canonical(root)?;
     let _guard = locked(&root, lock)?;
+    migrate_working_tree_with(&root, LegacyLayout::Refuse).map_err(CacheCommandError::Cache)?;
     rebuild_from_text(&root).map_err(CacheCommandError::Cache)
 }
 
@@ -217,7 +219,7 @@ mod tests {
         assert_eq!(report.retained.len(), 1);
     }
 
-    /// 원본 없는 옛 chunk 프로젝트: `status`·`migrate`는 바꾸지 않고 거부하고, `migrate --convert`는 텍스트 원본으로
+    /// 원본 없는 옛 chunk 프로젝트: `status`·`rebuild`·`migrate`는 바꾸지 않고 거부하고, `migrate --convert`는 텍스트 원본으로
     /// 바꿉니다(앱 열기와 같은 함수). Git을 쓸 수 없으면 옛 배치는 작업 트리에 남고 그 이유를 돌려줍니다.
     #[test]
     fn migrate_convert_turns_a_legacy_project_into_a_text_source() {
@@ -241,6 +243,7 @@ mod tests {
         assert!(refused(
             migrate(&root, &LockPolicy::None, SystemTime::now()).map(|_| ())
         ));
+        assert!(refused(rebuild(&root, &LockPolicy::None).map(|_| ())));
         assert!(stellar_project::document_io::session::read_source(&root)
             .unwrap()
             .is_none());
