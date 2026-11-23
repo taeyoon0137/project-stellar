@@ -122,6 +122,11 @@ impl HostedSessions {
             .map(AgentSession::mode)
     }
 
+    /// 연결된 agent-host 세션 id(순서대로).
+    pub fn host_ids(&self) -> Vec<HostSessionId> {
+        self.by_host.keys().copied().collect()
+    }
+
     /// 앱 시작 세션 수.
     pub fn len(&self) -> usize {
         self.by_host.len()
@@ -264,6 +269,31 @@ impl AgentWindow<'_> {
             .change_mode_by_user(mode)
             .map_err(|e| AgentEditError::Link(LinkError::Transition(e)))?;
         Ok(self.run_host_effects(host, effects, CommandId::from_bytes([0; 16]), 0))
+    }
+
+    /// 시각 진행을 앱 시작 세션에 알립니다(재연결 유예 초과면 종료 절차). 끝낸 세션의 종료 보고서를 돌려줍니다. 상태
+    /// snapshot 게시마다 부릅니다(`crate::agent_observe`).
+    pub fn tick_hosted(&mut self, now_ms: u64) -> Vec<SessionEndReport> {
+        let mut ended = Vec::new();
+        for host in self.agent.hosted.host_ids() {
+            let live = self
+                .agent
+                .hosted
+                .session(host)
+                .is_some_and(|s| matches!(s.state(), SessionState::Reconnecting { .. }));
+            if !live {
+                continue;
+            }
+            if let Ok(report) = self.host_event(
+                host,
+                SessionEvent::Tick,
+                CommandId::from_stable_id(fresh_id()),
+                now_ms,
+            ) {
+                ended.extend(report.ended.map(|r| *r));
+            }
+        }
+        ended
     }
 
     /// 편집 쪽이 끝낸 세션을 AgentSession에 알립니다(이미 끝났으면 아무것도 하지 않음).

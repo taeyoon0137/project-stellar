@@ -239,3 +239,58 @@ fn serve_reads_frames_and_writes_replies_until_the_bridge_closes() {
     }
     assert!(job(&f, |w| w.agent().lease_table().unwrap().is_empty()));
 }
+
+#[test]
+fn hosted_bridge_bind_and_disconnect_reach_the_agent_session() {
+    use stellar_agent_host::session::{
+        AgentSession, AgentSessionId as HostSessionId, SessionState, UserStartRequest,
+        DEFAULT_RECONNECT_GRACE_MS,
+    };
+    use stellar_agent_host::start::{FirstConnectionApproval, StartedSession};
+    let f = app("agent-frame-hosted");
+    let session = job(&f, |w| {
+        let started = StartedSession {
+            session: AgentSession::start_by_user(UserStartRequest {
+                session: HostSessionId(21),
+                mode: SessionMode::ReviewThenApply,
+                now_ms: 0,
+                reconnect_grace_ms: DEFAULT_RECONNECT_GRACE_MS,
+            }),
+            connection: FirstConnectionApproval {
+                project: crate::agent::project_key(w.session().identity()),
+                window: w.session().window(),
+                session: HostSessionId(21),
+                profile_id: "test-double".to_string(),
+                mode: SessionMode::ReviewThenApply,
+                approved_at_ms: 0,
+            },
+        };
+        w.start_hosted(started, "내장", UserUiAction::from_user_interface(), 0)
+            .unwrap()
+    });
+    let mut front = AgentFrontEnd::new(AppAgentHost::new(f.app.agent_io()));
+    let conn = AgentConnection(5);
+    let bound = front
+        .bind_hosted(conn, f.window, session, SessionMode::ReviewThenApply)
+        .unwrap();
+    assert_eq!(wait(bound), Ok(AgentReply::Bound));
+    let state = |f: &App| {
+        job(f, |w| {
+            let host = w.agent().hosted().host_ids()[0];
+            w.agent().hosted().session(host).unwrap().state()
+        })
+    };
+    assert_eq!(state(&f), SessionState::Running);
+    // 내장 세션은 첫 연결 승인이 시작 확인으로 기록되어 바로 lease를 요청할 수 있습니다.
+    assert_eq!(
+        front.handle(conn, begin(1), WAIT),
+        Ok(AgentReply::LeaseRequested(LeaseState::AwaitingApproval))
+    );
+    // 연결이 끊겨도 앱 시작 세션은 유지되고 재연결 유예에 들어갑니다.
+    assert_eq!(
+        wait(front.disconnected(conn).unwrap()),
+        Ok(AgentReply::Ended(None))
+    );
+    assert!(matches!(state(&f), SessionState::Reconnecting { .. }));
+    assert!(job(&f, move |w| w.agent().sessions().is_active(session)));
+}

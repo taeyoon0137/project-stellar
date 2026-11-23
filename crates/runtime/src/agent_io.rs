@@ -27,11 +27,12 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use stellar_agent_edit::agent_history::{
-    CompletedEdit, EndReason, ProposalId, SessionEndReport, SessionOrigin,
+    CompletedEdit, EndReason, ProposalId, SessionEndReport, SessionError, SessionOrigin,
 };
 use stellar_agent_edit::attached::edit::{decode_proposal, AttachedEditError, DecodedProposal};
 use stellar_agent_edit::lease::{LeaseState, LeaseTargets};
 use stellar_agent_edit::permission::{AgentSessionId, ConnectionApproval};
+use stellar_agent_host::session::SessionEvent;
 use stellar_commands::id::CommandId;
 use stellar_commands::lock::lease::LeaseId;
 use stellar_ops::apply::ApplyRequest;
@@ -88,6 +89,11 @@ pub enum AgentRequest {
         /// 확정할 history 항목 id.
         entry_id: CommandId,
     },
+    /// 결합된 bridge가 연결됨(앱 시작 세션이면 AgentSession `BridgeBound`, ADR-0124 결정 1).
+    Bound {
+        /// 세션.
+        session: AgentSessionId,
+    },
     /// bridge 연결 종료.
     Disconnected {
         /// 세션.
@@ -119,6 +125,8 @@ pub enum AgentReply {
     Completed(CompletedEdit),
     /// 종료 절차(연결 종료에서 앱 시작 세션을 유지하면 `None`).
     Ended(Option<Box<SessionEndReport>>),
+    /// bridge 결합을 기록함.
+    Bound,
 }
 
 /// 에이전트 요청 실패. 어느 경우든 문서는 바뀌지 않았습니다.
@@ -194,6 +202,9 @@ enum Prepared {
         session: AgentSessionId,
         entry_id: CommandId,
     },
+    Bound {
+        session: AgentSessionId,
+    },
     Disconnected {
         session: AgentSessionId,
         entry_id: CommandId,
@@ -238,6 +249,7 @@ fn prepare(request: AgentRequest) -> Result<Prepared, AgentIoError> {
             proposal: decode_proposal(&request).map_err(AgentIoError::Invalid)?,
         },
         AgentRequest::Complete { session, entry_id } => Prepared::Complete { session, entry_id },
+        AgentRequest::Bound { session } => Prepared::Bound { session },
         AgentRequest::Disconnected { session, entry_id } => {
             Prepared::Disconnected { session, entry_id }
         }
@@ -251,6 +263,11 @@ fn prepare(request: AgentRequest) -> Result<Prepared, AgentIoError> {
             entry_id,
         },
     })
+}
+
+/// 문서 밖 effect만 내는 host event의 history 항목 id 자리(확정할 항목이 없음).
+fn entry_placeholder() -> CommandId {
+    CommandId::from_bytes([0; 16])
 }
 
 /// lease 요청·제안 전에 그 세션의 첫 연결 승인을 봅니다(XIX.3.3). 모르는 세션은 세션 절차의 오류로 넘깁니다.
@@ -319,10 +336,37 @@ fn run(window: &mut AgentWindow<'_>, prepared: Prepared) -> Result<AgentReply, A
             .complete(session, entry_id)
             .map(AgentReply::Completed)
             .map_err(edit),
-        Prepared::Disconnected { session, entry_id } => window
-            .on_bridge_disconnected(session, entry_id, monotonic_ms())
-            .map(|report| AgentReply::Ended(report.map(Box::new)))
-            .map_err(edit),
+        Prepared::Bound { session } => {
+            if let Some(host) = window.agent().hosted().host_of(session) {
+                window
+                    .host_event(
+                        host,
+                        SessionEvent::BridgeBound,
+                        entry_placeholder(),
+                        monotonic_ms(),
+                    )
+                    .map_err(edit)?;
+            } else if !window.agent().sessions().is_active(session) {
+                return Err(edit(AgentEditError::Session(SessionError::UnknownSession(
+                    session,
+                ))));
+            }
+            Ok(AgentReply::Bound)
+        }
+        Prepared::Disconnected { session, entry_id } => {
+            let now = monotonic_ms();
+            let report = window
+                .on_bridge_disconnected(session, entry_id, now)
+                .map_err(edit)?;
+            // 앱 시작 세션은 유지하고 AgentSession의 재연결 유예를 시작합니다(ADR-0124 결정 1).
+            if report.is_none() {
+                if let Some(host) = window.agent().hosted().host_of(session) {
+                    let _ =
+                        window.host_event(host, SessionEvent::BridgeDisconnected, entry_id, now);
+                }
+            }
+            Ok(AgentReply::Ended(report.map(Box::new)))
+        }
         Prepared::End {
             session,
             reason,

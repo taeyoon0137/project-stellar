@@ -91,6 +91,8 @@ pub(crate) fn drain(window: &mut AgentWindow<'_>) -> Vec<SessionEndReport> {
             }
         }
     }
+    // 앱 시작 세션의 재연결 유예를 확인합니다(ADR-0124 결정 1).
+    ended.extend(window.tick_hosted(monotonic_ms()));
     rearm(window.session, window.agent);
     ended
 }

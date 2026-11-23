@@ -43,6 +43,8 @@ Accepted (2026-11-24). engine lane `agent-runtime-2`의 결정입니다. ADR-011
    - 편집 쪽이 먼저 끝낸 세션(lease 겹침, I/O의 `End`)은 같은 이유의 event(`end_event`)를 `AgentSession`에 넣어 상태를 맞춥니다.
      이미 끝난 편집 세션에는 종료 절차를 다시 실행하지 않습니다. 창을 닫을 때 앱 시작 세션은 `UserStop` event로 끝내 프로세스 종료
      효과도 냅니다.
+   - bridge 결합·연결 종료는 I/O 요청(`Bound`, `Disconnected`)으로 들어와 앱 시작 세션이면 `BridgeBound`·`BridgeDisconnected`
+     event가 됩니다. 재연결 유예는 상태 snapshot 게시마다 재연결 대기 세션에 `Tick`을 넣어 확인합니다(`tick_hosted`).
    - 편집 쪽 `EndReason`에 `UsageLimitReported`·`AuthErrorReported`를 더해 agent-host 이유와 손실 없이 대응합니다(진단 코드 같음).
    - 문서 변경은 document thread job 안에서 원자 실행되고 host event도 같은 스레드에서 실행되므로, event 시점에 적용 중인
      transaction은 없습니다. 그래서 runtime은 `TransactionStarted`·`TransactionSettled`를 넣지 않습니다.

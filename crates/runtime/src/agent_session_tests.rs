@@ -275,3 +275,34 @@ fn reasons_map_with_the_same_diagnostic_codes() {
         assert_eq!(end_reason(reason).code(), reason.code());
     }
 }
+
+#[test]
+fn reconnect_grace_expiry_ends_the_hosted_session_on_tick() {
+    // 앱 시작 세션은 bridge가 끊겨도 유예 동안 유지되고, 유예를 넘긴 Tick에서 종료 절차를 밟습니다(XXIX.2.8).
+    let mut f = fixture("agent-session-grace");
+    let mut window = AgentWindow::new(&mut f.session, &mut f.agent);
+    let start = started(window.session(), 6, SessionMode::default());
+    let edit_id = window.start_hosted(start, "내장", ui(), 10).unwrap();
+    window
+        .host_event(HostSessionId(6), SessionEvent::BridgeBound, id(9), 11)
+        .unwrap();
+    window
+        .host_event(
+            HostSessionId(6),
+            SessionEvent::BridgeDisconnected,
+            id(9),
+            100,
+        )
+        .unwrap();
+    assert!(window
+        .tick_hosted(100 + DEFAULT_RECONNECT_GRACE_MS - 1)
+        .is_empty());
+    assert!(
+        window.agent().sessions().is_active(edit_id),
+        "유예 안에서는 유지"
+    );
+    let ended = window.tick_hosted(100 + DEFAULT_RECONNECT_GRACE_MS);
+    assert_eq!(ended.len(), 1);
+    assert_eq!(ended[0].reason, EndReason::ReconnectGraceExpired);
+    assert!(!window.agent().sessions().is_active(edit_id));
+}

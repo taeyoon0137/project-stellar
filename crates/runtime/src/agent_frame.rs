@@ -122,14 +122,15 @@ impl AgentFrontEnd {
         ticket.map(|ticket| (session, ticket))
     }
 
-    /// 앱이 시작한 세션(`AgentWindow::start_hosted`로 이미 등록)의 bridge 연결을 묶습니다.
+    /// 앱이 시작한 세션(`AgentWindow::start_hosted`로 이미 등록)의 bridge 연결을 묶고, 결합을 AgentSession에 알리는
+    /// 요청(`Bound`)을 넣습니다.
     pub fn bind_hosted(
         &mut self,
         connection: AgentConnection,
         window: WindowSessionHandle,
         session: AgentSessionId,
         mode: SessionMode,
-    ) -> Result<(), HostRefusal> {
+    ) -> Result<AgentTicket, HostRefusal> {
         self.host.bind(
             connection,
             BoundConnection {
@@ -140,7 +141,12 @@ impl AgentFrontEnd {
             },
         )?;
         self.open.insert(connection, Open::default());
-        Ok(())
+        self.host
+            .submit(connection, AgentRequest::Bound { session })
+            .inspect_err(|_| {
+                self.host.unbind(connection);
+                self.open.remove(&connection);
+            })
     }
 
     /// frame 하나를 요청으로 바꿉니다(모듈 문서). 문서에 닿지 않고 연결 상태도 바꾸지 않습니다.
@@ -236,7 +242,7 @@ impl AgentFrontEnd {
         match reply {
             AgentReply::LeaseRequested(_) => open.lease = converted_lease,
             AgentReply::Completed(_) | AgentReply::Ended(_) => open.lease = None,
-            AgentReply::Started(_) | AgentReply::Queued(_) => {}
+            AgentReply::Started(_) | AgentReply::Queued(_) | AgentReply::Bound => {}
         }
     }
 
@@ -316,6 +322,7 @@ pub fn reply_frame(request: u64, outcome: Result<AgentReply, HostRefusal>) -> Fr
                 AgentReply::Queued(_) => "queued",
                 AgentReply::Completed(_) => "completed",
                 AgentReply::Ended(_) => "ended",
+                AgentReply::Bound => "bound",
             },
         ),
         Err(refusal) => (refusal.kind.name(), refusal.code),
