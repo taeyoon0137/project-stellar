@@ -10,7 +10,8 @@
 //! - 해결은 `stellar merge-driver resolve`와 같은 conflict 세션(`ConflictSession` + ops Git 포트 `GatedMergeGit`)과
 //!   적용(`apply_session`: 저장 journal 한 거래로 쓰고 `git add`)입니다.
 //!
-//! conflict 단위는 둘입니다: generation 문서(`design/current`)의 Frame `width`, 컴포넌트 원본 파일의 root 크기.
+//! conflict 단위는 둘입니다: 텍스트 원본 View 파일의 Frame `width`, 컴포넌트 원본 파일의 root 크기. chunk cache는 Git
+//! 밖이라(ADR-0122) cache 경로는 conflict가 되지 않습니다.
 //! 서로 다른 속성 변경(한쪽 `background-color`, 다른 쪽 이름)은 자동 병합되어야 합니다.
 //!
 //! 텍스트 원본 View 파일(`design/pages/**`)의 conflict는 conflict 세션이 의미 병합하지 않는 경로입니다(ADR-0081 단점).
@@ -165,13 +166,12 @@ fn two_branch_conflict_is_resolved_semantically_and_added() {
         .into_iter()
         .map(|e| e.path)
         .collect();
-    // 앱이 만든 프로젝트는 텍스트 원본이 Git 원본입니다(ADR-0113): View 원본·로컬 cache pointer·컴포넌트 원본.
-    assert_eq!(
-        unmerged.len(),
-        3,
-        "View 원본·design/current·컴포넌트 원본: {unmerged:?}"
-    );
-    assert!(unmerged.contains(&Path::new("design/current").to_path_buf()));
+    // 앱이 만든 프로젝트는 텍스트 원본이 Git 원본이고 chunk cache는 Git 밖입니다(ADR-0113·ADR-0122): View 원본과
+    // 컴포넌트 원본만 conflict입니다.
+    assert_eq!(unmerged.len(), 2, "View 원본·컴포넌트 원본: {unmerged:?}");
+    assert!(unmerged
+        .iter()
+        .all(|p| p.starts_with("design/") && p.to_string_lossy().ends_with(".stellar.yaml")));
     let view_path = unmerged
         .iter()
         .find(|p| p.starts_with("design/pages"))
@@ -247,10 +247,8 @@ fn two_branch_conflict_is_resolved_semantically_and_added() {
         "merge 진행 중 그대로"
     );
     assert_eq!(report.remaining, Some(Vec::new()), "unresolved entry 0");
-    assert!(report
-        .added
-        .contains(&Path::new("design/current").to_path_buf()));
     assert!(report.added.contains(&view_path));
+    assert!(report.added.iter().all(|p| !p.starts_with(".stellar")));
     assert!(report
         .added
         .iter()

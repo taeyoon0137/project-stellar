@@ -10,20 +10,31 @@ use stellar_git_porcelain::trust::GatedGitRunner;
 use stellar_ops::candidate::{saved_semantic_snapshot, CandidateStorageError, SemanticDiff};
 use stellar_ops::candidate::{ChangeId, StageSelectionRequest};
 use stellar_ops::test_support::{
-    file_digest, large_document, random_valid_document, save_documents, scaffold_project,
+    file_digest, large_document, save_text_document, scaffold_project,
 };
 use stellar_project::saved_project::SavedProjectLoader;
 
+/// materialize한 후보·index tree를 원본으로 만든 cache로 엽니다(Git tree에는 cache가 없음, ADR-0122).
+fn open_tree(
+    root: &std::path::Path,
+) -> Result<
+    stellar_project::saved_project::SavedProject,
+    stellar_project::saved_project::SavedProjectError,
+> {
+    let _ = stellar_project::cache::prepare_snapshot(root);
+    SavedProjectLoader::for_materialized_snapshot().open(root)
+}
+
 #[test]
 fn selected_property_round_trips_without_changing_working_bytes_or_real_index() {
+    // chunk cache는 Git 밖이라(ADR-0122) 후보 index에는 텍스트 원본만 바뀌어 들어갑니다.
     let fx = GitFixture::with_system_git("candidate-storage")
         .unwrap()
         .expect("system Git required");
     scaffold_project(fx.work());
     let model = large_document(4);
-    let other = random_valid_document(42);
-    save_documents(fx.work(), &[&model, &other]);
-    save_documents(fx.work(), &[&model, &other]);
+    save_text_document(fx.work(), &model);
+    save_text_document(fx.work(), &model);
     fx.write("stellar.lock.yaml", b"opaque-lock: keep-exactly\n")
         .unwrap();
     let manifest = std::fs::read(fx.work().join("stellar.yaml")).unwrap();
@@ -31,12 +42,21 @@ fn selected_property_round_trips_without_changing_working_bytes_or_real_index() 
     opaque_manifest.extend_from_slice(b"\n# opaque metadata spelling must survive\n");
     fx.write("stellar.yaml", &opaque_manifest).unwrap();
     fx.commit_all("fixture baseline").unwrap();
-    // HEAD 이후 이미 stage된 non-Stellar bytes도 그대로 보존합니다.
+    let tracked = String::from_utf8(fx.git(["ls-files"]).unwrap().stdout).unwrap();
+    assert!(
+        !tracked.lines().any(|l| l.starts_with(".stellar/")),
+        "{tracked}"
+    );
+    let view_file = tracked
+        .lines()
+        .find(|l| l.starts_with("design/pages/") && l.ends_with(".stellar.yaml"))
+        .unwrap()
+        .to_string();
+    // HEAD 이후 이미 stage된 non-Stellar bytes와 원본 파일 mode도 그대로 보존합니다.
     fx.write("README.txt", b"already staged bytes\n").unwrap();
     fx.git(["add", "README.txt"]).unwrap();
-    fx.git(["update-index", "--chmod=+x", "design/current"])
+    fx.git(["update-index", "--chmod=+x", view_file.as_str()])
         .unwrap();
-    let index_files = file_digest(fx.work());
     let mut records = model.to_records().unwrap();
     let node = records
         .nodes
@@ -53,7 +73,7 @@ fn selected_property_round_trips_without_changing_working_bytes_or_real_index() 
         .unwrap()
         .locked = true;
     let (working, _) = DocumentModel::from_records(records).unwrap();
-    save_documents(fx.work(), &[&working, &other]);
+    save_text_document(fx.work(), &working);
     fx.write("stellar.lock.yaml", b"unselected working lock\n")
         .unwrap();
     fx.write("README.txt", b"unstaged non-Stellar\n").unwrap();
@@ -69,9 +89,13 @@ fn selected_property_round_trips_without_changing_working_bytes_or_real_index() 
         ),
     )]);
     let candidate = prepare_stage_candidate(&fx.gated(), fx.work(), &parent, &request).unwrap();
-    let reopened = SavedProjectLoader::for_materialized_snapshot()
-        .open(candidate.tree.root())
-        .unwrap();
+    // 후보 tree(Git 파일)에는 cache 경로가 없습니다. 열 때는 원본에서 cache를 만듭니다.
+    assert!(!candidate
+        .tree
+        .files()
+        .iter()
+        .any(|f| f.path.as_bytes().starts_with(b".stellar/")));
+    let reopened = open_tree(candidate.tree.root()).unwrap();
     let mut actual = reopened
         .load_document(model.document_id())
         .unwrap()
@@ -82,16 +106,6 @@ fn selected_property_round_trips_without_changing_working_bytes_or_real_index() 
     let mut expected = expected;
     expected.sort_canonical();
     assert_eq!(actual, expected);
-    assert_eq!(
-        reopened
-            .load_document(other.document_id())
-            .unwrap()
-            .model
-            .to_records()
-            .unwrap(),
-        other.to_records().unwrap()
-    );
-    assert_eq!(reopened.generation_number(), 3);
     assert_eq!(
         std::fs::read(candidate.tree.root().join("stellar.yaml")).unwrap(),
         opaque_manifest
@@ -104,31 +118,30 @@ fn selected_property_round_trips_without_changing_working_bytes_or_real_index() 
         std::fs::read(candidate.tree.root().join("README.txt")).unwrap(),
         b"already staged bytes\n"
     );
-    let candidate_files = file_digest(candidate.tree.root());
-    for (path, hash) in &index_files {
-        if path.starts_with("design/") && path != "design/current" {
-            assert_eq!(
-                candidate_files.get(path),
-                Some(hash),
-                "old generation/object {path}"
-            );
-        }
-    }
     let repeated = prepare_stage_candidate(&fx.gated(), fx.work(), &parent, &request).unwrap();
-    assert_eq!(candidate_files, file_digest(repeated.tree.root()));
+    assert_eq!(
+        file_digest(repeated.tree.root())
+            .into_iter()
+            .filter(|(path, _)| !path.starts_with(".stellar"))
+            .collect::<std::collections::BTreeMap<_, _>>(),
+        file_digest(candidate.tree.root())
+            .into_iter()
+            .filter(|(path, _)| !path.starts_with(".stellar"))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    );
     let delta = stellar_git_porcelain::candidate_delta::compute_candidate_delta(
         &fx.gated(),
         fx.work(),
-        &candidate.tree,
+        &repeated.tree,
     )
     .unwrap();
-    // A가 든 chunk와 새 generation, current만 바뀌며 다른 문서·기존 staged 파일은 제외됩니다.
-    assert_eq!(delta.changes().len(), 3);
+    // A가 든 View 원본 파일만 바뀌며 다른 파일·기존 staged 파일·cache는 제외됩니다.
+    assert_eq!(delta.changes().len(), 1, "{:?}", delta.changes());
     assert!(delta.changes().iter().all(|change| {
         matches!(
             change,
             stellar_git_porcelain::candidate_delta::FileDelta::Upsert { .. }
-        ) && change.path().as_bytes().starts_with(b"design/")
+        ) && change.path().as_bytes() == view_file.as_bytes()
     }));
     assert_eq!(delta.base_index(), &index);
     assert_eq!(file_digest(fx.work()), before);
@@ -136,7 +149,7 @@ fn selected_property_round_trips_without_changing_working_bytes_or_real_index() 
     let before_write = gate.spawn_count();
     let written =
         stellar_git_porcelain::blob_write::write_candidate_blobs(&gate, fx.work(), &delta).unwrap();
-    assert_eq!(gate.spawn_count() - before_write, 3);
+    assert_eq!(gate.spawn_count() - before_write, 1);
     assert_eq!(written.base_index(), &index);
     for (file, stored) in delta.changes().iter().zip(written.changes()) {
         let stellar_git_porcelain::candidate_delta::FileDelta::Upsert { path, mode, bytes } = file
@@ -173,136 +186,18 @@ fn selected_property_round_trips_without_changing_working_bytes_or_real_index() 
     assert_eq!(read_index_snapshot(&fx.gated(), fx.work()).unwrap(), index);
     assert!(!candidate.tree.root().join(".git").exists());
     assert_eq!(
-        candidate
+        repeated
             .tree
             .files()
             .iter()
-            .find(|f| f.path.as_bytes() == b"design/current")
+            .find(|f| f.path.as_bytes() == view_file.as_bytes())
             .unwrap()
             .kind,
         FileModeKind::Executable
     );
-    // 현재 manifest가 참조하지 않는 opaque 파일도 후보 생성 때문에 덮어쓰면 안 됩니다.
-    let collision = candidate
-        .tree
-        .files()
-        .iter()
-        .find(|f| {
-            f.path.as_bytes().starts_with(b"design/objects/")
-                && matches!(
-                    f.origin,
-                    stellar_git_porcelain::candidate_tree::CandidateOrigin::Bytes
-                )
-        })
-        .unwrap()
-        .path
-        .clone();
-    let relative = collision.to_path_buf().unwrap();
-    std::fs::create_dir_all(fx.work().join(&relative).parent().unwrap()).unwrap();
-    std::fs::write(
-        fx.work().join(&relative),
-        b"opaque orphan: preserve these bytes",
-    )
-    .unwrap();
-    fx.git([std::ffi::OsStr::new("add"), relative.as_os_str()])
-        .unwrap();
-    let before_collision = file_digest(fx.work());
-    let result = prepare_stage_candidate(&fx.gated(), fx.work(), &parent, &request);
-    assert!(matches!(
-        result,
-        Err(PrepareStageError::Storage(
-            CandidateStorageError::Unsupported(_)
-        ))
-    ));
-    assert_eq!(file_digest(fx.work()), before_collision);
     drop(candidate);
     drop(repeated);
     assert_eq!(std::fs::read_dir(parent).unwrap().count(), 0);
-}
-
-#[test]
-fn unsupported_chunks_and_metadata_preserve_every_byte_and_leave_no_candidate() {
-    use stellar_ops::test_support::project_id;
-    use stellar_storage::chunk::envelope::ChunkKindCode;
-    use stellar_storage::chunk::id::ChunkId;
-    use stellar_storage::chunk::pointer::ChunkPointer;
-    use stellar_storage::chunk::store::ChunkStore;
-    use stellar_storage::generation::current::write_current_pointer;
-    use stellar_storage::generation::loader::{load_current_generation, write_manifest_file};
-    use stellar_storage::hash::ContentHash;
-
-    let fx = GitFixture::with_system_git("candidate-unsupported")
-        .unwrap()
-        .expect("system Git required");
-    scaffold_project(fx.work());
-    save_documents(fx.work(), &[&large_document(4)]);
-    let original = load_current_generation(fx.work(), project_id()).unwrap();
-    let parent = fx.root().join("candidates");
-    std::fs::create_dir(&parent).unwrap();
-    for case in 0..5 {
-        let mut manifest = original.manifest.clone();
-        match case {
-            0 => {
-                let kind = ChunkKindCode(999);
-                let payload = b"opaque optional chunk with future fields";
-                ChunkStore::new(fx.work())
-                    .write_chunk(kind, payload)
-                    .unwrap();
-                manifest.chunk_pointers.push(ChunkPointer {
-                    chunk_id: ChunkId::from_stable_id(stellar_core_types::ids::StableId::new_v7(
-                        99, 0, 99,
-                    )),
-                    content_hash: ContentHash::compute(payload),
-                    kind,
-                    schema_version: 1,
-                });
-            }
-            1 => manifest.chunk_pointers[0].schema_version += 1,
-            2 => manifest.root_document_ids.clear(),
-            3 => manifest.schema_version += 1,
-            4 => {
-                manifest
-                    .chunk_pointers
-                    .iter_mut()
-                    .find(|p| p.kind == stellar_storage::chunk::kinds::KIND_DOCUMENT_MANIFEST)
-                    .unwrap()
-                    .chunk_id =
-                    ChunkId::from_stable_id(stellar_core_types::ids::StableId::new_v7(99, 0, 99))
-            }
-            _ => unreachable!(),
-        }
-        manifest.chunk_pointers.sort();
-        let hash = write_manifest_file(fx.work(), &manifest).unwrap();
-        write_current_pointer(fx.work(), &hash).unwrap();
-        fx.git(["add", "."]).unwrap();
-        let before = file_digest(fx.work());
-        let result = prepare_stage_candidate(
-            &fx.gated(),
-            fx.work(),
-            &parent,
-            &StageSelectionRequest::stage([]),
-        );
-        // 새 schema(case 3)는 제품 open 경로의 migration 판정(IX.11.21)이 먼저 거부합니다.
-        assert!(
-            matches!(
-                result,
-                Err(PrepareStageError::Storage(
-                    CandidateStorageError::Unsupported(_)
-                ))
-            ) || (case == 3
-                && matches!(
-                    result,
-                    Err(PrepareStageError::Open(
-                        stellar_project::saved_project::SavedProjectError::Schema(
-                            stellar_project::migration::SchemaRejection::Newer { .. }
-                        )
-                    ))
-                )),
-            "case {case}: {result:?}"
-        );
-        assert_eq!(file_digest(fx.work()), before, "case {case}");
-        assert_eq!(std::fs::read_dir(&parent).unwrap().count(), 0);
-    }
 }
 
 #[test]
@@ -313,24 +208,23 @@ fn no_op_uses_index_generation_and_rejects_worktree_temp_parent_and_untrusted_gi
         .expect("system Git required");
     scaffold_project(fx.work());
     let model = large_document(3);
-    save_documents(fx.work(), &[&model]);
+    save_text_document(fx.work(), &model);
     fx.commit_all("fixture baseline").unwrap();
     let mut changed = model.to_records().unwrap();
     changed.nodes[0].display_name = "already staged".into();
     let (changed, _) = DocumentModel::from_records(changed).unwrap();
-    save_documents(fx.work(), &[&changed]);
+    save_text_document(fx.work(), &changed);
     fx.git(["add", "."]).unwrap();
     let index_files = file_digest(fx.work());
-    save_documents(fx.work(), &[&model]);
+    save_text_document(fx.work(), &model);
     let before = file_digest(fx.work());
     let request = StageSelectionRequest::stage([]);
     let parent = fx.root().join("candidates");
     std::fs::create_dir(&parent).unwrap();
     let candidate = prepare_stage_candidate(&fx.gated(), fx.work(), &parent, &request).unwrap();
-    let reopened = SavedProjectLoader::for_materialized_snapshot()
-        .open(candidate.tree.root())
-        .unwrap();
-    assert_eq!(reopened.generation_number(), 2);
+    let reopened = open_tree(candidate.tree.root()).unwrap();
+    // 후보 tree의 cache는 원본에서 새로 만든 1세대입니다(ADR-0122).
+    assert_eq!(reopened.generation_number(), 1);
     assert_eq!(
         reopened
             .load_document(model.document_id())
@@ -341,7 +235,10 @@ fn no_op_uses_index_generation_and_rejects_worktree_temp_parent_and_untrusted_gi
         changed.to_records().unwrap()
     );
     let candidate_files = file_digest(candidate.tree.root());
-    for (path, hash) in &candidate_files {
+    for (path, hash) in candidate_files
+        .iter()
+        .filter(|(p, _)| !p.starts_with(".stellar"))
+    {
         assert_eq!(index_files.get(path), Some(hash), "{path}");
     }
     let delta = stellar_git_porcelain::candidate_delta::compute_candidate_delta(
@@ -393,7 +290,7 @@ fn stage_preview_rejects_changed_name_with_same_id_and_accepts_independent_edit(
         node.display_name = name.into();
         node.locked = locked;
         let (model, _) = DocumentModel::from_records(records).unwrap();
-        save_documents(fx.work(), &[&model]);
+        save_text_document(fx.work(), &model);
     };
     save("A", false);
     fx.commit_all("baseline A").unwrap();
@@ -447,7 +344,7 @@ fn actual_partial_stage_reopens_index_and_preserves_working_bytes_and_memory_rev
         .expect("system Git required");
     scaffold_project(fx.work());
     let model = large_document(4);
-    save_documents(fx.work(), &[&model]);
+    save_text_document(fx.work(), &model);
     fx.commit_all("baseline").unwrap();
     fx.write("README.txt", b"unrelated staged").unwrap();
     fx.git(["add", "README.txt"]).unwrap();
@@ -461,7 +358,7 @@ fn actual_partial_stage_reopens_index_and_preserves_working_bytes_and_memory_rev
     root.display_name = "selected A".into();
     root.locked = true; // unselected B in the same chunk
     let (working, _) = DocumentModel::from_records(records).unwrap();
-    save_documents(fx.work(), &[&working]);
+    save_text_document(fx.work(), &working);
     fx.write("README.txt", b"unrelated working").unwrap();
     let memory = DocumentState::with_revision(working, DocumentRevision(7));
     let memory_before = memory.model().to_records().unwrap();
@@ -501,9 +398,7 @@ fn actual_partial_stage_reopens_index_and_preserves_working_bytes_and_memory_rev
     assert_eq!(actual, read_index_snapshot(&fx.gated(), fx.work()).unwrap());
     let actual_tree =
         materialize_snapshot(&fx.gated(), fx.work(), &actual.entries, &parent).unwrap();
-    let loaded = SavedProjectLoader::for_materialized_snapshot()
-        .open(actual_tree.root())
-        .unwrap();
+    let loaded = open_tree(actual_tree.root()).unwrap();
     assert_eq!(
         &saved_semantic_snapshot(&loaded).unwrap(),
         prepared.semantic.snapshot()
@@ -540,7 +435,7 @@ fn unstage_only_the_selected_name_from_index_even_when_working_is_different() {
         .unwrap();
     scaffold_project(fx.work());
     let model = large_document(4);
-    save_documents(fx.work(), &[&model]);
+    save_text_document(fx.work(), &model);
     fx.commit_all("baseline").unwrap();
 
     let mut records = model.to_records().unwrap();
@@ -554,7 +449,7 @@ fn unstage_only_the_selected_name_from_index_even_when_working_is_different() {
     root.display_name = "staged name".into();
     root.locked = true;
     let (staged, _) = DocumentModel::from_records(records).unwrap();
-    save_documents(fx.work(), &[&staged]);
+    save_text_document(fx.work(), &staged);
     fx.write("notes.txt", b"staged notes").unwrap();
     fx.git(["add", "."]).unwrap();
 
@@ -629,9 +524,7 @@ fn unstage_only_the_selected_name_from_index_even_when_working_is_different() {
     let actual =
         apply_stage_candidate(&git, fx.work(), &parent, &prepared, &GitCancelToken::new()).unwrap();
     let tree = materialize_snapshot(&git, fx.work(), &actual.entries, &parent).unwrap();
-    let loaded = SavedProjectLoader::for_materialized_snapshot()
-        .open(tree.root())
-        .unwrap();
+    let loaded = open_tree(tree.root()).unwrap();
     let reopened = loaded
         .load_document(model.document_id())
         .unwrap()
@@ -662,7 +555,7 @@ fn apply_fixture(
         .expect("system Git required");
     scaffold_project(fx.work());
     let model = large_document(4);
-    save_documents(fx.work(), &[&model]);
+    save_text_document(fx.work(), &model);
     fx.commit_all("baseline").unwrap();
     let mut records = model.to_records().unwrap();
     let root = records
@@ -673,7 +566,7 @@ fn apply_fixture(
     let id = root.id;
     root.display_name = "selected".into();
     let (working, _) = DocumentModel::from_records(records).unwrap();
-    save_documents(fx.work(), &[&working]);
+    save_text_document(fx.work(), &working);
     let parent = fx.root().join("candidate");
     std::fs::create_dir(&parent).unwrap();
     let request = StageSelectionRequest::stage([ChangeId::property(

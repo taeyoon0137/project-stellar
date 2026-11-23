@@ -62,21 +62,24 @@ pub struct TrackedFiles {
 }
 
 impl TrackedFiles {
-    /// 저장소 영역과 `.git` 밖의 모든 파일을 resolver로 훑어 snapshot을 만듭니다.
+    /// 저장소 영역과 `.git` 밖의 모든 파일을 resolver로 훑어 snapshot을 만듭니다. 저장소 영역은 chunk cache가 있는
+    /// 로컬 상태 폴더(`.stellar/`, ADR-0122)와 원본 폴더(`design/`, 원본 변경은 넘침 때 원본 반영 job이 따로 다시
+    /// 읽음)입니다. walk는 최상위 이름으로만 거릅니다.
     ///
     /// 목록을 읽지 못한 하위 디렉터리(권한 없음 등)는 실패로 끝내지 않고 그 디렉터리 경로를
     /// [`FileFingerprint::Unreadable`]로 기록합니다(읽을 수 있게 되거나 사라지면 변화로 나옵니다).
     /// 프로젝트 root 목록을 읽지 못할 때만 `Err`입니다.
     pub fn capture(resolver: &PathResolver) -> Result<TrackedFiles, ResolveError> {
         let pointer = current_pointer_watch_path();
-        let storage_dir = pointer
+        let storage_top = pointer
             .relative()
-            .rsplit_once('/')
-            .map(|(dir, _)| dir.to_string())
-            .unwrap_or_default();
+            .split('/')
+            .next()
+            .unwrap_or_default()
+            .to_string();
         let walk = resolver.walk_tree(|path| {
             let top = path.split('/').next().unwrap_or(path);
-            top != GIT_DIR && top != storage_dir
+            top != GIT_DIR && top != storage_top && top != stellar_storage::location::LEGACY_DIR
         })?;
         let mut files = BTreeMap::new();
         for entry in walk.entries {

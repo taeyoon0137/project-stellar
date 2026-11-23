@@ -55,7 +55,7 @@ pub fn scan_latest_valid_generation(
     root: &Path,
     expected_project_id: StableId,
 ) -> Result<Option<LoadedGeneration>, ScanError> {
-    let dir = root.join("design").join("generations");
+    let dir = crate::location::cache_dir(root).join(crate::location::GENERATIONS_DIR);
     if !dir.is_dir() {
         return Ok(None);
     }
@@ -228,7 +228,7 @@ mod tests {
         let dir = TempDir::new();
         let project_id = stable(42);
         write_generation(&dir, project_id, 1);
-        let gen_dir = dir.path.join("design").join("generations");
+        let gen_dir = crate::location::cache_dir(&dir.path).join(crate::location::GENERATIONS_DIR);
         std::fs::write(gen_dir.join("README.txt"), b"not a manifest").unwrap();
         std::fs::write(gen_dir.join("bad-name.starmanifest"), b"junk").unwrap();
         let best = scan_latest_valid_generation(&dir.path, project_id)

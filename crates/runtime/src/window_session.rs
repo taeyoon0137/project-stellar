@@ -2938,10 +2938,11 @@ mod tests {
         let mut b = ProjectWindowSession::load(identity(project.path()), window(32)).unwrap();
 
         // 바뀐 것이 없으면 새 generation을 쓰지 않습니다.
-        let current = std::fs::read(project.path().join("design").join("current")).unwrap();
+        let current =
+            std::fs::read(project.path().join(".stellar/cache/chunks").join("current")).unwrap();
         assert_eq!(generation_written(a.save_now().unwrap()), (1, false));
         assert_eq!(
-            std::fs::read(project.path().join("design").join("current")).unwrap(),
+            std::fs::read(project.path().join(".stellar/cache/chunks").join("current")).unwrap(),
             current
         );
 
@@ -2960,13 +2961,14 @@ mod tests {
         assert_eq!(name_of(&reopened, 12), "n12");
 
         // B는 오래된 base(1) 위에서 저장하려 하므로 아무것도 쓰지 않고 Stale입니다.
-        let current = std::fs::read(project.path().join("design").join("current")).unwrap();
+        let current =
+            std::fs::read(project.path().join(".stellar/cache/chunks").join("current")).unwrap();
         assert!(matches!(
             b.save_now(),
             Err(WindowSessionSaveError::Stale(_))
         ));
         assert_eq!(
-            std::fs::read(project.path().join("design").join("current")).unwrap(),
+            std::fs::read(project.path().join(".stellar/cache/chunks").join("current")).unwrap(),
             current,
             "Stale 저장은 current pointer를 바꾸지 않음"
         );
@@ -3216,14 +3218,21 @@ mod tests {
         assert_eq!(session.undo(), Ok(false));
         assert_eq!(session.redo(), Ok(false));
         assert_eq!(generation_written(session.save_now().unwrap()), (0, false));
-        assert!(!project.path().join("design").join("current").exists());
+        assert!(!project
+            .path()
+            .join(".stellar/cache/chunks")
+            .join("current")
+            .exists());
     }
 
     #[test]
     fn corrupt_generation_is_a_typed_error() {
         let project = saved_project("corrupt");
         // current pointer가 가리키는 manifest를 지우면 열기 검증이 실패합니다.
-        let manifest_dir = project.path().join("design").join("generations");
+        let manifest_dir = project
+            .path()
+            .join(".stellar/cache/chunks")
+            .join("generations");
         assert!(manifest_dir.is_dir(), "generation manifest 디렉터리");
         std::fs::remove_dir_all(&manifest_dir).unwrap();
         let error = ProjectWindowSession::load(identity(project.path()), window(4)).unwrap_err();
@@ -3264,8 +3273,17 @@ mod tests {
     fn committed_fixture_project_matches_the_sample_project() {
         // 셸 검사(`--window-session-check`)와 FFI 테스트가 복사해 쓰는 저장 프로젝트 fixture입니다. 저장 형식이
         // 바뀌면 `STELLAR_UPDATE_FIXTURES=1 cargo test -p stellar-runtime committed_fixture`로 다시 만듭니다.
+        // fixture는 옛 배치(`design/current` 등, ADR-0122 이전)로 커밋되어 있습니다. 새 저장 결과의 chunk cache
+        // (`.stellar/cache/chunks/`)를 옛 배치 경로로 옮겨 비교하고, 열기는 관찰의 migration이 cache 위치로 옮깁니다.
         let generated = saved_project("fixture");
-        let expected = tree(generated.path());
+        let mut expected = tree(generated.path());
+        let cache = stellar_storage::location::cache_dir(generated.path());
+        for (relative, bytes) in tree(&cache) {
+            let path =
+                std::path::Path::new(stellar_storage::location::CACHE_RELATIVE).join(&relative);
+            let legacy = stellar_storage::location::legacy_relative_path(&path).unwrap();
+            expected.insert(legacy.to_string_lossy().replace('\\', "/"), bytes);
+        }
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
             .join("fixtures")

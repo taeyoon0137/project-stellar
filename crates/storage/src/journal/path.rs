@@ -1,7 +1,8 @@
 //! journal 대상 상대 경로 검사(ADR-0078).
 //!
-//! 대상은 프로젝트 루트 아래 `/`로 구분한 상대 경로입니다. journal 자체(`.stellar/`)와 Git 내부(`.git`)는
-//! 대상이 될 수 없습니다. 복구는 신뢰할 수 없는 journal manifest의 경로도 같은 규칙으로 다시 검사합니다.
+//! 대상은 프로젝트 루트 아래 `/`로 구분한 상대 경로입니다. journal 자체를 포함한 로컬 상태(`.stellar/`)와 Git
+//! 내부(`.git`)는 대상이 될 수 없습니다. 예외는 chunk cache 안의 파일(`.stellar/cache/chunks/…`, ADR-0122)입니다.
+//! 병합 결과처럼 원본과 cache를 한 거래로 쓰는 경로가 cache 파일도 같은 journal로 씁니다. 복구는 신뢰할 수 없는 journal manifest의 경로도 같은 규칙으로 다시 검사합니다.
 
 /// 경로 전체 bytes 상한.
 const PATH_LIMIT: usize = 4096;
@@ -39,7 +40,15 @@ pub(crate) fn components(path: &str) -> Result<Vec<&str>, &'static str> {
         }
     }
     if parts[0].eq_ignore_ascii_case(".stellar") {
-        return Err("Stellar 로컬 상태 경로입니다");
+        let cache = crate::location::CACHE_DIR;
+        let in_cache = parts.len() > cache.len()
+            && parts[..cache.len()]
+                .iter()
+                .zip(cache)
+                .all(|(part, expected)| part.eq_ignore_ascii_case(expected));
+        if !in_cache {
+            return Err("Stellar 로컬 상태 경로입니다");
+        }
     }
     Ok(parts)
 }
@@ -64,6 +73,9 @@ mod tests {
             components("design/.stellar/x").is_ok(),
             "루트 밖 위치만 금지"
         );
+        // chunk cache 안 파일은 대상입니다(ADR-0122).
+        assert!(components(".stellar/cache/chunks/current").is_ok());
+        assert!(components(".stellar/cache/chunks/objects/ab/x.starchunk").is_ok());
     }
 
     #[test]
@@ -80,6 +92,8 @@ mod tests {
             "design/.GIT/config",
             ".stellar/journal/x",
             ".Stellar/cache",
+            ".stellar/cache/text-source.stamp",
+            ".stellar/cache/chunks",
             "bad\nname",
             "bad\0name",
             "back\\slash",

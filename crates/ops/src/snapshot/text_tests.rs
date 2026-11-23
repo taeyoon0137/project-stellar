@@ -293,19 +293,8 @@ fn a_broken_source_opens_but_refuses_document_reads_and_writes_with_the_file_nam
 fn a_text_only_clone_without_cache_is_read_from_text_and_the_first_write_creates_the_cache() {
     let (tmp, root, model) = text_project("text-clone");
     // Git clone처럼 원본만 있고 로컬 cache·stamp가 없습니다.
-    for path in [
-        "design/current",
-        "design/generations",
-        "design/objects",
-        ".stellar",
-    ] {
-        let path = root.join(path);
-        if path.is_dir() {
-            std::fs::remove_dir_all(&path).unwrap();
-        } else {
-            std::fs::remove_file(&path).unwrap();
-        }
-    }
+    // chunk cache와 stamp는 모두 `.stellar/` 아래 로컬 데이터입니다(ADR-0122).
+    std::fs::remove_dir_all(root.join(".stellar")).unwrap();
     assert!(root.join("design").join(DOCUMENT_PATH).is_file());
     let snapshot = open_snapshot(&root).unwrap();
     assert_eq!(snapshot.open_plan(), OpenPlan::FromText);

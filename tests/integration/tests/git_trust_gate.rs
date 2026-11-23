@@ -93,12 +93,11 @@ fn untrusted_repository_blocks_git_until_trust_is_granted() {
     };
     let work = fx.work().to_path_buf();
     let card = card_document();
-    let other = seeded_document(31);
     write_manifest(&work, "Trust");
-    save_documents(&work, &[&card, &other]);
+    save_documents(&work, &[&card]);
     let head = fx.commit_all("base").unwrap();
     fx.push("main").unwrap();
-    let expected = ProjectState::expected("Trust", &[&card, &other]);
+    let expected = ProjectState::expected("Trust", &[&card]);
     // materialize 거부 확인용 항목은 신뢰된 fixture gate로 미리 읽어 둡니다.
     let entries = read_tree_snapshot(&fx.gated(), &work, &SnapshotSource::Head)
         .unwrap()

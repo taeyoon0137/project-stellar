@@ -1357,7 +1357,8 @@ mod tests {
         // flush는 창 순서대로 캡처하고 writer는 받은 순서대로 쓰므로 A가 먼저 저장합니다.
         app.flush_autosave().unwrap();
         assert!(wait_for(|| generation(&app, a) == 2));
-        let current = std::fs::read(project.path().join("design").join("current")).unwrap();
+        let current =
+            std::fs::read(project.path().join(".stellar/cache/chunks").join("current")).unwrap();
         // B는 generation 1 위에서 편집했으므로 자동 저장이 stale로 멈추고 디스크를 바꾸지 않습니다.
         assert!(wait_for(|| status(&app, b) == AutosaveStatus::Stale));
         edit(&app, b, 801, "B 다시");
@@ -1369,7 +1370,7 @@ mod tests {
         );
         assert_eq!(generation(&app, b), 1);
         assert_eq!(
-            std::fs::read(project.path().join("design").join("current")).unwrap(),
+            std::fs::read(project.path().join(".stellar/cache/chunks").join("current")).unwrap(),
             current
         );
         // 창을 닫을 때의 Save Now는 같은 stale을 셸에 돌려줍니다(셸의 닫기 선택 D6).

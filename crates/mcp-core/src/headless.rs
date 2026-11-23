@@ -660,7 +660,7 @@ mod tests {
         assert_eq!(file_digest(&fx.temp.path), after_save);
 
         // 문서 전환 중 실제 chunk 읽기가 실패해도 이전 tree로 대체하지 않습니다.
-        let objects = fx.project.join("design/objects");
+        let objects = fx.project.join(".stellar/cache/chunks/objects");
         let moved_objects = fx.temp.path.join("saved-objects");
         std::fs::rename(&objects, &moved_objects).unwrap();
         let unavailable = file_digest(&fx.temp.path);
@@ -772,7 +772,7 @@ mod tests {
         read(&backend, &uri).unwrap();
         assert_eq!(backend.loads.get(), (4, 4));
 
-        let pointer = fx.project.join("design/current");
+        let pointer = fx.project.join(".stellar/cache/chunks/current");
         let moved_pointer = fx.temp.path.join("saved-current");
         std::fs::rename(&pointer, &moved_pointer).unwrap();
         let unsaved = read(&backend, "stellar://project/structure").unwrap();

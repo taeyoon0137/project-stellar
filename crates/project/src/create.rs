@@ -539,13 +539,30 @@ mod tests {
                 records.definition.pages[0].views[0].root_frame
             );
             assert!(records.nodes[0].visible && !records.nodes[0].locked);
+            // Git 원본은 텍스트 원본이고 chunk cache는 Git 밖입니다(ADR-0122).
             assert!(runner
                 .run(
-                    &argv(["ls-files", "--error-unmatch", "design/current"]),
+                    &argv([
+                        "ls-files",
+                        "--error-unmatch",
+                        "design/document.stellar.yaml"
+                    ]),
                     &root
                 )
                 .unwrap()
                 .success());
+            assert!(!runner
+                .run(
+                    &argv([
+                        "ls-files",
+                        "--error-unmatch",
+                        ".stellar/cache/chunks/current"
+                    ]),
+                    &root
+                )
+                .unwrap()
+                .success());
+            assert!(stellar_storage::generation::current::current_pointer_path(&root).is_file());
             assert_eq!(
                 runner
                     .run(&argv(["rev-parse", "--verify", "HEAD"]), &root)
@@ -556,10 +573,10 @@ mod tests {
             if committed {
                 assert_eq!(
                     runner
-                        .run(&argv(["show", "HEAD:design/current"]), &root)
+                        .run(&argv(["show", "HEAD:design/document.stellar.yaml"]), &root)
                         .unwrap()
                         .stdout,
-                    std::fs::read(root.join("design/current")).unwrap()
+                    std::fs::read(root.join("design/document.stellar.yaml")).unwrap()
                 );
                 assert!(runner
                     .run(&argv(["status", "--porcelain"]), &root)

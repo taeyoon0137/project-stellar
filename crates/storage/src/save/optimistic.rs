@@ -142,9 +142,9 @@ mod tests {
         }]
     }
 
-    /// design/objects 아래 chunk 파일 수.
+    /// chunk cache `objects` 아래 chunk 파일 수.
     fn chunk_file_count(root: &std::path::Path) -> usize {
-        let objects = root.join("design").join("objects");
+        let objects = crate::location::cache_dir(root).join("objects");
         if !objects.is_dir() {
             return 0;
         }
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn malformed_current_pointer_is_reported() {
         let dir = TempDir::new();
-        let current = dir.path.join("design").join("current");
+        let current = crate::generation::current::current_pointer_path(&dir.path);
         std::fs::create_dir_all(current.parent().unwrap()).unwrap();
         std::fs::write(&current, b"garbage\n").unwrap();
         let plan = build_save_plan(None, stable(42), 1, &dirty_state(), vec![]).unwrap();

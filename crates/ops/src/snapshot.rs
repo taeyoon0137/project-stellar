@@ -697,6 +697,7 @@ mod tests {
         scaffold_project(&dir.path);
         // 손상된 current pointer는 저장소 오류입니다(Unsaved로 숨기지 않음).
         let pointer = stellar_storage::generation::current::current_pointer_path(&dir.path);
+        std::fs::create_dir_all(pointer.parent().unwrap()).unwrap();
         std::fs::write(&pointer, b"not a hash\n").unwrap();
         assert!(matches!(
             open_snapshot(&dir.path),

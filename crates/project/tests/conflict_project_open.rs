@@ -1,8 +1,9 @@
 //! XIV.11.2 conflict 세 stage virtual project를 실제 프로젝트 loader로 여는 통합 테스트(시스템 Git).
 //!
-//! 실제 저장 파이프라인(V.5)으로 저장한 Stellar 프로젝트를 두 branch에서 서로 다르게 저장해 병합하면
-//! `design/current`가 conflict가 됩니다. base·ours·theirs snapshot을 [`SavedProjectLoader`]
-//! (매니페스트 → current pointer → manifest → chunk, V.4.4)로 열어 각 branch의 문서를 확인합니다.
+//! 제품 저장 순서(텍스트 원본 → chunk cache)로 저장한 Stellar 프로젝트를 두 branch에서 서로 다르게 저장해 병합하면
+//! Git 원본인 텍스트 원본 파일만 conflict가 됩니다(chunk cache는 Git 밖, ADR-0122). base·ours·theirs snapshot은
+//! 그 안에서 원본으로 cache를 만든 뒤 [`SavedProjectLoader`](매니페스트 → current pointer → manifest → chunk,
+//! V.4.4)로 열어 각 branch의 문서를 확인합니다.
 
 #![cfg(unix)]
 
@@ -12,7 +13,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use common::git::{
-    commit_all, git_any, git_ok, hermetic_runner, init_repo, save_documents, write_manifest,
+    commit_all, git_any, git_ok, hermetic_runner, init_repo, save_text_document, write_manifest,
 };
 use common::{rich_model, rich_nodes, TempDir};
 use stellar_core_types::ids::StableId;
@@ -22,7 +23,7 @@ use stellar_git_porcelain::conflict_snapshot::ConflictSide;
 use stellar_git_porcelain::runner::GitRunner;
 use stellar_git_porcelain::trust::{GatedGitRunner, GitTrust};
 use stellar_project::conflict_open::open_conflict_projects;
-use stellar_project::saved_project::{SavedProject, SavedProjectError, StorageEntryProblem};
+use stellar_project::saved_project::{SavedProject, SavedProjectError};
 
 /// 문서 0번 node 이름만 바꾼 rich 문서.
 fn renamed(name: &str) -> DocumentModel {
@@ -80,18 +81,18 @@ fn conflict_repo(runner: GitRunner) -> ConflictRepo {
     write_manifest(&repo, "Conflict");
     std::fs::write(repo.join("README.md"), b"base\n").unwrap();
     let base = rich_model(1, 0);
-    save_documents(&repo, &[&base]);
+    save_text_document(&repo, &base);
     commit_all(&runner, &repo, "base");
 
     git_ok(&runner, &repo, ["checkout", "-q", "-b", "theirs"]);
     let theirs = renamed("theirs edit");
-    save_documents(&repo, &[&theirs]);
+    save_text_document(&repo, &theirs);
     std::fs::write(repo.join("README.md"), b"theirs\n").unwrap();
     commit_all(&runner, &repo, "theirs");
 
     git_ok(&runner, &repo, ["checkout", "-q", "main"]);
     let ours = renamed("ours edit");
-    save_documents(&repo, &[&ours]);
+    save_text_document(&repo, &ours);
     std::fs::write(repo.join("README.md"), b"ours\n").unwrap();
     commit_all(&runner, &repo, "ours");
 
@@ -120,13 +121,19 @@ fn base_ours_theirs_projects_open_with_the_real_loader() {
 
     let projects = open_conflict_projects(&gate, &fx.repo, &fx.temp_parent).unwrap();
 
-    // Stellar conflict는 design/current, README는 raw conflict로만.
+    // Stellar conflict는 텍스트 원본 파일뿐(cache 경로 없음), README는 raw conflict로만.
     let stellar: Vec<&[u8]> = projects
         .stellar_conflicts()
         .iter()
         .map(|p| p.as_bytes())
         .collect();
-    assert_eq!(stellar, vec![&b"design/current"[..]]);
+    assert!(!stellar.is_empty());
+    assert!(
+        stellar
+            .iter()
+            .all(|p| p.starts_with(b"design/") && p.ends_with(b".stellar.yaml")),
+        "{stellar:?}"
+    );
     let raw: Vec<&[u8]> = projects
         .raw_conflicts()
         .iter()
@@ -134,12 +141,12 @@ fn base_ours_theirs_projects_open_with_the_real_loader() {
         .collect();
     assert_eq!(raw, vec![&b"README.md"[..]]);
 
-    // 세 side 모두 실제 loader로 열리고 각 branch의 문서·generation을 가짐.
+    // 세 side 모두 원본에서 만든 cache를 실제 loader로 열고 각 branch의 문서를 가짐(cache는 side마다 1세대).
     let id = fx.base.document_id();
     for (side, model, generation) in [
         (ConflictSide::Base, &fx.base, 1),
-        (ConflictSide::Ours, &fx.ours, 2),
-        (ConflictSide::Theirs, &fx.theirs, 2),
+        (ConflictSide::Ours, &fx.ours, 1),
+        (ConflictSide::Theirs, &fx.theirs, 1),
     ] {
         let project = projects
             .side(side)
@@ -199,7 +206,7 @@ fn side_without_the_project_reports_its_own_open_error() {
     std::fs::create_dir_all(&temp_parent).unwrap();
     init_repo(&runner, &repo);
     write_manifest(&repo, "Before");
-    save_documents(&repo, &[&rich_model(1, 0)]);
+    save_text_document(&repo, &rich_model(1, 0));
     commit_all(&runner, &repo, "base");
     git_ok(&runner, &repo, ["checkout", "-q", "-b", "theirs"]);
     write_manifest(&repo, "Renamed by theirs");
@@ -238,7 +245,7 @@ fn theirs_storage_symlink_outside_the_snapshot_is_not_followed() {
     let Some(runner) = hermetic_runner() else {
         return;
     };
-    // theirs가 design/current를 snapshot 밖 절대 경로 symlink로 바꾼 뒤 병합 → current conflict.
+    // theirs가 Git 원본(문서 텍스트 원본)을 snapshot 밖 절대 경로 symlink로 바꾼 뒤 병합 → 그 경로 conflict.
     let dir = TempDir::new("stellar-conflict-open-symlink");
     let repo = dir.path.join("repo");
     let temp_parent = dir.path.join("tmp");
@@ -247,19 +254,19 @@ fn theirs_storage_symlink_outside_the_snapshot_is_not_followed() {
     std::fs::create_dir_all(&temp_parent).unwrap();
     init_repo(&runner, &repo);
     write_manifest(&repo, "Symlink");
-    save_documents(&repo, &[&rich_model(1, 0)]);
+    save_text_document(&repo, &rich_model(1, 0));
     commit_all(&runner, &repo, "base");
 
     git_ok(&runner, &repo, ["checkout", "-q", "-b", "theirs"]);
-    save_documents(&repo, &[&renamed("theirs edit")]);
-    let pointer = repo.join("design").join("current");
+    save_text_document(&repo, &renamed("theirs edit"));
+    let pointer = repo.join("design").join("document.stellar.yaml");
     std::fs::copy(&pointer, &outside).unwrap();
     std::fs::remove_file(&pointer).unwrap();
     std::os::unix::fs::symlink(&outside, &pointer).unwrap();
     commit_all(&runner, &repo, "theirs");
 
     git_ok(&runner, &repo, ["checkout", "-q", "main"]);
-    save_documents(&repo, &[&renamed("ours edit")]);
+    save_text_document(&repo, &renamed("ours edit"));
     commit_all(&runner, &repo, "ours");
     assert!(!git_any(&runner, &repo, ["merge", "--no-edit", "theirs"]).success());
 
@@ -268,7 +275,7 @@ fn theirs_storage_symlink_outside_the_snapshot_is_not_followed() {
     let theirs_pointer = projects
         .root(ConflictSide::Theirs)
         .join("design")
-        .join("current");
+        .join("document.stellar.yaml");
     assert!(
         std::fs::symlink_metadata(&theirs_pointer)
             .unwrap()
@@ -276,15 +283,11 @@ fn theirs_storage_symlink_outside_the_snapshot_is_not_followed() {
             .is_symlink(),
         "materialize는 symlink를 그대로 둠"
     );
-    // theirs는 snapshot 밖 파일을 읽지 않고 거부, 다른 side는 정상.
-    match &projects.theirs {
-        Err(SavedProjectError::StorageEntry { path, problem }) => {
-            assert_eq!(path, "design/current");
-            assert_eq!(*problem, StorageEntryProblem::Symlink);
-        }
-        other => panic!("theirs가 symlink 거부가 아님: {other:?}"),
-    }
-    // file↔symlink 종류 conflict에서 Git은 한쪽을 다른 이름(`design/current~HEAD`)으로 기록하므로
+    // theirs는 snapshot 밖 원본을 읽지 않으므로 cache를 만들지 못하고 열기를 거부합니다.
+    assert!(projects.theirs.is_err(), "{:?}", projects.theirs);
+    let outside_bytes = std::fs::read(&outside).unwrap();
+    assert!(!outside_bytes.is_empty());
+    // file↔symlink 종류 conflict에서 Git은 한쪽을 다른 이름(`…~HEAD`)으로 기록하므로
     // base·ours side 구성은 Git이 정합니다. 이 테스트는 비신뢰 symlink가 있는 theirs만 검사합니다.
     drop(projects);
     assert_eq!(std::fs::read_dir(&temp_parent).unwrap().count(), 0);

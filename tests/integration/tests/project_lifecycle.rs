@@ -479,13 +479,16 @@ fn new_project_edit_save_reopen_round_trip() {
     let gen2 = saved.load_document(id(1)).expect("generation 2 로드");
     assert_same_document(reopened.model(), &gen2.model, "generation 2 재열기");
 
-    // 6. 저장 결과를 Git에 커밋하고 clone에서 다시 엽니다(Git이 원본).
-    git_ok(&runner, &root, ["add", "-A"]);
-    git_ok(&runner, &root, ["commit", "-q", "-m", "디자인 저장"]);
-    let status = git_ok(&runner, &root, ["status", "--porcelain"]);
+    // 6. chunk cache는 Git 밖입니다(ADR-0122). 문서 두 개를 담은 이 프로젝트는 텍스트 원본(root 문서 하나)으로 쓸 수 없어
+    //    cache에만 저장되므로, 저장은 Git 작업 트리를 바꾸지 않고 clone에는 cache가 오지 않습니다.
+    let status = git_ok(
+        &runner,
+        &root,
+        ["status", "--porcelain", "--untracked-files=all"],
+    );
     assert!(
         status.stdout.is_empty(),
-        "커밋 뒤 작업 트리 clean: {}",
+        "cache 저장 뒤 작업 트리 clean: {}",
         String::from_utf8_lossy(&status.stdout)
     );
     let clone = sandbox.path.join("landing-clone");
@@ -500,18 +503,8 @@ fn new_project_edit_save_reopen_round_trip() {
         ],
     );
     probe_project(&clone).expect("clone probe");
-    let cloned = SavedProjectLoader::new().open(&clone).expect("clone 열기");
-    assert_eq!(cloned.generation_number(), 2);
-    assert_same_document(
-        reopened.model(),
-        &cloned.load_document(id(1)).expect("clone 문서 A").model,
-        "clone 문서 A",
-    );
-    assert_same_document(
-        icons.model(),
-        &cloned.load_document(id(101)).expect("clone 문서 B").model,
-        "clone 문서 B",
-    );
+    assert!(!stellar_storage::generation::current::current_pointer_path(&clone).exists());
+    assert!(!clone.join(".stellar/cache/chunks").exists());
 
     // 7. 재열기 뒤 편집을 undo하고 저장하면 generation 1과 같은 chunk 집합(같은 content hash)이 됩니다.
     assert!(reopened.undo());

@@ -9,6 +9,9 @@ pub mod hash;
 /// chunk 저장소 (V.2).
 pub mod chunk;
 
+/// chunk cache 위치(`.stellar/cache/chunks/`, ADR-0122).
+pub mod location;
+
 /// atomic 파일 쓰기 (V.2.5).
 pub mod atomic_file;
 

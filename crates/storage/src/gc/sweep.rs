@@ -124,7 +124,15 @@ fn real_dir(path: &Path) -> Result<Option<FileIdentity>, PathBuf> {
 /// 경로를 `outcome.carry_over`에 남기고 건너뜁니다.
 fn collect(root: &Path, outcome: &mut SweepOutcome) -> Result<Collection, PathBuf> {
     let mut collection = Collection::default();
-    let design = root.join("design");
+    // cache 폴더(`.stellar/cache/chunks`, ADR-0122)의 부모 구성 요소도 symlink면 아무것도 지우지 않습니다.
+    let mut parent = root.to_path_buf();
+    for component in &crate::location::CACHE_DIR[..crate::location::CACHE_DIR.len() - 1] {
+        parent.push(component);
+        if real_dir(&parent)?.is_none() {
+            return Ok(collection);
+        }
+    }
+    let design = crate::location::cache_dir(root);
     let Some(design_identity) = real_dir(&design)? else {
         return Ok(collection);
     };
@@ -395,7 +403,9 @@ mod tests {
     #[test]
     fn unrelated_files_are_untouched() {
         let dir = TempDir::new();
-        let objects = dir.path.join("design").join("objects").join("aa");
+        let objects = crate::location::cache_dir(&dir.path)
+            .join("objects")
+            .join("aa");
         std::fs::create_dir_all(&objects).unwrap();
         let stray = objects.join("notes.txt");
         std::fs::write(&stray, b"not a chunk").unwrap();
@@ -471,11 +481,13 @@ mod tests {
                 .unwrap()
                 .to_string()
         };
-        let cases: [&[&str]; 4] = [
-            &["design"],
-            &["design", "objects"],
-            &["design", "generations"],
-            &["design", "objects", "<shard>"],
+        let cases: [&[&str]; 6] = [
+            &[".stellar"],
+            &[".stellar", "cache"],
+            &[".stellar", "cache", "chunks"],
+            &[".stellar", "cache", "chunks", "objects"],
+            &[".stellar", "cache", "chunks", "generations"],
+            &[".stellar", "cache", "chunks", "objects", "<shard>"],
         ];
         for case in cases {
             let dir = TempDir::new();
@@ -537,7 +549,7 @@ mod tests {
             reachable.insert(write_chunk(&dir, format!("live-{i}").as_bytes()));
         }
         let orphan = write_chunk(&dir, b"orphan");
-        let objects = dir.path.join("design").join("objects");
+        let objects = crate::location::cache_dir(&dir.path).join("objects");
         for name in ["a", "b", "loop"] {
             std::os::unix::fs::symlink(".", objects.join(name)).unwrap();
         }
@@ -596,12 +608,16 @@ mod tests {
         } else {
             "00"
         };
-        let misplaced_dir = dir.path.join("design").join("objects").join(wrong_prefix);
+        let misplaced_dir = crate::location::cache_dir(&dir.path)
+            .join("objects")
+            .join(wrong_prefix);
         std::fs::create_dir_all(&misplaced_dir).unwrap();
         let misplaced = misplaced_dir.join(ChunkObjectPath::for_hash(&orphan).file_name());
         std::fs::write(&misplaced, b"misplaced").unwrap();
         // generations 하위 디렉터리의 manifest 이름 파일.
-        let nested = dir.path.join("design").join("generations").join("nested");
+        let nested = crate::location::cache_dir(&dir.path)
+            .join("generations")
+            .join("nested");
         std::fs::create_dir_all(&nested).unwrap();
         let nested_manifest = nested.join(format!(
             "sha256-{}.starmanifest",

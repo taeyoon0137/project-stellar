@@ -10,7 +10,7 @@ use crate::apply::{apply, ApplyMode, ApplyRequest, CommandInput};
 use crate::core_types::ids::StableId;
 use crate::lock::LockPolicy;
 use crate::snapshot::open_snapshot;
-use crate::test_support::{random_valid_document, save_documents, scaffold_project};
+use crate::test_support::{random_valid_document, save_text_document, scaffold_project};
 
 /// fixture 저장소와 문서 정보.
 pub(super) struct Repo {
@@ -47,7 +47,7 @@ pub(super) fn repo(tag: &str, b_same_node: bool) -> Option<Repo> {
     let work = fx.work().to_path_buf();
     scaffold_project(&work);
     let model = random_valid_document(7);
-    save_documents(&work, &[&model]);
+    save_text_document(&work, &model);
     let children: Vec<StableId> = model
         .to_records()
         .unwrap()

@@ -1451,7 +1451,7 @@ fn check_object_path(hash: &ContentHash) -> Result<(), String> {
         || path.file_name() != expected_name
         || !safe(path.prefix())
         || !safe(path.file_name())
-        || components != 4
+        || components != 6
     {
         return Err(format!("비정상 object 경로: {path}"));
     }
@@ -2107,7 +2107,7 @@ fn multibyte_hash_text_is_rejected_on_every_path() {
     ));
 
     // fallback scanner의 manifest 파일 이름(`sha256-<hex>.starmanifest`).
-    let generations = dir.path.join("design").join("generations");
+    let generations = stellar_storage::location::cache_dir(&dir.path).join("generations");
     std::fs::create_dir_all(&generations).expect("디렉터리");
     let mut name = String::from("sha256-a€");
     name.push_str(&"a".repeat(60));

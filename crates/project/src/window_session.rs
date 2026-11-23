@@ -741,7 +741,7 @@ mod tests {
         fn poll(&mut self, ledger: &OwnSaveLedger) -> Vec<ExternalChange> {
             self.coalescer.push(
                 &[FileWatchEvent::Modified(
-                    WatchPath::project("design/current").unwrap(),
+                    WatchPath::project(".stellar/cache/chunks/current").unwrap(),
                 )],
                 self.now,
             );

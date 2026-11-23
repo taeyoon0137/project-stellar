@@ -27,7 +27,7 @@ use stellar_git_porcelain::trust::{GatedGitRunner, GitTrust};
 use stellar_ops::candidate::{ChangeId, DISPLAY_NAME};
 use stellar_ops::git::{GitError, GitItem, GitSession, GitStatusReport, SourceUnit, StatusRequest};
 use stellar_ops::git::{SemanticChangeKind, StatusArea};
-use stellar_ops::test_support::{large_document, save_documents, scaffold_project, web_frame};
+use stellar_ops::test_support::{large_document, save_text_document, scaffold_project, web_frame};
 
 use super::{submit_git_status, GitStatusJob};
 use crate::worker_pool::{WorkerPool, WorkerPoolConfig};
@@ -108,7 +108,7 @@ fn baseline(tag: &str) -> (GitFixture, DocumentModel) {
     let fx = fixture(tag);
     scaffold_project(fx.work());
     let model = large_document(4);
-    save_documents(fx.work(), &[&model]);
+    save_text_document(fx.work(), &model);
     fx.commit_all("baseline").unwrap();
     (fx, model)
 }
@@ -117,7 +117,7 @@ fn baseline(tag: &str) -> (GitFixture, DocumentModel) {
 fn partial_same_chunk_property_stage_unstage_commit() {
     let (fx, model) = baseline("engine-partial");
     let root = root_of(&model);
-    save_documents(fx.work(), &[&edit_root(&model)]);
+    save_text_document(fx.work(), &edit_root(&model));
     let s = session(&fx);
     let before = status(&s);
     let unstaged = area(&before, StatusArea::Unstaged);
@@ -147,7 +147,7 @@ fn partial_same_chunk_property_stage_unstage_commit() {
     s.stage(vec![GitItem::Change(name.clone())], vec![])
         .unwrap();
     let previous = fx.rev_parse("HEAD").unwrap();
-    let working_before = std::fs::read(fx.work().join("design/current")).unwrap();
+    let working_before = stellar_ops::test_support::file_digest(&fx.work().join("design"));
     let outcome = s.commit("이름만 커밋\n").unwrap();
     assert_eq!(outcome.previous_head, Some(previous.clone()));
     assert_ne!(outcome.head, previous);
@@ -155,22 +155,26 @@ fn partial_same_chunk_property_stage_unstage_commit() {
     assert!(outcome.tree_matches_validated);
     assert_eq!(outcome.repository.counts.staged, 0);
     assert!(git_text(&fx, fx.work(), &["diff", "--cached", "--name-only"]).is_empty());
-    // commit은 선택 속성이 든 chunk·새 generation·current만 바꿉니다.
+    // commit은 선택 속성이 든 View 원본 파일만 바꿉니다(chunk cache는 Git 밖, ADR-0122).
     let shown = git_text(
         &fx,
         fx.work(),
         &["show", "--name-only", "--format=", "HEAD"],
     );
     let files: Vec<&str> = shown.lines().collect();
-    assert_eq!(files.len(), 3, "{files:?}");
-    assert!(files.iter().all(|f| f.starts_with("design/")), "{files:?}");
-    assert!(files.contains(&"design/current"));
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert!(
+        files
+            .iter()
+            .all(|f| f.starts_with("design/") && f.ends_with(".stellar.yaml")),
+        "{files:?}"
+    );
     // HEAD = baseline + 이름, WT = HEAD + locked.
     let after = status(&s);
     assert!(area(&after, StatusArea::Staged).is_empty());
     assert_eq!(area(&after, StatusArea::Unstaged), vec![locked]);
     assert_eq!(
-        std::fs::read(fx.work().join("design/current")).unwrap(),
+        stellar_ops::test_support::file_digest(&fx.work().join("design")),
         working_before,
         "작업 트리 불변"
     );
@@ -187,7 +191,7 @@ fn partial_same_chunk_property_stage_unstage_commit() {
 #[test]
 fn staging_every_change_does_not_pull_unselected_design_files() {
     let (fx, model) = baseline("engine-implicit");
-    save_documents(fx.work(), &[&edit_root(&model)]);
+    save_text_document(fx.work(), &edit_root(&model));
     std::fs::write(fx.work().join("design/notes.txt"), b"not selected").unwrap();
     let s = session(&fx);
     let all: Vec<GitItem> = area(&status(&s), StatusArea::Unstaged)
@@ -196,14 +200,13 @@ fn staging_every_change_does_not_pull_unselected_design_files() {
         .collect();
     assert_eq!(all.len(), 2);
     let outcome = s.stage(all, vec![]).unwrap();
-    // 의미가 작업 트리와 같으므로 generation 저장 파일은 작업 트리 bytes 그대로입니다.
+    // 의미가 작업 트리와 같으므로 stage한 원본은 작업 트리 bytes 그대로입니다.
     assert!(outcome.units.contains(&SourceUnit::Generation));
-    assert!(git_text(
-        &fx,
-        fx.work(),
-        &["diff", "--name-only", "--", "design/current"]
-    )
-    .is_empty());
+    assert!(
+        git_text(&fx, fx.work(), &["diff", "--name-only", "--", "design"])
+            .lines()
+            .all(|l| l == "design/notes.txt")
+    );
     let staged = git_text(&fx, fx.work(), &["diff", "--cached", "--name-only"]);
     assert!(!staged.lines().any(|l| l == "design/notes.txt"), "{staged}");
     assert!(staged.lines().all(|l| l.starts_with("design/")), "{staged}");
@@ -217,13 +220,17 @@ fn staging_every_change_does_not_pull_unselected_design_files() {
 #[test]
 fn invalid_staged_snapshot_never_runs_git_commit() {
     let (fx, _) = baseline("engine-invalid");
-    // 기존 chunk object를 손상시켜 stage합니다.
-    let object = git_text(&fx, fx.work(), &["ls-files", "design/objects"])
-        .lines()
-        .next()
-        .unwrap()
-        .to_string();
-    std::fs::write(fx.work().join(&object), b"corrupt chunk").unwrap();
+    // 기존 원본 파일을 손상시켜 stage합니다(Git 원본, ADR-0122).
+    let object = git_text(
+        &fx,
+        fx.work(),
+        &["ls-files", "design/document.stellar.yaml"],
+    )
+    .lines()
+    .next()
+    .unwrap()
+    .to_string();
+    std::fs::write(fx.work().join(&object), b"format: corrupt\n").unwrap();
     fx.git(["add", "--", object.as_str()]).unwrap();
     let head = fx.rev_parse("HEAD").unwrap();
     let (gate, counter) = counted(&fx);
@@ -242,7 +249,7 @@ fn invalid_staged_snapshot_never_runs_git_commit() {
 fn failing_hook_blocks_commit_and_result_is_returned_as_is() {
     use std::os::unix::fs::PermissionsExt;
     let (fx, model) = baseline("engine-hook");
-    save_documents(fx.work(), &[&edit_root(&model)]);
+    save_text_document(fx.work(), &edit_root(&model));
     let s = session(&fx);
     s.stage(vec![GitItem::Unit(SourceUnit::Generation)], vec![])
         .unwrap();
@@ -311,10 +318,7 @@ fn moving_into_new_frame_requires_approval_of_the_addition() {
     let node = records.nodes.iter_mut().find(|n| n.id == moved).unwrap();
     node.parent = Some(added);
     node.order_key = OrderKey::between(None, None);
-    save_documents(
-        fx.work(),
-        &[&DocumentModel::from_records(records).unwrap().0],
-    );
+    save_text_document(fx.work(), &DocumentModel::from_records(records).unwrap().0);
     let s = session(&fx);
     let index_before = std::fs::read(fx.work().join(".git/index")).unwrap();
     let position = ChangeId::position(moved);
@@ -365,10 +369,10 @@ fn write_component(root: &Path) -> PathBuf {
 fn component_definition_is_a_required_companion_unit_not_auto_included() {
     let fx = fixture("engine-component");
     scaffold_project(fx.work());
-    save_documents(fx.work(), &[&web_frame::document()]);
+    save_text_document(fx.work(), &web_frame::document());
     fx.commit_all("baseline").unwrap();
     let file = write_component(fx.work());
-    save_documents(fx.work(), &[&web_frame::placed_components("")]);
+    save_text_document(fx.work(), &web_frame::placed_components(""));
     let s = session(&fx);
     let file_unit = SourceUnit::File(stellar_git_porcelain::decode::GitPath::from_bytes(
         file.to_str().unwrap().as_bytes(),
@@ -393,11 +397,15 @@ fn component_definition_is_a_required_companion_unit_not_auto_included() {
         vec![GitItem::Unit(file_unit.clone())],
     )
     .unwrap();
+    // 텍스트 원본 프로젝트의 generation 묶음은 문서 원본 파일들입니다(ADR-0122 결정 5). 모두 stage됐습니다.
     let report = status(&s);
-    for unit in [&SourceUnit::Generation, &file_unit] {
-        let u = report.units.iter().find(|u| &u.unit == unit).unwrap();
-        assert!(u.staged && !u.unstaged && !u.untracked, "{u:?}");
-    }
+    let u = report.units.iter().find(|u| u.unit == file_unit).unwrap();
+    assert!(u.staged && !u.unstaged && !u.untracked, "{u:?}");
+    assert!(
+        report.units.iter().all(|u| !u.unstaged && !u.untracked),
+        "{:?}",
+        report.units
+    );
     // 정의 파일만 빼면 index 인스턴스가 끊기므로 generation 동반 unstage가 필요합니다.
     match s.unstage(vec![GitItem::Unit(file_unit.clone())], vec![]) {
         Err(GitError::CompanionRequired { units, .. }) => {
@@ -421,11 +429,11 @@ fn staging_definition_removal_requires_generation_companion_not_dangling_error()
     let fx = fixture("engine-component-removal");
     scaffold_project(fx.work());
     let file = write_component(fx.work());
-    save_documents(fx.work(), &[&web_frame::placed_components("")]);
+    save_text_document(fx.work(), &web_frame::placed_components(""));
     fx.commit_all("baseline").unwrap();
     // 작업 트리에서 정의와 그 인스턴스를 함께 지웁니다.
     std::fs::remove_file(fx.work().join(&file)).unwrap();
-    save_documents(fx.work(), &[&web_frame::document()]);
+    save_text_document(fx.work(), &web_frame::document());
     let s = session(&fx);
     let file_unit = SourceUnit::File(stellar_git_porcelain::decode::GitPath::from_bytes(
         file.to_str().unwrap().as_bytes(),
@@ -475,7 +483,7 @@ fn linked_worktree_uses_its_own_index_and_leaves_main_index_alone() {
     let wt = fx.add_worktree("linked", "HEAD").unwrap();
     let main_index = std::fs::read(fx.work().join(".git/index")).unwrap();
     let main_head = fx.rev_parse("HEAD").unwrap();
-    save_documents(&wt, &[&edit_root(&model)]);
+    save_text_document(&wt, &edit_root(&model));
     let s = GitSession::open(fx.gated(), &wt).unwrap();
     assert_eq!(s.location().kind, WorktreeKind::Linked);
     let main = session(&fx);
@@ -509,7 +517,7 @@ fn status_runs_on_worker_with_real_head_upstream_remote_identity() {
     let (fx, model) = baseline("engine-worker");
     fx.push("main").unwrap();
     fx.git(["branch", "--set-upstream-to=origin/main"]).unwrap();
-    save_documents(fx.work(), &[&edit_root(&model)]);
+    save_text_document(fx.work(), &edit_root(&model));
     let s = session(&fx);
     let pool = WorkerPool::new(WorkerPoolConfig::new(2).unwrap()).unwrap();
     let (tx, rx) = mpsc::channel();

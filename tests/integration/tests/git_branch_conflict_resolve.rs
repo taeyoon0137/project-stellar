@@ -5,9 +5,11 @@
 //! 경로(ADR-0120 결정 5):
 //!
 //! - 저장소는 Git fixture harness(XIV.14.1)의 local bare 원격 + working 저장소 + peer clone입니다(네트워크 없음,
-//!   hermetic 설정, 고정 author·시각). 두 branch의 편집은 실제 저장 파이프라인으로 generation을 씁니다.
+//!   hermetic 설정, 고정 author·시각). 두 branch의 편집은 제품 저장 순서로 텍스트 원본(Git 원본)과 Git 밖 chunk
+//!   cache를 씁니다(ADR-0122).
 //! - peer가 `theirs` branch를 push하고, work는 `main`에서 따로 편집한 뒤 `origin/theirs`를 fetch해 시스템 Git
-//!   `git merge`로 병합합니다. merge driver를 등록하지 않아 `design/current` pointer가 텍스트 conflict로 남습니다.
+//!   `git merge`로 병합합니다. merge driver를 등록하지 않아 같은 줄을 바꾼 View 원본 파일이 텍스트 conflict로 남고,
+//!   cache 경로는 conflict 후보가 아닙니다.
 //! - 해결은 `stellar merge-driver resolve`와 같은 conflict 세션(`ConflictSession` + `GatedMergeGit`)이고, 적용
 //!   (`apply_session`)이 결과를 한 거래로 쓰고 `git add`합니다.
 //!
@@ -76,11 +78,11 @@ fn start_merge(tag: &str) -> Option<Merging> {
     let ours = fx.commit_all("ours edit").unwrap();
     fx.git(["fetch", "-q", "origin"]).unwrap();
 
-    // 시스템 Git 병합: 두 branch가 모두 새 generation을 저장해 pointer가 conflict입니다(종료 코드 1).
+    // 시스템 Git 병합: 아이콘 이름 줄을 두 branch가 다르게 바꿔 View 원본이 conflict입니다(종료 코드 1).
     let merged = fx.git(["merge", "--no-edit", "origin/theirs"]);
     assert!(
         matches!(merged, Err(FixtureError::Git { .. })),
-        "design/current conflict가 나야 함: {merged:?}"
+        "View 원본 conflict가 나야 함: {merged:?}"
     );
     Some(Merging {
         fx,
@@ -102,10 +104,13 @@ fn system_git_branch_conflict_is_resolved_semantically_and_added_keeping_merge_s
         .into_iter()
         .map(|e| e.path)
         .collect();
-    assert_eq!(unmerged, vec![PathBuf::from("design/current")]);
+    // conflict 후보는 텍스트 원본 View 파일 하나뿐입니다(cache는 Git 밖).
+    assert_eq!(unmerged.len(), 1, "{unmerged:?}");
+    let view = unmerged[0].clone();
+    assert!(view.starts_with("design/pages"), "{view:?}");
     assert_eq!(port.operation(&m.work).unwrap(), GitOperation::Merge);
 
-    // conflict 세션: generation 단위 하나, raw·제외 경로 없음, semantic conflict는 아이콘 이름 하나.
+    // conflict 세션: 텍스트 원본 단위 하나, raw·제외 경로 없음, semantic conflict는 아이콘 이름 하나.
     let mut session = ConflictSession::open(&port, &m.work).expect("conflict 세션");
     assert_eq!(session.operation(), GitOperation::Merge);
     assert!(
@@ -119,7 +124,7 @@ fn system_git_branch_conflict_is_resolved_semantically_and_added_keeping_merge_s
         session.unsupported()
     );
     let kinds: Vec<UnitKind> = session.units().iter().map(|u| u.kind()).collect();
-    assert_eq!(kinds, vec![UnitKind::Generation]);
+    assert_eq!(kinds, vec![UnitKind::TextSource]);
     let conflicts: Vec<(usize, ConflictTarget, stellar_core_types::ids::StableId)> = session
         .conflicts()
         .iter()
@@ -127,10 +132,7 @@ fn system_git_branch_conflict_is_resolved_semantically_and_added_keeping_merge_s
         .collect();
     assert_eq!(conflicts.len(), 1, "{conflicts:?}");
     assert_eq!(conflicts[0].2, nid(ICON));
-    assert_eq!(
-        session.paths_for(nid(ICON)),
-        vec![Path::new("design/current")]
-    );
+    assert_eq!(session.paths_for(nid(ICON)), vec![view.as_path()]);
 
     // 미해결이면 아무것도 쓰거나 add하지 않습니다.
     assert!(apply_session(&port, &session).is_err());
@@ -152,7 +154,7 @@ fn system_git_branch_conflict_is_resolved_semantically_and_added_keeping_merge_s
         "merge 진행 중 그대로"
     );
     assert_eq!(report.remaining, Some(Vec::new()), "unmerged entries 0");
-    assert!(report.added.contains(&PathBuf::from("design/current")));
+    assert!(report.added.contains(&view));
 
     // Git 상태: unmerged 0(시스템 Git으로도 확인), MERGE_HEAD = theirs, HEAD = ours, commit 없음.
     assert_eq!(out(&m.fx, &m.work, &["ls-files", "-u"]), "");

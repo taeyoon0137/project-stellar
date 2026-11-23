@@ -4,10 +4,10 @@
 
 - WBS: V.10.7
 - 작업명: 검증된 변환 경로에서 기본 원본을 텍스트로 전환하고 chunk 저장을 로컬 cache로 내림
-- 상태: 부분 완료 (`[~]`) — 앱 창 session의 열기·저장·자동 저장·stale·외부 변경이 텍스트 원본을 기본으로 쓰고, chunk generation은 stamp 짝으로 관리하는 파생 cache가 되었습니다. 2026-11-24 `text-source-everywhere` lane이 CLI·MCP의 읽기·쓰기, semantic Git, 새 프로젝트의 첫 저장을 같은 원본 session으로 옮겼습니다(아래 "후속: CLI·MCP·Git과 첫 저장"). 기준 장비(REF-MAC) 실측·예산 판정, cache GC, chunk의 Git 밖 이동은 하지 않았습니다(아래 차이). 원장 판정은 통합 때 `generate-ledger`로 정합니다.
+- 상태: 부분 완료 (`[~]`) — 앱 창 session의 열기·저장·자동 저장·stale·외부 변경이 텍스트 원본을 기본으로 쓰고, chunk generation은 stamp 짝으로 관리하는 파생 cache가 되었습니다. 2026-11-24 `text-source-everywhere` lane이 CLI·MCP의 읽기·쓰기, semantic Git, 새 프로젝트의 첫 저장을 같은 원본 session으로 옮겼습니다(아래 "후속: CLI·MCP·Git과 첫 저장"). 같은 날 `git-cache-out` lane이 chunk cache를 Git 밖 `.stellar/cache/chunks/`로 옮기고 옛 배치 migration, 원본에서 다시 만들기, cache GC를 연결했습니다(아래 "후속: chunk cache를 Git 밖으로"). 기준 장비(REF-MAC) 실측·예산 판정은 하지 않았습니다(아래 차이). 원장 판정은 통합 때 `generate-ledger`로 정합니다.
 - 선행: V.10.6(같은 lane에서 앱 연결을 함께 마침, 보고서 V.10.6)
-- 결정: [ADR-0088](../adr/ADR-0088-text-source-default-and-chunk-cache.md), [ADR-0113](../adr/ADR-0113-headless-text-source-everywhere.md)
-- lane: `text-source-default`, `text-source-everywhere`
+- 결정: [ADR-0088](../adr/ADR-0088-text-source-default-and-chunk-cache.md), [ADR-0113](../adr/ADR-0113-headless-text-source-everywhere.md), [ADR-0122](../adr/ADR-0122-chunk-cache-out-of-git.md)
+- lane: `text-source-default`, `text-source-everywhere`, `git-cache-out`
 
 ## 후속: CLI·MCP·Git과 첫 저장 (2026-11-24, ADR-0113)
 
@@ -52,6 +52,56 @@
 
 - cache GC와 chunk의 Git 밖 이동은 하지 않았습니다. storage 경로(보호 경로)·git-porcelain snapshot·앱 창 session·감시·fixture 전체가 바뀌어야 하고 대부분 이 lane 소유 밖입니다. 대신 semantic Git·merge가 원본을 기준으로 보게 해 cache가 commit에 들어가도 원본이 이깁니다(ADR-0113 결정 5·6·7).
 - `[REF-MAC]` 실측은 하지 않았습니다.
+
+## 후속: chunk cache를 Git 밖으로 (2026-11-24, ADR-0122)
+
+### 변경 파일
+
+- `crates/storage/src/location.rs`(신규): cache 위치 `.stellar/cache/chunks/` 함수·상수, 경로 판정, `.stellar/cache/.gitignore` 보장, 옛 배치 이동 `move_legacy_layout`
+- `crates/storage/src/{generation/current.rs,generation/loader.rs,generation/scanner.rs,chunk/path.rs,chunk/store.rs,gc/sweep.rs}`: 경로를 위치 모듈로, 쓰기 때 Git 제외 규칙 보장, symlink 시험을 새 구성 요소로
+- `crates/storage/src/journal/path.rs`: cache 안 파일만 `.stellar/` 아래 대상으로 받음
+- `crates/storage/tests/{migration_git_fixture.rs,chunk_canonical_fuzz.rs}`: migration이 Git 작업 트리를 바꾸지 않음, 경로 구성 요소 수
+- `crates/project/src/cache.rs`(신규): `migrate_layout`·`rebuild_from_text`·`prepare_snapshot`·`text_snapshot`·`collect_garbage`·`untrack_legacy`
+- `crates/project/src/document_io/session.rs`: 관찰 전에 옛 배치 이동, stamp의 Git 제외 규칙을 저장소 함수로
+- `crates/ops/src/git.rs`: Git snapshot을 원본으로 만든 cache로 엶, 후보 index에서 cache 경로 제외·원본 mode 유지, 원본 없는 index의 변경 단위 stage 거부, generation 묶음이 문서 원본 파일을 덮음, `GitSession::migrate_cache`(stage·unstage·commit 전), `GitError::Cache`
+- `crates/ops/src/git_cache.rs`(신규): `stellar cache status|rebuild|gc|migrate`
+- 소유 밖 최소 수정(위치 함수 사용·Git snapshot cache 준비): `crates/project/src/{conflict_open.rs,saved_project/head.rs,watcher/rescan.rs}`, `crates/ops/src/{candidate.rs,candidate/session.rs,merge_apply/composer.rs,merge_apply/target.rs}`, `tools/stellar-cli/src/cli.rs`·`tests/fixtures/help.txt`(명령 등록)
+- 시험 fixture·기대값(소유 밖): `crates/ops/src/test_support.rs`(`save_text_document`), project·runtime·ops·mcp-core·CLI·MCP·integration 시험의 `design/current` 경로와 "generation이 Git에 있음" 전제
+- `tests/integration/tests/git_cache_out.rs`(신규), `docs/adr/ADR-0122-chunk-cache-out-of-git.md`(신규)
+
+### 시험
+
+| 시험 | 확인 |
+|---|---|
+| `two_branch_saves_merge_with_only_text_sources_as_conflict_candidates` | 두 branch 저장 뒤 병합의 unmerged가 텍스트 원본 파일뿐, Git이 cache를 추적하지 않음, conflict 세션 해결 뒤 원본에서 읽고 `rebuild`로 cache 짝 |
+| `clone_without_cache_reads_the_text_source_and_rebuilds_the_cache` | clone에 cache 없음, 읽기는 원본에서(쓰지 않음), `rebuild`가 1세대 cache를 만들고 작업 트리는 깨끗 |
+| `legacy_tracked_cache_is_moved_on_open_and_untracked_before_commit` | 옛 배치를 추적하던 저장소: 관찰이 옮기고 `migrate_cache`가 index에서 빼며 commit 뒤 Git에 cache 없음 |
+| `cache_gc_removes_old_generations_without_touching_git` | GC가 보존 정책 밖 세대를 지우고 Git 상태는 그대로 |
+| `stellar_storage::location::tests::*` | 경로 판정, 옛 배치 이동·중복 제거·pointer 교체·다른 bytes 보존, symlink 미추적, Git 제외 규칙 |
+| `stellar_ops::git_cache::tests::status_rebuild_and_gc_work_on_a_text_project_without_cache` | 명령 함수의 계획·재생성·GC |
+| `selected_property_round_trips_without_changing_working_bytes_or_real_index`(runtime) | 변경 ID stage 후보 delta가 View 원본 파일 하나, 원본 실행 bit 유지 |
+
+### 명령과 종료 코드
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-storage --locked` | 0 — lib 297 포함 전부 통과 |
+| `cargo test -p stellar-integration-tests --locked --test git_cache_out`(샌드박스 해제) | 0 — 4 passed |
+| `cargo test -p stellar-project --locked` | lib·통합 통과. `restricted_yaml_fuzz`의 시간 기준(3초) stress 한 건은 다른 lane 부하에서 3.19초로 실패(이 변경과 무관한 시간 의존 시험) |
+| `cargo test -p stellar-ops -p stellar-runtime -p stellar-mcp-core -p stellar-mcp -p stellar-cli --locked`(샌드박스 해제) | 0 — 통과 |
+| `cargo test --workspace --locked --no-fail-fast`(샌드박스 해제) | 실패 시험을 고친 뒤 실패 묶음은 단독으로 다시 돌려 통과. `stellar-ffi`의 `create_via_abi_reopens_in_an_editable_window_and_preserves_existing_folder`는 전체 실행 부하에서만 실패하고 단독 통과 |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | 0 |
+| `cargo xtask validate-adr --base ef01e66d` | 0 |
+| `cargo xtask generate-ffi-header --check` | 0 — drift 없음 |
+| `STELLAR_CHECK_BASE=ef01e66d cargo xtask check-core`(샌드박스 해제) | 1회차 test 단계에서 `two_app_windows_resolve_a_source_stale_with_the_two_choices`가 저장 잠금 Busy로 실패, 단독 3회 통과. 재실행 결과는 lane 보고에 적음 |
+
+### 차이(후속)
+
+- 앱 runtime의 유휴 cache GC 일정(GcScheduler)은 연결하지 않았습니다. GC는 `stellar cache gc`·`migrate`로 실행합니다.
+- semantic Git stage는 Git snapshot마다 원본을 해석해 cache를 만듭니다. 원본만으로 semantic snapshot을 만드는 경로로 바꾸는 개선이 필요합니다(ADR-0122 Performance).
+- Git 줄 병합이 같은 문서 파일의 View 목록을 깨끗이 병합해도 결과 원본이 읽히지 않을 수 있습니다(시험 `independent_page_and_view_insertions_merge_cleanly`에서 관찰). merge driver를 등록하면 의미 병합되고, 등록하지 않은 저장소는 열기·검증이 원본 진단을 냅니다.
+- 원본이 없는 옛 chunk 프로젝트(root 문서 둘 이상 등)는 Git에 원본이 없어 변경 ID stage·의미 병합을 거부합니다.
+- 기술 아키텍처 §19 파일 구조 그림의 `design/current` 등은 문서 소유 밖이라 고치지 않았습니다(ADR-0122가 기준).
 
 ## 필수 실행 환경
 
@@ -126,7 +176,7 @@ DEV-MAC release, 다른 lane이 동시에 돌던 부하 상태입니다. 자세�
 ## 차이
 
 - `[REF-MAC]` 실제 통합 T0→T5와 기준 장비 열기·저장 예산 실측을 하지 않았습니다.
-- cache GC: generation이 아직 `design/`에 있어 Git이 추적하므로, 옛 generation을 지우면 추적 파일 삭제가 됩니다. chunk를 Git 밖으로 옮기는 일(ops·CLI·MCP·semantic Git의 원본 전환 뒤)과 함께 연결해야 합니다.
+- (2026-11-24 해소, ADR-0122) cache GC: chunk cache가 Git 밖이라 GC가 Git 추적 파일을 지우지 않습니다. `stellar cache gc`·`stellar cache migrate`가 연결되었고, 앱 runtime의 유휴 GC 일정은 아직 연결하지 않았습니다.
 - (2026-11-24 해소, ADR-0113 결정 4) 새 프로젝트 생성의 최초 commit이 원본을 담습니다.
 
 ## 남은 위험

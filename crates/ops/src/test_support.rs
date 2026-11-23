@@ -86,6 +86,58 @@ pub fn save_documents(root: &Path, documents: &[&DocumentModel]) {
     save_documents_with_schema(root, documents, 1);
 }
 
+/// 문서 하나를 제품 저장 순서(텍스트 원본 → chunk cache → stamp, ADR-0088·ADR-0113·ADR-0122)로 저장합니다.
+///
+/// chunk cache는 Git 밖(`.stellar/cache/chunks/`)이라 Git이 담는 것은 텍스트 원본뿐입니다. 저장한 프로젝트를 Git에
+/// commit해 semantic Git·병합을 시험하는 fixture는 이 helper를 씁니다([`save_documents`]는 cache만 씀).
+pub fn save_text_document(root: &Path, model: &DocumentModel) {
+    use stellar_project::document_io::component_source::read_project_library;
+    use stellar_project::document_io::session::{
+        commit, decode_source, read_source, read_source_dir, write_stamp, SourceBase,
+        SourceLibrary, Stamp,
+    };
+    use stellar_project::path_resolver::ExternalAccess;
+    // 문서 밖 의미(컴포넌트·token·이미지)는 이미 있는 원본(없으면 컴포넌트 원본 파일)에서 이어 받습니다.
+    let (base, library) = match read_source(root).expect("원본 읽기") {
+        Some(files) => (
+            files.base.clone(),
+            SourceLibrary::split(decode_source(&files).expect("원본 해석")).1,
+        ),
+        None => {
+            let design = root.join("design");
+            let existing = if design.is_dir() {
+                read_source_dir(&design).expect("design 읽기")
+            } else {
+                BTreeMap::new()
+            };
+            let (components, _) =
+                read_project_library(root, ExternalAccess::MetadataOnly).expect("컴포넌트 원본");
+            (
+                SourceBase::of(&existing),
+                SourceLibrary {
+                    components,
+                    ..SourceLibrary::default()
+                },
+            )
+        }
+    };
+    let records = model.to_records().expect("records");
+    let (mut copy, _) = DocumentModel::from_records(records).expect("model");
+    copy.replace_context(model.context().live(model));
+    let written = commit(root, &base, &library.join(copy)).expect("원본 저장");
+    save_documents(root, &[model]);
+    let manifest =
+        stellar_storage::generation::current::read_current_pointer(root).expect("pointer");
+    write_stamp(
+        root,
+        &Stamp {
+            source: written.base.digest(),
+            manifest,
+        },
+    )
+    .expect("stamp");
+}
+
 /// [`save_documents`]와 같되 generation 스키마 버전을 지정합니다(migration fixture용).
 pub fn save_documents_with_schema(root: &Path, documents: &[&DocumentModel], schema: u32) {
     let base = load_current_generation(root, project_id()).ok();

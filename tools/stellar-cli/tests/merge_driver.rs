@@ -9,7 +9,7 @@ use std::{
 };
 
 use stellar_cli::json::{parse, JsonLimits, JsonValue};
-use stellar_ops::test_support::{large_document, save_documents, scaffold_project, TempDir};
+use stellar_ops::test_support::{large_document, save_text_document, scaffold_project, TempDir};
 
 const A: &str = "0195c530-3acd-7bc1-8414-c213f61cb965";
 const AR: &str = "0195c530-3acd-7bc1-8414-c213f61cb966";
@@ -92,7 +92,7 @@ impl Repo {
         fs::create_dir(&home).unwrap();
         fs::write(home.join(".gitconfig"), "").unwrap();
         scaffold_project(&root);
-        save_documents(&root, &[&large_document(4)]);
+        save_text_document(&root, &large_document(4));
         fs::create_dir_all(root.join("design/components")).unwrap();
         let created = result(
             &stellar(
@@ -590,7 +590,8 @@ fn node_name(repo: &Repo, node: &str) -> String {
     string(found.get("result").unwrap().get("node").unwrap(), "name").to_owned()
 }
 
-/// 컴포넌트 폭 conflict와 generation(서로 다른 node 이름 변경) conflict가 함께 있는 merge 상태.
+/// 컴포넌트 폭 conflict와 서로 다른 node 이름 변경이 함께 있는 merge 상태. 이름 변경은 텍스트 원본이라 등록한
+/// driver가 의미 병합하고, chunk cache는 Git 밖이라(ADR-0122) conflict는 컴포넌트 원본 하나입니다.
 fn component_and_generation_conflict(label: &str) -> (Repo, Vec<String>) {
     let repo = Repo::new(label);
     trust(&repo);
@@ -616,7 +617,7 @@ fn component_and_generation_conflict(label: &str) -> (Repo, Vec<String>) {
     let merged = repo.git_output(&["merge", "--no-edit", "narrow"]);
     assert_eq!(merged.status.code(), Some(1));
     let unmerged = repo.git(&["diff", "--name-only", "--diff-filter=U"]);
-    assert_eq!(unmerged, format!("{}\ndesign/current", repo.file));
+    assert_eq!(unmerged, repo.file);
     (repo, kids)
 }
 
@@ -632,12 +633,8 @@ fn resolve_apply_writes_validated_files_and_marks_them_resolved() {
     let units = units.as_array().unwrap();
     assert_eq!(
         units.iter().map(|u| string(u, "kind")).collect::<Vec<_>>(),
-        ["component-source", "generation"]
+        ["component-source"]
     );
-    // generation 단위: raw 경로 design/current → 문서 객체 전체, 서로 다른 node 이름 변경은 conflict 없음.
-    assert_eq!(string(&units[1], "path"), "design/current");
-    assert!(units[1].get("objects").unwrap().as_i64().unwrap() > 4);
-    assert_eq!(units[1].get("writable"), Some(&JsonValue::Bool(true)));
 
     let applied = result(
         &stellar(
@@ -666,7 +663,11 @@ fn resolve_apply_writes_validated_files_and_marks_them_resolved() {
         .iter()
         .map(|p| p.as_str().unwrap().to_owned())
         .collect::<Vec<_>>();
-    assert!(added.contains(&repo.file) && added.contains(&"design/current".to_owned()));
+    assert!(added.contains(&repo.file));
+    assert!(
+        added.iter().all(|p| !p.starts_with(".stellar/")),
+        "{added:?}"
+    );
     let state = applied.get("result").unwrap().get("git").unwrap();
     assert_eq!(string(state, "operation"), "merge");
     assert!(state

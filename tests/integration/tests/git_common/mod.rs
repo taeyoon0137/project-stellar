@@ -2,7 +2,8 @@
 //!
 //! - 저장소: git-porcelain fixture harness(XIV.14.1)의 local bare 원격 + working 저장소. 네트워크 없음,
 //!   hermetic config, 고정 author·시각.
-//! - 프로젝트: `stellar.yaml` + 실제 저장 파이프라인(V.5)으로 기록한 generation·chunk.
+//! - 프로젝트: `stellar.yaml` + 제품 저장 순서로 기록한 텍스트 원본(Git 원본)과 Git 밖 chunk cache(ADR-0122).
+//!   materialize한 Git snapshot에는 cache가 없으므로 열 때 원본으로 cache를 만듭니다([`open_project`]).
 //! - 문서: 손으로 구성한 "카드 문서"(편집 대상 node를 이름으로 짚을 수 있음)와 seed 고정 random valid
 //!   document(VI.10.5).
 //! - 비교: 문서 validator(VI.10.1)를 통과한 영속 레코드를 [`SemanticSnapshot`](XIV.3.1)으로 펼쳐
@@ -99,8 +100,78 @@ pub fn write_manifest(root: &Path, name: &str) {
     .expect("stellar.yaml 쓰기");
 }
 
-/// 문서들을 실제 저장 파이프라인(V.5)으로 current generation 위에 저장합니다(디스크 기록).
+/// 문서들을 제품 저장 순서로 저장합니다(디스크 기록). 문서가 하나면 텍스트 원본(Git 원본) → chunk cache → stamp
+/// (ADR-0088·ADR-0113·ADR-0122)이고, 둘 이상이면 텍스트 원본이 담을 수 없어 chunk cache만 씁니다(Git 밖).
 pub fn save_documents(root: &Path, documents: &[&DocumentModel]) {
+    use stellar_project::document_io::component_source::read_project_library;
+    use stellar_project::document_io::session::{
+        commit, decode_source, read_source, read_source_dir, write_stamp, SourceBase,
+        SourceLibrary, Stamp,
+    };
+    use stellar_project::path_resolver::ExternalAccess;
+    let written = if let [model] = documents {
+        // 병합 해결처럼 작업 트리 원본이 Git 줄 병합으로 깨졌으면 컴포넌트 원본만 이어 받고 문서를 새로 씁니다.
+        let decoded = read_source(root)
+            .expect("원본 읽기")
+            .map(|files| (decode_source(&files), files));
+        let (base, library) = match decoded {
+            Some((Ok(project), files)) => (files.base.clone(), SourceLibrary::split(project).1),
+            Some((Err(_), files)) => {
+                let (components, _) = read_project_library(root, ExternalAccess::MetadataOnly)
+                    .expect("컴포넌트 원본");
+                (
+                    files.base.clone(),
+                    SourceLibrary {
+                        components,
+                        ..SourceLibrary::default()
+                    },
+                )
+            }
+            None => {
+                let design = root.join("design");
+                let existing = if design.is_dir() {
+                    read_source_dir(&design).expect("design 읽기")
+                } else {
+                    Default::default()
+                };
+                let (components, _) = read_project_library(root, ExternalAccess::MetadataOnly)
+                    .expect("컴포넌트 원본");
+                (
+                    SourceBase::of(&existing),
+                    SourceLibrary {
+                        components,
+                        ..SourceLibrary::default()
+                    },
+                )
+            }
+        };
+        let (mut copy, _) =
+            DocumentModel::from_records(model.to_records().expect("records")).expect("model");
+        copy.replace_context(model.context().live(model));
+        Some(
+            commit(root, &base, &library.join(copy))
+                .expect("원본 저장")
+                .base,
+        )
+    } else {
+        None
+    };
+    save_cache(root, documents);
+    if let Some(written) = written {
+        let manifest = stellar_storage::generation::current::read_current_pointer(root).unwrap();
+        write_stamp(
+            root,
+            &Stamp {
+                source: written.digest(),
+                manifest,
+            },
+        )
+        .expect("stamp");
+    }
+}
+
+/// 문서들을 chunk cache(Git 밖)에만 저장합니다.
+pub fn save_cache(root: &Path, documents: &[&DocumentModel]) {
     let base = load_current_generation(root, project_id()).ok();
     let serialized: Vec<_> = documents
         .iter()
@@ -152,8 +223,11 @@ pub fn materialize_source(
     snapshot
 }
 
-/// virtual project root를 실제 프로젝트 loader(V.4.4)로 엽니다.
+/// virtual project root를 실제 프로젝트 loader(V.4.4)로 엽니다. Git snapshot에는 chunk cache가 없으므로 먼저 원본으로
+/// cache를 만듭니다(ADR-0122, 작업 트리면 원본과 짝이 아닌 cache만 다시 만듦).
 pub fn open_project(root: &Path) -> SavedProject {
+    stellar_project::cache::prepare_snapshot(root)
+        .unwrap_or_else(|e| panic!("{} cache 준비: {e}", root.display()));
     SavedProjectLoader::new()
         .open(root)
         .unwrap_or_else(|e| panic!("{} 열기: {e}", root.display()))

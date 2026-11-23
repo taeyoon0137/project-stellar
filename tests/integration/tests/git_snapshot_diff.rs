@@ -27,9 +27,6 @@ use stellar_semantic_diff::diff::{diff, SemanticDiff};
 use stellar_semantic_diff::keys;
 use stellar_semantic_diff::snapshot::SemanticSnapshot;
 
-/// random 문서 seed.
-const SEED: u64 = 7;
-
 /// 프로젝트 이름.
 const NAME: &str = "Snapshot";
 
@@ -77,9 +74,8 @@ fn head_index_and_working_tree_snapshots_diff_and_round_trip() {
 
     // 1) base 프로젝트를 commit하고 local bare 원격에 push.
     let card = card_document();
-    let other = seeded_document(SEED);
     write_manifest(&work, NAME);
-    save_documents(&work, &[&card, &other]);
+    save_documents(&work, &[&card]);
     let base_commit = fx.commit_all("base project").unwrap();
     fx.push("main").unwrap();
     assert_eq!(
@@ -92,7 +88,7 @@ fn head_index_and_working_tree_snapshots_diff_and_round_trip() {
         rename(r, CARD, "카드 (staged)");
         move_line_end(r, DIVIDER, 240.0, 0.0);
     });
-    save_documents(&work, &[&staged_card, &other]);
+    save_documents(&work, &[&staged_card]);
     fx.git(["add", "-A"]).unwrap();
 
     // 3) unstaged 편집: 잎 삭제 + 그룹에 새 사각형 + random 문서 seed 편집.
@@ -100,12 +96,11 @@ fn head_index_and_working_tree_snapshots_diff_and_round_trip() {
         remove_leaf(r, LEAF);
         append_rectangle(r, WORKTREE_NEW, GROUP, "새 잎");
     });
-    let (wt_other, other_target) = seeded_edit(&other, SEED);
-    save_documents(&work, &[&wt_card, &wt_other]);
+    save_documents(&work, &[&wt_card]);
 
-    let expected_head = ProjectState::expected(NAME, &[&card, &other]);
-    let expected_index = ProjectState::expected(NAME, &[&staged_card, &other]);
-    let expected_wt = ProjectState::expected(NAME, &[&wt_card, &wt_other]);
+    let expected_head = ProjectState::expected(NAME, &[&card]);
+    let expected_index = ProjectState::expected(NAME, &[&staged_card]);
+    let expected_wt = ProjectState::expected(NAME, &[&wt_card]);
 
     // 4) 원천별 snapshot을 실제 loader로 엶.
     let head_view = materialize_source(&gate, &work, &SnapshotSource::Head, &parent);
@@ -137,7 +132,8 @@ fn head_index_and_working_tree_snapshots_diff_and_round_trip() {
 
     let index_view = materialize_source(&gate, &work, &SnapshotSource::Index, &parent);
     let index_project = open_project(index_view.root());
-    assert_eq!(index_project.generation_number(), 2);
+    // index snapshot의 cache는 index 원본에서 새로 만든 1세대입니다(cache는 Git 밖, ADR-0122).
+    assert_eq!(index_project.generation_number(), 1);
     let index = ProjectState::load(&index_project);
     assert_same_state(&index, &expected_index, "Index");
 
@@ -174,7 +170,7 @@ fn head_index_and_working_tree_snapshots_diff_and_round_trip() {
     let unstaged = assert_round_trip(&i, &w, "Index→WorkingTree");
     assert_eq!(
         touched_objects(&unstaged),
-        BTreeSet::from([nid(LEAF), nid(WORKTREE_NEW), other_target])
+        BTreeSet::from([nid(LEAF), nid(WORKTREE_NEW)])
     );
     for change in unstaged.iter() {
         let expected_kind = match change.object_id() {
@@ -187,20 +183,6 @@ fn head_index_and_working_tree_snapshots_diff_and_round_trip() {
             None => assert!(!change.kind().is_structural(), "{change:?}"),
         }
     }
-    let other_paths: BTreeSet<PropertyPath> = unstaged
-        .iter()
-        .filter(|c| c.object_id() == other_target)
-        .filter_map(|c| c.property_path().cloned())
-        .collect();
-    assert_eq!(
-        other_paths,
-        BTreeSet::from([
-            PropertyPath::with_keys(other_target, vec![keys::VISIBLE]),
-            PropertyPath::with_keys(other_target, vec![keys::DISPLAY_NAME]),
-        ]),
-        "seed 편집은 이름·visible 두 속성"
-    );
-
     // HEAD→WorkingTree는 두 단계의 합성과 같음.
     let total = assert_round_trip(&h, &w, "HEAD→WorkingTree");
     let composed = apply(&apply(&h, &staged).unwrap(), &unstaged).unwrap();

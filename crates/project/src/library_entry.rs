@@ -213,6 +213,11 @@ fn read_generation(
     root: &Path,
     project_id: StableId,
 ) -> Result<Option<ComponentLibrary>, StorageValidationFailure> {
+    // ADR-0122 이전에 commit된 library는 옛 배치(`design/current` 등)만 담습니다. 읽기 전용 entry를 바꾸지 않고 비공개
+    // 사본에서 cache 위치로 옮겨 읽습니다.
+    let view =
+        crate::cache::legacy_view(root).map_err(|_| StorageValidationFailure::CurrentPointer)?;
+    let root = view.as_ref().map_or(root, |view| view.path());
     let loaded = load_current_generation(root, project_id).map_err(|error| match error {
         LoadError::CurrentPointer(_) => StorageValidationFailure::CurrentPointer,
         LoadError::WrongProjectId { .. } => StorageValidationFailure::ProjectIdMismatch,
@@ -237,12 +242,16 @@ fn read_generation(
     Ok(library)
 }
 
-/// generation component library chunk를 검증하며 읽습니다. `design/current`가 없으면 `None`입니다.
+/// generation component library chunk를 검증하며 읽습니다. cache pointer(또는 옛 배치 `design/current`)가 없으면
+/// `None`입니다.
 pub fn generation_components(
     root: &Path,
     project_id: LibraryId,
 ) -> Result<Option<ComponentLibrary>, StorageValidationFailure> {
-    if !current_pointer_path(root).exists() {
+    let legacy = root
+        .join(stellar_storage::location::LEGACY_DIR)
+        .join(stellar_storage::location::CURRENT_FILE);
+    if !current_pointer_path(root).exists() && !legacy.exists() {
         return Ok(None);
     }
     let id = parse_project_id(&project_id.to_string())
@@ -342,6 +351,7 @@ mod tests {
             Err(StorageValidationFailure::TextSource)
         );
         std::fs::remove_file(root.join("design/document.stellar.yaml")).unwrap();
+        std::fs::create_dir_all(current_pointer_path(&root).parent().unwrap()).unwrap();
         std::fs::write(current_pointer_path(&root), "garbage\n").unwrap();
         assert_eq!(
             v.validate_storage(&root, id),

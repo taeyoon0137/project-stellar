@@ -289,41 +289,30 @@ fn adjacent_line_edits_in_one_view_file_merge_through_the_driver_and_resolve_cle
 
     repo.git(&["switch", "-q", "renamed"]);
     let merged = repo.git_output(&["merge", "--no-edit", "locked"]);
-    assert_eq!(merged.status.code(), Some(1), "cache pointer는 conflict");
-    // View 파일은 driver가 의미 단위로 병합했고, 남은 것은 로컬 cache pointer뿐입니다.
-    assert_eq!(repo.unmerged(), vec!["design/current".to_owned()]);
+    // View 파일은 driver가 의미 단위로 병합하고, chunk cache는 Git 밖이라(ADR-0122) conflict 후보가 없습니다.
+    assert_eq!(
+        merged.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&merged.stderr)
+    );
+    assert!(repo.unmerged().is_empty());
     let view = fs::read_to_string(repo.view_file()).unwrap();
     assert!(!view.contains("<<<<<<<"), "{view}");
     assert!(view.contains("renamed"));
-
-    let resolved = result(
-        &repo.stellar(&["merge-driver", "resolve", ".", "--apply"]),
-        0,
+    // merge commit의 tree에는 cache 경로가 없습니다.
+    let tracked = repo.git(&["ls-files"]);
+    assert!(
+        !tracked
+            .lines()
+            .any(|l| l.starts_with(".stellar/") || l == "design/current"),
+        "{tracked}"
     );
-    let resolved = resolved.get("result").unwrap();
-    let unit = &resolved.get("units").unwrap().as_array().unwrap()[0];
-    assert_eq!(string(unit, "kind"), "text-source");
-    assert_eq!(
-        resolved
-            .get("git")
-            .unwrap()
-            .get("remaining_unmerged")
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .len(),
-        0
-    );
-    assert!(repo.unmerged().is_empty());
+    // 병합 뒤 로컬 cache는 원본과 짝이 아니고, 열기는 원본에서 읽습니다.
     let node = repo.node(&kid);
     assert_eq!(string(&node, "name"), "renamed");
     assert_eq!(node.get("locked"), Some(&JsonValue::Bool(true)));
-    // merge 상태는 그대로이고 작업 트리와 index가 같습니다.
-    assert!(repo
-        .git_output(&["rev-parse", "-q", "--verify", "MERGE_HEAD"])
-        .status
-        .success());
-    assert_eq!(repo.git(&["diff", "--name-only"]), "");
+    assert_eq!(repo.git(&["status", "--porcelain"]), "");
 }
 
 #[test]

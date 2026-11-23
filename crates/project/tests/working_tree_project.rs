@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::git::{commit_all, hermetic_runner, init_repo, save_documents, write_manifest};
+use common::git::{commit_all, hermetic_runner, init_repo, save_text_document, write_manifest};
 use common::{rich_model, rich_nodes, TempDir};
 use stellar_document::test_support::semantic_snapshot::model_snapshot_json;
 use stellar_git_porcelain::repo_status::read_repository_status;
@@ -36,7 +36,7 @@ fn unsaved_memory_edit_does_not_appear_in_git_status_or_working_tree_project() {
     init_repo(&runner, &repo);
     write_manifest(&repo, "Working Tree");
     let saved = rich_model(1, 0);
-    save_documents(&repo, &[&saved]);
+    save_text_document(&repo, &saved);
     commit_all(&runner, &repo, "saved");
     let gate = GatedGitRunner::new(runner, GitTrust::Trusted);
 
@@ -59,10 +59,15 @@ fn unsaved_memory_edit_does_not_appear_in_git_status_or_working_tree_project() {
     assert_eq!(summary.basis(), SnapshotBasis::SavedFilesOnDisk);
     let snap = read_working_tree_project(&gate, &repo).unwrap();
     assert_eq!(snap.basis, SnapshotBasis::SavedFilesOnDisk);
+    // Git 파일 목록에는 텍스트 원본이 있고 chunk cache는 없습니다(ADR-0122).
     assert!(snap
         .files
         .iter()
-        .any(|f| f.path.as_bytes() == b"design/current"));
+        .any(|f| f.path.as_bytes() == b"design/document.stellar.yaml"));
+    assert!(!snap
+        .files
+        .iter()
+        .any(|f| f.path.as_bytes().starts_with(b".stellar/")));
     let project = snap.project.as_ref().unwrap();
     assert_eq!(project.generation_number(), 1);
     assert_eq!(project.manifest.project.name, "Working Tree");
@@ -72,19 +77,27 @@ fn unsaved_memory_edit_does_not_appear_in_git_status_or_working_tree_project() {
     assert_ne!(on_disk, memory_json, "메모리 편집은 snapshot에 없음");
 
     // 저장(V.5) 뒤에만 Git status와 snapshot에 나타남.
-    save_documents(&repo, &[&memory]);
+    save_text_document(&repo, &memory);
     let status = read_status(&gate, &repo, StatusOptions::default()).unwrap();
     assert!(
-        status.entries.iter().any(|e| matches!(
+        status.entries.iter().all(|e| matches!(
             e,
-            StatusEntry::Ordinary(c) if c.path.as_bytes() == b"design/current"
+            StatusEntry::Ordinary(c)
+                if c.path.as_bytes().starts_with(b"design/")
+                    && c.path.as_bytes().ends_with(b".stellar.yaml")
         )),
         "{:?}",
         status.entries
     );
     let summary = read_repository_status(&gate, &repo).unwrap();
-    assert_eq!(summary.counts.unstaged, 1, "design/current");
-    assert!(summary.counts.untracked >= 2, "새 manifest·chunk");
+    assert_eq!(
+        summary.counts.unstaged, 1,
+        "이름을 바꾼 node의 View 원본 파일"
+    );
+    assert_eq!(
+        summary.counts.untracked, 0,
+        "새 manifest·chunk는 Git 밖 cache"
+    );
     let snap = read_working_tree_project(&gate, &repo).unwrap();
     let project = snap.project.as_ref().unwrap();
     assert_eq!(project.generation_number(), 2);
@@ -103,19 +116,20 @@ fn working_tree_project_failure_keeps_the_file_listing() {
     let repo = dir.path.clone();
     init_repo(&runner, &repo);
     write_manifest(&repo, "Broken");
-    save_documents(&repo, &[&rich_model(2, 0)]);
+    save_text_document(&repo, &rich_model(2, 0));
     commit_all(&runner, &repo, "saved");
-    // current pointer가 가리키는 manifest를 지움(손상된 디스크 상태).
-    let generations = repo.join("design/generations");
+    // current pointer가 가리키는 cache manifest를 지우고(손상된 로컬 cache) 추적 원본 하나를 지움.
+    let generations = stellar_storage::location::cache_dir(&repo).join("generations");
     for entry in std::fs::read_dir(&generations).unwrap() {
         std::fs::remove_file(entry.unwrap().path()).unwrap();
     }
+    std::fs::remove_file(repo.join("design/document.stellar.yaml")).unwrap();
     let gate = GatedGitRunner::new(runner, GitTrust::Trusted);
     let snap = read_working_tree_project(&gate, &repo).unwrap();
     assert!(snap.project.is_err(), "loader 실패는 보존");
     assert!(
         !snap.missing_tracked.is_empty(),
-        "삭제된 manifest는 목록에 남음"
+        "삭제된 추적 원본은 목록에 남음"
     );
     assert!(snap
         .files

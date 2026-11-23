@@ -395,25 +395,32 @@ pub(crate) mod tests {
     #[test]
     fn pointer_relevance_of_events() {
         let p = |s: &str| WatchPath::project(s).unwrap();
-        assert_eq!(current_pointer_watch_path(), p("design/current"));
+        assert_eq!(
+            current_pointer_watch_path(),
+            p(".stellar/cache/chunks/current")
+        );
         for event in [
-            FileWatchEvent::Modified(p("design/current")),
+            FileWatchEvent::Modified(p(".stellar/cache/chunks/current")),
             FileWatchEvent::Renamed {
-                from: p("design/.current.tmp-1-0"),
-                to: p("design/current"),
+                from: p(".stellar/cache/chunks/.current.tmp-1-0"),
+                to: p(".stellar/cache/chunks/current"),
             },
-            FileWatchEvent::Removed(p("design")),
+            FileWatchEvent::Removed(p(".stellar")),
             FileWatchEvent::Modified(p("")),
             FileWatchEvent::Overflow(OverflowReason::EventsDropped),
         ] {
             assert!(may_change_current_pointer(&event), "{event:?}");
         }
         for event in [
-            FileWatchEvent::Created(p("design/objects/ab/sha256-ab.starchunk")),
-            FileWatchEvent::Created(p("design/generations/sha256-cd.starmanifest")),
-            FileWatchEvent::Created(p("design/.current.tmp-1-0")),
-            FileWatchEvent::Modified(p("design/currently")),
-            FileWatchEvent::Modified(WatchPath::new(WatchRootId(1), "design/current").unwrap()),
+            FileWatchEvent::Created(p(".stellar/cache/chunks/objects/ab/sha256-ab.starchunk")),
+            FileWatchEvent::Created(p(
+                ".stellar/cache/chunks/generations/sha256-cd.starmanifest",
+            )),
+            FileWatchEvent::Created(p(".stellar/cache/chunks/.current.tmp-1-0")),
+            FileWatchEvent::Modified(p(".stellar/cache/chunks/currently")),
+            FileWatchEvent::Modified(
+                WatchPath::new(WatchRootId(1), ".stellar/cache/chunks/current").unwrap(),
+            ),
         ] {
             assert!(!may_change_current_pointer(&event), "{event:?}");
         }

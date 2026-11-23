@@ -232,10 +232,15 @@ fn crash_after_checkpoint_relaunch_restore_and_working_tree() {
     assert!(disk.contains(&saved.to_string()) && disk.contains(&unsaved.to_string()));
     assert_eq!(git(&gate, &root, &["rev-parse", "HEAD"]), head);
     assert_eq!(git(&gate, &root, &["diff", "--cached", "--name-only"]), "");
+    // 저장은 Git 원본(텍스트 원본)의 작업 트리 변경이고, chunk cache는 Git 밖입니다(ADR-0122).
+    let changed = git(&gate, &root, &["diff", "--name-only"]);
     assert!(
-        git(&gate, &root, &["diff", "--name-only"]).contains("design/current"),
-        "저장은 작업 트리 변경"
+        changed
+            .lines()
+            .any(|l| l.starts_with("design/") && l.ends_with(".stellar.yaml")),
+        "저장은 작업 트리 변경: {changed}"
     );
+    assert!(!changed.contains(".stellar/"), "{changed}");
     // 저장 뒤 복구본은 정리되어 다음 실행에 다시 제안하지 않습니다.
     assert!(
         wait_until(Duration::from_secs(30), || app

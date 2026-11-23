@@ -1,6 +1,6 @@
 //! current generation pointer 파일 (V.4.3).
 //!
-//! `design/current` 파일에는 **manifest content hash 하나만** 기록합니다
+//! current pointer 파일(`.stellar/cache/chunks/current`, [`crate::location`])에는 **manifest content hash 하나만** 기록합니다
 //! (ADR-0004 문자열 + LF, 총 72바이트). 전환은 temp write 후 atomic replace
 //! (V.2.5)로만 수행하므로 어떤 시점에 읽어도 이전 hash 또는 새 hash 중
 //! 하나만 보입니다 — partial 상태가 노출되지 않습니다.
@@ -8,10 +8,10 @@
 //! # 비신뢰 프로젝트 폴더 (보안 감사 STOR-1·4)
 //!
 //! - 읽기는 symlink를 따르되(기술 아키텍처 19.3) 연 handle이 **정규 파일**이고 72 bytes 이하일 때만
-//!   읽습니다. `/dev/zero`·FIFO·거대한 파일을 가리키는 commit된 `design/current`가 메모리를 끝없이
+//!   읽습니다. `/dev/zero`·FIFO·거대한 파일을 가리키는 current pointer가 메모리를 끝없이
 //!   쓰거나 열기를 멈추게 하지 못합니다(crate 내부 `fs_guard`).
-//! - 쓰기는 `design`이 symlink면 따라가지 않고 거부합니다(프로젝트 밖에 쓰지 않음). 없으면 한 단계만
-//!   만들고, temp 생성·rename 직전에 같은 디렉터리인지 다시 확인합니다.
+//! - 쓰기는 cache 폴더 구성 요소(`.stellar`·`cache`·`chunks`)가 symlink면 따라가지 않고 거부합니다(프로젝트
+//!   밖에 쓰지 않음). 없으면 한 단계씩 만들고, temp 생성·rename 직전에 같은 디렉터리인지 다시 확인합니다.
 
 use std::fmt;
 use std::io::ErrorKind;
@@ -21,9 +21,6 @@ use crate::atomic_file::{write_file_atomic_observed, NoopObserver, WriteObserver
 use crate::fs_guard::{ensure_real_dirs, read_regular_file, DirGuard, Link, Refusal};
 use crate::hash::ContentHash;
 
-/// current pointer 파일의 프로젝트 root 기준 상대 경로 구성 요소.
-const CURRENT_POINTER_COMPONENTS: [&str; 2] = ["design", "current"];
-
 /// current pointer 파일 크기(bytes): ADR-0004 hash 문자열(`sha256:` + hex 64자 = 71자) + LF.
 ///
 /// 읽기 상한으로도 씁니다. 새 hash 알고리즘은 새 ADR로만 추가하므로(ADR-0004) 그때 함께 바꿉니다.
@@ -31,11 +28,7 @@ const CURRENT_POINTER_FILE_BYTES: u64 = 72;
 
 /// current pointer 파일 절대 경로.
 pub fn current_pointer_path(root: &Path) -> PathBuf {
-    let mut path = root.to_path_buf();
-    for component in CURRENT_POINTER_COMPONENTS {
-        path.push(component);
-    }
-    path
+    crate::location::cache_dir(root).join(crate::location::CURRENT_FILE)
 }
 
 /// current pointer 오류.
@@ -90,9 +83,13 @@ pub fn write_current_pointer_observed(
     observer: &mut dyn WriteObserver,
 ) -> Result<(), CurrentPointerError> {
     let path = current_pointer_path(root);
-    // `design`을 symlink를 따르지 않고 확인·생성합니다(`create_dir_all`은 symlink를 통과함).
-    let dirs = ensure_real_dirs(root, &CURRENT_POINTER_COMPONENTS[..1])
+    // cache 폴더를 symlink를 따르지 않고 확인·생성합니다(`create_dir_all`은 symlink를 통과함).
+    let dirs = ensure_real_dirs(root, &crate::location::CACHE_DIR)
         .map_err(|(path, source)| CurrentPointerError::Io { path, source })?;
+    crate::location::ensure_cache_ignore(root).map_err(|source| CurrentPointerError::Io {
+        path: root.join(".stellar/cache/.gitignore"),
+        source,
+    })?;
     let content = format!("{hash}\n");
     let mut guard = DirGuard::new(observer, dirs);
     write_file_atomic_observed(&path, content.as_bytes(), &mut guard).map_err(|source| {
@@ -368,23 +365,32 @@ mod tests {
         assert!(!format!("{err:?}").contains("SECRET"), "{err:?}");
     }
 
-    /// 보안 감사 STOR-4: `design`이 symlink면 따라가지 않고 쓰기를 거부합니다(프로젝트 밖에 쓰지 않음).
+    /// 보안 감사 STOR-4: cache 폴더 구성 요소가 symlink면 따라가지 않고 쓰기를 거부합니다(프로젝트 밖에 쓰지
+    /// 않음).
     #[cfg(unix)]
     #[test]
     fn write_refuses_symlinked_design_directory() {
-        let dir = TempDir::new();
-        let outside = TempDir::new();
-        std::os::unix::fs::symlink(&outside.path, dir.path.join("design")).unwrap();
-        let err = write_current_pointer(&dir.path, &ContentHash::compute(b"x")).unwrap_err();
-        assert_eq!(io_refusal(err), Refusal::SymlinkDirectory);
-        assert_eq!(
-            std::fs::read_dir(&outside.path).unwrap().count(),
-            0,
-            "symlink 대상에 아무것도 쓰지 않음"
-        );
+        let cache = crate::location::CACHE_DIR;
+        for depth in 1..=cache.len() {
+            let dir = TempDir::new();
+            let outside = TempDir::new();
+            let mut parent = dir.path.clone();
+            for component in &cache[..depth - 1] {
+                parent.push(component);
+            }
+            std::fs::create_dir_all(&parent).unwrap();
+            std::os::unix::fs::symlink(&outside.path, parent.join(cache[depth - 1])).unwrap();
+            let err = write_current_pointer(&dir.path, &ContentHash::compute(b"x")).unwrap_err();
+            assert_eq!(io_refusal(err), Refusal::SymlinkDirectory, "{depth}");
+            assert_eq!(
+                std::fs::read_dir(&outside.path).unwrap().count(),
+                0,
+                "symlink 대상에 아무것도 쓰지 않음"
+            );
+        }
     }
 
-    /// `design/current` 자리의 symlink는 따라 쓰지 않고 rename으로 정규 파일로 바뀝니다(대상 보존).
+    /// current pointer 자리의 symlink는 따라 쓰지 않고 rename으로 정규 파일로 바뀝니다(대상 보존).
     #[cfg(unix)]
     #[test]
     fn write_replaces_pointer_symlink_without_touching_its_target() {
