@@ -139,3 +139,15 @@ XXIII.2, XXIV.2, XVI.6.6, XXVIII.2.3의 결정을 한 곳에 모읍니다. 기�
 ## Migration
 
 - 기존 데이터 변환은 없습니다. 기존 저장소는 `stellar merge-driver install`을 실행한 뒤부터 driver를 씁니다.
+
+## 개정(2026-11-23, integration-followups)
+
+1. **결정 7 이행: Git 접근은 ops Git 경로 하나.** ADR-0080 lane으로 ops→git-porcelain edge가 생겨, CLI의 자체 시스템 Git
+   adapter(`tools/stellar-cli/src/merge_driver/system_git.rs`)를 지우고 `stellar_ops::candidate::git_port::GatedMergeGit`
+   (git-porcelain `GatedGitRunner` 기반 `MergeGit` 구현)으로 바꿨습니다. Git 탐색·환경 allowlist·timeout은 Stellar Git
+   엔진과 같은 `system_git_runner`이고, 신뢰 판정은 `os_git_trust`(OS 사용자 신뢰 등록)입니다. 신뢰하지 않은 프로젝트에서는
+   실행 전에 거부하고 프로세스를 만들지 않습니다(spawn 0 test). 고정 argv·shell 없음·경로 앞 `--`·`core.fsmonitor=false`·
+   `GIT_OPTIONAL_LOCKS=0`·`GIT_TERMINAL_PROMPT=0` 규칙은 그대로입니다. 포트의 동작 목록(continue·commit·전역 config 없음)은
+   바꾸지 않았습니다.
+2. **driver 결과 bytes 확인.** 시스템 Git merge driver 통합 test가 병합 결과 파일이 컴포넌트 원본 v4
+   (`schema_version: "4"`)인지 확인합니다.

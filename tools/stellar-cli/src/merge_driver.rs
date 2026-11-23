@@ -13,13 +13,11 @@
 //! 등록은 사용자가 명시적으로 부르는 `stellar merge-driver install <프로젝트>`만 합니다(XXIV.2.3). 신뢰한 프로젝트에서만
 //! 동작하고 저장소 로컬 config와 프로젝트 `.gitattributes` 한 줄만 바꿉니다. 전역·시스템 config는 바꾸지 않습니다.
 
-/// 시스템 Git adapter(ops `MergeGit` 포트 구현).
-mod system_git;
-
 use std::path::{Path, PathBuf};
 
 use stellar_ops::candidate::apply::{apply_session, ApplyError, DiskFiles};
 use stellar_ops::candidate::file_merge::{merge_semantic_file, FileMergeError, FileMergeOutcome};
+use stellar_ops::candidate::git_port::GatedMergeGit;
 use stellar_ops::candidate::install::{install_driver, InstallError};
 use stellar_ops::candidate::session::{parse_resolution, ConflictSession, PlanError};
 use stellar_ops::trusted::TrustedProject;
@@ -28,8 +26,6 @@ use crate::exit::ExitStatus;
 use crate::json::JsonValue;
 use crate::output::{CliError, Diagnostic, Severity, Success};
 use crate::project_cmds::conflict_json;
-
-use system_git::SystemGit;
 
 /// 한 입력 파일의 크기 상한(컴포넌트 원본 상한 1 MiB와 같음). 넘으면 읽지 않고 실패합니다.
 const MAX_SIDE_BYTES: u64 = 1024 * 1024;
@@ -48,13 +44,15 @@ fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
-fn system_git() -> Result<SystemGit, CliError> {
-    SystemGit::discover().ok_or_else(|| {
-        CliError::new(
-            ExitStatus::Unavailable,
-            "git-unavailable",
-            "시스템 Git을 찾지 못했습니다",
-        )
+/// ops Git 경로(`GatedGitRunner`)의 `MergeGit` 구현(ADR-0081 결정 7). 신뢰 판정은 [`trusted_root`]와 같은
+/// OS 사용자 신뢰 등록입니다.
+fn merge_git(root: &Path) -> Result<GatedMergeGit, CliError> {
+    GatedMergeGit::for_os_user(root).map_err(|e| {
+        let (status, code) = match e {
+            stellar_ops::git::GitError::NotTrusted => (ExitStatus::NoPerm, "untrusted-project"),
+            _ => (ExitStatus::Unavailable, "git-unavailable"),
+        };
+        CliError::new(status, code, e.to_string())
     })
 }
 
@@ -184,7 +182,7 @@ fn session_json(session: &ConflictSession) -> JsonValue {
 fn resolve(args: &[String]) -> Result<Success, CliError> {
     let args = resolve_args(args)?;
     let root = trusted_root(&args.project)?;
-    let git = system_git()?;
+    let git = merge_git(&root)?;
     let mut session = ConflictSession::open(&git, &root).map_err(|e| {
         CliError::new(ExitStatus::Unavailable, "conflict-session", e.to_string())
             .with_context(args.project.clone())
@@ -267,7 +265,7 @@ fn install(args: &[String]) -> Result<Success, CliError> {
         ));
     };
     let root = trusted_root(project)?;
-    let git = system_git()?;
+    let git = merge_git(&root)?;
     let exe = std::env::current_exe().map_err(|e| {
         CliError::new(
             ExitStatus::Software,

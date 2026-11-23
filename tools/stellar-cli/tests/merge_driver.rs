@@ -220,6 +220,11 @@ fn independent_child_insertions_merge_through_the_driver() {
     assert!(repo.git(&["status", "--porcelain"]).is_empty());
     let text = String::from_utf8(repo.read()).unwrap();
     assert!(text.contains("Badge") && text.contains("Tag"), "{text}");
+    // driver 결과는 컴포넌트 원본의 유일한 쓰기 버전 v4입니다(ADR-0081 결정 8, ADR-0077).
+    assert!(
+        text.starts_with("format: stellar-component\nschema_version: \"4\"\n"),
+        "{text}"
+    );
     // 결과는 codec이 그대로 읽는 원본이고 두 자식이 모두 정의 tree에 있습니다.
     let detail = result(
         &stellar(&repo.root, &repo.home, &["query", ".", "component", A]),
