@@ -31,7 +31,9 @@ stellar-layout = { path = "../../crates/layout" }
 stellar-export = { path = "../../crates/export" }
 # 초기 릴리스 종단 시나리오(XVI.11, ADR-0111): 앱 runtime·headless ops·외부 library 의존성 모델.
 stellar-runtime = { path = "../../crates/runtime" }
-stellar-ops = { path = "../../crates/ops" }
+# 인스턴스 자식 문서의 scene 그리기 경로 확인(ADR-0133 결정 6).
+stellar-scene = { path = "../../crates/scene", features = ["document"] }
+stellar-ops = { path = "../../crates/ops", features = ["test-support"] }
 stellar-dependencies = { path = "../../crates/dependencies" }
 
 [lints]

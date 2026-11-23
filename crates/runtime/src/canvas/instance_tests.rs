@@ -521,6 +521,7 @@ fn detach_instance_is_one_entry_and_undoes_once() {
     let detach = plan_detach_instance(
         doc.model(),
         &library,
+        &[],
         sid(50),
         &mut StableIdGenerator::new(3),
         &ManualClock::new(10),
@@ -539,6 +540,7 @@ fn detach_instance_is_one_entry_and_undoes_once() {
     assert!(plan_detach_instance(
         doc.model(),
         &ComponentLibrary::new(),
+        &[],
         sid(50),
         &mut StableIdGenerator::new(3),
         &ManualClock::new(10),

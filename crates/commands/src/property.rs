@@ -537,6 +537,21 @@ pub fn payload_property_info(payload: &NodePayload, key: PropertyKey) -> Option<
     }
 }
 
+/// `payload` node에서 `key`의 payload registry 값 종류(Shape·Image longhand). command 값 타입 `Number`는 `px` 좌표·`deg`
+/// 각도·개수를 함께 담으므로, 단위가 있는 값을 받는 호출자(Detach의 Property override 반영, ADR-0133 결정 3)가 이 값으로
+/// 단위를 구분합니다. Frame과 공통 node 필드는 `None`입니다.
+pub(crate) fn payload_value_kind(
+    payload: &NodePayload,
+    key: PropertyKey,
+) -> Option<PayloadPropertyType> {
+    match payload {
+        NodePayload::Shape(shape) => shape_property(shape.kind(), key),
+        NodePayload::Image(_) => image_property(key),
+        _ => None,
+    }
+    .map(|metadata| metadata.value_type)
+}
+
 /// `payload` node가 SetProperty로 받는 key 목록(공통 필드 + payload longhand, registry 순서).
 ///
 /// 묶음 key(Frame `size`·`corner-radius`)는 longhand가 따로 있어 목록에 넣지 않습니다.
@@ -811,6 +826,45 @@ fn write_frame(frame: &mut FramePayload, key: PropertyKey, value: &PropertyValue
     true
 }
 
+/// 레코드 하나에 registry 속성 값을 씁니다(문서는 바꾸지 않음). `SetProperty` 적용과 Detach의 Property override
+/// 반영(ADR-0133 결정 3)이 같은 쓰기 경로를 지납니다. `expected`는 registry가 정한 값 타입(오류 보고용)입니다.
+pub(crate) fn write_property(
+    record: &mut NodeRecord,
+    key: PropertyKey,
+    value: &PropertyValue,
+    expected: PropertyValueType,
+) -> Result<(), CommandError> {
+    let mismatch = || CommandError::PropertyTypeMismatch {
+        key,
+        expected,
+        found: value.value_type(),
+    };
+    match (key, value) {
+        (node_keys::VISIBLE, PropertyValue::Bool(v)) => record.visible = *v,
+        (node_keys::LOCKED, PropertyValue::Bool(v)) => record.locked = *v,
+        (node_keys::DISPLAY_NAME, PropertyValue::Text(v)) => record.display_name = v.clone(),
+        (key, value) => {
+            let invalid = |reason| CommandError::InvalidRequest { reason };
+            let written = match &mut record.payload {
+                NodePayload::Frame(frame) => write_frame(frame, key, value),
+                NodePayload::Shape(shape) => {
+                    write_shape(shape, key, value).map_err(invalid)?;
+                    true
+                }
+                NodePayload::Image(image) => {
+                    write_image(image, key, value).map_err(invalid)?;
+                    true
+                }
+                _ => false,
+            };
+            if !written {
+                return Err(mismatch());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// node 속성 하나를 바꿉니다.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetProperty {
@@ -945,34 +999,7 @@ impl SetProperty {
             .model()
             .record(self.node)
             .ok_or(CommandError::UnknownNode { id: self.node })?;
-        let mismatch = || CommandError::PropertyTypeMismatch {
-            key: self.key,
-            expected: info.value_type,
-            found: self.value.value_type(),
-        };
-        match (self.key, &self.value) {
-            (node_keys::VISIBLE, PropertyValue::Bool(v)) => record.visible = *v,
-            (node_keys::LOCKED, PropertyValue::Bool(v)) => record.locked = *v,
-            (node_keys::DISPLAY_NAME, PropertyValue::Text(v)) => record.display_name = v.clone(),
-            (key, value) => {
-                let invalid = |reason| CommandError::InvalidRequest { reason };
-                let written = match &mut record.payload {
-                    NodePayload::Frame(frame) => write_frame(frame, key, value),
-                    NodePayload::Shape(shape) => {
-                        write_shape(shape, key, value).map_err(invalid)?;
-                        true
-                    }
-                    NodePayload::Image(image) => {
-                        write_image(image, key, value).map_err(invalid)?;
-                        true
-                    }
-                    _ => false,
-                };
-                if !written {
-                    return Err(mismatch());
-                }
-            }
-        }
+        write_property(&mut record, self.key, &self.value, info.value_type)?;
         ctx.replace_record(record)?;
         ctx.changes()
             .node_property(self.node, self.key, info.invalidation);

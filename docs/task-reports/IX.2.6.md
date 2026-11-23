@@ -98,3 +98,46 @@
 | nested host 등록 순서 무관·`enclosing_slots` 관계(`nested_slot_host_is_registered_with_enclosing_relation`) | 통과 |
 
 - 남은 한계: slot command·구조 편집 validator의 적용 후 가림 검사는 별도 수정(MAJOR 2)에서 다룹니다.
+
+## 후속 수정 (2026-11-24 instance-integrity: Detach가 Property override 값을 반영, ADR-0133 결정 3)
+
+### 배경
+
+문서 command Detach(`commands::detach::plan_detach`, ADR-0129 결정 4.5)는 Property override 값을 복제 node에 반영하지
+않았습니다. 정의 node 속성과 Property의 연결(binding)이 문서에 없기 때문입니다. 그래서 override가 있는 인스턴스를 Detach하면
+화면이 바뀌어 이 행의 검증 "detach 후 시각 의미 동일"을 어겼습니다.
+
+### 변경 파일
+
+- `crates/commands/src/detach.rs` — `PropertyLink`(정의 node·속성·Property 연결), `plan_detach`의 `links` 인자, 값 대응
+  `registry_value`(단위를 바꾸지 않는 대응만), 값 쓰기 `write_linked_value`, `DetachPlanError::Link`.
+- `crates/commands/src/property.rs`(소유 밖, 리팩터) — `SetProperty` 적용의 레코드 쓰기를 `write_property`로 꺼내 Detach와
+  같은 쓰기 경로를 씁니다(동작 변경 없음).
+- `crates/runtime/src/canvas/instance.rs`(소유 밖, 최소 수정) — `PropertyLink`를 commands 타입의 다시 내보내기로 바꾸고
+  `plan_detach_instance`가 `links`를 받습니다. `crates/runtime/src/canvas/instance_tests.rs` 호출 2곳.
+- `crates/commands/src/detach_tests.rs` — Card fixture에 공개 String Property `title`을 선언.
+- `crates/commands/src/detach_integrity_tests.rs` — Detach 반영 fixture.
+
+### 규칙
+
+- 쓰는 값은 `override_rules::check_override`(공개·선언·타입)를 통과한 직접 override뿐입니다. 없거나 규칙을 어긴 override는
+  정의 값 그대로입니다(IX.1.4 Property 값 캐시와 같은 규칙).
+- Text 본문(`TEXT_CONTENT`)은 VI.7.5 `edit_text`로, 그 밖의 속성은 `write_property`로 씁니다.
+- 쓸 수 없는 연결은 `DetachPlanError::Link`로 거부합니다. 복제되지 않은 정의 node를 가리키는 연결은 건너뜁니다.
+
+### 실행한 명령
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-commands --lib` | 통과(259 passed, 6 ignored) |
+| `cargo test -p stellar-runtime --lib canvas::instance` | 통과(8 passed) |
+| `cargo clippy -p stellar-commands -p stellar-runtime --all-targets --locked -- -D warnings` | 통과 |
+
+### 테스트
+
+- `detach_writes_linked_property_overrides_into_the_copies`: `title` override "확인 창"이 있는 Card 인스턴스를 Detach하면 복제
+  title Text 본문이 "확인 창"이고, 적용·undo가 정확합니다. override가 없거나 연결을 넘기지 않으면 정의 값(빈 본문) 그대로,
+  선언되지 않은 Property의 override는 반영하지 않습니다. 문자열 Property를 Frame `width`에 잇는 연결은 `Link`로 거부합니다.
+- `registry_values_keep_css_units`: `px` 길이 → 비음수, 음수 길이 거부, `%` → 0..=1, 타입 불일치 거부. 값 타입 `Number`는
+  payload registry 값 종류로 단위를 맞춥니다. `px` 길이는 좌표 속성에만, `deg` 각도는 각도 속성에만 쓰고, 개수·종류를 모르는
+  속성에는 단위 있는 값을 쓰지 않습니다(검토 보완, ADR-0133 결정 3.4).

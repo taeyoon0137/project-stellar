@@ -10,7 +10,9 @@
 //!
 //! 적용은 재매핑한 레코드로 만든 [`InsertNode`]와 같은 검증·적용 경로를 지나며(부모·OrderKey·깊이·
 //! 참조·modifier·layout record 규칙), 역 command는 복제본 root의 [`DeleteSubtree`]입니다. 복제본은 원본 node의
-//! 명시 layout longhand(ADR-0086)를 그대로 가집니다. 값에는 id가 없으므로 소유 node만 새 id로 바꿉니다.
+//! 명시 layout longhand(ADR-0086)를 그대로 가집니다. 값에는 id가 없으므로 소유 node만 새 id로 바꿉니다. Frame의
+//! 가이드·레이아웃 그리드 기록(ADR-0126)도 같은 규칙으로 따라갑니다(ADR-0133 결정 4). 가이드 id는 소유 Frame 안에서만
+//! 유일하므로(ADR-0126 결정 1.4) 그대로 두고 소유 Frame만 새 id로 바꿉니다.
 
 use std::collections::BTreeSet;
 
@@ -19,6 +21,7 @@ use stellar_core_types::ids::{IdRemapTable, StableId, StableIdGenerator};
 use stellar_core_types::order_key::OrderKey;
 use stellar_core_types::reference::NodeRef;
 use stellar_document::frame::Clipping;
+use stellar_document::guides::{GuideEdit, NodeGuides};
 use stellar_document::layout_record::LayoutRecord;
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{ModifierEntry, ModifierId, ModifierPayload, ModifierStack};
@@ -143,6 +146,25 @@ pub(crate) fn remap_layout(table: &IdRemapTable, record: &LayoutRecord) -> Layou
     copy
 }
 
+/// 가이드 기록을 새 소유 Frame으로 옮깁니다. 가이드 id와 값, 그리드는 그대로입니다.
+pub(crate) fn remap_guides(
+    table: &IdRemapTable,
+    record: &NodeGuides,
+) -> Result<NodeGuides, CommandError> {
+    let invalid = |_| CommandError::InvalidRequest {
+        reason: "복제할 가이드 기록이 유효하지 않습니다",
+    };
+    let mut copy = NodeGuides::new(table.remap(record.owner()));
+    for guide in record.guides() {
+        copy.apply(&GuideEdit::Add(*guide)).map_err(invalid)?;
+    }
+    if !record.grids().is_empty() {
+        copy.apply(&GuideEdit::SetGrids(record.grids().to_vec()))
+            .map_err(invalid)?;
+    }
+    Ok(copy)
+}
+
 impl DuplicateSubtree {
     /// 결정적 id 생성기로 재매핑 쌍을 만들어 command를 계획합니다(테스트·fuzz용).
     pub fn plan<C: MonotonicClock>(
@@ -215,6 +237,7 @@ impl DuplicateSubtree {
         let mut records = Vec::with_capacity(nodes.len());
         let mut stacks = Vec::new();
         let mut layouts = Vec::new();
+        let mut guides = Vec::new();
         for (index, id) in nodes.iter().enumerate() {
             let record = model
                 .record(*id)
@@ -256,12 +279,17 @@ impl DuplicateSubtree {
             if let Some(layout) = model.layout_record(*id) {
                 layouts.push(remap_layout(&table, layout));
             }
+            if let Some(record) = model.node_guides(*id) {
+                guides.push(remap_guides(&table, record)?);
+            }
         }
         layouts.sort_by_key(|record: &LayoutRecord| record.node);
+        guides.sort_by_key(NodeGuides::owner);
         Ok(InsertNode {
             nodes: records,
             modifier_stacks: stacks,
             layout_records: layouts,
+            node_guides: guides,
         })
     }
 
@@ -429,6 +457,7 @@ mod tests {
                 nodes: vec![frame(20, Some(11), 0x40), path_record, clipped],
                 modifier_stacks: vec![stack],
                 layout_records: Vec::new(),
+                node_guides: Vec::new(),
             }),
         )
         .unwrap();
@@ -639,5 +668,135 @@ mod layout_record_tests {
         state.execute(&CommandRequest::at(&state, inverse)).unwrap();
         assert!(state.model().layout_record(copy_root).is_none());
         assert_eq!(state.model().to_records().unwrap().layout_records.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod guides_tests {
+    //! Frame 복제·붙여넣기·삭제 undo에서 가이드·레이아웃 그리드 기록이 layout record와 같은 규칙으로 따라가는지
+    //! (ADR-0133 결정 4).
+    use super::*;
+    use crate::codec::{decode_command, encode_command};
+    use crate::command::test_fixtures::{sid, small_model};
+    use crate::command::Command;
+    use crate::paste::ClipboardSubtree;
+    use crate::request::CommandRequest;
+    use crate::state::DocumentState;
+    use stellar_core_types::clock::ManualClock;
+    use stellar_document::guides::{GuideAxis, LayoutGrid, RulerGuide};
+
+    fn guides(owner: u64) -> NodeGuides {
+        let mut record = NodeGuides::new(sid(owner));
+        for (id, axis, position) in [(700, GuideAxis::X, 24.0), (701, GuideAxis::Y, 48.0)] {
+            record
+                .apply(&GuideEdit::Add(
+                    RulerGuide::new(sid(id), axis, position).unwrap(),
+                ))
+                .unwrap();
+        }
+        record
+            .apply(&GuideEdit::SetGrids(vec![LayoutGrid::columns(
+                12, 8.0, 16.0,
+            )
+            .unwrap()]))
+            .unwrap();
+        record
+    }
+
+    /// Frame 11(자식 13)과 13에 가이드 기록을 둔 문서.
+    fn model() -> DocumentModel {
+        let mut model = small_model();
+        model.set_node_guides(guides(11)).unwrap();
+        model.set_node_guides(guides(13)).unwrap();
+        model
+    }
+
+    fn run(state: &mut DocumentState, command: Command) -> Command {
+        state
+            .execute(&CommandRequest::at(state, command))
+            .unwrap()
+            .inverse
+    }
+
+    /// 소유 Frame만 다르고 가이드·그리드가 같은지.
+    fn same_guides(a: &NodeGuides, b: &NodeGuides) -> bool {
+        a.guides().eq(b.guides()) && a.grids() == b.grids()
+    }
+
+    #[test]
+    fn duplicate_copies_guides_to_the_new_frames_and_undo_removes_them() {
+        let mut state = DocumentState::new(model());
+        let duplicate = DuplicateSubtree::plan(
+            state.model(),
+            sid(11),
+            sid(10),
+            OrderKey::from_bytes(vec![0x30]).unwrap(),
+            &mut StableIdGenerator::new(4),
+            &ManualClock::new(10),
+        )
+        .unwrap();
+        let copy = duplicate.copy_root().unwrap();
+        let undo = run(&mut state, Command::DuplicateSubtree(duplicate));
+        let copied = state.model().node_guides(copy).unwrap();
+        assert_eq!(copied.owner(), copy);
+        assert!(same_guides(copied, &guides(11)));
+        let copy_child = state.model().children_in_order(copy)[0];
+        assert!(same_guides(
+            state.model().node_guides(copy_child).unwrap(),
+            &guides(13)
+        ));
+        // 원본 기록은 그대로입니다.
+        assert_eq!(state.model().node_guides(sid(11)), Some(&guides(11)));
+        assert_eq!(state.model().all_node_guides().count(), 4);
+        run(&mut state, undo);
+        assert_eq!(state.model().all_node_guides().count(), 2);
+    }
+
+    #[test]
+    fn paste_moves_guides_to_the_pasted_frames() {
+        let model = model();
+        let clipboard =
+            ClipboardSubtree::decode(&ClipboardSubtree::capture(&model, sid(11)).unwrap().encode())
+                .unwrap();
+        let insert = clipboard
+            .plan(
+                &model,
+                sid(12),
+                OrderKey::from_bytes(vec![0x10]).unwrap(),
+                &mut StableIdGenerator::new(6),
+                &ManualClock::new(10),
+            )
+            .unwrap();
+        assert_eq!(insert.node_guides.len(), 2);
+        assert!(insert
+            .node_guides
+            .iter()
+            .all(|g| g.owner() != sid(11) && g.owner() != sid(13)));
+        let root = insert.nodes[0].id;
+        let mut state = DocumentState::new(model);
+        run(&mut state, Command::InsertNode(insert));
+        assert!(same_guides(
+            state.model().node_guides(root).unwrap(),
+            &guides(11)
+        ));
+    }
+
+    #[test]
+    fn delete_undo_restores_guides_after_the_journal_is_reopened() {
+        let mut state = DocumentState::new(model());
+        let undo = run(
+            &mut state,
+            Command::DeleteSubtree(crate::node_ops::DeleteSubtree { root: sid(11) }),
+        );
+        // history journal에 쓴 뒤 다시 연 것과 같이: 저장 레코드(남은 기록 없음)로 다시 만든 문서에 decode한 역 command를
+        // 적용합니다.
+        let undo = decode_command(&encode_command(&undo)).unwrap();
+        let (reopened, _) =
+            DocumentModel::from_records(state.model().to_records().unwrap()).unwrap();
+        let mut state = DocumentState::new(reopened);
+        assert_eq!(state.model().all_node_guides().count(), 0);
+        run(&mut state, undo);
+        assert_eq!(state.model().node_guides(sid(11)), Some(&guides(11)));
+        assert_eq!(state.model().node_guides(sid(13)), Some(&guides(13)));
     }
 }

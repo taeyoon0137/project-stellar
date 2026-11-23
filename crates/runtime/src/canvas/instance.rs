@@ -19,6 +19,8 @@
 
 use stellar_commands::command::Command;
 use stellar_commands::detach::{plan_detach, DetachPlanError, InstanceRestructure, NodePlacement};
+// 정의 node 속성과 공개 Property의 연결은 Detach 계획(commands)과 같은 타입입니다(ADR-0133 결정 3).
+pub use stellar_commands::detach::PropertyLink;
 use stellar_commands::lock::{edit_permission, EditIntent};
 use stellar_commands::swap::SwapInstance;
 use stellar_core_types::clock::MonotonicClock;
@@ -133,17 +135,6 @@ pub fn pick_inside(
         node,
         outline,
     })
-}
-
-/// 정의 node 속성과 공개 Property의 연결: 이 정의 node의 `key` 속성 값이 Property `property`를 그대로 씁니다.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PropertyLink {
-    /// 정의 node.
-    pub node: StableId,
-    /// 속성.
-    pub key: PropertyKey,
-    /// 연결된 Component Property.
-    pub property: ComponentPropertyId,
 }
 
 /// 인스턴스 편집을 적용하지 않은 이유.
@@ -427,16 +418,17 @@ impl InstanceActions {
 }
 
 /// 인스턴스 Detach 실행 command(`detach-instance`, IX.2.6). 잠긴 인스턴스·미해결 정의는 거부합니다. 복제 node id는
-/// `generator`·`clock`이 정합니다.
+/// `generator`·`clock`이 정합니다. Property override 값은 `links`로 복제 node에 씁니다(ADR-0133 결정 3).
 pub fn plan_detach_instance<C: MonotonicClock>(
     model: &DocumentModel,
     library: &ComponentLibrary,
+    links: &[PropertyLink],
     instance: StableId,
     generator: &mut StableIdGenerator,
     clock: &C,
 ) -> Result<Command, Refused> {
     editable(model, library, instance)?;
-    plan_detach(model, library, instance, generator, clock)
+    plan_detach(model, library, links, instance, generator, clock)
         .map(|plan| Command::DetachInstance(Box::new(plan)))
         .map_err(|error| Refused {
             reason: InstanceEditRefusal::Detach(error),
@@ -523,6 +515,7 @@ fn slot_command(
         insert,
         insert_stacks,
         insert_layouts,
+        insert_guides: Vec::new(),
         moves,
         remove: Vec::new(),
     })))

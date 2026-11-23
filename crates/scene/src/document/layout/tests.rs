@@ -455,6 +455,7 @@ fn structure_and_visibility_edits_keep_incremental_layout_equal_to_a_full_rebuil
             nodes: vec![node(31, Some(11), 0x05, frame(20., 20., 0., 0.))],
             modifier_stacks: Vec::new(),
             layout_records: Vec::new(),
+            node_guides: Vec::new(),
         }),
     );
     assert_eq!(transform_of(&built, 31), translate(5., 0.));
@@ -503,6 +504,7 @@ fn fragments_in_a_flow_container_are_flattened() {
             ],
             modifier_stacks: Vec::new(),
             layout_records: Vec::new(),
+            node_guides: Vec::new(),
         }),
     );
     assert_eq!(transform_of(&built, 22), translate(85., 0.));

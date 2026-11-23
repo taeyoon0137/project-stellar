@@ -601,6 +601,7 @@ impl CanvasTextEditor {
                     }],
                     modifier_stacks: vec![stack.clone()],
                     layout_records: vec![layout],
+                    node_guides: Vec::new(),
                 };
                 tx = tx.with_command(revision, Command::InsertNode(insert));
                 if let Some(style) = style {

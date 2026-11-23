@@ -318,6 +318,7 @@ dependencies = [
  "stellar-prototype",
  "stellar-renderer-core",
  "stellar-runtime",
+ "stellar-scene",
  "stellar-semantic-diff",
  "stellar-semantic-merge",
  "stellar-storage",

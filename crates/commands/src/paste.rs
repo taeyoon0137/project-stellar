@@ -11,7 +11,7 @@ use stellar_document::{model::DocumentModel, modifier::ModifierStack};
 use crate::{
     codec::{decode_command, encode_command, CommandCodecError},
     command::{Command, CommandError},
-    duplicate::{remap_layout, remap_modifier_payload, remap_payload},
+    duplicate::{remap_guides, remap_layout, remap_modifier_payload, remap_payload},
     kind::CommandKind,
     node_ops::{DeleteSubtree, InsertNode},
     tree::path_element_ids,
@@ -25,7 +25,8 @@ pub struct ClipboardSubtree {
 }
 
 impl ClipboardSubtree {
-    /// 문서를 변경하지 않고 subtree와 modifier, 명시 layout record를 복사합니다. View root는 거부합니다.
+    /// 문서를 변경하지 않고 subtree와 modifier, 명시 layout record, Frame 가이드·레이아웃 그리드 기록을 복사합니다.
+    /// View root는 거부합니다.
     pub fn capture(model: &DocumentModel, root: StableId) -> Result<Self, CommandError> {
         Ok(Self {
             document: model.document_id(),
@@ -152,6 +153,11 @@ impl ClipboardSubtree {
             *layout = remap_layout(&table, layout);
         }
         insert.layout_records.sort_by_key(|layout| layout.node);
+        // 가이드 기록도 소유 Frame만 새 id로 옮깁니다(가이드 id는 Frame 안에서만 유일, ADR-0133 결정 4).
+        for guides in &mut insert.node_guides {
+            *guides = remap_guides(&table, guides)?;
+        }
+        insert.node_guides.sort_by_key(|guides| guides.owner());
         insert.validate(model)?;
         Ok(insert)
     }

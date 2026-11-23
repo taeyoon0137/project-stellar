@@ -80,3 +80,45 @@
 - Frame 복제·붙여넣기는 가이드·그리드를 옮기지 않습니다(layout record와 같은 남은 범위).
 - command codec version을 7로 올렸습니다. 동시에 다른 작업이 version을 올리면 통합 때 번호를 맞춰야 합니다.
 - 회전·확대된 최상위 Frame에는 Frame 기준 눈금·가이드를 두지 않습니다(View root 기준으로 대체).
+
+## 후속 수정 (2026-11-24 instance-integrity: Frame 복제·붙여넣기·삭제 undo에서 가이드·그리드가 따라감, ADR-0133 결정 4)
+
+위 "남은 위험"의 "Frame 복제·붙여넣기는 가이드·그리드를 옮기지 않습니다"를 해소했습니다. 레이아웃 그리드(XII.10.20)도
+같은 기록이라 함께 따라갑니다.
+
+### 변경 파일
+
+- `crates/commands/src/node_ops.rs` — `InsertNode.node_guides`(삽입하는 Frame의 기록, 문서 validator와 같은 검사),
+  `delete-subtree` 역이 subtree의 기록을 담음, 적용 때 기록을 담지 않은 삽입 node의 남은 기록을 지움(`apply_guides`),
+  끝 절 codec `encode_insert_tail`·`decode_insert_tail`(layout record 절과 하나의 canonical 형식).
+- `crates/commands/src/duplicate.rs` — `remap_guides`(소유 Frame만 새 id, 가이드 id는 Frame 안에서만 유일해 그대로)와 복제.
+- `crates/commands/src/paste.rs`(소유 밖, `clipboard*` 범위의 붙여넣기 파일) — 붙여넣기 계획이 기록을 새 Frame으로 옮김.
+- `crates/commands/src/detach.rs` — 인스턴스 구조 command `insert_guides`(만들 Frame의 기록, 지운 node의 기록을 역에 담음).
+- `crates/commands/src/codec.rs`(소유 밖, 등록) — command codec 버전 9.
+- 구조체 필드 추가에 따른 literal 한 줄씩(소유 밖, 컴파일 유지): `crates/commands/src/{convert,test_support}.rs`,
+  `crates/runtime/src/canvas/{instance.rs,text/edit.rs}`, `crates/scene/src/document/layout/tests.rs`,
+  `tests/integration/tests/{chunk_layout,component_library,project_lifecycle}.rs`.
+
+### 실행한 명령
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-commands --lib` | 통과(266 passed, 6 ignored) |
+| `cargo test -p stellar-history` | 통과(55 passed) |
+
+### 테스트
+
+- `duplicate_copies_guides_to_the_new_frames_and_undo_removes_them`: Frame 11과 자식 13의 가이드 2개·12열 그리드가 복제 Frame
+  둘에 같은 값으로 생기고(소유 Frame만 다름) 원본은 그대로, undo로 복제 기록이 사라집니다.
+- `paste_moves_guides_to_the_pasted_frames`: 클립보드 bytes 왕복 뒤 붙여넣기 계획의 기록 소유 node가 새 id이고 적용 결과가
+  같은 값입니다.
+- `delete_undo_restores_guides_after_the_journal_is_reopened`: 삭제의 역 command를 codec 왕복한 뒤 저장 레코드로 다시 만든
+  문서(남은 기록 없음)에 적용하면 기록이 돌아옵니다.
+- `slot_content_delete_undo_restores_frame_guides_after_reopen`: 인스턴스 구조 command의 역도 같은 규칙입니다.
+- `guide_section_round_trips_and_keeps_older_bytes_without_guides`·`guide_section_must_be_canonical`·
+  `insert_rejects_guides_outside_the_insert_or_on_non_frames`: 가이드 기록이 없으면 bytes가 버전 8과 같고, 수 0 layout 절·빈
+  가이드 절·내림차순을 거부하며, 삽입하지 않는 node·Frame이 아닌 node·빈 기록을 거부합니다.
+
+### 남은 위험
+
+- command codec 버전 9는 registry 전역 변경입니다. 동시에 다른 작업이 버전을 올리면 통합 때 맞춰야 합니다.

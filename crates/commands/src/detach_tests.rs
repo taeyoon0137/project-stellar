@@ -16,6 +16,7 @@ use stellar_document::component::definition::{
 use stellar_document::component::instance::{ComponentInstancePayload, SlotOverride};
 use stellar_document::component::slot::{ComponentSlot, SlotCardinality};
 use stellar_document::frame::FramePayload;
+use stellar_document::node_kind::NodeKind;
 use stellar_document::test_support::semantic_snapshot::model_snapshot_json;
 use stellar_document::text::TextPayload;
 
@@ -27,8 +28,13 @@ fn card_ref() -> ComponentRef {
     ComponentRef::new(sid(900))
 }
 
+/// Card의 공개 String Property `title`.
+pub(super) fn card_title() -> stellar_document::component::definition::ComponentPropertyId {
+    stellar_document::component::definition::ComponentPropertyId::new(sid(950))
+}
+
 /// Card 컴포넌트: root 901(100×80, 정의 캔버스 (2000, 0)) 아래 body 902(slot host, Frame·Text 허용)와 title 903(Text).
-fn card_library() -> ComponentLibrary {
+pub(super) fn card_library() -> ComponentLibrary {
     let frame = |w: f32, h: f32, x: f32, y: f32| {
         encode_payload(&NodePayload::Frame(FramePayload {
             size: Size2::new(w, h).unwrap(),
@@ -77,8 +83,37 @@ fn card_library() -> ComponentLibrary {
     }
     let mut definition = ComponentDefinition::new(sid(900), "Card".into(), NodeRef::new(sid(901)));
     definition.add_slot(body()).unwrap();
+    definition.add_property(card_title()).unwrap();
     let mut library = ComponentLibrary::new();
     library.insert(definition, tree).unwrap();
+    // 공개 String Property `title`(기본값 "제목"). Detach의 Property override 반영 fixture가 씁니다.
+    {
+        use stellar_document::component::property::{ComponentProperty, PropertyVisibility};
+        use stellar_document::expressions::ast::{ExprNode, ExprNodeId, ExpressionAst};
+        use stellar_document::expressions::types::{ExpressionType, TypeSpec};
+        let node = ExprNodeId::new(sid(951));
+        let default = ExpressionAst::new(
+            node,
+            vec![ExprNode::literal(
+                node,
+                stellar_core_types::typed_value::TypedValue::String("제목".into()),
+            )],
+        )
+        .unwrap();
+        library
+            .add_property(
+                card_ref(),
+                ComponentProperty::new(
+                    card_title(),
+                    "title".into(),
+                    TypeSpec::required(ExpressionType::String),
+                    default,
+                    PropertyVisibility::Public,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
     library
         .add_slot(
             card_ref(),
@@ -95,7 +130,7 @@ fn card_library() -> ComponentLibrary {
 }
 
 /// root(10) 아래 Card 인스턴스 30(배치 (200, 100), width 320px)과 그 body slot에 투영한 소유 Text 31.
-fn modal_state() -> DocumentState {
+pub(super) fn modal_state() -> DocumentState {
     let mut model = small_model();
     let mut payload = ComponentInstancePayload::new(card_ref());
     payload.set_slot_override(body(), SlotOverride::new(vec![sid(31)]).unwrap());
@@ -144,6 +179,7 @@ fn plan(state: &DocumentState) -> InstanceRestructure {
     plan_detach(
         state.model(),
         &library,
+        &[],
         sid(30),
         &mut StableIdGenerator::new(7),
         &ManualClock::new(1_000),
@@ -241,6 +277,7 @@ fn plan_detach_refuses_non_instances_and_unresolved_definitions() {
         plan_detach(
             state.model(),
             library,
+            &[],
             sid(node),
             &mut StableIdGenerator::new(1),
             &ManualClock::new(0),
@@ -267,6 +304,7 @@ fn restructure_refuses_unprojected_children_and_bad_shapes_without_changes() {
         insert: Vec::new(),
         insert_stacks: Vec::new(),
         insert_layouts: Vec::new(),
+        insert_guides: Vec::new(),
         moves: Vec::new(),
         remove: Vec::new(),
     };
