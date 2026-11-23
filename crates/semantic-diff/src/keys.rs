@@ -26,6 +26,12 @@ pub use stellar_document::component::instance::keys as instance;
 /// Modifier 속성 key(문서 crate, VI.9.7).
 pub use stellar_document::modifier_metadata::keys as modifier;
 
+/// node 공통 layout item longhand key(문서 crate, IX.11.6·ADR-0086). 문서 node 객체의 명시 layout 속성 경로입니다.
+pub use stellar_document::layout_record::keys as layout;
+
+/// Frame layout container longhand key(문서 crate, IX.11.6·ADR-0086).
+pub use stellar_document::layout_record::frame_keys as layout_container;
+
 /// Image asset 참조(문서 crate, VI.8.2).
 pub const IMAGE_ASSET: PropertyKey = stellar_document::image::IMAGE_PROP_ASSET;
 

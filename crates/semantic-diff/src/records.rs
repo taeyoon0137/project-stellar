@@ -7,7 +7,7 @@
 //! | 객체 | 레코드 |
 //! |---|---|
 //! | Document·Page·View | [`DocumentDefinition`](페이지·View 순서는 `DOCUMENT_PAGES`·`PAGE_VIEWS` 목록) |
-//! | scene `Node` | [`NodeRecord`](필드별 속성 → typed payload, Path·Text는 canonical payload 해석) |
+//! | scene `Node` | [`NodeRecord`](필드별 속성 → typed payload, Path·Text는 canonical payload 해석)와 명시 layout longhand 속성 → [`LayoutRecord`] |
 //! | `Modifier` | [`ModifierStack`](parent = 소유 node, OrderKey 순) |
 //!
 //! - **결정론·왕복**: `document_records(build(R)) == R`(레코드 canonical 정렬 기준)이 성립합니다. 결과는
@@ -33,6 +33,7 @@ use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefi
 use stellar_document::fragment::FragmentPayload;
 use stellar_document::frame::{Border, Clipping, CornerRadius, FramePayload};
 use stellar_document::image::{CropRect, FitMode, ImagePayload, SamplingMode};
+use stellar_document::layout_record::{format_value, LayoutLonghand, LayoutRecord};
 use stellar_document::modifier::{
     BlendMode, BooleanOp, ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack,
 };
@@ -568,6 +569,38 @@ fn modifier_payload(
     })
 }
 
+/// node 객체의 명시 layout longhand 속성에서 record를 복원합니다. key가 layout longhand record key 하나인 속성만
+/// 봅니다. 값은 정규 CSS 값 텍스트여야 하며(`format_value(parse(text)) == text`) 다른 표기는 고쳐 넣지 않고
+/// 거부합니다. node 종류에 붙지 않는 longhand는 문서 validator가 거부합니다.
+fn layout_record(r: &Reader<'_>) -> Result<Option<LayoutRecord>, ProjectionError> {
+    let mut record = LayoutRecord::new(r.object.id());
+    for (path, value) in r.object.properties() {
+        let [key] = path.keys() else {
+            continue;
+        };
+        let Some(longhand) = LayoutLonghand::ALL
+            .into_iter()
+            .find(|l| l.record_key() == *key)
+        else {
+            continue;
+        };
+        if path.tail().is_some() {
+            return Err(r.bad(*key));
+        }
+        let SemanticValue::Text(text) = value else {
+            return Err(r.bad(*key));
+        };
+        let parsed = longhand.parse(text).map_err(|e| r.invalid(*key, e))?;
+        if format_value(&parsed) != *text {
+            return Err(r.invalid(*key, format!("{longhand}: 정규 값 표기가 아닙니다")));
+        }
+        record
+            .set(longhand, parsed)
+            .map_err(|e| r.invalid(*key, e))?;
+    }
+    Ok((!record.is_empty()).then_some(record))
+}
+
 /// 문서 정의(Document·Page·View)를 복원합니다.
 fn definition(
     snapshot: &SemanticSnapshot,
@@ -644,6 +677,9 @@ pub fn document_records(
                     display_name: r.text(keys::DISPLAY_NAME)?,
                     payload: node_payload(object, kind)?,
                 });
+                if let Some(layout) = layout_record(&r)? {
+                    records.layout_records.push(layout);
+                }
             }
             ObjectKind::Modifier(kind) => {
                 let owner = object
@@ -961,5 +997,101 @@ mod tests {
             document_records(&broken, sid(1)).unwrap_err().reason,
             ProjectionFailure::InvalidValue { .. }
         ));
+    }
+
+    /// head 문서에 명시 layout longhand를 더합니다(ADR-0086): root Frame의 container 값, 자식의 item 값.
+    pub(crate) fn with_layout(mut records: DocumentRecords) -> DocumentRecords {
+        use stellar_document::layout_record::LayoutLonghand as L;
+        let record = |node: u64, pairs: &[(L, &str)]| {
+            let mut record = LayoutRecord::new(sid(node));
+            for (longhand, text) in pairs {
+                record
+                    .set(*longhand, longhand.parse(text).unwrap())
+                    .unwrap();
+            }
+            record
+        };
+        records.layout_records = vec![
+            record(
+                10,
+                &[
+                    (L::Display, "grid"),
+                    (L::ColumnGap, "8px"),
+                    (L::GridTemplateColumns, "1fr minmax(0px, 100px)"),
+                ],
+            ),
+            record(11, &[(L::FlexGrow, "1"), (L::Left, "4px")]),
+            record(12, &[(L::AlignSelf, "center")]),
+        ];
+        records.sort_canonical();
+        records
+    }
+
+    #[test]
+    fn layout_records_project_per_longhand_and_round_trip() {
+        let head = with_layout(head_records());
+        stellar_document::validate::validate_document(&head).unwrap();
+        let snapshot = build(&head);
+        let root = snapshot.get(sid(10)).unwrap();
+        assert_eq!(
+            root.property(&root.path(&[keys::layout_container::DISPLAY])),
+            Some(&SemanticValue::Text("grid".into()))
+        );
+        let projected = document_records(&snapshot, sid(1)).unwrap().records;
+        assert_eq!(projected, head);
+
+        // longhand 하나만 바꾸면 그 경로 하나만 다릅니다.
+        let mut working = head.clone();
+        working.layout_records[0]
+            .set(
+                stellar_document::layout_record::LayoutLonghand::ColumnGap,
+                stellar_document::layout_record::LayoutLonghand::ColumnGap
+                    .parse("12px")
+                    .unwrap(),
+            )
+            .unwrap();
+        let changes = crate::diff::diff(&snapshot, &build(&working));
+        let paths: Vec<_> = changes
+            .changes()
+            .iter()
+            .filter_map(|c| c.property_path().cloned())
+            .collect();
+        assert_eq!(
+            paths,
+            vec![stellar_core_types::property::PropertyPath::with_keys(
+                sid(10),
+                vec![keys::layout_container::COLUMN_GAP]
+            )]
+        );
+        // longhand를 지우면(미설정) 그 경로가 사라집니다.
+        let mut unset = head.clone();
+        unset.layout_records.retain(|r| r.node != sid(12));
+        let restored = document_records(&build(&unset), sid(1)).unwrap().records;
+        assert_eq!(restored, unset);
+    }
+
+    #[test]
+    fn layout_projection_rejects_orphans_and_non_canonical_text() {
+        let mut orphan = with_layout(head_records());
+        orphan.layout_records[0].node = sid(99);
+        let mut builder = crate::build::SnapshotBuilder::new();
+        assert_eq!(
+            builder.add_document(&orphan),
+            Err(crate::snapshot::SnapshotError::LayoutOwnerMissing { node: sid(99) })
+        );
+        // 정규 표기가 아닌 값(`8.0px`)과 문자열이 아닌 값은 고쳐 넣지 않고 거부합니다.
+        let snapshot = build(&with_layout(head_records()));
+        for bad in [
+            SemanticValue::Text("8.0px".into()),
+            SemanticValue::Text("var(--gap)".into()),
+            SemanticValue::Uint(8),
+        ] {
+            let mut broken = snapshot.clone();
+            let mut root = broken.remove(sid(10)).unwrap();
+            root.set_property(root.path(&[keys::layout_container::COLUMN_GAP]), bad)
+                .unwrap();
+            broken.insert(root).unwrap();
+            assert!(document_records(&broken, sid(1)).is_err());
+        }
     }
 }

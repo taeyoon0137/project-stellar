@@ -7,7 +7,7 @@
 //! | 입력 | 객체 |
 //! |---|---|
 //! | [`ProjectMetadata`] | `Project` 1개(항목은 `PROJECT_METADATA` + 이름 segment) |
-//! | [`DocumentRecords`] | `Document`·`Page`·`View`, scene `Node`, `Modifier` |
+//! | [`DocumentRecords`] | `Document`·`Page`·`View`, scene `Node`(명시 layout longhand 포함), `Modifier` |
 //! | [`ComponentLibrary`] | `Component`, 정의 tree `Node`(Origin::Component), `ComponentSlot` |
 //! | [`TokenEntry`] | `Token` |
 //! | [`AssetEntry`] | `Asset` |
@@ -24,6 +24,12 @@
 //! 합니다(XIV.3.4, XIV.10.2). 단, Path·Text는 내부 offset·point id가 서로 묶여 있어 payload
 //! 전체를 문서 canonical 인코딩 하나로 담습니다. 각 `add_*`는 원자적입니다 — 오류가 나면
 //! builder는 바뀌지 않습니다.
+//!
+//! **layout record(ADR-0086)**: node의 명시 layout longhand는 longhand마다 그 node 객체의 속성 하나입니다. 경로는
+//! longhand의 record key(`LayoutLonghand::record_key`, item `0x0010`–`0x0025`, Frame container `0x0110`–`0x0121`)
+//! 하나이고 값은 텍스트 원본 `layout` 줄과 같은 정규 CSS 값 텍스트(`layout_record::format_value`)입니다. 명시하지
+//! 않은 longhand는 속성이 없습니다. 그래서 한 longhand의 명시·변경·지우기가 Git status·stage·merge에서 따로
+//! 보이고 따로 병합됩니다. payload 크기 종류의 `width`·`height`는 payload 속성이라 record에 없습니다.
 
 use stellar_core_types::color::ColorSpace;
 use stellar_core_types::ids::StableId;
@@ -37,6 +43,7 @@ use stellar_document::component::variant_override::VariantOverrideSet;
 use stellar_document::definitions::DocumentDefinition;
 use stellar_document::frame::{Clipping, FramePayload};
 use stellar_document::image::{FitMode, ImagePayload, SamplingMode};
+use stellar_document::layout_record::{format_value, LayoutRecord};
 use stellar_document::modifier::{ModifierEntry, ModifierPayload};
 use stellar_document::node_kind::NodeKind;
 use stellar_document::payload_metadata::{image_keys, shape_keys};
@@ -170,8 +177,23 @@ impl SnapshotBuilder {
         let document = records.definition.id;
         let origin = Origin::Document(document);
         let mut objects = definition_objects(&records.definition)?;
+        let first_node = objects.len();
         for node in &records.nodes {
             objects.push(project_document_node(document, node)?);
+        }
+        if !records.layout_records.is_empty() {
+            let index: std::collections::BTreeMap<StableId, usize> = records
+                .nodes
+                .iter()
+                .enumerate()
+                .map(|(offset, node)| (node.id, first_node + offset))
+                .collect();
+            for record in &records.layout_records {
+                let at = *index
+                    .get(&record.node)
+                    .ok_or(SnapshotError::LayoutOwnerMissing { node: record.node })?;
+                project_layout(&mut objects[at], record)?;
+            }
         }
         for stack in &records.modifier_stacks {
             for entry in stack.entries() {
@@ -502,6 +524,21 @@ pub fn project_document_node(
     )?;
     project_payload(&mut object, &node.payload)?;
     Ok(object)
+}
+
+/// 명시 layout longhand를 longhand마다 속성 하나로 넣습니다(ADR-0086).
+pub fn project_layout(
+    object: &mut SemanticObject,
+    record: &LayoutRecord,
+) -> Result<(), SnapshotError> {
+    for (longhand, value) in record.iter() {
+        put(
+            object,
+            longhand.record_key(),
+            SemanticValue::Text(format_value(value)),
+        )?;
+    }
+    Ok(())
 }
 
 /// 공통 node 필드(VI.2.2)를 담은 node 객체.
