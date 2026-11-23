@@ -8,16 +8,17 @@
 //!   자신 또는 조상이 lease root) 그 lease와 겹칩니다. 위치가 바뀐 node가 lease root의 진조상이거나, View root가
 //!   lease subtree를 품으면 겹칩니다. 소속은 [`LeaseTable::holder`], 조상 관계는 [`SubtreeLock::overlaps`]로 판정해
 //!   사용자 편집 판정과 같은 규칙을 씁니다.
-//! - **분할**([`partition_external`]): 외부 변경 집합(`base`→`incoming`, [`ApplyExternalSnapshot::between`]) 중 창에서
-//!   바뀌지 않은 레코드의 변경만 바로 적용할 수 있습니다(`applicable`). 창에서도 바뀐 레코드(`divergent`)는
-//!   덮어쓰지 않고 semantic reconciliation(XIII.3.4) 입력으로 넘깁니다. 그래서 에이전트 변경이 자동으로 지워지지
-//!   않습니다.
+//! - **분할**([`partition_external`]): 외부 변경 집합(`base`→`incoming`, [`ApplyExternalSnapshot::between_models`],
+//!   레코드와 Component Context) 중 창에서 바뀌지 않은 레코드의 변경만 바로 적용할 수 있습니다(`applicable`). 창에서도
+//!   바뀐 레코드(`divergent`)는 덮어쓰지 않고 semantic reconciliation(XIII.3.4) 입력으로 넘깁니다. 그래서 에이전트
+//!   변경이 자동으로 지워지지 않습니다. Context는 문서 하나에 한 단위([`RecordTarget::Context`], ADR-0114 결정 1)라
+//!   창과 외부가 모두 Context를 바꿨으면 Context 전체가 `divergent`입니다(항목 단위 병합은 reconciliation의 semantic
+//!   snapshot이 합니다, ADR-0123 결정 3).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use stellar_core_types::ids::StableId;
 use stellar_document::model::DocumentModel;
-use stellar_document::records::DocumentRecords;
 
 use crate::command::CommandError;
 use crate::lock::lease::{LeaseId, LeaseTable, SubtreeLock};
@@ -128,28 +129,30 @@ pub struct ExternalPartition {
 }
 
 /// 외부 변경을 창 문서에 바로 적용할 부분과 reconciliation으로 넘길 부분으로 나눕니다. `base`는 창이 마지막으로
-/// 맞춘 원본, `incoming`은 외부 원본입니다. 셋은 같은 문서여야 합니다.
+/// 맞춘 원본, `incoming`은 외부 원본입니다(둘 다 레코드와 영속 Context). 셋은 같은 문서여야 합니다.
+///
+/// 바로 적용하는 Context 변경의 이전 값은 창 문서의 Context 거울입니다(창의 영속 Context가 `base`와 같을 때만
+/// 적용하므로 결과는 외부 원본의 영속 Context이고, Undo가 창 거울 전체를 되살립니다, ADR-0114 결정 1).
 pub fn partition_external(
-    base: &DocumentRecords,
+    base: &DocumentModel,
     current: &DocumentModel,
-    incoming: &DocumentRecords,
+    incoming: &DocumentModel,
 ) -> Result<ExternalPartition, CommandError> {
-    let mut base = base.clone();
-    base.sort_canonical();
-    let (base_model, _) =
-        DocumentModel::from_records(base).map_err(|_| CommandError::InvalidRequest {
-            reason: "기준 원본을 문서로 만들 수 없습니다",
-        })?;
-    let external = ApplyExternalSnapshot::between(&base_model, incoming)?;
-    let local = ApplyExternalSnapshot::between(&base_model, &current.to_records()?)?;
+    let external = ApplyExternalSnapshot::between_models(base, incoming)?;
+    let local = ApplyExternalSnapshot::between_models(base, current)?;
     let local_targets: BTreeSet<RecordTarget> =
         local.changes.iter().map(RecordTarget::of).collect();
     let external_targets: BTreeSet<RecordTarget> =
         external.changes.iter().map(RecordTarget::of).collect();
-    let (divergent, applicable): (Vec<RecordChange>, Vec<RecordChange>) = external
+    let (divergent, mut applicable): (Vec<RecordChange>, Vec<RecordChange>) = external
         .changes
         .into_iter()
         .partition(|change| local_targets.contains(&RecordTarget::of(change)));
+    for change in &mut applicable {
+        if let RecordChange::Context { before, .. } = change {
+            **before = current.context().clone();
+        }
+    }
     Ok(ExternalPartition {
         applicable: ApplyExternalSnapshot {
             changes: applicable,

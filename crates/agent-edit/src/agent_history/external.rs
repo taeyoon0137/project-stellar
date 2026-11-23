@@ -1,7 +1,8 @@
 //! 외부 변경 batch의 semantic diff·lease 겹침 판정과 반영 (XIX.7.1~XIX.7.3, ADR-0100).
 //!
 //! 1. [`analyze_external`]: 창이 마지막으로 맞춘 원본(`base`)과 외부 원본(`incoming`)의 semantic diff(ops
-//!    `diff_records`, `stellar diff`와 같은 함수)를 계산하고, 바뀐 객체를 대상([`ExternalTarget`])으로 바꿔
+//!    `diff_documents` 문서 범위, 레코드와 Component Context, 창 reconciliation과 같은 투영)를 계산하고, 바뀐 객체를
+//!    대상([`ExternalTarget`])으로 바꿔
 //!    `stellar_commands::agent_external::overlapping_leases`로 lease 겹침을 판정합니다. 같은 입력으로
 //!    `partition_external`이 창 문서에 바로 적용할 레코드 변경과 reconciliation으로 넘길 레코드를 나눕니다.
 //!    창(`base`→`current`)과 외부(`base`→`incoming`)가 같은 객체·속성을 서로 다르게 바꾼 항목은 semantic conflict
@@ -10,6 +11,10 @@
 //!    rollback 없음)로 끝냅니다(XIX.7.2). 겹치지 않으면 세션을 유지합니다(XIX.7.3). 어느 경우든 창에서 바뀌지 않은
 //!    레코드의 외부 변경만 System 출처 transaction으로 돌려주고(에이전트·사용자의 저장 전 변경을 덮어쓰지 않음),
 //!    창과 외부가 모두 바꾼 레코드와 semantic conflict 후보는 reconciliation 입력(XIII.3.4)으로 돌려줍니다.
+//!
+//! Context 변경의 lease 대상: provision은 provider node의 변경입니다(provider가 lease subtree 안이면 겹침). key·
+//! requirement·Slot 공개 목록은 node에 붙지 않아 lease와 겹치지 않고, 창도 Context를 바꿨으면 reconciliation 입력입니다
+//! (ADR-0123 결정 3).
 //!
 //! 다른 프로세스가 쥔 lease와 겹치면 그 프로세스가 같은 외부 변경을 보고 자기 세션을 끝냅니다. 이 창은 그 lease를
 //! `foreign_overlaps`로 보고만 합니다.
@@ -28,7 +33,7 @@ use stellar_ops::commands::id::CommandId;
 use stellar_ops::commands::lock::lease::{LeaseId, LeaseTable};
 use stellar_ops::commands::transaction::CommandTransaction;
 use stellar_ops::core_types::ids::StableId;
-use stellar_ops::diff::{diff_records, DiffEntry, DiffReport};
+use stellar_ops::diff::{diff_documents, DiffEntry, DiffReport, DocumentSource};
 use stellar_ops::query::OpsValue;
 
 use super::{AgentEditSessions, EndReason, SessionContext, SessionEndReport, SessionError};
@@ -89,20 +94,29 @@ impl ExternalAnalysis {
     }
 }
 
-fn model_of(records: &DocumentRecords) -> Result<DocumentModel, ExternalError> {
-    let mut records = records.clone();
-    records.sort_canonical();
-    DocumentModel::from_records(records)
-        .map(|(model, _)| model)
-        .map_err(|e| ExternalError::Projection(format!("{e:?}")))
+fn model_of(document: &DocumentSource) -> Result<DocumentModel, ExternalError> {
+    let mut document = document.clone();
+    document.records.sort_canonical();
+    document
+        .into_model()
+        .map_err(|e| ExternalError::Projection(e.0))
 }
 
-/// semantic diff 항목을 lease 판정 대상으로 바꿉니다. 문서 범위 객체(node·modifier·View·페이지)만 있습니다.
+/// semantic diff 항목을 lease 판정 대상으로 바꿉니다. 문서 범위 객체(node·modifier·View·페이지)와 provision(provider
+/// node, 모듈 문서)만 대상이 있습니다.
 fn targets(
     entries: &[DiffEntry],
     models: [&DocumentModel; 2],
     records: [&DocumentRecords; 2],
 ) -> Vec<ExternalTarget> {
+    let provider = |id: StableId| {
+        let mut providers: Vec<StableId> = models
+            .iter()
+            .filter_map(|m| m.context().provision(id).map(|p| p.provider()))
+            .collect();
+        providers.dedup();
+        providers
+    };
     let modifier_owner = |id: StableId| {
         records.iter().find_map(|r| {
             r.modifier_stacks
@@ -125,6 +139,11 @@ fn targets(
         }
         if let Some(owner) = modifier_owner(id) {
             out.push(ExternalTarget::Node(owner));
+            continue;
+        }
+        let providers = provider(id);
+        if !providers.is_empty() {
+            out.extend(providers.into_iter().map(ExternalTarget::Node));
             continue;
         }
         let definitions = models.map(DocumentModel::definition);
@@ -213,28 +232,33 @@ fn conflict_candidates(
     out
 }
 
-/// 외부 변경 batch를 분석합니다(문서를 바꾸지 않음). `current`는 지금 창 문서입니다.
+/// 외부 변경 batch를 분석합니다(문서를 바꾸지 않음). `current`는 지금 창 문서, `base`·`incoming`은 레코드와 영속
+/// Context입니다.
 pub fn analyze_external(
     current: &DocumentModel,
-    base: &DocumentRecords,
-    incoming: &DocumentRecords,
+    base: &DocumentSource,
+    incoming: &DocumentSource,
     table: &LeaseTable,
 ) -> Result<ExternalAnalysis, ExternalError> {
-    let diff = diff_records(&[base], &[incoming]).map_err(|e| ExternalError::Projection(e.0))?;
+    let project = |e: stellar_ops::diff::ProjectionError| ExternalError::Projection(e.0);
+    let diff = diff_documents(&[base.input()], &[incoming.input()], None).map_err(project)?;
+    let base_model = model_of(base)?;
     let incoming_model = model_of(incoming)?;
     let overlaps = overlapping_leases(
         table,
         current,
         &incoming_model,
-        targets(&diff.entries, [current, &incoming_model], [base, incoming]),
+        targets(
+            &diff.entries,
+            [current, &incoming_model],
+            [&base.records, &incoming.records],
+        ),
     );
-    let partition = partition_external(base, current, incoming)
+    let partition = partition_external(&base_model, current, &incoming_model)
         .map_err(|e| ExternalError::Partition(e.to_string()))?;
-    let current_records = current
-        .to_records()
-        .map_err(|e| ExternalError::Projection(e.to_string()))?;
+    let current_source = DocumentSource::of_model(current).map_err(project)?;
     let local =
-        diff_records(&[base], &[&current_records]).map_err(|e| ExternalError::Projection(e.0))?;
+        diff_documents(&[base.input()], &[current_source.input()], None).map_err(project)?;
     let conflicts = conflict_candidates(&local, &diff);
     Ok(ExternalAnalysis {
         diff,
@@ -266,8 +290,8 @@ pub fn respond_to_external(
     sessions: &mut AgentEditSessions,
     ctx: &mut SessionContext<'_>,
     history: &mut dyn AgentHistorySink,
-    base: &DocumentRecords,
-    incoming: &DocumentRecords,
+    base: &DocumentSource,
+    incoming: &DocumentSource,
     table: &LeaseTable,
     entry_id: CommandId,
     apply_id: CommandId,

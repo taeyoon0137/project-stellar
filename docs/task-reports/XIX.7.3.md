@@ -48,3 +48,12 @@
 ## 근거 커밋
 
 - 이 보고서를 담은 `Task(XIX.7.3)` 커밋(브랜치 `lane/agent-history`).
+
+## 후속 보완 (2026-11-24, 외부 변경 분할의 Context)
+
+- 결정: [ADR-0123](../adr/ADR-0123-context-merge-single-path.md) 결정 3.
+- `partition_external`이 세 문서 모델(레코드 + Context)을 `ApplyExternalSnapshot::between_models`로 비교합니다. 창이
+  Context를 바꾸지 않았으면 외부 Context 변경을 바로 적용하고(이전 값은 창의 Context 거울), 창도 바꿨으면 Context 전체를
+  reconciliation 입력(`divergent`)으로 넘깁니다(저장 전 Context 변경을 덮어쓰지 않음).
+- 시험: `agent_external::tests::partition_compares_the_context_too`.
+- 근거 커밋: 분석(XIX.7.1)과 같은 변경이라 `Task(XIX.7.1)` 커밋 하나에 담았습니다(브랜치 `lane/context-semantic-merge`).

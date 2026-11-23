@@ -51,3 +51,14 @@
 ## 근거 커밋
 
 - 이 보고서를 담은 `Task(XIX.7.1)` 커밋(브랜치 `lane/agent-history`).
+
+## 후속 보완 (2026-11-24, 외부 변경 분석의 Context)
+
+- 결정: [ADR-0123](../adr/ADR-0123-context-merge-single-path.md) 결정 3.
+- `analyze_external`·`respond_to_external`이 `base`·`incoming`을 레코드와 영속 Context(`DocumentSource`)로 받고, 분석 diff와 창
+  쪽 diff를 문서 범위 `diff_documents`로 계산합니다. 밖에서 바꾼 Context key·provision·requirement·Slot 공개 목록이 diff와
+  semantic conflict 후보에 나타납니다.
+- lease 겹침: provision 변경은 provider node 변경이라 provider가 lease subtree 안이면 겹칩니다. key·목록은 node가 없어
+  겹치지 않습니다.
+- 시험: `agent_history::external::tests::external_context_changes_are_diffed_partitioned_and_checked_for_lease_overlap`,
+  `context_changed_on_both_sides_goes_to_reconciliation_with_a_conflict_candidate`.
