@@ -5,14 +5,18 @@
 //! 비활성 조합은 문서를 바꾸지 않고 [`TransformError::Disabled`]로 이유 코드를 돌려줍니다(도움말).
 
 use stellar_commands::arrange::align::{model_style_set, Align, Distribute};
+use stellar_commands::arrange::group::{frame_selection, group, ungroup};
+use stellar_commands::arrange::order::order_commands;
 pub use stellar_commands::arrange::plan::ScaleOrigin;
 use stellar_commands::arrange::plan::{self, Geometry, PlanError};
 use stellar_commands::flip::FlipAxis;
 use stellar_commands::scale::Skipped;
+use stellar_commands::selection::Selection;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::value::Transform2D;
+use stellar_document::model::SiblingOrder;
 
-use super::{selection_roots, FreshIds, TransformError};
+use super::{geometries, selection_roots, union, FreshIds, NodeGeometry, TransformError};
 use crate::canvas::CanvasScene;
 use crate::window_session::{history_label, ProjectWindowSession};
 
@@ -124,6 +128,90 @@ pub fn arrange_grid(
     )?;
     ids.finish()?;
     super::commit(window, commands, history_label::MOVE)
+}
+
+/// 순서 명령 결과.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OrderOutcome {
+    /// 문서가 바뀌었는지.
+    pub changed: bool,
+    /// 흐름 컨테이너의 흐름 순서도 바뀌었는지(도움말·접근성 알림).
+    pub flow_order_changed: bool,
+}
+
+/// Bring Forward·Send Backward·Bring to Front·Send to Back.
+pub fn order(
+    window: &mut ProjectWindowSession,
+    direction: SiblingOrder,
+) -> Result<OrderOutcome, TransformError> {
+    let (model, _root, roots) = selection_roots(window)?;
+    let set = model_style_set(model);
+    let plan = order_commands(model, &set, &roots, direction)?;
+    let flow = plan.flow_order_changed;
+    let changed = super::commit(window, plan.commands, history_label::REORDER)?;
+    Ok(OrderOutcome {
+        changed,
+        flow_order_changed: flow && changed,
+    })
+}
+
+/// Group: 고른 node를 새 Fragment로 묶고 그 묶음을 선택합니다. 새 묶음 id를 돌려줍니다.
+pub fn group_selection(window: &mut ProjectWindowSession) -> Result<StableId, TransformError> {
+    let (model, _root, roots) = selection_roots(window)?;
+    let mut ids = FreshIds::default();
+    let id = ids.fresh();
+    let commands = group(model, &roots, id)?;
+    ids.finish()?;
+    let tx = super::transaction(window, commands)?;
+    window
+        .apply_and_select(&tx, Selection::new([id], Some(id)), history_label::NONE)
+        .map_err(|error| TransformError::Edit(format!("{error:?}")))?;
+    Ok(id)
+}
+
+/// Frame Selection: 고른 node를 그 경계 크기의 새 Frame으로 감싸고 그 Frame을 선택합니다.
+pub fn frame_selection_of(
+    window: &mut ProjectWindowSession,
+    scene: &CanvasScene,
+) -> Result<StableId, TransformError> {
+    let (model, _root, roots) = selection_roots(window)?;
+    let set = model_style_set(model);
+    let targets = geometries(scene, &roots)?;
+    let bounds = union(targets.iter().filter_map(NodeGeometry::parent_bounds))
+        .ok_or(TransformError::Stale)?;
+    let mut ids = FreshIds::default();
+    let id = ids.fresh();
+    let commands = frame_selection(model, &set, &roots, bounds, id, &mut || ids.fresh())?;
+    ids.finish()?;
+    let tx = super::transaction(window, commands)?;
+    window
+        .apply_and_select(&tx, Selection::new([id], Some(id)), history_label::NONE)
+        .map_err(|error| TransformError::Edit(format!("{error:?}")))?;
+    Ok(id)
+}
+
+/// Ungroup: 하나뿐인 선택 Fragment·Frame을 풀고 그 자식을 선택합니다.
+pub fn ungroup_selection(
+    window: &mut ProjectWindowSession,
+) -> Result<Vec<StableId>, TransformError> {
+    let (model, _root, roots) = selection_roots(window)?;
+    let [node] = roots.as_slice() else {
+        return Err(TransformError::Disabled("single-group"));
+    };
+    let children = model.children_in_order(*node);
+    let mut ids = FreshIds::default();
+    let commands = ungroup(model, *node, &mut || ids.fresh())?;
+    ids.finish()?;
+    let tx = super::transaction(window, commands)?;
+    let primary = children.last().copied();
+    window
+        .apply_and_select(
+            &tx,
+            Selection::new(children.clone(), primary),
+            history_label::NONE,
+        )
+        .map_err(|error| TransformError::Edit(format!("{error:?}")))?;
+    Ok(children)
 }
 
 /// Scale: 선택을 `factor`배 확대합니다. 쓰지 못한 길이 값(`border-width`·`font-size` 등)을 돌려줍니다.
@@ -352,6 +440,45 @@ mod tests {
             Err(TransformError::Disabled("flow-child"))
         );
         assert_eq!(w.revision(), revision);
+    }
+
+    #[test]
+    fn order_and_grouping_commands_round_trip() {
+        let (_dir, mut w) = open("order-group", &canvas_document());
+        let original = model(&w).to_records().unwrap();
+        select(&mut w, &[13, 15]);
+        let outcome = order(&mut w, SiblingOrder::Front).unwrap();
+        assert!(outcome.changed && !outcome.flow_order_changed);
+        let order_now = model(&w).children_in_order(sid(10));
+        assert_eq!(&order_now[order_now.len() - 2..], &[sid(13), sid(15)]);
+        assert!(w.undo().unwrap());
+        // Group 후 Ungroup이면 semantic snapshot(레코드)이 같습니다(순서 key 값만 새 key일 수 있음).
+        select(&mut w, &[13, 14]);
+        let group = group_selection(&mut w).unwrap();
+        assert_eq!(model(&w).children_in_order(group), vec![sid(13), sid(14)]);
+        assert_eq!(w.view().selection().ids(), [group]);
+        let children = ungroup_selection(&mut w).unwrap();
+        assert_eq!(children, vec![sid(13), sid(14)]);
+        // Group 뒤 Ungroup이면 순서 key까지 레코드 전체가 같습니다(semantic snapshot도 같음).
+        assert_eq!(model(&w).to_records().unwrap(), original);
+        // Frame Selection은 world 위치를 지킵니다.
+        select(&mut w, &[13, 14]);
+        let before = (bounds(&w, 13), bounds(&w, 14));
+        let s = scene(&w);
+        let frame = frame_selection_of(&mut w, &s).unwrap();
+        assert!(matches!(
+            model(&w).payload(frame),
+            Some(NodePayload::Frame(_))
+        ));
+        assert!(near(bounds(&w, 13), before.0) && near(bounds(&w, 14), before.1));
+    }
+
+    #[test]
+    fn flow_container_order_reports_the_flow_notice() {
+        let (_dir, mut w) = flow_document("flex");
+        select(&mut w, &[30]);
+        let outcome = order(&mut w, SiblingOrder::Forward).unwrap();
+        assert!(outcome.changed && outcome.flow_order_changed);
     }
 
     #[test]
