@@ -10,8 +10,12 @@
 //!    `design/components` 원본에서 정의를 찾고, 원본 파일 hash가 요청과 같을 때만 같은 transaction의
 //!    InsertNode 하나가 됩니다. 다르면 [`ApplyError::ComponentSourceChanged`]입니다.
 //!    registry 속성 설정([`CommandInput::SetProperty`])은 앞 command까지 적용한 문서에서 속성 패널·`stellar css`와
-//!    같은 선언 붙여넣기 경로(`css_value::paste_declarations`)로 command가 됩니다. 속성은 registry 이름 또는
-//!    numeric key(`0x0303`)로 받습니다(ADR-0075 개정).
+//!    같은 선언 붙여넣기 경로([`crate::css::paste_plan`])로 command가 됩니다. 속성은 registry 이름 또는
+//!    numeric key(`0x0303`)로 받습니다(ADR-0075 개정). 속성 패널 행이 없는 CSS layout longhand(`display`,
+//!    `padding-top` 등)는 그 경로가 node의 명시 layout record로 바꿉니다(ADR-0086).
+//!    명시 layout longhand 두기·지우기([`CommandInput::SetLayoutProperty`]·[`CommandInput::UnsetProperty`])는 문서
+//!    없이 `SetLayoutProperty`·`UnsetProperty` command 하나가 됩니다. 값은 텍스트 원본 `layout` 줄과 같은 문서
+//!    parser(`LayoutLonghand::parse`)로 읽습니다.
 //! 3. 대상 문서를 읽어 [`DocumentState::execute_transaction`]으로 전부 적용하거나 전부 롤백합니다.
 //!    validator가 거부하면 [`ApplyError::Rejected`]입니다. 잠긴 노드를 바꾸는 결과도 같은 오류로
 //!    거부합니다(D8, 앱 레이어 토글과 같은 규칙: 잠긴 조상 아래 노드는 바꾸지 않고, 잠금 해제는 그 노드의
@@ -36,16 +40,17 @@ use std::path::Path;
 
 use stellar_commands::codec::{decode_command, CommandCodecError};
 use stellar_commands::command::Command;
-use stellar_commands::css_value::{paste_declarations, NoTokens};
 use stellar_commands::id::{CommandId, CommandOrigin};
 use stellar_commands::kind::CommandKind;
 use stellar_commands::node_ops::{DeleteSubtree, InsertNode, MoveNode};
 use stellar_commands::property::{PropertyValue, SetProperty};
 use stellar_commands::request::CommandRequest;
 use stellar_commands::state::DocumentState;
+use stellar_commands::style_defaults::{SetLayoutProperty, UnsetProperty};
 use stellar_commands::transaction::CommandTransaction;
 use stellar_document::component::instance::ComponentInstancePayload;
 use stellar_document::frame::keys as frame_keys;
+use stellar_document::layout_record::LayoutLonghand;
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{
     ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack,
@@ -164,6 +169,24 @@ pub enum CommandInput {
         /// CSS 값 텍스트(`;`·`{`·`}` 없음).
         value: String,
     },
+    /// node의 명시 layout longhand 하나를 둡니다(ADR-0086 결정 10). 세트 값과 같아도 명시로 남습니다. 속성 패널
+    /// 행과 이름이 같은 longhand(`left`, Text의 `width`)도 layout record에 둡니다.
+    SetLayoutProperty {
+        /// 대상 node.
+        node: StableId,
+        /// CSS layout longhand 이름(`display`, `padding-top`, `grid-template-columns` …).
+        property: String,
+        /// CSS 값 텍스트.
+        value: String,
+    },
+    /// node의 명시 layout longhand 하나를 지웁니다. 그 뒤 값은 활성 기본값 세트가 정합니다. 명시 값이 없으면
+    /// 적용할 때 거부합니다.
+    UnsetProperty {
+        /// 대상 node.
+        node: StableId,
+        /// CSS layout longhand 이름.
+        property: String,
+    },
     /// 종류 이름 + canonical bytes(`encode_command`, VII.1.2).
     Canonical {
         /// 선언한 종류 이름([`CommandKind::name`]).
@@ -187,7 +210,7 @@ pub struct ComponentInstanceInsert {
 }
 
 /// 필드 형식으로 받는 종류 이름.
-pub const FIELD_KINDS: [&str; 12] = [
+pub const FIELD_KINDS: [&str; 14] = [
     "set-visible",
     "set-locked",
     "rename",
@@ -200,7 +223,18 @@ pub const FIELD_KINDS: [&str; 12] = [
     "move-node",
     "insert-component-instance",
     "set-property",
+    "set-layout-property",
+    "unset-property",
 ];
+
+/// layout longhand 이름을 풉니다. 모르는 이름은 `unknown-property`입니다.
+fn layout_longhand(property: &str) -> Result<LayoutLonghand, CommandInputError> {
+    LayoutLonghand::from_name(property).ok_or_else(|| {
+        CommandInputError::Invalid(format!(
+            "unknown-property: {property:?}는 layout longhand가 아닙니다"
+        ))
+    })
+}
 
 impl CommandInput {
     /// 단일 canonical command로 나타냅니다. 이전 size 묶음 bytes도 이 형식으로 유지합니다.
@@ -226,6 +260,27 @@ impl CommandInput {
                 name.clone(),
             ))),
             CommandInput::ReplaceText(edit) => Ok(Command::ReplaceText(edit.clone())),
+            CommandInput::SetLayoutProperty {
+                node,
+                property,
+                value,
+            } => {
+                let longhand = layout_longhand(property)?;
+                let value = longhand.parse(value).map_err(|e| {
+                    CommandInputError::Invalid(format!("{}: {property}: {}", e.code, e.message))
+                })?;
+                Ok(Command::SetLayoutProperty(SetLayoutProperty {
+                    node: *node,
+                    longhand,
+                    value,
+                }))
+            }
+            CommandInput::UnsetProperty { node, property } => {
+                Ok(Command::UnsetProperty(UnsetProperty {
+                    node: *node,
+                    longhand: layout_longhand(property)?,
+                }))
+            }
             CommandInput::SetFrameSize { node, size } => Ok(Command::SetProperty(SetProperty {
                 node: *node,
                 key: frame_keys::SIZE,
@@ -787,7 +842,7 @@ fn paste_property(
             StableId::NIL
         }
     };
-    let plan = paste_declarations(model, &[node], declaration, &NoTokens, &mut new_id)
+    let plan = crate::css::paste_plan(model, &[node], declaration, &mut new_id)
         .map_err(|e| invalid(format!("{}: {}", e.code, e.message)))?;
     if let Some(error) = id_error.into_inner() {
         return Err(ApplyError::Save(format!(
@@ -2163,5 +2218,137 @@ mod tests {
         );
         let renamed = records.nodes.iter().find(|n| n.id == root).unwrap();
         assert_eq!(renamed.display_name, "Placed");
+    }
+
+    #[test]
+    fn layout_longhands_are_set_and_unset_through_apply_and_saved() {
+        use crate::test_support::large_document;
+        use stellar_document::layout_record::LayoutLonghand;
+
+        let tmp = TempDir::new("apply-layout-property");
+        let dir = ProjectDir {
+            path: tmp.path.join("project"),
+            locks: tmp.path.join("user-data").join("locks"),
+            _tmp: tmp,
+        };
+        let model = large_document(4);
+        scaffold_project(&dir.path);
+        save_documents(&dir.path, &[&model]);
+        let records = model.to_records().unwrap();
+        let root = records
+            .nodes
+            .iter()
+            .find(|n| n.parent.is_none())
+            .unwrap()
+            .id;
+        let fragment = records
+            .nodes
+            .iter()
+            .find(|n| matches!(n.payload, NodePayload::Fragment(_)))
+            .unwrap()
+            .id;
+        let request = |commands: Vec<CommandInput>| ApplyRequest {
+            base_revision: open_snapshot(&dir.path).unwrap().revision(),
+            document: model.document_id(),
+            commands,
+        };
+        let layout = |property: &str, value: &str| CommandInput::SetLayoutProperty {
+            node: root,
+            property: property.into(),
+            value: value.into(),
+        };
+        let reopened = || {
+            open_snapshot(&dir.path)
+                .unwrap()
+                .document_model(model.document_id())
+                .unwrap()
+        };
+        // 명시 longhand 두기와, 속성 패널 행이 없는 layout longhand를 set-property로 두기를 한 transaction으로.
+        let saved = apply(
+            &dir.path,
+            &request(vec![
+                layout("display", "flex"),
+                layout("grid-template-columns", "1fr 2fr"),
+                CommandInput::SetProperty {
+                    node: root,
+                    property: "padding-top".into(),
+                    value: "4px".into(),
+                },
+            ]),
+            ApplyMode::Write,
+            &locks(&dir),
+        )
+        .unwrap();
+        assert_eq!(saved.command_count, 3);
+        assert_eq!(saved.diff.entries.len(), 3, "{:?}", saved.diff.entries);
+        let after = reopened();
+        let record = after.layout_record(root).unwrap();
+        assert_eq!(
+            record.get(LayoutLonghand::Display),
+            Some(&LayoutLonghand::Display.parse("flex").unwrap())
+        );
+        assert_eq!(
+            record.get(LayoutLonghand::PaddingTop),
+            Some(&LayoutLonghand::PaddingTop.parse("4px").unwrap())
+        );
+        // 지우기: 명시 값이 사라지고 세트 값으로 돌아갑니다.
+        apply(
+            &dir.path,
+            &request(vec![CommandInput::UnsetProperty {
+                node: root,
+                property: "display".into(),
+            }]),
+            ApplyMode::Write,
+            &locks(&dir),
+        )
+        .unwrap();
+        let after = reopened();
+        assert!(after
+            .layout_record(root)
+            .unwrap()
+            .get(LayoutLonghand::Display)
+            .is_none());
+        // 모르는 longhand·받지 않는 값은 입력 오류, 명시 값 없는 지우기·Fragment의 record는 적용 거부입니다.
+        let before = file_digest(&dir.path);
+        for (input, invalid) in [
+            (layout("no-such", "1"), true),
+            (layout("display", "var(--x)"), true),
+            (layout("column-gap", "1em"), true),
+            (
+                CommandInput::UnsetProperty {
+                    node: root,
+                    property: "display".into(),
+                },
+                false,
+            ),
+            (
+                CommandInput::SetLayoutProperty {
+                    node: fragment,
+                    property: "flex-grow".into(),
+                    value: "1".into(),
+                },
+                false,
+            ),
+        ] {
+            let error = apply(
+                &dir.path,
+                &request(vec![input]),
+                ApplyMode::Write,
+                &locks(&dir),
+            )
+            .unwrap_err();
+            if invalid {
+                assert!(
+                    matches!(error, ApplyError::InvalidCommand { index: 0, .. }),
+                    "{error:?}"
+                );
+            } else {
+                assert!(
+                    matches!(error, ApplyError::Rejected { index: 0, .. }),
+                    "{error:?}"
+                );
+            }
+        }
+        assert_eq!(file_digest(&dir.path), before);
     }
 }

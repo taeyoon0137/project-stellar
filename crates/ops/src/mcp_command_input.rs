@@ -157,6 +157,18 @@ pub const FIELD_SPECS: &[FieldSpec] = &[
             ("value", FieldType::Text),
         ],
     },
+    FieldSpec {
+        kind: "set-layout-property",
+        fields: &[
+            ("node", FieldType::NodeId),
+            ("property", FieldType::Text),
+            ("value", FieldType::Text),
+        ],
+    },
+    FieldSpec {
+        kind: "unset-property",
+        fields: &[("node", FieldType::NodeId), ("property", FieldType::Text)],
+    },
 ];
 
 /// canonical 형식(`kind` + [`CANONICAL_FIELD`])으로만 받는 closed enum 종류 이름(번호 오름차순). 필드 형식이
@@ -446,6 +458,15 @@ pub fn command_input(
             node: r.id("node")?,
             property: r.text("property")?.to_string(),
             value: r.text("value")?.to_string(),
+        },
+        "set-layout-property" => CommandInput::SetLayoutProperty {
+            node: r.id("node")?,
+            property: r.text("property")?.to_string(),
+            value: r.text("value")?.to_string(),
+        },
+        "unset-property" => CommandInput::UnsetProperty {
+            node: r.id("node")?,
+            property: r.text("property")?.to_string(),
         },
         _ => unreachable!("FIELD_SPECS의 모든 종류를 위에서 다룹니다"),
     };
