@@ -15,6 +15,8 @@ pub mod trace_store;
 /// 단계 trace record schema (XI.2.6).
 pub mod trace_schema;
 
+/// 상호작용 성능 예산 reader (XVI.4.1).
+pub mod budget;
 
 
 
