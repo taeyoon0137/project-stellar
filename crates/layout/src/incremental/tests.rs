@@ -168,8 +168,11 @@ fn random_edits(model: &LayoutInput, rng: &mut Rng, next_id: &mut u64) -> Vec<La
         12 => {
             new.style.display = match rng.below(3) {
                 0 => Display::Block,
+                1 => Display::Grid,
                 _ => Display::Flex,
             };
+            new.style.grid_template_columns =
+                vec![crate::style::TrackSize::fr(finite(1.0)); rng.below(3)];
             new.style.flex_direction = if rng.below(2) == 0 {
                 FlexDirection::Row
             } else {

@@ -210,3 +210,111 @@ fn overflow_bounds_include_relative_and_absolute_descendants() {
     let result = compute_layout(&auto).unwrap();
     assert_eq!(rect(&result, 1), (0.0, 0.0, 20.0, 20.0));
 }
+
+// --- grid (IX.11.5) ---
+
+fn grid_input(container: LayoutStyle, items: Vec<LayoutStyle>) -> LayoutInput {
+    let mut root = LayoutNode::new(id(1)).with_style(container);
+    let mut nodes = Vec::new();
+    for (k, item) in items.into_iter().enumerate() {
+        let n = k as u64 + 2;
+        root = root.with_child(id(n), key(k as u32 + 1));
+        nodes.push(LayoutNode::new(id(n)).with_style(item));
+    }
+    nodes.insert(0, root);
+    LayoutInput::new(id(1), nodes)
+}
+
+#[test]
+fn grid_subset_rejections() {
+    use crate::style::{GridLine, ItemAlignment, SelfAlignment};
+    let grid = style(|s| s.display = Display::Grid);
+    // grid 안 absolute 자식의 명시 line 배치.
+    let input = grid_input(
+        grid.clone(),
+        vec![style(|s| {
+            s.position = Position::Absolute;
+            s.grid_column_start = GridLine::Line(1);
+        })],
+    );
+    assert!(matches!(
+        input.validate(),
+        Err(LayoutError::Unsupported {
+            property: crate::property::LayoutProperty::GridColumnStart,
+            ..
+        })
+    ));
+    // grid item baseline 정렬.
+    let input = grid_input(
+        grid,
+        vec![style(|s| {
+            s.align_self = SelfAlignment::Item(ItemAlignment::Baseline)
+        })],
+    );
+    assert!(matches!(
+        input.validate(),
+        Err(LayoutError::Unsupported {
+            property: crate::property::LayoutProperty::AlignSelf,
+            ..
+        })
+    ));
+    // 0 line·0 span은 InvalidValue.
+    let input = grid_input(
+        style(|s| s.display = Display::Grid),
+        vec![style(|s| s.grid_row_end = GridLine::Span(0))],
+    );
+    assert!(matches!(
+        input.validate(),
+        Err(LayoutError::InvalidValue { .. })
+    ));
+}
+
+#[test]
+fn grid_cell_limit_is_enforced() {
+    use crate::style::{GridLine, TrackSize};
+    let input = grid_input(
+        style(|s| {
+            s.display = Display::Grid;
+            s.grid_template_columns = vec![TrackSize::length(crate::test_support::len(1.0)); 2048];
+        }),
+        vec![style(|s| s.grid_row_start = GridLine::Line(1024))],
+    );
+    assert!(matches!(
+        compute_layout(&input),
+        Err(LayoutError::LimitExceeded {
+            limit: crate::error::LayoutLimit::GridCells,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn grid_cyclic_percentage_is_reported() {
+    use crate::style::TrackSize;
+    // fit-content grid 안 50% 너비 item: 열 크기 계산에서는 auto(콘텐츠), 배치에서는 영역의 50%입니다.
+    let mut input = grid_input(
+        style(|s| {
+            s.display = Display::Grid;
+            s.width = Size::FitContent;
+            s.grid_template_columns = vec![TrackSize::AUTO];
+        }),
+        vec![style(|s| {
+            s.width = Size::Percentage(stellar_core_types::value::Percentage::new(50.0).unwrap())
+        })],
+    );
+    input.nodes[1] = input.nodes[1].clone().with_child(id(9), key(1));
+    input
+        .nodes
+        .push(LayoutNode::new(id(9)).with_style(fixed(60.0, 10.0)));
+    let result = compute_layout(&input).unwrap();
+    assert_eq!(rect(&result, 1).2, 60.0);
+    assert_eq!(rect(&result, 2).2, 30.0);
+    assert_eq!(
+        result.diagnostics(),
+        &[LayoutDiagnostic::CyclicPercentage {
+            ancestor: id(1),
+            node: id(2),
+            axis: Axis::Horizontal
+        }]
+    );
+}

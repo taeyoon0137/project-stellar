@@ -11,7 +11,7 @@
 //!   구체 조합(large + icon-only)이 일반 variant를 덮으며, 없는 조합은 base + 일반 variant만 적용합니다.
 //! - **token 조건**: density(comfortable·compact) × scale(regular·large)에 따라 간격·크기·글자 token 값이 바뀝니다.
 //!
-//! scene × token 조건 4개 fixture의 모든 box rect·baseline을 checked-in golden과 비교하고, 같은 scene에서
+//! scene 5개 × token 조건 4개 = fixture 20개의 모든 box rect·baseline을 checked-in golden과 비교하고, 같은 scene에서
 //! 조건을 바꾸는 edit를 증분 레이아웃(X.7)으로 적용해 전체 계산과 같은지 확인합니다.
 
 use std::collections::{BTreeMap, HashMap};
@@ -26,15 +26,15 @@ use stellar_layout::input::{LayoutContent, LayoutInput, LayoutNode};
 use stellar_layout::intrinsic::{DefaultMeasurer, MeasuredContent, TextIntrinsic};
 use stellar_layout::output::LayoutResult;
 use stellar_layout::style::{
-    Display, FlexDirection, ItemAlignment, LayoutStyle, LengthPercentageAuto, Position,
-    Size as CssSize,
+    Display, FlexDirection, GridLine, ItemAlignment, LayoutStyle, LengthPercentageAuto, Position,
+    Size as CssSize, TrackSize,
 };
 use stellar_layout::view::{build_layout_tree, virtual_layout_id, LayoutSource, SourceNode};
 
 const GOLDEN: &str = include_str!("fixtures/component_layout_v2.golden");
 
-/// fixture 수(scene 4 × token 조건 4).
-const FIXTURE_COUNT: usize = 16;
+/// fixture 수(scene 5 × token 조건 4).
+const FIXTURE_COUNT: usize = 20;
 
 // --- token ---
 
@@ -533,16 +533,8 @@ fn definitions() -> HashMap<Comp, Definition> {
     defs
 }
 
-/// 이번 엔진이 받는 scene(이름, root id, node). grid root scene(dashboard)은 `display: grid`를 받은 뒤 다시 넣습니다.
-fn scenes() -> Vec<(&'static str, u64, BTreeMap<u64, Node>)> {
-    all_scenes()
-        .into_iter()
-        .filter(|(name, _, _)| *name != "dashboard")
-        .collect()
-}
-
 /// scene 5개(이름, root id, node).
-fn all_scenes() -> Vec<(&'static str, u64, BTreeMap<u64, Node>)> {
+fn scenes() -> Vec<(&'static str, u64, BTreeMap<u64, Node>)> {
     vec![
         (
             "button",
@@ -967,7 +959,20 @@ impl Fixture<'_> {
                 height: CssSize::Length(length(*h)),
                 ..base.clone()
             }),
-            Body::GridRoot => return Err("grid root는 아직 받지 않습니다"),
+            Body::GridRoot => {
+                // 이전 Fraction은 export와 같은 minmax(0px, 1fr)이고 이전 행 MaxContent는 max-content입니다.
+                let fr = TrackSize::fr_from_zero(FiniteF32::new(1.0).map_err(|_| "fr")?);
+                LayoutNode::new(order_id(0)).with_style(LayoutStyle {
+                    display: Display::Grid,
+                    grid_template_columns: vec![fr, fr],
+                    grid_template_rows: vec![TrackSize::MAX_CONTENT, TrackSize::MAX_CONTENT],
+                    column_gap: token(Tok::SpaceL),
+                    row_gap: token(Tok::SpaceM),
+                    width: CssSize::Length(length(900.0)),
+                    height: CssSize::FitContent,
+                    ..base.clone()
+                })
+            }
         };
         match node.place {
             Place::None => {}
@@ -976,7 +981,12 @@ impl Fixture<'_> {
                 out.style.left = LengthPercentageAuto::Length(length(x));
                 out.style.top = LengthPercentageAuto::Length(length(y));
             }
-            Place::Cell(..) => return Err("grid 칸 배치는 아직 받지 않습니다"),
+            Place::Cell(column, row) => {
+                out.style.grid_column_start = GridLine::Line(column as i16);
+                out.style.grid_column_end = GridLine::Span(1);
+                out.style.grid_row_start = GridLine::Line(row as i16);
+                out.style.grid_row_end = GridLine::Span(1);
+            }
         }
         if let Some(resolved) = &resolved {
             for patch in self.patches(resolved, node.name) {

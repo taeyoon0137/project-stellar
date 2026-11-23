@@ -17,8 +17,7 @@ use crate::rounding::LayoutUnitError;
 /// 같은 입력은 플랫폼·빌드와 무관하게 같은 상한에 걸립니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LayoutLimit {
-    /// grid line 번호가 `u16` 범위를 넘습니다. 한 축의 track은
-    /// [`crate::grid::MAX_GRID_TRACKS`]개(line 1~65535)까지입니다.
+    /// 한 축의 grid track 수가 [`crate::input::MAX_GRID_TRACKS`]를 넘습니다.
     GridLines,
     /// grid cell 수(열 × 행)가 [`crate::grid::MAX_GRID_CELLS`]를 넘습니다.
     GridCells,

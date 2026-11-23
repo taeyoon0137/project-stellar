@@ -38,8 +38,9 @@ use crate::error::LayoutError;
 use crate::geometry::Axis;
 use crate::input::{IntrinsicContent, LayoutContent, LayoutInput, LayoutNode};
 use crate::style::{
-    AspectRatio, ContentAlignment, Display, FlexBasis, FlexDirection, FlexWrap, ItemAlignment,
-    LayoutStyle, LengthPercentageAuto, MaxSize, Position, SelfAlignment, Size,
+    AspectRatio, ContentAlignment, Display, FlexBasis, FlexDirection, FlexWrap, GridLine,
+    ItemAlignment, LayoutStyle, LengthPercentageAuto, MaxSize, MaxTrackSize, MinTrackSize,
+    Position, SelfAlignment, Size, TrackSize,
 };
 
 /// fixture schema version.
@@ -56,19 +57,31 @@ pub enum CorpusMode {
     Absolute,
     /// `display: flex` root.
     Flex,
+    /// `display: grid` root(track 목록과 line 배치).
+    Grid,
+    /// 한 칸 `display: grid` root(모든 자식 `grid-area: 1 / 1`, 이전 Overlay).
+    GridArea,
     /// block root 안 부모 변 기준 inset만 가진 absolute 자식.
     Inset,
 }
 
 impl CorpusMode {
     /// 모든 배치 방식(golden 순서).
-    pub const ALL: [CorpusMode; 3] = [CorpusMode::Absolute, CorpusMode::Flex, CorpusMode::Inset];
+    pub const ALL: [CorpusMode; 5] = [
+        CorpusMode::Absolute,
+        CorpusMode::Flex,
+        CorpusMode::Grid,
+        CorpusMode::GridArea,
+        CorpusMode::Inset,
+    ];
 
     /// 이름(fixture name 접두사).
     pub const fn name(self) -> &'static str {
         match self {
             CorpusMode::Absolute => "absolute",
             CorpusMode::Flex => "flex",
+            CorpusMode::Grid => "grid",
+            CorpusMode::GridArea => "grid-area",
             CorpusMode::Inset => "inset",
         }
     }
@@ -78,6 +91,7 @@ impl CorpusMode {
         match self {
             CorpusMode::Absolute | CorpusMode::Inset => root.display == Display::Block,
             CorpusMode::Flex => root.display == Display::Flex,
+            CorpusMode::Grid | CorpusMode::GridArea => root.display == Display::Grid,
         }
     }
 }
@@ -399,6 +413,8 @@ enum Context {
     FlexMain,
     /// flex item cross 축.
     FlexCross,
+    /// grid item(영역 안 정렬).
+    GridItem,
 }
 
 /// 축 크기 선택을 style에 씁니다(4.3절).
@@ -431,6 +447,10 @@ fn apply_choice(style: &mut LayoutStyle, axis: Axis, choice: Choice, context: Co
         (Choice::Stretch, Context::FlexCross) => {
             style.align_self = SelfAlignment::Item(ItemAlignment::Stretch);
         }
+        (Choice::Stretch, Context::GridItem) => match axis {
+            Axis::Horizontal => style.justify_self = SelfAlignment::Item(ItemAlignment::Stretch),
+            Axis::Vertical => style.align_self = SelfAlignment::Item(ItemAlignment::Stretch),
+        },
         (Choice::Stretch, Context::Absolute) => {
             let (start, end) = style.insets(axis);
             let fill = |inset: LengthPercentageAuto| match inset {
@@ -780,6 +800,135 @@ fn flex_fixture(seed: u64, index: usize) -> LayoutFixture {
     b.finish(CorpusMode::Flex, index)
 }
 
+/// 이전 track 선택(`Fraction`은 export와 같은 `minmax(0px, <n>fr)`, 속성 모델 4.4절).
+fn track(rng: &mut Rng) -> TrackSize {
+    match rng.range(0, 5) {
+        0 => TrackSize::length(rng.length(0, 80)),
+        1 => TrackSize::fr_from_zero(factor(rng.range(1, 12))),
+        2 => TrackSize::MIN_CONTENT,
+        3 => TrackSize::MAX_CONTENT,
+        4 => TrackSize::minmax(
+            MinTrackSize::Length(rng.length(0, 30)),
+            MaxTrackSize::Fraction(factor(rng.range(1, 8))),
+        ),
+        _ => TrackSize::minmax(
+            MinTrackSize::MinContent,
+            MaxTrackSize::Length(rng.length(30, 90)),
+        ),
+    }
+}
+
+fn line(n: i32) -> GridLine {
+    GridLine::Line(i16::try_from(n).unwrap_or(1))
+}
+
+fn span(n: i32) -> GridLine {
+    GridLine::Span(u16::try_from(n).unwrap_or(1))
+}
+
+fn grid_fixture(seed: u64, index: usize) -> LayoutFixture {
+    let mut b = Builder::new(seed);
+    let columns: Vec<TrackSize> = (0..b.rng.range(1, 4)).map(|_| track(&mut b.rng)).collect();
+    let rows: Vec<TrackSize> = (0..b.rng.range(0, 3)).map(|_| track(&mut b.rng)).collect();
+    let column_count = columns.len() as i32;
+    let column_gap = b.rng.length(0, 12);
+    let row_gap = b.rng.length(0, 12);
+    let implicit_row = if b.rng.chance(50) {
+        TrackSize::length(b.rng.length(4, 40))
+    } else {
+        TrackSize::MAX_CONTENT
+    };
+    let (root, _) = b.root(Display::Grid);
+    {
+        let style = &mut b.nodes[root].style;
+        style.grid_template_columns = columns;
+        style.grid_template_rows = rows;
+        style.column_gap = column_gap;
+        style.row_gap = row_gap;
+        style.grid_auto_rows = vec![implicit_row];
+    }
+    let count = b.rng.range(1, 8) as usize;
+    let mut children = Vec::new();
+    for n in 0..count {
+        let leaf = b.leaf(1 + n, true);
+        let mut node = leaf.node;
+        apply_choice(
+            &mut node.style,
+            Axis::Horizontal,
+            leaf.width,
+            Context::GridItem,
+        );
+        apply_choice(
+            &mut node.style,
+            Axis::Vertical,
+            leaf.height,
+            Context::GridItem,
+        );
+        let column_span = b.rng.range(1, column_count);
+        let style = &mut node.style;
+        match b.rng.range(0, 2) {
+            0 => {
+                let start = b.rng.range(1, column_count - column_span + 1);
+                let row = b.rng.range(1, 4);
+                let row_span = b.rng.range(1, 2);
+                style.grid_column_start = line(start);
+                style.grid_column_end = span(column_span);
+                style.grid_row_start = line(row);
+                style.grid_row_end = span(row_span);
+            }
+            1 => {
+                style.grid_column_start = span(column_span);
+                style.grid_row_start = span(b.rng.range(1, 2));
+            }
+            _ => {
+                let start = b.rng.range(1, column_count - column_span + 1);
+                style.grid_column_start = line(start);
+                style.grid_column_end = span(column_span);
+            }
+        }
+        children.push(b.push(node));
+    }
+    b.attach(root, &children);
+    b.finish(CorpusMode::Grid, index)
+}
+
+fn grid_area_fixture(seed: u64, index: usize) -> LayoutFixture {
+    let mut b = Builder::new(seed);
+    let alignments = [
+        ItemAlignment::Start,
+        ItemAlignment::Center,
+        ItemAlignment::End,
+    ];
+    let horizontal = b.rng.pick(&alignments);
+    let vertical = b.rng.pick(&alignments);
+    let (root, _) = b.root(Display::Grid);
+    b.nodes[root].style.justify_items = horizontal;
+    b.nodes[root].style.align_items = vertical;
+    let count = b.rng.range(1, 6) as usize;
+    let mut children = Vec::new();
+    for n in 0..count {
+        let leaf = b.leaf(1 + n, true);
+        let mut node = leaf.node;
+        apply_choice(
+            &mut node.style,
+            Axis::Horizontal,
+            leaf.width,
+            Context::GridItem,
+        );
+        apply_choice(
+            &mut node.style,
+            Axis::Vertical,
+            leaf.height,
+            Context::GridItem,
+        );
+        node.style.grid_column_start = line(1);
+        node.style.grid_row_start = line(1);
+        children.push(b.push(node));
+    }
+    b.attach(root, &children);
+    b.finish(CorpusMode::GridArea, index)
+}
+
 fn inset_fixture(seed: u64, index: usize) -> LayoutFixture {
     let mut b = Builder::new(seed);
     let (root, _) = b.root(Display::Block);
@@ -847,13 +996,16 @@ fn inset_fixture(seed: u64, index: usize) -> LayoutFixture {
 
 /// 배치 방식마다 `per_mode`개 fixture를 결정적으로 생성합니다(`CorpusMode::ALL` 순서).
 ///
-/// seed의 배치 방식 번호는 이전 corpus와 같습니다(absolute = Free 0, flex = Stack 1, inset = Constraint 4).
+/// seed의 배치 방식 번호는 이전 corpus와 같습니다(absolute = Free 0, flex = Stack 1, grid = Grid 2, grid-area = Overlay 3,
+/// inset = Constraint 4).
 pub fn generate_corpus(per_mode: usize) -> Vec<LayoutFixture> {
     let mut fixtures = Vec::with_capacity(per_mode * CorpusMode::ALL.len());
     for mode in CorpusMode::ALL {
         let m: u64 = match mode {
             CorpusMode::Absolute => 0,
             CorpusMode::Flex => 1,
+            CorpusMode::Grid => 2,
+            CorpusMode::GridArea => 3,
             CorpusMode::Inset => 4,
         };
         for index in 0..per_mode {
@@ -861,6 +1013,8 @@ pub fn generate_corpus(per_mode: usize) -> Vec<LayoutFixture> {
             let fixture = match mode {
                 CorpusMode::Absolute => absolute_fixture(seed, index),
                 CorpusMode::Flex => flex_fixture(seed, index),
+                CorpusMode::Grid => grid_fixture(seed, index),
+                CorpusMode::GridArea => grid_area_fixture(seed, index),
                 CorpusMode::Inset => inset_fixture(seed, index),
             };
             fixtures.push(fixture);

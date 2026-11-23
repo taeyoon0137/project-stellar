@@ -56,7 +56,7 @@ nodes 14
       capability element:frame native
       capability contract:text_input native
     [11] 00000000-0000-0000-0000-00000000000c frame contracts=[button] semantics=a11y[8]
-      layout {display: flex; height: 48px; min-width: 120px; justify-content: center; align-items: center}
+      layout {display: grid; height: 48px; min-width: 120px; align-items: center; justify-items: center}
       property 00000000-0000-0000-0000-00000000000c.1 = 12px origin=profile capability=property:common.corner_radius
       property 00000000-0000-0000-0000-00000000000c.2 = 4px origin=common capability=property:common.drop_shadow
       property 00000000-0000-0000-0000-00000000000c.4 = srgb(0 0.48 1 / 1) origin=common token=00000000-0000-0000-0000-000000000047

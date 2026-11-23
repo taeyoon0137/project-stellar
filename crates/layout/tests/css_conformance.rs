@@ -212,6 +212,7 @@ fn css_fixture_counts_meet_minimums() {
     let count = |suite: &str| counts.get(suite).copied().unwrap_or(0);
     assert!(count("flex") >= 60, "{counts:?}");
     assert!(count("positioning") >= 30, "{counts:?}");
+    assert!(count("grid") >= 40, "{counts:?}");
 }
 
 #[test]

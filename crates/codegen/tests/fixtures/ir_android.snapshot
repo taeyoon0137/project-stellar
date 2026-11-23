@@ -56,7 +56,7 @@ nodes 17
       capability element:frame native
       capability contract:text_input native
     [11] 00000000-0000-0000-0000-00000000000c frame contracts=[button] semantics=a11y[8]
-      layout {display: flex; height: 48px; min-width: 120px; justify-content: center; align-items: center}
+      layout {display: grid; height: 48px; min-width: 120px; align-items: center; justify-items: center}
       property 00000000-0000-0000-0000-00000000000c.1 = 8px origin=common capability=property:common.corner_radius
       property 00000000-0000-0000-0000-00000000000c.2 = 4px origin=common capability=property:common.drop_shadow
       property 00000000-0000-0000-0000-00000000000c.4 = srgb(0 0.48 1 / 1) origin=common token=00000000-0000-0000-0000-000000000047
@@ -65,15 +65,15 @@ nodes 17
       capability property:common.corner_radius native path=00000000-0000-0000-0000-00000000000c.1
       capability property:common.drop_shadow native path=00000000-0000-0000-0000-00000000000c.2
     [12] 00000000-0000-0000-0000-00000000000d frame semantics=a11y[9]
-      layout {display: flex; column-gap: 8px}
+      layout {display: grid; column-gap: 8px; grid-template-columns: minmax(0px, 1fr) minmax(0px, 1fr)}
       property 00000000-0000-0000-0000-00000000000d.4 = srgb(1.1 0.5 -0.05 / 1) origin=common
       capability element:frame native
       [13] 00000000-0000-0000-0000-00000000000f text semantics=a11y[10]
-        layout {min-width: 0px; flex-grow: 1; flex-basis: 0px} content=intrinsic(56x20 baseline=15)
+        layout {grid-column-start: 1; grid-row-start: 1} content=intrinsic(56x20 baseline=15)
         text "새 기능"
         capability element:text native
       [14] 00000000-0000-0000-0000-000000000012 shape
-        layout {width: 24px; height: 24px; min-width: 0px; flex-grow: 1; flex-basis: 0px}
+        layout {width: 24px; height: 24px; grid-column-start: 2; grid-row-start: 1}
         capability element:shape native
     [15] 00000000-0000-0000-0000-000000000010 frame contracts=[modal] semantics=a11y[11]
       layout {width: 320px; height: 120px}

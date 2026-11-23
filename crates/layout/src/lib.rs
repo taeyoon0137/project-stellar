@@ -48,6 +48,9 @@ pub mod block;
 /// `display: flex` 배치 (IX.11.4).
 pub mod flex;
 
+/// `display: grid` 배치 (IX.11.5).
+pub mod grid;
+
 /// `position: absolute`·`relative` 배치.
 pub mod position;
 

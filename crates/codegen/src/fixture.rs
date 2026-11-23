@@ -12,7 +12,7 @@
 //! │   └ 10 Frame Button("크게")
 //! ├ 11 Frame TextInput(placeholder "메모")
 //! ├ 12 Frame Button("저장", disabled = state 52)  radius 8(ios 12), fill = token accent
-//! ├ 13 Frame(flex 2열) — ios에서 제외         fill = 확장 범위 sRGB
+//! ├ 13 Frame(grid 2열) — ios에서 제외         fill = 확장 범위 sRGB
 //! │ ├ 15 Text "새 기능"
 //! │ └ 18 Shape(장식)
 //! └ 16 Frame Modal("알림", dismiss 63)
@@ -37,8 +37,8 @@ use stellar_core_types::typed_value::TypedValue;
 use stellar_core_types::value::{FiniteF32, Insets, Length};
 use stellar_layout::input::{IntrinsicContent, LayoutContent, LayoutInput, LayoutNode};
 use stellar_layout::style::{
-    ContentAlignment, Display, FlexBasis, FlexDirection, ItemAlignment, LayoutStyle,
-    LengthPercentageAuto, Position, Size,
+    ContentAlignment, Display, FlexDirection, GridLine, ItemAlignment, LayoutStyle,
+    LengthPercentageAuto, Position, Size, TrackSize,
 };
 use stellar_target_profile::builtin::{self, properties as p};
 use stellar_target_profile::capability::{CapabilityPropertyId, ContractCode, ElementKind};
@@ -312,6 +312,7 @@ fn px(value: f32) -> Size {
 
 fn layout() -> LayoutInput {
     let one = stellar_core_types::value::FiniteF32::new(1.0).expect("유한");
+    let fr = TrackSize::fr_from_zero(one);
     let row = |s: &mut LayoutStyle| {
         s.display = Display::Flex;
         s.column_gap = len(8.0);
@@ -373,30 +374,29 @@ fn layout() -> LayoutInput {
         LayoutNode::new(sid(12)).with_style(css(|s| {
             s.height = px(48.0);
             s.min_width = px(120.0);
-            s.display = Display::Flex;
-            s.justify_content = ContentAlignment::Center;
+            s.display = Display::Grid;
+            s.justify_items = ItemAlignment::Center;
             s.align_items = ItemAlignment::Center;
         })),
         LayoutNode::new(sid(13))
             .with_style(css(|s| {
-                s.display = Display::Flex;
+                s.display = Display::Grid;
+                s.grid_template_columns = vec![fr, fr];
                 s.column_gap = len(8.0);
             }))
             .with_child(sid(15), key(1))
             .with_child(sid(18), key(2)),
         LayoutNode::new(sid(15))
             .with_style(css(|s| {
-                s.flex_grow = one;
-                s.flex_basis = FlexBasis::Length(len(0.0));
-                s.min_width = px(0.0);
+                s.grid_column_start = GridLine::Line(1);
+                s.grid_row_start = GridLine::Line(1);
             }))
             .with_content(intrinsic(56.0, 20.0)),
         LayoutNode::new(sid(18)).with_style(css(|s| {
             s.width = px(24.0);
             s.height = px(24.0);
-            s.flex_grow = one;
-            s.flex_basis = FlexBasis::Length(len(0.0));
-            s.min_width = px(0.0);
+            s.grid_column_start = GridLine::Line(2);
+            s.grid_row_start = GridLine::Line(1);
         })),
         LayoutNode::new(sid(16))
             .with_style(css(|s| {

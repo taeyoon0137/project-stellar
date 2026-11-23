@@ -428,8 +428,6 @@ pub(crate) struct Prepared {
     pub(crate) justify_content: ContentAlignment,
     pub(crate) align_content: ContentAlignment,
     pub(crate) align_items: ItemAlignment,
-    /// grid가 씁니다(IX.11.5).
-    #[allow(dead_code)]
     pub(crate) justify_items: ItemAlignment,
     /// 축별 gap(가로 = `column-gap`, 세로 = `row-gap`).
     pub(crate) gap: [LayoutUnit; 2],
@@ -437,10 +435,10 @@ pub(crate) struct Prepared {
     pub(crate) shrink: u64,
     pub(crate) basis: BasisP,
     pub(crate) align_self: SelfAlignment,
-    /// grid가 씁니다(IX.11.5).
-    #[allow(dead_code)]
     pub(crate) justify_self: SelfAlignment,
     pub(crate) content: PreparedContent,
+    /// grid container·item 값.
+    pub(crate) grid: crate::grid::GridPrepared,
 }
 
 impl Prepared {
@@ -597,6 +595,7 @@ pub(crate) fn prepare(node: &LayoutNode) -> Result<Prepared, LayoutError> {
         align_self: s.align_self,
         justify_self: s.justify_self,
         content,
+        grid: crate::grid::prepare_grid(id, s)?,
     })
 }
 
@@ -1037,9 +1036,8 @@ impl<'a> Engine<'a> {
         }
         match prepared.display {
             Display::Flex => flex::layout(self, index, request, sizing),
-            Display::Block | Display::Grid | Display::None => {
-                block::layout(self, index, request, sizing)
-            }
+            Display::Grid => crate::grid::layout(self, index, request, sizing),
+            Display::Block | Display::None => block::layout(self, index, request, sizing),
         }
     }
 

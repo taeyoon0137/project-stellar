@@ -475,13 +475,6 @@ pub(crate) fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(
             reason: "root는 display: none일 수 없습니다",
         });
     }
-    if s.display == Display::Grid {
-        return Err(LayoutError::Unsupported {
-            node: id,
-            property: LayoutProperty::Display,
-            reason: "display: grid는 아직 받지 않습니다",
-        });
-    }
     let (top, right, bottom, left) = s.padding.components();
     for (property, value) in [
         (LayoutProperty::PaddingTop, top),
@@ -589,14 +582,38 @@ pub(crate) fn validate_in_parent(
     parent: &LayoutNode,
 ) -> Result<(), LayoutError> {
     let s = &node.style;
+    if s.display == Display::None {
+        return Ok(());
+    }
+    let grid = parent.style.display == Display::Grid;
+    if s.position == Position::Absolute {
+        let lines = [
+            s.grid_column_start,
+            s.grid_column_end,
+            s.grid_row_start,
+            s.grid_row_end,
+        ];
+        if grid && lines.iter().any(|line| *line != GridLine::Auto) {
+            return Err(LayoutError::Unsupported {
+                node: node.id,
+                property: LayoutProperty::GridColumnStart,
+                reason: "grid 안 absolute 자식의 명시 line 배치는 받지 않습니다",
+            });
+        }
+        return Ok(());
+    }
     let baseline = s.align_self == SelfAlignment::Item(ItemAlignment::Baseline)
         || (s.align_self == SelfAlignment::Auto
             && parent.style.align_items == ItemAlignment::Baseline);
-    if baseline && s.display != Display::None && s.position != Position::Absolute {
+    if baseline {
         return Err(LayoutError::Unsupported {
             node: node.id,
             property: LayoutProperty::AlignSelf,
-            reason: "baseline 정렬은 아직 받지 않습니다",
+            reason: if grid {
+                "grid item의 baseline 정렬은 받지 않습니다"
+            } else {
+                "baseline 정렬은 아직 받지 않습니다"
+            },
         });
     }
     Ok(())
