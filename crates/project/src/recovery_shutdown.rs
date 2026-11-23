@@ -73,6 +73,9 @@ pub fn end_window_session_clean(
 /// 순서: 지금 스냅샷 bytes의 hash를 폐기 표식에 기록 → 스냅샷 삭제 → 표식 삭제. 스냅샷이 없으면 남은 표식만
 /// 지웁니다. 삭제가 실패하면 오류를 돌려주지만 표식은 남아, 다음 시작에서 그 스냅샷을 제안하지 않습니다.
 /// 표식 기록이 실패해도 삭제는 시도합니다.
+///
+/// 결과는 스냅샷 삭제의 결과입니다. 스냅샷을 지웠으면 표식 기록·정리 실패는 오류로 돌려주지 않습니다. 가리킬
+/// 스냅샷이 없어 표식은 판정에 영향이 없고, 남은 표식은 다음 폐기가 지웁니다.
 pub fn discard_snapshot(
     store: &RecoverySnapshotStore,
     identity: &ProjectIdentity,
@@ -80,17 +83,16 @@ pub fn discard_snapshot(
 ) -> Result<(), RecoveryStoreError> {
     let marker = store.discarded_marker_path(identity, window_session);
     let Some(bytes) = store.read_snapshot(identity, window_session)? else {
-        return remove_if_exists(&marker);
+        // 지울 스냅샷이 없으면 남은 표식만 정리합니다(없으면 그대로).
+        let _ = std::fs::remove_file(&marker);
+        return Ok(());
     };
     let hash = ContentHash::compute(&bytes).to_string();
-    let marked =
-        write_file_atomic(&marker, hash.as_bytes()).map_err(|source| RecoveryStoreError::Io {
-            path: marker.clone(),
-            source,
-        });
+    // 표식 기록 실패는 삭제를 막지 않습니다. 삭제까지 실패하면 그 삭제 오류를 돌려줍니다.
+    let _ = write_file_atomic(&marker, hash.as_bytes());
     store.remove_snapshot(identity, window_session)?;
-    marked?;
-    remove_if_exists(&marker)
+    let _ = std::fs::remove_file(&marker);
+    Ok(())
 }
 
 /// `bytes`가 폐기 표식이 가리키는(지우려다 남은) 스냅샷인지 판정합니다.
@@ -105,17 +107,6 @@ pub fn is_discarded(
         .and_then(|text| String::from_utf8(text).ok())
         .and_then(|text| text.trim().parse::<ContentHash>().ok())
         .is_some_and(|hash| hash == ContentHash::compute(bytes))
-}
-
-fn remove_if_exists(path: &std::path::Path) -> Result<(), RecoveryStoreError> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(RecoveryStoreError::Io {
-            path: path.to_path_buf(),
-            source,
-        }),
-    }
 }
 
 /// 마지막 종료가 정상이었는지 판정합니다(marker 존재 여부).

@@ -455,3 +455,57 @@ fn failed_removal_after_normal_close_is_stale_on_next_start() {
     );
     next.shutdown().unwrap();
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn discarded_checkpoint_left_by_failed_removal_cannot_be_restored() {
+    // XIII.8.7: 사용자 Discard가 삭제에 실패해 남은 복구본은, 표시했던 후보와 bytes가 같아도 Restore하지 않고
+    // 다음 시작에서도 제안하지 않습니다.
+    let project = saved_project("checkpoint-discard-failure");
+    let store_dir = TempDir::new("checkpoint-discard-failure-store");
+    let store = RecoverySnapshotStore::new(store_dir.path());
+    let id = identity(project.path());
+    let crashed = window(93);
+    crashed_checkpoint(
+        &store,
+        &id,
+        crashed,
+        930,
+        "폐기한 편집",
+        std::time::SystemTime::now(),
+    );
+    let app = app_with_store(&store_dir);
+    let (a, _, _) = open_window(&app, open_project(&app, project.path()));
+    let probe = app.recovery_probe(a).unwrap().expect("복구본 제안");
+    let path = store.snapshot_path(&id, crashed);
+    set_immutable(&path, true);
+    let discard = app
+        .recover_checkpoint(a, probe.candidate.clone(), RecoveryAction::Discard)
+        .unwrap();
+    let discard_event = next_event(&app);
+    let restore = app
+        .recover_checkpoint(a, probe.candidate, RecoveryAction::Restore)
+        .unwrap();
+    let restore_event = next_event(&app);
+    let after = app.recovery_probe(a);
+    let name = frame_name(&app, a);
+    app.shutdown().unwrap();
+    set_immutable(&path, false);
+    assert!(matches!(
+        discard_event,
+        RuntimeEvent::RequestFailed { request: got, .. } if got == discard
+    ));
+    assert!(path.exists(), "삭제에 실패한 복구본이 남음");
+    assert!(store.discarded_marker_path(&id, crashed).exists());
+    assert!(matches!(
+        restore_event,
+        RuntimeEvent::RequestFailed { request: got, .. } if got == restore
+    ));
+    assert_ne!(name.0, "폐기한 편집", "폐기한 복구본을 창에 복원하지 않음");
+    assert_eq!(after.unwrap(), None, "폐기한 복구본은 다시 제안하지 않음");
+
+    let next = app_with_store(&store_dir);
+    let (b, _, _) = open_window(&next, open_project(&next, project.path()));
+    assert_eq!(next.recovery_probe(b).unwrap(), None);
+    next.shutdown().unwrap();
+}

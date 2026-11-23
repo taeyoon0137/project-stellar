@@ -301,23 +301,14 @@ impl ProjectSummary {
         &self,
         root: &std::path::Path,
         candidate: &RecoveryCandidate,
-    ) -> Result<
-        (
-            ProjectIdentity,
-            RecoverySnapshotStore,
-            fs::File,
-            RecoveryPayload,
-        ),
-        String,
-    > {
+    ) -> Result<(ProjectIdentity, RecoverySnapshotStore, fs::File, Vec<u8>), String> {
         let (id, store) = self.recovery_store_in(root)?;
         let guard = lock_candidate(&store, &id, candidate.window).map_err(|e| e.to_string())?;
         let bytes = payload_bytes(&store, &id, candidate.window)?;
         if ContentHash::compute(&bytes) != candidate.hash {
             return Err("표시한 복구본이 바뀌었습니다".into());
         }
-        let payload = RecoveryPayload::decode(&bytes).map_err(|e| e.to_string())?;
-        Ok((id, store, guard, payload))
+        Ok((id, store, guard, bytes))
     }
 }
 
@@ -338,13 +329,20 @@ impl ProjectSummary {
         root: &std::path::Path,
         candidate: &RecoveryCandidate,
     ) -> Result<PreparedRecovery, String> {
-        let (project, _, lease, payload) = self.read_recovery(root, candidate)?;
+        let (project, store, lease, bytes) = self.read_recovery(root, candidate)?;
+        // 제안과 같은 판정(폐기 표식 → payload → 기준 세대)을 적용 때 다시 합니다. 폐기했지만 삭제에 실패해 남은
+        // 복구본은 표시했던 후보와 bytes가 같아도 복원하지 않습니다(XIII.8.7, ADR-0120 결정 2).
+        let current = read_current_pointer(project.canonical_target()).ok();
+        let payload =
+            match judge_stored_snapshot(&store, &project, candidate.window, current, &bytes) {
+                StoredSnapshot::Fresh { payload, .. } => payload,
+                StoredSnapshot::Stale { reason } => {
+                    return Err(format!("복구본을 이 창에 복원할 수 없습니다: {reason}"));
+                }
+            };
         let base = payload
             .base_manifest_hash
             .ok_or("저장된 기준 세대가 없습니다")?;
-        if read_current_pointer(project.canonical_target()).ok() != Some(base) {
-            return Err("디스크 세대가 바뀌어 복구본을 이 창에 복원할 수 없습니다".into());
-        }
         let model = load_model(&payload)?;
         Ok(PreparedRecovery {
             project,

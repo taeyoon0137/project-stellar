@@ -50,9 +50,12 @@ ADR-0111(종단 시나리오)을 따릅니다.
 
 - `stellar_project::recovery_shutdown::discard_snapshot`: 지울 복구본 bytes의 content hash를 같은 폴더의
   `<창 UUID>.discarded`에 쓰고, 복구본을 지운 뒤, 표식을 지웁니다. 복구본이 없으면 남은 표식만 지웁니다. 표식 기록이
-  실패해도 삭제는 시도하고, 삭제가 실패하면 오류를 돌려주되 표식은 남습니다.
+  실패해도 삭제는 시도하고, 삭제가 실패하면 오류를 돌려주되 표식은 남습니다. 함수의 결과는 복구본 삭제의 결과입니다.
+  복구본을 지웠으면 표식 기록·정리 실패는 오류가 아닙니다(가리킬 복구본이 없어 판정에 영향이 없음).
 - 판정: 표식의 hash와 bytes가 같은 복구본은 `StaleReason::Discarded`로 제안하지 않습니다. 같은 창이 뒤에 새 bytes를
   기록하면 hash가 달라 다시 제안 대상이므로, 표식과 새 복구본의 쓰기 순서에 기대지 않습니다.
+- Restore 적용도 같은 판정(`judge_stored_snapshot`)을 다시 합니다. Discard가 삭제에 실패해 남은 복구본은 셸이 전에
+  받은 후보와 bytes가 같아도 복원하지 않습니다.
 - 체크포인트 worker의 Clear(정상 저장·닫기·저수준 close 폐기), 복원 뒤 이전 창 복구본 정리, 사용자 Discard가 모두 이
   함수를 씁니다. V.9.4 `end_window_session_clean`도 이 함수로 지운 뒤 정상 종료 marker를 씁니다.
 - 표식 파일은 스냅샷 목록(`list_sessions`)에 나타나지 않습니다(확장자가 다름). 파일 이름은 창 UUID뿐이라 V.9.1 경로
