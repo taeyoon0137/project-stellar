@@ -1,0 +1,71 @@
+{
+  "format": "stellar-launch-profile/1",
+  "id": "test-double-claude-code-2.1",
+  "cli": "claude-code",
+  "display_name": "Claude Code",
+  "enabled": true,
+  "versions": {
+    "min": "2.1.0",
+    "max_exclusive": "2.2.0"
+  },
+  "team_id": "TESTDBL001",
+  "version_command": [
+    "--version"
+  ],
+  "status_command": [
+    "auth",
+    "status"
+  ],
+  "status_rule": "exit-code",
+  "session_command": [
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--no-session-persistence",
+    "--strict-mcp-config",
+    "--mcp-config",
+    "{mcp_config}",
+    "--tools",
+    "",
+    "--allowedTools",
+    "mcp__stellar"
+  ],
+  "input": "stream-json-user",
+  "decoder": {
+    "id": "claude-stream-json",
+    "version": 1
+  },
+  "env": [
+    "HOME",
+    "PATH",
+    "USER",
+    "LOGNAME",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "CLAUDE_CONFIG_DIR",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "NO_PROXY"
+  ],
+  "timeouts_ms": {
+    "version": 5000,
+    "status": 5000,
+    "startup": 10000,
+    "terminate_grace": 500
+  },
+  "review": {
+    "terms_date": "2026-11-23",
+    "terms_result": "allowed",
+    "docs_date": "2026-11-23",
+    "docs": [
+      "https://code.claude.com/docs/en/cli-reference",
+      "https://code.claude.com/docs/en/agent-sdk/typescript"
+    ],
+    "note": "테스트 대역 전용 fixture. 앱 번들에 넣지 않음"
+  }
+}
