@@ -91,8 +91,8 @@ pub mod style_defaults {
 /// 테스트 전용 프로젝트 fixture 생성기. 프로덕션 경로에서 사용하지 않습니다.
 #[doc(hidden)]
 pub mod test_support;
-#[doc(hidden)]
-#[cfg(feature = "test-support")]
+/// 편집 command 모델 재수출. L2(mcp-core)가 commands crate에 직접 의존하지 않고 같은 lease 판정·실행 경로를
+/// 씁니다(ADR-0093). 테스트 fixture도 이 경로를 씁니다.
 pub use stellar_commands as commands;
 
 /// opt-in 컴포넌트별 텍스트 원본 파일 (ADR-0059).

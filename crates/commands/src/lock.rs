@@ -6,6 +6,15 @@
 //! 잠금 규칙은 [`EditIntent::blocked_by`] 하나입니다. 앱(속성 탭·캔버스·Layers)은 [`edit_permission`] 또는
 //! 조상 정보를 미리 계산한 [`NodeAccess::permits`]를, CLI apply는 적용 전 레코드로 [`NodeLock::resolve`]를 계산해
 //! 같은 함수를 씁니다.
+//!
+//! 에이전트 편집 lease(XIX.4, ADR-0093)는 이 D8 잠금과 별개인 세션 한정 잠금입니다. 판정은 [`lease`], 같은 프로젝트의
+//! 창·프로세스 사이 공유는 [`coordinator`]가 맡습니다.
+
+/// 에이전트 편집 lease와 판정 (XIX.4.2~XIX.4.4, XIX.4.6, XIX.5.2).
+pub mod lease;
+
+/// 같은 프로젝트의 창·프로세스가 공유하는 lease 조정자 (XIX.4.5, XIX.4.7).
+pub mod coordinator;
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::property::PropertyKey;
