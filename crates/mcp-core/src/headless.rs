@@ -9,6 +9,7 @@
 //! - 프로젝트 파일을 만들거나 바꾸지 않습니다. ops의 dry-run·읽기 함수만 부릅니다.
 mod comparison;
 mod components;
+mod context;
 mod integrity;
 mod operations;
 mod resources_extra;
@@ -134,6 +135,7 @@ impl Headless {
                     operations::export_web_frame(cached, args)?
                 }
                 n if n == tools::COPY_CSS.name => operations::copy_css(cached, args)?,
+                n if n == tools::CONTEXT.name => context::read(cached, args)?,
                 n if n == tools::PROPOSE_CSS_PASTE.name => {
                     operations::propose_css_paste(cached, args)?
                 }

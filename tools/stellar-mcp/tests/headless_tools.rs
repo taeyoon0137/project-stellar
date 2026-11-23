@@ -52,6 +52,9 @@ fn valid_arguments(name: &str, ids: &Ids) -> J {
             ("nodes", J::Array(vec![s(&ids.root)])),
             ("declarations", s("width: 320px; height: 200px;")),
         ]),
+        "document.context" => {
+            J::object(vec![("document", s(&ids.document)), ("node", s(&ids.root))])
+        }
         "git.semantic_conflicts" => empty(),
         other => panic!("인자를 모르는 tool: {other}"),
     }
@@ -90,7 +93,7 @@ fn every_listed_tool_runs_read_only_through_ops() {
     client.initialize();
     let ids = ids(&mut client);
     let names = listed(&mut client);
-    assert_eq!(names.len(), 10);
+    assert_eq!(names.len(), 11);
     for name in &names {
         let reply = client.tool(name, valid_arguments(name, &ids));
         if name == "document.source_span" {

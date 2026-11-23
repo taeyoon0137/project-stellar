@@ -21,6 +21,7 @@ stellar — Project Stellar headless 도구
     css               copy <경로> <문서 id> <node id> | paste <경로> <문서 id> <node id,…> <입력 파일|-> [--dry-run]: node 속성을 CSS longhand 선언 블록으로 복사하거나, 선언 블록을 한 transaction으로 붙여넣습니다(받지 못한 선언은 이유와 함께 건너뜀)
     style-defaults    list <경로> | show <경로> [<세트>] | set <경로> <세트> | resolve <경로> <문서 id> <node id>: 기본값 세트 목록·값 표·선택(stellar.yaml 한 줄)과 node layout longhand 값의 출처(explicit·default(<세트>))
     apply             <경로> <입력 파일|-> [--dry-run]: CommandTransaction JSON(base revision 포함)을 검증해 세대 전환 저장으로 기록합니다(--dry-run: semantic diff만)
+    context           <경로> <문서 id> [--node <node id> [--instances <id,…>]]: 문서 Component Context의 key·provision·requirement·Slot 공개 목록과 진단을, --node를 주면 그 위치의 key별 해석 값·출처·경로와 선택기 후보를 출력합니다
     component-source  create <폴더> <이름> <id> <root-id> | check <폴더> | resize <파일> <원본 hash> <너비> <높이> | set-fill <파일> <원본 hash> <none 또는 색 공간과 RGBA> | add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>: 컴포넌트별 Free Frame 트리
     git               status <경로> [--cursor <c>] [--limit <n>] | stage|unstage <경로> <대상>... [--with <대상>]... | commit <경로> -m <메시지>: 신뢰한 프로젝트의 의미 단위 Git 상태·stage·commit(push 없음, 필수 동반 변경은 자동 포함하지 않음)
     text-source       export <프로젝트> <새 파일> | check <파일>: 단일 View 텍스트 원본을 opt-in으로 내보내거나 읽기 전용 검사합니다

@@ -224,6 +224,19 @@ pub const PASTE_CSS: ToolDef = ToolDef {
     grant: Permission::Apply,
 };
 
+/// 문서 Component Context 선언·진단·위치별 해석(`stellar context`, XXX.7.11, ADR-0114 결정 6).
+pub const CONTEXT: ToolDef = ToolDef {
+    name: "document.context",
+    title: "Component Context",
+    description: "문서의 Context key·provision·requirement·Slot 공개 목록과 진단을, node를 주면 그 위치의 key별 해석 값·출처·경로와 선택기 후보를 돌려줍니다",
+    input_schema: r#"{"type":"object","additionalProperties":false,"required":["document"],"properties":{"document":{"type":"string"},"node":{"type":"string"},"instances":{"type":"array","maxItems":64,"items":{"type":"string"}}}}"#,
+    read_only: true,
+    destructive: false,
+    idempotent: true,
+    availability: Availability::All,
+    grant: Permission::Read,
+};
+
 /// 정의된 문서 tool(고정 순서).
 pub const DOCUMENT_TOOLS: &[ToolDef] = &[
     SEMANTIC_DIFF,
@@ -237,6 +250,7 @@ pub const DOCUMENT_TOOLS: &[ToolDef] = &[
     COPY_CSS,
     PROPOSE_CSS_PASTE,
     PASTE_CSS,
+    CONTEXT,
 ];
 
 /// 저장 파일 기준 의미 단위 Git 상태(`stellar git status`).
@@ -497,6 +511,7 @@ mod tests {
                 "document.export_web_frame",
                 "document.copy_css",
                 "document.propose_css_paste",
+                "document.context",
                 "git.status",
                 "git.semantic_conflicts",
             ]
