@@ -12,7 +12,9 @@
 //! 공유합니다. 그래서 layout이 잰 크기와 scene이 그리는 크기가 같습니다. Text stack은 scene Text hook이 받는 stack과
 //! 같은 [`content_stack`]입니다(효과·Boolean 항목 제외).
 //!
-//! - min-content 너비는 줄 너비 0으로 배치한 가장 넓은 줄입니다(줄바꿈 기회마다 끊은 결과의 가장 긴 줄바꿈 불가 단위).
+//! - min-content 너비는 줄 너비 0으로 배치한 결과에서 비상 줄바꿈 조각을 줄바꿈 기회 사이 단위로 다시 이은 가장 넓은
+//!   단위입니다([`DocumentText::min_content_width`](super::text::document::DocumentText::min_content_width)). text 엔진의
+//!   비상 줄바꿈(`overflow-wrap: break-word`)은 CSS에서 min-content를 줄이지 않습니다.
 //! - 줄 너비는 layout 단위(1/64 px)를 그대로 text 단위(1/64 px)로 옮깁니다.
 //! - 글꼴을 읽는 중이면 기본 chain으로 배치합니다([`FontCache`] 규칙). 글꼴을 다 읽으면 창 cache가 게시 결과를 버리고,
 //!   호출자는 `CanvasLayout`을 다시 만듭니다.
@@ -48,6 +50,8 @@ struct Measured {
     size: Size2,
     baseline: Option<f32>,
     transform: Transform2D,
+    /// CSS min-content 너비(px). 줄 너비 0으로 배치한 결과에만 있습니다.
+    min_content: Option<f32>,
 }
 
 struct State<'a> {
@@ -171,6 +175,10 @@ fn measure_payload(
         size,
         baseline: text.first_baseline(),
         transform,
+        min_content: match width {
+            Some(0) => Some(text.min_content_width(payload.content())?),
+            _ => None,
+        },
     })
 }
 
@@ -192,7 +200,7 @@ impl TextLayoutHook for CanvasText<'_> {
         _: &TextIntrinsic,
     ) -> Result<LayoutUnit, MeasureError> {
         let measured = self.measure(node, Some(0)).ok_or(UNAVAILABLE)?;
-        unit(measured.size.width())
+        unit(measured.min_content.ok_or(UNAVAILABLE)?)
     }
 
     fn layout(

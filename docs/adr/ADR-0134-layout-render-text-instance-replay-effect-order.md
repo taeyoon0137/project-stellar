@@ -34,7 +34,11 @@ Accepted (2026-11-24).
      min-content·줄 배치)과 scene Text hook(줄 너비에서의 Text 입력)이 같은 함수
      `FontCache::layout_input_width`로 같은 문서 Text를 배치하고, 결과를 (node, 줄 너비)로 공유합니다. 그래서 layout이
      잰 크기와 scene이 그리는 크기가 같습니다. 줄 너비는 1/64 px 단위 그대로입니다.
-   - min-content 너비는 줄 너비 0으로 배치한 가장 넓은 줄입니다.
+   - min-content 너비는 줄 너비 0으로 배치한 결과에서 비상 줄바꿈 조각을 줄바꿈 기회 사이 단위로 다시 이은 가장 넓은
+     단위입니다(`DocumentText::min_content_width`). text 엔진은 기회 사이 구간이 줄보다 넓으면 비상 줄바꿈(`overflow-wrap:
+     break-word`)을 하는데, CSS에서 이 비상 줄바꿈은 min-content를 줄이지 않습니다. 줄바꿈 기회는 배치와 같은 엔진 함수
+     (`line_break_opportunities`)와 같은 옵션으로 구합니다. 가장 넓은 줄만 쓰면 min-content가 글자 하나 너비가 되어 좁은
+     흐름 컨테이너에서 단어 안이 끊깁니다.
    - 측정 hook의 Text stack은 scene Text hook이 받는 stack과 같은 `stellar_scene::document::content_stack`입니다.
    - 캔버스 행 목록(`CanvasScene`)의 Text 배치는 `layout_input`(줄 너비 없음)이고 같은 함수의 줄 너비 `None` 경우입니다.
    - 시험과 다른 호출자는 `CanvasTextHook` trait으로 글꼴 없는 hook을 넘길 수 있습니다.
@@ -82,7 +86,8 @@ Accepted (2026-11-24).
 | 대안 | 판단 |
 |---|---|
 | runtime에 Text 측정 전용 함수를 따로 둠(줄바꿈만 계산) | 채택하지 않음. 그리기와 측정이 다른 함수가 되어 크기가 어긋날 수 있습니다. 같은 `layout_input_width`를 씁니다 |
-| min-content를 단어 분리로 따로 셈 | 채택하지 않음. 줄바꿈 기회 규칙(UAX #14)을 text 엔진과 따로 구현하게 됩니다 |
+| min-content를 단어 분리로 따로 셈 | 채택하지 않음. 줄바꿈 기회 규칙(UAX #14)을 text 엔진과 따로 구현하게 됩니다. 기회는 엔진 함수로 구합니다 |
+| min-content를 줄 너비 0 배치의 가장 넓은 줄로 둠 | 채택하지 않음. 엔진의 비상 줄바꿈 때문에 글자 하나 너비가 됩니다 |
 | 인스턴스는 늘 정의 root 크기로 그림(stretch 무시) | 채택하지 않음. Frame과 다른 규칙이 되고 layout 상자와 그린 상자가 달라집니다 |
 | 효과 자리 규칙을 scene과 codegen에 각각 둠 | 채택하지 않음. 이중 경로입니다 |
 | 효과 순서를 scene `PaintStack`·snapshot codec에 바로 실음 | 이번에는 채택하지 않음. scene canonical codec·semantic hash golden과 renderer pass compiler가 함께 바뀌는데, 그 renderer 경로는 다른 작업이 동시에 바꾸고 있습니다. 규칙과 평가 결과(`NodeEffects::order`)를 먼저 하나로 두고 renderer 연결은 후속입니다 |

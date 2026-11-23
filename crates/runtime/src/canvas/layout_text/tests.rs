@@ -341,3 +341,25 @@ fn reorder_preview_measures_and_draws_text_with_the_same_inputs() {
         Some([30., 20., natural.width(), natural.height()])
     );
 }
+
+/// 기본 글꼴 chain은 macOS 시스템 글꼴입니다.
+#[cfg(target_os = "macos")]
+#[test]
+fn min_content_width_is_the_widest_unbreakable_word() {
+    // CSS min-content(`overflow-wrap: normal`): 줄바꿈 기회마다 끊은 가장 긴 단위입니다. 단어 안에서 끊지 않습니다.
+    let doc = flex_text_document("alpha be");
+    let word = unwrapped_size(&flex_text_document("alpha"));
+    let mut fonts = FontCache::default();
+    let hook = CanvasText::new(&mut fonts, Path::new("."), &doc);
+    let intrinsic = TextIntrinsic {
+        words: vec![],
+        space: stellar_core_types::value::Length::new(0.0).unwrap(),
+        line_height: stellar_core_types::value::Length::new(0.0).unwrap(),
+        ascent: stellar_core_types::value::Length::new(0.0).unwrap(),
+    };
+    let min = hook.min_content_width(sid(29), &intrinsic).unwrap();
+    assert_eq!(min.to_px_f32().get(), word.width());
+    // min-content 너비로 배치하면 단어를 끊지 않고 기회에서만 줄을 나눕니다.
+    let at_min = hook.layout(sid(29), &intrinsic, Some(min)).unwrap();
+    assert_eq!(at_min.width.to_px_f32().get(), word.width());
+}
