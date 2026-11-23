@@ -45,6 +45,9 @@ mod swiftui;
 /// AppKit view tree.
 mod appkit;
 
+/// Context → SwiftUI Environment 값 출력 형태 (XXII.3.4 일부).
+pub mod context;
+
 #[cfg(test)]
 mod tests;
 
