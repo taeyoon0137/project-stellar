@@ -257,3 +257,50 @@ fn kotlin_syntax_checker_catches_mutations_of_real_output() {
         );
     }
 }
+
+#[test]
+fn compose_output_is_a_generated_file_set() {
+    // XXII.5.1: Compose 출력은 생성 파일 집합의 Kotlin 파일 하나이고, 경로는 package 디렉터리 + 접두어 이름입니다.
+    let ir = Fixture::new().ir(&fx::android_profile());
+    let options = ComposeOptions::default();
+    let (files, notes) = export_compose_files(&ir, &options).expect("files");
+    let (again, _) = export_compose_files(&ir, &options).expect("files");
+    assert_eq!(files.manifest_text(), again.manifest_text(), "byte 동일");
+    let paths: Vec<&str> = files.iter().map(|(p, _)| p).collect();
+    assert_eq!(paths, ["stellar/generated/StellarView.kt"]);
+    let content = files.get(paths[0]).expect("내용");
+    assert!(content.starts_with(&crate::output::FileKind::Kotlin.marker()));
+    assert!(content.ends_with("}\n") && !content.ends_with("\n\n"));
+    assert!(!content.contains('\r'));
+    let source = compose(&Fixture::new());
+    assert_eq!(notes, source.notes);
+    assert_eq!(
+        content,
+        format!(
+            "{}\n{}",
+            crate::output::FileKind::Kotlin.marker(),
+            source.source
+        )
+    );
+    super::kotlin_check::check_syntax(content).expect("marker 줄이 있어도 Kotlin 문법");
+    let custom = ComposeOptions {
+        package: "app.ui.gen".to_string(),
+        type_prefix: "Shop".to_string(),
+    };
+    let (files, _) = export_compose_files(&ir, &custom).expect("files");
+    assert_eq!(
+        files.iter().map(|(p, _)| p).collect::<Vec<_>>(),
+        ["app/ui/gen/ShopView.kt"]
+    );
+    assert_eq!(
+        export_compose_files(
+            &ir,
+            &ComposeOptions {
+                package: "../x".to_string(),
+                ..ComposeOptions::default()
+            }
+        )
+        .map(|_| ()),
+        Err(ComposeError::InvalidPackage)
+    );
+}
