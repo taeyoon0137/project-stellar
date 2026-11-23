@@ -426,6 +426,7 @@ fn span_of(start: GridLine, end: GridLine) -> Option<u16> {
 }
 
 const GRID_MIXED: &str = "명시 line 배치와 자동 배치가 섞인 grid는 배치 규칙을 다시 구현하지 않고 문서 순서 자동 배치로 냅니다";
+const GRID_AUTO_SPAN: &str = "자동 배치 item의 열 span은 줄 넘김 배치 규칙을 다시 구현하지 않고 span 1로 냅니다";
 const GRID_LINES: &str =
     "음수 line, row span, 끝 line만 명시한 배치는 대상 grid API로 낼 수 없어 문서 순서 자동 배치로 냅니다";
 
@@ -474,7 +475,12 @@ fn grid_plan(ir: &CodegenIr, grid: &LayoutStyle, flow: &[u32]) -> GridPlan {
             }
         }
     } else if !all_auto {
-        fallback = Some(GRID_MIXED);
+        // 명시 line이 하나도 없으면 섞인 것이 아니라 자동 배치의 row span입니다.
+        fallback = Some(if styles.iter().any(|s| explicit(s)) {
+            GRID_MIXED
+        } else {
+            GRID_LINES
+        });
     }
     if fallback.is_some() || !all_explicit {
         // 문서 순서 자동 배치(span 1).
@@ -506,7 +512,7 @@ fn grid_plan(ir: &CodegenIr, grid: &LayoutStyle, flow: &[u32]) -> GridPlan {
         }
         if fallback.is_none() && !column_flow && cells.iter().any(|c| c.column_span > 1) {
             // span이 있는 자동 배치는 칸 이동이 생기므로 span 1로 냅니다.
-            fallback = Some(GRID_LINES);
+            fallback = Some(GRID_AUTO_SPAN);
             for cell in &mut cells {
                 cell.column_span = 1;
             }
