@@ -451,6 +451,16 @@ pub(super) fn git_status(cached: &CachedRead, request: &PageRequest) -> Result<J
         ]),
         Err(_) => J::Null,
     };
+    // `stellar git status`와 같이 semantic 상태를 읽지 못하면 `semantic`은 null이고 경고 진단을 둡니다.
+    // 원인 문구는 프로젝트에서 온 값일 수 있으므로 data 안에만 둡니다(XIX.9.6).
+    let diagnostics = match &report.semantic {
+        Ok(_) => Vec::new(),
+        Err(reason) => vec![J::object(vec![
+            ("severity", J::string("warning")),
+            ("code", J::string("semantic-status-unavailable")),
+            ("message", J::string(reason.clone())),
+        ])],
+    };
     Ok(J::object(vec![
         ("revision", revision(cached.snapshot.revision())),
         ("git_revision", J::string(report.revision.to_string())),
@@ -499,7 +509,14 @@ pub(super) fn git_status(cached: &CachedRead, request: &PageRequest) -> Result<J
                     .collect(),
             ),
         ),
+        // raw는 page 상한까지만 싣고 전체 수와 잘림 여부를 함께 줍니다.
+        ("raw_total", count(report.raw.len())),
+        (
+            "raw_truncated",
+            J::Bool(report.raw.len() > paging::MAX_PAGE_ITEMS),
+        ),
         ("semantic", semantic),
+        ("diagnostics", J::Array(diagnostics)),
     ]))
 }
 

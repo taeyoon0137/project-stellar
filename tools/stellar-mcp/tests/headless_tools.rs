@@ -129,6 +129,11 @@ fn every_listed_tool_runs_read_only_through_ops() {
                     Some("main")
                 );
                 assert_eq!(body.get("counts").unwrap().get("staged"), Some(&J::int(0)));
+                // 깨끗한 작업 트리: raw 항목 0, 잘림 없음, semantic 상태를 읽었으므로 진단 없음.
+                assert_eq!(body.get("raw_total"), Some(&J::int(0)));
+                assert_eq!(body.get("raw_truncated"), Some(&J::Bool(false)));
+                assert!(body.get("semantic").is_some_and(|s| *s != J::Null));
+                assert_eq!(body.get("diagnostics"), Some(&J::Array(Vec::new())));
             }
             "git.semantic_conflicts" => {
                 assert_eq!(body.get("operation").map(text), Some("none"));
