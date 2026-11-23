@@ -856,15 +856,27 @@ mod tests {
                 StellarStatus::InvalidArgument
             );
             assert_eq!(
-                stellar_window_canvas_resize(0, 0, &view, &view, 0., 0., 0., 4., &mut request),
+                stellar_window_canvas_resize(
+                    0,
+                    0,
+                    &view,
+                    &view,
+                    0,
+                    0,
+                    0.,
+                    0.,
+                    0.,
+                    4.,
+                    &mut request
+                ),
                 StellarStatus::InvalidArgument
             );
             assert_eq!(
-                stellar_window_canvas_radius(0, 0, &view, &view, 4, 1., &mut request),
+                stellar_window_canvas_radius(0, 0, &view, &view, 0, 0, 4, 1., &mut request),
                 StellarStatus::InvalidArgument
             );
             assert_eq!(
-                stellar_window_canvas_line_end(0, 0, &view, &view, 2, 0., 0., &mut request),
+                stellar_window_canvas_line_end(0, 0, &view, &view, 0, 0, 2, 0., 0., &mut request),
                 StellarStatus::InvalidArgument
             );
             // 유효한 인자는 runtime handle 검사까지 갑니다.

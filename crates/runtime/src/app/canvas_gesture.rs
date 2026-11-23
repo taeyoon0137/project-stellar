@@ -246,9 +246,7 @@ impl AppRuntime {
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
             let (entry, scene) = window_scene(ctx.app_sessions_mut(), session)?;
-            if expected.is_some_and(|(revision, history)| {
-                entry.session.revision() != revision || entry.session.history_sequence() != history
-            }) {
+            if !started_at_current(&entry.session, expected) {
                 return Err(stale_view());
             }
             entry.gesture.deferred = None;
@@ -273,6 +271,17 @@ impl AppRuntime {
             })
         })
     }
+}
+
+/// 절대값 편집(크기·반경·Line 끝점)을 누른 시점의 revision·history 위치가 지금 창과 같은지(UX.3.14).
+/// 상대 이동처럼 시작 시점이 없는 편집(`None`)은 늘 통과합니다.
+fn started_at_current(
+    window: &ProjectWindowSession,
+    expected: Option<(DocumentRevision, u64)>,
+) -> bool {
+    expected.is_none_or(|(revision, history)| {
+        window.revision() == revision && window.history_sequence() == history
+    })
 }
 
 fn apply_edit(
@@ -1697,6 +1706,28 @@ mod tests {
             NodePayload::Shape(shape) => *shape,
             _ => panic!("Shape"),
         }
+    }
+
+    #[test]
+    fn absolute_edits_reject_a_changed_revision_or_history_since_the_press() {
+        let dir = saved_project_with("canvas-started-at", &[&all_shapes_document()]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        let pressed = (session.revision(), session.history_sequence());
+        assert!(started_at_current(&session, None));
+        assert!(started_at_current(&session, Some(pressed)));
+        // 선택만 바뀌어도 history 위치가 달라져 누른 시점의 기준이 아닙니다.
+        session
+            .select(Selection::new([sid(12)], Some(sid(12))))
+            .unwrap();
+        assert!(!started_at_current(&session, Some(pressed)));
+        let selected = (session.revision(), session.history_sequence());
+        // 문서 편집은 revision을 올립니다.
+        assert!(edit(&mut session, 1, resize(12, 0., 0., 60., 60.)));
+        assert!(!started_at_current(&session, Some(selected)));
+        assert!(started_at_current(
+            &session,
+            Some((session.revision(), session.history_sequence()))
+        ));
     }
 
     #[test]

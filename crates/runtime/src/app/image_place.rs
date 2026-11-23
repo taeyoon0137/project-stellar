@@ -343,6 +343,7 @@ mod tests {
             },
             parent: sid(10),
             position: Vec2::new(15., -12.).unwrap(),
+            size: None,
             source: "logo.png".into(),
             digest: [0; 32],
         };
@@ -406,5 +407,56 @@ mod tests {
             .unwrap(),
             meta
         );
+    }
+
+    #[test]
+    fn drag_size_sets_the_placement_box_instead_of_the_source_size() {
+        let fixture = saved_project("placed-image-drag-size");
+        let mut session = ProjectWindowSession::load(identity(fixture.path()), window(1)).unwrap();
+        let dragged = Size2::new(40., 30.).unwrap();
+        let input = ImagePlacement {
+            target: SelectionEditTarget {
+                session: WindowSessionHandle(1),
+                view: sid(3),
+                revision: session.revision(),
+                history_sequence: session.history_sequence(),
+            },
+            parent: sid(10),
+            position: Vec2::new(2., 3.).unwrap(),
+            size: Some(dragged),
+            source: "logo.png".into(),
+            digest: [0; 32],
+        };
+        let meta = AssetRecord::new(
+            ContentHash::compute(b"png"),
+            MediaType::new("image/png").unwrap(),
+            3,
+            None,
+        );
+        insert(
+            &mut session,
+            RequestId(1),
+            &input,
+            [sid(711), sid(712), sid(713)],
+            Size2::new(24., 16.).unwrap(),
+            meta,
+        )
+        .unwrap_or_else(|e| panic!("{}", e.message));
+        let model = session.document().unwrap().model();
+        assert_eq!(
+            model.payload(sid(711)),
+            Some(&NodePayload::Image(ImagePayload::new(
+                AssetRef::new(sid(713)),
+                dragged
+            )))
+        );
+        // 한 번의 Undo로 배치 전체가 사라집니다.
+        assert!(session.undo().unwrap());
+        assert!(session
+            .document()
+            .unwrap()
+            .model()
+            .payload(sid(711))
+            .is_none());
     }
 }
