@@ -17,36 +17,8 @@
 use super::resources::{Availability, Backend};
 use crate::json::{self, JsonLimits, JsonValue};
 
-/// tool이 요구하는 권한(아키텍처 §31.3 독립 권한 이름).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum RequiredGrant {
-    /// 읽기.
-    Read,
-    /// 변경 제안.
-    Propose,
-    /// 변경 적용.
-    Apply,
-    /// 터미널 실행(XIX.2.4).
-    Terminal,
-    /// Git commit(XIX.2.4).
-    GitCommit,
-    /// Git push(XIX.2.4).
-    GitPush,
-}
-
-impl RequiredGrant {
-    /// 고정 이름.
-    pub fn name(self) -> &'static str {
-        match self {
-            RequiredGrant::Read => "read",
-            RequiredGrant::Propose => "propose",
-            RequiredGrant::Apply => "apply",
-            RequiredGrant::Terminal => "terminal",
-            RequiredGrant::GitCommit => "git-commit",
-            RequiredGrant::GitPush => "git-push",
-        }
-    }
-}
+/// tool이 요구하는 권한(아키텍처 §31.3 독립 권한, XIX.3.1). 어휘는 `stellar-agent-protocol`이 정의합니다.
+pub use stellar_agent_protocol::permission::Permission as RequiredGrant;
 
 /// tool 정의 하나.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

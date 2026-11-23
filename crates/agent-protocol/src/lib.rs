@@ -10,3 +10,6 @@
 
 /// core 값 타입(직접 edge).
 pub use stellar_core_types as core_types;
+
+/// 권한 어휘 Read·Propose·Apply·Terminal·FileDelete·GitCommit·GitPush (XIX.3.1).
+pub mod permission;
