@@ -10,7 +10,7 @@
 //! | `Shape` | geometry bounds(가로·세로) 그대로. 가용 크기·mode와 무관하고 baseline이 없습니다. |
 //! | `Text` | 단어 폭 목록을 가용 너비에서 greedy로 줄바꿈합니다. 가용 너비가 없으면 max-content는 한 줄(단어 + 단어 사이 공백), min-content는 가장 넓은 단어 폭에서 줄바꿈합니다. 높이 = 줄 수 × line height(빈 텍스트도 한 줄), baseline = ascent(첫 줄). 줄은 최소 한 단어라 단어가 가용 너비보다 넓으면 넘칩니다. |
 //! | `Image` | natural 크기. 한 축만 definite면 natural 비율로 다른 축을 정합니다(한 번 반올림, ties away from zero). 두 축이 모두 definite·indefinite이거나 natural 크기에 0이 있으면 natural 그대로입니다. baseline이 없습니다. |
-//! | `ComponentInstance` | 자식(instance virtual subtree)을 node의 container 배치로 측정한 extent. 자식을 가질 수 있는 유일한 종류이며 baseline이 없습니다. |
+//! | `ComponentInstance` | 자식을 가질 수 있는 유일한 종류입니다. 엔진은 측정기를 부르지 않고 virtual subtree를 node의 `display`로 배치합니다(ADR-0076). |
 //!
 //! 실제 텍스트 shaping·이미지 decode 결과가 아니라 입력에 담긴 결정적 값입니다. 실제 엔진은 아래
 //! hook으로 연결합니다(텍스트는 X.10.4).
@@ -28,6 +28,15 @@
 //! 엔진 등은 이를 구현해 기본 구현을 대체하고, 처리하지 않는 종류는 [`MeasuredContent::measure`]
 //! (기본 구현)에 위임합니다. [`DefaultMeasurer`]는 기본 구현만 씁니다. 측정은 결정적이어야 합니다(같은
 //! 요청 → 같은 결과). 깊은 tree는 전용 stack thread에서 계산하므로 측정기는 `Sync`입니다.
+//!
+//! # Text 엔진 연결 (X.10.4)
+//!
+//! [`TextLayoutHook`]은 텍스트 엔진이 내는 값(min-content·max-content 너비, 너비 제약에서의 줄 배치 높이와 첫 baseline)을
+//! 그대로 받는 hook이고, [`TextHookMeasurer`]가 그것을 [`ContentMeasurer`]로 바꿉니다. 엔진은 Text leaf의 `auto` 너비를
+//! `fit-content`(min-content·max-content 사이)로, 높이를 정한 너비에서의 줄 배치 높이로, 첫 baseline을 그 줄 배치의 첫
+//! baseline + 위쪽 padding으로 씁니다. baseline은 container 첫 baseline(block·flex·grid)과 flex baseline 정렬(X.3.6)로
+//! 이어집니다. 텍스트 엔진 crate(`stellar-text`)와 이 crate는 서로 의존하지 않으므로 hook 구현은 두 crate에 함께 의존할 수
+//! 있는 상위 crate가 둡니다.
 
 use std::fmt;
 
@@ -202,6 +211,76 @@ impl ContentMeasurer for DefaultMeasurer {
         content: &MeasuredContent,
     ) -> Result<IntrinsicSize, MeasureError> {
         content.measure(request)
+    }
+}
+
+/// 텍스트 엔진의 줄 배치 결과 (X.10.4). 크기는 content 크기(padding 제외)입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TextLineLayout {
+    /// 가장 넓은 줄 너비.
+    pub width: LayoutUnit,
+    /// 줄 배치 높이(content height).
+    pub height: LayoutUnit,
+    /// 콘텐츠 top 기준 첫 줄 baseline. 줄이 없으면 `None`.
+    pub first_baseline: Option<LayoutUnit>,
+}
+
+/// 텍스트 엔진 hook (X.10.4).
+///
+/// `node`는 Text node, `text`는 레이아웃 입력에 담긴 결정적 기본 값입니다(hook은 무시하고 자신의 문서 값으로 계산해도
+/// 됩니다). 결과는 같은 입력에서 결정적이어야 합니다.
+pub trait TextLayoutHook: Sync {
+    /// min-content 너비(가장 넓은 줄바꿈 불가 단위).
+    fn min_content_width(
+        &self,
+        node: StableId,
+        text: &TextIntrinsic,
+    ) -> Result<LayoutUnit, MeasureError>;
+
+    /// 너비 `width`(없으면 줄바꿈 없음)에서의 줄 배치.
+    fn layout(
+        &self,
+        node: StableId,
+        text: &TextIntrinsic,
+        width: Option<LayoutUnit>,
+    ) -> Result<TextLineLayout, MeasureError>;
+
+    /// 결과 revision(폰트 로드 등). 바뀌면 계산 간 cache를 쓰지 않습니다.
+    fn revision(&self) -> u64 {
+        0
+    }
+}
+
+/// [`TextLayoutHook`]으로 Text를 측정하고 나머지 종류는 기본 구현에 위임하는 측정기 (X.10.4).
+#[derive(Debug, Clone, Copy)]
+pub struct TextHookMeasurer<'a, H: ?Sized>(pub &'a H);
+
+impl<H: TextLayoutHook + ?Sized> ContentMeasurer for TextHookMeasurer<'_, H> {
+    fn measure(
+        &self,
+        request: &MeasureRequest,
+        content: &MeasuredContent,
+    ) -> Result<IntrinsicSize, MeasureError> {
+        let MeasuredContent::Text(text) = content else {
+            return content.measure(request);
+        };
+        let width = match (request.available(Axis::Horizontal), request.mode) {
+            (Some(width), _) => Some(width),
+            (None, IntrinsicMode::MaxContent) => None,
+            (None, IntrinsicMode::MinContent) => {
+                Some(self.0.min_content_width(request.node, text)?)
+            }
+        };
+        let lines = self.0.layout(request.node, text, width)?;
+        Ok(IntrinsicSize {
+            width: lines.width,
+            height: lines.height,
+            baseline: lines.first_baseline,
+        })
+    }
+
+    fn revision(&self) -> u64 {
+        self.0.revision()
     }
 }
 
@@ -792,3 +871,6 @@ pub(crate) mod tests {
         assert_eq!(ContentKind::Text.to_string(), "text");
     }
 }
+
+#[cfg(test)]
+mod text_hook_tests;
