@@ -7,7 +7,7 @@
 //! [`validate_for_save`]는 cycle·참조 문제·type 오류를 모아 저장 전에 거부합니다. cycle 검출은 반복(비재귀) 3색
 //! DFS이며 토큰·간선을 ID 순으로 방문해 같은 registry는 항상 같은 경로를 보고합니다.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use stellar_core_types::reference::TokenRef;
@@ -172,40 +172,11 @@ impl TokenDependencyGraph {
                 path: vec![token, token],
             });
         }
-        let mut parent: BTreeMap<TokenRef, TokenRef> = BTreeMap::new();
-        let mut queue: VecDeque<TokenRef> = VecDeque::new();
-        for &start in new_references {
-            if parent.insert(start, token).is_none() {
-                queue.push_back(start);
-            }
-        }
-        while let Some(current) = queue.pop_front() {
-            for dep in self.dependencies(current) {
-                if dep == token {
-                    // current에서 parent를 따라 새 참조 대상(start)까지 거슬러 올라간 뒤 뒤집습니다.
-                    let mut chain = vec![current];
-                    let mut at = current;
-                    while let Some(&up) = parent.get(&at) {
-                        if up == token {
-                            break;
-                        }
-                        chain.push(up);
-                        at = up;
-                    }
-                    chain.reverse();
-                    let mut path = Vec::with_capacity(chain.len() + 2);
-                    path.push(token);
-                    path.extend(chain);
-                    path.push(token);
-                    return Some(TokenCycle { path });
-                }
-                if let std::collections::btree_map::Entry::Vacant(slot) = parent.entry(dep) {
-                    slot.insert(current);
-                    queue.push_back(dep);
-                }
-            }
-        }
-        None
+        // 판정·경로는 registry view(XVI.4.9)와 같은 BFS를 씁니다.
+        crate::graph_view::first_cycle_path(&token, new_references.iter().copied(), |current| {
+            self.dependencies(*current).collect::<Vec<_>>()
+        })
+        .map(|path| TokenCycle { path })
     }
 
     /// 의존 대상이 먼저 오는 위상 순서(같은 단계는 ID 순, Kahn). cycle이 있으면 그 cycle 오류입니다.

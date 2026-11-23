@@ -21,6 +21,13 @@ pub mod binding;
 /// 토큰·속성·Component Property·환경 입력 통합 dependency graph (VIII.6.2).
 pub mod graph;
 
+/// 저장소가 편집과 함께 유지하는 토큰·통합 dependency graph view (XVI.4.9).
+pub mod graph_view;
+
+/// 저장소 graph view 시험과 release 측정 (XVI.4.9).
+#[cfg(test)]
+mod graph_view_tests;
+
 /// 영향받는 binding만 위상 순서로 재평가하는 scheduler (VIII.6.4).
 pub mod scheduler;
 

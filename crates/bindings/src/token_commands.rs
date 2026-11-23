@@ -27,13 +27,14 @@ use stellar_expressions::ast::ExpressionAst;
 use stellar_expressions::typecheck::ReferenceTypes;
 
 use crate::binding::BindingId;
+use crate::graph_view::TokenGraphView;
 use crate::orphan::BindingStore;
 use crate::registry::{ReferenceIssue, RegistryError, TokenRegistry, TokenScope, TokenTombstone};
 use crate::token::{
     check_expression, TokenDefinition, TokenName, TokenReferenceTypes, TokenSetError, TokenType,
     TokenTypeError,
 };
-use crate::token_graph::{TokenCycle, TokenDependencyGraph};
+use crate::token_graph::TokenCycle;
 
 /// inbound 참조가 있는 토큰 삭제를 허용하는 명시 계획. 참조를 끊지 않고 orphan 상태로 둡니다.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -232,9 +233,7 @@ fn check_new_expression(
             }
         }
     }
-    if let Some(cycle) =
-        TokenDependencyGraph::build(registry).cycle_if_references(token, &references)
-    {
+    if let Some(cycle) = TokenGraphView::new(registry).cycle_if_references(token, &references) {
         return Err(TokenCommandError::Cycle(cycle));
     }
     let types = TokenReferenceTypes {

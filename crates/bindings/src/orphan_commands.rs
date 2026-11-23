@@ -21,7 +21,8 @@ use stellar_expressions::ast::ExpressionAst;
 use stellar_expressions::types::TypeSpec;
 
 use crate::binding::{BindingId, BindingSetError};
-use crate::graph::{BindingCycle, DependencyGraph, DependencyNode};
+use crate::graph::{BindingCycle, DependencyNode};
+use crate::graph_view::BindingGraphView;
 use crate::orphan::{break_cause, BindingStore, BindingWorld, OrphanCause, OrphanedBinding};
 use crate::registry::TokenRegistry;
 
@@ -132,7 +133,7 @@ impl OrphanCommand {
                     .iter()
                     .map(DependencyNode::from_target)
                     .collect();
-                if let Some(cycle) = DependencyGraph::build(tokens, store.live())
+                if let Some(cycle) = BindingGraphView::new(tokens, store.live())
                     .cycle_if_dependencies(&node, &dependencies)
                 {
                     return Err(OrphanCommandError::Cycle(cycle));
