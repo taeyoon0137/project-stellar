@@ -207,9 +207,9 @@ fn resolve(args: &[String]) -> Result<Success, CliError> {
                 ApplyError::Stale(_) => (ExitStatus::TempFail, "stale-session"),
                 ApplyError::Git(_) => (ExitStatus::Unavailable, "git"),
                 ApplyError::Write { .. } => (ExitStatus::IoErr, "merge-write"),
-                ApplyError::Add(_) => (ExitStatus::Unavailable, "git-add"),
+                ApplyError::Add { .. } => (ExitStatus::Unavailable, "git-add"),
             };
-            CliError::new(status, code, e.to_string())
+            CliError::new(status, code, format!("{e}. {}", e.guidance()))
                 .with_result(session_json(&session))
                 .with_context(args.project.clone())
         })?;

@@ -4,6 +4,12 @@
 //! 바뀌었으면(stale) 아무것도 쓰지 않습니다. (3) 계획한 파일을 한 번에 씁니다(각 파일은 임시 파일 뒤 rename). (4) 관련
 //! 경로를 `git add`합니다. (5) Git 상태(진행 중 작업, 남은 unmerged 경로)만 다시 읽어 돌려줍니다.
 //!
+//! **fault rollback(XIV.12.6)**: 쓰기 전에 대상 파일의 이전 bytes(없으면 없음)를 모두 읽어 둡니다. 쓰기 i번째가
+//! 실패하거나 모든 쓰기 뒤 `git add`가 실패하면, 이미 쓴 파일을 역순으로 이전 bytes로 되돌리고(새로 만든 파일은 지움)
+//! unresolved 상태와 복구 안내를 돌려줍니다. index는 `git add`가 한 번의 원자적 갱신이라 실패하면 바뀌지 않습니다.
+//! 되돌리기마저 실패한 파일은 오류에 경로를 남겨 사용자가 확인하게 합니다. commit은 어떤 경우에도 하지 않습니다.
+//! 다중 파일 journal(ADR-0078)이 들어오면 이 되돌리기를 journal 복구로 바꿉니다.
+//!
 //! **continue·commit 없음(XIV.12.5)**: merge·rebase·cherry-pick을 이어 가거나 commit하지 않습니다. 포트(`MergeGit`)에
 //! 그런 동작이 없어 이 경로는 그 명령을 부를 수 없습니다. 사용자가 결과를 보고 `git merge --continue`·`git commit` 등을
 //! 직접 실행합니다(기술 아키텍처 §27.2).
@@ -83,15 +89,47 @@ pub enum ApplyError {
     Stale(String),
     /// Git 읽기 실패. 아무것도 쓰지 않았습니다.
     Git(GitPortError),
-    /// 파일 쓰기 실패.
+    /// 파일 쓰기 실패. 이미 쓴 파일은 되돌렸습니다(`unrestored`에 남은 경로 제외).
     Write {
         /// 실패한 경로.
         path: PathBuf,
         /// 원인.
         error: io::Error,
+        /// 되돌리지 못한 경로.
+        unrestored: Vec<PathBuf>,
     },
-    /// `git add` 실패.
-    Add(GitPortError),
+    /// `git add` 실패. 쓴 파일은 되돌렸습니다(`unrestored`에 남은 경로 제외).
+    Add {
+        /// 원인.
+        error: GitPortError,
+        /// 되돌리지 못한 경로.
+        unrestored: Vec<PathBuf>,
+    },
+}
+
+impl ApplyError {
+    /// 사용자 복구 안내(XIV.12.6). conflict는 unresolved 그대로입니다.
+    pub fn guidance(&self) -> String {
+        match self {
+            ApplyError::Write { unrestored, .. } | ApplyError::Add { unrestored, .. }
+                if !unrestored.is_empty() =>
+            {
+                let paths: Vec<String> =
+                    unrestored.iter().map(|p| p.display().to_string()).collect();
+                format!(
+                    "다음 파일을 이전 상태로 되돌리지 못했습니다: {}. 내용을 확인하고 `git checkout --merge -- <경로>`로 \
+                     conflict 상태를 다시 만들 수 있습니다. conflict는 unresolved이며 commit하지 않았습니다",
+                    paths.join(", ")
+                )
+            }
+            ApplyError::Write { .. } | ApplyError::Add { .. } => {
+                "작업 트리를 이전 상태로 되돌렸습니다. conflict는 unresolved이며 commit하지 않았습니다. 원인을 해결한 뒤 \
+                 다시 실행하세요"
+                    .into()
+            }
+            _ => "아무것도 쓰지 않았습니다. conflict는 unresolved입니다".into(),
+        }
+    }
 }
 
 impl fmt::Display for ApplyError {
@@ -100,8 +138,10 @@ impl fmt::Display for ApplyError {
             ApplyError::Plan(e) => write!(f, "{e}"),
             ApplyError::Stale(e) => write!(f, "세션을 연 뒤 상태가 바뀌었습니다: {e}"),
             ApplyError::Git(e) => write!(f, "{e}"),
-            ApplyError::Write { path, error } => write!(f, "{} 쓰기 실패: {error}", path.display()),
-            ApplyError::Add(e) => write!(f, "git add 실패: {e}"),
+            ApplyError::Write { path, error, .. } => {
+                write!(f, "{} 쓰기 실패: {error}", path.display())
+            }
+            ApplyError::Add { error, .. } => write!(f, "git add 실패: {error}"),
         }
     }
 }
@@ -123,6 +163,7 @@ fn check_fresh(
             .map_err(|error| ApplyError::Write {
                 path: unit.path().to_path_buf(),
                 error,
+                unrestored: Vec::new(),
             })?
             .map(|bytes| ContentHash::compute(&bytes));
         if current != unit.observed() {
@@ -132,26 +173,61 @@ fn check_fresh(
     Ok(())
 }
 
-/// 계획을 씁니다.
+/// 쓰기 전 이전 bytes(되돌리기용).
+type Previous = Vec<(PathBuf, Option<Vec<u8>>)>;
+
+/// 쓴 파일을 역순으로 이전 bytes로 되돌립니다. 되돌리지 못한 경로를 돌려줍니다.
+fn restore(files: &dyn TreeFiles, root: &Path, previous: &Previous, count: usize) -> Vec<PathBuf> {
+    let mut unrestored = Vec::new();
+    for (path, bytes) in previous[..count].iter().rev() {
+        let full = root.join(path);
+        let outcome = match bytes {
+            Some(bytes) => files.write(&full, bytes),
+            None => files.remove(&full),
+        };
+        if outcome.is_err() {
+            unrestored.push(path.clone());
+        }
+    }
+    unrestored
+}
+
+/// 계획을 씁니다. 실패하면 이미 쓴 파일을 되돌립니다(XIV.12.6).
 fn write_plan(
     files: &dyn TreeFiles,
     root: &Path,
     plan: &WritePlan,
-) -> Result<Vec<PathBuf>, ApplyError> {
-    let mut written = Vec::new();
+) -> Result<(Vec<PathBuf>, Previous), ApplyError> {
+    let mut previous = Vec::with_capacity(plan.writes.len());
     for write in &plan.writes {
+        let bytes = files
+            .read(&root.join(&write.path))
+            .map_err(|error| ApplyError::Write {
+                path: write.path.clone(),
+                error,
+                unrestored: Vec::new(),
+            })?;
+        previous.push((write.path.clone(), bytes));
+    }
+    let mut written = Vec::new();
+    for (index, write) in plan.writes.iter().enumerate() {
         let path = root.join(&write.path);
         let outcome = match &write.bytes {
             Some(bytes) => files.write(&path, bytes),
             None => files.remove(&path),
         };
-        outcome.map_err(|error| ApplyError::Write {
-            path: write.path.clone(),
-            error,
-        })?;
+        if let Err(error) = outcome {
+            // 실패한 파일도 임시 파일 뒤 rename이라 그대로일 수 있지만, 안전하게 함께 되돌립니다.
+            let unrestored = restore(files, root, &previous, index + 1);
+            return Err(ApplyError::Write {
+                path: write.path.clone(),
+                error,
+                unrestored,
+            });
+        }
         written.push(write.path.clone());
     }
-    Ok(written)
+    Ok((written, previous))
 }
 
 /// 세션의 해결 결과를 작업 트리에 쓰고 resolved 처리합니다(XIV.12.4).
@@ -163,8 +239,11 @@ pub fn apply_session(
     let plan = session.plan().map_err(ApplyError::Plan)?;
     check_fresh(git, files, session)?;
     let root = session.root();
-    let written = write_plan(files, root, &plan)?;
-    git.add(root, &plan.add).map_err(ApplyError::Add)?;
+    let (written, previous) = write_plan(files, root, &plan)?;
+    if let Err(error) = git.add(root, &plan.add) {
+        let unrestored = restore(files, root, &previous, previous.len());
+        return Err(ApplyError::Add { error, unrestored });
+    }
     // add 뒤에는 상태만 읽습니다(XIV.12.5). 읽기 실패는 결과(쓰기·add 성공)를 바꾸지 않습니다.
     let operation = git.operation(root).ok();
     let remaining = git
