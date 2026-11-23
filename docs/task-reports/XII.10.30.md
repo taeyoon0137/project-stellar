@@ -65,3 +65,14 @@
 
 - 곡선은 선분화 결과(허용 오차 0.05 px)로 path를 냅니다. 원래 cubic을 보존하지 않습니다. export 굽기에서 곡선 보존이 필요하면 후속입니다.
 - host의 Boolean 앞뒤 modifier 순서 의미는 Boolean 항목을 뺀 stack 평가로 단순화했습니다.
+
+## 후속 보완 (2026-11-23, host가 skip될 때의 operand)
+
+- 결함: host가 skip되면(예: host에 평가하지 않는 modifier, host가 Text, host 조상이 skip됨) operand는 흡수된 채 아무것도 그리지 않았습니다. 이 동작이 정해지지 않았고, 빠진 이유도 기록되지 않았습니다.
+- 결정(ADR-0084 결정 7 개정):
+  - operand는 흡수된 채로 둡니다. 단독으로 되살리지 않습니다. 예를 들어 Subtract의 빼는 도형이 채운 도형으로 보이는 것처럼, 결과와 다른 그림이 되기 때문입니다. 평가 상한을 넘었을 때 operand를 그리지 않는 규칙과도 같습니다.
+  - 그 operand를 skip 이유 `SkipReason::BooleanHostSkipped`로 기록합니다. 이미 다른 이유가 있으면 그 이유를 유지합니다.
+- 구현: runtime `refresh_operands`가 전체 변환과 `scene_edits` 끝에서 operand마다 Boolean 결과를 가진 host가 source에 있는지 확인하고 기록을 맞춥니다. host가 돌아오면 기록도 지웁니다.
+- 변경 파일: `crates/runtime/src/canvas/scene_source.rs`, `crates/runtime/src/canvas/scene_source/tests.rs`, `docs/adr/ADR-0084-…`.
+- 테스트: `scene_source::tests::operands_of_a_skipped_host_stay_absorbed_and_are_recorded`. host에 StrokeExpand를 더하면 host는 UnsupportedModifiers, operand는 BooleanHostSkipped이고 scene은 root만 남습니다. 지우면 기록이 사라지고 결과가 돌아옵니다. 매 단계 증분 결과(source·skip·scene hash)가 처음부터 변환한 결과와 같습니다.
+- 검증: `cargo test -p stellar-runtime --lib scene_source` 11 passed.

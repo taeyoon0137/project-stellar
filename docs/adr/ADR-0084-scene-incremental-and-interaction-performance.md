@@ -4,8 +4,8 @@
 
 Accepted (2026-11-23, lane scene-incremental-perf 구현 기록)
 
-개정(2026-11-23, lane render-incremental): 결정 2에 operand 조상 전파를 더했습니다. render graph 증분 compile은
-ADR-0090에 따로 정합니다.
+개정(2026-11-23, lane render-incremental): 결정 2에 operand 조상 전파, 결정 7에 host가 skip될 때의 operand 처리를
+더했습니다. render graph 증분 compile은 ADR-0090에 따로 정합니다.
 
 ## Context
 
@@ -112,6 +112,11 @@ ADR-0090에 따로 정합니다.
      4. 남은 선분을 NonZero loop로 잇습니다.
    - 같은 입력은 bit 단위로 같은 결과입니다.
    - 좌표 ±32,768 px, 선분 20,000개를 넘으면 거부합니다. scene은 그때 host geometry를 그리고 실패 수를 셉니다.
+   - host 자신이나 조상이 skip되어 scene에 Boolean 결과가 없으면, operand는 흡수된 채 아무것도 그리지 않습니다. operand를
+     단독으로 되살리지 않습니다. Subtract의 빼는 도형이 채운 도형으로 보이는 것처럼, 결과와 다른 그림이 되기 때문입니다.
+     평가 상한을 넘었을 때도 operand를 그리지 않는 것과 같은 규칙입니다. 대신 그 operand를 skip 이유
+     `BooleanHostSkipped`로 기록해 빠진 이유가 드러나게 합니다. operand가 다른 이유로 이미 기록되어 있으면 그 이유를
+     유지합니다.
    - host의 다른 modifier는 Boolean 항목을 뺀 stack으로 평가합니다.
 8. **상호작용 trace(XVI.1.1\~XVI.1.5).** `stellar_diagnostics::interaction`이 담당합니다.
    - event마다 `InteractionTraceId`를 발급하고 T0을 기록합니다.

@@ -20,7 +20,8 @@
 //! - Boolean modifier(XII.10.30)를 가진 Shape·Path는 결과 host입니다. host의 다른 modifier는 Boolean 항목을 뺀
 //!   stack으로 평가합니다. operand node는 source에 넣지 않고(결과에 흡수), host local 좌표로 옮긴 geometry를 문서
 //!   pre-order(OrderKey 순) 순서로 host에 둡니다. operand의 geometry 변경과 operand 조상의 변경은 host의 geometry
-//!   dirty가 됩니다([`SceneDependents`]).
+//!   dirty가 됩니다([`SceneDependents`]). host가 skip되어 결과를 남기지 못하면 operand는 흡수된 채 그리지 않고
+//!   [`SkipReason::BooleanHostSkipped`]로 기록합니다(ADR-0084 결정 7).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -74,6 +75,9 @@ pub enum SkipReason {
     Instance,
     /// 값이 scene 규칙을 벗어났습니다(비유한 등).
     InvalidValue,
+    /// Boolean operand인데 결과를 그리는 host가 scene에 없습니다(host가 skip됨). operand는 결과에 흡수되므로 단독으로
+    /// 그리지 않습니다(ADR-0084 결정 7).
+    BooleanHostSkipped,
 }
 
 /// Text node를 scene 입력으로 바꾸는 hook(글꼴·layout은 text 엔진이 맡음).
@@ -178,7 +182,10 @@ pub fn document_scene_source<'a>(
     Ok(built)
 }
 
-/// operand 조상 표를 현재 operand 목록에 맞춥니다.
+/// operand 조상 표와 host 없는 operand의 skip 기록을 현재 source에 맞춥니다.
+///
+/// host가 scene에 Boolean 결과를 남기지 못하면(host 자신이나 조상이 skip됨) operand는 흡수된 채 아무것도 그리지
+/// 않습니다. 그 operand를 [`SkipReason::BooleanHostSkipped`]로 기록해 빠진 이유가 드러나게 합니다(ADR-0084 결정 7).
 fn refresh_operands(model: &DocumentModel, current: &mut DocumentSceneSource) {
     current.operand_ancestors = current
         .operand_hosts
@@ -193,6 +200,23 @@ fn refresh_operands(model: &DocumentModel, current: &mut DocumentSceneSource) {
             (*operand, ancestors)
         })
         .collect();
+    current
+        .skipped
+        .retain(|_, reason| *reason != SkipReason::BooleanHostSkipped);
+    for (operand, hosts) in &current.operand_hosts {
+        let drawn = hosts.iter().any(|host| {
+            current
+                .source
+                .get(SceneKey::node(*host))
+                .is_some_and(|node| node.boolean.is_some())
+        });
+        if !drawn {
+            current
+                .skipped
+                .entry(SceneKey::node(*operand))
+                .or_insert(SkipReason::BooleanHostSkipped);
+        }
+    }
 }
 
 impl<'a, 'o> Converter<'a, 'o> {

@@ -641,3 +641,51 @@ fn ancestor_move_of_an_operand_puts_the_host_in_the_dirty_set() {
     assert_eq!(dirty.get(sid(11)), Some(SceneDirtyKind::Paint));
     assert_eq!(dirty.get(sid(30)), Some(SceneDirtyKind::Geometry));
 }
+
+#[test]
+fn operands_of_a_skipped_host_stay_absorbed_and_are_recorded() {
+    // XII.10.30(ADR-0084 결정 7): host가 skip되면 operand는 흡수된 채 그리지 않고, 이유를 BooleanHostSkipped로 남깁니다.
+    let mut state = DocumentState::new(boolean_document());
+    let mut built = document_scene_source(state.model(), sid(10), options()).unwrap();
+    let (mut scene, _) =
+        IncrementalScene::build(built.source.clone(), state.revision(), &clock()).unwrap();
+    assert!(built.skipped.is_empty(), "{:?}", built.skipped);
+    apply_and_compare(
+        &mut state,
+        &mut built,
+        &mut scene,
+        Command::InsertModifier(stellar_commands::modifier_ops::InsertModifier {
+            node: sid(30),
+            entry: modifier(
+                62,
+                ModifierKind::StrokeExpand,
+                ModifierPayload::StrokeExpand {
+                    width: stellar_core_types::value::FiniteF32::new(1.).unwrap(),
+                },
+            ),
+        }),
+    );
+    assert_eq!(
+        built.skipped.get(&SceneKey::node(sid(30))),
+        Some(&SkipReason::UnsupportedModifiers)
+    );
+    assert!(built.source.get(SceneKey::node(sid(31))).is_none());
+    assert_eq!(
+        built.skipped.get(&SceneKey::node(sid(31))),
+        Some(&SkipReason::BooleanHostSkipped)
+    );
+    // root만 남습니다(operand를 단독으로 그리지 않음).
+    assert_eq!(scene.snapshot().node_count(), 1);
+    // host가 돌아오면 operand 기록도 사라집니다.
+    apply_and_compare(
+        &mut state,
+        &mut built,
+        &mut scene,
+        Command::RemoveModifier(stellar_commands::modifier_ops::RemoveModifier {
+            node: sid(30),
+            modifier: ModifierId::new(sid(62)),
+        }),
+    );
+    assert!(built.skipped.is_empty(), "{:?}", built.skipped);
+    assert_eq!(scene.snapshot().node_count(), 2);
+}
