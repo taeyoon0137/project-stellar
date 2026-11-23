@@ -60,3 +60,15 @@
 - 외부 원본 반영(`ApplyExternalSnapshot`, runtime `sync_external`)은 문서 레코드만 옮기므로 Context 파일을 밖에서 고치면
   열린 창에 반영되지 않습니다(소유 밖).
 - storage `INITIAL_KINDS`에는 kind 7을 등록하지 않았습니다(보호 경로, ADR-0099 결정 12).
+
+## 통합 보완 (2026-11-23, 앱 저장의 Context 손실)
+
+- 결함: 앱 창 저장 snapshot(`stellar_runtime::window_session::SharedSnapshot`)이 문서 레코드만 담아, 저장이 텍스트 원본
+  `design/context.stellar.yaml`을 삭제로 계획하고 context-set chunk도 빠뜨렸습니다. chunk 프로젝트를 텍스트 원본으로
+  옮기는 변환(`window_session/source.rs`)도 Context를 옮기지 않았습니다.
+- 수정: snapshot이 `model.context().live(model)`을 함께 담고, chunk 직렬화는 `serialize_records_with_context`, 텍스트
+  원본 인코딩과 변환은 레코드로 다시 만든 model에 Context를 넣은 뒤 씁니다.
+- 시험: `window_session::source_tests::save_keeps_the_document_context_in_the_source_and_the_cache`. 수정 전 코드에서는
+  첫 저장 뒤 Context 원본 파일이 없어 실패하는 것을 확인했습니다.
+- 남은 범위: 외부 변경 반영(`ApplyExternalSnapshot`)이 Context를 옮기지 않아, 밖에서 바꾼 Context 원본은 열린 창에
+  반영되지 않고 그 창의 다음 저장이 덮어씁니다.

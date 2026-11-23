@@ -700,3 +700,48 @@ fn a_cache_opened_window_saving_over_a_library_only_change_keeps_its_own_save() 
         "token 파일 그대로"
     );
 }
+
+/// 앱 저장이 문서 Context(레코드 밖 요소)를 잃지 않습니다(ADR-0099). 이전에는 저장 snapshot이 레코드만 담아
+/// `design/context.stellar.yaml`을 삭제로 계획하고 context-set chunk도 빠뜨렸습니다.
+#[test]
+fn save_keeps_the_document_context_in_the_source_and_the_cache() {
+    use stellar_commands::command::Command;
+    use stellar_commands::context::{ContextCommand, ContextEdit};
+    use stellar_commands::id::CommandOrigin;
+    use stellar_document::context::fixtures::{number, number_type};
+    use stellar_document::context::key::{ContextKey, ContextScope};
+
+    let project = saved_project("source-context");
+    let locks = TempDir::new("source-context-locks");
+    let mut a = open(&project, &locks, 1);
+    let key = ContextKey::new(
+        StableId::new_v7(70_001, 0x0c0c, 1),
+        "spacing",
+        ContextScope::Document(sid(1)),
+        number_type(),
+        number(1, 8.0),
+    )
+    .unwrap();
+    let doc = a.document().unwrap();
+    let tx = CommandTransaction::new(command(1), CommandOrigin::User).with_command(
+        doc.revision(),
+        Command::EditContext(Box::new(ContextCommand {
+            edit: ContextEdit::CreateKey(key.clone()),
+        })),
+    );
+    a.apply(&tx, 0).unwrap();
+    assert!(a.save_now().unwrap().written);
+    let context_file = project.path().join("design/context.stellar.yaml");
+    assert!(context_file.is_file(), "Context 원본 파일");
+
+    // 다른 편집을 저장해도 Context 원본이 남고, 다시 열면 원본·cache 어느 쪽에서도 key가 있습니다.
+    a.apply(&rename(a.document().unwrap(), 10, 11, "다시 저장"), 0)
+        .unwrap();
+    assert!(a.save_now().unwrap().written);
+    assert!(context_file.is_file(), "두 번째 저장 뒤에도 Context 원본 파일");
+    let b = open(&project, &locks, 2);
+    assert!(b.document().unwrap().model().context().key(key.id()).is_some());
+    let cache = open_snapshot(project.path()).unwrap();
+    let cached = cache.document_model(sid(1)).unwrap();
+    assert!(cached.context().key(key.id()).is_some(), "cache generation의 Context");
+}

@@ -95,7 +95,7 @@ use stellar_history::window::WindowHistory;
 use stellar_ops::lock::{default_lock_dir, LockError, SaveLock};
 use stellar_project::document_io::load::{load_document_from_generation, LoadDocumentError};
 use stellar_project::document_io::serialize::{
-    serialize_records, SerializeError, SerializedDocument,
+    serialize_records_with_context, SerializeError, SerializedDocument,
 };
 use stellar_project::document_io::session::{
     commit_files, decode_source, plan_changes, read_source, read_stamp, write_stamp, OpenPlan,
@@ -315,6 +315,9 @@ pub(crate) struct SharedSnapshot {
     document_id: StableId,
     revision: DocumentRevision,
     records: DocumentRecords,
+    /// 영속할 Context 요소(XXX.7, ADR-0099). 레코드 밖에 있어 따로 담지 않으면 저장이 context-set chunk와 텍스트
+    /// 원본 `design/context.stellar.yaml`을 잃습니다.
+    context: stellar_document::context::set::ContextSet,
     serialized: std::sync::OnceLock<Result<SerializedDocument, SerializeError>>,
     serializations: std::sync::atomic::AtomicUsize,
 }
@@ -337,7 +340,7 @@ impl SharedSnapshot {
             .get_or_init(|| {
                 self.serializations
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                serialize_records(&self.records)
+                serialize_records_with_context(&self.records, &self.context)
             })
             .as_ref()
             .map_err(Clone::clone)
@@ -547,7 +550,8 @@ impl SaveCapture {
             }
             library = std::sync::Arc::new(next);
         }
-        let (model, _) = DocumentModel::from_records(records.clone()).map_err(source_error)?;
+        let (mut model, _) = DocumentModel::from_records(records.clone()).map_err(source_error)?;
+        model.replace_context(self.snapshot.context.clone());
         let files = stellar_project::document_io::source_v4::project::encode(&library.join(model))
             .map_err(source_error)?
             .files;
@@ -1303,6 +1307,7 @@ impl ProjectWindowSession {
             document_id,
             revision,
             records: document.state.model().to_records()?,
+            context: document.state.model().context().live(document.state.model()),
             serialized: std::sync::OnceLock::new(),
             serializations: std::sync::atomic::AtomicUsize::new(0),
         });

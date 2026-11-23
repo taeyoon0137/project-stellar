@@ -269,7 +269,9 @@ fn convert(
     let (yaml, _) = read_project_library(root, ExternalAccess::MetadataOnly)
         .map_err(|error| error.to_string())?;
     let records = model.to_records().map_err(|error| error.to_string())?;
-    let (copy, _) = DocumentModel::from_records(records).map_err(|error| error.to_string())?;
+    let (mut copy, _) = DocumentModel::from_records(records).map_err(|error| error.to_string())?;
+    // Context는 레코드 밖에 있어 함께 옮깁니다(ADR-0099).
+    copy.replace_context(model.context().live(model));
     let mut project = from_saved(&lazy, copy, yaml).map_err(|error| error.to_string())?;
     if let Some(text) = text {
         project.token_sets = decode_source(text)
