@@ -455,4 +455,36 @@ mod tests {
         samples.reverse();
         assert_eq!(analyze(&samples, &budget()), stats);
     }
+
+    #[test]
+    fn excluded_samples_do_not_fill_the_sample_requirement() {
+        // 검증 기준(XVI.4.3): 제외는 사전 정의 코드로만 하고, 제외한 sample은 판정 sample 수에 들지 않습니다.
+        let budget = budget();
+        let mut samples: Vec<LatencySample> = (0..999)
+            .map(|_| LatencySample::controllable(ms(2.0)))
+            .collect();
+        for code in ExclusionCode::ALL {
+            samples.push(LatencySample {
+                latency_nanos: ms(1.0),
+                exclusion: Some(code),
+            });
+        }
+        let stats = analyze(&samples, &budget);
+        assert_eq!(stats.count, 999);
+        assert_eq!(stats.excluded, [1, 1, 1, 1]);
+        let violations = release_gate(
+            &[GateScenario {
+                required: true,
+                stats,
+                cache_consistent: true,
+            }],
+            &budget,
+        );
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].metric, GateMetric::TooFewSamples);
+        // 코드 이름은 서로 다른 고정 이름입니다.
+        let names: std::collections::BTreeSet<&str> =
+            ExclusionCode::ALL.iter().map(|c| c.name()).collect();
+        assert_eq!(names.len(), ExclusionCode::ALL.len());
+    }
 }
