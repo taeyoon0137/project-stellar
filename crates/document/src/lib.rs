@@ -18,6 +18,8 @@ pub mod control;
 
 /// 문서·페이지·View 정의 (VI.1.1).
 pub mod definitions;
+/// View 변수·Variant 영속 형식 보조 (XVI.11.1, ADR-0126).
+pub mod view_variables;
 /// View 변수와 nullable 조합형 Variant (IX.7).
 pub mod view_variant;
 

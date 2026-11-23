@@ -7,7 +7,7 @@
 //! | 입력 | 객체 |
 //! |---|---|
 //! | [`ProjectMetadata`] | `Project` 1개(항목은 `PROJECT_METADATA` + 이름 segment) |
-//! | [`DocumentRecords`] | `Document`·`Page`·`View`, scene `Node`(명시 layout longhand 포함), `Modifier` |
+//! | [`DocumentRecords`] | `Document`·`Page`·`View`, scene `Node`(명시 layout longhand·가이드 포함), `Modifier`, View Variant(ADR-0126, [`crate::guides`]) |
 //! | [`ComponentLibrary`] | `Component`, 정의 tree `Node`(Origin::Component), `ComponentSlot` |
 //! | [`TokenEntry`] | `Token` |
 //! | [`AssetEntry`] | `Asset` |
@@ -204,6 +204,7 @@ impl SnapshotBuilder {
                 objects.push(modifier_object(origin, stack.node, entry)?);
             }
         }
+        crate::guides::project(records, &mut objects)?;
         self.commit(objects)
     }
 
@@ -412,6 +413,34 @@ impl SnapshotBuilder {
     /// Property patch는 대상 경로마다 TypedValue 속성, 구조 patch·slot change는 항목마다 그
     /// 항목 하나만 담은 [`VariantOverrideSet`]의 canonical 인코딩(Bytes)입니다.
     pub fn add_variant(&mut self, variant: &VariantEntry) -> Result<(), SnapshotError> {
+        let object = variant_object(variant)?;
+        self.commit(vec![object])
+    }
+
+    /// 완성된 snapshot.
+    pub fn finish(self) -> SemanticSnapshot {
+        self.snapshot
+    }
+
+    /// 객체 묶음을 원자적으로 넣습니다: 기존·묶음 안 중복이 있으면 하나도 넣지 않습니다.
+    fn commit(&mut self, objects: Vec<SemanticObject>) -> Result<(), SnapshotError> {
+        let mut seen = std::collections::BTreeSet::new();
+        for object in &objects {
+            if self.snapshot.contains(object.id()) || !seen.insert(object.id()) {
+                return Err(SnapshotError::DuplicateObject { id: object.id() });
+            }
+        }
+        for object in objects {
+            self.snapshot.insert(object)?;
+        }
+        Ok(())
+    }
+}
+
+/// View Variant override 묶음 객체(XIV.3.7). [`SnapshotBuilder::add_variant`]와 문서 View 변수 투영([`crate::guides`])이
+/// 함께 씁니다.
+pub(crate) fn variant_object(variant: &VariantEntry) -> Result<SemanticObject, SnapshotError> {
+    {
         let mut object = SemanticObject::new(
             variant.id,
             ObjectKind::Variant,
@@ -445,26 +474,7 @@ impl SnapshotBuilder {
                 .with_key_segment(&format!("{instance}/{}", slot.stable_id()));
             object.insert_property(key, SemanticValue::Bytes(single.encode()))?;
         }
-        self.commit(vec![object])
-    }
-
-    /// 완성된 snapshot.
-    pub fn finish(self) -> SemanticSnapshot {
-        self.snapshot
-    }
-
-    /// 객체 묶음을 원자적으로 넣습니다: 기존·묶음 안 중복이 있으면 하나도 넣지 않습니다.
-    fn commit(&mut self, objects: Vec<SemanticObject>) -> Result<(), SnapshotError> {
-        let mut seen = std::collections::BTreeSet::new();
-        for object in &objects {
-            if self.snapshot.contains(object.id()) || !seen.insert(object.id()) {
-                return Err(SnapshotError::DuplicateObject { id: object.id() });
-            }
-        }
-        for object in objects {
-            self.snapshot.insert(object)?;
-        }
-        Ok(())
+        Ok(object)
     }
 }
 

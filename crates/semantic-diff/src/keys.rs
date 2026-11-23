@@ -195,6 +195,10 @@ pub const VARIANT_STRUCTURE_PATCH: PropertyKey = PropertyKey(0xEB02);
 /// Slot change. 마지막 segment는 `인스턴스 StableId/slot StableId`입니다.
 pub const VARIANT_SLOT_CHANGE: PropertyKey = PropertyKey(0xEB03);
 
+// --- Frame 가이드·레이아웃 그리드, View 변수·Variant 조건 (0xEDxx, ADR-0126) ---
+
+pub use crate::guides::{NODE_GUIDE, NODE_LAYOUT_GRIDS, VARIANT_CONDITION, VIEW_VARIABLE};
+
 /// 값이 asset 참조인 속성 key. 이 key의 변경은 `AssetRefChange`로 분류합니다.
 pub const ASSET_REFERENCE_KEYS: [PropertyKey; 1] = [IMAGE_ASSET];
 
@@ -308,6 +312,10 @@ mod tests {
             ("variant.property_patch", VARIANT_PROPERTY_PATCH),
             ("variant.structure_patch", VARIANT_STRUCTURE_PATCH),
             ("variant.slot_change", VARIANT_SLOT_CHANGE),
+            ("guides.guide", NODE_GUIDE),
+            ("guides.layout_grids", NODE_LAYOUT_GRIDS),
+            ("view.variable", VIEW_VARIABLE),
+            ("variant.condition", VARIANT_CONDITION),
         ]
     }
 

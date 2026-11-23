@@ -28,6 +28,8 @@ pub(crate) mod styles;
 pub mod token;
 /// 단일 View 원본.
 pub(crate) mod view;
+/// Frame 가이드·레이아웃 그리드와 View 변수·Variant 표기(ADR-0126).
+pub mod view_data;
 
 /// 텍스트 원본의 쓰기 버전.
 pub const VERSION: &str = "4";

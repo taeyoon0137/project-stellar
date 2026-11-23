@@ -23,7 +23,17 @@
 //!
 //! layout 절(IX.11.6, ADR-0086)은 record 수 `u32`(1 이상) + (`u32` 길이 + [`LayoutRecord::encode`])*이고, 소유
 //! node StableId 순입니다. 명시 layout longhand가 없는 subtree는 이 절을 쓰지 않으므로 이전 형식의 bytes와
-//! 같습니다. 읽을 때 절이 없으면 record가 없는 것입니다. 수 0으로 쓴 절은 정규형이 아니라 거부합니다.
+//! 같습니다. 읽을 때 절이 없으면 record가 없는 것입니다. 수 0으로 쓴 절은 뒤에 확장 절이 없으면 정규형이 아니라
+//! 거부합니다.
+//!
+//! 확장 절(ADR-0126)은 layout 절 뒤에 tag 오름차순으로 둡니다: Frame 가이드·레이아웃 그리드와 View root subtree의 View
+//! 변수·Variant입니다(형식은 [`crate::guides::persist`]). 확장 절이 있고 layout record가 없으면 layout 절 자리에 수 0을
+//! 씁니다. 확장 절이 없는 subtree는 이전 형식의 bytes와 같습니다. 확장 절은 [`SubtreeRecords`] 값 밖의
+//! [`SubtreeSections`]로 주고받습니다([`SubtreeRecords::encode_with`]·[`SubtreeRecords::decode_with_sections`],
+//! [`DocumentRecords::view_subtrees_with_sections`]·[`DocumentRecords::from_subtrees_with_sections`]). 확장 절을 모르는
+//! 경로(`decode`, `view_subtrees`)는 확장 절이 있으면 조용히 버리지 않고 거부합니다.
+
+pub use crate::guides::persist::SubtreeSections;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -94,6 +104,8 @@ pub enum RecordCodecError {
         /// 소유 node.
         owner: StableId,
     },
+    /// 확장 절(가이드·View 변수, ADR-0126) 오류.
+    Sections(crate::guides::persist::SectionError),
 }
 
 impl fmt::Display for RecordCodecError {
@@ -122,6 +134,7 @@ impl fmt::Display for RecordCodecError {
             RecordCodecError::ForeignLayoutRecord { owner } => {
                 write!(f, "subtree 밖 node {owner}의 layout record입니다")
             }
+            RecordCodecError::Sections(e) => write!(f, "{e}"),
         }
     }
 }
@@ -329,8 +342,13 @@ pub struct SubtreeRecords {
 }
 
 impl SubtreeRecords {
-    /// canonical bytes(모듈 문서의 subtree 형식).
+    /// canonical bytes(모듈 문서의 subtree 형식, 확장 절 없음).
     pub fn encode(&self) -> Vec<u8> {
+        self.encode_with(&SubtreeSections::default())
+    }
+
+    /// 확장 절(ADR-0126)을 붙인 canonical bytes. 절이 비면 [`SubtreeRecords::encode`]와 같습니다.
+    pub fn encode_with(&self, extension: &SubtreeSections) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(&self.root.to_bytes());
         put_u32(&mut buf, self.nodes.len());
@@ -341,18 +359,41 @@ impl SubtreeRecords {
         for stack in &self.modifier_stacks {
             put_bytes(&mut buf, &stack.encode());
         }
-        if !self.layout_records.is_empty() {
+        let sections = crate::guides::persist::encode_sections(
+            &extension.node_guides,
+            &extension.view_variants,
+        );
+        if !self.layout_records.is_empty() || !sections.is_empty() {
             put_u32(&mut buf, self.layout_records.len());
             for record in &self.layout_records {
                 put_bytes(&mut buf, &record.encode());
             }
         }
+        buf.extend_from_slice(&sections);
         buf
     }
 
     /// bytes에서 복원합니다. 첫 node가 root가 아니거나 subtree 밖 node의 stack이 있으면
     /// 거부합니다. 문서 불변식(부모·순서·참조 등)은 validator(VI.10.1)가 검사합니다.
+    ///
+    /// 확장 절(ADR-0126)이 있으면 버리지 않고 거부합니다. 확장 절까지 읽으려면 [`SubtreeRecords::decode_with_sections`]를
+    /// 씁니다.
     pub fn decode(bytes: &[u8]) -> Result<SubtreeRecords, RecordCodecError> {
+        let (records, sections) = SubtreeRecords::decode_with_sections(bytes)?;
+        if !sections.is_empty() {
+            return Err(RecordCodecError::Malformed {
+                reason: "확장 절이 있는 subtree는 decode_with_sections로 읽습니다",
+            });
+        }
+        Ok(records)
+    }
+
+    /// subtree와 확장 절(ADR-0126)을 함께 읽습니다. View 변수 절의 View는 subtree만으로 정의를 모르므로 그대로 받고,
+    /// View가 문서에 있는지는 [`DocumentRecords::from_subtrees_with_sections`] 뒤 validator가 확인합니다(쓰기는 언제나 그
+    /// View의 root subtree에 둡니다).
+    pub fn decode_with_sections(
+        bytes: &[u8],
+    ) -> Result<(SubtreeRecords, SubtreeSections), RecordCodecError> {
         let mut reader = Reader::new(bytes);
         let root = reader.take_id()?;
         let node_count = reader.take_u32()? as usize;
@@ -381,9 +422,10 @@ impl SubtreeRecords {
             modifier_stacks.push(stack);
         }
         let mut layout_records = Vec::new();
+        let mut sections = SubtreeSections::default();
         if !reader.is_at_end() {
             let count = reader.take_u32()? as usize;
-            if count == 0 {
+            if count == 0 && reader.is_at_end() {
                 return Err(RecordCodecError::Malformed {
                     reason: "빈 layout 절은 쓰지 않습니다",
                 });
@@ -404,14 +446,31 @@ impl SubtreeRecords {
                 }
                 layout_records.push(record);
             }
+            if !reader.is_at_end() {
+                let rest = reader.take(reader.input.len() - reader.pos)?;
+                sections = crate::guides::persist::decode_sections(rest, &members)
+                    .map_err(RecordCodecError::Sections)?;
+                if sections.is_empty() {
+                    return Err(RecordCodecError::Malformed {
+                        reason: "빈 확장 절",
+                    });
+                }
+            } else if count == 0 {
+                return Err(RecordCodecError::Malformed {
+                    reason: "빈 layout 절은 쓰지 않습니다",
+                });
+            }
         }
         reader.expect_end()?;
-        Ok(SubtreeRecords {
-            root,
-            nodes,
-            modifier_stacks,
-            layout_records,
-        })
+        Ok((
+            SubtreeRecords {
+                root,
+                nodes,
+                modifier_stacks,
+                layout_records,
+            },
+            sections,
+        ))
     }
 }
 
@@ -433,6 +492,11 @@ pub enum PartitionError {
         /// 소유 node들.
         owners: Vec<StableId>,
     },
+    /// 어느 subtree에도 속하지 않는 가이드 기록이나 View model이 있습니다(ADR-0126).
+    UnassignedGuides {
+        /// 소유 node 또는 View.
+        owners: Vec<StableId>,
+    },
     /// 한 node가 두 View subtree에 나타납니다.
     SharedNode {
         /// 해당 node.
@@ -452,6 +516,11 @@ impl fmt::Display for PartitionError {
             PartitionError::UnassignedLayoutRecords { owners } => {
                 write!(f, "subtree에 속하지 않는 layout record {}개", owners.len())
             }
+            PartitionError::UnassignedGuides { owners } => write!(
+                f,
+                "subtree에 속하지 않는 가이드 기록·View 변수 model {}개",
+                owners.len()
+            ),
             PartitionError::SharedNode { node } => {
                 write!(f, "node {node}가 두 View subtree에 있습니다")
             }
@@ -462,12 +531,71 @@ impl fmt::Display for PartitionError {
 impl std::error::Error for PartitionError {}
 
 impl DocumentRecords {
+    /// View마다 subtree 하나와 그 subtree의 확장 절(ADR-0126)로 나눕니다. 가이드 기록은 소유 Frame이 있는 subtree,
+    /// View model은 그 View의 root subtree에 둡니다. 어느 subtree에도 못 넣는 기록이 있으면 거부합니다.
+    pub fn view_subtrees_with_sections(
+        &self,
+    ) -> Result<Vec<(StableId, SubtreeRecords, SubtreeSections)>, PartitionError> {
+        let subtrees = self.partition()?;
+        let mut guides: BTreeMap<StableId, &crate::guides::NodeGuides> = BTreeMap::new();
+        for record in &self.node_guides {
+            if guides.insert(record.owner(), record).is_some() {
+                return Err(PartitionError::UnassignedGuides {
+                    owners: vec![record.owner()],
+                });
+            }
+        }
+        let mut variants: BTreeMap<StableId, &crate::view_variant::commands::ViewVariantModel> =
+            BTreeMap::new();
+        for model in &self.view_variants {
+            if variants.insert(model.variables().view(), model).is_some() {
+                return Err(PartitionError::UnassignedGuides {
+                    owners: vec![model.variables().view()],
+                });
+            }
+        }
+        let mut out = Vec::with_capacity(subtrees.len());
+        for (view, subtree) in subtrees {
+            let mut members: Vec<StableId> = subtree.nodes.iter().map(|n| n.id).collect();
+            members.sort();
+            let sections = SubtreeSections {
+                node_guides: members
+                    .iter()
+                    .filter_map(|id| guides.remove(id).cloned())
+                    .collect(),
+                view_variants: variants.remove(&view).cloned().into_iter().collect(),
+            };
+            out.push((view, subtree, sections));
+        }
+        let left: Vec<StableId> = guides.keys().chain(variants.keys()).copied().collect();
+        if !left.is_empty() {
+            return Err(PartitionError::UnassignedGuides { owners: left });
+        }
+        Ok(out)
+    }
+
+    /// View마다 root부터의 subtree 하나로 레코드를 나눕니다(정의 순서). 가이드 기록이나 View model이 있으면 확장 절을
+    /// 버리지 않도록 [`PartitionError::UnassignedGuides`]로 거부합니다([`DocumentRecords::view_subtrees_with_sections`]).
+    pub fn view_subtrees(&self) -> Result<Vec<(StableId, SubtreeRecords)>, PartitionError> {
+        if !self.node_guides.is_empty() || !self.view_variants.is_empty() {
+            return Err(PartitionError::UnassignedGuides {
+                owners: self
+                    .node_guides
+                    .iter()
+                    .map(|r| r.owner())
+                    .chain(self.view_variants.iter().map(|m| m.variables().view()))
+                    .collect(),
+            });
+        }
+        self.partition()
+    }
+
     /// View마다 root부터의 subtree 하나로 레코드를 나눕니다(정의 순서).
     ///
     /// 초기 정책은 **View당 subtree 하나**입니다. chunk 크기 기반 분할(V.6.4)은 임계치 ADR
     /// 승인 후 추가합니다. 모든 node와 stack이 정확히 한 subtree에 들어가지 않으면 데이터
     /// 손실을 막기 위해 거부합니다 — 직렬화 전에 validator(VI.10.1)를 통과해야 합니다.
-    pub fn view_subtrees(&self) -> Result<Vec<(StableId, SubtreeRecords)>, PartitionError> {
+    fn partition(&self) -> Result<Vec<(StableId, SubtreeRecords)>, PartitionError> {
         let mut children: BTreeMap<StableId, Vec<&NodeRecord>> = BTreeMap::new();
         let mut by_id: BTreeMap<StableId, &NodeRecord> = BTreeMap::new();
         for node in &self.nodes {
@@ -570,6 +698,26 @@ impl DocumentRecords {
             records.modifier_stacks.extend(subtree.modifier_stacks);
             records.layout_records.extend(subtree.layout_records);
         }
+        records.sort_canonical();
+        records
+    }
+
+    /// [`DocumentRecords::from_subtrees`]에 subtree마다의 확장 절(ADR-0126)을 더합니다.
+    pub fn from_subtrees_with_sections(
+        definition: DocumentDefinition,
+        subtrees: Vec<(SubtreeRecords, SubtreeSections)>,
+    ) -> DocumentRecords {
+        let mut node_guides = Vec::new();
+        let mut view_variants = Vec::new();
+        let mut plain = Vec::with_capacity(subtrees.len());
+        for (subtree, sections) in subtrees {
+            node_guides.extend(sections.node_guides);
+            view_variants.extend(sections.view_variants);
+            plain.push(subtree);
+        }
+        let mut records = DocumentRecords::from_subtrees(definition, plain);
+        records.node_guides = node_guides;
+        records.view_variants = view_variants;
         records.sort_canonical();
         records
     }

@@ -55,6 +55,13 @@ enum UndoOp {
     StyleDefaults(String),
     /// Component Context 요소 교체를 되돌림(XXX.7.8, ADR-0099).
     Context(Box<stellar_document::context::set::ContextSet>),
+    /// 가이드 기록 교체를 되돌림(`None`이면 기록 제거, ADR-0126).
+    Guides(StableId, Option<stellar_document::guides::NodeGuides>),
+    /// View 변수 model 교체를 되돌림(`None`이면 model 제거, ADR-0126).
+    ViewVariants(
+        StableId,
+        Option<Box<stellar_document::view_variant::commands::ViewVariantModel>>,
+    ),
 }
 
 /// rollback 실패: journal 재생 중 모델이 역 primitive를 거부했습니다(내부 불일치 신호).
@@ -339,6 +346,32 @@ impl<'a> EditContext<'a> {
         Ok(previous)
     }
 
+    /// Frame의 가이드 기록을 교체합니다(빈 기록 = 제거). 이전 기록을 반환합니다(ADR-0126).
+    pub fn set_node_guides(
+        &mut self,
+        record: stellar_document::guides::NodeGuides,
+    ) -> Result<Option<stellar_document::guides::NodeGuides>, CommandError> {
+        self.before_primitive()?;
+        let owner = record.owner();
+        let previous = self.model.set_node_guides(record)?;
+        self.journal.push(UndoOp::Guides(owner, previous.clone()));
+        Ok(previous)
+    }
+
+    /// View의 변수·Variant model을 교체합니다(빈 model = 제거). 이전 model을 반환합니다(ADR-0126).
+    pub fn set_view_variants(
+        &mut self,
+        model: stellar_document::view_variant::commands::ViewVariantModel,
+    ) -> Result<Option<stellar_document::view_variant::commands::ViewVariantModel>, CommandError>
+    {
+        self.before_primitive()?;
+        let view = model.variables().view();
+        let previous = self.model.set_view_variants(model)?;
+        self.journal
+            .push(UndoOp::ViewVariants(view, previous.clone().map(Box::new)));
+        Ok(previous)
+    }
+
     /// journal을 역순으로 재생해 context를 연 시점의 의미 상태로 되돌립니다.
     ///
     /// 각 역 primitive는 해당 primitive가 성공했던 상태에서 재생되므로 실패하지 않아야
@@ -397,6 +430,16 @@ fn undo(model: &mut DocumentModel, op: UndoOp) -> Result<(), CommandError> {
         }
         UndoOp::Context(previous) => {
             model.replace_context(*previous);
+        }
+        UndoOp::Guides(owner, previous) => {
+            model.set_node_guides(
+                previous.unwrap_or_else(|| stellar_document::guides::NodeGuides::new(owner)),
+            )?;
+        }
+        UndoOp::ViewVariants(view, previous) => {
+            model.set_view_variants(previous.map(|m| *m).unwrap_or_else(|| {
+                stellar_document::view_variant::commands::ViewVariantModel::new(view)
+            }))?;
         }
     }
     Ok(())

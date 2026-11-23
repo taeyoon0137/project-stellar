@@ -47,4 +47,7 @@ pub mod validate;
 /// snapshot → 영속 문서 레코드 역투영 (XIV.5.4).
 pub mod records;
 
+/// Frame 가이드·레이아웃 그리드와 View 변수·Variant의 snapshot 투영 (ADR-0126).
+pub mod guides;
+
 mod text_styles;

@@ -98,6 +98,10 @@ pub enum RecordTarget {
     TextStyles,
     /// 문서 Component Context(한 단위, ADR-0114).
     Context,
+    /// Frame의 가이드·레이아웃 그리드 기록(ADR-0126).
+    Guides(StableId),
+    /// View의 변수·Variant model(ADR-0126).
+    ViewVariants(StableId),
 }
 
 impl RecordTarget {
@@ -112,6 +116,8 @@ impl RecordTarget {
             RecordChange::Layout { node, .. } => RecordTarget::Layout(*node),
             RecordChange::TextStyles { .. } => RecordTarget::TextStyles,
             RecordChange::Context { .. } => RecordTarget::Context,
+            RecordChange::Guides { node, .. } => RecordTarget::Guides(*node),
+            RecordChange::ViewVariants { view, .. } => RecordTarget::ViewVariants(*view),
         }
     }
 }

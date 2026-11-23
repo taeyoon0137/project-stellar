@@ -8,8 +8,12 @@
 //! - [`NodeGuides`]: Frame 하나의 기록. 편집은 [`GuideEdit`]이고 [`NodeGuides::apply`]가 역 편집을 돌려줍니다.
 //! - canonical bytes([`NodeGuides::encode`], record v1)와 텍스트 원본 표기([`NodeGuides::to_text`]).
 //!
-//! 이 module은 값과 계산만 둡니다. 문서 모델 필드·command·저장 chunk·Semantic Diff 연결은 ADR-0117 결정 2.4의
-//! 후속 범위입니다.
+//! 이 module은 값과 계산을 둡니다. 문서 모델·subtree chunk 확장 절·validator 연결은 [`persist`](ADR-0126)입니다.
+//! command(`SetNodeGuides`)는 commands crate, 텍스트 원본 `guides` 목록은 project crate, Semantic Diff 투영은
+//! semantic-diff crate가 이 module의 [`NodeGuides::encode`]·[`NodeGuides::lines`]를 그대로 씁니다.
+
+/// 문서 모델·subtree 확장 절·validator 연결 (ADR-0126).
+pub mod persist;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -496,25 +500,7 @@ impl NodeGuides {
             out.push(guide.axis.index() as u8);
             out.extend_from_slice(&guide.position.to_le_bytes());
         }
-        out.push(self.grids.len() as u8);
-        for grid in &self.grids {
-            out.push(grid.kind.tag());
-            out.extend_from_slice(&grid.count.to_le_bytes());
-            match grid.size {
-                TrackSize::Auto => {
-                    out.push(0);
-                    out.extend_from_slice(&0f32.to_le_bytes());
-                }
-                TrackSize::Px(px) => {
-                    out.push(1);
-                    out.extend_from_slice(&px.to_le_bytes());
-                }
-            }
-            out.extend_from_slice(&grid.gap.to_le_bytes());
-            out.extend_from_slice(&grid.margin.to_le_bytes());
-            out.push(grid.align.tag());
-            out.push(u8::from(grid.visible));
-        }
+        put_grids(&mut out, &self.grids);
         out
     }
 
@@ -545,43 +531,7 @@ impl NodeGuides {
             let position = f32::from_le_bytes(input.array()?);
             record.apply(&GuideEdit::Add(RulerGuide::new(id, axis, position)?))?;
         }
-        let grids = input.u8()? as usize;
-        let mut list = Vec::with_capacity(grids);
-        for _ in 0..grids {
-            let kind = match input.u8()? {
-                0 => GridKind::Columns,
-                1 => GridKind::Rows,
-                2 => GridKind::Square,
-                _ => return Err(GuideError::Malformed("그리드 종류")),
-            };
-            let count = u32::from_le_bytes(input.array()?);
-            let size_tag = input.u8()?;
-            let size_value = f32::from_le_bytes(input.array()?);
-            let size = match size_tag {
-                0 if size_value.to_bits() == 0 => TrackSize::Auto,
-                1 => TrackSize::Px(size_value),
-                _ => return Err(GuideError::Malformed("그리드 size")),
-            };
-            let gap = f32::from_le_bytes(input.array()?);
-            let margin = f32::from_le_bytes(input.array()?);
-            let align = *GridAlign::ALL
-                .get(input.u8()? as usize)
-                .ok_or(GuideError::Malformed("그리드 정렬"))?;
-            let visible = match input.u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(GuideError::Malformed("그리드 표시")),
-            };
-            list.push(LayoutGrid {
-                kind,
-                count,
-                size,
-                gap,
-                margin,
-                align,
-                visible,
-            });
-        }
+        let list = read_grids(&mut input)?;
         record.apply(&GuideEdit::SetGrids(list))?;
         if input.at != bytes.len() {
             return Err(GuideError::Malformed("남는 bytes"));
@@ -601,93 +551,270 @@ impl NodeGuides {
     /// ```
     pub fn to_text(&self) -> String {
         let mut out = String::new();
-        for guide in self.guides.values() {
-            let _ = writeln!(
-                out,
-                "guide {} {} {}",
-                guide.axis.name(),
-                format_length(guide.position),
-                guide.id
-            );
-        }
-        for grid in &self.grids {
-            let count = match grid.kind {
-                GridKind::Square => "-".to_string(),
-                _ => grid.count.to_string(),
-            };
-            let size = match grid.size {
-                TrackSize::Auto => "auto".to_string(),
-                TrackSize::Px(px) => format_length(px),
-            };
-            let _ = write!(
-                out,
-                "grid {} {count} {size} gap {} margin {} {}",
-                grid.kind.name(),
-                format_length(grid.gap),
-                format_length(grid.margin),
-                grid.align.name()
-            );
-            if !grid.visible {
-                out.push_str(" hidden");
-            }
+        for line in self.lines() {
+            out.push_str(&line);
             out.push('\n');
         }
         out
     }
 
+    /// [`NodeGuides::to_text`]의 줄 목록(줄바꿈 없음). 텍스트 원본 `guides` 목록과 semantic snapshot 값이 이 줄을
+    /// 그대로 씁니다.
+    pub fn lines(&self) -> Vec<String> {
+        self.guides
+            .values()
+            .map(RulerGuide::to_line)
+            .chain(self.grids.iter().map(LayoutGrid::to_line))
+            .collect()
+    }
+
     /// [`NodeGuides::to_text`]의 역. 길이는 CSS 길이 parser(`css::value`)로 읽습니다.
     pub fn from_text(owner: StableId, text: &str) -> Result<NodeGuides, GuideError> {
+        NodeGuides::from_lines(owner, text.lines().filter(|l| !l.trim().is_empty()))
+    }
+
+    /// 줄 목록에서 기록을 만듭니다([`NodeGuides::lines`]의 역). 가이드 줄은 순서와 무관하고 그리드 줄은 쓴 순서가
+    /// 그리는 순서입니다.
+    pub fn from_lines<'a>(
+        owner: StableId,
+        lines: impl IntoIterator<Item = &'a str>,
+    ) -> Result<NodeGuides, GuideError> {
         let mut record = NodeGuides::new(owner);
         let mut grids = Vec::new();
-        for line in text.lines().filter(|l| !l.trim().is_empty()) {
-            let words: Vec<&str> = line.split_whitespace().collect();
-            match words.as_slice() {
-                ["guide", axis, position, id] => {
-                    let axis =
-                        GuideAxis::from_name(axis).ok_or(GuideError::Malformed("가이드 축"))?;
-                    let position = length(position, true)?;
-                    let id: StableId =
-                        id.parse().map_err(|_| GuideError::Malformed("가이드 id"))?;
-                    record.apply(&GuideEdit::Add(RulerGuide::new(id, axis, position)?))?;
+        for line in lines {
+            match GuideLine::parse(line)? {
+                GuideLine::Guide(guide) => {
+                    record.apply(&GuideEdit::Add(guide))?;
                 }
-                ["grid", kind, count, size, "gap", gap, "margin", margin, align, rest @ ..] => {
-                    let kind =
-                        GridKind::from_name(kind).ok_or(GuideError::Malformed("그리드 종류"))?;
-                    let count = match (kind, *count) {
-                        (GridKind::Square, "-") => 0,
-                        (GridKind::Square, _) => return Err(GuideError::Malformed("그리드 count")),
-                        (_, count) => count
-                            .parse::<u32>()
-                            .map_err(|_| GuideError::Malformed("그리드 count"))?,
-                    };
-                    let size = match *size {
-                        "auto" => TrackSize::Auto,
-                        px => TrackSize::Px(length(px, false)?),
-                    };
-                    let align = GridAlign::ALL
-                        .into_iter()
-                        .find(|a| a.name() == *align)
-                        .ok_or(GuideError::Malformed("그리드 정렬"))?;
-                    let visible = match rest {
-                        [] => true,
-                        ["hidden"] => false,
-                        _ => return Err(GuideError::Malformed("그리드 줄 끝")),
-                    };
-                    grids.push(LayoutGrid {
-                        kind,
-                        count,
-                        size,
-                        gap: length(gap, false)?,
-                        margin: length(margin, false)?,
-                        align,
-                        visible,
-                    });
-                }
-                _ => return Err(GuideError::Malformed("알 수 없는 줄")),
+                GuideLine::Grid(grid) => grids.push(grid),
             }
         }
         record.apply(&GuideEdit::SetGrids(grids))?;
         Ok(record)
+    }
+}
+
+impl RulerGuide {
+    /// 텍스트 원본 한 줄(`guide x 120px <id>`, 줄바꿈 없음).
+    pub fn to_line(&self) -> String {
+        format!(
+            "guide {} {} {}",
+            self.axis.name(),
+            format_length(self.position),
+            self.id
+        )
+    }
+}
+
+impl LayoutGrid {
+    /// 텍스트 원본 한 줄(`grid columns 12 auto gap 20px margin 32px stretch`, 줄바꿈 없음).
+    pub fn to_line(&self) -> String {
+        let count = match self.kind {
+            GridKind::Square => "-".to_string(),
+            _ => self.count.to_string(),
+        };
+        let size = match self.size {
+            TrackSize::Auto => "auto".to_string(),
+            TrackSize::Px(px) => format_length(px),
+        };
+        let mut out = String::new();
+        let _ = write!(
+            out,
+            "grid {} {count} {size} gap {} margin {} {}",
+            self.kind.name(),
+            format_length(self.gap),
+            format_length(self.margin),
+            self.align.name()
+        );
+        if !self.visible {
+            out.push_str(" hidden");
+        }
+        out
+    }
+}
+
+/// 텍스트 원본 한 줄의 내용.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GuideLine {
+    /// `guide …` 줄.
+    Guide(RulerGuide),
+    /// `grid …` 줄(검사·정규화한 값).
+    Grid(LayoutGrid),
+}
+
+impl GuideLine {
+    /// 한 줄을 읽습니다([`RulerGuide::to_line`]·[`LayoutGrid::to_line`]의 역).
+    pub fn parse(line: &str) -> Result<GuideLine, GuideError> {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        match words.as_slice() {
+            ["guide", axis, position, id] => {
+                let axis = GuideAxis::from_name(axis).ok_or(GuideError::Malformed("가이드 축"))?;
+                let position = length(position, true)?;
+                let id: StableId = id.parse().map_err(|_| GuideError::Malformed("가이드 id"))?;
+                Ok(GuideLine::Guide(RulerGuide::new(id, axis, position)?))
+            }
+            ["grid", kind, count, size, "gap", gap, "margin", margin, align, rest @ ..] => {
+                let kind = GridKind::from_name(kind).ok_or(GuideError::Malformed("그리드 종류"))?;
+                let count = match (kind, *count) {
+                    (GridKind::Square, "-") => 0,
+                    (GridKind::Square, _) => return Err(GuideError::Malformed("그리드 count")),
+                    (_, count) => count
+                        .parse::<u32>()
+                        .map_err(|_| GuideError::Malformed("그리드 count"))?,
+                };
+                let size = match *size {
+                    "auto" => TrackSize::Auto,
+                    px => TrackSize::Px(length(px, false)?),
+                };
+                let align = GridAlign::ALL
+                    .into_iter()
+                    .find(|a| a.name() == *align)
+                    .ok_or(GuideError::Malformed("그리드 정렬"))?;
+                let visible = match rest {
+                    [] => true,
+                    ["hidden"] => false,
+                    _ => return Err(GuideError::Malformed("그리드 줄 끝")),
+                };
+                LayoutGrid {
+                    kind,
+                    count,
+                    size,
+                    gap: length(gap, false)?,
+                    margin: length(margin, false)?,
+                    align,
+                    visible,
+                }
+                .validated()
+                .map(GuideLine::Grid)
+            }
+            _ => Err(GuideError::Malformed("알 수 없는 줄")),
+        }
+    }
+}
+
+fn put_grids(out: &mut Vec<u8>, grids: &[LayoutGrid]) {
+    out.push(grids.len() as u8);
+    for grid in grids {
+        out.push(grid.kind.tag());
+        out.extend_from_slice(&grid.count.to_le_bytes());
+        match grid.size {
+            TrackSize::Auto => {
+                out.push(0);
+                out.extend_from_slice(&0f32.to_le_bytes());
+            }
+            TrackSize::Px(px) => {
+                out.push(1);
+                out.extend_from_slice(&px.to_le_bytes());
+            }
+        }
+        out.extend_from_slice(&grid.gap.to_le_bytes());
+        out.extend_from_slice(&grid.margin.to_le_bytes());
+        out.push(grid.align.tag());
+        out.push(u8::from(grid.visible));
+    }
+}
+
+fn read_grids(input: &mut Cursor<'_>) -> Result<Vec<LayoutGrid>, GuideError> {
+    let grids = input.u8()? as usize;
+    let mut list = Vec::with_capacity(grids);
+    for _ in 0..grids {
+        let kind = match input.u8()? {
+            0 => GridKind::Columns,
+            1 => GridKind::Rows,
+            2 => GridKind::Square,
+            _ => return Err(GuideError::Malformed("그리드 종류")),
+        };
+        let count = u32::from_le_bytes(input.array()?);
+        let size_tag = input.u8()?;
+        let size_value = f32::from_le_bytes(input.array()?);
+        let size = match size_tag {
+            0 if size_value.to_bits() == 0 => TrackSize::Auto,
+            1 => TrackSize::Px(size_value),
+            _ => return Err(GuideError::Malformed("그리드 size")),
+        };
+        let gap = f32::from_le_bytes(input.array()?);
+        let margin = f32::from_le_bytes(input.array()?);
+        let align = *GridAlign::ALL
+            .get(input.u8()? as usize)
+            .ok_or(GuideError::Malformed("그리드 정렬"))?;
+        let visible = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(GuideError::Malformed("그리드 표시")),
+        };
+        list.push(LayoutGrid {
+            kind,
+            count,
+            size,
+            gap,
+            margin,
+            align,
+            visible,
+        });
+    }
+    Ok(list)
+}
+
+const EDIT_ADD: u8 = 1;
+const EDIT_MOVE: u8 = 2;
+const EDIT_REMOVE: u8 = 3;
+const EDIT_SET_GRIDS: u8 = 4;
+
+impl GuideEdit {
+    /// canonical bytes(command payload, ADR-0126): tag `u8` 뒤에 Add(id, 축, 위치 f32 LE)·Move(id, 위치)·Remove(id)·
+    /// SetGrids([`NodeGuides::encode`]와 같은 그리드 목록 형식).
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        match self {
+            GuideEdit::Add(guide) => {
+                out.push(EDIT_ADD);
+                out.extend_from_slice(&guide.id.to_bytes());
+                out.push(guide.axis.index() as u8);
+                out.extend_from_slice(&guide.position.to_le_bytes());
+            }
+            GuideEdit::Move { id, position } => {
+                out.push(EDIT_MOVE);
+                out.extend_from_slice(&id.to_bytes());
+                out.extend_from_slice(&position.to_le_bytes());
+            }
+            GuideEdit::Remove { id } => {
+                out.push(EDIT_REMOVE);
+                out.extend_from_slice(&id.to_bytes());
+            }
+            GuideEdit::SetGrids(grids) => {
+                out.push(EDIT_SET_GRIDS);
+                put_grids(&mut out, grids);
+            }
+        }
+        out
+    }
+
+    /// [`GuideEdit::encode`]의 역. 값 검사는 적용([`NodeGuides::apply`]) 때 합니다. 남는 bytes는 거부합니다.
+    pub fn decode(bytes: &[u8]) -> Result<GuideEdit, GuideError> {
+        let mut input = Cursor { bytes, at: 0 };
+        let edit = match input.u8()? {
+            EDIT_ADD => {
+                let id = input.id()?;
+                let axis = match input.u8()? {
+                    0 => GuideAxis::X,
+                    1 => GuideAxis::Y,
+                    _ => return Err(GuideError::Malformed("가이드 축")),
+                };
+                let position = f32::from_le_bytes(input.array()?);
+                GuideEdit::Add(RulerGuide { id, axis, position })
+            }
+            EDIT_MOVE => GuideEdit::Move {
+                id: input.id()?,
+                position: f32::from_le_bytes(input.array()?),
+            },
+            EDIT_REMOVE => GuideEdit::Remove { id: input.id()? },
+            EDIT_SET_GRIDS => GuideEdit::SetGrids(read_grids(&mut input)?),
+            _ => return Err(GuideError::Malformed("가이드 편집 tag")),
+        };
+        if input.at != bytes.len() {
+            return Err(GuideError::Malformed("남는 bytes"));
+        }
+        Ok(edit)
     }
 }
 

@@ -237,10 +237,13 @@ pub fn load_document(
             let payload = source
                 .read_chunk(subtree_ref.chunk)
                 .map_err(LoadDocumentError::Read)?;
-            let subtree =
-                SubtreeRecords::decode(&payload).map_err(|error| LoadDocumentError::Subtree {
-                    chunk: subtree_ref.chunk,
-                    error,
+            // 확장 절(가이드·View 변수, ADR-0126)까지 읽습니다.
+            let (subtree, sections) =
+                SubtreeRecords::decode_with_sections(&payload).map_err(|error| {
+                    LoadDocumentError::Subtree {
+                        chunk: subtree_ref.chunk,
+                        error,
+                    }
                 })?;
             if subtree.root != subtree_ref.root_node {
                 return Err(LoadDocumentError::SubtreeRootMismatch {
@@ -249,7 +252,7 @@ pub fn load_document(
                     found: subtree.root,
                 });
             }
-            subtrees.push(subtree);
+            subtrees.push((subtree, sections));
         }
     }
     let context = match manifest.context {
@@ -262,7 +265,7 @@ pub fn load_document(
         }
         None => None,
     };
-    let records = DocumentRecords::from_subtrees(manifest.definition, subtrees);
+    let records = DocumentRecords::from_subtrees_with_sections(manifest.definition, subtrees);
     let (mut model, diagnostics) =
         DocumentModel::from_records(records).map_err(LoadDocumentError::Model)?;
     if let Some(context) = context {

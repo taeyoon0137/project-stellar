@@ -613,6 +613,12 @@ pub fn generate(
             ))
         }
         CommandKind::EditContext => crate::context_test_support::random_edit(model, rng, ids),
+        CommandKind::SetNodeGuides => {
+            crate::guides_test_support::random_guides_edit(model, rng, ids)
+        }
+        CommandKind::EditViewVariants => {
+            crate::guides_test_support::random_view_variants_edit(model, rng, ids)
+        }
         CommandKind::EditPathPoint => {
             let paths = nodes_where(model, |id| kind_of(model, id) == Some(NodeKind::Path));
             let node = pick(rng, &paths)?;

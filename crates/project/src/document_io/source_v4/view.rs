@@ -13,7 +13,7 @@ use stellar_document::validate::validate_document;
 use super::super::text_codec::{field, fields, mapping, scalar, text};
 use super::super::text_source::TextSourceError;
 use super::css::{self, invalid, unsupported};
-use super::{node, styles, VERSION};
+use super::{node, styles, view_data, VERSION};
 use crate::yaml::{write_canonical_checked, YamlValue};
 
 fn styles_value(
@@ -42,6 +42,18 @@ pub(crate) fn encode(model: &DocumentModel) -> Result<String, TextSourceError> {
     let [view] = page.views.as_slice() else {
         return Err(unsupported("정확히 하나의 View가 필요합니다"));
     };
+    let guides: std::collections::BTreeMap<_, _> =
+        records.node_guides.iter().map(|r| (r.owner(), r)).collect();
+    let mut view_fields = vec![
+        (scalar("id"), scalar(css::id(view.id))),
+        (scalar("display_name"), scalar(view.display_name())),
+        (scalar("root_frame"), scalar(css::id(view.root_frame))),
+    ];
+    view_fields.extend(
+        view_data::variant_fields(model.view_variants(view.id))
+            .into_iter()
+            .map(|(k, v)| (scalar(k), v)),
+    );
     let value = mapping([
         ("schema_version", scalar(VERSION)),
         (
@@ -62,14 +74,7 @@ pub(crate) fn encode(model: &DocumentModel) -> Result<String, TextSourceError> {
                 ("display_name", scalar(page.display_name())),
             ]),
         ),
-        (
-            "view",
-            mapping([
-                ("id", scalar(css::id(view.id))),
-                ("display_name", scalar(view.display_name())),
-                ("root_frame", scalar(css::id(view.root_frame))),
-            ]),
-        ),
+        ("view", YamlValue::Mapping(view_fields)),
         (
             "nodes",
             YamlValue::Sequence(
@@ -77,10 +82,11 @@ pub(crate) fn encode(model: &DocumentModel) -> Result<String, TextSourceError> {
                     .nodes
                     .iter()
                     .map(|record| {
-                        node::node(
+                        node::document_node(
                             record,
                             Some(model.modifier_stack(record.id)),
                             model.layout_record(record.id),
+                            guides.get(&record.id).copied(),
                         )
                     })
                     .collect::<Result<_, _>>()?,
@@ -101,7 +107,13 @@ pub(crate) fn decode(value: &YamlValue) -> Result<DocumentModel, TextSourceError
     let page = field(value, "page")?;
     fields(page, &["id", "display_name"])?;
     let view = field(value, "view")?;
-    fields(view, &["id", "display_name", "root_frame"])?;
+    let mut view_keys = vec!["id", "display_name", "root_frame"];
+    view_keys.extend(
+        view_data::VIEW_KEYS
+            .iter()
+            .filter(|k| view.get(k).is_some()),
+    );
+    fields(view, &view_keys)?;
     let id = |v: &YamlValue, key| css::parse_id(text(field(v, key)?)?);
     let mut definition = DocumentDefinition::new(
         id(document, "id")?,
@@ -122,9 +134,10 @@ pub(crate) fn decode(value: &YamlValue) -> Result<DocumentModel, TextSourceError
         id(page, "id")?,
         text(field(page, "display_name")?)?.to_owned(),
     );
+    let view_id = id(view, "id")?;
     page_definition
         .add_view(ViewDefinition::new(
-            id(view, "id")?,
+            view_id,
             text(field(view, "display_name")?)?.to_owned(),
             id(view, "root_frame")?,
         ))
@@ -136,7 +149,7 @@ pub(crate) fn decode(value: &YamlValue) -> Result<DocumentModel, TextSourceError
         .as_sequence()
         .ok_or_else(|| invalid("nodes는 sequence여야 합니다"))?
     {
-        let (record, stack, layout) = node::parse_node(item, true)?;
+        let ((record, stack, layout), guides) = node::parse_document_node(item)?;
         if last.is_some_and(|prev| prev >= record.id) {
             return Err(invalid("node는 StableId 오름차순, 중복 없이 씁니다"));
         }
@@ -144,7 +157,11 @@ pub(crate) fn decode(value: &YamlValue) -> Result<DocumentModel, TextSourceError
         records.nodes.push(record);
         records.modifier_stacks.extend(stack);
         records.layout_records.extend(layout);
+        records.node_guides.extend(guides);
     }
+    records
+        .view_variants
+        .extend(view_data::parse_variant_fields(view, view_id)?);
     DocumentModel::from_records(records)
         .map(|(model, _)| model)
         .map_err(invalid)

@@ -6,6 +6,10 @@ Accepted (2026-11-23). 계획 XII.10.18(가이드·그리드 저장 위치 ADR)�
 XII.10.26·XII.10.29·XII.10.36·XII.10.37·XII.10.38·XII.10.43의 코어 부분(셸 UI·FFI 제외)을 정합니다. 캔버스 명세 열린 결정
 C1(눈금자 표현)과 C6(Grid 명시 배치 자식 drag)을 이 ADR에서 닫습니다.
 
+- 개정(2026-11-24): 결정 2.4의 연결(문서 모델 필드, `set-node-guides` command, core-types `reserved::guides` 번호 예약, subtree
+  chunk 확장 절, 텍스트 원본 `guides` 목록, Semantic Diff·Merge)은 ADR-0126이 정합니다. 저장 위치는 별도 chunk kind가 아니라
+  소유 Frame이 있는 View subtree chunk의 확장 절입니다(ADR-0126 결정 2).
+
 ## Context
 
 - 사용자 방향(2026-11-23): 지금은 엔진·기능만 만들고 Rust 테스트·CLI·MCP로 검증합니다. 셸 UI는 지워졌고(ADR-0098)

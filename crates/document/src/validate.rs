@@ -299,6 +299,11 @@ pub enum DocumentViolation {
         /// 위반.
         violation: crate::layout_record::LayoutRecordViolation,
     },
+    /// 가이드 기록·View 변수 model 제약 위반(ADR-0126).
+    Guides {
+        /// 위반.
+        violation: crate::guides::persist::GuidesViolation,
+    },
 }
 
 impl DocumentViolation {
@@ -328,6 +333,17 @@ impl DocumentViolation {
             DocumentViolation::LayoutRecord { node, .. } => ViolationLocation::Property {
                 node: *node,
                 path: PropertyPath::new(*node),
+            },
+            DocumentViolation::Guides { violation } => match violation {
+                crate::guides::persist::GuidesViolation::ViewMissing { view }
+                | crate::guides::persist::GuidesViolation::DuplicateView { view }
+                | crate::guides::persist::GuidesViolation::EmptyView { view } => {
+                    ViolationLocation::View(*view)
+                }
+                other => ViolationLocation::Property {
+                    node: other.subject(),
+                    path: PropertyPath::new(other.subject()),
+                },
             },
         }
     }
@@ -430,6 +446,7 @@ impl fmt::Display for DocumentViolation {
                 "{node}: depth {depth}가 최대 {MAX_NODE_DEPTH}를 넘습니다"
             ),
             DocumentViolation::LayoutRecord { violation, .. } => write!(f, "{violation}"),
+            DocumentViolation::Guides { violation } => write!(f, "{violation}"),
         }
     }
 }
@@ -484,6 +501,7 @@ pub fn validate_document(
     validator.check_references();
     validator.check_modifier_stacks();
     validator.check_layout_records();
+    validator.check_guides();
     if validator.violations.is_empty() {
         Ok(DocumentDiagnostics {
             unresolved: validator.unresolved,
@@ -918,6 +936,22 @@ impl Validator<'_> {
         }
     }
 
+    fn check_guides(&mut self) {
+        let records = self.records;
+        let views: BTreeSet<StableId> = records.views().map(|v| v.id).collect();
+        let violations = crate::guides::persist::check_records(
+            &records.node_guides,
+            &records.view_variants,
+            |id| self.kind_of(id),
+            &views,
+        );
+        self.violations.extend(
+            violations
+                .into_iter()
+                .map(|violation| DocumentViolation::Guides { violation }),
+        );
+    }
+
     fn check_modifier_stacks(&mut self) {
         let records = self.records;
         let mut owners: BTreeSet<StableId> = BTreeSet::new();
@@ -1154,6 +1188,8 @@ mod tests {
             nodes,
             modifier_stacks: vec![rect_stack, inner_stack],
             layout_records: Vec::new(),
+            node_guides: Vec::new(),
+            view_variants: Vec::new(),
         }
     }
 
