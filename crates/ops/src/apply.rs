@@ -33,6 +33,9 @@
 //! 6. transaction이 활성 기본값 세트(`SetStyleDefaults`, 모델 거울)를 바꿨으면 4번 뒤에 `stellar.yaml` 한 줄 쓰기를
 //!    준비하고(세트 평탄화·연 시점 선택 확인, 실패하면 [`ApplyError::Rejected`]), 쓰기 모드는 generation 저장 뒤에
 //!    그 한 줄을 씁니다(ADR-0087). dry-run은 준비만 합니다.
+//! 7. 결과 문서 레코드와 Component Context가 적용 전과 같으면(세트만 바꾸는 `SetStyleDefaults`, 이미 같은 값 등) 5번의
+//!    원본·cache 저장을 건너뜁니다(ADR-0128 결정 1). 세트를 바꿨으면 `stellar.yaml` 한 줄만 쓰고, Git diff는 그 한
+//!    줄입니다(ADR-0082 결정 4). 결과 revision은 원본·cache revision에 새 세트 선택을 더한 값입니다(ADR-0128 결정 2).
 //!
 //! 쓰기 모드는 1번 전에 프로젝트별 교차 프로세스 저장 잠금([`crate::lock`], XXIV.4.5)을 잡고 저장을
 //! 마칠 때까지 쥡니다. 잠금을 쥔 동안 같은 잠금을 쓰는 앱 창과 CLI는 들어오지 못하므로, 잠금 안에서 한
@@ -74,7 +77,7 @@ use crate::diff::{diff_documents, DiffReport, DocumentInput};
 use crate::error::{DocumentReadError, OpenError};
 use crate::lock::{LockError, LockPolicy, SaveLock};
 use crate::revision::ProjectRevision;
-use crate::snapshot::save::{root_order, save_documents, SaveError, SourceWrite};
+use crate::snapshot::save::{root_order, save_documents_selecting, SaveError, SourceWrite};
 use crate::snapshot::{open_snapshot, probe, ProjectSnapshot};
 use crate::text_source::TextSourceOperationError;
 
@@ -504,7 +507,8 @@ pub struct ApplyOutcome {
     pub mode: ApplyMode,
     /// 적용 전 revision.
     pub base_revision: ProjectRevision,
-    /// 적용 후 revision. dry-run이면 base와 같습니다.
+    /// 적용 후 revision. dry-run이면 base와 같습니다. 문서가 그대로이고 세트만 바꿨으면 generation 번호는 그대로이고
+    /// 세트 선택만 바뀐 revision입니다.
     pub revision: ProjectRevision,
     /// 대상 문서.
     pub document: StableId,
@@ -512,9 +516,9 @@ pub struct ApplyOutcome {
     pub command_count: usize,
     /// 적용 전후 semantic diff.
     pub diff: DiffReport,
-    /// 새로 기록한 chunk 수(dry-run이면 0).
+    /// 새로 기록한 chunk 수(dry-run·문서 레코드가 그대로면 0).
     pub written_chunks: usize,
-    /// 원본 쓰기 결과(dry-run·바꿀 것 없음이면 `None`, ADR-0113 결정 3).
+    /// 원본 쓰기 결과(dry-run·문서 레코드가 그대로면 `None`, ADR-0113 결정 3·ADR-0128 결정 1).
     pub source: Option<SourceWrite>,
     /// 원본은 썼지만 로컬 cache를 맞추지 못했습니다(다음 쓰기가 맞춤).
     pub cache_stale: bool,
@@ -1180,6 +1184,39 @@ pub fn apply(
         });
     }
 
+    // 결과 revision에 더할 세트 선택: 이번 transaction이 바꾼 선택, 아니면 연 시점 선택(ADR-0128 결정 2).
+    let selected = selection
+        .as_ref()
+        .map_or(snapshot.style_defaults_name(), |s| s.name())
+        .to_owned();
+    let commit_selection = |selection: Option<PreparedSelection>, what: &str| {
+        if let Some(selection) = selection {
+            selection.commit(snapshot.root()).map_err(|e| {
+                ApplyError::Save(format!(
+                    "{what}stellar.yaml 기본값 세트를 쓰지 못했습니다: {e}"
+                ))
+            })?;
+        }
+        Ok::<(), ApplyError>(())
+    };
+    if before == after && before_context == after_context {
+        // 문서 레코드와 Context가 그대로면 원본·cache를 쓰지 않습니다(ADR-0128 결정 1). 세트만 바꾸는 transaction의
+        // 영속 결과는 `stellar.yaml` 한 줄입니다. 잠금 안에서 연 snapshot이라 base revision 비교 뒤 다른 저장이 끼지
+        // 않았고, 세트 한 줄 쓰기는 준비 때 읽은 bytes hash가 그대로일 때만 씁니다.
+        commit_selection(selection, "")?;
+        return Ok(ApplyOutcome {
+            mode,
+            base_revision,
+            revision: snapshot.storage_revision().with_style_defaults(&selected),
+            document: request.document,
+            command_count: request.commands.len(),
+            diff,
+            written_chunks: 0,
+            source: None,
+            cache_stale: false,
+        });
+    }
+
     // 원본·cache 저장(ADR-0113 결정 3): 모든 root 문서를 넘기고 바꾼 문서만 결과 모델로 바꿉니다.
     let roots = root_order(&snapshot);
     let mut models = Vec::with_capacity(roots.len());
@@ -1198,26 +1235,21 @@ pub fn apply(
             document: request.document,
         }));
     }
-    let saved = save_documents(&snapshot, roots, models).map_err(|e| match e {
-        SaveError::ConcurrentWrite => ApplyError::ConcurrentWrite,
-        SaveError::Encode(e) => {
-            ApplyError::InvalidResult(format!("텍스트 원본으로 쓸 수 없습니다: {e}"))
-        }
-        SaveError::Source(e) => ApplyError::Document(DocumentReadError::Records(format!(
-            "텍스트 원본을 읽을 수 없습니다: {e}"
-        ))),
-        SaveError::Invalid(e) => ApplyError::InvalidResult(e),
-        SaveError::Write(e) => ApplyError::Save(e),
-    })?;
+    let saved =
+        save_documents_selecting(&snapshot, roots, models, &selected).map_err(|e| match e {
+            SaveError::ConcurrentWrite => ApplyError::ConcurrentWrite,
+            SaveError::Encode(e) => {
+                ApplyError::InvalidResult(format!("텍스트 원본으로 쓸 수 없습니다: {e}"))
+            }
+            SaveError::Source(e) => ApplyError::Document(DocumentReadError::Records(format!(
+                "텍스트 원본을 읽을 수 없습니다: {e}"
+            ))),
+            SaveError::Invalid(e) => ApplyError::InvalidResult(e),
+            SaveError::Write(e) => ApplyError::Save(e),
+        })?;
     let revision = saved.revision;
     let written_chunks = saved.written_chunks;
-    if let Some(selection) = selection {
-        selection.commit(snapshot.root()).map_err(|e| {
-            ApplyError::Save(format!(
-                "generation은 저장했지만 stellar.yaml 기본값 세트를 쓰지 못했습니다: {e}"
-            ))
-        })?;
-    }
+    commit_selection(selection, "generation은 저장했지만 ")?;
     Ok(ApplyOutcome {
         mode,
         base_revision,
@@ -2398,6 +2430,200 @@ mod tests {
                 );
             }
         }
+        assert_eq!(file_digest(&dir.path), before);
+    }
+
+    fn set_style_defaults(name: &str) -> CommandInput {
+        canonical(Command::SetStyleDefaults(
+            stellar_commands::style_defaults::SetStyleDefaults { name: name.into() },
+        ))
+    }
+
+    /// 두 digest에서 내용이 다른 파일(추가·삭제 포함) 목록.
+    fn changed_files(
+        before: &std::collections::BTreeMap<String, String>,
+        after: &std::collections::BTreeMap<String, String>,
+    ) -> Vec<String> {
+        before
+            .keys()
+            .chain(after.keys())
+            .filter(|name| before.get(*name) != after.get(*name))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    #[test]
+    fn a_style_defaults_only_transaction_writes_one_manifest_line_and_no_generation() {
+        // ADR-0128 결정 1·2: 문서 레코드가 그대로인 transaction은 generation을 쓰지 않습니다. 세트만 바꾸면 바뀌는
+        // 파일은 stellar.yaml 하나, 한 줄이고, revision은 generation 번호를 둔 채 세트 선택만 바뀝니다.
+        let (dir, model) = project_with(7);
+        let manifest = dir.path.join("stellar.yaml");
+        let opened = open_snapshot(&dir.path).unwrap();
+        let base = opened.revision();
+        let original = std::fs::read_to_string(&manifest).unwrap();
+        let before = file_digest(&dir.path);
+        let request = |base_revision, name: &str| ApplyRequest {
+            base_revision,
+            document: model.document_id(),
+            commands: vec![set_style_defaults(name)],
+        };
+        let outcome = apply(
+            &dir.path,
+            &request(base, "react-native"),
+            ApplyMode::Write,
+            &locks(&dir),
+        )
+        .unwrap();
+        assert_eq!(outcome.written_chunks, 0);
+        assert!(outcome.source.is_none());
+        assert!(
+            outcome.diff.entries.is_empty(),
+            "{:?}",
+            outcome.diff.entries
+        );
+        assert_eq!(
+            changed_files(&before, &file_digest(&dir.path)),
+            ["stellar.yaml"]
+        );
+        let after = std::fs::read_to_string(&manifest).unwrap();
+        assert_eq!(after, format!("{original}style_defaults: react-native\n"));
+        // revision: generation은 그대로, 세트 선택이 바뀌어 표기가 다릅니다. 다시 열면 같은 값입니다.
+        assert_eq!(outcome.revision.generation(), base.generation());
+        assert_ne!(outcome.revision, base);
+        let reopened = open_snapshot(&dir.path).unwrap();
+        assert_eq!(reopened.revision(), outcome.revision);
+        assert_eq!(reopened.storage_revision(), opened.storage_revision());
+        assert_eq!(reopened.style_defaults_name(), "react-native");
+        assert_eq!(
+            outcome.revision,
+            opened
+                .storage_revision()
+                .with_style_defaults("react-native")
+        );
+        // 옛 base로는 쓸 수 없습니다(다른 writer의 세트 변경을 base revision이 잡음).
+        assert!(matches!(
+            apply(&dir.path, &request(base, "css"), ApplyMode::Write, &locks(&dir)),
+            Err(ApplyError::BaseRevisionMismatch { expected, found })
+                if expected == base && found == outcome.revision
+        ));
+        // 되돌리면 stellar.yaml bytes와 revision이 처음과 같습니다.
+        let back = apply(
+            &dir.path,
+            &request(outcome.revision, "css"),
+            ApplyMode::Write,
+            &locks(&dir),
+        )
+        .unwrap();
+        assert_eq!(back.revision, base);
+        assert_eq!(file_digest(&dir.path), before);
+        // 없는 세트는 거부하고 아무것도 쓰지 않습니다.
+        assert!(matches!(
+            apply(
+                &dir.path,
+                &request(base, "nowhere"),
+                ApplyMode::Write,
+                &locks(&dir)
+            ),
+            Err(ApplyError::Rejected { index: 0, .. })
+        ));
+        assert_eq!(file_digest(&dir.path), before);
+    }
+
+    #[test]
+    fn an_unchanged_result_writes_nothing() {
+        // ADR-0128 결정 1: 이미 같은 값으로 바꾸는 transaction은 원본·cache를 쓰지 않고 revision도 그대로입니다.
+        let (dir, model) = project_with(7);
+        let base = open_snapshot(&dir.path).unwrap().revision();
+        let node = some_child(&model);
+        let visible = model
+            .to_records()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|n| n.id == node)
+            .unwrap()
+            .visible;
+        let before = file_digest(&dir.path);
+        let outcome = apply(
+            &dir.path,
+            &ApplyRequest {
+                base_revision: base,
+                document: model.document_id(),
+                commands: vec![CommandInput::SetVisible { node, visible }],
+            },
+            ApplyMode::Write,
+            &locks(&dir),
+        )
+        .unwrap();
+        assert_eq!(outcome.revision, base);
+        assert_eq!(outcome.written_chunks, 0);
+        assert!(outcome.source.is_none());
+        assert_eq!(file_digest(&dir.path), before);
+    }
+
+    #[test]
+    fn a_document_edit_with_a_set_change_saves_a_generation_and_the_manifest_line() {
+        // 문서도 바뀌면 generation을 쓰고 그 뒤에 stellar.yaml 한 줄을 씁니다. 결과 revision은 새 generation에 새 세트
+        // 선택을 더한 값이고 다시 열었을 때와 같습니다.
+        let (dir, model) = project_with(7);
+        let base = open_snapshot(&dir.path).unwrap().revision();
+        let outcome = apply(
+            &dir.path,
+            &ApplyRequest {
+                base_revision: base,
+                document: model.document_id(),
+                commands: vec![
+                    CommandInput::Rename {
+                        node: some_child(&model),
+                        name: "renamed".into(),
+                    },
+                    set_style_defaults("react-native"),
+                ],
+            },
+            ApplyMode::Write,
+            &locks(&dir),
+        )
+        .unwrap();
+        assert_eq!(outcome.revision.generation(), base.generation() + 1);
+        let reopened = open_snapshot(&dir.path).unwrap();
+        assert_eq!(reopened.style_defaults_name(), "react-native");
+        assert_eq!(reopened.revision(), outcome.revision);
+        assert_eq!(
+            reopened.revision(),
+            reopened
+                .storage_revision()
+                .with_style_defaults("react-native")
+        );
+        assert_ne!(reopened.revision(), reopened.storage_revision());
+    }
+
+    #[test]
+    fn another_writers_set_change_is_caught_by_the_base_revision() {
+        // ADR-0128 결정 2: generation을 쓰지 않는 세트 변경(다른 writer)도 base revision을 바꿉니다.
+        let (dir, model) = project_with(7);
+        let base = open_snapshot(&dir.path).unwrap().revision();
+        stellar_project::manifest_style_defaults::set_active(&dir.path, "react-native").unwrap();
+        let before = file_digest(&dir.path);
+        let error = apply(
+            &dir.path,
+            &ApplyRequest {
+                base_revision: base,
+                document: model.document_id(),
+                commands: vec![CommandInput::Rename {
+                    node: some_child(&model),
+                    name: "late".into(),
+                }],
+            },
+            ApplyMode::Write,
+            &locks(&dir),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, ApplyError::BaseRevisionMismatch { .. }),
+            "{error:?}"
+        );
         assert_eq!(file_digest(&dir.path), before);
     }
 }

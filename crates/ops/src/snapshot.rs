@@ -21,6 +21,9 @@
 //!    읽으면(FromText) 다음 cache generation 번호(current + 1)와 원본 revision hash(current manifest hash와 원본
 //!    파일 집합 digest의 hash, `session::source_revision`)입니다. 원본이나 cache 어느 쪽이 바뀌어도 revision이
 //!    바뀌므로, Git pull 전에 받은 revision으로 쓰면 [`crate::apply::ApplyError::BaseRevisionMismatch`]입니다.
+//!    프로젝트 revision([`ProjectSnapshot::revision`])은 이 원본·cache revision([`ProjectSnapshot::storage_revision`])에
+//!    `stellar.yaml` 활성 기본값 세트 선택을 더한 값입니다([`ProjectRevision::with_style_defaults`], ADR-0128 결정 2).
+//!    세트만 바꾸는 쓰기는 generation을 쓰지 않으므로, 다른 writer의 세트 변경도 base revision 비교가 잡습니다.
 //! 6. 활성 기본값 세트(ADR-0082 결정 4)를 `stellar.yaml` `style_defaults`와 `design/style-defaults/` 사용자 세트로
 //!    한 번 평탄화해 둡니다([`ProjectSnapshot::style_defaults`]). 세트 파일 오류는 열기를 막지 않고 세트를 쓰는
 //!    조회에서만 오류입니다. [`ProjectSnapshot::document_model`]은 연 세트 이름을 모델 거울에 넣습니다(ADR-0087).
@@ -113,7 +116,10 @@ pub struct ProjectSnapshot {
     git_link: GitLink,
     manifest: Manifest,
     project_id: StableId,
+    /// 세트 선택을 더한 프로젝트 revision.
     revision: ProjectRevision,
+    /// 원본·cache revision(세트 선택 없음).
+    storage_revision: ProjectRevision,
     documents: Vec<DocumentDefinition>,
     chunk_kinds: Vec<ChunkKindCount>,
     generation: Option<LazyGeneration>,
@@ -152,9 +158,16 @@ impl ProjectSnapshot {
         self.project_id
     }
 
-    /// 열린 원본·cache 기준 revision(모듈 문서 5번).
+    /// 프로젝트 revision: 열린 원본·cache 기준 revision에 열 때 본 활성 기본값 세트 선택을 더한 값(모듈 문서 5번).
+    /// 쓰기 명령의 base revision은 이 값과 비교합니다.
     pub fn revision(&self) -> ProjectRevision {
         self.revision
+    }
+
+    /// 세트 선택을 더하지 않은 원본·cache revision(모듈 문서 5번). 쓰기 경로가 새 세트 선택으로 결과 revision을 다시
+    /// 계산할 때 씁니다([`ProjectRevision::with_style_defaults`]).
+    pub fn storage_revision(&self) -> ProjectRevision {
+        self.storage_revision
     }
 
     /// 문서 정의. cache에서 읽으면 DocumentManifest chunk 순서(chunk id 오름차순), 원본에서 읽으면 원본의 root
@@ -494,13 +507,15 @@ pub fn open_snapshot(path: &Path) -> Result<ProjectSnapshot, OpenError> {
     };
 
     let style_defaults = active_set(&probe.root, &probe.manifest);
+    let selected = revision.with_style_defaults(active_name(&probe.manifest));
     Ok(ProjectSnapshot {
         style_defaults,
         root: probe.root,
         git_link: probe.git_link,
         manifest: probe.manifest,
         project_id,
-        revision,
+        revision: selected,
+        storage_revision: revision,
         documents,
         chunk_kinds,
         generation,
@@ -575,6 +590,27 @@ mod tests {
             parse_project_id(PROJECT_ID_TEXT).unwrap()
         );
         assert_eq!(snapshot.git_link(), GitLink::Directory);
+    }
+
+    #[test]
+    fn revision_includes_the_style_defaults_selection() {
+        // ADR-0128 결정 2: 프로젝트 revision은 원본·cache revision에 stellar.yaml 세트 선택을 더한 값입니다. 기본
+        // 세트는 표기를 바꾸지 않고, 저장 전 프로젝트에 다른 세트를 고르면 `g0:<hash>`입니다.
+        let dir = TempDir::new("selection");
+        scaffold_project(&dir.path);
+        stellar_project::manifest_style_defaults::set_active(&dir.path, "react-native").unwrap();
+        let snapshot = open_snapshot(&dir.path).unwrap();
+        assert_eq!(snapshot.storage_revision(), ProjectRevision::Unsaved);
+        assert_eq!(
+            snapshot.revision(),
+            ProjectRevision::Unsaved.with_style_defaults("react-native")
+        );
+        assert!(snapshot.revision().token().starts_with("g0:sha256:"));
+        stellar_project::manifest_style_defaults::set_active(&dir.path, "css").unwrap();
+        assert_eq!(
+            open_snapshot(&dir.path).unwrap().revision(),
+            ProjectRevision::Unsaved
+        );
     }
 
     #[test]

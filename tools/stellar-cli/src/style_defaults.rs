@@ -3,10 +3,11 @@
 //! - `list <경로>`: 내장·사용자 세트와 활성 세트.
 //! - `show <경로> [<세트>]`: 세트 사슬과 구획별 값 표(기본은 활성 세트).
 //! - `show`는 layout longhand 표(`values`)와 payload longhand 표(`payload`, registry 항목)를 함께 냅니다.
-//! - `set <경로> <세트> [--base <revision>] [--dry-run]`: 활성 세트를 바꿉니다(`SetStyleDefaults`의 영속 결과).
-//!   ops 쓰기 경로의 순서(교차 프로세스 저장 잠금 → 다시 열기 → base revision 검사)를 지키고, 결과는 두 단계 쓰기
-//!   (`prepare_selection` → `commit`)의 `stellar.yaml` 한 줄입니다. 문서 레코드는 바뀌지 않아 generation을 쓰지
-//!   않습니다(ADR-0087 결정 2, ADR-0115 결정 4). `--base`가 없으면 지금 revision을 base로 씁니다.
+//! - `set <경로> <세트> [--base <revision>] [--dry-run]`: 활성 세트를 바꿉니다. canonical `SetStyleDefaults` 하나를
+//!   `stellar_ops::apply`로 적용합니다(`stellar apply`·MCP와 같은 쓰기 경로: 교차 프로세스 저장 잠금 → 다시 열기 →
+//!   base revision 검사 → 세트 준비 → 쓰기). 문서 레코드는 바뀌지 않아 generation을 쓰지 않고, 바뀌는 파일은
+//!   `stellar.yaml` 한 줄입니다(ADR-0128 결정 1·3). revision에는 세트 선택이 들어가므로 결과 `revision`은 base와
+//!   다릅니다(결정 2). `--base`가 없으면 명령을 시작할 때 연 revision을 base로 씁니다.
 //! - `resolve <경로> <문서 id> <node id>`: node의 layout longhand 값과 출처(`explicit`·`default(<세트>)`).
 //!   `stellar query … node`의 `layout`과 같은 `stellar_ops::query::node_layout` 결과입니다.
 //!
@@ -14,16 +15,20 @@
 
 use std::path::Path;
 
-use stellar_ops::apply::ApplyError;
+use stellar_ops::apply::{apply, ApplyError, ApplyMode, ApplyRequest, CommandInput};
+use stellar_ops::commands::codec::encode_command;
+use stellar_ops::commands::command::Command;
+use stellar_ops::commands::style_defaults::SetStyleDefaults;
 use stellar_ops::core_types::ids::StableId;
-use stellar_ops::lock::{default_lock_dir, SaveLock};
+use stellar_ops::lock::{default_lock_dir, LockPolicy};
 use stellar_ops::query::{node_layout, LayoutUnavailable};
 use stellar_ops::revision::ProjectRevision;
 use stellar_ops::snapshot::open_snapshot;
+use stellar_ops::snapshot::save::root_order;
 use stellar_ops::style_defaults::layout_record::{format_value, LayoutLonghand};
 use stellar_ops::style_defaults::{
-    self as sd, active_name, flatten_named, load_user_sets, payload_longhands, prepare_selection,
-    scope_class, FlatSet, NodeClass, StyleDefaultsFileError,
+    self as sd, active_name, flatten_named, load_user_sets, payload_longhands, scope_class,
+    FlatSet, NodeClass, StyleDefaultsFileError,
 };
 
 use crate::exit::ExitStatus;
@@ -213,52 +218,49 @@ fn run_set(args: &[String]) -> Result<Success, CliError> {
         ));
     };
     let root = Path::new(path);
-    let opened = open_snapshot(root).map_err(|e| views::open_error(&e))?;
-    // 쓰기는 교차 프로세스 저장 잠금(XXIV.4.5)을 기다리지 않고 잡은 뒤에 다시 열어 base revision을 봅니다(ops 쓰기
-    // 경로와 같은 순서). dry-run은 쓰지 않으므로 잠금을 잡지 않습니다.
-    let _lock = if dry_run {
-        None
-    } else {
-        let lock_error =
-            |e: stellar_ops::lock::LockError| crate::apply::apply_error(&ApplyError::Lock(e));
-        let dir = default_lock_dir().map_err(lock_error)?;
-        Some(SaveLock::try_acquire(&dir, opened.project_id(), opened.root()).map_err(lock_error)?)
-    };
-    let snapshot = if dry_run {
-        opened
-    } else {
-        open_snapshot(root).map_err(|e| views::open_error(&e))?
-    };
-    let revision = snapshot.revision();
-    let base = base.unwrap_or(revision);
-    if base != revision {
-        return Err(crate::apply::apply_error(
-            &ApplyError::BaseRevisionMismatch {
-                expected: base,
-                found: revision,
-            },
+    let snapshot = open_snapshot(root).map_err(|e| views::open_error(&e))?;
+    let base = base.unwrap_or(snapshot.revision());
+    // `SetStyleDefaults`는 문서 모델의 세트 거울을 바꾸는 command라 대상 문서가 하나 필요합니다. 선택은 프로젝트
+    // 하나이므로 root 문서 순서의 첫 문서에 적용합니다(ADR-0128 결정 3).
+    let Some(document) = root_order(&snapshot).first().copied() else {
+        return Err(CliError::new(
+            ExitStatus::DataErr,
+            "no-document",
+            "저장된 문서가 없어 SetStyleDefaults를 적용할 문서가 없습니다",
         ));
-    }
-    // `SetStyleDefaults`의 영속 결과는 `stellar.yaml` 한 줄입니다(문서 레코드는 그대로). 앱·`stellar apply`가
-    // generation 저장 뒤에 쓰는 것과 같은 두 단계 쓰기입니다(ADR-0087 결정 2). 준비 단계가 세트 평탄화와 연 시점
-    // 선택을 확인하고, commit은 읽은 bytes hash가 그대로일 때만 씁니다.
-    let prepared = prepare_selection(snapshot.root(), Some(snapshot.style_defaults_name()), name)
+    };
+    // 없는 세트·순환 같은 세트 파일 오류는 그 code로 알립니다. 적용 경로의 준비 단계가 같은 함수로 다시 확인하고,
+    // 연 뒤 바뀐 선택은 base revision 비교가 거부합니다.
+    flatten_named(name, &load_user_sets(snapshot.root()).map_err(file_error)?)
         .map_err(file_error)?;
-    let previous = prepared.previous().to_string();
-    let changed = previous != *name;
-    if !dry_run {
-        prepared.commit(snapshot.root()).map_err(file_error)?;
-    }
+    let previous = snapshot.style_defaults_name().to_string();
+    let command = Command::SetStyleDefaults(SetStyleDefaults { name: name.clone() });
+    let request = ApplyRequest {
+        base_revision: base,
+        document,
+        commands: vec![CommandInput::Canonical {
+            kind: command.kind().name().to_string(),
+            bytes: encode_command(&command),
+        }],
+    };
+    let (mode, lock) = if dry_run {
+        (ApplyMode::DryRun, LockPolicy::None)
+    } else {
+        let dir =
+            default_lock_dir().map_err(|e| crate::apply::apply_error(&ApplyError::Lock(e)))?;
+        (ApplyMode::Write, LockPolicy::Required { dir })
+    };
+    let outcome = apply(root, &request, mode, &lock).map_err(|e| crate::apply::apply_error(&e))?;
     Ok(success(JsonValue::object(vec![
         (
             "mode",
             JsonValue::string(if dry_run { "dry-run" } else { "write" }),
         ),
-        ("previous", JsonValue::string(previous)),
+        ("previous", JsonValue::string(previous.clone())),
         ("active", JsonValue::string(name.clone())),
-        ("changed", JsonValue::Bool(changed)),
-        ("base_revision", views::revision(base)),
-        ("revision", views::revision(revision)),
+        ("changed", JsonValue::Bool(previous != *name)),
+        ("base_revision", views::revision(outcome.base_revision)),
+        ("revision", views::revision(outcome.revision)),
     ])))
 }
 

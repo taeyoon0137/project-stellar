@@ -312,14 +312,31 @@ fn set_goes_through_the_ops_write_path_and_changes_one_manifest_line() {
     );
     assert_eq!(result(&resolved).get("values"), layout.get("values"));
 
-    // 문서 레코드는 그대로라 generation revision도 그대로입니다. 같은 base로 되돌리면 stellar.yaml bytes가
-    // 원래대로입니다.
-    assert_eq!(text(set.get("revision").unwrap(), "token"), base);
-    envelope(
+    // 문서 레코드는 그대로라 generation 번호는 그대로이고, revision에는 세트 선택이 들어가 base와 다릅니다(ADR-0128
+    // 결정 2). 옛 base로는 다시 쓸 수 없습니다. 새 revision으로 되돌리면 stellar.yaml bytes와 revision이 원래대로입니다.
+    let revision = text(set.get("revision").unwrap(), "token").to_string();
+    assert_ne!(revision, base);
+    assert_eq!(
+        set.get("revision").unwrap().get("generation"),
+        set.get("base_revision").unwrap().get("generation")
+    );
+    let listed = envelope(&stellar(&["style-defaults", "list", path]), 0);
+    assert_eq!(
+        text(result(&listed).get("revision").unwrap(), "token"),
+        revision
+    );
+    let stale = envelope(
         &stellar(&["style-defaults", "set", path, "css", "--base", &base]),
+        65,
+    );
+    assert_eq!(error_code(&stale), Some("base-revision-mismatch"));
+    let back = envelope(
+        &stellar(&["style-defaults", "set", path, "css", "--base", &revision]),
         0,
     );
+    assert_eq!(text(result(&back).get("revision").unwrap(), "token"), base);
     assert_eq!(std::fs::read_to_string(&manifest).unwrap(), before);
+    assert_eq!(files(&root), before_files);
 
     // 바꿀 것이 없으면 쓰지 않습니다.
     let unchanged = files(&root);
