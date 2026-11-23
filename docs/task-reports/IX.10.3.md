@@ -2,7 +2,7 @@
 
 - WBS: IX.10.3
 - 작업명: `stellar.yaml`에 project target profile 목록과 기본 profile을 저장하고 존재하지 않는 default 거부
-- 상태: 부분 완료 (`[~]`) — 절 모델·검증 규칙·round-trip은 형식 중립 `ManifestNode`에서만 증명했고, 실제
+- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 절 모델·검증 규칙·round-trip은 형식 중립 `ManifestNode`에서만 증명했고, 실제
   `stellar.yaml` 파서(project crate)는 새 profile 필드와 `default_target_profile`을 아직 받지 않아 이 형식을 저장할 수
   없습니다(아래 상태 정정).
 - 선행: IX.10.2(이 lane `[x]`), IV.1.5(`[x]`)
@@ -83,3 +83,27 @@
 - 그 사이 이 crate의 형식이 아직 파일 형식이 아님을 `crates/target-profile/src/lib.rs`·`spec.rs`·`manifest.rs` 모듈 문서와
   `docs/spec/stellar-format.md` §14.5에 "미연결 초안"으로 적었습니다. §14.5 표 자체는 project 파서 기준 그대로이며, 형식
   통합 후 갱신합니다(위 3). 상태 `[~]`는 바꾸지 않았습니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 남은 범위·결함 있음.
+- 근거: 절 모델·검증 규칙은 target-profile crate에 있지만 실제 `stellar.yaml` 파서는 `default_target_profile`을 받지 않고 `target_profiles` 형식이 두 crate에 따로 있습니다. 검증 열 "manifest round-trip과 invalid default fixture"를 실제 manifest로 충족하지 못해 `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/project/src/manifest.rs` 165행 `target_profiles: Vec<TargetProfile>`, 192행 직렬화. `default_target_profile`은 project crate 어디에도 없습니다.
+- `tools/xtask/src/crate_graph.rs`의 `stellar-project` 허용 의존에 target-profile이 없습니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-target-profile` | 42 passed |
+| `cargo test -p stellar-project` | 392 passed |
+
+### 남은 조건과 finding
+
+- 결함 finding(text-source-codec lane, `crates/project/src/manifest.rs` 소유): project → target-profile 간선 결정(ADR 개정), manifest의 `target_profiles`를 `ProjectTargetProfiles`로 바꾸고 `default_target_profile` 허용, `docs/spec/stellar-format.md` §14.5 갱신, 실제 `stellar.yaml` round-trip과 invalid default fixture.
+- IX.10.4·IX.10.9·IX.10.10이 이 행에 이어집니다.
