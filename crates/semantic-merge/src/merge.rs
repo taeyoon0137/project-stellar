@@ -25,6 +25,20 @@
 //! type-change-vs-value-change, 그 밖은 property-value입니다. 양쪽이 같은 StableId를 서로 다르게
 //! 정의(추가·교체)하면 inconsistent-definition입니다.
 //!
+//! **전용 conflict(XIV.10.7)**: 서로 다른 대상이라 따로 받아들이면 결과 의미가 깨지는 세 경우는 전용
+//! 종류입니다.
+//!
+//! - token-type-vs-value: 한쪽이 token 타입(`TOKEN_TYPE`)을, 다른 쪽이 같은 token의 값(`TOKEN_VALUE`)
+//!   이나 expression(`TOKEN_EXPRESSION`)을 바꿨고 두 결과 token의 (타입, 값, expression)이 다르면 token
+//!   객체 전체가 conflict입니다. candidate는 token의 base 상태를 유지합니다.
+//! - component-property-removed-vs-override / drilling-chain-break: 한쪽이 컴포넌트 Property 목록
+//!   (`COMPONENT_PROPERTIES`)에서 Property를 빼고, 그 Property를 아직 목록에 둔 다른 쪽이 그 Property를
+//!   사용하는 변경을 더하면(값이 있는 새 상태) 목록 삭제를 받아들이지 않고 목록 속성 대상 conflict로
+//!   남깁니다. 사용이 scene(문서) 인스턴스의 override 경로면 component-property-removed-vs-override,
+//!   정의 tree 안 nested 인스턴스의 override(drilling link, IX.4.1)이거나 값 bytes가 그 Property
+//!   StableId를 담으면(binding chain) drilling-chain-break입니다. 둘 다 있으면 앞의 것입니다. 사용 변경은
+//!   목록이 base(Property 있음)로 남으므로 그대로 받아들입니다.
+//!
 //! **순서(XIV.10.6)**: 같은 parent에 양쪽이 독립적으로 삽입한 자식은 모두 받아들입니다. 같은
 //! 간격에 삽입해 같은 OrderKey가 나오면 `(OrderKey, StableId)` 순서를 유지한 채 key를 유일하게
 //! 다시 매깁니다. 같은 child를 양쪽이 다른 위치로 옮기면 conflicting-reorder이고, 서로 다른
@@ -46,15 +60,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use stellar_semantic_diff::apply::apply;
-use stellar_semantic_diff::change::{Position, SemanticChange, SemanticChangeKind};
+use stellar_semantic_diff::change::{Position, Provenance, SemanticChange, SemanticChangeKind};
 use stellar_semantic_diff::core_types::ids::StableId;
 use stellar_semantic_diff::core_types::order_key::OrderKey;
 use stellar_semantic_diff::core_types::property::{PropertyKey, PropertyPath};
 use stellar_semantic_diff::diff::{diff, object_provenance, SemanticDiff};
 use stellar_semantic_diff::keys;
-#[cfg(test)]
-use stellar_semantic_diff::snapshot::Origin;
-use stellar_semantic_diff::snapshot::{ObjectKind, SemanticObject, SemanticSnapshot};
+use stellar_semantic_diff::snapshot::{ObjectKind, Origin, SemanticObject, SemanticSnapshot};
+use stellar_semantic_diff::validate::override_member;
 use stellar_semantic_diff::value::SemanticValue;
 
 use crate::model::{
@@ -544,6 +557,10 @@ impl<'a> Merger<'a> {
             self.object_conflict(kind, id);
             return;
         }
+        if self.token_type_conflicts(id, ours, theirs) {
+            self.object_conflict(ConflictKind::TokenTypeVsValue, id);
+            return;
+        }
         match (ours.position, theirs.position) {
             (Some(change), None) | (None, Some(change)) => self.accepted.push(change.clone()),
             (Some(change), Some(other)) if same_position(change, other) => {
@@ -585,6 +602,109 @@ impl<'a> Merger<'a> {
         }
     }
 
+    /// token 타입 변경 대 값 변경(XIV.10.7): 한쪽이 `TOKEN_TYPE`을, 다른 쪽이 `TOKEN_VALUE`·
+    /// `TOKEN_EXPRESSION`을 바꿨고 두 쪽 결과의 (타입, 값, expression)이 다르면 참입니다.
+    fn token_type_conflicts(&self, id: StableId, ours: &Edits<'_>, theirs: &Edits<'_>) -> bool {
+        let input = self.input;
+        let Some(base) = input.base.get(id).filter(|o| o.kind() == ObjectKind::Token) else {
+            return false;
+        };
+        let type_path = base.path(&[keys::TOKEN_TYPE]);
+        let value_paths = [
+            base.path(&[keys::TOKEN_VALUE]),
+            base.path(&[keys::TOKEN_EXPRESSION]),
+        ];
+        let changes_type = |edits: &Edits<'_>| edits.properties.contains_key(&type_path);
+        let changes_value =
+            |edits: &Edits<'_>| value_paths.iter().any(|p| edits.properties.contains_key(p));
+        if !((changes_type(ours) && changes_value(theirs))
+            || (changes_type(theirs) && changes_value(ours)))
+        {
+            return false;
+        }
+        let tuple = |side: &SemanticSnapshot| {
+            let object = side.get(id)?;
+            Some(
+                [&type_path, &value_paths[0], &value_paths[1]]
+                    .map(|path| object.property(path).map(SemanticValue::to_canonical_bytes)),
+            )
+        };
+        tuple(&input.ours) != tuple(&input.theirs)
+    }
+
+    /// 컴포넌트 Property 삭제 대 사용 추가(XIV.10.7). 한쪽(삭제 쪽)이 Property 목록에서 뺀 Property를 다른
+    /// 쪽이 아직 목록에 두고 사용하는 변경을 더하면, 삭제 쪽 목록 변경을 받아들이지 않고 목록 속성 대상
+    /// conflict로 바꿉니다. 양쪽이 모두 목록을 바꿔 이미 목록 conflict가 있으면 그 종류만 바꿉니다.
+    fn interface_use_conflicts(&mut self, ours: &SemanticDiff, theirs: &SemanticDiff) {
+        let input = self.input;
+        let mut found: BTreeMap<PropertyPath, ConflictKind> = BTreeMap::new();
+        for (deleter, user, user_diff) in
+            [(ours, &input.theirs, theirs), (theirs, &input.ours, ours)]
+        {
+            for change in deleter.iter() {
+                let Some(path) = change.property_path() else {
+                    continue;
+                };
+                let Some(component) = input
+                    .base
+                    .get(path.root())
+                    .filter(|o| o.kind() == ObjectKind::Component)
+                else {
+                    continue;
+                };
+                if *path != component.path(&[keys::COMPONENT_PROPERTIES]) {
+                    continue;
+                }
+                let Some((old, new)) = property_values(change) else {
+                    continue;
+                };
+                let kept = id_set(new);
+                let still_listed = id_set(user.get(component.id()).and_then(|o| o.property(path)));
+                let removed: BTreeSet<StableId> = id_set(old)
+                    .into_iter()
+                    .filter(|id| !kept.contains(id) && still_listed.contains(id))
+                    .collect();
+                if removed.is_empty() {
+                    continue;
+                }
+                if let Some(kind) = uses_member(user, user_diff, &removed) {
+                    let entry = found.entry(path.clone()).or_insert(kind);
+                    *entry = (*entry).min(kind);
+                }
+            }
+        }
+        for (path, kind) in found {
+            let target = ConflictTarget::Property(path.clone());
+            if let Some(existing) = self
+                .conflicts
+                .iter_mut()
+                .find(|c| c.object == path.root() && c.target == target)
+            {
+                existing.kind = kind;
+                continue;
+            }
+            let before = self.accepted.len();
+            self.accepted
+                .retain(|change| change.property_path() != Some(&path));
+            if self.accepted.len() == before {
+                continue;
+            }
+            let provenance = input
+                .base
+                .get(path.root())
+                .map_or(Provenance::Project, object_provenance);
+            self.conflicts.push(SemanticConflict {
+                kind,
+                provenance,
+                object: path.root(),
+                target,
+                base: value_state(&input.base, &path),
+                ours: value_state(&input.ours, &path),
+                theirs: value_state(&input.theirs, &path),
+            });
+        }
+    }
+
     /// candidate에서 merge가 만든 고아를 찾습니다: parent가 없지만, 그 객체를 그 parent 아래에
     /// 둔 쪽 snapshot에는 parent가 있던 경우.
     ///
@@ -603,6 +723,83 @@ impl<'a> Merger<'a> {
             placed_with_parent.then_some((parent, object.id()))
         })
     }
+}
+
+/// Ids 값의 원소 집합(없거나 Ids가 아니면 빈 집합).
+fn id_set(value: Option<&SemanticValue>) -> BTreeSet<StableId> {
+    match value {
+        Some(SemanticValue::Ids(ids)) => ids.iter().copied().collect(),
+        _ => BTreeSet::new(),
+    }
+}
+
+/// 값의 canonical bytes가 `ids` 중 하나의 16바이트 StableId를 담는지(보수적 scan, dependency graph와
+/// 같은 방식). StableId는 전역 유일 값이라 우연 일치는 사실상 없고, 일치하면 conflict가 늘어나는
+/// 방향입니다.
+fn mentions(value: &SemanticValue, ids: &BTreeSet<StableId>) -> bool {
+    let windows: BTreeSet<[u8; 16]> = ids.iter().map(StableId::to_bytes).collect();
+    value.to_canonical_bytes().windows(16).any(|window| {
+        let mut key = [0u8; 16];
+        key.copy_from_slice(window);
+        windows.contains(&key)
+    })
+}
+
+/// 속성 하나가 `removed` Property를 사용하는 종류(XIV.10.7). override 경로의 member가 삭제 Property면
+/// 인스턴스 위치(scene 문서 = component-property-removed-vs-override, 정의 tree = drilling-chain-break),
+/// 값이 삭제 Property를 참조하면 drilling-chain-break입니다.
+fn property_use(
+    object: &SemanticObject,
+    path: &PropertyPath,
+    value: &SemanticValue,
+    removed: &BTreeSet<StableId>,
+) -> Option<ConflictKind> {
+    let is_override = path.keys().first() == Some(&keys::instance::PROPERTY_OVERRIDES);
+    if is_override && override_member(path).is_some_and(|(_, member)| removed.contains(&member)) {
+        return Some(match object.origin() {
+            Origin::Document(_) => ConflictKind::ComponentPropertyRemovedVsOverride,
+            _ => ConflictKind::DrillingChainBreak,
+        });
+    }
+    mentions(value, removed).then_some(ConflictKind::DrillingChainBreak)
+}
+
+/// `side`의 변경 중 `removed` Property를 새로 사용하는 변경의 conflict 종류(여럿이면 code가 작은 것).
+/// 값이 없어지거나 그대로인 변경(override 삭제 등)은 사용이 아닙니다.
+fn uses_member(
+    side: &SemanticSnapshot,
+    changes: &SemanticDiff,
+    removed: &BTreeSet<StableId>,
+) -> Option<ConflictKind> {
+    let mut best: Option<ConflictKind> = None;
+    let mut note = |kind: Option<ConflictKind>| {
+        if let Some(kind) = kind {
+            best = Some(best.map_or(kind, |b| b.min(kind)));
+        }
+    };
+    for change in changes.iter() {
+        match change {
+            SemanticChange::AddObject(c) | SemanticChange::AddToken(c) => {
+                for (path, value) in c.object.properties() {
+                    note(property_use(&c.object, path, value, removed));
+                }
+            }
+            _ => {
+                let (Some(path), Some((old, Some(new)))) =
+                    (change.property_path(), property_values(change))
+                else {
+                    continue;
+                };
+                if old.is_some_and(|old| old.canonical_eq(new)) {
+                    continue;
+                }
+                if let Some(object) = side.get(path.root()) {
+                    note(property_use(object, path, new, removed));
+                }
+            }
+        }
+    }
+    best
 }
 
 /// candidate에서 merge가 만든 parent cycle을 찾습니다(cycle 구성 객체, 오름차순).
@@ -727,6 +924,7 @@ pub fn merge(input: &MergeInput) -> Result<MergeResult, MergeError> {
             (None, None) => {}
         }
     }
+    merger.interface_use_conflicts(&ours_diff, &theirs_diff);
 
     // 고아를 만든 parent 삭제를 conflict로 되돌리고 다시 적용합니다. 되돌릴 때마다 받아들인
     // 변경이 줄어들므로 유한 번에 끝납니다.
@@ -1285,10 +1483,11 @@ pub(crate) mod tests {
             }
             produced.extend(kinds);
         }
-        // matrix가 모든 conflict 종류를 서로 다른 kind로 냅니다.
+        // matrix가 XIV.10.4~XIV.10.6 conflict 종류를 서로 다른 kind로 냅니다. 전용 종류(XIV.10.7~)는
+        // `tests/dedicated_conflicts.rs` corpus가 다룹니다.
         assert_eq!(
             produced.into_iter().collect::<Vec<_>>(),
-            ConflictKind::ALL.to_vec()
+            ConflictKind::ALL[..6].to_vec()
         );
     }
 

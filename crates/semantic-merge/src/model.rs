@@ -59,17 +59,31 @@ pub enum ConflictKind {
     ConflictingReorder = 5,
     /// 같은 StableId를 양쪽이 서로 다르게 정의(추가·교체, 아키텍처 §27.1).
     InconsistentDefinition = 6,
+    /// 한쪽이 컴포넌트 공개 Property를 interface에서 지우고 다른 쪽이 scene 인스턴스에서 그 Property
+    /// override를 추가·수정(XIV.10.7, 아키텍처 §27.1 "Component Property 삭제 대 사용처 추가"). 대상 =
+    /// 컴포넌트의 Property 목록 속성.
+    ComponentPropertyRemovedVsOverride = 7,
+    /// 한쪽이 token 타입을 바꾸고 다른 쪽이 같은 token의 값·expression을 바꿈(XIV.10.7, 아키텍처 §27.1
+    /// "Token 타입 변경 대 값 변경"). 두 속성은 따로 받아들이면 타입과 값이 어긋나므로 대상 = token 객체.
+    TokenTypeVsValue = 8,
+    /// 한쪽이 컴포넌트 Property를 지우고 다른 쪽이 그 Property를 지나는 drilling 연결(정의 tree 안 nested
+    /// 인스턴스 override, 또는 값이 그 Property를 참조하는 binding)을 추가·수정(XIV.10.7, IX.4.6). 대상 =
+    /// 컴포넌트의 Property 목록 속성.
+    DrillingChainBreak = 9,
 }
 
 impl ConflictKind {
     /// 정의된 모든 종류(code 오름차순).
-    pub const ALL: [ConflictKind; 6] = [
+    pub const ALL: [ConflictKind; 9] = [
         ConflictKind::PropertyValue,
         ConflictKind::DeleteVsModify,
         ConflictKind::DeleteVsMove,
         ConflictKind::TypeChangeVsValueChange,
         ConflictKind::ConflictingReorder,
         ConflictKind::InconsistentDefinition,
+        ConflictKind::ComponentPropertyRemovedVsOverride,
+        ConflictKind::TokenTypeVsValue,
+        ConflictKind::DrillingChainBreak,
     ];
 
     /// 안정 numeric code.
@@ -91,6 +105,11 @@ impl ConflictKind {
             ConflictKind::TypeChangeVsValueChange => "type-change-vs-value-change",
             ConflictKind::ConflictingReorder => "conflicting-reorder",
             ConflictKind::InconsistentDefinition => "inconsistent-definition",
+            ConflictKind::ComponentPropertyRemovedVsOverride => {
+                "component-property-removed-vs-override"
+            }
+            ConflictKind::TokenTypeVsValue => "token-type-vs-value",
+            ConflictKind::DrillingChainBreak => "drilling-chain-break",
         }
     }
 }
@@ -449,6 +468,9 @@ pub(crate) mod tests {
             (4, "type-change-vs-value-change"),
             (5, "conflicting-reorder"),
             (6, "inconsistent-definition"),
+            (7, "component-property-removed-vs-override"),
+            (8, "token-type-vs-value"),
+            (9, "drilling-chain-break"),
         ];
         assert_eq!(ConflictKind::ALL.len(), golden.len());
         for (kind, (code, name)) in ConflictKind::ALL.into_iter().zip(golden) {
