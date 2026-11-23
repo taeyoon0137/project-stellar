@@ -1,0 +1,7 @@
+nodes visible=7 vector=2 rasterized=5
+region content roots=0195c530-3acd-77bc-8000-000000001002 pixels=20,1,32,13 nodes=1
+  reason node=0195c530-3acd-77bc-8000-000000001002 feature=DropShadow css=box-shadow,filter why=feDropShadow blur 반경 의미가 렌더러 수식(XI.10.4)과 다름
+region subtrees parent=- roots=0195c530-3acd-77bc-8000-000000001003 pixels=39,0,53,12 nodes=2
+  reason node=0195c530-3acd-77bc-8000-000000001003 feature=LayerBlur css=filter why=feGaussianBlur 반경 의미가 렌더러 수식(XI.10.4)과 다름
+region subtrees parent=- roots=0195c530-3acd-77bc-8000-000000001005,0195c530-3acd-77bc-8000-000000001006 pixels=70,1,85,11 nodes=2
+  reason node=0195c530-3acd-77bc-8000-000000001006 feature=BlendMode css=mix-blend-mode why=SVG mix-blend-mode는 sRGB 공간에서 섞어 렌더러 선형 합성(XI.10.2)과 결과가 다름 — backdrop 의존 범위(XX.4.1)까지 래스터 isolation=canvas backdrop=0195c530-3acd-77bc-8000-000000001005

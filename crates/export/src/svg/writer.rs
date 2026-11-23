@@ -57,6 +57,7 @@ use crate::svg::raster::{
 use crate::svg::rasterize::{
     check_output, ExportRasterizer, NoRasterizer, RasterRequest, RasterRoot, RasterizeError,
 };
+use crate::svg::report::{RasterizedRegion, SvgExportReport};
 use crate::svg::text::{text_outlines, TextOutlineError, MAX_TEXT_OUTLINE_COMMANDS};
 use crate::text::{ExportTextSource, GlyphOutline, GlyphOutlineError, GlyphOutlineKey};
 
@@ -86,6 +87,7 @@ pub struct SvgDocument {
     clip_definitions: usize,
     mask_definitions: usize,
     raster_images: usize,
+    report: SvgExportReport,
 }
 
 impl SvgDocument {
@@ -122,6 +124,11 @@ impl SvgDocument {
     /// 넣은 래스터 경계 `<image>` 수(XX.4.2).
     pub const fn raster_images(&self) -> usize {
         self.raster_images
+    }
+
+    /// 래스터화한 subtree 목록과 이유(XX.4.3).
+    pub const fn report(&self) -> &SvgExportReport {
+        &self.report
     }
 }
 
@@ -275,6 +282,7 @@ pub fn write_svg_with(
         raster,
         plan: &plan,
         raster_images: 0,
+        rasterized: Vec::new(),
         outlines: HashMap::new(),
         limit: options.max_output_bytes,
         ids: SvgIdAllocator::new(),
@@ -344,6 +352,7 @@ pub fn write_svg_with(
         clip_definitions: writer.clip_definitions,
         mask_definitions: writer.mask_definitions,
         raster_images: writer.raster_images,
+        report: SvgExportReport::new(&plan, writer.rasterized),
     })
 }
 
@@ -364,6 +373,8 @@ struct Writer<'a> {
     raster: &'a dyn ExportRasterizer,
     plan: &'a RasterPlan,
     raster_images: usize,
+    /// report에 쓸 래스터 영역(paint 순서).
+    rasterized: Vec<RasterizedRegion>,
     /// glyph outline 조회 cache(조회만 하며 출력 순서에 영향 없음).
     outlines: HashMap<GlyphOutlineKey, Result<GlyphOutline, GlyphOutlineError>>,
     limit: usize,
@@ -497,6 +508,10 @@ impl<'a> Writer<'a> {
                 });
             }
         }
+        self.rasterized.push(RasterizedRegion::of(
+            boundary,
+            roots.iter().map(|root| root.node.source()).collect(),
+        ));
         let Some(pixels) = boundary.pixels() else {
             return Ok(());
         };

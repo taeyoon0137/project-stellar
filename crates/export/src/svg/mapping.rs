@@ -433,7 +433,7 @@ pub const SVG_MAPPING: [SvgMapping; 34] = [
     row(
         SvgFeature::BlendMode,
         "PaintStack::blend ≠ Normal(Blend modifier)",
-        "mix-blend-mode — 외부 backdrop 의존 범위 분석(XX.4.1) 후 래스터 경계 포함",
+        "SVG mix-blend-mode는 sRGB 공간에서 섞어 렌더러 선형 합성(XI.10.2)과 결과가 다름 — backdrop 의존 범위(XX.4.1)까지 래스터",
         SvgSupport::Rasterize { row: "XX.4.2" },
     ),
     row(

@@ -37,6 +37,8 @@ use crate::text::NoText;
 mod raster;
 /// 부분 래스터화 회귀 테스트 (XX.4.4).
 mod regression;
+/// 래스터 report 테스트 (XX.4.3).
+mod report;
 /// Text outline 테스트 (XX.3.2).
 mod text;
 mod vector;
