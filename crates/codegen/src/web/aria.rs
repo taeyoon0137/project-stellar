@@ -39,11 +39,11 @@ use std::collections::BTreeSet;
 use stellar_accessibility::node::{AccessibilityRole, ActionKind, StateKind};
 use stellar_core_types::ids::StableId;
 use stellar_core_types::typed_value::TypedValue;
-use stellar_target_profile::capability::ElementKind;
 
 use crate::ir::snapshot::id_hex;
 use crate::ir::{IrAccessibilityEntry, IrTree, ResolvedBinding};
 use crate::web::html::{HtmlChild, HtmlDocument};
+use crate::web::structure::map_structure;
 
 pub use crate::facet::Facet;
 
@@ -132,30 +132,6 @@ impl<'a> Mapper<'a> {
         self.notes.push(WebNote { node: id, kind });
     }
 
-    /// 1단계: Fragment를 펼친 element tree를 만듭니다(tag는 임시).
-    fn build_structure(&mut self) {
-        let ir = self.ir;
-        for (index, node) in ir.nodes.iter().enumerate() {
-            if node.element == ElementKind::FRAGMENT {
-                continue;
-            }
-            let element = self.doc.add("div", Some(node.id));
-            self.element_of[index] = Some(element);
-            // 가장 가까운 Fragment가 아닌 조상.
-            let mut parent = node.parent;
-            while let Some(p) = parent {
-                if ir.nodes[p as usize].element != ElementKind::FRAGMENT {
-                    break;
-                }
-                parent = ir.nodes[p as usize].parent;
-            }
-            match parent.and_then(|p| self.element_of[p as usize]) {
-                Some(parent) => self.doc.append(parent, element),
-                None => self.doc.push_root(element),
-            }
-        }
-    }
-
     fn element_children(&self, element: u32) -> Vec<u32> {
         self.doc
             .element(element)
@@ -173,7 +149,8 @@ impl<'a> Mapper<'a> {
         self.ir.node_index(source)
     }
 
-    /// 2단계: role·element 종류로 tag와 role 속성을 정합니다.
+    /// 구조([`map_structure`]) 위에서 접근성 entry가 있는 element의 tag와 role 속성을 role로 고칩니다. entry가 없는
+    /// element는 구조 결과의 tag를 그대로 두고 숨김만 정합니다.
     fn assign_tags(&mut self, has_semantics: &[bool]) {
         let ir = self.ir;
         for index in 0..ir.nodes.len() {
@@ -183,6 +160,10 @@ impl<'a> Mapper<'a> {
             let node = &ir.nodes[index];
             let has_children = !self.element_children(element).is_empty();
             let node_index = index as u32;
+            if self.role(node_index).is_some() {
+                // role이 element 의미를 정하므로 구조의 기본 속성(type·open·alt)을 버립니다.
+                self.doc.clear_attributes(element);
+            }
             match self.role(node_index) {
                 Some(AccessibilityRole::Generic) => self.doc.set_tag(element, "div"),
                 Some(AccessibilityRole::Group) => {
@@ -269,15 +250,13 @@ impl<'a> Mapper<'a> {
                     self.doc.set_attr(element, "role", "img");
                 }
                 None => {
-                    let leaf = !has_children;
-                    let tag = match node.element {
-                        ElementKind::TEXT => "span",
-                        ElementKind::IMAGE if leaf => "img",
-                        _ => "div",
-                    };
-                    self.doc.set_tag(element, tag);
-                    if tag == "img" {
-                        self.doc.set_attr(element, "alt", "");
+                    if !has_semantics[index]
+                        && matches!(self.doc.element(element).tag, "button" | "input" | "dialog")
+                    {
+                        // 접근성 entry가 없는 숨김 subtree에서는 native control이 focus를 받으면 안 되므로
+                        // 구조의 control tag를 장식 `div`로 낮춥니다(정적 검사 FocusableInHidden).
+                        self.doc.set_tag(element, "div");
+                        self.doc.clear_attributes(element);
                     }
                     // Fragment는 DOM element가 없으므로 실제 element 부모를 기준으로 숨깁니다.
                     let parent_has = self
@@ -289,11 +268,6 @@ impl<'a> Mapper<'a> {
                     if !has_semantics[index] && parent_has {
                         self.doc.set_attr(element, "aria-hidden", "true");
                     }
-                }
-            }
-            if let Some(text) = &node.text {
-                if !has_children && !self.doc.element(element).is_void() {
-                    self.doc.append_text(element, text.clone());
                 }
             }
         }
@@ -613,17 +587,17 @@ pub fn map_accessibility(ir: &IrTree) -> WebAccessibility {
     let listbox = (0..ir.accessibility.len())
         .map(|entry| is_listbox(ir, &children, entry))
         .collect();
+    let structure = map_structure(ir);
     let mut mapper = Mapper {
         ir,
-        doc: HtmlDocument::new(),
-        element_of: vec![None; ir.nodes.len()],
+        doc: structure.document,
+        element_of: structure.element_of,
         notes: Vec::new(),
         referenced: BTreeSet::new(),
         children,
         listbox,
     };
     let has_semantics = ir.semantic_subtrees();
-    mapper.build_structure();
     mapper.assign_tags(&has_semantics);
     for (index, node) in ir.nodes.iter().enumerate() {
         let (Some(element), Some(entry)) = (mapper.element_of[index], node.semantics) else {

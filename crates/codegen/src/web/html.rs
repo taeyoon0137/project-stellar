@@ -152,6 +152,11 @@ impl HtmlDocument {
             .retain(|(key, _)| key != name);
     }
 
+    /// 속성을 모두 지웁니다.
+    pub fn clear_attributes(&mut self, element: u32) {
+        self.elements[element as usize].attributes.clear();
+    }
+
     /// tag를 바꿉니다.
     pub fn set_tag(&mut self, element: u32, tag: &'static str) {
         self.elements[element as usize].tag = tag;

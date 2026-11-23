@@ -3,6 +3,9 @@
 /// 생성 HTML 구조 모델과 결정론 writer.
 pub mod html;
 
+/// IR node → HTML semantic 구조 (XXII.2.1).
+pub mod structure;
+
 /// 접근성 tree → HTML/ARIA 매핑 (XXII.2.4).
 pub mod aria;
 
