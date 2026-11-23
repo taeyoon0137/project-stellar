@@ -62,9 +62,13 @@ Accepted (2026-11-23).
    - `pHYs`: 배율 1 = 72 dpi(배율 × 2834.6 pixel/m).
    - 지원 조합은 {sRGB, Display P3} × 8-bit입니다. 16-bit와 그 밖의 profile 이름은 `PngOptionsError`로 거부하고 조용히 바꾸지
      않습니다.
-   - 이미지 asset 색공간 판정: `cICP`가 우선(1 → sRGB, 12 → P3, transfer 13), 없으면 `iCCP` colorant 비교(허용 오차 0.002),
-     없으면 sRGB입니다.
-   - 내보내기 결과는 출력 profile로 옮길 때 잘린 색과 확장 범위 색(XI.10.6)을 `GamutSummary`로 돌려줍니다.
+   - 이미지 asset 색공간 판정은 PNG 3판 우선순위(`cICP` → `iCCP` → `sRGB` → `gAMA`·`cHRM`)를 따릅니다. `cICP`는 1 → sRGB,
+     12 → P3(transfer 13, matrix 0). `iCCP`는 colorant(허용 오차 0.002)와 `rTRC`·`gTRC`·`bTRC`가 모두 sRGB 곡선(표본마다
+     0.5/255 이내, `curv` table·`para` 함수)이어야 합니다. `sRGB` chunk는 sRGB입니다. 그 밖에는 `gAMA`가 45455 ± 1000이어야
+     하고, `cHRM`이 있으면 sRGB 또는 P3 chromaticity(± 0.002)여야 합니다. 색 정보가 없으면 sRGB입니다. 나머지(선형·gamma
+     1.8 곡선, 다른 primaries)는 `Unsupported`(`image-color-profile`)이고 sRGB로 읽어 색을 조용히 바꾸지 않습니다.
+   - 내보내기 결과는 출력 profile로 옮길 때 잘린 색과 확장 범위 색(XI.10.6)을 `GamutSummary`로 돌려줍니다. 판정 대상은
+     scene paint stack의 단색(fill·stroke·shadow)입니다. text run 고유 색(glyph layout)과 이미지 pixel은 아직 세지 않습니다.
 6. **worker와 저장(XX.2.3).** 렌더·encode는 `PngJob`이 이름 있는 worker thread에서 실행하고 draw·행·압축 block 사이에서
    취소를 확인합니다. 저장은 `stellar_ops::export_png`가 storage `write_file_atomic_observed`(같은 디렉터리 temp →
    flush → fsync → rename → 부모 sync)로 합니다. 쓰기 단계마다 취소를 확인하고, 취소·실패면 storage가 이 호출의 temp를

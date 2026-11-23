@@ -6,7 +6,7 @@
 //! - 지원: 비interlace, 색 형식 0(gray)·2(RGB)·3(palette)·4(gray+α)·6(RGBA), bit depth 1·2·4·8·16, `tRNS` 투명색.
 //!   16-bit 표본은 상위 8 bit로 줄입니다(내보내기 합성은 8-bit 출력).
 //! - Adam7 interlace는 [`PngDecodeError::Unsupported`]입니다.
-//! - 색 정보 chunk(`sRGB`·`cICP`·`iCCP`·`gAMA`·`pHYs`)는 [`PngColorInfo`]로 돌려주고, [`PngColorInfo::color_space`]가
+//! - 색 정보 chunk(`sRGB`·`cICP`·`iCCP`·`gAMA`·`cHRM`·`pHYs`)는 [`PngColorInfo`]로 돌려주고, [`PngColorInfo::color_space`]가
 //!   sRGB·Display P3 판정 규칙을 정합니다.
 
 use std::fmt;
@@ -120,9 +120,26 @@ pub struct PngColorInfo {
     pub icc: Option<(String, Vec<u8>)>,
     /// `gAMA`(× 100000).
     pub gamma: Option<u32>,
+    /// `cHRM`(백색 x·y, 빨강 x·y, 초록 x·y, 파랑 x·y, × 100000).
+    pub chromaticities: Option<[u32; 8]>,
     /// `pHYs`(x, y pixel per unit, unit).
     pub physical: Option<(u32, u32, u8)>,
 }
+
+/// `gAMA` 허용 오차(× 100000). 45455(1/2.2)와 45000 같은 sRGB 관례 값을 받아들이고 선형(100000)·1.8(55556)은
+/// 거부합니다.
+pub const GAMMA_TOLERANCE: u32 = 1_000;
+
+/// `cHRM` 좌표 허용 오차(× 100000, xy 0.002).
+pub const CHROMATICITY_TOLERANCE: u32 = 200;
+
+/// sRGB·Display P3 `cHRM` 값(D65 백색, R, G, B).
+const SRGB_CHRM: [u32; 8] = [
+    31_270, 32_900, 64_000, 33_000, 30_000, 60_000, 15_000, 6_000,
+];
+const DISPLAY_P3_CHRM: [u32; 8] = [
+    31_270, 32_900, 68_000, 32_000, 26_500, 69_000, 15_000, 6_000,
+];
 
 /// 색 정보가 sRGB·Display P3가 아닙니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,9 +148,16 @@ pub struct UnsupportedColorInfo;
 impl PngColorInfo {
     /// 이미지 pixel의 색공간.
     ///
-    /// `cICP`가 있으면 그것이 우선합니다(PNG 3판): primaries 1 → sRGB, 12 → Display P3, transfer는 13(sRGB 곡선)이어야
-    /// 합니다. 없으면 `iCCP` colorant([`icc::primaries_space`]), 그것도 없으면 sRGB입니다(`sRGB` chunk, 또는 색 정보
-    /// 없는 PNG의 관례). 그 밖은 [`UnsupportedColorInfo`]입니다.
+    /// 우선순위는 PNG 3판과 같습니다(`cICP` → `iCCP` → `sRGB` → `gAMA`·`cHRM`).
+    ///
+    /// - `cICP`: primaries 1 → sRGB, 12 → Display P3, transfer는 13(sRGB 곡선)·matrix 0이어야 합니다.
+    /// - `iCCP`: colorant와 transfer 곡선([`icc::primaries_space`]).
+    /// - `sRGB` chunk: sRGB(같이 있는 `gAMA`·`cHRM`은 무시).
+    /// - 그 밖: `gAMA`가 있으면 45455 ± [`GAMMA_TOLERANCE`](sRGB 관례 값)여야 하고, `cHRM`이 있으면 sRGB 또는
+    ///   Display P3 chromaticity(± [`CHROMATICITY_TOLERANCE`])여야 합니다. 둘 다 없으면 sRGB입니다(색 정보 없는 PNG의
+    ///   관례).
+    ///
+    /// 그 밖은 [`UnsupportedColorInfo`]입니다. 다른 곡선·primaries의 pixel을 sRGB로 읽어 색을 조용히 바꾸지 않습니다.
     pub fn color_space(&self) -> Result<ColorSpace, UnsupportedColorInfo> {
         if let Some(cicp) = self.cicp {
             if cicp.transfer != 13 || cicp.matrix != 0 {
@@ -148,7 +172,29 @@ impl PngColorInfo {
         if let Some((_, profile)) = &self.icc {
             return icc::primaries_space(profile).ok_or(UnsupportedColorInfo);
         }
-        Ok(ColorSpace::Srgb)
+        if self.srgb_intent.is_some() {
+            return Ok(ColorSpace::Srgb);
+        }
+        if let Some(gamma) = self.gamma {
+            if gamma.abs_diff(45_455) > GAMMA_TOLERANCE {
+                return Err(UnsupportedColorInfo);
+            }
+        }
+        let Some(chrm) = self.chromaticities else {
+            return Ok(ColorSpace::Srgb);
+        };
+        let near = |expected: &[u32; 8]| {
+            chrm.iter()
+                .zip(expected)
+                .all(|(a, b)| a.abs_diff(*b) <= CHROMATICITY_TOLERANCE)
+        };
+        if near(&SRGB_CHRM) {
+            Ok(ColorSpace::Srgb)
+        } else if near(&DISPLAY_P3_CHRM) {
+            Ok(ColorSpace::DisplayP3)
+        } else {
+            Err(UnsupportedColorInfo)
+        }
     }
 }
 
@@ -340,6 +386,15 @@ pub fn decode_png(bytes: &[u8], limits: DecodeLimits) -> Result<DecodedPng, PngD
             }
             b"sRGB" => color.srgb_intent = data.first().copied(),
             b"gAMA" => color.gamma = Some(be32(data, 0)?),
+            b"cHRM" => {
+                if data.len() == 32 {
+                    let mut values = [0u32; 8];
+                    for (i, value) in values.iter_mut().enumerate() {
+                        *value = be32(data, i * 4)?;
+                    }
+                    color.chromaticities = Some(values);
+                }
+            }
             b"pHYs" => {
                 if data.len() == 9 {
                     color.physical = Some((be32(data, 0)?, be32(data, 4)?, data[8]));

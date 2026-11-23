@@ -59,3 +59,5 @@
   없습니다. 동작하지 않는 명령은 등록하지 않았습니다(ADR-0103 결정 8). scene source가 ops가 쓸 수 있는 crate로 옮겨지면
   `stellar export png`와 MCP 도구는 capture → 사전 진단 → `PngExport`만 부르면 됩니다.
 - 앱 export 명령·진행 표시(XX.5.1)는 UI 재설계 때 연결합니다.
+- gamut 요약은 scene paint stack의 단색만 셉니다. text run 고유 색(glyph layout)과 이미지 pixel이 출력 profile에서 잘려도
+  요약에 나타나지 않습니다. 렌더 중 실제로 변환한 색을 세도록 target 결과에 넣어야 합니다.

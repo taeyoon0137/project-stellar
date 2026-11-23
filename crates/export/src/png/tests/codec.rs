@@ -80,6 +80,46 @@ fn srgb_and_display_p3_metadata_are_recorded() {
         ..PngColorInfo::default()
     };
     assert!(bt2020.color_space().is_err());
+    // encoder가 쓴 sRGB 파일은 cHRM까지 읽고 sRGB입니다.
+    assert_eq!(
+        srgb_png.color.chromaticities,
+        Some([31_270, 32_900, 64_000, 33_000, 30_000, 60_000, 15_000, 6_000])
+    );
+}
+
+#[test]
+fn gamma_and_chromaticity_without_srgb_chunk_are_checked() {
+    let info = |gamma: Option<u32>, chrm: Option<[u32; 8]>| PngColorInfo {
+        gamma,
+        chromaticities: chrm,
+        ..PngColorInfo::default()
+    };
+    // 색 정보 없음·sRGB 관례 gamma는 sRGB입니다.
+    assert_eq!(info(None, None).color_space(), Ok(ColorSpace::Srgb));
+    assert_eq!(info(Some(45_455), None).color_space(), Ok(ColorSpace::Srgb));
+    assert_eq!(info(Some(45_000), None).color_space(), Ok(ColorSpace::Srgb));
+    // 선형·gamma 1.8 pixel을 sRGB로 읽지 않습니다.
+    assert!(info(Some(100_000), None).color_space().is_err());
+    assert!(info(Some(55_556), None).color_space().is_err());
+    // cHRM은 sRGB·Display P3 primaries만 받아들입니다.
+    let p3 = [
+        31_270, 32_900, 68_000, 32_000, 26_500, 69_000, 15_000, 6_000,
+    ];
+    assert_eq!(
+        info(Some(45_455), Some(p3)).color_space(),
+        Ok(ColorSpace::DisplayP3)
+    );
+    let bt2020 = [
+        31_270, 32_900, 70_800, 29_200, 17_000, 79_700, 13_100, 4_600,
+    ];
+    assert!(info(Some(45_455), Some(bt2020)).color_space().is_err());
+    // sRGB chunk가 있으면 gAMA·cHRM보다 우선합니다(PNG 3판).
+    let srgb_chunk = PngColorInfo {
+        srgb_intent: Some(0),
+        gamma: Some(100_000),
+        ..PngColorInfo::default()
+    };
+    assert_eq!(srgb_chunk.color_space(), Ok(ColorSpace::Srgb));
 }
 
 #[test]

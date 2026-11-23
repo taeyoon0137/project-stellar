@@ -66,6 +66,7 @@
 | Display P3 출력 색 변환, sRGB 출력의 P3 색 자르기(`display_p3_output_converts_colors`) | 통과 |
 | 결정론·취소(`rendering_is_deterministic_and_cancellable`), 크기 상한(`oversized_output_is_rejected_before_rendering`), 계약 검사(`check_image_rejects_contract_violations`) | 통과 |
 | zlib(참조 zlib 동적 Huffman stream 해제 포함)·ICC colorant(Apple Display P3 공개 값과 0.001 이내) 단위 test | 통과 |
+| 이미지 내장 색 정보 판정: ICC는 colorant와 transfer 곡선이 모두 sRGB·P3여야 함(선형·gamma 1.8 곡선 거부, 1024 표본 `curv` sRGB 수용, `primaries_space_requires_srgb_transfer_curves`), `sRGB` chunk 없는 `gAMA`·`cHRM` 검사(`gamma_and_chromaticity_without_srgb_chunk_are_checked`) | 통과 |
 
 ## 차이(작업 지시와 다른 점)
 
