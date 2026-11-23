@@ -1,0 +1,13 @@
+# 텔레메트리 동의 상태 전이 fixture (XVI.8.3, ADR-0109 결정 5).
+# 형식: <현재 상태> <사건> -> <결과 상태> <changed|unchanged> <upload:allowed|blocked>
+#       또는 <현재 상태> <사건> -> error:<오류 이름>
+# 모든 (상태, 사건) 쌍이 정확히 한 번 나옵니다.
+not_asked grant -> granted changed upload:allowed
+not_asked decline -> declined changed upload:blocked
+not_asked revoke -> error:nothing_to_revoke
+declined grant -> granted changed upload:allowed
+declined decline -> declined unchanged upload:blocked
+declined revoke -> error:nothing_to_revoke
+granted grant -> granted unchanged upload:allowed
+granted decline -> declined changed upload:blocked
+granted revoke -> declined changed upload:blocked

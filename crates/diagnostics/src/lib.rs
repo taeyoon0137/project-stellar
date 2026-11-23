@@ -30,6 +30,9 @@ pub mod bundle;
 /// 금지 필드 scanner (XVI.8.2, ADR-0109).
 pub mod scanner;
 
+/// 텔레메트리 동의 상태 NotAsked·Declined·Granted (XVI.8.3, ADR-0109).
+pub mod consent;
+
 /// 상호작용 성능 예산 reader (XVI.4.1).
 pub mod budget;
 
