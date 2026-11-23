@@ -1,0 +1,42 @@
+format: stellar-component-interface
+schema_version: "4"
+component: "00000000-01f4-7000-8000-0000000001f4"
+properties:
+  -
+    id: "00000000-01fe-7000-8000-0000000001fe"
+    name: initiallyOn
+    visibility: public
+    value_type: boolean
+    default_expression: "00000000-01ff-7000-8000-0000000001ff"
+    default_type: boolean
+    default: "true"
+slots:
+  -
+    id: "00000000-0208-7000-8000-000000000208"
+    host: "00000000-01f6-7000-8000-0000000001f6"
+    kinds: "frame text component-instance"
+    min: "0"
+    max: none
+    content: "00000000-01f7-7000-8000-0000000001f7"
+actions:
+  -
+    id: "00000000-0212-7000-8000-000000000212"
+    name: pressed
+variables:
+  -
+    id: "00000000-021c-7000-8000-00000000021c"
+    name: "on"
+    value_type: boolean
+    initial_ast: "01000100000000000000021d7000800000000000021d020000030000000001fe700080000000000001fe00000000"
+transitions:
+  -
+    id: "00000000-0226-7000-8000-000000000226"
+    trigger: "event activate 00000000-01f5-7000-8000-0000000001f5"
+    actions:
+      -
+        set: "00000000-021c-7000-8000-00000000021c"
+        to_expression: "00000000-0227-7000-8000-000000000227"
+        to_type: boolean
+        to: "false"
+      -
+        emit: "00000000-0212-7000-8000-000000000212"

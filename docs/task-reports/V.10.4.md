@@ -4,7 +4,7 @@
 
 - WBS: V.10.4
 - 작업명: 모든 node·modifier·component·token·resource를 텍스트화하고 문서·페이지·View·큰 Frame 파일 참조와 이름/StableId 규칙 완성
-- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 남은 범위가 있음(아래 본문). 2026-11-24 `text-source-everywhere` lane이 headless MCP 읽기 비교(원본 값과 MCP 값)를 더했습니다(아래 후속). 컴포넌트 Property·Slot·상태 머신과 표현식 token 쓰기 거부, 공개 포맷 동결 전 검증이 남습니다. 보고 당시 기록: 부분 완료 (`[~]`) — 텍스트화·배치·거부 규칙·Git 병합·CLI 검증은 통과했습니다.
+- 상태: 완료 (`[x]`, 이 행의 구현 기준) — 2026-11-24 `legacy-convert` lane이 남은 범위(컴포넌트 Property·Slot·상태 머신, 리터럴이 아닌 token, 공개 포맷 동결 전 검증)를 끝냈습니다(아래 "후속: 컴포넌트 interface·계산 token·추가 root 문서"). 원장 판정은 통합 때 정합니다. 이전 기록: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 남은 범위가 있음(아래 본문). 2026-11-24 `text-source-everywhere` lane이 headless MCP 읽기 비교(원본 값과 MCP 값)를 더했습니다(아래 후속). 컴포넌트 Property·Slot·상태 머신과 표현식 token 쓰기 거부, 공개 포맷 동결 전 검증이 남습니다. 보고 당시 기록: 부분 완료 (`[~]`) — 텍스트화·배치·거부 규칙·Git 병합·CLI 검증은 통과했습니다.
 - 구현 커밋: `58709614`(v4 node·modifier 문법), `df80100f`(catalog), `ae935137`(다중 파일 원본·generation 변환), `07f81702`(전환 준비 corpus). 결정: [ADR-0077](../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md). 명세: [`text-source-v4.md`](../spec/text-source-v4.md).
 
 ## 필수 실행 환경
@@ -59,3 +59,20 @@
 
 - MCP headless가 텍스트 원본 프로젝트를 원본 기준으로 읽습니다. `crates/mcp-core/src/headless/operations.rs`의 `reads_follow_a_source_only_edit_and_source_span_points_into_the_view_file`이 원본만 바꾼 값을 MCP 문서 page가 그대로 돌려주는지 확인합니다(`cargo test -p stellar-mcp-core --locked --lib headless::operations::tests`: 0, 1 passed).
 - 남은 범위: 컴포넌트 Property·Slot·상태 머신, 리터럴이 아닌 token 표현식 쓰기(표현식 텍스트 문법 결정 뒤), 공개 포맷 동결 전 검증.
+
+## 후속: 컴포넌트 interface·계산 token·추가 root 문서 (2026-11-24, ADR-0131)
+
+- 결정: [ADR-0131](../adr/ADR-0131-legacy-chunk-projects-to-text-source.md) 결정 1·2·3·5.
+- 변경 파일: `crates/project/src/document_io/source_v4/{interface,documents,freeze_tests}.rs`(신규), `source_v4/{project,token,context,mod}.rs`, `source_v4/golden/{interface,tokens,documents}-v4.stellar.yaml`(신규), `crates/project/src/document_io/session.rs`(`decode_source`·`decode_extra_documents`·`plan_changes`·`convert_saved`).
+- 컴포넌트 Property·Slot·상태 머신: 정의 파일 옆 `design/interfaces/<이름>-<hash12>.stellar.yaml`에 씁니다. 식은 Context 원본과 같은 "리터럴 또는 canonical AST hex" 문법입니다. 읽은 library는 `ComponentLibrary::decode` 검증을 그대로 통과해야 합니다.
+- 리터럴이 아닌 token: `TokenSetSource::computed`(선언 값 타입·기본 식 AST). 같은 `tokens` 목록에 `value_type`·`ast`로 씁니다. 리터럴 하나인 식은 리터럴 token으로만 씁니다.
+- root 문서 둘 이상: `design/documents.stellar.yaml`과 `design/documents/<slug>/`(첫 문서와 같은 codec). 첫 문서만 다루는 저장은 추가 문서 파일을 지우지 않습니다. generation 변환 `from_saved_documents`가 root 문서 전부·library·이미지 chunk를 소비합니다.
+- 공개 포맷 동결 전 검증: 모든 파일 종류를 담은 프로젝트의 새 형식 golden bytes, 같은 bytes 재생성·재쓰기, 한 줄 삭제 전수 검사(거부·의미 변경, 또는 기본값으로 읽는 줄이면 다시 쓴 결과가 원래 bytes).
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-project --lib source_v4` | 통과(freeze_tests 4, token 2 포함) |
+| `cargo test -p stellar-project --lib cache_tests` | 5 passed: 두 root 문서와 interface를 가진 옛 배치의 변환·재열기·원본에서 다시 만들기·Git 한 commit 전환 |
+| `cargo test -p stellar-project -p stellar-storage --no-fail-fast` | 826 passed, 0 failed |
+
+- 남은 범위·위험: semantic Git 원본 단위 분류와 merge driver pattern은 `interfaces/`·`documents/`를 아직 모릅니다(문서 전체 묶음으로 stage, Git 줄 병합). 식 텍스트 문법은 canonical AST hex라 사람이 읽기 어렵습니다(expressions crate가 텍스트 문법을 정하면 schema를 올려 바꿈). 명세 `docs/spec/text-source-v4.md`는 이 lane 소유 밖이라 새 형식을 더하지 않았습니다(ADR-0131에 형식을 적음).

@@ -43,7 +43,7 @@ use super::css::{self, invalid, unsupported};
 use super::slug::unique_slugs;
 use super::span::{node_spans, SpanTable};
 use super::token::{self, TokenSetSource};
-use super::{node, VERSION};
+use super::{documents, interface, node, VERSION};
 use crate::yaml::loader::MAX_INPUT_BYTES;
 use crate::yaml::{load_restricted, write_canonical, write_canonical_checked, YamlValue};
 
@@ -443,13 +443,18 @@ pub fn encode(project: &TextProject) -> Result<EncodedProject, TextSourceError> 
     document.push((scalar("pages"), YamlValue::Sequence(pages)));
     files.insert(DOCUMENT_PATH.to_owned(), file_text(document)?);
 
-    // 컴포넌트: 정의 하나 = 파일 하나. 파일 이름은 컴포넌트 원본 규칙(이름과 StableId 접미사)입니다.
+    // 컴포넌트: 정의 하나 = 파일 하나. 파일 이름은 컴포넌트 원본 규칙(이름과 StableId 접미사)입니다. Property·Slot·
+    // 상태 머신은 같은 이름의 interface 파일에 씁니다(ADR-0131 결정 1).
     for entry in project.components.iter() {
-        let source = ComponentSource::from_entry(entry)?;
+        let source =
+            ComponentSource::from_records(entry.definition().clone(), definition_records(entry)?)?;
         files.insert(
             format!("components/{}", source.filename()?),
             source.to_text()?,
         );
+        if let Some(text) = interface::encode(entry)? {
+            files.insert(interface::interface_path(entry.definition())?, text);
+        }
     }
     let token_slugs = unique_slugs(
         project
@@ -499,7 +504,11 @@ pub fn encode(project: &TextProject) -> Result<EncodedProject, TextSourceError> 
 pub fn spans(files: &BTreeMap<String, String>) -> SpanTable {
     files
         .iter()
-        .filter(|(path, _)| path.starts_with("pages/") || path.starts_with("components/"))
+        .filter(|(path, _)| {
+            path.starts_with("pages/")
+                || path.starts_with("components/")
+                || (documents::is_documents_path(path) && path.contains("/pages/"))
+        })
         .flat_map(|(path, text)| node_spans(path, text))
         .collect()
 }
@@ -598,7 +607,9 @@ pub fn decode(files: &BTreeMap<String, String>) -> Result<TextProject, TextSourc
                 && path.matches('/').count() == 1)
             || (path.starts_with("tokens/")
                 && path.ends_with(EXT)
-                && path.matches('/').count() == 1);
+                && path.matches('/').count() == 1)
+            || interface::is_interface_path(path)
+            || documents::is_documents_path(path);
         if !known {
             return Err(invalid(format!(
                 "텍스트 원본에 모르는 파일이 있습니다: {path}"
@@ -690,7 +701,21 @@ pub fn decode(files: &BTreeMap<String, String>) -> Result<TextProject, TextSourc
         } else if path.starts_with("tokens/") {
             token_sets.push(token::decode(source)?);
             reader.used.insert(path.clone());
+        } else if documents::is_documents_path(path) {
+            // 추가 root 문서는 [`documents::decode`]가 읽습니다. 이 문서 하나의 의미에는 들어가지 않습니다.
+            reader.used.insert(path.clone());
         }
+    }
+    let mut interfaces = false;
+    for (path, source) in files {
+        if interface::is_interface_path(path) {
+            interface::apply(&mut components, path, source)?;
+            reader.used.insert(path.clone());
+            interfaces = true;
+        }
+    }
+    if interfaces {
+        components = interface::validate_library(components)?;
     }
     let mut ids = BTreeSet::new();
     if token_sets.iter().any(|set| !ids.insert(set.id)) {
@@ -811,39 +836,82 @@ pub fn write_new(design: &Path, encoded: &EncodedProject) -> Result<(), TextSour
     Ok(())
 }
 
-// --- 저장된 세대에서 옮기기(V.10.7 준비) ---
+// --- 저장된 세대에서 옮기기(V.10.7) ---
 
-/// 저장된 generation 하나를 텍스트 원본 의미로 옮깁니다.
-///
-/// generation의 chunk pointer 전체를 소비해야 합니다: 문서 하나의 DocumentManifest·ViewTree·subtree(다시 직렬화한
-/// 집합과 ChunkId·hash·kind·schema가 정확히 같아야 함), component library chunk 0~1개, asset metadata chunk.
-/// 알 수 없거나 남는 chunk가 하나라도 있으면 거부합니다. `yaml_components`는 프로젝트 `design/components/`의
-/// 기존 YAML 원본에서 조립한 정의입니다(generation에 library chunk가 있으면 비어 있어야 합니다).
+/// 컴포넌트 정의 tree를 node 레코드로 풉니다(root 포함).
+pub(crate) fn definition_records(
+    entry: &stellar_document::component::definition::ComponentEntry,
+) -> Result<Vec<NodeRecord>, TextSourceError> {
+    entry
+        .tree()
+        .iter()
+        .map(|node| {
+            Ok(NodeRecord {
+                id: node.id,
+                parent: node.parent,
+                order_key: node.order_key.clone(),
+                visible: node.visible,
+                locked: node.locked,
+                display_name: node.display_name.clone(),
+                payload: stellar_document::record_codec::decode_payload(node.kind, &node.payload)
+                    .map_err(invalid)?,
+            })
+        })
+        .collect()
+}
+
+/// 저장된 generation 하나를 텍스트 원본 의미로 옮깁니다. root 문서는 하나여야 합니다
+/// ([`from_saved_documents`]의 한 문서 형태).
 pub fn from_saved(
     saved: &stellar_storage::generation::lazy::LazyGeneration,
     document: DocumentModel,
     yaml_components: ComponentLibrary,
 ) -> Result<TextProject, TextSourceError> {
+    if saved.manifest().root_document_ids.as_slice() != [document.document_id()] {
+        return Err(unsupported(
+            "이 경로는 root 문서 하나만 옮깁니다(root 문서가 둘 이상이면 추가 root 문서와 함께 옮김)",
+        ));
+    }
+    from_saved_documents(saved, vec![document], yaml_components).map(|(project, _)| project)
+}
+
+/// 저장된 generation 하나를 텍스트 원본 의미로 옮깁니다(ADR-0131 결정 3).
+///
+/// `documents`는 generation의 root 문서 전부이고 순서도 manifest의 `root_document_ids`와 같아야 합니다. 첫 문서가
+/// [`TextProject::document`], 나머지가 추가 root 문서([`super::documents`])입니다.
+///
+/// generation의 chunk pointer 전체를 소비해야 합니다: 문서마다 DocumentManifest·ViewTree·subtree·Context(다시
+/// 직렬화한 집합과 ChunkId·hash·kind·schema가 정확히 같아야 함), component library chunk 0~1개, asset metadata
+/// chunk. 알 수 없거나 남는 chunk가 하나라도 있으면 거부합니다. `yaml_components`는 프로젝트 `design/`의 기존 컴포넌트
+/// 원본에서 조립한 정의입니다. generation에도 library chunk가 있으면 두 정의가 같아야 합니다(같지 않으면 어느 쪽이
+/// 맞는지 정할 수 없어 거부).
+pub fn from_saved_documents(
+    saved: &stellar_storage::generation::lazy::LazyGeneration,
+    documents: Vec<DocumentModel>,
+    yaml_components: ComponentLibrary,
+) -> Result<(TextProject, Vec<DocumentModel>), TextSourceError> {
     use stellar_storage::chunk::kinds::{KIND_ASSET_METADATA, KIND_COMPONENT_LIBRARY};
     use stellar_storage::chunk::pointer::ChunkPointer;
     use stellar_storage::generation::lazy::NoopRecorder;
     use stellar_storage::hash::ContentHash;
 
     let manifest = saved.manifest();
-    if manifest.root_document_ids.as_slice() != [document.document_id()] {
-        return Err(unsupported("텍스트 원본은 root 문서 하나만 담습니다"));
+    let ids: Vec<StableId> = documents.iter().map(DocumentModel::document_id).collect();
+    if ids.is_empty() || manifest.root_document_ids != ids {
+        return Err(unsupported(
+            "옮길 문서가 generation의 root 문서 목록(순서 포함)과 다릅니다",
+        ));
     }
-    let serialized = super::super::serialize::serialize_document(&document).map_err(invalid)?;
-    let mut expected: Vec<ChunkPointer> = serialized
-        .chunks()
-        .into_iter()
-        .map(|chunk| ChunkPointer {
+    let mut expected: Vec<ChunkPointer> = Vec::new();
+    for document in &documents {
+        let serialized = super::super::serialize::serialize_document(document).map_err(invalid)?;
+        expected.extend(serialized.chunks().into_iter().map(|chunk| ChunkPointer {
             chunk_id: chunk.chunk_id,
             content_hash: ContentHash::compute(&chunk.payload),
             kind: chunk.kind,
             schema_version: chunk.schema_version,
-        })
-        .collect();
+        }));
+    }
     let mut components = yaml_components;
     let mut images = BTreeMap::new();
     let read = |pointer: &ChunkPointer| {
@@ -851,14 +919,18 @@ pub fn from_saved(
             .read_chunk_payload(pointer.chunk_id, &mut NoopRecorder)
             .map_err(invalid)
     };
+    let mut library_seen = false;
     for pointer in &manifest.chunk_pointers {
-        if pointer.kind == KIND_COMPONENT_LIBRARY && pointer.schema_version == 1 {
-            if !components.is_empty() {
+        if pointer.kind == KIND_COMPONENT_LIBRARY && pointer.schema_version == 1 && !library_seen {
+            library_seen = true;
+            let stored = ComponentLibrary::decode(&read(pointer)?).map_err(invalid)?;
+            if components.is_empty() {
+                components = stored;
+            } else if components.encode() != stored.encode() {
                 return Err(unsupported(
-                    "generation component library와 YAML 컴포넌트 원본이 함께 있습니다",
+                    "generation component library와 컴포넌트 원본의 정의가 다릅니다",
                 ));
             }
-            components = ComponentLibrary::decode(&read(pointer)?).map_err(invalid)?;
             expected.push(*pointer);
         } else if pointer.kind == KIND_ASSET_METADATA && pointer.schema_version == 1 {
             let record = AssetRecord::decode(&read(pointer)?).map_err(invalid)?;
@@ -874,10 +946,15 @@ pub fn from_saved(
             "텍스트 원본이 소비하지 않는 chunk 또는 다시 직렬화로 같아지지 않는 chunk가 있습니다",
         ));
     }
-    Ok(TextProject {
-        document,
-        components,
-        token_sets: Vec::new(),
-        images,
-    })
+    let mut documents = documents.into_iter();
+    let document = documents.next().expect("문서가 하나 이상");
+    Ok((
+        TextProject {
+            document,
+            components,
+            token_sets: Vec::new(),
+            images,
+        },
+        documents.collect(),
+    ))
 }

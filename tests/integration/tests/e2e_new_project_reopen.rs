@@ -158,6 +158,7 @@ fn new_project_edit_save_close_reopen_keeps_semantic_snapshot() {
             expression: new_id(),
             value: TypedValue::Color(Color::new(ColorSpace::Srgb, 0.125, 0.25, 0.5, 1.0).unwrap()),
         }],
+        computed: Vec::new(),
     };
     let token_path = root.join("design/tokens/brand.stellar.yaml");
     std::fs::create_dir_all(token_path.parent().unwrap()).unwrap();

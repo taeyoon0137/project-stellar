@@ -48,14 +48,16 @@ use stellar_assets::record::AssetRecord;
 use stellar_core_types::ids::StableId;
 use stellar_document::component::definition::ComponentLibrary;
 use stellar_document::model::DocumentModel;
-use stellar_storage::chunk::kinds::KIND_COMPONENT_LIBRARY;
 use stellar_storage::generation::current::{read_current_pointer, CurrentPointerError};
 use stellar_storage::generation::lazy::LazyGeneration;
 use stellar_storage::hash::ContentHash;
 use stellar_storage::journal::{self, JournalChange, JournalError};
 
 use super::component_source::read_project_library;
-use super::source_v4::project::{decode, encode, from_saved, read_dir, TextProject, DOCUMENT_PATH};
+use super::source_v4::documents;
+use super::source_v4::project::{
+    decode, encode, from_saved_documents, read_dir, TextProject, DOCUMENT_PATH,
+};
 use super::source_v4::token::TokenSetSource;
 use super::text_source::TextSourceError;
 use crate::manifest::Manifest;
@@ -206,9 +208,20 @@ impl SourceLibrary {
     }
 }
 
-/// 원본 파일 집합을 해석합니다(검증 포함).
+/// 원본 파일 집합을 해석합니다(검증 포함). 추가 root 문서(ADR-0131 결정 3)도 함께 검증하지만 돌려주는 의미는 첫
+/// 문서와 프로젝트 전체 의미입니다(추가 문서는 [`decode_extra_documents`]).
 pub fn decode_source(files: &SourceFiles) -> Result<TextProject, TextSourceError> {
-    decode(&files.files)
+    let project = decode(&files.files)?;
+    documents::decode(project.document.document_id(), &files.files)?;
+    Ok(project)
+}
+
+/// 원본의 추가 root 문서(generation root 순서, 첫 문서 제외). 없으면 빈 목록입니다.
+pub fn decode_extra_documents(
+    files: &SourceFiles,
+    primary: StableId,
+) -> Result<Vec<DocumentModel>, TextSourceError> {
+    documents::decode(primary, &files.files)
 }
 
 /// cache가 만들어진 원본·generation 짝.
@@ -342,6 +355,8 @@ pub struct SourceCommit {
 }
 
 /// 인코딩한 파일 집합을 base 위에 쓸 journal 변경 목록. base와 같은 파일은 빼고, base에만 있는 파일은 지웁니다.
+/// 다만 추가 root 문서 파일(`documents.stellar.yaml`·`documents/`)은 `files`에 없어도 지우지 않습니다. 첫 문서만
+/// 다루는 저장(앱 창·CLI·MCP)이 다른 root 문서를 지우지 않게 하기 위함입니다.
 pub fn plan_changes(base: &SourceBase, files: &BTreeMap<String, String>) -> Vec<JournalChange> {
     let mut changes = Vec::new();
     for (path, text) in files {
@@ -356,7 +371,8 @@ pub fn plan_changes(base: &SourceBase, files: &BTreeMap<String, String>) -> Vec<
         ));
     }
     for (path, hash) in &base.files {
-        if !files.contains_key(path) {
+        // 추가 root 문서는 첫 문서만 다루는 인코딩 결과에 없습니다. 그 경로는 지우지 않습니다(ADR-0131 결정 3).
+        if !files.contains_key(path) && !documents::is_documents_path(path) {
             changes.push(JournalChange::delete(format!("{DESIGN_DIR}/{path}"), *hash));
         }
     }
@@ -507,40 +523,76 @@ pub fn source_revision(current: Option<ContentHash>, base: &SourceBase) -> Conte
 }
 
 /// generation 문서를 텍스트 원본 의미로 옮길 수 있는지 검증하고 원본 base와 문서 밖 의미를 돌려줍니다(ADR-0088 결정 2,
-/// ADR-0113 결정 1). 앱 창 session과 CLI·MCP 쓰기가 같은 함수를 씁니다.
+/// ADR-0113 결정 1, ADR-0131 결정 1·3). 앱 창 session과 CLI·MCP 쓰기가 같은 함수를 씁니다.
 ///
-/// generation의 모든 chunk를 원본이 소비하고(문서 하나, component library chunk 없음), 인코딩한 원본을 다시 읽은 의미가
-/// 같아야 합니다. 원본이 이미 있으면(`text`, Forward) token set은 원본 것을 씁니다. 원본이 없으면(Migrate) `design/` 아래
-/// 기존 `.stellar.yaml`(컴포넌트 원본)이 모두 인코딩 결과의 경로여야 합니다. 실패는 이유 문장입니다.
+/// generation의 모든 chunk를 원본이 소비하고([`from_saved_documents`]), 인코딩한 원본을 다시 읽은 의미가 같아야
+/// 합니다. 원본이 이미 있으면(`text`, Forward) 컴포넌트 정의(interface 포함)와 token set은 원본 것을 쓰고, generation의
+/// component library chunk는 그 정의와 같아야 합니다. root 문서가 둘 이상이면 `model`이 첫 root 문서여야 하고, 나머지
+/// root 문서는 원본의 추가 root 문서와 의미가 같아야 합니다(이 경로는 첫 문서만 원본으로 옮기므로). 원본이 없으면
+/// (Migrate) root 문서는 하나여야 하고(둘 이상은 [`crate::cache::convert_legacy`]의 변환 경로), `design/` 아래 기존
+/// `.stellar.yaml`(컴포넌트 원본)이 모두 인코딩 결과의 경로여야 합니다. 실패는 이유 문장입니다.
 pub fn convert_saved(
     root: &Path,
     lazy: &LazyGeneration,
     model: &DocumentModel,
     text: Option<&SourceFiles>,
 ) -> Result<(SourceBase, SourceLibrary), String> {
-    if lazy
-        .manifest()
-        .chunk_pointers
-        .iter()
-        .any(|pointer| pointer.kind == KIND_COMPONENT_LIBRARY)
-    {
-        return Err("component library chunk는 텍스트 원본으로 옮기지 않습니다".into());
-    }
-    let (yaml, _) = read_project_library(root, ExternalAccess::MetadataOnly)
+    let decoded = text
+        .map(decode_source)
+        .transpose()
         .map_err(|error| error.to_string())?;
-    let records = model.to_records().map_err(|error| error.to_string())?;
-    let (mut copy, _) = DocumentModel::from_records(records).map_err(|error| error.to_string())?;
-    // Context는 레코드 밖에 있어 함께 옮깁니다(ADR-0099).
-    copy.replace_context(model.context().live(model));
-    let mut project = from_saved(lazy, copy, yaml).map_err(|error| error.to_string())?;
-    if let Some(text) = text {
-        project.token_sets = decode_source(text)
-            .map_err(|error| error.to_string())?
-            .token_sets;
+    let components = match &decoded {
+        Some(project) => project.components.clone(),
+        None => {
+            read_project_library(root, ExternalAccess::MetadataOnly)
+                .map_err(|error| error.to_string())?
+                .0
+        }
+    };
+    let roots = &lazy.manifest().root_document_ids;
+    if roots.first() != Some(&model.document_id()) {
+        return Err("옮길 문서가 generation의 첫 root 문서가 아닙니다".into());
+    }
+    let mut documents = vec![documents::copy_model(model).map_err(|error| error.to_string())?];
+    for id in &roots[1..] {
+        let extra = super::load::load_document_from_generation(
+            lazy,
+            *id,
+            &mut stellar_storage::generation::lazy::NoopRecorder,
+        )
+        .map_err(|error| error.to_string())?;
+        documents.push(extra.model);
+    }
+    let (mut project, extras) =
+        from_saved_documents(lazy, documents, components).map_err(|error| error.to_string())?;
+    if !extras.is_empty() {
+        let Some(text) = text else {
+            return Err(
+                "root 문서가 둘 이상인 generation은 옛 배치 변환(stellar cache migrate --convert)으로 옮깁니다"
+                    .into(),
+            );
+        };
+        let source =
+            decode_extra_documents(text, model.document_id()).map_err(|error| error.to_string())?;
+        let same = source.len() == extras.len()
+            && source.iter().zip(&extras).all(|(a, b)| {
+                matches!(
+                    (documents::semantic(a), documents::semantic(b)),
+                    (Ok(a), Ok(b)) if a == b
+                )
+            });
+        if !same {
+            return Err("원본의 추가 root 문서와 generation의 다른 root 문서가 다릅니다".into());
+        }
+    }
+    if let Some(decoded) = &decoded {
+        project.token_sets = decoded.token_sets.clone();
     }
     let encoded = encode(&project).map_err(|error| error.to_string())?;
-    let decoded = decode(&encoded.files).map_err(|error| error.to_string())?;
-    if decoded.semantic_key().map_err(|error| error.to_string())?
+    let decoded_again = decode(&encoded.files).map_err(|error| error.to_string())?;
+    if decoded_again
+        .semantic_key()
+        .map_err(|error| error.to_string())?
         != project.semantic_key().map_err(|error| error.to_string())?
     {
         return Err("다시 읽은 텍스트 원본의 의미가 generation과 다릅니다".into());
