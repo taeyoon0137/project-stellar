@@ -35,7 +35,7 @@ use crate::change::node_keys;
 use crate::command::Command;
 use crate::css_value::{format, parse, CssGrammar, CssValue, CssValueError};
 use crate::lock::{Blocked, EditIntent, NodeAccess};
-use crate::modifier_ops::{InsertModifier, RemoveModifier, SetModifierProperty};
+use crate::modifier_ops::{read_payload, InsertModifier, RemoveModifier, SetModifierProperty};
 use crate::property::{read_property, PropertyValue, SetProperty};
 
 /// 행 flag.
@@ -481,6 +481,12 @@ fn paint(model: &DocumentModel, id: StableId) -> Paint {
     out
 }
 
+/// node가 활성 Fill modifier를 가지는지. Text `color`는 Fill이 없으면 문서 기본 글자색을 물려받아 표시할 뿐
+/// 명시한 값이 아닙니다(선언 블록 복사가 명시 값만 내는 데 씁니다, ADR-0082 결정 5).
+pub(crate) fn has_fill(model: &DocumentModel, id: StableId) -> bool {
+    paint(model, id).fill.is_some()
+}
+
 struct NodeView {
     record: NodeRecord,
     class: NodeClass,
@@ -894,9 +900,6 @@ fn node_commands(
                 PropertyValue::OptionalBorder(Some(next)),
             ));
         }
-        // Text `color`가 칠하기 없이 문서 기본 글자색을 물려받고 있으면, 같은 색을 넣어도 바꾸지 않습니다(빈 변경 없음).
-        (P::Color, CssValue::Color(Some(color)))
-            if node.paint.fill.is_none() && *color == text_default_color(model) => {}
         (P::Color | P::Fill, CssValue::Color(color)) => match (color, &node.paint.fill) {
             (Some(color), Some(entry)) => {
                 out.push(set_modifier(id, entry, key, PropertyValue::Color(*color)))
@@ -979,10 +982,17 @@ fn node_commands(
         }
         _ => return Err(mismatch()),
     }
-    // 값이 같은 SetProperty는 뺍니다(history에 빈 변경을 남기지 않음).
+    // 값이 같은 SetProperty·SetModifierProperty는 뺍니다(history에 빈 변경을 남기지 않음).
     out.retain(|command| match command {
         Command::SetProperty(set) => {
             read_property(&node.record, set.key).as_ref() != Some(&set.value)
+        }
+        Command::SetModifierProperty(set) => {
+            let current = model
+                .modifier_stack(set.node)
+                .and_then(|stack| stack.entries().iter().find(|e| e.id == set.modifier))
+                .and_then(|entry| read_payload(&entry.payload, set.key));
+            current.as_ref() != Some(&set.value)
         }
         _ => true,
     });

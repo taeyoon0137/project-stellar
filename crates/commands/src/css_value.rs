@@ -23,7 +23,7 @@ pub use stellar_document::css::value::*;
 use crate::command::Command;
 use crate::id::{CommandId, CommandOrigin};
 use crate::inspector::{
-    edit_commands, flags, inspector_rows, InspectorInput, InspectorProperty, NodeClass,
+    edit_commands, flags, has_fill, inspector_rows, InspectorInput, InspectorProperty, NodeClass,
 };
 use crate::request::CommandRequest;
 use crate::state::DocumentState;
@@ -54,11 +54,15 @@ pub fn copy_declarations(model: &DocumentModel, node: StableId) -> Option<Vec<Co
     if snapshot.count == 0 {
         return None;
     }
+    // Text `color`는 Fill이 없으면 문서 기본 글자색을 물려받은 표시 값이라 명시 선언이 아닙니다. 복사는 명시 값만
+    // 내므로 넣지 않습니다(붙여넣은 쪽에서 기본값과 같은 색을 명시로 바꾸지 않음, ADR-0082 결정 5).
+    let inherited_color = !has_fill(model, node);
     Some(
         snapshot
             .rows
             .into_iter()
             .filter(|row| !is_layer_property(row.property) && row.flags & flags::GROUP == 0)
+            .filter(|row| !(row.property == InspectorProperty::Color && inherited_color))
             .map(|row| CopiedDeclaration {
                 name: row.property.name(),
                 value: row.value,
@@ -423,6 +427,51 @@ mod tests {
     }
 
     #[test]
+    fn inherited_text_color_is_not_copied_but_an_explicit_equal_color_stays_explicit() {
+        // ADR-0082 결정 5: 명시한 값은 기본값과 같아도 명시로 남고, 복사는 명시 값만 냅니다.
+        let (model, ids) = seven_kind_model();
+        let text = ids[5];
+        let mut state = DocumentState::new(model);
+        let copied = copy_declarations(state.model(), text).unwrap();
+        assert!(
+            copied.iter().all(|d| d.name != "color"),
+            "물려받은 글자색은 선언이 아님: {copied:?}"
+        );
+        // 기본 글자색(검정)과 같은 색을 붙여넣어도 명시 Fill이 생깁니다.
+        let plan = paste_declarations(
+            state.model(),
+            &[text],
+            "color: #000000",
+            &NoTokens,
+            &mut new_ids(9),
+        )
+        .unwrap();
+        assert!(plan.skipped.is_empty(), "{:?}", plan.skipped);
+        assert_eq!(plan.commands.len(), 1, "명시 Fill 추가");
+        assert!(matches!(plan.commands[0], Command::InsertModifier(_)));
+        execute(&mut state, &plan);
+        let copied = copy_declarations(state.model(), text).unwrap();
+        assert!(copied
+            .iter()
+            .any(|d| d.name == "color" && d.value == "#000000"));
+        // 같은 블록을 다시 붙이면 바꿀 것이 없습니다.
+        let again = paste_declarations(
+            state.model(),
+            &[text],
+            &declaration_block_text(&copied),
+            &NoTokens,
+            &mut new_ids(10),
+        )
+        .unwrap();
+        assert!(
+            again.commands.is_empty() && again.skipped.is_empty(),
+            "{copied:?} {:?} {:?}",
+            again.commands,
+            again.skipped
+        );
+    }
+
+    #[test]
     fn style_copied_from_one_shape_applies_to_another() {
         let (model, ids) = seven_kind_model();
         let mut state = DocumentState::new(model);
@@ -528,5 +577,16 @@ mod tests {
         assert!(style.contains("stroke: #0000ff;"));
         assert!(style.contains("stroke-width: 3px;"));
         assert!(style.contains("left: 5px;"));
+        // Fill·Stroke·Transform modifier가 있는 node에 같은 블록을 다시 붙이면 빈 변경 command가 없습니다.
+        let again = paste_declarations(
+            state.model(),
+            &[ellipse],
+            &style,
+            &NoTokens,
+            &mut new_ids(11),
+        )
+        .unwrap();
+        assert!(again.skipped.is_empty(), "{:?}", again.skipped);
+        assert!(again.commands.is_empty(), "{:?}", again.commands);
     }
 }

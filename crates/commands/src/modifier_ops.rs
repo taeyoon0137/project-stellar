@@ -318,7 +318,7 @@ fn modifier_value_type(value_type: ModifierPropertyType) -> Option<PropertyValue
 }
 
 /// payload 속성 값을 읽습니다.
-fn read_payload(payload: &ModifierPayload, key: PropertyKey) -> Option<PropertyValue> {
+pub(crate) fn read_payload(payload: &ModifierPayload, key: PropertyKey) -> Option<PropertyValue> {
     Some(match (payload, key) {
         (ModifierPayload::Transform(m), modifier_keys::TRANSFORM_MATRIX) => {
             PropertyValue::Transform(*m)
