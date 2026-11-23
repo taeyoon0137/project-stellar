@@ -1192,7 +1192,8 @@ pub(crate) fn read_limited(path: &Path) -> Result<Vec<u8>, StoreError> {
     Ok(bytes)
 }
 
-/// 소유자 전용(`0600`) 임시 파일에 쓰고 fsync한 뒤 rename합니다. 부모 디렉터리가 없으면 `0700`으로 만듭니다.
+/// 소유자 전용(`0600`) 임시 파일에 쓰고 fsync한 뒤 rename하고 부모 디렉터리를 fsync합니다. 부모 디렉터리가 없으면
+/// `0700`으로 만듭니다.
 ///
 /// store, 동의 상태, 전송 대기열이 같은 쓰기 경로를 씁니다.
 pub(crate) fn write_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -1223,8 +1224,13 @@ pub(crate) fn write_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
+        return result;
     }
-    result
+    // rename을 디렉터리에 고정합니다. 철회는 동의 파일을 쓴 뒤 대기열 파일을 지우므로, 동의 파일 교체가 대기열
+    // 삭제보다 먼저 디스크에 남아야 끊긴 뒤에도 `Granted`로 되돌아가지 않습니다.
+    #[cfg(unix)]
+    std::fs::File::open(parent)?.sync_all()?;
+    Ok(())
 }
 
 /// 소유자 전용 디렉터리를 만듭니다(이미 있으면 그대로 둡니다).

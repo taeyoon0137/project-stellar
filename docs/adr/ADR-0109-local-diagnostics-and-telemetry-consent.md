@@ -39,7 +39,7 @@ Accepted
    - 렌더러 backend는 `metal`뿐입니다(ADR-0006 Windows 지원 보류). 기능 목록은 초기 출시 기능만 둡니다.
 2. **store 위치·용량·보존.** store는 프로젝트 폴더와 Git 밖의 `<OS 사용자 데이터>/xyz.taeyoon.stellar/diagnostics/`
    아래 `store.stldiag`입니다(신뢰 저장소·잠금과 같은 앱 데이터 디렉터리). 디렉터리는 `0700`, 파일은 `0600`이고
-   임시 파일에 쓰고 fsync한 뒤 rename합니다. event record는 기본 2,048개(상한 65,536개)이고 가득 차면 가장 오래된
+   임시 파일에 쓰고 fsync한 뒤 rename하고 디렉터리를 fsync합니다(철회 때 동의 파일 교체가 대기열 삭제보다 먼저 남음). event record는 기본 2,048개(상한 65,536개)이고 가득 차면 가장 오래된
    것부터 지웁니다. 실패 카운트는 `(기능, 코드)`마다 counter 하나로 합치고 1,024쌍까지 둡니다. 넘친 수는
    `meta dropped=`에 셉니다. 기본 보존 기간은 30일이고 `prune`이 지웁니다. 보존 기간이 지난 record는 preview·
    내보내기·전송 대기열에 넣지 않습니다(`stellar diagnostics preview|export|enqueue`는 읽은 store를 메모리에서
