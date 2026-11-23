@@ -183,6 +183,29 @@ fn grace_expiry_finalizes_interrupted_entry() {
 }
 
 #[test]
+fn late_rebind_after_grace_ends_instead_of_resuming() {
+    // 유예가 지난 뒤 Tick보다 재결합이 먼저 도착해도 같은 세션으로 돌아가지 않습니다.
+    let mut s = busy();
+    s.apply(SessionEvent::BridgeDisconnected, 100).unwrap();
+    let effects = s.apply(SessionEvent::BridgeBound, 100 + GRACE).unwrap();
+    assert!(
+        effects.contains(&SessionEffect::FinalizeInterruptedHistoryEntry {
+            session: AgentSessionId(42),
+            batches: 2
+        })
+    );
+    assert!(effects.contains(&SessionEffect::EndBridgeBinding));
+    assert_eq!(
+        s.state(),
+        SessionState::Ended {
+            reason: EndReason::ReconnectGraceExpired
+        }
+    );
+    assert_eq!(s.leases().count(), 0);
+    assert_eq!(s.permissions().count(), 0);
+}
+
+#[test]
 fn in_flight_transaction_settles_before_end_procedure() {
     let mut s = busy();
     s.apply(SessionEvent::TransactionStarted, 5).unwrap();

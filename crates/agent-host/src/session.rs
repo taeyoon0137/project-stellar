@@ -21,7 +21,8 @@
 //! |---|---|---|---|
 //! | Starting | BridgeBound | Running | - |
 //! | Running | BridgeDisconnected | Reconnecting(now + 유예) | - |
-//! | Reconnecting | BridgeBound | Running | - (같은 세션, lease 유지) |
+//! | Reconnecting | BridgeBound(now < deadline) | Running | - (같은 세션, lease 유지) |
+//! | Reconnecting | BridgeBound(now ≥ deadline) | 종료 절차(ReconnectGraceExpired) | 종료 효과 |
 //! | Reconnecting | Tick(now ≥ deadline) | 종료 절차(ReconnectGraceExpired) | 종료 효과 |
 //! | Starting·Running·Reconnecting | Tick(그 밖) | 그대로 | - |
 //! | Running | LeaseGranted·PermissionGranted·RequestOpened·ProposalQueued·TransactionStarted | Running | - (권한은 모드 상한 안만) |
@@ -441,6 +442,11 @@ impl AgentSession {
         let running = self.state == SessionState::Running;
         match event {
             SessionEvent::BridgeBound => match self.state {
+                // 유예가 지난 뒤 늦게 도착한 재결합은 같은 세션으로 받지 않고 유예 초과로 끝냅니다.
+                // Tick보다 재결합이 먼저 처리되어도 결과가 같습니다(XXIX.2.8 재연결 유예).
+                SessionState::Reconnecting { deadline_ms } if now_ms >= deadline_ms => {
+                    Ok(self.begin_end(EndReason::ReconnectGraceExpired, now_ms))
+                }
                 SessionState::Starting | SessionState::Reconnecting { .. } => {
                     self.state = SessionState::Running;
                     Ok(Vec::new())

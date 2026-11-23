@@ -26,6 +26,7 @@
 - **전이 표**는 `src/session.rs` 모듈 문서에 있고, test `transition_matrix_matches_report_definition`이 그 표의 26개 조합을 검사합니다.
 - **소유**: 세션이 lease, 권한(모드 상한 안만), 응답 대기 요청, 적용 전 제안, 적용 batch 기록을 소유합니다. 결합된 bridge가 끊기면 유예(기본 15 s) 동안 같은 세션으로 다시 묶입니다.
   - 15 s의 근거: bridge 재시작과 재결합(handshake·peer 인증)은 수 초 안에 끝나고, lease 점유 시간은 짧게 둡니다.
+  - 유예가 지난 뒤 도착한 재결합(`BridgeBound`, now ≥ deadline)은 같은 세션으로 받지 않고 유예 초과로 끝냅니다. `Tick`보다 재결합이 먼저 처리되어도 결과가 같습니다(test `late_rebind_after_grace_ends_instead_of_resuming`).
 - **사용자 주도**: `start_by_user`로만 만듭니다. 끝난 세션은 모든 event를 `Ended`로 거부하고, 재개·재시작·재전송 API가 없습니다(inventory).
 - **종료 trigger**: 사용자 중지, CLI 프로세스 종료, 유예 초과, 신뢰 철회, lease 충돌, 사용자 lease 해제, CLI 보고 사용 한도·인증 오류. CLI 오류 문장은 채팅 item으로 그대로 보입니다.
 - **XIX.6.4 절차(자동 rollback 없음)**:
