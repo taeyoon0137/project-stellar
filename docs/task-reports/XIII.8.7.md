@@ -43,3 +43,24 @@
 ## 남은 위험
 
 - 없음.
+
+## 후속 (2026-11-23, lane `recovery-git-terminal`)
+
+- 결함: 정상 저장·닫기의 삭제가 실패하면 기준 세대가 current와 같은 복구본(닫으며 버린 편집)이 다음 시작에 다시 제안됐습니다. 위 시험은 기준 세대가 낡은 경우만 확인했습니다.
+- 수정: 삭제는 `stellar_project::recovery_shutdown::discard_snapshot`이 맡고, 지울 bytes의 hash를 폐기 표식에 먼저 씁니다. probe 판정(`judge_stored_snapshot`)은 표식과 같은 bytes를 `StaleReason::Discarded`로 제안하지 않습니다([ADR-0120](../adr/ADR-0120-recovery-probe-git-scenarios-terminal-env.md) 결정 2).
+- 선행 XIII.8.3을 같은 lane에서 완료했으므로 이 행은 `[x]` 후보입니다(원장 판정은 통합 때).
+
+| 테스트 | 결과 |
+|---|---|
+| `app::recovery::lifecycle_tests::failed_removal_after_normal_close_is_stale_on_next_start` | 통과 — 복구본에 macOS 변경 불가 flag를 건 채 창을 정상 닫기 → 삭제 실패, 표식 기록 → 다음 시작 probe `None`(normal close 후 prompt 없음) |
+| `recovery_shutdown::tests::failed_removal_leaves_a_marker_that_matches_only_those_bytes` | 통과 — 삭제 실패를 보고, 표식은 그 bytes에만 맞고 새 bytes에는 맞지 않음, 다음 폐기 성공 뒤 표식 정리 |
+| `recovery_shutdown::tests::discard_removes_snapshot_and_marker` | 통과 |
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-runtime --lib app::recovery` | 0 — 8 passed |
+| `cargo test -p stellar-project --lib recovery` | 0 — 23 passed |
+
+### 근거 커밋
+
+- `63c95449` Task(XIII.8.3): 앱 시작 복구 probe가 최신 복구본 요약을 돌려주고 복구·폐기를 같은 저장소에 적용(폐기 표식 포함)
