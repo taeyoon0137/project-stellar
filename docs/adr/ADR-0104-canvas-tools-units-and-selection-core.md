@@ -171,8 +171,11 @@ Accepted (2026-11-23). 계획 XII.10.2(가이드 열린 결정 O10)를 닫고, X
 
 ## Performance
 
-마퀴 후보와 bounds는 제스처 시작 때 한 번 만들고 update는 후보 수에 선형입니다. hover는 hit test 한 번과 조상 사슬
-계산입니다. 2만 가시 node 기준 p99 8ms(목표 5ms)를 release 측정 테스트로 확인합니다.
+마퀴 후보와 bounds는 제스처 시작 때 한 번 만들고 update는 후보 수에 선형이며, hit가 직전과 같으면 preview를 다시
+만들지 않습니다. hover는 hit test 한 번과 조상 사슬 계산입니다. 2만 가시 node 기준 p99 8ms(목표 5ms)를 release 측정
+테스트로 확인합니다. 마퀴 preview 갱신은 `WindowViewState::update_area_selection`이 만드는 `Selection::new`의 중복 제거가
+원소 수의 제곱 비용이라, 영역이 1만 개 가까이 덮으면 갱신 한 번이 8ms를 넘습니다(이 ADR의 후보 판정은 p99 1ms 미만).
+그 중복 제거를 정렬·hash 기반으로 바꾸는 일은 commands crate 선택 모델의 후속 작업입니다.
 
 ## Security
 

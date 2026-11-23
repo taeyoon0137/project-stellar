@@ -33,6 +33,8 @@ pub use image::image_placement;
 pub mod hit;
 /// 캔버스 클릭 선택과 편집 범위 (XII.10.3, ADR-0104).
 pub mod select;
+/// 영역 선택(마퀴) (XII.10.6, ADR-0104).
+pub mod select_area;
 mod select_fixtures;
 /// 깊은 선택과 편집 범위 이동 (XII.10.4, ADR-0104).
 pub mod select_navigate;
