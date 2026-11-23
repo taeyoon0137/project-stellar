@@ -120,8 +120,11 @@ C1(눈금자 표현)과 C6(Grid 명시 배치 자식 drag)을 이 ADR에서 닫�
 4. 흐름 컨테이너 밖으로 끌어내면 대상 부모 규칙으로 옮깁니다(자유 배치 Frame이면 ADR-0105 결정 2의 world 위치 보존
    재부모화). `position: absolute` 자식은 흐름 자식이 아니라 기존 자유 배치 이동 경로를 씁니다. 그 저장 위치는 ADR-0105
    결정 1(IX.11.9 step 등록 전에는 `transform`)을 따르며, inset longhand로 쓰는 일은 IX.11.9 step과 함께 합니다.
-5. ComponentInstance 내부(인스턴스 투영 행 안) 재정렬은 거부합니다(`instance-slot`).
-6. **C6: Grid 명시 배치 자식(`grid-column-start`·`grid-row-start` 중 하나라도 `auto`가 아님)은 캔버스 drag로 순서를
+5. ComponentInstance 내부(인스턴스 투영 행 안)로 놓거나 그 안에서 재정렬하는 일은 거부합니다(`instance-slot`). 인스턴스
+   투영 행의 node는 문서에서 고를 수 없으므로 거부는 놓을 자리 판정에서 합니다. 인스턴스 node 자체는 흐름 자식으로
+   재정렬할 수 있습니다.
+6. **C6: Grid 명시 배치 자식(`grid-column-start`·`grid-column-end`·`grid-row-start`·`grid-row-end` 중 하나라도 줄
+   번호 `<integer>`)은 캔버스 drag로 순서를
    바꾸지 않고 거부합니다(`grid-explicit-placement`).** 그 자식의 자리는 OrderKey가 아니라 줄 번호 값이 정하므로
    OrderKey를 바꾸면 화면이 움직이지 않고, 줄 번호를 쓰려면 grid track 기하가 필요한데 runtime scene에는 없습니다.
    줄 번호는 속성 값 입력(CSS 값 그대로)으로 바꿉니다. 자동 배치 형제의 삽입 index 계산에서는 명시 배치 자식을
