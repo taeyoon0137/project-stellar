@@ -317,7 +317,7 @@ fn interface_sources_reject_mismatched_or_unknown_content() {
         .unwrap();
     let with = |path: &str, text: String| {
         let mut broken = files.clone();
-        broken.remove(&path.to_owned());
+        broken.remove(path);
         broken.insert(path.to_owned(), text);
         broken
     };
