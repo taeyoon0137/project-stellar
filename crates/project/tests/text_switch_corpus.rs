@@ -67,6 +67,9 @@ fn checked_in_window_session_fixture_converts() {
     let dir = TempDir::new("text-switch-fixture");
     let copy = dir.path.join("project");
     copy_dir(&root, &copy);
+    // 커밋된 fixture는 옛 배치(`design/current` 등, ADR-0122 이전)입니다. 열기 관찰과 같은 migration으로 옮깁니다.
+    let migrated = stellar_project::cache::migrate_layout(&copy).unwrap();
+    assert!(migrated.moved.found);
     assert!(convert(&copy));
 }
 

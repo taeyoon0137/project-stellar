@@ -14,6 +14,7 @@ use stellar_semantic_diff::diff::diff;
 use stellar_storage::chunk::envelope::ChunkEnvelope;
 use stellar_storage::chunk::path::ChunkObjectPath;
 use stellar_storage::chunk::pointer::ChunkPointer;
+use stellar_storage::generation::current::current_pointer_path;
 use stellar_storage::generation::loader::{manifest_path, LoadedGeneration};
 use stellar_storage::hash::ContentHash;
 use stellar_storage::save::plan::build_save_plan;
@@ -195,7 +196,7 @@ pub fn serialize_candidate(
     let (bytes, hash) = plan.manifest.encode_with_hash().map_err(invalid)?;
     files.insert(manifest_path(Path::new(""), &hash), bytes);
     files.insert(
-        PathBuf::from("design/current"),
+        current_pointer_path(Path::new("")),
         format!("{hash}\n").into_bytes(),
     );
     Ok(files)
@@ -262,7 +263,7 @@ pub fn serialize_merged_generation(
     let (bytes, hash) = plan.manifest.encode_with_hash().map_err(invalid)?;
     files.insert(manifest_path(Path::new(""), &hash), bytes);
     files.insert(
-        PathBuf::from("design/current"),
+        current_pointer_path(Path::new("")),
         format!("{hash}\n").into_bytes(),
     );
     Ok(files)

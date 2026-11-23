@@ -59,6 +59,9 @@ pub mod candidate;
 /// Git 엔진: 상태·선택 stage·재검증 commit (ADR-0080).
 pub mod git;
 
+/// Git 밖 chunk cache 관리 명령: 상태·다시 만들기·GC·옛 배치 migration (V.10.7, ADR-0122).
+pub mod git_cache;
+
 /// 저장 스키마 migration (XXIV.1.3).
 pub mod migrate;
 

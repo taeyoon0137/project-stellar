@@ -110,8 +110,14 @@ pub fn open_conflict_projects(
     let snapshots = materialize_conflict_snapshots(git, worktree, session.path())
         .map_err(ConflictOpenError::Snapshot)?;
     // side는 checkout하지 않은 Git 객체에서 온 비신뢰 입력이라 저장소 경로의 symlink를 따르지 않습니다.
+    // Git이 담는 것은 텍스트 원본뿐이라 side에는 chunk cache가 없습니다(ADR-0122). 열기 전에 side 안에서 원본으로
+    // cache를 만들고(옛 commit은 옛 배치를 옮김), 실패하면 저장소 loader가 누락을 그대로 보고합니다.
     let loader = SavedProjectLoader::for_materialized_snapshot();
-    let open = |side: ConflictSide| loader.open(snapshots.side(side).root());
+    let open = |side: ConflictSide| {
+        let root = snapshots.side(side).root();
+        let _ = crate::cache::prepare_snapshot(root);
+        loader.open(root)
+    };
     Ok(ConflictProjects {
         base: open(ConflictSide::Base),
         ours: open(ConflictSide::Ours),

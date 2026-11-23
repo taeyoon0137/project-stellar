@@ -319,10 +319,11 @@ pub fn resource_body(reply: &J) -> J {
     .unwrap()
 }
 
-/// 문서 하나(Frame root + 그룹 Frame + Fragment)를 저장하고 Git 저장소로 만든 뒤 첫 commit을 합니다.
+/// 문서 하나(Frame root + 그룹 Frame + Fragment)를 텍스트 원본(Git 원본)과 Git 밖 chunk cache로 저장하고(ADR-0122)
+/// Git 저장소로 만든 뒤 첫 commit을 합니다.
 pub fn committed_project(fx: &Fixture, nodes: usize) -> stellar_mcp::test_support::FixtureDocument {
     let document = large_document(nodes);
-    save_documents(&fx.project, &[&document]);
+    stellar_mcp::test_support::save_text_document(&fx.project, &document);
     fx.git(&["init", "-q", "-b", "main"]);
     fx.git(&["add", "-A"]);
     fx.git(&["commit", "-qm", "base"]);

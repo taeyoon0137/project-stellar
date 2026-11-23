@@ -243,8 +243,28 @@ pub fn release(
         .unwrap()
 }
 
-/// 컴포넌트 정의를 제품 저장 경로로 generation 1의 component library chunk에 씁니다.
+/// 컴포넌트 정의를 제품 저장 경로로 generation 1의 component library chunk에 쓰고, ADR-0122 이전 library처럼 옛
+/// 배치(`design/current`·`generations/`·`objects/`)로 옮겨 Git이 추적하게 합니다. Property·Slot 정의는 아직 텍스트
+/// 원본이 담지 못해 이 chunk로 배포된 library를 읽는 호환 경로(`stellar_project::cache::legacy_view`)를 시험합니다.
 pub fn write_component_generation(root: &Path, id: LibraryId, components: &ComponentLibrary) {
+    let cache = stellar_storage::location::cache_dir(root);
+    let _ = std::fs::remove_dir_all(&cache);
+    for legacy in stellar_storage::location::LEGACY_PATHS {
+        let path = root.join(legacy);
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path).unwrap();
+        } else if path.exists() {
+            std::fs::remove_file(&path).unwrap();
+        }
+    }
+    write_generation_into_cache(root, id, components);
+    std::fs::create_dir_all(root.join("design")).unwrap();
+    for name in ["current", "generations", "objects"] {
+        std::fs::rename(cache.join(name), root.join("design").join(name)).unwrap();
+    }
+}
+
+fn write_generation_into_cache(root: &Path, id: LibraryId, components: &ComponentLibrary) {
     let project_id = stellar_project::identity::parse_project_id(&id.to_string()).unwrap();
     let chunks = [LogicalChunkState::Dirty {
         chunk_id: ChunkId::from_stable_id(sid(0, 999)),

@@ -1,7 +1,8 @@
 //! 앱 창 session의 기본 원본: 텍스트 원본과 로컬 chunk cache (V.10.7, ADR-0088).
 //!
 //! 사용자 결정(2026-11-14)대로 Git 원본은 의미 단위 텍스트 파일(`design/**/*.stellar.yaml`, ADR-0077 v4)이고, chunk
-//! generation(`design/current`·`design/generations`)은 빠른 열기·부분 로딩을 위한 파생 cache입니다. 이 모듈은 둘의
+//! generation은 빠른 열기·부분 로딩을 위한 파생 cache입니다. cache는 Git이 추적하지 않는 `.stellar/cache/chunks/`
+//! ([`stellar_storage::location`], ADR-0122)에 있고, 수명(옛 배치 이동·다시 만들기·GC)은 [`crate::cache`]가 다룹니다. 이 모듈은 둘의
 //! 관계를 정하는 한 곳입니다. 런타임 창 session(`stellar_runtime::window_session`)과 엔진 session
 //! ([`crate::external_change::source::TextSourceSession`])이 같은 함수를 씁니다.
 //!
@@ -19,8 +20,12 @@
 //! | 없음 | generation 있음 | [`OpenPlan::Migrate`] | generation | 원본(처음 전환) |
 //! | 없음 | generation 없음 | [`OpenPlan::Empty`] | 없음 | 없음(첫 저장이 원본을 만듦) |
 //!
-//! 원본과 cache가 함께 움직였으면(둘 다 stamp와 다름) 원본이 이깁니다. 덮인 cache generation은 GC 보존 정책이
-//! 지우기 전까지 `design/generations`에 남습니다.
+//! 원본과 cache가 함께 움직였으면(둘 다 stamp와 다름) 원본이 이깁니다. 덮인 cache generation은 GC 보존 정책
+//! ([`crate::cache::collect_garbage`])이 지우기 전까지 cache의 `generations/`에 남습니다.
+//!
+//! [`observe`]는 관찰 전에 옛 배치(`design/current`·`design/generations/`·`design/objects/`)를 cache 위치로 옮깁니다
+//! ([`crate::cache::migrate_layout`]). 앱 열기·CLI·MCP·semantic Git이 모두 이 함수로 관찰하므로 옛 프로젝트도 처음
+//! 관찰할 때 한 번 옮겨집니다(Git index 정리는 Git을 아는 호출자가 합니다).
 //!
 //! # 저장
 //!
@@ -70,9 +75,6 @@ pub const STAMP_PATH: [&str; 3] = [".stellar", "cache", "text-source.stamp"];
 
 /// stamp 형식 첫 단어.
 const STAMP_MAGIC: &str = "stellar-text-source-stamp 1";
-
-/// `.stellar/cache/`의 Git 제외 규칙.
-const CACHE_IGNORE: &[u8] = b"*\n";
 
 /// 원본 파일(`design/` 기준 경로) → 마지막으로 읽거나 쓴 bytes hash.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -237,19 +239,11 @@ pub fn read_stamp(root: &Path) -> Option<Stamp> {
     lines.next().is_none().then_some(Stamp { source, manifest })
 }
 
-/// stamp를 원자적으로 씁니다. `.stellar/cache/.gitignore`(`*`)가 없으면 함께 만듭니다.
+/// stamp를 원자적으로 씁니다. `.stellar/cache/.gitignore`(`*`)가 없으면 함께 만듭니다(chunk cache와 같은 함수,
+/// [`stellar_storage::location::ensure_cache_ignore`]).
 pub fn write_stamp(root: &Path, stamp: &Stamp) -> io::Result<()> {
     let path = stamp_path(root);
-    let dir = path.parent().expect("stamp 경로에는 부모가 있음");
-    std::fs::create_dir_all(dir)?;
-    let ignore = dir.join(".gitignore");
-    match std::fs::symlink_metadata(&ignore) {
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            stellar_storage::atomic_file::write_file_atomic(&ignore, CACHE_IGNORE)?;
-        }
-        Err(error) => return Err(error),
-    }
+    stellar_storage::location::ensure_cache_ignore(root)?;
     let text = format!(
         "{STAMP_MAGIC}\nsource {}\nmanifest {}\n",
         stamp.source, stamp.manifest
@@ -472,9 +466,18 @@ impl fmt::Display for ObserveError {
 
 impl std::error::Error for ObserveError {}
 
-/// 프로젝트 `root`의 원본·cache·stamp를 읽고 계획을 정합니다(쓰지 않음).
+/// 프로젝트 `root`의 원본·cache·stamp를 읽고 계획을 정합니다. 원본·cache 의미는 쓰지 않습니다. 옛 배치가 있으면
+/// 먼저 cache 위치로 옮깁니다(모듈 문서). 옮기지 못하면 원본이 있을 때는 cache 없이 관찰하고(원본이 Git 원본),
+/// 원본이 없으면 cache를 읽을 수 없으므로 [`ObserveError::Pointer`]입니다.
 pub fn observe(root: &Path) -> Result<DiskSource, ObserveError> {
+    let migrated = crate::cache::migrate_layout(root);
     let text = read_source(root).map_err(ObserveError::Source)?;
+    if let (Err(error), None) = (&migrated, &text) {
+        return Err(ObserveError::Pointer(CurrentPointerError::Io {
+            path: crate::cache::cache_dir(root),
+            source: io::Error::other(error.to_string()),
+        }));
+    }
     let current = match read_current_pointer(root) {
         Ok(current) => Some(current),
         Err(CurrentPointerError::Missing { .. }) => None,

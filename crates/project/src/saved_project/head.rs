@@ -15,6 +15,7 @@ use stellar_git_porcelain::snapshot::{
 };
 use stellar_git_porcelain::trust::GatedGitRunner;
 use stellar_storage::chunk::path::ChunkObjectPath;
+use stellar_storage::generation::current::{current_pointer_path, read_current_pointer};
 use stellar_storage::generation::loader::manifest_path;
 use stellar_storage::generation::manifest::GenerationManifest;
 use stellar_storage::hash::ContentHash;
@@ -157,40 +158,73 @@ impl ProjectHead {
         if header.project.id.parse::<StableId>().ok() != Some(project) {
             return Err(HeadUnavailable);
         }
-        let pointer = regular(Path::new("design/current"))?;
-        let limits = StorageReadLimits::default();
-        let bytes = self.read_blob(pointer, limits.current_pointer_bytes)?;
-        let hash: ContentHash = std::str::from_utf8(&bytes)
-            .ok()
-            .and_then(|s| s.strip_suffix('\n'))
-            .and_then(|s| s.parse().ok())
-            .ok_or(HeadUnavailable)?;
-        let generation = regular(&manifest_path(Path::new(""), &hash))?;
-        let bytes = self.read_blob(generation, limits.manifest_bytes)?;
-        if ContentHash::compute(&bytes) != hash {
-            return Err(HeadUnavailable);
-        }
-        let decoded = GenerationManifest::decode(&bytes).map_err(|_| HeadUnavailable)?;
-        if decoded.project_id != project {
-            return Err(HeadUnavailable);
-        }
         let (library, component_files) = self.component_library(&entries)?;
-        if !library.is_empty()
-            && decoded
+        // HEAD tree에는 Git 원본(텍스트 원본)만 있고 chunk cache는 없습니다(ADR-0122). 원본이 있으면 원본 파일만
+        // materialize해 그 안에서 cache를 만들고, 옛 commit(옛 배치 `design/current`만 있음)은 옛 배치 파일을
+        // materialize해 cache 위치로 옮겨 엽니다.
+        let document = format!(
+            "{}/{}",
+            crate::document_io::session::DESIGN_DIR,
+            crate::document_io::source_v4::project::DOCUMENT_PATH
+        );
+        let mut selected = vec![manifest.clone()];
+        if regular(Path::new(&document)).is_ok() {
+            for entry in &entries {
+                let path = entry.path.as_bytes();
+                if path.starts_with(b"design/")
+                    && path.ends_with(b".stellar.yaml")
+                    && matches!(
+                        entry.kind(),
+                        Some(FileModeKind::Regular | FileModeKind::Executable)
+                    )
+                {
+                    selected.push(entry.clone());
+                }
+            }
+        } else {
+            let legacy = |relative: &Path| {
+                stellar_storage::location::legacy_relative_path(relative).ok_or(HeadUnavailable)
+            };
+            let pointer = regular(&legacy(&current_pointer_path(Path::new("")))?)?;
+            let limits = StorageReadLimits::default();
+            let bytes = self.read_blob(pointer, limits.current_pointer_bytes)?;
+            let hash: ContentHash = std::str::from_utf8(&bytes)
+                .ok()
+                .and_then(|s| s.strip_suffix('\n'))
+                .and_then(|s| s.parse().ok())
+                .ok_or(HeadUnavailable)?;
+            let generation = regular(&legacy(&manifest_path(Path::new(""), &hash))?)?;
+            let bytes = self.read_blob(generation, limits.manifest_bytes)?;
+            if ContentHash::compute(&bytes) != hash {
+                return Err(HeadUnavailable);
+            }
+            let decoded = GenerationManifest::decode(&bytes).map_err(|_| HeadUnavailable)?;
+            if decoded.project_id != project {
+                return Err(HeadUnavailable);
+            }
+            if !library.is_empty()
+                && decoded
+                    .chunk_pointers
+                    .iter()
+                    .any(|p| p.kind == stellar_storage::chunk::kinds::KIND_COMPONENT_LIBRARY)
+            {
+                return Err(HeadUnavailable);
+            }
+            selected.push(pointer.clone());
+            selected.push(generation.clone());
+            let unique: BTreeSet<_> = decoded
                 .chunk_pointers
                 .iter()
-                .any(|p| p.kind == stellar_storage::chunk::kinds::KIND_COMPONENT_LIBRARY)
-        {
-            return Err(HeadUnavailable);
-        }
-        let mut selected = vec![manifest.clone(), pointer.clone(), generation.clone()];
-        let unique: BTreeSet<_> = decoded
-            .chunk_pointers
-            .iter()
-            .map(|p| p.content_hash)
-            .collect();
-        for hash in unique {
-            selected.push(regular(&ChunkObjectPath::for_hash(&hash).to_relative_path())?.clone());
+                .map(|p| p.content_hash)
+                .collect();
+            for hash in unique {
+                selected.push(
+                    regular(&legacy(
+                        &ChunkObjectPath::for_hash(&hash).to_relative_path(),
+                    )?)?
+                    .clone(),
+                );
+            }
         }
         let parent = std::env::temp_dir()
             .canonicalize()
@@ -200,14 +234,16 @@ impl ProjectHead {
         }
         let files = materialize_snapshot(&self.git, &self.root, &selected, &parent)
             .map_err(|_| HeadUnavailable)?;
+        crate::cache::prepare_snapshot(files.root()).map_err(|_| HeadUnavailable)?;
         let saved = SavedProjectLoader::for_materialized_snapshot()
             .open(files.root())
             .map_err(|_| HeadUnavailable)?;
         if saved.project_id != project {
             return Err(HeadUnavailable);
         }
+        let manifest_hash = read_current_pointer(files.root()).map_err(|_| HeadUnavailable)?;
         Ok(HeadGeneration {
-            manifest_hash: hash,
+            manifest_hash,
             component_files,
             library,
             saved,

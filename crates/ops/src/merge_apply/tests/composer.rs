@@ -39,10 +39,8 @@ fn clean_composition_is_saved_to_current_worktree_without_commit() {
     .unwrap();
     assert_eq!(report.target, "current-worktree");
     assert_eq!(report.created_branch, None);
-    assert_eq!(
-        report.revision.generation(),
-        report.base_revision.generation() + 1
-    );
+    // branch 전환 뒤 로컬 cache는 원본과 짝이 아닐 수 있어(ADR-0122) 번호 대신 revision이 바뀐 것을 봅니다.
+    assert_ne!(report.revision, report.base_revision);
     assert!(report.written_chunks > 0);
     // C의 두 변경이 모두 target에 있습니다.
     assert_eq!(name_of(&work, repo.document, repo.children[0]), "from-a");
@@ -50,7 +48,12 @@ fn clean_composition_is_saved_to_current_worktree_without_commit() {
     // HEAD·index는 그대로이고 merge 진행 표시도 없습니다(commit·add·merge 없음).
     assert_eq!(git_state(&repo.fx, &work), before);
     let status = String::from_utf8(repo.fx.git(["status", "--porcelain"]).unwrap().stdout).unwrap();
-    assert!(status.contains(" M design/current"), "{status}");
+    // 결과는 Git 원본(텍스트 원본)에만 보입니다. chunk cache는 Git 밖입니다(ADR-0122).
+    assert!(status.contains(" M design/"), "{status}");
+    assert!(
+        !status.lines().any(|l| l.contains(" .stellar/")),
+        "{status}"
+    );
 }
 
 #[test]

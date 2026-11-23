@@ -188,7 +188,13 @@ fn window_session_failures_have_fixed_codes() {
 
     // generation이 손상된 프로젝트는 창 session을 만들지 않습니다.
     let broken = saved_project("app-window-broken");
-    std::fs::remove_dir_all(broken.path().join("design").join("generations")).unwrap();
+    std::fs::remove_dir_all(
+        broken
+            .path()
+            .join(".stellar/cache/chunks")
+            .join("generations"),
+    )
+    .unwrap();
     let project = open_project(&app, broken.path());
     let request = app.open_window_session(project).unwrap();
     expect_failure(&app, request, RequestFailure::WindowSessionLoadFailed);
@@ -373,10 +379,11 @@ fn undo_redo_and_save_now_reach_only_the_target_window() {
     assert_eq!(app.state().window(a).unwrap().selection_len, 1);
 
     // Save Now: A는 문서 변경이 없어 쓰지 않고, B는 generation 2를 씁니다. A의 프로젝트 디스크는 그대로.
-    let a_current = std::fs::read(first.path().join("design").join("current")).unwrap();
+    let a_current =
+        std::fs::read(first.path().join(".stellar/cache/chunks").join("current")).unwrap();
     assert_eq!(save(&app, a), (1, false));
     assert_eq!(
-        std::fs::read(first.path().join("design").join("current")).unwrap(),
+        std::fs::read(first.path().join(".stellar/cache/chunks").join("current")).unwrap(),
         a_current
     );
     assert_eq!(save(&app, b), (2, true));
@@ -461,10 +468,11 @@ fn zoom_commands_and_pan_change_only_the_target_viewport() {
         0,
         "이동·확대는 history 아님"
     );
-    let current = std::fs::read(first.path().join("design").join("current")).unwrap();
+    let current =
+        std::fs::read(first.path().join(".stellar/cache/chunks").join("current")).unwrap();
     assert_eq!(save(&app, a), (1, false));
     assert_eq!(
-        std::fs::read(first.path().join("design").join("current")).unwrap(),
+        std::fs::read(first.path().join(".stellar/cache/chunks").join("current")).unwrap(),
         current
     );
     // 유한하지 않은 이동은 거부합니다.

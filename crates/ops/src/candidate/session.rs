@@ -5,8 +5,8 @@
 //! | 경로 | 단위 |
 //! |---|---|
 //! | `design/components/*.stellar.yaml` | 컴포넌트 원본 파일 하나(세 stage blob을 codec으로 읽음) |
-//! | `design/current` | generation 문서 전체(세 stage pointer가 가리키는 세대를 작업 트리 파일에서 읽음) |
-//! | 텍스트 원본 `design/{document,pages/**,assets/catalog,context,tokens/*}.stellar.yaml` | 텍스트 원본 문서 하나(그 경로 전체가 한 단위, ADR-0113 결정 5). 세 쪽 원본 파일 집합은 작업 트리의 나머지 원본과 unmerged 경로의 stage blob으로 만듭니다. 텍스트 원본이 있으면 `design/current`(로컬 cache)는 따로 병합하지 않고 이 단위의 결과로 다시 씁니다 |
+//! | 텍스트 원본 `design/{document,pages/**,assets/catalog,context,tokens/*}.stellar.yaml` | 텍스트 원본 문서 하나(그 경로 전체가 한 단위, ADR-0113 결정 5). 세 쪽 원본 파일 집합은 작업 트리의 나머지 원본과 unmerged 경로의 stage blob으로 만듭니다 |
+//! | 옛 배치 `design/current`(ADR-0122 이전 Git이 추적하던 cache pointer) | 텍스트 원본 프로젝트면 텍스트 원본 단위가 그 경로를 지워 해결합니다(cache는 Git 밖이고 병합 뒤 열기가 원본에서 다시 만듦). 원본이 없는 옛 chunk 프로젝트면 의미 병합하지 않습니다(이유와 함께 보고) |
 //! | 그 밖의 `stellar.yaml`·`design/` 경로 | 의미 병합하지 않는 Stellar 경로(이유와 함께 보고) |
 //! | 그 밖의 경로 | raw Git conflict(XIV.11.4, Semantic Merge로 해석하지 않음) |
 //!
@@ -18,17 +18,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use stellar_project::private_temp::PrivateTempDir;
-use stellar_project::saved_project::{SavedProject, SavedProjectLoader};
 use stellar_semantic_diff::codec::{read_value, Reader};
-use stellar_semantic_diff::snapshot::SemanticSnapshot;
 use stellar_semantic_merge::candidate::{
     allowed_resolutions, CandidateCommand, CandidateSnapshot, Resolution, ResolutionError,
     ResolutionKind,
 };
 use stellar_semantic_merge::model::{MergeInput, SemanticConflict};
-use stellar_storage::chunk::path::ChunkObjectPath;
-use stellar_storage::generation::loader::{manifest_path, read_manifest_file};
 use stellar_storage::hash::ContentHash;
 
 use super::component_file::{decode_component_file, is_component_source_path};
@@ -43,15 +38,16 @@ use stellar_project::document_io::source_v4::project::DOCUMENT_PATH as DOCUMENT_
 
 /// 한 stage blob의 크기 상한(컴포넌트 원본·pointer 모두 이 안).
 const MAX_STAGE_BYTES: u64 = 1024 * 1024;
-/// generation current pointer 경로.
-pub const CURRENT_POINTER: &str = "design/current";
+/// 옛 배치(ADR-0122 이전)에서 Git이 추적하던 generation current pointer 경로. 지금 cache는 Git 밖
+/// (`.stellar/cache/chunks/`)이라, 이 경로의 conflict는 옛 branch와의 병합에서만 생깁니다.
+pub const CURRENT_POINTER: &str = stellar_project::cache::LEGACY_PATHS[0];
 
 /// 단위 종류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnitKind {
     /// 컴포넌트 원본 파일 하나.
     ComponentSource,
-    /// generation 문서(`design/current`).
+    /// 옛 배치 generation 문서(`design/current`). ADR-0122 이후 세션은 이 단위를 만들지 않고 이유와 함께 보고합니다.
     Generation,
     /// 텍스트 원본 문서(ADR-0113 결정 5).
     TextSource,
@@ -68,14 +64,6 @@ impl UnitKind {
     }
 }
 
-/// ours generation(쓰기 기준)과 그 임시 사본.
-#[derive(Debug)]
-pub(crate) struct GenerationBase {
-    /// ours(stage 2) 세대 프로젝트.
-    pub(crate) ours: SavedProject,
-    _dir: PrivateTempDir,
-}
-
 /// 의미 병합 단위 하나.
 #[derive(Debug)]
 pub struct SessionUnit {
@@ -84,7 +72,6 @@ pub struct SessionUnit {
     candidate: CandidateSnapshot,
     objects: BTreeSet<StableId>,
     observed: Option<ContentHash>,
-    pub(crate) generation: Option<GenerationBase>,
     pub(crate) text: Option<TextUnit>,
 }
 
@@ -93,7 +80,7 @@ pub struct SessionUnit {
 pub(crate) struct TextUnit {
     /// 결과를 원본으로 쓰는 데 필요한 병합한 문서 밖 의미와 ours 파일 집합.
     pub(crate) base: TextMergeBase,
-    /// 이 단위가 resolved 처리하는 unmerged 경로(텍스트 원본, 그리고 cache `design/current`).
+    /// 이 단위가 resolved 처리하는 unmerged 경로(텍스트 원본, 그리고 옛 배치 cache pointer `design/current`는 지워서 해결).
     pub(crate) paths: Vec<PathBuf>,
 }
 
@@ -121,13 +108,6 @@ impl SessionUnit {
     /// 세션을 연 때 작업 트리 파일 bytes의 hash(없으면 `None`).
     pub fn observed(&self) -> Option<ContentHash> {
         self.observed
-    }
-
-    /// generation 단위의 ours(stage 2) 세대 번호. 쓰기는 이 세대를 기준으로 다음 세대를 만듭니다.
-    pub fn ours_generation(&self) -> Option<u64> {
-        self.generation
-            .as_ref()
-            .map(|base| base.ours.generation_number())
     }
 }
 
@@ -269,48 +249,6 @@ fn stage_bytes(
     }
 }
 
-fn copy_into(root: &Path, side: &Path, relative: &Path) -> Result<(), String> {
-    let from = root.join(relative);
-    let to = side.join(relative);
-    if let Some(parent) = to.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::copy(&from, &to)
-        .map(|_| ())
-        .map_err(|e| format!("{}: {e}", relative.display()))
-}
-
-/// stage pointer bytes가 가리키는 세대를 작업 트리 파일에서 비공개 사본으로 열어 문서 snapshot을 만듭니다.
-fn open_generation_side(
-    root: &Path,
-    pointer: &[u8],
-    side: &Path,
-) -> Result<(SavedProject, SemanticSnapshot), String> {
-    let line = std::str::from_utf8(pointer)
-        .ok()
-        .and_then(|text| text.strip_suffix('\n'))
-        .ok_or("current pointer 형식")?;
-    let hash: ContentHash = line.parse().map_err(|_| "current pointer hash 형식")?;
-    std::fs::create_dir_all(side.join("design")).map_err(|e| e.to_string())?;
-    copy_into(root, side, Path::new("stellar.yaml"))?;
-    std::fs::write(side.join(CURRENT_POINTER), pointer).map_err(|e| e.to_string())?;
-    let manifest = read_manifest_file(root, &hash)
-        .map_err(|e| format!("세대 manifest가 작업 트리에 없거나 손상됨: {e}"))?;
-    copy_into(root, side, &manifest_path(Path::new(""), &hash))?;
-    for pointer in &manifest.chunk_pointers {
-        copy_into(
-            root,
-            side,
-            &ChunkObjectPath::for_hash(&pointer.content_hash).to_relative_path(),
-        )?;
-    }
-    let project = SavedProjectLoader::for_materialized_snapshot()
-        .open(side)
-        .map_err(|e| e.to_string())?;
-    let semantic = super::saved_semantic_snapshot(&project).map_err(|e| e.to_string())?;
-    Ok((project, semantic))
-}
-
 fn objects_of(input: &MergeInput) -> BTreeSet<StableId> {
     [&input.base, &input.ours, &input.theirs]
         .into_iter()
@@ -338,8 +276,8 @@ impl ConflictSession {
             .filter(|path| is_text_source_path(path))
             .collect();
         let mut text_generation = false;
-        // 텍스트 원본 프로젝트에서 cache pointer만 conflict여도(원본은 driver나 Git이 깨끗이 병합) 원본 결과로 cache를
-        // 다시 씁니다(ADR-0113 결정 5).
+        // 텍스트 원본 프로젝트에서 옛 배치 cache pointer만 conflict여도(원본은 driver나 Git이 깨끗이 병합) 원본 단위가
+        // 그 pointer를 지워 해결합니다. cache는 Git 밖이고 병합 뒤 열기가 원본에서 다시 만듭니다(ADR-0122).
         let text_project = root.join(DESIGN_PREFIX).join(DOCUMENT_FILE).is_file();
         let cache_conflict = entries
             .iter()
@@ -348,28 +286,18 @@ impl ConflictSession {
             match Self::text_source(git, root, &entries)? {
                 Ok((input, base)) => {
                     let mut paths = text_paths.clone();
-                    let mut generation = None;
                     if let Some(entry) = entries
                         .iter()
                         .find(|entry| entry.path == Path::new(CURRENT_POINTER))
                     {
                         text_generation = true;
-                        match Self::generation(git, root, entry)? {
-                            Ok((_, ours)) => {
-                                generation = Some(ours);
-                                paths.push(entry.path.clone());
-                            }
-                            Err(reason) => unsupported.push((
-                                entry.path.clone(),
-                                format!("텍스트 원본의 로컬 cache를 다시 쓸 수 없음: {reason}"),
-                            )),
-                        }
+                        paths.push(entry.path.clone());
                     }
                     let path = text_paths
                         .first()
                         .cloned()
                         .unwrap_or_else(|| PathBuf::from(CURRENT_POINTER));
-                    let mut unit = Self::unit(root, path, UnitKind::TextSource, input, generation)?;
+                    let mut unit = Self::unit(root, path, UnitKind::TextSource, input)?;
                     unit.text = Some(TextUnit { base, paths });
                     units.push(unit);
                 }
@@ -409,19 +337,14 @@ impl ConflictSession {
                     path,
                     UnitKind::ComponentSource,
                     MergeInput { base, ours, theirs },
-                    None,
                 )?);
             } else if path == Path::new(CURRENT_POINTER) {
-                match Self::generation(git, root, entry)? {
-                    Ok((input, base)) => units.push(Self::unit(
-                        root,
-                        path,
-                        UnitKind::Generation,
-                        input,
-                        Some(base),
-                    )?),
-                    Err(reason) => unsupported.push((path, reason)),
-                }
+                // 옛 배치 cache pointer. 원본이 없는 옛 chunk 프로젝트의 generation은 Git 밖 cache 위치에 다시 쓸 수 없고
+                // (ADR-0122) Git에 남길 원본도 없어 의미 병합하지 않습니다.
+                unsupported.push((
+                    path,
+                    "텍스트 원본이 없는 옛 배치 generation pointer conflict는 의미 병합하지 않습니다(stellar text-source adopt 뒤 다시 병합)".into(),
+                ));
             } else if path == Path::new("stellar.yaml") || path.starts_with("design") {
                 unsupported.push((path, "의미 병합하지 않는 Stellar 저장 경로".into()));
             } else {
@@ -443,7 +366,6 @@ impl ConflictSession {
         path: PathBuf,
         kind: UnitKind,
         input: MergeInput,
-        generation: Option<GenerationBase>,
     ) -> Result<SessionUnit, SessionError> {
         let objects = objects_of(&input);
         let candidate =
@@ -454,7 +376,6 @@ impl ConflictSession {
             kind,
             candidate,
             objects,
-            generation,
             text: None,
         })
     }
@@ -501,48 +422,6 @@ impl ConflictSession {
             }
         }
         Ok(prepare_text_merge(&sides).map_err(|e| e.to_string()))
-    }
-
-    #[allow(clippy::type_complexity)]
-    fn generation(
-        git: &dyn MergeGit,
-        root: &Path,
-        entry: &UnmergedEntry,
-    ) -> Result<Result<(MergeInput, GenerationBase), String>, SessionError> {
-        if entry.stages.iter().any(Option::is_none) {
-            return Ok(Err("한쪽이 generation pointer를 지움".into()));
-        }
-        let dir = PrivateTempDir::create_in(&std::env::temp_dir(), "stellar-merge-generation")
-            .map_err(|e| SessionError::Io(e.to_string()))?;
-        let mut projects = Vec::new();
-        for (stage, name) in ["base", "ours", "theirs"].into_iter().enumerate() {
-            let pointer = stage_bytes(git, root, entry, stage)?;
-            match open_generation_side(root, &pointer, &dir.path().join(name)) {
-                Ok(side) => projects.push(side),
-                Err(reason) => return Ok(Err(format!("{name}: {reason}"))),
-            }
-        }
-        let mut projects = projects.into_iter();
-        let (
-            Some((base_project, base)),
-            Some((ours_project, ours)),
-            Some((theirs_project, theirs)),
-        ) = (projects.next(), projects.next(), projects.next())
-        else {
-            return Ok(Err("세 stage가 필요합니다".into()));
-        };
-        if base_project.project_id != ours_project.project_id
-            || base_project.project_id != theirs_project.project_id
-        {
-            return Ok(Err("세 stage의 project id가 다릅니다".into()));
-        }
-        Ok(Ok((
-            MergeInput { base, ours, theirs },
-            GenerationBase {
-                ours: ours_project,
-                _dir: dir,
-            },
-        )))
     }
 
     /// 프로젝트 루트.
@@ -714,16 +593,10 @@ impl ConflictSession {
                     add.push(unit.path.clone());
                 }
                 UnitKind::Generation => {
-                    let base = unit
-                        .generation
-                        .as_ref()
-                        .ok_or_else(|| encode("ours 세대가 없음".into()))?;
-                    let files = super::serialize_merged_generation(&base.ours, validated)
-                        .map_err(|e| encode(e.to_string()))?;
-                    for (path, bytes) in files {
-                        add.push(path.clone());
-                        writes.insert(path, Some(bytes));
-                    }
+                    let _ = validated;
+                    return Err(encode(
+                        "옛 배치 generation 단위는 쓰지 않습니다(ADR-0122)".into(),
+                    ));
                 }
                 UnitKind::TextSource => {
                     let text = unit
@@ -756,17 +629,12 @@ impl ConflictSession {
                         }
                     }
                     for path in &text.paths {
-                        add.push(path.clone());
-                    }
-                    if let Some(base) = &unit.generation {
-                        // 로컬 cache(generation)도 같은 결과로 다시 씁니다. 원본이 Git 원본이라 cache는 따로 병합하지
-                        // 않습니다.
-                        let cache = super::serialize_merged_generation(&base.ours, validated)
-                            .map_err(|e| encode(format!("로컬 cache: {e}")))?;
-                        for (path, bytes) in cache {
-                            add.push(path.clone());
-                            writes.insert(path, Some(bytes));
+                        // 옛 배치 cache pointer는 지워서 해결합니다(cache는 Git 밖, ADR-0122). 원본 결과와 짝이 아닌
+                        // 로컬 cache는 다음 열기가 원본에서 다시 만듭니다.
+                        if path == Path::new(CURRENT_POINTER) && self.root.join(path).exists() {
+                            writes.insert(path.clone(), None);
                         }
+                        add.push(path.clone());
                     }
                 }
             }
@@ -784,13 +652,15 @@ impl ConflictSession {
     }
 }
 
-/// 쓰기 순서 등급: chunk 0, 그 밖(컴포넌트 원본) 1, generation manifest 2, current pointer 3. 같은 등급은 경로 순서입니다.
+/// 쓰기 순서 등급: chunk 0, 그 밖(원본) 1, generation manifest 2, current pointer 3. 같은 등급은 경로 순서입니다.
+/// cache 경로는 저장소 위치 함수(`stellar_storage::location`)로 판정합니다.
 fn write_rank(path: &Path) -> u8 {
-    if path == Path::new(CURRENT_POINTER) {
+    let cache = Path::new(stellar_project::cache::CACHE_RELATIVE);
+    if path == stellar_storage::generation::current::current_pointer_path(Path::new("")) {
         3
-    } else if path.starts_with("design/generations") {
+    } else if path.starts_with(cache.join(stellar_storage::location::GENERATIONS_DIR)) {
         2
-    } else if path.starts_with("design/objects") {
+    } else if path.starts_with(cache.join(stellar_storage::location::OBJECTS_DIR)) {
         0
     } else {
         1

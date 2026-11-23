@@ -190,6 +190,8 @@ fn side_semantic(
     let components = project_source_index(&root, ExternalAccess::MetadataOnly)
         .map_err(|e| project_error(e.to_string()))?
         .hash();
+    // Git snapshot에는 chunk cache가 없습니다(ADR-0122). snapshot 안에서 원본으로 cache를 만들어 엽니다.
+    stellar_project::cache::prepare_snapshot(&root).map_err(|e| project_error(e.to_string()))?;
     let project = SavedProjectLoader::for_materialized_snapshot()
         .open(&root)
         .map_err(|e| project_error(e.to_string()))?;
@@ -447,12 +449,12 @@ fn write_documents(
             "현재 schema가 아닌 generation",
         ));
     }
-    let generation = snapshot
-        .generation()
-        .ok_or(ComposerApplyError::Unsupported(
+    // Git이 만든 worktree에는 chunk cache가 없을 수 있습니다(ADR-0122). 그때는 텍스트 원본에서 읽은 snapshot입니다.
+    if snapshot.generation().is_none() && !snapshot.reads_from_text() {
+        return Err(ComposerApplyError::Unsupported(
             "저장된 generation이 없는 target",
-        ))?;
-    let manifest = generation.manifest();
+        ));
+    }
     // 결과가 target 문서와 같으면 쓰지 않습니다.
     let mut current = BTreeMap::new();
     for definition in snapshot.documents() {
@@ -465,12 +467,17 @@ fn write_documents(
     }
     // 결과가 새로 참조하는 이미지 asset은 target에 그 metadata chunk가 있어야 합니다(target 문서가 이미 참조하던
     // asset은 target 상태 그대로라 따지지 않습니다). 없는 asset을 새로 참조하는 결과는 쓰지 않습니다.
-    let mut known: BTreeSet<StableId> = manifest
-        .chunk_pointers
-        .iter()
+    let mut known: BTreeSet<StableId> = snapshot
+        .generation()
+        .into_iter()
+        .flat_map(|generation| generation.manifest().chunk_pointers.iter())
         .filter(|p| p.kind == KIND_ASSET_METADATA)
         .map(|p| p.chunk_id.stable_id())
         .collect();
+    // 원본의 이미지 record도 target에 있는 asset입니다(원본에서 읽은 snapshot).
+    if let Some(library) = snapshot.decoded_library() {
+        known.extend(library.images.keys().copied());
+    }
     known.extend(referenced_assets(current.values()));
     if !referenced_assets(documents.iter()).is_subset(&known) {
         return Err(ComposerApplyError::Unsupported(

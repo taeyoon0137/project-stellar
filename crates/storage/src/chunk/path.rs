@@ -1,6 +1,6 @@
 //! chunk object 경로 생성 (V.2.3).
 //!
-//! content hash에서 `design/objects/<prefix>/<hash>.starchunk` 상대 경로를 만듭니다.
+//! content hash에서 `.stellar/cache/chunks/objects/<prefix>/<hash>.starchunk` 상대 경로를 만듭니다(ADR-0122).
 //! 입력은 [`ContentHash`] 타입으로만 받아 path traversal 문자열이 타입상 불가능합니다.
 //! 경로 문자는 소문자 16진수·알고리즘 이름(`[a-z0-9]`)·`-`·`.`뿐이라 모든 플랫폼에서
 //! 안전합니다(Windows 금지 문자 `:`는 파일명에서 `-`로 대체).
@@ -10,8 +10,13 @@ use std::path::PathBuf;
 
 use crate::hash::ContentHash;
 
-/// chunk object 디렉터리(프로젝트 root 기준) 고정 구성 요소.
-const OBJECTS_DIR: [&str; 2] = ["design", "objects"];
+/// chunk object 디렉터리(프로젝트 root 기준) 고정 구성 요소(ADR-0122 cache 위치).
+pub(crate) const OBJECTS_DIR: [&str; 4] = [
+    crate::location::CACHE_DIR[0],
+    crate::location::CACHE_DIR[1],
+    crate::location::CACHE_DIR[2],
+    crate::location::OBJECTS_DIR,
+];
 
 /// chunk object 파일 확장자.
 const CHUNK_EXTENSION: &str = "starchunk";
@@ -48,7 +53,7 @@ impl ChunkObjectPath {
         &self.file_name
     }
 
-    /// 프로젝트 root 기준 상대 경로(`design/objects/<prefix>/<file>`)를
+    /// 프로젝트 root 기준 상대 경로(`.stellar/cache/chunks/objects/<prefix>/<file>`)를
     /// 플랫폼 구분자로 만듭니다.
     pub fn to_relative_path(&self) -> PathBuf {
         let mut path = PathBuf::new();
@@ -66,8 +71,10 @@ impl fmt::Display for ChunkObjectPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}/{}/{}/{}",
-            OBJECTS_DIR[0], OBJECTS_DIR[1], self.prefix, self.file_name
+            "{}/{}/{}",
+            OBJECTS_DIR.join("/"),
+            self.prefix,
+            self.file_name
         )
     }
 }
@@ -83,7 +90,7 @@ mod tests {
         let path = ChunkObjectPath::for_hash(&hash);
         assert_eq!(
             path.to_string(),
-            "design/objects/9f/sha256-9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08.starchunk"
+            ".stellar/cache/chunks/objects/9f/sha256-9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08.starchunk"
         );
         assert_eq!(path.prefix(), "9f");
     }
@@ -118,12 +125,14 @@ mod tests {
             .components()
             .map(|c| c.as_os_str().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(components.len(), 4);
-        assert_eq!(components[0], "design");
-        assert_eq!(components[1], "objects");
-        assert_eq!(components[2].len(), 2);
-        assert!(components[3].starts_with("sha256-"));
-        assert!(components[3].ends_with(".starchunk"));
+        assert_eq!(components.len(), 6);
+        assert_eq!(
+            components[..4],
+            [".stellar", "cache", "chunks", "objects"].map(String::from)
+        );
+        assert_eq!(components[4].len(), 2);
+        assert!(components[5].starts_with("sha256-"));
+        assert!(components[5].ends_with(".starchunk"));
     }
 
     #[test]

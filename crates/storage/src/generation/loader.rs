@@ -28,8 +28,13 @@ use crate::hash::ContentHash;
 use super::current::{read_current_pointer, CurrentPointerError};
 use super::manifest::{GenerationManifest, ManifestError};
 
-/// manifest 파일 디렉터리(프로젝트 root 기준) 구성 요소.
-const GENERATIONS_DIR: [&str; 2] = ["design", "generations"];
+/// manifest 파일 디렉터리(프로젝트 root 기준) 구성 요소(ADR-0122 cache 위치).
+const GENERATIONS_DIR: [&str; 4] = [
+    crate::location::CACHE_DIR[0],
+    crate::location::CACHE_DIR[1],
+    crate::location::CACHE_DIR[2],
+    crate::location::GENERATIONS_DIR,
+];
 
 /// manifest 파일 확장자.
 const MANIFEST_EXTENSION: &str = "starmanifest";
@@ -43,7 +48,7 @@ const MAX_MANIFEST_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// manifest content hash의 파일 절대 경로.
 ///
-/// `design/generations/<algorithm>-<hex64>.starmanifest`. 경로 입력은
+/// `.stellar/cache/chunks/generations/<algorithm>-<hex64>.starmanifest`. 경로 입력은
 /// [`ContentHash`] 타입뿐이라 path traversal이 불가능합니다(V.2.3과 같은 원리).
 pub fn manifest_path(root: &Path, hash: &ContentHash) -> PathBuf {
     let mut path = root.to_path_buf();
@@ -190,9 +195,10 @@ fn write_manifest_file_limited(
     if expected_len > limit {
         return Err(io_error(Refusal::TooLarge { limit }.into_io()));
     }
-    // `design/generations`를 symlink를 따르지 않고 확인·생성합니다.
+    // manifest 폴더를 symlink를 따르지 않고 확인·생성합니다.
     let dirs = ensure_real_dirs(root, &GENERATIONS_DIR)
         .map_err(|(path, source)| LoadError::Io { path, source })?;
+    crate::location::ensure_cache_ignore(root).map_err(io_error)?;
     match FileIdentity::lstat(&path) {
         Ok(_) => {
             return match read_regular_file(&path, expected_len, Link::NoFollow) {
@@ -519,7 +525,7 @@ mod tests {
         );
     }
 
-    /// 보안 감사 STOR-4: `design`·`design/generations`가 symlink면 따라가지 않고 manifest 기록을
+    /// 보안 감사 STOR-4: cache 폴더 구성 요소·`generations`가 symlink면 따라가지 않고 manifest 기록을
     /// 거부합니다(프로젝트 밖에 쓰지 않음).
     #[cfg(unix)]
     #[test]
@@ -528,7 +534,8 @@ mod tests {
             let scratch = TempDir::new();
             valid_project(&scratch, stable(42))
         };
-        for link in [&["design"][..], &["design", "generations"][..]] {
+        for depth in 1..=GENERATIONS_DIR.len() {
+            let link = &GENERATIONS_DIR[..depth];
             let dir = TempDir::new();
             let outside = TempDir::new();
             let mut link_path = dir.path.clone();

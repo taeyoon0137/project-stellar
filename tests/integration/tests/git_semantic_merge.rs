@@ -2,7 +2,9 @@
 //!
 //! work 저장소가 base를 `main`에 commit·push하고, local bare 원격을 clone한 peer가 `theirs` branch에서
 //! 편집해 push합니다. work는 `main`에서 따로 편집한 뒤 `origin/theirs`를 fetch해 병합합니다. 두 branch가 모두
-//! 저장했으므로 Git 수준에서는 `design/current` pointer가 conflict입니다.
+//! 저장해도 chunk cache는 Git 밖이라(ADR-0122) Git이 보는 것은 텍스트 원본뿐입니다. Git 줄 병합이 깨끗하면 conflict
+//! 없이 병합 상태가 되고, 같은 줄을 바꿨으면 텍스트 원본 파일만 conflict입니다. 텍스트 원본은 root 문서 하나만 담으므로
+//! 시나리오 프로젝트는 문서 하나입니다.
 //!
 //! semantic 입력은 두 경로로 만들어 서로 대조합니다.
 //!
@@ -47,6 +49,8 @@ const BASE_NAME: &str = "Merge";
 
 /// 갈라진 두 branch와 진행 중인 병합.
 struct Diverged {
+    /// Git이 conflict로 남긴 경로(텍스트 원본 파일만).
+    conflicted: Vec<String>,
     fx: GitFixture,
     work: PathBuf,
     base: ObjectId,
@@ -104,13 +108,26 @@ fn diverge(
         base_commit.as_str()
     );
 
-    // 두 branch 모두 새 generation을 저장했으므로 pointer가 Git conflict.
-    let merged = fx.git(["merge", "--no-edit", "origin/theirs"]);
+    // Git 병합(commit하지 않음). conflict가 나면 텍스트 원본 파일뿐이어야 합니다(cache는 Git 밖).
+    let merged = fx.git(["merge", "--no-commit", "--no-ff", "origin/theirs"]);
     assert!(
-        matches!(merged, Err(FixtureError::Git { .. })),
-        "design/current conflict가 나야 함: {merged:?}"
+        matches!(merged, Ok(_) | Err(FixtureError::Git { .. })),
+        "{merged:?}"
     );
+    let unmerged = fx.git(["diff", "--name-only", "--diff-filter=U"]).unwrap();
+    let conflicted: Vec<String> = String::from_utf8_lossy(&unmerged.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        conflicted
+            .iter()
+            .all(|p| p.starts_with("design/") && p.ends_with(".stellar.yaml")),
+        "conflict 후보는 텍스트 원본뿐: {conflicted:?}"
+    );
+    assert_eq!(merged.is_ok(), conflicted.is_empty(), "{conflicted:?}");
     Some(Diverged {
+        conflicted,
         fx,
         work,
         base: base_commit,
@@ -128,8 +145,12 @@ impl Diverged {
             .map(|oid| source_state(&gate, &self.work, &commit_source(oid), &parent))
     }
 
-    /// unmerged index의 stage 1·2·3 virtual project(XIV.11.2).
-    fn conflict_projects(&self) -> ConflictProjects {
+    /// unmerged index의 stage 1·2·3 virtual project(XIV.11.2). Git 줄 병합이 깨끗했으면 conflict stage가 없어
+    /// `None`입니다.
+    fn conflict_projects(&self) -> Option<ConflictProjects> {
+        if self.conflicted.is_empty() {
+            return None;
+        }
         let gate = self.fx.gated();
         let parent = scratch_dir(&self.fx, "conflict-snapshots");
         let projects = open_conflict_projects(&gate, &self.work, &parent).unwrap();
@@ -138,20 +159,19 @@ impl Diverged {
             .iter()
             .map(|p| p.as_bytes())
             .collect();
-        assert_eq!(
-            stellar,
-            vec![&b"design/current"[..]],
-            "Stellar conflict 경로"
-        );
+        let expected: Vec<&[u8]> = self.conflicted.iter().map(|p| p.as_bytes()).collect();
+        assert_eq!(stellar, expected, "Stellar conflict 경로 = 텍스트 원본");
         assert!(projects.raw_conflicts().is_empty());
-        projects
+        Some(projects)
     }
 
-    /// 병합 해결: ours pointer를 기준으로 해결 문서를 저장하고 merge commit을 만들어 push합니다.
+    /// 병합 해결: conflict 원본은 ours를 기준으로 두고 해결 문서를 저장한 뒤 merge commit을 만들어 push합니다.
     fn conclude(&self, resolved: &[&DocumentModel]) -> ObjectId {
-        self.fx
-            .git(["checkout", "--ours", "--", "design/current"])
-            .unwrap();
+        for path in &self.conflicted {
+            self.fx
+                .git(["checkout", "--ours", "--", path.as_str()])
+                .unwrap();
+        }
         save_documents(&self.work, resolved);
         let merge_commit = self.fx.commit_all("semantic merge").unwrap();
         let parents = self
@@ -264,17 +284,14 @@ fn assert_conflict_sides_match_commits(
 
 #[test]
 fn non_conflicting_branch_edits_merge_cleanly_and_the_merge_commit_matches() {
-    const SEED: u64 = 11;
     const THEIRS_NAME: &str = "Merge (theirs)";
     let card = card_document();
-    let other = seeded_document(SEED);
     // ours: 카드 크기 + 배경 숨김 + 그룹 끝에 새 node + random 문서 seed 편집.
     let ours_card = edit(&card, |r| {
         resize_frame(r, CARD, 360.0, 200.0);
         node_mut(r, BACKGROUND).visible = false;
         append_rectangle(r, OURS_NEW, GROUP, "ours 잎");
     });
-    let (ours_other, _) = seeded_edit(&other, SEED);
     // theirs: 아이콘 이름 + 구분선 끝점 + 그룹 끝에 새 node(같은 간격) + 프로젝트 이름.
     let theirs_card = edit(&card, |r| {
         rename(r, ICON, "아이콘 (theirs)");
@@ -291,13 +308,13 @@ fn non_conflicting_branch_edits_merge_cleanly_and_the_merge_commit_matches() {
 
     let Some(d) = diverge(
         "e2e-merge-clean",
-        &[&card, &other],
+        &[&card],
         Side {
-            documents: &[&ours_card, &ours_other],
+            documents: &[&ours_card],
             rename_project: None,
         },
         Side {
-            documents: &[&theirs_card, &other],
+            documents: &[&theirs_card],
             rename_project: Some(THEIRS_NAME),
         },
     ) else {
@@ -311,23 +328,23 @@ fn non_conflicting_branch_edits_merge_cleanly_and_the_merge_commit_matches() {
         append_rectangle(r, THEIRS_NEW, GROUP, "theirs 잎");
         node_mut(r, THEIRS_NEW).order_key = OrderKey::between(Some(&shared_key), None);
     });
-    let expected = ProjectState::expected(THEIRS_NAME, &[&merged_card, &ours_other]);
+    let expected = ProjectState::expected(THEIRS_NAME, &[&merged_card]);
 
     // 1) commit snapshot 입력.
     let commits = d.commit_states();
     assert_same_state(
         &commits[0],
-        &ProjectState::expected(BASE_NAME, &[&card, &other]),
+        &ProjectState::expected(BASE_NAME, &[&card]),
         "base commit",
     );
     assert_same_state(
         &commits[1],
-        &ProjectState::expected(BASE_NAME, &[&ours_card, &ours_other]),
+        &ProjectState::expected(BASE_NAME, &[&ours_card]),
         "ours commit",
     );
     assert_same_state(
         &commits[2],
-        &ProjectState::expected(THEIRS_NAME, &[&theirs_card, &other]),
+        &ProjectState::expected(THEIRS_NAME, &[&theirs_card]),
         "theirs commit",
     );
     let commit_input = input(&commits[0], &commits[1], &commits[2]);
@@ -350,17 +367,17 @@ fn non_conflicting_branch_edits_merge_cleanly_and_the_merge_commit_matches() {
     );
 
     // 2) conflict stage 입력(XIV.11.2)도 같은 candidate를 냄.
-    let projects = d.conflict_projects();
-    let sides = assert_conflict_sides_match_commits(&projects, &commits, THEIRS_NAME);
-    let stage_input = input(&sides[0], &sides[1], &sides[2]);
-    let stage_result = merge(&stage_input).unwrap();
-    assert!(stage_result.is_clean());
-    assert_eq!(stage_result.merged, result.merged, "두 경로의 candidate");
-    assert_result_invariants(&stage_input, &stage_result, "stage 입력");
-    drop(projects);
+    if let Some(projects) = d.conflict_projects() {
+        let sides = assert_conflict_sides_match_commits(&projects, &commits, THEIRS_NAME);
+        let stage_input = input(&sides[0], &sides[1], &sides[2]);
+        let stage_result = merge(&stage_input).unwrap();
+        assert!(stage_result.is_clean());
+        assert_eq!(stage_result.merged, result.merged, "두 경로의 candidate");
+        assert_result_invariants(&stage_input, &stage_result, "stage 입력");
+    }
 
     // 3) 해결 결과를 저장·commit: merge commit의 HEAD snapshot = candidate.
-    let merge_commit = d.conclude(&[&merged_card, &ours_other]);
+    let merge_commit = d.conclude(&[&merged_card]);
     let gate = d.fx.gated();
     let parent = scratch_dir(&d.fx, "after-merge");
     let head = source_state(&gate, &d.work, &SnapshotSource::Head, &parent);
@@ -379,9 +396,7 @@ fn non_conflicting_branch_edits_merge_cleanly_and_the_merge_commit_matches() {
 
 #[test]
 fn conflicting_branch_edits_preserve_base_ours_theirs_and_resolve() {
-    const SEED: u64 = 23;
     let card = card_document();
-    let other = seeded_document(SEED);
     // ours: 아이콘 이름(충돌) + 카드 크기 + 잎 삭제(충돌) + 배경 잠금(양쪽 동일).
     let ours_card = edit(&card, |r| {
         rename(r, ICON, "아이콘 (ours)");
@@ -399,13 +414,13 @@ fn conflicting_branch_edits_preserve_base_ours_theirs_and_resolve() {
 
     let Some(d) = diverge(
         "e2e-merge-conflict",
-        &[&card, &other],
+        &[&card],
         Side {
-            documents: &[&ours_card, &other],
+            documents: &[&ours_card],
             rename_project: None,
         },
         Side {
-            documents: &[&theirs_card, &other],
+            documents: &[&theirs_card],
             rename_project: None,
         },
     ) else {
@@ -456,7 +471,7 @@ fn conflicting_branch_edits_preserve_base_ours_theirs_and_resolve() {
         node_mut(r, DIVIDER).visible = false;
         node_mut(r, BACKGROUND).locked = true;
     });
-    let candidate = ProjectState::expected(BASE_NAME, &[&candidate_card, &other]);
+    let candidate = ProjectState::expected(BASE_NAME, &[&candidate_card]);
     assert_eq!(
         result.merged,
         candidate.semantic(),
@@ -483,7 +498,8 @@ fn conflicting_branch_edits_preserve_base_ours_theirs_and_resolve() {
     );
 
     // 3) conflict stage 입력(XIV.11.2)도 같은 candidate와 conflict를 냄.
-    let projects = d.conflict_projects();
+    // 같은 이름 줄을 두 branch가 다르게 바꿨으므로 Git도 원본 conflict입니다.
+    let projects = d.conflict_projects().expect("텍스트 원본 conflict");
     let sides = assert_conflict_sides_match_commits(&projects, &commits, BASE_NAME);
     let stage_input = input(&sides[0], &sides[1], &sides[2]);
     let stage_result = merge(&stage_input).unwrap();
@@ -501,7 +517,7 @@ fn conflicting_branch_edits_preserve_base_ours_theirs_and_resolve() {
         rename(r, ICON, "아이콘 (ours)");
         rename(r, LEAF, "잎 (theirs)");
     });
-    let resolved = ProjectState::expected(BASE_NAME, &[&resolved_card, &other]);
+    let resolved = ProjectState::expected(BASE_NAME, &[&resolved_card]);
     let resolution = diff(&result.merged, &resolved.semantic());
     let touched: BTreeSet<StableId> = touched_objects(&resolution);
     assert_eq!(touched, conflict_objects, "해결은 conflict 대상만 바꿈");
@@ -514,7 +530,7 @@ fn conflicting_branch_edits_preserve_base_ours_theirs_and_resolve() {
     }
 
     // 5) 해결 결과를 저장·commit: merge commit의 HEAD snapshot = 해결 문서.
-    d.conclude(&[&resolved_card, &other]);
+    d.conclude(&[&resolved_card]);
     let gate = d.fx.gated();
     let parent = scratch_dir(&d.fx, "after-merge");
     let head = source_state(&gate, &d.work, &SnapshotSource::Head, &parent);
@@ -527,9 +543,7 @@ fn conflicting_branch_edits_preserve_base_ours_theirs_and_resolve() {
 
 #[test]
 fn deleted_parent_with_added_child_keeps_parent_and_candidate_validates() {
-    const SEED: u64 = 37;
     let card = card_document();
-    let other = seeded_document(SEED);
     // ours: 그룹(과 그 잎)을 삭제하고 카드 이름 변경.
     let ours_card = edit(&card, |r| {
         remove_leaf(r, LEAF);
@@ -543,13 +557,13 @@ fn deleted_parent_with_added_child_keeps_parent_and_candidate_validates() {
     });
     let Some(d) = diverge(
         "e2e-merge-orphan",
-        &[&card, &other],
+        &[&card],
         Side {
-            documents: &[&ours_card, &other],
+            documents: &[&ours_card],
             rename_project: None,
         },
         Side {
-            documents: &[&theirs_card, &other],
+            documents: &[&theirs_card],
             rename_project: None,
         },
     ) else {
@@ -581,7 +595,7 @@ fn deleted_parent_with_added_child_keeps_parent_and_candidate_validates() {
         remove_leaf(r, LEAF);
         rename(r, CARD, "카드 (ours)");
     });
-    let candidate = ProjectState::expected(BASE_NAME, &[&candidate_card, &other]);
+    let candidate = ProjectState::expected(BASE_NAME, &[&candidate_card]);
     assert_eq!(
         result.merged,
         candidate.semantic(),
@@ -589,7 +603,7 @@ fn deleted_parent_with_added_child_keeps_parent_and_candidate_validates() {
     );
 
     // 그룹을 유지하는 해결(= candidate)을 commit하면 HEAD가 candidate.
-    d.conclude(&[&candidate_card, &other]);
+    d.conclude(&[&candidate_card]);
     let gate = d.fx.gated();
     let parent = scratch_dir(&d.fx, "after-merge");
     let head = source_state(&gate, &d.work, &SnapshotSource::Head, &parent);
@@ -626,7 +640,6 @@ fn theirs_view(r: &mut DocumentRecords) {
 #[test]
 fn independent_page_and_view_insertions_merge_cleanly() {
     let card = card_document();
-    let other = seeded_document(41);
     let ours_card = edit(&card, |r| {
         ours_page(r);
         ours_view(r);
@@ -637,13 +650,13 @@ fn independent_page_and_view_insertions_merge_cleanly() {
     });
     let Some(d) = diverge(
         "e2e-merge-pages",
-        &[&card, &other],
+        &[&card],
         Side {
-            documents: &[&ours_card, &other],
+            documents: &[&ours_card],
             rename_project: None,
         },
         Side {
-            documents: &[&theirs_card, &other],
+            documents: &[&theirs_card],
             rename_project: None,
         },
     ) else {
@@ -685,12 +698,10 @@ fn independent_page_and_view_insertions_merge_cleanly() {
     }
     let merged_card = candidates
         .iter()
-        .find(|model| {
-            ProjectState::expected(BASE_NAME, &[model, &other]).semantic() == result.merged
-        })
+        .find(|model| ProjectState::expected(BASE_NAME, &[model]).semantic() == result.merged)
         .expect("candidate = 두 삽입을 모두 담은 validator 통과 문서");
 
-    d.conclude(&[merged_card, &other]);
+    d.conclude(&[merged_card]);
     let gate = d.fx.gated();
     let parent = scratch_dir(&d.fx, "after-merge");
     let head = source_state(&gate, &d.work, &SnapshotSource::Head, &parent);

@@ -90,12 +90,13 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-/// 컴포넌트 폭 conflict와 generation(서로 다른 node 이름 변경) 단위가 함께 있는 작업 트리.
+/// 컴포넌트 폭 conflict와 텍스트 원본(서로 다른 node 이름 변경) 단위가 함께 있는 작업 트리. chunk cache는 Git 밖이라
+/// (ADR-0122) 텍스트 원본 파일만 conflict입니다. 돌려주는 값은 Git 대역, 프로젝트 root, conflict인 원본 경로입니다.
 fn two_unit_session(dir: &TempDir) -> (MemoryGit, PathBuf) {
     use crate::apply::{apply, ApplyMode, ApplyRequest, CommandInput};
     use crate::lock::LockPolicy;
     use crate::snapshot::open_snapshot;
-    use crate::test_support::{random_valid_document, save_documents, scaffold_project};
+    use crate::test_support::{random_valid_document, save_text_document, scaffold_project};
     let model = random_valid_document(7);
     let kids: Vec<_> = model
         .to_records()
@@ -105,12 +106,12 @@ fn two_unit_session(dir: &TempDir) -> (MemoryGit, PathBuf) {
         .filter(|n| n.parent.is_some())
         .map(|n| n.id)
         .collect();
-    let mut pointers = Vec::new();
+    let mut sides_source = Vec::new();
     let sides = dir.path.join("sides");
     for (index, name) in ["base", "ours", "theirs"].into_iter().enumerate() {
         let side = sides.join(name);
         scaffold_project(&side);
-        save_documents(&side, &[&model]);
+        save_text_document(&side, &model);
         if index > 0 {
             let request = ApplyRequest {
                 base_revision: open_snapshot(&side).unwrap().revision(),
@@ -122,14 +123,17 @@ fn two_unit_session(dir: &TempDir) -> (MemoryGit, PathBuf) {
             };
             apply(&side, &request, ApplyMode::Write, &LockPolicy::None).unwrap();
         }
-        pointers.push(std::fs::read(side.join("design/current")).unwrap());
+        sides_source.push(
+            stellar_project::document_io::session::read_source(&side)
+                .unwrap()
+                .unwrap()
+                .files,
+        );
     }
+    // 작업 트리는 ours 원본(병합 중 Git이 놓는 ours 쪽)입니다. cache는 없습니다(Git checkout처럼).
     let root = dir.path.join("project");
     scaffold_project(&root);
-    for name in ["base", "ours", "theirs"] {
-        copy_tree(&sides.join(name).join("design"), &root.join("design"));
-    }
-    std::fs::write(root.join("design/current"), &pointers[1]).unwrap();
+    copy_tree(&sides.join("ours").join("design"), &root.join("design"));
     let (git, component) = {
         let (relative, path) = card(&root);
         let base = std::fs::read(&path).unwrap();
@@ -140,9 +144,37 @@ fn two_unit_session(dir: &TempDir) -> (MemoryGit, PathBuf) {
         git.conflict(relative.to_str().unwrap(), [&base, &ours, &theirs]);
         (git, relative)
     };
-    git.conflict("design/current", [&pointers[0], &pointers[1], &pointers[2]]);
+    let mut conflicted = 0;
+    for (relative, ours) in &sides_source[1] {
+        let base = sides_source[0].get(relative).cloned().unwrap_or_default();
+        let theirs = sides_source[2].get(relative).cloned().unwrap_or_default();
+        if &base != ours || &theirs != ours {
+            git.conflict(
+                &format!("design/{relative}"),
+                [base.as_bytes(), ours.as_bytes(), theirs.as_bytes()],
+            );
+            conflicted += 1;
+        }
+    }
+    assert!(conflicted > 0, "두 이름 변경이 텍스트 원본 conflict여야 함");
     assert!(component.starts_with("design/components"));
     (git, root)
+}
+
+/// 이름 변경 두 개가 모두 반영됐는지(원본에서 읽음).
+fn merged_names(root: &Path) -> Vec<String> {
+    let snapshot = crate::snapshot::open_snapshot(root).unwrap();
+    let id = snapshot.documents()[0].id;
+    let mut names: Vec<String> = snapshot
+        .document_records(id)
+        .unwrap()
+        .nodes
+        .into_iter()
+        .map(|n| n.display_name)
+        .filter(|n| n == "ours" || n == "theirs")
+        .collect();
+    names.sort();
+    names
 }
 
 /// journal 작업 디렉터리(`.stellar/journal/`)를 뺀 작업 트리 digest.
@@ -178,29 +210,19 @@ fn plan_keeps_generation_write_order_inside_one_journal_transaction() {
     session.resolve(0, Resolution::ChooseTheirs).unwrap();
     let plan = session.plan().unwrap();
     let writes = plan.writes.len();
-    assert!(writes >= 4, "원본 1 + chunk·manifest·current: {writes}");
-    // 세대 저장 순서: chunk가 manifest보다, manifest가 current pointer보다 먼저이고 pointer가 마지막입니다.
-    // journal은 입력 순서로 반영하므로 거래 안에서도 같은 순서입니다.
-    let order: Vec<&Path> = plan.writes.iter().map(|w| w.path.as_path()).collect();
-    assert_eq!(
-        order.last(),
-        Some(&Path::new("design/current")),
-        "{order:?}"
+    assert!(writes >= 2, "컴포넌트 원본 1 + 텍스트 원본: {writes}");
+    // 계획에는 Git 원본만 있고 chunk cache 경로는 없습니다(ADR-0122). cache는 다음 열기가 원본에서 다시 만듭니다.
+    assert!(
+        plan.writes
+            .iter()
+            .all(|w| w.path.starts_with("design/") && !w.path.starts_with(".stellar")),
+        "{:?}",
+        plan.writes
     );
-    let first_manifest = order
-        .iter()
-        .position(|p| p.starts_with("design/generations"))
-        .unwrap();
-    let last_chunk = order
-        .iter()
-        .rposition(|p| p.starts_with("design/objects"))
-        .unwrap();
-    assert!(last_chunk < first_manifest, "{order:?}");
     let report = apply_session(&git, &session).unwrap();
     assert_eq!(report.written.len(), writes);
     assert!(git.entries.borrow().is_empty());
-    let opened = crate::snapshot::open_snapshot(&root).unwrap();
-    assert_eq!(opened.revision().generation(), 3);
+    assert_eq!(merged_names(&root), ["ours", "theirs"]);
     // 끝난 거래는 journal에 남지 않습니다.
     assert!(recover_interrupted(&root).unwrap().transactions.is_empty());
 }
@@ -214,8 +236,13 @@ fn journal_fault_rolls_back_every_target_and_retry_succeeds() {
     session.resolve(0, Resolution::ChooseTheirs).unwrap();
     let before = tree(&root);
     let entries = git.entries.borrow().clone();
-    // manifest 반영 단계에서 실패합니다(chunk·컴포넌트 원본은 이미 반영된 뒤).
-    let generations = root.join("design/generations");
+    // 텍스트 원본 반영 단계에서 실패합니다(컴포넌트 원본은 경로 순서로 이미 반영된 뒤).
+    let text_path = entries
+        .iter()
+        .map(|e| e.path.clone())
+        .find(|p| !p.starts_with("design/components"))
+        .unwrap();
+    let generations = root.join(text_path.parent().unwrap());
     if !make_read_only(&generations) {
         make_writable(&generations);
         eprintln!("권한으로 쓰기를 막을 수 없는 환경(root)이라 건너뜁니다");
@@ -241,13 +268,7 @@ fn journal_fault_rolls_back_every_target_and_retry_succeeds() {
     let report = apply_session(&git, &session).unwrap();
     assert!(git.entries.borrow().is_empty());
     assert!(git.entries.borrow().is_empty(), "{:?}", report.added);
-    assert_eq!(
-        crate::snapshot::open_snapshot(&root)
-            .unwrap()
-            .revision()
-            .generation(),
-        3
-    );
+    assert_eq!(merged_names(&root), ["ours", "theirs"]);
 }
 
 #[test]
@@ -287,7 +308,7 @@ fn add_failure_restores_the_working_tree_with_an_inverse_transaction() {
             let ApplyError::Add { unrestored, .. } = &error else {
                 unreachable!()
             };
-            assert!(unrestored.is_empty());
+            assert!(unrestored.is_empty(), "{error} {unrestored:?}");
             assert!(error.guidance().contains("commit하지 않았습니다"));
         }
         other => panic!("add 실패 기대: {other:?}"),

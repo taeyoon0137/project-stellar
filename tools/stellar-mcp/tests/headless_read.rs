@@ -569,7 +569,7 @@ fn component_resource_tracks_saved_yaml_across_checkouts_in_one_session() {
     const FILE: &str = "Card-8c5619572809.stellar.yaml";
     let fx = Fixture::new();
     let document = large_document(2);
-    save_documents(&fx.project, &[&document]);
+    stellar_mcp::test_support::save_text_document(&fx.project, &document);
     fx.grant();
     fx.git(&["init", "-q", "-b", "main"]);
     let mut client = fx.launch();
@@ -584,7 +584,8 @@ fn component_resource_tracks_saved_yaml_across_checkouts_in_one_session() {
         let body = content(&client.read(COMPONENTS), COMPONENTS);
         assert_eq!(file_digest(&fx.temp.path), before);
         assert!(!json::write(&body).contains(fx.project.to_str().unwrap()));
-        assert_eq!(body.get("revision"), Some(&revision));
+        // 텍스트 원본 revision은 컴포넌트 원본 bytes도 담으므로(ADR-0113 결정 2) 원본이 바뀌면 바뀝니다.
+        assert!(body.get("revision").is_some() && revision != J::Null);
         assert_eq!(body.get("chunk_count"), Some(&J::int(0)));
         body
     };
@@ -657,7 +658,8 @@ payload:
     fs::write(&path, colored).unwrap();
     let filled = checked(&mut client, 1, "160");
     // generation은 그대로이고 YAML 원본 집합 hash만 바뀝니다.
-    assert_eq!(filled.get("revision"), main.get("revision"));
+    // 컴포넌트 원본이 바뀌면 텍스트 원본 revision도 바뀝니다(ADR-0113 결정 2).
+    assert_ne!(filled.get("revision"), main.get("revision"));
     assert_ne!(
         filled.get("component_source_hash"),
         main.get("component_source_hash")
@@ -726,7 +728,7 @@ payload:
     );
     let first = tool_page(&client.diff(J::object(vec![("limit", J::int(1))])));
     assert_eq!(first.get("total"), Some(&J::int(3)));
-    assert_eq!(first.get("revision"), Some(&revision));
+    assert!(first.get("revision").is_some());
     assert_eq!(
         first.get("base_commit").map(text),
         Some(nested_head.as_str())
@@ -853,7 +855,7 @@ fn head_diff_pages_follow_real_branches_and_preserve_all_inputs() {
     fx.git(&["init", "-q", "-b", "main"]);
     let mut document = large_document(4);
     let nodes = document.to_records().unwrap().nodes;
-    save_documents(&fx.project, &[&document]);
+    stellar_mcp::test_support::save_text_document(&fx.project, &document);
     fx.grant();
     let mut client = fx.launch();
     client.initialize();
@@ -871,14 +873,14 @@ fn head_diff_pages_follow_real_branches_and_preserve_all_inputs() {
     document
         .set_display_name(nodes[0].id, "브랜치 이름".into())
         .unwrap();
-    save_documents(&fx.project, &[&document]);
+    stellar_mcp::test_support::save_text_document(&fx.project, &document);
     fx.git(&["add", "-A"]);
     fx.git(&["commit", "-qm", "feature"]);
     let feature = fx.git(&["rev-parse", "HEAD"]);
     for (node, name) in nodes.iter().take(2).zip(["변경 A", "변경 B"]) {
         document.set_display_name(node.id, name.into()).unwrap();
     }
-    save_documents(&fx.project, &[&document]);
+    stellar_mcp::test_support::save_text_document(&fx.project, &document);
     let before = file_digest(&fx.temp.path);
     let first = tool_page(&client.diff(J::object(vec![
         ("base", J::string("HEAD")),

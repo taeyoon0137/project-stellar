@@ -1,8 +1,8 @@
 //! migration × Git working tree 통합 fixture (V.8.5).
 //!
-//! migration 결과는 자동으로 Git commit되지 않고 **working tree 변경으로만**
-//! 남아야 합니다. `git status`에 기대 파일(현재 pointer 수정 + 새 manifest
-//! 추가)만 나타나는지 검증합니다.
+//! migration 결과는 자동으로 Git commit되지 않습니다. chunk cache는 Git 밖
+//! (`.stellar/cache/chunks/`, ADR-0122)이므로 migration은 Git working tree를
+//! 바꾸지 않고(`git status`가 빔) cache 안에서만 pointer와 새 manifest를 씁니다.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -90,7 +90,15 @@ fn migration_leaves_only_expected_working_tree_changes() {
     };
     let manifest_hash = write_manifest_file(&dir.path, &manifest).unwrap();
     write_current_pointer(&dir.path, &manifest_hash).unwrap();
+    // Git 원본 파일 하나(텍스트 원본 자리). cache는 `.stellar/cache/.gitignore`로 Git 밖입니다.
+    std::fs::write(dir.path.join("stellar.yaml"), b"schema_version: 1\n").unwrap();
     git(&dir.path, &["add", "--all"]);
+    let tracked = git(&dir.path, &["ls-files", "--cached"]);
+    assert_eq!(
+        tracked.trim(),
+        "stellar.yaml",
+        "cache가 Git에 들어감: {tracked}"
+    );
     git(&dir.path, &["commit", "-q", "-m", "baseline v1"]);
     let head_before = git(&dir.path, &["rev-parse", "HEAD"]);
 
@@ -106,27 +114,15 @@ fn migration_leaves_only_expected_working_tree_changes() {
         "migration이 Git commit을 만들면 안 됨"
     );
 
-    // working tree 변경은 기대 파일 2개뿐:
-    //  M design/current (pointer 전환)
-    // ?? design/generations/<새 manifest>
-    let status = git(&dir.path, &["status", "--porcelain"]);
-    let mut lines: Vec<&str> = status.lines().collect();
-    lines.sort_unstable();
-    assert_eq!(lines.len(), 2, "예상 밖의 변경: {status}");
-
-    let new_manifest_rel = manifest_path(&dir.path, &outcome.new_manifest_hash)
-        .strip_prefix(&dir.path)
-        .unwrap()
-        .to_string_lossy()
-        .into_owned();
-    assert!(
-        lines.iter().any(|l| l.trim() == "M design/current"),
-        "current pointer 수정이 보여야 함: {status}"
+    // Git working tree 변경 없음: pointer 전환과 새 manifest는 Git 밖 cache 안에만 있습니다.
+    let status = git(
+        &dir.path,
+        &["status", "--porcelain", "--untracked-files=all"],
     );
-    assert!(
-        lines
-            .iter()
-            .any(|l| l.starts_with("??") && l.contains(new_manifest_rel.as_str())),
-        "새 manifest가 untracked로 보여야 함: {status}"
+    assert_eq!(status, "", "예상 밖의 변경: {status}");
+    assert!(manifest_path(&dir.path, &outcome.new_manifest_hash).is_file());
+    assert_eq!(
+        stellar_storage::generation::current::read_current_pointer(&dir.path).unwrap(),
+        outcome.new_manifest_hash
     );
 }

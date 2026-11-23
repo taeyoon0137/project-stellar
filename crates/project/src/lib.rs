@@ -69,6 +69,9 @@ pub mod trust_store;
 /// 문서 ↔ chunk model 입출력 (VI.10.2).
 pub mod document_io;
 
+/// 로컬 chunk cache 관리: 옛 배치 이동·다시 만들기·GC·Git index 정리 (V.10.7, ADR-0122).
+pub mod cache;
+
 /// 새 프로젝트·정의·노드에 사용할 UUIDv7.
 pub mod new_ids;
 

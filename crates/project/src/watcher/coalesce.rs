@@ -245,21 +245,23 @@ mod tests {
     /// 저장 한 번이 만드는 실제 순서의 event(chunk·manifest·임시 파일·pointer rename).
     fn save_events(manifest_hash: &ContentHash) -> Vec<Vec<FileWatchEvent>> {
         let manifest = format!(
-            "design/generations/{}.starmanifest",
+            ".stellar/cache/chunks/generations/{}.starmanifest",
             manifest_hash.digest_hex()
         );
         vec![
             vec![FileWatchEvent::Created(p(
-                "design/objects/ab/sha256-ab.starchunk",
+                ".stellar/cache/chunks/objects/ab/sha256-ab.starchunk",
             ))],
             vec![FileWatchEvent::Created(p(
-                "design/objects/cd/sha256-cd.starchunk",
+                ".stellar/cache/chunks/objects/cd/sha256-cd.starchunk",
             ))],
             vec![FileWatchEvent::Created(p(&manifest))],
-            vec![FileWatchEvent::Created(p("design/.current.tmp-9-0"))],
+            vec![FileWatchEvent::Created(p(
+                ".stellar/cache/chunks/.current.tmp-9-0",
+            ))],
             vec![FileWatchEvent::Renamed {
-                from: p("design/.current.tmp-9-0"),
-                to: p("design/current"),
+                from: p(".stellar/cache/chunks/.current.tmp-9-0"),
+                to: p(".stellar/cache/chunks/current"),
             }],
         ]
     }
@@ -295,7 +297,7 @@ mod tests {
             } => {
                 assert_eq!(*manifest_hash, external.manifest_hash);
                 assert_eq!(*generation, 2);
-                assert!(paths.contains(&p("design/current")));
+                assert!(paths.contains(&p(".stellar/cache/chunks/current")));
                 assert_eq!(paths.len(), 5);
             }
             other => panic!("Generation이어야 함: {other:?}"),
@@ -317,8 +319,8 @@ mod tests {
         // chunk·manifest event만(예: GC·다른 도구) → 변화 없음.
         coalescer.push(
             &[
-                FileWatchEvent::Created(p("design/objects/ef/sha256-ef.starchunk")),
-                FileWatchEvent::Removed(p("design/objects/ab/sha256-ab.starchunk")),
+                FileWatchEvent::Created(p(".stellar/cache/chunks/objects/ef/sha256-ef.starchunk")),
+                FileWatchEvent::Removed(p(".stellar/cache/chunks/objects/ab/sha256-ab.starchunk")),
             ],
             0,
         );
@@ -348,7 +350,10 @@ mod tests {
 
         // git checkout·reset이 pointer를 이 session의 예전 저장(A)으로 되돌림.
         write_current_pointer(&dir.path, &a.manifest_hash).unwrap();
-        coalescer.push(&[FileWatchEvent::Modified(p("design/current"))], 0);
+        coalescer.push(
+            &[FileWatchEvent::Modified(p(".stellar/cache/chunks/current"))],
+            0,
+        );
         let changes = coalescer.poll(WINDOW, &ledger);
         assert!(
             matches!(
@@ -411,7 +416,10 @@ mod tests {
         let held = dir.path.join("held.starchunk");
         std::fs::rename(&chunk, &held).unwrap();
 
-        coalescer.push(&[FileWatchEvent::Modified(p("design/current"))], 0);
+        coalescer.push(
+            &[FileWatchEvent::Modified(p(".stellar/cache/chunks/current"))],
+            0,
+        );
         assert!(
             coalescer.poll(WINDOW, &ledger).is_empty(),
             "미완성 generation"
@@ -421,7 +429,7 @@ mod tests {
         std::fs::rename(&held, &chunk).unwrap();
         coalescer.push(
             &[FileWatchEvent::Created(p(
-                "design/objects/xx/late.starchunk",
+                ".stellar/cache/chunks/objects/xx/late.starchunk",
             ))],
             2 * WINDOW,
         );
@@ -448,7 +456,10 @@ mod tests {
         let g2 = save_generation(&dir.path, Some(&base), b"x", &mut other);
         std::fs::write(manifest_path(&dir.path, &g2.manifest_hash), b"tampered").unwrap();
         write_current_pointer(&dir.path, &g2.manifest_hash).unwrap();
-        coalescer.push(&[FileWatchEvent::Modified(p("design/current"))], 0);
+        coalescer.push(
+            &[FileWatchEvent::Modified(p(".stellar/cache/chunks/current"))],
+            0,
+        );
         assert!(matches!(
             coalescer.poll(WINDOW, &ledger).as_slice(),
             [ExternalChange::InvalidGeneration { manifest_hash, .. }] if *manifest_hash == g2.manifest_hash
@@ -458,7 +469,10 @@ mod tests {
             &dir.path,
         ))
         .unwrap();
-        coalescer.push(&[FileWatchEvent::Removed(p("design/current"))], 2 * WINDOW);
+        coalescer.push(
+            &[FileWatchEvent::Removed(p(".stellar/cache/chunks/current"))],
+            2 * WINDOW,
+        );
         assert_eq!(
             coalescer.poll(3 * WINDOW, &ledger),
             vec![ExternalChange::PointerUnavailable(
@@ -484,7 +498,7 @@ mod tests {
             &[
                 FileWatchEvent::Modified(p("stellar.yaml")),
                 FileWatchEvent::Modified(ext.clone()),
-                FileWatchEvent::Modified(p("design/objects/ab/x.starchunk")),
+                FileWatchEvent::Modified(p(".stellar/cache/chunks/objects/ab/x.starchunk")),
             ],
             5 * MS,
         );

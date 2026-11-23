@@ -120,7 +120,8 @@ pub enum TargetError {
     },
     /// 시작 commit이 없거나 commit이 아닙니다.
     StartNotFound(ObjectId),
-    /// 시작 commit에 이 프로젝트(`stellar.yaml`·`design/current`)가 없습니다.
+    /// 시작 commit에 이 프로젝트(`stellar.yaml`과 텍스트 원본 `design/document.stellar.yaml`, 또는 옛 배치
+    /// `design/current`)가 없습니다.
     StartWithoutProject(ObjectId),
     /// target 프로젝트를 열 수 없습니다.
     Project(OpenError),
@@ -326,7 +327,15 @@ pub fn validate_target(
                     .iter()
                     .any(|e| e.path.as_bytes() == wanted.as_bytes())
             };
-            if !(has("stellar.yaml") && has("design/current")) {
+            // 저장된 프로젝트: Git 원본인 텍스트 원본 문서, 또는 옛 배치 cache pointer(ADR-0122 이전 commit).
+            let document = format!(
+                "{}/{}",
+                stellar_project::document_io::session::DESIGN_DIR,
+                stellar_project::document_io::source_v4::project::DOCUMENT_PATH
+            );
+            if !(has("stellar.yaml")
+                && (has(&document) || has(stellar_project::cache::LEGACY_PATHS[0])))
+            {
                 return Err(TargetError::StartWithoutProject(start.clone()));
             }
             Ok(ValidatedTarget {

@@ -636,7 +636,7 @@ pub(crate) mod tests {
             ChangeCoalescer::new(&sc.dir.path, PROJECT, Some(sc.base.manifest_hash), 10);
         coalescer.push(
             &[FileWatchEvent::Modified(
-                WatchPath::project("design/current").unwrap(),
+                WatchPath::project(".stellar/cache/chunks/current").unwrap(),
             )],
             0,
         );

@@ -108,8 +108,12 @@ fn every_listed_tool_runs_read_only_through_ops() {
             continue;
         }
         if name == "document.source_span" {
-            // 이 fixture에는 다중 파일 텍스트 원본이 없습니다.
-            assert_eq!(failure_kind(&reply), "unavailable", "{reply:?}");
+            // fixture는 텍스트 원본(Git 원본)이 있는 프로젝트라 root node의 파일·줄 범위를 돌려줍니다(ADR-0122).
+            let body = tool_body(&reply);
+            assert!(
+                text(body.get("file").unwrap()).ends_with(".stellar.yaml"),
+                "{body:?}"
+            );
             continue;
         }
         let body = tool_body(&reply);
@@ -341,7 +345,7 @@ fn git_status_resource_counts_semantic_changes_like_the_tool() {
             .set_display_name(node.id, format!("Renamed {index}"))
             .unwrap();
     }
-    save_documents(&fx.project, &[&document]);
+    stellar_mcp::test_support::save_text_document(&fx.project, &document);
     fx.grant();
     let mut client = fx.launch();
     client.initialize();

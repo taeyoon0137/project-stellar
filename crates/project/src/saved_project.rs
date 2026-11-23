@@ -843,10 +843,11 @@ pub(crate) mod tests {
 
     /// `design/objects` 아래 첫 shard 디렉터리 이름.
     fn first_shard(root: &Path) -> String {
-        let mut names: Vec<String> = std::fs::read_dir(root.join("design").join("objects"))
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
+        let mut names: Vec<String> =
+            std::fs::read_dir(root.join(".stellar/cache/chunks").join("objects"))
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
         names.sort();
         names.remove(0)
     }
@@ -881,10 +882,17 @@ pub(crate) mod tests {
         // current pointer가 snapshot 밖 절대 경로 symlink.
         let dir = saved_project_dir(21);
         let outside = TempDir::new();
-        replace_with_absolute_symlink(&dir.path, &["design", "current"], &outside.path);
+        replace_with_absolute_symlink(
+            &dir.path,
+            &[".stellar", "cache", "chunks", "current"],
+            &outside.path,
+        );
         assert_eq!(
             storage_problem(snapshot.open(&dir.path)),
-            ("design/current".to_string(), StorageEntryProblem::Symlink)
+            (
+                ".stellar/cache/chunks/current".to_string(),
+                StorageEntryProblem::Symlink
+            )
         );
         assert_eq!(working_tree.open(&dir.path).unwrap().generation_number(), 1);
 
@@ -892,23 +900,27 @@ pub(crate) mod tests {
         let dir = saved_project_dir(22);
         let outside = TempDir::new();
         let shard = first_shard(&dir.path);
-        replace_with_absolute_symlink(&dir.path, &["design", "objects", &shard], &outside.path);
+        replace_with_absolute_symlink(
+            &dir.path,
+            &[".stellar", "cache", "chunks", "objects", &shard],
+            &outside.path,
+        );
         assert_eq!(
             storage_problem(snapshot.open(&dir.path)),
             (
-                format!("design/objects/{shard}"),
+                format!(".stellar/cache/chunks/objects/{shard}"),
                 StorageEntryProblem::Symlink
             )
         );
         assert_eq!(working_tree.open(&dir.path).unwrap().generation_number(), 1);
 
-        // design 디렉터리 자체가 symlink.
+        // 로컬 상태 폴더(`.stellar`, cache 위치의 첫 구성 요소) 자체가 symlink.
         let dir = saved_project_dir(23);
         let outside = TempDir::new();
-        replace_with_absolute_symlink(&dir.path, &["design"], &outside.path);
+        replace_with_absolute_symlink(&dir.path, &[".stellar"], &outside.path);
         assert_eq!(
             storage_problem(snapshot.open(&dir.path)),
-            ("design".to_string(), StorageEntryProblem::Symlink)
+            (".stellar".to_string(), StorageEntryProblem::Symlink)
         );
         assert_eq!(working_tree.open(&dir.path).unwrap().generation_number(), 1);
     }
@@ -923,11 +935,17 @@ pub(crate) mod tests {
         std::os::unix::fs::symlink("/dev/zero", &pointer).unwrap();
         assert_eq!(
             storage_problem(SavedProjectLoader::new().open(&dir.path)),
-            ("design/current".to_string(), StorageEntryProblem::NotFile)
+            (
+                ".stellar/cache/chunks/current".to_string(),
+                StorageEntryProblem::NotFile
+            )
         );
         assert_eq!(
             storage_problem(SavedProjectLoader::for_materialized_snapshot().open(&dir.path)),
-            ("design/current".to_string(), StorageEntryProblem::Symlink)
+            (
+                ".stellar/cache/chunks/current".to_string(),
+                StorageEntryProblem::Symlink
+            )
         );
 
         // pointer 자리에 디렉터리.
@@ -939,19 +957,22 @@ pub(crate) mod tests {
         ] {
             assert_eq!(
                 storage_problem(loader.open(&dir.path)),
-                ("design/current".to_string(), StorageEntryProblem::NotFile)
+                (
+                    ".stellar/cache/chunks/current".to_string(),
+                    StorageEntryProblem::NotFile
+                )
             );
         }
 
         // manifest 디렉터리 자리에 정규 파일(snapshot 규칙은 디렉터리 구성 요소도 읽기 전에 검사).
         let dir = saved_project_dir(25);
-        let generations = dir.path.join("design").join("generations");
+        let generations = dir.path.join(".stellar/cache/chunks").join("generations");
         std::fs::remove_dir_all(&generations).unwrap();
         std::fs::write(&generations, b"not a directory").unwrap();
         assert_eq!(
             storage_problem(SavedProjectLoader::for_materialized_snapshot().open(&dir.path)),
             (
-                "design/generations".to_string(),
+                ".stellar/cache/chunks/generations".to_string(),
                 StorageEntryProblem::NotDirectory
             )
         );
@@ -959,7 +980,11 @@ pub(crate) mod tests {
         // chunk shard 자리에 정규 파일: 저장소의 chunk 존재 확인(읽기 없음)이 먼저 누락으로 보고.
         let dir = saved_project_dir(27);
         let shard = first_shard(&dir.path);
-        let shard_path = dir.path.join("design").join("objects").join(&shard);
+        let shard_path = dir
+            .path
+            .join(".stellar/cache/chunks")
+            .join("objects")
+            .join(&shard);
         std::fs::remove_dir_all(&shard_path).unwrap();
         std::fs::write(&shard_path, b"not a directory").unwrap();
         assert!(matches!(
@@ -982,7 +1007,7 @@ pub(crate) mod tests {
         assert_eq!(
             storage_problem(loader.open(&dir.path)),
             (
-                "design/current".to_string(),
+                ".stellar/cache/chunks/current".to_string(),
                 StorageEntryProblem::TooLarge { len: 72, limit: 71 }
             )
         );
@@ -993,7 +1018,10 @@ pub(crate) mod tests {
                 ..limits
             });
         let (path, problem) = storage_problem(loader.open(&dir.path));
-        assert!(path.starts_with("design/generations/"), "{path}");
+        assert!(
+            path.starts_with(".stellar/cache/chunks/generations/"),
+            "{path}"
+        );
         assert!(matches!(
             problem,
             StorageEntryProblem::TooLarge { limit: 8, .. }
@@ -1004,7 +1032,7 @@ pub(crate) mod tests {
             ..limits
         });
         let (path, problem) = storage_problem(loader.open(&dir.path));
-        assert!(path.starts_with("design/objects/"), "{path}");
+        assert!(path.starts_with(".stellar/cache/chunks/objects/"), "{path}");
         assert!(matches!(
             problem,
             StorageEntryProblem::TooLarge { limit: 8, .. }

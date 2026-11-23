@@ -16,6 +16,15 @@
 //! 선택 staging 파이프라인(실제 index → semantic 선택 → 임시 저장 후보 → 기존 loader 재열기 → index 기록 →
 //! 재검증, XIV.5.5~XIV.7.3)도 이 모듈에 있습니다. 앱 runtime은 `stellar_runtime::staging`에서 같은 함수를
 //! 재노출합니다. 작업 트리와 문서는 쓰지 않습니다.
+//!
+//! # chunk cache는 Git 밖(ADR-0122)
+//!
+//! chunk cache는 Git이 추적하지 않는 `.stellar/cache/chunks/`에 있고 Git은 텍스트 원본만 담습니다. 그래서
+//! materialize한 Git tree(HEAD·index·후보)에는 cache가 없고, 저장소 loader로 열기 전에 그 snapshot 안에서 원본으로
+//! cache를 만듭니다(`stellar_project::cache::prepare_snapshot`). 작업 트리 쪽은 작업 트리 cache가 원본과 짝인지와
+//! 관계없이 원본만 비공개 사본으로 복사해 엽니다(`text_snapshot`). 후보 index에는 원본 파일만 넣고 cache 경로는
+//! 넣지 않습니다. 옛 배치(`design/current` 등)를 추적하던 index는 stage·unstage·commit 전에 그 경로를 뺍니다
+//! ([`GitSession::migrate_cache`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -128,8 +137,10 @@ pub fn os_git_trust(root: &Path) -> GitTrust {
 
 /// Git index에 한 번에 포함하거나 빼는 원본 단위(UX.5.4).
 ///
-/// generation 저장(`design/current`·`design/generations/`·`design/objects/`)의 모든 View는
-/// [`SourceUnit::Generation`] 묶음 하나입니다. 텍스트 원본(ADR-0077 결정 1)은 의미 단위 파일 하나가 단위입니다:
+/// 문서 전체는 [`SourceUnit::Generation`] 묶음 하나입니다. 옛 배치(ADR-0122 이전 Git이 추적하던
+/// `design/current`·`design/generations/`·`design/objects/`)의 경로와 텍스트 원본·컴포넌트가 아닌 나머지 `design/` 경로가
+/// 이 묶음이고, 텍스트 원본 프로젝트에서 이 묶음을 고르면 문서를 이루는 원본 파일(컴포넌트 제외)도 함께 덮습니다(ADR-0122
+/// 결정 5). chunk cache(`.stellar/cache/chunks/`)는 Git 밖이라 어떤 단위에도 들지 않습니다. 텍스트 원본(ADR-0077 결정 1)은 의미 단위 파일 하나가 단위입니다:
 /// `design/document.stellar.yaml`(문서·페이지 목록), View 파일 `design/pages/<page>/<view>.stellar.yaml`(그 View의
 /// 분할 Frame 파일 `design/pages/<page>/<view>/**.stellar.yaml`을 함께 묶음), token set `design/tokens/<slug>.stellar.yaml`,
 /// asset catalog `design/assets/catalog.stellar.yaml`, 컴포넌트 `design/components/<이름>.stellar.yaml`(ADR-0080 개정).
@@ -702,11 +713,20 @@ fn companion_closure(
     Ok((units, reasons))
 }
 
-/// generation 저장 경로(`design/current`, `design/generations/`, `design/objects/`).
+/// 옛 배치 generation 저장 경로(`design/current`, `design/generations/`, `design/objects/`, ADR-0122 이전 Git 추적).
 fn is_generation_storage(path: &[u8]) -> bool {
-    path == b"design/current"
-        || path.starts_with(b"design/generations/")
-        || path.starts_with(b"design/objects/")
+    stellar_project::cache::is_legacy_cache_path(path)
+}
+
+/// materialize한 Git snapshot을 저장소 loader로 엽니다. 열기 전에 snapshot 안에서 옛 배치를 옮기고 원본으로 cache를
+/// 만듭니다(모듈 문서 "chunk cache는 Git 밖").
+fn open_snapshot_tree(
+    loader: &SavedProjectLoader,
+    root: &Path,
+) -> Result<SavedProject, PrepareStageError> {
+    stellar_project::cache::prepare_snapshot(root)
+        .map_err(|e| PrepareStageError::Storage(CandidateStorageError::Invalid(e.to_string())))?;
+    loader.open(root).map_err(PrepareStageError::Open)
 }
 
 fn read_tree_file_bytes(root: &Path, path: &GitPath, kind: FileModeKind) -> Option<Vec<u8>> {
@@ -814,18 +834,41 @@ fn prepare_selection(
     let base_tree = materialize_snapshot(git, worktree, &index.entries, &canonical_parent)
         .map_err(PrepareStageError::Materialize)?;
     let loader = SavedProjectLoader::for_materialized_snapshot();
-    let base = loader
-        .open(base_tree.root())
-        .map_err(PrepareStageError::Open)?;
+    let base = open_snapshot_tree(&loader, base_tree.root())?;
     let indexed = saved_semantic_snapshot(&base).map_err(PrepareStageError::Storage)?;
+    // 변경 ID 단위 선택은 index의 텍스트 원본을 후보 문서로 다시 씁니다. 원본이 없는 index(옛 배치만 추적하는 chunk
+    // 프로젝트)는 cache를 Git에 넣지 않으므로 변경 단위로 표현할 수 없습니다(ADR-0122 결정 5).
+    if has_changes
+        && stellar_project::document_io::session::read_source(base_tree.root())
+            .ok()
+            .flatten()
+            .is_none()
+    {
+        return Err(PrepareStageError::Storage(
+            CandidateStorageError::Unsupported(
+                "텍스트 원본이 없는 index는 변경 단위로 stage할 수 없습니다(stellar text-source adopt 뒤 다시)",
+            ),
+        ));
+    }
+    // 작업 트리 원본의 비공개 사본(stage 원천). 후보를 쓸 때까지 살아 있어야 합니다.
+    let mut working_copy = None;
     // Unstage 원천(HEAD) tree는 후보를 쓸 때까지 살아 있어야 합니다.
     let mut head_tree = None;
     let mut head_entries: Vec<SnapshotEntry> = Vec::new();
     let (semantic, head, source_project, source_semantic) = match request.operation {
         SelectionOperation::Stage => {
-            let working = SavedProjectLoader::new()
-                .open(worktree)
-                .map_err(PrepareStageError::Open)?;
+            // 작업 트리는 원본(Git 원본)을 기준으로 엽니다. cache가 원본과 짝이 아니어도(Git pull·clone 직후) 같은
+            // 의미입니다. 원본이 없으면 옛 chunk 작업 트리의 cache를 엽니다.
+            let copy = stellar_project::cache::text_snapshot(worktree, &canonical_parent).map_err(
+                |e| PrepareStageError::Storage(CandidateStorageError::Invalid(e.to_string())),
+            )?;
+            let working = match &copy {
+                Some(copy) => loader.open(copy.path()).map_err(PrepareStageError::Open)?,
+                None => SavedProjectLoader::new()
+                    .open(worktree)
+                    .map_err(PrepareStageError::Open)?,
+            };
+            working_copy = copy;
             if working.project_id != base.project_id {
                 return Err(PrepareStageError::Storage(
                     CandidateStorageError::Unsupported("서로 다른 project id"),
@@ -852,7 +895,7 @@ fn prepare_selection(
             }
             let tree = materialize_snapshot(git, worktree, &head.entries, &canonical_parent)
                 .map_err(PrepareStageError::Materialize)?;
-            let committed = loader.open(tree.root()).map_err(PrepareStageError::Open)?;
+            let committed = open_snapshot_tree(&loader, tree.root())?;
             if committed.project_id != base.project_id {
                 return Err(PrepareStageError::Storage(
                     CandidateStorageError::Unsupported("서로 다른 project id"),
@@ -955,6 +998,10 @@ fn prepare_selection(
     for (path, bytes) in bytes {
         // serializer 경로는 storage가 만든 ASCII 상대 경로뿐입니다.
         let path = GitPath::from_bytes(path.to_string_lossy().replace('\\', "/").as_bytes());
+        // chunk cache는 Git 밖입니다(ADR-0122). 후보 index에는 원본만 넣습니다.
+        if stellar_project::cache::is_cache_path(path.as_bytes()) {
+            continue;
+        }
         let existing = index_by_path.get(&path);
         if existing.is_some() && path.as_bytes() != b"design/current" {
             let kind = match existing.and_then(|entry| entry.kind()) {
@@ -995,14 +1042,15 @@ fn prepare_selection(
         for (path, text) in text_candidate_files(base_tree.root(), &semantic)? {
             match text {
                 Some(bytes) => {
-                    files.insert(
-                        path.clone(),
-                        CandidateFile::Bytes {
-                            path,
-                            kind: FileModeKind::Regular,
-                            bytes,
-                        },
-                    );
+                    // index에 있던 원본 파일은 mode(실행 bit)를 그대로 둡니다.
+                    let kind = index_by_path
+                        .get(&path)
+                        .and_then(|entry| entry.kind())
+                        .filter(|kind| {
+                            matches!(kind, FileModeKind::Regular | FileModeKind::Executable)
+                        })
+                        .unwrap_or(FileModeKind::Regular);
+                    files.insert(path.clone(), CandidateFile::Bytes { path, kind, bytes });
                 }
                 None => {
                     files.remove(&path);
@@ -1013,9 +1061,14 @@ fn prepare_selection(
 
     // 원본 단위: 단위 경로를 원천(stage: 저장된 작업 트리, unstage: HEAD)과 같게 만듭니다.
     if !units.is_empty() {
+        // generation 묶음(문서 전체)은 텍스트 원본 프로젝트에서 문서를 이루는 원본 파일(컴포넌트 제외)도 덮습니다.
+        // 원본 파일 하나하나도 원본 단위이지만, 문서 전체를 고르는 선택은 옛 배치와 같은 뜻이어야 하기 때문입니다
+        // (ADR-0122 결정 5). 암묵 generation(변경 ID 선택 결과가 원천과 같음)은 옛 배치 경로만 덮습니다.
         let covered = |path: &GitPath| {
             units.iter().any(|u| {
-                u.contains(path.as_bytes())
+                let bundle =
+                    *u == SourceUnit::Generation && text_source_unit(path.as_bytes()).is_some();
+                (u.contains(path.as_bytes()) || bundle)
                     && (!implicit_generation
                         || *u != SourceUnit::Generation
                         || is_generation_storage(path.as_bytes()))
@@ -1059,9 +1112,18 @@ fn prepare_selection(
             }
         }
     }
-    let generation = units
-        .contains(&SourceUnit::Generation)
-        .then(|| source_semantic.clone());
+    // 옛 배치 index(원본 없음)의 generation 묶음 선택은 원천 의미 그대로가 기대값입니다. 원본 index에서 원본 단위를
+    // 고르면(파일 단위 stage) 기대값은 후보 tree의 원본이 읽히는 의미입니다(아래, ADR-0122 결정 5).
+    let text_index = stellar_project::document_io::session::read_source(base_tree.root())
+        .ok()
+        .flatten()
+        .is_some();
+    let text_units = text_index
+        && units
+            .iter()
+            .any(|u| !(implicit_generation && *u == SourceUnit::Generation));
+    let generation =
+        (!text_index && units.contains(&SourceUnit::Generation)).then(|| source_semantic.clone());
 
     if read_index_snapshot(git, worktree).map_err(PrepareStageError::Git)? != index {
         return Err(PrepareStageError::IndexChanged);
@@ -1073,9 +1135,17 @@ fn prepare_selection(
         &files.into_values().collect::<Vec<_>>(),
     )
     .map_err(PrepareStageError::Write)?;
-    let reopened = loader.open(tree.root()).map_err(PrepareStageError::Open)?;
+    let reopened = open_snapshot_tree(&loader, tree.root())?;
+    drop(working_copy);
+    let reopened_semantic =
+        saved_semantic_snapshot(&reopened).map_err(PrepareStageError::Storage)?;
+    let generation = if text_units {
+        Some(reopened_semantic.clone())
+    } else {
+        generation
+    };
     let expected = generation.as_ref().unwrap_or_else(|| semantic.snapshot());
-    if saved_semantic_snapshot(&reopened).map_err(PrepareStageError::Storage)? != *expected {
+    if reopened_semantic != *expected {
         return Err(PrepareStageError::ReopenMismatch);
     }
     // 후보 tree의 텍스트 원본도 같은 의미여야 합니다(ADR-0113 결정 6).
@@ -1185,9 +1255,10 @@ pub fn apply_stage_candidate(
         }
         let tree = materialize_snapshot(git, worktree, &actual.entries, &parent)
             .map_err(PrepareStageError::Materialize)?;
-        let loaded = SavedProjectLoader::for_materialized_snapshot()
-            .open(tree.root())
-            .map_err(PrepareStageError::Open)?;
+        let loaded = open_snapshot_tree(
+            &SavedProjectLoader::for_materialized_snapshot(),
+            tree.root(),
+        )?;
         if saved_semantic_snapshot(&loaded).map_err(PrepareStageError::Storage)?
             != *prepared.expected_snapshot()
         {
@@ -1264,6 +1335,8 @@ pub enum GitError {
     IndexChangedBeforeCommit,
     /// commit 실패(identity 누락·hook 실패 등 Git 결과 그대로, XIV.8.5).
     Commit(CommitError),
+    /// 옛 배치 chunk cache를 옮기거나 index에서 빼지 못했습니다(ADR-0122).
+    Cache(String),
 }
 
 impl fmt::Display for GitError {
@@ -1280,6 +1353,7 @@ impl fmt::Display for GitError {
             Self::Snapshot(e) => write!(f, "{e}"),
             Self::Materialize(e) => write!(f, "{e}"),
             Self::Temp(e) => write!(f, "임시 디렉터리 생성 실패: {e}"),
+            Self::Cache(e) => write!(f, "chunk cache 정리 실패: {e}"),
             Self::Prepare(e) => write!(f, "{e}"),
             Self::Apply(e) => write!(f, "{e}"),
             Self::CompanionRequired { changes, units, .. } => write!(
@@ -1441,6 +1515,18 @@ impl GitSession {
         Ok(dir)
     }
 
+    /// 옛 배치 chunk cache(ADR-0122 이전 `design/current`·`design/generations/`·`design/objects/`)를 정리합니다:
+    /// 작업 트리의 옛 배치를 cache 위치로 옮기고(`stellar_project::cache::migrate_layout`), 텍스트 원본이 있으면 그
+    /// 경로를 index에서 뺍니다(`untrack_legacy`, 작업 트리·HEAD는 그대로). 그래서 다음 commit이 옛 cache를 Git에서
+    /// 지웁니다. stage·unstage·commit이 먼저 부릅니다. 돌려주는 값은 index에서 뺀 경로입니다.
+    pub fn migrate_cache(&self) -> Result<Vec<String>, GitError> {
+        self.git.runner()?;
+        stellar_project::cache::migrate_layout(&self.root)
+            .map_err(|e| GitError::Cache(e.to_string()))?;
+        stellar_project::cache::untrack_legacy(&self.git, &self.root)
+            .map_err(|e| GitError::Cache(e.to_string()))
+    }
+
     fn head_commit(&self) -> Result<Option<ObjectId>, GitError> {
         Ok(
             match resolve_tree(&self.git, &self.root, &SnapshotSource::Head)? {
@@ -1595,12 +1681,14 @@ fn unit_statuses(files: &[StellarFileStatus]) -> Vec<UnitStatus> {
 }
 
 /// materialize한 tree(또는 작업 트리)의 저장 semantic snapshot. 텍스트 원본이 있으면 원본(Git 원본)을 읽고
-/// (ADR-0113 결정 6), 없으면 generation을 읽습니다. 둘 다 없으면 빈 snapshot입니다.
+/// (ADR-0113 결정 6), 없으면 generation을 읽습니다(옛 commit의 옛 배치는 먼저 cache 위치로 옮김, ADR-0122). 둘 다
+/// 없으면 빈 snapshot입니다.
 fn semantic_of(root: &Path, loader: &SavedProjectLoader) -> Result<SemanticSnapshot, String> {
     if let Some(semantic) = crate::snapshot::source_semantic(root)? {
         return Ok(semantic);
     }
-    if !root.join("design/current").exists() {
+    stellar_project::cache::migrate_layout(root).map_err(|e| e.to_string())?;
+    if !stellar_storage::generation::current::current_pointer_path(root).exists() {
         return Ok(SemanticSnapshot::new());
     }
     let project = loader.open(root).map_err(|e| e.to_string())?;
@@ -1614,7 +1702,7 @@ fn put(buf: &mut Vec<u8>, bytes: &[u8]) {
 
 impl GitSession {
     /// 계산 revision. 같은 HEAD·index·저장된 Stellar 파일·raw status면 같은 값입니다.
-    /// 내용 hash로 이름 붙은 immutable 경로(`design/objects/`, `design/generations/`)는 경로만 넣습니다.
+    /// 내용 hash로 이름 붙은 immutable 경로(옛 배치 `design/objects/`, `design/generations/`)는 경로만 넣습니다.
     pub fn revision(&self) -> Result<ContentHash, GitError> {
         let report = read_status(&self.git, &self.root, StatusOptions::default())?;
         let partition = partition_status(&report);
@@ -1650,7 +1738,9 @@ impl GitSession {
             }
             put(&mut buf, file.path.as_bytes());
             let bytes = file.path.as_bytes();
-            if bytes.starts_with(b"design/objects/") || bytes.starts_with(b"design/generations/") {
+            if is_generation_storage(bytes)
+                && bytes != stellar_project::cache::LEGACY_PATHS[0].as_bytes()
+            {
                 continue;
             }
             let content = read_working_tree_file(&self.root, file).map_err(GitError::Path)?;
@@ -1846,6 +1936,7 @@ impl GitSession {
         if input.items.is_empty() {
             return Err(GitError::EmptySelection);
         }
+        self.migrate_cache()?;
         let (selected, units) = split(&input.items);
         let (approved, approved_units) = split(&input.approved);
         let request = StageSelectionRequest {
@@ -2010,13 +2101,34 @@ impl GitSession {
             ));
             return Ok(StagedValidation { index, findings });
         }
-        let project = match SavedProjectLoader::for_materialized_snapshot().open(root) {
+        // staged tree에는 cache가 없으므로 staged 원본으로 만듭니다(ADR-0122). 옛 배치만 있는 staged tree는 옮겨 엽니다.
+        let opened = stellar_project::cache::prepare_snapshot(root)
+            .map_err(|e| e.to_string())
+            .and_then(|_| {
+                SavedProjectLoader::for_materialized_snapshot()
+                    .open(root)
+                    .map_err(|e| e.to_string())
+            });
+        let project = match opened {
             Ok(project) => project,
             Err(e) => {
-                findings.push(StagedFinding::error("storage-invalid", None, e.to_string()));
+                findings.push(StagedFinding::error("storage-invalid", None, e));
                 return Ok(StagedValidation { index, findings });
             }
         };
+        if index
+            .entries
+            .iter()
+            .any(|entry| is_generation_storage(entry.path.as_bytes()))
+        {
+            findings.push(StagedFinding {
+                error: false,
+                code: "legacy-cache-tracked",
+                document: None,
+                message: "옛 배치 chunk cache(design/current 등)가 index에 있습니다(stellar cache migrate로 뺌)"
+                    .into(),
+            });
+        }
         // 컴포넌트 원본은 문서와 별개로 프로젝트 단위 검사이고, 읽은 정의는 문서 판정의 인스턴스 대조에 씁니다.
         let definitions: Result<BTreeSet<StableId>, String> =
             match read_project_library(root, ExternalAccess::MetadataOnly) {
@@ -2113,6 +2225,7 @@ impl GitSession {
     /// 5. 성공하면 HEAD·index·status를 다시 읽습니다. push하지 않습니다.
     pub fn commit(&self, message: &str) -> Result<CommitOutcome, GitError> {
         self.git.runner()?;
+        self.migrate_cache()?;
         let validation = self.validate_staged()?;
         if !validation.is_valid() {
             return Err(GitError::InvalidStagedSnapshot(validation.findings));
@@ -2305,7 +2418,7 @@ mod tests {
         use crate::core_types::reference::{AssetRef, ComponentRef};
         use crate::core_types::value::Size2;
         use crate::test_support::{
-            document_with_unresolved_clips, save_documents, scaffold_project,
+            document_with_unresolved_clips, save_text_document, scaffold_project,
         };
         use stellar_document::component::instance::ComponentInstancePayload;
         use stellar_document::image::ImagePayload;
@@ -2346,7 +2459,7 @@ mod tests {
                 )),
             })
             .unwrap();
-        save_documents(fx.work(), &[&instance]);
+        save_text_document(fx.work(), &instance);
         fx.git(["add", "-A"]).unwrap();
 
         let project = crate::validate::validate_project(fx.work()).unwrap();

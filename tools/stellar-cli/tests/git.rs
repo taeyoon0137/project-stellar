@@ -5,7 +5,7 @@ use std::process::{Command, Output, Stdio};
 
 use stellar_cli::json::{self, JsonValue};
 use stellar_ops::test_support::{
-    large_document, project_id, save_documents, scaffold_project, web_frame, FileTrustStore,
+    large_document, project_id, save_text_document, scaffold_project, web_frame, FileTrustStore,
     FixtureDocument, ProjectIdentity, TempDir,
 };
 
@@ -56,7 +56,7 @@ impl Repo {
             git(&work, &["config", k, v]);
         }
         scaffold_project(&work);
-        save_documents(&work, &[baseline]);
+        save_text_document(&work, baseline);
         git(&work, &["add", "-A"]);
         git(&work, &["commit", "-q", "-m", "baseline"]);
         if trusted {
@@ -139,7 +139,7 @@ fn edited(model: &FixtureDocument) -> FixtureDocument {
 fn status_stage_commit_then_git_log_shows_commit() {
     let model = large_document(4);
     let repo = Repo::new("cli-git-flow", &model, true);
-    save_documents(&repo.work, &[&edited(&model)]);
+    save_text_document(&repo.work, &edited(&model));
 
     let status = envelope(&repo.stellar(&["status", repo.path()]), 0);
     let r = result(&status);
@@ -193,7 +193,7 @@ fn status_stage_commit_then_git_log_shows_commit() {
 fn untrusted_project_is_refused_without_changes() {
     let model = large_document(4);
     let repo = Repo::new("cli-git-untrusted", &model, false);
-    save_documents(&repo.work, &[&edited(&model)]);
+    save_text_document(&repo.work, &edited(&model));
     let index = std::fs::read(repo.work.join(".git/index")).unwrap();
     for args in [
         vec!["status", repo.path()],
@@ -227,7 +227,7 @@ fn companion_component_is_listed_and_included_only_with_approval() {
         web_frame::id(7_001),
     )
     .unwrap();
-    save_documents(&repo.work, &[&web_frame::placed_components("")]);
+    save_text_document(&repo.work, &web_frame::placed_components(""));
 
     let refused = envelope(&repo.stellar(&["stage", repo.path(), "generation"]), 1);
     assert_eq!(
@@ -251,15 +251,21 @@ fn companion_component_is_listed_and_included_only_with_approval() {
         0,
     );
     let status = envelope(&repo.stellar(&["status", repo.path()]), 0);
+    // 텍스트 원본 프로젝트의 generation 묶음은 문서 원본 파일들이고(ADR-0122 결정 5), 모두 stage됐습니다.
     let units = result(&status).get("units").unwrap().as_array().unwrap();
-    for id in [SourceUnit::Generation.to_string(), required[0].clone()] {
-        let unit = units
-            .iter()
-            .find(|u| u.get("id").unwrap().as_str() == Some(id.as_str()))
-            .unwrap();
-        assert_eq!(unit.get("staged").unwrap().as_bool(), Some(true), "{id}");
-        assert_eq!(unit.get("unstaged").unwrap().as_bool(), Some(false), "{id}");
+    let unit = units
+        .iter()
+        .find(|u| u.get("id").unwrap().as_str() == Some(required[0].as_str()))
+        .unwrap();
+    assert_eq!(unit.get("staged").unwrap().as_bool(), Some(true));
+    for unit in units {
+        assert_eq!(
+            unit.get("unstaged").unwrap().as_bool(),
+            Some(false),
+            "{unit:?}"
+        );
     }
+    let _ = SourceUnit::Generation;
     envelope(&repo.stellar(&["commit", repo.path(), "-m", "배치"]), 0);
     assert!(git(&repo.work, &["status", "--porcelain"]).is_empty());
 }

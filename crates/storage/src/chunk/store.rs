@@ -236,10 +236,13 @@ impl ChunkStore {
             return Err(io_error(Refusal::TooLarge { limit }.into_io()));
         }
 
-        // `design/objects/<prefix>`를 symlink를 따르지 않고 확인·생성합니다
+        // `.stellar/cache/chunks/objects/<prefix>`를 symlink를 따르지 않고 확인·생성합니다
         // (`create_dir_all`은 symlink 디렉터리를 통과하므로 쓰지 않음).
-        let dirs = ensure_real_dirs(&self.root, &["design", "objects", path.prefix()])
+        let mut components = crate::chunk::path::OBJECTS_DIR.to_vec();
+        components.push(path.prefix());
+        let dirs = ensure_real_dirs(&self.root, &components)
             .map_err(|(path, source)| ChunkStoreError::Io { path, source })?;
+        crate::location::ensure_cache_ignore(&self.root).map_err(io_error)?;
 
         match FileIdentity::lstat(&target) {
             Ok(_) => {
@@ -627,8 +630,8 @@ mod tests {
         assert_eq!(store.read_chunk(&hash, KIND).unwrap(), b"linked chunk");
     }
 
-    /// 보안 감사 STOR-4: `design`·`design/objects`·shard 디렉터리가 symlink면 따라가지 않고 기록을
-    /// 거부합니다(프로젝트 밖에 디렉터리·파일을 만들지 않음).
+    /// 보안 감사 STOR-4: cache 폴더(`.stellar`·`cache`·`chunks`)·`objects`·shard 디렉터리가 symlink면 따라가지
+    /// 않고 기록을 거부합니다(프로젝트 밖에 디렉터리·파일을 만들지 않음).
     #[cfg(unix)]
     #[test]
     fn write_refuses_symlinked_storage_directories() {
@@ -636,14 +639,12 @@ mod tests {
         let prefix = ChunkObjectPath::for_hash(&ContentHash::compute(payload))
             .prefix()
             .to_string();
-        for (link, real_parents) in [
-            (vec!["design"], vec![]),
-            (vec!["design", "objects"], vec!["design"]),
-            (
-                vec!["design", "objects", prefix.as_str()],
-                vec!["design", "objects"],
-            ),
-        ] {
+        let objects = crate::chunk::path::OBJECTS_DIR;
+        for depth in 1..=objects.len() + 1 {
+            let mut link: Vec<&str> = objects.to_vec();
+            link.push(prefix.as_str());
+            link.truncate(depth);
+            let real_parents = link[..depth - 1].to_vec();
             let dir = TempDir::new();
             let outside = TempDir::new();
             let mut parent = dir.path.clone();

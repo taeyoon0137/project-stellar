@@ -107,6 +107,42 @@ pub fn write_manifest(root: &Path, name: &str) {
 }
 
 /// 문서들을 실제 저장 파이프라인(V.5)으로 current generation 위에 저장합니다(디스크 기록).
+/// 문서 하나를 제품 저장 순서(텍스트 원본 → chunk cache → stamp, ADR-0088·ADR-0122)로 저장합니다. Git이 담는 것은
+/// 텍스트 원본뿐이므로 Git 시나리오 fixture는 이 helper를 씁니다.
+#[allow(dead_code)]
+pub fn save_text_document(root: &Path, model: &DocumentModel) {
+    use stellar_project::document_io::session::{commit, read_source, write_stamp, Stamp};
+    use stellar_project::document_io::source_v4::project::TextProject;
+    let base = read_source(root)
+        .unwrap()
+        .map(|files| files.base)
+        .unwrap_or_default();
+    let (copy, _) = DocumentModel::from_records(model.to_records().unwrap()).unwrap();
+    let written = commit(
+        root,
+        &base,
+        &TextProject {
+            document: copy,
+            components: Default::default(),
+            token_sets: Vec::new(),
+            images: Default::default(),
+        },
+    )
+    .unwrap();
+    save_documents(root, &[model]);
+    let manifest = stellar_storage::generation::current::read_current_pointer(root).unwrap();
+    write_stamp(
+        root,
+        &Stamp {
+            source: written.base.digest(),
+            manifest,
+        },
+    )
+    .unwrap();
+}
+
+/// 문서들을 chunk cache에만 저장합니다(텍스트 원본 없음, Git 밖).
+#[allow(dead_code)]
 pub fn save_documents(root: &Path, documents: &[&DocumentModel]) {
     let base = load_current_generation(root, project_id()).ok();
     let serialized: Vec<_> = documents

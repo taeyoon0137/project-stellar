@@ -6,7 +6,8 @@ use std::{
 };
 use stellar_cli::json::{parse, JsonLimits, JsonValue};
 use stellar_ops::test_support::{
-    file_digest, large_document, legacy_component_yaml, save_documents, scaffold_project, TempDir,
+    file_digest, large_document, legacy_component_yaml, save_documents, save_text_document,
+    scaffold_project, TempDir,
 };
 
 const A: &str = "0195c530-3acd-7bc1-8414-c213f61cb965";
@@ -85,7 +86,7 @@ fn git_and_semantic_merge_of_two_clones_separate_frame_width_and_background() {
     let home = fixture.path.join("home");
     fs::create_dir(&home).unwrap();
     scaffold_project(&base);
-    save_documents(&base, &[&large_document(4)]);
+    save_text_document(&base, &large_document(4));
     fs::create_dir_all(base.join("design/components")).unwrap();
     let card = cli(
         &base,
@@ -225,7 +226,7 @@ fn frame_corners_merge_by_line_in_git_and_by_property_in_semantic_merge() {
     let home = fixture.path.join("home");
     fs::create_dir(&home).unwrap();
     scaffold_project(&base);
-    save_documents(&base, &[&large_document(4)]);
+    save_text_document(&base, &large_document(4));
     let folder = "design/components";
     fs::create_dir_all(base.join(folder)).unwrap();
     let card = cli(&base, &home, &["create", folder, "Card", A, AR], 0);
@@ -347,7 +348,7 @@ fn independent_component_files_merge_and_open_without_cache() {
     let fixture = TempDir::new("component-source-merge");
     let repo = fixture.path.join("repo");
     scaffold_project(&repo);
-    save_documents(&repo, &[&large_document(4)]);
+    save_text_document(&repo, &large_document(4));
     let project_before = file_digest(&repo);
     let folder = "design/components";
     fs::create_dir_all(repo.join(folder)).unwrap();
@@ -425,8 +426,12 @@ fn independent_component_files_merge_and_open_without_cache() {
     assert_eq!(file_digest(&fresh), before_query);
     assert!(git(&fresh, &["status", "--porcelain"]).is_empty());
     assert_eq!(git(&fresh, &["ls-files", folder]).lines().count(), 2);
+    // clone에는 Git 원본만 옵니다. 로컬 chunk cache(`.stellar/`)는 Git 밖이라 오지 않습니다(ADR-0122).
     let reopened_project = file_digest(&fresh);
-    for (path, hash) in project_before {
+    for (path, hash) in project_before
+        .into_iter()
+        .filter(|(path, _)| !path.starts_with(".stellar/"))
+    {
         assert_eq!(reopened_project.get(&path), Some(&hash), "{path}");
     }
 }
@@ -918,7 +923,7 @@ fn semantic_diff_compares_project_components_across_git_worktrees() {
     let home = fixture.path.join("home");
     fs::create_dir(&home).unwrap();
     scaffold_project(&repo);
-    save_documents(&repo, &[&large_document(4)]);
+    save_text_document(&repo, &large_document(4));
     git(&repo, &["init", "-q", "-b", "main"]);
     let folder = "design/components";
     fs::create_dir_all(repo.join(folder)).unwrap();
@@ -974,7 +979,8 @@ fn semantic_diff_compares_project_components_across_git_worktrees() {
     let staged = git(&repo, &["write-tree"]);
     let before = file_digest(&repo);
     let result = observe();
-    assert_eq!(result.get("base_revision"), result.get("target_revision"));
+    // 두 worktree의 로컬 cache는 서로 다르므로(Git 밖, ADR-0122) revision이 같다고 보지 않습니다. 비교는 원본 의미입니다.
+    assert!(result.get("base_revision").is_some() && result.get("target_revision").is_some());
     let changes = result
         .get("changes")
         .unwrap()
@@ -1009,7 +1015,8 @@ fn semantic_diff_compares_project_components_across_git_worktrees() {
         .open(repo.join(&new_path))
         .unwrap();
     writeln!(file, "# formatting only").unwrap();
-    assert_eq!(observe(), result);
+    // 텍스트 원본 revision은 원본 bytes를 담으므로 바뀌지만(ADR-0113 결정 2) 의미 변경은 같습니다.
+    assert_eq!(observe().get("changes"), result.get("changes"));
 
     let summary = run(&repo, &home, "diff-summary", &args, 0);
     assert_eq!(summary.get("total").and_then(JsonValue::as_i64), Some(6));
@@ -1050,7 +1057,7 @@ fn semantic_diff_compares_project_components_across_git_worktrees() {
         assert_eq!(value(conflict, "kind"), "property-value");
         assert_eq!(value(conflict, "path"), axis);
     }
-    assert_eq!(observe(), result);
+    assert_eq!(observe().get("changes"), result.get("changes"));
 
     // 손상된 텍스트 파일을 변경 없음으로 취급하거나 기록하지 않습니다.
     fs::write(repo.join(&new_path), "invalid").unwrap();
