@@ -80,10 +80,13 @@ Accepted (2026-11-23). engine lane `headless-e2e`의 결정입니다. 계획 XVI
 
 - 실제 Git 저장소(C v1·v2, A→C v1, B→C v2)를 bare mirror fetch·`ls-remote`·commit `stellar.yaml` 읽기로 해석하고
   (`MirrorCache`·`GitSelectorResolver`·`GitManifestSource`·`resolve_dependency_graph`), 다중 버전 경고(`duplicate_version_reports`),
-  update 후보(`prepare_library_update`)와 resource diff의 삭제 property(`removed_properties`)까지 확인합니다.
+  commit별 cache entry materialize(`LibraryEntryStore`, 실제 content hash로 lock 생성), update 후보(`prepare_library_update` +
+  제품 `CacheUpdateSource`: 후보 commit materialize·entry 검증·lock hash 대조)와 resource diff의 삭제 property(`removed_properties`)까지
+  확인합니다.
 - 제품에 없는 것: (1) 후보 library와 사용 프로젝트 instance override를 대조해 orphan 진단을 내는 생산자(XV.7.3 미착수),
   (2) 승인 뒤 lock·in-memory snapshot 적용(XV.7.4), (3) 의존성 trait(`GitCommandRunner`·`RepositoryKeyer`·`LibraryExportSource`·
-  `LibraryProjectValidator`)의 제품 구현. 테스트는 (3)을 얇은 연결(git-porcelain `GitRunner`, 저장 hash keyer, commit별 export 표)로
+  `LibraryProjectValidator`)의 제품 구현. 테스트는 (3)을 얇은 연결(git-porcelain `GitRunner`, 저장 hash keyer·SHA-256, entry 매니페스트
+  probe, release가 commit한 export 목록 파일을 entry에서 읽는 공급자)로
   두고, (1)의 진단을 테스트 안에서 따로 판정하지 않습니다(이중 판정 금지). XVI.11.4는 부분 완료입니다.
 
 ### 8. XVI.11.6은 같은 앱의 두 창으로 두 선택지를 각각 확인한다

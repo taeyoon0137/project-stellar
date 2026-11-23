@@ -34,7 +34,7 @@
 
 | 테스트 | 결과 |
 |---|---|
-| `two_versions_warning_update_and_removed_override_property` | 통과 — 실제 Git 저장소 C(v1·v2)·A(v1→C v1, v2→C v2)·B(→C v2)와 사용 프로젝트 선언(실제 `stellar.yaml` 파서) → bare mirror fetch·`ls-remote`·commit 매니페스트로 해석: C 두 commit 격리, 경고 경로 `a > c`·`b > c`, 추가 용량 하한(cache 없음 2개), telemetry에 URL 없음 → `prepare_library_update`(A tag v2 재해석): 현재 A v1·후보 A v2, lock 불변 → resource diff `removed_properties` = Card.badge → A v2 선언으로 다시 해석하면 C v2 하나, 경고 없음 |
+| `two_versions_warning_update_and_removed_override_property` | 통과 — 실제 Git 저장소 C(v1·v2)·A(v1→C v1, v2→C v2)·B(→C v2)와 사용 프로젝트 선언(실제 `stellar.yaml` 파서) → bare mirror fetch·`ls-remote`·commit 매니페스트로 해석: C 두 commit 격리, 경고 경로 `a > c`·`b > c`, 추가 용량 하한(cache 없음 2개), telemetry에 URL 없음 → node마다 `LibraryEntryStore::materialize`(실제 content hash·크기, project file만 entry에 들어감) → cache index로 계산한 추가 용량 = 정확한 값 → 실제 entry hash로 만든 lock과 제품 `CacheUpdateSource`로 `prepare_library_update`(A tag v2 재해석): 현재 snapshot hash = lock hash, 후보 A v2는 새로 materialize·검증한 entry에서 읽음, lock 불변 → resource diff `removed_properties` = Card.badge → A v2 선언으로 다시 해석하면 C v2 하나, 경고 없음 |
 
 ## 성능
 
@@ -42,7 +42,8 @@
 
 ## 차이
 
-- 의존성 crate trait의 제품 구현이 없어 테스트가 얇은 연결을 둡니다: `GitCommandRunner`(git-porcelain `GitRunner`), `RepositoryKeyer`(저장 SHA-256), commit별 export 표(`UpdateSnapshotSource`). library 저장소 파일에서 export를 읽는 공급자가 없기 때문입니다(ADR-0111 결정 7).
+- 의존성 crate trait의 제품 구현이 없어 테스트가 얇은 연결을 둡니다: `GitCommandRunner`(git-porcelain `GitRunner`), `RepositoryKeyer`·`Sha256Digest`(저장 SHA-256), `LibraryProjectValidator`(entry `stellar.yaml`을 제품 매니페스트 parser로 읽고 storage 검증은 통과), `LibraryExportSource`(release가 commit한 `design/e2e-exports.txt`를 entry에서 읽음). update snapshot 공급은 제품 `CacheUpdateSource`입니다(ADR-0111 결정 7).
+- 검토 보완: 처음 구현은 `UpdateSnapshotSource`를 commit별 표로 직접 구현하고 lock content hash를 commit id hash로 지어내 제품 cache 경로(materialize·entry 검증·lock hash 대조)를 건너뛰었습니다. 제품 `CacheUpdateSource`와 실제 entry hash로 바꿨습니다.
 - orphan 진단은 테스트에서 따로 만들지 않았습니다(이중 판정 금지). 그 입력인 삭제 property 목록까지 확인합니다.
 
 ## 남은 위험
