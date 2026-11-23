@@ -6,6 +6,8 @@
 //!   거부합니다. 손실 저장은 없습니다.
 //! - View·컴포넌트 원본 v1~v3은 읽기 전용이고, 실제 편집 때만 v4로 다시 씁니다.
 
+/// 텍스트 asset catalog(TS-ASSET).
+pub mod catalog;
 /// CSS 값 문법.
 pub(crate) mod css;
 /// registry 기반 파일 키.

@@ -66,7 +66,7 @@ Accepted (2026-11-23). 엔진 lane `text-source-codec`(V.10.3·V.10.4·IX.11.21�
      registry 이름으로 바꾸는 일은 css-registry lane이 MCP schema와 함께 합니다.
 3. **손실 저장 없음.** 텍스트로 정확히 복원할 수 없는 의미가 하나라도 있으면 쓰기를 거부하고 generation을
    그대로 둡니다. 현재 거부 대상: Text style의 고정 face family, 해석할 수 없거나 알 수 없는 bytes를 보존한
-   typography, 외부 출처 지문(HMAC)을 가진 asset record, 보존된 unknown optional field, 컴포넌트 Property·Slot·
+   typography, 보존된 unknown optional field, 컴포넌트 Property·Slot·
    상태 머신(표현식 문법이 정해지기 전), 리터럴이 아닌 token 기본 표현식과 리터럴로 쓰지 않는 값 타입(enum·
    gradient·shadow·typography·resource-ref), 하나를 넘는 root 문서, 알 수 없는 chunk.
 4. **제품 migration registry(IX.11.21).** `crates/project/src/migration/`에 둡니다.

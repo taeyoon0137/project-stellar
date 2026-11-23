@@ -194,6 +194,45 @@ component:
 nodes: [...]               # root 포함, StableId 오름차순, modifiers 없음
 ```
 
+## asset catalog
+
+`design/assets/catalog.stellar.yaml` 하나가 이미지 asset record, 등록 글꼴, 문서별 Text style 표의 원본입니다. 문서·View·컴포넌트는 asset StableId·글꼴 file hash·style index로 참조만 합니다.
+
+```yaml
+format: stellar-asset-catalog
+schema_version: "4"
+images:                      # asset StableId 오름차순
+  -
+    id: "<asset StableId>"
+    content-hash: "sha256:<hex64>"
+    media-type: "image/png"
+    size: "3"
+    source: none | "project <상대 경로>" | "external <출처 지문> <파일 이름>"
+fonts:                       # file hash 오름차순, 어떤 문서든 참조해야 함
+  -
+    file-hash: "sha256:<hex64>"
+    asset-id: "<StableId>"
+    format: "font/ttf"       # font/ttf·font/otf·font/collection·font/woff·font/woff2
+    faces:
+      -
+        family: none | "..."
+        subfamily: none | "..."
+        postscript: none | "..."
+    license-state: unknown | allowed | restricted | user-confirmed
+    license-name: none | "..."
+    license-url: none | "..."
+    copyright: none | "..."
+    notes: none | "..."
+    content-hash: "sha256:<hex64>"   # 글꼴 파일 asset record
+    media-type: "font/ttf"
+    size: "1024"
+    source: none | ...
+text-styles:                 # 문서 StableId 오름차순, 각 항목은 위 Text style 표
+  - ...
+```
+
+읽은 글꼴·asset 값은 binary record로 다시 인코딩해 원본 bytes와 같은지 확인합니다. 보존된 unknown optional field가 있는 record, 문서마다 다른 record를 가진 같은 file hash, 값이 문자열 `none`인 이름·라이선스 field는 쓰지 않습니다.
+
 ## Git 병합
 
 줄이 병합 단위입니다. 사이에 바뀌지 않은 줄이 있는 두 속성(예: `background`와 `width`)은 일반 `git merge`로 합쳐집니다. registry 순서에서 바로 이웃한 두 줄(`width`·`height`, 이웃한 모서리)을 서로 다른 브랜치가 바꾸면 Git 텍스트 충돌로 남고 자동 해결은 merge driver(XXIV.2.1) 이후입니다.
