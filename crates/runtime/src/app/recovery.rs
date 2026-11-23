@@ -3,6 +3,13 @@
 //! 제안은 V.9.3 규칙을 따릅니다: 기준 세대가 디스크의 current와 같고 미저장 revision이 있는 복구본만
 //! 제안합니다. 사용자는 Restore(이 창 메모리에 복원), Discard(복구본 삭제), Later(그대로 둠) 중 하나를
 //! 고릅니다. 복구 동작은 디스크의 프로젝트 파일을 쓰지 않습니다.
+//!
+//! 앱 시작 뒤 창을 열면 셸은 [`AppRuntime::recovery_probe`]로 최신 복구본 하나의 probe 결과를 받고, 사용자의
+//! 선택을 [`AppRuntime::recover_checkpoint`]로 넘깁니다(XIII.8.3). 두 함수는 runtime이 복구본을 쓰는 같은
+//! 저장소([`AppRuntime::enable_recovery`])를 읽습니다. 저장된 복구본 하나의 판정은
+//! [`judge_stored_snapshot`]이고(폐기 표식·payload·기준 세대), 순서는 마지막에 기록한 복구본부터입니다.
+//! 정상 저장·닫기·Discard의 삭제는 [`discard_snapshot`]이라, 삭제가 실패해 남은 복구본은 다음 시작에서
+//! stale로 무시합니다(XIII.8.7, ADR-0120 결정 2).
 use super::*;
 use std::fs;
 use std::io;
@@ -16,7 +23,8 @@ use stellar_project::document_io::load::{load_document, MemoryChunks};
 use stellar_project::document_io::serialize::{manifest_chunk_id, serialize_document};
 use stellar_project::recovery::RecoverySnapshotStore;
 use stellar_project::recovery_payload::{OpenTab, RecoveryPayload, UnsavedChunk, Viewport};
-use stellar_project::recovery_probe::{assess_snapshot, SnapshotFreshness};
+use stellar_project::recovery_probe::{judge_stored_snapshot, StoredSnapshot};
+use stellar_project::recovery_shutdown::discard_snapshot;
 use stellar_storage::chunk::kinds::KIND_DOCUMENT_MANIFEST;
 use stellar_storage::generation::current::read_current_pointer;
 use stellar_storage::hash::ContentHash;
@@ -34,6 +42,19 @@ pub struct RecoveryCandidate {
     pub window: WindowSessionId,
     /// 제안한 복구본 파일 bytes의 hash.
     pub hash: ContentHash,
+}
+
+/// 셸에 돌려주는 복구 probe 결과(XIII.8.3). 사용자에게 보일 요약과, 선택을 적용할 때 넘길 후보입니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryProbe {
+    /// 선택을 적용할 때 [`AppRuntime::recover_checkpoint`]에 넘길 후보.
+    pub candidate: RecoveryCandidate,
+    /// 복구본의 미저장 revision(1 이상).
+    pub revision: u64,
+    /// 복구본에 기록한 열린 View 탭 수.
+    pub open_tabs: usize,
+    /// 복구본 파일을 마지막으로 기록한 시각(읽을 수 없으면 `None`).
+    pub written_at: Option<std::time::SystemTime>,
 }
 
 /// 복구 제안에 대한 사용자의 결정. Later는 아무것도 하지 않으므로 요청이 없습니다.
@@ -214,7 +235,9 @@ impl ProjectSummary {
         Ok((id, RecoverySnapshotStore::new(root)))
     }
     /// 제안할 복구본 하나. V.9.3 규칙(기준 세대 = current, 미저장 revision 있음)을 따르고, 다른 살아 있는
-    /// 앱·창이 잠근 복구본과 읽을 수 없는 복구본은 제외합니다. 최근 창부터 고릅니다.
+    /// 앱·창이 잠근 복구본, 읽을 수 없는 복구본, 폐기했지만 삭제하지 못한 복구본은 제외합니다. 마지막에 기록한
+    /// 복구본부터 고릅니다. OS 사용자 데이터의 저장소를 읽습니다(셸 FFI 경로). 새 코드는
+    /// [`AppRuntime::recovery_probe`]를 씁니다.
     pub fn recovery_candidate(&self) -> Result<Option<RecoveryCandidate>, String> {
         self.recovery_candidate_in(&Self::recovery_root()?)
     }
@@ -223,10 +246,19 @@ impl ProjectSummary {
         &self,
         root: &std::path::Path,
     ) -> Result<Option<RecoveryCandidate>, String> {
+        Ok(self.recovery_probe_in(root)?.map(|probe| probe.candidate))
+    }
+    /// 복구본 저장소 `root`에서 제안할 복구본 하나의 probe 결과를 만듭니다.
+    pub(in crate::app) fn recovery_probe_in(
+        &self,
+        root: &std::path::Path,
+    ) -> Result<Option<RecoveryProbe>, String> {
         let (id, store) = self.recovery_store_in(root)?;
         let current = read_current_pointer(id.canonical_target()).ok();
-        let sessions = store.list_sessions(&id).map_err(|e| e.to_string())?;
-        for name in sessions.into_iter().rev() {
+        let sessions = store
+            .list_sessions_newest_first(&id)
+            .map_err(|e| e.to_string())?;
+        for name in sessions {
             let Some(window) = parse_project_id(&name).map(WindowSessionId::from_stable_id) else {
                 continue;
             };
@@ -241,25 +273,26 @@ impl ProjectSummary {
             else {
                 continue;
             };
-            let payload = match RecoveryPayload::decode(&bytes) {
-                Ok(payload) => payload,
-                Err(error) => {
-                    // V.9.3: 해석할 수 없는 복구본은 제안하지 않고 사유만 남깁니다.
-                    eprintln!("Stellar recovery: 읽을 수 없는 복구본을 건너뜁니다: {error}");
+            let (payload, hash) = match judge_stored_snapshot(&store, &id, window, current, &bytes)
+            {
+                StoredSnapshot::Fresh { payload, hash } => (payload, hash),
+                StoredSnapshot::Stale { reason } => {
+                    // V.9.3: 해석할 수 없는 복구본은 제안하지 않고 사유만 남깁니다(내용은 기록하지 않음).
+                    if reason == stellar_project::recovery_probe::StaleReason::UnreadablePayload {
+                        eprintln!("Stellar recovery: 읽을 수 없는 복구본을 건너뜁니다");
+                    }
                     continue;
                 }
             };
-            // 저장한 적 없는 기준이거나, 뒤에 정상 저장되어 current가 바뀐 복구본은 제안하지 않습니다.
-            let fresh = matches!(
-                assess_snapshot(current, &payload),
-                SnapshotFreshness::Fresh { .. }
-            );
-            if payload.base_manifest_hash.is_none() || !fresh {
+            // 저장한 적 없는 기준의 복구본은 이 창의 세대에 복원할 수 없으므로 제안하지 않습니다.
+            if payload.base_manifest_hash.is_none() {
                 continue;
             }
-            return Ok(Some(RecoveryCandidate {
-                window,
-                hash: ContentHash::compute(&bytes),
+            return Ok(Some(RecoveryProbe {
+                candidate: RecoveryCandidate { window, hash },
+                revision: payload.revision,
+                open_tabs: payload.open_tabs.len(),
+                written_at: store.snapshot_modified(&id, window),
             }));
         }
         Ok(None)
@@ -300,10 +333,6 @@ struct PreparedRecovery {
 }
 impl ProjectSummary {
     /// 파일 읽기와 문서 조립은 셸 worker에서 수행합니다.
-    fn prepare_recovery(&self, candidate: &RecoveryCandidate) -> Result<PreparedRecovery, String> {
-        self.prepare_recovery_in(&Self::recovery_root()?, candidate)
-    }
-
     fn prepare_recovery_in(
         &self,
         root: &std::path::Path,
@@ -327,17 +356,46 @@ impl ProjectSummary {
         })
     }
 
-    /// 표시한 것과 같은 bytes인 복구본만 지웁니다. 문서는 조립하지 않습니다.
-    fn discard_recovery(&self, candidate: &RecoveryCandidate) -> Result<(), String> {
-        let (id, store, _lease, _) = self.read_recovery(&Self::recovery_root()?, candidate)?;
-        store
-            .remove_snapshot(&id, candidate.window)
-            .map_err(|e| e.to_string())?;
+    /// 표시한 것과 같은 bytes인 복구본만 폐기합니다. 문서는 조립하지 않습니다. 삭제가 실패해도 폐기 표식이
+    /// 남아 다음 시작에서 제안하지 않습니다.
+    fn discard_recovery_in(
+        &self,
+        root: &std::path::Path,
+        candidate: &RecoveryCandidate,
+    ) -> Result<(), String> {
+        let (id, store, _lease, _) = self.read_recovery(root, candidate)?;
+        discard_snapshot(&store, &id, candidate.window).map_err(|e| e.to_string())?;
         remove_lock(&store, &id, candidate.window);
         Ok(())
     }
 }
 impl AppRuntime {
+    /// 복구본 저장소 root. [`AppRuntime::enable_recovery`]로 켰거나 시험이 바꾼 위치이고, 없으면 OS 사용자
+    /// 데이터의 기본 위치입니다(셸 FFI의 [`ProjectSummary::recovery_candidate`]와 같은 곳).
+    fn recovery_store_root(&self) -> Result<PathBuf, String> {
+        match &self.recovery_root {
+            Some(root) => Ok(root.clone()),
+            None => ProjectSummary::recovery_root(),
+        }
+    }
+
+    /// 이 창 session의 프로젝트에 제안할 최신 복구본의 probe 결과(XIII.8.3). 없으면 `None`입니다.
+    ///
+    /// 파일을 읽으므로 UI thread 밖에서 부릅니다. 셸은 결과를 사용자에게 보이고 Restore·Discard 선택을
+    /// [`AppRuntime::recover_checkpoint`]로 넘깁니다. Later는 아무것도 부르지 않으며 복구본은 그대로 남습니다.
+    pub fn recovery_probe(
+        &self,
+        session: WindowSessionHandle,
+    ) -> Result<Option<RecoveryProbe>, String> {
+        let root = self.recovery_store_root()?;
+        let state = self.state();
+        state
+            .window(session)
+            .and_then(|w| state.project(w.project))
+            .ok_or("열린 창이 없습니다")?
+            .recovery_probe_in(&root)
+    }
+
     /// 셸은 request만 즉시 접수합니다. 파일 읽기와 검증은 worker가 수행합니다. 두 동작 모두
     /// [`RuntimeEvent::WindowViewChanged`] 또는 [`RuntimeEvent::RequestFailed`]로 끝납니다.
     pub fn recover_checkpoint(
@@ -350,18 +408,20 @@ impl AppRuntime {
         let state = self.state();
         let shared = self.shared.clone();
         let sender = self.sender.clone();
+        let root = self.recovery_store_root();
         let launch = std::thread::Builder::new()
             .name("stellar-recover-document".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(|| -> Result<(), String> {
+                    let root = root?;
                     let p = state
                         .window(session)
                         .and_then(|w| state.project(w.project))
                         .ok_or("열린 창이 없습니다")?;
                     if action == RecoveryAction::Discard {
-                        return p.discard_recovery(&candidate);
+                        return p.discard_recovery_in(&root, &candidate);
                     }
-                    let ready = p.prepare_recovery(&candidate)?;
+                    let ready = p.prepare_recovery_in(&root, &candidate)?;
                     let snapshot = shared.clone();
                     sender
                         .submit(move |ctx| {

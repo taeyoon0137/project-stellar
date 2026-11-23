@@ -298,14 +298,12 @@ impl Worker {
                 }
                 match capture {
                     Some(c) => c.write(&self.store, &self.identity, self.owner)?,
-                    None => self
-                        .store
-                        .remove_snapshot(&self.identity, self.owner)
+                    // 정상 저장·닫기: 삭제가 실패해도 폐기 표식이 남아 다음 시작에서 제안하지 않습니다(XIII.8.7).
+                    None => discard_snapshot(&self.store, &self.identity, self.owner)
                         .map_err(io::Error::other)?,
                 }
                 if let Some((old, _)) = &self.previous {
-                    self.store
-                        .remove_snapshot(&self.identity, *old)
+                    discard_snapshot(&self.store, &self.identity, *old)
                         .map_err(io::Error::other)?;
                     remove_lock(&self.store, &self.identity, *old);
                     self.previous = None;

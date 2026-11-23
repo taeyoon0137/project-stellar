@@ -19,6 +19,8 @@ use crate::identity::ProjectIdentity;
 
 /// 스냅샷 파일 확장자.
 const SNAPSHOT_EXTENSION: &str = "starrecovery";
+/// 폐기 표식 확장자. 지우려던 스냅샷 bytes의 hash를 담습니다(XIII.8.7, ADR-0120 결정 2).
+const DISCARDED_EXTENSION: &str = "discarded";
 
 /// 복구 스냅샷 저장소 오류.
 #[derive(Debug)]
@@ -93,6 +95,16 @@ impl RecoverySnapshotStore {
             .join(format!("{window_session}.{SNAPSHOT_EXTENSION}"))
     }
 
+    /// 한 (프로젝트, 창 세션)의 폐기 표식 경로. 내용은 폐기한 스냅샷 bytes의 content hash 문자열입니다.
+    pub fn discarded_marker_path(
+        &self,
+        identity: &ProjectIdentity,
+        window_session: WindowSessionId,
+    ) -> PathBuf {
+        self.project_dir(identity)
+            .join(format!("{window_session}.{DISCARDED_EXTENSION}"))
+    }
+
     /// 스냅샷 bytes를 atomic write로 기록합니다(V.2.5 정책).
     pub fn write_snapshot(
         &self,
@@ -147,6 +159,41 @@ impl RecoverySnapshotStore {
             .collect();
         sessions.sort_unstable();
         Ok(sessions)
+    }
+
+    /// 한 프로젝트의 스냅샷 세션 목록을 최근에 기록한 것부터 돌려줍니다(XIII.8.3 "최신 snapshot").
+    ///
+    /// 순서는 스냅샷 파일 수정 시각 내림차순이고, 시각이 같거나 읽을 수 없으면 세션 이름 내림차순입니다.
+    /// 수정 시각을 읽지 못한 파일은 가장 오래된 것으로 봅니다. 창 세션 UUID 순서는 창을 연 순서일 뿐
+    /// 마지막 기록 순서가 아니므로 이름만으로 정렬하지 않습니다.
+    pub fn list_sessions_newest_first(
+        &self,
+        identity: &ProjectIdentity,
+    ) -> Result<Vec<String>, RecoveryStoreError> {
+        let mut sessions: Vec<(Option<std::time::SystemTime>, String)> = self
+            .list_sessions(identity)?
+            .into_iter()
+            .map(|name| {
+                let path = self
+                    .project_dir(identity)
+                    .join(format!("{name}.{SNAPSHOT_EXTENSION}"));
+                let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+                (modified, name)
+            })
+            .collect();
+        sessions.sort_unstable_by(|a, b| b.cmp(a));
+        Ok(sessions.into_iter().map(|(_, name)| name).collect())
+    }
+
+    /// 스냅샷 파일의 마지막 수정 시각. 없거나 읽을 수 없으면 `None`.
+    pub fn snapshot_modified(
+        &self,
+        identity: &ProjectIdentity,
+        window_session: WindowSessionId,
+    ) -> Option<std::time::SystemTime> {
+        std::fs::metadata(self.snapshot_path(identity, window_session))
+            .and_then(|m| m.modified())
+            .ok()
     }
 
     /// 스냅샷을 삭제합니다. 없으면 아무 일도 하지 않습니다.
@@ -294,5 +341,39 @@ mod tests {
         store.write_snapshot(&identity, session(1), b"a").unwrap();
         store.write_snapshot(&identity, session(2), b"b").unwrap();
         assert_eq!(store.list_sessions(&identity).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn sessions_are_listed_by_last_write_not_by_session_name() {
+        // XIII.8.3: 최신 스냅샷은 마지막에 기록한 것입니다. 창 UUID 순서(창을 연 순서)와 다를 수 있습니다.
+        let (_project_dir, identity) = identity_with_name("RecencyProject");
+        let app_data = TempDir::new("stellar-recovery-appdata");
+        let store = RecoverySnapshotStore::new(&app_data.path);
+        let base =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);
+        for (window, offset) in [(session(1), 30), (session(2), 10), (session(3), 20)] {
+            store.write_snapshot(&identity, window, b"p").unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(store.snapshot_path(&identity, window))
+                .unwrap()
+                .set_modified(base + std::time::Duration::from_secs(offset))
+                .unwrap();
+        }
+        assert_eq!(
+            store.list_sessions_newest_first(&identity).unwrap(),
+            vec![
+                session(1).to_string(),
+                session(3).to_string(),
+                session(2).to_string()
+            ]
+        );
+        assert_eq!(
+            store.snapshot_modified(&identity, session(3)),
+            Some(base + std::time::Duration::from_secs(20))
+        );
+        // 폐기 표식은 스냅샷 목록에 나타나지 않습니다.
+        std::fs::write(store.discarded_marker_path(&identity, session(4)), b"x").unwrap();
+        assert_eq!(store.list_sessions(&identity).unwrap().len(), 3);
     }
 }

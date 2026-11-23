@@ -8,6 +8,12 @@
 //!   제안하지 않음.
 //! - revision 0(미저장 변경 없음)이면 복구할 것이 없음 — 제안하지 않음.
 //! - payload를 읽지 못하는 스냅샷은 제안 대상에서 제외하고 사유만 보고.
+//! - 정상 저장·닫기·폐기로 지우려다 남은 스냅샷(폐기 표식의 hash와 bytes가 같음)은
+//!   제안하지 않음(XIII.8.7, [`discard_snapshot`](crate::recovery_shutdown::discard_snapshot)).
+//!
+//! 저장된 스냅샷 하나의 판정은 [`judge_stored_snapshot`] 하나로 합니다. 이 crate의 probe와 앱 runtime의
+//! 복구 제안이 같은 함수를 씁니다. 목록은 최근에 기록한 스냅샷부터입니다
+//! ([`RecoverySnapshotStore::list_sessions_newest_first`]).
 
 use std::fmt;
 use std::path::Path;
@@ -15,9 +21,12 @@ use std::path::Path;
 use stellar_storage::generation::current::{read_current_pointer, CurrentPointerError};
 use stellar_storage::hash::ContentHash;
 
+use stellar_core_types::ids::WindowSessionId;
+
 use crate::identity::ProjectIdentity;
 use crate::recovery::{RecoverySnapshotStore, RecoveryStoreError};
 use crate::recovery_payload::RecoveryPayload;
+use crate::recovery_shutdown::is_discarded;
 
 /// 스냅샷 하나의 최신성 판정.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +57,8 @@ pub enum StaleReason {
     },
     /// payload를 해석할 수 없습니다.
     UnreadablePayload,
+    /// 정상 저장·닫기·폐기로 지우려다 삭제에 실패해 남은 스냅샷입니다.
+    Discarded,
 }
 
 impl fmt::Display for StaleReason {
@@ -58,6 +69,7 @@ impl fmt::Display for StaleReason {
                 f.write_str("스냅샷 이후 정상 저장이 진행됨")
             }
             StaleReason::UnreadablePayload => f.write_str("payload 해석 불가"),
+            StaleReason::Discarded => f.write_str("폐기했지만 삭제하지 못한 스냅샷"),
         }
     }
 }
@@ -89,6 +101,52 @@ pub struct RecoveryProposal {
     pub window_session: String,
     /// 스냅샷 revision.
     pub revision: u64,
+    /// 판정한 스냅샷 파일 bytes의 hash. 적용할 때 같은 bytes인지 다시 확인하는 데 씁니다.
+    pub hash: ContentHash,
+}
+
+/// 저장된 스냅샷 하나의 판정 결과.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StoredSnapshot {
+    /// 제안 대상입니다.
+    Fresh {
+        /// 해석한 payload.
+        payload: RecoveryPayload,
+        /// 스냅샷 파일 bytes의 hash.
+        hash: ContentHash,
+    },
+    /// 제안하지 않습니다.
+    Stale {
+        /// 사유.
+        reason: StaleReason,
+    },
+}
+
+/// 저장소에서 읽은 스냅샷 bytes 하나를 판정합니다. 순서: 폐기 표식 → payload 해석 → [`assess_snapshot`].
+pub fn judge_stored_snapshot(
+    store: &RecoverySnapshotStore,
+    identity: &ProjectIdentity,
+    window_session: WindowSessionId,
+    current: Option<ContentHash>,
+    bytes: &[u8],
+) -> StoredSnapshot {
+    if is_discarded(store, identity, window_session, bytes) {
+        return StoredSnapshot::Stale {
+            reason: StaleReason::Discarded,
+        };
+    }
+    let Ok(payload) = RecoveryPayload::decode(bytes) else {
+        return StoredSnapshot::Stale {
+            reason: StaleReason::UnreadablePayload,
+        };
+    };
+    match assess_snapshot(current, &payload) {
+        SnapshotFreshness::Fresh { .. } => StoredSnapshot::Fresh {
+            payload,
+            hash: ContentHash::compute(bytes),
+        },
+        SnapshotFreshness::Stale { reason } => StoredSnapshot::Stale { reason },
+    }
 }
 
 /// 스냅샷 payload 하나의 최신성을 판정합니다(순수 함수).
@@ -115,7 +173,7 @@ pub fn assess_snapshot(
 }
 
 /// 프로젝트의 모든 스냅샷을 검사해 **최신 스냅샷만** 복구 제안 목록으로
-/// 반환합니다. 오래된 스냅샷은 목록에 포함하지 않습니다.
+/// 반환합니다. 오래된 스냅샷은 목록에 포함하지 않습니다. 목록은 최근에 기록한 스냅샷부터입니다.
 pub fn probe_recovery_snapshots(
     store: &RecoverySnapshotStore,
     identity: &ProjectIdentity,
@@ -130,27 +188,26 @@ pub fn probe_recovery_snapshots(
 
     let mut proposals = Vec::new();
     for session in store
-        .list_sessions(identity)
+        .list_sessions_newest_first(identity)
         .map_err(RecoveryProbeError::Store)?
     {
         let Some(id) = crate::identity::parse_project_id(&session) else {
             continue; // 형식이 아닌 파일 이름은 무시.
         };
-        let window = stellar_core_types::ids::WindowSessionId::from_stable_id(id);
+        let window = WindowSessionId::from_stable_id(id);
         let Some(bytes) = store
             .read_snapshot(identity, window)
             .map_err(RecoveryProbeError::Store)?
         else {
             continue;
         };
-        let Ok(payload) = RecoveryPayload::decode(&bytes) else {
-            // 해석 불가 스냅샷은 제안하지 않습니다(StaleReason::UnreadablePayload).
-            continue;
-        };
-        if let SnapshotFreshness::Fresh { revision } = assess_snapshot(current, &payload) {
+        if let StoredSnapshot::Fresh { payload, hash } =
+            judge_stored_snapshot(store, identity, window, current, &bytes)
+        {
             proposals.push(RecoveryProposal {
                 window_session: session,
-                revision,
+                revision: payload.revision,
+                hash,
             });
         }
     }
@@ -163,7 +220,7 @@ mod tests {
     use crate::recovery_payload::RecoveryPayload;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use stellar_core_types::ids::{StableId, WindowSessionId};
+    use stellar_core_types::ids::StableId;
     use stellar_storage::generation::current::write_current_pointer;
 
     struct TempDir {
@@ -306,5 +363,63 @@ mod tests {
         assert!(probe_recovery_snapshots(&store, &identity, &project.path)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn newest_snapshot_comes_first_and_discarded_leftovers_are_stale() {
+        // XIII.8.3: 최신 스냅샷부터 제안합니다. XIII.8.7: 폐기 표식과 bytes가 같은 스냅샷은 제안하지 않습니다.
+        let project = TempDir::new("stellar-probe-project");
+        let app_data = TempDir::new("stellar-probe-appdata");
+        let identity = ProjectIdentity::new(stable(1), &project.path).unwrap();
+        let store = RecoverySnapshotStore::new(&app_data.path);
+        let current = ContentHash::compute(b"gen-2-manifest");
+        write_current_pointer(&project.path, &current).unwrap();
+        let base =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);
+        let older_name = WindowSessionId::from_stable_id(stable(900));
+        let newer_name = WindowSessionId::from_stable_id(stable(100));
+        for (window, revision, offset) in [(older_name, 2, 50), (newer_name, 3, 10)] {
+            store
+                .write_snapshot(
+                    &identity,
+                    window,
+                    &payload(Some(current), revision).encode().unwrap(),
+                )
+                .unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(store.snapshot_path(&identity, window))
+                .unwrap()
+                .set_modified(base + std::time::Duration::from_secs(offset))
+                .unwrap();
+        }
+        let proposals = probe_recovery_snapshots(&store, &identity, &project.path).unwrap();
+        let order: Vec<u64> = proposals.iter().map(|p| p.revision).collect();
+        assert_eq!(order, [2, 3], "마지막에 기록한 창 900이 먼저");
+        let bytes = store.read_snapshot(&identity, older_name).unwrap().unwrap();
+        assert_eq!(proposals[0].hash, ContentHash::compute(&bytes));
+
+        // 삭제가 실패해 남은 스냅샷: 표식이 같은 bytes를 가리키면 stale입니다.
+        std::fs::write(
+            store.discarded_marker_path(&identity, older_name),
+            ContentHash::compute(&bytes).to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            judge_stored_snapshot(&store, &identity, older_name, Some(current), &bytes),
+            StoredSnapshot::Stale {
+                reason: StaleReason::Discarded
+            }
+        );
+        let proposals = probe_recovery_snapshots(&store, &identity, &project.path).unwrap();
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].window_session, newer_name.to_string());
+        // 해석 불가 payload도 같은 판정 함수의 결과입니다.
+        assert_eq!(
+            judge_stored_snapshot(&store, &identity, newer_name, Some(current), b"garbage"),
+            StoredSnapshot::Stale {
+                reason: StaleReason::UnreadablePayload
+            }
+        );
     }
 }
