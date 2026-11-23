@@ -45,6 +45,9 @@ pub mod views;
 /// `export-web`: 저장된 고정 Free Frame View의 HTML+CSS.
 pub mod web_frame;
 
+/// `export-styles`: 대상별 layout 스타일(Web 기반 규칙·요소 선언, React Native StyleSheet) (IX.11.30).
+pub mod export_styles;
+
 /// `css`: CSS 선언 블록 복사·붙여넣기 (IX.11.15).
 pub mod css;
 

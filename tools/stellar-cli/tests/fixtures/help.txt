@@ -15,6 +15,7 @@ stellar — Project Stellar headless 도구
     diff-summary      <base> <target> [--output <파일>] [--include-content]: semantic diff 요약 artifact를 만듭니다(기본: 프로젝트 텍스트·이름 redaction)
     ci                <경로>: CI 검사(lockfile·검증·migration 필요 여부)를 실행합니다(하나라도 실패하면 종료 코드 1)
     export-web        <경로> <문서 id> <View id> [--frame <Frame id>]: 고정 Free Frame·Fragment·Rectangle의 HTML+CSS와 revision·진단을 JSON으로 출력합니다(--frame은 View 안 Frame 하나, 미지원 값은 실패)
+    export-styles     <경로> <문서 id> <View id> [--frame <Frame id>] [--target web|react-native]: layout 스타일을 대상별로 출력합니다(web: 특이도 0 기반 규칙과 요소별 선언·출처, react-native: StyleSheet 모듈). 명시 값과 활성 기본값 세트·대상 기본값의 차이만 냅니다
     css               copy <경로> <문서 id> <node id> | paste <경로> <문서 id> <node id,…> <입력 파일|-> [--dry-run]: node 속성을 CSS longhand 선언 블록으로 복사하거나, 선언 블록을 한 transaction으로 붙여넣습니다(받지 못한 선언은 이유와 함께 건너뜀)
     style-defaults    list <경로> | show <경로> [<세트>] | set <경로> <세트> | resolve <경로> <문서 id> <node id>: 기본값 세트 목록·값 표·선택(stellar.yaml 한 줄)과 node layout longhand 값의 출처(explicit·default(<세트>))
     apply             <경로> <입력 파일|-> [--dry-run]: CommandTransaction JSON(base revision 포함)을 검증해 세대 전환 저장으로 기록합니다(--dry-run: semantic diff만)

@@ -15,6 +15,7 @@ use stellar_codegen::web::{
     frame::FrameStyle,
 };
 use stellar_document::frame::{Clipping, FramePayload};
+use stellar_document::layout_record::LayoutLonghand;
 use stellar_document::modifier::ModifierStack;
 use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_document::shape::{
@@ -80,7 +81,7 @@ impl std::fmt::Display for HtmlError {
 impl std::error::Error for HtmlError {}
 
 /// 읽은 범위와 결과. 오류가 하나라도 있으면 부분 HTML도 반환하지 않습니다.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WebFrameHtml {
     /// 열린 저장 generation.
     pub revision: ProjectRevision,
@@ -96,6 +97,14 @@ pub struct WebFrameHtml {
     pub html: Option<String>,
     /// 결정론 순서 진단. node 진단에는 StableId를 포함합니다.
     pub diagnostics: Vec<HtmlDiagnostic>,
+    /// 출력 형식(`fixed-free-frame-html` 또는 `css-layout-html`, ADR-0089 결정 2).
+    pub format: &'static str,
+    /// 활성 기본값 세트 이름. 세트를 읽기 전에 실패하면 빈 문자열입니다.
+    pub style_defaults: String,
+    /// 요소별 layout 계획(DOM 순서). 오류가 있으면 비어 있을 수 있습니다.
+    pub styles: Vec<crate::export_css::ElementStyle>,
+    /// Web 기반 규칙(특이도 0). 차이가 없으면 빈 문자열입니다.
+    pub base_rules: String,
 }
 
 impl WebFrameHtml {
@@ -204,7 +213,19 @@ pub fn export_web_frame_node(
         root_frame: root,
         html: None,
         diagnostics: Vec::new(),
+        format: crate::export_css::FORMAT_FIXED,
+        style_defaults: String::new(),
+        styles: Vec::new(),
+        base_rules: String::new(),
     };
+    let defaults = match crate::export_css::StyleContext::load(snapshot) {
+        Ok(defaults) => defaults,
+        Err(error) => {
+            result.note(true, "invalid-style-defaults", root, error);
+            return Ok(result);
+        }
+    };
+    result.style_defaults = defaults.active.name().to_string();
     result.note(false, "fixed-free-frame-only", root,
         "저장된 고정 Free Frame·Fragment·Rectangle Shape를 출력합니다. root 캔버스 이동은 생략합니다. 이름에서 Text·control·의미를 추정하지 않으며 동작·반응형·Variant·Context·Motion·전체 코드 생성을 지원하지 않습니다.");
     if !snapshot.manifest().target_profiles.is_empty() {
@@ -262,8 +283,11 @@ pub fn export_web_frame_node(
     let mut nodes = Vec::new();
     let mut styles = BTreeMap::new();
     let mut components = ComponentFrames::default();
-    let mut stack = vec![(root, None, true, Transform2D::identity())];
-    while let Some((id, parent_border, ancestor_visible, parent_transform)) = stack.pop() {
+    let mut plans = BTreeMap::new();
+    let mut stack = vec![(root, None, true, Transform2D::identity(), None)];
+    while let Some((id, parent_border, ancestor_visible, parent_transform, parent_layout)) =
+        stack.pop()
+    {
         let (mut record, mut children) = if let Some(projected) = components.pending.remove(&id) {
             projected
         } else {
@@ -339,6 +363,7 @@ pub fn export_web_frame_node(
         let visible = ancestor_visible && record.visible;
         let mut child_border = parent_border;
         let mut child_transform = parent_transform;
+        let mut child_layout = parent_layout;
         let rectangle = matches!(
             &record.payload,
             NodePayload::Shape(ShapeGeometry::Rectangle(_))
@@ -465,6 +490,33 @@ pub fn export_web_frame_node(
                     result.note_source(&components, false, "browser-color-compositing", id, "색공간·straight RGBA 선언은 보존합니다. 브라우저 alpha 합성은 Stellar 선형 합성과 달라 최종 픽셀 동일성은 보장하지 않습니다");
                 }
                 child_border = Some(border.map_or(FiniteF32::ZERO, |(_, w)| w));
+                let layout_record = model.layout_record(id);
+                if instance
+                    && layout_record.is_some_and(|r| {
+                        r.get(LayoutLonghand::Width).is_some()
+                            || r.get(LayoutLonghand::Height).is_some()
+                    })
+                {
+                    result.note(
+                        true,
+                        "unsupported-layout",
+                        id,
+                        "컴포넌트 인스턴스의 명시 width·height는 정의 root 크기와 함께 낼 수 없습니다",
+                    );
+                }
+                let (plan, notes) = crate::export_css::plan_element(
+                    &defaults,
+                    id,
+                    &record.payload,
+                    layout_record,
+                    if id == root { None } else { parent_layout },
+                    &style,
+                );
+                for note in notes {
+                    result.note_source(&components, note.error, note.code, id, note.message);
+                }
+                child_layout = Some(plan.children);
+                plans.insert(id, plan);
                 styles.insert(id, style);
                 Some(if rectangle {
                     (SourceKind::Graphic, ElementKind::SHAPE)
@@ -491,7 +543,7 @@ pub fn export_web_frame_node(
             children
                 .iter()
                 .rev()
-                .map(|child| (*child, child_border, visible, child_transform)),
+                .map(|child| (*child, child_border, visible, child_transform, child_layout)),
         );
         if let Some((kind, element)) = supported {
             let mut node = SourceNode::new(id, kind).with_children(children);
@@ -533,7 +585,21 @@ pub fn export_web_frame_node(
             format!("{:?}", note.kind),
         );
     }
+    // ADR-0089 결정 2: layout record가 하나도 없고 활성 세트가 출력 구획에서 Web 기본값과 같으면 기존 고정
+    // Free Frame 출력 그대로입니다. 그 밖에는 CSS layout 출력입니다.
+    let classes: Vec<_> = {
+        let ordered: Vec<_> = plans.values().cloned().collect();
+        crate::export_css::present_classes(&ordered)
+    };
+    let layout = plans.values().any(|p| p.has_record)
+        || classes.iter().any(|c| defaults.differs_from_web(*c));
+    let base = if layout {
+        defaults.web_base_rules(&element_id(root), &classes)
+    } else {
+        Default::default()
+    };
     let mut css = String::from("html, body {\n  margin: 0;\n  padding: 0;\n}\n");
+    css.push_str(&base.css);
     for index in 0..mapped.document.elements().len() as u32 {
         let id = mapped
             .document
@@ -546,7 +612,54 @@ pub fn export_web_frame_node(
             .map(|(instance, node)| format!("{}-{}", element_id(*instance), element_id(*node)))
             .unwrap_or_else(|| element_id(id));
         mapped.document.set_attr(index, "id", &name);
-        css.push_str(&format!("#{name} {{\n{}}}\n", styles[&id].declarations()));
+        let mut plan = plans.remove(&id).expect("계획한 요소");
+        plan.element = name.clone();
+        if layout {
+            if base.needs_class {
+                mapped.document.set_attr(
+                    index,
+                    "class",
+                    stellar_codegen::web::layout::class_name(plan.class.name()),
+                );
+            }
+            css.push_str(&format!(
+                "#{name} {{\n{}{}}}\n",
+                crate::export_css::layout_block(&plan),
+                styles[&id].paint_declarations(plan.paint_translation)
+            ));
+        } else {
+            css.push_str(&format!("#{name} {{\n{}}}\n", styles[&id].declarations()));
+        }
+        result.styles.push(plan);
+    }
+    if layout {
+        result.format = crate::export_css::FORMAT_LAYOUT;
+        result.base_rules = base.css.clone();
+        if let Some(scope) = result
+            .diagnostics
+            .iter_mut()
+            .find(|d| d.code == "fixed-free-frame-only")
+        {
+            scope.code = "css-layout-scope";
+            scope.message = format!("node {root}: 저장된 Frame·Fragment·Rectangle Shape와 layout longhand(명시 값과 활성 기본값 세트 {}의 Web 기본값 차이)를 출력합니다. root 캔버스 이동은 생략합니다. 이름에서 Text·control·의미를 추정하지 않으며 동작·반응형·Variant·Context·Motion·전체 코드 생성을 지원하지 않습니다.", result.style_defaults);
+        }
+        if result
+            .styles
+            .iter()
+            .any(|s| matches!(s.placement, crate::export_css::Placement::Free))
+        {
+            result.note(false, "fallback-free-position", root,
+                "위치 longhand를 명시하지 않은 Free 자식은 저장 transform 이동을 position: absolute + left·top으로 냅니다(IX.11.9 전 연결 규칙)");
+        }
+        if result.styles.iter().any(|s| {
+            matches!(
+                s.placement,
+                crate::export_css::Placement::Flow | crate::export_css::Placement::Inset
+            )
+        }) {
+            result.note(false, "layout-not-on-canvas", root,
+                "캔버스는 아직 CSS 레이아웃 결과로 그리지 않아 흐름·inset 배치 결과가 캔버스와 다를 수 있습니다");
+        }
     }
     for issue in check_document(&mapped.document) {
         result.note(true, "html-accessibility-check", root, format!("{issue:?}"));

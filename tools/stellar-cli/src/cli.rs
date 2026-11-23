@@ -67,6 +67,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "<경로> <문서 id> <View id> [--frame <Frame id>]: 고정 Free Frame·Fragment·Rectangle의 HTML+CSS와 revision·진단을 JSON으로 출력합니다(--frame은 View 안 Frame 하나, 미지원 값은 실패)",
     ),
     (
+        "export-styles",
+        "<경로> <문서 id> <View id> [--frame <Frame id>] [--target web|react-native]: layout 스타일을 대상별로 출력합니다(web: 특이도 0 기반 규칙과 요소별 선언·출처, react-native: StyleSheet 모듈). 명시 값과 활성 기본값 세트·대상 기본값의 차이만 냅니다",
+    ),
+    (
         "css",
         "copy <경로> <문서 id> <node id> | paste <경로> <문서 id> <node id,…> <입력 파일|-> [--dry-run]: node 속성을 CSS longhand 선언 블록으로 복사하거나, 선언 블록을 한 transaction으로 붙여넣습니다(받지 못한 선언은 이유와 함께 건너뜀)",
     ),
@@ -185,6 +189,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("query", commands::query(rest))
     } else if command == "export-web" {
         ("export-web", crate::web_frame::run(rest))
+    } else if command == "export-styles" {
+        ("export-styles", crate::export_styles::run(rest))
     } else if command == "css" {
         ("css", crate::css::run(rest))
     } else if command == "style-defaults" {
