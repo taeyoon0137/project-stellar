@@ -410,7 +410,7 @@ pub struct BudgetedGlyphAtlas {
 }
 
 impl BudgetedGlyphAtlas {
-    /// atlas를 감쌉니다. 지금 설정의 page 상한을 압박 해제 때 되돌릴 값으로 기억합니다.
+    /// atlas를 감쌉니다. 지금 설정의 page 상한을 page 하나를 지운 뒤 되돌릴 값으로 기억합니다.
     pub fn new(atlas: ShelfGlyphAtlas) -> BudgetedGlyphAtlas {
         let configured_max_pages = atlas.config().max_pages;
         BudgetedGlyphAtlas {
@@ -427,12 +427,6 @@ impl BudgetedGlyphAtlas {
     /// atlas(삽입·frame 진행). [`GlyphAtlas`](crate::glyph::GlyphAtlas) API를 그대로 씁니다.
     pub fn atlas_mut(&mut self) -> &mut ShelfGlyphAtlas {
         &mut self.atlas
-    }
-
-    /// 압박 때 줄인 page 상한을 처음 설정으로 되돌립니다.
-    pub fn restore_page_budget(&mut self) {
-        // 제거는 page 수를 줄이기만 하므로 지금 page 수는 설정값 이하입니다. 상한만 되돌리고 page는 지우지 않습니다.
-        self.atlas.apply_memory_pressure(self.configured_max_pages);
     }
 }
 
@@ -455,6 +449,10 @@ impl BudgetedCache for BudgetedGlyphAtlas {
         let before = self.atlas.memory_bytes();
         self.atlas
             .apply_memory_pressure(self.atlas.page_count().saturating_sub(1));
+        // `apply_memory_pressure`는 page 상한도 낮춥니다. 제거 목표는 manager pass가 정하므로 상한은 곧바로 처음 설정으로
+        // 되돌립니다. 되돌리지 않으면 압박 pass·GPU OOM purge 뒤 atlas가 page 한 장 상한에 묶여 새 glyph가 page를 늘리지
+        // 못합니다. 지금 page 수는 설정값 이하라 되돌리는 호출은 page를 지우지 않습니다.
+        self.atlas.apply_memory_pressure(self.configured_max_pages);
         before.saturating_sub(self.atlas.memory_bytes())
     }
 }

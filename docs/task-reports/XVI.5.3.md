@@ -28,7 +28,9 @@
   - 이미지 mipmap: `MipChain::total_bytes`. priority는 tessellation과 같은 규칙입니다.
   - glyph atlas: page texture byte(`memory_bytes`), 모두 `VisibleGlyphGeometry`. 제거는 atlas의 LRU page 제거
     (`apply_memory_pressure`)를 한 page씩 쓰고, 현재 frame·GPU 진행 중 page와 마지막 page 하나는 atlas 규칙대로 남깁니다.
-    `restore_page_budget`이 압박 해제 때 page 상한을 처음 설정으로 되돌립니다.
+    `apply_memory_pressure`는 page 상한도 낮추므로, page 하나를 지운 직후 상한을 처음 설정으로 되돌립니다(검토 수정:
+    처음 구현은 상한을 낮춘 채 두고 되돌리는 호출을 앱 연결에 미뤄, 압박 pass·GPU OOM purge 뒤 atlas가 page 한 장 상한에
+    묶였습니다. `glyph_page_eviction_keeps_the_configured_page_budget`가 확인합니다).
   - 썸네일(runtime): 문서·크기별 RGBA pixel, 모두 `BackgroundThumbnail`, LRU.
 - LRU 기록(`LruBudget`)은 한 구현을 renderer-core와 runtime 썸네일이 함께 씁니다.
 - Document/CurrentScene은 `ReportedUsage`(XVI.5.2)로 사용량만 등록합니다. 문서 모델·scene 크기를 재는 일은 연결하는 쪽이

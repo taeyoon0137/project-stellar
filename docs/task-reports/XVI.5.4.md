@@ -72,6 +72,6 @@
 ## 남은 한계
 
 - 앱 연결(OS memory pressure 알림 → `on_pressure`, UI tick → `run_chunk`, 해제 묶음 → worker pool `CacheGeneration`)은 UI 재설계
-  때 합니다. 압박이 풀릴 때 glyph atlas page 상한을 되돌리는 호출(`BudgetedGlyphAtlas::restore_page_budget`)도 그때 연결합니다.
+  때 합니다. glyph atlas는 page를 지운 직후 page 상한을 스스로 되돌리므로 압박 해제 때 따로 부를 것이 없습니다.
 - 해제를 pass 끝까지 미루므로 물리 메모리 반환은 pass 길이(위 측정에서 36\~42 chunk, 60 Hz tick 기준 약 0.7 초)만큼 늦습니다.
 - 무부하 기준 장비 측정이 필요합니다.

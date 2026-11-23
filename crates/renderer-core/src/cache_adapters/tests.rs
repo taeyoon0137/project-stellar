@@ -345,3 +345,41 @@ fn total_usage_matches_registered_caches() {
         expected - mip_chain(9, 8).total_bytes()
     );
 }
+
+#[test]
+fn glyph_page_eviction_keeps_the_configured_page_budget() {
+    // page 하나를 지우는 제거·GPU OOM purge 뒤에도 atlas의 page 상한은 처음 설정(8장) 그대로여야 합니다. 상한이 낮아진
+    // 채로 남으면 압박이 끝난 뒤에도 새 glyph가 page를 늘리지 못합니다.
+    let mut manager = CacheBudgetManager::new();
+    let id = manager.register(Box::new(atlas_with_pages(3)));
+    let mut pass = EvictionPass::new(64 * 64);
+    let outcome = manager.evict_chunk(&mut pass, &mut Unbounded);
+    assert_eq!(outcome.evicted.len(), 2, "page 2장 제거");
+    assert_eq!(outcome.freed, 2 * 64 * 64);
+    let atlas = manager.get::<BudgetedGlyphAtlas>(id).unwrap().atlas();
+    assert_eq!(atlas.page_count(), 1);
+    assert_eq!(atlas.config().max_pages, 8, "제거 뒤 상한 유지");
+    assert_eq!(manager.purge_gpu(), 0, "page 한 장은 남김");
+    assert_eq!(
+        manager
+            .get::<BudgetedGlyphAtlas>(id)
+            .unwrap()
+            .atlas()
+            .config()
+            .max_pages,
+        8,
+        "purge 뒤 상한 유지"
+    );
+    // 상한이 그대로이므로 새 frame의 glyph가 page를 다시 늘릴 수 있습니다.
+    let atlas = manager
+        .get_mut::<BudgetedGlyphAtlas>(id)
+        .unwrap()
+        .atlas_mut();
+    for (offset, frame) in (10..13u64).enumerate() {
+        atlas.begin_frame(frame).unwrap();
+        atlas
+            .insert(glyph_key(100 + offset as u32), &page_filling_glyph())
+            .unwrap();
+    }
+    assert_eq!(atlas.page_count(), 4);
+}
