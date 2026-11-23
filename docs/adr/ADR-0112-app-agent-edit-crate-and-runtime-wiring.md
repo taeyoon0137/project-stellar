@@ -115,8 +115,9 @@ Accepted (2026-11-23). engine lane `agent-edit-crate`의 결정입니다. 계획
 - 공개 API 이동: `stellar_mcp::{permission, provenance, agent_history, attached}` → `stellar_agent_edit::{…}`(이름 그대로).
   `stellar_mcp::lease`는 tool 정의·인자 해석만 남고, 요청 관리·문서 기준 확인은 `stellar_agent_edit::lease`(`LeaseTargets`,
   `TargetError`, `LeaseServiceError::{Target, Identity}`)입니다. `attached::edit::proposal_transaction`은 JSON 대신
-  `ApplyRequest`를 받습니다.
-- 공개 API 추가: runtime `agent_edit::{WindowAgentEdit, AgentWindow, HistoryNames, replay, monotonic_ms}`,
+  `ApplyRequest`를 받습니다. `DecodedProposal`은 `base_revision`을 갖고 `check_base`로 대조하며, 거부는
+  `AttachedEditError::StaleBase`(결과 종류 `Stale`)입니다.
+- 공개 API 추가: runtime `agent_edit::{WindowAgentEdit, AgentWindow, HistoryNames, replay, monotonic_ms, project_revision}`,
   `AppRuntime::{with_agent_edit, agent_history_names, agent_io, agent_io_with_limit}`, `agent_io::{AgentIo, AgentIoThread,
   AgentRequest, AgentReply, AgentIoError}`.
 
