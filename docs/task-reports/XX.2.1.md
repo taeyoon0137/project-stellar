@@ -103,3 +103,38 @@
 
 - 남은 한계: 여백이 출력 128 pixel을 넘는 큰 효과는 메모리 상한 때문에 배수가 8보다 낮아집니다(효과가 아닌 tile 크기 이유).
   margin 영역까지 supersample하지 않는 분리(효과 원본만 낮은 해상도 viewport로 그리기)는 후속입니다.
+
+## 후속: 효과 여백을 target 밖 효과 window에 그림, tile 메모리 예산 (lane render-effects-3, ADR-0136)
+
+- 위 후속 절의 남은 한계(여백이 출력 128 pixel을 넘으면 배수가 8보다 낮아짐, 여백 약 1984 pixel을 넘으면 실패, offset이 여백에
+  그대로 들어가 offset 300 그림자 하나로 배수 5)를 해결했습니다.
+- tile target은 출력 영역만 덮습니다(한 변 `tile × 배수`, 최대 1024). 여백은 compile viewport에만 들어가 여백의 내용이 cull되지
+  않고, 효과 원본은 `effects::window` 계획의 window에 따로 그립니다. shadow 원본 window는 offset만큼 옮긴 자리라 offset이 커도
+  커지지 않고, 큰 σ 효과 원본은 blur 해상도의 절반으로 그립니다(ADR-0136 결정 1·2).
+- 배수는 tile마다 8부터 그리고 device σ 상한, 효과 window 상한(4096), 잰 GPU 메모리가 예산을 넘을 때만 그 tile의 배수를 낮춥니다
+  (결정 3). `supersample_for`는 없앴습니다.
+- tile GPU 메모리를 잽니다: lowering이 만든 texture·buffer(backend 할당 증가분) + graph transient(alias slot마다 Metal heap 크기,
+  `MetalBackend::graph_transient_bytes`). 예산(`MetalOffscreenTarget::with_memory_budget`, 기본 device
+  `recommendedMaxWorkingSetSize`)의 남은 양을 넘으면 encode 전에 배수를 낮춥니다. `render_measured`가 측정을 돌려줍니다(결정 4).
+- 변경 파일: `crates/renderer-metal/src/offscreen_target.rs`, `crates/renderer-metal/src/backend.rs`,
+  `crates/renderer-metal/src/tests/offscreen_target.rs`(renderer-core 변경은 XI.10.4 후속 절),
+  `docs/adr/ADR-0136-render-effect-windows-and-export-memory-budget.md`.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-renderer-metal` | 72 passed, 실패 0 |
+| `cargo clippy -p stellar-renderer-core -p stellar-renderer-metal --all-targets --locked -- -D warnings` | 경고 0 |
+
+| 검사(테스트) | 결과 |
+|---|---|
+| blur 40 그림자·반경 12 layer blur 장면 배율 1·4 모두 배수 8(ADR-0130까지 배율 4는 2\~7), 배율 1은 CPU 기준과 연관 값 ±4, 배율 1·4가 같은 자리에서 ±6(`large_blur_keeps_supersampling_and_draws_effects_at_low_resolution`) | 통과 |
+| blur 1300(σ 650, ADR-0130에서 실패)은 σ 상한 때문에 배수 6으로 그리고 상자 밖 그림자 알파 50\~80, 상자 안 0. blur 16386은 배수 1에서도 σ 상한이라 `blur_too_large` 실패(`huge_blur_lowers_supersampling_only_for_the_sigma_limit`) | 통과 |
+| offset (300, 3) 그림자: 여백 306이라 ADR-0130 규칙이면 배수 5, 이제 배수 8이고 CPU 기준과 연관 값 ±3, 그림자는 300 pixel 오른쪽(`large_offset_shadow_keeps_supersampling`) | 통과 |
+| 메모리: 배수 8 tile 최대 측정값보다 작은 예산(60%)이면 그 tile만 배수를 낮추고(최소 5) 측정값이 예산 안, 배수 8 결과와 연관 값 ±24 안. 예산 1 KiB면 "메모리 예산" 실패(`memory_budget_lowers_supersampling_when_a_tile_does_not_fit`) | 통과 |
+| 효과 장면 CPU 기준 ±3(`metal_target_draws_effects_like_the_cpu_reference`), 적합성 fixture 전체(`full_inventory_matches_cpu_reference_on_metal`) | 통과 |
+
+- 측정(개발 장비 Apple GPU, 배수 8, 예산 = `recommendedMaxWorkingSetSize` 약 28 GiB): 큰 blur 장면 배율 1 tile 최대 약 39 MiB(2
+  tile), 배율 4 약 39.4 MiB(20 tile), 큰 offset 장면 약 3.8 MiB(3 tile), blur 1300(배수 6) 약 8.2 MiB. texture 한 변 최대는 모두
+  1024(target) 이하입니다. 기준 장비(M1 16GB)에서는 다시 재지 않았습니다.
+- 남은 한계: 제품 frame plan(pass compiler) graph의 효과 pass는 여전히 surface 크기입니다(창 drawable 경로 연결 때, ADR-0136
+  Alternatives). tile마다 transient pool을 비우고 다시 만듭니다.

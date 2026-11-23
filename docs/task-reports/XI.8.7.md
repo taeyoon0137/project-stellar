@@ -111,3 +111,10 @@
 |---|---|
 | `cargo test -p stellar-renderer-metal` | 54 passed, 0 failed |
 | `MTL_DEBUG_LAYER=1 cargo test -p stellar-renderer-metal` | 54 passed, 0 failed |
+
+## 후속: graph transient 메모리 측정 (lane render-effects-3, ADR-0136 결정 4)
+
+- `MetalBackend::graph_transient_bytes`: graph transient를 alias slot마다 하나씩 만들 때의 Metal heap 크기 합을 할당 없이 잽니다.
+  PNG 내보내기(XX.2.1)가 tile마다 이 값과 lowering 할당 증가분을 예산의 남은 양과 비교해, 넘으면 encode 전에 supersampling 배수를
+  낮춥니다. 예산·event 처리 경로는 바뀌지 않았습니다.
+- 검증: `cargo test -p stellar-renderer-metal`(72 passed), `memory_budget_lowers_supersampling_when_a_tile_does_not_fit`.
