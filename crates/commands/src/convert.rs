@@ -530,6 +530,20 @@ impl RestoreNodeRecords {
                     })?;
                 }
             }
+            // 바뀐 종류·payload에 붙지 않는 명시 layout longhand가 남으면 안 됩니다(예: Fragment로 되돌릴 때의 item
+            // longhand, ADR-0086).
+            if let Some(violation) = model.layout_record(record.id).and_then(|layout| {
+                stellar_document::layout_record::record_violations(layout, &record.payload)
+                    .into_iter()
+                    .next()
+            }) {
+                return Err(CommandError::Model(
+                    stellar_document::model::ModelError::Layout {
+                        id: record.id,
+                        reason: violation.to_string(),
+                    },
+                ));
+            }
             if kind != NodeKind::Path {
                 // 다른 Frame의 clip 대상이면 Path여야 합니다.
                 for from in references.inbound(record.id) {
