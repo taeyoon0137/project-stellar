@@ -48,6 +48,7 @@
 - **2026-11-23 — 엔진 작업 15개 통합 뒤 marker 반영:** 레이아웃 연결, 기본값 세트 연결, 텍스트 원본 기본 저장, CSS 코드 내보내기, 증분 렌더, CLI·MCP·Git 정리, SVG 내보내기, 에이전트 실행부·권한·편집 잠금, 프로토타입 모션, 무결성 진단, 지연 측정, 플러그인 실행부, 테두리·글자 속성 작업의 보고서 상태를 행 marker로 옮겼습니다. 보고서가 완료여도 선행이 `[x]`가 아니면 `[~]`로 두고 보고서 상태 줄에 이유를 적었습니다. XIX.5.1은 CLI command 해석이 공용 함수 하나로 합쳐져 `[x]`입니다.
 - **2026-11-23 — 엔진 작업 13개 통합 뒤 marker 반영:** 컴포넌트 문맥 값, 에이전트 변경 되돌리기, 에이전트 코어 연결, 렌더 색·효과 검사, PNG 내보내기, 캔버스 선택·변형 엔진, 웹·Apple·Android 코드 생성, 검증 색인과 캐시 예산, 진단과 동의, 열린 창 외부 변경 병합, 헤드리스 종단 시나리오 작업의 보고서 상태를 행 marker로 옮겼습니다. 보고서가 완료여도 선행이 `[x]`가 아니면 `[~]`로 두고 보고서 상태 줄에 이유를 적었습니다.
 - **2026-11-24 — 엔진 작업 10개 통합 뒤 marker 반영:** 에이전트 편집 crate, CLI·MCP·Git의 텍스트 원본 읽기·쓰기, Context 제품 경로, 기본값 세트 마무리, 렌더 효과 pass와 PNG 명령, 캔버스 편집 엔진 2, 텍스트·인스턴스 편집, 외부 라이브러리 마무리, 복구·Git 시나리오·터미널, 코드 생성 규칙 통합 작업의 보고서 상태를 행 marker로 옮겼습니다. 보고서가 완료여도 선행이 `[x]`가 아니면 `[~]`로 두고 보고서 상태 줄에 이유를 적었습니다.
+- **2026-11-24 — 엔진 작업 9개 통합 뒤 marker 반영:** chunk cache를 Git 밖으로 옮기기, Context 병합 경로 하나로, 에이전트 앱 연결 2, layout 결과로 그리기, 가이드·View 변수 저장, 외부 라이브러리 연결, 기본값 세트 저장 정리, 텍스트·인스턴스 편집 2, 그림자 품질 작업의 보고서 상태를 행 marker로 옮겼습니다. 보고서가 완료여도 선행이 `[x]`가 아니면 `[~]`로 두고 보고서 상태 줄에 이유를 적었습니다.
 
 ## 1. 원자적 구현·검증 실행 계획
 
@@ -1642,8 +1643,8 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XIV.14.1 | `[~]` | 임시 local bare repo와 working repo를 만드는 Git fixture harness를 작성합니다. 외부 네트워크를 사용하지 않습니다. | macOS/Windows 동일 scenario 생성. | XIV.1.2 |
 | XIV.14.2 | `[x]` | partial same-chunk property staging, unstage, commit scenario를 fixture로 만듭니다. | HEAD/Index/WT expected values 일치. | XIV.6.6, XIV.7.3, XIV.8.4 |
-| XIV.14.3 | `[~]` | component/token dependency staging scenario를 만듭니다. | invalid partial 차단, dependency 승인 후 성공. | XIV.5.4 |
-| XIV.14.4 | `[~]` | branch merge conflict를 시스템 Git으로 만든 뒤 Semantic Conflict 해결·git add까지 통합 실행합니다. | unmerged entries 0, merge state 유지. | XIV.12.5 |
+| XIV.14.3 | `[x]` | component/token dependency staging scenario를 만듭니다. | invalid partial 차단, dependency 승인 후 성공. | XIV.5.4 |
+| XIV.14.4 | `[x]` | branch merge conflict를 시스템 Git으로 만든 뒤 Semantic Conflict 해결·git add까지 통합 실행합니다. | unmerged entries 0, merge state 유지. | XIV.12.5 |
 | XIV.14.5 | `[x]` | linked worktree에서 open/status/stage/commit을 실행해 common git dir과 per-worktree index가 올바른지 검증합니다. | 다른 worktree index 변경 없음. | XIV.1.2, XIV.6.6 |
 | XIV.14.6 | `[x]` | non-UTF8 path, symlink, executable, LFS pointer, corrupt project scenario를 추가합니다. | 각 정책 결과 정확. | XIV.1.5, XIII.4, XIII.7.5 |
 
@@ -1700,9 +1701,9 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XV.5.1 | `[x]` | library project에서 export된 ComponentDefinition·TokenSet index를 읽는 `LibrarySnapshot`을 정의합니다. 모든 resource key에 LibraryId+commit+StableId를 포함합니다. | v1/v2 same StableId 충돌 없음. | XV.2.1, IX.1.1, VIII.5.1 |
 | XV.5.2 | `[x]` | 사용 project document가 library resource를 참조할 수 있게 `ExternalComponentRef`, `ExternalTokenRef`를 구현합니다. | round-trip. | XV.5.1 |
-| XV.5.3 | `[~]` | library resource를 수정하는 command를 사용 project에서 거부합니다. instance 공개 override만 허용합니다. | edit definition fixture 실패, override 성공. | XV.5.2, IX.2.4 |
+| XV.5.3 | `[x]` | library resource를 수정하는 command를 사용 project에서 거부합니다. instance 공개 override만 허용합니다. | edit definition fixture 실패, override 성공. | XV.5.2, IX.2.4 |
 | XV.5.4 | `[x]` | library의 transitive resource ref를 동일 dependency graph instance 안에서 resolve합니다. | v1 parent가 v1 child, v2 parent가 v2 child 참조. | XV.2.2, XV.5.1 |
-| XV.5.5 | `[~]` | missing cache/offline entry는 library resource unavailable diagnostic을 생성하고 project 기본 데이터는 읽을 수 있게 합니다. | offline missing fixture partial open. | XV.3.3, III.2.4 |
+| XV.5.5 | `[x]` | missing cache/offline entry는 library resource unavailable diagnostic을 생성하고 project 기본 데이터는 읽을 수 있게 합니다. | offline missing fixture partial open. | XV.3.3, III.2.4 |
 
 ### XV.6 로컬 경로·Worktree Override
 

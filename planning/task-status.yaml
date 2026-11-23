@@ -9445,20 +9445,30 @@ tasks:
     verified_at: "2026-11-23T18:16:51+09:00"
   - id: "XIV.14.3"
     title: "component/token dependency staging scenario를 만듭니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.5.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.14.3.md"
+    commit: "567bad31a064337db774f749d12fb74fb195e20b"
     report: "docs/task-reports/XIV.14.3.md"
+    verified_at: "2026-11-24T02:27:26+09:00"
   - id: "XIV.14.4"
     title: "branch merge conflict를 시스템 Git으로 만든 뒤 Semantic Conflict 해결·git add까지 통합 실행합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.12.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.14.4.md"
+    commit: "78e121eb4cde6aa803ec18dbb5e16171c7c7f1da"
     report: "docs/task-reports/XIV.14.4.md"
+    verified_at: "2026-11-24T02:27:30+09:00"
   - id: "XIV.14.5"
     title: "linked worktree에서 open/status/stage/commit을 실행해 common git dir과 per-worktree index가 올바른지 검증합니다."
     status: verified
@@ -9795,13 +9805,18 @@ tasks:
     verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XV.5.3"
     title: "library resource를 수정하는 command를 사용 project에서 거부합니다. instance 공개 override만 허용합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XV.5.2"
       - "IX.2.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.5.3.md"
+    commit: "4f1aa84a27dc325870cdef45f2b4d5a88c125afc"
     report: "docs/task-reports/XV.5.3.md"
+    verified_at: "2026-11-24T02:26:54+09:00"
   - id: "XV.5.4"
     title: "library의 transitive resource ref를 동일 dependency graph instance 안에서 resolve합니다."
     status: verified
@@ -9818,13 +9833,18 @@ tasks:
     verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XV.5.5"
     title: "missing cache/offline entry는 library resource unavailable diagnostic을 생성하고 project 기본 데이터는 읽을 수 있게 합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XV.3.3"
       - "III.2.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.5.5.md"
+    commit: "459eae10764e5b2c7e88aad708575ae3ea0c2e73"
     report: "docs/task-reports/XV.5.5.md"
+    verified_at: "2026-11-24T02:25:28+09:00"
   - id: "XV.6.1"
     title: "`stellar.yaml` local override는 특정 dependency logical name을 local Stellar project root로 매핑합니다."
     status: verified
@@ -11343,9 +11363,9 @@ tasks:
     evidence:
       - environment: DEV-MAC
         locator: "docs/task-reports/XIX.7.1.md"
-    commit: "0acc8ff98694bfcc8f0f819908cf31ce63300f4e"
+    commit: "6793dcec142624d3597a49c001e5f03de20feed4"
     report: "docs/task-reports/XIX.7.1.md"
-    verified_at: "2026-11-23T21:21:58+09:00"
+    verified_at: "2026-11-24T02:04:14+09:00"
   - id: "XIX.7.2"
     title: "overlap이면 agent 세션을 XIX.6.4 절차로 끝내고(자동 rollback 없음, lease 해제, 대기 제안 거부), 적용된 agent 변경은 출처 표시를 유지한 로컬 변경으로 XIII.3.4 reconciliation에 넣어 외부 변경을 반영합니다. 의미 충돌은 Semantic Conflict 경로로 보냅니다."
     status: reported_done
