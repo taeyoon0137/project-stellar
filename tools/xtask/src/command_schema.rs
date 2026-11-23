@@ -198,7 +198,7 @@ pub fn generate() -> String {
                     "base_revision",
                     obj(vec![
                         ("type", s("string")),
-                        ("pattern", s("^g(0|[1-9][0-9]*:sha256:[0-9a-f]{64})$")),
+                        ("pattern", s("^g(0|(0|[1-9][0-9]*):sha256:[0-9a-f]{64})$")),
                     ]),
                 ),
                 ("document", def_ref(FieldType::NodeId)),
