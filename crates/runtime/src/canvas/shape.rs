@@ -28,16 +28,26 @@ pub struct CanvasShapePath {
     pub point_cap: Option<Rect>,
 }
 
-pub(super) fn project(
-    model: &DocumentModel,
+/// 도형 하나의 scene 입력과 캔버스 행 보조 값. 캔버스 행과 증분 scene source(ADR-0084)가 함께 씁니다.
+pub(crate) struct ShapeSource {
+    /// scene builder 입력.
+    pub(crate) input: ShapeInput,
+    /// 평가한 modifier 값.
+    pub(crate) style: ShapeModifierStyle,
+    /// Rectangle 실효 모서리 반경.
+    pub(crate) radii: CornerRadii,
+    /// 길이 0인 선의 cap bounds.
+    pub(crate) point_cap: Option<Rect>,
+}
+
+/// 도형 payload와 modifier stack(`stack`)을 scene 입력으로 바꿉니다. 평가하지 못하는 stack이면 `None`입니다.
+pub(crate) fn shape_source(
     id: StableId,
     shape: &ShapeGeometry,
-    parent_scope: &SceneScope,
-    parent: Option<u32>,
+    stack: Option<&ModifierStack>,
     locked: bool,
-    builder: &mut SceneBuilder,
-) -> Option<(CanvasFrame, Option<CanvasShapePath>)> {
-    let style = shape_style(model.modifier_stack(id))?;
+) -> Option<ShapeSource> {
+    let style = shape_style(stack)?;
     let mut node = NodeInput::new(id, style.transform);
     node.locked = locked;
     if let Some(color) = style.fill {
@@ -83,23 +93,50 @@ pub(super) fn project(
     let path = evaluate_shape_path(shape)
         .ok()?
         .into_iter()
-        .map(|command| match command {
-            DocumentPath::MoveTo(p) => PathCommand::MoveTo(p),
-            DocumentPath::LineTo(p) => PathCommand::LineTo(p),
-            DocumentPath::CubicTo { c1, c2, to } => PathCommand::CubicTo { c1, c2, to },
-            DocumentPath::Close => PathCommand::Close,
-        })
+        .map(scene_command)
         .collect();
+    Some(ShapeSource {
+        input: ShapeInput {
+            node,
+            layout_rect: bounds,
+            geometry: PathGeometry::new(path).ok()?,
+            cap,
+        },
+        style,
+        radii,
+        point_cap,
+    })
+}
+
+/// 문서 path command를 scene path command로 옮깁니다(두 모델은 같은 의미, scene `geometry` 모듈 표).
+pub(crate) fn scene_command(command: DocumentPath) -> PathCommand {
+    match command {
+        DocumentPath::MoveTo(p) => PathCommand::MoveTo(p),
+        DocumentPath::LineTo(p) => PathCommand::LineTo(p),
+        DocumentPath::CubicTo { c1, c2, to } => PathCommand::CubicTo { c1, c2, to },
+        DocumentPath::Close => PathCommand::Close,
+    }
+}
+
+pub(super) fn project(
+    model: &DocumentModel,
+    id: StableId,
+    shape: &ShapeGeometry,
+    parent_scope: &SceneScope,
+    parent: Option<u32>,
+    locked: bool,
+    builder: &mut SceneBuilder,
+) -> Option<(CanvasFrame, Option<CanvasShapePath>)> {
+    let ShapeSource {
+        input,
+        style,
+        radii,
+        point_cap,
+    } = shape_source(id, shape, model.modifier_stack(id), locked)?;
+    let bounds = input.layout_rect;
+    let cap = input.cap;
     let item = builder
-        .build_shape(
-            &mut parent_scope.clone(),
-            &ShapeInput {
-                node,
-                layout_rect: bounds,
-                geometry: PathGeometry::new(path).ok()?,
-                cap,
-            },
-        )
+        .build_shape(&mut parent_scope.clone(), &input)
         .ok()?;
     let world = item.world_transform();
     world.inverse()?;
