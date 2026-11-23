@@ -4,8 +4,11 @@
 //! 목록 전체에서 유일해야 합니다.
 
 use super::fixture::{
-    solid, srgb, Category, Coverage, Feature, Fixture, LayerOp, Mesh, Op, SceneBlendMode,
+    fill_mesh, linear_gradient, p3, solid, srgb, Category, Coverage, Feature, FillRule, Fixture,
+    LayerOp, Mesh, Op, PathBuilder, SceneBlendMode,
 };
+use super::gradient::GradientStop;
+use crate::color::ColorSpace;
 use crate::output_color::OutputColor;
 
 /// 사각형 단색 fill.
@@ -87,6 +90,180 @@ pub fn blend_fixtures() -> Vec<Fixture> {
     linear
         .ops
         .push(layer(blend_source(), SceneBlendMode::Overlay));
+    out.push(linear);
+    out
+}
+
+/// 시각 순서 stop.
+pub fn stop(position: f32, color: OutputColor) -> GradientStop {
+    GradientStop { position, color }
+}
+
+fn gradient_fixture(name: &str, category: Category, ops: Vec<Op>) -> Fixture {
+    let mut fixture = Fixture::new(name, category, 32, 32).feature(Feature::Gradient);
+    fixture.tolerance = "gradient";
+    fixture.ops = ops;
+    fixture
+}
+
+/// gradient pixel fixture(XI.10.3): 선형 2·3 stop, 대각선, 같은 position tie, 범위 밖 stop, pad, 투명 stop, P3, 길이 0, 도형 안.
+pub fn gradient_fixtures() -> Vec<Fixture> {
+    let red = srgb(0.9, 0.1, 0.1, 1.0);
+    let blue = srgb(0.1, 0.2, 0.9, 1.0);
+    let yellow = srgb(0.95, 0.85, 0.2, 1.0);
+    let green = srgb(0.1, 0.7, 0.3, 1.0);
+    let full = || Mesh::rect(0.0, 0.0, 32.0, 32.0);
+    let horizontal = |stops| linear_gradient(full(), [0.0, 0.0], [32.0, 0.0], stops);
+    let mut out = vec![
+        gradient_fixture(
+            "gradient-linear-two-stop",
+            Category::Frame,
+            vec![linear_gradient(
+                Mesh::rect(2.0, 2.0, 30.0, 30.0),
+                [2.0, 0.0],
+                [30.0, 0.0],
+                vec![stop(0.0, red), stop(1.0, blue)],
+            )],
+        ),
+        gradient_fixture(
+            "gradient-linear-three-stop-vertical",
+            Category::Frame,
+            vec![linear_gradient(
+                full(),
+                [0.0, 2.0],
+                [0.0, 30.0],
+                vec![stop(0.0, yellow), stop(0.5, green), stop(1.0, blue)],
+            )],
+        ),
+        gradient_fixture(
+            "gradient-linear-diagonal",
+            Category::Frame,
+            vec![linear_gradient(
+                full(),
+                [0.0, 0.0],
+                [32.0, 32.0],
+                vec![stop(0.0, red), stop(0.6, yellow), stop(1.0, green)],
+            )],
+        ),
+        // 같은 position 두 stop: x = 16에서 앞(파랑) → 뒤(초록) hard edge.
+        gradient_fixture(
+            "gradient-tie-hard-edge",
+            Category::Frame,
+            vec![horizontal(vec![
+                stop(0.0, red),
+                stop(0.5, blue),
+                stop(0.5, green),
+                stop(1.0, yellow),
+            ])],
+        ),
+        // 같은 position 세 stop: 가운데 stop은 폭 0이라 보이지 않습니다.
+        gradient_fixture(
+            "gradient-tie-three-stops",
+            Category::Frame,
+            vec![horizontal(vec![
+                stop(0.0, red),
+                stop(0.4, blue),
+                stop(0.4, srgb(1.0, 0.0, 1.0, 1.0)),
+                stop(0.4, green),
+                stop(1.0, yellow),
+            ])],
+        ),
+        gradient_fixture(
+            "gradient-stops-outside-unit-range",
+            Category::Frame,
+            vec![horizontal(vec![stop(-0.5, red), stop(1.5, blue)])],
+        ),
+        gradient_fixture(
+            "gradient-pad-inner-stops",
+            Category::Frame,
+            vec![horizontal(vec![stop(0.3, red), stop(0.7, blue)])],
+        ),
+        gradient_fixture(
+            "gradient-transparent-stop",
+            Category::Frame,
+            vec![horizontal(vec![
+                stop(0.0, red),
+                stop(1.0, srgb(0.1, 0.2, 0.9, 0.0)),
+            ])],
+        ),
+        gradient_fixture(
+            "gradient-zero-length",
+            Category::Frame,
+            vec![linear_gradient(
+                full(),
+                [16.0, 16.0],
+                [16.0, 16.0],
+                vec![stop(0.0, red), stop(1.0, blue)],
+            )],
+        ),
+        gradient_fixture(
+            "gradient-in-ellipse",
+            Category::Shape,
+            vec![linear_gradient(
+                fill_mesh(
+                    &PathBuilder::new()
+                        .ellipse(16.0, 16.0, 13.0, 9.0)
+                        .build()
+                        .expect("ellipse"),
+                    FillRule::NonZero,
+                )
+                .expect("mesh"),
+                [3.0, 0.0],
+                [29.0, 0.0],
+                vec![stop(0.0, green), stop(1.0, red)],
+            )],
+        ),
+        gradient_fixture(
+            "gradient-in-rounded-rect",
+            Category::Frame,
+            vec![linear_gradient(
+                fill_mesh(
+                    &PathBuilder::new()
+                        .rounded_rect(3.0, 3.0, 29.0, 29.0, 7.0)
+                        .build()
+                        .expect("rounded"),
+                    FillRule::NonZero,
+                )
+                .expect("mesh"),
+                [0.0, 3.0],
+                [0.0, 29.0],
+                vec![stop(0.0, yellow), stop(1.0, blue)],
+            )],
+        ),
+    ];
+    let mut p3_surface = gradient_fixture(
+        "gradient-p3-on-p3-surface",
+        Category::P3,
+        vec![horizontal(vec![
+            stop(0.0, p3(1.0, 0.0, 0.0, 1.0)),
+            stop(1.0, p3(0.0, 1.0, 0.0, 1.0)),
+        ])],
+    )
+    .feature(Feature::DisplayP3);
+    p3_surface.requested = ColorSpace::DisplayP3;
+    p3_surface.display_p3 = true;
+    out.push(p3_surface);
+    let mut p3_fallback = gradient_fixture(
+        "gradient-p3-on-srgb-surface",
+        Category::P3,
+        vec![horizontal(vec![
+            stop(0.0, p3(1.0, 0.0, 0.0, 1.0)),
+            stop(1.0, p3(0.0, 1.0, 0.0, 1.0)),
+        ])],
+    )
+    .feature(Feature::DisplayP3);
+    p3_fallback.requested = ColorSpace::DisplayP3;
+    out.push(p3_fallback);
+    let mut linear = gradient_fixture(
+        "gradient-linear-target",
+        Category::Frame,
+        vec![horizontal(vec![
+            stop(0.0, red),
+            stop(0.5, yellow),
+            stop(1.0, blue),
+        ])],
+    );
+    linear.format = crate::render_graph::TextureFormat::Rgba8Unorm;
     out.push(linear);
     out
 }

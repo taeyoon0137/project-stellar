@@ -13,6 +13,7 @@
 //! - **이미지**: texture에 올리는 byte([`ImageData::texture_bytes`])를 decode한 값으로 sampling합니다. Nearest는
 //!   `floor(u × w)` texel, Linear는 texel 중심 기준 bilinear(가장자리 clamp)입니다.
 //! - **glyph**: mask byte / 255를 coverage로 색에 곱합니다.
+//! - **gradient**: pixel 중심의 `t`를 [`GradientRamp::evaluate`]로 정확히 계산합니다(XI.10.3).
 
 use crate::blend::{composite, source_over};
 use crate::color::{decode_pixel, encode_pixel, to_working, ColorSpace, WorkingColor};
@@ -26,6 +27,7 @@ use super::fixture::{
     Coverage, FillOp, Fixture, FixtureError, GlyphOp, ImageData, ImageOp, LayerOp, Op, Paint,
     IMAGE_TEXTURE_FORMAT,
 };
+use super::gradient::GradientRamp;
 
 /// working 값 canvas. 쓸 때마다 target format 저장 정밀도로 맞춥니다(GPU attachment가 draw마다 저장 값을 남기고 다음
 /// blend가 그 값을 읽는 것과 같게).
@@ -254,6 +256,21 @@ fn draw_fill(canvas: &mut Canvas, fill: &FillOp, plan: &OutputColorPlan) {
                 width,
                 height,
                 |x, y| canvas.over(x, y, working),
+            );
+        }
+        Paint::Gradient { geometry, stops } => {
+            let Ok(ramp) = GradientRamp::resolve(plan, stops) else {
+                return;
+            };
+            raster_mesh(
+                &fill.mesh.positions,
+                fill.coverage,
+                width,
+                height,
+                |x, y| {
+                    let t = geometry.parameter([x as f32 + 0.5, y as f32 + 0.5]);
+                    canvas.over(x, y, ramp.evaluate(t))
+                },
             );
         }
     }

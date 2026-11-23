@@ -13,6 +13,8 @@ stellar-storage = { path = "../../crates/storage" }
 stellar-project = { path = "../../crates/project" }
 stellar-layout = { path = "../../crates/layout" }
 stellar-assets = { path = "../../crates/assets" }
+stellar-scene = { path = "../../crates/scene" }
+stellar-renderer-core = { path = "../../crates/renderer-core" }
 
 [lints]
 workspace = true

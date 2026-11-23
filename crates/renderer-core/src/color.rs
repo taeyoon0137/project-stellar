@@ -316,4 +316,4 @@ pub fn f16_bits_to_f32(bits: u16) -> f32 {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

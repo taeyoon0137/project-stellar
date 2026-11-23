@@ -24,6 +24,7 @@ use crate::stroke::{tessellate_stroke, StrokeStyle};
 use crate::tessellation::{FillMesh, FillStyle, FillTessellator, TessellationError};
 
 use super::fill::SweepFillTessellator;
+use super::gradient::{GradientError, GradientGeometry, GradientStop};
 
 /// fixture 분류(XI.11.3 inventory 단위).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -89,6 +90,8 @@ pub enum Feature {
     DisplayP3,
     /// offscreen layer 합성과 blend mode(XI.10.2).
     Blend,
+    /// gradient fill(XI.10.3).
+    Gradient,
 }
 
 /// mesh 겹침 처리.
@@ -140,6 +143,13 @@ impl Mesh {
 pub enum Paint {
     /// 단색.
     Solid(OutputColor),
+    /// gradient(stop은 시각 순서, XI.10.3). GPU 경로는 선형 gradient만 있습니다.
+    Gradient {
+        /// 기하.
+        geometry: GradientGeometry,
+        /// 시각 순서 stop.
+        stops: Vec<GradientStop>,
+    },
 }
 
 /// mesh fill.
@@ -263,6 +273,8 @@ pub enum FixtureError {
     Invalid(&'static str),
     /// tessellation 실패.
     Tessellation(TessellationError),
+    /// gradient stop 오류.
+    Gradient(GradientError),
 }
 
 impl From<TessellationError> for FixtureError {
@@ -354,7 +366,7 @@ impl Fixture {
         {
             return Err(FixtureError::InvalidSize);
         }
-        validate_ops(&self.ops)
+        validate_ops(&self.ops, &self.plan())
     }
 
     /// 그리기를 덧붙입니다.
@@ -372,7 +384,7 @@ impl Fixture {
     }
 }
 
-fn validate_ops(ops: &[Op]) -> Result<(), FixtureError> {
+fn validate_ops(ops: &[Op], plan: &OutputColorPlan) -> Result<(), FixtureError> {
     for op in ops {
         match op {
             Op::Fill(fill) => {
@@ -381,6 +393,10 @@ fn validate_ops(ops: &[Op]) -> Result<(), FixtureError> {
                 }
                 if fill.mesh.positions.iter().flatten().any(|v| !v.is_finite()) {
                     return Err(FixtureError::Invalid("mesh 좌표가 유한하지 않습니다"));
+                }
+                if let Paint::Gradient { stops, .. } = &fill.paint {
+                    super::gradient::GradientRamp::resolve(plan, stops)
+                        .map_err(FixtureError::Gradient)?;
                 }
             }
             Op::Image(image) => {
@@ -406,7 +422,7 @@ fn validate_ops(ops: &[Op]) -> Result<(), FixtureError> {
                     ));
                 }
             }
-            Op::Layer(layer) => validate_ops(&layer.content)?,
+            Op::Layer(layer) => validate_ops(&layer.content, plan)?,
         }
     }
     Ok(())
@@ -548,6 +564,18 @@ pub fn fill_mesh(path: &PathGeometry, rule: FillRule) -> Result<Mesh, FixtureErr
 /// path stroke mesh(겹칠 수 있음, XI.6.2 기준 tessellator).
 pub fn stroke_mesh(path: &PathGeometry, style: &StrokeStyle) -> Result<Mesh, FixtureError> {
     Ok(Mesh::from_fill_mesh(&tessellate_stroke(path, style)?))
+}
+
+/// 선형 gradient mesh fill 그리기(stop은 시각 순서).
+pub fn linear_gradient(mesh: Mesh, start: [f32; 2], end: [f32; 2], stops: Vec<GradientStop>) -> Op {
+    Op::Fill(FillOp {
+        mesh,
+        paint: Paint::Gradient {
+            geometry: GradientGeometry::Linear { start, end },
+            stops,
+        },
+        coverage: Coverage::Disjoint,
+    })
 }
 
 /// 단색 mesh fill 그리기.

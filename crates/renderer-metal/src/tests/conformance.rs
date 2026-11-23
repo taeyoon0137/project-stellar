@@ -298,3 +298,15 @@ fn blend_reference_images_match_cpu_formula() {
         &stellar_renderer_core::effects::inventory::blend_fixtures(),
     );
 }
+
+#[test]
+fn gradient_pixel_fixtures_match_cpu_formula() {
+    // 검증 기준(XI.10.3): gradient pixel fixture 통과(같은 position tie·범위 밖 stop·pad·투명 stop·P3·도형 안).
+    if !metal_available() {
+        return;
+    }
+    run_group(
+        "gradient",
+        &stellar_renderer_core::effects::inventory::gradient_fixtures(),
+    );
+}

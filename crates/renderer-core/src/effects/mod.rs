@@ -8,6 +8,7 @@
 //! - [`artifact`]: reference image, raw RGBA·PNG 기록.
 //! - [`compare`]: 채널·structural 허용 오차 비교와 diff artifact.
 //! - [`inventory`]: 기능별 fixture 목록.
+//! - [`gradient`]: gradient stop 값·기하·GPU ramp.
 
 /// 공통 shader ABI byte 배치.
 pub mod abi;
@@ -23,6 +24,9 @@ pub mod fill;
 
 /// 적합성 fixture 모델 (XI.11.1).
 pub mod fixture;
+
+/// gradient 수식 (XI.10.3).
+pub mod gradient;
 
 /// 적합성 fixture 목록.
 pub mod inventory;

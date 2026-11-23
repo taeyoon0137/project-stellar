@@ -9,6 +9,8 @@
 //! - 단색 mesh: `SolidFill` + premultiplied over. [`Coverage::Union`] mesh는 stencil union입니다. `IncrementWhereEqual`
 //!   (reference 0)로 그려 pixel마다 처음 한 번만 칠하고, 같은 mesh를 `ClipStencil` + `DecrementWhereEqual`로 다시 그려
 //!   stencil을 0으로 되돌립니다. stencil이 필요한 pass에만 depth·stencil transient를 붙입니다.
+//! - gradient: stop ramp를 `RAMP_WIDTH` texel `Rgba16Float` texture로 올리고 정점 uv.x = ramp 좌표(선형 gradient의 `t`는 위치의
+//!   affine 함수)로 `Texture` program이 linear filter·clamp로 읽습니다(ADR-0102 결정 4).
 //! - 이미지: `Rgba8UnormSrgb` texture([`ImageData::texture_bytes`]) + `Texture` program, tint = 불투명도.
 //! - glyph: `R8Unorm` coverage texture + `GlyphMask` program(Nearest), tint = 글자 색 working 값.
 //! - layer: 내용을 자기 pass의 `Rgba16Float` transient(`pass_compiler::LAYER_FORMAT`, 투명 clear)에 그리고, 부모 pass가 그
@@ -24,7 +26,7 @@ use crate::backend::{
     PipelineKey, RendererBackend, ShaderProgram, StencilMode, TextureHandle, TextureRegion,
     TextureSource, TextureUsage,
 };
-use crate::color::to_working;
+use crate::color::{encode_pixel, to_working};
 use crate::output_color::OutputColorPlan;
 use crate::placeholder::{SamplerDesc, TextureFilter, TextureWrap};
 use crate::render_graph::{
@@ -41,6 +43,7 @@ use super::fixture::{
     Coverage, FillOp, Fixture, FixtureError, GlyphOp, ImageOp, LayerOp, Op, Paint,
     IMAGE_TEXTURE_FORMAT,
 };
+use super::gradient::{GradientRamp, RAMP_WIDTH};
 use crate::blend::{composite_blend_state, composite_program};
 use crate::pass_compiler::LAYER_FORMAT;
 use stellar_scene::stack::SceneBlendMode;
@@ -54,6 +57,8 @@ pub enum LowerError {
     Backend(BackendError),
     /// graph 구성 실패.
     Graph(&'static str),
+    /// backend 공통 경로가 아직 없는 그리기.
+    Unsupported(&'static str),
 }
 
 impl fmt::Display for LowerError {
@@ -62,6 +67,7 @@ impl fmt::Display for LowerError {
             LowerError::Fixture(error) => write!(f, "fixture 오류: {error:?}"),
             LowerError::Backend(error) => write!(f, "backend 오류: {error}"),
             LowerError::Graph(detail) => write!(f, "graph 오류: {detail}"),
+            LowerError::Unsupported(detail) => write!(f, "지원하지 않는 그리기: {detail}"),
         }
     }
 }
@@ -317,7 +323,7 @@ impl Recorder {
     ) -> Result<(), LowerError> {
         for op in ops {
             match op {
-                Op::Fill(fill) => self.record_fill(pass, fill),
+                Op::Fill(fill) => self.record_fill(pass, fill)?,
                 Op::Image(image) => self.record_image(pass, image),
                 Op::Glyphs(glyph) => self.record_glyph(pass, glyph),
                 Op::Layer(layer) => self.record_layer(pass, layer)?,
@@ -398,51 +404,105 @@ impl Recorder {
         Ok(())
     }
 
-    fn record_fill(&mut self, pass: &mut PassRecord, fill: &FillOp) {
+    fn record_fill(&mut self, pass: &mut PassRecord, fill: &FillOp) -> Result<(), LowerError> {
         if fill.mesh.positions.is_empty() {
-            return;
+            return Ok(());
         }
-        let color = match &fill.paint {
-            Paint::Solid(color) => to_working(&self.plan, *color).rgba,
-        };
-        let (first, count) = self.solid_vertices(&fill.mesh.positions, color);
         let (uniform_offset, uniform_size) = self.tint([1.0; 4]);
-        let draw = Step::Draw {
+        let solid_draw = |first, count| Step::Draw {
             stream: Stream::Solid,
             first,
             count,
             uniform_offset,
             uniform_size,
         };
-        match fill.coverage {
-            Coverage::Disjoint => {
-                pass.steps.push(Step::Pipeline(key(
-                    ShaderProgram::SolidFill,
-                    BlendState::PremultipliedOver,
-                    StencilMode::Disabled,
-                    pass.format,
-                )));
-                pass.steps.push(draw);
+        // (program, 칠하기 draw, ramp texture, stencil을 0으로 되돌리는 draw)
+        let (program, draw, texture, restore) = match &fill.paint {
+            Paint::Solid(color) => {
+                let color = to_working(&self.plan, *color).rgba;
+                let (first, count) = self.solid_vertices(&fill.mesh.positions, color);
+                let draw = solid_draw(first, count);
+                (ShaderProgram::SolidFill, draw, None, draw)
             }
-            Coverage::Union => {
-                pass.stencil = true;
-                pass.steps.push(Step::Pipeline(key(
-                    ShaderProgram::SolidFill,
-                    BlendState::PremultipliedOver,
-                    StencilMode::IncrementWhereEqual,
-                    pass.format,
-                )));
-                pass.steps.push(Step::StencilReference(0));
-                pass.steps.push(draw);
-                pass.steps.push(Step::Pipeline(key(
-                    ShaderProgram::ClipStencil,
-                    BlendState::Replace,
-                    StencilMode::DecrementWhereEqual,
-                    pass.format,
-                )));
-                pass.steps.push(draw);
+            Paint::Gradient { geometry, stops } => {
+                if !geometry.is_affine() {
+                    return Err(LowerError::Unsupported(
+                        "원형 gradient는 GPU 경로가 없습니다(ADR-0102 결정 4)",
+                    ));
+                }
+                let ramp = GradientRamp::resolve(&self.plan, stops)
+                    .map_err(|error| LowerError::Fixture(FixtureError::Gradient(error)))?;
+                let bytes = ramp
+                    .ramp(RAMP_WIDTH)
+                    .into_iter()
+                    .flat_map(|c| {
+                        encode_pixel(c, TextureFormat::Rgba16Float, self.plan.surface())
+                            .expect("float format")
+                    })
+                    .collect();
+                let upload = self.upload(RAMP_WIDTH, 1, TextureFormat::Rgba16Float, bytes);
+                let vertices: Vec<([f32; 2], [f32; 2])> = fill
+                    .mesh
+                    .positions
+                    .iter()
+                    .map(|p| (*p, [ramp.ramp_coordinate(geometry.parameter(*p)), 0.5]))
+                    .collect();
+                let (first, count) = self.textured_vertices(&vertices);
+                let (restore_first, restore_count) =
+                    self.solid_vertices(&fill.mesh.positions, [0.0; 4]);
+                (
+                    ShaderProgram::Texture,
+                    Step::Draw {
+                        stream: Stream::Textured,
+                        first,
+                        count,
+                        uniform_offset,
+                        uniform_size,
+                    },
+                    Some(Step::Texture {
+                        slot: 0,
+                        texture: TexRef::Upload(upload),
+                        sampler: clamp_sampler(TextureFilter::Linear),
+                    }),
+                    solid_draw(restore_first, restore_count),
+                )
             }
+        };
+        let stencil = match fill.coverage {
+            Coverage::Disjoint => StencilMode::Disabled,
+            Coverage::Union => StencilMode::IncrementWhereEqual,
+        };
+        pass.steps.push(Step::Pipeline(key(
+            program,
+            BlendState::PremultipliedOver,
+            stencil,
+            pass.format,
+        )));
+        if fill.coverage == Coverage::Union {
+            pass.stencil = true;
+            pass.steps.push(Step::StencilReference(0));
         }
+        pass.steps.extend(texture);
+        pass.steps.push(draw);
+        if fill.coverage == Coverage::Union {
+            pass.steps.push(Step::Pipeline(key(
+                ShaderProgram::ClipStencil,
+                BlendState::Replace,
+                StencilMode::DecrementWhereEqual,
+                pass.format,
+            )));
+            pass.steps.push(restore);
+        }
+        Ok(())
+    }
+
+    /// 임의 uv 정점 삼각형 목록.
+    pub(crate) fn textured_vertices(&mut self, vertices: &[([f32; 2], [f32; 2])]) -> (u32, u32) {
+        let first = (self.textured.len() / 16) as u32;
+        for (p, t) in vertices {
+            push_textured_vertex(&mut self.textured, *p, *t);
+        }
+        (first, vertices.len() as u32)
     }
 
     fn record_image(&mut self, pass: &mut PassRecord, image: &ImageOp) {
