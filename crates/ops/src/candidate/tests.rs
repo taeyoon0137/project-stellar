@@ -113,3 +113,174 @@ fn opaque_semantic_field_and_stale_base_are_explicitly_rejected_without_writes()
     ));
     assert_eq!(file_digest(&dir.path), before);
 }
+
+/// `model`의 Context에 `edit`을 적용한 사본.
+fn with_context(
+    model: &stellar_document::model::DocumentModel,
+    edit: impl FnOnce(&mut stellar_document::context::set::ContextSet),
+) -> stellar_document::model::DocumentModel {
+    let mut copy = crate::diff::DocumentSource::of_model(model)
+        .unwrap()
+        .into_model()
+        .unwrap();
+    let mut set = copy.context().clone();
+    edit(&mut set);
+    copy.replace_context(set);
+    copy
+}
+
+#[test]
+fn staging_one_requirement_list_keeps_the_other_context_lists_as_they_were() {
+    // 검증 기준(ADR-0123 결정 1, ADR-0138 결정 3): requirement·Slot 공개 목록이 있는 문서도 semantic stage 왕복을
+    // 증명하고, 목록은 대상(컴포넌트·Slot)마다 고를 수 있는 변경입니다. 고른 목록만 index에 쓰고 나머지 목록은
+    // index 값 그대로 둡니다.
+    use stellar_semantic_diff::build::context::{
+        COMPONENT_CONTEXT_REQUIREMENTS, SLOT_CONTEXT_KEYS,
+    };
+    let card = StableId::new_v7(97_001, 0x0c, 1);
+    let badge = StableId::new_v7(97_002, 0x0c, 2);
+    let slot = StableId::new_v7(97_003, 0x0c, 3);
+    let other_slot = StableId::new_v7(97_004, 0x0c, 4);
+    let key = StableId::new_v7(95_001, 0x0c, 1);
+    let model = with_context(&with_key(&large_document(4), 1), |set| {
+        set.add_requirement(card, key);
+        set.add_slot_key(slot, key);
+    });
+    let dir = TempDir::new("candidate-context-lists");
+    scaffold_project(&dir.path);
+    save_documents(&dir.path, &[&model]);
+    let index = SavedProjectLoader::new().open(&dir.path).unwrap();
+    let base = saved_semantic_snapshot(&index).unwrap();
+
+    // 작업 트리: 새 컴포넌트 requirement, 새 Slot 공개 목록, 기존 Slot 목록 삭제.
+    let working_model = with_context(&model, |set| {
+        set.add_requirement(badge, key);
+        set.add_slot_key(other_slot, key);
+        set.remove_slot_key(slot, key);
+    });
+    let work = TempDir::new("candidate-context-lists-work");
+    scaffold_project(&work.path);
+    save_documents(&work.path, &[&working_model]);
+    let working = SavedProjectLoader::new().open(&work.path).unwrap();
+    let target = saved_semantic_snapshot(&working).unwrap();
+
+    let document = target.get(model.document_id()).unwrap();
+    let list = |key, owner: StableId| document.path(&[key]).with_key_segment(&owner.to_string());
+    let changed: Vec<_> = diff(&base, &target)
+        .changes()
+        .iter()
+        .filter_map(|change| change.property_path().cloned())
+        .collect();
+    for path in [
+        list(COMPONENT_CONTEXT_REQUIREMENTS, badge),
+        list(SLOT_CONTEXT_KEYS, other_slot),
+        list(SLOT_CONTEXT_KEYS, slot),
+    ] {
+        assert!(changed.contains(&path), "목록마다 변경 하나: {path:?}");
+    }
+
+    let candidate = build_stage_candidate(
+        &base,
+        &target,
+        &StageSelectionRequest::stage([ChangeId::property(list(
+            COMPONENT_CONTEXT_REQUIREMENTS,
+            badge,
+        ))]),
+    )
+    .unwrap();
+    let files = serialize_candidate(&index, &candidate).unwrap();
+    assert!(!files.is_empty());
+    for (path, bytes) in &files {
+        let full = dir.path.join(path);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(full, bytes).unwrap();
+    }
+    let staged = SavedProjectLoader::new().open(&dir.path).unwrap();
+    let context = staged
+        .load_document(model.document_id())
+        .unwrap()
+        .model
+        .context()
+        .clone();
+    assert!(
+        context.requirements(badge).contains(&key),
+        "고른 requirement"
+    );
+    assert!(
+        context.requirements(card).contains(&key),
+        "index의 requirement"
+    );
+    assert!(
+        context.slot_keys(slot).contains(&key),
+        "고르지 않은 삭제는 index 그대로"
+    );
+    assert!(context.slot_keys(other_slot).is_empty(), "고르지 않은 추가");
+    assert_eq!(
+        saved_semantic_snapshot(&staged).unwrap(),
+        *candidate.snapshot()
+    );
+}
+
+#[test]
+fn project_scope_context_lists_are_split_back_from_the_ops_projection() {
+    // 검증 기준(ADR-0138 결정 4): `project_snapshot_of`(제품 프로젝트 범위 투영)의 합집합 목록을 문서별로 되돌리고, 다시
+    // 투영하면 같은 snapshot입니다.
+    use stellar_document::component::definition::ComponentLibrary;
+    use stellar_document::context::fixtures::{sid, ComponentBuilder, SceneBuilder};
+    use stellar_document::context::set::ContextSet;
+    use stellar_semantic_diff::build::context::{
+        project_contexts_from_snapshot, COMPONENT_CONTEXT_REQUIREMENTS,
+    };
+    let one = SceneBuilder::new(sid(1), sid(2), sid(3), sid(10)).build();
+    let two = SceneBuilder::new(sid(101), sid(102), sid(103), sid(110)).build();
+    let mut library = ComponentLibrary::new();
+    ComponentBuilder::new(sid(50), "card", sid(70)).register(&mut library);
+    let mut first = ContextSet::new();
+    first.add_requirement(sid(50), sid(900));
+    let mut second = ContextSet::new();
+    second.add_requirement(sid(50), sid(910));
+    second.add_requirement(sid(51), sid(910));
+    let sources = |a: &ContextSet, b: &ContextSet| {
+        [(&one, a), (&two, b)].map(|(model, set)| {
+            let mut source = crate::diff::DocumentSource::of_model(model).unwrap();
+            source.context = set.clone();
+            source
+        })
+    };
+    let snapshot_of = |documents: &[crate::diff::DocumentSource; 2]| {
+        let inputs: Vec<_> = documents.iter().map(|d| d.input()).collect();
+        crate::diff::project_snapshot_of(&inputs, &library).unwrap()
+    };
+    let mut merged = snapshot_of(&sources(&first, &second));
+    let mut card = merged.remove(sid(50)).unwrap();
+    let path = card.path(&[COMPONENT_CONTEXT_REQUIREMENTS]);
+    card.remove_property(&path);
+    card.insert_property(
+        path,
+        stellar_semantic_diff::value::SemanticValue::Ids(vec![sid(910), sid(920)]),
+    )
+    .unwrap();
+    merged.insert(card).unwrap();
+    let back =
+        project_contexts_from_snapshot(&merged, &[(sid(1), &first), (sid(101), &second)]).unwrap();
+    assert_eq!(
+        back[&sid(1)]
+            .requirements(sid(50))
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![sid(920)]
+    );
+    assert_eq!(
+        back[&sid(101)]
+            .requirements(sid(50))
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![sid(910), sid(920)]
+    );
+    assert_eq!(
+        snapshot_of(&sources(&back[&sid(1)], &back[&sid(101)])),
+        merged
+    );
+}

@@ -266,3 +266,6 @@ mod tests {
         assert!(after.text_source);
     }
 }
+
+#[cfg(test)]
+mod snapshot_tests;
