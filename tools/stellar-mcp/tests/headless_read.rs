@@ -585,11 +585,16 @@ fn component_resource_tracks_saved_yaml_across_checkouts_in_one_session() {
         assert_eq!(file_digest(&fx.temp.path), before);
         assert!(!json::write(&body).contains(fx.project.to_str().unwrap()));
         // 텍스트 원본 revision은 컴포넌트 원본 bytes도 담으므로(ADR-0113 결정 2) 원본이 바뀌면 바뀝니다.
-        assert!(body.get("revision").is_some() && revision != J::Null);
+        // 컴포넌트 resource revision은 같은 시점의 구조 resource revision과 같습니다. 텍스트 원본 프로젝트에서는 컴포넌트
+        // 원본이 원본 파일 집합에 들어 있어(ADR-0113 결정 2) 원본이 바뀌면 둘이 함께 바뀝니다.
+        let structure = content(&client.read(STRUCTURE), STRUCTURE);
+        assert_eq!(body.get("revision"), structure.get("revision"));
         assert_eq!(body.get("chunk_count"), Some(&J::int(0)));
         body
     };
-    assert!(array(read(&mut client).get("entries").unwrap()).is_empty());
+    let empty_components = read(&mut client);
+    assert_eq!(empty_components.get("revision"), Some(&revision));
+    assert!(array(empty_components.get("entries").unwrap()).is_empty());
     assert!(!dir.exists());
     fs::create_dir_all(&dir).unwrap();
     // component-source v1/v2의 최소 Free Frame 레코드. HEAD와 저장 generation을 독립적으로 변경합니다.
@@ -728,7 +733,8 @@ payload:
     );
     let first = tool_page(&client.diff(J::object(vec![("limit", J::int(1))])));
     assert_eq!(first.get("total"), Some(&J::int(3)));
-    assert!(first.get("revision").is_some());
+    let structure = content(&client.read(STRUCTURE), STRUCTURE);
+    assert_eq!(first.get("revision"), structure.get("revision"));
     assert_eq!(
         first.get("base_commit").map(text),
         Some(nested_head.as_str())
