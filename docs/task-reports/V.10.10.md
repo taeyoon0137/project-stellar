@@ -5,7 +5,7 @@
 - WBS: V.10.10
 - 등록: 2026-11-23 plan-revision이 임시 번호 TS-MAP를 이 ID로 계획서에 등록하고 보고서를 `docs/task-reports/pending-wbs/TS-MAP.md`에서 옮김
 - 작업명: node StableId → 텍스트 원본 파일·줄 범위 core API와 CLI `stellar query --source-span`
-- 상태: 완료 (`[x]`) — 2026-11-24 `text-source-everywhere` lane: core API·CLI(앞선 lane)에 더해 MCP `document.source_span`의 성공 경로를 텍스트 원본 fixture로 확인했고, span이 가리키는 줄의 값이 원본에서 읽은 조회 값과 같습니다. 선행 V.10.4 판정은 통합 때 `generate-ledger`로 정합니다. 처음 보고 당시: 완료 (`[x]`), 2026-11-23 plan-revision 판정: 부분 완료(`Task(V.10.10)` 커밋 없음, 선행 `[~]`).
+- 상태: 부분 완료 (`[~]`) — 2026-11-24 통합 판정: 이 행의 구현은 끝났지만 선행 V.10.4이 `[x]`가 아닙니다. 그 조건이 풀리면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`) — 2026-11-24 `text-source-everywhere` lane: core API·CLI(앞선 lane)에 더해 MCP `document.source_span`의 성공 경로를 텍스트 원본 fixture로 확인했고, span이 가리키는 줄의 값이 원본에서 읽은 조회 값과 같습니다. 선행 V.10.4 판정은 통합 때 `generate-ledger`로 정합니다. 처음 보고 당시: 완료 (`[x]`), 2026-11-23 plan-revision 판정: 부분 완료(`Task(V.10.10)` 커밋 없음, 선행 `[~]`).
 - 선행: V.10.4 `[~]`
 - 구현 커밋: `ae935137`(span table), `199fee64`(ops·CLI). 결정: [ADR-0077](../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md) 결정 6.
 

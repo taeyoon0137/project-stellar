@@ -4,7 +4,7 @@
 
 - WBS: V.10.6
 - 작업명: 텍스트 원본의 감시·외부 변경·저장·재열기 연결
-- 상태: 완료 (`[x]`) — 2026-11-24 `text-source-everywhere` lane: 앱 창 session의 감시·외부 변경·명령 저장·재열기(앞선 lane)에 더해, CLI·MCP의 명령 저장과 재열기가 같은 텍스트 원본 session을 쓰고 검증 열의 CLI dry-run→저장→재열기→Git diff를 실제 `stellar` 명령으로 확인했습니다. dirty 창 병합은 XIII.3.4(ADR-0110)로 들어와 있고, CLI가 원본도 쓰면서 생긴 원본 event·cache event 순서도 병합합니다. 선행 V.10.5의 판정과 원장 상태는 통합 때 `generate-ledger`로 정합니다. 처음 보고 당시: 부분 완료 (`[~]`).
+- 상태: 부분 완료 (`[~]`) — 2026-11-24 통합 판정: 이 행의 구현은 끝났지만 선행 V.10.5이 `[x]`가 아닙니다. 그 조건이 풀리면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`) — 2026-11-24 `text-source-everywhere` lane: 앱 창 session의 감시·외부 변경·명령 저장·재열기(앞선 lane)에 더해, CLI·MCP의 명령 저장과 재열기가 같은 텍스트 원본 session을 쓰고 검증 열의 CLI dry-run→저장→재열기→Git diff를 실제 `stellar` 명령으로 확인했습니다. dirty 창 병합은 XIII.3.4(ADR-0110)로 들어와 있고, CLI가 원본도 쓰면서 생긴 원본 event·cache event 순서도 병합합니다. 선행 V.10.5의 판정과 원장 상태는 통합 때 `generate-ledger`로 정합니다. 처음 보고 당시: 부분 완료 (`[~]`).
 - 선행: V.10.5, XIII.3.1
 - 결정: [ADR-0083](../adr/ADR-0083-window-session-stale-and-external-sync.md), [ADR-0088](../adr/ADR-0088-text-source-default-and-chunk-cache.md)
 - lane: `window-session-stale`, `text-source-default`

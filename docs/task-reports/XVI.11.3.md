@@ -4,7 +4,7 @@
 
 - WBS: XVI.11.3
 - 작업명: 두 branch conflict→Semantic Conflict 해결→git add E2E
-- 상태: 완료 (`[x]`) — 2026-11-24 `text-source-everywhere` lane: 앱이 만든 프로젝트(텍스트 원본이 Git 원본)의 두 branch conflict가 conflict 세션의 텍스트 원본 단위로 의미 병합되고 `git add`까지 unmerged 0, MERGE_HEAD 유지입니다(아래 후속). 처음 보고 당시: 부분 완료 (`[~]`) — 텍스트 원본 View 파일 conflict를 conflict 세션이 의미 병합하지 않았습니다. 원장 판정은 통합 때 `generate-ledger`로 정합니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-24 통합 판정: 이 행의 구현은 끝났지만 선행 XIV.14.4이 `[x]`가 아닙니다. 그 조건이 풀리면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`) — 2026-11-24 `text-source-everywhere` lane: 앱이 만든 프로젝트(텍스트 원본이 Git 원본)의 두 branch conflict가 conflict 세션의 텍스트 원본 단위로 의미 병합되고 `git add`까지 unmerged 0, MERGE_HEAD 유지입니다(아래 후속). 처음 보고 당시: 부분 완료 (`[~]`) — 텍스트 원본 View 파일 conflict를 conflict 세션이 의미 병합하지 않았습니다. 원장 판정은 통합 때 `generate-ledger`로 정합니다.
 - 선행: XIV.14.4
 - 결정: [ADR-0111](../adr/ADR-0111-headless-release-e2e-scenarios.md)
 - lane: `headless-e2e`
