@@ -401,8 +401,11 @@ pub fn command_error(error: &LibraryCommandError) -> CliError {
     };
     let error_value = CliError::new(status, code, message);
     match error {
-        LibraryCommandError::OrphansBlocked { diagnostics } => {
-            error_value.with_result(JsonValue::object(vec![(
+        LibraryCommandError::OrphansBlocked {
+            diagnostics,
+            ambiguous,
+        } => error_value.with_result(JsonValue::object(vec![
+            (
                 "orphans",
                 JsonValue::Array(
                     diagnostics
@@ -410,8 +413,12 @@ pub fn command_error(error: &LibraryCommandError) -> CliError {
                         .map(|d| JsonValue::string(d.to_string()))
                         .collect(),
                 ),
-            )]))
-        }
+            ),
+            (
+                "ambiguous",
+                JsonValue::Array(ambiguous.iter().map(|id| views::id(*id)).collect()),
+            ),
+        ])),
         LibraryCommandError::UnknownComponents { components, .. } => {
             error_value.with_result(JsonValue::object(vec![(
                 "components",

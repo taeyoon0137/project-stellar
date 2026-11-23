@@ -91,7 +91,7 @@ source는 instance, property path는 instance root, footprint는 `sources::libra
 | 명령 | 하는 일 |
 |---|---|
 | `add <경로> <이름> <repository> (--tag\|--branch\|--commit) <값> [--component <id>]...` | 선택자를 해석해 그 commit의 `project.id`로 library id를 정하고 선언을 더한 뒤 graph 전체를 해석·받기·검증하고 lock을 씁니다. `--component`는 새 library가 export해야 합니다 |
-| `update <경로> <이름> [선택자] [--allow-orphans] [--dry-run]` | 그 의존성만 다시 해석(선택자 생략 시 branch 이동 확인)하고, 저장된 모든 문서의 외부 instance를 후보에 대어 봅니다(XV.7.3). 끊기는 참조가 있으면 승인(`--allow-orphans`) 없이 거부합니다. 결과에 이전·새 commit과 resource diff 개수(XV.7.2)를 냅니다 |
+| `update <경로> <이름> [선택자] [--allow-orphans] [--dry-run]` | 그 의존성만 다시 해석(선택자 생략 시 branch 이동 확인)하고, 저장된 모든 문서의 외부 instance를 후보에 대어 봅니다(XV.7.3). 끊기는 참조가 있거나, 후보 선언 이름에 이 의존성이 들어 있어 검증하지 못한 모호한 instance가 있으면 승인(`--allow-orphans`) 없이 거부합니다(fail closed). 결과에 이전·새 commit과 resource diff 개수(XV.7.2)를 냅니다 |
 | `fetch <경로>` | lock의 모든 node를 공용 cache에 받고 검증합니다. 받은 content hash가 lock 값과 다르면 실패합니다(XV.4.4). lock·`stellar.yaml` 불변 |
 | `import <경로> <이름> <component id>... [--remove]` | 저장된 참조를 더하거나 지웁니다. 더할 때는 lock 기준으로 cache에서 연 그 의존성 library가 export해야 합니다(Git 없음) |
 

@@ -197,10 +197,13 @@ pub enum LibraryCommandError {
         /// 의존성 이름.
         name: LogicalName,
     },
-    /// 후보를 적용하면 사용 프로젝트 참조가 끊김(`allow_orphans` 없이 거부).
+    /// 후보를 적용하면 사용 프로젝트 참조가 끊기거나, 이 의존성의 것일 수 있는 모호한 instance를 검증하지 못함(`allow_orphans`
+    /// 없이 거부, fail closed).
     OrphansBlocked {
         /// orphan 진단(정렬).
         diagnostics: Vec<CandidateDiagnostic>,
+        /// 이 의존성이 후보에 들어 있어 검증하지 못한 모호한 instance(정렬).
+        ambiguous: Vec<StableId>,
     },
 }
 
@@ -259,11 +262,24 @@ impl fmt::Display for LibraryCommandError {
                 f,
                 "의존성 {name}의 library를 cache에서 읽을 수 없습니다(stellar library fetch로 받으세요)"
             ),
-            LibraryCommandError::OrphansBlocked { diagnostics } => write!(
-                f,
-                "update하면 사용 프로젝트 참조 {}개가 끊깁니다(확인했으면 --allow-orphans)",
-                diagnostics.len()
-            ),
+            LibraryCommandError::OrphansBlocked {
+                diagnostics,
+                ambiguous,
+            } => {
+                write!(
+                    f,
+                    "update하면 사용 프로젝트 참조 {}개가 끊깁니다",
+                    diagnostics.len()
+                )?;
+                if !ambiguous.is_empty() {
+                    write!(
+                        f,
+                        ", 어느 의존성의 것인지 정할 수 없어 검증하지 못한 instance가 {}개입니다",
+                        ambiguous.len()
+                    )?;
+                }
+                f.write_str("(확인했으면 --allow-orphans)")
+            }
         }
     }
 }
@@ -348,7 +364,8 @@ pub struct UpdateReport {
     pub diff: Option<DiffCounts>,
     /// 사용 프로젝트 참조 검증 결과(XV.7.3).
     pub orphans: Vec<CandidateDiagnostic>,
-    /// 어느 의존성인지 정할 수 없어 검증에서 빠진 instance.
+    /// 이 의존성이 후보 선언에 들어 있지만 어느 의존성인지 정할 수 없어 검증에서 빠진 instance. 있으면 orphan처럼 승인 없이는
+    /// 적용하지 않습니다(fail closed).
     pub ambiguous: Vec<StableId>,
     /// 적용했는지(dry-run이면 `false`).
     pub applied: bool,
@@ -784,10 +801,13 @@ pub fn update(
     // 사용 프로젝트의 외부 instance·override를 후보에 대어 봅니다(XV.7.3). 출처 판정은 지금 열린 library 기준입니다.
     let (orphans, ambiguous) =
         check_project_usages(root, &tools.cache, &request.name, &candidate, now_unix_ms);
-    let applied = !request.dry_run && (orphans.is_empty() || request.allow_orphans);
-    if !request.dry_run && !orphans.is_empty() && !request.allow_orphans {
+    // 이 의존성의 것일 수 있는 모호한 instance는 검증하지 못했으므로 끊기는 참조와 같이 승인을 요구합니다(fail closed).
+    let blocked = !orphans.is_empty() || !ambiguous.is_empty();
+    let applied = !request.dry_run && (!blocked || request.allow_orphans);
+    if !request.dry_run && blocked && !request.allow_orphans {
         return Err(LibraryCommandError::OrphansBlocked {
             diagnostics: orphans,
+            ambiguous,
         });
     }
     let (manifest_written, lock_written) = if applied {
@@ -814,7 +834,8 @@ pub fn update(
 }
 
 /// 저장된 모든 문서의 외부 instance 사용을 `dependency`의 후보 snapshot에 대어 봅니다. 출처는 지금 lock과 명령의 cache로 연
-/// library와 저장된 참조로 정합니다(`classify_component`, 진단·사전 검사와 같은 판정).
+/// library와 저장된 참조로 정합니다(`classify_component`, 진단·사전 검사와 같은 판정). 모호한 instance는 후보 선언 이름에
+/// `dependency`가 있는 것만 돌려줍니다(다른 의존성끼리의 모호함은 이 update와 무관).
 fn check_project_usages(
     root: &Path,
     cache: &LibraryCache,
@@ -839,7 +860,13 @@ fn check_project_usages(
         let usages = external_instance_usages(&model, &own, &libraries);
         let check = check_candidate_usages(dependency, candidate, &usages.instances, &[]);
         orphans.extend(check.diagnostics().iter().cloned());
-        ambiguous.extend(usages.ambiguous.into_iter().map(|(id, _)| id));
+        ambiguous.extend(
+            usages
+                .ambiguous
+                .into_iter()
+                .filter(|(_, names)| names.contains(dependency))
+                .map(|(id, _)| id),
+        );
     }
     orphans.sort();
     ambiguous.sort();

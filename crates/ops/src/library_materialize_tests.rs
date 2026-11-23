@@ -330,7 +330,11 @@ fn update_reviews_then_applies_and_reapplies_stored_refs_by_stable_id() {
 
     // v3는 Card를 지웠습니다: 사용 프로젝트 instance가 끊기므로 승인 없이는 거부합니다.
     match update(&env.project, &mut tools, &request("v3", false, false), 5) {
-        Err(LibraryCommandError::OrphansBlocked { diagnostics }) => {
+        Err(LibraryCommandError::OrphansBlocked {
+            diagnostics,
+            ambiguous,
+        }) => {
+            assert!(ambiguous.is_empty());
             assert_eq!(diagnostics.len(), 1);
             assert_eq!(
                 diagnostics[0].issue,
@@ -509,6 +513,74 @@ fn stored_refs_decide_external_components_and_document_diagnostics() {
     // remove는 저장된 참조를 지웁니다.
     let removed = remove_imports(&env.project, &name("ds"), &card).unwrap();
     assert_eq!(removed.components, [sid(SPACE, GHOST)]);
+}
+
+#[test]
+fn update_refuses_unverifiable_ambiguous_instances_without_approval() {
+    let Some(env) = Env::new("lib-update-ambiguous", &[(CARD_INSTANCE, CARD)]) else {
+        return;
+    };
+    // 두 library가 같은 Card StableId를 export하고, 두 선언이 모두 Card를 저장했습니다(모호).
+    let ds = env.repo("ds", 73);
+    ds.release(SPACE, defs(&[CARD, BADGE]), "v1");
+    ds.release(SPACE, defs(&[CARD, BADGE, TAG_COMPONENT]), "v2");
+    let twin = env.repo("twin", 74);
+    twin.release(SPACE, defs(&[CARD]), "v1");
+    let chips = env.repo("chips", 75);
+    chips.release(SPACE + 1, defs(&[CHIP]), "v1");
+    chips.release(SPACE + 1, defs(&[CHIP, BADGE]), "v2");
+    let mut tools = env.tools();
+    for (dependency, repo) in [("ds", &ds), ("twin", &twin)] {
+        add(
+            &env.project,
+            &mut tools,
+            &add_request(dependency, repo, "v1", &[CARD]),
+            1,
+        )
+        .unwrap();
+    }
+    add(
+        &env.project,
+        &mut tools,
+        &add_request("chips", &chips, "v1", &[]),
+        1,
+    )
+    .unwrap();
+    let request = |dependency: &str, allow_orphans: bool, dry_run: bool| UpdateRequest {
+        name: name(dependency),
+        version: Some(tag("v2")),
+        allow_orphans,
+        dry_run,
+    };
+
+    // 검토는 모호한 instance를 알립니다(쓰지 않음).
+    let review = update(&env.project, &mut tools, &request("ds", false, true), 2).unwrap();
+    assert!(review.orphans.is_empty());
+    assert_eq!(review.ambiguous, [sid(SPACE, CARD_INSTANCE)]);
+    assert!(!review.applied);
+
+    // ds의 것일 수 있는 instance를 검증하지 못했으므로 승인 없이는 적용하지 않습니다(fail closed).
+    let before = env.files();
+    match update(&env.project, &mut tools, &request("ds", false, false), 3) {
+        Err(LibraryCommandError::OrphansBlocked {
+            diagnostics,
+            ambiguous,
+        }) => {
+            assert!(diagnostics.is_empty());
+            assert_eq!(ambiguous, [sid(SPACE, CARD_INSTANCE)]);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(env.files(), before, "거부된 update는 파일을 바꾸지 않음");
+
+    // 모호함에 끼지 않은 의존성(chips)의 update는 막지 않습니다.
+    let unrelated = update(&env.project, &mut tools, &request("chips", false, false), 4).unwrap();
+    assert!(unrelated.applied && unrelated.ambiguous.is_empty());
+
+    // 승인하면 적용합니다.
+    let approved = update(&env.project, &mut tools, &request("ds", true, false), 5).unwrap();
+    assert!(approved.applied);
+    assert_eq!(approved.ambiguous, [sid(SPACE, CARD_INSTANCE)]);
 }
 
 #[test]
