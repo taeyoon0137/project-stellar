@@ -13,7 +13,7 @@
 ## 변경 파일 목록
 
 - `crates/mcp-core/src/lease.rs`(신규) — `BEGIN_AGENT_EDIT` ToolDef, `parse_begin_agent_edit`, `BeginAgentEdit::resolve`.
-- `crates/mcp-core/src/lease_tests.rs`(신규) — 인자·대상 거부 test.
+- `crates/mcp-core/src/lease.rs`의 test module — 인자·대상 거부 test(브리지 파일 변경 API 검사가 파일 끝 test module만 제외하므로 같은 파일에 둠).
 - `crates/mcp-core/src/lib.rs` — module 등록.
 
 ## 구현 요약
