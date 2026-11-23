@@ -74,17 +74,7 @@ impl AppRuntime {
                 ));
             }
             match edit {
-                SelectionEdit::SelectAll => {
-                    let invalid = || {
-                        Failure::new(RequestFailure::UnknownView, "활성 View를 찾을 수 없습니다")
-                    };
-                    let model = window.document().ok_or_else(invalid)?.model();
-                    let root = super::sidebar::view_root(model, target.view).ok_or_else(invalid)?;
-                    let nodes = super::canvas_gesture::selectable_root_children(model, root);
-                    window
-                        .select(stellar_commands::selection::Selection::new(nodes, None))
-                        .map_err(view_failure)?;
-                }
+                SelectionEdit::SelectAll => select_all(window, target.view)?,
                 SelectionEdit::Reorder(direction) => {
                     super::node_order::reorder(window, request, direction)?
                 }
@@ -140,6 +130,22 @@ fn same_selection(ids: &[StableId], selected: &[StableId]) -> bool {
     }
     let targets: std::collections::HashSet<_> = ids.iter().collect();
     selected.iter().all(|id| targets.contains(id))
+}
+
+/// 활성 View root의 보이고 잠기지 않은 직계 자식을 고릅니다(UX.3.13, 영역 선택과 같은 필터). 고를 자식이 없으면
+/// 지금 선택을 그대로 두고, 지금 선택과 같으면 history에 새 항목을 만들지 않습니다(`select`의 같은 선택 규칙).
+fn select_all(window: &mut ProjectWindowSession, view: StableId) -> Result<(), Failure> {
+    let invalid = || Failure::new(RequestFailure::UnknownView, "활성 View를 찾을 수 없습니다");
+    let model = window.document().ok_or_else(invalid)?.model();
+    let root = super::sidebar::view_root(model, view).ok_or_else(invalid)?;
+    let nodes = super::canvas_gesture::selectable_root_children(model, root);
+    if nodes.is_empty() {
+        return Ok(());
+    }
+    window
+        .select(stellar_commands::selection::Selection::new(nodes, None))
+        .map_err(view_failure)?;
+    Ok(())
 }
 
 fn delete_selected(
@@ -252,6 +258,29 @@ mod tests {
         identity, sample_document, saved_project_with, sid, window,
     };
     use stellar_commands::selection::Selection;
+
+    #[test]
+    fn select_all_picks_root_children_and_records_only_real_changes() {
+        let mut model = sample_document();
+        let mut hidden = model.record(sid(12)).unwrap();
+        hidden.id = sid(13);
+        hidden.visible = false;
+        hidden.order_key = stellar_core_types::order_key::OrderKey::from_bytes(vec![0x30]).unwrap();
+        model.insert_node(hidden).unwrap();
+        let dir = saved_project_with("select-all", &[&model]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        let depth = session.history().history().len();
+        assert!(select_all(&mut session, sid(3)).is_ok());
+        assert_eq!(session.view().selection().ids(), &[sid(11), sid(12)]);
+        assert_eq!(session.history().history().len(), depth + 1);
+        // 같은 선택이면 새 history 항목이 없습니다.
+        assert!(select_all(&mut session, sid(3)).is_ok());
+        assert_eq!(session.history().history().len(), depth + 1);
+        // 고를 자식이 없는 View(root 20)는 지금 선택을 비우지 않습니다.
+        assert!(select_all(&mut session, sid(4)).is_ok());
+        assert_eq!(session.view().selection().ids(), &[sid(11), sid(12)]);
+        assert_eq!(session.history().history().len(), depth + 1);
+    }
 
     #[test]
     fn deletion_history_and_save_reopen() {

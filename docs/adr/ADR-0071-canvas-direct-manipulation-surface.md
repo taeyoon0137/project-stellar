@@ -204,3 +204,8 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
 ## 철회(2026-11-23, UX.3.8 화살표 이동)
 
 2026-11-18 화살표 이동 개정의 `stellar_canvas_arrow_nudge`를 제거한다. 플랫폼 중립 코어가 macOS 가상 키코드(123~126)를 해석해 경계가 거꾸로였고, 하는 일은 1px·10px 상수표 하나를 FFI 왕복으로 바꾼 것뿐이었다. 키 매핑은 셸에 둔다. 이동 단위의 의미를 코어가 가져야 하면 UI 재설계 때 방향·크기 enum을 받는 Nudge 명령으로 만들고 기존 상대 이동(`canvas_move`)과 같은 경로로 처리해 CLI·MCP와 공유한다.
+
+## 개정(2026-11-18, UX.3.13 Select All)
+
+- Select All은 활성 View root의 보이고 잠기지 않은 직계 자식을 코어(`SelectionEdit::SelectAll`)에서 골라 창 선택 history에 기록한다. 영역 선택과 같은 자식 필터(`selectable_root_children`)를 쓰고, 셸은 레이어 페이지를 순회하지 않는다. 요청은 `stellar_window_edit_selection`의 View·revision·history 위치 검사를 거친다.
+- 보완(2026-11-23): 고를 자식이 없으면 지금 선택을 그대로 두고 기록하지 않는다. 지금 선택과 같으면 새 history 항목을 만들지 않는다. 처음 문단은 Inspector 표면 ADR-0070에 있었으나 선택 표면이라 이 ADR로 옮겼다.
