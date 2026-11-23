@@ -39,6 +39,17 @@ const FONT_MISSING: ExportFontFace = ExportFontFace::new([0x0B; 32], 0);
 const KEY_OK: TextLayoutKey = TextLayoutKey::from_bytes([1; 16]);
 const KEY_GONE: TextLayoutKey = TextLayoutKey::from_bytes([2; 16]);
 const KEY_HIDDEN: TextLayoutKey = TextLayoutKey::from_bytes([3; 16]);
+/// 첫 glyph는 정상이고 뒤 glyph가 outline 없는 color glyph인 layout.
+const KEY_COLOR: TextLayoutKey = TextLayoutKey::from_bytes([4; 16]);
+/// 첫 glyph는 정상이고 뒤 glyph가 손상 glyph인 layout.
+const KEY_BROKEN: TextLayoutKey = TextLayoutKey::from_bytes([5; 16]);
+
+/// 정상 glyph(크기 비례 사각형).
+const GLYPH_OK: u32 = 1;
+/// outline 없는 color glyph.
+const GLYPH_COLOR: u32 = 2;
+/// 기본 손상 glyph.
+const GLYPH_BROKEN: u32 = 3;
 
 /// 고정 revision별 asset.
 #[derive(Default)]
@@ -65,8 +76,11 @@ fn assets() -> Assets {
 }
 
 /// font revision별 text layout. KEY_GONE은 revision 5에만 있고, FONT_MISSING은 outline 조회가 실패합니다.
+/// GLYPH_COLOR는 outline이 없고 `malformed` glyph는 손상으로 조회됩니다.
 struct Text {
     layouts: HashMap<(TextLayoutKey, FontRevision), Arc<TextGlyphLayout>>,
+    /// 손상(`Malformed`)으로 조회되는 glyph.
+    malformed: u32,
 }
 
 fn square(size: f32) -> PathGeometry {
@@ -98,22 +112,32 @@ impl ExportTextSource for Text {
         if key.font == FONT_MISSING {
             return Err(GlyphOutlineError::FontUnavailable);
         }
+        if key.glyph == self.malformed {
+            return Err(GlyphOutlineError::Malformed);
+        }
+        if key.glyph == GLYPH_COLOR {
+            return Ok(GlyphOutline::NoOutline);
+        }
         Ok(GlyphOutline::Path(square(key.size.px() / 2.0)))
     }
 }
 
-fn glyph_run(font: ExportFontFace, x: i32) -> GlyphRun {
+/// 10 px 검은 run. glyph는 (번호, pen x 1/64 px), baseline 10 px.
+fn run_of(font: ExportFontFace, glyphs: &[(u32, i32)]) -> GlyphRun {
     GlyphRun {
         font,
         size: RunSize::from_px(10.0).unwrap(),
         variations: GlyphVariations::none(),
         fill: Some(fx::srgb(0.0, 0.0, 0.0, 1.0)),
-        glyphs: vec![PlacedGlyph {
-            glyph: 1,
-            x,
-            y: 640,
-        }],
+        glyphs: glyphs
+            .iter()
+            .map(|&(glyph, x)| PlacedGlyph { glyph, x, y: 640 })
+            .collect(),
     }
+}
+
+fn glyph_run(font: ExportFontFace, x: i32) -> GlyphRun {
+    run_of(font, &[(GLYPH_OK, x)])
 }
 
 fn text() -> Text {
@@ -128,7 +152,25 @@ fn text() -> Text {
             runs: vec![glyph_run(FONT_OK, 0)],
         }),
     );
-    Text { layouts }
+    layouts.insert(
+        (KEY_COLOR, FontRevision(4)),
+        Arc::new(TextGlyphLayout {
+            runs: vec![run_of(FONT_OK, &[(GLYPH_OK, 0), (GLYPH_COLOR, 640)])],
+        }),
+    );
+    layouts.insert(
+        (KEY_BROKEN, FontRevision(4)),
+        Arc::new(TextGlyphLayout {
+            runs: vec![run_of(
+                FONT_OK,
+                &[(GLYPH_OK, 0), (GLYPH_BROKEN, 640), (GLYPH_BROKEN, 1280)],
+            )],
+        }),
+    );
+    Text {
+        layouts,
+        malformed: GLYPH_BROKEN,
+    }
 }
 
 /// 진단 fixture scene.
@@ -205,6 +247,38 @@ fn scene(extra: impl FnOnce(&mut NodeInput)) -> SceneSnapshot {
             .unwrap();
     }
     builder.finish_frame(&mut root, frame).unwrap();
+    SceneRevisionMap::new()
+        .generate(DocumentRevision(1), builder.finish(root))
+        .unwrap()
+}
+
+/// 최상위 Text만 있는 scene. `(id, layout, shadow 여부)` 순서가 paint 순서입니다.
+fn text_scene(texts: &[(u64, TextLayoutKey, bool)]) -> SceneSnapshot {
+    let mut builder = SceneBuilder::new();
+    let mut root = builder.root_scope();
+    for (index, &(id, layout, shadow)) in texts.iter().enumerate() {
+        let mut node = NodeInput::new(
+            fx::node_id(id),
+            fx::translate(10.0 + 50.0 * index as f32, 10.0),
+        );
+        if shadow {
+            node.paint.shadows.push(Shadow::new(
+                fx::p(1.0, 1.0),
+                BlurRadius::new(2.0).unwrap(),
+                fx::srgb(0.0, 0.0, 0.0, 0.5),
+            ));
+        }
+        builder
+            .build_text(
+                &mut root,
+                &TextInput {
+                    node,
+                    layout,
+                    size: Size2::new(40.0, 20.0).unwrap(),
+                },
+            )
+            .unwrap();
+    }
     SceneRevisionMap::new()
         .generate(DocumentRevision(1), builder.finish(root))
         .unwrap()
@@ -564,6 +638,7 @@ fn resources_lost_after_the_preflight_are_errors() {
     );
     let empty = Text {
         layouts: HashMap::new(),
+        malformed: GLYPH_BROKEN,
     };
     assert_eq!(
         write_svg(&confirmed, &assets(), &empty, &SvgWriteOptions::default()),
@@ -572,4 +647,73 @@ fn resources_lost_after_the_preflight_are_errors() {
             layout: KEY_OK
         })
     );
+}
+
+#[test]
+fn exports_that_pass_the_preflight_do_not_stop_on_glyphs() {
+    // 진단을 통과하고 확인한 SVG 내보내기는 writer가 glyph 조회 때문에 멈추지 않습니다. 첫 glyph가 정상이어도 뒤
+    // glyph(outline 없는 color glyph, 손상 glyph)까지 진단해야 합니다.
+    for layout in [KEY_COLOR, KEY_BROKEN] {
+        let preflight = run_preflight(
+            svg_capture(text_scene(&[(21, layout, false)])),
+            &validated(Vec::new()),
+            &[],
+        );
+        match preflight.proceed(Some(&preflight.confirm())) {
+            Ok(confirmed) => {
+                if let Err(error) =
+                    write_svg(&confirmed, &assets(), &text(), &SvgWriteOptions::default())
+                {
+                    panic!("{layout:?}: 진단을 통과했는데 writer가 멈춤: {error}");
+                }
+            }
+            Err(PreflightRejection::GlyphsBlocked(_)) => {}
+            Err(other) => panic!("{layout:?}: {other}"),
+        }
+    }
+}
+
+#[test]
+fn glyphs_without_outlines_block_svg_but_not_png() {
+    // 첫 glyph가 정상이어도 뒤 glyph를 모두 진단하고, 같은 key는 한 번만 알립니다. 확인해도 진행하지 않습니다.
+    let cases = [
+        (KEY_COLOR, vec![(GLYPH_COLOR, GlyphBlockReason::NoOutline)]),
+        (
+            KEY_BROKEN,
+            vec![(GLYPH_BROKEN, GlyphBlockReason::Malformed)],
+        ),
+    ];
+    for (layout, expected) in cases {
+        let preflight = run_preflight(
+            svg_capture(text_scene(&[(21, layout, false)])),
+            &validated(Vec::new()),
+            &[],
+        );
+        let blockers: Vec<_> = expected
+            .iter()
+            .map(|&(glyph, reason)| GlyphBlocker {
+                layout,
+                nodes: vec![fx::node_id(21)],
+                font: FONT_OK,
+                glyph,
+                reason,
+            })
+            .collect();
+        assert_eq!(preflight.glyph_blockers(), blockers.as_slice());
+        assert!(!preflight.requires_confirmation());
+        let rejected = preflight.proceed(Some(&preflight.confirm())).unwrap_err();
+        assert_eq!(rejected, PreflightRejection::GlyphsBlocked(blockers));
+        assert!(!rejected.to_string().is_empty());
+        // PNG는 renderer가 bitmap glyph를 그리므로 glyph 진단이 없습니다.
+        let png = run_preflight(
+            capture_of(
+                text_scene(&[(21, layout, false)]),
+                fx::view_request(ExportFormat::Png),
+            ),
+            &validated(Vec::new()),
+            &[],
+        );
+        assert!(png.glyph_blockers().is_empty());
+        assert!(png.proceed(None).is_ok());
+    }
 }

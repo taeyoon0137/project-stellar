@@ -27,8 +27,8 @@ pub use capture::{
     FontRevision, ImageMedia, ResourcePins, SceneSource,
 };
 pub use preflight::{
-    ConfirmedExport, ExportConfirmation, ExportPreflight, PreflightInput, PreflightIssue,
-    PreflightRejection,
+    ConfirmedExport, ExportConfirmation, ExportPreflight, GlyphBlockReason, GlyphBlocker,
+    PreflightInput, PreflightIssue, PreflightRejection,
 };
 pub use request::{
     ExportBackground, ExportFormat, ExportRequest, ExportRequestError, ExportScale, ExportSource,

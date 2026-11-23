@@ -20,6 +20,7 @@
 //! | | 고정 font revision에 없는 폰트 | 확인 필요. 확인하면 그 폰트 glyph를 생략 |
 //! | | 명시 fallback chain으로 대체한 폰트(XIII.6.7) | 확인 필요(줄바꿈 변경 판정 포함) |
 //! | 출력 형식 | SVG로 아직 기록할 수 없는 기능(mapping table, XX.3.1) | 확인해도 진행 불가([`FormatBlocker`]) |
+//! | | SVG outline으로 쓸 수 없는 glyph(outline 없는 color glyph, 손상 glyph) | 확인해도 진행 불가([`GlyphBlocker`]) |
 //!
 //! 진단 순서는 위 표 순서이고, 같은 분류 안에서는 capability는 입력 순서(IX.10.8 결정론적 순서), resource는 key 순서,
 //! 폰트 대체는 Text id 순서입니다. 그래서 같은 입력이면 같은 진단 목록이 나옵니다.
@@ -38,7 +39,7 @@
 //! 진단과 XIII.6.7 폰트 대체 결과는 같은 의미의 값([`TargetCapabilityFinding`], [`FontFallbackUse`])으로 host가 옮겨
 //! 넘깁니다.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 
 use stellar_core_types::ids::StableId;
@@ -50,7 +51,9 @@ use stellar_scene::snapshot::SceneSemanticHash;
 use crate::capture::{ExportAssetSource, ExportCapture, ResourcePins};
 use crate::request::{ExportFormat, ExportRequest, TargetProfileKey};
 use crate::svg::mapping::{first_unsupported, node_features, SvgFeature, SvgSupport};
-use crate::text::{ExportFontFace, ExportTextSource, GlyphOutlineError};
+use crate::text::{
+    ExportFontFace, ExportTextSource, GlyphOutline, GlyphOutlineError, GlyphOutlineKey,
+};
 
 /// capability 진단 code(IX.10.8 `CapabilityDiagnosticCode`와 같은 번호).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -283,6 +286,31 @@ pub struct FormatBlocker {
     pub support: SvgSupport,
 }
 
+/// SVG outline으로 쓸 수 없는 glyph 이유.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GlyphBlockReason {
+    /// outline이 없고 bitmap·color 표현만 있습니다(emoji bitmap 등).
+    NoOutline,
+    /// 폰트 데이터가 손상되어 outline을 읽지 못했습니다.
+    Malformed,
+}
+
+/// 확인해도 진행할 수 없는 진단: SVG outline으로 쓸 수 없는 glyph(XX.3.2). 폰트 없음([`PreflightIssue::MissingFont`])과
+/// 달리 생략하면 글자가 조용히 빠지므로 확인으로 넘기지 않습니다.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GlyphBlocker {
+    /// glyph를 쓰는 text layout.
+    pub layout: TextLayoutKey,
+    /// 그 layout을 쓰는 Text node(정렬).
+    pub nodes: Vec<StableId>,
+    /// 폰트 face.
+    pub font: ExportFontFace,
+    /// 폰트 안 glyph 번호.
+    pub glyph: u32,
+    /// 이유.
+    pub reason: GlyphBlockReason,
+}
+
 /// host 입력 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreflightError {
@@ -313,6 +341,8 @@ impl std::error::Error for PreflightError {}
 pub enum PreflightRejection {
     /// 요청 형식으로 기록할 수 없는 기능이 있습니다(확인과 무관).
     Blocked(Vec<FormatBlocker>),
+    /// SVG outline으로 쓸 수 없는 glyph가 있습니다(확인과 무관).
+    GlyphsBlocked(Vec<GlyphBlocker>),
     /// 확인이 필요한데 확인이 없습니다.
     ConfirmationRequired(Vec<PreflightIssue>),
     /// 다른 preflight의 확인입니다.
@@ -326,6 +356,11 @@ impl fmt::Display for PreflightRejection {
                 f,
                 "요청 형식으로 기록할 수 없는 기능이 있어 내보낼 수 없습니다(node {}개)",
                 blockers.len()
+            ),
+            PreflightRejection::GlyphsBlocked(glyphs) => write!(
+                f,
+                "SVG outline으로 쓸 수 없는 glyph가 있어 내보낼 수 없습니다(glyph {}개)",
+                glyphs.len()
             ),
             PreflightRejection::ConfirmationRequired(issues) => {
                 write!(f, "내보내기 전에 진단 {}건을 확인해야 합니다", issues.len())
@@ -362,6 +397,7 @@ pub struct ExportPreflight {
     issues: Vec<PreflightIssue>,
     notes: Vec<TargetCapabilityFinding>,
     blockers: Vec<FormatBlocker>,
+    glyph_blockers: Vec<GlyphBlocker>,
 }
 
 /// capture 범위의 보이는 scene node와 resource 사용처.
@@ -452,6 +488,11 @@ impl ExportPreflight {
             }
         }
         let mut fonts: BTreeMap<ExportFontFace, (bool, BTreeSet<StableId>)> = BTreeMap::new();
+        // SVG는 모든 glyph를 outline으로 쓰므로(XX.3.2) 그릴 glyph key를 모두 조회합니다. PNG는 renderer가 bitmap glyph도
+        // 그리므로 폰트 유무만 봅니다(face마다 glyph 하나).
+        let outline_every_glyph = capture.request().format() == ExportFormat::Svg;
+        let mut checked: HashSet<GlyphOutlineKey> = HashSet::new();
+        let mut glyph_blockers = Vec::new();
         for (layout, nodes) in &scope.layouts {
             let Some(glyphs) = capture.glyph_layout(input.text, *layout) else {
                 issues.push(PreflightIssue::MissingTextLayout {
@@ -467,7 +508,6 @@ impl ExportPreflight {
                 let entry = match fonts.entry(run.font) {
                     std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                     std::collections::btree_map::Entry::Vacant(entry) => {
-                        // 폰트 유무는 face 단위라 face마다 glyph 하나만 조회합니다.
                         let missing = matches!(
                             capture.glyph_outline(input.text, &run.key(first.glyph)),
                             Err(GlyphOutlineError::FontUnavailable)
@@ -476,6 +516,29 @@ impl ExportPreflight {
                     }
                 };
                 entry.1.extend(nodes.iter().copied());
+                if !outline_every_glyph || entry.0 {
+                    // 폰트가 없으면 glyph 진단 대신 MissingFont 하나로 알립니다.
+                    continue;
+                }
+                for placed in &run.glyphs {
+                    let key = run.key(placed.glyph);
+                    if !checked.insert(key.clone()) {
+                        continue;
+                    }
+                    let reason = match capture.glyph_outline(input.text, &key) {
+                        Ok(GlyphOutline::NoOutline) => GlyphBlockReason::NoOutline,
+                        Err(GlyphOutlineError::Malformed) => GlyphBlockReason::Malformed,
+                        Ok(GlyphOutline::Empty | GlyphOutline::Path(_))
+                        | Err(GlyphOutlineError::FontUnavailable) => continue,
+                    };
+                    glyph_blockers.push(GlyphBlocker {
+                        layout: *layout,
+                        nodes: nodes.iter().copied().collect(),
+                        font: run.font,
+                        glyph: placed.glyph,
+                        reason,
+                    });
+                }
             }
         }
         for (font, (missing, nodes)) in fonts {
@@ -500,6 +563,7 @@ impl ExportPreflight {
             issues,
             notes,
             blockers: scope.blockers,
+            glyph_blockers,
         })
     }
 
@@ -521,6 +585,11 @@ impl ExportPreflight {
     /// 확인해도 진행할 수 없는 진단(paint 순서).
     pub fn blockers(&self) -> &[FormatBlocker] {
         &self.blockers
+    }
+
+    /// 확인해도 진행할 수 없는 glyph 진단(layout key 순서, 그 안 run·glyph 순서, 같은 key는 처음 한 번).
+    pub fn glyph_blockers(&self) -> &[GlyphBlocker] {
+        &self.glyph_blockers
     }
 
     /// 진행에 사용자 확인이 필요한지.
@@ -553,6 +622,11 @@ impl ExportPreflight {
     ) -> Result<ConfirmedExport, PreflightRejection> {
         if !self.blockers.is_empty() {
             return Err(PreflightRejection::Blocked(self.blockers.clone()));
+        }
+        if !self.glyph_blockers.is_empty() {
+            return Err(PreflightRejection::GlyphsBlocked(
+                self.glyph_blockers.clone(),
+            ));
         }
         match confirmation {
             Some(confirmation) if !self.matches(confirmation) => {
