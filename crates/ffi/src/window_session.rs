@@ -1022,7 +1022,19 @@ pub(crate) mod tests {
                     )
                 };
                 assert_eq!(status, StellarStatus::Ok);
-                return RuntimeEvent::decode(kind, &buf[..written]).expect("event payload");
+                let event = RuntimeEvent::decode(kind, &buf[..written]).expect("event payload");
+                // 글꼴 읽기 완료 같은 요청 없는 표시 변경은 언제든 올 수 있습니다(ADR-0067 §5). 이 시험들은 요청 완료만
+                // 기다립니다.
+                if matches!(
+                    event,
+                    RuntimeEvent::WindowViewChanged {
+                        request: RequestId(0),
+                        ..
+                    }
+                ) {
+                    continue;
+                }
+                return event;
             }
             assert_eq!(status, StellarStatus::NoError);
             assert!(Instant::now() < deadline, "event가 오지 않았습니다");

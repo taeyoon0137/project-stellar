@@ -148,7 +148,10 @@ journal)·ADR-0083(창 session stale·외부 변경)을 앱 runtime 기본 경�
 
 ## Compatibility
 
-- 파일 포맷·generation manifest·journal 형식·C ABI·FFI 헤더를 바꾸지 않습니다. 보호 경로(`crates/storage` 등) 변경이 없습니다.
+- 파일 포맷·generation manifest·journal 형식·C ABI·FFI 헤더를 바꾸지 않습니다. 보호 경로 가운데 `crates/ffi`는 시험 helper
+  하나만 바꿉니다: `crates/ffi/src/window_session.rs`의 시험용 `next_event`가 요청 없는 `WindowViewChanged`(글꼴 읽기 완료 등)를
+  건너뜁니다. 열기가 원본 전환으로 조금 길어지면서 그 event가 요청 완료보다 먼저 오는 경쟁이 잦아졌기 때문입니다. 제품
+  코드·C ABI는 그대로입니다.
 - 새 로컬 파일: `.stellar/cache/text-source.stamp`(3줄: 형식 이름 `stellar-text-source-stamp 1`, `source <hash>`,
   `manifest <hash>`), `.stellar/cache/.gitignore`. 읽을 수 없는 stamp는 짝을 모르는 cache로 봅니다.
 - 공개 Rust API 추가: `stellar_project::document_io::session`(`SourceBase`·`SourceFiles`·`SourceLibrary`·`Stamp`·

@@ -60,6 +60,7 @@
 | `a_broken_source_is_not_opened_and_names_the_file_and_line` | 깨진 원본 → 열기 거부, 파일·줄 진단 |
 | `a_generation_the_text_source_cannot_hold_stays_chunk_only` | root 문서 둘 → chunk 전용, 원본을 만들지 않고 generation 저장 |
 | `the_active_style_defaults_set_is_mirrored_on_open_and_written_back_on_save` | 열 때 거울, 바꾼 창만 `stellar.yaml` 되씀, 바꾸지 않은 창은 외부 변경을 되돌리지 않음 |
+| `a_library_only_source_change_is_taken_even_by_a_dirty_window` | token 파일만 외부에서 더해지면 문서 stale이 아니고, dirty 창도 그 의미를 받고 저장을 계속하며 token 파일을 덮어쓰지 않음 |
 
 시험 조정: 자동 저장·창 닫기 실패 시험은 cache(`design/objects`) 대신 원본 journal(`.stellar/journal`)을 막습니다(cache 실패는 저장 실패가 아님). 열기가 원본을 쓰므로 "pan·zoom·overlay는 bytes를 바꾸지 않음" 시험은 연 뒤의 bytes를 기준으로 잡습니다. 창 열기·zoom 시험은 요청 없는 글꼴 완료 event를 건너뜁니다. 잠금을 얻을 수 없는 fixture mode(`busy`·`missing-home`)는 열기 전환을 못 하므로 되돌린 편집의 쓰기 0 확인을 `write` mode에서만 합니다.
 
