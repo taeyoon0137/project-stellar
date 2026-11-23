@@ -168,7 +168,6 @@ impl Repo {
         self.cli(&["add-frame", &file, &self.hash(), AR, id, name, "10", "10"]);
     }
 
-    #[allow(dead_code)]
     fn resize(&self, width: &str, height: &str) {
         let file = self.file.clone();
         self.cli(&["resize", &file, &self.hash(), width, height]);
@@ -255,4 +254,46 @@ fn driver_rejects_wrong_arguments_and_unsupported_files() {
         "unsupported-file"
     );
     assert_eq!(fs::read(&readme).unwrap(), b"x", "%A 미변경");
+}
+
+#[test]
+fn unresolved_conflicts_keep_ours_bytes_and_exit_nonzero() {
+    let repo = Repo::new("driver-conflict");
+    repo.register_manually();
+    repo.branch("wide", |r| r.resize("144", "60"));
+    let wide = repo.read();
+    repo.branch("narrow", |r| r.resize("128", "60"));
+    repo.git(&["switch", "-q", "wide"]);
+    let merged = repo.git_output(&["merge", "--no-edit", "narrow"]);
+    assert_eq!(merged.status.code(), Some(1), "Git merge는 conflict로 끝남");
+    // driver가 %A를 바꾸지 않았으므로 작업 트리에는 ours bytes가 그대로 있고 conflict marker가 없습니다.
+    assert_eq!(repo.read(), wide);
+    assert_eq!(
+        repo.git(&["diff", "--name-only", "--diff-filter=U"]),
+        repo.file
+    );
+    let stages = repo.git(&["ls-files", "-u", "--", &repo.file]);
+    assert_eq!(stages.lines().count(), 3, "{stages}");
+    // conflict 목록은 Git 밖 .stellar/merge/에 남고 status에 나오지 않습니다.
+    let record_dir = repo.root.join(".stellar/merge");
+    let records: Vec<_> = fs::read_dir(&record_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.ends_with(".json"))
+        .collect();
+    assert_eq!(records.len(), 1, "{records:?}");
+    let record = parse(
+        &fs::read_to_string(record_dir.join(&records[0])).unwrap(),
+        JsonLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(string(&record, "outcome"), "conflicts");
+    let conflicts = record.get("conflicts").unwrap().as_array().unwrap();
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(string(&conflicts[0], "kind"), "property-value");
+    assert_eq!(string(&conflicts[0], "object"), AR);
+    let status = repo.git(&["status", "--porcelain"]);
+    assert_eq!(status, format!("UU {}", repo.file));
+    // driver는 merge 상태를 끝내지 않습니다(MERGE_HEAD 유지).
+    assert!(repo.root.join(".git/MERGE_HEAD").exists());
 }
