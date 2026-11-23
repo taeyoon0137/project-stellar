@@ -307,6 +307,26 @@ fn effects_that_disagree_with_records_are_refused() {
     assert_eq!(a.verify(&[], &[denied], &[]).len(), 1);
     let missing = a.verify(&opened, &[denied], &[batch(0, Some(2))]);
     assert!(matches!(missing.as_slice(), [Mismatch::Missing(_)]));
+
+    // 승인 하나는 적용 표시 하나에만 씁니다. 같은 제안의 승인으로 다음 batch를 표시하지 않습니다.
+    let approved_subject = ApprovalSubject::Batch {
+        proposal: ProposalId(3),
+    };
+    a.record_request(s, RequestId(8), approved_subject).unwrap();
+    a.record_resolution(&Resolution {
+        id: RequestId(8),
+        session: s,
+        window: window(),
+        subject: approved_subject,
+        outcome: Outcome::Approved,
+        at_ms: 2,
+    })
+    .unwrap();
+    a.record_batch(&batch(0, Some(3))).unwrap();
+    assert_eq!(
+        a.record_batch(&batch(1, Some(3))),
+        Err(AssemblyError::ProposalAlreadyApplied(ProposalId(3)))
+    );
 }
 
 #[test]

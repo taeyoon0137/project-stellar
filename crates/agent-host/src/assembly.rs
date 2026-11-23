@@ -11,14 +11,14 @@
 //!   넣지 않고 [`AssemblyError`]로 거부합니다.
 //!   - 승인 요청은 먼저 열린 기록이 있어야 확정을 받습니다. 다른 세션의 기록은 받지 않습니다.
 //!   - batch 적용 표시는 batch 순번이 늘어날 때만 받습니다. 제안 id가 있으면 그 제안의 batch 승인이
-//!     `approved`로 확정되어 있어야 합니다. 제안 없는 적용(승인 범위 내 바로 적용)은 그 모드에서만 받습니다.
+//!     `approved`로 확정되어 있어야 하고, 승인 하나는 적용 표시 하나에만 씁니다. 제안 없는 적용(승인 범위 내 바로 적용)은 그 모드에서만 받습니다.
 //!   - [`ChatAssembly::verify`]는 표시된 효과가 기록 목록과 정확히 같은지 다시 확인합니다.
 //! - **저장 범위**: 세션 메모리에만 둡니다. 직렬화·파일 경로가 없고 `Debug`는 개수만 씁니다. golden 직렬화
 //!   ([`TranscriptEntry::to_golden`])는 테스트 기준이며 저장 형식이 아닙니다.
 //! - **상한**: CLI 보고 item은 [`crate::chat::MAX_SESSION_ITEMS`]를 넘으면 오래된 것부터 버리고 수를 셉니다.
 //!   문서 효과는 버리지 않습니다(검토 대기 출처 표시의 근거라 잃으면 안 됨, batch·요청 수만큼만 생김).
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
 use crate::approval::{ApprovalSubject, Outcome, Resolution};
@@ -161,6 +161,8 @@ pub enum AssemblyError {
     },
     /// 제안의 batch 승인이 `approved`로 확정되지 않음.
     BatchNotApproved(ProposalId),
+    /// 이미 적용 표시를 받은 제안의 승인을 다른 batch에 다시 씀(승인 하나 = 적용 하나).
+    ProposalAlreadyApplied(ProposalId),
     /// 제안 없는 적용인데 모드가 승인 범위 내 바로 적용이 아님.
     DirectApplyAboveMode,
 }
@@ -176,6 +178,7 @@ impl AssemblyError {
             AssemblyError::SubjectMismatch(_) => "subject-mismatch",
             AssemblyError::BatchOutOfOrder { .. } => "batch-out-of-order",
             AssemblyError::BatchNotApproved(_) => "batch-not-approved",
+            AssemblyError::ProposalAlreadyApplied(_) => "proposal-already-applied",
             AssemblyError::DirectApplyAboveMode => "direct-apply-above-mode",
         }
     }
@@ -205,6 +208,7 @@ pub struct ChatAssembly {
     chat_count: usize,
     dropped_chat: u64,
     requests: BTreeMap<RequestId, RequestState>,
+    applied_proposals: BTreeSet<ProposalId>,
     last_batch: Option<u32>,
 }
 
@@ -228,6 +232,7 @@ impl ChatAssembly {
             chat_count: 0,
             dropped_chat: 0,
             requests: BTreeMap::new(),
+            applied_proposals: BTreeSet::new(),
             last_batch: None,
         }
     }
@@ -316,6 +321,9 @@ impl ChatAssembly {
         }
         match batch.proposal {
             Some(proposal) => {
+                if self.applied_proposals.contains(&proposal) {
+                    return Err(AssemblyError::ProposalAlreadyApplied(proposal));
+                }
                 let approved = self.requests.values().any(|r| {
                     *r == RequestState::Resolved(
                         ApprovalSubject::Batch { proposal },
@@ -331,6 +339,9 @@ impl ChatAssembly {
                     return Err(AssemblyError::DirectApplyAboveMode);
                 }
             }
+        }
+        if let Some(proposal) = batch.proposal {
+            self.applied_proposals.insert(proposal);
         }
         self.last_batch = Some(batch.batch_seq);
         self.entries
