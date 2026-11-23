@@ -395,9 +395,14 @@ fn commit(
         .with_command(composition.revision, Command::InsertNode(insert));
     let key = input_key(node, composition.replacement, &text);
     window
-        .insert_grouped_and_select(&tx, key, node, &InputClock)
+        .insert_grouped_and_select(
+            &tx,
+            key,
+            node,
+            &InputClock,
+            crate::window_session::history_label::TYPING,
+        )
         .map_err(view_failure)?;
-    window.label_current(crate::window_session::history_label::TYPING);
     Ok(())
 }
 
@@ -427,9 +432,13 @@ fn replace(
             }),
         );
     window
-        .apply_grouped(&tx, key, &InputClock)
+        .apply_grouped(
+            &tx,
+            key,
+            &InputClock,
+            crate::window_session::history_label::TYPING,
+        )
         .map_err(view_failure)?;
-    window.label_current(crate::window_session::history_label::TYPING);
     Ok(())
 }
 

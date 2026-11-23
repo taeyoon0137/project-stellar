@@ -743,7 +743,7 @@ mod tests {
 
         // 편집한 창은 자기 목록을 다시 평가하고, 저장본 그대로인 창은 공유 목록을 유지합니다.
         let tx = rename(a.document().unwrap(), 1, 11, "Edited");
-        a.apply(&tx).unwrap();
+        a.apply(&tx, 0).unwrap();
         assert!(a.has_unsaved_changes());
         let edited = cache_a.current(&a, None, &mut shared).unwrap();
         assert!(!Arc::ptr_eq(&first, &edited));
@@ -755,7 +755,7 @@ mod tests {
         // 편집 중인 창의 목록은 같은 revision 번호의 다른 창과 공유하지 않습니다.
         let mut c = ProjectWindowSession::load(identity(dir.path()), window(3)).unwrap();
         let tx = rename(c.document().unwrap(), 2, 12, "Other");
-        c.apply(&tx).unwrap();
+        c.apply(&tx, 0).unwrap();
         assert_eq!(c.revision(), a.revision());
         let other = CanvasCache::default()
             .current(&c, None, &mut shared)

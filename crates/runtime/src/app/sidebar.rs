@@ -229,8 +229,9 @@ fn move_layer(
             order_key,
         }),
     );
-    window.apply(&tx).map_err(view_failure)?;
-    window.label_current(crate::window_session::history_label::REORDER);
+    window
+        .apply(&tx, crate::window_session::history_label::REORDER)
+        .map_err(view_failure)?;
     Ok(())
 }
 
@@ -281,8 +282,9 @@ fn rename(
         CommandOrigin::User,
     )
     .with_command(revision, Command::rename_node(node, name));
-    window.apply(&tx).map_err(view_failure)?;
-    window.label_current(crate::window_session::history_label::RENAME);
+    window
+        .apply(&tx, crate::window_session::history_label::RENAME)
+        .map_err(view_failure)?;
     Ok(())
 }
 
@@ -408,11 +410,11 @@ pub(super) fn set_flags(
         tx = tx.with_command(revision, command);
     }
     if changed {
-        window.apply(&tx).map_err(view_failure)?;
-        window.label_current(match flag {
+        let label = match flag {
             LayerFlag::Visible => crate::window_session::history_label::SHOW_HIDE,
             LayerFlag::Locked => crate::window_session::history_label::LOCK_UNLOCK,
-        });
+        };
+        window.apply(&tx, label).map_err(view_failure)?;
     }
     Ok(())
 }

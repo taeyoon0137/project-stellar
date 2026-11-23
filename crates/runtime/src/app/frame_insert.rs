@@ -241,9 +241,12 @@ fn insert_item(
     let transaction = CommandTransaction::new(id, CommandOrigin::User)
         .with_command(revision, Command::InsertNode(insert));
     window
-        .insert_and_select(&transaction, node)
+        .insert_and_select(
+            &transaction,
+            node,
+            crate::window_session::history_label::INSERT,
+        )
         .map_err(view_failure)?;
-    window.label_current(crate::window_session::history_label::INSERT);
     Ok(node)
 }
 

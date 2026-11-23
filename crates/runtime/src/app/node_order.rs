@@ -93,8 +93,9 @@ pub(super) fn reorder(
             order_key: key,
         }),
     );
-    window.apply(&tx).map_err(view_failure)?;
-    window.label_current(crate::window_session::history_label::REORDER);
+    window
+        .apply(&tx, crate::window_session::history_label::REORDER)
+        .map_err(view_failure)?;
     Ok(())
 }
 

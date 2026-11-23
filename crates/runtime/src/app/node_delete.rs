@@ -89,10 +89,13 @@ impl AppRuntime {
                     super::node_order::reorder(window, request, direction)?
                 }
                 SelectionEdit::Delete | SelectionEdit::Cut => {
-                    delete_selected(window, request, target.view, target.revision)?;
-                    if matches!(edit, SelectionEdit::Cut) {
-                        window.label_current(crate::window_session::history_label::CUT);
-                    }
+                    // Cut은 셸의 Copy 다음에 오는 삭제이며, 삭제와 같은 판정에 Cut 이름표만 다릅니다.
+                    let label = if matches!(edit, SelectionEdit::Cut) {
+                        crate::window_session::history_label::CUT
+                    } else {
+                        crate::window_session::history_label::DELETE
+                    };
+                    delete_selected(window, request, target.view, target.revision, label)?;
                 }
                 SelectionEdit::Duplicate => {
                     super::node_duplicate::duplicate_selected(
@@ -145,6 +148,7 @@ fn delete_selected(
     request: RequestId,
     view: StableId,
     revision: DocumentRevision,
+    label: u8,
 ) -> Result<(), Failure> {
     let roots = editable_selected_roots(window, view, revision)?;
     let mut tx = CommandTransaction::new(command_id(window.window(), request), CommandOrigin::User);
@@ -154,8 +158,7 @@ fn delete_selected(
             Command::DeleteSubtree(DeleteSubtree { root: node }),
         );
     }
-    window.apply(&tx).map_err(view_failure)?;
-    window.label_current(crate::window_session::history_label::DELETE);
+    window.apply(&tx, label).map_err(view_failure)?;
     Ok(())
 }
 
@@ -259,11 +262,11 @@ mod tests {
             .select(Selection::new([sid(11), sid(12)], None))
             .unwrap();
         let rev = session.revision();
-        assert!(delete_selected(&mut session, RequestId(1), sid(4), rev).is_err());
-        assert!(delete_selected(&mut session, RequestId(2), sid(3), rev).is_ok());
+        assert!(delete_selected(&mut session, RequestId(1), sid(4), rev, 0).is_err());
+        assert!(delete_selected(&mut session, RequestId(2), sid(3), rev, 0).is_ok());
         assert!(session.view().selection().ids().is_empty());
         assert!(!session.document().unwrap().model().contains(sid(11)));
-        assert!(delete_selected(&mut session, RequestId(3), sid(3), rev).is_err());
+        assert!(delete_selected(&mut session, RequestId(3), sid(3), rev, 0).is_err());
         assert!(session.undo().unwrap());
         assert_eq!(session.view().selection().ids(), [sid(11), sid(12)]);
         assert!(session.document().unwrap().model().contains(sid(11)));
@@ -298,7 +301,7 @@ mod tests {
                 ))
                 .unwrap();
             let rev = session.revision();
-            let result = delete_selected(&mut session, RequestId(1), sid(3), rev);
+            let result = delete_selected(&mut session, RequestId(1), sid(3), rev, 0);
             if locked {
                 assert!(result.is_err());
                 assert_eq!(session.revision(), rev);
@@ -490,7 +493,7 @@ mod tests {
                 .select(Selection::new([sid(selected)], None))
                 .unwrap();
             let rev = session.revision();
-            let result = delete_selected(&mut session, RequestId(1), sid(3), rev);
+            let result = delete_selected(&mut session, RequestId(1), sid(3), rev, 0);
             if locked == 12 {
                 assert!(result.is_ok());
             } else {

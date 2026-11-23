@@ -17,6 +17,7 @@ use std::time::Instant;
 
 use super::frame_move::{command_id, FreshIds};
 use super::*;
+use crate::window_session::history_label::CHANGE_PROPERTY;
 use stellar_commands::id::CommandOrigin;
 use stellar_commands::inspector::{edit_commands, inspector_rows, InspectorSnapshot, NodeClass};
 use stellar_commands::kind::CommandKind;
@@ -208,15 +209,15 @@ fn edit_property(
     }
     match phase {
         PropertyEditPhase::Commit => {
-            window.apply(&transaction).map_err(view_failure)?;
+            window
+                .apply(&transaction, CHANGE_PROPERTY)
+                .map_err(view_failure)?;
         }
         PropertyEditPhase::Repeat => {
             let key = repeat_key(document.state.model(), &selection, property);
-            let document = window.document.as_mut().ok_or_else(stale)?;
             window
-                .history
-                .record_grouped(&mut document.state, &transaction, key, &InstantClock)
-                .map_err(history_failure)?;
+                .apply_grouped(&transaction, key, &InstantClock, CHANGE_PROPERTY)
+                .map_err(view_failure)?;
         }
         PropertyEditPhase::Continuous | PropertyEditPhase::Ended => {
             // scrub control id: 속성마다 하나(같은 속성의 연속 조작만 묶임).
@@ -237,16 +238,12 @@ fn edit_property(
                 return Err(history_failure(error));
             }
             if phase == PropertyEditPhase::Ended {
-                window.history.end_preview().map_err(history_failure)?;
+                window
+                    .end_preview(CHANGE_PROPERTY)
+                    .map_err(history_failure)?;
             }
         }
         PropertyEditPhase::Cancel => {}
-    }
-    if matches!(
-        phase,
-        PropertyEditPhase::Commit | PropertyEditPhase::Repeat | PropertyEditPhase::Ended
-    ) {
-        window.label_current(crate::window_session::history_label::CHANGE_PROPERTY);
     }
     Ok(())
 }

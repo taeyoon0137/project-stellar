@@ -10,7 +10,7 @@ fn checkpoint_rejects_partial_unknown_or_duplicate_chunks_without_writes() {
     let owner = window(41);
     let mut w = ProjectWindowSession::load(id.clone(), owner).unwrap();
     let edit = rename(w.document().unwrap(), 305, 11, "unsaved Frame");
-    w.apply(&edit).unwrap();
+    w.apply(&edit, 0).unwrap();
     Capture::from_window(&w)
         .unwrap()
         .write(&store, &id, owner)

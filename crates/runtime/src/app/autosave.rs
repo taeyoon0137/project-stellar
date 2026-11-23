@@ -628,7 +628,7 @@ mod tests {
             .submit(move |ctx, request| {
                 let window = window_mut(ctx, session)?;
                 let tx = rename(window.document().unwrap(), command, 11, &name);
-                window.apply(&tx).unwrap();
+                window.apply(&tx, 0).unwrap();
                 Ok(RuntimeEvent::WindowViewChanged { request, session })
             })
             .unwrap();
@@ -898,7 +898,7 @@ mod tests {
                     11,
                     &format!("이름 {round}"),
                 );
-                session.apply(&tx).unwrap();
+                session.apply(&tx, 0).unwrap();
                 let started = Instant::now();
                 let capture = session.capture_save().unwrap().unwrap();
                 let captured = started.elapsed();

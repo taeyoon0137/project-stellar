@@ -779,6 +779,8 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 
 - 창 세션은 앱 runtime이 확정한 history 항목에 `HistorySequence`별 동작 이름표를 붙입니다. 선택만 변경한 항목과 이전 세션에서 복구한 항목은 이름표가 0입니다. `crates/history`의 항목 형식은 바꾸지 않습니다.
 - `stellar_window_undo_label`·`stellar_window_redo_label`은 게시된 창 snapshot의 맨 위 항목 코드(u8)를 돌려줍니다. 0이면 셸 메뉴는 기존 `Undo`·`Redo`를 씁니다. 앱은 Insert, Paste, Delete, Cut, Duplicate, Move, Resize, Change Property, Rename, Reorder, Typing, Show/Hide, Lock/Unlock 이름을 기록합니다. Group·Ungroup·Convert 진입점은 아직 없습니다.
+- 보완(2026-11-23): 이름표는 기록하는 함수(`apply`·`apply_grouped`·`apply_and_select`·`insert_and_select`·`insert_grouped_and_select`, scrub 확정 `end_preview`)의 인자로 받아 기록에 성공한 같은 호출 안에서 붙입니다. 진입점이 기록 뒤 마지막 항목에 따로 붙이던 방식은 없앴습니다. 새 확정이나 선택 기록이 redo 갈래를 버리면 그 sequence의 이름표도 지우고, 복구 복원처럼 history를 새로 시작하면 표를 비웁니다. 표에는 지금 undo·redo 스택에 있는 sequence만 남습니다.
+- `STELLAR_SELECTION_CUT`(action 10)은 삭제(`STELLAR_SELECTION_DELETE`)와 같은 판정·transaction에 Cut 이름표만 붙인 것입니다. 클립보드 쓰기는 셸이 Copy로 먼저 합니다.
 
 ## 개정(2026-11-18, UX.3.9)
 

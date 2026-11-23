@@ -92,9 +92,12 @@ fn paste_into(
     let transaction = CommandTransaction::new(id, CommandOrigin::User)
         .with_command(revision, Command::InsertNode(insert));
     window
-        .insert_and_select(&transaction, inserted)
+        .insert_and_select(
+            &transaction,
+            inserted,
+            crate::window_session::history_label::PASTE,
+        )
         .map_err(view_failure)?;
-    window.label_current(crate::window_session::history_label::PASTE);
     Ok(inserted)
 }
 
@@ -351,7 +354,7 @@ mod tests {
             session.revision(),
             Command::DeleteSubtree(DeleteSubtree { root: sid(11) }),
         );
-        session.apply(&tx).unwrap();
+        session.apply(&tx, 0).unwrap();
         let selection = session.view().selection().clone();
         let revision = session.revision();
         // 선택이 비었으므로 활성 View root 아래에 붙여넣습니다.

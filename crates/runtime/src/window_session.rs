@@ -99,7 +99,12 @@ use stellar_storage::save::optimistic::{
 use stellar_storage::save::plan::{build_save_plan, SavePlanError};
 
 /// 창 메뉴의 history 동작 이름표. 값은 셸의 영어 이름 표와 같습니다.
+///
+/// 이름표는 기록하는 함수([`ProjectWindowSession::apply`] 등)의 인자로 받아 기록과 같은 호출에서 붙입니다. 표에는
+/// 지금 undo·redo 스택에 있는 sequence만 남깁니다.
 pub(crate) mod history_label {
+    /// 이름표 없음(셸은 `Undo`·`Redo`를 씁니다).
+    pub const NONE: u8 = 0;
     pub const INSERT: u8 = 1;
     pub const PASTE: u8 = 2;
     pub const DELETE: u8 = 3;
@@ -521,11 +526,62 @@ impl ProjectWindowSession {
             .map_or(0, |entry| entry.sequence.get())
     }
 
-    /// 마지막 history 항목에 runtime 진입점이 정한 이름표를 붙입니다. 선택만 기록한 항목은 호출하지 않습니다.
-    pub(crate) fn label_current(&mut self, label: u8) {
+    /// 기록 직전 redo 갈래의 sequence. 새 항목(문서·선택)이 확정되면 history가 이 갈래를 버립니다.
+    fn redo_sequences(&self) -> Vec<HistorySequence> {
+        self.history
+            .history()
+            .redo_entries()
+            .iter()
+            .map(|entry| entry.sequence)
+            .collect()
+    }
+
+    /// 기록에 성공한 직후 같은 호출 안에서 부릅니다. 버려진 redo 갈래의 이름표를 지우고, `label`이 있으면 방금
+    /// 기록한(또는 grouping으로 합친) 마지막 항목에 붙입니다. 기록 전에 있던 redo가 그대로면(기록하지 않음) 지우지
+    /// 않습니다.
+    fn labeled(&mut self, discarded: Vec<HistorySequence>, label: u8) {
+        if self.history.history().redo_entries().is_empty() {
+            for sequence in discarded {
+                self.history_labels.remove(&sequence);
+            }
+        }
+        if label == history_label::NONE {
+            return;
+        }
         if let Some(entry) = self.history.history().entries().last() {
             self.history_labels.insert(entry.sequence, label);
         }
+    }
+
+    /// 연속 조작(scrub) preview를 한 항목으로 확정하고 이름표를 붙입니다. preview 도중 버려진 redo 갈래의
+    /// 시점을 알 수 없으므로, 표를 지금 undo·redo 스택의 sequence로 다시 맞춥니다(드문 경로).
+    pub(crate) fn end_preview(
+        &mut self,
+        label: u8,
+    ) -> Result<(), stellar_history::entry::HistoryError> {
+        self.history.end_preview()?;
+        let history = self.history.history();
+        let live: std::collections::HashSet<HistorySequence> = history
+            .entries()
+            .iter()
+            .chain(history.redo_entries())
+            .map(|entry| entry.sequence)
+            .collect();
+        self.history_labels
+            .retain(|sequence, _| live.contains(sequence));
+        self.labeled(Vec::new(), label);
+        Ok(())
+    }
+
+    /// history를 새로 시작할 때(복구 복원) 이전 sequence의 이름표를 버립니다.
+    pub(crate) fn replace_history(&mut self, history: WindowHistory) {
+        self.history = history;
+        self.history_labels.clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn label_count(&self) -> usize {
+        self.history_labels.len()
     }
 
     /// Undo 맨 위 항목의 이름표. 세션 밖에서 만든 항목은 0입니다.
@@ -701,17 +757,24 @@ impl ProjectWindowSession {
 
     /// 작업 문서에 transaction을 실행하고 이 창 history에 기록합니다. 작업 문서가 없으면
     /// [`WindowSessionEditError::NoDocument`].
+    ///
+    /// `label`은 Undo·Redo 메뉴 이름표([`history_label`])입니다.
     pub fn apply(
         &mut self,
         transaction: &CommandTransaction,
+        label: u8,
     ) -> Result<ChangeSet, WindowSessionEditError> {
+        let discarded = self.redo_sequences();
         let document = self
             .document
             .as_mut()
             .ok_or(WindowSessionEditError::NoDocument)?;
-        self.history
+        let changes = self
+            .history
             .record_document(&mut document.state, transaction, None)
-            .map_err(WindowSessionEditError::History)
+            .map_err(WindowSessionEditError::History)?;
+        self.labeled(discarded, label);
+        Ok(changes)
     }
 
     /// 연속 입력 grouping으로 transaction을 기록합니다(Text 입력, VII.4.3).
@@ -720,14 +783,19 @@ impl ProjectWindowSession {
         transaction: &CommandTransaction,
         key: stellar_history::entry::GroupingKey,
         clock: &C,
+        label: u8,
     ) -> Result<ChangeSet, WindowSessionEditError> {
+        let discarded = self.redo_sequences();
         let document = self
             .document
             .as_mut()
             .ok_or(WindowSessionEditError::NoDocument)?;
-        self.history
+        let changes = self
+            .history
             .record_grouped(&mut document.state, transaction, key, clock)
-            .map_err(WindowSessionEditError::History)
+            .map_err(WindowSessionEditError::History)?;
+        self.labeled(discarded, label);
+        Ok(changes)
     }
 
     /// 새 Text 삽입을 이어지는 입력과 같은 group의 첫 항목으로 기록하고 선택합니다.
@@ -737,30 +805,40 @@ impl ProjectWindowSession {
         key: stellar_history::entry::GroupingKey,
         inserted: StableId,
         clock: &C,
+        label: u8,
     ) -> Result<ChangeSet, WindowSessionEditError> {
+        let discarded = self.redo_sequences();
         let document = self
             .document
             .as_mut()
             .ok_or(WindowSessionEditError::NoDocument)?;
         let selection = SetSelection::new(Selection::new([inserted], Some(inserted)));
-        self.history
+        let changes = self
+            .history
             .record_grouped_and_select(&mut document.state, transaction, key, &selection, clock)
-            .map_err(WindowSessionEditError::History)
+            .map_err(WindowSessionEditError::History)?;
+        self.labeled(discarded, label);
+        Ok(changes)
     }
 
     pub(crate) fn insert_and_select(
         &mut self,
         transaction: &CommandTransaction,
         inserted: StableId,
+        label: u8,
     ) -> Result<ChangeSet, WindowSessionEditError> {
+        let discarded = self.redo_sequences();
         let document = self
             .document
             .as_mut()
             .ok_or(WindowSessionEditError::NoDocument)?;
         let selection = SetSelection::new(Selection::new([inserted], Some(inserted)));
-        self.history
+        let changes = self
+            .history
             .record_document_and_select(&mut document.state, transaction, &selection)
-            .map_err(WindowSessionEditError::History)
+            .map_err(WindowSessionEditError::History)?;
+        self.labeled(discarded, label);
+        Ok(changes)
     }
 
     /// transaction과 새 선택을 한 history 항목으로 기록합니다(복제 드래그처럼 여러 node를 만들고 고를 때).
@@ -768,18 +846,23 @@ impl ProjectWindowSession {
         &mut self,
         transaction: &CommandTransaction,
         selection: Selection,
+        label: u8,
     ) -> Result<ChangeSet, WindowSessionEditError> {
+        let discarded = self.redo_sequences();
         let document = self
             .document
             .as_mut()
             .ok_or(WindowSessionEditError::NoDocument)?;
-        self.history
+        let changes = self
+            .history
             .record_document_and_select(
                 &mut document.state,
                 transaction,
                 &SetSelection::new(selection),
             )
-            .map_err(WindowSessionEditError::History)
+            .map_err(WindowSessionEditError::History)?;
+        self.labeled(discarded, label);
+        Ok(changes)
     }
 
     /// 이 창 history의 마지막 항목을 되돌립니다. 되돌릴 항목이 없거나 작업 문서가 없으면 `Ok(false)`.
@@ -891,13 +974,17 @@ impl ProjectWindowSession {
         &mut self,
         selection: Selection,
     ) -> Result<Option<HistorySequence>, WindowSessionEditError> {
+        let discarded = self.redo_sequences();
         let document = self
             .document
             .as_ref()
             .ok_or(WindowSessionEditError::NoDocument)?;
-        self.history
+        let recorded = self
+            .history
             .record_selection(&document.state, &SetSelection::new(selection))
-            .map_err(WindowSessionEditError::History)
+            .map_err(WindowSessionEditError::History)?;
+        self.labeled(discarded, history_label::NONE);
+        Ok(recorded)
     }
 }
 
@@ -1152,7 +1239,7 @@ mod tests {
 
         // A 편집: B의 문서·revision·history는 그대로.
         let tx = rename(a.document().unwrap(), 100, 11, "A가 바꾼 이름");
-        a.apply(&tx).unwrap();
+        a.apply(&tx, 0).unwrap();
         assert_eq!(a.revision(), DocumentRevision(1));
         assert_ne!(snapshot(&a), original);
         assert_eq!(snapshot(&b), original, "B 문서는 A 편집을 보지 않습니다");
@@ -1169,7 +1256,7 @@ mod tests {
 
         // B 편집은 A가 바꾼 node를 보지 않은 B 문서 위에서 실행됩니다.
         let tx = rename(b.document().unwrap(), 200, 11, "B가 바꾼 이름");
-        b.apply(&tx).unwrap();
+        b.apply(&tx, 0).unwrap();
         let name = |session: &ProjectWindowSession| {
             session
                 .document()
@@ -1270,16 +1357,59 @@ mod tests {
     }
 
     #[test]
+    fn history_labels_follow_the_recorded_entry_and_drop_discarded_redo() {
+        use super::history_label::{NONE, RENAME, REORDER};
+        let project = saved_project("history-labels");
+        let mut a = ProjectWindowSession::load(identity(project.path()), window(31)).unwrap();
+        assert_eq!((a.undo_label(), a.redo_label()), (NONE, NONE));
+        a.apply(&rename(a.document().unwrap(), 300, 11, "A1"), RENAME)
+            .unwrap();
+        a.apply(&rename(a.document().unwrap(), 301, 11, "A2"), REORDER)
+            .unwrap();
+        assert_eq!(a.undo_label(), REORDER);
+        // 선택만 기록한 항목은 이름표가 없고, 앞 항목의 이름을 물려받지 않습니다.
+        a.select(Selection::new([sid(12)], None)).unwrap();
+        assert_eq!(a.undo_label(), NONE);
+        assert_eq!(a.label_count(), 2);
+        assert_eq!(a.undo(), Ok(true));
+        assert_eq!(a.undo(), Ok(true));
+        assert_eq!((a.undo_label(), a.redo_label()), (RENAME, REORDER));
+        // 새 확정은 redo 갈래를 버리고 그 이름표도 표에서 지웁니다.
+        a.apply(&rename(a.document().unwrap(), 302, 11, "A3"), RENAME)
+            .unwrap();
+        assert_eq!((a.undo_label(), a.redo_label()), (RENAME, NONE));
+        assert_eq!(a.label_count(), 2);
+        // 실패한 기록은 이름표를 바꾸지 않습니다.
+        assert!(a
+            .apply(&rename(a.document().unwrap(), 303, 99, "없음"), REORDER)
+            .is_err());
+        assert_eq!(a.undo_label(), RENAME);
+        // 반복 편집을 한 표에서 1만 번 해도 표는 살아 있는 항목 수를 넘지 않습니다.
+        for index in 0..10_000u64 {
+            a.apply(
+                &rename(a.document().unwrap(), 400 + index, 11, &format!("n{index}")),
+                RENAME,
+            )
+            .unwrap();
+            if index % 2 == 0 {
+                assert_eq!(a.undo(), Ok(true));
+            }
+        }
+        let live = a.history().history().len() + a.history().history().redo_len();
+        assert!(a.label_count() <= live, "{} > {live}", a.label_count());
+    }
+
+    #[test]
     fn undo_and_redo_replay_only_their_own_window_history() {
         // 검증 기준(XII.6.4): 창별 history.
         let project = saved_project("undo-redo");
         let mut a = ProjectWindowSession::load(identity(project.path()), window(21)).unwrap();
         let mut b = ProjectWindowSession::load(identity(project.path()), window(22)).unwrap();
-        a.apply(&rename(a.document().unwrap(), 300, 11, "A1"))
+        a.apply(&rename(a.document().unwrap(), 300, 11, "A1"), 0)
             .unwrap();
-        a.apply(&rename(a.document().unwrap(), 301, 11, "A2"))
+        a.apply(&rename(a.document().unwrap(), 301, 11, "A2"), 0)
             .unwrap();
-        b.apply(&rename(b.document().unwrap(), 400, 12, "B1"))
+        b.apply(&rename(b.document().unwrap(), 400, 12, "B1"), 0)
             .unwrap();
         b.select(Selection::new([sid(12)], None)).unwrap();
 
@@ -1328,9 +1458,9 @@ mod tests {
             current
         );
 
-        a.apply(&rename(a.document().unwrap(), 500, 11, "저장된 이름"))
+        a.apply(&rename(a.document().unwrap(), 500, 11, "저장된 이름"), 0)
             .unwrap();
-        b.apply(&rename(b.document().unwrap(), 600, 12, "B 편집"))
+        b.apply(&rename(b.document().unwrap(), 600, 12, "B 편집"), 0)
             .unwrap();
         assert_eq!(
             a.save_now().unwrap(),
@@ -1385,7 +1515,7 @@ mod tests {
         let project = saved_project("save-revision");
         let mut a = ProjectWindowSession::load(identity(project.path()), window(31)).unwrap();
         let mut b = ProjectWindowSession::load(identity(project.path()), window(32)).unwrap();
-        a.apply(&rename(a.document().unwrap(), 500, 11, "임시 이름"))
+        a.apply(&rename(a.document().unwrap(), 500, 11, "임시 이름"), 0)
             .unwrap();
         assert!(a.undo().unwrap());
         assert_eq!(
@@ -1398,7 +1528,7 @@ mod tests {
         assert_eq!(a.document.as_ref().unwrap().saved_revision, a.revision());
         assert!(!a.save_now().unwrap().written);
 
-        b.apply(&rename(b.document().unwrap(), 600, 12, "외부 창 편집"))
+        b.apply(&rename(b.document().unwrap(), 600, 12, "외부 창 편집"), 0)
             .unwrap();
         assert!(b.save_now().unwrap().written);
         assert!(matches!(
@@ -1423,7 +1553,7 @@ mod tests {
                 ProjectWindowSession::load(identity(root.as_ref()), window(1)).unwrap();
             assert!(!session.save_now().unwrap().written);
             session
-                .apply(&rename(session.document().unwrap(), 500, 11, "앱 변경"))
+                .apply(&rename(session.document().unwrap(), 500, 11, "앱 변경"), 0)
                 .unwrap();
             assert!(session.undo().unwrap());
             assert!(!session.save_now().unwrap().written);
@@ -1517,12 +1647,10 @@ mod tests {
         symlink(first.path(), &alias).unwrap();
         let mut session = ProjectWindowSession::load(identity(&alias), window(1)).unwrap();
         session
-            .apply(&rename(
-                session.document().unwrap(),
-                500,
-                11,
-                "원래 프로젝트",
-            ))
+            .apply(
+                &rename(session.document().unwrap(), 500, 11, "원래 프로젝트"),
+                0,
+            )
             .unwrap();
         std::fs::remove_file(&alias).unwrap();
         symlink(second.path(), &alias).unwrap();
@@ -1563,12 +1691,10 @@ mod tests {
         );
 
         session
-            .apply(&rename(
-                session.document().unwrap(),
-                700,
-                12,
-                "첫 문서 편집",
-            ))
+            .apply(
+                &rename(session.document().unwrap(), 700, 12, "첫 문서 편집"),
+                0,
+            )
             .unwrap();
         assert!(session.save_now().unwrap().written);
         let saved = session.loaded_generation().unwrap();

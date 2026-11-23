@@ -259,7 +259,7 @@ fn rename_in(app: &AppRuntime, session: WindowSessionHandle, command: u64, node:
                 node,
                 &name,
             );
-            window.apply(&tx).unwrap();
+            window.apply(&tx, 0).unwrap();
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
         .unwrap();

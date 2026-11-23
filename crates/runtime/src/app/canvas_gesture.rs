@@ -444,8 +444,9 @@ fn apply_commands(
         .fold(CommandTransaction::new(id, CommandOrigin::User), |tx, c| {
             tx.with_command(revision, c)
         });
-    window.apply(&transaction).map_err(view_failure)?;
-    window.label_current(crate::window_session::history_label::RESIZE);
+    window
+        .apply(&transaction, crate::window_session::history_label::RESIZE)
+        .map_err(view_failure)?;
     Ok(())
 }
 
@@ -874,20 +875,16 @@ fn move_selection(
             stellar_commands::inspector::InspectorProperty::Left,
         )
     });
+    use crate::window_session::history_label::{DUPLICATE, MOVE};
     if duplicate {
         let primary = copies.last().copied();
-        window.apply_and_select(&transaction, Selection::new(copies, primary))
+        window.apply_and_select(&transaction, Selection::new(copies, primary), DUPLICATE)
     } else if let Some(key) = repeat {
-        window.apply_grouped(&transaction, key, &super::inspector::InstantClock)
+        window.apply_grouped(&transaction, key, &super::inspector::InstantClock, MOVE)
     } else {
-        window.apply(&transaction)
+        window.apply(&transaction, MOVE)
     }
     .map_err(view_failure)?;
-    window.label_current(if duplicate {
-        crate::window_session::history_label::DUPLICATE
-    } else {
-        crate::window_session::history_label::MOVE
-    });
     Ok(())
 }
 

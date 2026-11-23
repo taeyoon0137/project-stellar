@@ -415,7 +415,7 @@ fn apply_recovery(
         &Selection::new(p.selection.iter().copied(), p.selection.first().copied()),
         &model,
     );
-    w.history = history;
+    w.replace_history(history);
     w.document.as_mut().expect("checked document").state =
         DocumentState::with_revision(model, DocumentRevision(p.revision));
     entry
