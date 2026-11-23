@@ -738,10 +738,22 @@ fn save_keeps_the_document_context_in_the_source_and_the_cache() {
     a.apply(&rename(a.document().unwrap(), 10, 11, "다시 저장"), 0)
         .unwrap();
     assert!(a.save_now().unwrap().written);
-    assert!(context_file.is_file(), "두 번째 저장 뒤에도 Context 원본 파일");
+    assert!(
+        context_file.is_file(),
+        "두 번째 저장 뒤에도 Context 원본 파일"
+    );
     let b = open(&project, &locks, 2);
-    assert!(b.document().unwrap().model().context().key(key.id()).is_some());
+    assert!(b
+        .document()
+        .unwrap()
+        .model()
+        .context()
+        .key(key.id())
+        .is_some());
     let cache = open_snapshot(project.path()).unwrap();
     let cached = cache.document_model(sid(1)).unwrap();
-    assert!(cached.context().key(key.id()).is_some(), "cache generation의 Context");
+    assert!(
+        cached.context().key(key.id()).is_some(),
+        "cache generation의 Context"
+    );
 }

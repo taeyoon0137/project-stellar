@@ -83,10 +83,10 @@ pub mod export_native;
 /// CSS 선언 블록 복사·붙여넣기 (IX.11.15).
 pub mod css;
 
-/// PNG 내보내기 실행과 atomic 저장 (XX.2.3, ADR-0103).
-pub mod export_png;
 /// 문서 값 → 코드 생성 IR 입력 (XXII.1, ADR-0106).
 pub mod codegen;
+/// PNG 내보내기 실행과 atomic 저장 (XX.2.3, ADR-0103).
+pub mod export_png;
 
 /// 토큰 → Web CSS custom property·생성 상수 (XXII.2.3, ADR-0106).
 pub mod export_web_tokens;

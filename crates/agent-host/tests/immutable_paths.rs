@@ -104,7 +104,12 @@ fn agent_paths_do_not_call_the_app_revert_modules() {
         .collect();
     let found = hits(
         &files,
-        &["provenance::", "agent_history::", "attached::revert", "revert::"],
+        &[
+            "provenance::",
+            "agent_history::",
+            "attached::revert",
+            "revert::",
+        ],
     );
     assert!(found.is_empty(), "{found:#?}");
 }

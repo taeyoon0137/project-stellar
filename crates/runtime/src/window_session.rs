@@ -1307,7 +1307,11 @@ impl ProjectWindowSession {
             document_id,
             revision,
             records: document.state.model().to_records()?,
-            context: document.state.model().context().live(document.state.model()),
+            context: document
+                .state
+                .model()
+                .context()
+                .live(document.state.model()),
             serialized: std::sync::OnceLock::new(),
             serializations: std::sync::atomic::AtomicUsize::new(0),
         });
