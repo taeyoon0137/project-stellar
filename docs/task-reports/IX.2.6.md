@@ -138,4 +138,6 @@
 - `detach_writes_linked_property_overrides_into_the_copies`: `title` override "확인 창"이 있는 Card 인스턴스를 Detach하면 복제
   title Text 본문이 "확인 창"이고, 적용·undo가 정확합니다. override가 없거나 연결을 넘기지 않으면 정의 값(빈 본문) 그대로,
   선언되지 않은 Property의 override는 반영하지 않습니다. 문자열 Property를 Frame `width`에 잇는 연결은 `Link`로 거부합니다.
-- `registry_values_keep_css_units`: `px` 길이 → 비음수, 음수 길이 거부, `%` → 0..=1, 타입 불일치 거부.
+- `registry_values_keep_css_units`: `px` 길이 → 비음수, 음수 길이 거부, `%` → 0..=1, 타입 불일치 거부. 값 타입 `Number`는
+  payload registry 값 종류로 단위를 맞춥니다. `px` 길이는 좌표 속성에만, `deg` 각도는 각도 속성에만 쓰고, 개수·종류를 모르는
+  속성에는 단위 있는 값을 쓰지 않습니다(검토 보완, ADR-0133 결정 3.4).

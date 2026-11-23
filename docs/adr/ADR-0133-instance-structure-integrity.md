@@ -137,7 +137,10 @@ Slot content가 있는 문서를 각 경로로 보내는 통합 시험(`tests/in
 ## Consequences
 
 - 구조 command만 쓰는 호출자(CLI `stellar apply`의 `delete-subtree`·`move-node` 입력, agent batch 등)는 Slot content를
-  지우거나 꺼낼 수 없고 `place-slot-content` 입력을 써야 합니다. 거부 이유 문구가 그 경로를 알립니다.
+  지우거나 꺼낼 수 없습니다. 거부 이유 문구가 `place-slot-content` 경로를 알립니다. 다만 지금 command 입력 규칙
+  (`stellar_ops::mcp_command_input`)에는 `place-slot-content`·Slot content 지우기 입력이 없어, CLI·MCP로는 Slot content를
+  지우거나 꺼낼 길이 없습니다. 그 입력(`plan_slot_content_delete`·`plan_slot_take_out`을 부르는 입력)은 command 입력 규칙
+  작업으로 남깁니다. 이전에는 같은 요청이 투영을 깨뜨린 채 성공했으므로, 막힌 동작은 문서를 망가뜨리던 동작입니다.
 - runtime 선택 삭제·끌어 내기 제스처가 Slot content를 만나면 `slot_content_owner`로 골라 `plan_slot_content_delete`·
   `plan_slot_take_out`으로 보내야 합니다. 그 연결은 UI 재설계 때 합니다(지금 runtime 선택 삭제는 Slot content가 섞이면
   거부됩니다).

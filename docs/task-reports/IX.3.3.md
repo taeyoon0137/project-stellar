@@ -146,3 +146,6 @@ content를 가진 인스턴스를 지운 뒤의 undo, 그런 인스턴스의 복
 
 - runtime 선택 삭제·끌어 내기 제스처가 Slot content를 `plan_slot_content_delete`·`plan_slot_take_out`으로 보내는 연결은
   UI 재설계 때 합니다. 지금 선택 삭제에 Slot content가 섞이면 command가 거부합니다.
+- command 입력 규칙(`stellar_ops::mcp_command_input`)에는 `place-slot-content`·Slot content 지우기 입력이 없습니다. 그래서
+  CLI `stellar apply`·MCP로는 Slot content를 지우거나 꺼낼 수 없습니다(구조 command는 거부). 그 입력은 command 입력 규칙
+  작업으로 남깁니다(ADR-0133 Consequences).
