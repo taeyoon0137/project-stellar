@@ -19,7 +19,7 @@
 
 ## 구현 요약
 
-- 제출(`submit`)은 승인 대기만 만들고 잠그지 않습니다. 사용자가 승인(`approve`)하면 프로젝트 조정자에서 lease를 획득합니다.
+- 제출(`submit`)은 승인 대기만 만들고 잠그지 않습니다. 사용자가 승인(`approve`)하면 그 시점 문서로 대상을 다시 해석해 프로젝트 조정자에서 lease를 획득합니다. 제출 뒤 대상이 옮겨졌으면 새 조상으로 잠그고, 사라졌으면 `missing-node`로 거부합니다(`approval_resolves_targets_against_the_current_document`).
 - node 소속은 자신부터 조상을 따라 lease root를 찾아 정합니다. 자손 목록을 저장하지 않으므로 lease 뒤에 추가된 자손도 같은 lease입니다.
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)
@@ -36,6 +36,7 @@
 |---|---|
 | 새로 추가된 descendant 자동 잠금: 에이전트가 lease 안에 추가한 node가 같은 lease에 속하고 사용자 편집이 거부됨(`new_descendant_is_locked_automatically`) | 통과 |
 | 승인 전에는 잠그지 않고 승인 뒤 subtree 전체가 잠김(`lease_is_created_only_after_approval`) | 통과 |
+| 제출 뒤 대상이 옮겨지면 승인 시점 조상으로 잠그고 겹침도 그 조상으로 판정, 사라진 대상은 `missing-node`로 거부(`approval_resolves_targets_against_the_current_document`) | 통과 |
 
 ## 차이(작업 지시와 다른 점)
 

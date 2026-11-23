@@ -2,8 +2,9 @@
 //!
 //! 흐름(아키텍처 §31.4): 에이전트가 `document.begin_agent_edit`로 대상 root StableId 목록·전역 resource·작업
 //! 설명을 제출합니다 → [`AgentEditLeases::submit`]이 문서에서 대상을 확인하고 승인 대기로 둡니다(아직 잠그지
-//! 않음) → 사용자가 앱 UI에서 승인하면 [`AgentEditLeases::approve`]가 프로젝트 lease 조정자
-//! ([`ProjectLockCoordinator`])에서 lease를 획득합니다. 진행 중인 사용자 조작(gesture)과 겹치면 대기
+//! 않음) → 사용자가 앱 UI에서 승인하면 [`AgentEditLeases::approve`]가 그때의 문서로 대상을 다시 확인하고
+//! 프로젝트 lease 조정자([`ProjectLockCoordinator`])에서 lease를 획득합니다. 제출과 승인 사이에 사용자가 대상을
+//! 옮기거나 지울 수 있으므로, 겹침 판정에 쓰는 조상 목록은 획득 시점 문서로 만듭니다. 진행 중인 사용자 조작(gesture)과 겹치면 대기
 //! ([`LeaseState::WaitingForGesture`])로 남고, gesture가 끝난 뒤 [`AgentEditLeases::retry_waiting`]이
 //! 획득합니다(XIX.4.7). 다른 lease와 겹치면 거부합니다(XIX.4.6).
 //!
@@ -299,7 +300,7 @@ impl std::error::Error for LeaseServiceError {}
 #[derive(Debug)]
 enum Slot {
     Pending {
-        lease: Lease,
+        request: BeginAgentEdit,
         waiting: Option<Conflict>,
     },
     Held(HeldLease),
@@ -331,13 +332,13 @@ impl AgentEditLeases {
         if self.slots.contains_key(&id) {
             return Err(LeaseServiceError::Duplicate(id));
         }
-        let lease = request
+        request
             .resolve(model, id)
             .map_err(LeaseServiceError::Request)?;
         self.slots.insert(
             id,
             Slot::Pending {
-                lease,
+                request: request.clone(),
                 waiting: None,
             },
         );
@@ -356,16 +357,28 @@ impl AgentEditLeases {
         })
     }
 
-    /// 사용자가 승인한 요청의 lease를 획득합니다(앱 사용자 UI 전용). gesture와 겹치면 대기로 남고, 다른 lease와
-    /// 겹치면 요청을 버리고 거부합니다.
-    pub fn approve(&mut self, id: LeaseId) -> Result<LeaseState, LeaseServiceError> {
-        let Some(Slot::Pending { lease, .. }) = self.slots.get(&id) else {
+    /// 사용자가 승인한 요청의 lease를 획득합니다(앱 사용자 UI 전용). `model`은 지금 문서이고, 대상을 이 문서로
+    /// 다시 확인해 잠금을 만듭니다. 대상이 사라졌으면 요청을 버리고 거부합니다. gesture와 겹치면 대기로 남고,
+    /// 다른 lease와 겹치면 요청을 버리고 거부합니다.
+    pub fn approve(
+        &mut self,
+        model: &DocumentModel,
+        id: LeaseId,
+    ) -> Result<LeaseState, LeaseServiceError> {
+        let Some(Slot::Pending { request, .. }) = self.slots.get(&id) else {
             return match self.slots.get(&id) {
                 Some(Slot::Held(_)) => Ok(LeaseState::Granted),
                 _ => Err(LeaseServiceError::Unknown(id)),
             };
         };
-        match self.coordinator.try_acquire(lease.clone()) {
+        let lease = match request.resolve(model, id) {
+            Ok(lease) => lease,
+            Err(error) => {
+                self.slots.remove(&id);
+                return Err(LeaseServiceError::Request(error));
+            }
+        };
+        match self.coordinator.try_acquire(lease) {
             Ok(held) => {
                 self.slots.insert(id, Slot::Held(held));
                 Ok(LeaseState::Granted)
@@ -388,9 +401,12 @@ impl AgentEditLeases {
         }
     }
 
-    /// gesture 때문에 기다리는 요청을 다시 시도합니다. gesture가 끝난 뒤 부릅니다(XIX.4.7). 결과는 다시 시도한
-    /// 요청별 상태 또는 거부입니다.
-    pub fn retry_waiting(&mut self) -> Vec<(LeaseId, Result<LeaseState, LeaseServiceError>)> {
+    /// gesture 때문에 기다리는 요청을 지금 문서(`model`)로 다시 시도합니다. gesture가 끝난 뒤 부릅니다
+    /// (XIX.4.7). 결과는 다시 시도한 요청별 상태 또는 거부입니다.
+    pub fn retry_waiting(
+        &mut self,
+        model: &DocumentModel,
+    ) -> Vec<(LeaseId, Result<LeaseState, LeaseServiceError>)> {
         let waiting: Vec<LeaseId> = self
             .slots
             .iter()
@@ -407,7 +423,7 @@ impl AgentEditLeases {
             .collect();
         waiting
             .into_iter()
-            .map(|id| (id, self.approve(id)))
+            .map(|id| (id, self.approve(model, id)))
             .collect()
     }
 
@@ -454,19 +470,24 @@ mod tests {
 
     /// 문서 sid(1), View root sid(10). 10 ─ 11 ─ 13 ─ 14, 10 ─ 12.
     pub(crate) fn model() -> DocumentModel {
+        model_with(&[
+            (10, None, 0x10u8),
+            (11, Some(10), 0x10),
+            (12, Some(10), 0x20),
+            (13, Some(11), 0x10),
+            (14, Some(13), 0x10),
+        ])
+    }
+
+    /// 문서 sid(1), View root sid(10)에 (id, 부모, 순서 byte) node를 차례로 넣습니다.
+    fn model_with(nodes: &[(u64, Option<u64>, u8)]) -> DocumentModel {
         let mut definition = DocumentDefinition::new(sid(1), String::new());
         let mut page = PageDefinition::new(sid(2), String::new());
         page.add_view(ViewDefinition::new(sid(3), String::new(), sid(10)))
             .unwrap();
         definition.add_page(page).unwrap();
         let mut model = DocumentModel::new(definition);
-        for (id, parent, key) in [
-            (10, None, 0x10u8),
-            (11, Some(10), 0x10),
-            (12, Some(10), 0x20),
-            (13, Some(11), 0x10),
-            (14, Some(13), 0x10),
-        ] {
+        for &(id, parent, key) in nodes {
             model
                 .insert_node(NodeRecord {
                     id: sid(id),
@@ -610,7 +631,7 @@ mod tests {
             Ok(LeaseState::AwaitingApproval)
         );
         assert!(leases.table().unwrap().is_empty());
-        assert_eq!(leases.approve(id), Ok(LeaseState::Granted));
+        assert_eq!(leases.approve(&model, id), Ok(LeaseState::Granted));
         let table = leases.table().unwrap();
         assert_eq!(table.holder(&model, sid(14)), Some(id));
         assert_eq!(table.holder(&model, sid(12)), None);
@@ -618,15 +639,60 @@ mod tests {
         let other = LeaseId(sid(901));
         leases.submit(&model, other, &begin(&[11])).unwrap();
         assert!(matches!(
-            leases.approve(other),
+            leases.approve(&model, other),
             Err(LeaseServiceError::Conflict(Conflict::Subtree { holder, .. })) if holder == id
         ));
         assert_eq!(leases.state(other), None, "거부된 요청은 버립니다");
         leases.submit(&model, other, &begin(&[12])).unwrap();
-        assert_eq!(leases.approve(other), Ok(LeaseState::Granted));
+        assert_eq!(leases.approve(&model, other), Ok(LeaseState::Granted));
         leases.release(id).unwrap();
         assert_eq!(leases.table().unwrap().len(), 1);
         assert_eq!(leases.release(id), Err(LeaseServiceError::Unknown(id)));
+    }
+
+    #[test]
+    fn approval_resolves_targets_against_the_current_document() {
+        // 제출과 승인 사이에 대상이 옮겨지면 승인 시점 조상으로 잠그고, 사라졌으면 요청을 버립니다.
+        let temp = TempDir::new("lease-approve-current");
+        let mut leases = service(&temp);
+        let id = LeaseId(sid(900));
+        leases.submit(&model(), id, &begin(&[13])).unwrap();
+        // 13을 12 아래로 옮긴 문서.
+        let moved = model_with(&[
+            (10, None, 0x10),
+            (11, Some(10), 0x10),
+            (12, Some(10), 0x20),
+            (13, Some(12), 0x10),
+            (14, Some(13), 0x10),
+        ]);
+        assert_eq!(leases.approve(&moved, id), Ok(LeaseState::Granted));
+        let table = leases.table().unwrap();
+        assert_eq!(
+            table.get(id).unwrap().subtrees[0].ancestors,
+            [sid(12), sid(10)]
+        );
+        // 겹침 판정도 새 조상으로 합니다: 12를 요청하면 겹치고, 11은 겹치지 않습니다.
+        let other = LeaseId(sid(901));
+        leases.submit(&moved, other, &begin(&[12])).unwrap();
+        assert!(matches!(
+            leases.approve(&moved, other),
+            Err(LeaseServiceError::Conflict(Conflict::Subtree { .. }))
+        ));
+        leases.submit(&moved, other, &begin(&[11])).unwrap();
+        assert_eq!(leases.approve(&moved, other), Ok(LeaseState::Granted));
+        // 대상이 사라진 문서에서 승인하면 missing-node로 거부하고 요청을 버립니다.
+        let third = LeaseId(sid(902));
+        let without_14 = model_with(&[(10, None, 0x10), (11, Some(10), 0x10)]);
+        let mut fresh = AgentEditLeases::new(
+            open_project_coordinator(&temp.path.join("other"), sid(500), &temp.path).unwrap(),
+        );
+        fresh.submit(&model(), third, &begin(&[14])).unwrap();
+        match fresh.approve(&without_14, third) {
+            Err(LeaseServiceError::Request(error)) => assert_eq!(error.code, "missing-node"),
+            other => panic!("예상하지 않은 결과: {other:?}"),
+        }
+        assert_eq!(fresh.state(third), None);
+        assert!(fresh.table().unwrap().is_empty());
     }
 
     #[test]
@@ -645,7 +711,7 @@ mod tests {
         let id = LeaseId(sid(900));
         leases.submit(&model, id, &begin(&[13])).unwrap();
         assert!(matches!(
-            leases.approve(id),
+            leases.approve(&model, id),
             Ok(LeaseState::WaitingForGesture(Conflict::Gesture { .. }))
         ));
         assert!(matches!(
@@ -656,13 +722,13 @@ mod tests {
             leases.table().unwrap().is_empty(),
             "drag 중에는 잠그지 않습니다"
         );
-        let retried = leases.retry_waiting();
+        let retried = leases.retry_waiting(&model);
         assert!(matches!(
             retried.as_slice(),
             [(_, Ok(LeaseState::WaitingForGesture(_)))]
         ));
         drag.end().unwrap();
-        assert_eq!(leases.retry_waiting(), vec![(id, Ok(LeaseState::Granted))]);
+        assert_eq!(leases.retry_waiting(&model), vec![(id, Ok(LeaseState::Granted))]);
         assert_eq!(leases.state(id), Some(LeaseState::Granted));
     }
 
@@ -686,7 +752,7 @@ mod tests {
             AgentEditLeases::new(open_project_coordinator(&locks, sid(500), &worktree).unwrap());
         let id = LeaseId(sid(900));
         first.submit(&model, id, &begin(&[13])).unwrap();
-        first.approve(id).unwrap();
+        first.approve(&model, id).unwrap();
         assert_eq!(same.table().unwrap().len(), 1);
         assert!(other.table().unwrap().is_empty());
     }
