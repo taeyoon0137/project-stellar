@@ -366,7 +366,8 @@ impl<'a> AgentWindow<'a> {
             .map_err(AgentEditError::Session)
     }
 
-    /// 사용자가 승인한 제안을 lease 판정과 함께 적용하고 출처 색인에 batch로 기록합니다(앱 사용자 UI 전용).
+    /// 사용자가 승인한 제안을 lease 판정과 함께 적용하고 출처 색인에 batch로 기록합니다(앱 사용자 UI 전용). 적용
+    /// change set은 다른 세션의 표시된 batch에 `observe`로 알립니다.
     pub fn apply_proposal(
         &mut self,
         id: AgentSessionId,
@@ -384,9 +385,15 @@ impl<'a> AgentWindow<'a> {
             .document
             .as_mut()
             .ok_or(AgentEditError::NoDocument)?;
-        sessions
+        let batch = sessions
             .apply_proposal(id, proposal, &mut document.state, &table, provenance)
-            .map_err(AgentEditError::Session)
+            .map_err(AgentEditError::Session)?;
+        // 다른 세션의 표시된 batch에 닿았는지 다시 판정합니다(같은 세션 batch는 `observe`가 건너뜀).
+        if let Some(record) = provenance.get(batch).map(|b| &b.record) {
+            let (changes, origin) = (record.changes.clone(), record.forward.origin);
+            provenance.observe(&changes, origin, document.state.model());
+        }
+        Ok(batch)
     }
 
     /// 정상 완료(CompleteAgentEdit, XIX.6.2): 적용 batch를 "에이전트 편집" 항목 하나로 확정하고 lease를 풉니다.

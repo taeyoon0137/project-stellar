@@ -281,3 +281,35 @@ fn second_lease_request_in_one_session_is_refused_without_locking() {
         Err(AgentEditError::Session(SessionError::UnknownSession(_)))
     ));
 }
+
+#[test]
+fn another_session_batch_on_the_same_property_is_changed_later() {
+    // 첫 세션이 끝난 뒤 다른 세션이 같은 속성을 바꾸면 첫 batch는 "이후 변경됨"입니다(ADR-0100 결정 7).
+    let mut f = fixture("agent-edit-other-session");
+    let mut window = AgentWindow::new(&mut f.session, &mut f.agent);
+    let first = applied_batch(&mut window);
+    window.complete(session_id(), id(2)).unwrap();
+    let other = AgentSessionId(sid(702));
+    let other_lease = LeaseId(sid(904));
+    window
+        .start_session(other, SessionOrigin::ExternalClient, "둘째", 20)
+        .unwrap();
+    let targets = LeaseTargets {
+        document: sid(1),
+        targets: vec![sid(11)],
+        externals: Vec::new(),
+    };
+    window.submit_lease(other, other_lease, &targets).unwrap();
+    window.approve_lease(other_lease, ui()).unwrap();
+    let state = window.session().document().unwrap();
+    let transaction = agent_transaction(
+        state.revision(),
+        other_lease,
+        id(5),
+        vec![Command::rename_node(sid(11), "둘째".to_string())],
+    );
+    let proposal = window.queue_proposal(other, transaction).unwrap();
+    let second = window.apply_proposal(other, proposal, ui()).unwrap();
+    assert_eq!(display(&window, first), DisplayState::ChangedLater);
+    assert_eq!(display(&window, second), DisplayState::PendingReview);
+}

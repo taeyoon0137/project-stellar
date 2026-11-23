@@ -60,6 +60,8 @@ Accepted (2026-11-23). engine lane `agent-edit-crate`의 결정입니다. 계획
    - 창 Undo·Redo(`AppCommand::Undo/Redo`)는 `agent_edit::replay`를 거칩니다. `ProjectWindowSession::replay_history`가 재생한
      항목과 change set을 돌려주고(기존 `undo`·`redo`도 이 함수를 부름), `on_history(sequence, 방향)`로 표시 상태를 전이한 뒤
      재생 change set을 그 항목 출처로 `observe`에 넘깁니다.
+   - 승인한 제안을 적용하면 그 change set을 batch 출처로 `observe`에 넘깁니다. 같은 세션 batch는 `observe`가 건너뛰고, 다른
+     세션의 표시된 batch는 다시 판정됩니다(ADR-0100 결정 7 "다른 세션 batch").
    - 되돌리기 적용·제안 적용은 작업 문서 revision을 올립니다. 앱 사용자 UI 동작은 `AppRuntime::with_agent_edit`(job 접수기
      `JobPublisher`)로 document thread에서 실행되고, job 뒤 상태 게시가 자동 저장 예약을 관찰하므로 되돌리기 change set은 다음
      자동 저장에 들어갑니다. 자동 저장 경로를 따로 두지 않습니다.
@@ -99,7 +101,7 @@ Accepted (2026-11-23). engine lane `agent-edit-crate`의 결정입니다. 계획
     agent-host `AgentSessionId`(u64)와 이 crate `AgentSessionId`(StableId) 대응, `FirstConnectionApproval`을 권한 저장소 첫 연결
     응답으로 넣는 일, runtime의 agent-protocol host trait 구현(XXIX.3.1).
   - 셸 FFI(XXIX.3.1)와 UI.
-  - 사용자 편집 경로마다 change set을 `observe`에 넘기는 일. 지금은 Undo·Redo 재생과 되돌리기만 넘깁니다.
+  - 사용자 편집 경로마다 change set을 `observe`에 넘기는 일. 지금은 Undo·Redo 재생과 다른 세션 batch 적용만 넘깁니다.
   - 20만 node 문서의 lease 대상 계산·batch 적용 단일 점유 trace(XXIX.3.4 검증 열).
 - 미리보기 validation에 넘길 컴포넌트 정의 목록은 호출자가 줍니다(창 컴포넌트 원본 cache와의 연결은 후속).
 
