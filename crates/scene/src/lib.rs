@@ -36,6 +36,9 @@ pub mod freshness;
 /// node 종류별 scene builder (XI.2.2).
 pub mod builder;
 
+/// layout·binding·modifier invalidation → scene dirty set (XI.2.1).
+pub mod dirty;
+
 /// 축 정렬 bounds와 scene node world bounds (XI.3.1).
 pub mod bounds;
 
