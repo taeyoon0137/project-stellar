@@ -7,9 +7,11 @@
 //!    창(`base`→`current`)과 외부(`base`→`incoming`)가 같은 객체·속성을 서로 다르게 바꾼 항목은 semantic conflict
 //!    후보입니다.
 //! 2. [`respond_to_external`]: 이 창의 세션 lease와 겹치면 그 세션을 종료 절차([`EndReason::LeaseConflict`], 자동
-//!    rollback 없음)로 끝냅니다(XIX.7.2). 겹치지 않으면 세션을 유지합니다(XIX.7.3). 어느 경우든 창에서 바뀌지 않은
-//!    레코드의 외부 변경만 System 출처 transaction으로 돌려주고(에이전트·사용자의 저장 전 변경을 덮어쓰지 않음),
-//!    창과 외부가 모두 바꾼 레코드와 semantic conflict 후보는 reconciliation 입력(XIII.3.4)으로 돌려줍니다.
+//!    rollback 없음)로 끝냅니다(XIX.7.2). 겹치지 않으면 세션을 유지합니다(XIX.7.3). 문서는 바꾸지 않습니다.
+//!    외부 변경을 창 문서에 넣는 일은 창 session의 외부 변경 반영 한 경로가 합니다(clean이면 `ApplyExternalSnapshot`,
+//!    미저장 편집이 있으면 XIII.3.4 semantic reconciliation, 겹치면 두 선택지, ADR-0110). 에이전트가 적용한 변경은 그
+//!    경로에서 출처 표시를 유지한 로컬 변경으로 다뤄집니다. 이 module의 분할(`partition`)·후보(`conflicts`)는 판정
+//!    근거로만 돌려주고 따로 적용하지 않습니다(ADR-0124 결정 5, 이중 적용 경로 없음).
 //!
 //! 다른 프로세스가 쥔 lease와 겹치면 그 프로세스가 같은 외부 변경을 보고 자기 세션을 끝냅니다. 이 창은 그 lease를
 //! `foreign_overlaps`로 보고만 합니다.
@@ -18,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use stellar_ops::commands::agent_external::{
-    overlapping_leases, partition_external, ExternalPartition, ExternalTarget, RecordTarget,
+    overlapping_leases, partition_external, ExternalPartition, ExternalTarget,
 };
 use stellar_ops::commands::agent_sink::AgentHistorySink;
 use stellar_ops::commands::document::definitions::DocumentDefinition;
@@ -26,7 +28,6 @@ use stellar_ops::commands::document::model::DocumentModel;
 use stellar_ops::commands::document::records::DocumentRecords;
 use stellar_ops::commands::id::CommandId;
 use stellar_ops::commands::lock::lease::{LeaseId, LeaseTable};
-use stellar_ops::commands::transaction::CommandTransaction;
 use stellar_ops::core_types::ids::StableId;
 use stellar_ops::diff::{diff_records, DiffEntry, DiffReport};
 use stellar_ops::query::OpsValue;
@@ -247,20 +248,17 @@ pub fn analyze_external(
 /// 외부 변경 처리 결정.
 #[derive(Debug, Clone)]
 pub struct ExternalDecision {
-    /// 분석.
+    /// 분석(외부 변경 batch diff, lease 겹침, 판정 근거인 분할·semantic conflict 후보).
     pub analysis: ExternalAnalysis,
     /// 겹쳐서 끝낸 이 창의 세션.
     pub ended: Vec<SessionEndReport>,
     /// 다른 프로세스가 쥔 겹친 lease(그 프로세스가 끝냄).
     pub foreign_overlaps: Vec<LeaseId>,
-    /// 창에 적용할 외부 변경(System 출처, 창에서 바뀌지 않은 레코드만). 없으면 `None`.
-    pub apply: Option<CommandTransaction>,
-    /// reconciliation(XIII.3.4)으로 넘길, 창과 외부가 모두 바꾼 레코드.
-    pub divergent: Vec<RecordTarget>,
 }
 
-/// 외부 변경에 대응합니다(모듈 문서 2). 문서는 바꾸지 않고, 반영할 transaction을 돌려줍니다. 호출자는 그것을 창
-/// history의 일반 외부 반영 경로로 적용하고 출처 색인에 `observe`로 알립니다.
+/// 외부 변경에 대응합니다(모듈 문서 2). 문서는 바꾸지 않습니다. `base`는 창이 마지막으로 맞춘 원본, `incoming`은
+/// 외부 원본이고, `history`의 문서는 지금 창 문서입니다(창 session이 외부 변경을 이미 반영했으면 반영 뒤 문서). 겹친
+/// 이 창 세션의 "중단됨" entry는 `entry_id`로 확정합니다.
 #[allow(clippy::too_many_arguments)]
 pub fn respond_to_external(
     sessions: &mut AgentEditSessions,
@@ -270,7 +268,6 @@ pub fn respond_to_external(
     incoming: &DocumentRecords,
     table: &LeaseTable,
     entry_id: CommandId,
-    apply_id: CommandId,
     now_ms: u64,
 ) -> Result<ExternalDecision, ExternalError> {
     let analysis = analyze_external(history.state().model(), base, incoming, table)?;
@@ -293,21 +290,10 @@ pub fn respond_to_external(
             None => foreign_overlaps.push(*lease),
         }
     }
-    let revision = history.state().revision();
-    let apply = (!analysis.partition.applicable.is_empty()).then(|| {
-        analysis
-            .partition
-            .applicable
-            .clone()
-            .into_transaction(apply_id, revision)
-    });
-    let divergent = analysis.partition.divergent.clone();
     Ok(ExternalDecision {
         analysis,
         ended,
         foreign_overlaps,
-        apply,
-        divergent,
     })
 }
 
