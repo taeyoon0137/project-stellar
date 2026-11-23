@@ -131,10 +131,17 @@ fn assert_one_choice_alert(w: &TwoWindows) {
         StaleResolution::for_writer(WriterProvenance::AppWindow),
         StaleResolution::Choose
     );
+    // 첫 창은 디스크와 같으므로 알림이 없습니다(위 목록이 두 번째 창 하나뿐인 것과 같은 판정을 이름으로 남김).
+    assert!(!alerts.iter().any(|alert| alert.session == w.a));
+    // 같은 stale 구간에서 디스크 변화 반영을 다시 돌려도 알림은 다시 나오지 않습니다.
+    w.app
+        .rt
+        .sync_external_changes(project)
+        .unwrap()
+        .wait()
+        .unwrap();
     let again = w.app.rt.take_stale_alerts().unwrap().wait().unwrap();
-    assert!(again.is_empty(), "한 stale 구간의 알림은 한 번");
-    // 첫 창은 디스크와 같으므로 알림이 없습니다.
-    assert!(!again.iter().any(|alert| alert.session == w.a));
+    assert!(again.is_empty(), "한 stale 구간의 알림은 한 번: {again:?}");
 }
 
 fn assert_git_untouched(w: &TwoWindows) {
