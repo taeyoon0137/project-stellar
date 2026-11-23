@@ -510,3 +510,124 @@ fn stored_refs_decide_external_components_and_document_diagnostics() {
     let removed = remove_imports(&env.project, &name("ds"), &card).unwrap();
     assert_eq!(removed.components, [sid(SPACE, GHOST)]);
 }
+
+#[test]
+fn failed_update_keeps_previous_lock_manifest_and_cache_snapshot() {
+    let Some(env) = Env::new("lib-update-faults", &[(CARD_INSTANCE, CARD)]) else {
+        return;
+    };
+    let ds = env.repo("ds", 72);
+    let v1 = ds.release(SPACE, defs(&[CARD, BADGE]), "v1");
+    ds.release(SPACE, defs(&[CARD, BADGE, TAG_COMPONENT]), "v2");
+    ds.release(SPACE, defs(&[BADGE]), "v3");
+    let mut tools = env.tools();
+    add(
+        &env.project,
+        &mut tools,
+        &add_request("ds", &ds, "v1", &[CARD]),
+        1,
+    )
+    .unwrap();
+    let request = |version: &str| UpdateRequest {
+        name: name("ds"),
+        version: Some(tag(version)),
+        allow_orphans: false,
+        dry_run: false,
+    };
+    let before = env.files();
+    let unchanged = |env: &Env, tools: &LibraryTools, why: &str| {
+        assert_eq!(env.files(), before, "{why}: lock·stellar.yaml 불변");
+        let opened = open_libraries(&env.project, Ok(tools.cache()), 9);
+        assert!(
+            opened.is_complete(),
+            "{why}: 이전 cache snapshot을 그대로 읽음"
+        );
+        assert_eq!(
+            opened
+                .instance()
+                .snapshots()
+                .next()
+                .unwrap()
+                .commit()
+                .to_string(),
+            v1,
+            "{why}"
+        );
+    };
+
+    // network: 저장소에 닿을 수 없음(v2는 cache에 없음).
+    let away = env.base.join("libraries/ds-away");
+    std::fs::rename(&ds.dir, &away).unwrap();
+    assert!(matches!(
+        update(&env.project, &mut tools, &request("v2"), 2),
+        Err(LibraryCommandError::Resolve(_))
+    ));
+    unchanged(&env, &tools, "network");
+    std::fs::rename(&away, &ds.dir).unwrap();
+
+    // cache: entry를 공개할 수 없음(entries 디렉터리 쓰기 금지).
+    let entries = tools.cache().root().entries_dir();
+    let mode = |m: u32| {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&entries, std::fs::Permissions::from_mode(m)).unwrap();
+    };
+    mode(0o555);
+    let cache_fault = update(&env.project, &mut tools, &request("v2"), 3);
+    mode(0o755);
+    assert!(
+        matches!(cache_fault, Err(LibraryCommandError::Materialize { .. })),
+        "{cache_fault:?}"
+    );
+    unchanged(&env, &tools, "cache");
+
+    // schema: Stellar 프로젝트가 아닌 release, 텍스트 원본이 손상된 release.
+    std::fs::remove_file(ds.dir.join("stellar.yaml")).unwrap();
+    git(&ds.dir, &["add", "-A"]);
+    git(&ds.dir, &["commit", "-q", "-m", "plain"]);
+    git(&ds.dir, &["tag", "plain"]);
+    assert!(matches!(
+        update(&env.project, &mut tools, &request("plain"), 4),
+        Err(LibraryCommandError::Resolve(_))
+    ));
+    unchanged(&env, &tools, "not a stellar project");
+    std::fs::write(
+        ds.dir.join("stellar.yaml"),
+        manifest_text(&ds.id, "Library"),
+    )
+    .unwrap();
+    std::fs::write(ds.dir.join("design/document.stellar.yaml"), "broken: [\n").unwrap();
+    git(&ds.dir, &["add", "-A"]);
+    git(&ds.dir, &["commit", "-q", "-m", "broken"]);
+    git(&ds.dir, &["tag", "broken"]);
+    assert!(matches!(
+        update(&env.project, &mut tools, &request("broken"), 5),
+        Err(LibraryCommandError::Rejected { .. })
+    ));
+    unchanged(&env, &tools, "invalid library");
+
+    // 사용 프로젝트 참조가 끊기는 후보(승인 없음).
+    assert!(matches!(
+        update(&env.project, &mut tools, &request("v3"), 6),
+        Err(LibraryCommandError::OrphansBlocked { .. })
+    ));
+    unchanged(&env, &tools, "orphans");
+
+    // lock 쓰기 실패: stellar.yaml을 먼저 썼어도 연 시점 bytes로 되돌립니다.
+    let lock = env.project.join("stellar.lock.yaml");
+    let real = env.project.join("lock-target.yaml");
+    std::fs::rename(&lock, &real).unwrap();
+    std::os::unix::fs::symlink(&real, &lock).unwrap();
+    let lock_fault = update(&env.project, &mut tools, &request("v2"), 7);
+    assert!(
+        matches!(lock_fault, Err(LibraryCommandError::LockWrite(_))),
+        "{lock_fault:?}"
+    );
+    assert_eq!(
+        std::fs::read(env.project.join("stellar.yaml")).unwrap(),
+        before.0,
+        "stellar.yaml 되돌림"
+    );
+    std::fs::remove_file(&lock).unwrap();
+    std::fs::rename(&real, &lock).unwrap();
+    unchanged(&env, &tools, "lock write");
+}
