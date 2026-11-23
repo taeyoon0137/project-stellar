@@ -1,4 +1,3 @@
-
 # 작업 보고서: XVI.4.8 binding 저장소 역참조·orphan target index
 
 - WBS: XVI.4.8
