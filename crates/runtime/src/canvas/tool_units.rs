@@ -96,9 +96,8 @@ pub fn snap_tolerance_world(zoom: f64) -> Option<f64> {
 mod tests {
     use super::*;
 
-    const ADR: &str = include_str!(
-        "../../../../docs/adr/ADR-0104-canvas-tools-units-and-selection-core.md"
-    );
+    const ADR: &str =
+        include_str!("../../../../docs/adr/ADR-0104-canvas-tools-units-and-selection-core.md");
 
     fn row(name: &str) -> &'static str {
         let prefix = format!("| {name} | ");
@@ -135,8 +134,14 @@ mod tests {
         has("줌 상한", &format!("{}%", pct(MAX_ZOOM)));
         let steps: Vec<String> = ZOOM_STEPS.iter().map(|z| pct(*z)).collect();
         has("줌 단계", &format!("| {} (%) |", steps.join(", ")));
-        has("픽셀 그리드 표시", &format!("{}% 이상", pct(PIXEL_GRID_MIN_ZOOM)));
-        has("크기·반경 핸들 숨김", &format!("{} pt 미만", HIDE_RESIZE_BELOW_PT));
+        has(
+            "픽셀 그리드 표시",
+            &format!("{}% 이상", pct(PIXEL_GRID_MIN_ZOOM)),
+        );
+        has(
+            "크기·반경 핸들 숨김",
+            &format!("{} pt 미만", HIDE_RESIZE_BELOW_PT),
+        );
         has("변 핸들 숨김", &format!("{} pt 미만", HIDE_EDGES_BELOW_PT));
         has("반경 핸들 표시", &format!("{} pt 이상", RADIUS_MIN_SIDE_PT));
         has("모서리 핸들 반변", &format!("{} pt", CORNER_HALF_PT));

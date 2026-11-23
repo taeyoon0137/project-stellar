@@ -416,9 +416,9 @@ impl CanvasToolState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::canvas::select_fixtures::save_bytes;
     use crate::window_session::test_fixtures::{sample_document, window};
     use stellar_commands::state::DocumentState;
-    use stellar_document::record_codec::encode_node_record;
     use stellar_history::window::WindowHistory;
 
     fn down(key: CanvasKey, modifiers: Modifiers) -> ToolInput {
@@ -440,18 +440,6 @@ mod tests {
         down(CanvasKey::Character(c), Modifiers::NONE)
     }
 
-    fn save_bytes(state: &DocumentState) -> Vec<u8> {
-        let records = state.model().to_records().unwrap();
-        let mut bytes = records.definition.encode();
-        for node in &records.nodes {
-            bytes.extend(encode_node_record(node));
-        }
-        for stack in &records.modifier_stacks {
-            bytes.extend(stack.encode());
-        }
-        bytes
-    }
-
     #[test]
     fn ten_tools_have_distinct_shortcuts_and_roles() {
         assert_eq!(CanvasTool::ALL.len(), 10);
@@ -469,12 +457,12 @@ mod tests {
         assert_eq!(CanvasTool::Polygon.shortcut(), None);
         assert_eq!(CanvasTool::from_shortcut('p', Modifiers::NONE), None);
         assert_eq!(CanvasTool::from_shortcut('k', Modifiers::NONE), None);
-        let creating: Vec<_> = CanvasTool::ALL.into_iter().filter(|t| t.creates()).collect();
+        let creating: Vec<_> = CanvasTool::ALL
+            .into_iter()
+            .filter(|t| t.creates())
+            .collect();
         assert_eq!(creating.len(), 7);
-        assert_eq!(
-            CanvasTool::Move.interaction(),
-            Some(InteractionTool::Move)
-        );
+        assert_eq!(CanvasTool::Move.interaction(), Some(InteractionTool::Move));
         assert_eq!(CanvasTool::Rectangle.interaction(), None);
     }
 
@@ -598,7 +586,11 @@ mod tests {
         // 검증 기준(XII.10.1): 전환 전후 save bytes와 history 길이 동일.
         let state = DocumentState::new(sample_document());
         let history = WindowHistory::new(window(1));
-        let before = (save_bytes(&state), history.history().len(), state.revision());
+        let before = (
+            save_bytes(&state),
+            history.history().len(),
+            state.revision(),
+        );
         let mut tools = CanvasToolState::new();
         for input in [
             ch('f'),
@@ -613,7 +605,11 @@ mod tests {
         }
         tools.reset_to_move();
         assert_eq!(
-            (save_bytes(&state), history.history().len(), state.revision()),
+            (
+                save_bytes(&state),
+                history.history().len(),
+                state.revision()
+            ),
             before
         );
     }

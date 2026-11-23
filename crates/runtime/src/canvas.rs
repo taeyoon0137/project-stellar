@@ -29,6 +29,11 @@ mod image;
 /// 문서 → 증분 scene source 변환 (XI.2.4, XI.2.5, XII.10.30).
 pub mod scene_source;
 pub use image::image_placement;
+/// 선택 엔진의 hit 입력: 커서 아래 node 목록과 node world 상자 (XII.10.3, XII.10.5).
+pub mod hit;
+/// 캔버스 클릭 선택과 편집 범위 (XII.10.3, ADR-0104).
+pub mod select;
+mod select_fixtures;
 pub(crate) mod shape;
 /// 캔버스 도구 10종과 도구 상태 기계 (XII.10.1, ADR-0104).
 pub mod tool;
