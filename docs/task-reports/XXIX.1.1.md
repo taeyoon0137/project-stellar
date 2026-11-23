@@ -2,7 +2,7 @@
 
 - WBS: XXIX.1.1
 - 작업명: crate graph 검사기가 target·build·dev 의존 표와 `tools/stellar-*` manifest를 읽고 ADR-0005 §8 전이 도달 금지 규칙을 적용
-- 상태: 부분 완료 (`[~]`) — 검사기 구현과 검증은 끝났으나, 작업 지시의 "crate 의존 그래프 문서도 함께 갱신" 부분(`docs/architecture/crate-dependency-graph.md`)은 이 lane의 수정 허용 경로 밖이라 반영하지 못했습니다. 반영할 문안은 아래 "남은 위험 / 한계"에 있습니다.
+- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 검사기 구현과 검증은 끝났으나, 작업 지시의 "crate 의존 그래프 문서도 함께 갱신" 부분(`docs/architecture/crate-dependency-graph.md`)은 이 lane의 수정 허용 경로 밖이라 반영하지 못했습니다. 반영할 문안은 아래 "남은 위험 / 한계"에 있습니다.
 - 선행: 없음
 
 ## 필수 실행 환경
@@ -71,3 +71,28 @@
 - 내부 edge 판정은 의존 이름이 `stellar-`로 시작하거나 workspace member 이름인 경우입니다. 외부 crate와 이름이 같은 workspace member가 생기면 그 외부 의존도 내부 edge로 보고 거부할 수 있습니다(통과 쪽으로는 틀리지 않음).
 - workspace member 판정은 Cargo 규칙을 파일 기준으로 다시 구현한 것입니다(`cargo metadata`를 실행하지 않음). 경로는 글자 단위로 정리하고 symlink는 풀지 않으며, workspace 루트 밖에 있으면서 `package.workspace`로 이 workspace를 가리키는 package는 다루지 않습니다.
 - `stellar-mcp` 전이 금지 규칙은 package 이름으로 적용됩니다. XIX.9.1에서 library(`crates/mcp`)와 실행 파일(`tools/stellar-mcp`)의 package 이름이 나뉘면 규칙 대상 이름도 함께 맞춰야 합니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 남은 범위·결함 있음.
+- 근거: 검사기 코드는 행 지시와 검증 열을 모두 만족합니다. 행 지시의 "crate 의존 그래프 문서도 함께 갱신"이 아직 반영되지 않아 `[~]`를 유지합니다. 문서는 이 lane 소유 경로 밖이라 고치지 않았고, 아래 문안을 통합 세션에 넘깁니다. 문서를 반영하면 코드 변경 없이 `[x]`이고, 그러면 XIX.9.1의 선행(XIX.1.3 `[x]`, XXIV.4.2 이번 `[x]` 판정, XXIX.1.1)이 모두 풀립니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `tools/xtask/src/crate_graph/manifest.rs`: `[dependencies]`·`[build-dependencies]`·`[dev-dependencies]`·`[target.<spec>.*]`·하위 표·dotted key·inline table·`package` 이름 변경·`workspace = true`를 읽고, 해석할 수 없는 구문은 거부합니다(fail closed).
+- `tools/xtask/src/crate_graph/reach.rs` `FORBIDDEN_REACH`: mcp-core → agent-host·runtime·ffi, ops → local-ipc·agent-protocol·mcp-core·mcp·agent-host·ffi, cli → local-ipc·agent-protocol·mcp-core·mcp·agent-host, local-ipc → document·commands·ops, agent-protocol → commands·document·ops·agent-host, mcp → agent-host·ffi, agent-host → document·commands·history·storage·ops. 도달은 자기 모든 표에서 시작해 normal·build 의존만 따라가는 반복 BFS입니다.
+- `docs/architecture/crate-dependency-graph.md` 첫 문단은 여전히 "허용된 **직접** 의존 방향"만 말하고, 검사 범위·전이 도달 금지 절이 없습니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p xtask` | lib 188 passed, 통합 3+2 passed, 0 failed |
+| `cargo xtask validate-crate-graph` | 종료 코드 0(현재 workspace 통과) |
+
+### 남은 조건과 finding
+
+- 통합 세션 반영 문안(`docs/architecture/crate-dependency-graph.md`): 첫 문단을 "허용 직접 의존과 전이 도달 금지"로 바꾸고 "검사 범위" 절(`crates/*`·`tools/stellar-*`와 Cargo workspace member 전체의 모든 의존 표, `tools/xtask`·`benchmarks/fixtures`·`tests/integration` 제외, 정책 표에 없는 package 거부)과 "전이 도달 금지(ADR-0005 §8)" 절(위 `FORBIDDEN_REACH` 목록, 정책 위치 `tools/xtask/src/crate_graph/reach.rs`)을 추가합니다. 이전 보고서의 문안에서 mcp-core 규칙(agent-host·runtime·ffi)이 생긴 것만 다릅니다.
+- 결함은 없습니다. 이 행은 문서 한 절 때문에 `[~]`입니다.
