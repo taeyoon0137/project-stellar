@@ -97,7 +97,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "diagnostics",
-        "preview | export --output <파일> | scan <파일> | consent [show|grant|decline|revoke] | enqueue [--data-dir <디렉터리>] [--project <경로>]...: 로컬 진단 store의 전송 예정 bytes를 보여 주고, 같은 bytes를 진단 번들로 내보내고, 파일의 수집 금지 정보를 검사합니다(탐지가 있으면 종료 코드 1). consent는 텔레메트리 동의를 보고 바꾸며 철회하면 전송 대기열을 버리고, enqueue는 동의했을 때만 preview를 대기열에 넣습니다(네트워크 전송 없음)",
+        "preview | export --output <파일> | scan <파일> | consent [show|grant|decline|revoke] | enqueue | schema [--data-dir <디렉터리>] [--project <경로>]...: 로컬 진단 store의 전송 예정 bytes를 보여 주고, 같은 bytes를 진단 번들로 내보내고, 파일의 수집 금지 정보를 검사합니다(탐지가 있으면 종료 코드 1). consent는 텔레메트리 동의를 보고 바꾸며 철회하면 전송 대기열을 버리고, enqueue는 동의했을 때만 preview를 대기열에 넣습니다. schema는 진단 schema와 꺼진 기능(터미널·MCP·에이전트) field 부재 검사 결과를 냅니다(네트워크 전송 없음)",
     ),
     ("merge-driver", "<%O> <%A> <%B> <%P> | install <프로젝트> | resolve <프로젝트> [--resolve <번호>=<action>]... [--apply]: Git merge driver로 컴포넌트 원본을 semantic merge합니다(conflict가 있으면 %A를 바꾸지 않고 nonzero). install은 신뢰한 프로젝트의 저장소 로컬 config와 .gitattributes에만 등록하고, resolve는 unmerged 경로의 semantic conflict와 해결 결과를 보여 주고 --apply면 검증한 결과를 쓰고 git add합니다(continue·commit은 하지 않음)"),
 ];

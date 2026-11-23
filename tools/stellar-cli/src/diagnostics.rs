@@ -20,7 +20,11 @@ use stellar_diagnostics::consent::{
 use stellar_diagnostics::consent_gate::{OpenedGate, TelemetryGate, UploadBlocked};
 use stellar_diagnostics::scanner::{scan_bundle, ForbiddenCategory, ScanContext, ScanReport};
 use stellar_diagnostics::store::{
-    DiagnosticStore, StoreError, Version3, DIAGNOSTICS_DIR, MAX_DIAGNOSTIC_BYTES, STORE_FILE,
+    DiagnosticStore, FieldType, StoreError, Version3, DIAGNOSTICS_DIR, MAX_DIAGNOSTIC_BYTES,
+    STORE_FILE,
+};
+use stellar_diagnostics::store_inventory::{
+    check_feature_inventory, inventory_schemas, DISABLED_FEATURE_WORDS, FORMATS,
 };
 
 use crate::exit::ExitStatus;
@@ -28,7 +32,7 @@ use crate::json::JsonValue;
 use crate::output::{CliError, Success};
 use crate::views;
 
-const USAGE: &str = "diagnostics에는 preview | export --output <파일> | scan <파일> | consent [show|grant|decline|revoke] | enqueue 중 하나와 선택 [--data-dir <디렉터리>] [--project <경로>]...가 필요합니다";
+const USAGE: &str = "diagnostics에는 preview | export --output <파일> | scan <파일> | consent [show|grant|decline|revoke] | enqueue | schema 중 하나와 선택 [--data-dir <디렉터리>] [--project <경로>]...가 필요합니다";
 
 /// 공통 옵션.
 #[derive(Default)]
@@ -388,6 +392,94 @@ fn enqueue(args: &[String]) -> Result<Success, CliError> {
     })
 }
 
+fn field_type_json(ty: FieldType) -> (JsonValue, JsonValue) {
+    match ty {
+        FieldType::U32 => (JsonValue::string("u32"), JsonValue::Null),
+        FieldType::U64 => (JsonValue::string("u64"), JsonValue::Null),
+        FieldType::OptU64 => (JsonValue::string("opt_u64"), JsonValue::Null),
+        FieldType::Version => (JsonValue::string("version"), JsonValue::Null),
+        FieldType::Name(names) => (
+            JsonValue::string("name"),
+            JsonValue::Array(names.iter().map(|n| JsonValue::string(*n)).collect()),
+        ),
+    }
+}
+
+/// `diagnostics schema`: 진단 schema 전체와 꺼진 기능 field 부재 검사(XVI.8.6). 위반이 있으면 종료 코드 1.
+fn schema(args: &[String]) -> Result<Success, CliError> {
+    if let Some(extra) = args.first() {
+        return Err(CliError::usage(format!(
+            "schema는 인자를 받지 않습니다: {extra}"
+        )));
+    }
+    let schemas = inventory_schemas()
+        .into_iter()
+        .map(|schema| {
+            let fields = schema
+                .fields
+                .iter()
+                .map(|spec| {
+                    let (ty, values) = field_type_json(spec.ty);
+                    JsonValue::object(vec![
+                        ("name", JsonValue::string(spec.name)),
+                        ("type", ty),
+                        ("values", values),
+                    ])
+                })
+                .collect();
+            JsonValue::object(vec![
+                ("tag", JsonValue::string(schema.tag)),
+                ("fields", JsonValue::Array(fields)),
+            ])
+        })
+        .collect();
+    let violations = check_feature_inventory();
+    let result = JsonValue::object(vec![
+        (
+            "formats",
+            JsonValue::Array(FORMATS.iter().map(|f| JsonValue::string(*f)).collect()),
+        ),
+        ("schemas", JsonValue::Array(schemas)),
+        (
+            "disabled_feature_words",
+            JsonValue::Array(
+                DISABLED_FEATURE_WORDS
+                    .iter()
+                    .map(|w| JsonValue::string(*w))
+                    .collect(),
+            ),
+        ),
+        (
+            "violations",
+            JsonValue::Array(
+                violations
+                    .iter()
+                    .map(|v| {
+                        JsonValue::object(vec![
+                            ("schema", JsonValue::string(v.entry.schema)),
+                            ("kind", JsonValue::string(v.entry.kind.name())),
+                            ("word", JsonValue::string(v.entry.word)),
+                            ("disabled", JsonValue::string(v.disabled)),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+    ]);
+    if !violations.is_empty() {
+        return Err(CliError::new(
+            ExitStatus::Failure,
+            "disabled-feature-field",
+            format!("진단 schema에 꺼진 기능의 field {}개", violations.len()),
+        )
+        .with_result(result));
+    }
+    Ok(Success {
+        result,
+        diagnostics: Vec::new(),
+    })
+}
+
 /// `diagnostics <하위 명령> ...`.
 pub fn run(args: &[String]) -> Result<Success, CliError> {
     let Some((sub, rest)) = args.split_first() else {
@@ -399,6 +491,7 @@ pub fn run(args: &[String]) -> Result<Success, CliError> {
         "scan" => scan(rest),
         "consent" => consent(rest),
         "enqueue" => enqueue(rest),
+        "schema" => schema(rest),
         other => Err(CliError::usage(format!(
             "알 수 없는 diagnostics 하위 명령: {other}. {USAGE}"
         ))),
@@ -656,6 +749,55 @@ mod tests {
     }
 
     #[test]
+    fn schema_lists_every_field_and_no_disabled_feature() {
+        // 검증 기준(XVI.8.6) CLI 경로: feature inventory 통과.
+        let (code, doc, err) = cli(&["schema"]);
+        assert_eq!(code, 0, "{err}");
+        assert_eq!(
+            result(&doc)
+                .get("violations")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        let schemas = result(&doc).get("schemas").unwrap().as_array().unwrap();
+        let tags: Vec<&str> = schemas
+            .iter()
+            .map(|s| s.get("tag").unwrap().as_str().unwrap())
+            .collect();
+        assert_eq!(
+            tags,
+            vec![
+                "env",
+                "meta",
+                "crash",
+                "renderer_error",
+                "perf",
+                "feature_failure",
+                "end",
+                "consent"
+            ]
+        );
+        // 출력 전체(형식·field·값)에 꺼진 기능 단어가 없습니다(단어 목록 자체는 제외).
+        let mut without_words = doc.clone();
+        if let JsonValue::Object(pairs) = &mut without_words {
+            for (key, value) in pairs.iter_mut() {
+                if key == "result" {
+                    if let JsonValue::Object(inner) = value {
+                        inner.retain(|(k, _)| k != "disabled_feature_words");
+                    }
+                }
+            }
+        }
+        let text = json::write(&without_words).to_ascii_lowercase();
+        for word in DISABLED_FEATURE_WORDS {
+            assert!(!text.contains(word), "{word}");
+        }
+    }
+
+    #[test]
     fn corrupt_store_and_usage_errors() {
         let dir = Dir::new("corrupt");
         std::fs::write(
@@ -690,6 +832,7 @@ mod tests {
             &["consent", "grant", "extra"][..],
             &["consent", "--project", "p"][..],
             &["enqueue", "extra"][..],
+            &["schema", "extra"][..],
         ] {
             let (code, doc, err) = cli(args);
             assert_eq!(code, 64, "{args:?}");

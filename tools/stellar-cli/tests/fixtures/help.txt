@@ -23,7 +23,7 @@ stellar — Project Stellar headless 도구
     component-source  create <폴더> <이름> <id> <root-id> | check <폴더> | resize <파일> <원본 hash> <너비> <높이> | set-fill <파일> <원본 hash> <none 또는 색 공간과 RGBA> | add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>: 컴포넌트별 Free Frame 트리
     git               status <경로> [--cursor <c>] [--limit <n>] | stage|unstage <경로> <대상>... [--with <대상>]... | commit <경로> -m <메시지>: 신뢰한 프로젝트의 의미 단위 Git 상태·stage·commit(push 없음, 필수 동반 변경은 자동 포함하지 않음)
     text-source       export <프로젝트> <새 파일> | check <파일>: 단일 View 텍스트 원본을 opt-in으로 내보내거나 읽기 전용 검사합니다
-    diagnostics       preview | export --output <파일> | scan <파일> | consent [show|grant|decline|revoke] | enqueue [--data-dir <디렉터리>] [--project <경로>]...: 로컬 진단 store의 전송 예정 bytes를 보여 주고, 같은 bytes를 진단 번들로 내보내고, 파일의 수집 금지 정보를 검사합니다(탐지가 있으면 종료 코드 1). consent는 텔레메트리 동의를 보고 바꾸며 철회하면 전송 대기열을 버리고, enqueue는 동의했을 때만 preview를 대기열에 넣습니다(네트워크 전송 없음)
+    diagnostics       preview | export --output <파일> | scan <파일> | consent [show|grant|decline|revoke] | enqueue | schema [--data-dir <디렉터리>] [--project <경로>]...: 로컬 진단 store의 전송 예정 bytes를 보여 주고, 같은 bytes를 진단 번들로 내보내고, 파일의 수집 금지 정보를 검사합니다(탐지가 있으면 종료 코드 1). consent는 텔레메트리 동의를 보고 바꾸며 철회하면 전송 대기열을 버리고, enqueue는 동의했을 때만 preview를 대기열에 넣습니다. schema는 진단 schema와 꺼진 기능(터미널·MCP·에이전트) field 부재 검사 결과를 냅니다(네트워크 전송 없음)
     merge-driver      <%O> <%A> <%B> <%P> | install <프로젝트> | resolve <프로젝트> [--resolve <번호>=<action>]... [--apply]: Git merge driver로 컴포넌트 원본을 semantic merge합니다(conflict가 있으면 %A를 바꾸지 않고 nonzero). install은 신뢰한 프로젝트의 저장소 로컬 config와 .gitattributes에만 등록하고, resolve는 unmerged 경로의 semantic conflict와 해결 결과를 보여 주고 --apply면 검증한 결과를 쓰고 git add합니다(continue·commit은 하지 않음)
 
 query 대상:
