@@ -5,6 +5,10 @@
 //! inset 이동)은 node 상자를 이 source에서 읽습니다. layout 계산은 scene crate의 [`DocumentLayout`] 하나이고 runtime은
 //! 따로 배치하지 않습니다.
 //!
+//! 창 자료([`CanvasLayoutInputs`]): 컴포넌트 정의 집합이 있으면 ComponentInstance가 정의 root 크기의 상자를 갖고,
+//! Text hook([`CanvasText`])이 있으면 Text가 줄바꿈 측정으로 흐름 배치에 들어가 상자를 갖습니다(ADR-0134 결정 1).
+//! [`CanvasLayout::current`]·[`CanvasLayout::apply`]는 창 cache([`CanvasCache`])의 정의 집합과 글꼴로 두 값을 채웁니다.
+//!
 //! 옛 캔버스 행 목록(`CanvasScene`)은 저장 transform으로 그리는 이전 경로로 남아 있습니다. UI를 다시 설계할 때 이
 //! source를 그리는 경로로 바꿉니다.
 
@@ -27,9 +31,19 @@ use stellar_scene::node::TextLayoutKey;
 use stellar_scene::source::{SceneKey, SourceEdit, SourceError};
 
 use crate::canvas::flow_drag::Box4;
+use crate::canvas::layout_text::CanvasLayoutInputs;
 use crate::canvas::transform::TransformError;
-use crate::canvas::CanvasScene;
+use crate::canvas::{CanvasCache, CanvasScene};
 use crate::window_session::ProjectWindowSession;
+
+/// 측정 hook(layout 엔진이 Text를 잼).
+fn measure_hook<'a>(
+    inputs: &CanvasLayoutInputs<'a>,
+) -> Option<&'a dyn stellar_scene::document::layout::engine::intrinsic::TextLayoutHook> {
+    inputs
+        .text
+        .map(|t| t as &dyn stellar_scene::document::layout::engine::intrinsic::TextLayoutHook)
+}
 
 /// 활성 View 하나의 layout 반영 scene source.
 #[derive(Debug, Clone)]
@@ -97,31 +111,80 @@ impl CanvasLayout {
         Ok(CanvasLayout { source })
     }
 
-    /// 창의 활성 View를 변환합니다.
-    pub fn current(window: &ProjectWindowSession) -> Result<CanvasLayout, TransformError> {
+    /// 문서 `model`의 View root `root` subtree를 창 자료 `inputs`(정의 집합, Text hook)로 변환합니다.
+    pub fn with_inputs(
+        model: &DocumentModel,
+        root: StableId,
+        inputs: CanvasLayoutInputs<'_>,
+    ) -> Result<CanvasLayout, SourceError> {
+        // 그리기 hook과 측정 hook은 같은 [`CanvasTextHook`]입니다.
+        let text = inputs.text;
+        let mut hook = move |id, _: &TextPayload, _: Option<&ModifierStack>, locked, width| {
+            text.and_then(|t| t.text_input(id, locked, width))
+        };
+        let options = SceneSourceOptions {
+            library: inputs.library,
+            text: text.is_some().then_some(&mut hook),
+            variant: None,
+            text_measure: measure_hook(&inputs),
+        };
+        let source = document_scene_source(model, root, options)?;
+        Ok(CanvasLayout { source })
+    }
+
+    /// 창의 활성 View를 창 cache(`cache`)의 컴포넌트 정의 집합과 글꼴로 변환합니다. Text는 줄바꿈 측정으로 흐름에
+    /// 들어가고 ComponentInstance는 정의 root 크기의 상자를 갖습니다.
+    pub fn current(
+        window: &ProjectWindowSession,
+        cache: &mut CanvasCache,
+    ) -> Result<CanvasLayout, TransformError> {
         let view = window.tabs().active_view().ok_or(TransformError::Stale)?;
         let model = window.document().ok_or(TransformError::Stale)?.model();
         let root =
             crate::app::canvas_gesture::view_root(model, view).ok_or(TransformError::Stale)?;
-        CanvasLayout::for_model(model, root, None).map_err(|_| TransformError::Stale)
+        let project = window.identity().canonical_target();
+        cache
+            .with_layout_inputs(project, model, |inputs| {
+                CanvasLayout::with_inputs(model, root, inputs)
+            })
+            .map_err(|_| TransformError::Stale)
     }
 
-    /// command change set을 반영합니다(증분 layout과 증분 scene source 편집).
-    pub fn apply(
+    /// command change set을 반영합니다(증분 layout과 증분 scene source 편집). 변환 때와 같은 창 자료를 넘깁니다(Text
+    /// hook 유무가 바뀌면 layout을 처음부터 다시 계산합니다).
+    pub fn apply_with(
         &mut self,
         model: &DocumentModel,
         changes: &ChangeSet,
-        library: Option<&ComponentLibrary>,
+        inputs: CanvasLayoutInputs<'_>,
     ) -> Result<Vec<SourceEdit>, SourceError> {
-        scene_edits(
-            model,
-            &mut self.source,
-            changes,
-            SceneSourceOptions {
-                library,
-                ..SceneSourceOptions::default()
-            },
-        )
+        let text = inputs.text;
+        let mut hook = move |id, _: &TextPayload, _: Option<&ModifierStack>, locked, width| {
+            text.and_then(|t| t.text_input(id, locked, width))
+        };
+        let options = SceneSourceOptions {
+            library: inputs.library,
+            text: text.is_some().then_some(&mut hook),
+            variant: None,
+            text_measure: measure_hook(&inputs),
+        };
+        scene_edits(model, &mut self.source, changes, options)
+    }
+
+    /// 창 문서의 command change set을 창 cache(`cache`)의 정의 집합과 글꼴로 반영합니다.
+    pub fn apply(
+        &mut self,
+        window: &ProjectWindowSession,
+        changes: &ChangeSet,
+        cache: &mut CanvasCache,
+    ) -> Result<Vec<SourceEdit>, TransformError> {
+        let model = window.document().ok_or(TransformError::Stale)?.model();
+        let project = window.identity().canonical_target();
+        cache
+            .with_layout_inputs(project, model, |inputs| {
+                self.apply_with(model, changes, inputs)
+            })
+            .map_err(|_| TransformError::Stale)
     }
 
     /// scene source.

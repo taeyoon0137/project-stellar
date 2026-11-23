@@ -139,6 +139,11 @@ impl DocumentText {
         ))
     }
 
+    /// 첫 줄 baseline(text box 위쪽 기준 px). 줄이 없으면 `None`입니다.
+    pub(crate) fn first_baseline(&self) -> Option<f32> {
+        self.layout.first_baseline().map(px)
+    }
+
     /// 문단 경계를 넘는 selection을 visual rect로 반환합니다.
     pub fn selection_rects(&self, start: u32, end: u32) -> Option<Vec<Rect>> {
         if start > end {
@@ -285,6 +290,22 @@ impl FontCache {
         table: &DocumentTextStyles,
         modifiers: Option<&ModifierStack>,
         engine: &mut IncrementalTextLayout,
+    ) -> Option<(DocumentText, Size2, Transform2D)> {
+        self.layout_input_width(root, id, payload, table, modifiers, engine, None)
+    }
+
+    /// [`Self::layout_input`]에 줄 너비(`max_width`, 없으면 줄바꿈 없음)를 더한 것입니다. layout 흐름의 Text 측정과
+    /// 그리기가 이 함수 하나를 씁니다(ADR-0134 결정 1).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn layout_input_width(
+        &mut self,
+        root: &Path,
+        id: StableId,
+        payload: &TextPayload,
+        table: &DocumentTextStyles,
+        modifiers: Option<&ModifierStack>,
+        engine: &mut IncrementalTextLayout,
+        max_width: Option<TextUnit>,
     ) -> Option<(DocumentText, Size2, Transform2D)> {
         let mut transform = Transform2D::identity();
         let mut modifier_fill = None;
@@ -469,7 +490,7 @@ impl FontCache {
             styles: &styles,
             line_break: &LineBreakOptions::new(LanguageTag::parse("und").ok()?),
             target_profile: TargetProfileKey(0),
-            max_width: None,
+            max_width,
             paragraph_spacing: TextUnit::ZERO,
             text_box: TextBox::default(),
         };
