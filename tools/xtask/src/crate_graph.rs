@@ -139,6 +139,18 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         // L2 공용 정의(XIX.9.1, ADR-0005 §8, `crates/agent-protocol`): core-types만 허용합니다.
         // commands·document·ops·agent-host에는 전이적으로도 도달하지 않습니다(`reach::FORBIDDEN_REACH`).
         ("stellar-agent-protocol", &[core]),
+        // L3 구독 CLI 호스트 코어(XXIX.2.1, ADR-0005 §8, ADR-0092, `crates/agent-host`): core-types·agent-protocol·
+        // local-ipc·diagnostics만 허용합니다. document·commands·history·storage·ops에는 전이적으로도 도달하지
+        // 않습니다(`reach::FORBIDDEN_REACH`).
+        (
+            "stellar-agent-host",
+            &[
+                core,
+                "stellar-agent-protocol",
+                "stellar-local-ipc",
+                "stellar-diagnostics",
+            ],
+        ),
         // bridge↔app 로컬 IPC(ADR-0005 §8, `crates/local-ipc`): core-types만 허용합니다.
         // document·commands·ops에 도달하지 않습니다.
         ("stellar-local-ipc", &[core]),
@@ -354,6 +366,53 @@ mod tests {
             "stellar-cli",
         ] {
             let codes: Vec<&str> = check_crate_graph(&[edge("stellar-mcp-core", forbidden)])
+                .iter()
+                .map(|v| v.code)
+                .collect();
+            assert_eq!(codes, vec!["forbidden-edge"], "{forbidden}");
+        }
+    }
+
+    #[test]
+    fn agent_host_edges_follow_adr_0005() {
+        // XXIX.2.1: agent-host의 실제 manifest 의존은 core-types·agent-protocol·local-ipc·diagnostics 안입니다.
+        let path = format!(
+            "{}/../../crates/agent-host/Cargo.toml",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let parsed = manifest::parse_manifest(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(parsed.package.as_deref(), Some("stellar-agent-host"));
+        let edges: Vec<(String, String)> = parsed
+            .deps
+            .iter()
+            .map(|dep| dep.resolved_name(&std::collections::BTreeMap::new()))
+            .filter(|dep| dep.starts_with(manifest::INTERNAL_PREFIX))
+            .map(|dep| ("stellar-agent-host".to_string(), dep))
+            .collect();
+        assert!(!edges.is_empty());
+        assert!(check_crate_graph(&edges).is_empty(), "{edges:?}");
+        for allowed in [
+            "stellar-core-types",
+            "stellar-agent-protocol",
+            "stellar-local-ipc",
+            "stellar-diagnostics",
+        ] {
+            assert!(
+                check_crate_graph(&[edge("stellar-agent-host", allowed)]).is_empty(),
+                "{allowed}"
+            );
+        }
+        for forbidden in [
+            "stellar-document",
+            "stellar-commands",
+            "stellar-history",
+            "stellar-storage",
+            "stellar-ops",
+            "stellar-mcp-core",
+            "stellar-runtime",
+            "stellar-ffi",
+        ] {
+            let codes: Vec<&str> = check_crate_graph(&[edge("stellar-agent-host", forbidden)])
                 .iter()
                 .map(|v| v.code)
                 .collect();

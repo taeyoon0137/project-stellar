@@ -1,0 +1,9 @@
+{"kind":"session-started","model":{"text":"claude-test-model","truncated":false}}
+{"kind":"assistant-text","text":{"text":"레이어 구조를 읽겠습니다.","truncated":false}}
+{"kind":"tool-activity","call_id":{"text":"toolu_01","truncated":false},"tool":{"text":"mcp__stellar__read_document","truncated":false},"phase":"started"}
+{"kind":"tool-activity","call_id":{"text":"toolu_01","truncated":false},"tool":null,"phase":"succeeded"}
+{"kind":"tool-activity","call_id":{"text":"toolu_02","truncated":false},"tool":{"text":"mcp__stellar__propose_edit","truncated":false},"phase":"started"}
+{"kind":"tool-activity","call_id":{"text":"toolu_02","truncated":false},"tool":null,"phase":"failed"}
+{"kind":"assistant-text","text":{"text":"제안이 거부되었습니다. 🙂","truncated":false}}
+{"kind":"turn-completed","failed":false}
+ok

@@ -1,0 +1,8 @@
+{"kind":"session-started","model":null}
+{"kind":"tool-activity","call_id":{"text":"item_1","truncated":false},"tool":{"text":"read_document","truncated":false},"phase":"started"}
+{"kind":"tool-activity","call_id":{"text":"item_1","truncated":false},"tool":{"text":"read_document","truncated":false},"phase":"succeeded"}
+{"kind":"tool-activity","call_id":{"text":"item_2","truncated":false},"tool":{"text":"command_execution","truncated":false},"phase":"started"}
+{"kind":"tool-activity","call_id":{"text":"item_2","truncated":false},"tool":{"text":"command_execution","truncated":false},"phase":"failed"}
+{"kind":"assistant-text","text":{"text":"문서를 읽었습니다.","truncated":false}}
+{"kind":"turn-completed","failed":false}
+ok

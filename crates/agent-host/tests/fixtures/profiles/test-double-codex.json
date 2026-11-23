@@ -1,0 +1,63 @@
+{
+  "format": "stellar-launch-profile/1",
+  "id": "test-double-codex-exec-0",
+  "cli": "codex",
+  "display_name": "Codex CLI",
+  "enabled": true,
+  "versions": {
+    "min": "0.1.0",
+    "max_exclusive": "1.0.0"
+  },
+  "team_id": "TESTDBL001",
+  "version_command": [
+    "--version"
+  ],
+  "status_command": [
+    "login",
+    "status"
+  ],
+  "status_rule": "exit-code",
+  "session_command": [
+    "exec",
+    "--json",
+    "--ephemeral",
+    "--skip-git-repo-check",
+    "--sandbox",
+    "read-only",
+    "-"
+  ],
+  "input": "stdin-text-once",
+  "decoder": {
+    "id": "codex-exec-jsonl",
+    "version": 1
+  },
+  "env": [
+    "HOME",
+    "PATH",
+    "USER",
+    "LOGNAME",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "CODEX_HOME",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "NO_PROXY"
+  ],
+  "timeouts_ms": {
+    "version": 5000,
+    "status": 5000,
+    "startup": 10000,
+    "terminate_grace": 500
+  },
+  "review": {
+    "terms_date": "2026-11-23",
+    "terms_result": "allowed",
+    "docs_date": "2026-11-23",
+    "docs": [
+      "https://learn.chatgpt.com/docs/non-interactive-mode"
+    ],
+    "note": "테스트 대역 전용 fixture. 앱 번들에 넣지 않음"
+  }
+}

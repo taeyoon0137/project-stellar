@@ -1,0 +1,2 @@
+{"type":"assistant","uuid":"00000000-0000-4000-8000-000000000001","session_id":"00000000-0000-4000-8000-00000000aaaa","parent_tool_use_id":null,"error":"rate_limit","message":{"role":"assistant","content":[{"type":"text","text":"사용 한도에 도달했습니다."}]}}
+{"type":"result","subtype":"error_during_execution","uuid":"00000000-0000-4000-8000-000000000002","session_id":"00000000-0000-4000-8000-00000000aaaa","duration_ms":1,"duration_api_ms":1,"is_error":true,"num_turns":1,"stop_reason":null,"total_cost_usd":0,"usage":{},"modelUsage":{},"permission_denials":[],"errors":["rate limited"]}

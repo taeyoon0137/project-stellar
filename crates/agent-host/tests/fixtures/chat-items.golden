@@ -1,0 +1,13 @@
+{"kind":"user-prompt","text":{"text":"버튼을 정렬해 줘","truncated":false}}
+{"kind":"assistant-text","text":{"text":"정렬 제안을 만들었습니다.\n","truncated":false}}
+{"kind":"tool-activity","call_id":{"text":"call-1","truncated":false},"tool":{"text":"mcp__stellar__propose_edit","truncated":false},"phase":"started"}
+{"kind":"tool-activity","call_id":null,"tool":null,"phase":"succeeded"}
+{"kind":"tool-activity","call_id":null,"tool":null,"phase":"failed"}
+{"kind":"session-started","model":{"text":"model-x","truncated":false}}
+{"kind":"session-started","model":null}
+{"kind":"turn-completed","failed":false}
+{"kind":"cli-error","error":"usage-limit","text":{"text":"rate_limit","truncated":false}}
+{"kind":"cli-error","error":"authentication","text":{"text":"auth","truncated":false}}
+{"kind":"cli-error","error":"other","text":{"text":"\u001b[31mx","truncated":false}}
+{"kind":"decode-stopped","code":"invalid-json"}
+assistant-text truncated=true
