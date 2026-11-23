@@ -785,7 +785,12 @@ fn absolute_cards(count: u64) -> LayoutInput {
         root = root.with_child(id(card), key(n as u32));
         nodes.push(
             LayoutNode::new(id(card))
-                .with_style(place((n % 50) as f32 * 20.0, (n / 50) as f32 * 20.0, 18.0, 18.0))
+                .with_style(place(
+                    (n % 50) as f32 * 20.0,
+                    (n / 50) as f32 * 20.0,
+                    18.0,
+                    18.0,
+                ))
                 .with_child(id(card + 1), key(0)),
         );
         nodes.push(LayoutNode::new(id(card + 1)).with_style(place(2.0, 2.0, 8.0, 8.0)));
