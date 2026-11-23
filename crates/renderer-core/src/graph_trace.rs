@@ -15,7 +15,7 @@ use std::fmt::Write as _;
 use std::time::Instant;
 
 use crate::batching::{batch_count, batch_frame, PassBatches, TargetInfo};
-use crate::pass_compiler::{compile_frame, CompileInput, FrameCompileError, FramePlan};
+use crate::pass_compiler::{CompileInput, FrameCompileError, FrameCompiler, FramePlan};
 
 /// 단조 증가 시계(ns).
 pub trait TraceClock {
@@ -128,14 +128,28 @@ pub struct CompiledFrame {
 }
 
 /// frame을 compile·batch하고 trace를 기록합니다. 실패하면 trace를 기록하지 않습니다.
+///
+/// 이전 frame을 기억하지 않습니다. frame마다 부르는 쪽은 [`compile_frame_traced_with`]를 씁니다.
 pub fn compile_frame_traced(
     input: &CompileInput<'_>,
     surface: TargetInfo,
     clock: &dyn TraceClock,
     sink: &mut dyn TraceSink,
 ) -> Result<CompiledFrame, FrameCompileError> {
+    compile_frame_traced_with(&mut FrameCompiler::one_shot(), input, surface, clock, sink)
+}
+
+/// [`FrameCompiler`]로 바뀐 scene 부분만 다시 compile하고 batch·trace합니다(ADR-0090). plan과 trace 값은
+/// [`compile_frame_traced`]와 같고 CPU 시간만 다릅니다.
+pub fn compile_frame_traced_with(
+    compiler: &mut FrameCompiler,
+    input: &CompileInput<'_>,
+    surface: TargetInfo,
+    clock: &dyn TraceClock,
+    sink: &mut dyn TraceSink,
+) -> Result<CompiledFrame, FrameCompileError> {
     let start_nanos = clock.now_nanos();
-    let plan = compile_frame(input)?;
+    let plan = compiler.compile(input)?;
     let batches = batch_frame(&plan, surface);
     let end_nanos = clock.now_nanos();
     let trace = RenderGraphCompileTrace {

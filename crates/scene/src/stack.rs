@@ -109,6 +109,11 @@ impl ClipStackRef {
         self.0.as_ref().map(|entry| &entry.clip)
     }
 
+    /// 가장 안쪽 clip을 뺀 바깥 stack(구조 공유). 빈 stack은 `None`입니다.
+    pub fn outer(&self) -> Option<&ClipStackRef> {
+        self.0.as_ref().map(|entry| &entry.parent)
+    }
+
     /// clip을 안쪽 → 바깥쪽 순으로 순회합니다.
     pub fn iter_inner_first(&self) -> ClipIter<'_> {
         ClipIter {
@@ -121,6 +126,16 @@ impl ClipStackRef {
         let mut clips: Vec<&ClipShape> = self.iter_inner_first().collect();
         clips.reverse();
         clips
+    }
+
+    /// 저장소 주소(빈 stack은 0). 같은 주소는 같은 저장소입니다([`ClipStackRef::ptr_eq`]와 같은 판정).
+    ///
+    /// 값이 살아 있는 동안에만 식별자로 쓸 수 있습니다. 해제된 뒤 같은 주소가 다른 stack에 다시 쓰일 수
+    /// 있으므로, 이 값을 key로 쓰는 쪽은 snapshot처럼 stack을 붙잡고 있는 동안만 씁니다.
+    pub fn storage_addr(&self) -> usize {
+        self.0
+            .as_ref()
+            .map_or(0, |entry| Arc::as_ptr(entry) as usize)
     }
 
     /// 같은 저장소를 가리키면 참입니다(구조 공유 확인용).
