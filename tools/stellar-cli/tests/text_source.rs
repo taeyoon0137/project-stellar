@@ -208,7 +208,7 @@ fn git(root: &Path, args: &[&str]) -> String {
 }
 
 #[test]
-fn v2_source_with_new_project_styles_reopens_from_a_source_only_git_clone() {
+fn v4_source_with_new_project_styles_reopens_from_a_source_only_git_clone() {
     let mut model = text_document();
     let resource = StableId::new_v7(991, 0, 77);
     model.replace_text_styles(stellar_ops::test_support::DocumentTextStyles::initial(
@@ -217,9 +217,11 @@ fn v2_source_with_new_project_styles_reopens_from_a_source_only_git_clone() {
     let (project, source, path) = exported("text-source-v2-git", model);
     let original = file_digest(&project.path);
     let text = std::fs::read_to_string(&path).unwrap();
-    assert!(text.starts_with("schema_version: \"2\"\n"));
-    assert!(text.contains("  document_font:\n"));
-    assert!(text.contains(&format!("    typography:\n      id: \"{resource}\"\n")));
+    assert!(text.starts_with("schema_version: \"4\"\n"));
+    assert!(text.contains("  text-styles:\n"));
+    assert!(text.contains(&format!(
+        "    typography:\n      -\n        id: \"{resource}\"\n"
+    )));
     let annotated = format!("# collaborator comment\n{text}");
     std::fs::write(&path, &annotated).unwrap();
     let checked = run(&["text-source", "check", path.to_str().unwrap()], 0);
@@ -258,7 +260,7 @@ fn text_node_export_and_external_content_edit_preserve_payload() {
     let original = std::fs::read_to_string(&path).unwrap();
     assert!(original.contains("kind: text\n"), "{original}");
     assert!(original.contains("Original 한글 e\u{301} 👩‍💻"), "{original}");
-    assert!(original.contains("style: \"4294967295\""), "{original}");
+    assert!(original.contains("- \"4294967295\""), "{original}");
     let hash = source_hash(&run(&["text-source", "check", path.to_str().unwrap()], 0));
 
     let external = original.replace("Original 한글", "External 한글");
@@ -291,17 +293,17 @@ fn invalid_text_fields_reject_check_without_overwriting() {
             "text-source-invalid",
         ),
         (
-            source.replacen("style: \"17\"", "unknown_style: \"17\"", 1),
+            source.replacen("      paragraphs:", "      unknown_paragraphs:", 1),
             69,
             "text-source-unsupported",
         ),
         (
-            source.replacen("start: \"8\"", "start: \"13\"", 1),
+            source.replacen("- \"8 12 91\"", "- \"13 12 91\"", 1),
             65,
             "text-source-invalid",
         ),
         (
-            source.replacen("end: \"12\"", "end: \"999\"", 1),
+            source.replacen("- \"8 12 91\"", "- \"8 999 91\"", 1),
             65,
             "text-source-invalid",
         ),

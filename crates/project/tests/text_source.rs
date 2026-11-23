@@ -98,10 +98,10 @@ fn new_project_style_table_is_explicit_and_reproduces_the_same_bytes_and_chunks(
     let path = dir.path.join("view.stellar.yaml");
     let hash = text_source::save_new(&path, &model).unwrap();
     let source = std::fs::read_to_string(&path).unwrap();
-    assert!(source.starts_with("schema_version: \"2\"\n"));
-    // 숨은 상수 표 없이 문단 0·문자 0과 typography longhand를 모두 명시합니다.
+    assert!(source.starts_with("schema_version: \"4\"\n"));
+    // 숨은 상수 표 없이 문단 0·문자 0과 typography longhand를 모두 명시합니다(ADR-0077 v4 문법).
     let block = format!(
-        "  document_font:\n    color: none\n    paragraph:\n      line-height: auto\n      text-align: start\n      typography: none\n      wrapping: wrap\n    run:\n      color: none\n      font-feature-settings: normal\n      font-variation-settings: normal\n      letter-spacing: none\n      typography: none\n    typography:\n      id: \"{resource}\"\n      font-family: none\n      font-size: medium\n      font-stretch: \"100%\"\n      font-style: normal\n      font-weight: \"400\"\n      letter-spacing: normal\n      line-height: normal\n"
+        "    default-typography: \"{resource}\"\n    fonts: []\n    typography:\n      -\n        id: \"{resource}\"\n        font-family: none\n        font-size: medium\n        font-stretch: \"100%\"\n        font-style: normal\n        font-weight: \"400\"\n        letter-spacing: normal\n        line-height: normal\n    paragraphs:\n      -\n        index: \"0\"\n        line-height: auto\n        text-align: start\n        typography: none\n        wrapping: wrap\n    runs:\n      -\n        index: \"0\"\n        color: inherit\n        font-feature-settings: normal\n        font-variation-settings: normal\n        letter-spacing: inherit\n        typography: none\n"
     );
     assert!(source.contains(&block), "{source}");
     // export → check → export: 같은 bytes와 같은 chunk.
@@ -116,21 +116,18 @@ fn new_project_style_table_is_explicit_and_reproduces_the_same_bytes_and_chunks(
     assert_eq!(text_source::save(&path, &opened.model, hash).unwrap(), hash);
 
     // 같은 번호를 재정의하기 전의 문법과 잘못된 표는 열지 않고 원본을 보존합니다.
-    let old_v2 = source.replacen(
-        &block,
-        &format!("  initial_typography_id: \"{resource}\"\n"),
-        1,
-    );
+    let old_v2 = source.replacen("    default-typography:", "    initial_typography_id:", 1);
     for wrong in [
         old_v2,
-        source.replacen("schema_version: \"2\"", "schema_version: \"3\"", 1),
-        source.replacen("schema_version: \"2\"", "schema_version: \"1\"", 1),
+        source.replacen("schema_version: \"4\"", "schema_version: \"3\"", 1),
+        source.replacen("schema_version: \"4\"", "schema_version: \"2\"", 1),
+        source.replacen("schema_version: \"4\"", "schema_version: \"1\"", 1),
         source.replace(&resource.to_string(), "invalid-id"),
         source.replace(
             &resource.to_string(),
             &stellar_core_types::ids::StableId::NIL.to_string(),
         ),
-        source.replacen("      text-align: start\n", "", 1),
+        source.replacen("        text-align: start\n", "", 1),
         source.replacen("font-size: medium", "font-size: \"16.001px\"", 1),
         source.replacen(
             "font-feature-settings: normal",
@@ -189,11 +186,11 @@ fn representable_style_values_round_trip_and_other_tables_are_rejected() {
     text_source::save_new(&styled_path, &round_trip).unwrap();
     let styled_source = std::fs::read_to_string(&styled_path).unwrap();
     for line in [
-        "    color: \"display-p3 1.125 0 -0.25 0.5\"\n",
-        "      font-family: \"\\\"Pretendard \\\\\\\"Variable\\\\\\\"\\\", \\\"system-ui\\\"\"\n",
-        "      font-size: \"24.015625px\"\n",
-        "      letter-spacing: \"-0.05em\"\n",
-        "      letter-spacing: normal\n",
+        "    color: \"color(display-p3 1.125 0 -0.25 / 0.5)\"\n",
+        "        font-family: \"\\\"Pretendard \\\\\\\"Variable\\\\\\\"\\\", \\\"system-ui\\\"\"\n",
+        "        font-size: \"24.015625px\"\n",
+        "        letter-spacing: \"-0.05em\"\n",
+        "        letter-spacing: normal\n",
     ] {
         assert!(styled_source.contains(line), "{line}\n{styled_source}");
     }
@@ -202,7 +199,8 @@ fn representable_style_values_round_trip_and_other_tables_are_rejected() {
         serialize_document(&round_trip).unwrap()
     );
 
-    // 이 블록으로 표현할 수 없는 표는 기존 원본을 덮어쓰지 않고 거부합니다.
+    // v4는 표 전체(추가 문단·문자 style, 추가 typography, 기본 typography 없음)를 정확히 씁니다. 등록 글꼴과
+    // 고정 face는 단일 View 파일이 표현하지 않으므로(asset catalog 필요) 기존 원본을 덮어쓰지 않고 거부합니다.
     for change in 0..6 {
         let mut changed = initial.clone();
         match change {
@@ -247,14 +245,24 @@ fn representable_style_values_round_trip_and_other_tables_are_rejected() {
             }
         }
         model.replace_text_styles(changed);
-        assert!(
-            matches!(
-                text_source::save(&path, &model, expected),
-                Err(TextSourceError::Unsupported(_))
-            ),
-            "change {change}"
-        );
-        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        if matches!(change, 3 | 5) {
+            assert!(
+                matches!(
+                    text_source::save(&path, &model, expected),
+                    Err(TextSourceError::Unsupported(_))
+                ),
+                "change {change}"
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        } else {
+            let other = dir.path.join(format!("table-{change}.stellar.yaml"));
+            text_source::save_new(&other, &model).unwrap();
+            assert_eq!(
+                serialize_document(&text_source::open(&other).unwrap().model).unwrap(),
+                serialize_document(&model).unwrap(),
+                "change {change}"
+            );
+        }
     }
 }
 
@@ -297,7 +305,10 @@ fn placed_text_recreates_the_same_chunks() {
     let path = dir.path.join("submit.stellar.yaml");
     let hash = text_source::save_new(&path, &model).unwrap();
     let source = std::fs::read_to_string(&path).unwrap();
-    assert!(source.contains("translate-x: \"-12.25\"\n        translate-y: \"8.5\"\n"));
+    assert!(
+        source.contains("\"transform.matrix\": \"matrix(1, 0, 0, 1, -12.25, 8.5)\"\n"),
+        "{source}"
+    );
     let loaded = text_source::open(&path).unwrap().model;
     assert_eq!(
         serialize_document(&model).unwrap(),
@@ -305,9 +316,9 @@ fn placed_text_recreates_the_same_chunks() {
     );
     assert_eq!(text_source::save(&path, &loaded, hash).unwrap(), hash);
     for (before, after) in [
-        ("placement:", "lost_placement:"),
-        ("translate-y: \"8.5\"", "translate-y: \"8.5 0\""),
-        ("style: \"0\"", "style: \"-1\""),
+        ("modifiers:\n      -", "lost_modifiers:\n      -"),
+        ("-12.25, 8.5)", "-12.25, 8.5, 0)"),
+        ("        - \"0\"", "        - \"-1\""),
     ] {
         let bad = source.replacen(before, after, 1);
         assert_ne!(bad, source);
@@ -526,7 +537,6 @@ fn rectangle_preserves_affine_color_corners_and_modifier_identity() {
     }
     model.set_modifier_stack(stack.clone()).unwrap();
     let hash = text_source::save_new(&source, &model).unwrap();
-    let yaml = std::fs::read_to_string(&source).unwrap();
     let opened = text_source::open(&source).unwrap();
     assert_eq!(
         serialize_document(&opened.model).unwrap(),
@@ -536,15 +546,18 @@ fn rectangle_preserves_affine_color_corners_and_modifier_identity() {
         .push_back(ModifierId::new(common::id(4, 3)), ModifierKind::Opacity)
         .unwrap();
     model.set_modifier_stack(stack).unwrap();
-    assert!(matches!(
-        text_source::save(&source, &model, hash),
-        Err(TextSourceError::Unsupported(_))
-    ));
-    assert_eq!(std::fs::read_to_string(&source).unwrap(), yaml);
+    // v4는 모든 modifier 종류를 씁니다. 추가한 Opacity도 정확히 왕복합니다.
+    let changed = text_source::save(&source, &model, hash).unwrap();
+    assert_ne!(changed, hash);
+    assert_eq!(
+        serialize_document(&text_source::open(&source).unwrap().model).unwrap(),
+        serialize_document(&model).unwrap()
+    );
+    let yaml = std::fs::read_to_string(&source).unwrap();
     for malformed in [
         yaml.replace("border-top-left-radius:", "future-radius:"),
         yaml.replace("kind: fill", "kind: future-fill"),
-        yaml.replace("height: \"18.25\"", "height: \"-1\""),
+        yaml.replace("height: \"18.25px\"", "height: \"-1px\""),
     ] {
         assert_ne!(malformed, yaml);
         std::fs::write(&source, malformed).unwrap();
@@ -626,15 +639,21 @@ fn ellipse_directed_lines_and_polygon_preserve_geometry_and_modifier_chunk_bytes
     for (old, new) in [
         ("kind: ellipse", "kind: future-shape"),
         ("origin-x:", "future-origin:"),
-        ("end-x:", "future-end:"),
-        ("cap: square", "cap: future"),
-        ("sides: \"9\"", "sides: \"1001\""),
-        ("rotation_degrees: \"-32.5\"", "rotation_degrees: NaN"),
-        ("corner_radius: \"19.75\"", "corner_radius: \"-1\""),
-        ("width: \"2.375\"", "width: \"-1\""),
+        ("x2:", "future-end:"),
+        ("stroke-linecap: square", "stroke-linecap: future"),
+        ("polygon-sides: \"9\"", "polygon-sides: \"1001\""),
+        ("polygon-rotation: \"-32.5deg\"", "polygon-rotation: NaN"),
+        (
+            "polygon-corner-radius: \"19.75px\"",
+            "polygon-corner-radius: \"-1px\"",
+        ),
+        (
+            "\"stroke.width\": \"2.375px\"",
+            "\"stroke.width\": \"-1px\"",
+        ),
         ("kind: stroke", "kind: future-stroke"),
-        ("color: \"display-p3", "color: \"oklch"),
-        ("matrix:", "future-matrix:"),
+        ("color(display-p3", "color(oklch"),
+        ("\"transform.matrix\":", "\"future-matrix\":"),
     ] {
         let malformed = source.replacen(old, new, 1);
         assert_ne!(malformed, source, "{old}");
@@ -667,6 +686,14 @@ fn unsupported_input_or_external_fields_never_overwrite_source() {
             .unwrap(),
         ),
     ));
+    // 단일 View 파일은 페이지 하나만 씁니다. 두 번째 페이지는 이 파일이 표현하지 않습니다.
+    records
+        .definition
+        .add_page(stellar_document::definitions::PageDefinition::new(
+            id(3, 1),
+            "Second".into(),
+        ))
+        .unwrap();
     let unsupported = DocumentModel::from_records(records).unwrap().0;
     assert!(matches!(
         text_source::save(&path, &unsupported, hash),
@@ -693,18 +720,14 @@ fn malformed_text_payloads_and_unknown_nested_fields_preserve_source() {
     let source = std::fs::read_to_string(&path).unwrap();
     for malformed in [
         source.replacen("content:", "future_content:", 1),
-        source.replacen("style: \"7\"", "style: \"7\"\n          font: future", 1),
-        source.replacen(
-            "start: \"3\"",
-            "start: \"3\"\n          future_run: keep",
-            1,
-        ),
-        source.replacen("start: \"3\"", "start: \"6\"", 1),
-        source.replacen("end: \"5\"", "end: \"9999\"", 1),
-        source.replacen("style: \"7\"", "style: \"4294967296\"", 1),
-        source.replacen("style: \"7\"", "style: \"-1\"", 1),
-        source.replacen("        -\n          style: \"7\"\n", "", 1),
-        source.replacen("style_runs:", "missing_runs:", 1),
+        source.replacen("- \"7\"", "- \"7 future\"", 1),
+        source.replacen("- \"3 5 9\"", "- \"3 5 9 keep\"", 1),
+        source.replacen("- \"3 5 9\"", "- \"6 5 9\"", 1),
+        source.replacen("- \"0 8 2\"", "- \"0 9999 2\"", 1),
+        source.replacen("- \"7\"", "- \"4294967296\"", 1),
+        source.replacen("- \"7\"", "- \"-1\"", 1),
+        source.replacen("        - \"7\"\n", "", 1),
+        source.replacen("style-runs:", "missing_runs:", 1),
     ] {
         assert_ne!(malformed, source);
         std::fs::write(&path, &malformed).unwrap();

@@ -18,8 +18,9 @@ use stellar_document::record_codec::encode_payload;
 use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_storage::{hash::ContentHash, source_file};
 
+use super::source_v4::{self, css};
 use super::text_codec::{
-    field, fields, invalid, mapping, node, parse, parse_node, scalar, text, Grammar,
+    field, fields, invalid, mapping, parse, parse_node, scalar, text, Grammar,
 };
 use super::text_source::TextSourceError;
 use crate::folder_name::{collision_key, validate_folder_name};
@@ -29,10 +30,13 @@ use crate::yaml::{load_restricted, loader::MAX_INPUT_BYTES, write_canonical_chec
 pub use super::text_codec::color_source_value;
 
 pub(crate) const EXT: &str = ".stellar.yaml";
+/// 컴포넌트 원본의 유일한 쓰기 버전(ADR-0077 결정 2). v1~v3은 읽기 전용입니다.
+pub(crate) const COMPONENT_VERSION: &str = "4";
 pub(crate) const MAX_COMPONENT_FILES: usize = 4096;
 pub(crate) const MAX_PROJECT_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 
-/// 컴포넌트 조회에서 사용하는 Frame 속성. 읽기 전용 v1·v2 원본도 v3의 한 속성 한 줄 표현으로 제공합니다.
+/// 컴포넌트 조회(CLI·MCP)에서 사용하는 Frame 속성. 조회 JSON 키는 MCP catalog schema가 고정한 v3 한 줄 표현을
+/// 유지합니다. registry CSS 이름으로 바꾸는 일은 MCP payload를 맡은 css-registry 작업이 합니다(ADR-0077 결정 2).
 pub fn frame_source_properties(frame: &FramePayload) -> YamlValue {
     super::text_codec::frame(frame)
 }
@@ -210,28 +214,86 @@ impl ComponentSource {
             .map_err(invalid)
     }
 
-    /// 검증한 정의를 유일한 쓰기 버전 v3의 canonical YAML로 직렬화합니다(ADR-0061 결정 4).
+    /// 검증한 정의를 유일한 쓰기 버전 v4의 canonical YAML로 직렬화합니다(ADR-0077 결정 2).
+    ///
+    /// node는 root를 포함해 StableId 오름차순 `nodes` 목록 하나에 씁니다. Frame payload 키는 registry 이름·순서이고
+    /// 값은 CSS 문법입니다.
     fn to_yaml(&self) -> Result<String, TextSourceError> {
-        let mut fields = vec![
+        let mut records: Vec<&NodeRecord> = self.children.values().collect();
+        records.push(&self.root);
+        records.sort_by_key(|record| record.id);
+        let value = YamlValue::Mapping(vec![
             (scalar("format"), scalar("stellar-component")),
-            (scalar("schema_version"), scalar(3)),
+            (scalar("schema_version"), scalar(COMPONENT_VERSION)),
             (
                 scalar("component"),
                 mapping([
                     ("id", scalar(self.definition.id)),
                     ("name", scalar(self.definition.display_name())),
                     ("root", scalar(self.definition.root.id())),
+                    (
+                        "local-tokens",
+                        scalar(css::id_list(
+                            self.definition.local_tokens().iter().map(|t| t.id()),
+                        )),
+                    ),
                 ]),
             ),
-            (scalar("root_node"), node(&self.root)?),
-        ];
-        if !self.children.is_empty() {
-            fields.push((
-                scalar("children"),
-                YamlValue::Sequence(self.children.values().map(node).collect::<Result<_, _>>()?),
-            ));
+            (
+                scalar("nodes"),
+                YamlValue::Sequence(
+                    records
+                        .into_iter()
+                        .map(|record| source_v4::node::node(record, None))
+                        .collect::<Result<_, _>>()?,
+                ),
+            ),
+        ]);
+        write_canonical_checked(&value).map_err(invalid)
+    }
+
+    /// 쓰기 v4 원본을 읽습니다.
+    fn decode_v4(v: &YamlValue) -> Result<Self, TextSourceError> {
+        fields(v, &["format", "schema_version", "component", "nodes"])?;
+        let component = field(v, "component")?;
+        fields(component, &["id", "name", "root", "local-tokens"])?;
+        let root_id = css::parse_id(text(field(component, "root")?)?)?;
+        let mut definition = ComponentDefinition::new(
+            css::parse_id(text(field(component, "id")?)?)?,
+            text(field(component, "name")?)?.to_owned(),
+            NodeRef::new(root_id),
+        );
+        for token in css::parse_id_list(text(field(component, "local-tokens")?)?)? {
+            if !definition
+                .local_tokens_mut()
+                .insert(stellar_core_types::reference::TokenRef::new(token))
+            {
+                return Err(invalid("중복 local token"));
+            }
         }
-        write_canonical_checked(&YamlValue::Mapping(fields)).map_err(invalid)
+        let mut root = None;
+        let mut children = BTreeMap::new();
+        let mut last = None;
+        for item in field(v, "nodes")?
+            .as_sequence()
+            .ok_or_else(|| invalid("nodes는 sequence여야 합니다"))?
+        {
+            let (record, _) = source_v4::node::parse_node(item, false)?;
+            if last.is_some_and(|prev| prev >= record.id) {
+                return Err(invalid("node는 StableId 오름차순, 중복 없이 씁니다"));
+            }
+            last = Some(record.id);
+            if record.id == root_id {
+                root = Some(record);
+            } else {
+                children.insert(record.id, record);
+            }
+        }
+        Ok(Self {
+            definition,
+            root: root.ok_or_else(|| invalid("root node가 nodes에 없습니다"))?,
+            children,
+        })
     }
 
     fn decode(src: &str) -> Result<Self, TextSourceError> {
@@ -239,11 +301,12 @@ impl ComponentSource {
         if text(field(&v, "format")?)? != "stellar-component" {
             return Err(TextSourceError::Unsupported("컴포넌트 원본 형식".into()));
         }
-        // v1·v2는 커밋된 기존 원본의 읽기 전용 문법입니다. 편집하면 v3로 다시 씁니다.
+        // v1~v3은 커밋된 기존 원본의 읽기 전용 문법입니다. 편집하면 v4로 다시 씁니다.
         let version = text(field(&v, "schema_version")?)?;
         let grammar = match version {
             "1" | "2" => Grammar::Legacy,
             "3" => Grammar::Current,
+            COMPONENT_VERSION => return Self::decode_v4(&v),
             _ => return Err(TextSourceError::Unsupported("컴포넌트 원본 버전".into())),
         };
         let mut children = BTreeMap::new();

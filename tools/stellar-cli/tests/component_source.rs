@@ -77,7 +77,9 @@ fn value<'a>(v: &'a JsonValue, key: &str) -> &'a str {
 }
 
 #[test]
-fn git_and_semantic_merge_of_two_clones_separate_frame_width_and_height() {
+fn git_and_semantic_merge_of_two_clones_separate_frame_width_and_background() {
+    // v4는 Frame 키를 registry 순서로 씁니다(ADR-0077 결정 2). width와 height는 이웃한 줄이라 서로 다른 clone이
+    // 각각 바꾸면 Git 텍스트 충돌입니다. 사이에 다른 줄이 있는 width와 background는 일반 git merge로 합쳐집니다.
     let fixture = TempDir::new("same-card-dimensions");
     let base = fixture.path.join("base");
     let home = fixture.path.join("home");
@@ -101,7 +103,7 @@ fn git_and_semantic_merge_of_two_clones_separate_frame_width_and_height() {
     git(&base, &["init", "-q"]);
     git(&base, &["add", "."]);
     git(&base, &["commit", "-qm", "Card 90x60"]);
-    let clone = |name, width, height| {
+    let clone = |name, edit: &[&str]| {
         let root = fixture.path.join(name);
         git(
             &base,
@@ -113,22 +115,13 @@ fn git_and_semantic_merge_of_two_clones_separate_frame_width_and_height() {
                 root.to_str().unwrap(),
             ],
         );
-        let resized = cli(
-            &root,
-            &home,
-            &[
-                "resize",
-                file,
-                value(&initial, "source_hash"),
-                width,
-                height,
-            ],
-            0,
-        );
+        let mut args = vec![edit[0], file, value(&initial, "source_hash")];
+        args.extend(&edit[1..]);
+        let resized = cli(&root, &home, &args, 0);
         (root, resized)
     };
-    let (ours, _) = clone("ours", "144", "60");
-    let (theirs, resized) = clone("theirs", "90", "96");
+    let (ours, _) = clone("ours", &["resize", "144", "60"]);
+    let (theirs, resized) = clone("theirs", &["set-fill", "srgb", "1", "0", "0", "1"]);
     let args = [".", ours.to_str().unwrap(), theirs.to_str().unwrap()];
     let merged = run(&base, &home, "semantic-merge", &args, 0);
     assert_eq!(merged.get("clean"), Some(&JsonValue::Bool(true)));
@@ -140,20 +133,15 @@ fn git_and_semantic_merge_of_two_clones_separate_frame_width_and_height() {
         .as_array()
         .unwrap();
     assert_eq!(entries.len(), 2);
-    for (entry, (axis, size)) in entries.iter().zip([("0x0108", 144), ("0x0109", 96)]) {
-        assert_eq!(value(entry, "object"), AR);
-        assert_eq!(value(entry, "path"), axis);
-        assert_eq!(
-            entry
-                .get("new")
-                .unwrap()
-                .get("value")
-                .unwrap()
-                .as_array()
-                .unwrap(),
-            &[JsonValue::int(size)]
-        );
-    }
+    let mut paths: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            assert_eq!(value(entry, "object"), AR);
+            value(entry, "path").to_owned()
+        })
+        .collect();
+    paths.sort();
+    assert_eq!(paths, ["0x0104", "0x0108"]);
     for (repo, branch) in [(&ours, "width"), (&theirs, "height")] {
         git(repo, &["switch", "-qc", branch]);
         git(repo, &["add", "--", file]);
@@ -185,7 +173,8 @@ fn git_and_semantic_merge_of_two_clones_separate_frame_width_and_height() {
     assert_eq!(value(component, "id"), A);
     assert_eq!(value(component, "root"), AR);
     assert_eq!(value(component, "width"), "144");
-    assert_eq!(value(component, "height"), "96");
+    assert_eq!(value(component, "height"), "60");
+    assert!(component.get("background").unwrap().as_str().is_some());
     assert!(git(&fresh, &["status", "--porcelain"]).is_empty());
     let detail = run(&fresh, &home, "query", &[".", "component", A], 0);
     assert_eq!(
@@ -196,13 +185,13 @@ fn git_and_semantic_merge_of_two_clones_separate_frame_width_and_height() {
     assert_eq!(value(root, "id"), AR);
     assert_eq!(root.get("parent"), Some(&JsonValue::Null));
     assert_eq!(value(root.get("payload").unwrap(), "width"), "144");
-    assert_eq!(value(root.get("payload").unwrap(), "height"), "96");
+    assert_eq!(value(root.get("payload").unwrap(), "height"), "60");
     // semantic-merge에는 원래 공통 조상 checkout을 전달합니다.
     git(&base, &["switch", "--detach", "width^"]);
     cli(
         &theirs,
         &home,
-        &["resize", file, value(&resized, "source_hash"), "128", "96"],
+        &["resize", file, value(&resized, "source_hash"), "128", "60"],
         0,
     );
     let conflicted = run(&base, &home, "semantic-merge", &args, 1);
@@ -227,7 +216,7 @@ fn git_and_semantic_merge_of_two_clones_separate_frame_width_and_height() {
 
 #[test]
 fn frame_corners_merge_by_line_in_git_and_by_property_in_semantic_merge() {
-    // v3는 네 모서리를 이름 오름차순(BL, BR, border-color, TL, TR)의 줄로 씁니다.
+    // v4는 네 모서리를 registry 순서(TL, TR, BR, BL)의 줄로 씁니다(ADR-0077 결정 2).
     // 사이에 바뀌지 않은 줄이 있는 두 모서리는 일반 git merge로 합쳐지고, 바로 이웃한 줄의
     // 두 모서리는 Git 충돌로 남습니다. 읽기 전용 semantic-merge는 이 경우를 속성 단위 병합으로 보고하지만
     // 파일을 고치지 않습니다(자동 해결은 merge driver XXIV.2.1 이후).
@@ -242,13 +231,12 @@ fn frame_corners_merge_by_line_in_git_and_by_property_in_semantic_merge() {
     let card = cli(&base, &home, &["create", folder, "Card", A, AR], 0);
     let file = value(&card, "file");
     let original = fs::read_to_string(base.join(file)).unwrap();
-    let corner = |name: &str, radius: &str| format!("    border-{name}-radius: \"{radius}\"\n");
+    let corner = |name: &str, radius: &str| format!("      border-{name}-radius: \"{radius}px\"\n");
     let lines = [
-        corner("bottom-left", "0"),
-        corner("bottom-right", "0"),
-        "    border-color: none\n".into(),
         corner("top-left", "0"),
         corner("top-right", "0"),
+        corner("bottom-right", "0"),
+        corner("bottom-left", "0"),
     ];
     assert!(original.contains(&lines.concat()), "{original}");
     assert!(!original.contains("corner_radius"));
@@ -312,7 +300,7 @@ fn frame_corners_merge_by_line_in_git_and_by_property_in_semantic_merge() {
     };
     let args = ["base", "ours", "theirs"];
 
-    // 비인접(BL과 TL 사이에 BR 줄): 일반 git merge와 semantic-merge가 모두 깨끗합니다.
+    // 비인접(TL과 BL 사이에 TR·BR 줄): 일반 git merge와 semantic-merge가 모두 깨끗합니다.
     change("ours", &[("top-left", "11")]);
     change("theirs", &[("bottom-left", "23")]);
     let merged = run(&fixture.path, &home, "semantic-merge", &args, 0);
@@ -633,24 +621,21 @@ fn nested_unsupported_records_and_invalid_references_are_never_rewritten() {
         .collect();
     unsupported.extend([
         (
-            original.replace(r#"schema_version: "3""#, r#"schema_version: "4""#),
+            original.replace(r#"schema_version: "4""#, r#"schema_version: "5""#),
             69,
         ),
         (
-            original.replace(r#"    width: "0""#, r#"    size: "0 0""#),
+            original.replace(r#"      width: "0px""#, r#"      size: "0 0""#),
             69,
         ),
-        (original.replace(r#"    width: "0""#, ""), 65),
+        (original.replace("      width: \"0px\"\n", ""), 65),
         (
-            original.replace(r#"    height: "0""#, r#"    height: "-1""#),
+            original.replace(r#"      height: "0px""#, r#"      height: "-1px""#),
             65,
         ),
+        (original.replace("nodes:\n", "children: []\nnodes:\n"), 69),
         (
-            original.replace("root_node:\n", "root_node:\n  children: []\n"),
-            69,
-        ),
-        (
-            original.replace("  payload:\n", "  payload:\n    future_property: 1\n"),
+            original.replace("    payload:\n", "    payload:\n      future_property: 1\n"),
             69,
         ),
         (
@@ -691,7 +676,7 @@ const SECOND: &str = "0195c530-3acd-7bc1-8414-c213f61cb970";
 const NESTED: &str = "0195c530-3acd-7bc1-8414-c213f61cb960";
 
 #[test]
-fn legacy_component_sources_are_read_and_rewritten_only_as_v3() {
+fn legacy_component_sources_are_read_and_rewritten_only_as_v4() {
     let fixture = TempDir::new("legacy-component-dimensions");
     let folder = fixture.path.join("components");
     let home = fixture.path.join("home");
@@ -712,12 +697,12 @@ fn legacy_component_sources_are_read_and_rewritten_only_as_v3() {
     // 무변경 요청은 v1 bytes와 주석을 보존합니다.
     run(&["resize", file, hash, "90", "60"]);
     assert_eq!(fs::read_to_string(&path).unwrap(), commented);
-    // 실제 편집은 유일한 쓰기 버전 v3로 다시 씁니다.
+    // 실제 편집은 유일한 쓰기 버전 v4로 다시 씁니다(ADR-0077).
     let resized = run(&["resize", file, hash, "144", "60"]);
     let rewritten = fs::read_to_string(&path).unwrap();
-    assert!(rewritten.contains("schema_version: \"3\"\n"), "{rewritten}");
-    assert!(rewritten.contains("    width: \"144\"\n"));
-    assert!(rewritten.contains("    height: \"60\"\n"));
+    assert!(rewritten.contains("schema_version: \"4\"\n"), "{rewritten}");
+    assert!(rewritten.contains("      width: \"144px\"\n"));
+    assert!(rewritten.contains("      height: \"60px\"\n"));
     assert!(!rewritten.contains("size:") && !rewritten.contains("corner_radius"));
     run(&[
         "add-frame",
@@ -730,8 +715,8 @@ fn legacy_component_sources_are_read_and_rewritten_only_as_v3() {
         "16",
     ]);
     let tree = fs::read_to_string(&path).unwrap();
-    assert!(tree.contains("schema_version: \"3\"\n"));
-    assert_eq!(tree.matches("    width: ").count(), 2);
+    assert!(tree.contains("schema_version: \"4\"\n"));
+    assert_eq!(tree.matches("      width: ").count(), 2);
 }
 
 #[test]
@@ -750,8 +735,8 @@ fn nested_frames_survive_a_component_rename_and_fresh_clone() {
     let other = value(&b, "file");
     let original = fs::read_to_string(repo.join(file)).unwrap();
     let other_bytes = fs::read(repo.join(other)).unwrap();
-    assert!(original.contains("schema_version: \"3\"\n"));
-    assert!(!original.contains("children:"));
+    assert!(original.contains("schema_version: \"4\"\n"));
+    assert_eq!(original.matches("  -\n    id: ").count(), 1);
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-qm", "root frames"]);
 
@@ -776,35 +761,41 @@ fn nested_frames_survive_a_component_rename_and_fresh_clone() {
     assert_eq!(info.get("node_count").and_then(JsonValue::as_i64), Some(4));
     assert_eq!(git(&repo, &["diff", "--name-only"]), file);
     let yaml = fs::read_to_string(repo.join(file)).unwrap();
-    assert!(yaml.contains("schema_version: \"3\"\n"));
-    let root_lines = original.split_once("root_node:\n").unwrap().1;
-    assert!(yaml.contains(&format!("root_node:\n{root_lines}")));
-    let child_records: Vec<_> = yaml
-        .split_once("children:\n")
+    assert!(yaml.contains("schema_version: \"4\"\n"));
+    // v4는 root를 포함한 모든 node를 StableId 오름차순 `nodes` 목록 하나에 씁니다.
+    let records: Vec<_> = yaml
+        .split_once("nodes:\n")
         .unwrap()
         .1
         .split("  -\n")
         .skip(1)
         .collect();
-    assert_eq!(child_records.len(), 3);
-    for (record, (id, parent, order_key)) in child_records.iter().zip([
-        (NESTED, FIRST, "\"80\""),
-        (SECOND, AR, "c0"),
-        (FIRST, AR, "\"80\""),
+    assert_eq!(records.len(), 4);
+    for (record, (id, parent, order_key)) in records.iter().zip([
+        (NESTED, format!("\"{FIRST}\""), "\"80\""),
+        (AR, "none".to_owned(), "\"80\""),
+        (SECOND, format!("\"{AR}\""), "c0"),
+        (FIRST, format!("\"{AR}\""), "\"80\""),
     ]) {
         assert!(
             record.starts_with(&format!(
-                "    id: \"{id}\"\n    parent: \"{parent}\"\n    order_key: {order_key}\n"
+                "    id: \"{id}\"\n    parent: {parent}\n    order_key: {order_key}\n"
             )),
             "{record}"
         );
     }
     run(&["resize", file, value(&info, "source_hash"), "248.5", "44"]);
     let resized_yaml = fs::read_to_string(repo.join(file)).unwrap();
+    let root_at = yaml.find(&format!("    id: \"{AR}\"")).unwrap();
+    let (before_root, root_part) = yaml.split_at(root_at);
     assert_eq!(
         resized_yaml,
-        yaml.replacen("width: \"0\"", "width: \"248.5\"", 1)
-            .replacen("height: \"0\"", "height: \"44\"", 1)
+        format!(
+            "{before_root}{}",
+            root_part
+                .replacen("width: \"0px\"", "width: \"248.5px\"", 1)
+                .replacen("height: \"0px\"", "height: \"44px\"", 1)
+        )
     );
     assert_ne!(resized_yaml, yaml);
     assert_eq!(fs::read(repo.join(other)).unwrap(), other_bytes);
@@ -886,13 +877,15 @@ fn nested_frame_errors_preserve_every_component_file() {
     assert_eq!(file_digest(&dir), before);
     let path = dir.join(ap);
     let valid = fs::read_to_string(&path).unwrap();
-    let (head, children) = valid.split_once("children:\n").unwrap();
-    assert!(children.contains("kind: frame"));
+    // v4는 모든 node를 `nodes` 목록에 씁니다. 자식 하나의 종류를 모르는 값으로 바꿉니다.
+    assert_eq!(valid.matches("kind: frame").count(), 2);
+    let at = valid.rfind("kind: frame").unwrap();
     fs::write(
         &path,
         format!(
-            "{head}children:\n{}",
-            children.replacen("kind: frame", "kind: shape", 1)
+            "{}kind: shape{}",
+            &valid[..at],
+            &valid[at + "kind: frame".len()..]
         ),
     )
     .unwrap();
