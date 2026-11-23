@@ -1,0 +1,228 @@
+frame 0x0001 visible: boolean
+frame 0x0002 ! port-editor-metadata
+frame 0x0003 ! port-editor-metadata
+frame 0x0010 position: enum(static relative absolute)
+frame 0x0011 box-sizing: enum(content-box border-box)
+frame 0x0012 top: enum(auto) | length | percentage
+frame 0x0013 right: enum(auto) | length | percentage
+frame 0x0014 bottom: enum(auto) | length | percentage
+frame 0x0015 left: enum(auto) | length | percentage
+frame 0x0016 ! port-unknown-property
+frame 0x0017 ! port-unknown-property
+frame 0x0018 min-width: enum(auto min-content max-content fit-content) | length | percentage
+frame 0x0019 min-height: enum(auto min-content max-content fit-content) | length | percentage
+frame 0x001a max-width: enum(none min-content max-content fit-content) | length | percentage
+frame 0x001b max-height: enum(none min-content max-content fit-content) | length | percentage
+frame 0x001c ! port-unmapped-grammar
+frame 0x001d flex-grow: number
+frame 0x001e flex-shrink: number
+frame 0x001f flex-basis: enum(auto content) | length | percentage
+frame 0x0020 align-self: enum(auto normal stretch start end flex-start flex-end center baseline)
+frame 0x0021 justify-self: enum(auto normal stretch start end flex-start flex-end center baseline)
+frame 0x0022 ! port-unmapped-grammar
+frame 0x0023 ! port-unmapped-grammar
+frame 0x0024 ! port-unmapped-grammar
+frame 0x0025 ! port-unmapped-grammar
+frame 0x0101 ! port-bundle-key
+frame 0x0102 ! port-unmapped-grammar
+frame 0x0103 ! port-no-value-grammar
+frame 0x0104 background-color: color
+frame 0x0105 ! port-unmapped-grammar
+frame 0x0106 ! port-bundle-key
+frame 0x0107 ! port-no-value-grammar
+frame 0x0108 width: enum(auto min-content max-content fit-content) | length | percentage
+frame 0x0109 height: enum(auto min-content max-content fit-content) | length | percentage
+frame 0x010a border-top-left-radius: length
+frame 0x010b border-top-right-radius: length
+frame 0x010c border-bottom-right-radius: length
+frame 0x010d border-bottom-left-radius: length
+frame 0x0110 display: enum(block flex grid none)
+frame 0x0111 padding-top: length
+frame 0x0112 padding-right: length
+frame 0x0113 padding-bottom: length
+frame 0x0114 padding-left: length
+frame 0x0115 flex-direction: enum(row row-reverse column column-reverse)
+frame 0x0116 flex-wrap: enum(nowrap wrap wrap-reverse)
+frame 0x0117 justify-content: enum(normal start end flex-start flex-end center space-between space-around space-evenly stretch)
+frame 0x0118 align-content: enum(normal start end flex-start flex-end center space-between space-around space-evenly stretch)
+frame 0x0119 align-items: enum(normal stretch start end flex-start flex-end center baseline)
+frame 0x011a justify-items: enum(normal stretch start end flex-start flex-end center baseline)
+frame 0x011b row-gap: enum(normal) | length
+frame 0x011c column-gap: enum(normal) | length
+frame 0x011d ! port-unmapped-grammar
+frame 0x011e ! port-unmapped-grammar
+frame 0x011f ! port-unmapped-grammar
+frame 0x0120 ! port-unmapped-grammar
+frame 0x0121 grid-auto-flow: enum(row column)
+fragment 0x0001 visible: boolean
+fragment 0x0002 ! port-editor-metadata
+fragment 0x0003 ! port-editor-metadata
+shape 0x0001 visible: boolean
+shape 0x0002 ! port-editor-metadata
+shape 0x0003 ! port-editor-metadata
+shape 0x0010 position: enum(static relative absolute)
+shape 0x0011 box-sizing: enum(content-box border-box)
+shape 0x0012 top: enum(auto) | length | percentage
+shape 0x0013 right: enum(auto) | length | percentage
+shape 0x0014 bottom: enum(auto) | length | percentage
+shape 0x0015 left: enum(auto) | length | percentage
+shape 0x0016 width: enum(auto min-content max-content fit-content) | length | percentage
+shape 0x0017 height: enum(auto min-content max-content fit-content) | length | percentage
+shape 0x0018 min-width: enum(auto min-content max-content fit-content) | length | percentage
+shape 0x0019 min-height: enum(auto min-content max-content fit-content) | length | percentage
+shape 0x001a max-width: enum(none min-content max-content fit-content) | length | percentage
+shape 0x001b max-height: enum(none min-content max-content fit-content) | length | percentage
+shape 0x001c ! port-unmapped-grammar
+shape 0x001d flex-grow: number
+shape 0x001e flex-shrink: number
+shape 0x001f flex-basis: enum(auto content) | length | percentage
+shape 0x0020 align-self: enum(auto normal stretch start end flex-start flex-end center baseline)
+shape 0x0021 justify-self: enum(auto normal stretch start end flex-start flex-end center baseline)
+shape 0x0022 ! port-unmapped-grammar
+shape 0x0023 ! port-unmapped-grammar
+shape 0x0024 ! port-unmapped-grammar
+shape 0x0025 ! port-unmapped-grammar
+shape 0x0301 width: enum(auto min-content max-content fit-content) | length | percentage
+shape 0x0302 height: enum(auto min-content max-content fit-content) | length | percentage
+shape 0x0303 border-top-left-radius: length
+shape 0x0304 border-top-right-radius: length
+shape 0x0305 border-bottom-right-radius: length
+shape 0x0306 border-bottom-left-radius: length
+shape 0x0307 x1: length
+shape 0x0308 y1: length
+shape 0x0309 x2: length
+shape 0x030a y2: length
+shape 0x030b stroke-linecap: enum(butt round square)
+shape 0x030c polygon-sides: number
+shape 0x030d polygon-rotation: angle
+shape 0x030e polygon-corner-radius: length
+path 0x0001 visible: boolean
+path 0x0002 ! port-editor-metadata
+path 0x0003 ! port-editor-metadata
+path 0x0010 position: enum(static relative absolute)
+path 0x0011 box-sizing: enum(content-box border-box)
+path 0x0012 top: enum(auto) | length | percentage
+path 0x0013 right: enum(auto) | length | percentage
+path 0x0014 bottom: enum(auto) | length | percentage
+path 0x0015 left: enum(auto) | length | percentage
+path 0x0016 width: enum(auto min-content max-content fit-content) | length | percentage
+path 0x0017 height: enum(auto min-content max-content fit-content) | length | percentage
+path 0x0018 min-width: enum(auto min-content max-content fit-content) | length | percentage
+path 0x0019 min-height: enum(auto min-content max-content fit-content) | length | percentage
+path 0x001a max-width: enum(none min-content max-content fit-content) | length | percentage
+path 0x001b max-height: enum(none min-content max-content fit-content) | length | percentage
+path 0x001c ! port-unmapped-grammar
+path 0x001d flex-grow: number
+path 0x001e flex-shrink: number
+path 0x001f flex-basis: enum(auto content) | length | percentage
+path 0x0020 align-self: enum(auto normal stretch start end flex-start flex-end center baseline)
+path 0x0021 justify-self: enum(auto normal stretch start end flex-start flex-end center baseline)
+path 0x0022 ! port-unmapped-grammar
+path 0x0023 ! port-unmapped-grammar
+path 0x0024 ! port-unmapped-grammar
+path 0x0025 ! port-unmapped-grammar
+path 0x0401 ! port-no-value-grammar
+path 0x0402 fill-rule: enum(nonzero evenodd)
+text 0x0001 visible: boolean
+text 0x0002 ! port-editor-metadata
+text 0x0003 ! port-editor-metadata
+text 0x0010 position: enum(static relative absolute)
+text 0x0011 box-sizing: enum(content-box border-box)
+text 0x0012 top: enum(auto) | length | percentage
+text 0x0013 right: enum(auto) | length | percentage
+text 0x0014 bottom: enum(auto) | length | percentage
+text 0x0015 left: enum(auto) | length | percentage
+text 0x0016 width: enum(auto min-content max-content fit-content) | length | percentage
+text 0x0017 height: enum(auto min-content max-content fit-content) | length | percentage
+text 0x0018 min-width: enum(auto min-content max-content fit-content) | length | percentage
+text 0x0019 min-height: enum(auto min-content max-content fit-content) | length | percentage
+text 0x001a max-width: enum(none min-content max-content fit-content) | length | percentage
+text 0x001b max-height: enum(none min-content max-content fit-content) | length | percentage
+text 0x001c ! port-unmapped-grammar
+text 0x001d flex-grow: number
+text 0x001e flex-shrink: number
+text 0x001f flex-basis: enum(auto content) | length | percentage
+text 0x0020 align-self: enum(auto normal stretch start end flex-start flex-end center baseline)
+text 0x0021 justify-self: enum(auto normal stretch start end flex-start flex-end center baseline)
+text 0x0022 ! port-unmapped-grammar
+text 0x0023 ! port-unmapped-grammar
+text 0x0024 ! port-unmapped-grammar
+text 0x0025 ! port-unmapped-grammar
+text 0x0501 ! port-no-value-grammar
+image 0x0001 visible: boolean
+image 0x0002 ! port-editor-metadata
+image 0x0003 ! port-editor-metadata
+image 0x0010 position: enum(static relative absolute)
+image 0x0011 box-sizing: enum(content-box border-box)
+image 0x0012 top: enum(auto) | length | percentage
+image 0x0013 right: enum(auto) | length | percentage
+image 0x0014 bottom: enum(auto) | length | percentage
+image 0x0015 left: enum(auto) | length | percentage
+image 0x0016 ! port-unknown-property
+image 0x0017 ! port-unknown-property
+image 0x0018 min-width: enum(auto min-content max-content fit-content) | length | percentage
+image 0x0019 min-height: enum(auto min-content max-content fit-content) | length | percentage
+image 0x001a max-width: enum(none min-content max-content fit-content) | length | percentage
+image 0x001b max-height: enum(none min-content max-content fit-content) | length | percentage
+image 0x001c ! port-unmapped-grammar
+image 0x001d flex-grow: number
+image 0x001e flex-shrink: number
+image 0x001f flex-basis: enum(auto content) | length | percentage
+image 0x0020 align-self: enum(auto normal stretch start end flex-start flex-end center baseline)
+image 0x0021 justify-self: enum(auto normal stretch start end flex-start flex-end center baseline)
+image 0x0022 ! port-unmapped-grammar
+image 0x0023 ! port-unmapped-grammar
+image 0x0024 ! port-unmapped-grammar
+image 0x0025 ! port-unmapped-grammar
+image 0x0601 ! port-no-value-grammar
+image 0x0602 width: enum(auto min-content max-content fit-content) | length | percentage
+image 0x0603 height: enum(auto min-content max-content fit-content) | length | percentage
+image 0x0604 object-fit: enum(fill contain cover none)
+image 0x0605 image-rendering: enum(auto pixelated)
+image 0x0606 ! port-no-value-grammar
+image 0x0607 ! port-no-value-grammar
+componentinstance 0x0001 visible: boolean
+componentinstance 0x0002 ! port-editor-metadata
+componentinstance 0x0003 ! port-editor-metadata
+componentinstance 0x0010 position: enum(static relative absolute)
+componentinstance 0x0011 box-sizing: enum(content-box border-box)
+componentinstance 0x0012 top: enum(auto) | length | percentage
+componentinstance 0x0013 right: enum(auto) | length | percentage
+componentinstance 0x0014 bottom: enum(auto) | length | percentage
+componentinstance 0x0015 left: enum(auto) | length | percentage
+componentinstance 0x0016 width: enum(auto min-content max-content fit-content) | length | percentage
+componentinstance 0x0017 height: enum(auto min-content max-content fit-content) | length | percentage
+componentinstance 0x0018 min-width: enum(auto min-content max-content fit-content) | length | percentage
+componentinstance 0x0019 min-height: enum(auto min-content max-content fit-content) | length | percentage
+componentinstance 0x001a max-width: enum(none min-content max-content fit-content) | length | percentage
+componentinstance 0x001b max-height: enum(none min-content max-content fit-content) | length | percentage
+componentinstance 0x001c ! port-unmapped-grammar
+componentinstance 0x001d flex-grow: number
+componentinstance 0x001e flex-shrink: number
+componentinstance 0x001f flex-basis: enum(auto content) | length | percentage
+componentinstance 0x0020 align-self: enum(auto normal stretch start end flex-start flex-end center baseline)
+componentinstance 0x0021 justify-self: enum(auto normal stretch start end flex-start flex-end center baseline)
+componentinstance 0x0022 ! port-unmapped-grammar
+componentinstance 0x0023 ! port-unmapped-grammar
+componentinstance 0x0024 ! port-unmapped-grammar
+componentinstance 0x0025 ! port-unmapped-grammar
+modifier 0x1001 enabled: boolean
+modifier 0x1002 ! port-no-value-grammar
+modifier 0x1011 ! port-unmapped-grammar
+modifier 0x1021 boolean-operation: enum(union subtract intersect exclude)
+modifier 0x1022 ! port-no-value-grammar
+modifier 0x1031 stroke-expand-width: length
+modifier 0x1041 corner-radius: length
+modifier 0x1051 ! port-no-value-grammar
+modifier 0x1061 ! port-no-value-grammar
+modifier 0x1071 fill: color
+modifier 0x1081 stroke: color
+modifier 0x1082 stroke-width: length
+modifier 0x1091 shadow-color: color
+modifier 0x1092 ! port-bundle-key
+modifier 0x1093 shadow-blur: length
+modifier 0x1094 shadow-offset-x: length
+modifier 0x1095 shadow-offset-y: length
+modifier 0x10a1 blur-radius: length
+modifier 0x10b1 mix-blend-mode: enum(normal multiply screen overlay darken lighten)
+modifier 0x10c1 opacity: number

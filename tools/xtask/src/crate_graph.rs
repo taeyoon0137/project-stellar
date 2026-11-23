@@ -89,6 +89,16 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-layout",
             ],
         ),
+        // 노드 기반 프로토타이핑 엔진(Phase XXX, ADR-0094): 문서·binding·표현식 원본 위의 projection과 프리뷰 평가.
+        (
+            "stellar-prototype",
+            &[
+                core,
+                "stellar-expressions",
+                "stellar-document",
+                "stellar-bindings",
+            ],
+        ),
         // 앱 프로세스 runtime(ADR-0013): thread 구성과 document thread event loop. 창 session의 scene camera
         // 입력(viewport → scene Viewport, XII.4.3)을 위해 scene에 직접 의존합니다(ADR-0028). 창 canvas Text의
         // layout·outline·caret을 공통 text 엔진으로 계산하려고 text에 직접 의존합니다(ADR-0013, ADR-0067).

@@ -104,3 +104,9 @@ pub mod test_support;
 
 /// 문서 단위 Text style 표 및 상속.
 pub mod text_styles;
+
+/// 시간축 원본 `MotionSpec` (XXX.1.1, ADR-0094).
+pub mod motion;
+
+/// 노드 기반 프로토타이핑의 문서 쪽 정의 (XXX.1.2~XXX.1.5, ADR-0094).
+pub mod prototype;

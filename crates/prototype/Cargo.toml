@@ -1,0 +1,18 @@
+[package]
+name = "stellar-prototype"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+# 노드 기반 프로토타이핑 엔진(Phase XXX, ADR-0094): 그래프 projection·편집 plan·포트 공개·진단 매핑과
+# 프리뷰 논리 시계·timing evaluator·tick 처리. 문서(document)·binding(bindings)·표현식(expressions) 원본 위의
+# projection이며 새 문서 원본을 만들지 않습니다. 시스템 시각·파일·네트워크에 접근하지 않습니다.
+[dependencies]
+stellar-core-types = { path = "../core-types" }
+stellar-expressions = { path = "../expressions" }
+stellar-document = { path = "../document" }
+stellar-bindings = { path = "../bindings" }
+
+[lints]
+workspace = true

@@ -366,6 +366,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-prototype"
+version = "0.0.0"
+dependencies = [
+ "stellar-bindings",
+ "stellar-core-types",
+ "stellar-document",
+ "stellar-expressions",
+]
+
+[[package]]
 name = "stellar-renderer-core"
 version = "0.0.0"
 dependencies = [

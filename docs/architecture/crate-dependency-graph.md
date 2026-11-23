@@ -52,6 +52,7 @@
 | `stellar-agent-host` | core-types, agent-protocol, local-ipc, diagnostics |
 | `stellar-terminal` | core-types |
 | `stellar-codegen` | core-types, target-profile, accessibility, layout |
+| `stellar-prototype` | core-types, expressions, document, bindings |
 | `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile, git-porcelain |
 | `stellar-cli` | ops, diagnostics |
 | `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, text, ops, git-porcelain |
@@ -115,6 +116,10 @@ graph TD
   codegen --> target_profile
   codegen --> accessibility
   codegen --> layout
+  prototype --> core_types
+  prototype --> expressions
+  prototype --> document
+  prototype --> bindings
   ops --> codegen
   ops --> project
   ops --> document
