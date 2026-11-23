@@ -144,3 +144,21 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
    경로가 파일 단위로 분류되는지 test가 확인합니다. 한계: 페이지 목록(`document.stellar.yaml`)과 View 파일 사이 동반
    판정(새 View 파일만 stage하는 경우)은 아직 없고, staged 재검증은 아직 generation만 읽어 텍스트 원본 정합을 보지 않습니다.
    둘 다 텍스트 원본이 기본 저장이 되는 V.10.7 전환 때 검사에 넣습니다.
+
+## 개정(2026-11-23, cli-mcp-git-cleanup)
+
+1. **문서 하나의 판정은 읽기 결과까지 한 함수.** `stellar_ops::validate::validate_loaded_document`(문서 읽기 결과와 컴포넌트
+   정의 입력)를 공개하고 `stellar validate`와 `GitSession::validate_staged`가 모두 부릅니다. 읽기 실패의 `document-load`
+   오류도 이 함수가 만듭니다. 두 경로는 문서를 어디서 읽는지(작업 트리의 current generation, staged index를 materialize한
+   tree)만 다릅니다.
+2. **참조 대상의 존재는 문서 판정만 봅니다.** 이 개정 전 staged 재검증은 semantic 무결성
+   (`stellar_semantic_diff::validate::validate_snapshot`)의 `DanglingReference`를 인스턴스의 정의 참조만 빼고 모두
+   `snapshot-invalid` 오류로 냈습니다. 그래서 `stellar validate`가 유효(미해결 참조 경고 III.2.4)로 판정한 tree의 commit을
+   막았습니다. 같은 사실을 두 곳에서 다르게 판정한 것입니다. 이제 `DanglingReference`는 모두 semantic 검사에서 빼고, 문서
+   판정의 `unresolved-reference`·`missing-component-definition` 경고만 남깁니다. semantic 검사는 구조(parent 존재·순환,
+   형제 OrderKey, 소속 목록, 부모 없는 node, interface 멤버)만 봅니다. 같은 tree에서 두 경로의 문서 진단이 같은지 test
+   (`git::tests::staged_judgment_matches_project_validation`)가 확인합니다.
+3. **staged 재검증만의 검사는 그대로.** 저장소 loader 무결성(`storage-invalid`), 저장 무손실 왕복(`storage-roundtrip`),
+   프로젝트 단위 컴포넌트 원본 읽기(`component-library`)는 commit 전에만 보는 추가 검사입니다. 기존 component-library chunk와
+   텍스트 원본이 함께 있는 경우는 `stellar validate`가 `component-library-load`로 보고, staged 재검증에서는 그 chunk를 문서
+   레코드에서 다시 만들 수 없어 저장 왕복 검사가 `storage-roundtrip` 오류로 막습니다.

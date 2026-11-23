@@ -2,7 +2,7 @@
 
 - WBS: XIV.8.1
 - 작업명: staged snapshot commit 전 재검증
-- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 판정 이중 경로가 남아 있음: `crates/ops/src/git.rs`의 `validate_staged`가 `crates/ops/src/validate.rs`와 같은 검증(`validate_document` 호출 등)을 따로 조합합니다. 행 지시는 충족하지만 같은 판정을 두 곳에서 하지 않는다는 설계 규칙에 어긋나므로, integration-followups lane이 ops validate 판정을 records·definitions 입력 함수로 노출해 합치면 `[x]`. 보고 당시 기록: 완료 (`[x]` 후보)
+- 상태: 완료 (`[x]`) — 2026-11-23 cli-mcp-git-cleanup 재판정: staged 재검증과 `stellar validate`가 문서 판정을 같은 함수(`stellar_ops::validate::validate_loaded_document`) 하나로 하고, staged 재검증만 미해결 참조를 오류로 만들던 두 번째 판정을 없앴습니다(ADR-0080 개정 2026-11-23 cli-mcp-git-cleanup). 선행 XIV.6.5·VI.10.1은 `[x]`입니다. 이전 판정: 부분 완료 (`[~]`) — plan-revision 계획서 판정 "판정 이중 경로가 남아 있음"
 - 선행: XIV.6.5, VI.10.1
 - 결정: ADR-0080
 
@@ -12,35 +12,52 @@
 
 ## 변경 파일 목록
 
-- `crates/ops/src/git.rs`(`GitSession::validate_staged`, `GitSession::commit`)
-- `crates/runtime/src/staging/engine_tests.rs`
+- `crates/ops/src/git.rs`(`GitSession::validate_staged`, `GitSession::commit`, 판정 일치 test)
+- `crates/ops/src/validate.rs`(`validate_loaded_document`)
+- `crates/ops/Cargo.toml`(test 전용 Git fixture dev-dependency 한 줄)
+- `crates/runtime/src/staging/engine_tests.rs`(처음 구현)
+- `docs/adr/ADR-0080-semantic-git-engine-headless.md`(개정)
 
 ## 구현 요약
 
 - `validate_staged`는 실제 index를 작업 트리 밖 비공개 임시 디렉터리에 materialize하고 다음을 검사합니다.
   - conflict 없음, `stellar.yaml` 존재
   - 저장소 loader 무결성(`SavedProjectLoader::for_materialized_snapshot`)
-  - 문서마다 문서 validator(VI.10.1)
-  - 저장 무손실 왕복(`saved_semantic_snapshot`)과 semantic 무결성(`validate_snapshot`)
-  - 컴포넌트 원본 읽기. 정의 없는 인스턴스는 `stellar validate`와 같이 경고입니다.
-- `commit`은 오류가 하나라도 있으면 `GitError::InvalidStagedSnapshot`을 돌려주고 `git commit`을 실행하지 않습니다. 검사한 index와 commit 직전 index가 다르면 `IndexChangedBeforeCommit`으로 멈춥니다.
+  - 문서마다 문서 판정: `stellar validate`와 같은 `validate_loaded_document`입니다. 읽기 실패(`document-load`), 문서
+    validator 위반(`document-invalid`)은 오류, 미해결 참조(`unresolved-reference`)와 정의 없는 인스턴스
+    (`missing-component-definition`)는 경고입니다.
+  - 저장 무손실 왕복(`saved_semantic_snapshot`)과 semantic 구조 무결성(`validate_snapshot`의 parent·순서·소속·interface 위반)
+  - 프로젝트 단위 컴포넌트 원본 읽기(`component-library`)
+- `commit`은 오류가 하나라도 있으면 `GitError::InvalidStagedSnapshot`을 돌려주고 `git commit`을 실행하지 않습니다. 검사한
+  index와 commit 직전 index가 다르면 `IndexChangedBeforeCommit`으로 멈춥니다.
+
+### 2026-11-23 재판정에서 바꾼 것
+
+- 판정 이중 경로 1: 문서를 읽은 뒤의 판정(읽기 실패 진단, node 수, `validate_records` 호출)을 staged 재검증과
+  `stellar validate`가 따로 조합했습니다. `validate_loaded_document`로 합쳐 두 경로는 문서를 어디서 읽는지만 다릅니다.
+- 판정 이중 경로 2: staged 재검증은 semantic 무결성의 `DanglingReference`를 인스턴스 정의 참조만 빼고 `snapshot-invalid`
+  오류로 냈습니다. 그래서 `stellar validate`가 유효(미해결 참조 경고)로 본 tree의 commit을 막았습니다. 이 동작은 새 test가
+  처음 실패로 보여 줬습니다. 참조 대상의 존재는 이제 문서 판정만 보고, semantic 검사에서는 `DanglingReference`를 모두
+  뺍니다.
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)
 
 | 명령 | 결과 |
 |---|---|
-| `cargo test -p stellar-ops -p stellar-runtime -p stellar-git-porcelain -p stellar-cli -p stellar-mcp-core` | 모두 통과(실패 0) |
-| `cargo clippy -p stellar-ops -p stellar-runtime -p stellar-cli -p xtask --all-targets --features stellar-ops/test-support -- -D warnings` | exit 0 |
-| `cargo xtask validate-crate-graph` | exit 0 |
-| `cargo check --workspace --all-targets` | exit 0 |
+| `cargo test -p stellar-ops` | 83개 통과(실패 0) |
+| `cargo test -p stellar-runtime --lib staging` | 19개 통과 |
+| `cargo test -p stellar-cli --test git` | 4개 통과 |
+| `cargo clippy -p stellar-ops --all-targets --features test-support -- -D warnings` | exit 0 |
 
 | 검사 | 결과 |
 |---|---|
 | 손상 chunk object를 stage한 index에서 commit → `InvalidStagedSnapshot`, trace sink로 센 `git commit` spawn 0, HEAD 불변 (`invalid_staged_snapshot_never_runs_git_commit`) | 통과 |
+| 미해결 clip 참조 2개와 정의 없는 인스턴스 1개를 가진 문서를 stage → staged 재검증 진단이 `stellar validate`(`validate_project`) 진단과 같고(경고 3개, 오류 0), 재검증 통과 (`git::tests::staged_judgment_matches_project_validation`) | 통과 |
 
 ## 테스트
 
-- 위 검사 표의 테스트는 `cargo test -p stellar-runtime --lib staging`(19개)과 `cargo test -p stellar-cli --test git`(4개)에 포함되며 모두 통과했습니다.
+- 위 검사 표의 첫 test는 `cargo test -p stellar-runtime --lib staging`, 둘째 test는 `cargo test -p stellar-ops`에 포함되며
+  모두 통과했습니다.
 
 ## 성능
 
@@ -53,3 +70,5 @@
 ## 남은 위험 / 한계
 
 - 재검증과 `git commit` 사이 짧은 경합 창은 남습니다(ADR-0080 Consequences).
+- staged 재검증은 generation만 읽고 텍스트 원본(`design/**.stellar.yaml`) 정합은 보지 않습니다. 텍스트 원본이 기본 저장이
+  되는 V.10.7 전환 때 넣습니다(ADR-0080 개정 integration-followups 결정 2).

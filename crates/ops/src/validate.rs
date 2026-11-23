@@ -8,8 +8,9 @@
 //! | 오류 | 문서 chunk를 읽거나 해석할 수 없음(`document-load`), validator 위반(`document-invalid`) |
 //! | 경고 | 미해결 참조(III.2.4, `unresolved-reference`): 문서는 유효하지만 대상이 없음 |
 //!
-//! 문서 하나의 판정은 [`validate_records`](레코드·컴포넌트 정의 입력)가 합니다. `stellar validate`와 Git commit 전
-//! staged snapshot 재검증(`git::GitSession::validate_staged`)이 같은 함수를 씁니다(ADR-0080 개정).
+//! 문서 하나의 판정은 [`validate_loaded_document`](읽기 결과·컴포넌트 정의 입력)와 그 안의 [`validate_records`]가
+//! 합니다. `stellar validate`와 Git commit 전 staged snapshot 재검증(`git::GitSession::validate_staged`)이 같은
+//! 함수를 쓰고, 두 경로는 문서를 어디서 읽는지만 다릅니다(ADR-0080 개정).
 
 use stellar_document::records::{DocumentRecords, NodePayload};
 use stellar_document::validate::validate_document;
@@ -203,33 +204,43 @@ fn validate_with_definitions(
     document: StableId,
     definitions: &std::sync::OnceLock<Result<DefinitionIds, String>>,
 ) -> DocumentValidation {
-    let mut findings = Vec::new();
-    let records = match snapshot.document_records(document) {
-        Ok(records) => records,
-        Err(e) => {
-            findings.push(Finding {
-                severity: FindingSeverity::Error,
-                code: "document-load",
-                document,
-                message: e.to_string(),
-            });
-            return DocumentValidation {
-                document,
-                node_count: None,
-                findings,
-            };
-        }
-    };
-    findings.extend(validate_records(document, &records, || {
+    let records = snapshot
+        .document_records(document)
+        .map_err(|e| e.to_string());
+    validate_loaded_document(document, records.as_ref().map_err(String::as_str), || {
         match definitions.get_or_init(|| definition_ids(snapshot)) {
             Ok(ids) => Definitions::Known(ids),
             Err(reason) => Definitions::Failed(reason),
         }
-    }));
-    DocumentValidation {
-        document,
-        node_count: Some(records.nodes.len()),
-        findings,
+    })
+}
+
+/// 읽어 본 문서 하나를 판정합니다: 읽기 실패(`records`가 `Err`)는 `document-load` 오류이고 node 수가
+/// 없습니다. 읽었으면 [`validate_records`]의 판정입니다.
+///
+/// 문서를 어디서 읽었는지(`stellar validate`의 snapshot, Git commit 전 staged snapshot)와 무관하게 문서 하나의
+/// 판정은 이 함수 하나입니다(ADR-0080 개정).
+pub fn validate_loaded_document<'a>(
+    document: StableId,
+    records: Result<&DocumentRecords, &str>,
+    definitions: impl FnOnce() -> Definitions<'a>,
+) -> DocumentValidation {
+    match records {
+        Ok(records) => DocumentValidation {
+            document,
+            node_count: Some(records.nodes.len()),
+            findings: validate_records(document, records, definitions),
+        },
+        Err(reason) => DocumentValidation {
+            document,
+            node_count: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                code: "document-load",
+                document,
+                message: reason.to_owned(),
+            }],
+        },
     }
 }
 
