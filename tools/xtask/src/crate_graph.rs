@@ -77,7 +77,11 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         ("stellar-accessibility", &[core]),
         ("stellar-diagnostics", &[core]),
         // 로드맵 crate(ADR-0019): 내보내기(Phase XX)와 내장 터미널 코어(Phase XVIII).
-        ("stellar-export", &[core, "stellar-scene"]),
+        // export는 backend 중립 renderer 계산(출력 색 변환·stroke tessellation)만 씁니다(ADR-0103).
+        (
+            "stellar-export",
+            &[core, "stellar-scene", "stellar-renderer-core"],
+        ),
         ("stellar-terminal", &[core]),
         // 단방향 코드 생성(Phase XXII, ADR-0049): 문서·binding 계층을 거치지 않고 하위 crate의 지역 모델만 읽습니다.
         (
@@ -196,6 +200,9 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-diagnostics",
                 "stellar-git-porcelain",
                 "stellar-integrity",
+                // PNG 내보내기 실행·atomic 저장(ADR-0103). scene은 테스트 fixture가 씁니다.
+                "stellar-export",
+                "stellar-scene",
             ],
         ),
         // 무결성 진단 집계(ADR-0095, `crates/integrity`): 생산자 crate의 공개 결과만 읽고 셸·앱 runtime에 의존하지 않습니다.

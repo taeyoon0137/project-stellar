@@ -256,6 +256,7 @@ name = "stellar-export"
 version = "0.0.0"
 dependencies = [
  "stellar-core-types",
+ "stellar-renderer-core",
  "stellar-scene",
 ]
 
@@ -361,9 +362,11 @@ dependencies = [
  "stellar-codegen",
  "stellar-commands",
  "stellar-document",
+ "stellar-export",
  "stellar-git-porcelain",
  "stellar-integrity",
  "stellar-project",
+ "stellar-scene",
  "stellar-semantic-diff",
  "stellar-semantic-merge",
  "stellar-storage",
