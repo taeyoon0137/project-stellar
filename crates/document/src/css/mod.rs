@@ -4,5 +4,9 @@
 //! metadata입니다. 이 module은 registry가 공유하는 CSS 대응 규칙을 모읍니다.
 //!
 //! - [`bundle`]: 묶음 key와 longhand key 대응(IX.11.22).
+//! - [`grammar`]: 값 문법 종류(IX.11.1).
+//! - [`mapping`]: registry 항목별 CSS 매핑 metadata와 longhand 이름 inventory(IX.11.1).
 
 pub mod bundle;
+pub mod grammar;
+pub mod mapping;

@@ -45,55 +45,8 @@ impl fmt::Display for CssValueError {
 
 impl std::error::Error for CssValueError {}
 
-/// 속성 하나가 받는 값 문법.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CssGrammar {
-    /// `<length>`(px). `non_negative`이면 음수 거부. `sizing`이면 크기 keyword(`auto`, `fit-content` …)를
-    /// 알아보고 아직 저장할 수 없다고 진단합니다.
-    Length {
-        /// 음수 거부.
-        non_negative: bool,
-        /// 크기 속성(`width`·`height`).
-        sizing: bool,
-    },
-    /// `<angle>`(deg로 정규화).
-    Angle,
-    /// 정수 개수.
-    Count {
-        /// 최솟값.
-        min: u32,
-        /// 최댓값.
-        max: u32,
-    },
-    /// `<color>`. `none`을 받으면 `Color(None)`.
-    Color {
-        /// `none` 허용.
-        allow_none: bool,
-    },
-    /// keyword 하나.
-    Keyword(&'static [&'static str]),
-    /// `true`·`false`.
-    Bool,
-    /// 임의 문자열.
-    Text,
-    /// `border` shorthand: `none` 또는 `<length> [solid] <color>`(순서 무관).
-    Border,
-    /// `border-radius` shorthand: 길이 1–4개.
-    Corners,
-}
-
-impl CssGrammar {
-    /// 수치 조절(화살표·scrub)을 받는 문법인지.
-    pub fn is_numeric(self) -> bool {
-        matches!(
-            self,
-            CssGrammar::Length { .. }
-                | CssGrammar::Angle
-                | CssGrammar::Count { .. }
-                | CssGrammar::Corners
-        )
-    }
-}
+/// 속성 하나가 받는 값 문법(registry와 같은 타입, `stellar_document::css::grammar`).
+pub use stellar_document::css::grammar::CssGrammar;
 
 /// 해석한 값.
 #[derive(Debug, Clone, PartialEq)]
@@ -236,6 +189,14 @@ pub fn parse(grammar: CssGrammar, text: &str) -> Result<CssValue, CssValueError>
             _ => Err(CssValueError::invalid("true 또는 false를 넣으세요")),
         },
         CssGrammar::Text => unreachable!("앞에서 처리"),
+        CssGrammar::Percentage
+        | CssGrammar::Duration
+        | CssGrammar::Number
+        | CssGrammar::UnitInterval
+        | CssGrammar::Transform => Err(CssValueError::new(
+            "unsupported-value",
+            "이 값 문법은 아직 속성 패널에서 받지 않습니다",
+        )),
         CssGrammar::Border => parse_border(&lower),
         CssGrammar::Corners => parse_corners(&lower),
     }
