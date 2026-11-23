@@ -33,6 +33,8 @@ pub use image::image_placement;
 pub mod clipboard;
 /// Frame·Rectangle·Ellipse·Line·Polygon 생성 도구 (XII.10.26, ADR-0117).
 pub mod create;
+/// 캔버스 편집 성능 replay (XII.10.43, ADR-0117).
+pub mod edit_replay;
 /// 흐름 컨테이너 안 드래그 (XII.10.24, ADR-0117).
 pub mod flow_drag;
 /// 변형 핸들 hit layer (XII.10.8, ADR-0104).
