@@ -17,7 +17,7 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
   - headless backend는 구조·문서·컴포넌트 resource와 `document.semantic_diff`·`document.validate`만 구현했고, 목록을 코드에 따로 적었습니다.
   - tool 오류는 JSON-RPC 오류(-32602, -32000)였고 결과에는 종류·종료 코드가 없었습니다.
   - 응답 상한은 메시지 1 MiB, page 기본 500·최대 2,000이었고 호출 시간·호출량 상한은 없었습니다.
-- 1차 배치에서 CLI에 headless 기능이 늘었습니다: `stellar git status|stage|unstage|commit`(ADR-0080), `stellar css copy|paste`(ADR-0075), `export-web --frame`(ADR-0049), `query --source-span`(TS-MAP), `merge-driver resolve`(ADR-0081). ADR-0005의 CLI·MCP 동등성에 따라 MCP에도 같은 능력이 필요합니다.
+- 1차 배치에서 CLI에 headless 기능이 늘었습니다: `stellar git status|stage|unstage|commit`(ADR-0080), `stellar css copy|paste`(ADR-0075), `export-web --frame`(ADR-0049), `query --source-span`(V.10.10), `merge-driver resolve`(ADR-0081). ADR-0005의 CLI·MCP 동등성에 따라 MCP에도 같은 능력이 필요합니다.
 - ADR-0005 §3은 headless backend에서 쓰기를 허용하지 않습니다(대안 "headless backend에서 쓰기를 허용하는 방식" 기각).
 
 ## Decision

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-11-23). 엔진 lane `text-source-codec`(V.10.3·V.10.4·IX.11.21·TS-R2·TS-ASSET·TS-MAP, V.10.7 준비)의
+Accepted (2026-11-23). 엔진 lane `text-source-codec`(V.10.3·V.10.4·IX.11.21·V.10.8·V.10.9·V.10.10, V.10.7 준비)의
 결정입니다. [ADR-0059](ADR-0059-text-source-files-with-chunk-cache.md)와
 [ADR-0061](ADR-0061-text-source-format-and-layout.md)의 본문은 고치지 않고, 이 ADR이 다음을 대체·보완합니다.
 
@@ -98,7 +98,7 @@ Accepted (2026-11-23). 엔진 lane `text-source-codec`(V.10.3·V.10.4·IX.11.21�
    semantic snapshot 동일성 corpus 통과, (나) 다중 파일 저장 journal(V.10.5) 연결, (다) 외부 변경 반영(V.10.6)
    연결 뒤에 합니다. 전환 뒤 generation은 읽기·이전 전용이고 chunk는 원본 hash 키로 된 `.stellar/cache/` 파생물입니다.
    그 전까지 다중 파일 원본은 명시 export로 프로젝트 밖에만 만들어 두 원본을 동시에 쓰지 않습니다.
-6. **node → 줄 범위(TS-MAP).** codec이 쓴 텍스트의 `nodes` 항목에서 span table(node StableId → `design/` 기준
+6. **node → 줄 범위(V.10.10).** codec이 쓴 텍스트의 `nodes` 항목에서 span table(node StableId → `design/` 기준
    파일·시작 줄·끝 줄)을 만듭니다. 읽을 때는 디스크 bytes를 같은 규칙으로 스캔하므로 줄 번호는 그 파일 기준입니다.
 
 ## Alternatives

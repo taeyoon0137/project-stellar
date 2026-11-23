@@ -6,7 +6,7 @@
 //!   거부합니다. 손실 저장은 없습니다.
 //! - View·컴포넌트 원본 v1~v3은 읽기 전용이고, 실제 편집 때만 v4로 다시 씁니다.
 
-/// 텍스트 asset catalog(TS-ASSET).
+/// 텍스트 asset catalog(V.10.9).
 pub mod catalog;
 /// CSS 값 문법.
 pub(crate) mod css;
@@ -18,7 +18,7 @@ pub(crate) mod node;
 pub mod project;
 /// 파일 이름 slug.
 pub(crate) mod slug;
-/// node → 파일·줄 범위(TS-MAP).
+/// node → 파일·줄 범위(V.10.10).
 pub mod span;
 /// 문서 Text style 표.
 pub(crate) mod styles;

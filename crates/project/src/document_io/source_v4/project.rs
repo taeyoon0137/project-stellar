@@ -105,7 +105,7 @@ pub struct SemanticKey {
 pub struct EncodedProject {
     /// 파일 내용.
     pub files: BTreeMap<String, String>,
-    /// node → 파일·줄 범위(TS-MAP).
+    /// node → 파일·줄 범위(V.10.10).
     pub spans: SpanTable,
 }
 

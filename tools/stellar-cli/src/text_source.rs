@@ -24,7 +24,7 @@ pub(crate) fn operation_error(error: &TextSourceOperationError) -> CliError {
     CliError::new(status, code, error.to_string())
 }
 
-/// `query <design 폴더> --source-span <node StableId>`: 다중 파일 원본에서 node의 파일·줄 범위(TS-MAP).
+/// `query <design 폴더> --source-span <node StableId>`: 다중 파일 원본에서 node의 파일·줄 범위(V.10.10).
 pub fn query_source_span(args: &[String]) -> Result<Success, CliError> {
     let usage = || CliError::usage("query <design 폴더> --source-span <node StableId>");
     let [design, flag, node] = args else {
