@@ -50,6 +50,14 @@ impl SourceMode {
             SourceMode::ChunkOnly { .. } => None,
         }
     }
+
+    /// 원본의 문서 밖 의미(chunk 전용이거나 cache로 열어 아직 읽지 않았으면 `None`). 에이전트 관찰(ADR-0132 결정 4)이 읽습니다.
+    pub(crate) fn library(&self) -> Option<&Arc<SourceLibrary>> {
+        match self {
+            SourceMode::Text { library, .. } => library.as_ref(),
+            SourceMode::ChunkOnly { .. } => None,
+        }
+    }
 }
 
 /// 디스크 읽기 결과(아무것도 쓰지 않음).
