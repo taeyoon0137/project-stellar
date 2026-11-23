@@ -269,3 +269,42 @@ fn external_snapshot_applies_and_undoes_guide_and_view_variant_changes() {
     run(&mut model, &undo);
     assert_eq!(model.to_records().unwrap(), before);
 }
+
+#[test]
+fn external_change_of_a_guided_frame_to_another_kind_drops_its_guides() {
+    // 외부 원본에서 가이드가 있던 Frame이 같은 id의 다른 종류 node가 되고 가이드가 없어지면, 외부 반영 command 하나로
+    // 들어오고 undo가 Frame과 가이드를 되돌립니다(빈 기록 = 기록 제거는 종류와 무관합니다).
+    let mut model = document();
+    model
+        .insert_node(NodeRecord {
+            id: sid(12),
+            parent: Some(sid(10)),
+            order_key: OrderKey::from_bytes(vec![0x50]).unwrap(),
+            visible: true,
+            locked: false,
+            display_name: "n12".into(),
+            payload: NodePayload::Frame(FramePayload::default()),
+        })
+        .unwrap();
+    run(
+        &mut model,
+        &Command::SetNodeGuides(SetNodeGuides {
+            owner: sid(12),
+            edit: GuideEdit::Add(RulerGuide::new(sid(100), GuideAxis::Y, 6.0).unwrap()),
+        }),
+    );
+    let before = model.to_records().unwrap();
+    let mut incoming = before.clone();
+    incoming.node_guides.clear();
+    let node = incoming.nodes.iter_mut().find(|n| n.id == sid(12)).unwrap();
+    node.payload = NodePayload::Fragment(Default::default());
+    stellar_document::validate::validate_document(&incoming).unwrap();
+    let external =
+        crate::snapshot_apply::ApplyExternalSnapshot::between(&model, &incoming).unwrap();
+    let command = Command::ApplyExternalSnapshot(external);
+    let undo = run(&mut model, &command);
+    assert_eq!(model.to_records().unwrap(), incoming);
+    assert_eq!(model.node_guides(sid(12)), None);
+    run(&mut model, &undo);
+    assert_eq!(model.to_records().unwrap(), before);
+}

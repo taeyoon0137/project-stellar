@@ -30,7 +30,8 @@ Accepted (2026-11-24).
 2. `DocumentModel`은 두 map을 StableId로 들고 있습니다. layout record(ADR-0086)와 같이 node·View를 지워도 map에는 남고,
    같은 id가 되돌아오면(삭제 undo) 다시 보입니다. 조회(`node_guides`, `view_variants`)와 영속 레코드(`to_records`)에는
    살아 있는 Frame·문서 정의에 있는 View의 것만 나옵니다. `set_node_guides`는 Frame이 아닌 소유자를, `set_view_variants`는
-   없는 View를 거부합니다. 빈 값은 기록을 지웁니다.
+   없는 View를 거부합니다. 빈 값은 기록을 지웁니다. 가이드 기록 지우기는 소유 node의 종류와 무관하게 받습니다(외부 원본에서
+   가이드가 있던 Frame이 같은 id의 다른 종류가 되면 node를 바꾼 뒤 남은 기록을 지웁니다).
 3. validator(`guides::persist::check_records`)는 소유 node 없음·Frame이 아님·중복·빈 기록, View 없음·중복·빈 model을
    위반으로 냅니다. Variant override가 가리키는 scene node는 검사하지 않습니다(IX.7.8과 같이 orphan은 resolver가 적용하지
    않고 진단합니다).

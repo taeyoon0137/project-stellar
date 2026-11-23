@@ -228,13 +228,20 @@ impl DocumentModel {
             .filter(|record| self.payloads.contains_key(&record.owner()))
     }
 
-    /// Frame의 가이드 기록을 바꾸고 이전 기록을 돌려줍니다. 빈 기록은 기록을 지웁니다. 소유 node가 없거나 Frame이
-    /// 아니면 거부합니다.
+    /// Frame의 가이드 기록을 바꾸고 이전 기록을 돌려줍니다. 빈 기록은 기록을 지웁니다. 비어 있지 않은 기록은 소유 node가
+    /// 없거나 Frame이 아니면 거부합니다. 지우기는 종류와 무관하게 받습니다: 외부 원본에서 가이드가 있던 Frame이 같은 id의
+    /// 다른 종류가 되면 node를 바꾼 뒤 남은 기록을 지워야 합니다.
     pub fn set_node_guides(
         &mut self,
         record: crate::guides::NodeGuides,
     ) -> Result<Option<crate::guides::NodeGuides>, ModelError> {
         let id = record.owner();
+        if record.is_empty() {
+            if !self.payloads.contains_key(&id) {
+                return Err(ModelError::UnknownNode { id });
+            }
+            return Ok(self.guides.remove(&id));
+        }
         match self.payloads.get(&id) {
             None => return Err(ModelError::UnknownNode { id }),
             Some(NodePayload::Frame(_)) => {}
@@ -245,11 +252,7 @@ impl DocumentModel {
                 })
             }
         }
-        Ok(if record.is_empty() {
-            self.guides.remove(&id)
-        } else {
-            self.guides.insert(id, record)
-        })
+        Ok(self.guides.insert(id, record))
     }
 
     /// 문서 정의에 있는 View의 변수·Variant model(ADR-0126). model이 없으면 `None`입니다.
