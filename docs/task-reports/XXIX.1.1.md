@@ -2,7 +2,7 @@
 
 - WBS: XXIX.1.1
 - 작업명: crate graph 검사기가 target·build·dev 의존 표와 `tools/stellar-*` manifest를 읽고 ADR-0005 §8 전이 도달 금지 규칙을 적용
-- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 검토: `FORBIDDEN_REACH`에 ADR-0005 §8의 `stellar-runtime` → mcp-core 전이 도달 금지 규칙이 없습니다(아래 "검토 보완" 절). 문서 기록: 남은 문서 절을 2026-11-23 plan-revision이 `docs/architecture/crate-dependency-graph.md`에 반영했습니다(아래 "문서 반영" 절). 재판정 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 검사기 구현과 검증은 끝났으나, 작업 지시의 "crate 의존 그래프 문서도 함께 갱신" 부분(`docs/architecture/crate-dependency-graph.md`)은 이 lane의 수정 허용 경로 밖이라 반영하지 못했습니다. 반영할 문안은 아래 "남은 위험 / 한계"에 있습니다.
+- 상태: 완료 (`[x]`) — 2026-11-23 batch2 통합에서 `FORBIDDEN_REACH`에 ADR-0005 §8의 `stellar-runtime` → `stellar-mcp-core` 전이 도달 금지 규칙과 위반 fixture를 더하고 의존 그래프 문서 표에 그 행을 넣었습니다(아래 "통합 보완" 절). 이전 기록: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 검토: `FORBIDDEN_REACH`에 ADR-0005 §8의 `stellar-runtime` → mcp-core 전이 도달 금지 규칙이 없습니다(아래 "검토 보완" 절). 문서 기록: 남은 문서 절을 2026-11-23 plan-revision이 `docs/architecture/crate-dependency-graph.md`에 반영했습니다(아래 "문서 반영" 절). 재판정 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 검사기 구현과 검증은 끝났으나, 작업 지시의 "crate 의존 그래프 문서도 함께 갱신" 부분(`docs/architecture/crate-dependency-graph.md`)은 이 lane의 수정 허용 경로 밖이라 반영하지 못했습니다. 반영할 문안은 아래 "남은 위험 / 한계"에 있습니다.
 - 선행: 없음
 
 ## 필수 실행 환경
@@ -115,3 +115,10 @@
 - 지금 상태: `cargo tree -p stellar-runtime -e normal,build,dev`에 `stellar-mcp-core`가 없어 현재 위반은 없습니다. runtime 허용 의존을 넓히는 XXIX.3.1 전에 막아야 하는 규칙입니다.
 - `[x]` 조건: `FORBIDDEN_REACH`에 `stellar-runtime` → `stellar-mcp-core` 규칙과 위반 fixture를 더하고, 문서의 "전이 도달 금지" 절 표에 그 행을 넣습니다. 이 검토는 문서만 고칠 수 있어 코드는 바꾸지 않았습니다.
 - 영향: 선행 XXIX.1.1이 `[x]`가 아니므로 XIX.9.1은 `[!]`로 되돌렸습니다(계획 1.2 규칙 4).
+
+## 통합 보완 (2026-11-23)
+
+- `tools/xtask/src/crate_graph/reach.rs`: `ReachBan { from: "stellar-runtime", never_reach: &["stellar-mcp-core"] }`를 더했습니다.
+- 같은 파일 `bans_cover_the_adr_0005_section_8_columns` test에 runtime → scene → mcp-core 경로가 `forbidden-reach`로 거부되는 fixture를 더했습니다.
+- `docs/architecture/crate-dependency-graph.md` 전이 도달 금지 표에 `stellar-runtime` 행을 넣고 "아직 검사되지 않음" 주석을 지웠습니다.
+- 검증: `cargo test -p xtask --locked --lib crate_graph` 45 passed, `cargo xtask validate-crate-graph` exit 0(지금 workspace에서 runtime은 mcp-core에 도달하지 않음).

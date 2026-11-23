@@ -158,10 +158,9 @@ ADR-0005 §8 crate 배치 표의 "전이적으로도 도달 금지" 열입니다
 | `stellar-agent-protocol` | commands, document, ops, agent-host |
 | `stellar-mcp` | agent-host, ffi |
 | `stellar-agent-host` | document, commands, history, storage, ops |
+| `stellar-runtime` | mcp-core |
 
 - `stellar-ffi`는 이 열 대신 타입 변환 금지 inventory로 보완하므로 규칙이 없습니다.
-- ADR-0005 §8 표의 `stellar-runtime` 행(전이적으로도 도달 금지: mcp-core)은 아직 `FORBIDDEN_REACH`에 없어 검사되지 않습니다.
-  지금 runtime은 mcp-core에 도달하지 않습니다. 이 규칙과 위반 fixture를 더하는 일은 XXIX.1.1의 남은 범위입니다(2026-11-23).
 - `stellar-mcp` 행은 ADR-0005 §8 표에 행이 없고, XXIX.1.1 검사기가 실행 파일 package(`tools/stellar-mcp`)에 따로 둔 규칙입니다.
 
 ## 규칙

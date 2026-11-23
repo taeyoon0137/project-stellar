@@ -69,6 +69,10 @@ pub const FORBIDDEN_REACH: &[ReachBan] = &[
         never_reach: &["stellar-agent-host", "stellar-ffi"],
     },
     ReachBan {
+        from: "stellar-runtime",
+        never_reach: &["stellar-mcp-core"],
+    },
+    ReachBan {
         from: "stellar-agent-host",
         never_reach: &[
             "stellar-document",
@@ -473,6 +477,16 @@ stellar-project = { path = "../project" }
                 assert!(ban.never_reach.contains(target), "{from} -> {target}");
             }
         }
+        // runtime(ADR-0005 §8 runtime 행)은 다른 crate를 거쳐서도 mcp-core에 닿으면 안 됩니다.
+        let edges = [
+            edge("stellar-runtime", "stellar-scene", DepKind::Normal),
+            edge("stellar-scene", "stellar-mcp-core", DepKind::Normal),
+        ];
+        let reach = check_reach(FORBIDDEN_REACH, &edges);
+        assert_eq!(codes(&reach), ["forbidden-reach"]);
+        assert!(reach[0]
+            .message
+            .contains("stellar-runtime -> stellar-scene -> stellar-mcp-core"));
         // mcp-core가 생기기 전이라도 diagnostics를 거친 전이 도달은 거부됩니다.
         for from in ["stellar-ops", "stellar-cli"] {
             let edges = [
