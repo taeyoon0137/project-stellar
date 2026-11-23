@@ -310,12 +310,10 @@ impl LayoutSource for DocumentSource<'_> {
     }
 
     fn children(&self, key: &StableId) -> Result<Vec<StableId>, LayoutSourceError> {
-        Ok(match self.payload(*key)? {
-            NodePayload::Frame(frame) if frame.layout_mode.is_none() => {
-                self.model.children_in_order(*key)
-            }
-            NodePayload::Fragment(_) => self.model.children_in_order(*key),
-            _ => Vec::new(),
+        Ok(if lays_out_children(self.payload(*key)?) {
+            self.model.children_in_order(*key)
+        } else {
+            Vec::new()
         })
     }
 
@@ -348,6 +346,8 @@ pub struct DocumentLayout {
     /// 입력에 쓴 View Variant 표시 patch.
     visibility: HashMap<StableId, bool>,
     last: UpdateStats,
+    /// 전체 다시 계산 횟수.
+    rebuilds: u64,
 }
 
 impl PartialEq for DocumentLayout {
@@ -374,6 +374,7 @@ impl Default for DocumentLayout {
             fragment_hidden: HashSet::new(),
             visibility: HashMap::new(),
             last: UpdateStats::default(),
+            rebuilds: 0,
         }
     }
 }
@@ -385,14 +386,28 @@ fn measurer<'h>(hook: Option<&'h dyn TextLayoutHook>) -> Box<dyn ContentMeasurer
     }
 }
 
-/// `id`가 View root subtree에 있는지.
-fn in_subtree(model: &DocumentModel, root: StableId, id: StableId) -> bool {
+/// 자식을 layout 입력에 넣는 node인지: 옛 `layout_mode`가 없는 Frame과 Fragment.
+fn lays_out_children(payload: &NodePayload) -> bool {
+    match payload {
+        NodePayload::Frame(frame) => frame.layout_mode.is_none(),
+        NodePayload::Fragment(_) => true,
+        _ => false,
+    }
+}
+
+/// `id`가 layout 입력 tree에 있는지: View root subtree이고 조상이 모두 자식을 layout에 넣는 node입니다.
+fn in_layout_tree(model: &DocumentModel, root: StableId, id: StableId) -> bool {
     let mut current = Some(id);
     while let Some(node) = current {
         if node == root {
             return true;
         }
         current = parent_of(model, node);
+        if let Some(parent) = current {
+            if !model.payload(parent).is_some_and(lays_out_children) {
+                return false;
+            }
+        }
     }
     false
 }
@@ -524,6 +539,11 @@ impl DocumentLayout {
         self.boxes.get(&id).copied()
     }
 
+    /// 증분 갱신 대신 전체를 다시 계산한 횟수(세트·측정 hook 변경, 증분 실패 복구). 진단용입니다.
+    pub const fn full_rebuilds(&self) -> u64 {
+        self.rebuilds
+    }
+
     /// 마지막 계산의 집계.
     pub const fn last_stats(&self) -> UpdateStats {
         self.last
@@ -617,7 +637,9 @@ impl DocumentLayout {
                 moved.insert(*id);
             }
         }
+        let rebuilds = self.rebuilds + 1;
         *self = next;
+        self.rebuilds = rebuilds;
         moved
     }
 
@@ -659,7 +681,7 @@ impl DocumentLayout {
         let mut build: BTreeSet<StableId> = BTreeSet::new();
         for id in &dirty {
             let id = *id;
-            if removed.contains(&id) || !in_subtree(model, root, id) {
+            if removed.contains(&id) || !in_layout_tree(model, root, id) {
                 if let Some(parent) = self.parent.get(&id) {
                     hosts.insert(*parent);
                 }
@@ -707,7 +729,7 @@ impl DocumentLayout {
                 hosts.insert(*parent);
             }
         }
-        hosts.retain(|h| model.payload(*h).is_some() && in_subtree(model, root, *h));
+        hosts.retain(|h| model.payload(*h).is_some() && in_layout_tree(model, root, *h));
         let set = self.set.clone().ok_or(LayoutError::LayoutUnavailable)?;
         let mut sizes: HashMap<StableId, Size2> = HashMap::new();
         let empty_sizes: HashMap<StableId, Size2> = HashMap::new();
@@ -773,7 +795,7 @@ impl DocumentLayout {
             }
             flattened.insert(id, flat);
         }
-        build.retain(|id| model.payload(*id).is_some() && in_subtree(model, root, *id));
+        build.retain(|id| model.payload(*id).is_some() && in_layout_tree(model, root, *id));
         if inputs.text_measure.is_none() {
             for id in &build {
                 if matches!(model.payload(*id), Some(NodePayload::Text(_))) {
@@ -846,14 +868,14 @@ impl DocumentLayout {
             let now: HashSet<StableId> = flat.iter().map(|c| c.0).collect();
             if let Some(old) = session.node(*host) {
                 for child in &old.children {
-                    if !now.contains(&child.id) && !in_subtree(model, root, child.id) {
+                    if !now.contains(&child.id) && !in_layout_tree(model, root, child.id) {
                         gone.push(child.id);
                     }
                 }
             }
         }
         for id in &removed {
-            if session.node(*id).is_some() && !in_subtree(model, root, *id) {
+            if session.node(*id).is_some() && !in_layout_tree(model, root, *id) {
                 gone.push(*id);
             }
         }

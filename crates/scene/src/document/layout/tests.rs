@@ -322,6 +322,7 @@ fn width_change_moves_following_siblings_through_incremental_layout_and_scene() 
     // 증분 layout은 컨테이너 안쪽만 다시 배치했습니다.
     let stats = built.layout().last_stats();
     assert_eq!(stats.full_layouts, 0);
+    assert_eq!(built.layout().full_rebuilds(), 0);
     // container longhand(gap) 변경은 모든 자식을 옮깁니다.
     let edits = apply_and_compare(
         &mut state,
@@ -342,6 +343,44 @@ fn width_change_moves_following_siblings_through_incremental_layout_and_scene() 
         built.layout().rule(state.model(), sid(23)),
         PlacementRule::Stored
     );
+}
+
+#[test]
+fn edits_under_a_legacy_layout_frame_stay_incremental() {
+    // 옛 layout 정의 참조 Frame(13)의 자식(33)은 layout 입력에 없습니다. 그 자식 편집은 layout을 바꾸지 않고, 증분
+    // 갱신이 실패해 전체 다시 계산으로 가지도 않습니다.
+    let mut model = flex_model();
+    let mut legacy = match frame(50., 50., 600., 0.) {
+        NodePayload::Frame(frame) => frame,
+        _ => unreachable!(),
+    };
+    legacy.layout_mode = Some(sid(99));
+    model
+        .insert_node(node(13, Some(10), 0x30, NodePayload::Frame(legacy)))
+        .unwrap();
+    model
+        .insert_node(node(33, Some(13), 0x10, frame(10., 10., 0., 0.)))
+        .unwrap();
+    let mut state = DocumentState::new(model);
+    let mut built =
+        document_scene_source(state.model(), sid(10), SceneSourceOptions::default()).unwrap();
+    assert!(built.layout().session().unwrap().node(sid(33)).is_none());
+    let (mut scene, _) =
+        IncrementalScene::build(built.source.clone(), state.revision(), &clock()).unwrap();
+    apply_and_compare(
+        &mut state,
+        &mut built,
+        &mut scene,
+        Command::SetProperty(SetProperty {
+            node: sid(33),
+            key: frame_keys::WIDTH,
+            value: PropertyValue::NonNegative(
+                stellar_core_types::value::FiniteF32::new(20.0).unwrap(),
+            ),
+        }),
+    );
+    assert_eq!(built.layout().full_rebuilds(), 0);
+    assert!(built.layout().session().unwrap().node(sid(33)).is_none());
 }
 
 #[test]
@@ -420,6 +459,7 @@ fn structure_and_visibility_edits_keep_incremental_layout_equal_to_a_full_rebuil
     );
     assert_eq!(transform_of(&built, 31), translate(5., 0.));
     assert_eq!(transform_of(&built, 22), translate(35., 0.));
+    assert_eq!(built.layout().full_rebuilds(), 0);
 }
 
 #[test]
