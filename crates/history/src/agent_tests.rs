@@ -1,10 +1,14 @@
 //! 에이전트 작업 그룹·되돌리기 history test (XIX.6.2, XIX.6.4, XIX.6.8).
 
+use std::collections::BTreeSet;
+
 use super::*;
-use crate::history::test_fixtures::{sid, small_state};
+use crate::history::test_fixtures::{sid, small_state, tx};
 use stellar_commands::agent_batch::{AgentBatchId, AgentBatchRecord};
+use stellar_commands::agent_revert::plan_revert;
 use stellar_commands::command::Command;
 use stellar_commands::id::{AgentProvenance, CommandId, CommandOrigin, WindowSessionId};
+use stellar_commands::lock::lease::{Lease, LeaseId, SubtreeLock};
 use stellar_commands::request::CommandRequest;
 
 const LEASE: u64 = 900;
@@ -99,4 +103,77 @@ fn interrupted_group_is_labelled() {
     let entry = &window.history().entries()[0];
     assert_eq!(labels.action_name(entry), "에이전트 편집(중단됨)");
     assert_eq!(name(&doc, 11), "a", "적용 batch 유지");
+}
+
+#[test]
+fn revert_entry_is_undoable_and_reapplies_agent_change() {
+    let mut doc = small_state();
+    let mut window = window();
+    let mut labels = AgentEntryLabels::new();
+    let batch = agent_batch(&mut doc, 1, vec![Command::rename_node(sid(11), "a")]);
+    let plan = plan_revert(&doc, &[&batch], &BTreeSet::new()).unwrap();
+    let transaction = plan
+        .transaction(CommandId::from_stable_id(sid(3000)))
+        .unwrap();
+    let applied = WindowAgentHistory {
+        window: &mut window,
+        doc: &mut doc,
+        labels: &mut labels,
+    }
+    .apply_revert(&transaction, &LeaseTable::new())
+    .unwrap();
+    assert_eq!(name(&doc, 11), "n11");
+    assert!(!applied.changes.is_empty());
+    let entry = &window.history().entries()[0];
+    assert_eq!(entry.origin, CommandOrigin::User);
+    assert_eq!(labels.action_name(entry), "에이전트 변경 되돌리기");
+    window.undo(&mut doc).unwrap().unwrap();
+    assert_eq!(name(&doc, 11), "a", "되돌리기 Undo 후 재적용 일치");
+    window.redo(&mut doc).unwrap().unwrap();
+    assert_eq!(name(&doc, 11), "n11");
+}
+
+#[test]
+fn revert_overlapping_other_lease_or_stale_is_rejected_without_effect() {
+    let mut doc = small_state();
+    let mut window = window();
+    let mut labels = AgentEntryLabels::new();
+    let batch = agent_batch(&mut doc, 1, vec![Command::rename_node(sid(13), "a")]);
+    let plan = plan_revert(&doc, &[&batch], &BTreeSet::new()).unwrap();
+    let transaction = plan
+        .transaction(CommandId::from_stable_id(sid(3000)))
+        .unwrap();
+    let mut table = LeaseTable::new();
+    table
+        .insert(Lease {
+            id: LeaseId(sid(901)),
+            subtrees: vec![SubtreeLock::capture(doc.model(), sid(11)).unwrap()],
+            externals: Vec::new(),
+        })
+        .unwrap();
+    let revision = doc.revision();
+    let error = WindowAgentHistory {
+        window: &mut window,
+        doc: &mut doc,
+        labels: &mut labels,
+    }
+    .apply_revert(&transaction, &table)
+    .unwrap_err();
+    assert!(matches!(error, AgentSinkError::Lease(_)), "{error:?}");
+    assert_eq!(doc.revision(), revision);
+    assert_eq!(name(&doc, 13), "a");
+    assert!(window.history().is_empty());
+    assert!(labels.is_empty());
+
+    let later = tx(&doc, 50, Command::rename_node(sid(12), "x"));
+    window.record_document(&mut doc, &later, None).unwrap();
+    let error = WindowAgentHistory {
+        window: &mut window,
+        doc: &mut doc,
+        labels: &mut labels,
+    }
+    .apply_revert(&transaction, &LeaseTable::new())
+    .unwrap_err();
+    assert_eq!(error, AgentSinkError::Stale);
+    assert_eq!(window.history().len(), 1);
 }

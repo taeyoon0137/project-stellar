@@ -83,6 +83,9 @@ pub mod style_defaults;
 /// 에이전트 승인 batch 기록: 역 transaction 보존과 값 지문 (XIX.6.1, ADR-0100).
 pub mod agent_batch;
 
+/// 에이전트 변경 되돌리기 계획과 충돌 판정 (XIX.6.8, XIX.6.9, ADR-0100).
+pub mod agent_revert;
+
 /// 에이전트 작업 그룹과 창 history 연결 지점 (XIX.6.2, ADR-0100).
 pub mod agent_sink;
 

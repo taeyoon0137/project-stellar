@@ -43,6 +43,7 @@ use stellar_ops::commands::transaction::CommandTransaction;
 
 use crate::agent_protocol::permission::Permission;
 use crate::attached::edit::{apply_approved, AttachedEditError};
+use crate::attached::revert::RevertFlowError;
 use crate::lease::{AgentEditLeases, LeaseServiceError};
 use crate::permission::{
     AgentSessionId, Confirmation, ConnectionApproval, PermissionKey, PermissionStore, RequestId,
@@ -148,6 +149,8 @@ pub enum SessionError {
     History(AgentSinkError),
     /// lease 해제 실패.
     Lease(LeaseServiceError),
+    /// 되돌리기 미리보기 실패.
+    Revert(RevertFlowError),
 }
 
 impl fmt::Display for SessionError {
@@ -168,6 +171,7 @@ impl fmt::Display for SessionError {
             SessionError::Provenance(e) => write!(f, "{e}"),
             SessionError::History(e) => write!(f, "history 확정 실패: {e}"),
             SessionError::Lease(e) => write!(f, "{e}"),
+            SessionError::Revert(e) => write!(f, "{e}"),
         }
     }
 }

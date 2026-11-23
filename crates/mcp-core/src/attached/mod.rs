@@ -15,3 +15,6 @@
 
 /// proposal 해석, 승인 전 미리보기, 승인된 적용.
 pub mod edit;
+
+/// 에이전트 변경 되돌리기 미리보기와 적용 (XIX.6.8, XIX.6.9, ADR-0100).
+pub mod revert;
