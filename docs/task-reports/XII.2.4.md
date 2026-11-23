@@ -4,7 +4,7 @@
 
 - WBS: XII.2.4
 - 작업명: 같은 project path 여러 창의 독립 base generation·memory model
-- 상태: 완료 (`[x]`) — macOS 기준. Windows 판정은 ADR-0006을 따릅니다. 원장 판정은 통합 때 `generate-ledger`로 정합니다.
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록(ledger-refresh): 행 지시·검증 열을 코드와 테스트로 확인했고 선행이 모두 `[x]`입니다. 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 원장이 근거 커밋을 찾지 못했습니다(window-session-stale lane). 선행 XII.2.2만 남긴 계획 개정(ADR-0006)으로 Windows 행(XII.2.3)은 선행이 아닙니다. 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 완료 (`[x]`) — macOS 기준. Windows 판정은 ADR-0006을 따릅니다. 원장 판정은 통합 때 `generate-ledger`로 정합니다.
 - 선행: XII.2.2, XII.2.3 — XII.2.3(Windows)은 ADR-0006에 따라 빼고 macOS 기준으로 진행합니다(ADR-0083 결정 5).
 - 결정: [ADR-0083](../adr/ADR-0083-window-session-stale-and-external-sync.md)
 - lane: `window-session-stale`
@@ -45,3 +45,10 @@
 ## 남은 위험
 
 - Windows 창 세션 판정은 하지 않았습니다.
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(XII.2.4)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `5e1edbf4` Task(XII.2.1): 창별 독립 문서와 이력 세션 선별 통합
+- `75f2b026` Feat: 창 session의 stale 두 선택 실행과 외부 변경 command 반영 추가 (XII.7.1·XII.7.5·XII.7.6·UX.4.1)
