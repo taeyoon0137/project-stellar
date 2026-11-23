@@ -202,6 +202,65 @@ fn every_context_and_motion_item_has_a_rule_for_every_profile_kind() {
         subjects.len(),
         "항목마다 행 하나"
     );
+    // dialect 열(SwiftUI·AppKit·Compose)도 모든 항목에 있고, SwiftUI·Compose는 Apple·Android 열 그대로입니다.
+    use super::behavior::dialect_entry;
+    use super::dialect::Dialect;
+    for subject in &subjects {
+        for dialect in Dialect::ALL {
+            let entry = dialect_entry(*subject, dialect).expect("dialect 열");
+            if entry.status != CapabilityStatus::Native {
+                assert!(
+                    entry.diagnostic.is_some(),
+                    "{} {}",
+                    subject.name(),
+                    dialect.name()
+                );
+            }
+        }
+        assert_eq!(
+            dialect_entry(*subject, Dialect::SwiftUi),
+            behavior_entry(*subject, TargetProfileKind::Apple)
+        );
+        assert_eq!(
+            dialect_entry(*subject, Dialect::Compose),
+            behavior_entry(*subject, TargetProfileKind::Android)
+        );
+    }
+}
+
+#[test]
+fn adapters_follow_the_context_rules_of_the_matrix() {
+    // ADR-0121 결정 4: Compose local 선택 규칙과 AppKit Environment 부재는 matrix의 Context 규칙과 같습니다.
+    use super::behavior::{dialect_entry, BehaviorSubject, ContextFeature};
+    use super::dialect::Dialect;
+    use crate::android::context::{local_kind, LocalKind, ValueChange};
+    let rule =
+        |feature, dialect| dialect_entry(BehaviorSubject::Context(feature), dialect).expect("규칙");
+    let fixed = rule(ContextFeature::ValueFixed, Dialect::Compose);
+    let changing = rule(ContextFeature::ValueChanging, Dialect::Compose);
+    assert_eq!(local_kind([ValueChange::Fixed]), LocalKind::Static);
+    assert!(fixed.template.starts_with(LocalKind::Static.function()));
+    assert_eq!(
+        local_kind([ValueChange::Fixed, ValueChange::Changing]),
+        LocalKind::Tracked
+    );
+    assert!(changing.template.starts_with(LocalKind::Tracked.function()));
+    // provision이 없으면 key default만 쓰여 바뀌지 않습니다.
+    assert_eq!(local_kind([]), LocalKind::Static);
+    // AppKit은 Environment가 없어 IR이 해석한 값을 주입합니다.
+    use crate::apple::context::{environment_key, environment_names, ContextLoweringError};
+    use crate::apple::AppleDialect;
+    let names = environment_names("Stellar", "theme");
+    assert_eq!(
+        environment_key(AppleDialect::AppKit, &names, &crate::fixture::text("a")),
+        Err(ContextLoweringError::NoEnvironment(AppleDialect::AppKit))
+    );
+    for feature in ContextFeature::ALL {
+        let appkit = rule(feature, Dialect::AppKit);
+        assert!(appkit.rule.starts_with("appkit-"), "{}", feature.name());
+        let swiftui = rule(feature, Dialect::SwiftUi);
+        assert!(!swiftui.rule.starts_with("appkit-"));
+    }
 }
 
 #[test]
@@ -224,6 +283,7 @@ fn context_and_motion_rules_have_input_output_and_diagnostic_fixture() {
         for (kind, lowering) in [
             ("web", &row.web),
             ("apple", &row.apple),
+            ("appkit", &row.appkit),
             ("android", &row.android),
         ] {
             let input = sample(row.subject);

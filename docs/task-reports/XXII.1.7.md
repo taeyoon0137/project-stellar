@@ -58,3 +58,25 @@
 
 - Apple·Android template은 lowering 규칙의 대상 표기입니다. 실제 source와 compile 검사는 XXII.3.4·XXII.4.3 몫입니다.
 - Android 추적형·비추적형 선택 규칙의 값 변경 빈도 판정은 XXII.4.3에서 고정합니다.
+
+## 후속 작업 (2026-11-23, `lane/codegen-registry`, ADR-0121 결정 4)
+
+- `BehaviorRow`에 AppKit dialect 열을 더했습니다(`behavior::dialect_entry`).
+  - AppKit에는 렌더 트리 전달 값이 없습니다. 그래서 Context는 IR이 해석한 값의 생성자 주입(`appkit-resolved-value`)입니다.
+  - 바뀌는 값은 Approximated(`context-manual-propagation`)입니다.
+- Context 항목 `context-value-fixed`·`context-value-changing`을 더했습니다.
+  - Compose 추적형·비추적형 CompositionLocal은 값 변경 빈도로 고릅니다. `android::context::local_kind`와 test로 대조합니다.
+  - 스타일 값·그 밖의 값 항목의 Compose 열은 `composition-local-by-change`로 바꿨습니다.
+- timing function 상태를 adapter 결정과 맞췄습니다.
+  - steps: SwiftUI Approximated(`CustomAnimation`), AppKit Native(discrete keyframe), Compose Native(계단 `Easing`).
+  - spring: 모든 dialect Approximated(ADR-0094 고정 step 적분과 다름). ADR-0107 결정 7의 spring Native를 대체합니다.
+- CSS 기반 속성 항목은 이 커밋에서 바꾸지 않았습니다(`matrix_css.txt` 불변 test 통과).
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-codegen matrix` | 통과(16) |
+
+- 검증 대응:
+  - 완전성: `every_context_and_motion_item_has_a_rule_for_every_profile_kind`. profile kind와 dialect 열 모두 봅니다.
+  - adapter 대조: `adapters_follow_the_context_rules_of_the_matrix`.
+  - fixture: `matrix_behavior.txt`(17항목 × 4열).

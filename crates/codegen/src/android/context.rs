@@ -6,6 +6,9 @@
 //!
 //! # local 선택 규칙
 //!
+//! 규칙은 XXII.1.7 matrix의 Context 값 변경 빈도 항목(`context-value-fixed`·`context-value-changing`)의 Compose 열과
+//! 같습니다(ADR-0121 결정 4, matrix test가 대조).
+//!
 //! key의 export scope 안 provision 값이 모두 [`ValueChange::Fixed`]이면 `staticCompositionLocalOf`(비추적형), 하나라도
 //! [`ValueChange::Changing`]이면 `compositionLocalOf`(추적형)입니다. provision이 없으면(key default만 쓰임) 값이 바뀌지
 //! 않으므로 비추적형입니다.
