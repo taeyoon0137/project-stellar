@@ -2343,12 +2343,17 @@ tasks:
     verified_at: "2026-11-14T16:55:05+09:00"
   - id: "V.10.4"
     title: "전체 영속 의미(모든 node·modifier·component·token·resource)를 텍스트화하고 문서·페이지·View·큰 Frame 파일 참조 및 이름/StableId 규칙을 완성합니다. 미지원 필드·레코드는 보존하거나 쓰기를 거부합니다. 기존 generation 변환은 전체 semantic snapshot이 같을 때만 성공합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "V.10.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.10.4.md"
+    commit: "bf168cec88e6b2b72f22a8652d16f5836fde396a"
     report: "docs/task-reports/V.10.4.md"
+    verified_at: "2026-11-24T05:55:03+09:00"
   - id: "V.10.5"
     title: "여러 의미 파일의 temp/fsync/rename 저장 journal과 앞/새 세대 한쪽 복구를 구현합니다. 삭제·rename·디스크 오류도 원본과 미저장 작업을 보호합니다."
     status: reported_done
@@ -4180,9 +4185,9 @@ tasks:
     evidence:
       - environment: DEV-MAC
         locator: "docs/task-reports/IX.2.6.md"
-    commit: "2ad96e19e9517eccac7585d6a96520d42515f925"
+    commit: "bbae51d18439085f45550cead191ee9b469dd974"
     report: "docs/task-reports/IX.2.6.md"
-    verified_at: "2026-11-14T01:09:48+09:00"
+    verified_at: "2026-11-24T05:20:14+09:00"
   - id: "IX.3.1"
     title: "`ComponentSlot`에 StableId, host FrameRef, allowed node kinds, cardinality, default content refs를 정의합니다."
     status: verified
@@ -4220,9 +4225,9 @@ tasks:
     evidence:
       - environment: DEV-MAC
         locator: "docs/task-reports/IX.3.3.md"
-    commit: "e661cc290675c4babc7c49fff3622df1bdea416a"
+    commit: "6fee1ce37aeb2c397e1a4411918ff5c2e33f33f0"
     report: "docs/task-reports/IX.3.3.md"
-    verified_at: "2026-11-14T01:09:48+09:00"
+    verified_at: "2026-11-24T05:18:09+09:00"
   - id: "IX.4.1"
     title: "component boundary를 넘는 binding은 각 경계의 ComponentProperty StableId chain을 필수로 갖게 합니다."
     status: verified
@@ -9742,12 +9747,18 @@ tasks:
     verified_at: "2026-11-23T23:53:35+09:00"
   - id: "XV.4.3"
     title: "lockfile가 존재하면 선언 selector가 바뀌지 않은 dependency는 network 없이 lock commit을 우선 사용합니다."
-    status: blocked
+    status: verified
     depends_on:
       - "XV.4.2"
       - "XV.3.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.4.3.md"
+    commit: "ff7f27a745dd546df25d0b6db821e23cf71bc3da"
+    report: "docs/task-reports/XV.4.3.md"
+    verified_at: "2026-11-24T05:40:05+09:00"
   - id: "XV.4.4"
     title: "lockfile content hash와 cache entry가 다르면 corruption으로 처리하고 자동으로 다른 commit을 선택하지 않습니다."
     status: verified
@@ -9800,9 +9811,9 @@ tasks:
     evidence:
       - environment: DEV-MAC
         locator: "docs/task-reports/XV.5.2.md"
-    commit: "96ba766896b267b53f85a76efbb7a3bc1746f864"
+    commit: "4a708d88e0d5aa7707ffb6ae3916127ae7fddfbb"
     report: "docs/task-reports/XV.5.2.md"
-    verified_at: "2026-11-14T11:44:51+09:00"
+    verified_at: "2026-11-24T05:37:13+09:00"
   - id: "XV.5.3"
     title: "library resource를 수정하는 command를 사용 project에서 거부합니다. instance 공개 override만 허용합니다."
     status: verified
@@ -9842,9 +9853,9 @@ tasks:
     evidence:
       - environment: DEV-MAC
         locator: "docs/task-reports/XV.5.5.md"
-    commit: "459eae10764e5b2c7e88aad708575ae3ea0c2e73"
+    commit: "eac2955d2f23550310f9a612857133db8dbc0cee"
     report: "docs/task-reports/XV.5.5.md"
-    verified_at: "2026-11-24T02:25:28+09:00"
+    verified_at: "2026-11-24T05:37:59+09:00"
   - id: "XV.6.1"
     title: "`stellar.yaml` local override는 특정 dependency logical name을 local Stellar project root로 매핑합니다."
     status: verified
@@ -9939,19 +9950,31 @@ tasks:
     verified_at: "2026-11-23T23:55:53+09:00"
   - id: "XV.7.4"
     title: "사용자 승인 후 lockfile과 in-memory library snapshot을 원자적으로 갱신합니다. 사용 project document override는 StableId로 재적용합니다."
-    status: blocked
+    status: verified
     depends_on:
       - "XV.7.3"
       - "XV.4.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.7.4.md"
+    commit: "10c0226556545ed543b181934f11f7207f1b0a6f"
+    report: "docs/task-reports/XV.7.4.md"
+    verified_at: "2026-11-24T05:40:30+09:00"
   - id: "XV.7.5"
     title: "update 실패 시 이전 lock/cache snapshot을 유지합니다."
-    status: blocked
+    status: verified
     depends_on:
       - "XV.7.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.7.5.md"
+    commit: "c1c1b75e7257646082b8c0a4b75ff0b141382c8f"
+    report: "docs/task-reports/XV.7.5.md"
+    verified_at: "2026-11-24T05:40:43+09:00"
   - id: "XV.8.1"
     title: "최근 사용 시각과 lockfile reference set을 기준으로 cache GC 후보를 계산합니다. 삭제 임계치는 config에 둡니다."
     status: blocked
@@ -11449,7 +11472,7 @@ tasks:
     report: "docs/task-reports/XIX.9.3.md"
   - id: "XIX.9.4"
     title: "attached backend를 구현합니다. backend 선택은 앱이 기록한 목록이 아니라 endpoint 실시간 검증(XIX.1.7) 결과로 하고 세션 시작 시 고정합니다. 결합 단위는 WindowSessionId입니다. 외부 클라이언트는 첫 연결 승인 화면에서 창을 고르고, 앱이 시작한 세션은 시작한 창에 묶습니다. 모든 쓰기는 앱의 lease·승인·DocumentThread 경로로 보냅니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIX.9.3"
       - "XIX.1.7"
@@ -11458,6 +11481,7 @@ tasks:
       - "XII.2.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.9.4.md"
   - id: "XIX.9.5"
     title: "tool 결과 종류를 Stellar 승인·lease 모델(XIX.3, XIX.4, 아키텍처 31.3~31.5)의 판정으로 정의합니다(ADR-0005 §3 결과 종류). 결과 범주는 XIX.3·XIX.4 판정을 그대로 나타내도록 이 작업에서 정해 보고서에 기록하며, 거부 사유는 Stellar 판정에서만 옵니다. 응답이 없거나 세션이 끝나면 대기 요청은 거부로 닫습니다. 오래 걸리는 호출과 클라이언트 취소는 MCP 명세를 따르고, 대기 상한은 실측과 MCP 명세로 정해 보고서에 기록합니다."
     status: not_started

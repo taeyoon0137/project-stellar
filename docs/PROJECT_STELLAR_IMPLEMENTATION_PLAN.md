@@ -49,6 +49,7 @@
 - **2026-11-23 — 엔진 작업 13개 통합 뒤 marker 반영:** 컴포넌트 문맥 값, 에이전트 변경 되돌리기, 에이전트 코어 연결, 렌더 색·효과 검사, PNG 내보내기, 캔버스 선택·변형 엔진, 웹·Apple·Android 코드 생성, 검증 색인과 캐시 예산, 진단과 동의, 열린 창 외부 변경 병합, 헤드리스 종단 시나리오 작업의 보고서 상태를 행 marker로 옮겼습니다. 보고서가 완료여도 선행이 `[x]`가 아니면 `[~]`로 두고 보고서 상태 줄에 이유를 적었습니다.
 - **2026-11-24 — 엔진 작업 10개 통합 뒤 marker 반영:** 에이전트 편집 crate, CLI·MCP·Git의 텍스트 원본 읽기·쓰기, Context 제품 경로, 기본값 세트 마무리, 렌더 효과 pass와 PNG 명령, 캔버스 편집 엔진 2, 텍스트·인스턴스 편집, 외부 라이브러리 마무리, 복구·Git 시나리오·터미널, 코드 생성 규칙 통합 작업의 보고서 상태를 행 marker로 옮겼습니다. 보고서가 완료여도 선행이 `[x]`가 아니면 `[~]`로 두고 보고서 상태 줄에 이유를 적었습니다.
 - **2026-11-24 — 엔진 작업 9개 통합 뒤 marker 반영:** chunk cache를 Git 밖으로 옮기기, Context 병합 경로 하나로, 에이전트 앱 연결 2, layout 결과로 그리기, 가이드·View 변수 저장, 외부 라이브러리 연결, 기본값 세트 저장 정리, 텍스트·인스턴스 편집 2, 그림자 품질 작업의 보고서 상태를 행 marker로 옮겼습니다. 보고서가 완료여도 선행이 `[x]`가 아니면 `[~]`로 두고 보고서 상태 줄에 이유를 적었습니다.
+- **2026-11-24 — 엔진 작업 8개 통합 뒤 marker 반영:** 옛 chunk 프로젝트 변환, 에이전트 lease 성능, 인스턴스 구조 무결성, layout 결과 그리기 2, 기본값 세트 revision, 렌더 효과 품질 3, 외부 라이브러리 명령, cache 성능과 GC 작업의 보고서 상태를 행 marker로 옮겼습니다. 보고서가 완료여도 선행이 `[x]`가 아니면 `[~]`로 두고 보고서 상태 줄에 이유를 적었습니다.
 
 ## 1. 원자적 구현·검증 실행 계획
 
@@ -547,7 +548,7 @@ V.10.8\~V.10.10은 2026-11-23에 text-source-codec lane이 임시 번호(TS-R2, 
 | V.10.1 | `[x]` | `crates/storage/src/{source_file,atomic_file,lib}.rs`에서 제한 handle 읽기·기대 hash 확인·단일 파일 원자 저장·권한 보존·파생 cache 교체를 제공합니다. 기존 정책을 유지하고 실패 시 원본을 보호합니다. | `[DEV-MAC]` 생성 충돌·stale hash·rename 전 fault·권한 보존·fsync 후 오류 의미 검사, storage 테스트와 전체 Rust 검증. | V.2.5 |
 | V.10.2 | `[x]` | `crates/project/src/document_io/{text_source,text_codec,mod}.rs`에서 단일 문서·페이지·View 및 Frame/Fragment 전체 속성·StableId의 제한 YAML 왕복과 선택적 chunk cache 재생성을 구현합니다. 미지원 의미를 거부하고 ADR-0059·문법·호환 절차를 갱신합니다. | `[DEV-MAC]` 실제 모델 편집→저장→재열기→Git diff, 미지원 필드·외부 변경 보존, 캐시 없음·손상·I/O 실패, 문서 예시 검증. | V.10.1, VI.10.3 |
 | V.10.3 | `[x]` | `crates/ops/src/{text_source,lib}.rs`와 `tools/stellar-cli/src/{text_source,cli,lib}.rs`에 명시적 export/check를 연결합니다. 기존 generation 전체 pointer 집합을 비교해 미지원 chunk를 거부합니다. 기본 열기·저장은 바꾸지 않습니다. | `[DEV-MAC]` 실제 CLI export→check→재export 거부, 기존 generation bytes 보존, unknown optional·미사용 chunk 거부, `cargo xtask check-core`. | V.10.2, XXIV.4.2, V.8.6 |
-| V.10.4 | `[~]` | 전체 영속 의미(모든 node·modifier·component·token·resource)를 텍스트화하고 문서·페이지·View·큰 Frame 파일 참조 및 이름/StableId 규칙을 완성합니다. 미지원 필드·레코드는 보존하거나 쓰기를 거부합니다. 기존 generation 변환은 전체 semantic snapshot이 같을 때만 성공합니다. | `[DEV-MAC]` 전체 golden 의미 왕복·미지원 입력 보존·독립 View 변경의 Git 병합; 공개 포맷 동결 전 검증. | V.10.3 |
+| V.10.4 | `[x]` | 전체 영속 의미(모든 node·modifier·component·token·resource)를 텍스트화하고 문서·페이지·View·큰 Frame 파일 참조 및 이름/StableId 규칙을 완성합니다. 미지원 필드·레코드는 보존하거나 쓰기를 거부합니다. 기존 generation 변환은 전체 semantic snapshot이 같을 때만 성공합니다. | `[DEV-MAC]` 전체 golden 의미 왕복·미지원 입력 보존·독립 View 변경의 Git 병합; 공개 포맷 동결 전 검증. | V.10.3 |
 | V.10.5 | `[~]` | 여러 의미 파일의 temp/fsync/rename 저장 journal과 앞/새 세대 한쪽 복구를 구현합니다. 삭제·rename·디스크 오류도 원본과 미저장 작업을 보호합니다. | `[DEV-MAC]` 단계별 종료·오류 fault matrix, 재열기에서 섞인 세대 0건. | V.10.4 |
 | V.10.6 | `[~]` | 텍스트 원본을 파일 감시·외부 변경·명령 저장 및 재열기 경로에 연결합니다. 열린 뒤 외부 편집이나 git pull이 있으면 dirty 편집을 보존하고 재로드·병합합니다. | `[DEV-MAC]` CLI dry-run→저장→재열기→Git diff, clean/dirty 외부 변경 및 cache 무효화 통합 시나리오. | V.10.5, XIII.3.1 |
 | V.10.7 | `[~]` | 검증된 전체 변환 경로에서만 기본 원본을 텍스트로 전환하고 기존 chunk 저장은 로컬 cache로 내립니다. 새 프로젝트를 만들 때의 첫 저장도 같은 텍스트 원본으로 전환합니다. source hash 기반 빠른 열기·부분 로딩과 cache GC를 연결합니다. | `[DEV-MAC]` 기존 프로젝트 전체 semantic 왕복·복구·외부 변경 모두 통과. `[REF-MAC]` 실제 통합 T0→T5 및 열기·저장 예산 실측 후 전환. | V.10.6 |
@@ -1691,7 +1692,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XV.4.1 | `[x]` | resolver graph를 `stellar.lock.yaml`의 resolved entries와 dependency paths로 변환합니다. | canonical lock golden. | IV.1.6, XV.2.6 |
 | XV.4.2 | `[x]` | 각 entry에 exact commit, cached content hash, library schema version, transitive dependencies를 기록합니다. | 누락 field validator 실패. | XV.3.4, XV.4.1 |
-| XV.4.3 | `[!]` | lockfile가 존재하면 선언 selector가 바뀌지 않은 dependency는 network 없이 lock commit을 우선 사용합니다. | offline cache fixture 통과. | XV.4.2, XV.3.3 |
+| XV.4.3 | `[x]` | lockfile가 존재하면 선언 selector가 바뀌지 않은 dependency는 network 없이 lock commit을 우선 사용합니다. | offline cache fixture 통과. | XV.4.2, XV.3.3 |
 | XV.4.4 | `[x]` | lockfile content hash와 cache entry가 다르면 corruption으로 처리하고 자동으로 다른 commit을 선택하지 않습니다. | tampered cache fixture 실패. | XV.4.2 |
 | XV.4.5 | `[x]` | resolve 성공 후 lockfile을 canonical write하고 autosave와 별도 project file transaction으로 기록합니다. 자동 commit하지 않습니다. | Git status에 lockfile만 예상대로 변경. | XV.4.1, IV.1.7 |
 
@@ -1722,8 +1723,8 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XV.7.1 | `[x]` | dependency update request가 selector 재해석 후 CurrentLibrarySnapshot과 CandidateLibrarySnapshot을 생성합니다. | current/candidate commit 정확. | XV.2.4, XV.5.1 |
 | XV.7.2 | `[x]` | library resource Semantic Diff를 ComponentDefinition·Property·Token 단위로 계산합니다. | resource 변경 fixture 정확. | XIV.3.7, XV.5.1 |
 | XV.7.3 | `[x]` | candidate library를 적용하기 전 사용 project의 external refs와 instance overrides를 검증합니다. | removed property override가 orphan diagnostic. | IX.4.6, XV.5.2 |
-| XV.7.4 | `[!]` | 사용자 승인 후 lockfile과 in-memory library snapshot을 원자적으로 갱신합니다. 사용 project document override는 StableId로 재적용합니다. | update 후 render/semantic snapshot expected. | XV.7.3, XV.4.5 |
-| XV.7.5 | `[!]` | update 실패 시 이전 lock/cache snapshot을 유지합니다. | network/cache/schema fault fixture 통과. | XV.7.4 |
+| XV.7.4 | `[x]` | 사용자 승인 후 lockfile과 in-memory library snapshot을 원자적으로 갱신합니다. 사용 project document override는 StableId로 재적용합니다. | update 후 render/semantic snapshot expected. | XV.7.3, XV.4.5 |
+| XV.7.5 | `[x]` | update 실패 시 이전 lock/cache snapshot을 유지합니다. | network/cache/schema fault fixture 통과. | XV.7.4 |
 
 ### XV.8 캐시 정리와 진단
 
@@ -2076,7 +2077,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XIX.9.1 | `[x]` | `stellar-local-ipc`(`crates/local-ipc`), `stellar-agent-protocol`(`crates/agent-protocol`), `stellar-mcp-core` library(`crates/mcp-core`)를 crate graph 정책과 crate 의존 그래프 문서에 등록합니다. agent-protocol과 local-ipc는 core-types만, mcp-core는 ops·agent-protocol·local-ipc·diagnostics만 의존합니다. `tools/stellar-mcp` package(실행 이름 `stellar-mcp`)의 정책 허용 의존에 `stellar-mcp-core`를 추가하고, 이 실행 파일이 library 진입점만 갖도록 XIX.1.1~XIX.1.3 구현을 이 경계로 옮깁니다. | `[DEV-MAC]` `cargo xtask validate-crate-graph` 통과, tools 진입점에 protocol 로직 0. | XIX.1.3, XXIV.4.2, XXIX.1.1 |
 | XIX.9.2 | `[~]` | resource 목록(XIX.2.1)과 tool 목록(XIX.2.3)을 `stellar-agent-protocol`의 Rust 정의에서 생성합니다. CommandTransaction 입력 schema는 xtask가 VII.1.6 closed enum에서 생성해 `schemas/`에 두고 agent-protocol은 그 산출물만 포함합니다. tool 이름은 MCP 명세 규칙을 따르고 읽기·파괴 계열에 annotation을 붙입니다. Stellar 사용 안내는 MCP 명세에 따른 instructions로 제공합니다. `schemas/`는 보호 경로이므로 같은 변경에 ADR을 갱신합니다. | `[DEV-MAC]` catalog golden 일치, 생성 schema와 enum variant 일치, agent-protocol의 commands 의존 0. | XIX.9.1, XIX.2.1, XIX.2.3, XIX.5.1 |
 | XIX.9.3 | `[~]` | `stellar-mcp-core`에 headless 읽기 backend를 구현합니다(2026-11-14 제품 소유자 결정). 실행 인자로 고정한 프로젝트 루트 하나만 다루고 tool 인자로 다른 경로를 지정할 수 없습니다. XVI.7 trust store에서 trusted가 확인되지 않으면 모든 tool을 거부합니다. 노출하는 것은 `stellar-ops`의 읽기·검증·dry-run tool뿐이고 쓰기 tool은 tools/list에 넣지 않습니다. | `[DEV-MAC]` untrusted fixture 전 tool 거부, 다른 경로 요청 거부, headless tools/list의 쓰기 tool 0, 실행 전후 프로젝트 파일 hash 동일. | XIX.9.2, XXIV.4.3, XVI.7.2, XIX.3.3 |
-| XIX.9.4 | `[ ]` | attached backend를 구현합니다. backend 선택은 앱이 기록한 목록이 아니라 endpoint 실시간 검증(XIX.1.7) 결과로 하고 세션 시작 시 고정합니다. 결합 단위는 WindowSessionId입니다. 외부 클라이언트는 첫 연결 승인 화면에서 창을 고르고, 앱이 시작한 세션은 시작한 창에 묶습니다. 모든 쓰기는 앱의 lease·승인·DocumentThread 경로로 보냅니다. | `[DEV-MAC]` backend 선택 matrix(앱 없음, 검증 실패, 검증 성공) fixture, 다중 창에서 결합 창 외 history 변화 0. | XIX.9.3, XIX.1.7, XIX.1.8, XIX.5.4, XII.2.1 |
+| XIX.9.4 | `[~]` | attached backend를 구현합니다. backend 선택은 앱이 기록한 목록이 아니라 endpoint 실시간 검증(XIX.1.7) 결과로 하고 세션 시작 시 고정합니다. 결합 단위는 WindowSessionId입니다. 외부 클라이언트는 첫 연결 승인 화면에서 창을 고르고, 앱이 시작한 세션은 시작한 창에 묶습니다. 모든 쓰기는 앱의 lease·승인·DocumentThread 경로로 보냅니다. | `[DEV-MAC]` backend 선택 matrix(앱 없음, 검증 실패, 검증 성공) fixture, 다중 창에서 결합 창 외 history 변화 0. | XIX.9.3, XIX.1.7, XIX.1.8, XIX.5.4, XII.2.1 |
 | XIX.9.5 | `[ ]` | tool 결과 종류를 Stellar 승인·lease 모델(XIX.3, XIX.4, 아키텍처 31.3~31.5)의 판정으로 정의합니다(ADR-0005 §3 결과 종류). 결과 범주는 XIX.3·XIX.4 판정을 그대로 나타내도록 이 작업에서 정해 보고서에 기록하며, 거부 사유는 Stellar 판정에서만 옵니다. 응답이 없거나 세션이 끝나면 대기 요청은 거부로 닫습니다. 오래 걸리는 호출과 클라이언트 취소는 MCP 명세를 따르고, 대기 상한은 실측과 MCP 명세로 정해 보고서에 기록합니다. | `[DEV-MAC]` 결과 종류 golden, 대기 상한 초과 fixture에서 거부, 세션 종료 후 대기 요청 0. | XIX.9.4, XIX.4.1 |
 | XIX.9.6 | `[~]` | 프로젝트에서 온 문자열을 tool 결과에 넣을 때 아키텍처 37.1 신뢰 경계에 따라 데이터로만 다루고 지시로 해석되지 않게 합니다(ADR-0005 §3). 표현 방식은 MCP 명세를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 지시 형태 문자열을 담은 프로젝트 fixture에서 프로젝트 문자열이 지시로 해석되지 않음(결과 golden 일치). | XIX.9.2 |
 | XIX.9.7 | `[ ]` | MCP tool과 IPC 메시지 중 XVI.7 프로젝트 신뢰 상태, XIX.3 권한 상태, 다른 세션의 lease, 에이전트 모드, 앱 설정, terminal profile, 에이전트 변경 출처 표시·되돌리기(XIX.6.7~XIX.6.10), 명령줄 설치 상태(XXIV.5)에 쓰기 수단을 가진 것이 없음을 검사하는 inventory test를 추가합니다. | `[DEV-MAC]` 변경 불가 대상 쓰기 경로 inventory 0. | XIX.9.2, XIX.3.4, XIX.6.10 |
