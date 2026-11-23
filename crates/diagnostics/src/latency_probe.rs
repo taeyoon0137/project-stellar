@@ -486,4 +486,51 @@ mod tests {
         assert_eq!(probe.counters().cancelled, 1);
         assert_eq!(probe.store().len(), 1);
     }
+
+    #[test]
+    fn gpu_time_stays_in_its_own_clock_domain() {
+        // 검증 기준(XVI.1.3): GPU timestamp는 CPU T0~T5와 더하지 않습니다. stage 시각은 probe 시계 값만 받습니다.
+        let clock = TestClock::default();
+        let mut probe = probe(&clock);
+        let first = probe.begin(dims());
+        let second = probe.begin(dims());
+        probe.coalesce(second, first).unwrap();
+        for stage in &Stage::ALL[1..] {
+            clock.advance(1_000_000);
+            probe.mark(first, *stage).unwrap();
+        }
+        // GPU clock domain 값(CPU 시각과 무관하게 큼).
+        probe
+            .set_gpu(
+                first,
+                GpuTiming {
+                    start_nanos: 90_000_000_000,
+                    end_nanos: 90_003_000_000,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            probe.set_gpu(
+                first,
+                GpuTiming {
+                    start_nanos: 2,
+                    end_nanos: 1
+                }
+            ),
+            Err(ProbeError::Trace(TraceError::GpuOutOfOrder))
+        );
+        let done = probe.finish(first).unwrap();
+        assert_eq!(done.logical_latency_nanos(), 5_000_000);
+        assert_eq!(done.gpu_nanos(), Some(3_000_000));
+        // 병합된 event도 GPU 시간을 따로 받고 latency에는 더하지 않습니다.
+        for trace in probe.store().iter() {
+            assert_eq!(trace.logical_latency_nanos(), 5_000_000);
+            assert_eq!(trace.gpu_nanos(), Some(3_000_000));
+            let spans: u64 = crate::interaction::StageSpan::ALL
+                .iter()
+                .map(|s| trace.span_nanos(*s))
+                .sum();
+            assert_eq!(spans, trace.logical_latency_nanos());
+        }
+    }
 }
