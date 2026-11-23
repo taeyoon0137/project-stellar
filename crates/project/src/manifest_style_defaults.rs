@@ -700,7 +700,23 @@ mod tests {
         );
         std::fs::remove_file(sets_dir.join("big.stellar.yaml")).unwrap();
 
-        // 깊이 상한: 구획 안에 mapping을 더 두면 값 scalar가 아니라 거부합니다.
+        // 깊이 상한(텍스트 원본과 같은 제한 loader): 중첩이 MAX_NESTING_DEPTH를 넘으면 YAML 단계에서 거부합니다.
+        let nested = |depth: usize| {
+            format!(
+                "extends: css\nframe: {}{}\n",
+                "[".repeat(depth - 1),
+                "]".repeat(depth - 1)
+            )
+        };
+        let too_deep = crate::yaml::loader::MAX_NESTING_DEPTH + 1;
+        std::fs::write(sets_dir.join("nested.stellar.yaml"), nested(too_deep)).unwrap();
+        match load_user_sets(dir.path()).unwrap_err() {
+            StyleDefaultsFileError::Yaml { error, .. } => {
+                assert_eq!(error.kind.code(), "nesting-too-deep")
+            }
+            other => panic!("깊이 상한 거부가 아님: {other:?}"),
+        }
+        // 한도 안의 깊이라도 구획 안에 mapping을 더 두면 값 scalar가 아니라 형식 오류입니다.
         std::fs::write(
             sets_dir.join("nested.stellar.yaml"),
             "extends: css\nframe:\n  display:\n    deeper: flex\n",
