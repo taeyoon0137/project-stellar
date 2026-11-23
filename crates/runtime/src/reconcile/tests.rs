@@ -213,3 +213,39 @@ fn missing_base_generation_is_not_merged() {
     assert_eq!(name_of(&session, 11), "n11", "문서 그대로");
     assert_eq!(name_of(&session, 12), "창 편집");
 }
+
+#[test]
+fn a_pending_style_defaults_choice_stays_unsaved_after_the_merge() {
+    // 활성 기본값 세트는 레코드 밖 거울이라 병합 비교에 들지 않습니다. 창이 세트만 바꾼 채 외부 writer가 문서를
+    // 바꾸면, 레코드 결과는 디스크와 같아도 세트 선택이 아직 쓰이지 않았으므로 미저장으로 남아야 합니다.
+    use stellar_commands::transaction::CommandTransaction;
+    use stellar_document::css::style_defaults::REACT_NATIVE;
+    let project = saved_project("reconcile-style");
+    let locks = TempDir::new("reconcile-style-locks");
+    let mut session = ProjectWindowSession::load(identity(project.path()), window(2)).unwrap();
+    let tx = CommandTransaction::new(command(9), stellar_commands::id::CommandOrigin::User)
+        .with_command(
+            session.revision(),
+            stellar_commands::command::Command::SetStyleDefaults(
+                stellar_commands::style_defaults::SetStyleDefaults {
+                    name: REACT_NATIVE.into(),
+                },
+            ),
+        );
+    session.apply(&tx, 0).unwrap();
+    cli_rename(&project, &locks, 11, "CLI 편집");
+    assert!(matches!(
+        session.sync_external(command(1)),
+        ExternalSync::Applied { .. }
+    ));
+    assert_eq!(name_of(&session, 11), "CLI 편집");
+    assert!(session.has_unsaved_changes(), "세트 선택은 아직 쓰지 않음");
+    let dir = locks.path().to_path_buf();
+    session.save_with_lock_dir(move || Ok(dir)).unwrap();
+    assert!(!session.has_unsaved_changes());
+    assert_eq!(
+        stellar_project::document_io::session::active_style_defaults(project.path()).unwrap(),
+        REACT_NATIVE
+    );
+    assert_eq!(disk_name(project.path(), 11), "CLI 편집");
+}

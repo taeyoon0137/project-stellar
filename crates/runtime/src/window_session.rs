@@ -2315,7 +2315,13 @@ impl ProjectWindowSession {
             crate::reconcile::WindowMerge::Merged {
                 records,
                 matches_disk,
-            } => self.adopt_external(disk, &records, command, matches_disk),
+            } => {
+                // 활성 기본값 세트는 레코드 밖 거울이라 병합 비교에 들지 않습니다. 창이 세트를 바꿔 아직 쓰지 않았으면
+                // 레코드가 디스크와 같아도 clean으로 표시하지 않고 미저장 편집으로 남겨 자동 저장이 `stellar.yaml`을
+                // 쓰게 합니다(그 선택을 저장 없이 잃지 않음).
+                let style_pending = self.model_of().style_defaults() != self.style_defaults_base;
+                self.adopt_external(disk, &records, command, matches_disk && !style_pending)
+            }
             blocked => self.hold_conflict(mark, writer, blocked),
         }
     }
