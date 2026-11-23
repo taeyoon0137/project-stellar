@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="90" viewBox="10 10 120 90">
+<defs>
+<clipPath id="n-0195c530-3acd-77bc-8000-000000001001-g">
+<path d="M12 0 L108 0 A12 12 0 0 1 120 12 L120 78 A12 12 0 0 1 108 90 L12 90 A12 12 0 0 1 0 78 L0 12 A12 12 0 0 1 12 0 Z"/>
+</clipPath>
+<clipPath id="n-0195c530-3acd-77bc-8000-000000001002-c1">
+<path d="M12 0 L108 0 A12 12 0 0 1 120 12 L120 78 A12 12 0 0 1 108 90 L12 90 A12 12 0 0 1 0 78 L0 12 A12 12 0 0 1 12 0 Z" transform="matrix(1 0 0 1 10 10)"/>
+</clipPath>
+<mask id="n-0195c530-3acd-77bc-8000-000000001002-m" maskUnits="userSpaceOnUse" x="-16" y="-16" width="72" height="62">
+<rect x="-16" y="-16" width="72" height="62" fill="rgb(100%,100%,100%)"/>
+<path d="M0 0 L40 0 L20 30 Z" fill="rgb(0%,0%,0%)"/>
+</mask>
+<clipPath id="n-0195c530-3acd-77bc-8000-000000001004-c2">
+<rect x="0" y="0" width="30" height="20" transform="matrix(1 0 0 1 70 20)"/>
+</clipPath>
+<mask id="n-0195c530-3acd-77bc-8000-000000001005-m" maskUnits="userSpaceOnUse" x="-24" y="-24" width="78" height="78">
+<rect x="-24" y="-24" width="78" height="78" fill="rgb(100%,100%,100%)"/>
+<path d="M0 0 L30 0 L30 30 L0 30 Z M10 10 L20 10 L20 20 L10 20 Z" fill="rgb(0%,0%,0%)" fill-rule="evenodd"/>
+</mask>
+</defs>
+<g id="n-0195c530-3acd-77bc-8000-000000001001">
+<path d="M12 0 L108 0 A12 12 0 0 1 120 12 L120 78 A12 12 0 0 1 108 90 L12 90 A12 12 0 0 1 0 78 L0 12 A12 12 0 0 1 12 0 Z" fill="rgb(95%,95%,90%)" transform="matrix(1 0 0 1 10 10)"/>
+<path d="M12 0 L108 0 A12 12 0 0 1 120 12 L120 78 A12 12 0 0 1 108 90 L12 90 A12 12 0 0 1 0 78 L0 12 A12 12 0 0 1 12 0 Z" fill="none" stroke="rgb(20%,20%,20%)" stroke-width="6" transform="matrix(1 0 0 1 10 10)" clip-path="url(#n-0195c530-3acd-77bc-8000-000000001001-g)"/>
+<g id="n-0195c530-3acd-77bc-8000-000000001002" clip-path="url(#n-0195c530-3acd-77bc-8000-000000001002-c1)">
+<path d="M0 0 L40 0 L20 30 Z" fill="rgb(100%,80%,0%)" transform="matrix(1 0 0 1 20 20)"/>
+<path d="M0 0 L40 0 L20 30 Z" fill="none" stroke="rgb(0%,0%,100%)" stroke-opacity="0.5" stroke-width="8" transform="matrix(1 0 0 1 20 20)" mask="url(#n-0195c530-3acd-77bc-8000-000000001002-m)"/>
+<path d="M0 0 L40 0 L20 30 Z" fill="none" stroke="rgb(0%,0%,0%)" stroke-width="1" transform="matrix(1 0 0 1 20 20)"/>
+</g>
+<g id="n-0195c530-3acd-77bc-8000-000000001003" clip-path="url(#n-0195c530-3acd-77bc-8000-000000001002-c1)" opacity="0.5">
+<rect x="0" y="0" width="30" height="20" fill="rgb(0%,60.000004%,0%)" transform="matrix(1 0 0 1 70 20)"/>
+<g id="n-0195c530-3acd-77bc-8000-000000001004" clip-path="url(#n-0195c530-3acd-77bc-8000-000000001004-c2)">
+<rect x="0" y="0" width="40" height="40" fill="rgb(80%,0%,0%)" fill-opacity="0.75" transform="matrix(1 0 0 1 80 25)"/>
+</g>
+</g>
+<g id="n-0195c530-3acd-77bc-8000-000000001005" clip-path="url(#n-0195c530-3acd-77bc-8000-000000001002-c1)">
+<path d="M0 0 L30 0 L30 30 L0 30 Z M10 10 L20 10 L20 20 L10 20 Z" fill="rgb(50%,0%,50%)" fill-rule="evenodd" transform="matrix(1 0 0 1 100 65)"/>
+<path d="M0 0 L30 0 L30 30 L0 30 Z M10 10 L20 10 L20 20 L10 20 Z" fill="none" stroke="rgb(0%,50%,50%)" stroke-width="4" transform="matrix(1 0 0 1 100 65)" mask="url(#n-0195c530-3acd-77bc-8000-000000001005-m)"/>
+<path d="M0 0 L30 0 L30 30 L0 30 Z M10 10 L20 10 L20 20 L10 20 Z" fill="none" stroke="rgb(0%,0%,0%)" stroke-width="12" transform="matrix(1 0 0 1 100 65)" mask="url(#n-0195c530-3acd-77bc-8000-000000001005-m)"/>
+</g>
+</g>
+</svg>

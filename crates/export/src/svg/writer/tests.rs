@@ -26,10 +26,22 @@ use crate::capture::{
     AssetRevision, EncodedImage, ExportAssetSource, FontRevision, ImageMedia, ResourcePins,
     SceneSource,
 };
+use crate::preflight::ConfirmedExport;
 use crate::request::{
     ExportBackground, ExportRequest, ExportScale, ExportSource, OutputPath, TargetProfileKey,
 };
 use crate::test_fixtures::{self as fx, Basic};
+use crate::text::NoText;
+
+/// 부분 래스터화 테스트 (XX.4.2).
+mod raster;
+/// 부분 래스터화 회귀 테스트 (XX.4.4).
+mod regression;
+/// 래스터 report 테스트 (XX.4.3).
+mod report;
+/// Text outline 테스트 (XX.3.2).
+mod text;
+mod vector;
 
 const GOLDEN: &str = include_str!("../../../tests/fixtures/basic_view_v1.svg");
 
@@ -74,12 +86,22 @@ fn capture(snapshot: SceneSnapshot, request: ExportRequest) -> ExportCapture {
     .unwrap()
 }
 
+/// writer 동작만 보는 테스트용 진행 허가(진단은 preflight 테스트가 검사합니다).
+fn confirmed(capture: &ExportCapture) -> ConfirmedExport {
+    ConfirmedExport::assume_confirmed(capture.clone())
+}
+
 fn svg_request() -> ExportRequest {
     fx::view_request(ExportFormat::Svg)
 }
 
 fn write(capture: &ExportCapture) -> Result<SvgDocument, SvgExportError> {
-    write_svg(capture, &assets(), &SvgWriteOptions::default())
+    write_svg(
+        &confirmed(capture),
+        &assets(),
+        &NoText,
+        &SvgWriteOptions::default(),
+    )
 }
 
 fn write_snapshot(snapshot: SceneSnapshot) -> Result<SvgDocument, SvgExportError> {
@@ -210,7 +232,13 @@ fn edits_during_export_do_not_change_the_document() {
         (fx::asset(1), AssetRevision(4)),
         EncodedImage::new(ImageMedia::Png, Arc::from(b"replaced".to_vec()), 60, 40).unwrap(),
     );
-    let after = write_svg(&pinned, &store, &SvgWriteOptions::default()).unwrap();
+    let after = write_svg(
+        &confirmed(&pinned),
+        &store,
+        &NoText,
+        &SvgWriteOptions::default(),
+    )
+    .unwrap();
     assert_eq!(after.as_bytes(), before.as_bytes());
     let fresh = write(&capture(edited, svg_request())).unwrap();
     assert_ne!(fresh.as_bytes(), before.as_bytes());
@@ -404,13 +432,6 @@ fn clip_must_extend_the_parent_clip() {
 
 #[test]
 fn unsupported_features_stop_with_typed_errors() {
-    let text = SceneNodeSpec {
-        content: SceneContent::Text(TextPrimitive {
-            layout: TextLayoutKey::from_bytes([1; 16]),
-            bounds: fx::rect(0.0, 0.0, 10.0, 10.0),
-        }),
-        ..rect_spec(1, 1, 0.0)
-    };
     let mut shadow = rect_spec(2, 1, 0.0);
     shadow.paint = PaintStackRef::new(PaintStack {
         shadows: vec![Shadow::new(
@@ -425,24 +446,9 @@ fn unsupported_features_stop_with_typed_errors() {
         blend: SceneBlendMode::Multiply,
         ..PaintStack::empty()
     });
-    let mut outside = rect_spec(4, 1, 0.0);
-    outside.paint = PaintStackRef::new(PaintStack {
-        layers: vec![PaintLayer::Stroke(
-            StrokeLayer::new(
-                Paint::Solid(fx::srgb(0.0, 0.0, 0.0, 1.0)),
-                1.0,
-                StrokeAlign::Outside,
-                StrokeCap::Butt,
-            )
-            .unwrap(),
-        )],
-        ..PaintStack::empty()
-    });
     let cases = [
-        (text, SvgFeature::TextContent),
         (shadow, SvgFeature::DropShadow),
         (blend, SvgFeature::BlendMode),
-        (outside, SvgFeature::OutsideStroke),
     ];
     for (spec, feature) in cases {
         let source = spec.source;
@@ -502,7 +508,12 @@ fn missing_assets_and_wrong_format_are_errors() {
     );
     let pinned = capture(fx::basic_snapshot(&Basic::default()), svg_request());
     assert!(matches!(
-        write_svg(&pinned, &other_revision, &SvgWriteOptions::default()),
+        write_svg(
+            &confirmed(&pinned),
+            &other_revision,
+            &NoText,
+            &SvgWriteOptions::default()
+        ),
         Err(SvgExportError::MissingImage { .. })
     ));
     let png = capture(
@@ -524,12 +535,16 @@ fn output_limit_is_enforced() {
     let exact = SvgWriteOptions {
         max_output_bytes: full.as_bytes().len(),
     };
-    assert_eq!(write_svg(&pinned, &assets(), &exact).unwrap(), full);
+    assert_eq!(
+        write_svg(&confirmed(&pinned), &assets(), &NoText, &exact).unwrap(),
+        full
+    );
     for limit in [0, 100, full.as_bytes().len() - 1] {
         assert_eq!(
             write_svg(
-                &pinned,
+                &confirmed(&pinned),
                 &assets(),
+                &NoText,
                 &SvgWriteOptions {
                     max_output_bytes: limit
                 }
@@ -546,8 +561,9 @@ fn output_limit_is_enforced() {
     );
     assert_eq!(
         write_svg(
-            &pinned,
+            &confirmed(&pinned),
             &huge,
+            &NoText,
             &SvgWriteOptions {
                 max_output_bytes: 1 << 20
             }

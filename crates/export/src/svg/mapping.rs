@@ -16,8 +16,9 @@
 //!
 //! - [`SvgSupport::Vector`]: SVG 요소·속성으로 기록합니다.
 //! - [`SvgSupport::Deferred`]: 후속 WBS row가 구현할 때까지 writer가 typed error로 거부합니다.
-//! - [`SvgSupport::Rasterize`]: SVG로 정확히 표현할 수 없어 부분 래스터화(XX.4) 대상입니다.
-//!   부분 래스터화가 구현될 때까지 writer는 거부합니다(조용히 빼거나 근사하지 않습니다).
+//! - [`SvgSupport::Rasterize`]: SVG로 정확히 표현할 수 없어 부분 래스터화(XX.4) 대상입니다. writer는 raster
+//!   경계 planner(XX.4.1)가 고른 최소 영역만 host rasterizer(XX.4.2)로 PNG를 받아 `<image>`로 넣습니다. host가
+//!   rasterizer를 주지 않으면 사전 진단(XX.1.3)이 형식 차단으로 거부합니다(조용히 빼거나 근사하지 않습니다).
 //! - [`SvgSupport::NotInScene`]: scene에 아직 해당 primitive가 없습니다. 대응 SVG 요소만 명시합니다.
 //!
 //! 알파 합성 색공간 차이(Stellar 렌더러는 선형 합성, 일반 SVG 렌더러는 sRGB 합성, 아키텍처 §10.3)는
@@ -305,9 +306,9 @@ pub const SVG_MAPPING: [SvgMapping; 34] = [
     ),
     row(
         SvgFeature::TextContent,
-        "Text: SceneContent::Text(TextLayoutKey)",
-        "glyph outline <path> — <text>·font 포함 없음",
-        SvgSupport::Deferred { row: "XX.3.2" },
+        "Text: SceneContent::Text(TextLayoutKey) → 고정 font revision glyph run·outline(ExportTextSource)",
+        "run마다 glyph outline <path d fill=run 색>(non-zero), paint layer는 모든 glyph를 이은 <path> — <text>·font 포함 없음",
+        V,
     ),
     row(
         SvgFeature::ImageContent,
@@ -396,8 +397,8 @@ pub const SVG_MAPPING: [SvgMapping; 34] = [
     row(
         SvgFeature::OutsideStroke,
         "StrokeAlign::Outside",
-        "stroke-width = 2×폭 + geometry 밖 <mask>",
-        SvgSupport::Deferred { row: "XX.3.4" },
+        "stroke-width = 2×폭 + geometry 밖 <mask maskUnits=userSpaceOnUse>(흰 영역 위 geometry 검정, XX.3.4)",
+        V,
     ),
     row(
         SvgFeature::RoundCap,
@@ -432,7 +433,7 @@ pub const SVG_MAPPING: [SvgMapping; 34] = [
     row(
         SvgFeature::BlendMode,
         "PaintStack::blend ≠ Normal(Blend modifier)",
-        "mix-blend-mode — 외부 backdrop 의존 범위 분석(XX.4.1) 후 래스터 경계 포함",
+        "SVG mix-blend-mode는 sRGB 공간에서 섞어 렌더러 선형 합성(XI.10.2)과 결과가 다름 — backdrop 의존 범위(XX.4.1)까지 래스터",
         SvgSupport::Rasterize { row: "XX.4.2" },
     ),
     row(
@@ -825,6 +826,7 @@ mod tests {
             SvgFeature::RoundedRectContent,
             SvgFeature::PathContent,
             SvgFeature::EvenOddFill,
+            SvgFeature::TextContent,
             SvgFeature::ImageContent,
             SvgFeature::ImageFitFill,
             SvgFeature::ImageFitContain,
@@ -834,6 +836,9 @@ mod tests {
             SvgFeature::SolidFill,
             SvgFeature::CenterStroke,
             SvgFeature::InsideStroke,
+            SvgFeature::OutsideStroke,
+            SvgFeature::GroupOpacity,
+            SvgFeature::TranslucentColor,
             SvgFeature::RectClip,
             SvgFeature::RoundedRectClip,
             SvgFeature::PathClip,
@@ -851,16 +856,8 @@ mod tests {
             non_vector,
             vec![
                 (
-                    SvgFeature::TextContent,
-                    SvgSupport::Deferred { row: "XX.3.2" }
-                ),
-                (
                     SvgFeature::ImageColorSpaceOverride,
                     SvgSupport::Rasterize { row: "XX.4.2" }
-                ),
-                (
-                    SvgFeature::OutsideStroke,
-                    SvgSupport::Deferred { row: "XX.3.4" }
                 ),
                 (
                     SvgFeature::DropShadow,
@@ -955,10 +952,8 @@ mod tests {
             bounds: fx::rect(0.0, 0.0, 1.0, 1.0),
         }));
         let text_features = features(text);
-        assert_eq!(
-            first_unsupported(&text_features),
-            Some(SvgFeature::TextContent)
-        );
+        assert_eq!(text_features, set(&[SvgFeature::TextContent]));
+        assert_eq!(first_unsupported(&text_features), None);
         assert_eq!(first_unsupported(&set(&[SvgFeature::RectContent])), None);
     }
 

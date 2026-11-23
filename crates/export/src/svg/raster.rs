@@ -317,6 +317,17 @@ impl PixelGrid {
         )
     }
 
+    /// pixel 상자가 덮는 world 상자 `[x, y, 너비, 높이]`(XX.4.2 `<image>` 배치). device pixel `p`의 world 좌표는
+    /// `내보내기 영역 원점 + p / scale`입니다.
+    pub fn world_rect(&self, pixels: &PixelRect) -> [f64; 4] {
+        [
+            self.origin_x + pixels.x0 as f64 / self.scale,
+            self.origin_y + pixels.y0 as f64 / self.scale,
+            pixels.width() as f64 / self.scale,
+            pixels.height() as f64 / self.scale,
+        ]
+    }
+
     fn in_canvas(&self, area: Option<PixelRect>) -> Option<PixelRect> {
         area.and_then(|a| a.intersection(&self.canvas))
     }

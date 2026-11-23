@@ -27,12 +27,15 @@ use stellar_core_types::reference::AssetRef;
 use stellar_core_types::revision::{DocumentRevision, SceneRevision};
 use stellar_scene::bounds::Aabb;
 use stellar_scene::handle::SnapshotHandle;
-use stellar_scene::node::{SceneNode, SceneResourceRef, Visibility};
+use stellar_scene::node::{SceneNode, SceneResourceRef, TextLayoutKey, Visibility};
 use stellar_scene::snapshot::SceneSemanticHash;
 use stellar_scene::visibility::clip_shape_world_bounds;
 use stellar_scene::SceneSnapshot;
 
 use crate::request::{ExportRequest, ExportSource, TargetProfileKey};
+use crate::text::{
+    ExportTextSource, GlyphOutline, GlyphOutlineError, GlyphOutlineKey, TextGlyphLayout,
+};
 
 /// font catalog revision(host가 발급하는 단조 번호).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -392,6 +395,24 @@ impl ExportCapture {
         asset: AssetRef,
     ) -> Option<EncodedImage> {
         source.encoded_image(asset, self.pins.assets)
+    }
+
+    /// text layout glyph run을 **고정한 font revision**으로 조회합니다(XX.3.2).
+    pub fn glyph_layout(
+        &self,
+        source: &dyn ExportTextSource,
+        layout: TextLayoutKey,
+    ) -> Option<Arc<TextGlyphLayout>> {
+        source.glyph_layout(layout, self.pins.fonts)
+    }
+
+    /// glyph outline을 **고정한 font revision**으로 조회합니다(XX.3.2).
+    pub fn glyph_outline(
+        &self,
+        source: &dyn ExportTextSource,
+        key: &GlyphOutlineKey,
+    ) -> Result<GlyphOutline, GlyphOutlineError> {
+        source.glyph_outline(key, self.pins.fonts)
     }
 }
 

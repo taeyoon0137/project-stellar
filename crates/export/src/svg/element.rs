@@ -7,9 +7,9 @@
 //! 이 모듈은 id를 만들지 않습니다. 호출자가 넘긴 id는 [`is_safe_id`]를 통과해야 하며, 아니면
 //! [`SvgValueError::UnsafeId`]입니다.
 
-use stellar_core_types::color::Color;
+use stellar_core_types::color::{Color, ColorSpace};
 use stellar_core_types::value::{Rect, Transform2D};
-use stellar_scene::bounds::Aabb;
+use stellar_scene::bounds::{path_control_bounds, Aabb};
 use stellar_scene::geometry::{FillRule, PathGeometry};
 use stellar_scene::node::{
     CornerRadii, ImageCrop, ImageFit, ImagePrimitive, ImageSampling, SceneContent,
@@ -35,7 +35,8 @@ pub enum SvgGeometry<'a> {
 }
 
 impl<'a> SvgGeometry<'a> {
-    /// content의 칠하기 기하. Text는 glyph outline(XX.3.2) 전이라 `None`, Image는 배치 상자입니다.
+    /// content의 칠하기 기하. Image는 배치 상자입니다. Text는 glyph outline이 text source에서 오므로
+    /// `None`이고, writer가 outline 기하([`crate::svg::text`])를 넘깁니다.
     pub fn of_content(content: &'a SceneContent) -> Option<SvgGeometry<'a>> {
         match content {
             SceneContent::Rect(rect) => Some(if rect.radii.is_zero() {
@@ -191,21 +192,33 @@ pub fn write_fill(
     Ok(())
 }
 
+/// stroke를 geometry 경계 한쪽으로 자르는 수단.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StrokeMask<'a> {
+    /// 자르지 않음(Center).
+    None,
+    /// 자기 기하 `<clipPath>` id(Inside, [`write_geometry_clip_def`]).
+    InsideClip(&'a str),
+    /// geometry 밖만 남기는 `<mask>` id(Outside, [`write_outside_mask_def`]).
+    OutsideMask(&'a str),
+}
+
 /// stroke layer 하나. 빈 path는 아무것도 쓰지 않습니다.
 ///
-/// Center는 `inside_clip`이 `None`이어야 합니다. Inside는 폭을 두 배로 그리고 자기 기하
-/// clip(`inside_clip`, [`write_geometry_clip_def`])으로 바깥 절반을 자릅니다. Outside는 mask가
-/// 필요해(XX.3.4) [`SvgValueError::Unrepresentable`]입니다.
+/// Center는 [`StrokeMask::None`]이어야 합니다. Inside는 폭을 두 배로 그리고 자기 기하 clip으로 바깥 절반을,
+/// Outside는 폭을 두 배로 그리고 geometry 밖 mask로 안쪽 절반을 자릅니다(XX.3.4). 정렬과 수단이 맞지 않으면
+/// [`SvgValueError::Unrepresentable`]입니다.
 pub fn write_stroke(
     out: &mut String,
     geometry: &SvgGeometry<'_>,
     transform: &Transform2D,
     stroke: &StrokeLayer,
-    inside_clip: Option<&str>,
+    mask: StrokeMask<'_>,
 ) -> Result<(), SvgValueError> {
-    let width = match (stroke.align(), inside_clip) {
-        (StrokeAlign::Center, None) => stroke.width(),
-        (StrokeAlign::Inside, Some(_)) => stroke.width() * 2.0,
+    let width = match (stroke.align(), mask) {
+        (StrokeAlign::Center, StrokeMask::None) => stroke.width(),
+        (StrokeAlign::Inside, StrokeMask::InsideClip(_))
+        | (StrokeAlign::Outside, StrokeMask::OutsideMask(_)) => stroke.width() * 2.0,
         _ => return Err(SvgValueError::Unrepresentable),
     };
     if geometry.is_empty_path() {
@@ -224,12 +237,73 @@ pub fn write_stroke(
         StrokeCap::Square => attr(&mut element, "stroke-linecap", "square"),
     }
     attr_transform(&mut element, transform)?;
-    if let Some(clip) = inside_clip {
-        attr_url(&mut element, "clip-path", clip)?;
+    match mask {
+        StrokeMask::None => {}
+        StrokeMask::InsideClip(clip) => attr_url(&mut element, "clip-path", clip)?,
+        StrokeMask::OutsideMask(id) => attr_url(&mut element, "mask", id)?,
     }
     element.push_str("/>\n");
     out.push_str(&element);
     Ok(())
+}
+
+/// geometry 기하의 node local 경계 상자(path는 control point 볼록 껍질 상자라 실제보다 넓을 수 있음).
+fn local_bounds(geometry: &SvgGeometry<'_>) -> Option<Aabb> {
+    match geometry {
+        SvgGeometry::Rect(rect) | SvgGeometry::RoundedRect(rect, _) => Some(Aabb::from_rect(*rect)),
+        SvgGeometry::Path(path, _) => path_control_bounds(path),
+    }
+}
+
+/// Outside stroke용 mask 영역 여유(stroke 폭 배수).
+///
+/// SVG stroke는 폭 `2w`로 그리므로 중심선에서 `w`까지 퍼지고, miter join(SVG 기본 limit 4)은 중심선에서
+/// `4 × 2w / 2 = 4w`까지 뻗습니다. 그래서 경계 상자를 `4w`만큼 넓히면 그린 stroke 전체가 mask 영역 안입니다.
+pub const OUTSIDE_MASK_MARGIN: f32 = 4.0;
+
+/// Outside stroke용 `<mask>`: 영역 전체 흰색 위에 geometry를 검은색(자기 채우기 규칙)으로 칠해 geometry 밖만
+/// 남깁니다. 좌표는 참조 요소의 user space(그 요소의 `transform` 적용 전, node local)입니다. 흰색·검은색의
+/// luminance는 색공간과 무관하게 1·0이라 mask 값은 정확합니다. 빈 path는 호출하지 않습니다.
+pub fn write_outside_mask_def(
+    out: &mut String,
+    id: &str,
+    geometry: &SvgGeometry<'_>,
+    stroke_width: f32,
+) -> Result<(), SvgValueError> {
+    let bounds = local_bounds(geometry)
+        .ok_or(SvgValueError::Unrepresentable)?
+        .expanded(stroke_width * OUTSIDE_MASK_MARGIN);
+    let region = [
+        bounds.min_x(),
+        bounds.min_y(),
+        bounds.width(),
+        bounds.height(),
+    ];
+    let mut element = String::from("<mask");
+    attr_id(&mut element, id)?;
+    attr(&mut element, "maskUnits", "userSpaceOnUse");
+    let mut rect = String::from("<rect");
+    for (name, value) in ["x", "y", "width", "height"].iter().zip(region) {
+        attr_number(&mut element, name, value)?;
+        attr_number(&mut rect, name, value)?;
+    }
+    element.push_str(">\n");
+    attr_color(&mut rect, "fill", "fill-opacity", mask_gray(1.0)?)?;
+    rect.push_str("/>\n");
+    element.push_str(&rect);
+    open_shape(&mut element, geometry)?;
+    attr_color(&mut element, "fill", "fill-opacity", mask_gray(0.0)?)?;
+    if geometry.is_even_odd() {
+        attr(&mut element, "fill-rule", "evenodd");
+    }
+    element.push_str("/>\n</mask>\n");
+    out.push_str(&element);
+    Ok(())
+}
+
+/// mask 회색조 값(sRGB 불투명). 입력이 항상 유효해 실패하지 않습니다.
+fn mask_gray(level: f32) -> Result<Color, SvgValueError> {
+    Color::new(ColorSpace::Srgb, level, level, level, 1.0).map_err(|_| SvgValueError::NonFinite)
 }
 
 fn write_clip_body(
@@ -319,6 +393,27 @@ pub fn write_background(out: &mut String, bounds: Aabb, color: Color) -> Result<
     attr_number(&mut element, "height", bounds.height())?;
     attr_color(&mut element, "fill", "fill-opacity", color)?;
     element.push_str("/>\n");
+    out.push_str(&element);
+    Ok(())
+}
+
+/// 래스터 경계 PNG(XX.4.2). `rect`는 영역 pixel 상자의 world 상자 `[x, y, 너비, 높이]`이고 PNG pixel 하나가 내보내기
+/// device pixel 하나에 대응하므로 비율을 바꾸지 않습니다.
+pub fn write_raster_image(
+    out: &mut String,
+    rect: [f32; 4],
+    encoded: &EncodedImage,
+) -> Result<(), SvgValueError> {
+    let mut element = String::from("<image");
+    for (name, value) in ["x", "y", "width", "height"].iter().zip(rect) {
+        attr_number(&mut element, name, value)?;
+    }
+    attr(&mut element, "preserveAspectRatio", "none");
+    element.push_str(" href=\"data:");
+    element.push_str(encoded.media().mime());
+    element.push_str(";base64,");
+    push_base64(&mut element, encoded.bytes());
+    element.push_str("\"/>\n");
     out.push_str(&element);
     Ok(())
 }
@@ -469,14 +564,26 @@ mod tests {
         let blue = Paint::Solid(fx::srgb(0.0, 0.0, 1.0, 0.5));
         let center = StrokeLayer::new(blue, 3.0, StrokeAlign::Center, StrokeCap::Round).unwrap();
         assert_eq!(
-            written(|o| write_stroke(o, &path, &Transform2D::identity(), &center, None)),
+            written(|o| write_stroke(
+                o,
+                &path,
+                &Transform2D::identity(),
+                &center,
+                StrokeMask::None
+            )),
             "<path d=\"M0 0 L40 0 L20 30 Z\" fill=\"none\" stroke=\"rgb(0%,0%,100%)\" \
              stroke-opacity=\"0.5\" stroke-width=\"3\" stroke-linecap=\"round\"/>\n"
         );
         let rect = SvgGeometry::Rect(fx::rect(0.0, 0.0, 10.0, 10.0));
         let inside = StrokeLayer::new(blue, 2.0, StrokeAlign::Inside, StrokeCap::Square).unwrap();
         assert_eq!(
-            written(|o| write_stroke(o, &rect, &fx::translate(1.0, 2.0), &inside, Some("n-a-g"))),
+            written(|o| write_stroke(
+                o,
+                &rect,
+                &fx::translate(1.0, 2.0),
+                &inside,
+                StrokeMask::InsideClip("n-a-g")
+            )),
             "<rect x=\"0\" y=\"0\" width=\"10\" height=\"10\" fill=\"none\" \
              stroke=\"rgb(0%,0%,100%)\" stroke-opacity=\"0.5\" stroke-width=\"4\" \
              stroke-linecap=\"square\" transform=\"matrix(1 0 0 1 1 2)\" \
@@ -484,7 +591,13 @@ mod tests {
         );
         let mut out = String::new();
         assert_eq!(
-            write_stroke(&mut out, &rect, &Transform2D::identity(), &inside, None),
+            write_stroke(
+                &mut out,
+                &rect,
+                &Transform2D::identity(),
+                &inside,
+                StrokeMask::None
+            ),
             Err(SvgValueError::Unrepresentable)
         );
         assert_eq!(
@@ -493,13 +606,19 @@ mod tests {
                 &rect,
                 &Transform2D::identity(),
                 &center,
-                Some("c")
+                StrokeMask::InsideClip("c")
             ),
             Err(SvgValueError::Unrepresentable)
         );
         let outside = StrokeLayer::new(blue, 2.0, StrokeAlign::Outside, StrokeCap::Butt).unwrap();
         assert_eq!(
-            write_stroke(&mut out, &rect, &Transform2D::identity(), &outside, None),
+            write_stroke(
+                &mut out,
+                &rect,
+                &Transform2D::identity(),
+                &outside,
+                StrokeMask::InsideClip("c")
+            ),
             Err(SvgValueError::Unrepresentable)
         );
         assert_eq!(
@@ -508,11 +627,66 @@ mod tests {
                 &rect,
                 &Transform2D::identity(),
                 &inside,
-                Some("bad id")
+                StrokeMask::OutsideMask("m")
+            ),
+            Err(SvgValueError::Unrepresentable)
+        );
+        assert_eq!(
+            write_stroke(
+                &mut out,
+                &rect,
+                &Transform2D::identity(),
+                &inside,
+                StrokeMask::InsideClip("bad id")
             ),
             Err(SvgValueError::UnsafeId)
         );
         assert!(out.is_empty(), "실패한 요소는 쓰지 않습니다");
+        assert_eq!(
+            written(|o| write_stroke(
+                o,
+                &rect,
+                &fx::translate(1.0, 2.0),
+                &outside,
+                StrokeMask::OutsideMask("n-a-m")
+            )),
+            "<rect x=\"0\" y=\"0\" width=\"10\" height=\"10\" fill=\"none\" \
+             stroke=\"rgb(0%,0%,100%)\" stroke-opacity=\"0.5\" stroke-width=\"4\" \
+             transform=\"matrix(1 0 0 1 1 2)\" mask=\"url(#n-a-m)\"/>\n"
+        );
+    }
+
+    #[test]
+    fn outside_masks_cover_the_stroke_and_cut_the_geometry() {
+        let rect = SvgGeometry::Rect(fx::rect(0.0, 0.0, 10.0, 10.0));
+        assert_eq!(
+            written(|o| write_outside_mask_def(o, "n-a-m", &rect, 2.0)),
+            "<mask id=\"n-a-m\" maskUnits=\"userSpaceOnUse\" x=\"-8\" y=\"-8\" width=\"26\" \
+             height=\"26\">\n<rect x=\"-8\" y=\"-8\" width=\"26\" height=\"26\" \
+             fill=\"rgb(100%,100%,100%)\"/>\n<rect x=\"0\" y=\"0\" width=\"10\" height=\"10\" \
+             fill=\"rgb(0%,0%,0%)\"/>\n</mask>\n"
+        );
+        let ring = fx::triangle();
+        let even_odd = SvgGeometry::Path(&ring, FillRule::EvenOdd);
+        let mask = written(|o| write_outside_mask_def(o, "m", &even_odd, 1.0));
+        assert!(mask.contains("x=\"-4\" y=\"-4\" width=\"48\" height=\"38\""));
+        assert!(mask.contains("fill=\"rgb(0%,0%,0%)\" fill-rule=\"evenodd\"/>"));
+        let mut out = String::new();
+        assert_eq!(
+            write_outside_mask_def(&mut out, "bad id", &rect, 1.0),
+            Err(SvgValueError::UnsafeId)
+        );
+        let empty = PathGeometry::empty();
+        assert_eq!(
+            write_outside_mask_def(
+                &mut out,
+                "m",
+                &SvgGeometry::Path(&empty, FillRule::NonZero),
+                1.0
+            ),
+            Err(SvgValueError::Unrepresentable)
+        );
+        assert!(out.is_empty());
     }
 
     #[test]
