@@ -630,3 +630,54 @@ fn commit_clears_preview_and_applies_the_confirmed_edit_in_one_build() {
     assert_eq!(trace.stats.rebuilt, 1);
     assert_eq!(scene.snapshot().semantic_hash(), fresh_hash(&scene));
 }
+
+#[test]
+fn spatial_index_refresh_matches_a_fresh_index() {
+    use crate::spatial::{SceneSpatialIndex, SpatialIndex};
+    let mut scene = built();
+    let mut index = SceneSpatialIndex::build(scene.snapshot());
+    let same = |index: &SceneSpatialIndex, snapshot: &SceneSnapshot| {
+        let fresh = SceneSpatialIndex::build(snapshot);
+        assert_eq!(index.len(), fresh.len());
+        for z in 1..=snapshot.node_count() {
+            let z = crate::node::ZOrder(z);
+            assert!(Arc::ptr_eq(index.node(z).unwrap(), fresh.node(z).unwrap()));
+            assert_eq!(index.index().bounds_of(z), fresh.index().bounds_of(z));
+        }
+    };
+    // paint edit: 바뀐 path(조상 2 + leaf 1)만 갱신합니다.
+    let target = leaf(1, 2);
+    let mut dirty = SceneDirtySet::new();
+    dirty.insert(id(target), SceneDirtyKind::Paint);
+    scene
+        .update(
+            DocumentRevision(2),
+            &[upsert_shape(target, shape_input(target, 40.0, 0.1))],
+            &dirty,
+            &clock(),
+        )
+        .unwrap();
+    assert_eq!(index.refresh(scene.snapshot()), 3);
+    same(&index, scene.snapshot());
+    // 삭제로 node 수가 줄어도 같습니다.
+    let children: Vec<SceneKey> = (1..LEAVES).map(|l| key(leaf(0, l))).collect();
+    scene
+        .update(
+            DocumentRevision(3),
+            &[
+                SourceEdit::Remove(key(leaf(0, 0))),
+                SourceEdit::upsert(
+                    key(section(0)),
+                    SourceNode::with_children(
+                        SourceKind::Frame(frame_input(section(0), 0.0, 0.0, 200.0, 40.0)),
+                        children,
+                    ),
+                ),
+            ],
+            &SceneDirtySet::new(),
+            &clock(),
+        )
+        .unwrap();
+    index.refresh(scene.snapshot());
+    same(&index, scene.snapshot());
+}
