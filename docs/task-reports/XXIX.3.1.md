@@ -115,6 +115,7 @@
 | `edit_completed_and_mode_lowering_reach_the_session_manager` | 통과 |
 | `closing_the_window_stops_hosted_sessions_with_process_termination` | 통과 |
 | `reasons_map_with_the_same_diagnostic_codes` | 통과 |
+| `hosted_bridge_bind_and_disconnect_reach_the_agent_session`, `hosted_rebind_after_the_session_ended_is_refused_and_unbound` | 통과(결합·연결 종료가 AgentSession에 전달, 유예 안 재결합은 진행 중 lease를 이어 제안 가능, 유예 뒤 재결합은 거부·결합 해제) |
 | `builtin_sessions_follow_the_mode_cap`, `external_clients_use_the_attached_catalog_and_unbound_is_refused`, `refusals_use_the_result_kinds` | 통과 |
 | FFI smoke 세션 handle 누수 0 | 확인 안 함(FFI 범위 밖) |
 

@@ -67,7 +67,7 @@
 | frame 해석 fail closed·상한 | `malformed_frames_fail_closed`, `oversized_frames_are_not_written`, `frame_limit_matches_the_mcp_message_limit` | 통과 |
 | frame → 요청, 첫 연결 승인 전 거부, 기준 revision 대조 | `frames_become_agent_requests_through_the_host` | 통과 |
 | 연결 하나 처리와 응답 frame, 연결 종료 시 종료 절차 | `serve_reads_frames_and_writes_replies_until_the_bridge_closes` | 통과 |
-| batch 적용을 나눠 처리 | `large_approved_proposal_is_applied_in_batch_jobs`, `large_proposal_is_applied_in_batches_and_completes_as_one_entry`, `rejected_batch_drops_the_rest_and_keeps_earlier_batches` | 통과 |
+| batch 적용을 나눠 처리, batch 사이에 사용자 입력·다른 job이 먼저 실행 | `large_approved_proposal_is_applied_in_batch_jobs`, `large_proposal_is_applied_in_batches_and_completes_as_one_entry`, `rejected_batch_drops_the_rest_and_keeps_earlier_batches` | 통과 |
 | 20만 node lease·batch trace에서 UI·Document 단일 점유가 예산 이내 | `occupancy_trace_200k`(release 측정) | 작은 lease는 예산 이내, 문서 전체 lease는 초과(남은 위험) |
 | 사용자 입력 지연 증가가 예산 이내 | 없음 | 측정 안 함(앱 입력 경로 trace는 UI 재설계 뒤) |
 
