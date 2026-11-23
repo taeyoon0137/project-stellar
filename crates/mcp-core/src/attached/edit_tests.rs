@@ -2,8 +2,48 @@
 
 use super::*;
 use crate::json::{parse, JsonLimits};
-use crate::lease::tests::{model, sid};
+use stellar_ops::commands::document::definitions::{
+    DocumentDefinition, PageDefinition, ViewDefinition,
+};
+use stellar_ops::commands::document::frame::FramePayload;
+use stellar_ops::commands::document::model::DocumentModel;
+use stellar_ops::commands::document::records::{NodePayload, NodeRecord};
 use stellar_ops::commands::lock::lease::{Lease, SubtreeLock, ViolationReason};
+use stellar_ops::core_types::order_key::OrderKey;
+
+fn sid(n: u64) -> StableId {
+    StableId::new_v7(n, 0, n)
+}
+
+/// 문서 sid(1), View root sid(10). 10 ─ 11 ─ 13 ─ 14, 10 ─ 12.
+fn model() -> DocumentModel {
+    let mut definition = DocumentDefinition::new(sid(1), String::new());
+    let mut page = PageDefinition::new(sid(2), String::new());
+    page.add_view(ViewDefinition::new(sid(3), String::new(), sid(10)))
+        .unwrap();
+    definition.add_page(page).unwrap();
+    let mut model = DocumentModel::new(definition);
+    for (id, parent, key) in [
+        (10, None, 0x10u8),
+        (11, Some(10), 0x10),
+        (12, Some(10), 0x20),
+        (13, Some(11), 0x10),
+        (14, Some(13), 0x10),
+    ] {
+        model
+            .insert_node(NodeRecord {
+                id: sid(id),
+                parent: parent.map(sid),
+                order_key: OrderKey::from_bytes(vec![key]).unwrap(),
+                visible: true,
+                locked: false,
+                display_name: format!("n{id}"),
+                payload: NodePayload::Frame(FramePayload::default()),
+            })
+            .unwrap();
+    }
+    model
+}
 
 const LEASE: u64 = 900;
 
