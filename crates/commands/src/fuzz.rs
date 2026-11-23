@@ -181,7 +181,7 @@ mod tests {
         // ADR-0079 종류 10개, ADR-0086 종류 3개(codec version 3), ADR-0099 Context 편집 1개(codec version 5),
         // ADR-0126 가이드·View 변수 편집 2개(codec version 7).
         // ADR-0129 인스턴스 구조 2개(codec version 8).
-        assert_eq!(kinds.len(), 16);
+        assert_eq!(kinds.len(), 18);
         // UnsetProperty는 명시 layout longhand가 있어야 생성되므로 SetLayoutProperty 뒤에 둡니다.
         let mut kinds = kinds;
         kinds.sort_by_key(|kind| *kind == CommandKind::UnsetProperty);
