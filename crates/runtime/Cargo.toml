@@ -20,7 +20,7 @@ stellar-storage = { path = "../storage" }
 # thread 역할 표시(XI.7.1)를 runtime이 만드는 thread에 bind합니다.
 stellar-renderer-core = { path = "../renderer-core" }
 # 창 session viewport → scene camera 입력(XII.4.3, ADR-0028).
-stellar-scene = { path = "../scene" }
+stellar-scene = { path = "../scene", features = ["document"] }
 # canvas Text의 layout·glyph outline·caret을 공통 text 엔진으로 계산합니다(ADR-0013, ADR-0067).
 stellar-text = { path = "../text" }
 # 선택 staging 후보의 저장 직렬화와 실제 Git 읽기 조합(XIV.5.5, ADR-0013).

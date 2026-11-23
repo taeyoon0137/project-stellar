@@ -30,7 +30,7 @@
 | `stellar-bindings` | core-types, expressions |
 | `stellar-layout` | core-types |
 | `stellar-text` | core-types |
-| `stellar-scene` | core-types |
+| `stellar-scene` | core-types, document, commands(`document` feature, ADR-0116) |
 | `stellar-renderer-core` | scene |
 | `stellar-renderer-metal` | renderer-core |
 | `stellar-renderer-d3d12` | renderer-core |
@@ -87,6 +87,8 @@ graph TD
   layout --> core_types
   text --> core_types
   scene --> core_types
+  scene --> document
+  scene --> commands
   renderer_core --> scene
   renderer_metal --> renderer_core
   renderer_d3d12 --> renderer_core
@@ -205,5 +207,7 @@ ADR-0005 §8 crate 배치 표의 "전이적으로도 도달 금지" 열입니다
 - `commands`와 `history`는 이미 `document`를 거쳐 `core-types`에 전이 의존하므로, StableId·WindowSessionId·DocumentRevision 같은 기본 타입을 직접 쓰도록 `core-types` 직접 의존을 허용합니다(2026-11-14, `semantic-diff` 선례와 같음).
 - `assets`도 같은 이유로 `core-types` 직접 의존을 허용합니다. AssetId는 계획서(XIII.5.1)대로 StableId newtype입니다(2026-11-14).
 - `git-porcelain`은 `document`를 직접 의존하지 않고 snapshot 인터페이스(빈 trait)에만 의존합니다.
+- `scene`은 `document` feature에서만 `document`·`commands`에 의존합니다. 문서 → scene source 변환을 앱 runtime과 headless
+  도구(`ops`·CLI·MCP)가 함께 쓰기 위해서입니다. `renderer-core`·`export`는 feature를 켜지 않습니다(ADR-0116 결정 1, 순환 없음).
 - 플랫폼 backend(`renderer-metal`/`renderer-d3d12`)는 공통 backend(`renderer-core`)를 역참조하지 않습니다.
 - 표에 없는 edge는 금지이며 `validate-crate-graph`가 `forbidden-edge`로 거부합니다.

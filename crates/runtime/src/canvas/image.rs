@@ -1,21 +1,8 @@
 use super::*;
 use stellar_core_types::value::{Rect, Vec2};
-use stellar_document::{
-    image::{CropRect, FitMode, ImagePayload, SamplingMode},
-    modifier::ModifierPayload,
-};
-use stellar_scene::builder::{ImageInput, SceneScope};
-use stellar_scene::node::{ImageCrop, ImageFit, ImageSampling};
-
-/// 문서 `FitMode`를 scene `ImageFit`으로 옮깁니다(두 tag는 같습니다).
-pub(super) fn scene_fit(fit: FitMode) -> ImageFit {
-    match fit {
-        FitMode::Fill => ImageFit::Fill,
-        FitMode::Contain => ImageFit::Contain,
-        FitMode::Cover => ImageFit::Cover,
-        FitMode::None => ImageFit::None,
-    }
-}
+use stellar_document::image::ImagePayload;
+use stellar_scene::builder::SceneScope;
+use stellar_scene::node::ImageFit;
 
 /// 이미지 행의 object-fit 배치(`ImageFit::place`). `fit`은 표시 행의 tag, `bounds`는 행의 local 상자, `intrinsic`은
 /// 셸이 디코드한 원본 픽셀 크기입니다. (그릴 사각형, 상자로 자를지)를 돌려주며 셸은 그 사각형에 그리기만 합니다.
@@ -24,43 +11,8 @@ pub fn image_placement(fit: u8, bounds: [f32; 4], intrinsic: [f32; 2]) -> Option
     Some((placed.dest, placed.clip_to_bounds))
 }
 
-/// 이미지 payload와 modifier stack을 scene 입력으로 바꿉니다. 캔버스가 아직 그리지 않는 crop·sampling·색공간 override와
-/// Transform 밖 modifier는 `None`입니다. 캔버스 행과 증분 scene source(ADR-0084)가 함께 씁니다.
-pub(crate) fn image_input(
-    id: StableId,
-    image: &ImagePayload,
-    stack: Option<&stellar_document::modifier::ModifierStack>,
-    locked: bool,
-) -> Option<ImageInput> {
-    if image.crop != CropRect::FULL
-        || image.sampling != SamplingMode::Linear
-        || image.color_space_override.is_some()
-    {
-        return None;
-    }
-    let mut transform = Transform2D::identity();
-    for modifier in stack
-        .into_iter()
-        .flat_map(|s| s.entries())
-        .filter(|m| m.enabled)
-    {
-        let ModifierPayload::Transform(next) = modifier.payload else {
-            return None;
-        };
-        transform = transform.then(&next).ok()?;
-    }
-    let mut node = NodeInput::new(id, transform);
-    node.locked = locked;
-    Some(ImageInput {
-        node,
-        asset: image.asset,
-        size: image.size,
-        fit: scene_fit(image.fit),
-        crop: ImageCrop::new(0., 0., 1., 1.).ok()?,
-        sampling: ImageSampling::Linear,
-        color_space: None,
-    })
-}
+/// 이미지 payload와 modifier stack을 scene 입력으로 바꾸는 scene crate 함수(ADR-0116 결정 1).
+pub(crate) use stellar_scene::document::inputs::image_input;
 
 pub(super) fn project(
     model: &DocumentModel,

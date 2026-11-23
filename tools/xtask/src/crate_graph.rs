@@ -49,7 +49,12 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         ("stellar-bindings", &[core, "stellar-expressions"]),
         ("stellar-layout", &[core]),
         ("stellar-text", &[core]),
-        ("stellar-scene", &[core]),
+        // 문서 → scene source 변환(`document` feature, ADR-0116 결정 1): 앱 runtime과 headless 도구가 같은 변환을 씁니다.
+        // renderer는 이 feature를 켜지 않습니다.
+        (
+            "stellar-scene",
+            &[core, "stellar-document", "stellar-commands"],
+        ),
         ("stellar-renderer-core", &["stellar-scene"]),
         ("stellar-renderer-metal", &["stellar-renderer-core"]),
         ("stellar-renderer-d3d12", &["stellar-renderer-core"]),

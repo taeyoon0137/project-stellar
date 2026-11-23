@@ -1,6 +1,6 @@
 //! 문서 → 증분 scene source 변환 (XI.2.1, XI.2.4, XI.2.5, XII.10.30, ADR-0084 결정 2·3·5·7).
 //!
-//! [`document_scene_source`]는 View root 아래 문서 node를 `stellar_scene::source::SceneSource`로 바꿉니다. node 종류별
+//! [`document_scene_source`]는 View root 아래 문서 node를 `crate::source::SceneSource`로 바꿉니다. node 종류별
 //! 입력은 캔버스 행과 같은 함수([`super::frame_input`], [`super::shape::shape_source`], [`super::image::image_input`])로
 //! 만듭니다. [`scene_edits`]·[`scene_invalidations`]는 command change set(VII.1.4)을 source 편집과 scene 무효화로
 //! 바꿉니다.
@@ -25,6 +25,14 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+use crate::boolean::{BooleanOp as SceneBooleanOp, BooleanOperand};
+use crate::builder::{FragmentInput, NodeInput, PathInput, StrokeInput, TextInput};
+use crate::dirty::{InvalidationClasses, InvalidationOrigin, SceneDependents, SceneInvalidation};
+use crate::geometry::{FillRule, PathGeometry};
+use crate::source::{
+    BooleanSource, SceneKey, SceneSource, SourceEdit, SourceError, SourceKind, SourceNode,
+};
+use crate::stack::Paint;
 use stellar_commands::change::{node_keys, ChangeSet};
 use stellar_core_types::ids::StableId;
 use stellar_core_types::typed_value::TypedValue;
@@ -44,19 +52,11 @@ use stellar_document::record_codec::{decode_payload, encode_payload};
 use stellar_document::records::NodePayload;
 use stellar_document::shape::ShapeModifierStyle;
 use stellar_document::text::TextPayload;
-use stellar_scene::boolean::{BooleanOp as SceneBooleanOp, BooleanOperand};
-use stellar_scene::builder::{FragmentInput, NodeInput, PathInput, StrokeInput, TextInput};
-use stellar_scene::dirty::{
-    InvalidationClasses, InvalidationOrigin, SceneDependents, SceneInvalidation,
-};
-use stellar_scene::geometry::{FillRule, PathGeometry};
-use stellar_scene::source::{
-    BooleanSource, SceneKey, SceneSource, SourceEdit, SourceError, SourceKind, SourceNode,
-};
-use stellar_scene::stack::Paint;
 
-use super::image::image_input;
-use super::shape::{scene_command, shape_source};
+/// 문서 node payload → scene builder 입력.
+pub mod inputs;
+
+use inputs::{frame_input, image_input, scene_command, shape_source, shape_style};
 
 /// source에 넣지 않은 node의 이유.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -318,7 +318,7 @@ impl<'a, 'o> Converter<'a, 'o> {
                     self.skip(key, SkipReason::UnsupportedModifiers);
                     return None;
                 }
-                let Some(mut input) = super::frame_input(id, frame, locked) else {
+                let Some(mut input) = frame_input(id, frame, locked) else {
                     self.skip(key, SkipReason::InvalidValue);
                     return None;
                 };
@@ -371,8 +371,7 @@ impl<'a, 'o> Converter<'a, 'o> {
                 SourceNode::leaf(SourceKind::Shape(input))
             }
             NodePayload::Path(path) => {
-                let style =
-                    super::shape::shape_style(stack).ok_or(SkipReason::UnsupportedModifiers)?;
+                let style = shape_style(stack).ok_or(SkipReason::UnsupportedModifiers)?;
                 let input = path_input(id, path.data(), &style, visible, locked)
                     .ok_or(SkipReason::InvalidValue)?;
                 SourceNode::leaf(SourceKind::Path(input))
@@ -540,7 +539,7 @@ pub fn expand(
                 },
                 None => frame.clone(),
             };
-            let Some(mut input) = super::frame_input(source, &frame, node.locked()) else {
+            let Some(mut input) = frame_input(source, &frame, node.locked()) else {
                 skipped.push((key, SkipReason::InvalidValue));
                 return None;
             };
@@ -683,7 +682,7 @@ fn path_input(
             width: stroke.thickness(),
         });
     }
-    let bounds = match stellar_scene::bounds::path_control_bounds(&geometry) {
+    let bounds = match crate::bounds::path_control_bounds(&geometry) {
         Some(aabb) => Rect::new(
             Vec2::new(aabb.min_x(), aabb.min_y()).ok()?,
             Size2::new(aabb.width(), aabb.height()).ok()?,
@@ -717,7 +716,7 @@ fn operand_geometry(
             ))
         }
         NodePayload::Path(path) => {
-            let style = super::shape::shape_style(stack)?;
+            let style = shape_style(stack)?;
             let input = path_input(id, path.data(), &style, true, false)?;
             Some((input.geometry, input.fill_rule, input.node.transform))
         }
@@ -737,7 +736,7 @@ fn local_transform(model: &DocumentModel, id: StableId) -> Option<Transform2D> {
         | NodePayload::Image(_)
         | NodePayload::Text(_) => {
             let filtered = without_booleans(id, stack);
-            super::shape::shape_style(Some(&filtered)).map(|style| style.transform)
+            shape_style(Some(&filtered)).map(|style| style.transform)
         }
     }
 }

@@ -2,7 +2,10 @@
 #![cfg(test)]
 
 use super::*;
-use crate::window_session::test_fixtures::{sample_document, sid};
+use crate::boolean::signed_area;
+use crate::dirty::{SceneDirtyKind, SceneDirtySet};
+use crate::incremental::IncrementalScene;
+use crate::node::SceneContent;
 use stellar_commands::command::Command;
 use stellar_commands::id::{CommandId, CommandOrigin};
 use stellar_commands::property::{PropertyValue, SetProperty};
@@ -24,10 +27,45 @@ use stellar_document::modifier::{ModifierEntry, ModifierId, ModifierStack};
 use stellar_document::node_kind::NodeKind;
 use stellar_document::records::NodeRecord;
 use stellar_document::shape::{RectangleParams, ShapeGeometry};
-use stellar_scene::boolean::signed_area;
-use stellar_scene::dirty::{SceneDirtyKind, SceneDirtySet};
-use stellar_scene::incremental::IncrementalScene;
-use stellar_scene::node::SceneContent;
+
+/// 결정론적 id.
+fn sid(n: u64) -> StableId {
+    StableId::new_v7(n, 0, n)
+}
+
+fn plain_frame(id: u64, parent: Option<u64>, key: u8) -> NodeRecord {
+    NodeRecord {
+        id: sid(id),
+        parent: parent.map(sid),
+        order_key: OrderKey::from_bytes(vec![key]).expect("key"),
+        visible: true,
+        locked: false,
+        display_name: format!("n{id}"),
+        payload: NodePayload::Frame(FramePayload::default()),
+    }
+}
+
+/// 문서(1): 페이지(2) 아래 View 3(root 10)·View 4(root 20). 10 아래 11·12.
+fn sample_document() -> DocumentModel {
+    use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
+    let mut definition = DocumentDefinition::new(sid(1), "문서".to_string());
+    let mut page = PageDefinition::new(sid(2), "페이지".to_string());
+    page.add_view(ViewDefinition::new(sid(3), "첫 화면".to_string(), sid(10)))
+        .unwrap();
+    page.add_view(ViewDefinition::new(
+        sid(4),
+        "둘째 화면".to_string(),
+        sid(20),
+    ))
+    .unwrap();
+    definition.add_page(page).unwrap();
+    let mut model = DocumentModel::new(definition);
+    model.insert_node(plain_frame(10, None, 0x10)).unwrap();
+    model.insert_node(plain_frame(11, Some(10), 0x10)).unwrap();
+    model.insert_node(plain_frame(12, Some(10), 0x20)).unwrap();
+    model.insert_node(plain_frame(20, None, 0x20)).unwrap();
+    model
+}
 
 fn color(r: f32, g: f32, b: f32) -> Color {
     Color::new(ColorSpace::Srgb, r, g, b, 1.0).unwrap()

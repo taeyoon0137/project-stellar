@@ -1,21 +1,14 @@
 //! 고정 도형의 canonical path와 순서가 있는 Transform·단색 Fill·Stroke를 같은 장면에 투영합니다.
 use super::*;
-use stellar_core_types::value::{Rect, Vec2};
-use stellar_document::modifier::ModifierStack;
-use stellar_document::path::PathCommand as DocumentPath;
-use stellar_document::shape::{
-    evaluate_shape_modifiers, evaluate_shape_path, ShapeGeometry, ShapeModifierStyle,
-};
-use stellar_scene::builder::{SceneScope, ShapeInput, StrokeInput};
-use stellar_scene::geometry::{PathCommand, PathGeometry};
-use stellar_scene::stack::{Paint, StrokeCap};
+use stellar_core_types::value::Rect;
+use stellar_document::shape::ShapeGeometry;
+use stellar_scene::builder::SceneScope;
+use stellar_scene::geometry::PathGeometry;
+use stellar_scene::stack::StrokeCap;
 
-/// 캔버스가 평가하는 transform·fill·stroke. 규칙은 웹 출력과 같은 [`evaluate_shape_modifiers`] 한 곳에 있고,
-/// 캔버스는 평가하지 못하는 stack을 그리지 않습니다. 이동은 앞부분 Transform 가운데 마지막 것에 적용합니다
-/// (`stellar_commands::inspector::position_modifier`, 속성 탭과 같은 규칙).
-pub(crate) fn shape_style(stack: Option<&ModifierStack>) -> Option<ShapeModifierStyle> {
-    evaluate_shape_modifiers(stack).ok()
-}
+/// 캔버스가 평가하는 transform·fill·stroke와 도형 scene 입력. 규칙은 scene crate의 문서 변환 함수 한 곳에
+/// 있습니다(ADR-0116 결정 1).
+pub(crate) use stellar_scene::document::inputs::{shape_source, shape_style, ShapeSource};
 
 /// Free Frame 목록은 경로를 할당하지 않습니다. 이 정보는 도형 행에만 있습니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,96 +19,6 @@ pub struct CanvasShapePath {
     pub cap: StrokeCap,
     /// 길이 0인 선의 cap을 그릴 정확한 local bounds.
     pub point_cap: Option<Rect>,
-}
-
-/// 도형 하나의 scene 입력과 캔버스 행 보조 값. 캔버스 행과 증분 scene source(ADR-0084)가 함께 씁니다.
-pub(crate) struct ShapeSource {
-    /// scene builder 입력.
-    pub(crate) input: ShapeInput,
-    /// 평가한 modifier 값.
-    pub(crate) style: ShapeModifierStyle,
-    /// Rectangle 실효 모서리 반경.
-    pub(crate) radii: CornerRadii,
-    /// 길이 0인 선의 cap bounds.
-    pub(crate) point_cap: Option<Rect>,
-}
-
-/// 도형 payload와 modifier stack(`stack`)을 scene 입력으로 바꿉니다. 평가하지 못하는 stack이면 `None`입니다.
-pub(crate) fn shape_source(
-    id: StableId,
-    shape: &ShapeGeometry,
-    stack: Option<&ModifierStack>,
-    locked: bool,
-) -> Option<ShapeSource> {
-    let style = shape_style(stack)?;
-    let mut node = NodeInput::new(id, style.transform);
-    node.locked = locked;
-    if let Some(color) = style.fill {
-        node.paint.fills.push(Paint::Solid(color));
-    }
-    if let Some(stroke) = style.stroke {
-        node.paint.strokes.push(StrokeInput {
-            paint: Paint::Solid(stroke.color),
-            width: stroke.thickness(),
-        });
-    }
-    let mut cap = StrokeCap::Butt;
-    let mut point_cap = None;
-    let mut radii = CornerRadii::ZERO;
-    let bounds = match shape {
-        ShapeGeometry::Rectangle(rect) => {
-            let (tl, tr, br, bl) = rect.effective_corner_radius();
-            radii = CornerRadii::new(tl, tr, br, bl).ok()?;
-            Rect::new(Vec2::ZERO, rect.size)
-        }
-        ShapeGeometry::Ellipse(ellipse) => ellipse.bounds,
-        ShapeGeometry::Polygon(polygon) => polygon.bounds(),
-        ShapeGeometry::Line(line) => {
-            cap = StrokeCap::from_tag(line.cap as u8)?;
-            if line.is_zero_length() {
-                point_cap = style
-                    .stroke
-                    .and_then(|stroke| line.stroked_bounds(stroke.thickness()));
-            }
-            let min = Vec2::new(
-                line.start.x().min(line.end.x()),
-                line.start.y().min(line.end.y()),
-            )
-            .ok()?;
-            let size = stellar_core_types::value::Size2::new(
-                (line.end.x() - line.start.x()).abs(),
-                (line.end.y() - line.start.y()).abs(),
-            )
-            .ok()?;
-            Rect::new(min, size)
-        }
-    };
-    let path = evaluate_shape_path(shape)
-        .ok()?
-        .into_iter()
-        .map(scene_command)
-        .collect();
-    Some(ShapeSource {
-        input: ShapeInput {
-            node,
-            layout_rect: bounds,
-            geometry: PathGeometry::new(path).ok()?,
-            cap,
-        },
-        style,
-        radii,
-        point_cap,
-    })
-}
-
-/// 문서 path command를 scene path command로 옮깁니다(두 모델은 같은 의미, scene `geometry` 모듈 표).
-pub(crate) fn scene_command(command: DocumentPath) -> PathCommand {
-    match command {
-        DocumentPath::MoveTo(p) => PathCommand::MoveTo(p),
-        DocumentPath::LineTo(p) => PathCommand::LineTo(p),
-        DocumentPath::CubicTo { c1, c2, to } => PathCommand::CubicTo { c1, c2, to },
-        DocumentPath::Close => PathCommand::Close,
-    }
 }
 
 pub(super) fn project(
