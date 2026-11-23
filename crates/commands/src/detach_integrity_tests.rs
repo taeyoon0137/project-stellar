@@ -1,11 +1,12 @@
-//! 인스턴스 구조 무결성 fixture (IX.3.3, ADR-0133 결정 1·2).
+//! 인스턴스 구조 무결성 fixture (IX.3.3·IX.2.6, ADR-0133 결정 1·2·3).
 //!
 //! - 구조 command(`delete-subtree`·`move-node`)는 Slot content를 slot override 없이 지우거나 꺼내지 않습니다.
 //! - Slot content 지우기는 `place-slot-content` 하나이고 undo가 정확합니다.
 //! - 인스턴스 subtree를 지운 뒤의 undo, 복제, 붙여넣기는 인스턴스 자식(투영된 Slot content)을 그대로 옮깁니다.
+//! - Detach는 공개 Property override 값을 연결된 복제 node 속성에 씁니다.
 #![cfg(test)]
 
-use super::tests::{card_library, modal_state};
+use super::tests::{card_library, card_title, modal_state};
 use super::*;
 use crate::codec::{decode_command, encode_command};
 use crate::command::test_fixtures::{frame, sid};
@@ -19,6 +20,7 @@ use stellar_core_types::clock::ManualClock;
 use stellar_core_types::ids::StableIdGenerator;
 use stellar_document::component::definition::ComponentSlotId;
 use stellar_document::component::instance::ComponentInstancePayload;
+use stellar_document::frame::keys as frame_keys;
 use stellar_document::test_support::semantic_snapshot::model_snapshot_json;
 use stellar_document::text::TextPayload;
 
@@ -254,4 +256,145 @@ fn card_ref_of(state: &DocumentState) -> stellar_core_types::reference::Componen
         panic!("인스턴스");
     };
     payload.component()
+}
+
+/// Card 인스턴스 30에 `title` override(`title`)를 둔 문서.
+fn titled_state(title: Option<&str>) -> DocumentState {
+    let mut model = modal_state().into_model();
+    let mut record = model.record(sid(30)).unwrap();
+    let NodePayload::ComponentInstance(payload) = &mut record.payload else {
+        panic!("인스턴스");
+    };
+    if let Some(title) = title {
+        payload.set_property_override(
+            OverrideKey::direct(card_title()),
+            TypedValue::String(title.into()),
+        );
+    }
+    model.set_payload(sid(30), record.payload).unwrap();
+    DocumentState::new(model)
+}
+
+/// 정의 title Text(903)의 본문이 `title` Property를 씁니다.
+fn title_link() -> PropertyLink {
+    PropertyLink {
+        node: sid(903),
+        key: text_keys::TEXT_CONTENT,
+        property: card_title(),
+    }
+}
+
+fn detach(
+    state: &DocumentState,
+    links: &[PropertyLink],
+) -> Result<InstanceRestructure, DetachPlanError> {
+    plan_detach(
+        state.model(),
+        &card_library(),
+        links,
+        sid(30),
+        &mut StableIdGenerator::new(3),
+        &ManualClock::new(10),
+    )
+}
+
+fn title_text(plan: &InstanceRestructure) -> String {
+    let title = plan
+        .insert
+        .iter()
+        .find(|r| r.display_name == "title")
+        .expect("복제 title");
+    let NodePayload::Text(text) = &title.payload else {
+        panic!("Text");
+    };
+    text.content().to_owned()
+}
+
+#[test]
+fn detach_writes_linked_property_overrides_into_the_copies() {
+    // override가 있으면 연결된 복제 Text 본문이 override 값입니다.
+    let mut state = titled_state(Some("확인 창"));
+    let before = model_snapshot_json(state.model()).unwrap();
+    let plan = detach(&state, &[title_link()]).unwrap();
+    assert_eq!(title_text(&plan), "확인 창");
+    let undo = run(&mut state, Command::DetachInstance(Box::new(plan))).unwrap();
+    assert!(valid(&state));
+    run(&mut state, undo).unwrap();
+    assert_eq!(model_snapshot_json(state.model()).unwrap(), before);
+
+    // override가 없거나 연결을 넘기지 않으면 정의 값 그대로입니다.
+    assert_eq!(
+        title_text(&detach(&titled_state(None), &[title_link()]).unwrap()),
+        ""
+    );
+    assert_eq!(
+        title_text(&detach(&titled_state(Some("확인 창")), &[]).unwrap()),
+        ""
+    );
+
+    // 정의에 선언되지 않은 Property의 override(IX.2.3 규칙 위반)는 반영하지 않습니다.
+    let mut orphan = titled_state(None).into_model();
+    let mut record = orphan.record(sid(30)).unwrap();
+    let NodePayload::ComponentInstance(payload) = &mut record.payload else {
+        panic!("인스턴스");
+    };
+    let undeclared = stellar_document::component::definition::ComponentPropertyId::new(sid(999));
+    payload.set_property_override(
+        OverrideKey::direct(undeclared),
+        TypedValue::String("x".into()),
+    );
+    orphan.set_payload(sid(30), record.payload).unwrap();
+    let link = PropertyLink {
+        property: undeclared,
+        ..title_link()
+    };
+    assert_eq!(
+        title_text(&detach(&DocumentState::new(orphan), &[link]).unwrap()),
+        ""
+    );
+
+    // 값을 쓸 수 없는 연결(문자열 Property → Frame 폭)은 화면이 바뀌므로 거부합니다.
+    let wrong = PropertyLink {
+        node: sid(902),
+        key: frame_keys::WIDTH,
+        property: card_title(),
+    };
+    assert_eq!(
+        detach(&titled_state(Some("확인 창")), &[wrong]),
+        Err(DetachPlanError::Link {
+            node: sid(902),
+            key: frame_keys::WIDTH,
+        })
+    );
+}
+
+#[test]
+fn registry_values_keep_css_units() {
+    use stellar_core_types::value::{FiniteF32, Length, Percentage};
+    let f = |v: f32| FiniteF32::new(v).unwrap();
+    assert_eq!(
+        registry_value(
+            &TypedValue::Length(Length::new(12.).unwrap()),
+            PropertyValueType::NonNegative
+        ),
+        Some(PropertyValue::NonNegative(f(12.)))
+    );
+    assert_eq!(
+        registry_value(
+            &TypedValue::Length(Length::new(-1.).unwrap()),
+            PropertyValueType::NonNegative
+        ),
+        None
+    );
+    assert_eq!(
+        registry_value(
+            &TypedValue::Percentage(Percentage::new(50.).unwrap()),
+            PropertyValueType::UnitInterval
+        ),
+        Some(PropertyValue::UnitInterval(f(0.5)))
+    );
+    assert_eq!(
+        registry_value(&TypedValue::Boolean(true), PropertyValueType::Text),
+        None
+    );
 }

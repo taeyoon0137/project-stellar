@@ -27,22 +27,26 @@ use std::fmt;
 use stellar_core_types::clock::MonotonicClock;
 use stellar_core_types::ids::{RuntimeEntityId, StableId, StableIdGenerator};
 use stellar_core_types::order_key::OrderKey;
+use stellar_core_types::property::PropertyKey;
+use stellar_core_types::typed_value::TypedValue;
 use stellar_core_types::value::Size2;
 use stellar_core_types::value::Transform2D;
-use stellar_document::component::definition::ComponentLibrary;
+use stellar_document::component::definition::{ComponentLibrary, ComponentPropertyId};
 use stellar_document::component::detach::{detach_instance, DetachError};
 use stellar_document::component::expansion::ScenePayloads;
-use stellar_document::component::instance::{frame_instance_transform, SlotOverride};
+use stellar_document::component::instance::{frame_instance_transform, OverrideKey, SlotOverride};
+use stellar_document::component::override_rules::check_override;
 use stellar_document::component::slot::SlotError;
 use stellar_document::layout_record::{LayoutLonghand, LayoutRecord, LayoutValue};
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{ModifierKind, ModifierStack};
 use stellar_document::node_columns::{NodeColumns, NodeFields};
-use stellar_document::node_kind::NodeKind;
+use stellar_document::payload_metadata::text_keys;
 use stellar_document::record_codec::{
     decode_node_record, decode_payload, encode_node_record, encode_payload,
 };
 use stellar_document::records::{NodePayload, NodeRecord};
+use stellar_document::text::{edit_text, scalar_len, TextRange};
 use stellar_document::tree_ops::validate_reparent;
 use stellar_document::validate::{
     can_have_children, can_own_slot_content, validate_document, DocumentValidationError,
@@ -56,6 +60,7 @@ use crate::lock::{edit_permission, EditIntent};
 use crate::node_ops::{
     check_external_inbound, decode_layout_records, encode_layout_records, slot_content_owner,
 };
+use crate::property::{payload_property_info, write_property, PropertyValue, PropertyValueType};
 use crate::tree::{parent_of, ChildIndex};
 
 /// 기존 node 하나의 새 부모·순서.
@@ -495,6 +500,14 @@ pub enum DetachPlanError {
         /// node.
         node: StableId,
     },
+    /// Property override 값을 연결된 정의 node 속성에 쓸 수 없습니다(속성이 그 node에 없거나 값 종류가 맞지 않음).
+    /// 반영하지 못한 채 Detach하면 화면이 바뀌므로 거부합니다(ADR-0133 결정 3).
+    Link {
+        /// 정의 node.
+        node: StableId,
+        /// 속성.
+        key: PropertyKey,
+    },
 }
 
 impl fmt::Display for DetachPlanError {
@@ -505,6 +518,10 @@ impl fmt::Display for DetachPlanError {
             DetachPlanError::Payload { node } => {
                 write!(f, "정의 node {node}의 payload를 해석하지 못했습니다")
             }
+            DetachPlanError::Link { node, key } => write!(
+                f,
+                "정의 node {node}의 속성 {key:?}에 Property override 값을 쓸 수 없습니다"
+            ),
         }
     }
 }
@@ -582,18 +599,25 @@ fn scene_record(
 ///   stack에서 지웁니다. 다른 modifier는 그대로 둡니다.
 /// - 인스턴스 layout record의 명시 `width`·`height`가 `<length>`이면 Frame payload 크기로 옮기고(Frame 크기는 payload에
 ///   저장, ADR-0086), 그 밖의 크기 값은 지웁니다. 나머지 longhand는 그대로 둡니다.
-/// - Property override 값은 정의 node 속성과의 binding(VIII.6)이 문서에 없어 복제 node에 반영하지 않습니다.
+/// - Property override 값은 `links`(정의 node 속성 = 공개 Property 하나인 연결, binding 저장소가 넘김)로 복제 node에
+///   씁니다(ADR-0133 결정 3). 적용하는 값은 IX.2.3 규칙(`check_override`: 공개·선언·타입)을 통과한 직접 override뿐이고,
+///   override가 없거나 규칙을 어긴 Property는 정의 값 그대로입니다(Property 값 캐시와 같은 규칙, IX.1.4). 값은 속성
+///   registry의 쓰기 경로(`SetProperty`와 같음)로 쓰고, Text 본문(`TEXT_CONTENT`)은 VI.7.5 본문 교체로 씁니다. 쓸 수
+///   없는 연결이면 [`DetachPlanError::Link`]로 거부합니다. 복제되지 않은 정의 node(override된 Slot의 default content,
+///   nested 인스턴스 안 node)를 가리키는 연결은 건너뜁니다.
 pub fn plan_detach<C: MonotonicClock>(
     model: &DocumentModel,
     library: &ComponentLibrary,
+    links: &[PropertyLink],
     instance: StableId,
     generator: &mut StableIdGenerator,
     clock: &C,
 ) -> Result<InstanceRestructure, DetachPlanError> {
     let current = model.record(instance).ok_or(DetachPlanError::NotInstance)?;
-    if current.kind() != NodeKind::ComponentInstance {
+    let NodePayload::ComponentInstance(instance_payload) = &current.payload else {
         return Err(DetachPlanError::NotInstance);
-    }
+    };
+    let instance_payload = instance_payload.clone();
     // 인스턴스 배치(활성 Transform modifier 합성)와 Transform modifier를 뺀 stack.
     let current_stack = model.modifier_stack(instance);
     let mut placement_stack = current_stack
@@ -647,7 +671,7 @@ pub fn plan_detach<C: MonotonicClock>(
         )
         .map_err(|_| DetachPlanError::Payload { node: instance })?;
     }
-    let record = NodeRecord {
+    let mut record = NodeRecord {
         id: instance,
         parent: current.parent,
         order_key: current.order_key,
@@ -659,6 +683,32 @@ pub fn plan_detach<C: MonotonicClock>(
     let mut insert = Vec::with_capacity(detached.created().len());
     for id in detached.created() {
         insert.push(scene_record(&columns, &payloads, &handles, *id)?);
+    }
+    // Property override 값을 연결된 복제 node 속성에 씁니다.
+    if let Some(entry) = library.get(instance_payload.component()) {
+        let copies: HashMap<StableId, StableId> = detached.remap().iter().copied().collect();
+        for link in links {
+            let Some(copy) = copies.get(&link.node).copied() else {
+                continue;
+            };
+            let key = OverrideKey::direct(link.property);
+            let Some(value) = instance_payload
+                .property_override(&key)
+                .filter(|value| check_override(entry, instance, &key, value).is_ok())
+            else {
+                continue;
+            };
+            let target = if copy == instance {
+                Some(&mut record)
+            } else {
+                insert.iter_mut().find(|r| r.id == copy)
+            };
+            let target = target.ok_or(DetachPlanError::Payload { node: copy })?;
+            write_linked_value(target, link.key, value).ok_or(DetachPlanError::Link {
+                node: link.node,
+                key: link.key,
+            })?;
+        }
     }
     let mut moves = Vec::with_capacity(detached.moved().len());
     for content in detached.moved() {
@@ -682,6 +732,65 @@ pub fn plan_detach<C: MonotonicClock>(
         moves,
         remove: Vec::new(),
     })
+}
+
+/// 정의 node 속성과 공개 Property의 연결: 이 정의 node의 `key` 속성 값이 Property `property`를 그대로 씁니다(binding
+/// 저장소가 넘깁니다, VIII.6). 인스턴스 안 값 편집(runtime `canvas::instance`)과 Detach 계획이 같은 연결을 씁니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PropertyLink {
+    /// 정의 node.
+    pub node: StableId,
+    /// 속성.
+    pub key: PropertyKey,
+    /// 연결된 Component Property.
+    pub property: ComponentPropertyId,
+}
+
+/// Component Property 값(`TypedValue`)을 속성 registry 값으로 바꿉니다. 단위가 다른 값은 바꾸지 않습니다(CSS 값 그대로,
+/// ADR-0074): 길이는 `px`, 각도는 `deg`, 0..=1 값은 수 또는 `%`입니다.
+fn registry_value(value: &TypedValue, expected: PropertyValueType) -> Option<PropertyValue> {
+    use stellar_core_types::value::FiniteF32;
+    let unit = |v: f32| (0.0..=1.0).contains(&v).then(|| FiniteF32::new(v).ok())?;
+    Some(match (expected, value) {
+        (PropertyValueType::Bool, TypedValue::Boolean(v)) => PropertyValue::Bool(*v),
+        (PropertyValueType::Text, TypedValue::String(v)) => PropertyValue::Text(v.clone()),
+        (PropertyValueType::NonNegative, TypedValue::Length(v)) if v.get() >= 0.0 => {
+            PropertyValue::NonNegative(v.raw())
+        }
+        (PropertyValueType::NonNegative, TypedValue::Number(v)) if v.get() >= 0.0 => {
+            PropertyValue::NonNegative(*v)
+        }
+        (PropertyValueType::Number, TypedValue::Number(v)) => PropertyValue::Number(*v),
+        (PropertyValueType::Number, TypedValue::Length(v)) => PropertyValue::Number(v.raw()),
+        (PropertyValueType::Number, TypedValue::Angle(v)) => PropertyValue::Number(v.raw()),
+        (PropertyValueType::Color, TypedValue::Color(c)) => PropertyValue::Color(*c),
+        (PropertyValueType::OptionalColor, TypedValue::Color(c)) => {
+            PropertyValue::OptionalColor(Some(*c))
+        }
+        (PropertyValueType::UnitInterval, TypedValue::Number(v)) => {
+            PropertyValue::UnitInterval(unit(v.get())?)
+        }
+        (PropertyValueType::UnitInterval, TypedValue::Percentage(v)) => {
+            PropertyValue::UnitInterval(unit(v.get() / 100.0)?)
+        }
+        _ => return None,
+    })
+}
+
+/// 연결된 Property 값 하나를 레코드에 씁니다. 쓸 수 없으면 `None`입니다.
+fn write_linked_value(record: &mut NodeRecord, key: PropertyKey, value: &TypedValue) -> Option<()> {
+    if key == text_keys::TEXT_CONTENT {
+        let (NodePayload::Text(text), TypedValue::String(content)) = (&record.payload, value)
+        else {
+            return None;
+        };
+        let all = TextRange::new(0, scalar_len(text.content()))?;
+        record.payload = NodePayload::Text(edit_text(text, all, content, &[]).ok()?);
+        return Some(());
+    }
+    let info = payload_property_info(&record.payload, key)?;
+    let value = registry_value(value, info.value_type)?;
+    write_property(record, key, &value, info.value_type).ok()
 }
 
 /// Slot content 지우기 계획 실패.
