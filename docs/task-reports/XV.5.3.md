@@ -2,7 +2,7 @@
 
 - WBS: XV.5.3
 - 작업명: library resource를 수정하는 command를 사용 project에서 거부, instance 공개 override만 허용
-- 상태: 부분 완료 (`[~]`) — 2026-11-24 library-finish 비판 검토, 아래 "검토 (2026-11-24, library-finish 비판 검토)" 절: 사전 검사 함수 `check_component_edits`는 생겼지만 command를 적용하는 제품 경로(창 history·CLI·MCP transaction)가 아직 부르지 않습니다. 이전 기록: 완료 (`[x]`) — 2026-11-23 library-finish, 아래 "작업 (2026-11-23, library-finish)" 절. 이전 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 판정 정책은 완료했지만 실제 command가 이 판정을 거치지 않습니다(9A 리뷰 P2).
+- 상태: 완료 (`[x]`) 후보 — 2026-11-24 library-wire, 아래 "작업 (2026-11-24, library-wire)" 절: 창 history·CLI·MCP 적용 경로가 transaction 적용 전에 `check_component_edits`로 판정합니다. 원장 판정은 통합 때 정합니다. 이전 기록: 부분 완료 (`[~]`) — 2026-11-24 library-finish 비판 검토, 아래 "검토 (2026-11-24, library-finish 비판 검토)" 절: 사전 검사 함수 `check_component_edits`는 생겼지만 command를 적용하는 제품 경로(창 history·CLI·MCP transaction)가 아직 부르지 않습니다. 이전 기록: 완료 (`[x]`) — 2026-11-23 library-finish, 아래 "작업 (2026-11-23, library-finish)" 절. 이전 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 판정 정책은 완료했지만 실제 command가 이 판정을 거치지 않습니다(9A 리뷰 P2).
 - 선행: XV.5.2(`[x]`, 이 lane), IX.2.4(`[x]`)
 
 ## 필수 실행 환경
@@ -146,3 +146,42 @@
   transaction 전체 거부·모호 대상 거부는 의미대로 판정합니다.
 - 남은 조건: 문서가 외부 참조를 저장하는 작업(XV.5.2 차이) 뒤, component command를 적용하는 runtime·ops 경로가 transaction 적용 전에
   `check_component_edits`를 부르고 거부를 사용자 오류로 돌려줍니다. 소유 경로(runtime·ops·commands)는 이 lane 밖입니다.
+
+## 작업 (2026-11-24, library-wire): 적용 경로(창 history·CLI·MCP transaction) 연결
+
+- 결정: [ADR-0127](../adr/ADR-0127-library-product-paths-token-companion.md) 결정 3.
+- 대상 command: 사용 프로젝트에서 instance override를 바꾸는 제품 command는 `SwapInstance`(캔버스 override Set·Reset·교체)와 override를
+  가진 instance의 `InsertNode`입니다. `stellar_ops::library::check_commands`가 command마다 override 변화를 document command
+  (`PropertyOverrideCommand::Set`·`Reset`)로 옮겨 `check_component_edits` 하나로 판정합니다. 바뀌지 않은 override와 nested 경로
+  override는 넣지 않습니다. 판정 대상 instance만 담은 1-node scene으로 넘겨 교체·삽입도 command 뒤 component로 분류합니다.
+- headless(CLI `stellar apply`·MCP 편집): `stellar_ops::apply::apply`가 command 해석 뒤 transaction 실행 전에 `guard_transaction`을
+  부르고 거부를 `ApplyError::Rejected { index, reason }`으로 돌려줍니다. 대상 command가 있을 때만 library를 엽니다.
+- 창 session: history에 기록하는 다섯 적용 함수가 기록 전에 `WindowLibraries::check`를 부르고 거부를 `WindowSessionEditError::Library`로
+  돌려줍니다. Undo·Redo·외부 snapshot 반영은 검사하지 않습니다.
+
+### 변경 파일
+
+- `crates/ops/src/library.rs`(사전 검사 절), `crates/ops/src/apply.rs`(호출 한 곳)
+- `crates/runtime/src/library.rs`(`check`·`disk_components`·`LibraryEditRefused`), `crates/runtime/src/window_session.rs`
+  (`check_libraries`·적용 함수 다섯 곳·오류 variant)
+- `tests/integration/tests/library_product_guard.rs`(신규)
+
+### 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-integration-tests --test library_product_guard` | 0 — 1 passed |
+| `cargo test -p stellar-integration-tests --test library_read_only_commands` | 0 — 기존 판정 시험 그대로 통과 |
+
+| 검사 | 결과 |
+|---|---|
+| headless: library Card instance의 비공개 property override `SwapInstance`는 적용 전 거부(`Rejected` index 0, 사유 "공개 property가 아니라"), revision·저장 override 그대로 | 통과 |
+| headless: 타입이 다른 공개 property override는 dry-run에서도 거부 | 통과 |
+| headless: 공개 property override는 쓰기 성공, 저장된 instance override가 그 값 하나 | 통과 |
+| 창 session: 비공개 override는 `WindowSessionEditError::Library`(index 0, `LibraryGuardRejection::Library`), revision·history 그대로. 공개 override는 history 1건으로 기록 | 통과 |
+
+### 남은 위험 / 한계
+
+- 문서가 외부 참조를 저장하지 않아(XV.5.2 차이) 외부 component 판정은 ADR-0119 결정 4의 추론 규칙(로드한 직접 의존성 snapshot의
+  export)입니다. 대상 library를 쓸 수 없으면(offline) 미해결로 통과하고 command 자신의 검증에 맡깁니다.
+- 복제·외부 snapshot 반영·record 복원과 nested 경로 override는 검사하지 않습니다(ADR-0127 결정 3).

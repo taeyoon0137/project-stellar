@@ -2,7 +2,7 @@
 
 - WBS: XIV.14.3
 - 작업명: component/token dependency staging scenario
-- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 남은 범위가 있음(아래 본문). 보고 당시 기록: 부분 완료 (`[~]` 후보)
+- 상태: 완료 (`[x]`) 후보 — 2026-11-24 library-wire, 아래 "작업 (2026-11-24, library-wire)" 절: 컴포넌트 → token set 의존 staging 시나리오를 더했습니다. 원장 판정은 통합 때 정합니다. 이전 기록: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 남은 범위가 있음(아래 본문). 보고 당시 기록: 부분 완료 (`[~]` 후보)
 - 선행: XIV.5.4
 - 결정: ADR-0080
 
@@ -65,3 +65,41 @@
     차단"이 생길 경로가 없습니다.
 - 남은 일: token 참조가 문서 형식에 들어올 때 ops 동반 단위 계산에 token set 의존을 더하고, 같은 scenario(View만 stage → token
   set 동반 요구 → 승인 뒤 성공)를 XIV.14.1 harness로 더합니다. 둘 다 이 lane 소유 밖(document·ops)입니다.
+
+## 작업 (2026-11-24, library-wire): token 의존 staging
+
+- 결정: [ADR-0127](../adr/ADR-0127-library-product-paths-token-companion.md) 결정 4. 위 "후속 판정"의 전제(문서 레코드의 token 참조)와
+  달리, 저장 형식의 token 의존은 컴포넌트 텍스트 원본의 `local-tokens` → token set 원본(`design/tokens/<slug>.stellar.yaml`)으로 이미
+  있습니다. 이 의존으로 시나리오를 만들었습니다.
+- 동반 계산을 `crates/ops/src/git/companion.rs`로 옮기고 token 의존을 더했습니다. 후보 컴포넌트의 token이 후보 token set에 없으면 원천에서
+  그 token을 담은 token set 파일, 원천이 참조를 뺐으면 그 컴포넌트 파일이 동반입니다. 원천에서도 끊긴 참조(프로젝트 token set 밖)와
+  기준 index에서 이미 끊긴 참조는 막지 않습니다. `CompanionReason`에 `token`이 생겼고, token set을 읽지 못하면
+  `PrepareStageError::TokenSource`입니다.
+
+### 변경 파일
+
+- `crates/ops/src/git/companion.rs`(신규), `crates/ops/src/git.rs`
+- `tests/integration/tests/git_token_staging.rs`(신규), `tests/integration/tests/git_common/mod.rs`(`write_text_project`)
+
+### 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-ops --features test-support --lib git::companion` | 0 — 3 passed |
+| `cargo test -p stellar-integration-tests --test git_token_staging` | 0 — 1 passed |
+| 같은 시험을 token 단계를 끈 상태로 실행(일시 변경, 되돌림) | 실패 — 시험이 token 의존을 실제로 판정함을 확인 |
+
+| 검사 | 결과 |
+|---|---|
+| 새 컴포넌트 Card(`local-tokens` = Brand accent)만 stage → `CompanionRequired`(단위 = Brand token set 파일, 이유 = Card·accent), index bytes 불변. 필수가 아닌 승인은 `UnexpectedApproval` | 통과 |
+| token set만 stage·unstage는 동반 없음. 승인하면 두 파일만 staged, `validate_staged` 통과 | 통과 |
+| token set만 unstage → Card 파일 동반 | 통과 |
+| commit 뒤 작업 트리에서 Brand 삭제 + Card 참조 제거 → Brand 삭제만 stage하면 Card 동반, index 불변 → 승인 뒤 재검증 통과, commit 경고 없음, HEAD에 두 파일 | 통과 |
+| 단위 시험: 새 컴포넌트·새 token set, unstage, token set 삭제와 참조 제거, 프로젝트 밖 token·이미 끊긴 참조는 막지 않음 | 통과 |
+
+### 남은 위험 / 한계
+
+- CLI `stellar git` JSON의 `reasons`에는 `token` 필드가 아직 없습니다(CLI 출력 형식은 CLI 소유).
+- 문서 레코드·binding이 token을 저장하게 되면 View → token 의존을 같은 모듈에 더해야 합니다.
+- staging 파이프라인은 index를 저장 프로젝트로 다시 열므로 generation(`design/current`)이 있는 프로젝트가 대상입니다. 시험도 앱 저장처럼
+  텍스트 원본과 generation을 함께 씁니다.

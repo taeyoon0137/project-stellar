@@ -6,6 +6,9 @@
 //! keyer는 privacy key 설정 범위라 시험 keyer를 씁니다).
 #![allow(dead_code)]
 
+/// 제품 library cache 경로 fixture(ADR-0127).
+pub mod product;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

@@ -33,6 +33,9 @@ pub mod app;
 /// 창 하나의 프로젝트 편집 session (XII.2.1).
 pub mod window_session;
 
+/// 창 session의 외부 library (XV.5.5·XV.5.3, ADR-0127).
+pub mod library;
+
 /// 창의 고정 Free Frame scene.
 pub mod canvas;
 

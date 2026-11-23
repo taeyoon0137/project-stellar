@@ -11,11 +11,11 @@
 //! - history preview(속성 scrub)는 preview 중 넣지 않고 끝에서 마지막 change set 하나를 넣습니다. Undo·Redo 재생과 에이전트
 //!   batch 적용은 그 자리에서 `observe`를 부르므로 이 대기열에 넣지 않습니다.
 
+use stellar_ops::diff::DocumentSource;
 use stellar_agent_edit::agent_history::external::respond_to_external;
 use stellar_agent_edit::agent_history::{SessionContext, SessionEndReport};
 use stellar_commands::change::ChangeSet;
 use stellar_commands::id::{CommandId, CommandOrigin};
-use stellar_document::records::DocumentRecords;
 use stellar_history::agent::WindowAgentHistory;
 
 use crate::agent_edit::{monotonic_ms, AgentWindow, WindowAgentEdit};
@@ -30,7 +30,7 @@ pub(crate) enum Observation {
         origin: CommandOrigin,
     },
     /// 외부 변경(창이 마지막으로 맞춘 원본, 외부 원본).
-    External(Box<(DocumentRecords, DocumentRecords)>),
+    External(Box<(DocumentSource, DocumentSource)>),
 }
 
 /// 창 session의 관찰 대기열과 켜짐 여부. 에이전트 상태가 없으면 둘 다 꺼져 비용이 없습니다.
@@ -57,7 +57,7 @@ impl AgentWatch {
     /// 외부 변경 관찰값을 넣습니다(켜져 있을 때만). 값은 켜져 있을 때만 만듭니다.
     pub(crate) fn note_external(
         &mut self,
-        values: impl FnOnce() -> Option<(DocumentRecords, DocumentRecords)>,
+        values: impl FnOnce() -> Option<(DocumentSource, DocumentSource)>,
     ) {
         if self.external {
             if let Some((base, incoming)) = values() {
@@ -100,8 +100,8 @@ pub(crate) fn drain(window: &mut AgentWindow<'_>) -> Vec<SessionEndReport> {
 /// 외부 변경에 대응합니다: 이 창 세션의 lease와 겹치면 그 세션을 끝냅니다(문서는 바꾸지 않음).
 fn respond(
     window: &mut AgentWindow<'_>,
-    base: &DocumentRecords,
-    incoming: &DocumentRecords,
+    base: &DocumentSource,
+    incoming: &DocumentSource,
 ) -> Vec<SessionEndReport> {
     let Ok(table) = window.agent.lease_table() else {
         return Vec::new();

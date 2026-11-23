@@ -31,7 +31,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use stellar_document::records::{DocumentRecords, NodePayload};
+use stellar_document::records::DocumentRecords;
 use stellar_git_porcelain::blob_write::write_candidate_blobs;
 use stellar_git_porcelain::cancel::GitCancelToken;
 pub use stellar_git_porcelain::cancel::GitCancelToken as CancelToken;
@@ -92,6 +92,10 @@ use crate::candidate::{
 };
 use crate::core_types::ids::StableId;
 use crate::core_types::property::PropertyPath;
+
+/// 필수 동반 원본 단위 계산(컴포넌트 정의·token 의존, ADR-0127 결정 4).
+mod companion;
+use companion::{companion_closure, component_files, component_refs, token_files, CompanionInputs};
 
 // ───────────────────────────── 실행 환경 ─────────────────────────────
 
@@ -331,8 +335,10 @@ pub struct UnitSelection {
 pub struct CompanionReason {
     /// 필요한 단위.
     pub unit: SourceUnit,
-    /// 끊기는 컴포넌트 정의 참조.
+    /// 끊기는 컴포넌트 정의 참조. token 의존이면 그 token을 참조하는 컴포넌트 정의입니다.
     pub component: StableId,
+    /// 끊기는 token 참조(컴포넌트 정의 `local-tokens` → token set, ADR-0127 결정 4). 정의 참조면 `None`입니다.
+    pub token: Option<StableId>,
 }
 
 // ───────────────────────────── 선택 staging 파이프라인 ─────────────────────────────
@@ -424,6 +430,8 @@ pub enum PrepareStageError {
     DanglingComponent(StableId),
     /// 컴포넌트 텍스트 원본을 읽지 못했습니다.
     ComponentSource(String),
+    /// token set 텍스트 원본(`design/tokens/`)을 읽지 못했습니다.
+    TokenSource(String),
 }
 
 impl fmt::Display for PrepareStageError {
@@ -457,6 +465,7 @@ impl fmt::Display for PrepareStageError {
                 write!(f, "컴포넌트 정의 {id} 참조가 끊기며 포함할 원본이 없습니다")
             }
             Self::ComponentSource(e) => write!(f, "컴포넌트 원본 읽기 실패: {e}"),
+            Self::TokenSource(e) => write!(f, "token set 원본 읽기 실패: {e}"),
         }
     }
 }
@@ -604,113 +613,6 @@ fn project_records(
         out.insert(id, records);
     }
     Ok(out)
-}
-
-/// 문서들이 참조하는 컴포넌트 정의 ID.
-fn component_refs<'a>(
-    records: impl IntoIterator<Item = &'a DocumentRecords>,
-) -> BTreeSet<StableId> {
-    records
-        .into_iter()
-        .flat_map(|r| r.nodes.iter())
-        .filter_map(|n| match &n.payload {
-            NodePayload::ComponentInstance(i) => Some(i.component().id()),
-            _ => None,
-        })
-        .collect()
-}
-
-/// 프로젝트 root의 컴포넌트 원본: 저장소 경로 → 정의 ID. 폴더가 없으면 빈 목록입니다.
-fn component_files(root: &Path) -> Result<BTreeMap<GitPath, StableId>, PrepareStageError> {
-    let (_, files) = read_project_library(root, ExternalAccess::MetadataOnly)
-        .map_err(|e| PrepareStageError::ComponentSource(e.to_string()))?;
-    Ok(files
-        .into_iter()
-        .filter_map(|(id, (path, _))| {
-            let name = path.file_name()?.to_str()?;
-            Some((
-                GitPath::from_bytes(format!("{COMPONENTS_DIR}{name}").as_bytes()),
-                id,
-            ))
-        })
-        .collect())
-}
-
-/// 후보의 컴포넌트 정의 집합: 단위에 속한 경로는 원천(WT·HEAD), 나머지는 기준 index.
-fn candidate_definitions(
-    index: &BTreeMap<GitPath, StableId>,
-    source: &BTreeMap<GitPath, StableId>,
-    units: &BTreeSet<SourceUnit>,
-) -> BTreeSet<StableId> {
-    let covered = |path: &GitPath| units.iter().any(|u| u.contains(path.as_bytes()));
-    index
-        .iter()
-        .filter(|(path, _)| !covered(path))
-        .chain(source.iter().filter(|(path, _)| covered(path)))
-        .map(|(_, id)| *id)
-        .collect()
-}
-
-struct CompanionInputs<'a> {
-    has_changes: bool,
-    base_refs: &'a BTreeSet<StableId>,
-    selection_refs: &'a BTreeSet<StableId>,
-    source_refs: &'a BTreeSet<StableId>,
-    index_defs: &'a BTreeMap<GitPath, StableId>,
-    source_defs: &'a BTreeMap<GitPath, StableId>,
-}
-
-/// 새로 끊기는 컴포넌트 참조가 없어질 때까지 필요한 단위를 더한 집합(고정점)과 이유.
-fn companion_closure(
-    inputs: &CompanionInputs<'_>,
-    selected: &BTreeSet<SourceUnit>,
-) -> Result<(BTreeSet<SourceUnit>, Vec<CompanionReason>), PrepareStageError> {
-    let index_def_ids: BTreeSet<StableId> = inputs.index_defs.values().copied().collect();
-    let base_dangling: BTreeSet<StableId> = inputs
-        .base_refs
-        .difference(&index_def_ids)
-        .copied()
-        .collect();
-    let mut units = selected.clone();
-    let mut reasons = Vec::new();
-    loop {
-        let refs = if units.contains(&SourceUnit::Generation) {
-            inputs.source_refs
-        } else {
-            inputs.selection_refs
-        };
-        let defs = candidate_definitions(inputs.index_defs, inputs.source_defs, &units);
-        let mut added = false;
-        for id in refs.difference(&defs) {
-            if base_dangling.contains(id) {
-                continue;
-            }
-            let needed = match inputs.source_defs.iter().find(|(_, def)| *def == id) {
-                Some((path, _)) => SourceUnit::File(path.clone()),
-                // 정의 원본이 원천에 없으면 인스턴스 쪽(View generation 묶음)을 원천과 맞춰야 합니다.
-                // stage(작업 트리에서 정의와 인스턴스를 함께 지움)와 unstage 모두 같습니다. 원천에도
-                // 인스턴스가 남아 있으면 다음 반복에서 해결할 수 없는 오류가 됩니다.
-                None if !inputs.has_changes && !units.contains(&SourceUnit::Generation) => {
-                    SourceUnit::Generation
-                }
-                None => return Err(PrepareStageError::DanglingComponent(*id)),
-            };
-            if units.contains(&needed) {
-                return Err(PrepareStageError::DanglingComponent(*id));
-            }
-            reasons.push(CompanionReason {
-                unit: needed.clone(),
-                component: *id,
-            });
-            units.insert(needed);
-            added = true;
-        }
-        if !added {
-            break;
-        }
-    }
-    reasons.sort();
-    Ok((units, reasons))
 }
 
 /// 옛 배치 generation 저장 경로(`design/current`, `design/generations/`, `design/objects/`, ADR-0122 이전 Git 추적).
@@ -923,7 +825,7 @@ fn prepare_selection(
         None => worktree,
     };
 
-    // 컴포넌트 정의 참조의 필수 동반 단위(UX.5.4). 자동으로 포함하지 않습니다.
+    // 컴포넌트 정의·token 참조의 필수 동반 단위(UX.5.4, ADR-0127 결정 4). 자동으로 포함하지 않습니다.
     let base_records = project_records(&base)?;
     let mut selection_records = base_records.clone();
     for projection in semantic.documents() {
@@ -935,6 +837,8 @@ fn prepare_selection(
     let source_refs = component_refs(source_records.values());
     let index_defs = component_files(base_tree.root())?;
     let source_defs = component_files(source_root)?;
+    let index_tokens = token_files(base_tree.root())?;
+    let source_tokens = token_files(source_root)?;
     let inputs = CompanionInputs {
         has_changes,
         base_refs: &base_refs,
@@ -942,6 +846,8 @@ fn prepare_selection(
         source_refs: &source_refs,
         index_defs: &index_defs,
         source_defs: &source_defs,
+        index_tokens: &index_tokens,
+        source_tokens: &source_tokens,
     };
     let (closure, reasons) = companion_closure(&inputs, &unit_selection.selected)?;
     let required: BTreeSet<SourceUnit> = closure
@@ -2281,6 +2187,7 @@ impl GitSession {
 mod tests {
     use super::*;
     use crate::core_types::property::PropertyKey;
+    use stellar_document::records::NodePayload;
 
     #[test]
     fn item_ids_round_trip_and_reject_bad_forms() {

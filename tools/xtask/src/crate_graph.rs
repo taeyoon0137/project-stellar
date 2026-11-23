@@ -236,6 +236,8 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-export",
                 "stellar-scene",
                 "stellar-assets",
+                // 외부 library 제품 경로(ADR-0127): 공용 cache store·keyer·lock 로드와 읽기 전용 사전 검사.
+                "stellar-dependencies",
             ],
         ),
         // 무결성 진단 집계(ADR-0095, `crates/integrity`): 생산자 crate의 공개 결과만 읽고 셸·앱 runtime에 의존하지 않습니다.

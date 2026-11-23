@@ -35,6 +35,8 @@ stellar-export = { path = "../export" }
 stellar-scene = { path = "../scene", features = ["document"] }
 # PNG 내보내기의 이미지 asset 내용(asset metadata record·content store 읽기, ADR-0116 결정 5).
 stellar-assets = { path = "../assets" }
+# 외부 library cache·lock 로드와 읽기 전용 사전 검사(`library`, ADR-0127): 제품 cache store·keyer를 엽니다.
+stellar-dependencies = { path = "../dependencies" }
 
 [features]
 # 테스트 전용 fixture 생성기를 상위 도구(stellar-cli)의 테스트에 노출합니다. 기본값은 꺼져 있고

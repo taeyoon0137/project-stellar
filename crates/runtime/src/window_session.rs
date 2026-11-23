@@ -983,6 +983,8 @@ pub struct ProjectWindowSession {
     external_conflict: Option<(DiskMark, crate::reconcile::ExternalConflict)>,
     /// 사용자 편집·외부 변경을 에이전트 출처 색인에 알리는 관찰 대기열(ADR-0124 결정 4·5, `crate::agent_observe`).
     pub(crate) agent_watch: crate::agent_observe::AgentWatch,
+    /// 문서를 연 뒤 lock 기준으로 로드한 외부 library(XV.5.5, ADR-0127 결정 1).
+    libraries: std::sync::Arc<crate::library::WindowLibraries>,
 }
 
 /// 저장 잠금 디렉터리 공급자. 기본은 OS 사용자 데이터의 공용 잠금 디렉터리입니다.
@@ -1147,6 +1149,8 @@ impl ProjectWindowSession {
         let mut session = ProjectWindowSession::empty(identity, window);
         session.lock_dir = lock_dir;
         session.adopt(disk, DocumentRevision(0), None);
+        // 문서를 연 뒤 외부 library를 로드합니다. 실패하지 않으며 문제는 진단으로 남습니다(XV.5.5).
+        session.reload_libraries();
         if reconcile {
             if let Err(error) = session.reconcile() {
                 eprintln!("Stellar text source reconcile: {error}");
@@ -1221,6 +1225,7 @@ impl ProjectWindowSession {
             reconcile_pending: false,
             external_conflict: None,
             agent_watch: Default::default(),
+            libraries: Default::default(),
         }
     }
 
@@ -1591,6 +1596,48 @@ impl ProjectWindowSession {
             .map_or(0, |loaded| loaded.manifest.generation)
     }
 
+    /// 문서를 연 뒤 로드한 외부 library(열기 진단·사전 검사, XV.5.5).
+    pub fn libraries(&self) -> &crate::library::WindowLibraries {
+        &self.libraries
+    }
+
+    /// 외부 library를 OS 기본 cache에서 다시 로드합니다(lock·cache가 바뀐 뒤).
+    pub fn reload_libraries(&mut self) {
+        self.libraries = std::sync::Arc::new(crate::library::WindowLibraries::open(
+            self.identity.root_path(),
+        ));
+    }
+
+    /// 지정한 library 상태를 씁니다(시험·cache 위치를 아는 호출자).
+    pub fn set_libraries(&mut self, libraries: crate::library::WindowLibraries) {
+        self.libraries = std::sync::Arc::new(libraries);
+    }
+
+    /// transaction을 기록하기 전 외부 library 읽기 전용 사전 검사(XV.5.3, ADR-0127 결정 3).
+    fn check_libraries(
+        &self,
+        transaction: &CommandTransaction,
+    ) -> Result<(), WindowSessionEditError> {
+        let Some(document) = self.document.as_ref() else {
+            return Ok(());
+        };
+        self.libraries
+            .check(
+                || match &self.source {
+                    SourceMode::Text {
+                        library: Some(library),
+                        ..
+                    } => std::borrow::Cow::Borrowed(&library.components),
+                    _ => std::borrow::Cow::Owned(crate::library::disk_components(
+                        self.identity.root_path(),
+                    )),
+                },
+                document.state.model(),
+                transaction,
+            )
+            .map_err(WindowSessionEditError::Library)
+    }
+
     /// 작업 문서에 transaction을 실행하고 이 창 history에 기록합니다. 작업 문서가 없으면
     /// [`WindowSessionEditError::NoDocument`].
     ///
@@ -1600,6 +1647,7 @@ impl ProjectWindowSession {
         transaction: &CommandTransaction,
         label: u8,
     ) -> Result<ChangeSet, WindowSessionEditError> {
+        self.check_libraries(transaction)?;
         let discarded = self.redo_sequences();
         let document = self
             .document
@@ -1622,6 +1670,7 @@ impl ProjectWindowSession {
         clock: &C,
         label: u8,
     ) -> Result<ChangeSet, WindowSessionEditError> {
+        self.check_libraries(transaction)?;
         let discarded = self.redo_sequences();
         let document = self
             .document
@@ -1645,6 +1694,7 @@ impl ProjectWindowSession {
         clock: &C,
         label: u8,
     ) -> Result<ChangeSet, WindowSessionEditError> {
+        self.check_libraries(transaction)?;
         let discarded = self.redo_sequences();
         let document = self
             .document
@@ -1666,6 +1716,7 @@ impl ProjectWindowSession {
         inserted: StableId,
         label: u8,
     ) -> Result<ChangeSet, WindowSessionEditError> {
+        self.check_libraries(transaction)?;
         let discarded = self.redo_sequences();
         let document = self
             .document
@@ -1688,6 +1739,7 @@ impl ProjectWindowSession {
         selection: Selection,
         label: u8,
     ) -> Result<ChangeSet, WindowSessionEditError> {
+        self.check_libraries(transaction)?;
         let discarded = self.redo_sequences();
         let document = self
             .document
@@ -2205,7 +2257,12 @@ impl ProjectWindowSession {
         // clean 창의 문서는 base와 같습니다(ADR-0124 결정 5: lease를 쥔 세션이 있을 때만 관찰값을 만듦).
         let mut watch = std::mem::take(&mut self.agent_watch);
         let current = self.model_of();
-        watch.note_external(|| Some((current.to_records().ok()?, incoming.records.clone())));
+        watch.note_external(|| {
+            Some((
+                stellar_ops::diff::DocumentSource::of_model(current).ok()?,
+                incoming.clone(),
+            ))
+        });
         self.agent_watch = watch;
         self.adopt_external(disk, &incoming, command, true)
     }
@@ -2361,7 +2418,12 @@ impl ProjectWindowSession {
         // 외부 변경 관찰값(ADR-0124 결정 5): 병합 결과와 관계없이 lease 겹침을 판정합니다.
         if let (Ok(base), Some(model)) = (&base, disk.model.as_ref()) {
             self.agent_watch
-                .note_external(|| Some((base.records.clone(), model.to_records().ok()?)));
+                .note_external(|| {
+                    Some((
+                        base.clone(),
+                        stellar_ops::diff::DocumentSource::of_model(model).ok()?,
+                    ))
+                });
         }
         let merged = crate::reconcile::merge_window(base, self.model_of(), disk.model.as_ref());
         match merged {
@@ -2470,6 +2532,8 @@ pub enum WindowSessionEditError {
     View(ViewTabsError),
     /// 이동·확대 결과 viewport가 유효하지 않음(유한 값 아님).
     Viewport(ViewportError),
+    /// 외부 library 원본을 바꾸는 편집(읽기 전용 정책, XV.5.3).
+    Library(crate::library::LibraryEditRefused),
 }
 
 impl fmt::Display for WindowSessionEditError {
@@ -2479,6 +2543,7 @@ impl fmt::Display for WindowSessionEditError {
             WindowSessionEditError::History(error) => write!(f, "{error}"),
             WindowSessionEditError::View(error) => write!(f, "{error}"),
             WindowSessionEditError::Viewport(error) => write!(f, "{error}"),
+            WindowSessionEditError::Library(error) => write!(f, "{error}"),
         }
     }
 }

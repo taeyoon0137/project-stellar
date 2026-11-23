@@ -47,6 +47,9 @@ pub mod apply;
 /// 교차 프로세스 저장 잠금 (XXIV.4.5).
 pub mod lock;
 
+/// 외부 library 제품 경로 (XV.5.5·XV.5.3, ADR-0127).
+pub mod library;
+
 /// 프로젝트 검증 (XXIV.1.3).
 pub mod validate;
 
@@ -161,9 +164,9 @@ pub mod integrity {
         pub unreadable: Vec<(StableId, String)>,
     }
 
-    /// 저장 snapshot에서 앱 상태 없이 계산할 수 있는 진단을 모읍니다: 모든 문서의 미해결 참조(내장 checker)와 메모리
-    /// migration 상태. asset store·font registry·접근성 tree·Target Profile·library cache가 필요한 생산자는 headless
-    /// snapshot에 그 입력이 없어 실행하지 않습니다(ADR-0095 결정 7).
+    /// 저장 snapshot에서 앱 상태 없이 계산할 수 있는 진단을 모읍니다: 모든 문서의 미해결 참조(내장 checker), 메모리
+    /// migration 상태, 외부 library 부분 열기(OS 기본 library cache, ADR-0127 결정 2). asset store·font registry·접근성
+    /// tree·Target Profile이 필요한 생산자는 headless snapshot에 그 입력이 없어 실행하지 않습니다(ADR-0095 결정 7).
     pub fn diagnose_snapshot(snapshot: &ProjectSnapshot) -> SnapshotDiagnostics {
         let mut engine = IntegrityEngine::new();
         let mut unreadable = Vec::new();
@@ -171,6 +174,7 @@ pub mod integrity {
         if let SchemaDecision::MigrateInMemory { from, to } = snapshot.schema() {
             engine.submit(None, origins::MIGRATION, sources::migration(from, to));
         }
+        crate::library::open_libraries_default(snapshot.root()).submit_to(&mut engine);
         for definition in snapshot.documents() {
             match snapshot.document_records(definition.id) {
                 Ok(records) => {
