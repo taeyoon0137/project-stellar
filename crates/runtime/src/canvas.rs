@@ -53,6 +53,10 @@ pub(crate) mod shape;
 pub mod tool;
 /// 캔버스 이동·크기 단위와 핸들 숨김 기준 (XII.10.2, ADR-0104).
 pub mod tool_units;
+/// 스냅 엔진: 가이드·그리드·부모·형제·같은 간격·같은 크기·픽셀 후보 (XII.10.15, ADR-0105).
+pub mod snap;
+/// 캔버스 변형·정렬 엔진 (XII.10.9~XII.10.16, XII.10.21, XII.10.23, XII.10.44, ADR-0105).
+pub mod transform;
 
 /// painter 순서의 사각형 하나. parent는 투명한 Fragment를 펼친 뒤의 가장 가까운 Frame입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]

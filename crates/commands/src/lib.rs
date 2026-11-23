@@ -53,6 +53,15 @@ pub mod property;
 /// 속성 패널 값의 CSS 값 문법 parser·formatter (UX.2.2).
 pub mod css_value;
 
+/// 캔버스 배치: 배치 쓰기·정렬·분배·순서·묶음 (XII.10.21, XII.10.23, ADR-0105).
+pub mod arrange;
+
+/// 비례 확대 Scale (XII.10.12, ADR-0105).
+pub mod scale;
+
+/// 뒤집기 Flip (XII.10.44, ADR-0105).
+pub mod flip;
+
 /// 속성 패널 표면: 선택 행 snapshot과 CSS 값 편집 (UX.2.2).
 pub mod inspector;
 

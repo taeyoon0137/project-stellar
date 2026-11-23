@@ -127,15 +127,15 @@ use stellar_project::root::{classify_project_open, OpenError, RootError};
 use stellar_project::trust::TrustStatus;
 use stellar_project::trust_store::{os_user_data_base, FileTrustStore};
 
-mod canvas_gesture;
+pub(crate) mod canvas_gesture;
 mod components;
 mod create;
 mod frame_insert;
 mod frame_move;
 pub mod gesture_math;
 mod image_place;
-/// 이동·크기 조절 스냅 계산과 후보 수집(UX.3.8).
-pub mod snap;
+/// 이동·크기 조절 스냅 계산과 후보 수집(UX.3.8). 원본은 [`crate::canvas::snap`](XII.10.15)입니다.
+pub use crate::canvas::snap;
 pub use image_place::ImagePlacement;
 /// 속성 패널 행 게시와 CSS 값 편집(UX.2.2).
 pub mod inspector;
