@@ -30,6 +30,8 @@ mod image;
 pub mod scene_source;
 pub use image::image_placement;
 pub(crate) mod shape;
+/// 캔버스 도구 10종과 도구 상태 기계 (XII.10.1, ADR-0104).
+pub mod tool;
 /// 캔버스 이동·크기 단위와 핸들 숨김 기준 (XII.10.2, ADR-0104).
 pub mod tool_units;
 
