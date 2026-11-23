@@ -253,7 +253,7 @@ impl Headless {
                     cached.tree = Some((
                         document,
                         DocumentTree::load(snapshot, document).map_err(|_| {
-                            RpcError::new(-32000, "문서 snapshot을 읽을 수 없습니다")
+                            fail(Kind::Unavailable, "문서 snapshot을 읽을 수 없습니다")
                         })?,
                     ));
                 }

@@ -1,5 +1,5 @@
 //! 고정 HEAD·working generation·프로젝트 컴포넌트 YAML 집합의 변경 페이지.
-use super::{id, invalid, opt_id, read_error, revision, uint, CachedRead};
+use super::{fail, id, invalid, opt_id, read_error, revision, uint, CachedRead, Kind};
 use crate::catalog::paging::{self, PageRequest, PageSource};
 use crate::json::{self, JsonLimits, JsonValue};
 use crate::jsonrpc::RpcError;
@@ -64,8 +64,12 @@ pub(super) fn page(
     {
         return Err(invalid("base에는 HEAD만 지정할 수 있습니다"));
     }
-    let unavailable =
-        || RpcError::new(-32000, "같은 프로젝트의 HEAD와 현재 저장 세대가 필요합니다");
+    let unavailable = || {
+        fail(
+            Kind::Unavailable,
+            "같은 프로젝트의 HEAD와 현재 저장 세대가 필요합니다",
+        )
+    };
     let head = project.head().map_err(|error| match error {
         TrustedReadError::Unavailable => unavailable(),
         other => read_error(other),
