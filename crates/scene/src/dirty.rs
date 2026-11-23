@@ -14,7 +14,8 @@
 //!
 //! - 같은 node에 여러 입력이 오면 더 큰 종류가 이깁니다(`Paint < Geometry < Subtree`).
 //! - 다른 node의 geometry를 입력으로 쓰는 node(Boolean 결과, ADR-0084 결정 7)는 [`SceneDependents`]가 알려 줍니다.
-//!   operand의 geometry 이상 dirty는 결과 node의 [`SceneDirtyKind::Geometry`]가 됩니다. paint만 바뀐 operand는 결과에
+//!   operand의 geometry 이상 dirty, 그리고 operand 조상의 dirty(종류 무관, 조상이 움직이면 operand world geometry도
+//!   달라짐, [`SceneDependents::descendant_dependents`])는 결과 node의 [`SceneDirtyKind::Geometry`]가 됩니다. paint만 바뀐 operand는 결과에
 //!   영향이 없습니다(operand는 단독 표시하지 않고 결과는 host의 paint로 칠합니다).
 //! - 조상의 transform·clip·표시·잠금이 바뀌어 자손의 world 값이 달라지는 전파는 dirty set이 아니라 증분 builder가
 //!   scope 비교로 처리합니다([`crate::incremental`]). dirty set은 "자기 입력이 바뀐 node"만 담습니다.
@@ -165,6 +166,14 @@ impl SceneInvalidation {
 pub trait SceneDependents {
     /// `node`의 geometry를 읽는 node들.
     fn dependents_of(&self, node: StableId) -> Vec<StableId>;
+
+    /// `node`의 자손(자신 제외)의 geometry를 읽는 node들.
+    ///
+    /// 조상의 transform·크기가 바뀌면 자손 operand의 world geometry도 달라집니다(operand는 scene tree에 없어 증분
+    /// builder의 scope 비교로 잡히지 않음). 기본 구현은 자손을 모르는 조회라 비어 있습니다.
+    fn descendant_dependents(&self, _node: StableId) -> Vec<StableId> {
+        Vec::new()
+    }
 }
 
 /// 의존 node가 없는 조회.
@@ -222,21 +231,28 @@ impl SceneDirtySet {
         }
     }
 
-    /// geometry 이상 dirty node의 의존 node를 geometry dirty로 더합니다.
+    /// 의존 node를 geometry dirty로 더합니다.
+    ///
+    /// - geometry 이상 dirty node를 직접 읽는 node.
+    /// - dirty node(종류 무관)의 자손을 읽는 node. 문서 무효화 class가 paint인 Frame transform 변경도 자손 operand의 world
+    ///   geometry를 바꾸므로, 조상 쪽은 paint dirty도 보수적으로 전파합니다.
     fn propagate_dependents(&mut self, dependents: &dyn SceneDependents) {
-        let mut frontier: Vec<StableId> = self
+        let mut frontier: Vec<(StableId, SceneDirtyKind)> = self
             .nodes
             .iter()
-            .filter(|(_, kind)| **kind >= SceneDirtyKind::Geometry)
-            .map(|(node, _)| *node)
+            .map(|(node, kind)| (*node, *kind))
             .collect();
         for _ in 0..MAX_DEPENDENT_DEPTH {
             let mut next = Vec::new();
-            for node in frontier {
-                for dependent in dependents.dependents_of(node) {
+            for (node, kind) in frontier {
+                let mut readers = dependents.descendant_dependents(node);
+                if kind >= SceneDirtyKind::Geometry {
+                    readers.extend(dependents.dependents_of(node));
+                }
+                for dependent in readers {
                     if self.get(dependent) < Some(SceneDirtyKind::Geometry) {
                         self.insert(dependent, SceneDirtyKind::Geometry);
-                        next.push(dependent);
+                        next.push((dependent, SceneDirtyKind::Geometry));
                     }
                 }
             }
@@ -402,6 +418,71 @@ mod tests {
                 Vec::new()
             }
         }
+    }
+
+    /// 1 ⊃ 2 ⊃ 10(operand of 20). 20은 1 밖에 있습니다.
+    struct NestedOperand;
+
+    impl SceneDependents for NestedOperand {
+        fn dependents_of(&self, node: StableId) -> Vec<StableId> {
+            if node == id(10) {
+                vec![id(20)]
+            } else {
+                Vec::new()
+            }
+        }
+
+        fn descendant_dependents(&self, node: StableId) -> Vec<StableId> {
+            if [id(1), id(2)].contains(&node) {
+                vec![id(20)]
+            } else {
+                Vec::new()
+            }
+        }
+    }
+
+    #[test]
+    fn ancestor_geometry_of_an_operand_dirties_the_boolean_result() {
+        // 검증 기준(XI.2.1): operand 조상 이동도 host가 dirty set에 들어갑니다.
+        let moved = SceneDirtySet::from_invalidations(
+            &[node(
+                1,
+                InvalidationOrigin::Property,
+                InvalidationClasses::GEOMETRY,
+            )],
+            &NestedOperand,
+        );
+        assert_eq!(moved.get(id(20)), Some(SceneDirtyKind::Geometry));
+        assert_eq!(moved.counts(), [0, 2, 0]);
+        let laid_out = SceneDirtySet::from_invalidations(
+            &[SceneInvalidation::LayoutRect {
+                node: id(2),
+                moved: true,
+                resized: false,
+            }],
+            &NestedOperand,
+        );
+        assert_eq!(laid_out.get(id(20)), Some(SceneDirtyKind::Geometry));
+        // 문서 class가 paint인 조상 변경(Frame transform 등)도 보수적으로 전파합니다.
+        let painted = SceneDirtySet::from_invalidations(
+            &[node(
+                1,
+                InvalidationOrigin::Property,
+                InvalidationClasses::PAINT,
+            )],
+            &NestedOperand,
+        );
+        assert_eq!(painted.get(id(20)), Some(SceneDirtyKind::Geometry));
+        // operand 자신의 paint만 바뀌면 결과는 그대로입니다.
+        let operand_paint = SceneDirtySet::from_invalidations(
+            &[node(
+                10,
+                InvalidationOrigin::Property,
+                InvalidationClasses::PAINT,
+            )],
+            &NestedOperand,
+        );
+        assert_eq!(operand_paint.get(id(20)), None);
     }
 
     #[test]

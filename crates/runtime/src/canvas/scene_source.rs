@@ -19,8 +19,8 @@
 //!   때까지 [`DocumentSceneSource::unapplied_variant_patches`]에 셉니다(ADR-0084 결정 5).
 //! - Boolean modifier(XII.10.30)를 가진 Shape·Path는 결과 host입니다. host의 다른 modifier는 Boolean 항목을 뺀
 //!   stack으로 평가합니다. operand node는 source에 넣지 않고(결과에 흡수), host local 좌표로 옮긴 geometry를 문서
-//!   pre-order(OrderKey 순) 순서로 host에 둡니다. operand의 geometry 변경은 host의 geometry dirty가 됩니다
-//!   ([`SceneDependents`]).
+//!   pre-order(OrderKey 순) 순서로 host에 둡니다. operand의 geometry 변경과 operand 조상의 변경은 host의 geometry
+//!   dirty가 됩니다([`SceneDependents`]).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -106,11 +106,29 @@ pub struct DocumentSceneSource {
     root: StableId,
     /// root subtree pre-order 위치(Boolean operand 순서). 구조 변경 때만 다시 계산합니다.
     preorder: HashMap<StableId, usize>,
+    /// Boolean operand → 조상(가까운 것부터). 조상 이동이 host를 dirty로 만드는 데 씁니다.
+    operand_ancestors: BTreeMap<StableId, Vec<StableId>>,
 }
 
 impl SceneDependents for DocumentSceneSource {
     fn dependents_of(&self, node: StableId) -> Vec<StableId> {
         self.operand_hosts.get(&node).cloned().unwrap_or_default()
+    }
+
+    fn descendant_dependents(&self, node: StableId) -> Vec<StableId> {
+        let mut hosts: Vec<StableId> = Vec::new();
+        for (operand, list) in &self.operand_hosts {
+            let inside = self
+                .operand_ancestors
+                .get(operand)
+                .is_some_and(|ancestors| ancestors.contains(&node));
+            if inside {
+                hosts.extend(list.iter().copied());
+            }
+        }
+        hosts.sort_unstable();
+        hosts.dedup();
+        hosts
     }
 }
 
@@ -147,14 +165,34 @@ pub fn document_scene_source<'a>(
     let mut nodes = Vec::new();
     let roots: Vec<SceneKey> = converter.subtree(root, &mut nodes).into_iter().collect();
     let source = SceneSource::from_nodes(roots, nodes)?;
-    Ok(DocumentSceneSource {
+    let mut built = DocumentSceneSource {
         source,
         skipped: converter.skipped,
         operand_hosts: converter.operand_hosts,
         unapplied_variant_patches: unapplied,
         root,
         preorder: converter.preorder,
-    })
+        operand_ancestors: BTreeMap::new(),
+    };
+    refresh_operands(model, &mut built);
+    Ok(built)
+}
+
+/// operand 조상 표를 현재 operand 목록에 맞춥니다.
+fn refresh_operands(model: &DocumentModel, current: &mut DocumentSceneSource) {
+    current.operand_ancestors = current
+        .operand_hosts
+        .keys()
+        .map(|operand| {
+            let mut ancestors = Vec::new();
+            let mut parent = parent_of(model, *operand);
+            while let Some(id) = parent {
+                ancestors.push(id);
+                parent = parent_of(model, id);
+            }
+            (*operand, ancestors)
+        })
+        .collect();
 }
 
 impl<'a, 'o> Converter<'a, 'o> {
@@ -879,6 +917,7 @@ pub fn scene_edits<'a>(
         .retain(|key, _| !reconverted.contains(&key.id()) && !removed.contains(&key.id()));
     current.skipped.extend(converter.skipped);
     current.source.apply(&edits)?;
+    refresh_operands(model, current);
     Ok(edits)
 }
 

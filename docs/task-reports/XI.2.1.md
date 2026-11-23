@@ -49,3 +49,17 @@
 ## 남은 위험 / 한계
 
 - binding 재평가(VIII) 출처의 무효화는 아직 하류 연결이 없습니다. `InvalidationOrigin::Binding`으로 받을 수 있게만 두었습니다.
+
+## 후속 보완 (2026-11-23, operand 조상 전파)
+
+- 결함: dirty set의 `SceneDependents` 전파가 직접 바뀐 operand만 봤습니다. operand의 조상 Frame이 움직이면 operand world geometry가 바뀌지만 host가 dirty set 집계에서 빠졌습니다. scene 결과는 `scene_edits`가 host를 다시 변환해 맞았고, 집계만 틀렸습니다.
+- 수정(ADR-0084 결정 2 개정):
+  - `SceneDependents::descendant_dependents`(자손 operand를 읽는 node, 기본 빈 목록)를 더했습니다.
+  - dirty node는 종류와 무관하게 자손 쪽 의존을 전파합니다. Frame transform은 문서 class가 paint이기 때문입니다.
+  - operand 자신의 paint만 바뀌면 이전처럼 전파하지 않습니다.
+  - runtime `DocumentSceneSource`가 operand 조상 표를 들고 있고, 변환과 `scene_edits` 끝에 다시 맞춥니다.
+- 변경 파일: `crates/scene/src/dirty.rs`, `crates/runtime/src/canvas/scene_source.rs`, `crates/runtime/src/canvas/scene_source/tests.rs`, `docs/adr/ADR-0084-…`.
+- 테스트:
+  - `dirty::tests::ancestor_geometry_of_an_operand_dirties_the_boolean_result`: 조상 geometry·layout 이동, 조상 paint class, operand 자신의 paint.
+  - `scene_source::tests::ancestor_move_of_an_operand_puts_the_host_in_the_dirty_set`: 실제 Frame transform command에서 Frame은 Paint, host는 Geometry.
+- 검증: `cargo test -p stellar-scene dirty` 6 passed, `cargo test -p stellar-runtime --lib scene_source` 10 passed.

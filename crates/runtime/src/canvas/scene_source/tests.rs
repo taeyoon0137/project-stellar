@@ -600,3 +600,44 @@ fn a_node_that_becomes_unsupported_leaves_its_parent_list() {
     );
     assert!(built.skipped.is_empty());
 }
+
+#[test]
+fn ancestor_move_of_an_operand_puts_the_host_in_the_dirty_set() {
+    // XI.2.1: operand 31의 조상 Frame 11이 움직이면 host 30도 dirty set에 들어갑니다(SceneDependents::descendant_dependents).
+    let mut model = boolean_document();
+    model
+        .insert_node(record(
+            11,
+            10,
+            0x30,
+            true,
+            NodePayload::Frame(frame(100., 100., 0., 0.)),
+        ))
+        .unwrap();
+    let mut state = DocumentState::new(model);
+    execute(
+        &mut state,
+        Command::MoveNode(stellar_commands::node_ops::MoveNode {
+            node: sid(31),
+            new_parent: sid(11),
+            order_key: OrderKey::from_bytes(vec![0x10]).unwrap(),
+        }),
+    );
+    let built = document_scene_source(state.model(), sid(10), options()).unwrap();
+    assert_eq!(built.descendant_dependents(sid(11)), vec![sid(30)]);
+    assert_eq!(built.descendant_dependents(sid(10)), vec![sid(30)]);
+    assert_eq!(built.descendant_dependents(sid(30)), Vec::<StableId>::new());
+    let changes = execute(
+        &mut state,
+        Command::SetProperty(SetProperty {
+            node: sid(11),
+            key: frame_keys::TRANSFORM,
+            value: PropertyValue::Transform(Transform2D::new(1., 0., 0., 1., 2., 0.).unwrap()),
+        }),
+    );
+    let dirty =
+        SceneDirtySet::from_invalidations(&scene_invalidations(state.model(), &changes), &built);
+    // Frame transform은 문서 class가 paint입니다. 그래도 자손 operand의 host는 geometry dirty입니다.
+    assert_eq!(dirty.get(sid(11)), Some(SceneDirtyKind::Paint));
+    assert_eq!(dirty.get(sid(30)), Some(SceneDirtyKind::Geometry));
+}
