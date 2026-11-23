@@ -29,11 +29,8 @@ pub(crate) enum Observation {
         changes: ChangeSet,
         origin: CommandOrigin,
     },
-    /// 외부 변경(창이 마지막으로 맞춘 원본과 외부 원본).
-    External {
-        base: DocumentRecords,
-        incoming: DocumentRecords,
-    },
+    /// 외부 변경(창이 마지막으로 맞춘 원본, 외부 원본).
+    External(Box<(DocumentRecords, DocumentRecords)>),
 }
 
 /// 창 session의 관찰 대기열과 켜짐 여부. 에이전트 상태가 없으면 둘 다 꺼져 비용이 없습니다.
@@ -64,7 +61,8 @@ impl AgentWatch {
     ) {
         if self.external {
             if let Some((base, incoming)) = values() {
-                self.queue.push(Observation::External { base, incoming });
+                self.queue
+                    .push(Observation::External(Box::new((base, incoming))));
             }
         }
     }
@@ -87,7 +85,8 @@ pub(crate) fn drain(window: &mut AgentWindow<'_>) -> Vec<SessionEndReport> {
                         .observe(&changes, origin, document.model());
                 }
             }
-            Observation::External { base, incoming } => {
+            Observation::External(values) => {
+                let (base, incoming) = *values;
                 ended.extend(respond(window, &base, &incoming));
             }
         }
