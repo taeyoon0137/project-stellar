@@ -235,6 +235,7 @@
 				MARKETING_VERSION = 0.0.0;
 				OTHER_LDFLAGS = (
 					"-lstellar_ffi",
+					"-lbsm",
 					"-framework",
 					CoreFoundation,
 					"-framework",
@@ -282,6 +283,7 @@
 				MARKETING_VERSION = 0.0.0;
 				OTHER_LDFLAGS = (
 					"-lstellar_ffi",
+					"-lbsm",
 					"-framework",
 					CoreFoundation,
 					"-framework",
