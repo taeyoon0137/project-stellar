@@ -5,7 +5,10 @@
 //!   없이 편집을 끝내면 아무것도 기록하지 않습니다(history 0건).
 //! - **편집 모드.** 선택 엔진의 내용 편집 요청(더블클릭·Return, `SessionOutput::EditContent`)으로
 //!   [`CanvasTextEditor::begin_existing`]을 부릅니다. Escape는 조합이 있으면 조합만 버리고, 없으면 편집을 끝냅니다.
-//!   바깥 클릭은 조합을 확정하고 끝냅니다. 끝나면 Text node 하나가 선택됩니다.
+//!   바깥 클릭은 조합을 확정하고 끝냅니다. 끝나면 Text node 하나가 선택됩니다. 이 편집에서 만든 Text의 본문을 모두
+//!   지우고 끝내면 그 빈 Text를 지우는 항목 하나를 기록합니다(ADR-0129 결정 1).
+//! - **기록 host.** 편집기는 무엇을 기록할지만 정하고, 기록은 [`TextEditHost`]가 합니다(코어 경로 [`HistoryHost`],
+//!   앱 창 session은 `app::text_input`). 앱 Text 입력 경로도 이 편집기 하나를 씁니다(ADR-0129 결정 2).
 //! - **입력.** 본문·선택·조합은 공통 text buffer(`stellar_text::edit`)가 갖습니다. 조합 중 문자열은 [`TextPreview`]
 //!   (transient, scene이 공통 text 엔진으로 그림)로만 보이고, 확정 입력만 `replace-text` command(XII.10.32)와
 //!   입력 종류별 grouping key(`GroupingKey::text_edit`)로 기록합니다.
@@ -18,7 +21,7 @@
 use stellar_commands::command::Command;
 use stellar_commands::id::{CommandId, CommandOrigin};
 use stellar_commands::lock::{edit_permission, EditIntent};
-use stellar_commands::node_ops::InsertNode;
+use stellar_commands::node_ops::{DeleteSubtree, InsertNode};
 use stellar_commands::selection::{Selection, SetSelection};
 use stellar_commands::state::DocumentState;
 use stellar_commands::style_defaults::SetLayoutProperty;
@@ -193,6 +196,107 @@ impl std::fmt::Display for TextEditError {
 
 impl std::error::Error for TextEditError {}
 
+/// 편집기가 확정 입력을 기록하는 곳: 작업 문서와 그 창의 history·선택(ADR-0129 결정 2).
+///
+/// 편집 규칙(무엇을 어떤 command·grouping key로 기록할지)은 [`CanvasTextEditor`] 하나가 정하고, host는 기록만
+/// 합니다. 코어 시험·CLI처럼 history를 직접 쥔 경로는 [`HistoryHost`]를, 앱 창은 창 session(Undo 메뉴 이름표 포함)을
+/// 씁니다.
+pub trait TextEditHost {
+    /// 작업 문서. 없으면 편집 대상이 사라진 것으로 봅니다.
+    fn document(&self) -> Option<&DocumentState>;
+    /// 지금 창 선택.
+    fn selected(&self) -> &[StableId];
+    /// 확정 입력 하나(연속 입력 묶기).
+    fn record_input<C: MonotonicClock>(
+        &mut self,
+        transaction: &CommandTransaction,
+        key: GroupingKey,
+        clock: &C,
+    ) -> Result<(), TextEditError>;
+    /// 새 Text의 첫 확정 입력: 입력 group의 첫 항목으로 기록하고 그 Text 하나를 선택합니다.
+    fn record_creation<C: MonotonicClock>(
+        &mut self,
+        transaction: &CommandTransaction,
+        key: GroupingKey,
+        node: StableId,
+        clock: &C,
+    ) -> Result<(), TextEditError>;
+    /// 편집 중 typography 변경(앞 입력과 묶지 않는 항목 하나).
+    fn record_style(&mut self, transaction: &CommandTransaction) -> Result<(), TextEditError>;
+    /// 빈 Text 정리(삭제 항목 하나, 결정 1).
+    fn record_removal(&mut self, transaction: &CommandTransaction) -> Result<(), TextEditError>;
+    /// node 하나를 선택합니다. 이미 그 선택이면 기록하지 않고 `None`입니다.
+    fn select_only(&mut self, node: StableId) -> Result<Option<HistorySequence>, TextEditError>;
+}
+
+/// history를 직접 쥔 기록 host(창 session 밖의 코어 경로).
+pub struct HistoryHost<'a> {
+    history: &'a mut WindowHistory,
+    doc: &'a mut DocumentState,
+}
+
+impl<'a> HistoryHost<'a> {
+    /// 창 history와 작업 문서를 묶습니다.
+    pub fn new(history: &'a mut WindowHistory, doc: &'a mut DocumentState) -> HistoryHost<'a> {
+        HistoryHost { history, doc }
+    }
+}
+
+impl TextEditHost for HistoryHost<'_> {
+    fn document(&self) -> Option<&DocumentState> {
+        Some(self.doc)
+    }
+
+    fn selected(&self) -> &[StableId] {
+        self.history.view().selection().ids()
+    }
+
+    fn record_input<C: MonotonicClock>(
+        &mut self,
+        transaction: &CommandTransaction,
+        key: GroupingKey,
+        clock: &C,
+    ) -> Result<(), TextEditError> {
+        self.history
+            .record_grouped(self.doc, transaction, key, clock)?;
+        Ok(())
+    }
+
+    fn record_creation<C: MonotonicClock>(
+        &mut self,
+        transaction: &CommandTransaction,
+        key: GroupingKey,
+        node: StableId,
+        clock: &C,
+    ) -> Result<(), TextEditError> {
+        let select = SetSelection::new(Selection::new([node], Some(node)));
+        self.history
+            .record_grouped_and_select(self.doc, transaction, key, &select, clock)?;
+        Ok(())
+    }
+
+    fn record_style(&mut self, transaction: &CommandTransaction) -> Result<(), TextEditError> {
+        self.history.record_document(self.doc, transaction, None)?;
+        Ok(())
+    }
+
+    fn record_removal(&mut self, transaction: &CommandTransaction) -> Result<(), TextEditError> {
+        self.history.record_document(self.doc, transaction, None)?;
+        Ok(())
+    }
+
+    fn select_only(&mut self, node: StableId) -> Result<Option<HistorySequence>, TextEditError> {
+        Ok(self.history.record_selection(
+            self.doc,
+            &SetSelection::new(Selection::new([node], Some(node))),
+        )?)
+    }
+}
+
+fn host_doc<H: TextEditHost>(host: &H) -> Result<&DocumentState, TextEditError> {
+    host.document().ok_or(TextEditError::Stale)
+}
+
 /// 편집 대상.
 #[derive(Debug, Clone)]
 enum Target {
@@ -223,6 +327,11 @@ pub enum EscapeStep {
 pub enum EditEnd {
     /// 입력 없이 끝난 새 Text: 아무것도 만들지 않고 기록하지 않음.
     CreationCancelled,
+    /// 이 편집에서 만든 Text의 본문을 모두 지우고 끝냄: 빈 Text를 지우는 항목 하나를 기록함(ADR-0129 결정 1).
+    Removed {
+        /// 지운 Text node.
+        node: StableId,
+    },
     /// Text node 하나를 선택함. 선택이 바뀌었으면 그 선택 기록.
     Selected {
         /// Text node.
@@ -429,10 +538,9 @@ impl CanvasTextEditor {
     }
 
     /// 확정 입력 하나를 기록합니다. 새 Text는 첫 확정 때 만들고 선택합니다(이어지는 입력과 같은 group).
-    fn record<C: MonotonicClock>(
+    fn record<H: TextEditHost, C: MonotonicClock>(
         &mut self,
-        history: &mut WindowHistory,
-        doc: &mut DocumentState,
+        host: &mut H,
         edit: TextEdit,
         id: CommandId,
         clock: &C,
@@ -450,7 +558,7 @@ impl CanvasTextEditor {
         let style = self
             .typing_style
             .and_then(|style| self.style_command(inserted, style));
-        let revision = doc.revision();
+        let revision = host_doc(host)?.revision();
         let mut tx = CommandTransaction::new(id, CommandOrigin::User);
         match &self.target {
             Target::Node { .. } => {
@@ -458,7 +566,7 @@ impl CanvasTextEditor {
                 if let Some(style) = style {
                     tx = tx.with_command(revision, style);
                 }
-                history.record_grouped(doc, &tx, key, clock)?;
+                host.record_input(&tx, key, clock)?;
             }
             Target::Pending {
                 parent,
@@ -468,7 +576,8 @@ impl CanvasTextEditor {
                 if edit.replacement.is_empty() {
                     return Ok(false);
                 }
-                editable_parent(doc.model(), *parent)?;
+                let model = host_doc(host)?.model();
+                editable_parent(model, *parent)?;
                 let payload = edit_text(
                     &TextPayload::empty(0),
                     replace.range,
@@ -484,7 +593,7 @@ impl CanvasTextEditor {
                     nodes: vec![NodeRecord {
                         id: self.node,
                         parent: Some(*parent),
-                        order_key: doc.model().next_child_order_key(*parent),
+                        order_key: model.next_child_order_key(*parent),
                         visible: true,
                         locked: false,
                         display_name: "Text".into(),
@@ -497,22 +606,20 @@ impl CanvasTextEditor {
                 if let Some(style) = style {
                     tx = tx.with_command(revision, style);
                 }
-                let select = SetSelection::new(Selection::new([self.node], Some(self.node)));
-                history.record_grouped_and_select(doc, &tx, key, &select, clock)?;
+                host.record_creation(&tx, key, self.node, clock)?;
                 self.target = Target::Node { created: true };
             }
         }
         self.typing_style = None;
-        self.revision = doc.revision();
+        self.revision = host_doc(host)?.revision();
         Ok(true)
     }
 
     /// buffer 편집 하나를 적용하고 확정 입력이면 기록합니다. 기록이 실패하면(잠금, 표에 없는 style 번호 등) buffer를
     /// 편집 전으로 되돌려 문서 본문과 어긋나지 않게 하고, 실패한 transaction에 들어 있던 다음 입력 style도 버립니다.
-    fn confirmed<C: MonotonicClock>(
+    fn confirmed<H: TextEditHost, C: MonotonicClock>(
         &mut self,
-        history: &mut WindowHistory,
-        doc: &mut DocumentState,
+        host: &mut H,
         edit: impl FnOnce(&mut TextEditBuffer) -> Option<TextEdit>,
         id: CommandId,
         clock: &C,
@@ -521,7 +628,7 @@ impl CanvasTextEditor {
         let Some(edit) = edit(&mut self.buffer) else {
             return Ok(false);
         };
-        let recorded = self.record(history, doc, edit, id, clock);
+        let recorded = self.record(host, edit, id, clock);
         if recorded.is_err() {
             self.buffer = before;
             self.typing_style = None;
@@ -530,40 +637,37 @@ impl CanvasTextEditor {
     }
 
     /// 확정 입력(타이핑·붙여넣기·`insertText`). 조합 중이면 조합을 이 문자열로 확정합니다. 기록했으면 `true`.
-    pub fn insert<C: MonotonicClock>(
+    pub fn insert<H: TextEditHost, C: MonotonicClock>(
         &mut self,
-        history: &mut WindowHistory,
-        doc: &mut DocumentState,
+        host: &mut H,
         text: &str,
         id: CommandId,
         clock: &C,
     ) -> Result<bool, TextEditError> {
-        self.sync(doc)?;
-        self.confirmed(history, doc, |b| b.insert(text), id, clock)
+        self.sync(host_doc(host)?)?;
+        self.confirmed(host, |b| b.insert(text), id, clock)
     }
 
     /// Backspace.
-    pub fn delete_backward<C: MonotonicClock>(
+    pub fn delete_backward<H: TextEditHost, C: MonotonicClock>(
         &mut self,
-        history: &mut WindowHistory,
-        doc: &mut DocumentState,
+        host: &mut H,
         id: CommandId,
         clock: &C,
     ) -> Result<bool, TextEditError> {
-        self.sync(doc)?;
-        self.confirmed(history, doc, TextEditBuffer::delete_backward, id, clock)
+        self.sync(host_doc(host)?)?;
+        self.confirmed(host, TextEditBuffer::delete_backward, id, clock)
     }
 
     /// Delete.
-    pub fn delete_forward<C: MonotonicClock>(
+    pub fn delete_forward<H: TextEditHost, C: MonotonicClock>(
         &mut self,
-        history: &mut WindowHistory,
-        doc: &mut DocumentState,
+        host: &mut H,
         id: CommandId,
         clock: &C,
     ) -> Result<bool, TextEditError> {
-        self.sync(doc)?;
-        self.confirmed(history, doc, TextEditBuffer::delete_forward, id, clock)
+        self.sync(host_doc(host)?)?;
+        self.confirmed(host, TextEditBuffer::delete_forward, id, clock)
     }
 
     /// 조합 문자열 갱신(`setMarkedText`). 문서·history는 바뀌지 않고 [`Self::preview`]만 바뀝니다.
@@ -580,16 +684,15 @@ impl CanvasTextEditor {
     }
 
     /// 조합을 지금 문자열로 확정합니다(`unmarkText`).
-    pub fn commit_composition<C: MonotonicClock>(
+    pub fn commit_composition<H: TextEditHost, C: MonotonicClock>(
         &mut self,
-        history: &mut WindowHistory,
-        doc: &mut DocumentState,
+        host: &mut H,
         id: CommandId,
         clock: &C,
     ) -> Result<bool, TextEditError> {
-        self.sync(doc)?;
+        self.sync(host_doc(host)?)?;
         self.sequence += 1;
-        self.confirmed(history, doc, TextEditBuffer::commit_composition, id, clock)
+        self.confirmed(host, TextEditBuffer::commit_composition, id, clock)
     }
 
     /// caret·선택 이동(기록 없음). 조합 중이면 입력기 몫이라 `false`입니다.
@@ -633,14 +736,13 @@ impl CanvasTextEditor {
     /// 편집 중 문자 style(`DocumentTextStyles::runs` 번호, `None`은 기본 style) 변경. 조합이 있으면 조합 확정과 그
     /// 범위 style을, 선택이 있으면 선택 범위 style을 CommandTransaction 하나로 기록합니다(history 1건, 앞 입력과
     /// 묶지 않음). caret뿐이면 다음 확정 입력의 transaction에 넣습니다.
-    pub fn apply_style(
+    pub fn apply_style<H: TextEditHost>(
         &mut self,
-        history: &mut WindowHistory,
-        doc: &mut DocumentState,
+        host: &mut H,
         style: Option<u32>,
         id: CommandId,
     ) -> Result<StyleOutcome, TextEditError> {
-        self.sync(doc)?;
+        self.sync(host_doc(host)?)?;
         let composing = self.buffer.composition().is_some();
         let selected = self.buffer.selection().range();
         if !composing && (selected.is_empty() || !self.exists()) {
@@ -653,7 +755,7 @@ impl CanvasTextEditor {
             return Ok(StyleOutcome::Pending);
         }
         let before = self.buffer.clone();
-        let revision = doc.revision();
+        let revision = host_doc(host)?.revision();
         let mut tx = CommandTransaction::new(id, CommandOrigin::User);
         let range = if let Some(composition) = self.buffer.composition() {
             let start = composition.replaced.start;
@@ -682,12 +784,12 @@ impl CanvasTextEditor {
             return Ok(StyleOutcome::Pending);
         };
         tx = tx.with_command(revision, command);
-        if let Err(error) = history.record_document(doc, &tx, None) {
+        if let Err(error) = host.record_style(&tx) {
             self.buffer = before;
-            return Err(error.into());
+            return Err(error);
         }
         self.sequence += 1;
-        self.revision = doc.revision();
+        self.revision = host_doc(host)?.revision();
         Ok(StyleOutcome::Recorded)
     }
 
@@ -727,32 +829,39 @@ impl CanvasTextEditor {
     }
 
     /// 편집을 끝냅니다(Escape 뒤, 바깥 클릭, 도구 전환). 남은 조합은 확정합니다. 입력 없이 끝난 새 Text는
-    /// 아무것도 기록하지 않고, 그 밖에는 Text node 하나를 선택합니다.
-    pub fn finish<C: MonotonicClock>(
+    /// 아무것도 기록하지 않습니다. 이 편집에서 만든 Text의 본문이 비었으면 그 Text를 지우는 `delete-subtree` 항목
+    /// 하나를 기록합니다(ADR-0129 결정 1). 그 밖에는 Text node 하나를 선택합니다.
+    ///
+    /// 조합 확정과 빈 Text 정리는 함께 일어나지 않습니다(확정한 조합 문자열은 비어 있지 않음). 그래서 `id`는 둘 중
+    /// 하나에만 쓰입니다.
+    pub fn finish<H: TextEditHost, C: MonotonicClock>(
         mut self,
-        history: &mut WindowHistory,
-        doc: &mut DocumentState,
+        host: &mut H,
         id: CommandId,
         clock: &C,
     ) -> Result<EditEnd, TextEditError> {
         if self.buffer.composition().is_some() {
-            self.commit_composition(history, doc, id, clock)?;
+            self.commit_composition(host, id, clock)?;
         } else {
-            self.sync(doc)?;
+            self.sync(host_doc(host)?)?;
         }
         if !self.exists() {
             return Ok(EditEnd::CreationCancelled);
         }
-        if !doc.model().contains(self.node) {
-            return Err(TextEditError::Stale);
+        let doc = host_doc(host)?;
+        let payload = text_payload(doc.model(), self.node).ok_or(TextEditError::Stale)?;
+        if self.created() && payload.content().is_empty() {
+            let tx = CommandTransaction::new(id, CommandOrigin::User).with_command(
+                doc.revision(),
+                Command::DeleteSubtree(DeleteSubtree { root: self.node }),
+            );
+            host.record_removal(&tx)?;
+            return Ok(EditEnd::Removed { node: self.node });
         }
-        let selection = if history.view().selection().ids() == [self.node] {
+        let selection = if host.selected() == [self.node] {
             None
         } else {
-            history.record_selection(
-                doc,
-                &SetSelection::new(Selection::new([self.node], Some(self.node))),
-            )?
+            host.select_only(self.node)?
         };
         Ok(EditEnd::Selected {
             node: self.node,

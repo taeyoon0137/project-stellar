@@ -1,70 +1,82 @@
-//! 캔버스 Text 편집(ADR-0067 §6).
+//! 앱 창의 캔버스 Text 편집 요청(ADR-0067 §6, ADR-0129 결정 2).
 //!
-//! - IME 조합은 창 session의 조합 하나([`TextComposition`])가 소유합니다. 조합 중 본문은 문서와 history에 넣지
-//!   않고, 같은 창의 canvas scene이 미리보기로 그립니다(글꼴 cache는 scene의 것 하나).
-//! - 확정·직접 입력만 Text 범위 편집으로 기록합니다. 같은 node에서 caret이 이어지는 입력은
-//!   `GroupingKey::TextInput`으로 묶여 Undo 한 번이 됩니다. 새 Text는 첫 확정 때 만들고 이어지는 입력과 같은
-//!   group으로 기록합니다.
-//! - 편집 가능 여부는 문서 값(표시·잠금·View 소속)으로만 정합니다. 프로젝트 신뢰는 보지 않습니다(D1).
-use super::frame_move::{command_id, editable_frame};
+//! 편집 규칙은 코어 편집기 [`CanvasTextEditor`](`canvas::text::edit`, ADR-0118 결정 1·2·3) 하나가 정합니다. 이 모듈은
+//! 창 session마다 진행 중 편집기 하나를 두고, 비동기 요청을 그 편집기 호출로 바꾸고, 기록을 창 session(Undo 메뉴
+//! 이름표 포함)에 넘기는 일만 합니다. 조합 범위 하나를 바로 기록하던 옛 별도 구현은 지웠습니다.
+//!
+//! - 조합 중 본문은 문서와 history에 넣지 않고, 같은 창의 canvas scene이 미리보기로 그립니다.
+//! - 확정·직접 입력만 Text 범위 편집으로 기록합니다(입력 종류별 grouping key, 새 Text는 첫 확정 때 생성).
+//! - 편집 가능 여부는 `commands::lock::edit_permission`과 활성 View 소속으로만 정합니다. 프로젝트 신뢰는 보지
+//!   않습니다(D1).
+//! - 편집은 [`AppRuntime::end_canvas_text`]로 끝냅니다. 이 편집에서 만든 Text를 모두 지우고 끝내면 빈 Text를 지우는
+//!   항목 하나를 기록합니다(ADR-0129 결정 1).
+use super::frame_move::command_id;
+use super::sidebar::{in_view, view_root};
 use super::*;
+use crate::canvas::text::edit::{
+    CanvasTextEditor, CaretMove, EditEnd, TextEditError, TextEditHost, TextPlacement, TextWidth,
+};
 use crate::canvas::text::TextPreview;
 use crate::document_thread::JobTicket;
+use crate::window_session::history_label;
 use stellar_commands::{
-    command::Command, id::CommandOrigin, node_ops::InsertNode, text_edit::ReplaceText,
+    lock::{edit_permission, EditIntent},
+    selection::Selection,
+    state::DocumentState,
     transaction::CommandTransaction,
 };
-use stellar_core_types::{
-    clock::MonotonicClock,
-    order_key::OrderKey,
-    value::{Transform2D, Vec2},
-};
-use stellar_document::{
-    modifier::{ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack},
-    records::{NodePayload, NodeRecord},
-    text::{edit_text, TextPayload},
-};
-use stellar_history::entry::{GroupingKey, TextInputKind};
+use stellar_core_types::{clock::MonotonicClock, value::Vec2};
+use stellar_document::records::NodePayload;
+use stellar_document::text::scalar_len;
+use stellar_history::entry::{GroupingKey, HistorySequence};
+use stellar_text::edit::{EditSelection, ScalarRange};
 
 pub use stellar_document::text::TextRange;
 
-/// 조합을 시작할 대상.
+/// 편집을 시작할 대상.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TextTarget {
-    /// 선택한 기존 Text.
+    /// 기존 Text.
     Node(StableId),
-    /// 부모 Frame local 좌표의 원점에 만들 새 Text.
+    /// 부모 Frame local 좌표의 원점에 만들 새 자동 폭 Text(Text 도구 클릭).
     New {
         /// 자유 배치 부모 Frame.
         parent: StableId,
         /// 부모 local 원점.
         origin: Vec2,
     },
+    /// Text 도구 결과(`plan_text_tool`)대로 만들 새 Text(끌기면 고정 폭).
+    Placement(TextPlacement),
 }
 
-/// 첫 확정 때 만들 새 Text의 위치와 미리 정한 영속 ID(UUIDv7).
-#[derive(Debug, Clone)]
-struct NewText {
-    parent: StableId,
-    stack: ModifierStack,
-}
-
-/// 창 하나의 진행 중 IME 조합. document thread만 소유합니다.
+/// 창 하나의 진행 중 Text 편집. document thread만 소유합니다.
 #[derive(Debug)]
 pub(crate) struct TextComposition {
     token: u64,
     view: StableId,
+    editor: CanvasTextEditor,
+    /// 마지막으로 계산한 조합 미리보기와 그때의 문서 revision.
+    preview: Option<TextPreview>,
     revision: DocumentRevision,
-    replacement: TextRange,
-    original: TextPayload,
-    new_text: Option<NewText>,
-    preview: TextPreview,
 }
 
 impl TextComposition {
-    /// 시작한 revision이 그대로일 때만 scene에 미리보기를 그립니다.
+    /// 미리보기를 계산한 revision이 그대로일 때만 scene에 미리보기를 그립니다.
     pub(crate) fn preview_at(&self, revision: DocumentRevision) -> Option<&TextPreview> {
-        (self.revision == revision).then_some(&self.preview)
+        if self.revision == revision {
+            self.preview.as_ref()
+        } else {
+            None
+        }
+    }
+
+    fn refresh(&mut self, window: &ProjectWindowSession) {
+        let Some(doc) = window.document() else {
+            self.preview = None;
+            return;
+        };
+        self.preview = self.editor.preview(doc);
+        self.revision = doc.revision();
     }
 }
 
@@ -82,11 +94,84 @@ impl MonotonicClock for InputClock {
     }
 }
 
+/// 창 session을 편집기 기록 host로 씁니다. 기록마다 Undo 메뉴 이름표를 붙입니다.
+struct SessionHost<'a>(&'a mut ProjectWindowSession);
+
+fn session_error(error: WindowSessionEditError) -> TextEditError {
+    match error {
+        WindowSessionEditError::History(error) => TextEditError::History(error),
+        _ => TextEditError::Stale,
+    }
+}
+
+impl TextEditHost for SessionHost<'_> {
+    fn document(&self) -> Option<&DocumentState> {
+        self.0.document()
+    }
+
+    fn selected(&self) -> &[StableId] {
+        self.0.view().selection().ids()
+    }
+
+    fn record_input<C: MonotonicClock>(
+        &mut self,
+        transaction: &CommandTransaction,
+        key: GroupingKey,
+        clock: &C,
+    ) -> Result<(), TextEditError> {
+        self.0
+            .apply_grouped(transaction, key, clock, history_label::TYPING)
+            .map(drop)
+            .map_err(session_error)
+    }
+
+    fn record_creation<C: MonotonicClock>(
+        &mut self,
+        transaction: &CommandTransaction,
+        key: GroupingKey,
+        node: StableId,
+        clock: &C,
+    ) -> Result<(), TextEditError> {
+        self.0
+            .insert_grouped_and_select(transaction, key, node, clock, history_label::TYPING)
+            .map(drop)
+            .map_err(session_error)
+    }
+
+    fn record_style(&mut self, transaction: &CommandTransaction) -> Result<(), TextEditError> {
+        self.0
+            .apply(transaction, history_label::CHANGE_PROPERTY)
+            .map(drop)
+            .map_err(session_error)
+    }
+
+    fn record_removal(&mut self, transaction: &CommandTransaction) -> Result<(), TextEditError> {
+        self.0
+            .apply(transaction, history_label::DELETE)
+            .map(drop)
+            .map_err(session_error)
+    }
+
+    fn select_only(&mut self, node: StableId) -> Result<Option<HistorySequence>, TextEditError> {
+        self.0
+            .select(Selection::new([node], Some(node)))
+            .map_err(session_error)
+    }
+}
+
 fn stale() -> Failure {
     Failure::new(
         RequestFailure::UnknownView,
-        "Text 편집의 문서·선택·조합 상태가 바뀌었습니다",
+        "Text 편집의 문서·View·편집 상태가 바뀌었습니다",
     )
+}
+
+fn edit_failure(error: TextEditError) -> Failure {
+    let failure = match error {
+        TextEditError::History(_) => RequestFailure::HistoryUnavailable,
+        _ => RequestFailure::UnknownView,
+    };
+    Failure::new(failure, error.to_string())
 }
 
 fn entry_mut(
@@ -99,9 +184,167 @@ fn entry_mut(
         .ok_or_else(|| unknown_window(session))
 }
 
+/// 활성 View가 `view`이고 `node`가 그 View tree 안에 있는지.
+fn in_active_view(window: &ProjectWindowSession, view: StableId, node: StableId) -> Option<()> {
+    if window.tabs().active_view()? != view {
+        return None;
+    }
+    let model = window.document()?.model();
+    in_view(model, node, view_root(model, view)?)
+}
+
+/// 편집할 수 있는 Text의 저장된 본문(활성 View 안, 잠금 없음, 숨김은 막지 않음).
+fn editable_text(window: &ProjectWindowSession, view: StableId, node: StableId) -> Option<String> {
+    in_active_view(window, view, node)?;
+    let model = window.document()?.model();
+    let NodePayload::Text(payload) = model.payload(node)? else {
+        return None;
+    };
+    edit_permission(model, node, EditIntent::Edit).ok()?;
+    Some(payload.content().to_owned())
+}
+
+fn selection_of(range: TextRange) -> EditSelection {
+    EditSelection {
+        anchor: range.start.0,
+        focus: range.end.0,
+    }
+}
+
+/// 진행 중 편집을 끝냅니다(남은 조합 확정, 빈 새 Text 정리, Text 선택). 편집기는 버립니다.
+fn finish(entry: &mut WindowEntry, request: RequestId) -> Result<Option<EditEnd>, Failure> {
+    let Some(composition) = entry.text.take() else {
+        return Ok(None);
+    };
+    let id = command_id(entry.session.window(), request);
+    composition
+        .editor
+        .finish(&mut SessionHost(&mut entry.session), id, &InputClock)
+        .map(Some)
+        .map_err(edit_failure)
+}
+
+/// 편집을 시작합니다. `ids`는 새 Text가 쓸 node·Transform modifier ID입니다.
+fn begin(
+    entry: &mut WindowEntry,
+    request: RequestId,
+    view: StableId,
+    revision: DocumentRevision,
+    target: TextTarget,
+    replacement: TextRange,
+    ids: Option<[StableId; 2]>,
+) -> Result<StableId, Failure> {
+    if entry.session.revision() != revision || entry.session.tabs().active_view() != Some(view) {
+        return Err(stale());
+    }
+    let token = request.0;
+    if let TextTarget::Node(node) = target {
+        // 같은 Text의 편집이 이어지면 편집기(이 편집에서 만들었는지 포함)를 그대로 씁니다.
+        if let Some(live) = entry
+            .text
+            .as_mut()
+            .filter(|c| c.view == view && c.editor.node() == node && c.editor.exists())
+        {
+            if replacement.end.0 > scalar_len(live.editor.buffer().text()) {
+                return Err(stale());
+            }
+            live.editor.escape();
+            let doc = entry.session.document().ok_or_else(stale)?;
+            live.editor
+                .set_selection(doc, selection_of(replacement))
+                .map_err(edit_failure)?;
+            live.token = token;
+            live.refresh(&entry.session);
+            return Ok(node);
+        }
+    }
+    // 다른 대상의 편집이 남아 있으면 먼저 끝냅니다.
+    finish(entry, request)?;
+    if entry.session.revision() != revision {
+        return Err(stale());
+    }
+    let window = &entry.session;
+    let doc = window.document().ok_or_else(stale)?;
+    let placement = match target {
+        TextTarget::Node(node) => {
+            let content = editable_text(window, view, node).ok_or_else(stale)?;
+            if replacement.end.0 > scalar_len(&content) {
+                return Err(stale());
+            }
+            None
+        }
+        TextTarget::New { parent, origin } => Some(TextPlacement {
+            parent,
+            origin,
+            width: TextWidth::Auto,
+        }),
+        TextTarget::Placement(placement) => Some(placement),
+    };
+    let editor = match (target, placement) {
+        (TextTarget::Node(node), _) => {
+            CanvasTextEditor::begin_existing(doc, node, Some(selection_of(replacement)), token)
+                .map_err(edit_failure)?
+        }
+        (_, Some(placement)) => {
+            if replacement != TextRange::new(0, 0).expect("빈 범위") {
+                return Err(stale());
+            }
+            in_active_view(window, view, placement.parent).ok_or_else(stale)?;
+            let [node, modifier] = ids.ok_or_else(stale)?;
+            CanvasTextEditor::begin_new(doc, placement, node, modifier, token)
+                .map_err(edit_failure)?
+        }
+        (_, None) => return Err(stale()),
+    };
+    let node = editor.node();
+    let mut composition = TextComposition {
+        token,
+        view,
+        editor,
+        preview: None,
+        revision,
+    };
+    composition.refresh(&entry.session);
+    entry.text = Some(composition);
+    Ok(node)
+}
+
+/// 진행 중 편집기 하나에 일을 시킵니다. 대상이 사라졌거나 잠겼으면 편집기를 버립니다.
+fn with_editor<T>(
+    entry: &mut WindowEntry,
+    token: u64,
+    run: impl FnOnce(&mut CanvasTextEditor, &mut SessionHost<'_>) -> Result<T, TextEditError>,
+) -> Result<T, Failure> {
+    let composition = entry
+        .text
+        .as_mut()
+        .filter(|c| c.token == token)
+        .ok_or_else(stale)?;
+    let result = run(
+        &mut composition.editor,
+        &mut SessionHost(&mut entry.session),
+    );
+    match result {
+        Ok(value) => {
+            composition.refresh(&entry.session);
+            Ok(value)
+        }
+        Err(error @ (TextEditError::Stale | TextEditError::NotEditable)) => {
+            entry.text = None;
+            Err(edit_failure(error))
+        }
+        Err(error) => {
+            composition.refresh(&entry.session);
+            Err(edit_failure(error))
+        }
+    }
+}
+
 impl AppRuntime {
-    /// IME 조합을 시작합니다. 반환한 요청 ID가 이후 조합 요청의 token이고, StableId는 조합 대상 node입니다
-    /// (새 Text는 확정 때 이 ID로 만듭니다). range는 문서 전체 Unicode scalar 범위입니다.
+    /// Text 편집을 시작합니다. 반환한 요청 ID가 이후 편집 요청의 token이고, StableId는 편집 대상 node입니다(새
+    /// Text는 첫 확정 때 이 ID로 만듭니다). `replacement`는 문서 전체 Unicode scalar 범위이며 편집 선택이 됩니다
+    /// (이어 오는 조합이 바꿀 범위, 새 Text는 0..0). 같은 Text의 편집이 이어지면 그 편집기를 그대로 쓰고, 다른 대상의
+    /// 편집이 남아 있으면 먼저 끝냅니다.
     pub fn begin_canvas_text(
         &self,
         session: WindowSessionHandle,
@@ -110,32 +353,25 @@ impl AppRuntime {
         target: TextTarget,
         replacement: TextRange,
     ) -> Result<(RequestId, StableId), RequestError> {
-        let (node, new_text) = match target {
-            TextTarget::Node(node) => (node, None),
-            TextTarget::New { parent, origin } => {
-                let [node, modifier] =
-                    stellar_project::new_ids::new_ids().map_err(|_| RequestError::Stopped)?;
-                (node, Some((parent, origin, modifier)))
-            }
+        let ids = match target {
+            TextTarget::Node(_) => None,
+            _ => Some(stellar_project::new_ids::new_ids().map_err(|_| RequestError::Stopped)?),
+        };
+        let node = match (target, ids) {
+            (TextTarget::Node(node), _) => node,
+            (_, Some([node, _])) => node,
+            (_, None) => StableId::NIL,
         };
         self.submit(move |ctx, request| {
             let entry = entry_mut(ctx, session)?;
-            let composition = begin(
-                &entry.session,
-                request.0,
-                view,
-                revision,
-                node,
-                new_text,
-                replacement,
-            )?;
-            entry.text = Some(composition);
+            begin(entry, request, view, revision, target, replacement, ids)?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
         .map(|request| (request, node))
     }
 
-    /// 조합 중 본문을 바꿉니다. 문서와 history는 바뀌지 않고 scene 미리보기만 바뀝니다.
+    /// 조합 중 본문을 바꿉니다(`setMarkedText`, 빈 문자열은 조합 취소). 문서와 history는 바뀌지 않고 scene
+    /// 미리보기만 바뀝니다.
     pub fn mark_canvas_text(
         &self,
         session: WindowSessionHandle,
@@ -144,26 +380,18 @@ impl AppRuntime {
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
             let entry = entry_mut(ctx, session)?;
-            let revision = entry.session.revision();
-            let composition = entry
-                .text
-                .as_mut()
-                .filter(|c| c.token == token && c.revision == revision)
-                .ok_or_else(stale)?;
-            let payload = if text.is_empty() {
-                composition.original.clone()
-            } else {
-                edit_text(&composition.original, composition.replacement, &text, &[])
-                    .map_err(|_| stale())?
-            };
-            composition.preview.payload = payload;
-            composition.preview.key.1 += 1;
+            let caret = ScalarRange::caret(scalar_len(&text));
+            with_editor(entry, token, |editor, host| {
+                let doc = host.document().ok_or(TextEditError::Stale)?;
+                editor.set_marked(doc, &text, caret)
+            })?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
     }
 
-    /// 입력기가 확정한 본문을 조합 범위에 기록하고 조합을 끝냅니다. 본문이 같으면 history를 늘리지 않으며,
-    /// 그때도 같은 완료 event를 보냅니다(셸은 revision이 그대로인지로 구분합니다).
+    /// 확정 입력(`insertText`)을 기록합니다. 조합 중이면 조합을 이 문자열로 확정하고, 아니면 편집 선택을 바꿉니다.
+    /// 본문이 같으면 history를 늘리지 않으며, 그때도 같은 완료 event를 보냅니다(셸은 revision이 그대로인지로
+    /// 구분합니다). 편집은 이어집니다.
     pub fn commit_canvas_text(
         &self,
         session: WindowSessionHandle,
@@ -172,25 +400,104 @@ impl AppRuntime {
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
             let entry = entry_mut(ctx, session)?;
-            let composition = entry.text.take_if(|c| c.token == token).ok_or_else(stale)?;
-            commit(&mut entry.session, composition, text, request)?;
+            let id = command_id(entry.session.window(), request);
+            with_editor(entry, token, |editor, host| {
+                editor.insert(host, &text, id, &InputClock)
+            })?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
     }
 
-    /// 지정한 조합만 버립니다. 이미 끝났거나 더 새 조합이 있으면 아무것도 바꾸지 않습니다.
+    /// 조합만 버립니다(편집은 이어짐). 이미 끝났거나 더 새 편집이 있으면 아무것도 바꾸지 않습니다.
     pub fn cancel_canvas_text(
         &self,
         session: WindowSessionHandle,
         token: u64,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            entry_mut(ctx, session)?.text.take_if(|c| c.token == token);
+            let entry = entry_mut(ctx, session)?;
+            if let Some(composition) = entry.text.as_mut().filter(|c| c.token == token) {
+                composition.editor.escape();
+                composition.refresh(&entry.session);
+            }
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
     }
 
-    /// 조합 없는 입력(타이핑·삭제·붙여넣기) 한 번을 선택한 Text의 범위 편집으로 기록합니다.
+    /// Backspace(`forward == false`)·Delete 한 번. 단위는 확장 grapheme cluster입니다.
+    pub fn delete_canvas_text(
+        &self,
+        session: WindowSessionHandle,
+        token: u64,
+        forward: bool,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            let entry = entry_mut(ctx, session)?;
+            let id = command_id(entry.session.window(), request);
+            with_editor(entry, token, |editor, host| {
+                if forward {
+                    editor.delete_forward(host, id, &InputClock)
+                } else {
+                    editor.delete_backward(host, id, &InputClock)
+                }
+            })?;
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
+        })
+    }
+
+    /// caret·선택 이동(기록 없음).
+    pub fn move_canvas_caret(
+        &self,
+        session: WindowSessionHandle,
+        token: u64,
+        motion: CaretMove,
+        extend: bool,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            let entry = entry_mut(ctx, session)?;
+            with_editor(entry, token, |editor, host| {
+                let doc = host.document().ok_or(TextEditError::Stale)?;
+                editor.move_caret(doc, motion, extend)
+            })?;
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
+        })
+    }
+
+    /// 편집 중 문자 style(`DocumentTextStyles::runs` 번호, `None`은 기본 style) 변경(ADR-0118 결정 3).
+    pub fn set_canvas_text_style(
+        &self,
+        session: WindowSessionHandle,
+        token: u64,
+        style: Option<u32>,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            let entry = entry_mut(ctx, session)?;
+            let id = command_id(entry.session.window(), request);
+            with_editor(entry, token, |editor, host| {
+                editor.apply_style(host, style, id)
+            })?;
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
+        })
+    }
+
+    /// 편집을 끝냅니다(Escape 뒤, 바깥 클릭, 도구 전환). 남은 조합은 확정하고, 이 편집에서 만든 Text가 비었으면
+    /// 지우며, 그 밖에는 Text 하나를 선택합니다. 다른 token이면 아무것도 바꾸지 않습니다.
+    pub fn end_canvas_text(
+        &self,
+        session: WindowSessionHandle,
+        token: u64,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            let entry = entry_mut(ctx, session)?;
+            if entry.text.as_ref().is_some_and(|c| c.token == token) {
+                finish(entry, request)?;
+            }
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
+        })
+    }
+
+    /// 조합 없는 입력(타이핑·삭제·붙여넣기) 한 번: Text의 `range`(그 revision의 본문 기준)를 `text`로 바꾸는 확정
+    /// 입력으로 기록합니다. 그 Text의 편집이 없으면 편집을 시작해 이어 둡니다(token은 이 요청 ID).
     pub fn replace_canvas_text(
         &self,
         session: WindowSessionHandle,
@@ -201,13 +508,25 @@ impl AppRuntime {
         text: String,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            let window = &mut entry_mut(ctx, session)?.session;
-            replace(window, view, revision, node, range, text, request)?;
+            let entry = entry_mut(ctx, session)?;
+            begin(
+                entry,
+                request,
+                view,
+                revision,
+                TextTarget::Node(node),
+                range,
+                None,
+            )?;
+            let id = command_id(entry.session.window(), request);
+            with_editor(entry, request.0, |editor, host| {
+                editor.insert(host, &text, id, &InputClock)
+            })?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
     }
 
-    /// 편집 가능한 Text의 저장된 본문. 조합 상태를 만들거나 바꾸지 않습니다.
+    /// 편집 가능한 Text의 저장된 본문. 편집 상태를 만들거나 바꾸지 않습니다.
     pub fn canvas_text_content(
         &self,
         session: WindowSessionHandle,
@@ -217,253 +536,31 @@ impl AppRuntime {
     ) -> Result<JobTicket<Option<String>>, SubmitError> {
         self.sender.submit(move |ctx| {
             let window = &ctx.app_sessions().windows.get(&session)?.session;
-            editable_text(window, view, revision, node, false).map(|t| t.content().to_owned())
+            if window.revision() != revision {
+                return None;
+            }
+            editable_text(window, view, node)
         })
     }
-}
-
-/// 같은 View·revision에서 표시·잠금 해제된 조상만 가진 Text. `selected`면 그 Text 하나만 선택돼 있어야 합니다.
-fn editable_text(
-    window: &ProjectWindowSession,
-    view: StableId,
-    revision: DocumentRevision,
-    node: StableId,
-    selected: bool,
-) -> Option<&TextPayload> {
-    if window.revision() != revision
-        || window.tabs().active_view()? != view
-        || (selected
-            && (window.view().selection().ids() != [node] || window.view().area_selection_active()))
-    {
-        return None;
-    }
-    let model = window.document()?.model();
-    let NodePayload::Text(payload) = model.payload(node)? else {
-        return None;
-    };
-    let root = model
-        .definition()
-        .pages
-        .iter()
-        .flat_map(|p| &p.views)
-        .find(|v| v.id == view)?
-        .root_frame;
-    let mut current = model.runtime_id(node)?;
-    loop {
-        let row = model.columns().get(current)?;
-        if !row.visible || row.locked {
-            return None;
-        }
-        if row.stable_id == root {
-            return Some(payload);
-        }
-        current = row.parent?;
-    }
-}
-
-/// 연속 입력 group 판단 key. 삽입은 시작에서 입력 끝으로, 삭제는 범위 끝에서 시작으로 caret이 움직입니다.
-fn input_key(node: StableId, range: TextRange, text: &str) -> GroupingKey {
-    if text.is_empty() {
-        return GroupingKey::TextInput {
-            node,
-            kind: TextInputKind::DeleteBackward,
-            caret_before: range.end.0,
-            caret_after: range.start.0,
-        };
-    }
-    let len = u32::try_from(text.chars().count()).unwrap_or(u32::MAX);
-    GroupingKey::TextInput {
-        node,
-        kind: TextInputKind::Insert,
-        caret_before: range.start.0,
-        caret_after: range.start.0.saturating_add(len),
-    }
-}
-
-fn new_text_stack(node: StableId, modifier: StableId, origin: Vec2) -> Option<ModifierStack> {
-    let transform = Transform2D::new(1., 0., 0., 1., origin.x(), origin.y()).ok()?;
-    let mut stack = ModifierStack::new(node);
-    stack
-        .insert(ModifierEntry {
-            id: ModifierId::new(modifier),
-            order: OrderKey::between(None, None),
-            kind: ModifierKind::Transform,
-            enabled: true,
-            payload: ModifierPayload::Transform(transform),
-        })
-        .ok()?;
-    Some(stack)
-}
-
-fn begin(
-    window: &ProjectWindowSession,
-    token: u64,
-    view: StableId,
-    revision: DocumentRevision,
-    node: StableId,
-    new_text: Option<(StableId, Vec2, StableId)>,
-    replacement: TextRange,
-) -> Result<TextComposition, Failure> {
-    let (original, new_text) = match new_text {
-        None => {
-            let payload = editable_text(window, view, revision, node, true).ok_or_else(stale)?;
-            payload.slice(replacement).ok_or_else(stale)?;
-            (payload.clone(), None)
-        }
-        Some((parent, origin, modifier)) => {
-            if window.revision() != revision
-                || window.tabs().active_view() != Some(view)
-                || replacement != TextRange::new(0, 0).expect("empty range")
-            {
-                return Err(stale());
-            }
-            let model = window.document().ok_or_else(stale)?.model();
-            editable_frame(model, view, parent).ok_or_else(stale)?;
-            // 해석할 수 없는 기본 style로 Text를 만들면 보이지 않는 node가 생깁니다(U122).
-            let styles = &model.definition().text_styles;
-            if styles
-                .resolve(0, None)
-                .is_none_or(|s| s.typography.record().is_err())
-            {
-                return Err(Failure::new(
-                    RequestFailure::UnknownView,
-                    "문서에 새 Text가 쓸 기본 Text style이 없습니다",
-                ));
-            }
-            let stack = new_text_stack(node, modifier, origin).ok_or_else(stale)?;
-            (TextPayload::empty(0), Some(NewText { parent, stack }))
-        }
-    };
-    Ok(TextComposition {
-        token,
-        view,
-        revision,
-        replacement,
-        preview: TextPreview {
-            key: (token, 0),
-            node,
-            payload: original.clone(),
-            new_in: new_text.as_ref().map(|n| (n.parent, n.stack.clone())),
-        },
-        original,
-        new_text,
-    })
-}
-
-fn commit(
-    window: &mut ProjectWindowSession,
-    composition: TextComposition,
-    text: String,
-    request: RequestId,
-) -> Result<(), Failure> {
-    let node = composition.preview.node;
-    let Some(new_text) = composition.new_text else {
-        return replace(
-            window,
-            composition.view,
-            composition.revision,
-            node,
-            composition.replacement,
-            text,
-            request,
-        );
-    };
-    if window.revision() != composition.revision
-        || window.tabs().active_view() != Some(composition.view)
-    {
-        return Err(stale());
-    }
-    if text.is_empty() {
-        // 입력 없이 끝난 새 Text는 만들지 않습니다(history 없음).
-        return Ok(());
-    }
-    let model = window.document().ok_or_else(stale)?.model();
-    editable_frame(model, composition.view, new_text.parent).ok_or_else(stale)?;
-    let payload = edit_text(&composition.original, composition.replacement, &text, &[])
-        .map_err(|_| stale())?;
-    let mut insert = InsertNode::single(NodeRecord {
-        id: node,
-        parent: Some(new_text.parent),
-        order_key: model.next_child_order_key(new_text.parent),
-        visible: true,
-        locked: false,
-        display_name: "Text".into(),
-        payload: NodePayload::Text(payload),
-    });
-    insert.modifier_stacks.push(new_text.stack);
-    let tx = CommandTransaction::new(command_id(window.window(), request), CommandOrigin::User)
-        .with_command(composition.revision, Command::InsertNode(insert));
-    let key = input_key(node, composition.replacement, &text);
-    window
-        .insert_grouped_and_select(
-            &tx,
-            key,
-            node,
-            &InputClock,
-            crate::window_session::history_label::TYPING,
-        )
-        .map_err(view_failure)?;
-    Ok(())
-}
-
-fn replace(
-    window: &mut ProjectWindowSession,
-    view: StableId,
-    revision: DocumentRevision,
-    node: StableId,
-    range: TextRange,
-    text: String,
-    request: RequestId,
-) -> Result<(), Failure> {
-    let original = editable_text(window, view, revision, node, true)
-        .and_then(|payload| payload.slice(range))
-        .ok_or_else(stale)?;
-    if original == text {
-        return Ok(());
-    }
-    let key = input_key(node, range, &text);
-    let tx = CommandTransaction::new(command_id(window.window(), request), CommandOrigin::User)
-        .with_command(
-            revision,
-            Command::ReplaceText(ReplaceText {
-                node,
-                range,
-                replacement: text,
-            }),
-        );
-    window
-        .apply_grouped(
-            &tx,
-            key,
-            &InputClock,
-            crate::window_session::history_label::TYPING,
-        )
-        .map_err(view_failure)?;
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::window_session::test_fixtures::{
-        identity, sample_document, saved_project_with, sid, window, TempDir,
-    };
-    use stellar_commands::selection::Selection;
+    use crate::app_window_tests::{next_solicited, open_project, open_window};
+    use crate::window_session::test_fixtures::{sample_document, saved_project_with, sid, TempDir};
     use stellar_core_types::text::UserText;
-    use stellar_document::text::{Paragraph, StyleRun};
+    use stellar_document::text::{Paragraph, StyleRun, TextPayload};
     use stellar_document::text_styles::DocumentTextStyles;
 
     fn range(start: u32, end: u32) -> TextRange {
         TextRange::new(start, end).unwrap()
     }
 
-    fn ok<T>(result: Result<T, Failure>) -> T {
-        result.map_err(|e| e.message).unwrap()
-    }
-
     const VIEW: u64 = 3;
 
-    fn fixture(locked: bool) -> (TempDir, ProjectWindowSession) {
+    /// View root 10 아래 Frame 11을 Text "🎨old\n끝"로 바꾼 프로젝트. `locked`면 root 10을 잠급니다.
+    fn project(tag: &str, locked: bool) -> TempDir {
         let mut model = sample_document();
         model.replace_text_styles(DocumentTextStyles::initial(sid(900)));
         let mut record = model.remove_leaf(sid(11)).unwrap();
@@ -480,231 +577,251 @@ mod tests {
         );
         model.insert_node(record).unwrap();
         model.replace_flags(sid(10), true, locked).unwrap();
-        let dir = saved_project_with("text-input", &[&model]);
-        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
-        session.select(Selection::new([sid(11)], None)).unwrap();
-        (dir, session)
+        saved_project_with(tag, &[&model])
     }
 
-    fn content(session: &ProjectWindowSession, node: StableId) -> Option<String> {
-        editable_text(session, sid(VIEW), session.revision(), node, false)
-            .map(|t| t.content().to_owned())
+    struct Rig {
+        _dir: TempDir,
+        app: AppRuntime,
+        window: WindowSessionHandle,
+    }
+
+    impl Rig {
+        fn new(tag: &str, locked: bool) -> Rig {
+            let dir = project(tag, locked);
+            let app = AppRuntime::start().unwrap();
+            let project = open_project(&app, dir.path());
+            let (window, _, _) = open_window(&app, project);
+            Rig {
+                _dir: dir,
+                app,
+                window,
+            }
+        }
+
+        fn summary(&self) -> crate::app::WindowSessionSummary {
+            self.app.state().window(self.window).unwrap().clone()
+        }
+
+        fn revision(&self) -> DocumentRevision {
+            self.summary().revision
+        }
+
+        /// 요청 완료를 기다리고 성공이면 `true`.
+        fn done(&self, request: Result<RequestId, RequestError>) -> bool {
+            let request = request.unwrap();
+            let event = next_solicited(&self.app);
+            assert_eq!(event.request(), request, "{event:?}");
+            !matches!(event, RuntimeEvent::RequestFailed { .. })
+        }
+
+        fn begin(&self, target: TextTarget, replacement: TextRange) -> Option<(u64, StableId)> {
+            let (request, node) = self
+                .app
+                .begin_canvas_text(self.window, sid(VIEW), self.revision(), target, replacement)
+                .unwrap();
+            self.done(Ok(request)).then_some((request.0, node))
+        }
+
+        fn content(&self, node: StableId) -> Option<String> {
+            self.app
+                .canvas_text_content(self.window, sid(VIEW), self.revision(), node)
+                .unwrap()
+                .wait()
+                .unwrap()
+        }
+
+        fn contains(&self, node: StableId) -> bool {
+            let window = self.window;
+            self.app
+                .sender
+                .submit(move |ctx| {
+                    ctx.app_sessions()
+                        .windows
+                        .get(&window)
+                        .and_then(|e| e.session.document())
+                        .is_some_and(|d| d.model().contains(node))
+                })
+                .unwrap()
+                .wait()
+                .unwrap()
+        }
     }
 
     #[test]
     fn hangul_composition_previews_without_history_and_consecutive_commits_undo_once() {
-        let (dir, mut session) = fixture(false);
-        let history_before = session.history().history().len();
-        let revision = session.revision();
-        let mut composition = ok(begin(
-            &session,
-            7,
-            sid(VIEW),
-            revision,
-            sid(11),
-            None,
-            range(1, 4),
-        ));
+        let rig = Rig::new("text-input-hangul", false);
+        let depth = rig.summary().undo_depth;
+        let (token, node) = rig.begin(TextTarget::Node(sid(11)), range(1, 4)).unwrap();
+        assert_eq!(node, sid(11));
         for step in ["ㅎ", "하", "한"] {
-            composition.preview.payload =
-                edit_text(&composition.original, composition.replacement, step, &[]).unwrap();
-            assert_eq!(
-                composition
-                    .preview_at(session.revision())
-                    .unwrap()
-                    .payload
-                    .content(),
-                format!("🎨{step}\n끝")
-            );
-            assert_eq!(session.history().history().len(), history_before);
-            assert!(!session.has_unsaved_changes());
+            assert!(rig.done(rig.app.mark_canvas_text(rig.window, token, step.into())));
+            assert!(!rig.summary().has_unsaved_changes);
+            assert_eq!(rig.summary().undo_depth, depth);
         }
-        ok(commit(&mut session, composition, "한".into(), RequestId(1)));
-        // 이어지는 확정(caret 2 → 3)과 직접 입력(caret 3)은 같은 Undo 항목에 합쳐집니다.
-        let revision = session.revision();
-        let composition = ok(begin(
-            &session,
-            8,
-            sid(VIEW),
-            revision,
-            sid(11),
-            None,
-            range(2, 2),
-        ));
-        ok(commit(&mut session, composition, "글".into(), RequestId(2)));
-        let revision = session.revision();
-        ok(replace(
-            &mut session,
+        assert!(rig.done(rig.app.commit_canvas_text(rig.window, token, "한".into())));
+        // 선택("old")을 바꾼 확정은 교체 입력이라 따로 묶입니다. 이어지는 조합 확정(caret 2 → 3)과 직접 입력(caret
+        // 3)은 같은 삽입 입력이라 한 Undo 항목에 합쳐집니다(입력 종류별 grouping key, XII.10.32).
+        assert!(rig.done(rig.app.mark_canvas_text(rig.window, token, "그".into())));
+        assert!(rig.done(rig.app.commit_canvas_text(rig.window, token, "글".into())));
+        let revision = rig.revision();
+        assert!(rig.done(rig.app.replace_canvas_text(
+            rig.window,
             sid(VIEW),
             revision,
             sid(11),
             range(3, 3),
             "!".into(),
-            RequestId(3),
-        ));
-        assert_eq!(content(&session, sid(11)).unwrap(), "🎨한글!\n끝");
-        assert_eq!(session.history().history().len(), history_before + 1);
-        assert!(session.undo().unwrap());
-        assert_eq!(content(&session, sid(11)).unwrap(), "🎨old\n끝");
-        assert!(session.redo().unwrap());
-        session
-            .save_with_lock_dir(|| Ok(dir.path().join("locks")))
-            .unwrap();
-        let reopened = ProjectWindowSession::load(identity(dir.path()), window(2)).unwrap();
-        assert_eq!(content(&reopened, sid(11)).unwrap(), "🎨한글!\n끝");
+        )));
+        assert_eq!(rig.content(sid(11)).unwrap(), "🎨한글!\n끝");
+        let summary = rig.summary();
+        assert_eq!(summary.undo_depth, depth + 2);
+        assert_eq!(summary.undo_label, history_label::TYPING);
+        assert!(rig.done(rig.app.undo(rig.window)));
+        assert_eq!(rig.content(sid(11)).unwrap(), "🎨한\n끝");
+        assert!(rig.done(rig.app.undo(rig.window)));
+        assert_eq!(rig.content(sid(11)).unwrap(), "🎨old\n끝");
     }
 
     #[test]
     fn unchanged_stale_and_locked_edits_leave_history_alone() {
-        let (_dir, mut session) = fixture(false);
-        let history = session.history().history().len();
-        let revision = session.revision();
-        // 같은 값 확정과 같은 값 대체는 성공이지만 history를 늘리지 않습니다.
-        let same = ok(begin(
-            &session,
-            1,
-            sid(VIEW),
-            revision,
-            sid(11),
-            None,
-            range(1, 4),
-        ));
-        ok(commit(&mut session, same, "old".into(), RequestId(1)));
-        ok(replace(
-            &mut session,
-            sid(VIEW),
-            revision,
-            sid(11),
-            range(1, 4),
-            "old".into(),
-            RequestId(2),
-        ));
-        assert_eq!(session.history().history().len(), history);
-        assert!(begin(
-            &session,
-            2,
-            sid(VIEW),
-            revision,
-            sid(11),
-            None,
-            range(100, 100)
-        )
-        .is_err());
-        assert!(begin(&session, 3, sid(4), revision, sid(11), None, range(0, 0)).is_err());
-        let composition = ok(begin(
-            &session,
-            4,
-            sid(VIEW),
-            revision,
-            sid(11),
-            None,
-            range(1, 4),
-        ));
-        ok(replace(
-            &mut session,
-            sid(VIEW),
-            revision,
-            sid(11),
-            range(1, 4),
-            "新".into(),
-            RequestId(3),
-        ));
-        // 시작 뒤 문서가 바뀌면 조합 미리보기와 확정이 모두 거부됩니다.
-        assert!(composition.preview_at(session.revision()).is_none());
-        assert!(commit(&mut session, composition, "古".into(), RequestId(4)).is_err());
-        session.select(Selection::new([sid(12)], None)).unwrap();
-        let revision = session.revision();
-        assert!(replace(
-            &mut session,
-            sid(VIEW),
-            revision,
-            sid(11),
-            range(0, 0),
-            "x".into(),
-            RequestId(5)
-        )
-        .is_err());
-        let (_dir, session) = fixture(true);
-        assert!(begin(
-            &session,
-            5,
-            sid(VIEW),
-            session.revision(),
-            sid(11),
-            None,
-            range(0, 0)
-        )
-        .is_err());
+        let rig = Rig::new("text-input-stale", false);
+        let depth = rig.summary().undo_depth;
+        let (token, _) = rig.begin(TextTarget::Node(sid(11)), range(1, 4)).unwrap();
+        // 같은 값 확정은 성공이지만 history를 늘리지 않습니다.
+        assert!(rig.done(rig.app.commit_canvas_text(rig.window, token, "old".into())));
+        assert_eq!(rig.summary().undo_depth, depth);
+        // 범위 밖, 다른 View, 낡은 revision, Text가 아닌 node는 거부합니다.
+        assert!(rig
+            .begin(TextTarget::Node(sid(11)), range(100, 100))
+            .is_none());
+        assert!(rig.begin(TextTarget::Node(sid(12)), range(0, 0)).is_none());
+        let (request, _) = rig
+            .app
+            .begin_canvas_text(
+                rig.window,
+                sid(4),
+                rig.revision(),
+                TextTarget::Node(sid(11)),
+                range(0, 0),
+            )
+            .unwrap();
+        assert!(!rig.done(Ok(request)));
+        let stale = DocumentRevision(rig.revision().0 + 7);
+        let (request, _) = rig
+            .app
+            .begin_canvas_text(
+                rig.window,
+                sid(VIEW),
+                stale,
+                TextTarget::Node(sid(11)),
+                range(0, 0),
+            )
+            .unwrap();
+        assert!(!rig.done(Ok(request)));
+        // 잠긴 View root 아래 Text는 편집하지 못하고 본문 조회도 없음입니다.
+        let locked = Rig::new("text-input-locked", true);
+        assert!(locked
+            .begin(TextTarget::Node(sid(11)), range(0, 0))
+            .is_none());
+        assert_eq!(locked.content(sid(11)), None);
     }
 
     #[test]
     fn new_text_is_created_on_first_commit_and_undone_with_following_input() {
-        let (dir, mut session) = fixture(false);
-        let history = session.history().history().len();
+        let rig = Rig::new("text-input-new", false);
+        let depth = rig.summary().undo_depth;
         let origin = Vec2::new(-3.5, 42.).unwrap();
-        let (node, modifier) = (sid(950), sid(951));
-        let start = |session: &ProjectWindowSession, token| {
-            begin(
-                session,
-                token,
-                sid(VIEW),
-                session.revision(),
-                node,
-                Some((sid(10), origin, modifier)),
-                range(0, 0),
-            )
+        let new = TextTarget::New {
+            parent: sid(10),
+            origin,
         };
         // 입력 없이 끝나면 node와 history가 생기지 않습니다.
-        let empty = ok(start(&session, 1));
-        assert!(empty.preview.new_in.is_some());
-        ok(commit(&mut session, empty, String::new(), RequestId(1)));
-        assert!(!session.document().unwrap().model().contains(node));
-        assert_eq!(session.history().history().len(), history);
-        let composition = ok(start(&session, 2));
-        ok(commit(&mut session, composition, "안".into(), RequestId(2)));
-        assert_eq!(session.view().selection().ids(), [node]);
-        let revision = session.revision();
-        ok(replace(
-            &mut session,
-            sid(VIEW),
-            revision,
-            node,
-            range(1, 1),
-            "녕".into(),
-            RequestId(3),
-        ));
-        let model = session.document().unwrap().model();
-        assert_eq!(content(&session, node).unwrap(), "안녕");
-        let stack = model.modifier_stack(node).unwrap().entries();
-        assert_eq!(stack.len(), 1);
-        assert_eq!(stack[0].id, ModifierId::new(modifier));
-        assert!(
-            matches!(stack[0].payload, ModifierPayload::Transform(t) if t.components() == (1., 0., 0., 1., -3.5, 42.))
-        );
-        assert_eq!(session.history().history().len(), history + 1);
-        assert!(session.undo().unwrap());
-        assert!(!session.document().unwrap().model().contains(node));
-        assert!(session.redo().unwrap());
-        session
-            .save_with_lock_dir(|| Ok(dir.path().join("locks")))
-            .unwrap();
-        let reopened = ProjectWindowSession::load(identity(dir.path()), window(2)).unwrap();
-        let model = reopened.document().unwrap().model();
-        let Some(NodePayload::Text(text)) = model.payload(node) else {
-            panic!("Text node");
+        let (empty, node) = rig.begin(new, range(0, 0)).unwrap();
+        assert!(rig.done(rig.app.end_canvas_text(rig.window, empty)));
+        assert!(!rig.contains(node));
+        assert_eq!(rig.summary().undo_depth, depth);
+        let (token, node) = rig.begin(new, range(0, 0)).unwrap();
+        assert!(rig.done(rig.app.commit_canvas_text(rig.window, token, "안".into())));
+        assert_eq!(rig.summary().primary_selection, Some(node));
+        assert!(rig.done(rig.app.commit_canvas_text(rig.window, token, "녕".into())));
+        assert_eq!(rig.content(node).unwrap(), "안녕");
+        assert!(rig.done(rig.app.end_canvas_text(rig.window, token)));
+        let summary = rig.summary();
+        assert_eq!(summary.undo_depth, depth + 1);
+        assert_eq!(summary.primary_selection, Some(node));
+        assert!(rig.done(rig.app.undo(rig.window)));
+        assert!(!rig.contains(node));
+    }
+
+    /// 이 편집에서 만든 Text를 입력한 뒤 모두 지우고 끝내면 빈 Text를 지우는 항목 하나가 남습니다(ADR-0129 결정 1).
+    #[test]
+    fn emptied_new_text_is_removed_when_editing_ends() {
+        let rig = Rig::new("text-input-emptied", false);
+        let depth = rig.summary().undo_depth;
+        let placement = TextPlacement {
+            parent: sid(10),
+            origin: Vec2::new(5., 6.).unwrap(),
+            width: TextWidth::Fixed(80.),
         };
-        assert_eq!(text.content(), "안녕");
-        assert_eq!(
-            text.paragraphs()
-                .iter()
-                .map(|p| p.style)
-                .collect::<Vec<_>>(),
-            [0]
-        );
-        assert_eq!(
-            model.modifier_stack(node).unwrap().entries()[0].id,
-            ModifierId::new(modifier)
-        );
+        let (token, node) = rig
+            .begin(TextTarget::Placement(placement), range(0, 0))
+            .unwrap();
+        assert!(rig.done(rig.app.commit_canvas_text(rig.window, token, "ab".into())));
+        for _ in 0..2 {
+            assert!(rig.done(rig.app.delete_canvas_text(rig.window, token, false)));
+        }
+        assert_eq!(rig.content(node).as_deref(), Some(""));
+        assert!(rig.done(rig.app.end_canvas_text(rig.window, token)));
+        assert!(!rig.contains(node));
+        let summary = rig.summary();
+        // 생성·입력·지우기 항목 + 빈 Text 삭제 항목.
+        assert_eq!(summary.undo_label, history_label::DELETE);
+        assert!(summary.undo_depth > depth);
+        assert_eq!(summary.selection_len, 0);
+        // Undo 한 번은 빈 Text를 되살리고 선택합니다.
+        assert!(rig.done(rig.app.undo(rig.window)));
+        assert!(rig.contains(node));
+        assert_eq!(rig.summary().primary_selection, Some(node));
+        // 기존 Text는 비워도 남습니다.
+        let (token, _) = rig.begin(TextTarget::Node(sid(11)), range(0, 6)).unwrap();
+        assert!(rig.done(rig.app.commit_canvas_text(rig.window, token, String::new())));
+        assert!(rig.done(rig.app.end_canvas_text(rig.window, token)));
+        assert!(rig.contains(sid(11)));
+        assert_eq!(rig.content(sid(11)).as_deref(), Some(""));
+    }
+
+    #[test]
+    fn caret_moves_style_and_cancel_go_through_the_core_editor() {
+        let rig = Rig::new("text-input-keys", false);
+        let (token, _) = rig.begin(TextTarget::Node(sid(11)), range(6, 6)).unwrap();
+        assert!(rig.done(
+            rig.app
+                .move_canvas_caret(rig.window, token, CaretMove::Backward, true)
+        ));
+        // 선택한 "끝"을 지웁니다(grapheme 단위).
+        assert!(rig.done(rig.app.delete_canvas_text(rig.window, token, false)));
+        assert_eq!(rig.content(sid(11)).as_deref(), Some("🎨old\n"));
+        // 조합 취소는 문서를 바꾸지 않고 편집을 이어 둡니다.
+        let revision = rig.revision();
+        assert!(rig.done(rig.app.mark_canvas_text(rig.window, token, "ㄱ".into())));
+        assert!(rig.done(rig.app.cancel_canvas_text(rig.window, token)));
+        assert_eq!(rig.revision(), revision);
+        assert!(rig.done(rig.app.commit_canvas_text(rig.window, token, "x".into())));
+        assert_eq!(rig.content(sid(11)).as_deref(), Some("🎨old\nx"));
+        // 표에 없는 style 번호는 거부합니다.
+        assert!(rig.done(rig.app.move_canvas_caret(
+            rig.window,
+            token,
+            CaretMove::SelectAll,
+            false
+        )));
+        assert!(!rig.done(rig.app.set_canvas_text_style(rig.window, token, Some(9))));
+        assert!(rig.done(rig.app.set_canvas_text_style(rig.window, token, None)));
+        assert_eq!(rig.summary().undo_label, history_label::CHANGE_PROPERTY);
+        // 끝난 token은 더 쓸 수 없습니다.
+        assert!(rig.done(rig.app.end_canvas_text(rig.window, token)));
+        assert!(!rig.done(rig.app.commit_canvas_text(rig.window, token, "y".into())));
     }
 
     #[test]
@@ -712,75 +829,24 @@ mod tests {
         let mut model = sample_document();
         model.replace_text_styles(DocumentTextStyles::default());
         let dir = saved_project_with("text-input-no-style", &[&model]);
-        let session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
-        assert!(begin(
-            &session,
-            1,
-            sid(VIEW),
-            session.revision(),
-            sid(950),
-            Some((sid(10), Vec2::ZERO, sid(951))),
-            range(0, 0),
-        )
-        .is_err());
-        drop(dir);
-    }
-
-    #[test]
-    fn runtime_composition_does_not_depend_on_project_trust() {
-        use crate::app_window_tests::{next_event, open_project, open_window};
-        let (dir, _) = fixture(false);
         let app = AppRuntime::start().unwrap();
         let project = open_project(&app, dir.path());
-        let (handle, _, _) = open_window(&app, project);
-        app.set_selection(handle, vec![sid(11)]).unwrap();
-        assert!(matches!(
-            next_event(&app),
-            RuntimeEvent::WindowViewChanged { .. }
-        ));
-        let revision = app.state().window(handle).unwrap().revision;
-        let (token, node) = app
+        let (window, _, _) = open_window(&app, project);
+        let revision = app.state().window(window).unwrap().revision;
+        let (request, _) = app
             .begin_canvas_text(
-                handle,
+                window,
                 sid(VIEW),
                 revision,
-                TextTarget::Node(sid(11)),
-                range(1, 4),
+                TextTarget::New {
+                    parent: sid(10),
+                    origin: Vec2::ZERO,
+                },
+                range(0, 0),
             )
             .unwrap();
-        assert_eq!(node, sid(11));
-        assert!(matches!(
-            next_event(&app),
-            RuntimeEvent::WindowViewChanged { .. }
-        ));
-        app.mark_canvas_text(handle, token.0, "ㅎ".into()).unwrap();
-        assert!(matches!(
-            next_event(&app),
-            RuntimeEvent::WindowViewChanged { .. }
-        ));
-        assert!(!app.state().window(handle).unwrap().has_unsaved_changes);
-        app.commit_canvas_text(handle, token.0, "한".into())
-            .unwrap();
-        assert!(matches!(
-            next_event(&app),
-            RuntimeEvent::WindowViewChanged { .. }
-        ));
-        let state = app.state();
-        let window = state.window(handle).unwrap();
-        assert!(window.has_unsaved_changes);
-        assert_eq!(window.revision.0, revision.0 + 1);
-        // 끝난 token은 다시 확정할 수 없습니다.
-        app.commit_canvas_text(handle, token.0, "두 번".into())
-            .unwrap();
-        assert!(matches!(
-            next_event(&app),
-            RuntimeEvent::RequestFailed { .. }
-        ));
-        let content = app
-            .canvas_text_content(handle, sid(VIEW), window.revision, sid(11))
-            .unwrap()
-            .wait()
-            .unwrap();
-        assert_eq!(content.as_deref(), Some("🎨한\n끝"));
+        let event = next_solicited(&app);
+        assert_eq!(event.request(), request);
+        assert!(matches!(event, RuntimeEvent::RequestFailed { .. }));
     }
 }
