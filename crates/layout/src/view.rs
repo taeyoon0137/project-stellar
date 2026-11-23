@@ -38,6 +38,7 @@ use stellar_core_types::order_key::OrderKey;
 use crate::cache::LayoutInputHasher;
 use crate::error::LayoutError;
 use crate::input::{LayoutChild, LayoutInput, LayoutNode};
+use crate::style::Display;
 
 /// view가 방문하는 원천 node(box + Fragment) 수 상한(프로젝트 전체 node 상한과 같은 값).
 pub const MAX_VIEW_NODES: usize = 1_000_000;
@@ -46,7 +47,7 @@ pub const MAX_VIEW_NODES: usize = 1_000_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceNode {
     /// 레이아웃 box를 가진 node. 속성은 View Variant·override 적용이 끝난 값입니다. `id`·`children`
-    /// 필드는 view가 다시 씁니다(원천 값은 무시). `visible`은 Fragment 조상의 표시 여부와 곱해집니다.
+    /// 필드는 view가 다시 씁니다(원천 값은 무시). 숨긴 Fragment 아래 node는 `display: none`이 됩니다.
     Node(Box<LayoutNode>),
     /// 자체 box가 없는 Fragment(VI.4.1).
     Fragment {
@@ -272,7 +273,9 @@ impl<S: LayoutSource> Builder<'_, S> {
                 }
                 SourceNode::Node(node) => {
                     let mut node = *node;
-                    node.visible = node.visible && inherited;
+                    if !inherited {
+                        node.style.display = Display::None;
+                    }
                     let id = self.register(&key)?;
                     flat.push(PendingBox { key, node, id });
                 }
@@ -345,12 +348,10 @@ mod tests {
 
     use super::*;
     use crate::engine::compute_layout;
-    use crate::geometry::Axis;
-    use crate::input::{ContainerLayout, LayoutContent, SizingMode};
+    use crate::input::LayoutContent;
     use crate::intrinsic::{ComponentInstanceIntrinsic, MeasuredContent};
-    use crate::stack::StackLayout;
-    use crate::test_support::{id, len, px};
-    use stellar_core_types::value::{Insets, Length};
+    use crate::test_support::{fixed, id, len, px, style};
+    use stellar_core_types::value::Insets;
 
     /// 원천 key: scene node 또는 (인스턴스 chain, 정의 node) 가상 node.
     #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -447,30 +448,28 @@ mod tests {
         fn node(&self, key: &Key) -> Result<SourceNode, &'static str> {
             self.reads.set(self.reads.get() + 1);
             let (def, _) = self.def(key)?;
-            let hug = SizingMode::HugContent;
             Ok(match def {
                 Def::Row { gap, .. } => {
                     let gap = self.variant_gap.unwrap_or(gap);
-                    let stack = StackLayout {
-                        gap: Length::new(gap).map_err(|_| "gap")?,
-                        ..StackLayout::new(Axis::Horizontal)
-                    };
-                    boxed(
-                        LayoutNode::new(id(0))
-                            .with_sizing(hug, hug)
-                            .with_container(ContainerLayout::Stack(stack)),
-                    )
+                    boxed(LayoutNode::new(id(0)).with_style(style(|s| {
+                        s.display = Display::Flex;
+                        s.column_gap = len(gap);
+                    })))
                 }
-                Def::Leaf { width, visible } => boxed(
-                    LayoutNode::new(id(0))
-                        .with_fixed_size(len(width), len(10.0))
-                        .with_visible(visible),
-                ),
+                Def::Leaf { width, visible } => {
+                    boxed(LayoutNode::new(id(0)).with_style(style(|s| {
+                        *s = fixed(width, 10.0);
+                        if !visible {
+                            s.display = Display::None;
+                        }
+                    })))
+                }
                 Def::Fragment { visible, .. } => SourceNode::Fragment { visible },
                 Def::Instance { .. } => boxed(
                     LayoutNode::new(id(0))
-                        .with_sizing(hug, hug)
-                        .with_padding(Insets::new(1.0, 1.0, 1.0, 1.0).map_err(|_| "padding")?)
+                        .with_style(style(|s| {
+                            s.padding = Insets::new(1.0, 1.0, 1.0, 1.0).expect("padding");
+                        }))
                         .with_content(LayoutContent::Measured(MeasuredContent::ComponentInstance(
                             ComponentInstanceIntrinsic,
                         ))),
@@ -633,7 +632,7 @@ mod tests {
             },
         );
         let view = build_layout_tree(&source).unwrap();
-        let visible = |n: u64| view.input().node(id(n)).unwrap().visible;
+        let visible = |n: u64| view.input().node(id(n)).unwrap().style.display != Display::None;
         assert!(!visible(4) && !visible(5));
         assert!(visible(3) && visible(6));
         // 숨긴 자식은 flow에서 빠져 형제가 당겨집니다.
@@ -650,7 +649,10 @@ mod tests {
             },
         );
         let view = build_layout_tree(&source).unwrap();
-        assert!(!view.input().node(id(3)).unwrap().visible);
+        assert_eq!(
+            view.input().node(id(3)).unwrap().style.display,
+            Display::None
+        );
     }
 
     /// root 1 = Row[I20, I21](두 인스턴스) — 정의 100 = Row[200 leaf, 201 nested instance(정의 101)],

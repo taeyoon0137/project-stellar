@@ -1,0 +1,11 @@
+# X.11.1 레이아웃 회귀 corpus golden (CSS 값 입력, ADR-0076).
+# 생성: stellar_layout::corpus::generate_corpus(50) (배치 방식별 50개, 이전 corpus와 같은 seed·난수 순서)
+# 비교: crates/layout/tests/layout_corpus.rs
+# 형식: inputs = 입력 canonical bytes hash, 이후 배치 방식별 fixture·box·진단 수와 결과 bytes digest
+#       (primary FNV-1a 64 - check 다항식 hash). 값이 바뀌면 레이아웃 결과 계약이 바뀐 것입니다.
+# v1(Free·Stack·Grid·Overlay·Constraint) → v2 변경 fixture 목록과 이유: docs/task-reports/IX.11.4.md, IX.11.5.md.
+schema=2
+inputs=c2e8a6b7bab3d080-18f5bceedfb53b01
+absolute fixtures=50 boxes=235 diagnostics=0 digest=a0abf14654a0ebaa-07f1fabd5e90d47e
+flex fixtures=50 boxes=262 diagnostics=14 digest=c07066e4c4886934-07b3883181f0da89
+inset fixtures=50 boxes=224 diagnostics=0 digest=b42e87f9a94fc449-1d3d5d5c494f57ff

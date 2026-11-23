@@ -7,7 +7,6 @@ use std::fmt;
 
 use stellar_core_types::ids::StableId;
 
-use crate::geometry::Axis;
 use crate::intrinsic::ContentKind;
 use crate::property::LayoutProperty;
 use crate::rounding::LayoutUnitError;
@@ -111,21 +110,23 @@ pub enum LayoutError {
         /// 속성.
         property: LayoutProperty,
     },
-    /// sizing mode 값·조합이 허용되지 않습니다 (X.6.1).
-    InvalidSizing {
+    /// CSS 값이 허용 범위 밖입니다(0 line 번호, 0 span, 0 이하 aspect-ratio 성분 등).
+    InvalidValue {
         /// 대상 node.
         node: StableId,
-        /// 축.
-        axis: Axis,
+        /// 속성.
+        property: LayoutProperty,
         /// 사유.
         reason: &'static str,
     },
-    /// 한 축의 제약이 과다합니다(양 끝 anchor + definite 크기 등, X.2.2).
-    OverConstrained {
+    /// CSS가 받지만 엔진이 같은 결과를 보장하지 못해 받지 않는 값·조합입니다(부분집합 규칙, ADR-0076).
+    Unsupported {
         /// 대상 node.
         node: StableId,
-        /// 축.
-        axis: Axis,
+        /// 속성.
+        property: LayoutProperty,
+        /// 사유.
+        reason: &'static str,
     },
     /// Grid track·배치 설정이 잘못되었습니다 (X.4).
     InvalidGrid {
@@ -140,20 +141,6 @@ pub enum LayoutError {
         node: StableId,
         /// 상한 종류.
         limit: LayoutLimit,
-    },
-    /// constraint 값·조합이 잘못되었습니다 (X.5).
-    InvalidConstraint {
-        /// 대상 node.
-        node: StableId,
-        /// 사유.
-        reason: &'static str,
-    },
-    /// constraint sibling 참조가 순환합니다 (X.5.4).
-    ConstraintCycle {
-        /// 순환에 속한 node.
-        node: StableId,
-        /// 축.
-        axis: Axis,
     },
     /// 콘텐츠 intrinsic 측정이 실패했거나 결과가 잘못되었습니다 (X.6.4).
     ContentMeasure {
@@ -250,13 +237,21 @@ impl fmt::Display for LayoutError {
                     "node {node}의 {property} 값이 0이 아니지만 레이아웃 해상도(1/64)에서 0으로 반올림됩니다"
                 )
             }
-            LayoutError::InvalidSizing { node, axis, reason } => {
-                write!(f, "node {node}의 {axis} sizing이 잘못되었습니다: {reason}")
+            LayoutError::InvalidValue {
+                node,
+                property,
+                reason,
+            } => {
+                write!(f, "node {node}의 {property} 값이 잘못되었습니다: {reason}")
             }
-            LayoutError::OverConstrained { node, axis } => {
+            LayoutError::Unsupported {
+                node,
+                property,
+                reason,
+            } => {
                 write!(
                     f,
-                    "node {node}의 {axis} 배치 제약이 과다합니다(우선순위로 해소하지 않음)"
+                    "node {node}의 {property} 값을 지원하지 않습니다: {reason}"
                 )
             }
             LayoutError::InvalidGrid { node, reason } => {
@@ -264,12 +259,6 @@ impl fmt::Display for LayoutError {
             }
             LayoutError::LimitExceeded { node, limit } => {
                 write!(f, "node {node}의 레이아웃이 {limit} 상한을 넘습니다")
-            }
-            LayoutError::InvalidConstraint { node, reason } => {
-                write!(f, "node {node}의 constraint가 잘못되었습니다: {reason}")
-            }
-            LayoutError::ConstraintCycle { node, axis } => {
-                write!(f, "node {node}의 {axis} constraint 참조가 순환합니다")
             }
             LayoutError::ContentMeasure { node, kind, reason } => {
                 write!(f, "node {node}의 {kind} 콘텐츠 측정 실패: {reason}")

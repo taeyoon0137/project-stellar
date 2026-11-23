@@ -1,4 +1,4 @@
-codegen-ir v1
+codegen-ir v2
 target ios apple platform=ios minimum_os=26.0.0 registry=1
 tokens 3
   token 00000000-0000-0000-0000-000000000046 "surface" = display-p3(0.96 0.96 0.98 / 1)
@@ -10,53 +10,53 @@ states 3
   state 00000000-0000-0000-0000-000000000034 "isSaving" = false
 nodes 14
   [0] 00000000-0000-0000-0000-000000000001 frame semantics=a11y[0]
-    layout stack(axis=vertical direction=forward gap=16 main=start cross=stretch wrap=nowrap cross_gap=0 lines=start) w=390 h=844 padding=24,24,24,24
+    layout {display: flex; width: 390px; height: 844px; padding-top: 24px; padding-right: 24px; padding-bottom: 24px; padding-left: 24px; flex-direction: column; row-gap: 16px}
     property 00000000-0000-0000-0000-000000000001.4 = display-p3(0.96 0.96 0.98 / 1) origin=common token=00000000-0000-0000-0000-000000000046
     capability element:frame native
     [1] 00000000-0000-0000-0000-000000000002 text semantics=a11y[2]
-      layout free w=hug h=hug padding=0,0,0,0 content=intrinsic(48x28 baseline=21)
+      layout {align-self: flex-start} content=intrinsic(48x28 baseline=21)
       text "설정"
       property 00000000-0000-0000-0000-000000000002.5 = srgb(0.8 0.1 0.1 / 1) origin=variant(00000000-0000-0000-0000-000000000064)
       capability element:text native
     [2] 00000000-0000-0000-0000-000000000003 fragment
       capability element:fragment native
       [3] 00000000-0000-0000-0000-000000000004 image semantics=a11y[1]
-        layout free w=64 h=64 padding=0,0,0,0
+        layout {width: 64px; height: 64px}
         property 00000000-0000-0000-0000-000000000004.3 = "프로필 사진" origin=common
         property 00000000-0000-0000-0000-000000000004.201 = "person.crop.circle" origin=common capability=property:apple.sf_symbol
         capability element:image native
         capability property:apple.sf_symbol native path=00000000-0000-0000-0000-000000000004.201
       [4] 00000000-0000-0000-0000-000000000005 shape
-        layout free w=fill h=1 padding=0,0,0,0
+        layout {height: 1px}
         capability element:shape native
     [5] 00000000-0000-0000-0000-000000000006 frame contracts=[single_selection_group] semantics=a11y[3]
-      layout stack(axis=horizontal direction=forward gap=8 main=start cross=center wrap=nowrap cross_gap=0 lines=start) w=fill h=hug padding=0,0,0,0
+      layout {display: flex; align-items: center; column-gap: 8px}
       property 00000000-0000-0000-0000-000000000006.101 = 12px origin=common capability=property:css.backdrop_filter
       capability element:frame native
       capability contract:single_selection_group approximated
       capability property:css.backdrop_filter native path=00000000-0000-0000-0000-000000000006.101
       [6] 00000000-0000-0000-0000-000000000007 frame contracts=[list]
-        layout stack(axis=horizontal direction=forward gap=8 main=start cross=center wrap=nowrap cross_gap=0 lines=start) w=fill h=hug padding=0,0,0,0
+        layout {display: flex; align-items: center; column-gap: 8px; flex-grow: 1}
         capability element:frame native
         capability contract:list native
         [7] 00000000-0000-0000-0000-000000000008 frame contracts=[button] semantics=a11y[4]
-          layout stack(axis=horizontal direction=forward gap=0 main=center cross=start wrap=nowrap cross_gap=0 lines=start) w=hug h=hug padding=12,16,12,16 flex=1,1,auto
+          layout {display: flex; padding-top: 12px; padding-right: 16px; padding-bottom: 12px; padding-left: 16px; justify-content: center; flex-grow: 1}
           capability element:frame native
           capability contract:button native
           [8] 00000000-0000-0000-0000-000000000009 text semantics=a11y[5]
-            layout free w=hug h=hug padding=0,0,0,0 content=intrinsic(32x20 baseline=15)
+            layout {} content=intrinsic(32x20 baseline=15)
             text "작게"
             capability element:text native
         [9] 00000000-0000-0000-0000-00000000000a frame contracts=[button] semantics=a11y[6]
-          layout free w=hug h=hug padding=12,16,12,16 flex=1,1,auto
+          layout {padding-top: 12px; padding-right: 16px; padding-bottom: 12px; padding-left: 16px; flex-grow: 1}
           capability element:frame native
           capability contract:button native
     [10] 00000000-0000-0000-0000-00000000000b frame contracts=[text_input] semantics=a11y[7]
-      layout free w=fill h=44 padding=8,12,8,12
+      layout {height: 44px; padding-top: 8px; padding-right: 12px; padding-bottom: 8px; padding-left: 12px}
       capability element:frame native
       capability contract:text_input native
     [11] 00000000-0000-0000-0000-00000000000c frame contracts=[button] semantics=a11y[8]
-      layout overlay(horizontal=center vertical=center) w=fill h=48 padding=0,0,0,0 limits=w[120..-],h[-..-]
+      layout {display: flex; height: 48px; min-width: 120px; justify-content: center; align-items: center}
       property 00000000-0000-0000-0000-00000000000c.1 = 12px origin=profile capability=property:common.corner_radius
       property 00000000-0000-0000-0000-00000000000c.2 = 4px origin=common capability=property:common.drop_shadow
       property 00000000-0000-0000-0000-00000000000c.4 = srgb(0 0.48 1 / 1) origin=common token=00000000-0000-0000-0000-000000000047
@@ -65,11 +65,11 @@ nodes 14
       capability property:common.corner_radius native path=00000000-0000-0000-0000-00000000000c.1
       capability property:common.drop_shadow native path=00000000-0000-0000-0000-00000000000c.2
     [12] 00000000-0000-0000-0000-000000000010 frame contracts=[modal] semantics=a11y[9]
-      layout free w=320 h=120 padding=0,0,0,0
+      layout {width: 320px; height: 120px}
       capability element:frame native
       capability contract:modal native
       [13] 00000000-0000-0000-0000-000000000011 text semantics=a11y[10]
-        layout free w=hug h=hug padding=0,0,0,0 position=x(16..-),y(16..-) content=intrinsic(120x20 baseline=15)
+        layout {position: absolute; top: 16px; left: 16px} content=intrinsic(120x20 baseline=15)
         text "저장되었습니다"
         capability element:text native
 accessibility 11

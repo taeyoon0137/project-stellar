@@ -44,14 +44,10 @@ use stellar_accessibility::snapshot::AccessibilitySnapshot;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::property::PropertyPath;
 use stellar_core_types::typed_value::TypedValue;
-use stellar_core_types::value::{Insets, Transform2D};
-use stellar_layout::constraint::Constraint;
+use stellar_core_types::value::Transform2D;
 use stellar_layout::error::LayoutError;
-use stellar_layout::flex::FlexItem;
-use stellar_layout::free::FreePosition;
-use stellar_layout::grid::GridItem;
-use stellar_layout::input::{ContainerLayout, LayoutContent, LayoutInput, LayoutNode, SizingMode};
-use stellar_layout::sizing::{AspectRatio, SizeLimits};
+use stellar_layout::input::{LayoutContent, LayoutInput, LayoutNode};
+use stellar_layout::style::LayoutStyle;
 use stellar_target_profile::capability::{CapabilityPropertyId, ContractCode, ElementKind};
 use stellar_target_profile::overrides::{ValueOrigin, VariantLayer};
 use stellar_target_profile::registry::ProfileRegistryVersion;
@@ -139,54 +135,24 @@ pub struct IrTarget {
     pub registry_version: ProfileRegistryVersion,
 }
 
-/// node 하나의 layout 입력(자식 목록은 IR tree가 가집니다).
+/// node 하나의 layout 입력(자식 목록은 IR tree가 가집니다). 값은 CSS longhand 그대로입니다(ADR-0076).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IrLayout {
-    /// 자식 배치 방식.
-    pub container: ContainerLayout,
-    /// 안쪽 여백.
-    pub padding: Insets,
-    /// 너비 sizing.
-    pub width: SizingMode,
-    /// 높이 sizing.
-    pub height: SizingMode,
+    /// CSS 레이아웃 longhand.
+    pub style: LayoutStyle,
     /// 콘텐츠 intrinsic 정보.
     pub content: LayoutContent,
-    /// Free 부모 안의 anchor.
-    pub position: FreePosition,
     /// local transform.
     pub transform: Transform2D,
-    /// Stack 부모 main 축 grow·shrink·basis.
-    pub flex: FlexItem,
-    /// 표시 여부.
-    pub visible: bool,
-    /// Grid 부모 안의 위치.
-    pub grid: GridItem,
-    /// Constraint 부모 안의 등식 제약.
-    pub constraints: Vec<Constraint>,
-    /// 축별 최소·최대 크기.
-    pub limits: SizeLimits,
-    /// 너비 : 높이 비율.
-    pub aspect_ratio: Option<AspectRatio>,
 }
 
 impl IrLayout {
     /// layout node에서 자식 목록을 뺀 값을 복사합니다.
     pub fn from_node(node: &LayoutNode) -> IrLayout {
         IrLayout {
-            container: node.container.clone(),
-            padding: node.padding,
-            width: node.width,
-            height: node.height,
+            style: node.style.clone(),
             content: node.content.clone(),
-            position: node.position,
             transform: node.transform,
-            flex: node.flex,
-            visible: node.visible,
-            grid: node.grid,
-            constraints: node.constraints.clone(),
-            limits: node.limits,
-            aspect_ratio: node.aspect_ratio,
         }
     }
 }

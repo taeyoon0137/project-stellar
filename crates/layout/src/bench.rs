@@ -8,14 +8,14 @@
 //! # 합성 문서
 //!
 //! ```text
-//! root(Fixed, Free)
-//! └─ section × S (Fixed, 세로 Stack, Free 위치)
-//!    └─ row × R (Hug, 가로 Stack, gap 2)
-//!       └─ leaf × L: 고정 box, Hug Text(측정), 너비 고정 Image(측정)를 섞음
+//! root(block, 40000px × 40000px)
+//! └─ section × S (position: absolute, left·top, 1900px × 3900px, display: flex, flex-direction: column)
+//!    └─ row × R (display: flex, column-gap: 2px, width: fit-content, flex-shrink: 0)
+//!       └─ leaf × L: px 크기 box, fit-content Text(측정), width 16px Image(측정)를 섞음(flex-shrink: 0)
 //! ```
 //!
-//! leaf 너비 변경은 row(Hug Stack) → section(Fixed Stack)까지 전파되므로 기대 방문은 edit당 3 node(section, row,
-//! leaf)이고, 나머지 row·leaf는 재사용(측정 cache hit)됩니다. 시간 값은 실행 환경마다 다르며 결정적 비교 대상이
+//! leaf 너비 변경은 row(콘텐츠 크기 flex) → section(px 크기 absolute = 배치 경계)까지 전파되므로 기대 방문은 edit당
+//! 3 node(section, row, leaf)이고, 나머지 row·leaf는 재사용(cache hit)됩니다. 시간 값은 실행 환경마다 다르며 결정적 비교 대상이
 //! 아닙니다(방문·재사용·cache 수는 결정적).
 
 use std::fmt::Write as _;
@@ -25,13 +25,14 @@ use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
 use stellar_core_types::value::Length;
 
+use stellar_core_types::value::FiniteF32;
+
 use crate::engine::compute_layout_with;
 use crate::error::LayoutError;
-use crate::geometry::Axis;
 use crate::incremental::{IncrementalLayout, LayoutEdit, UpdateStats};
-use crate::input::{ContainerLayout, LayoutContent, LayoutInput, LayoutNode, SizingMode};
+use crate::input::{LayoutContent, LayoutInput, LayoutNode};
 use crate::intrinsic::{DefaultMeasurer, ImageIntrinsic, MeasuredContent, TextIntrinsic};
-use crate::stack::StackLayout;
+use crate::style::{Display, FlexDirection, LayoutStyle, LengthPercentageAuto, Position, Size};
 
 /// benchmark 이름(JSON `benchmark` 값).
 pub const BENCHMARK_NAME: &str = "layout-incremental-single-leaf-edit";
@@ -97,38 +98,57 @@ fn leaf_number(config: &LeafEditConfig, section: usize, row: usize, leaf: usize)
     row_number(config, section, row) + 1 + leaf as u64
 }
 
+/// flex item main 축을 줄이지 않는 style(`flex-shrink: 0`).
+fn no_shrink(style: LayoutStyle) -> LayoutStyle {
+    LayoutStyle {
+        flex_shrink: FiniteF32::ZERO,
+        ..style
+    }
+}
+
 /// 결정적 합성 문서를 만듭니다 (X.7.4).
 pub fn synthetic_input(config: &LeafEditConfig) -> Result<LayoutInput, LayoutError> {
-    let hug = SizingMode::HugContent;
     let mut nodes = Vec::with_capacity(config.node_count());
     let section_keys = OrderKey::evenly_spaced(config.sections);
     let row_keys = OrderKey::evenly_spaced(config.rows);
     let leaf_keys = OrderKey::evenly_spaced(config.leaves);
-    let mut root =
-        LayoutNode::new(synthetic_id(1)).with_fixed_size(length(40_000.0)?, length(40_000.0)?);
+    let mut root = LayoutNode::new(synthetic_id(1)).with_style(LayoutStyle {
+        width: Size::Length(length(40_000.0)?),
+        height: Size::Length(length(40_000.0)?),
+        ..LayoutStyle::default()
+    });
     for (section, key) in section_keys.iter().enumerate() {
         root = root.with_child(synthetic_id(section_number(config, section)), key.clone());
     }
     nodes.push(root);
-    let row_stack = StackLayout {
-        gap: length(2.0)?,
-        ..StackLayout::new(Axis::Horizontal)
-    };
+    let row_style = no_shrink(LayoutStyle {
+        display: Display::Flex,
+        column_gap: length(2.0)?,
+        width: Size::FitContent,
+        ..LayoutStyle::default()
+    });
     for section in 0..config.sections {
         let x = (section % 20) as f32 * 2000.0;
         let y = (section / 20) as f32 * 4000.0;
-        let mut node = LayoutNode::new(synthetic_id(section_number(config, section)))
-            .with_fixed_size(length(1900.0)?, length(3900.0)?)
-            .with_position(length(x)?, length(y)?)
-            .with_container(ContainerLayout::Stack(StackLayout::new(Axis::Vertical)));
+        let mut node = LayoutNode::new(synthetic_id(section_number(config, section))).with_style(
+            LayoutStyle {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                position: Position::Absolute,
+                left: LengthPercentageAuto::Length(length(x)?),
+                top: LengthPercentageAuto::Length(length(y)?),
+                width: Size::Length(length(1900.0)?),
+                height: Size::Length(length(3900.0)?),
+                ..LayoutStyle::default()
+            },
+        );
         for (row, key) in row_keys.iter().enumerate() {
             node = node.with_child(synthetic_id(row_number(config, section, row)), key.clone());
         }
         nodes.push(node);
         for row in 0..config.rows {
             let mut row_node = LayoutNode::new(synthetic_id(row_number(config, section, row)))
-                .with_sizing(hug, hug)
-                .with_container(ContainerLayout::Stack(row_stack));
+                .with_style(row_style.clone());
             for (leaf, key) in leaf_keys.iter().enumerate() {
                 row_node = row_node.with_child(leaf_id(config, section, row, leaf), key.clone());
             }
@@ -145,12 +165,16 @@ pub fn synthetic_input(config: &LeafEditConfig) -> Result<LayoutInput, LayoutErr
     Ok(LayoutInput::new(synthetic_id(1), nodes))
 }
 
-/// leaf 종류: 7번째는 Hug Text, 8번째는 너비 고정 Image, 나머지는 고정 box.
+/// leaf 종류: 7번째는 `fit-content` Text, 8번째는 너비 16px Image, 나머지는 px 크기 box. 모두 `flex-shrink: 0`.
 fn synthetic_leaf(id: StableId, leaf: usize, salt: usize) -> Result<LayoutNode, LayoutError> {
     let width = 8.0 + ((salt + leaf) % 5) as f32;
     Ok(match leaf % 9 {
         7 => LayoutNode::new(id)
-            .with_sizing(SizingMode::HugContent, SizingMode::HugContent)
+            .with_style(no_shrink(LayoutStyle {
+                width: Size::FitContent,
+                height: Size::FitContent,
+                ..LayoutStyle::default()
+            }))
             .with_content(LayoutContent::Measured(MeasuredContent::Text(
                 TextIntrinsic {
                     words: vec![length(width)?, length(12.0)?, length(6.0)?],
@@ -160,14 +184,22 @@ fn synthetic_leaf(id: StableId, leaf: usize, salt: usize) -> Result<LayoutNode, 
                 },
             ))),
         8 => LayoutNode::new(id)
-            .with_sizing(SizingMode::Fixed(length(16.0)?), SizingMode::HugContent)
+            .with_style(no_shrink(LayoutStyle {
+                width: Size::Length(length(16.0)?),
+                height: Size::FitContent,
+                ..LayoutStyle::default()
+            }))
             .with_content(LayoutContent::Measured(MeasuredContent::Image(
                 ImageIntrinsic {
                     width: length(32.0)?,
                     height: length(24.0)?,
                 },
             ))),
-        _ => LayoutNode::new(id).with_fixed_size(length(width)?, length(10.0)?),
+        _ => LayoutNode::new(id).with_style(no_shrink(LayoutStyle {
+            width: Size::Length(length(width)?),
+            height: Size::Length(length(10.0)?),
+            ..LayoutStyle::default()
+        })),
     })
 }
 
@@ -225,11 +257,11 @@ pub fn run_leaf_edit_benchmark(config: &LeafEditConfig) -> Result<LeafEditBenchm
             .node(leaf)
             .cloned()
             .ok_or(LayoutError::UnknownNode { node: leaf })?;
-        let width = match node.width {
-            SizingMode::Fixed(width) => width.get() + 1.0,
+        let width = match node.style.width {
+            Size::Length(width) => width.get() + 1.0,
             _ => 10.0,
         };
-        node.width = SizingMode::Fixed(length(width)?);
+        node.style.width = Size::Length(length(width)?);
         let start = Instant::now();
         let stats = session.apply(vec![LayoutEdit::upsert(node)], &DefaultMeasurer)?;
         let duration_ns = elapsed_ns(start);
@@ -264,11 +296,11 @@ fn percentile(sorted: &[u64], percent: u64) -> u64 {
 fn stats_json(out: &mut String, stats: &UpdateStats) {
     let _ = write!(
         out,
-        "\"visited\":{},\"reused\":{},\"replaced\":{},\"overflow_updates\":{},\"hashed\":{},\
+        "\"visited\":{},\"reused\":{},\"relayout_roots\":{},\"overflow_updates\":{},\"hashed\":{},\
          \"measured\":{},\"memo_hits\":{},\"cache_hits\":{},\"measurer_calls\":{},\"full_layouts\":{}",
         stats.arranged,
         stats.reused,
-        stats.replaced,
+        stats.relayout_roots,
         stats.overflow_updates,
         stats.hashed,
         stats.measured,
@@ -378,7 +410,7 @@ mod tests {
                 sample.stats.reused,
                 (SMALL.rows - 1 + SMALL.leaves - 1) as u64
             );
-            // 다른 row(Hug)의 크기는 측정 cache에서 읽습니다.
+            // 다른 row의 배치는 cache에서 읽습니다.
             assert!(
                 sample.stats.cache_hits >= (SMALL.rows - 1) as u64,
                 "{sample:?}"
@@ -409,7 +441,7 @@ mod tests {
         for edit in 0..4 {
             let leaf = leaf_id(&config, edit % config.sections, edit, 0);
             let mut node = session.node(leaf).unwrap().clone();
-            node.width = SizingMode::Fixed(length(30.0 + edit as f32).unwrap());
+            node.style.width = Size::Length(length(30.0 + edit as f32).unwrap());
             session
                 .apply(vec![LayoutEdit::upsert(node)], &DefaultMeasurer)
                 .unwrap();

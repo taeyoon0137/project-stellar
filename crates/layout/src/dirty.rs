@@ -40,34 +40,19 @@ use crate::input::{LayoutInput, LayoutNode};
 use crate::property::{
     dirty_class, dirty_classes, DirtyClass, DirtyClassSet, LayoutProperty, LAYOUT_PROPERTIES,
 };
+use crate::style::LayoutStyle;
 
 /// [`LayoutProperty`] 집합 (X.7.1). 순회 순서는 registry tag 순입니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct LayoutPropertySet(u16);
+pub struct LayoutPropertySet(u64);
 
 impl LayoutPropertySet {
     /// 빈 집합.
     pub const EMPTY: LayoutPropertySet = LayoutPropertySet(0);
 
-    const fn bit(property: LayoutProperty) -> u16 {
-        // registry tag(0..14)와 같은 고정 위치.
-        let tag = match property {
-            LayoutProperty::Children => 0,
-            LayoutProperty::ContainerLayout => 1,
-            LayoutProperty::Padding => 2,
-            LayoutProperty::Width => 3,
-            LayoutProperty::Height => 4,
-            LayoutProperty::Content => 5,
-            LayoutProperty::Position => 6,
-            LayoutProperty::Transform => 7,
-            LayoutProperty::Flex => 8,
-            LayoutProperty::Visibility => 9,
-            LayoutProperty::GridPlacement => 10,
-            LayoutProperty::Constraints => 11,
-            LayoutProperty::SizeLimits => 12,
-            LayoutProperty::AspectRatio => 13,
-        };
-        1 << tag
+    const fn bit(property: LayoutProperty) -> u64 {
+        // registry tag와 같은 고정 위치(tag < 64).
+        1 << property.tag()
     }
 
     /// 속성 하나의 집합.
@@ -130,52 +115,115 @@ pub fn changed_properties(before: &LayoutNode, after: &LayoutNode) -> LayoutProp
     let LayoutNode {
         id: _,
         children: _,
-        container,
-        padding,
+        style,
+        content,
+        transform,
+    } = before;
+    let LayoutStyle {
+        display,
+        position,
+        top,
+        right,
+        bottom,
+        left,
         width,
         height,
-        content,
-        position,
-        transform,
-        flex,
-        visible,
-        grid,
-        constraints,
-        limits,
+        min_width,
+        min_height,
+        max_width,
+        max_height,
         aspect_ratio,
-    } = before;
+        padding,
+        flex_direction,
+        flex_wrap,
+        justify_content,
+        align_content,
+        align_items,
+        justify_items,
+        row_gap,
+        column_gap,
+        flex_grow,
+        flex_shrink,
+        flex_basis,
+        align_self,
+        justify_self,
+        grid_template_columns,
+        grid_template_rows,
+        grid_auto_columns,
+        grid_auto_rows,
+        grid_auto_flow,
+        grid_column_start,
+        grid_column_end,
+        grid_row_start,
+        grid_row_end,
+    } = style;
+    let a = &after.style;
     let mut set = LayoutPropertySet::EMPTY;
     let mut mark = |changed: bool, property: LayoutProperty| {
         if changed {
             set = set.with(property);
         }
     };
+    use LayoutProperty as P;
     mark(
         visual_children(before) != visual_children(after),
-        LayoutProperty::Children,
+        P::Children,
+    );
+    mark(*display != a.display, P::Display);
+    mark(*position != a.position, P::Position);
+    mark(*top != a.top, P::Top);
+    mark(*right != a.right, P::Right);
+    mark(*bottom != a.bottom, P::Bottom);
+    mark(*left != a.left, P::Left);
+    mark(*width != a.width, P::Width);
+    mark(*height != a.height, P::Height);
+    mark(*min_width != a.min_width, P::MinWidth);
+    mark(*min_height != a.min_height, P::MinHeight);
+    mark(*max_width != a.max_width, P::MaxWidth);
+    mark(*max_height != a.max_height, P::MaxHeight);
+    mark(*aspect_ratio != a.aspect_ratio, P::AspectRatio);
+    let (bt, br, bb, bl) = padding.components();
+    let (at, ar, ab, al) = a.padding.components();
+    mark(bt != at, P::PaddingTop);
+    mark(br != ar, P::PaddingRight);
+    mark(bb != ab, P::PaddingBottom);
+    mark(bl != al, P::PaddingLeft);
+    mark(*flex_direction != a.flex_direction, P::FlexDirection);
+    mark(*flex_wrap != a.flex_wrap, P::FlexWrap);
+    mark(*justify_content != a.justify_content, P::JustifyContent);
+    mark(*align_content != a.align_content, P::AlignContent);
+    mark(*align_items != a.align_items, P::AlignItems);
+    mark(*justify_items != a.justify_items, P::JustifyItems);
+    mark(*row_gap != a.row_gap, P::RowGap);
+    mark(*column_gap != a.column_gap, P::ColumnGap);
+    mark(*flex_grow != a.flex_grow, P::FlexGrow);
+    mark(*flex_shrink != a.flex_shrink, P::FlexShrink);
+    mark(*flex_basis != a.flex_basis, P::FlexBasis);
+    mark(*align_self != a.align_self, P::AlignSelf);
+    mark(*justify_self != a.justify_self, P::JustifySelf);
+    mark(
+        *grid_template_columns != a.grid_template_columns,
+        P::GridTemplateColumns,
     );
     mark(
-        *container != after.container,
-        LayoutProperty::ContainerLayout,
+        *grid_template_rows != a.grid_template_rows,
+        P::GridTemplateRows,
     );
-    mark(*padding != after.padding, LayoutProperty::Padding);
-    mark(*width != after.width, LayoutProperty::Width);
-    mark(*height != after.height, LayoutProperty::Height);
-    mark(*content != after.content, LayoutProperty::Content);
-    mark(*position != after.position, LayoutProperty::Position);
-    mark(*transform != after.transform, LayoutProperty::Transform);
-    mark(*flex != after.flex, LayoutProperty::Flex);
-    mark(*visible != after.visible, LayoutProperty::Visibility);
-    mark(*grid != after.grid, LayoutProperty::GridPlacement);
     mark(
-        *constraints != after.constraints,
-        LayoutProperty::Constraints,
+        *grid_auto_columns != a.grid_auto_columns,
+        P::GridAutoColumns,
     );
-    mark(*limits != after.limits, LayoutProperty::SizeLimits);
+    mark(*grid_auto_rows != a.grid_auto_rows, P::GridAutoRows);
+    mark(*grid_auto_flow != a.grid_auto_flow, P::GridAutoFlow);
     mark(
-        *aspect_ratio != after.aspect_ratio,
-        LayoutProperty::AspectRatio,
+        *grid_column_start != a.grid_column_start,
+        P::GridColumnStart,
     );
+    mark(*grid_column_end != a.grid_column_end, P::GridColumnEnd);
+    mark(*grid_row_start != a.grid_row_start, P::GridRowStart);
+    mark(*grid_row_end != a.grid_row_end, P::GridRowEnd);
+    mark(*content != after.content, P::Content);
+    mark(*transform != after.transform, P::Transform);
     set
 }
 
@@ -501,14 +549,13 @@ pub fn dirty_set_from_changes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flex::{FlexBasis, FlexItem};
-    use crate::geometry::Axis;
-    use crate::grid::GridItem;
-    use crate::input::{ContainerLayout, IntrinsicContent, LayoutContent, SizingMode};
-    use crate::sizing::{AspectRatio, SizeLimits};
-    use crate::stack::StackLayout;
-    use crate::test_support::{id, key, len};
-    use stellar_core_types::value::{Insets, Scalar, Transform2D};
+    use crate::input::{IntrinsicContent, LayoutContent};
+    use crate::style::{
+        AspectRatio, Display, FlexDirection, GridLine, LengthPercentageAuto, MaxSize, Position,
+        SelfAlignment, Size, TrackSize,
+    };
+    use crate::test_support::{finite, fixed, id, key, len, size_px, style};
+    use stellar_core_types::value::{Insets, Transform2D};
 
     // 문서 registry를 흉내 낸 key(공통 node 필드 0x00xx, Frame 0x01xx, Text 0x07xx 대역).
     const VISIBLE: PropertyKey = PropertyKey(0x0001);
@@ -533,18 +580,22 @@ mod tests {
                 PropertyLayoutEffect::on_node(properties.iter().copied().collect())
             };
             Some(match key {
-                VISIBLE => node(&[P::Visibility]),
+                VISIBLE => node(&[P::Display]),
                 LOCKED => PropertyLayoutEffect::None,
                 PARENT | ORDER_KEY => {
                     PropertyLayoutEffect::on_parent(LayoutPropertySet::of(P::Children))
                 }
                 SIZE => node(&[P::Width, P::Height]),
-                PADDING => node(&[P::Padding]),
-                LAYOUT_MODE => node(&[P::ContainerLayout]),
-                // transform은 레이아웃 속성이지만 class가 PaintOnly입니다.
+                PADDING => node(&[
+                    P::PaddingTop,
+                    P::PaddingRight,
+                    P::PaddingBottom,
+                    P::PaddingLeft,
+                ]),
+                LAYOUT_MODE => node(&[P::Display, P::FlexDirection]),
                 TRANSFORM => node(&[P::Transform]),
                 FILL => PropertyLayoutEffect::PaintOnly,
-                FLEX => node(&[P::Flex]),
+                FLEX => node(&[P::FlexGrow, P::FlexShrink, P::FlexBasis]),
                 TEXT => node(&[P::Content]),
                 _ => return None,
             })
@@ -574,7 +625,6 @@ mod tests {
         }
     }
 
-    /// 속성 변경 하나와 그 node 무효화.
     fn property_change(node: u64, key: PropertyKey, invalidation: CommandInvalidation) -> Changes {
         Changes {
             nodes: vec![(id(node), invalidation)],
@@ -583,45 +633,42 @@ mod tests {
         }
     }
 
-    /// layout 속성의 무효화(geometry + layout + paint).
     const LAYOUT: CommandInvalidation = CommandInvalidation::STRUCTURE;
-    /// 렌더 전용 속성의 무효화.
     const PAINT: CommandInvalidation = CommandInvalidation::PAINT;
-    /// 무효화 없음(잠금·이름).
     const NONE: CommandInvalidation = CommandInvalidation {
         geometry: false,
         layout: false,
         paint: false,
     };
 
-    /// root 1(Fixed Stack) → 2(Hug Stack) → 3(Fixed leaf), 4(Hug text leaf); root → 5(Fixed Frame) → 6.
+    /// root 1(px 크기 세로 flex) → 2(`auto` 크기 가로 flex) → 3(px leaf), 4(`auto` text leaf);
+    /// root → 5(px 크기 block) → 6.
     fn document() -> LayoutInput {
-        let hug = SizingMode::HugContent;
         LayoutInput::new(
             id(1),
             vec![
                 LayoutNode::new(id(1))
-                    .with_fixed_size(len(400.0), len(300.0))
-                    .with_container(ContainerLayout::Stack(StackLayout::new(Axis::Vertical)))
+                    .with_style(style(|s| {
+                        *s = fixed(400.0, 300.0);
+                        s.display = Display::Flex;
+                        s.flex_direction = FlexDirection::Column;
+                    }))
                     .with_child(id(2), key(1))
                     .with_child(id(5), key(2)),
                 LayoutNode::new(id(2))
-                    .with_sizing(hug, hug)
-                    .with_container(ContainerLayout::Stack(StackLayout::new(Axis::Horizontal)))
+                    .with_style(style(|s| s.display = Display::Flex))
                     .with_child(id(3), key(1))
                     .with_child(id(4), key(2)),
-                LayoutNode::new(id(3)).with_fixed_size(len(10.0), len(10.0)),
-                LayoutNode::new(id(4)).with_sizing(hug, hug).with_content(
-                    LayoutContent::Intrinsic(IntrinsicContent {
-                        width: len(30.0),
-                        height: len(12.0),
-                        baseline: Some(len(9.0)),
-                    }),
-                ),
+                LayoutNode::new(id(3)).with_style(fixed(10.0, 10.0)),
+                LayoutNode::new(id(4)).with_content(LayoutContent::Intrinsic(IntrinsicContent {
+                    width: len(30.0),
+                    height: len(12.0),
+                    baseline: Some(len(9.0)),
+                })),
                 LayoutNode::new(id(5))
-                    .with_fixed_size(len(100.0), len(50.0))
+                    .with_style(fixed(100.0, 50.0))
                     .with_child(id(6), key(1)),
-                LayoutNode::new(id(6)).with_fixed_size(len(5.0), len(5.0)),
+                LayoutNode::new(id(6)).with_style(fixed(5.0, 5.0)),
             ],
         )
     }
@@ -652,7 +699,6 @@ mod tests {
     fn property_changes_map_to_expected_dirty_sets() {
         use DirtyClass::{DescendantConstraint as Desc, ParentFlow as Flow, SelfSize as Size};
         let doc = document();
-        // (node, key, node 무효화, 기대 layout queue, 기대 paint 집합)
         type Case = (
             u64,
             PropertyKey,
@@ -661,25 +707,25 @@ mod tests {
             Vec<u64>,
         );
         let cases: Vec<Case> = vec![
-            // 크기: SelfSize.
             (3, SIZE, LAYOUT, queue(&[(3, &[Size])]), vec![]),
-            // 텍스트 내용: SelfSize.
             (4, TEXT, LAYOUT, queue(&[(4, &[Size])]), vec![]),
-            // Fixed node의 padding: DescendantConstraint만.
+            // px 크기 node의 padding: DescendantConstraint만.
             (5, PADDING, LAYOUT, queue(&[(5, &[Desc])]), vec![]),
-            // Hug node의 padding·layout mode: 자기 크기도 바뀌어 SelfSize 포함.
+            // `auto` 크기 node의 padding: 자기 크기도 바뀌어 SelfSize 포함.
             (2, PADDING, LAYOUT, queue(&[(2, &[Size, Desc])]), vec![]),
-            (2, LAYOUT_MODE, LAYOUT, queue(&[(2, &[Size, Desc])]), vec![]),
-            // 표시 여부·flex: ParentFlow.
-            (3, VISIBLE, LAYOUT, queue(&[(3, &[Flow])]), vec![]),
+            // display는 부모 flow 참여도 바꿉니다.
+            (
+                2,
+                LAYOUT_MODE,
+                LAYOUT,
+                queue(&[(2, &[Size, Flow, Desc])]),
+                vec![],
+            ),
+            (3, VISIBLE, LAYOUT, queue(&[(3, &[Flow, Desc])]), vec![]),
             (3, FLEX, LAYOUT, queue(&[(3, &[Flow])]), vec![]),
-            // 형제 순서: 부모의 자식 변경(Hug 부모라 SelfSize 포함).
             (3, ORDER_KEY, LAYOUT, queue(&[(2, &[Size, Desc])]), vec![]),
-            // transform: PaintOnly → layout queue에 없음, paint만.
             (3, TRANSFORM, PAINT, vec![], vec![3]),
-            // 색: 렌더 전용.
             (3, FILL, PAINT, vec![], vec![3]),
-            // 잠금: 아무것도 아님.
             (3, LOCKED, NONE, vec![], vec![]),
         ];
         for (node, key, invalidation, expected_queue, expected_paint) in cases {
@@ -696,21 +742,16 @@ mod tests {
     #[test]
     fn classes_use_both_before_and_after_states() {
         use DirtyClass::{DescendantConstraint as Desc, SelfSize as Size};
-        // node 5: Fixed → Hug 로 바꾸는 크기 변경 + padding 변경(같은 command).
         let before = document();
         let mut after = document();
-        after.nodes[4] = after.nodes[4]
-            .clone()
-            .with_sizing(SizingMode::HugContent, SizingMode::HugContent);
+        after.nodes[4].style.width = crate::style::Size::Auto;
         let changes = Changes {
             nodes: vec![(id(5), CommandInvalidation::STRUCTURE)],
             properties: vec![(id(5), SIZE), (id(5), PADDING)],
             ..Changes::default()
         };
         let dirty = convert(&changes, &before, &after);
-        // 변경 후 상태가 Hug라 padding 변경에도 SelfSize가 포함됩니다.
         assert_eq!(dirty.layout_queue(), queue(&[(5, &[Size, Desc])]));
-        // 반대 방향(Hug → Fixed)도 변경 전 상태로 같은 결과.
         let dirty = convert(&changes, &after, &before);
         assert_eq!(dirty.layout_queue(), queue(&[(5, &[Size, Desc])]));
     }
@@ -719,12 +760,11 @@ mod tests {
     fn structure_insert_remove_and_move_mark_parents() {
         use DirtyClass::{DescendantConstraint as Desc, SelfSize as Size};
         let before = document();
-        // 7을 node 5(Fixed) 아래에 삽입.
         let mut after = document();
         after.nodes[4] = after.nodes[4].clone().with_child(id(7), key(2));
         after
             .nodes
-            .push(LayoutNode::new(id(7)).with_fixed_size(len(1.0), len(1.0)));
+            .push(LayoutNode::new(id(7)).with_style(fixed(1.0, 1.0)));
         let insert = Changes {
             nodes: vec![
                 (id(5), CommandInvalidation::STRUCTURE),
@@ -734,12 +774,10 @@ mod tests {
             ..Changes::default()
         };
         let dirty = convert(&insert, &before, &after);
-        // 부모 5의 구조 무효화는 삽입으로 설명되어 자식 변경(Fixed라 DescendantConstraint)만 남습니다.
         assert_eq!(
             dirty.layout_queue(),
             vec![(id(5), set(&[Desc])), (id(7), ALL_LAYOUT_CLASSES)]
         );
-        // 삭제: 7을 다시 지우면 부모 5(Fixed)의 자식 변경.
         let remove = Changes {
             nodes: vec![(id(5), CommandInvalidation::STRUCTURE)],
             removed: vec![id(7)],
@@ -747,7 +785,6 @@ mod tests {
         };
         let dirty = convert(&remove, &after, &before);
         assert_eq!(dirty.layout_queue(), vec![(id(5), set(&[Desc]))]);
-        // 설명되지 않은 구조 무효화(종류 변환 등, 잠금 변경만 기록)는 보수 처리합니다.
         let converted = Changes {
             nodes: vec![(id(5), CommandInvalidation::STRUCTURE)],
             properties: vec![(id(5), LOCKED)],
@@ -757,7 +794,6 @@ mod tests {
             convert(&converted, &before, &before).layout_queue(),
             vec![(id(5), ALL_LAYOUT_CLASSES)]
         );
-        // 이동: 3을 2(Hug)에서 5(Fixed)로. PARENT 속성은 전·후 부모의 Children.
         let mut moved = document();
         moved.nodes[1].children.retain(|c| c.id != id(3));
         moved.nodes[4] = moved.nodes[4].clone().with_child(id(3), key(5));
@@ -776,18 +812,14 @@ mod tests {
     #[test]
     fn unknown_keys_fall_back_to_node_invalidation() {
         let doc = document();
-        // layout 무효화가 있는 알 수 없는 key: 세 class 모두.
         let dirty = convert(&property_change(3, UNKNOWN, LAYOUT), &doc, &doc);
         assert_eq!(dirty.layout_queue(), vec![(id(3), ALL_LAYOUT_CLASSES)]);
-        // paint 무효화만 있는 알 수 없는 key: 렌더 전용.
         let dirty = convert(&property_change(3, UNKNOWN, PAINT), &doc, &doc);
         assert!(dirty.is_layout_clean());
         assert_eq!(dirty.paint(), vec![id(3)]);
-        // 레이아웃 node가 아닌 path root(예: modifier)는 layout queue에 넣지 않습니다.
         let dirty = convert(&property_change(99, UNKNOWN, LAYOUT), &doc, &doc);
         assert!(dirty.is_layout_clean());
         assert_eq!(dirty.paint(), vec![id(99)]);
-        // 정밀 속성과 알 수 없는 key가 함께면 보수 처리가 이깁니다.
         let mixed = Changes {
             nodes: vec![(id(3), CommandInvalidation::STRUCTURE)],
             properties: vec![(id(3), SIZE), (id(3), UNKNOWN)],
@@ -802,14 +834,12 @@ mod tests {
     #[test]
     fn unknown_keys_without_node_invalidation_are_conservative() {
         let doc = document();
-        // changed_nodes에 무효화가 없는 node의 알 수 없는 key: 판단 근거가 없으므로 세 class 모두.
         let orphan = Changes {
             properties: vec![(id(3), UNKNOWN)],
             ..Changes::default()
         };
         let dirty = convert(&orphan, &doc, &doc);
         assert_eq!(dirty.layout_queue(), vec![(id(3), ALL_LAYOUT_CLASSES)]);
-        // 정밀 속성과 섞여도 보수 처리가 이깁니다.
         let mixed = Changes {
             properties: vec![(id(4), TEXT), (id(4), UNKNOWN)],
             ..Changes::default()
@@ -818,7 +848,6 @@ mod tests {
             convert(&mixed, &doc, &doc).layout_queue(),
             vec![(id(4), ALL_LAYOUT_CLASSES)]
         );
-        // 레이아웃 node가 아닌 path root는 layout queue 없이 렌더 dirty.
         let modifier = Changes {
             properties: vec![(id(99), UNKNOWN)],
             ..Changes::default()
@@ -826,7 +855,6 @@ mod tests {
         let dirty = convert(&modifier, &doc, &doc);
         assert!(dirty.is_layout_clean());
         assert_eq!(dirty.paint(), vec![id(99)]);
-        // 다른 node의 무효화만 있어도 그 node의 누락은 그대로 보수 처리합니다.
         let other = Changes {
             nodes: vec![(id(5), CommandInvalidation::PAINT)],
             properties: vec![(id(3), UNKNOWN), (id(5), FILL)],
@@ -841,37 +869,132 @@ mod tests {
     fn changed_properties_detects_each_field() {
         use LayoutProperty as P;
         let base = LayoutNode::new(id(1))
-            .with_fixed_size(len(10.0), len(10.0))
+            .with_style(fixed(10.0, 10.0))
             .with_child(id(2), key(1))
             .with_child(id(3), key(2));
         assert!(changed_properties(&base, &base).is_empty());
-        // 자식 삽입 순서만 다르면 변경이 아닙니다.
         let mut reordered = base.clone();
         reordered.children.reverse();
         assert!(changed_properties(&base, &reordered).is_empty());
-        let one = Scalar::new(1.0).unwrap();
+        let edit = |f: &dyn Fn(&mut crate::style::LayoutStyle)| {
+            let mut node = base.clone();
+            f(&mut node.style);
+            node
+        };
+        let length = LengthPercentageAuto::Length(len(1.0));
         let cases: Vec<(LayoutNode, LayoutProperty)> = vec![
             (base.clone().with_child(id(4), key(3)), P::Children),
+            (edit(&|s| s.display = Display::Flex), P::Display),
+            (edit(&|s| s.position = Position::Absolute), P::Position),
+            (edit(&|s| s.top = length), P::Top),
+            (edit(&|s| s.right = length), P::Right),
+            (edit(&|s| s.bottom = length), P::Bottom),
+            (edit(&|s| s.left = length), P::Left),
+            (edit(&|s| s.width = Size::FitContent), P::Width),
+            (edit(&|s| s.height = Size::Auto), P::Height),
+            (edit(&|s| s.min_width = size_px(1.0)), P::MinWidth),
+            (edit(&|s| s.min_height = size_px(1.0)), P::MinHeight),
             (
-                base.clone()
-                    .with_container(ContainerLayout::Stack(StackLayout::new(Axis::Vertical))),
-                P::ContainerLayout,
+                edit(&|s| s.max_width = MaxSize::Length(len(1.0))),
+                P::MaxWidth,
             ),
             (
-                base.clone()
-                    .with_padding(Insets::new(1.0, 0.0, 0.0, 0.0).unwrap()),
-                P::Padding,
+                edit(&|s| s.max_height = MaxSize::Length(len(1.0))),
+                P::MaxHeight,
             ),
             (
-                base.clone()
-                    .with_sizing(SizingMode::HugContent, SizingMode::Fixed(len(10.0))),
-                P::Width,
+                edit(&|s| s.aspect_ratio = AspectRatio::new(1.0, 1.0)),
+                P::AspectRatio,
             ),
             (
-                base.clone()
-                    .with_sizing(SizingMode::Fixed(len(10.0)), SizingMode::Fill),
-                P::Height,
+                edit(&|s| s.padding = Insets::new(1.0, 0.0, 0.0, 0.0).unwrap()),
+                P::PaddingTop,
             ),
+            (
+                edit(&|s| s.padding = Insets::new(0.0, 1.0, 0.0, 0.0).unwrap()),
+                P::PaddingRight,
+            ),
+            (
+                edit(&|s| s.padding = Insets::new(0.0, 0.0, 1.0, 0.0).unwrap()),
+                P::PaddingBottom,
+            ),
+            (
+                edit(&|s| s.padding = Insets::new(0.0, 0.0, 0.0, 1.0).unwrap()),
+                P::PaddingLeft,
+            ),
+            (
+                edit(&|s| s.flex_direction = FlexDirection::Column),
+                P::FlexDirection,
+            ),
+            (
+                edit(&|s| s.flex_wrap = crate::style::FlexWrap::Wrap),
+                P::FlexWrap,
+            ),
+            (
+                edit(&|s| s.justify_content = crate::style::ContentAlignment::Center),
+                P::JustifyContent,
+            ),
+            (
+                edit(&|s| s.align_content = crate::style::ContentAlignment::Center),
+                P::AlignContent,
+            ),
+            (
+                edit(&|s| s.align_items = crate::style::ItemAlignment::Center),
+                P::AlignItems,
+            ),
+            (
+                edit(&|s| s.justify_items = crate::style::ItemAlignment::Center),
+                P::JustifyItems,
+            ),
+            (edit(&|s| s.row_gap = len(1.0)), P::RowGap),
+            (edit(&|s| s.column_gap = len(1.0)), P::ColumnGap),
+            (edit(&|s| s.flex_grow = finite(1.0)), P::FlexGrow),
+            (edit(&|s| s.flex_shrink = finite(0.0)), P::FlexShrink),
+            (
+                edit(&|s| s.flex_basis = crate::style::FlexBasis::Content),
+                P::FlexBasis,
+            ),
+            (
+                edit(&|s| s.align_self = SelfAlignment::Item(crate::style::ItemAlignment::End)),
+                P::AlignSelf,
+            ),
+            (
+                edit(&|s| s.justify_self = SelfAlignment::Item(crate::style::ItemAlignment::End)),
+                P::JustifySelf,
+            ),
+            (
+                edit(&|s| s.grid_template_columns = vec![TrackSize::AUTO]),
+                P::GridTemplateColumns,
+            ),
+            (
+                edit(&|s| s.grid_template_rows = vec![TrackSize::AUTO]),
+                P::GridTemplateRows,
+            ),
+            (
+                edit(&|s| s.grid_auto_columns = vec![TrackSize::MIN_CONTENT]),
+                P::GridAutoColumns,
+            ),
+            (
+                edit(&|s| s.grid_auto_rows = vec![TrackSize::MIN_CONTENT]),
+                P::GridAutoRows,
+            ),
+            (
+                edit(&|s| s.grid_auto_flow = crate::style::GridAutoFlow::Column),
+                P::GridAutoFlow,
+            ),
+            (
+                edit(&|s| s.grid_column_start = GridLine::Line(1)),
+                P::GridColumnStart,
+            ),
+            (
+                edit(&|s| s.grid_column_end = GridLine::Line(2)),
+                P::GridColumnEnd,
+            ),
+            (
+                edit(&|s| s.grid_row_start = GridLine::Line(1)),
+                P::GridRowStart,
+            ),
+            (edit(&|s| s.grid_row_end = GridLine::Span(2)), P::GridRowEnd),
             (
                 base.clone()
                     .with_content(LayoutContent::Intrinsic(IntrinsicContent {
@@ -881,42 +1004,10 @@ mod tests {
                     })),
                 P::Content,
             ),
-            (base.clone().with_position(len(1.0), len(0.0)), P::Position),
             (
                 base.clone()
                     .with_transform(Transform2D::new(1.0, 0.0, 0.0, 1.0, 3.0, 0.0).unwrap()),
                 P::Transform,
-            ),
-            (
-                base.clone()
-                    .with_flex(FlexItem::new(one, one, FlexBasis::Auto)),
-                P::Flex,
-            ),
-            (base.clone().with_visible(false), P::Visibility),
-            (
-                base.clone().with_grid(GridItem::at(1, 1, 1, 1)),
-                P::GridPlacement,
-            ),
-            (
-                base.clone().with_constraint(crate::constraint::Constraint {
-                    edge: crate::constraint::AnchorEdge::Left,
-                    target: crate::constraint::AnchorTarget::Parent(
-                        crate::constraint::AnchorEdge::Left,
-                    ),
-                    offset: len(0.0),
-                }),
-                P::Constraints,
-            ),
-            (
-                base.clone().with_limits(SizeLimits {
-                    min_width: Some(len(1.0)),
-                    ..SizeLimits::default()
-                }),
-                P::SizeLimits,
-            ),
-            (
-                base.clone().with_aspect_ratio(AspectRatio::new(one, one)),
-                P::AspectRatio,
             ),
         ];
         assert_eq!(cases.len(), LAYOUT_PROPERTIES.len());
@@ -953,9 +1044,7 @@ mod tests {
         );
         assert_eq!(dirty.layout_len(), 1);
         assert_eq!(dirty.classes(id(9)), DirtyClassSet::EMPTY);
-
-        // bit 위치 = registry tag.
-        for metadata in &LAYOUT_PROPERTIES {
+        for metadata in LAYOUT_PROPERTIES {
             assert_eq!(
                 LayoutPropertySet::of(metadata.property).0,
                 1 << metadata.tag
@@ -963,19 +1052,15 @@ mod tests {
         }
         let all: LayoutPropertySet = LAYOUT_PROPERTIES.iter().map(|m| m.property).collect();
         assert_eq!(all.iter().count(), LAYOUT_PROPERTIES.len());
-        assert_eq!(
-            all.iter().collect::<Vec<_>>(),
-            LAYOUT_PROPERTIES
-                .iter()
-                .map(|m| m.property)
-                .collect::<Vec<_>>()
-        );
         let pair = LayoutPropertySet::of(LayoutProperty::Width)
-            .union(LayoutPropertySet::of(LayoutProperty::Padding));
+            .union(LayoutPropertySet::of(LayoutProperty::PaddingTop));
         assert!(pair.contains(LayoutProperty::Width) && !pair.contains(LayoutProperty::Height));
-        // 상태 없는 node는 registry 기본 class.
         assert_eq!(
-            node_dirty_classes(LayoutPropertySet::of(LayoutProperty::Padding), None, None),
+            node_dirty_classes(
+                LayoutPropertySet::of(LayoutProperty::PaddingTop),
+                None,
+                None
+            ),
             DirtyClassSet::of(DirtyClass::DescendantConstraint)
         );
     }

@@ -19,7 +19,7 @@
 //!
 //! [`MeasureRequest`]의 `available`은 축별 content box 크기(padding 제외)이며 definite 축만 `Some`
 //! 입니다. `mode`는 indefinite 축을 최소 콘텐츠(가능한 한 좁게, 예: 가장 넓은 단어)로 볼지 최대
-//! 콘텐츠(줄바꿈 없음)로 볼지입니다. 엔진은 node의 sizing이 콘텐츠에 의존하는 축(Hug 등)에서만 측정
+//! 콘텐츠(줄바꿈 없음)로 볼지입니다. 엔진은 크기가 콘텐츠에 의존하는 축(`auto`·`fit-content` 등)에서만 측정
 //! 결과를 쓰며, definite 축은 엔진이 정한 크기를 씁니다.
 //!
 //! # 외부 hook
@@ -473,10 +473,10 @@ pub(crate) fn decode_measured(r: &mut Reader<'_>) -> Result<MeasuredContent, Lay
 pub(crate) mod tests {
     use super::*;
     use crate::engine::{compute_layout, compute_layout_with};
-    use crate::input::{ContainerLayout, LayoutContent, LayoutInput, LayoutNode, SizingMode};
+    use crate::input::{LayoutContent, LayoutInput, LayoutNode};
     use crate::output::LayoutResult;
-    use crate::stack::StackLayout;
-    use crate::test_support::{id, key, len, px};
+    use crate::style::{Display, ItemAlignment, LayoutStyle, Position, Size};
+    use crate::test_support::{id, key, len, px, size_px, style};
     use stellar_core_types::value::Insets;
 
     /// 텍스트 콘텐츠(단어 폭 px, 공백 5, 줄 높이 12, ascent 9).
@@ -510,73 +510,73 @@ pub(crate) mod tests {
         ))
     }
 
-    /// root(Free, 500×500) 아래 node 하나를 배치합니다.
+    /// root(500×500 block) 아래 absolute node 하나를 (0, 0)에 배치합니다(`auto` 크기 = `fit-content`).
     fn single(node: LayoutNode, extra: Vec<LayoutNode>) -> LayoutResult {
         let root = LayoutNode::new(id(1))
-            .with_fixed_size(len(500.0), len(500.0))
+            .with_style(fixed_style(500.0, 500.0))
             .with_child(node.id, key(1));
+        let mut node = node;
+        node.style.position = Position::Absolute;
         let mut nodes = vec![root, node];
         nodes.extend(extra);
         compute_layout(&LayoutInput::new(id(1), nodes)).unwrap()
     }
 
-    fn size_px(result: &LayoutResult, n: u64) -> (f64, f64) {
+    fn dims(result: &LayoutResult, n: u64) -> (f64, f64) {
         let r = result.get(id(n)).unwrap().local_rect();
         (r.width().to_px_f64(), r.height().to_px_f64())
     }
 
-    fn hug() -> SizingMode {
-        SizingMode::HugContent
+    fn sized(width: Size, height: Size) -> LayoutStyle {
+        style(|s| {
+            s.width = width;
+            s.height = height;
+        })
     }
 
-    fn fixed(value: f32) -> SizingMode {
-        SizingMode::Fixed(len(value))
+    fn fixed_style(width: f32, height: f32) -> LayoutStyle {
+        sized(size_px(width), size_px(height))
     }
 
     #[test]
     fn shape_default_intrinsic_is_geometry_bounds() {
-        let padding = Insets::new(2.0, 2.0, 2.0, 2.0).unwrap();
         let node = LayoutNode::new(id(2))
-            .with_sizing(hug(), hug())
-            .with_padding(padding)
+            .with_style(style(|s| {
+                s.padding = Insets::new(2.0, 2.0, 2.0, 2.0).unwrap()
+            }))
             .with_content(shape(30.0, 20.0));
         let result = single(node, vec![]);
-        assert_eq!(size_px(&result, 2), (34.0, 24.0));
+        assert_eq!(dims(&result, 2), (34.0, 24.0));
         assert_eq!(result.get(id(2)).unwrap().baseline(), None);
-        // 가용 크기와 무관: 너비 10 고정이어도 높이는 bounds 20.
         let node = LayoutNode::new(id(2))
-            .with_sizing(fixed(10.0), hug())
+            .with_style(sized(size_px(10.0), Size::Auto))
             .with_content(shape(30.0, 20.0));
-        assert_eq!(size_px(&single(node, vec![]), 2), (10.0, 20.0));
+        assert_eq!(dims(&single(node, vec![]), 2), (10.0, 20.0));
     }
 
     #[test]
     fn text_default_intrinsic_wraps_words_greedily() {
         let words = [10.0, 20.0, 15.0];
-        let run = |width: SizingMode| {
+        let run = |width: Size| {
             let node = LayoutNode::new(id(2))
-                .with_sizing(width, hug())
-                .with_padding(Insets::new(3.0, 0.0, 0.0, 0.0).unwrap())
+                .with_style(style(|s| {
+                    s.width = width;
+                    s.padding = Insets::new(3.0, 0.0, 0.0, 0.0).unwrap();
+                }))
                 .with_content(text(&words));
             single(node, vec![])
         };
         // max-content 한 줄: 10 + 5 + 20 + 5 + 15 = 55, 높이 12 + padding top 3.
-        let result = run(hug());
-        assert_eq!(size_px(&result, 2), (55.0, 15.0));
-        // baseline = padding top 3 + ascent 9.
+        let result = run(Size::Auto);
+        assert_eq!(dims(&result, 2), (55.0, 15.0));
         assert_eq!(result.get(id(2)).unwrap().baseline(), Some(px(12)));
-        // 너비 30: [10] [20] [15] 세 줄 → 36.
-        assert_eq!(size_px(&run(fixed(30.0)), 2), (30.0, 39.0));
-        // 너비 40: [10 20] [15] 두 줄 → 24.
-        assert_eq!(size_px(&run(fixed(40.0)), 2), (40.0, 27.0));
-        // 단어보다 좁아도 단어를 쪼개지 않고 줄마다 한 단어(넘침).
-        assert_eq!(size_px(&run(fixed(5.0)), 2), (5.0, 39.0));
-        // 빈 텍스트는 너비 0, 한 줄.
-        let empty = LayoutNode::new(id(2))
-            .with_sizing(hug(), hug())
-            .with_content(text(&[]));
-        assert_eq!(size_px(&single(empty, vec![]), 2), (0.0, 12.0));
-        // min-content: 가장 넓은 단어(20)에서 줄바꿈 → 20 × 36.
+        assert_eq!(dims(&run(size_px(30.0)), 2), (30.0, 39.0));
+        assert_eq!(dims(&run(size_px(40.0)), 2), (40.0, 27.0));
+        assert_eq!(dims(&run(size_px(5.0)), 2), (5.0, 39.0));
+        // min-content keyword: 가장 넓은 단어 20에서 줄바꿈.
+        assert_eq!(dims(&run(Size::MinContent), 2), (20.0, 39.0));
+        let empty = LayoutNode::new(id(2)).with_content(text(&[]));
+        assert_eq!(dims(&single(empty, vec![]), 2), (0.0, 12.0));
         let content = TextIntrinsic {
             words: words.iter().map(|w| len(*w)).collect(),
             space: len(5.0),
@@ -609,53 +609,42 @@ pub(crate) mod tests {
 
     #[test]
     fn image_default_intrinsic_keeps_natural_ratio() {
-        let run = |width: SizingMode, height: SizingMode, natural: (f32, f32)| {
+        let run = |width: Size, height: Size, natural: (f32, f32)| {
             let node = LayoutNode::new(id(2))
-                .with_sizing(width, height)
+                .with_style(sized(width, height))
                 .with_content(image(natural.0, natural.1));
-            size_px(&single(node, vec![]), 2)
+            dims(&single(node, vec![]), 2)
         };
-        assert_eq!(run(hug(), hug(), (64.0, 48.0)), (64.0, 48.0));
-        assert_eq!(run(fixed(32.0), hug(), (64.0, 48.0)), (32.0, 24.0));
-        assert_eq!(run(hug(), fixed(24.0), (64.0, 48.0)), (32.0, 24.0));
-        // 1/3 비율은 한 번 반올림: 100 × 1/3 = 33.33 → 2133 subpixel.
+        let auto = Size::Auto;
+        assert_eq!(run(auto, auto, (64.0, 48.0)), (64.0, 48.0));
+        assert_eq!(run(size_px(32.0), auto, (64.0, 48.0)), (32.0, 24.0));
+        assert_eq!(run(auto, size_px(24.0), (64.0, 48.0)), (32.0, 24.0));
         let node = LayoutNode::new(id(2))
-            .with_sizing(fixed(100.0), hug())
+            .with_style(sized(size_px(100.0), auto))
             .with_content(image(3.0, 1.0));
         let result = single(node, vec![]);
         assert_eq!(result.get(id(2)).unwrap().local_rect().height().raw(), 2133);
-        // natural 크기에 0이 있으면 비율 없이 natural 그대로.
-        assert_eq!(run(fixed(5.0), hug(), (0.0, 10.0)), (5.0, 10.0));
+        assert_eq!(run(size_px(5.0), auto, (0.0, 10.0)), (5.0, 10.0));
     }
 
     #[test]
-    fn component_instance_default_intrinsic_is_subtree_extent() {
-        let child = LayoutNode::new(id(3))
-            .with_fixed_size(len(40.0), len(10.0))
-            .with_position(len(5.0), len(5.0));
+    fn component_instance_lays_out_its_children_with_its_display() {
+        let child = LayoutNode::new(id(3)).with_style(fixed_style(40.0, 10.0));
         let node = LayoutNode::new(id(2))
-            .with_sizing(hug(), hug())
             .with_content(instance())
             .with_child(id(3), key(1));
         let result = single(node, vec![child]);
-        assert_eq!(size_px(&result, 2), (45.0, 15.0));
-        assert_eq!(size_px(&result, 3), (40.0, 10.0));
-        // instance container 배치(Stack)도 그대로 사용합니다.
-        let a = LayoutNode::new(id(3)).with_fixed_size(len(10.0), len(4.0));
-        let b = LayoutNode::new(id(4)).with_fixed_size(len(20.0), len(6.0));
+        assert_eq!(dims(&result, 2), (40.0, 10.0));
+        let a = LayoutNode::new(id(3)).with_style(fixed_style(10.0, 4.0));
+        let b = LayoutNode::new(id(4)).with_style(fixed_style(20.0, 6.0));
         let node = LayoutNode::new(id(2))
-            .with_sizing(hug(), hug())
+            .with_style(style(|s| s.display = Display::Flex))
             .with_content(instance())
-            .with_container(ContainerLayout::Stack(StackLayout::new(Axis::Horizontal)))
             .with_child(id(3), key(1))
             .with_child(id(4), key(2));
-        assert_eq!(size_px(&single(node, vec![a, b]), 2), (30.0, 6.0));
-        // 빈 instance는 0×0.
-        let empty = LayoutNode::new(id(2))
-            .with_sizing(hug(), hug())
-            .with_content(instance());
-        assert_eq!(size_px(&single(empty, vec![]), 2), (0.0, 0.0));
-        // instance만 자식을 가질 수 있고 Shape·Text·Image leaf에 자식이 있으면 오류.
+        assert_eq!(dims(&single(node, vec![a, b]), 2), (30.0, 6.0));
+        let empty = LayoutNode::new(id(2)).with_content(instance());
+        assert_eq!(dims(&single(empty, vec![]), 2), (0.0, 0.0));
         for leaf in [text(&[1.0]), image(1.0, 1.0), shape(1.0, 1.0)] {
             let input = LayoutInput::new(
                 id(1),
@@ -720,26 +709,24 @@ pub(crate) mod tests {
             id(1),
             vec![
                 LayoutNode::new(id(1))
-                    .with_sizing(hug(), hug())
-                    .with_container(ContainerLayout::Stack(StackLayout::new(Axis::Horizontal)))
+                    .with_style(style(|s| {
+                        s.display = Display::Flex;
+                        s.align_items = ItemAlignment::FlexStart;
+                    }))
                     .with_child(id(2), key(1))
                     .with_child(id(3), key(2)),
-                LayoutNode::new(id(2))
-                    .with_sizing(hug(), hug())
-                    .with_content(text(&[10.0])),
-                LayoutNode::new(id(3))
-                    .with_sizing(hug(), hug())
-                    .with_content(image(8.0, 30.0)),
+                LayoutNode::new(id(2)).with_content(text(&[10.0])),
+                LayoutNode::new(id(3)).with_content(image(8.0, 30.0)),
             ],
         );
         let result = compute_layout_with(&input, &FixedText).unwrap();
-        assert_eq!(size_px(&result, 2), (100.0, 7.0));
+        assert_eq!(dims(&result, 2), (100.0, 7.0));
         assert_eq!(result.get(id(2)).unwrap().baseline(), Some(px(5)));
         // 위임한 Image는 기본 구현 natural 크기.
-        assert_eq!(size_px(&result, 3), (8.0, 30.0));
-        assert_eq!(size_px(&result, 1), (108.0, 30.0));
+        assert_eq!(dims(&result, 3), (8.0, 30.0));
+        assert_eq!(dims(&result, 1), (108.0, 30.0));
         // 기본 측정기와는 Text 결과가 다릅니다.
-        assert_eq!(size_px(&compute_layout(&input).unwrap(), 2), (10.0, 12.0));
+        assert_eq!(dims(&compute_layout(&input).unwrap(), 2), (10.0, 12.0));
         assert_eq!(
             compute_layout_with(&input, &Broken { negative: false }),
             Err(LayoutError::ContentMeasure {
