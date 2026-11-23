@@ -10794,7 +10794,7 @@ tasks:
       - DEV-MAC
   - id: "XIX.9.1"
     title: "`stellar-local-ipc`(`crates/local-ipc`), `stellar-agent-protocol`(`crates/agent-protocol`), `stellar-mcp-core` library(`crates/mcp-core`)를 crate graph 정책과 crate 의존 그래프 문서에 등록합니다. agent-protocol과 local-ipc는 core-types만, mcp-core는 ops·agent-protocol·local-ipc·diagnostics만 의존합니다. `tools/stellar-mcp` package(실행 이름 `stellar-mcp`)의 정책 허용 의존에 `stellar-mcp-core`를 추가하고, 이 실행 파일이 library 진입점만 갖도록 XIX.1.1~XIX.1.3 구현을 이 경계로 옮깁니다."
-    status: blocked
+    status: not_started
     depends_on:
       - "XIX.1.3"
       - "XXIV.4.2"
