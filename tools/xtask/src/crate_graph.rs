@@ -139,6 +139,9 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-agent-host",
                 // 앱 쪽 에이전트 편집 구현 crate(XXIX.3.1, ADR-0112): 권한·lease 요청·출처 색인·종료 절차·되돌리기.
                 "stellar-agent-edit",
+                // attached host trait 구현(ADR-0005 §8, ADR-0124 결정 2)과 bridge↔app frame 앞단(ADR-0124 결정 3).
+                "stellar-agent-protocol",
+                "stellar-local-ipc",
             ],
         ),
         // 앱 쪽 에이전트 편집 구현(XXIX.3.1, ADR-0112, `crates/agent-edit`): ops 공개 진입점(commands 재수출·diff·

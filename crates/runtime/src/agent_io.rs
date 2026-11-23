@@ -135,6 +135,8 @@ pub enum AgentIoError {
     Invalid(AttachedEditError),
     /// 세션·lease 절차가 거부했습니다.
     Edit(AgentEditError),
+    /// 그 세션의 첫 연결 승인이 아직 없거나 거부됐습니다(XIX.3.3, ADR-0124 결정 3). lease 요청·제안을 받지 않습니다.
+    ConnectionNotApproved(ConnectionApproval),
 }
 
 impl std::fmt::Display for AgentIoError {
@@ -147,6 +149,9 @@ impl std::fmt::Display for AgentIoError {
             }
             AgentIoError::Invalid(e) => write!(f, "{e}"),
             AgentIoError::Edit(e) => write!(f, "{e}"),
+            AgentIoError::ConnectionNotApproved(state) => {
+                write!(f, "에이전트 연결이 승인되지 않았습니다({state:?})")
+            }
         }
     }
 }
@@ -248,9 +253,30 @@ fn prepare(request: AgentRequest) -> Result<Prepared, AgentIoError> {
     })
 }
 
+/// lease 요청·제안 전에 그 세션의 첫 연결 승인을 봅니다(XIX.3.3). 모르는 세션은 세션 절차의 오류로 넘깁니다.
+fn require_connection(
+    window: &AgentWindow<'_>,
+    session: AgentSessionId,
+) -> Result<(), AgentIoError> {
+    match window
+        .agent()
+        .permissions()
+        .connection(&window.permission_key(session))
+    {
+        None | Some(ConnectionApproval::Approved) => Ok(()),
+        Some(state) => Err(AgentIoError::ConnectionNotApproved(state)),
+    }
+}
+
 /// document thread job 안에서 검증된 요청을 처리합니다.
 fn run(window: &mut AgentWindow<'_>, prepared: Prepared) -> Result<AgentReply, AgentIoError> {
     let edit = AgentIoError::Edit;
+    match &prepared {
+        Prepared::BeginEdit { session, .. } | Prepared::Propose { session, .. } => {
+            require_connection(window, *session)?;
+        }
+        _ => {}
+    }
     match prepared {
         Prepared::Start {
             session,

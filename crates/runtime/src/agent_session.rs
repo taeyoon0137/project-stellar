@@ -68,15 +68,21 @@ pub fn end_event(reason: EndReason) -> SessionEvent {
     }
 }
 
-/// 새 에이전트 편집 세션 id(UUIDv7: unix ms 시각 + 프로세스 안 순번). 같은 프로세스 안에서 겹치지 않습니다.
-pub fn new_edit_session_id() -> AgentSessionId {
+/// 앱이 만드는 새 StableId(UUIDv7: unix ms 시각 + 프로세스 id + 프로세스 안 순번). 같은 프로세스 안에서 겹치지 않습니다.
+/// 에이전트 편집 세션 id와 앞단이 만드는 lease·transaction id에 씁니다.
+pub fn fresh_id() -> StableId {
     static ISSUED: AtomicU64 = AtomicU64::new(0);
     let issued = ISSUED.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
     let unix_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
     let rand_b = (u64::from(std::process::id()) << 32) | (issued & 0xFFFF_FFFF);
-    AgentSessionId(StableId::new_v7(unix_ms, 0x0a6e, rand_b))
+    StableId::new_v7(unix_ms, 0x0a6e, rand_b)
+}
+
+/// 새 에이전트 편집 세션 id([`fresh_id`]).
+pub fn new_edit_session_id() -> AgentSessionId {
+    AgentSessionId(fresh_id())
 }
 
 #[derive(Debug)]

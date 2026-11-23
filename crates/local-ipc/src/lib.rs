@@ -48,6 +48,9 @@ pub mod session;
 #[cfg(target_os = "macos")]
 pub mod binding;
 
+/// handshake 뒤 bridge↔app 메시지 frame (ADR-0124). OS 기능을 쓰지 않아 모든 OS에서 빌드됩니다.
+pub mod frame;
+
 /// 앱 측 IPC test double (XIX.1.2, XIX.1.3).
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) mod test_support;

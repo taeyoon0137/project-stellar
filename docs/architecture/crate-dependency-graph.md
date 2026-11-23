@@ -57,7 +57,7 @@
 | `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile, git-porcelain, integrity, export, scene, assets |
 | `stellar-integrity` | core-types, document, commands, bindings, expressions, text, accessibility, dependencies, target-profile |
 | `stellar-cli` | ops, diagnostics |
-| `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, text, ops, git-porcelain, agent-host, agent-edit |
+| `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, text, ops, git-porcelain, agent-host, agent-edit, agent-protocol, local-ipc |
 | `stellar-ffi` | core-types, runtime |
 | `stellar-plugin-host` | ops, project, storage, git-porcelain |
 
@@ -171,6 +171,8 @@ graph TD
   runtime --> git_porcelain
   runtime --> agent_host
   runtime --> agent_edit
+  runtime --> agent_protocol
+  runtime --> local_ipc
   ffi --> core_types
   ffi --> runtime
   plugin_host --> ops

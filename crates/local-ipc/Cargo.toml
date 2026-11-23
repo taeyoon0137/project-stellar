@@ -9,6 +9,7 @@ publish = false
 # 허용 직접 의존은 core-types뿐이고 document·commands·ops에는 도달하지 않습니다. 외부 crate와
 # network port를 쓰지 않습니다. 앱 runtime과 stellar-mcp가 같은 구현을 씁니다.
 [dependencies]
+stellar-core-types = { path = "../core-types" }
 
 [lints]
 workspace = true

@@ -108,6 +108,24 @@ fn base(app: &App) -> ProjectRevision {
     ticket.wait_timeout(WAIT).unwrap().unwrap().unwrap()
 }
 
+/// 사용자가 첫 연결을 승인합니다(앱 UI 경로).
+fn approve_connection(app: &App, session: AgentSessionId) {
+    let mut ticket = app
+        .app
+        .with_agent_edit(app.window, move |agent| {
+            let key = agent.permission_key(session);
+            agent
+                .agent
+                .permissions_mut(UserUiAction::from_user_interface())
+                .respond_connection(&key, true)
+        })
+        .unwrap();
+    assert_eq!(
+        ticket.wait_timeout(WAIT).unwrap().unwrap().unwrap(),
+        Ok(ConnectionApproval::Approved)
+    );
+}
+
 fn revision(app: &App) -> DocumentRevision {
     let mut ticket = app
         .app
@@ -138,6 +156,22 @@ fn io_thread_queues_validated_requests_without_writing_the_document() {
         }),
         Ok(AgentReply::Started(ConnectionApproval::Pending))
     );
+    // 첫 연결 승인 전에는 lease 요청을 받지 않습니다(XIX.3.3, ADR-0124 결정 3).
+    assert_eq!(
+        send(AgentRequest::BeginEdit {
+            session: session(),
+            lease: lease(),
+            targets: LeaseTargets {
+                document: sid(1),
+                targets: vec![sid(11)],
+                externals: Vec::new(),
+            },
+        }),
+        Err(AgentIoError::ConnectionNotApproved(
+            ConnectionApproval::Pending
+        ))
+    );
+    approve_connection(&f, session());
     assert_eq!(
         send(AgentRequest::BeginEdit {
             session: session(),
@@ -391,6 +425,7 @@ fn revert_through_the_runtime_job_is_autosaved() {
         name: "외부".into(),
     })
     .unwrap();
+    approve_connection(&f, session());
     send(AgentRequest::BeginEdit {
         session: session(),
         lease: lease(),
