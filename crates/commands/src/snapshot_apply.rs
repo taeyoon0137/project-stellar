@@ -30,7 +30,7 @@ use stellar_document::model::DocumentModel;
 use stellar_document::modifier::ModifierStack;
 use stellar_document::modifier_metadata::InvalidationSet;
 use stellar_document::record_codec::{decode_node_record, encode_node_record};
-use stellar_document::records::{DocumentRecords, NodeRecord};
+use stellar_document::records::{DocumentRecords, NodePayload, NodeRecord};
 use stellar_document::text_styles::DocumentTextStyles;
 
 use crate::change::node_keys;
@@ -592,9 +592,7 @@ impl ApplyExternalSnapshot {
                     RecordChange::Page { id, .. } | RecordChange::View { id, .. } => {
                         (*id, node_keys::ORDER_KEY)
                     }
-                    RecordChange::TextStyles { .. } => {
-                        (ctx.model().document_id(), node_keys::DISPLAY_NAME)
-                    }
+                    // Text style 표 변경의 무효화는 끝에서 Text node마다 보고합니다.
                     _ => continue,
                 };
                 ctx.changes().property(
@@ -690,6 +688,20 @@ impl ApplyExternalSnapshot {
             let stack = after.cloned().unwrap_or_else(|| ModifierStack::new(*node));
             ctx.set_modifier_stack(stack)?;
             ctx.changes().structure(*node);
+        }
+
+        // 6. 문서 Text style 표(글꼴 등록·문자·문단 style)가 바뀌면 모든 Text node의 layout·그리기가
+        //    달라질 수 있으므로 Text node마다 구조 무효화를 보고합니다(외부 반영은 드문 동작이라 O(N) 허용).
+        if self
+            .changes
+            .iter()
+            .any(|change| matches!(change, RecordChange::TextStyles { .. }))
+        {
+            for id in crate::tree::node_ids(ctx.model()) {
+                if matches!(ctx.model().payload(id), Some(NodePayload::Text(_))) {
+                    ctx.changes().structure(id);
+                }
+            }
         }
         Ok(())
     }
@@ -1008,6 +1020,30 @@ mod tests {
             panic!("역도 외부 변경 반영");
         };
         assert_eq!(inverse.changes.len(), request_len(&request));
+    }
+
+    #[test]
+    fn text_style_table_change_invalidates_text_nodes() {
+        // Text style 표만 바뀐 외부 원본도 Text node의 다시 그리기(구조 무효화)를 보고합니다.
+        use stellar_document::records::NodePayload;
+        use stellar_document::text::TextPayload;
+        let mut model = small_model();
+        let mut text = frame(20, Some(10), 0x70);
+        text.payload = NodePayload::Text(TextPayload::empty(0));
+        model.insert_node(text).unwrap();
+        let mut state = DocumentState::new(model);
+        let mut incoming = state.model().to_records().unwrap();
+        incoming.definition.text_styles = DocumentTextStyles::initial(sid(90));
+        let command = ApplyExternalSnapshot::between(state.model(), &incoming).unwrap();
+        assert_eq!(command.changes.len(), 1);
+        let request =
+            crate::request::CommandRequest::at(&state, Command::ApplyExternalSnapshot(command));
+        let outcome = state.execute(&request).unwrap();
+        assert!(outcome.changes.changed_nodes().contains(&sid(20)));
+        assert!(
+            !outcome.changes.changed_nodes().contains(&sid(11)),
+            "Text 아닌 node는 그대로"
+        );
     }
 
     fn request_len(request: &crate::request::CommandRequest) -> usize {
