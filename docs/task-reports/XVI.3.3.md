@@ -2,7 +2,7 @@
 
 - WBS: XVI.3.3
 - 작업명: text-heavy, image-heavy, effect-heavy, token-heavy, constraint-heavy fixture를 분리하고 목표 병목 특성을 계측값으로 확인
-- 상태: 부분 완료 (`[~]`) — text·image·effect·constraint-heavy는 구현·계측 완료, token-heavy는 토큰 모델(VIII.5)이 없어 만들 수 없음
+- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — text·image·effect·constraint-heavy는 구현·계측 완료, token-heavy는 토큰 모델(VIII.5)이 없어 만들 수 없음
 - 선행: Phase X, Phase XI (Phase 단위 선행은 완화 적용: 필요한 레이아웃 엔진(X)과 문서 modifier·이미지·텍스트 payload가 존재해 진행. Phase XI 렌더러 계측은 이 작업에 쓰지 않음)
 
 ## 필수 실행 환경
@@ -87,3 +87,25 @@
   합니다. 이 fixture는 문서 수준 특성만 계측합니다.
 - text-heavy View 하나의 subtree payload는 약 250 KB라 split 임계치(256 KiB) 근처입니다. 저장 경로 분할
   benchmark에서는 의도된 부하입니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 남은 범위·결함 있음.
+- 근거: text·image·effect·constraint-heavy는 계측으로 확인했습니다. token-heavy는 "토큰 모델(VIII.5)이 없음"을 이유로 빠졌지만 지금 VIII.5는 모두 `[x]`이므로 그 사유가 사라졌고, 아직 만들지 않았습니다. 선행 Phase X·XI도 `[x]`가 아니라 `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `benchmarks/fixtures/src/workload.rs` `UNAVAILABLE_WORKLOADS`에 `token-heavy`가 남아 있고 `benchmarks/fixtures/tests/workload_fixtures.rs` `token_heavy_is_reported_as_unavailable`이 그것을 고정합니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-bench-fixtures --test workload_fixtures` | 5 passed(워크스페이스 실행에 포함) |
+
+### 남은 조건과 finding
+
+- 결함 finding(`benchmarks/fixtures`, 소유 lane 없음 → backlog): VIII.5 토큰 registry·dependency graph로 token-heavy 문서를 만들고 토큰 해석 비용을 계측해 `UNAVAILABLE_WORKLOADS`를 비웁니다.
+- 선행 Phase X(X.3.6·X.10.4·X.10.7·X.11.2·X.11.3)·Phase XI(Windows 행 포함)가 남아 있습니다. 이 행이 쓰는 것은 layout 엔진과 문서 payload뿐이므로 선행을 "X.1\~X.9, VIII.5" 같은 실제 사용 범위로 좁히는 재작성안을 통합 세션에 넘깁니다.
