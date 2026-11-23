@@ -767,6 +767,21 @@ impl SaveCapture {
     }
 }
 
+/// 열기 전에 중단된 원본 저장 거래를 앞 세대 또는 새 세대로 맞춥니다(ADR-0078 복구, ADR-0088 결정 3). 원본을
+/// 읽기 전에 해야 반쯤 쓴 파일 집합을 원본으로 읽지 않습니다. journal 폴더가 없으면(원본 저장 전) 아무것도 만들지
+/// 않습니다. 다른 저장이 journal을 잡고 있거나(Busy) 복구가 실패해도 열기는 계속합니다. 남은 거래는 다음 저장
+/// 거래가 시작할 때 다시 복구합니다.
+fn recover_source_journal(identity: &ProjectIdentity) {
+    let root = identity.canonical_target();
+    if !root.join(".stellar").join("journal").is_dir() {
+        return;
+    }
+    match stellar_storage::journal::recover(root) {
+        Ok(_) | Err(stellar_storage::journal::JournalError::Busy) => {}
+        Err(error) => eprintln!("Stellar text source journal recovery: {error}"),
+    }
+}
+
 /// 문서가 참조하는 이미지 asset StableId.
 fn referenced_images(records: &DocumentRecords) -> BTreeSet<StableId> {
     records
@@ -1100,6 +1115,7 @@ impl ProjectWindowSession {
         window: WindowSessionId,
         lock_dir: LockDir,
     ) -> Result<ProjectWindowSession, WindowSessionLoadError> {
+        recover_source_journal(&identity);
         let disk = read_disk_state(&identity, DocumentPick::FirstRoot, None)?;
         let reconcile = disk.needs_reconcile();
         let mut session = ProjectWindowSession::empty(identity, window);
@@ -1108,6 +1124,8 @@ impl ProjectWindowSession {
         if reconcile {
             if let Err(error) = session.reconcile() {
                 eprintln!("Stellar text source reconcile: {error}");
+                // 다음 저장(자동 저장 writer·창 닫기 flush)이 다시 맞추도록 남깁니다.
+                session.reconcile_pending = true;
             }
         }
         Ok(session)

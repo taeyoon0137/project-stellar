@@ -435,6 +435,43 @@ fn the_active_style_defaults_set_is_mirrored_on_open_and_written_back_on_save() 
     );
 }
 
+#[test]
+fn opening_recovers_an_interrupted_source_save_before_reading_the_source() {
+    let project = saved_project("source-recover");
+    let locks = TempDir::new("source-recover-locks");
+    let a = open(&project, &locks, 1);
+    let expected = json(&a);
+    drop(a);
+    // 저장 journal 거래가 대상 하나를 바꾼 뒤 commit marker 전에 멈춘 상태를 만듭니다(ADR-0078 복구 대상).
+    let target = "design/document.stellar.yaml";
+    let path = project.path().join(target);
+    let old = std::fs::read(&path).unwrap();
+    let new = b"half written: [".to_vec();
+    let tx = project.path().join(".stellar/journal/tx-0abc");
+    std::fs::create_dir_all(tx.join("orig")).unwrap();
+    std::fs::create_dir_all(tx.join("new")).unwrap();
+    std::fs::write(tx.join("orig/0"), &old).unwrap();
+    std::fs::write(tx.join("new/0"), &new).unwrap();
+    std::fs::write(
+        tx.join("manifest"),
+        format!(
+            "stellar-journal 1\ntx 0abc\nwrite {} {} {} {} {target}\n",
+            ContentHash::compute(&old),
+            old.len(),
+            ContentHash::compute(&new),
+            new.len()
+        ),
+    )
+    .unwrap();
+    std::fs::write(&path, &new).unwrap();
+    // 열기는 원본을 읽기 전에 거래를 앞 세대로 되돌립니다. 반쯤 쓴 원본을 읽지 않습니다.
+    let b = open(&project, &locks, 2);
+    assert_eq!(std::fs::read(&path).unwrap(), old);
+    assert!(!tx.exists(), "복구한 거래는 남지 않음");
+    assert_eq!(b.open_plan(), OpenPlan::Cache);
+    assert_eq!(json(&b), expected);
+}
+
 fn git(repo: &Path, args: &[&str]) -> Option<String> {
     let out = std::process::Command::new("git")
         .env("GIT_CONFIG_NOSYSTEM", "1")

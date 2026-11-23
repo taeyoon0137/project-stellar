@@ -75,8 +75,13 @@ journal)·ADR-0083(창 session stale·외부 변경)을 앱 runtime 기본 경�
 
 ### 4. 맞춤 쓰기는 열기에서만 동기로 하고, 외부 변경 뒤에는 writer가 한다
 
-- 열기(`ProjectWindowSession::load`)는 계획이 요구하면 연 직후 같은 저장 경로로 원본 또는 cache를 씁니다. 실패해도
-  session은 열리고(로그) 다음 저장이 다시 맞춥니다. 열기는 이미 document thread에서 프로젝트를 읽는 일회성 작업입니다.
+- 열기(`ProjectWindowSession::load`)는 원본을 읽기 전에 `.stellar/journal/`에 남은 저장 거래를 복구합니다
+  (`stellar_storage::journal::recover`, ADR-0078). 중단된 원본 저장의 반쯤 바뀐 파일 집합을 원본으로 읽지 않기
+  위해서입니다. journal 폴더가 없으면 아무것도 만들지 않고, 다른 저장이 journal을 잡고 있거나(`Busy`) 복구가 실패해도
+  열기는 계속합니다(다음 저장 거래가 시작할 때 다시 복구함).
+- 열기는 계획이 요구하면 연 직후 같은 저장 경로로 원본 또는 cache를 씁니다. 실패해도 session은 열리고(로그)
+  `reconcile_pending`을 세워 다음 저장(자동 저장 writer·창 닫기 flush)이 다시 맞춥니다. 열기는 이미 document thread에서
+  프로젝트를 읽는 일회성 작업입니다.
 - 외부 변경 반영(`sync_external`)과 UseLatestDisk 다시 불러오기는 맞춤 쓰기를 document thread에서 하지 않고
   `reconcile_pending`만 세웁니다(기술 아키텍처 §6.4 "저장은 인터랙션 동기 경로에서 실행 금지"). 자동 저장 일정과 창 닫기
   flush는 `needs_write()`(미저장 편집 또는 맞춤 쓰기 남음)를 보고 writer thread에서 씁니다. 맞춤 쓰기는 미저장 편집이
