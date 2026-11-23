@@ -30,6 +30,9 @@ pub mod texture_cache;
 /// mipmap 생성과 texture upload task (XI.7.2).
 pub mod mipmap;
 
+/// 공통 cache budget manager와 cache priority (XVI.5.2).
+pub mod cache;
+
 /// backend 독립 Render Graph (XI.4.1).
 pub mod render_graph;
 
