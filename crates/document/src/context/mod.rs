@@ -5,6 +5,7 @@
 //! - [`key`]: `ContextKey` resource(StableId·이름·TypeSpec·필수 닫힌 default·scope, XXX.7.1).
 //! - [`provision`]: node에 붙는 `ContextProvision`과 owner 범위 검사(XXX.7.2).
 //! - [`set`]: key·provision·`ContextRequirement`·Slot 공개 목록을 담는 문서 resource `ContextSet`(XXX.7.2).
+//! - [`resolve`]: 작성 scope 기준 해석기·runtime index·값 평가(XXX.7.4).
 
 /// `ContextKey` resource (XXX.7.1).
 pub mod key;
@@ -15,9 +16,15 @@ pub mod provision;
 /// 문서 Context 요소 모음 (XXX.7.2).
 pub mod set;
 
+/// 가장 가까운 조상 provision 해석기와 값 평가 (XXX.7.4).
+pub mod resolve;
+
 /// 시험용 문서·컴포넌트 구성 도우미.
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixtures;
 
 #[cfg(test)]
 mod set_tests;
+
+#[cfg(test)]
+mod resolve_tests;

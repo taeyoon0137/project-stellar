@@ -432,3 +432,35 @@ fn read_members(
     }
     Ok(out)
 }
+
+/// 해석·진단이 보는 key 정의 모음: 문서 set과 외부 라이브러리·프로젝트 set(ADR-0099 결정 1). key StableId는 전역 유일이라
+/// 순서와 무관하게 한 정의로 찾습니다.
+#[derive(Debug, Clone, Default)]
+pub struct ContextKeys<'a> {
+    sets: Vec<&'a ContextSet>,
+}
+
+impl<'a> ContextKeys<'a> {
+    /// 문서 set 하나.
+    pub fn new(document: &'a ContextSet) -> ContextKeys<'a> {
+        ContextKeys {
+            sets: vec![document],
+        }
+    }
+
+    /// 다른 scope(프로젝트·라이브러리)의 set을 더합니다.
+    pub fn with(mut self, set: &'a ContextSet) -> ContextKeys<'a> {
+        self.sets.push(set);
+        self
+    }
+
+    /// key 정의.
+    pub fn key(&self, id: StableId) -> Option<&'a ContextKey> {
+        self.sets.iter().find_map(|set| set.key(id))
+    }
+
+    /// 모든 key(set 순서, set 안에서는 StableId 순).
+    pub fn iter(&self) -> impl Iterator<Item = &'a ContextKey> + '_ {
+        self.sets.iter().flat_map(|set| set.keys())
+    }
+}

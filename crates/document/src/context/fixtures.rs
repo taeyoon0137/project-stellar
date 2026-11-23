@@ -159,7 +159,7 @@ impl ComponentBuilder {
         self
     }
 
-    /// host Frame에 Slot을 선언합니다.
+    /// host Frame에 Slot을 선언합니다. default content는 등록 시점의 host 자식입니다.
     pub fn slot(mut self, slot: StableId, host: StableId) -> ComponentBuilder {
         let id = ComponentSlotId::new(slot);
         self.definition.add_slot(id).expect("slot 선언");
@@ -176,10 +176,29 @@ impl ComponentBuilder {
     /// library에 등록합니다.
     pub fn register(self, library: &mut ComponentLibrary) {
         let component = self.definition.reference();
+        let slots: Vec<ComponentSlot> = self
+            .slots
+            .into_iter()
+            .map(|slot| {
+                let content = self
+                    .tree
+                    .children(slot.host.id())
+                    .iter()
+                    .map(|child| NodeRef::new(*child))
+                    .collect();
+                ComponentSlot::new(
+                    slot.id,
+                    slot.host,
+                    slot.allowed_kinds().collect::<Vec<_>>(),
+                    slot.cardinality,
+                    content,
+                )
+            })
+            .collect();
         library
             .insert(self.definition, self.tree)
             .expect("컴포넌트 등록");
-        for slot in self.slots {
+        for slot in slots {
             library.add_slot(component, slot).expect("slot record");
         }
     }
@@ -263,4 +282,178 @@ impl SceneBuilder {
     pub fn build(self) -> DocumentModel {
         self.model
     }
+}
+
+/// 숫자 리터럴 AST.
+pub fn number(seed: u64, value: f32) -> ExpressionAst {
+    literal(
+        seed,
+        TypedValue::Number(stellar_core_types::value::FiniteF32::new(value).expect("유한")),
+    )
+}
+
+/// `Context(key) + add` AST.
+pub fn context_plus(seed: u64, key: StableId, add: f32) -> ExpressionAst {
+    use stellar_expressions::ops::BinaryOp;
+    let read = expr_id(seed, 1);
+    let lit = expr_id(seed, 2);
+    let root = expr_id(seed, 3);
+    ExpressionAst::new(
+        root,
+        vec![
+            ExprNode::reference(read, ReferenceTarget::Context(key)),
+            ExprNode::literal(
+                lit,
+                TypedValue::Number(stellar_core_types::value::FiniteF32::new(add).expect("유한")),
+            ),
+            ExprNode::binary(root, BinaryOp::Add, read, lit),
+        ],
+    )
+    .expect("덧셈 AST")
+}
+
+/// Number 필수 타입.
+pub fn number_type() -> TypeSpec {
+    TypeSpec::required(ExpressionType::Number)
+}
+
+/// [`sample_world`]의 id.
+pub mod world {
+    /// 문서.
+    pub const DOC: u64 = 1;
+    /// 페이지.
+    pub const PAGE: u64 = 2;
+    /// View.
+    pub const VIEW: u64 = 3;
+    /// View root Frame.
+    pub const ROOT: u64 = 10;
+    /// scene Card 인스턴스.
+    pub const CARD_INSTANCE: u64 = 11;
+    /// Card body slot 콘텐츠(scene, View 최상위에서 작성).
+    pub const CONTENT: u64 = 12;
+    /// scene Frame.
+    pub const FRAME: u64 = 13;
+    /// slot 콘텐츠의 자식.
+    pub const CONTENT_CHILD: u64 = 14;
+    /// Card 컴포넌트.
+    pub const CARD: u64 = 100;
+    /// Card root.
+    pub const CARD_ROOT: u64 = 101;
+    /// Card body slot host.
+    pub const CARD_HOST: u64 = 102;
+    /// Card 안 Button 인스턴스.
+    pub const CARD_BUTTON: u64 = 103;
+    /// Card body slot.
+    pub const BODY: u64 = 105;
+    /// Card가 Button slot에 작성한 콘텐츠.
+    pub const CARD_LABEL: u64 = 106;
+    /// Card 안 Frame.
+    pub const CARD_FRAME: u64 = 107;
+    /// Button 컴포넌트.
+    pub const BUTTON: u64 = 200;
+    /// Button root(= label slot host).
+    pub const BUTTON_ROOT: u64 = 201;
+    /// Button 안 Frame.
+    pub const BUTTON_FRAME: u64 = 202;
+    /// Button label slot.
+    pub const LABEL: u64 = 205;
+    /// Number key N(default 1).
+    pub const N: u64 = 900;
+    /// Number key D(default 0).
+    pub const D: u64 = 901;
+    /// Number key E(default 0).
+    pub const E: u64 = 902;
+    /// View root가 N = 10 공급.
+    pub const P_ROOT_N: u64 = 1000;
+    /// View root가 E = 3 공급.
+    pub const P_ROOT_E: u64 = 1001;
+    /// Card root가 N = Context(N) + 5 공급(같은 key 재읽기).
+    pub const P_CARD_N: u64 = 1002;
+    /// Card body host가 D = 2 공급.
+    pub const P_HOST_D: u64 = 1003;
+    /// Button root가 D = 7 공급.
+    pub const P_BUTTON_D: u64 = 1004;
+}
+
+/// 해석 시험 공용 문서: View root ← Card 인스턴스(body slot ← 12 ← 14), Frame 13. Card: root ← body host, Button 인스턴스
+/// (label slot ← 106), Frame 107. Button: root(label host) ← Frame 202. body는 D·E를, label은 D를 공개합니다. Card는 N을
+/// requirement로 선언합니다.
+pub fn sample_world() -> (DocumentModel, ComponentLibrary) {
+    use self::world::*;
+    use crate::context::key::{ContextKey, ContextScope};
+    use crate::context::provision::{ContextOwner, ContextProvision};
+    use crate::context::set::ContextSet;
+
+    let mut library = ComponentLibrary::new();
+    ComponentBuilder::new(sid(BUTTON), "Button", sid(BUTTON_ROOT))
+        .frame(sid(BUTTON_FRAME), sid(BUTTON_ROOT))
+        .slot(sid(LABEL), sid(BUTTON_ROOT))
+        .register(&mut library);
+    ComponentBuilder::new(sid(CARD), "Card", sid(CARD_ROOT))
+        .frame(sid(CARD_HOST), sid(CARD_ROOT))
+        .instance(
+            sid(CARD_BUTTON),
+            sid(CARD_ROOT),
+            instance_of(sid(BUTTON), &[(sid(LABEL), vec![sid(CARD_LABEL)])]),
+        )
+        .frame(sid(CARD_LABEL), sid(CARD_BUTTON))
+        .frame(sid(CARD_FRAME), sid(CARD_ROOT))
+        .slot(sid(BODY), sid(CARD_HOST))
+        .register(&mut library);
+    let mut model = SceneBuilder::new(sid(DOC), sid(PAGE), sid(VIEW), sid(ROOT))
+        .instance(
+            sid(CARD_INSTANCE),
+            sid(ROOT),
+            instance_of(sid(CARD), &[(sid(BODY), vec![sid(CONTENT)])]),
+        )
+        .frame(sid(CONTENT), sid(CARD_INSTANCE))
+        .frame(sid(CONTENT_CHILD), sid(CONTENT))
+        .frame(sid(FRAME), sid(ROOT))
+        .build();
+    let mut set = ContextSet::new();
+    for (id, name, default) in [(N, "n", 1.0), (D, "d", 0.0), (E, "e", 0.0)] {
+        set.insert_key(
+            ContextKey::new(
+                sid(id),
+                name,
+                ContextScope::Document(sid(DOC)),
+                number_type(),
+                number(id, default),
+            )
+            .expect("key"),
+        )
+        .expect("key 등록");
+    }
+    let provisions = [
+        (P_ROOT_N, ContextOwner::View(sid(VIEW)), ROOT, N, number(P_ROOT_N, 10.0)),
+        (P_ROOT_E, ContextOwner::View(sid(VIEW)), ROOT, E, number(P_ROOT_E, 3.0)),
+        (
+            P_CARD_N,
+            ContextOwner::Component(sid(CARD)),
+            CARD_ROOT,
+            N,
+            context_plus(P_CARD_N, sid(N), 5.0),
+        ),
+        (P_HOST_D, ContextOwner::Component(sid(CARD)), CARD_HOST, D, number(P_HOST_D, 2.0)),
+        (
+            P_BUTTON_D,
+            ContextOwner::Component(sid(BUTTON)),
+            BUTTON_ROOT,
+            D,
+            number(P_BUTTON_D, 7.0),
+        ),
+    ];
+    for (id, owner, provider, key, value) in provisions {
+        set.insert_provision(
+            ContextProvision::new(sid(id), owner, sid(provider), sid(key), value)
+                .expect("provision"),
+        )
+        .expect("provision 등록");
+    }
+    set.add_slot_key(sid(BODY), sid(D));
+    set.add_slot_key(sid(BODY), sid(E));
+    set.add_slot_key(sid(LABEL), sid(D));
+    set.add_requirement(sid(CARD), sid(N));
+    model.replace_context(set);
+    (model, library)
 }
