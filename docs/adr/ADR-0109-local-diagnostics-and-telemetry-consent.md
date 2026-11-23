@@ -41,7 +41,9 @@ Accepted
    아래 `store.stldiag`입니다(신뢰 저장소·잠금과 같은 앱 데이터 디렉터리). 디렉터리는 `0700`, 파일은 `0600`이고
    임시 파일에 쓰고 fsync한 뒤 rename합니다. event record는 기본 2,048개(상한 65,536개)이고 가득 차면 가장 오래된
    것부터 지웁니다. 실패 카운트는 `(기능, 코드)`마다 counter 하나로 합치고 1,024쌍까지 둡니다. 넘친 수는
-   `meta dropped=`에 셉니다. 기본 보존 기간은 30일이고 `prune`이 지웁니다. 읽을 파일 크기 상한은 8 MiB입니다.
+   `meta dropped=`에 셉니다. 기본 보존 기간은 30일이고 `prune`이 지웁니다. 보존 기간이 지난 record는 preview·
+   내보내기·전송 대기열에 넣지 않습니다(`stellar diagnostics preview|export|enqueue`는 읽은 store를 메모리에서
+   `prune`한 뒤 번들을 만들고, store 파일은 바꾸지 않습니다). 읽을 파일 크기 상한은 8 MiB입니다.
 3. **오류는 내용을 되풀이하지 않습니다.** 형식 오류는 줄 번호와 정적 종류(모르는 tag, field 이름, 값 등)만 냅니다.
 4. **금지 필드 scanner(XVI.8.2).** `stellar_diagnostics::scanner`는 세 층으로 검사합니다.
    - 내용 규칙: 사용자 홈·볼륨·임시 경로와 경로 구분자, URL scheme·scp 형식 Git 원격, `refs/heads/`·`origin/` 같은

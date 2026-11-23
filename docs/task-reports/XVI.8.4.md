@@ -28,6 +28,7 @@
 - `export_bundle`은 새 파일만 만들고(`create_new`, 있으면 거부) 소유자 전용(`0600`)으로 쓴 뒤 fsync합니다. 동의 상태와 무관합니다.
 - `TelemetryGate`의 `enqueue`·`flush`는 `Granted`에서만 동작합니다(XVI.8.3). 대기열은 16개 상한이고, 전송이 실패하면 실패한 payload부터 순서대로 남깁니다.
 - CLI `stellar diagnostics`:
+  - `preview`·`export`·`enqueue`는 읽은 store에서 보존 기간(기본 30일)이 지난 record를 메모리에서 뺀 뒤 번들을 만듭니다. store 파일은 바꾸지 않습니다(검토 보완: 처음 구현은 `prune`을 어디서도 부르지 않아 보존 기간이 지난 record까지 보내거나 내보냈습니다). 테스트 `preview_leaves_out_records_past_retention`.
   - `preview`: store를 읽어 `payload`(보낼 bytes 그대로), record 수, bytes 수, 동의 상태, 자동 전송 허용 여부를 냅니다. 파일을 만들지 않습니다.
   - `export --output <파일>`: 같은 bytes를 새 파일로 씁니다. 이미 있으면 73(`cantcreat`).
   - `scan <파일>`: 파일을 번들로 검사하고 탐지가 있으면 1과 탐지 목록(줄·범주·규칙)을 냅니다.

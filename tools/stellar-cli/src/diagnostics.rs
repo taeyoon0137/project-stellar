@@ -20,8 +20,8 @@ use stellar_diagnostics::consent::{
 use stellar_diagnostics::consent_gate::{OpenedGate, TelemetryGate, UploadBlocked};
 use stellar_diagnostics::scanner::{scan_bundle, ForbiddenCategory, ScanContext, ScanReport};
 use stellar_diagnostics::store::{
-    DiagnosticStore, FieldType, StoreError, Version3, DIAGNOSTICS_DIR, MAX_DIAGNOSTIC_BYTES,
-    STORE_FILE,
+    DiagnosticStore, FieldType, RetentionPolicy, StoreError, Version3, DIAGNOSTICS_DIR,
+    MAX_DIAGNOSTIC_BYTES, STORE_FILE,
 };
 use stellar_diagnostics::store_inventory::{
     check_feature_inventory, inventory_schemas, DISABLED_FEATURE_WORDS, FORMATS,
@@ -147,12 +147,14 @@ fn forbidden(report: &ScanReport, message: String) -> CliError {
     ))
 }
 
-/// store를 읽어 preview를 만듭니다.
+/// store를 읽어 preview를 만듭니다. 보존 기간(기본 30일)이 지난 record는 보내거나 내보내지 않습니다. store 파일은
+/// 바꾸지 않습니다(preview는 읽기만 합니다).
 fn build_preview(options: &Options) -> Result<(PathBuf, PayloadPreview), CliError> {
     let dir = data_dir(options)?;
     let store_path = dir.join(STORE_FILE);
-    let store =
+    let mut store =
         DiagnosticStore::read_file(&store_path).map_err(|e| store_error(&e, &store_path))?;
+    store.prune(RetentionPolicy::default(), now_ms());
     let preview = preview_payload(
         &BundleEnvironment::current(app_version()),
         &store,
@@ -554,21 +556,23 @@ mod tests {
     }
 
     fn write_store(dir: &Dir) -> DiagnosticStore {
+        // 보존 기간 안의 시각(preview는 30일이 지난 record를 뺍니다).
+        let base = now_ms() - 60_000;
         let mut store = DiagnosticStore::default();
         store.push_crash(AppCrash {
-            at_ms: 1_763_856_000_000,
+            at_ms: base,
             kind: CrashKind::Panic,
             code: 0,
             thread: ThreadRole::Document,
             uptime_ms: 5_000,
         });
         store.push_renderer_error(RendererError {
-            at_ms: 1_763_856_000_100,
+            at_ms: base + 100,
             backend: RendererBackend::Metal,
             stage: RendererStage::Present,
             code: 3,
         });
-        store.record_feature_failure(Feature::Save, 2, 1_763_856_000_200);
+        store.record_feature_failure(Feature::Save, 2, base + 200);
         store.write_file(&dir.0.join(STORE_FILE)).unwrap();
         store
     }
@@ -628,6 +632,39 @@ mod tests {
         let (code, doc, err) = cli(&["scan", out.to_str().unwrap()]);
         assert_eq!(code, 0, "{err}");
         assert_eq!(result(&doc).get("clean").unwrap().as_bool(), Some(true));
+    }
+
+    #[test]
+    fn preview_leaves_out_records_past_retention() {
+        // 보존 기간(30일)이 지난 record는 preview·내보내기·대기열에 들어가지 않고, store 파일은 그대로입니다.
+        let dir = Dir::new("retention");
+        let now = now_ms();
+        let day = 24 * 60 * 60 * 1000;
+        let mut store = DiagnosticStore::default();
+        for at_ms in [now - 40 * day, now - day] {
+            store.push_crash(AppCrash {
+                at_ms,
+                kind: CrashKind::Hang,
+                code: 0,
+                thread: ThreadRole::Main,
+                uptime_ms: 1,
+            });
+        }
+        store.record_feature_failure(Feature::Export, 1, now - 31 * day);
+        let path = dir.0.join(STORE_FILE);
+        store.write_file(&path).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let (code, doc, err) = cli(&["preview", "--data-dir", &dir.arg()]);
+        assert_eq!(code, 0, "{err}");
+        assert_eq!(number(&doc, "records"), 1);
+        let payload = state(&doc, "payload");
+        assert!(
+            payload.contains(&format!("at_ms={} ", now - day)),
+            "{payload}"
+        );
+        assert!(!payload.contains(&format!("at_ms={} ", now - 40 * day)));
+        assert!(!payload.contains("feature_failure"));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 
     #[test]
