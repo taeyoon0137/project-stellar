@@ -80,6 +80,10 @@ pub mod path_edit;
 /// Component Context 편집 command (XXX.7.8, ADR-0099).
 pub mod context;
 
+/// 테스트 전용 Context 편집 command 생성기 (XXX.7.8). 프로덕션 경로에서 사용하지 않습니다.
+#[cfg(any(test, feature = "test-support"))]
+mod context_test_support;
+
 /// 기본값 세트 선택과 명시 layout longhand command (SD.4, ADR-0086).
 pub mod style_defaults;
 
