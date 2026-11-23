@@ -191,6 +191,8 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
 
 `stellar_canvas_gesture_preview`는 문서 상태를 읽지 않는 순수 계산 ABI다. 입력은 핸들 종류·번호, local 포인터, Shift·Option·click flag, 시작 상자·끝점·반경이고 출력은 확정 요청에도 그대로 쓰는 상자·끝점·반경이다. 크기 핸들의 최소 1px·비율·중심, Line의 45도, 반경의 정수 반올림, 생성 클릭의 100px과 수식키를 코어가 계산한다. 기존 절대값 편집 ABI는 유지하되 셸에서 계산식을 제거하고 이 반환값을 보낸다. 스냅·가이드 입력은 다음 개정에서 다룬다.
 
+보완(2026-11-23): Rust API는 타입 있는 `Gesture`(`Resize{handle: ResizeHandle}`·`LineEnd{end}`·`Radius{corner: Option<Corner>}`·`Create{line, click}`)와 `Modifiers{shift, option}`을 받아 `GestureOutput`을 돌려준다. C ABI의 kind·handle·flag 숫자는 FFI 층의 `Gesture::from_abi`가 한 번만 바꾸며, 클릭 flag는 생성 도구에만 허용한다. 생성 클릭 크기는 이름 있는 상수 `CLICK_SIZE`(100px), 최소 변은 `MIN_SIZE`(1px)다. Shift 45° 맞춤에서 축 방향(짝수 octant)은 cos·sin을 반올림해 좌표가 정확히 축 위에 놓이게 한다. 이전 Swift 계산은 반올림하지 않아 f32 오차(cos(π/2) ≈ -4e-8)가 남았으며, 이 차이는 의도한 변경으로 둔다. 확정 요청(resize·radius ABI)은 아직 셸이 보낸 결과 값을 받는다. 코어가 시작 상자와 포인터로 같은 함수를 다시 계산하는 확정 ABI는 UI 재설계 때 새 셸 입력 모양과 함께 정한다.
+
 ## 개정(2026-11-18, UX.3.8 스냅)
 
 - `StellarSnapCandidate`(같은 좌표계의 부모·직계 형제 상자), `StellarSnapResult`(조정 상자·정렬선·CSS px 간격)와 `stellar_canvas_snap`을 추가한다. 셸은 제스처 시작 때 후보를 한 번 모으고 `stellar_canvas_snap_intervals`로 같은 간격 후보를 만든다. 드래그 중 Rust 계산은 화면 6pt 허용 오차를 좌표계 배율로 바꾸어 부모·형제 가장자리·중심, 형제 크기·간격, 정수 논리 px 순서로 평가한다. 픽셀 원점·간격도 ABI로 받아 화면 좌표의 픽셀 스냅을 논리 px 기준으로 만든다. ⌘를 누르면 셸은 스냅 호출을 건너뛴다.

@@ -39,28 +39,33 @@ pub unsafe extern "C" fn stellar_canvas_gesture_preview(
         if input.is_null() || output.is_null() {
             return StellarStatus::NullPointer;
         }
+        use stellar_runtime::app::gesture_math::{preview, Gesture, GestureOutput};
         let value = unsafe { *input };
-        let Some(result) = stellar_runtime::app::gesture_math::preview(
-            stellar_runtime::app::gesture_math::GestureInput {
-                kind: value.kind,
-                handle: value.handle,
-                flags: value.flags,
-                rect: value.rect,
-                line: value.line,
-                radii: value.radii,
-                point: value.point,
-            },
+        let Some((gesture, modifiers)) = Gesture::from_abi(
+            value.kind,
+            value.handle,
+            value.flags,
+            value.rect,
+            value.line,
+            value.radii,
         ) else {
             return StellarStatus::InvalidArgument;
         };
-        unsafe {
-            *output = StellarGesturePreview {
-                rect: result.rect,
-                line: result.line,
-                radii: result.radii,
-                ..value
-            };
+        let Some(result) = preview(gesture, modifiers, value.point) else {
+            return StellarStatus::InvalidArgument;
+        };
+        // 제스처가 바꾸지 않은 필드는 입력 그대로 돌려줍니다.
+        let mut written = value;
+        match result {
+            GestureOutput::Rect(rect) => written.rect = rect,
+            GestureOutput::Line(line) => written.line = line,
+            GestureOutput::Radii(radii) => written.radii = radii,
+            GestureOutput::Created { rect, line } => {
+                written.rect = rect;
+                written.line = line;
+            }
         }
+        unsafe { *output = written };
         StellarStatus::Ok
     })
 }
