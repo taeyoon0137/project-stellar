@@ -25,6 +25,7 @@ use stellar_commands::node_ops::{DeleteSubtree, InsertNode};
 use stellar_commands::test_support::{random_valid_request, FreshIds};
 use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
+use stellar_document::layout_record::LayoutRecord;
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{ModifierKind, ModifierStack};
 use stellar_document::node_kind::NodeKind;
@@ -94,6 +95,12 @@ fn partitions(model: &DocumentModel) -> Vec<ViewPartition> {
                 .iter()
                 .map(|s| (s.node, 4 + s.encode().len() as u64))
                 .collect();
+            // 명시 layout record(ADR-0086)도 node 소유 bytes로 셉니다. chunk에 record가 있으면 절 머리 4 byte가 더 붙습니다.
+            let layout_bytes: BTreeMap<StableId, u64> = subtree
+                .layout_records
+                .iter()
+                .map(|r| (r.node, 4 + r.encode().len() as u64))
+                .collect();
             let nodes = subtree
                 .nodes
                 .iter()
@@ -103,7 +110,8 @@ fn partitions(model: &DocumentModel) -> Vec<ViewPartition> {
                     boundary: n.kind() == NodeKind::Frame,
                     own_bytes: 4
                         + encode_node_record(n).len() as u64
-                        + stack_bytes.get(&n.id).copied().unwrap_or(0),
+                        + stack_bytes.get(&n.id).copied().unwrap_or(0)
+                        + layout_bytes.get(&n.id).copied().unwrap_or(0),
                 })
                 .collect();
             ViewPartition {
@@ -141,6 +149,12 @@ fn chunk_model(
             .iter()
             .map(|s| (s.node, s))
             .collect();
+        let layout_records: BTreeMap<StableId, &LayoutRecord> = part
+            .records
+            .layout_records
+            .iter()
+            .map(|r| (r.node, r))
+            .collect();
         let mut refs = Vec::new();
         let mut covered = BTreeSet::new();
         for chunk in layout.chunks() {
@@ -158,12 +172,20 @@ fn chunk_model(
                         .filter_map(|n| stacks.get(n).map(|s| (*s).clone()))
                         .collect()
                 },
-                layout_records: Vec::new(),
+                layout_records: members
+                    .iter()
+                    .filter_map(|n| layout_records.get(n).map(|r| (*r).clone()))
+                    .collect(),
             };
             let payload = subtree.encode();
+            let section = if subtree.layout_records.is_empty() {
+                0
+            } else {
+                4
+            };
             assert_eq!(
                 payload.len() as u64,
-                chunk.payload_bytes,
+                chunk.payload_bytes + section,
                 "크기 모델 = 실제 payload 길이"
             );
             let chunk_id = subtree_chunk_id(document, chunk.root);
