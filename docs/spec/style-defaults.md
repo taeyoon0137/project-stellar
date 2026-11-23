@@ -6,11 +6,17 @@
 
 - 원본(텍스트 원본, chunk)에는 사용자가 명시한 longhand만 있습니다. 명시하지 않은 longhand는 활성 기본값 세트의
   값으로 풉니다.
-- 이 표가 다루는 longhand는 명시·미설정 구분이 있는 layout longhand 40개입니다(`crates/document/src/layout_record.rs`
-  `LayoutLonghand`).
-  - payload 속성(`background-color`, 테두리, payload 크기 등)은 모델에서 언제나 값이 있는 명시 속성입니다.
-    그래서 세트가 끼어들지 않습니다.
-  - Frame·Rectangle·Ellipse·Polygon·Image의 `width`·`height`는 payload 크기이고, 언제나 명시 값입니다.
+- 세트 표는 Stellar가 node에 저장하는 모든 CSS longhand의 값을 둡니다(ADR-0115 결정 1). 표는 두 개입니다.
+  - layout longhand 40개(2.2절, `crates/document/src/layout_record.rs` `LayoutLonghand`). 명시·미설정 구분이 있어
+    해석 함수가 이 표로 생략값을 풉니다.
+  - payload longhand(2.4절). 속성 registry(`crates/document/src/css/registry.rs`)의 payload 범위 항목 가운데 이름이
+    자기 CSS longhand인 항목입니다(`style_defaults::payload_longhands`). 지금 모델에서 payload 값은 언제나 명시
+    값이라 해석에 끼어들지 않습니다. 표는 payload를 희소 저장으로 바꾸는 schema step과 codegen이 같은 값을 쓰도록
+    둡니다.
+  - Frame·Rectangle·Ellipse·Polygon·Image의 `width`·`height`는 payload 크기이고, 언제나 명시 값입니다. 세트 값은
+    layout 표의 `width`·`height`입니다.
+  - 공통 필드(`visible`·`locked`·`name`)와 modifier 속성은 longhand가 아니라 표에 없습니다. modifier는 stack
+    구조이고, 없으면 효과가 없습니다.
 - 세트는 초기값만 정합니다. 상속 규칙은 CSS 그대로입니다(ADR-0082 결정 7).
 - 해석 함수는 `stellar_document::css::style_defaults::resolve` 하나입니다. 레이아웃 입력, CLI 조회, codegen이 같은
   함수를 씁니다.
@@ -108,6 +114,63 @@ Fragment는 상자가 없어 구획이 없습니다.
 - RN 값은 Yoga를 실행한 fixture로 고정하지 못했습니다. 대신 conformance test가 다음을 확인합니다.
   - `react-native` 세트로 푼 문서와, 같은 값을 `css` 세트 위에 명시한 문서가 같은 rect를 냅니다.
   - `css` 세트의 `content-box` 결과가 기준 브라우저(Chrome) 기대값과 같습니다.
+
+### 2.4 payload longhand 표
+
+registry 순서입니다. `=`는 `css` 값을 물려받는다는 뜻입니다. 값은 registry 값 문법 formatter의 정규 표기입니다
+(`#00000000`은 `transparent`). 이 표는 `payload_snapshot_text()`와 같아야 합니다(`spec_document_table_matches_snapshot`
+test). 사용자 세트는 payload longhand를 두지 않습니다(ADR-0115 결정 1).
+
+| 구획 | key | longhand | css | react-native |
+|---|---|---|---|---|
+| frame | `0x0102` | `transform` | `none` | = |
+| frame | `0x0104` | `background-color` | `#00000000` | = |
+| frame | `0x010a` | `border-top-left-radius` | `0px` | = |
+| frame | `0x010b` | `border-top-right-radius` | `0px` | = |
+| frame | `0x010c` | `border-bottom-right-radius` | `0px` | = |
+| frame | `0x010d` | `border-bottom-left-radius` | `0px` | = |
+| frame | `0x0122` | `border-top-width` | `0px` | = |
+| frame | `0x0123` | `border-top-style` | `none` | `solid` |
+| frame | `0x0124` | `border-top-color` | `#000000` | = |
+| frame | `0x0125` | `border-right-width` | `0px` | = |
+| frame | `0x0126` | `border-right-style` | `none` | `solid` |
+| frame | `0x0127` | `border-right-color` | `#000000` | = |
+| frame | `0x0128` | `border-bottom-width` | `0px` | = |
+| frame | `0x0129` | `border-bottom-style` | `none` | `solid` |
+| frame | `0x012a` | `border-bottom-color` | `#000000` | = |
+| frame | `0x012b` | `border-left-width` | `0px` | = |
+| frame | `0x012c` | `border-left-style` | `none` | `solid` |
+| frame | `0x012d` | `border-left-color` | `#000000` | = |
+| shape | `0x0303` | `border-top-left-radius` | `0px` | = |
+| shape | `0x0304` | `border-top-right-radius` | `0px` | = |
+| shape | `0x0305` | `border-bottom-right-radius` | `0px` | = |
+| shape | `0x0306` | `border-bottom-left-radius` | `0px` | = |
+| shape | `0x030b` | `stroke-linecap` | `butt` | = |
+| shape | `0x0402` | `fill-rule` | `nonzero` | = |
+| text | `0x0510` | `font-family` | `serif` | `system-ui` |
+| text | `0x0511` | `font-size` | `16px` | `14px` |
+| text | `0x0512` | `font-weight` | `400` | = |
+| text | `0x0513` | `font-style` | `normal` | = |
+| text | `0x0514` | `font-stretch` | `100%` | = |
+| text | `0x0515` | `line-height` | `normal` | = |
+| text | `0x0516` | `letter-spacing` | `0px` | = |
+| image | `0x0604` | `object-fit` | `fill` | `cover` |
+| image | `0x0605` | `image-rendering` | `auto` | = |
+
+- `css` 값의 근거는 CSS initial value입니다. 예외는 다음과 같습니다.
+  - `border-*-width`: initial `medium`이지만 style이 `none`이면 계산값이 `0px`입니다(근거 `css-computed`).
+  - `border-*-color`: initial `currentcolor`이고 저자 스타일이 없으면 `color` 계산값이 검정입니다(`css-computed`).
+  - `letter-spacing`: `normal`은 0으로 계산합니다(CSS Text 3, `css-computed`). registry 값 문법은 길이만 받습니다.
+  - `font-family`·`font-size`: initial을 UA가 정합니다. 기본 표준 글꼴 serif 계열, `medium` = 16px(`user-agent`).
+  - `line-height: normal`은 registry 매핑의 값 변형 규칙에 있는 값입니다.
+- `react-native` 값과 근거는 다음과 같습니다.
+
+| longhand | 값 | 근거 |
+|---|---|---|
+| `border-*-style` | `solid` | RN 구현: View 테두리는 `borderWidth`만 주어도 실선(`react-native-source`) |
+| `font-family` | `system-ui` | RN 구현: Text 기본 글꼴은 플랫폼 시스템 글꼴(`react-native-source`) |
+| `font-size` | `14px` | RN 구현: Text 기본 글자 크기 14(`react-native-source`) |
+| `object-fit` | `cover` | RN 문서: Image `resizeMode` 기본값 `cover`(`react-native-docs`) |
 
 ## 3. 선택: `stellar.yaml`
 
