@@ -33,6 +33,8 @@ pub use image::image_placement;
 pub mod handles;
 /// 선택 엔진의 hit 입력: 커서 아래 node 목록과 node world 상자 (XII.10.3, XII.10.5).
 pub mod hit;
+/// ComponentInstance 캔버스 편집: 깊은 선택 윤곽, 공개 Property override, Reset·문맥 동작 (XII.10.34, ADR-0118).
+pub mod instance;
 /// 캔버스 클릭 선택과 편집 범위 (XII.10.3, ADR-0104).
 pub mod select;
 /// 영역 선택(마퀴) (XII.10.6, ADR-0104).
