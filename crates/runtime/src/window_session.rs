@@ -974,6 +974,9 @@ pub struct ProjectWindowSession {
     lock_dir: LockDir,
     /// 외부 변경 반영 뒤 원본·cache 맞춤 쓰기가 남았는지. 다음 저장(자동 저장 writer)이 합니다.
     reconcile_pending: bool,
+    /// 외부 writer 변경과 로컬 편집을 병합하지 못한 디스크 관찰값과 그 이유(XIII.3.4, ADR-0110 결정 2). 같은 디스크
+    /// 관찰값이면 stale 다음 할 일이 두 선택지입니다.
+    external_conflict: Option<(DiskMark, crate::reconcile::ExternalConflict)>,
 }
 
 /// 저장 잠금 디렉터리 공급자. 기본은 OS 사용자 데이터의 공용 잠금 디렉터리입니다.
@@ -1187,6 +1190,7 @@ impl ProjectWindowSession {
         self.open_plan = disk.plan;
         self.style_defaults_base = disk.style_defaults;
         self.reconcile_pending = false;
+        self.external_conflict = None;
     }
 
     /// 저장된 generation이 없는 프로젝트의 session.
@@ -1209,6 +1213,7 @@ impl ProjectWindowSession {
             style_defaults_base: stellar_document::css::style_defaults::DEFAULT_SET.to_owned(),
             lock_dir: LockDir::default(),
             reconcile_pending: false,
+            external_conflict: None,
         }
     }
 
@@ -1234,6 +1239,14 @@ impl ProjectWindowSession {
     /// [`ProjectWindowSession::has_unsaved_changes`]에는 들지 않습니다.
     pub fn reconcile_pending(&self) -> bool {
         self.reconcile_pending
+    }
+
+    /// 외부 writer 변경을 자동 병합하지 못해 두 선택지를 기다리면 그 이유와 겹친 변경(XIII.3.4). 디스크가 그 뒤에 다시
+    /// 바뀌었거나 stale이 풀렸으면 `None`입니다.
+    pub fn external_conflict(&self) -> Option<&crate::reconcile::ExternalConflict> {
+        let (mark, conflict) = self.external_conflict.as_ref()?;
+        let now = self.stale_judgement().ok().flatten()?;
+        (now.0 == *mark).then_some(conflict)
     }
 
     /// 저장 경로가 쓸 것이 있는지: 미저장 편집이나 남은 맞춤 쓰기. 자동 저장 일정이 이 값을 봅니다.
@@ -1804,6 +1817,7 @@ impl ProjectWindowSession {
         }
         self.style_defaults_base = written.style_defaults;
         self.reconcile_pending = false;
+        self.external_conflict = None;
         SaveOutcome {
             generation: self.generation_number(),
             ..result
@@ -1855,14 +1869,16 @@ impl ProjectWindowSession {
             } else {
                 WriterProvenance::AppWindow
             };
-        Ok(Some((
-            DiskMark {
-                manifest: current,
-                source,
-            },
-            writer,
-            StaleResolution::for_writer(writer),
-        )))
+        let mark = DiskMark {
+            manifest: current,
+            source,
+        };
+        // 이 디스크 관찰값을 이미 병합해 보았고 자동 적용할 수 없었으면 두 선택지입니다(ADR-0110 결정 2).
+        let resolution = match &self.external_conflict {
+            Some((judged, _)) if *judged == mark => StaleResolution::Choose,
+            _ => StaleResolution::for_writer(writer),
+        };
+        Ok(Some((mark, writer, resolution)))
     }
 
     /// stale 저장의 사용자 선택을 실행합니다(XII.7.5·XII.7.6, ADR-0083 결정 1).
@@ -2095,7 +2111,8 @@ impl ProjectWindowSession {
     /// |---|---|
     /// | current pointer·원본 = 이 창 base(자기 저장 event 포함) | [`ExternalSync::Unchanged`] |
     /// | 제스처(history preview) 진행 중 | [`ExternalSync::Deferred`]. 제스처가 끝난 뒤 다시 부릅니다 |
-    /// | 미저장 편집 있음 | [`ExternalSync::Stale`](두 선택지 또는 reconciliation 대기). 문서는 그대로 |
+    /// | 미저장 편집 있음, 다른 앱 창이 씀 | [`ExternalSync::Stale`](두 선택지). 문서는 그대로 |
+    /// | 미저장 편집 있음, 외부 writer가 씀 | semantic reconciliation(XIII.3.4): 자동 병합되면 [`ExternalSync::Applied`](결과가 디스크와 다르면 미저장 편집으로 남음), 겹치면 [`ExternalSync::Stale`](두 선택지, [`ProjectWindowSession::external_conflict`]) |
     /// | clean, 새 디스크 상태가 정상 | [`ApplyExternalSnapshot`] 하나를 이 창 history에 기록하고 base를 바꿉니다. Undo 한 번이 외부 변경 전체를 되돌립니다. 선택은 남은 node만 유지합니다. 원본·cache 가운데 뒤처진 쪽을 맞춰 씁니다 |
     /// | 새 generation·원본이 깨짐 | [`ExternalSync::Rejected`]. 아무것도 반영하지 않습니다 |
     ///
@@ -2106,7 +2123,7 @@ impl ProjectWindowSession {
         if let Some(applied) = self.adopt_library_change() {
             return applied;
         }
-        let current = match self.stale_state() {
+        let current = match self.stale_judgement() {
             Ok(None) => return ExternalSync::Unchanged,
             Ok(Some(state)) => state,
             Err(error) => return ExternalSync::Rejected(ExternalRejection::Pointer(error)),
@@ -2115,7 +2132,11 @@ impl ProjectWindowSession {
             return ExternalSync::Deferred;
         }
         if self.has_unsaved_changes() {
-            let (writer, resolution) = current;
+            let (mark, writer, resolution) = current;
+            if resolution == StaleResolution::ReconciliationPending {
+                // 외부 writer 변경과 로컬 편집: semantic reconciliation(XIII.3.4, ADR-0110 결정 1).
+                return self.reconcile_external(command, mark, writer);
+            }
             return ExternalSync::Stale { writer, resolution };
         }
         let Some(document_id) = self.document_id() else {
@@ -2140,24 +2161,37 @@ impl ProjectWindowSession {
         if disk.loaded.is_none() && disk.plan != OpenPlan::FromText {
             return ExternalSync::Rejected(ExternalRejection::PointerMissing);
         }
-        let Some(model) = disk.model else {
+        let Some(model) = disk.model.as_ref() else {
             return ExternalSync::Rejected(ExternalRejection::Load(
                 WindowSessionLoadError::Document(LoadDocumentError::UnknownDocument {
                     document: document_id,
                 }),
             ));
         };
-        let document = self
-            .document
-            .as_mut()
-            .expect("document_id가 있으면 문서도 있음");
         let incoming = match model.to_records() {
             Ok(records) => records,
             Err(error) => {
                 return ExternalSync::Rejected(ExternalRejection::Records(error.to_string()))
             }
         };
-        let apply = match ApplyExternalSnapshot::between(document.state.model(), &incoming) {
+        self.adopt_external(disk, &incoming, command, true)
+    }
+
+    /// 외부 변경 반영 공용 끝부분: `incoming` 문서 레코드를 [`ApplyExternalSnapshot`] transaction 하나로 이 창 history에
+    /// 기록하고(같으면 기록 없음) base를 `disk`로 바꿉니다. `clean`이면 반영 뒤 문서가 디스크와 같다고 기록하고,
+    /// 아니면(reconciliation 결과가 디스크와 다름) 미저장 편집으로 남겨 자동 저장이 씁니다.
+    fn adopt_external(
+        &mut self,
+        disk: DiskState,
+        incoming: &DocumentRecords,
+        command: CommandId,
+        clean: bool,
+    ) -> ExternalSync {
+        let document = self
+            .document
+            .as_mut()
+            .expect("반영 대상 창에는 작업 문서가 있음");
+        let apply = match ApplyExternalSnapshot::between(document.state.model(), incoming) {
             Ok(apply) => apply,
             Err(error) => return ExternalSync::Rejected(ExternalRejection::Snapshot(error)),
         };
@@ -2193,8 +2227,12 @@ impl ProjectWindowSession {
                         .open(document.state.model(), view);
                 }
             }
-            document.saved_revision = document.state.revision();
             self.labeled(discarded, history_label::NONE);
+        }
+        if let Some(document) = self.document.as_mut() {
+            if clean {
+                document.saved_revision = document.state.revision();
+            }
         }
         // 활성 기본값 세트는 레코드 밖 거울이라 변경 집합에 들지 않습니다. 거울과 그 기준값을 그대로 두어 외부에서 바뀐
         // `stellar.yaml`을 되쓰지 않습니다(다시 열면 디스크 값을 읽음).
@@ -2217,9 +2255,93 @@ impl ProjectWindowSession {
         self.open_plan = disk.plan;
         // 맞춤 쓰기는 document thread가 아니라 다음 저장(자동 저장 writer)이 합니다(기술 아키텍처 §6.4).
         self.reconcile_pending = reconcile;
+        self.external_conflict = None;
         ExternalSync::Applied {
             generation: self.generation_number(),
             changes,
+        }
+    }
+
+    /// 외부 writer 변경과 미저장 편집을 semantic reconciliation합니다(XIII.3.4, [`crate::reconcile`] 모듈 문서).
+    ///
+    /// 쓸 수 있는 결과면 [`ExternalSync::Applied`](반영 transaction 하나, base = 새 디스크 상태)이고, 결과가 디스크와 다르면
+    /// 미저장 편집으로 남아 자동 저장이 씁니다. 병합할 수 없으면 문서를 그대로 두고 `mark`에 이유를 기록한 뒤
+    /// 두 선택지 stale([`StaleResolution::Choose`])을 돌려줍니다. 깨진 디스크 상태는 [`ExternalSync::Rejected`]입니다.
+    fn reconcile_external(
+        &mut self,
+        command: CommandId,
+        mark: DiskMark,
+        writer: WriterProvenance,
+    ) -> ExternalSync {
+        let Some(document_id) = self.document_id() else {
+            return ExternalSync::Stale {
+                writer,
+                resolution: StaleResolution::ReconciliationPending,
+            };
+        };
+        let chunk_only = self.chunk_only();
+        let disk = match read_disk_state(
+            &self.identity,
+            DocumentPick::Document(document_id),
+            chunk_only.as_deref(),
+        ) {
+            Ok(disk) => disk,
+            // 외부 변경이 이 문서를 지웠으면 병합 대상이 없습니다(두 선택지).
+            Err(WindowSessionLoadError::Document(LoadDocumentError::UnknownDocument {
+                ..
+            })) => {
+                return self.hold_conflict(
+                    mark,
+                    writer,
+                    crate::reconcile::merge_window(Err(String::new()), self.model_of(), None),
+                );
+            }
+            Err(error) => return ExternalSync::Rejected(ExternalRejection::Load(error)),
+        };
+        // LoadedBase: 텍스트 원본에서 연 뒤 cache를 아직 맞춰 쓰지 않았으면 loaded generation은 base가 아닙니다.
+        let base = match &self.loaded {
+            Some(_) if self.reconcile_pending && self.open_plan == OpenPlan::FromText => {
+                Err("base cache를 아직 원본과 맞추지 않았습니다".to_owned())
+            }
+            Some(loaded) => crate::reconcile::base_records(
+                self.identity.canonical_target(),
+                loaded,
+                document_id,
+            ),
+            None => Err("base generation이 없습니다".to_owned()),
+        };
+        let merged = crate::reconcile::merge_window(base, self.model_of(), disk.model.as_ref());
+        match merged {
+            crate::reconcile::WindowMerge::Merged {
+                records,
+                matches_disk,
+            } => self.adopt_external(disk, &records, command, matches_disk),
+            blocked => self.hold_conflict(mark, writer, blocked),
+        }
+    }
+
+    /// 작업 문서 모델(호출자가 문서 있음을 확인함).
+    fn model_of(&self) -> &DocumentModel {
+        self.document
+            .as_ref()
+            .expect("reconciliation 대상 창에는 작업 문서가 있음")
+            .state
+            .model()
+    }
+
+    /// 병합하지 못한 결과를 기록하고 두 선택지 stale을 돌려줍니다.
+    fn hold_conflict(
+        &mut self,
+        mark: DiskMark,
+        writer: WriterProvenance,
+        merged: crate::reconcile::WindowMerge,
+    ) -> ExternalSync {
+        if let crate::reconcile::WindowMerge::Blocked(conflict) = merged {
+            self.external_conflict = Some((mark, conflict));
+        }
+        ExternalSync::Stale {
+            writer,
+            resolution: StaleResolution::Choose,
         }
     }
 

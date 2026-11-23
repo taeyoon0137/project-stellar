@@ -36,6 +36,9 @@ pub mod app_command;
 /// 실제 index에서 선택 staging용 임시 후보를 준비합니다(XIV.5.5).
 pub mod staging;
 
+/// 열린 창의 외부 변경 semantic reconciliation (XIII.3.4, ADR-0110).
+pub mod reconcile;
+
 /// 창 session을 앱 runtime 경계로 다루는 테스트.
 #[cfg(test)]
 mod app_window_tests;

@@ -362,7 +362,12 @@ fn finish(entry: &mut WindowEntry, (result, timings): SlotResult, now: Duration)
         }
         Err(error) if error.is_stale() => {
             schedule.stale(now);
-            entry.autosave.stale = Some(stale_resolution(&entry.session));
+            let resolution = stale_resolution(&entry.session);
+            entry.autosave.stale = Some(resolution);
+            // 외부 writer와 겹친 stale은 바로 reconciliation을 시도합니다(XIII.3.4, ADR-0110 결정 2).
+            if resolution == StaleResolution::ReconciliationPending {
+                entry.autosave.external_deferred = true;
+            }
         }
         Err(error) => {
             eprintln!("Stellar autosave: {error}");
@@ -419,6 +424,12 @@ fn sync_window(entry: &mut WindowEntry) -> bool {
         ExternalSync::Applied { .. } => {
             entry.autosave.external_deferred = false;
             entry.autosave.rejection = None;
+            // reconciliation 결과는 새 base 위의 미저장 편집일 수 있습니다. stale을 풀고 자동 저장 일정을 새로 시작해
+            // 그 결과를 쓰게 합니다(XIII.3.4 자동 저장 재개, ADR-0110 결정 2).
+            if entry.autosave.stale.take().is_some() {
+                entry.autosave.clear_stale();
+                entry.autosave.schedule = None;
+            }
             true
         }
         ExternalSync::Stale { resolution, .. } => {

@@ -104,6 +104,9 @@ pub mod mcp_command_input;
 /// 진행 중 merge의 semantic conflict 읽기 전용 진입점: L2 MCP가 쓰는 얇은 경로 (XIX.9.3, ADR-0085).
 pub mod mcp_merge;
 
+/// 병합 결과 적용: 창 문서 3-way reconciliation과 Merge Composer 결과 target 적용 (XIII.3.4, XXIII.3, ADR-0110).
+pub mod merge_apply;
+
 /// 무결성 진단(ADR-0095): 공통 DiagnosticIndex·필터·pagination·remediation(`stellar-integrity`)과 저장 snapshot 수집.
 /// `stellar diagnose`와 MCP `document.diagnostics`가 같은 수집 함수를 씁니다.
 pub mod integrity {
