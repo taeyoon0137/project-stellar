@@ -86,7 +86,7 @@ pub(super) fn page(
                 return Err(unavailable());
             }
             cached.comparison = current;
-            return page_result.map_err(|e| invalid(e.to_string()));
+            return page_result.map_err(|e| super::Failure::failure(&e));
         }
         observed_sources = Some(checked);
     }
@@ -101,7 +101,7 @@ pub(super) fn page(
         &cursor_revision(head.commit(), revision, &tag),
         request,
     )
-    .map_err(|e| invalid(e.to_string()))?;
+    .map_err(|e| super::Failure::failure(&e))?;
     let base = match current {
         Some(page) => page.base,
         None => HeadDiffBase::open(&head, &cached.snapshot).map_err(|_| unavailable())?,
@@ -118,7 +118,7 @@ pub(super) fn page(
         component_source_hash: tag,
         report,
     };
-    let body = paging::build_page(&page, request).map_err(|e| invalid(e.to_string()))?;
+    let body = paging::build_page(&page, request).map_err(|e| super::Failure::failure(&e))?;
     if observe()?.hash() != source_hash || !head.is_current().map_err(|_| unavailable())? {
         return Err(unavailable());
     }

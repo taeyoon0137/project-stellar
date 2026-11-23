@@ -22,3 +22,6 @@ pub mod schema;
 
 /// MCP `initialize`의 사용 안내 (XIX.9.2).
 pub mod instructions;
+
+/// 결과 종류와 XXIV.1.2 종료 코드 대응 (XIX.9.9).
+pub mod outcome;

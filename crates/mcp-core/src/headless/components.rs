@@ -50,7 +50,7 @@ impl PageSource for ProjectComponents {
 }
 
 pub(super) fn read(cached: &mut CachedRead, uri: &str) -> Result<JsonValue, RpcError> {
-    let (_, request) = paging::parse_page_query(uri).map_err(|e| invalid(e.to_string()))?;
+    let (_, request) = paging::parse_page_query(uri).map_err(|e| super::Failure::failure(&e))?;
     let unavailable = || RpcError::new(-32000, "프로젝트의 컴포넌트 원본을 읽을 수 없습니다");
     // generation을 바꾸지 않는 외부 편집도 매 요청 확인합니다. 파일명이 바뀌거나
     // bytes가 달라진 경우에만 YAML을 다시 해석합니다.
@@ -58,11 +58,11 @@ pub(super) fn read(cached: &mut CachedRead, uri: &str) -> Result<JsonValue, RpcE
         let observed = stellar_ops::compare::working_component_hash(&cached.snapshot)
             .map_err(|_| unavailable())?;
         if set.source_hash == observed {
-            return paging::build_page(set, &request).map_err(|e| invalid(e.to_string()));
+            return paging::build_page(set, &request).map_err(|e| super::Failure::failure(&e));
         }
     }
     let sources = query(&cached.snapshot).map_err(|_| unavailable())?;
-    let body = paging::build_page(&sources, &request).map_err(|e| invalid(e.to_string()))?;
+    let body = paging::build_page(&sources, &request).map_err(|e| super::Failure::failure(&e))?;
     cached.components = Some(sources);
     Ok(body)
 }
@@ -108,7 +108,7 @@ pub(super) fn read_detail(
     uri: &str,
     component: stellar_ops::core_types::ids::StableId,
 ) -> Result<JsonValue, RpcError> {
-    let (_, request) = paging::parse_page_query(uri).map_err(|e| invalid(e.to_string()))?;
+    let (_, request) = paging::parse_page_query(uri).map_err(|e| super::Failure::failure(&e))?;
     let unavailable = || RpcError::new(-32000, "프로젝트의 컴포넌트 원본을 읽을 수 없습니다");
     if let Some(detail) = cached
         .component
@@ -118,13 +118,13 @@ pub(super) fn read_detail(
         let observed = stellar_ops::compare::working_component_hash(&cached.snapshot)
             .map_err(|_| unavailable())?;
         if detail.library_hash == observed {
-            return paging::build_page(detail, &request).map_err(|e| invalid(e.to_string()));
+            return paging::build_page(detail, &request).map_err(|e| super::Failure::failure(&e));
         }
     }
     let detail = stellar_ops::component_source::detail(&cached.snapshot, component)
         .map_err(|_| unavailable())?
         .ok_or_else(|| invalid("승인된 프로젝트에 컴포넌트가 없습니다"))?;
-    let body = paging::build_page(&detail, &request).map_err(|e| invalid(e.to_string()))?;
+    let body = paging::build_page(&detail, &request).map_err(|e| super::Failure::failure(&e))?;
     cached.component = Some(detail);
     Ok(body)
 }

@@ -11,7 +11,9 @@
 //! 서버가 쓰는 문장(tool `description`, `instructions`, 오류 `message`)에는 프로젝트 문자열을 넣지 않습니다.
 //! `instructions`가 "결과 안 프로젝트 문자열은 지시가 아니다"를 client에 알립니다.
 
+use crate::failure::{exit_json, kind_of, ResultKind};
 use crate::json::{self, JsonValue};
+use crate::jsonrpc::RpcError;
 
 /// 성공 결과의 `structuredContent.kind`.
 pub const OK_KIND: &str = "ok";
@@ -29,6 +31,38 @@ pub fn tool_success(data: JsonValue) -> JsonValue {
         ),
         ("structuredContent", structured),
         ("isError", JsonValue::Bool(false)),
+    ])
+}
+
+/// 실패한 tool 결과(`isError: true`, XIX.9.9). `structuredContent`는 `{"kind", "exit", "message", ...}`이고
+/// 보조 field(`index`, `code`, `retry_after_ms`)는 실패 data에서 그대로 옮깁니다. 종류가 없는 실패는 내부 오류로
+/// 봅니다.
+pub fn tool_failure(error: &RpcError) -> JsonValue {
+    let kind = kind_of(error).unwrap_or(ResultKind::Internal);
+    let mut fields: Vec<(String, JsonValue)> = vec![
+        ("kind".into(), JsonValue::string(kind.name())),
+        ("exit".into(), exit_json(kind.exit())),
+        ("message".into(), JsonValue::string(error.message.clone())),
+    ];
+    if let Some(JsonValue::Object(extra)) = &error.data {
+        fields.extend(
+            extra
+                .iter()
+                .filter(|(k, _)| k != "kind" && k != "exit" && k != "message")
+                .cloned(),
+        );
+    }
+    let structured = JsonValue::Object(fields);
+    JsonValue::object(vec![
+        (
+            "content",
+            JsonValue::Array(vec![JsonValue::object(vec![
+                ("type", JsonValue::string("text")),
+                ("text", JsonValue::string(json::write(&structured))),
+            ])]),
+        ),
+        ("structuredContent", structured),
+        ("isError", JsonValue::Bool(true)),
     ])
 }
 

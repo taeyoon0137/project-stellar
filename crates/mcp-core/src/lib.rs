@@ -53,6 +53,9 @@ pub mod protocol;
 /// MCP stdio 서버 루프 (XIX.1.1).
 pub mod server;
 
+/// 요청 실패의 결과 종류·종료 코드 (XIX.9.9).
+pub mod failure;
+
 /// tool 결과 envelope: 프로젝트 문자열은 data로만 (XIX.9.6).
 pub mod result;
 

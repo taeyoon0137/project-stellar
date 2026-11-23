@@ -243,8 +243,23 @@ fn array(value: &J) -> &[J] {
 fn text(value: &J) -> &str {
     value.as_str().unwrap()
 }
+/// 실패를 확인합니다. resource·protocol 실패는 JSON-RPC `error.code`, tool 실행 실패(XIX.9.9)는 `isError` 결과의
+/// 결과 종류가 그 code 분류(인자·범위·revision 오류 -32602, 그 밖 -32000)에 속하는지 봅니다.
 fn assert_error(reply: &J, code: i64) {
-    assert!(reply.get("result").is_none());
+    if let Some(result) = reply.get("result") {
+        assert_eq!(result.get("isError"), Some(&J::Bool(true)), "{reply:?}");
+        let kind = result
+            .get("structuredContent")
+            .and_then(|s| s.get("kind"))
+            .and_then(J::as_str)
+            .unwrap();
+        let class = match kind {
+            "invalid-arguments" | "stale" | "out-of-scope" | "too-large" | "unknown-tool" => -32602,
+            _ => -32000,
+        };
+        assert_eq!(class, code, "{reply:?}");
+        return;
+    }
     assert_eq!(
         reply
             .get("error")

@@ -24,6 +24,7 @@ use crate::catalog::paging::{self, PageSource};
 use crate::catalog::resources::{self, Backend};
 use crate::catalog::scope::{ApprovedScope, ProjectDocuments, ScopeError, ScopedPayload};
 use crate::catalog::tools::{self, EnabledNamespaces, SEMANTIC_DIFF, VALIDATE_DOCUMENT};
+use crate::failure::{fail, kind_of, ResultKind as Kind, WithDetail};
 use crate::json::{self, JsonNumber, JsonValue};
 use crate::jsonrpc::{codes, RpcError};
 
@@ -56,7 +57,8 @@ impl Headless {
         if !root.is_absolute() {
             return Err(crate::exit::USAGE);
         }
-        let project = TrustedProject::select(root).map_err(|_| crate::exit::NOPERM)?;
+        let project =
+            TrustedProject::select(root).map_err(|_| crate::exit::for_kind(Kind::NotTrusted))?;
         Ok(Self::new(project))
     }
 
@@ -91,15 +93,24 @@ impl Headless {
             )),
             "resources/list" => Ok(resources::resources_list(Backend::Headless)),
             "resources/templates/list" => Ok(resources::templates_list(Backend::Headless)),
-            _ => Err(invalid("제공하지 않는 목록입니다")),
+            _ => Err(malformed("제공하지 않는 목록입니다")),
         }
     }
 
-    /// 신뢰 snapshot에서 읽기·검증·dry-run tool 하나를 실행합니다.
+    /// 신뢰 snapshot에서 읽기·검증·dry-run tool 하나를 실행합니다. 실행 실패(인자 오류 포함)는 `isError` 결과이고,
+    /// 모르는 tool과 params 형식 오류만 JSON-RPC 오류입니다(XIX.9.9).
     pub fn call(&self, params: Option<&JsonValue>) -> Result<JsonValue, RpcError> {
+        self.call_tool(params)
+            .or_else(|error| match kind_of(&error) {
+                Some(kind) if !kind.is_protocol_error() => Ok(crate::result::tool_failure(&error)),
+                _ => Err(error),
+            })
+    }
+
+    fn call_tool(&self, params: Option<&JsonValue>) -> Result<JsonValue, RpcError> {
         self.with_snapshot(|cached| {
             check_fields(params, &["name", "arguments"])?;
-            let params = params.ok_or_else(|| invalid("tool 이름이 필요합니다"))?;
+            let params = params.ok_or_else(|| malformed("tool 이름이 필요합니다"))?;
             let tool = params
                 .get("name")
                 .and_then(JsonValue::as_str)
@@ -113,7 +124,7 @@ impl Headless {
             let args = params.get("arguments").unwrap_or(&empty);
             self.scope
                 .check_tool_arguments(tool, args, &Documents(&cached.snapshot))
-                .map_err(|error| scope_failure(&error))?;
+                .map_err(|error| error.failure())?;
             let request = page_request(args)?;
             let body = match tool.name {
                 n if n == SEMANTIC_DIFF.name => {
@@ -178,7 +189,7 @@ impl Headless {
         let cached = cache.as_mut().expect("snapshot을 열었음");
         let result = build(cached)?;
         if json::write(&result).len() > crate::server::MAX_MESSAGE_BYTES - 1024 {
-            return Err(invalid("응답 크기 상한을 넘습니다"));
+            return Err(fail(Kind::TooLarge, "응답 크기 상한을 넘습니다"));
         }
         if !self
             .project
@@ -194,7 +205,7 @@ impl Headless {
                 session: self.session.clone(),
                 body: result,
             })
-            .map_err(|e| invalid(e.to_string()))?;
+            .map_err(|e| e.failure())?;
         *self.cache.borrow_mut() = cache;
         Ok(released)
     }
@@ -213,7 +224,7 @@ impl Headless {
         let target = self
             .scope
             .check_resource_uri(uri, &Documents(snapshot))
-            .map_err(|e| invalid(e.to_string()))?;
+            .map_err(|e| e.failure())?;
         let body = match target.name {
             "project-structure" => {
                 JsonValue::object(structure_fields(&project_structure(snapshot)))
@@ -236,14 +247,13 @@ impl Headless {
                     .as_deref()
                     .and_then(|id| id.parse::<StableId>().ok())
                     .ok_or_else(|| invalid("승인된 문서 ID가 필요합니다"))?;
-                let (_, request) =
-                    paging::parse_page_query(uri).map_err(|e| invalid(e.to_string()))?;
+                let (_, request) = paging::parse_page_query(uri).map_err(|e| e.failure())?;
                 paging::validate_request(
                     &document.to_string(),
                     &snapshot.revision().token(),
                     &request,
                 )
-                .map_err(|e| invalid(e.to_string()))?;
+                .map_err(|e| e.failure())?;
                 if cached.tree.as_ref().is_none_or(|(id, _)| *id != document) {
                     cached.tree = None;
                     #[cfg(test)]
@@ -260,103 +270,51 @@ impl Headless {
                     document,
                     revision: snapshot.revision(),
                 };
-                paging::build_page(&source, &request).map_err(|e| invalid(e.to_string()))?
+                paging::build_page(&source, &request).map_err(|e| e.failure())?
             }
-            _ => return Err(invalid("제공하지 않는 resource입니다")),
+            _ => return Err(fail(Kind::InvalidArguments, "제공하지 않는 resource입니다")),
         };
         if json::write(&body).len() > paging::MAX_PAGE_BYTES {
-            return Err(invalid("resource가 응답 크기 상한을 넘습니다"));
+            return Err(fail(Kind::TooLarge, "resource가 응답 크기 상한을 넘습니다"));
         }
         Ok(paging::read_result(uri, &body))
     }
 }
 
 fn invalid(message: impl Into<String>) -> RpcError {
+    crate::failure::fail_text(Kind::InvalidArguments, message)
+}
+
+/// params 형식 오류(MCP protocol 오류, 결과 종류 없음).
+fn malformed(message: &'static str) -> RpcError {
     RpcError::new(codes::INVALID_PARAMS, message)
 }
 
-/// 요청 실패 종류(ADR-0085 결정 7). 오류 `data.kind`로 나갑니다.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Kind {
-    /// 도메인 거부.
-    Rejected,
-    /// 이 backend에 없는 tool.
-    UnknownTool,
-    /// 인자 오류.
-    InvalidArguments,
-    /// revision·cursor 불일치.
-    Stale,
-    /// 응답 상한 초과.
-    TooLarge,
-    /// 대상 없음.
-    NotFound,
-    /// 구성 요소 없음.
-    Unavailable,
-    /// 내부 오류.
-    Internal,
-    /// 신뢰 확인 실패.
-    NotTrusted,
-    /// 승인 범위 밖.
-    OutOfScope,
+/// page·scope 오류를 결과 종류로 나눕니다. 두 오류의 문구는 고정 형식이고 프로젝트 문자열이 없습니다.
+trait Failure {
+    fn failure(&self) -> RpcError;
 }
 
-impl Kind {
-    /// 고정 이름.
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Kind::Rejected => "rejected",
-            Kind::UnknownTool => "unknown-tool",
-            Kind::InvalidArguments => "invalid-arguments",
-            Kind::Stale => "stale",
-            Kind::TooLarge => "too-large",
-            Kind::NotFound => "not-found",
-            Kind::Unavailable => "unavailable",
-            Kind::Internal => "internal",
-            Kind::NotTrusted => "not-trusted",
-            Kind::OutOfScope => "out-of-scope",
-        }
+impl Failure for paging::PageError {
+    fn failure(&self) -> RpcError {
+        let kind = match self {
+            paging::PageError::StaleCursor => Kind::Stale,
+            paging::PageError::ItemTooLarge { .. } => Kind::TooLarge,
+            _ => Kind::InvalidArguments,
+        };
+        crate::failure::fail_text(kind, self.to_string())
     }
 }
 
-/// 고정 문구와 종류로 요청 실패를 만듭니다. 문구에 프로젝트 문자열을 넣지 않습니다.
-pub(crate) fn fail(kind: Kind, message: &'static str) -> RpcError {
-    let code = match kind {
-        Kind::InvalidArguments | Kind::Stale | Kind::UnknownTool | Kind::OutOfScope => {
-            codes::INVALID_PARAMS
-        }
-        _ => -32000,
-    };
-    RpcError::new(code, message).with_data(JsonValue::object(vec![(
-        "kind",
-        JsonValue::string(kind.name()),
-    )]))
-}
-
-/// 실패 data에 보조 field를 더합니다.
-pub(crate) trait WithDetail {
-    /// `data`에 `key`를 더합니다.
-    fn with_detail(self, key: &str, value: JsonValue) -> Self;
-}
-
-impl WithDetail for RpcError {
-    fn with_detail(mut self, key: &str, value: JsonValue) -> Self {
-        match &mut self.data {
-            Some(JsonValue::Object(fields)) => fields.push((key.to_string(), value)),
-            _ => self.data = Some(JsonValue::object(vec![(key, value)])),
-        }
-        self
-    }
-}
-
-fn scope_failure(error: &ScopeError) -> RpcError {
-    match error {
-        ScopeError::ForeignDocument | ScopeError::ForeignProject | ScopeError::ForeignSession => {
-            fail(Kind::OutOfScope, "승인된 프로젝트·세션 밖의 대상입니다")
-        }
-        _ => fail(
-            Kind::InvalidArguments,
-            "선언되지 않았거나 형식이 틀린 tool 인자입니다",
-        ),
+impl Failure for ScopeError {
+    fn failure(&self) -> RpcError {
+        let kind = match self {
+            ScopeError::ForeignDocument
+            | ScopeError::ForeignProject
+            | ScopeError::ForeignSession => Kind::OutOfScope,
+            _ => Kind::InvalidArguments,
+        };
+        crate::failure::fail_text(kind, self.to_string())
     }
 }
 
@@ -397,12 +355,12 @@ fn check_fields(params: Option<&JsonValue>, allowed: &[&str]) -> Result<(), RpcE
     if let Some(params) = params {
         let fields = params
             .as_object()
-            .ok_or_else(|| invalid("params는 object여야 합니다"))?;
+            .ok_or_else(|| malformed("params는 object여야 합니다"))?;
         if fields
             .iter()
             .any(|(key, _)| !allowed.contains(&key.as_str()) && key != "_meta")
         {
-            return Err(invalid("선언되지 않은 요청 인자입니다"));
+            return Err(malformed("선언되지 않은 요청 인자입니다"));
         }
     }
     Ok(())

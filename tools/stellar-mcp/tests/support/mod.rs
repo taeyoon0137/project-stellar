@@ -261,15 +261,35 @@ pub fn tool_body(reply: &J) -> J {
     structured.get("data").unwrap().clone()
 }
 
-/// 실패 응답의 종류(`kind`).
+/// 실패 응답의 종류(`kind`). tool 실행 실패는 `isError` 결과의 `structuredContent`, protocol·resource 실패는
+/// JSON-RPC `error.data`에서 읽습니다. 둘 다 XXIV.1.2 종료 코드(`exit`)가 결과 종류와 맞는지 확인합니다.
 pub fn failure_kind(reply: &J) -> String {
-    reply
-        .get("error")
-        .and_then(|e| e.get("data"))
-        .and_then(|d| d.get("kind"))
-        .and_then(J::as_str)
-        .unwrap_or_else(|| panic!("실패 종류 없음: {reply:?}"))
-        .to_string()
+    let (kind, exit) = match reply.get("result") {
+        Some(result) => {
+            assert_eq!(result.get("isError"), Some(&J::Bool(true)), "{reply:?}");
+            let structured = result.get("structuredContent").unwrap();
+            let content = array(result.get("content").unwrap());
+            let serialized =
+                json::parse(text(content[0].get("text").unwrap()), JsonLimits::default()).unwrap();
+            assert_eq!(&serialized, structured);
+            (structured.get("kind"), structured.get("exit"))
+        }
+        None => {
+            let data = reply
+                .get("error")
+                .and_then(|e| e.get("data"))
+                .unwrap_or_else(|| panic!("실패 종류 없음: {reply:?}"));
+            (data.get("kind"), data.get("exit"))
+        }
+    };
+    let kind = kind.and_then(J::as_str).unwrap().to_string();
+    let expected = stellar_mcp::agent_protocol::outcome::ResultKind::from_name(&kind)
+        .unwrap()
+        .exit();
+    let exit = exit.unwrap();
+    assert_eq!(exit.get("code"), Some(&J::int(i64::from(expected.code))));
+    assert_eq!(exit.get("name").map(text), Some(expected.name));
+    kind
 }
 
 /// resource 내용 JSON.
