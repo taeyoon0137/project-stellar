@@ -301,7 +301,7 @@ fn started_at_current(
     })
 }
 
-fn apply_edit(
+pub(crate) fn apply_edit(
     window: &mut ProjectWindowSession,
     scene: &CanvasScene,
     request: RequestId,
@@ -624,7 +624,7 @@ fn line_end_commands(
 }
 
 /// 선택에서 다른 선택의 자손을 뺀 node(선택 순서).
-fn selection_roots(
+pub(crate) fn selection_roots(
     model: &DocumentModel,
     root: StableId,
     selected: &[StableId],
@@ -893,7 +893,7 @@ fn stale_view() -> Failure {
     )
 }
 
-pub(super) fn view_root(model: &DocumentModel, view: StableId) -> Option<StableId> {
+pub(crate) fn view_root(model: &DocumentModel, view: StableId) -> Option<StableId> {
     model
         .definition()
         .pages
@@ -903,7 +903,7 @@ pub(super) fn view_root(model: &DocumentModel, view: StableId) -> Option<StableI
         .map(|v| v.root_frame)
 }
 
-pub(super) fn parent_of(model: &DocumentModel, node: StableId) -> Option<StableId> {
+pub(crate) fn parent_of(model: &DocumentModel, node: StableId) -> Option<StableId> {
     let fields = model
         .runtime_id(node)
         .and_then(|id| model.columns().get(id))?;
