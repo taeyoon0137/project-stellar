@@ -31,6 +31,9 @@
   `UnknownProperty`·`NoMatchingSlot`이며 결과는 key 순이라 같은 입력은 같은 preview입니다.
 - 선언 타입은 commands가 expressions crate에 의존하지 않도록 제네릭 `T: PartialEq`로 같음만 비교합니다.
   `plan_instance_swap_with_entries`가 library 항목(`TypeSpec`)을 그대로 넘깁니다.
+- Slot: 새 정의에 같은 id의 Slot이 있고 content가 그 Slot의 종류·개수 규칙을 지킬 때만 옮깁니다(`SlotRuleMismatch`
+  탈락 이유 추가). content가 있는 Slot이 탈락하면 인스턴스 소유 node가 투영할 곳 없이 남으므로(IX.3.2) 계획을 거부하고,
+  `SwapInstance` 검증도 content 소유·중복·투영 유지를 확인합니다.
 - 크기: 인스턴스 payload에는 자기 크기가 없어 새 정의 root의 크기를 씁니다(`SwapSizing::DefinitionDefault`).
   `SwapSizing::KeepCurrent`는 계획 단계에서 거부합니다(ADR-0079 결정 6).
 
@@ -38,7 +41,7 @@
 
 | 명령 | 결과 |
 |---|---|
-| `cargo test -p stellar-commands swap_tests` | 3 passed: 보존·탈락 matrix(6개 탈락 이유, slot), 같은 입력 같은 preview, undo 뒤 원래 `ComponentRef`·override 6개 복원, codec 왕복, 크기 유지·비인스턴스·NIL 거부, library fixture 항목 경로 |
+| `cargo test -p stellar-commands swap_tests` | 4 passed(검토 보완 후): slot content 보존·거부·command 검증 포함, 보존·탈락 matrix(6개 탈락 이유, slot), 같은 입력 같은 preview, undo 뒤 원래 `ComponentRef`·override 6개 복원, codec 왕복, 크기 유지·비인스턴스·NIL 거부, library fixture 항목 경로 |
 | `cargo test -p stellar-commands property_tests` | `swap_instance_round_trip`(120건 이상) 포함 통과 |
 | `cargo test -p stellar-commands fuzz` | `adr_0079_kinds_survive_mutation_fuzz`, `smoke_fuzz_command_execution_is_panic_free` 통과 |
 | `cargo test -p stellar-commands -p stellar-history` | commands 152, history 50 통과 |

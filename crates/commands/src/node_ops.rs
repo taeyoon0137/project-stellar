@@ -17,6 +17,7 @@ use stellar_document::component::definition::{
     ComponentEntry, ComponentPropertyId, ComponentSlotId,
 };
 use stellar_document::component::instance::{ComponentInstancePayload, OverrideKey};
+use stellar_document::component::slot::ComponentSlot;
 use stellar_document::frame::Clipping;
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{find_modifier_cycle, validate_modifier_owner, ModifierStack};
@@ -587,10 +588,39 @@ impl SwapInstance {
         }
     }
 
+    /// 새 payload의 slot content가 이 인스턴스 소유 node(부모 = 인스턴스)이고 한 번씩만 투영되는지, 지금 투영된
+    /// content가 교체 뒤에도 모두 투영되는지 확인합니다(IX.3.2: 인스턴스 자식은 모두 slot에 투영돼야 함). 교체가
+    /// 소유 node를 투영할 곳 없이 남기지 않으므로 역(원래 payload)도 항상 적용됩니다. slot 종류·개수 규칙은 컴포넌트
+    /// library가 있어야 알 수 있어 [`plan_instance_swap`]이 봅니다.
     pub(crate) fn validate(&self, model: &DocumentModel) -> Result<(), CommandError> {
-        self.current(model)?;
+        let current = self.current(model)?;
         if self.payload.component().id() == StableId::NIL {
             return Err(CommandError::NilId);
+        }
+        let mut projected = BTreeSet::new();
+        for (_, content) in self.payload.slot_overrides() {
+            for node in content.content() {
+                let parent =
+                    parent_of(model, *node).ok_or(CommandError::UnknownNode { id: *node })?;
+                if parent != Some(self.node) {
+                    return Err(CommandError::InvalidParent {
+                        node: *node,
+                        parent,
+                    });
+                }
+                if !projected.insert(*node) {
+                    return Err(CommandError::DuplicateId { id: *node });
+                }
+            }
+        }
+        if current
+            .slot_overrides()
+            .flat_map(|(_, content)| content.content().iter())
+            .any(|node| !projected.contains(node))
+        {
+            return Err(CommandError::InvalidRequest {
+                reason: "교체 뒤 투영할 slot이 없는 인스턴스 소유 node가 남습니다",
+            });
         }
         Ok(())
     }
@@ -677,6 +707,8 @@ pub enum SwapDropReason {
     UnknownProperty,
     /// 새 정의에 같은 Slot이 없습니다.
     NoMatchingSlot,
+    /// 같은 Slot이 있지만 content가 새 Slot의 종류·개수 규칙을 어깁니다.
+    SlotRuleMismatch,
 }
 
 /// 보존한 Property override(옛 Property → 새 Property).
@@ -704,15 +736,17 @@ pub struct InstanceSwapPlan {
 /// 인스턴스 `node`를 `target` 컴포넌트로 바꾸는 계획을 만듭니다(문서는 바꾸지 않음).
 ///
 /// 직접 Property override는 옛 Property와 **이름과 선언 타입이 같은 새 정의의 공개 Property**로 옮깁니다.
-/// nested 경로 override, 맞는 Property가 없는 override, 새 정의에 같은 id의 Slot이 없는 Slot override는
-/// 버리고 `dropped`에 이유와 함께 보고합니다. 같은 입력은 같은 계획입니다(결과는 key 순).
+/// nested 경로 override, 맞는 Property가 없는 override, 새 정의에 같은 id의 Slot이 없거나 content가 새
+/// Slot의 종류·개수 규칙을 어기는 Slot override는 버리고 `dropped`에 이유와 함께 보고합니다. 버릴 Slot에
+/// content(인스턴스 소유 node)가 있으면 투영할 곳 없이 남게 되므로 계획을 거부합니다(IX.3.2). 같은 입력은 같은
+/// 계획입니다(결과는 key 순).
 pub fn plan_instance_swap<T: PartialEq>(
     model: &DocumentModel,
     node: StableId,
     target: ComponentRef,
     current_properties: &[SwapProperty<T>],
     target_properties: &[SwapProperty<T>],
-    target_slots: &[ComponentSlotId],
+    target_slots: &[ComponentSlot],
     sizing: SwapSizing,
 ) -> Result<InstanceSwapPlan, CommandError> {
     if sizing == SwapSizing::KeepCurrent {
@@ -765,10 +799,33 @@ pub fn plan_instance_swap<T: PartialEq>(
         }
     }
     for (slot, content) in current.slot_overrides() {
-        if target_slots.contains(&slot) {
-            payload.set_slot_override(slot, content.clone());
-        } else {
-            dropped.push((SwapOverride::Slot(slot), SwapDropReason::NoMatchingSlot));
+        let reason = match target_slots.iter().find(|s| s.id == slot) {
+            None => Some(SwapDropReason::NoMatchingSlot),
+            Some(rule) => {
+                let kinds = content
+                    .content()
+                    .iter()
+                    .map(|id| kind_of(model, *id).map(|kind| (*id, kind)))
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or(CommandError::InvalidRequest {
+                        reason: "slot content node가 문서에 없습니다",
+                    })?;
+                if rule.check_content(kinds).is_ok() {
+                    payload.set_slot_override(slot, content.clone());
+                    None
+                } else {
+                    Some(SwapDropReason::SlotRuleMismatch)
+                }
+            }
+        };
+        if let Some(reason) = reason {
+            if !content.is_empty() {
+                return Err(CommandError::InvalidRequest {
+                    reason:
+                        "새 정의에 둘 곳이 없는 slot content가 있습니다(먼저 옮기거나 지웁니다)",
+                });
+            }
+            dropped.push((SwapOverride::Slot(slot), reason));
         }
     }
     preserved.sort_by_key(|p| p.from);
@@ -809,7 +866,7 @@ pub fn plan_instance_swap_with_entries(
             })
             .collect::<Vec<_>>()
     };
-    let slots: Vec<ComponentSlotId> = target.slots().map(|slot| slot.id).collect();
+    let slots: Vec<ComponentSlot> = target.slots().cloned().collect();
     plan_instance_swap(
         model,
         node,
@@ -1777,6 +1834,19 @@ mod swap_tests {
         ComponentSlotId::new(sid(n))
     }
 
+    /// 새 정의의 Slot 규칙: `kinds`만 허용, content 0~`max`개.
+    fn rule(n: u64, kinds: &[NodeKind], max: Option<u32>) -> ComponentSlot {
+        use stellar_core_types::reference::NodeRef;
+        use stellar_document::component::slot::SlotCardinality;
+        ComponentSlot::new(
+            slot(n),
+            NodeRef::new(sid(n + 1_000)),
+            kinds.iter().copied(),
+            SlotCardinality::new(0, max).unwrap(),
+            Vec::new(),
+        )
+    }
+
     /// root(10) 아래 인스턴스 30(컴포넌트 sid(500)): override 6개 + slot 2개.
     fn state() -> DocumentState {
         let mut model = small_model();
@@ -1830,7 +1900,7 @@ mod swap_tests {
                 ComponentRef::new(sid(600)),
                 &current(),
                 &target(),
-                &[slot(40)],
+                &[rule(40, &[NodeKind::Frame], None)],
                 SwapSizing::DefinitionDefault,
             )
             .unwrap()
@@ -1899,6 +1969,86 @@ mod swap_tests {
         };
         assert_eq!(restored.component(), ComponentRef::new(sid(500)));
         assert_eq!(restored.property_overrides().count(), 6);
+    }
+
+    #[test]
+    fn swap_never_leaves_owned_slot_content_unprojected() {
+        // IX.3.2: 인스턴스 소유 node는 모두 slot에 투영돼야 합니다. 보존할 수 있는 slot content는 옮기고, 둘
+        // 곳이 없는 content가 있으면 계획·command가 거부합니다(문서 무변경).
+        let mut model = small_model();
+        let mut payload = ComponentInstancePayload::new(ComponentRef::new(sid(500)));
+        payload.set_slot_override(slot(40), SlotOverride::new(vec![sid(31)]).unwrap());
+        payload.set_slot_override(slot(41), SlotOverride::empty());
+        let mut record = frame(30, Some(10), 0x30);
+        record.payload = NodePayload::ComponentInstance(payload);
+        model.insert_node(record).unwrap();
+        model.insert_node(frame(31, Some(30), 0x10)).unwrap();
+        let mut state = DocumentState::new(model);
+        let before = model_snapshot_json(state.model()).unwrap();
+        let plan = |slots: &[ComponentSlot]| {
+            plan_instance_swap::<&str>(
+                state.model(),
+                sid(30),
+                ComponentRef::new(sid(600)),
+                &[],
+                &[],
+                slots,
+                SwapSizing::DefinitionDefault,
+            )
+        };
+        // 40은 Frame 허용이라 content째 보존, 빈 41은 새 정의에 없어 탈락.
+        let kept = plan(&[rule(40, &[NodeKind::Frame], Some(1))]).unwrap();
+        assert_eq!(
+            kept.dropped,
+            vec![(SwapOverride::Slot(slot(41)), SwapDropReason::NoMatchingSlot)]
+        );
+        assert_eq!(
+            kept.command
+                .payload
+                .slot_overrides()
+                .map(|(id, content)| (id, content.content().to_vec()))
+                .collect::<Vec<_>>(),
+            vec![(slot(40), vec![sid(31)])]
+        );
+        // content가 있는 40을 둘 곳이 없거나(새 정의에 없음) 규칙을 어기면(Text만 허용) 거부합니다.
+        assert!(plan(&[]).is_err());
+        assert!(plan(&[rule(40, &[NodeKind::Text], None)]).is_err());
+        let outcome = state
+            .execute(&CommandRequest::at(
+                &state,
+                Command::SwapInstance(kept.command.clone()),
+            ))
+            .unwrap();
+        state
+            .execute(&CommandRequest::at(&state, outcome.inverse))
+            .unwrap();
+        assert_eq!(model_snapshot_json(state.model()).unwrap(), before);
+
+        // command 수준: 소유 node를 버리는 payload, 남의 node(11), 두 번 투영, 없는 node는 거부합니다.
+        let with = |slots: &[(u64, Vec<StableId>)]| {
+            let mut payload = ComponentInstancePayload::new(ComponentRef::new(sid(600)));
+            for (n, content) in slots {
+                payload.set_slot_override(slot(*n), SlotOverride::new(content.clone()).unwrap());
+            }
+            Command::SwapInstance(SwapInstance {
+                node: sid(30),
+                payload,
+            })
+        };
+        for command in [
+            with(&[]),
+            with(&[(40, vec![sid(11)])]),
+            with(&[(40, vec![sid(31)]), (41, vec![sid(31)])]),
+            with(&[(40, vec![sid(31)]), (41, vec![sid(99)])]),
+        ] {
+            assert!(
+                state
+                    .execute(&CommandRequest::at(&state, command.clone()))
+                    .is_err(),
+                "{command:?}"
+            );
+        }
+        assert_eq!(model_snapshot_json(state.model()).unwrap(), before);
     }
 
     #[test]
