@@ -387,6 +387,24 @@ mod tests {
     }
 
     #[test]
+    fn reserved_context_snapshot_keys_are_unused_and_in_the_snapshot_band() {
+        // 검증 기준(IX.12.1): 예약한 snapshot key·대역이 지금 key와 겹치지 않음.
+        use stellar_core_types::reserved::context::{
+            SNAPSHOT_COMPONENT_CONTEXT_REQUIREMENTS, SNAPSHOT_CONTEXT_BAND,
+            SNAPSHOT_SLOT_CONTEXT_KEYS,
+        };
+        let used: Vec<u32> = all_keys().iter().map(|(_, k)| k.0).collect();
+        for reserved in [
+            SNAPSHOT_COMPONENT_CONTEXT_REQUIREMENTS,
+            SNAPSHOT_SLOT_CONTEXT_KEYS,
+        ] {
+            assert!(!used.contains(&reserved), "0x{reserved:04X}");
+            assert!((0xE000..=0xEFFF).contains(&reserved));
+        }
+        assert!(used.iter().all(|k| k >> 8 != SNAPSHOT_CONTEXT_BAND >> 8));
+    }
+
+    #[test]
     fn asset_reference_classification() {
         assert!(is_asset_reference(IMAGE_ASSET));
         assert!(!is_asset_reference(IMAGE_SIZE));

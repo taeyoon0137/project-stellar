@@ -49,3 +49,6 @@ pub mod font;
 
 /// CSS longhand typography record.
 pub mod typography;
+
+/// 아직 구현하지 않은 저장 요소의 예약 번호 (IX.12.1).
+pub mod reserved;

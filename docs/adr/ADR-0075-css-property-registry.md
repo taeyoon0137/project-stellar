@@ -87,8 +87,20 @@ Accepted (2026-11-23)
 
 ### 8. Component Context 번호 예약(IX.12.1)
 
-- 예약 번호는 `stellar_core_types::reserved`에 상수로 고정하고 다른 용도로 쓰지 않습니다. encoder·decoder는
-  바꾸지 않습니다. 구현은 Context lane이 합니다.
+- 예약 번호는 `stellar_core_types::reserved::context`에 상수로 고정하고 다른 용도로 쓰지 않습니다. encoder·decoder는
+  바꾸지 않습니다. 구현은 Context lane(로드맵 XXX.7)이 같은 번호로 합니다.
+
+| 대상 | 예약 | 근거 |
+|---|---|---|
+| `ReferenceTarget` Context tag | `0x05` | 기존 tag 0x01\~0x04(`crates/expressions/src/ast.rs`) 다음 |
+| `ContextKey`·`ContextProvision` chunk kind | required kind 7(`0x8000_0007`), 이름 `context-set` | 기존 kind 1\~6(`crates/storage/src/chunk/kinds.rs`) 다음. Context key는 문서 구조 해석에 필요하므로 required |
+| context-set chunk 안 record kind | `ContextKey` = `0x01`, `ContextProvision` = `0x02` | 공급은 Frame StableId로 가리키는 record라 node payload를 늘리지 않습니다 |
+| ComponentDefinition 공개 인터페이스 확장 | 정의 인코딩 끝(local token scope 뒤) tag 있는 확장 section, `ContextRequirement` 목록 tag `0x01` | 지금 인코딩에는 확장 section이 없어 bytes가 바뀌지 않습니다 |
+| Slot 공개 Context key 목록 | Slot 정의 확장 section tag `0x01` | ADR-0025 결정 3.11 |
+| semantic snapshot key | `0xE705`(컴포넌트 requirement), `0xE716`(Slot Context key), 대역 `0xECxx`(ContextKey·Provision 객체) | `crates/semantic-diff/src/keys.rs`의 빈 번호·빈 대역 |
+
+- chunk kind를 새로 두는 쪽을 골랐습니다. 기존 component-library chunk 안 record로 넣으면 컴포넌트가 없는 문서의
+  Context key 정의가 갈 곳이 없기 때문입니다.
 
 ### 9. 셸 경계
 

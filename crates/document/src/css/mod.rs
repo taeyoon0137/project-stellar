@@ -20,3 +20,37 @@ pub mod mapping;
 pub mod registry;
 pub mod shorthand;
 pub mod value;
+
+/// 예약 번호(IX.12.1)와 실제 `ReferenceTarget` tag 비교. document가 expressions에 의존하므로 여기서 봅니다.
+#[cfg(test)]
+mod reserved_numbers {
+    use stellar_core_types::ids::StableId;
+    use stellar_core_types::property::PropertyPath;
+    use stellar_core_types::reference::TokenRef;
+    use stellar_core_types::reserved::context::REFERENCE_TARGET_CONTEXT_TAG;
+    use stellar_expressions::ast::{EnvironmentKey, ReferenceTarget};
+
+    #[test]
+    fn context_tag_is_not_an_existing_reference_target_tag() {
+        // 검증 기준(IX.12.1): 예약 번호가 기존 번호와 겹치지 않음. ReferenceTarget의 모든 variant를 봅니다(새 variant가
+        // 생기면 이 match가 컴파일 실패로 갱신을 요구합니다).
+        let id = StableId::new_v7(1, 0, 1);
+        let targets = [
+            ReferenceTarget::Token(TokenRef::new(id)),
+            ReferenceTarget::Property(PropertyPath::new(id)),
+            ReferenceTarget::ComponentProperty(id),
+            ReferenceTarget::Environment(EnvironmentKey::new(1)),
+        ];
+        for target in &targets {
+            match target {
+                ReferenceTarget::Token(_)
+                | ReferenceTarget::Property(_)
+                | ReferenceTarget::ComponentProperty(_)
+                | ReferenceTarget::Environment(_) => {}
+            }
+            assert_ne!(target.tag(), REFERENCE_TARGET_CONTEXT_TAG);
+        }
+        let max = targets.iter().map(ReferenceTarget::tag).max().unwrap();
+        assert_eq!(REFERENCE_TARGET_CONTEXT_TAG, max + 1, "다음 빈 tag");
+    }
+}
