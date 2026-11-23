@@ -2,7 +2,7 @@
 
 - WBS: IX.9.1
 - 작업명: Button, TextInput, Modal, List, Radio 합성 예제 component library fixture
-- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 이 fixture에 접근성 tree golden과 IX.8.5 접근성 진단 0건 확인이 아직 없고, scene document validator(VI.10.1)는 ComponentInstance를 표현하지 못해 "document validator 0 오류"를 컴포넌트 계층 검사기로만 확인했습니다(아래 "후속 수정 (리뷰 반영)", "통합 후 확인").
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 library-finish, 아래 "작업 (2026-11-23, library-finish)" 절. 이전 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 이 fixture에 접근성 tree golden과 IX.8.5 접근성 진단 0건 확인이 아직 없고, scene document validator(VI.10.1)는 ComponentInstance를 표현하지 못해 "document validator 0 오류"를 컴포넌트 계층 검사기로만 확인했습니다(아래 "후속 수정 (리뷰 반영)", "통합 후 확인").
 - 선행: IX.6(`[x]` 전체), IX.8(section 단위 선행. 작성 당시 미착수라 완화 적용, 통합 후 IX.8.1\~IX.8.6 모두 `[x]` — 아래 "차이"·"통합 후 확인" 참고)
 
 ## 필수 실행 환경
@@ -126,3 +126,35 @@
 
 - 결함 finding(document crate test_support, 소유 lane 없음 → backlog): fixture scene을 영속 레코드(`NodePayload::ComponentInstance`)로 만들어 `validate_document` 0 오류를 확인합니다. 선행 IX.8이 모두 `[x]`이므로 이전 보고서가 정한 접근성 tree golden·IX.8.5 진단 0건도 같은 작업에서 더합니다.
 - X.11.2가 IX.9(절 단위)를 선행으로 둡니다.
+
+## 작업 (2026-11-23, library-finish): 영속 레코드 fixture와 validator finding
+
+### 한 일
+
+- `tests/integration/tests/library_component_fixture.rs`(신규): 합성 fixture scene을 영속 문서 레코드(`NodePayload::ComponentInstance`)로
+  옮겨, 같은 레코드에서 읽은 instance payload가 fixture library의 override 규칙(`check_payload_overrides`)과 instance 펼침
+  (`InstanceExpansion::walk`)을 통과하는지 확인했습니다.
+- 제품 문서 validator(`validate_document`)를 실행했더니 위반 1건이 나왔습니다: Modal instance가 body slot에 투영하는 instance 소유
+  Text(IX.3 slot override)를 `ParentNotContainer`로 거부합니다(validator는 Frame·Fragment만 자식을 허용). 이 시험은 사유를 단
+  `#[ignore]`로 두었습니다(ADR-0119 결정 8).
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-dependencies` | 101 passed, 0 failed; doctest 1 passed |
+| `cargo test -p stellar-project --lib library_` | library_entry·library_git 단위 시험 통과, 0 failed |
+| `cargo clippy -p stellar-dependencies -p stellar-project -p stellar-assets -p stellar-integration-tests --all-targets -- -D warnings` | 경고 0 |
+| `cargo xtask validate-adr --base 0c226a06` | 종료 코드 0 |
+| `cargo test -p stellar-integration-tests --test library_component_fixture` | 1 passed, 1 ignored |
+
+| 검사 | 결과 |
+|---|---|
+| 영속 레코드의 instance 5개가 override 규칙·펼침 통과(`persisted_fixture_instances_follow_library_rules`) | 통과 |
+| **document validator 0 오류**(`composed_component_library_fixture_passes_document_validator`, ignored) | 실패: `ParentNotContainer`(instance 소유 slot content) 1건 |
+
+### 남은 조건과 finding
+
+- 결함 finding(document crate `validate.rs`, 소유 밖): validator가 ComponentInstance의 instance 소유 slot content 자식을 받아야 합니다.
+  고치면 `#[ignore]`를 지우고 이 행을 `[x]`로 올립니다.
+- 접근성 tree golden은 문서 → 접근성 source tree 제품 bridge(XII.8.3)가 없어 넣지 않았습니다. 계획서 검증 열은 validator 0 오류입니다.
