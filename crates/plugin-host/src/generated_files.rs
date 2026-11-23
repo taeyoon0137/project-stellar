@@ -5,8 +5,13 @@
 
 /// 생성 파일 표.
 pub fn generated_files() -> Vec<(&'static str, String)> {
-    vec![(
-        "schemas/plugin-manifest.schema.json",
-        crate::manifest::manifest_json_schema(),
-    )]
+    let idl = crate::idl::Idl::source();
+    vec![
+        (
+            "schemas/plugin-manifest.schema.json",
+            crate::manifest::manifest_json_schema(),
+        ),
+        (crate::bindgen::RUST_PATH, crate::bindgen::render_rust(&idl)),
+        (crate::bindgen::TS_PATH, crate::bindgen::render_ts(&idl)),
+    ]
 }
