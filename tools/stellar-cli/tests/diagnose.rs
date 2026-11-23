@@ -135,6 +135,33 @@ fn diagnose_lists_filters_and_pages_without_writing() {
     assert!(items(&project).is_empty());
     let errors = envelope(&stellar(&["diagnose", path, "--severity", "error"]), 0);
     assert!(items(&errors).is_empty());
+    // 맞는 조건은 그 진단을 그대로 남깁니다(빈 결과만 보는 필터 test가 아님).
+    for args in [
+        vec!["diagnose", path, "--kind", "missing-node"],
+        vec!["diagnose", path, "--severity", "warning"],
+        vec![
+            "diagnose",
+            path,
+            "--kind",
+            "missing-font",
+            "--kind",
+            "missing-node",
+        ],
+    ] {
+        let page = envelope(&stellar(&args), 0);
+        assert_eq!(
+            num(result(&page).get("filter").unwrap(), "matching"),
+            25,
+            "{args:?}"
+        );
+        assert_eq!(items(&page).len(), 25, "{args:?}");
+    }
+    let source = str_of(first, "source").to_string();
+    let by_source = envelope(&stellar(&["diagnose", path, "--source", &source]), 0);
+    assert!(!items(&by_source).is_empty());
+    assert!(items(&by_source)
+        .iter()
+        .all(|i| str_of(i, "source") == source));
 
     assert_eq!(file_digest(&dir.path), before, "읽기 전용");
 

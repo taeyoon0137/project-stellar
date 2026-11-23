@@ -29,6 +29,7 @@ fn diagnostics_tool_filters_and_pages_the_shared_index_without_writes() {
     assert_eq!(first.get("kind").map(text), Some("missing-node"));
     assert_eq!(first.get("code").map(text), Some("unresolved-reference"));
     assert_eq!(first.get("severity").map(text), Some("warning"));
+    assert_eq!(first.get("origin").map(text), Some("references"));
     assert!(text(first.get("property").unwrap()).contains("clipping"));
     let actions: Vec<&str> = array(first.get("remediation").unwrap())
         .iter()

@@ -27,7 +27,7 @@ stellar-codegen = { path = "../codegen" }
 stellar-accessibility = { path = "../accessibility" }
 stellar-target-profile = { path = "../target-profile" }
 stellar-git-porcelain = { path = "../git-porcelain" }
-# 무결성 진단 집계·필터·pagination·remediation(ADR-0095, `stellar diagnose`·MCP `project.diagnostics`).
+# 무결성 진단 집계·필터·pagination·remediation(ADR-0095, `stellar diagnose`·MCP `document.diagnostics`).
 stellar-integrity = { path = "../integrity" }
 
 [features]

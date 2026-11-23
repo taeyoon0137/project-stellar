@@ -10,7 +10,6 @@ use stellar_ops::core_types::ids::StableId;
 use stellar_ops::integrity::diagnose_snapshot;
 use stellar_ops::integrity::diagnostic::{Diagnostic, DiagnosticKind, Severity};
 use stellar_ops::integrity::index::{DiagnosticFilter, MAX_PAGE_LIMIT};
-use stellar_ops::integrity::remediation::ActionForm;
 use stellar_ops::query::property_path_label;
 use stellar_ops::revision::ProjectRevision;
 use stellar_ops::snapshot::ProjectSnapshot;
@@ -93,13 +92,9 @@ impl PageSource for DiagnosticsPage {
             .remediation
             .iter()
             .map(|action| {
-                let form = match action.descriptor().form {
-                    ActionForm::Navigation => "navigation",
-                    ActionForm::Command => "command",
-                };
                 J::object(vec![
                     ("action", J::string(action.name())),
-                    ("form", J::string(form)),
+                    ("form", J::string(action.descriptor().form.name())),
                 ])
             })
             .collect();
@@ -108,6 +103,7 @@ impl PageSource for DiagnosticsPage {
             ("kind", J::string(d.kind().name())),
             ("severity", J::string(d.severity.name())),
             ("code", J::string(d.code())),
+            ("origin", J::string(&d.key.origin)),
             ("document", opt_id(d.document())),
             ("source", opt_id(d.source())),
             (

@@ -68,6 +68,16 @@ pub enum ActionForm {
     Command,
 }
 
+impl ActionForm {
+    /// 안정 이름(CLI·MCP 출력).
+    pub const fn name(self) -> &'static str {
+        match self {
+            ActionForm::Navigation => "navigation",
+            ActionForm::Command => "command",
+        }
+    }
+}
+
 /// inventory 항목.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActionDescriptor {

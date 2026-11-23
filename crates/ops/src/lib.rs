@@ -102,7 +102,7 @@ pub mod mcp_command_input;
 pub mod mcp_merge;
 
 /// 무결성 진단(ADR-0095): 공통 DiagnosticIndex·필터·pagination·remediation(`stellar-integrity`)과 저장 snapshot 수집.
-/// `stellar diagnose`와 MCP `project.diagnostics`가 같은 수집 함수를 씁니다.
+/// `stellar diagnose`와 MCP `document.diagnostics`가 같은 수집 함수를 씁니다.
 pub mod integrity {
     pub use stellar_integrity::*;
 

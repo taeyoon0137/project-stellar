@@ -12,7 +12,6 @@ use stellar_ops::core_types::ids::StableId;
 use stellar_ops::integrity::diagnose_snapshot;
 use stellar_ops::integrity::diagnostic::{Diagnostic, DiagnosticKind, Severity};
 use stellar_ops::integrity::index::{Cursor, DiagnosticFilter, PageError, MAX_PAGE_LIMIT};
-use stellar_ops::integrity::remediation::ActionForm;
 use stellar_ops::query::property_path_label;
 use stellar_ops::snapshot::open_snapshot;
 
@@ -119,13 +118,9 @@ fn diagnostic_json(d: &Diagnostic) -> JsonValue {
         .remediation
         .iter()
         .map(|action| {
-            let form = match action.descriptor().form {
-                ActionForm::Navigation => "navigation",
-                ActionForm::Command => "command",
-            };
             JsonValue::object(vec![
                 ("action", JsonValue::string(action.name())),
-                ("form", JsonValue::string(form)),
+                ("form", JsonValue::string(action.descriptor().form.name())),
             ])
         })
         .collect();

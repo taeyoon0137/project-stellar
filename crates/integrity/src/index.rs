@@ -692,8 +692,12 @@ mod tests {
             min_severity: Some(Severity::Warning),
             ..Default::default()
         };
-        let expected = index.count(&filter);
+        // 기대 개수는 생성 규칙에서 따로 셉니다(문서 3번, 종류 MissingAsset, 심각도 warning 이상).
+        let expected = (0..1_000_000u64)
+            .filter(|n| n % 8 == 3 && n % 10 == 3 && n % 3 != 0)
+            .count();
         assert!(expected > 0);
+        assert_eq!(index.count(&filter), expected);
         let mut cursor: Option<Cursor> = None;
         let mut total = 0;
         loop {
