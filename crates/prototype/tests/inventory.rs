@@ -103,10 +103,42 @@ fn violations<'a>(source: &str, patterns: &[&'a str]) -> Vec<&'a str> {
         .iter()
         .copied()
         .filter(|p| {
-            body.lines()
-                .any(|line| !line.trim_start().starts_with("//") && line.contains(p))
+            // 초월함수는 method 호출(`x.exp(`)과 경로 호출(`f64::exp(`) 둘 다 셉니다.
+            let path_form = p.strip_prefix('.').map(|name| format!("::{name}"));
+            body.lines().any(|line| {
+                !line.trim_start().starts_with("//")
+                    && (line.contains(p) || path_form.as_deref().is_some_and(|f| line.contains(f)))
+            })
         })
         .collect()
+}
+
+#[test]
+fn inventory_lists_every_engine_source() {
+    // 새 source file이 inventory에서 빠지지 않도록, 검사 대상 디렉터리의 `.rs` 파일이 모두 목록에 있는지 봅니다.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dirs = [
+        (root.join("src"), ""),
+        (root.join("../document/src/motion"), "document motion/"),
+        (
+            root.join("../document/src/prototype"),
+            "document prototype/",
+        ),
+    ];
+    let listed: Vec<&str> = ENGINE.iter().map(|(name, _)| *name).collect();
+    for (dir, prefix) in dirs {
+        for entry in std::fs::read_dir(&dir).expect("디렉터리") {
+            let path = entry.expect("항목").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let file = path.file_name().and_then(|f| f.to_str()).expect("이름");
+            if prefix.is_empty() || file != "mod.rs" {
+                let name = format!("{prefix}{file}");
+                assert!(listed.contains(&name.as_str()), "inventory에 없음: {name}");
+            }
+        }
+    }
 }
 
 #[test]
@@ -141,6 +173,8 @@ fn violation_fixtures_are_caught() {
     assert!(!violations(clock, SIDE_CHANNELS).is_empty());
     let spring = "fn f(t: f64) -> f64 { (-t).exp() * t.cos() }";
     assert_eq!(violations(spring, TRANSCENDENTAL), vec![".exp(", ".cos("]);
+    let path_call = "fn f(t: f64) -> f64 { f64::sin(t) }";
+    assert_eq!(violations(path_call, TRANSCENDENTAL), vec![".sin("]);
     let file = "use std::fs::read; fn x() {}";
     assert!(!violations(file, SIDE_CHANNELS).is_empty());
     // 주석과 시험 module은 세지 않습니다.
