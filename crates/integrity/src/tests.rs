@@ -415,7 +415,12 @@ fn fixture_counts_are_exact_per_kind_and_severity() {
     };
     // 오류: 접근성 label 누락 1 + target unsupported 1.
     assert_eq!(index.count(&errors), 2);
+    // 모든 진단은 XXV.2.2 필드를 갖고 schema round-trip합니다.
     let all: Vec<Diagnostic> = index.iter().collect();
+    assert_eq!(
+        crate::codec::decode(&crate::codec::encode(&all)).unwrap(),
+        all
+    );
     for d in &all {
         assert!(!d.code().is_empty() && !d.key.origin.is_empty());
         if d.document().is_some() {

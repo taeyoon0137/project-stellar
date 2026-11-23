@@ -16,6 +16,9 @@
 /// 진단 한 건과 정체성 (XXV.2.1, XXV.2.2).
 pub mod diagnostic;
 
+/// 진단 목록 저장 schema v1 (XXV.2.2).
+pub mod codec;
+
 /// remediation action inventory와 계획 (XXV.3.3).
 pub mod remediation;
 
