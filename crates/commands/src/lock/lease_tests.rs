@@ -277,13 +277,149 @@ fn agent_scope_escape_is_rejected() {
 fn system_origin_is_not_judged_but_reports_touched_leases() {
     let mut state = state();
     let table = table(&state, &[13]);
-    let before = table.snapshot(state.model());
+    let original = copy(&state);
     let transaction = tx(&state, CommandOrigin::System, rename(14));
     let applied = execute_leased(&mut state, &transaction, &table).unwrap();
+    let before = table.snapshot(original.model(), &applied.changes);
     assert_eq!(
         table.touched_leases(&before, state.model(), &applied.changes),
         [LeaseId(sid(900))].into_iter().collect()
     );
+}
+
+fn copy(state: &DocumentState) -> DocumentState {
+    let (model, _) = DocumentModel::from_records(records(state)).unwrap();
+    DocumentState::with_revision(model, state.revision())
+}
+
+/// 옛 판정 입력: 잠긴 subtree 전체를 걸어 만든 소속(ADR-0132 이전 `LeaseTable::snapshot`). 비교 기준으로만 씁니다.
+fn walked_snapshot(table: &LeaseTable, model: &DocumentModel) -> LeaseSnapshot {
+    let mut snapshot = LeaseSnapshot::default();
+    for (root, lease) in table.roots(model.document_id()) {
+        if !model.contains(root) {
+            continue;
+        }
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            if snapshot.covered.insert(node, lease).is_none() {
+                pending.extend(model.children_in_order(node));
+            }
+        }
+        for ancestor in proper_ancestors(model, root) {
+            snapshot.ancestors.insert(ancestor, lease);
+        }
+    }
+    snapshot
+}
+
+/// root(10) ─ 11 ─ 13 ─ 14 ─ 15, 11 ─ 16, root ─ 12 ─ 17 ─ 18.
+fn deep_state() -> DocumentState {
+    let mut model = DocumentModel::new(definition());
+    for (id, parent, key) in [
+        (10, None, 0x10),
+        (11, Some(10), 0x10),
+        (12, Some(10), 0x20),
+        (13, Some(11), 0x10),
+        (16, Some(11), 0x20),
+        (14, Some(13), 0x10),
+        (15, Some(14), 0x10),
+        (17, Some(12), 0x10),
+        (18, Some(17), 0x10),
+    ] {
+        model.insert_node(frame(id, parent, key)).expect("node");
+    }
+    DocumentState::with_revision(model, stellar_core_types::revision::DocumentRevision(3))
+}
+
+#[test]
+fn ancestor_walk_judgement_matches_the_subtree_walk_for_every_case() {
+    // 검증 기준(ADR-0132 결정 1): 변경 node의 조상만 보는 판정이 잠긴 subtree 전체를 걷던 판정과 모든 경우에 같습니다.
+    // lease 배치(하나·둘) × command(이름, 삭제, 이동, 추가, 여러 command 묶음) × 주체(사용자, 각 lease, 없는 lease).
+    let nodes = [10u64, 11, 12, 13, 14, 15, 16, 17, 18];
+    let layouts: Vec<Vec<(u64, Vec<u64>)>> = {
+        let mut out: Vec<Vec<(u64, Vec<u64>)>> =
+            nodes.iter().map(|n| vec![(900, vec![*n])]).collect();
+        out.push(vec![(900, vec![13]), (901, vec![17])]);
+        out.push(vec![(900, vec![14, 16]), (901, vec![12])]);
+        out.push(vec![(900, vec![11]), (901, vec![18])]);
+        out
+    };
+    let mut commands: Vec<Vec<Command>> = Vec::new();
+    for n in nodes {
+        commands.push(vec![rename(n)]);
+        commands.push(vec![delete(n)]);
+        commands.push(vec![insert(40, n)]);
+        for p in nodes {
+            commands.push(vec![move_to(n, p, 0x40)]);
+        }
+    }
+    commands.push(vec![move_to(14, 12, 0x40), delete(11)]);
+    commands.push(vec![move_to(17, 13, 0x40), rename(18), delete(12)]);
+    commands.push(vec![insert(40, 15), move_to(40, 18, 0x40)]);
+    commands.push(vec![move_to(13, 17, 0x40), move_to(13, 11, 0x40)]);
+    commands.push(vec![delete(14), insert(41, 13)]);
+    let mut compared = 0usize;
+    for layout in &layouts {
+        let base = deep_state();
+        let mut table = LeaseTable::new();
+        for (id, roots) in layout {
+            table.insert(lease(*id, base.model(), roots)).unwrap();
+        }
+        for batch in &commands {
+            for origin in [user(), agent(900), agent(901), agent(999)] {
+                let transaction = batch.iter().cloned().fold(
+                    CommandTransaction::new(CommandId::from_stable_id(sid(5000)), origin),
+                    |tx, command| tx.with_command(base.revision(), command),
+                );
+                // 기준: 사본에서 실행하고 실행 전 사본을 걸어 만든 소속으로 판정합니다.
+                let original = copy(&base);
+                let mut plain = copy(&base);
+                let Ok(applied) = plain.execute_transaction(&transaction) else {
+                    continue;
+                };
+                let expected = match Actor::of(origin) {
+                    Some(actor) => table.judge(
+                        &walked_snapshot(&table, original.model()),
+                        plain.model(),
+                        &applied.changes,
+                        actor,
+                    ),
+                    None => Ok(()),
+                };
+                assert_eq!(
+                    table.snapshot(original.model(), &applied.changes).covered,
+                    walked_snapshot(&table, original.model())
+                        .covered
+                        .into_iter()
+                        .filter(|(node, _)| applied.changes.changed_nodes().contains(node)
+                            || applied.changes.removed_nodes().contains(node))
+                        .collect(),
+                    "{layout:?} {batch:?}"
+                );
+                let mut state = copy(&base);
+                let before = records(&state);
+                let got = match execute_leased(&mut state, &transaction, &table) {
+                    Ok(_) => Ok(()),
+                    Err(LeasedExecutionError::Lease(violation)) => {
+                        assert_eq!(records(&state), before, "거부 뒤 문서 그대로");
+                        assert_eq!(state.revision(), base.revision(), "거부 뒤 revision 그대로");
+                        Err(violation)
+                    }
+                    Err(other) => panic!("{other}"),
+                };
+                assert_eq!(got, expected, "{layout:?} {batch:?} {origin:?}");
+                if got.is_ok() {
+                    assert_eq!(
+                        records(&state),
+                        records(&plain),
+                        "통과하면 일반 실행과 같은 결과"
+                    );
+                }
+                compared += 1;
+            }
+        }
+    }
+    assert!(compared > 1000, "비교 수 {compared}");
 }
 
 #[test]

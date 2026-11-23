@@ -14,7 +14,7 @@ use stellar_ops::commands::state::DocumentState;
 use stellar_ops::commands::transaction::{AppliedTransaction, CommandTransaction};
 use stellar_ops::core_types::ids::StableId;
 use stellar_ops::core_types::revision::DocumentRevision;
-use stellar_ops::diff::{diff_records, DiffReport};
+use stellar_ops::diff::{diff_documents, DiffReport, DocumentInput};
 use stellar_ops::revision::ProjectRevision;
 use stellar_ops::validate::{validate_records, Definitions, Finding};
 
@@ -176,7 +176,7 @@ pub fn agent_transaction(
 pub struct AgentPreview {
     /// 미리보기를 만든 문서 revision(적용 전과 같음).
     pub revision: DocumentRevision,
-    /// 적용 전후 semantic diff(XIV.3).
+    /// 적용 전후 semantic diff(XIV.3). 레코드와 영속 Component Context를 함께 비교합니다(문서 범위, ADR-0132 결정 5).
     pub diff: DiffReport,
     /// 적용했을 때의 문서 검증 진단(`stellar validate`와 같은 함수).
     pub findings: Vec<Finding>,
@@ -198,8 +198,13 @@ pub fn preview<'a>(
         PreviewError::Transaction(e) => AttachedEditError::Rejected(e.to_string()),
         PreviewError::Copy(e) => AttachedEditError::Internal(e),
     })?;
-    let diff = diff_records(&[&preview.before], &[&preview.after])
-        .map_err(|e| AttachedEditError::Internal(e.0))?;
+    let input = |records, context| DocumentInput { records, context };
+    let diff = diff_documents(
+        &[input(&preview.before, &preview.before_context)],
+        &[input(&preview.after, &preview.after_context)],
+        None,
+    )
+    .map_err(|e| AttachedEditError::Internal(e.0))?;
     let findings = validate_records(state.model().document_id(), &preview.after, definitions);
     Ok(AgentPreview {
         revision: state.revision(),

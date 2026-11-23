@@ -14,9 +14,17 @@
 //! - 앱이 시작한 세션([`SessionOrigin::AppStarted`])은 권한·lease 수명을 AgentSession(XXIX.2.8)이
 //!   정하므로 종료 절차를 호출하지 않고 event만 기록합니다.
 //!
-//! handshake 뒤의 bridge↔app 메시지는 아직 정의되지 않았으므로(XIX.9.4), 감시 스레드가 data를 받으면
-//! protocol 위반으로 연결을 닫습니다(fail closed). 이 crate는 document·commands에 의존하지 않으므로
-//! 감시와 종료 event 기록은 문서 상태를 바꿀 수 없습니다.
+//! 감시 방식은 둘입니다.
+//!
+//! - [`ConnectionMonitor::watch`]: 메시지를 주고받지 않는 연결. 감시 스레드가 data를 받으면 protocol 위반으로
+//!   연결을 닫습니다(fail closed).
+//! - [`ConnectionMonitor::serve`]: handshake 뒤 bridge↔app frame([`crate::frame`])을 주고받는 연결(ADR-0132 결정 2).
+//!   감시 스레드가 연결을 [`FrameService`]에 넘겨 frame을 처리하게 하고, 서비스가 돌아오면(연결 끝, 형식이 틀린
+//!   frame, 읽기·쓰기 오류) 같은 종료 event를 한 번 기록합니다. 이 연결의 종료 절차는 서비스가 맡으므로(앱 runtime
+//!   앞단의 연결 종료 요청) [`SessionTermination`]을 부르지 않습니다. 종료 절차 경로가 하나입니다.
+//!
+//! 이 crate는 document·commands에 의존하지 않으므로 감시와 종료 event 기록은 문서 상태를 바꿀 수 없습니다. frame
+//! 해석과 문서 변경 요청은 서비스 구현(앱 runtime)이 합니다.
 
 use std::io::{self, Read};
 use std::net::Shutdown;
@@ -73,6 +81,35 @@ pub enum CloseCause {
     },
 }
 
+impl CloseCause {
+    /// frame 연결이 끝난 이유([`crate::frame::read_frame`]·[`crate::frame::write_frame`] 실패)를 종료 이유로 바꿉니다.
+    /// frame 경계의 끝은 bridge 종료, 입출력 오류는 읽기 오류, 그 밖(중간에서 끊김, magic·version·종류·길이·payload
+    /// 형식 위반)은 정의되지 않은 data입니다.
+    pub fn of_frame_error(error: &crate::frame::FrameError) -> CloseCause {
+        use crate::frame::FrameError;
+        match error {
+            FrameError::Closed => CloseCause::PeerClosed,
+            FrameError::Io(kind) => CloseCause::ReadError { kind: *kind },
+            FrameError::Truncated
+            | FrameError::BadMagic
+            | FrameError::UnsupportedVersion(_)
+            | FrameError::UnknownKind(_)
+            | FrameError::TooLarge(_)
+            | FrameError::Malformed(_) => CloseCause::UnexpectedData,
+        }
+    }
+}
+
+/// handshake 뒤 frame 연결 하나를 처리하는 앱 쪽 구현(ADR-0132 결정 2). 감시 스레드에서 한 번 호출됩니다.
+///
+/// 구현은 `stream`에서 frame을 읽어 처리하고 응답 frame을 씁니다. 연결이 끝나면(또는 형식이 틀린 frame을 받으면)
+/// 연결 종료 절차를 마친 뒤 끝난 이유를 돌려줍니다. 앱이 연결을 닫으면([`ConnectionMonitor::close`]) socket이
+/// 닫혀 읽기가 끝납니다.
+pub trait FrameService: Send + 'static {
+    /// 연결 하나를 끝까지 처리합니다.
+    fn serve(&mut self, connection: ConnectionId, stream: &mut UnixStream) -> CloseCause;
+}
+
 /// 연결 종료 event. 연결마다 정확히 한 번 기록합니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConnectionClosed {
@@ -101,7 +138,8 @@ struct Shared {
     peer: AuthenticatedPeer,
     closed: AtomicBool,
     events: Mutex<Sender<ConnectionClosed>>,
-    termination: Arc<dyn SessionTermination>,
+    /// 외부 클라이언트 종료 절차. frame 연결은 서비스가 맡아 `None`입니다.
+    termination: Option<Arc<dyn SessionTermination>>,
 }
 
 impl Shared {
@@ -117,7 +155,9 @@ impl Shared {
             cause,
         };
         if self.origin == SessionOrigin::External {
-            self.termination.begin_external_termination(&event);
+            if let Some(termination) = &self.termination {
+                termination.begin_external_termination(&event);
+            }
         }
         let sender = self.events.lock().unwrap_or_else(|e| e.into_inner());
         let _ = sender.send(event);
@@ -151,6 +191,37 @@ impl ConnectionMonitor {
         events: Sender<ConnectionClosed>,
         termination: Arc<dyn SessionTermination>,
     ) -> io::Result<ConnectionMonitor> {
+        ConnectionMonitor::start(connection, origin, events, Some(termination), watch_loop)
+    }
+
+    /// 인증된 frame 연결의 감시를 시작하고 연결을 `service`에 넘깁니다(모듈 문서). 서비스가 돌아오면 종료 event를
+    /// `events`로 한 번 보냅니다. 종료 절차는 서비스가 맡으므로 [`SessionTermination`]을 받지 않습니다.
+    pub fn serve(
+        connection: AppConnection,
+        origin: SessionOrigin,
+        events: Sender<ConnectionClosed>,
+        mut service: Box<dyn FrameService>,
+    ) -> io::Result<ConnectionMonitor> {
+        ConnectionMonitor::start(
+            connection,
+            origin,
+            events,
+            None,
+            move |mut reader, shared| {
+                let cause = service.serve(shared.id, &mut reader);
+                shared.record(cause);
+                let _ = reader.shutdown(Shutdown::Both);
+            },
+        )
+    }
+
+    fn start(
+        connection: AppConnection,
+        origin: SessionOrigin,
+        events: Sender<ConnectionClosed>,
+        termination: Option<Arc<dyn SessionTermination>>,
+        run: impl FnOnce(UnixStream, &Shared) + Send + 'static,
+    ) -> io::Result<ConnectionMonitor> {
         let peer = connection.peer();
         let stream = connection.into_stream();
         // handshake timeout을 풀고 bridge가 끝날 때까지 기다립니다.
@@ -167,7 +238,7 @@ impl ConnectionMonitor {
         let thread_shared = Arc::clone(&shared);
         let thread = std::thread::Builder::new()
             .name(CONNECTION_THREAD_NAME.into())
-            .spawn(move || watch_loop(reader, &thread_shared))?;
+            .spawn(move || run(reader, &thread_shared))?;
         Ok(ConnectionMonitor {
             shared,
             stream,
@@ -350,6 +421,133 @@ mod tests {
         session.stream().set_nonblocking(false).unwrap();
         session.stream().set_read_timeout(Some(WAIT)).unwrap();
         assert_eq!(session.stream().read_to_end(&mut rest).unwrap(), 0);
+    }
+
+    /// 받은 frame마다 같은 요청 id의 `Reply`를 쓰는 서비스(test double).
+    struct EchoService {
+        served: Arc<AtomicUsize>,
+    }
+
+    impl FrameService for EchoService {
+        fn serve(&mut self, _connection: ConnectionId, stream: &mut UnixStream) -> CloseCause {
+            use crate::frame::{read_frame, write_frame, Frame};
+            loop {
+                let frame = match read_frame(stream) {
+                    Ok(frame) => frame,
+                    Err(error) => return CloseCause::of_frame_error(&error),
+                };
+                self.served.fetch_add(1, Ordering::SeqCst);
+                let reply = Frame::Reply {
+                    request: frame.request(),
+                    result: "ok".into(),
+                    message: "echo".into(),
+                };
+                if let Err(error) = write_frame(stream, &reply) {
+                    return CloseCause::of_frame_error(&error);
+                }
+            }
+        }
+    }
+
+    fn serve_pair(
+        tmp: &TempDir,
+        origin: SessionOrigin,
+    ) -> (
+        AppListener,
+        Session,
+        ConnectionMonitor,
+        Receiver<ConnectionClosed>,
+        Arc<AtomicUsize>,
+    ) {
+        let (app, session, connection) = pair(tmp);
+        let (tx, rx) = mpsc::channel();
+        let served = Arc::new(AtomicUsize::new(0));
+        let monitor = ConnectionMonitor::serve(
+            connection,
+            origin,
+            tx,
+            Box::new(EchoService {
+                served: Arc::clone(&served),
+            }),
+        )
+        .unwrap();
+        (app, session, monitor, rx, served)
+    }
+
+    #[test]
+    fn frame_connection_is_served_and_closes_once() {
+        // 검증 기준(ADR-0132 결정 2): handshake 뒤 frame은 서비스가 처리하고 응답을 쓰며, bridge가 끝나면 종료 event를
+        // 한 번 기록합니다.
+        use crate::frame::{read_frame, write_frame, Frame};
+        let tmp = TempDir::new();
+        let (_app, mut session, monitor, rx, served) = serve_pair(&tmp, SessionOrigin::External);
+        let stream = session.stream();
+        stream.set_nonblocking(false).unwrap();
+        stream.set_read_timeout(Some(WAIT)).unwrap();
+        for request in [7u64, 8] {
+            write_frame(stream, &Frame::Complete { request }).unwrap();
+            assert_eq!(
+                read_frame(stream).unwrap(),
+                Frame::Reply {
+                    request,
+                    result: "ok".into(),
+                    message: "echo".into()
+                }
+            );
+        }
+        assert!(
+            rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "연결 중 event 없음"
+        );
+        drop(session);
+        let event = rx.recv_timeout(WAIT).unwrap();
+        assert_eq!(event.cause, CloseCause::PeerClosed);
+        assert_eq!(event.id, monitor.id());
+        assert_eq!(served.load(Ordering::SeqCst), 2);
+        assert!(monitor.is_closed());
+        drop(monitor);
+        assert!(
+            rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "event 1회"
+        );
+    }
+
+    #[test]
+    fn malformed_frame_closes_served_connection_as_unexpected_data() {
+        let tmp = TempDir::new();
+        let (_app, mut session, _monitor, rx, served) = serve_pair(&tmp, SessionOrigin::AppStarted);
+        session.stream().write_all(b"XX-not-a-frame--").unwrap();
+        let event = rx.recv_timeout(WAIT).unwrap();
+        assert_eq!(event.cause, CloseCause::UnexpectedData);
+        assert_eq!(served.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn frame_errors_map_to_close_causes() {
+        use crate::frame::FrameError;
+        assert_eq!(
+            CloseCause::of_frame_error(&FrameError::Closed),
+            CloseCause::PeerClosed
+        );
+        assert_eq!(
+            CloseCause::of_frame_error(&FrameError::Io(io::ErrorKind::BrokenPipe)),
+            CloseCause::ReadError {
+                kind: io::ErrorKind::BrokenPipe
+            }
+        );
+        for error in [
+            FrameError::Truncated,
+            FrameError::BadMagic,
+            FrameError::UnsupportedVersion(9),
+            FrameError::UnknownKind(9),
+            FrameError::TooLarge(1),
+            FrameError::Malformed("x"),
+        ] {
+            assert_eq!(
+                CloseCause::of_frame_error(&error),
+                CloseCause::UnexpectedData
+            );
+        }
     }
 
     #[test]

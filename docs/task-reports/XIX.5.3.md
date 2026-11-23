@@ -47,3 +47,22 @@
 
 - `537dbbd7`
 - `f8ad5150`
+
+## 추가 작업: 미리보기 diff가 Component Context도 비교 (ADR-0132 결정 5, lane `agent-lease-perf`)
+
+### 변경 파일
+
+- `crates/commands/src/lock/lease.rs`: `lease::preview`의 문서 사본이 레코드와 함께 Component Context와 활성 기본값 세트 이름을 옮기고, `LeasePreview`가 적용 전·후 영속 Context(`before_context`, `after_context`)를 싣습니다.
+- `crates/agent-edit/src/attached/edit.rs`·`edit_tests.rs`: attached 미리보기의 semantic diff를 `diff_records`(레코드만) 대신 `diff_documents`(문서 범위, 레코드와 Context)로 만듭니다.
+
+### 구현 요약
+
+- 전에는 사본을 레코드로만 만들어 Context를 잃었으므로, Context command 미리보기는 diff가 비었고 사본에 적용한 결과도 실제 적용과 다를 수 있었습니다(사본에는 key·provision이 없음). 이제 사본에 적용한 결과가 실제 적용과 같고, diff는 외부 변경 분석·창 reconciliation과 같은 투영입니다.
+
+### 검증
+
+| 명령 / test | 결과 |
+|---|---|
+| `cargo test -p stellar-agent-edit --lib attached::edit` | 통과 |
+| `preview_diff_includes_component_context_changes` | 통과: ContextKey 생성 proposal의 미리보기 diff에 그 key 항목이 있고, 원본 문서의 레코드와 Context는 그대로 |
+| `cargo test -p stellar-commands --lib lock::` | 통과(`preview_does_not_change_document_state` 포함) |

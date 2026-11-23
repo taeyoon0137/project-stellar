@@ -74,6 +74,9 @@ pub mod lease;
 /// 실행 인자로 고정한 신뢰 프로젝트 루트의 읽기 전용 backend (XIX.9.3).
 pub mod headless;
 
+/// attached backend의 앱 연결: 편집 tool 호출을 bridge→app frame으로 (XIX.9.4 일부, ADR-0132).
+pub mod attached;
+
 /// 테스트 fixture 전용 재노출. 제품 빌드에는 없습니다.
 #[cfg(feature = "test-support")]
 pub use stellar_ops::test_support;

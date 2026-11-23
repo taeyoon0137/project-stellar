@@ -23,6 +23,28 @@ fn micros(start: Instant) -> u128 {
     start.elapsed().as_micros()
 }
 
+/// `node` 이름 변경의 change set(문서 사본에서 만듦).
+fn apply_probe(state: &DocumentState, node: StableId) -> stellar_ops::commands::change::ChangeSet {
+    let records = state.model().to_records().unwrap();
+    let (copy, _) =
+        stellar_ops::commands::document::model::DocumentModel::from_records(records).unwrap();
+    let mut copy = DocumentState::with_revision(copy, state.revision());
+    let commands = decode_commands(&[CommandInput::Rename {
+        node,
+        name: "probe".to_string(),
+    }])
+    .unwrap();
+    let transaction = stellar_ops::commands::transaction::CommandTransaction {
+        id: CommandId::from_bytes([0xee; 16]),
+        origin: stellar_ops::commands::id::CommandOrigin::User,
+        requests: commands
+            .into_iter()
+            .map(|c| stellar_ops::commands::request::CommandRequest::new(state.revision(), c))
+            .collect(),
+    };
+    copy.execute_transaction(&transaction).unwrap().changes
+}
+
 #[test]
 #[ignore = "release 측정(문서 참고)"]
 fn occupancy_trace_200k() {
@@ -66,8 +88,49 @@ fn occupancy_trace_200k() {
         let mut table = LeaseTable::new();
         let start = Instant::now();
         table.insert(resolved).unwrap();
-        let _ = table.snapshot(state.model());
         println!("lease-table {name}: {} us", micros(start));
+        // 판정 입력(ADR-0132 결정 1): 변경 node 하나의 적용 전 소속. 잠긴 subtree 크기와 관계없습니다.
+        let probe = apply_probe(&state, leaves[0]);
+        let start = Instant::now();
+        let _ = table.snapshot(state.model(), &probe);
+        println!(
+            "lease-snapshot {name} (변경 node 1개): {} us",
+            micros(start)
+        );
+    }
+
+    // 사용자 편집 판정(XIX.4.3): 문서 전체 lease 안 node 이름 변경은 거부되고 문서는 그대로입니다. 적용·판정·되돌리기 전체.
+    {
+        let mut table = LeaseTable::new();
+        table
+            .insert(
+                LeaseTargets {
+                    document,
+                    targets: vec![root],
+                    externals: Vec::new(),
+                }
+                .resolve(state.model(), lease)
+                .unwrap(),
+            )
+            .unwrap();
+        let commands = decode_commands(&[CommandInput::Rename {
+            node: leaves[1],
+            name: "user".to_string(),
+        }])
+        .unwrap();
+        let transaction = stellar_ops::commands::transaction::CommandTransaction {
+            id: CommandId::from_bytes([0xef; 16]),
+            origin: stellar_ops::commands::id::CommandOrigin::User,
+            requests: commands
+                .into_iter()
+                .map(|c| stellar_ops::commands::request::CommandRequest::new(state.revision(), c))
+                .collect(),
+        };
+        let start = Instant::now();
+        let refused =
+            stellar_ops::commands::lock::lease::execute_leased(&mut state, &transaction, &table);
+        println!("user-edit in root lease (거부): {} us", micros(start));
+        assert!(refused.is_err());
     }
 
     // batch 적용: rename N개, lease 판정·출처 기록 포함. lease는 문서 전체(root)와 group 하나(500 node) 두 경우.
@@ -80,7 +143,12 @@ fn occupancy_trace_200k() {
         .map(|n| n.id)
         .collect();
     let cases: Vec<(&str, StableId, &[StableId], &[usize])> = vec![
-        ("root", root, &leaves, &[1, 16, 64, 256, 1024, 4096, 10_000]),
+        (
+            "root",
+            root,
+            &leaves,
+            &[1, 16, 64, 256, 512, 1024, 4096, 10_000],
+        ),
         ("group", groups[0], &one_group, &[1, 64, 256, 499]),
     ];
     let mut round = 0u8;
