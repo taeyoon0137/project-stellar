@@ -185,6 +185,36 @@ fn partial_same_chunk_property_stage_unstage_commit() {
 }
 
 #[test]
+fn staging_every_change_does_not_pull_unselected_design_files() {
+    let (fx, model) = baseline("engine-implicit");
+    save_documents(fx.work(), &[&edit_root(&model)]);
+    std::fs::write(fx.work().join("design/notes.txt"), b"not selected").unwrap();
+    let s = session(&fx);
+    let all: Vec<GitItem> = area(&status(&s), StatusArea::Unstaged)
+        .into_iter()
+        .map(GitItem::Change)
+        .collect();
+    assert_eq!(all.len(), 2);
+    let outcome = s.stage(all, vec![]).unwrap();
+    // 의미가 작업 트리와 같으므로 generation 저장 파일은 작업 트리 bytes 그대로입니다.
+    assert!(outcome.units.contains(&SourceUnit::Generation));
+    assert!(git_text(
+        &fx,
+        fx.work(),
+        &["diff", "--name-only", "--", "design/current"]
+    )
+    .is_empty());
+    let staged = git_text(&fx, fx.work(), &["diff", "--cached", "--name-only"]);
+    assert!(!staged.lines().any(|l| l == "design/notes.txt"), "{staged}");
+    assert!(staged.lines().all(|l| l.starts_with("design/")), "{staged}");
+    // 명시적인 generation 묶음 선택은 정의대로 `design/` 전체를 포함합니다.
+    s.stage(vec![GitItem::Unit(SourceUnit::Generation)], vec![])
+        .unwrap();
+    let staged = git_text(&fx, fx.work(), &["diff", "--cached", "--name-only"]);
+    assert!(staged.lines().any(|l| l == "design/notes.txt"), "{staged}");
+}
+
+#[test]
 fn invalid_staged_snapshot_never_runs_git_commit() {
     let (fx, _) = baseline("engine-invalid");
     // 기존 chunk object를 손상시켜 stage합니다.

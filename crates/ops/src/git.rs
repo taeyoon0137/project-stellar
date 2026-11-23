@@ -666,6 +666,13 @@ fn companion_closure(
     Ok((units, reasons))
 }
 
+/// generation 저장 경로(`design/current`, `design/generations/`, `design/objects/`).
+fn is_generation_storage(path: &[u8]) -> bool {
+    path == b"design/current"
+        || path.starts_with(b"design/generations/")
+        || path.starts_with(b"design/objects/")
+}
+
 fn read_tree_file_bytes(root: &Path, path: &GitPath, kind: FileModeKind) -> Option<Vec<u8>> {
     let local = root.join(path.to_path_buf()?);
     match kind {
@@ -830,7 +837,9 @@ fn prepare_selection(
     // 선택 결과가 원천(stage: 저장된 WT, unstage: HEAD) generation과 의미가 같으면 새 generation을 만들지 않고
     // 원천 bytes를 그대로 씁니다. 저장 왕복이 무손실로 증명된 snapshot끼리의 같음이라 같은 원본입니다.
     // 그래서 전부 unstage하면 `git diff --cached`가 비고, 전부 stage하면 generation 파일이 WT와 같아집니다.
-    if has_changes && semantic.snapshot() == &source_semantic {
+    // 이때 바꾸는 경로는 generation 저장 경로뿐입니다. 고르지 않은 `design/` 아래 다른 파일은 포함하지 않습니다.
+    let implicit_generation = has_changes && semantic.snapshot() == &source_semantic;
+    if implicit_generation {
         units.insert(SourceUnit::Generation);
     }
 
@@ -893,7 +902,14 @@ fn prepare_selection(
 
     // 원본 단위: 단위 경로를 원천(stage: 저장된 작업 트리, unstage: HEAD)과 같게 만듭니다.
     if !units.is_empty() {
-        let covered = |path: &GitPath| units.iter().any(|u| u.contains(path.as_bytes()));
+        let covered = |path: &GitPath| {
+            units.iter().any(|u| {
+                u.contains(path.as_bytes())
+                    && (!implicit_generation
+                        || *u != SourceUnit::Generation
+                        || is_generation_storage(path.as_bytes()))
+            })
+        };
         files.retain(|path, _| !covered(path));
         match request.operation {
             SelectionOperation::Stage => {

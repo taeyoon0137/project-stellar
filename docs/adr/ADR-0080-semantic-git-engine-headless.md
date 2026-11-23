@@ -55,6 +55,7 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
    - 필수가 아닌 승인은 오래된 승인으로 거부합니다.
 6. **같은 의미면 원천 bytes를 씁니다.** 선택 결과의 semantic snapshot이 원천과 같으면 새 generation을 쓰지 않고 generation 묶음을 원천 bytes로 둡니다. 원천은 stage면 저장된 작업 트리, unstage면 HEAD입니다.
    - 같음은 저장 왕복이 무손실로 증명된 snapshot끼리의 비교입니다(`saved_semantic_snapshot`).
+   - 이때 원천 bytes로 바꾸는 경로는 generation 저장 경로(`design/current`, `design/generations/`, `design/objects/`)뿐입니다. 고르지 않은 `design/` 아래 다른 파일은 포함하지 않습니다. 명시적인 `generation` 선택만 `design/` 전체를 포함합니다.
    - 그래서 모두 unstage하면 `git diff --cached`가 비고, 모두 stage하면 generation 파일이 작업 트리와 같아집니다.
 7. **commit 순서.**
    1. trust를 확인합니다.
