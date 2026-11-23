@@ -80,6 +80,9 @@ pub mod path_edit;
 /// 기본값 세트 선택과 명시 layout longhand command (SD.4, ADR-0086).
 pub mod style_defaults;
 
+/// 에이전트 승인 batch 기록: 역 transaction 보존과 값 지문 (XIX.6.1, ADR-0100).
+pub mod agent_batch;
+
 /// 원본과 독립적인 subtree 클립보드와 Paste 계획.
 pub mod paste;
 
