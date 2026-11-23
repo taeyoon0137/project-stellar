@@ -31,6 +31,7 @@ use stellar_document::context::set::ContextSet;
 use stellar_document::model::DocumentModel;
 
 use crate::change::{node_keys, ChangeSet};
+use crate::command::CommandError;
 use crate::guard::TransactionGuard;
 use crate::id::CommandOrigin;
 use crate::state::DocumentState;
@@ -732,11 +733,12 @@ impl std::error::Error for LeasedExecutionError {}
 /// lease 판정을 거쳐 transaction을 실행합니다(XIX.4.3 user command validator, XIX.5.2 범위 검사).
 ///
 /// 판정 주체는 transaction 출처입니다([`Actor::of`]). 시스템·migration 출처이거나, 사용자 편집인데 이 문서에
-/// lease가 없으면 판정 없이 [`DocumentState::execute_transaction`]과 같습니다. /// 판정할 때는 같은 실행 경로로
+/// lease가 없으면 판정 없이 [`DocumentState::execute_transaction`]과 같습니다. 판정할 때는 같은 실행 경로로
 /// 적용한 뒤 결과 [`ChangeSet`]을 [`LeaseTable::judge`]로 보고, 거부하면 역 transaction으로 되돌리고
 /// revision을 실행 전 값으로 돌립니다. 적용 전 소속([`LeaseSnapshot`])은 역 transaction을 guard 안에서 적용한 문서로
-/// 만들고 guard journal로 적용 후 문서로 되돌립니다(ADR-0132 결정 1). 그 과정이 실패하면 판정하지 않고 거부합니다
-/// ([`ViolationReason::Unjudged`]). 거부된 실행은 밖에서 관찰되지 않으므로(change set·역 transaction을
+/// 만들고 guard journal로 적용 후 문서로 되돌립니다(ADR-0132 결정 1). 역 transaction 적용이 실패하면 판정하지 않고
+/// 거부합니다([`ViolationReason::Unjudged`]). guard 되돌리기마저 실패하면 문서가 적용 후 상태라는 보장이 없으므로 역
+/// transaction을 다시 적용하지 않고 [`LeasedExecutionError::Restore`]로 알립니다(내부 불일치 신호). 거부된 실행은 밖에서 관찰되지 않으므로(change set·역 transaction을
 /// 내보내지 않음) 문서는 실행 전과 같은 의미 상태·revision입니다.
 pub fn execute_leased(
     state: &mut DocumentState,
@@ -757,12 +759,21 @@ pub fn execute_leased(
     let applied = state
         .execute_transaction(transaction)
         .map_err(LeasedExecutionError::Transaction)?;
+    let unjudged = LeaseViolation {
+        node: StableId::NIL,
+        reason: ViolationReason::Unjudged,
+    };
     let verdict = match snapshot_before(state, table, &applied) {
-        Some(before) => table.judge(&before, state.model(), &applied.changes, actor),
-        None => Err(LeaseViolation {
-            node: StableId::NIL,
-            reason: ViolationReason::Unjudged,
-        }),
+        Ok(Some(before)) => table.judge(&before, state.model(), &applied.changes, actor),
+        Ok(None) => Err(unjudged),
+        Err(error) => {
+            // 문서 상태를 알 수 없으므로 역 transaction을 얹지 않습니다. revision만 실행 전 값으로 돌립니다.
+            state.revision = start;
+            return Err(LeasedExecutionError::Restore {
+                violation: unjudged,
+                error,
+            });
+        }
     };
     match verdict {
         Ok(()) => Ok(applied),
@@ -779,24 +790,42 @@ pub fn execute_leased(
 
 /// 적용 후 `state`에서 적용 전 소속을 만듭니다. 이 문서에 lease root가 없으면 문서를 건드리지 않습니다. 있으면 역
 /// transaction의 command를 guard 안에서 적용해(검증 없이, undo와 같은 primitive) 적용 전 문서를 잠깐 만들고, 소속을
-/// 기록한 뒤 guard를 되돌립니다. 비용은 transaction이 바꾼 primitive 수에 비례합니다. 실패하면 `None`이고 문서는
-/// 적용 후 상태입니다(guard가 되돌림).
+/// 기록한 뒤 guard를 되돌립니다. 비용은 transaction이 바꾼 primitive 수에 비례합니다. 역 transaction 적용이 실패하면
+/// guard를 되돌리고 `Ok(None)`입니다(문서는 적용 후 상태). guard 되돌리기가 실패하면 `Err`이고 문서 상태는 보장되지
+/// 않습니다(`CommandError::RollbackFailed`, 내부 불일치 신호).
 fn snapshot_before(
     state: &mut DocumentState,
     table: &LeaseTable,
     applied: &AppliedTransaction,
-) -> Option<LeaseSnapshot> {
+) -> Result<Option<LeaseSnapshot>, TransactionError> {
     if table.roots(state.model().document_id()).is_empty() {
-        return Some(LeaseSnapshot::default());
+        return Ok(Some(LeaseSnapshot::default()));
     }
     let mut guard = TransactionGuard::begin(&mut state.model);
-    for request in &applied.inverse.requests {
-        // 실패하면 guard drop이 journal로 되돌립니다.
-        request.command.apply(guard.ctx()).ok()?;
+    let mut failed = None;
+    for (index, request) in applied.inverse.requests.iter().enumerate() {
+        if let Err(error) = request.command.apply(guard.ctx()) {
+            failed = Some((index, error));
+            break;
+        }
     }
-    let snapshot = table.snapshot(guard.ctx().model(), &applied.changes);
-    guard.rollback().ok()?;
-    Some(snapshot)
+    let snapshot = failed
+        .is_none()
+        .then(|| table.snapshot(guard.ctx().model(), &applied.changes));
+    guard.rollback().map_err(|rollback| {
+        // 역 transaction 적용이 성공했다면 원래 실패는 되돌리기의 첫 실패 원인입니다.
+        let (index, original) = failed
+            .clone()
+            .unwrap_or_else(|| (0, rollback.first.clone()));
+        TransactionError {
+            index,
+            error: CommandError::RollbackFailed {
+                original: Box::new(original),
+                rollback: Box::new(rollback),
+            },
+        }
+    })?;
+    Ok(snapshot)
 }
 
 /// 승인 전 미리보기 결과(XIX.5.3).

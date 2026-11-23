@@ -38,8 +38,10 @@ XXIX.3.4, XIX.7.2, XIX.5.3, XIX.9.4 일부).
      command를 `TransactionGuard` 안에서 적용해(undo와 같은 primitive, 검증 없음) 적용 전 문서를 잠깐 되살리고, 소속을 기록한
      뒤 guard journal로 적용 후 문서로 되돌립니다. 문서를 복제하지 않고 비용은 transaction이 바꾼 primitive 수에 비례합니다.
      이 문서에 lease root가 없으면(전역 resource만 잠근 lease) 이 단계를 건너뜁니다.
-   - 역 transaction 적용이나 guard 되돌리기가 실패하면 판정하지 않고 거부합니다(`ViolationReason::Unjudged`, fail closed).
-     문서와 revision은 기존 거부 경로대로 실행 전 상태입니다.
+   - 역 transaction 적용이 실패하면 guard를 되돌린 뒤 판정하지 않고 거부합니다(`ViolationReason::Unjudged`, fail closed).
+     문서와 revision은 기존 거부 경로대로 실행 전 상태입니다. guard 되돌리기마저 실패하면 문서가 적용 후 상태라는 보장이
+     없으므로 역 transaction을 다시 얹지 않고 `LeasedExecutionError::Restore`(위반 `Unjudged`, 원인
+     `CommandError::RollbackFailed`)로 알립니다(내부 불일치 신호, 기존 되돌리기 실패와 같은 종류).
    - 미리보기(`lease::preview`)는 원본 문서를 바꾸지 않으므로 원본 문서로 바로 소속을 만듭니다.
 2. **local-ipc 감시가 frame 연결을 앞단에 넘김.**
    - `ConnectionMonitor::serve(connection, origin, events, service)`: 감시 스레드가 handshake를 마친 연결을

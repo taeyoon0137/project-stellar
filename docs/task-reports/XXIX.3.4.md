@@ -2,7 +2,7 @@
 
 - WBS: XXIX.3.4
 - 작업명: 문서를 쓰지 않는 에이전트 I/O 스레드가 검증한 요청을 사용자 입력보다 낮은 priority로 document thread에 넣고 넘치면 busy, 큰 batch는 단일 점유 상한 안에서 나눠 적용
-- 상태: 부분 완료 (`[~]`) — 스레드·검증·priority·busy 코어(ADR-0112), bridge frame 앞단, 큰 batch 분할, 20만 node 단일 점유 측정은 끝났습니다. 문서 대부분을 덮는 lease의 판정 비용(아래 "남은 위험")과 bridge 쪽 frame 쓰기·연결 감시 연결이 남았습니다.
+- 상태: 부분 완료 (`[~]`) — 스레드·검증·priority·busy 코어(ADR-0112), bridge frame 앞단, 큰 batch 분할, 20만 node 단일 점유 측정은 끝났습니다. 문서 대부분을 덮는 lease의 판정 비용과 bridge 쪽 frame 쓰기·연결 감시 연결은 lane `agent-lease-perf`가 고쳤습니다(아래 추가 작업 1·2). 사용자 입력 지연 측정, MCP 서버 루프의 link 연결, 앱 listener 연결 수명 코드가 남았습니다.
 - 선행: XXIX.3.1, XII.1.2, XIX.4.2
 - 설계 기준: ADR-0112 결정 5, ADR-0124 결정 3·6, ADR-0005 §8, 아키텍처 §6.3(UI·문서 스레드 단일 점유 2 ms)
 
@@ -91,6 +91,7 @@
 
 - `crates/commands/src/lock/lease.rs`: `LeaseTable::snapshot(before, changes)`가 바뀐·삭제 node의 조상 사슬만 걸어 적용 전 소속을 만듭니다. lease root의 진조상은 부모·순서 변경이 있을 때만 걷습니다. `execute_leased`는 적용 뒤 역 transaction을 `TransactionGuard` 안에서 적용해 적용 전 문서를 잠깐 되살리고, 소속을 기록한 뒤 guard journal로 되돌립니다(문서 복제 없음). 그 단계가 실패하면 판정하지 않고 거부합니다(`ViolationReason::Unjudged`). 미리보기는 손대지 않은 원본 문서로 소속을 만듭니다.
 - `crates/commands/src/lock/lease_tests.rs`: 옛 subtree 걷기 판정을 비교 기준으로 둔 전수 대조 test.
+- 검토 보완: guard 되돌리기마저 실패하면 문서가 적용 후 상태라는 보장이 없으므로 역 transaction을 다시 얹지 않고 `LeasedExecutionError::Restore`(위반 `Unjudged`, 원인 `CommandError::RollbackFailed`)로 알립니다. 역 transaction 적용만 실패하면 guard를 명시적으로 되돌린 뒤 `Unjudged`로 거부합니다(drop 경로의 조용한 되돌리기 실패 없음).
 - `crates/agent-edit/src/occupancy_trace.rs`: 새 판정 입력, 512 command batch, lease 안 사용자 편집 거부 측정을 더했습니다.
 
 ### 단일 점유 측정 (20만 node, release, 개발 장비, 다른 lane 빌드가 함께 도는 부하 상태)
