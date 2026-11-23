@@ -1,0 +1,281 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stellar://schemas/command-transaction",
+  "title": "CommandTransaction",
+  "description": "cargo xtask generate-command-schema가 commands closed enum과 ops 필드 종류 표에서 생성합니다. 직접 고치지 않습니다.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["base_revision", "document", "commands"],
+  "properties": {
+    "base_revision": {
+      "type": "string",
+      "pattern": "^g(0|[1-9][0-9]*:sha256:[0-9a-f]{64})$"
+    },
+    "document": {
+      "$ref": "#/$defs/stable-id"
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "node", "visible"],
+            "properties": {
+              "kind": {
+                "const": "set-visible"
+              },
+              "node": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "visible": {
+                "$ref": "#/$defs/bool"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "node", "locked"],
+            "properties": {
+              "kind": {
+                "const": "set-locked"
+              },
+              "node": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "locked": {
+                "$ref": "#/$defs/bool"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "node", "name"],
+            "properties": {
+              "kind": {
+                "const": "rename"
+              },
+              "node": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "name": {
+                "$ref": "#/$defs/text"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "node", "start", "end", "text"],
+            "properties": {
+              "kind": {
+                "const": "replace-text"
+              },
+              "node": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "start": {
+                "$ref": "#/$defs/u32"
+              },
+              "end": {
+                "$ref": "#/$defs/u32"
+              },
+              "text": {
+                "$ref": "#/$defs/text"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "node", "width", "height"],
+            "properties": {
+              "kind": {
+                "const": "set-frame-size"
+              },
+              "node": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "width": {
+                "$ref": "#/$defs/non-negative-f32"
+              },
+              "height": {
+                "$ref": "#/$defs/non-negative-f32"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "node", "width"],
+            "properties": {
+              "kind": {
+                "const": "set-frame-width"
+              },
+              "node": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "width": {
+                "$ref": "#/$defs/non-negative-f32"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "node", "height"],
+            "properties": {
+              "kind": {
+                "const": "set-frame-height"
+              },
+              "node": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "height": {
+                "$ref": "#/$defs/non-negative-f32"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "node", "a", "b", "c", "d", "tx", "ty"],
+            "properties": {
+              "kind": {
+                "const": "set-frame-transform"
+              },
+              "node": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "a": {
+                "$ref": "#/$defs/f32"
+              },
+              "b": {
+                "$ref": "#/$defs/f32"
+              },
+              "c": {
+                "$ref": "#/$defs/f32"
+              },
+              "d": {
+                "$ref": "#/$defs/f32"
+              },
+              "tx": {
+                "$ref": "#/$defs/f32"
+              },
+              "ty": {
+                "$ref": "#/$defs/f32"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "root"],
+            "properties": {
+              "kind": {
+                "const": "delete-subtree"
+              },
+              "root": {
+                "$ref": "#/$defs/stable-id"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "node", "new_parent", "order_key"],
+            "properties": {
+              "kind": {
+                "const": "move-node"
+              },
+              "node": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "new_parent": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "order_key": {
+                "$ref": "#/$defs/hex"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "parent", "component", "source_hash", "x", "y"],
+            "properties": {
+              "kind": {
+                "const": "insert-component-instance"
+              },
+              "parent": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "component": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "source_hash": {
+                "$ref": "#/$defs/content-hash"
+              },
+              "x": {
+                "$ref": "#/$defs/f32"
+              },
+              "y": {
+                "$ref": "#/$defs/f32"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "canonical"],
+            "properties": {
+              "kind": {
+                "enum": ["insert-node", "set-property", "insert-modifier", "remove-modifier", "move-modifier", "set-modifier-property", "convert-fragment-to-frame", "convert-shape-to-path", "restore-node-records", "duplicate-subtree", "set-text-range-style", "add-page", "remove-page", "rename-page", "add-view", "remove-view", "rename-view", "apply-external-snapshot", "edit-path-point", "swap-instance"]
+              },
+              "canonical": {
+                "$ref": "#/$defs/hex"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "stable-id": {
+      "type": "string",
+      "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+    },
+    "bool": {
+      "type": "boolean"
+    },
+    "text": {
+      "type": "string"
+    },
+    "u32": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "f32": {
+      "type": "number"
+    },
+    "non-negative-f32": {
+      "type": "number",
+      "minimum": 0
+    },
+    "hex": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{2})*$"
+    },
+    "content-hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

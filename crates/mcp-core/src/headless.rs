@@ -1,6 +1,16 @@
-//! 고정한 신뢰 프로젝트의 저장 문서 조회·비교·검증 L2 backend (XIX.9.3).
+//! 고정한 신뢰 프로젝트의 읽기·검증·dry-run L2 backend (XIX.9.3, ADR-0005 §3, ADR-0085 결정 1).
+//!
+//! - 실행 인자로 고정한 절대 루트 하나만 다룹니다. tool 인자에 경로·프로젝트를 고르는 key가 없고, 선언되지
+//!   않은 key는 거부합니다.
+//! - 매 요청 진입과 응답 직전에 신뢰·identity·generation을 다시 확인합니다. 신뢰가 철회되면 모든 요청을
+//!   거부합니다.
+//! - 목록은 agent-protocol 정의에서 headless가 제공하는(`Availability::All`) 항목만 고릅니다. 쓰기 tool은
+//!   목록에 없고, 이름으로 불러도 모르는 tool입니다.
+//! - 프로젝트 파일을 만들거나 바꾸지 않습니다. ops의 dry-run·읽기 함수만 부릅니다.
 mod comparison;
 mod components;
+mod operations;
+mod resources_extra;
 mod validation;
 use std::cell::RefCell;
 
@@ -11,9 +21,10 @@ use stellar_ops::snapshot::ProjectSnapshot;
 use stellar_ops::trusted::{TrustedProject, TrustedReadError};
 
 use crate::catalog::paging::{self, PageSource};
-use crate::catalog::resources::{descriptor, resource, template_descriptor};
-use crate::catalog::scope::{ApprovedScope, ProjectDocuments, ScopedPayload};
-use crate::catalog::tools::{self, SEMANTIC_DIFF, VALIDATE_DOCUMENT};
+use crate::catalog::resources::{self, Backend};
+use crate::catalog::scope::{ApprovedScope, ProjectDocuments, ScopeError, ScopedPayload};
+use crate::catalog::tools::{self, EnabledNamespaces, SEMANTIC_DIFF, VALIDATE_DOCUMENT};
+use crate::failure::{fail, ResultKind as Kind, WithDetail};
 use crate::json::{self, JsonNumber, JsonValue};
 use crate::jsonrpc::{codes, RpcError};
 
@@ -46,7 +57,8 @@ impl Headless {
         if !root.is_absolute() {
             return Err(crate::exit::USAGE);
         }
-        let project = TrustedProject::select(root).map_err(|_| crate::exit::NOPERM)?;
+        let project =
+            TrustedProject::select(root).map_err(|_| crate::exit::for_kind(Kind::NotTrusted))?;
         Ok(Self::new(project))
     }
 
@@ -70,88 +82,65 @@ impl Headless {
         })
     }
 
-    /// 구현한 resource·template과 저장 문서 비교·검증 tool을 노출합니다.
+    /// agent-protocol 정의 중 headless가 제공하는 resource·template·tool을 노출합니다.
     pub fn list(&self, method: &str, params: Option<&JsonValue>) -> Result<JsonValue, RpcError> {
         self.check()?;
         check_fields(params, &[])?;
-        if method == "tools/list" {
-            return Ok(JsonValue::object(vec![(
-                "tools",
-                JsonValue::Array(vec![
-                    tools::descriptor(&SEMANTIC_DIFF),
-                    tools::descriptor(&VALIDATE_DOCUMENT),
-                ]),
-            )]));
+        match method {
+            "tools/list" => Ok(tools::tools_list(
+                Backend::Headless,
+                EnabledNamespaces::default(),
+            )),
+            "resources/list" => Ok(resources::resources_list(Backend::Headless)),
+            "resources/templates/list" => Ok(resources::templates_list(Backend::Headless)),
+            _ => Err(malformed("제공하지 않는 목록입니다")),
         }
-        let (field, names): (_, &[&str]) = match method {
-            "resources/list" => ("resources", &["project-structure", "components"]),
-            "resources/templates/list" => (
-                "resourceTemplates",
-                &["document", "components", "component"],
-            ),
-            _ => return Err(invalid("제공하지 않는 목록입니다")),
-        };
-        let describe = if method == "resources/templates/list" {
-            template_descriptor
-        } else {
-            descriptor
-        };
-        Ok(JsonValue::object(vec![(
-            field,
-            JsonValue::Array(
-                names
-                    .iter()
-                    .map(|name| describe(resource(name).expect("catalog resource")))
-                    .collect(),
-            ),
-        )]))
     }
 
-    /// 신뢰 snapshot에서 읽기 전용 tool 한 페이지를 만듭니다.
+    /// 신뢰 snapshot에서 읽기·검증·dry-run tool 하나를 실행합니다. 실패는 결과 종류를 가진 [`RpcError`]이고,
+    /// 서버가 실행 실패를 `isError` 결과로, 모르는 tool·params 형식 오류를 JSON-RPC 오류로 보냅니다(XIX.9.9).
     pub fn call(&self, params: Option<&JsonValue>) -> Result<JsonValue, RpcError> {
         self.with_snapshot(|cached| {
             check_fields(params, &["name", "arguments"])?;
-            let params = params.ok_or_else(|| invalid("tool 이름이 필요합니다"))?;
-            let tool = match params.get("name").and_then(JsonValue::as_str) {
-                Some(name) if name == VALIDATE_DOCUMENT.name => &VALIDATE_DOCUMENT,
-                Some(name) if name == SEMANTIC_DIFF.name => &SEMANTIC_DIFF,
-                _ => return Err(invalid("제공하지 않는 tool입니다")),
-            };
+            let params = params.ok_or_else(|| malformed("tool 이름이 필요합니다"))?;
+            let tool = params
+                .get("name")
+                .and_then(JsonValue::as_str)
+                .and_then(tools::tool)
+                .filter(|tool| {
+                    tool.availability.includes(Backend::Headless)
+                        && EnabledNamespaces::default().shows(tool)
+                })
+                .ok_or_else(|| fail(Kind::UnknownTool, "제공하지 않는 tool입니다"))?;
             let empty = JsonValue::Object(Vec::new());
             let args = params.get("arguments").unwrap_or(&empty);
             self.scope
                 .check_tool_arguments(tool, args, &Documents(&cached.snapshot))
-                .map_err(|error| invalid(error.to_string()))?;
-            let request = paging::PageRequest {
-                cursor: args
-                    .get("cursor")
-                    .map(|v| {
-                        v.as_str()
-                            .map(str::to_owned)
-                            .ok_or_else(|| invalid("cursor는 문자열이어야 합니다"))
-                    })
-                    .transpose()?,
-                limit: args
-                    .get("limit")
-                    .map(|v| {
-                        v.as_i64()
-                            .and_then(|n| usize::try_from(n).ok())
-                            .ok_or_else(|| invalid("limit은 양의 정수여야 합니다"))
-                    })
-                    .transpose()?,
+                .map_err(|error| error.failure())?;
+            let request = page_request(args)?;
+            let body = match tool.name {
+                n if n == SEMANTIC_DIFF.name => {
+                    comparison::page(&self.project, cached, args, &request)?
+                }
+                n if n == VALIDATE_DOCUMENT.name => validation::page(cached, args, &request)?,
+                n if n == tools::PROPOSE_COMMANDS.name => {
+                    operations::propose_commands(cached, args)?
+                }
+                n if n == tools::SOURCE_SPAN.name => operations::node_source_span(cached, args)?,
+                n if n == tools::EXPORT_WEB_FRAME.name => {
+                    operations::export_web_frame(cached, args)?
+                }
+                n if n == tools::COPY_CSS.name => operations::copy_css(cached, args)?,
+                n if n == tools::PROPOSE_CSS_PASTE.name => {
+                    operations::propose_css_paste(cached, args)?
+                }
+                n if n == tools::GIT_STATUS.name => operations::git_status(cached, &request)?,
+                n if n == tools::SEMANTIC_CONFLICTS.name => {
+                    operations::git_semantic_conflicts(cached)?
+                }
+                _ => return Err(fail(Kind::Internal, "headless 목록과 구현이 다릅니다")),
             };
-            let body = if tool.name == SEMANTIC_DIFF.name {
-                comparison::page(&self.project, cached, args, &request)?
-            } else {
-                validation::page(cached, args, &request)?
-            };
-            Ok(JsonValue::object(vec![(
-                "content",
-                JsonValue::Array(vec![JsonValue::object(vec![
-                    ("type", JsonValue::string("text")),
-                    ("text", JsonValue::string(json::write(&body))),
-                ])]),
-            )]))
+            Ok(crate::result::tool_success(body))
         })
     }
 
@@ -192,7 +181,7 @@ impl Headless {
         let cached = cache.as_mut().expect("snapshot을 열었음");
         let result = build(cached)?;
         if json::write(&result).len() > crate::server::MAX_MESSAGE_BYTES - 1024 {
-            return Err(invalid("응답 크기 상한을 넘습니다"));
+            return Err(fail(Kind::TooLarge, "응답 크기 상한을 넘습니다"));
         }
         if !self
             .project
@@ -208,7 +197,7 @@ impl Headless {
                 session: self.session.clone(),
                 body: result,
             })
-            .map_err(|e| invalid(e.to_string()))?;
+            .map_err(|e| e.failure())?;
         *self.cache.borrow_mut() = cache;
         Ok(released)
     }
@@ -227,12 +216,15 @@ impl Headless {
         let target = self
             .scope
             .check_resource_uri(uri, &Documents(snapshot))
-            .map_err(|e| invalid(e.to_string()))?;
+            .map_err(|e| e.failure())?;
         let body = match target.name {
             "project-structure" => {
                 JsonValue::object(structure_fields(&project_structure(snapshot)))
             }
             "components" => components::read(cached, uri)?,
+            "tokens" => resources_extra::read_tokens(cached),
+            "target-profiles" => resources_extra::read_target_profiles(cached),
+            "git-status" => resources_extra::read_git_summary(cached)?,
             "component" => {
                 let component = target
                     .component
@@ -247,14 +239,13 @@ impl Headless {
                     .as_deref()
                     .and_then(|id| id.parse::<StableId>().ok())
                     .ok_or_else(|| invalid("승인된 문서 ID가 필요합니다"))?;
-                let (_, request) =
-                    paging::parse_page_query(uri).map_err(|e| invalid(e.to_string()))?;
+                let (_, request) = paging::parse_page_query(uri).map_err(|e| e.failure())?;
                 paging::validate_request(
                     &document.to_string(),
                     &snapshot.revision().token(),
                     &request,
                 )
-                .map_err(|e| invalid(e.to_string()))?;
+                .map_err(|e| e.failure())?;
                 if cached.tree.as_ref().is_none_or(|(id, _)| *id != document) {
                     cached.tree = None;
                     #[cfg(test)]
@@ -262,7 +253,7 @@ impl Headless {
                     cached.tree = Some((
                         document,
                         DocumentTree::load(snapshot, document).map_err(|_| {
-                            RpcError::new(-32000, "문서 snapshot을 읽을 수 없습니다")
+                            fail(Kind::Unavailable, "문서 snapshot을 읽을 수 없습니다")
                         })?,
                     ));
                 }
@@ -271,41 +262,97 @@ impl Headless {
                     document,
                     revision: snapshot.revision(),
                 };
-                paging::build_page(&source, &request).map_err(|e| invalid(e.to_string()))?
+                paging::build_page(&source, &request).map_err(|e| e.failure())?
             }
-            _ => return Err(invalid("제공하지 않는 resource입니다")),
+            _ => return Err(fail(Kind::InvalidArguments, "제공하지 않는 resource입니다")),
         };
         if json::write(&body).len() > paging::MAX_PAGE_BYTES {
-            return Err(invalid("resource가 응답 크기 상한을 넘습니다"));
+            return Err(fail(Kind::TooLarge, "resource가 응답 크기 상한을 넘습니다"));
         }
         Ok(paging::read_result(uri, &body))
     }
 }
 
 fn invalid(message: impl Into<String>) -> RpcError {
+    crate::failure::fail_text(Kind::InvalidArguments, message)
+}
+
+/// params 형식 오류(MCP protocol 오류, 결과 종류 없음).
+fn malformed(message: &'static str) -> RpcError {
     RpcError::new(codes::INVALID_PARAMS, message)
 }
 
+/// page·scope 오류를 결과 종류로 나눕니다. 두 오류의 문구는 고정 형식이고 프로젝트 문자열이 없습니다.
+trait Failure {
+    fn failure(&self) -> RpcError;
+}
+
+impl Failure for paging::PageError {
+    fn failure(&self) -> RpcError {
+        let kind = match self {
+            paging::PageError::StaleCursor => Kind::Stale,
+            paging::PageError::ItemTooLarge { .. } => Kind::TooLarge,
+            _ => Kind::InvalidArguments,
+        };
+        crate::failure::fail_text(kind, self.to_string())
+    }
+}
+
+impl Failure for ScopeError {
+    fn failure(&self) -> RpcError {
+        let kind = match self {
+            ScopeError::ForeignDocument
+            | ScopeError::ForeignProject
+            | ScopeError::ForeignSession => Kind::OutOfScope,
+            _ => Kind::InvalidArguments,
+        };
+        crate::failure::fail_text(kind, self.to_string())
+    }
+}
+
+/// `cursor`·`limit` 인자.
+fn page_request(args: &JsonValue) -> Result<paging::PageRequest, RpcError> {
+    Ok(paging::PageRequest {
+        cursor: args
+            .get("cursor")
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| invalid("cursor는 문자열이어야 합니다"))
+            })
+            .transpose()?,
+        limit: args
+            .get("limit")
+            .map(|v| {
+                v.as_i64()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .ok_or_else(|| invalid("limit은 양의 정수여야 합니다"))
+            })
+            .transpose()?,
+    })
+}
+
 fn read_error(error: TrustedReadError) -> RpcError {
-    RpcError::new(
-        -32000,
-        match error {
-            TrustedReadError::NotTrusted => "프로젝트 읽기 신뢰를 확인할 수 없습니다",
-            TrustedReadError::Unavailable => "프로젝트 snapshot을 읽을 수 없습니다",
-        },
-    )
+    match error {
+        TrustedReadError::NotTrusted => {
+            fail(Kind::NotTrusted, "프로젝트 읽기 신뢰를 확인할 수 없습니다")
+        }
+        TrustedReadError::Unavailable => {
+            fail(Kind::Unavailable, "프로젝트 snapshot을 읽을 수 없습니다")
+        }
+    }
 }
 
 fn check_fields(params: Option<&JsonValue>, allowed: &[&str]) -> Result<(), RpcError> {
     if let Some(params) = params {
         let fields = params
             .as_object()
-            .ok_or_else(|| invalid("params는 object여야 합니다"))?;
+            .ok_or_else(|| malformed("params는 object여야 합니다"))?;
         if fields
             .iter()
             .any(|(key, _)| !allowed.contains(&key.as_str()) && key != "_meta")
         {
-            return Err(invalid("선언되지 않은 요청 인자입니다"));
+            return Err(malformed("선언되지 않은 요청 인자입니다"));
         }
     }
     Ok(())
@@ -627,6 +674,50 @@ mod tests {
             "연결 사이 cache 공유 없음"
         );
         assert_eq!(file_digest(&fx.temp.path), after_save);
+    }
+
+    /// 서버 한 개를 initialize하고 `tools/call` 응답 하나를 돌려줍니다.
+    fn served_call(server: crate::server::Server) -> JsonValue {
+        let mut server = server;
+        let mut log = crate::log::Logger::new(Vec::new());
+        let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#;
+        server.handle_frame(init.as_bytes(), &mut log).unwrap();
+        server.handle_frame(
+            br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            &mut log,
+        );
+        let call = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"document.validate","arguments":{}}}"#;
+        server.handle_frame(call.as_bytes(), &mut log).unwrap()
+    }
+
+    fn structured_kind(reply: &JsonValue) -> Option<&str> {
+        reply
+            .get("result")
+            .and_then(|r| r.get("structuredContent"))
+            .and_then(|s| s.get("kind"))
+            .and_then(JsonValue::as_str)
+    }
+
+    #[test]
+    fn call_deadline_and_response_limit_turn_results_into_retryable_failures() {
+        // 검증 기준(XIX.9.10): 호출 대기 상한·응답 크기 상한 초과 응답.
+        let fx = Fixture::new();
+        save_documents(&fx.project, &[&large_document(50)]);
+        let ok = served_call(crate::server::Server::headless(fx.backend()));
+        assert_eq!(structured_kind(&ok), Some("ok"));
+        let late = served_call(
+            crate::server::Server::headless(fx.backend())
+                .with_call_deadline(std::time::Duration::ZERO),
+        );
+        assert_eq!(structured_kind(&late), Some("timeout"));
+        assert_eq!(
+            late.get("result").and_then(|r| r.get("isError")),
+            Some(&JsonValue::Bool(true))
+        );
+        let big =
+            served_call(crate::server::Server::headless(fx.backend()).with_response_limit(200));
+        assert_eq!(structured_kind(&big), Some("too-large"));
+        assert!(json::write(&big).len() < 1024, "대체 응답은 작음");
     }
 
     #[test]

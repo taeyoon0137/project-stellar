@@ -103,7 +103,7 @@ pub(super) fn page(
         &cached.snapshot.revision().token(),
         request,
     )
-    .map_err(|error| invalid(error.to_string()))?;
+    .map_err(|error| super::Failure::failure(&error))?;
     if cached
         .validation
         .as_ref()
@@ -114,5 +114,5 @@ pub(super) fn page(
     }
 
     paging::build_page(cached.validation.as_ref().expect("검증을 마쳤음"), request)
-        .map_err(|error| invalid(error.to_string()))
+        .map_err(|error| super::Failure::failure(&error))
 }

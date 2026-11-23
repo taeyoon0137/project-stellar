@@ -1,5 +1,5 @@
 //! 고정 HEAD·working generation·프로젝트 컴포넌트 YAML 집합의 변경 페이지.
-use super::{id, invalid, opt_id, read_error, revision, uint, CachedRead};
+use super::{fail, id, invalid, opt_id, read_error, revision, uint, CachedRead, Kind};
 use crate::catalog::paging::{self, PageRequest, PageSource};
 use crate::json::{self, JsonLimits, JsonValue};
 use crate::jsonrpc::RpcError;
@@ -64,8 +64,12 @@ pub(super) fn page(
     {
         return Err(invalid("base에는 HEAD만 지정할 수 있습니다"));
     }
-    let unavailable =
-        || RpcError::new(-32000, "같은 프로젝트의 HEAD와 현재 저장 세대가 필요합니다");
+    let unavailable = || {
+        fail(
+            Kind::Unavailable,
+            "같은 프로젝트의 HEAD와 현재 저장 세대가 필요합니다",
+        )
+    };
     let head = project.head().map_err(|error| match error {
         TrustedReadError::Unavailable => unavailable(),
         other => read_error(other),
@@ -86,7 +90,7 @@ pub(super) fn page(
                 return Err(unavailable());
             }
             cached.comparison = current;
-            return page_result.map_err(|e| invalid(e.to_string()));
+            return page_result.map_err(|e| super::Failure::failure(&e));
         }
         observed_sources = Some(checked);
     }
@@ -101,7 +105,7 @@ pub(super) fn page(
         &cursor_revision(head.commit(), revision, &tag),
         request,
     )
-    .map_err(|e| invalid(e.to_string()))?;
+    .map_err(|e| super::Failure::failure(&e))?;
     let base = match current {
         Some(page) => page.base,
         None => HeadDiffBase::open(&head, &cached.snapshot).map_err(|_| unavailable())?,
@@ -118,7 +122,7 @@ pub(super) fn page(
         component_source_hash: tag,
         report,
     };
-    let body = paging::build_page(&page, request).map_err(|e| invalid(e.to_string()))?;
+    let body = paging::build_page(&page, request).map_err(|e| super::Failure::failure(&e))?;
     if observe()?.hash() != source_hash || !head.is_current().map_err(|_| unavailable())? {
         return Err(unavailable());
     }
@@ -151,7 +155,7 @@ fn value_inner(value: &OpsValue) -> JsonValue {
     }
 }
 
-fn diff_position(position: Option<&DiffPosition>) -> JsonValue {
+pub(super) fn diff_position(position: Option<&DiffPosition>) -> JsonValue {
     match position {
         None => JsonValue::Null,
         Some(p) => JsonValue::object(vec![
@@ -165,7 +169,7 @@ fn diff_position(position: Option<&DiffPosition>) -> JsonValue {
 }
 
 /// 선택 속성 값(`{"type","value"}` 또는 `null`).
-fn opt_value(value: Option<&OpsValue>) -> JsonValue {
+pub(super) fn opt_value(value: Option<&OpsValue>) -> JsonValue {
     value.map_or(JsonValue::Null, |v| {
         JsonValue::object(vec![
             ("type", JsonValue::string(v.type_name())),
@@ -175,7 +179,7 @@ fn opt_value(value: Option<&OpsValue>) -> JsonValue {
 }
 
 /// semantic diff 변경 한 건.
-fn diff_entry(entry: &DiffEntry) -> JsonValue {
+pub(super) fn diff_entry(entry: &DiffEntry) -> JsonValue {
     let mut fields = vec![
         ("kind", JsonValue::string(entry.kind)),
         ("document", opt_id(entry.document)),

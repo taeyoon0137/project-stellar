@@ -20,6 +20,8 @@ stellar-renderer-core = { path = "../../crates/renderer-core" }
 stellar-runtime = { path = "../../crates/runtime" }
 stellar-scene = { path = "../../crates/scene" }
 stellar-project = { path = "../../crates/project" }
+# CommandTransaction 입력 schema 생성(XIX.9.2): commands closed enum과 ops 필드 종류 표.
+stellar-ops = { path = "../../crates/ops" }
 
 [lints]
 workspace = true

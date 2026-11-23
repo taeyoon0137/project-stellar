@@ -1,0 +1,16 @@
+[package]
+name = "stellar-agent-protocol"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+# L2 공용 정의(ADR-0005 §3·§8, ADR-0085): MCP resource·tool catalog, 권한 어휘, 생성 schema, instructions,
+# 자원 상한, 결과 종류. 허용 직접 의존은 core-types뿐이고 commands·document·ops·agent-host에는 전이적으로도
+# 도달하지 않습니다. CommandTransaction 입력 schema는 xtask가 commands closed enum에서 생성한 `schemas/`
+# 산출물만 포함합니다.
+[dependencies]
+stellar-core-types = { path = "../core-types" }
+
+[lints]
+workspace = true

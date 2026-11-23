@@ -34,6 +34,7 @@
 | `stellar-mcp` | mcp-core, core-types, diagnostics, local-ipc |
 | `stellar-mcp-core` | ops, agent-protocol, local-ipc, diagnostics |
 | `stellar-local-ipc` | core-types |
+| `stellar-agent-protocol` | core-types |
 | `stellar-terminal` | core-types |
 | `stellar-codegen` | core-types, target-profile, accessibility, layout |
 | `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile |
@@ -53,6 +54,7 @@ graph TD
   mcp_core --> agent_protocol
   mcp_core --> diagnostics
   mcp_core --> local_ipc
+  agent_protocol --> core_types
   document --> core_types
   document --> expressions
   commands --> document

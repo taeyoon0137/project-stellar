@@ -94,3 +94,9 @@ pub use stellar_commands as commands;
 
 /// opt-in 컴포넌트별 텍스트 원본 파일 (ADR-0059).
 pub mod component_source;
+
+/// 형식 중립 command 입력 해석과 command 종류 표: L2 MCP와 schema 생성이 쓰는 진입점 (XIX.5.1, ADR-0085).
+pub mod mcp_command_input;
+
+/// 진행 중 merge의 semantic conflict 읽기 전용 진입점: L2 MCP가 쓰는 얇은 경로 (XIX.9.3, ADR-0085).
+pub mod mcp_merge;

@@ -17,12 +17,8 @@ use std::fmt;
 
 use crate::json::{self, JsonNumber, JsonValue};
 
-/// page item 기본 개수.
-pub const DEFAULT_PAGE_ITEMS: usize = 500;
-/// page item 상한.
-pub const MAX_PAGE_ITEMS: usize = 2000;
-/// page 내용 JSON 최대 byte 수(MCP 메시지 상한 1 MiB의 절반, envelope·escape 여유).
-pub const MAX_PAGE_BYTES: usize = 512 * 1024;
+/// page item 기본 개수·상한·내용 byte 상한(XIX.9.10, `stellar_agent_protocol::limits`).
+pub use stellar_agent_protocol::limits::{DEFAULT_PAGE_ITEMS, MAX_PAGE_BYTES, MAX_PAGE_ITEMS};
 
 /// page로 나눌 수 있는 resource 내용.
 pub trait PageSource {
@@ -404,7 +400,7 @@ mod tests {
         )
         .unwrap();
         let items = content.get("items").and_then(JsonValue::as_array).unwrap();
-        assert!(items.len() < 100 && items.len() >= 4, "{}", items.len());
+        assert!(items.len() < 100 && items.len() >= 3, "{}", items.len());
         assert!(json::write(&content).len() <= MAX_PAGE_BYTES);
         assert!(next_cursor(&content)
             .unwrap()

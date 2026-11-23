@@ -15,6 +15,12 @@ pub mod catalog;
 /// MCP client 등록 정보 (XIX.9.8).
 pub mod connection_info;
 
+/// 실행 인자 해석과 bridge 세션 실행. 실행 파일은 이 진입점만 부릅니다 (XIX.9.1).
+pub mod entry;
+
+/// L2 공용 정의(catalog·권한·schema·상한) crate (XIX.9.1, ADR-0005 §8).
+pub use stellar_agent_protocol as agent_protocol;
+
 /// 종료 코드: XXIV.1.2 표와 같은 값·이름 (XIX.1.7).
 pub mod exit;
 
@@ -46,6 +52,18 @@ pub mod protocol;
 
 /// MCP stdio 서버 루프 (XIX.1.1).
 pub mod server;
+
+/// 요청 실패의 결과 종류·종료 코드 (XIX.9.9).
+pub mod failure;
+
+/// 호출량 상한 판정 (XIX.9.10).
+pub mod limits;
+
+/// tool 결과 envelope: 프로젝트 문자열은 data로만 (XIX.9.6).
+pub mod result;
+
+/// agent command proposal 입력 해석: closed enum command만 (XIX.5.1).
+pub mod proposal;
 
 /// 실행 인자로 고정한 신뢰 프로젝트 루트의 읽기 전용 backend (XIX.9.3).
 pub mod headless;

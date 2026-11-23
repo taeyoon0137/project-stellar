@@ -5,15 +5,15 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
-# L2 MCP stdio 진입점. 구현과 L1 연결은 mcp-core가 소유합니다.
-# network port를 열지 않으며, 로컬 IPC만 사용합니다.
+# L2 MCP stdio 진입점(XIX.9.1). 실행 파일은 표준 입출력 handle만 열고 `stellar-mcp-core`의 진입점을
+# 부릅니다. 인자 해석·backend·protocol·로컬 IPC 연결은 모두 mcp-core가 소유합니다. network port를 열지 않습니다.
 [dependencies]
 stellar-mcp-core = { path = "../../crates/mcp-core" }
-# bridge↔app 로컬 IPC(ADR-0005 §8 허용 edge).
-stellar-local-ipc = { path = "../../crates/local-ipc" }
 
 [dev-dependencies]
 stellar-mcp-core = { path = "../../crates/mcp-core", features = ["test-support"] }
+# 앱 측 IPC 구현으로 세션 수명을 검사하는 테스트 전용(ADR-0005 §8 허용 edge).
+stellar-local-ipc = { path = "../../crates/local-ipc" }
 
 [lints]
 workspace = true

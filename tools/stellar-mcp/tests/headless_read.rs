@@ -243,8 +243,23 @@ fn array(value: &J) -> &[J] {
 fn text(value: &J) -> &str {
     value.as_str().unwrap()
 }
+/// 실패를 확인합니다. resource·protocol 실패는 JSON-RPC `error.code`, tool 실행 실패(XIX.9.9)는 `isError` 결과의
+/// 결과 종류가 그 code 분류(인자·범위·revision 오류 -32602, 그 밖 -32000)에 속하는지 봅니다.
 fn assert_error(reply: &J, code: i64) {
-    assert!(reply.get("result").is_none());
+    if let Some(result) = reply.get("result") {
+        assert_eq!(result.get("isError"), Some(&J::Bool(true)), "{reply:?}");
+        let kind = result
+            .get("structuredContent")
+            .and_then(|s| s.get("kind"))
+            .and_then(J::as_str)
+            .unwrap();
+        let class = match kind {
+            "invalid-arguments" | "stale" | "out-of-scope" | "too-large" | "unknown-tool" => -32602,
+            _ => -32000,
+        };
+        assert_eq!(class, code, "{reply:?}");
+        return;
+    }
     assert_eq!(
         reply
             .get("error")
@@ -253,6 +268,24 @@ fn assert_error(reply: &J, code: i64) {
         Some(code),
         "{reply:?}"
     );
+    // 서버 실패(-32000)는 결과 종류와 종료 코드를 data에 둡니다(ADR-0085 결정 3).
+    if code == -32000 {
+        let data = reply.get("error").and_then(|e| e.get("data"));
+        assert!(
+            data.and_then(|d| d.get("kind")).is_some()
+                && data.and_then(|d| d.get("exit")).is_some(),
+            "결과 종류 없는 서버 실패: {reply:?}"
+        );
+    }
+}
+/// tool 실행 실패를 확인합니다. 모르는 tool이 아닌 실패는 JSON-RPC 오류가 아니라 결과 종류를 가진 `isError`
+/// 결과여야 합니다(XIX.9.9, ADR-0085 결정 7).
+fn assert_tool_error(reply: &J, code: i64) {
+    assert!(
+        reply.get("error").is_none(),
+        "tool 실행 실패가 JSON-RPC 오류로 왔습니다: {reply:?}"
+    );
+    assert_error(reply, code);
 }
 fn content(reply: &J, uri: &str) -> J {
     let result = reply
@@ -282,14 +315,23 @@ fn approved_snapshot_lists_only_implemented_resources_and_pages_without_writes()
     client.initialize();
     let list = client.call("resources/list", empty());
     let resources = array(list.get("result").unwrap().get("resources").unwrap());
-    assert_eq!(resources.len(), 2);
-    assert_eq!(resources[1].get("uri").map(text), Some(COMPONENTS));
-    assert_eq!(resources[1].get("name").map(text), Some("components"));
-    assert_eq!(resources[0].get("uri").map(text), Some(STRUCTURE));
+    let names: Vec<&str> = resources
+        .iter()
+        .map(|r| text(r.get("name").unwrap()))
+        .collect();
+    // headless는 정의 중 availability가 All인 고정 URI resource를 모두 제공합니다(XIX.9.3).
     assert_eq!(
-        resources[0].get("name").map(text),
-        Some("project-structure")
+        names,
+        [
+            "project-structure",
+            "components",
+            "tokens",
+            "target-profiles",
+            "git-status"
+        ]
     );
+    assert_eq!(resources[1].get("uri").map(text), Some(COMPONENTS));
+    assert_eq!(resources[0].get("uri").map(text), Some(STRUCTURE));
     let templates = client.call("resources/templates/list", empty());
     let templates = array(
         templates
@@ -313,16 +355,27 @@ fn approved_snapshot_lists_only_implemented_resources_and_pages_without_writes()
     );
     let tools = client.call("tools/list", empty());
     let tools = array(tools.get("result").unwrap().get("tools").unwrap());
-    assert_eq!(tools.len(), 2);
+    let names: Vec<&str> = tools.iter().map(|t| text(t.get("name").unwrap())).collect();
+    // 검증 기준(XIX.9.3): headless tools/list의 쓰기 tool 0.
     assert_eq!(
-        tools[0].get("name").map(text),
-        Some("document.semantic_diff")
+        names,
+        [
+            "document.semantic_diff",
+            "document.validate",
+            "document.propose_commands",
+            "document.source_span",
+            "document.export_web_frame",
+            "document.copy_css",
+            "document.propose_css_paste",
+            "git.status",
+            "git.semantic_conflicts"
+        ]
     );
-    assert_eq!(tools[1].get("name").map(text), Some("document.validate"));
-    assert_eq!(
-        tools[0].get("annotations").unwrap().get("readOnlyHint"),
-        Some(&J::Bool(true))
-    );
+    for tool in tools {
+        let annotations = tool.get("annotations").unwrap();
+        assert_eq!(annotations.get("readOnlyHint"), Some(&J::Bool(true)));
+        assert_eq!(annotations.get("destructiveHint"), Some(&J::Bool(false)));
+    }
     let structure = content(&client.read(STRUCTURE), STRUCTURE);
     let documents = array(structure.get("documents").unwrap());
     assert_eq!(documents.len(), 1);
@@ -333,7 +386,7 @@ fn approved_snapshot_lists_only_implemented_resources_and_pages_without_writes()
         Some(&J::int(1))
     );
     assert!(!json::write(&structure).contains(fx.project.to_str().unwrap()));
-    let mut uri = format!("stellar://documents/{document}?limit=2000");
+    let mut uri = format!("stellar://documents/{document}?limit=1000");
     let mut seen = 0;
     loop {
         let body = content(&client.read(&uri), &uri);
@@ -344,7 +397,7 @@ fn approved_snapshot_lists_only_implemented_resources_and_pages_without_writes()
         seen += items.len() as i64;
         match body.get("next_cursor").unwrap().as_str() {
             Some(cursor) => {
-                uri = format!("stellar://documents/{document}?cursor={cursor}&limit=2000")
+                uri = format!("stellar://documents/{document}?cursor={cursor}&limit=1000")
             }
             None => break,
         }
@@ -374,7 +427,7 @@ fn scope_revision_limits_and_write_requests_return_normal_errors() {
     for uri in [
         format!("stellar://projects/{OTHER}/structure"),
         format!("stellar://documents/{OTHER}"),
-        format!("stellar://documents/{document}?limit=2001"),
+        format!("stellar://documents/{document}?limit=1001"),
         format!("stellar://documents/{document}?limit=0"),
         format!("stellar://documents/{document}?project={OTHER}"),
         format!("stellar://documents/{document}?cursor=p1.2.{OTHER}.g0"),
@@ -437,18 +490,19 @@ fn scope_revision_limits_and_write_requests_return_normal_errors() {
 }
 
 fn tool_page(reply: &J) -> J {
-    let parts = array(
-        reply
-            .get("result")
-            .expect("tool result")
-            .get("content")
-            .unwrap(),
-    );
+    let result = reply.get("result").expect("tool result");
+    let parts = array(result.get("content").unwrap());
     assert_eq!(parts.len(), 1);
     assert_eq!(parts[0].get("type").map(text), Some("text"));
-    let text = text(parts[0].get("text").unwrap());
-    assert!(text.len() <= paging::MAX_PAGE_BYTES);
-    json::parse(text, JsonLimits::default()).unwrap()
+    // XIX.9.6: text block은 structuredContent의 직렬화이고 내용은 data 아래에만 있습니다.
+    let structured = result.get("structuredContent").unwrap();
+    let serialized =
+        json::parse(text(parts[0].get("text").unwrap()), JsonLimits::default()).unwrap();
+    assert_eq!(&serialized, structured);
+    assert_eq!(structured.get("kind").map(text), Some("ok"));
+    let data = structured.get("data").unwrap().clone();
+    assert!(json::write(&data).len() <= paging::MAX_PAGE_BYTES);
+    data
 }
 
 #[test]
@@ -490,7 +544,7 @@ fn component_pages_cover_large_libraries_and_reject_a_changed_source_cursor() {
             break;
         };
         first_cursor.get_or_insert_with(|| cursor.to_owned());
-        uri = format!("{COMPONENTS}?cursor={cursor}&limit=1600");
+        uri = format!("{COMPONENTS}?cursor={cursor}&limit=1000");
     }
     assert_eq!(seen.len(), 2200);
     let mut bytes = std::fs::read(&first_file).unwrap();
@@ -708,7 +762,7 @@ payload:
     fs::write(&path, &v2).unwrap();
     // 고정된 HEAD가 실제로 바뀌면 현재 파일과 generation이 같아도 이전 커서는 폐기합니다.
     fx.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
-    assert_error(&client.diff(J::object(vec![("cursor", cursor)])), -32602);
+    assert_tool_error(&client.diff(J::object(vec![("cursor", cursor)])), -32602);
     let switched = tool_page(&client.diff(empty()));
     assert_eq!(switched.get("total"), Some(&J::int(1)));
     assert_eq!(
@@ -731,23 +785,23 @@ payload:
     let colliding = v2.replace(CHILD, &document.document_id().to_string());
     fs::write(&path, colliding).unwrap();
     let before = file_digest(&fx.temp.path);
-    assert_error(&client.diff(empty()), -32000);
+    assert_tool_error(&client.diff(empty()), -32000);
     assert_eq!(file_digest(&fx.temp.path), before);
     fs::write(&path, v2.replace("160 40", "184.5 40")).unwrap();
 
     // 전체 SHA·generation을 그대로 둔 작업 파일 손상, 바이트 상한은 fail closed.
     let edited = fs::read(&path).unwrap();
     fs::write(&path, "format: unsupported").unwrap();
-    assert_error(&client.diff(empty()), -32000);
+    assert_tool_error(&client.diff(empty()), -32000);
     fs::write(&path, vec![b' '; 1024 * 1024 + 1]).unwrap();
-    assert_error(&client.diff(empty()), -32000);
+    assert_tool_error(&client.diff(empty()), -32000);
 
     // HEAD의 과대 blob도 working 파일로 대체해서 비교하지 않습니다.
     fx.git(&["add", "--", "design/components"]);
     fx.git(&["commit", "-qm", "oversized source"]);
     fs::write(&path, &edited).unwrap();
     let over = file_digest(&fx.temp.path);
-    assert_error(&client.diff(empty()), -32000);
+    assert_tool_error(&client.diff(empty()), -32000);
     assert_eq!(file_digest(&fx.temp.path), over);
     fx.git(&["reset", "--soft", &nested_head]);
     fx.git(&["restore", "--staged", "--", "design/components"]);
@@ -766,7 +820,7 @@ payload:
         fs::remove_file(&path).unwrap();
         fs::write(&path, &edited).unwrap();
         let switched = file_digest(&fx.temp.path);
-        assert_error(&client.diff(empty()), -32000);
+        assert_tool_error(&client.diff(empty()), -32000);
         assert_eq!(file_digest(&fx.temp.path), switched);
     }
 
@@ -800,7 +854,7 @@ fn head_diff_pages_follow_real_branches_and_preserve_all_inputs() {
     fx.grant();
     let mut client = fx.launch();
     client.initialize();
-    assert_error(&client.diff(empty()), -32000); // unborn HEAD
+    assert_tool_error(&client.diff(empty()), -32000); // unborn HEAD
     fx.git(&["add", "-A"]);
     fx.git(&["commit", "-qm", "main"]);
     let main = fx.git(&["rev-parse", "HEAD"]);
@@ -854,14 +908,14 @@ fn head_diff_pages_follow_real_branches_and_preserve_all_inputs() {
         J::object(vec![("path", J::string("other"))]),
         J::object(vec![("limit", J::int(2001))]),
     ] {
-        assert_error(&client.diff(bad), -32602);
+        assert_tool_error(&client.diff(bad), -32602);
     }
     assert_eq!(file_digest(&fx.temp.path), before);
 
     // 작업 트리와 index는 그대로 두고 실제 branch를 이동합니다.
     fx.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
     let after_ref = file_digest(&fx.temp.path);
-    assert_error(&client.diff(J::object(vec![("cursor", cursor)])), -32602);
+    assert_tool_error(&client.diff(J::object(vec![("cursor", cursor)])), -32602);
     let switched = tool_page(&client.diff(J::object(vec![("limit", J::int(1))])));
     assert_eq!(switched.get("base_commit").map(text), Some(main.as_str()));
     assert_eq!(switched.get("revision"), first.get("revision"));
@@ -881,7 +935,7 @@ fn head_diff_pages_follow_real_branches_and_preserve_all_inputs() {
     // 긴 문자열도 count limit보다 실제 JSON byte 한도가 먼저 페이지를 끊습니다.
     for node in nodes.iter().take(3) {
         document
-            .set_display_name(node.id, "이름".repeat(38_000))
+            .set_display_name(node.id, "이름".repeat(25_000))
             .unwrap();
     }
     save_documents(&fx.project, &[&document]);
@@ -897,7 +951,7 @@ fn head_diff_pages_follow_real_branches_and_preserve_all_inputs() {
         .set_display_name(nodes[0].id, "가".repeat(180_000))
         .unwrap();
     save_documents(&fx.project, &[&document]);
-    assert_error(&client.diff(empty()), -32602);
+    assert_tool_error(&client.diff(empty()), -32602);
     for node in nodes.iter().take(3) {
         document.set_display_name(node.id, "복원".into()).unwrap();
     }
@@ -912,7 +966,7 @@ fn head_diff_pages_follow_real_branches_and_preserve_all_inputs() {
     fx.git(&["commit", "-qm", "different project"]);
     std::fs::write(manifest, original).unwrap();
     let before = file_digest(&fx.temp.path);
-    assert_error(&client.diff(empty()), -32000);
+    assert_tool_error(&client.diff(empty()), -32000);
     assert_eq!(file_digest(&fx.temp.path), before);
     fx.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
     assert!(tool_page(&client.diff(empty())).get("items").is_some());
@@ -921,7 +975,7 @@ fn head_diff_pages_follow_real_branches_and_preserve_all_inputs() {
         .revoke(&fx.identity())
         .unwrap();
     let revoked = file_digest(&fx.temp.path);
-    assert_error(&client.diff(empty()), -32000);
+    assert_tool_error(&client.diff(empty()), -32000);
     client.finish();
     assert_eq!(file_digest(&fx.temp.path), revoked);
 }
@@ -935,7 +989,7 @@ fn validation_pages_share_the_cli_validator_and_only_read_the_selected_project()
     fx.grant();
     let before = file_digest(&fx.temp.path);
     let mut client = fx.launch();
-    assert_error(&client.validate(empty()), -32002);
+    assert_error(&client.validate(empty()), -32002); // initialize 전 protocol 오류
     client.initialize();
     let project = tool_page(&client.validate(empty()));
     assert_eq!(project.get("documents_checked"), Some(&J::int(2)));
@@ -988,19 +1042,19 @@ fn validation_pages_share_the_cli_validator_and_only_read_the_selected_project()
         J::object(vec![("limit", J::int(2001))]),
         J::object(vec![("limit", J::string("2"))]),
     ] {
-        assert_error(&client.validate(bad), -32602);
+        assert_tool_error(&client.validate(bad), -32602);
     }
     assert_eq!(file_digest(&fx.temp.path), before);
     save_documents(&fx.project, &[&warned]);
     let saved = file_digest(&fx.temp.path);
-    assert_error(&client.validate(J::object(arguments)), -32602);
+    assert_tool_error(&client.validate(J::object(arguments)), -32602);
     assert_eq!(file_digest(&fx.temp.path), saved);
     FileTrustStore::open(&fx.data)
         .unwrap()
         .revoke(&fx.identity())
         .unwrap();
     let revoked = file_digest(&fx.temp.path);
-    assert_error(&client.validate(empty()), -32000);
+    assert_tool_error(&client.validate(empty()), -32000);
     assert_error(&client.call("tools/list", empty()), -32000);
     client.finish();
     assert_eq!(file_digest(&fx.temp.path), revoked);

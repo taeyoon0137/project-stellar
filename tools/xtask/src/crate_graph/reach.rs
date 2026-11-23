@@ -199,6 +199,37 @@ fn bfs<'a>(
     parents
 }
 
+/// `from`이 실제 graph에서 도달하는 crate와 그 최단 경로(`from -> ... -> crate`). 시작은 `from`의 모든 표,
+/// 그 뒤는 normal·build 의존만 따라갑니다([`check_reach`]와 같은 규칙, XXIV.4.7).
+pub fn reach_paths(from: &str, edges: &[ManifestEdge]) -> BTreeMap<String, Vec<String>> {
+    let mut start: BTreeSet<&str> = BTreeSet::new();
+    let mut propagating: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for edge in edges {
+        if edge.from == from {
+            start.insert(edge.to.as_str());
+        }
+        if edge.table.kind.propagates() {
+            propagating
+                .entry(edge.from.as_str())
+                .or_default()
+                .insert(edge.to.as_str());
+        }
+    }
+    let parents = bfs(from, &start, &propagating);
+    parents
+        .keys()
+        .map(|target| {
+            (
+                (*target).to_string(),
+                path_to(from, target, &parents)
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
 /// BFS 부모 기록으로 `from -> ... -> target` 경로를 복원합니다.
 fn path_to<'a>(
     from: &'a str,
