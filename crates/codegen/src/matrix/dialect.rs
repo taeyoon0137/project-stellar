@@ -627,32 +627,14 @@ mod tests {
         let mut items: BTreeSet<(&str, &str)> = stellar_layout::declared::LONGHANDS
             .iter()
             .map(|name| {
-                let item = matches!(
-                    *name,
-                    "position"
-                        | "box-sizing"
-                        | "top"
-                        | "right"
-                        | "bottom"
-                        | "left"
-                        | "width"
-                        | "height"
-                        | "min-width"
-                        | "min-height"
-                        | "max-width"
-                        | "max-height"
-                        | "aspect-ratio"
-                        | "flex-grow"
-                        | "flex-shrink"
-                        | "flex-basis"
-                        | "align-self"
-                        | "justify-self"
-                        | "grid-column-start"
-                        | "grid-column-end"
-                        | "grid-row-start"
-                        | "grid-row-end"
-                );
-                (if item { "node" } else { "frame" }, *name)
+                // item longhand는 `node/<이름>` 항목, container longhand는 `frame/<이름>` 항목입니다.
+                let scope = if find("node", name).is_some() {
+                    "node"
+                } else {
+                    "frame"
+                };
+                assert!(find(scope, name).is_some(), "{scope}/{name} 항목 없음");
+                (scope, *name)
             })
             .collect();
         items.insert(("frame", "transform"));

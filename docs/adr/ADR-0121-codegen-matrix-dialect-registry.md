@@ -60,8 +60,11 @@ Accepted (2026-11-23).
      부릅니다.
    - CSS 속성 사용(`css_properties`)은 node마다 다음을 넣습니다. 매핑 상태는 `exact`입니다(layout longhand는 CSS
      longhand 그대로).
-     - 엔진 입력 필드가 엔진 생략값(`LayoutStyle::default()`)과 다른 layout longhand. 비교는 필드끼리 합니다. 값 텍스트를
-       다시 읽거나 초기값 표를 따로 두지 않습니다.
+     - 엔진 입력 필드가 엔진 생략값(`LayoutStyle::default()`)과 다른 layout longhand. 판정은 엔진의
+       `LayoutStyle::declarations`가 합니다. 필드 비교·값 텍스트 읽기·초기값 표를 따로 두지 않습니다.
+       - 엔진 생략값은 CSS 초기값과 다를 수 있습니다. 예: `box-sizing`은 엔진 생략값이 border-box라 CSS 초기값
+         content-box가 사용으로 들어갑니다. 출력 코드가 실제로 그 값을 낮추므로 사용이 맞습니다.
+     - item·container 구분은 matrix 항목 표에 `node/<이름>` 항목이 있는지로 정합니다. 목록을 따로 두지 않습니다.
      - container longhand는 Frame·ComponentInstance에만 넣습니다.
      - 0이 아닌 시각 이동이 있는 Frame은 `frame/transform`을 넣습니다.
    - 상태·상태 머신·`MotionSpec`·Context는 호출자가 IR 타입으로 넘긴 값을 그대로 씁니다. 문서 값 변환은 문서 계층(ops)의

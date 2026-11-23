@@ -17,7 +17,7 @@
 //! 문서가 아직 복원하지 못하는 control contract·token·Variant·target capability 속성은 채우지 않습니다(ADR-0049,
 //! XXII.1.1).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use stellar_accessibility::generate::generate;
@@ -138,100 +138,30 @@ pub struct NativeBehaviors {
     pub contexts: IrContexts,
 }
 
-/// item longhand(범위 `node`)인지. 나머지 layout longhand는 container longhand(범위 `frame`)입니다.
-fn is_item_longhand(name: &str) -> bool {
-    matches!(
-        name,
-        "position"
-            | "box-sizing"
-            | "top"
-            | "right"
-            | "bottom"
-            | "left"
-            | "width"
-            | "height"
-            | "min-width"
-            | "min-height"
-            | "max-width"
-            | "max-height"
-            | "aspect-ratio"
-            | "flex-grow"
-            | "flex-shrink"
-            | "flex-basis"
-            | "align-self"
-            | "justify-self"
-            | "grid-column-start"
-            | "grid-column-end"
-            | "grid-row-start"
-            | "grid-row-end"
-    )
-}
-
-/// longhand의 값이 엔진 생략값과 다른지. 값 텍스트를 다시 읽지 않고 엔진 입력 필드를 비교합니다.
-fn differs(style: &LayoutStyle, base: &LayoutStyle, name: &str) -> bool {
-    let (t, r, b, l) = style.padding.components();
-    let (bt, br, bb, bl) = base.padding.components();
-    match name {
-        "display" => style.display != base.display,
-        "position" => style.position != base.position,
-        "box-sizing" => style.box_sizing != base.box_sizing,
-        "top" => style.top != base.top,
-        "right" => style.right != base.right,
-        "bottom" => style.bottom != base.bottom,
-        "left" => style.left != base.left,
-        "width" => style.width != base.width,
-        "height" => style.height != base.height,
-        "min-width" => style.min_width != base.min_width,
-        "min-height" => style.min_height != base.min_height,
-        "max-width" => style.max_width != base.max_width,
-        "max-height" => style.max_height != base.max_height,
-        "aspect-ratio" => style.aspect_ratio != base.aspect_ratio,
-        "padding-top" => t != bt,
-        "padding-right" => r != br,
-        "padding-bottom" => b != bb,
-        "padding-left" => l != bl,
-        "flex-direction" => style.flex_direction != base.flex_direction,
-        "flex-wrap" => style.flex_wrap != base.flex_wrap,
-        "justify-content" => style.justify_content != base.justify_content,
-        "align-content" => style.align_content != base.align_content,
-        "align-items" => style.align_items != base.align_items,
-        "justify-items" => style.justify_items != base.justify_items,
-        "row-gap" => style.row_gap != base.row_gap,
-        "column-gap" => style.column_gap != base.column_gap,
-        "flex-grow" => style.flex_grow != base.flex_grow,
-        "flex-shrink" => style.flex_shrink != base.flex_shrink,
-        "flex-basis" => style.flex_basis != base.flex_basis,
-        "align-self" => style.align_self != base.align_self,
-        "justify-self" => style.justify_self != base.justify_self,
-        "grid-template-columns" => style.grid_template_columns != base.grid_template_columns,
-        "grid-template-rows" => style.grid_template_rows != base.grid_template_rows,
-        "grid-auto-columns" => style.grid_auto_columns != base.grid_auto_columns,
-        "grid-auto-rows" => style.grid_auto_rows != base.grid_auto_rows,
-        "grid-auto-flow" => style.grid_auto_flow != base.grid_auto_flow,
-        "grid-column-start" => style.grid_column_start != base.grid_column_start,
-        "grid-column-end" => style.grid_column_end != base.grid_column_end,
-        "grid-row-start" => style.grid_row_start != base.grid_row_start,
-        "grid-row-end" => style.grid_row_end != base.grid_row_end,
-        _ => false,
-    }
-}
-
 /// node 하나의 CSS 기반 속성 사용(ADR-0121 결정 3). layout longhand는 CSS longhand 그대로라 매핑 상태가 `exact`입니다.
+///
+/// 생략값과 다른 longhand는 엔진의 [`LayoutStyle::declarations`]가 정합니다(필드 비교를 다시 두지 않음). 범위는 matrix
+/// 항목 표([`crate::matrix::css::find`])에 `node/<이름>` 항목이 있으면 item longhand(`node`), 없으면 container
+/// longhand(`frame`)입니다(item·container 목록을 따로 두지 않음).
 fn css_uses(
     style: &LayoutStyle,
     element: ElementKind,
     translation: (f32, f32),
 ) -> Vec<CssPropertyUse> {
-    let base = LayoutStyle::default();
+    let changed: BTreeSet<&'static str> = style
+        .declarations()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
     let container = matches!(
         element,
         ElementKind::FRAME | ElementKind::COMPONENT_INSTANCE
     );
     let mut out: Vec<CssPropertyUse> = stellar_layout::declared::LONGHANDS
         .iter()
-        .filter(|name| differs(style, &base, name))
+        .filter(|name| changed.contains(*name))
         .filter_map(|name| {
-            let scope = if is_item_longhand(name) {
+            let scope = if crate::matrix::css::find("node", name).is_some() {
                 "node"
             } else if container {
                 "frame"
@@ -552,25 +482,21 @@ mod tests {
                     })
                     .collect()
             };
-            let root = names(0);
-            for name in [
-                "display",
-                "flex-direction",
-                "flex-wrap",
-                "width",
-                "transform",
-            ] {
-                assert!(root.contains(&name), "{name}: {root:?}");
-            }
-            assert!(
-                !root.contains(&"grid-row-end"),
-                "생략값 longhand는 사용이 아닙니다"
+            // 엔진 생략값과 다른 longhand만 사용이고(`grid-row-end: auto` 같은 값은 아님), local transform registry
+            // 항목은 Frame(`frame/transform`)에만 있습니다. Text의 container longhand(display)는 사용이 아닙니다.
+            // `box-sizing`은 CSS 초기값(content-box)이 엔진 생략값(border-box)과 달라 사용입니다.
+            assert_eq!(
+                names(0),
+                [
+                    "display",
+                    "flex-direction",
+                    "flex-wrap",
+                    "transform",
+                    "box-sizing",
+                    "width"
+                ]
             );
-            let text = names(1);
-            assert!(text.contains(&"flex-grow"));
-            // local transform registry 항목은 Frame(`frame/transform`)에만 있습니다.
-            assert!(!text.contains(&"transform"));
-            assert!(!text.contains(&"display"));
+            assert_eq!(names(1), ["box-sizing", "flex-grow"]);
             // 판정은 matrix 그대로입니다(Apple은 flex-wrap Unsupported, Android는 Native).
             let kind = profile.kind();
             let wrap = ir.nodes[0]
