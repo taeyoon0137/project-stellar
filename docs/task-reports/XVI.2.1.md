@@ -2,7 +2,7 @@
 
 - WBS: XVI.2.1
 - 작업명: 입력 재생 파일에 초기 project fixture hash, viewport, InputEvent sequence, ManualClock timeline 정의
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 ledger-refresh 판정: 구현 판정 통과, 선행 미충족(계획 1.2 규칙 4): 선행 XVI.1.1(`[~]`, 앱 입력 경로 없음)이 `[x]`가 아닙니다. 이전 기록: 완료 (`[x]`)
 - 결정: ADR-0084 결정 9
 - 선행: XII.3.1(`[x]`), XVI.1.1(이 lane)
 

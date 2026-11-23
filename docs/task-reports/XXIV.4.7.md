@@ -2,7 +2,7 @@
 
 - WBS: XXIV.4.7
 - 작업명: `stellar`에 AI·MCP·모델·에이전트 관련 명령과 해당 crate로의 직접·전이 의존이 없음을 검사하는 inventory test 추가
-- 상태: 구현 완료, 원장 판정 보류 (`[~]`) — 선행 XXIX.1.1이 `[~]`(crate 의존 그래프 문서 절, 이 lane 소유 밖)라서 `[x]`로 올리지 않습니다. XXIV.4.3·XXIV.4.4는 ledger-verification 재판정·원장 상태대로입니다. 행 범위는 모두 구현했습니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 ledger-refresh 판정: 구현 판정 통과, 선행 미충족(계획 1.2 규칙 4): 선행 XXIV.4.4(`[~]`, generation metadata writer 종류 미기록)가 `[x]`가 아닙니다. 선행 XXIX.1.1은 `[x]`입니다. 이전 기록: 구현 완료, 원장 판정 보류 (`[~]`) — 선행 XXIX.1.1이 `[~]`(crate 의존 그래프 문서 절, 이 lane 소유 밖)라서 `[x]`로 올리지 않습니다. XXIV.4.3·XXIV.4.4는 ledger-verification 재판정·원장 상태대로입니다. 행 범위는 모두 구현했습니다.
 - 선행: XXIV.4.3(ledger-verification 재판정 `[x]`, 원장 미반영), XXIV.4.4 `[x]`, XXIX.1.1 `[~]`
 
 ## 필수 실행 환경

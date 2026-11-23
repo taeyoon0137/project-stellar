@@ -2,7 +2,7 @@
 
 - WBS: XIX.9.2
 - 작업명: resource·tool 목록을 `stellar-agent-protocol` Rust 정의에서 생성하고, CommandTransaction 입력 schema를 xtask가 closed enum에서 생성해 `schemas/`에 둠
-- 상태: 구현 완료, 원장 판정 보류 (`[~]`) — 선행 XIX.9.1이 `[~]`(XXIX.1.1 문서 대기)라서 `[x]`로 올리지 않습니다. 행 범위는 모두 구현했습니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 ledger-refresh 판정: 구현 판정 통과, 선행 미충족(계획 1.2 규칙 4): 선행 XIX.5.1(`[~]`, CLI·MCP command 해석 이중 경로)이 `[x]`가 아닙니다. 선행 XIX.9.1은 `[x]`입니다. 이전 기록: 구현 완료, 원장 판정 보류 (`[~]`) — 선행 XIX.9.1이 `[~]`(XXIX.1.1 문서 대기)라서 `[x]`로 올리지 않습니다. 행 범위는 모두 구현했습니다.
 - 선행: XIX.9.1(`[~]`), XIX.2.1 `[x]`, XIX.2.3 `[x]`, XIX.5.1(이 lane `[x]`)
 
 ## 필수 실행 환경

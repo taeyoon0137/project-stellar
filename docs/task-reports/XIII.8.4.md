@@ -4,7 +4,7 @@
 
 - WBS: XIII.8.4
 - 작업명: 복구 선택 시 in-memory 상태와 디스크 비덮어쓰기
-- 상태: 완료 (`[x]`) 원장 판정은 통합 때 `generate-ledger`로 정합니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 ledger-refresh 판정: 구현 판정 통과, 선행 미충족(계획 1.2 규칙 4): 선행 XIII.8.3(`[ ]`)이 `[x]`가 아닙니다. XIII.8.3이 끝나면 근거 커밋 기록만으로 `[x]`입니다. 이전 기록: 완료 (`[x]`) 원장 판정은 통합 때 `generate-ledger`로 정합니다.
 - 선행: XIII.8.3
 - 결정: [ADR-0083](../adr/ADR-0083-window-session-stale-and-external-sync.md)
 - lane: `window-session-stale`

@@ -2,7 +2,7 @@
 
 - WBS: XVI.4.5
 - 작업명: 결과를 commit, hardware profile, OS build, app build와 함께 보존하되 사용자 project 정보 미포함
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 ledger-refresh 판정: 구현 판정 통과, 선행 미충족(계획 1.2 규칙 4): 선행 XVI.4.4(`[~]`)가 `[x]`가 아닙니다(XVI.1.2 사슬). 이전 기록: 완료 (`[x]`)
 - 결정: ADR-0084 결정 11
 - 선행: XVI.4.4(이 lane)
 
