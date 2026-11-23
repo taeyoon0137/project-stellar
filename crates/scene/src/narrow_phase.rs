@@ -111,9 +111,9 @@ impl TextHitGeometry for LayoutBoxesOnly {
 
 /// 내부 계산용 점(f64).
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Pt {
-    x: f64,
-    y: f64,
+pub(crate) struct Pt {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
 }
 
 impl Pt {
@@ -146,9 +146,9 @@ impl Pt {
 
 /// 선분화한 subpath.
 #[derive(Debug, Clone)]
-struct Polyline {
-    points: Vec<Pt>,
-    closed: bool,
+pub(crate) struct Polyline {
+    pub(crate) points: Vec<Pt>,
+    pub(crate) closed: bool,
 }
 
 /// cubic을 나눌 선분 수(Wang 공식, `[1, MAX_CUBIC_SEGMENTS]`).
@@ -182,7 +182,7 @@ fn cubic_at(p0: Pt, p1: Pt, p2: Pt, p3: Pt, t: f64) -> Pt {
 }
 
 /// geometry를 local 허용 오차 `tolerance`로 선분화합니다.
-fn flatten(geometry: &PathGeometry, tolerance: f64) -> Vec<Polyline> {
+pub(crate) fn flatten(geometry: &PathGeometry, tolerance: f64) -> Vec<Polyline> {
     let tolerance = if tolerance.is_finite() && tolerance > 0.0 {
         tolerance
     } else {

@@ -388,7 +388,21 @@ impl SceneBuilder {
         self.built
     }
 
-    fn allocate_z(&mut self) -> Result<ZOrder, SceneBuildError> {
+    /// 다음에 발급할 z-order 값(증분 builder, XI.2.5).
+    pub(crate) const fn next_z(&self) -> u64 {
+        self.next_z
+    }
+
+    /// 공유한 subtree의 node `count`개만큼 z-order를 건너뜁니다(증분 builder, XI.2.5).
+    pub(crate) fn skip(&mut self, count: u64) -> Result<(), SceneBuildError> {
+        self.next_z = self
+            .next_z
+            .checked_add(count)
+            .ok_or(SceneBuildError::ZOrderExhausted)?;
+        Ok(())
+    }
+
+    pub(crate) fn allocate_z(&mut self) -> Result<ZOrder, SceneBuildError> {
         let z = self.next_z;
         self.next_z = z.checked_add(1).ok_or(SceneBuildError::ZOrderExhausted)?;
         self.built += 1;

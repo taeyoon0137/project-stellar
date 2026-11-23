@@ -10,6 +10,15 @@ yaml-rust2 = "=0.11.0"
 # chunk 크기 측정 harness(V.6.3)용 내부 crate.
 stellar-storage = { path = "../../crates/storage" }
 stellar-core-types = { path = "../../crates/core-types" }
+# core 입력 재생 runner(XVI.2.2, ADR-0084): 문서 command → layout → scene → render graph encode.
+stellar-bench-fixtures = { path = "../../benchmarks/fixtures" }
+stellar-commands = { path = "../../crates/commands" }
+stellar-diagnostics = { path = "../../crates/diagnostics" }
+stellar-document = { path = "../../crates/document" }
+stellar-layout = { path = "../../crates/layout" }
+stellar-renderer-core = { path = "../../crates/renderer-core" }
+stellar-runtime = { path = "../../crates/runtime" }
+stellar-scene = { path = "../../crates/scene" }
 
 [lints]
 workspace = true

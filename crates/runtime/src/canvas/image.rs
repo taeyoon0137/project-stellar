@@ -24,15 +24,14 @@ pub fn image_placement(fit: u8, bounds: [f32; 4], intrinsic: [f32; 2]) -> Option
     Some((placed.dest, placed.clip_to_bounds))
 }
 
-pub(super) fn project(
-    model: &DocumentModel,
+/// 이미지 payload와 modifier stack을 scene 입력으로 바꿉니다. 캔버스가 아직 그리지 않는 crop·sampling·색공간 override와
+/// Transform 밖 modifier는 `None`입니다. 캔버스 행과 증분 scene source(ADR-0084)가 함께 씁니다.
+pub(crate) fn image_input(
     id: StableId,
     image: &ImagePayload,
-    scope: &SceneScope,
-    parent: Option<u32>,
+    stack: Option<&stellar_document::modifier::ModifierStack>,
     locked: bool,
-    builder: &mut SceneBuilder,
-) -> Option<CanvasFrame> {
+) -> Option<ImageInput> {
     if image.crop != CropRect::FULL
         || image.sampling != SamplingMode::Linear
         || image.color_space_override.is_some()
@@ -40,8 +39,7 @@ pub(super) fn project(
         return None;
     }
     let mut transform = Transform2D::identity();
-    for modifier in model
-        .modifier_stack(id)
+    for modifier in stack
         .into_iter()
         .flat_map(|s| s.entries())
         .filter(|m| m.enabled)
@@ -53,20 +51,28 @@ pub(super) fn project(
     }
     let mut node = NodeInput::new(id, transform);
     node.locked = locked;
-    let built = builder
-        .build_image(
-            &mut scope.clone(),
-            &ImageInput {
-                node,
-                asset: image.asset,
-                size: image.size,
-                fit: scene_fit(image.fit),
-                crop: ImageCrop::new(0., 0., 1., 1.).ok()?,
-                sampling: ImageSampling::Linear,
-                color_space: None,
-            },
-        )
-        .ok()?;
+    Some(ImageInput {
+        node,
+        asset: image.asset,
+        size: image.size,
+        fit: scene_fit(image.fit),
+        crop: ImageCrop::new(0., 0., 1., 1.).ok()?,
+        sampling: ImageSampling::Linear,
+        color_space: None,
+    })
+}
+
+pub(super) fn project(
+    model: &DocumentModel,
+    id: StableId,
+    image: &ImagePayload,
+    scope: &SceneScope,
+    parent: Option<u32>,
+    locked: bool,
+    builder: &mut SceneBuilder,
+) -> Option<CanvasFrame> {
+    let input = image_input(id, image, model.modifier_stack(id), locked)?;
+    let built = builder.build_image(&mut scope.clone(), &input).ok()?;
     let world = built.world_transform();
     world.inverse()?;
     let rect = Rect::new(Vec2::ZERO, image.size);

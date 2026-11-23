@@ -26,6 +26,8 @@ use crate::window_session::ProjectWindowSession;
 
 mod component;
 mod image;
+/// 문서 → 증분 scene source 변환 (XI.2.4, XI.2.5, XII.10.30).
+pub mod scene_source;
 pub use image::image_placement;
 pub(crate) mod shape;
 
@@ -255,6 +257,38 @@ impl CanvasCache {
     }
 }
 
+/// 고정 Free Frame payload를 scene 입력으로 바꿉니다. 캔버스 행과 증분 scene source(ADR-0084)가 함께 씁니다.
+/// Path clip은 아직 그리지 않습니다(호출자가 거릅니다).
+pub(crate) fn frame_input(
+    id: StableId,
+    frame: &stellar_document::frame::FramePayload,
+    locked: bool,
+) -> Option<FrameInput> {
+    let radius = RectangleParams {
+        size: frame.size,
+        corner_radius: frame.corner_radius,
+    }
+    .effective_corner_radius();
+    let radii = CornerRadii::new(radius.0, radius.1, radius.2, radius.3).ok()?;
+    let mut node = NodeInput::new(id, frame.transform);
+    node.locked = locked;
+    Some(FrameInput {
+        node,
+        size: frame.size,
+        corner_radii: radii,
+        background: frame.background,
+        border: frame.border.map(|b| BorderInput {
+            color: b.color,
+            thickness: b.thickness(),
+        }),
+        clip: if frame.clipping == Clipping::FrameBounds {
+            FrameClipInput::Bounds
+        } else {
+            FrameClipInput::None
+        },
+    })
+}
+
 impl CanvasScene {
     /// 활성 View의 root Frame(painter 순서 첫 행)을 창의 logical point 안에 배치합니다. 100%보다 키우지 않습니다.
     pub(crate) fn root_viewport(&self, width: f64, height: f64) -> Option<CanvasViewport> {
@@ -290,30 +324,8 @@ impl CanvasScene {
         frame: &stellar_document::frame::FramePayload,
         locked: bool,
     ) -> Option<(stellar_scene::builder::SceneScope, u32)> {
-        let radius = RectangleParams {
-            size: frame.size,
-            corner_radius: frame.corner_radius,
-        }
-        .effective_corner_radius();
-        let radii = CornerRadii::new(radius.0, radius.1, radius.2, radius.3).ok()?;
-        let mut node = NodeInput::new(id, frame.transform);
-        node.locked = locked;
-        let clip_children = frame.clipping == Clipping::FrameBounds;
-        let input = FrameInput {
-            node,
-            size: frame.size,
-            corner_radii: radii,
-            background: frame.background,
-            border: frame.border.map(|b| BorderInput {
-                color: b.color,
-                thickness: b.thickness(),
-            }),
-            clip: if clip_children {
-                FrameClipInput::Bounds
-            } else {
-                FrameClipInput::None
-            },
-        };
+        let input = frame_input(id, frame, locked)?;
+        let clip_children = input.clip == FrameClipInput::Bounds;
         let scope = builder.begin_frame(parent_scope, &input).ok()?;
         let spec = scope.spec();
         let SceneContent::Rect(geometry) = &spec.content else {

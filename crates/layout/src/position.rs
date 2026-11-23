@@ -115,7 +115,8 @@ pub(crate) fn place_absolute(
     cb: [LayoutUnit; 2],
     static_rect: StaticRect,
 ) -> Result<Placement, LayoutError> {
-    let prepared = engine.nodes[index].clone();
+    let nodes = engine.nodes;
+    let prepared = &nodes[index];
     let id = prepared.id;
     let mut starts = [None; 2];
     let mut ends = [None; 2];

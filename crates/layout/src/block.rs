@@ -89,7 +89,8 @@ pub(crate) fn layout(
     request: Request,
     mut sizing: Sizing,
 ) -> Result<NodeLayout, LayoutError> {
-    let prepared = engine.nodes[index].clone();
+    let nodes = engine.nodes;
+    let prepared = &nodes[index];
     let id = prepared.id;
     let pad = prepared.padding;
     let ph = pad.sum(Axis::Horizontal).map_err(at(id))?;

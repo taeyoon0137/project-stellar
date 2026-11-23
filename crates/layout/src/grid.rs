@@ -671,7 +671,8 @@ fn contributions(
     };
     let min_content = measure(engine, Avail::MinContent, false)?;
     let max_content = measure(engine, Avail::MaxContent, false)?.max(min_content);
-    let prepared = engine.nodes[index].clone();
+    let nodes = engine.nodes;
+    let prepared = &nodes[index];
     let minimum = match prepared.min[i] {
         SizeP::Auto => {
             if spans_auto_min && !spans_flexible {
@@ -1422,7 +1423,8 @@ pub(crate) fn layout(
     request: Request,
     mut sizing: Sizing,
 ) -> Result<NodeLayout, LayoutError> {
-    let prepared = engine.nodes[index].clone();
+    let nodes = engine.nodes;
+    let prepared = &nodes[index];
     let id = prepared.id;
     let err = at(id);
     let pad = prepared.padding;

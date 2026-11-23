@@ -718,13 +718,40 @@ impl Sizing {
 
 // --- 엔진 ---
 
+/// memo 한 항목: (정규화한 요청, 결과, 이번 계산에서 새로 계산했는지).
+type MemoEntry = (Request, Arc<NodeLayout>, bool);
+
+/// in-run memo. node 하나의 요청 종류는 몇 개뿐이라 요청 전체를 hash하는 map보다 node별 목록의 선형 탐색이 빠릅니다
+/// (ADR-0084 결정 1). 전체 계산은 node 수만큼 목록을 미리 두고(`Dense`), 일부 subtree만 방문하는 증분 계산은 방문한
+/// node만 담습니다(`Sparse`).
+enum Memo {
+    Dense(Vec<Vec<MemoEntry>>),
+    Sparse(FastMap<usize, Vec<MemoEntry>>),
+}
+
+impl Memo {
+    fn entries(&self, index: usize) -> &[MemoEntry] {
+        match self {
+            Memo::Dense(slots) => &slots[index],
+            Memo::Sparse(map) => map.get(&index).map_or(&[], Vec::as_slice),
+        }
+    }
+
+    fn slot(&mut self, index: usize) -> &mut Vec<MemoEntry> {
+        match self {
+            Memo::Dense(slots) => &mut slots[index],
+            Memo::Sparse(map) => map.entry(index).or_default(),
+        }
+    }
+}
+
 /// 레이아웃 계산 상태(한 번의 계산 동안만 유지).
 pub(crate) struct Engine<'a> {
     pub(crate) input: &'a LayoutInput,
     pub(crate) tree: &'a TreeIndex,
     pub(crate) nodes: &'a [Prepared],
-    /// in-run memo((node index, 요청) → (결과, 이번 계산에서 새로 계산했는지)).
-    memo: FastMap<(usize, Request), (Arc<NodeLayout>, bool)>,
+    /// in-run memo([`Memo`]).
+    memo: Memo,
     /// 측정기 결과 in-run memo.
     measure_memo: FastMap<(usize, [Option<LayoutUnit>; 2], IntrinsicMode), IntrinsicSize>,
     /// node별 subtree input hash(입력 순서). cache가 없으면 비어 있을 수 있습니다.
@@ -738,7 +765,7 @@ pub(crate) struct Engine<'a> {
 }
 
 impl<'a> Engine<'a> {
-    /// 계산 상태를 만듭니다. `cache`가 있으면 `subtree`는 모든 node의 현재 subtree hash여야 합니다.
+    /// 전체 계산 상태를 만듭니다. `cache`가 있으면 `subtree`는 모든 node의 현재 subtree hash여야 합니다.
     pub(crate) fn new(
         input: &'a LayoutInput,
         tree: &'a TreeIndex,
@@ -747,11 +774,37 @@ impl<'a> Engine<'a> {
         measurer: &'a dyn ContentMeasurer,
         cache: Option<&'a mut MeasureCache>,
     ) -> Engine<'a> {
+        let memo = Memo::Dense(vec![Vec::new(); nodes.len()]);
+        Engine::with_memo(input, tree, nodes, subtree, measurer, cache, memo)
+    }
+
+    /// 일부 subtree만 다시 배치하는 증분 계산 상태를 만듭니다. memo를 node 수만큼 미리 할당하지 않습니다.
+    pub(crate) fn new_partial(
+        input: &'a LayoutInput,
+        tree: &'a TreeIndex,
+        nodes: &'a [Prepared],
+        subtree: &'a [LayoutInputHash],
+        measurer: &'a dyn ContentMeasurer,
+        cache: Option<&'a mut MeasureCache>,
+    ) -> Engine<'a> {
+        let memo = Memo::Sparse(FastMap::default());
+        Engine::with_memo(input, tree, nodes, subtree, measurer, cache, memo)
+    }
+
+    fn with_memo(
+        input: &'a LayoutInput,
+        tree: &'a TreeIndex,
+        nodes: &'a [Prepared],
+        subtree: &'a [LayoutInputHash],
+        measurer: &'a dyn ContentMeasurer,
+        cache: Option<&'a mut MeasureCache>,
+        memo: Memo,
+    ) -> Engine<'a> {
         Engine {
             input,
             tree,
             nodes,
-            memo: FastMap::default(),
+            memo,
             measure_memo: FastMap::default(),
             subtree,
             cache,
@@ -785,26 +838,35 @@ impl<'a> Engine<'a> {
         request: Request,
     ) -> Result<Arc<NodeLayout>, LayoutError> {
         let request = self.normalize(index, request);
-        if let Some((layout, _)) = self.memo.get(&(index, request)) {
+        if let Some(layout) = self.memo_get(index, &request) {
             self.stats.memo_hits = self.stats.memo_hits.saturating_add(1);
-            return Ok(layout.clone());
+            return Ok(layout);
         }
         let id = self.nodes[index].id;
         let revision = self.measurer.revision();
         if let Some(cache) = self.cache.as_deref_mut() {
             if let Some(layout) = cache.get(id, self.subtree[index], revision, &request) {
                 self.stats.cache_hits = self.stats.cache_hits.saturating_add(1);
-                self.memo.insert((index, request), (layout.clone(), false));
+                self.memo.slot(index).push((request, layout.clone(), false));
                 return Ok(layout);
             }
         }
         let layout = Arc::new(self.compute(index, request)?);
         self.stats.measured = self.stats.measured.saturating_add(1);
-        self.memo.insert((index, request), (layout.clone(), true));
+        self.memo.slot(index).push((request, layout.clone(), true));
         if let Some(cache) = self.cache.as_deref_mut() {
             cache.insert(id, self.subtree[index], revision, request, layout.clone());
         }
         Ok(layout)
+    }
+
+    /// 정규화한 요청의 in-run memo 결과.
+    fn memo_get(&self, index: usize, request: &Request) -> Option<Arc<NodeLayout>> {
+        self.memo
+            .entries(index)
+            .iter()
+            .find(|(memo, _, _)| memo == request)
+            .map(|(_, layout, _)| layout.clone())
     }
 
     /// 결과에 영향을 주지 않는 요청 값을 정규형으로 바꿉니다(memo·cache 적중률).
@@ -812,6 +874,13 @@ impl<'a> Engine<'a> {
     /// - `parent`(백분율 기준)는 그 축의 `width`·`height`·`min-*`·`max-*`가 백분율일 때만 결과에 쓰입니다. 자식에게
     ///   주는 백분율 기준은 이 node 자신의 크기에서 나옵니다.
     /// - `available`은 `known` 축에서 쓰이지 않습니다(크기가 이미 정해짐).
+    /// - 세로 `available`의 `MinContent`·`MaxContent`는 구분되지 않습니다. 배치 알고리즘은 세로 가용 공간을
+    ///   `.definite()`로만 읽고(가로 쓰기 방향에서 min-content 높이 = max-content 높이), 같은 node의 probe에 그대로
+    ///   넘길 뿐입니다. 그래서 세로 `MinContent`를 `MaxContent`로 바꿉니다(ADR-0084 결정 1).
+    /// - 자식이 없는 node는 세로 가용 공간을 읽지 않습니다(자식에게 넘길 일도 없음).
+    /// - 축 크기가 `<length>`(px)이고 그 축의 `min-*`·`max-*`가 keyword가 아니며 `content_only`가 아니면, 그 축의 크기는
+    ///   가용 공간과 무관합니다. 가로 축은 너비만 묻는 요청([`Request::is_width_query`]) 여부만 남기고, 세로 축은
+    ///   `MaxContent`로 바꿉니다. 자식 요청은 이 node의 정해진 content 크기에서 나오므로 결과가 같습니다.
     pub(crate) fn normalize(&self, index: usize, mut request: Request) -> Request {
         let prepared = &self.nodes[index];
         for i in 0..2 {
@@ -824,7 +893,23 @@ impl<'a> Engine<'a> {
             }
             if let Some(known) = request.known[i] {
                 request.available[i] = Avail::Definite(known);
+                continue;
             }
+            let fixed = !request.content_only[i]
+                && matches!(prepared.size[i], SizeP::Length(LengthP::Unit(_)))
+                && matches!(prepared.min[i], SizeP::Auto | SizeP::Length(_))
+                && matches!(prepared.max[i], MaxP::None | MaxP::Length(_));
+            if fixed {
+                request.available[i] = match (i, request.available[i]) {
+                    (0, Avail::Definite(_)) => Avail::Definite(LayoutUnit::ZERO),
+                    _ => Avail::MaxContent,
+                };
+            }
+        }
+        if request.known[1].is_none()
+            && (request.available[1] == Avail::MinContent || self.tree.children[index].is_empty())
+        {
+            request.available[1] = Avail::MaxContent;
         }
         request
     }
@@ -833,8 +918,9 @@ impl<'a> Engine<'a> {
     pub(crate) fn is_fresh(&self, index: usize, request: &Request) -> bool {
         let request = self.normalize(index, *request);
         self.memo
-            .get(&(index, request))
-            .is_some_and(|(_, fresh)| *fresh)
+            .entries(index)
+            .iter()
+            .any(|(memo, _, fresh)| *memo == request && *fresh)
     }
 
     /// 콘텐츠 측정기를 호출합니다(in-run memo).
@@ -1082,7 +1168,8 @@ impl<'a> Engine<'a> {
         request: Request,
         mut sizing: Sizing,
     ) -> Result<NodeLayout, LayoutError> {
-        let prepared = self.nodes[index].clone();
+        let nodes = self.nodes;
+        let prepared = &nodes[index];
         let id = prepared.id;
         let pad = prepared.padding;
         let ph = pad.sum(Axis::Horizontal).map_err(at(id))?;

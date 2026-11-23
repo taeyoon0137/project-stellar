@@ -56,6 +56,7 @@ use crate::input::{
 use crate::intrinsic::ContentMeasurer;
 use crate::measure::{combine_subtree, node_hash, subtree_hashes_from, MeasureCache};
 use crate::output::{LayoutBox, LayoutResult};
+use crate::position::{place_absolute, StaticAlign, StaticRect};
 use crate::property::{DirtyClass, DirtyClassSet};
 use crate::rounding::LayoutUnit;
 use crate::style::{Display, Position};
@@ -243,6 +244,8 @@ pub struct IncrementalLayout {
     finals: Vec<Option<Final>>,
     last_arranged: Vec<StableId>,
     metrics: LayoutMetrics,
+    /// 이번 edit 앞뒤 모두 inset이 정해진 absolute node(표시 상태 유지). 부모를 다시 배치하지 않는 대상입니다.
+    stable_absolute: HashSet<StableId>,
 }
 
 impl IncrementalLayout {
@@ -270,6 +273,7 @@ impl IncrementalLayout {
             finals: vec![None; count],
             last_arranged: Vec::new(),
             metrics: LayoutMetrics::default(),
+            stable_absolute: HashSet::new(),
         };
         let stats =
             session.relayout_all(measurer, UpdateStats::default(), FullLayoutReason::Initial)?;
@@ -646,8 +650,15 @@ impl IncrementalLayout {
         let mut rehash: Vec<StableId> = Vec::new();
         let mut relinked: Vec<usize> = Vec::new();
         let mut released: Vec<usize> = Vec::new();
+        self.stable_absolute.clear();
         for (index, node, prepared) in staged.changed {
             let old = &self.input.nodes[index];
+            if fixed_absolute(&self.prepared[index])
+                && fixed_absolute(&prepared)
+                && self.prepared[index].display == prepared.display
+            {
+                self.stable_absolute.insert(node.id);
+            }
             let properties = changed_properties(old, &node);
             if old.children != node.children {
                 released.extend(
@@ -849,6 +860,8 @@ impl IncrementalLayout {
     ) -> Result<UpdateStats, LayoutError> {
         self.last_arranged.clear();
         let mut starts: BTreeSet<(usize, usize)> = BTreeSet::new();
+        // inset이 정해진 absolute node: 부모 배치는 그 node의 위치만 읽으므로 부모를 다시 배치하지 않습니다.
+        let mut absolutes: Vec<usize> = Vec::new();
         for &(id, classes) in dirty {
             if !classes.affects_layout() {
                 if classes.contains(DirtyClass::PaintOnly) {
@@ -860,6 +873,15 @@ impl IncrementalLayout {
             let Some(&index) = self.tree.index.get(&id) else {
                 continue;
             };
+            if let Some(parent) = self.tree.parent[index] {
+                if self.stable_absolute.contains(&id)
+                    && self.finals[index].is_some()
+                    && self.finals[parent].is_some()
+                {
+                    absolutes.push(index);
+                    continue;
+                }
+            }
             let outer =
                 classes.contains(DirtyClass::SelfSize) || classes.contains(DirtyClass::ParentFlow);
             let start = match (outer, self.tree.parent[index]) {
@@ -868,7 +890,7 @@ impl IncrementalLayout {
             };
             starts.insert((depth_of(&self.tree, start), start));
         }
-        if starts.is_empty() {
+        if starts.is_empty() && absolutes.is_empty() {
             return Ok(stats);
         }
         self.valid = false;
@@ -884,7 +906,8 @@ impl IncrementalLayout {
         } = self;
         let depth = tree.depth;
         let outcome = with_layout_stack(depth, move || {
-            let mut engine = Engine::new(input, tree, prepared, subtree, measurer, Some(cache));
+            let mut engine =
+                Engine::new_partial(input, tree, prepared, subtree, measurer, Some(cache));
             let mut done: HashSet<usize> = HashSet::new();
             // 얕은 시작 node부터 처리합니다. 앞선 relayout이 이미 다시 배치한 node는 건너뜁니다.
             let mut written: HashSet<StableId> = HashSet::new();
@@ -930,6 +953,52 @@ impl IncrementalLayout {
                 }
                 refresh_overflow(input, tree, finals, &mut stats, parent)?;
             }
+            for index in absolutes {
+                if !displayed(input, tree, index) || written.contains(&input.nodes[index].id) {
+                    continue;
+                }
+                let Some(parent) = tree.parent[index] else {
+                    return Ok(None);
+                };
+                let Some(previous) = finals[parent].clone() else {
+                    return Ok(None);
+                };
+                // 부모가 쓰는 containing block은 자기 border-box 크기입니다(block·flex·grid 모두). inset이 정해진 축은
+                // static position을 읽지 않습니다.
+                let rect = StaticRect {
+                    start: [LayoutUnit::ZERO; 2],
+                    size: [LayoutUnit::ZERO; 2],
+                    align: [StaticAlign::Start; 2],
+                };
+                let placement = place_absolute(&mut engine, index, previous.layout.size, rect)?;
+                stats.relayout_roots = stats.relayout_roots.saturating_add(1);
+                let layout = engine.layout(index, placement.request)?;
+                let first = last_arranged.len();
+                write_subtree(
+                    &mut engine,
+                    finals,
+                    last_arranged,
+                    &mut stats,
+                    index,
+                    (placement.x, placement.y),
+                    placement.request,
+                    layout,
+                )?;
+                written.extend(last_arranged[first..].iter().copied());
+                let mut patched = (*previous.layout).clone();
+                let Some(slot) = patched
+                    .placements
+                    .iter_mut()
+                    .find(|p| p.child == placement.child)
+                else {
+                    return Ok(None);
+                };
+                *slot = placement;
+                if let Some(fin) = finals[parent].as_mut() {
+                    fin.layout = Arc::new(patched);
+                }
+                refresh_overflow(input, tree, finals, &mut stats, parent)?;
+            }
             stats.absorb(&engine.stats);
             Ok(Some(stats))
         })?;
@@ -970,6 +1039,17 @@ fn relayout_root(
         }
         current = parent;
     }
+}
+
+/// 두 축 모두 시작·끝 inset 중 하나가 정해진 absolute node인지 여부. 부모 배치는 이런 node의 크기·baseline을 읽지 않고
+/// static position도 쓰지 않으므로, node가 바뀌어도 부모 안의 그 node 위치만 다시 구하면 됩니다(ADR-0084 결정 1).
+fn fixed_absolute(node: &Prepared) -> bool {
+    use crate::engine::InsetP;
+    node.position == Position::Absolute
+        && node
+            .inset
+            .iter()
+            .all(|axis| axis.iter().any(|inset| matches!(inset, InsetP::Length(_))))
 }
 
 /// 부모 배치가 `index`에서 border-box 크기·baseline만 읽는지 여부.

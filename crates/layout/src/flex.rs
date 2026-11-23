@@ -330,7 +330,8 @@ pub(crate) fn layout(
     request: Request,
     mut sizing: Sizing,
 ) -> Result<NodeLayout, LayoutError> {
-    let prepared = engine.nodes[index].clone();
+    let nodes = engine.nodes;
+    let prepared = &nodes[index];
     let id = prepared.id;
     let err = at(id);
     let main = prepared.direction.main_axis();
@@ -419,7 +420,7 @@ pub(crate) fn layout(
             engine,
             child,
             slot,
-            &prepared,
+            prepared,
             &context,
             wrap_reverse,
         )?);
@@ -811,7 +812,8 @@ fn base_item(
     let main = context.main;
     let cross = main.cross();
     let (mi, ci) = (main.index(), cross.index());
-    let prepared = engine.nodes[child].clone();
+    let nodes = engine.nodes;
+    let prepared = &nodes[child];
     let id = prepared.id;
     let err = at(id);
     let request = item_request(context);

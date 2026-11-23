@@ -16,7 +16,7 @@
 //! 질의 결과는 경계를 포함한 교차(닿기만 해도 포함)이고 **순서는 정하지 않습니다**. 순서가 필요한
 //! 소비자(paint 순서, topmost hit)가 정렬합니다.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -325,7 +325,7 @@ impl<K: Copy + Eq + Hash> SpatialIndex<K> for GridIndex<K> {
 pub struct SceneSpatialIndex {
     index: GridIndex<ZOrder>,
     nodes: HashMap<ZOrder, Arc<SceneNode>>,
-    unindexed: usize,
+    unindexed: HashSet<ZOrder>,
 }
 
 impl SceneSpatialIndex {
@@ -343,10 +343,65 @@ impl SceneSpatialIndex {
                         out.nodes.insert(node.z(), Arc::clone(node));
                     }
                 }
-                None => out.unindexed += 1,
+                None => {
+                    out.unindexed.insert(node.z());
+                }
             }
         }
         out
+    }
+
+    /// 새 snapshot으로 인덱스를 갱신합니다(XI.2.5 증분 build의 하류, ADR-0084 결정 3).
+    ///
+    /// 같은 z-order에 같은 `Arc`가 있는 subtree는 내려가지 않습니다(증분 build가 공유한 subtree). 나머지 node는
+    /// bounds를 다시 넣고, 새 snapshot에 없는 z-order는 지웁니다. 결과는 [`SceneSpatialIndex::build`]와 같습니다.
+    /// 갱신한 node 수를 돌려줍니다.
+    pub fn refresh(&mut self, snapshot: &SceneSnapshot) -> usize {
+        let mut touched = 0usize;
+        let mut seen_max = 0u64;
+        let mut stack: Vec<&Arc<SceneNode>> = snapshot.roots().collect();
+        while let Some(node) = stack.pop() {
+            let z = node.z();
+            seen_max = seen_max.max(node.last_z().0);
+            if self.nodes.get(&z).is_some_and(|old| Arc::ptr_eq(old, node)) {
+                continue;
+            }
+            touched += 1;
+            stack.extend(node.children());
+            let had = self.nodes.remove(&z).is_some();
+            self.unindexed.remove(&z);
+            match node.world_render_bounds() {
+                Some(bounds) => {
+                    let placed = if had {
+                        self.index.update(z, bounds)
+                    } else {
+                        self.index.insert(z, bounds)
+                    };
+                    if placed.is_ok() {
+                        self.nodes.insert(z, Arc::clone(node));
+                    }
+                }
+                None => {
+                    self.index.remove(z);
+                    self.unindexed.insert(z);
+                }
+            }
+        }
+        // 새 snapshot에 없는 뒤쪽 z-order(삭제로 node 수가 줄어듦).
+        let stale: Vec<ZOrder> = self
+            .nodes
+            .keys()
+            .chain(self.unindexed.iter())
+            .copied()
+            .filter(|z| z.0 > seen_max)
+            .collect();
+        for z in stale {
+            self.nodes.remove(&z);
+            self.index.remove(z);
+            self.unindexed.remove(&z);
+            touched += 1;
+        }
+        touched
     }
 
     /// 아래 공간 인덱스.
@@ -370,8 +425,8 @@ impl SceneSpatialIndex {
     }
 
     /// world bounds가 비유한이라 색인하지 않은 node 수.
-    pub const fn unindexed_count(&self) -> usize {
-        self.unindexed
+    pub fn unindexed_count(&self) -> usize {
+        self.unindexed.len()
     }
 
     /// `area`와 교차하는 node의 z-order를 `out`에 덧붙입니다(순서 미정).

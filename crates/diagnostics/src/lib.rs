@@ -6,6 +6,24 @@
 /// CPU/GPU 메모리 예산 provider와 정규화 bucket (XVI.5.1).
 pub mod memory;
 
+/// 상호작용 지연 trace T0~T5 (XVI.1.1~XVI.1.4).
+pub mod interaction;
+
+/// ring buffer 로컬 trace store (XVI.1.5).
+pub mod trace_store;
+
+/// 단계 trace record schema (XI.2.6).
+pub mod trace_schema;
+
+/// 상호작용 성능 예산 reader (XVI.4.1).
+pub mod budget;
+
+/// 성능 sample analyzer와 release gate (XVI.4.2~XVI.4.4).
+pub mod analyzer;
+
+/// 성능 측정 결과 보존 schema (XVI.4.5).
+pub mod result;
+
 /// 민감 데이터(프로젝트 내용·텍스트·경로) 래퍼.
 ///
 /// telemetry 기본 필드에 직접 넣을 수 없고, [`SensitiveDiagnostic`]를 통해서만 다룹니다.
