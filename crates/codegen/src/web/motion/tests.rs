@@ -236,3 +236,93 @@ fn becomes_rule_keeps_changes_entries_and_root_target_has_no_descendant_combinat
         )
     );
 }
+
+#[test]
+fn state_selectors_are_emitted_only_where_the_final_element_can_match() {
+    // 검증 기준(XXII.2.6): `:disabled`는 native form control, `:focus-visible`은 focus를 받는 element에만 맞습니다.
+    // 맞지 않는 element의 상태 값은 규칙 없이 진단합니다(값이 조용히 사라지지 않음).
+    let states = |fixture: &mut Fixture| {
+        let accent = fixture
+            .tokens
+            .iter_mut()
+            .find(|t| t.id == sid(fx::TOKEN_ACCENT))
+            .expect("accent");
+        accent.variants = [IrInteractionState::Focused, IrInteractionState::Disabled]
+            .into_iter()
+            .map(|state| crate::ir::IrTokenVariant {
+                when: vec![crate::ir::IrEnvironmentValue::InteractionState(state)],
+                value: fx::srgb(0.0, 0.4, 0.9, 1.0),
+            })
+            .collect();
+    };
+    // Button(`button`): 두 상태 모두 규칙이 있습니다.
+    let mut fixture = Fixture::new();
+    states(&mut fixture);
+    let ir = fixture.ir(&fx::web_profile());
+    let plan = plan_tokens(&ir, &|v| Names.literal(v).is_some());
+    let out = lower_interaction_tokens(&ir, &plan.interaction, &Names, &property_name);
+    let selectors: Vec<&str> = out.rules.iter().map(|r| r.selector.as_str()).collect();
+    assert_eq!(
+        selectors,
+        [
+            "#s-0000000000000000000000000000000c",
+            "#s-0000000000000000000000000000000c:focus-visible",
+            "#s-0000000000000000000000000000000c:disabled",
+        ]
+    );
+    assert!(out.diagnostics.is_empty());
+    // 접근성 entry가 없는 SingleSelectionGroup(`div`, tabindex 없음): focused는 element가 맞지 않아 진단하고,
+    // disabled는 contract가 지원하지 않습니다.
+    let mut fixture = Fixture::new();
+    states(&mut fixture);
+    fixture
+        .view
+        .nodes
+        .iter_mut()
+        .find(|n| n.id == sid(13))
+        .expect("node 13")
+        .contracts = vec![ContractCode::SINGLE_SELECTION_GROUP];
+    fixture.token_bindings.remove(&fx::path(12, fx::KEY_FILL));
+    fixture
+        .token_bindings
+        .insert(fx::path(13, fx::KEY_FILL), sid(fx::TOKEN_ACCENT));
+    let ir = fixture.ir(&fx::web_profile());
+    let doc = crate::web::aria::map_accessibility(&ir).document;
+    let element = doc
+        .elements()
+        .iter()
+        .find(|e| e.source == Some(sid(13)))
+        .expect("element 13");
+    assert_eq!((element.tag, element.attr("tabindex")), ("div", None));
+    let plan = plan_tokens(&ir, &|v| Names.literal(v).is_some());
+    let out = lower_interaction_tokens(&ir, &plan.interaction, &Names, &property_name);
+    let selectors: Vec<&str> = out.rules.iter().map(|r| r.selector.as_str()).collect();
+    assert_eq!(
+        selectors,
+        ["#s-0000000000000000000000000000000d"],
+        "기본 값 규칙만"
+    );
+    let codes: Vec<&str> = out.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        [
+            "interaction-state-element-unsupported",
+            "interaction-state-unsupported"
+        ]
+    );
+    assert!(element_matches_state(
+        "div",
+        true,
+        IrInteractionState::Focused
+    ));
+    assert!(!element_matches_state(
+        "div",
+        true,
+        IrInteractionState::Disabled
+    ));
+    assert!(element_matches_state(
+        "div",
+        false,
+        IrInteractionState::Pressed
+    ));
+}

@@ -8,7 +8,9 @@
 //!   `play`는 그대로 둡니다.
 //! - `interaction_state` 조건부 토큰을 쓰는 Control element 속성은 element 규칙에 기본 값, 상태 selector에 상태 값을
 //!   냅니다. 대응: hover `:hover`, focused `:focus-visible`, pressed `:active`, disabled `:disabled`. Button은 네 상태,
-//!   TextInput은 hover·focused·disabled, 그 밖의 contract는 hover·focused를 지원합니다.
+//!   TextInput은 hover·focused·disabled, 그 밖의 contract는 hover·focused를 지원합니다. 최종 element가 그 selector와
+//!   맞지 않으면(`:disabled`는 native form control만, `:focus-visible`은 native form control이나 `tabindex` element만)
+//!   `interaction-state-element-unsupported`를 냅니다.
 
 use std::collections::BTreeMap;
 
@@ -286,6 +288,20 @@ pub fn supported_states(contracts: &[ContractCode]) -> Vec<IrInteractionState> {
     }
 }
 
+/// native form control tag(`:disabled`가 맞는 element).
+const FORM_CONTROL_TAGS: [&str; 4] = ["button", "input", "select", "textarea"];
+
+/// element가 상태 selector와 맞을 수 있는지. `:disabled`는 native form control, `:focus-visible`은 native form
+/// control이나 `tabindex`가 있는 element에만 맞습니다. `:hover`·`:active`는 모든 element에 맞습니다.
+pub fn element_matches_state(tag: &str, tabindex: bool, state: IrInteractionState) -> bool {
+    let native = FORM_CONTROL_TAGS.contains(&tag);
+    match state {
+        IrInteractionState::Disabled => native,
+        IrInteractionState::Focused => native || tabindex,
+        _ => true,
+    }
+}
+
 /// 상태 selector 접미사.
 pub const fn state_selector(state: IrInteractionState) -> &'static str {
     match state {
@@ -314,10 +330,19 @@ pub fn lower_interaction_tokens(
 ) -> WebMotion {
     let mut out = WebMotion::default();
     let by_id: BTreeMap<StableId, &InteractionToken> = tokens.iter().map(|t| (t.id, t)).collect();
+    // 최종 element(구조 위에 접근성 mapper를 적용한 결과)의 tag와 tabindex. `:disabled`는 native form control에만,
+    // `:focus-visible`은 focus를 받는 element에만 맞으므로 그 밖의 element에서는 상태 selector를 내지 않고 진단합니다.
+    let document = crate::web::aria::map_accessibility(ir).document;
+    let elements: BTreeMap<StableId, (&'static str, bool)> = document
+        .elements()
+        .iter()
+        .filter_map(|e| Some((e.source?, (e.tag, e.attr("tabindex").is_some()))))
+        .collect();
     // element → (상태 → 선언).
     for node in &ir.nodes {
         let element = element_id(node.id);
         let supported = supported_states(&node.contracts);
+        let (tag, tabindex) = elements.get(&node.id).copied().unwrap_or(("div", false));
         let mut base: Vec<(String, String)> = Vec::new();
         let mut states: BTreeMap<IrInteractionState, Vec<(String, String)>> = BTreeMap::new();
         for property in &node.properties {
@@ -347,6 +372,13 @@ pub fn lower_interaction_tokens(
                     out.diagnostics.push(MotionDiagnostic {
                         subject: node.id,
                         code: "interaction-state-unsupported",
+                    });
+                    continue;
+                }
+                if !element_matches_state(tag, tabindex, *state) {
+                    out.diagnostics.push(MotionDiagnostic {
+                        subject: node.id,
+                        code: "interaction-state-element-unsupported",
                     });
                     continue;
                 }

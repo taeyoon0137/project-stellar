@@ -100,7 +100,7 @@ validator)는 각 원본 모듈이 이미 합니다.
 | Button contract | `button type="button"` |
 | TextInput contract | 자식·텍스트가 없으면 `input type="text"`, 아니면 `div` |
 | Modal contract | `dialog` |
-| List contract | `ul`, 그 element 자식은 `li` |
+| List contract | element 자식이 모두 contract 없는 node이면 `ul`(그 자식은 `li`), 아니면 `div` |
 | SingleSelectionGroup contract | `div` |
 
 contract가 둘 이상이면 contract 번호 오름차순 첫 contract가 tag를 정합니다. 접근성 mapper(XXII.2.4)는 이 구조
@@ -143,17 +143,26 @@ contract가 둘 이상이면 contract 번호 오름차순 첫 contract가 tag를
 ### 7. 상태 머신·motion·상호작용 상태의 Web 출력(XXII.2.6)
 
 - `MotionSpec`은 대상 element 규칙의 `transition-*` longhand로 냅니다. `Becomes` 시작 조건은
-  `[data-s-<상태 hex>="<값>"]` 조상 selector 아래 규칙, `Changes`는 element 규칙입니다(CSS transition은 바뀐 뒤
-  style의 선언을 쓰므로 그 상태로 들어갈 때만 재생). reduced motion `instant`는
+  `[data-s-<상태 hex>="<값>"]` 조상 selector 아래 규칙(대상이 export root 자신이면 root selector에 속성 조건을 바로
+  붙임), `Changes`는 element 규칙입니다(CSS transition은 바뀐 뒤 style의 선언을 쓰므로 그 상태로 들어갈 때만 재생).
+  `Becomes` 규칙은 specificity가 높아 같은 element의 `Changes` 목록을 가리므로, `Becomes` 규칙 목록에 같은 element의
+  `Changes` 항목을 앞에 함께 씁니다. 같은 속성이 겹치면 CSS는 목록의 마지막 항목을 쓰므로 그 상태로 들어갈 때는
+  `Becomes` 항목이 이깁니다. reduced motion `instant`는
   `@media (prefers-reduced-motion: reduce)` 블록에서 `transition-property: none`, `play`는 그대로입니다.
-- 상태 전환은 `state.js`가 냅니다. transition trigger 이벤트를 DOM 이벤트(`click`·`input`·`focus`·`blur`·`keydown`·
-  `change`·`open`·`close`)로 등록하고, 조건식과 action을 `IrExpr`에서 낮춘 JavaScript로 평가하며, 상태 값을 root
+- 상태 전환은 `state.js`가 냅니다. transition trigger 이벤트를 DOM 이벤트(activate `click`, input `input`, focus
+  `focus`, blur `blur`, key `keydown`, selectionChange `change`, open `toggle`, close `close`, pointerEnter·Leave·Down·Up
+  `pointerenter`·`pointerleave`·`pointerdown`·`pointerup`)로 등록하고(drag·scroll·long press는 DOM 이벤트가 없어
+  `state-event-unsupported`), 조건식과 action을 `IrExpr`에서 낮춘 JavaScript로 평가하며, 상태 값을 root
   element `data-s-*` 속성에 씁니다. semantic action emit은 `CustomEvent`입니다.
 - `interaction_state` 조건부 토큰 값은 그 토큰을 쓰는 Control element의 상태 selector에 해당 속성 선언으로 냅니다.
   대응은 Control contract 상태로 정합니다: Button은 hover·pressed·focused·disabled, TextInput은 hover·focused·
   disabled, 그 밖의 contract는 hover·focused입니다. selector는 hover → `:hover`, focused → `:focus-visible`,
   pressed → `:active`, disabled → `:disabled`입니다. contract가 지원하지 않는 상태 값은
-  `interaction-state-unsupported` 진단을 냅니다.
+  `interaction-state-unsupported` 진단을 냅니다. selector가 맞는지는 최종 element(구조 위에 접근성 mapper를 적용한
+  결과)로 판정합니다. `:disabled`는 native form control(`button`·`input`·`select`·`textarea`)에만, `:focus-visible`은
+  native form control이나 `tabindex`가 있는 element에만 맞으므로, 그 밖의 element(예: 숨김 subtree에서 `div`로 낮춘
+  control, 자식이 있어 `div`가 된 TextInput)의 그 상태 값은 규칙 없이 `interaction-state-element-unsupported` 진단을
+  냅니다.
 
 ### 8. 생성 파일 순서·식별자·formatting(XXII.5.1)
 

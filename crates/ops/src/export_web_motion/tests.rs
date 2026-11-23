@@ -1,10 +1,12 @@
 //! XXII.2.6 검증: `interaction_state` 조건 토큰을 쓰는 Control의 상태별 브라우저 계산값과 `:root` 미선언.
 //!
 //! 기대값(`fixture/expected.txt`)은 `fixture/generate.py`가 고정 버전 Chrome(DevTools `CSS.forcePseudoState`)으로
-//! `fixture/control.css`를 읽어 만들어 커밋합니다. test는 브라우저를 실행하지 않습니다.
+//! `fixture/control.css`와 생성 element 조각 `fixture/control.html`(구조·접근성 결과 그대로)을 읽어 만들어 커밋합니다.
+//! test는 브라우저를 실행하지 않습니다.
 
 use stellar_codegen::ir::{IrInteractionState, IrProperty, IrToken, IrTokenVariant, IrTree};
-use stellar_codegen::web::motion::{rules_text, supported_states};
+use stellar_codegen::web::aria::{element_id, map_accessibility};
+use stellar_codegen::web::motion::{element_matches_state, rules_text, supported_states};
 use stellar_target_profile::capability::{ContractCode, ElementKind};
 use stellar_target_profile::overrides::ValueOrigin;
 
@@ -93,15 +95,44 @@ fn page_css(ir: &IrTree) -> String {
     format!("{}{}", tokens.css, rules_text(&behavior.interaction.rules))
 }
 
+/// 브라우저가 읽는 element 조각: 생성 출력과 같은 구조·접근성 결과에 모든 element id를 붙인 HTML.
+fn page_html(ir: &IrTree) -> String {
+    let mut document = map_accessibility(ir).document;
+    for index in 0..document.elements().len() as u32 {
+        if let Some(source) = document.element(index).source {
+            document.set_attr(index, "id", element_id(source));
+        }
+    }
+    document.to_html()
+}
+
+/// 생성 element의 (tag, tabindex 여부).
+fn final_element(ir: &IrTree, n: u8) -> (&'static str, bool) {
+    let document = map_accessibility(ir).document;
+    let element = document
+        .elements()
+        .iter()
+        .find(|e| e.source == Some(id(n)))
+        .expect("element");
+    (element.tag, element.attr("tabindex").is_some())
+}
+
 #[test]
 fn interaction_rules_match_the_committed_browser_input_and_diagnose_unsupported_states() {
     let ir = fixture();
     let css = page_css(&ir);
+    let html = page_html(&ir);
     let path = fixture_path("control.css");
+    let html_path = fixture_path("control.html");
     if std::env::var_os("STELLAR_UPDATE_SNAPSHOT_FIXTURES").is_some() {
         std::fs::write(&path, &css).expect("갱신");
+        std::fs::write(&html_path, &html).expect("갱신");
     }
     assert_eq!(css, std::fs::read_to_string(&path).expect("control.css"));
+    assert_eq!(
+        html,
+        std::fs::read_to_string(&html_path).expect("control.html")
+    );
     // 토큰은 :root 선언에 없습니다.
     assert!(!css.contains("--control-fill"));
     let behavior = export_behavior(&ir, None);
@@ -114,6 +145,10 @@ fn interaction_rules_match_the_committed_browser_input_and_diagnose_unsupported_
     assert_eq!(
         codes,
         vec![
+            // 접근성 entry가 없는 tree라 control은 숨김 `div`입니다(XXII.2.4). `:focus-visible`·`:disabled`가 맞지
+            // 않아 그 상태 값은 규칙 없이 진단합니다.
+            (id(2), "interaction-state-element-unsupported"),
+            (id(3), "interaction-state-element-unsupported"),
             (id(3), "interaction-state-unsupported"),
             (id(4), "interaction-state-no-control"),
         ]
@@ -162,7 +197,10 @@ fn control_state_computed_values_in_the_browser_follow_the_contract_states() {
             "disabled" => IrInteractionState::Disabled,
             other => panic!("모르는 상태 {other}"),
         };
-        let value = if supported_states(&node.contracts).contains(&state) {
+        let (tag, tabindex) = final_element(&ir, n);
+        let value = if supported_states(&node.contracts).contains(&state)
+            && element_matches_state(tag, tabindex, state)
+        {
             token
                 .variants
                 .iter()

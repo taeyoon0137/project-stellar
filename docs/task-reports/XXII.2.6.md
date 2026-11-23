@@ -58,7 +58,11 @@
   (`web_motion.css.txt`), `state_machines_become_event_listeners_with_atomic_commit`(`web_state.js`).
 - 근사·미지원 진단 fixture 정확: `approximated_and_unsupported_motion_diagnostics_are_exact`.
 - Control 상태별 계산값(브라우저 기대값 커밋): `ops::export_web_motion::tests::control_state_computed_values_in_the_browser_follow_the_contract_states`
-  — Button 다섯 상태, TextInput(pressed는 기본 값), contract 없는 Frame(모두 기본 값)이 IR 토큰 값과 같음.
+  — 브라우저 page는 생성 출력과 같은 element 조각(`fixture/control.html`, 구조·접근성 결과)입니다. 이 fixture는
+  `IrTree::from_nodes`라 접근성 entry가 없어 control이 숨김 `div`로 낮춰지므로, hover·active는 IR 토큰 값, focused·
+  disabled는 `interaction-state-element-unsupported` 진단과 기본 값, contract 없는 Frame은 모두 기본 값입니다.
+  native `button`·`input`의 `:focus-visible`·`:disabled` 규칙은 codegen test
+  `state_selectors_are_emitted_only_where_the_final_element_can_match`가 확인합니다(브라우저 계산값은 아님).
 - 그 토큰이 `:root` 선언에 없음: 같은 fixture의 `:root` 값 빈 문자열과
   `interaction_rules_match_the_committed_browser_input_and_diagnose_unsupported_states`.
 
@@ -66,7 +70,22 @@
 
 - spring은 호출자 sampler가 있을 때만 근사 출력이고, 지금 제품 경로에는 sampler 연결이 없습니다.
 
+## 검토 보완
+
+- 같은 element에 `Changes`와 `Becomes` motion이 함께 있으면 specificity가 높은 `Becomes` 규칙이 `Changes` 목록을
+  가려 그 상태에서 `Changes` motion이 재생되지 않았습니다. `Becomes` 규칙에 같은 element의 `Changes` 항목을 앞에
+  함께 씁니다(겹치는 속성은 CSS 목록의 마지막 항목 = `Becomes`가 이김).
+- `Becomes` 대상이 export root 자신이면 `#root[...] #root` 자손 selector가 되어 맞지 않았습니다. root selector에 속성
+  조건을 바로 붙입니다.
+- 상호작용 상태 selector를 contract만으로 정해, 최종 element가 `div`(숨김 subtree의 control, 자식이 있는 TextInput)일
+  때 `:disabled`·`:focus-visible` 규칙이 절대 맞지 않는데도 진단 없이 냈습니다. 최종 element로 판정하고 맞지 않으면
+  `interaction-state-element-unsupported`를 냅니다. 브라우저 기대값 page도 손으로 쓴 `button`·`input`이 아니라 생성
+  element 조각을 읽도록 바꿔 다시 만들었습니다(Chrome 157.0.8103.79).
+
 ## 남은 위험
+
+- 이 lane의 ops fixture는 접근성 entry를 만들 수 없어(`from_nodes`) native control의 `:focus-visible`·`:disabled`
+  브라우저 계산값 fixture가 없습니다. 문서 View → IR 연결(XXII.1.1 재개)이 생기면 `build_ir` fixture로 더해야 합니다.
 
 - 상태에 따라 바뀌는 속성 binding의 Web 출력은 아직 없어, transition 선언은 있지만 값 변화는 다른 경로가 만들어야
   합니다(ADR-0106 Consequences).

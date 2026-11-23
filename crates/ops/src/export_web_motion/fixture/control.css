@@ -4,26 +4,14 @@
 #s-00000000000070008000000000000002:hover {
   background-color: #eeeeee;
 }
-#s-00000000000070008000000000000002:focus-visible {
-  background-color: #ddeeff;
-}
 #s-00000000000070008000000000000002:active {
   background-color: #cccccc;
-}
-#s-00000000000070008000000000000002:disabled {
-  background-color: #999999;
 }
 #s-00000000000070008000000000000003 {
   background-color: #ffffff;
 }
 #s-00000000000070008000000000000003:hover {
   background-color: #eeeeee;
-}
-#s-00000000000070008000000000000003:focus-visible {
-  background-color: #ddeeff;
-}
-#s-00000000000070008000000000000003:disabled {
-  background-color: #999999;
 }
 #s-00000000000070008000000000000004 {
   background-color: #ffffff;
