@@ -75,7 +75,7 @@ pub struct ResourceDef {
 /// 공통 revision schema 조각(XXIV.4.2 revision 표기).
 macro_rules! revision_schema {
     () => {
-        r#"{"type":"object","additionalProperties":false,"required":["token","generation","manifest_hash"],"properties":{"token":{"type":"string","pattern":"^g(0|[1-9][0-9]*(:sha256:[0-9a-f]{64}))$"},"generation":{"type":"integer","minimum":0},"manifest_hash":{"type":["string","null"]}}}"#
+        r#"{"type":"object","additionalProperties":false,"required":["token","generation","hash"],"properties":{"token":{"type":"string","pattern":"^g(0|[1-9][0-9]*(:sha256:[0-9a-f]{64}))$"},"generation":{"type":"integer","minimum":0},"hash":{"type":["string","null"]}}}"#
     };
 }
 

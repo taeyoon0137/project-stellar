@@ -291,7 +291,7 @@ impl HeadDiffBase {
             ));
         }
         // 세트 선택을 더하지 않은 원본·cache revision으로 HEAD generation과 같은지 봅니다(ADR-0128 결정 2).
-        if target.storage_revision().manifest_hash() == Some(self.manifest_hash)
+        if target.storage_revision().hash() == Some(self.manifest_hash)
             && observed.entries().len() == self.components.len()
         {
             // 같은 파일명이 모두 있으면 정의간 이름 충돌과 기존 generation의 경계도 동일합니다.

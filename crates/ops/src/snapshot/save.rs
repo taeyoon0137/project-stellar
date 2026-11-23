@@ -306,7 +306,7 @@ fn write_documents(
     let mut cache_stale = false;
     let mut revision = ProjectRevision::Saved {
         generation,
-        manifest_hash,
+        hash: manifest_hash,
     };
     if let Some(new_base) = &new_base {
         let stamp = Stamp {

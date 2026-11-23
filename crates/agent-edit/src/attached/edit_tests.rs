@@ -146,7 +146,7 @@ fn stale_base_revision_is_refused() {
     assert_eq!(decoded.check_base(ProjectRevision::Unsaved), Ok(()));
     let saved = ProjectRevision::Saved {
         generation: 2,
-        manifest_hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
             .parse()
             .unwrap(),
     };

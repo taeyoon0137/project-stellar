@@ -182,7 +182,7 @@ pub fn migrate(
                 // 프로젝트 revision은 새 generation에 stellar.yaml 세트 선택을 더한 값입니다(ADR-0128 결정 2).
                 revision: ProjectRevision::Saved {
                     generation: outcome.to_generation,
-                    manifest_hash: outcome.new_manifest_hash,
+                    hash: outcome.new_manifest_hash,
                 }
                 .with_style_defaults(snapshot.style_defaults_name()),
                 migrated: true,

@@ -437,15 +437,16 @@ fn count(value: usize) -> JsonValue {
     uint(u64::try_from(value).unwrap_or(u64::MAX))
 }
 
-/// revision object: `{"token", "generation", "manifest_hash"}`.
+/// revision object: `{"token", "generation", "hash"}`. `hash`는 revision hash이고 manifest content hash가 아닐 수
+/// 있습니다(원본에서 읽은 상태, 기본값 세트를 고른 프로젝트, ADR-0135 결정 1). 저장 전 기본 세트 프로젝트는 `null`.
 fn revision(value: ProjectRevision) -> JsonValue {
     JsonValue::object(vec![
         ("token", JsonValue::string(value.token())),
         ("generation", uint(value.generation())),
         (
-            "manifest_hash",
+            "hash",
             value
-                .manifest_hash()
+                .hash()
                 .map_or(JsonValue::Null, |h| JsonValue::string(h.to_string())),
         ),
     ])

@@ -38,7 +38,7 @@ pub enum ProjectRevision {
         generation: u64,
         /// revision hash. cache에서 읽은 기본 세트 프로젝트는 manifest content hash, 원본에서 읽으면 원본 revision
         /// hash(`snapshot` 모듈 문서 5번), 세트가 `css`가 아니면 그 hash에 선택을 더한 hash입니다.
-        manifest_hash: ContentHash,
+        hash: ContentHash,
     },
 }
 
@@ -51,11 +51,11 @@ impl ProjectRevision {
         }
     }
 
-    /// revision hash([`ProjectRevision::Saved`]의 `manifest_hash`). [`ProjectRevision::Unsaved`]이면 `None`.
-    pub fn manifest_hash(&self) -> Option<ContentHash> {
+    /// revision hash([`ProjectRevision::Saved`]의 `hash`). [`ProjectRevision::Unsaved`]이면 `None`.
+    pub fn hash(&self) -> Option<ContentHash> {
         match self {
             ProjectRevision::Unsaved => None,
-            ProjectRevision::Saved { manifest_hash, .. } => Some(*manifest_hash),
+            ProjectRevision::Saved { hash, .. } => Some(*hash),
         }
     }
 
@@ -73,7 +73,7 @@ impl ProjectRevision {
             return self;
         }
         let mut bytes = STYLE_DEFAULTS_DOMAIN.to_vec();
-        match self.manifest_hash() {
+        match self.hash() {
             Some(hash) => bytes.extend_from_slice(hash.to_string().as_bytes()),
             None => bytes.push(b'-'),
         }
@@ -81,7 +81,7 @@ impl ProjectRevision {
         bytes.extend_from_slice(selection.as_bytes());
         ProjectRevision::Saved {
             generation: self.generation(),
-            manifest_hash: ContentHash::compute(&bytes),
+            hash: ContentHash::compute(&bytes),
         }
     }
 
@@ -95,10 +95,7 @@ impl fmt::Display for ProjectRevision {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ProjectRevision::Unsaved => f.write_str("g0"),
-            ProjectRevision::Saved {
-                generation,
-                manifest_hash,
-            } => write!(f, "g{generation}:{manifest_hash}"),
+            ProjectRevision::Saved { generation, hash } => write!(f, "g{generation}:{hash}"),
         }
     }
 }
@@ -161,13 +158,10 @@ impl FromStr for ProjectRevision {
             (_, None) => Err(ParseRevisionError::Inconsistent),
             // `g0:<hash>`는 저장된 generation 없이 세트 선택을 더한 revision입니다(ADR-0128 결정 2).
             (generation, Some(hash)) => {
-                let manifest_hash = hash
+                let hash = hash
                     .parse::<ContentHash>()
                     .map_err(|_| ParseRevisionError::InvalidHash)?;
-                Ok(ProjectRevision::Saved {
-                    generation,
-                    manifest_hash,
-                })
+                Ok(ProjectRevision::Saved { generation, hash })
             }
         }
     }
@@ -181,7 +175,7 @@ mod tests {
     fn token_round_trips() {
         let saved = ProjectRevision::Saved {
             generation: 12,
-            manifest_hash: ContentHash::compute(b"m"),
+            hash: ContentHash::compute(b"m"),
         };
         for revision in [ProjectRevision::Unsaved, saved] {
             let token = revision.token();
@@ -190,7 +184,7 @@ mod tests {
         assert_eq!(ProjectRevision::Unsaved.token(), "g0");
         assert_eq!(saved.token(), format!("g12:{}", ContentHash::compute(b"m")));
         assert_eq!(saved.generation(), 12);
-        assert_eq!(ProjectRevision::Unsaved.manifest_hash(), None);
+        assert_eq!(ProjectRevision::Unsaved.hash(), None);
     }
 
     #[test]
@@ -225,7 +219,7 @@ mod tests {
     fn style_defaults_selection_changes_the_revision_except_for_the_default_set() {
         let saved = ProjectRevision::Saved {
             generation: 4,
-            manifest_hash: ContentHash::compute(b"m"),
+            hash: ContentHash::compute(b"m"),
         };
         // 기본 세트는 표기를 바꾸지 않습니다(키가 없을 때와 같음).
         assert_eq!(saved.with_style_defaults("css"), saved);
@@ -241,7 +235,7 @@ mod tests {
         assert_ne!(rn, compact);
         let other = ProjectRevision::Saved {
             generation: 4,
-            manifest_hash: ContentHash::compute(b"n"),
+            hash: ContentHash::compute(b"n"),
         };
         assert_ne!(other.with_style_defaults("react-native"), rn);
         // 같은 입력은 같은 결과(결정론적)입니다.

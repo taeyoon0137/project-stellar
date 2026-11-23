@@ -444,7 +444,7 @@ pub fn open_snapshot(path: &Path) -> Result<ProjectSnapshot, OpenError> {
                 .map_err(|e| OpenError::Storage(LazyLoadError::Load(LoadError::Manifest(e))))?;
             let revision = ProjectRevision::Saved {
                 generation: manifest.generation,
-                manifest_hash,
+                hash: manifest_hash,
             };
             let mut documents = Vec::new();
             if !from_text || matches!(text, TextState::Broken(_)) {
@@ -563,7 +563,7 @@ pub(crate) fn text_revision(
     let empty = SourceBase::default();
     ProjectRevision::Saved {
         generation: cache_generation + 1,
-        manifest_hash: source_revision(current, base.unwrap_or(&empty)),
+        hash: source_revision(current, base.unwrap_or(&empty)),
     }
 }
 
@@ -628,7 +628,7 @@ mod tests {
             snapshot.revision(),
             ProjectRevision::Saved {
                 generation: 1,
-                manifest_hash: pointer
+                hash: pointer
             }
         );
         assert_eq!(snapshot.documents().len(), 1);
@@ -638,7 +638,7 @@ mod tests {
         let reopened = open_snapshot(&dir.path).unwrap();
         let pointer = read_current_pointer(&dir.path).unwrap();
         assert_eq!(reopened.revision().generation(), 2);
-        assert_eq!(reopened.revision().manifest_hash(), Some(pointer));
+        assert_eq!(reopened.revision().hash(), Some(pointer));
         assert_ne!(reopened.revision(), snapshot.revision());
         let mut ids: Vec<StableId> = reopened.documents().iter().map(|d| d.id).collect();
         ids.sort();

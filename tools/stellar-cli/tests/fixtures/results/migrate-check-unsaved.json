@@ -1,1 +1,1 @@
-{"schema":"stellar-cli/result","schema_version":1,"command":"migrate","ok":true,"exit_code":0,"exit_name":"ok","result":{"revision":{"token":"g0","generation":0,"manifest_hash":null},"schema_version":null,"target_schema":1,"state":"unsaved"},"error":null,"diagnostics":[]}
+{"schema":"stellar-cli/result","schema_version":1,"command":"migrate","ok":true,"exit_code":0,"exit_name":"ok","result":{"revision":{"token":"g0","generation":0,"hash":null},"schema_version":null,"target_schema":1,"state":"unsaved"},"error":null,"diagnostics":[]}

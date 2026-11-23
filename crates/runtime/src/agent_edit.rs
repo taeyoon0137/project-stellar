@@ -585,7 +585,7 @@ pub fn project_revision(session: &ProjectWindowSession) -> ProjectRevision {
         .loaded_generation()
         .map_or(ProjectRevision::Unsaved, |loaded| ProjectRevision::Saved {
             generation: loaded.manifest.generation,
-            manifest_hash: loaded.manifest_hash,
+            hash: loaded.manifest_hash,
         })
 }
 
