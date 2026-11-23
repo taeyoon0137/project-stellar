@@ -5143,7 +5143,7 @@ tasks:
       - DEV-MAC
   - id: "IX.12.1"
     title: "Component Context 저장에 쓸 numeric 번호와 확장 위치를 예약하는 ADR을 작성하고 registry 예약 상수로 고정합니다. 대상은 ReferenceTarget의 Context tag(현재 tag는 `crates/expressions/src/ast.rs`의 0x01\\~0x04), `ContextKey`·`ContextProvision` record를 담을 chunk kind(현재 `crates/storage/src/chunk/kinds.rs`의 1\\~6이며 모르는 required kind는 V.2.7 규칙으로 오류) 또는 기존 chunk 안의 record kind, ComponentDefinition 공개 인터페이스의 `ContextRequirement` 목록과 Slot의 공개 Context key 목록(ADR-0025 결정 3.11)이 들어갈 확장 위치입니다. 예약 번호는 다른 용도로 쓰지 않습니다. encoder·decoder 동작은 바꾸지 않습니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "VIII.2.2"
       - "V.6.1"
@@ -5151,7 +5151,12 @@ tasks:
       - "IX.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.12.1.md"
+    commit: "5f3bd6b93622761c501ea799a76411ffcfa24901"
     report: "docs/task-reports/IX.12.1.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "X.1.1"
     title: "`layout`에 `LayoutInput`, `LayoutBox`, `LayoutResult`, `LayoutError`를 정의합니다. 결과는 local rect, content rect, baseline, overflow bounds를 포함합니다."
     status: verified
@@ -7312,14 +7317,19 @@ tasks:
       - DEV-MAC
   - id: "XII.10.28"
     title: "Path point 편집 command를 추가합니다. point 삽입·이동·삭제, handle 이동, handle 대칭 모드 전환, subpath 닫기·열기를 closed enum으로 정의하고 point StableId를 유지합니다. CommandKind registry 변경이므로 전역 mutex 작업입니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "VI.6.3"
       - "VII.1.6"
       - "VII.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.10.28.md"
+    commit: "7cbdeec53f8f931abdb9429ae087b1b4acd67cd8"
     report: "docs/task-reports/XII.10.28.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XII.10.29"
     title: "기존 Path의 벡터 편집 모드를 구현합니다. Path에서 Return·더블클릭으로 진입하고 Escape로 나옵니다. Shape는 명시적 Convert to Path(VII.2.7) 뒤에만 들어가며, 분기형 vector network는 지원하지 않습니다."
     status: not_started
@@ -7350,14 +7360,19 @@ tasks:
       - DEV-MAC
   - id: "XII.10.32"
     title: "Text 내용·style 범위 편집 command를 추가합니다. text range 교체와 범위 style 설정을 VI.7.5 helper로 구현하고 입력 종류와 caret 정보를 VII.4.3 grouping key로 넘깁니다. CommandKind registry 변경이므로 전역 mutex 작업입니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "VI.7.5"
       - "VII.4.3"
       - "VII.1.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.10.32.md"
+    commit: "aca9e6fbdd27cd3f7e2703bd6983bd480f213db9"
     report: "docs/task-reports/XII.10.32.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XII.10.33"
     title: "캔버스 텍스트 편집을 구현합니다. Text 도구 클릭은 자동 폭, 드래그는 고정 폭 Text를 만들고, 더블클릭·Return은 편집 모드, Escape와 바깥 클릭은 편집을 끝내고 Text node 선택으로 돌아갑니다. 조합 중 문자열은 transient로 그리고 확정 때만 XII.10.32 command를 만들며, 새로 만든 Text를 입력 없이 끝내면 생성을 취소합니다. 상자 변 드래그는 자동 폭을 고정 폭으로 바꿉니다(`docs/design/property_model.md`)."
     status: not_started
@@ -8861,30 +8876,45 @@ tasks:
     verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.10.7"
     title: "component property 삭제 vs instance override 추가, token type 변경 vs value 변경, drilling chain break를 전용 conflict로 분류합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "IX.1.3"
       - "IX.4.6"
       - "VIII.5.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.10.7.md"
+    commit: "29d0c0cc9d77c1b1764c0ce9a4eeb938c8c81052"
     report: "docs/task-reports/XIV.10.7.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XIV.10.8"
     title: "conflict 없는 merged snapshot을 full validator로 검증합니다. invalid result는 자동 merge 성공으로 반환하지 않습니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "VI.10.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.10.8.md"
+    commit: "84c1c991f8ee9a41c57daed615986c636ff69d37"
     report: "docs/task-reports/XIV.10.8.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XIV.10.9"
     title: "merge 결과와 conflict 순서를 deterministic sort합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.10.8"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.10.9.md"
+    commit: "8c549de7605da33d732a8e8df05d74108007ee21"
     report: "docs/task-reports/XIV.10.9.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XIV.11.1"
     title: "`git ls-files -u -z`를 읽어 stage 1(base), 2(ours), 3(theirs) blob과 mode를 path별로 수집합니다."
     status: verified
@@ -8914,13 +8944,18 @@ tasks:
     verified_at: "2026-11-14T03:11:58+09:00"
   - id: "XIV.11.3"
     title: "세 snapshot을 Semantic Merge engine에 전달하고 raw file conflict와 semantic conflict mapping을 유지합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.10.9"
       - "XIV.11.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.11.3.md"
+    commit: "5ab08bda6854742fc9144a67b5784103bf97a7a8"
     report: "docs/task-reports/XIV.11.3.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XIV.11.4"
     title: "Stellar 파일이 아닌 conflict는 raw Git conflict로 표시하고 Semantic Merge로 해석하지 않습니다."
     status: verified
@@ -8936,52 +8971,82 @@ tasks:
     verified_at: "2026-11-14T02:14:04+09:00"
   - id: "XIV.12.1"
     title: "conflict별 resolution을 ChooseBase, ChooseOurs, ChooseTheirs, CustomValue, Delete, KeepModified로 정의하고 허용 action은 conflict kind별로 제한합니다."
-    status: reported_done
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.12.1.md"
+    commit: "0121752a0c14ed42844d40b946822bc5d9f5f6ad"
     report: "docs/task-reports/XIV.12.1.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XIV.12.2"
     title: "resolution apply는 candidate merged snapshot에만 적용하고 WorkingTree/Index를 즉시 수정하지 않습니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.12.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.12.2.md"
+    commit: "68bca83e971d18bf29e8a4194569f0db5eebf8d8"
     report: "docs/task-reports/XIV.12.2.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XIV.12.3"
     title: "모든 semantic conflict 해결 후 candidate snapshot full validation을 실행합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.12.2"
       - "VI.10.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.12.3.md"
+    commit: "2ecd1aa1b0e63a972fda9999b2841cad9b098766"
     report: "docs/task-reports/XIV.12.3.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XIV.12.4"
     title: "validated snapshot을 WorkingTree project files로 generation save하고 관련 path를 시스템 Git `git add`로 resolved 처리합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.12.3"
       - "V.5.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.12.4.md"
+    commit: "b27f66110a3afdf3c9e5e6949589a5b34f278c3e"
     report: "docs/task-reports/XIV.12.4.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XIV.12.5"
     title: "merge/rebase/cherry-pick 진행 상태를 자동 continue하거나 commit하지 않습니다. UI에는 Git 상태만 반환합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.12.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.12.5.md"
+    commit: "42f679aef9e81ab6ac529891c716033799f8ffe3"
     report: "docs/task-reports/XIV.12.5.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XIV.12.6"
     title: "conflict resolution apply 전체에 fault rollback을 구현합니다. WorkingTree write 성공 후 git add 실패 시 unresolved 상태와 복구 안내를 반환하고 자동 commit하지 않습니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.12.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.12.6.md"
+    commit: "317021c395e0c33ee42e9baac3d17d1274605617"
     report: "docs/task-reports/XIV.12.6.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XIV.13.1"
     title: "FFI에 repository status, staged/unstaged semantic change 목록을 page 단위로 조회하는 API를 추가합니다."
     status: not_started
@@ -9066,13 +9131,18 @@ tasks:
       - DEV-MAC
   - id: "XIV.14.5"
     title: "linked worktree에서 open/status/stage/commit을 실행해 common git dir과 per-worktree index가 올바른지 검증합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.1.2"
       - "XIV.6.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.14.5.md"
+    commit: "c0ffc8d6ddf9fa9b778a888bce288b469bd14acb"
     report: "docs/task-reports/XIV.14.5.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XIV.14.6"
     title: "non-UTF8 path, symlink, executable, LFS pointer, corrupt project scenario를 추가합니다."
     status: verified
@@ -9866,12 +9936,17 @@ tasks:
     verified_at: "2026-11-14T09:54:36+09:00"
   - id: "XVI.6.6"
     title: "Semantic Merge fuzz target을 추가해 결과 valid 또는 명시 conflict/error만 허용합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.10.8"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.6.6.md"
+    commit: "207b3fc2ae2574bb354851f267ba8d7b9794ba21"
     report: "docs/task-reports/XVI.6.6.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XVI.6.7"
     title: "command sequence fuzz target의 장기 실행 진입점을 추가합니다(`cargo test -p stellar-commands sequence_fuzz_nightly -- --ignored`, seed 범위·단계 수·실행 시간·artifact 경로는 환경 변수). 제품 테스트를 CI에 넣지 않는 2026-11-14 개정에 따라 정기 job은 두지 않고, 장기 실행은 로컬에서 이 진입점으로 합니다."
     status: verified
@@ -11449,38 +11524,58 @@ tasks:
     verified_at: "2026-11-14T03:30:16+09:00"
   - id: "XXIII.2.1"
     title: "SemanticMergeEngine 결과를 독립 `CandidateSnapshot C`로 생성합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.10.9"
       - "XXIII.1.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIII.2.1.md"
+    commit: "1ec8b7df8c8633b128ec54358ae9ce593eacfb94"
     report: "docs/task-reports/XXIII.2.1.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XXIII.2.2"
     title: "object/property별 A, B, auto, custom source provenance를 C에 기록합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XXIII.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIII.2.2.md"
+    commit: "4e443fdf37b7840c3f2e8f3d03f88cf21fe7e942"
     report: "docs/task-reports/XXIII.2.2.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XXIII.2.3"
     title: "C에서 A/B object·property를 선택하는 resolution command를 구현합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XXIII.2.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIII.2.3.md"
+    commit: "4eabf034434639fe58832035a0bf7729c7c0b928"
     report: "docs/task-reports/XXIII.2.3.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XXIII.2.4"
     title: "C full validation과 unresolved conflict count가 0일 때만 write 가능하게 합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XXIII.2.3"
       - "VI.10.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIII.2.4.md"
+    commit: "45f3777484d19a4b8ca26c66d627a87acdae79a9"
     report: "docs/task-reports/XXIII.2.4.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XXIII.3.1"
     title: "결과 target을 current worktree, existing worktree, new branch+worktree로 정의합니다."
     status: not_started
@@ -11538,12 +11633,17 @@ tasks:
     verified_at: "2026-11-14T01:09:48+09:00"
   - id: "XXIV.1.3"
     title: "`validate`, `semantic-diff`, `semantic-merge`, `migrate` 명령을 구현합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "V.8.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIV.1.3.md"
+    commit: "091a0dc552f820569012ca4c90b7e7118f915250"
     report: "docs/task-reports/XXIV.1.3.md"
+    verified_at: "2026-11-14T12:53:05+09:00"
   - id: "XXIV.1.4"
     title: "Phase XX 이후 `render/export` 명령을 추가합니다."
     status: not_started
@@ -11551,36 +11651,56 @@ tasks:
       - DEV-MAC
   - id: "XXIV.2.1"
     title: "Git custom merge driver가 base/ours/theirs/result path를 받아 Semantic Merge를 실행하는 noninteractive mode를 구현합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XXIV.1.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIV.2.1.md"
+    commit: "50a70cf63c961b0fb2cd699b2c22d5c22a915760"
     report: "docs/task-reports/XXIV.2.1.md"
+    verified_at: "2026-11-23T17:57:58+09:00"
   - id: "XXIV.2.2"
     title: "unresolved semantic conflict가 있으면 원본을 보존하고 nonzero exit로 앱에서 해결해야 함을 표시합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XXIV.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIV.2.2.md"
+    commit: "591654c9656ac20e7b37552e37cd8828207820a5"
     report: "docs/task-reports/XXIV.2.2.md"
+    verified_at: "2026-11-23T17:57:58+09:00"
   - id: "XXIV.2.3"
     title: "`.gitattributes`/Git config 등록은 사용자 승인 명령으로만 수행합니다. 전역 config를 자동 변경하지 않습니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XXIV.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIV.2.3.md"
+    commit: "f7b2df6d4791320ac1115f02ce99453f679855b8"
     report: "docs/task-reports/XXIV.2.3.md"
+    verified_at: "2026-11-23T17:57:58+09:00"
   - id: "XXIV.3.1"
     title: "lockfile resolve check, project validation, migration-required check를 CI mode로 제공합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XXIV.1.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIV.3.1.md"
+    commit: "e701f4401bcd391b8e396e25b76d463be57efcc2"
     report: "docs/task-reports/XXIV.3.1.md"
+    verified_at: "2026-11-14T12:53:05+09:00"
   - id: "XXIV.3.2"
     title: "semantic diff summary를 artifact로 생성하되 project text/name/path redaction option을 기본으로 합니다."
     status: verified
@@ -12095,12 +12215,17 @@ tasks:
       - DEV-MAC
   - id: "XXVIII.2.3"
     title: "semantic diff/merge conformance corpus와 runner를 제공합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XXVIII.1.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXVIII.2.3.md"
+    commit: "e7e63d916d4764f4849a74bf77da7a8378e0f12b"
     report: "docs/task-reports/XXVIII.2.3.md"
+    verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XXVIII.2.4"
     title: "version compatibility matrix와 deprecation policy를 공개합니다."
     status: verified
