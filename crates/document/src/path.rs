@@ -49,6 +49,16 @@ pub enum PathError {
         /// 요청 index.
         index: usize,
     },
+    /// path에 없는 point·handle id입니다(ADR-0079).
+    UnknownElement {
+        /// 요청 id.
+        id: StableId,
+    },
+    /// 이 path에 적용할 수 없는 point 편집입니다(ADR-0079).
+    InvalidEdit {
+        /// 원인.
+        reason: &'static str,
+    },
 }
 
 impl fmt::Display for PathError {
@@ -66,6 +76,8 @@ impl fmt::Display for PathError {
             }
             PathError::DuplicateId { id } => write!(f, "path point/handle id 중복: {id}"),
             PathError::IndexOutOfRange { index } => write!(f, "삽입 위치가 범위 밖입니다: {index}"),
+            PathError::UnknownElement { id } => write!(f, "path에 point/handle {id}가 없습니다"),
+            PathError::InvalidEdit { reason } => write!(f, "path point 편집 거부: {reason}"),
         }
     }
 }
@@ -339,14 +351,51 @@ pub struct CommandIds {
     pub handles: Option<(PathHandleId, PathHandleId)>,
 }
 
+/// anchor point의 두 handle 관계(ADR-0079). tag는 저장 포맷의 일부입니다.
+///
+/// - `Independent`: 두 handle이 따로 움직입니다(기본, 저장하지 않음).
+/// - `Aligned`: 한 handle을 움직이면 반대 handle이 같은 직선 위 반대 방향으로 돌고 길이는 유지합니다.
+/// - `Mirrored`: 반대 handle이 anchor 기준 점대칭(방향 반대, 길이 같음)입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(u8)]
+pub enum HandleMode {
+    /// 독립(기본).
+    #[default]
+    Independent = 0,
+    /// 방향만 맞춤.
+    Aligned = 1,
+    /// 방향·길이 대칭.
+    Mirrored = 2,
+}
+
+impl HandleMode {
+    /// 저장 tag에서 복원합니다. 기본값(0)은 저장하지 않으므로 거부합니다.
+    fn from_stored_tag(tag: u8) -> Option<HandleMode> {
+        match tag {
+            1 => Some(HandleMode::Aligned),
+            2 => Some(HandleMode::Mirrored),
+            _ => None,
+        }
+    }
+
+    /// tag에서 복원합니다(기본값 포함).
+    pub fn from_tag(tag: u8) -> Option<HandleMode> {
+        match tag {
+            0 => Some(HandleMode::Independent),
+            tag => HandleMode::from_stored_tag(tag),
+        }
+    }
+}
+
 /// point·handle에 StableId가 붙은 path. 개별 point 단위 semantic diff의 기준입니다.
 ///
 /// 불변식: id 목록 길이 = command 수, 각 id 구성이 command 종류와 일치, 모든
-/// id가 유일.
+/// id가 유일. handle mode는 기본값이 아닌 point만, 있는 point id로만 담습니다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdentifiedPath {
     data: PathData,
     ids: Vec<CommandIds>,
+    modes: std::collections::BTreeMap<PathPointId, HandleMode>,
 }
 
 fn expected_shape(command: &PathCommand) -> (bool, bool) {
@@ -384,7 +433,45 @@ impl IdentifiedPath {
                 }
             }
         }
-        Ok(IdentifiedPath { data, ids })
+        Ok(IdentifiedPath {
+            data,
+            ids,
+            modes: Default::default(),
+        })
+    }
+
+    /// 기본값이 아닌 handle mode를 붙입니다. 없는 point id나 기본값은 거부합니다(ADR-0079).
+    pub fn with_handle_modes(
+        mut self,
+        modes: impl IntoIterator<Item = (PathPointId, HandleMode)>,
+    ) -> Result<IdentifiedPath, PathError> {
+        for (point, mode) in modes {
+            if self.point_index(point).is_none() {
+                return Err(PathError::UnknownElement { id: point.0 });
+            }
+            if mode == HandleMode::Independent {
+                return Err(PathError::Malformed {
+                    reason: "기본 handle mode는 저장하지 않습니다",
+                });
+            }
+            self.modes.insert(point, mode);
+        }
+        Ok(self)
+    }
+
+    /// point의 handle mode(없으면 기본 `Independent`).
+    pub fn handle_mode(&self, point: PathPointId) -> HandleMode {
+        self.modes.get(&point).copied().unwrap_or_default()
+    }
+
+    /// 기본값이 아닌 handle mode(point id 오름차순).
+    pub fn handle_modes(&self) -> impl Iterator<Item = (PathPointId, HandleMode)> + '_ {
+        self.modes.iter().map(|(point, mode)| (*point, *mode))
+    }
+
+    /// point의 command 위치.
+    pub fn point_index(&self, point: PathPointId) -> Option<usize> {
+        self.ids.iter().position(|ids| ids.point == Some(point))
     }
 
     /// 새 id를 생성기에서 받아 모든 point·handle에 부여합니다.
@@ -401,7 +488,11 @@ impl IdentifiedPath {
                 }
             })
             .collect();
-        IdentifiedPath { data, ids }
+        IdentifiedPath {
+            data,
+            ids,
+            modes: Default::default(),
+        }
     }
 
     /// path 데이터.
@@ -430,6 +521,35 @@ impl IdentifiedPath {
         self.ids.iter().filter_map(|id| id.point).collect()
     }
 
+    /// 같은 command 구성의 새 좌표 `data`로 바꾼 path. point·handle id와 handle mode는 그대로입니다
+    /// (평행이동 같은 좌표 변환용, ADR-0079). command 구성이 다르면 거부합니다.
+    pub fn with_data(&self, data: PathData) -> Result<IdentifiedPath, PathError> {
+        IdentifiedPath::new(data, self.ids.clone())?.with_handle_modes(self.handle_modes())
+    }
+
+    /// 모든 point·handle id를 `remap`으로 바꾼 path(복제용). handle mode는 바뀐 point id로 옮깁니다
+    /// (ADR-0079). 결과 id가 겹치면 거부합니다.
+    pub fn remapped(
+        &self,
+        mut remap: impl FnMut(StableId) -> StableId,
+    ) -> Result<IdentifiedPath, PathError> {
+        let ids = self
+            .ids
+            .iter()
+            .map(|ids| CommandIds {
+                point: ids.point.map(|p| PathPointId(remap(p.0))),
+                handles: ids
+                    .handles
+                    .map(|(h1, h2)| (PathHandleId(remap(h1.0)), PathHandleId(remap(h2.0)))),
+            })
+            .collect();
+        let modes: Vec<(PathPointId, HandleMode)> = self
+            .handle_modes()
+            .map(|(point, mode)| (PathPointId(remap(point.0)), mode))
+            .collect();
+        IdentifiedPath::new(self.data.clone(), ids)?.with_handle_modes(modes)
+    }
+
     /// `index` 위치에 LineTo point를 삽입합니다. 기존 point·handle id는 그대로
     /// 유지되고 새 point만 `id`를 받습니다. 결과가 subpath 규칙을 어기면(예: 맨
     /// 앞, Close 직후) 거부하고 path를 바꾸지 않습니다.
@@ -453,8 +573,422 @@ impl IdentifiedPath {
             },
         );
         let data = PathData::new(self.data.winding(), commands)?;
-        *self = IdentifiedPath::new(data, ids)?;
+        let modes = std::mem::take(&mut self.modes);
+        *self = IdentifiedPath::new(data, ids)?.with_handle_modes(modes)?;
         Ok(())
+    }
+}
+
+// --- point 편집 (XII.10.28, ADR-0079) ---
+
+/// Path point 편집 연산(closed enum). 대상은 point·handle StableId로 가리키며, 편집하지 않은 point·handle의
+/// id는 그대로 유지합니다. tag는 command 직렬화 계약입니다.
+///
+/// handle 소속: `CubicTo { c1, c2, to }`의 `c1`은 **앞 point의 나가는 handle**, `c2`는 **`to` point의 들어오는
+/// handle**입니다.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PathEdit {
+    /// `segment` point로 끝나는 선분·곡선을 `t`(0 < t < 1)에서 둘로 나눠 새 point `point`를 넣습니다. 곡선은
+    /// de Casteljau로 나눠 모양을 그대로 두며, 새로 생기는 두 handle id(`handles`, 앞 곡선의 c2·뒤 곡선의 c1)가
+    /// 필요합니다. 직선이면 `handles`는 `None`입니다.
+    InsertPoint {
+        /// 나눌 segment의 끝 point.
+        segment: PathPointId,
+        /// 나눌 위치(0 < t < 1).
+        t: stellar_core_types::value::FiniteF32,
+        /// 새 point id.
+        point: PathPointId,
+        /// 곡선일 때 새 handle id(앞 곡선 c2, 뒤 곡선 c1).
+        handles: Option<(PathHandleId, PathHandleId)>,
+    },
+    /// anchor를 옮깁니다. 그 point의 두 handle도 같은 만큼 옮깁니다.
+    MovePoint {
+        /// 대상 point.
+        point: PathPointId,
+        /// 새 위치.
+        to: Vec2,
+    },
+    /// point를 지웁니다. 앞뒤 segment를 하나로 합치며(둘 다 곡선이면 바깥 두 handle로 곡선, 아니면 직선),
+    /// subpath 시작 point면 다음 point가 시작이 됩니다. point 하나뿐인 subpath는 통째로 지웁니다.
+    DeletePoint {
+        /// 대상 point.
+        point: PathPointId,
+    },
+    /// handle 하나를 옮기고, 소속 point의 [`HandleMode`]에 따라 반대 handle을 맞춥니다.
+    MoveHandle {
+        /// 대상 handle.
+        handle: PathHandleId,
+        /// 새 위치.
+        to: Vec2,
+    },
+    /// point의 handle mode를 바꿉니다. `Aligned`·`Mirrored`로 바꾸면 들어오는 handle을 기준으로 나가는
+    /// handle을 맞춥니다.
+    SetHandleMode {
+        /// 대상 point.
+        point: PathPointId,
+        /// 새 mode.
+        mode: HandleMode,
+    },
+    /// `start` point(MoveTo)로 시작하는 열린 subpath를 닫습니다.
+    CloseSubpath {
+        /// subpath 시작 point.
+        start: PathPointId,
+    },
+    /// `start` point(MoveTo)로 시작하는 닫힌 subpath를 엽니다.
+    OpenSubpath {
+        /// subpath 시작 point.
+        start: PathPointId,
+    },
+}
+
+fn invalid_edit(reason: &'static str) -> PathError {
+    PathError::InvalidEdit { reason }
+}
+
+fn lerp(a: Vec2, b: Vec2, t: f32) -> Result<Vec2, PathError> {
+    Ok(Vec2::new(
+        a.x() + (b.x() - a.x()) * t,
+        a.y() + (b.y() - a.y()) * t,
+    )?)
+}
+
+fn offset(point: Vec2, dx: f32, dy: f32) -> Result<Vec2, PathError> {
+    Ok(Vec2::new(point.x() + dx, point.y() + dy)?)
+}
+
+/// `anchor` 기준으로 `reference` handle의 반대쪽 handle을 mode에 맞게 계산합니다. `current`는 지금 반대
+/// handle 위치(Aligned에서 길이 유지).
+fn opposite_handle(
+    mode: HandleMode,
+    anchor: Vec2,
+    reference: Vec2,
+    current: Vec2,
+) -> Result<Vec2, PathError> {
+    let (dx, dy) = (reference.x() - anchor.x(), reference.y() - anchor.y());
+    match mode {
+        HandleMode::Independent => Ok(current),
+        HandleMode::Mirrored => offset(anchor, -dx, -dy),
+        HandleMode::Aligned => {
+            let len = (dx * dx + dy * dy).sqrt();
+            if len == 0.0 {
+                return Ok(current);
+            }
+            let keep =
+                ((current.x() - anchor.x()).powi(2) + (current.y() - anchor.y()).powi(2)).sqrt();
+            offset(anchor, -dx / len * keep, -dy / len * keep)
+        }
+    }
+}
+
+fn endpoint(command: &PathCommand) -> Option<Vec2> {
+    match command {
+        PathCommand::MoveTo(p) | PathCommand::LineTo(p) => Some(*p),
+        PathCommand::CubicTo { to, .. } => Some(*to),
+        PathCommand::Close => None,
+    }
+}
+
+fn with_endpoint(command: PathCommand, to: Vec2) -> PathCommand {
+    match command {
+        PathCommand::MoveTo(_) => PathCommand::MoveTo(to),
+        PathCommand::LineTo(_) => PathCommand::LineTo(to),
+        PathCommand::CubicTo { c1, c2, .. } => PathCommand::CubicTo { c1, c2, to },
+        PathCommand::Close => PathCommand::Close,
+    }
+}
+
+impl IdentifiedPath {
+    /// handle의 (command 위치, `c1`인지).
+    fn handle_index(&self, handle: PathHandleId) -> Option<(usize, bool)> {
+        self.ids
+            .iter()
+            .enumerate()
+            .find_map(|(index, ids)| match ids.handles {
+                Some((c1, _)) if c1 == handle => Some((index, true)),
+                Some((_, c2)) if c2 == handle => Some((index, false)),
+                _ => None,
+            })
+    }
+
+    /// `index` command가 속한 subpath의 (MoveTo 위치, 마지막 비-Close command 위치, 닫혔는지).
+    fn subpath_bounds(&self, index: usize) -> (usize, usize, bool) {
+        let commands = self.data.commands();
+        let start = (0..=index)
+            .rev()
+            .find(|i| matches!(commands[*i], PathCommand::MoveTo(_)))
+            .unwrap_or(0);
+        let mut last = start;
+        let mut closed = false;
+        for (i, command) in commands.iter().enumerate().skip(start + 1) {
+            match command {
+                PathCommand::MoveTo(_) => break,
+                PathCommand::Close => {
+                    closed = true;
+                    break;
+                }
+                _ => last = i,
+            }
+        }
+        (start, last, closed)
+    }
+
+    fn rebuilt(
+        &self,
+        commands: Vec<PathCommand>,
+        ids: Vec<CommandIds>,
+        modes: std::collections::BTreeMap<PathPointId, HandleMode>,
+    ) -> Result<IdentifiedPath, PathError> {
+        let data = PathData::new(self.data.winding(), commands)?;
+        IdentifiedPath::new(data, ids)?.with_handle_modes(modes)
+    }
+
+    fn required_point(&self, point: PathPointId) -> Result<usize, PathError> {
+        self.point_index(point)
+            .ok_or(PathError::UnknownElement { id: point.0 })
+    }
+
+    /// point 편집을 적용한 새 path를 반환합니다. 이 path는 바꾸지 않습니다. 편집하지 않은 point·handle의 id와
+    /// mode는 유지합니다.
+    pub fn edited(&self, edit: &PathEdit) -> Result<IdentifiedPath, PathError> {
+        let mut commands = self.data.commands().to_vec();
+        let mut ids = self.ids.clone();
+        let mut modes = self.modes.clone();
+        match *edit {
+            PathEdit::InsertPoint {
+                segment,
+                t,
+                point,
+                handles,
+            } => {
+                let t = t.get();
+                if !(t > 0.0 && t < 1.0) {
+                    return Err(invalid_edit("나눌 위치는 0과 1 사이여야 합니다"));
+                }
+                let i = self.required_point(segment)?;
+                let from = match i.checked_sub(1).map(|p| &commands[p]) {
+                    Some(previous) => endpoint(previous),
+                    None => None,
+                };
+                match (commands[i], from, handles) {
+                    (PathCommand::LineTo(to), Some(from), None) => {
+                        commands.insert(i, PathCommand::LineTo(lerp(from, to, t)?));
+                        ids.insert(
+                            i,
+                            CommandIds {
+                                point: Some(point),
+                                handles: None,
+                            },
+                        );
+                    }
+                    (PathCommand::CubicTo { c1, c2, to }, Some(from), Some((left, right))) => {
+                        let (q0, q1, q2) = (lerp(from, c1, t)?, lerp(c1, c2, t)?, lerp(c2, to, t)?);
+                        let (r0, r1) = (lerp(q0, q1, t)?, lerp(q1, q2, t)?);
+                        let split = lerp(r0, r1, t)?;
+                        let (h1, h2) = ids[i]
+                            .handles
+                            .ok_or(PathError::IdShapeMismatch { index: i })?;
+                        commands[i] = PathCommand::CubicTo { c1: r1, c2: q2, to };
+                        ids[i].handles = Some((right, h2));
+                        commands.insert(
+                            i,
+                            PathCommand::CubicTo {
+                                c1: q0,
+                                c2: r0,
+                                to: split,
+                            },
+                        );
+                        ids.insert(
+                            i,
+                            CommandIds {
+                                point: Some(point),
+                                handles: Some((h1, left)),
+                            },
+                        );
+                    }
+                    (PathCommand::MoveTo(_), _, _) => {
+                        return Err(invalid_edit(
+                            "subpath 시작 point로 끝나는 segment는 없습니다",
+                        ))
+                    }
+                    _ => {
+                        return Err(invalid_edit(
+                            "곡선 분할에는 새 handle id 두 개가, 직선에는 0개가 필요합니다",
+                        ))
+                    }
+                }
+            }
+            PathEdit::MovePoint { point, to } => {
+                let i = self.required_point(point)?;
+                let old = endpoint(&commands[i]).ok_or(PathError::IdShapeMismatch { index: i })?;
+                let (dx, dy) = (to.x() - old.x(), to.y() - old.y());
+                commands[i] = with_endpoint(commands[i], to);
+                if let PathCommand::CubicTo { c1, c2, to } = commands[i] {
+                    commands[i] = PathCommand::CubicTo {
+                        c1,
+                        c2: offset(c2, dx, dy)?,
+                        to,
+                    };
+                }
+                if let Some(PathCommand::CubicTo { c1, c2, to }) = commands.get(i + 1).copied() {
+                    commands[i + 1] = PathCommand::CubicTo {
+                        c1: offset(c1, dx, dy)?,
+                        c2,
+                        to,
+                    };
+                }
+            }
+            PathEdit::DeletePoint { point } => {
+                let i = self.required_point(point)?;
+                modes.remove(&point);
+                let next = commands.get(i + 1).copied();
+                let next_is_segment = matches!(
+                    next,
+                    Some(PathCommand::LineTo(_) | PathCommand::CubicTo { .. })
+                );
+                match commands[i] {
+                    PathCommand::MoveTo(_) if next_is_segment => {
+                        let to = endpoint(&commands[i + 1]).expect("segment endpoint");
+                        commands[i + 1] = PathCommand::MoveTo(to);
+                        ids[i + 1].handles = None;
+                        commands.remove(i);
+                        ids.remove(i);
+                    }
+                    PathCommand::MoveTo(_) => {
+                        // point 하나뿐인 subpath: MoveTo(와 Close)를 지웁니다.
+                        let end = if matches!(next, Some(PathCommand::Close)) {
+                            i + 2
+                        } else {
+                            i + 1
+                        };
+                        commands.drain(i..end);
+                        ids.drain(i..end);
+                    }
+                    current if next_is_segment => {
+                        let following = next.expect("segment");
+                        let to = endpoint(&following).expect("segment endpoint");
+                        match (current, following) {
+                            (PathCommand::CubicTo { c1, .. }, PathCommand::CubicTo { c2, .. }) => {
+                                let (h1, _) = ids[i]
+                                    .handles
+                                    .ok_or(PathError::IdShapeMismatch { index: i })?;
+                                let (_, h2) = ids[i + 1]
+                                    .handles
+                                    .ok_or(PathError::IdShapeMismatch { index: i + 1 })?;
+                                commands[i + 1] = PathCommand::CubicTo { c1, c2, to };
+                                ids[i + 1].handles = Some((h1, h2));
+                            }
+                            _ => {
+                                commands[i + 1] = PathCommand::LineTo(to);
+                                ids[i + 1].handles = None;
+                            }
+                        }
+                        commands.remove(i);
+                        ids.remove(i);
+                    }
+                    _ => {
+                        commands.remove(i);
+                        ids.remove(i);
+                    }
+                }
+            }
+            PathEdit::MoveHandle { handle, to } => {
+                let (i, is_c1) = self
+                    .handle_index(handle)
+                    .ok_or(PathError::UnknownElement { id: handle.0 })?;
+                let PathCommand::CubicTo { c1, c2, to: end } = commands[i] else {
+                    return Err(PathError::IdShapeMismatch { index: i });
+                };
+                if is_c1 {
+                    commands[i] = PathCommand::CubicTo {
+                        c1: to,
+                        c2,
+                        to: end,
+                    };
+                    // 앞 point의 나가는 handle: 반대는 앞 command의 c2(들어오는 handle).
+                    let owner = i - 1;
+                    let anchor = endpoint(&commands[owner]).expect("앞 point");
+                    let mode = ids[owner]
+                        .point
+                        .map_or(HandleMode::Independent, |p| self.handle_mode(p));
+                    if let PathCommand::CubicTo { c1, c2, to: e } = commands[owner] {
+                        commands[owner] = PathCommand::CubicTo {
+                            c1,
+                            c2: opposite_handle(mode, anchor, to, c2)?,
+                            to: e,
+                        };
+                    }
+                } else {
+                    commands[i] = PathCommand::CubicTo {
+                        c1,
+                        c2: to,
+                        to: end,
+                    };
+                    let mode = ids[i]
+                        .point
+                        .map_or(HandleMode::Independent, |p| self.handle_mode(p));
+                    if let Some(PathCommand::CubicTo { c1, c2, to: e }) =
+                        commands.get(i + 1).copied()
+                    {
+                        commands[i + 1] = PathCommand::CubicTo {
+                            c1: opposite_handle(mode, end, to, c1)?,
+                            c2,
+                            to: e,
+                        };
+                    }
+                }
+            }
+            PathEdit::SetHandleMode { point, mode } => {
+                let i = self.required_point(point)?;
+                if mode == HandleMode::Independent {
+                    modes.remove(&point);
+                } else {
+                    modes.insert(point, mode);
+                }
+                let anchor =
+                    endpoint(&commands[i]).ok_or(PathError::IdShapeMismatch { index: i })?;
+                if let (
+                    PathCommand::CubicTo { c2: incoming, .. },
+                    Some(PathCommand::CubicTo { c1, c2, to }),
+                ) = (commands[i], commands.get(i + 1).copied())
+                {
+                    commands[i + 1] = PathCommand::CubicTo {
+                        c1: opposite_handle(mode, anchor, incoming, c1)?,
+                        c2,
+                        to,
+                    };
+                }
+            }
+            PathEdit::CloseSubpath { start } | PathEdit::OpenSubpath { start } => {
+                let i = self.required_point(start)?;
+                if !matches!(commands[i], PathCommand::MoveTo(_)) {
+                    return Err(invalid_edit(
+                        "subpath는 시작 point(MoveTo)로 가리켜야 합니다",
+                    ));
+                }
+                let (_, last, closed) = self.subpath_bounds(i);
+                match (edit, closed) {
+                    (PathEdit::CloseSubpath { .. }, false) => {
+                        commands.insert(last + 1, PathCommand::Close);
+                        ids.insert(
+                            last + 1,
+                            CommandIds {
+                                point: None,
+                                handles: None,
+                            },
+                        );
+                    }
+                    (PathEdit::OpenSubpath { .. }, true) => {
+                        commands.remove(last + 1);
+                        ids.remove(last + 1);
+                    }
+                    (PathEdit::CloseSubpath { .. }, true) => {
+                        return Err(invalid_edit("이미 닫힌 subpath입니다"))
+                    }
+                    _ => return Err(invalid_edit("이미 열린 subpath입니다")),
+                }
+            }
+        }
+        self.rebuilt(commands, ids, modes)
     }
 }
 
@@ -507,6 +1041,14 @@ impl IdentifiedPath {
                 buf.extend_from_slice(&h2.0.to_bytes());
             }
         }
+        // handle mode 절(ADR-0079): 기본값이 아닌 point가 있을 때만 씁니다. 없으면 이전 형식과 같은 bytes입니다.
+        if !self.modes.is_empty() {
+            buf.extend_from_slice(&(self.modes.len() as u32).to_le_bytes());
+            for (point, mode) in &self.modes {
+                buf.extend_from_slice(&point.0.to_bytes());
+                buf.push(*mode as u8);
+            }
+        }
         buf
     }
 
@@ -541,12 +1083,35 @@ impl IdentifiedPath {
             };
             ids.push(CommandIds { point, handles });
         }
+        let mut modes = Vec::new();
+        if reader.pos != bytes.len() {
+            let count = take_u32(&mut reader)? as usize;
+            if count == 0 {
+                return Err(PathError::Malformed {
+                    reason: "빈 handle mode 절",
+                });
+            }
+            for _ in 0..count {
+                let point = PathPointId(take_stable_id(&mut reader)?);
+                let mode = HandleMode::from_stored_tag(reader.take(1)?[0]).ok_or(
+                    PathError::Malformed {
+                        reason: "알 수 없는 handle mode",
+                    },
+                )?;
+                if modes.last().is_some_and(|(last, _)| *last >= point) {
+                    return Err(PathError::Malformed {
+                        reason: "handle mode 순서",
+                    });
+                }
+                modes.push((point, mode));
+            }
+        }
         if reader.pos != bytes.len() {
             return Err(PathError::Malformed {
                 reason: "trailing bytes",
             });
         }
-        IdentifiedPath::new(data, ids)
+        IdentifiedPath::new(data, ids)?.with_handle_modes(modes)
     }
 }
 
@@ -1164,5 +1729,60 @@ mod tests {
         let mut mismatch = bytes;
         mismatch[flag_at] = IDS_POINT | IDS_HANDLES;
         assert!(IdentifiedPath::decode(&mismatch).is_err());
+    }
+
+    #[test]
+    fn handle_mode_section_is_optional_and_validated() {
+        // ADR-0079: 기본 mode만 있는 path는 이전 형식과 같은 bytes이고, mode 절은 있을 때만 씁니다.
+        let data = PathData::new(
+            WindingRule::NonZero,
+            vec![
+                PathCommand::MoveTo(p(0.0, 0.0)),
+                PathCommand::CubicTo {
+                    c1: p(1.0, 0.0),
+                    c2: p(2.0, 1.0),
+                    to: p(3.0, 1.0),
+                },
+            ],
+        )
+        .unwrap();
+        let mut next = 0u64;
+        let plain = IdentifiedPath::assign(data, &mut || {
+            next += 1;
+            StableId::new_v7(next, 0, next)
+        });
+        let plain_bytes = plain.encode();
+        let points = plain.point_ids();
+        let moded = plain
+            .clone()
+            .with_handle_modes([(points[1], HandleMode::Mirrored)])
+            .unwrap();
+        let bytes = moded.encode();
+        assert_eq!(&bytes[..plain_bytes.len()], plain_bytes.as_slice());
+        assert_eq!(bytes.len(), plain_bytes.len() + 4 + 17);
+        assert_eq!(IdentifiedPath::decode(&bytes).unwrap(), moded);
+        assert_eq!(moded.handle_mode(points[1]), HandleMode::Mirrored);
+        assert_eq!(moded.handle_mode(points[0]), HandleMode::Independent);
+        // 없는 point, 기본값, 알 수 없는 tag, 빈 절은 거부합니다.
+        assert!(plain
+            .clone()
+            .with_handle_modes([(
+                PathPointId(StableId::new_v7(99, 0, 99)),
+                HandleMode::Aligned
+            )])
+            .is_err());
+        assert!(plain
+            .clone()
+            .with_handle_modes([(points[0], HandleMode::Independent)])
+            .is_err());
+        let mut bad_tag = bytes.clone();
+        *bad_tag.last_mut().unwrap() = 7;
+        assert!(IdentifiedPath::decode(&bad_tag).is_err());
+        let mut empty_section = plain_bytes.clone();
+        empty_section.extend_from_slice(&0u32.to_le_bytes());
+        assert!(IdentifiedPath::decode(&empty_section).is_err());
+        for cut in plain_bytes.len() + 1..bytes.len() {
+            assert!(IdentifiedPath::decode(&bytes[..cut]).is_err(), "절단 {cut}");
+        }
     }
 }

@@ -12,6 +12,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
+use stellar_core_types::reference::ComponentRef;
+use stellar_document::component::definition::{
+    ComponentEntry, ComponentPropertyId, ComponentSlotId,
+};
+use stellar_document::component::instance::{ComponentInstancePayload, OverrideKey};
+use stellar_document::component::slot::ComponentSlot;
 use stellar_document::frame::Clipping;
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{find_modifier_cycle, validate_modifier_owner, ModifierStack};
@@ -550,6 +556,326 @@ fn subtree_height(index: &ChildIndex, root: StableId) -> u32 {
         }
     }
     height
+}
+
+// --- 인스턴스 교체 (XII.10.35, ADR-0079) ---
+
+/// 인스턴스의 참조 컴포넌트를 바꿉니다(swap). 새 payload는 [`plan_instance_swap`]이 만듭니다.
+///
+/// command는 결과 payload(새 `ComponentRef`와 보존한 override)를 그대로 담아 컴포넌트 library 없이 재실행할 수
+/// 있습니다. 역은 원래 payload로 되돌리는 같은 command입니다(원래 `ComponentRef`·override 복원).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwapInstance {
+    /// 대상 ComponentInstance node.
+    pub node: StableId,
+    /// 교체 뒤 payload.
+    pub payload: ComponentInstancePayload,
+}
+
+impl SwapInstance {
+    fn current<'a>(
+        &self,
+        model: &'a DocumentModel,
+    ) -> Result<&'a ComponentInstancePayload, CommandError> {
+        match model.payload(self.node) {
+            Some(NodePayload::ComponentInstance(payload)) => Ok(payload),
+            None => Err(CommandError::UnknownNode { id: self.node }),
+            Some(other) => Err(CommandError::ConversionKind {
+                node: self.node,
+                expected: NodeKind::ComponentInstance,
+                found: other.kind(),
+            }),
+        }
+    }
+
+    /// 새 payload의 slot content가 이 인스턴스 소유 node(부모 = 인스턴스)이고 한 번씩만 투영되는지, 지금 투영된
+    /// content가 교체 뒤에도 모두 투영되는지 확인합니다(IX.3.2: 인스턴스 자식은 모두 slot에 투영돼야 함). 교체가
+    /// 소유 node를 투영할 곳 없이 남기지 않으므로 역(원래 payload)도 항상 적용됩니다. slot 종류·개수 규칙은 컴포넌트
+    /// library가 있어야 알 수 있어 [`plan_instance_swap`]이 봅니다.
+    pub(crate) fn validate(&self, model: &DocumentModel) -> Result<(), CommandError> {
+        let current = self.current(model)?;
+        if self.payload.component().id() == StableId::NIL {
+            return Err(CommandError::NilId);
+        }
+        let mut projected = BTreeSet::new();
+        for (_, content) in self.payload.slot_overrides() {
+            for node in content.content() {
+                let parent =
+                    parent_of(model, *node).ok_or(CommandError::UnknownNode { id: *node })?;
+                if parent != Some(self.node) {
+                    return Err(CommandError::InvalidParent {
+                        node: *node,
+                        parent,
+                    });
+                }
+                if !projected.insert(*node) {
+                    return Err(CommandError::DuplicateId { id: *node });
+                }
+            }
+        }
+        if current
+            .slot_overrides()
+            .flat_map(|(_, content)| content.content().iter())
+            .any(|node| !projected.contains(node))
+        {
+            return Err(CommandError::InvalidRequest {
+                reason: "교체 뒤 투영할 slot이 없는 인스턴스 소유 node가 남습니다",
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn invert(&self, model: &DocumentModel) -> Result<SwapInstance, CommandError> {
+        Ok(SwapInstance {
+            node: self.node,
+            payload: self.current(model)?.clone(),
+        })
+    }
+
+    pub(crate) fn apply(&self, ctx: &mut EditContext<'_>) -> Result<(), CommandError> {
+        if self.current(ctx.model())? == &self.payload {
+            return Ok(());
+        }
+        ctx.set_payload(
+            self.node,
+            NodePayload::ComponentInstance(self.payload.clone()),
+        )?;
+        ctx.changes().structure(self.node);
+        Ok(())
+    }
+
+    pub(crate) fn encode_into(&self, out: &mut Writer) {
+        out.id(self.node);
+        out.bytes(&self.payload.encode());
+    }
+
+    pub(crate) fn decode_from(input: &mut Reader<'_>) -> Result<SwapInstance, CommandCodecError> {
+        let node = input.id()?;
+        let payload = ComponentInstancePayload::decode(input.bytes()?).map_err(|_| {
+            CommandCodecError::Malformed {
+                reason: "잘못된 인스턴스 payload",
+            }
+        })?;
+        Ok(SwapInstance { node, payload })
+    }
+}
+
+/// 교체 뒤 인스턴스 크기.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SwapSizing {
+    /// 새 정의 root의 기본 크기(기본).
+    #[default]
+    DefinitionDefault,
+    /// 지금 보이는 크기 유지. 인스턴스 크기 override가 문서 모델에 아직 없어 계획이 거부합니다(ADR-0079).
+    KeepCurrent,
+}
+
+/// 교체 계획에 쓰는 정의 Property 요약. `T`는 선언 타입(`TypeSpec`)이며 같음만 비교합니다.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwapProperty<T> {
+    /// Property id.
+    pub id: ComponentPropertyId,
+    /// 이름.
+    pub name: String,
+    /// 선언 타입.
+    pub value_type: T,
+    /// 공개 Property인지.
+    pub public: bool,
+}
+
+/// 보존하지 못한 override.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SwapOverride {
+    /// Property override.
+    Property(OverrideKey),
+    /// Slot override.
+    Slot(ComponentSlotId),
+}
+
+/// override를 보존하지 못한 이유.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SwapDropReason {
+    /// 새 정의에 같은 이름의 Property가 없습니다.
+    NoMatchingProperty,
+    /// 같은 이름이지만 선언 타입이 다릅니다.
+    TypeMismatch,
+    /// 같은 이름·타입이지만 새 정의에서 공개가 아닙니다.
+    NotPublic,
+    /// nested instance 경로 override(옛 정의 tree를 가리킴)입니다.
+    NestedPath,
+    /// 현재 정의에 없는 Property를 가리킵니다.
+    UnknownProperty,
+    /// 새 정의에 같은 Slot이 없습니다.
+    NoMatchingSlot,
+    /// 같은 Slot이 있지만 content가 새 Slot의 종류·개수 규칙을 어깁니다.
+    SlotRuleMismatch,
+}
+
+/// 보존한 Property override(옛 Property → 새 Property).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreservedOverride {
+    /// 옛 정의 Property.
+    pub from: ComponentPropertyId,
+    /// 새 정의 Property.
+    pub to: ComponentPropertyId,
+    /// 공통 이름.
+    pub name: String,
+}
+
+/// 인스턴스 교체 계획: 적용할 command와 적용 전 preview.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceSwapPlan {
+    /// 적용할 command.
+    pub command: SwapInstance,
+    /// 보존한 Property override(옛 Property id 순).
+    pub preserved: Vec<PreservedOverride>,
+    /// 보존하지 못한 override(key 순).
+    pub dropped: Vec<(SwapOverride, SwapDropReason)>,
+}
+
+/// 인스턴스 `node`를 `target` 컴포넌트로 바꾸는 계획을 만듭니다(문서는 바꾸지 않음).
+///
+/// 직접 Property override는 옛 Property와 **이름과 선언 타입이 같은 새 정의의 공개 Property**로 옮깁니다.
+/// nested 경로 override, 맞는 Property가 없는 override, 새 정의에 같은 id의 Slot이 없거나 content가 새
+/// Slot의 종류·개수 규칙을 어기는 Slot override는 버리고 `dropped`에 이유와 함께 보고합니다. 버릴 Slot에
+/// content(인스턴스 소유 node)가 있으면 투영할 곳 없이 남게 되므로 계획을 거부합니다(IX.3.2). 같은 입력은 같은
+/// 계획입니다(결과는 key 순).
+pub fn plan_instance_swap<T: PartialEq>(
+    model: &DocumentModel,
+    node: StableId,
+    target: ComponentRef,
+    current_properties: &[SwapProperty<T>],
+    target_properties: &[SwapProperty<T>],
+    target_slots: &[ComponentSlot],
+    sizing: SwapSizing,
+) -> Result<InstanceSwapPlan, CommandError> {
+    if sizing == SwapSizing::KeepCurrent {
+        return Err(CommandError::InvalidRequest {
+            reason: "인스턴스 크기 override가 문서 모델에 없어 현재 크기를 유지할 수 없습니다",
+        });
+    }
+    if target.id() == StableId::NIL {
+        return Err(CommandError::NilId);
+    }
+    let probe = SwapInstance {
+        node,
+        payload: ComponentInstancePayload::new(target),
+    };
+    let current = probe.current(model)?;
+    let mut payload = ComponentInstancePayload::new(target);
+    let mut preserved = Vec::new();
+    let mut dropped = Vec::new();
+    for (key, value) in current.property_overrides() {
+        if !key.is_direct() {
+            dropped.push((
+                SwapOverride::Property(key.clone()),
+                SwapDropReason::NestedPath,
+            ));
+            continue;
+        }
+        let Some(old) = current_properties.iter().find(|p| p.id == key.property()) else {
+            dropped.push((
+                SwapOverride::Property(key.clone()),
+                SwapDropReason::UnknownProperty,
+            ));
+            continue;
+        };
+        let reason = match target_properties.iter().find(|p| p.name == old.name) {
+            None => Some(SwapDropReason::NoMatchingProperty),
+            Some(new) if new.value_type != old.value_type => Some(SwapDropReason::TypeMismatch),
+            Some(new) if !new.public => Some(SwapDropReason::NotPublic),
+            Some(new) => {
+                payload.set_property_override(OverrideKey::direct(new.id), value.clone());
+                preserved.push(PreservedOverride {
+                    from: old.id,
+                    to: new.id,
+                    name: old.name.clone(),
+                });
+                None
+            }
+        };
+        if let Some(reason) = reason {
+            dropped.push((SwapOverride::Property(key.clone()), reason));
+        }
+    }
+    for (slot, content) in current.slot_overrides() {
+        let reason = match target_slots.iter().find(|s| s.id == slot) {
+            None => Some(SwapDropReason::NoMatchingSlot),
+            Some(rule) => {
+                let kinds = content
+                    .content()
+                    .iter()
+                    .map(|id| kind_of(model, *id).map(|kind| (*id, kind)))
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or(CommandError::InvalidRequest {
+                        reason: "slot content node가 문서에 없습니다",
+                    })?;
+                if rule.check_content(kinds).is_ok() {
+                    payload.set_slot_override(slot, content.clone());
+                    None
+                } else {
+                    Some(SwapDropReason::SlotRuleMismatch)
+                }
+            }
+        };
+        if let Some(reason) = reason {
+            if !content.is_empty() {
+                return Err(CommandError::InvalidRequest {
+                    reason:
+                        "새 정의에 둘 곳이 없는 slot content가 있습니다(먼저 옮기거나 지웁니다)",
+                });
+            }
+            dropped.push((SwapOverride::Slot(slot), reason));
+        }
+    }
+    preserved.sort_by_key(|p| p.from);
+    dropped.sort();
+    Ok(InstanceSwapPlan {
+        command: SwapInstance { node, payload },
+        preserved,
+        dropped,
+    })
+}
+
+/// 컴포넌트 library 항목으로 [`plan_instance_swap`]을 부릅니다. `current`는 인스턴스가 지금 참조하는 정의여야
+/// 합니다.
+pub fn plan_instance_swap_with_entries(
+    model: &DocumentModel,
+    node: StableId,
+    current: &ComponentEntry,
+    target: &ComponentEntry,
+    sizing: SwapSizing,
+) -> Result<InstanceSwapPlan, CommandError> {
+    let probe = SwapInstance {
+        node,
+        payload: ComponentInstancePayload::new(target.definition().reference()),
+    };
+    if probe.current(model)?.component() != current.definition().reference() {
+        return Err(CommandError::InvalidRequest {
+            reason: "인스턴스가 참조하는 정의와 current 정의가 다릅니다",
+        });
+    }
+    let summary = |entry: &ComponentEntry| {
+        entry
+            .property_records()
+            .map(|p| SwapProperty {
+                id: p.id(),
+                name: p.name().to_string(),
+                value_type: p.value_type(),
+                public: p.is_public(),
+            })
+            .collect::<Vec<_>>()
+    };
+    let slots: Vec<ComponentSlot> = target.slots().cloned().collect();
+    plan_instance_swap(
+        model,
+        node,
+        target.definition().reference(),
+        &summary(current),
+        &summary(target),
+        &slots,
+        sizing,
+    )
 }
 
 #[cfg(test)]
@@ -1476,5 +1802,348 @@ mod tests {
             }
         }
         assert!(moved > 100, "이동 {moved}");
+    }
+}
+
+#[cfg(test)]
+mod swap_tests {
+    use super::*;
+    use crate::codec::{decode_command, encode_command};
+    use crate::command::test_fixtures::{frame, sid, small_model};
+    use crate::command::Command;
+    use crate::request::CommandRequest;
+    use crate::state::DocumentState;
+    use stellar_core_types::typed_value::TypedValue;
+    use stellar_document::component::instance::SlotOverride;
+    use stellar_document::test_support::semantic_snapshot::model_snapshot_json;
+
+    fn prop(n: u64) -> ComponentPropertyId {
+        ComponentPropertyId::new(sid(n))
+    }
+
+    fn info(n: u64, name: &str, ty: &'static str, public: bool) -> SwapProperty<&'static str> {
+        SwapProperty {
+            id: prop(n),
+            name: name.into(),
+            value_type: ty,
+            public,
+        }
+    }
+
+    fn slot(n: u64) -> ComponentSlotId {
+        ComponentSlotId::new(sid(n))
+    }
+
+    /// 새 정의의 Slot 규칙: `kinds`만 허용, content 0~`max`개.
+    fn rule(n: u64, kinds: &[NodeKind], max: Option<u32>) -> ComponentSlot {
+        use stellar_core_types::reference::NodeRef;
+        use stellar_document::component::slot::SlotCardinality;
+        ComponentSlot::new(
+            slot(n),
+            NodeRef::new(sid(n + 1_000)),
+            kinds.iter().copied(),
+            SlotCardinality::new(0, max).unwrap(),
+            Vec::new(),
+        )
+    }
+
+    /// root(10) 아래 인스턴스 30(컴포넌트 sid(500)): override 6개 + slot 2개.
+    fn state() -> DocumentState {
+        let mut model = small_model();
+        let mut payload = ComponentInstancePayload::new(ComponentRef::new(sid(500)));
+        payload.set_property_override(
+            OverrideKey::direct(prop(1)),
+            TypedValue::String("확인".into()),
+        );
+        payload.set_property_override(OverrideKey::direct(prop(2)), TypedValue::Boolean(true));
+        payload.set_property_override(OverrideKey::direct(prop(3)), TypedValue::Boolean(false));
+        payload.set_property_override(OverrideKey::direct(prop(4)), TypedValue::String("x".into()));
+        payload.set_property_override(
+            OverrideKey::nested(vec![sid(77)], prop(1)),
+            TypedValue::String("안".into()),
+        );
+        payload.set_property_override(OverrideKey::direct(prop(9)), TypedValue::Boolean(true));
+        payload.set_slot_override(slot(40), SlotOverride::empty());
+        payload.set_slot_override(slot(41), SlotOverride::empty());
+        let mut record = frame(30, Some(10), 0x30);
+        record.payload = NodePayload::ComponentInstance(payload);
+        model.insert_node(record).unwrap();
+        DocumentState::new(model)
+    }
+
+    fn current() -> Vec<SwapProperty<&'static str>> {
+        vec![
+            info(1, "label", "String", true),
+            info(2, "count", "Boolean", true),
+            info(3, "hidden", "Boolean", true),
+            info(4, "gone", "String", true),
+        ]
+    }
+
+    fn target() -> Vec<SwapProperty<&'static str>> {
+        vec![
+            info(101, "label", "String", true),
+            info(102, "count", "Number", true),
+            info(103, "hidden", "Boolean", false),
+            info(104, "other", "String", true),
+        ]
+    }
+
+    #[test]
+    fn preserve_and_drop_matrix_is_deterministic_and_undoable() {
+        let mut state = state();
+        let before = model_snapshot_json(state.model()).unwrap();
+        let plan = |state: &DocumentState| {
+            plan_instance_swap(
+                state.model(),
+                sid(30),
+                ComponentRef::new(sid(600)),
+                &current(),
+                &target(),
+                &[rule(40, &[NodeKind::Frame], None)],
+                SwapSizing::DefinitionDefault,
+            )
+            .unwrap()
+        };
+        let first = plan(&state);
+        assert_eq!(first, plan(&state), "같은 입력 같은 preview");
+        assert_eq!(
+            first.preserved,
+            vec![PreservedOverride {
+                from: prop(1),
+                to: prop(101),
+                name: "label".into()
+            }]
+        );
+        let mut expected = vec![
+            (
+                SwapOverride::Property(OverrideKey::direct(prop(2))),
+                SwapDropReason::TypeMismatch,
+            ),
+            (
+                SwapOverride::Property(OverrideKey::direct(prop(3))),
+                SwapDropReason::NotPublic,
+            ),
+            (
+                SwapOverride::Property(OverrideKey::direct(prop(4))),
+                SwapDropReason::NoMatchingProperty,
+            ),
+            (
+                SwapOverride::Property(OverrideKey::direct(prop(9))),
+                SwapDropReason::UnknownProperty,
+            ),
+            (
+                SwapOverride::Property(OverrideKey::nested(vec![sid(77)], prop(1))),
+                SwapDropReason::NestedPath,
+            ),
+            (SwapOverride::Slot(slot(41)), SwapDropReason::NoMatchingSlot),
+        ];
+        expected.sort();
+        assert_eq!(first.dropped, expected);
+        let payload = &first.command.payload;
+        assert_eq!(payload.component(), ComponentRef::new(sid(600)));
+        assert_eq!(
+            payload.property_override(&OverrideKey::direct(prop(101))),
+            Some(&TypedValue::String("확인".into()))
+        );
+        assert_eq!(payload.property_overrides().count(), 1);
+        assert_eq!(payload.slot_overrides().count(), 1);
+
+        let command = Command::SwapInstance(first.command.clone());
+        let bytes = encode_command(&command);
+        assert_eq!(&bytes[..2], &0x0090u16.to_le_bytes());
+        assert_eq!(decode_command(&bytes).unwrap(), command);
+        let outcome = state.execute(&CommandRequest::at(&state, command)).unwrap();
+        assert_eq!(
+            state.model().references().outbound(sid(30)),
+            vec![sid(600)],
+            "참조 index도 새 정의를 가리킴"
+        );
+        // undo: 원래 ComponentRef와 override 전체 복원.
+        state
+            .execute(&CommandRequest::at(&state, outcome.inverse))
+            .unwrap();
+        assert_eq!(model_snapshot_json(state.model()).unwrap(), before);
+        let Some(NodePayload::ComponentInstance(restored)) = state.model().payload(sid(30)) else {
+            panic!();
+        };
+        assert_eq!(restored.component(), ComponentRef::new(sid(500)));
+        assert_eq!(restored.property_overrides().count(), 6);
+    }
+
+    #[test]
+    fn swap_never_leaves_owned_slot_content_unprojected() {
+        // IX.3.2: 인스턴스 소유 node는 모두 slot에 투영돼야 합니다. 보존할 수 있는 slot content는 옮기고, 둘
+        // 곳이 없는 content가 있으면 계획·command가 거부합니다(문서 무변경).
+        let mut model = small_model();
+        let mut payload = ComponentInstancePayload::new(ComponentRef::new(sid(500)));
+        payload.set_slot_override(slot(40), SlotOverride::new(vec![sid(31)]).unwrap());
+        payload.set_slot_override(slot(41), SlotOverride::empty());
+        let mut record = frame(30, Some(10), 0x30);
+        record.payload = NodePayload::ComponentInstance(payload);
+        model.insert_node(record).unwrap();
+        model.insert_node(frame(31, Some(30), 0x10)).unwrap();
+        let mut state = DocumentState::new(model);
+        let before = model_snapshot_json(state.model()).unwrap();
+        let plan = |slots: &[ComponentSlot]| {
+            plan_instance_swap::<&str>(
+                state.model(),
+                sid(30),
+                ComponentRef::new(sid(600)),
+                &[],
+                &[],
+                slots,
+                SwapSizing::DefinitionDefault,
+            )
+        };
+        // 40은 Frame 허용이라 content째 보존, 빈 41은 새 정의에 없어 탈락.
+        let kept = plan(&[rule(40, &[NodeKind::Frame], Some(1))]).unwrap();
+        assert_eq!(
+            kept.dropped,
+            vec![(SwapOverride::Slot(slot(41)), SwapDropReason::NoMatchingSlot)]
+        );
+        assert_eq!(
+            kept.command
+                .payload
+                .slot_overrides()
+                .map(|(id, content)| (id, content.content().to_vec()))
+                .collect::<Vec<_>>(),
+            vec![(slot(40), vec![sid(31)])]
+        );
+        // content가 있는 40을 둘 곳이 없거나(새 정의에 없음) 규칙을 어기면(Text만 허용) 거부합니다.
+        assert!(plan(&[]).is_err());
+        assert!(plan(&[rule(40, &[NodeKind::Text], None)]).is_err());
+        let outcome = state
+            .execute(&CommandRequest::at(
+                &state,
+                Command::SwapInstance(kept.command.clone()),
+            ))
+            .unwrap();
+        state
+            .execute(&CommandRequest::at(&state, outcome.inverse))
+            .unwrap();
+        assert_eq!(model_snapshot_json(state.model()).unwrap(), before);
+
+        // command 수준: 소유 node를 버리는 payload, 남의 node(11), 두 번 투영, 없는 node는 거부합니다.
+        let with = |slots: &[(u64, Vec<StableId>)]| {
+            let mut payload = ComponentInstancePayload::new(ComponentRef::new(sid(600)));
+            for (n, content) in slots {
+                payload.set_slot_override(slot(*n), SlotOverride::new(content.clone()).unwrap());
+            }
+            Command::SwapInstance(SwapInstance {
+                node: sid(30),
+                payload,
+            })
+        };
+        for command in [
+            with(&[]),
+            with(&[(40, vec![sid(11)])]),
+            with(&[(40, vec![sid(31)]), (41, vec![sid(31)])]),
+            with(&[(40, vec![sid(31)]), (41, vec![sid(99)])]),
+        ] {
+            assert!(
+                state
+                    .execute(&CommandRequest::at(&state, command.clone()))
+                    .is_err(),
+                "{command:?}"
+            );
+        }
+        assert_eq!(model_snapshot_json(state.model()).unwrap(), before);
+    }
+
+    #[test]
+    fn keep_current_size_and_non_instances_are_rejected() {
+        let state = state();
+        assert!(matches!(
+            plan_instance_swap(
+                state.model(),
+                sid(30),
+                ComponentRef::new(sid(600)),
+                &current(),
+                &target(),
+                &[],
+                SwapSizing::KeepCurrent,
+            ),
+            Err(CommandError::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            plan_instance_swap(
+                state.model(),
+                sid(11),
+                ComponentRef::new(sid(600)),
+                &current(),
+                &target(),
+                &[],
+                SwapSizing::DefinitionDefault,
+            ),
+            Err(CommandError::ConversionKind { .. })
+        ));
+        let mut state = state;
+        let nil = Command::SwapInstance(SwapInstance {
+            node: sid(30),
+            payload: ComponentInstancePayload::new(ComponentRef::new(StableId::NIL)),
+        });
+        assert_eq!(
+            state.execute(&CommandRequest::at(&state, nil)),
+            Err(CommandError::NilId)
+        );
+    }
+
+    #[test]
+    fn library_entries_drive_the_same_plan() {
+        use stellar_document::test_support::component_fixtures::{
+            button_label, button_ref, component_library_fixture, modal_ref, text_input_ref,
+        };
+        let fixture = component_library_fixture().unwrap();
+        let library = &fixture.library;
+        let mut model = small_model();
+        let mut payload = ComponentInstancePayload::new(button_ref());
+        payload.set_property_override(
+            OverrideKey::direct(button_label()),
+            TypedValue::String("저장".into()),
+        );
+        let mut record = frame(30, Some(10), 0x30);
+        record.payload = NodePayload::ComponentInstance(payload);
+        model.insert_node(record).unwrap();
+        let button = library.get(button_ref()).unwrap();
+        let input = library.get(text_input_ref()).unwrap();
+        let plan = plan_instance_swap_with_entries(
+            &model,
+            sid(30),
+            button,
+            input,
+            SwapSizing::DefinitionDefault,
+        )
+        .unwrap();
+        // TextInput에는 label이 없어 탈락합니다.
+        assert!(plan.preserved.is_empty());
+        assert_eq!(
+            plan.dropped,
+            vec![(
+                SwapOverride::Property(OverrideKey::direct(button_label())),
+                SwapDropReason::NoMatchingProperty
+            )]
+        );
+        // 같은 정의로 바꾸면 이름·타입이 같아 모두 보존합니다.
+        let same = plan_instance_swap_with_entries(
+            &model,
+            sid(30),
+            button,
+            button,
+            SwapSizing::DefinitionDefault,
+        )
+        .unwrap();
+        assert_eq!(same.preserved.len(), 1);
+        assert!(same.dropped.is_empty());
+        // current가 실제 참조와 다르면 거부합니다.
+        let modal = library.get(modal_ref()).unwrap();
+        assert!(plan_instance_swap_with_entries(
+            &model,
+            sid(30),
+            modal,
+            input,
+            SwapSizing::DefinitionDefault
+        )
+        .is_err());
     }
 }

@@ -18,12 +18,22 @@ use std::fmt;
 
 use stellar_core_types::ids::StableId;
 
+/// command codec 버전(ADR-0079). 새 command 종류나 종류별 payload 형식이 생기면 올립니다.
+///
+/// - 1: VII.1.2 ~ `replace-text`(0x0050)까지.
+/// - 2: ADR-0079가 더한 종류(Page·View, 외부 snapshot 반영, Path point, Text 범위 style, 인스턴스 교체).
+///
+/// 각 종류가 처음 들어간 버전은 [`CommandKind::codec_version`]입니다. history journal header가 이 값을
+/// 기록하므로 옛 reader는 모르는 종류를 담은 journal의 복원만 포기하고 문서는 건드리지 않습니다.
+pub const COMMAND_CODEC_VERSION: u32 = 2;
+
 use crate::command::Command;
 use crate::convert::{ConvertFragmentToFrame, ConvertShapeToPath, RestoreNodeRecords};
 use crate::duplicate::DuplicateSubtree;
 use crate::kind::CommandKind;
 use crate::modifier_ops::{InsertModifier, MoveModifier, RemoveModifier, SetModifierProperty};
 use crate::node_ops::{DeleteSubtree, InsertNode, MoveNode};
+use crate::page_view::{AddPage, AddView, RemovePage, RemoveView, RenamePage, RenameView};
 use crate::property::SetProperty;
 
 /// command 직렬화 오류.
@@ -301,6 +311,16 @@ fn encode_payload(command: &Command, out: &mut Writer) {
             out.str(&edit.replacement);
         }
         Command::DuplicateSubtree(command) => command.encode_into(out),
+        Command::SetTextRangeStyle(command) => command.encode_into(out),
+        Command::AddPage(command) => command.encode_into(out),
+        Command::RemovePage(command) => command.encode_into(out),
+        Command::RenamePage(command) => command.encode_into(out),
+        Command::AddView(command) => command.encode_into(out),
+        Command::RemoveView(command) => command.encode_into(out),
+        Command::RenameView(command) => command.encode_into(out),
+        Command::ApplyExternalSnapshot(command) => command.encode_into(out),
+        Command::EditPathPoint(command) => command.encode_into(out),
+        Command::SwapInstance(command) => command.encode_into(out),
         #[cfg(test)]
         Command::TestProbe(probe) => {
             out.id(probe.node);
@@ -369,6 +389,25 @@ fn decode_payload(kind: CommandKind, input: &mut Reader<'_>) -> Result<Command, 
         }
         CommandKind::DuplicateSubtree => {
             DuplicateSubtree::decode_from(input).map(Command::DuplicateSubtree)
+        }
+        CommandKind::SetTextRangeStyle => {
+            crate::text_edit::SetTextRangeStyle::decode_from(input).map(Command::SetTextRangeStyle)
+        }
+        CommandKind::AddPage => AddPage::decode_from(input).map(Command::AddPage),
+        CommandKind::RemovePage => RemovePage::decode_from(input).map(Command::RemovePage),
+        CommandKind::RenamePage => RenamePage::decode_from(input).map(Command::RenamePage),
+        CommandKind::AddView => AddView::decode_from(input).map(Command::AddView),
+        CommandKind::RemoveView => RemoveView::decode_from(input).map(Command::RemoveView),
+        CommandKind::RenameView => RenameView::decode_from(input).map(Command::RenameView),
+        CommandKind::ApplyExternalSnapshot => {
+            crate::snapshot_apply::ApplyExternalSnapshot::decode_from(input)
+                .map(Command::ApplyExternalSnapshot)
+        }
+        CommandKind::EditPathPoint => {
+            crate::path_edit::EditPathPoint::decode_from(input).map(Command::EditPathPoint)
+        }
+        CommandKind::SwapInstance => {
+            crate::node_ops::SwapInstance::decode_from(input).map(Command::SwapInstance)
         }
         #[cfg(test)]
         CommandKind::TestProbe => Ok(Command::TestProbe(crate::command::TestProbe {

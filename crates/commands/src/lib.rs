@@ -68,6 +68,15 @@ pub mod convert;
 /// `DuplicateSubtree` command (VII.2.8).
 pub mod duplicate;
 
+/// Page·View 추가·삭제·이름 변경 command (UX.12.1, ADR-0079).
+pub mod page_view;
+
+/// 외부에서 바뀐 문서 원본을 command 하나로 반영 (UX.4.1, ADR-0079).
+pub mod snapshot_apply;
+
+/// Path point 편집 command (XII.10.28, ADR-0079).
+pub mod path_edit;
+
 /// 원본과 독립적인 subtree 클립보드와 Paste 계획.
 pub mod paste;
 

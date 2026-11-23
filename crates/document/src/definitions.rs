@@ -47,6 +47,13 @@ pub enum DefinitionError {
         /// 공유된 root Frame id.
         root_frame: StableId,
     },
+    /// 삽입 위치가 목록 길이보다 큽니다(ADR-0079).
+    IndexOutOfRange {
+        /// 요청 위치.
+        index: usize,
+        /// 현재 목록 길이.
+        len: usize,
+    },
 }
 
 impl fmt::Display for DefinitionError {
@@ -63,6 +70,9 @@ impl fmt::Display for DefinitionError {
             }
             DefinitionError::SharedRootFrame { root_frame } => {
                 write!(f, "root Frame {root_frame}을 두 View가 공유합니다")
+            }
+            DefinitionError::IndexOutOfRange { index, len } => {
+                write!(f, "위치 {index}가 목록 길이 {len}보다 큽니다")
             }
         }
     }
@@ -200,6 +210,31 @@ impl PageDefinition {
             .ok_or(DefinitionError::NotFound { id })?;
         Ok(self.views.remove(index))
     }
+
+    /// View를 `index` 위치(표시 순)에 넣습니다. 같은 id가 있거나 위치가 길이보다 크면 거부합니다
+    /// (ADR-0079).
+    pub fn insert_view(
+        &mut self,
+        index: usize,
+        view: ViewDefinition,
+    ) -> Result<(), DefinitionError> {
+        if self.views.iter().any(|v| v.id == view.id) {
+            return Err(DefinitionError::DuplicateId { id: view.id });
+        }
+        if index > self.views.len() {
+            return Err(DefinitionError::IndexOutOfRange {
+                index,
+                len: self.views.len(),
+            });
+        }
+        self.views.insert(index, view);
+        Ok(())
+    }
+
+    /// id로 View를 찾습니다.
+    pub fn view(&self, id: StableId) -> Option<&ViewDefinition> {
+        self.views.iter().find(|v| v.id == id)
+    }
 }
 
 impl DocumentDefinition {
@@ -240,6 +275,57 @@ impl DocumentDefinition {
             .position(|p| p.id == id)
             .ok_or(DefinitionError::NotFound { id })?;
         Ok(self.pages.remove(index))
+    }
+
+    /// 페이지를 `index` 위치(표시 순)에 넣습니다. 같은 id가 있거나 위치가 길이보다 크면 거부합니다
+    /// (ADR-0079).
+    pub fn insert_page(
+        &mut self,
+        index: usize,
+        page: PageDefinition,
+    ) -> Result<(), DefinitionError> {
+        if self.pages.iter().any(|p| p.id == page.id) {
+            return Err(DefinitionError::DuplicateId { id: page.id });
+        }
+        if index > self.pages.len() {
+            return Err(DefinitionError::IndexOutOfRange {
+                index,
+                len: self.pages.len(),
+            });
+        }
+        self.pages.insert(index, page);
+        Ok(())
+    }
+
+    /// id로 페이지를 찾습니다.
+    pub fn page(&self, id: StableId) -> Option<&PageDefinition> {
+        self.pages.iter().find(|p| p.id == id)
+    }
+
+    /// id로 페이지를 찾습니다(가변).
+    pub fn page_mut(&mut self, id: StableId) -> Option<&mut PageDefinition> {
+        self.pages.iter_mut().find(|p| p.id == id)
+    }
+
+    /// View의 (페이지 위치, 페이지 안 View 위치).
+    pub fn view_position(&self, id: StableId) -> Option<(usize, usize)> {
+        self.pages
+            .iter()
+            .enumerate()
+            .find_map(|(page_index, page)| {
+                page.views
+                    .iter()
+                    .position(|v| v.id == id)
+                    .map(|view_index| (page_index, view_index))
+            })
+    }
+
+    /// id로 View를 찾습니다(가변).
+    pub fn view_mut(&mut self, id: StableId) -> Option<&mut ViewDefinition> {
+        self.pages
+            .iter_mut()
+            .flat_map(|p| p.views.iter_mut())
+            .find(|v| v.id == id)
     }
 }
 

@@ -40,6 +40,10 @@ fn command_round_trip(kind: CommandKind) -> usize {
         let mut state = DocumentState::new(random_valid_document(seed));
         let mut rng = SplitMix64::new(seed.wrapping_mul(0x9E37) ^ u64::from(kind.as_u16()));
         let mut ids = FreshIds::new(seed);
+        if kind == CommandKind::SwapInstance {
+            // random document는 인스턴스를 만들지 않으므로 대상 인스턴스를 하나 넣습니다.
+            seed_instance(&mut state, &mut ids);
+        }
         // 문서마다 여러 후보를 시도해 적용 가능한 command를 찾습니다.
         for _ in 0..8 {
             let Some(command) = generate(kind, state.model(), &mut rng, &mut ids) else {
@@ -69,6 +73,51 @@ fn command_round_trip(kind: CommandKind) -> usize {
         }
     }
     applied
+}
+
+/// root 아래에 override 하나를 가진 인스턴스를 넣습니다(SwapInstance 왕복용).
+fn seed_instance(state: &mut DocumentState, ids: &mut FreshIds) {
+    use stellar_core_types::order_key::OrderKey;
+    use stellar_core_types::reference::ComponentRef;
+    use stellar_core_types::typed_value::TypedValue;
+    use stellar_document::component::definition::ComponentPropertyId;
+    use stellar_document::component::instance::{ComponentInstancePayload, OverrideKey};
+    use stellar_document::records::{NodePayload, NodeRecord};
+    let Some(root) = state
+        .model()
+        .definition()
+        .pages
+        .iter()
+        .flat_map(|p| p.views.iter())
+        .map(|v| v.root_frame)
+        .find(|root| state.model().contains(*root))
+    else {
+        return;
+    };
+    let mut payload = ComponentInstancePayload::new(ComponentRef::new(ids.fresh()));
+    payload.set_property_override(
+        OverrideKey::direct(ComponentPropertyId::new(ids.fresh())),
+        TypedValue::Boolean(true),
+    );
+    let last = state
+        .model()
+        .children_in_order(root)
+        .last()
+        .and_then(|child| state.model().record(*child))
+        .map(|record| record.order_key);
+    let record = NodeRecord {
+        id: ids.fresh(),
+        parent: Some(root),
+        order_key: OrderKey::between(last.as_ref(), None),
+        visible: true,
+        locked: false,
+        display_name: "인스턴스".into(),
+        payload: NodePayload::ComponentInstance(payload),
+    };
+    let command = crate::command::Command::InsertNode(crate::node_ops::InsertNode::single(record));
+    state
+        .execute(&CommandRequest::at(state, command))
+        .expect("인스턴스 삽입");
 }
 
 /// 선택 event의 forward/inverse 왕복.
@@ -138,6 +187,16 @@ round_trip_property! {
     restore_node_records_round_trip => Registered::Command(CommandKind::RestoreNodeRecords), min 120;
     duplicate_subtree_round_trip => Registered::Command(CommandKind::DuplicateSubtree), min 80;
     replace_text_round_trip => Registered::Command(CommandKind::ReplaceText), min 60;
+    set_text_range_style_round_trip => Registered::Command(CommandKind::SetTextRangeStyle), min 100;
+    add_page_round_trip => Registered::Command(CommandKind::AddPage), min 120;
+    remove_page_round_trip => Registered::Command(CommandKind::RemovePage), min 120;
+    rename_page_round_trip => Registered::Command(CommandKind::RenamePage), min 120;
+    add_view_round_trip => Registered::Command(CommandKind::AddView), min 120;
+    remove_view_round_trip => Registered::Command(CommandKind::RemoveView), min 100;
+    rename_view_round_trip => Registered::Command(CommandKind::RenameView), min 120;
+    apply_external_snapshot_round_trip => Registered::Command(CommandKind::ApplyExternalSnapshot), min 120;
+    edit_path_point_round_trip => Registered::Command(CommandKind::EditPathPoint), min 60;
+    swap_instance_round_trip => Registered::Command(CommandKind::SwapInstance), min 120;
     set_selection_round_trip => Registered::Selection, min 120;
 }
 

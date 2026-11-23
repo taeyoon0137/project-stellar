@@ -13,9 +13,10 @@
 //! 간격 값은 [`GroupingConfig`]에 둡니다. 기본값은 사용성 벤치마크 전 잠정값입니다.
 
 use stellar_commands::command::Command;
+use stellar_commands::text_edit::ReplaceText;
 use stellar_commands::transaction::CommandTransaction;
 
-use crate::entry::{CommandSignature, GroupingKey};
+use crate::entry::{CommandSignature, GroupingKey, TextInputKind};
 
 impl CommandSignature {
     /// 요청 하나짜리 속성·이동 transaction의 signature. 그 밖의 transaction은 반복 병합 대상이
@@ -50,6 +51,32 @@ impl GroupingKey {
     /// 키보드 반복 입력의 grouping key(signature가 없으면 `None`).
     pub fn keyboard(transaction: &CommandTransaction) -> Option<GroupingKey> {
         CommandSignature::of(transaction).map(GroupingKey::KeyboardRepeat)
+    }
+
+    /// 확정한 Text 편집 하나의 grouping key(XII.10.32). caret은 scalar index입니다.
+    ///
+    /// | 입력 종류 | 편집 전 caret | 편집 후 caret |
+    /// |---|---|---|
+    /// | `Insert`·`Replace` | 범위 끝 | 범위 시작 + 확정 문자열 길이 |
+    /// | `DeleteBackward` | 범위 끝 | 범위 시작 |
+    /// | `DeleteForward` | 범위 시작 | 범위 시작 |
+    ///
+    /// 빈 범위에 넣는 입력이면 `Insert`, 선택을 지우는 입력이면 삭제 종류, 선택을 다른 문자열로 바꾸면
+    /// `Replace`를 씁니다. IME 조합 중 문자열은 command가 아니므로 확정 문자열만 넘깁니다.
+    pub fn text_edit(edit: &ReplaceText, kind: TextInputKind) -> GroupingKey {
+        let (start, end) = (edit.range.start.0, edit.range.end.0);
+        let typed = stellar_commands::document::text::scalar_len(&edit.replacement);
+        let (caret_before, caret_after) = match kind {
+            TextInputKind::Insert | TextInputKind::Replace => (end, start.saturating_add(typed)),
+            TextInputKind::DeleteBackward => (end, start),
+            TextInputKind::DeleteForward => (start, start),
+        };
+        GroupingKey::TextInput {
+            node: edit.node,
+            kind,
+            caret_before,
+            caret_after,
+        }
     }
 }
 
@@ -123,7 +150,8 @@ impl HistoryGroupingPolicy {
                     ..
                 },
             ) => {
-                prev_node == node
+                *kind != TextInputKind::Replace
+                    && prev_node == node
                     && prev_kind == kind
                     && prev_after == caret_before
                     && elapsed <= self.config.text_merge_interval_nanos
@@ -149,6 +177,184 @@ mod tests {
             caret_before: before,
             caret_after: after,
         }
+    }
+
+    #[test]
+    fn continuous_text_input_merges_into_one_history_entry() {
+        // XII.10.32: 연속 입력 merge fixture와 한글 조합 확정 fixture.
+        use crate::window::WindowHistory;
+        use stellar_commands::command::Command;
+        use stellar_commands::document::model::DocumentModel;
+        use stellar_commands::document::records::{NodePayload, NodeRecord};
+        use stellar_commands::document::text::TextPayload;
+        use stellar_commands::id::{CommandId, CommandOrigin, WindowSessionId};
+        use stellar_commands::state::DocumentState;
+        use stellar_commands::transaction::CommandTransaction;
+        use stellar_core_types::clock::ManualClock;
+        use stellar_core_types::order_key::OrderKey;
+
+        let mut model = DocumentModel::from_records(
+            crate::history::test_fixtures::small_state()
+                .model()
+                .to_records()
+                .unwrap(),
+        )
+        .unwrap()
+        .0;
+        model
+            .insert_node(NodeRecord {
+                id: sid(20),
+                parent: Some(sid(10)),
+                order_key: OrderKey::from_bytes(vec![0x30]).unwrap(),
+                visible: true,
+                locked: false,
+                display_name: "text".into(),
+                payload: NodePayload::Text(TextPayload::empty(0)),
+            })
+            .unwrap();
+        let mut doc = DocumentState::new(model);
+        let mut history = WindowHistory::new(WindowSessionId::from_stable_id(sid(820)));
+        let mut clock = ManualClock::new(0);
+        let ms = 1_000_000u64;
+        let mut seq = 0u64;
+        let mut type_text = |history: &mut WindowHistory,
+                             doc: &mut DocumentState,
+                             clock: &ManualClock,
+                             start: u32,
+                             end: u32,
+                             text: &str,
+                             kind: TextInputKind| {
+            seq += 1;
+            let edit = ReplaceText::new(sid(20), start, end, text.into()).unwrap();
+            let key = GroupingKey::text_edit(&edit, kind);
+            let transaction = CommandTransaction::new(
+                CommandId::from_stable_id(sid(9_000 + seq)),
+                CommandOrigin::User,
+            )
+            .with_command(doc.revision(), Command::ReplaceText(edit));
+            history
+                .record_grouped(doc, &transaction, key, clock)
+                .unwrap();
+        };
+        let content = |doc: &DocumentState| match doc.model().payload(sid(20)) {
+            Some(NodePayload::Text(text)) => text.content().to_string(),
+            other => panic!("{other:?}"),
+        };
+        // 한글: 조합(ㅎ→하→한)은 transient이고 확정한 음절만 command입니다. "한" "글"은 인접 caret이라 합쳐집니다.
+        type_text(
+            &mut history,
+            &mut doc,
+            &clock,
+            0,
+            0,
+            "한",
+            TextInputKind::Insert,
+        );
+        clock.advance(200 * ms);
+        type_text(
+            &mut history,
+            &mut doc,
+            &clock,
+            1,
+            1,
+            "글",
+            TextInputKind::Insert,
+        );
+        clock.advance(200 * ms);
+        type_text(
+            &mut history,
+            &mut doc,
+            &clock,
+            2,
+            2,
+            "!",
+            TextInputKind::Insert,
+        );
+        assert_eq!(content(&doc), "한글!");
+        assert_eq!(
+            history.history().entries().len(),
+            1,
+            "연속 입력은 항목 하나"
+        );
+        // Backspace 두 번도 하나로 합쳐지고, 입력과는 다른 항목입니다.
+        clock.advance(200 * ms);
+        type_text(
+            &mut history,
+            &mut doc,
+            &clock,
+            2,
+            3,
+            "",
+            TextInputKind::DeleteBackward,
+        );
+        clock.advance(200 * ms);
+        type_text(
+            &mut history,
+            &mut doc,
+            &clock,
+            1,
+            2,
+            "",
+            TextInputKind::DeleteBackward,
+        );
+        assert_eq!(content(&doc), "한");
+        assert_eq!(history.history().entries().len(), 2);
+        // 선택 교체는 앞 입력과 합치지 않습니다.
+        clock.advance(200 * ms);
+        type_text(
+            &mut history,
+            &mut doc,
+            &clock,
+            0,
+            1,
+            "韓",
+            TextInputKind::Replace,
+        );
+        clock.advance(200 * ms);
+        type_text(
+            &mut history,
+            &mut doc,
+            &clock,
+            1,
+            1,
+            "국",
+            TextInputKind::Insert,
+        );
+        assert_eq!(content(&doc), "韓국");
+        assert_eq!(history.history().entries().len(), 4);
+        // 간격을 넘긴 입력은 새 항목입니다.
+        clock.advance(2_000 * ms);
+        type_text(
+            &mut history,
+            &mut doc,
+            &clock,
+            2,
+            2,
+            ".",
+            TextInputKind::Insert,
+        );
+        assert_eq!(history.history().entries().len(), 5);
+        // undo 한 번이 합쳐진 입력 전체를 되돌립니다.
+        for _ in 0..4 {
+            history.undo(&mut doc).unwrap().unwrap();
+        }
+        assert_eq!(content(&doc), "한글!");
+        history.undo(&mut doc).unwrap().unwrap();
+        assert_eq!(content(&doc), "");
+        // grouping key는 journal에 그대로 기록됩니다(Replace tag 포함).
+        let key = GroupingKey::text_edit(
+            &ReplaceText::new(sid(20), 0, 1, "ab".into()).unwrap(),
+            TextInputKind::Replace,
+        );
+        assert_eq!(
+            key,
+            GroupingKey::TextInput {
+                node: sid(20),
+                kind: TextInputKind::Replace,
+                caret_before: 1,
+                caret_after: 2
+            }
+        );
     }
 
     #[test]

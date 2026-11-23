@@ -5,7 +5,7 @@
 //! 기록(VII.1.4)과 되돌리기 journal(VII.1.5)이 여기에 붙습니다.
 //!
 //! primitive는 [`DocumentModel`]의 공개 변경 API와 1:1입니다: node 삽입, leaf 삭제, payload
-//! 교체(종류 유지), 표시 이름, modifier stack 교체.
+//! 교체(종류 유지), 표시 이름, modifier stack 교체, 문서 정의 교체(ADR-0079).
 //!
 //! - **변경 기록**: command는 의미 단위 변경(바뀐 node·속성·무효화)을 [`EditContext::changes`]에
 //!   기록합니다. primitive 자체는 기록하지 않습니다 — 예를 들어 이동을 삭제·재삽입 primitive로
@@ -18,6 +18,7 @@
 use std::fmt;
 
 use stellar_core_types::{ids::StableId, order_key::OrderKey};
+use stellar_document::definitions::DocumentDefinition;
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::ModifierStack;
 use stellar_document::records::{NodePayload, NodeRecord};
@@ -46,6 +47,7 @@ enum UndoOp {
     },
     /// stack 교체를 되돌림(`None`이면 stack 제거).
     Stack(StableId, Option<ModifierStack>),
+    Definition(Box<DocumentDefinition>),
 }
 
 /// rollback 실패: journal 재생 중 모델이 역 primitive를 거부했습니다(내부 불일치 신호).
@@ -286,6 +288,18 @@ impl<'a> EditContext<'a> {
         Ok(())
     }
 
+    /// 문서·페이지·View 정의(Text style 표 포함)를 바꾸고 이전 정의를 반환합니다(ADR-0079).
+    pub fn replace_definition(
+        &mut self,
+        definition: DocumentDefinition,
+    ) -> Result<DocumentDefinition, CommandError> {
+        self.before_primitive()?;
+        let previous = self.model.replace_definition(definition);
+        self.journal
+            .push(UndoOp::Definition(Box::new(previous.clone())));
+        Ok(previous)
+    }
+
     /// journal을 역순으로 재생해 context를 연 시점의 의미 상태로 되돌립니다.
     ///
     /// 각 역 primitive는 해당 primitive가 성공했던 상태에서 재생되므로 실패하지 않아야
@@ -332,6 +346,9 @@ fn undo(model: &mut DocumentModel, op: UndoOp) -> Result<(), CommandError> {
         }
         UndoOp::Stack(owner, previous) => {
             model.set_modifier_stack(previous.unwrap_or_else(|| ModifierStack::new(owner)))?;
+        }
+        UndoOp::Definition(definition) => {
+            model.replace_definition(*definition);
         }
     }
     Ok(())

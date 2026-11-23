@@ -38,10 +38,16 @@ use crate::duplicate::DuplicateSubtree;
 use crate::kind::CommandKind;
 use crate::modifier_ops::{InsertModifier, MoveModifier, RemoveModifier, SetModifierProperty};
 use crate::node_ops::{DeleteSubtree, InsertNode, MoveNode};
+use crate::page_view::{AddPage, AddView, RemovePage, RemoveView, RenamePage, RenameView};
+use crate::path_edit::EditPathPoint;
 use crate::property::{node_property_info, PropertyValue, PropertyValueType, SetProperty};
 use crate::request::CommandRequest;
+use crate::snapshot_apply::ApplyExternalSnapshot;
 use crate::state::DocumentState;
 use crate::tree::{depth_of, node_ids, order_key_of, parent_of, ChildIndex};
+use stellar_core_types::reference::ComponentRef;
+use stellar_document::component::instance::ComponentInstancePayload;
+use stellar_document::path::{HandleMode, PathCommand, PathEdit, PathHandleId, PathPointId};
 
 /// 문서에서 쓰이지 않는 새 StableId 공급기(문서 생성기 id 대역 밖의 timestamp 사용).
 #[derive(Debug, Clone)]
@@ -386,6 +392,40 @@ pub fn generate(
             crate::text_edit::ReplaceText::new(node, start, end, replacement)
                 .map(Command::ReplaceText)
         }
+        CommandKind::SetTextRangeStyle => {
+            let candidates = nodes_where(model, |id| kind_of(model, id) == Some(NodeKind::Text));
+            let node = pick(rng, &candidates)?;
+            let NodePayload::Text(text) = model.payload(node)? else {
+                return None;
+            };
+            let len = stellar_document::text::scalar_len(text.content());
+            if len == 0 {
+                return None;
+            }
+            let start = rng.below(u64::from(len)) as u32;
+            let end = start + 1 + rng.below(u64::from(len - start)) as u32;
+            let styles: Vec<u32> = model
+                .definition()
+                .text_styles
+                .runs
+                .keys()
+                .copied()
+                .collect();
+            let style = if rng.one_in(3) {
+                None
+            } else if styles.is_empty() {
+                Some(rng.below(3) as u32)
+            } else {
+                Some(*rng.pick(&styles))
+            };
+            Some(Command::SetTextRangeStyle(
+                crate::text_edit::SetTextRangeStyle {
+                    node,
+                    range: stellar_document::text::TextRange::new(start, end)?,
+                    style,
+                },
+            ))
+        }
         CommandKind::ConvertFragmentToFrame => {
             let fragments = nodes_where(model, |id| kind_of(model, id) == Some(NodeKind::Fragment));
             Some(Command::ConvertFragmentToFrame(ConvertFragmentToFrame {
@@ -420,6 +460,179 @@ pub fn generate(
         // command 계층 자체용 test double은 property 대상이 아닙니다.
         #[cfg(test)]
         CommandKind::TestProbe => None,
+        CommandKind::AddPage => {
+            let index = rng.below(model.definition().pages.len() as u64 + 1) as u32;
+            Some(Command::AddPage(AddPage::with_empty_view(
+                index,
+                ids.fresh(),
+                format!("페이지 {}", rng.below(100)),
+                ids.fresh(),
+                String::new(),
+                ids.fresh(),
+            )))
+        }
+        CommandKind::RemovePage | CommandKind::RenamePage => {
+            let pages: Vec<StableId> = model.definition().pages.iter().map(|p| p.id).collect();
+            let page = pick(rng, &pages)?;
+            Some(match kind {
+                CommandKind::RemovePage => Command::RemovePage(RemovePage { page }),
+                _ => Command::RenamePage(RenamePage {
+                    page,
+                    name: rng.pick(&["표지", "", "🎨 화면"]).to_string(),
+                }),
+            })
+        }
+        CommandKind::AddView => {
+            let pages: Vec<(StableId, usize)> = model
+                .definition()
+                .pages
+                .iter()
+                .map(|p| (p.id, p.views.len()))
+                .collect();
+            let (page, count) = pick(rng, &pages)?;
+            Some(Command::AddView(AddView::empty(
+                page,
+                rng.below(count as u64 + 1) as u32,
+                ids.fresh(),
+                format!("View {}", rng.below(100)),
+                ids.fresh(),
+            )))
+        }
+        CommandKind::ApplyExternalSnapshot => {
+            // 현재 문서에 무작위 편집 하나를 가한 결과를 외부 원본으로 삼습니다.
+            let mut edited = DocumentState::new(
+                DocumentModel::from_records(model.to_records().ok()?)
+                    .ok()?
+                    .0,
+            );
+            for _ in 0..8 {
+                let other = *rng.pick(CommandKind::ALL);
+                if other == CommandKind::ApplyExternalSnapshot {
+                    continue;
+                }
+                let Some(command) = generate(other, edited.model(), rng, ids) else {
+                    continue;
+                };
+                if edited
+                    .execute(&CommandRequest::at(&edited, command))
+                    .is_ok()
+                {
+                    break;
+                }
+            }
+            let incoming = edited.model().to_records().ok()?;
+            let command = ApplyExternalSnapshot::between(model, &incoming).ok()?;
+            (!command.is_empty()).then_some(Command::ApplyExternalSnapshot(command))
+        }
+        CommandKind::SwapInstance => {
+            let instances = nodes_where(model, |id| {
+                kind_of(model, id) == Some(NodeKind::ComponentInstance)
+            });
+            let node = pick(rng, &instances)?;
+            let NodePayload::ComponentInstance(current) = model.payload(node)? else {
+                return None;
+            };
+            // override를 일부만 옮긴 다른 컴포넌트 참조.
+            let mut payload = ComponentInstancePayload::new(ComponentRef::new(ids.fresh()));
+            for (key, value) in current.property_overrides() {
+                if rng.one_in(2) {
+                    payload.set_property_override(key.clone(), value.clone());
+                }
+            }
+            Some(Command::SwapInstance(crate::node_ops::SwapInstance {
+                node,
+                payload,
+            }))
+        }
+        CommandKind::EditPathPoint => {
+            let paths = nodes_where(model, |id| kind_of(model, id) == Some(NodeKind::Path));
+            let node = pick(rng, &paths)?;
+            let NodePayload::Path(path) = model.payload(node)? else {
+                return None;
+            };
+            let commands = path.data().commands();
+            let points = path.point_ids();
+            let handles: Vec<PathHandleId> = path
+                .ids()
+                .iter()
+                .filter_map(|ids| ids.handles)
+                .flat_map(|(a, b)| [a, b])
+                .collect();
+            let segments: Vec<(PathPointId, bool)> = path
+                .ids()
+                .iter()
+                .zip(commands)
+                .filter_map(|(ids, command)| match command {
+                    PathCommand::LineTo(_) => ids.point.map(|p| (p, false)),
+                    PathCommand::CubicTo { .. } => ids.point.map(|p| (p, true)),
+                    _ => None,
+                })
+                .collect();
+            let starts: Vec<PathPointId> = path
+                .ids()
+                .iter()
+                .zip(commands)
+                .filter_map(|(ids, command)| match command {
+                    PathCommand::MoveTo(_) => ids.point,
+                    _ => None,
+                })
+                .collect();
+            let to = Vec2::new(grid(rng, 400), grid(rng, 400)).ok()?;
+            let edit = match rng.below(7) {
+                0 => {
+                    let (segment, cubic) = pick(rng, &segments)?;
+                    PathEdit::InsertPoint {
+                        segment,
+                        t: finite(*rng.pick(&[0.25, 0.5, 0.75])),
+                        point: PathPointId(ids.fresh()),
+                        handles: cubic
+                            .then(|| (PathHandleId(ids.fresh()), PathHandleId(ids.fresh()))),
+                    }
+                }
+                1 => PathEdit::MovePoint {
+                    point: pick(rng, &points)?,
+                    to,
+                },
+                2 => PathEdit::DeletePoint {
+                    point: pick(rng, &points)?,
+                },
+                3 => PathEdit::MoveHandle {
+                    handle: pick(rng, &handles)?,
+                    to,
+                },
+                4 => PathEdit::SetHandleMode {
+                    point: pick(rng, &points)?,
+                    mode: *rng.pick(&[
+                        HandleMode::Independent,
+                        HandleMode::Aligned,
+                        HandleMode::Mirrored,
+                    ]),
+                },
+                5 => PathEdit::CloseSubpath {
+                    start: pick(rng, &starts)?,
+                },
+                _ => PathEdit::OpenSubpath {
+                    start: pick(rng, &starts)?,
+                },
+            };
+            Some(Command::EditPathPoint(EditPathPoint { node, edit }))
+        }
+        CommandKind::RemoveView | CommandKind::RenameView => {
+            let views: Vec<StableId> = model
+                .definition()
+                .pages
+                .iter()
+                .flat_map(|p| p.views.iter().map(|v| v.id))
+                .collect();
+            let view = pick(rng, &views)?;
+            Some(match kind {
+                CommandKind::RemoveView => Command::RemoveView(RemoveView { view }),
+                _ => Command::RenameView(RenameView {
+                    view,
+                    name: rng.pick(&["홈", "", "설정 e\u{301}"]).to_string(),
+                }),
+            })
+        }
         CommandKind::DuplicateSubtree => {
             let sources = node_ids(model);
             let source = pick(rng, &sources)?;

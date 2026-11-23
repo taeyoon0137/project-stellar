@@ -195,6 +195,29 @@ impl DocumentModel {
         std::mem::replace(&mut self.definition.text_styles, styles)
     }
 
+    /// 문서·페이지·View 정의 전체(Text style 표 포함)를 바꾸고 이전 정의를 반환합니다(ADR-0079).
+    ///
+    /// 정의가 점유하는 영속 ID(문서·페이지·View·typography resource)의 소유 수를 함께 갱신합니다.
+    /// View root node의 존재·종류 같은 문서 수준 불변식은 command 검증과 validator(VI.10.1)의 몫입니다.
+    pub fn replace_definition(&mut self, definition: DocumentDefinition) -> DocumentDefinition {
+        fn owned_ids(definition: &DocumentDefinition) -> Vec<StableId> {
+            let mut ids = vec![definition.id];
+            for page in &definition.pages {
+                ids.push(page.id);
+                ids.extend(page.views.iter().map(|view| view.id));
+            }
+            ids.extend(definition.text_styles.typography.keys().copied());
+            ids
+        }
+        for id in owned_ids(&self.definition) {
+            remove_non_node_id(&mut self.non_node_ids, id);
+        }
+        for id in owned_ids(&definition) {
+            *self.non_node_ids.entry(id).or_default() += 1;
+        }
+        std::mem::replace(&mut self.definition, definition)
+    }
+
     /// 문서 정의.
     pub fn definition(&self) -> &DocumentDefinition {
         &self.definition

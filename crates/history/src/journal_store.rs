@@ -410,6 +410,7 @@ impl JournalStore {
             Err(e) => return Err(e.into()),
         }
         match JournalHeader::decode_prefix(&prefix) {
+            // 이 앱이 모르는 command codec의 journal은 덮어쓰지 않습니다(ADR-0079).
             Ok(header) => match header.access(JOURNAL_SCHEMA_VERSION) {
                 Ok(JournalAccess::Editable) => Ok(()),
                 Ok(JournalAccess::ReadOnly) => Err(JournalStoreError::WriterTooOld {
@@ -704,13 +705,13 @@ mod tests {
         // 미래 writer가 최소 writer version을 올린 journal(읽기 전용)은 덮어쓰지 않습니다.
         let mut bytes = std::fs::read(&path).unwrap();
         bytes[12..16].copy_from_slice(&3u32.to_le_bytes()); // schema
-        bytes[20..24].copy_from_slice(&2u32.to_le_bytes()); // 최소 writer
+        bytes[20..24].copy_from_slice(&3u32.to_le_bytes()); // 최소 writer
         std::fs::write(&path, &bytes).unwrap();
         assert_eq!(
             store.record_save_point(&history, base(2)),
             Err(JournalStoreError::WriterTooOld {
-                required: 2,
-                writer: 1
+                required: 3,
+                writer: JOURNAL_SCHEMA_VERSION
             })
         );
         assert_eq!(std::fs::read(&path).unwrap(), bytes, "미래 journal 보존");

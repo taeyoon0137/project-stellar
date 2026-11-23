@@ -83,6 +83,8 @@ pub enum TextInputKind {
     DeleteBackward,
     /// caret 뒤 문자 삭제(Delete).
     DeleteForward,
+    /// 선택 범위를 확정 문자열로 교체(붙여넣기·IME 재변환 등). 앞뒤 입력과 합치지 않습니다(XII.10.32).
+    Replace,
 }
 
 /// 반복 입력 병합에 쓰는 command signature(VII.4.4): 같은 종류·대상·속성이면 같은 signature.
@@ -170,6 +172,22 @@ pub struct HistoryEntry {
 }
 
 impl HistoryEntry {
+    /// Undo·Redo 메뉴의 동작 이름(코어가 정합니다, ADR-0079). 외부 변경 반영을 담은 항목은 "외부 변경
+    /// 반영", 그 밖의 문서 항목은 첫 command 종류의 이름, 선택 항목은 "선택 변경"입니다.
+    pub fn action_name(&self) -> &'static str {
+        match &self.payload {
+            HistoryPayload::Document { forward, .. } => {
+                let kinds = || forward.requests.iter().map(|r| r.command.kind());
+                if kinds().any(|kind| kind == CommandKind::ApplyExternalSnapshot) {
+                    CommandKind::ApplyExternalSnapshot.action_name()
+                } else {
+                    kinds().next().map_or("편집", CommandKind::action_name)
+                }
+            }
+            HistoryPayload::Selection { .. } => "선택 변경",
+        }
+    }
+
     /// 문서 편집 항목인지.
     pub fn is_document(&self) -> bool {
         matches!(self.payload, HistoryPayload::Document { .. })
@@ -215,5 +233,74 @@ impl std::error::Error for HistoryError {}
 impl From<TransactionError> for HistoryError {
     fn from(error: TransactionError) -> HistoryError {
         HistoryError::Transaction(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::history::test_fixtures::{sid, small_state, tx};
+    use crate::journal::HistoryJournal;
+    use crate::window::WindowHistory;
+    use stellar_commands::command::Command;
+    use stellar_commands::document::definitions::ViewDefinition;
+    use stellar_commands::document::model::DocumentModel;
+    use stellar_commands::document::test_support::semantic_snapshot::model_snapshot_json;
+    use stellar_commands::id::{CommandId, WindowSessionId};
+    use stellar_commands::snapshot_apply::ApplyExternalSnapshot;
+    use stellar_commands::state::DocumentState;
+
+    fn snapshot(doc: &DocumentState) -> String {
+        model_snapshot_json(doc.model()).unwrap()
+    }
+
+    #[test]
+    fn external_snapshot_is_one_history_entry_named_by_the_core() {
+        // UX.4.1 코어: 외부 원본 반영이 history 항목 하나이고, Undo 한 번으로 되돌아가며, 메뉴 이름은 코어가
+        // 정합니다. journal에도 그대로 기록·복원됩니다.
+        let mut history = WindowHistory::new(WindowSessionId::from_stable_id(sid(800)));
+        let mut doc = small_state();
+        let rename = tx(&doc, 1, Command::rename_node(sid(11), "앱 편집"));
+        history.record_document(&mut doc, &rename, None).unwrap();
+        assert_eq!(history.history().entries()[0].action_name(), "속성 변경");
+        let before = snapshot(&doc);
+        // 다른 프로세스가 쓴 새 원본: 12 삭제, 이름 변경, 새 View.
+        let mut incoming = doc.model().to_records().unwrap();
+        incoming
+            .nodes
+            .retain(|n| n.id != sid(12) && n.id != sid(13));
+        incoming
+            .nodes
+            .iter_mut()
+            .for_each(|n| n.display_name = "외부".into());
+        incoming.definition.pages[0]
+            .add_view(ViewDefinition::new(sid(30), "새".into(), sid(31)))
+            .unwrap();
+        let mut root = incoming.nodes[0].clone();
+        root.id = sid(31);
+        incoming.nodes.push(root);
+        let command = ApplyExternalSnapshot::between(doc.model(), &incoming).unwrap();
+        let transaction =
+            command.into_transaction(CommandId::from_stable_id(sid(901)), doc.revision());
+        history
+            .record_document(&mut doc, &transaction, None)
+            .unwrap();
+        let expected =
+            model_snapshot_json(&DocumentModel::from_records(incoming).unwrap().0).unwrap();
+        assert_eq!(snapshot(&doc), expected);
+        let entries = history.history().entries();
+        assert_eq!(entries.len(), 2, "외부 반영은 항목 하나");
+        assert_eq!(entries[1].action_name(), "외부 변경 반영");
+        assert_eq!(entries[1].origin, ApplyExternalSnapshot::ORIGIN);
+        // journal 왕복.
+        let journal = HistoryJournal::capture(
+            history.window(),
+            crate::journal::tests::base(3),
+            history.history(),
+        );
+        assert_eq!(HistoryJournal::decode(&journal.encode()).unwrap(), journal);
+        history.undo(&mut doc).unwrap().unwrap();
+        assert_eq!(snapshot(&doc), before, "Undo 한 번");
+        history.redo(&mut doc).unwrap().unwrap();
+        assert_eq!(snapshot(&doc), expected, "Redo");
     }
 }
