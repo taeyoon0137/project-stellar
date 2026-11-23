@@ -14,5 +14,9 @@ stellar-expressions = { path = "../expressions" }
 stellar-document = { path = "../document" }
 stellar-bindings = { path = "../bindings" }
 
+[dev-dependencies]
+# Context 시험 fixture(sample_world).
+stellar-document = { path = "../document", features = ["test-support"] }
+
 [lints]
 workspace = true

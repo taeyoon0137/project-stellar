@@ -34,3 +34,6 @@ pub mod gesture;
 
 /// 프리뷰 세션과 tick 처리 순서 (XXX.3.3~XXX.3.6).
 pub mod session;
+
+/// 문서 Context 해석 → binding graph 입력 (XXX.7.3·XXX.7.6 제품 경로, ADR-0114).
+pub mod context;
