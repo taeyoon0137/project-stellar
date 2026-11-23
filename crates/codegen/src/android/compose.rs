@@ -51,6 +51,14 @@ pub(crate) const IMPORTS: &[(&str, &str)] = &[
     ),
     ("Box", "androidx.compose.foundation.layout.Box"),
     ("BoxScope", "androidx.compose.foundation.layout.BoxScope"),
+    (
+        "CollectionInfo",
+        "androidx.compose.ui.semantics.CollectionInfo",
+    ),
+    (
+        "CollectionItemInfo",
+        "androidx.compose.ui.semantics.CollectionItemInfo",
+    ),
     ("Color", "androidx.compose.ui.graphics.Color"),
     (
         "ColorSpaces",
@@ -85,13 +93,41 @@ pub(crate) const IMPORTS: &[(&str, &str)] = &[
     ),
     ("Matrix", "androidx.compose.ui.graphics.Matrix"),
     ("Modifier", "androidx.compose.ui.Modifier"),
+    (
+        "MutableInteractionSource",
+        "androidx.compose.foundation.interaction.MutableInteractionSource",
+    ),
+    ("Role", "androidx.compose.ui.semantics.Role"),
     ("Row", "androidx.compose.foundation.layout.Row"),
     ("RowScope", "androidx.compose.foundation.layout.RowScope"),
     ("Spacer", "androidx.compose.foundation.layout.Spacer"),
     (
+        "ToggleableState",
+        "androidx.compose.ui.state.ToggleableState",
+    ),
+    (
         "aspectRatio",
         "androidx.compose.foundation.layout.aspectRatio",
     ),
+    (
+        "clearAndSetSemantics",
+        "androidx.compose.ui.semantics.clearAndSetSemantics",
+    ),
+    ("clickable", "androidx.compose.foundation.clickable"),
+    (
+        "collectionInfo",
+        "androidx.compose.ui.semantics.collectionInfo",
+    ),
+    (
+        "collectionItemInfo",
+        "androidx.compose.ui.semantics.collectionItemInfo",
+    ),
+    (
+        "contentDescription",
+        "androidx.compose.ui.semantics.contentDescription",
+    ),
+    ("disabled", "androidx.compose.ui.semantics.disabled"),
+    ("dismiss", "androidx.compose.ui.semantics.dismiss"),
     ("dp", "androidx.compose.ui.unit.dp"),
     (
         "drawWithContent",
@@ -105,14 +141,44 @@ pub(crate) const IMPORTS: &[(&str, &str)] = &[
         "fillMaxWidth",
         "androidx.compose.foundation.layout.fillMaxWidth",
     ),
+    ("focused", "androidx.compose.ui.semantics.focused"),
     ("getValue", "androidx.compose.runtime.getValue"),
     ("height", "androidx.compose.foundation.layout.height"),
     ("heightIn", "androidx.compose.foundation.layout.heightIn"),
+    (
+        "isTraversalGroup",
+        "androidx.compose.ui.semantics.isTraversalGroup",
+    ),
     ("mutableStateOf", "androidx.compose.runtime.mutableStateOf"),
     ("offset", "androidx.compose.foundation.layout.offset"),
+    ("onClick", "androidx.compose.ui.semantics.onClick"),
     ("padding", "androidx.compose.foundation.layout.padding"),
+    ("paneTitle", "androidx.compose.ui.semantics.paneTitle"),
     ("remember", "androidx.compose.runtime.remember"),
+    ("role", "androidx.compose.ui.semantics.role"),
+    (
+        "selectable",
+        "androidx.compose.foundation.selection.selectable",
+    ),
+    (
+        "selectableGroup",
+        "androidx.compose.foundation.selection.selectableGroup",
+    ),
+    ("selected", "androidx.compose.ui.semantics.selected"),
+    ("semantics", "androidx.compose.ui.semantics.semantics"),
     ("setValue", "androidx.compose.runtime.setValue"),
+    (
+        "stateDescription",
+        "androidx.compose.ui.semantics.stateDescription",
+    ),
+    (
+        "toggleableState",
+        "androidx.compose.ui.semantics.toggleableState",
+    ),
+    (
+        "traversalIndex",
+        "androidx.compose.ui.semantics.traversalIndex",
+    ),
     ("width", "androidx.compose.foundation.layout.width"),
     ("widthIn", "androidx.compose.foundation.layout.widthIn"),
     (
@@ -278,6 +344,10 @@ impl<'a> Generator<'a> {
     }
 
     fn use_name(&mut self, name: &'static str) {
+        debug_assert!(
+            IMPORTS.iter().any(|(known, _)| *known == name),
+            "import 표에 없는 이름: {name}"
+        );
         self.used.insert(name);
     }
 
