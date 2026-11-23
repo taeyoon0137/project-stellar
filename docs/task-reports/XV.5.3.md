@@ -2,7 +2,7 @@
 
 - WBS: XV.5.3
 - 작업명: library resource를 수정하는 command를 사용 project에서 거부, instance 공개 override만 허용
-- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 판정 정책은 완료했지만 실제 command가 이 판정을 거치지 않습니다(9A 리뷰 P2).
+- 상태: 완료 (`[x]`) — 2026-11-23 library-finish, 아래 "작업 (2026-11-23, library-finish)" 절. 이전 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 판정 정책은 완료했지만 실제 command가 이 판정을 거치지 않습니다(9A 리뷰 P2).
 - 선행: XV.5.2(`[x]`, 이 lane), IX.2.4(`[x]`)
 
 ## 필수 실행 환경
@@ -100,3 +100,36 @@
 ### 남은 조건과 finding
 
 - 결함 finding(소유 lane 없음 → backlog): 문서가 외부 참조를 저장하는 통합(XV.5.2 차이) 뒤, project crate나 runtime에서 transaction 적용 전에 `check_library_edits`를 부르고 실제 정의 편집 command 거부·override 성공 fixture를 확인합니다. document·commands는 dependencies에 의존할 수 없으므로 연결 위치는 project·runtime입니다.
+
+## 작업 (2026-11-23, library-finish): 실제 document command 사전 검사 연결
+
+### 한 일
+
+- `crates/project/src/library_guard.rs`(신규): `check_component_edits`가 document command(`PropertyCommand`·`PropertyOverrideCommand`)를
+  `LibraryEditRequest`로 바꿔 `check_library_edits` 하나로 판정합니다. 한 건이라도 거부되면 전체 거부입니다.
+- `crates/project/src/library_refs.rs`(신규): 대상 component가 외부인지 정하는 규칙 하나(`classify_component`). 문서가 아직 외부
+  참조를 저장하지 않으므로 자기 library에 없고 직접 의존성 하나만 export한 StableId를 외부 참조로 봅니다. 둘 이상이면 모호해서
+  거부합니다(ADR-0119 결정 4).
+- override 타입 표기 규칙(`override_type_accepted`, `Optional<T>`는 `T` 값을 받음)을 의존성 crate에 두었습니다(결정 3).
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-dependencies` | 101 passed, 0 failed; doctest 1 passed |
+| `cargo test -p stellar-project --lib library_` | library_entry·library_git 단위 시험 통과, 0 failed |
+| `cargo clippy -p stellar-dependencies -p stellar-project -p stellar-assets -p stellar-integration-tests --all-targets -- -D warnings` | 경고 0 |
+| `cargo xtask validate-adr --base 0c226a06` | 종료 코드 0 |
+| `cargo test -p stellar-integration-tests --test library_read_only_commands` | 1 passed |
+
+| 검사 | 결과 |
+|---|---|
+| **edit definition fixture 실패**: 실제 Git library Card에 대한 `PropertyCommand::Rename`·`Delete`가 `ReadOnlyResource`(전역 key = LibraryId + lock commit + StableId)로 거부 | 통과 |
+| **override 성공**: 공개 `title` override가 허용되고 실제 `PropertyOverrideCommand::apply`로 instance payload에 적용(정의는 entry에서 제품 `read_library_resources`로 읽음) | 통과 |
+| 비공개 property·타입이 다른 값 override 거부, override와 정의 편집이 섞인 transaction은 정의 편집 위치에서 전체 거부, 자기 component 편집은 통과, offline reset 허용, 같은 Card를 두 직접 의존성이 export하면 `AmbiguousComponent` | 통과 |
+
+### 남은 위험
+
+- 외부 component 판정은 문서가 외부 참조를 저장하기 전까지의 추론 규칙입니다. 저장 형식이 생기면 `classify_component`만 바뀝니다.
+- `stellar-commands` CommandTransaction(Phase VII closed enum)에는 component command 갈래가 아직 없어, 사전 검사 진입점은 document
+  command 묶음입니다.

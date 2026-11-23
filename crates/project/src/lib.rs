@@ -116,3 +116,9 @@ pub mod library_overrides;
 
 /// 프로젝트 열기 때 lock 기준 library 로드와 부분 열기 (XV.5.5).
 pub mod library_open;
+
+/// 사용 프로젝트 instance의 외부 component 해석과 외부 참조 사용 수집 (XV.5.3·XV.7.3).
+pub mod library_refs;
+
+/// 사용 프로젝트 component command의 library 읽기 전용 사전 검사 (XV.5.3).
+pub mod library_guard;
