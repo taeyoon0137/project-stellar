@@ -10,9 +10,9 @@
 //! - **독립 확인**(XIX.3.4): Read를 뺀 권한은 권한마다 따로 확인 요청을 만들고 따로 응답받습니다. 한 권한의
 //!   승인이 다른 권한의 상태를 바꾸지 않습니다. Propose·Apply·Terminal·FileDelete 승인은 세션 동안 유지되고,
 //!   GitCommit·GitPush 승인은 실행 한 번에만 쓰입니다(§31.3 "Git commit·push는 개별 확인").
-//! - **쓰는 쪽**: 확인 요청은 MCP 경로가 만들 수 있지만, 응답([`PermissionStore::respond`],
+//! - **쓰는 쪽**: 확인 요청은 에이전트 tool 호출을 받은 앱이 만들 수 있지만, 응답([`PermissionStore::respond`],
 //!   [`PermissionStore::respond_connection`])은 앱의 사용자 UI만 부릅니다(ADR-0005 §3 변경 불가 경로).
-//!   첫 응답만 유효합니다.
+//!   첫 응답만 유효합니다. 이 저장소는 앱 쪽 crate에 있어 에이전트 경로 crate(MCP 브리지)는 닿지 않습니다(ADR-0112).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -232,7 +232,7 @@ impl PermissionStore {
             .unwrap_or(Confirmation::NotRequested)
     }
 
-    /// 권한 하나의 확인을 요청합니다(MCP 경로가 부를 수 있음). 이미 대기·승인 중이면 그 상태를, 아니면 새 대기
+    /// 권한 하나의 확인을 요청합니다(에이전트 tool 호출 처리에서 부를 수 있음). 이미 대기·승인 중이면 그 상태를, 아니면 새 대기
     /// 요청을 돌려줍니다. 거부된 권한은 다시 요청하면 새 대기 요청이 됩니다. 다른 권한의 상태는 바꾸지
     /// 않습니다(XIX.3.4).
     pub fn request(

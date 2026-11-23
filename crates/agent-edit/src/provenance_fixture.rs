@@ -1,6 +1,6 @@
 //! 에이전트 출처·세션·되돌리기 test 공용 fixture (XIX.6, XIX.7).
 //!
-//! mcp-core는 history crate에 닿지 않으므로(crate graph) 창 history 연결 지점은 같은 trait를 구현한 test 대역
+//! 이 crate는 history crate에 직접 의존하지 않으므로 창 history 연결 지점은 같은 trait를 구현한 test 대역
 //! [`TestHistory`]로 대신합니다. 실제 창 history 구현(`stellar_history::agent::WindowAgentHistory`)은 history crate
 //! test가 검증합니다.
 
@@ -28,7 +28,7 @@ use stellar_ops::core_types::order_key::OrderKey;
 use stellar_ops::core_types::revision::DocumentRevision;
 use stellar_ops::test_support::TempDir;
 
-use crate::lease::{open_project_coordinator, AgentEditLeases, BeginAgentEdit};
+use crate::lease::{open_project_coordinator, AgentEditLeases, LeaseTargets};
 use crate::permission::{AgentSessionId, PermissionKey};
 
 pub(crate) fn sid(n: u64) -> StableId {
@@ -102,11 +102,10 @@ pub(crate) fn grant(
     lease: LeaseId,
     targets: &[u64],
 ) {
-    let request = BeginAgentEdit {
+    let request = LeaseTargets {
         document: sid(1),
         targets: targets.iter().map(|t| sid(*t)).collect(),
         externals: Vec::new(),
-        description: "편집".to_string(),
     };
     leases.submit(model, lease, &request).unwrap();
     leases.approve(model, lease).unwrap();

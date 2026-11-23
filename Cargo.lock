@@ -153,6 +153,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-agent-edit"
+version = "0.0.0"
+dependencies = [
+ "stellar-agent-protocol",
+ "stellar-ops",
+]
+
+[[package]]
 name = "stellar-agent-host"
 version = "0.0.0"
 dependencies = [
@@ -438,6 +446,7 @@ dependencies = [
 name = "stellar-runtime"
 version = "0.0.0"
 dependencies = [
+ "stellar-agent-edit",
  "stellar-agent-host",
  "stellar-assets",
  "stellar-commands",

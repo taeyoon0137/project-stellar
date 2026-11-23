@@ -28,7 +28,12 @@ pub struct ReachBan {
 pub const FORBIDDEN_REACH: &[ReachBan] = &[
     ReachBan {
         from: "stellar-mcp-core",
-        never_reach: &["stellar-agent-host", "stellar-runtime", "stellar-ffi"],
+        never_reach: &[
+            "stellar-agent-host",
+            "stellar-runtime",
+            "stellar-ffi",
+            "stellar-agent-edit",
+        ],
     },
     ReachBan {
         from: "stellar-ops",
@@ -39,6 +44,7 @@ pub const FORBIDDEN_REACH: &[ReachBan] = &[
             "stellar-mcp",
             "stellar-agent-host",
             "stellar-ffi",
+            "stellar-agent-edit",
         ],
     },
     ReachBan {
@@ -49,11 +55,17 @@ pub const FORBIDDEN_REACH: &[ReachBan] = &[
             "stellar-mcp-core",
             "stellar-mcp",
             "stellar-agent-host",
+            "stellar-agent-edit",
         ],
     },
     ReachBan {
         from: "stellar-local-ipc",
-        never_reach: &["stellar-document", "stellar-commands", "stellar-ops"],
+        never_reach: &[
+            "stellar-document",
+            "stellar-commands",
+            "stellar-ops",
+            "stellar-agent-edit",
+        ],
     },
     ReachBan {
         from: "stellar-agent-protocol",
@@ -62,11 +74,12 @@ pub const FORBIDDEN_REACH: &[ReachBan] = &[
             "stellar-document",
             "stellar-ops",
             "stellar-agent-host",
+            "stellar-agent-edit",
         ],
     },
     ReachBan {
         from: "stellar-mcp",
-        never_reach: &["stellar-agent-host", "stellar-ffi"],
+        never_reach: &["stellar-agent-host", "stellar-ffi", "stellar-agent-edit"],
     },
     ReachBan {
         from: "stellar-runtime",
@@ -80,6 +93,21 @@ pub const FORBIDDEN_REACH: &[ReachBan] = &[
             "stellar-history",
             "stellar-storage",
             "stellar-ops",
+            "stellar-agent-edit",
+        ],
+    },
+    // 앱 쪽 에이전트 편집 crate(ADR-0112): 앱 사용자 UI 전용 상태(권한 응답, 출처 표시 정리, 되돌리기)를 갖습니다.
+    // 에이전트 경로 crate(위 행들)는 여기에 닿지 않고, 이 crate도 MCP 브리지·CLI 호스트·runtime·셸 경계에 닿지
+    // 않습니다.
+    ReachBan {
+        from: "stellar-agent-edit",
+        never_reach: &[
+            "stellar-mcp-core",
+            "stellar-mcp",
+            "stellar-local-ipc",
+            "stellar-agent-host",
+            "stellar-runtime",
+            "stellar-ffi",
         ],
     },
 ];
@@ -499,6 +527,47 @@ stellar-project = { path = "../project" }
                 "{from} -> stellar-diagnostics -> stellar-mcp-core"
             )));
         }
+    }
+
+    #[test]
+    fn agent_paths_never_reach_the_app_agent_edit_crate() {
+        // ADR-0112: 에이전트 경로 crate는 다른 crate를 거쳐서도 앱 쪽 에이전트 편집 crate에 닿으면 안 됩니다.
+        for from in [
+            "stellar-mcp-core",
+            "stellar-mcp",
+            "stellar-agent-protocol",
+            "stellar-local-ipc",
+            "stellar-cli",
+            "stellar-agent-host",
+            "stellar-ops",
+        ] {
+            let ban = FORBIDDEN_REACH
+                .iter()
+                .find(|ban| ban.from == from)
+                .unwrap_or_else(|| panic!("{from} 규칙 없음"));
+            assert!(ban.never_reach.contains(&"stellar-agent-edit"), "{from}");
+            let edges = [
+                edge(from, "stellar-diagnostics", DepKind::Normal),
+                edge("stellar-diagnostics", "stellar-agent-edit", DepKind::Normal),
+            ];
+            let reach = check_reach(FORBIDDEN_REACH, &edges);
+            assert!(
+                reach.iter().any(|v| v.message.contains(&format!(
+                    "{from} -> stellar-diagnostics -> stellar-agent-edit"
+                ))),
+                "{from}: {reach:?}"
+            );
+        }
+        // 반대로 이 crate는 MCP 브리지 library에 닿을 수 없습니다(runtime이 mcp-core에 닿게 되므로).
+        let edges = [edge(
+            "stellar-agent-edit",
+            "stellar-mcp-core",
+            DepKind::Normal,
+        )];
+        assert_eq!(
+            codes(&check_reach(FORBIDDEN_REACH, &edges)),
+            ["forbidden-reach"]
+        );
     }
 
     #[test]

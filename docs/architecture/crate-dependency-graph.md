@@ -50,13 +50,14 @@
 | `stellar-local-ipc` | core-types |
 | `stellar-agent-protocol` | core-types |
 | `stellar-agent-host` | core-types, agent-protocol, local-ipc, diagnostics |
+| `stellar-agent-edit` | ops, agent-protocol |
 | `stellar-terminal` | core-types |
 | `stellar-codegen` | core-types, target-profile, accessibility, layout |
 | `stellar-prototype` | core-types, expressions, document, bindings |
 | `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile, git-porcelain, integrity, export, scene |
 | `stellar-integrity` | core-types, document, commands, bindings, expressions, text, accessibility, dependencies, target-profile |
 | `stellar-cli` | ops, diagnostics |
-| `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, text, ops, git-porcelain, agent-host |
+| `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, text, ops, git-porcelain, agent-host, agent-edit |
 | `stellar-ffi` | core-types, runtime |
 | `stellar-plugin-host` | ops, project, storage, git-porcelain |
 
@@ -75,6 +76,8 @@ graph TD
   agent_protocol --> core_types
   agent_host --> agent_protocol
   agent_host --> local_ipc
+  agent_edit --> ops
+  agent_edit --> agent_protocol
   document --> core_types
   document --> expressions
   commands --> document
@@ -162,6 +165,7 @@ graph TD
   runtime --> ops
   runtime --> git_porcelain
   runtime --> agent_host
+  runtime --> agent_edit
   ffi --> core_types
   ffi --> runtime
   plugin_host --> ops
@@ -179,17 +183,19 @@ ADR-0005 §8 crate 배치 표의 "전이적으로도 도달 금지" 열입니다
 
 | crate | 전이적으로도 도달 금지 |
 |---|---|
-| `stellar-mcp-core` | agent-host, runtime, ffi |
-| `stellar-ops` | local-ipc, agent-protocol, mcp-core, mcp, agent-host, ffi |
-| `stellar-cli` | local-ipc, agent-protocol, mcp-core, mcp, agent-host |
-| `stellar-local-ipc` | document, commands, ops |
-| `stellar-agent-protocol` | commands, document, ops, agent-host |
-| `stellar-mcp` | agent-host, ffi |
-| `stellar-agent-host` | document, commands, history, storage, ops |
+| `stellar-mcp-core` | agent-host, runtime, ffi, agent-edit |
+| `stellar-ops` | local-ipc, agent-protocol, mcp-core, mcp, agent-host, ffi, agent-edit |
+| `stellar-cli` | local-ipc, agent-protocol, mcp-core, mcp, agent-host, agent-edit |
+| `stellar-local-ipc` | document, commands, ops, agent-edit |
+| `stellar-agent-protocol` | commands, document, ops, agent-host, agent-edit |
+| `stellar-mcp` | agent-host, ffi, agent-edit |
+| `stellar-agent-host` | document, commands, history, storage, ops, agent-edit |
 | `stellar-runtime` | mcp-core |
+| `stellar-agent-edit` | mcp-core, mcp, local-ipc, agent-host, runtime, ffi |
 
 - `stellar-ffi`는 이 열 대신 타입 변환 금지 inventory로 보완하므로 규칙이 없습니다.
 - `stellar-mcp` 행은 ADR-0005 §8 표에 행이 없고, XXIX.1.1 검사기가 실행 파일 package(`tools/stellar-mcp`)에 따로 둔 규칙입니다.
+- `agent-edit` 열과 `stellar-agent-edit` 행은 ADR-0112가 더했습니다. 앱 사용자 UI 전용 상태(권한 응답, 출처 표시 정리, 되돌리기)를 가진 crate라 에이전트 경로 crate는 직접·전이로 닿지 않고, 이 crate도 MCP·CLI 호스트·runtime·FFI에 닿지 않습니다.
 
 ## 규칙
 
@@ -201,6 +207,7 @@ ADR-0005 §8 crate 배치 표의 "전이적으로도 도달 금지" 열입니다
 - `codegen`(ADR-0049)은 문서·binding 계층에 의존하지 않고 target-profile·accessibility·layout의 지역 모델로 만든
   IR만 읽습니다. 생성 코드를 되읽는 crate는 없습니다(단방향, 2026-11-14).
 - 셸 경계(`ffi`)는 문서·프로젝트 작업에 `runtime`을 통해서만 도달합니다(ADR-0013, 2026-11-14).
+- 앱이 소유하는 에이전트 편집 구현(권한 저장소, lease 요청 관리, 승인 전 미리보기·적용, 출처 색인, 세션 종료 절차, 되돌리기)은 `agent-edit`에 있고 `runtime`이 의존합니다. `runtime`은 `mcp-core`에 닿지 않으므로 이 module들은 `mcp-core`에서 옮겼습니다(ADR-0112, ADR-0093 결정 12, ADR-0100 결정 3, 2026-11-23).
 - `runtime`은 창 session의 viewport를 scene camera 입력(`stellar_scene::visibility::Viewport`)으로 만들고 selection overlay를 transient scene layer로 만들기 위해 `scene`에 직접 의존합니다(ADR-0028, 2026-11-14, 순환 없음).
 - `commands`와 `history`는 이미 `document`를 거쳐 `core-types`에 전이 의존하므로, StableId·WindowSessionId·DocumentRevision 같은 기본 타입을 직접 쓰도록 `core-types` 직접 의존을 허용합니다(2026-11-14, `semantic-diff` 선례와 같음).
 - `assets`도 같은 이유로 `core-types` 직접 의존을 허용합니다. AssetId는 계획서(XIII.5.1)대로 StableId newtype입니다(2026-11-14).

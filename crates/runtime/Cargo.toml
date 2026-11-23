@@ -28,6 +28,8 @@ stellar-ops = { path = "../ops" }
 stellar-git-porcelain = { path = "../git-porcelain" }
 # 내장 에이전트 세션 시작 확인·승인 요청·채팅 조립(ADR-0005 §8, ADR-0101): 신뢰 capability 판정과 프로젝트 identity를 연결합니다.
 stellar-agent-host = { path = "../agent-host" }
+# 앱 쪽 에이전트 편집 구현(XXIX.3.1, ADR-0112): 창별 권한·lease 요청·출처 색인·종료 절차·되돌리기를 창 history에 연결합니다.
+stellar-agent-edit = { path = "../agent-edit" }
 
 [dev-dependencies]
 stellar-text = { path = "../text", features = ["test-support"] }

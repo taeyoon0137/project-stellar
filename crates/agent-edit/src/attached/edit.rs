@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use stellar_ops::apply::decode_commands;
+use stellar_ops::apply::{decode_commands, ApplyRequest};
 use stellar_ops::commands::change::ChangeSet;
 use stellar_ops::commands::command::Command;
 use stellar_ops::commands::id::{AgentProvenance, CommandId, CommandOrigin};
@@ -18,8 +18,6 @@ use stellar_ops::diff::{diff_records, DiffReport};
 use stellar_ops::validate::{validate_records, Definitions, Finding};
 
 use crate::agent_protocol::outcome::ResultKind;
-use crate::json::JsonValue;
-use crate::proposal::parse_transaction;
 
 /// attached 편집 실패. 어느 경우든 문서 상태는 호출 전과 같습니다.
 #[derive(Debug, Clone, PartialEq)]
@@ -70,30 +68,61 @@ impl fmt::Display for AttachedEditError {
 
 impl std::error::Error for AttachedEditError {}
 
-/// MCP proposal 인자(`{base_revision, document, commands}`)를 이 창 세션 문서의 에이전트 transaction으로 만듭니다.
+/// 닫힌 enum command로 바꾼 proposal. 문서 상태 없이 만들 수 있어 앱의 Agent Host·IPC I/O 스레드가 document
+/// thread에 넣기 전에 만듭니다(XXIX.3.4).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecodedProposal {
+    /// 대상 문서.
+    pub document: StableId,
+    /// 닫힌 enum command(요청 순서).
+    pub commands: Vec<Command>,
+}
+
+/// 해석한 proposal 요청(`{base_revision, document, commands}`)의 command를 닫힌 enum으로 바꿉니다.
 ///
-/// command는 headless dry-run과 같은 해석기와 같은 닫힌 enum 변환(`stellar_ops::apply::decode_commands`)을 씁니다.
-/// 출처는 lease의 편집 세션(`AgentProvenance`)이라 판정 주체가 그 lease입니다. `base_revision`은 저장 generation
-/// 기준이므로 창 세션 revision과의 대조는 호출자(앱)가 합니다. transaction의 base는 지금 문서 revision입니다.
-pub fn proposal_transaction(
-    args: &JsonValue,
-    state: &DocumentState,
-    lease: LeaseId,
-    id: CommandId,
-    max_commands: usize,
-) -> Result<CommandTransaction, AttachedEditError> {
-    let request = parse_transaction(args, max_commands).map_err(|e| AttachedEditError::Input {
-        code: e.code,
-        message: e.message,
-    })?;
-    if request.document != state.model().document_id() {
-        return Err(AttachedEditError::ForeignDocument(request.document));
-    }
+/// 요청은 headless dry-run과 같은 해석 결과(`ApplyRequest`)이고, command는 같은 닫힌 enum 변환
+/// (`stellar_ops::apply::decode_commands`, 빈 요청·command 수 상한 포함)을 씁니다. `base_revision`은 저장 generation
+/// 기준이므로 창 세션 revision과의 대조는 호출자(앱)가 합니다.
+pub fn decode_proposal(request: &ApplyRequest) -> Result<DecodedProposal, AttachedEditError> {
     let commands = decode_commands(&request.commands).map_err(|e| AttachedEditError::Input {
         code: "invalid-transaction",
         message: e.to_string(),
     })?;
-    Ok(agent_transaction(state.revision(), lease, id, commands))
+    Ok(DecodedProposal {
+        document: request.document,
+        commands,
+    })
+}
+
+impl DecodedProposal {
+    /// 이 창 세션 문서의 에이전트 transaction으로 만듭니다. 출처는 lease의 편집 세션(`AgentProvenance`)이라 판정
+    /// 주체가 그 lease이고, base는 지금 문서 revision입니다. 다른 문서의 proposal은 거부합니다.
+    pub fn transaction(
+        &self,
+        state: &DocumentState,
+        lease: LeaseId,
+        id: CommandId,
+    ) -> Result<CommandTransaction, AttachedEditError> {
+        if self.document != state.model().document_id() {
+            return Err(AttachedEditError::ForeignDocument(self.document));
+        }
+        Ok(agent_transaction(
+            state.revision(),
+            lease,
+            id,
+            self.commands.clone(),
+        ))
+    }
+}
+
+/// [`decode_proposal`]과 [`DecodedProposal::transaction`]을 차례로 부릅니다.
+pub fn proposal_transaction(
+    request: &ApplyRequest,
+    state: &DocumentState,
+    lease: LeaseId,
+    id: CommandId,
+) -> Result<CommandTransaction, AttachedEditError> {
+    decode_proposal(request)?.transaction(state, lease, id)
 }
 
 /// lease 편집 세션 출처의 transaction.

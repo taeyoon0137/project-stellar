@@ -1,0 +1,19 @@
+[package]
+name = "stellar-agent-edit"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+# 앱이 소유하는 에이전트 편집 구현(ADR-0112, ADR-0093 결정 12, ADR-0100 결정 3): 권한 저장소, lease 요청 관리,
+# 승인 전 미리보기·승인된 적용, 출처 색인, 세션 종료 절차, 되돌리기. runtime이 의존하고 에이전트 경로 crate
+# (mcp-core, stellar-mcp, agent-protocol, local-ipc, stellar-cli, agent-host)는 닿지 않습니다.
+[dependencies]
+stellar-ops = { path = "../ops" }
+stellar-agent-protocol = { path = "../agent-protocol" }
+
+[dev-dependencies]
+stellar-ops = { path = "../ops", features = ["test-support"] }
+
+[lints]
+workspace = true

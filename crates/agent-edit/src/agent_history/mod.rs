@@ -313,6 +313,11 @@ impl AgentEditSessions {
         self.sessions.len()
     }
 
+    /// 활성 세션 id(순서대로). 창을 닫을 때 남은 세션을 끝내는 데 씁니다.
+    pub fn active_ids(&self) -> Vec<AgentSessionId> {
+        self.sessions.keys().copied().collect()
+    }
+
     /// 끝난 이유.
     pub fn end_reason(&self, id: AgentSessionId) -> Option<EndReason> {
         self.ended.get(&id).copied()
