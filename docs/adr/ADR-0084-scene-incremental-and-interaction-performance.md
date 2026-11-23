@@ -4,8 +4,8 @@
 
 Accepted (2026-11-23, lane scene-incremental-perf 구현 기록)
 
-개정(2026-11-23, lane render-incremental): 결정 2에 operand 조상 전파, 결정 7에 host가 skip될 때의 operand 처리를
-더했습니다. render graph 증분 compile은 ADR-0090에 따로 정합니다.
+개정(2026-11-23, lane render-incremental): 결정 2에 operand 조상 전파, 결정 5에 가상 key skip 기록 정리, 결정 7에 host가
+skip될 때의 operand 처리를 더했습니다. render graph 증분 compile은 ADR-0090에 따로 정합니다.
 
 ## Context
 
@@ -93,6 +93,8 @@ Accepted (2026-11-23, lane scene-incremental-perf 구현 기록)
      - 다른 property·구조·slot patch는 셉니다. 문서 계층에 `TypedValue → payload` 쓰기 함수가 없기 때문입니다. 따로
        해석하면 이중 경로가 됩니다.
      - Variant 교체는 Subtree 무효화입니다.
+   - 인스턴스 펼침에서 나온 skip 기록은 가상 key라 문서 node id로 찾을 수 없습니다. 기록마다 바깥 인스턴스를 함께
+     남기고, 인스턴스를 다시 변환하거나 지우면 그 기록을 지웁니다.
 6. **transient preview(XII.3.7).**
    - `IncrementalScene::set_preview`는 key별 대체 입력으로 snapshot을 만듭니다. document revision은 그대로 두고 scene
      revision만 올립니다.

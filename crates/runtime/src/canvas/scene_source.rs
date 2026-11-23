@@ -112,6 +112,9 @@ pub struct DocumentSceneSource {
     preorder: HashMap<StableId, usize>,
     /// Boolean operand → 조상(가까운 것부터). 조상 이동이 host를 dirty로 만드는 데 씁니다.
     operand_ancestors: BTreeMap<StableId, Vec<StableId>>,
+    /// instance 펼침에서 나온 skip 기록 → 그 instance. 가상 key는 문서 node id가 아니라서, 인스턴스를 다시 변환할 때
+    /// 이 표로 이전 기록을 지웁니다.
+    skip_owner: BTreeMap<SceneKey, StableId>,
 }
 
 impl SceneDependents for DocumentSceneSource {
@@ -156,6 +159,8 @@ struct Converter<'a, 'o> {
     /// instance expansion용 payload 색인(필요할 때만 만듦).
     payloads: Option<ScenePayloads>,
     skipped: BTreeMap<SceneKey, SkipReason>,
+    /// instance 펼침 skip 기록의 instance.
+    skip_owner: BTreeMap<SceneKey, StableId>,
 }
 
 /// 문서 View root subtree를 scene source로 바꿉니다.
@@ -177,6 +182,7 @@ pub fn document_scene_source<'a>(
         root,
         preorder: converter.preorder,
         operand_ancestors: BTreeMap::new(),
+        skip_owner: converter.skip_owner,
     };
     refresh_operands(model, &mut built);
     Ok(built)
@@ -265,6 +271,7 @@ impl<'a, 'o> Converter<'a, 'o> {
             visibility,
             payloads: None,
             skipped: BTreeMap::new(),
+            skip_owner: BTreeMap::new(),
         }
     }
 
@@ -480,6 +487,7 @@ impl<'a, 'o> Converter<'a, 'o> {
         );
         for (k, reason) in skipped {
             self.skip(k, reason);
+            self.skip_owner.insert(k, id);
         }
         out.extend(virtual_nodes);
         let children = root.into_iter().collect();
@@ -936,10 +944,20 @@ pub fn scene_edits<'a>(
             stack.extend(model.children_in_order(id));
         }
     }
-    current
-        .skipped
-        .retain(|key, _| !reconverted.contains(&key.id()) && !removed.contains(&key.id()));
+    // instance 펼침에서 나온 기록(가상 key)은 그 instance를 다시 변환하거나 지웠을 때 지웁니다.
+    let stale = |key: &SceneKey, owner: &BTreeMap<SceneKey, StableId>| {
+        let gone = |id: &StableId| reconverted.contains(id) || removed.contains(id);
+        gone(&key.id()) || owner.get(key).is_some_and(gone)
+    };
+    let owner = std::mem::take(&mut current.skip_owner);
+    current.skipped.retain(|key, _| !stale(key, &owner));
+    current.skip_owner = owner
+        .iter()
+        .filter(|(key, _)| !stale(key, &owner))
+        .map(|(key, id)| (*key, *id))
+        .collect();
     current.skipped.extend(converter.skipped);
+    current.skip_owner.extend(converter.skip_owner);
     current.source.apply(&edits)?;
     refresh_operands(model, current);
     Ok(edits)

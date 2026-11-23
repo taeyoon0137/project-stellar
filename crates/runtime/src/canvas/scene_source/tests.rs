@@ -267,6 +267,11 @@ fn boolean_operands_are_absorbed_into_the_host_result() {
 }
 
 fn component_library() -> (ComponentLibrary, ComponentRef) {
+    component_library_with(Vec::new())
+}
+
+/// 정의 root 501 아래 Shape 502·Frame 503(과 `extra`)을 둔 컴포넌트.
+fn component_library_with(extra: Vec<DefinitionNode>) -> (ComponentLibrary, ComponentRef) {
     let component = ComponentRef::new(sid(500));
     let mut tree = DefinitionTree::new(component);
     let node = |id: u64, kind, parent: Option<u64>, key: u8, payload: NodePayload| DefinitionNode {
@@ -303,6 +308,9 @@ fn component_library() -> (ComponentLibrary, ComponentRef) {
         NodePayload::Frame(frame(20., 10., 30., 10.)),
     ))
     .unwrap();
+    for node in extra {
+        tree.insert(node).unwrap();
+    }
     let mut library = ComponentLibrary::new();
     library
         .insert(
@@ -688,4 +696,63 @@ fn operands_of_a_skipped_host_stay_absorbed_and_are_recorded() {
     );
     assert!(built.skipped.is_empty(), "{:?}", built.skipped);
     assert_eq!(scene.snapshot().node_count(), 2);
+}
+
+#[test]
+fn virtual_skip_records_follow_their_instance() {
+    // XI.2.4: 인스턴스 펼침의 skip 기록(가상 key)은 인스턴스를 지우면 함께 사라집니다.
+    use stellar_core_types::text::UserText;
+    use stellar_document::text::{Paragraph, TextPayload};
+    let text = TextPayload::new(UserText::new("a"), vec![Paragraph { style: 0 }], vec![]).unwrap();
+    let (library, component) = component_library_with(vec![DefinitionNode {
+        id: sid(504),
+        kind: NodeKind::Text,
+        parent: Some(sid(501)),
+        order_key: OrderKey::from_bytes(vec![0x60]).unwrap(),
+        visible: true,
+        locked: false,
+        display_name: "d504".to_string(),
+        payload: encode_payload(&NodePayload::Text(text)),
+    }]);
+    let mut state = DocumentState::new(instance_document(component));
+    let mut built = document_scene_source(
+        state.model(),
+        sid(10),
+        SceneSourceOptions {
+            library: Some(&library),
+            ..SceneSourceOptions::default()
+        },
+    )
+    .unwrap();
+    let a = SceneKey::virtual_node(&[sid(60)], sid(504));
+    let b = SceneKey::virtual_node(&[sid(61)], sid(504));
+    assert_eq!(built.skipped.get(&a), Some(&SkipReason::Text));
+    assert_eq!(built.skipped.get(&b), Some(&SkipReason::Text));
+    let changes = execute(
+        &mut state,
+        Command::DeleteSubtree(stellar_commands::node_ops::DeleteSubtree { root: sid(61) }),
+    );
+    scene_edits(
+        state.model(),
+        &mut built,
+        &changes,
+        SceneSourceOptions {
+            library: Some(&library),
+            ..SceneSourceOptions::default()
+        },
+    )
+    .unwrap();
+    let fresh = document_scene_source(
+        state.model(),
+        sid(10),
+        SceneSourceOptions {
+            library: Some(&library),
+            ..SceneSourceOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(built.skipped.get(&a), Some(&SkipReason::Text));
+    assert_eq!(built.skipped.get(&b), None);
+    assert_eq!(built.skipped, fresh.skipped);
+    assert_eq!(built.source, fresh.source);
 }
