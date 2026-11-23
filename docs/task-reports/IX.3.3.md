@@ -99,3 +99,50 @@
 |---|---|
 | Text 부모 거부, subtree 안 형제 key 중복 거부, 다른 부모 아래 같은 key 허용(`insert_subtree_parents_and_sibling_keys_are_validated`) | 통과 |
 | subtree 안 nested 인스턴스의 미투영 자식·subtree 밖 content 거부, 유효 subtree 삽입 후 두 인스턴스 투영 통과, Remove inverse로 snapshot 복원(`nested_instance_subtree_is_validated_and_remove_inverse_restores_it`) | 통과 |
+
+## 후속 수정 (2026-11-24 instance-integrity: 일반 구조 command와 Slot content 투영, ADR-0133 결정 1·2)
+
+### 배경
+
+ADR-0129 결정 3으로 ComponentInstance 자식(투영된 Slot content)을 문서에 둘 수 있게 된 뒤, 일반 구조 command가 투영을
+몰라 다음이 깨졌습니다. `delete-subtree`로 Slot content를 지우면 slot override가 지워진 node를 가리킨 채 남고, 그 역
+`insert-node`는 부모가 인스턴스라 거부되어 undo가 실패했습니다. `move-node`로 인스턴스 밖으로 옮겨도 같았습니다. Slot
+content를 가진 인스턴스를 지운 뒤의 undo, 그런 인스턴스의 복제·붙여넣기도 `insert-node`가 인스턴스 아래 자식을 거부해
+실패했습니다.
+
+### 변경 파일
+
+- `crates/commands/src/node_ops.rs` — `slot_content_owner`(Slot content 판정 하나), `check_external_inbound`(삭제 정책을
+  함수로 분리). `delete-subtree`·`move-node`가 Slot content를 투영 밖으로 지우거나 옮기면 거부, `insert-node`가 삽입하는
+  인스턴스 아래 자식을 받고 투영(`validate::instance_projection_issues`)을 검사.
+- `crates/commands/src/detach.rs` — `plan_slot_content_delete`·`SlotContentDeleteError`(투영에서 빼고 subtree를 지우는
+  `place-slot-content` 하나).
+- `crates/commands/src/detach_integrity_tests.rs`(신규), `crates/commands/src/detach_tests.rs`(fixture 공유).
+- `docs/adr/ADR-0133-instance-structure-integrity.md`(신규).
+
+### 실행한 명령
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-commands --lib` | 통과(257 passed, 6 ignored) |
+| `cargo clippy -p stellar-commands --all-targets --locked -- -D warnings` | 통과 |
+
+### 테스트
+
+- `structure_commands_refuse_to_drop_slot_content_out_of_its_projection`: Slot content 31의 `delete-subtree`, 인스턴스 밖
+  `move-node`, 인스턴스 아래로의 이동·삽입을 거부하고 문서는 그대로입니다. 같은 인스턴스 안 OrderKey 변경은 받고 문서
+  validator를 통과하며 undo가 정확합니다.
+- `slot_content_delete_is_one_restructure_and_undoes_exactly`: content subtree(31과 자식 32)를 자식부터 지우는 command 하나,
+  codec 왕복, 결과 문서 validator 통과, `restore_default`에 따라 빈 override 또는 override 없음, undo 한 번에 처음 문서와
+  같습니다.
+- `slot_content_delete_refuses_non_content_locks_and_missing_definitions`: Slot content가 아닌 node, 미해결 컴포넌트,
+  잠긴 인스턴스.
+- `instance_subtree_delete_duplicate_and_paste_keep_projected_children`: 인스턴스 삭제의 역 command(codec 왕복 뒤) 적용이
+  처음 문서와 같고, 복제·붙여넣기 결과 인스턴스의 slot override가 새 content id를 가리키며 문서 validator를 통과합니다.
+- `insert_rejects_instance_children_that_are_not_projected_exactly_once`: 투영되지 않은 자식이 섞인 삽입은 거부, 투영된
+  자식만이면 받습니다.
+
+### 남은 범위
+
+- runtime 선택 삭제·끌어 내기 제스처가 Slot content를 `plan_slot_content_delete`·`plan_slot_take_out`으로 보내는 연결은
+  UI 재설계 때 합니다. 지금 선택 삭제에 Slot content가 섞이면 command가 거부합니다.

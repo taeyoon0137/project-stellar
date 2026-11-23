@@ -28,7 +28,7 @@ fn card_ref() -> ComponentRef {
 }
 
 /// Card 컴포넌트: root 901(100×80, 정의 캔버스 (2000, 0)) 아래 body 902(slot host, Frame·Text 허용)와 title 903(Text).
-fn card_library() -> ComponentLibrary {
+pub(super) fn card_library() -> ComponentLibrary {
     let frame = |w: f32, h: f32, x: f32, y: f32| {
         encode_payload(&NodePayload::Frame(FramePayload {
             size: Size2::new(w, h).unwrap(),
@@ -95,7 +95,7 @@ fn card_library() -> ComponentLibrary {
 }
 
 /// root(10) 아래 Card 인스턴스 30(배치 (200, 100), width 320px)과 그 body slot에 투영한 소유 Text 31.
-fn modal_state() -> DocumentState {
+pub(super) fn modal_state() -> DocumentState {
     let mut model = small_model();
     let mut payload = ComponentInstancePayload::new(card_ref());
     payload.set_slot_override(body(), SlotOverride::new(vec![sid(31)]).unwrap());

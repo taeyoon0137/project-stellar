@@ -10,6 +10,16 @@
 //!   InsertNode이고, 외부 inbound 참조가 있으면 정책 오류로 거부합니다. InsertNode의 역입니다. 역 InsertNode는
 //!   subtree의 layout record도 담으므로 history journal을 저장했다가 다시 연 뒤의 삭제 undo도 record를
 //!   되살립니다.
+//!
+//! **인스턴스 Slot content(ADR-0133 결정 1).** ComponentInstance의 자식은 그 인스턴스 slot override에 투영된 Slot
+//! content입니다(ADR-0129 결정 3). 세 command는 slot override를 바꾸지 않으므로 투영을 깨뜨리는 변경을 거부합니다.
+//! - [`DeleteSubtree`]는 Slot content(인스턴스의 직접 자식)를 root로 지우지 않습니다. [`MoveNode`]는 Slot content를
+//!   인스턴스 밖으로 옮기지 않습니다(같은 인스턴스 안 순서 key 변경은 투영 순서와 무관해 허용). 지우기·꺼내기는 slot
+//!   override를 함께 바꾸는 `place-slot-content`(`crate::detach::plan_slot_content_delete`, runtime
+//!   `plan_slot_take_out`)로 합니다. Slot content 판정은 [`slot_content_owner`] 하나입니다.
+//! - [`InsertNode`]는 삽입 root를 기존 인스턴스 아래에 두지 않습니다(투영 없이 자식이 생김). 삽입하는 인스턴스 아래의
+//!   자식(인스턴스 subtree 삭제의 undo, 복제, 붙여넣기)은 받되, 그 인스턴스 slot override에 정확히 한 번 투영돼야
+//!   합니다(문서 validator와 같은 판정 `validate::instance_projection_issues`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -23,7 +33,9 @@ use stellar_document::node_kind::NodeKind;
 use stellar_document::record_codec::{decode_node_record, encode_node_record};
 use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_document::tree_ops::validate_reparent;
-use stellar_document::validate::{can_have_children, MAX_NODE_DEPTH};
+use stellar_document::validate::{
+    can_have_children, can_own_slot_content, instance_projection_issues, MAX_NODE_DEPTH,
+};
 
 use crate::change::{node_keys, STRUCTURE_INVALIDATION};
 use crate::codec::{CommandCodecError, Reader, Writer};
@@ -142,7 +154,8 @@ impl InsertNode {
                     parent: Some(parent),
                 });
             };
-            if !can_have_children(parent_kind) {
+            // 삽입하는 인스턴스 아래 자식은 Slot content입니다(투영은 7에서 확인).
+            if !can_have_children(parent_kind) && !can_own_slot_content(parent_kind) {
                 return Err(CommandError::InvalidParent {
                     node: record.id,
                     parent: Some(parent),
@@ -272,6 +285,36 @@ impl InsertNode {
                 }));
             }
         }
+
+        // 7. 삽입하는 인스턴스의 자식은 그 인스턴스 slot override에 정확히 한 번 투영돼야 합니다(ADR-0129 결정 3).
+        let mut owned: BTreeMap<StableId, Vec<StableId>> = BTreeMap::new();
+        for record in &self.nodes[1..] {
+            if let Some(parent) = record.parent {
+                if new_ids
+                    .get(&parent)
+                    .copied()
+                    .is_some_and(can_own_slot_content)
+                {
+                    owned.entry(parent).or_default().push(record.id);
+                }
+            }
+        }
+        for record in &self.nodes {
+            let NodePayload::ComponentInstance(payload) = &record.payload else {
+                continue;
+            };
+            let children = owned.remove(&record.id).unwrap_or_default();
+            let projected = payload
+                .slot_overrides()
+                .flat_map(|(_, content)| content.content().iter());
+            if !instance_projection_issues(projected, &children).is_empty() {
+                return Err(CommandError::InvalidRequest {
+                    reason:
+                        "삽입하는 인스턴스의 자식이 slot override에 정확히 한 번 투영되지 않습니다",
+                });
+            }
+        }
+
         Ok(())
     }
 
@@ -438,21 +481,12 @@ impl DeleteSubtree {
 
     pub(crate) fn validate(&self, model: &DocumentModel) -> Result<(), CommandError> {
         let subtree = self.subtree(model)?;
-        let members: BTreeSet<StableId> = subtree.iter().copied().collect();
-        let references = model.references();
-        for target in &subtree {
-            if let Some(from) = references
-                .inbound(*target)
-                .into_iter()
-                .find(|from| !members.contains(from))
-            {
-                return Err(CommandError::ExternalReference {
-                    target: *target,
-                    from,
-                });
-            }
+        if slot_content_owner(model, self.root).is_some() {
+            return Err(CommandError::InvalidRequest {
+                reason: "인스턴스 Slot content는 slot override와 함께 지웁니다(place-slot-content)",
+            });
         }
-        Ok(())
+        check_external_inbound(model, &subtree)
     }
 
     pub(crate) fn invert(&self, model: &DocumentModel) -> Result<InsertNode, CommandError> {
@@ -500,6 +534,39 @@ impl DeleteSubtree {
     }
 }
 
+/// `node`가 인스턴스 Slot content(ComponentInstance의 직접 자식)이면 그 인스턴스(ADR-0129 결정 3, ADR-0133 결정 1).
+///
+/// 구조 command(`DeleteSubtree`·`MoveNode`)의 거부와 그 대신 쓸 경로(`place-slot-content`)를 고르는 호출자가 같은
+/// 판정을 씁니다.
+pub fn slot_content_owner(model: &DocumentModel, node: StableId) -> Option<StableId> {
+    let parent = parent_of(model, node).flatten()?;
+    kind_of(model, parent)
+        .is_some_and(can_own_slot_content)
+        .then_some(parent)
+}
+
+/// subtree 밖 node가 subtree 안 node를 참조하면 [`CommandError::ExternalReference`]입니다(삭제 정책, VII.2.2).
+pub(crate) fn check_external_inbound(
+    model: &DocumentModel,
+    subtree: &[StableId],
+) -> Result<(), CommandError> {
+    let members: BTreeSet<StableId> = subtree.iter().copied().collect();
+    let references = model.references();
+    for target in subtree {
+        if let Some(from) = references
+            .inbound(*target)
+            .into_iter()
+            .find(|from| !members.contains(from))
+        {
+            return Err(CommandError::ExternalReference {
+                target: *target,
+                from,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// node 이동·재정렬 (VII.2.3).
 ///
 /// 부모와 OrderKey를 **함께** 바꿉니다(같은 부모에 새 key면 재정렬). 자손과 modifier stack은
@@ -543,6 +610,11 @@ impl MoveNode {
                 });
             }
             return Ok(());
+        }
+        if slot_content_owner(model, self.node).is_some() {
+            return Err(CommandError::InvalidRequest {
+                reason: "인스턴스 Slot content는 slot override와 함께 꺼냅니다(place-slot-content)",
+            });
         }
         validate_reparent(model.columns(), node_handle, parent_handle).map_err(|error| {
             CommandError::Reparent {

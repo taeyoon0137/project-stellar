@@ -10,6 +10,10 @@
 //!   또는 반대로 투영을 빼고 밖으로 옮깁니다. 계획은 runtime `canvas::instance`가 컴포넌트 library로 slot 규칙을
 //!   확인한 뒤 만듭니다.
 //!
+//! - Slot content 지우기(ADR-0133 결정 2): 구조 command `delete-subtree`는 Slot content를 지우지 않습니다(slot override를
+//!   바꾸지 않으므로 투영이 깨짐). [`plan_slot_content_delete`]가 content를 slot override에서 빼고 subtree를 지우는
+//!   `place-slot-content` 하나를 만듭니다.
+//!
 //! 역 command는 같은 종류의 [`InstanceRestructure`]입니다(현재 레코드, 지운 node 복원, 원래 부모·순서, 만든 node
 //! 지우기). 그래서 undo·redo가 정확합니다.
 //!
@@ -28,7 +32,8 @@ use stellar_core_types::value::Transform2D;
 use stellar_document::component::definition::ComponentLibrary;
 use stellar_document::component::detach::{detach_instance, DetachError};
 use stellar_document::component::expansion::ScenePayloads;
-use stellar_document::component::instance::frame_instance_transform;
+use stellar_document::component::instance::{frame_instance_transform, SlotOverride};
+use stellar_document::component::slot::SlotError;
 use stellar_document::layout_record::{LayoutLonghand, LayoutRecord, LayoutValue};
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{ModifierKind, ModifierStack};
@@ -47,7 +52,10 @@ use crate::change::{node_field_invalidation, node_keys, STRUCTURE_INVALIDATION};
 use crate::codec::{CommandCodecError, Reader, Writer};
 use crate::command::CommandError;
 use crate::edit::EditContext;
-use crate::node_ops::{decode_layout_records, encode_layout_records};
+use crate::lock::{edit_permission, EditIntent};
+use crate::node_ops::{
+    check_external_inbound, decode_layout_records, encode_layout_records, slot_content_owner,
+};
 use crate::tree::{parent_of, ChildIndex};
 
 /// 기존 node 하나의 새 부모·순서.
@@ -676,6 +684,121 @@ pub fn plan_detach<C: MonotonicClock>(
     })
 }
 
+/// Slot content 지우기 계획 실패.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SlotContentDeleteError {
+    /// node가 인스턴스 Slot content(인스턴스의 직접 자식으로 slot override에 투영된 node)가 아닙니다.
+    NotSlotContent,
+    /// content나 인스턴스가 잠겼습니다(D8).
+    Locked,
+    /// 인스턴스가 참조하는 컴포넌트가 library에 없습니다.
+    UnresolvedComponent,
+    /// content가 투영된 Slot을 컴포넌트가 선언하지 않습니다.
+    UnknownSlot,
+    /// 남는 content가 Slot 종류·개수 규칙을 어깁니다(IX.3.1).
+    Rule(SlotError),
+    /// 삭제 정책 위반(subtree 밖에서 content subtree를 참조함 등).
+    Command(CommandError),
+}
+
+impl fmt::Display for SlotContentDeleteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SlotContentDeleteError::NotSlotContent => {
+                f.write_str("인스턴스 Slot content가 아닙니다")
+            }
+            SlotContentDeleteError::Locked => f.write_str("content나 인스턴스가 잠겼습니다"),
+            SlotContentDeleteError::UnresolvedComponent => {
+                f.write_str("인스턴스 컴포넌트가 library에 없습니다")
+            }
+            SlotContentDeleteError::UnknownSlot => {
+                f.write_str("컴포넌트가 선언하지 않은 Slot입니다")
+            }
+            SlotContentDeleteError::Rule(error) => write!(f, "{error}"),
+            SlotContentDeleteError::Command(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for SlotContentDeleteError {}
+
+/// 인스턴스 Slot content 하나를 지우는 `place-slot-content` 계획(ADR-0133 결정 2).
+///
+/// content를 slot override 투영에서 빼고 그 subtree를 자식부터 지웁니다. 마지막 content를 지우면 `restore_default`일 때
+/// override를 지워 default content로 돌아가고, 아니면 빈 override(Slot 비움)로 남깁니다(runtime `plan_slot_take_out`과
+/// 같은 규칙). 남는 content는 Slot 종류·개수 규칙(`ComponentSlot::check_content`)을 지켜야 합니다. 삭제 정책은
+/// `delete-subtree`와 같습니다(subtree 밖 참조 거부). 역 command는 지운 node와 그 modifier·layout 기록, 원래 slot
+/// override를 되살립니다.
+pub fn plan_slot_content_delete(
+    model: &DocumentModel,
+    library: &ComponentLibrary,
+    node: StableId,
+    restore_default: bool,
+) -> Result<InstanceRestructure, SlotContentDeleteError> {
+    let instance = slot_content_owner(model, node).ok_or(SlotContentDeleteError::NotSlotContent)?;
+    if edit_permission(model, node, EditIntent::Delete).is_err()
+        || edit_permission(model, instance, EditIntent::Edit).is_err()
+    {
+        return Err(SlotContentDeleteError::Locked);
+    }
+    let mut record = model
+        .record(instance)
+        .ok_or(SlotContentDeleteError::NotSlotContent)?;
+    let NodePayload::ComponentInstance(payload) = &record.payload else {
+        return Err(SlotContentDeleteError::NotSlotContent);
+    };
+    let entry = library
+        .get(payload.component())
+        .ok_or(SlotContentDeleteError::UnresolvedComponent)?;
+    let (slot, list) = payload
+        .slot_overrides()
+        .find(|(_, content)| content.content().contains(&node))
+        .map(|(slot, content)| (slot, content.content().to_vec()))
+        .ok_or(SlotContentDeleteError::NotSlotContent)?;
+    let declared = entry
+        .slot(slot)
+        .ok_or(SlotContentDeleteError::UnknownSlot)?;
+    let kept: Vec<StableId> = list.into_iter().filter(|n| *n != node).collect();
+    let mut next = payload.clone();
+    if kept.is_empty() && restore_default {
+        next.remove_slot_override(slot);
+    } else {
+        let kinds = kept
+            .iter()
+            .map(|id| model.record(*id).map(|r| (*id, r.kind())))
+            .collect::<Option<Vec<_>>>()
+            .ok_or(SlotContentDeleteError::NotSlotContent)?;
+        declared
+            .check_content(kinds)
+            .map_err(SlotContentDeleteError::Rule)?;
+        next.set_slot_override(
+            slot,
+            SlotOverride::new(kept).map_err(|_| SlotContentDeleteError::NotSlotContent)?,
+        );
+    }
+    let subtree = ChildIndex::build(model).subtree(node);
+    check_external_inbound(model, &subtree).map_err(SlotContentDeleteError::Command)?;
+    record.payload = NodePayload::ComponentInstance(next);
+    Ok(InstanceRestructure {
+        node: instance,
+        record,
+        layout: model
+            .layout_record(instance)
+            .cloned()
+            .unwrap_or_else(|| LayoutRecord::new(instance)),
+        stack: None,
+        insert: Vec::new(),
+        insert_stacks: Vec::new(),
+        insert_layouts: Vec::new(),
+        moves: Vec::new(),
+        remove: subtree.into_iter().rev().collect(),
+    })
+}
+
 #[cfg(test)]
 #[path = "detach_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "detach_integrity_tests.rs"]
+mod integrity_tests;
