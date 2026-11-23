@@ -311,6 +311,13 @@ impl CanvasSelectSession {
         root: StableId,
         input: ToolInput,
     ) -> Result<SessionOutput, SessionError> {
+        if input == ToolInput::FocusLost && self.active.is_some() {
+            // 초점을 잃으면 pointer up이 오지 않으므로 진행 중 제스처를 취소합니다(ADR-0104 결정 5.1). 제스처가 끝난
+            // 뒤 수식키·Space를 지웁니다.
+            let output = self.cancel(history, doc)?;
+            self.tools.handle(input);
+            return Ok(output);
+        }
         let event = self.tools.handle(input);
         match event {
             ToolEvent::Changed { from, to } => return Ok(SessionOutput::ToolChanged { from, to }),
@@ -788,6 +795,34 @@ mod tests {
         assert_eq!(rig.history.history().len(), len);
         assert_eq!(rig.selected(), vec![sid(11), sid(12)]);
         assert!(!rig.session.gesture_active());
+        // 초점 상실도 진행 중 제스처(끌기·마퀴)를 취소하고 기록하지 않습니다.
+        let before = save_bytes(&rig.doc);
+        rig.down(310., 30., none, 1);
+        rig.mv(350., 60., none);
+        let tx = width_tx(&rig.doc, 8_001, 777.);
+        rig.session
+            .preview(&mut rig.history, &mut rig.doc, &tx)
+            .unwrap();
+        assert_eq!(
+            rig.send(0., 0., CanvasInput::Key(ToolInput::FocusLost)),
+            SessionOutput::Cancelled
+        );
+        assert!(!rig.session.gesture_active() && !rig.session.tools().gesture_active());
+        assert_eq!(save_bytes(&rig.doc), before);
+        assert_eq!(rig.history.history().len(), len);
+        assert_eq!(rig.selected(), vec![sid(11), sid(12)]);
+        rig.down(700., 500., none, 1);
+        rig.mv(780., 580., none);
+        assert!(rig.history.view().area_selection_active());
+        assert_eq!(
+            rig.send(0., 0., CanvasInput::Key(ToolInput::FocusLost)),
+            SessionOutput::Cancelled
+        );
+        assert!(!rig.history.view().area_selection_active());
+        assert_eq!(rig.history.history().len(), len);
+        // 다음 제스처는 정상으로 시작합니다.
+        assert_eq!(rig.down(130., 130., none, 1), SessionOutput::Pending);
+        rig.up(130., 130.);
     }
 
     #[test]
