@@ -2,7 +2,7 @@
 
 - WBS: XX.4.3
 - 작업명: rasterized subtree 목록과 이유를 export report에 기록
-- 상태: 완료
+- 상태: 완료 (`[x]`)
 - 선행: XX.4.2 (이 작업 묶음에서 완료).
 - 결정: ADR-0091 결정 4.
 
@@ -38,6 +38,10 @@
 |---|---|
 | shadow(Content)·blur 가지(Subtrees, node 2개)·blend 범위(앞 형제까지)가 있는 View의 report 고정 표기가 golden과 같고, 종류·root·pixel·node 수·이유·backdrop이 계획과 SVG image 수와 맞음(`report_lists_rasterized_subtrees_and_reasons`) | 통과 |
 | 모두 vector인 View는 영역 없이 `vector = visible`(`vector_exports_report_no_rasterized_regions`) | 통과 |
+
+## 차이(작업 지시와 다른 점)
+
+- 없음.
 
 ## 남은 위험 / 한계
 

@@ -2,7 +2,7 @@
 
 - WBS: XX.4.4
 - 작업명: 한 unsupported effect가 전체 View를 불필요하게 rasterize하지 않는 회귀 테스트 추가
-- 상태: 완료
+- 상태: 완료 (`[x]`)
 - 선행: XX.4.2 (이 작업 묶음에서 완료).
 - 결정: ADR-0091 결정 2.
 
@@ -34,6 +34,10 @@
 |---|---|
 | `cargo test -p stellar-export --locked regression` | 3 passed |
 | `cargo test -p stellar-export --locked` | 통과 |
+
+## 차이(작업 지시와 다른 점)
+
+- 테스트 rasterizer(단색 PNG)를 써서 pixel 대신 구조와 node 수로 검증합니다.
 
 ## 남은 위험 / 한계
 

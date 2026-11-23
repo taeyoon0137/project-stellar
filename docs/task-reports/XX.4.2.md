@@ -2,7 +2,7 @@
 
 - WBS: XX.4.2
 - 작업명: boundary를 offscreen PNG data로 렌더하고 SVG image element로 삽입
-- 상태: 완료 (export 쪽). 실제 pixel 렌더는 host rasterizer가 맡고, renderer offscreen target(XX.2.1)이 아직 없어
+- 상태: 완료 (`[x]`, export 쪽). 실제 pixel 렌더는 host rasterizer가 맡고, renderer offscreen target(XX.2.1)이 아직 없어
   제품 host는 아직 `NoRasterizer`입니다(아래 한계).
 - 선행: XX.2.1 (`[ ]`), XX.4.1 (`[x]`).
 - 결정: ADR-0091 결정 2·3.
@@ -53,6 +53,10 @@
 | 계약 위반(크기·형식·실패)은 `Raster` 오류, rasterizer 없으면 `Unsupported`(`raster_contract_violations_are_errors`) | 통과 |
 | 같은 snapshot byte-identical(`raster_output_is_byte_identical`) | 통과 |
 | 사전 진단: rasterizer가 있으면 shadow 차단 해제, 래스터 경계 안 color glyph Text는 glyph 차단 없음(`rasterizers_lift_raster_blockers_and_skip_rasterized_glyphs`) | 통과 |
+
+## 차이(작업 지시와 다른 점)
+
+- 선행 XX.2.1(renderer offscreen target)이 미완료라 offscreen PNG 렌더는 host 연결 지점(`ExportRasterizer`)으로 두고, 제품 기본값 `NoRasterizer`에서는 사전 진단이 형식 차단으로 처리합니다.
 
 ## 남은 위험 / 한계
 
