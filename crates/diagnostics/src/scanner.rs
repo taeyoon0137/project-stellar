@@ -170,14 +170,48 @@ impl ScanContext {
     }
 }
 
+/// 번들 schema 어휘(정렬, 한 번만 만듭니다).
+fn bundle_vocabulary() -> &'static [&'static str] {
+    static VOCABULARY: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    VOCABULARY.get_or_init(|| schema_vocabulary(&BUNDLE_SCHEMAS))
+}
+
 /// schema 어휘, 형식 이름, 정수·version처럼 번들에 정상으로 나오는 값인지.
 fn is_public_vocabulary(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
     lower == BUNDLE_HEADER
         || lower == STORE_HEADER
-        || schema_vocabulary(&BUNDLE_SCHEMAS).contains(&lower.as_str())
-        || parse_value(FieldType::U64, &lower).is_some()
+        || bundle_vocabulary().binary_search(&lower.as_str()).is_ok()
+        || parse_value(FieldType::OptU64, &lower).is_some()
         || parse_value(FieldType::Version, &lower).is_some()
+}
+
+/// 줄의 `[start, end)` 구간이 공개 조각 하나 안에 들어 있는지.
+///
+/// 조각은 형식 이름 줄이면 줄 전체이고, 그 밖에는 공백과 `=`로 나눈 token입니다. 공개 조각은 schema 어휘,
+/// 형식 이름, 정수·`none`·version입니다. 문맥 값이 `uptime_ms` 안의 `time`, `renderer_error` 안의 `error`,
+/// 형식 이름 안의 `stellar`처럼 공개 조각의 일부로만 나오면 프로젝트 값이 아니라 schema 어휘이므로 탐지하지
+/// 않습니다. 공개 조각 밖으로 걸치거나 공개가 아닌 조각에 나오면 탐지합니다.
+fn within_public_piece(lower: &str, start: usize, end: usize) -> bool {
+    if lower == BUNDLE_HEADER || lower == STORE_HEADER {
+        return true;
+    }
+    let mut piece_start = 0;
+    for piece in lower.split([' ', '=']) {
+        let piece_end = piece_start + piece.len();
+        if start >= piece_start && end <= piece_end {
+            return is_public_vocabulary(piece);
+        }
+        piece_start = piece_end + 1;
+    }
+    false
+}
+
+/// 문맥 값이 공개 조각 밖에 나오는지.
+fn context_value_appears(lower: &str, value: &str) -> bool {
+    lower
+        .match_indices(value)
+        .any(|(start, found)| !within_public_piece(lower, start, start + found.len()))
 }
 
 const PATH_PREFIXES: [&str; 12] = [
@@ -387,7 +421,7 @@ fn scan_line(line_no: usize, line: &str, ctx: &ScanContext, out: &mut BTreeSet<F
         }
     }
     for (category, value) in &ctx.values {
-        if lower.contains(value.as_str()) {
+        if context_value_appears(&lower, value) {
             out.insert(Finding {
                 line: line_no,
                 category: *category,
@@ -792,6 +826,43 @@ mod tests {
             .findings
             .iter()
             .any(|f| f.rule == "context_value" && f.category == ProjectName));
+    }
+
+    #[test]
+    fn context_values_inside_schema_words_are_not_findings() {
+        // 열린 프로젝트·레이어 이름이 schema 어휘나 형식 이름의 일부(`stellar`, `uptime_ms`의 `time`,
+        // `renderer_error`의 `error`, `feature_failure`의 `failure`)여도 정상 번들은 거부하지 않습니다.
+        let mut ctx = ScanContext::new();
+        for value in ["Stellar", "Time", "Error", "Failure", "Diagnostic"] {
+            ctx.add(ProjectName, value);
+        }
+        // `none`(gpu 시간 없음)은 정상 값이라 비교하지 않습니다.
+        assert!(!ctx.clone().add(ProjectName, "None"));
+        assert_eq!(ctx.len(), 5);
+        let bytes = bundle(Arch::Arm64);
+        let report = scan_bundle(&bytes, &ctx);
+        assert!(report.is_clean(), "{:?}", report.findings);
+        assert!(scan_text(&bytes, &ctx).is_clean());
+        // 같은 값이 schema 조각 밖에 나오면 탐지합니다(값 자리, 덧붙인 token, 새 줄, key, 공백을 걸친 값).
+        for value in ["stellar", "time", "error", "failure"] {
+            for (position, bytes) in injections(value).iter().enumerate() {
+                let report = scan_bundle(bytes, &ctx);
+                assert!(
+                    report
+                        .findings
+                        .iter()
+                        .any(|f| f.rule == "context_value" && f.category == ProjectName),
+                    "{value}@{position}: {:?}",
+                    report.findings
+                );
+            }
+        }
+        let text = b"feature_failure stellar site\n";
+        let ctx = ScanContext::new().with(ProjectName, "Stellar Site");
+        assert!(scan_text(text, &ctx)
+            .findings
+            .iter()
+            .any(|f| f.rule == "context_value"));
     }
 
     #[test]
