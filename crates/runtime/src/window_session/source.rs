@@ -11,14 +11,14 @@ use std::sync::Arc;
 use stellar_document::model::DocumentModel;
 use stellar_project::document_io::load::LoadDocumentError;
 use stellar_project::document_io::session::{
-    active_style_defaults, convert_saved, decode_source, read_source, read_stamp, OpenPlan,
-    SourceBase, SourceFiles, SourceLibrary,
+    active_style_defaults, convert_saved, decode_source, observe, read_source, DiskSource,
+    ObserveError, OpenPlan, SourceBase, SourceFiles, SourceLibrary,
 };
 use stellar_project::document_io::text_source::TextSourceError;
 use stellar_project::external_change::source::diagnose;
 use stellar_project::identity::ProjectIdentity;
 use stellar_storage::chunk::id::ChunkId;
-use stellar_storage::generation::current::{read_current_pointer, CurrentPointerError};
+use stellar_storage::generation::current::CurrentPointerError;
 use stellar_storage::generation::lazy::{LazyGeneration, LazyLoadError, NoopRecorder};
 use stellar_storage::generation::loader::{load_current_generation, LoadError, LoadedGeneration};
 use stellar_storage::hash::ContentHash;
@@ -112,17 +112,16 @@ pub(crate) fn read_disk_state(
             style_defaults,
         ));
     }
-    let text = read_source(root).map_err(|error| source_error(None, &error))?;
-    let current = match read_current_pointer(root) {
-        Ok(current) => Some(current),
-        Err(CurrentPointerError::Missing { .. }) => None,
-        Err(error) => return Err(pointer_error(error)),
-    };
-    let plan = OpenPlan::decide(
-        text.as_ref().map(|text| text.base.digest()),
+    // 열기 계획은 CLI·MCP와 같은 관찰 함수 하나로 정합니다(ADR-0113 결정 1).
+    let DiskSource {
+        text,
         current,
-        read_stamp(root),
-    );
+        plan,
+        ..
+    } = observe(root).map_err(|error| match error {
+        ObserveError::Source(error) => source_error(None, &error),
+        ObserveError::Pointer(error) => pointer_error(error),
+    })?;
     match plan {
         OpenPlan::Empty => Ok(DiskState {
             plan,
