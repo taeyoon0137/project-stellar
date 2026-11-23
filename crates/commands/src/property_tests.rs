@@ -144,6 +144,7 @@ round_trip_property! {
     add_view_round_trip => Registered::Command(CommandKind::AddView), min 120;
     remove_view_round_trip => Registered::Command(CommandKind::RemoveView), min 100;
     rename_view_round_trip => Registered::Command(CommandKind::RenameView), min 120;
+    apply_external_snapshot_round_trip => Registered::Command(CommandKind::ApplyExternalSnapshot), min 120;
     set_selection_round_trip => Registered::Selection, min 120;
 }
 

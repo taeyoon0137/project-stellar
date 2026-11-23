@@ -325,6 +325,8 @@ pub enum Command {
     RemoveView(crate::page_view::RemoveView),
     /// View 이름 변경 (UX.12.1).
     RenameView(crate::page_view::RenameView),
+    /// 외부 원본 반영 (UX.4.1).
+    ApplyExternalSnapshot(crate::snapshot_apply::ApplyExternalSnapshot),
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -368,6 +370,7 @@ impl Command {
             Command::AddView(_) => CommandKind::AddView,
             Command::RemoveView(_) => CommandKind::RemoveView,
             Command::RenameView(_) => CommandKind::RenameView,
+            Command::ApplyExternalSnapshot(_) => CommandKind::ApplyExternalSnapshot,
             #[cfg(test)]
             Command::TestProbe(_) => CommandKind::TestProbe,
         }
@@ -395,6 +398,7 @@ impl Command {
             Command::AddView(command) => command.validate(model),
             Command::RemoveView(command) => command.validate(model),
             Command::RenameView(command) => command.validate(model),
+            Command::ApplyExternalSnapshot(command) => command.validate(model),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.validate(model),
         }
@@ -430,6 +434,9 @@ impl Command {
             Command::AddView(command) => Ok(Command::RemoveView(command.invert())),
             Command::RemoveView(command) => command.invert(model).map(Command::AddView),
             Command::RenameView(command) => command.invert(model).map(Command::RenameView),
+            Command::ApplyExternalSnapshot(command) => {
+                Ok(Command::ApplyExternalSnapshot(command.invert()))
+            }
             #[cfg(test)]
             Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
         }
@@ -457,6 +464,7 @@ impl Command {
             Command::AddView(command) => command.apply(ctx),
             Command::RemoveView(command) => command.apply(ctx),
             Command::RenameView(command) => command.apply(ctx),
+            Command::ApplyExternalSnapshot(command) => command.apply(ctx),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.apply(ctx),
         }

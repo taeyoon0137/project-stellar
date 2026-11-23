@@ -41,6 +41,7 @@ use crate::node_ops::{DeleteSubtree, InsertNode, MoveNode};
 use crate::page_view::{AddPage, AddView, RemovePage, RemoveView, RenamePage, RenameView};
 use crate::property::{node_property_info, PropertyValue, PropertyValueType, SetProperty};
 use crate::request::CommandRequest;
+use crate::snapshot_apply::ApplyExternalSnapshot;
 use crate::state::DocumentState;
 use crate::tree::{depth_of, node_ids, order_key_of, parent_of, ChildIndex};
 
@@ -458,6 +459,32 @@ pub fn generate(
                 format!("View {}", rng.below(100)),
                 ids.fresh(),
             )))
+        }
+        CommandKind::ApplyExternalSnapshot => {
+            // 현재 문서에 무작위 편집 하나를 가한 결과를 외부 원본으로 삼습니다.
+            let mut edited = DocumentState::new(
+                DocumentModel::from_records(model.to_records().ok()?)
+                    .ok()?
+                    .0,
+            );
+            for _ in 0..8 {
+                let other = *rng.pick(CommandKind::ALL);
+                if other == CommandKind::ApplyExternalSnapshot {
+                    continue;
+                }
+                let Some(command) = generate(other, edited.model(), rng, ids) else {
+                    continue;
+                };
+                if edited
+                    .execute(&CommandRequest::at(&edited, command))
+                    .is_ok()
+                {
+                    break;
+                }
+            }
+            let incoming = edited.model().to_records().ok()?;
+            let command = ApplyExternalSnapshot::between(model, &incoming).ok()?;
+            (!command.is_empty()).then_some(Command::ApplyExternalSnapshot(command))
         }
         CommandKind::RemoveView | CommandKind::RenameView => {
             let views: Vec<StableId> = model

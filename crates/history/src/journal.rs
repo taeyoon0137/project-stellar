@@ -17,6 +17,7 @@
 //! | schema version | `u32` — 기록 시점 schema |
 //! | minimum reader version | `u32` — 이 journal을 읽는 데 필요한 최소 schema |
 //! | minimum writer version | `u32` — 이 journal을 이어 기록(수정 저장)해도 안전한 최소 schema |
+//! | command codec version | `u32` — schema 2 이상에만 있음. 항목 command를 기록한 codec 버전(ADR-0079) |
 //! | window | 16바이트 [`WindowSessionId`] |
 //! | base generation | `u64` [`StorageGeneration`] |
 //! | base manifest hash | 32바이트 — base 세대 manifest content hash(`design/current`가 가리키는 값) |
@@ -38,10 +39,17 @@
 //!
 //! 개정(2026-11-14, 기록 경로 XXV.1.2 이전이라 기록된 journal 없음): redo stack, next sequence, minimum
 //! writer version, base manifest hash를 schema 1에 추가했습니다.
+//!
+//! schema 2(ADR-0079): header에 command codec version([`COMMAND_CODEC_VERSION`])을 더했습니다. schema 1
+//! journal은 codec 1로 읽습니다(새 reader는 옛 journal을 그대로 decode). 새 layout은 옛 reader가 해석할 수
+//! 없으므로 minimum reader·writer를 2로 기록합니다. 옛 reader는 schema 판정(`ReaderTooOld`)에서 복원만
+//! 포기하고 문서 원본은 건드리지 않습니다. reader의 codec보다 새 codec([`JournalError::CommandCodecTooNew`])
+//! 이거나, header가 선언한 codec 안에 없는 command 종류([`JournalError::KindOutsideCodec`])·registry에 없는
+//! 종류가 들어 있으면 같은 방식으로 복원을 포기하고 진단(봉인 사유 `unknown-command`)을 남깁니다.
 
 use std::fmt;
 
-use stellar_commands::codec::CommandCodecError;
+use stellar_commands::codec::{CommandCodecError, COMMAND_CODEC_VERSION};
 use stellar_commands::id::{CommandOrigin, WindowSessionId};
 use stellar_commands::kind::CommandKind;
 use stellar_commands::selection::{Selection, SetSelection};
@@ -61,11 +69,13 @@ pub const JOURNAL_MAGIC: [u8; 8] = *b"STLRHJNL";
 /// 이 reader가 지원하는 journal 컨테이너 형식 버전.
 pub const JOURNAL_FORMAT_VERSION: u32 = 1;
 /// 이 writer가 기록하는 journal schema 버전.
-pub const JOURNAL_SCHEMA_VERSION: u32 = 1;
+pub const JOURNAL_SCHEMA_VERSION: u32 = 2;
 /// 이 writer가 기록하는 journal을 읽는 데 필요한 최소 schema 버전.
-pub const JOURNAL_MINIMUM_READER_VERSION: u32 = 1;
+pub const JOURNAL_MINIMUM_READER_VERSION: u32 = 2;
 /// 이 writer가 기록하는 journal을 이어 기록해도 안전한 최소 schema 버전.
-pub const JOURNAL_MINIMUM_WRITER_VERSION: u32 = 1;
+pub const JOURNAL_MINIMUM_WRITER_VERSION: u32 = 2;
+/// header에 command codec version 필드가 생긴 schema 버전(ADR-0079).
+pub const JOURNAL_CODEC_FIELD_SCHEMA: u32 = 2;
 
 /// journal 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +103,33 @@ pub enum JournalError {
     },
     /// 안에 담긴 command·선택 bytes 오류.
     Command(CommandCodecError),
+    /// journal의 command codec이 이 reader보다 새것입니다(ADR-0079).
+    CommandCodecTooNew {
+        /// journal header의 codec 버전.
+        found: u32,
+        /// 이 reader의 codec 버전.
+        supported: u32,
+    },
+    /// header가 선언한 codec 버전에 없는 command 종류가 있습니다(ADR-0079).
+    KindOutsideCodec {
+        /// command 종류 번호.
+        kind: u16,
+        /// header의 codec 버전.
+        codec: u32,
+    },
+}
+
+impl JournalError {
+    /// 이 reader가 모르는 command를 담아 복원을 포기한 경우인지(ADR-0079). 문서 원본과 무관한 journal
+    /// 한정 진단입니다.
+    pub fn is_unknown_command(&self) -> bool {
+        matches!(
+            self,
+            JournalError::CommandCodecTooNew { .. }
+                | JournalError::KindOutsideCodec { .. }
+                | JournalError::Command(CommandCodecError::UnknownKind { .. })
+        )
+    }
 }
 
 impl fmt::Display for JournalError {
@@ -109,6 +146,14 @@ impl fmt::Display for JournalError {
             JournalError::InvalidVersions => f.write_str("journal 버전 선언이 모순입니다"),
             JournalError::Malformed { reason } => write!(f, "journal 형식 위반: {reason}"),
             JournalError::Command(error) => write!(f, "journal 항목 command 오류: {error}"),
+            JournalError::CommandCodecTooNew { found, supported } => write!(
+                f,
+                "journal command codec {found}이 이 앱의 codec {supported}보다 새것입니다"
+            ),
+            JournalError::KindOutsideCodec { kind, codec } => write!(
+                f,
+                "journal codec {codec}에 없는 command 종류 {kind:#06x}가 있습니다"
+            ),
         }
     }
 }
@@ -161,6 +206,8 @@ pub struct JournalHeader {
     pub minimum_reader_version: u32,
     /// 이어 기록(수정 저장)에 필요한 최소 schema 버전.
     pub minimum_writer_version: u32,
+    /// 항목 command를 기록한 codec 버전(schema 1 journal은 1, ADR-0079).
+    pub command_codec_version: u32,
     /// 기록한 창.
     pub window: WindowSessionId,
     /// journal이 기준으로 삼은 저장 세대.
@@ -175,9 +222,15 @@ impl JournalHeader {
             schema_version: JOURNAL_SCHEMA_VERSION,
             minimum_reader_version: JOURNAL_MINIMUM_READER_VERSION,
             minimum_writer_version: JOURNAL_MINIMUM_WRITER_VERSION,
+            command_codec_version: COMMAND_CODEC_VERSION,
             window,
             base,
         }
+    }
+
+    /// header bytes 길이(schema에 따라 codec 필드 유무가 다름).
+    pub fn encoded_len(&self) -> usize {
+        header_len(self.schema_version)
     }
 
     /// reader schema `reader_version`의 접근 판정(V.8.1). 읽을 수 없으면 오류입니다.
@@ -196,6 +249,15 @@ impl JournalHeader {
             return Err(JournalError::ReaderTooOld {
                 required: self.minimum_reader_version,
                 reader: reader_version,
+            });
+        }
+        if self.command_codec_version == 0 {
+            return Err(JournalError::InvalidVersions);
+        }
+        if self.command_codec_version > COMMAND_CODEC_VERSION {
+            return Err(JournalError::CommandCodecTooNew {
+                found: self.command_codec_version,
+                supported: COMMAND_CODEC_VERSION,
             });
         }
         Ok(if reader_version < self.minimum_writer_version {
@@ -545,10 +607,23 @@ fn check_sequences(
     Ok(())
 }
 
-/// header 고정 길이(magic 8 + version 4×4 + window 16 + generation 8 + manifest hash 32).
-pub const JOURNAL_HEADER_LEN: usize = 8 + 4 * 4 + 16 + 8 + 32;
+/// schema 1 header 길이(magic 8 + version 4×4 + window 16 + generation 8 + manifest hash 32).
+pub const JOURNAL_HEADER_V1_LEN: usize = 8 + 4 * 4 + 16 + 8 + 32;
 
-/// 항목이 없는 journal 길이(header + next sequence 8 + undo·redo 항목 수 4×2).
+/// 이 writer가 기록하는 header 길이(schema 1 + command codec version 4). 어떤 schema의 header든 이 길이
+/// 안에 들어갑니다.
+pub const JOURNAL_HEADER_LEN: usize = JOURNAL_HEADER_V1_LEN + 4;
+
+/// schema의 header 길이.
+fn header_len(schema_version: u32) -> usize {
+    if schema_version >= JOURNAL_CODEC_FIELD_SCHEMA {
+        JOURNAL_HEADER_LEN
+    } else {
+        JOURNAL_HEADER_V1_LEN
+    }
+}
+
+/// 이 writer가 기록하는, 항목이 없는 journal 길이(header + next sequence 8 + undo·redo 항목 수 4×2).
 pub const JOURNAL_EMPTY_LEN: usize = JOURNAL_HEADER_LEN + 8 + 4 + 4;
 
 /// compaction 결과(XXV.1.5): 버린 항목 수.
@@ -617,6 +692,11 @@ fn read_header(input: &mut In<'_>) -> Result<JournalHeader, JournalError> {
     let schema_version = input.u32()?;
     let minimum_reader_version = input.u32()?;
     let minimum_writer_version = input.u32()?;
+    let command_codec_version = if schema_version >= JOURNAL_CODEC_FIELD_SCHEMA {
+        input.u32()?
+    } else {
+        1
+    };
     let window = WindowSessionId::from_stable_id(input.id()?);
     let generation = StorageGeneration(input.u64()?);
     let mut manifest_hash = [0u8; 32];
@@ -626,9 +706,35 @@ fn read_header(input: &mut In<'_>) -> Result<JournalHeader, JournalError> {
         schema_version,
         minimum_reader_version,
         minimum_writer_version,
+        command_codec_version,
         window,
         base: JournalBase::new(generation, manifest_hash),
     })
+}
+
+/// 항목 안 command 종류가 header가 선언한 codec 버전 안에 있는지 확인합니다(ADR-0079).
+fn check_codec(entries: &[HistoryEntry], codec: u32) -> Result<(), JournalError> {
+    let check = |kind: CommandKind| {
+        if kind.codec_version() > codec {
+            Err(JournalError::KindOutsideCodec {
+                kind: kind.as_u16(),
+                codec,
+            })
+        } else {
+            Ok(())
+        }
+    };
+    for entry in entries {
+        if let Some(GroupingKey::KeyboardRepeat(signature)) = &entry.grouping {
+            check(signature.kind)?;
+        }
+        if let HistoryPayload::Document { forward, inverse } = &entry.payload {
+            for request in forward.requests.iter().chain(&inverse.requests) {
+                check(request.command.kind())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 impl JournalHeader {
@@ -709,6 +815,9 @@ impl HistoryJournal {
         out.u32(self.header.schema_version);
         out.u32(self.header.minimum_reader_version);
         out.u32(self.header.minimum_writer_version);
+        if self.header.schema_version >= JOURNAL_CODEC_FIELD_SCHEMA {
+            out.u32(self.header.command_codec_version);
+        }
         out.id(self.header.window.stable_id());
         out.u64(self.header.base.generation.0);
         out.0.extend_from_slice(&self.header.base.manifest_hash);
@@ -755,12 +864,15 @@ impl HistoryJournal {
             reader.read_exact(&mut raw)?;
             Ok(u32::from_le_bytes(raw))
         }
-        let mut prefix = [0u8; JOURNAL_HEADER_LEN + 8];
+        let mut prefix = [0u8; JOURNAL_HEADER_V1_LEN + 8];
         let counts = (|| -> std::io::Result<Option<(usize, usize)>> {
             reader.read_exact(&mut prefix)?;
-            if JournalHeader::decode_prefix(&prefix).is_err() {
+            let Ok(header) = JournalHeader::decode_prefix(&prefix) else {
                 return Ok(None);
-            }
+            };
+            // schema 2 이상은 header가 codec 필드만큼 깁니다(next sequence까지 건너뜀).
+            let rest = header.encoded_len() + 8 - prefix.len();
+            reader.seek_relative(rest as i64)?;
             let undo = count(reader)? as usize;
             for _ in 0..undo {
                 let len = count(reader)?;
@@ -807,6 +919,8 @@ impl HistoryJournal {
         let redo = read_stack(&mut input)?;
         input.end()?;
         check_sequences(&undo, &redo, next_sequence)?;
+        check_codec(&undo, header.command_codec_version)?;
+        check_codec(&redo, header.command_codec_version)?;
         Ok(HistoryJournal {
             header,
             next_sequence,
@@ -884,8 +998,10 @@ pub(crate) mod tests {
     const SCHEMA_AT: usize = 12;
     const MIN_READER_AT: usize = 16;
     const MIN_WRITER_AT: usize = 20;
-    /// window 16 + generation 8 + hash 32 뒤 next sequence.
-    const NEXT_SEQUENCE_AT: usize = 24 + 16 + 8 + 32;
+    /// command codec version(schema 2 이상).
+    pub(crate) const CODEC_AT: usize = 24;
+    /// codec 4 + window 16 + generation 8 + hash 32 뒤 next sequence.
+    const NEXT_SEQUENCE_AT: usize = 28 + 16 + 8 + 32;
 
     fn set_u32(bytes: &mut [u8], at: usize, value: u32) {
         bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
@@ -941,6 +1057,95 @@ pub(crate) mod tests {
         assert_eq!(HistoryJournal::decode(&empty.encode()).unwrap(), empty);
     }
 
+    /// 기준 commit(ce60bb92, schema 1 writer)이 [`rich_history`]를 base(42)로 기록한 bytes(ADR-0079).
+    const SCHEMA1_FIXTURE: &[u8] = include_bytes!("../fixtures/journal-schema1-codec1.stlhjnl");
+
+    #[test]
+    fn schema1_journal_fixture_decodes_as_codec1() {
+        // 검증(ADR-0079): 옛 codec version journal fixture가 새 reader에서 그대로 decode됩니다.
+        let old = HistoryJournal::decode(SCHEMA1_FIXTURE).unwrap();
+        assert_eq!(old.header.schema_version, 1);
+        assert_eq!(old.header.minimum_reader_version, 1);
+        assert_eq!(old.header.command_codec_version, 1);
+        assert_eq!(old.header.encoded_len(), JOURNAL_HEADER_V1_LEN);
+        assert_eq!(
+            old.header.access(JOURNAL_SCHEMA_VERSION),
+            Ok(JournalAccess::Editable)
+        );
+        let current = rich_journal();
+        assert_eq!(old.undo, current.undo);
+        assert_eq!(old.redo, current.redo);
+        assert_eq!(old.next_sequence, current.next_sequence);
+        assert_eq!(old.header.base, current.header.base);
+        // 같은 내용을 새 writer로 쓰면 schema 2 + codec 필드 4바이트만 다릅니다.
+        let bytes = current.encode();
+        assert_eq!(bytes.len(), SCHEMA1_FIXTURE.len() + 4);
+        assert_eq!(&bytes[..SCHEMA_AT], &SCHEMA1_FIXTURE[..SCHEMA_AT]);
+        assert_eq!(
+            &bytes[CODEC_AT..CODEC_AT + 4],
+            &COMMAND_CODEC_VERSION.to_le_bytes()
+        );
+        assert_eq!(&bytes[CODEC_AT + 4..], &SCHEMA1_FIXTURE[CODEC_AT..]);
+        // 옛 journal의 항목 수 세기(retention)도 header 길이를 따릅니다.
+        let counts = |bytes: &[u8]| {
+            HistoryJournal::read_entry_counts(&mut std::io::BufReader::new(std::io::Cursor::new(
+                bytes.to_vec(),
+            )))
+            .unwrap()
+        };
+        assert_eq!(counts(SCHEMA1_FIXTURE), Some((4, 2)));
+        assert_eq!(counts(&bytes), Some((4, 2)));
+    }
+
+    #[test]
+    fn newer_codec_and_kinds_outside_the_declared_codec_are_rejected() {
+        let bytes = rich_journal().encode();
+        // 이 reader보다 새 codec.
+        let mut newer = bytes.clone();
+        set_u32(&mut newer, CODEC_AT, COMMAND_CODEC_VERSION + 1);
+        let error = HistoryJournal::decode(&newer).unwrap_err();
+        assert_eq!(
+            error,
+            JournalError::CommandCodecTooNew {
+                found: COMMAND_CODEC_VERSION + 1,
+                supported: COMMAND_CODEC_VERSION
+            }
+        );
+        assert!(error.is_unknown_command());
+        let mut zero = bytes.clone();
+        set_u32(&mut zero, CODEC_AT, 0);
+        assert_eq!(
+            HistoryJournal::decode(&zero),
+            Err(JournalError::InvalidVersions)
+        );
+        // codec 1을 선언했는데 codec 2 종류(View 이름 변경)가 들어 있으면 거부합니다.
+        let mut history = WindowHistory::new(WindowSessionId::from_stable_id(sid(510)));
+        let mut doc = small_state();
+        let rename = Command::RenameView(stellar_commands::page_view::RenameView {
+            view: sid(3),
+            name: "홈".into(),
+        });
+        let t = tx(&doc, 2_000, rename);
+        history.record_document(&mut doc, &t, None).unwrap();
+        let journal = HistoryJournal::capture(history.window(), base(1), history.history());
+        let mut declared_old = journal.encode();
+        set_u32(&mut declared_old, CODEC_AT, 1);
+        let error = HistoryJournal::decode(&declared_old).unwrap_err();
+        assert_eq!(
+            error,
+            JournalError::KindOutsideCodec {
+                kind: CommandKind::RenameView.as_u16(),
+                codec: 1
+            }
+        );
+        assert!(error.is_unknown_command());
+        assert_eq!(
+            HistoryJournal::decode(&journal.encode()).unwrap(),
+            journal,
+            "codec 2 선언이면 정상"
+        );
+    }
+
     #[test]
     fn version_rules_follow_v81_matrix() {
         // V.8.1과 같은 판정: format 정확 일치, reader < 최소 reader 거부, reader < 최소 writer 읽기 전용.
@@ -984,7 +1189,7 @@ pub(crate) mod tests {
             HistoryJournal::decode(&future),
             Err(JournalError::ReaderTooOld {
                 required: 3,
-                reader: 1
+                reader: JOURNAL_SCHEMA_VERSION
             })
         );
         // 모순 선언: 최소 reader > 최소 writer, 최소 writer > schema.

@@ -51,6 +51,8 @@ pub enum CommandKind {
     RemoveView,
     /// View 이름 변경 (UX.12.1, ADR-0079).
     RenameView,
+    /// 외부에서 바뀐 문서 원본을 레코드 변경 집합으로 반영 (UX.4.1, ADR-0079).
+    ApplyExternalSnapshot,
     /// 테스트 전용 probe(fault injection). 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe,
@@ -78,6 +80,7 @@ impl CommandKind {
         CommandKind::AddView,
         CommandKind::RemoveView,
         CommandKind::RenameView,
+        CommandKind::ApplyExternalSnapshot,
     ];
 
     /// 영구 예약 값(유효한 종류가 아님).
@@ -105,6 +108,7 @@ impl CommandKind {
             CommandKind::AddView => 0x0063,
             CommandKind::RemoveView => 0x0064,
             CommandKind::RenameView => 0x0065,
+            CommandKind::ApplyExternalSnapshot => 0x0070,
             #[cfg(test)]
             CommandKind::TestProbe => 0xFFF0,
         }
@@ -144,6 +148,7 @@ impl CommandKind {
             CommandKind::AddView => "add-view",
             CommandKind::RemoveView => "remove-view",
             CommandKind::RenameView => "rename-view",
+            CommandKind::ApplyExternalSnapshot => "apply-external-snapshot",
             #[cfg(test)]
             CommandKind::TestProbe => "test-probe",
         }
@@ -173,7 +178,8 @@ impl CommandKind {
             | CommandKind::RenamePage
             | CommandKind::AddView
             | CommandKind::RemoveView
-            | CommandKind::RenameView => 2,
+            | CommandKind::RenameView
+            | CommandKind::ApplyExternalSnapshot => 2,
             #[cfg(test)]
             CommandKind::TestProbe => 1,
         }
@@ -202,6 +208,7 @@ impl CommandKind {
             CommandKind::AddView => "View 추가",
             CommandKind::RemoveView => "View 삭제",
             CommandKind::RenameView => "View 이름 변경",
+            CommandKind::ApplyExternalSnapshot => "외부 변경 반영",
             #[cfg(test)]
             CommandKind::TestProbe => "test probe",
         }
@@ -262,6 +269,7 @@ mod tests {
                 (0x0063, "add-view"),
                 (0x0064, "remove-view"),
                 (0x0065, "rename-view"),
+                (0x0070, "apply-external-snapshot"),
             ]
         );
     }

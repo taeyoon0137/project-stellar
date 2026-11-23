@@ -12,6 +12,7 @@
 //! | base ≠ 현재 세대(generation 번호 또는 manifest hash가 다름) | 봉인 [`SealReason::BaseMismatch`] |
 //! | 읽기 전용(최소 writer version이 이 writer보다 높음) | 봉인 [`SealReason::ReadOnly`] — 복원 후 이어 기록할 수 없음 |
 //! | 읽을 수 없음(형식·버전·손상) | 봉인 [`SealReason::Unreadable`] — 새 reader가 읽을 수 있게 보존 |
+//! | 이 앱이 모르는 command(새 codec·registry 밖 종류, ADR-0079) | 봉인 [`SealReason::UnknownCommand`] — 복원만 포기, 문서 원본은 그대로 |
 //! | 파일 이름과 창 id가 다름 | 봉인 [`SealReason::WindowMismatch`] |
 //!
 //! 실행 중 checkout·merge·rebase 등으로 기준점이 바뀌면 복원과 별개로 active journal을 봉인합니다
@@ -46,17 +47,20 @@ pub enum SealReason {
     Unreadable,
     /// 파일 이름과 journal 안 창 id가 다릅니다.
     WindowMismatch,
+    /// journal에 이 앱이 모르는 command가 있습니다(새 command codec, ADR-0079).
+    UnknownCommand,
     /// 실행 중 기준점이 바뀌었습니다(checkout·merge·rebase 등, XXV.1.4).
     BaseChanged(BaseChangeKind),
 }
 
 impl SealReason {
     /// 모든 사유.
-    pub const ALL: [SealReason; 12] = [
+    pub const ALL: [SealReason; 13] = [
         SealReason::BaseMismatch,
         SealReason::ReadOnly,
         SealReason::Unreadable,
         SealReason::WindowMismatch,
+        SealReason::UnknownCommand,
         SealReason::BaseChanged(BaseChangeKind::Checkout),
         SealReason::BaseChanged(BaseChangeKind::Merge),
         SealReason::BaseChanged(BaseChangeKind::Rebase),
@@ -74,6 +78,7 @@ impl SealReason {
             SealReason::ReadOnly => "read-only",
             SealReason::Unreadable => "unreadable",
             SealReason::WindowMismatch => "window-mismatch",
+            SealReason::UnknownCommand => "unknown-command",
             SealReason::BaseChanged(kind) => kind.token(),
         }
     }
@@ -269,6 +274,7 @@ impl JournalStore {
             Err(e) => return Err(e.into()),
         };
         let reason = match HistoryJournal::decode(&bytes) {
+            Err(error) if error.is_unknown_command() => SealReason::UnknownCommand,
             Err(_) => SealReason::Unreadable,
             Ok(journal) if journal.header.window != window => SealReason::WindowMismatch,
             Ok(journal)
@@ -463,6 +469,68 @@ mod tests {
         assert_eq!(store.list_sealed().unwrap().len(), 2);
     }
 
+    /// `haystack` 안 `needle`의 시작 위치.
+    fn find(haystack: &[u8], needle: &[u8]) -> usize {
+        haystack
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .expect("부분 bytes")
+    }
+
+    #[test]
+    fn journal_with_unknown_command_is_sealed_and_document_is_untouched() {
+        // 검증(ADR-0079): 미래 kind journal은 복원만 포기하고 진단(봉인 사유)을 남깁니다. 문서는 그대로입니다.
+        let project = TempDir::new("restore-project-unknown");
+        let store = JournalStore::open(project.path(), JournalLocation::ProjectLocal).unwrap();
+        let w = window(6);
+        let mut history = WindowHistory::new(w);
+        let mut doc = small_state();
+        let t = tx(&doc, 3_000, Command::rename_node(sid(11), "미래"));
+        history.record_document(&mut doc, &t, None).unwrap();
+        let path = store.record_save_point(&history, base(5)).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        // 항목 안 command 종류 번호를 registry 밖 값으로 바꿉니다(미래 앱이 더한 종류).
+        let command = stellar_commands::codec::encode_command(&t.requests[0].command);
+        let at = find(&bytes, &command);
+        let mut future = bytes.clone();
+        future[at..at + 2].copy_from_slice(&0x7777u16.to_le_bytes());
+        std::fs::write(&path, &future).unwrap();
+        let reopened = reopen(&doc);
+        let before = snapshot(&reopened);
+        let restored = store
+            .restore_window(w, base(5), HistoryGroupingPolicy::default())
+            .unwrap();
+        let RestoreOutcome::Sealed(sealed) = &restored.outcome else {
+            panic!("봉인되어야 함: {:?}", restored.outcome);
+        };
+        assert_eq!(sealed.reason, SealReason::UnknownCommand);
+        assert!(sealed
+            .path
+            .to_str()
+            .unwrap()
+            .ends_with(".unknown-command.stlhjnl"));
+        assert_eq!(
+            std::fs::read(&sealed.path).unwrap(),
+            future,
+            "봉인 파일 보존"
+        );
+        assert!(restored.history.history().is_empty(), "빈 history");
+        assert_eq!(snapshot(&reopened), before, "문서 무손상");
+        // header가 이 앱보다 새 codec을 선언한 journal도 같습니다.
+        store.record_save_point(&history, base(5)).unwrap();
+        let mut newer = bytes.clone();
+        newer[crate::journal::tests::CODEC_AT..crate::journal::tests::CODEC_AT + 4]
+            .copy_from_slice(&99u32.to_le_bytes());
+        std::fs::write(&path, &newer).unwrap();
+        let outcome = store
+            .restore_window(w, base(5), HistoryGroupingPolicy::default())
+            .unwrap()
+            .outcome;
+        assert!(
+            matches!(&outcome, RestoreOutcome::Sealed(s) if s.reason == SealReason::UnknownCommand)
+        );
+    }
+
     #[test]
     fn unreadable_read_only_and_foreign_journals_are_sealed() {
         let project = TempDir::new("restore-project-3");
@@ -479,10 +547,10 @@ mod tests {
         assert!(
             matches!(&outcome, RestoreOutcome::Sealed(s) if s.reason == SealReason::Unreadable)
         );
-        // 미래 writer(최소 writer 2)가 쓴 journal: 같은 base라도 이어 기록할 수 없어 봉인.
+        // 미래 writer(최소 writer 3)가 쓴 journal: 같은 base라도 이어 기록할 수 없어 봉인.
         let mut future = bytes.clone();
         future[12..16].copy_from_slice(&3u32.to_le_bytes());
-        future[20..24].copy_from_slice(&2u32.to_le_bytes());
+        future[20..24].copy_from_slice(&3u32.to_le_bytes());
         std::fs::write(&path, &future).unwrap();
         let outcome = store.restore_window(w, base(5), policy).unwrap().outcome;
         assert!(matches!(&outcome, RestoreOutcome::Sealed(s) if s.reason == SealReason::ReadOnly));
