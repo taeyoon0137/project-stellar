@@ -47,7 +47,7 @@ use crate::change::{node_field_invalidation, node_keys};
 use crate::codec::{CommandCodecError, Reader, Writer};
 use crate::command::CommandError;
 use crate::edit::EditContext;
-use crate::tree::{id_owners, IdOwner};
+use crate::tree::{id_use, IdUse};
 
 /// 속성 값 타입(registry가 key마다 하나를 정합니다).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -907,8 +907,8 @@ impl SetProperty {
         }
         // clip 대상이 문서에 있으면 Path여야 합니다(없으면 미해결 진단).
         if let PropertyValue::Clipping(Clipping::Path(target)) = &self.value {
-            match id_owners(model).get(&target.id()) {
-                None | Some(IdOwner::Node(NodeKind::Path)) => {}
+            match id_use(model, target.id()) {
+                None | Some(IdUse::Node(NodeKind::Path)) => {}
                 Some(_) => {
                     return Err(CommandError::ReferenceTypeMismatch {
                         owner: self.node,

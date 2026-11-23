@@ -37,7 +37,7 @@ use crate::change::{node_field_invalidation, node_keys};
 use crate::codec::{CommandCodecError, Reader, Writer};
 use crate::command::CommandError;
 use crate::edit::EditContext;
-use crate::tree::{id_owners, path_element_ids, ChildIndex, IdOwner};
+use crate::tree::{id_use, path_element_ids, ChildIndex, IdUse};
 
 fn kind_error(node: StableId, expected: NodeKind, found: NodeKind) -> CommandError {
     CommandError::ConversionKind {
@@ -330,13 +330,12 @@ impl ConvertShapeToPath {
                 reason: "path point·handle id 수가 변환 결과와 다릅니다",
             });
         }
-        let owners = id_owners(model);
         let mut seen = BTreeSet::new();
         for id in &self.element_ids {
             if *id == StableId::NIL {
                 return Err(CommandError::NilId);
             }
-            if owners.contains_key(id) || !seen.insert(*id) {
+            if id_use(model, *id).is_some() || !seen.insert(*id) {
                 return Err(CommandError::DuplicateId { id: *id });
             }
         }
@@ -474,21 +473,21 @@ impl RestoreNodeRecords {
             .filter_map(|id| model.payload(*id))
             .flat_map(path_element_ids)
             .collect();
-        // clip 대상이나 새 path element의 소유권을 조회할 때만 문서 전체 id 공간이 필요합니다.
-        let owners = std::cell::LazyCell::new(|| {
-            let mut owners = id_owners(model);
-            for element in &released {
-                owners.remove(element);
+        // 교체 node가 내놓는 path element를 뺀 문서 영속 id 공간(모델의 증분 index 조회, XVI.4.7).
+        let owner = |id: StableId| -> Option<IdUse> {
+            if released.contains(&id) {
+                None
+            } else {
+                id_use(model, id)
             }
-            owners
-        });
+        };
         let new_kinds: BTreeMap<StableId, NodeKind> =
             self.records.iter().map(|r| (r.id, r.kind())).collect();
-        let kind_after = |id: StableId| -> Option<IdOwner> {
+        let kind_after = |id: StableId| -> Option<IdUse> {
             new_kinds
                 .get(&id)
-                .map(|kind| IdOwner::Node(*kind))
-                .or_else(|| owners.get(&id).copied())
+                .map(|kind| IdUse::Node(*kind))
+                .or_else(|| owner(id))
         };
         let references = model.references();
         let mut claimed = BTreeSet::new();
@@ -552,7 +551,7 @@ impl RestoreNodeRecords {
             if let NodePayload::Frame(frame) = &record.payload {
                 if let stellar_document::frame::Clipping::Path(target) = frame.clipping {
                     match kind_after(target.id()) {
-                        None | Some(IdOwner::Node(NodeKind::Path)) => {}
+                        None | Some(IdUse::Node(NodeKind::Path)) => {}
                         Some(_) => {
                             return Err(CommandError::ReferenceTypeMismatch {
                                 owner: record.id,
@@ -566,7 +565,7 @@ impl RestoreNodeRecords {
                 if element == StableId::NIL {
                     return Err(CommandError::NilId);
                 }
-                if owners.contains_key(&element) || !claimed.insert(element) {
+                if owner(element).is_some() || !claimed.insert(element) {
                     return Err(CommandError::DuplicateId { id: element });
                 }
             }
@@ -1506,7 +1505,7 @@ mod tests {
                 }
             }
             // payload를 유지한 Frame의 미해결 clip 대상을 다른 node의 새 Path element로 재사용하는 후보.
-            let owners = id_owners(&model);
+            let owners = crate::tree::id_owners(&model);
             for &frame_id in &ids {
                 let Some(NodePayload::Frame(current)) = model.payload(frame_id) else {
                     continue;

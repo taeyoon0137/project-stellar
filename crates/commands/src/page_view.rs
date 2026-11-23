@@ -69,7 +69,7 @@ impl ViewContent {
 
     fn capture_with(
         model: &DocumentModel,
-        index: &ChildIndex,
+        index: &ChildIndex<'_>,
         view: &ViewDefinition,
     ) -> Result<ViewContent, CommandError> {
         let mut nodes = Vec::new();

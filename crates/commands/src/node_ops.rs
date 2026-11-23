@@ -35,7 +35,7 @@ use crate::change::{node_keys, STRUCTURE_INVALIDATION};
 use crate::codec::{CommandCodecError, Reader, Writer};
 use crate::command::CommandError;
 use crate::edit::EditContext;
-use crate::tree::{depth_of, id_owners, kind_of, parent_of, path_element_ids, ChildIndex, IdOwner};
+use crate::tree::{depth_of, id_use, kind_of, parent_of, path_element_ids, ChildIndex, IdUse};
 
 /// node(또는 subtree) 삽입.
 ///
@@ -185,18 +185,17 @@ impl InsertNode {
         }
 
         // 4. 참조 종류: 대상이 있으면 기대 종류여야 합니다(없으면 미해결 진단, III.2.4).
-        let owners = std::cell::OnceCell::new();
-        let target_kind = |id: StableId| -> Option<IdOwner> {
+        let target_kind = |id: StableId| -> Option<IdUse> {
             new_ids
                 .get(&id)
-                .map(|kind| IdOwner::Node(*kind))
-                .or_else(|| owners.get_or_init(|| id_owners(model)).get(&id).copied())
+                .map(|kind| IdUse::Node(*kind))
+                .or_else(|| id_use(model, id))
         };
         for record in &self.nodes {
             if let NodePayload::Frame(frame) = &record.payload {
                 if let Clipping::Path(target) = frame.clipping {
                     match target_kind(target.id()) {
-                        None | Some(IdOwner::Node(NodeKind::Path)) => {}
+                        None | Some(IdUse::Node(NodeKind::Path)) => {}
                         Some(_) => {
                             return Err(CommandError::ReferenceTypeMismatch {
                                 owner: record.id,
@@ -230,7 +229,7 @@ impl InsertNode {
                 })?;
                 for target in entry.payload.referenced_nodes() {
                     match target_kind(target) {
-                        None | Some(IdOwner::Node(_)) => {}
+                        None | Some(IdUse::Node(_)) => {}
                         Some(_) => {
                             return Err(CommandError::ReferenceTypeMismatch {
                                 owner: stack.node,
@@ -567,7 +566,7 @@ impl MoveNode {
             });
         }
         let index = ChildIndex::build(model);
-        for sibling in index.children(self.new_parent) {
+        for sibling in &index.children(self.new_parent) {
             if *sibling != self.node
                 && crate::tree::order_key_of(model, *sibling).as_ref() == Some(&self.order_key)
             {
@@ -665,12 +664,12 @@ pub(crate) fn decode_order_key(input: &mut Reader<'_>) -> Result<OrderKey, Comma
 }
 
 /// `root` 아래 가장 깊은 자손까지의 거리(leaf = 0).
-fn subtree_height(index: &ChildIndex, root: StableId) -> u32 {
+fn subtree_height(index: &ChildIndex<'_>, root: StableId) -> u32 {
     let mut height = 0u32;
     let mut stack = vec![(root, 0u32)];
     while let Some((id, depth)) = stack.pop() {
         height = height.max(depth);
-        for child in index.children(id) {
+        for child in &index.children(id) {
             stack.push((*child, depth.saturating_add(1)));
         }
     }
@@ -1080,15 +1079,18 @@ mod tests {
             let mut seen_ids = BTreeSet::new();
             let mut seen_keys = BTreeSet::new();
             let mut assert_indexes = |model: &DocumentModel| {
-                let owners = id_owners(model);
+                let owners = crate::tree::id_owners(model);
                 seen_ids.extend(owners.keys().copied());
                 for &id in &seen_ids {
                     assert_eq!(model.contains_persistent_id(id), owners.contains_key(&id));
                 }
-                let rebuilt = ChildIndex::build(model);
+                let rebuilt = ChildIndex::rebuild(model);
                 let mut keys = BTreeSet::new();
                 for id in crate::tree::node_ids(model) {
-                    assert_eq!(model.children_in_order(id), rebuilt.children(id));
+                    assert_eq!(
+                        model.children_in_order(id),
+                        rebuilt.get(&id).cloned().unwrap_or_default()
+                    );
                     if let Some(Some(parent)) = parent_of(model, id) {
                         keys.insert((parent, crate::tree::order_key_of(model, id).unwrap()));
                     }
