@@ -531,17 +531,6 @@ mod tests {
     }
 
     #[test]
-    fn connection_result_does_not_depend_on_stored_value() {
-        // 저장 값이 Length에서 Percentage로 바뀌어도 포트(문법)와 식의 정적 타입만 보므로 결과가 같습니다.
-        let port = property_port(node(NodeKind::Frame), PropertyKey(0x0108)).expect("width");
-        let found = TypeSpec::required(ExpressionType::Length);
-        let before = check_state_connection(&port, found);
-        let stored_after = ExpressionType::Percentage;
-        assert!(port.accepts(stored_after));
-        assert_eq!(check_state_connection(&port, found), before);
-    }
-
-    #[test]
     fn unmapped_grammar_is_diagnosed() {
         let tracks = property_port(
             node(NodeKind::Frame),

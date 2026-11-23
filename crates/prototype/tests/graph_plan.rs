@@ -207,3 +207,46 @@ fn socket_kinds_and_port_types_are_enforced() {
     ));
     let _ = ExpressionType::Length;
 }
+
+#[test]
+fn connection_check_does_not_depend_on_stored_value_variant() {
+    // 검증 기준(XXX.1.2): 저장 값을 Length에서 Percentage로 바꿔도 연결 검사 결과 불변. 실제 binding을 Length로 저장한
+    // 문서와 Percentage로 바꿔 저장한 문서에서 같은 연결 plan의 결과가 같아야 합니다.
+    let mut doc = document();
+    let percent = TypedValue::Percentage(Percentage::new(50.0).expect("%"));
+    let connect = |doc: &PrototypeDocument, value: TypedValue, binding: Option<BindingId>| {
+        Planner::new(doc, toggle()).plan(&GraphEdit::Connect {
+            from: Endpoint::Expression(literal_ast(420, value)),
+            to: Endpoint::PropertyInput(width(ROOT)),
+            binding,
+            reference_node: None,
+        })
+    };
+    let outcomes = |doc: &PrototypeDocument| {
+        [px(10.0), percent.clone(), green()].map(|value| {
+            connect(doc, value, None)
+                .map(|_| ())
+                .map_err(|e| format!("{e:?}"))
+        })
+    };
+    // 저장 값 Length.
+    connect(&doc, px(100.0), Some(BindingId::new(sid(421))))
+        .expect("Length plan")
+        .apply(&mut doc)
+        .expect("Length 적용");
+    let with_length = outcomes(&doc);
+    // 저장 값 Percentage로 교체.
+    connect(&doc, percent.clone(), None)
+        .expect("Percentage plan")
+        .apply(&mut doc)
+        .expect("Percentage 적용");
+    let stored = doc.bindings.get(BindingId::new(sid(421))).expect("binding");
+    assert_eq!(
+        stored.expected_type(),
+        stellar_expressions::types::TypeSpec::required(ExpressionType::Percentage),
+        "저장 variant가 바뀌었습니다"
+    );
+    let with_percent = outcomes(&doc);
+    assert_eq!(with_length, with_percent);
+    assert!(with_length[0].is_ok() && with_length[1].is_ok() && with_length[2].is_err());
+}

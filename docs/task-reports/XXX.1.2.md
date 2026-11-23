@@ -36,8 +36,9 @@
 시험:
 
 - `prototype::socket::tests::port_types_match_golden`: 모든 node 종류·modifier의 포트 golden.
-- `width_accepts_length_and_percentage_but_not_color`, `connection_result_does_not_depend_on_stored_value`, `unmapped_grammar_is_diagnosed`, `state_and_pulse_do_not_connect_directly`, `union_keywords_parse_with_layout_grammar`.
+- `width_accepts_length_and_percentage_but_not_color`, `unmapped_grammar_is_diagnosed`, `state_and_pulse_do_not_connect_directly`, `union_keywords_parse_with_layout_grammar`.
 - `crates/prototype/tests/graph_plan.rs::socket_kinds_and_port_types_are_enforced`: plan 수준의 직접 연결 거부·변환 node 경유·width Length·Percentage 허용·Color 거부.
+- `crates/prototype/tests/graph_plan.rs::connection_check_does_not_depend_on_stored_value_variant`: width binding을 Length로 저장한 문서와 Percentage로 바꿔 저장한 문서에서 같은 연결 plan(Length·Percentage 허용, Color 거부) 결과가 같음.
 
 ## 차이(작업 지시와 다른 점)
 
