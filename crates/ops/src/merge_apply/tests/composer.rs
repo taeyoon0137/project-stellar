@@ -1,5 +1,6 @@
 //! Merge Composer 결과 적용 통합 시험(시스템 Git fixture). Git이 없는 환경에서는 건너뜁니다.
 
+use stellar_git_porcelain::composer::SourceRef;
 use stellar_semantic_merge::candidate::{CandidateCommand, Resolution};
 use stellar_semantic_merge::model::ConflictTarget;
 
@@ -141,6 +142,83 @@ fn existing_worktree_target_receives_c() {
     assert_eq!(report.target, "existing-worktree");
     assert_eq!(name_of(&other, repo.document, repo.children[0]), "from-a");
     assert_eq!(name_of(&other, repo.document, repo.children[1]), "from-b");
+}
+
+#[test]
+fn moved_source_blocks_apply_and_writes_nothing() {
+    let Some(repo) = repo("merge-apply-stale", false) else {
+        return;
+    };
+    let work = repo.fx.work().to_path_buf();
+    let git = repo.fx.gated();
+    let (a, b) = branches();
+    let composition = compose(&git, &work, &a, &b, &scratch(&repo)).unwrap();
+    let target = validate_target(
+        &git,
+        &work,
+        composition.project_id(),
+        &ResultTarget::CurrentWorktree,
+    )
+    .unwrap();
+    // C를 만든 뒤 branch b가 움직입니다.
+    let other = repo.fx.add_worktree("mover", "b").unwrap();
+    repo.fx.git_in(&other, ["switch", "-q", "b"]).unwrap();
+    repo.fx.write_in(&other, "notes.txt", b"moved\n").unwrap();
+    repo.fx.commit_all_in(&other, "move b").unwrap();
+    let before = file_digest(&work);
+    let error = apply_composition(
+        &git,
+        &composition,
+        target,
+        &LockPolicy::None,
+        &scratch(&repo),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, ComposerApplyError::StaleSource { side: "b", ref reason } if reason == "commit"),
+        "{error}"
+    );
+    assert_eq!(file_digest(&work), before, "쓰기 0");
+}
+
+#[test]
+fn changed_working_tree_source_blocks_apply() {
+    let Some(repo) = repo("merge-apply-stale-wt", false) else {
+        return;
+    };
+    let work = repo.fx.work().to_path_buf();
+    let git = repo.fx.gated();
+    // A = 현재 작업 트리(main), B = branch b.
+    let composition = compose(
+        &git,
+        &work,
+        &SourceRef::WorkingTree,
+        &SourceRef::Branch("b".into()),
+        &scratch(&repo),
+    )
+    .unwrap();
+    let target = validate_target(
+        &git,
+        &work,
+        composition.project_id(),
+        &ResultTarget::CurrentWorktree,
+    )
+    .unwrap();
+    std::fs::write(work.join("README.md"), b"edited after compose\n").unwrap();
+    let before = file_digest(&work);
+    let error = apply_composition(
+        &git,
+        &composition,
+        target,
+        &LockPolicy::None,
+        &scratch(&repo),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, ComposerApplyError::StaleSource { side: "a", ref reason } if reason == "content"),
+        "{error}"
+    );
+    assert_eq!(file_digest(&work), before, "쓰기 0");
 }
 
 #[test]

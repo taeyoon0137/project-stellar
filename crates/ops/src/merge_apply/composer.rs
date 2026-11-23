@@ -1,4 +1,4 @@
-//! Merge Composer 결과 적용 (XXIII.3.3, ADR-0110 결정 6).
+//! Merge Composer 결과 적용 (XXIII.3.3·XXIII.3.4, ADR-0110 결정 5·6).
 //!
 //! 순서:
 //!
@@ -7,7 +7,8 @@
 //!    (XXIII.2.1). A·B의 해석 결과(commit OID·snapshot 원천)와 내용 지문(path·mode·blob ID)을 기록합니다.
 //! 2. 사용자는 [`Composition::candidate_mut`]로 conflict를 해결합니다(XXIII.2.3).
 //! 3. [`apply_composition`]: C가 쓰기 조건(unresolved 0·새 위반 0, XXIII.2.4)을 통과하는지, C의 문서를 무손실로 되돌릴
-//!    수 있는지 확인합니다. 새 branch+worktree target이면 이때 시스템 Git으로 만듭니다(XXIII.3.2). 마지막으로 C의 문서를
+//!    수 있는지 확인합니다. 그다음 **A·B를 다시 해석·지문 계산해 기록과 비교**하고 다르면 아무것도 쓰지 않습니다
+//!    (XXIII.3.4). 새 branch+worktree target이면 이때 시스템 Git으로 만듭니다(XXIII.3.2). 마지막으로 C의 문서를
 //!    target 프로젝트에 generation save합니다(XXIII.3.3): 저장 잠금 → target revision 재확인 → 문서 재직렬화 →
 //!    저장 파이프라인(V.5, optimistic base check). 문서가 아닌 chunk(project metadata·컴포넌트·token·asset)는 target
 //!    것을 그대로 잇습니다.
@@ -25,11 +26,11 @@ use std::path::{Path, PathBuf};
 
 use stellar_document::records::{DocumentRecords, NodePayload};
 use stellar_git_porcelain::composer::{
-    materialize_sources, resolve_source, ComparisonMode, ComposerSnapshotError, ResolvedSource,
-    SourceError, SourceRef, SourceSnapshot,
+    materialize_source, materialize_sources, resolve_source, ComparisonMode, ComposerSnapshotError,
+    ResolvedSource, SourceError, SourceRef, SourceSnapshot,
 };
 use stellar_git_porcelain::object::ObjectId;
-use stellar_git_porcelain::snapshot::SnapshotEntry;
+use stellar_git_porcelain::snapshot::{SnapshotEntry, SnapshotSource};
 use stellar_git_porcelain::trust::GatedGitRunner;
 use stellar_project::document_io::component_source::project_source_index;
 use stellar_project::document_io::serialize::serialize_records;
@@ -57,7 +58,7 @@ use crate::lock::{LockError, LockPolicy, SaveLock};
 use crate::revision::ProjectRevision;
 use crate::snapshot::open_snapshot;
 
-/// C를 만든 source 기록(해석 결과와 내용 지문).
+/// 적용 전 재검사의 기준이 되는 source 기록.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceFingerprint {
     /// 해석 결과(commit OID·snapshot 원천·worktree).
@@ -277,6 +278,13 @@ pub enum ComposerApplyError {
     Blocked(CandidateBlocked),
     /// C의 문서를 무손실로 되돌릴 수 없습니다.
     Result(DocumentMergeError),
+    /// C를 만든 뒤 source가 바뀌었습니다(XXIII.3.4). `side`는 `a`·`b`입니다.
+    StaleSource {
+        /// 바뀐 source.
+        side: &'static str,
+        /// 바뀐 내용(`commit`·`content`, 또는 `resolve`·`materialize` 실패 원인).
+        reason: String,
+    },
     /// target 검증·생성 실패.
     Target(TargetError),
     /// 저장 잠금 실패.
@@ -303,6 +311,10 @@ impl fmt::Display for ComposerApplyError {
         match self {
             ComposerApplyError::Blocked(e) => write!(f, "C를 쓸 수 없습니다: {e}"),
             ComposerApplyError::Result(e) => write!(f, "{e}"),
+            ComposerApplyError::StaleSource { side, reason } => write!(
+                f,
+                "C를 만든 뒤 source {side}가 바뀌었습니다({reason}). 다시 만드세요"
+            ),
             ComposerApplyError::Target(e) => write!(f, "{e}"),
             ComposerApplyError::Lock(e) => write!(f, "{e}"),
             ComposerApplyError::Open(e) => write!(f, "target 프로젝트: {e}"),
@@ -322,6 +334,37 @@ impl fmt::Display for ComposerApplyError {
 
 impl std::error::Error for ComposerApplyError {}
 
+/// C를 만든 뒤 source가 바뀌었는지 다시 검사합니다(XXIII.3.4). A·B를 같은 요청으로 다시 해석해 commit OID·snapshot
+/// 원천이 같은지 보고, index·작업 트리 source는 같은 materialize 경로로 내용 지문을 다시 계산해 비교합니다. commit
+/// 계열 source의 내용은 OID가 고정하므로 다시 읽지 않습니다. 원본을 바꾸지 않습니다.
+pub fn recheck_sources(
+    git: &GatedGitRunner,
+    composition: &Composition,
+    scratch: &Path,
+) -> Result<(), ComposerApplyError> {
+    let (current, _) =
+        project_location(git, &composition.project_root).map_err(ComposerApplyError::Target)?;
+    for (side, recorded) in [("a", &composition.a), ("b", &composition.b)] {
+        let stale = |reason: String| ComposerApplyError::StaleSource { side, reason };
+        let now = resolve_source(git, &current, &recorded.resolved.source)
+            .map_err(|e| stale(format!("resolve: {e}")))?;
+        if now != recorded.resolved {
+            return Err(stale("commit".into()));
+        }
+        if matches!(
+            now.snapshot,
+            SnapshotSource::Index | SnapshotSource::WorkingTree
+        ) {
+            let fresh = materialize_source(git, &now, scratch)
+                .map_err(|e| stale(format!("materialize: {e}")))?;
+            if fresh.entries != recorded.entries {
+                return Err(stale("content".into()));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// C를 `target`에 적용합니다(모듈 문서 3). `target`은 [`super::target::validate_target`] 결과입니다.
 pub fn apply_composition(
     git: &GatedGitRunner,
@@ -335,7 +378,7 @@ pub fn apply_composition(
         .validate()
         .map_err(ComposerApplyError::Blocked)?;
     let documents = project_documents(validated.snapshot()).map_err(ComposerApplyError::Result)?;
-    let _ = scratch;
+    recheck_sources(git, composition, scratch)?;
     let created_branch = match target.target() {
         super::target::ResultTarget::NewBranchWorktree { branch, .. } => Some(branch.clone()),
         _ => None,
