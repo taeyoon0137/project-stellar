@@ -10,10 +10,16 @@
 //!   [`composite_program`]·[`composite_blend_state`]입니다.
 //! - **layer blur**: 경계 node에 layer blur가 있으면 layer pass 뒤에 `GaussianBlur` 가로·세로 pass 두 개를 두고, 부모는 세로
 //!   pass 결과를 합성합니다([`LayerEffects::blurred`]). σ = 반경(CSS `filter: blur()`).
-//! - **drop shadow**: shadow가 있는 내용 draw는 node 자기 내용(shadow 제외)을 투명 layer에 그리는 원본 pass
-//!   ([`EffectStep::ShadowSource`]) 하나와, shadow마다 `GaussianBlur` 가로(alpha를 모든 채널로 퍼뜨림)·세로(shadow 색을 곱함)
-//!   pass 두 개를 둡니다. target pass는 내용 draw 바로 아래에 shadow 결과를 offset만큼 옮겨 목록 순서(앞이 아래)로 합성합니다
-//!   ([`DrawEffects::shadows`]). σ = blur 반경 / 2(CSS `box-shadow`·`drop-shadow()`).
+//! - **shadow**: shadow가 있는 내용 draw는 원본 pass([`EffectStep::ShadowSource`]) 하나와, shadow마다 `GaussianBlur`
+//!   가로(alpha를 모든 채널로 퍼뜨림)·세로(shadow 색을 곱함) pass 두 개를 둡니다. target pass는 내용 draw 바로 아래에 shadow
+//!   결과를 offset만큼 옮겨 목록 순서(앞이 아래)로 합성합니다([`DrawEffects::shadows`]). σ = blur 반경 / 2. 원본 모양은
+//!   CSS 대응을 따릅니다([`ShadowShape`], ADR-0130 결정 1). Frame(`SceneContent::Rect`)은 CSS `box-shadow`라 원본이 테두리
+//!   상자(모서리 반경 포함)를 불투명하게 칠한 모양이고 합성할 때 상자 안을 비웁니다. 그래서 배경이 없거나 반투명해도 상자
+//!   모양 그림자이고 상자 안에는 비치지 않습니다. 그 밖의 내용(Path·Text·Image)은 `filter: drop-shadow()`라 node 자기
+//!   내용(shadow 제외)의 alpha입니다.
+//! - **낮은 해상도 효과**(ADR-0130 결정 2): device σ가 [`MAX_SIGMA`](crate::effects::blur::MAX_SIGMA)를 넘으면 blur 입력을 [`effect_downsample`] 배수로
+//!   줄이는 pass([`EffectStep::Downsample`])를 두고 줄인 크기 texture에서 σ / d로 blur합니다. shadow는 target 합성이,
+//!   layer blur는 키우기 pass([`EffectStep::Upsample`])가 bilinear로 다시 키웁니다([`DeviceBlur::downsample`]).
 //! - **clip mask**: clip 방식이 [`ClipPlan::Mask`]인 draw는 복합 clip coverage(나열한 clip의 곱, 곧 교집합)를 `R8Unorm`
 //!   texture에 그리는 pass([`EffectStep::Mask`])를 두고 draw가 그 texture를 곱합니다([`DrawEffects::mask`]). 같은 clip
 //!   stack·같은 복합 clip 목록의 draw는 mask 하나를 같이 씁니다.
@@ -24,11 +30,12 @@
 //! 옮깁니다. shadow offset은 `M·offset`입니다. σ는 축마다 `σx = σ·√(a² + c²)`, `σy = σ·√(b² + d²)`이고, 분리 blur는 device
 //! 가로·세로로 적용합니다. `M·Mᵀ`가 대각(축 정렬 변환, 또는 회전 + 균일 배율)이면 local 등방 gaussian을 옮긴 결과와
 //! 같고, 기울임·비균일 회전은 대각 성분만 쓰는 근사입니다([`DeviceBlur::exact`]가 거짓). σ가
-//! [`MAX_SIGMA`]를 넘으면 상한으로 그리고 [`EffectDiagnostic::BlurTooLarge`]를 남깁니다(근사를 알림).
+//! [`MAX_DEVICE_SIGMA`]를 넘으면 상한으로 그리고 [`EffectDiagnostic::BlurTooLarge`]를 남깁니다(근사를 알림).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use stellar_scene::node::SceneContent;
 use stellar_scene::stack::{Opacity, SceneBlendMode};
 use stellar_scene::visibility::Viewport;
 use stellar_scene::{SceneNode, ZOrder};
@@ -36,10 +43,13 @@ use stellar_scene::{SceneNode, ZOrder};
 use crate::backend::{BlendState, ShaderProgram};
 use crate::blend::{composite_blend_state, composite_program, resolve_or_normal, BlendDiagnostic};
 use crate::clip_plan::ClipPlan;
-use crate::effects::blur::{layer_blur_sigma, shadow_sigma, MAX_SIGMA};
+use crate::effects::blur::{
+    downsampled_extent, effect_downsample, layer_blur_sigma, shadow_sigma, MAX_DEVICE_SIGMA,
+    MAX_DOWNSAMPLE,
+};
 use crate::render_graph::{
-    ClearColor, GraphBuildError, LoadOp, PassId, PassKind, RenderGraphBuilder, ResourceVersion,
-    StoreOp, TextureDesc, TextureFormat,
+    AttachmentSize, ClearColor, GraphBuildError, LoadOp, PassId, PassKind, RenderGraphBuilder,
+    ResourceVersion, StoreOp, TextureDesc, TextureFormat,
 };
 
 use super::{DrawSource, LayerId, PlannedDraw, LAYER_FORMAT};
@@ -79,6 +89,27 @@ pub struct DeviceBlur {
     pub sigma_y: f32,
     /// 분리 blur가 local 등방 gaussian과 정확히 같은지(`M·Mᵀ`가 대각).
     pub exact: bool,
+    /// 효과를 그리는 낮은 해상도 배수(2의 거듭제곱, 1이면 device 해상도). 큰 축 σ로 [`effect_downsample`]가 정합니다.
+    pub downsample: u32,
+}
+
+/// shadow 원본 모양(ADR-0130 결정 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ShadowShape {
+    /// node 자기 내용의 alpha(CSS `filter: drop-shadow()`). Path·Text·Image.
+    ContentAlpha,
+    /// 테두리 상자(CSS `box-shadow`): 모서리 반경 포함 상자를 불투명하게 칠한 모양이고 합성할 때 상자 안을 비웁니다. Frame.
+    BorderBox,
+}
+
+impl ShadowShape {
+    /// node 내용의 CSS 대응으로 정합니다: `SceneContent::Rect`(Frame)는 `box-shadow`, 나머지는 `drop-shadow()`.
+    pub fn of(node: &SceneNode) -> ShadowShape {
+        match node.content() {
+            SceneContent::Rect(_) => ShadowShape::BorderBox,
+            _ => ShadowShape::ContentAlpha,
+        }
+    }
 }
 
 /// 효과 진단.
@@ -111,11 +142,28 @@ impl EffectDiagnostic {
 /// 효과 pass 하나가 하는 일.
 #[derive(Debug, Clone)]
 pub enum EffectStep {
-    /// node 자기 내용(paint layer·image·text, shadow 제외)을 투명 layer(`LAYER_FORMAT`)에 그립니다. clip은 적용하지 않습니다
-    /// (target 합성 draw가 적용).
+    /// shadow 원본을 투명 layer(`LAYER_FORMAT`)에 그립니다. [`ShadowShape::ContentAlpha`]는 node 자기 내용(paint layer·
+    /// image·text, shadow 제외), [`ShadowShape::BorderBox`]는 테두리 상자를 불투명하게 칠한 모양입니다. clip은 적용하지
+    /// 않습니다(target 합성 draw가 적용).
     ShadowSource {
         /// node.
         node: Arc<SceneNode>,
+        /// 원본 모양.
+        shape: ShadowShape,
+    },
+    /// 입력을 `factor`배(2의 거듭제곱) 줄입니다(단계마다 2×2 상자 평균, ADR-0130 결정 2). 출력은 줄인 고정 크기입니다.
+    Downsample {
+        /// 입력.
+        source: ResourceVersion,
+        /// 배수.
+        factor: u32,
+    },
+    /// 줄인 blur 결과를 surface 크기로 bilinear 키웁니다(layer blur).
+    Upsample {
+        /// 입력.
+        source: ResourceVersion,
+        /// 입력이 줄인 배수.
+        factor: u32,
     },
     /// 한 방향 gaussian blur(`GaussianBlur` program, 밖은 투명).
     Blur {
@@ -159,7 +207,9 @@ pub struct ShadowComposite {
     pub offset: [f32; 2],
     /// device σ.
     pub blur: DeviceBlur,
-    /// 세로 blur pass 결과(shadow 색을 곱한 premultiplied).
+    /// 원본 모양. [`ShadowShape::BorderBox`]면 합성할 때 상자 안을 비웁니다.
+    pub shape: ShadowShape,
+    /// 세로 blur pass 결과(shadow 색을 곱한 premultiplied, `blur.downsample`배 줄인 크기).
     pub output: ResourceVersion,
 }
 
@@ -241,27 +291,36 @@ impl<'v> EffectBuilder<'v> {
             self.diagnostics
                 .push(EffectDiagnostic::AnisotropicBlur { z: node.z() });
         }
-        let mut clamp = |value: f32| {
-            if value > MAX_SIGMA {
+        let finite = |value: f32| if value.is_finite() { value } else { 0.0 };
+        let (mut sigma_x, mut sigma_y) = (finite(sigma * scale_x), finite(sigma * scale_y));
+        let downsample = match effect_downsample(sigma_x.max(sigma_y)) {
+            Some(d) => d,
+            None => {
                 self.diagnostics.push(EffectDiagnostic::BlurTooLarge {
                     z: node.z(),
-                    sigma: value,
+                    sigma: sigma_x.max(sigma_y),
                 });
-                MAX_SIGMA
-            } else if value.is_finite() {
-                value
-            } else {
-                0.0
+                sigma_x = sigma_x.min(MAX_DEVICE_SIGMA);
+                sigma_y = sigma_y.min(MAX_DEVICE_SIGMA);
+                MAX_DOWNSAMPLE
             }
         };
         DeviceBlur {
-            sigma_x: clamp(sigma * scale_x),
-            sigma_y: clamp(sigma * scale_y),
+            sigma_x,
+            sigma_y,
             exact,
+            downsample,
         }
     }
 
-    /// 새 transient에 그리는 효과 pass를 graph에 더합니다.
+    /// viewport(surface) 크기 pixel.
+    fn surface_extent(&self) -> (u32, u32) {
+        let size = self.viewport.size();
+        let side = |v: f32| (v.ceil().max(1.0)) as u32;
+        (side(size.width()), side(size.height()))
+    }
+
+    /// 새 transient(surface 크기)에 그리는 효과 pass를 graph에 더합니다.
     fn pass(
         &mut self,
         builder: &mut RenderGraphBuilder,
@@ -270,7 +329,19 @@ impl<'v> EffectBuilder<'v> {
         reads: &[ResourceVersion],
         step: EffectStep,
     ) -> Result<ResourceVersion, GraphBuildError> {
-        let texture = builder.transient(label, TextureDesc::surface(format));
+        self.sized_pass(builder, label, TextureDesc::surface(format), reads, step)
+    }
+
+    /// 새 transient(`desc`)에 그리는 효과 pass를 graph에 더합니다.
+    fn sized_pass(
+        &mut self,
+        builder: &mut RenderGraphBuilder,
+        label: &'static str,
+        desc: TextureDesc,
+        reads: &[ResourceVersion],
+        step: EffectStep,
+    ) -> Result<ResourceVersion, GraphBuildError> {
+        let texture = builder.transient(label, desc);
         let pass = builder.pass(label, PassKind::Raster);
         for version in reads {
             builder.read(pass, *version)?;
@@ -286,7 +357,7 @@ impl<'v> EffectBuilder<'v> {
         Ok(output)
     }
 
-    /// 가로 → 세로 blur pass 두 개를 더하고 세로 결과를 돌려줍니다.
+    /// (줄이기 →) 가로 → 세로 blur pass를 더하고 세로 결과를 돌려줍니다. 줄였으면 결과도 줄인 크기입니다.
     fn blur_pair(
         &mut self,
         builder: &mut RenderGraphBuilder,
@@ -295,27 +366,51 @@ impl<'v> EffectBuilder<'v> {
         alpha_to_all: bool,
         shadow: Option<(Arc<SceneNode>, usize)>,
     ) -> Result<ResourceVersion, GraphBuildError> {
-        let horizontal = self.pass(
+        let d = blur.downsample.max(1);
+        let mut input = source;
+        let desc = if d == 1 {
+            TextureDesc::surface(LAYER_FORMAT)
+        } else {
+            let (w, h) = self.surface_extent();
+            TextureDesc {
+                format: LAYER_FORMAT,
+                size: AttachmentSize::Fixed {
+                    width: downsampled_extent(w, d),
+                    height: downsampled_extent(h, d),
+                },
+                samples: crate::render_graph::SampleCount::X1,
+            }
+        };
+        if d > 1 {
+            input = self.sized_pass(
+                builder,
+                "effect downsample",
+                desc,
+                &[source],
+                EffectStep::Downsample { source, factor: d },
+            )?;
+        }
+        let horizontal = self.sized_pass(
             builder,
             "effect blur",
-            LAYER_FORMAT,
-            &[source],
+            desc,
+            &[input],
             EffectStep::Blur {
-                source,
-                sigma: blur.sigma_x,
+                source: input,
+                sigma: blur.sigma_x / d as f32,
                 direction: [1.0, 0.0],
                 alpha_to_all,
                 shadow: None,
             },
         )?;
-        self.pass(
+        self.sized_pass(
             builder,
             "effect blur",
-            LAYER_FORMAT,
+            desc,
             &[horizontal],
             EffectStep::Blur {
                 source: horizontal,
-                sigma: blur.sigma_y,
+                sigma: blur.sigma_y / d as f32,
                 direction: [0.0, 1.0],
                 alpha_to_all: false,
                 shadow,
@@ -341,7 +436,19 @@ impl<'v> EffectBuilder<'v> {
             return Ok(output);
         }
         let blur = self.device_blur(node, layer_blur_sigma(radius));
-        let blurred = self.blur_pair(builder, output, blur, false, None)?;
+        let mut blurred = self.blur_pair(builder, output, blur, false, None)?;
+        if blur.downsample > 1 {
+            blurred = self.pass(
+                builder,
+                "effect upsample",
+                LAYER_FORMAT,
+                &[blurred],
+                EffectStep::Upsample {
+                    source: blurred,
+                    factor: blur.downsample,
+                },
+            )?;
+        }
         self.layers.push(LayerEffects {
             layer,
             blur: Some(blur),
@@ -375,6 +482,7 @@ impl<'v> EffectBuilder<'v> {
             if let DrawSource::Content(node) = &draw.source {
                 let paint = node.paint().get();
                 if !paint.shadows.is_empty() {
+                    let shape = ShadowShape::of(node);
                     let source = self.pass(
                         builder,
                         "shadow source",
@@ -382,6 +490,7 @@ impl<'v> EffectBuilder<'v> {
                         &[],
                         EffectStep::ShadowSource {
                             node: Arc::clone(node),
+                            shape,
                         },
                     )?;
                     let (a, b, c, d) = self.linear(node).unwrap_or((1.0, 0.0, 0.0, 1.0));
@@ -400,6 +509,7 @@ impl<'v> EffectBuilder<'v> {
                             index,
                             offset: [a * x + c * y, b * x + d * y],
                             blur,
+                            shape,
                             output,
                         });
                     }

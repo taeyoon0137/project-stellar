@@ -9,7 +9,7 @@ use super::compare::ToleranceConfig;
 use super::fixture::{
     fill_mesh, linear_gradient, p3, solid, srgb, stroke_mesh, Category, ClipSpec, Coverage,
     CoverageMask, CoverageShape, Feature, FillRule, Fixture, GlyphOp, ImageData, ImageOp, LayerOp,
-    Mesh, Op, PathBuilder, SceneBlendMode, StrokeCap,
+    Mesh, Op, PathBuilder, SceneBlendMode, ShadowSource, StrokeCap,
 };
 use super::gradient::GradientStop;
 use super::raster::render_reference;
@@ -575,6 +575,65 @@ pub fn effect_fixtures() -> Vec<Fixture> {
                 .with_shadow([0, 3], 5.0, shadow_color),
             )],
         ),
+        // --- CSS box-shadow(Frame): 상자 모양 원본, 상자 안 비움(ADR-0130 결정 1) ---
+        effect_fixture(
+            "shadow-box-no-background",
+            Feature::Shadow,
+            "blur",
+            with_backdrop(vec![effect(
+                LayerOp::new(Vec::new(), SceneBlendMode::Normal).with_box_shadow(
+                    [3.0, 3.0],
+                    4.0,
+                    shadow_color,
+                    Mesh::rect(8.0, 8.0, 22.0, 22.0),
+                ),
+            )]),
+        ),
+        effect_fixture(
+            "shadow-box-translucent-rounded",
+            Feature::Shadow,
+            "blur",
+            with_backdrop(vec![effect(
+                LayerOp::new(
+                    vec![solid(
+                        rounded.clone(),
+                        srgb(0.9, 0.9, 1.0, 0.35),
+                        Coverage::Disjoint,
+                    )],
+                    SceneBlendMode::Normal,
+                )
+                .with_box_shadow([2.0, 3.0], 6.0, srgb(0.1, 0.0, 0.3, 0.8), rounded.clone())
+                .with_box_shadow(
+                    [-2.0, -1.0],
+                    0.0,
+                    srgb(0.9, 0.2, 0.1, 0.7),
+                    rounded.clone(),
+                ),
+            )]),
+        ),
+        // --- 소수 offset(반올림 없음, ADR-0130 결정 3) ---
+        effect_fixture(
+            "shadow-subpixel-offset",
+            Feature::Shadow,
+            "blur",
+            vec![effect(
+                LayerOp::new(
+                    vec![solid(
+                        ellipse.clone(),
+                        srgb(0.9, 0.3, 0.5, 1.0),
+                        Coverage::Disjoint,
+                    )],
+                    SceneBlendMode::Normal,
+                )
+                .with_shadow_sigmas([2.5, 1.25], [1.5, 1.5], shadow_color, ShadowSource::Content)
+                .with_shadow_sigmas(
+                    [-1.75, 0.5],
+                    [0.0, 0.0],
+                    srgb(0.1, 0.1, 0.9, 0.6),
+                    ShadowSource::Content,
+                ),
+            )],
+        ),
         // --- layer blur ---
         effect_fixture(
             "blur-sigma-1",
@@ -623,6 +682,56 @@ pub fn effect_fixtures() -> Vec<Fixture> {
         .feature(Feature::StencilClip)
         .feature(Feature::Opacity)
         .feature(Feature::Blend),
+    ]
+}
+
+/// 큰 σ(상한 64 초과)를 낮은 해상도로 그리는 효과 fixture(ADR-0130 결정 2). 192 pixel 정사각입니다.
+pub fn large_effect_fixtures() -> Vec<Fixture> {
+    let big = |name: &str, feature: Feature, ops: Vec<Op>| {
+        let mut fixture = Fixture::new(name, Category::Modifier, 192, 192).feature(feature);
+        fixture.tolerance = "blur";
+        fixture.ops = ops;
+        fixture
+    };
+    let card = || vec![rect(48.0, 56.0, 144.0, 136.0, srgb(1.0, 1.0, 1.0, 1.0))];
+    let backdrop = || {
+        (0..12)
+            .map(|i| {
+                let x = i as f32 * 16.0;
+                rect(x, 0.0, x + 8.0, 192.0, srgb(0.3, 0.3, 0.35, 1.0))
+            })
+            .collect::<Vec<_>>()
+    };
+    let with = |mut base: Vec<Op>, op: Op| {
+        base.push(op);
+        base
+    };
+    vec![
+        // blur 150 → σ 75 → 2배 줄여 σ 37.5, 소수 offset.
+        big(
+            "shadow-large-blur-downsampled",
+            Feature::Shadow,
+            with(
+                backdrop(),
+                effect(
+                    LayerOp::new(card(), SceneBlendMode::Normal).with_box_shadow(
+                        [4.5, 6.0],
+                        150.0,
+                        srgb(0.0, 0.0, 0.2, 0.9),
+                        Mesh::rect(48.0, 56.0, 144.0, 136.0),
+                    ),
+                ),
+            ),
+        ),
+        // layer blur 반경 140 → σ 140 → 4배 줄여 σ 35.
+        big(
+            "blur-large-downsampled",
+            Feature::Blur,
+            with(
+                backdrop(),
+                effect(LayerOp::new(card(), SceneBlendMode::Normal).with_blur(140.0)),
+            ),
+        ),
     ]
 }
 
@@ -1552,6 +1661,7 @@ pub fn inventory() -> Vec<Fixture> {
     all.extend(gradient_fixtures());
     all.extend(blend_fixtures());
     all.extend(effect_fixtures());
+    all.extend(large_effect_fixtures());
     all
 }
 

@@ -167,3 +167,67 @@ fn rounded_rect_path_and_transforms() {
         PathCommand::MoveTo(Vec2::new(3.0, 1.0).unwrap())
     );
 }
+
+#[test]
+fn frame_box_shadow_ignores_background_alpha_and_stays_outside_the_box() {
+    // 배경 없는 Frame과 반투명 배경 Frame: CSS box-shadow는 배경과 관계없이 상자 모양이고 상자 안에는 비치지 않습니다
+    // (ADR-0130 결정 1).
+    let shadow = ShadowFx {
+        offset: [2.0, 2.0],
+        blur: 0.0,
+        color: [0.0, 0.0, 1.0, 1.0],
+    };
+    let empty = group(1, [2.0, 2.0, 6.0, 6.0], Vec::new()).with_shadow(shadow);
+    let image = render(&[empty], 16, IDENTITY, SampleCount::X4);
+    // 상자 (2..8) 안은 비고, offset 자리(4..10) 중 상자 밖은 shadow 색입니다.
+    assert_eq!(image.pixel(5, 5), [0, 0, 0, 0], "상자 안은 비움");
+    assert_eq!(image.pixel(9, 9), [0, 0, 255, 255], "상자 밖 shadow");
+    assert_eq!(image.pixel(9, 5), [0, 0, 255, 255]);
+    assert_eq!(image.pixel(1, 1), [0, 0, 0, 0]);
+    let translucent = rect(1, [2.0, 2.0, 6.0, 6.0], [1.0, 1.0, 1.0, 0.5]).with_shadow(shadow);
+    let image = render(&[translucent], 16, IDENTITY, SampleCount::X4);
+    // 상자 안은 배경만(shadow가 비치지 않음), 상자 밖 shadow는 불투명(배경 alpha 0.5와 무관).
+    assert_eq!(image.pixel(5, 5), [128, 128, 128, 128]);
+    assert_eq!(image.pixel(9, 9), [0, 0, 255, 255]);
+}
+
+#[test]
+fn text_and_path_shadows_follow_content_alpha() {
+    // Frame이 아닌 내용(text)은 drop-shadow(): 내용 alpha 그대로입니다. glyph 모양이 없으면 내용 alpha도 없어 그림자가
+    // 없습니다(배경 없는 Frame과 다름).
+    let text = rect(1, [2.0, 2.0, 6.0, 6.0], opaque(1.0, 1.0, 1.0))
+        .with_content(crate::test_scene::ContentFx::Text {
+            key: 1,
+            bounds: [2.0, 2.0, 6.0, 6.0],
+        })
+        .with_shadow(ShadowFx {
+            offset: [2.0, 2.0],
+            blur: 0.0,
+            color: [0.0, 0.0, 1.0, 1.0],
+        });
+    let image = render(&[text], 16, IDENTITY, SampleCount::X4);
+    // fill layer가 glyph 합(빈 모양)을 칠하므로 아무것도 없습니다.
+    assert_eq!(image.pixel(9, 9), [0, 0, 0, 0]);
+}
+
+#[test]
+fn fractional_shadow_offset_is_not_rounded() {
+    // device offset 0.5: 반올림하면 한 pixel 옮겨지거나 그대로지만, bilinear 합성은 경계 pixel을 반씩 덮습니다
+    // (ADR-0130 결정 3).
+    let image = render(
+        &[
+            rect(1, [2.0, 2.0, 4.0, 4.0], opaque(1.0, 1.0, 1.0)).with_shadow(ShadowFx {
+                offset: [0.5, 0.0],
+                blur: 0.0,
+                color: [0.0, 0.0, 1.0, 1.0],
+            }),
+        ],
+        16,
+        IDENTITY,
+        SampleCount::X4,
+    );
+    // 상자 (2..6) 오른쪽 바로 밖 pixel 6: shadow가 x 2.5..6.5를 덮으므로 절반.
+    let edge = image.pixel(6, 3);
+    assert!((126..=129).contains(&edge[3]), "{edge:?}");
+    assert_eq!(image.pixel(7, 3), [0, 0, 0, 0]);
+}

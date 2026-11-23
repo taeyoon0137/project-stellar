@@ -11,7 +11,9 @@
 //!   결과를 내는 GPU 최적화라 여기서는 합칩니다(불투명 draw의 source-over는 덮어쓰기). layer 합성 draw는 그 layer pass의 draw를
 //!   painter 순서로 담은 [`LayerOp`]입니다.
 //! - **효과**: 한 draw의 효과는 [`LayerOp`] 하나의 순서(내용 → shadow → layer blur → clip → mask → opacity → blend)로
-//!   표현합니다. shadow·σ·offset은 frame plan의 device 값([`DrawEffects`])이고 offset은 device pixel 정수로 반올림합니다.
+//!   표현합니다. shadow·σ·offset은 frame plan의 device 값([`DrawEffects`])이고 offset은 소수 device pixel 그대로입니다
+//!   (ADR-0130 결정 3). shadow 원본은 plan의 [`ShadowShape`]이고, 상자 shadow(Frame, CSS `box-shadow`)는 테두리 상자 device
+//!   mesh를 원본·비우기 모양으로 씁니다(ADR-0130 결정 1).
 //!   합성 mode는 plan이 `resolve_or_normal`로 푼 값입니다. 내용 draw에 접힌 불투명도·blend도 같은 layer로 합성합니다(단일
 //!   draw 합성과 같음).
 //! - **clip**: [`ClipPlan::Scissor`]는 scissor, [`ClipPlan::Stencil`]·[`ClipPlan::Mask`]는 scissor(모든 clip의 경계)와 복합
@@ -34,10 +36,11 @@ use stellar_scene::{Rect, Transform2D, Vec2};
 
 use super::fixture::{
     fill_mesh, solid, ClipSpec, Coverage, FixtureError, ImageData, ImageOp, LayerOp, Mesh, Op,
+    ShadowSource,
 };
 use crate::clip_plan::ClipPlan;
 use crate::output_color::OutputColor;
-use crate::pass_compiler::effects::DrawEffects;
+use crate::pass_compiler::effects::{DrawEffects, ShadowShape};
 use crate::pass_compiler::{DrawSource, FramePlan, LayerId, PassClass, PlannedDraw};
 use crate::placeholder::{TextureFilter, TextureWrap};
 use crate::stroke::{tessellate_stroke, StrokeStyle};
@@ -304,19 +307,33 @@ impl Encoder<'_> {
             }
             DrawSource::Content(node) => {
                 let paint = node.paint().get();
+                let mut border_box: Option<Arc<Mesh>> = None;
                 for shadow in &effects.shadows {
                     let color = paint
                         .shadows
                         .get(shadow.index)
                         .map(|s| OutputColor::from_paint(Paint::Solid(s.color())))
                         .ok_or(EncodeError::Plan("shadow 번호가 paint stack 밖입니다"))?;
+                    let source = match shadow.shape {
+                        ShadowShape::ContentAlpha => ShadowSource::Content,
+                        ShadowShape::BorderBox => {
+                            let mesh = match &border_box {
+                                Some(mesh) => Arc::clone(mesh),
+                                None => {
+                                    let mesh = Arc::new(self.border_box(node)?);
+                                    border_box = Some(Arc::clone(&mesh));
+                                    mesh
+                                }
+                            };
+                            ShadowSource::Box(mesh)
+                        }
+                    };
+                    // offset은 소수 device pixel 그대로 둡니다(합성이 bilinear로 읽음, ADR-0130 결정 3).
                     top = top.with_shadow_sigmas(
-                        [
-                            shadow.offset[0].round() as i32,
-                            shadow.offset[1].round() as i32,
-                        ],
+                        shadow.offset,
                         [shadow.blur.sigma_x, shadow.blur.sigma_y],
                         color,
+                        source,
                     );
                 }
                 self.content(node)?
@@ -436,6 +453,20 @@ impl Encoder<'_> {
             .map_err(|_| unsupported(node, "clip 변환 값"))?;
         let device = transform_path(&path, &to_device).ok_or(unsupported(node, "clip 변환 값"))?;
         fill_mesh(&device, rule).map_err(tessellation(node))
+    }
+
+    /// Frame 테두리 상자(모서리 반경 포함)의 device fill mesh(CSS `box-shadow` 원본, ADR-0130 결정 1).
+    fn border_box(&self, node: &SceneNode) -> Result<Mesh, EncodeError> {
+        let SceneContent::Rect(rect) = node.content() else {
+            return Err(EncodeError::Plan("상자 shadow는 사각형 내용만 갖습니다"));
+        };
+        let to_device = self
+            .to_device(node)
+            .ok_or(unsupported(node, "node 변환 값"))?;
+        let path = rounded_rect_path(rect.rect, rect.radii.components())
+            .ok_or(unsupported(node, "사각형 값"))?;
+        let device = transform_path(&path, &to_device).ok_or(unsupported(node, "변환 값"))?;
+        fill_mesh(&device, FillRule::NonZero).map_err(tessellation(node))
     }
 
     /// node 자기 내용(이미지 pixel·text run 색 → paint layer).
