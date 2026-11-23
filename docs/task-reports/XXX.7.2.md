@@ -72,3 +72,20 @@
   첫 저장 뒤 Context 원본 파일이 없어 실패하는 것을 확인했습니다.
 - 남은 범위: 외부 변경 반영(`ApplyExternalSnapshot`)이 Context를 옮기지 않아, 밖에서 바꾼 Context 원본은 열린 창에
   반영되지 않고 그 창의 다음 저장이 덮어씁니다.
+
+## 후속 보완 (2026-11-24, Context 제품 경로 연결)
+
+- 결정: ADR-0114 결정 1·4.
+- 외부 원본 반영: `ApplyExternalSnapshot`에 Context 변경(`RecordChange::Context`, tag 8, command codec version 6)을 더했습니다.
+  이전 값은 모델 거울 전체라 Undo 한 번이 삭제한 provider의 provision까지 되살립니다. 창 `sync_external`(clean 반영)과
+  reconciliation 결과, 텍스트 원본 session의 외부 반영이 디스크의 영속 Context를 함께 넘깁니다
+  (`between_with_context`). 텍스트 원본 session 저장 사본이 Context를 버려 저장이 `design/context.stellar.yaml`을 지우던
+  결함도 고쳤습니다.
+- storage `INITIAL_KINDS`에 `context-set`(`0x8000_0007`, required)을 등록했습니다(보호 경로, ADR-0114 결정 4). project의 같은
+  상수는 storage 값을 다시 내보냅니다.
+- 시험: `snapshot_apply::tests::external_context_change_is_applied_and_undone_with_the_whole_mirror`,
+  `external_context_change_checks_the_previous_mirror`, `codec_round_trips_every_change_tag`(tag 1~8),
+  `window_session::source_tests::an_external_context_source_edit_reaches_the_open_window_and_is_not_overwritten`(밖에서 바꾼
+  Context 원본이 clean 창에 반영되고 저장이 덮어쓰지 않음, dirty 창은 겹치지 않는 Context 편집과 병합),
+  `chunk::kinds::tests::golden_kind_codes_are_stable`.
+- 남은 범위: 이 행의 남은 위험(앱 저장 손실, 외부 반영, storage 등록)은 모두 닫혔습니다. 행 상태 판정은 통합 때 합니다.

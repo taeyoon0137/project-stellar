@@ -52,3 +52,15 @@
   값 하나). 해석기·provision node는 인스턴스 chain별이지만 소비 binding은 binding당 site 하나입니다.
 - 문서 해석 결과를 `ContextGraph`로 옮기는 변환은 지금 종단 시험(`tests/integration/tests/context_common`)에만 있습니다.
   제품 경로(runtime 평가)에 binding graph가 아직 없기 때문입니다.
+
+## 후속 보완 (2026-11-24, Context 제품 경로 연결)
+
+- 결정: ADR-0114 결정 5.
+- 문서 해석 결과를 `ContextGraph`로 옮기는 변환을 제품 crate `stellar_prototype::context`에 두었습니다(`binding_consumers`,
+  `context_graph`, `affected_nodes`, `hop_info`, `consumer_hops`). 증분 갱신 입력은 `stellar_bindings::RouteChange::between`
+  입니다. 종단 시험 도우미(`tests/integration/tests/context_common`)는 이 함수들을 그대로 부릅니다.
+- 시험: `stellar_prototype::context::tests::document_resolution_feeds_the_binding_graph_and_its_incremental_update`(binding 모음
+  → 소비 → graph → 평가 10, provision 삭제 뒤 영향 소비만 reroute해 default 1), 종단 `context_nested`·`context_provenance`·
+  `context_reevaluation`·`context_semantic`·`context_commands` 통과.
+- 남은 위험: 정의 tree node를 target으로 하는 binding의 인스턴스별 값은 binding graph가 binding당 값 하나라 여전히 없습니다.
+  runtime 평가 경로에는 binding graph가 아직 없습니다.

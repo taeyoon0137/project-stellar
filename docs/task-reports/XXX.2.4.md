@@ -39,3 +39,13 @@
 ## 남은 위험 / 한계
 
 - ContextRequirement(XXX.7.8)가 생기면 공개 plan에 더해야 합니다.
+
+## 후속 보완 (2026-11-24, Context 제품 경로 연결)
+
+- 결정: ADR-0114 결정 7.
+- 포트 공개에 ContextRequirement를 더했습니다. `PrototypeDocument`가 문서 `ContextSet`을 들고, step
+  `ContextRequirement { component, key, add }`(역은 반대 연산)를 둡니다. `ExposeRequest::ContextRequirement { component, key }`는
+  미리보기 항목 하나와 transaction 하나입니다. 이미 선언한 key는 `InUse`, 문서에 없는 key는 `Missing`입니다.
+- 시험: `graph_expose::exposing_a_context_port_declares_the_requirement_atomically`(fault injection 시 생성 0, Undo 1회 복원,
+  중복·없는 key 거부).
+- 남은 위험: PrototypeTransaction을 Phase VII `CommandTransaction` journal에 등록하는 일은 그대로 영속 command registry 몫입니다.
