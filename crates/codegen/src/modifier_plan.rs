@@ -16,6 +16,8 @@
 //!
 //! 문서 crate에 의존하지 않으므로 입력은 지역 타입([`PlanInput`])입니다. 같은 입력은 언제나 같은 계획입니다.
 
+use stellar_layout::effect_order::{effect_slots, EffectSlot, FilterEffect};
+
 use crate::text::num;
 
 /// 계획에 쓰는 modifier 종류.
@@ -216,7 +218,16 @@ fn declarations_for(
     let mut transforms = Vec::new();
     let mut filters = Vec::new();
     let mut out = Vec::new();
-    let mut filter_seen = false;
+    // Shadow·Blur의 CSS 자리는 scene 효과 평가와 같은 규칙 하나입니다(ADR-0134 결정 3).
+    let effects = indices
+        .iter()
+        .filter_map(|&i| match input.modifiers[i].0 {
+            PlanModifier::Shadow => Some(FilterEffect::Shadow),
+            PlanModifier::Blur => Some(FilterEffect::Blur),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut slots = effect_slots(effects, input.kind == PlanNodeKind::Frame).into_iter();
     for &i in indices {
         let modifier = input.modifiers[i].0;
         match modifier {
@@ -236,15 +247,14 @@ fn declarations_for(
                 out.push(("stroke", "<stroke>".into()));
                 out.push(("stroke-width", "<stroke-width>".into()));
             }
-            PlanModifier::Shadow if input.kind == PlanNodeKind::Frame && !filter_seen => {
-                out.push(("box-shadow", "<x> <y> <blur> <shadow>".into()))
-            }
-            PlanModifier::Shadow => {
-                filter_seen = true;
-                filters.push("drop-shadow(<x> <y> <blur> <shadow>)".to_string());
-            }
+            PlanModifier::Shadow => match slots.next() {
+                Some(EffectSlot::BoxShadow) => {
+                    out.push(("box-shadow", "<x> <y> <blur> <shadow>".into()))
+                }
+                _ => filters.push("drop-shadow(<x> <y> <blur> <shadow>)".to_string()),
+            },
             PlanModifier::Blur => {
-                filter_seen = true;
+                slots.next();
                 filters.push("blur(<blur>)".to_string());
             }
             PlanModifier::Clip => out.push(("clip-path", "url(#<clip>)".into())),

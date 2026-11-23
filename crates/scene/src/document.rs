@@ -569,7 +569,7 @@ impl<'a, 'o> Converter<'a, 'o> {
                     self.skip(key, SkipReason::UnsupportedModifiers);
                     return None;
                 }
-                let node_effects = match effects::evaluate_effects(stack) {
+                let node_effects = match effects::evaluate_effects(stack, true) {
                     Ok(node_effects) => node_effects,
                     Err(error) => {
                         self.skip(key, effect_skip(error));
@@ -635,7 +635,7 @@ impl<'a, 'o> Converter<'a, 'o> {
     ) -> Result<SourceNode, SkipReason> {
         let booleans = boolean_modifiers(stack);
         // 합성 효과는 따로 평가하고(ADR-0116 결정 2), 내용 입력 함수에는 효과·Boolean을 뗀 stack을 넘깁니다.
-        let node_effects = effects::evaluate_effects(stack).map_err(effect_skip)?;
+        let node_effects = effects::evaluate_effects(stack, false).map_err(effect_skip)?;
         let filtered = content_stack(id, stack);
         let stack = filtered.as_ref();
         // Layout 규칙 node는 결과 상자 원점 뒤에 저장 transform을 합성하고 크기를 결과 크기로 둡니다(ADR-0125).

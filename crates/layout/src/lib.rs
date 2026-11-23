@@ -60,6 +60,9 @@ pub mod position;
 /// local transform 적용 정책 (X.2.4).
 pub mod transform;
 
+/// CSS 효과 적용 순서에서 그림자·blur 자리 (ADR-0134 결정 3).
+pub mod effect_order;
+
 /// layout worker result guard (X.7.5).
 pub mod guard;
 
