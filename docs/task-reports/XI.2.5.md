@@ -31,7 +31,7 @@
 |---|---|
 | `cargo test -p stellar-scene` | lib 151 passed, 통합 3 passed(1 ignored), 0 failed |
 | `cargo clippy -p stellar-scene --all-targets -- -D warnings` | 경고 0 |
-| `cargo test -p stellar-runtime --lib scene_source` | 6 passed, 0 failed |
+| `cargo test -p stellar-runtime --lib scene_source` | 9 passed, 0 failed(검토 보완 3개 포함) |
 | 최종 검증(`check-core` 등) | lane 결과 보고에 기록 |
 
 ## 테스트
@@ -40,6 +40,7 @@
 - Frame 이동(자식 5개 재평가), Frame paint(자식 공유), Subtree(자손 전부), 삽입(뒤쪽 z만 다시 매김, paint 공유)·삭제 후 원래 hash, 잘못된 편집 거부·상태 유지, Fragment 공유, 무작위 편집 38회 전체 build와 hash 동일.
 - `spatial_index_refresh_matches_a_fresh_index`: paint 편집 뒤 갱신 node 3개, 삭제 뒤에도 새 인덱스와 같음.
 - `change_set_drives_a_minimal_rebuild`(runtime): 실제 command → rebuilt 1·copied 1·shared 5, 이동 뒤 source와 전체 변환 동일.
+- 검토 보완: `removing_a_node_its_parent_or_roots_still_list_is_rejected`는 부모·root가 아직 가리키는 node 삭제를 거부하는지 봅니다. runtime의 `operand_moved_by_an_ancestor_frame_updates_the_boolean_host`, `adding_a_boolean_modifier_absorbs_an_existing_node`, `a_node_that_becomes_unsupported_leaves_its_parent_list`는 증분 변환 결과(source·operand 색인·skip·scene hash)가 처음부터 변환한 결과와 같은지 봅니다.
 
 ## 성능
 
