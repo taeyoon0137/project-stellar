@@ -569,6 +569,25 @@ mod tests {
         }
     }
 
+    /// [`LayoutStyle::default`] 값의 정규 텍스트(그 값이면 `declarations`가 생략함). `gap`의 `normal`은 0입니다.
+    fn engine_default_texts(name: &str) -> &'static [&'static str] {
+        match name {
+            "display" => &["block"],
+            "position" => &["static"],
+            "box-sizing" => &["border-box"],
+            "max-width" | "max-height" => &["none"],
+            "padding-top" | "padding-right" | "padding-bottom" | "padding-left" => &["0px"],
+            "row-gap" | "column-gap" => &["normal", "0px"],
+            "flex-direction" | "grid-auto-flow" => &["row"],
+            "flex-wrap" => &["nowrap"],
+            "justify-content" | "align-content" | "align-items" | "justify-items" => &["normal"],
+            "flex-grow" => &["0"],
+            "flex-shrink" => &["1"],
+            "grid-template-columns" | "grid-template-rows" => &["none"],
+            _ => &["auto"],
+        }
+    }
+
     /// 문서 formatter가 쓴 값 목록(공유 fixture)을 모두 받습니다. 문서 쪽 test가 같은 파일이 자기 정규형과 같은지
     /// 확인합니다(`stellar_document::layout_record` `declared_values_fixture_matches_formatter`).
     #[test]
@@ -584,7 +603,17 @@ mod tests {
                 .into_iter()
                 .map(|(n, v)| if n == name { (n, value) } else { (n, v) })
                 .collect();
-            style_from_declarations(&list).unwrap_or_else(|e| panic!("{line}: {e}"));
+            let style = style_from_declarations(&list).unwrap_or_else(|e| panic!("{line}: {e}"));
+            // 받기만 하는 것이 아니라 같은 값으로 읽어야 합니다. 엔진 formatter(`LayoutStyle::declarations`)로 다시
+            // 쓰면 같은 텍스트이고, 생략된 경우(엔진 생성자 값과 같음)는 그 값의 정규 텍스트여야 합니다.
+            let written: Vec<(&str, String)> = style.declarations();
+            match written.iter().find(|(n, _)| *n == name) {
+                Some((_, text)) => assert_eq!(text, value, "{line}: 엔진이 다른 값으로 읽음"),
+                None => assert!(
+                    engine_default_texts(name).contains(&value),
+                    "{line}: 엔진이 생성자 기본값으로 읽음"
+                ),
+            }
             count += 1;
         }
         assert!(count > 60, "fixture 항목 {count}");
