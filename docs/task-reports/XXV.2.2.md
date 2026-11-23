@@ -2,7 +2,7 @@
 
 - WBS: XXV.2.2
 - 작업명: diagnostic에 severity, source StableId, property path, remediation action ID 포함
-- 상태: 완료 (`[x]` 후보). 선행 XXV.2.1 판정을 따릅니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 통합 판정: 이 행의 구현은 끝났지만 선행 XXV.2.1이 `[x]`가 아닙니다. 선행이 끝나면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]` 후보). 선행 XXV.2.1 판정을 따릅니다.
 - 결정: ADR-0095 결정 2·3
 
 ## 필수 실행 환경

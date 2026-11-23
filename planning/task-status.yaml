@@ -2368,12 +2368,13 @@ tasks:
     report: "docs/task-reports/V.10.6.md"
   - id: "V.10.7"
     title: "검증된 전체 변환 경로에서만 기본 원본을 텍스트로 전환하고 기존 chunk 저장은 로컬 cache로 내립니다. 새 프로젝트를 만들 때의 첫 저장도 같은 텍스트 원본으로 전환합니다. source hash 기반 빠른 열기·부분 로딩과 cache GC를 연결합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "V.10.6"
     required_environments:
       - DEV-MAC
       - REF-MAC
+    report: "docs/task-reports/V.10.7.md"
   - id: "V.10.8"
     title: "컴포넌트·View 원본의 쓰기 버전을 v4로 올립니다(ADR-0077 결정 2, 명세 `docs/spec/text-source-v4.md`). 파일 키는 frame·payload·modifier metadata registry의 `name`을 조회해 쓰고 순서도 registry 순서이며, codec은 registry를 조회만 합니다. 값은 CSS 값 문법(`px`, `deg`, `color()`, `matrix()`, `transparent`)의 최단 왕복 표기만 받고, 묶음 `border`는 CSS longhand 열두 줄로 씁니다. 모든 node 종류와 modifier를 쓰고, View v1·v2와 컴포넌트 v1\\~v3은 읽기 전용입니다."
     status: verified
@@ -4952,7 +4953,7 @@ tasks:
     report: "docs/task-reports/IX.11.9.md"
   - id: "IX.11.10"
     title: "Frame border를 4변 `border-*-width`·`-style`·`-color` longhand로 바꾸는 migration을 IX.11.21 registry step으로 구현합니다. 기존 `Border{color, thickness}`는 4변 같은 값과 style `solid`로, 없음은 `none`으로 옮기고, 12개 longhand에 ADR-0024 결정 14로 key를 할당하며 0x0105는 묶음 key로 남기되 이 schema 이후 새 command로 받지 않습니다. border가 CSS처럼 padding box를 줄이도록 layout 입력에 border 두께를 넣고, 화면 위치를 보존하려고 border가 있는 부모의 Free 자식 `left`·`top`에서 부모 border 두께를 뺍니다(IX.11.9 뒤 적용). IX.11.6 이전 schema에서 온 입력에는 layout record가 없어 모든 자식이 Free 자식입니다. 입력 schema에 영속 layout record(IX.11.6)가 있어 border가 있는 부모가 flow 방식(flex·grid 컨테이너)이면, 부모의 각 변 `padding-*`에서 그 변 border 두께를 빼 flow 자식의 위치와 부모의 내용 기반 크기를 보존합니다. padding이 border 두께보다 작은 변은 padding을 `0px`로 두고 보존하지 못한 차이를 노드별로 migration 보고서에 기록합니다(속성 모델 5장 `border` 행). 이런 중간 schema 입력의 Free 자식은 지정된 `right`·`bottom`도 그 변 border 두께로 같은 방식으로 보정하고, 백분율 inset·크기처럼 길이 보정으로 보존할 수 없는 값은 보고서에 기록합니다. 0x0105를 가리키는 저장 참조(index segment 포함)는 IX.11.9와 같은 규칙으로 값 변환 없이 보존·보고합니다. Frame payload schema 변경은 storage format 변경이므로(I.3.5) 같은 diff에서 ADR을 작성하거나 ADR-0024를 개정합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IX.11.6"
       - "IX.11.9"
@@ -4960,9 +4961,10 @@ tasks:
       - "V.8.6"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/IX.11.10.md"
   - id: "IX.11.11"
     title: "Typography record를 CSS longhand(`font-family`, `font-size`, `font-weight`, `font-style`, `font-stretch`, `line-height`, `letter-spacing`)로 정의하고 `TextStyle.typography` 참조 대상으로 연결합니다. family 해석 결과는 `FontFaceRef`로 고정하고 누락 글꼴은 진단합니다. 지금 `TextPayload`는 content와 paragraph·run의 style index만 저장하고 `TextStyle`·`ParagraphStyle` 표는 저장하지 않으므로(`crates/document/src/text.rs` `encode`), style 표 저장 형식을 이 행에서 정하고 Text payload schema 변경으로 IX.11.21 step에 넣습니다(옛 payload는 기본 style 표로 migration). 저장하는 `line-height` 값(`ParagraphStyle.line_height`, Typography `line-height`)의 뜻은 처음부터 CSS 의미(속성 모델 7장, inline box마다 자기 글꼴 metric에 half-leading 적용)로 정의합니다. text 엔진이 그 의미를 따르게 하는 일은 IX.11.12이며, 그 사이에 저장된 값의 뜻은 바뀌지 않습니다. `ParagraphStyle`에 문단 typography 참조(CSS의 문단 요소 자신의 `font-*`, root inline box strut의 글꼴 출처)를 추가하고, typography 없는 run은 문단 typography, 그다음 문서 기본 typography를 상속합니다(문서 기본의 저장 위치도 이 행에서 정함). `letter-spacing`은 `ParagraphStyle.letter_spacing_em`에서 run `TextStyle`의 선택 필드(없으면 Typography 값)로 옮기며 Typography resource를 복제하지 않습니다. 저장된 값이 없으므로 이 이동은 파일 migration이 아닙니다. `TypedValue::Typography` tag는 유지하고 payload를 Typography canonical encoding으로 정의하며, 새 encoding으로 decode되지 않는 기존 불투명 blob은 bytes를 보존하고 `typography-unrecognized` 진단을 냅니다. style longhand에는 IX.11.3 Text registry에 ADR-0024 결정 14로 key를 할당하고, semantic snapshot(`crates/semantic-diff/src/build.rs`)의 Text style 경로를 `TEXT_PAYLOAD` 하나에서 style longhand key 경로로 바꿉니다. 이때부터 Text style은 longhand 단위로 merge합니다(속성 모델 15장 O12). Text payload schema와 `crates/core-types/`의 `TypedValue::Typography` encoding 변경은 I.3.5 보호 대상이므로 같은 diff에서 ADR을 작성하거나 ADR-0008·ADR-0024를 개정합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IX.11.1"
       - "IX.11.3"
@@ -4972,15 +4974,17 @@ tasks:
       - "XIV.10.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/IX.11.11.md"
   - id: "IX.11.12"
     title: "Text paragraph 속성을 CSS에 맞춥니다. `line-height` 배율(`<number>`)과 고정 길이(`<length>`)를 CSS처럼 inline box마다 자기 글꼴 metric에 half-leading을 적용해 해석하도록 text layout을 고칩니다. 지금은 둘 다 줄 전체 높이를 정하고 줄 안 최대 ascent·descent로 baseline을 정합니다(`crates/text/src/text_layout.rs`). root inline box strut는 문단 typography(IX.11.11)의 첫 사용 가능 글꼴과 font-size로 만듭니다. run `letter-spacing`(IX.11.11)을 text 엔진 입력에 연결합니다. IX.11.11이 저장하는 `line-height`는 처음부터 CSS 의미로 정의되므로 이 행은 저장 bytes의 뜻을 바꾸지 않고 엔진 해석만 맞추며 파일 migration을 만들지 않습니다. 바뀐 X.10 golden은 이유와 함께 갱신합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IX.11.11"
       - "IX.11.21"
       - "X.10.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/IX.11.12.md"
   - id: "IX.11.13"
     title: "registry 값 문법별 CSS 값 formatter를 구현합니다. 속성 모델 8.2절·8.3절 정규 형식(가장 짧은 왕복 10진, 소문자 keyword, 색 hex 또는 `color()`)을 따르고 토큰 참조는 `var(--name)`으로 씁니다."
     status: verified
@@ -5142,12 +5146,13 @@ tasks:
       - DEV-MAC
   - id: "IX.11.26"
     title: "`stellar.yaml`의 선택 키 `style_defaults: <세트 이름>`과 사용자 세트 파일 `design/style-defaults/<name>.stellar.yaml` codec을 구현합니다(ADR-0082 결정 3·4). 사용자 세트 형식은 `extends: <세트 이름>` 한 줄과 `<css-longhand>: <CSS 값>` 줄이고, 노드 종류 구획(`frame:`·`text:`·`image:`·`shape:`)을 둘 수 있습니다. `extends` 사슬은 내장 세트에서 끝나야 하며 순환, 모르는 longhand, 문법 오류, `var()` 참조를 거부합니다. 키가 없으면 `css`입니다. 기존 텍스트 원본과 같은 크기·깊이 제한과 경로 guard를 적용합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IX.11.24"
       - "V.10.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/IX.11.26.md"
   - id: "IX.11.27"
     title: "영속 command `SetStyleDefaults`(활성 세트 변경)와 `UnsetProperty`(명시 값 지우기)를 persistent-commands 대역 끝 번호(0x0091부터)와 command codec version 3으로 추가합니다(ADR-0082 결정 4·5, Compatibility). 두 command 모두 Undo 한 번으로 되돌아가고, 세트 변경은 Git diff에서 `stellar.yaml` 한 줄입니다."
     status: not_started
@@ -5159,13 +5164,14 @@ tasks:
       - DEV-MAC
   - id: "IX.11.28"
     title: "속성 조회 결과(`stellar query`, MCP 읽기, 속성 탭 snapshot)가 값마다 출처 `explicit` 또는 `default(<세트 이름>)`를 돌려주게 합니다(ADR-0082 결정 5). 출처는 고정 크기 enum이고 세트 이름은 세트 표 index로 줄여 씁니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IX.11.25"
       - "IX.11.27"
       - "XXIV.4.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/IX.11.28.md"
   - id: "IX.11.29"
     title: "CLI `stellar style-defaults`에 `list`(내장·사용자 세트 목록), `show`(평탄화한 세트 표), `set`(`SetStyleDefaults` 적용)을 추가합니다. `set`은 ops 쓰기 경로(base revision 검사, 교차 프로세스 저장 잠금)를 거칩니다."
     status: not_started
@@ -5177,11 +5183,12 @@ tasks:
       - DEV-MAC
   - id: "IX.11.30"
     title: "codegen이 대상의 고유 기본값과 활성 세트의 차이를 명시 선언으로 냅니다(ADR-0082 결정 6). Web export에서 세트가 `react-native`이면 내보내는 root 범위에 특이도 0인 기반 규칙 하나(`:where(.<root>, .<root> *) { … }`)를 두어 저자 규칙이 언제나 이기게 합니다. RN 대상 출력에서 세트가 `css`이면 차이 값을 스타일 객체에 명시합니다. 세트와 대상 기본값이 같으면 아무것도 더하지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IX.11.25"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/IX.11.30.md"
   - id: "IX.11.31"
     title: "`css`·`react-native` 세트 conformance fixture를 추가합니다(ADR-0082 Consequences). `css` 세트는 기준 browser 계산값으로, `react-native` 세트는 RN 공식 문서와 Yoga 동작에서 얻은 기대값으로 표를 고정하고, fixture마다 기대값 출처를 기록합니다."
     status: not_started
@@ -6016,9 +6023,9 @@ tasks:
     evidence:
       - environment: DEV-MAC
         locator: "docs/task-reports/XI.2.1.md"
-    commit: "16b2b59cf89d68c64718c3ee1991d58d6e683909"
+    commit: "bc094ffc93896336fe473c57985489a7a5165ea8"
     report: "docs/task-reports/XI.2.1.md"
-    verified_at: "2026-11-23T18:16:48+09:00"
+    verified_at: "2026-11-23T18:37:08+09:00"
   - id: "XI.2.2"
     title: "Frame, Shape, Path, Text, Image를 scene primitives로 변환하는 builder를 각각 별도 함수로 구현합니다."
     status: verified
@@ -7010,17 +7017,11 @@ tasks:
       - DEV-MAC
   - id: "XII.6.3"
     title: "Clone Project command가 URL과 target folder를 받아 clone-open pipeline을 호출합니다."
-    status: verified
+    status: not_started
     depends_on:
       - "IV.6.4"
     required_environments:
       - DEV-MAC
-    evidence:
-      - environment: DEV-MAC
-        locator: "docs/task-reports/XII.6.3.md"
-    commit: "9f5e4d895eff0c682c5f614ff7364b99a3c805d6"
-    report: "docs/task-reports/XII.6.3.md"
-    verified_at: "2026-11-23T18:16:51+09:00"
   - id: "XII.6.4"
     title: "Undo/Redo/Save Now command를 active WindowSession에 연결합니다."
     status: not_started
@@ -7438,9 +7439,9 @@ tasks:
     evidence:
       - environment: DEV-MAC
         locator: "docs/task-reports/XII.10.30.md"
-    commit: "97cfe1ef3f11ec35befbc0cdc30f8d0a87840421"
+    commit: "bdd9a9b7357a5c1c772c7ac412f97f249bbea5da"
     report: "docs/task-reports/XII.10.30.md"
-    verified_at: "2026-11-23T18:16:49+09:00"
+    verified_at: "2026-11-23T18:37:48+09:00"
   - id: "XII.10.31"
     title: "Boolean 명령을 Object 메뉴와 문맥 메뉴에 연결합니다. 메뉴 막대 Object 메뉴에 Boolean 하위 메뉴(연산 4종)를 추가하고 `docs/design/ui/tools_menus.md` 3.2·6.1절 표와 `ShortcutPolicy`를 함께 갱신합니다. 같은 부모의 Shape·Path 둘 이상을 선택하면 맨 뒤 node에 Boolean modifier를 넣고 나머지를 operand로 연결하며, 연산 종류 변경과 operand 분리를 지원합니다. Path로 굽는 평탄화는 별도 명시 명령으로만 실행합니다."
     status: not_started
@@ -9852,20 +9853,22 @@ tasks:
       - DEV-MAC
   - id: "XVI.2.5"
     title: "Pan, Zoom, Drag, Resize, Rotate, Hover, Select, Text Edit, Token Propagation, Component Update, Variant Change, Undo, Redo replay를 각각 만듭니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XVI.2.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XVI.2.5.md"
   - id: "XVI.2.6"
     title: "warm cache와 cold cache setup을 분리하고 결과 metadata에 명시합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XI.6.5"
       - "XI.7.3"
       - "XVI.2.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XVI.2.6.md"
   - id: "XVI.3.1"
     title: "1만, 20만, 프로젝트 전체 100만 node synthetic fixture generator를 구현합니다. 파일을 직접 Git에 대량 저장하지 않고 seed+generator version으로 재현합니다."
     status: verified
@@ -10821,110 +10824,152 @@ tasks:
     evidence:
       - environment: DEV-MAC
         locator: "docs/task-reports/XIX.3.1.md"
-    commit: "2e2288fc6248bab3dab333ae64053523c87ef4c4"
+    commit: "dfb0186cf6de33297827aaebe7ae94c3bab0db38"
     report: "docs/task-reports/XIX.3.1.md"
-    verified_at: "2026-11-23T18:16:49+09:00"
+    verified_at: "2026-11-23T18:38:44+09:00"
   - id: "XIX.3.2"
     title: "권한을 ProjectIdentity+AgentSessionId별로 저장하고 app 재시작 후 유지하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIX.3.1"
       - "IV.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.3.2.md"
+    commit: "f229e4c28e8d09838572391357e6afd2e9718b22"
+    report: "docs/task-reports/XIX.3.2.md"
+    verified_at: "2026-11-23T18:38:45+09:00"
   - id: "XIX.3.3"
     title: "앱에 붙는 MCP 연결은 trusted project라도 첫 연결 승인 전에는 Read도 허용하지 않는 기본 정책을 구현합니다. 예외로 앱 없이 실행한 headless 읽기 backend는 실행 인자로 고정한 trusted project 하나에 한해 읽기·검증·dry-run을 승인 없이 허용하고(2026-11-14 제품 소유자 결정), 쓰기 권한을 주지 않으며, untrusted 프로젝트에서는 모든 tool을 거부합니다. 앱이 시작한 내장 세션의 첫 연결 승인 기록은 XXIX.3.5가 담당합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XVI.7.2"
       - "XIX.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.3.3.md"
+    commit: "ba116d1e8b9696c48501462641568ce5aa4232b7"
+    report: "docs/task-reports/XIX.3.3.md"
+    verified_at: "2026-11-23T18:38:45+09:00"
   - id: "XIX.3.4"
     title: "Apply, Terminal, GitCommit, GitPush 요청은 각각 독립 확인 상태를 반환합니다. 한 번의 Apply 승인으로 Push를 허용하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIX.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.3.4.md"
+    commit: "46d40070181b67dfd7e88db9839228ca4133d554"
+    report: "docs/task-reports/XIX.3.4.md"
+    verified_at: "2026-11-23T18:38:46+09:00"
   - id: "XIX.4.1"
     title: "agent가 편집 시작 전 target root StableId 목록과 작업 설명을 제출하는 `BeginAgentEdit` tool을 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIX.2.3"
       - "XIX.3.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.4.1.md"
+    commit: "927fad4bbde25e2aeae3f81fe3607d89bfe92612"
+    report: "docs/task-reports/XIX.4.1.md"
+    verified_at: "2026-11-23T18:39:04+09:00"
   - id: "XIX.4.2"
     title: "승인 후 각 target node와 전체 descendant를 잠그는 `AgentEditLease`를 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIX.4.1"
       - "VI.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.4.2.md"
+    commit: "86f243a4cae764e6ef88d132f63f1fd6b183a7cc"
+    report: "docs/task-reports/XIX.4.2.md"
+    verified_at: "2026-11-23T18:39:04+09:00"
   - id: "XIX.4.3"
     title: "잠긴 subtree의 속성 변경, 자식 추가·삭제·이동, 상위 삭제·이동을 user command validator가 거부합니다. 조회·선택은 허용합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIX.4.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.4.3.md"
   - id: "XIX.4.4"
     title: "외부 token, component definition, asset 수정은 별도 root lock을 요청해야 합니다. 자동 연쇄 잠금은 하지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIX.4.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.4.4.md"
   - id: "XIX.4.5"
     title: "같은 project의 모든 창·프로세스가 local ProjectLockCoordinator로 lease를 공유합니다. 다른 worktree는 별도 project identity로 취급합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IV.2.3"
       - "XII.2.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.4.5.md"
   - id: "XIX.4.6"
     title: "여러 agent는 겹치지 않는 subtree만 동시에 lock할 수 있습니다. 동일 또는 ancestor/descendant request는 거부합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIX.4.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.4.6.md"
   - id: "XIX.4.7"
     title: "user interaction preview 중인 node는 gesture 종료 후에만 agent lease를 획득합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XII.3.7"
       - "XIX.4.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.4.7.md"
   - id: "XIX.5.1"
     title: "agent command proposal은 일반 CommandTransaction closed enum만 사용합니다. raw memory patch와 임의 script는 금지합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIX.2.3"
       - "VII.1.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.5.1.md"
+    commit: "4ce50af04015b194b9b6b6612dfce3e4a8b6523a"
     report: "docs/task-reports/XIX.5.1.md"
+    verified_at: "2026-11-23T18:39:12+09:00"
   - id: "XIX.5.2"
     title: "proposed transaction이 lease 범위를 벗어나는 StableId를 수정하면 거부합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIX.4.2"
       - "XIX.5.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.5.2.md"
   - id: "XIX.5.3"
     title: "user preview에는 semantic diff와 validation 결과를 제공하고 승인 전 document state를 변경하지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIV.3.10"
       - "XIX.5.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.5.3.md"
   - id: "XIX.5.4"
     title: "승인된 command는 일반 DocumentThread queue, Binding/Layout/Scene invalidation, autosave 경로로 적용됩니다."
     status: not_started
@@ -11182,12 +11227,18 @@ tasks:
     verified_at: "2026-11-14T03:12:00+09:00"
   - id: "XX.1.3"
     title: "unsupported target capability와 missing resource를 export 전 진단하고 user confirmation 없이는 진행하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.10.8"
       - "XIII.6.7"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XX.1.3.md"
+    commit: "12b775d9eb23dd617ab96e88cda6ad0e73833177"
+    report: "docs/task-reports/XX.1.3.md"
+    verified_at: "2026-11-23T18:09:03+09:00"
   - id: "XX.2.1"
     title: "offscreen RenderGraph target을 구현해 지정 scale의 RGBA image를 생성합니다."
     status: not_started
@@ -11233,12 +11284,18 @@ tasks:
     verified_at: "2026-11-14T03:12:00+09:00"
   - id: "XX.3.2"
     title: "모든 Text glyph run을 outline Path로 변환합니다. `<text>` 요소와 font embedding은 생성하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.9.6"
       - "XI.6.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XX.3.2.md"
+    commit: "b11d7b8ce9e98351e7df5ff187196f0d9970e861"
+    report: "docs/task-reports/XX.3.2.md"
+    verified_at: "2026-11-23T18:08:25+09:00"
   - id: "XX.3.3"
     title: "SVG id는 StableId에서 deterministic safe id로 생성하고 collision을 검사합니다."
     status: verified
@@ -11254,11 +11311,12 @@ tasks:
     verified_at: "2026-11-14T03:12:00+09:00"
   - id: "XX.3.4"
     title: "SVG로 정확히 표현 가능한 gradient, clip, mask, opacity를 vector로 기록합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XI.10.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XX.3.4.md"
   - id: "XX.4.1"
     title: "unsupported effect를 가진 최소 scene subtree와 외부 blend dependency를 분석하는 raster boundary planner를 구현합니다."
     status: verified
@@ -11275,26 +11333,29 @@ tasks:
     verified_at: "2026-11-14T12:53:07+09:00"
   - id: "XX.4.2"
     title: "boundary를 offscreen PNG data로 렌더하고 SVG image element로 삽입합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XX.2.1"
       - "XX.4.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XX.4.2.md"
   - id: "XX.4.3"
     title: "rasterized subtree 목록과 이유를 export report에 기록합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XX.4.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XX.4.3.md"
   - id: "XX.4.4"
     title: "한 unsupported effect가 전체 View를 불필요하게 rasterize하지 않는 회귀 테스트를 추가합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XX.4.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XX.4.4.md"
   - id: "XX.5.1"
     title: "macOS native export command와 progress/cancel을 연결합니다."
     status: not_started
@@ -11320,23 +11381,41 @@ tasks:
       - DEV-MAC
   - id: "XXI.1.1"
     title: "`.stellar-plugin` directory package와 `plugin.yaml` schema를 정의합니다. fields: id, version, entry HTML, permissions, host API version, optional WASM modules."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXI.1.1.md"
+    commit: "9348629236bf13fc3805ecda56e45885f0c480cb"
+    report: "docs/task-reports/XXI.1.1.md"
+    verified_at: "2026-11-23T18:16:56+09:00"
   - id: "XXI.1.2"
     title: "package path traversal, symlink escape, duplicate id, unsupported version을 검증합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXI.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXI.1.2.md"
+    commit: "397790206dae73c9ab81a4b77041ad3a5106dc83"
+    report: "docs/task-reports/XXI.1.2.md"
+    verified_at: "2026-11-23T18:18:45+09:00"
   - id: "XXI.1.3"
     title: "plugin signature/registry는 별도 gate로 두고 unsigned local plugin은 개발 mode에서만 허용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXI.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXI.1.3.md"
+    commit: "6e1701d7a39a073c66e2f050f166dda166059560"
+    report: "docs/task-reports/XXI.1.3.md"
+    verified_at: "2026-11-23T18:19:39+09:00"
   - id: "XXI.2.1"
     title: "macOS WKWebView를 plugin별 별도 data store/process pool 정책으로 생성합니다."
     status: not_started
@@ -11361,12 +11440,13 @@ tasks:
       - DEV-MAC
   - id: "XXI.2.4"
     title: "native app UI와 canvas rendering path에 WebView를 사용하지 않는 inventory test를 유지합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXI.2.1"
       - "XXI.2.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXI.2.4.md"
   - id: "XXI.3.1"
     title: "plugin package WASM module을 WebView JS runtime에서 직접 instantiate하는 SDK loader를 제공합니다. Host IPC를 거치지 않습니다."
     status: not_started
@@ -11397,60 +11477,98 @@ tasks:
       - DEV-MAC
   - id: "XXI.4.1"
     title: "Host API를 versioned IDL/WIT 또는 동등 schema로 정의하고 TypeScript/Rust bindings를 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXI.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXI.4.1.md"
+    commit: "d0271daf479fdb9f8060240994b556d590d2ef3e"
+    report: "docs/task-reports/XXI.4.1.md"
+    verified_at: "2026-11-23T18:24:11+09:00"
   - id: "XXI.4.2"
     title: "read snapshot, query projection, apply CommandTransaction, Git status, file/network 요청을 별도 RPC namespace로 분리합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXI.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXI.4.2.md"
+    commit: "7c3af8a8ba36e9fc6ab1a906848eb38f20402ad4"
+    report: "docs/task-reports/XXI.4.2.md"
+    verified_at: "2026-11-23T18:29:44+09:00"
   - id: "XXI.4.3"
     title: "RPC는 async request/response와 batch를 지원하고 high-frequency pointer/render loop 호출을 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXI.4.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXI.4.3.md"
+    commit: "e7bdbe40b516985ac64d9866b38d72f724b18249"
+    report: "docs/task-reports/XXI.4.3.md"
+    verified_at: "2026-11-23T18:32:34+09:00"
   - id: "XXI.4.4"
     title: "Windows 대용량 payload는 Shared Buffer, macOS는 chunked binary reply 또는 승인 방식으로 전송합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXI.4.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXI.4.4.md"
   - id: "XXI.4.5"
     title: "파일, network, Git, terminal, clipboard, document apply 권한을 plugin별로 승인·저장합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXI.4.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXI.4.5.md"
+    commit: "ebb9132e47100c11aea4d4d4c59015993a6861e5"
+    report: "docs/task-reports/XXI.4.5.md"
+    verified_at: "2026-11-23T18:34:22+09:00"
   - id: "XXI.4.6"
     title: "plugin command도 일반 Command/Undo/Git WorkingTree 경로를 사용합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXI.4.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXI.4.6.md"
   - id: "XXI.5.1"
     title: "장기 실행·네이티브 플러그인을 별도 process로 실행하는 IPC contract를 정의합니다. app process에 native library를 dlopen하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXI.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXI.5.1.md"
+    commit: "e97fc351742743e986bc98eb3e365330d9061af0"
+    report: "docs/task-reports/XXI.5.1.md"
+    verified_at: "2026-11-23T18:42:32+09:00"
   - id: "XXI.5.2"
     title: "process lifecycle, heartbeat, timeout, permission revocation을 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXI.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXI.5.2.md"
+    commit: "7ed08ac0b84d95e0b6bf11fce03bb1328d096743"
+    report: "docs/task-reports/XXI.5.2.md"
+    verified_at: "2026-11-23T18:42:52+09:00"
   - id: "XXI.5.3"
     title: "외부 process plugin UI는 동일 HTML/JS WebView panel을 사용하게 합니다."
     status: not_started
@@ -11468,11 +11586,17 @@ tasks:
       - DEV-MAC
   - id: "XXI.6.2"
     title: "collaboration metadata는 plugin namespace directory에만 저장하고 core document schema에 넣지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXI.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXI.6.2.md"
+    commit: "437a558af7f4910d87d1b38261443f20b3d44120"
+    report: "docs/task-reports/XXI.6.2.md"
+    verified_at: "2026-11-23T18:35:57+09:00"
   - id: "XXI.6.3"
     title: "sample collaboration plugin은 검증용으로만 작성하고 Stellar 공식 service는 제공하지 않습니다."
     status: not_started
@@ -11550,13 +11674,14 @@ tasks:
       - DEV-MAC
   - id: "XXII.2.2"
     title: "IX.11.6 layout record의 CSS 기반 layout 속성을 같은 이름의 CSS 속성(flex, grid, position·inset)으로 출력합니다. 이름·값 형태가 다른 항목은 IX.11.19 matrix와 속성 모델 4장의 변환 규칙으로만 변환하고, 불가능한 constraint는 diagnostic 처리합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.2.1"
       - "IX.11.6"
       - "IX.11.19"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.2.2.md"
   - id: "XXII.2.3"
     title: "token을 CSS custom property 또는 generated constants로 내보냅니다. CSS 이름은 IX.11.16 파생 규칙, 등록 방식은 속성 모델 10장(`inherits: true`, `initial-value`는 기본 환경에서 평가한 literal, 값은 `:root`와 `:root`를 감싼 `@media` 블록에서만 선언)을 따릅니다. 환경 `interaction_state`에 따라 달라지는 값은 토큰 선언에서 빼고 XXII.2.6이 Control 상태 selector로 냅니다."
     status: not_started
@@ -12116,7 +12241,7 @@ tasks:
     verified_at: "2026-11-14T12:53:29+09:00"
   - id: "XXV.2.1"
     title: "OrphanedBinding, missing token/font/asset/library, invalid accessibility, target unsupported, migration warning을 공통 DiagnosticIndex로 집계합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "VIII.8.1"
       - "XIII.6.7"
@@ -12124,28 +12249,32 @@ tasks:
       - "IX.8.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXV.2.1.md"
   - id: "XXV.2.2"
     title: "diagnostic에 severity, source StableId, property path, remediation action ID를 포함합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXV.2.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXV.2.2.md"
   - id: "XXV.2.3"
     title: "document 변경 시 영향받는 diagnostic만 증분 재검사합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXV.2.1"
       - "VII.1.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXV.2.3.md"
   - id: "XXV.3.1"
     title: "FFI pagination/filter API로 DiagnosticIndex를 노출합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXV.2.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXV.3.1.md"
   - id: "XXV.3.2"
     title: "macOS/Windows native panel에서 종류·severity·document로 필터하고 source로 이동합니다."
     status: not_started
@@ -12155,11 +12284,12 @@ tasks:
       - DEV-MAC
   - id: "XXV.3.3"
     title: "remediation action은 일반 CommandTransaction 또는 명시 navigation만 실행합니다. 임의 script는 금지합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXV.2.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXV.3.3.md"
   - id: "XXVI.1.1"
     title: "branch list/switch/create/delete UI API를 시스템 Git 명령에 연결합니다."
     status: verified
@@ -12505,106 +12635,154 @@ tasks:
     verified_at: "2026-11-14T03:11:59+09:00"
   - id: "XXIX.2.1"
     title: "`stellar-agent-host` crate(`crates/agent-host`)를 추가하고 crate graph에 등록합니다. 의존은 core-types, agent-protocol, local-ipc, diagnostics만 허용하고 document, commands, history, storage, ops로의 전이 도달을 금지합니다. 모델 제공자 API client, API key 필드, 자격 증명 저장, 모델 라우팅, 사용량 계량 타입이 없음을 inventory test로 고정합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIX.9.1"
       - "XXIX.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIX.2.1.md"
+    commit: "0f4c925799c93334b984116b1c4439965b926bdf"
+    report: "docs/task-reports/XXIX.2.1.md"
+    verified_at: "2026-11-23T18:42:07+09:00"
   - id: "XXIX.2.2"
     title: "구독 CLI 실행 경로를 네트워크와 실제 계정 없이 테스트할 수 있는 테스트 대역을 만듭니다. XXIX.2.4~XXIX.2.13과 XXIX.6의 시나리오를 재현할 수 있어야 하며, 방식은 이 작업에서 정해 보고서에 기록합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXIX.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIX.2.2.md"
+    commit: "675b56cfbf1d2dcbf2f6625e0313806b12eef2f7"
+    report: "docs/task-reports/XXIX.2.2.md"
+    verified_at: "2026-11-23T18:43:14+09:00"
   - id: "XXIX.2.3"
     title: "구독 CLI 실행 대상 지정을 구현합니다. 사용자가 확인한, 수정하지 않은 공식 CLI만 실행 대상으로 삼습니다(ADR-0005 §4.3 실행 대상 확인). 신원 확인 방법은 Apple 공식 문서와 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다. Stellar는 공급자 CLI를 설치·업데이트·수정하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXIX.2.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIX.2.3.md"
+    commit: "ff60ad899031248e8c1df62f1ab04768593ac4e3"
+    report: "docs/task-reports/XXIX.2.3.md"
+    verified_at: "2026-11-23T18:42:09+09:00"
   - id: "XXIX.2.4"
     title: "macOS 실행기를 구현합니다. 실행은 ADR-0005 §4.3 두 불변식(문서 변경은 Stellar MCP tool로만, 세션은 프로젝트 working tree와 사용자의 CLI·도구 설정에 흔적 없음)을 지키고, Stellar는 자격 증명을 다루거나 들여다보지 않습니다(아키텍처 31.1, 37.3). UI가 느려도 출력 수신을 멈추지 않습니다(ADR-0005 §6). CLI 프로세스 환경은 대화형 터미널과 달리 ADR-0023 결정 9의 허용 목록으로 만듭니다. 빈 환경에서 시작해 launch profile(XXIX.2.6)의 환경 변수 이름 목록에 있는 이름만 앱 프로세스 환경에서 전달합니다. 그 밖의 실행 세부와 timeout 값은 실측, Apple 공식 문서, 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXIX.2.2"
       - "XVIII.2.4"
       - "XVI.7.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIX.2.4.md"
+    commit: "7bd6628002e4070e3c94ec1c2a51444f8263d199"
+    report: "docs/task-reports/XXIX.2.4.md"
+    verified_at: "2026-11-23T18:42:09+09:00"
   - id: "XXIX.2.5"
     title: "구독 CLI 연결 상태를 각 CLI 공식 문서가 제공하는 방법으로만 판정합니다. CLI 자격 증명 저장 위치에는 접근하지 않습니다. 판정은 UI·Document 스레드 밖에서 하며, 판정할 수 없으면 사용 불가로 처리합니다(fail closed). CLI가 보고한 계정 식별 정보는 저장·로그·진단에 넣지 않습니다(XVI.8). 상태 정의와 판정 시점은 보고서에 기록합니다(ADR-0005 §4.1)."
-    status: not_started
+    status: verified
     depends_on:
       - "XXIX.2.3"
       - "XXIX.2.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIX.2.5.md"
+    commit: "e8b2e4ef60c2f51384d98b1306c5415d2182cc58"
+    report: "docs/task-reports/XXIX.2.5.md"
+    verified_at: "2026-11-23T18:42:10+09:00"
   - id: "XXIX.2.6"
     title: "CLI 종류와 지원 버전 범위별 launch profile을 Stellar 소유 fixture로 관리합니다. 각 profile은 각 CLI 공식 문서의 비대화형 인터페이스와 구조화 출력 형식만 쓰고, 실행 설정, decoder profile 버전, CLI 프로세스에 전달할 환경 변수 이름 목록(ADR-0023 결정 9), 공급자 약관·공식 문서 검토 일자와 결과를 담습니다. 환경 변수 목록에는 이름만 적고 값은 넣지 않으며, 각 이름을 넣은 근거(CLI 공식 문서의 해당 항목)를 profile별 보고서에 기록합니다. profile은 ADR-0005 §4.3 두 불변식을 지키며, 각 불변식을 지키는 공식 설정과 그 밖의 실행 세부는 각 CLI 공식 문서와 Apple 공식 문서를 근거로 profile별 보고서에 기록합니다. 약관 검토상 허용이 명확하지 않은 CLI와 지원 범위 밖 버전은 실행하지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIX.2.4"
       - "XXIX.2.5"
       - "XIX.1.8"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIX.2.6.md"
   - id: "XXIX.2.7"
     title: "세션 실행 전 확인을 구현합니다. ADR-0005 §4.3 실행 대상 확인과 XXIX.2.5 연결 상태를 확인하고, 확인되지 않으면 실행하지 않습니다(fail closed)."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIX.2.6"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIX.2.7.md"
   - id: "XXIX.2.8"
     title: "AgentSession 상태 기계를 구현합니다. 상태와 전이는 XIX.6.4 종료 절차와 아키텍처 31.5 수명 규칙을 표현하도록 이 작업에서 정해 보고서에 기록합니다. 앱이 시작한 세션의 lease와 권한은 AgentSession이 소유하고, XIX.1.8로 결합된 bridge가 다시 연결되면 같은 세션에 다시 묶으며, 재연결 유예를 둡니다. 세션은 사용자가 명시적으로 시작할 때만 만들고 사용자 동작 없이 시작·재개·재전송하지 않으며, CLI가 보고한 사용 한도·인증 오류는 그대로 전달하고 세션을 멈춥니다. 세션 중지, CLI 프로세스 종료, 유예 초과, 신뢰 철회 시 XIX.6.4 절차(자동 rollback 없음)로 끝내고 ADR-0005 §4.3 불변식에 따라 실행 흔적을 정리합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIX.2.7"
       - "XIX.6.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIX.2.8.md"
   - id: "XXIX.2.9"
     title: "출력 디코더 테스트 fixture를 launch profile마다 둡니다. 원문 입력과 기대 `AgentChatItem` 목록(golden)으로 네트워크와 실제 계정 없이 결정적으로 실행하며(아키텍처 38), fixture에는 XVI.8 금지 정보를 넣지 않습니다. 정상 출력, 해석할 수 없는 출력, 입력 경계에 걸친 데이터를 포함하고, profile별 사례는 각 CLI 공식 문서를 근거로 보고서에 기록합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIX.2.2"
       - "XXIX.2.6"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIX.2.9.md"
   - id: "XXIX.2.10"
     title: "채팅 보기 모델 `AgentChatItem` closed enum을 `stellar-agent-host`에 정의합니다. variant는 ADR-0005 §4.4 범위 안에서 이 작업에서 정해 보고서에 기록합니다. 이 타입은 CommandTransaction이나 document, commands, history, storage, ops 타입을 담지 않고 그 타입이나 승인 응답으로의 변환 함수를 갖지 않습니다. item당 표시 텍스트와 세션당 item 수에 상한을 둡니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXIX.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIX.2.10.md"
+    commit: "ab26ea6889cddff71cfee213be946c404470e358"
+    report: "docs/task-reports/XXIX.2.10.md"
+    verified_at: "2026-11-23T18:42:07+09:00"
   - id: "XXIX.2.11"
     title: "표시 전용 출력 디코더를 `stellar-agent-host` 계층 안에 격리해 구현합니다(2026-11-14 제품 소유자 결정). launch profile마다 버전이 붙은 decoder profile로 각 CLI 공식 문서의 구조화 출력만 해석하고, 디코드는 실패하면 닫힙니다(fail closed, 2026-11-14 제품 소유자 결정). 모듈 구성, 입출력, 실패 판정 기준은 보고서에 기록합니다. 같은 원문은 항상 같은 item 목록으로 디코드됩니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIX.2.9"
       - "XXIX.2.10"
       - "XXIX.1.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIX.2.11.md"
   - id: "XXIX.2.12"
     title: "원문 보기 버퍼를 구현합니다. CLI 출력을 수신한 그대로 담는 세션별 메모리 상한 버퍼이며, 상한을 넘으면 잘린 사실을 표시합니다. 제어 문자는 해석하지 않고 PTY·terminal emulation은 쓰지 않습니다. 디코더 성공·실패와 관계없이 보존하고 세션 메모리에만 둡니다. 상한 값은 실측으로 정합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXIX.2.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIX.2.12.md"
+    commit: "6095e305bf567d6b698fbb5b66727b1f2d8e60e9"
+    report: "docs/task-reports/XXIX.2.12.md"
+    verified_at: "2026-11-23T18:42:08+09:00"
   - id: "XXIX.2.13"
     title: "디코드 실패 판정을 세션 처리에 연결합니다. 실패 뒤 처리는 2026-11-14 결정(fail closed)과 XIX.6.4 절차(자동 rollback 없음)를 지키도록 이 작업에서 정해 보고서에 기록합니다. 디코드 실패 판정은 권한을 판단하지 않으며, 문서 접근 허용 여부는 앱의 권한·승인·lease 판정만 정합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIX.2.11"
       - "XXIX.2.8"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIX.2.13.md"
   - id: "XXIX.3.1"
     title: "FFI를 확장합니다. 에이전트 세션 생성·메시지 전송·중지, 승인 응답, 채팅 item과 원문 버퍼 증분 event, 출처 색인 조회, 변경·세션 되돌리기와 표시 정리 함수, 버전이 매겨진 에이전트 event message를 추가하고 셸은 II.4.5 pull 방식 event 경로로 받습니다. stellar-ffi 허용 의존은 ADR-0013대로 core-types, runtime만 두고, 에이전트 기능은 runtime을 거쳐 도달합니다. crate graph 정책의 stellar-runtime 허용 의존에 agent-host, agent-protocol, ops와 에이전트 편집 구현 crate를 추가하고, runtime이 agent-protocol host trait를 구현합니다(ADR-0005 §8). FFI는 보호 경로이므로 같은 변경에 ADR을 갱신합니다."
     status: not_started
@@ -12846,24 +13024,36 @@ tasks:
       - DEV-MAC
   - id: "XXX.1.1"
     title: "`MotionSpec` record에 StableId, owner(ComponentDefinition 또는 ViewDefinition), 대상 PropertyPath 목록, 시작 조건(상태 변수 StableId와 값 조건), 지속 시간, 지연, timing function, reduced motion 대체 동작(기본 즉시 전환)을 정의합니다. timing function은 linear, cubic-bezier(4 parameter), steps(개수·위치), spring(질량·강성·감쇠·초기 속도)의 닫힌 집합입니다. Color 보간 공간은 ADR-0025 결정 1.2를 따릅니다. 저장된 색공간(sRGB 또는 Display P3)의 encoded 채널을 premultiplied로 선형 보간하고, 시작값과 끝값의 색공간이 다르면 거부합니다. 저장 형식은 착수 시 ADR로 고정합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.5.1"
       - "VIII.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXX.1.1.md"
+    commit: "ff3ac508fab1dc27ee1c67129dc7c85736d5ced4"
+    report: "docs/task-reports/XXX.1.1.md"
+    verified_at: "2026-11-23T18:58:57+09:00"
   - id: "XXX.1.2"
     title: "프로토타입 socket 종류 State와 Pulse를 정의하고 expression socket 연결 가능 API를 확장합니다. State와 Pulse의 직접 연결은 거부하고 등록된 변환 node(상태 변화→펄스, 펄스→상태 토글·카운터)만 허용합니다. 속성 입력 포트의 State socket 타입은 registry 항목의 CSS 값 문법을 ADR-0025 결정 1.2 대응으로 바꾼 `ExpressionType`이며, 합집합 문법(`width` 등)은 구성 타입별 `ExpressionType`의 집합입니다. 연결된 식의 정적 타입이 그 집합에 속해야 하고 저장 값 variant는 그 타입을 따릅니다. 대응이 없는 값 문법의 속성은 포트로 노출하지 않고 진단합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.3.2"
       - "IX.5.2"
       - "IX.11.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXX.1.2.md"
+    commit: "f7904830a1aa332c0dbb0142e5485ff70a64cd1a"
+    report: "docs/task-reports/XXX.1.2.md"
+    verified_at: "2026-11-23T18:58:37+09:00"
   - id: "XXX.1.3"
     title: "프로토타입 node 종류 registry를 닫힌 집합으로 정의합니다. 속성 출력(PropertyPath), expression block, 상태 변수, 이벤트 원천, Transition, semantic emit, Context 읽기, MotionSpec, 변환 node만 둡니다. 사용자 정의 코드, JavaScript, 파일·네트워크 node는 표현할 수 없게 합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.1.1"
       - "XXX.1.2"
@@ -12872,48 +13062,64 @@ tasks:
       - "IX.11.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.1.3.md"
   - id: "XXX.1.4"
     title: "EventKind에 hover, pointer down·up, drag(변위), scroll, long press를 추가하는 확장을 ADR로 고정한 뒤 구현합니다. 현재 EventKind payload는 `TypeSpec` 하나(`crates/document/src/component/event.rs`의 `payload_type`)이고 `TypedValue`에는 2D 값이 없습니다(`crates/core-types/src/typed_value.rs`). 그래서 ADR은 drag·scroll 변위 payload를 2D 값 타입 추가(`TypedValue`·`ExpressionType` variant와 tag 추가)와 축별 이벤트(x·y 각각 `Length` payload, 같은 tick 안에서 x 다음 y) 중 하나로 정합니다. drag 끝 이벤트는 spring 초기 속도(XXX.3.2)에 쓸 축별 release velocity(px/tick)를 싣고, velocity는 registry에 고정한 개수만큼의 마지막 tick 변위를 IEEE 기본 연산으로 평균해 계산합니다. 제스처 판정 임계값은 논리 tick 단위로 registry에 고정하고 기존 kind 번호는 바꾸지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXX.1.4.md"
+    commit: "c8ea3a2d85046c1512fd3e05ef4557bec5239790"
+    report: "docs/task-reports/XXX.1.4.md"
+    verified_at: "2026-11-23T19:00:41+09:00"
   - id: "XXX.1.5"
     title: "사용자가 고정한 그래프 node 위치만 희소 배치 hint(StableId→좌표)로 저장합니다. Semantic Diff에서는 표현 전용 change로 분류해 따로 stage할 수 있게 합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.1.3"
       - "XIV.3.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.1.5.md"
   - id: "XXX.1.6"
     title: "`MotionSpec` 생성·변경·삭제 command를 구현합니다. 대상 속성이 삭제되면 MotionSpec을 지우지 않고 orphan 진단으로 남깁니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXX.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXX.1.6.md"
+    commit: "4eb4d09856475862cbc58fa023ef278db43320da"
+    report: "docs/task-reports/XXX.1.6.md"
+    verified_at: "2026-11-23T18:59:17+09:00"
   - id: "XXX.2.1"
     title: "owner의 binding, expression AST, 상태 머신, Control Contract 이벤트, Context 읽기, MotionSpec에서 node·edge 목록을 만드는 읽기 전용 `PrototypeGraphView`를 구현합니다. node·edge 순서는 StableId 기준으로 결정합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.1.3"
       - "VIII.3.1"
       - "IX.5.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.2.1.md"
   - id: "XXX.2.2"
     title: "결정론적 자동 배치를 구현합니다. hint 없는 node 위치를 계산하고 hint 있는 node는 고정합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.2.1"
       - "XXX.1.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.2.2.md"
   - id: "XXX.2.3"
     title: "node 추가·연결·해제·삭제를 기존 binding·expression·transition command와 MotionSpec command로 낮춘 command plan을 생성하는 API를 구현합니다. 사용자 동작 하나는 CommandTransaction 하나입니다. 실제 UI는 XXX.5에서 연결합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.2.1"
       - "XXX.1.6"
@@ -12921,18 +13127,20 @@ tasks:
       - "VIII.6.6"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.2.3.md"
   - id: "XXX.2.4"
     title: "포트 공개를 구현합니다. 그래프에서 컴포넌트 밖으로 포트를 공개하면 필요한 공개 ComponentProperty·Event·ContextRequirement 생성 plan을 계산하고, 미리보기 후 하나의 CommandTransaction으로 적용합니다. nested instance 내부 포트에 직접 연결하는 edge는 거부합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.2.3"
       - "IX.4.5"
       - "XXX.7.8"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.2.4.md"
   - id: "XXX.2.5"
     title: "expression, 상태 머신, Context, MotionSpec 진단을 그래프 node·socket ID로 매핑합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.2.1"
       - "VIII.3.4"
@@ -12940,25 +13148,28 @@ tasks:
       - "XXX.7.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.2.5.md"
   - id: "XXX.3.1"
     title: "프리뷰 세션에 고정 tick 논리 시계 `PreviewClock`을 정의합니다. 문서 평가 경로에는 시스템 시각 접근을 두지 않고, 셸은 디스플레이 프레임을 tick 번호로 대응시키기만 합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IX.5.4"
       - "XVI.2.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.3.1.md"
   - id: "XXX.3.2"
     title: "timing function evaluator를 구현합니다. cubic-bezier는 고정 반복 횟수 해법, spring은 고정 step 적분을 쓰고 결과는 tick의 순수 함수입니다. 진행률에 따른 값 보간(Color는 ADR-0025 결정 1.2의 premultiplied encoded 채널 선형 보간)도 같은 evaluator에 둡니다. 계산은 IEEE-754 기본 연산(사칙연산·`sqrt`)만 씁니다. `exp`·`sin`·`cos`·`pow` 같은 libm 초월함수가 필요한 닫힌 식은 ADR-0006 기준으로 플랫폼 의존 결과가 되므로 쓰지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.1.1"
       - "VIII.4.6"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.3.2.md"
   - id: "XXX.3.3"
     title: "tick 처리 순서를 고정합니다. 입력 이벤트→펄스 dispatch(정해진 순서, 원자 commit)→상태 변화에 따른 MotionSpec 시작·현재 값에서 재지정→영향받는 binding 재평가 순서입니다. 펄스 연쇄 dispatch 깊이가 상한을 넘으면 진단하고 그 tick의 상태 변화는 버립니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.3.1"
       - "XXX.3.2"
@@ -12966,30 +13177,34 @@ tasks:
       - "IX.5.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.3.3.md"
   - id: "XXX.3.4"
     title: "tick마다 활성 MotionSpec과 그 대상 binding만 평가하도록 binding scheduler에 연결합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.3.3"
       - "VIII.6.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.3.4.md"
   - id: "XXX.3.5"
     title: "환경 key `reduced_motion`이 켜지면 MotionSpec의 대체 동작을 씁니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.3.3"
       - "VIII.7.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.3.5.md"
   - id: "XXX.3.6"
     title: "프리뷰 상태, 진행 중 motion, 입력 로그를 세션 메모리에만 둡니다. 프로젝트 저장과 recovery snapshot에 넣지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.3.3"
       - "XIII.8.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.3.6.md"
   - id: "XXX.4.1"
     title: "macOS 프리뷰 세션을 구현합니다. 캔버스 렌더러로 프리뷰를 그리고, InputEvent를 프로토타입 이벤트로 변환하며, 평가 결과는 transient scene으로 주입합니다."
     status: not_started
@@ -13078,12 +13293,13 @@ tasks:
       - REF-MAC
   - id: "XXX.6.3"
     title: "문서 schema와 프로토타입 registry에 실행 코드, 파일·네트워크, 시스템 시각 접근 경로가 없음을 검사하는 inventory test를 추가합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.1.3"
       - "XXX.3.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.6.3.md"
   - id: "XXX.7.1"
     title: "`ContextKey` resource에 StableId, 이름, TypeSpec, 필수 default expression, scope(프로젝트·라이브러리·문서)를 정의합니다. default는 닫힌 식이어야 하며 default 없는 key는 만들 수 없습니다. 참조는 StableId로 합니다. 번호는 IX.12.1 예약 값을 쓰고 나머지 저장 형식은 착수 시 ADR로 고정합니다."
     status: not_started

@@ -2,7 +2,7 @@
 
 - WBS: XXX.2.3
 - 작업명: node 추가·연결·해제·삭제를 binding·expression·transition·MotionSpec command로 낮춘 plan.
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 통합 판정: 이 행의 구현은 끝났지만 선행 XXX.2.1이 `[x]`가 아닙니다. 선행이 끝나면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`)
 - 결정: ADR-0094 결정 4
 - 선행: XXX.2.1, XXX.1.6, VIII.3.3, VIII.6.6
 

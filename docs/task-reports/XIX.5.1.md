@@ -2,7 +2,7 @@
 
 - WBS: XIX.5.1
 - 작업명: agent command proposal은 일반 CommandTransaction closed enum만 사용하고 raw memory patch와 임의 script를 금지
-- 상태: 부분 완료 (`[~]`) — 2026-11-23 ledger-refresh 판정: 남은 결함: `stellar apply`(`tools/stellar-cli/src/apply.rs`의 `command_input`)가 같은 입력 규칙을 따로 구현해, MCP 해석기(`stellar_ops::mcp_command_input::command_input`)와 두 경로입니다. 소스 비교 test(`bc082d7e`)로 일치만 막고 있습니다. CLI가 ops 해석기를 쓰면 `[x]`입니다. 이전 기록: 완료 (`[x]`)
+- 상태: 완료 (`[x]`) — 2026-11-23 통합 재판정: `stellar apply`의 command 해석이 `stellar_ops::mcp_command_input::command_input` 하나로 합쳐져(`ff4d8666`) 이중 경로가 없어졌습니다. 선행이 모두 `[x]`입니다. 이전 기록: 부분 완료 (`[~]`) — 2026-11-23 ledger-refresh 판정: 남은 결함: `stellar apply`(`tools/stellar-cli/src/apply.rs`의 `command_input`)가 같은 입력 규칙을 따로 구현해, MCP 해석기(`stellar_ops::mcp_command_input::command_input`)와 두 경로입니다. 소스 비교 test(`bc082d7e`)로 일치만 막고 있습니다. CLI가 ops 해석기를 쓰면 `[x]`입니다. 이전 기록: 완료 (`[x]`)
 - 선행: XIX.2.3 `[x]`, VII.1.6 `[x]`
 
 ## 필수 실행 환경

@@ -2,7 +2,7 @@
 
 - WBS: XIX.5.2
 - 작업명: proposed transaction이 lease 범위를 벗어나는 StableId를 수정하면 거부
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 통합 판정: 이 행의 구현은 끝났지만 선행 이 `[x]`가 아닙니다. 선행이 끝나면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`)
 - 선행: XIX.4.2, XIX.5.1
 - 결정: [ADR-0093](../adr/ADR-0093-agent-permission-and-edit-lease.md)
 

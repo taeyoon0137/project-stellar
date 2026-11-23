@@ -2,7 +2,7 @@
 
 - WBS: XXX.1.3
 - 작업명: 속성 출력·expression block·상태 변수·이벤트 원천·Transition·semantic emit·Context 읽기·MotionSpec·변환 node만 있는 닫힌 registry.
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 통합 판정: 이 행의 구현은 끝났지만 선행 XXX.7.3이 `[x]`가 아닙니다. 선행이 끝나면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`)
 - 결정: ADR-0094 결정 3
 - 선행: XXX.1.1, XXX.1.2, XXX.7.3, IX.11.2, IX.11.3
 

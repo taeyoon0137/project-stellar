@@ -2,7 +2,7 @@
 
 - WBS: XIX.5.3
 - 작업명: user preview에 semantic diff와 validation 결과 제공, 승인 전 document state 불변
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 통합 판정: 이 행의 구현은 끝났지만 선행 이 `[x]`가 아닙니다. 선행이 끝나면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`)
 - 선행: XIV.3.10, XIX.5.1
 - 결정: [ADR-0093](../adr/ADR-0093-agent-permission-and-edit-lease.md)
 
