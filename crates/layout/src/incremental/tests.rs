@@ -766,3 +766,67 @@ fn unexpected_fallback_metric_is_recorded_before_the_assertion() {
     assert_eq!(outcome.is_err(), cfg!(debug_assertions));
     assert_eq!(session.metrics().unexpected_fallback, 1);
 }
+
+/// block root 아래 absolute card `count`개(card마다 absolute leaf 하나).
+fn absolute_cards(count: u64) -> LayoutInput {
+    let place = |x: f32, y: f32, w: f32, h: f32| {
+        style(|s| {
+            s.position = Position::Absolute;
+            s.left = LengthPercentageAuto::Length(len(x));
+            s.top = LengthPercentageAuto::Length(len(y));
+            s.width = size_px(w);
+            s.height = size_px(h);
+        })
+    };
+    let mut root = LayoutNode::new(id(1)).with_style(fixed(4000.0, 4000.0));
+    let mut nodes = Vec::new();
+    for n in 0..count {
+        let card = 10 + 2 * n;
+        root = root.with_child(id(card), key(n as u32));
+        nodes.push(
+            LayoutNode::new(id(card))
+                .with_style(place((n % 50) as f32 * 20.0, (n / 50) as f32 * 20.0, 18.0, 18.0))
+                .with_child(id(card + 1), key(0)),
+        );
+        nodes.push(LayoutNode::new(id(card + 1)).with_style(place(2.0, 2.0, 8.0, 8.0)));
+    }
+    nodes.insert(0, root);
+    LayoutInput::new(id(1), nodes)
+}
+
+#[test]
+fn moving_an_absolute_child_does_not_relayout_its_parent() {
+    // ADR-0084 결정 1: inset이 정해진 absolute node의 이동·크기 변경은 부모 안 그 node 위치만 다시 구합니다.
+    let (mut session, _) = IncrementalLayout::new(absolute_cards(500), &DefaultMeasurer).unwrap();
+    for (n, (x, y, w)) in [
+        (7u64, (33.5, 41.0, 18.0)),
+        (8, (5.0, 6.0, 30.0)),
+        (7, (0.0, 0.0, 12.0)),
+    ] {
+        let card = 10 + 2 * n;
+        let mut node = session.node(id(card)).unwrap().clone();
+        node.style.left = LengthPercentageAuto::Length(len(x));
+        node.style.top = LengthPercentageAuto::Length(len(y));
+        node.style.width = size_px(w);
+        let stats = session
+            .apply(vec![LayoutEdit::upsert(node)], &DefaultMeasurer)
+            .unwrap();
+        // card와 자식 leaf만 다시 배치합니다(부모 root·다른 card 499개는 그대로).
+        assert!(stats.arranged <= 2, "{stats:?}");
+        assert_eq!(stats.full_layouts, 0);
+        assert_eq!(
+            session.result().unwrap(),
+            compute_layout(session.input()).unwrap()
+        );
+    }
+    // absolute에서 흐름으로 바뀌면 부모를 다시 배치합니다(결과는 전체 계산과 같음).
+    let mut node = session.node(id(12)).unwrap().clone();
+    node.style.position = Position::Static;
+    session
+        .apply(vec![LayoutEdit::upsert(node)], &DefaultMeasurer)
+        .unwrap();
+    assert_eq!(
+        session.result().unwrap(),
+        compute_layout(session.input()).unwrap()
+    );
+}
