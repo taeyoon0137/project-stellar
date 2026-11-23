@@ -50,6 +50,9 @@ Accepted (2026-11-24).
    - `ProjectSnapshot::revision`은 이 값입니다. 더하기 전 값은 `ProjectSnapshot::storage_revision`입니다.
      `snapshot::save::save_documents`의 결과 revision도 세트 선택을 더한 값입니다. 같은 쓰기에서 세트도 바꾸는
      `ops::apply`는 `save_documents_selecting`에 새 선택을 넘깁니다.
+   - 새 generation을 쓰는 다른 ops 경로도 결과 revision에 세트 선택을 더합니다(`ops::migrate` 결과는 다시 연
+     revision과 같음). HEAD generation과 같은지 보는 비교(`compare`의 HEAD 재사용 판정)는 세트 선택을 더하지 않은
+     `storage_revision`의 hash를 manifest hash와 대조합니다. 그래서 세트를 고른 프로젝트도 빠른 경로를 씁니다.
    - revision 표기 해석은 `g0:<hash>`를 받습니다. 1 이상 generation에 hash가 없는 표기는 전처럼 거부합니다.
    - 그래서 다른 writer의 세트 변경도 모든 ops 쓰기(`stellar apply`, `stellar css paste`, MCP, Merge Composer target,
      `style-defaults set`)의 base revision 비교가 잡습니다.
@@ -83,7 +86,7 @@ Accepted (2026-11-24).
 | 대안 | 판단 |
 |---|---|
 | revision 표기에 세트 이름을 그대로 붙임(`g3:<hash>+react-native`) | 채택하지 않음. `ProjectRevision`은 `Copy` 값이고 L2·runtime·agent-edit가 variant를 직접 만듭니다. 새 필드는 그 호출자를 모두 바꿉니다. hash에 접으면 표기 형식과 타입이 그대로입니다 |
-| 기본 세트도 hash에 접음 | 채택하지 않음. 세트를 고르지 않은 모든 프로젝트의 revision 표기가 바뀌고, manifest hash와 같다고 보는 기존 비교(`compare` HEAD 재사용 판정 등)가 기본 프로젝트에서도 느린 경로로 갑니다 |
+| 기본 세트도 hash에 접음 | 채택하지 않음. 세트를 고르지 않은 모든 프로젝트의 revision 표기가 바뀝니다 |
 | 사용자 세트 파일(`design/style-defaults/*`) 내용까지 revision에 넣음 | 지금은 채택하지 않음. 목표는 `stellar.yaml` 선택 변경을 잡는 것입니다. 세트 파일 편집은 생략값 해석에 영향을 주지만 쓰기 경로가 따로 없고, 넣으려면 열 때마다 세트 파일을 모두 hash해야 합니다. 후속에서 정합니다 |
 | CLI `set`을 계속 두 단계 쓰기로 둠 | 채택하지 않음. 같은 command의 쓰기 경로가 둘이 되고, base 검사 규칙도 따로 지켜야 합니다 |
 | 문서가 없는 프로젝트에서 CLI가 두 단계 쓰기로 물러섬 | 채택하지 않음. 이중 경로입니다. 저장된 문서가 없는 프로젝트는 앱이 만들지 않는 상태입니다 |
@@ -103,8 +106,6 @@ Accepted (2026-11-24).
   - runtime 창의 `agent_edit::project_revision`은 창이 연 generation만 봅니다. 세트가 `css`가 아닌 프로젝트에서는 MCP
     headless revision과 표기가 다릅니다. runtime이 세트 거울을 `stellar.yaml`과 잇는 작업(활성 세트 거울 연결)에서
     `with_style_defaults`를 불러야 합니다.
-  - `ops::migrate`의 결과 revision은 세트 선택을 더하지 않습니다(소유 밖). 세트가 `css`가 아닌 프로젝트에서 migrate
-    결과 revision을 바로 base로 쓰면 불일치입니다. 다시 열어 얻은 revision은 맞습니다.
   - 세트를 바꿨다가 되돌리는 ABA는 revision이 같습니다. 내용이 같은 상태라 의도한 동작입니다.
   - `docs/spec/style-defaults.md` 3장의 `set` 설명은 ADR-0115 기준 문장입니다(결과는 같음). 문서 소유 작업이 이
     결정을 덧붙입니다.

@@ -108,3 +108,27 @@
 - `ops::migrate` 결과 revision도 세트 선택을 더하지 않습니다(소유 밖). 다시 열어 얻은 revision은 맞습니다.
 - `docs/spec/style-defaults.md` 3장은 ADR-0115 기준 설명입니다(결과는 같음, 소유 밖).
 - 행 상태는 선행 IX.11.26·IX.11.27·XXIV.4.5 판정을 따릅니다.
+
+## 검토 보완 (2026-11-24, `lane/style-apply-revision` 검토)
+
+- revision에 세트 선택을 넣은 뒤 같은 뜻을 따르지 않던 두 곳을 맞췄습니다(ADR-0128 결정 2 보완).
+  - `ops::migrate` 결과 revision에 세트 선택을 더했습니다. 세트가 `css`가 아닌 프로젝트에서도 migrate 결과가 다시 연
+    revision과 같아 바로 다음 쓰기의 base로 쓸 수 있습니다. 위 "남은 위험"의 migrate 항목은 해소됐습니다.
+  - `compare`의 HEAD 재사용 판정은 `storage_revision`의 hash를 HEAD manifest hash와 대조합니다. 세트를 고른 프로젝트가
+    빠른 경로에서 빠지던 성능 회귀를 없앴습니다(결과는 전과 같음).
+- CLI `set`은 없는 세트 같은 세트 파일 오류를 문서 확인보다 먼저 알립니다(빈 프로젝트에서 `unknown-style-defaults`).
+- 텍스트 원본 프로젝트에서 세트만 바꾸는 쓰기 test를 더했습니다. 원본·cache 짝(Cache)과 원본만 바뀐 상태(FromText)
+  모두 `stellar.yaml`만 바뀌고, 연 방식과 다시 연 revision이 쓰기 결과와 같습니다.
+
+### 변경 파일
+
+- `crates/ops/src/migrate.rs`, `crates/ops/src/compare.rs`(소유 밖, 이 작업이 바꾼 revision 뜻에 따른 한 줄씩).
+- `crates/ops/src/snapshot/text_tests.rs`, `tools/stellar-cli/src/style_defaults.rs`,
+  `tools/stellar-cli/tests/style_defaults.rs`.
+
+### 검증 (`DEV-MAC`)
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-ops --lib` | 통과(165) |
+| `cargo test -p stellar-cli --test style_defaults` | 통과(6) |

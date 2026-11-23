@@ -346,6 +346,25 @@ fn set_goes_through_the_ops_write_path_and_changes_one_manifest_line() {
 }
 
 #[test]
+fn set_without_a_saved_document_is_refused_and_writes_nothing() {
+    // ADR-0128 결정 3: `set`은 `stellar apply`와 같은 경로라 적용할 문서가 필요합니다. 없으면 따로 쓰지 않고
+    // `no-document`로 거부합니다. 없는 세트는 그보다 먼저 세트 파일 오류 code로 알립니다.
+    let tmp = TempDir::new("cli-style-defaults-empty");
+    let root = tmp.path.join("project");
+    scaffold_project(&root);
+    let path = root.to_str().unwrap();
+    let before = files(&root);
+    let refused = envelope(
+        &stellar(&["style-defaults", "set", path, "react-native"]),
+        65,
+    );
+    assert_eq!(error_code(&refused), Some("no-document"));
+    let unknown = envelope(&stellar(&["style-defaults", "set", path, "nowhere"]), 66);
+    assert_eq!(error_code(&unknown), Some("unknown-style-defaults"));
+    assert_eq!(files(&root), before);
+}
+
+#[test]
 fn show_lists_payload_longhands_from_the_registry_table() {
     let tmp = TempDir::new("cli-style-defaults-payload");
     let (root, _, _) = project(&tmp);

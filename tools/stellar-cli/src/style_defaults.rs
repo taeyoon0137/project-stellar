@@ -220,6 +220,10 @@ fn run_set(args: &[String]) -> Result<Success, CliError> {
     let root = Path::new(path);
     let snapshot = open_snapshot(root).map_err(|e| views::open_error(&e))?;
     let base = base.unwrap_or(snapshot.revision());
+    // 없는 세트·순환 같은 세트 파일 오류는 문서 확인보다 먼저 그 code로 알립니다. 적용 경로의 준비 단계가 같은
+    // 함수로 다시 확인하고, 연 뒤 바뀐 선택은 base revision 비교가 거부합니다.
+    flatten_named(name, &load_user_sets(snapshot.root()).map_err(file_error)?)
+        .map_err(file_error)?;
     // `SetStyleDefaults`는 문서 모델의 세트 거울을 바꾸는 command라 대상 문서가 하나 필요합니다. 선택은 프로젝트
     // 하나이므로 root 문서 순서의 첫 문서에 적용합니다(ADR-0128 결정 3).
     let Some(document) = root_order(&snapshot).first().copied() else {
@@ -229,10 +233,6 @@ fn run_set(args: &[String]) -> Result<Success, CliError> {
             "저장된 문서가 없어 SetStyleDefaults를 적용할 문서가 없습니다",
         ));
     };
-    // 없는 세트·순환 같은 세트 파일 오류는 그 code로 알립니다. 적용 경로의 준비 단계가 같은 함수로 다시 확인하고,
-    // 연 뒤 바뀐 선택은 base revision 비교가 거부합니다.
-    flatten_named(name, &load_user_sets(snapshot.root()).map_err(file_error)?)
-        .map_err(file_error)?;
     let previous = snapshot.style_defaults_name().to_string();
     let command = Command::SetStyleDefaults(SetStyleDefaults { name: name.clone() });
     let request = ApplyRequest {
