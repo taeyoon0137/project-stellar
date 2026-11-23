@@ -179,10 +179,12 @@ pub fn migrate(
             .map_err(|e| MigrateError::Run(e.to_string()))?;
             Ok(MigrateOutcome {
                 before,
+                // 프로젝트 revision은 새 generation에 stellar.yaml 세트 선택을 더한 값입니다(ADR-0128 결정 2).
                 revision: ProjectRevision::Saved {
                     generation: outcome.to_generation,
                     manifest_hash: outcome.new_manifest_hash,
-                },
+                }
+                .with_style_defaults(snapshot.style_defaults_name()),
                 migrated: true,
             })
         }
@@ -253,6 +255,24 @@ mod tests {
             })
         ));
         assert_eq!(file_digest(&root), before);
+    }
+
+    #[test]
+    fn migrated_revision_includes_the_style_defaults_selection() {
+        // ADR-0128 결정 2: 세트가 `css`가 아닌 프로젝트에서도 migrate 결과 revision은 다시 연 revision과 같아 바로
+        // 다음 쓰기의 base로 쓸 수 있습니다.
+        let dir = TempDir::new("migrate-selection");
+        let root = saved(&dir);
+        stellar_project::manifest_style_defaults::set_active(&root, "react-native").unwrap();
+        let mut registry = MigrationRegistry::new();
+        registry.register(noop_v1_to_v2()).unwrap();
+        let outcome = migrate(&root, &registry, 2, &LockPolicy::None).unwrap();
+        assert!(outcome.migrated);
+        assert_eq!(outcome.revision.generation(), 2);
+        let reopened = crate::snapshot::open_snapshot(&root).unwrap();
+        assert_ne!(reopened.revision(), reopened.storage_revision());
+        assert_eq!(outcome.revision, reopened.revision());
+        assert_eq!(schema_status(&root, 2).unwrap().revision, outcome.revision);
     }
 
     #[test]

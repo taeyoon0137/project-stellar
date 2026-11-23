@@ -52,3 +52,6 @@ pub mod typography;
 
 /// 아직 구현하지 않은 저장 요소의 예약 번호 (IX.12.1).
 pub mod reserved;
+
+/// CSS·SVG 값 표기가 함께 쓰는 수 표기 (IX.11.20).
+pub mod number;

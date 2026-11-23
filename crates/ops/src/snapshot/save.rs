@@ -63,7 +63,7 @@ pub enum SourceWrite {
 /// 저장 결과.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SaveOutcome {
-    /// 저장 뒤 revision(다시 열었을 때와 같은 값).
+    /// 저장 뒤 프로젝트 revision(다시 열었을 때와 같은 값, 세트 선택 포함).
     pub revision: ProjectRevision,
     /// 새로 기록한 chunk 수.
     pub written_chunks: usize,
@@ -159,7 +159,32 @@ fn write_error(error: SaveRunError) -> SaveError {
 }
 
 /// `roots` 순서의 문서 전체(`models`, 바꾸지 않은 문서 포함)를 원본과 cache에 씁니다(모듈 문서 순서).
+///
+/// 결과 revision은 원본·cache revision에 열 때 본 활성 기본값 세트 선택을 더한 프로젝트 revision입니다(ADR-0128
+/// 결정 2). 같은 쓰기에서 세트도 바꾸는 호출자는 [`save_documents_selecting`]을 씁니다.
 pub fn save_documents(
+    snapshot: &ProjectSnapshot,
+    roots: Vec<StableId>,
+    models: Vec<DocumentModel>,
+) -> Result<SaveOutcome, SaveError> {
+    save_documents_selecting(snapshot, roots, models, snapshot.style_defaults_name())
+}
+
+/// [`save_documents`]와 같고, 결과 revision에 더할 세트 선택이 `selection`입니다. 이 함수는 `stellar.yaml`을 쓰지
+/// 않습니다. 호출자가 저장 뒤 그 선택을 씁니다(`ops::apply`, ADR-0087 결정 2).
+pub fn save_documents_selecting(
+    snapshot: &ProjectSnapshot,
+    roots: Vec<StableId>,
+    models: Vec<DocumentModel>,
+    selection: &str,
+) -> Result<SaveOutcome, SaveError> {
+    let mut outcome = write_documents(snapshot, roots, models)?;
+    outcome.revision = outcome.revision.with_style_defaults(selection);
+    Ok(outcome)
+}
+
+/// 원본과 cache를 씁니다. 결과 revision은 세트 선택을 더하지 않은 원본·cache revision입니다.
+fn write_documents(
     snapshot: &ProjectSnapshot,
     roots: Vec<StableId>,
     models: Vec<DocumentModel>,

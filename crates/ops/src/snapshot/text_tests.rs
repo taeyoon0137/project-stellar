@@ -358,3 +358,105 @@ fn a_write_over_an_unreadable_source_is_refused_instead_of_falling_back_to_the_c
     );
     assert_eq!(file_digest(&root), digest);
 }
+
+fn set_style_defaults(snapshot: &ProjectSnapshot, name: &str) -> ApplyRequest {
+    let command = stellar_commands::command::Command::SetStyleDefaults(
+        stellar_commands::style_defaults::SetStyleDefaults { name: name.into() },
+    );
+    ApplyRequest {
+        base_revision: snapshot.revision(),
+        document: snapshot.documents()[0].id,
+        commands: vec![CommandInput::Canonical {
+            kind: command.kind().name().to_string(),
+            bytes: stellar_commands::codec::encode_command(&command),
+        }],
+    }
+}
+
+/// 두 digest에서 내용이 다른 파일(추가·삭제 포함).
+fn changed_files(
+    before: &std::collections::BTreeMap<String, String>,
+    after: &std::collections::BTreeMap<String, String>,
+) -> Vec<String> {
+    before
+        .keys()
+        .chain(after.keys())
+        .filter(|name| before.get(*name) != after.get(*name))
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+#[test]
+fn a_set_only_write_on_a_text_source_project_touches_only_the_manifest_line() {
+    // ADR-0128 결정 1·2: 텍스트 원본 프로젝트(원본·cache 짝, 원본만 바뀐 FromText)에서도 세트만 바꾸는 쓰기는
+    // 원본·cache·stamp를 쓰지 않고 `stellar.yaml`만 바꿉니다. 연 방식(open plan)이 그대로이고, 다시 연 revision이
+    // 쓰기 결과와 같습니다.
+    let (tmp, root, model) = text_project("text-set-only");
+    let snapshot = open_snapshot(&root).unwrap();
+    assert_eq!(snapshot.open_plan(), OpenPlan::Cache);
+    let before = file_digest(&root);
+    let outcome = apply(
+        &root,
+        &set_style_defaults(&snapshot, "react-native"),
+        ApplyMode::Write,
+        &locks(&tmp),
+    )
+    .unwrap();
+    assert!(outcome.source.is_none());
+    assert_eq!(outcome.written_chunks, 0);
+    assert_eq!(
+        changed_files(&before, &file_digest(&root)),
+        ["stellar.yaml"]
+    );
+    let reopened = open_snapshot(&root).unwrap();
+    assert_eq!(reopened.open_plan(), OpenPlan::Cache);
+    assert_eq!(reopened.storage_revision(), snapshot.storage_revision());
+    assert_eq!(reopened.revision(), outcome.revision);
+    assert_ne!(reopened.revision(), snapshot.revision());
+
+    // 원본만 바뀐 상태(FromText)에서도 같습니다. cache를 다시 만들지 않고 다음 문서 쓰기가 맞춥니다.
+    let view = view_file(&root);
+    let text = std::fs::read_to_string(&view).unwrap();
+    let empty = r#"display_name: """#;
+    let at = text.rfind(empty).expect("빈 이름 줄");
+    std::fs::write(
+        &view,
+        format!(
+            "{}display_name: pulled{}",
+            &text[..at],
+            &text[at + empty.len()..]
+        ),
+    )
+    .unwrap();
+    let pulled = open_snapshot(&root).unwrap();
+    assert_eq!(pulled.open_plan(), OpenPlan::FromText);
+    let before = file_digest(&root);
+    let back = apply(
+        &root,
+        &set_style_defaults(&pulled, "css"),
+        ApplyMode::Write,
+        &locks(&tmp),
+    )
+    .unwrap();
+    assert!(back.source.is_none());
+    assert_eq!(
+        changed_files(&before, &file_digest(&root)),
+        ["stellar.yaml"]
+    );
+    let reopened = open_snapshot(&root).unwrap();
+    assert_eq!(reopened.open_plan(), OpenPlan::FromText);
+    assert_eq!(reopened.revision(), back.revision);
+    assert_eq!(back.revision, pulled.storage_revision());
+    let node = child(&model);
+    let edit = apply(
+        &root,
+        &rename(&reopened, node, "after-set"),
+        ApplyMode::Write,
+        &locks(&tmp),
+    )
+    .unwrap();
+    assert_eq!(open_snapshot(&root).unwrap().revision(), edit.revision);
+    assert_eq!(open_snapshot(&root).unwrap().open_plan(), OpenPlan::Cache);
+}

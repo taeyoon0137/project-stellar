@@ -64,3 +64,71 @@
 
 - 앱·`stellar apply`로 `SetStyleDefaults`를 적용하면 여전히 generation 파일 두 개가 함께 바뀝니다(`ops::apply` 소유 작업).
 - `show`의 payload 표는 내장 세트 값입니다. 사용자 세트는 payload longhand를 두지 않습니다(ADR-0115 결정 1).
+
+## 후속 작업 (2026-11-24, `lane/style-apply-revision`, ADR-0128)
+
+- `set`을 `stellar_ops::apply` 하나로 옮겼습니다. 위 "차이"에 적은 두 단계 쓰기 별도 경로가 없어졌습니다.
+  - `ops::apply`는 결과 문서 레코드와 Component Context가 적용 전과 같으면 원본·cache를 쓰지 않습니다(ADR-0128 결정 1).
+    canonical `SetStyleDefaults` 하나만 담은 transaction의 영속 결과는 `stellar.yaml` 한 줄입니다. `stellar apply`·MCP로
+    세트만 바꿔도 같습니다.
+  - CLI `set`은 canonical `SetStyleDefaults` 하나를 root 문서 순서의 첫 문서에 적용합니다. 잠금·다시 열기·base 검사·세트
+    준비·쓰기 순서는 `stellar apply`와 같습니다. 저장된 문서가 없으면 `no-document`입니다(결정 3).
+  - 세트 파일 오류 code(`unknown-style-defaults` 등)는 적용 전에 같은 판정 함수(`flatten_named`)로 알립니다.
+- 프로젝트 revision에 `stellar.yaml` 세트 선택을 넣었습니다(ADR-0128 결정 2,
+  `ProjectRevision::with_style_defaults`). 세트만 바꾸는 쓰기도 revision을 바꾸므로, 다른 writer의 세트 변경을 모든 ops
+  쓰기의 `--base` 비교가 잡습니다. 기본 세트 `css` 프로젝트의 표기는 그대로입니다.
+  - 그래서 `set` 결과의 `revision`은 이제 base와 다릅니다(generation 번호는 같음). 위 "차이"의 마지막 항목("`set` 뒤에도
+    revision은 그대로")은 이 결정으로 바뀌었습니다.
+
+### 변경 파일
+
+- `crates/ops/src/apply.rs`: 문서가 그대로인 transaction의 저장 생략, 새 세트 선택으로 결과 revision 계산. 단위 test 4개.
+- `crates/ops/src/revision.rs`: `with_style_defaults`, `g0:<hash>` 해석. 단위 test.
+- `crates/ops/src/snapshot.rs`, `crates/ops/src/snapshot/save.rs`: `revision`(세트 선택 포함)·`storage_revision`,
+  `save_documents_selecting`. 단위 test.
+- `tools/stellar-cli/src/style_defaults.rs`: `set`을 `ops::apply`로.
+- `tools/stellar-cli/tests/style_defaults.rs`: `set` 뒤 revision이 바뀌고 옛 base가 거부되는 검사로 고침(소유 밖, 동작
+  변경에 따른 수정).
+- `tools/stellar-cli/tests/fixtures/results/semantic-merge-{clean,conflict}.json`: fixture의 이미 잠긴 node에 대한
+  `set-locked` apply가 generation을 쓰지 않아 theirs revision이 바뀜(소유 밖, `STELLAR_CLI_BLESS`로 갱신, revision 필드만
+  바뀜).
+
+### 검증 (`DEV-MAC`)
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-ops --lib` | 통과(163) |
+| `cargo test -p stellar-cli --test style_defaults` | 통과(5). 바뀐 파일 `stellar.yaml` 하나·한 줄, 옛 base 거부, 새 revision으로 되돌리면 bytes·revision 원래대로 |
+| `cargo test -p stellar-cli --test output_fixtures` | 통과(golden 2개 갱신 뒤) |
+
+### 남은 위험 / 한계
+
+- runtime `agent_edit::project_revision`은 세트 선택을 더하지 않습니다(소유 밖). 세트가 `css`가 아닌 프로젝트에서
+  창 revision과 headless revision 표기가 다릅니다. 활성 세트 거울 연결 작업이 `with_style_defaults`를 불러야 합니다.
+- `ops::migrate` 결과 revision도 세트 선택을 더하지 않습니다(소유 밖). 다시 열어 얻은 revision은 맞습니다.
+- `docs/spec/style-defaults.md` 3장은 ADR-0115 기준 설명입니다(결과는 같음, 소유 밖).
+- 행 상태는 선행 IX.11.26·IX.11.27·XXIV.4.5 판정을 따릅니다.
+
+## 검토 보완 (2026-11-24, `lane/style-apply-revision` 검토)
+
+- revision에 세트 선택을 넣은 뒤 같은 뜻을 따르지 않던 두 곳을 맞췄습니다(ADR-0128 결정 2 보완).
+  - `ops::migrate` 결과 revision에 세트 선택을 더했습니다. 세트가 `css`가 아닌 프로젝트에서도 migrate 결과가 다시 연
+    revision과 같아 바로 다음 쓰기의 base로 쓸 수 있습니다. 위 "남은 위험"의 migrate 항목은 해소됐습니다.
+  - `compare`의 HEAD 재사용 판정은 `storage_revision`의 hash를 HEAD manifest hash와 대조합니다. 세트를 고른 프로젝트가
+    빠른 경로에서 빠지던 성능 회귀를 없앴습니다(결과는 전과 같음).
+- CLI `set`은 없는 세트 같은 세트 파일 오류를 문서 확인보다 먼저 알립니다(빈 프로젝트에서 `unknown-style-defaults`).
+- 텍스트 원본 프로젝트에서 세트만 바꾸는 쓰기 test를 더했습니다. 원본·cache 짝(Cache)과 원본만 바뀐 상태(FromText)
+  모두 `stellar.yaml`만 바뀌고, 연 방식과 다시 연 revision이 쓰기 결과와 같습니다.
+
+### 변경 파일
+
+- `crates/ops/src/migrate.rs`, `crates/ops/src/compare.rs`(소유 밖, 이 작업이 바꾼 revision 뜻에 따른 한 줄씩).
+- `crates/ops/src/snapshot/text_tests.rs`, `tools/stellar-cli/src/style_defaults.rs`,
+  `tools/stellar-cli/tests/style_defaults.rs`.
+
+### 검증 (`DEV-MAC`)
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-ops --lib` | 통과(165) |
+| `cargo test -p stellar-cli --test style_defaults` | 통과(6) |

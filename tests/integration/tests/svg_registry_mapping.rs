@@ -6,7 +6,10 @@
 //! - 매핑표가 이름을 대는 longhand는 모두 registry 항목의 CSS 매핑에 있습니다.
 //! - registry에서 SVG로 그리는 칠하기·합성 longhand(`fill`, `stroke`, `stroke-width`, `opacity`, `mix-blend-mode`,
 //!   `filter` 등)는 모두 매핑표 어느 행에 있습니다(누락 0).
-//! - SVG 값 표기의 수 부분은 CSS 값 formatter(`css::value::format_number`·`format_percentage`)와 같습니다.
+//! - 매핑표 행의 원천 registry 항목(`SvgFeature::registry_items`, 범위·이름)은 모두 registry에 있고, 그 항목들의 CSS
+//!   매핑 longhand가 그 행의 `css_longhands`를 모두 덮습니다(ADR-0128 결정 5).
+//! - SVG 값 표기의 수 부분은 CSS 값 formatter(`css::value::format_number`·`format_percentage`)와 같습니다. 두 쪽은
+//!   같은 함수(`stellar_core_types::number`, ADR-0128 결정 4)를 부르고, 이 test는 색·행렬 profile까지 대조합니다.
 
 use std::collections::BTreeSet;
 
@@ -70,6 +73,42 @@ fn every_registry_paint_longhand_has_a_mapping_row() {
         }
     }
     assert!(checked >= PAINT_LONGHANDS.len(), "{checked}");
+}
+
+#[test]
+fn every_registry_item_exists_and_covers_the_rows_css_longhands() {
+    let entries = registry::entries();
+    let mut rows_with_longhands = 0;
+    for feature in SvgFeature::ALL {
+        let items = feature.registry_items();
+        assert!(
+            !items.is_empty(),
+            "{feature:?}에 원천 registry 항목이 없습니다"
+        );
+        let mut covered = BTreeSet::new();
+        for (scope, name) in items {
+            let found: Vec<_> = entries
+                .iter()
+                .filter(|e| e.scope.name() == *scope && e.name == *name && e.bundle.is_empty())
+                .collect();
+            assert_eq!(
+                found.len(),
+                1,
+                "{feature:?}의 {scope}/{name}은 registry 편집 항목 하나가 아닙니다"
+            );
+            covered.extend(found[0].css.longhands.iter().copied());
+        }
+        for longhand in feature.css_longhands() {
+            assert!(
+                covered.contains(longhand),
+                "{feature:?}의 CSS longhand {longhand}를 원천 항목 {items:?}의 CSS 매핑이 덮지 않습니다"
+            );
+        }
+        if !feature.css_longhands().is_empty() {
+            rows_with_longhands += 1;
+        }
+    }
+    assert!(rows_with_longhands > 0);
 }
 
 #[test]

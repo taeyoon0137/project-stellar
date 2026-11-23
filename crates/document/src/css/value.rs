@@ -823,12 +823,10 @@ fn unit_channel(text: &str) -> Result<f32, CssValueError> {
     }
 }
 
-/// f32를 왕복하는 가장 짧은 10진 표기(지수 없음, `-0`은 `0`).
+/// f32를 왕복하는 가장 짧은 10진 표기(지수 없음, `-0`은 `0`). SVG 값 표기와 같은 함수입니다
+/// (`stellar_core_types::number`, ADR-0128 결정 4).
 pub fn format_number(value: f32) -> String {
-    if value == 0.0 {
-        return "0".into();
-    }
-    format!("{value}")
+    stellar_core_types::number::format_number(value)
 }
 
 /// `<n>px`.

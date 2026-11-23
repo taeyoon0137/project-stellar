@@ -173,7 +173,9 @@ impl SvgFeature {
     /// [`SvgFeature::css_longhands`]가 CSS longhand 이름으로 잇는다면, 이 목록은 그 값을 가진 registry 항목 자체(범위와
     /// registry 이름, `stellar_document::css::registry::RegistryEntry`)를 가리킵니다. Stellar 전용 원천(Text 본문,
     /// image asset·crop, 색공간 override)도 registry 항목이 있어 모든 행이 하나 이상의 항목에 이어집니다. 항목 이름이
-    /// registry에 있는지는 registry 전체 항목을 담은 코드 생성 matrix golden과 대조합니다(이 module test).
+    /// registry에 있는지는 registry 전체 항목을 담은 코드 생성 matrix golden과 대조합니다(이 module test). 종단 test
+    /// (`tests/integration/tests/svg_registry_mapping.rs`)는 registry 자체와 대조하고, 이 항목들의 CSS 매핑 longhand가
+    /// 같은 행의 [`SvgFeature::css_longhands`]를 모두 덮는지 봅니다(ADR-0128 결정 5).
     pub fn registry_items(self) -> &'static [(&'static str, &'static str)] {
         const COLOR_SOURCES: &[(&str, &str)] = &[
             ("frame", "background-color"),
