@@ -67,6 +67,10 @@ pub enum CommandKind {
     SetLayoutProperty,
     /// Component Context 편집 (XXX.7.8, ADR-0099).
     EditContext,
+    /// Frame 가이드·레이아웃 그리드 편집 (XII.10.19·XII.10.20, ADR-0126).
+    SetNodeGuides,
+    /// View 변수·Variant 편집 (XVI.11.1, ADR-0126).
+    EditViewVariants,
     /// 테스트 전용 probe(fault injection). 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe,
@@ -102,6 +106,8 @@ impl CommandKind {
         CommandKind::UnsetProperty,
         CommandKind::SetLayoutProperty,
         CommandKind::EditContext,
+        CommandKind::SetNodeGuides,
+        CommandKind::EditViewVariants,
     ];
 
     /// 영구 예약 값(유효한 종류가 아님).
@@ -137,6 +143,8 @@ impl CommandKind {
             CommandKind::UnsetProperty => 0x0092,
             CommandKind::SetLayoutProperty => 0x0093,
             CommandKind::EditContext => 0x00A0,
+            CommandKind::SetNodeGuides => 0x00B0,
+            CommandKind::EditViewVariants => 0x00B1,
             #[cfg(test)]
             CommandKind::TestProbe => 0xFFF0,
         }
@@ -184,6 +192,8 @@ impl CommandKind {
             CommandKind::UnsetProperty => "unset-property",
             CommandKind::SetLayoutProperty => "set-layout-property",
             CommandKind::EditContext => "edit-context",
+            CommandKind::SetNodeGuides => "set-node-guides",
+            CommandKind::EditViewVariants => "edit-view-variants",
             #[cfg(test)]
             CommandKind::TestProbe => "test-probe",
         }
@@ -222,6 +232,7 @@ impl CommandKind {
             | CommandKind::UnsetProperty
             | CommandKind::SetLayoutProperty => 3,
             CommandKind::EditContext => 5,
+            CommandKind::SetNodeGuides | CommandKind::EditViewVariants => 7,
             #[cfg(test)]
             CommandKind::TestProbe => 1,
         }
@@ -258,6 +269,8 @@ impl CommandKind {
             CommandKind::UnsetProperty => "속성 초기화",
             CommandKind::SetLayoutProperty => "레이아웃 속성 변경",
             CommandKind::EditContext => "Context 변경",
+            CommandKind::SetNodeGuides => "가이드 변경",
+            CommandKind::EditViewVariants => "View 변수 변경",
             #[cfg(test)]
             CommandKind::TestProbe => "test probe",
         }
@@ -326,6 +339,8 @@ mod tests {
                 (0x0092, "unset-property"),
                 (0x0093, "set-layout-property"),
                 (0x00A0, "edit-context"),
+                (0x00B0, "set-node-guides"),
+                (0x00B1, "edit-view-variants"),
             ]
         );
     }

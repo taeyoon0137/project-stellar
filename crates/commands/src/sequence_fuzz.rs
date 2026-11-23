@@ -73,7 +73,20 @@ struct Applied {
 }
 
 fn snapshot(state: &DocumentState) -> String {
-    model_snapshot_json(state.model()).unwrap_or_else(|e| panic!("snapshot 실패: {e}"))
+    let json = model_snapshot_json(state.model()).unwrap_or_else(|e| panic!("snapshot 실패: {e}"));
+    // 가이드 기록과 View 변수 model은 semantic snapshot JSON 밖이라 canonical bytes를 덧붙여 함께 비교합니다(ADR-0126).
+    let records = state
+        .model()
+        .to_records()
+        .unwrap_or_else(|e| panic!("records 실패: {e}"));
+    let mut out = json;
+    for record in &records.node_guides {
+        out.push_str(&format!("\nguides {:02x?}", record.encode()));
+    }
+    for model in &records.view_variants {
+        out.push_str(&format!("\nview-variants {:02x?}", model.encode()));
+    }
+    out
 }
 
 fn assert_valid(state: &DocumentState, context: &str) {

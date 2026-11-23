@@ -7,7 +7,8 @@
 //!   담습니다. 각 변경은 이전 값과 새 값을 함께 가지므로 역은 두 값을 바꾼 같은 command입니다(역집합이
 //!   Undo).
 //! - 레코드 단위는 문서 모델이 소유하는 것입니다: 문서 이름, 페이지, View, node, modifier stack, node의 명시
-//!   layout record(ADR-0086), 문서 Text style resource 표, 문서 Component Context(ADR-0099, 한 단위). 레코드는
+//!   layout record(ADR-0086), 문서 Text style resource 표, 문서 Component Context(ADR-0099, 한 단위), Frame의 가이드·
+//!   레이아웃 그리드 기록과 View의 변수·Variant model(ADR-0126, 각각 기록 하나가 한 단위). 레코드는
 //!   StableId로만 짝지으며 이름·geometry 유사도는 쓰지 않습니다(semantic diff XIV.3.3과 같은 식별 규칙). 컴포넌트
 //!   정의·token은 문서 모델 밖(project library)이라 이 command의 대상이 아닙니다(ADR-0079 결정 2).
 //! - Context는 레코드 밖 거울이라 [`ApplyExternalSnapshot::between_with_context`]가 외부 원본의 영속 Context
@@ -30,6 +31,7 @@ use stellar_core_types::property::PropertyPath;
 use stellar_core_types::revision::DocumentRevision;
 use stellar_document::context::set::ContextSet;
 use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
+use stellar_document::guides::NodeGuides;
 use stellar_document::layout_record::LayoutRecord;
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::ModifierStack;
@@ -37,6 +39,7 @@ use stellar_document::modifier_metadata::InvalidationSet;
 use stellar_document::record_codec::{decode_node_record, encode_node_record};
 use stellar_document::records::{DocumentRecords, NodePayload, NodeRecord};
 use stellar_document::text_styles::DocumentTextStyles;
+use stellar_document::view_variant::commands::ViewVariantModel;
 
 use crate::change::node_keys;
 use crate::codec::{CommandCodecError, Reader, Writer};
@@ -142,6 +145,24 @@ pub enum RecordChange {
         /// 새 Context.
         after: Box<ContextSet>,
     },
+    /// Frame의 가이드·레이아웃 그리드 기록 교체(빈 기록은 `None`, ADR-0126).
+    Guides {
+        /// 소유 Frame.
+        node: StableId,
+        /// 이전 기록.
+        before: Option<NodeGuides>,
+        /// 새 기록.
+        after: Option<NodeGuides>,
+    },
+    /// View의 변수·Variant model 교체(빈 model은 `None`, ADR-0126).
+    ViewVariants {
+        /// View.
+        view: StableId,
+        /// 이전 model.
+        before: Option<Box<ViewVariantModel>>,
+        /// 새 model.
+        after: Option<Box<ViewVariantModel>>,
+    },
 }
 
 impl RecordChange {
@@ -193,6 +214,24 @@ impl RecordChange {
                 before: after,
                 after: before,
             },
+            RecordChange::Guides {
+                node,
+                before,
+                after,
+            } => RecordChange::Guides {
+                node,
+                before: after,
+                after: before,
+            },
+            RecordChange::ViewVariants {
+                view,
+                before,
+                after,
+            } => RecordChange::ViewVariants {
+                view,
+                before: after,
+                after: before,
+            },
         }
     }
 
@@ -207,6 +246,8 @@ impl RecordChange {
             RecordChange::Layout { node, .. } => (TAG_LAYOUT, *node),
             RecordChange::TextStyles { .. } => (TAG_TEXT_STYLES, StableId::NIL),
             RecordChange::Context { .. } => (TAG_CONTEXT, StableId::NIL),
+            RecordChange::Guides { node, .. } => (TAG_GUIDES, *node),
+            RecordChange::ViewVariants { view, .. } => (TAG_VIEW_VARIANTS, *view),
         }
     }
 }
@@ -222,6 +263,10 @@ const TAG_TEXT_STYLES: u8 = 6;
 const TAG_LAYOUT: u8 = 7;
 /// command codec version 6(ADR-0114).
 const TAG_CONTEXT: u8 = 8;
+/// command codec version 7(ADR-0126).
+const TAG_GUIDES: u8 = 9;
+/// command codec version 7(ADR-0126).
+const TAG_VIEW_VARIANTS: u8 = 10;
 
 /// 외부에서 바뀐 문서 원본을 반영하는 command.
 #[derive(Debug, Clone, PartialEq)]
@@ -457,6 +502,42 @@ impl ApplyExternalSnapshot {
                 })
             },
         );
+        let guides = |records: &[NodeGuides]| -> BTreeMap<StableId, NodeGuides> {
+            records
+                .iter()
+                .filter(|r| !r.is_empty())
+                .map(|r| (r.owner(), r.clone()))
+                .collect()
+        };
+        diff_maps(
+            &guides(&records.node_guides),
+            &guides(&incoming.node_guides),
+            |node, before, after| {
+                changes.push(RecordChange::Guides {
+                    node,
+                    before,
+                    after,
+                })
+            },
+        );
+        let variants = |models: &[ViewVariantModel]| -> BTreeMap<StableId, Box<ViewVariantModel>> {
+            models
+                .iter()
+                .filter(|m| !stellar_document::view_variables::is_empty_model(m))
+                .map(|m| (m.variables().view(), Box::new(m.clone())))
+                .collect()
+        };
+        diff_maps(
+            &variants(&records.view_variants),
+            &variants(&incoming.view_variants),
+            |view, before, after| {
+                changes.push(RecordChange::ViewVariants {
+                    view,
+                    before,
+                    after,
+                })
+            },
+        );
         if current.text_styles != next.text_styles {
             changes.push(RecordChange::TextStyles {
                 before: Box::new(current.text_styles.clone()),
@@ -533,7 +614,9 @@ impl ApplyExternalSnapshot {
                 RecordChange::Node { .. }
                 | RecordChange::ModifierStack { .. }
                 | RecordChange::Layout { .. }
-                | RecordChange::Context { .. } => {}
+                | RecordChange::Context { .. }
+                | RecordChange::Guides { .. }
+                | RecordChange::ViewVariants { .. } => {}
             }
         }
         let mut ordered: Vec<(u32, StableId, String)> = pages
@@ -607,6 +690,30 @@ impl ApplyExternalSnapshot {
                     };
                     ok(before) && ok(after) && (before.is_some() || after.is_some())
                 }
+                RecordChange::Guides {
+                    node,
+                    before,
+                    after,
+                } => {
+                    let ok = |r: &Option<NodeGuides>| {
+                        r.as_ref()
+                            .is_none_or(|r| r.owner() == *node && !r.is_empty())
+                    };
+                    ok(before) && ok(after) && (before.is_some() || after.is_some())
+                }
+                RecordChange::ViewVariants {
+                    view,
+                    before,
+                    after,
+                } => {
+                    let ok = |m: &Option<Box<ViewVariantModel>>| {
+                        m.as_ref().is_none_or(|m| {
+                            m.variables().view() == *view
+                                && !stellar_document::view_variables::is_empty_model(m)
+                        })
+                    };
+                    ok(before) && ok(after) && (before.is_some() || after.is_some())
+                }
                 RecordChange::Page { before, after, .. } => before.is_some() || after.is_some(),
                 RecordChange::View { before, after, .. } => before.is_some() || after.is_some(),
                 RecordChange::DocumentName { .. }
@@ -639,6 +746,12 @@ impl ApplyExternalSnapshot {
                     model.layout_record(*node) == before.as_ref()
                 }
                 RecordChange::Context { before, .. } => model.context() == before.as_ref(),
+                RecordChange::Guides { node, before, .. } => {
+                    model.node_guides(*node) == before.as_ref()
+                }
+                RecordChange::ViewVariants { view, before, .. } => {
+                    model.view_variants(*view) == before.as_deref()
+                }
                 _ => true,
             };
             if !current {
@@ -663,6 +776,16 @@ impl ApplyExternalSnapshot {
                 .layout_records
                 .drain(..)
                 .map(|r| (r.node, r))
+                .collect();
+            let mut guides: BTreeMap<StableId, NodeGuides> = records
+                .node_guides
+                .drain(..)
+                .map(|r| (r.owner(), r))
+                .collect();
+            let mut variants: BTreeMap<StableId, ViewVariantModel> = records
+                .view_variants
+                .drain(..)
+                .map(|m| (m.variables().view(), m))
                 .collect();
             for change in &self.changes {
                 match change {
@@ -690,6 +813,22 @@ impl ApplyExternalSnapshot {
                             layouts.remove(node);
                         }
                     },
+                    RecordChange::Guides { node, after, .. } => match after {
+                        Some(record) => {
+                            guides.insert(*node, record.clone());
+                        }
+                        None => {
+                            guides.remove(node);
+                        }
+                    },
+                    RecordChange::ViewVariants { view, after, .. } => match after {
+                        Some(model) => {
+                            variants.insert(*view, (**model).clone());
+                        }
+                        None => {
+                            variants.remove(view);
+                        }
+                    },
                     _ => {}
                 }
             }
@@ -698,6 +837,9 @@ impl ApplyExternalSnapshot {
             records.modifier_stacks = stacks.into_values().collect();
             // 지운 node의 record가 남으면 validator가 소유자 없는 record로 거부합니다.
             records.layout_records = layouts.into_values().collect();
+            // 지운 Frame의 가이드·지운 View의 model이 남으면 validator가 거부합니다(ADR-0126).
+            records.node_guides = guides.into_values().collect();
+            records.view_variants = variants.into_values().collect();
             Ok(())
         })
     }
@@ -714,6 +856,7 @@ impl ApplyExternalSnapshot {
         let mut node_after: BTreeMap<StableId, Option<&NodeRecord>> = BTreeMap::new();
         let mut stack_after: BTreeMap<StableId, Option<&ModifierStack>> = BTreeMap::new();
         let mut layout_after: BTreeMap<StableId, Option<&LayoutRecord>> = BTreeMap::new();
+        let mut guides_after: BTreeMap<StableId, Option<&NodeGuides>> = BTreeMap::new();
         for change in &self.changes {
             match change {
                 RecordChange::Node { id, after, .. } => {
@@ -724,6 +867,9 @@ impl ApplyExternalSnapshot {
                 }
                 RecordChange::Layout { node, after, .. } => {
                     layout_after.insert(*node, after.as_ref());
+                }
+                RecordChange::Guides { node, after, .. } => {
+                    guides_after.insert(*node, after.as_ref());
                 }
                 _ => {}
             }
@@ -895,6 +1041,48 @@ impl ApplyExternalSnapshot {
             ctx.changes().structure(*node);
         }
 
+        // 6b. 가이드·레이아웃 그리드(ADR-0126). layout record와 같은 규칙입니다: 다시 넣은 node는 모델이 들고 있던 기록을
+        //     되찾고, 새로 넣은 node에 남은 같은 id 기록은 외부 원본에 없으므로 지우며, 변경 집합의 기록은 그 값으로 바꿉니다.
+        for id in &inserted {
+            if !detached.contains_key(id)
+                && !guides_after.contains_key(id)
+                && ctx.model().node_guides(*id).is_some()
+            {
+                ctx.set_node_guides(NodeGuides::new(*id))?;
+            }
+        }
+        for (node, after) in &guides_after {
+            if !ctx.model().contains(*node) {
+                continue;
+            }
+            let record = after.cloned().unwrap_or_else(|| NodeGuides::new(*node));
+            ctx.set_node_guides(record)?;
+            ctx.changes().property(
+                *node,
+                PropertyPath::with_keys(*node, vec![crate::guides::GUIDE_PATH]),
+                InvalidationSet::EMPTY,
+            );
+        }
+        // 6c. View 변수·Variant(ADR-0126). 정의 변경 뒤라 새 View에도 둘 수 있습니다. 지운 View의 변경은 새 값이 언제나
+        //     `None`이고(validate), 모델에는 이전 값이 남아 있어도 영속 레코드에 나오지 않습니다.
+        for change in &self.changes {
+            if let RecordChange::ViewVariants { view, after, .. } = change {
+                if ctx.model().definition().view_position(*view).is_none() {
+                    continue;
+                }
+                let model = after
+                    .as_deref()
+                    .cloned()
+                    .unwrap_or_else(|| ViewVariantModel::new(*view));
+                ctx.set_view_variants(model)?;
+                ctx.changes().property(
+                    *view,
+                    PropertyPath::with_keys(*view, vec![crate::guides::VIEW_VARIABLE_PATH]),
+                    InvalidationSet::EMPTY,
+                );
+            }
+        }
+
         // 7. 문서 Text style 표(글꼴 등록·문자·문단 style)가 바뀌면 모든 Text node의 layout·그리기가
         //    달라질 수 있으므로 Text node마다 구조 무효화를 보고합니다(외부 반영은 드문 동작이라 O(N) 허용).
         if self
@@ -943,6 +1131,8 @@ impl ApplyExternalSnapshot {
         let node = |out: &mut Writer, record: &NodeRecord| out.bytes(&encode_node_record(record));
         let stack = |out: &mut Writer, stack: &ModifierStack| out.bytes(&stack.encode());
         let layout = |out: &mut Writer, record: &LayoutRecord| out.bytes(&record.encode());
+        let guides = |out: &mut Writer, record: &NodeGuides| out.bytes(&record.encode());
+        let variants = |out: &mut Writer, model: &&ViewVariantModel| out.bytes(&model.encode());
         out.len(self.changes.len());
         for change in &self.changes {
             match change {
@@ -998,6 +1188,26 @@ impl ApplyExternalSnapshot {
                     out.u8(TAG_CONTEXT);
                     out.bytes(&before.encode());
                     out.bytes(&after.encode());
+                }
+                RecordChange::Guides {
+                    node: owner,
+                    before,
+                    after,
+                } => {
+                    out.u8(TAG_GUIDES);
+                    out.id(*owner);
+                    opt(out, before, guides);
+                    opt(out, after, guides);
+                }
+                RecordChange::ViewVariants {
+                    view: owner,
+                    before,
+                    after,
+                } => {
+                    out.u8(TAG_VIEW_VARIANTS);
+                    out.id(*owner);
+                    opt(out, &before.as_deref(), variants);
+                    opt(out, &after.as_deref(), variants);
                 }
             }
         }
@@ -1059,6 +1269,18 @@ impl ApplyExternalSnapshot {
                     reason: "잘못된 Context",
                 })
         }
+        fn guides(input: &mut Reader<'_>) -> Result<NodeGuides, CommandCodecError> {
+            NodeGuides::decode(input.bytes()?).map_err(|_| CommandCodecError::Malformed {
+                reason: "잘못된 가이드 기록",
+            })
+        }
+        fn variants(input: &mut Reader<'_>) -> Result<Box<ViewVariantModel>, CommandCodecError> {
+            ViewVariantModel::decode(input.bytes()?)
+                .map(Box::new)
+                .map_err(|_| CommandCodecError::Malformed {
+                    reason: "잘못된 View 변수 model",
+                })
+        }
         let count = input.len()?;
         let mut changes = Vec::with_capacity(count);
         for _ in 0..count {
@@ -1099,6 +1321,16 @@ impl ApplyExternalSnapshot {
                 TAG_CONTEXT => RecordChange::Context {
                     before: context(input)?,
                     after: context(input)?,
+                },
+                TAG_GUIDES => RecordChange::Guides {
+                    node: input.id()?,
+                    before: opt(input, guides)?,
+                    after: opt(input, guides)?,
+                },
+                TAG_VIEW_VARIANTS => RecordChange::ViewVariants {
+                    view: input.id()?,
+                    before: opt(input, variants)?,
+                    after: opt(input, variants)?,
                 },
                 _ => {
                     return Err(CommandCodecError::Malformed {

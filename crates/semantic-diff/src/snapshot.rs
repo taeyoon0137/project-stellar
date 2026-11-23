@@ -173,6 +173,11 @@ pub enum SnapshotError {
         /// 소유 node.
         node: StableId,
     },
+    /// 가이드 기록의 Frame node 또는 View 변수 model의 View 객체가 없습니다(ADR-0126).
+    GuidesOwnerMissing {
+        /// 소유 node 또는 View.
+        owner: StableId,
+    },
     /// Context requirement·Slot 공개 목록의 컴포넌트·Slot 객체가 snapshot에 없습니다(XXX.7.10).
     ContextOwnerMissing {
         /// 컴포넌트 또는 Slot.
@@ -204,6 +209,12 @@ impl fmt::Display for SnapshotError {
             }
             SnapshotError::LayoutOwnerMissing { node } => {
                 write!(f, "layout record의 node {node}가 문서에 없습니다")
+            }
+            SnapshotError::GuidesOwnerMissing { owner } => {
+                write!(
+                    f,
+                    "가이드·View 변수의 소유 객체 {owner}가 snapshot에 없습니다"
+                )
             }
             SnapshotError::ContextOwnerMissing { owner } => {
                 write!(

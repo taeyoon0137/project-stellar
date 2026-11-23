@@ -200,7 +200,11 @@ pub fn serialize_records_with_context(
     let mut view_trees = Vec::new();
     let mut subtrees = Vec::new();
     let mut refs = Vec::new();
-    for (view, subtree) in records.view_subtrees().map_err(SerializeError::Partition)? {
+    // 가이드·레이아웃 그리드와 View 변수·Variant는 subtree 확장 절로 씁니다(ADR-0126).
+    for (view, subtree, sections) in records
+        .view_subtrees_with_sections()
+        .map_err(SerializeError::Partition)?
+    {
         let subtree_id = subtree_chunk_id(document_id, subtree.root);
         let tree = ViewTreeChunk {
             view_root: subtree.root,
@@ -215,7 +219,11 @@ pub fn serialize_records_with_context(
             KIND_VIEW_TREE,
             tree.encode().map_err(SerializeError::ViewTree)?,
         ));
-        subtrees.push(chunk(subtree_id, KIND_VIEW_TREE, subtree.encode()));
+        subtrees.push(chunk(
+            subtree_id,
+            KIND_VIEW_TREE,
+            subtree.encode_with(&sections),
+        ));
         refs.push(ViewTreeRef {
             view,
             chunk: tree_id,

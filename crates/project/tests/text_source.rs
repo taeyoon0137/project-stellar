@@ -82,6 +82,8 @@ fn fixture() -> DocumentModel {
         ],
         modifier_stacks: Vec::new(),
         layout_records: Vec::new(),
+        node_guides: Vec::new(),
+        view_variants: Vec::new(),
     };
     DocumentModel::from_records(records).unwrap().0
 }

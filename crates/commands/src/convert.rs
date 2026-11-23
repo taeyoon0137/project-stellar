@@ -530,6 +530,21 @@ impl RestoreNodeRecords {
                     })?;
                 }
             }
+            // 종류가 바뀌어도 node의 명시 layout record와 가이드 기록(Frame 전용, ADR-0126)은 그대로 남으므로 새 종류에
+            // 붙을 수 있어야 합니다.
+            if model.layout_record(record.id).is_some_and(|layout| {
+                !stellar_document::layout_record::record_violations(layout, &record.payload)
+                    .is_empty()
+            }) {
+                return Err(CommandError::InvalidRequest {
+                    reason: "복원할 종류에 붙을 수 없는 layout longhand가 있습니다",
+                });
+            }
+            if kind != NodeKind::Frame && model.node_guides(record.id).is_some() {
+                return Err(CommandError::InvalidRequest {
+                    reason: "가이드·레이아웃 그리드가 있는 Frame은 다른 종류로 복원할 수 없습니다",
+                });
+            }
             if kind != NodeKind::Path {
                 // 다른 Frame의 clip 대상이면 Path여야 합니다.
                 for from in references.inbound(record.id) {

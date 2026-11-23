@@ -711,6 +711,7 @@ pub fn document_records(
         }
     }
     records.modifier_stacks = stacks.into_values().collect();
+    crate::guides::restore(snapshot, document, &mut records)?;
     records.sort_canonical();
     Ok(DocumentProjection { records, instances })
 }

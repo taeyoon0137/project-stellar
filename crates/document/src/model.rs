@@ -164,6 +164,13 @@ pub struct DocumentModel {
     /// 문서의 Component Context 요소(XXX.7, ADR-0099 결정 1). 영속 레코드([`DocumentModel::to_records`])에는 나오지 않고
     /// 저장 경로가 `context-set` chunk·텍스트 원본으로 따로 씁니다.
     context: crate::context::set::ContextSet,
+    /// Frame별 눈금자 가이드·레이아웃 그리드(XII.10.19·XII.10.20, ADR-0126). layout record처럼 node를 지워도 StableId로
+    /// 남아 있다가 같은 id의 node가 되돌아오면(삭제 undo) 다시 보입니다. 조회·영속 레코드에는 살아 있는 Frame의 기록만
+    /// 나옵니다.
+    guides: BTreeMap<StableId, crate::guides::NodeGuides>,
+    /// View별 변수·Variant(XVI.11.1, ADR-0126). View를 지워도 남아 있다가 같은 View가 되돌아오면 다시 보입니다. 조회·영속
+    /// 레코드에는 문서 정의에 있는 View의 model만 나옵니다.
+    view_variants: BTreeMap<StableId, crate::view_variant::commands::ViewVariantModel>,
 }
 
 fn remove_non_node_id(ids: &mut BTreeMap<StableId, usize>, id: StableId) {
@@ -200,7 +207,92 @@ impl DocumentModel {
             layouts: BTreeMap::new(),
             style_defaults: crate::css::style_defaults::DEFAULT_SET.to_string(),
             context: crate::context::set::ContextSet::new(),
+            guides: BTreeMap::new(),
+            view_variants: BTreeMap::new(),
         }
+    }
+
+    /// 살아 있는 Frame의 가이드·레이아웃 그리드 기록(ADR-0126). 기록이 없으면 `None`입니다.
+    pub fn node_guides(&self, owner: StableId) -> Option<&crate::guides::NodeGuides> {
+        if self.payloads.contains_key(&owner) {
+            self.guides.get(&owner)
+        } else {
+            None
+        }
+    }
+
+    /// 살아 있는 Frame의 가이드 기록 전체(소유 node StableId 순).
+    pub fn all_node_guides(&self) -> impl Iterator<Item = &crate::guides::NodeGuides> + '_ {
+        self.guides
+            .values()
+            .filter(|record| self.payloads.contains_key(&record.owner()))
+    }
+
+    /// Frame의 가이드 기록을 바꾸고 이전 기록을 돌려줍니다. 빈 기록은 기록을 지웁니다. 비어 있지 않은 기록은 소유 node가
+    /// 없거나 Frame이 아니면 거부합니다. 지우기는 종류와 무관하게 받습니다: 외부 원본에서 가이드가 있던 Frame이 같은 id의
+    /// 다른 종류가 되면 node를 바꾼 뒤 남은 기록을 지워야 합니다.
+    pub fn set_node_guides(
+        &mut self,
+        record: crate::guides::NodeGuides,
+    ) -> Result<Option<crate::guides::NodeGuides>, ModelError> {
+        let id = record.owner();
+        if record.is_empty() {
+            if !self.payloads.contains_key(&id) {
+                return Err(ModelError::UnknownNode { id });
+            }
+            return Ok(self.guides.remove(&id));
+        }
+        match self.payloads.get(&id) {
+            None => return Err(ModelError::UnknownNode { id }),
+            Some(NodePayload::Frame(_)) => {}
+            Some(_) => {
+                return Err(ModelError::Inconsistent {
+                    id,
+                    reason: "가이드·레이아웃 그리드는 Frame에만 둡니다",
+                })
+            }
+        }
+        Ok(self.guides.insert(id, record))
+    }
+
+    /// 문서 정의에 있는 View의 변수·Variant model(ADR-0126). model이 없으면 `None`입니다.
+    pub fn view_variants(
+        &self,
+        view: StableId,
+    ) -> Option<&crate::view_variant::commands::ViewVariantModel> {
+        self.definition.view_position(view)?;
+        self.view_variants.get(&view)
+    }
+
+    /// 어느 View model(지운 View의 model 포함)이 이 id의 변수나 Variant를 가지면 참입니다. 새 변수·Variant id가 문서의
+    /// 다른 View 변수·Variant id와 겹치는지 볼 때 씁니다(ADR-0126 결정 1.4).
+    pub fn has_view_variant_item(&self, id: StableId) -> bool {
+        self.view_variants.values().any(|model| {
+            model
+                .variables()
+                .iter()
+                .any(|variable| variable.id().stable_id() == id)
+                || model.variants().any(|variant| variant.id.stable_id() == id)
+        })
+    }
+
+    /// View의 변수·Variant model을 바꾸고 이전 model을 돌려줍니다. 빈 model은 model을 지웁니다. View가 없으면 거부합니다.
+    pub fn set_view_variants(
+        &mut self,
+        model: crate::view_variant::commands::ViewVariantModel,
+    ) -> Result<Option<crate::view_variant::commands::ViewVariantModel>, ModelError> {
+        let view = model.variables().view();
+        if self.definition.view_position(view).is_none() {
+            return Err(ModelError::Inconsistent {
+                id: view,
+                reason: "View 변수 model의 View가 문서에 없습니다",
+            });
+        }
+        Ok(if crate::view_variables::is_empty_model(&model) {
+            self.view_variants.remove(&view)
+        } else {
+            self.view_variants.insert(view, model)
+        })
     }
 
     /// 문서의 Context 요소(XXX.7). 삭제된 scene node에 붙은 View provision도 남아 있습니다(영속 출력은
@@ -740,6 +832,8 @@ impl DocumentModel {
             nodes,
             modifier_stacks,
             layout_records,
+            node_guides,
+            view_variants,
         } = records;
         let roots: Vec<StableId> = definition
             .pages
@@ -796,6 +890,16 @@ impl DocumentModel {
                 .set_layout_record(record)
                 .map_err(LoadModelError::Model)?;
         }
+        for record in node_guides {
+            model
+                .set_node_guides(record)
+                .map_err(LoadModelError::Model)?;
+        }
+        for variants in view_variants {
+            model
+                .set_view_variants(variants)
+                .map_err(LoadModelError::Model)?;
+        }
         Ok((model, diagnostics))
     }
 
@@ -823,6 +927,13 @@ impl DocumentModel {
             .values()
             .filter(|record| self.payloads.contains_key(&record.node))
             .cloned()
+            .collect();
+        records.node_guides = self.all_node_guides().cloned().collect();
+        records.view_variants = self
+            .view_variants
+            .iter()
+            .filter(|(view, _)| self.definition.view_position(**view).is_some())
+            .map(|(_, model)| model.clone())
             .collect();
         records.sort_canonical();
         Ok(records)

@@ -94,6 +94,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "context",
         "<경로> <문서 id> [--node <node id> [--instances <id,…>]]: 문서 Component Context의 key·provision·requirement·Slot 공개 목록과 진단을, --node를 주면 그 위치의 key별 해석 값·출처·경로와 선택기 후보를 출력합니다",
     ),
+    (
+        "guides",
+        "<경로> <문서 id> [--node <Frame id>]: 문서의 Frame 가이드·레이아웃 그리드(텍스트 원본 줄과 Frame 크기로 계산한 트랙)와 View 변수·Variant(값 문장·조건·진단)를 출력합니다(--node는 그 Frame만)",
+    ),
     ("component-source", "create <폴더> <이름> <id> <root-id> | check <폴더> | resize <파일> <원본 hash> <너비> <높이> | set-fill <파일> <원본 hash> <none 또는 색 공간과 RGBA> | add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>: 컴포넌트별 Free Frame 트리"),
     (
         "git",
@@ -221,6 +225,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("apply", crate::apply::run(rest))
     } else if command == "context" {
         ("context", crate::context::run(rest))
+    } else if command == "guides" {
+        ("guides", crate::guides::run(rest))
     } else if command == "validate" {
         ("validate", crate::project_cmds::validate(rest))
     } else if command == "diagnose" {

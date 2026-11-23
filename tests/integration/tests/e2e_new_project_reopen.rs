@@ -9,13 +9,14 @@
 //! | Component 정의 생성 | `stellar component-source create`와 같은 `stellar_ops::component_source::create` |
 //! | Token set 생성 | 텍스트 원본 `design/tokens/<set>.stellar.yaml`을 codec 공개 encoder로 씀(AI·편집기가 파일을 직접 고치는 경로) |
 //! | Component 사용 | `stellar apply`의 `InsertComponentInstance`(CLI가 cache generation을 쓰고 앱이 다음 열기에 원본으로 옮김) |
+//! | View 변수·Variant 생성 | `edit-view-variants` command(ADR-0126)를 headless 공용 저장(`ops::snapshot::save`)으로 기록 |
 //!
 //! "semantic snapshot 동일"은 세 겹으로 확인합니다: 문서 semantic snapshot JSON(VI.10.4), 텍스트 원본 전체 의미
 //! (`TextProject::semantic_key`: 문서 레코드·컴포넌트 library bytes·token set·이미지 record), 그리고 다시 연 창의 Save
 //! Now가 쓸 것이 없다는 사실(디스크 = 창 메모리).
 //!
-//! View Variant는 영속 형식이 없어 저장·다시 열기 대상이 아닙니다(ADR-0111 결정 3). 이 시나리오는 Variant를 만들지
-//! 않습니다.
+//! View 변수·Variant는 View 원본 파일의 `variables`·`variants`와 View root subtree chunk에 저장됩니다(ADR-0126). 이
+//! 시나리오는 변수 하나와 그 변수를 조건으로 쓰는 Variant 하나를 만들고 다시 열어 같은지 봅니다.
 
 mod e2e_common;
 
@@ -280,6 +281,96 @@ fn new_project_edit_save_close_reopen_keeps_semantic_snapshot() {
     let session = reopen(&root);
     assert_eq!(json(session.document().unwrap().model()), with_instance);
     assert_eq!(source_key(&root), after_cli);
+
+    // ── 7b. View 변수·Variant 생성: 변수 하나와 그 변수를 조건으로 쓰는 Variant 하나(override: 카드 이름)를 command 두 개로
+    //       만들고 공용 저장으로 원본·cache에 씁니다. 앱이 다시 열어도 같고, 다시 연 창은 쓸 것이 없습니다.
+    use stellar_commands::command::Command;
+    use stellar_commands::guides::EditViewVariants;
+    use stellar_commands::request::CommandRequest;
+    use stellar_commands::state::DocumentState;
+    use stellar_core_types::property::{PropertyKey, PropertyPath};
+    use stellar_document::expressions::types::{ExpressionType, TypeSpec};
+    use stellar_document::view_variant::commands::ViewVariantCommand;
+    use stellar_document::view_variant::condition::VariantCondition;
+    use stellar_document::view_variant::resolver::{ViewVariant, ViewVariantId};
+    use stellar_document::view_variant::variable::{VariableValue, ViewVariable, ViewVariableId};
+    let snapshot = open_snapshot(&root).unwrap();
+    let mut state = DocumentState::new(snapshot.document_model(document).unwrap());
+    let (variable, variant) = (new_id(), new_id());
+    let mut overrides = stellar_document::component::variant_override::VariantOverrideSet::new();
+    overrides.set_property(
+        PropertyPath::with_keys(card, vec![PropertyKey(0x0110)]),
+        TypedValue::Boolean(true),
+    );
+    for command in [
+        ViewVariantCommand::CreateVariable(
+            ViewVariable::new(
+                ViewVariableId::new(variable),
+                "dark".into(),
+                TypeSpec::required(ExpressionType::Boolean),
+                VariableValue::Value(TypedValue::Boolean(false)),
+                [],
+            )
+            .unwrap(),
+        ),
+        ViewVariantCommand::CreateVariant(ViewVariant::new(
+            ViewVariantId::new(variant),
+            VariantCondition::new().equals(
+                ViewVariableId::new(variable),
+                VariableValue::Value(TypedValue::Boolean(true)),
+            ),
+            overrides.clone(),
+        )),
+    ] {
+        let command = Command::EditViewVariants(Box::new(EditViewVariants {
+            view: view_id,
+            command,
+        }));
+        state
+            .execute(&CommandRequest::at(&state, command))
+            .expect("View 변수·Variant command");
+    }
+    let expected = state
+        .model()
+        .view_variants(view_id)
+        .cloned()
+        .expect("View model");
+    stellar_ops::snapshot::save::save_documents(
+        &snapshot,
+        stellar_ops::snapshot::save::root_order(&snapshot),
+        vec![state
+            .model()
+            .to_records()
+            .map(|r| {
+                stellar_document::model::DocumentModel::from_records(r)
+                    .unwrap()
+                    .0
+            })
+            .unwrap()],
+    )
+    .expect("공용 저장");
+    let with_variants = source_key(&root);
+    assert_eq!(with_variants.records.view_variants, vec![expected.clone()]);
+    let view_file =
+        std::fs::read_to_string(root.join("design/pages/page-1/view-1.stellar.yaml")).unwrap();
+    assert!(
+        view_file.contains("variables:") && view_file.contains("variants:"),
+        "{view_file}"
+    );
+    let app = App::start();
+    let project = app.open_project(&root);
+    let (window, _, _) = app.open_window(project);
+    assert!(!app.window(window).has_unsaved_changes);
+    assert!(!app.save(window).1, "다시 연 창 = 디스크");
+    app.close_window(window);
+    app.close_project(project);
+    app.shutdown();
+    let session = reopen(&root);
+    assert_eq!(
+        session.document().unwrap().model().view_variants(view_id),
+        Some(&expected)
+    );
+    assert_eq!(source_key(&root), with_variants);
 
     // ── 8. Git: 최초 commit 이후 변경은 작업 트리에만 있고 HEAD·index는 그대로입니다.
     assert_eq!(git(&gate, &root, &["rev-parse", "HEAD"]), first_commit);

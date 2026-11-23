@@ -96,6 +96,13 @@ pub mod context;
 #[cfg(any(test, feature = "test-support"))]
 mod context_test_support;
 
+/// 가이드·레이아웃 그리드와 View 변수·Variant 편집 command (XII.10.19·XII.10.20·XVI.11.1, ADR-0126).
+pub mod guides;
+
+/// 테스트 전용 가이드·View 변수 편집 command 생성기 (ADR-0126). 프로덕션 경로에서 사용하지 않습니다.
+#[cfg(any(test, feature = "test-support"))]
+mod guides_test_support;
+
 /// 기본값 세트 선택과 명시 layout longhand command (SD.4, ADR-0086).
 pub mod style_defaults;
 

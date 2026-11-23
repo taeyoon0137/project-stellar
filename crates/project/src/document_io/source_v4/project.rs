@@ -13,6 +13,9 @@
 //!   context.stellar.yaml                        Component Context(있을 때만, XXX.7·ADR-0099)
 //! ```
 //!
+//! Frame 가이드·레이아웃 그리드는 그 Frame node 항목의 `guides` 목록, View 변수·Variant는 View 파일 `view` mapping의
+//! `variables`·`variants`입니다(ADR-0126, [`super::view_data`]).
+//!
 //! 파일 이름은 slug이고 정체성은 파일 안의 StableId입니다. 결과는 모델만의 함수라 같은 프로젝트는 같은 파일
 //! 집합·bytes가 됩니다. reader는 참조하지 않은 파일, 두 번 참조한 파일, 모르는 경로를 거부합니다.
 
@@ -182,15 +185,17 @@ struct ViewLayout<'a> {
     children: BTreeMap<StableId, Vec<StableId>>,
     stacks: &'a BTreeMap<StableId, &'a ModifierStack>,
     layouts: &'a BTreeMap<StableId, &'a LayoutRecord>,
+    guides: &'a BTreeMap<StableId, &'a stellar_document::guides::NodeGuides>,
     sizes: BTreeMap<StableId, usize>,
 }
 
 impl ViewLayout<'_> {
     fn node_value(&self, id: StableId) -> Result<YamlValue, TextSourceError> {
-        node::node(
+        node::document_node(
             self.records[&id],
             Some(self.stacks.get(&id).copied()),
             self.layouts.get(&id).copied(),
+            self.guides.get(&id).copied(),
         )
     }
 
@@ -310,6 +315,11 @@ pub fn encode(project: &TextProject) -> Result<EncodedProject, TextSourceError> 
         .iter()
         .map(|record| (record.node, record))
         .collect();
+    let guides: BTreeMap<StableId, &stellar_document::guides::NodeGuides> = records
+        .node_guides
+        .iter()
+        .map(|record| (record.owner(), record))
+        .collect();
     let mut children: BTreeMap<StableId, Vec<StableId>> = BTreeMap::new();
     for record in &records.nodes {
         if let Some(parent) = record.parent {
@@ -318,10 +328,11 @@ pub fn encode(project: &TextProject) -> Result<EncodedProject, TextSourceError> 
     }
     let mut sizes = BTreeMap::new();
     for record in &records.nodes {
-        let value = node::node(
+        let value = node::document_node(
             record,
             Some(stacks.get(&record.id).copied()),
             layouts.get(&record.id).copied(),
+            guides.get(&record.id).copied(),
         )?;
         let text = write_canonical(&YamlValue::Mapping(vec![(
             scalar("nodes"),
@@ -334,6 +345,7 @@ pub fn encode(project: &TextProject) -> Result<EncodedProject, TextSourceError> 
         children,
         stacks: &stacks,
         layouts: &layouts,
+        guides: &guides,
         sizes,
     };
 
@@ -387,14 +399,22 @@ pub fn encode(project: &TextProject) -> Result<EncodedProject, TextSourceError> 
                 );
                 let mut content = if root == view.root_frame {
                     let mut fields_ = header("stellar-view");
-                    fields_.push((
-                        scalar("view"),
-                        mapping([
-                            ("id", line(css::id(view.id))),
-                            ("display_name", line(view.display_name())),
-                            ("root_frame", line(css::id(view.root_frame))),
-                        ]),
-                    ));
+                    let mut view_fields = vec![
+                        (scalar("id"), line(css::id(view.id))),
+                        (scalar("display_name"), line(view.display_name())),
+                        (scalar("root_frame"), line(css::id(view.root_frame))),
+                    ];
+                    view_fields.extend(
+                        super::view_data::variant_fields(
+                            records
+                                .view_variants
+                                .iter()
+                                .find(|m| m.variables().view() == view.id),
+                        )
+                        .into_iter()
+                        .map(|(k, v)| (scalar(k), v)),
+                    );
+                    fields_.push((scalar("view"), YamlValue::Mapping(view_fields)));
                     fields_
                 } else {
                     let mut fields_ = header("stellar-frame");
@@ -525,7 +545,7 @@ impl Reader<'_> {
             if !refs.is_empty() {
                 return Err(invalid("$ref 항목은 node 뒤에 씁니다"));
             }
-            let (record, stack, layout) = node::parse_node(item, true)?;
+            let ((record, stack, layout), guides) = node::parse_document_node(item)?;
             if last.is_some_and(|prev| prev >= record.id) {
                 return Err(invalid("node는 StableId 오름차순, 중복 없이 씁니다"));
             }
@@ -535,6 +555,7 @@ impl Reader<'_> {
             self.records.nodes.push(record);
             self.records.modifier_stacks.extend(stack);
             self.records.layout_records.extend(layout);
+            self.records.node_guides.extend(guides);
         }
         if !ids.contains(&root) {
             return Err(invalid(format!("{path}: 파일 root node가 없습니다")));
@@ -619,15 +640,26 @@ pub fn decode(files: &BTreeMap<String, String>) -> Result<TextProject, TextSourc
             fields(&value, &["format", "schema_version", "view", "nodes"])?;
             check_header(&value, "stellar-view")?;
             let view = field(&value, "view")?;
-            fields(view, &["id", "display_name", "root_frame"])?;
+            let mut view_keys = vec!["id", "display_name", "root_frame"];
+            view_keys.extend(
+                super::view_data::VIEW_KEYS
+                    .iter()
+                    .filter(|k| view.get(k).is_some()),
+            );
+            fields(view, &view_keys)?;
             let root = css::parse_id(get(view, "root_frame")?)?;
+            let view_id = css::parse_id(get(view, "id")?)?;
             page_definition
                 .add_view(ViewDefinition::new(
-                    css::parse_id(get(view, "id")?)?,
+                    view_id,
                     get(view, "display_name")?.to_owned(),
                     root,
                 ))
                 .map_err(invalid)?;
+            reader
+                .records
+                .view_variants
+                .extend(super::view_data::parse_variant_fields(view, view_id)?);
             reader.nodes(&path, &value, root, &BTreeSet::new())?;
         }
         definition.add_page(page_definition).map_err(invalid)?;

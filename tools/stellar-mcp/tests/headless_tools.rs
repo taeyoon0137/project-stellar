@@ -61,6 +61,7 @@ fn valid_arguments(name: &str, ids: &Ids) -> J {
         "document.context" => {
             J::object(vec![("document", s(&ids.document)), ("node", s(&ids.root))])
         }
+        "document.guides" => J::object(vec![("document", s(&ids.document))]),
         "git.semantic_conflicts" => empty(),
         other => panic!("인자를 모르는 tool: {other}"),
     }
@@ -99,7 +100,7 @@ fn every_listed_tool_runs_read_only_through_ops() {
     client.initialize();
     let ids = ids(&mut client);
     let names = listed(&mut client);
-    assert_eq!(names.len(), 12);
+    assert_eq!(names.len(), 13);
     for name in &names {
         let reply = client.tool(name, valid_arguments(name, &ids));
         if name == "document.export_png" {
@@ -165,6 +166,12 @@ fn every_listed_tool_runs_read_only_through_ops() {
                 assert_eq!(body.get("raw_truncated"), Some(&J::Bool(false)));
                 assert!(body.get("semantic").is_some_and(|s| *s != J::Null));
                 assert_eq!(body.get("diagnostics"), Some(&J::Array(Vec::new())));
+            }
+            "document.guides" => {
+                // 이 fixture에는 가이드·View 변수가 없습니다(ADR-0126).
+                assert_eq!(body.get("document").map(text), Some(ids.document.as_str()));
+                assert_eq!(body.get("frames"), Some(&J::Array(Vec::new())));
+                assert_eq!(body.get("views"), Some(&J::Array(Vec::new())));
             }
             "git.semantic_conflicts" => {
                 assert_eq!(body.get("operation").map(text), Some("none"));

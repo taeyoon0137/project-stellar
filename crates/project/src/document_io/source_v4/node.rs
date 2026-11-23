@@ -7,6 +7,9 @@
 //! payload 키는 registry 이름·순서([`super::keys`])를 따르고 값은 CSS 문법([`super::css`])입니다. 모델이
 //! 표현하는 값만 쓰고, 표현할 수 없는 입력(변마다 다른 테두리, 모르는 키·값)은 거부합니다.
 //!
+//! Frame 가이드·레이아웃 그리드가 있는 문서 node는 `layout` 자리 뒤에 `guides` 목록을 둡니다(ADR-0126,
+//! [`super::view_data`]).
+//!
 //! 명시 layout longhand(IX.11.6)가 있는 문서 node는 `payload` 뒤에 `layout` mapping을 둡니다. 한 줄이 longhand
 //! 하나이고 명시한 longhand만 씁니다(ADR-0086, ADR-0077 개정). 명시 값이 없으면 `layout` 키를 쓰지 않습니다.
 //! 읽을 때 없는 longhand는 미설정입니다.
@@ -1052,6 +1055,16 @@ pub(crate) fn node(
     stack: Option<Option<&ModifierStack>>,
     layout_record: Option<&LayoutRecord>,
 ) -> Result<YamlValue, TextSourceError> {
+    document_node(record, stack, layout_record, None)
+}
+
+/// [`node`]에 Frame 가이드 기록(`guides` 목록, ADR-0126)을 더해 씁니다.
+pub(crate) fn document_node(
+    record: &NodeRecord,
+    stack: Option<Option<&ModifierStack>>,
+    layout_record: Option<&LayoutRecord>,
+    guides: Option<&stellar_document::guides::NodeGuides>,
+) -> Result<YamlValue, TextSourceError> {
     let mut out = vec![
         (scalar("id"), line(css::id(record.id))),
         (scalar("parent"), line(css::optional_id(record.parent))),
@@ -1067,6 +1080,9 @@ pub(crate) fn node(
     ];
     if let Some(record) = layout_record.filter(|r| !r.is_empty()) {
         out.push((scalar("layout"), layout(record)));
+    }
+    if let Some(value) = super::view_data::guides_value(guides) {
+        out.push((scalar("guides"), value));
     }
     if let Some(stack) = stack {
         out.push((
@@ -1097,6 +1113,10 @@ pub(crate) fn parse_node(
         keys.push("modifiers");
         if value.get("layout").is_some() {
             keys.push("layout");
+        }
+        // `guides`는 [`parse_document_node`]가 읽습니다.
+        if value.get("guides").is_some() {
+            keys.push("guides");
         }
     }
     fields(value, &keys)?;
@@ -1136,4 +1156,16 @@ pub(crate) fn parse_node(
         _ => None,
     };
     Ok((record, stack, layout_record))
+}
+
+/// 문서 node 항목을 읽습니다([`document_node`]의 역): [`parse_node`] 결과와 Frame 가이드 기록.
+pub(crate) fn parse_document_node(
+    value: &YamlValue,
+) -> Result<(ParsedNode, Option<stellar_document::guides::NodeGuides>), TextSourceError> {
+    let parsed = parse_node(value, true)?;
+    let guides = match value.get("guides") {
+        Some(item) => Some(super::view_data::parse_guides(item, parsed.0.id)?),
+        None => None,
+    };
+    Ok((parsed, guides))
 }

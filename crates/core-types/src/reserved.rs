@@ -34,6 +34,29 @@ pub mod context {
     pub const SNAPSHOT_CONTEXT_BAND: u32 = 0xEC00;
 }
 
+/// 눈금자 가이드·레이아웃 그리드와 View 변수·Variant 저장 번호(XII.10.19·XII.10.20·XVI.11.1, ADR-0117 결정 2.4·ADR-0126).
+///
+/// 둘 다 View subtree chunk(`KIND_VIEW_TREE` 계열 subtree payload) 끝의 **확장 절**에 담습니다. 확장 절은 tag 오름차순이고,
+/// 절 하나는 tag `u8` + record 수 `u32`(1 이상) + (`u32` 길이 + record bytes)*입니다. 이 번호를 모르는 reader는 subtree
+/// 끝의 남는 bytes를 형식 오류로 거부합니다(조용히 버리지 않음).
+pub mod guides {
+    /// subtree 확장 절 tag: Frame 하나의 가이드·레이아웃 그리드 record(`stellar_document::guides::NodeGuides::encode`).
+    pub const SUBTREE_SECTION_NODE_GUIDES: u8 = 0x01;
+    /// subtree 확장 절 tag: View 하나의 변수·Variant record(`ViewVariantModel::encode`). View root subtree에만 둡니다.
+    pub const SUBTREE_SECTION_VIEW_VARIANTS: u8 = 0x02;
+
+    /// semantic snapshot 대역: 가이드·그리드·View 변수·Variant 조건(`0xEDxx`, snapshot 전용 대역의 빈 대역).
+    pub const SNAPSHOT_GUIDES_BAND: u32 = 0xED00;
+    /// semantic snapshot 속성 key: Frame node 객체의 가이드 하나(경로 tail = 가이드 StableId, 값 = 텍스트 원본 한 줄).
+    pub const SNAPSHOT_NODE_GUIDE: u32 = 0xED01;
+    /// semantic snapshot 속성 key: Frame node 객체의 레이아웃 그리드 목록(값 = 텍스트 원본 줄 목록, 순서 있는 값 하나).
+    pub const SNAPSHOT_NODE_LAYOUT_GRIDS: u32 = 0xED02;
+    /// semantic snapshot 속성 key: View 객체의 변수 하나(경로 tail = 변수 StableId, 값 = 변수 canonical bytes).
+    pub const SNAPSHOT_VIEW_VARIABLE: u32 = 0xED10;
+    /// semantic snapshot 속성 key: Variant 객체의 조건(값 = `VariantCondition` canonical bytes).
+    pub const SNAPSHOT_VARIANT_CONDITION: u32 = 0xED11;
+}
+
 #[cfg(test)]
 mod tests {
     use super::context::*;
@@ -65,5 +88,26 @@ mod tests {
         assert!(!slot_snapshot.contains(&SNAPSHOT_SLOT_CONTEXT_KEYS));
         // 0xECxx는 snapshot 전용 대역(0xE0xx~0xEFxx)의 빈 대역입니다(0xE0~0xEB 사용 중).
         assert_eq!(SNAPSHOT_CONTEXT_BAND >> 8, 0xEC);
+    }
+
+    #[test]
+    fn guide_numbers_are_distinct_and_in_the_snapshot_band() {
+        // 검증 기준(ADR-0126): 예약 번호가 서로 겹치지 않고 Context 대역(0xEC)과도 다릅니다.
+        use super::guides::*;
+        assert_ne!(SUBTREE_SECTION_NODE_GUIDES, SUBTREE_SECTION_VIEW_VARIANTS);
+        const { assert!(SUBTREE_SECTION_NODE_GUIDES < SUBTREE_SECTION_VIEW_VARIANTS) };
+        let keys = [
+            SNAPSHOT_NODE_GUIDE,
+            SNAPSHOT_NODE_LAYOUT_GRIDS,
+            SNAPSHOT_VIEW_VARIABLE,
+            SNAPSHOT_VARIANT_CONDITION,
+        ];
+        for key in keys {
+            assert_eq!(key >> 8, SNAPSHOT_GUIDES_BAND >> 8, "0x{key:04X}");
+        }
+        assert_ne!(SNAPSHOT_GUIDES_BAND >> 8, SNAPSHOT_CONTEXT_BAND >> 8);
+        let mut sorted = keys.to_vec();
+        sorted.dedup();
+        assert_eq!(sorted.len(), keys.len());
     }
 }

@@ -59,12 +59,22 @@ fn command_round_trip(kind: CommandKind) -> usize {
             let before = model_snapshot_json(state.model()).expect("snapshot");
             // semantic snapshot은 layout record와 활성 기본값 세트를 담지 않으므로 따로 비교합니다(ADR-0086).
             let before_layout = layout_state(&state);
+            // 가이드 기록과 View 변수 model도 semantic snapshot JSON 밖이라 따로 비교합니다(ADR-0126).
+            let before_guides = guides_state(&state);
             let request = CommandRequest::at(&state, command);
             let outcome = state
                 .execute(&request)
                 .unwrap_or_else(|e| panic!("{kind} seed {seed}: validate 통과 후 실행 실패: {e}"));
             validate_document(&state.model().to_records().expect("records"))
                 .unwrap_or_else(|e| panic!("{kind} seed {seed}: forward 후 문서 무효: {e}"));
+            if kind == CommandKind::EditViewVariants {
+                // 생성기는 변수·Variant 생성·삭제만 만들므로 forward는 언제나 View model을 바꿉니다.
+                assert_ne!(
+                    guides_state(&state),
+                    before_guides,
+                    "{kind} seed {seed}: forward가 View 변수 model을 바꾸지 않았습니다"
+                );
+            }
             if LAYOUT_KINDS.contains(&kind) {
                 assert_ne!(
                     layout_state(&state),
@@ -85,6 +95,11 @@ fn command_round_trip(kind: CommandKind) -> usize {
                 layout_state(&state),
                 before_layout,
                 "{kind} seed {seed}: apply(forward); apply(inverse)의 layout record·세트 ≠ 원본"
+            );
+            assert_eq!(
+                guides_state(&state),
+                before_guides,
+                "{kind} seed {seed}: apply(forward); apply(inverse)의 가이드·View 변수 ≠ 원본"
             );
             applied += 1;
             break;
@@ -108,6 +123,17 @@ fn layout_state(
         state.model().to_records().expect("records").layout_records,
         state.model().style_defaults().to_string(),
     )
+}
+
+/// semantic snapshot JSON 밖의 상태: 영속 가이드 기록과 View 변수·Variant model(ADR-0126).
+fn guides_state(
+    state: &DocumentState,
+) -> (
+    Vec<stellar_document::guides::NodeGuides>,
+    Vec<stellar_document::view_variant::commands::ViewVariantModel>,
+) {
+    let records = state.model().to_records().expect("records");
+    (records.node_guides, records.view_variants)
 }
 
 /// root 아래에 override 하나를 가진 인스턴스를 넣습니다(SwapInstance 왕복용).
@@ -252,6 +278,8 @@ round_trip_property! {
     unset_property_round_trip => Registered::Command(CommandKind::UnsetProperty), min 120;
     set_layout_property_round_trip => Registered::Command(CommandKind::SetLayoutProperty), min 120;
     edit_context_round_trip => Registered::Command(CommandKind::EditContext), min 120;
+    set_node_guides_round_trip => Registered::Command(CommandKind::SetNodeGuides), min 120;
+    edit_view_variants_round_trip => Registered::Command(CommandKind::EditViewVariants), min 120;
     set_selection_round_trip => Registered::Selection, min 120;
 }
 

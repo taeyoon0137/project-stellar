@@ -10,6 +10,7 @@
 mod comparison;
 mod components;
 mod context;
+mod guides;
 mod integrity;
 mod operations;
 mod resources_extra;
@@ -137,6 +138,7 @@ impl Headless {
                 n if n == tools::EXPORT_PNG.name => operations::export_png(cached, args)?,
                 n if n == tools::COPY_CSS.name => operations::copy_css(cached, args)?,
                 n if n == tools::CONTEXT.name => context::read(cached, args)?,
+                n if n == tools::GUIDES.name => guides::read(cached, args)?,
                 n if n == tools::PROPOSE_CSS_PASTE.name => {
                     operations::propose_css_paste(cached, args)?
                 }

@@ -132,6 +132,8 @@ pub mod mcp_merge;
 
 /// Component Context override 조립과 조회 (XXX.7.9·XXX.7.11, ADR-0099).
 pub mod context;
+/// Frame 가이드·레이아웃 그리드와 View 변수·Variant 조회 (XII.10.19·XII.10.20·XVI.11.1, ADR-0126).
+pub mod guides;
 /// 텍스트 원본(View·문서·token·catalog·Context 파일)의 3-way semantic merge (ADR-0113 결정 5).
 pub mod merge_text;
 

@@ -370,6 +370,7 @@ fn approved_snapshot_lists_only_implemented_resources_and_pages_without_writes()
             "document.copy_css",
             "document.propose_css_paste",
             "document.context",
+            "document.guides",
             "git.status",
             "git.semantic_conflicts"
         ]
