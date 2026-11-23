@@ -249,8 +249,14 @@ mod tests {
         let converted = report.layout.converted.expect("변환함");
         assert_eq!(converted.documents, 1);
         assert!(converted.written > 0);
-        assert!(report.untracked.is_err(), "신뢰하지 않은 fixture는 Git을 쓰지 않음");
-        assert!(root.join("design/current").is_file(), "옛 배치는 Git에 넣기 전까지 남음");
+        assert!(
+            report.untracked.is_err(),
+            "신뢰하지 않은 fixture는 Git을 쓰지 않음"
+        );
+        assert!(
+            root.join("design/current").is_file(),
+            "옛 배치는 Git에 넣기 전까지 남음"
+        );
         assert_eq!(report.rebuilt, Rebuild::Fresh, "변환이 cache 짝을 맞춤");
         let after = status(&root).unwrap();
         assert_eq!(after.plan, "cache");

@@ -398,7 +398,11 @@ fn converted_legacy_reaches_git_as_text_source_in_one_commit() {
     // 변환한 원본은 아직 추적하지 않으므로 `commit -a`는 옛 배치를 지우지 않습니다.
     let status = run_git(&gate, root, &["status", "--porcelain"]);
     assert!(status.lines().all(|l| l.starts_with("??")), "{status}");
-    run_git(&gate, root, &["commit", "-q", "-a", "--allow-empty", "-m", "noop"]);
+    run_git(
+        &gate,
+        root,
+        &["commit", "-q", "-a", "--allow-empty", "-m", "noop"],
+    );
     let tracked = run_git(&gate, root, &["ls-files"]);
     assert!(tracked.lines().any(|l| l == "design/current"), "{tracked}");
 
@@ -408,7 +412,10 @@ fn converted_legacy_reaches_git_as_text_source_in_one_commit() {
         "{untracked:?}"
     );
     assert!(converted_marker(root).is_none());
-    assert!(!root.join("design/current").exists(), "옛 배치를 cache로 옮김");
+    assert!(
+        !root.join("design/current").exists(),
+        "옛 배치를 cache로 옮김"
+    );
     run_git(&gate, root, &["commit", "-q", "-m", "text source"]);
     let tracked = run_git(&gate, root, &["ls-files"]);
     assert!(
@@ -417,7 +424,9 @@ fn converted_legacy_reaches_git_as_text_source_in_one_commit() {
             .all(|l| !crate::cache::is_legacy_cache_path(l.as_bytes())),
         "{tracked}"
     );
-    assert!(tracked.lines().any(|l| l == "design/documents.stellar.yaml"));
+    assert!(tracked
+        .lines()
+        .any(|l| l == "design/documents.stellar.yaml"));
     assert!(tracked.lines().any(|l| l.starts_with("design/interfaces/")));
     assert_eq!(
         run_git(
