@@ -468,11 +468,11 @@ fn reconcile_member_lists(
     }
 }
 
-/// merge 진행 상태.
 /// Component Context 전용 conflict(XXX.7.10, ADR-0099 결정 10). Merger 내부 변경 목록을 고쳐야 해서 하위 모듈입니다.
 #[path = "context.rs"]
 mod context;
 
+/// merge 진행 상태.
 struct Merger<'a> {
     input: &'a MergeInput,
     accepted: Vec<SemanticChange>,
