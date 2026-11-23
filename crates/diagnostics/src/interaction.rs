@@ -152,7 +152,10 @@ impl StageSpan {
     }
 }
 
-/// 상호작용 종류(아키텍처 §6.4·§38.1 시나리오).
+/// 상호작용 종류(아키텍처 §6.4·§38.1 시나리오, ADR-0096 결정 3).
+///
+/// §38.1 결정적 성능 게이트 시나리오 13개와 단일 속성 변경입니다. 시나리오 하나가 종류 하나라서 결과 JSON의
+/// `kind`만으로 시나리오를 구분합니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InteractionKind {
     /// pan.
@@ -174,12 +177,36 @@ pub enum InteractionKind {
     /// 단일 속성 변경.
     PropertyEdit,
     /// 토큰 전파.
-    TokenEdit,
-    /// undo·redo.
-    UndoRedo,
+    TokenPropagation,
+    /// 중첩 컴포넌트 갱신.
+    ComponentUpdate,
+    /// View Variant 변경.
+    VariantChange,
+    /// undo.
+    Undo,
+    /// redo.
+    Redo,
 }
 
 impl InteractionKind {
+    /// 모든 종류.
+    pub const ALL: [InteractionKind; 14] = [
+        InteractionKind::Pan,
+        InteractionKind::Zoom,
+        InteractionKind::Drag,
+        InteractionKind::Resize,
+        InteractionKind::Rotate,
+        InteractionKind::Hover,
+        InteractionKind::Select,
+        InteractionKind::TextEdit,
+        InteractionKind::PropertyEdit,
+        InteractionKind::TokenPropagation,
+        InteractionKind::ComponentUpdate,
+        InteractionKind::VariantChange,
+        InteractionKind::Undo,
+        InteractionKind::Redo,
+    ];
+
     /// 고정 이름.
     pub const fn name(self) -> &'static str {
         match self {
@@ -192,8 +219,11 @@ impl InteractionKind {
             InteractionKind::Select => "select",
             InteractionKind::TextEdit => "text_edit",
             InteractionKind::PropertyEdit => "property_edit",
-            InteractionKind::TokenEdit => "token_edit",
-            InteractionKind::UndoRedo => "undo_redo",
+            InteractionKind::TokenPropagation => "token_propagation",
+            InteractionKind::ComponentUpdate => "component_update",
+            InteractionKind::VariantChange => "variant_change",
+            InteractionKind::Undo => "undo",
+            InteractionKind::Redo => "redo",
         }
     }
 }
@@ -478,6 +508,11 @@ impl InteractionTrace {
         Ok(())
     }
 
+    /// 기록한 GPU 실행 시각(다른 clock domain).
+    pub const fn gpu(&self) -> Option<GpuTiming> {
+        self.gpu
+    }
+
     /// present 대기열 깊이(frame 수)를 기록합니다.
     pub fn set_queue_depth(&mut self, depth: u32) {
         self.queue_depth = Some(depth);
@@ -737,6 +772,20 @@ mod tests {
             "interaction id=1 kind=drag document=le_200k visible=le_20k cache=warm t0_ns=0 t1_ns=1 \
              t2_ns=2 t3_ns=3 t4_ns=4 t5_ns=5 latency_ns=5 queue_depth=1"
         );
+    }
+
+    #[test]
+    fn kind_names_are_unique_fixed_names() {
+        // 검증 기준(XVI.1.4): dimension 값은 고정 이름(소문자·밑줄)이고 서로 다릅니다.
+        let names: std::collections::BTreeSet<&str> =
+            InteractionKind::ALL.iter().map(|k| k.name()).collect();
+        assert_eq!(names.len(), InteractionKind::ALL.len());
+        for name in names {
+            assert!(
+                name.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "{name}"
+            );
+        }
     }
 
     #[test]
