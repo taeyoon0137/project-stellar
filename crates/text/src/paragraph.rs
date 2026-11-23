@@ -222,6 +222,61 @@ impl ShapedParagraph {
         self.default_font_size
     }
 
+    /// CSS `letter-spacing`을 적용한 사본(IX.11.12, ADR-0075 개정 결정 12). `spacing`은 run style index의 값입니다.
+    ///
+    /// run마다 typographic character unit(grapheme cluster) 하나 뒤에 간격 하나를 더합니다(CSS Text 3 §8.2). 간격은
+    /// shaping cluster의 마지막 glyph advance에 그 cluster가 덮는 grapheme 수만큼 더하고, 줄 나누기 폭이 같은 값을
+    /// 보도록 그 cluster의 segment advance에도 더합니다. `em`은 run 자신의 글꼴 크기 기준이고, px·em 값은 1/64 px로
+    /// 반올림합니다. `normal`과 0은 아무것도 바꾸지 않습니다.
+    pub fn with_letter_spacing(
+        &self,
+        spacing: impl Fn(u32) -> stellar_core_types::typography::LetterSpacing,
+    ) -> Result<ShapedParagraph, UnitError> {
+        use stellar_core_types::typography::LetterSpacing;
+        let mut out = self.clone();
+        for (run_index, run) in out.runs.iter_mut().enumerate() {
+            let per_unit = match spacing(run.style) {
+                LetterSpacing::Normal => 0i64,
+                LetterSpacing::Px(v) => {
+                    (f64::from(v.get()) * f64::from(crate::units::SUBPIXELS_PER_PX)).round() as i64
+                }
+                LetterSpacing::Em(v) => {
+                    (f64::from(v.get()) * f64::from(run.font_size.raw())).round() as i64
+                }
+            };
+            if per_unit == 0 {
+                continue;
+            }
+            // cluster 시작(논리 순서)과 그 cluster의 끝(다음 cluster 시작 또는 run 끝).
+            let mut starts: Vec<u32> = run.glyphs.iter().map(|g| g.cluster).collect();
+            starts.sort_unstable();
+            starts.dedup();
+            for (i, start) in starts.iter().enumerate() {
+                let end = starts
+                    .get(i + 1)
+                    .map_or(run.range.end, |next| *next as usize);
+                let units = self.text[*start as usize..end].graphemes(true).count() as i64;
+                let add = per_unit * units;
+                // 같은 cluster의 glyph 가운데 run glyph 순서상 마지막 glyph에 더합니다.
+                if let Some(glyph) = run.glyphs.iter_mut().rev().find(|g| g.cluster == *start) {
+                    glyph.x_advance = TextUnit::from_i64(i64::from(glyph.x_advance.raw()) + add)?;
+                }
+                // segment는 논리 순서로 빈틈없이 이어지므로(범위 오름차순) 이분 탐색으로 찾습니다.
+                let at = out
+                    .segments
+                    .partition_point(|s| s.range.end <= *start as usize);
+                if let Some(segment) = out
+                    .segments
+                    .get_mut(at)
+                    .filter(|s| s.run == run_index && s.range.contains(&(*start as usize)))
+                {
+                    segment.advance = TextUnit::from_i64(i64::from(segment.advance.raw()) + add)?;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// segment 경계 offset인지(0과 텍스트 끝 포함).
     pub fn is_segment_boundary(&self, offset: usize) -> bool {
         offset == 0

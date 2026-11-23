@@ -6,12 +6,12 @@
 //! 그대로 따라갑니다.
 //!
 //! - 내부 모델이 아직 묶음 값인 Frame `border`(색과 두께 하나)는 파일에서 CSS longhand 열두 줄로 씁니다.
-//!   그 이름은 CSS 명세의 longhand 이름([`BORDER_LONGHANDS`])이며 registry에 항목이 생기면 registry 이름이
-//!   같아야 합니다(테스트가 검사).
+//!   이름·순서·key는 registry의 테두리 longhand 표(`stellar_document::css::border`, IX.11.10)를 그대로 씁니다.
 //! - registry에 없는 모델 필드(도형 경계 원점, Path 명령, Image asset·crop, Text 본문, 인스턴스 참조)는 codec
 //!   고유 키를 씁니다.
 
 use stellar_core_types::property::PropertyKey;
+use stellar_document::css::border::BorderLonghand;
 use stellar_document::frame::keys as frame_keys;
 use stellar_document::frame::FramePayload;
 use stellar_document::frame_metadata::{frame_field_keys, FRAME_PROPERTIES};
@@ -22,31 +22,12 @@ use stellar_document::payload_metadata::{
 };
 use stellar_document::shape::ShapeKind;
 
-/// 네 변의 border CSS longhand. 변 순서는 CSS의 top·right·bottom·left입니다.
-pub(crate) const BORDER_SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
-
-/// Frame `border` 한 값이 나뉘는 CSS longhand 열두 개(변마다 width·style·color).
-pub(crate) const BORDER_LONGHANDS: [&str; 12] = [
-    "border-top-width",
-    "border-top-style",
-    "border-top-color",
-    "border-right-width",
-    "border-right-style",
-    "border-right-color",
-    "border-bottom-width",
-    "border-bottom-style",
-    "border-bottom-color",
-    "border-left-width",
-    "border-left-style",
-    "border-left-color",
-];
-
 /// Frame 파일 줄 하나가 담는 값.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FrameLine {
     /// registry key 하나의 값 전체.
     Key(PropertyKey),
-    /// 묶음 `border`의 longhand 하나(`BORDER_LONGHANDS`의 index).
+    /// 묶음 `border`의 longhand 하나(`BorderLonghand::ALL`의 index).
     Border(usize),
 }
 
@@ -60,10 +41,9 @@ pub(crate) fn frame_lines() -> Vec<(&'static str, FrameLine)> {
         }
         if metadata.key == frame_keys::BORDER {
             lines.extend(
-                BORDER_LONGHANDS
+                BorderLonghand::ALL
                     .iter()
-                    .enumerate()
-                    .map(|(index, name)| (*name, FrameLine::Border(index))),
+                    .map(|longhand| (longhand.name(), FrameLine::Border(longhand.index()))),
             );
         } else {
             lines.push((metadata.name, FrameLine::Key(metadata.key)));
@@ -145,13 +125,15 @@ mod tests {
     }
 
     #[test]
-    fn border_longhands_do_not_collide_with_other_registry_names() {
-        // registry가 border longhand를 항목으로 가지게 되면 그 이름은 CSS longhand 이름과 같아야 하고,
-        // 다른 key가 같은 이름을 쓰면 안 됩니다.
+    fn border_longhands_are_registry_entries_with_registry_names() {
+        // 테두리 줄의 이름은 registry 항목(IX.11.10 key) 이름이고, 다른 Frame key가 같은 이름을 쓰지 않습니다.
+        use stellar_document::css::registry::{entry, PropertyScope};
+        for longhand in BorderLonghand::ALL {
+            let registered = entry(PropertyScope::Frame, longhand.key()).unwrap();
+            assert_eq!(registered.name, longhand.name());
+        }
         for metadata in &FRAME_PROPERTIES {
-            if BORDER_LONGHANDS.contains(&metadata.name) {
-                assert_ne!(metadata.key, frame_keys::BORDER);
-            }
+            assert!(BorderLonghand::from_name(metadata.name).is_none());
         }
         for kind in ShapeKind::ALL {
             let names: BTreeSet<_> = shape_lines(kind).iter().map(|(n, _)| *n).collect();

@@ -14,6 +14,18 @@ frame 0x010a border-top-left-radius | exact [subset] | border-top-left-radius | 
 frame 0x010b border-top-right-radius | exact [subset] | border-top-right-radius | length | -
 frame 0x010c border-bottom-right-radius | exact [subset] | border-bottom-right-radius | length | -
 frame 0x010d border-bottom-left-radius | exact [subset] | border-bottom-left-radius | length | -
+frame 0x0122 border-top-width | exact | border-top-width | length | -
+frame 0x0123 border-top-style | exact [subset] | border-top-style | keyword | -
+frame 0x0124 border-top-color | exact | border-top-color | color | -
+frame 0x0125 border-right-width | exact | border-right-width | length | -
+frame 0x0126 border-right-style | exact [subset] | border-right-style | keyword | -
+frame 0x0127 border-right-color | exact | border-right-color | color | -
+frame 0x0128 border-bottom-width | exact | border-bottom-width | length | -
+frame 0x0129 border-bottom-style | exact [subset] | border-bottom-style | keyword | -
+frame 0x012a border-bottom-color | exact | border-bottom-color | color | -
+frame 0x012b border-left-width | exact | border-left-width | length | -
+frame 0x012c border-left-style | exact [subset] | border-left-style | keyword | -
+frame 0x012d border-left-color | exact | border-left-color | color | -
 shape 0x0301 width | converted | width | length | -
 shape 0x0302 height | converted | height | length | -
 shape 0x0303 border-top-left-radius | exact [subset] | border-top-left-radius | length | -
@@ -31,6 +43,13 @@ shape 0x030e polygon-corner-radius | stellar-only | - | length | -
 path 0x0401 path-data | converted | d | - | -
 path 0x0402 fill-rule | exact | fill-rule | keyword | -
 text 0x0501 text-content | stellar-only | - | - | -
+text 0x0510 font-family | converted | font-family | string | -
+text 0x0511 font-size | exact | font-size | length | -
+text 0x0512 font-weight | exact [subset] | font-weight | number | -
+text 0x0513 font-style | exact | font-style | keyword | -
+text 0x0514 font-stretch | exact [subset] | font-stretch | percentage | -
+text 0x0515 line-height | exact | line-height | number | normal=approximated, number=exact, length=exact
+text 0x0516 letter-spacing | exact | letter-spacing | length | -
 image 0x0601 image-asset | stellar-only | - | - | -
 image 0x0602 width | converted | width | length | -
 image 0x0603 height | converted | height | length | -

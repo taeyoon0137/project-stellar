@@ -7,3 +7,9 @@
 
 /// Frame 위치와 transform 분리 (IX.11.9).
 pub mod frame_position;
+
+/// Frame 테두리 4변 longhand와 padding box 보정 (IX.11.10).
+pub mod frame_border;
+
+/// 옛 Text 문서의 기본 style 표 (IX.11.11).
+pub mod text_styles;

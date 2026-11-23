@@ -8,11 +8,18 @@
 //!    정렬**(paragraph 속성 [`TextAlign`])과 **text box 세로 정렬**([`VerticalAlign`] Top·Middle·Bottom)을
 //!    따로 적용합니다. 두 정렬은 서로 독립입니다.
 //!
-//! 줄 높이(문서 `LineHeight`, VI.7.3):
-//! - `Auto`: 줄에 있는 run 글꼴 metric의 최대 ascent·descent·line gap 합. gap은 위아래 반씩(half-leading).
-//! - `Multiplier`: 줄의 최대 글꼴 크기 × 배율(1/1024 정수 배율, 반올림). 남는(모자라는) 공간을 위아래로
-//!   반씩 나눕니다.
-//! - `Fixed`: 고정 높이. 배분 규칙은 `Multiplier`와 같습니다.
+//! 줄 높이(문서 `LineHeight`, VI.7.3)는 CSS 의미입니다(CSS 2 §10.8, IX.11.12, ADR-0075 개정 결정 12). 줄 상자 안의 inline
+//! box(줄에 걸친 glyph run)마다 **자기 글꼴**의 ascent `A`·depth `D`로 자기 line-height `L`을 정하고, leading
+//! `L − (A + D)`를 위아래로 반씩(위는 내림, 나머지는 아래) 더합니다. 문단 root inline box의 strut([`Strut`], 문단
+//! typography의 첫 사용 가능 글꼴과 font-size)도 같은 규칙의 inline box 하나입니다. 모든 box는 baseline에 맞추므로 줄
+//! 높이는 baseline 위로 가장 높은 box와 아래로 가장 깊은 box의 합이고, baseline은 위쪽 최댓값입니다. 그래서 크기가 섞인
+//! 줄은 지정 line-height보다 클 수 있습니다.
+//! - `Auto`(`normal`): `L = A + D + line gap`(box 자기 글꼴 metric).
+//! - `Multiplier`(`<number>`): `L` = box **자기** 글꼴 크기 × 배율(1/1024 정수 배율, 반올림).
+//! - `Fixed`(`<length>`): `L` = 고정 길이(box마다 같음).
+//!
+//! 크기가 하나인 문단(run과 strut의 metric·크기가 같음)의 결과는 이전 규칙(줄 전체 높이 하나와 최대 ascent·descent)과
+//! 같습니다.
 //!
 //! 가로 정렬은 paragraph 기준 방향 기준입니다(Start = LTR 왼쪽·RTL 오른쪽). `Justify`는 마지막 줄과 강제
 //! 줄바꿈 줄을 제외한 줄에서 줄 안 공백 segment에 남는 폭을 정수로 나눠 주고, 나머지 subpixel은 visual
@@ -183,6 +190,37 @@ pub fn lay_out_paragraph(
     style: &ParagraphLayoutStyle,
     max_width: Option<TextUnit>,
 ) -> Result<ParagraphLines, TextLayoutError> {
+    lay_out_paragraph_with_strut(shaped, breaks, style, Strut::of(shaped), max_width)
+}
+
+/// root inline box strut: 문단 typography의 첫 사용 가능 글꼴 metric과 font-size(CSS 2 §10.8.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Strut {
+    /// 글꼴 metric(scaled).
+    pub metrics: ScaledLineMetrics,
+    /// 글꼴 크기. 없으면 `Multiplier`는 metric 높이(`A + D`)를 씁니다.
+    pub font_size: Option<FontSize>,
+}
+
+impl Strut {
+    /// shaping 결과의 기본값(첫 span style의 첫 사용 가능 face와 크기)으로 만든 strut. 문단 typography가 첫 span과
+    /// 다르면 호출자가 [`lay_out_paragraph_with_strut`]에 문단 typography의 strut를 줍니다.
+    pub fn of(shaped: &ShapedParagraph) -> Strut {
+        Strut {
+            metrics: shaped.default_metrics(),
+            font_size: shaped.default_font_size(),
+        }
+    }
+}
+
+/// [`lay_out_paragraph`]에 문단 root inline box strut를 따로 주는 판.
+pub fn lay_out_paragraph_with_strut(
+    shaped: &ShapedParagraph,
+    breaks: &[BreakOpportunity],
+    style: &ParagraphLayoutStyle,
+    strut: Strut,
+    max_width: Option<TextUnit>,
+) -> Result<ParagraphLines, TextLayoutError> {
     let bidi = &shaped.itemization().bidi;
     // 아래 이분 탐색이 기대는 불변식을 쓰는 곳에서도 확인합니다(debug 빌드, paragraph당 O(n) 한 번).
     // 깨지면 잘못된 배치를 조용히 내지 않고 panic합니다.
@@ -201,8 +239,8 @@ pub fn lay_out_paragraph(
     for line in breaks_out {
         let order = bidi.line_order(shaped.text(), line.range.clone())?;
         let glyphs = place_glyphs(shaped, &index, &line, &order)?;
-        let (metrics, max_size) = line_metrics(shaped, &line.range);
-        let (height, baseline) = line_box(metrics, max_size, style.line_height)?;
+        let metrics = line_metrics(shaped, &line.range);
+        let (height, baseline) = line_box(shaped, &line.range, strut, style.line_height)?;
         total += i64::from(height.raw());
         lines.push(ParagraphLine {
             line,
@@ -367,32 +405,25 @@ fn trailing_len(shaped: &ShapedParagraph, line: &LineBreak) -> usize {
         .sum()
 }
 
-/// 줄에 걸친 run의 최대 metric과 최대 글꼴 크기. run이 없으면 paragraph 기본값.
-fn line_metrics(
-    shaped: &ShapedParagraph,
-    range: &Range<usize>,
-) -> (ScaledLineMetrics, Option<FontSize>) {
+/// 줄에 걸친 run의 최대 metric(표시·caret용). run이 없으면 paragraph 기본값.
+fn line_metrics(shaped: &ShapedParagraph, range: &Range<usize>) -> ScaledLineMetrics {
     let mut metrics: Option<ScaledLineMetrics> = None;
-    let mut size: Option<FontSize> = None;
     for (_, run) in overlapping_runs(shaped.runs(), range) {
         let m = metrics.get_or_insert(run.metrics);
         m.ascent = m.ascent.max(run.metrics.ascent);
         m.descent = m.descent.min(run.metrics.descent);
         m.line_gap = m.line_gap.max(run.metrics.line_gap);
-        size = Some(size.map_or(run.font_size, |s| s.max(run.font_size)));
     }
-    (
-        metrics.unwrap_or(shaped.default_metrics()),
-        size.or(shaped.default_font_size()),
-    )
+    metrics.unwrap_or(shaped.default_metrics())
 }
 
-/// (줄 높이, 줄 위→baseline).
-fn line_box(
+/// inline box 하나의 (baseline 위, baseline 아래) 크기. CSS half-leading: leading `L − (A + D)`의 내림 절반을 위에,
+/// 나머지를 아래에 더합니다.
+fn inline_box(
     metrics: ScaledLineMetrics,
     font_size: Option<FontSize>,
     mode: LineHeight,
-) -> Result<(TextUnit, TextUnit), UnitError> {
+) -> (i64, i64) {
     let ascent = i64::from(metrics.ascent.raw());
     let depth = -i64::from(metrics.descent.raw());
     let content = ascent + depth;
@@ -406,8 +437,31 @@ fn line_box(
         LineHeight::Fixed(fixed) => i64::from(fixed.raw()),
     };
     let leading = height - content;
-    let baseline = leading.div_euclid(2) + ascent;
-    Ok((TextUnit::from_i64(height)?, TextUnit::from_i64(baseline)?))
+    let top = leading.div_euclid(2);
+    (ascent + top, depth + (leading - top))
+}
+
+/// (줄 높이, 줄 위→baseline). strut와 줄에 걸친 run(글꼴이 있는 것)마다 inline box를 만들어 baseline에 맞춥니다.
+fn line_box(
+    shaped: &ShapedParagraph,
+    range: &Range<usize>,
+    strut: Strut,
+    mode: LineHeight,
+) -> Result<(TextUnit, TextUnit), UnitError> {
+    let (mut above, mut below) = inline_box(strut.metrics, strut.font_size, mode);
+    for (_, run) in overlapping_runs(shaped.runs(), range) {
+        // 글꼴이 없는 run(metric 0)은 glyph가 없어 inline box 높이에 들어가지 않습니다.
+        if run.metrics == ScaledLineMetrics::default() {
+            continue;
+        }
+        let (a, b) = inline_box(run.metrics, Some(run.font_size), mode);
+        above = above.max(a);
+        below = below.max(b);
+    }
+    Ok((
+        TextUnit::from_i64(above + below)?,
+        TextUnit::from_i64(above)?,
+    ))
 }
 
 /// 최종 위치 glyph(text box 좌상단 기준).
@@ -714,7 +768,9 @@ pub(crate) mod tests {
         );
         assert_eq!(fixed.lines[0].height, px(10));
         assert_eq!(fixed.lines[0].baseline, TextUnit::from_raw(819 - 192));
-        // CJK 줄(asc 880, desc -120, gap 100 @16px → 901/-123/102)과 섞이면 최대값을 씁니다.
+        // CJK run(asc 880, desc -120, gap 100 @16px → 901/-123/102)과 섞인 줄: CSS는 inline box마다 자기 metric에
+        // half-leading을 더합니다. Latin box(와 strut)는 위 819·아래 205, CJK box는 위 901 + 51·아래 123 + 51입니다.
+        // 줄 높이는 위 최댓값 952 + 아래 최댓값 205 = 1157입니다(이전 규칙은 최대 ascent·descent·gap 합 1208).
         let mixed = paragraph(
             &fx,
             "a日",
@@ -724,7 +780,7 @@ pub(crate) mod tests {
         );
         assert_eq!(mixed.lines[0].metrics.ascent, TextUnit::from_raw(901));
         assert_eq!(mixed.lines[0].metrics.descent, TextUnit::from_raw(-205));
-        assert_eq!(mixed.lines[0].height, TextUnit::from_raw(901 + 205 + 102));
+        assert_eq!(mixed.lines[0].height, TextUnit::from_raw(901 + 51 + 205));
         assert_eq!(mixed.lines[0].baseline, TextUnit::from_raw(51 + 901));
         // 빈 paragraph도 기본 metric 한 줄.
         let empty = paragraph(
@@ -738,6 +794,179 @@ pub(crate) mod tests {
         assert_eq!(empty.height, TextUnit::from_raw(1024));
         assert_eq!(LineHeightRatio::from_raw(0), None);
         assert_eq!(LineHeightRatio::ONE.raw(), 1024);
+    }
+
+    /// 크기가 다른 style span으로 shaping합니다(style i의 크기 = `sizes[i]` px).
+    fn shape_sizes(
+        fx: &Fixture,
+        text: &str,
+        parts: &[(Range<usize>, u32)],
+        sizes: &[i32],
+    ) -> ShapedParagraph {
+        use crate::itemize::StyleSpan;
+        use crate::paragraph::{shape_paragraph, ParagraphInput, TextStyleSpec};
+        let styles: Vec<TextStyleSpec<'_>> = sizes
+            .iter()
+            .map(|size| fx.styles(*size).remove(0))
+            .collect();
+        let spans: Vec<StyleSpan> = parts
+            .iter()
+            .map(|(range, style)| StyleSpan {
+                range: range.clone(),
+                style: *style,
+                language: None,
+            })
+            .collect();
+        shape_paragraph(
+            &ParagraphInput {
+                text,
+                spans: &spans,
+                base_direction: BaseDirection::LeftToRight,
+            },
+            &styles,
+            &fx.set.faces,
+        )
+        .expect("shape")
+    }
+
+    fn one_line(shaped: &ShapedParagraph, mode: LineHeight) -> ParagraphLine {
+        let style = ParagraphLayoutStyle {
+            line_height: mode,
+            ..ParagraphLayoutStyle::default()
+        };
+        let mut lines = lay_out_paragraph(shaped, &breaks(shaped.text()), &style, None)
+            .expect("paragraph")
+            .lines;
+        assert_eq!(lines.len(), 1);
+        lines.remove(0)
+    }
+
+    #[test]
+    fn mixed_size_runs_use_their_own_half_leading_css_line_box() {
+        // 검증 기준(IX.11.12): 고정 길이 혼합 크기 run line box. Latin 글꼴은 ascent 0.8em·descent 0.2em입니다.
+        let fx = Fixture::new();
+        let shaped = shape_sizes(&fx, "abcd", &[(0..2, 0), (2..4, 1)], &[10, 40]);
+        // line-height: 20px(1280). 10px box(640): leading 640 → 위 512 + 320, 아래 128 + 320. 40px box(2560): leading −1280
+        // → 위 2048 − 640, 아래 512 − 640. strut는 첫 span(10px)과 같습니다. 줄 = 위 1408 + 아래 448 = 1856 > 1280.
+        let fixed = one_line(&shaped, LineHeight::Fixed(px(20)));
+        assert_eq!(fixed.height, TextUnit::from_raw(1408 + 448));
+        assert!(fixed.height > px(20));
+        assert_eq!(fixed.baseline, TextUnit::from_raw(1408));
+        // 배율(<number>): box마다 자기 font-size × 배율. Latin 16px와 CJK 16px(위 901·아래 123)에 1.5를 주면 둘 다
+        // L = 1536이고, Latin은 위 819 + 256·아래 205 + 256, CJK는 위 901 + 256·아래 123 + 256입니다. 줄 = 1157 + 461 =
+        // 1618 > 1536(이전 규칙: 줄의 최대 글꼴 크기 × 배율 = 1536).
+        let ratio = LineHeightRatio::from_raw(1536).expect("1.5");
+        let mixed_fonts = fx.shape("a日", 16, BaseDirection::LeftToRight);
+        let multiplied = one_line(&mixed_fonts, LineHeight::Multiplier(ratio));
+        assert_eq!(multiplied.height, TextUnit::from_raw(1157 + 461));
+        assert_eq!(multiplied.baseline, TextUnit::from_raw(1157));
+        // 배율, 같은 글꼴 다른 크기(10px·40px, ×2): 40px box가 위 2048 + 1280·아래 512 + 1280을 정합니다.
+        let two = LineHeightRatio::from_raw(2048).expect("2");
+        let sized = one_line(&shaped, LineHeight::Multiplier(two));
+        assert_eq!(sized.height, TextUnit::from_raw(3328 + 1792));
+    }
+
+    #[test]
+    fn strut_from_paragraph_typography_sets_the_minimum_line_box() {
+        // 검증 기준(IX.11.12): 문단 글꼴보다 작은 run만 있는 줄의 strut 높이 fixture.
+        let fx = Fixture::new();
+        let small = fx.shape("ab", 10, BaseDirection::LeftToRight);
+        let paragraph_font = fx.shape("", 40, BaseDirection::LeftToRight);
+        let strut = Strut::of(&paragraph_font);
+        assert_eq!(strut.font_size, Some(FontSize::from_px(40).unwrap()));
+        let style = ParagraphLayoutStyle::default();
+        let with_strut =
+            lay_out_paragraph_with_strut(&small, &breaks("ab"), &style, strut, None).unwrap();
+        // normal: strut(40px Latin) 위 2048·아래 512가 10px run(위 512·아래 128)보다 큽니다.
+        assert_eq!(with_strut.lines[0].height, TextUnit::from_raw(2048 + 512));
+        assert_eq!(with_strut.lines[0].baseline, TextUnit::from_raw(2048));
+        // 문단 글꼴이 run과 같으면(기본 strut) run 높이입니다.
+        let own = lay_out_paragraph(&small, &breaks("ab"), &style, None).unwrap();
+        assert_eq!(own.lines[0].height, TextUnit::from_raw(512 + 128));
+        // 고정 길이에서도 strut는 inline box 하나입니다: 20px, 40px strut → 위 2048 − 640, 아래 512 − 640.
+        let fixed = ParagraphLayoutStyle {
+            line_height: LineHeight::Fixed(px(20)),
+            ..ParagraphLayoutStyle::default()
+        };
+        let fixed_lines =
+            lay_out_paragraph_with_strut(&small, &breaks("ab"), &fixed, strut, None).unwrap();
+        // 10px run: 위 512 + 320, 아래 128 + 320. 줄 = 위 max(1408, 832) + 아래 max(−128, 448).
+        assert_eq!(fixed_lines.lines[0].height, TextUnit::from_raw(1408 + 448));
+    }
+
+    #[test]
+    fn run_letter_spacing_adds_after_each_character_unit() {
+        // 검증 기준(IX.11.12): run별 letter-spacing fixture.
+        use stellar_core_types::typography::LetterSpacing;
+        use stellar_core_types::value::FiniteF32;
+        let fx = Fixture::new();
+        let shaped = shape_sizes(&fx, "abcd", &[(0..2, 0), (2..4, 1)], &[16, 16]);
+        let width = |p: &ShapedParagraph| -> i64 {
+            let line = one_line(p, LineHeight::Auto);
+            line.glyphs.iter().map(|g| i64::from(g.advance.raw())).sum()
+        };
+        let segment_sum = |p: &ShapedParagraph| -> i64 {
+            p.segments()
+                .iter()
+                .map(|s| i64::from(s.advance.raw()))
+                .sum()
+        };
+        let base = width(&shaped);
+        let spaced = shaped
+            .with_letter_spacing(|style| match style {
+                0 => LetterSpacing::Px(FiniteF32::new(1.0).unwrap()),
+                _ => LetterSpacing::Em(FiniteF32::new(0.5).unwrap()),
+            })
+            .unwrap();
+        // run 0: 글자 2개 × 1px(64), run 1: 글자 2개 × 0.5em(16px → 512).
+        assert_eq!(width(&spaced), base + 2 * 64 + 2 * 512);
+        assert_eq!(
+            segment_sum(&spaced),
+            width(&spaced),
+            "줄 나누기 폭도 같은 값"
+        );
+        // normal은 바꾸지 않습니다.
+        assert_eq!(
+            shaped
+                .with_letter_spacing(|_| LetterSpacing::Normal)
+                .unwrap(),
+            shaped
+        );
+        // ligature cluster(ffi)는 grapheme 수만큼 더합니다: "office"는 글자 6개.
+        let office = fx.shape("office", 16, BaseDirection::LeftToRight);
+        let spaced_office = office
+            .with_letter_spacing(|_| LetterSpacing::Px(FiniteF32::new(1.0).unwrap()))
+            .unwrap();
+        assert_eq!(width(&spaced_office), width(&office) + 6 * 64);
+    }
+
+    #[test]
+    fn single_size_paragraphs_keep_previous_line_boxes() {
+        // 검증 기준(IX.11.12): 단일 크기 문단 결과 불변. 이전 규칙(줄 높이 = 모드 높이, baseline = leading/2 + ascent)과
+        // 같아야 합니다. Latin 글꼴은 ascent 0.8em·descent 0.2em·gap 0입니다.
+        let fx = Fixture::new();
+        for size in [10, 16, 40] {
+            let shaped = fx.shape("ab cd", size, BaseDirection::LeftToRight);
+            let unit = i64::from(FontSize::from_px(size).unwrap().raw());
+            let ascent = i64::from(shaped.default_metrics().ascent.raw());
+            let content = ascent - i64::from(shaped.default_metrics().descent.raw());
+            for (mode, height) in [
+                (LineHeight::Auto, content),
+                (
+                    LineHeight::Multiplier(LineHeightRatio::from_raw(1536).unwrap()),
+                    (unit * 1536 + 512).div_euclid(1024),
+                ),
+                (LineHeight::Fixed(px(10)), 640),
+            ] {
+                let line = one_line(&shaped, mode);
+                assert_eq!(i64::from(line.height.raw()), height, "{size}px {mode:?}");
+                assert_eq!(
+                    i64::from(line.baseline.raw()),
+                    (height - content).div_euclid(2) + ascent,
+                    "{size}px {mode:?}"
+                );
+            }
+        }
     }
 
     #[test]
