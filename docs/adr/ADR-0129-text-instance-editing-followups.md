@@ -68,8 +68,11 @@ Accepted (2026-11-24). 계획 XII.10.33·XII.10.34의 코어 후속(Swift·FFI �
    slot override 하나에 정확히 한 번 투영돼야 합니다(IX.3.2 규칙을 문서 validator로).
 2. 문서 validator 위반 두 가지를 더합니다.
    - `UnprojectedInstanceChild`: 인스턴스 자식이 어느 slot override에도 없음.
-   - `InvalidSlotContent`: slot override가 인스턴스 자식이 아닌 node(없는 node 포함)를 가리키거나 같은 node를 두 번
-     투영함.
+   - `InvalidSlotContent`: slot override가 같은 자식을 두 번 투영함.
+   - 자식이 아닌 node(없는 node 포함)를 가리키는 slot content는 문서 위반으로 보지 않습니다. 이 규칙 전에 저장된
+     문서의 slot override는 인스턴스 자식을 둘 수 없어 모두 그런 참조였기 때문입니다. 그런 참조는 IX.3 투영
+     검사(`validate_scene_slot_overrides` 등, 컴포넌트 library 필요)가 진단하고, 계획 함수와 command는 만들지
+     않습니다(`swap-instance` 검증, `plan_slot_drop`).
 3. 판정 함수는 하나입니다. `validate::instance_projection_issues`(투영 목록, 실제 자식)가 문제 목록을 내고, 문서
    validator와 인스턴스 구조 command가 같은 판정(문서 validator)을 씁니다.
 4. `can_have_children(kind)`는 **자유 자식**(삽입·이동·붙여넣기가 아무 node나 둘 수 있는 부모: Frame·Fragment)
@@ -153,6 +156,8 @@ Accepted (2026-11-24). 계획 XII.10.33·XII.10.34의 코어 후속(Swift·FFI �
 
 - 파일 포맷 변경은 없습니다. 인스턴스 자식은 기존 node 레코드 형식 그대로이고, 이전에 거부하던 구조만 받습니다.
 - command codec 버전 6 → 7. 옛 reader는 새 종류를 담은 history journal 복원만 포기합니다(ADR-0079 규칙).
+- 생성 파일 `schemas/command-transaction.schema.json`의 canonical 입력 종류 목록에 두 종류가 더해집니다
+  (`cargo xtask generate-command-schema`로 다시 만듦).
 - FFI·`stellar_ffi.h` 변경은 없습니다.
 - 공개 Rust API 변경:
   - `CanvasTextEditor`의 기록 메서드가 `(history, doc)` 대신 `&mut impl TextEditHost`를 받습니다.

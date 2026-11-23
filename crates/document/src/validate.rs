@@ -248,7 +248,7 @@ pub enum DocumentViolation {
         /// 인스턴스 id.
         instance: StableId,
     },
-    /// slot override가 그 인스턴스의 자식이 아닌 node(없는 node 포함)를 가리키거나, 같은 node를 두 번 투영합니다.
+    /// slot override가 그 인스턴스의 자식을 두 번 투영합니다.
     InvalidSlotContent {
         /// 인스턴스 node.
         instance: ViolationLocation,
@@ -409,10 +409,9 @@ impl fmt::Display for DocumentViolation {
                 f,
                 "{node}: 인스턴스 {instance}의 자식이지만 어느 slot에도 투영되지 않았습니다"
             ),
-            DocumentViolation::InvalidSlotContent { instance, node } => write!(
-                f,
-                "{instance}: slot content {node}가 이 인스턴스의 자식이 아니거나 두 번 투영됩니다"
-            ),
+            DocumentViolation::InvalidSlotContent { instance, node } => {
+                write!(f, "{instance}: slot content {node}가 두 번 투영됩니다")
+            }
             DocumentViolation::DuplicateOrderKey {
                 parent,
                 node,
@@ -505,9 +504,12 @@ pub fn can_own_slot_content(kind: NodeKind) -> bool {
 /// 인스턴스 하나의 자식·slot override 투영 구조 문제(컴포넌트 library 없이 볼 수 있는 부분, IX.3.2).
 ///
 /// `projected`는 slot override의 content id(slot 순서대로), `children`은 인스턴스의 실제 자식 id(자식 순서)입니다.
-/// 자식이 아닌 node를 투영하거나 같은 node를 두 번 투영하면 [`ProjectionIssue::InvalidContent`](투영 순서), 어느 slot
-/// override에도 투영되지 않은 자식은 [`ProjectionIssue::Unprojected`](자식 순서)입니다. 문서 validator와 인스턴스 구조
-/// command가 같은 판정을 씁니다. 문제가 없으면 빈 목록입니다.
+/// 자식을 두 번 투영하면 [`ProjectionIssue::InvalidContent`](투영 순서), 어느 slot override에도 투영되지 않은 자식은
+/// [`ProjectionIssue::Unprojected`](자식 순서)입니다. 문제가 없으면 빈 목록입니다.
+///
+/// 자식이 아닌 node(없는 node 포함)를 가리키는 content는 문서 위반으로 보지 않습니다. 이 규칙 전에 저장된 문서의
+/// slot override는 모두 그런 참조였고(인스턴스 자식을 둘 수 없었음), 그 참조는 IX.3 투영 검사(컴포넌트 library 필요)가
+/// 진단합니다(ADR-0129 결정 3).
 pub fn instance_projection_issues<'a>(
     projected: impl IntoIterator<Item = &'a StableId>,
     children: &[StableId],
@@ -516,7 +518,7 @@ pub fn instance_projection_issues<'a>(
     let mut seen = BTreeSet::new();
     let mut issues = Vec::new();
     for node in projected {
-        if !children_set.contains(node) || !seen.insert(*node) {
+        if children_set.contains(node) && !seen.insert(*node) {
             issues.push(ProjectionIssue::InvalidContent(*node));
         }
     }
@@ -532,7 +534,7 @@ pub fn instance_projection_issues<'a>(
 /// [`instance_projection_issues`]의 문제 하나.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectionIssue {
-    /// slot override가 자식이 아닌 node를 가리키거나 같은 node를 두 번 투영합니다.
+    /// slot override가 같은 자식을 두 번 투영합니다.
     InvalidContent(StableId),
     /// 어느 slot override에도 투영되지 않은 자식.
     Unprojected(StableId),
@@ -1572,21 +1574,17 @@ mod tests {
                 instance: sid(INSTANCE),
             }]
         );
-        // 자식이 아닌 node(다른 부모의 RECT)와 두 slot에 같은 node를 투영.
-        let records = with(&[(800, &[OWNED]), (801, &[OWNED, RECT])], &[OWNED]);
+        // 두 slot에 같은 자식을 투영하면 위반입니다. 자식이 아닌 node(다른 부모의 RECT, 없는 node)를 가리키는 옛 형식
+        // 참조는 문서 위반이 아닙니다(IX.3 투영 검사가 진단).
+        let records = with(&[(800, &[OWNED]), (801, &[OWNED, RECT, 4_321])], &[OWNED]);
         assert_eq!(
             violations(&records),
-            vec![
-                DocumentViolation::InvalidSlotContent {
-                    instance: loc(&records, INSTANCE),
-                    node: sid(OWNED),
-                },
-                DocumentViolation::InvalidSlotContent {
-                    instance: loc(&records, INSTANCE),
-                    node: sid(RECT),
-                },
-            ]
+            vec![DocumentViolation::InvalidSlotContent {
+                instance: loc(&records, INSTANCE),
+                node: sid(OWNED),
+            }]
         );
+        assert!(validate_document(&with(&[(800, &[RECT, 4_321])], &[])).is_ok());
         // leaf 부모는 여전히 container 위반이고, 자유 자식 판정은 인스턴스를 포함하지 않습니다.
         assert!(!can_have_children(NodeKind::ComponentInstance));
         assert!(can_own_slot_content(NodeKind::ComponentInstance));
@@ -1597,7 +1595,7 @@ mod tests {
         assert_eq!(
             violations(&records)[0].to_string(),
             format!(
-                "node {}(#{}): slot content {}가 이 인스턴스의 자식이 아니거나 두 번 투영됩니다",
+                "node {}(#{}): slot content {}가 두 번 투영됩니다",
                 sid(INSTANCE),
                 index_of(&records, INSTANCE),
                 sid(OWNED)

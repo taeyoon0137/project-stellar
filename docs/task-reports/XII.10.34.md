@@ -28,6 +28,10 @@
 - `crates/runtime/src/canvas/instance_tests.rs`(수정) — Slot 넣기·순서 바꾸기·꺼내기·default 복귀, 규칙 거부, Detach
   history 1건과 undo, command ID fixture.
 - `docs/adr/ADR-0129-text-instance-editing-followups.md`(신규).
+- `schemas/command-transaction.schema.json`(생성 파일 재생성) — canonical 입력 종류 목록에 두 종류.
+- `crates/commands/src/convert.rs`(소유 밖, 수정) — `restore-node-records`가 바뀐 종류·payload에 붙지 않는 명시 layout
+  longhand를 남기는 복원을 거부합니다. 새 command 종류 등록으로 random 순서 시험(`random_sequences`)의 생성 순서가
+  바뀌며 드러난 기존 결함입니다(Fragment로 되돌린 node에 `grid-column-start`가 남음).
 
 2026-11-23 canvas-text-instance 작업:
 
@@ -94,7 +98,8 @@
 ## 테스트(2026-11-24 text-instance-2)
 
 - 문서 규칙(`instance_children_must_be_projected_slot_content`): 투영된 자식·빈 override는 유효, 투영되지 않은 자식은
-  `UnprojectedInstanceChild`, 남의 node·두 번 투영은 `InvalidSlotContent`입니다. 자유 자식 판정은 인스턴스를 넣지
+  `UnprojectedInstanceChild`, 같은 자식 두 번 투영은 `InvalidSlotContent`입니다. 자식이 아닌 node·없는 node를 가리키는
+  옛 형식 참조는 문서 위반이 아닙니다(이 규칙 전 저장 문서 호환, ADR-0129 결정 3). 자유 자식 판정은 인스턴스를 넣지
   않습니다.
 - Slot fixture(`slot_drop_and_take_out_are_one_entry_each_and_undo_exactly`): Frame 11을 Modal body 맨 앞에 넣기,
   같은 인스턴스 안 순서 바꾸기, root로 꺼내기, 마지막 content를 default 복귀로 꺼내기가 각각 history 1건입니다. 매번
