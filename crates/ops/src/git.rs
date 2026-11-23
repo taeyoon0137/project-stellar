@@ -651,8 +651,10 @@ fn read_tree_file_bytes(root: &Path, path: &GitPath, kind: FileModeKind) -> Opti
 type TextCandidateFile = (GitPath, Option<Vec<u8>>);
 
 /// index tree(`index_root`)에 텍스트 원본이 있으면 후보 문서를 원본으로 인코딩해 바뀐 파일(`Some`)과 지울 파일
-/// (`None`)을 돌려줍니다(ADR-0113 결정 6). 문서 밖 의미(token·이미지 record·Context)는 index 원본 것을 쓰고, 컴포넌트
-/// 원본 파일은 원본 단위가 다루므로 넣지 않습니다. 원본이 없거나 후보가 문서를 바꾸지 않으면 빈 목록입니다.
+/// (`None`)을 돌려줍니다(ADR-0113 결정 6). 문서 밖 의미(token·이미지 record)는 index 원본 것을 쓰고, 컴포넌트
+/// 원본 파일은 원본 단위가 다루므로 넣지 않습니다. 문서 Context(key·provision·requirement·Slot 공개 목록)는 문서
+/// 의미라 후보 snapshot에서 레코드와 함께 되돌린 것을 씁니다(ADR-0114 결정 2, ADR-0138 결정 3). 그래서 고른 Context
+/// 변경이 index 원본에 들어갑니다. 원본이 없거나 후보가 문서를 바꾸지 않으면 빈 목록입니다.
 fn text_candidate_files(
     index_root: &Path,
     candidate: &CandidateIndexSnapshot,
@@ -680,7 +682,10 @@ fn text_candidate_files(
     let (mut next, _) =
         stellar_document::model::DocumentModel::from_records(projection.records.clone())
             .map_err(|_| unsupported("후보 문서를 모델로 만들 수 없습니다"))?;
-    next.replace_context(model.context().live(&model));
+    let context = crate::diff::document_from_snapshot(candidate.snapshot(), document)
+        .map_err(|_| unsupported("후보 문서의 Context를 되돌릴 수 없습니다"))?
+        .context;
+    next.replace_context(context.live(&next));
     let encoded = stellar_project::document_io::source_v4::project::encode(&library.join(next))
         .map_err(|_| unsupported("후보 문서를 텍스트 원본으로 쓸 수 없습니다"))?;
     let path_of = |relative: &str| GitPath::from_bytes(format!("design/{relative}").as_bytes());
@@ -2395,5 +2400,120 @@ mod tests {
         expected.sort_by_key(key);
         assert_eq!(found, expected);
         assert!(staged.is_valid());
+    }
+
+    /// requirement·Slot 공개 목록이 있는 텍스트 원본 문서의 semantic stage(ADR-0123 결정 1, ADR-0138 결정 3): 목록
+    /// 하나를 고르면 index의 텍스트 원본에 그 목록만 들어가고, 고르지 않은 목록 변경은 작업 트리에만 남습니다.
+    #[test]
+    fn staging_a_context_list_of_a_text_source_writes_only_that_list_to_the_index_source() {
+        use crate::test_support::{large_document, save_text_document, scaffold_project};
+        use stellar_document::context::fixtures::{number, number_type};
+        use stellar_document::context::key::{ContextKey, ContextScope};
+        use stellar_git_porcelain::fixture::GitFixture;
+        use stellar_semantic_diff::build::context::{
+            COMPONENT_CONTEXT_REQUIREMENTS, SLOT_CONTEXT_KEYS,
+        };
+
+        let Some(fx) = GitFixture::with_system_git("ops-stage-context-lists").unwrap() else {
+            panic!("system Git required");
+        };
+        scaffold_project(fx.work());
+        let card = StableId::new_v7(97_001, 0x0c, 1);
+        let badge = StableId::new_v7(97_002, 0x0c, 2);
+        let slot = StableId::new_v7(97_003, 0x0c, 3);
+        let other_slot = StableId::new_v7(97_004, 0x0c, 4);
+        let key = StableId::new_v7(95_001, 0x0c, 1);
+        let edit =
+            |model: &stellar_document::model::DocumentModel,
+             change: &dyn Fn(&mut stellar_document::context::set::ContextSet)| {
+                let mut copy = crate::diff::DocumentSource::of_model(model)
+                    .unwrap()
+                    .into_model()
+                    .unwrap();
+                let mut set = copy.context().clone();
+                change(&mut set);
+                copy.replace_context(set);
+                copy
+            };
+        let plain = large_document(4);
+        let document = plain.document_id();
+        let base = edit(&plain, &|set| {
+            set.insert_key(
+                ContextKey::new(
+                    key,
+                    "k1",
+                    ContextScope::Document(document),
+                    number_type(),
+                    number(96_001, 3.0),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            set.add_requirement(card, key);
+            set.add_slot_key(slot, key);
+        });
+        save_text_document(fx.work(), &base);
+        fx.commit_all("base").unwrap();
+        let working = edit(&base, &|set| {
+            set.add_requirement(badge, key);
+            set.add_slot_key(other_slot, key);
+            set.remove_slot_key(slot, key);
+        });
+        save_text_document(fx.work(), &working);
+
+        let session = GitSession::open(fx.gated(), fx.work()).unwrap();
+        let source = crate::diff::DocumentSource::of_model(&working).unwrap();
+        let snapshot = crate::diff::snapshot_of(&[source.input()]).unwrap();
+        let anchor = snapshot.get(document).unwrap();
+        let path =
+            |list, owner: StableId| anchor.path(&[list]).with_key_segment(&owner.to_string());
+        // 목록마다 따로 고를 수 있는 변경입니다(같은 문서 Document 객체의 서로 다른 속성).
+        let status = session.status(&StatusRequest::default()).unwrap();
+        let ids: Vec<ChangeId> = status
+            .semantic
+            .unwrap()
+            .entries
+            .into_iter()
+            .filter(|entry| entry.area == StatusArea::Unstaged)
+            .map(|entry| entry.id)
+            .collect();
+        for (list, owner) in [
+            (COMPONENT_CONTEXT_REQUIREMENTS, badge),
+            (SLOT_CONTEXT_KEYS, other_slot),
+            (SLOT_CONTEXT_KEYS, slot),
+        ] {
+            let id = ChangeId::property(path(list, owner));
+            assert!(ids.contains(&id), "{id:?} 없음: {ids:?}");
+        }
+        session
+            .stage(
+                vec![GitItem::Change(ChangeId::property(path(
+                    COMPONENT_CONTEXT_REQUIREMENTS,
+                    badge,
+                )))],
+                Vec::new(),
+            )
+            .unwrap();
+
+        // index의 텍스트 원본을 읽은 문서 Context: 고른 requirement만 더해졌습니다.
+        let index = read_index_snapshot(session.git(), session.root()).unwrap();
+        let temp = session.temp().unwrap();
+        let tree = materialize_snapshot(session.git(), session.root(), &index.entries, temp.path())
+            .unwrap();
+        let files = stellar_project::document_io::session::read_source(tree.root())
+            .unwrap()
+            .expect("index 텍스트 원본");
+        let (staged, _) = stellar_project::document_io::session::SourceLibrary::split(
+            stellar_project::document_io::session::decode_source(&files).unwrap(),
+        );
+        let context = staged.context();
+        assert!(
+            context.requirements(badge).contains(&key),
+            "고른 requirement"
+        );
+        assert!(context.requirements(card).contains(&key));
+        assert!(context.slot_keys(slot).contains(&key), "고르지 않은 삭제");
+        assert!(context.slot_keys(other_slot).is_empty(), "고르지 않은 추가");
+        assert!(session.validate_staged().unwrap().is_valid());
     }
 }
