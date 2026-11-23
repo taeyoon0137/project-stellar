@@ -26,7 +26,7 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
 
 ### 2. 테스트 대역(XXIX.2.2)
 
-- 테스트 전용 실행 파일 `stellar-agent-host-test-cli`(`src/bin/test_cli.rs`)를 둡니다. 테스트는 이 파일을 임시 디렉터리에 CLI 이름으로 복사하고, 옆에 `<exe>.scenario`를 둡니다. 대역은 자기 경로로 scenario를 찾습니다. 인자로 버전·연결 상태·세션 단계를 고르고, 출력 재생·조각 쓰기·대기·hang·종료 코드·하위 프로세스 띄우기·환경과 cwd 기록을 합니다.
+- 테스트 전용 실행 파일 `stellar-agent-host-test-cli`(`test-cli/main.rs`)를 둡니다. 테스트는 이 파일을 임시 디렉터리에 CLI 이름으로 복사하고, 옆에 `<exe>.scenario`를 둡니다. 대역은 자기 경로로 scenario를 찾습니다. 인자로 버전·연결 상태·세션 단계를 고르고, 출력 재생·조각 쓰기·대기·hang·종료 코드·하위 프로세스 띄우기·환경과 cwd 기록을 합니다.
 - 대역은 환경 변수로 설정을 받지 않습니다. library를 쓰지 않아 framework를 link하지 않으므로 대역 스스로 환경 변수를 더하지 않습니다. 그래서 child 환경 측정이 정확합니다(CoreFoundation은 load 시 `__CF_USER_TEXT_ENCODING`을 스스로 더함). network API를 쓰지 않습니다.
 - 대역은 공급자 서명을 가질 수 없습니다. 서명 확인은 `CodeVerifier` trait로 주입하고, 테스트는 결과를 정해 둔 구현을 넣습니다. 앱은 `AppleStaticCodeVerifier`를 씁니다. 대역은 앱 번들에 넣지 않습니다.
 

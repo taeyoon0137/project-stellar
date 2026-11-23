@@ -22,7 +22,7 @@
 //! | [`decoder`] | XXIX.2.11 | launch profile별 표시 전용 출력 디코더(fail closed) |
 //! | [`raw`] | XXIX.2.12 | 세션별 메모리 상한 원문 버퍼 |
 //! | [`output`] | XXIX.2.4·XXIX.2.13 | 수신 출력의 원문 보존·디코드·디코드 실패 연결 |
-//! | `src/bin/test_cli.rs` | XXIX.2.2 | 구독 CLI 테스트 대역 실행 파일(테스트 전용, library 미사용) |
+//! | `test-cli/main.rs` | XXIX.2.2 | 구독 CLI 테스트 대역 실행 파일(테스트 전용, library 미사용) |
 
 pub mod chat;
 pub mod decoder;

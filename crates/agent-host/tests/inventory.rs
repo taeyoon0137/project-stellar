@@ -136,7 +136,7 @@ fn no_cli_credential_location_access() {
         "\"home\"",
     ];
     let mut files = agent_host_sources();
-    files.push(crate_dir().join("src/bin/test_cli.rs"));
+    files.push(crate_dir().join("test-cli/main.rs"));
     let found = hits(&files, &words, true);
     assert!(found.is_empty(), "{found:#?}");
 }
@@ -222,7 +222,7 @@ fn no_session_restart_resume_or_resend_api() {
 #[test]
 fn test_double_uses_no_network_or_library() {
     // XXIX.2.2: 대역은 network API와 library(framework link)를 쓰지 않습니다.
-    let bin = vec![crate_dir().join("src/bin/test_cli.rs")];
+    let bin = vec![crate_dir().join("test-cli/main.rs")];
     let found = hits(
         &bin,
         &[
