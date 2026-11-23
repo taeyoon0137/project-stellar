@@ -347,6 +347,64 @@ fn invalid_edits_are_rejected_without_changing_the_scene() {
 }
 
 #[test]
+fn removing_a_node_its_parent_or_roots_still_list_is_rejected() {
+    // 부모 Upsert 없이 지우면 부모 자식 목록에 끊긴 참조가 남습니다. 편집 전으로 되돌려야 합니다.
+    let mut scene = built();
+    let hash = scene.snapshot().semantic_hash();
+    let dangling = scene.update(
+        DocumentRevision(2),
+        &[SourceEdit::Remove(key(leaf(2, 3)))],
+        &SceneDirtySet::new(),
+        &clock(),
+    );
+    assert_eq!(
+        dangling,
+        Err(IncrementalError::Source(SourceError::MissingNode {
+            key: key(leaf(2, 3))
+        }))
+    );
+    // root를 SetRoots 없이 지우는 것도 같습니다.
+    let mut lone = SceneSource::from_nodes(
+        vec![key(7)],
+        [(
+            key(7),
+            SourceNode::leaf(SourceKind::Shape(shape_input(7, 0.0, 0.5))),
+        )],
+    )
+    .unwrap();
+    assert_eq!(
+        lone.apply(&[SourceEdit::Remove(key(7))]),
+        Err(SourceError::MissingNode { key: key(7) })
+    );
+    assert_eq!(lone.len(), 1);
+    assert_eq!(scene.snapshot().semantic_hash(), hash);
+    assert_eq!(scene.source(), &source());
+    // 부모를 함께 고치면 받아들입니다.
+    let leaves: Vec<SceneKey> = (0..LEAVES)
+        .filter(|l| *l != 3)
+        .map(|l| key(leaf(2, l)))
+        .collect();
+    scene
+        .update(
+            DocumentRevision(2),
+            &[
+                SourceEdit::Remove(key(leaf(2, 3))),
+                SourceEdit::upsert(
+                    key(section(2)),
+                    SourceNode::with_children(
+                        SourceKind::Frame(frame_input(section(2), 0.0, 100.0, 200.0, 40.0)),
+                        leaves,
+                    ),
+                ),
+            ],
+            &SceneDirtySet::new(),
+            &clock(),
+        )
+        .unwrap();
+    assert_eq!(scene.snapshot().semantic_hash(), fresh_hash(&scene));
+}
+
+#[test]
 fn fragments_flatten_and_stay_shareable() {
     let mut nodes = vec![(
         key(1),

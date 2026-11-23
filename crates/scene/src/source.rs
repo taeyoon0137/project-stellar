@@ -295,6 +295,8 @@ impl SceneSource {
         let old_roots = self.roots.clone();
         let mut roots_changed = false;
         let mut displaced = Vec::new();
+        // 지운 node와 지우기 전 부모. 부모가 아직 그 node를 나열하면 끊긴 참조입니다.
+        let mut removed: Vec<(SceneKey, Option<SceneKey>)> = Vec::new();
         for edit in edits {
             if let Some(key) = edit.key() {
                 undo.entry(key)
@@ -304,14 +306,20 @@ impl SceneSource {
                 SourceEdit::Upsert(key, node) => {
                     displaced.extend(self.upsert(*key, (**node).clone()));
                 }
-                SourceEdit::Remove(key) => self.remove(*key),
+                SourceEdit::Remove(key) => {
+                    removed.push((*key, self.parents.get(key).copied()));
+                    self.remove(*key);
+                }
                 SourceEdit::SetRoots(roots) => {
                     self.roots = roots.clone();
                     roots_changed = true;
                 }
             }
         }
-        if let Err(error) = self.check_edits(&undo, &displaced, &old_roots, roots_changed) {
+        let checked = self
+            .check_removed(&removed)
+            .and_then(|()| self.check_edits(&undo, &displaced, &old_roots, roots_changed));
+        if let Err(error) = checked {
             // 되돌리기: 편집 전 node와 root를 복원하고 부모 index를 다시 맞춥니다.
             for (key, previous) in undo {
                 match previous {
@@ -335,6 +343,22 @@ impl SceneSource {
                 self.parents.insert(*child, *key);
             }
         }
+    }
+
+    /// 지운 node를 부모나 root 목록이 아직 가리키는지 검사합니다.
+    fn check_removed(&self, removed: &[(SceneKey, Option<SceneKey>)]) -> Result<(), SourceError> {
+        for (key, parent) in removed {
+            if self.nodes.contains_key(key) {
+                continue;
+            }
+            let listed_by_parent = parent
+                .and_then(|parent| self.nodes.get(&parent))
+                .is_some_and(|parent| parent.children.contains(key));
+            if listed_by_parent || self.roots.contains(key) {
+                return Err(SourceError::MissingNode { key: *key });
+            }
+        }
+        Ok(())
     }
 
     /// 편집한 부분의 불변식 검사.
