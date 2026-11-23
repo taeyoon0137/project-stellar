@@ -12,6 +12,9 @@ pub mod interaction;
 /// ring buffer 로컬 trace store (XVI.1.5).
 pub mod trace_store;
 
+/// 앱 입력 경로 연결 지점 trace probe (XVI.1.1~XVI.1.5, ADR-0096).
+pub mod latency_probe;
+
 /// 단계 trace record schema (XI.2.6).
 pub mod trace_schema;
 

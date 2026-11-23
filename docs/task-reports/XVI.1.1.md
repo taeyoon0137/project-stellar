@@ -46,3 +46,28 @@
 ## 남은 위험 / 한계
 
 - 앱 경로가 없어 `[~]`입니다. 앱 연결 때 receipt의 T0 후보(event_time·received) 중 어느 값을 T0로 쓸지 정해야 합니다.
+
+## 2026-11-23 interaction-trace 후속: 앱 연결 지점 (ADR-0096 결정 1·2)
+
+- 상태는 그대로 부분 완료(`[~]`)입니다. 앱 입력 경로 연결은 UI 재설계 때 하고, 이번에는 그때 쓸 연결 지점 API를
+  `crates/diagnostics/src/latency_probe.rs`에 두었습니다.
+- T0은 Stellar 수신 시각입니다. 운영체제 event timestamp는 T0에 쓰지 않습니다(ADR-0096 결정 1). 위 "남은 위험"의 T0
+  후보 결정이 이것으로 닫힙니다.
+- `InteractionProbe::begin`은 event마다 새 `InteractionTraceId`를 발급하고 probe 시계로 T0을 찍습니다. `begin_at`은 수신
+  스레드가 `Stamper`로 먼저 찍은 시각을 씁니다.
+- 이벤트 병합(`coalesce`)된 event도 자기 trace ID·T0을 유지하고, 살아남은 event의 T1\~T5를 받아 store에 들어갑니다.
+
+| 테스트 | 확인 |
+|---|---|
+| `begin_issues_one_id_per_event_with_receipt_t0` | event 4개에 고유 ID 4개, `begin_at`의 T0 = 수신 시각 |
+| `coalesced_events_keep_their_own_id_and_t0` | 병합 event의 latency가 자기 수신부터(5µs·7µs), T1 뒤 병합 거부 |
+
+### 근거 커밋
+
+- `d25a69c9` Feat: 상호작용 trace T0\~T5 ID·stage·구간·dimension 추가 (XVI.1.1\~XVI.1.4)
+- 이 커밋(`Task(XVI.1.1)`): 앱 연결 지점 probe.
+
+### 남은 범위
+
+- 앱 입력 경로(AppKit 입력 → DocumentThread)에서 `InteractionProbe::begin`을 부르는 일(UI 재설계 때). runtime은
+  diagnostics에 의존하지 않으므로 shell 또는 앱 진단 계층이 probe를 갖습니다.
