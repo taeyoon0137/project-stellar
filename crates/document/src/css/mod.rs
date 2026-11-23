@@ -3,6 +3,7 @@
 //! 저장은 바이너리·텍스트 원본의 숫자 `PropertyKey` 그대로이고, CSS 이름·값 문법·매핑 상태는 registry
 //! metadata입니다. 이 module은 registry가 공유하는 CSS 대응 규칙을 모읍니다.
 //!
+//! - [`border`]: Frame 테두리 4변 longhand key·값·레이아웃 입력(IX.11.10).
 //! - [`bundle`]: 묶음 key와 longhand key 대응(IX.11.22).
 //! - [`grammar`]: 값 문법 종류(IX.11.1).
 //! - [`mapping`]: registry 항목별 CSS 매핑 metadata와 longhand 이름 inventory(IX.11.1).
@@ -13,6 +14,7 @@
 //! - [`declaration`]: 선언 블록 텍스트 해석·정규 출력(IX.11.15).
 //! - [`style_defaults`]: 명시하지 않은 layout longhand를 푸는 기본값 세트(ADR-0082, ADR-0086).
 
+pub mod border;
 pub mod bundle;
 pub mod custom_property;
 pub mod declaration;

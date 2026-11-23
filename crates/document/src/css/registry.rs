@@ -123,6 +123,7 @@ pub fn entries() -> Vec<RegistryEntry> {
         bundle: m.longhands,
     });
     node.chain(frame)
+        .chain(super::border::registry_entries())
         .chain(payload_entries(PropertyScope::Shape, &SHAPE_PROPERTIES))
         .chain(payload_entries(PropertyScope::Path, &PATH_PROPERTIES))
         .chain(payload_entries(PropertyScope::Text, &TEXT_PROPERTIES))

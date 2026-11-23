@@ -216,3 +216,48 @@ Accepted (2026-11-23)
 - 그래서 이 속성들을 가진 node에서도 copy → paste 왕복의 semantic snapshot이 같고, `stellar apply`의 `set-property`도
   같은 경로로 이 속성을 받습니다. 저장 위치는 있지만 아직 경로가 없는 속성(`transform-origin`, `mask-image`,
   `clip-path` 등)은 `unsupported-property`입니다.
+
+## 개정(2026-11-23, css-typography-border)
+
+계획 행 IX.11.10·IX.11.11·IX.11.12의 결정입니다. 본문 결정 1\~9는 고치지 않고 아래 결정을 더합니다.
+
+### 결정 10. Frame 테두리 4변 longhand(IX.11.10)
+
+- **key.** 열두 longhand에 Frame 대역 빈 번호를 하나씩 둡니다(ADR-0024 결정 14). 순서는 변(top, right, bottom, left)마다
+  width·style·color이고, 이 순서가 registry 순서이자 텍스트 원본 v4의 줄 순서입니다(ADR-0077 결정 2: 줄 순서는 registry
+  순서). `border-top-width` 0x0122, `border-top-style` 0x0123, `border-top-color` 0x0124, `border-right-*` 0x0125\~0x0127,
+  `border-bottom-*` 0x0128\~0x012a, `border-left-*` 0x012b\~0x012d입니다. container longhand(0x0110\~0x0121, ADR-0086) 다음
+  번호라 겹치지 않습니다.
+- **한 곳.** key·이름·값 모델(`BorderSides`)·CSS 값 해석과 출력·레이아웃 입력은 `stellar_document::css::border` 하나입니다.
+  길이·색은 결정 5의 parser·formatter(`css::value`)를 지납니다. 텍스트 원본 v4 codec은 자체 테두리 해석을 지우고 이 함수를
+  씁니다(읽은 값을 같은 formatter로 다시 쓴 결과가 입력과 byte 단위로 같아야 함). 파일 bytes는 바뀌지 않습니다.
+- **값의 뜻.** initial value는 변마다 `medium none currentcolor`입니다. computed `border-*-width`는 style `none`이면 0이고,
+  레이아웃은 이 값으로 border box 안쪽을 padding box로 줄입니다(`BorderSides::computed_widths`, `layout_declarations`).
+  style은 Stellar가 그리는 `none`·`solid`만 받고(`subset`), 다른 CSS keyword는 `unsupported-value`입니다. `thin`·`medium`·
+  `thick`은 입력 표기를 보존하고 px 값은 기준 브라우저 값(1·3·5px)입니다.
+- **옛 bytes.** 제품 schema 1 Frame payload의 묶음 값 `Border{color, thickness}`(0x0105)는 값 변환 없이 longhand로 읽힙니다.
+  있으면 네 변 같은 두께·`solid`·색, 없으면 네 변 initial입니다(`BorderSides::from_payload`). 묶음 값으로 되돌릴 수 있는
+  조합(네 변 같은 `solid` px 두께·명시 색, 또는 네 변 initial)만 지금 저장됩니다(`to_payload`). 그 밖은 조용히 바꾸지 않고
+  `unsupported-value`로 거부합니다.
+- **schema 2 저장 형식.** 변마다 다른 값은 Frame payload schema 2의 테두리 절로 저장합니다(`BorderSides::encode`: 변마다
+  width tag + 선택 f32, style tag, color flag + 선택 색, canonical). schema 2 Frame payload에서 이 절이 0x0105 묶음 값을
+  대체하고, 0x0105는 재사용하지 않는 묶음 key가 되어 schema 2 이후 새 command로 받지 않습니다. 묶음 key 참조는 결정 1처럼
+  변환하지 않고 보고합니다. Frame payload 타입(`frame.rs`)과 chunk 형식 연결, `frame_metadata`의 0x0105 `longhands` 지정은
+  이 lane의 소유 범위 밖이라 1→2 묶음 step을 등록하는 작업이 함께 합니다(아래 Consequences).
+- **migration step.** `stellar_project::migration::steps::frame_border::split_frame_border`가 schema 1→2 묶음 step의 테두리
+  부분입니다(ADR-0077 결정 4의 묶음 규칙, IX.11.9 step 뒤 적용).
+  - 테두리가 있는 부모의 Free 자식(`position: absolute`, IX.11.6 이전 schema에서는 IX.11.9가 위치를 옮긴 모든 Frame 자식)은
+    길이 inset `left`·`top`·`right`·`bottom`에서 그 변 computed 두께를 빼 화면 위치를 보존합니다.
+  - 명시 `display: flex|grid` 부모는 각 변 `padding-*`에서 그 변 두께를 빼 flow 자식 위치와 내용 기반 크기를 보존합니다.
+    padding이 두께보다 작은 변(미설정 포함)은 `0px`(미설정이면 그대로)로 두고 차이를 노드·변별로 보고합니다.
+  - 백분율 inset·크기·padding, 위치가 payload에 있는 자식(layout 입력이 아님, ADR-0086 결정 3)은 보정하지 않고 보고합니다.
+  - payload bytes는 바꾸지 않습니다. step은 아직 `PRODUCT_STEPS`에 등록하지 않습니다(IX.11.9와 같은 이유: scene·layout이
+    테두리 longhand와 layout 결과로 그리기 전에 켜면 화면이 바뀝니다).
+
+### 결정 10의 대안
+
+| 대안 | 판단 |
+|---|---|
+| key 순서를 `border-*-width` 넷, `-style` 넷, `-color` 넷 | 텍스트 원본 v4가 이미 변마다 세 줄 순서로 씁니다. registry 순서를 파일 순서와 다르게 두면 파일 bytes가 바뀝니다. 미선택 |
+| `FramePayload::border` 타입을 이번에 4변 구조로 교체 | 이 필드를 읽는 crate가 열 곳이 넘고(semantic-diff·scene·runtime·codegen·ops·commands·ffi) 대부분 다른 lane 소유입니다. 값 모델·저장 형식·step을 먼저 고정하고 타입 교체는 1→2 등록 작업에 둡니다. 미선택 |
+| 묶음 값 없음을 `0px none currentcolor`로 읽기 | CSS initial(`medium`)과 다르고 기존 v4 파일 bytes(`medium`)와 달라집니다. computed 두께는 어느 쪽이든 0입니다. 미선택 |

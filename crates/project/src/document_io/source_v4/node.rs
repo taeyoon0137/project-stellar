@@ -29,7 +29,8 @@ use stellar_document::component::definition::{ComponentPropertyId, ComponentSlot
 use stellar_document::component::instance::{ComponentInstancePayload, OverrideKey, SlotOverride};
 use stellar_document::fragment::FragmentPayload;
 use stellar_document::frame::keys as frame_keys;
-use stellar_document::frame::{Border, Clipping, CornerRadius, FramePayload};
+use stellar_document::css::border::{BorderLonghand, BorderSides};
+use stellar_document::frame::{Clipping, CornerRadius, FramePayload};
 use stellar_document::image::{CropRect, FitMode, ImagePayload, SamplingMode, IMAGE_PROP_ASSET};
 use stellar_document::layout_record::{format_value, LayoutLonghand, LayoutRecord};
 use stellar_document::modifier::{
@@ -49,7 +50,7 @@ use stellar_document::text::{Paragraph, StyleRun, TextPayload, TextRange};
 use super::super::text_codec::{field, fields, mapping, scalar, text};
 use super::super::text_source::TextSourceError;
 use super::css::{self, invalid, unsupported};
-use super::keys::{frame_lines, image_lines, modifier_lines, shape_lines, FrameLine, BORDER_SIDES};
+use super::keys::{frame_lines, image_lines, modifier_lines, shape_lines, FrameLine};
 use crate::yaml::YamlValue;
 
 const COMMON: [&str; 7] = [
@@ -84,18 +85,6 @@ pub(crate) fn kind_name(payload: &NodePayload) -> &'static str {
 }
 
 // --- Frame ---
-
-fn border_value(border: Option<Border>, index: usize) -> String {
-    let side_part = index % 3;
-    match (border, side_part) {
-        (None, 0) => "medium".into(),
-        (None, 1) => "none".into(),
-        (None, _) => "currentcolor".into(),
-        (Some(border), 0) => css::px(border.thickness()),
-        (Some(_), 1) => "solid".into(),
-        (Some(border), _) => css::color(border.color),
-    }
-}
 
 fn clipping(value: &Clipping) -> String {
     match value {
@@ -154,41 +143,38 @@ fn frame_key_value(payload: &FramePayload, key: PropertyKey) -> Result<String, T
 /// Frame payload를 registry 이름·순서의 한 속성 한 줄로 씁니다.
 pub(crate) fn frame(payload: &FramePayload) -> Result<YamlValue, TextSourceError> {
     let mut out = Vec::new();
+    let border = BorderSides::from_payload(payload.border);
     for (name, which) in frame_lines() {
         let value = match which {
             FrameLine::Key(key) => frame_key_value(payload, key)?,
-            FrameLine::Border(index) => border_value(payload.border, index),
+            FrameLine::Border(index) => border.format(BorderLonghand::ALL[index]),
         };
         out.push((scalar(name), line(value)));
     }
     Ok(YamlValue::Mapping(out))
 }
 
-fn parse_border(values: &[&str; 12]) -> Result<Option<Border>, TextSourceError> {
-    let side = |index: usize| {
-        (
-            values[index * 3],
-            values[index * 3 + 1],
-            values[index * 3 + 2],
-        )
-    };
-    let first = side(0);
-    if (1..4).any(|index| side(index) != first) {
-        return Err(unsupported(format!(
-            "변마다 다른 테두리는 모델이 표현하지 않습니다({}의 네 변이 같아야 합니다)",
-            BORDER_SIDES.join("·")
+/// 테두리 longhand 한 줄을 읽습니다. 값은 registry 테두리 표의 parser·formatter(`css::border`)를 쓰고, 정규 텍스트와
+/// 같아야 합니다(결정론적 bytes).
+fn parse_border_line(
+    sides: &mut BorderSides,
+    longhand: BorderLonghand,
+    text: &str,
+) -> Result<(), TextSourceError> {
+    sides.set(longhand, text).map_err(|error| {
+        if error.code.starts_with("unsupported") {
+            unsupported(format!("{longhand}: {error}"))
+        } else {
+            invalid(format!("{longhand}: {error}"))
+        }
+    })?;
+    let expected = sides.format(longhand);
+    if expected != text {
+        return Err(invalid(format!(
+            "{longhand}: 정규 표기 {expected}이어야 합니다: {text}"
         )));
     }
-    match first {
-        ("medium", "none", "currentcolor") => Ok(None),
-        (_, "none", _) => Err(unsupported(
-            "border-style: none의 width·color는 초기값(medium·currentcolor)이어야 합니다",
-        )),
-        (width, "solid", color) => Border::new(css::parse_color(color)?, css::parse_px(width)?)
-            .map(Some)
-            .map_err(invalid),
-        (_, style, _) => Err(unsupported(format!("border-style {style}"))),
-    }
+    Ok(())
 }
 
 /// [`frame`]을 읽습니다.
@@ -200,14 +186,7 @@ pub(crate) fn parse_frame(value: &YamlValue) -> Result<FramePayload, TextSourceE
     let mut width = 0.0;
     let mut height = 0.0;
     let mut radius = [0.0_f32; 4];
-    let mut border = [""; 12];
-    for (index, slot) in border.iter_mut().enumerate() {
-        *slot = match index % 3 {
-            0 => "medium",
-            1 => "none",
-            _ => "currentcolor",
-        };
-    }
+    let mut border = BorderSides::INITIAL;
     for (name, which) in &lines {
         let required = matches!(
             which,
@@ -218,7 +197,9 @@ pub(crate) fn parse_frame(value: &YamlValue) -> Result<FramePayload, TextSourceE
         }
         let text = get(value, name)?;
         match which {
-            FrameLine::Border(index) => border[*index] = text,
+            FrameLine::Border(index) => {
+                parse_border_line(&mut border, BorderLonghand::ALL[*index], text)?
+            }
             FrameLine::Key(key) => match *key {
                 frame_keys::TRANSFORM => payload.transform = css::parse_matrix(text)?,
                 frame_keys::CLIPPING => payload.clipping = parse_clipping(text)?,
@@ -241,7 +222,8 @@ pub(crate) fn parse_frame(value: &YamlValue) -> Result<FramePayload, TextSourceE
     payload.size = Size2::new(width, height).map_err(invalid)?;
     payload.corner_radius =
         CornerRadius::new(radius[0], radius[1], radius[2], radius[3]).map_err(invalid)?;
-    payload.border = parse_border(&border)?;
+    // 묶음 값으로 표현할 수 없는 조합(변마다 다른 값 등)은 거부합니다(Frame payload schema 2 전).
+    payload.border = border.to_payload().map_err(unsupported)?;
     Ok(payload)
 }
 
