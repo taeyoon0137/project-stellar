@@ -8,13 +8,19 @@
 //! 같은 [`ConflictTarget`]). C는 base와 다른 단위와 conflict 단위마다 출처 [`Source`]를 기록합니다: A·B 한쪽
 //! 상태와 같으면 그쪽, 양쪽과 같거나(같은 변경) 엔진이 계산한 값(key 재배정·정의 목록 병합)이면 `Auto`,
 //! conflict로 base를 유지하면 `Base`, 사용자가 직접 넣은 값이면 `Custom`입니다. 기록이 없는 단위는 base 그대로입니다.
+//!
+//! **해결(XIV.12.1, ADR-0081 결정 4)**: [`Resolution`]은 `ChooseBase`·`ChooseOurs`·`ChooseTheirs`·
+//! `CustomValue`·`Delete` 닫힌 enum입니다. 허용 action은 conflict 대상과 세 상태로 정합니다
+//! ([`allowed_resolutions`]). 계획서의 `KeepModified`는 수정 쪽 선택과 같아 따로 두지 않습니다.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use stellar_semantic_diff::change::{Position, SemanticChange};
 use stellar_semantic_diff::core_types::ids::StableId;
 use stellar_semantic_diff::diff::diff;
 use stellar_semantic_diff::snapshot::SemanticSnapshot;
+use stellar_semantic_diff::value::SemanticValue;
 
 use crate::merge::merge;
 use crate::model::{ConflictTarget, SideState};
@@ -78,6 +84,142 @@ fn unit_of(change: &SemanticChange) -> UnitKey {
     };
     (change.object_id(), target)
 }
+
+/// conflict 해결 action(XIV.12.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resolution {
+    /// base 상태.
+    ChooseBase,
+    /// Source A(ours) 상태.
+    ChooseOurs,
+    /// Source B(theirs) 상태.
+    ChooseTheirs,
+    /// 직접 넣는 속성 값.
+    CustomValue(SemanticValue),
+    /// 객체 또는 속성 삭제.
+    Delete,
+}
+
+/// 해결 action 종류(안정 numeric code).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
+pub enum ResolutionKind {
+    /// [`Resolution::ChooseBase`].
+    ChooseBase = 1,
+    /// [`Resolution::ChooseOurs`].
+    ChooseOurs = 2,
+    /// [`Resolution::ChooseTheirs`].
+    ChooseTheirs = 3,
+    /// [`Resolution::CustomValue`].
+    CustomValue = 4,
+    /// [`Resolution::Delete`].
+    Delete = 5,
+}
+
+impl ResolutionKind {
+    /// 정의된 모든 종류(code 오름차순).
+    pub const ALL: [ResolutionKind; 5] = [
+        ResolutionKind::ChooseBase,
+        ResolutionKind::ChooseOurs,
+        ResolutionKind::ChooseTheirs,
+        ResolutionKind::CustomValue,
+        ResolutionKind::Delete,
+    ];
+
+    /// 진단용 이름.
+    pub fn name(self) -> &'static str {
+        match self {
+            ResolutionKind::ChooseBase => "base",
+            ResolutionKind::ChooseOurs => "ours",
+            ResolutionKind::ChooseTheirs => "theirs",
+            ResolutionKind::CustomValue => "custom",
+            ResolutionKind::Delete => "delete",
+        }
+    }
+}
+
+impl Resolution {
+    /// action 종류.
+    pub fn kind(&self) -> ResolutionKind {
+        match self {
+            Resolution::ChooseBase => ResolutionKind::ChooseBase,
+            Resolution::ChooseOurs => ResolutionKind::ChooseOurs,
+            Resolution::ChooseTheirs => ResolutionKind::ChooseTheirs,
+            Resolution::CustomValue(_) => ResolutionKind::CustomValue,
+            Resolution::Delete => ResolutionKind::Delete,
+        }
+    }
+}
+
+/// conflict 하나에 허용되는 해결 action(code 오름차순, XIV.12.1).
+///
+/// | 대상 | side 선택 | `CustomValue` | `Delete` |
+/// |---|---|---|---|
+/// | 객체 | 세 side 모두(`Missing` = 삭제) | 없음 | 어느 side든 `Missing`일 때 |
+/// | 위치 | 그 side가 위치 상태일 때 | 없음 | 없음 |
+/// | 속성 | 그 side가 속성 상태일 때 | 있음 | 어느 side든 속성이 없거나 객체가 없을 때 |
+pub fn allowed_resolutions(conflict: &SemanticConflict) -> Vec<ResolutionKind> {
+    let sides = [
+        (ResolutionKind::ChooseBase, &conflict.base),
+        (ResolutionKind::ChooseOurs, &conflict.ours),
+        (ResolutionKind::ChooseTheirs, &conflict.theirs),
+    ];
+    let mut out = Vec::new();
+    for (kind, state) in sides {
+        let applicable = match conflict.target {
+            ConflictTarget::Object => true,
+            ConflictTarget::Position => matches!(state, SideState::Position(_)),
+            ConflictTarget::Property(_) => matches!(state, SideState::Value(_)),
+        };
+        if applicable {
+            out.push(kind);
+        }
+    }
+    let states = [&conflict.base, &conflict.ours, &conflict.theirs];
+    match conflict.target {
+        ConflictTarget::Object => {
+            if states.iter().any(|s| matches!(s, SideState::Missing)) {
+                out.push(ResolutionKind::Delete);
+            }
+        }
+        ConflictTarget::Position => {}
+        ConflictTarget::Property(_) => {
+            out.push(ResolutionKind::CustomValue);
+            if states
+                .iter()
+                .any(|s| matches!(s, SideState::Missing | SideState::Value(None)))
+            {
+                out.push(ResolutionKind::Delete);
+            }
+        }
+    }
+    out
+}
+
+/// 해결·선택 실패. 실패한 command는 C를 바꾸지 않습니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolutionError {
+    /// 그 `(StableId, 대상)`의 conflict가 없음.
+    UnknownConflict,
+    /// conflict 대상·상태가 허용하지 않는 action.
+    NotAllowed(ResolutionKind),
+    /// 상태를 그 단위에 넣을 수 없음(예: 객체가 없는 쪽의 속성, 위치가 없는 객체).
+    NotApplicable(&'static str),
+}
+
+impl fmt::Display for ResolutionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ResolutionError::UnknownConflict => f.write_str("해당 대상의 conflict가 없습니다"),
+            ResolutionError::NotAllowed(kind) => {
+                write!(f, "이 conflict에 허용하지 않는 해결입니다: {}", kind.name())
+            }
+            ResolutionError::NotApplicable(reason) => write!(f, "적용할 수 없는 상태: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ResolutionError {}
 
 /// 병합 결과 candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]

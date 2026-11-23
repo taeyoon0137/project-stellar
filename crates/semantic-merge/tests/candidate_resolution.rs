@@ -6,6 +6,7 @@ use common::*;
 use stellar_semantic_diff::keys;
 use stellar_semantic_diff::value::SemanticValue;
 use stellar_semantic_merge::candidate::*;
+use stellar_semantic_merge::model::ConflictKind;
 use stellar_semantic_merge::model::{ConflictTarget, MergeInput};
 
 fn candidate(
@@ -87,5 +88,49 @@ fn provenance_records_a_b_auto_and_base() {
             (sid(CHILD_B), Source::B),
             (sid(TOKEN), Source::Base),
         ]
+    );
+}
+
+#[test]
+fn allowed_actions_depend_on_target_and_states() {
+    use ResolutionKind::*;
+    let c = mixed();
+    assert_eq!(
+        allowed_resolutions(&c.conflicts()[0]),
+        vec![ChooseBase, ChooseOurs, ChooseTheirs, CustomValue]
+    );
+    // 삭제 대 수정(객체): side 선택과 삭제, custom 없음.
+    let base = world();
+    let mut ours = base.clone();
+    ours.remove(sid(CHILD_A)).unwrap();
+    let theirs = edit(&base, CHILD_A, |o| set(o, keys::DISPLAY_NAME, text("x")));
+    let deleted = candidate(&base, &ours, &theirs);
+    assert_eq!(deleted.conflicts()[0].kind, ConflictKind::DeleteVsModify);
+    assert_eq!(
+        allowed_resolutions(&deleted.conflicts()[0]),
+        vec![ChooseBase, ChooseOurs, ChooseTheirs, Delete]
+    );
+    // 위치 conflict: side 선택만.
+    let ours = edit(&base, CHILD_A, |o| {
+        o.set_position(Some(sid(ROOT)), Some(key(0x10)))
+    });
+    let theirs = edit(&base, CHILD_A, |o| {
+        o.set_position(Some(sid(ROOT)), Some(key(0x20)))
+    });
+    let moved = candidate(&base, &ours, &theirs);
+    assert_eq!(moved.conflicts()[0].target, ConflictTarget::Position);
+    assert_eq!(
+        allowed_resolutions(&moved.conflicts()[0]),
+        vec![ChooseBase, ChooseOurs, ChooseTheirs]
+    );
+    // 한쪽이 속성을 지운 속성 conflict: delete 허용.
+    let ours = edit(&base, CHILD_A, |o| {
+        o.remove_property(&o.path(&[keys::DISPLAY_NAME]));
+    });
+    let theirs = edit(&base, CHILD_A, |o| set(o, keys::DISPLAY_NAME, text("y")));
+    let removed = candidate(&base, &ours, &theirs);
+    assert_eq!(
+        allowed_resolutions(&removed.conflicts()[0]),
+        vec![ChooseBase, ChooseOurs, ChooseTheirs, CustomValue, Delete]
     );
 }
