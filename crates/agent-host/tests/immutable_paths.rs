@@ -22,7 +22,7 @@ mod support;
 
 use std::path::PathBuf;
 
-use support::scan::{hits, source_files, sources_in};
+use support::scan::{code_lines, hits, source_files, sources_in};
 use support::TempDir;
 
 /// 에이전트 경로(제품 코드).
@@ -67,10 +67,13 @@ const WRITE_MARKERS: [&str; 22] = [
 
 fn violations(files: &[PathBuf]) -> Vec<String> {
     let mut found = hits(files, &WRITE_MARKERS);
-    // JSON-RPC 응답 함수(`self.respond(&id, ..)`)는 권한 응답이 아닙니다. 그 밖의 `.respond(` 호출은 금지입니다.
-    for h in hits(files, &[".respond("]) {
-        if !h.contains("server.rs") {
-            found.push(h);
+    // JSON-RPC 응답 함수 호출(`self.respond(&id, ..)`)은 권한 응답이 아닙니다. 그 줄만 빼고, 그 밖의
+    // `.respond(` 호출은 어느 파일에 있든 금지입니다(파일 이름으로 통째로 빼지 않음).
+    for file in files {
+        for (n, line) in code_lines(file) {
+            if line.contains(".respond(") && !line.contains("self.respond(&id") {
+                found.push(format!("{}:{n}: .respond(", file.display()));
+            }
         }
     }
     found
@@ -86,14 +89,6 @@ fn agent_paths_cannot_write_immutable_state() {
     );
     let found = violations(&files);
     assert!(found.is_empty(), "{found:#?}");
-    // server.rs의 `.respond(`는 JSON-RPC 응답(`self.respond(&id`)뿐입니다.
-    for h in hits(&sources_in(&["crates/mcp-core/src"]), &[".respond("]) {
-        let (path, rest) = h.split_once(':').unwrap();
-        let line: usize = rest.split(':').next().unwrap().parse().unwrap();
-        let text = std::fs::read_to_string(path).unwrap();
-        let code = text.lines().nth(line - 1).unwrap();
-        assert!(code.contains("self.respond(&id"), "{h}: {code}");
-    }
 }
 
 #[test]
@@ -129,6 +124,21 @@ fn checker_rejects_violation_fixture() {
         "fn handle() {\n    trust.grant(&identity);\n    store.respond(key, id, true);\n    session.change_mode_by_user(m);\n    notices.acknowledge(&p);\n    index.clear_provenance(s);\n    window.revert_session(s);\n    // 주석의 .grant( 는 세지 않습니다\n}\n#[cfg(test)]\nmod tests { fn t() { x.revoke(&y); } }\n",
     )
     .unwrap();
+    // 파일 이름이 server.rs여도 JSON-RPC 응답이 아닌 `.respond(`는 잡습니다.
+    std::fs::write(
+        src.join("server.rs"),
+        "fn rpc(&self) {\n    self.respond(&id, &method, outcome, log);\n    permissions.respond(key, id, true);\n    self.store.respond(key, id, true);\n}\n",
+    )
+    .unwrap();
+    let server_hits: Vec<String> = violations(&[src.join("server.rs")])
+        .into_iter()
+        .map(|h| h.rsplit(':').nth(1).unwrap().trim().to_string())
+        .collect();
+    let mut server_lines = server_hits.clone();
+    server_lines.sort();
+    server_lines.dedup();
+    assert_eq!(server_lines, ["3", "4"], "{server_hits:#?}");
+    std::fs::remove_file(src.join("server.rs")).unwrap();
     let files = source_files(dir.path());
     let found = violations(&files);
     // 한 줄에 표지가 둘이면 두 번 나옵니다. 줄 기준으로 2~7행(6줄)만 잡히고 주석·단위 테스트는 빠집니다.
