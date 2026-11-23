@@ -14,6 +14,9 @@ pub mod auto_layout;
 /// 프로토타입 문서 상태와 원자 transaction (XXX.2.3).
 pub mod edit;
 
+/// 그래프 편집 → command plan (XXX.2.3, XXX.1.2).
+pub mod plan;
+
 /// 프리뷰 논리 시계 (XXX.3.1).
 pub mod clock;
 
