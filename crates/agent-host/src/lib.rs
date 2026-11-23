@@ -26,6 +26,7 @@
 //! | [`mode`] | XXIX.3.3 | 모드 권한 상한과 내장 세션 카탈로그 |
 //! | [`start`] | XXIX.3.5 | 신뢰 capability 시작 확인, 약관 고지 기록, 신뢰 철회 |
 //! | [`assembly`] | XXIX.3.6 | 채팅 보기 조립(문서 효과는 승인·출처 기록에서만) |
+//! | [`scenario`] | XXIX.6.1 | 테스트 대역 기반 E2E 시나리오 정의 loader(headless·앱 실행기 공통) |
 //! | `test-cli/main.rs` | XXIX.2.2 | 구독 CLI 테스트 대역 실행 파일(테스트 전용, library 미사용) |
 
 pub mod approval;
@@ -40,6 +41,7 @@ pub mod preflight;
 pub mod process;
 pub mod profile;
 pub mod raw;
+pub mod scenario;
 pub mod session;
 pub mod start;
 pub mod status;

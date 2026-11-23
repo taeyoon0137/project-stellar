@@ -1,0 +1,34 @@
+{
+  "format": "stellar-agent-e2e-scenario/1",
+  "id": "complete-undo",
+  "title": "세션 시작, 범위 승인, batch 미리보기·적용, 완료, Undo 1회 복원",
+  "profile": "claude",
+  "mode": "review-then-apply",
+  "double": [
+    "read-line",
+    "outfile decoder/claude-stream-json/normal.jsonl",
+    "hang"
+  ],
+  "steps": [
+    {"at": 0, "do": "start"},
+    {"at": 1, "do": "launch", "prompt": "버튼 색을 브랜드 색으로 바꿔 줘"},
+    {"at": 2, "do": "bridge-bound"},
+    {"at": 3, "do": "grant", "permission": "read"},
+    {"at": 3, "do": "grant", "permission": "propose"},
+    {"at": 4, "do": "open-scope", "targets": 1},
+    {"at": 5, "do": "answer", "request": 1, "answer": "approve"},
+    {"at": 6, "do": "lease", "lease": 1},
+    {"at": 7, "do": "await-output", "until": "turn-completed"},
+    {"at": 8, "do": "open-batch", "proposal": 1},
+    {"at": 9, "do": "check", "pending_requests": 1, "pending_proposals": 1, "applied": 0, "app": ["default-view-chat"]},
+    {"at": 10, "do": "answer", "request": 2, "answer": "approve"},
+    {"at": 11, "do": "apply", "batch": 0, "history": 41, "proposal": 1},
+    {"at": 12, "do": "complete"},
+    {"at": 13, "do": "check", "state": "running", "leases": 0, "pending_requests": 0, "pending_proposals": 0, "applied": 1,
+      "permissions": ["read", "propose"], "effects": ["undo-entry", "release-leases"],
+      "chat": ["user-prompt", "session-started", "assistant-text", "tool-activity", "turn-completed"],
+      "outcomes": ["approved", "approved"], "app": ["history-entries-1", "provenance-shown"]},
+    {"at": 14, "do": "app", "action": "undo"},
+    {"at": 15, "do": "check", "app": ["undo-restores-baseline"]}
+  ]
+}
