@@ -14,7 +14,7 @@ use stellar_project::document_io::component_source::{
 };
 use stellar_semantic_diff::build::SnapshotBuilder;
 use stellar_semantic_diff::snapshot::SemanticSnapshot;
-use stellar_semantic_merge::merge::merge;
+use stellar_semantic_merge::candidate::CandidateSnapshot;
 use stellar_semantic_merge::model::{ConflictTarget, MergeInput, SemanticConflict, SideState};
 use stellar_storage::hash::ContentHash;
 
@@ -427,24 +427,59 @@ pub fn semantic_merge_projects(
     ours: &Path,
     theirs: &Path,
 ) -> Result<ProjectMerge, CompareError> {
+    let opened = candidate_from_projects(base, ours, theirs)?;
+    let candidate = &opened.candidate;
+    let changes = diff_snapshots(&candidate.input().base, candidate.snapshot());
+    Ok(ProjectMerge {
+        base_revision: opened.base_revision,
+        ours_revision: opened.ours_revision,
+        theirs_revision: opened.theirs_revision,
+        changes,
+        conflicts: candidate
+            .conflicts()
+            .iter()
+            .map(ConflictEntry::from)
+            .collect(),
+    })
+}
+
+/// 세 프로젝트 폴더에서 만든 독립 CandidateSnapshot C(XXIII.2.1).
+#[derive(Debug, Clone)]
+pub struct ProjectCandidate {
+    /// base revision.
+    pub base_revision: ProjectRevision,
+    /// Source A(ours) revision.
+    pub ours_revision: ProjectRevision,
+    /// Source B(theirs) revision.
+    pub theirs_revision: ProjectRevision,
+    /// 병합 candidate. 입력 폴더의 파일은 읽기만 합니다.
+    pub candidate: CandidateSnapshot,
+}
+
+/// 같은 프로젝트의 base·Source A(ours)·Source B(theirs) 폴더를 읽기 전용으로 열어 C를 만듭니다(XXIII.2.1).
+/// 어느 폴더의 파일도 만들거나 바꾸지 않습니다.
+pub fn candidate_from_projects(
+    base: &Path,
+    ours: &Path,
+    theirs: &Path,
+) -> Result<ProjectCandidate, CompareError> {
     let base = open_side(base, "base")?;
     let ours = open_side(ours, "ours")?;
     let theirs = open_side(theirs, "theirs")?;
     same_project(&base, &ours, "ours")?;
     same_project(&base, &theirs, "theirs")?;
     let input = MergeInput {
-        base: base.semantic.clone(),
+        base: base.semantic,
         ours: ours.semantic,
         theirs: theirs.semantic,
     };
-    let result = merge(&input).map_err(|e| CompareError::Merge(e.to_string()))?;
-    let changes = diff_snapshots(&base.semantic, &result.merged);
-    Ok(ProjectMerge {
+    let candidate =
+        CandidateSnapshot::build(input).map_err(|e| CompareError::Merge(e.to_string()))?;
+    Ok(ProjectCandidate {
         base_revision: base.snapshot.revision(),
         ours_revision: ours.snapshot.revision(),
         theirs_revision: theirs.snapshot.revision(),
-        changes,
-        conflicts: result.conflicts.iter().map(ConflictEntry::from).collect(),
+        candidate,
     })
 }
 
@@ -559,6 +594,37 @@ mod tests {
             conflict.theirs,
             SideView::Value(Some(OpsValue::Text("theirs".into())))
         );
+    }
+
+    #[test]
+    fn candidate_from_projects_leaves_source_files_unchanged() {
+        let (_dir, roots, document, children) = three_copies(7);
+        edit(
+            &roots[1],
+            document,
+            CommandInput::Rename {
+                node: children[0],
+                name: "A".into(),
+            },
+        );
+        edit(
+            &roots[2],
+            document,
+            CommandInput::Rename {
+                node: children[1],
+                name: "B".into(),
+            },
+        );
+        let before: Vec<_> = roots.iter().map(|root| file_digest(root)).collect();
+        let opened = candidate_from_projects(&roots[0], &roots[1], &roots[2]).unwrap();
+        assert_eq!(opened.candidate.unresolved_count(), 0);
+        let after: Vec<_> = roots.iter().map(|root| file_digest(root)).collect();
+        assert_eq!(before, after, "A·B·base 파일 bytes 미변경");
+        assert_eq!(opened.ours_revision.generation(), 2);
+        // C는 두 변경을 모두 담고 A·B snapshot과 다릅니다.
+        let input = opened.candidate.input();
+        assert_ne!(opened.candidate.snapshot(), &input.ours);
+        assert_ne!(opened.candidate.snapshot(), &input.theirs);
     }
 
     #[test]
