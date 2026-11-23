@@ -342,8 +342,7 @@ impl ReferenceTypes for StoreTypes<'_> {
                     return Some(binding.expected_type());
                 }
                 self.store
-                    .orphans()
-                    .find(|orphan| orphan.target() == path)
+                    .orphan_by_target(path)
                     .map(OrphanedBinding::last_valid_type)
                     .or_else(source)
             }

@@ -15,7 +15,6 @@
 //! 현재 상태는 [`BindingWorld`]가 알려 줍니다. validator는 live binding만 검사하며 이미 orphan인 binding을 자동으로
 //! 다시 연결하지 않습니다(재연결은 명시 command, VIII.8.4).
 
-use std::collections::BTreeMap;
 use std::fmt;
 
 use stellar_core_types::property::PropertyPath;
@@ -24,9 +23,7 @@ use stellar_expressions::ast::{ExprNodeId, NodePayload, ReferenceTarget};
 use stellar_expressions::typecheck::{ReferenceTypes, TypeError};
 use stellar_expressions::types::TypeSpec;
 
-use crate::binding::{
-    check_source, BindingId, BindingSet, BindingSetError, BindingTypeError, ValueBinding,
-};
+use crate::binding::{check_source, BindingId, BindingTypeError, ValueBinding};
 
 /// binding validator가 보는 현재 상태.
 pub trait BindingWorld {
@@ -194,90 +191,14 @@ pub fn break_cause(binding: &ValueBinding, world: &dyn BindingWorld) -> Option<O
     }
 }
 
-/// live binding과 orphan binding 저장소 (VIII.8.1). 같은 ID는 둘 중 한 곳에만 있습니다.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct BindingStore {
-    live: BindingSet,
-    orphans: BTreeMap<BindingId, OrphanedBinding>,
-}
-
-impl BindingStore {
-    /// live binding으로 만듭니다.
-    pub fn new(live: BindingSet) -> BindingStore {
-        BindingStore {
-            live,
-            orphans: BTreeMap::new(),
-        }
-    }
-
-    /// live binding.
-    pub fn live(&self) -> &BindingSet {
-        &self.live
-    }
-
-    /// orphan binding(ID 순).
-    pub fn orphans(&self) -> impl Iterator<Item = &OrphanedBinding> {
-        self.orphans.values()
-    }
-
-    /// orphan 하나.
-    pub fn orphan(&self, id: BindingId) -> Option<&OrphanedBinding> {
-        self.orphans.get(&id)
-    }
-
-    /// 전체 binding 수(live + orphan).
-    pub fn len(&self) -> usize {
-        self.live.len() + self.orphans.len()
-    }
-
-    /// binding이 없으면 `true`.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// live binding을 추가합니다. 같은 ID의 orphan이 있거나 live 모음 규칙(ID·target 유일)을 어기면 거부합니다.
-    pub fn insert_live(&mut self, binding: ValueBinding) -> Result<(), BindingSetError> {
-        if self.orphans.contains_key(&binding.id()) {
-            return Err(BindingSetError::DuplicateId(binding.id()));
-        }
-        self.live.insert(binding)
-    }
-
-    pub(crate) fn live_mut(&mut self) -> &mut BindingSet {
-        &mut self.live
-    }
-
-    pub(crate) fn insert_orphan(&mut self, orphan: OrphanedBinding) {
-        self.orphans.insert(orphan.id(), orphan);
-    }
-
-    pub(crate) fn remove_orphan(&mut self, id: BindingId) -> Option<OrphanedBinding> {
-        self.orphans.remove(&id)
-    }
-
-    /// live binding을 검사해 깨진 binding을 orphan으로 옮기고, 새로 orphan이 된 ID를 돌려줍니다(ID 순). 아무것도
-    /// 삭제하지 않습니다.
-    pub fn orphan_broken(&mut self, world: &dyn BindingWorld) -> Vec<BindingId> {
-        let broken: Vec<(BindingId, OrphanCause)> = self
-            .live
-            .iter()
-            .filter_map(|binding| break_cause(binding, world).map(|cause| (binding.id(), cause)))
-            .collect();
-        let mut moved = Vec::with_capacity(broken.len());
-        for (id, cause) in broken {
-            if let Some(binding) = self.live.remove(id) {
-                self.orphans
-                    .insert(id, OrphanedBinding::new(binding, cause));
-                moved.push(id);
-            }
-        }
-        moved
-    }
-}
+/// live binding과 orphan binding 저장소(VIII.8.1). 역참조 index와 함께 [`crate::store`]에 있습니다(XVI.4.8).
+pub use crate::store::BindingStore;
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use crate::binding::BindingSet;
 
     use stellar_core_types::ids::StableId;
     use stellar_core_types::property::PropertyKey;

@@ -36,6 +36,13 @@ pub mod environment_index;
 /// Orphaned Binding validator와 binding 저장소 (VIII.8.1).
 pub mod orphan;
 
+/// live·orphan binding 저장소와 토큰 역참조·orphan target index (VIII.8.1, XVI.4.8).
+pub mod store;
+
+/// binding 저장소 index release 측정 (XVI.4.8).
+#[cfg(test)]
+mod store_bench;
+
 /// orphan binding 선언 기본값 fallback (VIII.8.2).
 pub mod fallback;
 

@@ -23,7 +23,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use stellar_core_types::reference::TokenRef;
-use stellar_expressions::ast::{ExpressionAst, ReferenceTarget};
+use stellar_expressions::ast::ExpressionAst;
 use stellar_expressions::typecheck::ReferenceTypes;
 
 use crate::binding::BindingId;
@@ -51,16 +51,10 @@ impl TokenOrphanPlan {
         bindings: &BindingStore,
         token: TokenRef,
     ) -> TokenOrphanPlan {
-        let target = ReferenceTarget::Token(token);
-        let live = bindings.live().iter();
-        let orphaned = bindings.orphans().map(|orphan| orphan.binding());
+        // binding 쪽은 저장소의 토큰 역참조 index로 그 토큰을 읽는 binding만 봅니다(XVI.4.8).
         TokenOrphanPlan {
             referrers: registry.referrers(token),
-            bindings: live
-                .chain(orphaned)
-                .filter(|binding| binding.refers_to(&target))
-                .map(|binding| binding.id())
-                .collect(),
+            bindings: bindings.bindings_reading(token),
         }
     }
 
