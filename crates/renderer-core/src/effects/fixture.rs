@@ -13,7 +13,7 @@ use stellar_scene::Vec2;
 
 /// fixture 작성에 쓰는 scene 값 재노출(backend crate는 scene을 직접 의존하지 않음).
 pub use stellar_scene::geometry::FillRule;
-pub use stellar_scene::stack::StrokeCap;
+pub use stellar_scene::stack::{SceneBlendMode, StrokeCap};
 
 use crate::backend::{BackendKind, DeviceCapabilities};
 use crate::color::{encode_pixel, image_texel, ColorSpace, WorkingColor};
@@ -87,6 +87,8 @@ pub enum Feature {
     Glyph,
     /// Display P3 입력 또는 surface.
     DisplayP3,
+    /// offscreen layer 합성과 blend mode(XI.10.2).
+    Blend,
 }
 
 /// mesh 겹침 처리.
@@ -221,6 +223,22 @@ pub struct GlyphOp {
     pub color: OutputColor,
 }
 
+/// offscreen layer: 내용을 투명 layer에 그린 뒤 부모에 합성합니다(ADR-0102 결정 3·5).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayerOp {
+    /// layer 내용(painter 순서).
+    pub content: Vec<Op>,
+    /// 합성 blend mode.
+    pub blend: SceneBlendMode,
+}
+
+impl LayerOp {
+    /// `content`를 `blend`로 합성하는 layer.
+    pub fn new(content: Vec<Op>, blend: SceneBlendMode) -> LayerOp {
+        LayerOp { content, blend }
+    }
+}
+
 /// 그리기 하나.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
@@ -230,6 +248,8 @@ pub enum Op {
     Image(ImageOp),
     /// glyph.
     Glyphs(GlyphOp),
+    /// offscreen layer.
+    Layer(Box<LayerOp>),
 }
 
 /// fixture 정의 오류.
@@ -386,6 +406,7 @@ fn validate_ops(ops: &[Op]) -> Result<(), FixtureError> {
                     ));
                 }
             }
+            Op::Layer(layer) => validate_ops(&layer.content)?,
         }
     }
     Ok(())

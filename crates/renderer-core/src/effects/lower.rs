@@ -11,6 +11,9 @@
 //!   stencil을 0으로 되돌립니다. stencil이 필요한 pass에만 depth·stencil transient를 붙입니다.
 //! - 이미지: `Rgba8UnormSrgb` texture([`ImageData::texture_bytes`]) + `Texture` program, tint = 불투명도.
 //! - glyph: `R8Unorm` coverage texture + `GlyphMask` program(Nearest), tint = 글자 색 working 값.
+//! - layer: 내용을 자기 pass의 `Rgba16Float` transient(`pass_compiler::LAYER_FORMAT`, 투명 clear)에 그리고, 부모 pass가 그
+//!   version을 읽어 target 전체 quad로 합성합니다. program·blend state는 [`crate::blend::composite_program`]입니다.
+//!   layer pass는 부모보다 먼저 끝나므로 기록 목록에서 앞에 옵니다(graph가 resource 흐름으로 순서를 정함).
 //! - 정점·uniform byte 배치는 [`super::abi`]입니다.
 
 use std::fmt;
@@ -26,7 +29,8 @@ use crate::output_color::OutputColorPlan;
 use crate::placeholder::{SamplerDesc, TextureFilter, TextureWrap};
 use crate::render_graph::{
     AttachmentSize, CompiledRenderGraph, GraphBuildError, ImportKind, LoadOp, PassId, PassKind,
-    RenderGraphBuilder, RenderGraphError, SampleCount, StoreOp, TextureDesc, TextureFormat,
+    RenderGraphBuilder, RenderGraphError, ResourceVersion, SampleCount, StoreOp, TextureDesc,
+    TextureFormat,
 };
 
 use super::abi::{
@@ -34,8 +38,12 @@ use super::abi::{
     MODE_PLAIN, UNIFORM_ALIGNMENT,
 };
 use super::fixture::{
-    Coverage, FillOp, Fixture, FixtureError, GlyphOp, ImageOp, Op, Paint, IMAGE_TEXTURE_FORMAT,
+    Coverage, FillOp, Fixture, FixtureError, GlyphOp, ImageOp, LayerOp, Op, Paint,
+    IMAGE_TEXTURE_FORMAT,
 };
+use crate::blend::{composite_blend_state, composite_program};
+use crate::pass_compiler::LAYER_FORMAT;
+use stellar_scene::stack::SceneBlendMode;
 
 /// lowering 오류.
 #[derive(Debug, Clone, PartialEq)]
@@ -136,10 +144,11 @@ pub(crate) enum Stream {
     Textured,
 }
 
-/// texture 참조(upload 순번).
+/// texture 참조(upload 순번 또는 graph version).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TexRef {
     Upload(usize),
+    Graph(ResourceVersion),
 }
 
 /// backend handle이 정해지기 전 command.
@@ -186,6 +195,9 @@ pub(crate) struct Recorder {
     pub(crate) textured: Vec<u8>,
     pub(crate) uniforms: Vec<u8>,
     pub(crate) uploads: Vec<Upload>,
+    pub(crate) builder: RenderGraphBuilder,
+    /// 끝난 pass 기록(layer pass가 먼저 끝납니다).
+    pub(crate) records: Vec<PassRecord>,
 }
 
 /// clamp sampler.
@@ -224,6 +236,8 @@ impl Recorder {
             textured: Vec::new(),
             uniforms: Vec::new(),
             uploads: Vec::new(),
+            builder: RenderGraphBuilder::new(),
+            records: Vec::new(),
         }
     }
 
@@ -306,7 +320,80 @@ impl Recorder {
                 Op::Fill(fill) => self.record_fill(pass, fill),
                 Op::Image(image) => self.record_image(pass, image),
                 Op::Glyphs(glyph) => self.record_glyph(pass, glyph),
+                Op::Layer(layer) => self.record_layer(pass, layer)?,
             }
+        }
+        Ok(())
+    }
+
+    /// layer 내용을 자기 offscreen pass에 그리고 부모 pass에 합성합니다.
+    fn record_layer(&mut self, parent: &mut PassRecord, layer: &LayerOp) -> Result<(), LowerError> {
+        let texture = self
+            .builder
+            .transient("conformance layer", self.desc(LAYER_FORMAT));
+        let id = self.builder.pass("conformance layer", PassKind::Raster);
+        let mut child = PassRecord {
+            id,
+            format: LAYER_FORMAT,
+            stencil: false,
+            steps: Vec::new(),
+        };
+        self.record_ops(&mut child, &layer.content)?;
+        let written = self.builder.color(
+            id,
+            texture,
+            LoadOp::Clear,
+            crate::render_graph::ClearColor::TRANSPARENT,
+            StoreOp::Store,
+        )?;
+        self.attach_stencil(&child)?;
+        self.records.push(child);
+        self.builder.read(parent.id, written)?;
+        self.composite(parent, written, layer.blend);
+        Ok(())
+    }
+
+    /// graph texture 전체를 부모 target에 `mode`로 합성합니다(ADR-0102 결정 3).
+    fn composite(
+        &mut self,
+        parent: &mut PassRecord,
+        source: ResourceVersion,
+        mode: SceneBlendMode,
+    ) {
+        let (first, count) = self.textured_quad(
+            [0.0, 0.0, self.width as f32, self.height as f32],
+            [0.0, 0.0, 1.0, 1.0],
+        );
+        let (uniform_offset, uniform_size) = self.tint([1.0; 4]);
+        parent.steps.push(Step::Pipeline(key(
+            composite_program(mode),
+            composite_blend_state(mode),
+            StencilMode::Disabled,
+            parent.format,
+        )));
+        parent.steps.push(Step::Texture {
+            slot: 0,
+            texture: TexRef::Graph(source),
+            sampler: clamp_sampler(TextureFilter::Nearest),
+        });
+        parent.steps.push(Step::Draw {
+            stream: Stream::Textured,
+            first,
+            count,
+            uniform_offset,
+            uniform_size,
+        });
+    }
+
+    /// pass에 stencil이 필요하면 depth·stencil transient를 붙입니다.
+    pub(crate) fn attach_stencil(&mut self, pass: &PassRecord) -> Result<(), LowerError> {
+        if pass.stencil {
+            let depth = self.builder.transient(
+                "conformance stencil",
+                self.desc(TextureFormat::Depth32FloatStencil8),
+            );
+            self.builder
+                .depth_stencil(pass.id, depth, LoadOp::Clear, StoreOp::Discard)?;
         }
         Ok(())
     }
@@ -436,22 +523,6 @@ impl Recorder {
     }
 }
 
-/// pass에 stencil이 필요하면 depth·stencil transient를 붙입니다.
-pub(crate) fn attach_stencil(
-    builder: &mut RenderGraphBuilder,
-    recorder: &Recorder,
-    pass: &PassRecord,
-) -> Result<(), LowerError> {
-    if pass.stencil {
-        let depth = builder.transient(
-            "conformance stencil",
-            recorder.desc(TextureFormat::Depth32FloatStencil8),
-        );
-        builder.depth_stencil(pass.id, depth, LoadOp::Clear, StoreOp::Discard)?;
-    }
-    Ok(())
-}
-
 /// fixture를 `backend`의 한 frame으로 바꿉니다(buffer·texture 생성과 upload 포함).
 pub fn lower<B: RendererBackend + ?Sized>(
     backend: &mut B,
@@ -459,13 +530,12 @@ pub fn lower<B: RendererBackend + ?Sized>(
 ) -> Result<LoweredFrame, LowerError> {
     fixture.validate()?;
     let mut recorder = Recorder::new(fixture.plan(), fixture.width, fixture.height);
-    let mut builder = RenderGraphBuilder::new();
-    let target = builder.import(
+    let target = recorder.builder.import(
         "conformance target",
         recorder.desc(fixture.format),
         ImportKind::External,
     );
-    let main = builder.pass("conformance main", PassKind::Raster);
+    let main = recorder.builder.pass("conformance main", PassKind::Raster);
     let mut record = PassRecord {
         id: main,
         format: fixture.format,
@@ -479,11 +549,14 @@ pub fn lower<B: RendererBackend + ?Sized>(
         .ok_or(LowerError::Fixture(FixtureError::Invalid(
             "clear 색이 유한하지 않습니다",
         )))?;
-    let written = builder.color(main, target, LoadOp::Clear, clear, StoreOp::Store)?;
-    attach_stencil(&mut builder, &recorder, &record)?;
-    builder.set_output(written);
-    let graph = builder.finish().compile()?;
-    finish(backend, fixture, recorder, graph, vec![record])
+    let written = recorder
+        .builder
+        .color(main, target, LoadOp::Clear, clear, StoreOp::Store)?;
+    recorder.attach_stencil(&record)?;
+    recorder.records.push(record);
+    recorder.builder.set_output(written);
+    let graph = std::mem::take(&mut recorder.builder).finish().compile()?;
+    finish(backend, fixture, recorder, graph)
 }
 
 /// buffer·texture를 만들고 step을 command로 바꿉니다.
@@ -492,8 +565,8 @@ pub(crate) fn finish<B: RendererBackend + ?Sized>(
     fixture: &Fixture,
     recorder: Recorder,
     graph: CompiledRenderGraph,
-    records: Vec<PassRecord>,
 ) -> Result<LoweredFrame, LowerError> {
+    let records = &recorder.records;
     let mut buffers = Vec::new();
     let mut textures = Vec::new();
     let result =
@@ -551,7 +624,7 @@ pub(crate) fn finish<B: RendererBackend + ?Sized>(
                 },
             })?;
             let mut passes = Vec::with_capacity(records.len());
-            for record in &records {
+            for record in records {
                 let mut commands = Vec::with_capacity(record.steps.len() * 2);
                 let mut bound: Option<Stream> = None;
                 for step in &record.steps {
@@ -568,6 +641,7 @@ pub(crate) fn finish<B: RendererBackend + ?Sized>(
                             slot,
                             texture: match texture {
                                 TexRef::Upload(index) => TextureSource::Handle(uploaded[index]),
+                                TexRef::Graph(version) => TextureSource::Graph(version),
                             },
                             sampler,
                         }),

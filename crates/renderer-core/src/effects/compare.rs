@@ -515,7 +515,7 @@ mod tests {
                 max_shifted: 24
             })
         );
-        for class in ["curve", "filtered", "gradient", "blur"] {
+        for class in ["curve", "blend", "filtered", "gradient", "blur"] {
             assert!(builtin.get(class).is_some(), "{class}");
         }
         let ok = ToleranceConfig::parse(

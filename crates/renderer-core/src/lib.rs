@@ -69,6 +69,9 @@ pub mod output_color;
 /// 선형 working space와 출력 target encode 공통 수식 (XI.10.1).
 pub mod color;
 
+/// alpha 합성과 blend mode 수식 (XI.10.2).
+pub mod blend;
+
 /// 렌더 효과 수식, 공통 shader ABI, 적합성 fixture·harness (XI.10.2~XI.10.4, XI.11.1~XI.11.3).
 pub mod effects;
 

@@ -265,3 +265,36 @@ fn gpu_image_against_altered_reference_fails_with_located_diff_artifact() {
     // 같은 fixture 기준과는 통과합니다(known equal).
     assert!(check_against_reference(&base, &gpu, &config, &dir).passed());
 }
+
+/// fixture 묶음을 GPU로 그려 CPU 기준과 비교합니다. 실패한 fixture 이름과 요약을 모아 한 번에 실패합니다.
+pub(crate) fn run_group(group: &str, fixtures: &[Fixture]) {
+    let mut harness = MetalHarness::new();
+    let config = ToleranceConfig::builtin();
+    let dir = artifact_dir(group);
+    let mut failed = Vec::new();
+    for fixture in fixtures {
+        let image = harness
+            .render(fixture)
+            .unwrap_or_else(|error| panic!("{}: {error}", fixture.name));
+        image
+            .write_reference(&dir, &fixture.name)
+            .expect("write reference");
+        let comparison = check_against_reference(fixture, &image, &config, &dir);
+        if !comparison.passed() {
+            failed.push(format!("{}: {}", fixture.name, comparison.summary()));
+        }
+    }
+    assert!(failed.is_empty(), "{group} 실패:\n{}", failed.join("\n"));
+}
+
+#[test]
+fn blend_reference_images_match_cpu_formula() {
+    // 검증 기준(XI.10.2): blend reference image 통과(mode 6개 × 불투명·반투명 backdrop, 중첩, 선형 target).
+    if !metal_available() {
+        return;
+    }
+    run_group(
+        "blend",
+        &stellar_renderer_core::effects::inventory::blend_fixtures(),
+    );
+}

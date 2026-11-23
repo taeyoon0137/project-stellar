@@ -4,24 +4,31 @@
 //!
 //! - **표본**: pixel 중심 `(x + 0.5, y + 0.5)` 하나. 삼각형 변 위의 중심은 top-left 규칙으로 판정합니다(위쪽 수평 변과
 //!   왼쪽 변이면 안쪽). GPU rasterizer와 같은 규칙이며, 정점 subpixel 반올림 차이는 structural 허용 오차가 흡수합니다.
-//! - **합성**: premultiplied source-over(ADR-0102 결정 3).
+//! - **합성**: premultiplied source-over와 blend mode([`crate::blend`], ADR-0102 결정 3).
+//! - **저장 정밀도**: canvas는 쓸 때마다 target format 저장 값으로 맞춥니다(8-bit target은 양자화, layer는 half float).
+//!   GPU blend가 draw마다 저장된 값을 다시 읽는 것과 같습니다.
+//! - **layer**: 내용을 투명 layer canvas(`pass_compiler::LAYER_FORMAT` 정밀도)에 그린 뒤 target 전체에 합성합니다.
 //! - **겹침**: [`Coverage::Disjoint`] mesh는 삼각형마다 합성하고(GPU draw 순서와 같음), [`Coverage::Union`]은 pixel마다
 //!   한 번만 합성합니다.
 //! - **이미지**: texture에 올리는 byte([`ImageData::texture_bytes`])를 decode한 값으로 sampling합니다. Nearest는
 //!   `floor(u × w)` texel, Linear는 texel 중심 기준 bilinear(가장자리 clamp)입니다.
 //! - **glyph**: mask byte / 255를 coverage로 색에 곱합니다.
 
-use crate::color::{decode_pixel, encode_pixel, to_working, WorkingColor};
+use crate::blend::{composite, source_over};
+use crate::color::{decode_pixel, encode_pixel, to_working, ColorSpace, WorkingColor};
 use crate::output_color::OutputColorPlan;
+use crate::pass_compiler::LAYER_FORMAT;
 use crate::placeholder::TextureFilter;
+use crate::render_graph::TextureFormat;
 
 use super::artifact::RgbaImage;
 use super::fixture::{
-    Coverage, FillOp, Fixture, FixtureError, GlyphOp, ImageData, ImageOp, Op, Paint,
+    Coverage, FillOp, Fixture, FixtureError, GlyphOp, ImageData, ImageOp, LayerOp, Op, Paint,
     IMAGE_TEXTURE_FORMAT,
 };
 
-/// working 값 canvas.
+/// working 값 canvas. 쓸 때마다 target format 저장 정밀도로 맞춥니다(GPU attachment가 draw마다 저장 값을 남기고 다음
+/// blend가 그 값을 읽는 것과 같게).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Canvas {
     /// 너비.
@@ -30,16 +37,50 @@ pub struct Canvas {
     pub height: u32,
     /// pixel(행 우선).
     pub pixels: Vec<WorkingColor>,
+    /// 저장 format과 transfer 곡선 surface(`None`이면 `f32` 그대로).
+    pub storage: Option<(TextureFormat, ColorSpace)>,
 }
 
 impl Canvas {
-    /// `clear`로 채운 canvas.
+    /// `clear`로 채운 `f32` canvas.
     pub fn new(width: u32, height: u32, clear: WorkingColor) -> Canvas {
         Canvas {
             width,
             height,
             pixels: vec![clear; (width * height) as usize],
+            storage: None,
         }
+    }
+
+    /// `format` 저장 정밀도 canvas.
+    pub fn stored(
+        width: u32,
+        height: u32,
+        clear: WorkingColor,
+        format: TextureFormat,
+        surface: ColorSpace,
+    ) -> Canvas {
+        let mut canvas = Canvas::new(width, height, clear);
+        canvas.storage = Some((format, surface));
+        let clear = canvas.quantize(clear);
+        canvas.pixels.fill(clear);
+        canvas
+    }
+
+    /// 저장 정밀도로 맞춘 값.
+    pub fn quantize(&self, color: WorkingColor) -> WorkingColor {
+        match self.storage {
+            None => color,
+            Some((format, surface)) => encode_pixel(color, format, surface)
+                .and_then(|bytes| decode_pixel(&bytes, format, surface))
+                .unwrap_or(color),
+        }
+    }
+
+    /// pixel을 씁니다(저장 정밀도 적용).
+    pub fn set(&mut self, x: u32, y: u32, color: WorkingColor) {
+        let stored = self.quantize(color);
+        *self.at_mut(x, y) = stored;
     }
 
     /// pixel 값.
@@ -57,15 +98,9 @@ impl Canvas {
 
     /// premultiplied source-over.
     pub fn over(&mut self, x: u32, y: u32, src: WorkingColor) {
-        let dst = self.at_mut(x, y);
-        *dst = source_over(src, *dst);
+        let dst = *self.at_mut(x, y);
+        self.set(x, y, source_over(src, dst));
     }
-}
-
-/// premultiplied source-over `src + dst × (1 − src.a)`.
-pub fn source_over(src: WorkingColor, dst: WorkingColor) -> WorkingColor {
-    let k = 1.0 - src.alpha();
-    WorkingColor::premultiplied(std::array::from_fn(|i| src.rgba[i] + dst.rgba[i] * k))
 }
 
 /// 삼각형이 덮는 pixel 중심마다 `f(x, y)`를 부릅니다(top-left 규칙).
@@ -179,6 +214,31 @@ pub fn draw_ops(canvas: &mut Canvas, ops: &[Op], plan: &OutputColorPlan) {
             Op::Fill(fill) => draw_fill(canvas, fill, plan),
             Op::Image(image) => draw_image(canvas, image, plan),
             Op::Glyphs(glyph) => draw_glyph(canvas, glyph, plan),
+            Op::Layer(layer) => draw_layer(canvas, layer, plan),
+        }
+    }
+}
+
+/// layer canvas(GPU layer format 저장 정밀도).
+pub(crate) fn layer_canvas(parent: &Canvas, plan: &OutputColorPlan) -> Canvas {
+    Canvas::stored(
+        parent.width,
+        parent.height,
+        WorkingColor::TRANSPARENT,
+        LAYER_FORMAT,
+        plan.surface(),
+    )
+}
+
+/// layer를 투명 canvas에 그린 뒤 부모에 합성합니다.
+fn draw_layer(canvas: &mut Canvas, layer: &LayerOp, plan: &OutputColorPlan) {
+    let mut content = layer_canvas(canvas, plan);
+    draw_ops(&mut content, &layer.content, plan);
+    for y in 0..canvas.height {
+        for x in 0..canvas.width {
+            let src = content.get(i64::from(x), i64::from(y));
+            let dst = canvas.get(i64::from(x), i64::from(y));
+            canvas.set(x, y, composite(layer.blend, src, dst));
         }
     }
 }
@@ -259,7 +319,13 @@ pub fn encode_canvas(canvas: &Canvas, fixture: &Fixture) -> RgbaImage {
 pub fn render_reference(fixture: &Fixture) -> Result<RgbaImage, FixtureError> {
     fixture.validate()?;
     let plan = fixture.plan();
-    let mut canvas = Canvas::new(fixture.width, fixture.height, fixture.clear_working());
+    let mut canvas = Canvas::stored(
+        fixture.width,
+        fixture.height,
+        fixture.clear_working(),
+        fixture.format,
+        plan.surface(),
+    );
     draw_ops(&mut canvas, &fixture.ops, &plan);
     Ok(encode_canvas(&canvas, fixture))
 }

@@ -10,6 +10,9 @@
 //!   `base_vertex + index`가 모두 vertex 용량 안인지 확인합니다(index 수에 비례하는 CPU 비용).
 //! - scissor는 attachment 크기로 자릅니다. 잘린 결과가 비면 다음 scissor 변경까지 draw를 건너뜁니다.
 //! - vertex 수·instance 수가 0인 draw는 건너뜁니다.
+//! - `LayerComposite`·`BlendComposite`는 slot 1 mask를 선언합니다. slot 1이 비어 있으면 draw 직전에 slot 0 texture를 함께
+//!   bind합니다(shader는 `DrawUniforms.mode`가 1일 때만 읽음). `BlendComposite`는 shader가 합성하므로 blend state가
+//!   `Replace`가 아니면 `InvalidUsage`입니다. uniform 범위는 program uniform 크기 이상이어야 합니다.
 //! - sampling program(`Texture`·`LayerComposite`·`GlyphMask`)은 draw 전에 texture slot 0이 있어야
 //!   합니다. bind하는 texture는 sampled 용도·single sample·color format이어야 하고, 이 pass가 그리는
 //!   attachment texture가 아니어야 합니다(feedback loop).
@@ -18,8 +21,8 @@
 //!   넣습니다(reference 255는 비교 대상이 없어 `InvalidUsage`).
 
 use stellar_renderer_core::backend::{
-    BackendError, BackendErrorKind, BufferHandle, BufferUsage, DrawCommand, PipelineKey,
-    StencilMode, TextureSource,
+    BackendError, BackendErrorKind, BlendState, BufferHandle, BufferUsage, DrawCommand,
+    PipelineKey, StencilMode, TextureSource,
 };
 use stellar_renderer_core::gpu_handle::{BufferKind, HandleTable, TextureKind};
 use stellar_renderer_core::render_graph::{ResourceVersion, SampleCount, TextureFormat};
@@ -139,8 +142,10 @@ struct DrawState {
     pipeline: Option<(PipelineKey, ProgramLayout)>,
     vertex: Option<(BufferHandle, u64)>,
     index: Option<(BufferHandle, u64)>,
-    uniforms: bool,
-    textures: [bool; MAX_TEXTURE_SLOTS as usize],
+    /// bind한 uniform 범위 byte 수(없으면 `None`).
+    uniforms: Option<u32>,
+    /// slot별 bind한 (texture, sampler).
+    textures: [Option<(RawId, RawId)>; MAX_TEXTURE_SLOTS as usize],
     scissor_empty: bool,
     reference: u8,
     emitted_reference: Option<u32>,
@@ -152,13 +157,31 @@ impl DrawState {
         let (_, layout) = self
             .pipeline
             .ok_or(invalid("draw 전에 pipeline을 bind해야 합니다"))?;
-        if !self.uniforms {
-            return Err(invalid("draw 전에 uniform을 bind해야 합니다"));
+        let uniforms = self
+            .uniforms
+            .ok_or(invalid("draw 전에 uniform을 bind해야 합니다"))?;
+        if uniforms < layout.uniform_size {
+            return Err(invalid("uniform 범위가 program uniform 크기보다 작습니다"));
         }
-        if layout.needs_texture && !self.textures[0] {
+        if layout.needs_texture && self.textures[0].is_none() {
             return Err(invalid("sampling program은 texture slot 0이 필요합니다"));
         }
         Ok(layout)
+    }
+
+    /// mask slot을 선언한 program인데 slot 1이 비어 있으면 slot 0 texture를 함께 bind합니다(shader는 mode가 1일 때만 읽음).
+    fn fill_mask_slot(&mut self, layout: &ProgramLayout, ops: &mut Vec<Op>) {
+        if !layout.mask_slot || self.textures[1].is_some() {
+            return;
+        }
+        if let Some((texture, sampler)) = self.textures[0] {
+            self.textures[1] = Some((texture, sampler));
+            ops.push(Op::Texture {
+                slot: 1,
+                texture,
+                sampler,
+            });
+        }
     }
 
     /// 현재 pipeline stencil mode에 맞춘 Metal stencil reference.
@@ -232,6 +255,11 @@ pub(crate) fn plan_commands(
                     BackendErrorKind::Unsupported,
                     "Metal backend가 아직 구현하지 않은 shader program",
                 ))?;
+                if layout.shader_blend && key.blend != BlendState::Replace {
+                    return Err(invalid(
+                        "BlendComposite는 shader가 합성하므로 blend state가 Replace여야 합니다",
+                    ));
+                }
                 let pipeline = ctx
                     .pipelines
                     .pipeline(ctx.device, &key, pass.depth_format)?;
@@ -305,7 +333,7 @@ pub(crate) fn plan_commands(
                         "uniform 범위가 정렬·크기·buffer 범위를 벗어났습니다",
                     ));
                 }
-                state.uniforms = true;
+                state.uniforms = Some(size);
                 ops.push(Op::Uniforms {
                     buffer: native.buffer.as_raw(),
                     offset: offset as NSUInteger,
@@ -345,7 +373,7 @@ pub(crate) fn plan_commands(
                         .ok_or(invalid("sampling할 수 없는 graph resource입니다"))?,
                 };
                 let sampler = ctx.pipelines.sampler(ctx.device, sampler)?;
-                state.textures[usize::from(slot)] = true;
+                state.textures[usize::from(slot)] = Some((texture, sampler));
                 ops.push(Op::Texture {
                     slot: NSUInteger::from(slot),
                     texture,
@@ -358,6 +386,7 @@ pub(crate) fn plan_commands(
                 instance_count,
             } => {
                 let layout = state.ready()?;
+                state.fill_mask_slot(&layout, &mut ops);
                 let capacity = vertex_capacity(ctx, &state, &layout)?;
                 if u64::from(vertex_start) + u64::from(vertex_count) > capacity {
                     return Err(invalid("vertex 범위가 vertex buffer 밖입니다"));
@@ -378,6 +407,7 @@ pub(crate) fn plan_commands(
                 instance_count,
             } => {
                 let layout = state.ready()?;
+                state.fill_mask_slot(&layout, &mut ops);
                 let capacity = vertex_capacity(ctx, &state, &layout)?;
                 let (index_handle, index_offset) = state
                     .index

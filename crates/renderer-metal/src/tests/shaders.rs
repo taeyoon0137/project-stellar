@@ -499,6 +499,22 @@ fn texture_binding_and_program_rules_are_checked() {
         0,
         TextureSource::Graph(ResourceVersion::new(ResourceId(0), 0)),
     ));
+    // BlendComposite는 shader가 합성하므로 pipeline blend가 Replace여야 합니다(XI.10.2).
+    let mut blend_over = base(ShaderProgram::SolidFill);
+    blend_over[0] = DrawCommand::SetPipeline(PipelineKey {
+        blend: BlendState::PremultipliedOver,
+        ..key(
+            ShaderProgram::BlendComposite(stellar_renderer_core::blend::SceneBlendMode::Multiply),
+            TextureFormat::Rgba8Unorm,
+        )
+    });
+    // uniform 범위가 program 크기보다 작으면 거부합니다.
+    let mut short_uniforms = base(ShaderProgram::SolidFill);
+    short_uniforms[2] = DrawCommand::SetUniforms {
+        buffer: uniforms,
+        offset: 0,
+        size: 16,
+    };
     let mut depth_key = base(ShaderProgram::SolidFill);
     depth_key[0] = DrawCommand::SetPipeline(PipelineKey {
         depth: DepthMode::TestAndWrite,
@@ -511,6 +527,8 @@ fn texture_binding_and_program_rules_are_checked() {
         // pass가 reads로 선언하지 않은 graph version은 sampling할 수 없습니다(XI.8.5).
         (graph_source, BackendErrorKind::InvalidUsage),
         (depth_key, BackendErrorKind::InvalidUsage),
+        (blend_over, BackendErrorKind::InvalidUsage),
+        (short_uniforms, BackendErrorKind::InvalidUsage),
         (
             base(ShaderProgram::GaussianBlur),
             BackendErrorKind::Unsupported,
