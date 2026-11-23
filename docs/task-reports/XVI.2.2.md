@@ -95,5 +95,12 @@
 - 검증: `cargo test -p xtask --lib replay` 12 passed. `cargo test -p stellar-scene --lib document::layout` 16 passed(1 ignored,
   새 test `rect_changes_name_moved_and_resized_boxes_of_the_last_update`: 너비 변경의 크기·위치 변경 상자, 다시 계산 결과
   동일).
-- 남은 한계: 선행 XVI.2.1이 `[~]`입니다. 재생 측정값은 다시 재지 않았습니다(T3 구간의 layout 시간은 이제 `scene_edits` 안에
-  포함됩니다).
+- 남은 한계: 선행 XVI.2.1이 `[~]`입니다. T3 구간의 layout 시간은 이제 `scene_edits` 안에 포함됩니다.
+- 검토 재측정(2026-11-24, 다른 작업이 동시에 도는 부하 상태, 기준 장비 아님): `cargo run --release -p xtask -- replay
+  record-suite`로 만든 20개 파일을 시작 커밋(eb09bb43)과 이 작업 head에서 `replay run --gate`로 돌렸습니다.
+  - 26개 scenario 모두 마지막 scene semantic hash가 시작 커밋과 같습니다.
+  - warm scenario의 p50은 시작 커밋과 같은 범위입니다.
+  - cold scenario는 첫 event의 최대값이 약 100ms에서 약 185\~200ms로 늘었습니다. 첫 cold event가 이제 문서 layout을
+    처음부터 계산하기 때문입니다(이전 재생은 Free node를 absolute box로만 넣은 가벼운 layout이었습니다).
+  - gate는 두 커밋 모두 같은 scenario에서 실패합니다(cold `controllable_max`, variant-change p50, 재생 파일이 없는 3종의
+    `no_samples`). 이 작업이 새로 깬 gate 항목은 없습니다.
