@@ -106,9 +106,13 @@
   문서 validator 통과, 4번 Undo로 처음과 같습니다.
 - 거부 fixture(`slot_drop_refuses_rule_violations_without_changing_the_document`): 인스턴스 조상, 없는 Slot, 허용하지
   않는 종류(Rectangle), 부모가 인스턴스가 아닌 새 content, Slot content가 아닌 node 꺼내기.
+- 다른 인스턴스 content 거부(`slot_drop_refuses_content_owned_by_another_instance`): 다른 Modal 인스턴스의 Slot
+  content를 바로 옮기는 계획은 거부하고(원래 인스턴스 override가 자식이 아닌 node를 가리키게 됨), 인스턴스 밖 node는
+  받습니다.
 - Detach fixture:
   - commands `detach_replaces_the_instance_with_a_frame_copy_and_moves_slot_content`: 인스턴스 id·부모·이름 유지,
-    root transform 이동 0, 명시 width 320px → Frame 크기, 정의 node 복제와 body 복제 아래로 content 이동, 같은 입력
+    root Frame transform 이동이 인스턴스 배치 (200, 100)이고 Transform modifier는 빠지며 Opacity modifier는 남음, 명시
+    width 320px → Frame 크기, 정의 node 복제와 body 복제 아래로 content 이동, 같은 입력
     같은 계획, 역 command 정확, codec 왕복.
   - runtime `detach_instance_is_one_entry_and_undoes_once`: history 1건, Undo 한 번에 처음과 같음.
   - 미해결 정의·비인스턴스 거부.

@@ -530,7 +530,8 @@ fn slot_command(
 
 /// 공개 Slot(인스턴스 컴포넌트가 선언한 Slot) `slot`의 `index` 자리(투영 순서, 개수보다 크면 끝)에 content를 넣는
 /// command 하나(끌어 놓기, history 1건). override가 없던 Slot은 이 content 하나짜리 override가 됩니다(default content
-/// 대신 보임). 같은 인스턴스의 다른 Slot에 있던 content면 그 Slot에서 빠집니다.
+/// 대신 보임). 같은 인스턴스의 다른 Slot에 있던 content면 그 Slot에서 빠집니다. 다른 인스턴스의 Slot content는
+/// 거부합니다(먼저 [`plan_slot_take_out`]으로 꺼냄).
 pub fn plan_slot_drop(
     model: &DocumentModel,
     library: &ComponentLibrary,
@@ -551,7 +552,13 @@ pub fn plan_slot_drop(
         SlotContent::Existing(node) => {
             let record = model.record(node).ok_or_else(not_movable)?;
             let parent = record.parent.ok_or_else(not_movable)?;
-            if is_self_or_ancestor(model, node, instance)
+            // 다른 인스턴스의 Slot content는 그 인스턴스 slot override에서 먼저 빼야 합니다(`plan_slot_take_out`). 이
+            // command는 대상 인스턴스 하나의 레코드만 바꾸므로, 그대로 옮기면 원래 인스턴스 override가 자식이 아닌 node를
+            // 가리키게 되고 그 인스턴스의 override 편집(`swap-instance` 검증)이 막힙니다.
+            let foreign_slot = parent != instance
+                && model.record(parent).map(|r| r.kind()) == Some(NodeKind::ComponentInstance);
+            if foreign_slot
+                || is_self_or_ancestor(model, node, instance)
                 || edit_permission(model, node, EditIntent::Move).is_err()
                 || edit_permission(model, parent, EditIntent::Edit).is_err()
             {

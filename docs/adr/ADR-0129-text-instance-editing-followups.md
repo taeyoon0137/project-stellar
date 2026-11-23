@@ -107,7 +107,9 @@ Accepted (2026-11-24). 계획 XII.10.33·XII.10.34의 코어 후속(Swift·FFI �
 6. Slot 끌어 놓기 계획은 runtime `canvas::instance`가 컴포넌트 library로 만듭니다.
    - `plan_slot_drop`(인스턴스, slot, 투영 위치, 기존 node 또는 새 subtree): 공개 Slot(컴포넌트가 선언한 Slot)에만
      넣습니다. override가 없던 Slot은 그 content 하나짜리 override가 됩니다. 같은 인스턴스의 다른 Slot에 있던
-     content는 그 Slot에서 빠집니다(부모는 그대로).
+     content는 그 Slot에서 빠집니다(부모는 그대로). 다른 인스턴스의 Slot content는 거부합니다. command가 대상 인스턴스
+     하나의 레코드만 바꾸므로 원래 인스턴스 override가 자식이 아닌 node를 가리키게 되기 때문입니다. 먼저
+     `plan_slot_take_out`으로 꺼냅니다.
    - `plan_slot_take_out`(인스턴스, content, 새 부모, 순서, `restore_default`): 마지막 content를 빼면
      `restore_default`일 때 override를 지워 default content로 돌아가고, 아니면 빈 override로 남깁니다.
    - 거부: 인스턴스 잠금·미해결 정의, 없는 Slot, 종류·개수 위반, 가려진 Slot, 옮길 수 없는 content(View root,

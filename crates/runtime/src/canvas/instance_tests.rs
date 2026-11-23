@@ -402,6 +402,55 @@ fn slot_drop_refuses_rule_violations_without_changing_the_document() {
     );
 }
 
+/// 다른 인스턴스의 Slot content를 바로 옮기면 원래 인스턴스 override가 자식이 아닌 node를 가리키게 되므로
+/// 거부합니다(먼저 꺼냄).
+#[test]
+fn slot_drop_refuses_content_owned_by_another_instance() {
+    let library = component_library_fixture().unwrap().library;
+    let mut model = crate::window_session::test_fixtures::sample_document();
+    let mut modal = ComponentInstancePayload::new(modal_ref());
+    modal.set_slot_override(body(), SlotOverride::new(vec![sid(32)]).unwrap());
+    model
+        .insert_node(record(31, 10, 0x40, NodePayload::ComponentInstance(modal)))
+        .unwrap();
+    model
+        .insert_node(record(
+            32,
+            31,
+            0x10,
+            NodePayload::Text(stellar_document::text::TextPayload::empty(0)),
+        ))
+        .unwrap();
+    model
+        .insert_node(record(
+            33,
+            10,
+            0x50,
+            NodePayload::ComponentInstance(ComponentInstancePayload::new(modal_ref())),
+        ))
+        .unwrap();
+    let refused = plan_slot_drop(
+        &model,
+        &library,
+        sid(33),
+        body(),
+        0,
+        SlotContent::Existing(sid(32)),
+    )
+    .unwrap_err();
+    assert_eq!(refused.reason, InstanceEditRefusal::ContentNotMovable);
+    // 인스턴스 밖 node는 같은 인스턴스에 넣을 수 있습니다.
+    assert!(plan_slot_drop(
+        &model,
+        &library,
+        sid(33),
+        body(),
+        0,
+        SlotContent::Existing(sid(11)),
+    )
+    .is_ok());
+}
+
 /// Detach 실행은 `detach-instance` 한 건이고, Undo 한 번이 인스턴스와 Slot content 자리를 되돌립니다.
 #[test]
 fn detach_instance_is_one_entry_and_undoes_once() {
