@@ -306,8 +306,8 @@ fn unreferenced_duplicate_or_unknown_files_and_fields_are_rejected() {
 #[test]
 fn unrepresentable_meaning_refuses_to_write() {
     // Property를 선언만 하고 record가 없는 컴포넌트(library 규칙 위반, Property·Slot·상태 머신 자체는 ADR-0131
-    // 결정 1로 interface 원본에 씀)와 리터럴로 쓰지 않는 값 타입의 token은 텍스트로 쓰지 않습니다. token 거부는
-    // Unsupported여야 합니다.
+    // 결정 1로 interface 원본에 씀)와 리터럴로 쓰지 않는 값 타입의 token은 텍스트로 쓰지 않습니다. Property 거부는
+    // Invalid, token 거부는 Unsupported여야 합니다.
     let mut bad = ComponentLibrary::new();
     let mut definition = ComponentDefinition::new(sid(70), "Bad".into(), NodeRef::new(sid(71)));
     definition
@@ -330,7 +330,9 @@ fn unrepresentable_meaning_refuses_to_write() {
         components: bad,
         ..project(golden_document(0))
     };
-    assert!(encode(&project_with_property).is_err());
+    // 선언 record가 없는 Property는 library 저장 규칙 위반이라 Invalid입니다(ADR-0131 Compatibility).
+    let error = encode(&project_with_property).unwrap_err();
+    assert!(matches!(error, TextSourceError::Invalid(_)), "{error:?}");
     let mut sets = tokens();
     sets[0].tokens[0].value = TypedValue::Typography(
         stellar_core_types::typed_value::TypographyValue::from_record(
