@@ -565,7 +565,11 @@ fn large_blur_lowers_supersampling_instead_of_failing() {
     let actual = png(&export, &metal(), OutputProfile::Srgb);
     let expected = cpu_reference_of(&export);
     write_artifact("large_blur_srgb_1x_metal", &actual, OutputProfile::Srgb);
-    write_artifact("large_blur_srgb_1x_reference", &expected, OutputProfile::Srgb);
+    write_artifact(
+        "large_blur_srgb_1x_reference",
+        &expected,
+        OutputProfile::Srgb,
+    );
     // 그림자 끝의 알파가 몇 단계뿐인 pixel은 비연관 RGB가 크게 흔들리므로 연관 알파 값(RGB × 알파)으로 비교합니다.
     let associated = |p: &[u8]| -> [i32; 4] {
         let a = i32::from(p[3]);
@@ -580,12 +584,7 @@ fn large_blur_lowers_supersampling_instead_of_failing() {
     let mut worst = 0;
     for (pa, pb) in expected.rgba.chunks(4).zip(actual.rgba.chunks(4)) {
         let (ea, eb) = (associated(pa), associated(pb));
-        let diff = ea
-            .iter()
-            .zip(eb)
-            .map(|(x, y)| x.abs_diff(y))
-            .max()
-            .unwrap();
+        let diff = ea.iter().zip(eb).map(|(x, y)| x.abs_diff(y)).max().unwrap();
         worst = worst.max(diff);
         // CPU 기준의 8-bit layer 저장과 GPU half float의 차이가 큰 kernel(supersample σ 60)의 두 blur 단계에서 쌓입니다.
         if diff > 4 {
@@ -602,9 +601,8 @@ fn large_blur_lowers_supersampling_instead_of_failing() {
         .position(|p| p[3] == 255)
         .map(|i| (i as u32 % actual.width, i as u32 / actual.width))
         .unwrap();
-    let red = |x: u32, y: u32| {
-        actual.rgba[(((origin.1 + y) * actual.width + origin.0 + x) * 4) as usize]
-    };
+    let red =
+        |x: u32, y: u32| actual.rgba[(((origin.1 + y) * actual.width + origin.0 + x) * 4) as usize];
     assert!(red(64, 56) < 236, "{}", red(64, 56));
     assert!(red(0, 89).abs_diff(red(119, 0)) <= 1);
     // 출력 pixel 단위 σ가 상한을 넘으면 배수 1에서도 그리지 않고 실패합니다.
