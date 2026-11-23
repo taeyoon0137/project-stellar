@@ -157,7 +157,11 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
    막았습니다. 같은 사실을 두 곳에서 다르게 판정한 것입니다. 이제 `DanglingReference`는 모두 semantic 검사에서 빼고, 문서
    판정의 `unresolved-reference`·`missing-component-definition` 경고만 남깁니다. semantic 검사는 구조(parent 존재·순환,
    형제 OrderKey, 소속 목록, 부모 없는 node, interface 멤버)만 봅니다. 같은 tree에서 두 경로의 문서 진단이 같은지 test
-   (`git::tests::staged_judgment_matches_project_validation`)가 확인합니다.
+   (`git::tests::staged_judgment_matches_project_validation`)가 확인합니다. staged semantic snapshot은 문서만 담고 asset과
+   컴포넌트 정의를 담지 않으므로, 이 개정 전에는 이미지 node가 있는 문서는 asset이 실제로 있어도 `IMAGE_ASSET`
+   `DanglingReference`로 commit이 막혔습니다. 같은 test가 이미지 node도 넣어 이 경우를 확인합니다. 한계: 이미지 asset이
+   실제로 있는지는 `stellar validate`와 staged 재검증 어느 쪽도 판정하지 않습니다. 넣을 때는 두 경로가 함께 쓰는
+   `validate_loaded_document` 쪽에 넣습니다.
 3. **staged 재검증만의 검사는 그대로.** 저장소 loader 무결성(`storage-invalid`), 저장 무손실 왕복(`storage-roundtrip`),
    프로젝트 단위 컴포넌트 원본 읽기(`component-library`)는 commit 전에만 보는 추가 검사입니다. 기존 component-library chunk와
    텍스트 원본이 함께 있는 경우는 `stellar validate`가 `component-library-load`로 보고, staged 재검증에서는 그 chunk를 문서

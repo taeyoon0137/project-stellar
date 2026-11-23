@@ -39,6 +39,9 @@
   오류로 냈습니다. 그래서 `stellar validate`가 유효(미해결 참조 경고)로 본 tree의 commit을 막았습니다. 이 동작은 새 test가
   처음 실패로 보여 줬습니다. 참조 대상의 존재는 이제 문서 판정만 보고, semantic 검사에서는 `DanglingReference`를 모두
   뺍니다.
+- 같은 이유로 이미지 node가 있는 문서는 asset이 있어도 commit이 막혔습니다. staged semantic snapshot은 문서만 담아 asset이
+  없기 때문입니다. 판정 일치 test에 이미지 node를 더해 이 경우를 확인했고, 옛 필터(`IMAGE_ASSET` 참조를 오류로 남김)를
+  잠시 되돌리면 이 test가 `snapshot-invalid` 오류로 실패하는 것을 확인했습니다.
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)
 
@@ -52,7 +55,7 @@
 | 검사 | 결과 |
 |---|---|
 | 손상 chunk object를 stage한 index에서 commit → `InvalidStagedSnapshot`, trace sink로 센 `git commit` spawn 0, HEAD 불변 (`invalid_staged_snapshot_never_runs_git_commit`) | 통과 |
-| 미해결 clip 참조 2개와 정의 없는 인스턴스 1개를 가진 문서를 stage → staged 재검증 진단이 `stellar validate`(`validate_project`) 진단과 같고(경고 3개, 오류 0), 재검증 통과 (`git::tests::staged_judgment_matches_project_validation`) | 통과 |
+| 미해결 clip 참조 2개, 정의 없는 인스턴스 1개, snapshot에 asset이 없는 이미지 node 1개를 가진 문서를 stage → staged 재검증 진단이 `stellar validate`(`validate_project`) 진단과 같고(경고 3개, 오류 0), 재검증 통과 (`git::tests::staged_judgment_matches_project_validation`) | 통과 |
 
 ## 테스트
 
@@ -70,5 +73,7 @@
 ## 남은 위험 / 한계
 
 - 재검증과 `git commit` 사이 짧은 경합 창은 남습니다(ADR-0080 Consequences).
+- 이미지 asset이 실제로 있는지는 `stellar validate`와 staged 재검증 어느 쪽도 판정하지 않습니다(ADR-0080 개정
+  cli-mcp-git-cleanup 2).
 - staged 재검증은 generation만 읽고 텍스트 원본(`design/**.stellar.yaml`) 정합은 보지 않습니다. 텍스트 원본이 기본 저장이
   되는 V.10.7 전환 때 넣습니다(ADR-0080 개정 integration-followups 결정 2).

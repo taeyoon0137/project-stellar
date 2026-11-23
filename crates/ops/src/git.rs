@@ -2190,10 +2190,13 @@ mod tests {
     }
 
     /// staged 재검증과 `stellar validate`는 같은 tree의 문서를 같은 진단으로 판정합니다(ADR-0080 개정).
-    /// 미해결 참조와 정의 없는 인스턴스는 둘 다 경고라 commit을 막지 않습니다.
+    /// 미해결 참조와 정의 없는 인스턴스는 둘 다 경고라 commit을 막지 않습니다. 이미지 node의 asset은 staged
+    /// semantic snapshot(문서만 담음)에 없지만, 그 사실만으로 commit을 막지 않습니다.
     #[test]
     fn staged_judgment_matches_project_validation() {
-        use crate::core_types::reference::ComponentRef;
+        use crate::core_types::reference::{AssetRef, ComponentRef};
+        use crate::core_types::value::Size2;
+        use stellar_document::image::ImagePayload;
         use crate::test_support::{
             document_with_unresolved_clips, save_documents, scaffold_project,
         };
@@ -2218,6 +2221,20 @@ mod tests {
                 display_name: "Placed".into(),
                 payload: NodePayload::ComponentInstance(ComponentInstancePayload::new(
                     ComponentRef::new(StableId::new_v7(1_960_000_000_000, 0, 2)),
+                )),
+            })
+            .unwrap();
+        instance
+            .insert_node(NodeRecord {
+                id: StableId::new_v7(1_960_000_000_000, 0, 3),
+                parent: Some(root),
+                order_key: instance.next_child_order_key(root),
+                visible: true,
+                locked: false,
+                display_name: "Photo".into(),
+                payload: NodePayload::Image(ImagePayload::new(
+                    AssetRef::new(StableId::new_v7(1_960_000_000_000, 0, 4)),
+                    Size2::new(4.0, 4.0).unwrap(),
                 )),
             })
             .unwrap();
