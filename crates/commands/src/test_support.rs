@@ -454,6 +454,7 @@ fn modifier_value_type(
         T::NonNegative => PropertyValueType::NonNegative,
         T::Color => PropertyValueType::Color,
         T::Offset => PropertyValueType::Offset,
+        T::Coordinate => PropertyValueType::Number,
         T::UnitInterval => PropertyValueType::UnitInterval,
         T::BlendMode => PropertyValueType::BlendMode,
     })

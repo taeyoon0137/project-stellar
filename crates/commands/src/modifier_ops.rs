@@ -16,6 +16,7 @@
 use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
 use stellar_core_types::property::{PropertyKey, PropertyPath};
+use stellar_core_types::value::{FiniteF32, Vec2};
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{
     find_modifier_cycle, validate_modifier_owner, ModifierEntry, ModifierError, ModifierId,
@@ -310,6 +311,7 @@ fn modifier_value_type(value_type: ModifierPropertyType) -> Option<PropertyValue
         ModifierPropertyType::NonNegative => PropertyValueType::NonNegative,
         ModifierPropertyType::Color => PropertyValueType::Color,
         ModifierPropertyType::Offset => PropertyValueType::Offset,
+        ModifierPropertyType::Coordinate => PropertyValueType::Number,
         ModifierPropertyType::UnitInterval => PropertyValueType::UnitInterval,
         ModifierPropertyType::BlendMode => PropertyValueType::BlendMode,
     })
@@ -347,6 +349,12 @@ fn read_payload(payload: &ModifierPayload, key: PropertyKey) -> Option<PropertyV
         }
         (ModifierPayload::Shadow { offset, .. }, modifier_keys::SHADOW_OFFSET) => {
             PropertyValue::Offset(*offset)
+        }
+        (ModifierPayload::Shadow { offset, .. }, modifier_keys::SHADOW_OFFSET_X) => {
+            PropertyValue::Number(FiniteF32::new(offset.x()).ok()?)
+        }
+        (ModifierPayload::Shadow { offset, .. }, modifier_keys::SHADOW_OFFSET_Y) => {
+            PropertyValue::Number(FiniteF32::new(offset.y()).ok()?)
         }
         (ModifierPayload::Shadow { blur, .. }, modifier_keys::SHADOW_BLUR) => {
             PropertyValue::NonNegative(*blur)
@@ -423,6 +431,23 @@ fn write_payload(payload: &mut ModifierPayload, key: PropertyKey, value: &Proper
             modifier_keys::SHADOW_OFFSET,
             PropertyValue::Offset(v),
         ) => *offset = *v,
+        // 묶음 key(0x1092)를 나눈 longhand: 다른 축은 그대로 둡니다(IX.11.22).
+        (
+            ModifierPayload::Shadow { offset, .. },
+            modifier_keys::SHADOW_OFFSET_X,
+            PropertyValue::Number(v),
+        ) => match Vec2::new(v.get(), offset.y()) {
+            Ok(next) => *offset = next,
+            Err(_) => return false,
+        },
+        (
+            ModifierPayload::Shadow { offset, .. },
+            modifier_keys::SHADOW_OFFSET_Y,
+            PropertyValue::Number(v),
+        ) => match Vec2::new(offset.x(), v.get()) {
+            Ok(next) => *offset = next,
+            Err(_) => return false,
+        },
         (
             ModifierPayload::Shadow { blur, .. },
             modifier_keys::SHADOW_BLUR,

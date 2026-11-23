@@ -228,6 +228,9 @@ mod tests {
             ("instance.property_overrides", instance::PROPERTY_OVERRIDES),
             ("instance.slot_overrides", instance::SLOT_OVERRIDES),
             ("modifier.enabled", modifier::ENABLED),
+            ("modifier.shadow_offset", modifier::SHADOW_OFFSET),
+            ("modifier.shadow_offset_x", modifier::SHADOW_OFFSET_X),
+            ("modifier.shadow_offset_y", modifier::SHADOW_OFFSET_Y),
             ("visible", VISIBLE),
             ("locked", LOCKED),
             ("display_name", DISPLAY_NAME),
@@ -323,5 +326,56 @@ mod tests {
         assert!(is_asset_reference(IMAGE_ASSET));
         assert!(!is_asset_reference(IMAGE_SIZE));
         assert!(!is_asset_reference(frame::SIZE));
+    }
+
+    #[test]
+    fn frame_snapshot_uses_longhand_keys_so_corner_edits_touch_disjoint_paths() {
+        // 검증 기준(IX.11.22) 일부: 서로 다른 모서리를 바꾼 두 편집은 서로 다른 snapshot 경로만 바꿉니다.
+        // 그래서 3-way merge가 같은 경로를 두 번 바꾸는 conflict를 만들 근거가 없습니다(merge 실행 test는
+        // semantic-merge crate 범위).
+        use stellar_core_types::ids::StableId;
+        use stellar_core_types::order_key::OrderKey;
+        use stellar_core_types::property::PropertyPath;
+        use stellar_document::frame::{CornerRadius, FramePayload};
+        use stellar_document::records::{NodePayload, NodeRecord};
+
+        let id = StableId::new_v7(3, 0, 3);
+        let record = |radius: CornerRadius| NodeRecord {
+            id,
+            parent: None,
+            order_key: OrderKey::between(None, None),
+            visible: true,
+            locked: false,
+            display_name: "card".into(),
+            payload: NodePayload::Frame(FramePayload {
+                corner_radius: radius,
+                ..FramePayload::default()
+            }),
+        };
+        let document = StableId::new_v7(1, 0, 1);
+        let project =
+            |radius| crate::build::project_document_node(document, &record(radius)).unwrap();
+        let base = project(CornerRadius::ZERO);
+        let ours = project(CornerRadius::new(4., 0., 0., 0.).unwrap());
+        let theirs = project(CornerRadius::new(0., 0., 8., 0.).unwrap());
+        let changed = |other: &crate::snapshot::SemanticObject| -> Vec<PropertyPath> {
+            base.properties()
+                .iter()
+                .filter(|(path, value)| other.property(path) != Some(value))
+                .map(|(path, _)| path.clone())
+                .collect()
+        };
+        let path = |key| PropertyPath::with_keys(id, vec![key]);
+        assert_eq!(changed(&ours), vec![path(frame::BORDER_TOP_LEFT_RADIUS)]);
+        assert_eq!(
+            changed(&theirs),
+            vec![path(frame::BORDER_BOTTOM_RIGHT_RADIUS)]
+        );
+        assert!(
+            base.property(&path(frame::CORNER_RADIUS)).is_none(),
+            "묶음 key 경로 없음"
+        );
+        assert!(base.property(&path(frame::SIZE)).is_none());
+        assert!(base.property(&path(frame::WIDTH)).is_some());
     }
 }

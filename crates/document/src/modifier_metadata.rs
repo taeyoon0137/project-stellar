@@ -144,10 +144,17 @@ pub mod keys {
     pub const STROKE_WIDTH: PropertyKey = PropertyKey(0x1082);
     /// Shadow: 색.
     pub const SHADOW_COLOR: PropertyKey = PropertyKey(0x1091);
-    /// Shadow: 오프셋.
+    /// Shadow: 이전 SetModifierProperty와 journal의 오프셋 x·y 묶음(IX.11.22). 새 편집은
+    /// [`SHADOW_OFFSET_X`]·[`SHADOW_OFFSET_Y`]를 씁니다. 번호는 재사용하지 않습니다.
     pub const SHADOW_OFFSET: PropertyKey = PropertyKey(0x1092);
     /// Shadow: blur 반경.
     pub const SHADOW_BLUR: PropertyKey = PropertyKey(0x1093);
+    /// Shadow: 오프셋 x(px, 음수 허용, IX.11.22).
+    pub const SHADOW_OFFSET_X: PropertyKey = PropertyKey(0x1094);
+    /// Shadow: 오프셋 y(px, 음수 허용, IX.11.22).
+    pub const SHADOW_OFFSET_Y: PropertyKey = PropertyKey(0x1095);
+    /// [`SHADOW_OFFSET`] 묶음이 나뉜 longhand(x, y 순).
+    pub const SHADOW_OFFSET_LONGHANDS: [PropertyKey; 2] = [SHADOW_OFFSET_X, SHADOW_OFFSET_Y];
     /// Blur: 반경.
     pub const BLUR_RADIUS: PropertyKey = PropertyKey(0x10A1);
     /// Blend: mode.
@@ -175,8 +182,10 @@ pub enum ModifierPropertyType {
     NonNegative,
     /// 색.
     Color,
-    /// 2D 오프셋.
+    /// 2D 오프셋(묶음 key 전용).
     Offset,
+    /// 부호 있는 finite 길이(px).
+    Coordinate,
     /// 0..=1 범위 값.
     UnitInterval,
     /// blend mode.
@@ -208,6 +217,16 @@ pub struct ModifierPropertyMetadata {
     pub default: &'static str,
     /// 무효화 규칙.
     pub invalidation: InvalidationRule,
+    /// 묶음 key(IX.11.22)가 나뉜 longhand key. 비어 있으면 longhand 하나인 보통 항목입니다. 묶음 key는
+    /// 이전 command bytes·journal의 decode·실행에만 쓰고 새 편집은 longhand를 씁니다.
+    pub longhands: &'static [PropertyKey],
+}
+
+impl ModifierPropertyMetadata {
+    /// 묶음 key인지.
+    pub const fn is_bundle(&self) -> bool {
+        !self.longhands.is_empty()
+    }
 }
 
 const fn common(
@@ -223,6 +242,7 @@ const fn common(
         value_type,
         default,
         invalidation: InvalidationRule::KindUnion,
+        longhands: &[],
     }
 }
 
@@ -241,6 +261,27 @@ const fn field(
         value_type,
         default,
         invalidation: InvalidationRule::Fixed(invalidation),
+        longhands: &[],
+    }
+}
+
+const fn bundle(
+    key: PropertyKey,
+    owner: ModifierKind,
+    name: &'static str,
+    value_type: ModifierPropertyType,
+    default: &'static str,
+    invalidation: InvalidationSet,
+    longhands: &'static [PropertyKey],
+) -> ModifierPropertyMetadata {
+    ModifierPropertyMetadata {
+        key,
+        owner: Some(owner),
+        name,
+        value_type,
+        default,
+        invalidation: InvalidationRule::Fixed(invalidation),
+        longhands,
     }
 }
 
@@ -248,7 +289,7 @@ const GP: InvalidationSet = InvalidationSet::GEOMETRY_AND_PAINT;
 const P: InvalidationSet = InvalidationSet::PAINT;
 
 /// modifier 속성 registry. 순서는 key 오름차순입니다.
-pub const MODIFIER_PROPERTIES: [ModifierPropertyMetadata; 18] = [
+pub const MODIFIER_PROPERTIES: [ModifierPropertyMetadata; 20] = [
     common(keys::ENABLED, "enabled", ModifierPropertyType::Bool, "true"),
     common(
         keys::ORDER,
@@ -347,19 +388,36 @@ pub const MODIFIER_PROPERTIES: [ModifierPropertyMetadata; 18] = [
         P,
     ),
     // 오프셋·blur는 그림자 overflow(visual bounds)를 바꿉니다.
-    field(
+    bundle(
         keys::SHADOW_OFFSET,
         ModifierKind::Shadow,
         "shadow.offset",
         ModifierPropertyType::Offset,
         "(0, 0)",
         GP,
+        &keys::SHADOW_OFFSET_LONGHANDS,
     ),
     field(
         keys::SHADOW_BLUR,
         ModifierKind::Shadow,
         "shadow.blur",
         ModifierPropertyType::NonNegative,
+        "0",
+        GP,
+    ),
+    field(
+        keys::SHADOW_OFFSET_X,
+        ModifierKind::Shadow,
+        "shadow.offset-x",
+        ModifierPropertyType::Coordinate,
+        "0",
+        GP,
+    ),
+    field(
+        keys::SHADOW_OFFSET_Y,
+        ModifierKind::Shadow,
+        "shadow.offset-y",
+        ModifierPropertyType::Coordinate,
         "0",
         GP,
     ),
@@ -394,11 +452,11 @@ pub fn modifier_property(key: PropertyKey) -> Option<&'static ModifierPropertyMe
     MODIFIER_PROPERTIES.iter().find(|m| m.key == key)
 }
 
-/// `kind` modifier가 가진 속성(공통 항목 포함, key 순).
+/// `kind` modifier가 새 편집에서 받는 속성(공통 항목 포함, key 순). 묶음 key는 빠집니다.
 pub fn properties_of(kind: ModifierKind) -> Vec<&'static ModifierPropertyMetadata> {
     MODIFIER_PROPERTIES
         .iter()
-        .filter(|m| m.owner.is_none_or(|owner| owner == kind))
+        .filter(|m| m.owner.is_none_or(|owner| owner == kind) && !m.is_bundle())
         .collect()
 }
 
@@ -451,7 +509,12 @@ pub fn modifier_payload_keys(payload: &ModifierPayload) -> Vec<PropertyKey> {
             color: _,
             offset: _,
             blur: _,
-        } => vec![keys::SHADOW_COLOR, keys::SHADOW_OFFSET, keys::SHADOW_BLUR],
+        } => vec![
+            keys::SHADOW_COLOR,
+            keys::SHADOW_OFFSET_X,
+            keys::SHADOW_OFFSET_Y,
+            keys::SHADOW_BLUR,
+        ],
         ModifierPayload::Blur { radius: _ } => vec![keys::BLUR_RADIUS],
         ModifierPayload::Blend { mode: _ } => vec![keys::BLEND_MODE],
         ModifierPayload::Opacity { value: _ } => vec![keys::OPACITY_VALUE],
@@ -487,12 +550,20 @@ mod tests {
                 assert_eq!(metadata.owner, Some(kind), "{}", metadata.name);
             }
             // registry(이 종류 소유) → payload 필드.
-            let registered: Vec<PropertyKey> = MODIFIER_PROPERTIES
+            let mut registered: Vec<PropertyKey> = MODIFIER_PROPERTIES
                 .iter()
-                .filter(|m| m.owner == Some(kind))
+                .filter(|m| m.owner == Some(kind) && !m.is_bundle())
                 .map(|m| m.key)
                 .collect();
-            assert_eq!(registered, field_keys, "{}: registry↔필드 1:1", kind.name());
+            let mut sorted_fields = field_keys.clone();
+            registered.sort_unstable();
+            sorted_fields.sort_unstable();
+            assert_eq!(
+                registered,
+                sorted_fields,
+                "{}: registry↔필드 1:1",
+                kind.name()
+            );
         }
         // 모든 kind-소유 항목은 어떤 kind의 payload 필드입니다(고아 항목 없음).
         let all_field_keys: BTreeSet<u32> = ModifierKind::ALL
@@ -500,7 +571,10 @@ mod tests {
             .flat_map(|k| modifier_payload_keys(&ModifierPayload::default_for(k)))
             .map(|k| k.0)
             .collect();
-        for metadata in MODIFIER_PROPERTIES.iter().filter(|m| m.owner.is_some()) {
+        for metadata in MODIFIER_PROPERTIES
+            .iter()
+            .filter(|m| m.owner.is_some() && !m.is_bundle())
+        {
             assert!(
                 all_field_keys.contains(&metadata.key.0),
                 "payload에 없는 registry 항목: {}",
@@ -524,6 +598,29 @@ mod tests {
             let fields = modifier_payload_keys(&ModifierPayload::default_for(kind));
             assert_eq!(props.len(), 2 + fields.len(), "{}", kind.name());
         }
+    }
+
+    #[test]
+    fn bundle_keys_split_into_registered_longhands_in_the_same_band() {
+        // 검증 기준(IX.11.22): 묶음 key → longhand 대응, 묶음 key는 새 편집 목록에서 빠짐.
+        let bundles: Vec<&ModifierPropertyMetadata> = MODIFIER_PROPERTIES
+            .iter()
+            .filter(|m| m.is_bundle())
+            .collect();
+        assert_eq!(bundles.len(), 1);
+        let offset = bundles[0];
+        assert_eq!(offset.key, keys::SHADOW_OFFSET);
+        assert_eq!(offset.longhands, &keys::SHADOW_OFFSET_LONGHANDS);
+        for longhand in offset.longhands {
+            let metadata = modifier_property(*longhand).unwrap();
+            assert_eq!(metadata.owner, offset.owner);
+            assert!(!metadata.is_bundle());
+            assert_eq!(longhand.0 >> 4, offset.key.0 >> 4, "같은 대역");
+            assert_eq!(metadata.invalidation, offset.invalidation);
+        }
+        assert!(!properties_of(ModifierKind::Shadow)
+            .iter()
+            .any(|m| m.key == keys::SHADOW_OFFSET));
     }
 
     #[test]
@@ -607,6 +704,8 @@ mod tests {
         );
         assert_eq!(default(keys::SHADOW_OFFSET), "(0, 0)");
         assert_eq!(ty(keys::SHADOW_OFFSET), ModifierPropertyType::Offset);
+        assert_eq!(default(keys::SHADOW_OFFSET_X), "0");
+        assert_eq!(ty(keys::SHADOW_OFFSET_Y), ModifierPropertyType::Coordinate);
         assert_eq!(
             ModifierPayload::default_for(ModifierKind::Blend),
             ModifierPayload::Blend {

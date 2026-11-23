@@ -66,6 +66,9 @@ pub mod image;
 /// Shape·Image property metadata registry (UX.2.1).
 pub mod payload_metadata;
 
+/// CSS 속성 체계: 묶음 key, CSS 매핑, 값 문법 (IX.11).
+pub mod css;
+
 /// Modifier stack (VI.9).
 pub mod modifier;
 

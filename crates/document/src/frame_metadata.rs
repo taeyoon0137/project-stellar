@@ -68,7 +68,20 @@ pub struct FramePropertyMetadata {
     pub default: &'static str,
     /// 무효화 범위.
     pub invalidation: Invalidation,
+    /// 묶음 key(IX.11.22, ADR-0024 결정 14)가 나뉜 longhand key. 비어 있으면 longhand 하나인 보통 항목입니다.
+    /// 묶음 key는 이전 `SetProperty` bytes·journal의 decode·실행에만 쓰고 새 편집은 longhand를 씁니다.
+    pub longhands: &'static [PropertyKey],
 }
+
+impl FramePropertyMetadata {
+    /// 묶음 key인지.
+    pub const fn is_bundle(&self) -> bool {
+        !self.longhands.is_empty()
+    }
+}
+
+/// `width`·`height` 순서의 크기 longhand.
+const SIZE_LONGHANDS: [PropertyKey; 2] = [keys::WIDTH, keys::HEIGHT];
 
 /// Frame 속성 registry. 순서는 key 오름차순입니다.
 pub const FRAME_PROPERTIES: [FramePropertyMetadata; 13] = [
@@ -78,6 +91,7 @@ pub const FRAME_PROPERTIES: [FramePropertyMetadata; 13] = [
         value_type: FramePropertyType::Size,
         default: "0 × 0",
         invalidation: Invalidation::LAYOUT_AND_PAINT,
+        longhands: &SIZE_LONGHANDS,
     },
     FramePropertyMetadata {
         key: keys::TRANSFORM,
@@ -86,6 +100,7 @@ pub const FRAME_PROPERTIES: [FramePropertyMetadata; 13] = [
         default: "identity",
         // 시각 변환: 배치(layout)는 바꾸지 않습니다.
         invalidation: Invalidation::PAINT,
+        longhands: &[],
     },
     FramePropertyMetadata {
         key: keys::CLIPPING,
@@ -93,6 +108,7 @@ pub const FRAME_PROPERTIES: [FramePropertyMetadata; 13] = [
         value_type: FramePropertyType::Clipping,
         default: "frame-bounds",
         invalidation: Invalidation::PAINT,
+        longhands: &[],
     },
     FramePropertyMetadata {
         key: keys::BACKGROUND,
@@ -100,6 +116,7 @@ pub const FRAME_PROPERTIES: [FramePropertyMetadata; 13] = [
         value_type: FramePropertyType::OptionalColor,
         default: "none",
         invalidation: Invalidation::PAINT,
+        longhands: &[],
     },
     FramePropertyMetadata {
         key: keys::BORDER,
@@ -108,6 +125,7 @@ pub const FRAME_PROPERTIES: [FramePropertyMetadata; 13] = [
         default: "none",
         // 두께가 content box에 영향을 줄 수 있어 layout까지 보수적으로 무효화합니다.
         invalidation: Invalidation::LAYOUT_AND_PAINT,
+        longhands: &[],
     },
     FramePropertyMetadata {
         key: keys::CORNER_RADIUS,
@@ -115,6 +133,7 @@ pub const FRAME_PROPERTIES: [FramePropertyMetadata; 13] = [
         value_type: FramePropertyType::CornerRadius,
         default: "0",
         invalidation: Invalidation::PAINT,
+        longhands: &keys::BORDER_RADIUS_LONGHANDS,
     },
     FramePropertyMetadata {
         key: keys::LAYOUT_MODE,
@@ -122,6 +141,7 @@ pub const FRAME_PROPERTIES: [FramePropertyMetadata; 13] = [
         value_type: FramePropertyType::OptionalLayoutRef,
         default: "none",
         invalidation: Invalidation::LAYOUT_AND_PAINT,
+        longhands: &[],
     },
     FramePropertyMetadata {
         key: keys::WIDTH,
@@ -129,6 +149,7 @@ pub const FRAME_PROPERTIES: [FramePropertyMetadata; 13] = [
         value_type: FramePropertyType::Dimension,
         default: "0",
         invalidation: Invalidation::LAYOUT_AND_PAINT,
+        longhands: &[],
     },
     FramePropertyMetadata {
         key: keys::HEIGHT,
@@ -136,6 +157,7 @@ pub const FRAME_PROPERTIES: [FramePropertyMetadata; 13] = [
         value_type: FramePropertyType::Dimension,
         default: "0",
         invalidation: Invalidation::LAYOUT_AND_PAINT,
+        longhands: &[],
     },
     FramePropertyMetadata {
         key: keys::BORDER_TOP_LEFT_RADIUS,
@@ -143,6 +165,7 @@ pub const FRAME_PROPERTIES: [FramePropertyMetadata; 13] = [
         value_type: FramePropertyType::Dimension,
         default: "0",
         invalidation: Invalidation::PAINT,
+        longhands: &[],
     },
     FramePropertyMetadata {
         key: keys::BORDER_TOP_RIGHT_RADIUS,
@@ -150,6 +173,7 @@ pub const FRAME_PROPERTIES: [FramePropertyMetadata; 13] = [
         value_type: FramePropertyType::Dimension,
         default: "0",
         invalidation: Invalidation::PAINT,
+        longhands: &[],
     },
     FramePropertyMetadata {
         key: keys::BORDER_BOTTOM_RIGHT_RADIUS,
@@ -157,6 +181,7 @@ pub const FRAME_PROPERTIES: [FramePropertyMetadata; 13] = [
         value_type: FramePropertyType::Dimension,
         default: "0",
         invalidation: Invalidation::PAINT,
+        longhands: &[],
     },
     FramePropertyMetadata {
         key: keys::BORDER_BOTTOM_LEFT_RADIUS,
@@ -164,6 +189,7 @@ pub const FRAME_PROPERTIES: [FramePropertyMetadata; 13] = [
         value_type: FramePropertyType::Dimension,
         default: "0",
         invalidation: Invalidation::PAINT,
+        longhands: &[],
     },
 ];
 
@@ -224,12 +250,43 @@ mod tests {
         }
         for metadata in &FRAME_PROPERTIES {
             assert!(
-                matches!(metadata.key, keys::SIZE | keys::CORNER_RADIUS)
-                    || field_keys.contains(&metadata.key),
+                metadata.is_bundle() || field_keys.contains(&metadata.key),
                 "payload에 없는 registry 항목: {}",
                 metadata.name
             );
         }
+    }
+
+    #[test]
+    fn bundle_keys_map_to_registered_longhands() {
+        // 검증 기준(IX.11.22): 묶음 key → longhand 대응. 묶음은 SIZE·CORNER_RADIUS 둘뿐이고 longhand는
+        // 모두 보통 항목이며 같은 무효화 범위를 가집니다.
+        let bundles: Vec<PropertyKey> = FRAME_PROPERTIES
+            .iter()
+            .filter(|m| m.is_bundle())
+            .map(|m| m.key)
+            .collect();
+        assert_eq!(bundles, vec![keys::SIZE, keys::CORNER_RADIUS]);
+        for bundle in FRAME_PROPERTIES.iter().filter(|m| m.is_bundle()) {
+            for longhand in bundle.longhands {
+                let metadata = frame_property(*longhand).unwrap();
+                assert!(!metadata.is_bundle());
+                assert_eq!(
+                    metadata.invalidation, bundle.invalidation,
+                    "{}",
+                    metadata.name
+                );
+                assert_eq!(longhand.0 >> 8, bundle.key.0 >> 8, "같은 대역");
+            }
+        }
+        assert_eq!(
+            frame_property(keys::SIZE).unwrap().longhands,
+            &[keys::WIDTH, keys::HEIGHT]
+        );
+        assert_eq!(
+            frame_property(keys::CORNER_RADIUS).unwrap().longhands,
+            &keys::BORDER_RADIUS_LONGHANDS
+        );
     }
 
     #[test]

@@ -545,8 +545,8 @@ pub fn node_property_keys(payload: &NodePayload) -> Vec<PropertyKey> {
         NodePayload::Frame(_) => keys.extend(
             stellar_document::frame_metadata::FRAME_PROPERTIES
                 .iter()
-                .map(|m| m.key)
-                .filter(|k| *k != frame_keys::SIZE && *k != frame_keys::CORNER_RADIUS),
+                .filter(|m| !m.is_bundle())
+                .map(|m| m.key),
         ),
         NodePayload::Shape(shape) => keys.extend_from_slice(shape_kind_keys(shape.kind())),
         NodePayload::Image(_) => keys.extend(IMAGE_PROPERTIES.iter().map(|m| m.key)),
