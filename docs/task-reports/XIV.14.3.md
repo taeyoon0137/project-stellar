@@ -2,7 +2,7 @@
 
 - WBS: XIV.14.3
 - 작업명: component/token dependency staging scenario
-- 상태: 부분 완료 (`[~]` 후보)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 남은 범위가 있음(아래 본문). 보고 당시 기록: 부분 완료 (`[~]` 후보)
 - 선행: XIV.5.4
 - 결정: ADR-0080
 

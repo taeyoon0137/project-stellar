@@ -2,7 +2,7 @@
 
 - WBS: XIV.10.7
 - 작업명: component property 삭제 대 instance override 추가, token 타입 변경 대 값 변경, drilling chain break를 전용 conflict로 분류
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 계획 1.1의 "올바른 커밋"이 없음: 구현 커밋이 `Feat:`·`Fix:`·`Test:` 제목이라 `Task(<ID>)` 제목 커밋이 없고, 원장(`cargo xtask generate-ledger`)이 근거 커밋과 검증 시각을 채우지 못합니다. 구현·검증과 선행 판정은 `[x]` 조건을 충족합니다. 보고 당시 기록: 완료 (`[x]`)
 - 선행: IX.1.3, IX.4.6, VIII.5.5
 - 결정: [ADR-0081](../adr/ADR-0081-semantic-merge-resolution-and-git-driver.md) 결정 1
 

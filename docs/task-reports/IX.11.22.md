@@ -2,7 +2,7 @@
 
 - WBS: IX.11.22
 - 작업명: Frame `size`·`corner_radius`, modifier Shadow offset 합성 key를 longhand key로 나누고 옛 key를 묶음 key로 남김
-- 상태: 부분 완료 (`[~]`) — registry·command·묶음 key 진단·decode 동등성은 구현·검증했습니다. semantic snapshot의
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 남은 범위가 있음(아래 본문). 보고 당시 기록: 부분 완료 (`[~]`) — registry·command·묶음 key 진단·decode 동등성은 구현·검증했습니다. semantic snapshot의
   Shadow offset 경로 교체와 3-way merge 실행 test는 소유 파일 밖(`crates/semantic-diff/src/build.rs`·`records.rs`,
   `crates/semantic-merge/`)이라 하지 않았습니다.
 - 결정: ADR-0075 결정 1

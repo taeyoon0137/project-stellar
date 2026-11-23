@@ -3,7 +3,7 @@
 - WBS: IX.11.4
 - 작업명: layout 엔진 Stack 의미를 CSS Flexbox에 맞춤(`flex-shrink` 기본 1, `align-items`·`align-content` 생략값
   `normal`, 자식별 `align-self`, 축 고정 `row-gap`·`column-gap`, stretch 대상 제한)
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 IX.11.1(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`)
 - 결정: ADR-0074 결정 6, ADR-0076
 - 선행: IX.11.1, X.3.5, X.6.4. 이 lane 결정(ADR-0076 결정 1)대로 엔진 입력 타입은 `crates/layout` 안에 두고 document
   registry에 의존하지 않으므로 IX.11.1을 기다리지 않고 착수했습니다.

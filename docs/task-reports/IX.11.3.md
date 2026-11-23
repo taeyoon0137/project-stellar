@@ -2,7 +2,7 @@
 
 - WBS: IX.11.3
 - 작업명: Shape·Path·Text·Image property metadata registry를 Frame registry와 같은 방식으로 두고 CSS 매핑을 채움, snapshot 전용 key를 문서 key로 교체
-- 상태: 부분 완료 (`[~]`) — registry·CSS 매핑·key 할당과 값 하나인 snapshot 경로의 문서 key 교체는 완료했습니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 남은 범위가 있음(아래 본문); 선행 IX.11.1(`[~]`), IX.11.22(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 부분 완료 (`[~]`) — registry·CSS 매핑·key 할당과 값 하나인 snapshot 경로의 문서 key 교체는 완료했습니다.
   값 여러 개를 한 경로에 담는 snapshot 투영(Rectangle size·corner radius, Line 끝점, Ellipse·Polygon bounds,
   Image size)의 longhand 경로 분할은 `crates/semantic-diff/src/build.rs`·`records.rs`(semantic-merge lane 소유)
   변경이 필요해 하지 않았습니다.

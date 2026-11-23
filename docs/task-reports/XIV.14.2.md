@@ -2,7 +2,7 @@
 
 - WBS: XIV.14.2
 - 작업명: partial same-chunk property stage·unstage·commit scenario
-- 상태: 완료 (`[x]` 후보)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 XIV.8.4(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]` 후보)
 - 선행: XIV.6.6, XIV.7.3, XIV.8.4
 - 결정: ADR-0080
 

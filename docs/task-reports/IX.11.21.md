@@ -4,7 +4,7 @@
 
 - WBS: IX.11.21
 - 작업명: 제품 문서 migration registry를 `crates/project`에 만들고 project 열기에 연결
-- 상태: 부분 완료 (`[~]`) — registry·고정 decoder·열기 판정·메모리 migration은 들어왔습니다. `cargo xtask test-migrations`의 제품 registry 사용과 Semantic Diff·Merge의 옛 schema snapshot fixture는 소유 범위 밖(`tools/xtask`, `crates/semantic-diff`·`semantic-merge`)이라 하지 않았습니다(아래 "차이").
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 남은 범위가 있음(아래 본문). 보고 당시 기록: 부분 완료 (`[~]`) — registry·고정 decoder·열기 판정·메모리 migration은 들어왔습니다. `cargo xtask test-migrations`의 제품 registry 사용과 Semantic Diff·Merge의 옛 schema snapshot fixture는 소유 범위 밖(`tools/xtask`, `crates/semantic-diff`·`semantic-merge`)이라 하지 않았습니다(아래 "차이").
 - 구현 커밋: `becdcefe`. 결정: [ADR-0077](../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md) 결정 4.
 
 ## 필수 실행 환경
