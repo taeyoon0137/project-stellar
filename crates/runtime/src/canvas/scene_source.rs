@@ -104,6 +104,8 @@ pub struct DocumentSceneSource {
     pub unapplied_variant_patches: usize,
     /// View root.
     root: StableId,
+    /// root subtree pre-order 위치(Boolean operand 순서). 구조 변경 때만 다시 계산합니다.
+    preorder: HashMap<StableId, usize>,
 }
 
 impl SceneDependents for DocumentSceneSource {
@@ -151,6 +153,7 @@ pub fn document_scene_source<'a>(
         operand_hosts: converter.operand_hosts,
         unapplied_variant_patches: unapplied,
         root,
+        preorder: converter.preorder,
     })
 }
 
@@ -172,6 +175,16 @@ impl<'a, 'o> Converter<'a, 'o> {
             }
             stack.extend(model.children_in_order(id).into_iter().rev());
         }
+        Converter::with_index(model, options, preorder, operand_hosts)
+    }
+
+    /// 이미 계산한 pre-order·operand 색인으로 만듭니다(구조가 바뀌지 않은 편집).
+    fn with_index(
+        model: &'a DocumentModel,
+        options: &'o mut SceneSourceOptions<'a>,
+        preorder: HashMap<StableId, usize>,
+        operand_hosts: BTreeMap<StableId, Vec<StableId>>,
+    ) -> Converter<'a, 'o> {
         let mut visibility = HashMap::new();
         if let Some(variant) = options.variant {
             for (path, value) in variant.property_patches() {
@@ -759,7 +772,31 @@ pub fn scene_edits<'a>(
             affected.extend(hosts.iter().copied());
         }
     }
-    let mut converter = Converter::new(model, root, &mut options);
+    // 구조가 바뀌면 pre-order·operand 색인을 다시 만들고, 아니면 바뀐 node의 Boolean operand만 다시 읽습니다
+    // (전체 tree를 걷지 않음).
+    let structural = !changes.inserted_nodes().is_empty() || !removed.is_empty();
+    let mut converter = if structural {
+        Converter::new(model, root, &mut options)
+    } else {
+        let mut operand_hosts = std::mem::take(&mut current.operand_hosts);
+        for hosts in operand_hosts.values_mut() {
+            hosts.retain(|host| !affected.contains(host));
+        }
+        for host in &affected {
+            for (_, operands) in boolean_modifiers(model.modifier_stack(*host)) {
+                for operand in operands {
+                    operand_hosts.entry(operand).or_default().push(*host);
+                }
+            }
+        }
+        operand_hosts.retain(|_, hosts| !hosts.is_empty());
+        Converter::with_index(
+            model,
+            &mut options,
+            std::mem::take(&mut current.preorder),
+            operand_hosts,
+        )
+    };
     // 조상이 함께 바뀐 node는 조상 subtree 변환에 들어갑니다.
     let tops: Vec<StableId> = affected
         .iter()
@@ -806,9 +843,10 @@ pub fn scene_edits<'a>(
             edits.push(SourceEdit::Remove(key));
         }
     }
-    current.source.apply(&edits)?;
     current.operand_hosts = converter.operand_hosts;
+    current.preorder = converter.preorder;
     current.skipped.extend(converter.skipped);
+    current.source.apply(&edits)?;
     Ok(edits)
 }
 
