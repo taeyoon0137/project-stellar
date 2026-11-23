@@ -6,12 +6,12 @@
 //!
 //! - **pixel format**: CAMetalLayer는 BGRA8(·sRGB)·RGBA16Float만 받습니다. 다른 format은 설정 전에
 //!   `Unsupported`로 거부합니다(잘못된 값은 Objective-C 예외).
-//! - **colorspace**: surface 색공간 tag(III.4.1 `ColorSpace::tag`)에 맞춰 sRGB 또는 Display P3를
-//!   지정합니다. RGBA16Float는 선형 working 값을 담으므로 extended linear 변형을 씁니다.
-//!   BGRA8(sRGB가 아닌 `Bgra8Unorm` 포함)에는 sRGB 인코딩 colorspace를 붙이지만 shader는 선형 값을
-//!   출력합니다. 그래서 `Bgra8Unorm`에 shader가 encode하지 않은 값을 쓰면 어둡게 표시됩니다. renderer-core
-//!   HDR fallback(XI.10.6)이 `Rgba16Float`를 `Bgra8Unorm`으로 바꾸므로, XI.10.1에서 format별 출력 encode
-//!   규칙(하드웨어 `Bgra8UnormSrgb` 또는 shader encode)을 renderer-core `output_color`와 함께 고정합니다(미결).
+//! - **colorspace**: surface 색공간 tag(III.4.1 `ColorSpace::tag`)와 format의 저장 방식
+//!   ([`output_encoding`], XI.10.1·ADR-0102 결정 2)으로 정합니다. 하드웨어 sRGB encode format(`Bgra8UnormSrgb`)은
+//!   sRGB·Display P3 인코딩 colorspace, 선형 값을 그대로 저장하는 `Bgra8Unorm`은 선형 변형(`kCGColorSpaceLinearSRGB`·
+//!   `kCGColorSpaceLinearDisplayP3`), `Rgba16Float`는 extended linear 변형입니다. shader는 언제나 선형 working 값을
+//!   출력하고 따로 encode하지 않으므로, 저장 값과 colorspace 해석이 항상 맞습니다(renderer-core HDR fallback이
+//!   `Rgba16Float`를 `Bgra8Unorm`으로 바꿔도 어둡게 표시되지 않음).
 //! - **속성 변경**은 명시적 `CATransaction`(animation 끔) 안에서 합니다. render thread에서 바꿔도
 //!   implicit transaction이 thread에 남지 않습니다.
 //! - **drawable 획득**은 `allowsNextDrawableTimeout`을 항상 켜 둡니다. 가려진 창에서도 무한 대기하지
@@ -32,13 +32,15 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use stellar_renderer_core::backend::{BackendError, BackendErrorKind, SurfaceConfig, SurfaceSize};
+use stellar_renderer_core::color::{output_encoding, OutputEncoding};
 use stellar_renderer_core::render_graph::{TextureFormat, MAX_TEXTURE_DIMENSION};
 
 use crate::format::{is_layer_format, mtl_pixel_format};
 use crate::objc::{class, sel, send, Id, NSUInteger, RawId};
 use crate::sys::{
     kCGColorSpaceDisplayP3, kCGColorSpaceExtendedLinearDisplayP3, kCGColorSpaceExtendedLinearSRGB,
-    kCGColorSpaceSRGB, CFStringRef, CGColorSpaceCreateWithName, CGColorSpaceRelease, CGSize,
+    kCGColorSpaceLinearDisplayP3, kCGColorSpaceLinearSRGB, kCGColorSpaceSRGB, CFStringRef,
+    CGColorSpaceCreateWithName, CGColorSpaceRelease, CGSize,
 };
 
 /// sRGB 색공간 tag(III.4.1 `ColorSpace::tag`, 저장 포맷 계약).
@@ -83,16 +85,26 @@ impl Default for LayerOptions {
     }
 }
 
-/// surface 색공간·format에 맞는 CoreGraphics 색공간 이름.
-fn color_space_name(tag: u8, format: TextureFormat) -> Option<CFStringRef> {
-    let linear = format == TextureFormat::Rgba16Float;
+/// surface 색공간·format에 맞는 CoreGraphics 색공간 이름(모듈 문서 colorspace 규칙).
+pub(crate) fn color_space_name(tag: u8, format: TextureFormat) -> Option<CFStringRef> {
+    let encoding = output_encoding(format)?;
     // SAFETY: CoreGraphics가 정의한 불변 전역 CFString 상수를 읽습니다.
     unsafe {
-        match (tag, linear) {
-            (COLOR_SPACE_TAG_SRGB, false) => Some(kCGColorSpaceSRGB),
-            (COLOR_SPACE_TAG_SRGB, true) => Some(kCGColorSpaceExtendedLinearSRGB),
-            (COLOR_SPACE_TAG_DISPLAY_P3, false) => Some(kCGColorSpaceDisplayP3),
-            (COLOR_SPACE_TAG_DISPLAY_P3, true) => Some(kCGColorSpaceExtendedLinearDisplayP3),
+        match (tag, encoding) {
+            (COLOR_SPACE_TAG_SRGB, OutputEncoding::TransferEncoded) => Some(kCGColorSpaceSRGB),
+            (COLOR_SPACE_TAG_SRGB, OutputEncoding::LinearUnorm) => Some(kCGColorSpaceLinearSRGB),
+            (COLOR_SPACE_TAG_SRGB, OutputEncoding::LinearFloat) => {
+                Some(kCGColorSpaceExtendedLinearSRGB)
+            }
+            (COLOR_SPACE_TAG_DISPLAY_P3, OutputEncoding::TransferEncoded) => {
+                Some(kCGColorSpaceDisplayP3)
+            }
+            (COLOR_SPACE_TAG_DISPLAY_P3, OutputEncoding::LinearUnorm) => {
+                Some(kCGColorSpaceLinearDisplayP3)
+            }
+            (COLOR_SPACE_TAG_DISPLAY_P3, OutputEncoding::LinearFloat) => {
+                Some(kCGColorSpaceExtendedLinearDisplayP3)
+            }
             _ => None,
         }
     }

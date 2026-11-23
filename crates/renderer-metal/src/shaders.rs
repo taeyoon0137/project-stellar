@@ -8,36 +8,53 @@
 //! | buffer 1 | vertex·fragment | [`DRAW_UNIFORMS_SIZE`] byte `DrawUniforms`(`SetUniforms`) |
 //! | buffer 2 | vertex | backend가 pass마다 넣는 target 크기(`float2`, pixel) |
 //! | texture·sampler 0 | fragment | sampling program의 source(`BindTexture { slot: 0 }`) |
+//! | texture·sampler 1 | fragment | `LayerComposite`·`BlendComposite`의 coverage mask(`DrawUniforms.mode = 1`일 때만 읽음) |
 //!
 //! - 좌표는 attachment pixel 좌표(좌상단 원점, y 아래로)입니다. backend가 clip 좌표로 바꿉니다.
-//! - 색은 premultiplied alpha 선형 값입니다(XI.10.1에서 encode 규칙 고정).
-//! - `DrawUniforms { float4 tint; float depth; float pad[3]; }` = 32 byte. clip z = depth.
+//! - 색은 working space 값입니다: surface primaries 선형광, premultiplied alpha
+//!   (`stellar_renderer_core::color`, XI.10.1). fragment는 encode하지 않고, attachment format이 저장 방식을
+//!   정합니다(`*UnormSrgb`는 하드웨어 transfer encode, 나머지는 선형 그대로).
+//! - byte 배치는 공통 ABI(`stellar_renderer_core::effects::abi`)가 소유합니다.
+//!   `DrawUniforms { float4 tint; float depth; float mode; float2 param; }` = 32 byte. clip z = depth.
 //!
 //! | program | vertex layout(stride) | fragment 출력 | texture 0 |
 //! |---|---|---|---|
 //! | `SolidFill` | position·color(24) | `color × tint` | — |
-//! | `Texture`·`LayerComposite` | position·uv(16) | `sample × tint` | 필요 |
+//! | `Texture` | position·uv(16) | `sample × tint` | 필요 |
+//! | `LayerComposite` | position·uv(16) | `sample × tint × mask`(blend는 pipeline premultiplied over) | 필요 |
+//! | `BlendComposite(mode)` | position·uv(16) | `composite(mode, sample × tint × mask, backdrop)`(framebuffer fetch, blend `Replace`) | 필요 |
 //! | `GlyphMask` | position·uv(16) | `tint × sample.r`(coverage) | 필요 |
 //! | `ClipStencil` | position·color(24) | 없음(color write mask 0, stencil만) | — |
 //! | `ClipMask` | position·color(24) | `tint.a`(coverage, 모든 채널) | — |
-//! | `BlendComposite`·`GaussianBlur` | — | 미구현(XI.10.2·XI.10.4, `Unsupported`) | — |
+//! | `GaussianBlur` | position·uv(16) | 한 방향 gaussian blur × tint(48 byte `BlurUniforms`) | 필요(`read`, sampler 미사용) |
+//!
+//! - `mask`는 `DrawUniforms.mode`가 1이면 texture 1의 `.r`, 아니면 1입니다. mask를 쓰지 않는 draw에서도 slot 1이 비지 않도록
+//!   backend가 slot 0 texture를 slot 1에 함께 bind합니다(`commands`).
+//! - `BlendComposite`는 Apple GPU framebuffer fetch(`[[color(0)]]`, 선형 working 값)로 backdrop을 읽어
+//!   `stellar_renderer_core::blend` 식(W3C separable, ADR-0102 결정 3)으로 합성합니다. shader가 합성을 끝내므로 pipeline
+//!   blend state는 `Replace`여야 합니다(`PremultipliedOver`는 `InvalidUsage`).
+//! - `GaussianBlur`(ADR-0102 결정 5): fragment pixel 좌표에서 `direction` 방향 정수 offset `[−R, R]`(`R = ceil(3σ)`) texel을
+//!   `read`로 읽고 가중치 `exp(−i²/(2σ²))`로 평균합니다. texture 밖은 투명, σ = 0이면 texel 하나입니다. `source_alpha`가 1이면 texel
+//!   alpha를 모든 채널로 퍼뜨립니다(shadow). source와 target은 같은 크기여야 합니다(harness·pass compiler layer 규칙).
 
 use stellar_renderer_core::backend::ShaderProgram;
+use stellar_renderer_core::blend::SceneBlendMode;
+use stellar_renderer_core::effects::abi;
 
-/// `DrawUniforms` byte 크기.
-pub(crate) const DRAW_UNIFORMS_SIZE: u32 = 32;
+/// `DrawUniforms` byte 크기(공통 ABI, `stellar_renderer_core::effects::abi`).
+pub(crate) const DRAW_UNIFORMS_SIZE: u32 = abi::DRAW_UNIFORMS_SIZE;
 
 /// uniform 범위 offset 정렬(byte). `float4` 정렬과 같습니다.
-pub(crate) const UNIFORM_OFFSET_ALIGNMENT: u64 = 16;
+pub(crate) const UNIFORM_OFFSET_ALIGNMENT: u64 = abi::UNIFORM_ALIGNMENT;
 
 /// vertex·index buffer offset 정렬(byte).
 pub(crate) const VERTEX_OFFSET_ALIGNMENT: u64 = 4;
 
 /// position·color vertex stride(byte).
-pub(crate) const SOLID_VERTEX_STRIDE: u32 = 24;
+pub(crate) const SOLID_VERTEX_STRIDE: u32 = abi::SOLID_VERTEX_STRIDE;
 
 /// position·uv vertex stride(byte).
-pub(crate) const TEXTURED_VERTEX_STRIDE: u32 = 16;
+pub(crate) const TEXTURED_VERTEX_STRIDE: u32 = abi::TEXTURED_VERTEX_STRIDE;
 
 /// fragment texture slot 수.
 pub(crate) const MAX_TEXTURE_SLOTS: u8 = 4;
@@ -48,7 +65,7 @@ pub(crate) const BUILTIN_SOURCE: &str = r#"
 using namespace metal;
 
 struct TargetUniforms { float2 size; };
-struct DrawUniforms { float4 tint; float depth; float pad0; float pad1; float pad2; };
+struct DrawUniforms { float4 tint; float depth; float mode; float2 param; };
 
 static float4 stellar_clip(float2 px, float depth, constant TargetUniforms& target) {
     float2 ndc = float2(px.x / target.size.x * 2.0 - 1.0, 1.0 - px.y / target.size.y * 2.0);
@@ -103,6 +120,96 @@ fragment float4 stellar_texture_fragment(TexturedOut in [[stage_in]],
     return source.sample(source_sampler, in.uv) * draw.tint;
 }
 
+static float4 stellar_layer_source(TexturedOut in, constant DrawUniforms& draw,
+                                   texture2d<float> source, sampler source_sampler,
+                                   texture2d<float> mask, sampler mask_sampler) {
+    float4 value = source.sample(source_sampler, in.uv) * draw.tint;
+    if (draw.mode > 0.5) {
+        value *= mask.sample(mask_sampler, in.uv).r;
+    }
+    return value;
+}
+
+fragment float4 stellar_layer_fragment(TexturedOut in [[stage_in]],
+                                       constant DrawUniforms& draw [[buffer(1)]],
+                                       texture2d<float> source [[texture(0)]],
+                                       sampler source_sampler [[sampler(0)]],
+                                       texture2d<float> mask [[texture(1)]],
+                                       sampler mask_sampler [[sampler(1)]]) {
+    return stellar_layer_source(in, draw, source, source_sampler, mask, mask_sampler);
+}
+
+// W3C separable blend 함수 B(cb, cs). mode: 0 normal, 1 multiply, 2 screen, 3 overlay, 4 darken, 5 lighten
+// (SceneBlendMode tag).
+static float stellar_blend_channel(uint mode, float cb, float cs) {
+    switch (mode) {
+        case 1: return cb * cs;
+        case 2: return cb + cs - cb * cs;
+        case 3: return cb <= 0.5 ? 2.0 * cb * cs : cs + (2.0 * cb - 1.0) - cs * (2.0 * cb - 1.0);
+        case 4: return min(cb, cs);
+        case 5: return max(cb, cs);
+        default: return cs;
+    }
+}
+
+static float4 stellar_composite(uint mode, float4 src, float4 dst) {
+    float as = src.a;
+    float ab = dst.a;
+    float3 cs = as > 0.0 ? src.rgb / as : float3(0.0);
+    float3 cb = ab > 0.0 ? dst.rgb / ab : float3(0.0);
+    float3 b = float3(stellar_blend_channel(mode, cb.r, cs.r),
+                      stellar_blend_channel(mode, cb.g, cs.g),
+                      stellar_blend_channel(mode, cb.b, cs.b));
+    float3 co = src.rgb * (1.0 - ab) + dst.rgb * (1.0 - as) + as * ab * b;
+    return float4(co, as + ab * (1.0 - as));
+}
+
+#define STELLAR_BLEND_FRAGMENT(NAME, MODE)                                                      \
+fragment float4 NAME(TexturedOut in [[stage_in]],                                               \
+                     float4 backdrop [[color(0)]],                                              \
+                     constant DrawUniforms& draw [[buffer(1)]],                                 \
+                     texture2d<float> source [[texture(0)]],                                    \
+                     sampler source_sampler [[sampler(0)]],                                     \
+                     texture2d<float> mask [[texture(1)]],                                      \
+                     sampler mask_sampler [[sampler(1)]]) {                                     \
+    float4 src = stellar_layer_source(in, draw, source, source_sampler, mask, mask_sampler);   \
+    return stellar_composite(MODE, src, backdrop);                                              \
+}
+
+STELLAR_BLEND_FRAGMENT(stellar_blend_normal_fragment, 0)
+STELLAR_BLEND_FRAGMENT(stellar_blend_multiply_fragment, 1)
+STELLAR_BLEND_FRAGMENT(stellar_blend_screen_fragment, 2)
+STELLAR_BLEND_FRAGMENT(stellar_blend_overlay_fragment, 3)
+STELLAR_BLEND_FRAGMENT(stellar_blend_darken_fragment, 4)
+STELLAR_BLEND_FRAGMENT(stellar_blend_lighten_fragment, 5)
+
+struct BlurUniforms { float4 tint; float depth; float sigma; float2 direction; float source_alpha; float pad0; float pad1; float pad2; };
+
+fragment float4 stellar_blur_fragment(TexturedOut in [[stage_in]],
+                                      constant BlurUniforms& blur [[buffer(1)]],
+                                      texture2d<float> source [[texture(0)]]) {
+    int2 size = int2(source.get_width(), source.get_height());
+    int2 p = int2(floor(in.position.xy));
+    int radius = blur.sigma > 0.0 ? int(ceil(3.0 * blur.sigma)) : 0;
+    int2 dir = int2(blur.direction);
+    float4 sum = float4(0.0);
+    float total = 0.0;
+    for (int i = -radius; i <= radius; ++i) {
+        float w = radius == 0 ? 1.0 : exp(-float(i * i) / (2.0 * blur.sigma * blur.sigma));
+        int2 q = p + dir * i;
+        float4 v = float4(0.0);
+        if (q.x >= 0 && q.y >= 0 && q.x < size.x && q.y < size.y) {
+            v = source.read(uint2(q));
+        }
+        if (blur.source_alpha > 0.5) {
+            v = float4(v.a);
+        }
+        sum += w * v;
+        total += w;
+    }
+    return sum / total * blur.tint;
+}
+
 fragment float4 stellar_glyph_fragment(TexturedOut in [[stage_in]],
                                        constant DrawUniforms& draw [[buffer(1)]],
                                        texture2d<float> source [[texture(0)]],
@@ -124,9 +231,15 @@ pub(crate) struct ProgramLayout {
     pub(crate) needs_texture: bool,
     /// color를 쓰면 참(거짓이면 write mask 0).
     pub(crate) writes_color: bool,
+    /// texture slot 1 coverage mask를 선언하면 참(비어 있으면 backend가 slot 0을 함께 bind).
+    pub(crate) mask_slot: bool,
+    /// uniform 최소 byte 수.
+    pub(crate) uniform_size: u32,
+    /// shader가 backdrop과 합성을 끝내 pipeline blend가 `Replace`여야 하면 참.
+    pub(crate) shader_blend: bool,
 }
 
-/// program의 shader 변형. 아직 구현하지 않은 program은 `None`.
+/// program의 shader 변형. 아직 구현하지 않은 program은 `None`(지금은 모든 program을 구현했습니다).
 pub(crate) const fn program_layout(program: ShaderProgram) -> Option<ProgramLayout> {
     const fn solid(fragment: &'static str, writes_color: bool) -> ProgramLayout {
         ProgramLayout {
@@ -135,6 +248,9 @@ pub(crate) const fn program_layout(program: ShaderProgram) -> Option<ProgramLayo
             stride: SOLID_VERTEX_STRIDE,
             needs_texture: false,
             writes_color,
+            mask_slot: false,
+            uniform_size: DRAW_UNIFORMS_SIZE,
+            shader_blend: false,
         }
     }
     const fn textured(fragment: &'static str) -> ProgramLayout {
@@ -144,16 +260,39 @@ pub(crate) const fn program_layout(program: ShaderProgram) -> Option<ProgramLayo
             stride: TEXTURED_VERTEX_STRIDE,
             needs_texture: true,
             writes_color: true,
+            mask_slot: false,
+            uniform_size: DRAW_UNIFORMS_SIZE,
+            shader_blend: false,
+        }
+    }
+    const fn layer(fragment: &'static str, shader_blend: bool) -> ProgramLayout {
+        ProgramLayout {
+            mask_slot: true,
+            shader_blend,
+            ..textured(fragment)
         }
     }
     match program {
         ShaderProgram::SolidFill => Some(solid("stellar_solid_fragment", true)),
         ShaderProgram::ClipStencil => Some(solid("stellar_clip_stencil_fragment", false)),
         ShaderProgram::ClipMask => Some(solid("stellar_clip_mask_fragment", true)),
-        ShaderProgram::Texture | ShaderProgram::LayerComposite => {
-            Some(textured("stellar_texture_fragment"))
-        }
+        ShaderProgram::Texture => Some(textured("stellar_texture_fragment")),
+        ShaderProgram::LayerComposite => Some(layer("stellar_layer_fragment", false)),
+        ShaderProgram::BlendComposite(mode) => Some(layer(
+            match mode {
+                SceneBlendMode::Normal => "stellar_blend_normal_fragment",
+                SceneBlendMode::Multiply => "stellar_blend_multiply_fragment",
+                SceneBlendMode::Screen => "stellar_blend_screen_fragment",
+                SceneBlendMode::Overlay => "stellar_blend_overlay_fragment",
+                SceneBlendMode::Darken => "stellar_blend_darken_fragment",
+                SceneBlendMode::Lighten => "stellar_blend_lighten_fragment",
+            },
+            true,
+        )),
         ShaderProgram::GlyphMask => Some(textured("stellar_glyph_fragment")),
-        ShaderProgram::BlendComposite(_) | ShaderProgram::GaussianBlur => None,
+        ShaderProgram::GaussianBlur => Some(ProgramLayout {
+            uniform_size: abi::BLUR_UNIFORMS_SIZE,
+            ..textured("stellar_blur_fragment")
+        }),
     }
 }
