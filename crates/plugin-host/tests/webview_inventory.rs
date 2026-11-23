@@ -34,14 +34,14 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         }
         match entry.file_type() {
             Ok(kind) if kind.is_dir() => walk(&path, out),
-            Ok(kind) if kind.is_file() => {
-                if path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| EXTENSIONS.contains(&e))
-                {
-                    out.push(path);
-                }
+            Ok(kind)
+                if kind.is_file()
+                    && path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| EXTENSIONS.contains(&e)) =>
+            {
+                out.push(path);
             }
             _ => {}
         }
