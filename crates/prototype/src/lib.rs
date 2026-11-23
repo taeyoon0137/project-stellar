@@ -7,3 +7,6 @@
 
 /// 프리뷰 논리 시계 (XXX.3.1).
 pub mod clock;
+
+/// 포인터 제스처 판정과 release velocity (XXX.1.4).
+pub mod gesture;

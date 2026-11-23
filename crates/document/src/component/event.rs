@@ -14,6 +14,21 @@
 //! | SelectionChange | 0x06 | `String`(선택된 item identity key, IX.6.5) |
 //! | Open | 0x07 | 없음 |
 //! | Close | 0x08 | 없음 |
+//! | PointerEnter | 0x09 | 없음 |
+//! | PointerLeave | 0x0A | 없음 |
+//! | PointerDown | 0x0B | 없음 |
+//! | PointerUp | 0x0C | 없음 |
+//! | DragX | 0x0D | `Length`(drag 시작점에서 x 누적 변위, px) |
+//! | DragY | 0x0E | `Length`(drag 시작점에서 y 누적 변위, px) |
+//! | DragEndX | 0x0F | `Length`(x release velocity, px/tick) |
+//! | DragEndY | 0x10 | `Length`(y release velocity, px/tick) |
+//! | ScrollX | 0x11 | `Length`(이 tick의 x scroll 변위, px) |
+//! | ScrollY | 0x12 | `Length`(이 tick의 y scroll 변위, px) |
+//! | LongPress | 0x13 | 없음 |
+//!
+//! 0x09 이후는 포인터 제스처 확장입니다(XXX.1.4, ADR-0094 결정 7). 2D 값 타입을 더하지 않고 축별 이벤트로 나누며, 같은
+//! tick 안에서는 x 다음 y 순서로 냅니다. release velocity 계산과 제스처 판정 임계값(논리 tick 단위)은
+//! `stellar-prototype`의 gesture registry가 고정합니다. 기존 kind 번호는 바뀌지 않습니다.
 //!
 //! Enabled·Disabled 전환은 이벤트가 아니라 `disabled` 상태 값(IX.6.2)으로 표현합니다.
 
@@ -41,6 +56,28 @@ pub enum EventKind {
     Open,
     /// 닫힘(modal dismiss 등).
     Close,
+    /// pointer가 node 위로 들어옴(hover 시작).
+    PointerEnter,
+    /// pointer가 node 밖으로 나감(hover 끝).
+    PointerLeave,
+    /// pointer 누름.
+    PointerDown,
+    /// pointer 뗌.
+    PointerUp,
+    /// drag x 누적 변위.
+    DragX,
+    /// drag y 누적 변위.
+    DragY,
+    /// drag 끝 x release velocity.
+    DragEndX,
+    /// drag 끝 y release velocity.
+    DragEndY,
+    /// scroll x 변위.
+    ScrollX,
+    /// scroll y 변위.
+    ScrollY,
+    /// 길게 누름.
+    LongPress,
 }
 
 /// 알 수 없는 이벤트 tag.
@@ -57,7 +94,7 @@ impl std::error::Error for UnknownEventKind {}
 
 impl EventKind {
     /// 모든 종류(tag 순).
-    pub const ALL: [EventKind; 8] = [
+    pub const ALL: [EventKind; 19] = [
         EventKind::Activate,
         EventKind::Input,
         EventKind::Focus,
@@ -66,6 +103,17 @@ impl EventKind {
         EventKind::SelectionChange,
         EventKind::Open,
         EventKind::Close,
+        EventKind::PointerEnter,
+        EventKind::PointerLeave,
+        EventKind::PointerDown,
+        EventKind::PointerUp,
+        EventKind::DragX,
+        EventKind::DragY,
+        EventKind::DragEndX,
+        EventKind::DragEndY,
+        EventKind::ScrollX,
+        EventKind::ScrollY,
+        EventKind::LongPress,
     ];
 
     /// 안정 numeric tag(저장 형식 계약).
@@ -79,6 +127,17 @@ impl EventKind {
             EventKind::SelectionChange => 0x06,
             EventKind::Open => 0x07,
             EventKind::Close => 0x08,
+            EventKind::PointerEnter => 0x09,
+            EventKind::PointerLeave => 0x0A,
+            EventKind::PointerDown => 0x0B,
+            EventKind::PointerUp => 0x0C,
+            EventKind::DragX => 0x0D,
+            EventKind::DragY => 0x0E,
+            EventKind::DragEndX => 0x0F,
+            EventKind::DragEndY => 0x10,
+            EventKind::ScrollX => 0x11,
+            EventKind::ScrollY => 0x12,
+            EventKind::LongPress => 0x13,
         }
     }
 
@@ -93,6 +152,17 @@ impl EventKind {
             0x06 => Ok(EventKind::SelectionChange),
             0x07 => Ok(EventKind::Open),
             0x08 => Ok(EventKind::Close),
+            0x09 => Ok(EventKind::PointerEnter),
+            0x0A => Ok(EventKind::PointerLeave),
+            0x0B => Ok(EventKind::PointerDown),
+            0x0C => Ok(EventKind::PointerUp),
+            0x0D => Ok(EventKind::DragX),
+            0x0E => Ok(EventKind::DragY),
+            0x0F => Ok(EventKind::DragEndX),
+            0x10 => Ok(EventKind::DragEndY),
+            0x11 => Ok(EventKind::ScrollX),
+            0x12 => Ok(EventKind::ScrollY),
+            0x13 => Ok(EventKind::LongPress),
             other => Err(UnknownEventKind(other)),
         }
     }
@@ -108,6 +178,17 @@ impl EventKind {
             EventKind::SelectionChange => "selectionChange",
             EventKind::Open => "open",
             EventKind::Close => "close",
+            EventKind::PointerEnter => "pointerEnter",
+            EventKind::PointerLeave => "pointerLeave",
+            EventKind::PointerDown => "pointerDown",
+            EventKind::PointerUp => "pointerUp",
+            EventKind::DragX => "dragX",
+            EventKind::DragY => "dragY",
+            EventKind::DragEndX => "dragEndX",
+            EventKind::DragEndY => "dragEndY",
+            EventKind::ScrollX => "scrollX",
+            EventKind::ScrollY => "scrollY",
+            EventKind::LongPress => "longPress",
         }
     }
 
@@ -117,11 +198,22 @@ impl EventKind {
             EventKind::Input | EventKind::Key | EventKind::SelectionChange => {
                 Some(TypeSpec::required(ExpressionType::String))
             }
+            EventKind::DragX
+            | EventKind::DragY
+            | EventKind::DragEndX
+            | EventKind::DragEndY
+            | EventKind::ScrollX
+            | EventKind::ScrollY => Some(TypeSpec::required(ExpressionType::Length)),
             EventKind::Activate
             | EventKind::Focus
             | EventKind::Blur
             | EventKind::Open
-            | EventKind::Close => None,
+            | EventKind::Close
+            | EventKind::PointerEnter
+            | EventKind::PointerLeave
+            | EventKind::PointerDown
+            | EventKind::PointerUp
+            | EventKind::LongPress => None,
         }
     }
 
@@ -168,16 +260,50 @@ mod tests {
             (EventKind::Open, 0x07, "open", None),
             (EventKind::Close, 0x08, "close", None),
         ];
-        assert_eq!(EventKind::ALL.len(), golden.len());
-        for (kind, (expected, tag, name, payload)) in EventKind::ALL.iter().zip(golden) {
+        // 기존 8개 kind golden은 그대로입니다(XXX.1.4: 기존 kind golden 불변).
+        for (kind, (expected, tag, name, payload)) in EventKind::ALL[..8].iter().zip(golden) {
             assert_eq!(*kind, expected);
             assert_eq!(kind.tag(), tag);
             assert_eq!(kind.name(), name);
             assert_eq!(kind.payload_type(), payload.map(TypeSpec::required));
             assert_eq!(EventKind::from_tag(tag), Ok(*kind));
         }
-        for tag in [0x00, 0x09, 0x7F, 0xFF] {
+        for tag in [0x00, 0x14, 0x7F, 0xFF] {
             assert_eq!(EventKind::from_tag(tag), Err(UnknownEventKind(tag)));
+        }
+    }
+
+    #[test]
+    fn gesture_kind_golden_table() {
+        // 검증 기준(XXX.1.4): 새 kind golden test.
+        let length = Some(ExpressionType::Length);
+        let golden: [(EventKind, u8, &str, Option<ExpressionType>); 11] = [
+            (EventKind::PointerEnter, 0x09, "pointerEnter", None),
+            (EventKind::PointerLeave, 0x0A, "pointerLeave", None),
+            (EventKind::PointerDown, 0x0B, "pointerDown", None),
+            (EventKind::PointerUp, 0x0C, "pointerUp", None),
+            (EventKind::DragX, 0x0D, "dragX", length),
+            (EventKind::DragY, 0x0E, "dragY", length),
+            (EventKind::DragEndX, 0x0F, "dragEndX", length),
+            (EventKind::DragEndY, 0x10, "dragEndY", length),
+            (EventKind::ScrollX, 0x11, "scrollX", length),
+            (EventKind::ScrollY, 0x12, "scrollY", length),
+            (EventKind::LongPress, 0x13, "longPress", None),
+        ];
+        assert_eq!(EventKind::ALL.len(), 8 + golden.len());
+        for (kind, (expected, tag, name, payload)) in EventKind::ALL[8..].iter().zip(golden) {
+            assert_eq!(*kind, expected);
+            assert_eq!(kind.tag(), tag);
+            assert_eq!(kind.name(), name);
+            assert_eq!(kind.payload_type(), payload.map(TypeSpec::required));
+            assert_eq!(EventKind::from_tag(tag), Ok(*kind));
+        }
+        for (index, kind) in EventKind::ALL.iter().enumerate() {
+            assert_eq!(
+                kind.tag() as usize,
+                index + 1,
+                "tag는 ALL 순서대로 1부터 연속입니다"
+            );
         }
     }
 
