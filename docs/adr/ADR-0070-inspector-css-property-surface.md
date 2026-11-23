@@ -155,11 +155,6 @@ ADR-0024는 디자인 속성의 이름·값 문법을 CSS longhand로 정하고(
 
 - 데이터 migration은 없습니다. 셸은 Frame 전용 편집 함수 대신 새 함수를 씁니다.
 
-## 개정(2026-11-18, UX.2.13)
-
-- 속성 탭의 `border` 묶음 행 아래에 `border-width`·`border-color` 행을 노출합니다. 두 행은 현재 Frame의 네 변 공통 Border 값과 기존 `BORDER` key를 공유합니다. 변별 12개 속성과 저장 key 분할은 아직 구현하지 않았습니다.
-- 테두리가 없는 Frame에서는 묶음 행에 두께와 색을 함께 입력해야 합니다. 단일 longhand 입력으로 기본 색이나 두께를 만들지 않습니다. `border-color: none`은 테두리를 제거합니다.
-
 ## 개정(2026-11-18, UX.3.11)
 
 - `stellar_commands::lock::edit_permission`을 속성 탭, 캔버스 편집, Layers 토글·이름·삭제·복제, CLI apply가 공유합니다. 자신이나 조상이 잠기면 수정할 수 없고, 자신의 잠금 토글은 조상이 잠기지 않았을 때 허용합니다. 숨김은 편집을 막지 않습니다.
@@ -170,3 +165,8 @@ ADR-0024는 디자인 속성의 이름·값 문법을 CSS longhand로 정하고(
 
 - Select All은 활성 View root의 보이고 잠기지 않은 직계 자식을 코어에서 골라 창 선택 history에 기록합니다. 영역 선택과 같은 자식 필터를 씁니다. 셸은 레이어 페이지를 순회하지 않습니다.
 - 1만 개 선택의 Inspector snapshot과 편집 비용은 위 Performance 절의 2026-11-15 측정값(각각 6.8ms, 명령 생성 약 6ms와 적용 14–18ms)을 참고합니다. 이번 행에서는 테스트·벤치 실행이 금지되어 새 측정이나 비용 상한 검증을 하지 못했습니다. 대량 선택의 편집 비용은 여전히 20ms를 넘을 수 있습니다.
+
+## 철회(2026-11-23, UX.2.13 테두리 행)
+
+- 2026-11-18 UX.2.13 개정의 `border-width`·`border-color` 행을 제거합니다. 두 행은 longhand flag를 달았지만 묶음 key `BORDER`를 함께 써서 ADR-0024의 "longhand 하나 = 속성 하나"와 UX.2.13 완료 기준(변 하나를 바꾸면 그 longhand만 저장)을 따르지 않았습니다. `border-color: none`을 테두리 제거로 해석해 CSS 문법에 없는 값을 앱·CLI·MCP 공용 값 문법에 넣었고, 기존 `border` 묶음 행이 이미 한쪽 값만 받아 나머지를 이어 쓰므로 같은 일을 하는 이중 경로였습니다.
+- 테두리 longhand는 따로 ADR을 세워 storage·document 저장 key를 12개로 나누고(IX.11.22) text source에 longhand 한 줄 표기를 정한 뒤, 속성 행을 진짜 longhand key로 만듭니다. 제거는 CSS 그대로 `border-style: none` 또는 묶음 `border: none`으로 합니다.

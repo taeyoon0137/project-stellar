@@ -114,10 +114,6 @@ pub enum InspectorProperty {
     StrokeWidth,
     /// `border`.
     Border,
-    /// `border-width`(현재 Frame의 네 변 공통 두께).
-    BorderWidth,
-    /// `border-color`(현재 Frame의 네 변 공통 색).
-    BorderColor,
     /// `border-radius` shorthand.
     BorderRadius,
     /// `border-*-radius`(TL, TR, BR, BL index).
@@ -143,7 +139,7 @@ pub enum InspectorProperty {
 use InspectorProperty as P;
 
 /// 표시 순서.
-const ORDER: [InspectorProperty; 29] = [
+const ORDER: [InspectorProperty; 27] = [
     P::Name,
     P::Visible,
     P::Locked,
@@ -158,8 +154,6 @@ const ORDER: [InspectorProperty; 29] = [
     P::Stroke,
     P::StrokeWidth,
     P::Border,
-    P::BorderWidth,
-    P::BorderColor,
     P::BorderRadius,
     P::Corner(0),
     P::Corner(1),
@@ -265,8 +259,6 @@ impl InspectorProperty {
             P::Stroke => "stroke",
             P::StrokeWidth => "stroke-width",
             P::Border => "border",
-            P::BorderWidth => "border-width",
-            P::BorderColor => "border-color",
             P::BorderRadius => "border-radius",
             P::Corner(index) => CORNER_NAMES[usize::from(index) & 3],
             P::X1 => "x1",
@@ -296,9 +288,7 @@ impl InspectorProperty {
             P::Color => S::Typography,
             P::BackgroundColor => S::Background,
             P::Fill | P::Stroke | P::StrokeWidth => S::FillStroke,
-            P::Border | P::BorderWidth | P::BorderColor | P::BorderRadius | P::Corner(_) => {
-                S::Border
-            }
+            P::Border | P::BorderRadius | P::Corner(_) => S::Border,
             _ => S::Kind,
         }
     }
@@ -315,8 +305,6 @@ impl InspectorProperty {
             P::Color => CssGrammar::Color { allow_none: false },
             P::BackgroundColor | P::Fill | P::Stroke => CssGrammar::Color { allow_none: true },
             P::Border => CssGrammar::Border,
-            P::BorderWidth => DIMENSION,
-            P::BorderColor => CssGrammar::Color { allow_none: true },
             P::BorderRadius => CssGrammar::Corners,
             P::PolygonSides => CssGrammar::Count { min: 3, max: 1000 },
             P::PolygonRotation => CssGrammar::Angle,
@@ -346,8 +334,8 @@ impl InspectorProperty {
             _ => {}
         }
         match self {
-            P::Border | P::BorderRadius => out |= flags::GROUP,
-            P::BorderWidth | P::BorderColor | P::Corner(_) => out |= flags::LONGHAND,
+            P::BorderRadius => out |= flags::GROUP,
+            P::Corner(_) => out |= flags::LONGHAND,
             P::Name
             | P::Visible
             | P::Locked
@@ -373,9 +361,7 @@ impl InspectorProperty {
                 class,
                 C::Frame | C::Rectangle | C::Ellipse | C::Polygon | C::Image
             ),
-            P::Overflow | P::BackgroundColor | P::Border | P::BorderWidth | P::BorderColor => {
-                class == C::Frame
-            }
+            P::Overflow | P::BackgroundColor | P::Border => class == C::Frame,
             P::BorderRadius | P::Corner(_) => matches!(class, C::Frame | C::Rectangle),
             P::Color => class == C::Text,
             P::Fill => matches!(class, C::Rectangle | C::Ellipse | C::Polygon),
@@ -407,7 +393,7 @@ impl InspectorProperty {
             P::BackgroundColor => frame_keys::BACKGROUND,
             P::Stroke => modifier_keys::STROKE_COLOR,
             P::StrokeWidth => modifier_keys::STROKE_WIDTH,
-            P::Border | P::BorderWidth | P::BorderColor => frame_keys::BORDER,
+            P::Border => frame_keys::BORDER,
             P::BorderRadius => PropertyKey(0),
             P::Corner(i) if frame => frame_keys::BORDER_RADIUS_LONGHANDS[usize::from(i) & 3],
             P::Corner(i) => shape_keys::BORDER_RADIUS_LONGHANDS[usize::from(i) & 3],
@@ -568,14 +554,6 @@ fn read(model: &DocumentModel, node: &NodeView, property: InspectorProperty) -> 
             NodePayload::Frame(frame) => {
                 CssValue::Border(frame.border.map(|b| (b.thickness(), b.color)))
             }
-            _ => return None,
-        },
-        P::BorderWidth => match &record.payload {
-            NodePayload::Frame(frame) => length_of(frame.border.map_or(0., |b| b.thickness())),
-            _ => return None,
-        },
-        P::BorderColor => match &record.payload {
-            NodePayload::Frame(frame) => CssValue::Color(frame.border.map(|b| b.color)),
             _ => return None,
         },
         P::Color => CssValue::Color(Some(match paint.fill.as_ref().map(|e| &e.payload) {
@@ -899,50 +877,6 @@ fn node_commands(
                 key,
                 PropertyValue::OptionalBorder(Some(next)),
             ));
-        }
-        (P::BorderWidth, CssValue::Length(width)) => {
-            let existing = match &node.record.payload {
-                NodePayload::Frame(frame) => frame.border,
-                _ => None,
-            };
-            let Some(existing) = existing else {
-                return Err(reject(
-                    "테두리가 없는 Frame에는 border에서 두께와 색을 함께 넣으세요",
-                ));
-            };
-            let next = Border::new(existing.color, *width)
-                .map_err(|_| reject("테두리 두께가 잘못되었습니다"))?;
-            out.push(set_property(
-                id,
-                key,
-                PropertyValue::OptionalBorder(Some(next)),
-            ));
-        }
-        (P::BorderColor, CssValue::Color(color)) => {
-            let existing = match &node.record.payload {
-                NodePayload::Frame(frame) => frame.border,
-                _ => None,
-            };
-            match (existing, color) {
-                (Some(existing), Some(color)) => {
-                    let next = Border::new(*color, existing.thickness())
-                        .map_err(|_| reject("테두리 색이 잘못되었습니다"))?;
-                    out.push(set_property(
-                        id,
-                        key,
-                        PropertyValue::OptionalBorder(Some(next)),
-                    ));
-                }
-                (Some(_), None) => {
-                    out.push(set_property(id, key, PropertyValue::OptionalBorder(None)))
-                }
-                (None, None) => {}
-                (None, Some(_)) => {
-                    return Err(reject(
-                        "테두리가 없는 Frame에는 border에서 두께와 색을 함께 넣으세요",
-                    ));
-                }
-            }
         }
         (P::Color | P::Fill, CssValue::Color(color)) => match (color, &node.paint.fill) {
             (Some(color), Some(entry)) => {

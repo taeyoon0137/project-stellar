@@ -41,7 +41,6 @@
 
 - 레이블은 CSS longhand 이름(`width`, `background-color`)이고 Stellar 전용 속성은 Stellar 이름(`polygon-sides`)입니다.
   툴팁은 쉬운 설명, longhand 이름, 변환 진단(Stellar 전용이면 "Stellar only")입니다. 진단은 코어 행 flag에서 옵니다.
-- `border`는 묶음 행이며 펼치면 현재 네 변 공통 모델 값인 `border-width`와 `border-color`가 보입니다. 두 행은 기존 Border 저장 key 하나에 매핑되고, 변별 12개 속성은 아직 없습니다.
 - `border-radius`는 묶음 행입니다. 펼침 단추를 누르면 4모서리 longhand 행이 들여 써서 보입니다. 펼침 상태는 창
   안에서만 기억합니다.
 - 컨트롤: 수치·문자 값은 텍스트 필드, keyword는 popup, true·false는 체크박스, 색은 견본(`NSColorWell` minimal)과
