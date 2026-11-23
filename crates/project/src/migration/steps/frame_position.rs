@@ -15,7 +15,9 @@
 //! - 이미 `left`·`top`·`position`을 명시한 Frame은 건드리지 않고 보고서에 남깁니다(이미 옮긴 문서).
 //! - 0x0102(`transform` 묶음)를 가리키는 저장 참조(View Variant property patch, ValueBinding target, Component variant
 //!   override)는 값 변환 없이 보존하고 [`transform_bundle_references`]로 보고합니다(`TypedValue`·`ExpressionType`에
-//!   Transform 타입이 없음).
+//!   Transform 타입이 없음). 문서 레코드 안의 View Variant patch 경로는 [`stored_reference_paths`]가 모읍니다. ValueBinding
+//!   target·Component variant override는 문서 레코드 밖(binding·컴포넌트 원본)에 있어 호출자가 그 경로를 같은 함수에
+//!   넘깁니다.
 
 use stellar_commands::arrange::align::{flow_parent, model_style_set, FlowParent};
 use stellar_core_types::ids::StableId;
