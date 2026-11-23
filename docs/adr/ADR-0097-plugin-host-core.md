@@ -118,7 +118,7 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
 
 ## Performance
 
-- 1초 20 메시지·batch 64 상한으로 Host RPC가 interaction T0~T5 경로에 끼지 않습니다. 고빈도 event는 Host RPC를 지나지 않습니다.
+- 1초 20 메시지·batch 64 상한으로 Host RPC가 interaction T0\~T5 경로에 끼지 않습니다. 고빈도 event는 Host RPC를 지나지 않습니다.
 - package 검증은 적재 때 한 번이며 항목 수·크기 상한이 시간을 묶습니다.
 
 ## Security
