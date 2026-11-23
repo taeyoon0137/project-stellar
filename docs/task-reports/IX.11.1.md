@@ -44,6 +44,10 @@
 | storage golden 불변 | 저장 encoder·decoder 변경 없음. `crates/storage` 미변경(lane 최종 check-core에서 storage test 포함 실행) |
 | 같은 diff 범위의 ADR | ADR-0008 개정 + ADR-0075. `cargo xtask validate-adr --base ce60bb92`는 lane 최종 검증에서 실행 |
 
+## 차이(작업 지시와 다른 점)
+
+- 값 문법 종류(`CssGrammar`)를 이 행에서 registry 쪽 crate로 옮겼습니다. 매핑 metadata의 "값 문법 종류" 필드가 parser와 같은 타입을 쓰게 하려는 것입니다(이중 정의 없음).
+
 ## 남은 위험 / 한계
 
 - 없음. 새 문법 종류의 값 해석은 IX.11.13·IX.11.14에서 구현합니다.

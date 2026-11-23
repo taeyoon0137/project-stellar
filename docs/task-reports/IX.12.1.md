@@ -41,6 +41,10 @@
 | 기존 golden bytes 불변 | encoder·decoder 변경 없음. storage·expressions golden test는 lane 최종 check-core에서 실행 |
 | `cargo xtask validate-adr` | lane 최종 검증에서 실행(아래 lane 결과) |
 
+## 차이(작업 지시와 다른 점)
+
+- 없음.
+
 ## 남은 위험 / 한계
 
 - chunk kind 1\~6 비교는 storage golden 값을 core-types test에 복사한 목록입니다. core-types가 storage에 의존할 수

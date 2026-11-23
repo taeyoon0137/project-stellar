@@ -43,6 +43,10 @@
 | alias 토큰 golden(`initial-value`는 literal, `var()`는 `:root` 선언에만) | 통과 |
 | rename 후 StableId 참조 유지, parser `var()`가 새 이름으로 같은 StableId를 냄 | 통과 |
 
+## 차이(작업 지시와 다른 점)
+
+- 없음.
+
 ## 남은 위험 / 한계
 
 - 접미사를 붙인 이름이 다른 항목의 기본 이름과 다시 겹치는 경우(이름이 `x-<32hex>` 꼴)는 따로 검사하지 않습니다.

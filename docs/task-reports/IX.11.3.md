@@ -58,6 +58,11 @@
 | 문서 key가 생긴 필드의 snapshot 전용 key 사용 0(값 하나인 경로) | 통과. 남은 전용 key는 값 여러 개 경로 7개 + 도형 종류 tag |
 | 갱신한 diff golden | 없음. CLI·ops fixture의 속성 경로는 공통 필드(0xE0xx)뿐이라 바뀌지 않았습니다(`grep`으로 확인) |
 
+## 차이(작업 지시와 다른 점)
+
+- 값 여러 개를 한 snapshot 경로에 담는 투영의 분할은 소유 파일 밖이라 하지 않았습니다(상태 참조).
+- 공통 node 필드 registry(`node_keys` 0x0001\~0x0003)를 문서 crate에 더했습니다. 숫자는 command `node_keys`와 같고 test로 고정합니다.
+
 ## 남은 위험 / 한계
 
 - 후속(semantic-merge lane): `build.rs`·`records.rs`에서 `RECT_SIZE`→`shape_keys::WIDTH`·`HEIGHT`,

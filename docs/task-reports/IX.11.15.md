@@ -58,6 +58,11 @@
 | `stellar query node` 속성 경로가 longhand key(0x0108·0x010b)이고 묶음 key(0x0101·0x0106)가 아님 | 통과 |
 | Swift·셸 CSS 문자열 조립 신규 0 | `apps/`·`crates/ffi` 미변경(`git diff --stat`) |
 
+## 차이(작업 지시와 다른 점)
+
+- `stellar query`·`stellar apply` JSON의 속성 경로는 숫자 key 표기이며 이 lane 소유 밖이라 이름 표기로 바꾸지 않았습니다. 대신 경로가 longhand key(0x0108·0x010b)인지 CLI 통합 test로 확인하고, CSS 이름은 새 `stellar css`가 냅니다.
+- 속성 패널 편집 규칙 두 곳(빈 이동 modifier, 물려받은 Text 색)을 "값이 같으면 command 없음"에 맞게 고쳤습니다. 왕복 test가 찾은 누락입니다.
+
 ## 남은 위험 / 한계
 
 - `stellar query`·`stellar apply` 결과의 속성 경로 표기는 숫자 key 그대로입니다(`crates/ops/src/query.rs`, 이 lane

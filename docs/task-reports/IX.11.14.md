@@ -46,6 +46,10 @@
 | 거부 입력 fixture(코드 4종 + 형식 오류, shorthand 거부) | 통과 |
 | parser fuzz target panic 0(무작위 bytes와 유효 입력 변조 6,000 round, 모든 문법 × 모든 shorthand) | 통과 |
 
+## 차이(작업 지시와 다른 점)
+
+- 없음.
+
 ## 남은 위험 / 한계
 
 - fuzz는 결정론적 내장 harness입니다. 외부 fuzz 엔진(cargo-fuzz) 연결과 장기 실행은 XVI.6.7 범위입니다.

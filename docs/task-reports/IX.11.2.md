@@ -51,6 +51,10 @@
 | PropertyKey 숫자 불변(key 중복 0, 기존 key 값 그대로) | 통과 |
 | storage golden 불변 | 저장 코드 변경 없음(lane 최종 check-core에 포함) |
 
+## 차이(작업 지시와 다른 점)
+
+- registry 이름 변경에 맞춰 `PropertyNameRegistry` 등록 test의 기대 이름을 바꿨습니다. 이름은 범위(Frame·Modifier)마다 유일하며, 두 범위를 한 이름 registry에 함께 등록하면 `transform`처럼 같은 이름이 생깁니다(제품 코드에서 함께 등록하는 곳 없음).
+
 ## 남은 위험 / 한계
 
 - `stellar query`의 속성 경로 표기는 여전히 숫자 key(`crates/ops/src/query.rs`, 이 lane 소유 밖)입니다. 이름 표기가
