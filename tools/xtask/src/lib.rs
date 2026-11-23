@@ -15,6 +15,7 @@ pub mod ffi_header;
 pub mod migration_fixtures;
 pub mod plan;
 pub mod pr_body;
+pub mod replay;
 pub mod storage_fixtures;
 pub mod sync;
 pub mod task_report;
