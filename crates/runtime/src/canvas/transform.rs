@@ -107,35 +107,13 @@ impl NodeGeometry {
     }
 }
 
-/// 변환한 상자의 축 정렬 경계.
-pub fn bounds_of(transform: &Transform2D, rect: [f32; 4]) -> Option<[f32; 4]> {
-    let [x, y, w, h] = rect;
-    let mut min = [f32::INFINITY; 2];
-    let mut max = [f32::NEG_INFINITY; 2];
-    for (px, py) in [(x, y), (x + w, y), (x, y + h), (x + w, y + h)] {
-        let p = transform.apply(Vec2::new(px, py).ok()?).ok()?;
-        min = [min[0].min(p.x()), min[1].min(p.y())];
-        max = [max[0].max(p.x()), max[1].max(p.y())];
-    }
-    Some([min[0], min[1], max[0] - min[0], max[1] - min[1]])
-}
+/// 변환한 상자의 축 정렬 경계(문서 쪽 계획과 같은 함수).
+pub use stellar_commands::arrange::plan::bounds_of;
 
-/// 상자들의 경계.
+/// 상자들의 경계. 계산은 문서 쪽 계획과 같은 [`stellar_commands::arrange::align::union`]입니다.
 pub fn union(boxes: impl IntoIterator<Item = [f32; 4]>) -> Option<[f32; 4]> {
-    let mut out: Option<[f32; 4]> = None;
-    for b in boxes {
-        out = Some(match out {
-            None => b,
-            Some(a) => {
-                let x0 = a[0].min(b[0]);
-                let y0 = a[1].min(b[1]);
-                let x1 = (a[0] + a[2]).max(b[0] + b[2]);
-                let y1 = (a[1] + a[3]).max(b[1] + b[3]);
-                [x0, y0, x1 - x0, y1 - y0]
-            }
-        });
-    }
-    out
+    let boxes: Vec<[f32; 4]> = boxes.into_iter().collect();
+    stellar_commands::arrange::align::union(&boxes)
 }
 
 /// scene에서 `node`의 기하를 읽습니다. 행이 없으면 `None`입니다.
