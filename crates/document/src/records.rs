@@ -6,6 +6,7 @@
 //! - 문서 validator(VI.10.1)의 입력입니다.
 //! - chunk serializer(VI.10.2)와 loader(VI.10.3)가 이 형태로 주고받습니다.
 //! - modifier stack은 node payload와 **분리**되어 별도 목록으로 저장됩니다(VI.9.1).
+//! - 명시 layout longhand도 node별 희소 record로 **분리**해 별도 목록에 둡니다(IX.11.6, ADR-0086).
 //!
 //! node 종류는 payload variant에서 유도하므로 kind와 payload가 어긋난 레코드는 표현할 수
 //! 없습니다. 컴포넌트 인스턴스는 정의와 희소 override만 보관합니다.
@@ -18,6 +19,7 @@ use crate::definitions::{DocumentDefinition, ViewDefinition};
 use crate::fragment::FragmentPayload;
 use crate::frame::FramePayload;
 use crate::image::ImagePayload;
+use crate::layout_record::LayoutRecord;
 use crate::modifier::ModifierStack;
 use crate::node_kind::NodeKind;
 use crate::path::IdentifiedPath;
@@ -93,6 +95,8 @@ pub struct DocumentRecords {
     pub nodes: Vec<NodeRecord>,
     /// node별 modifier stack(빈 stack은 저장하지 않음).
     pub modifier_stacks: Vec<ModifierStack>,
+    /// node별 명시 layout longhand(빈 record는 저장하지 않음, IX.11.6).
+    pub layout_records: Vec<LayoutRecord>,
 }
 
 impl DocumentRecords {
@@ -102,6 +106,7 @@ impl DocumentRecords {
             definition,
             nodes: Vec::new(),
             modifier_stacks: Vec::new(),
+            layout_records: Vec::new(),
         }
     }
 
@@ -110,11 +115,12 @@ impl DocumentRecords {
         self.definition.pages.iter().flat_map(|p| p.views.iter())
     }
 
-    /// canonical 순서로 정렬합니다: node는 StableId 오름차순, stack은 소유 node
+    /// canonical 순서로 정렬합니다: node는 StableId 오름차순, stack·layout record는 소유 node
     /// StableId 오름차순(안정 정렬). 같은 의미의 레코드는 정렬 후 `==`로 비교할 수 있습니다.
     pub fn sort_canonical(&mut self) {
         self.nodes.sort_by_key(|n| n.id);
         self.modifier_stacks.sort_by_key(|s| s.node);
+        self.layout_records.sort_by_key(|r| r.node);
     }
 }
 

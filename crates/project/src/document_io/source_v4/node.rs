@@ -6,6 +6,14 @@
 //!
 //! payload 키는 registry 이름·순서([`super::keys`])를 따르고 값은 CSS 문법([`super::css`])입니다. 모델이
 //! 표현하는 값만 쓰고, 표현할 수 없는 입력(변마다 다른 테두리, 모르는 키·값)은 거부합니다.
+//!
+//! 명시 layout longhand(IX.11.6)가 있는 문서 node는 `payload` 뒤에 `layout` mapping을 둡니다. 한 줄이 longhand
+//! 하나이고 명시한 longhand만 씁니다(ADR-0086, ADR-0077 개정). 명시 값이 없으면 `layout` 키를 쓰지 않습니다.
+//! 읽을 때 없는 longhand는 미설정입니다.
+//!
+//! Frame payload에서 CSS initial value가 곧 모델 기본값인 키(`transform`, `background-color`, 테두리 열두 줄,
+//! `border-*-radius`, `layout-mode`, `clipping`)는 읽을 때 생략을 허용하고 모델 기본값으로 읽습니다. 쓰기는 모든
+//! 키를 그대로 씁니다(payload 값은 모델에서 언제나 명시 값입니다). `width`·`height`는 생략할 수 없습니다.
 
 use stellar_core_types::color::ColorSpace;
 use stellar_core_types::ids::StableId;
@@ -23,6 +31,7 @@ use stellar_document::fragment::FragmentPayload;
 use stellar_document::frame::keys as frame_keys;
 use stellar_document::frame::{Border, Clipping, CornerRadius, FramePayload};
 use stellar_document::image::{CropRect, FitMode, ImagePayload, SamplingMode, IMAGE_PROP_ASSET};
+use stellar_document::layout_record::{format_value, LayoutLonghand, LayoutRecord};
 use stellar_document::modifier::{
     BlendMode, BooleanOp, ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack,
 };
@@ -186,13 +195,27 @@ fn parse_border(values: &[&str; 12]) -> Result<Option<Border>, TextSourceError> 
 pub(crate) fn parse_frame(value: &YamlValue) -> Result<FramePayload, TextSourceError> {
     let lines = frame_lines();
     let names: Vec<&str> = lines.iter().map(|(name, _)| *name).collect();
-    fields(value, &names)?;
+    known_fields(value, &names)?;
     let mut payload = FramePayload::default();
     let mut width = 0.0;
     let mut height = 0.0;
     let mut radius = [0.0_f32; 4];
     let mut border = [""; 12];
+    for (index, slot) in border.iter_mut().enumerate() {
+        *slot = match index % 3 {
+            0 => "medium",
+            1 => "none",
+            _ => "currentcolor",
+        };
+    }
     for (name, which) in &lines {
+        let required = matches!(
+            which,
+            FrameLine::Key(frame_keys::WIDTH) | FrameLine::Key(frame_keys::HEIGHT)
+        );
+        if !required && value.get(name).is_none() {
+            continue;
+        }
         let text = get(value, name)?;
         match which {
             FrameLine::Border(index) => border[*index] = text,
@@ -990,10 +1013,62 @@ fn parse_payload(kind: &str, value: &YamlValue) -> Result<NodePayload, TextSourc
     })
 }
 
-/// node 레코드 하나를 씁니다. `stack`이 `Some`이면 문서 node로 보고 `modifiers` 목록을 붙입니다.
+/// 모르는 키는 거부하고 빠진 키는 허용합니다.
+fn known_fields(value: &YamlValue, allowed: &[&str]) -> Result<(), TextSourceError> {
+    let pairs = value
+        .as_mapping()
+        .ok_or_else(|| invalid("mapping이 필요합니다"))?;
+    for (key, _) in pairs {
+        let name = text(key)?;
+        if !allowed.contains(&name) {
+            return Err(unsupported(format!("알 수 없는 키: {name}")));
+        }
+    }
+    Ok(())
+}
+
+/// 명시 layout longhand를 longhand 번호 순서의 한 줄씩으로 씁니다.
+fn layout(record: &LayoutRecord) -> YamlValue {
+    YamlValue::Mapping(
+        record
+            .iter()
+            .map(|(longhand, value)| (scalar(longhand.name()), line(format_value(value))))
+            .collect(),
+    )
+}
+
+/// [`layout`]을 읽습니다. 줄 순서는 longhand 번호 순이어야 합니다(결정론적 bytes).
+fn parse_layout(value: &YamlValue, node: StableId) -> Result<LayoutRecord, TextSourceError> {
+    let pairs = value
+        .as_mapping()
+        .ok_or_else(|| invalid("layout은 mapping이어야 합니다"))?;
+    let mut record = LayoutRecord::new(node);
+    let mut last: Option<LayoutLonghand> = None;
+    for (key, item) in pairs {
+        let name = text(key)?;
+        let longhand = LayoutLonghand::from_name(name)
+            .ok_or_else(|| unsupported(format!("layout longhand가 아닙니다: {name}")))?;
+        if last.is_some_and(|l| l >= longhand) {
+            return Err(invalid("layout longhand는 번호 순서로 한 번씩 씁니다"));
+        }
+        last = Some(longhand);
+        let parsed = longhand
+            .parse(text(item)?)
+            .map_err(|e| invalid(format!("{name}: {e}")))?;
+        record.set(longhand, parsed).map_err(invalid)?;
+    }
+    if record.is_empty() {
+        return Err(invalid("빈 layout은 쓰지 않습니다"));
+    }
+    Ok(record)
+}
+
+/// node 레코드 하나를 씁니다. `stack`이 `Some`이면 문서 node로 보고 `modifiers` 목록을 붙입니다. `layout`이
+/// 있으면 `payload` 뒤에 명시 layout longhand를 씁니다.
 pub(crate) fn node(
     record: &NodeRecord,
     stack: Option<Option<&ModifierStack>>,
+    layout_record: Option<&LayoutRecord>,
 ) -> Result<YamlValue, TextSourceError> {
     let mut out = vec![
         (scalar("id"), line(css::id(record.id))),
@@ -1008,6 +1083,9 @@ pub(crate) fn node(
         (scalar("kind"), line(kind_name(&record.payload))),
         (scalar("payload"), payload(&record.payload)?),
     ];
+    if let Some(record) = layout_record.filter(|r| !r.is_empty()) {
+        out.push((scalar("layout"), layout(record)));
+    }
     if let Some(stack) = stack {
         out.push((
             scalar("modifiers"),
@@ -1023,15 +1101,21 @@ pub(crate) fn node(
     Ok(YamlValue::Mapping(out))
 }
 
-/// [`node`]를 읽습니다. `with_modifiers`이면 `modifiers` 목록을 요구하고 비어 있지 않은 stack을 돌려줍니다.
+/// [`node`]를 읽은 결과: node 레코드, 비어 있지 않은 modifier stack, 명시 layout record.
+pub(crate) type ParsedNode = (NodeRecord, Option<ModifierStack>, Option<LayoutRecord>);
+
+/// [`node`]를 읽습니다. `with_modifiers`이면 문서 node로 보고 `modifiers` 목록을 요구하며 선택 `layout`을 읽습니다.
 pub(crate) fn parse_node(
     value: &YamlValue,
     with_modifiers: bool,
-) -> Result<(NodeRecord, Option<ModifierStack>), TextSourceError> {
+) -> Result<ParsedNode, TextSourceError> {
     let mut keys: Vec<&str> = COMMON.to_vec();
     keys.push("payload");
     if with_modifiers {
         keys.push("modifiers");
+        if value.get("layout").is_some() {
+            keys.push("layout");
+        }
     }
     fields(value, &keys)?;
     let record = NodeRecord {
@@ -1065,5 +1149,9 @@ pub(crate) fn parse_node(
             stack = Some(modifiers);
         }
     }
-    Ok((record, stack))
+    let layout_record = match value.get("layout") {
+        Some(item) if with_modifiers => Some(parse_layout(item, record.id)?),
+        _ => None,
+    };
+    Ok((record, stack, layout_record))
 }

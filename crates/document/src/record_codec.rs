@@ -18,8 +18,12 @@
 //! | payload | `u32` 길이 + 종류별 canonical payload |
 //!
 //! subtree 형식: root id 16 + node 수 `u32` + (`u32` 길이 + node 레코드)* + stack 수 `u32` +
-//! (`u32` 길이 + [`ModifierStack::encode`])*. node는 root부터 pre-order(형제는 OrderKey,
+//! (`u32` 길이 + [`ModifierStack::encode`])* + [선택 layout 절]. node는 root부터 pre-order(형제는 OrderKey,
 //! StableId 순), stack은 소유 node StableId 순입니다.
+//!
+//! layout 절(IX.11.6, ADR-0086)은 record 수 `u32`(1 이상) + (`u32` 길이 + [`LayoutRecord::encode`])*이고, 소유
+//! node StableId 순입니다. 명시 layout longhand가 없는 subtree는 이 절을 쓰지 않으므로 이전 형식의 bytes와
+//! 같습니다. 읽을 때 절이 없으면 record가 없는 것입니다. 수 0으로 쓴 절은 정규형이 아니라 거부합니다.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -32,6 +36,7 @@ use crate::definitions::{DefinitionError, DocumentDefinition};
 use crate::fragment::{FragmentError, FragmentPayload};
 use crate::frame::{FrameError, FramePayload};
 use crate::image::{ImageError, ImagePayload};
+use crate::layout_record::{LayoutRecord, LayoutRecordError};
 use crate::modifier::{ModifierError, ModifierStack};
 use crate::node_kind::NodeKind;
 use crate::path::{IdentifiedPath, PathError};
@@ -82,6 +87,13 @@ pub enum RecordCodecError {
     Modifier(ModifierError),
     /// 문서 정의 오류.
     Definition(DefinitionError),
+    /// layout record 오류(IX.11.6).
+    Layout(LayoutRecordError),
+    /// subtree 안 layout record의 소유 node가 그 subtree에 없습니다.
+    ForeignLayoutRecord {
+        /// 소유 node.
+        owner: StableId,
+    },
 }
 
 impl fmt::Display for RecordCodecError {
@@ -106,6 +118,10 @@ impl fmt::Display for RecordCodecError {
             RecordCodecError::Image(e) => write!(f, "Image payload: {e}"),
             RecordCodecError::Modifier(e) => write!(f, "modifier stack: {e}"),
             RecordCodecError::Definition(e) => write!(f, "문서 정의: {e}"),
+            RecordCodecError::Layout(e) => write!(f, "layout record: {e}"),
+            RecordCodecError::ForeignLayoutRecord { owner } => {
+                write!(f, "subtree 밖 node {owner}의 layout record입니다")
+            }
         }
     }
 }
@@ -176,6 +192,10 @@ impl<'a> Reader<'a> {
     fn take_bytes(&mut self) -> Result<&'a [u8], RecordCodecError> {
         let len = self.take_u32()? as usize;
         self.take(len)
+    }
+
+    fn is_at_end(&self) -> bool {
+        self.pos == self.input.len()
     }
 
     fn expect_end(&self) -> Result<(), RecordCodecError> {
@@ -304,6 +324,8 @@ pub struct SubtreeRecords {
     pub nodes: Vec<NodeRecord>,
     /// subtree 안 node의 modifier stack(소유 node StableId 순).
     pub modifier_stacks: Vec<ModifierStack>,
+    /// subtree 안 node의 명시 layout record(소유 node StableId 순, IX.11.6).
+    pub layout_records: Vec<LayoutRecord>,
 }
 
 impl SubtreeRecords {
@@ -318,6 +340,12 @@ impl SubtreeRecords {
         put_u32(&mut buf, self.modifier_stacks.len());
         for stack in &self.modifier_stacks {
             put_bytes(&mut buf, &stack.encode());
+        }
+        if !self.layout_records.is_empty() {
+            put_u32(&mut buf, self.layout_records.len());
+            for record in &self.layout_records {
+                put_bytes(&mut buf, &record.encode());
+            }
         }
         buf
     }
@@ -352,11 +380,37 @@ impl SubtreeRecords {
             }
             modifier_stacks.push(stack);
         }
+        let mut layout_records = Vec::new();
+        if !reader.is_at_end() {
+            let count = reader.take_u32()? as usize;
+            if count == 0 {
+                return Err(RecordCodecError::Malformed {
+                    reason: "빈 layout 절은 쓰지 않습니다",
+                });
+            }
+            for _ in 0..count {
+                let record =
+                    LayoutRecord::decode(reader.take_bytes()?).map_err(RecordCodecError::Layout)?;
+                if !members.contains(&record.node) {
+                    return Err(RecordCodecError::ForeignLayoutRecord { owner: record.node });
+                }
+                if layout_records
+                    .last()
+                    .is_some_and(|last: &LayoutRecord| last.node >= record.node)
+                {
+                    return Err(RecordCodecError::Malformed {
+                        reason: "layout record는 소유 node 순서로 한 번씩 씁니다",
+                    });
+                }
+                layout_records.push(record);
+            }
+        }
         reader.expect_end()?;
         Ok(SubtreeRecords {
             root,
             nodes,
             modifier_stacks,
+            layout_records,
         })
     }
 }
@@ -371,6 +425,11 @@ pub enum PartitionError {
     },
     /// 어느 subtree에도 속하지 않는 modifier stack이 있습니다.
     UnassignedModifierStacks {
+        /// 소유 node들.
+        owners: Vec<StableId>,
+    },
+    /// 어느 subtree에도 속하지 않는 layout record가 있습니다.
+    UnassignedLayoutRecords {
         /// 소유 node들.
         owners: Vec<StableId>,
     },
@@ -389,6 +448,9 @@ impl fmt::Display for PartitionError {
             }
             PartitionError::UnassignedModifierStacks { owners } => {
                 write!(f, "subtree에 속하지 않는 modifier stack {}개", owners.len())
+            }
+            PartitionError::UnassignedLayoutRecords { owners } => {
+                write!(f, "subtree에 속하지 않는 layout record {}개", owners.len())
             }
             PartitionError::SharedNode { node } => {
                 write!(f, "node {node}가 두 View subtree에 있습니다")
@@ -419,6 +481,8 @@ impl DocumentRecords {
         }
         let stacks: BTreeMap<StableId, &ModifierStack> =
             self.modifier_stacks.iter().map(|s| (s.node, s)).collect();
+        let layouts: BTreeMap<StableId, &LayoutRecord> =
+            self.layout_records.iter().map(|r| (r.node, r)).collect();
 
         let mut assigned: BTreeSet<StableId> = BTreeSet::new();
         let mut out = Vec::new();
@@ -442,12 +506,17 @@ impl DocumentRecords {
                 .iter()
                 .filter_map(|id| stacks.get(id).map(|s| (*s).clone()))
                 .collect();
+            let layout_records = members
+                .iter()
+                .filter_map(|id| layouts.get(id).map(|r| (*r).clone()))
+                .collect();
             out.push((
                 view.id,
                 SubtreeRecords {
                     root: view.root_frame,
                     nodes,
                     modifier_stacks,
+                    layout_records,
                 },
             ));
         }
@@ -478,6 +547,15 @@ impl DocumentRecords {
         if !unassigned.is_empty() || stacks.len() != self.modifier_stacks.len() {
             return Err(PartitionError::UnassignedModifierStacks { owners: unassigned });
         }
+        let unassigned: Vec<StableId> = self
+            .layout_records
+            .iter()
+            .map(|r| r.node)
+            .filter(|owner| !assigned.contains(owner))
+            .collect();
+        if !unassigned.is_empty() || layouts.len() != self.layout_records.len() {
+            return Err(PartitionError::UnassignedLayoutRecords { owners: unassigned });
+        }
         Ok(out)
     }
 
@@ -490,6 +568,7 @@ impl DocumentRecords {
         for subtree in subtrees {
             records.nodes.extend(subtree.nodes);
             records.modifier_stacks.extend(subtree.modifier_stacks);
+            records.layout_records.extend(subtree.layout_records);
         }
         records.sort_canonical();
         records

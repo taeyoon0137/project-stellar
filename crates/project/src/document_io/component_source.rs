@@ -328,7 +328,7 @@ impl ComponentSource {
                 YamlValue::Sequence(
                     records
                         .into_iter()
-                        .map(|record| source_v4::node::node(record, None))
+                        .map(|record| source_v4::node::node(record, None, None))
                         .collect::<Result<_, _>>()?,
                 ),
             ),
@@ -362,7 +362,7 @@ impl ComponentSource {
             .as_sequence()
             .ok_or_else(|| invalid("nodes는 sequence여야 합니다"))?
         {
-            let (record, _) = source_v4::node::parse_node(item, false)?;
+            let (record, _, _) = source_v4::node::parse_node(item, false)?;
             if last.is_some_and(|prev| prev >= record.id) {
                 return Err(invalid("node는 StableId 오름차순, 중복 없이 씁니다"));
             }

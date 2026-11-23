@@ -200,6 +200,7 @@ pub const CSS_LONGHAND_NAMES: &[&str] = &[
     "grid-template-columns",
     "grid-template-rows",
     "grid-auto-rows",
+    "grid-auto-columns",
     "grid-auto-flow",
     "grid-column-start",
     "grid-column-end",

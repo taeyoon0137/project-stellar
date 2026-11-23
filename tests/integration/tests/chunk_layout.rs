@@ -158,6 +158,7 @@ fn chunk_model(
                         .filter_map(|n| stacks.get(n).map(|s| (*s).clone()))
                         .collect()
                 },
+                layout_records: Vec::new(),
             };
             let payload = subtree.encode();
             assert_eq!(

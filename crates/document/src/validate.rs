@@ -292,6 +292,13 @@ pub enum DocumentViolation {
         /// 그 node의 depth.
         depth: u32,
     },
+    /// layout record 제약 위반(IX.11.6).
+    LayoutRecord {
+        /// 소유 node.
+        node: StableId,
+        /// 위반.
+        violation: crate::layout_record::LayoutRecordViolation,
+    },
 }
 
 impl DocumentViolation {
@@ -318,6 +325,10 @@ impl DocumentViolation {
             DocumentViolation::ModifierOwnerMissing { stack }
             | DocumentViolation::DuplicateModifierStack { stack }
             | DocumentViolation::EmptyModifierStack { stack } => stack.clone(),
+            DocumentViolation::LayoutRecord { node, .. } => ViolationLocation::Property {
+                node: *node,
+                path: PropertyPath::new(*node),
+            },
         }
     }
 }
@@ -418,6 +429,7 @@ impl fmt::Display for DocumentViolation {
                 f,
                 "{node}: depth {depth}가 최대 {MAX_NODE_DEPTH}를 넘습니다"
             ),
+            DocumentViolation::LayoutRecord { violation, .. } => write!(f, "{violation}"),
         }
     }
 }
@@ -471,6 +483,7 @@ pub fn validate_document(
     validator.check_depth();
     validator.check_references();
     validator.check_modifier_stacks();
+    validator.check_layout_records();
     if validator.violations.is_empty() {
         Ok(DocumentDiagnostics {
             unresolved: validator.unresolved,
@@ -884,6 +897,27 @@ impl Validator<'_> {
     }
 
     // 6. modifier stack.
+    fn check_layout_records(&mut self) {
+        let records = self.records;
+        let payload_of = |id: StableId| {
+            self.node_index
+                .get(&id)
+                .map(|&index| &records.nodes[index].payload)
+        };
+        let violations = crate::layout_record::check_records(&records.layout_records, payload_of);
+        for violation in violations {
+            let node = match &violation {
+                crate::layout_record::LayoutRecordViolation::OwnerMissing { node }
+                | crate::layout_record::LayoutRecordViolation::Duplicate { node }
+                | crate::layout_record::LayoutRecordViolation::Empty { node }
+                | crate::layout_record::LayoutRecordViolation::NotApplicable { node, .. }
+                | crate::layout_record::LayoutRecordViolation::SizeInPayload { node, .. } => *node,
+            };
+            self.violations
+                .push(DocumentViolation::LayoutRecord { node, violation });
+        }
+    }
+
     fn check_modifier_stacks(&mut self) {
         let records = self.records;
         let mut owners: BTreeSet<StableId> = BTreeSet::new();
@@ -1119,6 +1153,7 @@ mod tests {
             definition,
             nodes,
             modifier_stacks: vec![rect_stack, inner_stack],
+            layout_records: Vec::new(),
         }
     }
 

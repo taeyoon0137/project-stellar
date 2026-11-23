@@ -184,11 +184,13 @@ fn view_tree_with_two_subtrees_is_merged() {
         root,
         nodes: Vec::new(),
         modifier_stacks: Vec::new(),
+        layout_records: Vec::new(),
     };
     let mut second = SubtreeRecords {
         root: split_root,
         nodes: Vec::new(),
         modifier_stacks: Vec::new(),
+        layout_records: Vec::new(),
     };
     for node in subtree.nodes {
         let in_second = node.id == split_root || node.parent.is_some_and(|p| moved.contains(&p));
