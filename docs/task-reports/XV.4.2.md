@@ -2,7 +2,7 @@
 
 - WBS: XV.4.2
 - 작업명: 각 lock entry에 exact commit, cached content hash, library schema version, transitive dependencies 기록
-- 상태: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 완료 (`[x]`)
+- 상태: 완료 (`[x]`) — 2026-11-23 library-finish, 아래 "작업 (2026-11-23, library-finish)" 절. 이전 기록: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 완료 (`[x]`)
 - 선행: XV.3.4(이 lane `[~]` — 필요한 검증 결과 타입은 존재), XV.4.1(이 lane `[~]` — 변환 코드 존재)
 
 ## 필수 실행 환경
@@ -84,3 +84,26 @@
 ### 남은 조건과 finding
 
 - XV.3.4가 `[x]`가 되면 코드 변경 없이 `[x]`입니다.
+
+## 작업 (2026-11-23, library-finish): 선행 XV.3.4 충족과 실제 lock 확인
+
+### 한 일
+
+- 선행 XV.3.4가 이 작업에서 제품 검증기로 완료되었습니다(XV.3.4 보고서). lock entry 필드·validator 코드는 바꾸지 않았습니다.
+- 실제 Git library(전이 의존성 A → C)를 제품 resolver·materialize로 해석하고 제품 lock 기록(`write_resolved_lockfile`)으로 쓴 lock을
+  제품 lock parser(`library_open::read_lock`)로 다시 읽어 확인했습니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-dependencies` | 101 passed, 0 failed; doctest 1 passed |
+| `cargo test -p stellar-project --lib library_` | library_entry·library_git 단위 시험 통과, 0 failed |
+| `cargo clippy -p stellar-dependencies -p stellar-project -p stellar-assets -p stellar-integration-tests --all-targets -- -D warnings` | 경고 0 |
+| `cargo xtask validate-adr --base 0c226a06` | 종료 코드 0 |
+| `cargo test -p stellar-integration-tests --test library_lock_integrity` | 1 passed |
+
+| 검사 | 결과 |
+|---|---|
+| entry가 exact commit·content hash(entry bytes를 `StorageSha256`으로 다시 계산한 값과 같음)·schema version 4·전이 의존성(C node)을 기록하고 제품 parser로 round-trip(`lock_records_entry_hash_and_tampered_cache_is_corruption_without_other_commit`) | 통과 |
+| **누락 field validator 실패**: `content_hash` 줄을 지운 lock은 `read_lock`이 `LockInvalid`로 거부 | 통과 |
