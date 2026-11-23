@@ -233,6 +233,17 @@ fn agent_scope_escape_is_rejected() {
             insert(20, 12),
             Some(ViolationReason::OutsideLease),
         ),
+        (
+            "자기 root를 밖으로 이동",
+            move_to(13, 12, 0x10),
+            Some(ViolationReason::OutsideLease),
+        ),
+        (
+            "자기 root 순서 변경",
+            move_to(13, 11, 0x30),
+            Some(ViolationReason::OutsideLease),
+        ),
+        ("범위 안 자손 순서 변경", move_to(14, 13, 0x30), None),
     ];
     for (name, command, expected) in cases {
         let mut state = state();
@@ -250,6 +261,11 @@ fn agent_scope_escape_is_rejected() {
     assert_eq!(
         run(&mut state, &table, agent(901), rename(14)),
         Some(ViolationReason::Leased(LeaseId(sid(900))))
+    );
+    // 자기 root를 옮기면 root의 옛 부모(lease 밖)가 바뀐 node라 거부합니다. 다른 lease subtree 안으로도 못 옮깁니다.
+    assert_eq!(
+        run(&mut state, &table, agent(901), move_to(12, 14, 0x20)),
+        Some(ViolationReason::OutsideLease)
     );
     assert_eq!(
         run(&mut state, &table, agent(999), rename(12)),
