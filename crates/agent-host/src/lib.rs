@@ -33,5 +33,6 @@ pub mod preflight;
 pub mod process;
 pub mod profile;
 pub mod raw;
+pub mod session;
 pub mod status;
 pub mod target;
