@@ -9,6 +9,8 @@ pub mod memory;
 /// 상호작용 지연 trace T0~T5 (XVI.1.1~XVI.1.4).
 pub mod interaction;
 
+/// ring buffer 로컬 trace store (XVI.1.5).
+pub mod trace_store;
 
 
 
