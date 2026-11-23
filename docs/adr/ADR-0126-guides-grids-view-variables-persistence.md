@@ -35,7 +35,10 @@ Accepted (2026-11-24).
    위반으로 냅니다. Variant override가 가리키는 scene node는 검사하지 않습니다(IX.7.8과 같이 orphan은 resolver가 적용하지
    않고 진단합니다).
 4. 가이드 id는 소유 Frame 안에서 유일합니다. 문서 전체 영속 id 등록에는 넣지 않습니다(경로가 항상 소유 Frame을 root로 가지므로
-   Diff·Merge 식별에 충분). View 변수·Variant id는 새로 만들 때 문서의 다른 영속 id와 겹치지 않아야 합니다.
+   Diff·Merge 식별에 충분). View 변수·Variant id는 문서 안에서 유일합니다: 문서의 다른 영속 id(문서·페이지·View·node·
+   modifier·path element)와도, 다른 View나 같은 View의 다른 변수·Variant id와도 겹치지 않습니다. Variant는 semantic
+   snapshot에서 id로 객체가 되기 때문입니다. command(`edit-view-variants`의 생성)와 validator
+   (`guides::persist::check_view_item_ids`) 둘 다 이 규칙으로 거부합니다.
 
 ### 2. chunk: View subtree 확장 절
 

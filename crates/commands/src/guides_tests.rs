@@ -203,6 +203,20 @@ fn view_variant_commands_persist_in_records_and_undo_exactly() {
         command: ViewVariantCommand::CreateVariable(flag(10)),
     }));
     assert!(clash.validate(&model).is_err());
+    // 변수·Variant끼리도 겹치면 거부합니다: 이미 있는 변수 id로 Variant를 만들면 semantic snapshot의 Variant 객체 id가
+    // 문서 안에서 유일하지 않게 됩니다(ADR-0126 결정 1.4).
+    let variant_as_variable = Command::EditViewVariants(Box::new(EditViewVariants {
+        view: sid(3),
+        command: ViewVariantCommand::CreateVariant(ViewVariant::new(
+            ViewVariantId::new(sid(200)),
+            VariantCondition::new(),
+            Default::default(),
+        )),
+    }));
+    assert!(matches!(
+        variant_as_variable.validate(&model),
+        Err(CommandError::DuplicateId { id }) if id == sid(200)
+    ));
     // 없는 View.
     let no_view = Command::EditViewVariants(Box::new(EditViewVariants {
         view: sid(4),

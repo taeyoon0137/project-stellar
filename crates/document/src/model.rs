@@ -261,6 +261,18 @@ impl DocumentModel {
         self.view_variants.get(&view)
     }
 
+    /// 어느 View model(지운 View의 model 포함)이 이 id의 변수나 Variant를 가지면 참입니다. 새 변수·Variant id가 문서의
+    /// 다른 View 변수·Variant id와 겹치는지 볼 때 씁니다(ADR-0126 결정 1.4).
+    pub fn has_view_variant_item(&self, id: StableId) -> bool {
+        self.view_variants.values().any(|model| {
+            model
+                .variables()
+                .iter()
+                .any(|variable| variable.id().stable_id() == id)
+                || model.variants().any(|variant| variant.id.stable_id() == id)
+        })
+    }
+
     /// View의 변수·Variant model을 바꾸고 이전 model을 돌려줍니다. 빈 model은 model을 지웁니다. View가 없으면 거부합니다.
     pub fn set_view_variants(
         &mut self,

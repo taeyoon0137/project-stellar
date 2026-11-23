@@ -64,6 +64,14 @@ pub enum GuidesViolation {
         /// View.
         view: StableId,
     },
+    /// View 변수·Variant id가 문서의 다른 영속 id(문서·페이지·View·node·modifier·path element)나 다른 변수·Variant
+    /// id와 겹칩니다. Variant는 semantic snapshot에서 id로 객체가 되므로 문서 안에서 유일해야 합니다(ADR-0126 결정 1.4).
+    DuplicateViewItemId {
+        /// 그 변수·Variant가 든 View.
+        view: StableId,
+        /// 겹친 id.
+        id: StableId,
+    },
 }
 
 impl GuidesViolation {
@@ -76,7 +84,8 @@ impl GuidesViolation {
             | GuidesViolation::EmptyGuides { owner } => *owner,
             GuidesViolation::ViewMissing { view }
             | GuidesViolation::DuplicateView { view }
-            | GuidesViolation::EmptyView { view } => *view,
+            | GuidesViolation::EmptyView { view }
+            | GuidesViolation::DuplicateViewItemId { view, .. } => *view,
         }
     }
 }
@@ -107,6 +116,10 @@ impl fmt::Display for GuidesViolation {
             GuidesViolation::EmptyView { view } => {
                 write!(f, "View {view}의 변수 model이 비어 있습니다")
             }
+            GuidesViolation::DuplicateViewItemId { view, id } => write!(
+                f,
+                "View {view}의 변수·Variant id {id}가 문서의 다른 영속 id와 겹칩니다"
+            ),
         }
     }
 }
@@ -147,6 +160,31 @@ pub fn check_records(
         }
         if !views.contains(&view) {
             violations.push(GuidesViolation::ViewMissing { view });
+        }
+    }
+    violations
+}
+
+/// View 변수·Variant id가 문서 안에서 유일한지 봅니다(ADR-0126 결정 1.4). `taken`은 문서의 다른 영속 id(문서·페이지·
+/// View·node·modifier·path element)이면 참입니다. 변수·Variant끼리도(다른 View 사이, 같은 View의 변수와 Variant 사이)
+/// 겹치면 위반입니다.
+pub fn check_view_item_ids(
+    variants: &[ViewVariantModel],
+    taken: impl Fn(StableId) -> bool,
+) -> Vec<GuidesViolation> {
+    let mut violations = Vec::new();
+    let mut seen = BTreeSet::new();
+    for model in variants {
+        let view = model.variables().view();
+        let ids = model
+            .variables()
+            .iter()
+            .map(|variable| variable.id().stable_id())
+            .chain(model.variants().map(|variant| variant.id.stable_id()));
+        for id in ids {
+            if taken(id) || !seen.insert(id) {
+                violations.push(GuidesViolation::DuplicateViewItemId { view, id });
+            }
         }
     }
     violations
@@ -500,6 +538,46 @@ mod tests {
         assert_eq!(
             subtree.encode_with(&SubtreeSections::default()),
             subtree.encode()
+        );
+    }
+
+    #[test]
+    fn view_item_ids_must_be_unique_in_the_document() {
+        // 검증 기준(ADR-0126 결정 1.4): View 변수·Variant id는 다른 영속 id, 다른 View의 변수·Variant id와 겹치지 않습니다.
+        let taken = |id: StableId| id == sid(1);
+        assert!(check_view_item_ids(&[view_model(50)], taken).is_empty());
+        let variable = device_variable().id().stable_id();
+        assert_eq!(
+            check_view_item_ids(&[view_model(50), view_model(51)], taken),
+            vec![GuidesViolation::DuplicateViewItemId {
+                view: sid(51),
+                id: variable
+            }]
+        );
+        assert_eq!(
+            check_view_item_ids(&[view_model(50)], |id| id == variable),
+            vec![GuidesViolation::DuplicateViewItemId {
+                view: sid(50),
+                id: variable
+            }]
+        );
+
+        // validator: 변수 id가 node id와 같으면 거부합니다.
+        let mut records = document().to_records().unwrap();
+        records.view_variants = vec![view_model(50)];
+        crate::validate::validate_document(&records).unwrap();
+        let mut clash = records.clone();
+        clash.nodes[1].id = variable;
+        let error = crate::validate::validate_document(&clash).unwrap_err();
+        assert!(
+            error.violations.iter().any(|v| matches!(
+                v,
+                crate::validate::DocumentViolation::Guides {
+                    violation: GuidesViolation::DuplicateViewItemId { .. }
+                }
+            )),
+            "{:?}",
+            error.violations
         );
     }
 

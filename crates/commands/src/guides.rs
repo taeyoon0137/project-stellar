@@ -179,8 +179,9 @@ impl EditViewVariants {
                 ViewVariantCommand::CreateVariant(variant) => variant.id.stable_id(),
                 _ => unreachable!(),
             };
-            // 새 변수·Variant id는 문서의 다른 영속 id와 겹치지 않아야 합니다.
-            if model.contains(id) || model.contains_persistent_id(id) {
+            // 새 변수·Variant id는 문서의 다른 영속 id와, 다른 View(또는 같은 View의 다른 종류)의 변수·Variant id와
+            // 겹치지 않아야 합니다(ADR-0126 결정 1.4). Variant는 semantic snapshot에서 id로 객체가 됩니다.
+            if model.contains_persistent_id(id) || model.has_view_variant_item(id) {
                 return Err(CommandError::DuplicateId { id });
             }
         }

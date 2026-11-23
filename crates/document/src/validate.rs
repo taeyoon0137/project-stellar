@@ -337,7 +337,8 @@ impl DocumentViolation {
             DocumentViolation::Guides { violation } => match violation {
                 crate::guides::persist::GuidesViolation::ViewMissing { view }
                 | crate::guides::persist::GuidesViolation::DuplicateView { view }
-                | crate::guides::persist::GuidesViolation::EmptyView { view } => {
+                | crate::guides::persist::GuidesViolation::EmptyView { view }
+                | crate::guides::persist::GuidesViolation::DuplicateViewItemId { view, .. } => {
                     ViolationLocation::View(*view)
                 }
                 other => ViolationLocation::Property {
@@ -945,9 +946,15 @@ impl Validator<'_> {
             |id| self.kind_of(id),
             &views,
         );
+        // View 변수·Variant id도 문서 영속 id 공간에서 유일해야 합니다(check_ids가 채운 targets 기준).
+        let duplicates =
+            crate::guides::persist::check_view_item_ids(&records.view_variants, |id| {
+                self.targets.contains_key(&id)
+            });
         self.violations.extend(
             violations
                 .into_iter()
+                .chain(duplicates)
                 .map(|violation| DocumentViolation::Guides { violation }),
         );
     }
