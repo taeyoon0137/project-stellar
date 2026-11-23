@@ -527,3 +527,69 @@ fn cli_dry_run_then_window_save_and_reopen_show_one_view_file_in_git_diff() {
         "stamp·journal은 Git 밖: {untracked}"
     );
 }
+
+/// 지금 원본에 token set 하나를 더한 파일 집합에서 새 token 파일 경로와 내용(외부 편집기·CLI가 token 파일을 씀).
+fn token_file(project: &TempDir) -> (String, String) {
+    use stellar_core_types::typed_value::TypedValue;
+    use stellar_core_types::value::Length;
+    use stellar_project::document_io::source_v4::project::{decode, encode};
+    use stellar_project::document_io::source_v4::token::{TokenSetSource, TokenSource};
+    let files = read_source(project.path()).unwrap().unwrap().files;
+    let mut text = decode(&files).unwrap();
+    text.token_sets.push(TokenSetSource {
+        id: sid(3_000),
+        name: "Brand Space".into(),
+        tokens: vec![TokenSource {
+            id: sid(3_001),
+            name: "space/4".into(),
+            expression: sid(3_002),
+            value: TypedValue::Length(Length::new(16.0).unwrap()),
+        }],
+    });
+    let encoded = encode(&text).unwrap().files;
+    let (path, content) = encoded
+        .into_iter()
+        .find(|(path, _)| path.starts_with("tokens/"))
+        .unwrap();
+    (path, content)
+}
+
+#[test]
+fn a_library_only_source_change_is_taken_even_by_a_dirty_window() {
+    // ADR-0088 결정 5: 컴포넌트·token 파일만 바뀌면 문서 stale이 아니며, dirty 창도 그 의미를 받고 저장을 계속합니다.
+    let project = saved_project("source-library-only");
+    let locks = TempDir::new("source-library-only-locks");
+    let mut a = open(&project, &locks, 1);
+    a.apply(&rename(a.document().unwrap(), 40, 12, "dirty 편집"), 0)
+        .unwrap();
+    let (path, content) = token_file(&project);
+    let target = project.path().join("design").join(&path);
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::fs::write(&target, &content).unwrap();
+    assert_eq!(a.stale_state().unwrap(), None, "문서 stale이 아님");
+    match a.sync_external(command(9)) {
+        ExternalSync::Applied { changes: None, .. } => {}
+        other => panic!("{other:?}"),
+    }
+    assert!(a.has_unsaved_changes(), "편집 보존");
+    assert_eq!(name_of(&a, 12), "dirty 편집");
+    let outcome = a.save_now().unwrap();
+    assert_eq!(outcome.source_files, 1, "View 파일 하나만 씀");
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        content,
+        "token 파일 그대로"
+    );
+    assert!(stamped(project.path()));
+    let text = TextSourceSession::open(project.path(), window(5)).unwrap();
+    assert_eq!(
+        text.document()
+            .model()
+            .record(sid(12))
+            .unwrap()
+            .display_name,
+        "dirty 편집"
+    );
+    let reopened = open(&project, &locks, 2);
+    assert_eq!(reopened.open_plan(), OpenPlan::Cache);
+}

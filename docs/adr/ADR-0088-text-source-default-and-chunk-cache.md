@@ -92,6 +92,11 @@ journal)·ADR-0083(창 session stale·외부 변경)을 앱 runtime 기본 경�
   대기입니다.
 - UseCurrentWindow는 판정한 generation과 원본이 그대로일 때만 씁니다(최신 원본 hash를 기대 hash로). 판정 뒤 다른 writer가
   썼으면 다시 stale입니다.
+- 문서 밖 의미 파일(`components/`·`tokens/`, `document_io::session::is_library_path`)만 바뀐 것은 문서 stale이 아닙니다.
+  그 의미는 창 history 밖이고(ADR-0079 결정 2) 창 저장은 그 파일을 바꾸지 않으므로(인코딩 결과가 base와 같아 쓰지 않음),
+  `sync_external`이 편집 여부와 관계없이 디스크 의미와 base를 받고 stamp 맞춤만 writer에 남깁니다. cache로 연 session의
+  writer도 디스크 원본이 그 파일에서만 다르면 디스크 의미로 인코딩합니다. 이미지·Text style catalog는 문서 Text style 표를
+  담으므로 문서 파일로 봅니다.
 
 ### 6. 감시는 원본 파일 event도 반영 job으로 보낸다
 

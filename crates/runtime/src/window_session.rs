@@ -109,7 +109,9 @@ use stellar_project::window_session::{
     record_app_window_save, writer_provenance, StaleResolution, StaleSaveChoice, WriterProvenance,
 };
 mod source;
-use source::{read_disk_state, source_moved, DiskState, SourceMark, SourceMode};
+use source::{
+    document_source_moved, library_moved, read_disk_state, DiskState, SourceMark, SourceMode,
+};
 
 use stellar_scene::overlay::{
     build_selection_overlay, OverlayError, OverlayStyle, SelectionOverlay,
@@ -499,7 +501,7 @@ impl SaveCapture {
     fn encode_source(
         &self,
         root: &std::path::Path,
-        capture: TextCapture,
+        mut capture: TextCapture,
     ) -> Result<EncodedSource, WindowSessionSaveError> {
         let mut library = match &capture.library {
             Some(library) => std::sync::Arc::clone(library),
@@ -509,11 +511,13 @@ impl SaveCapture {
                     .as_ref()
                     .map(|disk| disk.base.clone())
                     .unwrap_or_default();
-                if now != capture.base {
+                // 문서 밖 의미 파일만 바뀌었으면 디스크 것을 씁니다(그 파일은 이 저장이 바꾸지 않음).
+                if now != capture.base && !capture.base.differs_only_in_library(&now) {
                     return Err(WindowSessionSaveError::SourceStale {
                         paths: capture.base.changed_paths(&now).into_iter().collect(),
                     });
                 }
+                capture.base = now;
                 let library = match disk {
                     Some(disk) => {
                         SourceLibrary::split(decode_source(&disk).map_err(source_error)?).1
@@ -1798,7 +1802,7 @@ impl ProjectWindowSession {
         let source = self
             .source
             .base()
-            .and_then(|base| source_moved(&self.identity, base))
+            .and_then(|base| document_source_moved(&self.identity, base))
             .map(|(mark, _)| mark);
         if !generation_moved && source.is_none() {
             return Ok(None);
@@ -1883,7 +1887,7 @@ impl ProjectWindowSession {
         let source = self
             .source
             .base()
-            .and_then(|base| source_moved(&self.identity, base))
+            .and_then(|base| document_source_moved(&self.identity, base))
             .map(|(mark, _)| mark);
         self.save_over_judged(
             DiskMark {
@@ -1947,7 +1951,7 @@ impl ProjectWindowSession {
         let text = match self.source.base() {
             None => None,
             Some(base) => {
-                let moved = source_moved(&self.identity, base);
+                let moved = document_source_moved(&self.identity, base);
                 if moved.as_ref().map(|(mark, _)| *mark) != judged.source {
                     let paths = moved
                         .map(|(_, now)| base.changed_paths(&now).into_iter().collect())
@@ -2062,6 +2066,11 @@ impl ProjectWindowSession {
     ///
     /// `command`는 반영 transaction의 id입니다(창 id와 generation hash에서 만든 값을 권장).
     pub fn sync_external(&mut self, command: CommandId) -> ExternalSync {
+        // 문서 밖 의미 파일(컴포넌트·token)만 바뀌었으면 편집 여부와 관계없이 받습니다. 창 history 밖이고(ADR-0079
+        // 결정 2) 이 창의 저장은 그 파일을 바꾸지 않습니다.
+        if let Some(applied) = self.adopt_library_change() {
+            return applied;
+        }
         let current = match self.stale_state() {
             Ok(None) => return ExternalSync::Unchanged,
             Ok(Some(state)) => state,
@@ -2177,6 +2186,42 @@ impl ProjectWindowSession {
             generation: self.generation_number(),
             changes,
         }
+    }
+
+    /// 원본이 문서 밖 의미 파일에서만 바뀌었으면 그 의미와 base를 받습니다. 해당 없으면 `None`입니다.
+    fn adopt_library_change(&mut self) -> Option<ExternalSync> {
+        let base = self.source.base()?;
+        let current = read_current_pointer(self.identity.canonical_target()).ok();
+        if current != self.loaded.as_ref().map(|loaded| loaded.manifest_hash) {
+            return None;
+        }
+        let files = library_moved(&self.identity, base)?;
+        let project = match decode_source(&files) {
+            Ok(project) => project,
+            Err(error) => {
+                let all: BTreeSet<String> = base.changed_paths(&files.base);
+                return Some(ExternalSync::Rejected(ExternalRejection::Load(
+                    WindowSessionLoadError::Source(
+                        stellar_project::external_change::source::diagnose(
+                            &files.files,
+                            &all,
+                            &error,
+                        ),
+                    ),
+                )));
+            }
+        };
+        let (_, library) = SourceLibrary::split(project);
+        self.source = SourceMode::Text {
+            base: files.base,
+            library: Some(std::sync::Arc::new(library)),
+        };
+        // stamp 짝을 맞추는 일만 남습니다(cache에는 컴포넌트·token이 없음).
+        self.reconcile_pending = true;
+        Some(ExternalSync::Applied {
+            generation: self.generation_number(),
+            changes: None,
+        })
     }
 
     /// 선택을 바꾸고 이 창 history에 기록합니다(같은 선택이면 기록하지 않음).

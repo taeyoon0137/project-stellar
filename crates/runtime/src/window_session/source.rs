@@ -316,6 +316,23 @@ pub(crate) enum SourceMark {
     Unreadable,
 }
 
+/// 디스크 원본의 문서 파일이 `base`와 다르면 그 관찰값을 돌려줍니다. 문서 밖 의미 파일(컴포넌트·token)만 바뀌었으면
+/// `None`입니다(그 변화는 [`library_moved`]가 받음, ADR-0088 결정 5).
+pub(crate) fn document_source_moved(
+    identity: &ProjectIdentity,
+    base: &SourceBase,
+) -> Option<(SourceMark, SourceBase)> {
+    source_moved(identity, base).filter(|(mark, now)| {
+        !(matches!(mark, SourceMark::Digest(_)) && base.differs_only_in_library(now))
+    })
+}
+
+/// 디스크 원본이 문서 밖 의미 파일에서만 `base`와 다르면 지금 원본을 돌려줍니다.
+pub(crate) fn library_moved(identity: &ProjectIdentity, base: &SourceBase) -> Option<SourceFiles> {
+    let files = read_source(identity.canonical_target()).ok().flatten()?;
+    base.differs_only_in_library(&files.base).then_some(files)
+}
+
 /// 디스크 원본이 `base`와 다르면 그 관찰값을 돌려줍니다.
 pub(crate) fn source_moved(
     identity: &ProjectIdentity,

@@ -108,6 +108,12 @@ impl SourceBase {
         ContentHash::compute(&input)
     }
 
+    /// `other`와 다른 경로가 모두 문서 밖 의미 파일([`is_library_path`])인지. 같으면 `false`입니다.
+    pub fn differs_only_in_library(&self, other: &SourceBase) -> bool {
+        let changed = self.changed_paths(other);
+        !changed.is_empty() && changed.iter().all(|path| is_library_path(path))
+    }
+
     /// `other`와 hash가 다른 경로(추가·삭제 포함).
     pub fn changed_paths(&self, other: &SourceBase) -> BTreeSet<String> {
         self.files
@@ -117,6 +123,13 @@ impl SourceBase {
             .cloned()
             .collect()
     }
+}
+
+/// 문서 밖 의미(컴포넌트 정의·token set)만 담는 원본 파일인지(`design/` 기준 경로). 이 파일들은 창 history 밖이라
+/// (ADR-0079 결정 2) 미저장 편집이 있어도 디스크 것을 받습니다. 이미지·Text style catalog는 문서 Text style 표를 담으므로
+/// 문서 파일로 봅니다.
+pub fn is_library_path(path: &str) -> bool {
+    path.starts_with("components/") || path.starts_with("tokens/")
 }
 
 /// 원본 읽기 결과: 파일 내용과 그 base.
@@ -506,5 +519,13 @@ mod tests {
         let changes = plan_changes(&base_a, &b);
         assert_eq!(changes.len(), 3);
         assert!(plan_changes(&base_a, &a).is_empty());
+        assert!(!base_a.differs_only_in_library(&base_b));
+        assert!(!base_a.differs_only_in_library(&base_a));
+        let mut c = a.clone();
+        c.insert("components/x-0123456789ab.stellar.yaml".into(), "5".into());
+        c.insert("tokens/t.stellar.yaml".into(), "6".into());
+        assert!(base_a.differs_only_in_library(&SourceBase::of(&c)));
+        c.insert("assets/catalog.stellar.yaml".into(), "7".into());
+        assert!(!base_a.differs_only_in_library(&SourceBase::of(&c)));
     }
 }
