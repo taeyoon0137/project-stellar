@@ -38,6 +38,7 @@ use crate::duplicate::DuplicateSubtree;
 use crate::kind::CommandKind;
 use crate::modifier_ops::{InsertModifier, MoveModifier, RemoveModifier, SetModifierProperty};
 use crate::node_ops::{DeleteSubtree, InsertNode, MoveNode};
+use crate::page_view::{AddPage, AddView, RemovePage, RemoveView, RenamePage, RenameView};
 use crate::property::{node_property_info, PropertyValue, PropertyValueType, SetProperty};
 use crate::request::CommandRequest;
 use crate::state::DocumentState;
@@ -420,6 +421,60 @@ pub fn generate(
         // command 계층 자체용 test double은 property 대상이 아닙니다.
         #[cfg(test)]
         CommandKind::TestProbe => None,
+        CommandKind::AddPage => {
+            let index = rng.below(model.definition().pages.len() as u64 + 1) as u32;
+            Some(Command::AddPage(AddPage::with_empty_view(
+                index,
+                ids.fresh(),
+                format!("페이지 {}", rng.below(100)),
+                ids.fresh(),
+                String::new(),
+                ids.fresh(),
+            )))
+        }
+        CommandKind::RemovePage | CommandKind::RenamePage => {
+            let pages: Vec<StableId> = model.definition().pages.iter().map(|p| p.id).collect();
+            let page = pick(rng, &pages)?;
+            Some(match kind {
+                CommandKind::RemovePage => Command::RemovePage(RemovePage { page }),
+                _ => Command::RenamePage(RenamePage {
+                    page,
+                    name: rng.pick(&["표지", "", "🎨 화면"]).to_string(),
+                }),
+            })
+        }
+        CommandKind::AddView => {
+            let pages: Vec<(StableId, usize)> = model
+                .definition()
+                .pages
+                .iter()
+                .map(|p| (p.id, p.views.len()))
+                .collect();
+            let (page, count) = pick(rng, &pages)?;
+            Some(Command::AddView(AddView::empty(
+                page,
+                rng.below(count as u64 + 1) as u32,
+                ids.fresh(),
+                format!("View {}", rng.below(100)),
+                ids.fresh(),
+            )))
+        }
+        CommandKind::RemoveView | CommandKind::RenameView => {
+            let views: Vec<StableId> = model
+                .definition()
+                .pages
+                .iter()
+                .flat_map(|p| p.views.iter().map(|v| v.id))
+                .collect();
+            let view = pick(rng, &views)?;
+            Some(match kind {
+                CommandKind::RemoveView => Command::RemoveView(RemoveView { view }),
+                _ => Command::RenameView(RenameView {
+                    view,
+                    name: rng.pick(&["홈", "", "설정 e\u{301}"]).to_string(),
+                }),
+            })
+        }
         CommandKind::DuplicateSubtree => {
             let sources = node_ids(model);
             let source = pick(rng, &sources)?;

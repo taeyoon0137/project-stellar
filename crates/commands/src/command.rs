@@ -313,6 +313,18 @@ pub enum Command {
     DuplicateSubtree(DuplicateSubtree),
     /// Text node의 부분 문자열을 편집합니다.
     ReplaceText(crate::text_edit::ReplaceText),
+    /// 페이지 추가 (UX.12.1).
+    AddPage(crate::page_view::AddPage),
+    /// 페이지 삭제(AddPage의 역).
+    RemovePage(crate::page_view::RemovePage),
+    /// 페이지 이름 변경 (UX.12.1).
+    RenamePage(crate::page_view::RenamePage),
+    /// View 추가 (UX.12.1).
+    AddView(crate::page_view::AddView),
+    /// View 삭제(AddView의 역).
+    RemoveView(crate::page_view::RemoveView),
+    /// View 이름 변경 (UX.12.1).
+    RenameView(crate::page_view::RenameView),
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -350,6 +362,12 @@ impl Command {
             Command::RestoreNodeRecords(_) => CommandKind::RestoreNodeRecords,
             Command::ReplaceText(_) => CommandKind::ReplaceText,
             Command::DuplicateSubtree(_) => CommandKind::DuplicateSubtree,
+            Command::AddPage(_) => CommandKind::AddPage,
+            Command::RemovePage(_) => CommandKind::RemovePage,
+            Command::RenamePage(_) => CommandKind::RenamePage,
+            Command::AddView(_) => CommandKind::AddView,
+            Command::RemoveView(_) => CommandKind::RemoveView,
+            Command::RenameView(_) => CommandKind::RenameView,
             #[cfg(test)]
             Command::TestProbe(_) => CommandKind::TestProbe,
         }
@@ -371,6 +389,12 @@ impl Command {
             Command::RestoreNodeRecords(command) => command.validate(model),
             Command::ReplaceText(command) => command.validate(model),
             Command::DuplicateSubtree(command) => command.validate(model),
+            Command::AddPage(command) => command.validate(model),
+            Command::RemovePage(command) => command.validate(model),
+            Command::RenamePage(command) => command.validate(model),
+            Command::AddView(command) => command.validate(model),
+            Command::RemoveView(command) => command.validate(model),
+            Command::RenameView(command) => command.validate(model),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.validate(model),
         }
@@ -400,6 +424,12 @@ impl Command {
             }
             Command::ReplaceText(command) => command.invert(model).map(Command::RestoreNodeRecords),
             Command::DuplicateSubtree(command) => command.invert().map(Command::DeleteSubtree),
+            Command::AddPage(command) => Ok(Command::RemovePage(command.invert())),
+            Command::RemovePage(command) => command.invert(model).map(Command::AddPage),
+            Command::RenamePage(command) => command.invert(model).map(Command::RenamePage),
+            Command::AddView(command) => Ok(Command::RemoveView(command.invert())),
+            Command::RemoveView(command) => command.invert(model).map(Command::AddView),
+            Command::RenameView(command) => command.invert(model).map(Command::RenameView),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
         }
@@ -421,6 +451,12 @@ impl Command {
             Command::RestoreNodeRecords(command) => command.apply(ctx),
             Command::ReplaceText(command) => command.apply(ctx),
             Command::DuplicateSubtree(command) => command.apply(ctx),
+            Command::AddPage(command) => command.apply(ctx),
+            Command::RemovePage(command) => command.apply(ctx),
+            Command::RenamePage(command) => command.apply(ctx),
+            Command::AddView(command) => command.apply(ctx),
+            Command::RemoveView(command) => command.apply(ctx),
+            Command::RenameView(command) => command.apply(ctx),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.apply(ctx),
         }

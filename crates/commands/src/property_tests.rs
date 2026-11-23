@@ -138,6 +138,12 @@ round_trip_property! {
     restore_node_records_round_trip => Registered::Command(CommandKind::RestoreNodeRecords), min 120;
     duplicate_subtree_round_trip => Registered::Command(CommandKind::DuplicateSubtree), min 80;
     replace_text_round_trip => Registered::Command(CommandKind::ReplaceText), min 60;
+    add_page_round_trip => Registered::Command(CommandKind::AddPage), min 120;
+    remove_page_round_trip => Registered::Command(CommandKind::RemovePage), min 120;
+    rename_page_round_trip => Registered::Command(CommandKind::RenamePage), min 120;
+    add_view_round_trip => Registered::Command(CommandKind::AddView), min 120;
+    remove_view_round_trip => Registered::Command(CommandKind::RemoveView), min 100;
+    rename_view_round_trip => Registered::Command(CommandKind::RenameView), min 120;
     set_selection_round_trip => Registered::Selection, min 120;
 }
 

@@ -39,6 +39,18 @@ pub enum CommandKind {
     DuplicateSubtree,
     /// Unicode scalar 범위의 Text 본문 교체.
     ReplaceText,
+    /// 페이지 추가 (UX.12.1, ADR-0079).
+    AddPage,
+    /// 페이지 삭제(AddPage의 역, ADR-0079).
+    RemovePage,
+    /// 페이지 이름 변경 (UX.12.1, ADR-0079).
+    RenamePage,
+    /// View 추가 (UX.12.1, ADR-0079).
+    AddView,
+    /// View 삭제(AddView의 역, ADR-0079).
+    RemoveView,
+    /// View 이름 변경 (UX.12.1, ADR-0079).
+    RenameView,
     /// 테스트 전용 probe(fault injection). 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe,
@@ -60,6 +72,12 @@ impl CommandKind {
         CommandKind::RestoreNodeRecords,
         CommandKind::DuplicateSubtree,
         CommandKind::ReplaceText,
+        CommandKind::AddPage,
+        CommandKind::RemovePage,
+        CommandKind::RenamePage,
+        CommandKind::AddView,
+        CommandKind::RemoveView,
+        CommandKind::RenameView,
     ];
 
     /// 영구 예약 값(유효한 종류가 아님).
@@ -81,6 +99,12 @@ impl CommandKind {
             CommandKind::RestoreNodeRecords => 0x0032,
             CommandKind::DuplicateSubtree => 0x0040,
             CommandKind::ReplaceText => 0x0050,
+            CommandKind::AddPage => 0x0060,
+            CommandKind::RemovePage => 0x0061,
+            CommandKind::RenamePage => 0x0062,
+            CommandKind::AddView => 0x0063,
+            CommandKind::RemoveView => 0x0064,
+            CommandKind::RenameView => 0x0065,
             #[cfg(test)]
             CommandKind::TestProbe => 0xFFF0,
         }
@@ -114,8 +138,72 @@ impl CommandKind {
             CommandKind::RestoreNodeRecords => "restore-node-records",
             CommandKind::DuplicateSubtree => "duplicate-subtree",
             CommandKind::ReplaceText => "replace-text",
+            CommandKind::AddPage => "add-page",
+            CommandKind::RemovePage => "remove-page",
+            CommandKind::RenamePage => "rename-page",
+            CommandKind::AddView => "add-view",
+            CommandKind::RemoveView => "remove-view",
+            CommandKind::RenameView => "rename-view",
             #[cfg(test)]
             CommandKind::TestProbe => "test-probe",
+        }
+    }
+
+    /// 이 종류를 처음 담은 command codec 버전([`crate::codec::COMMAND_CODEC_VERSION`], ADR-0079).
+    ///
+    /// history journal header는 기록한 codec 버전을 담고, reader는 journal 안 command 종류가 그 버전
+    /// 안에 있는지 확인합니다. 한 번 정한 값은 바꾸지 않습니다.
+    pub fn codec_version(self) -> u32 {
+        match self {
+            CommandKind::InsertNode
+            | CommandKind::DeleteSubtree
+            | CommandKind::MoveNode
+            | CommandKind::SetProperty
+            | CommandKind::InsertModifier
+            | CommandKind::RemoveModifier
+            | CommandKind::MoveModifier
+            | CommandKind::SetModifierProperty
+            | CommandKind::ConvertFragmentToFrame
+            | CommandKind::ConvertShapeToPath
+            | CommandKind::RestoreNodeRecords
+            | CommandKind::DuplicateSubtree
+            | CommandKind::ReplaceText => 1,
+            CommandKind::AddPage
+            | CommandKind::RemovePage
+            | CommandKind::RenamePage
+            | CommandKind::AddView
+            | CommandKind::RemoveView
+            | CommandKind::RenameView => 2,
+            #[cfg(test)]
+            CommandKind::TestProbe => 1,
+        }
+    }
+
+    /// Undo·Redo 메뉴에 쓰는 동작 이름(코어가 정합니다, ADR-0079). 셸은 "실행 취소"·"실행 복귀" 같은
+    /// 앞뒤 문구만 붙입니다.
+    pub fn action_name(self) -> &'static str {
+        match self {
+            CommandKind::InsertNode => "삽입",
+            CommandKind::DeleteSubtree => "삭제",
+            CommandKind::MoveNode => "이동",
+            CommandKind::SetProperty => "속성 변경",
+            CommandKind::InsertModifier => "Modifier 추가",
+            CommandKind::RemoveModifier => "Modifier 삭제",
+            CommandKind::MoveModifier => "Modifier 순서 변경",
+            CommandKind::SetModifierProperty => "Modifier 속성 변경",
+            CommandKind::ConvertFragmentToFrame => "Frame으로 변환",
+            CommandKind::ConvertShapeToPath => "Path로 변환",
+            CommandKind::RestoreNodeRecords => "변환 되돌리기",
+            CommandKind::DuplicateSubtree => "복제",
+            CommandKind::ReplaceText => "텍스트 입력",
+            CommandKind::AddPage => "페이지 추가",
+            CommandKind::RemovePage => "페이지 삭제",
+            CommandKind::RenamePage => "페이지 이름 변경",
+            CommandKind::AddView => "View 추가",
+            CommandKind::RemoveView => "View 삭제",
+            CommandKind::RenameView => "View 이름 변경",
+            #[cfg(test)]
+            CommandKind::TestProbe => "test probe",
         }
     }
 }
@@ -168,6 +256,12 @@ mod tests {
                 (0x0032, "restore-node-records"),
                 (0x0040, "duplicate-subtree"),
                 (0x0050, "replace-text"),
+                (0x0060, "add-page"),
+                (0x0061, "remove-page"),
+                (0x0062, "rename-page"),
+                (0x0063, "add-view"),
+                (0x0064, "remove-view"),
+                (0x0065, "rename-view"),
             ]
         );
     }
