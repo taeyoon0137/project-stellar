@@ -1180,6 +1180,18 @@ impl Merger<'_> {
     }
 }
 
+/// conflict 목록의 결정론적 순서(XIV.10.9, ADR-0081 결정 3).
+///
+/// `(StableId, 대상)` 오름차순(대상은 객체 < 위치 < 속성 경로)이고 같은 키는 kind code 순입니다. 같은
+/// `(StableId, 대상)`은 하나만 남깁니다(code가 작은 종류, 예: 전용 conflict가 있으면 invalid-result는
+/// 버림). 해결 모델(XIV.12)은 `(StableId, 대상)`으로 conflict를 찾으므로 이 유일성이 필요합니다. 입력
+/// 목록의 순서·중복과 무관하게 같은 결과를 냅니다.
+pub fn canonical_conflicts(mut conflicts: Vec<SemanticConflict>) -> Vec<SemanticConflict> {
+    conflicts.sort_by(|a, b| (a.object, &a.target, a.kind).cmp(&(b.object, &b.target, b.kind)));
+    conflicts.dedup_by(|later, first| later.object == first.object && later.target == first.target);
+    conflicts
+}
+
 /// 3-way merge를 실행합니다.
 ///
 /// 결과 candidate는 snapshot validator(XIV.5.3)가 세 입력 어디에도 없던 위반을 찾지 못할 때만 clean일 수
@@ -1237,15 +1249,7 @@ pub fn merge(input: &MergeInput) -> Result<MergeResult, MergeError> {
 
     let mut conflicts = merger.conflicts;
     conflicts.extend(merger.list_conflicts);
-    conflicts.sort_by(|a, b| {
-        (a.document(), a.object, &a.target, a.kind).cmp(&(
-            b.document(),
-            b.object,
-            &b.target,
-            b.kind,
-        ))
-    });
-    conflicts.dedup();
+    let conflicts = canonical_conflicts(conflicts);
     let changes = diff(&input.base, &merged);
     Ok(MergeResult {
         merged,
