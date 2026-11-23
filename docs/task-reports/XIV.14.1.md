@@ -2,7 +2,7 @@
 
 - WBS: XIV.14.1
 - 작업명: 임시 local bare repo와 working repo를 만드는 Git fixture harness(외부 네트워크 미사용)
-- 상태: 부분 완료 (`[~]`) — ADR-0006 4번 규칙. macOS에서 harness 구현·결정론(golden commit ID)
+- 상태: `[~]` 유지 — 판정 보류(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — ADR-0006 4번 규칙. macOS에서 harness 구현·결정론(golden commit ID)
   검증을 마쳤습니다. 완료 기준의 "macOS/Windows 동일 scenario 생성"은 시스템 Git과 파일 시스템(플랫폼
   구현)에 의존하므로, Windows 재개 시 같은 golden을 Windows Git에서 확인해야 `[x]`가 됩니다.
 - 선행: XIV.1.2 (`[x]`)
@@ -69,3 +69,24 @@
   harness를 사용합니다.
 - golden은 Git 기본 commit 형식에 의존합니다. 향후 Git이 commit header 형식을 바꾸면 golden을 다시
   고정해야 합니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 판정 보류.
+- 근거: 판정 보류(플랫폼 의존). harness와 macOS golden commit ID는 있지만 "macOS/Windows 동일 scenario 생성"은 시스템 Git·파일 시스템 의존이라 ADR-0006 결정 4에 따라 `[~]`입니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/git-porcelain/src/fixture.rs` `GitFixture`·`build_standard_scenario`(로컬 bare·working repo, 외부 네트워크 없음, 고정 `BASE_EPOCH`·작성자로 golden commit ID 고정).
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-git-porcelain` | 354 passed, 0 failed |
+
+### 남은 조건과 finding
+
+- Windows 재개 때 같은 golden을 Git for Windows로 확인합니다(ADR-0006 목록에 Windows 대기 행으로 넘김).
