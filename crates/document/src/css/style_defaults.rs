@@ -912,6 +912,140 @@ pub fn payload_snapshot_text() -> String {
     out
 }
 
+/// 내장 세트 conformance fixture(IX.11.31, ADR-0115 결정 2). 형식은 파일 머리 주석에 있습니다.
+pub const CONFORMANCE_FIXTURE: &str = include_str!("style_defaults_conformance.txt");
+
+/// css 줄 출처 접두사. `chrome:`만 관측값과 기대값이 같고, 나머지는 다른 이유입니다.
+const CSS_SOURCES: [&str; 4] = ["chrome:", "stellar-mapping:", "css-computed:", "user-agent:"];
+/// react-native 줄 출처 접두사.
+const RN_SOURCES: [&str; 4] = ["rn-docs:", "rn-source:", "yoga:", "inherits:"];
+
+/// 브라우저 계산값 표기(`rgb(0, 0, 0)`, `rgba(0, 0, 0, 0)`)를 registry 색 정규 표기로 바꿉니다. 그 밖은 그대로입니다.
+fn normalize_observed(observed: &str) -> String {
+    let inner = observed
+        .strip_prefix("rgba(")
+        .or_else(|| observed.strip_prefix("rgb("))
+        .and_then(|rest| rest.strip_suffix(')'));
+    let Some(inner) = inner else {
+        return observed.to_string();
+    };
+    let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+    let channels: Option<Vec<u8>> = parts.iter().take(3).map(|p| p.parse().ok()).collect();
+    let alpha: Option<f32> = match parts.get(3) {
+        Some(a) => a.parse().ok(),
+        None => Some(1.0),
+    };
+    match (channels, alpha) {
+        (Some(c), Some(a)) if c.len() == 3 && parts.len() <= 4 => {
+            let mut out = format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2]);
+            if a != 1.0 {
+                out.push_str(&format!("{:02x}", (a * 255.0).round() as u8));
+            }
+            out
+        }
+        _ => observed.to_string(),
+    }
+}
+
+/// `fixture`를 `css`·`react-native` 평탄화 세트와 비교해 어긋난 점을 돌려줍니다. 빈 목록이면 표와 fixture가
+/// 같습니다. 모든 (세트, 구획, longhand)가 정확히 한 번 나와야 하고, 줄마다 출처가 있어야 합니다.
+pub fn conformance_mismatches(fixture: &str, css: &FlatSet, rn: &FlatSet) -> Vec<String> {
+    let mut problems = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let payload = payload_longhands();
+    for (number, line) in fixture.lines().enumerate() {
+        let line_no = number + 1;
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields: Vec<&str> = line.split(" | ").map(str::trim).collect();
+        let [set_name, class_name, longhand, expected, observed, source] = fields[..] else {
+            problems.push(format!("{line_no}: 칸이 여섯 개가 아닙니다"));
+            continue;
+        };
+        let (set, prefixes) = match set_name {
+            CSS => (css, &CSS_SOURCES),
+            REACT_NATIVE => (rn, &RN_SOURCES),
+            other => {
+                problems.push(format!("{line_no}: 모르는 세트 {other}"));
+                continue;
+            }
+        };
+        let Some(class) = NodeClass::from_name(class_name) else {
+            problems.push(format!("{line_no}: 모르는 구획 {class_name}"));
+            continue;
+        };
+        let table = |set: &FlatSet| -> Option<String> {
+            match LayoutLonghand::from_name(longhand) {
+                Some(l) => Some(format_value(set.value(class, l))),
+                None => payload
+                    .iter()
+                    .find(|e| e.name == longhand && scope_class(e.scope) == Some(class))
+                    .and_then(|e| set.payload_value(e.scope, e.key))
+                    .map(str::to_string),
+            }
+        };
+        let Some(value) = table(set) else {
+            problems.push(format!(
+                "{line_no}: {class_name} 구획에 {longhand} longhand가 없습니다"
+            ));
+            continue;
+        };
+        if !seen.insert((set_name, class, longhand.to_string())) {
+            problems.push(format!("{line_no}: {set_name} {class_name} {longhand}가 두 번 있습니다"));
+        }
+        if value != expected {
+            problems.push(format!(
+                "{line_no}: {set_name} {class_name} {longhand} 표 값 {value}, fixture 기대값 {expected}"
+            ));
+        }
+        let Some(prefix) = prefixes.iter().find(|p| source.starts_with(**p)) else {
+            problems.push(format!("{line_no}: 출처가 없거나 접두사가 맞지 않습니다: {source}"));
+            continue;
+        };
+        if source.len() <= prefix.len() + 1 {
+            problems.push(format!("{line_no}: 출처 설명이 비어 있습니다"));
+        }
+        if set_name == CSS {
+            if observed == "-" || observed.is_empty() {
+                problems.push(format!("{line_no}: css 줄에 관측값이 없습니다"));
+            }
+            let same = normalize_observed(observed) == expected;
+            if same != (*prefix == "chrome:") {
+                problems.push(format!(
+                    "{line_no}: 관측값 {observed}과 기대값 {expected}의 차이와 출처 {prefix}가 맞지 않습니다"
+                ));
+            }
+        } else {
+            if observed != "-" {
+                problems.push(format!("{line_no}: react-native 줄의 관측값은 -입니다"));
+            }
+            if *prefix == "inherits:" && table(css).as_deref() != Some(expected) {
+                problems.push(format!(
+                    "{line_no}: inherits 줄의 기대값이 css 값과 다릅니다"
+                ));
+            }
+        }
+    }
+    for set_name in BUILTIN_SETS {
+        for class in NodeClass::ALL {
+            for longhand in LayoutLonghand::ALL {
+                if !seen.contains(&(set_name, class, longhand.name().to_string())) {
+                    problems.push(format!("{set_name} {} {longhand} 줄이 없습니다", class.name()));
+                }
+            }
+        }
+        for entry in &payload {
+            let class = scope_class(entry.scope).expect("payload 범위");
+            if !seen.contains(&(set_name, class, entry.name.to_string())) {
+                problems.push(format!("{set_name} {} {} 줄이 없습니다", class.name(), entry.name));
+            }
+        }
+    }
+    problems
+}
+
 /// 사용자 세트 원본을 이름으로 모은 표.
 pub type UserSets = BTreeMap<String, UserSetSource>;
 
@@ -1274,6 +1408,54 @@ mod tests {
             payload_entries().iter().filter(|r| r.set == CSS).count(),
             longhands.len()
         );
+    }
+
+    #[test]
+    fn conformance_fixture_matches_tables() {
+        // IX.11.31 검증 기준: 세트별 fixture가 registry 표 값과 일치, 기대값 출처 기록 누락 0.
+        let css = builtin(CSS).unwrap();
+        let rn = builtin(REACT_NATIVE).unwrap();
+        let problems = conformance_mismatches(CONFORMANCE_FIXTURE, &css, &rn);
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
+    #[test]
+    fn conformance_fixture_fails_when_a_table_value_changes() {
+        // IX.11.31 검증 기준: 표 값을 바꾸면 fixture가 실패.
+        let css = builtin(CSS).unwrap();
+        let rn = builtin(REACT_NATIVE).unwrap();
+        let mut changed = rn.clone();
+        changed.apply(
+            Some(NodeClass::Frame),
+            LayoutLonghand::FlexDirection,
+            LayoutValue::Keyword("row"),
+        );
+        let problems = conformance_mismatches(CONFORMANCE_FIXTURE, &css, &changed);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("flex-direction"));
+        // payload 값이 바뀐 세트(다른 내장 세트의 사슬)도 잡습니다.
+        let swapped = conformance_mismatches(CONFORMANCE_FIXTURE, &rn, &css);
+        assert!(swapped.iter().any(|p| p.contains("object-fit")));
+        // 출처가 없는 줄, 빠진 줄, 관측값과 출처가 맞지 않는 줄.
+        let fixture = CONFORMANCE_FIXTURE.replacen(
+            "css | frame | position | static | static | chrome: div 계산값",
+            "css | frame | position | static | static | 메모",
+            1,
+        );
+        assert!(conformance_mismatches(&fixture, &css, &rn)
+            .iter()
+            .any(|p| p.contains("출처")));
+        let fixture = CONFORMANCE_FIXTURE.replacen(
+            "css | frame | position | static | static | chrome: div 계산값\n",
+            "",
+            1,
+        );
+        assert!(conformance_mismatches(&fixture, &css, &rn)
+            .iter()
+            .any(|p| p.contains("줄이 없습니다")));
+        assert_eq!(normalize_observed("rgba(0, 0, 0, 0)"), "#00000000");
+        assert_eq!(normalize_observed("rgb(0, 0, 0)"), "#000000");
+        assert_eq!(normalize_observed("auto"), "auto");
     }
 
     #[test]

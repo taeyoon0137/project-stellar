@@ -114,6 +114,13 @@ Fragment는 상자가 없어 구획이 없습니다.
 - RN 값은 Yoga를 실행한 fixture로 고정하지 못했습니다. 대신 conformance test가 다음을 확인합니다.
   - `react-native` 세트로 푼 문서와, 같은 값을 `css` 세트 위에 명시한 문서가 같은 rect를 냅니다.
   - `css` 세트의 `content-box` 결과가 기준 브라우저(Chrome) 기대값과 같습니다.
+- 세트 표 전체는 conformance fixture(`crates/document/src/css/style_defaults_conformance.txt`, ADR-0115 결정 2)로
+  고정합니다.
+  - `css` 줄은 Chrome 157 headless의 계산값(`computedStyleMap`)을 관측값으로 적습니다. 측정기는 같은 디렉터리의
+    `style_defaults_conformance.py`입니다. 관측값과 다른 기대값은 이유(`stellar-mapping`·`css-computed`·`user-agent`)를
+    출처에 적습니다.
+  - `react-native` 줄은 출처(`rn-docs`·`rn-source`·`yoga`·`inherits`)를 적습니다.
+  - 표 값을 바꾸면 `conformance_fixture_matches_tables` test가 실패합니다.
 
 ### 2.4 payload longhand 표
 
