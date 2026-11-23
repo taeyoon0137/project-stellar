@@ -627,20 +627,24 @@ impl Generator<'_> {
     }
 
     /// 자식 목록 줄(flex spacer 포함).
-    fn child_lines(&self, children: &[u32], spread: Spread) -> Vec<String> {
+    ///
+    /// stack `spacing`은 Spacer 양옆에도 붙으므로, spread가 있으면 stack spacing을 0으로 두고 gap을 사이 Spacer의
+    /// `minLength`로 냅니다. space-between은 이렇게 하면 CSS와 같습니다(사이 간격 = gap + 남은 공간 몫).
+    fn child_lines(&self, children: &[u32], spread: Spread, gap: f32) -> Vec<String> {
         let mut lines = Vec::new();
-        let spacer = "Spacer(minLength: 0)".to_string();
+        let edge = "Spacer(minLength: 0)".to_string();
+        let between = format!("Spacer(minLength: {})", px(gap));
         if spread == Spread::Evenly {
-            lines.push(spacer.clone());
+            lines.push(edge.clone());
         }
         for (position, child) in children.iter().enumerate() {
             if position > 0 && spread != Spread::None {
-                lines.push(spacer.clone());
+                lines.push(between.clone());
             }
             lines.push(self.name(*child));
         }
         if spread == Spread::Evenly && !children.is_empty() {
-            lines.push(spacer);
+            lines.push(edge);
         }
         lines
     }
@@ -661,7 +665,7 @@ impl Generator<'_> {
         match &info.container {
             Container::Block => Self::block(
                 "VStack(alignment: .leading, spacing: 0)".to_string(),
-                self.child_lines(&info.flow, Spread::None),
+                self.child_lines(&info.flow, Spread::None, 0.0),
             ),
             Container::Flex { main, reverse } => {
                 let mut children = info.flow.clone();
@@ -719,7 +723,7 @@ impl Generator<'_> {
                                     approximated(
                                         "justify-content",
                                         "spread-gap",
-                                        "space-evenly와 gap을 함께 쓰면 Spacer 양쪽에 gap이 더해집니다",
+                                        "space-evenly와 gap을 함께 쓰면 사이 Spacer만 gap을 최소로 가져 양끝과 사이 간격이 CSS와 다릅니다",
                                     ),
                                 );
                             }
@@ -745,12 +749,13 @@ impl Generator<'_> {
                     Axis::Horizontal => "HStack",
                     Axis::Vertical => "VStack",
                 };
+                let spacing = if spread == Spread::None { gap } else { 0.0 };
                 Self::block(
                     format!(
                         "{stack}(alignment: {stack_alignment}, spacing: {})",
-                        px(gap)
+                        px(spacing)
                     ),
-                    self.child_lines(&children, spread),
+                    self.child_lines(&children, spread, gap),
                 )
             }
             Container::Grid(plan) => {

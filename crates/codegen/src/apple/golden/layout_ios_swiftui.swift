@@ -57,15 +57,15 @@ struct StellarView: View {
     }
 
     private var node00000000000000000000000000000001: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
             node00000000000000000000000000000002
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
             node00000000000000000000000000000005
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
             node00000000000000000000000000000008
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
             node0000000000000000000000000000000b
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
             node0000000000000000000000000000000e
         }
         .frame(width: 360, height: 640, alignment: .topLeading)

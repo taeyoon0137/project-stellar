@@ -55,7 +55,7 @@ pub const SWIFTUI_RULES: [(&str, &str); 40] = [
     ("padding-left", "`.padding(EdgeInsets(leading:))`"),
     ("flex-direction", "row는 `HStack`, column은 `VStack`. reverse는 자식 출력 순서를 뒤집어 읽기 순서도 바뀌므로 Approximated"),
     ("flex-wrap", "nowrap만 Native, wrap·wrap-reverse는 Unsupported(한 줄로 냄)"),
-    ("justify-content", "확정 main 크기에서 start·center·end는 `.frame(alignment:)`, space-between은 사이 `Spacer`, space-evenly는 양끝·사이 `Spacer`(gap이 있으면 Approximated), space-around는 Approximated"),
+    ("justify-content", "확정 main 크기에서 start·center·end는 `.frame(alignment:)`, space-between은 사이 `Spacer(minLength: gap)` + stack spacing 0(Native), space-evenly는 양끝·사이 `Spacer`(gap이 있으면 Approximated), space-around는 Approximated"),
     ("align-content", "nowrap flex에서는 CSS에서도 효과 없음. grid는 start·center·end를 `.frame(alignment:)`, 그 밖은 Approximated"),
     ("align-items", "stack `alignment:`(row: top·center·bottom·firstTextBaseline, column: leading·center·trailing), stretch·normal은 cross 축 채움 + 확정이 아닌 container `.fixedSize`. column의 baseline은 Approximated"),
     ("justify-items", "grid는 `Grid(alignment:)` 가로 성분·채움, flex·block은 효과 없음"),

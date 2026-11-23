@@ -290,12 +290,13 @@ fn layout_findings_follow_swiftui_rules() {
     .collect();
     assert_eq!(codes, expected);
     let source = &export.source;
-    // content-box: 크기 frame 뒤 padding. space-between: 사이 Spacer.
+    // content-box: 크기 frame 뒤 padding. space-between: stack spacing은 Spacer 양옆에도 붙으므로 0이고, row-gap 8은
+    // 사이 Spacer의 최소 길이입니다(사이 간격 = gap + 남은 공간 몫, CSS와 같음).
     assert!(source.contains(
         "        .frame(width: 360, height: 640, alignment: .topLeading)\n        .padding(EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16))"
     ));
     assert!(source.contains(
-        "            node00000000000000000000000000000002\n            Spacer(minLength: 0)\n            node00000000000000000000000000000005"
+        "        VStack(alignment: .leading, spacing: 0) {\n            node00000000000000000000000000000002\n            Spacer(minLength: 8)\n            node00000000000000000000000000000005"
     ));
     // row-reverse는 출력 순서를 뒤집습니다. 성장 item이 남은 공간을 받으므로 space-around Spacer는 내지 않습니다
     // (CSS에서도 분배할 공간이 없음).
