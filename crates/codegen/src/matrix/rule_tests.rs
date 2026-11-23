@@ -168,3 +168,98 @@ fn table_has_one_row_per_registry_item_and_is_stable() {
     }
     check_golden("matrix_css.txt", &css_matrix_text());
 }
+
+#[test]
+fn every_context_and_motion_item_has_a_rule_for_every_profile_kind() {
+    // 검증 기준(XXII.1.7): Context·MotionSpec 항목에 profile kind별 상태·규칙이 있는지 완전성 검사. Native가 아닌
+    // 항목은 진단이 짝으로 있습니다.
+    use super::behavior::{behavior_entry, BehaviorSubject, ContextFeature, MotionFeature};
+    let subjects: Vec<BehaviorSubject> = MotionFeature::ALL
+        .into_iter()
+        .map(BehaviorSubject::Motion)
+        .chain(
+            ContextFeature::ALL
+                .into_iter()
+                .map(BehaviorSubject::Context),
+        )
+        .collect();
+    for subject in &subjects {
+        for kind in TargetProfileKind::ALL {
+            let entry = behavior_entry(*subject, kind)
+                .unwrap_or_else(|| panic!("{} {} 규칙 없음", subject.name(), kind.name()));
+            if entry.status != CapabilityStatus::Native {
+                assert!(
+                    entry.diagnostic.is_some(),
+                    "{} {}: 진단 없음",
+                    subject.name(),
+                    kind.name()
+                );
+            }
+        }
+    }
+    assert_eq!(
+        super::behavior::BEHAVIOR_LOWERINGS.len(),
+        subjects.len(),
+        "항목마다 행 하나"
+    );
+}
+
+#[test]
+fn context_and_motion_rules_have_input_output_and_diagnostic_fixture() {
+    // 검증 기준(XXII.1.7): 규칙별 입력·출력·진단 fixture. spring과 Context 전달 방식처럼 1:1이 아닌 항목은 진단이
+    // 함께 나옵니다.
+    use super::behavior::{
+        apply, behavior_entry, BehaviorSubject, MotionFeature, BEHAVIOR_LOWERINGS,
+    };
+    let sample = |subject: BehaviorSubject| match subject {
+        BehaviorSubject::Motion(MotionFeature::TimingCubicBezier) => "0.25, 0.1, 0.25, 1",
+        BehaviorSubject::Motion(MotionFeature::TimingSteps) => "4, jump-end",
+        BehaviorSubject::Motion(MotionFeature::TimingSpring) => "0, 0.52, 0.94, 1.03, 1",
+        BehaviorSubject::Motion(MotionFeature::Delay) => "120ms",
+        BehaviorSubject::Motion(_) => "opacity",
+        BehaviorSubject::Context(_) => "--context-accent",
+    };
+    let mut out = String::new();
+    for row in BEHAVIOR_LOWERINGS {
+        for (kind, lowering) in [
+            ("web", &row.web),
+            ("apple", &row.apple),
+            ("android", &row.android),
+        ] {
+            let input = sample(row.subject);
+            let _ = writeln!(
+                out,
+                "{} {kind} {} rule={} input={input:?} output={:?} diagnostic={}",
+                row.subject.name(),
+                lowering.status.name(),
+                lowering.rule,
+                apply(lowering, input),
+                lowering.diagnostic.unwrap_or("-")
+            );
+        }
+    }
+    check_golden("matrix_behavior.txt", &out);
+    let spring = behavior_entry(
+        BehaviorSubject::Motion(MotionFeature::TimingSpring),
+        TargetProfileKind::Web,
+    )
+    .expect("spring");
+    assert_eq!(spring.status, CapabilityStatus::Approximated);
+    assert_eq!(spring.diagnostic, Some("motion-spring-approximated"));
+}
+
+#[test]
+fn context_and_motion_items_leave_css_items_unchanged() {
+    // 검증 기준(XXII.1.7): XXII.1.4 항목 불변. CSS 기반 속성 표 텍스트는 XXII.1.4 커밋의 golden(`matrix_css.txt`)과
+    // 같고, Context·MotionSpec 이름은 CSS 표에 없습니다.
+    use super::behavior::BEHAVIOR_LOWERINGS;
+    let css = css_matrix_text();
+    let committed = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/matrix_css.txt"),
+    )
+    .expect("golden");
+    assert_eq!(css, committed);
+    for row in BEHAVIOR_LOWERINGS {
+        assert!(!css.contains(row.subject.name()));
+    }
+}

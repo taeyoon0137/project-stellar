@@ -6,11 +6,16 @@
 //! - Web 항목은 IX.11.19 matrix(`stellar_target_profile::css_matrix::web_capability`)를 그대로 씁니다(다시 정의하지
 //!   않음).
 //! - Apple·Android 항목은 [`css`]의 명시 규칙 표가 정합니다(XXII.1.4). CSS 매핑 상태에서 유도하지 않습니다.
+//! - Context·`MotionSpec` 항목은 [`behavior`]가 Web·Apple·Android마다 정합니다(XXII.1.7). CSS 기반 속성 항목은
+//!   바꾸지 않습니다.
 
 use std::fmt::Write as _;
 
 /// CSS 기반 속성의 Apple·Android lowering 규칙 (XXII.1.4).
 pub mod css;
+
+/// Context·`MotionSpec` 항목의 profile kind별 규칙 (XXII.1.7).
+pub mod behavior;
 
 use stellar_target_profile::capability::CapabilityStatus;
 use stellar_target_profile::css_matrix::{web_capability, Basis, RegistryInput};
