@@ -603,20 +603,22 @@ final class CanvasFrameScene {
                         context.saveGState()
                         context.translateBy(x: 0, y: frame.localBounds.height)
                         context.scaleBy(x: 1, y: -1)
+                        // object-fit 배치는 코어가 계산합니다(ADR-0028). 셸은 받은 사각형에 그리기만 합니다.
                         let box = frame.localBounds
-                        if frame.imageFit == 2 || frame.imageFit == 3 { context.clip(to: box) }
-                        let sourceWidth = CGFloat(image.width), sourceHeight = CGFloat(image.height)
-                        let scale: CGFloat
-                        switch frame.imageFit {
-                        case 0: scale = 0
-                        case 1: scale = min(box.width / sourceWidth, box.height / sourceHeight)
-                        case 2: scale = max(box.width / sourceWidth, box.height / sourceHeight)
-                        case 3: scale = 1
-                        default: scale = 0
+                        let bounds: [Float] = [Float(box.minX), Float(box.minY), Float(box.width), Float(box.height)]
+                        var dest: [Float] = [0, 0, 0, 0]
+                        var clip: UInt8 = 0
+                        let placed = bounds.withUnsafeBufferPointer { input in
+                            dest.withUnsafeMutableBufferPointer { output in
+                                stellar_image_fit_place(frame.imageFit, input.baseAddress, Float(image.width),
+                                                        Float(image.height), output.baseAddress, &clip)
+                            }
                         }
-                        let w = frame.imageFit == 0 ? box.width : sourceWidth * scale
-                        let h = frame.imageFit == 0 ? box.height : sourceHeight * scale
-                        context.draw(image, in: CGRect(x: (frame.localBounds.width - w)/2, y: (frame.localBounds.height - h)/2, width: w, height: h))
+                        if placed == STELLAR_OK {
+                            if clip != 0 { context.clip(to: box) }
+                            context.draw(image, in: CGRect(x: CGFloat(dest[0]), y: CGFloat(dest[1]),
+                                                           width: CGFloat(dest[2]), height: CGFloat(dest[3])))
+                        }
                         context.restoreGState()
                     }
                 }

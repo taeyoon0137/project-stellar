@@ -171,7 +171,7 @@ impl From<&CanvasFrame> for StellarCanvasFrame {
             fill: frame.background.into(),
             border: frame.border.map(|b| b.color).into(),
             border_width: frame.border.map_or(0.0, |b| b.thickness()),
-            fit: frame.image_fit as u8,
+            fit: frame.image_fit.map_or(0, |fit| fit as u8),
         }
     }
 }
@@ -412,5 +412,100 @@ mod window_input_tests {
         assert!(header.contains(
             "StellarStatus stellar_window_session_submit_mac_event(uint64_t handle, uint64_t session, const StellarMacEvent *event, uint64_t *out_request);"
         ));
+    }
+}
+
+/// 이미지 행의 object-fit 배치를 계산합니다(`ImageFit::place`). 셸은 디코드한 원본 픽셀 크기만 넘기고 결과 사각형에
+/// 그리기만 합니다. `fit`은 표시 행의 tag, `bounds`는 행의 local 상자(x, y, width, height)입니다.
+/// # Safety
+/// `bounds`는 float 4개를 읽을 수 있어야 하고 `out_rect`는 float 4개, `out_clip`은 u8 하나를 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_image_fit_place(
+    fit: u8,
+    bounds: *const f32,
+    intrinsic_width: f32,
+    intrinsic_height: f32,
+    out_rect: *mut f32,
+    out_clip: *mut u8,
+) -> StellarStatus {
+    ffi_guard(|| {
+        if bounds.is_null() || out_rect.is_null() || out_clip.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let input = unsafe { std::slice::from_raw_parts(bounds, 4) };
+        let Some((rect, clip)) = stellar_runtime::canvas::image_placement(
+            fit,
+            [input[0], input[1], input[2], input[3]],
+            [intrinsic_width, intrinsic_height],
+        ) else {
+            return StellarStatus::InvalidArgument;
+        };
+        unsafe {
+            std::ptr::copy_nonoverlapping(rect.as_ptr(), out_rect, 4);
+            *out_clip = u8::from(clip);
+        }
+        StellarStatus::Ok
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_fit_place_returns_core_placement_and_rejects_bad_input() {
+        let bounds = [10.0f32, 20.0, 100.0, 50.0];
+        let mut rect = [0.0f32; 4];
+        let mut clip = 9u8;
+        // cover(2): 가로로 긴 200×50 원본은 높이에 맞춰 가로가 넘치고 상자로 자릅니다.
+        let status = unsafe {
+            stellar_image_fit_place(
+                2,
+                bounds.as_ptr(),
+                200.0,
+                50.0,
+                rect.as_mut_ptr(),
+                &mut clip,
+            )
+        };
+        assert_eq!(status, StellarStatus::Ok);
+        assert_eq!((rect, clip), ([-40.0, 20.0, 200.0, 50.0], 1));
+        // contain(1)은 자르지 않습니다.
+        let status = unsafe {
+            stellar_image_fit_place(
+                1,
+                bounds.as_ptr(),
+                200.0,
+                50.0,
+                rect.as_mut_ptr(),
+                &mut clip,
+            )
+        };
+        assert_eq!(status, StellarStatus::Ok);
+        assert_eq!((rect, clip), ([10.0, 32.5, 100.0, 25.0], 0));
+        for (fit, width) in [(4u8, 200.0f32), (1, 0.0)] {
+            let status = unsafe {
+                stellar_image_fit_place(
+                    fit,
+                    bounds.as_ptr(),
+                    width,
+                    50.0,
+                    rect.as_mut_ptr(),
+                    &mut clip,
+                )
+            };
+            assert_eq!(status, StellarStatus::InvalidArgument);
+        }
+        let status = unsafe {
+            stellar_image_fit_place(1, std::ptr::null(), 1.0, 1.0, rect.as_mut_ptr(), &mut clip)
+        };
+        assert_eq!(status, StellarStatus::NullPointer);
+    }
+
+    #[test]
+    fn canvas_row_layout_is_unchanged_by_the_fit_tag() {
+        // id 16 + parent·flags 8 + world 24 + size 8 + radii 16 + 색 둘 40 + border_width 4 + fit 1 → 정렬 120.
+        assert_eq!(std::mem::size_of::<StellarCanvasFrame>(), 120);
+        assert_eq!(std::mem::align_of::<StellarCanvasFrame>(), 4);
     }
 }

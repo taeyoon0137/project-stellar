@@ -212,6 +212,51 @@ impl ImageFit {
             _ => None,
         }
     }
+
+    /// CSS `object-fit`의 배치 계산. `bounds`(x, y, width, height)는 이미지 상자, `intrinsic`은 원본 크기(이미지 1px =
+    /// 1 CSS px)입니다. 중앙 정렬(`object-position: 50% 50%`)이며, 상자를 넘칠 수 있는 Cover·None은 상자로 잘라야
+    /// 합니다. 캔버스 표시(셸은 결과 사각형에 그리기만 함)와 테스트의 SVG 대조가 이 함수 하나를 씁니다. 크기가 0 이하이거나
+    /// 비유한이면 `None`입니다.
+    pub fn place(self, bounds: [f32; 4], intrinsic: [f32; 2]) -> Option<ImagePlacement> {
+        let [x, y, width, height] = bounds;
+        let [source_width, source_height] = intrinsic;
+        if !(bounds.iter().chain(intrinsic.iter()).all(|v| v.is_finite())
+            && width > 0.0
+            && height > 0.0
+            && source_width > 0.0
+            && source_height > 0.0)
+        {
+            return None;
+        }
+        let (w, h, clip) = match self {
+            ImageFit::Fill => (width, height, false),
+            ImageFit::Contain => {
+                let scale = (width / source_width).min(height / source_height);
+                (source_width * scale, source_height * scale, false)
+            }
+            ImageFit::Cover => {
+                let scale = (width / source_width).max(height / source_height);
+                (source_width * scale, source_height * scale, true)
+            }
+            ImageFit::None => (source_width, source_height, true),
+        };
+        let dest = [x + (width - w) / 2.0, y + (height - h) / 2.0, w, h];
+        dest.iter()
+            .all(|v| v.is_finite())
+            .then_some(ImagePlacement {
+                dest,
+                clip_to_bounds: clip,
+            })
+    }
+}
+
+/// [`ImageFit::place`]의 결과.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ImagePlacement {
+    /// 원본 전체를 그릴 사각형(x, y, width, height). 상자 밖으로 나갈 수 있습니다.
+    pub dest: [f32; 4],
+    /// 상자 밖을 잘라야 하는지(Cover·None).
+    pub clip_to_bounds: bool,
 }
 
 /// 이미지 확대·축소 sampling. document `SamplingMode`와 같은 의미·tag입니다.
@@ -952,6 +997,68 @@ impl fmt::Debug for DebugChildren<'_> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn object_fit_places_each_mode_for_wide_and_tall_sources() {
+        use super::ImageFit;
+        let bounds = [10.0, 20.0, 100.0, 50.0];
+        // 가로로 긴 원본 200×50(4:1)과 세로로 긴 원본 20×80(1:4).
+        let cases = [
+            (
+                ImageFit::Fill,
+                [200.0, 50.0],
+                [10.0, 20.0, 100.0, 50.0],
+                false,
+            ),
+            (
+                ImageFit::Contain,
+                [200.0, 50.0],
+                [10.0, 32.5, 100.0, 25.0],
+                false,
+            ),
+            (
+                ImageFit::Cover,
+                [200.0, 50.0],
+                [-40.0, 20.0, 200.0, 50.0],
+                true,
+            ),
+            (
+                ImageFit::None,
+                [200.0, 50.0],
+                [-40.0, 20.0, 200.0, 50.0],
+                true,
+            ),
+            (
+                ImageFit::Fill,
+                [20.0, 80.0],
+                [10.0, 20.0, 100.0, 50.0],
+                false,
+            ),
+            (
+                ImageFit::Contain,
+                [20.0, 80.0],
+                [53.75, 20.0, 12.5, 50.0],
+                false,
+            ),
+            (
+                ImageFit::Cover,
+                [20.0, 80.0],
+                [10.0, -155.0, 100.0, 400.0],
+                true,
+            ),
+            (ImageFit::None, [20.0, 80.0], [50.0, 5.0, 20.0, 80.0], true),
+        ];
+        for (fit, source, dest, clip) in cases {
+            let placed = fit.place(bounds, source).unwrap();
+            assert_eq!(placed.dest, dest, "{fit:?} {source:?}");
+            assert_eq!(placed.clip_to_bounds, clip, "{fit:?}");
+        }
+        assert!(ImageFit::Contain.place(bounds, [0.0, 10.0]).is_none());
+        assert!(ImageFit::Contain
+            .place([0.0, 0.0, 0.0, 1.0], [1.0, 1.0])
+            .is_none());
+        assert!(ImageFit::Cover.place(bounds, [f32::NAN, 1.0]).is_none());
+    }
+
     use super::*;
     use stellar_core_types::value::{Size2, Vec2};
 

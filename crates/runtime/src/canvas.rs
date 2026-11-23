@@ -26,6 +26,7 @@ use crate::window_session::ProjectWindowSession;
 
 mod component;
 mod image;
+pub use image::image_placement;
 pub(crate) mod shape;
 
 /// painter 순서의 사각형 하나. parent는 투명한 Fragment를 펼친 뒤의 가장 가까운 Frame입니다.
@@ -41,8 +42,8 @@ pub struct CanvasFrame {
     pub instance_frame: bool,
     /// PNG asset 참조. 픽셀은 worker에서 검증·디코드합니다.
     pub image_asset: Option<StableId>,
-    /// 이미지 상자 안의 CSS object-fit 배치 방식.
-    pub image_fit: FitMode,
+    /// 이미지 상자 안의 CSS object-fit 배치 방식. Image 행에만 있습니다.
+    pub image_fit: Option<FitMode>,
     /// 문서 node 식별자.
     pub id: StableId,
     /// 같은 목록의 Frame 부모 index.
@@ -327,7 +328,7 @@ impl CanvasScene {
             instance_frame: false,
             text_node: false,
             image_asset: None,
-            image_fit: FitMode::Contain,
+            image_fit: None,
             id,
             parent,
             world: spec.world_transform,
@@ -391,7 +392,7 @@ impl CanvasScene {
                     instance_frame: false,
                     text_node: true,
                     image_asset: None,
-                    image_fit: FitMode::Contain,
+                    image_fit: None,
                     id,
                     parent,
                     world,

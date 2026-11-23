@@ -213,7 +213,7 @@ typedef struct StellarCanvasColor { uint32_t space; float rgba[4]; } StellarCanv
 typedef struct StellarCanvasFrame {
     uint8_t id[16]; uint32_t parent, flags; /* parent: root UINT32_MAX, flags: bit0 clip children, bit1 hit target, bit2 Rectangle Shape, bit3 component instance, bit4 Text, bit5 Image, bit6 path Shape(Ellipse·Line·Polygon, stellar_canvas_shape_path) */
     float world[6], size[2], radii[4]; /* TL,TR,BR,BL */
-    StellarCanvasColor fill, border; float border_width; uint8_t fit; /* image object-fit: fill=0, contain=1, cover=2, none=3 */
+    StellarCanvasColor fill, border; float border_width; uint8_t fit; /* bit5 Image 행만: object-fit fill=0, contain=1, cover=2, none=3(다른 행은 0, 의미 없음) */
 } StellarCanvasFrame;
 typedef struct StellarCanvasInfo {
     uint64_t revision; uint8_t view[16], primary[16]; float camera[6]; uint32_t count, skipped;
@@ -512,6 +512,8 @@ StellarStatus stellar_window_canvas_move(uint64_t handle, uint64_t session, cons
 typedef struct StellarCanvasSelectionItem { uint8_t id[16]; uint32_t kind, flags; float world[6], rect[4], radii[4], line[4]; } StellarCanvasSelectionItem;
 typedef struct StellarGesturePreview { uint32_t kind; int32_t handle; uint32_t flags; float rect[4], line[4], radii[4], point[2]; } StellarGesturePreview;
 StellarStatus stellar_canvas_gesture_preview(const StellarGesturePreview *input, StellarGesturePreview *output);
+/* Image 행의 object-fit 배치: bounds(x, y, w, h)와 원본 픽셀 크기 → 그릴 사각형과 상자 clip 여부(Cover·None은 1). */
+StellarStatus stellar_image_fit_place(uint8_t fit, const float bounds[4], float intrinsic_width, float intrinsic_height, float out_rect[4], uint8_t *out_clip);
 /* 하나뿐인 선택 node의 상자를 지금 local 좌표 (x, y, w, h)로 바꿉니다(크기 핸들, Undo 한 번, 크기 > 0). */
 StellarStatus stellar_window_canvas_resize(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint64_t history_sequence, float x, float y, float width, float height, uint64_t *out_request);
 /* 하나뿐인 선택 node의 모서리 반경(corner -1 네 모서리, 0–3 tl tr br bl 하나). Frame·Rectangle은 border-*-radius, Polygon은 값 하나. */

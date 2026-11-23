@@ -809,3 +809,10 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 ## 철회(2026-11-23, UX.3.8 스냅 연결)
 
 - `stellar_canvas_snap`·`stellar_canvas_snap_intervals`와 두 POD를 제거합니다. 사유와 엔진 쪽 보완은 ADR-0071 같은 날짜 절에 적습니다.
+
+## 보완(2026-11-23, 이미지 object-fit 배치)
+
+- 2026-11-18 이미지 object-fit 개정은 `StellarCanvasFrame.fit` tag만 넘기고 배치(배율·사각형·clip)를 셸이 계산했습니다. 배치 계산은 scene `ImageFit::place`(CSS `object-fit`, 중앙 `object-position`) 하나로 두고 `stellar_image_fit_place`로 노출합니다. 셸은 행의 local 상자와 디코드한 원본 픽셀 크기만 넘기고 받은 사각형에 그리며, clip 값이 1(Cover·None)이면 상자로 자릅니다. 원본 픽셀 크기는 셸이 PNG를 디코드한 뒤에만 알 수 있어 표시 행에 미리 사각형을 싣지 않습니다.
+- `fit`은 bit5(Image) 행에서만 의미가 있고 다른 행은 0입니다. runtime `CanvasFrame.image_fit`은 `Option<FitMode>`입니다.
+- SVG exporter는 같은 의미를 `viewBox`·`preserveAspectRatio`(fill `none`, contain `meet`, cover `slice`, none 1:1 viewBox) 선언으로 씁니다. 수치 배치 정의는 `ImageFit::place`가 기준이며 SVG는 브라우저가 같은 결과를 계산하게 하는 선언형 출력입니다.
+
