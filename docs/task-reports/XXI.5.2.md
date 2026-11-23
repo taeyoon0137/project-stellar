@@ -36,6 +36,10 @@
 | Host가 `ProcessPlugin`을 놓으면(drop) process를 끝내고 pid 사라짐 | 통과 |
 | `revoke`가 `Killed(Revoked)`, pid 사라짐 | 통과 |
 
+## 차이(작업 지시와 다른 점)
+
+- 없음.
+
 ## 남은 위험 / 한계
 
 - `sh`가 띄운 손자 process는 이 계약이 추적하지 않습니다. 실제 플러그인 실행 파일은 직접 실행하는 단일 process를 전제로 합니다.

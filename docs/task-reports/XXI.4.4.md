@@ -37,6 +37,10 @@
 | session이 1 KiB 상한에서 16 KiB `file.read` 결과를 조각으로 보내고 이어 붙인 결과가 원본과 같음 | 통과 |
 | node로 띄운 생성 TypeScript client ↔ Rust session: 쓰기·조각 읽기·batch(권한 거부 포함)·오류 class·`host.info` | 통과 |
 
+## 차이(작업 지시와 다른 점)
+
+- 없음.
+
 ## 남은 위험 / 한계
 
 - 조각 data는 JSON 문자열이라 따옴표·escape가 많은 응답은 전송 크기가 늘어납니다. 진짜 binary 전송(WKWebView `WKScriptMessage` reply의

@@ -45,6 +45,10 @@
 | 모르는 method(`pointer.move` 포함), 모르는 매개변수, 형식 오류, 권한 없음 거부 | 통과 |
 | 프로젝트 신뢰 철회 뒤 프로젝트 method `not-trusted`, `host.info`는 동작 | 통과 |
 
+## 차이(작업 지시와 다른 점)
+
+- 없음.
+
 ## 남은 위험 / 한계
 
 - terminal·clipboard 권한은 정의만 있고 method는 아직 없습니다(WebView·앱 연결 때 추가).

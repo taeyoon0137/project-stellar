@@ -36,6 +36,10 @@
 | `plugins/` 삭제(플러그인 제거) 뒤 `open_snapshot`·`validate_project`·`document.read_snapshot` 정상 | 통과 |
 | 경로 탈출 4종 거부, namespace 안 파일·디렉터리 symlink 읽기·쓰기 거부, `stellar.yaml` 내용 그대로 | 통과 |
 
+## 차이(작업 지시와 다른 점)
+
+- 없음.
+
 ## 남은 위험 / 한계
 
 - `plugins/`를 Git에 넣을지는 프로젝트 `.gitignore`가 정합니다. 기본 scaffold는 무시하지 않습니다.

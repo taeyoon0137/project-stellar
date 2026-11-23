@@ -27,6 +27,10 @@
 |---|---|
 | `cargo test -p stellar-plugin-host --test webview_inventory` | 2 passed(plugin panel 밖 WebView 0) |
 
+## 차이(작업 지시와 다른 점)
+
+- 없음.
+
 ## 남은 위험 / 한계
 
 - 문자열 검색이라 다른 이름으로 WebView를 감싸면 놓칩니다. WebView 연결 때 Xcode target의 link framework 검사(WebKit)를 더하는 편이 확실합니다.

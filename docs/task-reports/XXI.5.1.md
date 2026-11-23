@@ -39,6 +39,10 @@
 | process가 code 3으로 죽어도 Host process는 계속 동작하고 같은 프로젝트로 새 dispatcher가 읽기 성공(process crash isolation) | 통과 |
 | 철회 뒤 process id가 더는 살아 있지 않음 | 통과 |
 
+## 차이(작업 지시와 다른 점)
+
+- 없음.
+
 ## 남은 위험 / 한계
 
 - 실행 파일을 manifest에 선언하는 필드는 아직 없습니다. 호출자가 package 안 경로(`PluginPackage::resolve`)로 정합니다.
