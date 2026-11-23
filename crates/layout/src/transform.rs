@@ -38,6 +38,56 @@ pub fn placement_transform(
     })
 }
 
+/// `rotate(<angle>)`의 행렬(속성 모델 15장 O13, IX.11.9 결정).
+///
+/// 직각 배수(0·90·180·270도와 그 ±360k)는 sin·cos를 정확한 0·±1로 둡니다. 그 밖의 각은 f64 `sin_cos`를 한 번 계산해
+/// f32로 반올림합니다. 플랫폼 libm 차이는 f64 결과의 마지막 bit에만 나타나 f32 반올림 뒤 같은 값이 될 가능성이
+/// 높지만 보장하지 않으므로, 저장 형식은 회전을 분해하지 않고 `matrix()`로 둡니다(ADR-0024 결정 8).
+pub fn rotate_matrix(degrees: f32) -> Result<Transform2D, LayoutError> {
+    let non_finite = |_| LayoutError::NonFinite { field: "rotate" };
+    let turns = degrees.rem_euclid(360.0);
+    let (sin, cos) = if turns == 0.0 {
+        (0.0, 1.0)
+    } else if turns == 90.0 {
+        (1.0, 0.0)
+    } else if turns == 180.0 {
+        (0.0, -1.0)
+    } else if turns == 270.0 {
+        (-1.0, 0.0)
+    } else {
+        let (s, c) = f64::from(degrees).to_radians().sin_cos();
+        (s as f32, c as f32)
+    };
+    Transform2D::new(cos, sin, -sin, cos, 0.0, 0.0).map_err(non_finite)
+}
+
+/// node의 CSS 위치와 변형을 부모 좌표 변환 하나로 합성합니다(IX.11.9).
+///
+/// CSS 순서는 `translate(left, top)`(layout 결과 위치) 뒤 `transform-origin` o에 대해
+/// `translate(o) ∘ transform ∘ translate(-o)`입니다. `transform`은 node border box 좌상단 원점의 선형 행렬과 이동을
+/// 담은 `matrix(a, b, c, d, e, f)`입니다. o가 0이면 결과는 `translate(position) ∘ transform`입니다.
+pub fn css_node_transform(
+    position: (f32, f32),
+    origin: (f32, f32),
+    transform: &Transform2D,
+) -> Result<Transform2D, LayoutError> {
+    let non_finite = |_| LayoutError::NonFinite {
+        field: "css transform",
+    };
+    let translate = |x: f32, y: f32| Transform2D::new(1.0, 0.0, 0.0, 1.0, x, y).map_err(non_finite);
+    let around = if origin == (0.0, 0.0) {
+        *transform
+    } else {
+        translate(-origin.0, -origin.1)?
+            .then(transform)
+            .and_then(|t| t.then(&Transform2D::new(1.0, 0.0, 0.0, 1.0, origin.0, origin.1)?))
+            .map_err(non_finite)?
+    };
+    around
+        .then(&translate(position.0, position.1)?)
+        .map_err(non_finite)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +176,36 @@ mod tests {
         assert_eq!(decoded, input);
         assert_eq!(decoded.nodes[0].transform, rotate_scale());
         assert_eq!(LayoutNode::new(id(2)).transform, Transform2D::identity());
+    }
+
+    #[test]
+    fn rotate_right_angles_are_exact_and_others_round_from_f64() {
+        let exact = |deg: f32| rotate_matrix(deg).unwrap().components();
+        assert_eq!(exact(0.0), (1.0, 0.0, -0.0, 1.0, 0.0, 0.0));
+        assert_eq!(exact(90.0), (0.0, 1.0, -1.0, 0.0, 0.0, 0.0));
+        assert_eq!(exact(180.0), (-1.0, 0.0, -0.0, -1.0, 0.0, 0.0));
+        assert_eq!(exact(270.0), (0.0, -1.0, 1.0, 0.0, 0.0, 0.0));
+        assert_eq!(exact(-90.0), exact(270.0));
+        assert_eq!(exact(450.0), exact(90.0));
+        let (a, b, ..) = exact(30.0);
+        assert_eq!(a, (30f64.to_radians().cos()) as f32);
+        assert_eq!(b, (30f64.to_radians().sin()) as f32);
+    }
+
+    #[test]
+    fn css_transform_with_zero_origin_reproduces_the_original_matrix() {
+        // 위치 분리 migration(IX.11.9): 이동 성분은 left·top으로, 선형 부분은 matrix(a, b, c, d, 0, 0)으로.
+        let original = Transform2D::new(0.8, 0.6, -0.6, 0.8, 12.5, -4.0).unwrap();
+        let (a, b, c, d, tx, ty) = original.components();
+        let linear = Transform2D::new(a, b, c, d, 0.0, 0.0).unwrap();
+        let composed = css_node_transform((tx, ty), (0.0, 0.0), &linear).unwrap();
+        assert_eq!(composed, original);
+        // origin이 있으면 그 점이 고정됩니다.
+        let rotate = rotate_matrix(90.0).unwrap();
+        let around = css_node_transform((0.0, 0.0), (10.0, 10.0), &rotate).unwrap();
+        let p = around
+            .apply(stellar_core_types::value::Vec2::new(10.0, 10.0).unwrap())
+            .unwrap();
+        assert_eq!((p.x(), p.y()), (10.0, 10.0));
     }
 }
