@@ -100,6 +100,13 @@ fn user_files_are_never_overwritten() {
     let error = replace_directory(&mine, &files(&[("index.html", "<p>x</p>")])).unwrap_err();
     assert!(matches!(&error, WriteError::UserFiles(list) if list == &["src/app.js".to_string()]));
     assert_eq!(snapshot(&mine), before);
+    // 생성 디렉터리 안에 사용자가 만든 빈 디렉터리도 사용자 항목이라 지우지 않습니다.
+    let web = temp.0.join("web2");
+    replace_directory(&web, &files(&[("index.html", "<p>1</p>")])).expect("first");
+    fs::create_dir(web.join("assets")).unwrap();
+    let error = replace_directory(&web, &files(&[("index.html", "<p>2</p>")])).unwrap_err();
+    assert!(matches!(&error, WriteError::UserFiles(list) if list == &["assets/".to_string()]));
+    assert!(web.join("assets").is_dir());
     // 파일 경로는 디렉터리가 아니므로 거부합니다.
     let error = replace_directory(&mine.join("src/app.js"), &files(&[("a.css", "x")])).unwrap_err();
     assert!(matches!(error, WriteError::NotADirectory(_)));
@@ -174,4 +181,36 @@ fn only_marked_regions_change_in_user_files() {
         }
         assert_eq!(fs::read_to_string(&path).unwrap(), content, "{tag}");
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn marked_region_update_keeps_the_user_file_permissions() {
+    // 검증 기준(XXII.5.2): 사용자 파일 보존. 임시 파일 교체가 실행 bit 같은 권한을 바꾸지 않습니다.
+    use std::os::unix::fs::PermissionsExt;
+    let temp = TempDir::new("perm");
+    let file = temp.0.join("run.js");
+    fs::write(
+        &file,
+        "// stellar:generated:begin a\nold\n// stellar:generated:end a\n",
+    )
+    .unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o750)).unwrap();
+    let mut regions = BTreeMap::new();
+    regions.insert("a".to_string(), "new".to_string());
+    update_marked_regions(&file, &regions).expect("update");
+    assert_eq!(
+        fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o750
+    );
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "// stellar:generated:begin a\nnew\n// stellar:generated:end a\n"
+    );
+    // 임시 파일이 남지 않습니다.
+    let names: Vec<String> = fs::read_dir(&temp.0)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["run.js"]);
 }

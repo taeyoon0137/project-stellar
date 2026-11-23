@@ -99,11 +99,22 @@ fn sibling(dir: &Path, tag: &str) -> Result<PathBuf, WriteError> {
     )))
 }
 
-/// 디렉터리 안 파일(상대 경로, 정렬). symlink는 오류입니다.
+/// 디렉터리 안 파일(상대 경로, 정렬). 빈 하위 디렉터리는 `<경로>/`로 넣습니다(생성 manifest는 파일만 담으므로 빈
+/// 디렉터리는 사용자 항목이고, 교체로 지우지 않습니다). symlink는 오류입니다.
 fn list_files(root: &Path) -> Result<Vec<String>, WriteError> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
+        if dir != root && fs::read_dir(&dir)?.next().is_none() {
+            let relative = dir
+                .strip_prefix(root)
+                .map_err(|_| WriteError::NotADirectory(dir.clone()))?;
+            out.push(format!(
+                "{}/",
+                relative.to_string_lossy().replace('\\', "/")
+            ));
+            continue;
+        }
         for entry in fs::read_dir(&dir)? {
             let entry = entry?;
             let path = entry.path();
@@ -319,11 +330,14 @@ pub fn update_marked_regions(
         index += 1;
     }
     let temp = sibling(file, "tmp")?;
-    if let Err(error) = write_synced(&temp, out.as_bytes()) {
+    // 사용자 파일의 권한(실행 bit 등)을 그대로 둡니다. 교체 전에 실패하면 임시 파일만 지웁니다.
+    let replaced = write_synced(&temp, out.as_bytes())
+        .and_then(|()| fs::set_permissions(&temp, meta.permissions()).map_err(WriteError::from))
+        .and_then(|()| fs::rename(&temp, file).map_err(WriteError::from));
+    if let Err(error) = replaced {
         let _ = fs::remove_file(&temp);
         return Err(error);
     }
-    fs::rename(&temp, file)?;
     Ok(())
 }
 
