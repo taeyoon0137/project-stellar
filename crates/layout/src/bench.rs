@@ -453,6 +453,18 @@ mod tests {
     }
 
     #[test]
+    fn full_layout_computes_at_most_four_requests_per_node() {
+        // 요청 정규화(ADR-0084 결정 1)의 회귀 감시: 계산 수는 결정적입니다. 정규화 전 엔진은 node당 약 7.4회였습니다.
+        let report = run_leaf_edit_benchmark(&LeafEditConfig { edits: 0, ..SMALL }).unwrap();
+        let nodes = SMALL.node_count() as u64;
+        assert!(
+            report.initial.measured <= 4 * nodes,
+            "node {nodes}개에 배치 계산 {}회",
+            report.initial.measured
+        );
+    }
+
+    #[test]
     fn percentile_uses_nearest_rank() {
         assert_eq!(percentile(&[], 50), 0);
         assert_eq!(percentile(&[5], 95), 5);

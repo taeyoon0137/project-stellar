@@ -884,7 +884,8 @@ impl IncrementalLayout {
         } = self;
         let depth = tree.depth;
         let outcome = with_layout_stack(depth, move || {
-            let mut engine = Engine::new(input, tree, prepared, subtree, measurer, Some(cache));
+            let mut engine =
+                Engine::new_partial(input, tree, prepared, subtree, measurer, Some(cache));
             let mut done: HashSet<usize> = HashSet::new();
             // 얕은 시작 node부터 처리합니다. 앞선 relayout이 이미 다시 배치한 node는 건너뜁니다.
             let mut written: HashSet<StableId> = HashSet::new();
