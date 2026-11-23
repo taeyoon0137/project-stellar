@@ -1,0 +1,24 @@
+00000000-0000-0000-0000-000000000001 {
+  --context-accent: c(0.5,0.5,0.5);
+  --context-density-0: 1;
+  --context-density: var(--context-density-0);
+}
+00000000-0000-0000-0000-000000000002 {
+  --context-accent: c(1,0,0);
+  --context-density-1: calc(var(--context-density-0) * 2);
+  --context-density: var(--context-density-1);
+}
+00000000-0000-0000-0000-000000000003 {
+  --context-accent: c(0,0,1);
+  --context-density-2: calc(var(--context-density-1) * 2);
+  --context-density: var(--context-density-2);
+}
+00000000-0000-0000-0000-000000000005 {
+  --context-accent-outer: var(--context-accent);
+}
+00000000-0000-0000-0000-000000000006 {
+  --context-accent: c(0,1,0);
+}
+00000000-0000-0000-0000-000000000007 {
+  --context-accent: var(--context-accent-outer);
+}

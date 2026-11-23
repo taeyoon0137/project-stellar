@@ -1,0 +1,59 @@
+@property --radius-lg {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 8px;
+}
+@property --accent {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #0a84ff;
+}
+@property --accent-alias {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #0a84ff;
+}
+@property --motion-scale {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+@property --Space-2 {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 4px;
+}
+@property --viewport-gap {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 10px;
+}
+:root {
+  --radius-lg: 8px;
+  --accent: #0a84ff;
+  --accent-alias: var(--accent);
+  --motion-scale: 1;
+  --Space-2: 4px;
+  --viewport-gap: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --radius-lg: 12px;
+    --accent: #64d2ff;
+  }
+}
+@media (prefers-contrast: more) {
+  :root {
+    --accent: #0040dd;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-scale: 0;
+  }
+}
+@media (prefers-color-scheme: dark) and (prefers-contrast: more) {
+  :root {
+    --accent: #409cff;
+  }
+}

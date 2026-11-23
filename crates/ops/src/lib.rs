@@ -82,6 +82,23 @@ pub mod css;
 
 /// PNG 내보내기 실행과 atomic 저장 (XX.2.3, ADR-0103).
 pub mod export_png;
+/// 문서 값 → 코드 생성 IR 입력 (XXII.1, ADR-0106).
+pub mod codegen;
+
+/// 토큰 → Web CSS custom property·생성 상수 (XXII.2.3, ADR-0106).
+pub mod export_web_tokens;
+
+/// codegen Web 출력의 문서 CSS 이름·값 표기와 Context 출력 (XXII.2.5, ADR-0106).
+pub mod export_web_css;
+
+/// 상태 머신·MotionSpec·상호작용 상태 토큰의 Web 출력 (XXII.2.6, ADR-0106).
+pub mod export_web_motion;
+
+/// IR → Web 생성 파일 집합 (XXII.5.1, ADR-0106).
+pub mod export_web;
+
+/// 생성 파일 쓰기: 임시 디렉터리 교체 또는 generated marker 구간 갱신 (XXII.5.2, ADR-0106).
+pub mod export_web_write;
 
 /// 기본값 세트(ADR-0082, ADR-0086): 세트 표·해석 함수(document)와 프로젝트 선택·사용자 세트 파일(project)을
 /// 상위 도구가 같은 구현으로 쓰도록 다시 냅니다.

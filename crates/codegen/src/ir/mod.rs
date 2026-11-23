@@ -17,6 +17,8 @@
 //! | state | [`StateDecl`](상태 변수 id·이름·초기값) | IX.5.1 |
 //! | tokens | [`TokenDecl`](token id·이름·해석 값)과 PropertyPath → token binding | VIII.5·VIII.6 |
 //! | 텍스트 | Text node의 해석된 내용 | VI.7 |
+//! | CSS 기반 속성 사용 | [`CssPropertyUse`](node별 registry 항목·매핑 상태) | IX.11 registry |
+//! | 상태 머신·motion | [`IrStateMachine`]·[`IrMotion`](문서 값 그대로, 표현식은 [`IrExpr`]) | IX.5·XXX.1.1 |
 //!
 //! # 변환 규칙
 //!
@@ -32,6 +34,13 @@
 //! - **target capability**: IX.10.8 validator 결과(Native 포함 모든 진단)를 node별로 붙입니다. profile이 pin한
 //!   registry release를 앱이 모르면 IR을 만들지 않습니다.
 //! - **tokens·state**: 선언 전체를 id 오름차순으로 담습니다. token binding은 IR에 값이 있는 속성에만 붙습니다.
+//! - **mapping 진단**(XXII.1.2): node마다 validator 진단과 CSS 기반 속성 사용의 matrix 판정을 Native까지 모두
+//!   [`IrNode::mappings`]에 남깁니다([`mapping`]).
+//! - **상태 머신·motion**(XXII.1.5): 참조 무결성(선언된 상태·action·토큰, View node)만 검사하고 값은 그대로
+//!   보존합니다. 제외 node가 source인 transition과 제외 node 대상은 버리고, 대상이 모두 빠진 motion도 버립니다.
+//!   머신은 소유자 오름차순, motion은 id 오름차순입니다.
+//! - **Context**(XXII.1.6): XXX.7.4 해석기 결과(소비 지점별 출처·slot 경계)를 그대로 보존합니다. adapter는 다시
+//!   해석하지 않습니다([`context`]).
 //!
 //! 같은 입력은 항상 같은 IR과 같은 [`CodegenIr::semantic_snapshot`] 텍스트를 만듭니다(hash 순서·pointer·부동소수
 //! 연산을 쓰지 않음).
@@ -54,8 +63,21 @@ use stellar_target_profile::registry::ProfileRegistryVersion;
 use stellar_target_profile::spec::TargetProfile;
 use stellar_target_profile::validate::{CapabilityFinding, PropertyCapabilityMap, ViewModel};
 
+mod behavior_build;
 mod binding;
 mod build;
+
+/// node별 mapping 진단 (XXII.1.2).
+pub mod mapping;
+
+/// 선언형 상태 머신과 `MotionSpec` (XXII.1.5).
+pub mod behavior;
+
+/// Context 선언·provision·소비 (XXII.1.6).
+pub mod context;
+
+/// 토큰 alias와 환경 조건부 값 (XXII.2.3).
+pub mod token_env;
 
 /// semantic snapshot 텍스트와 안정 이름 표기.
 pub mod snapshot;
@@ -63,8 +85,20 @@ pub mod snapshot;
 #[cfg(test)]
 mod tests;
 
+pub use behavior::{
+    IrAction, IrExpr, IrMotion, IrMotionStart, IrOwner, IrReducedMotion, IrSemanticAction,
+    IrStateMachine, IrStepPosition, IrTiming, IrTransition, IrTrigger, MAX_EXPR_DEPTH,
+};
 pub use binding::ResolvedBinding;
 pub use build::{build_accessibility_ir, build_ir};
+pub use context::{
+    IrContextConsumption, IrContextKey, IrContextProvision, IrContextSource, IrContexts,
+    IrSlotCrossing, IrSlotHost,
+};
+pub use mapping::{CssPropertyUse, IrMapping, MappingSource, MappingSubject};
+pub use token_env::{
+    IrColorScheme, IrContrast, IrEnvironmentValue, IrInteractionState, IrTokenVariant,
+};
 
 /// IR을 만들 수 있는 최대 View node 수.
 pub const MAX_IR_NODES: usize = 1_000_000;
@@ -87,8 +121,25 @@ pub struct TokenDecl {
     pub id: StableId,
     /// token 이름(비어 있으면 안 됨).
     pub name: String,
-    /// 선택 profile로 해석한 값.
+    /// 선택 profile·기본 환경으로 해석한 값.
     pub value: TypedValue,
+    /// default expression이 다른 토큰 참조 하나뿐이면 그 토큰(alias, XXII.2.3).
+    pub alias: Option<StableId>,
+    /// 환경 조건 조합별 값(기본 환경과 다른 조합만, XXII.2.3).
+    pub variants: Vec<IrTokenVariant>,
+}
+
+impl TokenDecl {
+    /// alias·조건부 값이 없는 선언.
+    pub fn new(id: StableId, name: impl Into<String>, value: TypedValue) -> TokenDecl {
+        TokenDecl {
+            id,
+            name: name.into(),
+            value,
+            alias: None,
+            variants: Vec::new(),
+        }
+    }
 }
 
 /// IR 변환 입력. 모든 값은 IR을 만들 Target Profile로 이미 해석된 것입니다(layout·텍스트·token 값 포함).
@@ -112,6 +163,14 @@ pub struct CodegenSources<'a> {
     pub tokens: &'a [TokenDecl],
     /// 속성 경로 → 그 값을 정한 token.
     pub token_bindings: &'a BTreeMap<PropertyPath, StableId>,
+    /// node → 그 node가 쓰는 CSS 기반 속성 registry 항목(XXII.1.2).
+    pub css_properties: &'a BTreeMap<StableId, Vec<CssPropertyUse>>,
+    /// 선언형 상태 머신(XXII.1.5).
+    pub machines: &'a [IrStateMachine],
+    /// `MotionSpec`(XXII.1.5).
+    pub motions: &'a [IrMotion],
+    /// Context 해석 결과(XXII.1.6).
+    pub contexts: &'a IrContexts,
 }
 
 impl fmt::Debug for CodegenSources<'_> {
@@ -197,6 +256,8 @@ pub struct IrNode {
     pub semantics: Option<u32>,
     /// 선택 profile의 capability 진단(IX.10.8 결정론 순서).
     pub capabilities: Vec<CapabilityFinding>,
+    /// Native 포함 mapping 진단(출처·subject·path 오름차순, XXII.1.2).
+    pub mappings: Vec<IrMapping>,
 }
 
 impl IrNode {
@@ -245,12 +306,27 @@ pub struct IrToken {
     pub id: StableId,
     /// 이름.
     pub name: String,
-    /// 해석 값.
+    /// 기본 환경 해석 값.
     pub value: TypedValue,
+    /// alias 대상 토큰.
+    pub alias: Option<StableId>,
+    /// 환경 조건부 값(조건 정규화, 조건 순).
+    pub variants: Vec<IrTokenVariant>,
+}
+
+impl IrToken {
+    /// `interaction_state` 조건이 있는 값이 있는지(XXII.2.3: 토큰 선언에서 뺌).
+    pub fn depends_on_interaction(&self) -> bool {
+        self.variants.iter().any(|v| {
+            v.when
+                .iter()
+                .any(|e| matches!(e, IrEnvironmentValue::InteractionState(s) if *s != IrInteractionState::Default))
+        })
+    }
 }
 
 /// 중립 코드 생성 IR.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CodegenIr {
     /// target.
     pub target: IrTarget,
@@ -274,7 +350,7 @@ impl std::ops::DerefMut for CodegenIr {
 
 /// Target Profile과 독립된 IR tree. 접근성 전용 입력은 layout·capability·속성·상태·token을
 /// 만들지 않습니다. 전체 코드 생성에는 `build_ir`가 만든 `CodegenIr`이 필요합니다.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct IrTree {
     /// 시각 node(preorder, `nodes[0]`이 root).
     pub nodes: Vec<IrNode>,
@@ -284,10 +360,69 @@ pub struct IrTree {
     pub states: Vec<IrState>,
     /// token(id 오름차순).
     pub tokens: Vec<IrToken>,
+    /// 상태 머신(소유자 오름차순, XXII.1.5).
+    pub machines: Vec<IrStateMachine>,
+    /// `MotionSpec`(id 오름차순, XXII.1.5).
+    pub motions: Vec<IrMotion>,
+    /// Context 선언·provision·소비(XXII.1.6).
+    pub contexts: IrContexts,
     index: BTreeMap<StableId, u32>,
 }
 
 impl IrTree {
+    /// adapter 입력용으로 node 목록에서 tree를 만듭니다(상태·토큰·머신·motion·Context는 빈 값, 공개 field로 채움).
+    ///
+    /// node는 preorder여야 합니다: `nodes[0]`이 root(부모 없음, 깊이 0), 부모 index가 자기보다 앞, 깊이 = 부모 깊이 + 1,
+    /// 부모의 `children`이 자식 index를 문서 순서로 담고, StableId가 겹치지 않아야 합니다. 접근성 entry는 없습니다.
+    /// 전체 코드 생성 IR은 [`build_ir`]가 만듭니다.
+    pub fn from_nodes(nodes: Vec<IrNode>) -> Result<IrTree, IrError> {
+        if nodes.is_empty() {
+            return Err(IrError::EmptyView);
+        }
+        if nodes.len() > MAX_IR_NODES {
+            return Err(IrError::TooManyNodes);
+        }
+        let mut index = BTreeMap::new();
+        for (position, node) in nodes.iter().enumerate() {
+            if index.insert(node.id, position as u32).is_some() {
+                return Err(IrError::DuplicateNode(node.id));
+            }
+            let consistent = match node.parent {
+                None => position == 0 && node.depth == 0,
+                Some(parent) => {
+                    (parent as usize) < position
+                        && nodes[parent as usize].depth + 1 == node.depth
+                        && nodes[parent as usize].children.contains(&(position as u32))
+                }
+            };
+            if !consistent || (position > 0 && node.parent.is_none()) {
+                return Err(IrError::Unreachable(node.id));
+            }
+            if node.semantics.is_some() {
+                return Err(IrError::AccessibilityOutsideView(node.id));
+            }
+        }
+        for (position, node) in nodes.iter().enumerate() {
+            if node
+                .children
+                .iter()
+                .any(|c| nodes.get(*c as usize).and_then(|n| n.parent) != Some(position as u32))
+            {
+                return Err(IrError::Unreachable(node.id));
+            }
+        }
+        Ok(IrTree {
+            nodes,
+            accessibility: Vec::new(),
+            states: Vec::new(),
+            tokens: Vec::new(),
+            machines: Vec::new(),
+            motions: Vec::new(),
+            contexts: IrContexts::default(),
+            index,
+        })
+    }
+
     /// StableId의 IR node index.
     pub fn node_index(&self, id: StableId) -> Option<u32> {
         self.index.get(&id).copied()
@@ -480,6 +615,78 @@ pub enum IrError {
     },
     /// token binding의 속성에 해석 값이 없습니다.
     TokenBindingWithoutValue(StableId),
+    /// CSS 기반 속성 사용의 대상이 View node가 아닙니다.
+    CssPropertyOutsideView(StableId),
+    /// 같은 소유자의 상태 머신이 둘 이상입니다.
+    DuplicateMachine(StableId),
+    /// 같은 transition id가 두 번 있습니다.
+    DuplicateTransition(StableId),
+    /// 상태 머신이 선언되지 않은 상태 변수를 씁니다.
+    MachineUnknownState {
+        /// 소유자.
+        owner: StableId,
+        /// 상태 변수.
+        state: StableId,
+    },
+    /// transition이 선언되지 않은 semantic action을 emit합니다.
+    MachineUnknownAction {
+        /// transition.
+        transition: StableId,
+        /// action.
+        action: StableId,
+    },
+    /// transition source·instance가 View node가 아닙니다.
+    TransitionOutsideView(StableId),
+    /// 표현식이 선언되지 않은 토큰을 읽습니다.
+    ExpressionUnknownToken(StableId),
+    /// 표현식 깊이가 [`MAX_EXPR_DEPTH`]를 넘습니다.
+    ExpressionTooDeep,
+    /// 같은 MotionSpec id가 두 번 있습니다.
+    DuplicateMotion(StableId),
+    /// MotionSpec 대상이 View node가 아닙니다.
+    MotionTargetOutsideView(StableId),
+    /// MotionSpec 시작 조건이 선언되지 않은 상태 변수를 씁니다.
+    MotionUnknownState {
+        /// motion.
+        motion: StableId,
+        /// 상태 변수.
+        state: StableId,
+    },
+    /// 표현식이 선언되지 않은 상태 변수를 읽습니다.
+    ExpressionUnknownState(StableId),
+    /// 같은 ContextKey가 두 번 선언되었습니다.
+    DuplicateContextKey(StableId),
+    /// ContextKey 이름이 비었습니다.
+    EmptyContextKeyName(StableId),
+    /// 선언되지 않은 ContextKey를 가리킵니다.
+    UnknownContextKey(StableId),
+    /// Context provision·소비·slot host의 node가 View node가 아닙니다.
+    ContextNodeOutsideView(StableId),
+    /// 같은 node에 같은 key provision이 둘 이상입니다.
+    DuplicateProvision {
+        /// node.
+        node: StableId,
+        /// key.
+        key: StableId,
+    },
+    /// provision 깊이 집합이 비었거나 0을 담습니다.
+    InvalidProvisionDepth {
+        /// node.
+        node: StableId,
+        /// key.
+        key: StableId,
+    },
+    /// 소비 출처 provision이 IR에 없습니다.
+    ContextSourceMissing {
+        /// 소비 node.
+        node: StableId,
+        /// key.
+        key: StableId,
+    },
+    /// 같은 속성 경로의 소비가 둘 이상입니다.
+    DuplicateConsumption(StableId),
+    /// 토큰 조건부 값의 조건이 잘못되었습니다(같은 key 두 번, 같은 조합 두 번, 빈 조건).
+    InvalidTokenCondition(StableId),
 }
 
 impl fmt::Display for IrError {
@@ -542,6 +749,66 @@ impl fmt::Display for IrError {
             ),
             IrError::TokenBindingWithoutValue(id) => {
                 write!(f, "node {id}의 token binding 속성에 해석 값이 없습니다")
+            }
+            IrError::CssPropertyOutsideView(id) => {
+                write!(f, "CSS 기반 속성 사용의 대상 {id}가 View node가 아닙니다")
+            }
+            IrError::DuplicateMachine(id) => {
+                write!(f, "소유자 {id}의 상태 머신이 둘 이상입니다")
+            }
+            IrError::DuplicateTransition(id) => write!(f, "transition {id}가 두 번 있습니다"),
+            IrError::MachineUnknownState { owner, state } => write!(
+                f,
+                "소유자 {owner}의 상태 머신이 선언되지 않은 상태 변수 {state}를 씁니다"
+            ),
+            IrError::MachineUnknownAction { transition, action } => write!(
+                f,
+                "transition {transition}이 선언되지 않은 action {action}을 emit합니다"
+            ),
+            IrError::TransitionOutsideView(id) => {
+                write!(f, "transition source {id}가 View node가 아닙니다")
+            }
+            IrError::ExpressionUnknownToken(id) => {
+                write!(f, "표현식이 선언되지 않은 토큰 {id}를 읽습니다")
+            }
+            IrError::ExpressionTooDeep => {
+                write!(f, "표현식 깊이가 IR 상한 {MAX_EXPR_DEPTH}를 넘습니다")
+            }
+            IrError::DuplicateMotion(id) => write!(f, "MotionSpec {id}가 두 번 있습니다"),
+            IrError::MotionTargetOutsideView(id) => {
+                write!(f, "MotionSpec 대상 {id}가 View node가 아닙니다")
+            }
+            IrError::MotionUnknownState { motion, state } => write!(
+                f,
+                "MotionSpec {motion}의 시작 조건이 선언되지 않은 상태 변수 {state}를 씁니다"
+            ),
+            IrError::ExpressionUnknownState(id) => {
+                write!(f, "표현식이 선언되지 않은 상태 변수 {id}를 읽습니다")
+            }
+            IrError::DuplicateContextKey(id) => {
+                write!(f, "ContextKey {id}가 두 번 선언되었습니다")
+            }
+            IrError::EmptyContextKeyName(id) => write!(f, "ContextKey {id}의 이름이 비었습니다"),
+            IrError::UnknownContextKey(id) => write!(f, "선언되지 않은 ContextKey {id}"),
+            IrError::ContextNodeOutsideView(id) => {
+                write!(f, "Context 대상 node {id}가 View node가 아닙니다")
+            }
+            IrError::DuplicateProvision { node, key } => {
+                write!(f, "node {node}에 key {key} provision이 둘 이상입니다")
+            }
+            IrError::InvalidProvisionDepth { node, key } => write!(
+                f,
+                "node {node}의 key {key} provision 깊이 집합이 비었거나 0을 담습니다"
+            ),
+            IrError::ContextSourceMissing { node, key } => write!(
+                f,
+                "node {node}의 key {key} 소비 출처 provision이 IR에 없습니다"
+            ),
+            IrError::DuplicateConsumption(id) => {
+                write!(f, "node {id}의 같은 속성에 Context 소비가 둘 이상입니다")
+            }
+            IrError::InvalidTokenCondition(id) => {
+                write!(f, "토큰 {id}의 조건부 값 조건이 잘못되었습니다")
             }
         }
     }

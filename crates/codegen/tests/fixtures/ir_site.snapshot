@@ -1,8 +1,10 @@
-codegen-ir v2
+codegen-ir v3
 target site web baseline=2024 capability_set=1 registry=1
 tokens 3
   token 00000000-0000-0000-0000-000000000046 "surface" = display-p3(0.96 0.96 0.98 / 1)
+    when [color_scheme=dark] = display-p3(0.1 0.1 0.12 / 1)
   token 00000000-0000-0000-0000-000000000047 "accent" = srgb(0 0.48 1 / 1)
+    when [interaction_state=hover] = srgb(0 0.4 0.9 / 1)
   token 00000000-0000-0000-0000-000000000048 "spacing.md" = 16px
 states 3
   state 00000000-0000-0000-0000-000000000032 "selectedSize" = "00000000-0000-0000-0000-000000000008"
@@ -12,77 +14,85 @@ nodes 17
   [0] 00000000-0000-0000-0000-000000000001 frame semantics=a11y[0]
     layout {display: flex; width: 390px; height: 844px; padding-top: 24px; padding-right: 24px; padding-bottom: 24px; padding-left: 24px; flex-direction: column; row-gap: 16px}
     property 00000000-0000-0000-0000-000000000001.4 = display-p3(0.96 0.96 0.98 / 1) origin=common token=00000000-0000-0000-0000-000000000046
-    capability element:frame native
+    mapping validator element:frame native rule=capability-registry diagnostic=capability-native
+    mapping matrix css:frame/background-color native rule=same-name-css path=00000000-0000-0000-0000-000000000001.4
+    mapping matrix css:frame/display native rule=same-name-css
+    mapping matrix css:frame/flex-direction native rule=same-name-css
     [1] 00000000-0000-0000-0000-000000000002 text semantics=a11y[2]
       layout {align-self: flex-start} content=intrinsic(48x28 baseline=21)
       text "설정"
       property 00000000-0000-0000-0000-000000000002.5 = srgb(0.8 0.1 0.1 / 1) origin=variant(00000000-0000-0000-0000-000000000064)
-      capability element:text native
+      mapping validator element:text native rule=capability-registry diagnostic=capability-native
     [2] 00000000-0000-0000-0000-000000000003 fragment
-      capability element:fragment native
+      mapping validator element:fragment native rule=capability-registry diagnostic=capability-native
       [3] 00000000-0000-0000-0000-000000000004 image semantics=a11y[1]
         layout {width: 64px; height: 64px}
         property 00000000-0000-0000-0000-000000000004.3 = "프로필 사진" origin=common
         property 00000000-0000-0000-0000-000000000004.201 = "person.crop.circle" origin=common capability=property:apple.sf_symbol
-        capability element:image native
-        capability property:apple.sf_symbol approximated path=00000000-0000-0000-0000-000000000004.201
+        mapping validator element:image native rule=capability-registry diagnostic=capability-native
+        mapping validator property:apple.sf_symbol approximated rule=capability-registry diagnostic=capability-approximated path=00000000-0000-0000-0000-000000000004.201
+        mapping matrix css:image/object-fit native rule=css-extension-e5-explicit-initial diagnostic=css-extension
       [4] 00000000-0000-0000-0000-000000000005 shape
         layout {height: 1px}
-        capability element:shape native
+        mapping validator element:shape native rule=capability-registry diagnostic=capability-native
     [5] 00000000-0000-0000-0000-000000000006 frame contracts=[single_selection_group] semantics=a11y[3]
       layout {display: flex; align-items: center; column-gap: 8px}
       property 00000000-0000-0000-0000-000000000006.101 = 12px origin=common capability=property:css.backdrop_filter
-      capability element:frame native
-      capability contract:single_selection_group native
-      capability property:css.backdrop_filter native path=00000000-0000-0000-0000-000000000006.101
+      mapping validator element:frame native rule=capability-registry diagnostic=capability-native
+      mapping validator property:css.backdrop_filter native rule=capability-registry diagnostic=capability-native path=00000000-0000-0000-0000-000000000006.101
+      mapping validator contract:single_selection_group native rule=capability-registry diagnostic=capability-native
       [6] 00000000-0000-0000-0000-000000000007 frame contracts=[list]
         layout {display: flex; align-items: center; column-gap: 8px; flex-grow: 1}
-        capability element:frame native
-        capability contract:list native
+        mapping validator element:frame native rule=capability-registry diagnostic=capability-native
+        mapping validator contract:list native rule=capability-registry diagnostic=capability-native
         [7] 00000000-0000-0000-0000-000000000008 frame contracts=[button] semantics=a11y[4]
           layout {display: flex; padding-top: 12px; padding-right: 16px; padding-bottom: 12px; padding-left: 16px; justify-content: center; flex-grow: 1}
-          capability element:frame native
-          capability contract:button native
+          mapping validator element:frame native rule=capability-registry diagnostic=capability-native
+          mapping validator contract:button native rule=capability-registry diagnostic=capability-native
           [8] 00000000-0000-0000-0000-000000000009 text semantics=a11y[5]
             layout {} content=intrinsic(32x20 baseline=15)
             text "작게"
-            capability element:text native
+            mapping validator element:text native rule=capability-registry diagnostic=capability-native
         [9] 00000000-0000-0000-0000-00000000000a frame contracts=[button] semantics=a11y[6]
           layout {padding-top: 12px; padding-right: 16px; padding-bottom: 12px; padding-left: 16px; flex-grow: 1}
-          capability element:frame native
-          capability contract:button native
+          mapping validator element:frame native rule=capability-registry diagnostic=capability-native
+          mapping validator contract:button native rule=capability-registry diagnostic=capability-native
     [10] 00000000-0000-0000-0000-00000000000b frame contracts=[text_input] semantics=a11y[7]
       layout {height: 44px; padding-top: 8px; padding-right: 12px; padding-bottom: 8px; padding-left: 12px}
-      capability element:frame native
-      capability contract:text_input native
+      mapping validator element:frame native rule=capability-registry diagnostic=capability-native
+      mapping validator contract:text_input native rule=capability-registry diagnostic=capability-native
     [11] 00000000-0000-0000-0000-00000000000c frame contracts=[button] semantics=a11y[8]
       layout {display: grid; height: 48px; min-width: 120px; align-items: center; justify-items: center}
       property 00000000-0000-0000-0000-00000000000c.1 = 8px origin=common capability=property:common.corner_radius
       property 00000000-0000-0000-0000-00000000000c.2 = 4px origin=common capability=property:common.drop_shadow
       property 00000000-0000-0000-0000-00000000000c.4 = srgb(0 0.48 1 / 1) origin=common token=00000000-0000-0000-0000-000000000047
-      capability element:frame native
-      capability contract:button native
-      capability property:common.corner_radius native path=00000000-0000-0000-0000-00000000000c.1
-      capability property:common.drop_shadow native path=00000000-0000-0000-0000-00000000000c.2
+      mapping validator element:frame native rule=capability-registry diagnostic=capability-native
+      mapping validator property:common.corner_radius native rule=capability-registry diagnostic=capability-native path=00000000-0000-0000-0000-00000000000c.1
+      mapping validator property:common.drop_shadow native rule=capability-registry diagnostic=capability-native path=00000000-0000-0000-0000-00000000000c.2
+      mapping validator contract:button native rule=capability-registry diagnostic=capability-native
+      mapping matrix css:frame/border-top-left-radius native rule=same-name-css
+      mapping matrix css:modifier/mix-blend-mode approximated rule=css-extension-e1-linear-composite diagnostic=css-extension
+      mapping matrix css:node/locked unsupported rule=css-no-output diagnostic=css-no-output
     [12] 00000000-0000-0000-0000-00000000000d frame semantics=a11y[9]
       layout {display: grid; column-gap: 8px; grid-template-columns: minmax(0px, 1fr) minmax(0px, 1fr)}
       property 00000000-0000-0000-0000-00000000000d.4 = srgb(1.1 0.5 -0.05 / 1) origin=common
-      capability element:frame native
+      mapping validator element:frame native rule=capability-registry diagnostic=capability-native
+      mapping matrix css:frame/grid-template-columns native rule=same-name-css
       [13] 00000000-0000-0000-0000-00000000000f text semantics=a11y[10]
         layout {grid-column-start: 1; grid-row-start: 1} content=intrinsic(56x20 baseline=15)
         text "새 기능"
-        capability element:text native
+        mapping validator element:text native rule=capability-registry diagnostic=capability-native
       [14] 00000000-0000-0000-0000-000000000012 shape
         layout {width: 24px; height: 24px; grid-column-start: 2; grid-row-start: 1}
-        capability element:shape native
+        mapping validator element:shape native rule=capability-registry diagnostic=capability-native
     [15] 00000000-0000-0000-0000-000000000010 frame contracts=[modal] semantics=a11y[11]
       layout {width: 320px; height: 120px}
-      capability element:frame native
-      capability contract:modal native
+      mapping validator element:frame native rule=capability-registry diagnostic=capability-native
+      mapping validator contract:modal native rule=capability-registry diagnostic=capability-native
       [16] 00000000-0000-0000-0000-000000000011 text semantics=a11y[12]
         layout {position: absolute; top: 16px; left: 16px} content=intrinsic(120x20 baseline=15)
         text "저장되었습니다"
-        capability element:text native
+        mapping validator element:text native rule=capability-registry diagnostic=capability-native
 accessibility 13
   [0] node=[0] generic
     [1] node=[3] image label=property(00000000-0000-0000-0000-000000000004.3)
@@ -97,3 +107,32 @@ accessibility 13
       [10] node=[13] staticText label=text(00000000-0000-0000-0000-00000000000f)
     [11] node=[15] dialog label="알림" states{modal=true} actions{dismiss=action(00000000-0000-0000-0000-00000000003f)}
       [12] node=[16] staticText label=text(00000000-0000-0000-0000-000000000011)
+machines 1
+  machine view(00000000-0000-0000-0000-0000000000c8) variables=[00000000-0000-0000-0000-000000000033,00000000-0000-0000-0000-000000000034] actions=[00000000-0000-0000-0000-0000000000c9 "saved"]
+    transition 00000000-0000-0000-0000-0000000000dc on activate@00000000-0000-0000-0000-00000000000c if (not state(00000000-0000-0000-0000-000000000034))
+      set 00000000-0000-0000-0000-000000000034 = true
+      emit 00000000-0000-0000-0000-0000000000c9
+    transition 00000000-0000-0000-0000-0000000000dd on input@00000000-0000-0000-0000-00000000000b
+      set 00000000-0000-0000-0000-000000000033 = "입력"
+    transition 00000000-0000-0000-0000-0000000000de on activate@00000000-0000-0000-0000-00000000000f
+      set 00000000-0000-0000-0000-000000000034 = false
+motions 2
+  motion 00000000-0000-0000-0000-0000000000d2 owner=view(00000000-0000-0000-0000-0000000000c8) start=becomes(00000000-0000-0000-0000-000000000034=true) duration=200 delay=16.5 timing=cubic-bezier(0.25, 0.1, 0.25, 1) reduced_motion=instant
+    target 00000000-0000-0000-0000-00000000000c.4
+    target 00000000-0000-0000-0000-00000000000c.1
+  motion 00000000-0000-0000-0000-0000000000d3 owner=view(00000000-0000-0000-0000-0000000000c8) start=changes(00000000-0000-0000-0000-000000000033) duration=480 delay=0 timing=spring(mass=1 stiffness=170 damping=26 velocity=0) reduced_motion=play
+    target 00000000-0000-0000-0000-00000000000d.4
+contexts keys=3 provisions=4 consumptions=5 slots=1
+  key 00000000-0000-0000-0000-0000000000e6 "accent" default=srgb(0.2 0.2 0.2 / 1)
+  key 00000000-0000-0000-0000-0000000000e7 "density" default=1
+  key 00000000-0000-0000-0000-0000000000e8 "label" default="기본"
+  provision 00000000-0000-0000-0000-000000000001 key=00000000-0000-0000-0000-0000000000e6 depths=[1] value=srgb(0 0.48 1 / 1)
+  provision 00000000-0000-0000-0000-000000000006 key=00000000-0000-0000-0000-0000000000e6 depths=[2] value=token(00000000-0000-0000-0000-000000000047)
+  provision 00000000-0000-0000-0000-000000000007 key=00000000-0000-0000-0000-0000000000e7 depths=[1] value=(context(00000000-0000-0000-0000-0000000000e7) * 2)
+  provision 00000000-0000-0000-0000-00000000000b key=00000000-0000-0000-0000-0000000000e8 depths=[1,2] value="메모"
+  consume 00000000-0000-0000-0000-000000000002.5 key=00000000-0000-0000-0000-0000000000e6 from=provision(00000000-0000-0000-0000-000000000001)
+  consume 00000000-0000-0000-0000-000000000008.4 key=00000000-0000-0000-0000-0000000000e6 from=provision(00000000-0000-0000-0000-000000000006)
+  consume 00000000-0000-0000-0000-000000000009.5 key=00000000-0000-0000-0000-0000000000e7 from=provision(00000000-0000-0000-0000-000000000007)
+  consume 00000000-0000-0000-0000-00000000000c.3 key=00000000-0000-0000-0000-0000000000e8 from=default
+  consume 00000000-0000-0000-0000-000000000011.5 key=00000000-0000-0000-0000-0000000000e6 from=provision(00000000-0000-0000-0000-000000000001) slots=[00000000-0000-0000-0000-000000000011<-00000000-0000-0000-0000-000000000010]
+  slot host=00000000-0000-0000-0000-000000000011 instance=00000000-0000-0000-0000-000000000010 public=[]

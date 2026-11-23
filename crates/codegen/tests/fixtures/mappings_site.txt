@@ -1,0 +1,36 @@
+00000000-0000-0000-0000-000000000001 validator element:frame native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-000000000001 matrix css:frame/background-color native rule=same-name-css path=00000000-0000-0000-0000-000000000001.4
+00000000-0000-0000-0000-000000000001 matrix css:frame/display native rule=same-name-css
+00000000-0000-0000-0000-000000000001 matrix css:frame/flex-direction native rule=same-name-css
+00000000-0000-0000-0000-000000000002 validator element:text native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-000000000003 validator element:fragment native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-000000000004 validator element:image native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-000000000004 validator property:apple.sf_symbol approximated rule=capability-registry diagnostic=capability-approximated path=00000000-0000-0000-0000-000000000004.201
+00000000-0000-0000-0000-000000000004 matrix css:image/object-fit native rule=css-extension-e5-explicit-initial diagnostic=css-extension
+00000000-0000-0000-0000-000000000005 validator element:shape native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-000000000006 validator element:frame native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-000000000006 validator property:css.backdrop_filter native rule=capability-registry diagnostic=capability-native path=00000000-0000-0000-0000-000000000006.101
+00000000-0000-0000-0000-000000000006 validator contract:single_selection_group native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-000000000007 validator element:frame native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-000000000007 validator contract:list native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-000000000008 validator element:frame native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-000000000008 validator contract:button native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-000000000009 validator element:text native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-00000000000a validator element:frame native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-00000000000a validator contract:button native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-00000000000b validator element:frame native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-00000000000b validator contract:text_input native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-00000000000c validator element:frame native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-00000000000c validator property:common.corner_radius native rule=capability-registry diagnostic=capability-native path=00000000-0000-0000-0000-00000000000c.1
+00000000-0000-0000-0000-00000000000c validator property:common.drop_shadow native rule=capability-registry diagnostic=capability-native path=00000000-0000-0000-0000-00000000000c.2
+00000000-0000-0000-0000-00000000000c validator contract:button native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-00000000000c matrix css:frame/border-top-left-radius native rule=same-name-css
+00000000-0000-0000-0000-00000000000c matrix css:modifier/mix-blend-mode approximated rule=css-extension-e1-linear-composite diagnostic=css-extension
+00000000-0000-0000-0000-00000000000c matrix css:node/locked unsupported rule=css-no-output diagnostic=css-no-output
+00000000-0000-0000-0000-00000000000d validator element:frame native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-00000000000d matrix css:frame/grid-template-columns native rule=same-name-css
+00000000-0000-0000-0000-00000000000f validator element:text native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-000000000012 validator element:shape native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-000000000010 validator element:frame native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-000000000010 validator contract:modal native rule=capability-registry diagnostic=capability-native
+00000000-0000-0000-0000-000000000011 validator element:text native rule=capability-registry diagnostic=capability-native

@@ -1,0 +1,45 @@
+timing-linear web native rule=css-easing input="opacity" output="transition-timing-function: linear" diagnostic=-
+timing-linear apple native rule=swiftui-animation input="opacity" output=".linear(duration: opacity)" diagnostic=-
+timing-linear android native rule=compose-tween input="opacity" output="tween(easing = LinearEasing)" diagnostic=-
+timing-cubic-bezier web native rule=css-easing input="0.25, 0.1, 0.25, 1" output="transition-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1)" diagnostic=-
+timing-cubic-bezier apple native rule=swiftui-animation input="0.25, 0.1, 0.25, 1" output=".timingCurve(0.25, 0.1, 0.25, 1, duration:)" diagnostic=-
+timing-cubic-bezier android native rule=compose-tween input="0.25, 0.1, 0.25, 1" output="tween(easing = CubicBezierEasing(0.25, 0.1, 0.25, 1))" diagnostic=-
+timing-steps web native rule=css-easing input="4, jump-end" output="transition-timing-function: steps(4, jump-end)" diagnostic=-
+timing-steps apple unsupported rule=no-output input="4, jump-end" output="" diagnostic=motion-steps-unsupported
+timing-steps android approximated rule=compose-custom-easing input="4, jump-end" output="tween(easing = Easing { steps(4, jump-end) })" diagnostic=motion-steps-custom-easing
+timing-spring web approximated rule=css-linear-samples input="0, 0.52, 0.94, 1.03, 1" output="transition-timing-function: linear(0, 0.52, 0.94, 1.03, 1)" diagnostic=motion-spring-approximated
+timing-spring apple approximated rule=swiftui-interpolating-spring input="0, 0.52, 0.94, 1.03, 1" output=".interpolatingSpring(0, 0.52, 0.94, 1.03, 1)" diagnostic=motion-spring-integration
+timing-spring android approximated rule=compose-spring input="0, 0.52, 0.94, 1.03, 1" output="spring(dampingRatio, stiffness)(0, 0.52, 0.94, 1.03, 1)" diagnostic=motion-spring-normalized
+reduced-motion-instant web native rule=reduced-motion-media input="opacity" output="@media (prefers-reduced-motion: reduce) { transition-property: none }" diagnostic=-
+reduced-motion-instant apple native rule=swiftui-reduce-motion input="opacity" output="@Environment(\\.accessibilityReduceMotion)" diagnostic=-
+reduced-motion-instant android approximated rule=android-animator-scale input="opacity" output="ANIMATOR_DURATION_SCALE == 0" diagnostic=reduced-motion-system-scale
+reduced-motion-play web native rule=no-change input="opacity" output="" diagnostic=-
+reduced-motion-play apple native rule=no-change input="opacity" output="" diagnostic=-
+reduced-motion-play android native rule=no-change input="opacity" output="" diagnostic=-
+start-becomes web native rule=state-selector-transition input="opacity" output="[data-s-opacity] rule" diagnostic=motion-start-selector
+start-becomes apple native rule=swiftui-on-change input="opacity" output=".onChange(of: opacity) { withAnimation }" diagnostic=-
+start-becomes android native rule=compose-animate-as-state input="opacity" output="animate*AsState(target = opacity)" diagnostic=-
+start-changes web native rule=element-transition input="opacity" output="transition-property: opacity" diagnostic=-
+start-changes apple native rule=swiftui-animation-value input="opacity" output=".animation(_, value: opacity)" diagnostic=-
+start-changes android native rule=compose-animate-as-state input="opacity" output="animate*AsState(target = opacity)" diagnostic=-
+delay web native rule=css-delay input="120ms" output="transition-delay: 120ms" diagnostic=-
+delay apple native rule=swiftui-delay input="120ms" output=".delay(120ms)" diagnostic=-
+delay android native rule=compose-delay input="120ms" output="tween(delayMillis = 120ms)" diagnostic=-
+color-interpolation web approximated rule=encoded-color-interpolation input="opacity" output="transition on color" diagnostic=motion-color-space-approximated
+color-interpolation apple approximated rule=encoded-color-interpolation input="opacity" output="Color animation" diagnostic=motion-color-space-approximated
+color-interpolation android approximated rule=encoded-color-interpolation input="opacity" output="animateColorAsState" diagnostic=motion-color-space-approximated
+context-style-value web native rule=registered-custom-property input="--context-accent" output="--context-accent: <value>" diagnostic=-
+context-style-value apple native rule=environment-value input="--context-accent" output="EnvironmentValues.--context-accent" diagnostic=-
+context-style-value android native rule=composition-local-tracked input="--context-accent" output="compositionLocalOf { --context-accent }" diagnostic=composition-local-tracked
+context-non-style-value web native rule=context-structure input="--context-accent" output="contexts[--context-accent]" diagnostic=context-structure
+context-non-style-value apple native rule=environment-value input="--context-accent" output="EnvironmentValues.--context-accent" diagnostic=-
+context-non-style-value android native rule=composition-local-static input="--context-accent" output="staticCompositionLocalOf { --context-accent }" diagnostic=composition-local-static
+context-self-read web native rule=depth-named-property input="--context-accent" output="--context-accent-<d>: f(var(--context-accent-<d-1>))" diagnostic=context-depth-rename
+context-self-read apple native rule=environment-transform input="--context-accent" output=".transformEnvironment(\\.--context-accent)" diagnostic=-
+context-self-read android native rule=composition-local-outer-read input="--context-accent" output="Local--context-accent provides f(Local--context-accent.current)" diagnostic=-
+context-depth-varies web approximated rule=context-structure-fallback input="--context-accent" output="contexts[--context-accent]" diagnostic=context-depth-varies
+context-depth-varies apple native rule=environment-value input="--context-accent" output="EnvironmentValues.--context-accent" diagnostic=-
+context-depth-varies android native rule=composition-local-tracked input="--context-accent" output="compositionLocalOf { --context-accent }" diagnostic=-
+context-slot-resupply web native rule=slot-outer-resupply input="--context-accent" output="--context-accent-outer at instance, --context-accent at slot host" diagnostic=context-slot-resupply
+context-slot-resupply apple native rule=environment-outer-resupply input="--context-accent" output=".environment(\\.--context-accent, outer)" diagnostic=context-slot-resupply
+context-slot-resupply android native rule=composition-local-outer-resupply input="--context-accent" output="CompositionLocalProvider(Local--context-accent provides outer)" diagnostic=context-slot-resupply

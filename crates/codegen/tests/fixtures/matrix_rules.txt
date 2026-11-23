@@ -1,0 +1,24 @@
+modifier apple frame/background-color input="0.5" output=".background(0.5)" diagnostic=-
+frame-size apple frame/width input="12px" output=".frame(width: 12)" diagnostic=-
+stack-layout apple node/align-self input="center" output=".frame(alignment: center)" diagnostic=stack-layout
+grid-layout apple node/justify-self input="center" output=".gridColumnAlignment(center)" diagnostic=grid-approximated
+flex-item apple node/flex-grow input="1" output=".frame(maxWidth: .infinity) priority 1" diagnostic=flex-item-approximated
+absolute-offset apple node/position input="12px" output="ZStack + .position(12px)" diagnostic=absolute-offset
+explicit-default apple node/box-sizing input="center" output="border-box frame" diagnostic=explicit-default
+modifier-chain apple modifier/modifier-order input="-" output="modifier chain" diagnostic=modifier-chain-order
+srgb-composite apple modifier/shadow-color input="0.5" output=".shadow(color: 0.5)" diagnostic=srgb-composite
+border-overlay apple frame/border-top-width input="12px" output=".overlay(edge: .top, width: 12)" diagnostic=border-overlay
+corner-shape apple frame/border-top-left-radius input="12px" output="UnevenRoundedRectangle(topLeadingRadius: 12)" diagnostic=-
+clip-shape apple frame/clipping input="url(#m)" output=".clipped()" diagnostic=-
+mask-layer apple modifier/mask-image input="url(#m)" output=".mask(url(#m))" diagnostic=mask-layer
+font-attribute apple text/font-family input="16px" output=".font(.custom(16px))" diagnostic=-
+line-spacing apple text/line-height input="12px" output=".lineSpacing(12)" diagnostic=line-spacing-approximated
+image-scaling apple image/object-fit input="cover" output=".aspectRatio(contentMode: cover)" diagnostic=-
+aspect-ratio apple node/aspect-ratio input="1.5" output=".aspectRatio(1.5)" diagnostic=aspect-ratio-approximated
+transform-effect apple frame/transform input="matrix(1, 0, 0, 1, 4, 8)" output=".transformEffect(matrix(1, 0, 0, 1, 4, 8))" diagnostic=transform-effect
+visibility apple node/visible input="false" output=".hidden()" diagnostic=-
+group-key apple frame/size input="-" output=".frame(width:height:)" diagnostic=-
+structural apple path/path-data input="\"작게\"" output="Path(\"작게\")" diagnostic=-
+path-bake apple shape/x1 input="12px" output="Path.move(x: 12)" diagnostic=path-bake
+rasterize apple image/image-color-space input="-" output="rasterized image" diagnostic=rasterize
+no-output apple node/locked input="-" output="" diagnostic=no-output

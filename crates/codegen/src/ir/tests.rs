@@ -548,6 +548,10 @@ fn view_without_semantics_or_tokens_still_builds() {
         states: &[],
         tokens: &[],
         token_bindings: &empty_bindings,
+        css_properties: &BTreeMap::new(),
+        machines: &[],
+        motions: &[],
+        contexts: &IrContexts::default(),
     };
     let catalog = stellar_target_profile::builtin::catalog().expect("catalog");
     let ir = build_ir(&sources, &fx::web_profile(), &catalog).expect("IR");
@@ -650,4 +654,494 @@ fn accessibility_only_input_does_not_resolve_missing_state_or_hide_mapping_and_c
             assert!(!check_document(&mapped.document).is_empty());
         }
     }
+}
+
+/// node별 mapping 줄만 모은 진단 fixture 텍스트(XXII.1.2).
+fn mapping_fixture(ir: &CodegenIr) -> String {
+    let snapshot = ir.semantic_snapshot();
+    let mut out = String::new();
+    let mut node = String::new();
+    let mut in_nodes = false;
+    for line in snapshot.lines() {
+        let trimmed = line.trim_start();
+        if line.starts_with("nodes ") {
+            in_nodes = true;
+        } else if line.starts_with("accessibility ") {
+            in_nodes = false;
+        } else if in_nodes && trimmed.starts_with('[') {
+            node = trimmed.split_whitespace().nth(1).unwrap_or("").to_string();
+        } else if let Some(rest) = trimmed.strip_prefix("mapping ") {
+            out.push_str(&format!("{node} {rest}\n"));
+        }
+    }
+    out
+}
+
+#[test]
+fn mapping_diagnostics_are_kept_per_node_including_native() {
+    // 검증 기준(XXII.1.2): diagnostic fixture. node마다 Native·Approximated·Unsupported·미등록 진단이 출처별로
+    // 남고, profile에서 제외한 node(ios의 13)의 진단은 없습니다.
+    let fixture = Fixture::new();
+    for (name, profile) in [
+        ("mappings_site.txt", fx::web_profile()),
+        ("mappings_ios.txt", fx::ios_profile()),
+        ("mappings_android.txt", fx::android_profile()),
+    ] {
+        let ir = build(&fixture, &profile).expect("IR");
+        fx::check_golden(name, &mapping_fixture(&ir));
+    }
+    let ir = build(&fixture, &fx::web_profile()).expect("IR");
+    let save = ir.node(sid(12)).expect("저장 버튼");
+    let css = |name: &str| {
+        save.mappings
+            .iter()
+            .find(|m| matches!(m.subject, MappingSubject::Css { name: n, .. } if n == name))
+            .expect("css mapping")
+    };
+    assert_eq!(
+        css("border-top-left-radius").status,
+        Some(CapabilityStatus::Native)
+    );
+    assert_eq!(css("border-top-left-radius").diagnostic, None);
+    assert_eq!(
+        css("mix-blend-mode").status,
+        Some(CapabilityStatus::Approximated)
+    );
+    assert_eq!(css("locked").status, Some(CapabilityStatus::Unsupported));
+    // validator 진단도 Native까지 mapping으로 옮깁니다.
+    assert!(save.mappings.iter().any(
+        |m| m.source == MappingSource::Validator && m.status == Some(CapabilityStatus::Native)
+    ));
+    // 순서: (출처, subject, path) 오름차순.
+    for node in &ir.nodes {
+        assert!(node.mappings.windows(2).all(|w| {
+            (w[0].source, w[0].subject, &w[0].path) < (w[1].source, w[1].subject, &w[1].path)
+        }));
+    }
+    let ios = build(&fixture, &fx::ios_profile()).expect("IR");
+    assert!(ios.node(sid(13)).is_none());
+}
+
+#[test]
+fn mapping_diagnostics_are_deterministic_and_reject_unknown_nodes() {
+    let mut fixture = Fixture::new();
+    let first = build(&fixture, &fx::web_profile()).expect("IR");
+    // 입력 순서를 뒤집고 같은 항목을 한 번 더 넣어도 같은 결과입니다.
+    for uses in fixture.css_properties.values_mut() {
+        uses.reverse();
+        if let Some(first_use) = uses.first().cloned() {
+            uses.push(first_use);
+        }
+    }
+    let second = build(&fixture, &fx::web_profile()).expect("IR");
+    assert_eq!(first.semantic_snapshot(), second.semantic_snapshot());
+    fixture.css_properties.insert(
+        sid(250),
+        vec![fx::css_use(
+            "frame",
+            "display",
+            stellar_target_profile::css_matrix::MappingInput::Exact,
+            None,
+        )],
+    );
+    assert_eq!(
+        build(&fixture, &fx::web_profile()).unwrap_err(),
+        IrError::CssPropertyOutsideView(sid(250))
+    );
+}
+
+#[test]
+fn state_machine_and_motion_are_kept_in_ir_with_exact_parameters() {
+    // 검증 기준(XXII.1.5): semantic snapshot fixture(ir_*.snapshot의 machines·motions 절), timing function과 reduced
+    // motion 대체 동작을 그대로 보존.
+    let fixture = Fixture::new();
+    let ir = build(&fixture, &fx::web_profile()).expect("IR");
+    assert_eq!(ir.machines.len(), 1);
+    assert_eq!(ir.machines[0].transitions.len(), 3);
+    let ids: Vec<StableId> = ir.motions.iter().map(|m| m.id).collect();
+    assert_eq!(ids, [fx::MOTION_SAVE, fx::MOTION_GRID].map(sid));
+    let save = &ir.motions[0];
+    assert_eq!(save.delay_ms.to_bits(), 16.5f32.to_bits());
+    assert_eq!(
+        save.timing,
+        IrTiming::CubicBezier {
+            x1: 0.25,
+            y1: 0.1,
+            x2: 0.25,
+            y2: 1.0
+        }
+    );
+    assert_eq!(save.reduced_motion, IrReducedMotion::Instant);
+    assert_eq!(ir.motions[1].reduced_motion, IrReducedMotion::Play);
+    let snapshot = ir.semantic_snapshot();
+    assert!(snapshot.contains("timing=cubic-bezier(0.25, 0.1, 0.25, 1) reduced_motion=instant"));
+    assert!(snapshot.contains("timing=spring(mass=1 stiffness=170 damping=26 velocity=0)"));
+    assert!(snapshot.contains("if (not state(00000000-0000-0000-0000-000000000034))"));
+    // ios는 13을 제외하므로 13 대상 motion과 15 source transition이 빠집니다.
+    let ios = build(&fixture, &fx::ios_profile()).expect("IR");
+    assert_eq!(ios.motions.len(), 1);
+    assert_eq!(ios.machines[0].transitions.len(), 2);
+}
+
+#[test]
+fn state_machine_and_motion_ir_bytes_are_identical_for_the_same_input() {
+    // 검증 기준(XXII.1.5): 같은 입력 IR bytes 동일. 입력 순서를 바꿔도 같습니다.
+    let mut fixture = Fixture::new();
+    let first = build(&fixture, &fx::web_profile())
+        .expect("IR")
+        .semantic_snapshot();
+    let again = build(&fixture, &fx::web_profile())
+        .expect("IR")
+        .semantic_snapshot();
+    assert_eq!(first, again);
+    fixture.motions.reverse();
+    fixture.machines[0].variables.reverse();
+    fixture.machines[0].actions.reverse();
+    let reordered = build(&fixture, &fx::web_profile())
+        .expect("IR")
+        .semantic_snapshot();
+    assert_eq!(first, reordered);
+}
+
+#[test]
+fn behavior_reference_errors_are_rejected() {
+    let deep = {
+        let mut expr = IrExpr::Literal(TypedValue::Boolean(true));
+        for _ in 0..MAX_EXPR_DEPTH {
+            expr = IrExpr::Unary {
+                op: "not",
+                operand: Box::new(expr),
+            };
+        }
+        expr
+    };
+    let cases: Vec<Case> = vec![
+        (
+            "같은 소유자 두 번",
+            Box::new(|f| {
+                let machine = f.machines[0].clone();
+                f.machines.push(machine);
+            }),
+            IrError::DuplicateMachine(sid(fx::VIEW_OWNER)),
+        ),
+        (
+            "선언 안 된 머신 변수",
+            Box::new(|f| f.machines[0].variables.push(sid(240))),
+            IrError::MachineUnknownState {
+                owner: sid(fx::VIEW_OWNER),
+                state: sid(240),
+            },
+        ),
+        (
+            "머신 변수가 아닌 set",
+            Box::new(|f| {
+                f.machines[0].transitions[1].actions[0] = IrAction::SetState {
+                    variable: sid(fx::STATE_SIZE),
+                    value: IrExpr::Null,
+                };
+            }),
+            IrError::MachineUnknownState {
+                owner: sid(fx::VIEW_OWNER),
+                state: sid(fx::STATE_SIZE),
+            },
+        ),
+        (
+            "선언 안 된 action emit",
+            Box::new(|f| {
+                f.machines[0].transitions[0].actions[1] = IrAction::Emit { action: sid(241) };
+            }),
+            IrError::MachineUnknownAction {
+                transition: sid(220),
+                action: sid(241),
+            },
+        ),
+        (
+            "View 밖 source",
+            Box::new(|f| {
+                f.machines[0].transitions[0].trigger = IrTrigger::Event {
+                    kind: "activate",
+                    source: sid(242),
+                };
+            }),
+            IrError::TransitionOutsideView(sid(242)),
+        ),
+        (
+            "transition id 중복",
+            Box::new(|f| {
+                let t = f.machines[0].transitions[0].clone();
+                f.machines[0].transitions.push(t);
+            }),
+            IrError::DuplicateTransition(sid(220)),
+        ),
+        (
+            "선언 안 된 토큰",
+            Box::new(|f| {
+                f.machines[0].transitions[0].condition = Some(IrExpr::Token(sid(243)));
+            }),
+            IrError::ExpressionUnknownToken(sid(243)),
+        ),
+        (
+            "너무 깊은 식",
+            Box::new(move |f| {
+                f.machines[0].transitions[0].condition = Some(deep.clone());
+            }),
+            IrError::ExpressionTooDeep,
+        ),
+        (
+            "motion id 중복",
+            Box::new(|f| {
+                let m = f.motions[0].clone();
+                f.motions.push(m);
+            }),
+            IrError::DuplicateMotion(sid(fx::MOTION_GRID)),
+        ),
+        (
+            "motion 대상이 View 밖",
+            Box::new(|f| f.motions[0].targets.push(fx::path(244, 1))),
+            IrError::MotionTargetOutsideView(sid(244)),
+        ),
+        (
+            "motion 시작 조건 변수 없음",
+            Box::new(|f| {
+                f.motions[0].start = IrMotionStart::Changes { state: sid(245) };
+            }),
+            IrError::MotionUnknownState {
+                motion: sid(fx::MOTION_GRID),
+                state: sid(245),
+            },
+        ),
+    ];
+    for (name, change, expected) in cases {
+        let mut fixture = Fixture::new();
+        change(&mut fixture);
+        assert_eq!(
+            build(&fixture, &fx::web_profile()).unwrap_err(),
+            expected,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn context_resolution_is_kept_per_consumption_without_reinterpretation() {
+    // 검증 기준(XXII.1.6, 해석기 대조 부분 제외): 중첩·shadowing·slot fixture의 소비 지점마다 입력(해석기 결과)의
+    // 출처와 slot 경계가 IR에 그대로 남습니다.
+    let fixture = Fixture::new();
+    let ir = build(&fixture, &fx::web_profile()).expect("IR");
+    let contexts = &ir.contexts;
+    assert_eq!(contexts.keys.len(), 3);
+    for expected in &fixture.contexts.consumptions {
+        let kept = contexts.consumption_of(&expected.path).expect("소비 지점");
+        assert_eq!(kept, expected);
+    }
+    // shadowing: 8은 가까운 6, 2는 바깥 1.
+    let from = |node: u8, key: u32| {
+        contexts
+            .consumption_of(&fx::path(node, key))
+            .expect("소비")
+            .source
+    };
+    assert_eq!(from(8, fx::KEY_FILL), IrContextSource::Provision(sid(6)));
+    assert_eq!(
+        from(2, fx::KEY_TEXT_COLOR),
+        IrContextSource::Provision(sid(1))
+    );
+    assert_eq!(from(12, fx::KEY_LABEL), IrContextSource::Default);
+    let slot = contexts
+        .consumption_of(&fx::path(17, fx::KEY_TEXT_COLOR))
+        .expect("slot 소비");
+    assert_eq!(
+        slot.slots,
+        vec![IrSlotCrossing {
+            host: sid(17),
+            instance: sid(16)
+        }]
+    );
+    // 깊이 집합은 정렬되고 중복이 없습니다.
+    assert_eq!(
+        contexts
+            .provision(sid(11), sid(fx::KEY_CTX_LABEL))
+            .expect("label")
+            .depths,
+        vec![1, 2]
+    );
+    let snapshot = ir.semantic_snapshot();
+    assert!(snapshot.contains("contexts keys=3 provisions=4 consumptions=5 slots=1"));
+    assert!(snapshot.contains("value=(context(00000000-0000-0000-0000-0000000000e7) * 2)"));
+}
+
+#[test]
+fn context_ir_bytes_are_identical_for_the_same_input() {
+    // 검증 기준(XXII.1.6): 같은 입력 IR bytes 동일(입력 순서와 무관).
+    let mut fixture = Fixture::new();
+    let first = build(&fixture, &fx::web_profile())
+        .expect("IR")
+        .semantic_snapshot();
+    fixture.contexts.keys.reverse();
+    fixture.contexts.provisions.reverse();
+    fixture.contexts.consumptions.reverse();
+    assert_eq!(
+        first,
+        build(&fixture, &fx::web_profile())
+            .expect("IR")
+            .semantic_snapshot()
+    );
+}
+
+#[test]
+fn context_reference_errors_are_rejected() {
+    let key = sid(fx::KEY_ACCENT);
+    let cases: Vec<Case> = vec![
+        (
+            "key 중복",
+            Box::new(|f| {
+                let k = f.contexts.keys[0].clone();
+                f.contexts.keys.push(k);
+            }),
+            IrError::DuplicateContextKey(key),
+        ),
+        (
+            "빈 key 이름",
+            Box::new(|f| f.contexts.keys[0].name = " ".to_string()),
+            IrError::EmptyContextKeyName(key),
+        ),
+        (
+            "없는 key provision",
+            Box::new(|f| f.contexts.provisions[0].key = sid(250)),
+            IrError::UnknownContextKey(sid(250)),
+        ),
+        (
+            "식 안 없는 key",
+            Box::new(|f| f.contexts.provisions[0].value = IrExpr::Context(sid(251))),
+            IrError::UnknownContextKey(sid(251)),
+        ),
+        (
+            "식 안 없는 상태",
+            Box::new(|f| f.contexts.provisions[0].value = IrExpr::State(sid(252))),
+            IrError::ExpressionUnknownState(sid(252)),
+        ),
+        (
+            "View 밖 provision",
+            Box::new(|f| f.contexts.provisions[0].node = sid(253)),
+            IrError::ContextNodeOutsideView(sid(253)),
+        ),
+        (
+            "같은 node·key provision 둘",
+            Box::new(|f| {
+                let p = f.contexts.provisions[0].clone();
+                f.contexts.provisions.push(p);
+            }),
+            IrError::DuplicateProvision { node: sid(1), key },
+        ),
+        (
+            "깊이 0",
+            Box::new(|f| f.contexts.provisions[0].depths = vec![0, 1]),
+            IrError::InvalidProvisionDepth { node: sid(1), key },
+        ),
+        (
+            "출처 provision 없음",
+            Box::new(|f| {
+                f.contexts.consumptions[0].source = IrContextSource::Provision(sid(3));
+            }),
+            IrError::ContextSourceMissing { node: sid(2), key },
+        ),
+        (
+            "같은 경로 소비 둘",
+            Box::new(|f| {
+                let c = f.contexts.consumptions[0].clone();
+                f.contexts.consumptions.push(c);
+            }),
+            IrError::DuplicateConsumption(sid(2)),
+        ),
+        (
+            "slot 공개 key 없음",
+            Box::new(|f| f.contexts.slots[0].public_keys.push(sid(254))),
+            IrError::UnknownContextKey(sid(254)),
+        ),
+    ];
+    for (name, change, expected) in cases {
+        let mut fixture = Fixture::new();
+        change(&mut fixture);
+        assert_eq!(
+            build(&fixture, &fx::web_profile()).unwrap_err(),
+            expected,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn tree_from_nodes_checks_preorder_parent_links() {
+    let fixture = Fixture::new();
+    let ir = build(&fixture, &fx::web_profile()).expect("IR");
+    let mut nodes = ir.nodes.clone();
+    for node in &mut nodes {
+        node.semantics = None;
+    }
+    let tree = IrTree::from_nodes(nodes.clone()).expect("tree");
+    assert_eq!(tree.node_index(sid(12)), ir.node_index(sid(12)));
+    assert!(tree.accessibility.is_empty() && tree.tokens.is_empty());
+    let mut broken = nodes.clone();
+    broken[1].depth = 5;
+    assert_eq!(
+        IrTree::from_nodes(broken).unwrap_err(),
+        IrError::Unreachable(sid(2))
+    );
+    let mut duplicate = nodes.clone();
+    duplicate[2].id = sid(2);
+    assert_eq!(
+        IrTree::from_nodes(duplicate).unwrap_err(),
+        IrError::DuplicateNode(sid(2))
+    );
+    assert_eq!(
+        IrTree::from_nodes(Vec::new()).unwrap_err(),
+        IrError::EmptyView
+    );
+    // 접근성 entry를 가리키는 node는 받지 않습니다(접근성 entry가 없음).
+    assert!(IrTree::from_nodes(ir.nodes.clone()).is_err());
+}
+
+#[test]
+fn token_alias_and_conditions_are_normalized_and_checked() {
+    let mut fixture = Fixture::new();
+    fixture.tokens[0].alias = Some(sid(fx::TOKEN_ACCENT));
+    fixture.tokens[1].variants.push(IrTokenVariant {
+        when: vec![
+            IrEnvironmentValue::ReducedMotion(false),
+            IrEnvironmentValue::Contrast(IrContrast::High),
+        ],
+        value: fx::srgb(0.0, 0.0, 0.0, 1.0),
+    });
+    let ir = build(&fixture, &fx::web_profile()).expect("IR");
+    let surface = ir.token(sid(fx::TOKEN_SURFACE)).expect("surface");
+    // 기본 값 조건은 빠지고 조건 순으로 정렬됩니다.
+    assert_eq!(
+        surface.variants[0].when,
+        vec![IrEnvironmentValue::ColorScheme(IrColorScheme::Dark)]
+    );
+    assert_eq!(
+        surface.variants[1].when,
+        vec![IrEnvironmentValue::Contrast(IrContrast::High)]
+    );
+    assert!(ir
+        .semantic_snapshot()
+        .contains("alias=00000000-0000-0000-0000-000000000047"));
+    let mut bad = Fixture::new();
+    bad.tokens[0].alias = Some(sid(99));
+    assert!(matches!(
+        build(&bad, &fx::web_profile()).unwrap_err(),
+        IrError::UnknownToken { .. }
+    ));
+    let mut twice = Fixture::new();
+    twice.tokens[0].variants.push(IrTokenVariant {
+        when: vec![
+            IrEnvironmentValue::ColorScheme(IrColorScheme::Dark),
+            IrEnvironmentValue::ColorScheme(IrColorScheme::Light),
+        ],
+        value: fx::srgb(0.0, 0.0, 0.0, 1.0),
+    });
+    assert_eq!(
+        build(&twice, &fx::web_profile()).unwrap_err(),
+        IrError::InvalidTokenCondition(sid(fx::TOKEN_SPACING))
+    );
 }

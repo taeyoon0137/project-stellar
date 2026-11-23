@@ -11,6 +11,11 @@ use stellar_target_profile::registry::RegistryCatalog;
 use stellar_target_profile::spec::TargetProfile;
 use stellar_target_profile::validate::{validate_profiles, ProfileOutcome, ViewNode};
 
+use super::behavior_build;
+use super::mapping;
+use super::token_env::normalize_when;
+use super::IrContexts;
+use super::IrTokenVariant;
 use super::{
     CodegenIr, CodegenSources, IrAccessibilityEntry, IrError, IrLayout, IrNode, IrProperty,
     IrState, IrTarget, IrToken, IrTree, MAX_IR_NODES,
@@ -196,8 +201,28 @@ pub fn build_ir(
     // capability 진단(validator가 제외 node를 이미 건너뜀).
     for finding in findings {
         if let Some(&index) = ir_index.get(&finding.node) {
-            nodes[index as usize].capabilities.push(finding);
+            let node = &mut nodes[index as usize];
+            node.mappings.push(mapping::from_finding(&finding));
+            node.capabilities.push(finding);
         }
+    }
+
+    // CSS 기반 속성 사용의 matrix 판정(XXII.1.2).
+    let kind = profile.kind();
+    for (id, uses) in sources.css_properties {
+        match ir_index.get(id) {
+            Some(&index) => {
+                let node = &mut nodes[index as usize];
+                for css in uses {
+                    node.mappings.push(mapping::from_css_use(css, kind));
+                }
+            }
+            None if tree.index.contains_key(id) => {}
+            None => return Err(IrError::CssPropertyOutsideView(*id)),
+        }
+    }
+    for node in &mut nodes {
+        mapping::normalize(&mut node.mappings);
     }
 
     let states = declared_states(sources)?;
@@ -205,6 +230,16 @@ pub fn build_ir(
     for entry in &accessibility {
         check_state_references(&entry.semantics, &states)?;
     }
+
+    let scope = Scope {
+        tree: &tree,
+        ir_index: &ir_index,
+        states: &states,
+        tokens: &tokens,
+    };
+    let machines = behavior_build::machines(sources.machines, &scope)?;
+    let motions = behavior_build::motions(sources.motions, &scope)?;
+    let contexts = behavior_build::contexts(sources.contexts, &scope)?;
 
     Ok(CodegenIr {
         target: IrTarget {
@@ -216,9 +251,41 @@ pub fn build_ir(
             accessibility,
             states,
             tokens,
+            machines,
+            motions,
+            contexts,
             index: ir_index,
         },
     })
+}
+
+/// 참조 무결성 검사에 쓰는 IR 범위.
+pub(crate) struct Scope<'a> {
+    tree: &'a ViewTree,
+    ir_index: &'a BTreeMap<StableId, u32>,
+    states: &'a [IrState],
+    tokens: &'a [IrToken],
+}
+
+impl Scope<'_> {
+    /// node가 IR에 있으면 `Some(true)`, View에는 있지만 제외되었으면 `Some(false)`, View에 없으면 `None`.
+    pub(crate) fn node(&self, id: StableId) -> Option<bool> {
+        if self.ir_index.contains_key(&id) {
+            Some(true)
+        } else if self.tree.index.contains_key(&id) {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn has_state(&self, id: StableId) -> bool {
+        self.states.binary_search_by(|s| s.id.cmp(&id)).is_ok()
+    }
+
+    pub(crate) fn has_token(&self, id: StableId) -> bool {
+        self.tokens.binary_search_by(|t| t.id.cmp(&id)).is_ok()
+    }
 }
 
 /// Fragment를 펼친 IR 자식(StableId, 문서 순서).
@@ -324,15 +391,41 @@ fn declared_tokens(sources: &CodegenSources<'_>) -> Result<Vec<IrToken>, IrError
         if decl.name.trim().is_empty() {
             return Err(IrError::EmptyTokenName(decl.id));
         }
+        let mut variants = Vec::with_capacity(decl.variants.len());
+        for variant in &decl.variants {
+            let when = normalize_when(&variant.when)
+                .filter(|when| !when.is_empty())
+                .ok_or(IrError::InvalidTokenCondition(decl.id))?;
+            variants.push(IrTokenVariant {
+                when,
+                value: variant.value.clone(),
+            });
+        }
+        variants.sort_by(|a, b| a.when.cmp(&b.when));
+        if variants.windows(2).any(|w| w[0].when == w[1].when) {
+            return Err(IrError::InvalidTokenCondition(decl.id));
+        }
         tokens.push(IrToken {
             id: decl.id,
             name: decl.name.clone(),
             value: decl.value.clone(),
+            alias: decl.alias,
+            variants,
         });
     }
     tokens.sort_by_key(|token| token.id);
     if let Some(pair) = tokens.windows(2).find(|pair| pair[0].id == pair[1].id) {
         return Err(IrError::DuplicateToken(pair[0].id));
+    }
+    for token in &tokens {
+        if let Some(alias) = token.alias {
+            if alias == token.id || tokens.binary_search_by(|t| t.id.cmp(&alias)).is_err() {
+                return Err(IrError::UnknownToken {
+                    node: token.id,
+                    token: alias,
+                });
+            }
+        }
     }
     Ok(tokens)
 }
@@ -444,6 +537,9 @@ pub fn build_accessibility_ir(
         accessibility,
         states: Vec::new(),
         tokens: Vec::new(),
+        machines: Vec::new(),
+        motions: Vec::new(),
+        contexts: IrContexts::default(),
         index,
     })
 }
@@ -478,6 +574,7 @@ fn build_nodes(
             properties: Vec::new(),
             semantics: None,
             capabilities: Vec::new(),
+            mappings: Vec::new(),
         });
         ir_index.insert(source.id, index);
         if let Some(parent) = parent {
