@@ -72,7 +72,7 @@
 
 - `crates/local-ipc/src/binding.rs`: 256 bit token, 상수 시간 비교, `SessionBindings::end` 즉시 무효, 끝난 token 기억 상한. 결합 결과 `BindingSession`에는 권한 field가 없습니다.
 - `crates/local-ipc/src/listener.rs` `spawn_with_bindings`: peer 인증(`crates/local-ipc/src/auth.rs`, `getpeereid(3)`·코드 서명)과 nonce를 통과한 연결에서만 token을 보고, Unknown·Ended·Unsupported는 `REJECT binding-rejected`.
-- `tools/stellar-mcp/src/attach.rs`: 환경 변수 `STELLAR_MCP_SESSION_BINDING`, 거부 77·형식 오류 78.
+- `crates/mcp-core/src/attach.rs`(XIX.9.3 `e7d46f02`에서 `tools/stellar-mcp/src/attach.rs`를 옮긴 위치): 환경 변수 `STELLAR_MCP_SESSION_BINDING`, 거부 77·형식 오류 78.
 
 ### 실행한 검증
 
