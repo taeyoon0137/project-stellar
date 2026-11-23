@@ -8,6 +8,9 @@
 /// 읽기 전용 `PrototypeGraphView` (XXX.2.1).
 pub mod graph;
 
+/// 결정론적 자동 배치 (XXX.2.2).
+pub mod auto_layout;
+
 /// 프로토타입 문서 상태와 원자 transaction (XXX.2.3).
 pub mod edit;
 
