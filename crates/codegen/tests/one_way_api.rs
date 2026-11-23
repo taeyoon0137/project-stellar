@@ -80,7 +80,9 @@ fn public_items(text: &str) -> Vec<String> {
         let Some(rest) = line.strip_prefix("pub ") else {
             continue;
         };
-        let rest = rest.trim_start_matches("const ").trim_start_matches("async ");
+        let rest = rest
+            .trim_start_matches("const ")
+            .trim_start_matches("async ");
         for keyword in ["fn ", "trait ", "struct ", "enum ", "mod ", "type "] {
             if let Some(name) = rest.strip_prefix(keyword) {
                 let name: String = name
