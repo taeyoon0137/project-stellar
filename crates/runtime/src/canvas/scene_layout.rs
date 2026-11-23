@@ -45,10 +45,29 @@ fn measure_hook<'a>(
         .map(|t| t as &dyn stellar_scene::document::layout::engine::intrinsic::TextLayoutHook)
 }
 
+/// 게시 행 목록 Text 크기(`sizes`)로 만든 Text 입력([`CanvasLayout::for_scene`]).
+fn scene_text_input(
+    sizes: &HashMap<StableId, Size2>,
+    id: StableId,
+    stack: Option<&ModifierStack>,
+    locked: bool,
+) -> Option<TextInput> {
+    let size = *sizes.get(&id)?;
+    let mut node = NodeInput::new(id, shape_style(stack)?.transform);
+    node.locked = locked;
+    Some(TextInput {
+        node,
+        layout: TextLayoutKey::from_bytes(id.to_bytes()),
+        size,
+    })
+}
+
 /// 활성 View 하나의 layout 반영 scene source.
 #[derive(Debug, Clone)]
 pub struct CanvasLayout {
     source: DocumentSceneSource,
+    /// [`Self::for_scene`]가 쓴 게시 행 목록 Text 크기. preview를 같은 Text 입력으로 다시 그리려고 둡니다.
+    scene_texts: HashMap<StableId, Size2>,
 }
 
 impl CanvasLayout {
@@ -66,7 +85,10 @@ impl CanvasLayout {
                 ..SceneSourceOptions::default()
             },
         )?;
-        Ok(CanvasLayout { source })
+        Ok(CanvasLayout {
+            source,
+            scene_texts: HashMap::new(),
+        })
     }
 
     /// `scene`(게시한 캔버스 행 목록)이 이미 layout한 Text 크기를 Text 입력으로 써서 변환합니다. text layout을 다시
@@ -84,21 +106,13 @@ impl CanvasLayout {
             .filter(|row| row.text_node)
             .map(|row| (row.id, row.geometry.rect.size()))
             .collect();
-        let mut hook = |id: StableId,
-                        _: &TextPayload,
-                        stack: Option<&ModifierStack>,
-                        locked: bool,
-                        _: Option<f32>|
-         -> Option<TextInput> {
-            let size = *sizes.get(&id)?;
-            let mut node = NodeInput::new(id, shape_style(stack)?.transform);
-            node.locked = locked;
-            Some(TextInput {
-                node,
-                layout: TextLayoutKey::from_bytes(id.to_bytes()),
-                size,
-            })
-        };
+        let mut hook =
+            |id: StableId,
+             _: &TextPayload,
+             stack: Option<&ModifierStack>,
+             locked: bool,
+             _: Option<f32>|
+             -> Option<TextInput> { scene_text_input(&sizes, id, stack, locked) };
         let source = document_scene_source(
             model,
             root,
@@ -108,7 +122,10 @@ impl CanvasLayout {
                 ..SceneSourceOptions::default()
             },
         )?;
-        Ok(CanvasLayout { source })
+        Ok(CanvasLayout {
+            source,
+            scene_texts: sizes,
+        })
     }
 
     /// 문서 `model`의 View root `root` subtree를 창 자료 `inputs`(정의 집합, Text hook)로 변환합니다.
@@ -129,7 +146,10 @@ impl CanvasLayout {
             text_measure: measure_hook(&inputs),
         };
         let source = document_scene_source(model, root, options)?;
-        Ok(CanvasLayout { source })
+        Ok(CanvasLayout {
+            source,
+            scene_texts: HashMap::new(),
+        })
     }
 
     /// 창의 활성 View를 창 cache(`cache`)의 컴포넌트 정의 집합과 글꼴로 변환합니다. Text는 줄바꿈 측정으로 흐름에
@@ -208,15 +228,52 @@ impl CanvasLayout {
         ])
     }
 
-    /// 흐름 컨테이너 `container`의 layout 자식을 `order` 순서로 바꾼 preview.
+    /// 흐름 컨테이너 `container`의 layout 자식을 `order` 순서로 바꾼 preview. 창 자료 없이 변환한 source용입니다.
+    /// [`Self::for_scene`]으로 만든 source는 같은 게시 행 목록 Text 크기로 Text를 다시 그립니다. 창 자료로 만든 source는
+    /// [`Self::reorder_preview_with`]에 같은 자료를 넘깁니다.
     pub fn reorder_preview(
         &self,
         model: &DocumentModel,
         container: StableId,
         order: &[StableId],
     ) -> Option<FlowPreview> {
+        let sizes = &self.scene_texts;
+        let mut hook = |id: StableId,
+                        _: &TextPayload,
+                        stack: Option<&ModifierStack>,
+                        locked: bool,
+                        _: Option<f32>|
+         -> Option<TextInput> { scene_text_input(sizes, id, stack, locked) };
+        let options = SceneSourceOptions {
+            text: (!sizes.is_empty()).then_some(&mut hook),
+            ..SceneSourceOptions::default()
+        };
         self.source
-            .reorder_preview(model, container, order, SceneSourceOptions::default())
+            .reorder_preview(model, container, order, options)
+            .ok()
+    }
+
+    /// [`Self::reorder_preview`]를 변환 때와 같은 창 자료(`inputs`)로 계산합니다. Text는 같은 측정 hook으로 다시 재고
+    /// 같은 Text hook으로 그리며, 인스턴스는 같은 정의 집합으로 펼칩니다(ADR-0134 결정 1).
+    pub fn reorder_preview_with(
+        &self,
+        model: &DocumentModel,
+        container: StableId,
+        order: &[StableId],
+        inputs: CanvasLayoutInputs<'_>,
+    ) -> Option<FlowPreview> {
+        let text = inputs.text;
+        let mut hook = move |id, _: &TextPayload, _: Option<&ModifierStack>, locked, width| {
+            text.and_then(|t| t.text_input(id, locked, width))
+        };
+        let options = SceneSourceOptions {
+            library: inputs.library,
+            text: text.is_some().then_some(&mut hook),
+            variant: None,
+            text_measure: measure_hook(&inputs),
+        };
+        self.source
+            .reorder_preview(model, container, order, options)
             .ok()
     }
 

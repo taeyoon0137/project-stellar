@@ -312,4 +312,17 @@ fn flow_insertion_counts_text_siblings_with_the_published_text_size() {
     let text_key = order_key(&doc, sid(29)).unwrap();
     let rect_key = order_key(&doc, sid(30)).unwrap();
     assert!(text_key < key && key < rect_key, "{key:?}");
+    // 순서를 바꾼 preview도 같은 행 목록 Text 크기로 Text를 다시 그립니다(Text가 옛 자리에 남지 않음, ADR-0134 결정 1).
+    let mut order = doc.children_in_order(sid(11));
+    order.retain(|id| *id != sid(29));
+    order.insert(1, sid(29));
+    let preview = layout.reorder_preview(&doc, sid(11), &order).unwrap();
+    assert_eq!(
+        layout.preview_box(&preview, sid(30)),
+        Some([10., 20., 20., 20.])
+    );
+    assert_eq!(
+        layout.preview_box(&preview, sid(29)),
+        Some([30., 20., 40., 10.])
+    );
 }
