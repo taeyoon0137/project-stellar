@@ -37,6 +37,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use stellar_core_types::color::Color;
+pub use stellar_core_types::font::{FontFileHash, OpenTypeTag};
 use stellar_scene::geometry::PathGeometry;
 use stellar_scene::node::TextLayoutKey;
 
@@ -58,8 +59,6 @@ pub enum GlyphValueError {
     InvalidSize,
     /// run 크기가 유한한 `(0, MAX_RUN_PX]`가 아니거나 1/64 px로 양자화하면 0입니다.
     InvalidRunSize,
-    /// OpenType tag가 출력 가능한 ASCII 4바이트가 아닙니다.
-    InvalidTag,
     /// variation 값이 유한하지 않습니다.
     NonFiniteVariation,
     /// variation axis가 너무 많습니다.
@@ -77,9 +76,6 @@ impl fmt::Display for GlyphValueError {
                 f,
                 "glyph run 크기는 1/64 px 이상 {MAX_RUN_PX} px 이하의 유한한 값이어야 합니다"
             ),
-            GlyphValueError::InvalidTag => {
-                f.write_str("OpenType tag는 출력 가능한 ASCII 4바이트여야 합니다")
-            }
             GlyphValueError::NonFiniteVariation => f.write_str("variation 값이 유한하지 않습니다"),
             GlyphValueError::TooManyAxes => write!(
                 f,
@@ -91,25 +87,25 @@ impl fmt::Display for GlyphValueError {
 
 impl std::error::Error for GlyphValueError {}
 
-/// 폰트 face 식별: 파일 SHA-256 digest + collection face index.
+/// 폰트 face 식별: 폰트 파일 콘텐츠 해시(core-types [`FontFileHash`], X.8.1) + collection face index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExportFontFace {
-    file_sha256: [u8; 32],
+    file_hash: FontFileHash,
     face_index: u32,
 }
 
 impl ExportFontFace {
-    /// host(text·asset 계층)가 계산한 파일 digest와 face index로 만듭니다.
-    pub const fn new(file_sha256: [u8; 32], face_index: u32) -> ExportFontFace {
+    /// host(text·asset 계층)가 계산한 파일 해시와 face index로 만듭니다.
+    pub const fn new(file_hash: FontFileHash, face_index: u32) -> ExportFontFace {
         ExportFontFace {
-            file_sha256,
+            file_hash,
             face_index,
         }
     }
 
-    /// 파일 SHA-256 digest.
-    pub const fn file_sha256(&self) -> &[u8; 32] {
-        &self.file_sha256
+    /// 폰트 파일 콘텐츠 해시.
+    pub const fn file_hash(&self) -> FontFileHash {
+        self.file_hash
     }
 
     /// face index.
@@ -120,11 +116,7 @@ impl ExportFontFace {
 
 impl fmt::Display for ExportFontFace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("sha256:")?;
-        for byte in &self.file_sha256 {
-            write!(f, "{byte:02x}")?;
-        }
-        write!(f, "#{}", self.face_index)
+        write!(f, "{}#{}", self.file_hash, self.face_index)
     }
 }
 
@@ -242,40 +234,11 @@ impl RunSize {
     }
 }
 
-/// OpenType variation axis tag(출력 가능한 ASCII 4바이트).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AxisTag([u8; 4]);
-
-impl AxisTag {
-    /// 4바이트 tag를 만듭니다.
-    pub fn new(tag: [u8; 4]) -> Result<AxisTag, GlyphValueError> {
-        if tag.iter().all(|b| (0x20..=0x7E).contains(b)) {
-            Ok(AxisTag(tag))
-        } else {
-            Err(GlyphValueError::InvalidTag)
-        }
-    }
-
-    /// 정확히 4바이트 ASCII 문자열(예: `"wght"`).
-    pub fn parse(tag: &str) -> Result<AxisTag, GlyphValueError> {
-        let bytes: [u8; 4] = tag
-            .as_bytes()
-            .try_into()
-            .map_err(|_| GlyphValueError::InvalidTag)?;
-        AxisTag::new(bytes)
-    }
-
-    /// 원본 bytes.
-    pub const fn bytes(&self) -> [u8; 4] {
-        self.0
-    }
-}
-
 /// variable font axis 좌표의 정규형(모듈 문서 규칙).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct GlyphVariations {
     /// (tag, 값 bits), tag 오름차순.
-    axes: Arc<[(AxisTag, u32)]>,
+    axes: Arc<[(OpenTypeTag, u32)]>,
 }
 
 impl GlyphVariations {
@@ -286,9 +249,9 @@ impl GlyphVariations {
 
     /// 좌표 목록으로 정규형을 만듭니다. 같은 tag는 마지막 값이 우선합니다.
     pub fn new(
-        axes: impl IntoIterator<Item = (AxisTag, f32)>,
+        axes: impl IntoIterator<Item = (OpenTypeTag, f32)>,
     ) -> Result<GlyphVariations, GlyphValueError> {
-        let mut sorted: Vec<(AxisTag, u32)> = Vec::new();
+        let mut sorted: Vec<(OpenTypeTag, u32)> = Vec::new();
         for (count, (tag, value)) in axes.into_iter().enumerate() {
             if count >= MAX_VARIATION_AXES * 4 {
                 // 중복 tag로 무한히 긴 입력을 막습니다.
@@ -324,14 +287,14 @@ impl GlyphVariations {
     }
 
     /// (tag, 값) 목록(tag 오름차순).
-    pub fn axes(&self) -> impl Iterator<Item = (AxisTag, f32)> + '_ {
+    pub fn axes(&self) -> impl Iterator<Item = (OpenTypeTag, f32)> + '_ {
         self.axes
             .iter()
             .map(|(tag, bits)| (*tag, f32::from_bits(*bits)))
     }
 
     /// `tag` 좌표.
-    pub fn get(&self, tag: AxisTag) -> Option<f32> {
+    pub fn get(&self, tag: OpenTypeTag) -> Option<f32> {
         self.axes
             .binary_search_by(|(existing, _)| existing.cmp(&tag))
             .ok()
@@ -471,8 +434,8 @@ impl ExportTextSource for NoText {
 mod tests {
     use super::*;
 
-    fn tag(t: &str) -> AxisTag {
-        AxisTag::parse(t).unwrap()
+    fn tag(t: &str) -> OpenTypeTag {
+        OpenTypeTag::parse(t).unwrap()
     }
 
     #[test]
@@ -554,7 +517,7 @@ mod tests {
         );
         let many = (0..65u8).map(|i| {
             (
-                AxisTag::new([b'a', b'a', b'a' + i / 26, b'a' + i % 26]).unwrap(),
+                OpenTypeTag::new([b'a', b'a', b'a' + i / 26, b'a' + i % 26]).unwrap(),
                 1.0,
             )
         });
@@ -567,18 +530,13 @@ mod tests {
             GlyphVariations::new(repeated),
             Err(GlyphValueError::TooManyAxes)
         );
-        assert_eq!(
-            AxisTag::new([0, b'a', b'b', b'c']),
-            Err(GlyphValueError::InvalidTag)
-        );
-        assert_eq!(AxisTag::parse("wg"), Err(GlyphValueError::InvalidTag));
         assert!(GlyphVariations::none().is_empty());
     }
 
     #[test]
     fn run_keys_carry_font_size_and_variations() {
         let run = GlyphRun {
-            font: ExportFontFace::new([7; 32], 2),
+            font: ExportFontFace::new(FontFileHash::from_sha256_digest([7; 32]), 2),
             size: RunSize::from_px(20.0).unwrap(),
             variations: GlyphVariations::new([(tag("wght"), 650.0)]).unwrap(),
             fill: None,
@@ -593,13 +551,14 @@ mod tests {
         assert_eq!(key.glyph, 5);
         assert_eq!(key.size.sixty_fourths(), 1280);
         assert_eq!(key.variations.get(tag("wght")), Some(650.0));
-        assert!(ExportFontFace::new([0xAB; 32], 1)
-            .to_string()
-            .ends_with("abab#1"));
+        assert!(
+            ExportFontFace::new(FontFileHash::from_sha256_digest([0xAB; 32]), 1)
+                .to_string()
+                .ends_with("abab#1")
+        );
         for error in [
             GlyphValueError::InvalidSize,
             GlyphValueError::InvalidRunSize,
-            GlyphValueError::InvalidTag,
             GlyphValueError::NonFiniteVariation,
             GlyphValueError::TooManyAxes,
         ] {

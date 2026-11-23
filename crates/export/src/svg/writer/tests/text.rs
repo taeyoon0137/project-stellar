@@ -15,16 +15,17 @@ use stellar_scene::geometry::PathCommand;
 use super::*;
 use crate::svg::text::MAX_TEXT_OUTLINE_COMMANDS;
 use crate::text::{
-    AxisTag, ExportFontFace, ExportTextSource, GlyphOutline, GlyphOutlineError, GlyphOutlineKey,
-    GlyphRun, GlyphVariations, PlacedGlyph, RunSize, TextGlyphLayout,
+    ExportFontFace, ExportTextSource, FontFileHash, GlyphOutline, GlyphOutlineError,
+    GlyphOutlineKey, GlyphRun, GlyphVariations, OpenTypeTag, PlacedGlyph, RunSize, TextGlyphLayout,
 };
 
 const TEXT_GOLDEN: &str = include_str!("../../../../tests/fixtures/text_view_v1.svg");
 const COVERAGE_GOLDEN: &str = include_str!("../../../../tests/fixtures/text_view_v1.coverage.txt");
 
-const FONT_A: ExportFontFace = ExportFontFace::new([0xA1; 32], 0);
-const FONT_B: ExportFontFace = ExportFontFace::new([0xB2; 32], 1);
-const FONT_MISSING: ExportFontFace = ExportFontFace::new([0xEE; 32], 0);
+const FONT_A: ExportFontFace = ExportFontFace::new(FontFileHash::from_sha256_digest([0xA1; 32]), 0);
+const FONT_B: ExportFontFace = ExportFontFace::new(FontFileHash::from_sha256_digest([0xB2; 32]), 1);
+const FONT_MISSING: ExportFontFace =
+    ExportFontFace::new(FontFileHash::from_sha256_digest([0xEE; 32]), 0);
 
 const LAYOUT: [u8; 16] = [0x51; 16];
 
@@ -56,7 +57,7 @@ fn rect_contour(x0: f32, y0: f32, x1: f32, y1: f32, reverse: bool) -> Contour {
 
 fn wght(variations: &GlyphVariations) -> f32 {
     variations
-        .get(AxisTag::parse("wght").unwrap())
+        .get(OpenTypeTag::parse("wght").unwrap())
         .unwrap_or(400.0)
 }
 
@@ -161,7 +162,7 @@ fn glyph_run(
         font,
         size: RunSize::from_px(size).unwrap(),
         variations: match weight {
-            Some(w) => GlyphVariations::new([(AxisTag::parse("wght").unwrap(), w)]).unwrap(),
+            Some(w) => GlyphVariations::new([(OpenTypeTag::parse("wght").unwrap(), w)]).unwrap(),
             None => GlyphVariations::none(),
         },
         fill,
@@ -405,11 +406,11 @@ fn outline_keys_carry_font_size_and_variations() {
         .iter()
         .map(|k| {
             (
-                k.font.file_sha256()[0],
+                k.font.file_hash().sha256_digest()[0],
                 k.glyph,
                 k.size.sixty_fourths(),
                 k.variations
-                    .get(AxisTag::parse("wght").unwrap())
+                    .get(OpenTypeTag::parse("wght").unwrap())
                     .map(|w| w as u32),
             )
         })

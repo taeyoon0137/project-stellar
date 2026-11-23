@@ -235,7 +235,8 @@ mod tests {
 
     use crate::test_fixtures as fx;
     use crate::text::{
-        AxisTag, GlyphRun, GlyphVariations, PlacedGlyph, RunSize, MAX_GLYPH_PX, MAX_RUN_PX,
+        FontFileHash, GlyphRun, GlyphVariations, OpenTypeTag, PlacedGlyph, RunSize, MAX_GLYPH_PX,
+        MAX_RUN_PX,
     };
 
     fn square(size: f32) -> PathGeometry {
@@ -250,7 +251,7 @@ mod tests {
     }
 
     fn face(n: u8) -> ExportFontFace {
-        ExportFontFace::new([n; 32], 0)
+        ExportFontFace::new(FontFileHash::from_sha256_digest([n; 32]), 0)
     }
 
     fn run(font: u8, size: f32, fill: Option<Color>, glyphs: &[(u32, i32, i32)]) -> GlyphRun {
@@ -451,7 +452,7 @@ mod tests {
 
     #[test]
     fn keys_use_the_run_instance() {
-        let wght = AxisTag::parse("wght").unwrap();
+        let wght = OpenTypeTag::parse("wght").unwrap();
         let mut first = run(1, 12.0, None, &[(1, 0, 0), (1, 64, 0)]);
         first.variations = GlyphVariations::new([(wght, 700.0)]).unwrap();
         let second = run(1, 12.0, None, &[(1, 0, 0)]);

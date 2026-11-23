@@ -25,7 +25,8 @@ use crate::request::ExportSource;
 use crate::svg::{write_svg, SvgExportError, SvgWriteOptions};
 use crate::test_fixtures as fx;
 use crate::text::{
-    GlyphOutline, GlyphOutlineKey, GlyphRun, GlyphVariations, PlacedGlyph, RunSize, TextGlyphLayout,
+    FontFileHash, GlyphOutline, GlyphOutlineKey, GlyphRun, GlyphVariations, PlacedGlyph, RunSize,
+    TextGlyphLayout,
 };
 
 const PINS: ResourcePins = ResourcePins {
@@ -33,8 +34,10 @@ const PINS: ResourcePins = ResourcePins {
     assets: AssetRevision(3),
 };
 
-const FONT_OK: ExportFontFace = ExportFontFace::new([0x0A; 32], 0);
-const FONT_MISSING: ExportFontFace = ExportFontFace::new([0x0B; 32], 0);
+const FONT_OK: ExportFontFace =
+    ExportFontFace::new(FontFileHash::from_sha256_digest([0x0A; 32]), 0);
+const FONT_MISSING: ExportFontFace =
+    ExportFontFace::new(FontFileHash::from_sha256_digest([0x0B; 32]), 0);
 
 const KEY_OK: TextLayoutKey = TextLayoutKey::from_bytes([1; 16]);
 const KEY_GONE: TextLayoutKey = TextLayoutKey::from_bytes([2; 16]);
@@ -358,7 +361,7 @@ fn fallback(
 ) -> FontFallbackUse {
     FontFallbackUse {
         text: fx::node_id(text),
-        requested: ExportFontFace::new([0xF0; 32], 0),
+        requested: ExportFontFace::new(FontFileHash::from_sha256_digest([0xF0; 32]), 0),
         substitution,
         line_break,
     }
