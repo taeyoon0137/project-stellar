@@ -39,6 +39,9 @@ pub mod builder;
 /// layout·binding·modifier invalidation → scene dirty set (XI.2.1).
 pub mod dirty;
 
+/// Boolean modifier geometry 평가 (XII.10.30).
+pub mod boolean;
+
 /// 축 정렬 bounds와 scene node world bounds (XI.3.1).
 pub mod bounds;
 

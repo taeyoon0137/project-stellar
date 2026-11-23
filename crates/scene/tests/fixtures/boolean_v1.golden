@@ -1,0 +1,5 @@
+# Boolean 결과 path golden v1. A=[0,10]², B=[5,15]².
+union: M 0 0 L 10 0 L 10 5 L 15 5 L 15 15 L 5 15 L 5 10 L 0 10 Z
+subtract: M 0 0 L 10 0 L 10 5 L 5 5 L 5 10 L 0 10 Z
+intersect: M 5 5 L 10 5 L 10 10 L 5 10 Z
+exclude: M 0 0 L 10 0 L 10 5 L 15 5 L 15 15 L 5 15 L 5 10 L 0 10 Z M 5 5 L 5 10 L 10 10 L 10 5 Z
