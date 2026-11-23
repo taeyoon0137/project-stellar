@@ -7,3 +7,6 @@
 
 /// socket 종류와 속성 입력 포트 타입.
 pub mod socket;
+
+/// 프로토타입 node 종류 registry(닫힌 집합).
+pub mod node_kind;
