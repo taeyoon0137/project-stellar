@@ -110,8 +110,9 @@ pub struct DocumentSceneSource {
     root: StableId,
     /// root subtree pre-order 위치(Boolean operand 순서). 구조 변경 때만 다시 계산합니다.
     preorder: HashMap<StableId, usize>,
-    /// Boolean operand → 조상(가까운 것부터). 조상 이동이 host를 dirty로 만드는 데 씁니다.
-    operand_ancestors: BTreeMap<StableId, Vec<StableId>>,
+    /// Boolean operand의 조상 → 그 operand를 읽는 host(정렬·중복 없음). 조상 이동이 host를 dirty로 만드는 데
+    /// 씁니다. dirty node마다 operand 전체를 훑지 않도록 조상 쪽으로 뒤집어 둡니다.
+    ancestor_hosts: HashMap<StableId, Vec<StableId>>,
     /// instance 펼침에서 나온 skip 기록 → 그 instance. 가상 key는 문서 node id가 아니라서, 인스턴스를 다시 변환할 때
     /// 이 표로 이전 기록을 지웁니다.
     skip_owner: BTreeMap<SceneKey, StableId>,
@@ -123,19 +124,7 @@ impl SceneDependents for DocumentSceneSource {
     }
 
     fn descendant_dependents(&self, node: StableId) -> Vec<StableId> {
-        let mut hosts: Vec<StableId> = Vec::new();
-        for (operand, list) in &self.operand_hosts {
-            let inside = self
-                .operand_ancestors
-                .get(operand)
-                .is_some_and(|ancestors| ancestors.contains(&node));
-            if inside {
-                hosts.extend(list.iter().copied());
-            }
-        }
-        hosts.sort_unstable();
-        hosts.dedup();
-        hosts
+        self.ancestor_hosts.get(&node).cloned().unwrap_or_default()
     }
 }
 
@@ -181,7 +170,7 @@ pub fn document_scene_source<'a>(
         unapplied_variant_patches: unapplied,
         root,
         preorder: converter.preorder,
-        operand_ancestors: BTreeMap::new(),
+        ancestor_hosts: HashMap::new(),
         skip_owner: converter.skip_owner,
     };
     refresh_operands(model, &mut built);
@@ -193,19 +182,19 @@ pub fn document_scene_source<'a>(
 /// host가 scene에 Boolean 결과를 남기지 못하면(host 자신이나 조상이 skip됨) operand는 흡수된 채 아무것도 그리지
 /// 않습니다. 그 operand를 [`SkipReason::BooleanHostSkipped`]로 기록해 빠진 이유가 드러나게 합니다(ADR-0084 결정 7).
 fn refresh_operands(model: &DocumentModel, current: &mut DocumentSceneSource) {
-    current.operand_ancestors = current
-        .operand_hosts
-        .keys()
-        .map(|operand| {
-            let mut ancestors = Vec::new();
-            let mut parent = parent_of(model, *operand);
-            while let Some(id) = parent {
-                ancestors.push(id);
-                parent = parent_of(model, id);
-            }
-            (*operand, ancestors)
-        })
-        .collect();
+    let mut ancestor_hosts: HashMap<StableId, Vec<StableId>> = HashMap::new();
+    for (operand, hosts) in &current.operand_hosts {
+        let mut parent = parent_of(model, *operand);
+        while let Some(id) = parent {
+            ancestor_hosts.entry(id).or_default().extend(hosts.iter().copied());
+            parent = parent_of(model, id);
+        }
+    }
+    for hosts in ancestor_hosts.values_mut() {
+        hosts.sort_unstable();
+        hosts.dedup();
+    }
+    current.ancestor_hosts = ancestor_hosts;
     current
         .skipped
         .retain(|_, reason| *reason != SkipReason::BooleanHostSkipped);
