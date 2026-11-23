@@ -285,6 +285,7 @@ fn write_token_file(f: &Fixture, px: f32) {
     let mut text = decode(&files).unwrap();
     text.token_sets.retain(|set| set.id != sid(TOKEN_SET));
     text.token_sets.push(TokenSetSource {
+        computed: Vec::new(),
         id: sid(TOKEN_SET),
         name: "Brand Space".into(),
         tokens: vec![TokenSource {
@@ -404,12 +405,14 @@ fn library_diff_counts_resources_by_stable_id() {
         ..SourceLibrary::default()
     };
     let old = library(vec![TokenSetSource {
+        computed: Vec::new(),
         id: sid(10),
         name: "a".into(),
         tokens: vec![token_source(11, 1.0), token_source(12, 2.0)],
     }]);
     // 12의 값 변경, 13 추가, 같은 set.
     let new = library(vec![TokenSetSource {
+        computed: Vec::new(),
         id: sid(10),
         name: "a".into(),
         tokens: vec![
