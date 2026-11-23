@@ -53,6 +53,9 @@ pub mod protocol;
 /// MCP stdio 서버 루프 (XIX.1.1).
 pub mod server;
 
+/// agent command proposal 입력 해석: closed enum command만 (XIX.5.1).
+pub mod proposal;
+
 /// 실행 인자로 고정한 신뢰 프로젝트 루트의 읽기 전용 backend (XIX.9.3).
 pub mod headless;
 
