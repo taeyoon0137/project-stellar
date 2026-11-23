@@ -318,6 +318,7 @@ fn encode_payload(command: &Command, out: &mut Writer) {
         Command::RemoveView(command) => command.encode_into(out),
         Command::RenameView(command) => command.encode_into(out),
         Command::ApplyExternalSnapshot(command) => command.encode_into(out),
+        Command::EditPathPoint(command) => command.encode_into(out),
         #[cfg(test)]
         Command::TestProbe(probe) => {
             out.id(probe.node);
@@ -396,6 +397,9 @@ fn decode_payload(kind: CommandKind, input: &mut Reader<'_>) -> Result<Command, 
         CommandKind::ApplyExternalSnapshot => {
             crate::snapshot_apply::ApplyExternalSnapshot::decode_from(input)
                 .map(Command::ApplyExternalSnapshot)
+        }
+        CommandKind::EditPathPoint => {
+            crate::path_edit::EditPathPoint::decode_from(input).map(Command::EditPathPoint)
         }
         #[cfg(test)]
         CommandKind::TestProbe => Ok(Command::TestProbe(crate::command::TestProbe {

@@ -327,6 +327,8 @@ pub enum Command {
     RenameView(crate::page_view::RenameView),
     /// 외부 원본 반영 (UX.4.1).
     ApplyExternalSnapshot(crate::snapshot_apply::ApplyExternalSnapshot),
+    /// Path point 편집 (XII.10.28).
+    EditPathPoint(crate::path_edit::EditPathPoint),
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -371,6 +373,7 @@ impl Command {
             Command::RemoveView(_) => CommandKind::RemoveView,
             Command::RenameView(_) => CommandKind::RenameView,
             Command::ApplyExternalSnapshot(_) => CommandKind::ApplyExternalSnapshot,
+            Command::EditPathPoint(_) => CommandKind::EditPathPoint,
             #[cfg(test)]
             Command::TestProbe(_) => CommandKind::TestProbe,
         }
@@ -399,6 +402,7 @@ impl Command {
             Command::RemoveView(command) => command.validate(model),
             Command::RenameView(command) => command.validate(model),
             Command::ApplyExternalSnapshot(command) => command.validate(model),
+            Command::EditPathPoint(command) => command.validate(model),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.validate(model),
         }
@@ -437,6 +441,9 @@ impl Command {
             Command::ApplyExternalSnapshot(command) => {
                 Ok(Command::ApplyExternalSnapshot(command.invert()))
             }
+            Command::EditPathPoint(command) => {
+                command.invert(model).map(Command::RestoreNodeRecords)
+            }
             #[cfg(test)]
             Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
         }
@@ -465,6 +472,7 @@ impl Command {
             Command::RemoveView(command) => command.apply(ctx),
             Command::RenameView(command) => command.apply(ctx),
             Command::ApplyExternalSnapshot(command) => command.apply(ctx),
+            Command::EditPathPoint(command) => command.apply(ctx),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.apply(ctx),
         }

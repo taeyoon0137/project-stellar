@@ -39,11 +39,13 @@ use crate::kind::CommandKind;
 use crate::modifier_ops::{InsertModifier, MoveModifier, RemoveModifier, SetModifierProperty};
 use crate::node_ops::{DeleteSubtree, InsertNode, MoveNode};
 use crate::page_view::{AddPage, AddView, RemovePage, RemoveView, RenamePage, RenameView};
+use crate::path_edit::EditPathPoint;
 use crate::property::{node_property_info, PropertyValue, PropertyValueType, SetProperty};
 use crate::request::CommandRequest;
 use crate::snapshot_apply::ApplyExternalSnapshot;
 use crate::state::DocumentState;
 use crate::tree::{depth_of, node_ids, order_key_of, parent_of, ChildIndex};
+use stellar_document::path::{HandleMode, PathCommand, PathEdit, PathHandleId, PathPointId};
 
 /// 문서에서 쓰이지 않는 새 StableId 공급기(문서 생성기 id 대역 밖의 timestamp 사용).
 #[derive(Debug, Clone)]
@@ -485,6 +487,79 @@ pub fn generate(
             let incoming = edited.model().to_records().ok()?;
             let command = ApplyExternalSnapshot::between(model, &incoming).ok()?;
             (!command.is_empty()).then_some(Command::ApplyExternalSnapshot(command))
+        }
+        CommandKind::EditPathPoint => {
+            let paths = nodes_where(model, |id| kind_of(model, id) == Some(NodeKind::Path));
+            let node = pick(rng, &paths)?;
+            let NodePayload::Path(path) = model.payload(node)? else {
+                return None;
+            };
+            let commands = path.data().commands();
+            let points = path.point_ids();
+            let handles: Vec<PathHandleId> = path
+                .ids()
+                .iter()
+                .filter_map(|ids| ids.handles)
+                .flat_map(|(a, b)| [a, b])
+                .collect();
+            let segments: Vec<(PathPointId, bool)> = path
+                .ids()
+                .iter()
+                .zip(commands)
+                .filter_map(|(ids, command)| match command {
+                    PathCommand::LineTo(_) => ids.point.map(|p| (p, false)),
+                    PathCommand::CubicTo { .. } => ids.point.map(|p| (p, true)),
+                    _ => None,
+                })
+                .collect();
+            let starts: Vec<PathPointId> = path
+                .ids()
+                .iter()
+                .zip(commands)
+                .filter_map(|(ids, command)| match command {
+                    PathCommand::MoveTo(_) => ids.point,
+                    _ => None,
+                })
+                .collect();
+            let to = Vec2::new(grid(rng, 400), grid(rng, 400)).ok()?;
+            let edit = match rng.below(7) {
+                0 => {
+                    let (segment, cubic) = pick(rng, &segments)?;
+                    PathEdit::InsertPoint {
+                        segment,
+                        t: finite(*rng.pick(&[0.25, 0.5, 0.75])),
+                        point: PathPointId(ids.fresh()),
+                        handles: cubic
+                            .then(|| (PathHandleId(ids.fresh()), PathHandleId(ids.fresh()))),
+                    }
+                }
+                1 => PathEdit::MovePoint {
+                    point: pick(rng, &points)?,
+                    to,
+                },
+                2 => PathEdit::DeletePoint {
+                    point: pick(rng, &points)?,
+                },
+                3 => PathEdit::MoveHandle {
+                    handle: pick(rng, &handles)?,
+                    to,
+                },
+                4 => PathEdit::SetHandleMode {
+                    point: pick(rng, &points)?,
+                    mode: *rng.pick(&[
+                        HandleMode::Independent,
+                        HandleMode::Aligned,
+                        HandleMode::Mirrored,
+                    ]),
+                },
+                5 => PathEdit::CloseSubpath {
+                    start: pick(rng, &starts)?,
+                },
+                _ => PathEdit::OpenSubpath {
+                    start: pick(rng, &starts)?,
+                },
+            };
+            Some(Command::EditPathPoint(EditPathPoint { node, edit }))
         }
         CommandKind::RemoveView | CommandKind::RenameView => {
             let views: Vec<StableId> = model
