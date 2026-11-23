@@ -43,3 +43,17 @@
 ## 남은 위험
 
 - 선행 XIII.8.3 판정은 원장을 따릅니다.
+
+## 후속 (2026-11-23, lane `recovery-git-terminal`)
+
+- 선행 XIII.8.3을 완료했습니다. 복원 경로는 그대로이고, 이제 셸이 쓰는 공개 경로(`AppRuntime::recovery_probe` → `AppRuntime::recover_checkpoint(Restore)`)로도 디스크 불변을 확인합니다. 이 행은 `[x]` 후보입니다(원장 판정은 통합 때).
+- 결정: [ADR-0120](../adr/ADR-0120-recovery-probe-git-scenarios-terminal-env.md) 결정 1
+
+| 테스트 | 결과 |
+|---|---|
+| `app::recovery::lifecycle_tests::startup_probe_offers_the_newest_checkpoint_and_both_choices_apply` | 통과 — 공개 API Restore 뒤 창 문서 = 복구본·dirty, 프로젝트 폴더 bytes 불변 |
+| `app::recovery::lifecycle_tests::restored_checkpoint_lives_in_memory_and_leaves_disk_bytes_unchanged` | 통과 — 다음 Save Now가 일반 저장으로 generation 2 |
+
+### 근거 커밋
+
+- `63c95449` Task(XIII.8.3): 앱 시작 복구 probe가 최신 복구본 요약을 돌려주고 복구·폐기를 같은 저장소에 적용
