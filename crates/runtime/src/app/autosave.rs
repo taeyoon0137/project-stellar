@@ -513,8 +513,23 @@ fn collect(ctx: &mut DocumentContext, shared: &AppShared) {
         finish(entry, result, now);
         changed = true;
     }
-    if changed {
+    // 진행 중인 쓰기 때문에 미룬 외부 변경을 지금 반영하고 그 창에 표시 변경을 알립니다(UX.4.1). 상태 게시의
+    // 관찰(observe)도 미룬 반영을 실행하지만 표시 변경 event를 낼 수 없어, 쓰기가 끝난 이 자리에서 먼저 합니다.
+    let mut applied = Vec::new();
+    for (handle, entry) in sessions.windows.iter_mut() {
+        if entry.autosave.external_deferred
+            && entry.autosave.in_flight.is_none()
+            && !gesture_active(&entry.session)
+            && sync_window(entry)
+        {
+            applied.push(*handle);
+        }
+    }
+    if changed || !applied.is_empty() {
         shared.publish_state(build_state(ctx));
+    }
+    for session in applied {
+        shared.push_unsolicited_view_change(session);
     }
     shared
         .autosave_writing
