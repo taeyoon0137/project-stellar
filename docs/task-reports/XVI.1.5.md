@@ -43,3 +43,17 @@
 ## 남은 위험 / 한계
 
 - 진단 번들 내보내기(사용자 동의·확인 UI)는 이 행 밖입니다.
+
+## 2026-11-23 interaction-trace 후속: 연결 지점의 memory bound (ADR-0096 결정 2)
+
+- 연결 지점 probe는 진행 중 trace를 `MAX_IN_FLIGHT_TRACES`(256)개까지 둡니다. 넘으면 가장 오래된 진행 중 trace를 버리고
+  `abandoned`에 셉니다. 완료 trace는 이 행의 고정 용량 `TraceStore`에 들어갑니다.
+
+| 테스트 | 확인 |
+|---|---|
+| `in_flight_and_stored_traces_stay_bounded` | 266개 시작 → 진행 중 256 유지·가장 오래된 10개 버림, 256개 완료 → store 16개 유지·240개 지움, 할당 bytes 상한 유지 |
+
+### 근거 커밋
+
+- `4d0a7a59` Feat: ring buffer 로컬 trace store 추가 (XVI.1.5)
+- 이 커밋(`Task(XVI.1.5)`): 연결 지점의 진행 중·완료 trace 상한 검사.

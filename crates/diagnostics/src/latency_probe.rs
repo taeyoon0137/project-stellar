@@ -533,4 +533,37 @@ mod tests {
             assert_eq!(spans, trace.logical_latency_nanos());
         }
     }
+
+    #[test]
+    fn in_flight_and_stored_traces_stay_bounded() {
+        // 검증 기준(XVI.1.5): memory bound 유지. 진행 중 trace와 완료 trace 모두 상한 안입니다.
+        let clock = TestClock::default();
+        let mut probe = InteractionProbe::new(clock.clone(), TraceStore::new(16));
+        let bound = probe.store().memory_bound_bytes();
+        let mut kept = Vec::new();
+        for _ in 0..(MAX_IN_FLIGHT_TRACES + 10) {
+            clock.advance(1);
+            kept.push(probe.begin(dims()));
+            assert!(probe.in_flight() <= MAX_IN_FLIGHT_TRACES);
+        }
+        assert_eq!(probe.in_flight(), MAX_IN_FLIGHT_TRACES);
+        assert_eq!(probe.counters().abandoned, 10);
+        // 버린 것은 가장 오래된 trace입니다.
+        assert_eq!(
+            probe.mark(kept[0], Stage::T1),
+            Err(ProbeError::UnknownTrace { id: kept[0] })
+        );
+        for id in &kept[10..] {
+            for stage in &Stage::ALL[1..] {
+                probe.mark(*id, *stage).unwrap();
+            }
+            probe.finish(*id).unwrap();
+            assert!(probe.store().len() <= 16);
+            assert!(probe.store().allocated_bytes() <= bound * 2);
+        }
+        assert_eq!(probe.in_flight(), 0);
+        assert_eq!(probe.store().len(), 16);
+        assert_eq!(probe.store().dropped(), MAX_IN_FLIGHT_TRACES as u64 - 16);
+        assert_eq!(probe.counters().completed, MAX_IN_FLIGHT_TRACES as u64);
+    }
 }
