@@ -1590,6 +1590,7 @@ mod tests {
             ("PROJECT_CLONE_FAILED", RequestFailure::ProjectCloneFailed),
             ("CLONE_TARGET_EXISTS", RequestFailure::CloneTargetExists),
             ("CLONE_CANCELLED", RequestFailure::CloneCancelled),
+            ("NODE_LOCKED", RequestFailure::NodeLocked),
         ];
         assert_eq!(
             failures.len(),

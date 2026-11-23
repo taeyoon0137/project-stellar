@@ -121,6 +121,7 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_FAILURE_PROJECT_CLONE_FAILED 28
 #define STELLAR_FAILURE_CLONE_TARGET_EXISTS 29
 #define STELLAR_FAILURE_CLONE_CANCELLED 30
+#define STELLAR_FAILURE_NODE_LOCKED 31
 
 /* 창 session 명령 코드(stellar_window_session_perform). 코어가 정하고 셸과 공유합니다. 셸은 메뉴 명령의 공유 이름
  * (edit.undo, edit.redo, file.save_now, view.zoom_in, view.zoom_out, view.zoom_actual_size)으로

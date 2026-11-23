@@ -181,10 +181,18 @@ fn move_layer(
         || source.parent.is_none()
         || in_view(model, node, root).is_none()
         || in_view(model, parent, root).is_none()
-        || edit_permission(model, node, EditIntent::Move).is_err()
-        || edit_permission(model, parent, EditIntent::Edit).is_err()
     {
         return Err(stale());
+    }
+    // 잠긴 노드 자신, 잠긴 조상 아래의 노드, 잠긴 대상 부모는 옮기지 않습니다(D8). 순환·부모 종류·깊이는
+    // MoveNode.validate가 다시 확인합니다.
+    if edit_permission(model, node, EditIntent::Move).is_err()
+        || edit_permission(model, parent, EditIntent::Edit).is_err()
+    {
+        return Err(Failure::new(
+            RequestFailure::NodeLocked,
+            "잠긴 레이어나 잠긴 부모로는 옮길 수 없습니다",
+        ));
     }
     let mut siblings = model
         .children_front_to_back(parent, None, usize::MAX)
@@ -192,19 +200,15 @@ fn move_layer(
     if index > siblings.len() {
         return Err(stale());
     }
-    // 드롭 index는 이동 대상을 제거하기 전의 표시 순서입니다.
-    let position = index;
+    // 드롭 index는 이동 대상을 제거하기 전의 표시 순서입니다. 같은 부모 안에서 대상보다 뒤로 놓으면 대상이
+    // 빠진 만큼 한 칸 당깁니다.
     let original_position = siblings.iter().position(|id| *id == node);
     siblings.retain(|id| *id != node);
-    let position = if source.parent == Some(parent) {
-        let original = model
-            .children_front_to_back(parent, None, usize::MAX)
-            .ok_or_else(stale)?;
-        position - usize::from(original[..position].contains(&node))
-    } else {
-        position
+    let position = match original_position {
+        Some(original) if original < index => index - 1,
+        _ => index,
     };
-    if source.parent == Some(parent) && original_position == Some(position) {
+    if original_position == Some(position) {
         return Ok(());
     }
     let key = |id: StableId| model.record(id).map(|record| record.order_key);
@@ -270,7 +274,7 @@ fn rename(
     in_view(model, node, root).ok_or_else(stale)?;
     if edit_permission(model, node, EditIntent::Modify(node_keys::DISPLAY_NAME)).is_err() {
         return Err(Failure::new(
-            RequestFailure::UnknownView,
+            RequestFailure::NodeLocked,
             "잠긴 레이어나 잠긴 부모 아래의 레이어는 이름을 바꿀 수 없습니다",
         ));
     }
@@ -387,10 +391,9 @@ pub(super) fn set_flags(
     let root = view_root(model, view).ok_or_else(stale)?;
     let targets = flag_targets(model, root, nodes, flag).map_err(|denied| match denied {
         FlagDenied::Stale => stale(),
-        FlagDenied::Locked => Failure::new(
-            RequestFailure::UnknownView,
-            "잠긴 레이어는 바꿀 수 없습니다",
-        ),
+        FlagDenied::Locked => {
+            Failure::new(RequestFailure::NodeLocked, "잠긴 레이어는 바꿀 수 없습니다")
+        }
     })?;
     let value = value.unwrap_or_else(|| !targets.iter().all(|(_, on)| *on));
     let mut tx = CommandTransaction::new(
@@ -537,6 +540,96 @@ fn read_page(
 mod tests {
     use super::*;
     use crate::window_session::test_fixtures::{identity, saved_project, sid, window};
+
+    #[test]
+    fn move_layer_reorders_within_and_across_parents_with_one_undo_and_rejects_locks() {
+        use crate::window_session::test_fixtures::{sample_document, saved_project_with};
+        let mut model = sample_document();
+        let template = model.record(sid(12)).unwrap();
+        for (id, parent, key, locked) in [
+            (13, 10, 0x30, false),
+            (30, 10, 0x40, true),
+            (31, 30, 0x10, false),
+        ] {
+            let mut record = template.clone();
+            record.id = sid(id);
+            record.parent = Some(sid(parent));
+            record.order_key =
+                stellar_core_types::order_key::OrderKey::from_bytes(vec![key]).unwrap();
+            record.locked = locked;
+            record.display_name = format!("n{id}");
+            model.insert_node(record).unwrap();
+        }
+        let dir = saved_project_with("layer-move", &[&model]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        let order = |session: &ProjectWindowSession, parent: u64| -> Vec<StableId> {
+            session
+                .document()
+                .unwrap()
+                .model()
+                .children_front_to_back(sid(parent), None, usize::MAX)
+                .unwrap()
+        };
+        let ids = |list: &[u64]| list.iter().map(|n| sid(*n)).collect::<Vec<_>>();
+        let go = |session: &mut ProjectWindowSession,
+                  view: u64,
+                  node: u64,
+                  parent: Option<u64>,
+                  index: usize| {
+            let revision = session.revision();
+            move_layer(
+                session,
+                RequestId(7),
+                sid(view),
+                revision,
+                sid(node),
+                parent.map(sid),
+                index,
+            )
+        };
+        assert_eq!(order(&session, 10), ids(&[30, 13, 12, 11]));
+        let start = (session.revision(), session.history().history().len());
+
+        // 제자리(자기 위치, 바로 아래 칸)는 기록하지 않습니다.
+        assert!(go(&mut session, 3, 12, None, 2).is_ok());
+        assert!(go(&mut session, 3, 12, None, 3).is_ok());
+        assert_eq!(
+            (session.revision(), session.history().history().len()),
+            start
+        );
+
+        // 같은 부모 안에서 맨 앞으로, 그리고 맨 뒤로 옮깁니다. 한 번이 Undo 한 번입니다.
+        assert!(go(&mut session, 3, 11, None, 0).is_ok());
+        assert_eq!(order(&session, 10), ids(&[11, 30, 13, 12]));
+        assert_eq!(session.history().history().len(), start.1 + 1);
+        assert!(go(&mut session, 3, 13, None, 4).is_ok());
+        assert_eq!(order(&session, 10), ids(&[11, 30, 12, 13]));
+        assert!(session.undo().unwrap());
+        assert_eq!(order(&session, 10), ids(&[11, 30, 13, 12]));
+        assert!(session.undo().unwrap());
+        assert_eq!(order(&session, 10), ids(&[30, 13, 12, 11]));
+
+        // 다른 부모로: 11 아래로 12를 넣습니다.
+        assert!(go(&mut session, 3, 12, Some(11), 0).is_ok());
+        assert_eq!(order(&session, 11), ids(&[12]));
+        assert!(session.undo().unwrap());
+
+        // 잠긴 노드, 잠긴 부모 아래 노드, 잠긴 대상 부모는 잠금 실패로 거부합니다.
+        for (node, parent) in [(30, None), (31, None), (12, Some(30))] {
+            let failure = go(&mut session, 3, node, parent, 0).unwrap_err();
+            assert_eq!(failure.failure, RequestFailure::NodeLocked, "{node}");
+        }
+        // 활성이 아닌 View, root, 범위를 벗어난 index는 오래된 표시입니다.
+        for (view, node, index) in [(4, 12, 0), (3, 10, 0), (3, 12, 9)] {
+            let failure = go(&mut session, view, node, None, index).unwrap_err();
+            assert_eq!(
+                failure.failure,
+                RequestFailure::UnknownView,
+                "{view} {node}"
+            );
+        }
+        assert_eq!(order(&session, 10), ids(&[30, 13, 12, 11]));
+    }
 
     #[test]
     fn rename_checks_revision_ownership_and_changes_one_history_entry() {

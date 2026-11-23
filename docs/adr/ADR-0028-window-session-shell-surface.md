@@ -786,6 +786,7 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 
 - `stellar_window_layer_move`는 활성 View, 문서 revision, 단일 node, 대상 parent(null은 View root), 대상의 이동 전 표시 순서 index를 받습니다. 코어가 저장 OrderKey를 계산하고 `MoveNode`를 한 transaction에 적용해 Undo 한 번으로 기록합니다. stale View·revision, 잠금, root 이동, 잘못된 부모와 순서는 거부합니다.
 - 사이드바의 기존 드래그 대상 검증과 실제 창 공급자를 이 요청에 연결합니다. 여러 행을 함께 끄는 동작은 아직 거부합니다.
+- 보완(2026-11-23): 실패 코드 끝에 `STELLAR_FAILURE_NODE_LOCKED`(31)를 덧붙입니다. 레이어 이동·이름 바꾸기·표시/잠금 토글이 잠금 규칙(D8)으로 거부되면 이 코드를 쓰고, 오래된 표시(stale View·revision·없는 노드·범위 밖 index)는 계속 `STELLAR_FAILURE_UNKNOWN_VIEW`입니다. 셸의 드래그 대상 판정(잠금·부모 종류·순환)은 코어 규칙의 사본이므로 UI 재설계 때 지우고 코어 거부 결과에 맡깁니다.
 
 ## 개정(2026-11-18, UX.3.8 편집 해석)
 

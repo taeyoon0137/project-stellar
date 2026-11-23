@@ -290,11 +290,13 @@ pub enum RequestFailure {
     CloneTargetExists,
     /// 최종 폴더 공개 전에 사용자가 Clone을 취소했습니다.
     CloneCancelled,
+    /// 대상 노드나 그 조상이 잠겨 편집을 거부했습니다(D8). 오래된 표시(UnknownView)와 구분합니다.
+    NodeLocked,
 }
 
 impl RequestFailure {
     /// 전체 코드(값 순서).
-    pub const ALL: [RequestFailure; 24] = [
+    pub const ALL: [RequestFailure; 25] = [
         RequestFailure::UnknownProject,
         RequestFailure::UnknownDocument,
         RequestFailure::DocumentInOtherProject,
@@ -319,6 +321,7 @@ impl RequestFailure {
         RequestFailure::ProjectCloneFailed,
         RequestFailure::CloneTargetExists,
         RequestFailure::CloneCancelled,
+        RequestFailure::NodeLocked,
     ];
 
     /// C ABI 코드 값.
@@ -348,6 +351,7 @@ impl RequestFailure {
             RequestFailure::ProjectCloneFailed => 28,
             RequestFailure::CloneTargetExists => 29,
             RequestFailure::CloneCancelled => 30,
+            RequestFailure::NodeLocked => 31,
         }
     }
 
@@ -2579,7 +2583,7 @@ mod tests {
             codes,
             [
                 1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28,
-                29, 30
+                29, 30, 31
             ]
         );
         let unique: BTreeSet<u32> = codes.iter().copied().collect();
