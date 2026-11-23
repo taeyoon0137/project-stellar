@@ -15,6 +15,12 @@ pub mod expr;
 /// Context → Web 출력 (XXII.2.5).
 pub mod context;
 
+/// MotionSpec·상호작용 상태 토큰 → Web CSS (XXII.2.6).
+pub mod motion;
+
+/// 상태 머신 → 생성 JavaScript (XXII.2.6).
+pub mod state;
+
 /// 생성 JavaScript 값·식별자 표기 (XXII.2.3, XXII.5.1).
 pub mod js;
 
