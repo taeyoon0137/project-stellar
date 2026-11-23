@@ -9,7 +9,9 @@ use stellar_core_types::ids::StableId;
 use stellar_document::context::key::{ContextKey, ContextScope};
 use stellar_document::context::provision::{ContextOwner, ContextProvision};
 use stellar_document::context::set::ContextSet;
-use stellar_document::expressions::ast::{ExprNode, ExprNodeId, ExpressionAst, Literal, NodePayload};
+use stellar_document::expressions::ast::{
+    ExprNode, ExprNodeId, ExpressionAst, Literal, NodePayload,
+};
 use stellar_document::expressions::types::{EnumTypeId, ExpressionType, TypeSpec};
 
 use super::super::text_codec::{field, fields, mapping, scalar, text};
@@ -119,7 +121,9 @@ fn parse_owner(value: &str) -> Result<ContextOwner, TextSourceError> {
 }
 
 /// expression 필드: 리터럴 형식 또는 `ast` hex.
-fn expression_fields(ast: &ExpressionAst) -> Result<Vec<(&'static str, YamlValue)>, TextSourceError> {
+fn expression_fields(
+    ast: &ExpressionAst,
+) -> Result<Vec<(&'static str, YamlValue)>, TextSourceError> {
     if ast.len() == 1 {
         if let Some(NodePayload::Literal(Literal::Value(value))) =
             ast.node(ast.root()).map(ExprNode::payload)
@@ -227,7 +231,9 @@ pub fn encode(set: &ContextSet) -> Result<String, TextSourceError> {
     ]);
     let out = write_canonical_checked(&value).map_err(invalid)?;
     if decode(&out)? != *set {
-        return Err(unsupported("Context 원본으로 정확히 복원할 수 없는 의미가 있습니다"));
+        return Err(unsupported(
+            "Context 원본으로 정확히 복원할 수 없는 의미가 있습니다",
+        ));
     }
     Ok(out)
 }
@@ -263,7 +269,14 @@ pub fn decode(source: &str) -> Result<ContextSet, TextSourceError> {
     let value = load_restricted(source).map_err(invalid)?;
     fields(
         &value,
-        &["format", "schema_version", "keys", "provisions", "requirements", "slots"],
+        &[
+            "format",
+            "schema_version",
+            "keys",
+            "provisions",
+            "requirements",
+            "slots",
+        ],
     )?;
     if text(field(&value, "format")?)? != CONTEXT_FORMAT {
         return Err(unsupported("Context 원본 형식"));
@@ -324,12 +337,16 @@ pub fn decode(source: &str) -> Result<ContextSet, TextSourceError> {
             fields(item, &[owner, "keys"])?;
             let id = css::parse_id(text(field(item, owner)?)?)?;
             if last.is_some_and(|prev| prev >= id) {
-                return Err(invalid(format!("{section}는 id 오름차순, 중복 없이 씁니다")));
+                return Err(invalid(format!(
+                    "{section}는 id 오름차순, 중복 없이 씁니다"
+                )));
             }
             last = Some(id);
             let keys = css::parse_id_list(text(field(item, "keys")?)?)?;
             if keys.is_empty() || keys.windows(2).any(|w| w[0] >= w[1]) {
-                return Err(invalid(format!("{section} key 목록은 비지 않은 오름차순입니다")));
+                return Err(invalid(format!(
+                    "{section} key 목록은 비지 않은 오름차순입니다"
+                )));
             }
             for key in keys {
                 if section == "requirements" {
@@ -398,8 +415,14 @@ mod tests {
         )
         .unwrap();
         set.insert_provision(
-            ContextProvision::new(sid(20), ContextOwner::View(sid(3)), sid(4), theme, literal(52, blue()))
-                .unwrap(),
+            ContextProvision::new(
+                sid(20),
+                ContextOwner::View(sid(3)),
+                sid(4),
+                theme,
+                literal(52, blue()),
+            )
+            .unwrap(),
         )
         .unwrap();
         let read = ExprNodeId::new(sid(53));
@@ -409,8 +432,11 @@ mod tests {
                 ContextOwner::Component(sid(5)),
                 sid(6),
                 theme,
-                ExpressionAst::new(read, vec![ExprNode::reference(read, ReferenceTarget::Context(theme))])
-                    .unwrap(),
+                ExpressionAst::new(
+                    read,
+                    vec![ExprNode::reference(read, ReferenceTarget::Context(theme))],
+                )
+                .unwrap(),
             )
             .unwrap(),
         )
@@ -439,7 +465,9 @@ mod tests {
         // 검증 기준(XXX.7.2): 텍스트 원본과 chunk cache 양쪽 round-trip. Context가 없으면 기존 파일·chunk 그대로.
         use crate::document_io::load::{load_document, MemoryChunks};
         use crate::document_io::serialize::serialize_document;
-        use crate::document_io::source_v4::project::{decode as decode_project, encode as encode_project, TextProject};
+        use crate::document_io::source_v4::project::{
+            decode as decode_project, encode as encode_project, TextProject,
+        };
         use stellar_document::component::definition::ComponentLibrary;
         use stellar_document::context::fixtures::{literal as lit, rgb, sid as fsid, SceneBuilder};
 
@@ -475,8 +503,14 @@ mod tests {
         )
         .unwrap();
         set.insert_provision(
-            ContextProvision::new(fsid(901), ContextOwner::View(fsid(3)), fsid(11), theme, lit(2, rgb(0.0, 0.0, 1.0)))
-                .unwrap(),
+            ContextProvision::new(
+                fsid(901),
+                ContextOwner::View(fsid(3)),
+                fsid(11),
+                theme,
+                lit(2, rgb(0.0, 0.0, 1.0)),
+            )
+            .unwrap(),
         )
         .unwrap();
         document.replace_context(set.clone());
@@ -490,7 +524,10 @@ mod tests {
         assert!(files.contains_key(CONTEXT_PATH));
         let decoded = decode_project(&files).unwrap();
         assert_eq!(decoded.document.context(), &set);
-        assert_eq!(decoded.semantic_key().unwrap(), project.semantic_key().unwrap());
+        assert_eq!(
+            decoded.semantic_key().unwrap(),
+            project.semantic_key().unwrap()
+        );
         // 다른 파일은 Context가 없을 때와 같습니다.
         for (path, text) in &plain_files {
             assert_eq!(files.get(path), Some(text), "{path}");
@@ -505,6 +542,9 @@ mod tests {
         let loaded = load_document(&serialized.manifest.payload, &mut chunks).unwrap();
         assert_eq!(loaded.model.context(), &set);
         // manifest bytes는 Context 절 16 bytes만 늘어납니다.
-        assert_eq!(serialized.manifest.payload.len(), plain_chunks.manifest.payload.len() + 16);
+        assert_eq!(
+            serialized.manifest.payload.len(),
+            plain_chunks.manifest.payload.len() + 16
+        );
     }
 }

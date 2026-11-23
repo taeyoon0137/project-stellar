@@ -175,15 +175,31 @@ impl fmt::Display for ContextDiagnosticKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use ContextDiagnosticKind::*;
         match self {
-            UndeclaredConsumption { component, key, reader } => write!(
+            UndeclaredConsumption {
+                component,
+                key,
+                reader,
+            } => write!(
                 f,
                 "컴포넌트 {component} 안의 {reader}가 선언하지 않은 Context key {key}를 읽습니다"
             ),
-            TypeMismatch { reader, expected, found } => match found {
-                Some(found) => write!(f, "{reader}: Context 값 타입 {found}는 {expected}에 맞지 않습니다"),
-                None => write!(f, "{reader}: Context 값 타입을 정할 수 없습니다(기대 {expected})"),
+            TypeMismatch {
+                reader,
+                expected,
+                found,
+            } => match found {
+                Some(found) => write!(
+                    f,
+                    "{reader}: Context 값 타입 {found}는 {expected}에 맞지 않습니다"
+                ),
+                None => write!(
+                    f,
+                    "{reader}: Context 값 타입을 정할 수 없습니다(기대 {expected})"
+                ),
             },
-            ProvisionOutsideOwner { provision, error } => write!(f, "provision {provision}: {error}"),
+            ProvisionOutsideOwner { provision, error } => {
+                write!(f, "provision {provision}: {error}")
+            }
             ProvisionCycle { provisions } => write!(f, "provision 읽기 cycle: {provisions:?}"),
             OrphanProvision { provision, key } => {
                 write!(f, "provision {provision}의 key {key}가 없습니다")
@@ -201,7 +217,12 @@ impl fmt::Display for ContextDiagnosticKind {
             DefaultResolved { binding, key } => {
                 write!(f, "binding {binding}의 key {key}는 default로 해석됩니다")
             }
-            Shadowing { binding, key, provision, shadowed } => write!(
+            Shadowing {
+                binding,
+                key,
+                provision,
+                shadowed,
+            } => write!(
                 f,
                 "binding {binding}의 key {key}: provision {provision}이 {shadowed:?}를 가립니다"
             ),
@@ -382,7 +403,12 @@ pub fn validate_context(
             },
         );
         for read in provision.reads() {
-            note_read(&mut out, provision_component(provision.owner()), read, provision.id());
+            note_read(
+                &mut out,
+                provision_component(provision.owner()),
+                read,
+                provision.id(),
+            );
         }
     }
 
@@ -437,7 +463,9 @@ pub fn validate_context(
                             key,
                         },
                     }),
-                    ContextOrigin::Provision { provision, .. } if !resolution.shadowed.is_empty() => {
+                    ContextOrigin::Provision { provision, .. }
+                        if !resolution.shadowed.is_empty() =>
+                    {
                         out.push(ContextDiagnostic {
                             kind: ContextDiagnosticKind::Shadowing {
                                 binding: consumer.binding,
@@ -531,4 +559,3 @@ pub fn error_counts(diagnostics: &[ContextDiagnostic]) -> BTreeMap<&'static str,
     }
     out
 }
-

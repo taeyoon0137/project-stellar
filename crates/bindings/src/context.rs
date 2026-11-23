@@ -156,7 +156,12 @@ impl ContextGraph {
         let mut out: BTreeMap<DependencyNode, ContextRoute> = self
             .provisions
             .iter()
-            .map(|p| (DependencyNode::ContextProvision(p.node.clone()), routes_of(&p.hops)))
+            .map(|p| {
+                (
+                    DependencyNode::ContextProvision(p.node.clone()),
+                    routes_of(&p.hops),
+                )
+            })
             .collect();
         for (node, hops) in &self.consumers {
             out.insert(node.clone(), routes_of(hops));

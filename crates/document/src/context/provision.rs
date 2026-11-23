@@ -186,7 +186,10 @@ impl ContextProvision {
     }
 
     /// 값 식만 바꾼 provision.
-    pub fn with_value(&self, value: ExpressionAst) -> Result<ContextProvision, ContextProvisionError> {
+    pub fn with_value(
+        &self,
+        value: ExpressionAst,
+    ) -> Result<ContextProvision, ContextProvisionError> {
         ContextProvision::new(self.id, self.owner, self.provider, self.key, value)
     }
 
@@ -228,7 +231,9 @@ impl ContextProvision {
         let provision = ContextProvision::decode_from(&mut reader)?;
         reader.expect_end()?;
         if provision.encode() != bytes {
-            return Err(ContextProvisionError::Malformed("canonical bytes가 아닙니다"));
+            return Err(ContextProvisionError::Malformed(
+                "canonical bytes가 아닙니다",
+            ));
         }
         Ok(provision)
     }

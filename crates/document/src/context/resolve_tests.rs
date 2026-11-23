@@ -6,12 +6,10 @@ use stellar_core_types::value::FiniteF32;
 
 use super::fixtures::world::*;
 use super::fixtures::*;
-use super::resolve::{
-    ContextEvaluator, ContextOrigin, ContextResolver, ContextSite, NoInputs,
-};
+use super::resolve::{ContextEvaluator, ContextOrigin, ContextResolver, ContextSite, NoInputs};
 use super::set::ContextKeys;
-use crate::component::expansion::{ExpandedNodeId, InstanceExpansion, SceneIndex, ScenePayloads};
 use crate::component::definition::ComponentLibrary;
+use crate::component::expansion::{ExpandedNodeId, InstanceExpansion, SceneIndex, ScenePayloads};
 use crate::model::DocumentModel;
 use crate::record_codec::encode_payload;
 
@@ -27,7 +25,12 @@ fn inside(chain: &[u64], node: u64) -> ContextSite {
     ContextSite::virtual_node(chain.iter().map(|c| sid(*c)).collect(), sid(node))
 }
 
-fn value(model: &DocumentModel, library: &ComponentLibrary, key: u64, site: &ContextSite) -> Option<TypedValue> {
+fn value(
+    model: &DocumentModel,
+    library: &ComponentLibrary,
+    key: u64,
+    site: &ContextSite,
+) -> Option<TypedValue> {
     let resolver = ContextResolver::new(model, library);
     let keys = ContextKeys::new(model.context());
     let evaluator = ContextEvaluator::new(&resolver, &keys, &NoInputs);
@@ -104,7 +107,10 @@ fn slot_content_resolves_in_authoring_scope_and_exposed_keys_see_internal_provis
     let label = inside(&[CARD_INSTANCE], CARD_LABEL);
     // D는 label이 공개: Button 내부 root provision(7).
     let r = resolver.resolve(sid(D), &label).unwrap();
-    assert_eq!(r.origin, origin(P_BUTTON_D, &[CARD_INSTANCE, CARD_BUTTON], BUTTON_ROOT));
+    assert_eq!(
+        r.origin,
+        origin(P_BUTTON_D, &[CARD_INSTANCE, CARD_BUTTON], BUTTON_ROOT)
+    );
     assert_eq!(value(&model, &library, D, &label), n(7.0));
     // N은 공개하지 않음: Button 내부를 건너뛰고 Card root(15).
     let r = resolver.resolve(sid(N), &label).unwrap();

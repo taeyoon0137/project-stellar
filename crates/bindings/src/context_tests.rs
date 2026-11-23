@@ -38,7 +38,11 @@ fn literal(seed: u64, v: f32) -> ExpressionAst {
 
 fn read(seed: u64, key: StableId) -> ExpressionAst {
     let id = ExprNodeId::new(sid(seed));
-    ExpressionAst::new(id, vec![ExprNode::reference(id, ReferenceTarget::Context(key))]).unwrap()
+    ExpressionAst::new(
+        id,
+        vec![ExprNode::reference(id, ReferenceTarget::Context(key))],
+    )
+    .unwrap()
 }
 
 /// `Context(key) + add`.
@@ -99,7 +103,13 @@ fn hop_default() -> ContextHopInfo {
     }
 }
 
-fn provision(id: u64, provider: u64, key: u64, value: ExpressionAst, hops: &[(u64, ContextHopInfo)]) -> ProvisionInput {
+fn provision(
+    id: u64,
+    provider: u64,
+    key: u64,
+    value: ExpressionAst,
+    hops: &[(u64, ContextHopInfo)],
+) -> ProvisionInput {
     ProvisionInput {
         node: pnode(id, &[]),
         provider: sid(provider),
@@ -138,7 +148,13 @@ fn graph() -> ContextGraph {
         keys: vec![key(K, 1.0)],
         provisions: vec![
             provision(1, 10, K, literal(11, 5.0), &[]),
-            provision(2, 20, K, read_plus(12, sid(K), 100.0), &[(K, hop_to(1, 10))]),
+            provision(
+                2,
+                20,
+                K,
+                read_plus(12, sid(K), 100.0),
+                &[(K, hop_to(1, 10))],
+            ),
         ],
         consumers,
     }
@@ -213,7 +229,10 @@ fn context_nodes_are_common_graph_nodes_and_consumers_follow_routes() {
     let plain = BindingEvaluator::new(
         &TokenRegistry::new(),
         &bindings(),
-        &StaticSources::from([(DependencyNode::ContextKey(sid(K)), (number(), Some(num(7.0))))]),
+        &StaticSources::from([(
+            DependencyNode::ContextKey(sid(K)),
+            (number(), Some(num(7.0))),
+        )]),
     )
     .unwrap();
     assert_eq!(value(&plain, 30), num(7.0));
@@ -247,9 +266,10 @@ fn rerouting_reevaluates_only_affected_consumers_in_topological_order() {
     let mut incremental = evaluator(&context);
     // 1) provision 삭제(P2): 소비 30은 P1로 다시 해석됩니다. 40·50은 영향 없음.
     context.provisions.retain(|p| p.node.provision != sid(2));
-    context
-        .consumers
-        .insert(DependencyNode::Property(target(30)), BTreeMap::from([(sid(K), hop_to(1, 10))]));
+    context.consumers.insert(
+        DependencyNode::Property(target(30)),
+        BTreeMap::from([(sid(K), hop_to(1, 10))]),
+    );
     let report = incremental
         .apply_context_change(
             RouteChange {
@@ -320,7 +340,10 @@ fn rerouting_reevaluates_only_affected_consumers_in_topological_order() {
                     value_type: Some(number()),
                     expression: read(14, sid(K)),
                 },
-                Some(BTreeMap::from([(sid(K), DependencyNode::ContextProvision(pnode(1, &[])))])),
+                Some(BTreeMap::from([(
+                    sid(K),
+                    DependencyNode::ContextProvision(pnode(1, &[])),
+                )])),
             )],
             ..RouteChange::default()
         },
@@ -354,8 +377,14 @@ fn provenance_records_key_and_provision_chain() {
         .unwrap();
     assert_eq!(trace.providers(), vec![sid(20), sid(10)]);
     assert_eq!(trace.hops[0].key, sid(K));
-    assert_eq!(trace.hops[0].read, DependencyNode::ContextProvision(pnode(2, &[])));
-    assert_eq!(trace.hops[1].reader, DependencyNode::ContextProvision(pnode(2, &[])));
+    assert_eq!(
+        trace.hops[0].read,
+        DependencyNode::ContextProvision(pnode(2, &[]))
+    );
+    assert_eq!(
+        trace.hops[1].reader,
+        DependencyNode::ContextProvision(pnode(2, &[]))
+    );
     let default = evaluator
         .context_provenance(&DependencyNode::Property(target(50)), &context)
         .unwrap();

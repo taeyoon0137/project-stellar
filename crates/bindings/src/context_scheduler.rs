@@ -120,7 +120,12 @@ impl BindingEvaluator {
         let old_programs: BTreeMap<DependencyNode, _> = self
             .graph
             .indices()
-            .map(|index| (self.graph.node(index).clone(), self.programs[index.get()].clone()))
+            .map(|index| {
+                (
+                    self.graph.node(index).clone(),
+                    self.programs[index.get()].clone(),
+                )
+            })
             .collect();
         self.graph = graph;
         self.types = types;

@@ -205,7 +205,10 @@ impl ComponentBuilder {
 }
 
 /// 인스턴스 payload(slot override 포함).
-pub fn instance_of(component: StableId, slots: &[(StableId, Vec<StableId>)]) -> ComponentInstancePayload {
+pub fn instance_of(
+    component: StableId,
+    slots: &[(StableId, Vec<StableId>)],
+) -> ComponentInstancePayload {
     let mut payload = ComponentInstancePayload::new(ComponentRef::new(component));
     for (slot, content) in slots {
         payload.set_slot_override(
@@ -425,8 +428,20 @@ pub fn sample_world() -> (DocumentModel, ComponentLibrary) {
         .expect("key 등록");
     }
     let provisions = [
-        (P_ROOT_N, ContextOwner::View(sid(VIEW)), ROOT, N, number(P_ROOT_N, 10.0)),
-        (P_ROOT_E, ContextOwner::View(sid(VIEW)), ROOT, E, number(P_ROOT_E, 3.0)),
+        (
+            P_ROOT_N,
+            ContextOwner::View(sid(VIEW)),
+            ROOT,
+            N,
+            number(P_ROOT_N, 10.0),
+        ),
+        (
+            P_ROOT_E,
+            ContextOwner::View(sid(VIEW)),
+            ROOT,
+            E,
+            number(P_ROOT_E, 3.0),
+        ),
         (
             P_CARD_N,
             ContextOwner::Component(sid(CARD)),
@@ -434,7 +449,13 @@ pub fn sample_world() -> (DocumentModel, ComponentLibrary) {
             N,
             context_plus(P_CARD_N, sid(N), 5.0),
         ),
-        (P_HOST_D, ContextOwner::Component(sid(CARD)), CARD_HOST, D, number(P_HOST_D, 2.0)),
+        (
+            P_HOST_D,
+            ContextOwner::Component(sid(CARD)),
+            CARD_HOST,
+            D,
+            number(P_HOST_D, 2.0),
+        ),
         (
             P_BUTTON_D,
             ContextOwner::Component(sid(BUTTON)),

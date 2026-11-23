@@ -4,7 +4,9 @@ use stellar_core_types::ids::StableId;
 
 use super::fixtures::*;
 use super::key::{ContextKey, ContextScope};
-use super::provision::{check_provision_scope, ContextOwner, ContextProvision, ProvisionScopeError};
+use super::provision::{
+    check_provision_scope, ContextOwner, ContextProvision, ProvisionScopeError,
+};
 use super::set::{ContextSet, ContextSetError};
 use crate::component::definition::ComponentLibrary;
 use crate::model::DocumentModel;
@@ -28,7 +30,11 @@ fn world() -> (DocumentModel, ComponentLibrary) {
     ComponentBuilder::new(sid(BUTTON), "Button", sid(BUTTON_ROOT)).register(&mut library);
     ComponentBuilder::new(sid(CARD), "Card", sid(CARD_ROOT))
         .frame(sid(CARD_HOST), sid(CARD_ROOT))
-        .instance(sid(CARD_BUTTON), sid(CARD_ROOT), instance_of(sid(BUTTON), &[]))
+        .instance(
+            sid(CARD_BUTTON),
+            sid(CARD_ROOT),
+            instance_of(sid(BUTTON), &[]),
+        )
         .slot(sid(BODY_SLOT), sid(CARD_HOST))
         .register(&mut library);
     let model = SceneBuilder::new(sid(DOC), sid(PAGE), sid(VIEW), sid(ROOT))
@@ -70,8 +76,12 @@ fn sample_set() -> ContextSet {
     set.insert_key(theme()).unwrap();
     set.insert_provision(provision(1000, ContextOwner::View(sid(VIEW)), ROOT))
         .unwrap();
-    set.insert_provision(provision(1001, ContextOwner::Component(sid(CARD)), CARD_ROOT))
-        .unwrap();
+    set.insert_provision(provision(
+        1001,
+        ContextOwner::Component(sid(CARD)),
+        CARD_ROOT,
+    ))
+    .unwrap();
     set.add_requirement(sid(CARD), sid(THEME));
     set.add_slot_key(sid(BODY_SLOT), sid(THEME));
     set
@@ -92,7 +102,10 @@ fn set_round_trips_with_requirements_and_slot_keys() {
         Some(sid(1000))
     );
     // 빈 set도 왕복합니다.
-    assert_eq!(ContextSet::decode(&ContextSet::new().encode()).unwrap(), ContextSet::new());
+    assert_eq!(
+        ContextSet::decode(&ContextSet::new().encode()).unwrap(),
+        ContextSet::new()
+    );
     // 꼬리 bytes·version 오류는 거부.
     let mut trailing = bytes.clone();
     trailing.push(0);
@@ -146,7 +159,10 @@ fn provision_scope_rejects_nodes_outside_owner_and_allows_own_instance_nodes() {
     let (model, library) = world();
     let ok = |p: &ContextProvision| check_provision_scope(p, &model, &library);
     // View 안 scene node, scene instance node.
-    assert_eq!(ok(&provision(1, ContextOwner::View(sid(VIEW)), ROOT)), Ok(()));
+    assert_eq!(
+        ok(&provision(1, ContextOwner::View(sid(VIEW)), ROOT)),
+        Ok(())
+    );
     assert_eq!(ok(&provision(2, ContextOwner::View(sid(VIEW)), 11)), Ok(()));
     // 정의 tree 안 node, 정의 tree 안 nested instance node.
     assert_eq!(
@@ -154,12 +170,20 @@ fn provision_scope_rejects_nodes_outside_owner_and_allows_own_instance_nodes() {
         Ok(())
     );
     assert_eq!(
-        ok(&provision(4, ContextOwner::Component(sid(CARD)), CARD_BUTTON)),
+        ok(&provision(
+            4,
+            ContextOwner::Component(sid(CARD)),
+            CARD_BUTTON
+        )),
         Ok(())
     );
     // 다른 컴포넌트 내부 node(nested Button의 root)는 Card 소유 provision이 가리킬 수 없습니다.
     assert_eq!(
-        ok(&provision(5, ContextOwner::Component(sid(CARD)), BUTTON_ROOT)),
+        ok(&provision(
+            5,
+            ContextOwner::Component(sid(CARD)),
+            BUTTON_ROOT
+        )),
         Err(ProvisionScopeError::OutsideOwner {
             provider: sid(BUTTON_ROOT),
             owner: ContextOwner::Component(sid(CARD)),

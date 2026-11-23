@@ -93,7 +93,10 @@ impl fmt::Display for ContextKeyError {
         match self {
             ContextKeyError::NilId => f.write_str("NIL은 ContextKey id로 쓸 수 없습니다"),
             ContextKeyError::InvalidName { name } => {
-                write!(f, "ContextKey 이름 {name:?}은 비지 않고 앞뒤 공백이 없어야 합니다")
+                write!(
+                    f,
+                    "ContextKey 이름 {name:?}은 비지 않고 앞뒤 공백이 없어야 합니다"
+                )
             }
             ContextKeyError::Default(error) => write!(f, "ContextKey default: {error}"),
             ContextKeyError::MissingDefault => {
@@ -280,7 +283,9 @@ mod tests {
                 "x",
                 ContextScope::Project,
                 color(),
-                literal(TypedValue::Number(stellar_core_types::value::FiniteF32::new(1.0).unwrap())),
+                literal(TypedValue::Number(
+                    stellar_core_types::value::FiniteF32::new(1.0).unwrap()
+                )),
             ),
             Err(ContextKeyError::Default(
                 ExpressionCheckError::TypeMismatch { .. }
@@ -302,11 +307,23 @@ mod tests {
             ))
         ));
         assert_eq!(
-            ContextKey::new(StableId::NIL, "x", ContextScope::Project, color(), literal(blue())),
+            ContextKey::new(
+                StableId::NIL,
+                "x",
+                ContextScope::Project,
+                color(),
+                literal(blue())
+            ),
             Err(ContextKeyError::NilId)
         );
         assert!(matches!(
-            ContextKey::new(sid(1), " x", ContextScope::Project, color(), literal(blue())),
+            ContextKey::new(
+                sid(1),
+                " x",
+                ContextScope::Project,
+                color(),
+                literal(blue())
+            ),
             Err(ContextKeyError::InvalidName { .. })
         ));
         // default 자리가 빈 bytes는 거부(default 없는 key 없음).
@@ -343,15 +360,10 @@ mod tests {
                 ReferenceTarget::Context(key.id())
             );
         }
-        let mut trailing = ContextKey::new(
-            sid(3),
-            "x",
-            ContextScope::Project,
-            color(),
-            literal(blue()),
-        )
-        .unwrap()
-        .encode();
+        let mut trailing =
+            ContextKey::new(sid(3), "x", ContextScope::Project, color(), literal(blue()))
+                .unwrap()
+                .encode();
         trailing.push(0);
         assert!(ContextKey::decode(&trailing).is_err());
     }

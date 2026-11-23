@@ -705,7 +705,10 @@ mod tests {
         );
         // 참조 대상 ↔ node 변환은 왕복합니다.
         for node in a.nodes() {
-            assert_eq!(&DependencyNode::from_target(&node.to_target().unwrap()), node);
+            assert_eq!(
+                &DependencyNode::from_target(&node.to_target().unwrap()),
+                node
+            );
         }
     }
 

@@ -148,11 +148,9 @@ impl ContextSet {
     }
 
     fn check_name(&self, key: &ContextKey) -> Result<(), ContextSetError> {
-        if self
-            .keys
-            .values()
-            .any(|other| other.id() != key.id() && other.scope() == key.scope() && other.name() == key.name())
-        {
+        if self.keys.values().any(|other| {
+            other.id() != key.id() && other.scope() == key.scope() && other.name() == key.name()
+        }) {
             return Err(ContextSetError::DuplicateName {
                 scope: key.scope(),
                 name: key.name().to_owned(),
@@ -205,7 +203,10 @@ impl ContextSet {
     }
 
     /// provider node에 붙은 provision(key 순).
-    pub fn provisions_at(&self, provider: StableId) -> impl Iterator<Item = &ContextProvision> + '_ {
+    pub fn provisions_at(
+        &self,
+        provider: StableId,
+    ) -> impl Iterator<Item = &ContextProvision> + '_ {
         self.by_provider
             .range((provider, StableId::NIL)..)
             .take_while(move |((p, _), _)| *p == provider)
@@ -239,12 +240,12 @@ impl ContextSet {
         &mut self,
         provision: ContextProvision,
     ) -> Result<ContextProvision, ContextSetError> {
-        let current = self
-            .provisions
-            .get(&provision.id())
-            .ok_or(ContextSetError::UnknownProvision {
-                provision: provision.id(),
-            })?;
+        let current =
+            self.provisions
+                .get(&provision.id())
+                .ok_or(ContextSetError::UnknownProvision {
+                    provision: provision.id(),
+                })?;
         if (current.provider(), current.key(), current.owner())
             != (provision.provider(), provision.key(), provision.owner())
         {
@@ -351,7 +352,9 @@ impl ContextSet {
     pub fn decode(bytes: &[u8]) -> Result<ContextSet, ContextSetError> {
         let mut reader = Reader::new(bytes);
         if reader.u16()? != CONTEXT_SET_FORMAT_VERSION {
-            return Err(ContextSetError::Malformed("지원하지 않는 context-set version"));
+            return Err(ContextSetError::Malformed(
+                "지원하지 않는 context-set version",
+            ));
         }
         let count = reader.count()?;
         let mut set = ContextSet::new();
@@ -366,7 +369,11 @@ impl ContextSet {
                         .map_err(ContextSetError::Provision)?;
                     set.insert_provision(provision)?;
                 }
-                _ => return Err(ContextSetError::Malformed("알 수 없는 context-set record kind")),
+                _ => {
+                    return Err(ContextSetError::Malformed(
+                        "알 수 없는 context-set record kind",
+                    ))
+                }
             }
         }
         if reader.u8()? != COMPONENT_SECTION_CONTEXT_REQUIREMENTS {

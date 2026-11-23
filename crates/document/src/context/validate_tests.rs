@@ -133,7 +133,10 @@ fn diagnostics_cover_declaration_types_orphans_unused_and_info() {
     ];
     expected.sort();
     assert_eq!(kinds(&diagnostics), expected);
-    let severities: Vec<ContextSeverity> = diagnostics.iter().map(ContextDiagnostic::severity).collect();
+    let severities: Vec<ContextSeverity> = diagnostics
+        .iter()
+        .map(ContextDiagnostic::severity)
+        .collect();
     assert!(severities.contains(&ContextSeverity::Error));
     assert!(severities.contains(&ContextSeverity::Orphan));
     assert!(severities.contains(&ContextSeverity::Warning));
@@ -186,13 +189,25 @@ fn clean_sample_world_has_no_errors_and_mutual_key_reads_are_a_cycle() {
             .unwrap();
         }
         set.insert_provision(
-            ContextProvision::new(sid(3100), ContextOwner::View(sid(VIEW)), sid(FRAME), x, context_plus(3100, y, 1.0))
-                .unwrap(),
+            ContextProvision::new(
+                sid(3100),
+                ContextOwner::View(sid(VIEW)),
+                sid(FRAME),
+                x,
+                context_plus(3100, y, 1.0),
+            )
+            .unwrap(),
         )
         .unwrap();
         set.insert_provision(
-            ContextProvision::new(sid(3101), ContextOwner::View(sid(VIEW)), sid(ROOT), y, context_plus(3101, x, 1.0))
-                .unwrap(),
+            ContextProvision::new(
+                sid(3101),
+                ContextOwner::View(sid(VIEW)),
+                sid(ROOT),
+                y,
+                context_plus(3101, x, 1.0),
+            )
+            .unwrap(),
         )
         .unwrap();
     }
@@ -208,8 +223,14 @@ fn clean_sample_world_has_no_errors_and_mutual_key_reads_are_a_cycle() {
     model
         .context_mut()
         .insert_provision(
-            ContextProvision::new(sid(3102), ContextOwner::View(sid(VIEW)), sid(FRAME), y, context_plus(3102, x, 1.0))
-                .unwrap(),
+            ContextProvision::new(
+                sid(3102),
+                ContextOwner::View(sid(VIEW)),
+                sid(FRAME),
+                y,
+                context_plus(3102, x, 1.0),
+            )
+            .unwrap(),
         )
         .unwrap();
     let keys_set = model.context().clone();

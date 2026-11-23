@@ -139,7 +139,9 @@ pub enum ResolveError {
 impl fmt::Display for ResolveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ResolveError::UnknownSite(site) => write!(f, "Context site {site:?}를 찾을 수 없습니다"),
+            ResolveError::UnknownSite(site) => {
+                write!(f, "Context site {site:?}를 찾을 수 없습니다")
+            }
             ResolveError::BadInstance { instance } => {
                 write!(f, "인스턴스 {instance}의 컴포넌트를 펼칠 수 없습니다")
             }
@@ -283,10 +285,7 @@ impl<'a> ContextResolver<'a> {
                 .ok_or_else(|| ResolveError::UnknownSite(site.clone()))?;
             match record.parent {
                 None => return Ok(Up::Top),
-                Some(parent) => (
-                    parent,
-                    self.model.payload(parent).map(NodePayload::kind),
-                ),
+                Some(parent) => (parent, self.model.payload(parent).map(NodePayload::kind)),
             }
         } else {
             let entry = self.entry_of(&site.instances)?;
@@ -332,7 +331,11 @@ impl<'a> ContextResolver<'a> {
     }
 
     /// `site`에서 key를 해석합니다(site 자신의 provision 포함).
-    pub fn resolve(&self, key: StableId, site: &ContextSite) -> Result<ContextResolution, ResolveError> {
+    pub fn resolve(
+        &self,
+        key: StableId,
+        site: &ContextSite,
+    ) -> Result<ContextResolution, ResolveError> {
         self.resolve_from(key, site, true)
     }
 
@@ -376,7 +379,8 @@ impl<'a> ContextResolver<'a> {
         let mut current = start.clone();
         let mut check = include_start;
         let limit = self.model.node_count()
-            + self.library.iter().map(|e| e.tree().len()).sum::<usize>() * (MAX_INSTANCE_NESTING + 1)
+            + self.library.iter().map(|e| e.tree().len()).sum::<usize>()
+                * (MAX_INSTANCE_NESTING + 1)
             + 16;
         let mut steps = 0usize;
         loop {
@@ -417,7 +421,11 @@ impl<'a> ContextResolver<'a> {
             }
         }
         let shadowed = match &origin {
-            ContextOrigin::Provision { instances, provider, .. } => {
+            ContextOrigin::Provision {
+                instances,
+                provider,
+                ..
+            } => {
                 let outer = self.resolve_outer(
                     key,
                     &ContextSite::virtual_node(instances.clone(), *provider),
@@ -436,7 +444,9 @@ impl<'a> ContextResolver<'a> {
             skipped_slots,
             shadowed,
         };
-        self.cache.borrow_mut().insert(cache_key, resolution.clone());
+        self.cache
+            .borrow_mut()
+            .insert(cache_key, resolution.clone());
         Ok(resolution)
     }
 
@@ -451,7 +461,11 @@ pub trait ContextInputs {
     /// 참조 타입.
     fn input_type(&self, target: &ReferenceTarget, site: &ContextSite) -> Option<TypeSpec>;
     /// 참조 값.
-    fn input_value(&self, target: &ReferenceTarget, site: &ContextSite) -> Option<Option<TypedValue>>;
+    fn input_value(
+        &self,
+        target: &ReferenceTarget,
+        site: &ContextSite,
+    ) -> Option<Option<TypedValue>>;
 }
 
 /// Context 밖 참조가 없는 입력.
@@ -528,7 +542,11 @@ impl<'r, 'a> ContextEvaluator<'r, 'a> {
     }
 
     /// `site`에서 key의 값.
-    pub fn value(&self, key: StableId, site: &ContextSite) -> Result<Option<TypedValue>, ContextEvalError> {
+    pub fn value(
+        &self,
+        key: StableId,
+        site: &ContextSite,
+    ) -> Result<Option<TypedValue>, ContextEvalError> {
         let resolution = self
             .resolver
             .resolve(key, site)
@@ -537,10 +555,15 @@ impl<'r, 'a> ContextEvaluator<'r, 'a> {
     }
 
     /// 해석 결과의 값.
-    pub fn value_of(&self, resolution: &ContextResolution) -> Result<Option<TypedValue>, ContextEvalError> {
+    pub fn value_of(
+        &self,
+        resolution: &ContextResolution,
+    ) -> Result<Option<TypedValue>, ContextEvalError> {
         match &resolution.origin {
             ContextOrigin::Default => {
-                let key = self.keys.key(resolution.key)
+                let key = self
+                    .keys
+                    .key(resolution.key)
                     .ok_or(ContextEvalError::UnknownKey(resolution.key))?;
                 key.default_expression()
                     .evaluate(&BTreeMap::<ReferenceTarget, Option<TypedValue>>::new())
@@ -580,7 +603,10 @@ impl<'r, 'a> ContextEvaluator<'r, 'a> {
             path.push(provision.id());
             return Err(ContextEvalError::Cycle(path));
         }
-        let key = self.keys.key(provision.key()).ok_or(ContextEvalError::UnknownKey(provision.key()))?;
+        let key = self
+            .keys
+            .key(provision.key())
+            .ok_or(ContextEvalError::UnknownKey(provision.key()))?;
         self.stack.borrow_mut().push(memo.clone());
         let result = self.compute(provision, &site, key.value_type());
         self.stack.borrow_mut().pop();
