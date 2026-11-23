@@ -69,6 +69,8 @@ pub enum StartRefusal {
     ProfileDisabled,
     /// 확인 데이터와 실행할 profile이 다름.
     ProfileMismatch,
+    /// 확인 데이터의 대상 프로젝트와 신뢰를 다시 확인한 프로젝트가 다름.
+    ProjectMismatch,
     /// 약관 고지를 확인하지 않음(또는 검토 결과가 바뀐 뒤 다시 확인하지 않음).
     NoticeNotAcknowledged,
 }
@@ -80,6 +82,7 @@ impl StartRefusal {
             StartRefusal::Untrusted => "untrusted-project",
             StartRefusal::ProfileDisabled => "profile-disabled",
             StartRefusal::ProfileMismatch => "profile-mismatch",
+            StartRefusal::ProjectMismatch => "project-mismatch",
             StartRefusal::NoticeNotAcknowledged => "notice-not-acknowledged",
         }
     }

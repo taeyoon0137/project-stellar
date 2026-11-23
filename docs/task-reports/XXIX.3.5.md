@@ -25,7 +25,7 @@
 - **시작 순서**:
   1. `prepare_start`: 신뢰와 profile 활성을 확인하고 `StartConfirmation`을 만듭니다. 담는 값은 대상 프로젝트, 창, profile id, CLI 종류·이름, 모드, 고지 필요 여부입니다.
   2. 고지가 필요하면 사용자가 확인한 뒤 앱 UI가 `TermsNoticeStore::acknowledge`를 부릅니다.
-  3. `confirm_start`: 확인 순간에 신뢰·profile·고지를 다시 확인합니다. 통과하면 `AgentSession`(상태 `Starting`, 권한·lease 0)과 `FirstConnectionApproval`(프로젝트, 창, 세션, profile, 모드, 시각)을 만듭니다.
+  3. `confirm_start`: 확인 순간에 신뢰·profile·고지를 다시 확인합니다. runtime의 `confirm_agent_start`는 같은 `ProjectIdentity`로 신뢰 저장소를 다시 조회하고, 확인 데이터의 대상 프로젝트가 다르면 `ProjectMismatch`로 거부합니다(검토 보완, `confirmation_for_another_project_is_refused`). 통과하면 `AgentSession`(상태 `Starting`, 권한·lease 0)과 `FirstConnectionApproval`(프로젝트, 창, 세션, profile, 모드, 시각)을 만듭니다.
   4. 그 뒤 실행 전 확인(XXIX.2.7)과 실행기가 이어집니다.
 - **약관 고지 기록**: `<OS 사용자 데이터 디렉터리>/agent/terms-notices`에 둡니다.
   - 첫 줄은 `stellar-agent-terms-notice 1`이고, CLI마다 `<cli> <약관 검토 일자> <검토 결과>` 한 줄입니다.

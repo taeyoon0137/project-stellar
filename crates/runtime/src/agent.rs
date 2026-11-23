@@ -43,10 +43,11 @@ pub fn mcp_capability(trust: TrustStatus) -> McpCapability {
     }
 }
 
-/// 시작 확인 데이터를 만듭니다(신뢰되지 않은 프로젝트는 거부).
+/// 시작 확인 데이터를 만듭니다(신뢰되지 않은 프로젝트는 거부). 신뢰 상태는 같은 `identity`로
+/// `trust_of`(앱의 신뢰 저장소 조회)에서 읽으므로, 다른 프로젝트의 신뢰 상태가 끼어들 수 없습니다.
 pub fn prepare_agent_start(
     identity: &ProjectIdentity,
-    trust: TrustStatus,
+    trust_of: impl Fn(&ProjectIdentity) -> TrustStatus,
     window: WindowSessionId,
     profile: &LaunchProfile,
     mode: SessionMode,
@@ -55,26 +56,32 @@ pub fn prepare_agent_start(
     prepare_start(
         project_key(identity),
         window,
-        mcp_capability(trust),
+        mcp_capability(trust_of(identity)),
         profile,
         mode,
         notices,
     )
 }
 
-/// 사용자가 시작을 확인했습니다. 그 시점의 신뢰 상태로 다시 확인합니다.
+/// 사용자가 시작을 확인했습니다. 그 순간의 신뢰 상태를 같은 `identity`로 다시 읽어 확인합니다. 확인 데이터의
+/// 대상 프로젝트가 `identity`와 다르면 시작하지 않습니다([`StartRefusal::ProjectMismatch`]).
+#[allow(clippy::too_many_arguments)]
 pub fn confirm_agent_start(
     confirmation: StartConfirmation,
-    trust: TrustStatus,
+    identity: &ProjectIdentity,
+    trust_of: impl Fn(&ProjectIdentity) -> TrustStatus,
     profile: &LaunchProfile,
     notices: &TermsNoticeStore,
     session: AgentSessionId,
     now_ms: u64,
     reconnect_grace_ms: u64,
 ) -> Result<StartedSession, StartRefusal> {
+    if confirmation.project != project_key(identity) {
+        return Err(StartRefusal::ProjectMismatch);
+    }
     confirm_start(
         confirmation,
-        mcp_capability(trust),
+        mcp_capability(trust_of(identity)),
         profile,
         notices,
         session,
@@ -176,7 +183,7 @@ mod tests {
         assert_eq!(trust, TrustStatus::NotTrusted);
         let refused = prepare_agent_start(
             &identity,
-            trust,
+            |_| trust,
             window(),
             &profile(),
             SessionMode::default(),
@@ -187,7 +194,7 @@ mod tests {
         // 확인 데이터를 만든 뒤 신뢰가 철회되면 확인 단계에서도 시작하지 않습니다.
         let confirmation = prepare_agent_start(
             &identity,
-            TrustStatus::Trusted,
+            |_| TrustStatus::Trusted,
             window(),
             &profile(),
             SessionMode::default(),
@@ -196,7 +203,8 @@ mod tests {
         .unwrap();
         let refused = confirm_agent_start(
             confirmation,
-            TrustStatus::NotTrusted,
+            &identity,
+            |_| TrustStatus::NotTrusted,
             &profile(),
             &notices,
             AgentSessionId(1),
@@ -215,10 +223,9 @@ mod tests {
         let mut trust_store = FileTrustStore::open(&data).unwrap();
         trust_store.grant(&identity).unwrap();
         let notices = acknowledged(&data);
-        let trust = trust_store.status(&identity);
         let confirmation = prepare_agent_start(
             &identity,
-            trust,
+            |id| trust_store.status(id),
             window(),
             &profile(),
             SessionMode::ApplyInScope,
@@ -231,7 +238,8 @@ mod tests {
             connection,
         } = confirm_agent_start(
             confirmation,
-            trust,
+            &identity,
+            |id| trust_store.status(id),
             &profile(),
             &notices,
             AgentSessionId(7),
@@ -306,7 +314,7 @@ mod tests {
         let notices = TermsNoticeStore::open(&data).unwrap();
         let confirmation = prepare_agent_start(
             &identity,
-            TrustStatus::Trusted,
+            |_| TrustStatus::Trusted,
             window(),
             &profile(),
             SessionMode::default(),
@@ -316,7 +324,8 @@ mod tests {
         assert!(confirmation.notice_required);
         let refused = confirm_agent_start(
             confirmation,
-            TrustStatus::Trusted,
+            &identity,
+            |_| TrustStatus::Trusted,
             &profile(),
             &notices,
             AgentSessionId(1),
@@ -324,6 +333,44 @@ mod tests {
             1_000,
         );
         assert_eq!(refused.unwrap_err(), StartRefusal::NoticeNotAcknowledged);
+    }
+
+    #[test]
+    fn confirmation_for_another_project_is_refused() {
+        // 확인 데이터는 만든 프로젝트에만 쓸 수 있습니다. 다른 프로젝트(신뢰됨)의 identity로 확인하면 거부합니다.
+        let dir = Dir::new("mismatch");
+        let identity = project(&dir.0);
+        let other_root = dir.0.join("other");
+        std::fs::create_dir_all(&other_root).unwrap();
+        write_default_scaffold(&other_root, "다른", PROJECT_ID).unwrap();
+        let other =
+            ProjectIdentity::new(parse_project_id(PROJECT_ID).unwrap(), &other_root).unwrap();
+        assert_ne!(project_key(&identity), project_key(&other));
+        let data = dir.0.join("data");
+        let notices = acknowledged(&data);
+        let mut trust_store = FileTrustStore::open(&data).unwrap();
+        trust_store.grant(&identity).unwrap();
+        trust_store.grant(&other).unwrap();
+        let confirmation = prepare_agent_start(
+            &identity,
+            |id| trust_store.status(id),
+            window(),
+            &profile(),
+            SessionMode::default(),
+            &notices,
+        )
+        .unwrap();
+        let refused = confirm_agent_start(
+            confirmation,
+            &other,
+            |id| trust_store.status(id),
+            &profile(),
+            &notices,
+            AgentSessionId(1),
+            0,
+            1_000,
+        );
+        assert_eq!(refused.unwrap_err(), StartRefusal::ProjectMismatch);
     }
 
     #[test]
@@ -351,12 +398,16 @@ mod tests {
         // 매니페스트 loader는 모르는 key를 받아들이든 거부하든 신뢰·모드 상태를 만들지 않습니다.
         let _ = probe_project(&root);
 
-        let trust = FileTrustStore::open(&data).unwrap().status(&identity);
-        assert_eq!(trust, TrustStatus::NotTrusted, "신뢰 변경 0");
+        let trust_store = FileTrustStore::open(&data).unwrap();
+        assert_eq!(
+            trust_store.status(&identity),
+            TrustStatus::NotTrusted,
+            "신뢰 변경 0"
+        );
         assert_eq!(
             prepare_agent_start(
                 &identity,
-                trust,
+                |id| trust_store.status(id),
                 window(),
                 &profile(),
                 SessionMode::ReadOnly,
@@ -371,7 +422,7 @@ mod tests {
         // 사용자가 신뢰한 뒤에도 모드는 사용자가 고른 값이고 권한은 0에서 시작합니다.
         let confirmation = prepare_agent_start(
             &identity,
-            TrustStatus::Trusted,
+            |_| TrustStatus::Trusted,
             window(),
             &profile(),
             SessionMode::ReadOnly,
@@ -381,7 +432,8 @@ mod tests {
         assert_eq!(confirmation.mode, SessionMode::ReadOnly);
         let started = confirm_agent_start(
             confirmation,
-            TrustStatus::Trusted,
+            &identity,
+            |_| TrustStatus::Trusted,
             &profile(),
             &TermsNoticeStore::open(&data).unwrap(),
             AgentSessionId(2),
