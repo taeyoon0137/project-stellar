@@ -728,7 +728,10 @@ mod tests {
             [(_, Ok(LeaseState::WaitingForGesture(_)))]
         ));
         drag.end().unwrap();
-        assert_eq!(leases.retry_waiting(&model), vec![(id, Ok(LeaseState::Granted))]);
+        assert_eq!(
+            leases.retry_waiting(&model),
+            vec![(id, Ok(LeaseState::Granted))]
+        );
         assert_eq!(leases.state(id), Some(LeaseState::Granted));
     }
 
