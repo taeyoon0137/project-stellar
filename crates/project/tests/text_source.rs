@@ -306,7 +306,7 @@ fn placed_text_recreates_the_same_chunks() {
     let hash = text_source::save_new(&path, &model).unwrap();
     let source = std::fs::read_to_string(&path).unwrap();
     assert!(
-        source.contains("\"transform.matrix\": \"matrix(1, 0, 0, 1, -12.25, 8.5)\"\n"),
+        source.contains("      transform: \"matrix(1, 0, 0, 1, -12.25, 8.5)\"\n"),
         "{source}"
     );
     let loaded = text_source::open(&path).unwrap().model;
@@ -647,13 +647,10 @@ fn ellipse_directed_lines_and_polygon_preserve_geometry_and_modifier_chunk_bytes
             "polygon-corner-radius: \"19.75px\"",
             "polygon-corner-radius: \"-1px\"",
         ),
-        (
-            "\"stroke.width\": \"2.375px\"",
-            "\"stroke.width\": \"-1px\"",
-        ),
+        ("stroke-width: \"2.375px\"", "stroke-width: \"-1px\""),
         ("kind: stroke", "kind: future-stroke"),
         ("color(display-p3", "color(oklch"),
-        ("\"transform.matrix\":", "\"future-matrix\":"),
+        ("      transform: \"matrix", "      future-matrix: \"matrix"),
     ] {
         let malformed = source.replacen(old, new, 1);
         assert_ne!(malformed, source, "{old}");
