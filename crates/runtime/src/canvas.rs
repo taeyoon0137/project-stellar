@@ -47,6 +47,10 @@ pub mod navigate;
 pub mod path_edit;
 /// 눈금자 눈금과 가이드 제스처 (XII.10.19, ADR-0117).
 pub mod ruler;
+/// ComponentInstance 캔버스 편집: 깊은 선택 윤곽, 공개 Property override, Reset·문맥 동작 (XII.10.34, ADR-0118).
+pub mod instance;
+/// 키보드만으로 하는 캔버스 편집 경로: 포커스, 키 배정, 화면 가운데 삽입, 핸들 대체 (XII.10.41, ADR-0118).
+pub mod keyboard;
 /// 캔버스 클릭 선택과 편집 범위 (XII.10.3, ADR-0104).
 pub mod select;
 /// 영역 선택(마퀴) (XII.10.6, ADR-0104).

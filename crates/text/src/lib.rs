@@ -57,6 +57,9 @@ pub mod cache;
 /// paragraph 단위 증분 텍스트 레이아웃 (X.10.6).
 pub mod incremental;
 
+/// 캔버스 Text 편집 buffer: 본문·선택·입력기 조합 (XII.10.33).
+pub mod edit;
+
 /// 내부 루프 작업량 계수기(테스트 빌드에서만 셈, 성능 회귀 검사용).
 mod op_count;
 

@@ -220,6 +220,9 @@ impl TextHitGeometry for CanvasTextGeometry {
 #[cfg(test)]
 mod tests;
 
+/// 캔버스 Text 편집기 코어(XII.10.33).
+pub mod edit;
+
 pub(crate) mod document;
 pub(crate) mod fonts;
 pub(crate) mod saved;
@@ -227,7 +230,7 @@ pub use document::DocumentText;
 
 /// 확정 전 IME 조합을 반영한 Text 한 개(ADR-0067 §6). 문서와 history에는 없습니다.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct TextPreview {
+pub struct TextPreview {
     /// (조합 token, 갱신 순번). 같은 값이면 게시한 scene을 다시 씁니다.
     pub(crate) key: (u64, u64),
     /// 조합 대상 node. 새 Text면 확정 때 만들 ID입니다.
@@ -239,6 +242,18 @@ pub(crate) struct TextPreview {
         stellar_core_types::ids::StableId,
         stellar_document::modifier::ModifierStack,
     )>,
+}
+
+impl TextPreview {
+    /// 조합 대상 node.
+    pub fn node(&self) -> stellar_core_types::ids::StableId {
+        self.node
+    }
+
+    /// 조합 중 본문을 넣은 payload.
+    pub fn payload(&self) -> &stellar_document::text::TextPayload {
+        &self.payload
+    }
 }
 
 /// Native paint bridge에서 공통 outline을 순회합니다.
