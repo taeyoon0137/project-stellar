@@ -22,7 +22,7 @@ use stellar_document::component::definition::{
 use stellar_document::component::instance::{ComponentInstancePayload, OverrideKey};
 use stellar_document::component::slot::ComponentSlot;
 use stellar_document::frame::Clipping;
-use stellar_document::layout_record::{check_records, LayoutRecord};
+use stellar_document::layout_record::{check_records, LayoutRecord, LayoutRecordViolation};
 use stellar_document::model::{DocumentModel, ModelError};
 use stellar_document::modifier::{find_modifier_cycle, validate_modifier_owner, ModifierStack};
 use stellar_document::node_kind::NodeKind;
@@ -250,21 +250,34 @@ impl InsertNode {
         }
 
         // 6. layout record: 소유 node는 이 요청의 node, 소유자당 하나, 빈 record 금지, node 종류에 붙는
-        //    longhand만(문서 validator와 같은 검사, ADR-0086 결정 1).
-        let payloads: BTreeMap<StableId, &NodePayload> = self
-            .nodes
-            .iter()
-            .map(|record| (record.id, &record.payload))
-            .collect();
-        if let Some(violation) =
-            check_records(&self.layout_records, |id| payloads.get(&id).copied())
-                .into_iter()
-                .next()
-        {
-            return Err(CommandError::Model(ModelError::Layout {
-                id: root.id,
-                reason: violation.to_string(),
-            }));
+        //    longhand만(문서 validator와 같은 검사, ADR-0086 결정 1). 목록은 소유 node 오름차순이어야 합니다
+        //    (codec의 canonical 절과 같은 규칙. 어긋난 command는 history journal에 쓴 뒤 다시 읽을 수 없습니다).
+        if !self.layout_records.is_empty() {
+            if let Some(pair) = self
+                .layout_records
+                .windows(2)
+                .find(|pair| pair[0].node >= pair[1].node)
+            {
+                return Err(CommandError::Model(ModelError::Layout {
+                    id: pair[1].node,
+                    reason: "layout record 소유 node가 오름차순이 아닙니다".to_string(),
+                }));
+            }
+            let payloads: BTreeMap<StableId, &NodePayload> = self
+                .nodes
+                .iter()
+                .map(|record| (record.id, &record.payload))
+                .collect();
+            if let Some(violation) =
+                check_records(&self.layout_records, |id| payloads.get(&id).copied())
+                    .into_iter()
+                    .next()
+            {
+                return Err(CommandError::Model(ModelError::Layout {
+                    id: violation_node(&violation),
+                    reason: violation.to_string(),
+                }));
+            }
         }
         Ok(())
     }
@@ -294,7 +307,10 @@ impl InsertNode {
         // 결정 5). 삽입한 node의 명시 값은 이 command가 정하므로 담지 않은 node의 남은 record는 지웁니다.
         for record in &self.nodes {
             if ctx.model().layout_record(record.id).is_some()
-                && !self.layout_records.iter().any(|l| l.node == record.id)
+                && self
+                    .layout_records
+                    .binary_search_by_key(&record.id, |l| l.node)
+                    .is_err()
             {
                 ctx.set_layout_record(LayoutRecord::new(record.id))?;
             }
@@ -341,6 +357,17 @@ impl InsertNode {
             modifier_stacks,
             layout_records: decode_layout_records(input)?,
         })
+    }
+}
+
+/// 위반한 record의 소유 node.
+fn violation_node(violation: &LayoutRecordViolation) -> StableId {
+    match violation {
+        LayoutRecordViolation::OwnerMissing { node }
+        | LayoutRecordViolation::Duplicate { node }
+        | LayoutRecordViolation::Empty { node }
+        | LayoutRecordViolation::NotApplicable { node, .. }
+        | LayoutRecordViolation::SizeInPayload { node, .. } => *node,
     }
 }
 
@@ -2392,6 +2419,25 @@ mod layout_record_tests {
         let mut insert = InsertNode::single(frame(20, Some(10), 0x30));
         insert.layout_records = vec![LayoutRecord::new(sid(20))];
         assert!(insert.validate(&model).is_err());
+        // 소유 node 내림차순 목록은 codec이 다시 읽지 못하므로 적용 전에 거부합니다. 오류는 위반 node를 가리킵니다.
+        let mut insert = InsertNode::single(frame(20, Some(10), 0x30));
+        insert.nodes.push(frame(21, Some(20), 0x10));
+        insert.layout_records = vec![
+            record(21, &[(LayoutLonghand::FlexGrow, "1")]),
+            record(20, &[(LayoutLonghand::Display, "grid")]),
+        ];
+        assert!(matches!(
+            insert.validate(&model),
+            Err(CommandError::Model(ModelError::Layout { id, .. })) if id == sid(20)
+        ));
+        insert.layout_records.reverse();
+        insert.validate(&model).unwrap();
+        // 자식 node의 위반은 root가 아니라 그 node를 가리킵니다.
+        insert.layout_records[1] = record(21, &[(LayoutLonghand::Width, "10px")]);
+        assert!(matches!(
+            insert.validate(&model),
+            Err(CommandError::Model(ModelError::Layout { id, .. })) if id == sid(21)
+        ));
         // Text의 item longhand와 record 크기는 받습니다.
         let mut text = frame(21, Some(10), 0x40);
         text.payload = NodePayload::Text(TextPayload::empty(0));
