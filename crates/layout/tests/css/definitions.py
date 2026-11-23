@@ -863,5 +863,62 @@ fx(
     "positioning",
     n("root", "display:grid;width:200px;height:100px;padding:10px;grid-template-columns:1fr 1fr", [n("a", "position:absolute;right:5px;bottom:5px;width:30px;height:20px"), n("b", "")]),
 )
+
+# --- flex item 자동 최소 크기(IX.11.23) ---
+
+fx(
+    "flex/auto-min-content-prevents-shrink",
+    "flex",
+    n("root", "display:flex;width:200px;height:20px", [c("a", 150, 10), c("b", 150, 10)]),
+    note="min-width: auto = min-content(150): 줄어들지 않고 넘침",
+)
+fx(
+    "flex/auto-min-specified-size-smaller",
+    "flex",
+    n("root", "display:flex;width:100px;height:20px", [c("a", 120, 10, None, "width:60px;flex-basis:200px"), n("b", "width:40px")]),
+    note="지정 크기 suggestion(60) < 콘텐츠(120): 최소 60",
+)
+fx(
+    "flex/auto-min-clamped-by-max",
+    "flex",
+    n("root", "display:flex;width:100px;height:20px", [c("a", 150, 10, None, "max-width:90px"), c("b", 150, 10, None, "min-width:0px")]),
+)
+fx(
+    "flex/auto-min-nested-container",
+    "flex",
+    n(
+        "root",
+        "display:flex;width:120px;height:30px",
+        [n("box", "display:flex;column-gap:4px;padding:0 3px", [c("x", 40, 10), c("y", 50, 10)]), n("other", "width:100px")],
+    ),
+    note="container item의 자동 최소 크기 = 자식 min-content 기여 합",
+)
+fx(
+    "flex/auto-min-column-content-height",
+    "flex",
+    n("root", "display:flex;flex-direction:column;width:60px;height:50px", [c("a", 20, 40), c("b", 20, 40)]),
+)
+fx(
+    "flex/auto-min-wrapping-block-content",
+    "flex",
+    n(
+        "root",
+        "display:flex;width:100px;height:20px",
+        [n("a", "width:200px", [c("a1", 70, 10), c("a2", 30, 10)]), n("b", "width:200px")],
+    ),
+    note="block item의 min-content = 가장 넓은 자식(70)",
+)
+fx(
+    "flex/auto-min-aspect-ratio-main-axis",
+    "flex",
+    n("root", "display:flex;width:100px;height:40px;align-items:flex-start", [n("a", "height:40px;aspect-ratio:2/1;flex-basis:150px"), n("b", "width:80px")]),
+    note="비율 축이 main 축이면 자동 최소 크기를 따름(14장 E10 제외)",
+)
+fx(
+    "flex/auto-min-grow-unaffected",
+    "flex",
+    n("root", "display:flex;width:300px;height:20px", [c("a", 50, 10, None, "flex-grow:1;flex-basis:0px"), c("b", 100, 10, None, "flex-grow:1;flex-basis:0px")]),
+    note="flex-basis 0 + grow에서 콘텐츠 최소(100) 위반 item은 freeze",
+)
 def all_fixtures():
     return FIXTURES

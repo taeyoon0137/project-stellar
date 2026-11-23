@@ -9,7 +9,7 @@
 //!    min-content 기여입니다. column container는 item 기여의 최댓값입니다.
 //! 2. **flex base size**(§9.2.3): `flex-basis`가 definite면 그 값, `auto`면 main 축 크기 속성, 둘 다 없으면 비율과
 //!    definite cross 크기로 변환한 값, 그 밖에는 콘텐츠 크기(max-content, column은 cross 크기에서의 콘텐츠 높이)입니다.
-//!    hypothetical main 크기는 base를 `min-*`·`max-*`로 clamp한 값입니다(`min-*: auto`의 자동 최소 크기는
+//!    hypothetical main 크기는 base를 `min-*`·`max-*`로 clamp한 값입니다(`min-*: auto`는 콘텐츠 기반 자동 최소 크기,
 //!    [`automatic_min_main`]).
 //! 3. **line**(§9.3): `nowrap`은 한 줄, `wrap`은 가용 main 공간을 넘지 않게 앞에서부터 나눕니다.
 //! 4. **flexible length**(§9.7): 남는 공간이 양수면 `flex-grow`, 음수면 `flex-shrink × flex base size` 비례로
@@ -187,14 +187,57 @@ fn distribute_free(
     })
 }
 
-/// item `min-*: auto`의 자동 최소 크기(main 축). IX.11.23이 콘텐츠 기반 최소 크기로 바꿉니다.
+/// item `min-*: auto`의 자동 최소 크기(main 축, CSS Flexbox §4.5, IX.11.23).
+///
+/// scroll container가 아닌 item(엔진의 모든 box, `overflow: visible`)의 콘텐츠 기반 최소 크기입니다.
+///
+/// - content size suggestion: main 축 min-content 크기. column이면 item의 cross 크기(`definite_cross`, 없으면 cross 가용
+///   공간 안 fit-content)에서의 콘텐츠 높이입니다. 비율 item은 definite cross 크기를 비율로 바꾼 값이 하한이고, definite
+///   `min-*`·`max-*` cross 크기를 비율로 바꿔 clamp합니다.
+/// - specified size suggestion: main 축 크기 속성이 definite면 그 값.
+/// - 결과는 둘 중 작은 값(specified가 없으면 content)이고, definite max main 크기로 제한합니다.
 fn automatic_min_main(
-    _engine: &mut Engine<'_>,
-    _item: usize,
-    _main: Axis,
-    _context: &ItemContext,
+    engine: &mut Engine<'_>,
+    item: usize,
+    main: Axis,
+    context: &ItemContext,
+    definite_cross: Option<LayoutUnit>,
 ) -> Result<LayoutUnit, LayoutError> {
-    Ok(LayoutUnit::ZERO)
+    let cross = main.cross();
+    let (mi, ci) = (main.index(), cross.index());
+    let request = item_request(context);
+    let mut probe = request;
+    probe.content_only[mi] = true;
+    probe.available[mi] = Avail::MinContent;
+    probe.known[ci] = definite_cross;
+    let mut content = engine.layout(item, probe)?.size[mi];
+    let id = engine.nodes[item].id;
+    if let Some(ratio) = engine.nodes[item].ratio {
+        // definite cross 크기가 있으면 min-content main 크기는 비율로 정한 크기입니다(Chromium 157 fixture
+        // `flex/auto-min-aspect-ratio-main-axis`).
+        if let Some(cross_size) = definite_cross {
+            content = content.max(transfer_ratio(ratio, cross, cross_size).map_err(at(id))?);
+        }
+        let min_cross = engine.min_size(item, cross, request)?;
+        if min_cross > LayoutUnit::ZERO {
+            content = content.max(transfer_ratio(ratio, cross, min_cross).map_err(at(id))?);
+        }
+        if let Some(max_cross) = engine.max_size(item, cross, request)? {
+            content = content.min(transfer_ratio(ratio, cross, max_cross).map_err(at(id))?);
+        }
+    }
+    let specified = match engine.nodes[item].size[mi] {
+        SizeP::Auto => None,
+        _ => engine.preferred(item, main, request)?,
+    };
+    let mut value = match specified {
+        Some(size) => size.min(content),
+        None => content,
+    };
+    if let Some(max) = engine.max_size(item, main, request)? {
+        value = value.min(max);
+    }
+    Ok(value)
 }
 
 /// item 계산에 쓰는 container 문맥.
@@ -772,7 +815,7 @@ fn base_item(
     }
     .max(pad_main);
     let min_main = match prepared.min[mi] {
-        SizeP::Auto => automatic_min_main(engine, child, main, context)?,
+        SizeP::Auto => automatic_min_main(engine, child, main, context, definite_cross)?,
         _ => engine.min_size(child, main, request)?,
     };
     let max_main = engine.max_size(child, main, request)?;

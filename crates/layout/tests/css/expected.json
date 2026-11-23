@@ -3393,6 +3393,150 @@
     "a": [10560, 4800, 1920, 1280],
     "b": [640, 640, 5760, 5120]
    }
+  },
+  {
+   "name": "flex/auto-min-content-prevents-shrink",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "min-width: auto = min-content(150): 줄어들지 않고 넘침",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;width:200px;height:20px", "content": null, "children": ["a", "b"]},
+    {"id": "a", "parent": "root", "style": "", "content": {"width": 150, "height": 10, "baseline": null}, "children": []},
+    {"id": "b", "parent": "root", "style": "", "content": {"width": 150, "height": 10, "baseline": null}, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 12800, 1280],
+    "a": [0, 0, 9600, 1280],
+    "b": [9600, 0, 9600, 1280]
+   }
+  },
+  {
+   "name": "flex/auto-min-specified-size-smaller",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "지정 크기 suggestion(60) < 콘텐츠(120): 최소 60",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;width:100px;height:20px", "content": null, "children": ["a", "b"]},
+    {"id": "a", "parent": "root", "style": "width:60px;flex-basis:200px", "content": {"width": 120, "height": 10, "baseline": null}, "children": []},
+    {"id": "b", "parent": "root", "style": "width:40px", "content": null, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 6400, 1280],
+    "a": [0, 0, 5333, 1280],
+    "b": [5333, 0, 1067, 1280]
+   }
+  },
+  {
+   "name": "flex/auto-min-clamped-by-max",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;width:100px;height:20px", "content": null, "children": ["a", "b"]},
+    {"id": "a", "parent": "root", "style": "max-width:90px", "content": {"width": 150, "height": 10, "baseline": null}, "children": []},
+    {"id": "b", "parent": "root", "style": "min-width:0px", "content": {"width": 150, "height": 10, "baseline": null}, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 6400, 1280],
+    "a": [0, 0, 5760, 1280],
+    "b": [5760, 0, 640, 1280]
+   }
+  },
+  {
+   "name": "flex/auto-min-nested-container",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "container item의 자동 최소 크기 = 자식 min-content 기여 합",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;width:120px;height:30px", "content": null, "children": ["box", "other"]},
+    {"id": "box", "parent": "root", "style": "display:flex;column-gap:4px;padding:0 3px", "content": null, "children": ["x", "y"]},
+    {"id": "x", "parent": "box", "style": "", "content": {"width": 40, "height": 10, "baseline": null}, "children": []},
+    {"id": "y", "parent": "box", "style": "", "content": {"width": 50, "height": 10, "baseline": null}, "children": []},
+    {"id": "other", "parent": "root", "style": "width:100px", "content": null, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 7680, 1920],
+    "box": [0, 0, 6400, 1920],
+    "x": [192, 0, 2560, 1920],
+    "y": [3008, 0, 3200, 1920],
+    "other": [6400, 0, 1280, 1920]
+   }
+  },
+  {
+   "name": "flex/auto-min-column-content-height",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;flex-direction:column;width:60px;height:50px", "content": null, "children": ["a", "b"]},
+    {"id": "a", "parent": "root", "style": "", "content": {"width": 20, "height": 40, "baseline": null}, "children": []},
+    {"id": "b", "parent": "root", "style": "", "content": {"width": 20, "height": 40, "baseline": null}, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 3840, 3200],
+    "a": [0, 0, 3840, 2560],
+    "b": [0, 2560, 3840, 2560]
+   }
+  },
+  {
+   "name": "flex/auto-min-wrapping-block-content",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "block item의 min-content = 가장 넓은 자식(70)",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;width:100px;height:20px", "content": null, "children": ["a", "b"]},
+    {"id": "a", "parent": "root", "style": "width:200px", "content": null, "children": ["a1", "a2"]},
+    {"id": "a1", "parent": "a", "style": "", "content": {"width": 70, "height": 10, "baseline": null}, "children": []},
+    {"id": "a2", "parent": "a", "style": "", "content": {"width": 30, "height": 10, "baseline": null}, "children": []},
+    {"id": "b", "parent": "root", "style": "width:200px", "content": null, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 6400, 1280],
+    "a": [0, 0, 4480, 1280],
+    "a1": [0, 0, 4480, 640],
+    "a2": [0, 640, 4480, 640],
+    "b": [4480, 0, 1920, 1280]
+   }
+  },
+  {
+   "name": "flex/auto-min-aspect-ratio-main-axis",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "비율 축이 main 축이면 자동 최소 크기를 따름(14장 E10 제외)",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;width:100px;height:40px;align-items:flex-start", "content": null, "children": ["a", "b"]},
+    {"id": "a", "parent": "root", "style": "height:40px;aspect-ratio:2/1;flex-basis:150px", "content": null, "children": []},
+    {"id": "b", "parent": "root", "style": "width:80px", "content": null, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 6400, 2560],
+    "a": [0, 0, 5120, 2560],
+    "b": [5120, 0, 1280, 0]
+   }
+  },
+  {
+   "name": "flex/auto-min-grow-unaffected",
+   "suite": "flex",
+   "bundle": "basic",
+   "exception": null,
+   "note": "flex-basis 0 + grow에서 콘텐츠 최소(100) 위반 item은 freeze",
+   "nodes": [
+    {"id": "root", "parent": null, "style": "display:flex;width:300px;height:20px", "content": null, "children": ["a", "b"]},
+    {"id": "a", "parent": "root", "style": "flex-grow:1;flex-basis:0px", "content": {"width": 50, "height": 10, "baseline": null}, "children": []},
+    {"id": "b", "parent": "root", "style": "flex-grow:1;flex-basis:0px", "content": {"width": 100, "height": 10, "baseline": null}, "children": []}
+   ],
+   "expected": {
+    "root": [0, 0, 19200, 1280],
+    "a": [0, 0, 9600, 1280],
+    "b": [9600, 0, 9600, 1280]
+   }
   }
  ]
 }

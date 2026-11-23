@@ -3,11 +3,11 @@
 # 비교: crates/layout/tests/layout_corpus.rs
 # 형식: inputs = 입력 canonical bytes hash, 이후 배치 방식별 fixture·box·진단 수와 결과 bytes digest
 #       (primary FNV-1a 64 - check 다항식 hash). 값이 바뀌면 레이아웃 결과 계약이 바뀐 것입니다.
-# v1(Free·Stack·Grid·Overlay·Constraint) → v2 변경 fixture 목록과 이유: docs/task-reports/IX.11.4.md, IX.11.5.md.
+# v1(Free·Stack·Grid·Overlay·Constraint) → v2 변경 fixture 목록과 이유: docs/task-reports/IX.11.4.md, IX.11.5.md, IX.11.23.md.
 schema=2
 inputs=7e4bbd5956d64945-110b3f47e63fb177
 absolute fixtures=50 boxes=235 diagnostics=0 digest=a0abf14654a0ebaa-07f1fabd5e90d47e
-flex fixtures=50 boxes=262 diagnostics=14 digest=c07066e4c4886934-07b3883181f0da89
+flex fixtures=50 boxes=262 diagnostics=14 digest=477b501ba5d74661-12cde641fdf6b495
 grid fixtures=50 boxes=260 diagnostics=10 digest=0b93ecd43ce5df78-1e551c71958d68d7
 grid-area fixtures=50 boxes=190 diagnostics=1 digest=be1bca228ce5e1a4-1c55ac3e116db761
 inset fixtures=50 boxes=224 diagnostics=0 digest=b42e87f9a94fc449-1d3d5d5c494f57ff
