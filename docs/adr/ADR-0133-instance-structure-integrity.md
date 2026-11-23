@@ -74,6 +74,9 @@ Consequences의 "Frame 복제·붙여넣기 때 가이드·그리드가 따라�
    Text 본문(`payload_metadata::text_keys::TEXT_CONTENT`)은 VI.7.5 본문 교체(`text::edit_text`)로 씁니다.
 4. Property 값(`TypedValue`)과 registry 값 타입의 대응은 단위를 바꾸지 않는 것만 받습니다(CSS 값 그대로, ADR-0074).
    bool ← Boolean, 문자열 ← String, 비음수 ← `px` 길이·수(0 이상), 수 ← 수·`px`·`deg`, 색·선택 색 ← Color, 0..=1 ← 수·`%`.
+   registry 값 타입 `Number`는 `px` 좌표·`deg` 각도·개수를 함께 담으므로 payload registry 값 종류
+   (`property::payload_value_kind`)로 단위를 맞춥니다. `px` 길이는 좌표 속성에만, `deg` 각도는 각도 속성에만 쓰고, 개수는
+   수만 받습니다.
 5. 쓸 수 없는 연결(그 node에 없는 속성, 맞지 않는 값)은 `DetachPlanError::Link`로 거부합니다. 반영하지 못한 채 Detach하면
    화면이 바뀌기 때문입니다(IX.2.6 검증 "detach 후 시각 의미 동일"). 복제되지 않은 정의 node(override된 Slot의 default
    content, nested 인스턴스 안 node)를 가리키는 연결은 건너뜁니다.

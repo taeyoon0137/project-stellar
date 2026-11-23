@@ -537,6 +537,21 @@ pub fn payload_property_info(payload: &NodePayload, key: PropertyKey) -> Option<
     }
 }
 
+/// `payload` node에서 `key`의 payload registry 값 종류(Shape·Image longhand). command 값 타입 `Number`는 `px` 좌표·`deg`
+/// 각도·개수를 함께 담으므로, 단위가 있는 값을 받는 호출자(Detach의 Property override 반영, ADR-0133 결정 3)가 이 값으로
+/// 단위를 구분합니다. Frame과 공통 node 필드는 `None`입니다.
+pub(crate) fn payload_value_kind(
+    payload: &NodePayload,
+    key: PropertyKey,
+) -> Option<PayloadPropertyType> {
+    match payload {
+        NodePayload::Shape(shape) => shape_property(shape.kind(), key),
+        NodePayload::Image(_) => image_property(key),
+        _ => None,
+    }
+    .map(|metadata| metadata.value_type)
+}
+
 /// `payload` node가 SetProperty로 받는 key 목록(공통 필드 + payload longhand, registry 순서).
 ///
 /// 묶음 key(Frame `size`·`corner-radius`)는 longhand가 따로 있어 목록에 넣지 않습니다.

@@ -44,7 +44,7 @@ use stellar_document::layout_record::{LayoutLonghand, LayoutRecord, LayoutValue}
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{ModifierKind, ModifierStack};
 use stellar_document::node_columns::{NodeColumns, NodeFields};
-use stellar_document::payload_metadata::text_keys;
+use stellar_document::payload_metadata::{text_keys, PayloadPropertyType};
 use stellar_document::record_codec::{
     decode_node_record, decode_payload, encode_node_record, encode_payload,
 };
@@ -64,7 +64,9 @@ use crate::node_ops::{
     apply_guides, check_external_inbound, decode_insert_tail, encode_insert_tail,
     slot_content_owner,
 };
-use crate::property::{payload_property_info, write_property, PropertyValue, PropertyValueType};
+use crate::property::{
+    payload_property_info, payload_value_kind, write_property, PropertyValue, PropertyValueType,
+};
 use crate::tree::{parent_of, ChildIndex};
 
 /// 기존 node 하나의 새 부모·순서.
@@ -783,8 +785,13 @@ pub struct PropertyLink {
 }
 
 /// Component Property 값(`TypedValue`)을 속성 registry 값으로 바꿉니다. 단위가 다른 값은 바꾸지 않습니다(CSS 값 그대로,
-/// ADR-0074): 길이는 `px`, 각도는 `deg`, 0..=1 값은 수 또는 `%`입니다.
-fn registry_value(value: &TypedValue, expected: PropertyValueType) -> Option<PropertyValue> {
+/// ADR-0074): 길이는 `px`, 각도는 `deg`, 0..=1 값은 수 또는 `%`입니다. `Number` 속성은 `px` 좌표·`deg` 각도·개수를 함께
+/// 담으므로 `kind`(payload registry 값 종류)로 단위를 맞춥니다. `px` 길이는 좌표에만, `deg` 각도는 각도에만 씁니다.
+fn registry_value(
+    value: &TypedValue,
+    expected: PropertyValueType,
+    kind: Option<PayloadPropertyType>,
+) -> Option<PropertyValue> {
     use stellar_core_types::value::FiniteF32;
     let unit = |v: f32| (0.0..=1.0).contains(&v).then(|| FiniteF32::new(v).ok())?;
     Some(match (expected, value) {
@@ -797,8 +804,16 @@ fn registry_value(value: &TypedValue, expected: PropertyValueType) -> Option<Pro
             PropertyValue::NonNegative(*v)
         }
         (PropertyValueType::Number, TypedValue::Number(v)) => PropertyValue::Number(*v),
-        (PropertyValueType::Number, TypedValue::Length(v)) => PropertyValue::Number(v.raw()),
-        (PropertyValueType::Number, TypedValue::Angle(v)) => PropertyValue::Number(v.raw()),
+        (PropertyValueType::Number, TypedValue::Length(v))
+            if kind == Some(PayloadPropertyType::Coordinate) =>
+        {
+            PropertyValue::Number(v.raw())
+        }
+        (PropertyValueType::Number, TypedValue::Angle(v))
+            if kind == Some(PayloadPropertyType::Angle) =>
+        {
+            PropertyValue::Number(v.raw())
+        }
         (PropertyValueType::Color, TypedValue::Color(c)) => PropertyValue::Color(*c),
         (PropertyValueType::OptionalColor, TypedValue::Color(c)) => {
             PropertyValue::OptionalColor(Some(*c))
@@ -825,7 +840,11 @@ fn write_linked_value(record: &mut NodeRecord, key: PropertyKey, value: &TypedVa
         return Some(());
     }
     let info = payload_property_info(&record.payload, key)?;
-    let value = registry_value(value, info.value_type)?;
+    let value = registry_value(
+        value,
+        info.value_type,
+        payload_value_kind(&record.payload, key),
+    )?;
     write_property(record, key, &value, info.value_type).ok()
 }
 

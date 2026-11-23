@@ -407,26 +407,68 @@ fn registry_values_keep_css_units() {
     assert_eq!(
         registry_value(
             &TypedValue::Length(Length::new(12.).unwrap()),
-            PropertyValueType::NonNegative
+            PropertyValueType::NonNegative,
+            None
         ),
         Some(PropertyValue::NonNegative(f(12.)))
     );
     assert_eq!(
         registry_value(
             &TypedValue::Length(Length::new(-1.).unwrap()),
-            PropertyValueType::NonNegative
+            PropertyValueType::NonNegative,
+            None
         ),
         None
     );
     assert_eq!(
         registry_value(
             &TypedValue::Percentage(Percentage::new(50.).unwrap()),
-            PropertyValueType::UnitInterval
+            PropertyValueType::UnitInterval,
+            None
         ),
         Some(PropertyValue::UnitInterval(f(0.5)))
     );
     assert_eq!(
-        registry_value(&TypedValue::Boolean(true), PropertyValueType::Text),
+        registry_value(&TypedValue::Boolean(true), PropertyValueType::Text, None),
+        None
+    );
+    // `Number` 속성은 `px` 좌표·`deg` 각도·개수를 함께 담으므로 payload registry 값 종류로 단위를 맞춥니다.
+    use stellar_core_types::value::Angle;
+    let length = TypedValue::Length(Length::new(12.).unwrap());
+    let angle = TypedValue::Angle(Angle::new(30.).unwrap());
+    let number = Some(PropertyValue::Number(f(12.)));
+    assert_eq!(
+        registry_value(
+            &length,
+            PropertyValueType::Number,
+            Some(PayloadPropertyType::Coordinate)
+        ),
+        number
+    );
+    for kind in [
+        Some(PayloadPropertyType::Angle),
+        Some(PayloadPropertyType::Count),
+        None,
+    ] {
+        assert_eq!(
+            registry_value(&length, PropertyValueType::Number, kind),
+            None
+        );
+    }
+    assert_eq!(
+        registry_value(
+            &angle,
+            PropertyValueType::Number,
+            Some(PayloadPropertyType::Angle)
+        ),
+        Some(PropertyValue::Number(f(30.)))
+    );
+    assert_eq!(
+        registry_value(
+            &angle,
+            PropertyValueType::Number,
+            Some(PayloadPropertyType::Coordinate)
+        ),
         None
     );
 }
