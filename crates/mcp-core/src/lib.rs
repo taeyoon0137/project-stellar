@@ -65,24 +65,11 @@ pub mod result;
 /// agent command proposal 입력 해석: closed enum command만 (XIX.5.1).
 pub mod proposal;
 
-/// MCP 세션 권한 저장과 판정 (XIX.3.2~XIX.3.4, ADR-0093).
-pub mod permission;
-
-/// 에이전트 편집 대상 선언과 lease 요청 (XIX.4.1, XIX.4.4~XIX.4.7, ADR-0093).
+/// `document.begin_agent_edit` tool 정의와 인자 해석 (XIX.4.1, XIX.4.4, ADR-0093).
+///
+/// 권한 저장소, lease 요청 관리, attached 편집 미리보기·적용, 출처 색인, 세션 종료 절차, 되돌리기는 앱이 소유하는
+/// 에이전트 편집 crate(`stellar-agent-edit`)에 있습니다. 이 crate는 그 crate에 닿지 않습니다(ADR-0112).
 pub mod lease;
-
-/// attached backend의 에이전트 편집 경로: 범위 검사와 승인 전 미리보기 (XIX.5.2, XIX.5.3, ADR-0093).
-pub mod attached;
-
-/// 에이전트 변경 출처 색인과 표시 상태 전이 (XIX.6.7, XIX.6.10, ADR-0100).
-pub mod provenance;
-
-/// 에이전트 출처·세션·되돌리기 test 공용 fixture.
-#[cfg(test)]
-pub(crate) mod provenance_fixture;
-
-/// 에이전트 편집 세션의 완료·중지·종료 절차와 외부 변경 처리 (XIX.6.2~XIX.6.6, XIX.7, ADR-0100).
-pub mod agent_history;
 
 /// 실행 인자로 고정한 신뢰 프로젝트 루트의 읽기 전용 backend (XIX.9.3).
 pub mod headless;

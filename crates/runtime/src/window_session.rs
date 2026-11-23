@@ -1695,24 +1695,29 @@ impl ProjectWindowSession {
 
     /// 이 창 history의 마지막 항목을 되돌립니다. 되돌릴 항목이 없거나 작업 문서가 없으면 `Ok(false)`.
     pub fn undo(&mut self) -> Result<bool, WindowSessionEditError> {
-        let Some(document) = self.document.as_mut() else {
-            return Ok(false);
-        };
-        self.history
-            .undo(&mut document.state)
-            .map(|outcome| outcome.is_some())
-            .map_err(WindowSessionEditError::History)
+        self.replay_history(false).map(|outcome| outcome.is_some())
     }
 
     /// 이 창에서 마지막으로 되돌린 항목을 다시 적용합니다. 다시 적용할 항목이 없으면 `Ok(false)`.
     pub fn redo(&mut self) -> Result<bool, WindowSessionEditError> {
+        self.replay_history(true).map(|outcome| outcome.is_some())
+    }
+
+    /// undo(`redo == false`)·redo 하나를 재생하고 재생한 항목과 change set을 돌려줍니다. 재생할 항목이 없거나 작업
+    /// 문서가 없으면 `Ok(None)`. 에이전트 출처 표시 전이(ADR-0112)가 재생 결과를 씁니다.
+    pub(crate) fn replay_history(
+        &mut self,
+        redo: bool,
+    ) -> Result<Option<stellar_history::history::UndoOutcome>, WindowSessionEditError> {
         let Some(document) = self.document.as_mut() else {
-            return Ok(false);
+            return Ok(None);
         };
-        self.history
-            .redo(&mut document.state)
-            .map(|outcome| outcome.is_some())
-            .map_err(WindowSessionEditError::History)
+        let replayed = if redo {
+            self.history.redo(&mut document.state)
+        } else {
+            self.history.undo(&mut document.state)
+        };
+        replayed.map_err(WindowSessionEditError::History)
     }
 
     /// 작업 문서를 지금 저장합니다(모듈 문서 "Undo·Redo·Save Now"). 캡처·쓰기·반영을 이 thread에서 차례로 합니다.

@@ -10,9 +10,10 @@ use std::path::{Path, PathBuf};
 
 use crate::permission::{AgentSessionId, PermissionKey};
 
-/// MCP·에이전트 model crate(L2·L3).
+/// MCP·에이전트 model crate(L2·L3)와 앱 쪽 에이전트 편집 crate.
 const AGENT_ROOTS: &[&str] = &[
     "crates/mcp-core",
+    "crates/agent-edit",
     "crates/agent-protocol",
     "crates/agent-host",
     "tools/stellar-mcp",

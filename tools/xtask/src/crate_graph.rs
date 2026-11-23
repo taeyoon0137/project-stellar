@@ -123,7 +123,16 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-git-porcelain",
                 // ADR-0005 §8 runtime 허용 의존의 agent-host(ADR-0101: 시작 확인·승인 요청을 앱 runtime에 연결).
                 "stellar-agent-host",
+                // 앱 쪽 에이전트 편집 구현 crate(XXIX.3.1, ADR-0112): 권한·lease 요청·출처 색인·종료 절차·되돌리기.
+                "stellar-agent-edit",
             ],
+        ),
+        // 앱 쪽 에이전트 편집 구현(XXIX.3.1, ADR-0112, `crates/agent-edit`): ops 공개 진입점(commands 재수출·diff·
+        // validate)과 L2 공용 정의(권한 어휘·결과 종류)만 씁니다. 에이전트 경로 crate는 이 crate에 닿지 않고, 이
+        // crate도 MCP·CLI 호스트·runtime·FFI에 닿지 않습니다(`reach::FORBIDDEN_REACH`).
+        (
+            "stellar-agent-edit",
+            &["stellar-ops", "stellar-agent-protocol"],
         ),
         // 셸 경계는 runtime을 통해서만 문서·프로젝트 작업에 도달합니다(ADR-0013).
         ("stellar-ffi", &[core, "stellar-runtime"]),
