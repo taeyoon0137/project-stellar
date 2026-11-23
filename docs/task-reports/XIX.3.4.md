@@ -26,7 +26,7 @@
 | 명령 | 결과 |
 |---|---|
 | `cargo test -p stellar-commands --locked` | 185 passed, 5 ignored(자식 프로세스 전용 1건 포함) |
-| `cargo test -p stellar-mcp-core --locked` | 모든 test target 통과(lib 82 passed) |
+| `cargo test -p stellar-mcp-core --locked` | 모든 test target 통과(lib 78 passed) |
 | `cargo clippy -p stellar-commands -p stellar-mcp-core --all-targets --locked -- -D warnings` | 경고 0 |
 | `cargo xtask validate-adr --base edfea9db` | 0 |
 | `cargo xtask generate-ffi-header --check` | 0, drift 없음 |
