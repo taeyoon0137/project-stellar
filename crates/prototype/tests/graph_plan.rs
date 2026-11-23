@@ -116,6 +116,18 @@ fn graph_edits_lower_to_commands_and_undo_once() {
         },
     );
     apply_and_undo(&mut doc, &pin);
+    // 고정한 node를 지우면 hint도 같은 transaction에서 풀리고, Undo 1회로 둘 다 돌아옵니다.
+    pin.apply(&mut doc).expect("고정");
+    let delete = planner_edit(
+        &doc,
+        GraphEdit::DeleteNode(GraphNodeId::new(sid(80), PrototypeNodeKind::PropertyOutput)),
+    );
+    assert_eq!(delete.steps.len(), 2, "binding 삭제 + hint 해제");
+    let before = doc.state_bytes();
+    let applied = delete.apply(&mut doc).expect("삭제");
+    assert!(doc.hints.is_empty(), "지운 node의 hint가 남지 않음");
+    applied.inverse.apply(&mut doc).expect("Undo");
+    assert_eq!(doc.state_bytes(), before);
     // 쓰는 곳이 있는 상태 변수는 지우지 않습니다.
     assert!(matches!(
         Planner::new(&doc, toggle()).plan(&GraphEdit::DeleteNode(GraphNodeId::new(

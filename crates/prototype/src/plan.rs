@@ -564,7 +564,21 @@ impl<'a> Planner<'a> {
                 ))
             }
         };
-        Ok(vec![step])
+        let mut steps = vec![step];
+        // 지운 node의 배치 hint도 함께 풉니다(없는 node의 좌표를 남기지 않고, Undo 1회로 함께 돌아옵니다).
+        if self
+            .doc
+            .hints
+            .get(&self.owner())
+            .is_some_and(|hints| hints.get(id).is_some())
+        {
+            steps.push(PrototypeStep::Hint {
+                owner: self.owner(),
+                node: id,
+                point: None,
+            });
+        }
+        Ok(steps)
     }
 
     /// 편집 하나를 transaction 하나로 낮춥니다. 문서는 바뀌지 않습니다.
