@@ -60,6 +60,9 @@ pub mod agent_attached;
 /// bridge frame을 에이전트 요청으로 바꾸는 앞단 (XXIX.3.4, ADR-0124).
 pub mod agent_frame;
 
+/// 사용자 편집·외부 변경을 에이전트 출처 색인에 알리는 관찰 대기열 (XIX.6.7, XIX.7.2, ADR-0124).
+pub(crate) mod agent_observe;
+
 /// 열린 창의 외부 변경 semantic reconciliation (XIII.3.4, ADR-0110).
 pub mod reconcile;
 

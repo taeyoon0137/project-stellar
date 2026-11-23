@@ -981,6 +981,8 @@ pub struct ProjectWindowSession {
     /// 외부 writer 변경과 로컬 편집을 병합하지 못한 디스크 관찰값과 그 이유(XIII.3.4, ADR-0110 결정 2). 같은 디스크
     /// 관찰값이면 stale 다음 할 일이 두 선택지입니다.
     external_conflict: Option<(DiskMark, crate::reconcile::ExternalConflict)>,
+    /// 사용자 편집·외부 변경을 에이전트 출처 색인에 알리는 관찰 대기열(ADR-0124 결정 4·5, `crate::agent_observe`).
+    pub(crate) agent_watch: crate::agent_observe::AgentWatch,
 }
 
 /// 저장 잠금 디렉터리 공급자. 기본은 OS 사용자 데이터의 공용 잠금 디렉터리입니다.
@@ -1218,6 +1220,7 @@ impl ProjectWindowSession {
             lock_dir: LockDir::default(),
             reconcile_pending: false,
             external_conflict: None,
+            agent_watch: Default::default(),
         }
     }
 
@@ -1383,11 +1386,16 @@ impl ProjectWindowSession {
 
     /// 연속 조작(scrub) preview를 한 항목으로 확정하고 이름표를 붙입니다. preview 도중 버려진 redo 갈래의
     /// 시점을 알 수 없으므로, 표를 지금 undo·redo 스택의 sequence로 다시 맞춥니다(드문 경로).
+    /// `changes`는 마지막 preview 단계의 change set입니다(제스처 전체, 에이전트 출처 관찰에 한 번 넣음, ADR-0124 결정 4).
     pub(crate) fn end_preview(
         &mut self,
         label: u8,
+        changes: Option<(&ChangeSet, stellar_commands::id::CommandOrigin)>,
     ) -> Result<(), stellar_history::entry::HistoryError> {
         self.history.end_preview()?;
+        if let Some((changes, origin)) = changes {
+            self.agent_watch.note(changes, origin);
+        }
         let history = self.history.history();
         let live: std::collections::HashSet<HistorySequence> = history
             .entries()
@@ -1602,6 +1610,7 @@ impl ProjectWindowSession {
             .record_document(&mut document.state, transaction, None)
             .map_err(WindowSessionEditError::History)?;
         self.labeled(discarded, label);
+        self.agent_watch.note(&changes, transaction.origin);
         Ok(changes)
     }
 
@@ -1623,6 +1632,7 @@ impl ProjectWindowSession {
             .record_grouped(&mut document.state, transaction, key, clock)
             .map_err(WindowSessionEditError::History)?;
         self.labeled(discarded, label);
+        self.agent_watch.note(&changes, transaction.origin);
         Ok(changes)
     }
 
@@ -1646,6 +1656,7 @@ impl ProjectWindowSession {
             .record_grouped_and_select(&mut document.state, transaction, key, &selection, clock)
             .map_err(WindowSessionEditError::History)?;
         self.labeled(discarded, label);
+        self.agent_watch.note(&changes, transaction.origin);
         Ok(changes)
     }
 
@@ -1666,6 +1677,7 @@ impl ProjectWindowSession {
             .record_document_and_select(&mut document.state, transaction, &selection)
             .map_err(WindowSessionEditError::History)?;
         self.labeled(discarded, label);
+        self.agent_watch.note(&changes, transaction.origin);
         Ok(changes)
     }
 
@@ -1690,6 +1702,7 @@ impl ProjectWindowSession {
             )
             .map_err(WindowSessionEditError::History)?;
         self.labeled(discarded, label);
+        self.agent_watch.note(&changes, transaction.origin);
         Ok(changes)
     }
 
@@ -2229,7 +2242,10 @@ impl ProjectWindowSession {
                 .history
                 .record_document(&mut document.state, &transaction, None)
             {
-                Ok(changes) => Some(changes),
+                Ok(changes) => {
+                    self.agent_watch.note(&changes, transaction.origin);
+                    Some(changes)
+                }
                 Err(error) => return ExternalSync::Rejected(ExternalRejection::Record(error)),
             };
             let _ = self

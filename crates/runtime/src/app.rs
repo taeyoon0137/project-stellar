@@ -1617,6 +1617,8 @@ pub(crate) fn change_view_on_thread(
 
 /// 현재 session 표로 불변 상태 snapshot을 만듭니다(세대 1 증가).
 fn build_state(ctx: &mut DocumentContext) -> RuntimeState {
+    // 사용자 편집·외부 변경을 에이전트 출처 색인에 알립니다(ADR-0124 결정 4·5). job이 끝날 때마다 여기를 지납니다.
+    crate::agent_observe::drain_windows(ctx.app_sessions_mut());
     let generation = {
         let sessions = ctx.app_sessions_mut();
         sessions.generation = sessions.generation.saturating_add(1);

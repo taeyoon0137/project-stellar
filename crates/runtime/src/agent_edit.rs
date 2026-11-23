@@ -60,9 +60,9 @@ const CLOSE_ENTRY_ID: CommandId = CommandId::from_bytes([
 pub struct WindowAgentEdit {
     pub(crate) sessions: AgentEditSessions,
     pub(crate) provenance: AgentChangeProvenance,
-    labels: AgentEntryLabels,
+    pub(crate) labels: AgentEntryLabels,
     pub(crate) permissions: PermissionStore,
-    leases: Option<AgentEditLeases>,
+    pub(crate) leases: Option<AgentEditLeases>,
     /// lease 조정 디렉터리(없으면 OS 사용자 데이터의 공용 잠금 디렉터리).
     lock_dir: Option<PathBuf>,
     /// 앱이 시작한 세션(agent-host AgentSession)과 편집 세션 id 대응(ADR-0124 결정 1).
