@@ -1,5 +1,7 @@
 //! 생산자 전체 fixture(XXV.2.1), 증분 재검사(XXV.2.3), remediation 실행(XXV.3.3) test.
 
+#![cfg(test)]
+
 use std::collections::BTreeMap;
 
 use stellar_accessibility::diagnostics::diagnose;
