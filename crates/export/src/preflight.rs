@@ -19,7 +19,8 @@
 //! | | 고정 font revision에 없는 text layout | 확인 필요. 확인하면 그 Text glyph를 생략 |
 //! | | 고정 font revision에 없는 폰트 | 확인 필요. 확인하면 그 폰트 glyph를 생략 |
 //! | | 명시 fallback chain으로 대체한 폰트(XIII.6.7) | 확인 필요(줄바꿈 변경 판정 포함) |
-//! | 출력 형식 | SVG로 아직 기록할 수 없는 기능(mapping table, XX.3.1) | 확인해도 진행 불가([`FormatBlocker`]) |
+//! | 출력 형식 | SVG로 아직 기록할 수 없는 기능(mapping table, XX.3.1). 래스터 기능은 host가 offscreen 렌더
+//! ([`PreflightInput::rasterizer`], XX.4.2)를 주지 않을 때만 | 확인해도 진행 불가([`FormatBlocker`]) |
 //! | | SVG outline으로 쓸 수 없는 glyph(outline 없는 color glyph, 손상 glyph) | 확인해도 진행 불가([`GlyphBlocker`]) |
 //!
 //! 진단 순서는 위 표 순서이고, 같은 분류 안에서는 capability는 입력 순서(IX.10.8 결정론적 순서), resource는 key 순서,
@@ -50,7 +51,9 @@ use stellar_scene::snapshot::SceneSemanticHash;
 
 use crate::capture::{ExportAssetSource, ExportCapture, ResourcePins};
 use crate::request::{ExportFormat, ExportRequest, TargetProfileKey};
-use crate::svg::mapping::{first_unsupported, node_features, SvgFeature, SvgSupport};
+use crate::svg::mapping::{node_features, SvgFeature, SvgSupport};
+use crate::svg::raster::{plan_raster, raster_scope};
+use crate::svg::rasterize::ExportRasterizer;
 use crate::text::{
     ExportFontFace, ExportTextSource, GlyphOutline, GlyphOutlineError, GlyphOutlineKey,
 };
@@ -199,6 +202,8 @@ pub struct PreflightInput<'a> {
     pub assets: &'a dyn ExportAssetSource,
     /// text glyph(고정 font revision으로 조회).
     pub text: &'a dyn ExportTextSource,
+    /// 래스터 경계 offscreen 렌더(XX.4.2). 렌더를 제공하지 않으면 래스터 기능이 형식 차단입니다.
+    pub rasterizer: &'a dyn ExportRasterizer,
 }
 
 /// 확인이 필요한 진단.
@@ -406,11 +411,15 @@ struct Scope {
     nodes: BTreeSet<StableId>,
     images: BTreeMap<AssetRef, BTreeSet<StableId>>,
     layouts: BTreeMap<TextLayoutKey, BTreeSet<StableId>>,
+    /// SVG에서 glyph outline으로 쓸(래스터 경계 밖 node가 쓰는) layout.
+    outlined_layouts: BTreeSet<TextLayoutKey>,
     blockers: Vec<FormatBlocker>,
 }
 
-fn scan(capture: &ExportCapture) -> Scope {
+fn scan(capture: &ExportCapture, rasterizer: &dyn ExportRasterizer) -> Scope {
     let check_svg = capture.request().format() == ExportFormat::Svg;
+    // SVG에서 래스터 경계 안 node 내용은 rasterizer가 그리므로 glyph outline이 필요 없습니다(XX.4.2).
+    let plan = (check_svg && rasterizer.is_available()).then(|| plan_raster(capture));
     let mut scope = Scope::default();
     for root in capture.roots() {
         let mut stack: Vec<&SceneNode> = vec![root.node()];
@@ -426,11 +435,19 @@ fn scan(capture: &ExportCapture) -> Scope {
                 }
                 Some(SceneResourceRef::TextLayout(layout)) => {
                     scope.layouts.entry(layout).or_default().insert(source);
+                    if check_svg && !plan.as_ref().is_some_and(|plan| plan.rasterizes(node.z())) {
+                        scope.outlined_layouts.insert(layout);
+                    }
                 }
                 None => {}
             }
             if check_svg {
-                if let Some(feature) = first_unsupported(&node_features(node)) {
+                // rasterizer가 있으면 래스터 기능은 planner가 고른 경계가 image로 담습니다(XX.4.1, XX.4.2).
+                let blocked = node_features(node).into_iter().find(|feature| {
+                    let rasterized = plan.is_some() && raster_scope(*feature).is_some();
+                    !(feature.support().is_vector() || rasterized)
+                });
+                if let Some(feature) = blocked {
                     scope.blockers.push(FormatBlocker {
                         node: source,
                         feature,
@@ -460,7 +477,7 @@ impl ExportPreflight {
                 report: input.capabilities.profile().clone(),
             });
         }
-        let scope = scan(&capture);
+        let scope = scan(&capture, input.rasterizer);
         let mut issues = Vec::new();
         let mut notes = Vec::new();
         match input.capabilities {
@@ -490,7 +507,7 @@ impl ExportPreflight {
         let mut fonts: BTreeMap<ExportFontFace, (bool, BTreeSet<StableId>)> = BTreeMap::new();
         // SVG는 모든 glyph를 outline으로 쓰므로(XX.3.2) 그릴 glyph key를 모두 조회합니다. PNG는 renderer가 bitmap glyph도
         // 그리므로 폰트 유무만 봅니다(face마다 glyph 하나).
-        let outline_every_glyph = capture.request().format() == ExportFormat::Svg;
+        let svg = capture.request().format() == ExportFormat::Svg;
         let mut checked: HashSet<GlyphOutlineKey> = HashSet::new();
         let mut glyph_blockers = Vec::new();
         for (layout, nodes) in &scope.layouts {
@@ -516,7 +533,7 @@ impl ExportPreflight {
                     }
                 };
                 entry.1.extend(nodes.iter().copied());
-                if !outline_every_glyph || entry.0 {
+                if !(svg && scope.outlined_layouts.contains(layout)) || entry.0 {
                     // 폰트가 없으면 glyph 진단 대신 MissingFont 하나로 알립니다.
                     continue;
                 }

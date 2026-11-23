@@ -19,7 +19,12 @@
 //!   바깥 정의를 `clip-path`로 참조하는 chain이 됩니다. 같은 (chain 안 바로 바깥 정의, clip 값)
 //!   조합은 문서 안에서 한 정의를 공유하며, 정의는 `<defs>`에 처음 쓰인 순서대로 모읍니다.
 //! - id: [`SvgIdAllocator`](StableId 기반, 중복 발급 거부).
-//! - 지원 상태가 vector가 아닌 기능을 만나면 그 node에서 typed error로 멈춥니다(조용히 빼지 않음).
+//! - 부분 래스터화(XX.4.2): 래스터 경계 planner([`crate::svg::raster`])가 고른 영역마다 host rasterizer
+//!   ([`ExportRasterizer`])의 PNG를 영역 pixel 상자의 world 상자에 `<image>`로 넣습니다. Content 영역은 node 그룹(clip·
+//!   opacity)을 그대로 열고 자기 내용 자리에 image를, Subtrees·Canvas 영역은 첫 root id 그룹(영역 root 공통 clip) 안에
+//!   image 하나를 쓰고 영역 안 node는 vector로 쓰지 않습니다. canvas 영역이면 배경도 image에 들어갑니다.
+//! - 지원 상태가 vector가 아닌 기능을 래스터 경계 밖에서 만나거나 rasterizer가 없으면 그 node에서 typed error로
+//!   멈춥니다(조용히 빼지 않음).
 //! - 출력 크기는 [`SvgWriteOptions::max_output_bytes`]를 넘으면 중단합니다(이미지 base64는 쓰기 전에
 //!   길이를 계산해 검사합니다).
 
@@ -30,19 +35,28 @@ use std::rc::Rc;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::reference::AssetRef;
 use stellar_scene::geometry::{FillRule, PathGeometry};
-use stellar_scene::node::{SceneContent, SceneNode, TextLayoutKey, TextPrimitive, Visibility};
-use stellar_scene::stack::{ClipShape, Paint, PaintLayer, StrokeAlign};
+use stellar_scene::node::{
+    SceneContent, SceneNode, TextLayoutKey, TextPrimitive, Visibility, ZOrder,
+};
+use stellar_scene::stack::{ClipShape, Opacity, Paint, PaintLayer, StrokeAlign};
 
 use crate::capture::{ExportAssetSource, ExportCapture, ExportRoot};
 use crate::preflight::ConfirmedExport;
 use crate::request::{ExportBackground, ExportFormat};
 use crate::svg::element::{
     write_background, write_clip_def, write_fill, write_geometry_clip_def, write_group_close,
-    write_group_open, write_image, write_outside_mask_def, write_stroke, StrokeMask, SvgGeometry,
+    write_group_open, write_image, write_outside_mask_def, write_raster_image, write_stroke,
+    StrokeMask, SvgGeometry,
 };
 use crate::svg::format::{base64_len, write_number, write_numbers, SvgValueError};
 use crate::svg::id::{SvgId, SvgIdAllocator, SvgIdError};
-use crate::svg::mapping::{first_unsupported, node_features, SvgFeature, SvgSupport};
+use crate::svg::mapping::{node_features, SvgFeature, SvgSupport};
+use crate::svg::raster::{
+    plan_raster, raster_scope, RasterBoundary, RasterPlan, RasterRegion, RasterScope,
+};
+use crate::svg::rasterize::{
+    check_output, ExportRasterizer, NoRasterizer, RasterRequest, RasterRoot, RasterizeError,
+};
 use crate::svg::text::{text_outlines, TextOutlineError, MAX_TEXT_OUTLINE_COMMANDS};
 use crate::text::{ExportTextSource, GlyphOutline, GlyphOutlineError, GlyphOutlineKey};
 
@@ -71,6 +85,7 @@ pub struct SvgDocument {
     groups: u64,
     clip_definitions: usize,
     mask_definitions: usize,
+    raster_images: usize,
 }
 
 impl SvgDocument {
@@ -102,6 +117,11 @@ impl SvgDocument {
     /// 쓴 `<mask>` 정의 수(Outside stroke, XX.3.4).
     pub const fn mask_definitions(&self) -> usize {
         self.mask_definitions
+    }
+
+    /// 넣은 래스터 경계 `<image>` 수(XX.4.2).
+    pub const fn raster_images(&self) -> usize {
+        self.raster_images
     }
 }
 
@@ -164,6 +184,13 @@ pub enum SvgExportError {
         /// 상한(byte).
         limit: usize,
     },
+    /// 래스터 경계 렌더가 실패했거나 계약을 지키지 않았습니다(XX.4.2).
+    Raster {
+        /// 경계의 첫 래스터 이유 node.
+        node: StableId,
+        /// 원인.
+        error: RasterizeError,
+    },
 }
 
 impl fmt::Display for SvgExportError {
@@ -196,6 +223,9 @@ impl fmt::Display for SvgExportError {
             SvgExportError::Value { node, error } => write!(f, "node {node}: {error}"),
             SvgExportError::Document(error) => write!(f, "SVG 문서: {error}"),
             SvgExportError::Id(error) => write!(f, "{error}"),
+            SvgExportError::Raster { node, error } => {
+                write!(f, "node {node}의 래스터 경계: {error}")
+            }
             SvgExportError::OutputTooLarge { limit } => {
                 write!(f, "SVG 출력이 {limit} byte 상한을 넘습니다")
             }
@@ -211,12 +241,24 @@ impl From<SvgIdError> for SvgExportError {
     }
 }
 
-/// 진행 허가를 받은 capture를 SVG 문서로 씁니다. 이미지 내용은 `assets`에서 고정 asset revision으로, text glyph는
-/// `text`에서 고정 font revision으로 읽습니다.
+/// 래스터 렌더 없이([`NoRasterizer`]) 진행 허가를 받은 capture를 SVG 문서로 씁니다. 래스터 경계가 있으면 그 기능에서
+/// [`SvgExportError::Unsupported`]입니다. 나머지는 [`write_svg_with`]와 같습니다.
 pub fn write_svg(
     export: &ConfirmedExport,
     assets: &dyn ExportAssetSource,
     text: &dyn ExportTextSource,
+    options: &SvgWriteOptions,
+) -> Result<SvgDocument, SvgExportError> {
+    write_svg_with(export, assets, text, &NoRasterizer, options)
+}
+
+/// 진행 허가를 받은 capture를 SVG 문서로 씁니다. 이미지 내용은 `assets`에서 고정 asset revision으로, text glyph는
+/// `text`에서 고정 font revision으로 읽고, 래스터 경계(XX.4.1)는 `raster`가 렌더한 PNG를 `<image>`로 넣습니다(XX.4.2).
+pub fn write_svg_with(
+    export: &ConfirmedExport,
+    assets: &dyn ExportAssetSource,
+    text: &dyn ExportTextSource,
+    raster: &dyn ExportRasterizer,
     options: &SvgWriteOptions,
 ) -> Result<SvgDocument, SvgExportError> {
     let capture = export.capture();
@@ -224,11 +266,15 @@ pub fn write_svg(
     if requested != ExportFormat::Svg {
         return Err(SvgExportError::FormatMismatch { requested });
     }
+    let plan = plan_raster(capture);
     let mut writer = Writer {
         export,
         capture,
         assets,
         text,
+        raster,
+        plan: &plan,
+        raster_images: 0,
         outlines: HashMap::new(),
         limit: options.max_output_bytes,
         ids: SvgIdAllocator::new(),
@@ -239,9 +285,16 @@ pub fn write_svg(
         clip_definitions: 0,
         mask_definitions: 0,
     };
+    // canvas 영역이면 배경도 래스터 image에 들어갑니다(XX.4.1 canvas 단계).
+    let canvas_raster = plan
+        .boundaries()
+        .iter()
+        .any(|boundary| *boundary.region() == RasterRegion::Canvas);
     if let ExportBackground::Solid(color) = capture.request().background() {
-        write_background(&mut writer.body, capture.bounds(), color)
-            .map_err(SvgExportError::Document)?;
+        if !canvas_raster {
+            write_background(&mut writer.body, capture.bounds(), color)
+                .map_err(SvgExportError::Document)?;
+        }
     }
     for root in capture.roots() {
         writer.write_root(root)?;
@@ -290,6 +343,7 @@ pub fn write_svg(
         groups: writer.groups,
         clip_definitions: writer.clip_definitions,
         mask_definitions: writer.mask_definitions,
+        raster_images: writer.raster_images,
     })
 }
 
@@ -297,7 +351,8 @@ pub fn write_svg(
 type Applied<'a> = Rc<Vec<&'a ClipShape>>;
 
 enum Step<'a> {
-    Enter(&'a SceneNode, Applied<'a>),
+    /// node, 부모(최상위면 `None`), 부모까지 적용된 clip.
+    Enter(&'a SceneNode, Option<&'a SceneNode>, Applied<'a>),
     Exit,
 }
 
@@ -306,6 +361,9 @@ struct Writer<'a> {
     capture: &'a ExportCapture,
     assets: &'a dyn ExportAssetSource,
     text: &'a dyn ExportTextSource,
+    raster: &'a dyn ExportRasterizer,
+    plan: &'a RasterPlan,
+    raster_images: usize,
     /// glyph outline 조회 cache(조회만 하며 출력 순서에 영향 없음).
     outlines: HashMap<GlyphOutlineKey, Result<GlyphOutline, GlyphOutlineError>>,
     limit: usize,
@@ -345,21 +403,36 @@ impl<'a> Writer<'a> {
             .into_iter()
             .take(root.base_clip_depth())
             .collect();
-        let mut stack = vec![Step::Enter(root.node(), Rc::new(base))];
+        let mut stack = vec![Step::Enter(root.node(), None, Rc::new(base))];
         while let Some(step) = stack.pop() {
             match step {
                 Step::Exit => write_group_close(&mut self.body),
-                Step::Enter(node, parent) => {
+                Step::Enter(node, parent_node, parent) => {
                     if node.hit().visibility == Visibility::Hidden {
                         continue;
                     }
-                    let state = Rc::new(self.write_node_open(node, &parent)?);
+                    let z = node.z();
+                    let content_raster = match self.plan.boundary_at(z) {
+                        Some(boundary) => match boundary.region() {
+                            RasterRegion::Content { .. } => Some(boundary),
+                            RasterRegion::Subtrees { .. } | RasterRegion::Canvas => {
+                                // 영역 전체를 image 하나로 쓰고, 영역 안 node는 vector로 쓰지 않습니다.
+                                self.write_raster_region(boundary, parent_node, &parent)?;
+                                self.check_size(0)?;
+                                continue;
+                            }
+                        },
+                        // 다른 node에서 시작한 영역 안이면 이미 image로 썼습니다.
+                        None if self.plan.rasterizes(z) => continue,
+                        None => None,
+                    };
+                    let state = Rc::new(self.write_node_open(node, &parent, content_raster)?);
                     self.check_size(0)?;
                     stack.push(Step::Exit);
                     let start = stack.len();
                     stack.extend(
                         node.children()
-                            .map(|child| Step::Enter(child, Rc::clone(&state))),
+                            .map(|child| Step::Enter(child, Some(node), Rc::clone(&state))),
                     );
                     stack[start..].reverse();
                 }
@@ -368,34 +441,22 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    /// node 그룹을 열고 내용을 씁니다. 자식에게 넘길 적용 clip을 돌려줍니다.
-    fn write_node_open(
+    /// `stack[applied..]`(새로 늘어난 clip)의 `<clipPath>` chain을 만들고 가장 안쪽 정의 id를 돌려줍니다. 정의 id는
+    /// `owner` 기준이며 같은 (바로 바깥 정의, clip 값) 조합은 문서 안에서 공유합니다.
+    fn clip_chain(
         &mut self,
-        node: &'a SceneNode,
-        parent: &[&'a ClipShape],
-    ) -> Result<Vec<&'a ClipShape>, SvgExportError> {
-        let source = node.source();
-        if let Some(feature) = first_unsupported(&node_features(node)) {
-            return Err(SvgExportError::Unsupported {
-                node: source,
-                feature,
-                support: feature.support(),
-            });
-        }
-        let id = self.ids.node(source)?;
-        let stack = node.clip().to_outer_first();
-        let applied = parent.len();
-        if stack.len() < applied || stack[..applied] != *parent {
-            return Err(SvgExportError::ClipNotNested { node: source });
-        }
-        // 새로 늘어난 clip만 chain으로 만듭니다(조상 그룹 clip은 상속으로 적용됨).
+        owner: &SvgId,
+        source: StableId,
+        stack: &[&'a ClipShape],
+        applied: usize,
+    ) -> Result<Option<SvgId>, SvgExportError> {
         let mut chain: Option<SvgId> = None;
         for (offset, shape) in stack[applied..].iter().enumerate() {
             let key = (chain.clone(), clip_key(shape));
             let definition = match self.clip_defs.get(&key) {
                 Some(existing) => existing.clone(),
                 None => {
-                    let definition = self.ids.clip(&id, applied + offset + 1)?;
+                    let definition = self.ids.clip(owner, applied + offset + 1)?;
                     write_clip_def(
                         &mut self.defs,
                         definition.as_str(),
@@ -410,6 +471,181 @@ impl<'a> Writer<'a> {
             };
             chain = Some(definition);
         }
+        Ok(chain)
+    }
+
+    /// 경계 하나를 렌더해 `<image>`로 씁니다. 렌더할 pixel이 없으면 아무것도 쓰지 않습니다.
+    fn write_raster_image(
+        &mut self,
+        boundary: &'a RasterBoundary,
+        roots: Vec<RasterRoot<'a>>,
+    ) -> Result<(), SvgExportError> {
+        let first_cause = boundary.causes().first().copied();
+        let Some(node) = first_cause
+            .map(|cause| cause.node.source)
+            .or_else(|| roots.first().map(|root| root.node.source()))
+        else {
+            return Ok(());
+        };
+        if !self.raster.is_available() {
+            // host가 offscreen 렌더를 주지 않으면 래스터 기능을 기록할 수 없습니다(조용히 빼지 않음).
+            if let Some(cause) = first_cause {
+                return Err(SvgExportError::Unsupported {
+                    node: cause.node.source,
+                    feature: cause.feature,
+                    support: cause.feature.support(),
+                });
+            }
+        }
+        let Some(pixels) = boundary.pixels() else {
+            return Ok(());
+        };
+        let background = match (boundary.region(), self.capture.request().background()) {
+            (RasterRegion::Canvas, ExportBackground::Solid(color)) => Some(color),
+            _ => None,
+        };
+        let grid = *self.plan.grid();
+        let request = RasterRequest::new(self.export, boundary, grid, pixels, roots, background);
+        let image = self
+            .raster
+            .rasterize(&request)
+            .and_then(|image| check_output(&image, pixels).map(|()| image))
+            .map_err(|error| SvgExportError::Raster { node, error })?;
+        self.check_size(base64_len(image.bytes().len()).unwrap_or(usize::MAX))?;
+        let [x, y, width, height] = grid.world_rect(&pixels);
+        // f64 → f32는 반올림이며, 유한하지 않으면 값 표기가 거부합니다.
+        let rect = [x as f32, y as f32, width as f32, height as f32];
+        write_raster_image(&mut self.body, rect, &image).map_err(value_error(node))?;
+        self.raster_images += 1;
+        Ok(())
+    }
+
+    /// Subtrees·Canvas 영역을 그룹 하나 안의 `<image>`로 씁니다. 그룹 id는 영역 첫 root의 node id이고, 영역 root들이
+    /// 함께 가진 clip(부모까지 적용된 clip 뒤 공통 부분)을 그룹에 겁니다.
+    fn write_raster_region(
+        &mut self,
+        boundary: &'a RasterBoundary,
+        parent_node: Option<&'a SceneNode>,
+        parent: &[&'a ClipShape],
+    ) -> Result<(), SvgExportError> {
+        let (first_z, last_z, canvas) = match boundary.region() {
+            RasterRegion::Subtrees { first, last, .. } => (first.z, last.z, false),
+            RasterRegion::Canvas => (ZOrder(0), ZOrder(u64::MAX), true),
+            RasterRegion::Content { node } => (node.z, node.z, false),
+        };
+        let in_region = |node: &SceneNode| {
+            node.hit().visibility != Visibility::Hidden && first_z <= node.z() && node.z() <= last_z
+        };
+        let mut nodes: Vec<(&'a SceneNode, usize)> = Vec::new();
+        match parent_node {
+            Some(parent_node) if !canvas => {
+                nodes.extend(
+                    parent_node
+                        .children()
+                        .map(|child| &**child)
+                        .filter(|child| in_region(child))
+                        .map(|child| (child, 0)),
+                );
+            }
+            _ => {
+                nodes.extend(
+                    self.capture
+                        .roots()
+                        .iter()
+                        .filter(|root| in_region(root.node()))
+                        .map(|root| (&**root.node(), root.base_clip_depth())),
+                );
+            }
+        }
+        let Some(&(first, _)) = nodes.first() else {
+            return Ok(());
+        };
+        let id = self.ids.node(first.source())?;
+        let applied = parent.len();
+        let roots = if canvas {
+            // 최상위 root마다 내보내기 범위 밖 clip만 빼고 나머지는 rasterizer가 적용합니다.
+            write_group_open(&mut self.body, id.as_str(), None, Opacity::OPAQUE)
+                .map_err(value_error(first.source()))?;
+            nodes
+                .into_iter()
+                .map(|(node, base)| RasterRoot {
+                    node,
+                    content_only: false,
+                    skip_clip_depth: base,
+                })
+                .collect()
+        } else {
+            let first_stack = first.clip().to_outer_first();
+            let mut common = first_stack.len();
+            for (node, _) in &nodes {
+                let stack = node.clip().to_outer_first();
+                if stack.len() < applied || stack[..applied] != *parent {
+                    return Err(SvgExportError::ClipNotNested {
+                        node: node.source(),
+                    });
+                }
+                common = common.min(
+                    stack
+                        .iter()
+                        .zip(&first_stack)
+                        .take_while(|(a, b)| a == b)
+                        .count(),
+                );
+            }
+            let chain = self.clip_chain(&id, first.source(), &first_stack[..common], applied)?;
+            write_group_open(
+                &mut self.body,
+                id.as_str(),
+                chain.as_ref().map(SvgId::as_str),
+                Opacity::OPAQUE,
+            )
+            .map_err(value_error(first.source()))?;
+            nodes
+                .into_iter()
+                .map(|(node, _)| RasterRoot {
+                    node,
+                    content_only: false,
+                    skip_clip_depth: common,
+                })
+                .collect()
+        };
+        self.groups += 1;
+        self.write_raster_image(boundary, roots)?;
+        write_group_close(&mut self.body);
+        Ok(())
+    }
+
+    /// node 그룹을 열고 내용을 씁니다. 자식에게 넘길 적용 clip을 돌려줍니다.
+    ///
+    /// `content_raster`가 있으면 node 자기 내용을 그 경계(Content 영역) image로 쓰고, 자식은 vector로 둡니다.
+    fn write_node_open(
+        &mut self,
+        node: &'a SceneNode,
+        parent: &[&'a ClipShape],
+        content_raster: Option<&'a RasterBoundary>,
+    ) -> Result<Vec<&'a ClipShape>, SvgExportError> {
+        let source = node.source();
+        // Content 영역 node의 자기 내용 래스터 기능(shadow·image 색공간 override)은 image가 담습니다.
+        let unsupported = node_features(node).into_iter().find(|feature| {
+            let in_image =
+                content_raster.is_some() && raster_scope(*feature) == Some(RasterScope::Content);
+            !(feature.support().is_vector() || in_image)
+        });
+        if let Some(feature) = unsupported {
+            return Err(SvgExportError::Unsupported {
+                node: source,
+                feature,
+                support: feature.support(),
+            });
+        }
+        let id = self.ids.node(source)?;
+        let stack = node.clip().to_outer_first();
+        let applied = parent.len();
+        if stack.len() < applied || stack[..applied] != *parent {
+            return Err(SvgExportError::ClipNotNested { node: source });
+        }
+        // 새로 늘어난 clip만 chain으로 만듭니다(조상 그룹 clip은 상속으로 적용됨).
+        let chain = self.clip_chain(&id, source, &stack, applied)?;
         write_group_open(
             &mut self.body,
             id.as_str(),
@@ -418,7 +654,17 @@ impl<'a> Writer<'a> {
         )
         .map_err(value_error(source))?;
         self.groups += 1;
-        self.write_content(node, &id)?;
+        match content_raster {
+            Some(boundary) => {
+                let root = RasterRoot {
+                    node,
+                    content_only: true,
+                    skip_clip_depth: stack.len(),
+                };
+                self.write_raster_image(boundary, vec![root])?;
+            }
+            None => self.write_content(node, &id)?,
+        }
         Ok(stack)
     }
 

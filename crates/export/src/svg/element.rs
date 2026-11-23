@@ -397,6 +397,27 @@ pub fn write_background(out: &mut String, bounds: Aabb, color: Color) -> Result<
     Ok(())
 }
 
+/// 래스터 경계 PNG(XX.4.2). `rect`는 영역 pixel 상자의 world 상자 `[x, y, 너비, 높이]`이고 PNG pixel 하나가 내보내기
+/// device pixel 하나에 대응하므로 비율을 바꾸지 않습니다.
+pub fn write_raster_image(
+    out: &mut String,
+    rect: [f32; 4],
+    encoded: &EncodedImage,
+) -> Result<(), SvgValueError> {
+    let mut element = String::from("<image");
+    for (name, value) in ["x", "y", "width", "height"].iter().zip(rect) {
+        attr_number(&mut element, name, value)?;
+    }
+    attr(&mut element, "preserveAspectRatio", "none");
+    element.push_str(" href=\"data:");
+    element.push_str(encoded.media().mime());
+    element.push_str(";base64,");
+    push_base64(&mut element, encoded.bytes());
+    element.push_str("\"/>\n");
+    out.push_str(&element);
+    Ok(())
+}
+
 /// image content(픽셀). 칠하기 layer는 호출자가 이 뒤(위)에 씁니다.
 ///
 /// 바깥 `<svg>`가 배치 상자이고 viewBox는 image pixel 좌표입니다. crop이 전체가 아니면 안쪽

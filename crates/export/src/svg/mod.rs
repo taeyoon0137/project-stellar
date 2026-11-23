@@ -21,8 +21,12 @@ pub mod writer;
 /// 부분 래스터화 경계 planner (XX.4.1).
 pub mod raster;
 
+/// 래스터 경계 offscreen 렌더 요청과 host rasterizer 연결 지점 (XX.4.2).
+pub mod rasterize;
+
 /// Text glyph run → outline path 변환 (XX.3.2).
 pub mod text;
 
 pub use raster::{plan_raster, RasterBoundary, RasterCause, RasterPlan, RasterRegion};
-pub use writer::{write_svg, SvgDocument, SvgExportError, SvgWriteOptions};
+pub use rasterize::{ExportRasterizer, NoRasterizer, RasterRequest, RasterRoot, RasterizeError};
+pub use writer::{write_svg, write_svg_with, SvgDocument, SvgExportError, SvgWriteOptions};

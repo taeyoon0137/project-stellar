@@ -22,7 +22,7 @@ use crate::capture::{
     AssetRevision, EncodedImage, FontRevision, ImageMedia, ResourcePins, SceneSource,
 };
 use crate::request::ExportSource;
-use crate::svg::{write_svg, SvgExportError, SvgWriteOptions};
+use crate::svg::{write_svg, ExportRasterizer, NoRasterizer, SvgExportError, SvgWriteOptions};
 use crate::test_fixtures as fx;
 use crate::text::{
     FontFileHash, GlyphOutline, GlyphOutlineKey, GlyphRun, GlyphVariations, PlacedGlyph, RunSize,
@@ -403,6 +403,7 @@ fn run_preflight(
             font_fallbacks: fallbacks,
             assets: &assets(),
             text: &text(),
+            rasterizer: &NoRasterizer,
         },
     )
     .unwrap()
@@ -554,6 +555,7 @@ fn unvalidated_profile_requires_confirmation_and_profile_must_match() {
             font_fallbacks: &[],
             assets: &assets(),
             text: &text(),
+            rasterizer: &NoRasterizer,
         },
     )
     .unwrap_err();
@@ -719,4 +721,56 @@ fn glyphs_without_outlines_block_svg_but_not_png() {
         assert!(png.glyph_blockers().is_empty());
         assert!(png.proceed(None).is_ok());
     }
+}
+
+/// 렌더를 제공한다고만 알리는 rasterizer(진단은 렌더하지 않음).
+struct Offscreen;
+
+impl ExportRasterizer for Offscreen {
+    fn is_available(&self) -> bool {
+        true
+    }
+
+    fn rasterize(
+        &self,
+        _: &crate::svg::RasterRequest<'_>,
+    ) -> Result<crate::capture::EncodedImage, crate::svg::RasterizeError> {
+        Err(crate::svg::RasterizeError::Unavailable)
+    }
+}
+
+#[test]
+fn rasterizers_lift_raster_blockers_and_skip_rasterized_glyphs() {
+    // XX.4.2: offscreen 렌더가 있으면 래스터 기능은 차단이 아니고, 래스터 경계 안 Text는 glyph outline을 보지 않습니다.
+    let run = |snapshot: SceneSnapshot, rasterizer: &dyn ExportRasterizer| {
+        ExportPreflight::run(
+            svg_capture(snapshot),
+            &PreflightInput {
+                capabilities: &validated(Vec::new()),
+                font_fallbacks: &[],
+                assets: &assets(),
+                text: &text(),
+                rasterizer,
+            },
+        )
+        .unwrap()
+    };
+    // shadow 있는 color glyph Text(래스터 경계).
+    let snapshot = || text_scene(&[(21, KEY_COLOR, true)]);
+    let without = run(snapshot(), &NoRasterizer);
+    assert_eq!(
+        without.blockers(),
+        &[FormatBlocker {
+            node: fx::node_id(21),
+            feature: SvgFeature::DropShadow,
+            support: SvgFeature::DropShadow.support(),
+        }]
+    );
+    let with = run(snapshot(), &Offscreen);
+    assert!(with.blockers().is_empty());
+    assert!(with.glyph_blockers().is_empty());
+    assert!(with.proceed(None).is_ok());
+    // 같은 color glyph Text가 vector로 남으면 여전히 glyph 차단입니다.
+    let vector = run(text_scene(&[(21, KEY_COLOR, false)]), &Offscreen);
+    assert_eq!(vector.glyph_blockers().len(), 1);
 }

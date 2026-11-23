@@ -33,6 +33,8 @@ use crate::request::{
 use crate::test_fixtures::{self as fx, Basic};
 use crate::text::NoText;
 
+/// 부분 래스터화 테스트 (XX.4.2).
+mod raster;
 /// Text outline 테스트 (XX.3.2).
 mod text;
 mod vector;
