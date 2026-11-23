@@ -2,7 +2,11 @@
 
 use super::*;
 use crate::command::test_fixtures::{sid, small_model};
+use crate::command::Command;
+use crate::id::{CommandId, CommandOrigin};
 use crate::lock::lease::Lease;
+use crate::request::CommandRequest;
+use crate::state::DocumentState;
 
 fn table(model: &DocumentModel) -> LeaseTable {
     let mut table = LeaseTable::new();
@@ -14,6 +18,21 @@ fn table(model: &DocumentModel) -> LeaseTable {
         })
         .unwrap();
     table
+}
+
+fn renamed(model: &DocumentModel, node: u64, name: &str) -> DocumentModel {
+    let mut state = DocumentState::new(
+        DocumentModel::from_records(model.to_records().unwrap())
+            .unwrap()
+            .0,
+    );
+    state
+        .execute(&CommandRequest::at(
+            &state,
+            Command::rename_node(sid(node), name),
+        ))
+        .unwrap();
+    state.into_model()
 }
 
 #[test]
@@ -38,4 +57,40 @@ fn overlap_is_lease_subtree_or_moved_ancestor() {
         }]
     )
     .is_empty());
+}
+
+#[test]
+fn partition_keeps_local_agent_changes_and_applies_independent_external_changes() {
+    let base = small_model();
+    let base_records = base.to_records().unwrap();
+    // 창: 에이전트가 13 이름을 바꿈(저장 전).
+    let current = renamed(&base, 13, "agent");
+    // 외부: 12 이름을 바꿈.
+    let incoming = renamed(&base, 12, "external").to_records().unwrap();
+    let partition = partition_external(&base_records, &current, &incoming).unwrap();
+    assert_eq!(partition.applicable.changes.len(), 1);
+    assert!(partition.divergent.is_empty());
+    assert_eq!(partition.local_only, vec![RecordTarget::Node(sid(13))]);
+
+    let mut state = DocumentState::new(current);
+    let tx = partition
+        .applicable
+        .clone()
+        .into_transaction(CommandId::from_stable_id(sid(7000)), state.revision());
+    assert_eq!(tx.origin, CommandOrigin::System);
+    state.execute_transaction(&tx).unwrap();
+    assert_eq!(
+        state.model().record(sid(12)).unwrap().display_name,
+        "external"
+    );
+    assert_eq!(state.model().record(sid(13)).unwrap().display_name, "agent");
+
+    // 외부도 13을 바꾸면 덮어쓰지 않고 reconciliation 대상입니다.
+    let both = renamed(&renamed(&base, 12, "external"), 13, "external")
+        .to_records()
+        .unwrap();
+    let current = renamed(&base, 13, "agent");
+    let partition = partition_external(&base_records, &current, &both).unwrap();
+    assert_eq!(partition.divergent, vec![RecordTarget::Node(sid(13))]);
+    assert_eq!(partition.applicable.changes.len(), 1);
 }

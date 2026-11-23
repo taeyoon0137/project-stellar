@@ -2,9 +2,11 @@
 
 use super::*;
 use crate::agent_history::SessionOrigin;
+use crate::provenance::DisplayState;
 use crate::provenance_fixture::world::{World, L, S};
 use crate::provenance_fixture::*;
 use stellar_ops::commands::command::Command;
+use stellar_ops::commands::id::CommandOrigin;
 use stellar_ops::commands::request::CommandRequest;
 
 /// 원본 문서에 이름 변경을 적용한 외부 원본.
@@ -68,6 +70,30 @@ fn external_batch_semantic_diff_and_lease_overlap() {
         Some(&BTreeSet::from([sid(14)])),
         "lease root 아래 자손도 subtree 안"
     );
+}
+
+#[test]
+fn non_overlapping_external_change_is_applied_keeping_agent_work() {
+    let mut world = World::new(SessionOrigin::ExternalClient);
+    let base = state().model().to_records().unwrap();
+    world.apply(100, vec![Command::rename_node(sid(13), "agent")]);
+    let decision = respond(&mut world, &base, &external(&[(12, "external")]));
+    assert!(decision.ended.is_empty());
+    assert!(world.sessions.is_active(session(S)), "세션 유지");
+    assert_eq!(world.table().len(), 1, "lease 유지");
+    let tx = decision.apply.expect("외부 변경 반영");
+    assert_eq!(tx.origin, CommandOrigin::System);
+    let applied = world.history.doc.execute_transaction(&tx).unwrap();
+    world
+        .provenance
+        .observe(&applied.changes, tx.origin, world.history.doc.model());
+    assert_eq!(name(&world.history.doc, 12), "external");
+    assert_eq!(name(&world.history.doc, 13), "agent", "agent 작업 유지");
+    assert_eq!(
+        world.provenance.batches()[0].display(),
+        DisplayState::PendingReview
+    );
+    assert!(decision.divergent.is_empty());
 }
 
 #[test]
