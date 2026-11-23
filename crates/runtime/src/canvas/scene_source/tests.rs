@@ -1,4 +1,5 @@
 //! 문서 → scene source 변환 테스트 (XI.2.1, XI.2.4, XI.2.5, XII.10.30).
+#![cfg(test)]
 
 use super::*;
 use crate::window_session::test_fixtures::{sample_document, sid};
