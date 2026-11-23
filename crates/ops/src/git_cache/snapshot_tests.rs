@@ -256,3 +256,36 @@ fn measure_snapshot_preparation_on_a_20k_node_document() {
         println!("{round} | {build:.1} ms | {open_cold:.1} ms | {reuse:.1} ms | {open_warm:.1} ms");
     }
 }
+
+#[test]
+#[ignore = "실측(release로 실행)"]
+fn measure_cache_gc_on_a_20k_node_document() {
+    // 앱 유휴 GC는 document thread job 안에서 collect_garbage를 부릅니다(ADR-0138 결정 2). 그 시간이 document
+    // thread를 막는 시간입니다.
+    use crate::test_support::save_documents;
+    use stellar_project::cache::collect_garbage;
+    use stellar_storage::gc::retention::RetentionPolicy;
+    let dir = TempDir::new("snapshot-store-gc-measure");
+    let root = dir.path.join("project");
+    scaffold_project(&root);
+    let base = large_document(20_000);
+    let records = base.to_records().unwrap();
+    let mut model = base;
+    let generations = 6;
+    for n in 0..generations {
+        let id = records.nodes[n * 1_000].id;
+        model.set_display_name(id, format!("g{n}")).unwrap();
+        save_documents(&root, &[&model]);
+    }
+    let policy = RetentionPolicy {
+        keep_recent_generations: 1,
+        grace_period_seconds: 0,
+    };
+    let later = || SystemTime::now() + Duration::from_secs(1);
+    let (report, gc_ms) = time(|| collect_garbage(&root, &policy, later()).unwrap());
+    let (again, idle_ms) = time(|| collect_garbage(&root, &policy, later()).unwrap());
+    println!(
+        "세대 {generations}: 정리 {gc_ms:.1} ms(지운 파일 {}), 지울 것 없는 정리 {idle_ms:.1} ms(지운 파일 {})",
+        report.deleted, again.deleted
+    );
+}
