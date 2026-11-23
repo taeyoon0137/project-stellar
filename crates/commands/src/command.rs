@@ -340,7 +340,7 @@ pub enum Command {
     /// 명시 layout longhand 두기 (SD.4).
     SetLayoutProperty(crate::style_defaults::SetLayoutProperty),
     /// Component Context 편집(XXX.7.8, ADR-0099).
-    EditContext(crate::context::ContextCommand),
+    EditContext(Box<crate::context::ContextCommand>),
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -477,7 +477,9 @@ impl Command {
             }
             Command::UnsetProperty(command) => command.invert(model),
             Command::SetLayoutProperty(command) => command.invert(model),
-            Command::EditContext(command) => command.invert(model).map(Command::EditContext),
+            Command::EditContext(command) => command
+                .invert(model)
+                .map(|inverse| Command::EditContext(Box::new(inverse))),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
         }

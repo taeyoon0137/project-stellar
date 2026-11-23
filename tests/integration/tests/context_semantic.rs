@@ -26,7 +26,7 @@ fn snapshot(
     let mut builder = SnapshotBuilder::new();
     let records = model.to_records().unwrap();
     builder.add_document(&records).unwrap();
-    builder.add_component_library(sid(DOC), &library).unwrap();
+    builder.add_component_library(sid(DOC), library).unwrap();
     builder.add_context(sid(DOC), set).unwrap();
     // 소비: (expression node seed, owner node, key) — owner node 아래 expression node가 key를 읽습니다.
     let entries: Vec<ExpressionNodeEntry> = reads

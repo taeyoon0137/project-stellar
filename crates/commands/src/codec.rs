@@ -428,9 +428,8 @@ fn decode_payload(kind: CommandKind, input: &mut Reader<'_>) -> Result<Command, 
             crate::style_defaults::SetLayoutProperty::decode_from(input)
                 .map(Command::SetLayoutProperty)
         }
-        CommandKind::EditContext => {
-            crate::context::ContextCommand::decode_from(input).map(Command::EditContext)
-        }
+        CommandKind::EditContext => crate::context::ContextCommand::decode_from(input)
+            .map(|command| Command::EditContext(Box::new(command))),
         #[cfg(test)]
         CommandKind::TestProbe => Ok(Command::TestProbe(crate::command::TestProbe {
             node: input.id()?,

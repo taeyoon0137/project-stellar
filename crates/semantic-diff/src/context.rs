@@ -157,7 +157,7 @@ impl SnapshotBuilder {
     }
 }
 
-fn bytes<'a>(object: &'a SemanticObject, key: PropertyKey) -> Option<&'a [u8]> {
+fn bytes(object: &SemanticObject, key: PropertyKey) -> Option<&[u8]> {
     match object.property(&object.path(&[key]))? {
         SemanticValue::Bytes(bytes) => Some(bytes),
         _ => None,

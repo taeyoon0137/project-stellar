@@ -49,9 +49,9 @@ fn deleting_a_consumed_key_orphans_only_its_consumers_and_inverse_restores_resol
         },
     ];
     let mut store = BindingStore::new(bindings(&consumers));
-    let command = Command::EditContext(ContextCommand {
+    let command = Command::EditContext(Box::new(ContextCommand {
         edit: ContextEdit::DeleteKey { key: sid(D) },
-    });
+    }));
     let inverse = command.invert(&model).unwrap();
     {
         let mut ctx = EditContext::new(&mut model);

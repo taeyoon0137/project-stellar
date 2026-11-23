@@ -619,7 +619,7 @@ pub(crate) fn random_edit(
     };
     let command = ContextCommand { edit };
     command.validate(model).ok()?;
-    Some(crate::command::Command::EditContext(command))
+    Some(crate::command::Command::EditContext(Box::new(command)))
 }
 
 #[cfg(test)]
@@ -642,7 +642,7 @@ mod tests {
     }
 
     fn run(model: &mut DocumentModel, edit: ContextEdit) -> Command {
-        let command = Command::EditContext(ContextCommand { edit });
+        let command = Command::EditContext(Box::new(ContextCommand { edit }));
         let inverse = command.invert(model).expect("invert");
         apply(model, &command);
         inverse
@@ -708,7 +708,7 @@ mod tests {
             },
         ];
         for edit in edits {
-            let command = Command::EditContext(ContextCommand { edit: edit.clone() });
+            let command = Command::EditContext(Box::new(ContextCommand { edit: edit.clone() }));
             assert_eq!(decode_command(&encode_command(&command)).unwrap(), command);
             let inverse = run(&mut model, edit.clone());
             assert_ne!(model.context(), &original, "{edit:?}");
@@ -772,17 +772,17 @@ mod tests {
             ),
         ];
         for edit in bad {
-            let command = Command::EditContext(ContextCommand { edit: edit.clone() });
+            let command = Command::EditContext(Box::new(ContextCommand { edit: edit.clone() }));
             assert!(command.validate(&model).is_err(), "{edit:?}");
         }
         // 한 context에서 적용한 편집은 rollback으로 되돌아갑니다.
         let before = model.context().clone();
         let mut ctx = EditContext::new(&mut model);
-        Command::EditContext(ContextCommand {
+        Command::EditContext(Box::new(ContextCommand {
             edit: ContextEdit::DeleteProvision {
                 provision: sid(P_ROOT_N),
             },
-        })
+        }))
         .apply(&mut ctx)
         .unwrap();
         ctx.rollback().unwrap();
