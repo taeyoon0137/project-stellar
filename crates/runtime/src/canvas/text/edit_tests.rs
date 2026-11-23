@@ -477,3 +477,68 @@ fn style_on_a_composition_equal_to_the_replaced_text_writes_only_the_style() {
     assert_eq!(entries(&history), 1);
     assert!(editor.buffer().composition().is_none());
 }
+
+/// 기록이 실패한 확정 입력은 buffer를 되돌립니다. 되돌리지 않으면 편집기 본문이 문서와 어긋나 다음 입력의 범위가
+/// 잘못된 위치를 가리킵니다.
+#[test]
+fn failed_record_restores_the_buffer_and_drops_the_pending_style() {
+    let (mut history, mut doc) = rig(true);
+    let clock = ManualClock::new(0);
+    let mut editor = CanvasTextEditor::begin_existing(&doc, sid(TEXT), None, 5).unwrap();
+    // caret뿐이라 표에 없는 번호도 다음 입력까지 미뤄지고, 그 입력의 transaction이 거부됩니다.
+    assert_eq!(
+        editor
+            .apply_style(&mut history, &mut doc, Some(9), id(1))
+            .unwrap(),
+        StyleOutcome::Pending
+    );
+    assert!(editor
+        .insert(&mut history, &mut doc, "z", id(2), &clock)
+        .is_err());
+    assert_eq!(editor.buffer().text(), "abcd");
+    assert_eq!(editor.buffer().selection(), EditSelection::caret(4));
+    assert_eq!(content(&doc, sid(TEXT)).as_deref(), Some("abcd"));
+    assert_eq!(entries(&history), 0);
+    // 실패한 style은 버려져 다음 입력은 기본 style로 기록됩니다.
+    assert!(editor
+        .insert(&mut history, &mut doc, "y", id(3), &clock)
+        .unwrap());
+    assert_eq!(content(&doc, sid(TEXT)).as_deref(), Some("abcdy"));
+    assert_eq!(entries(&history), 1);
+    // 새 Text의 첫 확정이 실패해도 아직 만들지 않은 상태로 남습니다.
+    let mut fresh =
+        CanvasTextEditor::begin_new(&doc, placement(TextWidth::Auto), sid(31), sid(32), 6).unwrap();
+    fresh.set_marked(&doc, "ㅎ", ScalarRange::caret(1)).unwrap();
+    fresh
+        .apply_style(&mut history, &mut doc, Some(9), id(4))
+        .unwrap();
+    assert!(fresh
+        .commit_composition(&mut history, &mut doc, id(5), &clock)
+        .is_err());
+    assert!(!fresh.exists());
+    assert!(fresh.buffer().composition().is_some());
+    assert!(!doc.model().contains(sid(31)));
+    assert!(fresh
+        .commit_composition(&mut history, &mut doc, id(6), &clock)
+        .unwrap());
+    assert_eq!(content(&doc, sid(31)).as_deref(), Some("ㅎ"));
+}
+
+#[test]
+fn text_locked_during_editing_stops_further_input() {
+    use stellar_commands::property::SetProperty;
+    let (mut history, mut doc) = rig(true);
+    let clock = ManualClock::new(0);
+    let mut editor = CanvasTextEditor::begin_existing(&doc, sid(TEXT), None, 5).unwrap();
+    // 다른 경로(레이어 패널 등)가 편집 중인 Text를 잠급니다.
+    let lock = CommandTransaction::new(id(1), CommandOrigin::User).with_command(
+        doc.revision(),
+        Command::SetProperty(SetProperty::locked(sid(TEXT), true)),
+    );
+    history.record_document(&mut doc, &lock, None).unwrap();
+    assert_eq!(
+        editor.insert(&mut history, &mut doc, "z", id(2), &clock),
+        Err(TextEditError::NotEditable)
+    );
+    assert_eq!(content(&doc, sid(TEXT)).as_deref(), Some("abcd"));
+}

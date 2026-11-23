@@ -52,6 +52,10 @@
   거부, `typography_change_during_editing_is_one_transaction`, `style_before_creation_is_part_of_the_creating_entry`,
   `style_on_a_composition_equal_to_the_replaced_text_writes_only_the_style`), 잠금 거부(`locked_text_and_locked_parent_are_not_editable`).
 - buffer: grapheme 삭제(ZWJ emoji, 결합 문자, 국기), 단어·문단 이동, 빈 marked text 취소, 외부 변경 뒤 caret 위치.
+- 검토 보완(2026-11-24): 기록이 실패한 확정 입력은 buffer를 되돌리고 실패한 다음 입력 style을 버립니다
+  (`failed_record_restores_the_buffer_and_drops_the_pending_style`). 편집 중 다른 경로로 잠긴 Text는 다음 입력을
+  거부합니다(`text_locked_during_editing_stops_further_input`). buffer의 grapheme·단어 경계 계산을 본문 길이에
+  선형으로 바꿨습니다(이전에는 경계마다 앞부분을 다시 세어 제곱 비용이었습니다).
 - 남은 경고 0.
 
 ## 성능

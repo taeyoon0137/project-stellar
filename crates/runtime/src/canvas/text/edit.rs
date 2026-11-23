@@ -396,7 +396,8 @@ impl CanvasTextEditor {
         &self.buffer
     }
 
-    /// 다른 경로(undo·다른 창)로 문서가 바뀌었으면 본문을 다시 읽습니다. 대상이 사라졌으면 [`TextEditError::Stale`].
+    /// 다른 경로(undo·다른 창)로 문서가 바뀌었으면 본문을 다시 읽습니다. 대상이 사라졌으면 [`TextEditError::Stale`],
+    /// 잠겼으면 [`TextEditError::NotEditable`]입니다.
     fn sync(&mut self, doc: &DocumentState) -> Result<(), TextEditError> {
         if doc.revision() == self.revision {
             return Ok(());
@@ -405,6 +406,9 @@ impl CanvasTextEditor {
         match self.target {
             Target::Node { .. } => {
                 let payload = text_payload(doc.model(), self.node).ok_or(TextEditError::Stale)?;
+                // 편집 중 다른 경로로 잠기면 더 쓰지 않습니다(ADR-0118 결정 2.8).
+                edit_permission(doc.model(), self.node, EditIntent::Edit)
+                    .map_err(|_| TextEditError::NotEditable)?;
                 if payload.content() != self.buffer.text() {
                     self.buffer.reset_text(payload.content());
                 }
@@ -503,18 +507,26 @@ impl CanvasTextEditor {
         Ok(true)
     }
 
+    /// buffer 편집 하나를 적용하고 확정 입력이면 기록합니다. 기록이 실패하면(잠금, 표에 없는 style 번호 등) buffer를
+    /// 편집 전으로 되돌려 문서 본문과 어긋나지 않게 하고, 실패한 transaction에 들어 있던 다음 입력 style도 버립니다.
     fn confirmed<C: MonotonicClock>(
         &mut self,
         history: &mut WindowHistory,
         doc: &mut DocumentState,
-        edit: Option<TextEdit>,
+        edit: impl FnOnce(&mut TextEditBuffer) -> Option<TextEdit>,
         id: CommandId,
         clock: &C,
     ) -> Result<bool, TextEditError> {
-        match edit {
-            Some(edit) => self.record(history, doc, edit, id, clock),
-            None => Ok(false),
+        let before = self.buffer.clone();
+        let Some(edit) = edit(&mut self.buffer) else {
+            return Ok(false);
+        };
+        let recorded = self.record(history, doc, edit, id, clock);
+        if recorded.is_err() {
+            self.buffer = before;
+            self.typing_style = None;
         }
+        recorded
     }
 
     /// 확정 입력(타이핑·붙여넣기·`insertText`). 조합 중이면 조합을 이 문자열로 확정합니다. 기록했으면 `true`.
@@ -527,8 +539,7 @@ impl CanvasTextEditor {
         clock: &C,
     ) -> Result<bool, TextEditError> {
         self.sync(doc)?;
-        let edit = self.buffer.insert(text);
-        self.confirmed(history, doc, edit, id, clock)
+        self.confirmed(history, doc, |b| b.insert(text), id, clock)
     }
 
     /// Backspace.
@@ -540,8 +551,7 @@ impl CanvasTextEditor {
         clock: &C,
     ) -> Result<bool, TextEditError> {
         self.sync(doc)?;
-        let edit = self.buffer.delete_backward();
-        self.confirmed(history, doc, edit, id, clock)
+        self.confirmed(history, doc, TextEditBuffer::delete_backward, id, clock)
     }
 
     /// Delete.
@@ -553,8 +563,7 @@ impl CanvasTextEditor {
         clock: &C,
     ) -> Result<bool, TextEditError> {
         self.sync(doc)?;
-        let edit = self.buffer.delete_forward();
-        self.confirmed(history, doc, edit, id, clock)
+        self.confirmed(history, doc, TextEditBuffer::delete_forward, id, clock)
     }
 
     /// 조합 문자열 갱신(`setMarkedText`). 문서·history는 바뀌지 않고 [`Self::preview`]만 바뀝니다.
@@ -579,9 +588,8 @@ impl CanvasTextEditor {
         clock: &C,
     ) -> Result<bool, TextEditError> {
         self.sync(doc)?;
-        let edit = self.buffer.commit_composition();
         self.sequence += 1;
-        self.confirmed(history, doc, edit, id, clock)
+        self.confirmed(history, doc, TextEditBuffer::commit_composition, id, clock)
     }
 
     /// caret·선택 이동(기록 없음). 조합 중이면 입력기 몫이라 `false`입니다.
