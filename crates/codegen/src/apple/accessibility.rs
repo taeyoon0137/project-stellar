@@ -44,15 +44,20 @@ use crate::facet::Facet;
 use crate::ir::snapshot::id_hex;
 use crate::ir::{CodegenIr, IrAccessibilityEntry, ResolvedBinding};
 
+/// 상태 변수의 Swift 타입.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SwiftType {
+pub(crate) enum SwiftType {
+    /// `String`.
     String,
+    /// `Bool`.
     Bool,
+    /// `Double`.
     Double,
 }
 
 impl SwiftType {
-    fn name(self) -> &'static str {
+    /// Swift 타입 이름.
+    pub(crate) fn name(self) -> &'static str {
         match self {
             SwiftType::String => "String",
             SwiftType::Bool => "Bool",
@@ -100,10 +105,60 @@ enum Op {
     Children(Vec<StableId>),
 }
 
+/// 생성한 접근성 코드를 view에 붙이는 데 필요한 정보(node 하나).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AccessibilityHook {
+    /// 매개변수로 받는 상태 변수(StableId 오름차순).
+    pub states: Vec<StableId>,
+    /// `onAction`을 받는지.
+    pub action: bool,
+    /// `onStateChange`를 받는지(AppKit).
+    pub set_state: bool,
+    /// `views` 표를 받는지(AppKit).
+    pub children: bool,
+}
+
+/// 상태 변수 → (Swift 식별자, 타입). Swift로 표현할 수 없는 타입의 상태는 빠집니다. 접근성 코드와 view 코드가
+/// 같은 이름을 씁니다.
+pub(crate) type StateNames = BTreeMap<StableId, (String, SwiftType)>;
+
+/// IR 상태 변수의 Swift 이름과 타입.
+pub(crate) fn state_names(ir: &CodegenIr) -> StateNames {
+    let typed: Vec<(StableId, &str, Option<SwiftType>)> = ir
+        .states
+        .iter()
+        .map(|state| {
+            let ty = match state.initial {
+                TypedValue::String(_) => Some(SwiftType::String),
+                TypedValue::Boolean(_) => Some(SwiftType::Bool),
+                TypedValue::Number(_) => Some(SwiftType::Double),
+                _ => None,
+            };
+            (state.id, state.name.as_str(), ty)
+        })
+        .collect();
+    let names = identifiers(typed.iter().map(|(_, name, _)| *name), "state");
+    typed
+        .iter()
+        .zip(names)
+        .filter_map(|((id, _, ty), name)| ty.map(|ty| (*id, (name, ty))))
+        .collect()
+}
+
+fn hook(ops: &[Op]) -> AccessibilityHook {
+    let (states, action, set_state, children) = uses(ops);
+    AccessibilityHook {
+        states: states.into_iter().collect(),
+        action,
+        set_state,
+        children,
+    }
+}
+
 struct Ctx<'a> {
     ir: &'a CodegenIr,
     apple: AppleProfile,
-    states: BTreeMap<StableId, (String, SwiftType)>,
+    states: StateNames,
     notes: &'a mut Vec<AppleNote>,
 }
 
@@ -735,46 +790,30 @@ fn appkit_function(ctx: &mut Ctx<'_>, node: StableId, ops: &[Op]) -> String {
     out
 }
 
-/// 접근성 Swift 소스(SwiftUI modifier 목록 또는 AppKit 함수 enum).
+/// 접근성 Swift 소스(SwiftUI modifier 목록 또는 AppKit 함수 enum)와 node별 hook(IR node index 순, 코드를 만들지
+/// 않은 node는 `None`).
 pub(crate) fn accessibility_source(
     ir: &CodegenIr,
     dialect: AppleDialect,
     apple: AppleProfile,
     prefix: &str,
     notes: &mut Vec<AppleNote>,
-) -> String {
-    let typed: Vec<(StableId, &str, Option<SwiftType>)> = ir
-        .states
-        .iter()
-        .map(|state| {
-            let ty = match state.initial {
-                TypedValue::String(_) => Some(SwiftType::String),
-                TypedValue::Boolean(_) => Some(SwiftType::Bool),
-                TypedValue::Number(_) => Some(SwiftType::Double),
-                _ => None,
-            };
-            (state.id, state.name.as_str(), ty)
-        })
-        .collect();
-    let names = identifiers(typed.iter().map(|(_, name, _)| *name), "state");
-    let states = typed
-        .iter()
-        .zip(names)
-        .filter_map(|((id, _, ty), name)| ty.map(|ty| (*id, (name, ty))))
-        .collect();
+) -> (String, Vec<Option<AccessibilityHook>>) {
     let mut ctx = Ctx {
         ir,
         apple,
-        states,
+        states: state_names(ir),
         notes,
     };
     let ops = plan(&mut ctx);
+    let mut hooks = vec![None; ir.nodes.len()];
     let mut out = String::new();
     match dialect {
         AppleDialect::SwiftUi => {
             for (index, node_ops) in ops.iter().enumerate() {
                 let code = swiftui_modifier(&mut ctx, ir.nodes[index].id, node_ops, prefix);
                 if !code.is_empty() {
+                    hooks[index] = Some(hook(node_ops));
                     out.push('\n');
                     out.push_str(&code);
                 }
@@ -785,6 +824,7 @@ pub(crate) fn accessibility_source(
             for (index, node_ops) in ops.iter().enumerate() {
                 let code = appkit_function(&mut ctx, ir.nodes[index].id, node_ops);
                 if !code.is_empty() {
+                    hooks[index] = Some(hook(node_ops));
                     functions.push(code);
                 }
             }
@@ -793,5 +833,5 @@ pub(crate) fn accessibility_source(
             out.push_str("}\n");
         }
     }
-    out
+    (out, hooks)
 }

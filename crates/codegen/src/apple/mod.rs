@@ -9,6 +9,10 @@
 //!   `<prefix>Accessibility.apply<StableId 16진>(to:)` 함수입니다([`accessibility`] 표). 컨트롤 자체의 생성(XXII.3.1)과
 //!   layout(XXII.3.2)은 이 module 범위 밖이며, 생성한 modifier·함수를 그 view에 붙입니다.
 //!
+//! [`export_apple_ui`]는 같은 소스에 view tree를 더합니다(XXII.3.1·XXII.3.2). SwiftUI는 `struct <prefix>View: View`,
+//! AppKit은 `final class <prefix>View: NSView`이고, Control contract와 CSS layout longhand를 [`layout`] 규칙으로
+//! 낮추며 node마다 위 접근성 modifier·함수를 붙입니다.
+//!
 //! 같은 IR과 옵션은 항상 같은 bytes를 만듭니다.
 
 use std::fmt;
@@ -29,10 +33,36 @@ pub mod color;
 /// 접근성 의미 → SwiftUI·AppKit API.
 pub mod accessibility;
 
+/// Apple·Android 공용 native 구조·layout 분석.
+pub mod native;
+
+/// CSS layout longhand → Apple layout 규칙.
+pub mod layout;
+
+/// SwiftUI view tree.
+mod swiftui;
+
+/// AppKit view tree.
+mod appkit;
+
+/// Context → SwiftUI Environment 값 출력 형태 (XXII.3.4 일부).
+pub mod context;
+
+/// 저장 View 투영 → CodegenIR 입력(CLI·MCP용, Apple·Android 공용).
+pub mod native_input;
+
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) mod ui_tests;
+
+#[cfg(test)]
+pub(crate) mod layout_tests;
+
 pub use color::{ColorApi, ColorNote};
+pub use layout::LayoutFinding;
+pub use native::Control;
 
 /// 출력 dialect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -88,6 +118,27 @@ pub enum AppleNoteKind {
     ComponentProperty(Facet),
     /// profile 최소 OS에서 쓸 수 없는 API라 쓰지 않았습니다.
     Unavailable(Facet),
+    /// Control·element 출력 노트(XXII.3.1).
+    Control(ControlNote),
+    /// layout 규칙 진단(XXII.3.2).
+    Layout(LayoutFinding),
+}
+
+/// Control·element 출력 노트.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ControlNote {
+    /// 이 profile에서 Unsupported인 contract라 contract 없는 container로 냈습니다.
+    ContractUnsupported(Control),
+    /// native control이 자식 view를 그리지 않아 자식을 내지 않았습니다.
+    ChildrenIgnored(Control),
+    /// Modal 표시 상태가 IR에 없어 내용을 그 자리에 냈습니다.
+    ModalInPlace,
+    /// 이미지 원본이 IR에 없어 빈 view로 냈습니다(SF Symbol 속성만 읽음).
+    ImageSourceUnavailable,
+    /// 도형 기하가 IR에 없어 빈 view로 냈습니다.
+    ShapeGeometryUnavailable,
+    /// 펼치지 않은 component instance라 빈 view로 냈습니다.
+    InstanceUnexpanded,
 }
 
 /// 노트.
@@ -150,8 +201,14 @@ pub(crate) fn apple_profile(ir: &CodegenIr) -> Option<AppleProfile> {
     }
 }
 
-/// 접근성 의미와 색공간을 Apple API로 내보냅니다.
-pub fn export_apple(ir: &CodegenIr, options: &AppleOptions) -> Result<AppleExport, AppleError> {
+struct Prepared {
+    apple: AppleProfile,
+    source: String,
+    hooks: Vec<Option<accessibility::AccessibilityHook>>,
+    notes: Vec<AppleNote>,
+}
+
+fn prepare(ir: &CodegenIr, options: &AppleOptions) -> Result<Prepared, AppleError> {
     let apple = apple_profile(ir).ok_or(AppleError::NotAppleProfile)?;
     if options.dialect == AppleDialect::AppKit && apple.platform != ApplePlatform::MacOs {
         return Err(AppleError::DialectUnavailable {
@@ -177,14 +234,63 @@ pub fn export_apple(ir: &CodegenIr, options: &AppleOptions) -> Result<AppleExpor
     };
     source.push('\n');
     source.push_str(&color::colors_enum(ir, api, prefix, &mut notes));
-    source.push_str(&accessibility::accessibility_source(
-        ir,
-        options.dialect,
+    let (code, hooks) =
+        accessibility::accessibility_source(ir, options.dialect, apple, prefix, &mut notes);
+    source.push_str(&code);
+    Ok(Prepared {
         apple,
-        prefix,
-        &mut notes,
-    ));
+        source,
+        hooks,
+        notes,
+    })
+}
+
+fn finish(source: String, mut notes: Vec<AppleNote>) -> AppleExport {
     notes.sort();
     notes.dedup();
-    Ok(AppleExport { source, notes })
+    AppleExport { source, notes }
+}
+
+/// 접근성 의미와 색공간을 Apple API로 내보냅니다.
+pub fn export_apple(ir: &CodegenIr, options: &AppleOptions) -> Result<AppleExport, AppleError> {
+    let prepared = prepare(ir, options)?;
+    Ok(finish(prepared.source, prepared.notes))
+}
+
+/// 색·접근성에 view tree(Control contract·layout·상태)를 더한 Swift 소스를 내보냅니다(XXII.3.1·XXII.3.2).
+pub fn export_apple_ui(ir: &CodegenIr, options: &AppleOptions) -> Result<AppleExport, AppleError> {
+    let Prepared {
+        apple,
+        mut source,
+        hooks,
+        mut notes,
+    } = prepare(ir, options)?;
+    let analysis = native::analyze(ir);
+    let states = accessibility::state_names(ir);
+    match options.dialect {
+        AppleDialect::SwiftUi => {
+            let mut generator = swiftui::Generator {
+                ir,
+                analysis: &analysis,
+                states: &states,
+                hooks: &hooks,
+                prefix: &options.type_prefix,
+                apple,
+                notes: &mut notes,
+            };
+            source.push_str(&generator.source());
+        }
+        AppleDialect::AppKit => {
+            let mut generator = appkit::Generator {
+                ir,
+                analysis: &analysis,
+                states: &states,
+                hooks: &hooks,
+                prefix: &options.type_prefix,
+                notes: &mut notes,
+            };
+            source.push_str(&generator.source());
+        }
+    }
+    Ok(finish(source, notes))
 }

@@ -75,6 +75,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "<경로> <문서 id> <View id> [--frame <Frame id>] [--target web|react-native]: layout 스타일을 대상별로 출력합니다(web: 특이도 0 기반 규칙과 요소별 선언·출처, react-native: StyleSheet 모듈). 명시 값과 활성 기본값 세트·대상 기본값의 차이만 냅니다",
     ),
     (
+        "export",
+        "swiftui|appkit|compose <경로> <문서 id> <View id> [--frame <Frame id>] [--platform ios|macos]: 저장 View를 export-web과 같은 투영으로 SwiftUI·AppKit·Compose 소스로 출력합니다(구조·layout·기본 접근성, 미지원 node는 실패)",
+    ),
+    (
         "css",
         "copy <경로> <문서 id> <node id> | paste <경로> <문서 id> <node id,…> <입력 파일|-> [--dry-run]: node 속성을 CSS longhand 선언 블록으로 복사하거나, 선언 블록을 한 transaction으로 붙여넣습니다(받지 못한 선언은 이유와 함께 건너뜀)",
     ),
@@ -195,6 +199,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("export-web", crate::web_frame::run(rest))
     } else if command == "export-styles" {
         ("export-styles", crate::export_styles::run(rest))
+    } else if command == "export" {
+        ("export", crate::export_native::run(rest))
     } else if command == "css" {
         ("css", crate::css::run(rest))
     } else if command == "style-defaults" {

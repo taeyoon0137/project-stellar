@@ -77,6 +77,9 @@ pub mod web_frame;
 /// 저장 View 내보내기의 CSS layout 계획과 React Native 스타일 객체 출력 (IX.11.30, ADR-0089).
 pub mod export_css;
 
+/// 저장 View → SwiftUI·AppKit·Compose 소스 (ADR-0107).
+pub mod export_native;
+
 /// CSS 선언 블록 복사·붙여넣기 (IX.11.15).
 pub mod css;
 
