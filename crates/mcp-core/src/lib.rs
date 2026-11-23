@@ -71,6 +71,9 @@ pub mod permission;
 /// 에이전트 편집 대상 선언과 lease 요청 (XIX.4.1, XIX.4.4~XIX.4.7, ADR-0093).
 pub mod lease;
 
+/// attached backend의 에이전트 편집 경로: 범위 검사와 승인 전 미리보기 (XIX.5.2, XIX.5.3, ADR-0093).
+pub mod attached;
+
 /// 실행 인자로 고정한 신뢰 프로젝트 루트의 읽기 전용 backend (XIX.9.3).
 pub mod headless;
 
