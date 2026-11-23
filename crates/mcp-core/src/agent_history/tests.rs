@@ -225,3 +225,28 @@ fn external_client_disconnect_ends_but_app_started_waits_for_grace() {
     assert_eq!(app.history.entries[0].kind, "interrupted");
     assert_eq!(name(&app.history.doc, 13), "a");
 }
+
+#[test]
+fn interrupted_diagnostic_has_only_session_duration_and_code() {
+    let mut world = World::new(SessionOrigin::ExternalClient);
+    world.apply(100, vec![Command::rename_node(sid(13), "비밀 이름")]);
+    let report = world.end(EndReason::ProcessExited, 4_500);
+    let InterruptedAgentTask {
+        session: diagnostic_session,
+        duration_ms,
+        error_code,
+    } = report.diagnostic;
+    assert_eq!(diagnostic_session, session(S));
+    assert_eq!(duration_ms, 3_500);
+    assert_eq!(error_code, "process-exited");
+    let text = report.diagnostic.to_string();
+    for forbidden in [
+        "비밀",
+        "디자인 정리",
+        "/project",
+        &sid(13).to_string(),
+        &sid(1).to_string(),
+    ] {
+        assert!(!text.contains(forbidden), "{text} contains {forbidden}");
+    }
+}
