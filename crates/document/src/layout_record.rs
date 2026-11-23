@@ -327,6 +327,11 @@ impl LayoutLonghand {
         LayoutLonghand::GridAutoFlow,
     ];
 
+    /// [`LayoutLonghand::ALL`] 안 순번(고정 배열 조회용). enum 선언 순서가 `ALL` 순서와 같습니다(test가 확인).
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
     /// 저장 번호. node 공통 key 또는 Frame key의 숫자 값과 같습니다(`width`·`height`는 node 공통 key).
     pub fn id(self) -> u16 {
         self.record_key().0 as u16
@@ -1428,7 +1433,8 @@ mod tests {
     fn longhand_numbers_and_names_are_unique_and_golden() {
         let mut ids = std::collections::BTreeSet::new();
         let mut names = std::collections::BTreeSet::new();
-        for longhand in LayoutLonghand::ALL {
+        for (index, longhand) in LayoutLonghand::ALL.into_iter().enumerate() {
+            assert_eq!(longhand.index(), index, "{longhand}: ALL 순번");
             assert!(ids.insert(longhand.id()), "번호 중복 {longhand}");
             assert!(names.insert(longhand.name()), "이름 중복 {longhand}");
             assert_eq!(LayoutLonghand::from_id(longhand.id()), Some(longhand));

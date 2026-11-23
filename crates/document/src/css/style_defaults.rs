@@ -370,10 +370,7 @@ pub struct FlatSet {
 }
 
 fn longhand_index(longhand: LayoutLonghand) -> usize {
-    LayoutLonghand::ALL
-        .iter()
-        .position(|l| *l == longhand)
-        .expect("ALL에 모든 longhand")
+    longhand.index()
 }
 
 impl FlatSet {
