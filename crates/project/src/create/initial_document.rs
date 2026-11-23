@@ -1,4 +1,8 @@
-//! 새 편집 프로젝트의 첫 저장 세대. 신규 폴더 트랜잭션 안에서만 호출합니다.
+//! 새 편집 프로젝트의 첫 저장. 신규 폴더 트랜잭션 안에서만 호출합니다.
+//!
+//! 첫 문서를 텍스트 원본(Git 원본, ADR-0077 v4)과 로컬 chunk cache(generation 1)로 함께 쓰고 둘의 짝을 stamp로
+//! 남깁니다(ADR-0088 결정 1, ADR-0113 결정 4). 저장 순서는 앱 창 저장과 같은 원본 → cache → stamp입니다. 최초
+//! commit은 원본 파일을 담고, `.stellar/` 아래 로컬 파일은 그 폴더의 `.gitignore`로 Git 밖에 둡니다.
 use std::io;
 use std::path::Path;
 
@@ -15,6 +19,8 @@ use stellar_storage::save::commit::SavedGenerationState;
 use stellar_storage::save::plan::build_save_plan;
 
 use crate::document_io::serialize::serialize_document;
+use crate::document_io::session::{commit, write_stamp, SourceBase, Stamp};
+use crate::document_io::source_v4::project::TextProject;
 use crate::manifest::CURRENT_SCHEMA_VERSION;
 
 pub(super) fn save(
@@ -55,11 +61,23 @@ pub(super) fn save(
         vec![document],
     )
     .map_err(io::Error::other)?;
-    run_save(
+    let source = TextProject {
+        document: model,
+        components: Default::default(),
+        token_sets: Vec::new(),
+        images: Default::default(),
+    };
+    let written = commit(root, &SourceBase::default(), &source).map_err(io::Error::other)?;
+    let mut memory = SavedGenerationState::new(None);
+    run_save(root, &plan, &mut memory, &CancelToken::new()).map_err(io::Error::other)?;
+    let (_, manifest) = memory
+        .saved()
+        .ok_or_else(|| io::Error::other("첫 저장 generation이 없습니다"))?;
+    write_stamp(
         root,
-        &plan,
-        &mut SavedGenerationState::new(None),
-        &CancelToken::new(),
+        &Stamp {
+            source: written.base.digest(),
+            manifest,
+        },
     )
-    .map_err(io::Error::other)
 }

@@ -77,13 +77,51 @@ fn project_success(
     }
 }
 
+/// `text-source adopt <프로젝트>`: 텍스트 원본이 없는 chunk 프로젝트를 앱 창 열기와 같은 검증된 변환으로 원본으로
+/// 옮깁니다(ADR-0113 결정 3).
+fn adopt(project: &str) -> Result<Success, CliError> {
+    use stellar_ops::snapshot::save::{adopt, AdoptError};
+    let lock = stellar_ops::lock::LockPolicy::Required {
+        dir: stellar_ops::lock::default_lock_dir()
+            .map_err(|e| crate::apply::apply_error(&stellar_ops::apply::ApplyError::Lock(e)))?,
+    };
+    let outcome = adopt(Path::new(project), &lock).map_err(|error| {
+        let message = error.to_string();
+        let (status, code) = match error {
+            AdoptError::Open(e) => return views::open_error(&e).with_context(project.to_owned()),
+            AdoptError::Lock(e) => {
+                return crate::apply::apply_error(&stellar_ops::apply::ApplyError::Lock(e))
+                    .with_context(project.to_owned())
+            }
+            AdoptError::AlreadyText => (ExitStatus::Failure, "text-source-present"),
+            AdoptError::Unsaved => (ExitStatus::NoInput, "unsaved-project"),
+            AdoptError::Unsupported(_) => (ExitStatus::Unavailable, "text-source-unsupported"),
+            AdoptError::Save(stellar_ops::snapshot::save::SaveError::ConcurrentWrite) => {
+                (ExitStatus::TempFail, "concurrent-write")
+            }
+            AdoptError::Save(_) => (ExitStatus::IoErr, "text-source-io"),
+        };
+        CliError::new(status, code, message).with_context(project.to_owned())
+    })?;
+    Ok(Success {
+        result: JsonValue::object(vec![
+            ("operation", JsonValue::string("adopt")),
+            ("revision", JsonValue::string(outcome.revision.token())),
+            ("file_count", views::count(outcome.files)),
+            ("written", views::count(outcome.written)),
+        ]),
+        diagnostics: Vec::new(),
+    })
+}
+
 /// `text-source export <프로젝트> <새 파일>`, `check <파일>`, 다중 파일 원본(V.10.4)
-/// `export-project <프로젝트> <새 design 폴더>`, `check-project <design 폴더>`.
+/// `export-project <프로젝트> <새 design 폴더>`, `check-project <design 폴더>`, 원본 전환 `adopt <프로젝트>`.
 pub fn run(args: &[String]) -> Result<Success, CliError> {
     if args.iter().any(|arg| arg.starts_with('-')) {
         return Err(CliError::usage("text-source는 옵션을 받지 않습니다"));
     }
     match args {
+        [operation, project] if operation == "adopt" => return adopt(project),
         [operation, project, output] if operation == "export-project" => {
             let outcome = text_source::export_project(Path::new(project), Path::new(output))
                 .map_err(|error| {
@@ -109,7 +147,7 @@ pub fn run(args: &[String]) -> Result<Success, CliError> {
         }
         _ => {
             return Err(CliError::usage(
-                "text-source export <프로젝트> <새 파일> | check <파일> | export-project <프로젝트> <새 design 폴더> | check-project <design 폴더>",
+                "text-source export <프로젝트> <새 파일> | check <파일> | export-project <프로젝트> <새 design 폴더> | check-project <design 폴더> | adopt <프로젝트>",
             ))
         }
     };

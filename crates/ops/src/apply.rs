@@ -22,12 +22,13 @@
 //!    `set-locked`로만 합니다).
 //! 4. 적용 전후 문서 레코드의 semantic diff(XIV.3)를 계산합니다. dry-run은 여기서 끝나며 파일을
 //!    쓰지 않습니다.
-//! 5. 쓰기 모드는 모든 문서를 다시 직렬화해(VI.10.2) 같은 base generation 위의 SavePlan(V.5.1)을
-//!    만들고, 저장 파이프라인(V.5.2~V.5.5)으로 chunk·manifest를 쓴 뒤 current pointer를 원자적으로
-//!    교체합니다(세대 전환 저장). 내용이 같은 chunk는 hash 비교로 재사용되고, 문서가 아닌 chunk
-//!    (project metadata·token·component·asset)는 base pointer를 그대로 씁니다. 계획과 교체 사이에
-//!    다른 writer가 current pointer를 바꿨으면 optimistic check(V.5.2)가 쓰기 전에 거부합니다
-//!    ([`ApplyError::ConcurrentWrite`]).
+//! 5. 쓰기 모드는 앱 창 저장과 같은 순서로 텍스트 원본(Git 원본)과 로컬 chunk cache를 함께 씁니다
+//!    ([`crate::snapshot::save`], ADR-0113 결정 3): 결과 문서를 원본으로 인코딩하고, 바뀐 원본 파일만 저장
+//!    journal 한 거래로 쓴 뒤, 모든 문서를 다시 직렬화해(VI.10.2) 같은 base generation 위의 SavePlan(V.5.1)을
+//!    저장 파이프라인(V.5.2~V.5.5)으로 쓰고 stamp를 씁니다. 내용이 같은 chunk는 hash 비교로 재사용되고, 문서가 아닌
+//!    chunk(project metadata·token·component·asset)는 base pointer를 그대로 씁니다. 연 뒤 다른 writer가 원본이나
+//!    current pointer를 바꿨으면 쓰기 전에 거부합니다([`ApplyError::ConcurrentWrite`]). 텍스트 원본이 없는 chunk
+//!    프로젝트는 generation만 씁니다([`crate::snapshot::save::SourceWrite::ChunkOnly`]).
 //!
 //! 6. transaction이 활성 기본값 세트(`SetStyleDefaults`, 모델 거울)를 바꿨으면 4번 뒤에 `stellar.yaml` 한 줄 쓰기를
 //!    준비하고(세트 평탄화·연 시점 선택 확인, 실패하면 [`ApplyError::Rejected`]), 쓰기 모드는 generation 저장 뒤에
@@ -60,18 +61,9 @@ use stellar_document::modifier::{
     ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack,
 };
 use stellar_document::records::{NodePayload, NodeRecord};
-use stellar_project::document_io::serialize::serialize_document;
 use stellar_project::identity::parse_project_id;
 use stellar_project::manifest_style_defaults::{prepare_selection, PreparedSelection};
-use stellar_storage::chunk::kinds::{KIND_DOCUMENT_MANIFEST, KIND_VIEW_TREE};
-use stellar_storage::chunk::planner::LogicalChunkState;
-use stellar_storage::generation::loader::LoadedGeneration;
 use stellar_storage::hash::ContentHash;
-use stellar_storage::save::cancel::{run_save, CancelToken, SaveRunError};
-use stellar_storage::save::commit::SavedGenerationState;
-use stellar_storage::save::executor::SaveExecError;
-use stellar_storage::save::optimistic::BaseCheckError;
-use stellar_storage::save::plan::build_save_plan;
 
 use crate::core_types::ids::StableId;
 use crate::core_types::order_key::OrderKey;
@@ -82,6 +74,7 @@ use crate::diff::{diff_records, DiffReport};
 use crate::error::{DocumentReadError, OpenError};
 use crate::lock::{LockError, LockPolicy, SaveLock};
 use crate::revision::ProjectRevision;
+use crate::snapshot::save::{root_order, save_documents, SaveError, SourceWrite};
 use crate::snapshot::{open_snapshot, probe, ProjectSnapshot};
 use crate::text_source::TextSourceOperationError;
 
@@ -509,6 +502,10 @@ pub struct ApplyOutcome {
     pub diff: DiffReport,
     /// 새로 기록한 chunk 수(dry-run이면 0).
     pub written_chunks: usize,
+    /// 원본 쓰기 결과(dry-run·바꿀 것 없음이면 `None`, ADR-0113 결정 3).
+    pub source: Option<SourceWrite>,
+    /// 원본은 썼지만 로컬 cache를 맞추지 못했습니다(다음 쓰기가 맞춤).
+    pub cache_stale: bool,
 }
 
 /// 요청 command 하나가 만드는 command. 컴포넌트 인스턴스 삽입만 프로젝트 원본을 읽은 뒤 정합니다.
@@ -1077,6 +1074,8 @@ pub fn apply(
             command_count: 0,
             diff,
             written_chunks: 0,
+            source: None,
+            cache_stale: false,
         });
     }
 
@@ -1141,68 +1140,39 @@ pub fn apply(
             command_count: request.commands.len(),
             diff,
             written_chunks: 0,
+            source: None,
+            cache_stale: false,
         });
     }
 
-    let generation =
-        snapshot
-            .generation()
-            .ok_or(ApplyError::Document(DocumentReadError::UnknownDocument {
-                document: request.document,
-            }))?;
-    let manifest = generation.manifest();
-    let manifest_hash = base_revision
-        .manifest_hash()
-        .ok_or(ApplyError::ConcurrentWrite)?;
-
-    // 문서가 아닌 chunk는 base pointer 재사용, 모든 문서는 다시 직렬화(같은 내용은 재사용됨).
-    let mut states: Vec<LogicalChunkState> = manifest
-        .chunk_pointers
-        .iter()
-        .filter(|p| p.kind != KIND_DOCUMENT_MANIFEST && p.kind != KIND_VIEW_TREE)
-        .map(|p| LogicalChunkState::Clean {
-            chunk_id: p.chunk_id,
-        })
-        .collect();
-    for definition in snapshot.documents() {
-        let serialized = if definition.id == request.document {
-            serialize_document(&model)
+    // 원본·cache 저장(ADR-0113 결정 3): 모든 root 문서를 넘기고 바꾼 문서만 결과 모델로 바꿉니다.
+    let roots = root_order(&snapshot);
+    let mut models = Vec::with_capacity(roots.len());
+    let mut edited = Some(model);
+    for id in &roots {
+        if *id == request.document {
+            models.push(edited.take().ok_or(ApplyError::InvalidResult(
+                "root 문서 목록에 같은 문서가 두 번 있습니다".into(),
+            ))?);
         } else {
-            let other = snapshot
-                .document_model(definition.id)
-                .map_err(ApplyError::Document)?;
-            serialize_document(&other)
+            models.push(snapshot.document_model(*id).map_err(ApplyError::Document)?);
         }
-        .map_err(|e| ApplyError::InvalidResult(e.to_string()))?;
-        states.extend(serialized.to_dirty_states());
     }
-    let base = LoadedGeneration {
-        manifest_hash,
-        manifest: manifest.clone(),
-    };
-    let plan = build_save_plan(
-        Some(&base),
-        snapshot.project_id(),
-        manifest.schema_version,
-        &states,
-        manifest.root_document_ids.clone(),
-    )
-    .map_err(|e| ApplyError::Save(e.to_string()))?;
-    let written_chunks = plan.dirty_chunks.len();
-    let mut memory = SavedGenerationState::new(Some((manifest.generation, manifest_hash)));
-    run_save(snapshot.root(), &plan, &mut memory, &CancelToken::new()).map_err(|e| match e {
-        SaveRunError::Exec(SaveExecError::BaseCheck(BaseCheckError::StaleBase { .. })) => {
-            ApplyError::ConcurrentWrite
+    if edited.is_some() {
+        return Err(ApplyError::Document(DocumentReadError::UnknownDocument {
+            document: request.document,
+        }));
+    }
+    let saved = save_documents(&snapshot, roots, models).map_err(|e| match e {
+        SaveError::ConcurrentWrite => ApplyError::ConcurrentWrite,
+        SaveError::Encode(e) => {
+            ApplyError::InvalidResult(format!("텍스트 원본으로 쓸 수 없습니다: {e}"))
         }
-        other => ApplyError::Save(other.to_string()),
+        SaveError::Invalid(e) => ApplyError::InvalidResult(e),
+        SaveError::Write(e) => ApplyError::Save(e),
     })?;
-    let revision = match memory.saved() {
-        Some((generation, manifest_hash)) => ProjectRevision::Saved {
-            generation,
-            manifest_hash,
-        },
-        None => return Err(ApplyError::Save("저장 결과 generation이 없습니다".into())),
-    };
+    let revision = saved.revision;
+    let written_chunks = saved.written_chunks;
     if let Some(selection) = selection {
         selection.commit(snapshot.root()).map_err(|e| {
             ApplyError::Save(format!(
@@ -1218,6 +1188,8 @@ pub fn apply(
         command_count: request.commands.len(),
         diff,
         written_chunks,
+        source: Some(saved.source),
+        cache_stale: saved.cache_stale,
     })
 }
 

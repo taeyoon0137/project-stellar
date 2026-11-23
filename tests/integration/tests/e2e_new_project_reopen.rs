@@ -284,9 +284,24 @@ fn new_project_edit_save_close_reopen_keeps_semantic_snapshot() {
     // ── 8. Git: 최초 commit 이후 변경은 작업 트리에만 있고 HEAD·index는 그대로입니다.
     assert_eq!(git(&gate, &root, &["rev-parse", "HEAD"]), first_commit);
     assert_eq!(git(&gate, &root, &["diff", "--cached", "--name-only"]), "");
+    // 새 프로젝트의 최초 commit이 이미 텍스트 원본을 담습니다(ADR-0113 결정 4). 그 뒤 편집은 바뀐 원본 파일로 보입니다.
+    assert_eq!(
+        git(
+            &gate,
+            &root,
+            &[
+                "ls-tree",
+                "--name-only",
+                first_commit.trim(),
+                "design/document.stellar.yaml"
+            ]
+        )
+        .trim(),
+        "design/document.stellar.yaml"
+    );
     let status = porcelain(&gate, &root);
     for expected in [
-        "design/document.stellar.yaml",
+        "design/pages/page-1/view-1.stellar.yaml",
         "design/tokens/brand.stellar.yaml",
     ] {
         assert!(

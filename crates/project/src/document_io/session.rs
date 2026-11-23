@@ -43,13 +43,18 @@ use stellar_assets::record::AssetRecord;
 use stellar_core_types::ids::StableId;
 use stellar_document::component::definition::ComponentLibrary;
 use stellar_document::model::DocumentModel;
+use stellar_storage::chunk::kinds::KIND_COMPONENT_LIBRARY;
+use stellar_storage::generation::current::{read_current_pointer, CurrentPointerError};
+use stellar_storage::generation::lazy::LazyGeneration;
 use stellar_storage::hash::ContentHash;
 use stellar_storage::journal::{self, JournalChange, JournalError};
 
-use super::source_v4::project::{decode, encode, read_dir, TextProject, DOCUMENT_PATH};
+use super::component_source::read_project_library;
+use super::source_v4::project::{decode, encode, from_saved, read_dir, TextProject, DOCUMENT_PATH};
 use super::source_v4::token::TokenSetSource;
 use super::text_source::TextSourceError;
 use crate::manifest::Manifest;
+use crate::path_resolver::ExternalAccess;
 use crate::root::MANIFEST_FILE;
 use crate::yaml::load_restricted;
 use crate::yaml::loader::MAX_INPUT_BYTES;
@@ -423,6 +428,142 @@ pub fn active_style_defaults(root: &Path) -> Result<String, String> {
     let value = load_restricted(text).map_err(|error| error.to_string())?;
     let manifest = Manifest::from_yaml(&value).map_err(|error| error.to_string())?;
     Ok(crate::manifest_style_defaults::active_name(&manifest).to_owned())
+}
+
+/// 열기 계획을 정하는 디스크 관찰값(ADR-0113 결정 1). 앱 창 session·CLI·MCP·semantic Git이 같은 함수로 봅니다.
+#[derive(Debug, Clone)]
+pub struct DiskSource {
+    /// 텍스트 원본(없으면 `None`).
+    pub text: Option<SourceFiles>,
+    /// current manifest hash(cache가 없으면 `None`).
+    pub current: Option<ContentHash>,
+    /// 원본·cache 짝.
+    pub stamp: Option<Stamp>,
+    /// 고른 계획.
+    pub plan: OpenPlan,
+}
+
+impl DiskSource {
+    /// 원본 revision([`source_revision`]). 원본이 없으면 `None`입니다.
+    pub fn source_revision(&self) -> Option<ContentHash> {
+        self.text
+            .as_ref()
+            .map(|text| source_revision(self.current, &text.base))
+    }
+}
+
+/// 디스크 관찰 실패.
+#[derive(Debug)]
+pub enum ObserveError {
+    /// 원본을 읽을 수 없습니다.
+    Source(TextSourceError),
+    /// current pointer가 손상됐거나 읽을 수 없습니다.
+    Pointer(CurrentPointerError),
+}
+
+impl fmt::Display for ObserveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ObserveError::Source(error) => write!(f, "{error}"),
+            ObserveError::Pointer(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for ObserveError {}
+
+/// 프로젝트 `root`의 원본·cache·stamp를 읽고 계획을 정합니다(쓰지 않음).
+pub fn observe(root: &Path) -> Result<DiskSource, ObserveError> {
+    let text = read_source(root).map_err(ObserveError::Source)?;
+    let current = match read_current_pointer(root) {
+        Ok(current) => Some(current),
+        Err(CurrentPointerError::Missing { .. }) => None,
+        Err(error) => return Err(ObserveError::Pointer(error)),
+    };
+    let stamp = read_stamp(root);
+    let plan = OpenPlan::decide(text.as_ref().map(|text| text.base.digest()), current, stamp);
+    Ok(DiskSource {
+        text,
+        current,
+        stamp,
+        plan,
+    })
+}
+
+/// 원본이 있는 프로젝트 상태의 revision hash(ADR-0113 결정 2): `stellar-text-source-revision/1`, current manifest
+/// hash(없으면 빈 값), 원본 digest를 길이와 함께 이은 bytes의 hash. 원본이나 cache 어느 쪽이 바뀌어도 값이 바뀝니다.
+pub fn source_revision(current: Option<ContentHash>, base: &SourceBase) -> ContentHash {
+    let mut input = b"stellar-text-source-revision/1".to_vec();
+    let current = current
+        .map(|hash| hash.digest().to_vec())
+        .unwrap_or_default();
+    input.extend_from_slice(&(current.len() as u64).to_le_bytes());
+    input.extend_from_slice(&current);
+    input.extend_from_slice(base.digest().digest());
+    ContentHash::compute(&input)
+}
+
+/// generation 문서를 텍스트 원본 의미로 옮길 수 있는지 검증하고 원본 base와 문서 밖 의미를 돌려줍니다(ADR-0088 결정 2,
+/// ADR-0113 결정 1). 앱 창 session과 CLI·MCP 쓰기가 같은 함수를 씁니다.
+///
+/// generation의 모든 chunk를 원본이 소비하고(문서 하나, component library chunk 없음), 인코딩한 원본을 다시 읽은 의미가
+/// 같아야 합니다. 원본이 이미 있으면(`text`, Forward) token set은 원본 것을 씁니다. 원본이 없으면(Migrate) `design/` 아래
+/// 기존 `.stellar.yaml`(컴포넌트 원본)이 모두 인코딩 결과의 경로여야 합니다. 실패는 이유 문장입니다.
+pub fn convert_saved(
+    root: &Path,
+    lazy: &LazyGeneration,
+    model: &DocumentModel,
+    text: Option<&SourceFiles>,
+) -> Result<(SourceBase, SourceLibrary), String> {
+    if lazy
+        .manifest()
+        .chunk_pointers
+        .iter()
+        .any(|pointer| pointer.kind == KIND_COMPONENT_LIBRARY)
+    {
+        return Err("component library chunk는 텍스트 원본으로 옮기지 않습니다".into());
+    }
+    let (yaml, _) = read_project_library(root, ExternalAccess::MetadataOnly)
+        .map_err(|error| error.to_string())?;
+    let records = model.to_records().map_err(|error| error.to_string())?;
+    let (mut copy, _) = DocumentModel::from_records(records).map_err(|error| error.to_string())?;
+    // Context는 레코드 밖에 있어 함께 옮깁니다(ADR-0099).
+    copy.replace_context(model.context().live(model));
+    let mut project = from_saved(lazy, copy, yaml).map_err(|error| error.to_string())?;
+    if let Some(text) = text {
+        project.token_sets = decode_source(text)
+            .map_err(|error| error.to_string())?
+            .token_sets;
+    }
+    let encoded = encode(&project).map_err(|error| error.to_string())?;
+    let decoded = decode(&encoded.files).map_err(|error| error.to_string())?;
+    if decoded.semantic_key().map_err(|error| error.to_string())?
+        != project.semantic_key().map_err(|error| error.to_string())?
+    {
+        return Err("다시 읽은 텍스트 원본의 의미가 generation과 다릅니다".into());
+    }
+    let base = match text {
+        Some(text) => text.base.clone(),
+        None => {
+            let design = root.join(DESIGN_DIR);
+            let existing = match std::fs::symlink_metadata(&design) {
+                Ok(_) => read_source_dir(&design).map_err(|error| error.to_string())?,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
+                Err(error) => return Err(error.to_string()),
+            };
+            if let Some(unknown) = existing
+                .keys()
+                .find(|path| !encoded.files.contains_key(*path))
+            {
+                return Err(format!(
+                    "텍스트 원본이 모르는 파일이 design/ 아래에 있습니다: {unknown}"
+                ));
+            }
+            SourceBase::of(&existing)
+        }
+    };
+    let (_, library) = SourceLibrary::split(project);
+    Ok((base, library))
 }
 
 #[cfg(test)]

@@ -9,19 +9,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use stellar_document::model::DocumentModel;
-use stellar_project::document_io::component_source::read_project_library;
 use stellar_project::document_io::load::LoadDocumentError;
 use stellar_project::document_io::session::{
-    active_style_defaults, decode_source, read_source, read_source_dir, read_stamp, OpenPlan,
-    SourceBase, SourceFiles, SourceLibrary, DESIGN_DIR,
+    active_style_defaults, convert_saved, decode_source, read_source, read_stamp, OpenPlan,
+    SourceBase, SourceFiles, SourceLibrary,
 };
-use stellar_project::document_io::source_v4::project::{decode, encode, from_saved};
 use stellar_project::document_io::text_source::TextSourceError;
 use stellar_project::external_change::source::diagnose;
 use stellar_project::identity::ProjectIdentity;
-use stellar_project::path_resolver::ExternalAccess;
 use stellar_storage::chunk::id::ChunkId;
-use stellar_storage::chunk::kinds::KIND_COMPONENT_LIBRARY;
 use stellar_storage::generation::current::{read_current_pointer, CurrentPointerError};
 use stellar_storage::generation::lazy::{LazyGeneration, LazyLoadError, NoopRecorder};
 use stellar_storage::generation::loader::{load_current_generation, LoadError, LoadedGeneration};
@@ -246,10 +242,8 @@ fn from_generation(
     }
 }
 
-/// generation 문서를 텍스트 원본 의미로 옮길 수 있는지 검증하고 원본 base와 문서 밖 의미를 돌려줍니다(ADR-0088
-/// 결정 2). generation의 모든 chunk를 원본이 소비하고(문서 하나, component library chunk 없음), 인코딩한 원본을 다시
-/// 읽은 의미가 같아야 합니다. 원본이 이미 있으면(Forward) token set은 원본 것을 씁니다. 원본이 없으면(Migrate)
-/// `design/` 아래 기존 `.stellar.yaml`(컴포넌트 원본)이 모두 인코딩 결과의 경로여야 합니다. 실패는 이유 문장입니다.
+/// generation 문서를 텍스트 원본 의미로 옮길 수 있는지 검증합니다. 판정은 CLI·MCP와 같은
+/// [`stellar_project::document_io::session::convert_saved`] 하나입니다(ADR-0088 결정 2, ADR-0113 결정 1).
 fn convert(
     identity: &ProjectIdentity,
     model: &DocumentModel,
@@ -258,55 +252,7 @@ fn convert(
     let root = identity.canonical_target();
     let lazy = LazyGeneration::open(root, identity.project_id(), &mut NoopRecorder)
         .map_err(|error| error.to_string())?;
-    if lazy
-        .manifest()
-        .chunk_pointers
-        .iter()
-        .any(|pointer| pointer.kind == KIND_COMPONENT_LIBRARY)
-    {
-        return Err("component library chunk는 텍스트 원본으로 옮기지 않습니다".into());
-    }
-    let (yaml, _) = read_project_library(root, ExternalAccess::MetadataOnly)
-        .map_err(|error| error.to_string())?;
-    let records = model.to_records().map_err(|error| error.to_string())?;
-    let (mut copy, _) = DocumentModel::from_records(records).map_err(|error| error.to_string())?;
-    // Context는 레코드 밖에 있어 함께 옮깁니다(ADR-0099).
-    copy.replace_context(model.context().live(model));
-    let mut project = from_saved(&lazy, copy, yaml).map_err(|error| error.to_string())?;
-    if let Some(text) = text {
-        project.token_sets = decode_source(text)
-            .map_err(|error| error.to_string())?
-            .token_sets;
-    }
-    let encoded = encode(&project).map_err(|error| error.to_string())?;
-    let decoded = decode(&encoded.files).map_err(|error| error.to_string())?;
-    if decoded.semantic_key().map_err(|error| error.to_string())?
-        != project.semantic_key().map_err(|error| error.to_string())?
-    {
-        return Err("다시 읽은 텍스트 원본의 의미가 generation과 다릅니다".into());
-    }
-    let base = match text {
-        Some(text) => text.base.clone(),
-        None => {
-            let design = root.join(DESIGN_DIR);
-            let existing = match std::fs::symlink_metadata(&design) {
-                Ok(_) => read_source_dir(&design).map_err(|error| error.to_string())?,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
-                Err(error) => return Err(error.to_string()),
-            };
-            if let Some(unknown) = existing
-                .keys()
-                .find(|path| !encoded.files.contains_key(*path))
-            {
-                return Err(format!(
-                    "텍스트 원본이 모르는 파일이 design/ 아래에 있습니다: {unknown}"
-                ));
-            }
-            SourceBase::of(&existing)
-        }
-    };
-    let (_, library) = SourceLibrary::split(project);
-    Ok((base, library))
+    convert_saved(root, &lazy, model, text)
 }
 
 /// 디스크 원본 관찰값(stale 판정).
