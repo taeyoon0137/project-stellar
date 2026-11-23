@@ -43,3 +43,4 @@ pub mod views;
 pub mod web_frame;
 
 mod component_source;
+mod merge_driver;

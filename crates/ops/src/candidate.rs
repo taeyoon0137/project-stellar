@@ -192,5 +192,11 @@ pub fn serialize_candidate(
     Ok(files)
 }
 
+/// 컴포넌트 원본 파일 하나의 bytes ↔ semantic snapshot (XXIV.2.1, ADR-0081).
+pub mod component_file;
+
+/// 텍스트 의미 파일 하나의 3-way semantic merge (XXIV.2.1·XXIV.2.2, ADR-0081).
+pub mod file_merge;
+
 #[cfg(test)]
 mod tests;

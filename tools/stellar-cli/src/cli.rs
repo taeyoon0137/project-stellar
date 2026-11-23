@@ -75,6 +75,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "text-source",
         "export <프로젝트> <새 파일> | check <파일>: 단일 View 텍스트 원본을 opt-in으로 내보내거나 읽기 전용 검사합니다",
     ),
+    ("merge-driver", "<%O> <%A> <%B> <%P>: Git merge driver로 컴포넌트 원본을 semantic merge합니다(conflict가 있으면 %A를 바꾸지 않고 nonzero)"),
 ];
 
 /// `query` 대상: (사용법, 한 줄 설명). 도움말에 이 순서로 나타납니다.
@@ -188,6 +189,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("component-source", crate::component_source::run(rest))
     } else if command == "text-source" {
         ("text-source", crate::text_source::run(rest))
+    } else if command == "merge-driver" {
+        ("merge-driver", crate::merge_driver::run(rest))
     } else {
         return usage_error(err, &format!("알 수 없는 명령: {command}"));
     };

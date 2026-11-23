@@ -25,7 +25,9 @@ use stellar_core_types::property::{PathSegment, PropertyKey};
 use stellar_core_types::reference::{AssetRef, ComponentRef, NodeRef};
 use stellar_core_types::typed_value::TypedValue;
 use stellar_core_types::value::{Angle, FiniteF32, Rect, Size2, Transform2D, Vec2};
-use stellar_document::component::definition::{ComponentPropertyId, ComponentSlotId};
+use stellar_document::component::definition::{
+    ComponentDefinition, ComponentPropertyId, ComponentSlotId,
+};
 use stellar_document::component::instance::{ComponentInstancePayload, OverrideKey, SlotOverride};
 use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
 use stellar_document::fragment::FragmentPayload;
@@ -82,6 +84,10 @@ pub enum ProjectionFailure {
     MissingOwner,
     /// 정의 조립 실패(중복 Page·View 등).
     Definition(String),
+    /// 컴포넌트 객체가 없거나 종류가 다름([`component_records`]).
+    MissingComponent,
+    /// 비어 있지 않은 컴포넌트 interface(Property·Slot·local token)는 역투영하지 않음([`component_records`]).
+    UnsupportedInterface,
 }
 
 impl fmt::Display for ProjectionError {
@@ -635,6 +641,73 @@ pub fn document_records(
     records.modifier_stacks = stacks.into_values().collect();
     records.sort_canonical();
     Ok(DocumentProjection { records, instances })
+}
+
+/// 컴포넌트 정의 하나의 역투영 결과([`component_records`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComponentProjection {
+    /// 정의(id·표시 이름·root). interface는 비어 있습니다.
+    pub definition: ComponentDefinition,
+    /// 정의 tree node 레코드(StableId 오름차순). root도 포함합니다.
+    pub nodes: Vec<NodeRecord>,
+}
+
+/// snapshot에서 컴포넌트 정의 하나와 그 정의 tree node 레코드를 복원합니다(XXIV.2.1).
+///
+/// [`SnapshotBuilder`](crate::build::SnapshotBuilder)의 컴포넌트 투영(`add_component_library`·
+/// `add_project_component_library`)을 거꾸로 돌립니다. node payload는 문서 node와 같은 필드별 속성에서
+/// 복원합니다. 지금은 interface(Property·Slot·local token)가 빈 정의만 다룹니다 — 텍스트 컴포넌트
+/// 원본(ADR-0061)이 빈 interface만 담기 때문이며, 비어 있지 않으면 [`ProjectionFailure::UnsupportedInterface`]
+/// 로 거부하고 고쳐 넣지 않습니다.
+pub fn component_records(
+    snapshot: &SemanticSnapshot,
+    component: StableId,
+) -> Result<ComponentProjection, ProjectionError> {
+    let fail = |object, reason| ProjectionError { object, reason };
+    let object = snapshot
+        .get(component)
+        .filter(|o| o.kind() == ObjectKind::Component)
+        .ok_or(fail(component, ProjectionFailure::MissingComponent))?;
+    let r = Reader { object };
+    for key in [
+        keys::COMPONENT_PROPERTIES,
+        keys::COMPONENT_SLOTS,
+        keys::COMPONENT_LOCAL_TOKENS,
+    ] {
+        if !r.ids(key)?.is_empty() {
+            return Err(fail(component, ProjectionFailure::UnsupportedInterface));
+        }
+    }
+    let definition = ComponentDefinition::new(
+        component,
+        r.text(keys::DISPLAY_NAME)?,
+        NodeRef::new(r.id(keys::COMPONENT_ROOT)?),
+    );
+    let origin = object.origin();
+    let mut nodes = Vec::new();
+    for node in snapshot
+        .objects()
+        .filter(|o| o.id() != component && o.origin() == origin)
+    {
+        let r = Reader { object: node };
+        let ObjectKind::Node(kind) = node.kind() else {
+            return Err(r.fail(ProjectionFailure::UnsupportedInterface));
+        };
+        let order_key = node
+            .order_key()
+            .cloned()
+            .ok_or(r.fail(ProjectionFailure::MissingOrderKey))?;
+        nodes.push(NodeRecord {
+            id: node.id(),
+            parent: node.parent(),
+            order_key,
+            visible: r.bool(keys::VISIBLE)?,
+            locked: r.bool(keys::LOCKED)?,
+            display_name: r.text(keys::DISPLAY_NAME)?,
+            payload: node_payload(node, kind)?,
+        });
+    }
+    Ok(ComponentProjection { definition, nodes })
 }
 
 /// snapshot의 모든 문서 객체 id(오름차순).
