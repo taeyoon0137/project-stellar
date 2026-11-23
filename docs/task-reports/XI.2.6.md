@@ -2,7 +2,7 @@
 
 - WBS: XI.2.6
 - 작업명: scene build duration과 rebuilt node count를 diagnostics trace에 기록(내용·이름 없음)
-- 상태: 완료 (`[x]`)
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록(ledger-refresh): 행 지시·검증 열을 코드와 테스트로 확인했고 선행이 모두 `[x]`입니다. 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 원장이 근거 커밋을 찾지 못했습니다(scene-incremental-perf lane). 선행 XI.2.5도 같은 판정으로 `[x]`입니다. 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 완료 (`[x]`)
 - 결정: ADR-0084 결정 4
 - 선행: II.3.2(`[x]`), XI.2.5(이 lane)
 
@@ -52,3 +52,10 @@
 ## 남은 위험 / 한계
 
 - 앱 runtime은 diagnostics에 의존할 수 없어(crate graph) 앱 경로의 trace 저장은 UI 재설계 때 연결합니다.
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(XI.2.6)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `201c908b` Feat: dirty subtree만 다시 만드는 증분 scene build 추가 (XI.2.5)
+- `38ffb5c9` Feat: scene build trace를 검사하는 diagnostics trace schema 추가 (XI.2.6)
