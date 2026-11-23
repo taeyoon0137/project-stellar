@@ -157,6 +157,7 @@ name = "stellar-agent-host"
 version = "0.0.0"
 dependencies = [
  "stellar-agent-protocol",
+ "stellar-diagnostics",
  "stellar-local-ipc",
 ]
 
