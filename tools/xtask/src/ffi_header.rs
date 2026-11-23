@@ -511,7 +511,6 @@ StellarStatus stellar_window_canvas_move(uint64_t handle, uint64_t session, cons
 typedef struct StellarCanvasSelectionItem { uint8_t id[16]; uint32_t kind, flags; float world[6], rect[4], radii[4], line[4]; } StellarCanvasSelectionItem;
 typedef struct StellarGesturePreview { uint32_t kind; int32_t handle; uint32_t flags; float rect[4], line[4], radii[4], point[2]; } StellarGesturePreview;
 StellarStatus stellar_canvas_gesture_preview(const StellarGesturePreview *input, StellarGesturePreview *output);
-StellarStatus stellar_canvas_arrow_nudge(uint16_t key_code, uint8_t shift, float out_delta[2]);
 typedef struct StellarSnapCandidate { float rect[4]; uint32_t kind; } StellarSnapCandidate;
 typedef struct StellarSnapResult { float rect[4]; float guide_x, guide_y, distance_x, distance_y; uint32_t flags; } StellarSnapResult;
 StellarStatus stellar_canvas_snap(const float rect[4], uint32_t mode, int32_t handle, float scale, float pixel_origin_x, float pixel_origin_y, float pixel_step, uint32_t flags, const StellarSnapCandidate *candidates, size_t count, StellarSnapResult *output);

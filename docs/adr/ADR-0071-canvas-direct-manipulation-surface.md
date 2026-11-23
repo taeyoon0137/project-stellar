@@ -191,10 +191,6 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
 
 `stellar_canvas_gesture_preview`는 문서 상태를 읽지 않는 순수 계산 ABI다. 입력은 핸들 종류·번호, local 포인터, Shift·Option·click flag, 시작 상자·끝점·반경이고 출력은 확정 요청에도 그대로 쓰는 상자·끝점·반경이다. 크기 핸들의 최소 1px·비율·중심, Line의 45도, 반경의 정수 반올림, 생성 클릭의 100px과 수식키를 코어가 계산한다. 기존 절대값 편집 ABI는 유지하되 셸에서 계산식을 제거하고 이 반환값을 보낸다. 스냅·가이드 입력은 다음 개정에서 다룬다.
 
-## 개정(2026-11-18, UX.3.8 화살표 이동)
-
-`stellar_canvas_arrow_nudge`는 macOS 화살표 key code와 Shift를 받아 부모 공간 이동량 1px 또는 10px을 돌려준다. ⌘·Option·Control 조합의 단축키 충돌 검사는 셸에 남고, 이동량의 의미는 코어가 정한다.
-
 ## 개정(2026-11-18, UX.3.8 스냅)
 
 - `StellarSnapCandidate`(같은 좌표계의 부모·직계 형제 상자), `StellarSnapResult`(조정 상자·정렬선·CSS px 간격)와 `stellar_canvas_snap`을 추가한다. 셸은 제스처 시작 때 후보를 한 번 모으고 `stellar_canvas_snap_intervals`로 같은 간격 후보를 만든다. 드래그 중 Rust 계산은 화면 6pt 허용 오차를 좌표계 배율로 바꾸어 부모·형제 가장자리·중심, 형제 크기·간격, 정수 논리 px 순서로 평가한다. 픽셀 원점·간격도 ABI로 받아 화면 좌표의 픽셀 스냅을 논리 px 기준으로 만든다. ⌘를 누르면 셸은 스냅 호출을 건너뛴다.
@@ -204,3 +200,7 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
 ## 철회(2026-11-23, UX.3.8 도구 상태)
 
 2026-11-18 도구 상태 개정의 `stellar_window_canvas_set_tool`과 `StellarWindowSessionInfo.reserved` 도구 tag 게시를 제거하고 reserved를 다시 0으로 둔다. 코어는 셸이 보낸 tag를 저장해 되돌려 줄 뿐 입력 해석에 쓰지 않았고, tag 의미가 Swift 선언 순서에 묶였으며, ABI v3 reserved의 의미를 버전 변경 없이 바꿨다. View별 도구 기억은 사용자 결정이 아니었고, 순수 UI 상태에 document thread 왕복을 더해 다른 명령을 잠시 막을 수 있었다. 코어 도구 상태가 필요하면 UI 재설계 때 XII.3.6 설계로 코어 enum, 도구가 입력 해석을 소유하는 구조, ABI 버전 증가를 함께 정한다.
+
+## 철회(2026-11-23, UX.3.8 화살표 이동)
+
+2026-11-18 화살표 이동 개정의 `stellar_canvas_arrow_nudge`를 제거한다. 플랫폼 중립 코어가 macOS 가상 키코드(123~126)를 해석해 경계가 거꾸로였고, 하는 일은 1px·10px 상수표 하나를 FFI 왕복으로 바꾼 것뿐이었다. 키 매핑은 셸에 둔다. 이동 단위의 의미를 코어가 가져야 하면 UI 재설계 때 방향·크기 enum을 받는 Nudge 명령으로 만들고 기존 상대 이동(`canvas_move`)과 같은 경로로 처리해 CLI·MCP와 공유한다.

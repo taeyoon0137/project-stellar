@@ -23,14 +23,6 @@ enum CoreRuntime {
         return stellar_canvas_gesture_preview(&input, &output) == STELLAR_OK ? output : nil
     }
 
-    static func arrowNudge(keyCode: UInt16, shift: Bool) -> CGVector? {
-        var delta: [Float] = [0, 0]
-        let status = delta.withUnsafeMutableBufferPointer { buffer in
-            stellar_canvas_arrow_nudge(keyCode, shift ? 1 : 0, buffer.baseAddress)
-        }
-        return status == STELLAR_OK ? CGVector(dx: CGFloat(delta[0]), dy: CGFloat(delta[1])) : nil
-    }
-
     static func snap(rect: CGRect, mode: UInt32, handle: Int32 = 0, scale: CGFloat,
                      pixelOrigin: CGPoint = .zero, pixelStep: CGFloat = 1,
                      flags: UInt32, candidates: [StellarSnapCandidate]) -> StellarSnapResult? {

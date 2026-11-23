@@ -204,18 +204,6 @@ fn angle45(origin: [f32; 2], point: [f32; 2]) -> [f32; 2] {
     [origin[0] + length * x, origin[1] + length * y]
 }
 
-/// macOS 화살표 키를 부모 공간의 1px 또는 Shift 10px 이동으로 해석합니다.
-pub fn arrow_nudge(key_code: u16, shift: bool) -> Option<[f32; 2]> {
-    let step = if shift { 10.0 } else { 1.0 };
-    match key_code {
-        123 => Some([-step, 0.0]),
-        124 => Some([step, 0.0]),
-        125 => Some([0.0, step]),
-        126 => Some([0.0, -step]),
-        _ => None,
-    }
-}
-
 /// 제스처 시작 때 모은 부모(1)·형제(2)의 같은 좌표계 상자.
 #[repr(C)]
 #[derive(Clone, Copy)]

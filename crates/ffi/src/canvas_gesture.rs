@@ -65,34 +65,6 @@ pub unsafe extern "C" fn stellar_canvas_gesture_preview(
     })
 }
 
-/// macOS 화살표 key code와 Shift를 부모 공간 px 이동량으로 바꿉니다.
-/// # Safety
-/// `out_delta`는 float 두 개를 쓸 수 있어야 합니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_canvas_arrow_nudge(
-    key_code: u16,
-    shift: u8,
-    out_delta: *mut f32,
-) -> StellarStatus {
-    ffi_guard(|| {
-        if out_delta.is_null() {
-            return StellarStatus::NullPointer;
-        }
-        if shift > 1 {
-            return StellarStatus::InvalidArgument;
-        }
-        let Some([dx, dy]) = stellar_runtime::app::gesture_math::arrow_nudge(key_code, shift != 0)
-        else {
-            return StellarStatus::InvalidArgument;
-        };
-        unsafe {
-            *out_delta = dx;
-            *out_delta.add(1) = dy;
-        }
-        StellarStatus::Ok
-    })
-}
-
 /// 스냅 결과: 조정 상자, 가이드 x/y, 형제 거리 x/y, 표시 bit.
 #[repr(C)]
 pub struct StellarSnapResult {
