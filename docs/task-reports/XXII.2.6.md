@@ -5,7 +5,7 @@
 - WBS: XXII.2.6
 - 작업명: CSS transition으로 표현 가능한 motion은 CSS, 상태 전환은 생성 코드, 표현할 수 없는 항목은 근사·미지원 진단,
   `interaction_state` 조건부 토큰은 Control 상태 selector
-- 상태: 완료 보고(`reported_done`). 선행 XXII.1.7이 보고 상태라 원장 판정은 통합 때 정합니다.
+- 상태: 완료 (`[x]`) — 선행 XXII.1.7이 보고 상태라 원장 표기는 통합 때 정합니다.
 - 결정: ADR-0106 결정 3·7, ADR-0025 결정 4.4, 속성 모델 10장
 - 선행: XXII.1.5, XXII.1.7, XXII.2.1, XXII.2.3
 
@@ -43,7 +43,7 @@
   (`:hover`·`:focus-visible`·`:active`·`:disabled`)로 냅니다. Button은 네 상태, TextInput은 hover·focused·disabled,
   그 밖의 contract는 hover·focused이고, 지원하지 않는 상태와 contract 없는 element는 진단합니다.
 
-## 명령과 결과
+## 실행한 명령 / 검증
 
 | 명령 | 결과 |
 |---|---|
@@ -61,6 +61,10 @@
   — Button 다섯 상태, TextInput(pressed는 기본 값), contract 없는 Frame(모두 기본 값)이 IR 토큰 값과 같음.
 - 그 토큰이 `:root` 선언에 없음: 같은 fixture의 `:root` 값 빈 문자열과
   `interaction_rules_match_the_committed_browser_input_and_diagnose_unsupported_states`.
+
+## 차이(작업 지시와 다른 점)
+
+- spring은 호출자 sampler가 있을 때만 근사 출력이고, 지금 제품 경로에는 sampler 연결이 없습니다.
 
 ## 남은 위험
 

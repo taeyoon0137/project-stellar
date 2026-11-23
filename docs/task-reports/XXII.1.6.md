@@ -4,11 +4,13 @@
 
 - WBS: XXII.1.6
 - 작업명: Context 선언·provision·소비를 CodegenIR에 포함, 소비 지점마다 해석기가 정한 값의 출처와 slot 경계를 보존
-- 상태: 부분 완료(`[~]`). IR 형식·보존·결정론·참조 검사는 끝났습니다. 완료 기준의 "IR 해석이 XXX.7.4 결과와 같음"은
-  XXX.7.4 Context 해석기가 없어(XXX.7.1\~XXX.7.4 `[ ]`) 확인할 수 없습니다. 해석기 결과 자리에 손으로 적은 합성
-  입력을 넣어 검증했습니다.
+- 상태: 부분 완료 (`[~]`) — XXX.7.4 해석기가 없어 해석기 대조 기준이 남았습니다.
 - 결정: ADR-0106 결정 1.4, ADR-0025 결정 3·4.1
 - 선행: XXII.1.1, XXX.7.4
+
+## 필수 실행 환경
+
+- `DEV-MAC` (순수 Rust 로컬 검증).
 
 ## 변경 파일
 
@@ -27,7 +29,7 @@
   같은 node·key provision 중복, 비었거나 0을 담은 깊이 집합, IR에 없는 출처 provision, 같은 경로 소비 중복.
 - profile에서 제외한 node의 provision·소비·slot host는 버립니다.
 
-## 명령과 결과
+## 실행한 명령 / 검증
 
 | 명령 | 결과 |
 |---|---|
@@ -40,6 +42,10 @@
   → 8), 같은 key 재읽기(7), default 소비(12), slot 경계(17 ← 16)가 입력 그대로 남음.
 - `context_ir_bytes_are_identical_for_the_same_input`: 입력 순서와 무관하게 같은 snapshot.
 - `context_reference_errors_are_rejected`: 11 case.
+
+## 차이(작업 지시와 다른 점)
+
+- 해석기 결과 자리에 손으로 적은 합성 입력을 썼습니다.
 
 ## 남은 위험
 

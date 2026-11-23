@@ -4,9 +4,13 @@
 
 - WBS: XXII.2.1
 - 작업명: Frame/Fragment/Text/Image/Control contract를 HTML semantic structure로 매핑
-- 상태: 완료 보고(`reported_done`). 선행 XXII.1.1이 `[!]`이라 원장 판정은 통합 때 정합니다.
+- 상태: 완료 (`[x]`) — 선행 XXII.1.1이 차단 상태라 원장 표기는 통합 때 정합니다.
 - 결정: ADR-0106 결정 4
 - 선행: XXII.1.1
+
+## 필수 실행 환경
+
+- `DEV-MAC` (순수 Rust 로컬 검증).
 
 ## 변경 파일
 
@@ -29,7 +33,7 @@
   (`button`·`input`·`dialog`)는 focus를 받으면 안 되므로 `div`로 낮춥니다. 기존 XXII.2.4 golden HTML은 바뀌지
   않았습니다.
 
-## 명령과 결과
+## 실행한 명령 / 검증
 
 | 명령 | 결과 |
 |---|---|
@@ -41,6 +45,10 @@
 - golden DOM tree: `web::structure::tests::golden_dom_tree_maps_frame_fragment_text_image_and_controls`
   (`structure_site.tree`), `list_contract_with_plain_items_is_ul_li`(`structure_list.tree`), 결정론
   `structure_is_deterministic`.
+
+## 차이(작업 지시와 다른 점)
+
+- 접근성 mapper(XXII.2.4)가 이 구조 위에서 동작하도록 바꿨습니다(같은 판정 이중 경로 제거). 기존 golden은 그대로입니다.
 
 ## 남은 위험
 

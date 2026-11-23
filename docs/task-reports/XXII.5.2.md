@@ -5,9 +5,13 @@
 - WBS: XXII.5.2
 - 작업명: output directory를 temp에 생성 후 replace하거나 generated marker 아래만 수정, 사용자 source를 임의로 덮어쓰지
   않음
-- 상태: 완료 보고(`reported_done`). 선행 XXII.5.1이 부분 완료라 원장 판정은 통합 때 정합니다.
+- 상태: 완료 (`[x]`) — 선행 XXII.5.1이 부분 완료라 원장 표기는 통합 때 정합니다.
 - 결정: ADR-0106 결정 9
 - 선행: XXII.5.1
+
+## 필수 실행 환경
+
+- `DEV-MAC` (순수 Rust 로컬 검증).
 
 ## 변경 파일
 
@@ -28,7 +32,7 @@
 - 교체는 rename 두 번(기존 → 백업, 임시 → 출력)이라 그 사이 짧게 출력 경로가 비어 있을 수 있습니다. 표준 라이브러리에
   디렉터리 교환 rename이 없어 이렇게 했고, 실패 시 백업을 되돌립니다.
 
-## 명령과 결과
+## 실행한 명령 / 검증
 
 | 명령 | 결과 |
 |---|---|
@@ -42,6 +46,10 @@
 - `only_marked_regions_change_in_user_files`: 요청한 구간만 바뀌고 나머지(다른 구간 포함)는 byte 그대로, marker 오류
   4종은 파일 불변.
 - `symlinks_are_not_followed`, `fresh_and_regenerated_directories_are_replaced_with_manifest`(임시·백업 디렉터리 잔여 없음).
+
+## 차이(작업 지시와 다른 점)
+
+- 디렉터리 교체는 rename 두 번(백업 → 교체)입니다. 표준 라이브러리에 디렉터리 교환 rename이 없습니다.
 
 ## 남은 위험
 

@@ -4,10 +4,13 @@
 
 - WBS: XXII.5.1
 - 작업명: 생성 파일 순서, 식별자 escape, formatting 고정
-- 상태: 부분 완료(`[~]`). Web 출력은 끝났습니다. 선행 범위 XXII.2\~XXII.4 중 Apple·Android adapter(XXII.3·XXII.4)는 이
-  작업 범위 밖이라 그 출력의 파일 집합에는 아직 연결하지 않았습니다(같은 `GeneratedFiles`를 쓰면 됨).
+- 상태: 부분 완료 (`[~]`) — Apple·Android 출력 파일 집합 연결이 남았습니다.
 - 결정: ADR-0106 결정 8
 - 선행: XXII.2\~XXII.4
+
+## 필수 실행 환경
+
+- `DEV-MAC` (순수 Rust 로컬 검증).
 
 ## 변경 파일
 
@@ -28,7 +31,7 @@
   escape(`</`·U+2028·U+2029 포함), JavaScript 식별자 규칙은 `web::js::Identifiers`(ASCII, 예약어 회피, 충돌 시 hex 접미사).
 - 경로: 상대 경로만, `..`·`.`·빈 조각·`\`·NUL 거부.
 
-## 명령과 결과
+## 실행한 명령 / 검증
 
 | 명령 | 결과 |
 |---|---|
@@ -43,6 +46,10 @@
 - 식별자·formatting: `identifiers_are_escaped_and_selectors_point_at_ids`(모든 selector id가 HTML에 있음, HTML 텍스트
   escape, JavaScript에 `</script` 없음, 토큰 이름 CSS escape, 모든 파일 LF·끝 줄바꿈 하나·marker),
   `codegen::output::tests::paths_formatting_and_order_are_fixed`, `web::js::tests::*`.
+
+## 차이(작업 지시와 다른 점)
+
+- Web 출력만 연결했습니다.
 
 ## 남은 위험
 

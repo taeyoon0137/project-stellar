@@ -4,9 +4,13 @@
 
 - WBS: XXII.1.7
 - 작업명: XXII.1.4 matrix에 Context·`MotionSpec` 항목의 Web·Apple·Android profile kind별 상태와 lowering 규칙 추가
-- 상태: 완료 보고(`reported_done`). 선행 XXII.1.6이 부분 완료라 원장 판정은 통합 때 정합니다.
+- 상태: 완료 (`[x]`) — 선행 XXII.1.6이 부분 완료라 원장 표기는 통합 때 정합니다.
 - 결정: ADR-0106 결정 3, ADR-0025 결정 1.2·4.2·4.3·4.4
 - 선행: XXII.1.4, XXII.1.5, XXII.1.6
+
+## 필수 실행 환경
+
+- `DEV-MAC` (순수 Rust 로컬 검증).
 
 ## 변경 파일
 
@@ -31,7 +35,7 @@
   - Android: 추적형(`compositionLocalOf`)·비추적형(`staticCompositionLocalOf`) local, slot 재공급.
 - Native가 아닌 항목은 모두 진단이 짝으로 있습니다. CSS 기반 속성 표는 바꾸지 않았습니다.
 
-## 명령과 결과
+## 실행한 명령 / 검증
 
 | 명령 | 결과 |
 |---|---|
@@ -45,6 +49,10 @@
   파일 변경 없음).
 - 규칙별 입력·출력·진단 fixture: `context_and_motion_rules_have_input_output_and_diagnostic_fixture`
   (`matrix_behavior.txt`, 15항목 × 3 profile).
+
+## 차이(작업 지시와 다른 점)
+
+- 없음.
 
 ## 남은 위험
 

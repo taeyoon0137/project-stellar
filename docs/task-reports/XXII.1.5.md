@@ -4,9 +4,13 @@
 
 - WBS: XXII.1.5
 - 작업명: 선언형 상태 머신과 `MotionSpec`을 CodegenIR에 포함, timing function과 reduced motion 대체 동작을 그대로 보존
-- 상태: 완료 보고(`reported_done`). 선행 XXII.1.1이 `[!]`이라 원장 판정은 통합 때 정합니다.
+- 상태: 완료 (`[x]`) — 선행 XXII.1.1이 차단 상태라 원장 표기는 통합 때 정합니다.
 - 결정: ADR-0106 결정 1.2·1.3, ADR-0094 결정 1, ADR-0025 결정 4.1
 - 선행: XXII.1.1, XXX.1.1, IX.5.3
+
+## 필수 실행 환경
+
+- `DEV-MAC` (순수 Rust 로컬 검증).
 
 ## 변경 파일
 
@@ -30,7 +34,7 @@
   일은 expressions 타입을 이름으로 써야 해서 ops에서 할 수 없습니다(crate 그래프). IR 입력 타입은 준비했고, 문서 →
   IR 연결(XXII.1.1 재개)이 expressions에 닿는 위치에서 채워야 합니다.
 
-## 명령과 결과
+## 실행한 명령 / 검증
 
 | 명령 | 결과 |
 |---|---|
@@ -45,6 +49,10 @@
 - 같은 입력 IR bytes 동일: `state_machine_and_motion_ir_bytes_are_identical_for_the_same_input`(입력 순서를 바꿔도 같음).
 - 입력 오류: `behavior_reference_errors_are_rejected`(11 case).
 - 문서 값 보존: `ops::codegen::tests::motion_spec_values_are_copied_bit_for_bit`.
+
+## 차이(작업 지시와 다른 점)
+
+- 문서 상태 머신 → IR 변환은 만들지 않았습니다(ops가 expressions 타입에 닿지 못함, ADR-0106 결정 1.2).
 
 ## 남은 위험
 

@@ -5,10 +5,13 @@
 - WBS: XXII.2.5
 - 작업명: Context를 등록 custom property 상속·생성 코드 context 구조로 낮춤(같은 key 재읽기 깊이 이름, 깊이가 다른
   provision의 구조 대체, slot 재공급, 이름 충돌 진단)
-- 상태: 부분 완료(`[~]`). 출력 규칙·결정론·진단은 끝났습니다. 완료 기준의 "출력 해석값이 XXX.7.4 결과와 같음"은
-  XXX.7.4 해석기가 없어(`[ ]`) IR이 보존한 해석 결과(합성 입력)와의 일치로 대신 확인했습니다.
+- 상태: 부분 완료 (`[~]`) — XXX.7.4 해석기 대조 기준이 남았습니다.
 - 결정: ADR-0106 결정 6, ADR-0025 결정 3.5·3.11·4.3, 속성 모델 10장
 - 선행: XXII.2.3, XXII.1.6, XXII.1.7, IX.11.16, XXX.7.4
+
+## 필수 실행 환경
+
+- `DEV-MAC` (순수 Rust 로컬 검증).
 
 ## 변경 파일
 
@@ -36,7 +39,7 @@
   `-outer`로 보존하고 host에서 다시 공급합니다. 깊이 이름 key는 그 구간의 깊이 이름도 같이 옮깁니다.
 - 깊이·보존 이름은 토큰·key 이름 공간과 충돌을 검사합니다(`name-collision`).
 
-## 명령과 결과
+## 실행한 명령 / 검증
 
 | 명령 | 결과 |
 |---|---|
@@ -56,6 +59,10 @@
   golden.
 - 이름 충돌: `depth_and_outer_names_colliding_with_tokens_are_diagnosed`.
 - 문서 formatter·등록: `ops::export_web_css::tests::context_keys_use_document_names_values_and_registration`.
+
+## 차이(작업 지시와 다른 점)
+
+- 해석값 대조를 해석기 대신 IR이 보존한 해석 결과(합성 입력)로 했습니다.
 
 ## 남은 위험
 

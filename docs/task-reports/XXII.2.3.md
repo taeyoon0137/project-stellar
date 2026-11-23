@@ -4,7 +4,7 @@
 
 - WBS: XXII.2.3
 - 작업명: token을 CSS custom property 또는 generated constants로 내보냄(IX.11.16 이름, 속성 모델 10장 등록 정책)
-- 상태: 완료 보고(`reported_done`). 선행 IX.11.8이 `[~]`라 원장 판정은 통합 때 정합니다.
+- 상태: 완료 (`[x]`) — 선행 IX.11.8이 부분 완료라 원장 표기는 통합 때 정합니다.
 - 결정: ADR-0106 결정 1.5·5, ADR-0075 결정 7, 속성 모델 10장
 - 선행: Phase VIII, IX.11.8, IX.11.16
 
@@ -40,7 +40,7 @@
 - `@property` 문법: ops는 `ExpressionType`을 쓸 수 없어 literal variant로 문법을 정하고, 문서 `registered_syntax`·
   `property_rule`과 같은 표·template인지 문서 source와 대조하는 test를 둡니다.
 
-## 명령과 결과
+## 실행한 명령 / 검증
 
 | 명령 | 결과 |
 |---|---|
@@ -59,6 +59,10 @@
   계산값이 조합 8개 모두에서 IR 값(기본·dark·high contrast·dark+high·reduced motion)과 같고, alias도 따라가며,
   `interaction_state` 토큰은 `:root`에 없음.
 - 문서 함수 일치: `property_rule_template_matches_the_document_function`.
+
+## 차이(작업 지시와 다른 점)
+
+- `@property` 문법을 문서 `property_rule` 대신 ops 표로 냈습니다(crate 그래프). 문서 source 대조 test로 같음을 고정했습니다.
 
 ## 남은 위험
 

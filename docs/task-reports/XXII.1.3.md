@@ -4,9 +4,13 @@
 
 - WBS: XXII.1.3
 - 작업명: CodegenIR은 one-way이며 generated source parser/import API를 만들지 않음
-- 상태: 완료 보고(`reported_done`). 선행 XXII.1.1이 `[!]`이라 원장 판정은 통합 때 정합니다.
+- 상태: 완료 (`[x]`) — 선행 XXII.1.1이 차단 상태라 원장 표기는 통합 때 정합니다.
 - 결정: ADR-0106 결정 9, ADR-0025 결정 4.5, 기술 아키텍처 §17.3
 - 선행: XXII.1.1
+
+## 필수 실행 환경
+
+- `DEV-MAC` (순수 Rust 로컬 검증).
 
 ## 변경 파일
 
@@ -22,11 +26,15 @@
 - `FromStr`·`TryFrom<&str>`·`TryFrom<String>`·`Deserialize` 구현이 있어도 실패합니다.
 - 검사기가 실제로 잡는지 합성 source로 확인합니다.
 
-## 명령과 결과
+## 실행한 명령 / 검증
 
 | 명령 | 결과 |
 |---|---|
 | `cargo test -p stellar-codegen --test one_way_api` | 통과(2) |
+
+## 차이(작업 지시와 다른 점)
+
+- 없음.
 
 ## 남은 위험
 

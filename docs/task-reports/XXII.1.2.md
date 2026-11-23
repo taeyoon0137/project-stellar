@@ -4,9 +4,13 @@
 
 - WBS: XXII.1.2
 - 작업명: unsupported/approximated/native mapping diagnostic을 IR node별로 보존
-- 상태: 완료 보고(`reported_done`). 선행 XXII.1.1이 `[!]`이라 원장 판정은 통합 때 정합니다.
+- 상태: 완료 (`[x]`) — 선행 XXII.1.1이 차단 상태라 원장 표기는 통합 때 정합니다.
 - 결정: ADR-0106 결정 2·3, ADR-0025 결정 1.3
 - 선행: XXII.1.1
+
+## 필수 실행 환경
+
+- `DEV-MAC` (순수 Rust 로컬 검증).
 
 ## 변경 파일
 
@@ -26,7 +30,7 @@
 - semantic snapshot 머리를 `codegen-ir v3`로 올리고 `capability` 줄을 `mapping` 줄(출처, subject, 상태, 규칙, 진단,
   대체, path)로 바꿨습니다.
 
-## 명령과 결과
+## 실행한 명령 / 검증
 
 | 명령 | 결과 |
 |---|---|
@@ -38,6 +42,10 @@
 - `ir::tests::mapping_diagnostics_are_kept_per_node_including_native`: Web·iOS·Android 진단 fixture golden, Native·
   Approximated·Unsupported 판정, 정렬, 제외 node 진단 없음.
 - `ir::tests::mapping_diagnostics_are_deterministic_and_reject_unknown_nodes`: 입력 순서·중복과 무관한 결과, View 밖 node 거부.
+
+## 차이(작업 지시와 다른 점)
+
+- 없음.
 
 ## 남은 위험
 

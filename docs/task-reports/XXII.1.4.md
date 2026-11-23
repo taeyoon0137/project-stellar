@@ -5,9 +5,13 @@
 - WBS: XXII.1.4
 - 작업명: IX.11.19 capability matrix와 IX.11.18 modifier stack 선형화 계획을 코드 생성용으로 확장(Apple·Android
   profile 상태와 lowering 규칙)
-- 상태: 완료 보고(`reported_done`). 선행 IX.11.18·IX.11.19가 `[~]`라 원장 판정은 통합 때 정합니다.
+- 상태: 완료 (`[x]`) — 선행 IX.11.18·IX.11.19가 부분 완료라 원장 표기는 통합 때 정합니다.
 - 결정: ADR-0106 결정 3, ADR-0025 결정 1.3·4.2
 - 선행: XXII.1.2, IX.11.6, IX.11.18, IX.11.19
+
+## 필수 실행 환경
+
+- `DEV-MAC` (순수 Rust 로컬 검증).
 
 ## 변경 파일
 
@@ -33,7 +37,7 @@
   - 그 밖에 테두리 overlay, grid, flex item, mask, 줄 높이, aspect-ratio, transform, path 굽기, 래스터화, 출력 없음.
 - Native가 아닌 항목은 모두 진단이 붙은 규칙을 씁니다(test로 확인).
 
-## 명령과 결과
+## 실행한 명령 / 검증
 
 | 명령 | 결과 |
 |---|---|
@@ -50,6 +54,10 @@
   `matrix::rule_tests::web_entries_are_the_ix_11_19_matrix_and_platform_entries_come_from_rules`.
 - 규칙별 입력·출력·진단 fixture: `matrix::rule_tests::every_rule_has_input_output_and_diagnostic_fixture`
   (`matrix_rules.txt`, 규칙 24개 모두), `rule_application_examples`.
+
+## 차이(작업 지시와 다른 점)
+
+- Apple·Android 규칙 표를 target-profile `CapabilityTable`이 아니라 codegen `matrix`에 두었습니다(소유 범위와 crate 그래프). IR lowering은 이 matrix만 참조합니다.
 
 ## 남은 위험
 
