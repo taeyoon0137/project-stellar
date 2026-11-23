@@ -31,8 +31,12 @@ pub mod decode;
 /// PNG encode (XX.2.2, XX.2.3).
 pub mod encode;
 
+/// worker 실행과 결과 (XX.2.3).
+pub mod job;
+
 pub use decode::{decode_png, Cicp, DecodeLimits, DecodedPng, PngColorInfo, PngDecodeError};
 pub use encode::encode_png;
+pub use job::{render_png, GamutSummary, PngExportError, PngFile, PngJob};
 
 /// PNG signature.
 pub const SIGNATURE: [u8; 8] = decode::SIGNATURE;

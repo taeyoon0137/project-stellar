@@ -80,6 +80,9 @@ pub mod export_css;
 /// CSS 선언 블록 복사·붙여넣기 (IX.11.15).
 pub mod css;
 
+/// PNG 내보내기 실행과 atomic 저장 (XX.2.3, ADR-0103).
+pub mod export_png;
+
 /// 기본값 세트(ADR-0082, ADR-0086): 세트 표·해석 함수(document)와 프로젝트 선택·사용자 세트 파일(project)을
 /// 상위 도구가 같은 구현으로 쓰도록 다시 냅니다.
 pub mod style_defaults {
