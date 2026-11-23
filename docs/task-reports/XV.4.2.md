@@ -2,7 +2,7 @@
 
 - WBS: XV.4.2
 - 작업명: 각 lock entry에 exact commit, cached content hash, library schema version, transitive dependencies 기록
-- 상태: 완료 (`[x]`)
+- 상태: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 완료 (`[x]`)
 - 선행: XV.3.4(이 lane `[~]` — 필요한 검증 결과 타입은 존재), XV.4.1(이 lane `[~]` — 변환 코드 존재)
 
 ## 필수 실행 환경
@@ -63,3 +63,24 @@
 ## 상태 유지(deps_wiring lane, 2026-11-14)
 
 - `[~]` 유지: 엄격 선행 XV.3.4가 아직 `[~]`입니다(실제 ProjectProbe·storage validator 연결은 project crate의 probe/adapter 파일이 필요하며 이 lane의 허용 경로 밖). lock entry 필드·validator는 이제 실제 `stellar.lock.yaml` 파서(`Lockfile::from_yaml`)가 그대로 씁니다(ADR-0021, `lock::tests::rejects_missing_field_in_resolved`).
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 구현 판정 통과, 선행 미충족.
+- 근거: lock entry 필드(exact commit, cached content hash, schema version, transitive dependencies)와 누락 field 거부는 실제 `stellar.lock.yaml` 파서가 씁니다. 선행 XV.3.4가 `[~]`라 `[~]`를 유지합니다. 보고서 상태 줄이 계획서와 달리 `[x]`였던 것을 바로잡습니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/project/src/lock.rs` `Lockfile::from_yaml`(실제 `stellar.lock.yaml` 파서)이 dependencies의 entry 필드·validator를 쓰고, `rejects_missing_field_in_resolved`가 누락 field를 거부합니다(ADR-0021).
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-dependencies` | 96 passed |
+
+### 남은 조건과 finding
+
+- XV.3.4가 `[x]`가 되면 코드 변경 없이 `[x]`입니다.

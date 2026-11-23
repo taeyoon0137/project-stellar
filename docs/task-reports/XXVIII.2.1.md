@@ -2,7 +2,7 @@
 
 - WBS: XXVIII.2.1
 - 작업명: valid/invalid binary/YAML golden corpus를 라이선스와 함께 공개 가능한 형태로 정리(synthetic 내용만)
-- 상태: 부분 완료 (`[~]`) — corpus·manifest는 완료, 라이선스는 미결정
+- 상태: `[~]` 유지 — 판정 보류(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — corpus·manifest는 완료, 라이선스는 미결정
 - 선행: XXVIII.1.2(기준 commit에서 `[x]`)
 
 ## 필수 실행 환경
@@ -78,3 +78,23 @@
   작업에서 저장소로 옮겨야 합니다.
 - 형식 명세 §14.5·§14.6(`stellar.yaml` 의존성·lock entry)과 §14.2(loader 오류 열 번호)는 기준 commit 구현과
   다릅니다(ADR-0021 단일화, parser 단계 오류의 열은 0부터). 별도 문서 수정 commit으로 고칩니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 판정 보류.
+- 근거: 판정 보류(사용자 결정). corpus와 manifest는 완료되었고 synthetic 내용만 씁니다. 공개 라이선스 선택은 기술 결정이 아니라 제품 소유자 결정이라 이 lane이 정하지 않았습니다. `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- corpus manifest `license.status: undecided`(이전 보고서).
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+
+### 남은 조건과 finding
+
+- 제품 소유자가 corpus 라이선스를 정하면 manifest `license`와 본문을 더해 `[x]`로 올립니다.

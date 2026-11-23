@@ -2,7 +2,7 @@
 
 - WBS: XV.5.3
 - 작업명: library resource를 수정하는 command를 사용 project에서 거부, instance 공개 override만 허용
-- 상태: 부분 완료 (`[~]`) — 판정 정책은 완료했지만 실제 command가 이 판정을 거치지 않습니다(9A 리뷰 P2).
+- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 판정 정책은 완료했지만 실제 command가 이 판정을 거치지 않습니다(9A 리뷰 P2).
 - 선행: XV.5.2(`[x]`, 이 lane), IX.2.4(`[x]`)
 
 ## 필수 실행 환경
@@ -79,3 +79,24 @@
   쓰는 project crate 또는 runtime입니다. 문서가 외부 참조를 저장하는 통합(XV.5.2 차이)이 먼저 필요합니다.
 - 이 crate의 판정 정책(정의·property·token 편집과 삭제 거부, 공개 override만 허용, reset 항상 허용)은
   완료했고 리뷰 수정 P3까지 반영했습니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 남은 범위·결함 있음.
+- 근거: 판정 정책(정의·property·token 편집과 삭제 거부, 공개 override 허용)은 있지만 실제 command가 이 판정을 거치지 않아 `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/dependencies/src/read_only.rs` `check_library_edit`·`check_library_edits`. commands·project·runtime에서 부르는 곳이 없습니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-dependencies` | 96 passed |
+
+### 남은 조건과 finding
+
+- 결함 finding(소유 lane 없음 → backlog): 문서가 외부 참조를 저장하는 통합(XV.5.2 차이) 뒤, project crate나 runtime에서 transaction 적용 전에 `check_library_edits`를 부르고 실제 정의 편집 command 거부·override 성공 fixture를 확인합니다. document·commands는 dependencies에 의존할 수 없으므로 연결 위치는 project·runtime입니다.

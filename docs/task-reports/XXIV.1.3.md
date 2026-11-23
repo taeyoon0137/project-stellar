@@ -2,7 +2,7 @@
 
 - WBS: XXIV.1.3
 - 작업명: headless `stellar`에 프로젝트 검증, 프로젝트 사이 semantic diff, 3-way semantic merge, 저장 스키마 migration 명령을 추가
-- 상태: 부분 완료 (`[~]`) — 네 명령과 fixture corpus는 통과했으나, 선행 "Phase XIV"에 `[ ]` 행이 남아 있습니다(XIV.10.7~XIV.10.9, XIV.12.3, XIV.12.4 등). 계획서 §1.2 규칙 4에 따라 Phase XIV가 모두 `[x]`가 될 때까지 `[~]`로 둡니다. 또 `semantic-merge`는 병합 결과를 프로젝트에 쓰지 못하고(XIV.12.4 없음) `migrate`에는 제품 migration step이 없습니다(아래 "차이").
+- 상태: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 네 명령과 fixture corpus는 통과했으나, 선행 "Phase XIV"에 `[ ]` 행이 남아 있습니다(XIV.10.7~XIV.10.9, XIV.12.3, XIV.12.4 등). 계획서 §1.2 규칙 4에 따라 Phase XIV가 모두 `[x]`가 될 때까지 `[~]`로 둡니다. 또 `semantic-merge`는 병합 결과를 프로젝트에 쓰지 못하고(XIV.12.4 없음) `migrate`에는 제품 migration step이 없습니다(아래 "차이").
 - 선행: Phase XIV(semantic diff XIV.3·merge XIV.10 엔진 코드 있음, 일부 행 `[ ]`), V.8.6(`[x]`)
 
 ## 필수 실행 환경
@@ -68,3 +68,30 @@
 - validate·diff·merge는 모든 문서를 메모리에 올립니다. 대형 프로젝트에서 시간·메모리가 문서 크기에 비례합니다.
 - semantic snapshot 투영은 문서 레코드(정의·node·modifier)만 다룹니다. token·component·asset은 저장 포맷이 없어 diff·merge 대상이 아닙니다.
 - validate 경고 메시지의 참조 종류 표기는 Rust enum 이름(`Node` 등)입니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 구현 판정 통과, 선행 미충족.
+- 근거: 네 명령은 행 지시(명령 구현, fixture corpus 통과)를 만족합니다. 선행 "Phase XIV"에 `[ ]` 행 24개가 남아 규칙 4로 `[~]`를 유지합니다. 다만 `semantic-merge`의 clean 판정은 XIV.10.8(merged snapshot full validator)이 없으면 무효 결과를 clean으로 낼 수 있어, 선행을 통째로 없애는 재작성은 권하지 않습니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/ops/src/validate.rs` `validate_project`: 모든 문서를 읽어 문서 validator를 다시 실행하고 오류·경고를 분리합니다.
+- `crates/ops/src/compare.rs` `semantic_diff_projects`·`semantic_merge_projects`: 같은 project id만 받고 XIV.3 diff·XIV.10 `merge`를 부릅니다. merge 결과(`result.conflicts`)를 그대로 내보내며 merged snapshot을 검증하지 않습니다(425행 이후). 병합 엔진은 `BTreeMap`·`BTreeSet`으로 순서가 정해져 출력은 결정적입니다.
+- `crates/ops/src/migrate.rs`: `CURRENT_SCHEMA_VERSION = 1`, 제품 registry step 없음, 실행 모드는 저장 잠금 안에서 다시 판정합니다.
+- `tools/stellar-cli/src/project_cmds.rs`: 종료 코드 분류(1 도메인 실패, 65 판정 실패)와 결과 JSON.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-ops` | 51 passed |
+| `cargo test -p stellar-cli` | output_fixtures 26 passed(validate·semantic-diff·semantic-merge·migrate corpus 포함) |
+
+### 남은 조건과 finding
+
+- 선행 재작성안(통합 세션 판단): XXIV.1.3의 "Phase XIV"를 실제로 쓰는 "XIV.3, XIV.10, V.8.6"으로 좁힙니다. XIV.3은 모두 `[x]`이고 XIV.10은 XIV.10.7\~XIV.10.9가 남아 있어 이 행은 여전히 `[~]`입니다. XIV.10.8이 엔진에서 무효 결과를 conflict로 돌리면 CLI 변경 없이 이 행을 `[x]`로 올릴 수 있습니다(semantic-merge lane).
+- V.10.3 사슬: V.10.3이 실제로 쓰는 것은 ops snapshot(XXIV.4.2), `apply::ApplyError`, `migrate::CURRENT_SCHEMA_VERSION`뿐이고 validate·diff·merge는 쓰지 않습니다(`crates/ops/src/text_source.rs` import). V.10.3의 선행 XXIV.1.3을 "XXIV.4.2, V.8.6"으로 바꾸는 재작성안을 통합 세션에 넘깁니다. 이번에 XXIV.4.2를 `[x]`로 판정했으므로 이 재작성이 들어가면 V.10.3은 V.10.2와 함께 착수 가능합니다.
+- `semantic-merge`가 결과를 파일에 쓰지 않는 것은 행 지시와 충돌하지 않습니다(기록은 XXIV.2.1·XIV.12.4 범위).

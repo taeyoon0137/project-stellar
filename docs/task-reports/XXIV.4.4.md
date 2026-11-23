@@ -2,7 +2,7 @@
 
 - WBS: XXIV.4.4
 - 작업명: 파일·표준 입력의 CommandTransaction JSON과 base revision을 closed enum으로 검증해 세대 전환 저장으로 원자적으로 기록, `--dry-run`은 semantic diff만 출력
-- 상태: 부분 완료 (`[~]`) — 적용·검증·세대 전환 저장·dry-run은 끝났으나, "generation metadata에 writer 종류 headless CLI 기록"은 보호 경로 `crates/storage`(generation manifest 포맷) 변경과 ADR 갱신이 필요한데 이 lane의 수정 허용 경로 밖이라 하지 못했습니다.
+- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 적용·검증·세대 전환 저장·dry-run은 끝났으나, "generation metadata에 writer 종류 headless CLI 기록"은 보호 경로 `crates/storage`(generation manifest 포맷) 변경과 ADR 갱신이 필요한데 이 lane의 수정 허용 경로 밖이라 하지 못했습니다.
 - 선행: XXIV.4.2(이 lane에서 구현, `[~]`: 남은 일은 문서 반영뿐), VII.1.6(`[x]`), XIV.3.8(`[x]`)
 
 ## 필수 실행 환경
@@ -68,3 +68,27 @@
 - 쓰기는 모든 문서를 메모리에 올려 다시 직렬화합니다. 내용이 같은 chunk는 쓰지 않지만 대형 프로젝트에서 시간·메모리가 문서 수에 비례합니다.
 - 교차 프로세스 저장 잠금은 아직 없습니다(XXIV.4.5). 현재는 V.5.2 optimistic check가 계획과 pointer 교체 사이의 다른 writer를 쓰기 전에 거부하지만, check와 교체 사이의 아주 짧은 구간은 잠금으로 막아야 합니다.
 - `CommandOrigin::User`를 씁니다. headless 쓰기는 앱 history에 들어가지 않으므로 origin은 저장되지 않습니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 남은 범위·결함 있음.
+- 근거: 적용·dry-run·base revision 비교·closed enum 검증·잠금 판정은 코드에 있습니다. 행 지시의 "generation metadata에 writer 종류 headless CLI를 남김"은 아직 없어 `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/ops/src/apply.rs`: CommandTransaction JSON → closed enum 해석, base revision 비교, 세대 전환 저장, `--dry-run`은 semantic diff만. 잠금 판정 `locked_change`는 `stellar_commands::lock::{EditIntent, NodeLock}`을 적용 전 레코드로 계산하며 일반 수정은 `EditIntent::Edit`입니다. Codex 검토(48fb4828)가 지적한 `from_records` 실패를 잠금 위반으로 보고하던 경로와 `DISPLAY_NAME` 대리 intent는 지금 코드에 없습니다.
+- `crates/storage/src/generation/manifest.rs` `GenerationManifest`: generation·parent·project_id·schema_version·chunk_pointers·root_document_ids뿐이고 writer 종류 필드가 없습니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-ops` | 51 passed |
+| `cargo test -p stellar-cli` | output_fixtures 26 passed |
+
+### 남은 조건과 finding
+
+- 결함(남은 범위): writer 종류 필드는 보호 경로 `crates/storage`(generation manifest 포맷)와 ADR이 필요합니다. 이 경로를 소유한 첫 배치 lane이 없으므로 backlog finding으로 넘깁니다. 저장 형식 전환(텍스트 원본, ADR-0061) 뒤에는 writer 기록 위치를 generation manifest로 둘지 다시 정해야 합니다.
+- XXIV.4.5가 이 행을 선행으로 둡니다.

@@ -2,7 +2,7 @@
 
 - WBS: XV.6.2
 - 작업명: local path가 일반 repo 또는 잘못된 library id이면 거부
-- 상태: 부분 완료 (`[~]`) — 위치 재검사(symlink 해석)·거부 정책은 실제 디렉터리 fixture로 완료했지만,
+- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 위치 재검사(symlink 해석)·거부 정책은 실제 디렉터리 fixture로 완료했지만,
   "일반 repo" 판정 자체는 project crate의 `ProjectProbe`(IV.5.1) 연결이 필요합니다(현재 테스트는 표
   기반 probe fake).
 - 선행: XV.6.1(이 lane에서 완료), IV.5.1(`[x]`)
@@ -49,3 +49,24 @@
 
 - linked worktree 대상(gitfile) 허용은 XV.6.4 범위입니다(ProjectProbe의 gitfile 처리에 의존).
 - override 대상의 current commit·dirty 상태 진단(XV.6.3)은 선행 XIV.2.2 미완료로 차단입니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 남은 범위·결함 있음.
+- 근거: local override 위치 재검사(symlink 해석)·거부 정책은 실제 디렉터리 fixture로 있지만 "일반 repo" 판정은 표 기반 probe fake만 써서 `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/dependencies/src/local_override.rs`. project의 `manifest.rs`는 `local_overrides`만 가져오고 거부 판정에 실제 `ProjectProbe`를 넘기지 않습니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-dependencies` | 96 passed |
+
+### 남은 조건과 finding
+
+- 결함 finding(소유 lane 없음 → backlog): XV.3.4와 같은 probe 연결로 실제 일반 repo·잘못된 library id fixture를 확인합니다.

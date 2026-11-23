@@ -2,7 +2,7 @@
 
 - WBS: IX.10.4
 - 작업명: Stellar 앱 업데이트만으로 project profile version을 바꾸지 않게 registry version과 project pin 분리
-- 상태: 부분 완료 (`[~]`) — pin 분리와 pin 기준 해석은 구현·검증했지만, "project bytes"는 형식 중립
+- 상태: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — pin 분리와 pin 기준 해석은 구현·검증했지만, "project bytes"는 형식 중립
   `ManifestNode` canonical bytes로만 검증했습니다. 실제 `stellar.yaml`은 `registry_version` pin을 아직 저장할 수
   없습니다(IX.10.3 `[~]`, 아래 상태 정정).
 - 선행: IX.10.3(이 lane `[x]`)
@@ -66,3 +66,24 @@
   적은 한계와 같음).
 - `[x]`로 되돌리려면 IX.10.3의 project 연결 후, 실제 `stellar.yaml` 텍스트를 이전 앱 release와 새 앱 release로 열고 다시 기록해
   bytes·해석 결과가 같음을 확인해야 합니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 구현 판정 통과, 선행 미충족.
+- 근거: registry version과 project pin 분리, pin 기준 해석은 코드에 있습니다. "project bytes unchanged"는 실제 `stellar.yaml` 연결(IX.10.3 남은 범위)이 있어야 확인할 수 있고 선행 IX.10.3이 `[~]`라 `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/target-profile/src/`: `RegistryCatalog`, project pin 기준 해석.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-target-profile` | 42 passed |
+
+### 남은 조건과 finding
+
+- IX.10.3이 실제 manifest에 연결되면 이전 release와 새 release로 같은 `stellar.yaml`을 열고 다시 써 bytes가 같은지 확인합니다.

@@ -2,7 +2,7 @@
 
 - WBS: XXIV.4.2
 - 작업명: `crates/ops`(`stellar-ops`)를 추가하고 crate graph 정책에 등록, 앱 없이 프로젝트를 열어 revision을 포함한 읽기 전용 snapshot 반환
-- 상태: 부분 완료 (`[~]`) — crate·정책 등록·snapshot·검증은 끝났으나, 작업 지시의 "crate graph **문서**에 등록"(`docs/architecture/crate-dependency-graph.md`)은 이 lane의 수정 허용 경로 밖이라 반영하지 못했습니다. 반영할 문안은 아래 "남은 위험 / 한계"에 있습니다.
+- 상태: `[x]` 판정 — 통합 때 계획서 표기를 `[x]`로 바꿉니다(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — crate·정책 등록·snapshot·검증은 끝났으나, 작업 지시의 "crate graph **문서**에 등록"(`docs/architecture/crate-dependency-graph.md`)은 이 lane의 수정 허용 경로 밖이라 반영하지 못했습니다. 반영할 문안은 아래 "남은 위험 / 한계"에 있습니다.
 - 선행: XXIV.1.2(`[x]`), VII.1.6(`[x]`)
 
 ## 필수 실행 환경
@@ -67,3 +67,28 @@
 - **후속(이 행을 `[x]`로 올리기 위한 남은 일)**: `docs/architecture/crate-dependency-graph.md` 허용 의존 표에 `| \`stellar-ops\` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics |` 행과 Mermaid edge(`ops --> project` 등 8개)를 추가하고, 규칙 절에 "ops는 local-ipc·agent-protocol·mcp-core·agent-host·ffi에 전이적으로도 도달하지 않음(ADR-0005 §8, `reach::FORBIDDEN_REACH`)"을 적어야 합니다.
 - `reach::FORBIDDEN_REACH`의 `stellar-ops` 금지 목록에는 처음에 ADR의 `mcp-core` 대신 현재 package 이름 `stellar-mcp`만 있었습니다. 리뷰 보완에서 `stellar-ops`·`stellar-cli` 금지 목록에 `stellar-mcp-core`를 더했고(`stellar-mcp`도 유지), ADR-0005 §8 열이 모두 들어 있는지와 diagnostics를 거친 `stellar-mcp-core` 전이 도달 거부를 `bans_cover_the_adr_0005_section_8_columns`로 확인합니다.
 - token·component 정의는 아직 저장 포맷(Phase VIII·IX)이 없어 snapshot은 chunk kind 개수만 보고합니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[x]` 판정 — 통합 때 계획서 표기를 `[x]`로 바꿉니다.
+- 근거: 행 지시의 불변식이 코드에 있고, 이전 `[~]` 사유였던 crate graph 문서 등록이 반영되어 있습니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/ops/src/snapshot.rs` `open_snapshot`: probe → project id → `LazyGeneration::open`. current pointer가 없을 때만 `ProjectRevision::Unsaved`, 그 밖의 저장소 오류는 `OpenError::Storage`로 거부합니다. revision은 current generation 번호와 manifest content hash입니다(`manifest.encode_with_hash`). 쓰기 API를 부르지 않습니다.
+- `crates/ops/Cargo.toml`: 직접 의존은 project·document·commands·storage·semantic-diff·semantic-merge·codegen·accessibility·target-profile입니다. codegen·accessibility·target-profile 세 간선은 ADR-0049와 ADR-0005 §8 표(`docs/adr/ADR-0005-agent-tool-layers.md` 294행) 개정으로 허용된 것이고, 행 지시의 금지 대상(local-ipc·agent-protocol·mcp-core·agent-host·ffi)에는 닿지 않습니다.
+- `tools/xtask/src/crate_graph.rs` `allowed_edges()`의 `stellar-ops` 항목과 `tools/xtask/src/crate_graph/reach.rs` `FORBIDDEN_REACH`의 `stellar-ops` 전이 금지(local-ipc·agent-protocol·mcp-core·mcp·agent-host·ffi).
+- `docs/architecture/crate-dependency-graph.md`: 허용 의존 표에 `stellar-ops` 행과 Mermaid `ops --> ...` 간선이 있습니다(이전 보고서의 남은 일).
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-ops` | 51 passed, 0 failed |
+| `cargo xtask validate-crate-graph` | 종료 코드 0 |
+
+### 남은 조건과 finding
+
+- ADR-0005 §8 표의 ops 허용 목록이 행 지시(8개)보다 3개 많습니다. 행 지시를 바꾸지 않은 개정이므로 통합 때 계획서 행 문구를 ADR-0049에 맞춰 고치는 것이 맞습니다(판정에는 영향 없음).

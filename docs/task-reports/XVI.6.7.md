@@ -2,7 +2,7 @@
 
 - WBS: XVI.6.7
 - 작업명: command sequence fuzz target을 장기 nightly job으로 추가(crash seed 자동 artifact 저장)
-- 상태: 부분 완료 (`[~]`) — 결정론적 seed harness, 장기 실행 진입점, crash seed artifact 저장은 구현·검증했으나 **nightly CI job 등록은 하지 않았습니다**
+- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 결정론적 seed harness, 장기 실행 진입점, crash seed artifact 저장은 구현·검증했으나 **nightly CI job 등록은 하지 않았습니다**
   (아래 "차이" 참조). 선행 VII.6.3도 `[~]`입니다.
 - 선행: VII.6.3(`[~]` — CI fuzz 등록만 미완, harness `fuzz_one`과 로컬 smoke는 통과)
 
@@ -67,3 +67,25 @@
   나타나지 않고 200 seed 범위에서 8건 나타났습니다 — 장기 실행이 필요한 이유입니다.
 - 변조는 transaction bytes 단위(bit flip·절단)이며 구조 인지(structure-aware) 변이는 아닙니다.
 - 단계마다 semantic snapshot을 만들어 debug 빌드에서 seed당 약 0.3~0.5초입니다. nightly 기본 3,600초 예산이면 약 1만 seed 안팎입니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 남은 범위·결함 있음.
+- 근거: 결정론적 seed harness, 장기 실행 진입점, crash seed artifact 저장·재현은 코드와 실제 결함 검출 실험으로 확인했습니다. 행 지시의 "장기 nightly job"은 제품 test를 CI에 넣지 않는 계획서 개정(2026-11-14)과 충돌해 실행할 job이 없습니다. `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/commands/src/sequence_fuzz.rs`: `run_sequence`, `run_campaign`(seed별 `catch_unwind`, artifact `command-sequence-seed-<seed>.txt`), `#[ignore]` `sequence_fuzz_nightly`(환경 변수로 범위·시간·artifact 경로).
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-commands` | 123 passed, 4 ignored |
+
+### 남은 조건과 finding
+
+- 계획 개정 제안(통합 세션 판단): CI 정책에 맞춰 "장기 nightly job으로 추가"를 "장기 실행 진입점(`cargo test -p stellar-commands sequence_fuzz_nightly -- --ignored`)과 crash artifact 경로를 제공"으로 바꾸거나, 로컬 정기 실행 수단을 정합니다. 문구가 바뀌면 코드 변경 없이 `[x]`입니다.
+- 선행 VII.6.3은 이번에 `[x]`로 판정했습니다.

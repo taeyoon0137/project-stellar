@@ -2,7 +2,7 @@
 
 - WBS: XIX.2.5
 - 작업명: 모든 MCP payload에서 agent에 전달되는 프로젝트 내용을 사용자가 승인한 프로젝트·세션으로 제한
-- 상태: 부분 완료 (`[~]`) — 범위 검사(요청 URI·tool 인자·응답 payload)와 cross-project 거부 fixture는 끝났습니다. 작업 지시의 "모든 MCP payload" 중 headless 읽기 backend 일부만 이 검사를 거치고, attached와 나머지 resource·tool 연결은 남았습니다. 아래 "2026-11-15 검토 메모"를 참고합니다.
+- 상태: `[x]` 판정 — 통합 때 계획서 표기를 `[x]`로 바꿉니다(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 범위 검사(요청 URI·tool 인자·응답 payload)와 cross-project 거부 fixture는 끝났습니다. 작업 지시의 "모든 MCP payload" 중 headless 읽기 backend 일부만 이 검사를 거치고, attached와 나머지 resource·tool 연결은 남았습니다. 아래 "2026-11-15 검토 메모"를 참고합니다.
 - 선행: XIX.1.4(`[x]`)
 
 ## 필수 실행 환경
@@ -59,3 +59,27 @@
 - headless backend(`crates/mcp-core/src/headless.rs`)의 resource 읽기는 `check_resource_uri`와 `release`, tool 호출은
   `check_tool_arguments`를 거칩니다. 이 backend의 행 XIX.9.3은 선행 미완료로 `[!]`입니다.
 - 이 절에 처음 적었던 stdio 프로세스 검사 결과와 "tools/list는 비어 있음"은 Codex 보고였고 지금 코드와도 맞지 않아 지웠습니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[x]` 판정 — 통합 때 계획서 표기를 `[x]`로 바꿉니다.
+- 근거: 프로젝트 내용을 agent에 내보내는 모든 MCP 경로가 승인 범위 검사를 거칩니다. 이전 `[~]` 사유(일부 backend만 연결)는 지금 코드와 맞지 않습니다. 프로젝트 내용을 내보내는 backend는 headless 하나이고, 기본·attach 세션은 ping만 제공합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/mcp-core/src/server.rs` 175\~189행: `resources/read`·`tools/call` 등은 headless backend가 있을 때만 처리하고, 없으면 내용 method를 제공하지 않습니다.
+- `crates/mcp-core/src/headless.rs`: `call`은 `check_tool_arguments`(123행), `read_cached`는 `check_resource_uri`(229행), 모든 응답은 `with_snapshot` 끝의 `release`(206행)를 거칩니다. 응답 직전에 신뢰·snapshot 최신성을 다시 확인합니다.
+- `crates/mcp-core/src/catalog/scope.rs` `ApprovedScope`: 다른 scheme·정의 밖 경로·다른 프로젝트 문서·선언 밖 인자·다른 프로젝트·세션 표지 payload를 거부합니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-mcp-core` | 58 passed |
+| `cargo test -p stellar-mcp --test headless_read` | 11 passed, 1 ignored(`release_page_rtt` 측정). `scope_revision_limits_and_write_requests_return_normal_errors`가 실제 stdio server 왕복으로 다른 프로젝트 URI·`project` 인자·쓰기 tool을 -32602로 거부하고 파일 digest가 같음을 확인합니다. |
+
+### 남은 조건과 finding
+
+- attached backend가 프로젝트 내용을 내보내기 시작하면(agent-session-core lane) 같은 `ApprovedScope`를 거치게 해야 합니다. 그 전까지 이 판정은 유지됩니다.

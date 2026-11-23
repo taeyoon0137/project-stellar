@@ -2,7 +2,7 @@
 
 - WBS: XV.5.5
 - 작업명: missing cache/offline entry는 library resource unavailable diagnostic을 만들고 project 기본 데이터는 읽기 가능
-- 상태: 부분 완료 (`[~]`) — library 부분 로드와 진단은 완료했지만 프로젝트 열기 경로에 연결하지 않았습니다(9A 리뷰 P2).
+- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — library 부분 로드와 진단은 완료했지만 프로젝트 열기 경로에 연결하지 않았습니다(9A 리뷰 P2).
 - 선행: XV.3.3(`[x]`), III.2.4(`[x]`)
 
 ## 필수 실행 환경
@@ -98,3 +98,24 @@
   누락 library가 진단으로 남는 것을 확인하면 `[x]`로 올립니다.
 - unavailable 진단 생성, 미해결 외부 참조 보존(P1), 같은 node entry 불일치 진단(P5)은 이 crate에서
   완료했습니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 남은 범위·결함 있음.
+- 근거: library 부분 로드와 unavailable 진단은 있지만 프로젝트 열기 경로가 `load_locked_libraries`를 부르지 않아 `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/dependencies/src/library_load.rs`: 실패 node를 진단으로 남기고 나머지를 반환. project·runtime·ops에서 부르는 곳이 없습니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-dependencies` | 96 passed |
+
+### 남은 조건과 finding
+
+- 결함 finding(소유 lane 없음 → backlog): 프로젝트 열기 경로에 연결하고 offline missing fixture로 프로젝트 기본 데이터가 열리고 누락 library가 진단으로 남는지 확인합니다.
