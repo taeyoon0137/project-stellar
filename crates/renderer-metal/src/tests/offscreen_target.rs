@@ -770,6 +770,35 @@ fn large_offset_shadow_keeps_supersampling() {
     assert_eq!(pixel(160, 10)[3], 0);
 }
 
+/// 배수 8 tile의 GPU 메모리를 재고, backend 메모리 예산을 넘으면 그 tile만 배수를 낮춥니다. 배수 1로도 넘으면 실패합니다.
+#[test]
+fn memory_budget_lowers_supersampling_when_a_tile_does_not_fit() {
+    let export = confirmed(large_blur_roots(), 1.0, ExportBackground::Transparent);
+    let (full, report) = measured(&export, &metal()).unwrap();
+    assert_eq!(report.supersample_min, SUPERSAMPLE);
+    assert!(report.peak_frame_bytes > 0 && report.peak_frame_bytes < report.budget_bytes);
+    // 배수 8 tile 측정(기준 장비 기록용): target 한 변 1024 texel(Rgba16Float 8 MiB) + 효과 window.
+    eprintln!("budget default: {report:?}");
+    assert!(report.peak_frame_bytes < 512 << 20, "{report:?}");
+    let budget = report.peak_frame_bytes * 6 / 10;
+    let (lowered, small) = measured(&export, &metal().with_memory_budget(Some(budget))).unwrap();
+    eprintln!("budget {budget}: {small:?}");
+    assert!(small.supersample_min < SUPERSAMPLE, "{small:?}");
+    assert!(small.peak_frame_bytes <= budget, "{small:?}");
+    write_artifact("large_blur_srgb_1x_budget", &lowered, OutputProfile::Srgb);
+    // 배수만 다르고 같은 장면입니다(가장자리 coverage 단계 차이).
+    let (over, worst) = associated_diff(&full, &lowered, 24);
+    assert_eq!(over, 0, "최대 차이 {worst}");
+    let request = OffscreenRequest::new(&export, OutputProfile::Srgb);
+    let result = metal()
+        .with_memory_budget(Some(1024))
+        .render(&request, &CancelToken::new());
+    assert!(
+        matches!(&result, Err(OffscreenError::Failed { message }) if message.contains("메모리 예산")),
+        "{result:?}"
+    );
+}
+
 #[test]
 fn selection_and_cancel_are_reported() {
     let roots = shared_roots();

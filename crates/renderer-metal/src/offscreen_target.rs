@@ -16,8 +16,9 @@
 //!   덮고(한 변 `tile × 배수`), 여백의 효과 원본은 효과 window(ADR-0136, `effects::window`)에 따로 그립니다. shadow 원본
 //!   window는 offset만큼 옮긴 자리라 offset이 커도 커지지 않고, 큰 σ 효과의 원본은 blur 해상도의 절반으로 그립니다.
 //! - **배수**: 배수 8로 그립니다. tile 하나에서 device σ가 상한(`render.effect.blur_too_large`)을 넘거나, 효과 window가
-//!   texture 한 변 상한([`MAX_TILE_TEXTURE`])을 blur 해상도로도 넘으면 그 tile만 배수를 하나씩 낮춰 다시 그립니다. 배수
-//!   1로도 안 되면 실패합니다(근사하지 않음). [`MetalOffscreenTarget::render_measured`]가 tile 배수를 돌려줍니다.
+//!   texture 한 변 상한([`MAX_TILE_TEXTURE`])을 blur 해상도로도 넘거나, 잰 GPU 메모리(lowering이 만든 texture·buffer와
+//!   graph transient의 Metal heap 크기)가 backend 메모리 예산의 남은 양을 넘으면 그 tile만 배수를 하나씩 낮춰 다시
+//!   그립니다. 배수 1로도 안 되면 실패합니다(근사하지 않음). [`MetalOffscreenTarget::render_measured`]가 측정을 돌려줍니다.
 //! - **색**: working space는 출력 profile 색공간 선형광이고 target은 `Rgba16Float`입니다. 배경이 있으면 clear 색입니다.
 //! - **효과 근사 거부**: frame plan에 효과 근사 진단(낮은 해상도로도 넘는 σ 상한, 기울임 blur)이 있으면 그리지 않고
 //!   실패합니다. 내보내기는
@@ -82,6 +83,7 @@ pub const TARGET_FORMAT: TextureFormat = LAYER_FORMAT;
 pub struct MetalOffscreenTarget {
     assets: Arc<dyn ExportAssetSource + Send + Sync>,
     text: Arc<dyn ExportTextSource + Send + Sync>,
+    memory_budget: Option<u64>,
 }
 
 impl std::fmt::Debug for MetalOffscreenTarget {
@@ -96,7 +98,18 @@ impl MetalOffscreenTarget {
         assets: Arc<dyn ExportAssetSource + Send + Sync>,
         text: Arc<dyn ExportTextSource + Send + Sync>,
     ) -> MetalOffscreenTarget {
-        MetalOffscreenTarget { assets, text }
+        MetalOffscreenTarget {
+            assets,
+            text,
+            memory_budget: None,
+        }
+    }
+
+    /// GPU 메모리 예산(byte)을 정합니다. `None`이면 device `recommendedMaxWorkingSetSize`입니다. 예산을 넘는 tile은
+    /// supersampling 배수를 낮춰 다시 그립니다(ADR-0136).
+    pub fn with_memory_budget(mut self, budget_bytes: Option<u64>) -> MetalOffscreenTarget {
+        self.memory_budget = budget_bytes;
+        self
     }
 }
 
@@ -302,7 +315,7 @@ pub fn tile_margin(export: &ConfirmedExport, scale: f64) -> u32 {
     }
 }
 
-/// 내보내기 tile 측정(ADR-0136).
+/// 내보내기 GPU 메모리 측정(ADR-0136).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ExportMemoryReport {
     /// 그린 tile 수.
@@ -311,13 +324,18 @@ pub struct ExportMemoryReport {
     pub supersample_min: u32,
     /// tile supersampling 배수 최댓값.
     pub supersample_max: u32,
+    /// tile 하나를 그릴 때 잰 GPU 메모리 최댓값(byte): lowering이 만든 target·upload texture·buffer(backend 할당 증가분)와
+    /// graph transient(alias slot마다 Metal heap 크기).
+    pub peak_frame_bytes: u64,
     /// target·효과 texture 한 변 최댓값(texel).
     pub largest_texture_side: u32,
+    /// GPU 메모리 예산(byte).
+    pub budget_bytes: u64,
 }
 
 /// tile 한 번 그리기의 실패.
 enum TileError {
-    /// 더 낮은 supersampling 배수로 다시 그릴 수 있습니다(σ 상한, window 상한).
+    /// 더 낮은 supersampling 배수로 다시 그릴 수 있습니다(σ 상한, window 상한, 메모리 예산).
     Retry(String),
     /// 다시 그려도 안 됩니다.
     Fail(OffscreenError),
@@ -339,11 +357,12 @@ struct TileContext<'a> {
 /// tile 한 번 그리기 결과.
 struct TileOutput {
     bytes: Vec<u8>,
+    frame_bytes: u64,
     largest_side: u32,
 }
 
 impl MetalOffscreenTarget {
-    /// [`OffscreenTarget::render`]와 같게 그리고 tile 측정을 함께 돌려줍니다(ADR-0136).
+    /// [`OffscreenTarget::render`]와 같게 그리고 GPU 메모리 측정을 함께 돌려줍니다(ADR-0136).
     pub fn render_measured(
         &self,
         request: &OffscreenRequest<'_>,
@@ -396,6 +415,9 @@ impl MetalOffscreenTarget {
         if caps.backend != BackendKind::Metal {
             return Err(failed("Metal backend가 아닙니다"));
         }
+        if let Some(budget) = self.memory_budget {
+            backend.inner_mut().set_memory_budget(Some(budget));
+        }
         let context = TileContext {
             snapshot,
             resources: &resources,
@@ -410,7 +432,10 @@ impl MetalOffscreenTarget {
         let space = request.profile().color_space();
         let mut pixels = vec![0u8; (width as usize) * (height as usize) * 4];
         let mut frame = 1u64;
-        let mut report = ExportMemoryReport::default();
+        let mut report = ExportMemoryReport {
+            budget_bytes: backend.inner().memory_usage().budget_bytes,
+            ..ExportMemoryReport::default()
+        };
         for tile_y in (0..height).step_by(TILE as usize) {
             for tile_x in (0..width).step_by(TILE as usize) {
                 if cancel.is_cancelled() {
@@ -418,7 +443,7 @@ impl MetalOffscreenTarget {
                 }
                 let tw = TILE.min(width - tile_x);
                 let th = TILE.min(height - tile_y);
-                // 배수 8부터 그리고, σ 상한·window 상한 때문에 못 그리면 배수를 하나씩 낮춥니다.
+                // 배수 8부터 그리고, σ 상한·window 상한·메모리 예산 때문에 못 그리면 배수를 하나씩 낮춥니다.
                 let mut s = SUPERSAMPLE;
                 let output = loop {
                     match render_tile(&mut backend, &context, (tile_x, tile_y, tw, th), s, frame) {
@@ -438,6 +463,7 @@ impl MetalOffscreenTarget {
                     report.supersample_min.min(s)
                 };
                 report.supersample_max = report.supersample_max.max(s);
+                report.peak_frame_bytes = report.peak_frame_bytes.max(output.frame_bytes);
                 report.largest_texture_side = report.largest_texture_side.max(output.largest_side);
                 cancel.advance(1);
                 resolve_tile(
@@ -523,6 +549,9 @@ fn render_tile(
     })?;
     let (cw, ch) = (tw * s, th * s);
     let core = i64::from(margin) * i64::from(s);
+    // 남은 transient를 놓고 이 tile이 새로 쓰는 메모리만 잽니다.
+    backend.inner_mut().purge_transients();
+    let before = backend.inner().memory_usage();
     let lowered = lower_ops(
         backend,
         &OpsTarget {
@@ -541,8 +570,37 @@ fn render_tile(
     )
     .map_err(|error| match error {
         LowerError::Fixture(FixtureError::Window(error)) => TileError::Retry(error.to_string()),
+        LowerError::Backend(error) if error.kind() == BackendErrorKind::OutOfDeviceMemory => {
+            TileError::Retry(format!("GPU 메모리 예산을 넘습니다: {error}"))
+        }
         error => TileError::Fail(failed(format!("lowering 실패: {error}"))),
     })?;
+    let measured = (|| {
+        let transient = backend.inner().graph_transient_bytes(&lowered.graph)?;
+        let after = backend.inner().memory_usage();
+        Ok::<_, BackendError>(
+            after
+                .resident_bytes
+                .saturating_sub(before.resident_bytes)
+                .saturating_add(transient),
+        )
+    })();
+    let frame_bytes = match measured {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let _ = lowered.release(backend);
+            return Err(fail(failed(format!(
+                "GPU 메모리를 재지 못했습니다: {error}"
+            ))));
+        }
+    };
+    let available = before.budget_bytes.saturating_sub(before.resident_bytes);
+    if frame_bytes > available {
+        let _ = lowered.release(backend);
+        return Err(TileError::Retry(format!(
+            "tile GPU 메모리 {frame_bytes} byte가 메모리 예산 남은 {available} byte를 넘습니다"
+        )));
+    }
     let largest_side = largest_side(&lowered.graph).max(cw).max(ch);
     let result = (|| {
         let EncodeOutcome::Encoded(encoded) = backend.encode(&lowered.request(FrameId(frame)))?
@@ -557,10 +615,17 @@ fn render_tile(
         backend.inner_mut().read_texture(lowered.target)
     })();
     let release = lowered.release(backend);
-    let bytes = result.map_err(|error| fail(failed(format!("GPU 렌더 실패: {error}"))))?;
+    let bytes = result.map_err(|error| {
+        if error.kind() == BackendErrorKind::OutOfDeviceMemory {
+            TileError::Retry(format!("GPU 메모리 예산을 넘습니다: {error}"))
+        } else {
+            TileError::Fail(failed(format!("GPU 렌더 실패: {error}")))
+        }
+    })?;
     release.map_err(|error| fail(failed(format!("GPU resource 해제 실패: {error}"))))?;
     Ok(TileOutput {
         bytes,
+        frame_bytes,
         largest_side,
     })
 }

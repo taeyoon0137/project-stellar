@@ -22,7 +22,8 @@ use stellar_renderer_core::backend::{
 use stellar_renderer_core::gpu_handle::{BufferKind, HandleTable, TextureKind};
 use stellar_renderer_core::graph_trace::{MonotonicClock, TraceClock};
 use stellar_renderer_core::render_graph::{
-    ImportKind, ResourceLifetime, SampleCount, TextureFormat,
+    AttachmentSize, CompiledRenderGraph, ImportKind, ResourceId, ResourceLifetime,
+    ResourceLiveness, SampleCount, TextureFormat,
 };
 
 use crate::buffer::{
@@ -39,7 +40,7 @@ use crate::objc::{autoreleasepool, sel, Id, NSUInteger, RawId};
 use crate::pipeline::{PipelineCache, ShaderError};
 use crate::surface::{check_surface_size, Drawable, LayerOptions, LayerSurface, SurfaceStats};
 use crate::sys::{command_buffer_status, resource_options, MTLOrigin, MTLSize};
-use crate::texture::{create_texture, texture_footprint, MetalTexture};
+use crate::texture::{create_texture, render_target_desc, texture_footprint, MetalTexture};
 use crate::timestamps::{timestamp_counter_set, FrameTiming, Timestamps};
 use crate::trace::{Clock, MetalFrameTrace, MAX_FRAME_TRACES};
 use crate::transient::{PoolError, TransientPool};
@@ -294,6 +295,40 @@ impl MetalBackend {
             resident_bytes: self.memory.resident(),
             budget_bytes: self.memory.budget(),
         }
+    }
+
+    /// `graph`의 transient를 alias slot마다 하나씩 만들 때 차지할 GPU 메모리(byte)를 잽니다. 크기는 Metal heap 크기
+    /// (`heapTextureSizeAndAlignWithDescriptor:`)이고 같은 slot의 resource는 가장 큰 것 하나로 셉니다(transient pool과
+    /// 같은 할당 단위, ADR-0136). 할당하지 않습니다.
+    pub fn graph_transient_bytes(&self, graph: &CompiledRenderGraph) -> Result<u64, BackendError> {
+        let device = self.device()?;
+        let mut slots: Vec<u64> = Vec::new();
+        for (index, liveness) in graph.liveness().iter().enumerate() {
+            let ResourceLiveness::Transient { slot, .. } = *liveness else {
+                continue;
+            };
+            let resource = u32::try_from(index)
+                .ok()
+                .and_then(|id| graph.resource(ResourceId(id)))
+                .ok_or(invalid("없는 transient resource"))?;
+            let (width, height) = match resource.desc.size {
+                AttachmentSize::Surface => (self.surface_size.width, self.surface_size.height),
+                AttachmentSize::Fixed { width, height } => (width, height),
+            };
+            let desc = render_target_desc(
+                resource.desc.format,
+                width.max(1),
+                height.max(1),
+                resource.desc.samples,
+            );
+            let bytes = texture_footprint(device.device(), &desc)?;
+            let slot = slot as usize;
+            if slots.len() <= slot {
+                slots.resize(slot + 1, 0);
+            }
+            slots[slot] = slots[slot].max(bytes);
+        }
+        Ok(slots.iter().sum())
     }
 
     /// 다시 만들 수 있는 graph transient texture를 모두 놓습니다(memory pressure 대응, 다음 frame에
