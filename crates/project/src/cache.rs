@@ -11,10 +11,13 @@
 //! | [`untrack_legacy`] | Git index에서 옛 배치 경로를 뺌(작업 트리·HEAD는 그대로) | semantic Git stage·unstage·commit, `stellar cache migrate` |
 //! | [`prepare_snapshot`] | materialize한 Git snapshot(HEAD·index·후보·merge stage)의 cache를 원본에서 만듦 | semantic Git, HEAD 비교 |
 //! | [`text_snapshot`] | 작업 트리 원본만 비공개 사본으로 복사하고 cache를 만듦 | semantic Git stage(작업 트리 쪽) |
+//! | [`SnapshotStore`] | 같은 원본 digest로 만든 snapshot generation을 보관·재사용 | [`prepare_snapshot`]·[`text_snapshot`], 앱 유휴 GC |
 //!
 //! Git이 담는 것은 원본뿐이라, Git tree를 materialize한 snapshot에는 cache가 없습니다. generation을 여는 저장소
 //! loader(`saved_project`)를 그대로 쓰려고 snapshot 안에서 원본으로 cache를 만듭니다([`prepare_snapshot`]). 옛
-//! commit(원본 없이 옛 배치만 있음)도 같은 함수가 snapshot 안에서 옛 배치를 옮겨 엽니다.
+//! commit(원본 없이 옛 배치만 있음)도 같은 함수가 snapshot 안에서 옛 배치를 옮겨 엽니다. 원본에서 만든 snapshot
+//! generation은 입력(프로젝트 id·원본 digest·schema·build)에만 달린 값이라, 같은 key의 다음 snapshot은 원본을 해석하지
+//! 않고 [`SnapshotStore`]에 보관한 generation을 옮겨 놓습니다(ADR-0138 결정 1).
 //!
 //! cache는 언제든 지우고 원본에서 다시 만들 수 있습니다(ADR-0059 결정 3). 그래서 GC는 Git과 무관하게 cache만
 //! 지우고, 원본이 없는 옛 chunk 프로젝트의 Git index는 건드리지 않습니다(그 경우 Git에 남은 옛 cache가 유일한
@@ -58,6 +61,9 @@ use crate::manifest::Manifest;
 use crate::root::MANIFEST_FILE;
 use crate::yaml::load_restricted;
 use crate::yaml::loader::MAX_INPUT_BYTES;
+
+mod snapshot_store;
+pub use snapshot_store::{PruneReport, SnapshotKey, SnapshotStore, MAX_ENTRIES, STORE_DIR_NAME};
 
 /// 저장소 GC 보존 정책 원본(`config/storage-gc.yaml`, V.7.1). 수치를 코드에 두지 않고 config 파일을 읽습니다.
 const RETENTION_CONFIG: &str = include_str!("../../../config/storage-gc.yaml");
@@ -195,6 +201,14 @@ pub enum Rebuild {
 /// (materialize한 비공개 snapshot은 잠금 대상이 아님). 원본 파일은 쓰지 않습니다.
 pub fn rebuild_from_text(root: &Path) -> Result<Rebuild, CacheError> {
     let disk = observe(root).map_err(|error| CacheError::Source(error.to_string()))?;
+    rebuild_observed(root, disk)
+}
+
+/// [`rebuild_from_text`] 본체(관찰한 디스크 상태에서).
+fn rebuild_observed(
+    root: &Path,
+    disk: crate::document_io::session::DiskSource,
+) -> Result<Rebuild, CacheError> {
     match disk.plan {
         OpenPlan::Cache | OpenPlan::Forward => return Ok(Rebuild::Fresh),
         OpenPlan::Migrate | OpenPlan::Empty => return Ok(Rebuild::NoTextSource),
@@ -273,8 +287,79 @@ pub fn rebuild_from_text(root: &Path) -> Result<Rebuild, CacheError> {
 /// loader가 pointer 누락을 보고). snapshot은 이 프로세스만 쓰므로 잠금을 잡지 않습니다. 사용자 작업 트리에는 쓰지
 /// 마십시오(작업 트리는 [`text_snapshot`]).
 pub fn prepare_snapshot(root: &Path) -> Result<Rebuild, CacheError> {
+    Ok(prepare_snapshot_with(root, SnapshotStore::user().as_ref())?.rebuild())
+}
+
+/// [`prepare_snapshot_with`] 결과.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotCache {
+    /// 같은 key의 보관 generation을 옮겨 놓았습니다(원본을 해석하지 않음).
+    Reused {
+        /// generation 번호.
+        generation: u64,
+        /// manifest hash.
+        manifest: ContentHash,
+    },
+    /// 원본에서 만들었거나([`Rebuild::Rebuilt`]) 만들 것이 없었습니다.
+    Built(Rebuild),
+}
+
+impl SnapshotCache {
+    /// [`Rebuild`]로 본 결과(재사용도 cache를 맞춘 것이므로 [`Rebuild::Rebuilt`]).
+    pub fn rebuild(self) -> Rebuild {
+        match self {
+            SnapshotCache::Reused {
+                generation,
+                manifest,
+            } => Rebuild::Rebuilt {
+                generation,
+                manifest,
+            },
+            SnapshotCache::Built(rebuild) => rebuild,
+        }
+    }
+}
+
+/// [`prepare_snapshot`]에 보관소를 직접 준 버전(`None`이면 재사용하지 않음). 시험과 측정이 씁니다.
+pub fn prepare_snapshot_with(
+    root: &Path,
+    store: Option<&SnapshotStore>,
+) -> Result<SnapshotCache, CacheError> {
     migrate_layout(root)?;
-    rebuild_from_text(root)
+    snapshot_from_text(root, store)
+}
+
+/// cache가 없는 snapshot이면 보관 generation을 먼저 찾고, 없으면 원본에서 만든 뒤 보관합니다(ADR-0138 결정 1).
+/// snapshot에 이미 cache가 있으면(옛 배치를 옮김) 그 다음 번호로 잇는 결과가 입력에만 달린 값이 아니므로 보관소를
+/// 쓰지 않습니다.
+fn snapshot_from_text(
+    root: &Path,
+    store: Option<&SnapshotStore>,
+) -> Result<SnapshotCache, CacheError> {
+    let disk = observe(root).map_err(|error| CacheError::Source(error.to_string()))?;
+    let reusable = match (store, disk.plan, disk.current, &disk.text) {
+        (Some(store), OpenPlan::FromText, None, Some(text)) => {
+            let project = project_id(root)?;
+            let source = text.base.digest();
+            SnapshotKey::new(project, source).map(|key| (store, key, project, source))
+        }
+        _ => None,
+    };
+    let Some((store, key, project, source)) = reusable else {
+        return Ok(SnapshotCache::Built(rebuild_observed(root, disk)?));
+    };
+    if let Some((generation, manifest)) = store.restore(&key, root, project, source) {
+        return Ok(SnapshotCache::Reused {
+            generation,
+            manifest,
+        });
+    }
+    let built = rebuild_observed(root, disk)?;
+    if let Rebuild::Rebuilt { manifest, .. } = built {
+        // 보관 실패는 다음 snapshot이 원본에서 다시 만들 뿐입니다.
+        let _ = store.publish(&key, root, project, manifest, SystemTime::now());
+    }
+    Ok(SnapshotCache::Built(built))
 }
 
 /// 쓸 수 없는 Git 사본(library cache entry처럼 commit 하나를 읽기 전용으로 materialize한 폴더)에 옛 배치만 있으면, 옛
@@ -350,7 +435,7 @@ pub fn text_snapshot(
     for (relative, text) in &files.files {
         write(&design.join(relative), text.as_bytes())?;
     }
-    rebuild_from_text(temp.path())?;
+    snapshot_from_text(temp.path(), SnapshotStore::user().as_ref())?;
     Ok(Some(temp))
 }
 

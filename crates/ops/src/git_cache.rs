@@ -191,3 +191,6 @@ mod tests {
         assert_eq!(report.retained.len(), 1);
     }
 }
+
+#[cfg(test)]
+mod snapshot_tests;

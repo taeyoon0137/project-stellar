@@ -25,6 +25,10 @@
 //! 관계없이 원본만 비공개 사본으로 복사해 엽니다(`text_snapshot`). 후보 index에는 원본 파일만 넣고 cache 경로는
 //! 넣지 않습니다. 옛 배치(`design/current` 등)를 추적하던 index는 stage·unstage·commit 전에 그 경로를 뺍니다
 //! ([`GitSession::migrate_cache`]).
+//!
+//! 같은 원본(프로젝트 id·원본 파일 집합 digest·schema·build)으로 만든 snapshot cache는 사용자 임시 폴더의 보관소에서
+//! 다시 씁니다. 그래서 stage가 index·작업 트리를, unstage가 HEAD를 여는 일이 원본 해석 없이 보관 generation을 옮겨
+//! 놓는 일로 줄어듭니다(`stellar_project::cache::SnapshotStore`, ADR-0138 결정 1).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
