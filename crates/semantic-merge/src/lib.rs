@@ -15,3 +15,6 @@ pub mod candidate;
 
 /// Semantic Diff/Merge conformance corpus runner (XXVIII.2.3).
 pub mod conformance;
+
+/// 병합 결과 적용 판정: 창 외부 변경 반영·Merge Composer 결과 적용 공용 (XIII.3.4, XXIII.3, ADR-0110).
+pub mod apply;

@@ -276,8 +276,9 @@ fn use_latest_disk_keeps_memory_edits_when_the_latest_generation_does_not_load()
 }
 
 #[test]
-fn external_writer_over_dirty_window_waits_for_reconciliation() {
-    // ADR-0083 결정 2: 외부 writer(CLI)와 dirty가 겹치면 두 선택지가 아니라 reconciliation 대기입니다.
+fn external_writer_over_dirty_window_is_reconciled_when_changes_do_not_overlap() {
+    // XIII.3.4(ADR-0110 결정 1): 외부 writer(CLI)와 dirty가 겹치면 두 선택지 대신 semantic reconciliation입니다.
+    // 서로 다른 node 변경은 자동 병합되고, 결과는 새 base 위의 미저장 편집입니다. 판정만으로는 쓰지 않습니다.
     let project = saved_project("external-dirty");
     let locks = TempDir::new("external-dirty-locks");
     let mut b = ProjectWindowSession::load(identity(project.path()), window(2)).unwrap();
@@ -300,14 +301,17 @@ fn external_writer_over_dirty_window_waits_for_reconciliation() {
     }
     assert!(matches!(
         b.sync_external(command(1)),
-        ExternalSync::Stale {
-            writer: WriterProvenance::External,
-            resolution: StaleResolution::ReconciliationPending,
+        ExternalSync::Applied {
+            generation: 2,
+            changes: Some(_)
         }
     ));
-    assert_eq!(current_bytes(project.path()), before);
+    assert_eq!(current_bytes(project.path()), before, "반영은 쓰지 않음");
     assert_eq!(name_of(&b, 12), "B 편집");
-    assert_eq!(name_of(&b, 11), "n11");
+    assert_eq!(name_of(&b, 11), "CLI 편집");
+    assert!(b.has_unsaved_changes(), "결과는 디스크와 달라 미저장 편집");
+    assert_eq!(b.stale_state().unwrap(), None, "새 base 위라 stale 아님");
+    assert!(b.external_conflict().is_none());
 }
 
 #[test]

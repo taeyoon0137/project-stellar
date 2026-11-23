@@ -41,6 +41,8 @@ pub mod staging;
 
 /// 내장 에이전트 세션의 프로젝트 identity·신뢰 판정 연결 (XXIX.3.2·XXIX.3.5, ADR-0101).
 pub mod agent;
+/// 열린 창의 외부 변경 semantic reconciliation (XIII.3.4, ADR-0110).
+pub mod reconcile;
 
 /// 창 session을 앱 runtime 경계로 다루는 테스트.
 #[cfg(test)]

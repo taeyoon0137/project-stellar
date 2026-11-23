@@ -268,33 +268,33 @@ fn a_clean_window_applies_a_cache_only_write_and_moves_it_into_the_source() {
 }
 
 #[test]
-fn a_dirty_window_keeps_its_edits_and_does_not_overwrite_an_external_source_edit() {
+fn a_dirty_window_merges_a_non_overlapping_external_source_edit_and_keeps_its_edits() {
+    // XIII.3.4(ADR-0110 결정 1): 텍스트 원본을 외부(Git·편집기)가 바꾸고 창도 다른 node를 편집했으면 자동 병합합니다.
+    // 병합 결과를 저장하면 원본은 두 변경을 모두 담습니다(외부 변경을 덮어쓰지 않음).
     let project = saved_project("source-sync-dirty");
     let locks = TempDir::new("source-sync-dirty-locks");
     let mut a = open(&project, &locks, 1);
     a.apply(&rename(a.document().unwrap(), 10, 12, "창 편집"), 0)
         .unwrap();
     text_rename(&project, 11, "외부 원본");
-    let disk = read_source(project.path()).unwrap().unwrap().base;
     match a.sync_external(command(1)) {
-        ExternalSync::Stale { writer, resolution } => {
-            assert_eq!(writer, WriterProvenance::External);
-            assert_eq!(resolution, StaleResolution::ReconciliationPending);
-        }
+        ExternalSync::Applied { .. } => {}
         other => panic!("{other:?}"),
     }
     assert_eq!(name_of(&a, 12), "창 편집", "편집 보존");
-    let error = a.save_now().unwrap_err();
-    assert!(error.is_stale(), "{error}");
-    assert_eq!(
-        read_source(project.path()).unwrap().unwrap().base,
-        disk,
-        "원본을 덮어쓰지 않음"
-    );
-    assert!(matches!(
-        a.resolve_stale(StaleSaveChoice::UseCurrentWindow),
-        Err(StaleResolveError::ReconciliationRequired)
-    ));
+    assert_eq!(name_of(&a, 11), "외부 원본", "외부 변경 반영");
+    assert!(a.has_unsaved_changes());
+    a.save_now().unwrap();
+    let text = TextSourceSession::open(project.path(), window(3)).unwrap();
+    let saved = |node: u64| {
+        text.document()
+            .model()
+            .record(sid(node))
+            .unwrap()
+            .display_name
+    };
+    assert_eq!(saved(11), "외부 원본");
+    assert_eq!(saved(12), "창 편집");
 }
 
 #[test]

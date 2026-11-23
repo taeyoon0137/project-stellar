@@ -129,6 +129,8 @@ pub mod mcp_merge;
 
 /// Component Context override 조립과 조회 (XXX.7.9·XXX.7.11, ADR-0099).
 pub mod context;
+/// 병합 결과 적용: 창 문서 3-way reconciliation과 Merge Composer 결과 target 적용 (XIII.3.4, XXIII.3, ADR-0110).
+pub mod merge_apply;
 
 /// 무결성 진단(ADR-0095): 공통 DiagnosticIndex·필터·pagination·remediation(`stellar-integrity`)과 저장 snapshot 수집.
 /// `stellar diagnose`와 MCP `document.diagnostics`가 같은 수집 함수를 씁니다.
