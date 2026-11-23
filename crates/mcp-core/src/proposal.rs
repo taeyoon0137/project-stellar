@@ -159,6 +159,27 @@ mod tests {
             request.commands.as_slice(),
             [CommandInput::Rename { .. }]
         ));
+        // 명시 layout longhand 두기·지우기(ADR-0086)는 필드 형식으로만 받습니다.
+        let request = parse_transaction(
+            &args(&format!(
+                r#"[{{"kind":"set-layout-property","node":"{NODE}","property":"display","value":"grid"}},{{"kind":"unset-property","node":"{NODE}","property":"row-gap"}}]"#
+            )),
+            100,
+        )
+        .unwrap();
+        assert!(matches!(
+            request.commands.as_slice(),
+            [
+                CommandInput::SetLayoutProperty { .. },
+                CommandInput::UnsetProperty { .. }
+            ]
+        ));
+        let canonical = parse_transaction(
+            &args(r#"[{"kind":"set-layout-property","canonical":"00"}]"#),
+            100,
+        )
+        .unwrap_err();
+        assert_eq!(canonical.code, "invalid-transaction");
     }
 
     #[test]

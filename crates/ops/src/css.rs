@@ -403,10 +403,11 @@ mod tests {
             &LockPolicy::None,
         )
         .unwrap();
-        assert_eq!(pasted.applied.len(), 2, "{:?}", pasted.skipped);
-        assert_eq!(pasted.skipped.len(), 4, "padding 4변");
+        // `padding`은 4변 longhand로 펼쳐 Frame의 명시 layout record에 둡니다(ADR-0086 개정 5).
+        assert_eq!(pasted.applied.len(), 6, "{:?}", pasted.skipped);
+        assert!(pasted.skipped.is_empty(), "{:?}", pasted.skipped);
         let outcome = pasted.outcome.expect("저장");
-        assert_eq!(outcome.command_count, 2);
+        assert_eq!(outcome.command_count, 6);
         assert_ne!(outcome.revision, pasted.base_revision);
         let after = copy(&root, document, frame).unwrap();
         assert!(after.text.contains("width: 321px;\n"), "{}", after.text);
