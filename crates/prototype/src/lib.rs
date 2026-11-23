@@ -8,5 +8,8 @@
 /// 프리뷰 논리 시계 (XXX.3.1).
 pub mod clock;
 
+/// timing function evaluator와 값 보간 (XXX.3.2).
+pub mod timing;
+
 /// 포인터 제스처 판정과 release velocity (XXX.1.4).
 pub mod gesture;
