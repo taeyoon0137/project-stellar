@@ -2,8 +2,12 @@
 //!
 //! 각 변환은 [`DocumentRecords`](stellar_document::records::DocumentRecords)를 받아 새 레코드와 보고서를 돌려주는
 //! 순수 함수입니다. 아직 [`super::PRODUCT_STEPS`]에 등록하지 않습니다. IX.11.6·IX.11.9·IX.11.10·IX.11.11의 변경을
-//! 1→2 한 번으로 묶고, scene이 layout 결과 위치로 그리게 된 뒤 등록합니다(등록 전에 켜면 위치를 layout record로
-//! 옮긴 Frame이 transform 이동 성분 없이 그려집니다).
+//! 1→2 한 번으로 묶습니다.
+//!
+//! - scene 조건(layout 결과 위치로 그림)은 ADR-0125로 충족됐습니다.
+//! - 남은 등록 조건은 ADR-0134 결정 4입니다. Frame payload가 4변 테두리 타입으로 바뀌고 layout 입력이 테두리 두께를 받아야
+//!   합니다(IX.11.10). 그래야 테두리 step 결과가 같은 화면으로 그려집니다. 그 전에 켜면 테두리가 있는 부모의 자식이 테두리
+//!   두께만큼 옮겨져 그려집니다.
 
 /// Frame 위치와 transform 분리 (IX.11.9).
 pub mod frame_position;

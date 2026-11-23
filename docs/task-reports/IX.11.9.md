@@ -8,7 +8,10 @@
   - `transform-origin` longhand
   - binding·variant 참조 보고
   - 인스펙터 경로
-- 결정: ADR-0024 결정 8, ADR-0086 결정 3, ADR-0125 결정 3
+- 2026-11-24 layout-render-2: 흐름 부모 자식 분기, 0x0102 참조 보고, View·ComponentDefinition root 캔버스 배치 보고를
+  더했습니다. 제품 step 등록은 IX.11.10 Frame payload·layout 테두리 입력이 남아 하지 않았습니다(ADR-0134 결정 4).
+  `transform-origin`·캔버스 배치 longhand의 key 할당과 텍스트 원본 줄 형식, 인스펙터 경로가 남았습니다.
+- 결정: ADR-0024 결정 8, ADR-0086 결정 3, ADR-0125 결정 3, ADR-0134 결정 4
 - 선행: IX.11.6, IX.11.21, IX.11.22, X.1.2, V.8.6
 
 ## 필수 실행 환경
@@ -69,6 +72,25 @@
 - flow 부모 입력의 `translate` 분기, View·ComponentDefinition root의 캔버스 배치 longhand가 남았습니다.
 - runtime의 옛 캔버스 행 목록(`CanvasScene`)은 저장 transform으로 그립니다. step을 등록하면 그 행 목록에서 옮긴 Frame이
   부모 원점에 보입니다. 화면 경로를 scene source로 바꾸는 일은 UI 재설계 몫입니다(ADR-0125 결정 9).
+
+## 2026-11-24 layout-render-2 보완
+
+- 변경 파일: `crates/project/src/migration/steps/frame_position.rs`, `crates/project/src/migration/steps/mod.rs`(등록 조건 문서).
+- 흐름 부모 분기: 활성 기본값 세트로 푼 부모 `display`가 `flex`·`grid`인 자식(편집 경로와 같은
+  `commands::arrange::align::flow_parent`)은 `position: absolute`로 옮기지 않습니다. 저장 transform 이동 성분이 scene
+  합성에서 이미 CSS `translate`처럼 layout 위치 뒤에 더해지므로(ADR-0125 결정 3) transform에 그대로 두고
+  `FramePositionReport::flow_children`에 남깁니다. `translate` longhand key가 생기면 그 값으로 옮깁니다.
+- 0x0102 참조: `stored_reference_paths`(View Variant property patch)와 `transform_bundle_references`가 0x0102를 가리키는
+  경로를 값 변환 없이 나열합니다. ValueBinding target·Component variant override 경로도 같은 함수에 넘기면 됩니다.
+- 캔버스 배치: View root(부모 없는 Frame)는 `canvas_roots`, ComponentDefinition root는 `component_root_placement`가
+  이동 성분을 보고합니다. 인스턴스 배치는 정의 root 이동 성분을 쓰지 않습니다(`placed_free_frame`).
+- 검증: `cargo test -p stellar-project --lib frame_position` 4 passed(흐름 부모 자식 보존·보고, 참조 bytes 보존과 목록,
+  정의 root 캔버스 배치, 기존 bit 동일·멱등).
+- 남은 일(ADR-0134 결정 4):
+  - 제품 step 등록: IX.11.10 Frame payload 4변 테두리 타입과 layout 테두리 입력이 먼저입니다(ADR-0115 결정 5 조건 2).
+  - `transform-origin`·캔버스 배치(x·y) longhand: key 할당(ADR-0024 결정 14)과 텍스트 원본 v4 줄 형식이 필요합니다.
+    그 전까지 Frame transform origin은 모델에 고정된 `0 0`이고 scene 합성 origin도 `0 0`입니다.
+  - 인스펙터 위치 X·Y 경로(UI 재설계 몫), `cargo xtask test-migrations` fixture(등록 뒤).
 
 ## 근거 커밋
 
