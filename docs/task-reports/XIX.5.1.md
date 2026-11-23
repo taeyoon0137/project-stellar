@@ -43,3 +43,9 @@
 
 - 위 이중 구현이 남아 있습니다. 한쪽 규칙만 바뀌면 CLI와 MCP 해석이 달라질 수 있습니다. 같은 입력에 대해 두 해석이 같은지는 이 행의 테스트가 직접 비교하지 않습니다.
 - lease 범위 검사(XIX.5.2)와 user preview(XIX.5.3)는 다른 행입니다.
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(XIX.5.1)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다. attached proposal 경로(`stellar_mcp::attached::edit::proposal_transaction`, XIX.5.2)도 같은 해석기와 `decode_commands`를 씁니다.
+
+- `63866e96` Feat: agent command proposal을 closed enum command로만 해석함 (XIX.5.1)
