@@ -216,6 +216,15 @@ pub fn records_only(records: &DocumentRecords) -> DocumentInput<'_> {
 /// snapshot에 넣을 수 있는 Context: key·provision 전부와, `library`에 있는 컴포넌트·Slot의 requirement·공개 목록.
 /// `library`가 없으면(문서 범위) requirement·공개 목록은 넣지 않습니다.
 pub fn projectable_context(set: &ContextSet, library: Option<&ComponentLibrary>) -> ContextSet {
+    let mut out = declarations(set);
+    if let Some(library) = library {
+        add_library_members(&mut out, set, library);
+    }
+    out
+}
+
+/// key·provision만 담은 사본.
+fn declarations(set: &ContextSet) -> ContextSet {
     let mut out = ContextSet::new();
     for key in set.keys() {
         let _ = out.insert_key(key.clone());
@@ -223,9 +232,11 @@ pub fn projectable_context(set: &ContextSet, library: Option<&ComponentLibrary>)
     for provision in set.provisions() {
         let _ = out.insert_provision(provision.clone());
     }
-    let Some(library) = library else {
-        return out;
-    };
+    out
+}
+
+/// `set`의 requirement·Slot 공개 목록 가운데 `library`에 그 컴포넌트·Slot이 있는 항목을 `out`에 더합니다.
+fn add_library_members(out: &mut ContextSet, set: &ContextSet, library: &ComponentLibrary) {
     for (component, keys) in set.all_requirements() {
         if library
             .get(crate::core_types::reference::ComponentRef::new(component))
@@ -246,28 +257,42 @@ pub fn projectable_context(set: &ContextSet, library: Option<&ComponentLibrary>)
             }
         }
     }
-    out
 }
 
-/// 이미 문서(와 프로젝트 범위면 library)를 넣은 builder에 문서마다 [`projectable_context`]를 넣습니다.
+/// 이미 문서(와 프로젝트 범위면 library)를 넣은 builder에 문서마다 Context key·provision을 넣고, 프로젝트 범위면
+/// requirement·Slot 공개 목록을 넣습니다([`projectable_context`]의 범위).
+///
+/// requirement·공개 목록은 프로젝트 library의 Component·Slot 객체 하나에 붙는 속성이라 문서별로 따로 붙일 수 없습니다.
+/// 여러 문서가 같은 컴포넌트·Slot에 항목을 두면 합집합 하나로 붙입니다(문서마다 붙이면 같은 속성이 두 번 들어가
+/// 투영 전체가 실패합니다).
 pub fn add_contexts<'a>(
     builder: &mut SnapshotBuilder,
     documents: impl IntoIterator<Item = DocumentInput<'a>>,
     library: Option<&ComponentLibrary>,
 ) -> Result<(), ProjectionError> {
+    let mut members = ContextSet::new();
+    let mut anchor = None;
     for document in documents {
-        let set = projectable_context(document.context, library);
+        let id = document.records.definition.id;
+        if let Some(library) = library {
+            add_library_members(&mut members, document.context, library);
+            anchor.get_or_insert(id);
+        }
+        let set = declarations(document.context);
         if set.is_empty() {
             continue;
         }
         builder
-            .add_context(document.records.definition.id, &set)
-            .map_err(|e| {
-                ProjectionError(format!(
-                    "문서 {}의 Context: {e}",
-                    document.records.definition.id
-                ))
-            })?;
+            .add_context(id, &set)
+            .map_err(|e| ProjectionError(format!("문서 {id}의 Context: {e}")))?;
+    }
+    if let Some(anchor) = anchor.filter(|_| !members.is_empty()) {
+        // 목록 항목만 담은 set이라 문서 id는 객체 출처로 쓰이지 않습니다.
+        builder.add_context(anchor, &members).map_err(|e| {
+            ProjectionError(format!(
+                "프로젝트 컴포넌트의 Context requirement·Slot 공개 목록: {e}"
+            ))
+        })?;
     }
     Ok(())
 }
@@ -394,5 +419,57 @@ mod tests {
         assert_eq!(entry.path.as_deref(), Some("0xe001"));
         assert_eq!(entry.document, Some(model.document_id()));
         assert_eq!(report.counts().get("set-property"), Some(&1));
+    }
+
+    #[test]
+    fn requirements_of_one_library_component_from_two_documents_project_as_one_union() {
+        // 프로젝트 범위: 두 문서가 같은 library 컴포넌트·Slot에 requirement·공개 목록을 두어도 투영이 실패하지 않고
+        // 그 Component·Slot 객체에 합집합 하나가 붙습니다.
+        use stellar_document::context::fixtures::world::{BODY, CARD, D, E, N};
+        use stellar_document::context::fixtures::{sample_world, sid};
+        use stellar_semantic_diff::build::context::{
+            COMPONENT_CONTEXT_REQUIREMENTS, SLOT_CONTEXT_KEYS,
+        };
+        use stellar_semantic_diff::value::SemanticValue;
+        let (model, library) = sample_world();
+        let records = model.to_records().unwrap();
+        let first = model.context().live(&model);
+        assert!(first.requirements(sid(CARD)).contains(&sid(N)));
+        let mut other_records = records.clone();
+        other_records.definition.id = sid(9_999);
+        let mut other = ContextSet::new();
+        other.add_requirement(sid(CARD), sid(D));
+        other.add_slot_key(sid(BODY), sid(N));
+        let mut builder = SnapshotBuilder::new();
+        builder.add_project_component_library(&library).unwrap();
+        add_contexts(
+            &mut builder,
+            [
+                DocumentInput {
+                    records: &records,
+                    context: &first,
+                },
+                DocumentInput {
+                    records: &other_records,
+                    context: &other,
+                },
+            ],
+            Some(&library),
+        )
+        .expect("같은 컴포넌트의 requirement를 두 문서가 둠");
+        let snapshot = builder.finish();
+        let ids = |object: StableId, key| {
+            let object = snapshot.get(object).unwrap();
+            match object.property(&object.path(&[key])) {
+                Some(SemanticValue::Ids(ids)) => ids.clone(),
+                other => panic!("{other:?}"),
+            }
+        };
+        let mut want = vec![sid(N), sid(D)];
+        want.sort();
+        assert_eq!(ids(sid(CARD), COMPONENT_CONTEXT_REQUIREMENTS), want);
+        let mut want = vec![sid(D), sid(E), sid(N)];
+        want.sort();
+        assert_eq!(ids(sid(BODY), SLOT_CONTEXT_KEYS), want);
     }
 }

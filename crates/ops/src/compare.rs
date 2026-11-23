@@ -364,13 +364,25 @@ impl HeadDiffBase {
             .map_err(|e| CompareError::Projection(e.to_string()))?;
         // 문서가 HEAD와 같으므로 문서 Context의 requirement·Slot 공개 목록도 같습니다. 이 컴포넌트 투영에 남은
         // Component·Slot 객체에 다시 붙여 base와 같은 범위로 비교합니다.
-        for (document, members) in &self.members {
+        // 여러 문서가 같은 컴포넌트·Slot에 항목을 두면 그 객체 하나에 합집합으로 붙습니다(`add_contexts`와 같은 규칙).
+        let mut union = ContextSet::new();
+        for (_, members) in &self.members {
             let mine = projectable_context(members, Some(&library));
-            if !mine.is_empty() {
-                builder
-                    .add_context(*document, &mine)
-                    .map_err(|e| CompareError::Projection(e.to_string()))?;
+            for (component, keys) in mine.all_requirements() {
+                for key in keys {
+                    union.add_requirement(component, *key);
+                }
             }
+            for (slot, keys) in mine.all_slot_keys() {
+                for key in keys {
+                    union.add_slot_key(slot, *key);
+                }
+            }
+        }
+        if let Some((anchor, _)) = self.members.first().filter(|_| !union.is_empty()) {
+            builder
+                .add_context(*anchor, &union)
+                .map_err(|e| CompareError::Projection(e.to_string()))?;
         }
         let working = builder.finish();
         let mut base = SemanticSnapshot::new();

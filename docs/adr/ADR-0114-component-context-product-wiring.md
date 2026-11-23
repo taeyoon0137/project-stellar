@@ -44,7 +44,9 @@ ADR-0099 본문은 고치지 않습니다. 셸 FFI와 macOS UI(XXX.7.12)는 범�
     거부됩니다(`Lossy`·`Unsupported`).
   - **프로젝트 범위** `add_contexts(…, Some(library))`·`project_snapshot_of`: library 투영 뒤에 Context를 넣고,
     requirement·Slot 공개 목록은 그 컴포넌트·Slot이 library에 있을 때만 넣습니다(`projectable_context`). 없는 대상의 항목은
-    validator의 orphan 진단 대상이며 diff에는 나타나지 않습니다. `stellar diff`·compare·HEAD 비교·project merge 보기·
+    validator의 orphan 진단 대상이며 diff에는 나타나지 않습니다. requirement·공개 목록은 library의 Component·Slot 객체 하나에 붙는
+    속성이라, 여러 문서가 같은 컴포넌트·Slot에 항목을 두면 합집합 하나로 붙입니다(문서마다 붙이면 같은 속성이 두 번 들어가
+    투영 전체가 실패함). `stellar diff`·compare·HEAD 비교·project merge 보기·
     `stellar apply` 결과 diff가 이 범위입니다. HEAD 단일 컴포넌트 비교는 HEAD 문서의 requirement·공개 목록을 그 컴포넌트
     투영에 다시 붙여 같은 범위로 비교합니다.
   - 역투영 `document_from_snapshot`은 `document_records`와 `context_from_snapshot`을 함께 불러 레코드와 Context를 돌려줍니다.
