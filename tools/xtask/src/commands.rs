@@ -32,7 +32,7 @@ pub const EXIT_POLICY: i32 = 65;
 pub const EXIT_INTERNAL: i32 = 70;
 
 /// 등록된 명령 이름(help 포함).
-pub const COMMANDS: [&str; 18] = [
+pub const COMMANDS: [&str; 19] = [
     "help",
     "generate-ledger",
     "generate-ffi-header",
