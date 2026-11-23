@@ -98,3 +98,22 @@
   - `runtime` `reconcile::tests::a_document_with_context_requirements_and_slot_keys_is_reconciled`.
 - 남은 위험: Git stage(`candidate.rs`)는 같은 투영 함수를 쓰지만 requirement가 있는 문서의 stage 전용 시험은 더하지
   않았습니다(소유 밖 시험 파일). 프로젝트 범위 snapshot에서 문서별 목록을 되돌리는 역투영은 없습니다(쓰는 경로 없음).
+
+## 후속 보완 (2026-11-24, Git stage의 Context 목록과 프로젝트 범위 역투영)
+
+- 결정: [ADR-0138](../adr/ADR-0138-snapshot-cache-reuse-and-idle-gc.md) 결정 3·4. lane `cache-perf-gc`.
+- 고친 결함: 텍스트 원본 프로젝트의 Git semantic stage가 후보 원본을 쓸 때 index 원본의 Context를 그대로 써서, Context 변경
+  (requirement·Slot 공개 목록·key)을 고르면 다시 연 index 의미가 후보와 달라 `ReopenMismatch`로 거부했습니다.
+  `stellar_ops::git::text_candidate_files`가 후보 snapshot에서 되돌린 Context를 쓰게 고쳤습니다.
+- 프로젝트 범위 역투영: `stellar_semantic_diff::build::context::project_contexts_from_snapshot`이 library 컴포넌트·Slot에
+  합집합으로 붙은 목록을 투영 전 문서별 Context를 기준으로 나눕니다. 바꾸지 않은 snapshot은 그대로 되돌아오고, 결과를 다시
+  투영하면 같은 snapshot입니다. 제품 호출자는 아직 없습니다(병합 결과를 쓰는 경로는 모두 문서 범위).
+- 시험:
+  - `ops` `git::tests::staging_a_context_list_of_a_text_source_writes_only_that_list_to_the_index_source`(시스템 Git, 목록 셋이
+    status에 따로 나오고 하나만 stage, index 원본에 그 목록만 들어감, staged 재검증 통과). 고치기 전에는 `ReopenMismatch`로
+    실패하는 것을 확인했습니다.
+  - `ops` `candidate::tests::staging_one_requirement_list_keeps_the_other_context_lists_as_they_were`(generation 직렬화 경로).
+  - `semantic-diff` `context::tests::project_scope_lists_are_split_back_per_document`, `ops`
+    `candidate::tests::project_scope_context_lists_are_split_back_from_the_ops_projection`(제품 `project_snapshot_of` 투영 기준).
+- 남은 위험: 프로젝트 범위 역투영은 합집합에 새로 생긴 항목을 그 대상에 목록을 둔 문서 모두에 더합니다(합집합만으로는 어느
+  문서의 변경인지 구별할 수 없음).

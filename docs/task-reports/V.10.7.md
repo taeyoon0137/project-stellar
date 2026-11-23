@@ -103,6 +103,54 @@
 - 원본이 없는 옛 chunk 프로젝트(root 문서 둘 이상 등)는 Git에 원본이 없어 변경 ID stage·의미 병합을 거부합니다.
 - 기술 아키텍처 §19 파일 구조 그림의 `design/current` 등은 문서 소유 밖이라 고치지 않았습니다(ADR-0122가 기준).
 
+## 후속: snapshot cache 재사용과 앱 유휴 GC (2026-11-24, ADR-0138)
+
+- 결정: [ADR-0138](../adr/ADR-0138-snapshot-cache-reuse-and-idle-gc.md) 결정 1·2. lane `cache-perf-gc`.
+- 같은 원본으로 만든 Git snapshot cache를 다시 씁니다. key는 (프로젝트 id, 원본 파일 집합 digest, 제품 schema 번호,
+  실행 파일 식별자)입니다. 보관소는 사용자 임시 폴더의 비공개 폴더 `stellar-snapshot-cache/`이고, 꺼낼 때 manifest와 chunk
+  hash를 다시 확인한 뒤 hard link로 놓습니다. 확인이 실패하면 원본에서 만듭니다. `prepare_snapshot`·`text_snapshot`이 이
+  경로를 쓰므로 stage·unstage·HEAD 비교·conflict 열기·Merge Composer·staged 재검증이 호출자 변경 없이 혜택을 받습니다.
+- 앱 runtime 유휴 GC: `AppRuntime::start_idle_gc`가 프로젝트마다 V.7.4 `GcScheduler`로 idle(기본 60초)을 기다리고, 저장하지
+  않은 편집·제스처·자동 저장 쓰기·이미지 가져오기가 없으며 지난 정리 뒤 current가 바뀌었을 때 document thread job 안에서
+  저장 잠금을 잡고 `collect_garbage`를 부릅니다. 다른 프로세스가 잠금을 쥐면 건너뛰고 다시 시도합니다.
+
+### 변경 파일
+
+- `crates/project/src/cache.rs`, `crates/project/src/cache/snapshot_store.rs`(신규): 보관소, `prepare_snapshot_with`, `SnapshotCache`
+- `crates/ops/src/git.rs`: 모듈 문서(재사용 경로)
+- `crates/ops/src/git_cache.rs`, `crates/ops/src/git_cache/snapshot_tests.rs`(신규): 시험·실측
+- `crates/runtime/src/app/gc.rs`, `crates/runtime/src/app/gc/tests.rs`(신규), `crates/runtime/src/app.rs`(mod 등록 한 줄)
+
+### 시험
+
+| 시험 | 확인 |
+|---|---|
+| `git_cache::snapshot_tests::a_second_snapshot_of_the_same_source_reuses_the_stored_generation` | 두 번째 snapshot은 보관 generation 재사용, 열기 계획 `Cache`, semantic snapshot이 원본에서 만든 것과 같음, 원본 한 byte 차이·보관소 없음은 원본에서 만듦 |
+| `a_damaged_stored_chunk_is_not_reused_and_the_snapshot_is_built_from_text` | 손상된 보관 chunk는 쓰지 않고 원본에서 만듦 |
+| `the_key_separates_projects_builds_and_sources` | key가 프로젝트·build·원본마다 다름 |
+| `prune_keeps_the_most_recent_entries_and_drops_idle_ones` | 최근 16개만 남김, 유예 시간 지난 항목 삭제, key 형식 밖 항목은 그대로 |
+| `a_shared_store_folder_is_refused` | group·other 권한·symlink 폴더 거부 |
+| `app::gc::tests::idle_gc_waits_for_idle_then_collects_old_generations_once_per_save` | 연 직후 정리 없음, idle 뒤 한 번 정리(current만 남음), current가 그대로면 다시 정리하지 않음, 정리 뒤 저장 성공·새 저장 뒤 다시 정리 |
+| `idle_gc_does_not_run_while_edits_are_unsaved` | 저장하지 않은 편집이 있으면 정리하지 않음 |
+| `idle_gc_skips_while_another_writer_holds_the_save_lock` | 다른 writer가 잠금을 쥐면 `LockBusy`로 건너뛰고 삭제 없음, 풀리면 정리 |
+
+### 실측(개발 장비, 다른 lane 부하 상태, REF-MAC 아님)
+
+`cargo test -p stellar-ops --release --locked --lib git_cache::snapshot_tests::measure -- --ignored --nocapture`, 2만 node:
+
+| 측정 | 1회차 | 2회차 |
+|---|---|---|
+| snapshot 준비, 원본에서 만들기 | 254\~267 ms | 274\~547 ms |
+| snapshot 준비, 재사용 | 56\~108 ms | 70\~101 ms |
+| 준비 뒤 열기 + semantic snapshot | 62\~68 ms | 69\~170 ms |
+| cache GC(6세대) | — | 2.1 ms |
+
+### 차이(후속)
+
+- 셸이 `start_idle_gc`를 부르는 연결은 UI 재설계 때 합니다(지금 셸은 빈 창).
+- 원본만으로 semantic snapshot을 만드는 경로는 보류했습니다(ADR-0138 Alternatives).
+- `[REF-MAC]` 실측은 하지 않았습니다.
+
 ## 필수 실행 환경
 
 - `DEV-MAC`: 순수 Rust 시험(아래).
