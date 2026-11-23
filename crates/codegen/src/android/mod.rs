@@ -32,6 +32,9 @@ pub mod color;
 /// CSS layout longhand → Compose layout 규칙.
 pub mod layout;
 
+/// Context → CompositionLocal 출력 형태와 선택 규칙 (XXII.4.3 일부).
+pub mod context;
+
 /// Compose 생성기.
 pub(crate) mod compose;
 
