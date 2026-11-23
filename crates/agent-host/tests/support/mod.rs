@@ -1,6 +1,8 @@
 //! 통합 테스트 공용 도구: 테스트 대역 설치, 대역 전용 profile, 대역 서명 확인 수단, 디렉터리 hash.
 #![allow(dead_code)]
 
+pub mod scan;
+
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};

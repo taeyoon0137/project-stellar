@@ -1,0 +1,142 @@
+//! ADR-0005 §3 변경 불가 경로 inventory (XXIX.6.5).
+//!
+//! 검증 기준: 프로젝트 파일 변조 fixture에서 상태 변경 0(`stellar-runtime` `agent` 단위 test
+//! `project_file_tampering_changes_no_trust_mode_or_notice_state`), agent 경로의 출처 표시 정리·되돌리기 호출 0.
+//!
+//! 에이전트 경로는 MCP(`crates/mcp-core`, `tools/stellar-mcp`, `crates/agent-protocol`), 로컬 IPC
+//! (`crates/local-ipc`), headless `stellar` 명령(`tools/stellar-cli`)입니다. 이 경로의 제품 코드에는 다음 상태를
+//! 쓰는 호출이 없어야 합니다.
+//!
+//! | 상태 | 쓰는 수단(앱 사용자 UI 전용) |
+//! |---|---|
+//! | XVI.7 프로젝트 신뢰 | `FileTrustStore::grant`·`revoke`, `TrustStore::set`·`forget` |
+//! | XIX.3 권한 | `PermissionStore::respond`·`respond_connection`, `ApprovalStore::answer` |
+//! | 에이전트 모드 | `AgentSession::change_mode_by_user`, `ChatAssembly::set_mode` |
+//! | 약관 고지 기록 | `TermsNoticeStore::acknowledge` |
+//! | 출처 표시·되돌리기 | 출처 정리·유지·되돌리기 함수(XIX.6.8~XIX.6.10, 이름 표지) |
+//!
+//! 에이전트 경로가 agent-host에 도달하지 않는 것(crate graph `FORBIDDEN_REACH`)과 함께, 이 test가 호출 표지
+//! 자체가 없음을 봅니다. 위반 fixture로 검사기가 실제로 잡는지도 확인합니다.
+
+mod support;
+
+use std::path::PathBuf;
+
+use support::scan::{hits, source_files, sources_in};
+use support::TempDir;
+
+/// 에이전트 경로(제품 코드).
+const AGENT_PATHS: [&str; 5] = [
+    "crates/mcp-core/src",
+    "tools/stellar-mcp/src",
+    "crates/agent-protocol/src",
+    "crates/local-ipc/src",
+    "tools/stellar-cli/src",
+];
+
+/// 변경 불가 상태를 쓰는 호출 표지.
+const WRITE_MARKERS: [&str; 22] = [
+    // 신뢰
+    ".grant(",
+    ".revoke(",
+    "TrustStore::set",
+    "trust_store.set(",
+    ".forget(",
+    // 권한·승인 응답
+    ".respond_connection(",
+    "permissions.respond(",
+    "store.respond(",
+    "ApprovalStore",
+    "UserAnswer",
+    // 모드
+    "change_mode_by_user",
+    ".set_mode(",
+    "SessionMode",
+    // 약관 고지
+    "TermsNoticeStore",
+    ".acknowledge(",
+    // 출처 표시·되돌리기
+    "clear_provenance",
+    "keep_provenance",
+    "dismiss_provenance",
+    "revert_batch",
+    "revert_session",
+    "revert_agent",
+    "AgentChangeProvenance",
+];
+
+fn violations(files: &[PathBuf]) -> Vec<String> {
+    let mut found = hits(files, &WRITE_MARKERS);
+    // JSON-RPC 응답 함수(`self.respond(&id, ..)`)는 권한 응답이 아닙니다. 그 밖의 `.respond(` 호출은 금지입니다.
+    for h in hits(files, &[".respond("]) {
+        if !h.contains("server.rs") {
+            found.push(h);
+        }
+    }
+    found
+}
+
+#[test]
+fn agent_paths_cannot_write_immutable_state() {
+    let files = sources_in(&AGENT_PATHS);
+    assert!(
+        files.len() > 30,
+        "검사 대상이 비어 있지 않음: {}",
+        files.len()
+    );
+    let found = violations(&files);
+    assert!(found.is_empty(), "{found:#?}");
+    // server.rs의 `.respond(`는 JSON-RPC 응답(`self.respond(&id`)뿐입니다.
+    for h in hits(&sources_in(&["crates/mcp-core/src"]), &[".respond("]) {
+        let (path, rest) = h.split_once(':').unwrap();
+        let line: usize = rest.split(':').next().unwrap().parse().unwrap();
+        let text = std::fs::read_to_string(path).unwrap();
+        let code = text.lines().nth(line - 1).unwrap();
+        assert!(code.contains("self.respond(&id"), "{h}: {code}");
+    }
+}
+
+#[test]
+fn bridge_events_and_tool_calls_have_no_mode_or_permission_write() {
+    // 세션 상태 기계 event(bridge·출력·앱 효과에서 옴)에는 모드 변경 event가 없습니다. 모드는
+    // `change_mode_by_user` 하나로만 바뀝니다.
+    let session =
+        std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/session.rs"))
+            .unwrap();
+    let start = session.find("pub enum SessionEvent").unwrap();
+    let end = start + session[start..].find("\n}\n").unwrap();
+    let body = &session[start..end];
+    for word in ["Mode", "Trust(", "Grant(", "Provenance", "Revert"] {
+        assert!(!body.contains(word), "SessionEvent에 `{word}`");
+    }
+    // 출력 디코드 결과(OutputSignal·CliSignal)는 권한·모드·신뢰를 담지 않습니다.
+    let output =
+        std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/output.rs"))
+            .unwrap();
+    for word in ["Permission", "SessionMode", "Trust"] {
+        assert!(!output.contains(word), "output.rs에 `{word}`");
+    }
+}
+
+#[test]
+fn checker_rejects_violation_fixture() {
+    // 위반 fixture: 에이전트 경로에서 상태를 쓰는 가짜 소스.
+    let dir = TempDir::new("immutable-violation");
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("tool.rs"),
+        "fn handle() {\n    trust.grant(&identity);\n    store.respond(key, id, true);\n    session.change_mode_by_user(m);\n    notices.acknowledge(&p);\n    index.clear_provenance(s);\n    window.revert_session(s);\n    // 주석의 .grant( 는 세지 않습니다\n}\n#[cfg(test)]\nmod tests { fn t() { x.revoke(&y); } }\n",
+    )
+    .unwrap();
+    let files = source_files(dir.path());
+    let found = violations(&files);
+    // 한 줄에 표지가 둘이면 두 번 나옵니다. 줄 기준으로 2~7행(6줄)만 잡히고 주석·단위 테스트는 빠집니다.
+    let mut lines: Vec<usize> = found
+        .iter()
+        .map(|h| h.rsplit(':').nth(1).unwrap().trim().parse().unwrap())
+        .collect();
+    lines.sort_unstable();
+    lines.dedup();
+    assert_eq!(lines, [2, 3, 4, 5, 6, 7], "{found:#?}");
+}
