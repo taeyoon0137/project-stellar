@@ -2,8 +2,9 @@
 
 - WBS: XX.4.2
 - 작업명: boundary를 offscreen PNG data로 렌더하고 SVG image element로 삽입
-- 상태: 완료 (`[x]`, export 쪽). 실제 pixel 렌더는 host rasterizer가 맡고, renderer offscreen target(XX.2.1)이 아직 없어
-  제품 host는 아직 `NoRasterizer`입니다(아래 한계).
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 lane 검토 판정: export 쪽 연결 지점·배치·계약 검사와 위치·scale·alpha fixture(테스트
+  rasterizer)는 끝났습니다. 선행 XX.2.1이 `[ ]`이고(계획 1.2 규칙 4), 실제 offscreen PNG 렌더를 하는 제품 rasterizer가 없어
+  제품 host는 `NoRasterizer`입니다(아래 한계). 보고 당시 기록: 완료 (`[x]`, export 쪽).
 - 선행: XX.2.1 (`[ ]`), XX.4.1 (`[x]`).
 - 결정: ADR-0091 결정 2·3.
 
@@ -65,3 +66,9 @@
 - 테스트 rasterizer는 단색 PNG로 계약(위치·크기·bytes 전달·요청 내용)만 검사합니다. 실제 합성 pixel 비교는 renderer
   연결 뒤 golden으로 고정해야 합니다.
 - 효과와 clip의 적용 순서(XI.10.4)가 고정되면 rasterizer가 건너뛸 clip 깊이 규약을 다시 확인해야 합니다.
+
+## 검토 추가(2026-11-23)
+
+- 출력 계약 검사가 rasterizer가 선언한 형식·크기만 보고 bytes를 보지 않았습니다. 이제 PNG signature와 IHDR 크기가 선언과
+  요청에 맞는지 bytes에서 확인합니다(`check_output`). 선언은 맞지만 IHDR 크기가 다른 출력, PNG가 아닌 bytes를 거부하는
+  경우를 `raster_contract_violations_are_errors`에 더했습니다.

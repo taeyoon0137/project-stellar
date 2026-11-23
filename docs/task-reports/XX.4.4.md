@@ -2,8 +2,10 @@
 
 - WBS: XX.4.4
 - 작업명: 한 unsupported effect가 전체 View를 불필요하게 rasterize하지 않는 회귀 테스트 추가
-- 상태: 완료 (`[x]`)
-- 선행: XX.4.2 (이 작업 묶음에서 완료).
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 lane 검토 판정: 회귀 test는 끝났지만 선행 XX.4.2가 `[~]`입니다(계획 1.2 규칙 4). 투명
+  배경 경우만 검사하며, 불투명 배경 위 blend 하나가 canvas 전체를 래스터화하는 XX.4.1 planner 규칙은 남은 범위입니다(아래
+  "검토 추가"). 보고 당시 기록: 완료 (`[x]`).
+- 선행: XX.4.2 (`[~]`, 위 판정).
 - 결정: ADR-0091 결정 2.
 
 ## 필수 실행 환경
@@ -42,3 +44,11 @@
 ## 남은 위험 / 한계
 
 - 테스트 rasterizer(단색 PNG)로 구조와 개수를 봅니다. 실제 pixel 비교는 renderer offscreen target 연결 뒤에 더합니다.
+
+## 검토 추가(2026-11-23)
+
+- 불투명 배경(`ExportBackground::Solid`, alpha > 0)에서 Normal이 아닌 blend node가 배경과 겹치면 XX.4.1 planner가 canvas
+  전체를 영역 하나(`RasterRegion::Canvas`)로 래스터화합니다. 그 blend와 겹치지 않는 뒤 node도 image에 들어가 vector
+  node 수가 0이 됩니다(`blend_backdrops_and_canvas_backgrounds_are_rasterized_together`가 이 동작을 고정). backdrop은 blend
+  footprint 안 배경과 앞선 겹치는 내용뿐이라 영역을 그 범위로 줄이는 planner 변경(XX.4.1 규칙과 writer 배경 처리)이 후속으로
+  필요합니다. 이 행의 회귀 test는 투명 배경만 검사합니다.

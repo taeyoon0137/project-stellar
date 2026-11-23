@@ -2,7 +2,7 @@
 
 - WBS: XX.3.4
 - 작업명: SVG로 정확히 표현 가능한 gradient, clip, mask, opacity를 vector로 기록
-- 상태: 완료 (`[x]`, scene이 표현하는 범위). gradient는 scene `Paint`에 아직 없어 기록할 대상이 없습니다(아래 한계).
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 lane 검토 판정: clip·mask·opacity·Outside stroke vector 기록과 golden·결정론 test는 끝났습니다. 선행 XI.10.4가 `[ ]`이고(계획 1.2 규칙 4), 행 범위의 gradient는 scene `Paint`에 값이 없어 기록하지 않았으며, browser render 확인은 수동 Quick Look 한 번이라 자동 fixture가 아닙니다. 보고 당시 기록: 완료 (`[x]`, scene이 표현하는 범위).
 - 선행: XI.10.4 (`[ ]`). 효과 적용 순서를 고정하는 렌더 행이 아직 없어, 이 행은 SVG 표기가 scene 값만으로
   정확히 정해지는 기능(clip·mask·opacity)만 vector로 둡니다. blur·shadow·blend는 부분 래스터화(XX.4.2) 대상입니다.
 - 결정: ADR-0091 결정 1.
