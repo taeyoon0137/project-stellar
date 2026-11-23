@@ -414,3 +414,89 @@ fn registration_happens_only_through_the_install_command() {
     let text = String::from_utf8(repo.read()).unwrap();
     assert!(text.contains("Badge") && text.contains("Tag"));
 }
+
+/// 작업 트리 파일(`.git` 제외)과 Git index bytes의 digest.
+fn tree_and_index(repo: &Repo) -> (std::collections::BTreeMap<String, String>, Vec<u8>) {
+    let mut digest = stellar_ops::test_support::file_digest(&repo.root);
+    digest.retain(|path, _| !path.starts_with(".git/") && path != ".git");
+    (digest, fs::read(repo.root.join(".git/index")).unwrap())
+}
+
+/// 같은 폭을 다르게 바꾼 두 branch를 merge해 driver가 conflict로 남긴 저장소.
+fn width_conflict(label: &str) -> Repo {
+    let repo = Repo::new(label);
+    trust(&repo);
+    let installed = stellar(&repo.root, &repo.home, &["merge-driver", "install", "."]);
+    result(&installed, 0);
+    repo.git(&["add", ".gitattributes"]);
+    repo.git(&["commit", "-qm", "install"]);
+    repo.branch("wide", |r| {
+        r.resize("144", "60");
+        r.add_frame(BADGE, "Badge");
+    });
+    repo.branch("narrow", |r| r.resize("128", "60"));
+    repo.git(&["switch", "-q", "wide"]);
+    let merged = repo.git_output(&["merge", "--no-edit", "narrow"]);
+    assert_eq!(merged.status.code(), Some(1));
+    repo
+}
+
+#[test]
+fn resolve_preview_changes_only_the_candidate() {
+    let repo = width_conflict("resolve-preview");
+    let before = tree_and_index(&repo);
+    let preview = result(
+        &stellar(
+            &repo.root,
+            &repo.home,
+            &["merge-driver", "resolve", ".", "--resolve", "0=theirs"],
+        ),
+        0,
+    );
+    let session = preview.get("result").unwrap();
+    assert_eq!(string(session, "operation"), "merge");
+    let units = session.get("units").unwrap().as_array().unwrap();
+    assert_eq!(units.len(), 1);
+    assert_eq!(string(&units[0], "path"), repo.file);
+    assert_eq!(string(&units[0], "kind"), "component-source");
+    assert_eq!(units[0].get("writable"), Some(&JsonValue::Bool(true)));
+    let conflicts = units[0].get("conflicts").unwrap().as_array().unwrap();
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(string(&conflicts[0], "resolution"), "theirs");
+    assert_eq!(
+        conflicts[0]
+            .get("allowed")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
+    assert_eq!(
+        tree_and_index(&repo),
+        before,
+        "preview 중 작업 트리·index 동일"
+    );
+
+    // 미해결 preview도 읽기 전용이고, 허용하지 않은 action은 오류입니다.
+    let unresolved = result(
+        &stellar(&repo.root, &repo.home, &["merge-driver", "resolve", "."]),
+        0,
+    );
+    let unit = &unresolved
+        .get("result")
+        .unwrap()
+        .get("units")
+        .unwrap()
+        .as_array()
+        .unwrap()[0];
+    assert_eq!(unit.get("writable"), Some(&JsonValue::Bool(false)));
+    let refused = stellar(
+        &repo.root,
+        &repo.home,
+        &["merge-driver", "resolve", ".", "--resolve", "0=delete"],
+    );
+    let envelope = result(&refused, 65);
+    assert_eq!(string(envelope.get("error").unwrap(), "code"), "resolution");
+    assert_eq!(tree_and_index(&repo), before);
+}

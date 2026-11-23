@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use stellar_ops::candidate::file_merge::{merge_semantic_file, FileMergeError, FileMergeOutcome};
 use stellar_ops::candidate::install::{install_driver, InstallError};
+use stellar_ops::candidate::session::{parse_resolution, ConflictSession};
 use stellar_ops::trusted::TrustedProject;
 
 use crate::exit::ExitStatus;
@@ -36,6 +37,7 @@ const MAX_SIDE_BYTES: u64 = 1024 * 1024;
 pub fn run(args: &[String]) -> Result<Success, CliError> {
     match args.first().map(String::as_str) {
         Some("install") => install(&args[1..]),
+        Some("resolve") => resolve(&args[1..]),
         _ => drive(args),
     }
 }
@@ -68,6 +70,131 @@ fn trusted_root(path: &str) -> Result<PathBuf, CliError> {
         .with_context(path.to_owned())
     })?;
     Ok(root)
+}
+
+/// `resolve` 인자.
+struct ResolveArgs {
+    project: String,
+    resolutions: Vec<(usize, String)>,
+}
+
+fn resolve_args(args: &[String]) -> Result<ResolveArgs, CliError> {
+    let usage = || {
+        CliError::usage(
+            "merge-driver resolve <프로젝트> [--resolve <번호>=<base|ours|theirs|delete|custom:<16진수>>]...",
+        )
+    };
+    let mut iter = args.iter();
+    let project = iter.next().ok_or_else(usage)?.clone();
+    let mut resolutions = Vec::new();
+    while let Some(flag) = iter.next() {
+        match flag.as_str() {
+            "--resolve" => {
+                let value = iter.next().ok_or_else(usage)?;
+                let (index, action) = value.split_once('=').ok_or_else(usage)?;
+                let index = index.parse().map_err(|_| usage())?;
+                resolutions.push((index, action.to_owned()));
+            }
+            _ => return Err(usage()),
+        }
+    }
+    Ok(ResolveArgs {
+        project,
+        resolutions,
+    })
+}
+
+fn session_json(session: &ConflictSession) -> JsonValue {
+    let conflicts = session.conflicts();
+    let units = session
+        .units()
+        .iter()
+        .map(|unit| {
+            let status = unit.status();
+            let entries = conflicts
+                .iter()
+                .filter(|c| std::ptr::eq(c.unit, unit))
+                .map(|c| {
+                    let mut value = conflict_json(&c.entry());
+                    if let JsonValue::Object(fields) = &mut value {
+                        fields.insert(0, ("index".into(), JsonValue::int(c.index as i64)));
+                        fields.push((
+                            "allowed".into(),
+                            JsonValue::Array(
+                                c.allowed().into_iter().map(JsonValue::string).collect(),
+                            ),
+                        ));
+                        fields.push((
+                            "resolution".into(),
+                            c.resolution().map_or(JsonValue::Null, JsonValue::string),
+                        ));
+                    }
+                    value
+                })
+                .collect();
+            JsonValue::object(vec![
+                ("path", JsonValue::string(unit.path().to_string_lossy())),
+                ("kind", JsonValue::string(unit.kind().name())),
+                ("objects", JsonValue::int(unit.objects().len() as i64)),
+                ("conflicts", JsonValue::Array(entries)),
+                ("unresolved", JsonValue::int(status.unresolved as i64)),
+                ("violations", JsonValue::int(status.violations as i64)),
+                ("writable", JsonValue::Bool(status.writable())),
+            ])
+        })
+        .collect();
+    JsonValue::object(vec![
+        ("operation", JsonValue::string(session.operation().name())),
+        ("units", JsonValue::Array(units)),
+        (
+            "raw_conflicts",
+            JsonValue::Array(
+                session
+                    .raw_conflicts()
+                    .iter()
+                    .map(|p| JsonValue::string(p.to_string_lossy()))
+                    .collect(),
+            ),
+        ),
+        (
+            "unsupported",
+            JsonValue::Array(
+                session
+                    .unsupported()
+                    .iter()
+                    .map(|(path, reason)| {
+                        JsonValue::object(vec![
+                            ("path", JsonValue::string(path.to_string_lossy())),
+                            ("reason", JsonValue::string(reason.as_str())),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+    ])
+}
+
+/// `merge-driver resolve <프로젝트> [--resolve n=action]...`: conflict 세션을 열어 해결을 C에만 적용한 결과를
+/// 보여 줍니다(XIV.12.2). 작업 트리·index를 바꾸지 않습니다.
+fn resolve(args: &[String]) -> Result<Success, CliError> {
+    let args = resolve_args(args)?;
+    let root = trusted_root(&args.project)?;
+    let git = system_git()?;
+    let mut session = ConflictSession::open(&git, &root).map_err(|e| {
+        CliError::new(ExitStatus::Unavailable, "conflict-session", e.to_string())
+            .with_context(args.project.clone())
+    })?;
+    for (index, action) in &args.resolutions {
+        let resolution = parse_resolution(action)
+            .map_err(|e| CliError::usage(format!("--resolve {index}: {e}")))?;
+        session.resolve(*index, resolution).map_err(|e| {
+            CliError::new(ExitStatus::DataErr, "resolution", format!("{index}: {e}"))
+        })?;
+    }
+    Ok(Success {
+        result: session_json(&session),
+        diagnostics: Vec::new(),
+    })
 }
 
 /// `merge-driver install <프로젝트>`(XXIV.2.3).

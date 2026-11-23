@@ -19,9 +19,11 @@ use std::path::{Path, PathBuf};
 
 use stellar_project::private_temp::PrivateTempDir;
 use stellar_project::saved_project::{SavedProject, SavedProjectLoader};
+use stellar_semantic_diff::codec::{read_value, Reader};
 use stellar_semantic_diff::snapshot::SemanticSnapshot;
 use stellar_semantic_merge::candidate::{
-    CandidateCommand, CandidateSnapshot, Resolution, ResolutionError,
+    allowed_resolutions, CandidateCommand, CandidateSnapshot, Resolution, ResolutionError,
+    ResolutionKind,
 };
 use stellar_semantic_merge::model::{MergeInput, SemanticConflict};
 use stellar_storage::chunk::path::ChunkObjectPath;
@@ -30,6 +32,7 @@ use stellar_storage::hash::ContentHash;
 
 use super::component_file::{decode_component_file, is_component_source_path};
 use super::git_port::{GitOperation, GitPortError, MergeGit, UnmergedEntry};
+use crate::compare::ConflictEntry;
 use crate::core_types::ids::StableId;
 
 /// 한 stage blob의 크기 상한(컴포넌트 원본·pointer 모두 이 안).
@@ -138,6 +141,88 @@ pub struct SessionConflict<'a> {
     pub unit: &'a SessionUnit,
     /// conflict.
     pub conflict: &'a SemanticConflict,
+}
+
+impl SessionConflict<'_> {
+    /// 표시용 conflict 항목.
+    pub fn entry(&self) -> ConflictEntry {
+        ConflictEntry::from(self.conflict)
+    }
+
+    /// 허용 해결 action 이름(XIV.12.1, code 순서).
+    pub fn allowed(&self) -> Vec<&'static str> {
+        allowed_resolutions(self.conflict)
+            .into_iter()
+            .map(ResolutionKind::name)
+            .collect()
+    }
+
+    /// 적용한 해결 action 이름(미해결이면 `None`).
+    pub fn resolution(&self) -> Option<&'static str> {
+        self.unit
+            .candidate
+            .resolution(self.conflict.object, &self.conflict.target)
+            .map(|r| r.kind().name())
+    }
+}
+
+/// 단위의 쓰기 조건 상태(XIV.12.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnitStatus {
+    /// 미해결 conflict 수.
+    pub unresolved: usize,
+    /// 새 snapshot 위반 수.
+    pub violations: usize,
+}
+
+impl UnitStatus {
+    /// 쓸 수 있는지(둘 다 0).
+    pub fn writable(&self) -> bool {
+        self.unresolved == 0 && self.violations == 0
+    }
+}
+
+impl SessionUnit {
+    /// 쓰기 조건 상태.
+    pub fn status(&self) -> UnitStatus {
+        match self.candidate.validate() {
+            Ok(_) => UnitStatus {
+                unresolved: 0,
+                violations: 0,
+            },
+            Err(blocked) => UnitStatus {
+                unresolved: blocked.unresolved.len(),
+                violations: blocked.violations.len(),
+            },
+        }
+    }
+}
+
+/// 해결 action 표기를 읽습니다: `base`·`ours`·`theirs`·`delete`·`custom:<SemanticValue canonical bytes 16진수>`.
+pub fn parse_resolution(text: &str) -> Result<Resolution, String> {
+    Ok(match text {
+        "base" => Resolution::ChooseBase,
+        "ours" => Resolution::ChooseOurs,
+        "theirs" => Resolution::ChooseTheirs,
+        "delete" => Resolution::Delete,
+        other => {
+            let hex = other
+                .strip_prefix("custom:")
+                .ok_or_else(|| format!("알 수 없는 해결 action: {other}"))?;
+            if hex.len() % 2 != 0 {
+                return Err("custom 값 16진수 길이".into());
+            }
+            let bytes = (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
+                .collect::<Result<Vec<u8>, _>>()
+                .map_err(|_| "custom 값 16진수".to_string())?;
+            let mut reader = Reader::new(&bytes);
+            let value = read_value(&mut reader).map_err(|e| e.to_string())?;
+            reader.finish().map_err(|e| e.to_string())?;
+            Resolution::CustomValue(value)
+        }
+    })
 }
 
 /// Git conflict 세션.

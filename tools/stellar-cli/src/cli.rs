@@ -75,7 +75,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "text-source",
         "export <프로젝트> <새 파일> | check <파일>: 단일 View 텍스트 원본을 opt-in으로 내보내거나 읽기 전용 검사합니다",
     ),
-    ("merge-driver", "<%O> <%A> <%B> <%P> | install <프로젝트>: Git merge driver로 컴포넌트 원본을 semantic merge합니다(conflict가 있으면 %A를 바꾸지 않고 nonzero). install은 신뢰한 프로젝트의 저장소 로컬 config와 .gitattributes에만 등록합니다"),
+    ("merge-driver", "<%O> <%A> <%B> <%P> | install <프로젝트> | resolve <프로젝트> [--resolve <번호>=<action>]...: Git merge driver로 컴포넌트 원본을 semantic merge합니다(conflict가 있으면 %A를 바꾸지 않고 nonzero). install은 신뢰한 프로젝트의 저장소 로컬 config와 .gitattributes에만 등록하고, resolve는 unmerged 경로의 semantic conflict와 해결 결과를 보여 줍니다"),
 ];
 
 /// `query` 대상: (사용법, 한 줄 설명). 도움말에 이 순서로 나타납니다.
