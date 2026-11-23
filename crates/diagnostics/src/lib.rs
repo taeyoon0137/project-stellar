@@ -21,6 +21,8 @@ pub mod budget;
 /// 성능 sample analyzer와 release gate (XVI.4.2~XVI.4.4).
 pub mod analyzer;
 
+/// 성능 측정 결과 보존 schema (XVI.4.5).
+pub mod result;
 
 /// 민감 데이터(프로젝트 내용·텍스트·경로) 래퍼.
 ///
