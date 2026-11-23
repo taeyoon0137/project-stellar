@@ -42,6 +42,9 @@ pub(crate) mod compose;
 mod tests;
 
 #[cfg(test)]
+pub(crate) mod kotlin_check;
+
+#[cfg(test)]
 mod semantics_tests;
 
 /// 내보내기 옵션.

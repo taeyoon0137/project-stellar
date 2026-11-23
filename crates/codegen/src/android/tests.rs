@@ -1,7 +1,8 @@
 //! XXII.4.1 검증: Compose golden source(static fixture), 정적 구조 검사, 옵션 오류.
 //!
-//! Kotlin 컴파일러가 DEV-MAC에 없어 compile fixture 대신 정적 검사를 씁니다. 괄호 짝, import한 이름이 모두 본문에
-//! 쓰였는지, 본문이 쓴 Compose 이름(import 표에 있는 이름)이 모두 import되었는지 확인합니다.
+//! Kotlin 컴파일러가 DEV-MAC에 없어 compile fixture 대신 정적 검사를 씁니다. 괄호 짝, Kotlin 문법 검사기
+//! ([`super::kotlin_check`]), import 표 검사(import가 표의 정규 경로이고 표의 package가 Compose artifact에 있음), import한
+//! 이름이 모두 본문에 쓰였는지, 본문이 쓴 Compose 이름(import 표에 있는 이름)이 모두 import되었는지 확인합니다.
 
 use std::collections::BTreeSet;
 
@@ -89,6 +90,13 @@ fn identifiers_outside_strings(source: &str) -> BTreeSet<String> {
 /// 정적 검사: 괄호 짝, import 이름 사용, 사용 이름 import.
 pub(crate) fn static_check(source: &str) {
     assert!(balanced(source), "괄호 짝이 맞지 않습니다:\n{source}");
+    // compile fixture 대체(ADR-0121 결정 6): 문법 검사기와 import 표 검사.
+    if let Err(error) = super::kotlin_check::check_syntax(source) {
+        panic!("Kotlin 문법 오류 {error:?}:\n{source}");
+    }
+    if let Err(error) = super::kotlin_check::check_imports(source) {
+        panic!("import 표 검사 실패 {error}:\n{source}");
+    }
     let imports: BTreeSet<&str> = source
         .lines()
         .filter_map(|line| line.strip_prefix("import "))
@@ -216,4 +224,36 @@ fn static_check_detects_broken_sources() {
     let unused =
         std::panic::catch_unwind(|| static_check("package a\n\nimport x.Row\n\nfun f() {}\n"));
     assert!(unused.is_err());
+}
+
+#[test]
+fn kotlin_syntax_checker_catches_mutations_of_real_output() {
+    // 문법 검사기가 실제 출력을 읽고, 실제 출력에 넣은 문법 오류를 잡는지 확인합니다(ADR-0121 결정 6).
+    let source = compose(&Fixture::new()).source;
+    super::kotlin_check::check_syntax(&source).expect("실제 출력");
+    let mutations: [(&str, &str); 6] = [
+        (
+            "horizontalAlignment = Alignment.Start,",
+            "horizontalAlignment = ,",
+        ),
+        (".width(390.dp)", ".width(390.dp"),
+        (
+            "state: StellarState, onAction",
+            "state: StellarState onAction",
+        ),
+        ("var memo by mutableStateOf(\"\")", "var memo by"),
+        (
+            "@Composable\nfun StellarView(",
+            "@Composable\nfun (StellarView(",
+        ),
+        ("Modifier.weight(1f)", "Modifier.weight(1f) 2f"),
+    ];
+    for (from, to) in mutations {
+        assert!(source.contains(from), "{from}");
+        let broken = source.replacen(from, to, 1);
+        assert!(
+            super::kotlin_check::check_syntax(&broken).is_err(),
+            "{from} → {to}"
+        );
+    }
 }
