@@ -53,6 +53,7 @@
 | `stellar-mcp` 종료 코드 표 = `tools/stellar-cli/src/exit.rs` XXIV.1.2 표(값·이름, 소스 비교)(`bridge_exit_table_equals_the_cli_table`) | 통과 |
 | 모든 결과 종류의 종료 코드가 `stellar-mcp` 표에 있음(`every_result_kind_maps_into_this_table_with_the_same_name`) | 통과 |
 | 통합 test의 모든 실패 응답에서 `exit`가 `kind`의 대응과 같음(`support::failure_kind`가 매번 확인) | 통과 |
+| 검토 보완: HEAD 없음·컴포넌트 원본·문서 snapshot 읽기 실패도 `unavailable` 종류를 가져 tool 실패는 `isError` 결과, resource 실패는 `data.kind`·`exit`가 있는 JSON-RPC 오류(`headless_read`의 `assert_tool_error`·`assert_error`가 확인) | 통과 |
 
 ## 차이(작업 지시와 다른 점)
 

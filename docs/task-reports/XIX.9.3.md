@@ -44,7 +44,7 @@
 
 | 명령 | 결과 |
 |---|---|
-| `cargo test -p stellar-mcp --test headless_tools` | 4 passed |
+| `cargo test -p stellar-mcp --test headless_tools` | 5 passed |
 | `cargo test -p stellar-mcp -p stellar-mcp-core -p stellar-agent-protocol -p stellar-ops` | 실패 0 |
 | `cargo clippy -p stellar-mcp -p stellar-mcp-core -p stellar-agent-protocol -p stellar-ops --all-targets -- -D warnings` | 경고 0 |
 
@@ -55,6 +55,8 @@
 | headless tools/list의 쓰기 tool 0: 목록 9개 모두 `readOnlyHint: true`, 쓰기 tool 8개 이름은 `unknown-tool`(같은 test, `approved_snapshot_lists_only_implemented_resources_and_pages_without_writes`) | 통과 |
 | 실행 전후 프로젝트 파일 hash 동일: dry-run 두 종류와 Git status·conflict 읽기를 포함한 전 tool 실행 전후 임시 루트 전체(작업 트리·`.git`·신뢰 저장소·HOME) digest 동일(`every_listed_tool_runs_read_only_through_ops`) | 통과 |
 | stale `base_revision`과 closed enum 밖 종류 거부(`stale_base_revision_is_rejected_before_dry_run`) | 통과 |
+| 검토 보완: `stellar://git/status`의 `staged`·`unstaged`는 정의(XIX.2.1)대로 semantic 변경 수이고 `git.status`의 `semantic.*_total`과 같음. 한 파일 안 이름 변경 세 개(경로 1, semantic 3)로 확인(`git_status_resource_counts_semantic_changes_like_the_tool`) | 통과 |
+| 검토 보완: `git.status`는 `stellar git status`처럼 semantic 상태 실패를 `semantic-status-unavailable` 진단으로 내고, `raw`의 전체 수·잘림 여부(`raw_total`·`raw_truncated`)를 줌 | 통과 |
 
 ## 차이(작업 지시와 다른 점)
 
