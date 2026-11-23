@@ -4,7 +4,7 @@
 //! 최단 왕복 10진 표기(지수 없음), 문자열은 escape한 따옴표 표기, StableId는 하이픈 표기입니다.
 //!
 //! ```text
-//! codegen-ir v2
+//! codegen-ir v3
 //! target <profile id> <kind> <spec> registry=<release>
 //! tokens <n>
 //!   token <id> <name> = <value>
@@ -15,7 +15,7 @@
 //!     layout {<CSS 생략값과 다른 longhand; ...>} [transform=..] [content=..]
 //!     text <string>
 //!     property <path> = <value> origin=<origin> [token=<id>] [capability=<name>]
-//!     capability <subject> <status> [replacement=<subject>] [path=<path>]
+//!     mapping <validator|matrix> <subject> <status> rule=<rule> [diagnostic=<code>] [replacement=<subject>] [path=<path>]
 //! accessibility <n>
 //!   [j] node=[i] <role> [label=..] [value=..] [states{..}] [actions{..}]   (깊이마다 두 칸 들여쓰기)
 //! ```
@@ -35,11 +35,11 @@ use stellar_target_profile::capability::{CapabilitySubject, ContractCode, Elemen
 use stellar_target_profile::overrides::ValueOrigin;
 use stellar_target_profile::spec::ProfileSpec;
 
-use super::{CodegenIr, IrLayout};
+use super::{CodegenIr, IrLayout, MappingSubject};
 use crate::text::num;
 
 /// snapshot 형식 머리.
-pub const SNAPSHOT_HEADER: &str = "codegen-ir v2";
+pub const SNAPSHOT_HEADER: &str = "codegen-ir v3";
 
 impl CodegenIr {
     /// 결정론 semantic snapshot 텍스트(모듈 문서 형식).
@@ -119,17 +119,25 @@ impl CodegenIr {
                 }
                 out.push('\n');
             }
-            for finding in &node.capabilities {
-                let status = finding.status.map_or("not_registered", |s| s.name());
+            for mapping in &node.mappings {
+                let status = mapping.status.map_or("not_registered", |s| s.name());
+                let subject = match mapping.subject {
+                    MappingSubject::Capability(subject) => subject_text(subject),
+                    MappingSubject::Css { scope, name } => format!("css:{scope}/{name}"),
+                };
                 let _ = write!(
                     out,
-                    "{indent}  capability {} {status}",
-                    subject_text(finding.subject)
+                    "{indent}  mapping {} {subject} {status} rule={}",
+                    mapping.source.name(),
+                    mapping.rule
                 );
-                if let Some(replacement) = finding.replacement {
+                if let Some(code) = mapping.diagnostic {
+                    let _ = write!(out, " diagnostic={code}");
+                }
+                if let Some(replacement) = mapping.replacement {
                     let _ = write!(out, " replacement={}", subject_text(replacement));
                 }
-                if let Some(path) = &finding.path {
+                if let Some(path) = &mapping.path {
                     let _ = write!(out, " path={}", path_text(path));
                 }
                 out.push('\n');

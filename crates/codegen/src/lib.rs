@@ -18,6 +18,9 @@ pub mod facet;
 /// modifier stack → CSS 고정 적용 순서 선형화 계획 (IX.11.18).
 pub mod modifier_plan;
 
+/// 코드 생성 lowering matrix (XXII.1.2, XXII.1.4, XXII.1.7).
+pub mod matrix;
+
 /// Web adapter (XXII.2).
 pub mod web;
 

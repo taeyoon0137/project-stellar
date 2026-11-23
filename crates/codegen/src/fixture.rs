@@ -51,7 +51,69 @@ use stellar_target_profile::spec::{
 };
 use stellar_target_profile::validate::{PropertyCapabilityMap, ViewModel, ViewNode};
 
-use crate::ir::{build_ir, CodegenIr, CodegenSources, StateDecl, TokenDecl};
+use crate::ir::{build_ir, CodegenIr, CodegenSources, CssPropertyUse, StateDecl, TokenDecl};
+use stellar_target_profile::css_matrix::MappingInput;
+
+/// CSS 기반 속성 사용 하나.
+pub fn css_use(
+    scope: &'static str,
+    name: &'static str,
+    status: MappingInput,
+    path: Option<PropertyPath>,
+) -> CssPropertyUse {
+    CssPropertyUse {
+        scope,
+        name,
+        status,
+        path,
+    }
+}
+
+/// 메인 fixture의 CSS 기반 속성 사용: 배경(exact), layout longhand(exact), 블렌드(approximated), 잠금
+/// (stellar-only, 출력 없음), 제외 node(ios에서 13).
+fn css_properties() -> BTreeMap<StableId, Vec<CssPropertyUse>> {
+    let mut out = BTreeMap::new();
+    out.insert(
+        sid(1),
+        vec![
+            css_use("frame", "display", MappingInput::Exact, None),
+            css_use(
+                "frame",
+                "background-color",
+                MappingInput::Exact,
+                Some(path(1, KEY_FILL)),
+            ),
+            css_use("frame", "flex-direction", MappingInput::Exact, None),
+        ],
+    );
+    out.insert(
+        sid(12),
+        vec![
+            css_use(
+                "modifier",
+                "mix-blend-mode",
+                MappingInput::Approximated,
+                None,
+            ),
+            css_use("node", "locked", MappingInput::StellarOnly, None),
+            css_use("frame", "border-top-left-radius", MappingInput::Exact, None),
+        ],
+    );
+    out.insert(
+        sid(13),
+        vec![css_use(
+            "frame",
+            "grid-template-columns",
+            MappingInput::Exact,
+            None,
+        )],
+    );
+    out.insert(
+        sid(4),
+        vec![css_use("image", "object-fit", MappingInput::Exact, None)],
+    );
+    out
+}
 
 /// 마지막 바이트가 `n`인 결정론 StableId.
 pub fn sid(n: u8) -> StableId {
@@ -212,6 +274,8 @@ pub struct Fixture {
     pub tokens: Vec<TokenDecl>,
     /// token binding.
     pub token_bindings: BTreeMap<PropertyPath, StableId>,
+    /// CSS 기반 속성 사용(XXII.1.2).
+    pub css_properties: BTreeMap<StableId, Vec<CssPropertyUse>>,
     /// registry catalog.
     pub catalog: RegistryCatalog,
 }
@@ -536,6 +600,7 @@ impl Fixture {
             states,
             tokens,
             token_bindings,
+            css_properties: css_properties(),
             catalog: builtin::catalog().expect("catalog"),
         }
     }
@@ -552,6 +617,7 @@ impl Fixture {
             states: &self.states,
             tokens: &self.tokens,
             token_bindings: &self.token_bindings,
+            css_properties: &self.css_properties,
         }
     }
 
@@ -606,6 +672,7 @@ pub fn fragment_fixture() -> Fixture {
         states: Vec::new(),
         tokens: Vec::new(),
         token_bindings: BTreeMap::new(),
+        css_properties: BTreeMap::new(),
         catalog: builtin::catalog().expect("catalog"),
     }
 }
@@ -684,6 +751,7 @@ pub fn list_fixture(items: u32) -> Fixture {
         }],
         tokens: Vec::new(),
         token_bindings: BTreeMap::new(),
+        css_properties: BTreeMap::new(),
         catalog: builtin::catalog().expect("catalog"),
     }
 }

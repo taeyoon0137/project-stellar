@@ -548,6 +548,7 @@ fn view_without_semantics_or_tokens_still_builds() {
         states: &[],
         tokens: &[],
         token_bindings: &empty_bindings,
+        css_properties: &BTreeMap::new(),
     };
     let catalog = stellar_target_profile::builtin::catalog().expect("catalog");
     let ir = build_ir(&sources, &fx::web_profile(), &catalog).expect("IR");
@@ -650,4 +651,98 @@ fn accessibility_only_input_does_not_resolve_missing_state_or_hide_mapping_and_c
             assert!(!check_document(&mapped.document).is_empty());
         }
     }
+}
+
+/// node별 mapping 줄만 모은 진단 fixture 텍스트(XXII.1.2).
+fn mapping_fixture(ir: &CodegenIr) -> String {
+    let snapshot = ir.semantic_snapshot();
+    let mut out = String::new();
+    let mut node = String::new();
+    let mut in_nodes = false;
+    for line in snapshot.lines() {
+        let trimmed = line.trim_start();
+        if line.starts_with("nodes ") {
+            in_nodes = true;
+        } else if line.starts_with("accessibility ") {
+            in_nodes = false;
+        } else if in_nodes && trimmed.starts_with('[') {
+            node = trimmed.split_whitespace().nth(1).unwrap_or("").to_string();
+        } else if let Some(rest) = trimmed.strip_prefix("mapping ") {
+            out.push_str(&format!("{node} {rest}\n"));
+        }
+    }
+    out
+}
+
+#[test]
+fn mapping_diagnostics_are_kept_per_node_including_native() {
+    // 검증 기준(XXII.1.2): diagnostic fixture. node마다 Native·Approximated·Unsupported·미등록 진단이 출처별로
+    // 남고, profile에서 제외한 node(ios의 13)의 진단은 없습니다.
+    let fixture = Fixture::new();
+    for (name, profile) in [
+        ("mappings_site.txt", fx::web_profile()),
+        ("mappings_ios.txt", fx::ios_profile()),
+        ("mappings_android.txt", fx::android_profile()),
+    ] {
+        let ir = build(&fixture, &profile).expect("IR");
+        fx::check_golden(name, &mapping_fixture(&ir));
+    }
+    let ir = build(&fixture, &fx::web_profile()).expect("IR");
+    let save = ir.node(sid(12)).expect("저장 버튼");
+    let css = |name: &str| {
+        save.mappings
+            .iter()
+            .find(|m| matches!(m.subject, MappingSubject::Css { name: n, .. } if n == name))
+            .expect("css mapping")
+    };
+    assert_eq!(
+        css("border-top-left-radius").status,
+        Some(CapabilityStatus::Native)
+    );
+    assert_eq!(css("border-top-left-radius").diagnostic, None);
+    assert_eq!(
+        css("mix-blend-mode").status,
+        Some(CapabilityStatus::Approximated)
+    );
+    assert_eq!(css("locked").status, Some(CapabilityStatus::Unsupported));
+    // validator 진단도 Native까지 mapping으로 옮깁니다.
+    assert!(save.mappings.iter().any(
+        |m| m.source == MappingSource::Validator && m.status == Some(CapabilityStatus::Native)
+    ));
+    // 순서: (출처, subject, path) 오름차순.
+    for node in &ir.nodes {
+        assert!(node.mappings.windows(2).all(|w| {
+            (w[0].source, w[0].subject, &w[0].path) < (w[1].source, w[1].subject, &w[1].path)
+        }));
+    }
+    let ios = build(&fixture, &fx::ios_profile()).expect("IR");
+    assert!(ios.node(sid(13)).is_none());
+}
+
+#[test]
+fn mapping_diagnostics_are_deterministic_and_reject_unknown_nodes() {
+    let mut fixture = Fixture::new();
+    let first = build(&fixture, &fx::web_profile()).expect("IR");
+    // 입력 순서를 뒤집고 같은 항목을 한 번 더 넣어도 같은 결과입니다.
+    for uses in fixture.css_properties.values_mut() {
+        uses.reverse();
+        if let Some(first_use) = uses.first().cloned() {
+            uses.push(first_use);
+        }
+    }
+    let second = build(&fixture, &fx::web_profile()).expect("IR");
+    assert_eq!(first.semantic_snapshot(), second.semantic_snapshot());
+    fixture.css_properties.insert(
+        sid(250),
+        vec![fx::css_use(
+            "frame",
+            "display",
+            stellar_target_profile::css_matrix::MappingInput::Exact,
+            None,
+        )],
+    );
+    assert_eq!(
+        build(&fixture, &fx::web_profile()).unwrap_err(),
+        IrError::CssPropertyOutsideView(sid(250))
+    );
 }

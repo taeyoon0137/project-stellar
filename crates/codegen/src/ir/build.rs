@@ -11,6 +11,7 @@ use stellar_target_profile::registry::RegistryCatalog;
 use stellar_target_profile::spec::TargetProfile;
 use stellar_target_profile::validate::{validate_profiles, ProfileOutcome, ViewNode};
 
+use super::mapping;
 use super::{
     CodegenIr, CodegenSources, IrAccessibilityEntry, IrError, IrLayout, IrNode, IrProperty,
     IrState, IrTarget, IrToken, IrTree, MAX_IR_NODES,
@@ -196,8 +197,28 @@ pub fn build_ir(
     // capability 진단(validator가 제외 node를 이미 건너뜀).
     for finding in findings {
         if let Some(&index) = ir_index.get(&finding.node) {
-            nodes[index as usize].capabilities.push(finding);
+            let node = &mut nodes[index as usize];
+            node.mappings.push(mapping::from_finding(&finding));
+            node.capabilities.push(finding);
         }
+    }
+
+    // CSS 기반 속성 사용의 matrix 판정(XXII.1.2).
+    let kind = profile.kind();
+    for (id, uses) in sources.css_properties {
+        match ir_index.get(id) {
+            Some(&index) => {
+                let node = &mut nodes[index as usize];
+                for css in uses {
+                    node.mappings.push(mapping::from_css_use(css, kind));
+                }
+            }
+            None if tree.index.contains_key(id) => {}
+            None => return Err(IrError::CssPropertyOutsideView(*id)),
+        }
+    }
+    for node in &mut nodes {
+        mapping::normalize(&mut node.mappings);
     }
 
     let states = declared_states(sources)?;
@@ -478,6 +499,7 @@ fn build_nodes(
             properties: Vec::new(),
             semantics: None,
             capabilities: Vec::new(),
+            mappings: Vec::new(),
         });
         ir_index.insert(source.id, index);
         if let Some(parent) = parent {

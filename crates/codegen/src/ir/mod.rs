@@ -17,6 +17,7 @@
 //! | state | [`StateDecl`](상태 변수 id·이름·초기값) | IX.5.1 |
 //! | tokens | [`TokenDecl`](token id·이름·해석 값)과 PropertyPath → token binding | VIII.5·VIII.6 |
 //! | 텍스트 | Text node의 해석된 내용 | VI.7 |
+//! | CSS 기반 속성 사용 | [`CssPropertyUse`](node별 registry 항목·매핑 상태) | IX.11 registry |
 //!
 //! # 변환 규칙
 //!
@@ -32,6 +33,8 @@
 //! - **target capability**: IX.10.8 validator 결과(Native 포함 모든 진단)를 node별로 붙입니다. profile이 pin한
 //!   registry release를 앱이 모르면 IR을 만들지 않습니다.
 //! - **tokens·state**: 선언 전체를 id 오름차순으로 담습니다. token binding은 IR에 값이 있는 속성에만 붙습니다.
+//! - **mapping 진단**(XXII.1.2): node마다 validator 진단과 CSS 기반 속성 사용의 matrix 판정을 Native까지 모두
+//!   [`IrNode::mappings`]에 남깁니다([`mapping`]).
 //!
 //! 같은 입력은 항상 같은 IR과 같은 [`CodegenIr::semantic_snapshot`] 텍스트를 만듭니다(hash 순서·pointer·부동소수
 //! 연산을 쓰지 않음).
@@ -57,6 +60,9 @@ use stellar_target_profile::validate::{CapabilityFinding, PropertyCapabilityMap,
 mod binding;
 mod build;
 
+/// node별 mapping 진단 (XXII.1.2).
+pub mod mapping;
+
 /// semantic snapshot 텍스트와 안정 이름 표기.
 pub mod snapshot;
 
@@ -65,6 +71,7 @@ mod tests;
 
 pub use binding::ResolvedBinding;
 pub use build::{build_accessibility_ir, build_ir};
+pub use mapping::{CssPropertyUse, IrMapping, MappingSource, MappingSubject};
 
 /// IR을 만들 수 있는 최대 View node 수.
 pub const MAX_IR_NODES: usize = 1_000_000;
@@ -112,6 +119,8 @@ pub struct CodegenSources<'a> {
     pub tokens: &'a [TokenDecl],
     /// 속성 경로 → 그 값을 정한 token.
     pub token_bindings: &'a BTreeMap<PropertyPath, StableId>,
+    /// node → 그 node가 쓰는 CSS 기반 속성 registry 항목(XXII.1.2).
+    pub css_properties: &'a BTreeMap<StableId, Vec<CssPropertyUse>>,
 }
 
 impl fmt::Debug for CodegenSources<'_> {
@@ -197,6 +206,8 @@ pub struct IrNode {
     pub semantics: Option<u32>,
     /// 선택 profile의 capability 진단(IX.10.8 결정론 순서).
     pub capabilities: Vec<CapabilityFinding>,
+    /// Native 포함 mapping 진단(출처·subject·path 오름차순, XXII.1.2).
+    pub mappings: Vec<IrMapping>,
 }
 
 impl IrNode {
@@ -480,6 +491,8 @@ pub enum IrError {
     },
     /// token binding의 속성에 해석 값이 없습니다.
     TokenBindingWithoutValue(StableId),
+    /// CSS 기반 속성 사용의 대상이 View node가 아닙니다.
+    CssPropertyOutsideView(StableId),
 }
 
 impl fmt::Display for IrError {
@@ -542,6 +555,9 @@ impl fmt::Display for IrError {
             ),
             IrError::TokenBindingWithoutValue(id) => {
                 write!(f, "node {id}의 token binding 속성에 해석 값이 없습니다")
+            }
+            IrError::CssPropertyOutsideView(id) => {
+                write!(f, "CSS 기반 속성 사용의 대상 {id}가 View node가 아닙니다")
             }
         }
     }
