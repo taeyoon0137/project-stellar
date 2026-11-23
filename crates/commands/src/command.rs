@@ -313,6 +313,8 @@ pub enum Command {
     DuplicateSubtree(DuplicateSubtree),
     /// Text node의 부분 문자열을 편집합니다.
     ReplaceText(crate::text_edit::ReplaceText),
+    /// Text 범위 문자 style 설정 (XII.10.32).
+    SetTextRangeStyle(crate::text_edit::SetTextRangeStyle),
     /// 페이지 추가 (UX.12.1).
     AddPage(crate::page_view::AddPage),
     /// 페이지 삭제(AddPage의 역).
@@ -366,6 +368,7 @@ impl Command {
             Command::RestoreNodeRecords(_) => CommandKind::RestoreNodeRecords,
             Command::ReplaceText(_) => CommandKind::ReplaceText,
             Command::DuplicateSubtree(_) => CommandKind::DuplicateSubtree,
+            Command::SetTextRangeStyle(_) => CommandKind::SetTextRangeStyle,
             Command::AddPage(_) => CommandKind::AddPage,
             Command::RemovePage(_) => CommandKind::RemovePage,
             Command::RenamePage(_) => CommandKind::RenamePage,
@@ -395,6 +398,7 @@ impl Command {
             Command::RestoreNodeRecords(command) => command.validate(model),
             Command::ReplaceText(command) => command.validate(model),
             Command::DuplicateSubtree(command) => command.validate(model),
+            Command::SetTextRangeStyle(command) => command.validate(model),
             Command::AddPage(command) => command.validate(model),
             Command::RemovePage(command) => command.validate(model),
             Command::RenamePage(command) => command.validate(model),
@@ -432,6 +436,9 @@ impl Command {
             }
             Command::ReplaceText(command) => command.invert(model).map(Command::RestoreNodeRecords),
             Command::DuplicateSubtree(command) => command.invert().map(Command::DeleteSubtree),
+            Command::SetTextRangeStyle(command) => {
+                command.invert(model).map(Command::RestoreNodeRecords)
+            }
             Command::AddPage(command) => Ok(Command::RemovePage(command.invert())),
             Command::RemovePage(command) => command.invert(model).map(Command::AddPage),
             Command::RenamePage(command) => command.invert(model).map(Command::RenamePage),
@@ -465,6 +472,7 @@ impl Command {
             Command::RestoreNodeRecords(command) => command.apply(ctx),
             Command::ReplaceText(command) => command.apply(ctx),
             Command::DuplicateSubtree(command) => command.apply(ctx),
+            Command::SetTextRangeStyle(command) => command.apply(ctx),
             Command::AddPage(command) => command.apply(ctx),
             Command::RemovePage(command) => command.apply(ctx),
             Command::RenamePage(command) => command.apply(ctx),

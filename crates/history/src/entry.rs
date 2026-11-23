@@ -83,6 +83,8 @@ pub enum TextInputKind {
     DeleteBackward,
     /// caret 뒤 문자 삭제(Delete).
     DeleteForward,
+    /// 선택 범위를 확정 문자열로 교체(붙여넣기·IME 재변환 등). 앞뒤 입력과 합치지 않습니다(XII.10.32).
+    Replace,
 }
 
 /// 반복 입력 병합에 쓰는 command signature(VII.4.4): 같은 종류·대상·속성이면 같은 signature.

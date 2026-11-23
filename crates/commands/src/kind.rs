@@ -39,6 +39,8 @@ pub enum CommandKind {
     DuplicateSubtree,
     /// Unicode scalar 범위의 Text 본문 교체.
     ReplaceText,
+    /// Text 범위 문자 style 설정 (XII.10.32, ADR-0079).
+    SetTextRangeStyle,
     /// 페이지 추가 (UX.12.1, ADR-0079).
     AddPage,
     /// 페이지 삭제(AddPage의 역, ADR-0079).
@@ -76,6 +78,7 @@ impl CommandKind {
         CommandKind::RestoreNodeRecords,
         CommandKind::DuplicateSubtree,
         CommandKind::ReplaceText,
+        CommandKind::SetTextRangeStyle,
         CommandKind::AddPage,
         CommandKind::RemovePage,
         CommandKind::RenamePage,
@@ -105,6 +108,7 @@ impl CommandKind {
             CommandKind::RestoreNodeRecords => 0x0032,
             CommandKind::DuplicateSubtree => 0x0040,
             CommandKind::ReplaceText => 0x0050,
+            CommandKind::SetTextRangeStyle => 0x0051,
             CommandKind::AddPage => 0x0060,
             CommandKind::RemovePage => 0x0061,
             CommandKind::RenamePage => 0x0062,
@@ -146,6 +150,7 @@ impl CommandKind {
             CommandKind::RestoreNodeRecords => "restore-node-records",
             CommandKind::DuplicateSubtree => "duplicate-subtree",
             CommandKind::ReplaceText => "replace-text",
+            CommandKind::SetTextRangeStyle => "set-text-range-style",
             CommandKind::AddPage => "add-page",
             CommandKind::RemovePage => "remove-page",
             CommandKind::RenamePage => "rename-page",
@@ -178,7 +183,8 @@ impl CommandKind {
             | CommandKind::RestoreNodeRecords
             | CommandKind::DuplicateSubtree
             | CommandKind::ReplaceText => 1,
-            CommandKind::AddPage
+            CommandKind::SetTextRangeStyle
+            | CommandKind::AddPage
             | CommandKind::RemovePage
             | CommandKind::RenamePage
             | CommandKind::AddView
@@ -208,6 +214,7 @@ impl CommandKind {
             CommandKind::RestoreNodeRecords => "변환 되돌리기",
             CommandKind::DuplicateSubtree => "복제",
             CommandKind::ReplaceText => "텍스트 입력",
+            CommandKind::SetTextRangeStyle => "텍스트 스타일 변경",
             CommandKind::AddPage => "페이지 추가",
             CommandKind::RemovePage => "페이지 삭제",
             CommandKind::RenamePage => "페이지 이름 변경",
@@ -270,6 +277,7 @@ mod tests {
                 (0x0032, "restore-node-records"),
                 (0x0040, "duplicate-subtree"),
                 (0x0050, "replace-text"),
+                (0x0051, "set-text-range-style"),
                 (0x0060, "add-page"),
                 (0x0061, "remove-page"),
                 (0x0062, "rename-page"),

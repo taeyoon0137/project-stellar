@@ -390,6 +390,40 @@ pub fn generate(
             crate::text_edit::ReplaceText::new(node, start, end, replacement)
                 .map(Command::ReplaceText)
         }
+        CommandKind::SetTextRangeStyle => {
+            let candidates = nodes_where(model, |id| kind_of(model, id) == Some(NodeKind::Text));
+            let node = pick(rng, &candidates)?;
+            let NodePayload::Text(text) = model.payload(node)? else {
+                return None;
+            };
+            let len = stellar_document::text::scalar_len(text.content());
+            if len == 0 {
+                return None;
+            }
+            let start = rng.below(u64::from(len)) as u32;
+            let end = start + 1 + rng.below(u64::from(len - start)) as u32;
+            let styles: Vec<u32> = model
+                .definition()
+                .text_styles
+                .runs
+                .keys()
+                .copied()
+                .collect();
+            let style = if rng.one_in(3) {
+                None
+            } else if styles.is_empty() {
+                Some(rng.below(3) as u32)
+            } else {
+                Some(*rng.pick(&styles))
+            };
+            Some(Command::SetTextRangeStyle(
+                crate::text_edit::SetTextRangeStyle {
+                    node,
+                    range: stellar_document::text::TextRange::new(start, end)?,
+                    style,
+                },
+            ))
+        }
         CommandKind::ConvertFragmentToFrame => {
             let fragments = nodes_where(model, |id| kind_of(model, id) == Some(NodeKind::Fragment));
             Some(Command::ConvertFragmentToFrame(ConvertFragmentToFrame {

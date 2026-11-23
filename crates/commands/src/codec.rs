@@ -311,6 +311,7 @@ fn encode_payload(command: &Command, out: &mut Writer) {
             out.str(&edit.replacement);
         }
         Command::DuplicateSubtree(command) => command.encode_into(out),
+        Command::SetTextRangeStyle(command) => command.encode_into(out),
         Command::AddPage(command) => command.encode_into(out),
         Command::RemovePage(command) => command.encode_into(out),
         Command::RenamePage(command) => command.encode_into(out),
@@ -387,6 +388,9 @@ fn decode_payload(kind: CommandKind, input: &mut Reader<'_>) -> Result<Command, 
         }
         CommandKind::DuplicateSubtree => {
             DuplicateSubtree::decode_from(input).map(Command::DuplicateSubtree)
+        }
+        CommandKind::SetTextRangeStyle => {
+            crate::text_edit::SetTextRangeStyle::decode_from(input).map(Command::SetTextRangeStyle)
         }
         CommandKind::AddPage => AddPage::decode_from(input).map(Command::AddPage),
         CommandKind::RemovePage => RemovePage::decode_from(input).map(Command::RemovePage),

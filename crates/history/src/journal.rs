@@ -390,6 +390,7 @@ fn text_kind_tag(kind: TextInputKind) -> u8 {
         TextInputKind::Insert => 1,
         TextInputKind::DeleteBackward => 2,
         TextInputKind::DeleteForward => 3,
+        TextInputKind::Replace => 4,
     }
 }
 
@@ -445,6 +446,7 @@ fn read_grouping(input: &mut In<'_>) -> Result<Option<GroupingKey>, JournalError
                 1 => TextInputKind::Insert,
                 2 => TextInputKind::DeleteBackward,
                 3 => TextInputKind::DeleteForward,
+                4 => TextInputKind::Replace,
                 _ => return Err(malformed("알 수 없는 텍스트 입력 종류")),
             };
             Some(GroupingKey::TextInput {
