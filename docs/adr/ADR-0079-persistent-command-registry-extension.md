@@ -59,6 +59,8 @@ command를 먼저 만들고 runtime·셸 연결은 뒤로)로 풉니다.
   올립니다.
 - 검증: 각 변경의 이전 값이 현재 문서와 같아야 합니다(낡은 변경 집합 거부). 적용 결과는 전체 validator(VI.10.1)에서 새
   위반이 없어야 합니다. 외부 반영은 드문 동작이라 O(N) 결과 검사를 허용합니다.
+- 변경 보고: Text style 표(글꼴 등록·문자·문단 style)가 바뀌면 모든 Text node의 layout·그리기가 달라질 수 있으므로
+  Text node마다 구조 무효화를 change set에 보고합니다(O(N), 같은 이유로 허용).
 - 출처: transaction 출처는 `CommandOrigin::System`입니다(`ApplyExternalSnapshot::ORIGIN`). lane 결정은 `External`
   출처를 말했지만, `CommandOrigin`(commands `id.rs`)은 이 lane 소유 파일이 아니고 `System`은 이미 "외부 변경 반영용
   synthetic command" 출처로 정의돼 있습니다. 외부 출처는 command 종류 자체가 나타냅니다.
@@ -85,6 +87,10 @@ command를 먼저 만들고 runtime·셸 연결은 뒤로)로 풉니다.
   command가 담습니다.
 - handle 대칭 모드(`HandleMode`: Independent·Aligned·Mirrored) 전환도 command입니다. mode는 `IdentifiedPath`에 기본값이
   아닌 point만 저장하고, 저장 bytes 끝에 mode가 있을 때만 `u32 개수 + (point id 16 + tag 1)*` 절을 붙입니다.
+- mode는 path의 저장 상태이므로 path를 다시 만드는 다른 경로도 보존합니다. 좌표만 옮기는 변환(Fragment → Frame의 자손
+  이동)은 `IdentifiedPath::with_data`, id를 바꾸는 복제(`duplicate-subtree`, Paste)는 `IdentifiedPath::remapped`로 mode를
+  새 point id로 옮깁니다(`crates/commands/src/duplicate.rs`는 이 lane 소유가 아니지만 mode 손실을 막는 호출 교체만
+  했습니다). semantic snapshot test helper는 mode를 담지 않으므로 Path 편집 test는 payload 전체도 비교합니다.
 
 ### 5. Text 범위 편집
 
@@ -99,6 +105,11 @@ command를 먼저 만들고 runtime·셸 연결은 뒤로)로 풉니다.
 - `plan_instance_swap`은 적용 전 preview입니다. 직접 Property override는 옛 Property와 이름과 선언 타입이 같은 새 정의의
   공개 Property로 옮기고, 나머지(nested 경로, 맞는 Property 없음, 타입 다름, 비공개, 새 정의에 없는 Slot)는 이유와 함께
   탈락 목록으로 돌려줍니다. 결과는 key 순입니다.
+- Slot override는 새 정의에 같은 id의 Slot이 있고 content가 그 Slot의 종류·개수 규칙(`ComponentSlot::check_content`)을
+  지킬 때만 옮깁니다. 아니면 탈락(`NoMatchingSlot`·`SlotRuleMismatch`)입니다. 인스턴스 소유 node는 모두 slot에 투영돼야
+  하므로(IX.3.2) content가 있는 Slot이 탈락하면 계획을 거부합니다. `swap-instance` 자체도 새 payload의 content가 이
+  인스턴스의 자식이고 한 번씩만 투영되며, 지금 투영된 content가 교체 뒤에도 모두 투영되는지 검사합니다. 그래서 역(원래
+  payload)도 항상 적용됩니다.
 - 크기: 인스턴스 payload에는 자기 크기가 없어 새 정의 root의 크기를 씁니다. "현재 크기 유지"(`SwapSizing::KeepCurrent`)
   는 인스턴스 크기를 CSS 값으로 담을 override 모델(ADR-0074)이 정해질 때까지 계획 단계에서 거부합니다.
 
