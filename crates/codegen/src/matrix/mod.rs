@@ -5,6 +5,12 @@
 //!
 //! - Web 항목은 IX.11.19 matrix(`stellar_target_profile::css_matrix::web_capability`)를 그대로 씁니다(다시 정의하지
 //!   않음).
+//! - Apple·Android 항목은 [`css`]의 명시 규칙 표가 정합니다(XXII.1.4). CSS 매핑 상태에서 유도하지 않습니다.
+
+use std::fmt::Write as _;
+
+/// CSS 기반 속성의 Apple·Android lowering 규칙 (XXII.1.4).
+pub mod css;
 
 use stellar_target_profile::capability::CapabilityStatus;
 use stellar_target_profile::css_matrix::{web_capability, Basis, RegistryInput};
@@ -72,9 +78,42 @@ fn extension_rule(id: &'static str) -> &'static str {
 pub fn css_entry(input: RegistryInput<'_>, kind: TargetProfileKind) -> MatrixEntry {
     match kind {
         TargetProfileKind::Web => web_entry(input),
-        TargetProfileKind::Apple | TargetProfileKind::Android => MatrixEntry::NOT_REGISTERED,
+        TargetProfileKind::Apple | TargetProfileKind::Android => {
+            match css::find(input.scope, input.name).and_then(|row| css::platform(row, kind)) {
+                Some(lowering) => MatrixEntry {
+                    status: Some(lowering.status),
+                    rule: lowering.rule.id(),
+                    diagnostic: lowering.rule.diagnostic(),
+                },
+                None => MatrixEntry::NOT_REGISTERED,
+            }
+        }
     }
 }
+
+/// CSS 기반 속성 규칙 표의 결정론 텍스트(Apple·Android, 표 순서). XXII.1.7이 이 항목을 바꾸지 않는지 golden으로
+/// 검사합니다.
+pub fn css_matrix_text() -> String {
+    let mut out = String::new();
+    for row in css::CSS_LOWERINGS {
+        for (kind, lowering) in [("apple", &row.apple), ("android", &row.android)] {
+            let _ = writeln!(
+                out,
+                "{}/{} {kind} {} rule={} diagnostic={} template={:?}",
+                row.scope,
+                row.name,
+                lowering.status.name(),
+                lowering.rule.id(),
+                lowering.rule.diagnostic().unwrap_or("-"),
+                lowering.template
+            );
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod rule_tests;
 
 #[cfg(test)]
 mod tests {

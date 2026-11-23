@@ -13,9 +13,9 @@ nodes 14
     layout {display: flex; width: 390px; height: 844px; padding-top: 24px; padding-right: 24px; padding-bottom: 24px; padding-left: 24px; flex-direction: column; row-gap: 16px}
     property 00000000-0000-0000-0000-000000000001.4 = display-p3(0.96 0.96 0.98 / 1) origin=common token=00000000-0000-0000-0000-000000000046
     mapping validator element:frame native rule=capability-registry diagnostic=capability-native
-    mapping matrix css:frame/background-color not_registered rule=not-registered diagnostic=mapping-not-registered path=00000000-0000-0000-0000-000000000001.4
-    mapping matrix css:frame/display not_registered rule=not-registered diagnostic=mapping-not-registered
-    mapping matrix css:frame/flex-direction not_registered rule=not-registered diagnostic=mapping-not-registered
+    mapping matrix css:frame/background-color native rule=modifier path=00000000-0000-0000-0000-000000000001.4
+    mapping matrix css:frame/display native rule=stack-layout diagnostic=stack-layout
+    mapping matrix css:frame/flex-direction native rule=stack-layout diagnostic=stack-layout
     [1] 00000000-0000-0000-0000-000000000002 text semantics=a11y[2]
       layout {align-self: flex-start} content=intrinsic(48x28 baseline=21)
       text "설정"
@@ -29,7 +29,7 @@ nodes 14
         property 00000000-0000-0000-0000-000000000004.201 = "person.crop.circle" origin=common capability=property:apple.sf_symbol
         mapping validator element:image native rule=capability-registry diagnostic=capability-native
         mapping validator property:apple.sf_symbol native rule=capability-registry diagnostic=capability-native path=00000000-0000-0000-0000-000000000004.201
-        mapping matrix css:image/object-fit not_registered rule=not-registered diagnostic=mapping-not-registered
+        mapping matrix css:image/object-fit native rule=image-scaling
       [4] 00000000-0000-0000-0000-000000000005 shape
         layout {height: 1px}
         mapping validator element:shape native rule=capability-registry diagnostic=capability-native
@@ -68,9 +68,9 @@ nodes 14
       mapping validator property:common.corner_radius native rule=capability-registry diagnostic=capability-native path=00000000-0000-0000-0000-00000000000c.1
       mapping validator property:common.drop_shadow native rule=capability-registry diagnostic=capability-native path=00000000-0000-0000-0000-00000000000c.2
       mapping validator contract:button native rule=capability-registry diagnostic=capability-native
-      mapping matrix css:frame/border-top-left-radius not_registered rule=not-registered diagnostic=mapping-not-registered
-      mapping matrix css:modifier/mix-blend-mode not_registered rule=not-registered diagnostic=mapping-not-registered
-      mapping matrix css:node/locked not_registered rule=not-registered diagnostic=mapping-not-registered
+      mapping matrix css:frame/border-top-left-radius native rule=corner-shape
+      mapping matrix css:modifier/mix-blend-mode approximated rule=srgb-composite diagnostic=srgb-composite
+      mapping matrix css:node/locked unsupported rule=no-output diagnostic=no-output
     [12] 00000000-0000-0000-0000-000000000010 frame contracts=[modal] semantics=a11y[9]
       layout {width: 320px; height: 120px}
       mapping validator element:frame native rule=capability-registry diagnostic=capability-native
