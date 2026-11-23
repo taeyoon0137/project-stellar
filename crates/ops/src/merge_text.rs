@@ -4,10 +4,12 @@
 //! Text style 표는 catalog에 있음). 그래서 병합 입력은 세 쪽의 **원본 파일 집합 전체**입니다([`TextSides`]).
 //!
 //! 1. 세 쪽을 같은 codec(`source_v4::project::decode`)으로 읽습니다. 한쪽이라도 읽지 못하면 병합하지 않습니다.
-//! 2. 문서는 레코드를 semantic snapshot으로 올려 엔진으로 병합합니다(XIV.10). 입력은 무손실 왕복이어야 합니다
-//!    (`merge_apply::document`와 같은 조건).
-//! 3. 문서 밖 의미는 단위별 3-way입니다. 이미지 record·token set은 id별로, Component Context는 통째로 비교해 한쪽만
-//!    바뀌었으면 그쪽을, 둘이 같으면 그 값을 받습니다. 두 쪽이 다르게 바꿨으면 병합하지 않습니다([`TextMergeError`]).
+//! 2. 문서(레코드와 Component Context)는 semantic snapshot으로 올려 엔진으로 병합합니다(XIV.10). 투영·무손실 검사·
+//!    역투영은 창 reconciliation과 같은 함수(`merge_apply::document`의 `lossless_snapshot`·`project_documents`)입니다.
+//!    Context는 key·provision 객체와 requirement·Slot 공개 목록 속성 단위로 병합되고 conflict도 엔진 conflict입니다
+//!    (Context 병합 경로 하나, ADR-0123 결정 2).
+//! 3. 문서 밖 의미는 단위별 3-way입니다. 이미지 record·token set은 id별로 비교해 한쪽만 바뀌었으면 그쪽을, 둘이 같으면
+//!    그 값을 받습니다. 두 쪽이 다르게 바꿨으면 병합하지 않습니다([`TextMergeError`]).
 //!    컴포넌트 정의는 파일마다 컴포넌트 원본 병합(XXIV.2.1)이 따로 다루므로 이 병합의 쓰기 결과에 넣지 않습니다
 //!    ([`TextMergeBase::encode`]는 `components/` 파일을 빼고 돌려줌). 인코딩 검증에는 한쪽만 바뀐 쪽을, 둘 다 바뀌었으면
 //!    ours 정의를 씁니다.
@@ -24,9 +26,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
-use stellar_document::context::set::ContextSet;
-use stellar_document::model::DocumentModel;
-use stellar_document::records::DocumentRecords;
 use stellar_project::document_io::session::{SourceLibrary, STYLE_DEFAULTS_PREFIX};
 use stellar_project::document_io::source_v4::project::{decode, encode, TextProject};
 use stellar_semantic_diff::snapshot::SemanticSnapshot;
@@ -36,8 +35,8 @@ use stellar_semantic_merge::model::MergeInput;
 use crate::candidate::file_merge::FileMergeOutcome;
 use crate::compare::ConflictEntry;
 use crate::core_types::ids::StableId;
-use crate::diff::snapshot_of;
-use crate::merge_apply::document::project_documents;
+use crate::diff::DocumentSource;
+use crate::merge_apply::document::{lossless_snapshot, project_documents, DocumentMergeError};
 
 /// 텍스트 원본 폴더(프로젝트 기준).
 pub const DESIGN_PREFIX: &str = "design/";
@@ -110,7 +109,7 @@ pub enum TextMergeError {
     },
     /// 문서 밖 의미를 두 쪽이 다르게 바꿨습니다.
     Library {
-        /// 단위 이름(`image`·`token-set`·`context`).
+        /// 단위 이름(`image`·`token-set`).
         unit: &'static str,
     },
     /// 결과를 원본으로 쓸 수 없습니다.
@@ -190,8 +189,7 @@ fn three_way_map<K: Ord + Clone, V: PartialEq + Clone>(
 
 /// 한쪽 해석 결과.
 struct Side {
-    records: DocumentRecords,
-    context: ContextSet,
+    document: DocumentSource,
     library: SourceLibrary,
 }
 
@@ -201,36 +199,18 @@ fn side(files: &Files, name: &'static str) -> Result<Side, TextMergeError> {
         reason: e.to_string(),
     })?;
     let (model, library) = SourceLibrary::split(project);
-    let context = model.context().live(&model);
-    let mut records = model.to_records().map_err(|e| TextMergeError::Decode {
+    let document = DocumentSource::of_model(&model).map_err(|e| TextMergeError::Decode {
         side: name,
-        reason: e.to_string(),
+        reason: e.0,
     })?;
-    records.sort_canonical();
-    Ok(Side {
-        records,
-        context,
-        library,
-    })
+    Ok(Side { document, library })
 }
 
-fn lossless(
-    records: &DocumentRecords,
-    name: &'static str,
-) -> Result<SemanticSnapshot, TextMergeError> {
-    // Context는 원본 파일 단위 3-way(`three_way`)로 따로 병합하므로 레코드 snapshot에는 넣지 않습니다(병합 경로 하나).
-    let empty = ContextSet::new();
-    let snapshot = snapshot_of(&[crate::diff::DocumentInput {
-        records,
-        context: &empty,
-    }])
-    .map_err(|e| TextMergeError::Merge(e.0.clone()))?;
-    let back = stellar_semantic_diff::records::document_records(&snapshot, records.definition.id)
-        .map_err(|e| TextMergeError::Merge(e.to_string()))?;
-    if &back.records != records {
-        return Err(TextMergeError::Lossy { side: name });
+fn merge_error(error: DocumentMergeError) -> TextMergeError {
+    match error {
+        DocumentMergeError::Lossy { side } => TextMergeError::Lossy { side },
+        other => TextMergeError::Merge(other.to_string()),
     }
-    Ok(snapshot)
 }
 
 /// 결과를 원본으로 쓰는 데 필요한 문서 밖 의미(병합한 값).
@@ -238,7 +218,6 @@ fn lossless(
 pub struct TextMergeBase {
     document: StableId,
     library: SourceLibrary,
-    context: ContextSet,
     ours: Files,
 }
 
@@ -256,19 +235,14 @@ impl TextMergeBase {
     /// 결과 snapshot을 원본 파일 집합으로 인코딩합니다. `components/` 파일은 뺍니다(모듈 문서 3번). 다시 읽은 의미가
     /// 결과와 다르면 거부합니다.
     pub fn encode(&self, merged: &SemanticSnapshot) -> Result<Files, TextMergeError> {
-        let mut documents = project_documents(merged).map_err(|e| match e {
-            crate::merge_apply::document::DocumentMergeError::Lossy { side } => {
-                TextMergeError::Lossy { side }
-            }
-            other => TextMergeError::Merge(other.to_string()),
-        })?;
-        let records = match (documents.pop(), documents.is_empty()) {
-            (Some(source), true) if source.records.definition.id == self.document => source.records,
+        let mut documents = project_documents(merged).map_err(merge_error)?;
+        let source = match (documents.pop(), documents.is_empty()) {
+            (Some(source), true) if source.records.definition.id == self.document => source,
             _ => return Err(TextMergeError::DocumentMismatch),
         };
-        let (mut model, _) = DocumentModel::from_records(records)
-            .map_err(|e| TextMergeError::Encode(format!("{e:?}")))?;
-        model.replace_context(self.context.clone());
+        let model = source
+            .into_model()
+            .map_err(|e| TextMergeError::Encode(e.0))?;
         let project: TextProject = self.library.join(model);
         let key = project
             .semantic_key()
@@ -293,8 +267,10 @@ pub fn prepare_text_merge(
     let base = side(&sides.base, "base")?;
     let ours = side(&sides.ours, "ours")?;
     let theirs = side(&sides.theirs, "theirs")?;
-    let document = base.records.definition.id;
-    if ours.records.definition.id != document || theirs.records.definition.id != document {
+    let document = base.document.records.definition.id;
+    if ours.document.records.definition.id != document
+        || theirs.document.records.definition.id != document
+    {
         return Err(TextMergeError::DocumentMismatch);
     }
     let images = three_way_map(
@@ -318,17 +294,15 @@ pub fn prepare_text_merge(
     )?
     .into_values()
     .collect();
-    let context = three_way(&base.context, &ours.context, &theirs.context)
-        .ok_or(TextMergeError::Library { unit: "context" })?;
     let components = if ours.library.components.encode() == base.library.components.encode() {
         theirs.library.components.clone()
     } else {
         ours.library.components.clone()
     };
     let input = MergeInput {
-        base: lossless(&base.records, "base")?,
-        ours: lossless(&ours.records, "ours")?,
-        theirs: lossless(&theirs.records, "theirs")?,
+        base: lossless_snapshot(&base.document, "base").map_err(merge_error)?,
+        ours: lossless_snapshot(&ours.document, "ours").map_err(merge_error)?,
+        theirs: lossless_snapshot(&theirs.document, "theirs").map_err(merge_error)?,
     };
     Ok((
         input,
@@ -339,7 +313,6 @@ pub fn prepare_text_merge(
                 token_sets,
                 images,
             },
-            context,
             ours: sides.ours.clone(),
         },
     ))
@@ -433,3 +406,7 @@ pub fn merge_text_file(
         None => FileMergeOutcome::Deleted,
     })
 }
+
+#[cfg(test)]
+#[path = "merge_text_tests.rs"]
+mod tests;

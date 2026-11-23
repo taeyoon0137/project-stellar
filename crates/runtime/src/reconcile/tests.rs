@@ -249,3 +249,42 @@ fn a_pending_style_defaults_choice_stays_unsaved_after_the_merge() {
     );
     assert_eq!(disk_name(project.path(), 11), "CLI 편집");
 }
+
+#[test]
+fn a_document_with_context_requirements_and_slot_keys_is_reconciled() {
+    // 검증 기준(ADR-0123 결정 1): requirement·Slot 공개 목록이 있는 문서도 문서 범위 reconciliation이 무손실로
+    // 병합합니다(예전에는 무손실 검사가 거부해 두 선택지로 갔음).
+    use stellar_document::context::fixtures::{literal, rgb};
+    use stellar_document::context::key::{ContextKey, ContextScope};
+    use stellar_document::context::set::ContextSet;
+    use stellar_document::expressions::types::{ExpressionType, TypeSpec};
+    let mut set = ContextSet::new();
+    set.insert_key(
+        ContextKey::new(
+            sid(900),
+            "theme",
+            ContextScope::Document(sid(1)),
+            TypeSpec::required(ExpressionType::Color),
+            literal(901, rgb(1.0, 1.0, 1.0)),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    set.add_requirement(sid(950), sid(900));
+    set.add_slot_key(sid(960), sid(900));
+    let mut document = sample_document();
+    document.replace_context(set.clone());
+    let project = saved_project_with("reconcile-context", &[&document]);
+    let locks = TempDir::new("reconcile-context-locks");
+    let mut session = dirty_window(&project);
+    cli_rename(&project, &locks, 11, "CLI 편집");
+    assert!(matches!(
+        session.sync_external(command(1)),
+        ExternalSync::Applied { .. }
+    ));
+    assert!(session.external_conflict().is_none());
+    assert_eq!(name_of(&session, 11), "CLI 편집");
+    assert_eq!(name_of(&session, 12), "창 편집");
+    let model = session.document().unwrap().model();
+    assert_eq!(model.context().live(model), set);
+}

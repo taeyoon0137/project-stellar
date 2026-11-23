@@ -171,14 +171,102 @@ fn context_changes_merge_and_conflict_like_other_objects() {
         merge_document(&base, &ours, &other).unwrap(),
         DocumentMerge::Conflicted { .. }
     ));
-    // 문서 범위에 넣지 않는 requirement는 조용히 잃지 않고 무손실 검사가 거부합니다.
-    let mut required = base.clone();
-    required.context.add_requirement(
-        StableId::new_v7(9200, 0, 9200),
-        StableId::new_v7(9000, 0, 9000),
-    );
-    assert!(matches!(
-        merge_document(&required, &required, &required),
-        Err(DocumentMergeError::Lossy { side: "base" })
-    ));
+}
+
+#[test]
+fn requirement_and_slot_lists_merge_in_document_scope() {
+    // 검증 기준(ADR-0123 결정 1): 컴포넌트 library를 투영하지 않는 문서 범위에서도 requirement·Slot 공개 목록이 있는
+    // 문서를 거부하지 않고, 목록 변경이 다른 객체 변경처럼 병합·충돌합니다.
+    let (plain, children) = records(7);
+    let theme = StableId::new_v7(9000, 0, 9000);
+    let gap = StableId::new_v7(9100, 0, 9100);
+    let card = StableId::new_v7(9200, 0, 9200);
+    let button = StableId::new_v7(9300, 0, 9300);
+    let slot = StableId::new_v7(9400, 0, 9400);
+    let mut base = with_key(&with_key(&plain, 9000, "theme", 1.0), 9100, "gap", 4.0);
+    base.context.add_requirement(card, theme);
+    // 세 쪽이 같으면 그대로 돌아옵니다(무손실 왕복).
+    let DocumentMerge::Merged { document, .. } = merge_document(&base, &base, &base).unwrap()
+    else {
+        panic!("병합되지 않음");
+    };
+    assert_eq!(document.context, base.context);
+    // 한쪽은 다른 컴포넌트 requirement, 다른 쪽은 Slot 공개 목록과 node 이름: 모두 받아들입니다.
+    let mut ours = renamed(&base, children[0], "ours");
+    ours.context.add_requirement(button, gap);
+    let mut theirs = base.clone();
+    theirs.context.add_slot_key(slot, theme);
+    let DocumentMerge::Merged { decision, document } =
+        merge_document(&base, &ours, &theirs).unwrap()
+    else {
+        panic!("병합되지 않음");
+    };
+    assert_eq!(decision, "merged");
+    assert_eq!(name_of(&document.records, children[0]), "ours");
+    let mut expected = base.context.clone();
+    expected.add_requirement(button, gap);
+    expected.add_slot_key(slot, theme);
+    assert_eq!(document.context, expected);
+    // 같은 컴포넌트의 requirement 목록을 두 쪽이 다르게 바꾸면 conflict입니다.
+    let mut left = base.clone();
+    left.context.add_requirement(card, gap);
+    let mut right = base.clone();
+    right.context.remove_requirement(card, theme);
+    let DocumentMerge::Conflicted { conflicts, .. } = merge_document(&base, &left, &right).unwrap()
+    else {
+        panic!("conflict가 아님");
+    };
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].object, base.records.definition.id);
+}
+
+#[test]
+fn adding_a_requirement_is_not_a_new_consumption_of_a_removed_provision() {
+    // requirement는 공개 interface 선언이라 provision 삭제 대 소비 추가 conflict(XXX.7.10)를 만들지 않습니다(ADR-0123
+    // 결정 1). 목록이 Document 객체에 붙어도 같은 문서 안 "위치 모르는 소비"로 보지 않습니다.
+    use stellar_document::context::provision::{ContextOwner, ContextProvision};
+    let (plain, children) = records(7);
+    let theme = StableId::new_v7(9000, 0, 9000);
+    let provision = StableId::new_v7(9500, 0, 9500);
+    let mut base = with_key(&plain, 9000, "theme", 1.0);
+    let view = base
+        .records
+        .definition
+        .pages
+        .iter()
+        .flat_map(|page| page.views.iter())
+        .next()
+        .unwrap()
+        .id;
+    let value = with_key(&plain, 9600, "value", 2.0)
+        .context
+        .key(StableId::new_v7(9600, 0, 9600))
+        .unwrap()
+        .default_expression()
+        .ast()
+        .clone();
+    base.context
+        .insert_provision(
+            ContextProvision::new(
+                provision,
+                ContextOwner::View(view),
+                children[0],
+                theme,
+                value,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut ours = base.clone();
+    let _ = ours.context.remove_provision(provision);
+    let mut theirs = base.clone();
+    theirs
+        .context
+        .add_requirement(StableId::new_v7(9200, 0, 9200), theme);
+    let DocumentMerge::Merged { document, .. } = merge_document(&base, &ours, &theirs).unwrap()
+    else {
+        panic!("병합되지 않음");
+    };
+    assert!(document.context.provision(provision).is_none());
+    assert_eq!(document.context.all_requirements().count(), 1);
 }

@@ -6,6 +6,10 @@
 //!   `PROVISION_VALUE`와 같은 key), owner `0xEC11`(Bytes), provider `0xEC12`(Id), key `0xEC13`(Id).
 //! - `ContextRequirement` → Component 객체의 `0xE705`(Ids, 정렬), Slot 공개 목록 → Slot 객체의 `0xE716`(Ids, 정렬). 빈
 //!   목록은 속성을 두지 않습니다(Context가 없는 문서의 snapshot은 그대로).
+//! - 그 Component·Slot 객체가 snapshot에 없으면(컴포넌트 library를 투영하지 않는 문서 범위) 목록은 소유 문서의 Document
+//!   객체에 붙습니다: `0xE705`·`0xE716` 경로에 map key segment(컴포넌트·Slot StableId 문자열)를 단 Ids 속성입니다
+//!   (ADR-0123 결정 1). 그래서 문서 범위 snapshot도 "문서 → snapshot → 문서" 왕복이 무손실입니다. 대상마다 속성 하나라
+//!   병합 단위는 Component·Slot 객체에 붙을 때와 같습니다(같은 대상 목록을 두 쪽이 다르게 바꾸면 conflict).
 //!
 //! bytes 형식은 문서 crate의 canonical 형식을 그대로 씁니다(scope·owner·TypeSpec·AST). [`context_from_snapshot`]이 같은
 //! 객체에서 `ContextSet`을 다시 만듭니다(merge 결과 반영).
@@ -13,7 +17,7 @@
 use std::collections::BTreeSet;
 
 use stellar_core_types::ids::StableId;
-use stellar_core_types::property::PropertyKey;
+use stellar_core_types::property::{PathSegment, PropertyKey};
 use stellar_core_types::reserved::context::{
     SNAPSHOT_COMPONENT_CONTEXT_REQUIREMENTS, SNAPSHOT_SLOT_CONTEXT_KEYS,
 };
@@ -111,8 +115,9 @@ pub fn provision_object(
 }
 
 impl SnapshotBuilder {
-    /// 문서 Context를 추가합니다(XXX.7.10). requirement·Slot 공개 목록은 이미 추가된 Component·Slot 객체에 속성으로 붙습니다.
-    /// 묶음 전체가 원자적입니다.
+    /// 문서 Context를 추가합니다(XXX.7.10). requirement·Slot 공개 목록은 이미 추가된 Component·Slot 객체에 속성으로 붙고,
+    /// 그 객체가 없으면 문서 `document`의 Document 객체에 대상 id map key로 붙습니다(모듈 문서). Document 객체도 없으면
+    /// [`SnapshotError::ContextOwnerMissing`]입니다. 묶음 전체가 원자적입니다.
     pub fn add_context(
         &mut self,
         document: StableId,
@@ -136,15 +141,36 @@ impl SnapshotBuilder {
         for (slot, keys) in set.all_slot_keys() {
             members.push((slot, SLOT_CONTEXT_KEYS, keys.iter().copied().collect()));
         }
-        let mut owners = Vec::new();
+        // 같은 객체에 여러 속성이 붙을 수 있어(Document 객체) 객체별로 모읍니다.
+        let mut owners: Vec<SemanticObject> = Vec::new();
         for (owner, key, ids) in members {
-            let mut object = self
-                .snapshot
-                .get(owner)
-                .cloned()
-                .ok_or(SnapshotError::ContextOwnerMissing { owner })?;
-            object.insert_property(object.path(&[key]), SemanticValue::Ids(ids))?;
-            owners.push(object);
+            let (target, path) = match self.snapshot.get(owner) {
+                Some(object) => (owner, object.path(&[key])),
+                None => {
+                    let anchor = self
+                        .snapshot
+                        .get(document)
+                        .filter(|o| o.kind() == ObjectKind::Document)
+                        .ok_or(SnapshotError::ContextOwnerMissing { owner })?;
+                    (
+                        document,
+                        anchor.path(&[key]).with_key_segment(&owner.to_string()),
+                    )
+                }
+            };
+            let index = match owners.iter().position(|o| o.id() == target) {
+                Some(index) => index,
+                None => {
+                    let object = self
+                        .snapshot
+                        .get(target)
+                        .cloned()
+                        .expect("위에서 찾은 객체");
+                    owners.push(object);
+                    owners.len() - 1
+                }
+            };
+            owners[index].insert_property(path, SemanticValue::Ids(ids))?;
         }
         self.commit(objects)?;
         for object in owners {
@@ -219,6 +245,33 @@ pub fn context_from_snapshot(
             _ => {}
         }
     }
+    if let Some(anchor) = snapshot
+        .get(document)
+        .filter(|o| o.kind() == ObjectKind::Document)
+    {
+        for (path, value) in anchor.properties() {
+            let requirement = match path.keys() {
+                [key] if *key == COMPONENT_CONTEXT_REQUIREMENTS => true,
+                [key] if *key == SLOT_CONTEXT_KEYS => false,
+                _ => continue,
+            };
+            let (Some(PathSegment::Key(owner)), SemanticValue::Ids(ids)) = (path.tail(), value)
+            else {
+                return Err(anchor.id());
+            };
+            let owner: StableId = owner.parse().map_err(|_| anchor.id())?;
+            if ids.is_empty() {
+                return Err(anchor.id());
+            }
+            for member in ids.iter().copied().collect::<BTreeSet<_>>() {
+                if requirement {
+                    set.add_requirement(owner, member);
+                } else {
+                    set.add_slot_key(owner, member);
+                }
+            }
+        }
+    }
     for object in snapshot.objects() {
         for (kind, key) in [
             (ObjectKind::Component, COMPONENT_CONTEXT_REQUIREMENTS),
@@ -244,4 +297,107 @@ pub fn context_from_snapshot(
         }
     }
     Ok(set)
+}
+
+#[cfg(test)]
+mod tests {
+    use stellar_document::component::definition::ComponentLibrary;
+    use stellar_document::context::fixtures::{literal, rgb, sid, ComponentBuilder, SceneBuilder};
+    use stellar_document::expressions::types::{ExpressionType, TypeSpec};
+
+    use super::*;
+    use stellar_core_types::property::PropertyPath;
+
+    fn context() -> ContextSet {
+        let mut set = ContextSet::new();
+        set.insert_key(
+            ContextKey::new(
+                sid(900),
+                "theme",
+                ContextScope::Document(sid(1)),
+                TypeSpec::required(ExpressionType::Color),
+                literal(901, rgb(1.0, 1.0, 1.0)),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        set.add_requirement(sid(50), sid(900));
+        set.add_requirement(sid(51), sid(900));
+        set.add_slot_key(sid(60), sid(900));
+        set
+    }
+
+    fn lists(object: &SemanticObject) -> Vec<&PropertyPath> {
+        object
+            .properties()
+            .keys()
+            .filter(|p| {
+                p.keys() == [COMPONENT_CONTEXT_REQUIREMENTS] || p.keys() == [SLOT_CONTEXT_KEYS]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn lists_without_their_component_attach_to_the_document_object_and_round_trip() {
+        // 검증 기준(ADR-0123 결정 1): 문서 범위 snapshot(library 없음)도 requirement·Slot 공개 목록을 잃지 않습니다.
+        let model = SceneBuilder::new(sid(1), sid(2), sid(3), sid(10)).build();
+        let set = context();
+        let mut builder = SnapshotBuilder::new();
+        builder.add_document(&model.to_records().unwrap()).unwrap();
+        builder.add_context(sid(1), &set).unwrap();
+        let snapshot = builder.finish();
+        let document = snapshot.get(sid(1)).unwrap();
+        for (key, owner) in [
+            (COMPONENT_CONTEXT_REQUIREMENTS, 50),
+            (COMPONENT_CONTEXT_REQUIREMENTS, 51),
+            (SLOT_CONTEXT_KEYS, 60),
+        ] {
+            let path = document
+                .path(&[key])
+                .with_key_segment(&sid(owner).to_string());
+            assert_eq!(
+                document.property(&path),
+                Some(&SemanticValue::Ids(vec![sid(900)]))
+            );
+        }
+        assert_eq!(context_from_snapshot(&snapshot, sid(1)).unwrap(), set);
+        // Document 객체도 없으면 거부합니다.
+        let mut empty = SnapshotBuilder::new();
+        assert_eq!(
+            empty.add_context(sid(1), &set),
+            Err(SnapshotError::ContextOwnerMissing { owner: sid(50) })
+        );
+    }
+
+    #[test]
+    fn lists_with_their_component_stay_on_the_component_object() {
+        // 프로젝트 범위(library 투영 뒤)는 Component·Slot 객체 속성 그대로이고, library에 없는 대상만 Document 객체입니다.
+        let model = SceneBuilder::new(sid(1), sid(2), sid(3), sid(10)).build();
+        let mut library = ComponentLibrary::new();
+        ComponentBuilder::new(sid(50), "card", sid(70))
+            .slot(sid(60), sid(70))
+            .register(&mut library);
+        let mut builder = SnapshotBuilder::new();
+        builder.add_document(&model.to_records().unwrap()).unwrap();
+        builder.add_project_component_library(&library).unwrap();
+        builder.add_context(sid(1), &context()).unwrap();
+        let snapshot = builder.finish();
+        for (owner, key) in [
+            (50, COMPONENT_CONTEXT_REQUIREMENTS),
+            (60, SLOT_CONTEXT_KEYS),
+        ] {
+            let object = snapshot.get(sid(owner)).unwrap();
+            assert_eq!(
+                object.property(&object.path(&[key])),
+                Some(&SemanticValue::Ids(vec![sid(900)]))
+            );
+        }
+        let document = snapshot.get(sid(1)).unwrap();
+        let on_document = lists(document);
+        assert_eq!(on_document.len(), 1);
+        assert_eq!(
+            on_document[0].tail(),
+            Some(&PathSegment::Key(sid(51).to_string()))
+        );
+    }
 }
