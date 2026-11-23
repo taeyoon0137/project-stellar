@@ -344,8 +344,10 @@ mod tests {
         let event = rx.recv_timeout(WAIT).unwrap();
         assert_eq!(event.cause, CloseCause::UnexpectedData);
         assert_eq!(termination.calls.load(Ordering::SeqCst), 1);
-        // 앱이 닫았으므로 bridge는 EOF를 봅니다.
+        // 앱이 닫았으므로 bridge는 EOF를 봅니다. 종료 event는 socket shutdown 직전에 기록되므로, 그 사이에 읽으면
+        // non-blocking socket은 EOF 대신 WouldBlock을 돌려줍니다. blocking으로 바꿔 제한 시간 안에서 EOF를 기다립니다.
         let mut rest = Vec::new();
+        session.stream().set_nonblocking(false).unwrap();
         session.stream().set_read_timeout(Some(WAIT)).unwrap();
         assert_eq!(session.stream().read_to_end(&mut rest).unwrap(), 0);
     }
