@@ -28,6 +28,9 @@ pub mod invalidate;
 /// provision 값의 View Variant·Target Profile override (XXX.7.9).
 pub mod overrides;
 
+/// 인스펙터용 Context 조회 API (XXX.7.11).
+pub mod query;
+
 /// 시험용 문서·컴포넌트 구성 도우미.
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixtures;
@@ -43,3 +46,6 @@ mod validate_tests;
 
 #[cfg(test)]
 mod invalidate_tests;
+
+#[cfg(test)]
+mod query_tests;
