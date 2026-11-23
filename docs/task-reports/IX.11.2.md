@@ -2,7 +2,7 @@
 
 - WBS: IX.11.2
 - 작업명: Frame·Modifier metadata registry의 모든 항목에 속성 모델 5장·9장 CSS 대응을 채우고 이름을 CSS longhand 또는 Stellar 이름으로 맞춤
-- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 IX.11.1(`[~]`), IX.11.22(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`)
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록(ledger-refresh): 이 행의 남은 범위가 없고, `[~]`의 이유였던 선행 사슬(IX.11.22 → IX.11.1)이 풀렸습니다. IX.11.22는 integration-followups lane이 다값 snapshot 경로·Shadow offset 투영·variant validator 연결을 끝내 `[x]`입니다. 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 원장이 근거 커밋을 찾지 못했습니다. 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 IX.11.1(`[~]`), IX.11.22(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`)
 - 결정: ADR-0075 결정 3·4
 
 ## 필수 실행 환경
@@ -60,3 +60,9 @@
 - `stellar query`의 속성 경로 표기는 여전히 숫자 key(`crates/ops/src/query.rs`, 이 lane 소유 밖)입니다. 이름 표기가
   필요하면 `stellar_semantic_diff::keys::display_name`을 쓰면 됩니다. 이 lane은 이름을 내는 CLI를 `stellar css`
   (IX.11.15)로 제공합니다.
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(IX.11.2)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `59479ff0` Feat: Frame·Modifier registry에 CSS 매핑과 CSS 이름 채움
