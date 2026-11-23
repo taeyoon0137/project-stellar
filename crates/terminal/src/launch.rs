@@ -43,6 +43,7 @@ use std::path::{Path, PathBuf};
 use stellar_core_types::ids::WindowSessionId;
 
 use crate::capability::TerminalCapability;
+use crate::env::EnvChange;
 use crate::size::TerminalSize;
 use crate::state::{StartFailure, TerminalExitStatus};
 
@@ -54,7 +55,7 @@ pub struct LaunchRequest {
     args: Vec<OsString>,
     arg0: Option<OsString>,
     cwd: PathBuf,
-    env: Vec<(OsString, OsString)>,
+    env: Vec<(OsString, EnvChange)>,
     size: TerminalSize,
 }
 
@@ -67,7 +68,7 @@ impl LaunchRequest {
         args: Vec<OsString>,
         arg0: Option<OsString>,
         cwd: PathBuf,
-        env: Vec<(OsString, OsString)>,
+        env: Vec<(OsString, EnvChange)>,
         size: TerminalSize,
     ) -> LaunchRequest {
         LaunchRequest {
@@ -106,8 +107,9 @@ impl LaunchRequest {
         &self.cwd
     }
 
-    /// child 환경 전체(허용 목록 적용 결과, 이름 순).
-    pub fn env(&self) -> &[(OsString, OsString)] {
+    /// 앱 프로세스 환경(상속)에 적용할 변경(이름 순, ADR-0023 결정 3~5). child는 상속 환경 전체에 이 변경을
+    /// 얹은 환경을 받습니다([`crate::env::interactive_env`]).
+    pub fn env_changes(&self) -> &[(OsString, EnvChange)] {
         &self.env
     }
 

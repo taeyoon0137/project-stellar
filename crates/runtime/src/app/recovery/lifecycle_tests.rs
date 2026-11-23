@@ -1,5 +1,5 @@
 //! 복구 체크포인트 수명 시험: 앱 데이터에만 기록(XIII.8.1), 자동 저장과 snapshot 공유(XIII.8.2), 복구 선택 뒤
-//! 디스크 불변(XIII.8.4), 정상 종료 뒤 정리(XIII.8.7).
+//! 디스크 불변(XIII.8.4), 정상 종료 뒤 정리(XIII.8.7), 시작 probe와 두 선택(XIII.8.3).
 
 use super::*;
 use crate::app_window_tests::{open_project, open_window};
@@ -259,5 +259,253 @@ fn normal_save_and_close_remove_the_checkpoint_and_offer_no_prompt() {
         None,
         "stale 복구본은 무시"
     );
+    next.shutdown().unwrap();
+}
+
+/// 비정상 종료한 창 `owner`가 남긴 복구본을 쓰고 파일 수정 시각을 `written_at`으로 맞춥니다.
+fn crashed_checkpoint(
+    store: &RecoverySnapshotStore,
+    id: &ProjectIdentity,
+    owner: WindowSessionId,
+    command: u64,
+    name: &str,
+    written_at: std::time::SystemTime,
+) {
+    let mut lost = ProjectWindowSession::load(id.clone(), owner).unwrap();
+    lost.apply(&rename(lost.document().unwrap(), command, 11, name), 0)
+        .unwrap();
+    fs::create_dir_all(store.project_dir(id)).unwrap();
+    Capture::from_window(&lost)
+        .unwrap()
+        .write(store, id, owner)
+        .unwrap();
+    fs::File::options()
+        .write(true)
+        .open(store.snapshot_path(id, owner))
+        .unwrap()
+        .set_modified(written_at)
+        .unwrap();
+}
+
+/// 창 `a` 작업 문서의 node 11 이름과 dirty 여부.
+fn frame_name(app: &AppRuntime, a: WindowSessionHandle) -> (String, bool) {
+    app.sender
+        .submit(move |ctx| {
+            let session = &ctx.app_sessions().windows[&a].session;
+            (
+                session
+                    .document()
+                    .unwrap()
+                    .model()
+                    .record(sid(11))
+                    .unwrap()
+                    .display_name,
+                session.has_unsaved_changes(),
+            )
+        })
+        .unwrap()
+        .wait()
+        .unwrap()
+}
+
+#[test]
+fn startup_probe_offers_the_newest_checkpoint_and_both_choices_apply() {
+    // XIII.8.3: 앱 시작 뒤 창을 열면 최신 복구본 probe 결과를 돌려주고, 사용자는 폐기 또는 복구를 고릅니다.
+    let project = saved_project("checkpoint-probe");
+    let store_dir = TempDir::new("checkpoint-probe-store");
+    let store = RecoverySnapshotStore::new(store_dir.path());
+    let id = identity(project.path());
+    let base = std::time::SystemTime::now() - Duration::from_secs(600);
+    // 창 UUID 순서(창을 연 순서)와 마지막 기록 순서가 반대인 두 복구본.
+    let newer = window(81);
+    let older = window(82);
+    crashed_checkpoint(&store, &id, older, 820, "먼저 남긴 편집", base);
+    crashed_checkpoint(
+        &store,
+        &id,
+        newer,
+        810,
+        "나중에 남긴 편집",
+        base + Duration::from_secs(60),
+    );
+
+    let app = app_with_store(&store_dir);
+    let owner = open_project(&app, project.path());
+    let (a, _, _) = open_window(&app, owner);
+    let probe = app.recovery_probe(a).unwrap().expect("최신 복구본 제안");
+    assert_eq!(probe.candidate.window, newer, "마지막에 기록한 복구본");
+    assert_eq!(probe.revision, 1);
+    assert_eq!(probe.open_tabs, 1, "열린 기본 View 탭 하나");
+    assert_eq!(probe.written_at, Some(base + Duration::from_secs(60)));
+    let before = tree(project.path());
+
+    // 선택 1: 폐기. 그 복구본만 지우고 다음 probe는 남은 복구본을 제안합니다. 창 문서는 그대로입니다.
+    let request = app
+        .recover_checkpoint(a, probe.candidate.clone(), RecoveryAction::Discard)
+        .unwrap();
+    assert!(matches!(
+        next_event(&app),
+        RuntimeEvent::WindowViewChanged { request: got, .. } if got == request
+    ));
+    assert_eq!(store.read_snapshot(&id, newer).unwrap(), None);
+    assert!(!store.discarded_marker_path(&id, newer).exists());
+    assert_ne!(frame_name(&app, a).0, "나중에 남긴 편집");
+    let next = app.recovery_probe(a).unwrap().expect("남은 복구본");
+    assert_eq!(next.candidate.window, older);
+    // 이미 폐기한 후보를 다시 적용하면 거부합니다(같은 bytes 재확인).
+    let request = app
+        .recover_checkpoint(a, probe.candidate, RecoveryAction::Restore)
+        .unwrap();
+    assert!(matches!(
+        next_event(&app),
+        RuntimeEvent::RequestFailed { request: got, .. } if got == request
+    ));
+
+    // 선택 2: 복구. 새 in-memory 상태이고 디스크는 그대로입니다(XIII.8.4).
+    let request = app
+        .recover_checkpoint(a, next.candidate, RecoveryAction::Restore)
+        .unwrap();
+    assert!(matches!(
+        next_event(&app),
+        RuntimeEvent::WindowViewChanged { request: got, .. } if got == request
+    ));
+    assert_eq!(frame_name(&app, a), ("먼저 남긴 편집".to_string(), true));
+    assert_eq!(
+        tree(project.path()),
+        before,
+        "두 선택 모두 프로젝트 bytes 미변경"
+    );
+    app.shutdown().unwrap();
+}
+
+#[test]
+fn later_leaves_the_checkpoint_for_the_next_start() {
+    // XIII.8.3: Later는 아무것도 부르지 않습니다. 복구본은 그대로이고 다음 시작에서 다시 제안합니다.
+    let project = saved_project("checkpoint-later");
+    let store_dir = TempDir::new("checkpoint-later-store");
+    let store = RecoverySnapshotStore::new(store_dir.path());
+    let id = identity(project.path());
+    let crashed = window(91);
+    crashed_checkpoint(
+        &store,
+        &id,
+        crashed,
+        910,
+        "미룬 편집",
+        std::time::SystemTime::now(),
+    );
+    let bytes = store.read_snapshot(&id, crashed).unwrap().unwrap();
+    for _ in 0..2 {
+        let app = app_with_store(&store_dir);
+        let (a, _, _) = open_window(&app, open_project(&app, project.path()));
+        let probe = app.recovery_probe(a).unwrap().expect("미룬 복구본");
+        assert_eq!(probe.candidate.window, crashed);
+        assert_eq!(probe.candidate.hash, ContentHash::compute(&bytes));
+        app.shutdown().unwrap();
+    }
+    assert_eq!(store.read_snapshot(&id, crashed).unwrap(), Some(bytes));
+}
+
+/// macOS 사용자 변경 불가 flag로 복구본 삭제를 실패시킵니다.
+#[cfg(target_os = "macos")]
+fn set_immutable(path: &std::path::Path, on: bool) {
+    let status = std::process::Command::new("/usr/bin/chflags")
+        .arg(if on { "uchg" } else { "nouchg" })
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn failed_removal_after_normal_close_is_stale_on_next_start() {
+    // XIII.8.7: 정상 닫기가 복구본 삭제에 실패해도 다음 시작에서 prompt가 없습니다. 기준 세대가 current와 같아
+    // 세대 비교로는 걸러지지 않는 경우입니다.
+    let project = saved_project("checkpoint-close-failure");
+    let store_dir = TempDir::new("checkpoint-close-failure-store");
+    let store = RecoverySnapshotStore::new(store_dir.path());
+    let id = identity(project.path());
+    let app = app_with_store(&store_dir);
+    let owner = open_project(&app, project.path());
+    let (a, _, _) = open_window(&app, owner);
+    edit(&app, a, 720, "닫으며 버린 편집");
+    assert!(wait_for(|| snapshot_count(&store_dir, &project) == 1));
+    let window = store.list_sessions(&id).unwrap()[0].clone();
+    let window = WindowSessionId::from_stable_id(parse_project_id(&window).unwrap());
+    let path = store.snapshot_path(&id, window);
+    set_immutable(&path, true);
+    let request = app.close_window_session(a).unwrap();
+    assert!(matches!(
+        next_event(&app),
+        RuntimeEvent::WindowSessionClosed { request: got, .. } if got == request
+    ));
+    let marked = wait_for(|| store.discarded_marker_path(&id, window).exists());
+    app.shutdown().unwrap();
+    set_immutable(&path, false);
+    assert!(marked, "삭제 실패 뒤 폐기 표식");
+    assert!(path.exists(), "삭제에 실패한 복구본이 남음");
+
+    let next = app_with_store(&store_dir);
+    let (b, _, _) = open_window(&next, open_project(&next, project.path()));
+    assert_eq!(
+        next.recovery_probe(b).unwrap(),
+        None,
+        "normal close 후 prompt 없음"
+    );
+    next.shutdown().unwrap();
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn discarded_checkpoint_left_by_failed_removal_cannot_be_restored() {
+    // XIII.8.7: 사용자 Discard가 삭제에 실패해 남은 복구본은, 표시했던 후보와 bytes가 같아도 Restore하지 않고
+    // 다음 시작에서도 제안하지 않습니다.
+    let project = saved_project("checkpoint-discard-failure");
+    let store_dir = TempDir::new("checkpoint-discard-failure-store");
+    let store = RecoverySnapshotStore::new(store_dir.path());
+    let id = identity(project.path());
+    let crashed = window(93);
+    crashed_checkpoint(
+        &store,
+        &id,
+        crashed,
+        930,
+        "폐기한 편집",
+        std::time::SystemTime::now(),
+    );
+    let app = app_with_store(&store_dir);
+    let (a, _, _) = open_window(&app, open_project(&app, project.path()));
+    let probe = app.recovery_probe(a).unwrap().expect("복구본 제안");
+    let path = store.snapshot_path(&id, crashed);
+    set_immutable(&path, true);
+    let discard = app
+        .recover_checkpoint(a, probe.candidate.clone(), RecoveryAction::Discard)
+        .unwrap();
+    let discard_event = next_event(&app);
+    let restore = app
+        .recover_checkpoint(a, probe.candidate, RecoveryAction::Restore)
+        .unwrap();
+    let restore_event = next_event(&app);
+    let after = app.recovery_probe(a);
+    let name = frame_name(&app, a);
+    app.shutdown().unwrap();
+    set_immutable(&path, false);
+    assert!(matches!(
+        discard_event,
+        RuntimeEvent::RequestFailed { request: got, .. } if got == discard
+    ));
+    assert!(path.exists(), "삭제에 실패한 복구본이 남음");
+    assert!(store.discarded_marker_path(&id, crashed).exists());
+    assert!(matches!(
+        restore_event,
+        RuntimeEvent::RequestFailed { request: got, .. } if got == restore
+    ));
+    assert_ne!(name.0, "폐기한 편집", "폐기한 복구본을 창에 복원하지 않음");
+    assert_eq!(after.unwrap(), None, "폐기한 복구본은 다시 제안하지 않음");
+
+    let next = app_with_store(&store_dir);
+    let (b, _, _) = open_window(&next, open_project(&next, project.path()));
+    assert_eq!(next.recovery_probe(b).unwrap(), None);
     next.shutdown().unwrap();
 }

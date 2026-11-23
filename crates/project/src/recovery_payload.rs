@@ -384,4 +384,31 @@ mod tests {
         extended.push(0);
         assert!(RecoveryPayload::decode(&extended).is_err());
     }
+
+    #[test]
+    fn payload_has_no_terminal_output_or_process_fields() {
+        // XVIII.4.6, ADR-0023 결정 10: recovery snapshot에 터미널 출력·프로세스를 넣지 않습니다. 필드가 늘면 이
+        // 구조 분해가 컴파일되지 않아 이 검사를 다시 보게 됩니다.
+        let RecoveryPayload {
+            base_manifest_hash: _,
+            revision: _,
+            unsaved_chunks: _,
+            open_tabs: _,
+            active_tab: _,
+            selection: _,
+            target_profile: _,
+        } = sample();
+        let OpenTab {
+            view: _,
+            viewport: _,
+        } = sample().open_tabs[0].clone();
+        // payload를 만들고 읽는 crate(project·runtime)는 터미널 crate에 의존하지 않습니다. 복구 문서 chunk는
+        // runtime이 문서 직렬화 결과와 같은지 다시 확인하므로 다른 내용이 끼어들 수 없습니다.
+        for (name, manifest) in [
+            ("stellar-project", include_str!("../Cargo.toml")),
+            ("stellar-runtime", include_str!("../../runtime/Cargo.toml")),
+        ] {
+            assert!(!manifest.contains("stellar-terminal"), "{name}");
+        }
+    }
 }

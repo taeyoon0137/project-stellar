@@ -6,7 +6,8 @@
 //! 크기는 master에 `TIOCSWINSZ`로 설정합니다.
 //!
 //! **child 실행**: `std::process::Command`로 argv 배열을 그대로 exec합니다(셸 문자열 해석 없음).
-//! 환경은 모두 지운 뒤 요청 환경(허용 목록 적용 결과)만 넣고, cwd는 검증된 canonical 경로입니다.
+//! 환경은 앱 프로세스 환경을 그대로 물려받고 요청의 변경(식별 변수·`SHELL`·profile 명시 지정)만 얹으며
+//! (ADR-0023), cwd는 검증된 canonical 경로입니다.
 //! stdin·stdout·stderr는 slave 복제본입니다. fork 뒤 exec 전(`pre_exec`)에 `setsid()`로 새 세션과
 //! process group의 leader가 되고, `TIOCSCTTY`로 slave를 controlling terminal로 만듭니다. 이
 //! closure는 fork된 child에서 돌기 때문에 async-signal-safe 시스템 호출(`setsid`, `ioctl`)만
@@ -61,6 +62,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::env::EnvChange;
 use crate::launch::{
     ExitReport, LaunchError, LaunchRequest, TerminalIoError, TerminalLauncher, TerminalProcess,
 };
@@ -308,11 +310,16 @@ impl PtyProcess {
         if let Some(arg0) = request.arg0() {
             command.arg0(arg0);
         }
+        // child는 앱 프로세스 환경을 그대로 물려받고, 요청의 변경만 얹습니다(ADR-0023 결정 3).
+        for (name, change) in request.env_changes() {
+            match change {
+                EnvChange::Set(value) => command.env(name, value),
+                EnvChange::Remove => command.env_remove(name),
+            };
+        }
         command
             .args(request.args())
             .current_dir(request.cwd())
-            .env_clear()
-            .envs(request.env().iter().map(|(name, value)| (name, value)))
             .stdin(stdio(&slave)?)
             .stdout(stdio(&slave)?)
             .stderr(stdio(&slave)?);
@@ -764,7 +771,9 @@ pub(crate) mod tests {
             args.iter().map(OsString::from).collect(),
             None,
             cwd.to_path_buf(),
-            env,
+            env.into_iter()
+                .map(|(name, value)| (name, EnvChange::Set(value)))
+                .collect(),
             TerminalSize::DEFAULT,
         )
     }
@@ -821,21 +830,40 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn child_gets_only_requested_environment_and_cwd() {
+    fn child_inherits_app_environment_with_requested_changes_and_cwd() {
+        // ADR-0023 결정 3: env_clear 없이 앱 프로세스 환경을 물려받고, 요청의 설정·삭제만 얹습니다.
         let _pty = pty_shared();
         let dir = TempDir::new();
-        let env = vec![
-            (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
-            (OsString::from("STELLAR_TEST"), OsString::from("a b=c")),
-        ];
-        let (report, text) = run_to_end(request_with_env("/usr/bin/env", &[], dir.path(), env));
+        let launch_request = LaunchRequest::new(
+            test_capability(),
+            PathBuf::from("/usr/bin/env"),
+            Vec::new(),
+            None,
+            dir.path().to_path_buf(),
+            vec![
+                (OsString::from("CARGO_PKG_NAME"), EnvChange::Remove),
+                (
+                    OsString::from("STELLAR_TEST"),
+                    EnvChange::Set(OsString::from("a b=c")),
+                ),
+            ],
+            TerminalSize::DEFAULT,
+        );
+        let (report, text) = run_to_end(launch_request);
         assert_eq!(report.status, TerminalExitStatus::Exited(0));
-        let mut lines: Vec<&str> = text
+        let child: std::collections::BTreeMap<String, String> = text
             .lines()
-            .map(|line| line.trim_end_matches('\r'))
+            .filter_map(|line| line.trim_end_matches('\r').split_once('='))
+            .map(|(n, v)| (n.to_string(), v.to_string()))
             .collect();
-        lines.sort_unstable();
-        assert_eq!(lines, ["PATH=/usr/bin:/bin", "STELLAR_TEST=a b=c"]);
+        assert_eq!(child.get("STELLAR_TEST").map(String::as_str), Some("a b=c"));
+        // cargo가 시험 프로세스에 넣은 변수(옛 허용 목록 밖)도 child에 보입니다.
+        assert_eq!(
+            child.get("CARGO_MANIFEST_DIR"),
+            std::env::var("CARGO_MANIFEST_DIR").ok().as_ref()
+        );
+        assert!(child.contains_key("CARGO_MANIFEST_DIR"));
+        assert!(!child.contains_key("CARGO_PKG_NAME"), "삭제 변경");
 
         let (_, text) = run_to_end(request("/bin/pwd", &[], dir.path()));
         assert_eq!(text, format!("{}\r\n", dir.path().display()));
@@ -912,7 +940,10 @@ pub(crate) mod tests {
             args.iter().map(OsString::from).collect(),
             None,
             cwd.to_path_buf(),
-            vec![(OsString::from("PATH"), OsString::from("/usr/bin:/bin"))],
+            vec![(
+                OsString::from("PATH"),
+                EnvChange::Set(OsString::from("/usr/bin:/bin")),
+            )],
             size,
         )
     }
