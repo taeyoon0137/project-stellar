@@ -8,7 +8,7 @@ Accepted (2026-11-24).
   변수·Variant 영속 형식을 다룹니다.
 - ADR-0117 결정 2.4·2.5가 후속으로 미룬 연결을 이 ADR이 정합니다. ADR-0111 결정 3의 "View 변수·Variant는 영속 형식이
   없다"는 이 ADR로 바뀝니다.
-- 보호 경로 `crates/core-types`(`reserved::guides`)를 바꿉니다.
+- 보호 경로 `crates/core-types`(`reserved::guides`)와 `schemas/command-transaction.schema.json`(새 command 종류 이름)을 바꿉니다.
 
 ## Context
 
@@ -138,6 +138,8 @@ guides:
 - 확장 절이 없는 문서의 chunk bytes·텍스트 원본 bytes는 그대로입니다. 확장 절을 쓴 chunk와 새 키를 쓴 텍스트 원본은 옛 앱이
   거부합니다(조용히 버리지 않음).
 - command codec version 7. 옛 history reader는 새 종류·tag를 담은 journal의 복원만 포기합니다(ADR-0079).
+- 보호 경로 `schemas/command-transaction.schema.json`의 canonical command 종류 목록에 `set-node-guides`·`edit-view-variants`가
+  늘어납니다(`cargo xtask generate-command-schema` 생성 결과). 다른 schema 항목은 그대로입니다.
 - MCP tool 하나(`document.guides`)와 CLI 명령 하나(`guides`)가 늘어납니다. FFI는 바꾸지 않습니다.
 
 ## Performance
