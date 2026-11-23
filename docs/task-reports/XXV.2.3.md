@@ -35,7 +35,8 @@
 | 검사 | 결과 |
 |---|---|
 | unrelated edit recompute 0: 무관한 node의 표시 이름·잠금 변경 뒤 checker 실행 0, stale 0, index revision·내용 불변 | 통과(`tests::unrelated_edit_recomputes_nothing_and_related_edit_rechecks_only_its_scope`) |
-| 표시 여부 변경은 Target Profile·binding·font scope만 stale로 만들고 내장 checker는 0. 접근성 tree 밖 node라 접근성은 그대로 | 통과(같은 test) |
+| 표시 여부 변경은 Target Profile·binding·font·접근성 scope를 stale로 만들고 내장 checker는 0(접근성 tree 밖 node도 표시 여부로 tree에 들어올 수 있음) | 통과(같은 test) |
+| 어떤 외부 진단에도 없는 node의 표시 여부 변경도 font·접근성·token scope를 stale로 만들고, 지정 node만 보는 binding scope는 그대로 | 통과(같은 test, 검토 보완) |
 | clip 해제는 참조 checker 하나만 다시 실행하고 진단 1개 감소 | 통과(같은 test) |
 | 무작위 문서 12개 × 유효 command 최대 40개: 매 단계 증분 index = 새 엔진 전체 검사, 일부 단계는 실행 0 | 통과(`tests::incremental_result_equals_full_recheck_on_random_command_sequences`, 미해결 node 참조가 있는 단계 136개 포함) |
 
