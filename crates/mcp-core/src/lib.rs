@@ -65,6 +65,9 @@ pub mod result;
 /// agent command proposal 입력 해석: closed enum command만 (XIX.5.1).
 pub mod proposal;
 
+/// MCP 세션 권한 저장과 판정 (XIX.3.2~XIX.3.4, ADR-0093).
+pub mod permission;
+
 /// 실행 인자로 고정한 신뢰 프로젝트 루트의 읽기 전용 backend (XIX.9.3).
 pub mod headless;
 
