@@ -18,8 +18,8 @@
 //!   순서 자동 배치로 냅니다.
 
 use stellar_layout::style::{
-    Display, FlexBasis, FlexDirection, GridAutoFlow, GridLine, ItemAlignment, LayoutStyle,
-    MaxTrackSize, MinTrackSize, Position, SelfAlignment, Size, TrackSize,
+    ContentAlignment, Display, FlexBasis, FlexDirection, GridAutoFlow, GridLine, ItemAlignment,
+    LayoutStyle, MaxTrackSize, MinTrackSize, Position, SelfAlignment, Size, TrackSize,
 };
 use stellar_target_profile::capability::{
     CapabilityStatus, CapabilitySubject, ContractCode, ElementKind,
@@ -604,5 +604,21 @@ pub(crate) fn explicit_self(alignment: SelfAlignment) -> Option<ItemAlignment> {
     match alignment {
         SelfAlignment::Auto => None,
         SelfAlignment::Item(item) => Some(item),
+    }
+}
+
+/// flex container의 main 축 정렬(`reverse`면 flex-start·flex-end가 반대쪽).
+pub(crate) fn justify_edge(value: ContentAlignment, reverse: bool) -> Edge {
+    let (start, end) = if reverse {
+        (Edge::End, Edge::Start)
+    } else {
+        (Edge::Start, Edge::End)
+    };
+    match value {
+        ContentAlignment::Center => Edge::Center,
+        ContentAlignment::Start => Edge::Start,
+        ContentAlignment::End => Edge::End,
+        ContentAlignment::FlexEnd => end,
+        _ => start,
     }
 }

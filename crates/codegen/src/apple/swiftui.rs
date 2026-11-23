@@ -32,8 +32,9 @@ use crate::apple::layout::{
     LayoutFinding,
 };
 use crate::apple::native::{
-    explicit_self, grow_is_basis_zero, is_stretch, item_edge, justify_alignment, self_alignment,
-    size, style, track_kind, Analysis, Axis, Container, Control, Edge, TrackKind, ViewKind,
+    explicit_self, grow_is_basis_zero, is_stretch, item_edge, justify_alignment, justify_edge,
+    self_alignment, size, style, track_kind, Analysis, Axis, Container, Control, Edge, TrackKind,
+    ViewKind,
 };
 use crate::apple::swift::{number, string_literal};
 use crate::apple::{AppleNote, AppleNoteKind, AppleNoteSubject, ControlNote};
@@ -84,22 +85,6 @@ pub(crate) fn initial_literal(value: &TypedValue, ty: SwiftType) -> String {
         (_, SwiftType::String) => "\"\"".to_string(),
         (_, SwiftType::Bool) => "false".to_string(),
         (_, SwiftType::Double) => "0".to_string(),
-    }
-}
-
-/// flex container의 main 축 정렬(`reverse`면 flex-start·flex-end가 반대쪽).
-pub(crate) fn justify_edge(value: ContentAlignment, reverse: bool) -> Edge {
-    let (start, end) = if reverse {
-        (Edge::End, Edge::Start)
-    } else {
-        (Edge::Start, Edge::End)
-    };
-    match value {
-        ContentAlignment::Center => Edge::Center,
-        ContentAlignment::Start => Edge::Start,
-        ContentAlignment::End => Edge::End,
-        ContentAlignment::FlexEnd => end,
-        _ => start,
     }
 }
 

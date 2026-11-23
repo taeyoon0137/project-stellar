@@ -49,10 +49,10 @@ mod appkit;
 mod tests;
 
 #[cfg(test)]
-mod ui_tests;
+pub(crate) mod ui_tests;
 
 #[cfg(test)]
-mod layout_tests;
+pub(crate) mod layout_tests;
 
 pub use color::{ColorApi, ColorNote};
 pub use layout::LayoutFinding;

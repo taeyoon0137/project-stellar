@@ -27,11 +27,11 @@ use stellar_target_profile::capability::{CapabilityStatus, CapabilitySubject};
 use crate::apple::accessibility::{AccessibilityHook, StateNames, SwiftType};
 use crate::apple::layout::{appkit_stack_alignment, approximated, unsupported, LayoutFinding};
 use crate::apple::native::{
-    grow_is_basis_zero, item_edge, justify_alignment, self_alignment, size, style, track_kind,
-    Analysis, Axis, Container, Control, Edge, GridPlan, NodeInfo, TrackKind, ViewKind,
+    grow_is_basis_zero, item_edge, justify_alignment, justify_edge, self_alignment, size, style,
+    track_kind, Analysis, Axis, Container, Control, Edge, GridPlan, NodeInfo, TrackKind, ViewKind,
 };
 use crate::apple::swift::{number, string_literal};
-use crate::apple::swiftui::{initial_literal, justify_edge};
+use crate::apple::swiftui::initial_literal;
 use crate::apple::{AppleNote, AppleNoteKind, AppleNoteSubject, ControlNote};
 use crate::facet::Facet;
 use crate::ir::snapshot::id_hex;
