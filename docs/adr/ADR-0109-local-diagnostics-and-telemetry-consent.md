@@ -43,9 +43,9 @@ Accepted
    것부터 지웁니다. 실패 카운트는 `(기능, 코드)`마다 counter 하나로 합치고 1,024쌍까지 둡니다. 넘친 수는
    `meta dropped=`에 셉니다. 기본 보존 기간은 30일이고 `prune`이 지웁니다. 읽을 파일 크기 상한은 8 MiB입니다.
 3. **오류는 내용을 되풀이하지 않습니다.** 형식 오류는 줄 번호와 정적 종류(모르는 tag, field 이름, 값 등)만 냅니다.
-4. **금지 필드 scanner(XVI.8.2).** `stellar_diagnostics::scanner`는 두 층으로 검사합니다.
+4. **금지 필드 scanner(XVI.8.2).** `stellar_diagnostics::scanner`는 세 층으로 검사합니다.
    - 내용 규칙: 사용자 홈·볼륨·임시 경로와 경로 구분자, URL scheme·scp 형식 Git 원격, `refs/heads/`·`origin/` 같은
-     branch 표기, 7자 이상 hex(문자 포함)나 21자 이상 숫자열 commit, 제어 문자·ANSI escape·shell prompt·shell 이름
+     branch 표기, 숫자와 문자가 섞인 7\~64자 hex나 21자 이상 숫자열 commit, 제어 문자·ANSI escape·shell prompt·shell 이름
      같은 터미널 입출력, `jsonrpc`·`tools/call`·`"method"` 같은 MCP·에이전트 payload, 비ASCII 텍스트·따옴표 같은
      프로젝트 텍스트, 자격 증명 표기(`Bearer `, `sk-`, `password` 등)입니다. 규칙마다 금지 범주가 정해져 있습니다.
    - 문맥 값: 호출자(앱)가 아는 열린 프로젝트의 이름·경로·텍스트·레이어·토큰 이름, Git 원격·branch·commit을
@@ -88,7 +88,9 @@ Accepted
 9. **CLI.** `stellar diagnostics`가 `schema`, `scan <파일>`, `preview`, `export --output <파일>`,
    `consent [show|grant|decline|revoke]`, `enqueue`를 제공합니다. 기본 디렉터리는 결정 2의 위치이고
    `--data-dir`로 바꿀 수 있습니다. 모든 결과는 기존 결과 envelope JSON이고, `preview`의 `payload`는 내보내기 파일
-   bytes와 같습니다.
+   bytes와 같습니다. `scan`은 탐지가, `schema`는 위반이 있으면 1이고, `consent revoke`는 철회할 동의가 없으면 1,
+   `enqueue`는 동의가 없으면 77(`noperm`), 대기열이 가득 차면 75(`tempfail`), `export`는 파일이 있으면
+   73(`cantcreat`)입니다.
 
 ## Alternatives
 
