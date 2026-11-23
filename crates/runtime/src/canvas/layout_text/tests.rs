@@ -314,8 +314,7 @@ fn flow_child_instances_get_boxes_from_the_component_library() {
 #[cfg(target_os = "macos")]
 #[test]
 fn reorder_preview_measures_and_draws_text_with_the_same_inputs() {
-    // 흐름 drag preview도 변환 때와 같은 창 자료(Text hook, 정의 집합)로 다시 배치합니다. 그렇지 않으면 preview에서
-    // Text가 크기 0으로 재어지고 scene 입력이 빠져 옛 자리에 남습니다.
+    // 흐름 drag preview도 Text를 다시 그립니다. 그렇지 않으면 preview에서 Text scene 입력이 빠져 옛 자리에 남습니다.
     let doc = flex_text_document("ab");
     let natural = unwrapped_size(&doc);
     let mut fonts = FontCache::default();
@@ -329,17 +328,22 @@ fn reorder_preview_measures_and_draws_text_with_the_same_inputs() {
     let text_at = order.iter().position(|id| *id == sid(29)).unwrap();
     let rect_at = order.iter().position(|id| *id == sid(30)).unwrap();
     order.swap(text_at, rect_at);
-    let preview = layout
-        .reorder_preview_with(&doc, sid(11), &order, inputs)
-        .unwrap();
-    assert_eq!(
-        layout.preview_box(&preview, sid(30)),
-        Some([10., 20., 20., 20.])
-    );
-    assert_eq!(
-        layout.preview_box(&preview, sid(29)),
-        Some([30., 20., natural.width(), natural.height()])
-    );
+    // 창 자료로 다시 재는 preview와 이미 그린 Text 크기를 쓰는 preview가 같은 자리입니다.
+    for preview in [
+        layout
+            .reorder_preview_with(&doc, sid(11), &order, inputs)
+            .unwrap(),
+        layout.reorder_preview(&doc, sid(11), &order).unwrap(),
+    ] {
+        assert_eq!(
+            layout.preview_box(&preview, sid(30)),
+            Some([10., 20., 20., 20.])
+        );
+        assert_eq!(
+            layout.preview_box(&preview, sid(29)),
+            Some([30., 20., natural.width(), natural.height()])
+        );
+    }
 }
 
 /// 기본 글꼴 chain은 macOS 시스템 글꼴입니다.

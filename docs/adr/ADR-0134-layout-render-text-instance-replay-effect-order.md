@@ -42,9 +42,9 @@ Accepted (2026-11-24).
    - 측정 hook의 Text stack은 scene Text hook이 받는 stack과 같은 `stellar_scene::document::content_stack`입니다.
    - 캔버스 행 목록(`CanvasScene`)의 Text 배치는 `layout_input`(줄 너비 없음)이고 같은 함수의 줄 너비 `None` 경우입니다.
    - 시험과 다른 호출자는 `CanvasTextHook` trait으로 글꼴 없는 hook을 넘길 수 있습니다.
-   - 흐름 drag preview(`reorder_preview_with`)는 변환 때와 같은 창 자료로 다시 배치하고 그립니다. 게시 행 목록 Text
-     크기로 만든 source(`for_scene`)의 `reorder_preview`는 같은 Text 크기로 Text를 다시 그립니다. 그렇지 않으면 preview에서
-     Text가 크기 0으로 재어지거나 옛 자리에 남습니다.
+   - 흐름 drag preview는 Text를 다시 그립니다. `reorder_preview_with`는 변환 때와 같은 창 자료로 다시 재고 그립니다.
+     창 자료가 없는 `reorder_preview`는 source가 이미 그린 Text 입력 크기로 그립니다(순서만 바꾸면 줄 너비가 같은 한 결과가
+     같음). 그렇지 않으면 preview에서 Text가 옛 자리에 남습니다.
 2. **흐름 자식 ComponentInstance 상자(scene 문서 변환).**
    - Layout 규칙 인스턴스는 정의 root를 layout 결과 위치(저장 배치는 뒤 `translate`)와 **layout 결과 크기**로 그립니다.
      Frame과 같은 규칙입니다(ADR-0125 결정 3). 교차축 `stretch`가 인스턴스 상자를 늘리면 정의 root도 그 크기입니다.

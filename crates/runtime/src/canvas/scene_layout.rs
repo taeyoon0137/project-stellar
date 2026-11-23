@@ -28,7 +28,7 @@ use stellar_scene::document::{
     document_scene_source, scene_edits, DocumentSceneSource, FlowPreview, SceneSourceOptions,
 };
 use stellar_scene::node::TextLayoutKey;
-use stellar_scene::source::{SceneKey, SourceEdit, SourceError};
+use stellar_scene::source::{SceneKey, SourceEdit, SourceError, SourceKind};
 
 use crate::canvas::flow_drag::Box4;
 use crate::canvas::layout_text::CanvasLayoutInputs;
@@ -66,8 +66,6 @@ fn scene_text_input(
 #[derive(Debug, Clone)]
 pub struct CanvasLayout {
     source: DocumentSceneSource,
-    /// [`Self::for_scene`]가 쓴 게시 행 목록 Text 크기. preview를 같은 Text 입력으로 다시 그리려고 둡니다.
-    scene_texts: HashMap<StableId, Size2>,
 }
 
 impl CanvasLayout {
@@ -85,10 +83,7 @@ impl CanvasLayout {
                 ..SceneSourceOptions::default()
             },
         )?;
-        Ok(CanvasLayout {
-            source,
-            scene_texts: HashMap::new(),
-        })
+        Ok(CanvasLayout { source })
     }
 
     /// `scene`(게시한 캔버스 행 목록)이 이미 layout한 Text 크기를 Text 입력으로 써서 변환합니다. text layout을 다시
@@ -122,10 +117,7 @@ impl CanvasLayout {
                 ..SceneSourceOptions::default()
             },
         )?;
-        Ok(CanvasLayout {
-            source,
-            scene_texts: sizes,
-        })
+        Ok(CanvasLayout { source })
     }
 
     /// 문서 `model`의 View root `root` subtree를 창 자료 `inputs`(정의 집합, Text hook)로 변환합니다.
@@ -146,10 +138,7 @@ impl CanvasLayout {
             text_measure: measure_hook(&inputs),
         };
         let source = document_scene_source(model, root, options)?;
-        Ok(CanvasLayout {
-            source,
-            scene_texts: HashMap::new(),
-        })
+        Ok(CanvasLayout { source })
     }
 
     /// 창의 활성 View를 창 cache(`cache`)의 컴포넌트 정의 집합과 글꼴로 변환합니다. Text는 줄바꿈 측정으로 흐름에
@@ -228,24 +217,35 @@ impl CanvasLayout {
         ])
     }
 
-    /// 흐름 컨테이너 `container`의 layout 자식을 `order` 순서로 바꾼 preview. 창 자료 없이 변환한 source용입니다.
-    /// [`Self::for_scene`]으로 만든 source는 같은 게시 행 목록 Text 크기로 Text를 다시 그립니다. 창 자료로 만든 source는
-    /// [`Self::reorder_preview_with`]에 같은 자료를 넘깁니다.
+    /// 흐름 컨테이너 `container`의 layout 자식을 `order` 순서로 바꾼 preview. Text는 이 source가 이미 그린 Text 입력 크기로
+    /// 다시 그립니다(Text가 옛 자리에 남지 않음). 순서만 바꾸면 흐름이 Text 줄 너비를 바꾸지 않는 한 결과가 같습니다.
+    /// 줄 너비까지 다시 재려면 변환 때와 같은 창 자료로 [`Self::reorder_preview_with`]를 부릅니다.
     pub fn reorder_preview(
         &self,
         model: &DocumentModel,
         container: StableId,
         order: &[StableId],
     ) -> Option<FlowPreview> {
-        let sizes = &self.scene_texts;
+        let source = &self.source.source;
         let mut hook = |id: StableId,
                         _: &TextPayload,
                         stack: Option<&ModifierStack>,
                         locked: bool,
                         _: Option<f32>|
-         -> Option<TextInput> { scene_text_input(sizes, id, stack, locked) };
+         -> Option<TextInput> {
+            let SourceKind::Text(drawn) = &source.get(SceneKey::node(id))?.kind else {
+                return None;
+            };
+            let mut node = NodeInput::new(id, shape_style(stack)?.transform);
+            node.locked = locked;
+            Some(TextInput {
+                node,
+                layout: drawn.layout,
+                size: drawn.size,
+            })
+        };
         let options = SceneSourceOptions {
-            text: (!sizes.is_empty()).then_some(&mut hook),
+            text: Some(&mut hook),
             ..SceneSourceOptions::default()
         };
         self.source
