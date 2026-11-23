@@ -19,12 +19,19 @@
 //! 사전 검사에서 `LibraryUnavailable`로 거부되고(reset은 허용), 문서 참조 진단은 그 참조를 사용할 수 없다고 냅니다.
 
 use stellar_core_types::ids::StableId;
+use stellar_core_types::property::PropertyPath;
 use stellar_core_types::reference::ComponentRef;
-use stellar_dependencies::candidate_check::{ExternalInstanceUsage, OverrideUsage};
+use stellar_dependencies::candidate_check::{
+    check_candidate_usages, CandidateDiagnostic, CandidateIssue, ExternalInstanceUsage,
+    OverrideUsage,
+};
 use stellar_dependencies::component_imports::ComponentImports;
 use stellar_dependencies::declaration::LogicalName;
-use stellar_dependencies::external_ref::ExternalComponentRef;
-use stellar_dependencies::ref_resolution::{LibraryGraphInstance, RefScope};
+use stellar_dependencies::external_ref::{ExternalComponentRef, ExternalResourceRef};
+use stellar_dependencies::library_load::{
+    LoadedLibraries, ResourceResolution, UnresolvedExternalRef,
+};
+use stellar_dependencies::ref_resolution::{LibraryGraphInstance, RefResolutionError, RefScope};
 use stellar_document::component::definition::ComponentLibrary;
 use stellar_document::component::instance::ComponentInstancePayload;
 use stellar_document::model::DocumentModel;
@@ -189,3 +196,144 @@ pub fn check_update_candidate(
     )
 }
 
+/// 문서 instance 하나의 외부 참조 문제(문서 참조 단위 진단의 입력, ADR-0137 결정 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentRefIssue {
+    /// 참조한 library를 사용할 수 없음(offline·손상). 원래 참조 전체와 위치를 보존합니다.
+    Unavailable(UnresolvedExternalRef),
+    /// 의존성이 `stellar.lock.yaml`에 없음(선언만 있고 아직 받지 않음).
+    NotLocked {
+        /// instance.
+        instance: StableId,
+        /// 참조.
+        reference: ExternalComponentRef,
+    },
+    /// library는 로드했지만 참조를 해석하지 못함(사라진 component·다른 library·다른 종류).
+    Unresolved {
+        /// instance.
+        instance: StableId,
+        /// 참조.
+        reference: ExternalComponentRef,
+        /// 해석 오류.
+        error: RefResolutionError,
+    },
+    /// 참조가 `stellar.yaml`에 저장되지 않음(호환 읽기로 판정).
+    Undeclared {
+        /// instance.
+        instance: StableId,
+        /// 호환 읽기로 정한 참조.
+        reference: ExternalComponentRef,
+    },
+    /// 어느 의존성의 component인지 정할 수 없음.
+    Ambiguous {
+        /// instance.
+        instance: StableId,
+        /// component.
+        component: ComponentRef,
+        /// 후보 선언 이름.
+        dependencies: Vec<LogicalName>,
+    },
+    /// 현재 lock의 library에서 instance override가 orphan임(property 사라짐·비공개·타입 변경).
+    OrphanOverride(CandidateDiagnostic),
+}
+
+impl DocumentRefIssue {
+    /// 문제가 있는 instance.
+    pub fn instance(&self) -> StableId {
+        match self {
+            DocumentRefIssue::Unavailable(r) => r.location().root(),
+            DocumentRefIssue::NotLocked { instance, .. }
+            | DocumentRefIssue::Unresolved { instance, .. }
+            | DocumentRefIssue::Undeclared { instance, .. }
+            | DocumentRefIssue::Ambiguous { instance, .. } => *instance,
+            DocumentRefIssue::OrphanOverride(d) => match &d.issue {
+                CandidateIssue::ComponentRemoved { instance }
+                | CandidateIssue::LibraryChanged { instance, .. }
+                | CandidateIssue::OrphanOverride { instance, .. } => *instance,
+                CandidateIssue::TokenRemoved { location }
+                | CandidateIssue::TokenRetyped { location } => location.root(),
+            },
+        }
+    }
+}
+
+/// 문서의 외부 component 참조를 lock 기준으로 로드한 library에 대어 문제를 모읍니다(instance 순, ADR-0137 결정 2).
+///
+/// 판정은 기존 함수가 합니다: 출처는 [`classify_component`], 해석·사용할 수 없음 구분은 [`LoadedLibraries::resolve`], override
+/// orphan은 후보 검증과 같은 [`check_candidate_usages`](현재 snapshot에 대어 봄)입니다. `loaded`가 없으면(lock 없음) 모든 외부
+/// 참조가 [`DocumentRefIssue::NotLocked`]입니다.
+pub fn document_ref_issues(
+    model: &DocumentModel,
+    own: &ComponentLibrary,
+    instance: &LibraryGraphInstance,
+    loaded: Option<&LoadedLibraries>,
+) -> Vec<DocumentRefIssue> {
+    let usages = external_instance_usages(model, own, instance);
+    let mut issues: Vec<DocumentRefIssue> = usages
+        .ambiguous
+        .iter()
+        .filter_map(|(id, dependencies)| match model.payload(*id) {
+            Some(NodePayload::ComponentInstance(payload)) => Some(DocumentRefIssue::Ambiguous {
+                instance: *id,
+                component: payload.component(),
+                dependencies: dependencies.clone(),
+            }),
+            _ => None,
+        })
+        .collect();
+    for usage in &usages.instances {
+        if usages.undeclared.contains(&usage.instance) {
+            issues.push(DocumentRefIssue::Undeclared {
+                instance: usage.instance,
+                reference: usage.component.clone(),
+            });
+        }
+        let reference = ExternalResourceRef::Component(usage.component.clone());
+        let Some(loaded) = loaded else {
+            issues.push(DocumentRefIssue::NotLocked {
+                instance: usage.instance,
+                reference: usage.component.clone(),
+            });
+            continue;
+        };
+        match loaded.resolve(&RefScope::Project, &reference) {
+            ResourceResolution::Resolved(_) => {
+                let node = loaded
+                    .instance()
+                    .node_for(&RefScope::Project, &reference)
+                    .ok()
+                    .and_then(|node| loaded.instance().snapshot(node));
+                if let Some(snapshot) = node {
+                    let check = check_candidate_usages(
+                        usage.component.dependency(),
+                        snapshot,
+                        std::slice::from_ref(usage),
+                        &[],
+                    );
+                    issues.extend(
+                        check
+                            .diagnostics()
+                            .iter()
+                            .cloned()
+                            .map(DocumentRefIssue::OrphanOverride),
+                    );
+                }
+            }
+            ResourceResolution::Unavailable(missing) => issues.push(DocumentRefIssue::Unavailable(
+                missing.unresolved_at(PropertyPath::new(usage.instance)),
+            )),
+            ResourceResolution::Unresolved(RefResolutionError::UnknownDependency { .. }) => issues
+                .push(DocumentRefIssue::NotLocked {
+                    instance: usage.instance,
+                    reference: usage.component.clone(),
+                }),
+            ResourceResolution::Unresolved(error) => issues.push(DocumentRefIssue::Unresolved {
+                instance: usage.instance,
+                reference: usage.component.clone(),
+                error,
+            }),
+        }
+    }
+    issues.sort_by_key(DocumentRefIssue::instance);
+    issues
+}

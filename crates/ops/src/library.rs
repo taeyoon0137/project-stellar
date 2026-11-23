@@ -37,7 +37,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use stellar_commands::command::Command;
 use stellar_dependencies::cache_entry::LibraryEntryStore;
 use stellar_dependencies::cache_root::{CacheRootError, LibraryCacheRoot};
+use stellar_dependencies::candidate_check::CandidateIssue;
 use stellar_dependencies::declaration::RepositoryUrl;
+use stellar_dependencies::library_load::{LoadedLibraries, UnresolvedExternalRef};
 use stellar_dependencies::library_snapshot::SnapshotLimits;
 use stellar_dependencies::mirror::{RepositoryKey, RepositoryKeyer};
 use stellar_document::component::definition::ComponentLibrary;
@@ -55,10 +57,12 @@ use stellar_integrity::remediation::actions_for;
 use stellar_integrity::sources;
 use stellar_project::library_guard::{check_component_edits, ComponentEdit};
 use stellar_project::library_open::{declared_only, open_project_libraries, read_lock};
+use stellar_project::library_refs::{document_ref_issues, DocumentRefIssue};
 use stellar_storage::hash::ContentHash;
 
 use crate::core_types::ids::StableId;
 use crate::core_types::order_key::OrderKey;
+use crate::core_types::property::PropertyPath;
 use crate::core_types::reference::ComponentRef;
 use crate::lock::APP_DATA_DIR;
 
@@ -472,6 +476,170 @@ pub fn open_libraries_default(project_root: &Path) -> ProductLibraries {
     }
     let cache = LibraryCache::os_default();
     open_libraries(project_root, cache.as_ref(), now_unix_ms())
+}
+
+// ───────────────────────────── 문서 참조 단위 진단 ─────────────────────────────
+
+impl ProductLibraries {
+    /// lock 기준으로 로드한 library(lock이 없거나 읽지 못했으면 `None`).
+    pub fn loaded(&self) -> Option<&LoadedLibraries> {
+        self.opened.as_ref().and_then(ProjectLibraries::loaded)
+    }
+
+    /// 문서 하나의 외부 component 참조 진단 기여(문서 단위, origin [`origins::LIBRARY_REFS`], ADR-0137 결정 2).
+    ///
+    /// `own`은 사용 프로젝트 자신의 component library입니다. 외부 component가 있을 수 없으면 빈 기여입니다.
+    pub fn document_contribution(
+        &self,
+        document: StableId,
+        model: &DocumentModel,
+        own: &ComponentLibrary,
+    ) -> Contribution {
+        let instance = self.instance();
+        if !has_external(&instance) {
+            return sources::library_refs(document, &[]);
+        }
+        document_ref_contribution(
+            document,
+            &document_ref_issues(model, own, &instance, self.loaded()),
+        )
+    }
+
+    /// [`ProductLibraries::document_contribution`]을 엔진에 문서 단위로 넣습니다.
+    pub fn submit_document(
+        &self,
+        engine: &mut IntegrityEngine,
+        document: StableId,
+        model: &DocumentModel,
+        own: &ComponentLibrary,
+    ) -> bool {
+        engine.submit(
+            Some(document),
+            origins::LIBRARY_REFS,
+            self.document_contribution(document, model, own),
+        )
+    }
+}
+
+/// 문서 참조 문제를 진단으로 바꿉니다. 사용할 수 없는 library의 참조는 integrity 생산자 [`sources::library_refs`]가 바꾸고
+/// (code `library-resource-unavailable`), 나머지는 같은 origin·footprint 규칙으로 더합니다.
+///
+/// | 문제 | code | 종류 | 심각도 |
+/// |---|---|---|---|
+/// | 사용할 수 없는 library | `library-resource-unavailable` | MissingLibrary | 경고 |
+/// | lock에 없는 의존성 | `library-ref/not-locked` | MissingLibrary | 경고 |
+/// | 사라진 component·다른 library·다른 종류 | `library-ref/unresolved` | MissingComponent | 오류 |
+/// | 저장되지 않은 참조(호환 읽기) | `library-ref/undeclared` | MissingLibrary | 경고 |
+/// | 모호한 참조 | `library-ref/ambiguous` | MissingLibrary | 오류 |
+/// | 현재 library에서 orphan인 override | `library-ref/orphan-override` | MissingLibrary | 경고 |
+pub fn document_ref_contribution(document: StableId, issues: &[DocumentRefIssue]) -> Contribution {
+    let unavailable: Vec<UnresolvedExternalRef> = issues
+        .iter()
+        .filter_map(|issue| match issue {
+            DocumentRefIssue::Unavailable(r) => Some(r.clone()),
+            _ => None,
+        })
+        .collect();
+    let mut contribution = sources::library_refs(document, &unavailable);
+    for issue in issues {
+        let instance = issue.instance();
+        let (code, kind, severity, subject, message) = match issue {
+            DocumentRefIssue::Unavailable(_) => continue,
+            DocumentRefIssue::NotLocked { reference, .. } => (
+                "library-ref/not-locked",
+                DiagnosticKind::MissingLibrary,
+                Severity::Warning,
+                reference.to_string(),
+                format!(
+                    "의존성 {}이 stellar.lock.yaml에 없습니다(stellar library update로 받으세요): {reference}",
+                    reference.dependency()
+                ),
+            ),
+            DocumentRefIssue::Unresolved {
+                reference, error, ..
+            } => (
+                "library-ref/unresolved",
+                DiagnosticKind::MissingComponent,
+                Severity::Error,
+                reference.to_string(),
+                format!("외부 component 참조를 해석하지 못했습니다: {error}"),
+            ),
+            DocumentRefIssue::Undeclared { reference, .. } => (
+                "library-ref/undeclared",
+                DiagnosticKind::MissingLibrary,
+                Severity::Warning,
+                reference.to_string(),
+                format!(
+                    "외부 component 참조가 stellar.yaml에 저장되지 않았습니다(stellar library import로 저장하세요): {reference}"
+                ),
+            ),
+            DocumentRefIssue::Ambiguous {
+                component,
+                dependencies,
+                ..
+            } => {
+                let names: Vec<&str> = dependencies.iter().map(|n| n.as_str()).collect();
+                (
+                    "library-ref/ambiguous",
+                    DiagnosticKind::MissingLibrary,
+                    Severity::Error,
+                    component.id().to_string(),
+                    format!(
+                        "component {}가 어느 의존성의 것인지 정할 수 없습니다({})",
+                        component.id(),
+                        names.join(", ")
+                    ),
+                )
+            }
+            DocumentRefIssue::OrphanOverride(diagnostic) => (
+                "library-ref/orphan-override",
+                DiagnosticKind::MissingLibrary,
+                Severity::Warning,
+                match &diagnostic.issue {
+                    CandidateIssue::OrphanOverride { property, .. } => property.to_string(),
+                    _ => diagnostic.dependency.to_string(),
+                },
+                diagnostic.to_string(),
+            ),
+        };
+        let property = PropertyPath::new(instance);
+        contribution.footprint.nodes.insert(instance);
+        contribution.diagnostics.push(Diagnostic {
+            remediation: actions_for(kind, Some(document), Some(instance), Some(&property)),
+            key: DiagnosticKey {
+                document: Some(document),
+                kind,
+                source: Some(instance),
+                property: Some(property),
+                code: code.to_string(),
+                subject,
+                origin: origins::LIBRARY_REFS.to_string(),
+            },
+            severity,
+            message,
+        });
+    }
+    contribution
+}
+
+/// 저장 snapshot의 외부 library 진단을 모두 엔진에 넣습니다: 프로젝트 단위 열기 진단([`ProductLibraries::contribution`])과
+/// 문서마다 외부 component 참조 진단([`ProductLibraries::document_contribution`]). `stellar diagnose`·MCP
+/// `document.diagnostics`가 같이 쓰는 [`crate::integrity::diagnose_snapshot`]이 부릅니다. 읽지 못한 문서는 건너뜁니다(그 문서는
+/// 수집 결과의 `unreadable`에 따로 남음).
+pub fn submit_snapshot(snapshot: &crate::snapshot::ProjectSnapshot, engine: &mut IntegrityEngine) {
+    let libraries = open_libraries_default(snapshot.root());
+    libraries.submit_to(engine);
+    if !libraries.has_external() {
+        return;
+    }
+    let own = crate::component_source::project_library(snapshot)
+        .map(|(library, _)| library)
+        .unwrap_or_default();
+    for definition in snapshot.documents() {
+        if let Ok(model) = snapshot.document_model(definition.id) {
+            libraries.submit_document(engine, definition.id, &model, &own);
+        }
+    }
 }
 
 // ───────────────────────────── 읽기 전용 사전 검사 ─────────────────────────────
