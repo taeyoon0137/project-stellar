@@ -521,6 +521,35 @@ impl IdentifiedPath {
         self.ids.iter().filter_map(|id| id.point).collect()
     }
 
+    /// 같은 command 구성의 새 좌표 `data`로 바꾼 path. point·handle id와 handle mode는 그대로입니다
+    /// (평행이동 같은 좌표 변환용, ADR-0079). command 구성이 다르면 거부합니다.
+    pub fn with_data(&self, data: PathData) -> Result<IdentifiedPath, PathError> {
+        IdentifiedPath::new(data, self.ids.clone())?.with_handle_modes(self.handle_modes())
+    }
+
+    /// 모든 point·handle id를 `remap`으로 바꾼 path(복제용). handle mode는 바뀐 point id로 옮깁니다
+    /// (ADR-0079). 결과 id가 겹치면 거부합니다.
+    pub fn remapped(
+        &self,
+        mut remap: impl FnMut(StableId) -> StableId,
+    ) -> Result<IdentifiedPath, PathError> {
+        let ids = self
+            .ids
+            .iter()
+            .map(|ids| CommandIds {
+                point: ids.point.map(|p| PathPointId(remap(p.0))),
+                handles: ids
+                    .handles
+                    .map(|(h1, h2)| (PathHandleId(remap(h1.0)), PathHandleId(remap(h2.0)))),
+            })
+            .collect();
+        let modes: Vec<(PathPointId, HandleMode)> = self
+            .handle_modes()
+            .map(|(point, mode)| (PathPointId(remap(point.0)), mode))
+            .collect();
+        IdentifiedPath::new(self.data.clone(), ids)?.with_handle_modes(modes)
+    }
+
     /// `index` 위치에 LineTo point를 삽입합니다. 기존 point·handle id는 그대로
     /// 유지되고 새 point만 `id`를 받습니다. 결과가 subpath 규칙을 어기면(예: 맨
     /// 앞, Close 직후) 거부하고 path를 바꾸지 않습니다.

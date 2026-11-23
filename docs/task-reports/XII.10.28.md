@@ -31,12 +31,16 @@
 - handle mode는 `IdentifiedPath` 안에 기본값이 아닌 point만 저장합니다. 저장 bytes는 mode가 있을 때만 끝에
   `u32 개수 + (point id 16 + tag 1)*` 절을 붙이므로 mode 없는 path는 이전 형식과 같은 bytes입니다.
 - 역은 원래 레코드를 되돌리는 `RestoreNodeRecords`입니다(지운 point·handle의 id·좌표를 정확히 복원).
+- 검토 보완: path를 다시 만드는 기존 경로가 mode를 버리지 않게 했습니다. Fragment → Frame 자손 이동은
+  `IdentifiedPath::with_data`, 복제·Paste는 `IdentifiedPath::remapped`로 mode를 새 point id로 옮깁니다
+  (`crates/commands/src/{convert,duplicate}.rs`). semantic snapshot은 mode를 담지 않으므로 fixture가 inverse 뒤 path
+  payload 전체도 비교하고, mode가 있는 point의 삭제·mode 변경 Undo test를 더했습니다.
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)
 
 | 명령 | 결과 |
 |---|---|
-| `cargo test -p stellar-commands path_edit` | 5 passed: 삽입(직선·곡선 분할 좌표, 기존 point id 유지), 이동·삭제 4종, Mirrored·Aligned·Independent handle, 닫기·열기, 잘못된 편집 9종 거부 |
+| `cargo test -p stellar-commands path_edit` | 6 passed(검토 보완 후, mode Undo 포함): 삽입(직선·곡선 분할 좌표, 기존 point id 유지), 이동·삭제 4종, Mirrored·Aligned·Independent handle, 닫기·열기, 잘못된 편집 9종 거부 |
 | `cargo test -p stellar-commands property_tests` | `edit_path_point_round_trip` 포함 전체 통과(random document 160 seed, 60건 이상 forward/inverse snapshot 일치), 등록 검사 통과 |
 | `cargo test -p stellar-document path` | `handle_mode_section_is_optional_and_validated` 포함 통과 |
 | `cargo test -p stellar-document -p stellar-commands -p stellar-history` | document 369, commands 144, history 49 등 전부 통과 |

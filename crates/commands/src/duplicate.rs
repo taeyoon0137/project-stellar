@@ -20,7 +20,6 @@ use stellar_core_types::reference::NodeRef;
 use stellar_document::frame::Clipping;
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{ModifierEntry, ModifierId, ModifierPayload, ModifierStack};
-use stellar_document::path::{CommandIds, IdentifiedPath, PathHandleId, PathPointId};
 use stellar_document::records::{NodePayload, NodeRecord};
 
 use crate::codec::{CommandCodecError, Reader, Writer};
@@ -84,21 +83,9 @@ pub(crate) fn remap_payload(
             }
             NodePayload::Frame(frame)
         }
+        // handle mode(ADR-0079)도 새 point id로 옮깁니다.
         NodePayload::Path(path) => {
-            let ids = path
-                .ids()
-                .iter()
-                .map(|ids| CommandIds {
-                    point: ids.point.map(|p| PathPointId(table.remap(p.0))),
-                    handles: ids.handles.map(|(h1, h2)| {
-                        (
-                            PathHandleId(table.remap(h1.0)),
-                            PathHandleId(table.remap(h2.0)),
-                        )
-                    }),
-                })
-                .collect();
-            NodePayload::Path(IdentifiedPath::new(path.data().clone(), ids).map_err(|_| {
+            NodePayload::Path(path.remapped(|id| table.remap(id)).map_err(|_| {
                 CommandError::InvalidRequest {
                     reason: "복제 path id가 path 불변식을 깨뜨립니다",
                 }
@@ -332,7 +319,7 @@ mod tests {
     use stellar_core_types::value::Vec2;
     use stellar_document::frame::FramePayload;
     use stellar_document::modifier::ModifierKind;
-    use stellar_document::path::{PathCommand, PathData, WindingRule};
+    use stellar_document::path::{HandleMode, IdentifiedPath, PathCommand, PathData, WindingRule};
     use stellar_document::test_support::semantic_snapshot::model_snapshot_json;
 
     #[test]
@@ -395,6 +382,11 @@ mod tests {
             next += 1;
             sid(next)
         });
+        // 끝 point에 handle mode(ADR-0079)를 둬 복제가 mode를 옮기는지 봅니다.
+        let end = path.point_ids()[1];
+        let path = path
+            .with_handle_modes([(end, HandleMode::Mirrored)])
+            .unwrap();
         let mut path_record = frame(21, Some(20), 0x10);
         path_record.payload = NodePayload::Path(path);
         let mut clipped = frame(22, Some(20), 0x20);
@@ -498,6 +490,13 @@ mod tests {
         for id in path_element_ids(&NodePayload::Path(path.clone())) {
             assert!(added.contains(&id));
         }
+        // handle mode는 새 point id로 옮겨집니다(ADR-0079).
+        let copied_end = path.point_ids()[1];
+        assert!(added.contains(&copied_end.0));
+        assert_eq!(
+            path.handle_modes().collect::<Vec<_>>(),
+            vec![(copied_end, HandleMode::Mirrored)]
+        );
         // 원본은 그대로.
         let NodePayload::Frame(original) = state.model().payload(sid(22)).unwrap() else {
             panic!("Frame");

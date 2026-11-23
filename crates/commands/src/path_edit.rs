@@ -316,6 +316,8 @@ mod tests {
             before,
             "{edit:?} 역"
         );
+        // semantic snapshot은 handle mode를 담지 않으므로 path payload 전체(mode 포함)도 비교합니다.
+        assert_eq!(current(&state), path(), "{edit:?} 역 payload");
         let bytes = encode_command(&command);
         assert_eq!(&bytes[..2], &0x0080u16.to_le_bytes());
         assert_eq!(decode_command(&bytes).unwrap(), command);
@@ -516,6 +518,44 @@ mod tests {
             },
             |path| assert_eq!(path.encode(), self::path().encode()),
         );
+    }
+
+    #[test]
+    fn undo_restores_handle_modes_of_deleted_and_changed_points() {
+        // mode가 있는 point를 지우거나 mode를 바꾼 뒤 Undo하면 mode까지 원래대로입니다.
+        let mut state = state();
+        let set = Command::EditPathPoint(EditPathPoint {
+            node: sid(20),
+            edit: PathEdit::SetHandleMode {
+                point: p(102),
+                mode: HandleMode::Aligned,
+            },
+        });
+        state.execute(&CommandRequest::at(&state, set)).unwrap();
+        let moded = current(&state);
+        assert_eq!(moded.handle_mode(p(102)), HandleMode::Aligned);
+        for edit in [
+            PathEdit::DeletePoint { point: p(102) },
+            PathEdit::SetHandleMode {
+                point: p(102),
+                mode: HandleMode::Mirrored,
+            },
+            PathEdit::SetHandleMode {
+                point: p(102),
+                mode: HandleMode::Independent,
+            },
+        ] {
+            let command = Command::EditPathPoint(EditPathPoint {
+                node: sid(20),
+                edit,
+            });
+            let outcome = state.execute(&CommandRequest::at(&state, command)).unwrap();
+            assert_ne!(current(&state), moded, "{edit:?}");
+            state
+                .execute(&CommandRequest::at(&state, outcome.inverse))
+                .unwrap();
+            assert_eq!(current(&state), moded, "{edit:?} 역");
+        }
     }
 
     #[test]

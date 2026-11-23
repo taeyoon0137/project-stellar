@@ -25,9 +25,7 @@ use stellar_document::fragment::plan_fragment_to_frame;
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::validate_modifier_owner;
 use stellar_document::node_kind::NodeKind;
-use stellar_document::path::{
-    path_bounds, plan_shape_to_path, IdentifiedPath, PathCommand, PathData,
-};
+use stellar_document::path::{path_bounds, plan_shape_to_path, PathCommand, PathData};
 use stellar_document::record_codec::{decode_node_record, encode_node_record};
 use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_document::shape::{
@@ -149,7 +147,8 @@ fn translate(payload: &NodePayload, offset: Vec2) -> Result<Option<NodePayload>,
             }
             PathData::new(path.data().winding(), commands)
                 .ok()
-                .and_then(|data| IdentifiedPath::new(data, path.ids().to_vec()).ok())
+                // id와 handle mode(ADR-0079)를 그대로 둡니다.
+                .and_then(|data| path.with_data(data).ok())
                 .map(NodePayload::Path)
         }
         NodePayload::Fragment(_)
@@ -661,6 +660,7 @@ mod tests {
     use stellar_document::fragment::FragmentPayload;
     use stellar_document::frame::{Clipping, CornerRadius, FramePayload};
     use stellar_document::modifier::{ModifierId, ModifierKind, ModifierStack};
+    use stellar_document::path::IdentifiedPath;
     use stellar_document::shape::RectangleParams;
     use stellar_document::test_support::semantic_snapshot::model_snapshot_json;
     use stellar_document::text::TextPayload;
@@ -788,6 +788,44 @@ mod tests {
         run(&mut state, outcome.inverse).unwrap();
         assert_eq!(encoded(&state, &ids), original);
         assert_eq!(snapshot(&state), before);
+    }
+
+    #[test]
+    fn translated_path_keeps_ids_and_handle_modes() {
+        // Fragment → Frame 변환이 자식 Path를 옮길 때 point id와 handle mode(ADR-0079)를 잃지 않습니다.
+        use stellar_document::path::{HandleMode, WindingRule};
+        let data = PathData::new(
+            WindingRule::NonZero,
+            vec![
+                PathCommand::MoveTo(v(0.0, 0.0)),
+                PathCommand::CubicTo {
+                    c1: v(1.0, 0.0),
+                    c2: v(2.0, 1.0),
+                    to: v(3.0, 1.0),
+                },
+            ],
+        )
+        .unwrap();
+        let mut n = 8_000;
+        let path = IdentifiedPath::assign(data, &mut || {
+            n += 1;
+            sid(n)
+        });
+        let end = path.point_ids()[1];
+        let path = path
+            .with_handle_modes([(end, HandleMode::Aligned)])
+            .unwrap();
+        let Ok(Some(NodePayload::Path(moved))) =
+            translate(&NodePayload::Path(path.clone()), v(5.0, -1.0))
+        else {
+            panic!("Path 이동");
+        };
+        assert_eq!(moved.ids(), path.ids());
+        assert_eq!(moved.handle_mode(end), HandleMode::Aligned);
+        assert_eq!(
+            moved.data().commands()[0],
+            PathCommand::MoveTo(v(5.0, -1.0))
+        );
     }
 
     #[test]
