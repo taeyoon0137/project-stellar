@@ -39,6 +39,7 @@ use stellar_document::frame::{Clipping, FramePayload};
 use stellar_document::image::{FitMode, ImagePayload, SamplingMode};
 use stellar_document::modifier::{ModifierEntry, ModifierPayload};
 use stellar_document::node_kind::NodeKind;
+use stellar_document::payload_metadata::{image_keys, shape_keys};
 use stellar_document::record_codec::{decode_payload, encode_payload};
 use stellar_document::records::{DocumentRecords, NodePayload, NodeRecord};
 use stellar_document::shape::{LineCap, ShapeGeometry};
@@ -539,19 +540,6 @@ fn vec2_values(value: Vec2) -> [f32; 2] {
     [value.x(), value.y()]
 }
 
-fn size_values(value: Size2) -> [f32; 2] {
-    [value.width(), value.height()]
-}
-
-fn rect_values(value: Rect) -> [f32; 4] {
-    [
-        value.origin().x(),
-        value.origin().y(),
-        value.size().width(),
-        value.size().height(),
-    ]
-}
-
 fn transform_values(value: Transform2D) -> [f32; 6] {
     let (a, b, c, d, tx, ty) = value.components();
     [a, b, c, d, tx, ty]
@@ -668,19 +656,21 @@ fn project_shape(object: &mut SemanticObject, shape: &ShapeGeometry) -> Result<(
     )?;
     match shape {
         ShapeGeometry::Rectangle(params) => {
-            put_floats(object, keys::RECT_SIZE, &size_values(params.size))?;
-            put_floats(
-                object,
-                keys::RECT_CORNER_RADIUS,
-                &quad(params.corner_radius.components()),
-            )
+            put_size(object, shape_keys::WIDTH, shape_keys::HEIGHT, params.size)?;
+            for (key, value) in shape_keys::BORDER_RADIUS_LONGHANDS
+                .into_iter()
+                .zip(quad(params.corner_radius.components()))
+            {
+                put_floats(object, key, &[value])?;
+            }
+            Ok(())
         }
-        ShapeGeometry::Ellipse(params) => {
-            put_floats(object, keys::ELLIPSE_BOUNDS, &rect_values(params.bounds))
-        }
+        ShapeGeometry::Ellipse(params) => put_bounds(object, keys::ELLIPSE_BOUNDS, params.bounds),
         ShapeGeometry::Line(params) => {
-            put_floats(object, keys::LINE_START, &vec2_values(params.start))?;
-            put_floats(object, keys::LINE_END, &vec2_values(params.end))?;
+            put_floats(object, shape_keys::X1, &[params.start.x()])?;
+            put_floats(object, shape_keys::Y1, &[params.start.y()])?;
+            put_floats(object, shape_keys::X2, &[params.end.x()])?;
+            put_floats(object, shape_keys::Y2, &[params.end.y()])?;
             let cap = match params.cap {
                 LineCap::Butt => 0,
                 LineCap::Round => 1,
@@ -689,7 +679,7 @@ fn project_shape(object: &mut SemanticObject, shape: &ShapeGeometry) -> Result<(
             put(object, keys::LINE_CAP, SemanticValue::Uint(cap))
         }
         ShapeGeometry::Polygon(params) => {
-            put_floats(object, keys::POLYGON_BOUNDS, &rect_values(params.bounds()))?;
+            put_bounds(object, keys::POLYGON_BOUNDS, params.bounds())?;
             put(
                 object,
                 keys::POLYGON_SIDES,
@@ -705,13 +695,35 @@ fn project_shape(object: &mut SemanticObject, shape: &ShapeGeometry) -> Result<(
     }
 }
 
+/// 크기를 문서 longhand key 두 경로(`width`·`height`)로 나눠 넣습니다(IX.11.3, ADR-0075 결정 1).
+fn put_size(
+    object: &mut SemanticObject,
+    width: PropertyKey,
+    height: PropertyKey,
+    size: Size2,
+) -> Result<(), SnapshotError> {
+    put_floats(object, width, &[size.width()])?;
+    put_floats(object, height, &[size.height()])
+}
+
+/// Ellipse·Polygon bounds: 크기는 문서 longhand `width`·`height`, 원점 `(x, y)`는 문서 registry key가 없어
+/// snapshot 전용 `origin_key` 한 경로입니다(IX.11.3).
+fn put_bounds(
+    object: &mut SemanticObject,
+    origin_key: PropertyKey,
+    bounds: Rect,
+) -> Result<(), SnapshotError> {
+    put_size(object, shape_keys::WIDTH, shape_keys::HEIGHT, bounds.size())?;
+    put_floats(object, origin_key, &vec2_values(bounds.origin()))
+}
+
 fn project_image(object: &mut SemanticObject, image: &ImagePayload) -> Result<(), SnapshotError> {
     put(
         object,
         keys::IMAGE_ASSET,
         SemanticValue::Id(image.asset.id()),
     )?;
-    put_floats(object, keys::IMAGE_SIZE, &size_values(image.size))?;
+    put_size(object, image_keys::WIDTH, image_keys::HEIGHT, image.size)?;
     let fit = match image.fit {
         FitMode::Fill => 0,
         FitMode::Contain => 1,
@@ -839,7 +851,9 @@ fn modifier_object(
             blur,
         } => {
             put(&mut object, m::SHADOW_COLOR, color(*c))?;
-            put_floats(&mut object, m::SHADOW_OFFSET, &vec2_values(*offset))?;
+            // 묶음 key 0x1092는 decode 전용이므로 longhand x·y로 나눕니다(IX.11.22, ADR-0075 결정 1).
+            put_floats(&mut object, m::SHADOW_OFFSET_X, &[offset.x()])?;
+            put_floats(&mut object, m::SHADOW_OFFSET_Y, &[offset.y()])?;
             put(&mut object, m::SHADOW_BLUR, finite(*blur))?;
         }
         ModifierPayload::Blur { radius } => put(&mut object, m::BLUR_RADIUS, finite(*radius))?,
@@ -1002,17 +1016,21 @@ pub(crate) mod tests {
         assert_eq!(head_snapshot.len(), 8);
         assert_eq!(index_snapshot.len(), 8);
         assert_eq!(working_snapshot.len(), 9);
-        let rect_size = PropertyPath::with_keys(sid(11), vec![keys::RECT_SIZE]);
-        let width = |s: &SemanticSnapshot| s.get(sid(11)).unwrap().property(&rect_size).cloned();
-        let floats = |w: f32, h: f32| {
-            Some(SemanticValue::Floats(vec![
-                FiniteF32::new(w).unwrap(),
-                FiniteF32::new(h).unwrap(),
-            ]))
+        // Rectangle 크기는 문서 longhand `width`·`height` 두 경로입니다(IX.11.3).
+        let value = |s: &SemanticSnapshot, key| {
+            s.get(sid(11))
+                .unwrap()
+                .property(&PropertyPath::with_keys(sid(11), vec![key]))
+                .cloned()
         };
-        assert_eq!(width(head_snapshot), floats(10.0, 20.0));
-        assert_eq!(width(index_snapshot), floats(30.0, 20.0));
-        assert_eq!(width(working_snapshot), floats(30.0, 20.0));
+        let float = |v: f32| Some(SemanticValue::Floats(vec![FiniteF32::new(v).unwrap()]));
+        assert_eq!(value(head_snapshot, shape_keys::WIDTH), float(10.0));
+        assert_eq!(value(index_snapshot, shape_keys::WIDTH), float(30.0));
+        assert_eq!(value(working_snapshot, shape_keys::WIDTH), float(30.0));
+        for snapshot in [head_snapshot, index_snapshot, working_snapshot] {
+            assert_eq!(value(snapshot, shape_keys::HEIGHT), float(20.0));
+            assert_eq!(value(snapshot, keys::RECT_SIZE), None);
+        }
         assert!(!index_snapshot.contains(sid(14)));
         assert!(working_snapshot.contains(sid(14)));
 
@@ -1298,5 +1316,59 @@ pub(crate) mod tests {
             Err(SnapshotError::DuplicateProperty { .. })
         ));
         assert!(builder.finish().is_empty());
+    }
+
+    #[test]
+    fn multi_value_fields_project_to_document_longhand_paths() {
+        // 값 여러 개를 한 경로에 담던 snapshot 전용 key와 decode 전용 묶음 key는 투영에 나오지 않습니다
+        // (IX.11.3·IX.11.22, ADR-0075 결정 1). Ellipse·Polygon 원점만 registry key가 없어 `(x, y)` 한 경로입니다.
+        let packed = [
+            keys::RECT_SIZE,
+            keys::RECT_CORNER_RADIUS,
+            keys::LINE_START,
+            keys::LINE_END,
+            keys::IMAGE_SIZE,
+            keys::frame::SIZE,
+            keys::frame::CORNER_RADIUS,
+            keys::modifier::SHADOW_OFFSET,
+        ];
+        let longhands = [
+            shape_keys::WIDTH,
+            shape_keys::HEIGHT,
+            shape_keys::X1,
+            shape_keys::Y1,
+            shape_keys::X2,
+            shape_keys::Y2,
+            image_keys::WIDTH,
+            image_keys::HEIGHT,
+            keys::modifier::SHADOW_OFFSET_X,
+            keys::modifier::SHADOW_OFFSET_Y,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for seed in 0..200 {
+            let records = random_valid_document(seed).to_records().unwrap();
+            for object in build(&records).objects() {
+                for (path, value) in object.properties() {
+                    let key = path.keys()[0];
+                    assert!(!packed.contains(&key), "seed {seed}: {path:?}");
+                    let len = match value {
+                        SemanticValue::Floats(values) => values.len(),
+                        _ => continue,
+                    };
+                    if longhands.contains(&key)
+                        || shape_keys::BORDER_RADIUS_LONGHANDS.contains(&key)
+                    {
+                        assert_eq!(len, 1, "seed {seed}: {path:?}");
+                        seen.insert(key);
+                    }
+                    if key == keys::ELLIPSE_BOUNDS || key == keys::POLYGON_BOUNDS {
+                        assert_eq!(len, 2, "원점 (x, y)만: {path:?}");
+                    }
+                }
+            }
+        }
+        for key in longhands {
+            assert!(seen.contains(&key), "random 문서에 {key:?} 투영이 없음");
+        }
     }
 }

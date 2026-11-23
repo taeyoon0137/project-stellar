@@ -154,3 +154,22 @@ Accepted (2026-11-23)
 ## Migration
 
 - 파일 migration은 없습니다. 묶음 key 참조가 있는 문서는 진단을 받고 사용자가 longhand로 다시 지정합니다.
+
+### 결정 1 보완: snapshot 투영과 묶음 key 참조 검사(IX.11.22·IX.11.3)
+
+- semantic snapshot 투영(`crates/semantic-diff/src/build.rs`)과 역투영(`records.rs`)은 값 여러 개를 한 경로에 담지
+  않습니다. Rectangle 크기는 `width`·`height`(0x0301·0x0302), 모서리는 `border-*-radius` 네 longhand(0x0303\~0x0306),
+  Line 끝점은 `x1`·`y1`·`x2`·`y2`(0x0307\~0x030a), Image 크기는 `width`·`height`(0x0602·0x0603), Ellipse·Polygon bounds
+  크기는 `width`·`height`, Shadow offset은 `shadow-offset-x`·`shadow-offset-y`(0x1094·0x1095)입니다. Ellipse·Polygon
+  원점 `(x, y)`만 registry key가 없어 snapshot 전용 경로(`ELLIPSE_BOUNDS`·`POLYGON_BOUNDS` 번호에 원점 두 값)로
+  남습니다. snapshot 전용 key `RECT_SIZE`·`RECT_CORNER_RADIUS`·`LINE_START`·`LINE_END`·`IMAGE_SIZE`는 더 투영하지
+  않고 번호를 재사용하지 않습니다. snapshot은 저장하지 않으므로 파일 migration은 없습니다.
+- 그래서 같은 Frame·Rectangle의 서로 다른 모서리, Shadow offset의 x와 y를 양쪽에서 바꾸면 3-way merge가 conflict 없이
+  합칩니다(`crates/semantic-merge/tests/longhand_merge.rs`, 컴포넌트 원본 파일 병합 test). 같은 longhand를 다르게
+  바꾸면 그 경로 하나만 conflict입니다.
+- 묶음 key 참조 진단(`bundle_key_reference`)은 `VariantOverrideSet::validate_references`의 property patch 검사가
+  부릅니다(`VariantOverrideError::BundleKeyPatch`). View Variant와 Component variant override는 같은 patch 묶음을
+  쓰므로 이 한 곳이 둘 다 덮습니다. binding target 검사는 bindings가 crate graph상 문서 crate에 의존하지 않으므로
+  `BindingContext::targets`(`TargetCheck`)로 호출자가 넘기고, `check_binding`이 type·cycle보다 먼저 부릅니다
+  (`BindingCommandError::Target`). 문서와 bindings를 함께 보는 제품 호출자는 아직 없어, 그 호출자를 만들 때 이
+  검사에 `bundle_key_reference`를 넘깁니다.

@@ -861,6 +861,7 @@ pub(crate) mod tests {
     use crate::diff::diff;
     use crate::keys;
     use crate::status::tests::partial_staged;
+    use stellar_document::payload_metadata::shape_keys;
 
     pub(crate) fn path(id: u64, key: stellar_core_types::property::PropertyKey) -> PropertyPath {
         PropertyPath::with_keys(sid(id), vec![key])
@@ -1150,7 +1151,7 @@ pub(crate) mod tests {
         }
         // 선택하지 않은 변경(modifier 60, rect 11 크기)은 들어가지 않습니다.
         assert!(!snapshot.contains(sid(60)));
-        let size = path(11, keys::RECT_SIZE);
+        let size = path(11, shape_keys::WIDTH);
         assert_eq!(
             snapshot.get(sid(11)).unwrap().property(&size),
             index.get(sid(11)).unwrap().property(&size)
@@ -1238,7 +1239,7 @@ pub(crate) mod tests {
         let (head, index) = staged_pair();
         let status = SemanticStatus::classify(&head, &index, &index);
         let staged: Vec<ChangeId> = status.staged().iter().map(SemanticChange::id).collect();
-        let a = ChangeId::property(path(11, keys::RECT_SIZE));
+        let a = ChangeId::property(path(11, shape_keys::WIDTH));
         let b = ChangeId::add(sid(14));
         assert_eq!(staged, vec![a.clone(), b.clone()]);
 
@@ -1247,7 +1248,7 @@ pub(crate) mod tests {
             build_unstage_candidate(&head, &index, &StageSelectionRequest::unstage([a.clone()]))
                 .unwrap();
         let snapshot = candidate.snapshot();
-        let size = path(11, keys::RECT_SIZE);
+        let size = path(11, shape_keys::WIDTH);
         assert_eq!(
             snapshot.get(sid(11)).unwrap().property(&size),
             head.get(sid(11)).unwrap().property(&size)
@@ -1584,7 +1585,7 @@ pub(crate) mod tests {
             ChangeId::add(sid(14)),
             ChangeId::position(sid(12)),
             ChangeId::property(path(11, keys::VISIBLE)),
-            ChangeId::property(path(11, keys::RECT_SIZE).with_index(1)),
+            ChangeId::property(path(11, shape_keys::WIDTH).with_index(1)),
             ChangeId::property(
                 PropertyPath::with_keys(sid(40), vec![keys::instance::PROPERTY_OVERRIDES])
                     .with_key_segment("a/b"),

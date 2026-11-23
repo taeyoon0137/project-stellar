@@ -330,6 +330,7 @@ pub(crate) mod tests {
     use stellar_document::definitions::{PageDefinition, ViewDefinition};
     use stellar_document::frame::FramePayload;
     use stellar_document::image::ImagePayload;
+    use stellar_document::payload_metadata::{image_keys, shape_keys};
     use stellar_document::record_codec::SubtreeRecords;
     use stellar_document::records::{DocumentRecords, NodePayload};
     use stellar_document::shape::{EllipseParams, ShapeGeometry};
@@ -407,7 +408,7 @@ pub(crate) mod tests {
                 (
                     SemanticChangeKind::SetProperty,
                     sid(11),
-                    Some(keys::RECT_SIZE.0)
+                    Some(shape_keys::WIDTH.0)
                 ),
                 (SemanticChangeKind::AddObject, sid(14), None),
             ]
@@ -435,7 +436,7 @@ pub(crate) mod tests {
         );
 
         // staged 값은 Index 기준: rect 11 크기의 이후 값이 Index 값이고, unstaged 쪽에는 없습니다.
-        let size = PropertyPath::with_keys(sid(11), vec![keys::RECT_SIZE]);
+        let size = PropertyPath::with_keys(sid(11), vec![shape_keys::WIDTH]);
         let staged_size = status
             .staged()
             .iter()
@@ -481,17 +482,14 @@ pub(crate) mod tests {
     }
 
     fn width(w: f32) -> LayerValue {
-        LayerValue::Value(SemanticValue::Floats(vec![
-            FiniteF32::new(w).unwrap(),
-            FiniteF32::new(20.0).unwrap(),
-        ]))
+        LayerValue::Value(SemanticValue::Floats(vec![FiniteF32::new(w).unwrap()]))
     }
 
     #[test]
     fn same_property_staged_then_modified_keeps_three_values() {
         // H=1, I=2, W=3.
         let status = width_layers([1.0, 2.0, 3.0]);
-        let size = PropertyPath::with_keys(sid(11), vec![keys::RECT_SIZE]);
+        let size = PropertyPath::with_keys(sid(11), vec![shape_keys::WIDTH]);
         let layers = status.property(&size).unwrap();
         assert_eq!(layers.head, width(1.0));
         assert_eq!(layers.index, width(2.0));
@@ -543,10 +541,10 @@ pub(crate) mod tests {
         // 부분 staged fixture: 14는 staged 추가, 13은 unstaged 삭제, 11은 영역별 다른 속성.
         let [head, index, working] = partial_staged().map(|r| build(&r));
         let status = SemanticStatus::classify(&head, &index, &working);
-        let size = PropertyPath::with_keys(sid(11), vec![keys::RECT_SIZE]);
+        let size = PropertyPath::with_keys(sid(11), vec![shape_keys::WIDTH]);
         let visible = PropertyPath::with_keys(sid(11), vec![keys::VISIBLE]);
         let paths: Vec<&PropertyPath> = status.properties().map(|p| &p.path).collect();
-        assert_eq!(paths, vec![&visible, &size]);
+        assert_eq!(paths, vec![&size, &visible]);
         let v = status.property(&visible).unwrap();
         assert_eq!(v.head, LayerValue::Value(SemanticValue::Bool(true)));
         assert_eq!(v.index, LayerValue::Value(SemanticValue::Bool(true)));
@@ -574,7 +572,7 @@ pub(crate) mod tests {
             LayerValue::Value(SemanticValue::Text("점".into()))
         );
         assert!(layers.is_layered());
-        let unset = PropertyPath::with_keys(sid(11), vec![keys::IMAGE_SIZE]);
+        let unset = PropertyPath::with_keys(sid(11), vec![image_keys::WIDTH]);
         assert_eq!(LayerValue::read(&head, &unset), LayerValue::Unset);
         assert!(LayerValue::Unset.canonical_eq(&LayerValue::Unset));
         assert!(!LayerValue::Unset.canonical_eq(&LayerValue::NoObject));
