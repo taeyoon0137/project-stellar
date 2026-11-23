@@ -220,3 +220,67 @@ fn staging_one_requirement_list_keeps_the_other_context_lists_as_they_were() {
         *candidate.snapshot()
     );
 }
+
+#[test]
+fn project_scope_context_lists_are_split_back_from_the_ops_projection() {
+    // 검증 기준(ADR-0138 결정 4): `project_snapshot_of`(제품 프로젝트 범위 투영)의 합집합 목록을 문서별로 되돌리고, 다시
+    // 투영하면 같은 snapshot입니다.
+    use stellar_document::component::definition::ComponentLibrary;
+    use stellar_document::context::fixtures::{sid, ComponentBuilder, SceneBuilder};
+    use stellar_document::context::set::ContextSet;
+    use stellar_semantic_diff::build::context::{
+        project_contexts_from_snapshot, COMPONENT_CONTEXT_REQUIREMENTS,
+    };
+    let one = SceneBuilder::new(sid(1), sid(2), sid(3), sid(10)).build();
+    let two = SceneBuilder::new(sid(101), sid(102), sid(103), sid(110)).build();
+    let mut library = ComponentLibrary::new();
+    ComponentBuilder::new(sid(50), "card", sid(70)).register(&mut library);
+    let mut first = ContextSet::new();
+    first.add_requirement(sid(50), sid(900));
+    let mut second = ContextSet::new();
+    second.add_requirement(sid(50), sid(910));
+    second.add_requirement(sid(51), sid(910));
+    let sources = |a: &ContextSet, b: &ContextSet| {
+        [(&one, a), (&two, b)].map(|(model, set)| {
+            let mut source = crate::diff::DocumentSource::of_model(model).unwrap();
+            source.context = set.clone();
+            source
+        })
+    };
+    let snapshot_of = |documents: &[crate::diff::DocumentSource; 2]| {
+        let inputs: Vec<_> = documents.iter().map(|d| d.input()).collect();
+        crate::diff::project_snapshot_of(&inputs, &library).unwrap()
+    };
+    let mut merged = snapshot_of(&sources(&first, &second));
+    let mut card = merged.remove(sid(50)).unwrap();
+    let path = card.path(&[COMPONENT_CONTEXT_REQUIREMENTS]);
+    card.remove_property(&path);
+    card.insert_property(
+        path,
+        stellar_semantic_diff::value::SemanticValue::Ids(vec![sid(910), sid(920)]),
+    )
+    .unwrap();
+    merged.insert(card).unwrap();
+    let back =
+        project_contexts_from_snapshot(&merged, &[(sid(1), &first), (sid(101), &second)]).unwrap();
+    assert_eq!(
+        back[&sid(1)]
+            .requirements(sid(50))
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![sid(920)]
+    );
+    assert_eq!(
+        back[&sid(101)]
+            .requirements(sid(50))
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![sid(910), sid(920)]
+    );
+    assert_eq!(
+        snapshot_of(&sources(&back[&sid(1)], &back[&sid(101)])),
+        merged
+    );
+}

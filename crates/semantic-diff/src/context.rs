@@ -299,11 +299,116 @@ pub fn context_from_snapshot(
     Ok(set)
 }
 
+/// 프로젝트 범위 snapshot(컴포넌트 library를 투영한 뒤 Context를 넣은 것)에서 문서마다 ContextSet을 되돌립니다
+/// (ADR-0138 결정 4).
+///
+/// 프로젝트 범위는 library에 있는 컴포넌트·Slot의 requirement·공개 목록을 여러 문서의 합집합 하나로 그 객체에 붙입니다
+/// (ADR-0123). 합집합에는 어느 문서의 항목인지가 없으므로, 투영하기 전 문서별 Context(`base`, 순서가 투영 순서)를
+/// 기준으로 나눕니다.
+///
+/// - key·provision과 Document 객체에 붙은 목록은 그 문서 것을 그대로 되돌립니다([`context_from_snapshot`]).
+/// - library 대상(출처가 [`Origin::ProjectComponent`]인 Component·Slot 객체) `T`의 목록 `M`: `base`에서 `T`에 목록을 둔
+///   문서는 각자 `기존 목록 ∩ M`을 갖고, `M`에서 어느 문서에도 없던 항목은 `T`에 목록을 둔 문서 모두에 더합니다.
+///   `T`에 목록을 둔 문서가 없으면 `base`의 첫 문서(투영의 기준 문서)에 둡니다.
+/// - snapshot library에 없는 대상의 `base` 목록은 그대로 둡니다. 프로젝트 범위 투영은 그런 목록(validator의 orphan)을
+///   snapshot에 넣지 않으므로 snapshot이 바꿀 수 없는 값입니다.
+///
+/// 그래서 투영을 바꾸지 않은 snapshot이면 `base` 그대로이고, 결과를 다시 투영하면 대상마다 문서별 합집합이 `M`과 같아
+/// 같은 snapshot이 됩니다. 형식이 맞지 않는 객체는 그 id와 함께 거부합니다. `base`에 없는 문서는 돌려주지 않습니다.
+pub fn project_contexts_from_snapshot(
+    snapshot: &SemanticSnapshot,
+    base: &[(StableId, &ContextSet)],
+) -> Result<std::collections::BTreeMap<StableId, ContextSet>, StableId> {
+    use std::collections::BTreeMap;
+    let mut out: BTreeMap<StableId, ContextSet> = BTreeMap::new();
+    for (document, _) in base {
+        out.insert(*document, context_from_snapshot(snapshot, *document)?);
+    }
+    let Some((anchor, _)) = base.first() else {
+        return Ok(out);
+    };
+    let library = |kind: ObjectKind, target: StableId| {
+        snapshot.get(target).is_some_and(|object| {
+            object.kind() == kind && matches!(object.origin(), Origin::ProjectComponent(_))
+        })
+    };
+    for (document, set) in base {
+        let target = out.get_mut(document).expect("위에서 넣음");
+        for (component, keys) in set.all_requirements() {
+            if !library(ObjectKind::Component, component) {
+                for key in keys {
+                    target.add_requirement(component, *key);
+                }
+            }
+        }
+        for (slot, keys) in set.all_slot_keys() {
+            if !library(ObjectKind::ComponentSlot, slot) {
+                for key in keys {
+                    target.add_slot_key(slot, *key);
+                }
+            }
+        }
+    }
+    for object in snapshot.objects() {
+        let (requirement, key) = match (object.kind(), object.origin()) {
+            (ObjectKind::Component, Origin::ProjectComponent(_)) => {
+                (true, COMPONENT_CONTEXT_REQUIREMENTS)
+            }
+            (ObjectKind::ComponentSlot, Origin::ProjectComponent(_)) => (false, SLOT_CONTEXT_KEYS),
+            _ => continue,
+        };
+        let merged: BTreeSet<StableId> = match object.property(&object.path(&[key])) {
+            None => BTreeSet::new(),
+            Some(SemanticValue::Ids(ids)) => ids.iter().copied().collect(),
+            Some(_) => return Err(object.id()),
+        };
+        let target = object.id();
+        let list_of = |set: &ContextSet| -> BTreeSet<StableId> {
+            if requirement {
+                set.requirements(target).clone()
+            } else {
+                set.slot_keys(target).clone()
+            }
+        };
+        let owners: Vec<(StableId, BTreeSet<StableId>)> = base
+            .iter()
+            .map(|(document, set)| (*document, list_of(set)))
+            .filter(|(_, list)| !list.is_empty())
+            .collect();
+        let known: BTreeSet<StableId> = owners
+            .iter()
+            .flat_map(|(_, list)| list.iter().copied())
+            .collect();
+        let added: BTreeSet<StableId> = merged.difference(&known).copied().collect();
+        let mut give = |document: StableId, members: &BTreeSet<StableId>| {
+            let set = out.get_mut(&document).expect("base 문서는 모두 out에 있음");
+            for member in members {
+                if requirement {
+                    set.add_requirement(target, *member);
+                } else {
+                    set.add_slot_key(target, *member);
+                }
+            }
+        };
+        if owners.is_empty() {
+            give(*anchor, &added);
+            continue;
+        }
+        for (document, list) in &owners {
+            let mut kept: BTreeSet<StableId> = list.intersection(&merged).copied().collect();
+            kept.extend(added.iter().copied());
+            give(*document, &kept);
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use stellar_document::component::definition::ComponentLibrary;
     use stellar_document::context::fixtures::{literal, rgb, sid, ComponentBuilder, SceneBuilder};
     use stellar_document::expressions::types::{ExpressionType, TypeSpec};
+    use stellar_document::model::DocumentModel;
 
     use super::*;
     use stellar_core_types::property::PropertyPath;
@@ -398,6 +503,143 @@ mod tests {
         assert_eq!(
             on_document[0].tail(),
             Some(&PathSegment::Key(sid(51).to_string()))
+        );
+    }
+
+    /// 프로젝트 범위 투영(`stellar_ops::diff::add_contexts`에 library를 준 것과 같은 규칙): 문서마다 key·provision,
+    /// library에 있는 대상의 목록은 모든 문서의 합집합 하나를 첫 문서 기준으로 붙이고, library에 없는 대상의 목록은
+    /// 넣지 않습니다.
+    fn project(
+        documents: &[(&DocumentModel, &ContextSet)],
+        library: &ComponentLibrary,
+    ) -> SemanticSnapshot {
+        let mut builder = SnapshotBuilder::new();
+        for (model, _) in documents {
+            builder.add_document(&model.to_records().unwrap()).unwrap();
+        }
+        builder.add_project_component_library(library).unwrap();
+        let slots: BTreeSet<StableId> = library
+            .iter()
+            .flat_map(|entry| entry.slots().map(|s| s.id.stable_id()).collect::<Vec<_>>())
+            .collect();
+        let mut members = ContextSet::new();
+        for (model, set) in documents {
+            let mut declarations = ContextSet::new();
+            for key in set.keys() {
+                declarations.insert_key(key.clone()).unwrap();
+            }
+            for provision in set.provisions() {
+                declarations.insert_provision(provision.clone()).unwrap();
+            }
+            if !declarations.is_empty() {
+                builder
+                    .add_context(model.document_id(), &declarations)
+                    .unwrap();
+            }
+            for (component, keys) in set.all_requirements() {
+                if library
+                    .get(stellar_core_types::reference::ComponentRef::new(component))
+                    .is_some()
+                {
+                    for key in keys {
+                        members.add_requirement(component, *key);
+                    }
+                }
+            }
+            for (slot, keys) in set.all_slot_keys() {
+                if slots.contains(&slot) {
+                    for key in keys {
+                        members.add_slot_key(slot, *key);
+                    }
+                }
+            }
+        }
+        if !members.is_empty() {
+            builder
+                .add_context(documents[0].0.document_id(), &members)
+                .unwrap();
+        }
+        builder.finish()
+    }
+
+    fn key(n: u64, document: u64) -> ContextKey {
+        ContextKey::new(
+            sid(n),
+            format!("k{n}"),
+            ContextScope::Document(sid(document)),
+            TypeSpec::required(ExpressionType::Color),
+            literal(n + 1, rgb(1.0, 1.0, 1.0)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn project_scope_lists_are_split_back_per_document() {
+        // 검증 기준(ADR-0138 결정 4): 프로젝트 범위 snapshot의 합집합 목록을 문서별 Context로 되돌립니다.
+        let one = SceneBuilder::new(sid(1), sid(2), sid(3), sid(10)).build();
+        let two = SceneBuilder::new(sid(101), sid(102), sid(103), sid(110)).build();
+        let mut library = ComponentLibrary::new();
+        ComponentBuilder::new(sid(50), "card", sid(70))
+            .slot(sid(60), sid(70))
+            .register(&mut library);
+        ComponentBuilder::new(sid(52), "badge", sid(72)).register(&mut library);
+        let mut first = ContextSet::new();
+        first.insert_key(key(900, 1)).unwrap();
+        first.add_requirement(sid(50), sid(900));
+        first.add_slot_key(sid(60), sid(900));
+        let mut second = ContextSet::new();
+        second.insert_key(key(910, 101)).unwrap();
+        second.add_requirement(sid(50), sid(910));
+        // library에 없는 컴포넌트의 목록(orphan)은 투영하지 않지만 문서에 남습니다.
+        second.add_requirement(sid(51), sid(910));
+        let base = [(sid(1), &first), (sid(101), &second)];
+        let snapshot = project(&[(&one, &first), (&two, &second)], &library);
+
+        // 투영을 바꾸지 않았으면 그대로입니다.
+        let back = project_contexts_from_snapshot(&snapshot, &base).unwrap();
+        assert_eq!(back[&sid(1)], first);
+        assert_eq!(back[&sid(101)], second);
+
+        // 병합 결과처럼 snapshot을 바꿉니다: card 목록에 새 key 하나, Slot 목록 비움, badge에 새 목록.
+        let mut merged = snapshot.clone();
+        let mut edit = |id: u64, key: PropertyKey, ids: Option<Vec<StableId>>| {
+            let mut object = merged.remove(sid(id)).unwrap();
+            let path = object.path(&[key]);
+            object.remove_property(&path);
+            if let Some(ids) = ids {
+                object
+                    .insert_property(path, SemanticValue::Ids(ids))
+                    .unwrap();
+            }
+            merged.insert(object).unwrap();
+        };
+        edit(
+            50,
+            COMPONENT_CONTEXT_REQUIREMENTS,
+            Some(vec![sid(900), sid(910), sid(920)]),
+        );
+        edit(60, SLOT_CONTEXT_KEYS, None);
+        edit(52, COMPONENT_CONTEXT_REQUIREMENTS, Some(vec![sid(930)]));
+        let back = project_contexts_from_snapshot(&merged, &base).unwrap();
+        let (one_back, two_back) = (&back[&sid(1)], &back[&sid(101)]);
+        // 새 항목은 그 대상에 목록을 둔 문서 모두에, 대상에 목록이 없던 항목은 첫 문서에 갑니다.
+        assert_eq!(
+            one_back.requirements(sid(50)),
+            &BTreeSet::from([sid(900), sid(920)])
+        );
+        assert_eq!(
+            two_back.requirements(sid(50)),
+            &BTreeSet::from([sid(910), sid(920)])
+        );
+        assert!(one_back.slot_keys(sid(60)).is_empty());
+        assert_eq!(one_back.requirements(sid(52)), &BTreeSet::from([sid(930)]));
+        assert!(two_back.requirements(sid(52)).is_empty());
+        assert_eq!(two_back.requirements(sid(51)), &BTreeSet::from([sid(910)]));
+        assert!(one_back.key(sid(900)).is_some() && two_back.key(sid(910)).is_some());
+        // 다시 투영하면 같은 snapshot입니다.
+        assert_eq!(
+            project(&[(&one, one_back), (&two, two_back)], &library),
+            merged
         );
     }
 }
