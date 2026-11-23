@@ -245,6 +245,7 @@ fn unconvertible_legacy_projects_are_left_untouched() {
     assert!(read_source(root).unwrap().is_none(), "원본을 쓰지 않음");
     assert!(root.join("design/current").is_file());
     assert!(!crate::cache::cache_dir(root).join("current").exists());
+    assert!(converted_marker(root).is_none(), "변환 표시도 남지 않음");
 }
 
 /// 텍스트 원본 프로젝트에서 원본 이후 cache에만 쓴 편집(Forward)이 있을 때 Git이 옛 `design/current`를 되살려도
@@ -454,4 +455,37 @@ fn converted_legacy_reaches_git_as_text_source_in_one_commit() {
         &decode_extra_documents(&files, first.document_id()).unwrap()[0],
         &second
     ));
+}
+
+/// 변환은 표시를 원본보다 먼저 씁니다. 그래서 중단(또는 동시 관찰)이 볼 수 있는 중간 상태 "표시만 있고 원본 없음"은
+/// 해가 없어야 합니다: 다음 관찰이 다시 변환하고 옛 배치는 작업 트리에 남습니다. 변환할 수 없어 멈추면 표시도 남지
+/// 않습니다(ADR-0131 결정 4).
+#[test]
+fn marker_written_before_the_source_is_harmless_when_interrupted() {
+    let temp = Temp::new("marker-first");
+    let root = &temp.0;
+    let first = document(0);
+    write_legacy(root, &[&first], None);
+    let legacy_pointer = std::fs::read(root.join("design/current")).unwrap();
+    // 원본 쓰기 직전에 멈춘 상태를 흉내 냅니다(표시만 있음).
+    let digest = crate::cache::legacy_pointer_digest(root).unwrap();
+    std::fs::create_dir_all(root.join(".stellar/cache")).unwrap();
+    std::fs::write(
+        root.join(".stellar/cache/legacy-converted"),
+        format!("stellar-legacy-converted 1\npointer {digest}\n"),
+    )
+    .unwrap();
+    assert_eq!(converted_marker(root), Some(digest));
+    let migrated = migrate_working_tree(root).unwrap();
+    assert!(migrated.converted.is_some() && migrated.held);
+    assert!(read_source(root).unwrap().is_some());
+    assert_eq!(converted_marker(root), Some(digest));
+    assert_eq!(
+        std::fs::read(root.join("design/current")).unwrap(),
+        legacy_pointer,
+        "옛 배치는 Git에 들어갈 때까지 남음"
+    );
+    // 다시 관찰해도 옛 배치를 옮기지 않습니다.
+    assert!(migrate_working_tree(root).unwrap().held);
+    assert!(root.join("design/current").is_file());
 }

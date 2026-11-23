@@ -11,9 +11,10 @@
 //!    텍스트 원본 의미로 옮깁니다(`source_v4::project::from_saved_documents`: chunk pointer 전체 소비). 옮길 수 없으면
 //!    [`CacheError::LegacyUnconvertible`]이고 작업 트리는 그대로입니다.
 //! 2. 인코딩한 파일 집합을 다시 읽은 의미(첫 문서·프로젝트 의미·추가 root 문서)가 generation과 같아야 합니다.
-//! 3. 원본을 저장 journal 한 거래로 씁니다(기대 hash = 디스크의 기존 컴포넌트 원본, 없는 파일은 없음). 다른 writer가
-//!    먼저 썼으면 journal이 거부하고 아무것도 쓰지 않습니다.
-//! 4. 옛 배치를 cache에 **복사**하고(옛 파일은 작업 트리에 둠) 원본·cache 짝(stamp)과 변환 표시를 씁니다. 옛 배치는 변환한
+//! 3. 변환 표시를 먼저 쓰고, 원본을 저장 journal 한 거래로 씁니다(기대 hash = 디스크의 기존 컴포넌트 원본, 없는 파일은
+//!    없음). 다른 writer가 먼저 썼으면 journal이 거부하고 아무것도 쓰지 않습니다(원본이 없으면 표시도 거둠). 표시가 원본보다
+//!    늦으면 그 사이 다른 관찰이 옛 배치를 작업 트리에서 옮길 수 있습니다.
+//! 4. 옛 배치를 cache에 **복사**하고(옛 파일은 작업 트리에 둠) 원본·cache 짝(stamp)을 씁니다. 옛 배치는 변환한
 //!    원본이 Git index에 들어갈 때(`cache::untrack_legacy`) 작업 트리에서 옮겨집니다. 그 전에 `git commit -a`를 해도
 //!    추적하지 않는 새 원본 대신 옛 배치가 Git에 남으므로 Git 원본이 사라지지 않습니다.
 //!
@@ -223,15 +224,28 @@ pub fn convert_legacy(root: &Path) -> Result<LegacyConversion, CacheError> {
             "텍스트 원본이 모르는 파일이 design/ 아래에 있습니다: {unknown}"
         )));
     }
-    let written = match commit_files(root, &SourceBase::of(&existing), &files) {
-        Ok(commit) => commit.written,
-        Err(SourceCommitError::Stale { paths }) => {
-            return Err(CacheError::Write(format!(
-                "변환하는 사이 다른 writer가 원본을 바꿨습니다: {}",
-                paths.join(", ")
-            )))
+    // 변환 표시는 원본보다 먼저 씁니다. 원본이 생긴 뒤 표시가 없는 순간이 있으면, 그 사이 다른 관찰(동시에 연 다른
+    // 프로세스)이나 중단 뒤의 다음 열기가 "원본이 있는 작업 트리"로 보고 옛 배치를 작업 트리에서 옮깁니다. 그러면 아직
+    // 추적하지 않는 새 원본 대신 옛 배치 삭제만 `git commit -a`에 담겨 Git 원본이 끊깁니다(ADR-0131 결정 4). 원본 없이
+    // 표시만 남은 상태는 해가 없습니다(원본이 없으면 관찰이 다시 변환하고, index 정리는 원본이 없으면 아무것도 안 함).
+    write_marker(root, pointer_digest).map_err(|e| CacheError::Write(e.to_string()))?;
+    let committed = match commit_files(root, &SourceBase::of(&existing), &files) {
+        Ok(commit) => Ok(commit.written),
+        Err(SourceCommitError::Stale { paths }) => Err(CacheError::Write(format!(
+            "변환하는 사이 다른 writer가 원본을 바꿨습니다: {}",
+            paths.join(", ")
+        ))),
+        Err(error) => Err(CacheError::Write(error.to_string())),
+    };
+    let written = match committed {
+        Ok(written) => written,
+        Err(error) => {
+            // 원본을 쓰지 못했으면 표시를 거둡니다. 다른 writer(동시 변환)가 원본을 썼으면 그 표시이므로 둡니다.
+            if matches!(read_source(root), Ok(None)) {
+                let _ = clear_converted_marker(root);
+            }
+            return Err(error);
         }
-        Err(error) => return Err(CacheError::Write(error.to_string())),
     };
 
     transfer_legacy_layout(root, LegacyTransfer::Copy, LegacyPointer::Replace)
@@ -247,7 +261,6 @@ pub fn convert_legacy(root: &Path) -> Result<LegacyConversion, CacheError> {
         },
     )
     .map_err(|e| CacheError::Write(e.to_string()))?;
-    write_marker(root, pointer_digest).map_err(|e| CacheError::Write(e.to_string()))?;
     Ok(LegacyConversion {
         manifest,
         documents: 1 + extras.len(),

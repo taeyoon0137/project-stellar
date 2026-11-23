@@ -65,14 +65,16 @@ ADR-0122 결정 3("옛 pointer는 새 pointer를 바꿈")의 작업 트리 부�
   함수를 씁니다. Forward에서 다른 root 문서는 원본의 추가 문서와 같아야 하고, 원본이 없는 Migrate는 root 문서 하나만 받습니다.
 - `cache::convert_legacy`: 작업 트리에 원본 없이 옛 배치만 있으면 옛 파일을 읽기 전용 비공개 사본(`cache::legacy_view`와
   같은 복사 함수)으로 옮겨 연 뒤, generation 전체를 원본 의미로 옮기고, 인코딩한 파일 집합을 열기와 같은 함수로 다시 읽어
-  의미가 같을 때만 저장 journal 한 거래로 씁니다(기대 hash = 기존 컴포넌트 원본, 다른 writer가 먼저 쓰면 거부). 그다음 옛 배치를
-  cache에 **복사**하고(옛 파일은 작업 트리에 둠) stamp(원본 digest·옛 manifest)와 변환 표시(`.stellar/cache/legacy-converted`,
-  옛 pointer bytes hash)를 씁니다. 바꿀 수 없으면(모르는 chunk, schema가 제품 schema가 아님, 의미 차이) 원본 쓰기 전에 멈추고
+  의미가 같을 때만 저장 journal 한 거래로 씁니다(기대 hash = 기존 컴포넌트 원본, 다른 writer가 먼저 쓰면 거부). 변환
+  표시는 원본보다 먼저 씁니다. 원본만 있고 표시가 없는 순간이 있으면 그 사이 동시 관찰이나 중단 뒤 열기가 옛 배치를 작업
+  트리에서 옮겨 결정 4가 막으려는 상태가 됩니다. 원본을 쓰지 못하면(원본이 여전히 없으면) 표시를 거둡니다. 그다음 옛 배치를
+  cache에 **복사**하고(옛 파일은 작업 트리에 둠) stamp(원본 digest·옛 manifest)를 씁니다. 변환 표시는
+  `.stellar/cache/legacy-converted`(옛 pointer bytes hash)입니다. 바꿀 수 없으면(모르는 chunk, schema가 제품 schema가 아님, 의미 차이) 원본 쓰기 전에 멈추고
   `CacheError::LegacyUnconvertible`입니다.
 - 앱 창 열기·CLI·MCP 열기(`observe`)와 semantic Git(`GitSession::migrate_cache`)이 `cache::migrate_working_tree`(=
   `LegacyLayout::Convert`)로 이 변환을 부릅니다. `stellar cache migrate --convert <프로젝트>`도 같은 함수입니다
-  (`stellar_ops::git_cache::migrate_with`). `stellar cache status`와 `--convert` 없는 `migrate`는 원본을 쓰지 않으므로 변환하지
-  않고 지금처럼 거부합니다(`LegacyLayout::Refuse`, 메시지가 `--convert`를 알림).
+  (`stellar_ops::git_cache::migrate_with`). `stellar cache status`·`rebuild`와 `--convert` 없는 `migrate`는 원본을 쓰지 않으므로
+  변환하지 않고 지금처럼 거부합니다(`LegacyLayout::Refuse`, 메시지가 `--convert`를 알림).
 
 ### 4. 옛 배치는 바꾼 원본이 Git index에 들어갈 때 옮기고, 원본이 있는 작업 트리에서 옛 pointer는 cache pointer를 바꾸지 않는다
 
