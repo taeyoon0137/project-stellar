@@ -19,7 +19,7 @@
 ## 구현 요약
 
 - `ResizeGesture::begin/update/commands/commit`: update는 `gesture_math::preview`와 같은 상자 계산이고 문서를 바꾸지 않습니다.
-- Shift 비율 유지, 명시 `aspect-ratio`가 있으면 기본 비율 유지와 Shift 일시 해제, Option 중심 기준.
+- Shift 비율 유지, `aspect-ratio`가 `auto`가 아니면(생략값은 기본값 세트로 풂) 기본 비율 유지와 Shift 일시 해제, Option 중심 기준.
 - 반대편(Option이면 중심)을 넘으면 그 축을 뒤집습니다. 단일 선택은 local 축 기준이고 고정 변의 world 위치가 남습니다.
 - 다중 선택은 공통 부모 공간의 선택 경계를 늘리고 node마다 자기 축 길이 비율로 크기를 바꿉니다(회전 node가 기울지 않음).
 - 흐름 자식은 조절한 축의 `width`·`height` 값만 씁니다(위치·layout record 불변).
@@ -45,3 +45,4 @@
 
 - IX.11.9 step 등록 뒤 `place` 쓰기와 완료 기준(`scale` 부호만 반전, inset·`translate` 보정)을 다시 판정해야 합니다.
 - 인스턴스는 다중 선택 크기 조절에서 위치만 바뀝니다.
+- 앞선 핸들 크기 조절 경로(`CanvasEdit::Resize`)는 아직 자기 저장 쓰기를 가져 이 제스처의 `place` 쓰기와 두 경로입니다. IX.11.9 때 합칩니다(ADR-0105 Consequences).

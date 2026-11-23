@@ -36,8 +36,8 @@ UI 재설계 때 정합니다(ADR-0098). ADR-0071의 캔버스 직접 조작 결
    `ResizeGesture`·`RotateGesture`·`MoveDrag`는 게시된 캔버스 scene에서 대상 기하를 시작 때 읽고, update는 문서·history를
    바꾸지 않으며, `commit`이 CommandTransaction 하나를 창 history에 기록합니다. 그래서 drag 500 update는 history 1건,
    확정하지 않은 취소(Escape)는 0건입니다.
-   - 크기 조절: 상자 계산은 핸들 미리보기와 같은 `gesture_math::preview`. 명시 `aspect-ratio`가 있으면 비율 유지가
-     기본이고 Shift가 일시 해제합니다. 반대편(Option이면 중심)을 넘으면 그 축을 뒤집습니다. 단일 선택은 핸들이 local
+   - 크기 조절: 상자 계산은 핸들 미리보기와 같은 `gesture_math::preview`. `aspect-ratio`가 `auto`가 아니면(생략값은 활성 기본값
+     세트로 풂, ADR-0082) 비율 유지가 기본이고 Shift가 일시 해제합니다. 반대편(Option이면 중심)을 넘으면 그 축을 뒤집습니다. 단일 선택은 핸들이 local
      좌표라 local 축 기준이고 고정 변의 world 위치가 남습니다. 다중 선택은 선택 경계를 늘리고 node마다 자기 축 방향
      길이 비율로 크기를 바꿉니다(회전 node가 기울지 않음). 흐름 자식은 조절한 축의 `width`·`height`만 씁니다.
    - 회전: pivot은 단일 선택이면 border box 중심, 다중 선택이면 선택 경계 중심. Shift는 단일 선택이면 결과 world 각도,
@@ -109,6 +109,9 @@ UI 재설계 때 정합니다(ADR-0098). ADR-0071의 캔버스 직접 조작 결
   행렬을 위치와 선형부로 나눕니다(ADR-0024 결정 8).
 - `app::canvas_gesture`의 몇 함수(`apply_edit`, `view_root`, `selection_roots`, `parent_of`)가 crate 안에서 보이게
   되었습니다(동작 변화 없음).
+- 앞선 핸들 크기 조절 경로(`app::canvas_gesture`의 `CanvasEdit::Resize`, ADR-0071)는 아직 자기 저장 쓰기(Frame
+  `transform`·위치 modifier 보정, Line 끝점 비율)를 가집니다. 이동만 `place`로 옮겼고, 크기 쓰기는 IX.11.9 step 등록 때
+  `place::set_size`·`place::apply_affine`으로 합칩니다.
 
 ## Compatibility
 
