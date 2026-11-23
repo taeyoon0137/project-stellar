@@ -2,7 +2,7 @@
 
 - WBS: XXIX.1.1
 - 작업명: crate graph 검사기가 target·build·dev 의존 표와 `tools/stellar-*` manifest를 읽고 ADR-0005 §8 전이 도달 금지 규칙을 적용
-- 상태: 완료 (`[x]`) — 남은 문서 절을 2026-11-23 plan-revision이 `docs/architecture/crate-dependency-graph.md`에 반영했습니다(아래 "문서 반영" 절). 재판정 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 검사기 구현과 검증은 끝났으나, 작업 지시의 "crate 의존 그래프 문서도 함께 갱신" 부분(`docs/architecture/crate-dependency-graph.md`)은 이 lane의 수정 허용 경로 밖이라 반영하지 못했습니다. 반영할 문안은 아래 "남은 위험 / 한계"에 있습니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 검토: `FORBIDDEN_REACH`에 ADR-0005 §8의 `stellar-runtime` → mcp-core 전이 도달 금지 규칙이 없습니다(아래 "검토 보완" 절). 문서 기록: 남은 문서 절을 2026-11-23 plan-revision이 `docs/architecture/crate-dependency-graph.md`에 반영했습니다(아래 "문서 반영" 절). 재판정 기록: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 검사기 구현과 검증은 끝났으나, 작업 지시의 "crate 의존 그래프 문서도 함께 갱신" 부분(`docs/architecture/crate-dependency-graph.md`)은 이 lane의 수정 허용 경로 밖이라 반영하지 못했습니다. 반영할 문안은 아래 "남은 위험 / 한계"에 있습니다.
 - 선행: 없음
 
 ## 필수 실행 환경
@@ -99,7 +99,7 @@
 
 ## 문서 반영 (2026-11-23, plan-revision)
 
-- 판정: 완료 (`[x]`). 재판정의 남은 조건이었던 문서 절을 반영했고, 코드는 바꾸지 않았습니다.
+- 판정(문서 반영 당시): 완료 (`[x]`). 재판정의 남은 조건이었던 문서 절을 반영했고, 코드는 바꾸지 않았습니다. 이 판정은 아래 "검토 보완" 절로 `[~]`가 되었습니다.
 - `docs/architecture/crate-dependency-graph.md`:
   - 첫 문단을 "허용 직접 의존과 전이 도달 금지 규칙"으로 바꾸고 두 정책 위치(`allowed_edges()`, `FORBIDDEN_REACH`)를 적었습니다.
   - "검사 범위" 절: `crates/*`·`tools/stellar-*`와 Cargo workspace member 전체, 모든 의존 표와 그 표기 형태, 제외 crate(`tools/xtask`, `benchmarks/fixtures`, `tests/integration`), 정책 표에 없는 package 거부.
@@ -107,3 +107,11 @@
   - 허용 표의 `stellar-ops` 행과 Mermaid에 `allowed_edges()`에 이미 있던 git-porcelain 간선(ADR-0080)을 더했습니다. 이 밖의 표·Mermaid 간선이 `allowed_edges()`와 같은지 스크립트로 대조했습니다.
 - 이전 보고서가 적은 "`stellar-cli`, `stellar-mcp` 행 누락"은 지금 문서에 두 행이 있어 해소된 상태입니다.
 - 실행한 검증: `cargo xtask validate-crate-graph` 종료 코드 0, `cargo xtask validate-task-report docs/task-reports/XXIX.1.1.md` 종료 코드 0.
+
+## 검토 보완 (2026-11-23, plan-revision 검토)
+
+- 판정: 부분 완료 (`[~]`).
+- 근거: ADR-0005 §8 crate 배치 표의 "전이적으로도 도달 금지" 열에는 `stellar-runtime` 행(mcp-core)이 있습니다. `tools/xtask/src/crate_graph/reach.rs`의 `FORBIDDEN_REACH`에는 runtime 규칙이 없고, 주석과 crate 의존 그래프 문서는 이 상수를 그 열의 인코딩이라고 적습니다. 행 지시의 "지정한 crate 쌍 사이의 전이 도달 금지" 가운데 한 쌍이 검사되지 않으므로 남은 범위입니다. 앞의 재판정("결함은 없습니다")은 이 차이를 보지 못했습니다.
+- 지금 상태: `cargo tree -p stellar-runtime -e normal,build,dev`에 `stellar-mcp-core`가 없어 현재 위반은 없습니다. runtime 허용 의존을 넓히는 XXIX.3.1 전에 막아야 하는 규칙입니다.
+- `[x]` 조건: `FORBIDDEN_REACH`에 `stellar-runtime` → `stellar-mcp-core` 규칙과 위반 fixture를 더하고, 문서의 "전이 도달 금지" 절 표에 그 행을 넣습니다. 이 검토는 문서만 고칠 수 있어 코드는 바꾸지 않았습니다.
+- 영향: 선행 XXIX.1.1이 `[x]`가 아니므로 XIX.9.1은 `[!]`로 되돌렸습니다(계획 1.2 규칙 4).
