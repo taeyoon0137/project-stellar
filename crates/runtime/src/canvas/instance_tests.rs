@@ -1,4 +1,5 @@
 //! ComponentInstance 캔버스 편집 fixture (XII.10.34).
+#![cfg(test)]
 
 use super::*;
 use crate::canvas::select_fixtures::{nested, nested_library, record};
