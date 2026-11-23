@@ -20,6 +20,7 @@
 
 - 구조 의존: 새 Frame 아래로 기존 node를 옮긴 뒤 위치 변경만 stage하면 `CompanionRequired`(새 Frame 추가 포함)이고 index bytes는 그대로입니다. 필수가 아닌 승인은 `UnexpectedApproval`입니다. 승인하면 성공하고 재검증을 통과합니다.
 - 컴포넌트 의존: 새 컴포넌트 원본과 그 인스턴스를 배치한 View에서 `generation`만 stage하면 `CompanionRequired`(단위 `file:design/components/...`, 이유: 정의 id)입니다. 승인하면 두 단위가 staged입니다. 정의 파일만 unstage하면 `generation` 동반이 필요합니다. commit은 경고 없이 성공합니다.
+- 정의 삭제: 작업 트리에서 정의와 인스턴스를 함께 지운 뒤 정의 파일만 stage해도 `generation` 동반이 필요합니다(오류가 아니라 승인 목록).
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)
 
@@ -34,11 +35,12 @@
 |---|---|
 | 구조 의존 차단 → 승인 후 성공 (`moving_into_new_frame_requires_approval_of_the_addition`) | 통과 |
 | 컴포넌트 정의 동반 차단 → 승인 후 성공, unstage 동반 (`component_definition_is_a_required_companion_unit_not_auto_included`) | 통과 |
+| 작업 트리에서 정의와 인스턴스를 함께 지운 뒤 정의 파일만 stage하면 `generation` 동반 요구 → 승인 후 경고 없이 commit (`staging_definition_removal_requires_generation_companion_not_dangling_error`) | 통과 |
 | CLI: `stage generation` 종료 코드 1 `companion-required`, `--with`로 승인 후 commit (`companion_component_is_listed_and_included_only_with_approval`) | 통과 |
 
 ## 테스트
 
-- 위 검사 표의 테스트는 `cargo test -p stellar-runtime --lib staging`(17개)과 `cargo test -p stellar-cli --test git`(4개)에 포함되며 모두 통과했습니다.
+- 위 검사 표의 테스트는 `cargo test -p stellar-runtime --lib staging`(19개)과 `cargo test -p stellar-cli --test git`(4개)에 포함되며 모두 통과했습니다.
 
 ## 성능
 

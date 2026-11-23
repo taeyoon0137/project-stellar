@@ -34,7 +34,7 @@
 
 ## 테스트
 
-- 위 검사 표의 테스트는 `cargo test -p stellar-runtime --lib staging`(17개)과 `cargo test -p stellar-cli --test git`(4개)에 포함되며 모두 통과했습니다.
+- 위 검사 표의 테스트는 `cargo test -p stellar-runtime --lib staging`(19개)과 `cargo test -p stellar-cli --test git`(4개)에 포함되며 모두 통과했습니다.
 
 ## 성능
 
