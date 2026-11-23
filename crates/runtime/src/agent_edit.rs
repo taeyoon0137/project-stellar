@@ -58,13 +58,15 @@ const CLOSE_ENTRY_ID: CommandId = CommandId::from_bytes([
 /// 창 하나의 에이전트 편집 상태(창 메모리 전용).
 #[derive(Debug, Default)]
 pub struct WindowAgentEdit {
-    sessions: AgentEditSessions,
-    provenance: AgentChangeProvenance,
+    pub(crate) sessions: AgentEditSessions,
+    pub(crate) provenance: AgentChangeProvenance,
     labels: AgentEntryLabels,
-    permissions: PermissionStore,
+    pub(crate) permissions: PermissionStore,
     leases: Option<AgentEditLeases>,
     /// lease 조정 디렉터리(없으면 OS 사용자 데이터의 공용 잠금 디렉터리).
     lock_dir: Option<PathBuf>,
+    /// 앱이 시작한 세션(agent-host AgentSession)과 편집 세션 id 대응(ADR-0124 결정 1).
+    pub(crate) hosted: crate::agent_session::HostedSessions,
 }
 
 impl WindowAgentEdit {
@@ -89,6 +91,11 @@ impl WindowAgentEdit {
     /// 에이전트 history 항목 이름표(읽기).
     pub fn labels(&self) -> &AgentEntryLabels {
         &self.labels
+    }
+
+    /// 앱 시작 세션 표(읽기).
+    pub fn hosted(&self) -> &crate::agent_session::HostedSessions {
+        &self.hosted
     }
 
     /// 권한 저장소(읽기).
@@ -145,6 +152,8 @@ pub enum AgentEditError {
     Revert(RevertFlowError),
     /// 출처 색인 실패.
     Provenance(ProvenanceError),
+    /// 앱 시작 세션 연결 실패(ADR-0124 결정 1).
+    Link(crate::agent_session::LinkError),
 }
 
 impl std::fmt::Display for AgentEditError {
@@ -155,6 +164,7 @@ impl std::fmt::Display for AgentEditError {
             AgentEditError::Session(e) => write!(f, "{e}"),
             AgentEditError::Revert(e) => write!(f, "{e}"),
             AgentEditError::Provenance(e) => write!(f, "{e}"),
+            AgentEditError::Link(e) => write!(f, "{e}"),
         }
     }
 }
@@ -524,6 +534,20 @@ impl<'a> AgentWindow<'a> {
         let active: Vec<AgentSessionId> = self.agent.sessions.active_ids();
         let mut reports = Vec::new();
         for id in active {
+            // 앱 시작 세션은 AgentSession에 사용자 중지를 넣어 프로세스 종료 효과도 함께 냅니다.
+            if let Some(host) = self.agent.hosted.host_of(id) {
+                if let Ok(report) = self.host_event(
+                    host,
+                    stellar_agent_host::session::SessionEvent::UserStop,
+                    CLOSE_ENTRY_ID,
+                    now_ms,
+                ) {
+                    reports.extend(report.ended.map(|r| *r));
+                }
+                if !self.agent.sessions.is_active(id) {
+                    continue;
+                }
+            }
             if let Ok(report) = self.end(id, EndReason::UserStopped, CLOSE_ENTRY_ID, now_ms) {
                 reports.push(report);
             }

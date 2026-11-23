@@ -301,10 +301,13 @@ fn run(window: &mut AgentWindow<'_>, prepared: Prepared) -> Result<AgentReply, A
             session,
             reason,
             entry_id,
-        } => window
-            .end(session, reason, entry_id, monotonic_ms())
-            .map(|report| AgentReply::Ended(Some(Box::new(report))))
-            .map_err(edit),
+        } => {
+            let now = monotonic_ms();
+            let report = window.end(session, reason, entry_id, now).map_err(edit)?;
+            // 앱 시작 세션이면 AgentSession 상태도 맞춥니다(ADR-0124 결정 1).
+            window.notify_host_ended(&report, now);
+            Ok(AgentReply::Ended(Some(Box::new(report))))
+        }
     }
 }
 

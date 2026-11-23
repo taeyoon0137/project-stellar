@@ -89,6 +89,10 @@ pub enum EndReason {
     LeaseConflict,
     /// 사용자의 lease 해제.
     UserReleasedLease,
+    /// CLI가 보고한 사용 한도(앱 시작 세션, ADR-0124 결정 1).
+    UsageLimitReported,
+    /// CLI가 보고한 인증 오류(앱 시작 세션, ADR-0124 결정 1).
+    AuthErrorReported,
 }
 
 impl EndReason {
@@ -103,6 +107,8 @@ impl EndReason {
             EndReason::TrustRevoked => "trust-revoked",
             EndReason::LeaseConflict => "lease-conflict",
             EndReason::UserReleasedLease => "user-released-lease",
+            EndReason::UsageLimitReported => "usage-limit",
+            EndReason::AuthErrorReported => "auth-error",
         }
     }
 }

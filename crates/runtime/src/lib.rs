@@ -50,6 +50,10 @@ pub mod agent_edit;
 
 /// 앱 Agent Host·IPC I/O 스레드의 코어: 검증한 에이전트 요청을 낮은 priority로 document thread에 넣음 (XXIX.3.4, ADR-0112).
 pub mod agent_io;
+
+/// 앱이 시작한 에이전트 세션(agent-host AgentSession)과 창 에이전트 편집 세션의 연결 (XXIX.3.1, ADR-0124).
+pub mod agent_session;
+
 /// 열린 창의 외부 변경 semantic reconciliation (XIII.3.4, ADR-0110).
 pub mod reconcile;
 

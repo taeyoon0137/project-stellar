@@ -250,3 +250,24 @@ fn confirmations_are_independent() {
         Err(PermissionError::UnknownRequest(RequestId(999)))
     );
 }
+
+#[test]
+fn lowering_the_mode_revokes_only_the_named_permissions() {
+    // ADR-0124 결정 1: agent-host `RevokePermissions`는 그 권한의 확인만 버리고 첫 연결 승인과 다른 권한은 둡니다.
+    let key = key(30);
+    let mut store = approved_store(&key);
+    approve(&mut store, &key, Permission::Apply);
+    approve(&mut store, &key, Permission::Propose);
+    assert_eq!(store.revoke(&key, &[Permission::Apply]), 1);
+    assert_eq!(
+        store.confirmation(&key, Permission::Apply),
+        Confirmation::NotRequested
+    );
+    assert!(matches!(
+        store.confirmation(&key, Permission::Propose),
+        Confirmation::Approved(_)
+    ));
+    assert_eq!(store.connection(&key), Some(ConnectionApproval::Approved));
+    assert_eq!(store.revoke(&key, &[Permission::Apply]), 0);
+    assert_eq!(store.revoke(&self::key(31), &[Permission::Propose]), 0);
+}
