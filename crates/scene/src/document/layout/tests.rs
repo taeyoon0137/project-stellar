@@ -827,3 +827,63 @@ fn flow_document_edit_performance_with_20000_nodes() {
         samples[1].1
     );
 }
+
+#[test]
+fn legacy_layout_mode_toggle_on_a_flow_container_stays_equal_to_a_full_rebuild() {
+    // 흐름 컨테이너 11에 옛 `layout_mode`를 걸면 자식이 layout 입력에서 빠지고, 풀면 다시 흐름 자식으로 들어갑니다.
+    let mut state = DocumentState::new(flex_model());
+    let mut built =
+        document_scene_source(state.model(), sid(10), SceneSourceOptions::default()).unwrap();
+    let (mut scene, _) =
+        IncrementalScene::build(built.source.clone(), state.revision(), &clock()).unwrap();
+    let layout_mode = |value| {
+        Command::SetProperty(SetProperty {
+            node: sid(11),
+            key: frame_keys::LAYOUT_MODE,
+            value: PropertyValue::OptionalLayoutRef(value),
+        })
+    };
+    apply_and_compare(
+        &mut state,
+        &mut built,
+        &mut scene,
+        layout_mode(Some(sid(99))),
+    );
+    assert!(built.layout().session().unwrap().node(sid(21)).is_none());
+    apply_and_compare(&mut state, &mut built, &mut scene, layout_mode(None));
+    assert!(built.layout().session().unwrap().node(sid(21)).is_some());
+    assert_eq!(transform_of(&built, 22), translate(65., 0.));
+    assert_eq!(built.layout().full_rebuilds(), 0);
+}
+
+#[test]
+fn position_and_container_display_edits_stay_equal_to_a_full_rebuild() {
+    // 흐름 자식을 absolute로 빼고 inset을 주고, 컨테이너 display를 block·grid로 바꿔도 증분 결과가 같습니다.
+    let mut state = DocumentState::new(flex_model());
+    let mut built =
+        document_scene_source(state.model(), sid(10), SceneSourceOptions::default()).unwrap();
+    let (mut scene, _) =
+        IncrementalScene::build(built.source.clone(), state.revision(), &clock()).unwrap();
+    for command in [
+        set_layout_command(22, "position", "absolute"),
+        set_layout_command(22, "left", "7px"),
+    ] {
+        apply_and_compare(&mut state, &mut built, &mut scene, command);
+    }
+    assert_eq!(
+        built.layout().rule(state.model(), sid(22)),
+        PlacementRule::Layout
+    );
+    let (_, _, _, _, x, _) = transform_of(&built, 22).components();
+    assert_eq!(x, 7.0);
+    // 22가 흐름에서 빠져 23이 21 바로 뒤로 당겨집니다.
+    assert_eq!(transform_of(&built, 23), translate(68., 4.));
+    for command in [
+        set_layout_command(11, "display", "block"),
+        set_layout_command(12, "position", "relative"),
+        set_layout_command(11, "display", "grid"),
+    ] {
+        apply_and_compare(&mut state, &mut built, &mut scene, command);
+    }
+    assert_eq!(built.layout().full_rebuilds(), 0);
+}

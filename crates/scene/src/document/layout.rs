@@ -40,6 +40,7 @@ use stellar_core_types::value::{Length, Size2, Transform2D};
 use stellar_document::component::definition::ComponentLibrary;
 use stellar_document::component::instance::placed_free_frame;
 use stellar_document::css::style_defaults::{resolve, FlatSet};
+use stellar_document::frame::keys as frame_keys;
 use stellar_document::layout_record::{payload_size, LayoutLonghand, LayoutValue};
 use stellar_document::model::DocumentModel;
 use stellar_document::node_kind::NodeKind;
@@ -715,8 +716,13 @@ impl DocumentLayout {
                 }
                 hosts.insert(id);
             }
-            // container longhand·구조 변경은 자식 배치 규칙(흐름 여부)을 바꿀 수 있습니다.
-            let container = keys.is_none_or(|keys| keys.iter().any(|k| is_container_key(*k)));
+            // container longhand·구조 변경은 자식 배치 규칙(흐름 여부)을 바꿀 수 있습니다. Frame의 옛 `layout_mode`
+            // 변경은 자식이 layout 입력에 들어가는지를 바꿉니다([`lays_out_children`]).
+            let frame = matches!(payload, NodePayload::Frame(_));
+            let container = keys.is_none_or(|keys| {
+                keys.iter()
+                    .any(|k| is_container_key(*k) || (frame && *k == frame_keys::LAYOUT_MODE.0))
+            });
             if container {
                 if let Some(node) = session.node(id) {
                     build.extend(node.children.iter().map(|c| c.id));
