@@ -76,6 +76,10 @@ Accepted (2026-11-23). engine lane `agent-edit-crate`의 결정입니다. 계획
    - 검증한 요청은 `Command` lane에 넣습니다(사용자 입력 `Input`보다 늦게 처리). `Background`는 넘칠 때 밀어내므로 쓰지 않습니다.
    - 에이전트 요청은 처리 전 요청 수 상한(기본 64, `Command` lane 기본 용량 1024보다 작음)을 따로 둡니다. 상한·lane·수신함이
      차면 `Busy`로 바로 거부하고 이미 접수한 요청은 버리지 않습니다. 에이전트가 사용자 command 자리를 다 쓰지 못합니다.
+   - proposal의 `base_revision`(저장 generation 기준)은 document thread에서 창이 열어 둔 저장 generation
+     (`agent_edit::project_revision`)과 `DecodedProposal::check_base`로 대조합니다(ADR-0093 Consequences "대조는 앱이 합니다").
+     다르면 대기로 두지 않고 `AttachedEditError::StaleBase`(결과 종류 `Stale`)로 거부합니다. headless `stellar apply`의
+     `BaseRevisionMismatch`와 같은 비교입니다.
    - document thread에서는 세션 등록, lease 요청(승인 대기), 제안 대기, 완료, 연결 종료, 종료 절차만 합니다. 문서 적용은 사용자가
      승인한 뒤의 `apply_proposal`입니다.
 

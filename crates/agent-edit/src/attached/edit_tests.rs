@@ -140,6 +140,28 @@ fn proposal_uses_closed_enum_and_lease_origin() {
 }
 
 #[test]
+fn stale_base_revision_is_refused() {
+    // ADR-0093 Consequences: attached proposal의 base_revision(저장 generation 기준)은 앱이 창의 generation과 대조합니다.
+    let decoded = decode_proposal(&request(sid(1), rename(14))).unwrap();
+    assert_eq!(decoded.check_base(ProjectRevision::Unsaved), Ok(()));
+    let saved = ProjectRevision::Saved {
+        generation: 2,
+        manifest_hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+            .parse()
+            .unwrap(),
+    };
+    let error = decoded.check_base(saved).unwrap_err();
+    assert_eq!(
+        error,
+        AttachedEditError::StaleBase {
+            expected: ProjectRevision::Unsaved,
+            found: saved,
+        }
+    );
+    assert_eq!(error.kind(), ResultKind::Stale);
+}
+
+#[test]
 fn preview_has_semantic_diff_and_validation_without_changing_state() {
     // 검증 기준(XIX.5.3): preview 전후 revision 동일.
     let state = state();

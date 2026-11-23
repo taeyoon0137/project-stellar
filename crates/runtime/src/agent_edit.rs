@@ -42,6 +42,7 @@ use stellar_commands::id::CommandId;
 use stellar_commands::lock::lease::{LeaseId, LeaseTable};
 use stellar_commands::transaction::CommandTransaction;
 use stellar_history::agent::{AgentEntryLabels, WindowAgentHistory};
+use stellar_ops::revision::ProjectRevision;
 use stellar_ops::validate::Definitions;
 
 use crate::app::{AppRuntime, JobPublisher, WindowSessionHandle};
@@ -530,6 +531,17 @@ impl<'a> AgentWindow<'a> {
         self.agent.provenance.close_window();
         reports
     }
+}
+
+/// 창이 열어 둔 저장 generation의 프로젝트 revision(`stellar_ops::revision` 표기, 저장한 적 없으면 `g0`). 에이전트
+/// proposal의 `base_revision`을 이 값과 대조합니다(ADR-0093 Consequences, ADR-0112 결정 5).
+pub fn project_revision(session: &ProjectWindowSession) -> ProjectRevision {
+    session
+        .loaded_generation()
+        .map_or(ProjectRevision::Unsaved, |loaded| ProjectRevision::Saved {
+            generation: loaded.manifest.generation,
+            manifest_hash: loaded.manifest_hash,
+        })
 }
 
 /// runtime 단조 시각(ms, 프로세스 안에서만 비교). 세션 시작·종료 시각과 진단 duration에 씁니다.

@@ -35,9 +35,9 @@ fn command_id(n: u64) -> CommandId {
     CommandId::from_stable_id(StableId::new_v7(n, 0x0b0b, n))
 }
 
-fn rename(document: StableId, node: u64, name: &str) -> ApplyRequest {
+fn rename(base: ProjectRevision, document: StableId, node: u64, name: &str) -> ApplyRequest {
     ApplyRequest {
-        base_revision: ProjectRevision::Unsaved,
+        base_revision: base,
         document,
         commands: vec![CommandInput::Rename {
             node: sid(node),
@@ -95,6 +95,17 @@ fn block_document_thread(app: &AppRuntime) -> mpsc::Sender<()> {
         .unwrap();
     running.recv_timeout(WAIT).unwrap();
     release
+}
+
+/// 창이 열어 둔 저장 generation revision(에이전트가 읽은 기준).
+fn base(app: &App) -> ProjectRevision {
+    let mut ticket = app
+        .app
+        .with_agent_edit(app.window, |agent| {
+            crate::agent_edit::project_revision(agent.session())
+        })
+        .unwrap();
+    ticket.wait_timeout(WAIT).unwrap().unwrap().unwrap()
 }
 
 fn revision(app: &App) -> DocumentRevision {
@@ -176,17 +187,44 @@ fn io_thread_queues_validated_requests_without_writing_the_document() {
             session: session(),
             lease: lease(),
             id: command_id(2),
-            request: rename(sid(77), 11, "x"),
+            request: rename(base(&f), sid(77), 11, "x"),
         }),
         Err(AgentIoError::Invalid(_))
     ));
+    // 창이 열어 둔 저장 generation과 다른 기준의 proposal은 대기로 두지 않고 Stale로 거부합니다.
+    let saved = base(&f);
+    assert_ne!(
+        saved,
+        ProjectRevision::Unsaved,
+        "저장된 fixture 프로젝트입니다"
+    );
+    let stale = send(AgentRequest::Propose {
+        session: session(),
+        lease: lease(),
+        id: command_id(5),
+        request: rename(ProjectRevision::Unsaved, sid(1), 11, "x"),
+    });
+    let Err(AgentIoError::Invalid(error)) = stale else {
+        panic!("{stale:?}");
+    };
+    assert_eq!(
+        error,
+        stellar_agent_edit::attached::edit::AttachedEditError::StaleBase {
+            expected: ProjectRevision::Unsaved,
+            found: saved,
+        }
+    );
+    assert_eq!(
+        error.kind(),
+        stellar_agent_edit::agent_protocol::outcome::ResultKind::Stale
+    );
     // 올바른 proposal은 승인 대기로 들어가고 문서는 그대로입니다.
     let before = revision(&f);
     let queued = send(AgentRequest::Propose {
         session: session(),
         lease: lease(),
         id: command_id(3),
-        request: rename(sid(1), 11, "에이전트"),
+        request: rename(saved, sid(1), 11, "에이전트"),
     });
     let Ok(AgentReply::Queued(proposal)) = queued else {
         panic!("{queued:?}");

@@ -13,6 +13,8 @@
 //! - **busy**: 에이전트 요청은 처리 전 요청 수 상한([`DEFAULT_IN_FLIGHT_LIMIT`])을 따로 둡니다. 상한에 닿거나 queue
 //!   lane이 차면 [`AgentIoError::Busy`]로 바로 거부합니다(기다리거나 이미 접수한 요청을 버리지 않음). 상한이 lane
 //!   용량보다 작아서 에이전트 요청이 사용자 command 자리를 다 쓰지 못합니다.
+//! - **기준 revision**: proposal의 `base_revision`은 document thread에서 창이 열어 둔 저장 generation
+//!   ([`crate::agent_edit::project_revision`])과 대조하고, 다르면 대기로 두지 않고 거부합니다(ADR-0093 Consequences).
 //! - **document thread 안 작업**: 제안은 승인 대기로 두기만 합니다(문서는 사용자가 승인한 뒤
 //!   [`crate::agent_edit::AgentWindow::apply_proposal`]이 바꿈). lease 요청은 승인 대기로 두고 잠그지 않습니다.
 //!
@@ -35,7 +37,7 @@ use stellar_commands::lock::lease::LeaseId;
 use stellar_ops::apply::ApplyRequest;
 
 use crate::agent_edit::{
-    monotonic_ms, submit_window_job, AgentEditError, AgentJobError, AgentWindow,
+    monotonic_ms, project_revision, submit_window_job, AgentEditError, AgentJobError, AgentWindow,
 };
 use crate::app::{AppRuntime, JobPublisher, WindowSessionHandle};
 use crate::command_queue::SubmitOptions;
@@ -128,7 +130,8 @@ pub enum AgentIoError {
     Stopped,
     /// 열려 있지 않은 창 session입니다.
     UnknownWindow(WindowSessionHandle),
-    /// proposal을 닫힌 enum command로 바꿀 수 없거나 이 창 문서의 것이 아닙니다.
+    /// proposal을 닫힌 enum command로 바꿀 수 없거나, 이 창 문서의 것이 아니거나, `base_revision`이 창이 열어 둔
+    /// 저장 generation과 다릅니다(`AttachedEditError::StaleBase`).
     Invalid(AttachedEditError),
     /// 세션·lease 절차가 거부했습니다.
     Edit(AgentEditError),
@@ -271,6 +274,9 @@ fn run(window: &mut AgentWindow<'_>, prepared: Prepared) -> Result<AgentReply, A
             id,
             proposal,
         } => {
+            proposal
+                .check_base(project_revision(window.session()))
+                .map_err(AgentIoError::Invalid)?;
             let state = window
                 .session()
                 .document()

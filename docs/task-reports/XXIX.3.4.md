@@ -22,6 +22,7 @@
 - **이 스레드의 검증**: proposal은 `decode_proposal`(`stellar apply`와 같은 `decode_commands`)로 닫힌 enum command가 된 뒤에만 document thread에 들어갑니다. 바꿀 수 없으면 넣지 않고 `Invalid`로 거부합니다.
 - **priority**: 검증한 요청은 XII.1.2 `Command` lane에 들어가 사용자 입력(`Input`) 뒤에 처리됩니다. `Background` lane은 넘칠 때 오래된 항목을 밀어내므로 쓰지 않습니다.
 - **busy**: 에이전트 요청은 처리 전 요청 수 상한(기본 64)을 따로 둡니다. `Command` lane 기본 용량 1024보다 작아 사용자 command 자리를 다 쓰지 못합니다. 상한, lane, 수신함 중 하나가 차면 `Busy`로 바로 거부하고 이미 접수한 요청은 버리지 않습니다. 처리하거나 버린 job은 자리를 돌려줍니다(drop guard).
+- **기준 revision**: proposal의 `base_revision`은 document thread에서 창이 열어 둔 저장 generation과 대조합니다. 다르면 대기로 두지 않고 `StaleBase`(결과 종류 `Stale`)로 거부합니다(ADR-0093 Consequences, ADR-0112 결정 5).
 - **document thread 안**: 세션 등록, lease 요청(승인 대기, 잠그지 않음), 제안 대기(문서 그대로), 완료, 연결 종료, 종료 절차만 합니다. 문서 적용은 사용자가 승인한 뒤 `AgentWindow::apply_proposal`입니다.
 - 스레드는 document thread 처리를 기다리지 않고 접수 결과(ticket 또는 거부)를 돌려줘 다음 요청을 바로 받습니다.
 
@@ -36,6 +37,7 @@
 |---|---|---|
 | 스레드는 문서를 쓰지 않음 | `io_thread_queues_validated_requests_without_writing_the_document` | 통과(제안 대기 전후 revision 같음, 승인 뒤에만 바뀜) |
 | 검증 실패는 queue에 넣지 않음 | 같은 test(빈 proposal은 스레드에서 `Invalid`) | 통과 |
+| 기준 revision이 다른 proposal은 대기로 두지 않음 | 같은 test(`StaleBase`), `stale_base_revision_is_refused` | 통과 |
 | 사용자 입력보다 낮은 priority | `agent_requests_run_after_user_input` | 통과(입력 job이 먼저 실행) |
 | 넘치면 busy | `in_flight_limit_returns_busy_without_waiting` | 통과(기다리지 않고 거부, 접수한 요청은 처리, 자리 반환) |
 | 20만 node 문서 lease·batch trace에서 단일 점유와 입력 지연 증가가 예산 이내 | 없음 | 측정 안 함 |
