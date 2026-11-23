@@ -30,6 +30,8 @@ mod image;
 pub mod scene_source;
 pub use image::image_placement;
 pub(crate) mod shape;
+/// 캔버스 이동·크기 단위와 핸들 숨김 기준 (XII.10.2, ADR-0104).
+pub mod tool_units;
 
 /// painter 순서의 사각형 하나. parent는 투명한 Fragment를 펼친 뒤의 가장 가까운 Frame입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
