@@ -559,9 +559,7 @@ fn resolve_layout(
     let payload = model.payload(node)?;
     let set = match snapshot.style_defaults() {
         Ok(set) => set,
-        Err(e) => {
-            return Some(Err(LayoutUnavailable::StyleDefaults { code: e.code() }))
-        }
+        Err(e) => return Some(Err(LayoutUnavailable::StyleDefaults { code: e.code() })),
     };
     let Some(resolved) = resolve(set, payload, model.layout_record(node)) else {
         return Some(Err(LayoutUnavailable::NoBox));
@@ -1099,7 +1097,10 @@ mod tests {
             assert_eq!(layout.style_defaults, "css");
             assert_eq!(layout.class, "frame");
             assert_eq!(layout.values.len(), LayoutLonghand::ALL.len());
-            assert_eq!(source(&layout, "display"), ("flex".into(), "explicit".into()));
+            assert_eq!(
+                source(&layout, "display"),
+                ("flex".into(), "explicit".into())
+            );
             assert_eq!(
                 source(&layout, "flex-shrink"),
                 ("1".into(), "default(css)".into())
@@ -1156,7 +1157,10 @@ mod tests {
                 source(&layout, "flex-direction"),
                 ("column".into(), "default(react-native)".into())
             );
-            assert_eq!(source(&layout, "display"), ("flex".into(), "explicit".into()));
+            assert_eq!(
+                source(&layout, "display"),
+                ("flex".into(), "explicit".into())
+            );
         }
 
         #[test]
