@@ -8,6 +8,8 @@
 
 /// 텍스트 asset catalog(V.10.9).
 pub mod catalog;
+/// Component Context 원본(XXX.7, ADR-0099).
+pub mod context;
 /// CSS 값 문법.
 pub(crate) mod css;
 /// registry 기반 파일 키.

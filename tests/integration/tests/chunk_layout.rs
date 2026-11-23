@@ -221,7 +221,13 @@ fn load_from_memory(
     for (chunk_id, (_, payload)) in chunks {
         memory.insert(*chunk_id, payload.clone());
     }
-    let manifest = serialize_document(model).expect("직렬화").manifest;
+    let serialized = serialize_document(model).expect("직렬화");
+    // 무작위 command에 Context 편집(XXX.7.8)이 있어 manifest가 context-set chunk를 가리킬 수 있습니다. 이 시험이 나누는
+    // 것은 subtree chunk뿐이므로 context-set chunk는 직렬화 결과를 그대로 넣습니다.
+    if let Some(context) = &serialized.context {
+        memory.insert(context.chunk_id, context.payload.clone());
+    }
+    let manifest = serialized.manifest;
     load_document(&manifest.payload, &mut memory)
         .expect("chunk model 로드")
         .model

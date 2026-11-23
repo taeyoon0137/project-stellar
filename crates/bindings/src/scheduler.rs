@@ -29,6 +29,7 @@ use stellar_expressions::types::TypeSpec;
 use stellar_expressions::vm::EvalLimits;
 
 use crate::binding::BindingSet;
+use crate::context::{route_node, ContextRoute};
 use crate::graph::{
     BindingCycle, DependencyGraph, DependencyNode, GraphBuildError, NodeIndex, Producer,
     ProducerRecord,
@@ -149,17 +150,25 @@ pub struct BindingEvaluator {
     rank: Vec<u32>,
     topological: Vec<NodeIndex>,
     limits: EvalLimits,
+    /// producer별 Context 경로표(XXX.7.3, ADR-0099 결정 3). 없으면 `Context(K)`는 key node입니다.
+    routes: Vec<Option<ContextRoute>>,
 }
+
+/// Context 경로표로 소비 binding을 해석 결과에 잇는 생성·재경로(XXX.7.3·XXX.7.6).
+#[path = "context_scheduler.rs"]
+mod context_scheduler;
+pub use context_scheduler::RouteChange;
 
 /// graph node 값을 표현식 참조 값으로 보는 view.
 struct ValueView<'a> {
     graph: &'a DependencyGraph,
     values: &'a [NodeValue],
+    route: Option<&'a ContextRoute>,
 }
 
 impl ReferenceValues for ValueView<'_> {
     fn reference_value(&self, target: &ReferenceTarget) -> Option<Option<TypedValue>> {
-        let index = self.graph.index_of(&DependencyNode::from_target(target))?;
+        let index = self.graph.index_of(&route_node(self.route, target))?;
         self.values[index.get()].as_ref().ok().cloned()
     }
 }
@@ -168,11 +177,12 @@ impl ReferenceValues for ValueView<'_> {
 struct TypeView<'a> {
     graph: &'a DependencyGraph,
     types: &'a [Option<TypeSpec>],
+    route: Option<&'a ContextRoute>,
 }
 
 impl ReferenceTypes for TypeView<'_> {
     fn reference_type(&self, target: &ReferenceTarget) -> Option<TypeSpec> {
-        let index = self.graph.index_of(&DependencyNode::from_target(target))?;
+        let index = self.graph.index_of(&route_node(self.route, target))?;
         self.types[index.get()]
     }
 }
@@ -263,6 +273,17 @@ impl BindingEvaluator {
         sources: &dyn SourceInputs,
         limits: EvalLimits,
     ) -> Result<BindingEvaluator, SchedulerError> {
+        BindingEvaluator::from_specs_with_context(specs, BTreeMap::new(), sources, limits)
+    }
+
+    /// producer 명세와 producer node별 Context 경로표로 만듭니다(XXX.7.3). 경로표가 있는 producer의 `Context(K)` 읽기는
+    /// 의존 간선·평가·타입 조회·provenance 모두 경로표가 가리키는 node(provision 또는 key default)를 씁니다.
+    pub fn from_specs_with_context(
+        specs: Vec<ProducerSpec>,
+        routes: BTreeMap<DependencyNode, ContextRoute>,
+        sources: &dyn SourceInputs,
+        limits: EvalLimits,
+    ) -> Result<BindingEvaluator, SchedulerError> {
         let records: Vec<ProducerRecord> = specs
             .iter()
             .map(|spec| ProducerRecord {
@@ -272,7 +293,7 @@ impl BindingEvaluator {
                     .expression
                     .referenced_targets()
                     .into_iter()
-                    .map(DependencyNode::from_target)
+                    .map(|target| route_node(routes.get(&spec.node), target))
                     .collect(),
             })
             .collect();
@@ -282,10 +303,16 @@ impl BindingEvaluator {
         let mut types = vec![None; count];
         let mut expressions = vec![None; count];
         let mut values: Vec<NodeValue> = vec![Err(NodeEvalError::MissingSource); count];
+        let mut node_routes: Vec<Option<ContextRoute>> = vec![None; count];
         for spec in specs {
             if let Some(index) = graph.index_of(&spec.node) {
                 types[index.get()] = spec.value_type;
                 expressions[index.get()] = Some(spec.expression);
+            }
+        }
+        for (node, route) in routes {
+            if let Some(index) = graph.index_of(&node) {
+                node_routes[index.get()] = Some(route);
             }
         }
         for index in graph.indices() {
@@ -307,6 +334,7 @@ impl BindingEvaluator {
             rank,
             topological,
             limits,
+            routes: node_routes,
         };
         for index in evaluator.graph.indices() {
             evaluator.compile(index);
@@ -321,6 +349,7 @@ impl BindingEvaluator {
             let types = TypeView {
                 graph: &self.graph,
                 types: &self.types,
+                route: self.routes[at].as_ref(),
             };
             Program::compile(expression, &types)
         });
@@ -426,10 +455,11 @@ impl BindingEvaluator {
         if self.graph.producer(index).is_none() {
             return Err(SchedulerError::NotAProducer(node.clone()));
         }
+        let route = self.routes[index.get()].as_ref();
         let references: BTreeSet<DependencyNode> = expression
             .referenced_targets()
             .into_iter()
-            .map(DependencyNode::from_target)
+            .map(|target| route_node(route, target))
             .collect();
         let current: BTreeSet<DependencyNode> = self
             .graph
@@ -518,17 +548,28 @@ impl BindingEvaluator {
         let view = ValueView {
             graph: &self.graph,
             values: &self.values,
+            route: self.routes[at].as_ref(),
         };
         program
             .evaluate_with_limits(&view, self.limits)
             .map(|(value, _)| value)
-            .map_err(|error| self.classify(error))
+            .map_err(|error| self.classify(index, error))
+    }
+
+    /// producer `index`가 읽는 참조 대상의 graph node(Context 경로표 반영).
+    pub fn reference_node(&self, index: NodeIndex, target: &ReferenceTarget) -> DependencyNode {
+        route_node(self.routes[index.get()].as_ref(), target)
+    }
+
+    /// producer `index`의 Context 경로표.
+    pub fn context_route(&self, index: NodeIndex) -> Option<&ContextRoute> {
+        self.routes[index.get()].as_ref()
     }
 
     /// 읽은 node의 값이 오류여서 난 평가 오류는 dependency 오류로 바꿉니다.
-    fn classify(&self, error: EvalError) -> NodeEvalError {
+    fn classify(&self, index: NodeIndex, error: EvalError) -> NodeEvalError {
         if let EvalErrorKind::MissingReference(target) = &error.kind {
-            let node = DependencyNode::from_target(target);
+            let node = self.reference_node(index, target);
             if let Some(index) = self.graph.index_of(&node) {
                 if self.values[index.get()].is_err() {
                     return NodeEvalError::Dependency(node);

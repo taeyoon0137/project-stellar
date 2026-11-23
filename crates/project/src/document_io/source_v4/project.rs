@@ -10,6 +10,7 @@
 //!   components/<이름>-<hash12>.stellar.yaml     컴포넌트 정의 하나
 //!   tokens/<set>.stellar.yaml                   token set 하나
 //!   assets/catalog.stellar.yaml                 이미지·글꼴·Text style 표
+//!   context.stellar.yaml                        Component Context(있을 때만, XXX.7·ADR-0099)
 //! ```
 //!
 //! 파일 이름은 slug이고 정체성은 파일 안의 StableId입니다. 결과는 모델만의 함수라 같은 프로젝트는 같은 파일
@@ -34,6 +35,7 @@ use super::super::component_source::ComponentSource;
 use super::super::text_codec::{field, fields, mapping, scalar, text};
 use super::super::text_source::TextSourceError;
 use super::catalog::{self, AssetCatalog, CATALOG_PATH};
+use super::context::{self, CONTEXT_PATH};
 use super::css::{self, invalid, unsupported};
 use super::slug::unique_slugs;
 use super::span::{node_spans, SpanTable};
@@ -80,6 +82,7 @@ impl TextProject {
         tokens.sort_by_key(|set| set.id);
         Ok(SemanticKey {
             records,
+            context: self.document.context().live(&self.document).encode(),
             components: self.components.encode(),
             tokens,
             images: self.images.clone(),
@@ -92,6 +95,8 @@ impl TextProject {
 pub struct SemanticKey {
     /// 정렬한 문서 레코드.
     pub records: DocumentRecords,
+    /// 문서 Component Context canonical bytes(XXX.7).
+    pub context: Vec<u8>,
     /// 컴포넌트 library canonical bytes.
     pub components: Vec<u8>,
     /// token set(id 순).
@@ -452,6 +457,10 @@ pub fn encode(project: &TextProject) -> Result<EncodedProject, TextSourceError> 
             .insert(definition.id, definition.text_styles.clone());
     }
     files.insert(CATALOG_PATH.to_owned(), catalog::encode(&catalog_value)?);
+    let context_set = project.document.context().live(&project.document);
+    if !context_set.is_empty() {
+        files.insert(CONTEXT_PATH.to_owned(), context::encode(&context_set)?);
+    }
 
     let encoded = EncodedProject {
         spans: spans(&files),
@@ -561,6 +570,7 @@ pub fn decode(files: &BTreeMap<String, String>) -> Result<TextProject, TextSourc
     for path in files.keys() {
         let known = path == DOCUMENT_PATH
             || path == CATALOG_PATH
+            || path == CONTEXT_PATH
             || (path.starts_with("pages/") && path.ends_with(EXT))
             || (path.starts_with("components/")
                 && path.ends_with(EXT)
@@ -650,17 +660,31 @@ pub fn decode(files: &BTreeMap<String, String>) -> Result<TextProject, TextSourc
             reader.used.insert(path.clone());
         }
     }
-    if let Some(unused) = files.keys().find(|path| !reader.used.contains(*path)) {
-        return Err(invalid(format!("어디서도 참조하지 않은 파일: {unused}")));
-    }
     let mut ids = BTreeSet::new();
     if token_sets.iter().any(|set| !ids.insert(set.id)) {
         return Err(invalid("중복 token set id"));
     }
     token_sets.sort_by_key(|set| set.id);
+    let context_set = match files.get(CONTEXT_PATH) {
+        Some(source) => {
+            reader.used.insert(CONTEXT_PATH.to_owned());
+            let set = context::decode(source)?;
+            if set.is_empty() {
+                return Err(invalid("빈 Context 원본은 쓰지 않습니다"));
+            }
+            Some(set)
+        }
+        None => None,
+    };
+    if let Some(unused) = files.keys().find(|path| !reader.used.contains(*path)) {
+        return Err(invalid(format!("어디서도 참조하지 않은 파일: {unused}")));
+    }
     let mut records = reader.records;
     records.definition = definition;
-    let (document, _) = DocumentModel::from_records(records).map_err(invalid)?;
+    let (mut document, _) = DocumentModel::from_records(records).map_err(invalid)?;
+    if let Some(set) = context_set {
+        document.replace_context(set);
+    }
     Ok(TextProject {
         document,
         components,

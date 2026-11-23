@@ -148,7 +148,9 @@ impl OrphanedBinding {
                 ExpectedRefType::Component,
                 location,
             )),
-            ReferenceTarget::Environment(_) => None,
+            // 환경 입력과 Context key는 `ExpectedRefType`에 대응 종류가 없습니다. Context key StableId는 원인
+            // (`SourceMissing.target`)에 남습니다(XXX.7.8).
+            ReferenceTarget::Environment(_) | ReferenceTarget::Context(_) => None,
         }
     }
 }

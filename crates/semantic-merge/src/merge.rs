@@ -468,6 +468,10 @@ fn reconcile_member_lists(
     }
 }
 
+/// Component Context 전용 conflict(XXX.7.10, ADR-0099 결정 10). Merger 내부 변경 목록을 고쳐야 해서 하위 모듈입니다.
+#[path = "context.rs"]
+mod context;
+
 /// merge 진행 상태.
 struct Merger<'a> {
     input: &'a MergeInput,
@@ -1216,6 +1220,7 @@ pub fn merge(input: &MergeInput) -> Result<MergeResult, MergeError> {
         }
     }
     merger.interface_use_conflicts(&ours_diff, &theirs_diff);
+    merger.context_conflicts(&ours_diff, &theirs_diff);
 
     // 속성 변경은 base에 있는 같은 정체성 객체에서만 나옵니다.
     let changed_lists: BTreeSet<PropertyPath> = ours_diff

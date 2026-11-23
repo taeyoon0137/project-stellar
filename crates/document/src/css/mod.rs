@@ -39,7 +39,7 @@ mod reserved_numbers {
     #[test]
     fn context_tag_is_not_an_existing_reference_target_tag() {
         // 검증 기준(IX.12.1): 예약 번호가 기존 번호와 겹치지 않음. ReferenceTarget의 모든 variant를 봅니다(새 variant가
-        // 생기면 이 match가 컴파일 실패로 갱신을 요구합니다).
+        // 생기면 이 match가 컴파일 실패로 갱신을 요구합니다). Context variant(XXX.7.3)는 예약 tag 그대로입니다.
         let id = StableId::new_v7(1, 0, 1);
         let targets = [
             ReferenceTarget::Token(TokenRef::new(id)),
@@ -53,10 +53,15 @@ mod reserved_numbers {
                 | ReferenceTarget::Property(_)
                 | ReferenceTarget::ComponentProperty(_)
                 | ReferenceTarget::Environment(_) => {}
+                ReferenceTarget::Context(_) => unreachable!("기존 variant 목록에 없음"),
             }
             assert_ne!(target.tag(), REFERENCE_TARGET_CONTEXT_TAG);
         }
         let max = targets.iter().map(ReferenceTarget::tag).max().unwrap();
         assert_eq!(REFERENCE_TARGET_CONTEXT_TAG, max + 1, "다음 빈 tag");
+        assert_eq!(
+            ReferenceTarget::Context(id).tag(),
+            REFERENCE_TARGET_CONTEXT_TAG
+        );
     }
 }

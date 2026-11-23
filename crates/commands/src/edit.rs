@@ -53,6 +53,8 @@ enum UndoOp {
     Layout(StableId, Option<LayoutRecord>),
     /// 활성 기본값 세트 이름 변경을 되돌림(ADR-0086).
     StyleDefaults(String),
+    /// Component Context 요소 교체를 되돌림(XXX.7.8, ADR-0099).
+    Context(Box<stellar_document::context::set::ContextSet>),
 }
 
 /// rollback 실패: journal 재생 중 모델이 역 primitive를 거부했습니다(내부 불일치 신호).
@@ -325,6 +327,18 @@ impl<'a> EditContext<'a> {
         Ok(previous)
     }
 
+    /// 문서 Component Context 요소를 교체하고 이전 값을 반환합니다(XXX.7.8, ADR-0099).
+    pub fn replace_context(
+        &mut self,
+        context: stellar_document::context::set::ContextSet,
+    ) -> Result<stellar_document::context::set::ContextSet, CommandError> {
+        self.before_primitive()?;
+        let previous = self.model.replace_context(context);
+        self.journal
+            .push(UndoOp::Context(Box::new(previous.clone())));
+        Ok(previous)
+    }
+
     /// journal을 역순으로 재생해 context를 연 시점의 의미 상태로 되돌립니다.
     ///
     /// 각 역 primitive는 해당 primitive가 성공했던 상태에서 재생되므로 실패하지 않아야
@@ -380,6 +394,9 @@ fn undo(model: &mut DocumentModel, op: UndoOp) -> Result<(), CommandError> {
         }
         UndoOp::StyleDefaults(name) => {
             model.set_style_defaults(name);
+        }
+        UndoOp::Context(previous) => {
+            model.replace_context(*previous);
         }
     }
     Ok(())

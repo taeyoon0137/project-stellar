@@ -251,6 +251,7 @@ round_trip_property! {
     set_style_defaults_round_trip => Registered::Command(CommandKind::SetStyleDefaults), min 120;
     unset_property_round_trip => Registered::Command(CommandKind::UnsetProperty), min 120;
     set_layout_property_round_trip => Registered::Command(CommandKind::SetLayoutProperty), min 120;
+    edit_context_round_trip => Registered::Command(CommandKind::EditContext), min 120;
     set_selection_round_trip => Registered::Selection, min 120;
 }
 

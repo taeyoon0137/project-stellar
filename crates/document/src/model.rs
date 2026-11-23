@@ -161,6 +161,9 @@ pub struct DocumentModel {
     /// 모델은 연 쪽이 넣어 준 값을 거울로 들고 있어 `SetStyleDefaults` command가 undo 한 번으로 되돌아갑니다.
     /// 영속 레코드([`DocumentModel::to_records`])에는 나오지 않습니다.
     style_defaults: String,
+    /// 문서의 Component Context 요소(XXX.7, ADR-0099 결정 1). 영속 레코드([`DocumentModel::to_records`])에는 나오지 않고
+    /// 저장 경로가 `context-set` chunk·텍스트 원본으로 따로 씁니다.
+    context: crate::context::set::ContextSet,
 }
 
 fn remove_non_node_id(ids: &mut BTreeMap<StableId, usize>, id: StableId) {
@@ -196,7 +199,27 @@ impl DocumentModel {
             references: ReferenceIndex::new(),
             layouts: BTreeMap::new(),
             style_defaults: crate::css::style_defaults::DEFAULT_SET.to_string(),
+            context: crate::context::set::ContextSet::new(),
         }
+    }
+
+    /// 문서의 Context 요소(XXX.7). 삭제된 scene node에 붙은 View provision도 남아 있습니다(영속 출력은
+    /// [`crate::context::set::ContextSet::live`]).
+    pub fn context(&self) -> &crate::context::set::ContextSet {
+        &self.context
+    }
+
+    /// Context 요소(가변). command(XXX.7.8)와 로더만 씁니다.
+    pub fn context_mut(&mut self) -> &mut crate::context::set::ContextSet {
+        &mut self.context
+    }
+
+    /// Context 요소 전체를 바꾸고 이전 값을 돌려줍니다(로더·외부 원본 반영).
+    pub fn replace_context(
+        &mut self,
+        context: crate::context::set::ContextSet,
+    ) -> crate::context::set::ContextSet {
+        std::mem::replace(&mut self.context, context)
     }
 
     /// 활성 기본값 세트 이름(모델의 거울 값).

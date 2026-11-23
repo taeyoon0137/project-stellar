@@ -8,7 +8,9 @@
 //! | View 수 | `u32` LE |
 //! | View 항목 | View StableId 16바이트 + ViewTree ChunkId 16바이트 |
 //!
-//! View 항목은 정의의 View 순서(페이지 → View)와 정확히 같아야 합니다.
+//! | (선택) context-set chunk | ChunkId 16바이트(문서에 Component Context가 있을 때만, XXX.7·ADR-0099 결정 2) |
+//!
+//! View 항목은 정의의 View 순서(페이지 → View)와 정확히 같아야 합니다. context-set 절이 있으면 pointer schema는 3입니다.
 
 use std::fmt;
 
@@ -34,6 +36,8 @@ pub struct DocumentManifestChunk {
     pub definition: DocumentDefinition,
     /// View별 ViewTree chunk(정의의 View 순서).
     pub view_trees: Vec<ViewTreeRef>,
+    /// 문서 Component Context(`context-set` chunk, ADR-0099 결정 2). 비어 있으면 `None`이고 절을 쓰지 않습니다.
+    pub context: Option<ChunkId>,
 }
 
 /// manifest payload 오류.
@@ -121,12 +125,17 @@ impl DocumentManifestChunk {
             enc.put_fixed_raw(&entry.view.to_bytes());
             enc.put_fixed_raw(&entry.chunk.to_bytes());
         }
+        if let Some(context) = self.context {
+            enc.put_fixed_raw(&context.to_bytes());
+        }
         Ok(enc.into_bytes())
     }
 
     /// 이 payload를 가리키는 pointer의 schema. 기존 정의는 v1 bytes를 그대로 유지합니다.
     pub fn schema_version(&self) -> u32 {
-        if self.definition.text_styles.is_empty() {
+        if self.context.is_some() {
+            3
+        } else if self.definition.text_styles.is_empty() {
             1
         } else {
             2
@@ -135,7 +144,7 @@ impl DocumentManifestChunk {
 
     /// 제품 generation에서 읽을 때는 저장된 pointer version을 먼저 확인합니다.
     pub fn decode_for_schema(version: u32, bytes: &[u8]) -> Result<Self, ManifestChunkError> {
-        if !matches!(version, 1 | 2) {
+        if !matches!(version, 1..=3) {
             return Err(ManifestChunkError::UnsupportedSchema(version));
         }
         let manifest = Self::decode(bytes)?;
@@ -162,10 +171,18 @@ impl DocumentManifestChunk {
                 chunk: ChunkId::from_bytes(chunk),
             });
         }
+        let context = if dec.remaining() == 16 {
+            let mut chunk = [0u8; 16];
+            chunk.copy_from_slice(dec.take_raw(16)?);
+            Some(ChunkId::from_bytes(chunk))
+        } else {
+            None
+        };
         dec.expect_end()?;
         let manifest = DocumentManifestChunk {
             definition,
             view_trees,
+            context,
         };
         manifest.validate()?;
         Ok(manifest)
@@ -190,6 +207,7 @@ mod tests {
             .unwrap();
         definition.add_page(page).unwrap();
         DocumentManifestChunk {
+            context: None,
             definition,
             view_trees: vec![
                 ViewTreeRef {

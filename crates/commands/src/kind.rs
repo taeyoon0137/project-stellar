@@ -65,6 +65,8 @@ pub enum CommandKind {
     UnsetProperty,
     /// 명시 layout longhand 두기 (SD.4, ADR-0086).
     SetLayoutProperty,
+    /// Component Context 편집 (XXX.7.8, ADR-0099).
+    EditContext,
     /// 테스트 전용 probe(fault injection). 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe,
@@ -99,6 +101,7 @@ impl CommandKind {
         CommandKind::SetStyleDefaults,
         CommandKind::UnsetProperty,
         CommandKind::SetLayoutProperty,
+        CommandKind::EditContext,
     ];
 
     /// 영구 예약 값(유효한 종류가 아님).
@@ -133,6 +136,7 @@ impl CommandKind {
             CommandKind::SetStyleDefaults => 0x0091,
             CommandKind::UnsetProperty => 0x0092,
             CommandKind::SetLayoutProperty => 0x0093,
+            CommandKind::EditContext => 0x00A0,
             #[cfg(test)]
             CommandKind::TestProbe => 0xFFF0,
         }
@@ -179,6 +183,7 @@ impl CommandKind {
             CommandKind::SetStyleDefaults => "set-style-defaults",
             CommandKind::UnsetProperty => "unset-property",
             CommandKind::SetLayoutProperty => "set-layout-property",
+            CommandKind::EditContext => "edit-context",
             #[cfg(test)]
             CommandKind::TestProbe => "test-probe",
         }
@@ -216,6 +221,7 @@ impl CommandKind {
             CommandKind::SetStyleDefaults
             | CommandKind::UnsetProperty
             | CommandKind::SetLayoutProperty => 3,
+            CommandKind::EditContext => 5,
             #[cfg(test)]
             CommandKind::TestProbe => 1,
         }
@@ -251,6 +257,7 @@ impl CommandKind {
             CommandKind::SetStyleDefaults => "기본값 세트 변경",
             CommandKind::UnsetProperty => "속성 초기화",
             CommandKind::SetLayoutProperty => "레이아웃 속성 변경",
+            CommandKind::EditContext => "Context 변경",
             #[cfg(test)]
             CommandKind::TestProbe => "test probe",
         }
@@ -318,6 +325,7 @@ mod tests {
                 (0x0091, "set-style-defaults"),
                 (0x0092, "unset-property"),
                 (0x0093, "set-layout-property"),
+                (0x00A0, "edit-context"),
             ]
         );
     }

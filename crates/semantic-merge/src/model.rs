@@ -73,11 +73,17 @@ pub enum ConflictKind {
     /// 자동 병합 결과가 snapshot validator(XIV.5.3)를 새로 어김(XIV.10.8). 대상은 위반에 관련된 받아들인
     /// 변경의 단위이고 candidate는 그 단위의 base 상태를 유지합니다. 되돌릴 변경이 없으면 위반의 대표 대상입니다.
     InvalidResult = 10,
+    /// 한쪽이 ContextProvision을 지우고 다른 쪽이 그 provider 하위 트리에서 같은 key 소비를 추가(XXX.7.10, 아키텍처 §27.1).
+    /// 대상 = provision 객체.
+    ContextProvisionRemovedVsConsume = 11,
+    /// 한쪽이 ContextKey 값 타입을 바꾸고 다른 쪽이 그 key provision 값을 바꾸거나 provision을 추가(XXX.7.10). 대상 = key의
+    /// 값 타입 속성과 provision 값 속성(또는 추가된 provision 객체).
+    ContextKeyTypeVsProvisionValue = 12,
 }
 
 impl ConflictKind {
     /// 정의된 모든 종류(code 오름차순).
-    pub const ALL: [ConflictKind; 10] = [
+    pub const ALL: [ConflictKind; 12] = [
         ConflictKind::PropertyValue,
         ConflictKind::DeleteVsModify,
         ConflictKind::DeleteVsMove,
@@ -88,6 +94,8 @@ impl ConflictKind {
         ConflictKind::TokenTypeVsValue,
         ConflictKind::DrillingChainBreak,
         ConflictKind::InvalidResult,
+        ConflictKind::ContextProvisionRemovedVsConsume,
+        ConflictKind::ContextKeyTypeVsProvisionValue,
     ];
 
     /// 안정 numeric code.
@@ -115,6 +123,10 @@ impl ConflictKind {
             ConflictKind::TokenTypeVsValue => "token-type-vs-value",
             ConflictKind::DrillingChainBreak => "drilling-chain-break",
             ConflictKind::InvalidResult => "invalid-result",
+            ConflictKind::ContextProvisionRemovedVsConsume => {
+                "context-provision-removed-vs-consume"
+            }
+            ConflictKind::ContextKeyTypeVsProvisionValue => "context-key-type-vs-provision-value",
         }
     }
 }
@@ -477,6 +489,8 @@ pub(crate) mod tests {
             (8, "token-type-vs-value"),
             (9, "drilling-chain-break"),
             (10, "invalid-result"),
+            (11, "context-provision-removed-vs-consume"),
+            (12, "context-key-type-vs-provision-value"),
         ];
         assert_eq!(ConflictKind::ALL.len(), golden.len());
         for (kind, (code, name)) in ConflictKind::ALL.into_iter().zip(golden) {

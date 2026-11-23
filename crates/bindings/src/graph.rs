@@ -7,6 +7,10 @@
 //! - 속성 node는 그 속성을 target으로 하는 binding이 값을 만들고(producer = [`Producer::Binding`]), binding source의
 //!   참조로 간선을 냅니다. binding이 없는 속성은 외부에서 값이 주어지는 source node입니다.
 //! - Component Property와 환경 입력 node는 binding graph 밖에서 값이 주어지는 source node입니다(producer 없음).
+//! - Context(XXX.7.3, ADR-0099): [`DependencyNode::ContextKey`]는 key default 값이고(producer =
+//!   [`Producer::ContextDefault`]), [`DependencyNode::ContextProvision`]은 provision 하나의 인스턴스 chain별 값입니다
+//!   (producer = [`Producer::ContextProvision`]). 표현식의 `Context(K)` 참조는 소비 지점마다 해석 결과로 연결합니다
+//!   ([`crate::context`]). 해석 정보 없이 만든 graph에서는 `Context(K)`가 key node(default)로 연결됩니다.
 //!
 //! node는 [`DependencyNode`] 정렬 순서로 [`NodeIndex`]를 받으므로 index 순서 = node 정렬 순서이고, 간선 목록도 index
 //! 오름차순입니다. 같은 입력은 항상 같은 graph가 됩니다. 인접 목록은 index 기반 `Vec`이라 대규모 graph(VIII.9.1)에서도
@@ -34,6 +38,21 @@ pub enum DependencyNode {
     ComponentProperty(StableId),
     /// 환경 입력.
     Environment(EnvironmentKey),
+    /// ContextKey의 default 값(XXX.7.3). 값은 key StableId입니다.
+    ContextKey(StableId),
+    /// ContextProvision 하나가 인스턴스 chain 한 곳에서 내는 값(XXX.7.3).
+    ContextProvision(ContextProvisionNode),
+}
+
+/// ContextProvision 값 node의 식별: provision StableId와 provider node를 펼친 인스턴스 chain(scene 인스턴스부터
+/// 바깥 → 안쪽, scene node에 붙은 provision이면 빈 chain). 정의 tree node에 붙은 provision은 인스턴스마다 값이 다를
+/// 수 있어(값 식이 다른 Context·Component Property를 읽음) chain으로 구분합니다.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ContextProvisionNode {
+    /// provision StableId.
+    pub provision: StableId,
+    /// provider node를 펼친 인스턴스 chain.
+    pub instances: Vec<StableId>,
 }
 
 impl DependencyNode {
@@ -44,6 +63,8 @@ impl DependencyNode {
             DependencyNode::Property(_) => DependencyKind::Property,
             DependencyNode::ComponentProperty(_) => DependencyKind::ComponentProperty,
             DependencyNode::Environment(_) => DependencyKind::Environment,
+            DependencyNode::ContextKey(_) => DependencyKind::ContextKey,
+            DependencyNode::ContextProvision(_) => DependencyKind::ContextProvision,
         }
     }
 
@@ -54,23 +75,36 @@ impl DependencyNode {
             ReferenceTarget::Property(path) => DependencyNode::Property(path.clone()),
             ReferenceTarget::ComponentProperty(id) => DependencyNode::ComponentProperty(*id),
             ReferenceTarget::Environment(key) => DependencyNode::Environment(*key),
+            ReferenceTarget::Context(key) => DependencyNode::ContextKey(*key),
         }
     }
 
-    /// node에 대응하는 표현식 참조 대상.
-    pub fn to_target(&self) -> ReferenceTarget {
-        match self {
+    /// node에 대응하는 표현식 참조 대상. provision 값 node는 표현식이 직접 가리키지 않으므로 `None`입니다.
+    pub fn to_target(&self) -> Option<ReferenceTarget> {
+        Some(match self {
             DependencyNode::Token(token) => ReferenceTarget::Token(*token),
             DependencyNode::Property(path) => ReferenceTarget::Property(path.clone()),
             DependencyNode::ComponentProperty(id) => ReferenceTarget::ComponentProperty(*id),
             DependencyNode::Environment(key) => ReferenceTarget::Environment(*key),
-        }
+            DependencyNode::ContextKey(key) => ReferenceTarget::Context(*key),
+            DependencyNode::ContextProvision(_) => return None,
+        })
     }
 }
 
 impl fmt::Display for DependencyNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_target())
+        match (self, self.to_target()) {
+            (_, Some(target)) => write!(f, "{target}"),
+            (DependencyNode::ContextProvision(node), None) => {
+                write!(f, "context provision {}", node.provision)?;
+                for instance in &node.instances {
+                    write!(f, " @{instance}")?;
+                }
+                Ok(())
+            }
+            (_, None) => f.write_str("?"),
+        }
     }
 }
 
@@ -85,6 +119,10 @@ pub enum DependencyKind {
     ComponentProperty,
     /// 환경 입력.
     Environment,
+    /// ContextKey default(XXX.7.3).
+    ContextKey,
+    /// ContextProvision 값(XXX.7.3).
+    ContextProvision,
 }
 
 /// node 값을 만드는 정의.
@@ -96,6 +134,10 @@ pub enum Producer {
     Binding(BindingId),
     /// orphan binding(VIII.8.1) target 속성의 선언 기본값(VIII.8.2). 값은 orphan의 ID로 구분합니다.
     OrphanDefault(BindingId),
+    /// ContextKey의 닫힌 default expression(XXX.7.3). 값은 key StableId입니다.
+    ContextDefault(StableId),
+    /// ContextProvision의 값 expression(XXX.7.3). 값은 provision StableId입니다.
+    ContextProvision(StableId),
 }
 
 /// graph 안의 node 번호. node 정렬 순서와 같습니다.
@@ -663,7 +705,10 @@ mod tests {
         );
         // 참조 대상 ↔ node 변환은 왕복합니다.
         for node in a.nodes() {
-            assert_eq!(&DependencyNode::from_target(&node.to_target()), node);
+            assert_eq!(
+                &DependencyNode::from_target(&node.to_target().unwrap()),
+                node
+            );
         }
     }
 
