@@ -7,7 +7,8 @@
 //! # 규칙
 //!
 //! - **좌표**: device pixel `p`는 world `내보내기 영역 원점 + p / scale`입니다(CPU target과 같은 grid). 가장자리 부분
-//!   coverage는 축마다 [`SUPERSAMPLE`]배 supersampling으로 만들고, readback한 선형광 연관 알파 값을 output pixel마다
+//!   coverage는 축마다 [`SUPERSAMPLE`]배 supersampling으로 만들고(blur가 커서 supersample device σ가 [`MAX_SIGMA`]를 넘으면
+//!   넘지 않는 가장 큰 배수로 낮춤, [`supersample_for`]), readback한 선형광 연관 알파 값을 output pixel마다
 //!   상자 평균합니다. 그 뒤 비연관으로 되돌려 출력 색공간 transfer로 encode하고 8-bit로 반올림합니다(CPU target과 같은
 //!   마지막 단계). 알파 0 pixel의 RGB는 0입니다.
 //! - **tile**: 출력을 [`TILE`] pixel 정사각 tile로 나눠 그립니다. tile마다 효과가 번지는 거리(shadow offset + 3σ, layer
@@ -37,6 +38,7 @@ use stellar_renderer_core::backend::{
 };
 use stellar_renderer_core::clip_plan::ClipCapabilities;
 use stellar_renderer_core::color::{decode_pixel, to_working, WorkingColor};
+use stellar_renderer_core::effects::blur::{layer_blur_sigma, shadow_sigma, MAX_SIGMA};
 use stellar_renderer_core::effects::fixture::ImageData;
 use stellar_renderer_core::effects::lower::{lower_ops, OpsTarget};
 use stellar_renderer_core::effects::scene::{encode_plan, EncodeError, FrameResources, GlyphShape};
@@ -275,6 +277,39 @@ fn effect_reach(export: &ConfirmedExport) -> f32 {
     reach
 }
 
+/// 내보내기의 supersampling 배수.
+///
+/// 효과 σ는 supersample device 단위로 그리므로 배수만큼 커집니다. 출력 pixel 단위 최대 σ(축별 배율 포함)에 배수를 곱해도
+/// [`MAX_SIGMA`]를 넘지 않는 가장 큰 배수(1..=[`SUPERSAMPLE`])를 씁니다. 배수 1에서도 넘으면 1이고, 그때는 frame plan이
+/// σ 상한 진단을 남겨 렌더가 실패합니다(근사하지 않음). 배수를 낮추면 가장자리 coverage 단계만 거칠어지고 효과 수식은
+/// 같습니다.
+pub fn supersample_for(export: &ConfirmedExport, scale: f64) -> u32 {
+    let mut sigma = 0.0f32;
+    for root in export.capture().roots() {
+        let mut stack: Vec<&SceneNode> = vec![root.node()];
+        while let Some(node) = stack.pop() {
+            if node.hit().visibility == Visibility::Hidden {
+                continue;
+            }
+            let paint = node.paint().get();
+            let own = paint
+                .shadows
+                .iter()
+                .map(|s| shadow_sigma(s.blur().get()))
+                .fold(layer_blur_sigma(paint.layer_blur.get()), f32::max);
+            let device = f64::from(own * axis_scale(&node.world_transform())) * scale;
+            if device.is_finite() {
+                sigma = sigma.max(device as f32);
+            }
+            stack.extend(node.children().map(|child| &**child));
+        }
+    }
+    if sigma <= 0.0 {
+        return SUPERSAMPLE;
+    }
+    ((MAX_SIGMA / sigma).floor() as u32).clamp(1, SUPERSAMPLE)
+}
+
 impl OffscreenTarget for MetalOffscreenTarget {
     fn render(
         &self,
@@ -332,7 +367,7 @@ impl OffscreenTarget for MetalOffscreenTarget {
         let space = request.profile().color_space();
         let mut pixels = vec![0u8; (width as usize) * (height as usize) * 4];
         let mut frame = 1u64;
-        let s = SUPERSAMPLE;
+        let s = supersample_for(export, scale);
         for tile_y in (0..height).step_by(TILE as usize) {
             for tile_x in (0..width).step_by(TILE as usize) {
                 if cancel.is_cancelled() {

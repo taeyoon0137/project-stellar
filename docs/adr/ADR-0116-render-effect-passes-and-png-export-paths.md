@@ -70,7 +70,10 @@ Accepted (2026-11-23).
      오류입니다. shadow·layer blur의 축별 σ를 표현하려고 fixture 모델에 축별 배율을 더했습니다(기본 등방, 기존 fixture 불변).
    - `stellar_renderer_metal::offscreen_target::MetalOffscreenTarget`이 export `OffscreenTarget`을 구현합니다. capture snapshot
      → frame plan → encoder → lowering → headless Metal(`Rgba16Float`) → readback입니다. 가장자리 coverage는 축마다 8배
-     supersampling이고 output pixel마다 연관 알파 선형광 값을 상자 평균한 뒤 CPU target과 같은 마지막 단계(비연관 → transfer
+     supersampling입니다. 효과 σ는 supersample device 단위라 배수만큼 커지므로, 출력 pixel 단위 최대 σ × 배수가 `MAX_SIGMA`를
+     넘으면 넘지 않는 가장 큰 배수(1\~8)로 낮춥니다(가장자리 coverage 단계만 거칠어지고 효과 수식은 같음). 배수 1에서도 넘으면
+     σ 상한 진단으로 실패합니다. 고정 8배면 출력 pixel σ 8(box-shadow blur 16) 넘는 흔한 그림자가 모두 실패합니다. 그 뒤
+     output pixel마다 연관 알파 선형광 값을 상자 평균하고 CPU target과 같은 마지막 단계(비연관 → transfer
      encode → 8-bit 반올림, 알파 0이면 RGB 0)를 거칩니다. 출력을 128 pixel tile로 나누고 효과가 번지는 거리(shadow offset + 3σ,
      layer blur 3σ의 경로 합) 이상 여백을 두고 그려 tile 경계가 이어집니다. 효과 근사 진단이 있으면 그리지 않고 실패합니다.
      selection 내보내기(조상 clip·효과 제외)는 pass compiler가 subtree 시작을 받지 않아 아직 실패입니다.

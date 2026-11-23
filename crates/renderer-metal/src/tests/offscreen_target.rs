@@ -312,6 +312,23 @@ fn effect_roots() -> Vec<Arc<SceneNode>> {
     })
 }
 
+/// 흔한 크기의 box-shadow(blur 40 → σ 20)와 layer blur(반경 12): 배수 8이면 supersample σ가 상한을 넘습니다.
+fn large_blur_roots() -> Vec<Arc<SceneNode>> {
+    let root = frame(1, 0.0, 0.0, 120.0, 90.0, srgb(0.95, 0.95, 0.9, 1.0));
+    scene(&root, |b, s| {
+        let mut card = frame(2, 20.0, 20.0, 40.0, 30.0, srgb(1.0, 1.0, 1.0, 1.0));
+        card.node.paint.shadows.push(Shadow::new(
+            p(4.0, 6.0),
+            BlurRadius::new(40.0).unwrap(),
+            srgb(0.0, 0.0, 0.2, 0.5),
+        ));
+        leaf(b, s, &card);
+        let mut blurred = frame(3, 70.0, 40.0, 30.0, 30.0, srgb(0.1, 0.4, 0.9, 1.0));
+        blurred.node.paint.layer_blur = BlurRadius::new(12.0).unwrap();
+        leaf(b, s, &blurred);
+    })
+}
+
 pub(super) fn confirmed(
     roots: Vec<Arc<SceneNode>>,
     scale: f32,
@@ -402,7 +419,7 @@ fn cpu_reference_of(export: &ConfirmedExport) -> DecodedPng {
     let (width, height) = request.size().unwrap();
     let grid = request.grid();
     let origin = grid.world_rect(&grid.canvas());
-    let s = crate::offscreen_target::SUPERSAMPLE;
+    let s = crate::offscreen_target::supersample_for(export, grid.scale());
     let k = (grid.scale() * f64::from(s)) as f32;
     let view = Transform2D::new(
         k,
@@ -529,6 +546,75 @@ fn metal_target_draws_effects_like_the_cpu_reference() {
         }
     }
     assert_eq!(over, 0, "최대 차이 {worst}");
+}
+
+/// 큰 blur는 supersampling 배수를 낮춰 그립니다. 배수 8 고정이면 σ 상한 진단으로 실패하던 장면입니다.
+#[test]
+fn large_blur_lowers_supersampling_instead_of_failing() {
+    let export = confirmed(large_blur_roots(), 1.0, ExportBackground::Transparent);
+    // σ 20 → 배수 3(20·3 = 60 ≤ 64).
+    assert_eq!(crate::offscreen_target::supersample_for(&export, 1.0), 3);
+    // σ 20·4 = 80이면 배수 8로는 그리지 못합니다.
+    assert_eq!(
+        crate::offscreen_target::supersample_for(
+            &confirmed(effect_roots(), 1.0, ExportBackground::Transparent),
+            1.0
+        ),
+        crate::offscreen_target::SUPERSAMPLE
+    );
+    let actual = png(&export, &metal(), OutputProfile::Srgb);
+    let expected = cpu_reference_of(&export);
+    write_artifact("large_blur_srgb_1x_metal", &actual, OutputProfile::Srgb);
+    write_artifact("large_blur_srgb_1x_reference", &expected, OutputProfile::Srgb);
+    // 그림자 끝의 알파가 몇 단계뿐인 pixel은 비연관 RGB가 크게 흔들리므로 연관 알파 값(RGB × 알파)으로 비교합니다.
+    let associated = |p: &[u8]| -> [i32; 4] {
+        let a = i32::from(p[3]);
+        [
+            (i32::from(p[0]) * a + 127) / 255,
+            (i32::from(p[1]) * a + 127) / 255,
+            (i32::from(p[2]) * a + 127) / 255,
+            a,
+        ]
+    };
+    let mut over = 0;
+    let mut worst = 0;
+    for (pa, pb) in expected.rgba.chunks(4).zip(actual.rgba.chunks(4)) {
+        let (ea, eb) = (associated(pa), associated(pb));
+        let diff = ea
+            .iter()
+            .zip(eb)
+            .map(|(x, y)| x.abs_diff(y))
+            .max()
+            .unwrap();
+        worst = worst.max(diff);
+        // CPU 기준의 8-bit layer 저장과 GPU half float의 차이가 큰 kernel(supersample σ 60)의 두 blur 단계에서 쌓입니다.
+        if diff > 4 {
+            over += 1;
+        }
+    }
+    assert_eq!(over, 0, "최대 차이 {worst}");
+    // 그림자가 카드 밖으로 번졌는지: 카드 오른쪽 아래 바깥 pixel은 배경(sRGB 약 242)보다 어둡고, 멀리 떨어진 왼쪽 위
+    // 모서리는 배경 그대로입니다.
+    // 내보내기 영역은 그림자 번짐만큼 root보다 넓으므로 root 기준 좌표에 영역 원점(root 왼쪽 위 pixel)을 더합니다.
+    let origin = actual
+        .rgba
+        .chunks(4)
+        .position(|p| p[3] == 255)
+        .map(|i| (i as u32 % actual.width, i as u32 / actual.width))
+        .unwrap();
+    let red = |x: u32, y: u32| {
+        actual.rgba[(((origin.1 + y) * actual.width + origin.0 + x) * 4) as usize]
+    };
+    assert!(red(64, 56) < 236, "{}", red(64, 56));
+    assert!(red(0, 89).abs_diff(red(119, 0)) <= 1);
+    // 출력 pixel 단위 σ가 상한을 넘으면 배수 1에서도 그리지 않고 실패합니다.
+    let too_large = confirmed(large_blur_roots(), 4.0, ExportBackground::Transparent);
+    assert_eq!(crate::offscreen_target::supersample_for(&too_large, 4.0), 1);
+    let request = OffscreenRequest::new(&too_large, OutputProfile::Srgb);
+    assert!(matches!(
+        metal().render(&request, &CancelToken::new()),
+        Err(OffscreenError::Failed { .. })
+    ));
 }
 
 #[test]

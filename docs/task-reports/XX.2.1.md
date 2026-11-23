@@ -40,6 +40,9 @@
 - **Metal target**: capture snapshot을 tile(128 pixel, 효과 여백)마다 축 8배 supersample viewport로 compile → encode → lowering
   → headless Metal `Rgba16Float` → readback → 상자 평균 → 비연관 → transfer encode → 8-bit. 효과 근사 진단·selection은 실패로
   돌려줍니다(근사하지 않음). 이미지는 PNG(색 정보 판정 또는 override), text는 고정 font revision glyph outline입니다.
+- **supersampling 배수(검토 보완)**: 효과 σ는 supersample device 단위라 8배면 출력 pixel σ 8(box-shadow blur 16)만 넘어도
+  σ 상한(`MAX_SIGMA` 64) 진단으로 실패했습니다. 이제 출력 pixel 단위 최대 σ × 배수가 상한을 넘지 않는 가장 큰 배수(1\~8)를
+  씁니다(`supersample_for`). 배수 1에서도 넘으면 전처럼 실패합니다.
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)
 
@@ -55,6 +58,7 @@
 | encoder → CPU 기준: painter 순서·pixel 정렬 사각형 정확, 겹친 opacity 그룹 한 번 합성(알파 128), multiply layer가 backdrop을 읽음, shadow가 내용 아래 device offset, 둥근 clip(stencil·mask plan 모두) 밖 투명(`effects::scene::tests`) | 통과 |
 | Metal target이 CPU target이 그리지 않는 효과(shadow·layer blur·multiply)를 같은 그리기 목록의 CPU 기준과 연관 값 ±3 안에서 그림, CPU target은 같은 요청을 `Unsupported`로 거부(`metal_target_draws_effects_like_the_cpu_reference`) | 통과 |
 | selection 내보내기는 실패, 취소는 `Cancelled`(`selection_and_cancel_are_reported`) | 통과 |
+| blur 40 그림자·반경 12 layer blur 장면은 배수 3으로 그리고 같은 배수의 CPU 기준과 연관 값 ±4 안, 그림자가 카드 밖으로 번짐, 배율 4로 출력 σ 80이면 실패(`large_blur_lowers_supersampling_instead_of_failing`) | 통과 |
 | 결과 확대 이미지 눈 검사(`target/render-conformance/png-export/`): 둥근 clip·테두리·opacity 그룹·path·이미지·text, shadow·blur·multiply | 의도대로 보임 |
 
 ## 차이(작업 지시와 다른 점)
@@ -68,7 +72,10 @@
 
 - selection 내보내기는 Metal target이 아직 그리지 않습니다(pass compiler가 subtree 시작과 조상 clip 제외를 받아야 함).
 - 축 정렬이 아닌 이미지 변환은 미지원 오류입니다(GPU 이미지 quad가 축 정렬 사각형만 받음).
-- shadow offset은 supersample device pixel 정수로 반올림합니다(출력 1/16 pixel 이하 오차).
+- shadow offset은 supersample device pixel 정수로 반올림합니다(배수 8이면 출력 1/16 pixel 이하, 큰 blur로 배수를 낮추면
+  최대 1/2 pixel 오차).
+- 큰 blur로 배수를 낮추면 그 내보내기 전체의 가장자리 coverage 단계가 거칠어집니다(배수 3이면 9단계). 효과만 낮은 해상도로
+  그리는 분리는 후속입니다.
 - 둥근 사각형 path 작성(`rounded_rect_path`)이 export CPU target의 비공개 함수와 같은 식으로 따로 있습니다. scene crate 공용 함수로
   합치는 정리가 후속입니다.
 - 앱 화면 frame encoder(창 drawable)는 같은 encoder로 붙일 수 있지만 이번에 연결하지 않았습니다(UI 재설계 때).
