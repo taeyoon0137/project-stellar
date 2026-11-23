@@ -2,7 +2,7 @@
 
 - WBS: IX.9.1
 - 작업명: Button, TextInput, Modal, List, Radio 합성 예제 component library fixture
-- 상태: 부분 완료 (`[~]`) — 이 fixture에 접근성 tree golden과 IX.8.5 접근성 진단 0건 확인이 아직 없고, scene document validator(VI.10.1)는 ComponentInstance를 표현하지 못해 "document validator 0 오류"를 컴포넌트 계층 검사기로만 확인했습니다(아래 "후속 수정 (리뷰 반영)", "통합 후 확인").
+- 상태: `[~]` 유지 — 남은 범위·결함 있음(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 이 fixture에 접근성 tree golden과 IX.8.5 접근성 진단 0건 확인이 아직 없고, scene document validator(VI.10.1)는 ComponentInstance를 표현하지 못해 "document validator 0 오류"를 컴포넌트 계층 검사기로만 확인했습니다(아래 "후속 수정 (리뷰 반영)", "통합 후 확인").
 - 선행: IX.6(`[x]` 전체), IX.8(section 단위 선행. 작성 당시 미착수라 완화 적용, 통합 후 IX.8.1\~IX.8.6 모두 `[x]` — 아래 "차이"·"통합 후 확인" 참고)
 
 ## 필수 실행 환경
@@ -104,3 +104,25 @@
 - `[~]`는 유지합니다. 남은 조건은 위 "`[x]`로 올릴 조건"과 같습니다. 이 fixture에 접근성 tree golden(IX.8.3·IX.8.4
   생성기)과 IX.8.5 진단 0건 확인을 추가하고, scene document validator가 ComponentInstance를 다루게 되면 그 validator 0 오류를
   함께 확인해야 합니다. 이 수정에서는 코드와 fixture를 바꾸지 않았습니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 남은 범위·결함 있음.
+- 근거: 컴포넌트 다섯 개 fixture와 컴포넌트 계층 검사기 0 오류는 있습니다. 검증 열의 "document validator 0 오류"는 아직 `validate_document`로 확인하지 않았습니다. 이전에 막혔던 이유(validator가 ComponentInstance를 표현하지 못함)는 사라졌습니다. 지금 `NodePayload::ComponentInstance`가 있습니다(`crates/document/src/records.rs` 43행).
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/document/src/test_support/component_fixtures.rs`: `component_library_fixture`, `fixture_scene`, golden `component_library.json`. 이 파일은 `validate_document`(`crates/document/src/validate.rs` 457행)를 부르지 않습니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-document` | 368 passed, 0 failed |
+
+### 남은 조건과 finding
+
+- 결함 finding(document crate test_support, 소유 lane 없음 → backlog): fixture scene을 영속 레코드(`NodePayload::ComponentInstance`)로 만들어 `validate_document` 0 오류를 확인합니다. 선행 IX.8이 모두 `[x]`이므로 이전 보고서가 정한 접근성 tree golden·IX.8.5 진단 0건도 같은 작업에서 더합니다.
+- X.11.2가 IX.9(절 단위)를 선행으로 둡니다.
