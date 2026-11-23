@@ -40,10 +40,10 @@
 
 | 측정 | 값 |
 |---|---|
-| lease 대상 확인 `resolve`(root 1개) | 39~55 µs |
-| lease 대상 확인 `resolve`(group 400개) | 372~377 µs |
-| lease 판정 snapshot(lease root = 문서 root, 20만 node subtree) | 10.9~11.0 ms |
-| lease 판정 snapshot(group 400개, 약 20만 node) | 13.5~13.6 ms |
+| lease 대상 확인 `resolve`(root 1개) | 39–55 µs |
+| lease 대상 확인 `resolve`(group 400개) | 372–377 µs |
+| lease 판정 snapshot(lease root = 문서 root, 20만 node subtree) | 10.9–11.0 ms |
+| lease 판정 snapshot(group 400개, 약 20만 node) | 13.5–13.6 ms |
 | batch 적용 + 출처 기록, lease = group 하나(500 node): 1 / 64 / 256 / 499 command | 33 / 114 / 379 / 694 µs |
 | batch 적용 + 출처 기록, lease = 문서 root: 1 / 1024 / 4096 / 10000 command | 10.6 / 11.9 / 16.5 / 25.5 ms |
 
