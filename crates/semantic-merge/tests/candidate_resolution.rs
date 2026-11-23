@@ -321,5 +321,13 @@ fn write_requires_zero_unresolved_and_no_new_violation() {
         resolution: Resolution::ChooseBase,
     })
     .unwrap();
-    assert!(c.validate().is_ok());
+    let validated = c.validate().unwrap();
+    assert_eq!(
+        validated
+            .snapshot()
+            .get(sid(INSTANCE))
+            .unwrap()
+            .property(&path),
+        Some(&text("v"))
+    );
 }

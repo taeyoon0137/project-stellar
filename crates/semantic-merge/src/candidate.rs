@@ -21,6 +21,8 @@
 //!
 //! **쓰기 조건(XIV.12.3)**: [`CandidateSnapshot::validate`]는 unresolved conflict가 0이고 C가 세 입력
 //! 어디에도 없던 snapshot 위반을 갖지 않을 때만 성공합니다.
+//! 성공 값은 [`ValidatedCandidate`]이며(XXIII.2.4) 쓰기 경로는 `ValidatedCandidate`만 받습니다. 검증하지 않은 C로는
+//! 쓰기 API를 부를 수 없습니다.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -460,6 +462,24 @@ impl fmt::Display for CandidateBlocked {
 
 impl std::error::Error for CandidateBlocked {}
 
+/// 쓰기 조건을 통과한 C. [`CandidateSnapshot::validate`]만 만듭니다.
+#[derive(Debug, Clone, Copy)]
+pub struct ValidatedCandidate<'a> {
+    candidate: &'a CandidateSnapshot,
+}
+
+impl<'a> ValidatedCandidate<'a> {
+    /// 검증한 C.
+    pub fn candidate(&self) -> &'a CandidateSnapshot {
+        self.candidate
+    }
+
+    /// 검증한 snapshot.
+    pub fn snapshot(&self) -> &'a SemanticSnapshot {
+        &self.candidate.snapshot
+    }
+}
+
 /// 병합 결과 candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CandidateSnapshot {
@@ -590,7 +610,7 @@ impl CandidateSnapshot {
     }
 
     /// 쓰기 조건 검사(XIV.12.3, XXIII.2.4): unresolved conflict 0과 새 snapshot 위반 0.
-    pub fn validate(&self) -> Result<(), CandidateBlocked> {
+    pub fn validate(&self) -> Result<ValidatedCandidate<'_>, CandidateBlocked> {
         let unresolved: Vec<UnitKey> = self
             .conflicts
             .iter()
@@ -601,7 +621,7 @@ impl CandidateSnapshot {
         let violations =
             introduced_violations(&self.snapshot, &[&input.base, &input.ours, &input.theirs]);
         if unresolved.is_empty() && violations.is_empty() {
-            Ok(())
+            Ok(ValidatedCandidate { candidate: self })
         } else {
             Err(CandidateBlocked {
                 unresolved,
