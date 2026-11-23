@@ -6,7 +6,11 @@
 //! 2. root 검증(IV.2.2, `stellar.yaml`+`.git`)과 `stellar.yaml` probe(IV.5.1, loader 상한까지만 읽음).
 //! 3. `project.id`(IV.2.3)로 current generation을 엽니다(V.4.4 검증, V.6.6 lazy: DocumentManifest chunk만 읽음).
 //!    current pointer가 없으면 저장된 generation이 없는 프로젝트([`ProjectRevision::Unsaved`])입니다.
-//! 4. revision은 열린 generation 번호와 manifest content hash입니다([`crate::revision`]).
+//! 4. generation schema를 제품 migration 정책으로 판정합니다(IX.11.21, [`decide`]). 같은 schema는 그대로,
+//!    낮은 schema는 메모리에서만 migration해 읽고(디스크는 그대로), 높은 schema·경로 없는 schema는 열기는
+//!    하되(상태 보고·`stellar migrate` 판정용) 문서 내용 읽기를 [`DocumentReadError::Schema`]로 거부합니다.
+//!    이 경로는 읽기 전용이므로 메모리 migration 결과도 쓰지 않습니다.
+//! 5. revision은 열린 generation 번호와 manifest content hash입니다([`crate::revision`]).
 //!
 //! 이 경로는 파일을 만들거나 바꾸지 않습니다. 문서 내용(node 레코드)은 요청할 때
 //! [`ProjectSnapshot::document_records`]로 그 문서의 chunk만 읽습니다. 모든 결과는 열기 시점에
@@ -23,6 +27,7 @@ use stellar_project::document_io::load::LoadDocumentError;
 use stellar_project::document_io::manifest::DocumentManifestChunk;
 use stellar_project::identity::parse_project_id;
 use stellar_project::manifest::Manifest;
+use stellar_project::migration::{decide, MigratedGeneration, MigrationPolicy, SchemaDecision};
 use stellar_project::probe::{probe_project, ProbeError};
 use stellar_project::root::GitLink;
 use stellar_storage::chunk::kinds::INITIAL_KINDS;
@@ -56,6 +61,9 @@ pub struct ProjectSnapshot {
     documents: Vec<DocumentDefinition>,
     chunk_kinds: Vec<ChunkKindCount>,
     generation: Option<LazyGeneration>,
+    /// 낮은 schema generation을 메모리에서 migration한 결과(디스크는 원본 그대로).
+    migrated: Option<MigratedGeneration>,
+    schema: SchemaDecision,
 }
 
 impl ProjectSnapshot {
@@ -99,18 +107,29 @@ impl ProjectSnapshot {
         self.generation.as_ref()
     }
 
+    /// 열린 generation의 schema 판정(IX.11.21). 저장된 generation이 없으면 [`SchemaDecision::Current`]입니다.
+    pub fn schema(&self) -> SchemaDecision {
+        self.schema
+    }
+
     /// 문서 하나의 런타임 모델을 그 문서의 chunk만 읽어 만듭니다(VI.10.3).
     pub fn document_model(&self, document: StableId) -> Result<DocumentModel, DocumentReadError> {
+        if let SchemaDecision::Reject(rejection) = self.schema {
+            return Err(DocumentReadError::Schema(rejection));
+        }
         let generation = self
             .generation
             .as_ref()
             .filter(|_| self.documents.iter().any(|d| d.id == document))
             .ok_or(DocumentReadError::UnknownDocument { document })?;
-        let loaded = stellar_project::document_io::load::load_document_from_generation(
-            generation,
-            document,
-            &mut NoopRecorder,
-        )
+        let loaded = match &self.migrated {
+            Some(migrated) => migrated.load_document(document),
+            None => stellar_project::document_io::load::load_document_from_generation(
+                generation,
+                document,
+                &mut NoopRecorder,
+            ),
+        }
         .map_err(|e| match e {
             LoadDocumentError::UnknownDocument { document } => {
                 DocumentReadError::UnknownDocument { document }
@@ -183,7 +202,23 @@ pub fn open_snapshot(path: &Path) -> Result<ProjectSnapshot, OpenError> {
         Err(e) => return Err(OpenError::Storage(e)),
     };
 
-    let (revision, documents, chunk_kinds) = match &generation {
+    let schema = generation
+        .as_ref()
+        .map_or(SchemaDecision::Current, |generation| {
+            decide(
+                generation.manifest().schema_version,
+                &MigrationPolicy::PRODUCT,
+            )
+        });
+    let migrated = match (schema, &generation) {
+        (SchemaDecision::MigrateInMemory { .. }, Some(generation)) => Some(
+            MigratedGeneration::from_lazy(generation, &MigrationPolicy::PRODUCT)
+                .map_err(|e| OpenError::Migration(e.to_string()))?,
+        ),
+        _ => None,
+    };
+
+    let (revision, mut documents, chunk_kinds) = match &generation {
         None => (ProjectRevision::Unsaved, Vec::new(), Vec::new()),
         Some(generation) => {
             let manifest = generation.manifest();
@@ -223,6 +258,22 @@ pub fn open_snapshot(path: &Path) -> Result<ProjectSnapshot, OpenError> {
             (revision, documents, chunk_kinds)
         }
     };
+    if let Some(migrated) = &migrated {
+        // 문서 정의는 migration한 DocumentManifest에서 다시 읽습니다.
+        documents = Vec::new();
+        for chunk in migrated
+            .chunks()
+            .iter()
+            .filter(|chunk| chunk.kind == stellar_storage::chunk::kinds::KIND_DOCUMENT_MANIFEST)
+        {
+            let manifest =
+                DocumentManifestChunk::decode_for_schema(chunk.schema_version, &chunk.payload)
+                    .map_err(|e| {
+                        OpenError::Document(DocumentReadError::Load(LoadDocumentError::Manifest(e)))
+                    })?;
+            documents.push(manifest.definition);
+        }
+    }
 
     Ok(ProjectSnapshot {
         root: probe.root,
@@ -233,6 +284,8 @@ pub fn open_snapshot(path: &Path) -> Result<ProjectSnapshot, OpenError> {
         documents,
         chunk_kinds,
         generation,
+        migrated,
+        schema,
     })
 }
 
@@ -330,6 +383,34 @@ mod tests {
             snapshot.document_records(document.id).unwrap();
         }
         assert_eq!(file_digest(&dir.path), before);
+    }
+
+    #[test]
+    fn newer_schema_generation_is_rejected_and_current_schema_opens() {
+        // IX.11.21: open_snapshot은 migration::decide 판정을 따릅니다.
+        let dir = TempDir::new("schema-newer");
+        scaffold_project(&dir.path);
+        let model = random_valid_document(51);
+        save_documents(&dir.path, &[&model]);
+        assert_eq!(
+            open_snapshot(&dir.path).unwrap().schema(),
+            SchemaDecision::Current
+        );
+        let before = file_digest(&dir.path);
+        crate::test_support::save_documents_with_schema(&dir.path, &[&model], 2);
+        let after = file_digest(&dir.path);
+        assert_ne!(before, after);
+        let newer = open_snapshot(&dir.path).unwrap();
+        let rejection = stellar_project::migration::SchemaRejection::Newer {
+            found: 2,
+            target: 1,
+        };
+        assert_eq!(newer.schema(), SchemaDecision::Reject(rejection));
+        assert!(matches!(
+            newer.document_records(model.document_id()),
+            Err(DocumentReadError::Schema(found)) if found == rejection
+        ));
+        assert_eq!(file_digest(&dir.path), after, "거부한 읽기는 쓰지 않음");
     }
 
     #[test]
