@@ -1605,6 +1605,29 @@ impl ProjectWindowSession {
         self.libraries = std::sync::Arc::new(libraries);
     }
 
+    /// transaction을 기록하기 전 외부 library 읽기 전용 사전 검사(XV.5.3, ADR-0127 결정 3).
+    fn check_libraries(
+        &self,
+        transaction: &CommandTransaction,
+    ) -> Result<(), WindowSessionEditError> {
+        let Some(document) = self.document.as_ref() else {
+            return Ok(());
+        };
+        self.libraries
+            .check(
+                || match &self.source {
+                    SourceMode::Text {
+                        library: Some(library),
+                        ..
+                    } => library.components.clone(),
+                    _ => crate::library::disk_components(self.identity.root_path()),
+                },
+                document.state.model(),
+                transaction,
+            )
+            .map_err(WindowSessionEditError::Library)
+    }
+
     /// 작업 문서에 transaction을 실행하고 이 창 history에 기록합니다. 작업 문서가 없으면
     /// [`WindowSessionEditError::NoDocument`].
     ///
@@ -1614,6 +1637,7 @@ impl ProjectWindowSession {
         transaction: &CommandTransaction,
         label: u8,
     ) -> Result<ChangeSet, WindowSessionEditError> {
+        self.check_libraries(transaction)?;
         let discarded = self.redo_sequences();
         let document = self
             .document
@@ -1635,6 +1659,7 @@ impl ProjectWindowSession {
         clock: &C,
         label: u8,
     ) -> Result<ChangeSet, WindowSessionEditError> {
+        self.check_libraries(transaction)?;
         let discarded = self.redo_sequences();
         let document = self
             .document
@@ -1657,6 +1682,7 @@ impl ProjectWindowSession {
         clock: &C,
         label: u8,
     ) -> Result<ChangeSet, WindowSessionEditError> {
+        self.check_libraries(transaction)?;
         let discarded = self.redo_sequences();
         let document = self
             .document
@@ -1677,6 +1703,7 @@ impl ProjectWindowSession {
         inserted: StableId,
         label: u8,
     ) -> Result<ChangeSet, WindowSessionEditError> {
+        self.check_libraries(transaction)?;
         let discarded = self.redo_sequences();
         let document = self
             .document
@@ -1698,6 +1725,7 @@ impl ProjectWindowSession {
         selection: Selection,
         label: u8,
     ) -> Result<ChangeSet, WindowSessionEditError> {
+        self.check_libraries(transaction)?;
         let discarded = self.redo_sequences();
         let document = self
             .document
@@ -2466,6 +2494,8 @@ pub enum WindowSessionEditError {
     View(ViewTabsError),
     /// 이동·확대 결과 viewport가 유효하지 않음(유한 값 아님).
     Viewport(ViewportError),
+    /// 외부 library 원본을 바꾸는 편집(읽기 전용 정책, XV.5.3).
+    Library(crate::library::LibraryEditRefused),
 }
 
 impl fmt::Display for WindowSessionEditError {
@@ -2475,6 +2505,7 @@ impl fmt::Display for WindowSessionEditError {
             WindowSessionEditError::History(error) => write!(f, "{error}"),
             WindowSessionEditError::View(error) => write!(f, "{error}"),
             WindowSessionEditError::Viewport(error) => write!(f, "{error}"),
+            WindowSessionEditError::Library(error) => write!(f, "{error}"),
         }
     }
 }
