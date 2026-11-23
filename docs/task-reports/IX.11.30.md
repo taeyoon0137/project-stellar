@@ -77,7 +77,8 @@
     기대값으로 바꿉니다.
   - 두 세트, 세 View에서 확인했습니다.
 - RN 차이: `react_native_output_states_css_set_differences`
-  - `css` 세트에서 `position: 'static'`, `boxSizing: 'content-box'`, `flexShrink: 1`이 나옵니다.
+  - `css` 세트에서 `boxSizing: 'content-box'`, `flexShrink: 1`이 나옵니다. `position: static`은 Web 투영처럼
+    `relative`(RN 기본값)로 두어 쓰지 않습니다(absolute 자식의 containing block을 부모로 유지).
   - block 부모 자식에는 flex item 속성이 없습니다.
   - `react-native` 세트에서 같은 Frame은 크기만 남습니다.
 - export-web CSS ↔ record: `export_web_rules_carry_the_resolved_explicit_values`. `style-defaults resolve`의 명시 값이

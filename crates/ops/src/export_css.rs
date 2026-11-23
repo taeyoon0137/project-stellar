@@ -647,6 +647,10 @@ fn react_native_style(element: &ElementStyle, target: &FlatSet) -> (RnStyle, RnN
                 Placement::Free | Placement::Inset => {
                     entries.push(("position".into(), RnValue::Text("absolute".into())))
                 }
+                // Web 투영은 stacking 규칙(속성 모델 3장)으로 `static`을 `relative`로 냅니다. 그래서 absolute
+                // 자식의 containing block이 언제나 부모 요소입니다. RN에 `static`을 쓰면 absolute 자식이 더 위
+                // 조상을 기준으로 놓이므로, Web 결과와 같은 RN 기본값 `relative`로 둡니다(항목을 쓰지 않음).
+                _ if position == "static" => {}
                 _ if explicit || differs => emit(&mut entries, &mut notes, longhand, &rv.value),
                 _ => {}
             },

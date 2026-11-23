@@ -82,8 +82,11 @@ Accepted (2026-11-23).
      `approximated-border-inset`을 냅니다.
 7. **React Native 출력.** 같은 계획을 `StyleSheet.create` 모듈로 냅니다(`stellar export-styles --target react-native`).
    - longhand는 명시 값이거나 활성 세트 값이 `react-native` 세트와 다를 때만 냅니다. 그래서 `css` 세트 프로젝트는
-     `flexShrink: 1`, `boxSizing: 'content-box'`, `position: 'static'` 같은 차이가 명시됩니다. `react-native` 세트
-     프로젝트는 명시 값만 남습니다.
+     `flexShrink: 1`, `boxSizing: 'content-box'` 같은 차이가 명시됩니다. `react-native` 세트 프로젝트는 명시 값만
+     남습니다.
+   - `position: static`은 Web 투영과 같이 `relative`로 봅니다(결정 4의 stacking 규칙). RN 기본값이 `relative`라
+     항목을 쓰지 않습니다. `static`을 그대로 쓰면 absolute 자식(Free·inset)의 containing block이 부모 요소가
+     아니라 더 위 조상이 되어 Web 출력과 위치가 달라지기 때문입니다.
    - 낮춤 규칙(`codegen::react_native::lower`)은 Target Profile 상태(Native·Approximated·Unsupported)를 돌려줍니다.
      - CSS `normal` 정렬은 flex에서의 동작 값으로 바꿉니다(`justify-content` → `flex-start`, `align-*` → `stretch`,
        gap → 0).

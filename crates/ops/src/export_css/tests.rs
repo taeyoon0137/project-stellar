@@ -405,7 +405,10 @@ fn react_native_output_states_css_set_differences() {
     };
     let plain = block(11);
     // css 세트의 생략값이 RN 기본값과 다른 항목을 명시합니다.
-    assert!(plain.contains("    position: 'static',"), "{plain}");
+    // static은 Web 투영처럼 relative(RN 기본값)로 두어 항목을 쓰지 않습니다. absolute 자식의 containing block이
+    // Web 출력과 같게 부모 요소로 남습니다.
+    assert!(!plain.contains("position:"), "{plain}");
+    assert!(!source.contains("'static'"), "{source}");
     assert!(plain.contains("    boxSizing: 'content-box',"), "{plain}");
     assert!(plain.contains("    flexShrink: 1,"), "{plain}");
     assert!(plain.contains("    width: 100,"), "{plain}");
