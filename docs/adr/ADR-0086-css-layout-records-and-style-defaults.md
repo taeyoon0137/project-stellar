@@ -124,8 +124,12 @@ Accepted (2026-11-23).
       - lane 계획은 command 두 개를 예정했습니다. 그러나 `UnsetProperty`의 역에는 값을 되돌리는 command가 필요합니다.
       - 기존 `SetProperty`의 값 타입(`TypedValue`)은 track 목록 같은 layout 값을 표현하지 못합니다.
       - 그래서 세 번째 번호를 씁니다.
-    - 활성 세트 이름은 `DocumentModel`에 거울로 둡니다. 원본은 `stellar.yaml`이고, 연 쪽이 넣어 줍니다. 이 거울이
-      있어야 command가 undo 한 번으로 되돌아갑니다.
+    - 활성 세트 이름은 `DocumentModel`에 거울로 둡니다. 원본은 `stellar.yaml`이고, 문서를 여는 쪽이 넣어 주어야
+      합니다. 이 거울이 있어야 command가 undo 한 번으로 되돌아갑니다.
+    - 아직 거울을 채우고 되쓰는 경로가 없습니다. 문서를 여는 경로(`ops::snapshot`, runtime)는 거울을 `css`로 두고,
+      저장 경로는 거울을 `stellar.yaml`에 쓰지 않습니다. 그래서 지금 `SetStyleDefaults`를 실행하는 제품 경로는 두지
+      않습니다. CLI `style-defaults set`은 command 없이 `stellar.yaml` 한 줄을 직접 바꿉니다(결정 11). 연결은
+      Consequences의 후속 작업입니다.
 11. **조회 출처(ADR-0082 결정 5).**
     - 출처는 `stellar style-defaults resolve <프로젝트> <문서> <node>`가 longhand마다 돌려줍니다.
     - 세트 목록·내용·선택은 `stellar style-defaults list|show|set`입니다.
@@ -156,6 +160,14 @@ Accepted (2026-11-23).
     - 복제·붙여넣기한 node는 명시 layout 값을 잃습니다.
     - 저장된 history journal에서 다시 연 삭제 undo도 layout record를 되살리지 못합니다.
   - semantic diff·merge snapshot은 아직 layout record를 투영하지 않습니다(semantic-diff lane).
+    - Git 상태·stage에서 `layout` 줄만 바뀐 문서는 의미 변경이 없는 것으로 보입니다.
+    - 외부 변경 반영(`ApplyExternalSnapshot`, ADR-0059)은 바뀐 `layout` 줄을 모델에 옮기지 않습니다. 앱이 그 뒤에
+      저장하면 외부에서 고친 layout 값을 앱 모델 값으로 덮어쓸 수 있습니다.
+  - 컴포넌트 원본(ADR-0061)과 컴포넌트 정의 node에는 layout record가 없습니다. 컴포넌트 root의 `display` 등을 둘 수
+    없습니다.
+  - `stellar apply`의 CommandTransaction JSON과 `stellar css paste`는 layout longhand를 받지 않습니다(`ops::apply`,
+    `ops::css`). CLI·MCP로 layout 값을 바꾸는 길은 텍스트 원본 `layout` 줄을 직접 고치는 것뿐입니다.
+  - 활성 세트 거울을 열 때 채우고 저장할 때 되쓰는 연결이 없습니다(결정 10).
   - scene·runtime은 아직 레이아웃 결과로 그리지 않습니다. 위치는 여전히 Frame transform입니다.
 
 ## Compatibility
