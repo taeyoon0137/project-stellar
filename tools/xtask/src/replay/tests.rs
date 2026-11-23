@@ -1,4 +1,4 @@
-//! core replay 테스트 (XI.2.6, XII.3.7, XVI.2.2, XXIV.3.3).
+//! core replay 테스트 (XI.2.6, XII.3.7, XVI.2.1, XVI.2.2, XXIV.3.3).
 
 use super::*;
 use std::path::PathBuf;
@@ -138,4 +138,66 @@ fn result_schema_is_identical_across_runs() {
         shapes.push(shape(&result.to_json()));
     }
     assert_eq!(shapes[0], shapes[1]);
+}
+
+#[test]
+fn cli_records_and_runs_replay_files() {
+    // lane 검증: `cargo xtask replay` CLI.
+    let dir = std::env::temp_dir().join(format!("stellar-replay-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let replay = dir.join("drag.replay");
+    let result = dir.join("result.json");
+    let args = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+    run_cli(
+        &args(&[
+            "record",
+            "drag",
+            "--out",
+            replay.to_str().unwrap(),
+            "--seed",
+            "3",
+            "--size",
+            "2000",
+        ]),
+        &repo_root(),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(&replay).unwrap();
+    assert!(text.starts_with("stellar-replay v1\nfixture visible-nodes 3 2000\n"));
+    run_cli(
+        &args(&[
+            "run",
+            replay.to_str().unwrap(),
+            "--out",
+            result.to_str().unwrap(),
+            "--commit",
+            "0123456789abcdef0123456789abcdef01234567",
+            "--hardware-model",
+            "Mac14,2",
+            "--hardware-cpu",
+            "Apple M1",
+            "--memory-gib",
+            "16",
+            "--os-build",
+            "25C56",
+            "--app-build",
+            "0.0.0",
+        ]),
+        &repo_root(),
+    )
+    .unwrap();
+    let json = std::fs::read_to_string(&result).unwrap();
+    assert!(json.contains("\"schema\": \"stellar.performance-result.v1\""));
+    assert!(json.contains("\"kind\": \"drag\""));
+    assert!(!json.contains(dir.to_str().unwrap()));
+    // 잘못된 인자와 다른 fixture hash는 거부합니다.
+    assert_eq!(run_cli(&args(&["spin"]), &repo_root()).unwrap_err().0, 64);
+    let tampered = text.replace(
+        "fixture visible-nodes 3 2000",
+        "fixture visible-nodes 4 2000",
+    );
+    std::fs::write(&replay, tampered).unwrap();
+    let err = run_cli(&args(&["run", replay.to_str().unwrap()]), &repo_root()).unwrap_err();
+    assert_eq!(err.0, 70, "{}", err.1);
+    let _ = std::fs::remove_dir_all(&dir);
 }

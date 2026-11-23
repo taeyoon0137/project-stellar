@@ -32,7 +32,7 @@ pub const EXIT_POLICY: i32 = 65;
 pub const EXIT_INTERNAL: i32 = 70;
 
 /// 등록된 명령 이름(help 포함).
-pub const COMMANDS: [&str; 17] = [
+pub const COMMANDS: [&str; 18] = [
     "help",
     "generate-ledger",
     "generate-ffi-header",
@@ -50,6 +50,7 @@ pub const COMMANDS: [&str; 17] = [
     "validate-storage-fixtures",
     "bench-chunk-size",
     "test-migrations",
+    "replay",
 ];
 
 /// 사용법 문자열. 각 명령이 정확히 한 번 나타납니다.
@@ -115,6 +116,10 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
             }
             Err(e) => Err(policy_err(&[e])),
         },
+        "replay" => crate::replay::run_cli(rest, repo_root).map_err(|(code, message)| {
+            eprintln!("{message}");
+            code
+        }),
         other => {
             eprintln!("알 수 없는 명령: {other}");
             eprint!("{}", usage());
