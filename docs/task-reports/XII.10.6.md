@@ -3,7 +3,7 @@
 - WBS: XII.10.6
 - 작업명: 빈 캔버스·Root Frame 빈 영역에서 시작하는 영역 선택, 수식키 4종(기본 걸침, Option 완전 포함, ⌘ 가장 깊은 node, Shift 더하기),
   transient preview와 pointer up의 SetSelection 하나
-- 상태: 부분 완료 보고. 기능·history 기준은 통과, 2만 node 갱신 p99 8ms 기준은 preview 갱신 전체로는 미충족(아래).
+- 상태: `[~]` 부분 완료 보고. 기능·history 기준은 통과, 2만 node 갱신 p99 8ms 기준은 preview 갱신 전체로는 미충족(아래).
 - 선행: VII.3.3, XII.10.3(이 작업에서 구현), XI.3.1
 
 ## 필수 실행 환경
