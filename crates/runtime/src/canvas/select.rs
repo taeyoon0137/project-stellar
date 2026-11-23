@@ -428,7 +428,8 @@ mod tests {
         };
         let inside_11 = EditingScope::at(&tree, sid(11));
         // (클릭 위치, 범위, 수식키) → (선택, 범위).
-        let cases: [((f32, f32), EditingScope, Modifiers, &[u64], u64); 9] = [
+        type Case<'a> = ((f32, f32), EditingScope, Modifiers, &'a [u64], u64);
+        let cases: [Case<'_>; 9] = [
             // 최상위: Rectangle 13 위를 눌러도 범위 직계 자식 Frame 11.
             ((130., 130.), top, NONE, &[11], 10),
             ((220., 220.), top, NONE, &[11], 10),
