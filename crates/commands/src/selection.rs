@@ -24,9 +24,13 @@ use crate::tree::parent_of;
 use crate::view_tabs::ViewTabs;
 
 /// 순서 있는 선택 집합 + primary.
+///
+/// `sorted`는 `ids`를 정렬한 사본으로 소속 판정([`Selection::contains`])을 이분 탐색으로 합니다. `ids`에서만
+/// 만들어지므로 같음 비교에 영향이 없습니다.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Selection {
     ids: Vec<StableId>,
+    sorted: Vec<StableId>,
     primary: Option<StableId>,
 }
 
@@ -38,19 +42,28 @@ impl Selection {
 
     /// 선택을 만듭니다. 중복은 처음 위치만 남기고 NIL은 버립니다. primary가 집합의 원소가
     /// 아니면 마지막 원소(가장 최근에 더한 node)가 primary입니다(빈 집합이면 없음).
+    ///
+    /// 중복 판정은 hash 집합 하나로 원소 수에 선형입니다. 2만 개 가까운 마퀴 preview 갱신이 제곱 비용이 되지
+    /// 않게 합니다(ADR-0104 Performance).
     pub fn new(ids: impl IntoIterator<Item = StableId>, primary: Option<StableId>) -> Selection {
-        let mut ordered: Vec<StableId> = Vec::new();
+        let ids = ids.into_iter();
+        let mut seen: std::collections::HashSet<StableId> =
+            std::collections::HashSet::with_capacity(ids.size_hint().0);
+        let mut ordered: Vec<StableId> = Vec::with_capacity(ids.size_hint().0);
         for id in ids {
-            if id != StableId::NIL && !ordered.contains(&id) {
+            if id != StableId::NIL && seen.insert(id) {
                 ordered.push(id);
             }
         }
         let primary = match primary {
-            Some(primary) if ordered.contains(&primary) => Some(primary),
+            Some(primary) if seen.contains(&primary) => Some(primary),
             _ => ordered.last().copied(),
         };
+        let mut sorted = ordered.clone();
+        sorted.sort_unstable();
         Selection {
             ids: ordered,
+            sorted,
             primary,
         }
     }
@@ -67,7 +80,7 @@ impl Selection {
 
     /// `id`가 선택되었는지.
     pub fn contains(&self, id: StableId) -> bool {
-        self.ids.contains(&id)
+        self.sorted.binary_search(&id).is_ok()
     }
 
     /// 선택 수.
@@ -250,7 +263,8 @@ impl WindowViewState {
     /// 사용자 history 항목이 아니라 **system event**([`SelectionPruned`])를 돌려줍니다. 진행 중인 영역
     /// 선택 preview도 함께 정리합니다. 지울 것이 없으면 `None`입니다.
     pub fn prune_removed(&mut self, changes: &ChangeSet) -> Option<SelectionPruned> {
-        let removed = changes.removed_nodes();
+        let removed: std::collections::HashSet<StableId> =
+            changes.removed_nodes().into_iter().collect();
         if removed.is_empty() {
             return None;
         }
@@ -449,6 +463,26 @@ mod tests {
         // 창 id·선택 id는 저장 bytes 어디에도 새로 생기지 않습니다(문서 정의·레코드만 기록).
         let window_bytes = sid(500).to_bytes();
         assert!(!before.windows(16).any(|w| w == window_bytes));
+    }
+
+    #[test]
+    fn large_selection_keeps_first_positions_and_membership() {
+        // 2만 개 + 중복 2만 개: 처음 위치만 남고 소속 판정이 순서 목록과 같습니다.
+        let ids: Vec<StableId> = (1..=20_000u64)
+            .rev()
+            .chain(1..=20_000u64)
+            .map(sid)
+            .collect();
+        let selection = Selection::new(ids, Some(sid(7)));
+        assert_eq!(selection.len(), 20_000);
+        assert_eq!(selection.ids()[0], sid(20_000));
+        assert_eq!(selection.ids()[19_999], sid(1));
+        assert_eq!(selection.primary(), Some(sid(7)));
+        assert!(selection.contains(sid(1)) && selection.contains(sid(20_000)));
+        assert!(!selection.contains(sid(20_001)));
+        let kept = selection.retain(|id| id != sid(7));
+        assert_eq!(kept.primary(), Some(sid(1)), "primary가 빠지면 마지막 원소");
+        assert!(!kept.contains(sid(7)));
     }
 
     #[test]
