@@ -3,7 +3,7 @@
 - WBS: XIV.10.8
 - 작업명: conflict 없는 merged snapshot을 full validator로 검증하고 invalid result를 자동 merge 성공으로 반환하지 않음
 - 상태: 완료 (`[x]`)
-- 선행: XIV.10.2~XIV.10.7, VI.10.1
+- 선행: XIV.10.2\~XIV.10.7, VI.10.1
 - 결정: [ADR-0081](../adr/ADR-0081-semantic-merge-resolution-and-git-driver.md) 결정 2
 
 ## 필수 실행 환경

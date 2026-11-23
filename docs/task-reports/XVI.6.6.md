@@ -17,7 +17,7 @@
 ## 구현 요약
 
 - 고정 seed 결정론 harness(XVI.6.5와 같은 방식, 새 의존성 없음). 반복 수는 `STELLAR_SEMANTIC_MERGE_FUZZ_ITERATIONS`.
-- 입력: `world` fixture에 무작위 편집 1~4개(이름·표시·node 삭제·추가·이동, token 타입·값, interface Property 목록,
+- 입력: `world` fixture에 무작위 편집 1\~4개(이름·표시·node 삭제·추가·이동, token 타입·값, interface Property 목록,
   scene·정의 tree override, clipping 참조, 컴포넌트 삭제, 새 인스턴스)를 양쪽에 따로 적용합니다. 편집 결과가 그쪽에서 이미
   invalid여도 됩니다.
 - 판정: clean이면 세 입력 어디에도 없던 위반 0, conflict는 `(StableId, 대상)` 엄격 순서, 결과 bytes round-trip. 아니면

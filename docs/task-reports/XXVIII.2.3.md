@@ -24,7 +24,7 @@
   fixture뿐입니다.
 - runner는 구현(`Implementation`: diff bytes, merge bytes)을 받아 bytes 단위로 판정합니다. 세 파일 중 하나라도 없거나 16진수·입력
   형식이 틀리면 corpus 오류입니다.
-- 사례는 XIV.10.2~XIV.10.8 규칙(자동 병합, 같은 변경, 속성 값·삭제 대 수정·상충 재정렬 conflict, 독립 삽입 key 재배정, 전용 세
+- 사례는 XIV.10.2\~XIV.10.8 규칙(자동 병합, 같은 변경, 속성 값·삭제 대 수정·상충 재정렬 conflict, 독립 삽입 key 재배정, 전용 세
   종류, 결과 검증 되돌리기)을 하나씩 담습니다.
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)

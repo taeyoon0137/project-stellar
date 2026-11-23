@@ -3,7 +3,7 @@
 - WBS: XIV.12.1
 - 작업명: conflict별 resolution을 정의하고 허용 action을 conflict kind별로 제한
 - 상태: 완료 (`[x]`)
-- 선행: XIV.10.4~XIV.10.7
+- 선행: XIV.10.4\~XIV.10.7
 - 결정: [ADR-0081](../adr/ADR-0081-semantic-merge-resolution-and-git-driver.md) 결정 4
 
 ## 필수 실행 환경
@@ -18,7 +18,7 @@
 ## 구현 요약
 
 - `Resolution`은 `ChooseBase`·`ChooseOurs`·`ChooseTheirs`·`CustomValue(SemanticValue)`·`Delete` 닫힌 enum이고, `ResolutionKind`는
-  안정 code 1~5입니다.
+  안정 code 1\~5입니다.
 - 허용 action은 conflict 대상과 세 상태로 정합니다. 객체: 세 side 선택(`Missing` = 삭제), 어느 side든 `Missing`이면 `Delete`.
   위치: 위치 상태인 side 선택만. 속성: 속성 상태인 side 선택, `CustomValue`, 어느 side든 속성이 없거나 객체가 없으면 `Delete`.
   conflict 종류마다 대상이 정해져 있으므로(예: token-type-vs-value는 객체, conflicting-reorder는 위치나 목록 속성) 종류별 제한이
