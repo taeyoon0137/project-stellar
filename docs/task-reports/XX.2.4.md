@@ -58,3 +58,10 @@
 - shadow·layer blur·blend는 CPU target이 그리지 않아 두 target 대조가 없습니다. 대신 Metal target을 같은 그리기 목록의 CPU 기준과
   ±3으로 비교합니다(XX.2.1 `metal_target_draws_effects_like_the_cpu_reference`).
 - 저장 golden PNG는 CPU target 결과뿐입니다. GPU 결과는 매번 CPU 결과와 비교하므로 따로 저장하지 않았습니다.
+
+## 후속: 효과 대조 갱신 (lane render-shadow-quality, ADR-0130)
+
+- CPU target은 여전히 shadow·blur를 그리지 않으므로 효과 대조는 같은 그리기 목록의 CPU 기준과 합니다. 그 기준 그리기는
+  fixture 크기 상한(512)을 넘을 수 있어 canvas에 직접 그립니다(`cpu_reference_of`). 큰 blur 장면은 이제 배수 8로 그려
+  CPU 기준과 연관 값 ±4 안입니다(XX.2.1 후속 절). 공유 scene golden(`metal_target_matches_cpu_target_on_shared_scenes`)과 결정론
+  test는 바뀌지 않았고 통과합니다.
