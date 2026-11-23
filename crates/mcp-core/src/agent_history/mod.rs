@@ -141,6 +141,8 @@ pub enum SessionError {
     DuplicateSession(AgentSessionId),
     /// 이미 끝난 세션(다시 시작하지 않음).
     Ended(AgentSessionId, EndReason),
+    /// 아직 끝나지 않은 세션(끝난 세션만 받는 동작).
+    NotEnded(AgentSessionId),
     /// 진행 중인 편집(lease)이 있습니다.
     EditInProgress(LeaseId),
     /// 진행 중인 편집이 없습니다.
@@ -170,6 +172,9 @@ impl fmt::Display for SessionError {
             }
             SessionError::Ended(id, reason) => {
                 write!(f, "에이전트 세션 {}은 끝났습니다({})", id.0, reason.code())
+            }
+            SessionError::NotEnded(id) => {
+                write!(f, "에이전트 세션 {}은 아직 끝나지 않았습니다", id.0)
             }
             SessionError::EditInProgress(id) => write!(f, "진행 중인 편집 {id}가 있습니다"),
             SessionError::NoEdit => f.write_str("진행 중인 편집이 없습니다"),
@@ -494,6 +499,40 @@ impl AgentEditSessions {
                 )
                 .map(Some),
         }
+    }
+
+    /// 종료 절차에서 history 확정이 실패해(예: 창 history가 gesture preview 중) 진행 중으로 남은 batch를 "중단됨"
+    /// entry 하나로 확정합니다. 다음 확정 기회(preview가 끝난 뒤 등)에 앱이 부릅니다. 끝난 세션만 받고, 남은 batch가
+    /// 없으면 entry를 만들지 않습니다. 실패하면 batch는 계속 진행 중으로 남습니다.
+    pub fn confirm_interrupted(
+        &self,
+        id: AgentSessionId,
+        provenance: &mut AgentChangeProvenance,
+        history: &mut dyn AgentHistorySink,
+        entry_id: CommandId,
+    ) -> Result<(Option<u64>, usize), SessionError> {
+        if self.sessions.contains_key(&id) {
+            return Err(SessionError::NotEnded(id));
+        }
+        if !self.ended.contains_key(&id) {
+            return Err(SessionError::UnknownSession(id));
+        }
+        let Some(lease) = provenance
+            .session_batches(id)
+            .find(|b| b.outcome == BatchOutcome::InProgress)
+            .map(|b| b.lease)
+        else {
+            return Ok((None, 0));
+        };
+        confirm(
+            id,
+            lease,
+            provenance,
+            history,
+            entry_id,
+            AgentGroupOutcome::Interrupted,
+        )
+        .map_err(SessionError::History)
     }
 
     /// 종료 절차(모듈 문서). 자동 rollback하지 않습니다.

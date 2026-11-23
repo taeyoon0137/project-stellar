@@ -195,6 +195,52 @@ fn history_refusal_still_releases_lease_and_permission() {
         "확정 못 한 batch는 진행 중으로 남음"
     );
     assert_eq!(name(&world.history.doc, 13), "a");
+    // 끝나지 않은 세션은 받지 않습니다(진행 중 편집은 complete·end 경로).
+    let mut active = World::new(SessionOrigin::ExternalClient);
+    assert!(matches!(
+        active.sessions.confirm_interrupted(
+            session(S),
+            &mut active.provenance,
+            &mut active.history,
+            id(5000)
+        ),
+        Err(SessionError::NotEnded(_))
+    ));
+    // 다음 확정 기회에 남은 batch를 "중단됨" entry 하나로 확정합니다.
+    world.history.refuse = false;
+    let revision = world.history.doc.revision();
+    let (sequence, count) = world
+        .sessions
+        .confirm_interrupted(
+            session(S),
+            &mut world.provenance,
+            &mut world.history,
+            id(5000),
+        )
+        .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(world.history.entries.len(), 1);
+    assert_eq!(world.history.entries[0].kind, "interrupted");
+    assert_eq!(sequence, Some(world.history.entries[0].sequence));
+    assert_eq!(world.history.doc.revision(), revision, "다시 실행하지 않음");
+    assert_eq!(
+        world.provenance.batches()[0].outcome,
+        BatchOutcome::Interrupted
+    );
+    // 남은 batch가 없으면 entry를 만들지 않습니다.
+    assert_eq!(
+        world
+            .sessions
+            .confirm_interrupted(
+                session(S),
+                &mut world.provenance,
+                &mut world.history,
+                id(5001)
+            )
+            .unwrap(),
+        (None, 0)
+    );
+    assert_eq!(world.history.entries.len(), 1);
 }
 
 #[test]
