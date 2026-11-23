@@ -328,6 +328,49 @@ fn external_change_over_a_dirty_window_is_reconciled_and_autosave_resumes() {
 }
 
 #[test]
+fn autosave_writer_meeting_an_external_change_first_reconciles_and_saves_both() {
+    // XIII.3.4(ADR-0110 결정 2): 감시 반영보다 자동 저장 writer가 먼저 외부 writer stale을 만나도, 쓰기 결과를 반영하는
+    // 자리에서 병합하고 stale을 풀어 자동 저장이 병합 결과를 씁니다(두 선택지 alert 0).
+    let project = saved_project("pipeline-reconcile-writer");
+    let locks = TempDir::new("pipeline-reconcile-writer-locks");
+    let mut app = AppRuntime::start().unwrap();
+    app.enable_autosave_with(policy(60_000, 60_000));
+    let owner = open_project(&app, project.path());
+    let (a, _, _) = open_window(&app, owner);
+    edit(&app, a, 701, 12, "로컬");
+    cli_rename(&project, &locks, 11, "CLI 편집");
+    app.flush_autosave().unwrap();
+    let saved_name = |node: u64| {
+        open_snapshot(project.path())
+            .unwrap()
+            .document_records(sid(1))
+            .unwrap()
+            .nodes
+            .into_iter()
+            .find(|n| n.id == sid(node))
+            .unwrap()
+            .display_name
+    };
+    assert!(
+        wait_for(|| name_of(&app, a, 11) == "CLI 편집"),
+        "쓰기 결과 반영 자리에서 병합"
+    );
+    let traces = app.autosave_traces(a).unwrap().wait().unwrap();
+    assert_eq!(
+        traces.first().map(|t| t.result),
+        Some(AutosaveTraceResult::Stale),
+        "첫 쓰기는 외부 writer stale"
+    );
+    assert_eq!(name_of(&app, a, 12), "로컬", "편집 보존");
+    assert_eq!(alerts(&app), Vec::new(), "두 선택지 alert 0");
+    app.flush_autosave().unwrap();
+    assert!(wait_for(|| !dirty(&app, a)), "자동 저장 재개");
+    assert_eq!(saved_name(11), "CLI 편집");
+    assert_eq!(saved_name(12), "로컬");
+    app.shutdown().unwrap();
+}
+
+#[test]
 fn overlapping_external_change_leaves_the_two_choices_without_writing() {
     // XIII.3.4: 같은 속성을 외부 writer와 창이 다르게 바꾸면 자동 적용하지 않고 두 선택지 상태로 둡니다.
     let project = saved_project("pipeline-reconcile-overlap");
