@@ -46,6 +46,11 @@ Accepted (2026-11-23).
        longhand가 아닙니다. modifier는 stack 구조이고, 없으면 효과가 없습니다.
      - 묶음 key가 아니고, 매핑 상태가 `stellar-only`가 아니며, 이름이 그 항목의 CSS longhand 이름입니다.
      - 이름이 layout longhand가 아닙니다. payload 크기 `width`·`height`는 layout 표의 값을 씁니다.
+   - 이 규칙으로 빠지는 converted 항목은 CSS longhand 하나가 아니라 Stellar 단일 값입니다. 표에 두지 않습니다.
+     - `visible`(`display`로 변환), Frame `clipping`(값 변형 규칙으로 `overflow`·`clip-path`, registry 주석의 Stellar
+       고유 단일 속성), Path `path-data`(`d`, 도형 자체라 생략값이 없음).
+     - Frame `transform` 항목의 `transform-origin`은 따로 저장하는 key가 없어 표에 없습니다.
+     - 이 항목들의 생략값이 필요해지면(희소 저장 등) 그 작업이 표 항목과 값 표기를 정합니다.
    - 표 원본은 `style_defaults::payload_entries`이고 줄마다 (세트, registry 범위, key, 정규 값, 근거)입니다. 구획은
      registry 범위가 정합니다(Frame→`frame`, Shape·Path→`shape`, Text→`text`, Image→`image`).
    - 값은 registry 값 문법 formatter의 정규 표기입니다. 문법 parser가 받지 않는 값은 registry 매핑의 값 변형 규칙에
@@ -127,7 +132,7 @@ Accepted (2026-11-23).
 
 ## Consequences
 
-- 모든 registry CSS longhand가 두 세트의 값을 갖습니다. payload 희소 저장, codegen 차이 출력, 조회가 같은 표를 씁니다.
+- 결정 1의 payload longhand 전부와 layout longhand 전부가 두 세트의 값을 갖습니다(결정 1의 제외 항목 빼고). payload 희소 저장, codegen 차이 출력, 조회가 같은 표를 씁니다.
 - 표 값을 바꾸면 conformance test가 실패하고, 바꾼 이유를 fixture 출처에 적어야 합니다.
 - 붙여넣기와 속성 패널이 같은 stack에 같은 위치로 modifier를 넣습니다.
 - `stellar style-defaults set`이 base revision과 저장 잠금을 지키고, 바뀌는 파일은 `stellar.yaml` 하나, 한 줄입니다.

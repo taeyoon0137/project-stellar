@@ -24,7 +24,8 @@
 ## 구현 요약
 
 - 세트 표는 layout longhand 40개(기존)와 payload longhand 33개입니다. 두 표를 합치면 Stellar가 node에 저장하는 CSS
-  longhand 전체입니다.
+  longhand 전체입니다. CSS longhand 하나가 아닌 Stellar 단일 값(`visible`, Frame `clipping`, Path `path-data`)은
+  표에 없습니다(ADR-0115 결정 1, 통합 검토에서 명시).
 - payload 값은 지금 모델에서 언제나 명시 값이라 해석 함수 `resolve`는 바뀌지 않습니다. 표는 payload 희소 저장 step,
   codegen, 조회가 같은 값을 쓰도록 registry key별로 한 곳에 둡니다.
 - `react-native`가 바꾸는 payload 값은 `border-*-style: solid`, `font-family: system-ui`, `font-size: 14px`,

@@ -245,7 +245,8 @@ pub fn builtin_entries() -> &'static [BuiltinEntry] {
 /// 기본값 세트가 값을 두는 payload longhand(registry 항목) 목록(registry 순서).
 ///
 /// registry([`registry::entries`])에서 다음 조건을 모두 만족하는 항목입니다. [`LayoutLonghand::ALL`]과 합치면
-/// Stellar가 node에 저장하는 CSS longhand 전체입니다.
+/// Stellar가 node에 저장하는 CSS longhand 전체입니다. CSS longhand 하나가 아닌 Stellar 단일 값(`visible`, Frame
+/// `clipping`, Path `path-data`)은 빠집니다(ADR-0115 결정 1).
 /// - 범위가 node 종류 payload(Frame·Shape·Path·Text·Image)입니다. 공통 필드(`0x00xx`)와 modifier(`0x10xx`)는
 ///   longhand가 아닙니다. modifier는 stack 구조이고, 없으면 효과가 없습니다.
 /// - 묶음 key가 아니고 매핑 상태가 `stellar-only`가 아니며, 이름이 그 항목의 CSS longhand 이름입니다.
@@ -1447,6 +1448,8 @@ mod tests {
             "polygon-sides",
             "text-content",
             "path-data",
+            "clipping",
+            "visible",
         ] {
             assert!(!names.contains(&excluded), "{excluded}");
         }

@@ -6,7 +6,8 @@
 
 - 원본(텍스트 원본, chunk)에는 사용자가 명시한 longhand만 있습니다. 명시하지 않은 longhand는 활성 기본값 세트의
   값으로 풉니다.
-- 세트 표는 Stellar가 node에 저장하는 모든 CSS longhand의 값을 둡니다(ADR-0115 결정 1). 표는 두 개입니다.
+- 세트 표는 Stellar가 node에 저장하는 CSS longhand의 값을 둡니다(ADR-0115 결정 1). 표는 두 개입니다. CSS longhand
+  하나가 아닌 Stellar 단일 값(`visible`, Frame `clipping`, Path `path-data`)은 표에 없습니다(ADR-0115 결정 1).
   - layout longhand 40개(2.2절, `crates/document/src/layout_record.rs` `LayoutLonghand`). 명시·미설정 구분이 있어
     해석 함수가 이 표로 생략값을 풉니다.
   - payload longhand(2.4절). 속성 registry(`crates/document/src/css/registry.rs`)의 payload 범위 항목 가운데 이름이
