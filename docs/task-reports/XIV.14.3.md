@@ -53,3 +53,15 @@
 ## 남은 위험 / 한계
 
 - token은 저장 포맷이 없어(문서 레코드에 token 없음) 저장 프로젝트 scenario를 만들 수 없습니다. token·binding 의존은 semantic-diff dependency graph(XIV.5.2) 단위 테스트로만 검증됩니다. token 저장 포맷이 생기면 같은 scenario를 추가해야 합니다.
+
+## 후속 판정 (2026-11-23, lane `recovery-git-terminal`)
+
+- 판정: `[~]` 유지. 컴포넌트 의존 staging(차단 → 승인 뒤 성공)은 위 엔진·CLI 시험으로 충족합니다.
+- token 의존 staging 시나리오는 지금 형식으로 만들 수 없음을 다시 확인했습니다([ADR-0120](../adr/ADR-0120-recovery-probe-git-scenarios-terminal-env.md) 결정 5).
+  - 텍스트 원본에는 token set 파일(`design/tokens/<slug>.stellar.yaml`, `stellar_project::document_io::source_v4::token`)이 생겼고
+    ops staging도 이 파일을 독립 원본 단위로 다룹니다(`stellar_ops::git::SourceUnit`).
+  - 그러나 문서 레코드(`stellar_document::records::DocumentRecords`)에 token 참조가 없어 View가 token set에 기대는 저장 프로젝트가
+    생기지 않고, 동반 단위 계산(`stellar_ops::git` `companion_closure`)도 컴포넌트 정의만 봅니다. 그래서 "token 의존 partial
+    차단"이 생길 경로가 없습니다.
+- 남은 일: token 참조가 문서 형식에 들어올 때 ops 동반 단위 계산에 token set 의존을 더하고, 같은 scenario(View만 stage → token
+  set 동반 요구 → 승인 뒤 성공)를 XIV.14.1 harness로 더합니다. 둘 다 이 lane 소유 밖(document·ops)입니다.
