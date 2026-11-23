@@ -1055,6 +1055,8 @@ pub(crate) struct WindowEntry {
     inspector: inspector::InspectorCache,
     selection_caps: selection_menu::SelectionCapsCache,
     autosave: autosave::WindowAutosave,
+    /// 창 하나의 에이전트 편집 상태(권한·lease 요청·출처 색인·세션 절차, ADR-0112). 창과 함께 버립니다.
+    pub(crate) agent: crate::agent_edit::WindowAgentEdit,
 }
 
 #[derive(Debug)]
@@ -1273,6 +1275,7 @@ fn close_project_on_thread(
     for window in session.windows {
         if let Some(mut entry) = sessions.windows.remove(&window) {
             entry.checkpoint.discard();
+            crate::agent_edit::close_window(&mut entry);
         }
     }
     Ok(RuntimeEvent::ProjectClosed {
@@ -1415,6 +1418,7 @@ fn open_window_session_on_thread(
             inspector: Default::default(),
             selection_caps: Default::default(),
             autosave: Default::default(),
+            agent: Default::default(),
         },
     );
     if let Some(owner) = sessions.projects.get_mut(&project) {
@@ -1441,6 +1445,7 @@ fn close_window_session_on_thread(
         .remove(&session)
         .ok_or_else(|| unknown_window(session))?;
     entry.checkpoint.discard();
+    crate::agent_edit::close_window(&mut entry);
     if let Some(owner) = sessions.projects.get_mut(&entry.project) {
         owner.windows.remove(&session);
     }
@@ -1550,22 +1555,27 @@ fn perform_on_thread(
         autosave::settle(ctx, session)
             .map_err(|error| Failure::new(RequestFailure::SaveFailed, error.to_string()))?;
     }
+    if matches!(command, AppCommand::Undo | AppCommand::Redo) {
+        // 재생한 항목으로 에이전트 출처 표시 상태를 맞춥니다(ADR-0112).
+        let redo = command == AppCommand::Redo;
+        let entry = ctx
+            .app_sessions_mut()
+            .windows
+            .get_mut(&session)
+            .ok_or_else(|| unknown_window(session))?;
+        let applied = crate::agent_edit::replay(&mut entry.session, &mut entry.agent, redo)
+            .map_err(|error| Failure::new(RequestFailure::HistoryUnavailable, error.to_string()))?;
+        return Ok(RuntimeEvent::HistoryReplayed {
+            request,
+            session,
+            redo,
+            applied,
+            revision: entry.session.revision(),
+        });
+    }
     let window = window_mut(ctx, session)?;
     match command {
-        AppCommand::Undo | AppCommand::Redo => {
-            let redo = command == AppCommand::Redo;
-            let replayed = if redo { window.redo() } else { window.undo() };
-            let applied = replayed.map_err(|error| {
-                Failure::new(RequestFailure::HistoryUnavailable, error.to_string())
-            })?;
-            Ok(RuntimeEvent::HistoryReplayed {
-                request,
-                session,
-                redo,
-                applied,
-                revision: window.revision(),
-            })
-        }
+        AppCommand::Undo | AppCommand::Redo => unreachable!("위에서 처리했습니다"),
         AppCommand::ZoomIn | AppCommand::ZoomOut | AppCommand::ZoomToActualSize => {
             let zoomed = match command {
                 AppCommand::ZoomIn => window.zoom(ZOOM_STEP, 0.0, 0.0),
@@ -1703,6 +1713,38 @@ pub enum EventPoll {
         /// payload.
         payload: Vec<u8>,
     },
+}
+
+/// document thread job 접수기(ADR-0112). job을 실행한 뒤 상태 snapshot을 게시하므로 자동 저장 예약이 job의 문서
+/// 변경을 관찰합니다(일반 요청과 같은 경로). 복제해 다른 thread(에이전트 I/O 스레드 등)로 옮길 수 있습니다.
+#[derive(Clone)]
+pub(crate) struct JobPublisher {
+    sender: DocumentSender,
+    shared: Arc<AppShared>,
+}
+
+impl fmt::Debug for JobPublisher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("JobPublisher")
+    }
+}
+
+impl JobPublisher {
+    /// 우선순위를 지정해 job을 접수합니다. 기다리지 않고 queue overflow 정책대로 바로 판정합니다.
+    pub(crate) fn try_submit<T: Send + 'static>(
+        &self,
+        options: crate::command_queue::SubmitOptions,
+        job: impl FnOnce(&mut DocumentContext) -> T + Send + 'static,
+    ) -> Result<crate::document_thread::JobTicket<T>, SubmitError> {
+        let shared = Arc::clone(&self.shared);
+        self.sender
+            .try_submit(options, move |ctx: &mut DocumentContext| {
+                let value = job(ctx);
+                shared.publish_state(build_state(ctx));
+                value
+            })
+            .map(|submitted| submitted.ticket)
+    }
 }
 
 /// UI thread와 document thread가 공유하는 outbox·snapshot.
@@ -2285,6 +2327,14 @@ impl AppRuntime {
     /// 창 session의 작업 문서를 지금 저장합니다([`AppCommand::SaveNow`]).
     pub fn save_now(&self, session: WindowSessionHandle) -> Result<RequestId, RequestError> {
         self.perform(session, AppCommand::SaveNow)
+    }
+
+    /// 상태를 게시하는 job 접수기(ADR-0112).
+    pub(crate) fn job_publisher(&self) -> JobPublisher {
+        JobPublisher {
+            sender: self.sender.clone(),
+            shared: Arc::clone(&self.shared),
+        }
     }
 
     /// 최신 상태 snapshot. document thread를 기다리지 않습니다.

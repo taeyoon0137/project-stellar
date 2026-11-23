@@ -41,6 +41,9 @@ pub mod staging;
 
 /// 내장 에이전트 세션의 프로젝트 identity·신뢰 판정 연결 (XXIX.3.2·XXIX.3.5, ADR-0101).
 pub mod agent;
+
+/// 창 하나의 에이전트 편집 상태와 창 history 연결 (XXIX.3.1 엔진 부분, ADR-0112).
+pub mod agent_edit;
 /// 열린 창의 외부 변경 semantic reconciliation (XIII.3.4, ADR-0110).
 pub mod reconcile;
 
