@@ -50,6 +50,22 @@
 //! 위에 그릴 transient scene layer([`SelectionOverlay`])를 만듭니다. overlay는 작업 문서·scene snapshot·저장 경로에
 //! 들어가지 않습니다.
 //!
+//! # 텍스트 원본과 chunk cache (V.10.7, ADR-0088)
+//!
+//! 기본 원본은 텍스트 원본(`design/**/*.stellar.yaml`)이고 chunk generation은 로컬 cache입니다. 디스크 읽기는
+//! [`source::read_disk_state`] 하나가 stamp 짝으로 계획([`OpenPlan`])을 정해 합니다. 원본과 cache가 짝이면 cache에서
+//! 작업 문서만 읽고(빠른 열기·부분 로딩), 원본이 움직였으면 원본을 읽고 cache를 다시 만들며, cache만 움직였으면
+//! (CLI·MCP의 generation 저장) cache를 읽고 원본을 맞춥니다. 원본이 없는 기존 chunk 프로젝트는 열 때 검증한 변환이
+//! 있을 때만 원본으로 옮깁니다. 변환이 검증되지 않으면 그 session은 chunk 전용으로 남습니다.
+//!
+//! 저장([`SaveCapture::write`])은 같은 잠금 안에서 generation base 확인 → 원본(바뀐 파일만 저장 journal 한 거래, 기대
+//! hash = 원본 base) → cache generation → stamp 순서입니다. 원본이 외부에서 바뀌었으면
+//! [`WindowSessionSaveError::SourceStale`]이고 아무것도 쓰지 않습니다. cache 쓰기가 실패해도 원본 저장은 성공으로
+//! 반영하고 [`SaveOutcome::cache_stale`]로 알립니다(다음 열기가 cache를 다시 만듭니다).
+//!
+//! 열 때 `stellar.yaml`의 활성 기본값 세트 이름을 모델 거울에 넣고(ADR-0082 결정 4), 저장할 때 거울이 열 때·마지막
+//! 저장 때의 값과 다르면 같은 잠금 안에서 `stellar.yaml`에 되씁니다.
+//!
 //! # view state (XII.2.5)
 //!
 //! 작업 문서를 로드하면 문서의 첫 View(첫 페이지의 첫 View) 탭을 기본 viewport로 열어 active view로 둡니다. 탭
@@ -81,12 +97,20 @@ use stellar_project::document_io::load::{load_document_from_generation, LoadDocu
 use stellar_project::document_io::serialize::{
     serialize_records, SerializeError, SerializedDocument,
 };
+use stellar_project::document_io::session::{
+    commit_files, decode_source, plan_changes, read_source, read_stamp, write_stamp, OpenPlan,
+    SourceBase, SourceCommitError, SourceLibrary, Stamp,
+};
+use stellar_project::external_change::source::SourceDiagnostic;
 use stellar_project::identity::ProjectIdentity;
 use stellar_project::manifest::CURRENT_SCHEMA_VERSION;
 use stellar_project::migration::{decide, MigrationPolicy, SchemaDecision};
 use stellar_project::window_session::{
     record_app_window_save, writer_provenance, StaleResolution, StaleSaveChoice, WriterProvenance,
 };
+mod source;
+use source::{read_disk_state, source_moved, DiskState, SourceMark, SourceMode};
+
 use stellar_scene::overlay::{
     build_selection_overlay, OverlayError, OverlayStyle, SelectionOverlay,
 };
@@ -142,6 +166,9 @@ pub enum WindowSessionLoadError {
     /// generation schema가 이 도구의 편집 schema가 아닙니다(IX.11.21). 높은 schema·경로 없는 schema는 거부이고,
     /// 낮은 schema의 메모리 migration 결과는 읽기 전용이라 편집 session으로 열지 않습니다.
     Schema(SchemaDecision),
+    /// 텍스트 원본을 읽거나 검증하지 못했습니다(파일·줄 진단, ADR-0088). 원본이 Git 원본이므로 cache로 대신 열지
+    /// 않습니다.
+    Source(SourceDiagnostic),
 }
 
 impl fmt::Display for WindowSessionLoadError {
@@ -162,6 +189,9 @@ impl fmt::Display for WindowSessionLoadError {
             WindowSessionLoadError::Schema(decision) => {
                 write!(f, "편집할 수 없는 generation schema입니다: {decision:?}")
             }
+            WindowSessionLoadError::Source(diagnostic) => {
+                write!(f, "텍스트 원본 오류: {diagnostic}")
+            }
         }
     }
 }
@@ -175,6 +205,10 @@ pub struct SaveOutcome {
     pub generation: u64,
     /// 새 generation을 썼는지. 바뀐 chunk가 없거나 작업 문서가 없으면 `false`.
     pub written: bool,
+    /// 텍스트 원본에서 쓰거나 지운 파일 수(ADR-0088).
+    pub source_files: usize,
+    /// 원본은 저장했지만 cache generation·stamp를 쓰지 못했는지. 다음 열기가 원본에서 cache를 다시 만듭니다.
+    pub cache_stale: bool,
 }
 
 /// Save Now 실패. loaded generation과 디스크는 저장 전 그대로입니다(commit 전 실패).
@@ -199,6 +233,15 @@ pub enum WindowSessionSaveError {
     Interrupted,
     /// UseCurrentWindow가 새 base로 삼을 최신 generation을 읽지 못했습니다(XII.7.5). 아무것도 쓰지 않았습니다.
     Rebase(Box<WindowSessionLoadError>),
+    /// 텍스트 원본을 base로 읽은 뒤 외부가 바꾼 파일이 있습니다(`design/` 기준). 아무것도 쓰지 않았습니다.
+    SourceStale {
+        /// 바뀐 파일.
+        paths: Vec<String>,
+    },
+    /// 텍스트 원본을 인코딩·읽기·쓰기하지 못했습니다. 아무것도 쓰지 않았습니다.
+    Source(String),
+    /// 활성 기본값 세트를 `stellar.yaml`에 되쓰지 못했습니다. 아무것도 쓰지 않았습니다.
+    StyleDefaults(String),
 }
 
 impl fmt::Display for WindowSessionSaveError {
@@ -226,11 +269,39 @@ impl fmt::Display for WindowSessionSaveError {
                     "최신 디스크 generation을 읽지 못해 저장하지 않았습니다: {error}"
                 )
             }
+            WindowSessionSaveError::SourceStale { paths } => {
+                write!(
+                    f,
+                    "외부에서 바뀐 텍스트 원본이 있어 저장하지 않았습니다: {}",
+                    paths.join(", ")
+                )
+            }
+            WindowSessionSaveError::Source(error) => write!(f, "텍스트 원본 저장 실패: {error}"),
+            WindowSessionSaveError::StyleDefaults(error) => {
+                write!(f, "기본값 세트 선택을 저장하지 못했습니다: {error}")
+            }
         }
     }
 }
 
 impl std::error::Error for WindowSessionSaveError {}
+
+impl WindowSessionSaveError {
+    /// 다른 writer가 먼저 저장해 쓰지 않은 실패인지(generation base 또는 텍스트 원본 base, XII.7).
+    pub fn is_stale(&self) -> bool {
+        matches!(
+            self,
+            WindowSessionSaveError::Stale(_) | WindowSessionSaveError::SourceStale { .. }
+        )
+    }
+}
+
+impl SaveOutcome {
+    /// 디스크에 무엇이든 썼는지(새 generation 또는 원본 파일).
+    pub fn wrote_anything(&self) -> bool {
+        self.written || self.source_files > 0
+    }
+}
 
 /// 같은 작업 문서 revision의 불변 memory snapshot(XIII.8.2). 자동 저장과 복구 체크포인트가 함께 씁니다.
 ///
@@ -287,8 +358,17 @@ pub(crate) struct SaveTimings {
     pub(crate) write: std::time::Duration,
 }
 
+/// 저장 snapshot의 텍스트 원본 부분(ADR-0088).
+#[derive(Debug, Clone)]
+pub(crate) struct TextCapture {
+    /// 캡처할 때의 원본 base(journal 기대 hash).
+    base: SourceBase,
+    /// 문서 밖 의미. `None`이면 writer가 base와 같은 디스크 원본에서 읽습니다.
+    library: Option<std::sync::Arc<SourceLibrary>>,
+}
+
 /// 저장 snapshot([`ProjectWindowSession::capture_save`]). document thread에서 문서 레코드와 기준 generation만
-/// 복사해 두고, 직렬화·chunk 쓰기·current pointer 전환은 [`SaveCapture::write`]가 다른 thread에서 합니다(XIII.1.4).
+/// 복사해 두고, 직렬화·원본 인코딩·쓰기는 [`SaveCapture::write`]가 다른 thread에서 합니다(XIII.1.4).
 #[derive(Debug)]
 pub(crate) struct SaveCapture {
     identity: ProjectIdentity,
@@ -298,6 +378,22 @@ pub(crate) struct SaveCapture {
     owned_chunks: BTreeSet<ChunkId>,
     image_records:
         std::sync::Arc<std::collections::BTreeMap<StableId, stellar_assets::record::AssetRecord>>,
+    /// 텍스트 원본 session이면 원본 부분(chunk 전용이면 `None`).
+    text: Option<TextCapture>,
+    /// (모델 거울의 활성 기본값 세트, 열 때·마지막 저장 때의 값). 다르면 `stellar.yaml`에 되씁니다.
+    style_defaults: (String, String),
+}
+
+/// 쓴 원본 상태([`SaveWritten`] 안).
+#[derive(Debug)]
+pub(crate) struct TextWritten {
+    /// 캡처할 때의 base(반영 때 session base와 같아야 함).
+    before: SourceBase,
+    /// 저장 뒤 base.
+    after: SourceBase,
+    library: std::sync::Arc<SourceLibrary>,
+    /// 쓰거나 지운 파일 수.
+    files: usize,
 }
 
 /// [`SaveCapture::write`] 결과. [`ProjectWindowSession::apply_save`]가 document thread에서 반영합니다.
@@ -310,13 +406,30 @@ pub(crate) struct SaveWritten {
     revision: DocumentRevision,
     /// 새로 쓴 generation과 작업 문서가 차지한 chunk(쓸 것이 없었으면 `None`).
     saved: Option<(LoadedGeneration, BTreeSet<ChunkId>)>,
+    /// 텍스트 원본 결과(chunk 전용이면 `None`).
+    text: Option<TextWritten>,
+    /// 저장한 활성 기본값 세트 이름.
+    style_defaults: String,
+    /// 원본은 저장했지만 cache generation·stamp를 쓰지 못함.
+    cache_stale: bool,
 }
 
 impl SaveWritten {
-    /// 새 generation을 썼는지.
+    /// 새 generation이나 원본 파일을 썼는지.
     pub(crate) fn wrote(&self) -> bool {
-        self.saved.is_some()
+        self.saved.is_some() || self.text.as_ref().is_some_and(|text| text.files > 0)
     }
+}
+
+/// writer가 인코딩한 원본.
+struct EncodedSource {
+    capture: TextCapture,
+    library: std::sync::Arc<SourceLibrary>,
+    files: BTreeMap<String, String>,
+}
+
+fn source_error(error: impl fmt::Display) -> WindowSessionSaveError {
+    WindowSessionSaveError::Source(error.to_string())
 }
 
 impl SaveCapture {
@@ -333,6 +446,7 @@ impl SaveCapture {
 
     /// 직렬화하고 loaded generation 위의 SavePlan을 씁니다. 공용 저장 잠금 안에서 current pointer가 캡처한 기준
     /// generation과 다르면 [`WindowSessionSaveError::Stale`]로 아무것도 쓰지 않습니다(current pointer를 바꾸지 않음).
+    /// 텍스트 원본 session이면 원본을 먼저 씁니다(모듈 문서 "텍스트 원본과 chunk cache").
     pub(crate) fn write(
         self,
         lock_dir: impl FnOnce() -> Result<std::path::PathBuf, LockError>,
@@ -359,11 +473,81 @@ impl SaveCapture {
         let base = self.base.as_ref();
         let started = std::time::Instant::now();
         let serialized = self.snapshot.serialized();
+        let source = match self.text.clone() {
+            Some(text) => match self.encode_source(root, text) {
+                Ok(source) => Some(source),
+                // 원본과 generation이 함께 움직였으면(다른 앱 창의 저장) generation stale로 알립니다. 두 선택지 판정이
+                // generation writer 기록을 먼저 보기 때문입니다.
+                Err(error) if error.is_stale() => {
+                    check_base_manifest(root, base.map(|base| base.manifest_hash))
+                        .map_err(WindowSessionSaveError::Stale)?;
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            },
+            None => None,
+        };
         timings.serialize = started.elapsed();
         let started = std::time::Instant::now();
-        let result = self.write_serialized(root, base, serialized, lock_dir);
+        let result = self.write_serialized(root, base, serialized, source, lock_dir);
         timings.write = started.elapsed();
         result
+    }
+
+    /// 문서 레코드와 문서 밖 의미로 원본 파일 집합을 만듭니다. 문서 밖 의미를 아직 모르면 디스크 원본을 읽고, 그
+    /// 원본이 캡처한 base와 다르면 [`WindowSessionSaveError::SourceStale`]입니다.
+    fn encode_source(
+        &self,
+        root: &std::path::Path,
+        capture: TextCapture,
+    ) -> Result<EncodedSource, WindowSessionSaveError> {
+        let mut library = match &capture.library {
+            Some(library) => std::sync::Arc::clone(library),
+            None => {
+                let disk = read_source(root).map_err(source_error)?;
+                let now = disk
+                    .as_ref()
+                    .map(|disk| disk.base.clone())
+                    .unwrap_or_default();
+                if now != capture.base {
+                    return Err(WindowSessionSaveError::SourceStale {
+                        paths: capture.base.changed_paths(&now).into_iter().collect(),
+                    });
+                }
+                let library = match disk {
+                    Some(disk) => {
+                        SourceLibrary::split(decode_source(&disk).map_err(source_error)?).1
+                    }
+                    None => SourceLibrary::default(),
+                };
+                std::sync::Arc::new(library)
+            }
+        };
+        let records = self.snapshot.records();
+        let referenced = referenced_images(records);
+        let added: Vec<_> = self
+            .image_records
+            .iter()
+            .filter(|(id, record)| {
+                referenced.contains(*id) && library.images.get(*id) != Some(*record)
+            })
+            .collect();
+        if !added.is_empty() {
+            let mut next = (*library).clone();
+            for (id, record) in added {
+                next.images.insert(*id, record.clone());
+            }
+            library = std::sync::Arc::new(next);
+        }
+        let (model, _) = DocumentModel::from_records(records.clone()).map_err(source_error)?;
+        let files = stellar_project::document_io::source_v4::project::encode(&library.join(model))
+            .map_err(source_error)?
+            .files;
+        Ok(EncodedSource {
+            capture,
+            library,
+            files,
+        })
     }
 
     fn write_serialized(
@@ -371,6 +555,7 @@ impl SaveCapture {
         root: &std::path::Path,
         base: Option<&LoadedGeneration>,
         serialized: Result<&SerializedDocument, SerializeError>,
+        source: Option<EncodedSource>,
         lock_dir: impl FnOnce() -> Result<std::path::PathBuf, LockError>,
     ) -> Result<SaveWritten, WindowSessionSaveError> {
         let serialized = serialized.map_err(WindowSessionSaveError::Serialize)?;
@@ -381,40 +566,38 @@ impl SaveCapture {
             .map(|chunk| chunk.chunk_id)
             .collect();
         let mut states = serialized.to_dirty_states();
-        if !self.image_records.is_empty() {
-            let referenced: BTreeSet<_> = self
-                .snapshot
-                .records()
-                .nodes
-                .iter()
-                .filter_map(|node| match &node.payload {
-                    stellar_document::records::NodePayload::Image(image) => Some(image.asset.id()),
-                    _ => None,
-                })
-                .collect();
-            for (&id, record) in self
-                .image_records
-                .iter()
-                .filter(|(id, _)| referenced.contains(id))
-            {
-                let chunk_id = ChunkId::from_stable_id(id);
-                if base.is_some_and(|g| {
-                    g.manifest
-                        .chunk_pointers
-                        .iter()
-                        .any(|p| p.chunk_id == chunk_id)
-                }) {
-                    continue;
-                }
-                states.push(LogicalChunkState::Dirty {
-                    chunk_id,
-                    kind: stellar_storage::chunk::kinds::KIND_ASSET_METADATA,
-                    schema_version: 1,
-                    payload: record
-                        .encode()
-                        .map_err(|_| WindowSessionSaveError::ImageMetadata)?,
-                });
+        // 이미지 asset metadata chunk: 새로 가져온 record와 원본 catalog의 record 가운데 문서가 참조하고 base에 없는
+        // 것을 cache에 더합니다(원본에서 다시 만든 cache도 이미지를 그릴 수 있게).
+        let referenced = referenced_images(self.snapshot.records());
+        let mut images: BTreeMap<StableId, &stellar_assets::record::AssetRecord> = BTreeMap::new();
+        if let Some(source) = &source {
+            images.extend(
+                source
+                    .library
+                    .images
+                    .iter()
+                    .map(|(id, record)| (*id, record)),
+            );
+        }
+        images.extend(self.image_records.iter().map(|(id, record)| (*id, record)));
+        for (id, record) in images.iter().filter(|(id, _)| referenced.contains(*id)) {
+            let chunk_id = ChunkId::from_stable_id(*id);
+            if base.is_some_and(|g| {
+                g.manifest
+                    .chunk_pointers
+                    .iter()
+                    .any(|p| p.chunk_id == chunk_id)
+            }) {
+                continue;
             }
+            states.push(LogicalChunkState::Dirty {
+                chunk_id,
+                kind: stellar_storage::chunk::kinds::KIND_ASSET_METADATA,
+                schema_version: 1,
+                payload: record
+                    .encode()
+                    .map_err(|_| WindowSessionSaveError::ImageMetadata)?,
+            });
         }
         let mut roots = base.map_or_else(Vec::new, |base| base.manifest.root_document_ids.clone());
         if let Some(base) = base {
@@ -446,26 +629,113 @@ impl SaveCapture {
             roots,
         )
         .map_err(WindowSessionSaveError::Plan)?;
-        let written = |saved| SaveWritten {
-            base: base.map(|base| base.manifest_hash),
-            document_id,
-            revision: self.revision,
-            saved,
-        };
-        if let Some(base) = base {
-            let unchanged = plan.dirty_chunks.is_empty()
+        let generation_unchanged = base.is_some_and(|base| {
+            plan.dirty_chunks.is_empty()
                 && plan.manifest.chunk_pointers == base.manifest.chunk_pointers
-                && plan.manifest.root_document_ids == base.manifest.root_document_ids;
-            if unchanged {
-                check_base_generation(root, &plan).map_err(WindowSessionSaveError::Stale)?;
-                return Ok(written(None));
+                && plan.manifest.root_document_ids == base.manifest.root_document_ids
+        });
+        let source_unchanged = source
+            .as_ref()
+            .is_none_or(|source| plan_changes(&source.capture.base, &source.files).is_empty());
+        let (style_now, style_base) = &self.style_defaults;
+        let style_unchanged = style_now == style_base;
+        let base_hash = base.map(|base| base.manifest_hash);
+        let next_source = source.as_ref().map(|source| SourceBase::of(&source.files));
+        let finish =
+            |saved, source: Option<EncodedSource>, files: usize, cache_stale: bool| SaveWritten {
+                base: base_hash,
+                document_id,
+                revision: self.revision,
+                saved,
+                text: source.map(|source| TextWritten {
+                    after: SourceBase::of(&source.files),
+                    before: source.capture.base,
+                    library: source.library,
+                    files,
+                }),
+                style_defaults: style_now.clone(),
+                cache_stale,
+            };
+        if generation_unchanged && source_unchanged && style_unchanged {
+            check_base_generation(root, &plan).map_err(WindowSessionSaveError::Stale)?;
+            // 원본과 cache가 이미 짝인데 stamp가 다르면(옛 stamp) 맞춥니다. 실패해도 다음 열기가 다시 맞춥니다.
+            let mut cache_stale = false;
+            if let (Some(next), Some(manifest)) = (&next_source, base_hash) {
+                let stamp = Stamp {
+                    source: next.digest(),
+                    manifest,
+                };
+                if read_stamp(root) != Some(stamp) {
+                    cache_stale = write_stamp(root, &stamp).is_err();
+                }
             }
+            return Ok(finish(None, source, 0, cache_stale));
         }
-        // 계획은 메모리에서만 만듭니다. 실제 쓰기만 CLI와 직렬화하고 잠금 안에서 base를 확인합니다.
+        // 계획과 원본 인코딩은 메모리에서만 만듭니다. 실제 쓰기만 CLI와 직렬화하고 잠금 안에서 base를 확인합니다.
         let dir = lock_dir().map_err(WindowSessionSaveError::Lock)?;
         let _guard =
             SaveLock::for_identity(&dir, &self.identity).map_err(WindowSessionSaveError::Lock)?;
         check_base_generation(root, &plan).map_err(WindowSessionSaveError::Stale)?;
+        if !style_unchanged {
+            stellar_project::manifest_style_defaults::set_active(root, style_now)
+                .map_err(|error| WindowSessionSaveError::StyleDefaults(error.to_string()))?;
+        }
+        let mut files = 0;
+        if let (Some(source), Some(next)) = (&source, &next_source) {
+            // 앱 창이 쓰는 원본임을 쓰기 **전에** 기록합니다(다른 창 감시가 이 저장을 외부 writer로 오판하지 않게).
+            record_app_window_save(root, next.digest());
+            let commit = match commit_files(root, &source.capture.base, &source.files) {
+                Ok(commit) => commit,
+                Err(SourceCommitError::Stale { paths }) => {
+                    return Err(WindowSessionSaveError::SourceStale { paths })
+                }
+                Err(error) => return Err(source_error(error)),
+            };
+            files = commit.written + commit.deleted;
+        }
+        let saved = if generation_unchanged {
+            Ok(None)
+        } else {
+            self.write_generation(root, base, &plan, new_chunks)
+        };
+        let saved = match saved {
+            Ok(saved) => saved,
+            // 원본은 이미 저장했습니다. cache 실패는 저장 실패가 아니라 cache가 뒤처진 상태입니다(stamp는 옛 짝이라 다음
+            // 열기가 원본에서 다시 만듭니다).
+            Err(error) if source.is_some() => {
+                eprintln!("Stellar cache generation: {error}");
+                return Ok(finish(None, source, files, true));
+            }
+            Err(error) => return Err(error),
+        };
+        let mut cache_stale = false;
+        if let Some(next) = &next_source {
+            let manifest = saved
+                .as_ref()
+                .map(|(loaded, _)| loaded.manifest_hash)
+                .or(base_hash);
+            if let Some(manifest) = manifest {
+                cache_stale = write_stamp(
+                    root,
+                    &Stamp {
+                        source: next.digest(),
+                        manifest,
+                    },
+                )
+                .is_err();
+            }
+        }
+        Ok(finish(saved, source, files, cache_stale))
+    }
+
+    /// 잠금 안에서 generation을 씁니다(V.5). 새 generation과 작업 문서 chunk를 돌려줍니다.
+    fn write_generation(
+        &self,
+        root: &std::path::Path,
+        base: Option<&LoadedGeneration>,
+        plan: &stellar_storage::save::plan::SavePlan,
+        new_chunks: BTreeSet<ChunkId>,
+    ) -> Result<Option<(LoadedGeneration, BTreeSet<ChunkId>)>, WindowSessionSaveError> {
         let mut memory = SavedGenerationState::new(
             base.map(|base| (base.manifest.generation, base.manifest_hash)),
         );
@@ -475,7 +745,7 @@ impl SaveCapture {
         if let Ok((_, manifest_hash)) = plan.manifest.encode_with_hash() {
             record_app_window_save(root, manifest_hash);
         }
-        run_save(root, &plan, &mut memory, &CancelToken::new())
+        run_save(root, plan, &mut memory, &CancelToken::new())
             .map_err(WindowSessionSaveError::Run)?;
         // commit(V.5.4)이 성공하면 메모리 상태에 새 (generation, manifest hash)가 들어 있습니다. 없으면 디스크에서
         // 다시 읽습니다.
@@ -489,8 +759,20 @@ impl SaveCapture {
         };
         // 미리 기록한 hash와 같아야 합니다. manifest encode가 실패했던 경우를 위해 실제 hash도 기록합니다(중복은 무시).
         record_app_window_save(root, loaded.manifest_hash);
-        Ok(written(Some((loaded, new_chunks))))
+        Ok(Some((loaded, new_chunks)))
     }
+}
+
+/// 문서가 참조하는 이미지 asset StableId.
+fn referenced_images(records: &DocumentRecords) -> BTreeSet<StableId> {
+    records
+        .nodes
+        .iter()
+        .filter_map(|node| match &node.payload {
+            stellar_document::records::NodePayload::Image(image) => Some(image.asset.id()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// stale 선택 실행 결과([`ProjectWindowSession::resolve_stale`]).
@@ -646,6 +928,56 @@ pub struct ProjectWindowSession {
         std::sync::Arc<std::collections::BTreeMap<StableId, stellar_assets::record::AssetRecord>>,
     /// 마지막으로 만든 불변 memory snapshot(XIII.8.2). 문서·revision이 같으면 다시 씁니다.
     snapshot_cache: std::sync::Mutex<Option<std::sync::Arc<SharedSnapshot>>>,
+    /// 원본 상태(텍스트 원본 또는 chunk 전용, ADR-0088).
+    pub(crate) source: SourceMode,
+    /// 마지막으로 디스크를 읽은 계획.
+    open_plan: OpenPlan,
+    /// 열 때·마지막 저장 때 `stellar.yaml`의 활성 기본값 세트 이름.
+    style_defaults_base: String,
+    /// 저장 잠금 디렉터리(열기 뒤 맞춤 쓰기·Save Now).
+    lock_dir: LockDir,
+    /// 외부 변경 반영 뒤 원본·cache 맞춤 쓰기가 남았는지. 다음 저장(자동 저장 writer)이 합니다.
+    reconcile_pending: bool,
+}
+
+/// 저장 잠금 디렉터리 공급자. 기본은 OS 사용자 데이터의 공용 잠금 디렉터리입니다.
+#[derive(Clone)]
+pub(crate) struct LockDir(
+    std::sync::Arc<dyn Fn() -> Result<std::path::PathBuf, LockError> + Send + Sync>,
+);
+
+impl LockDir {
+    /// `f`가 잠금 디렉터리를 정합니다(테스트의 임시 디렉터리 등).
+    pub(crate) fn new(
+        f: impl Fn() -> Result<std::path::PathBuf, LockError> + Send + Sync + 'static,
+    ) -> LockDir {
+        LockDir(std::sync::Arc::new(f))
+    }
+
+    fn get(&self) -> Result<std::path::PathBuf, LockError> {
+        (self.0)()
+    }
+}
+
+impl Default for LockDir {
+    fn default() -> LockDir {
+        LockDir::new(default_lock_dir)
+    }
+}
+
+impl fmt::Debug for LockDir {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("LockDir")
+    }
+}
+
+/// 디스크 원본·cache 관찰값(stale 판정, ADR-0088).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DiskMark {
+    /// current manifest hash(없으면 `None`).
+    manifest: Option<ContentHash>,
+    /// base와 다른 원본 관찰값(같으면 `None`).
+    source: Option<SourceMark>,
 }
 
 /// 읽은 chunk id를 모읍니다.
@@ -746,44 +1078,76 @@ fn asset_chunks_of(loaded: &LoadedGeneration) -> BTreeMap<StableId, ContentHash>
 }
 
 impl ProjectWindowSession {
-    /// 프로젝트 `identity`의 current generation과 첫 root 문서를 로드해 창 `window`의 session을 만듭니다.
+    /// 프로젝트 `identity`를 열어 창 `window`의 session을 만듭니다(모듈 문서 "텍스트 원본과 chunk cache").
     ///
-    /// 저장한 적 없는 프로젝트(current pointer 없음)는 작업 문서·loaded generation 없이 엽니다.
+    /// 원본과 cache가 짝이면 cache에서 첫 root 문서만 읽습니다. 계획이 맞춤 쓰기(원본 전환·cache 다시 만들기)를
+    /// 요구하면 연 뒤 같은 저장 경로로 씁니다. 그 쓰기가 실패해도 session은 열리며 다음 저장이 다시 맞춥니다.
+    /// 저장한 적 없는 프로젝트는 작업 문서·loaded generation 없이 엽니다.
     pub fn load(
         identity: ProjectIdentity,
         window: WindowSessionId,
     ) -> Result<ProjectWindowSession, WindowSessionLoadError> {
-        let Some(disk) = read_disk_document(&identity, DocumentPick::FirstRoot)? else {
-            return Ok(ProjectWindowSession::empty(identity, window));
-        };
-        let document = disk.document.map(|(model, owned_chunks)| {
-            let state = DocumentState::new(model);
+        ProjectWindowSession::load_with_lock_dir(identity, window, LockDir::default())
+    }
+
+    /// [`ProjectWindowSession::load`]와 같고 저장 잠금 디렉터리를 정합니다.
+    pub(crate) fn load_with_lock_dir(
+        identity: ProjectIdentity,
+        window: WindowSessionId,
+        lock_dir: LockDir,
+    ) -> Result<ProjectWindowSession, WindowSessionLoadError> {
+        let disk = read_disk_state(&identity, DocumentPick::FirstRoot, None)?;
+        let reconcile = disk.needs_reconcile();
+        let mut session = ProjectWindowSession::empty(identity, window);
+        session.lock_dir = lock_dir;
+        session.adopt(disk, DocumentRevision(0), None);
+        if reconcile {
+            if let Err(error) = session.reconcile() {
+                eprintln!("Stellar text source reconcile: {error}");
+            }
+        }
+        Ok(session)
+    }
+
+    /// 디스크 상태를 이 session의 작업 문서·base로 삼습니다(history는 새로 시작). `revision`이 0이 아니면 그
+    /// revision으로 문서를 만들고(다시 불러오기), `tabs`가 있으면 남은 View 탭을 다시 엽니다.
+    fn adopt(&mut self, disk: DiskState, revision: DocumentRevision, tabs: Option<&ViewTabs>) {
+        let mut history = WindowHistory::new(self.window);
+        self.document = disk.model.map(|mut model| {
+            model.set_style_defaults(disk.style_defaults.clone());
+            let state = if revision.0 == 0 {
+                DocumentState::new(model)
+            } else {
+                DocumentState::with_revision(model, revision)
+            };
+            match tabs {
+                Some(old) => reopen_tabs(&mut history, state.model(), old),
+                None => {
+                    if let Some(view) = first_view(state.model()) {
+                        // 같은 모델에서 고른 View이므로 열기는 실패하지 않습니다(UnknownView만 가능한 오류).
+                        let opened = history.view_mut().tabs_mut().open(state.model(), view);
+                        debug_assert_eq!(opened, Ok(true));
+                    }
+                }
+            }
             WindowDocument {
                 saved_revision: state.revision(),
                 state,
-                owned_chunks,
+                owned_chunks: disk.owned,
             }
         });
-        let mut history = WindowHistory::new(window);
-        if let Some(document) = &document {
-            let model = document.state.model();
-            if let Some(view) = first_view(model) {
-                // 같은 모델에서 고른 View이므로 열기는 실패하지 않습니다(UnknownView만 가능한 오류).
-                let opened = history.view_mut().tabs_mut().open(model, view);
-                debug_assert_eq!(opened, Ok(true));
-            }
-        }
-        Ok(ProjectWindowSession {
-            asset_chunks: std::sync::Arc::new(asset_chunks_of(&disk.loaded)),
-            identity,
-            window,
-            document,
-            history,
-            history_labels: BTreeMap::new(),
-            loaded: Some(disk.loaded),
-            image_records: Default::default(),
-            snapshot_cache: Default::default(),
-        })
+        self.replace_history(history);
+        self.asset_chunks = std::sync::Arc::new(
+            disk.loaded
+                .as_ref()
+                .map(asset_chunks_of)
+                .unwrap_or_default(),
+        );
+        self.loaded = disk.loaded;
+        self.source = disk.source;
+        self.open_plan = disk.plan;
+        self.style_defaults_base = disk.style_defaults;
+        self.reconcile_pending = false;
     }
 
     /// 저장된 generation이 없는 프로젝트의 session.
@@ -798,7 +1162,64 @@ impl ProjectWindowSession {
             asset_chunks: Default::default(),
             image_records: Default::default(),
             snapshot_cache: Default::default(),
+            source: SourceMode::Text {
+                base: SourceBase::default(),
+                library: Some(Default::default()),
+            },
+            open_plan: OpenPlan::Empty,
+            style_defaults_base: stellar_document::css::style_defaults::DEFAULT_SET.to_owned(),
+            lock_dir: LockDir::default(),
+            reconcile_pending: false,
         }
+    }
+
+    /// 마지막으로 디스크를 읽은 계획(열기·다시 불러오기·외부 변경 반영).
+    pub fn open_plan(&self) -> OpenPlan {
+        self.open_plan
+    }
+
+    /// 텍스트 원본으로 옮기지 못해 chunk generation이 원본으로 남은 이유. 텍스트 원본 session이면 `None`.
+    pub fn chunk_only_reason(&self) -> Option<&str> {
+        match &self.source {
+            SourceMode::ChunkOnly { reason } => Some(reason),
+            SourceMode::Text { .. } => None,
+        }
+    }
+
+    /// 텍스트 원본 base(chunk 전용이면 `None`).
+    pub fn source_base(&self) -> Option<&SourceBase> {
+        self.source.base()
+    }
+
+    /// 외부 변경 반영 뒤 원본·cache 맞춤 쓰기가 남았는지. 미저장 편집이 아니므로
+    /// [`ProjectWindowSession::has_unsaved_changes`]에는 들지 않습니다.
+    pub fn reconcile_pending(&self) -> bool {
+        self.reconcile_pending
+    }
+
+    /// 저장 경로가 쓸 것이 있는지: 미저장 편집이나 남은 맞춤 쓰기. 자동 저장 일정이 이 값을 봅니다.
+    pub fn needs_write(&self) -> bool {
+        self.has_unsaved_changes() || self.reconcile_pending
+    }
+
+    /// 계획이 요구하는 맞춤 쓰기를 합니다: 작업 문서와 문서 밖 의미를 바뀐 것이 없어도 저장 경로로 씁니다. 원본과
+    /// cache 가운데 디스크와 다른 쪽만 실제로 쓰고 stamp를 맞춥니다. chunk 전용이면 아무것도 하지 않습니다.
+    pub(crate) fn reconcile(&mut self) -> Result<SaveOutcome, WindowSessionSaveError> {
+        let idle = SaveOutcome {
+            generation: self.generation_number(),
+            written: false,
+            source_files: 0,
+            cache_stale: false,
+        };
+        if !matches!(self.source, SourceMode::Text { .. }) {
+            return Ok(idle);
+        }
+        let Some(capture) = self.capture(true)? else {
+            return Ok(idle);
+        };
+        let lock = self.lock_dir.clone();
+        let written = capture.write(move || lock.get())?;
+        Ok(self.apply_save(written))
     }
 
     /// 지금 작업 문서 revision의 불변 memory snapshot(XIII.8.2). 같은 문서·revision이면 앞서 만든 것을 돌려주므로
@@ -1235,7 +1656,8 @@ impl ProjectWindowSession {
 
     /// 작업 문서를 지금 저장합니다(모듈 문서 "Undo·Redo·Save Now"). 캡처·쓰기·반영을 이 thread에서 차례로 합니다.
     pub fn save_now(&mut self) -> Result<SaveOutcome, WindowSessionSaveError> {
-        self.save_with_lock_dir(default_lock_dir)
+        let lock = self.lock_dir.clone();
+        self.save_with_lock_dir(move || lock.get())
     }
 
     pub(crate) fn save_with_lock_dir(
@@ -1246,6 +1668,8 @@ impl ProjectWindowSession {
             return Ok(SaveOutcome {
                 generation: self.generation_number(),
                 written: false,
+                source_files: 0,
+                cache_stale: false,
             });
         };
         let written = capture.write(lock_dir)?;
@@ -1256,12 +1680,17 @@ impl ProjectWindowSession {
     /// 쓰기는 [`SaveCapture::write`]가 합니다. 작업 문서가 없거나 저장 뒤 바뀐 것이 없으면 `Ok(None)`이고, 바뀐 것이
     /// 없을 때도 current pointer가 loaded generation과 같은지는 확인합니다(stale이면 오류).
     pub(crate) fn capture_save(&self) -> Result<Option<SaveCapture>, WindowSessionSaveError> {
+        self.capture(false)
+    }
+
+    /// `forced`이면 저장 뒤 바뀐 것이 없어도 캡처합니다(맞춤 쓰기, [`ProjectWindowSession::reconcile`]).
+    fn capture(&self, forced: bool) -> Result<Option<SaveCapture>, WindowSessionSaveError> {
         let Some(document) = self.document.as_ref() else {
             return Ok(None);
         };
         let base = self.loaded.as_ref();
         let revision = document.state.revision();
-        if let Some(base) = base {
+        if let Some(base) = base.filter(|_| !forced && !self.reconcile_pending) {
             if revision == document.saved_revision {
                 check_base_manifest(self.identity.canonical_target(), Some(base.manifest_hash))
                     .map_err(WindowSessionSaveError::Stale)?;
@@ -1278,43 +1707,72 @@ impl ProjectWindowSession {
             snapshot,
             owned_chunks: document.owned_chunks.clone(),
             image_records: std::sync::Arc::clone(&self.image_records),
+            text: self.text_capture(),
+            style_defaults: (
+                document.state.model().style_defaults().to_owned(),
+                self.style_defaults_base.clone(),
+            ),
         }))
     }
 
-    /// [`SaveCapture::write`] 결과를 이 창에 반영합니다. 캡처 뒤 이 창의 기준 generation이나 작업 문서가 바뀌었으면
-    /// (다른 저장·다시 불러오기) 아무것도 바꾸지 않습니다. 캡처 뒤의 편집은 dirty로 남습니다.
+    fn text_capture(&self) -> Option<TextCapture> {
+        match &self.source {
+            SourceMode::Text { base, library } => Some(TextCapture {
+                base: base.clone(),
+                library: library.clone(),
+            }),
+            SourceMode::ChunkOnly { .. } => None,
+        }
+    }
+
+    /// [`SaveCapture::write`] 결과를 이 창에 반영합니다. 캡처 뒤 이 창의 기준 generation·원본 base나 작업 문서가
+    /// 바뀌었으면(다른 저장·다시 불러오기·외부 변경 반영) 아무것도 바꾸지 않습니다. 캡처 뒤의 편집은 dirty로 남습니다.
     pub(crate) fn apply_save(&mut self, written: SaveWritten) -> SaveOutcome {
         let current = self.loaded.as_ref().map(|loaded| loaded.manifest_hash);
         let wrote = written.saved.is_some();
-        let Some(document) = self
-            .document
-            .as_mut()
-            .filter(|document| document.state.model().document_id() == written.document_id)
-        else {
-            return SaveOutcome {
-                generation: self.generation_number(),
-                written: wrote,
-            };
+        let source_files = written.text.as_ref().map_or(0, |text| text.files);
+        let outcome = |session: &ProjectWindowSession| SaveOutcome {
+            generation: session.generation_number(),
+            written: wrote,
+            source_files,
+            cache_stale: written.cache_stale,
         };
-        if current != written.base {
-            return SaveOutcome {
-                generation: self.generation_number(),
-                written: wrote,
-            };
+        let same_document = self
+            .document
+            .as_ref()
+            .is_some_and(|document| document.state.model().document_id() == written.document_id);
+        let same_source = match (&self.source, &written.text) {
+            (SourceMode::Text { base, .. }, Some(text)) => *base == text.before,
+            (SourceMode::ChunkOnly { .. }, None) => true,
+            _ => false,
+        };
+        if !same_document || current != written.base || !same_source {
+            return outcome(self);
         }
+        let result = outcome(self);
+        let document = self.document.as_mut().expect("같은 문서를 확인함");
         if let Some((loaded, chunks)) = written.saved {
+            self.asset_chunks = std::sync::Arc::new(asset_chunks_of(&loaded));
             self.loaded = Some(loaded);
             document.owned_chunks = chunks;
         }
         document.saved_revision = written.revision;
+        if let Some(text) = written.text {
+            self.source = SourceMode::Text {
+                base: text.after,
+                library: Some(text.library),
+            };
+        }
+        self.style_defaults_base = written.style_defaults;
+        self.reconcile_pending = false;
         SaveOutcome {
             generation: self.generation_number(),
-            written: wrote,
+            ..result
         }
     }
 
-    /// 디스크 current generation이 이 창의 base(loaded generation)와 다르면 그 writer 출처와 다음 할 일을
-    /// 돌려줍니다(XII.7.1, ADR-0083 결정 2). 같거나 저장한 적 없는 프로젝트면 `Ok(None)`입니다.
+    /// 디스크 current generation이나 텍스트 원본이 이 창의 base와 다르면 그 writer 출처와 다음 할 일을 돌려줍니다
+    /// (XII.7.1, ADR-0083 결정 2, ADR-0088 결정 5). 같거나 저장한 적 없는 프로젝트면 `Ok(None)`입니다.
     pub fn stale_state(
         &self,
     ) -> Result<Option<(WriterProvenance, StaleResolution)>, CurrentPointerError> {
@@ -1323,33 +1781,62 @@ impl ProjectWindowSession {
             .map(|(_, writer, resolution)| (writer, resolution)))
     }
 
-    /// [`ProjectWindowSession::stale_state`]와 같고, 판정한 디스크 current manifest hash를 함께 돌려줍니다.
+    /// [`ProjectWindowSession::stale_state`]와 같고, 판정한 디스크 관찰값을 함께 돌려줍니다.
+    ///
+    /// 원본과 cache를 함께 쓰는 writer는 앱 창뿐이라(CLI·MCP는 아직 cache만, Git·편집기는 원본만 씀) 둘 가운데 하나라도
+    /// 외부 writer가 만든 것이면 외부입니다. 원본은 파일 집합 digest로 앱 창 저장 기록을 찾습니다.
     fn stale_judgement(
         &self,
-    ) -> Result<Option<(ContentHash, WriterProvenance, StaleResolution)>, CurrentPointerError> {
+    ) -> Result<Option<(DiskMark, WriterProvenance, StaleResolution)>, CurrentPointerError> {
         let root = self.identity.canonical_target();
         let current = match read_current_pointer(root) {
-            Ok(current) => current,
-            Err(CurrentPointerError::Missing { .. }) if self.loaded.is_none() => return Ok(None),
+            Ok(current) => Some(current),
+            Err(CurrentPointerError::Missing { .. }) if self.loaded.is_none() => None,
             Err(error) => return Err(error),
         };
-        if self.loaded.as_ref().map(|loaded| loaded.manifest_hash) == Some(current) {
+        let generation_moved = current != self.loaded.as_ref().map(|loaded| loaded.manifest_hash);
+        let source = self
+            .source
+            .base()
+            .and_then(|base| source_moved(&self.identity, base))
+            .map(|(mark, _)| mark);
+        if !generation_moved && source.is_none() {
             return Ok(None);
         }
-        let writer = writer_provenance(root, &current);
-        Ok(Some((current, writer, StaleResolution::for_writer(writer))))
+        let generation_writer = current
+            .filter(|_| generation_moved)
+            .map(|current| writer_provenance(root, &current));
+        let source_writer = source.map(|mark| match mark {
+            SourceMark::Digest(digest) => writer_provenance(root, &digest),
+            SourceMark::Unreadable => WriterProvenance::External,
+        });
+        let writer =
+            if [generation_writer, source_writer].contains(&Some(WriterProvenance::External)) {
+                WriterProvenance::External
+            } else {
+                WriterProvenance::AppWindow
+            };
+        Ok(Some((
+            DiskMark {
+                manifest: current,
+                source,
+            },
+            writer,
+            StaleResolution::for_writer(writer),
+        )))
     }
 
     /// stale 저장의 사용자 선택을 실행합니다(XII.7.5·XII.7.6, ADR-0083 결정 1).
     ///
-    /// 디스크가 이 창의 base와 같으면(stale이 아님) [`StaleResolveError::NotStale`], 디스크 generation을 외부
+    /// 디스크가 이 창의 base와 같으면(stale이 아님) [`StaleResolveError::NotStale`], 디스크 generation·원본을 외부
     /// writer가 만들었으면 두 선택지 대신 reconciliation 대기이므로 [`StaleResolveError::ReconciliationRequired`]
     /// 입니다(결정 2). 어느 실패에서도 이 창 문서·history는 그대로입니다.
     pub fn resolve_stale(
         &mut self,
         choice: StaleSaveChoice,
     ) -> Result<StaleResolved, StaleResolveError> {
-        self.resolve_stale_with_lock_dir(choice, default_lock_dir)
+        let lock = self.lock_dir.clone();
+        self.resolve_stale_with_lock_dir(choice, move || lock.get())
     }
 
     pub(crate) fn resolve_stale_with_lock_dir(
@@ -1367,11 +1854,11 @@ impl ProjectWindowSession {
             Some((_, _, StaleResolution::ReconciliationPending)) => {
                 Err(StaleResolveError::ReconciliationRequired)
             }
-            // UseCurrentWindow는 writer 출처를 판정한 그 generation 위에서만 씁니다. 판정 뒤 다른 writer(외부 포함)가
-            // 저장했으면 다시 stale입니다(ADR-0083 결정 1·2).
+            // UseCurrentWindow는 writer 출처를 판정한 그 generation·원본 위에서만 씁니다. 판정 뒤 다른 writer(외부
+            // 포함)가 저장했으면 다시 stale입니다(ADR-0083 결정 1·2).
             Some((judged, _, StaleResolution::Choose)) => match choice {
                 StaleSaveChoice::UseCurrentWindow => self
-                    .save_over_latest_with_lock_dir(judged, lock_dir)
+                    .save_over_judged(judged, lock_dir)
                     .map(StaleResolved::Saved)
                     .map_err(StaleResolveError::Save),
                 StaleSaveChoice::UseLatestDisk => self
@@ -1385,24 +1872,48 @@ impl ProjectWindowSession {
         }
     }
 
-    /// UseCurrentWindow(XII.7.5): 디스크의 최신 generation을 새 base로 삼아 이 창 문서 전체를 새 generation으로
-    /// 씁니다. 다른 문서·에셋 chunk는 최신 generation 것을 그대로 잇고, 이 창 문서가 최신 generation에서 차지한
-    /// chunk는 이 창 문서로 바뀝니다. 쓰기는 일반 저장과 같은 잠금·base 검사를 거치므로, 최신 generation을 읽은
-    /// 뒤 commit 전에 다른 저장이 끝나면 다시 [`WindowSessionSaveError::Stale`]이고 아무것도 쓰지 않습니다.
-    /// 성공하면 디스크 current의 이 문서는 창 문서와 같고, history는 그대로 남습니다.
-    ///
-    /// `judged`는 [`ProjectWindowSession::resolve_stale`]이 writer 출처를 판정한 디스크 generation입니다. 다시 읽은
-    /// 최신 generation이 그것과 다르면(판정 뒤 다른 저장이 끝남) 쓰지 않고 다시 stale입니다. 그래서 외부 writer의
-    /// generation을 두 선택지 경로로 덮어쓰지 않습니다(결정 2). 공개 진입점은 `resolve_stale` 하나입니다.
+    /// [`ProjectWindowSession::save_over_judged`]를 generation 관찰값만으로 부릅니다. 원본은 지금 디스크 것을
+    /// 판정값으로 씁니다(시험 경로).
+    #[cfg(test)]
     pub(crate) fn save_over_latest_with_lock_dir(
         &mut self,
         judged: ContentHash,
+        lock_dir: impl FnOnce() -> Result<std::path::PathBuf, LockError>,
+    ) -> Result<SaveOutcome, WindowSessionSaveError> {
+        let source = self
+            .source
+            .base()
+            .and_then(|base| source_moved(&self.identity, base))
+            .map(|(mark, _)| mark);
+        self.save_over_judged(
+            DiskMark {
+                manifest: Some(judged),
+                source,
+            },
+            lock_dir,
+        )
+    }
+
+    /// UseCurrentWindow(XII.7.5): 디스크의 최신 generation·원본을 새 base로 삼아 이 창 문서 전체를 씁니다. 다른
+    /// 문서·에셋 chunk는 최신 generation 것을 그대로 잇고, 이 창 문서가 최신 generation에서 차지한 chunk는 이 창
+    /// 문서로 바뀝니다. 원본은 최신 파일 hash를 기대 hash로 씁니다. 쓰기는 일반 저장과 같은 잠금·base 검사를 거치므로,
+    /// 최신을 읽은 뒤 commit 전에 다른 저장이 끝나면 다시 stale이고 아무것도 쓰지 않습니다. 성공하면 디스크의 이
+    /// 문서는 창 문서와 같고, history는 그대로 남습니다.
+    ///
+    /// `judged`는 [`ProjectWindowSession::resolve_stale`]이 writer 출처를 판정한 디스크 관찰값입니다. 다시 읽은 최신이
+    /// 그것과 다르면(판정 뒤 다른 저장이 끝남) 쓰지 않고 다시 stale입니다. 그래서 외부 writer의 저장을 두 선택지
+    /// 경로로 덮어쓰지 않습니다(결정 2). 공개 진입점은 `resolve_stale` 하나입니다.
+    fn save_over_judged(
+        &mut self,
+        judged: DiskMark,
         lock_dir: impl FnOnce() -> Result<std::path::PathBuf, LockError>,
     ) -> Result<SaveOutcome, WindowSessionSaveError> {
         let Some(document) = self.document.as_ref() else {
             return Ok(SaveOutcome {
                 generation: self.generation_number(),
                 written: false,
+                source_files: 0,
+                cache_stale: false,
             });
         };
         let document_id = document.state.model().document_id();
@@ -1425,12 +1936,39 @@ impl ProjectWindowSession {
             Err(error) => return Err(WindowSessionSaveError::Rebase(Box::new(error))),
         };
         let found = disk.as_ref().map(|disk| disk.loaded.manifest_hash);
-        if found != Some(judged) {
+        if found != judged.manifest {
             return Err(WindowSessionSaveError::Stale(BaseCheckError::StaleBase {
-                expected: Some(judged),
+                expected: judged.manifest,
                 found,
             }));
         }
+        // 원본: 판정한 원본과 지금 원본이 같아야 하고, 그 파일 hash가 새 기대 hash입니다. 문서 밖 의미는 writer가 그
+        // 원본에서 다시 읽습니다.
+        let text = match self.source.base() {
+            None => None,
+            Some(base) => {
+                let moved = source_moved(&self.identity, base);
+                if moved.as_ref().map(|(mark, _)| *mark) != judged.source {
+                    let paths = moved
+                        .map(|(_, now)| base.changed_paths(&now).into_iter().collect())
+                        .unwrap_or_default();
+                    return Err(WindowSessionSaveError::SourceStale { paths });
+                }
+                if moved.as_ref().map(|(mark, _)| *mark) == Some(SourceMark::Unreadable) {
+                    return Err(source_error("텍스트 원본을 읽지 못했습니다"));
+                }
+                Some(match moved {
+                    Some((_, now)) => TextCapture {
+                        base: now,
+                        library: None,
+                    },
+                    None => TextCapture {
+                        base: base.clone(),
+                        library: self.text_capture().and_then(|text| text.library),
+                    },
+                })
+            }
+        };
         let (base, owned_chunks) = match disk {
             Some(disk) => (
                 Some(disk.loaded),
@@ -1449,9 +1987,16 @@ impl ProjectWindowSession {
             snapshot,
             owned_chunks: owned_chunks.clone(),
             image_records: std::sync::Arc::clone(&self.image_records),
+            text,
+            style_defaults: (
+                document.state.model().style_defaults().to_owned(),
+                self.style_defaults_base.clone(),
+            ),
         };
         let written = capture.write(lock_dir)?;
         let wrote = written.saved.is_some();
+        let source_files = written.text.as_ref().map_or(0, |text| text.files);
+        let cache_stale = written.cache_stale;
         let (loaded, chunks) = match written.saved {
             Some((loaded, chunks)) => (Some(loaded), chunks),
             // 최신 generation의 이 문서가 이미 창 문서와 같음: 그 generation이 새 base입니다.
@@ -1461,6 +2006,13 @@ impl ProjectWindowSession {
             self.asset_chunks = std::sync::Arc::new(asset_chunks_of(loaded));
         }
         self.loaded = loaded;
+        if let Some(text) = written.text {
+            self.source = SourceMode::Text {
+                base: text.after,
+                library: Some(text.library),
+            };
+        }
+        self.style_defaults_base = written.style_defaults;
         if let Some(document) = self.document.as_mut() {
             document.owned_chunks = chunks;
             document.saved_revision = revision;
@@ -1468,53 +2020,45 @@ impl ProjectWindowSession {
         Ok(SaveOutcome {
             generation: self.generation_number(),
             written: wrote,
+            source_files,
+            cache_stale,
         })
     }
 
-    /// UseLatestDisk(XII.7.6): 디스크의 최신 generation을 검증하고 이 창 문서를 다시 읽은 **뒤에만** 로컬 미저장
-    /// 편집과 이 창 history를 버리고 그 generation으로 바꿉니다. 열린 탭은 새 문서에 남은 View만 viewport와 함께
-    /// 유지합니다(없으면 첫 View). 읽기에 실패하면 아무것도 바꾸지 않습니다. 버린 history 항목 수(undo + redo)를
-    /// 돌려줍니다.
+    /// chunk 전용 session이면 그 이유(디스크 다시 읽기가 원본을 보지 않게).
+    fn chunk_only(&self) -> Option<String> {
+        self.chunk_only_reason().map(str::to_owned)
+    }
+
+    /// UseLatestDisk(XII.7.6): 디스크의 최신 원본·generation을 검증하고 이 창 문서를 다시 읽은 **뒤에만** 로컬 미저장
+    /// 편집과 이 창 history를 버리고 그것으로 바꿉니다. 열린 탭은 새 문서에 남은 View만 viewport와 함께 유지합니다
+    /// (없으면 첫 View). 읽기에 실패하면 아무것도 바꾸지 않습니다. 버린 history 항목 수(undo + redo)를 돌려줍니다.
     pub fn reload_latest_disk(&mut self) -> Result<usize, WindowSessionLoadError> {
         let pick = self
             .document_id()
             .map_or(DocumentPick::FirstRoot, DocumentPick::Document);
-        let disk = read_disk_document(&self.identity, pick)?;
-        // 여기부터 실패 없음.
+        let chunk_only = self.chunk_only();
+        let disk = read_disk_state(&self.identity, pick, chunk_only.as_deref())?;
+        // 여기부터 실패 없음(맞춤 쓰기 실패는 다음 저장이 다시 맞춤).
         let discarded = self.history.history().len() + self.history.history().redo_len();
-        let Some(disk) = disk else {
-            let mut empty = ProjectWindowSession::empty(self.identity.clone(), self.window);
-            empty.image_records = std::mem::take(&mut self.image_records);
-            *self = empty;
-            return Ok(discarded);
-        };
+        let reconcile = disk.needs_reconcile();
         let revision = DocumentRevision(self.revision().0.saturating_add(1));
         let old_tabs = self.tabs().clone();
-        let mut history = WindowHistory::new(self.window);
-        self.document = disk.document.map(|(model, owned_chunks)| {
-            let state = DocumentState::with_revision(model, revision);
-            reopen_tabs(&mut history, state.model(), &old_tabs);
-            WindowDocument {
-                saved_revision: revision,
-                state,
-                owned_chunks,
-            }
-        });
-        self.replace_history(history);
-        self.asset_chunks = std::sync::Arc::new(asset_chunks_of(&disk.loaded));
-        self.loaded = Some(disk.loaded);
+        self.adopt(disk, revision, Some(&old_tabs));
+        // 맞춤 쓰기는 document thread가 아니라 다음 저장(자동 저장 writer)이 합니다(기술 아키텍처 §6.4).
+        self.reconcile_pending = reconcile;
         Ok(discarded)
     }
 
-    /// 디스크의 외부 변경을 이 창에 반영합니다(UX.4.1·UX.4.4, ADR-0083 결정 3).
+    /// 디스크의 외부 변경을 이 창에 반영합니다(UX.4.1·UX.4.4, ADR-0083 결정 3, ADR-0088 결정 5).
     ///
     /// | 상태 | 결과 |
     /// |---|---|
-    /// | current pointer = 이 창 base(자기 저장 event 포함) | [`ExternalSync::Unchanged`] |
+    /// | current pointer·원본 = 이 창 base(자기 저장 event 포함) | [`ExternalSync::Unchanged`] |
     /// | 제스처(history preview) 진행 중 | [`ExternalSync::Deferred`]. 제스처가 끝난 뒤 다시 부릅니다 |
     /// | 미저장 편집 있음 | [`ExternalSync::Stale`](두 선택지 또는 reconciliation 대기). 문서는 그대로 |
-    /// | clean, 새 generation이 정상 | [`ApplyExternalSnapshot`] 하나를 이 창 history에 기록하고 base를 바꿉니다. Undo 한 번이 외부 변경 전체를 되돌립니다. 선택은 남은 node만 유지합니다 |
-    /// | 새 generation·문서가 깨짐 | [`ExternalSync::Rejected`]. 아무것도 반영하지 않습니다 |
+    /// | clean, 새 디스크 상태가 정상 | [`ApplyExternalSnapshot`] 하나를 이 창 history에 기록하고 base를 바꿉니다. Undo 한 번이 외부 변경 전체를 되돌립니다. 선택은 남은 node만 유지합니다. 원본·cache 가운데 뒤처진 쪽을 맞춰 씁니다 |
+    /// | 새 generation·원본이 깨짐 | [`ExternalSync::Rejected`]. 아무것도 반영하지 않습니다 |
     ///
     /// `command`는 반영 transaction의 id입니다(창 id와 generation hash에서 만든 값을 권장).
     pub fn sync_external(&mut self, command: CommandId) -> ExternalSync {
@@ -1531,7 +2075,7 @@ impl ProjectWindowSession {
             return ExternalSync::Stale { writer, resolution };
         }
         let Some(document_id) = self.document_id() else {
-            // 문서가 없던 창(저장 전 프로젝트)은 history 없이 새 generation을 엽니다.
+            // 문서가 없던 창(저장 전 프로젝트)은 history 없이 새 디스크 상태를 엽니다.
             return match self.reload_latest_disk() {
                 Ok(_) => ExternalSync::Applied {
                     generation: self.generation_number(),
@@ -1540,12 +2084,19 @@ impl ProjectWindowSession {
                 Err(error) => ExternalSync::Rejected(ExternalRejection::Load(error)),
             };
         };
-        let disk = match read_disk_document(&self.identity, DocumentPick::Document(document_id)) {
-            Ok(Some(disk)) => disk,
-            Ok(None) => return ExternalSync::Rejected(ExternalRejection::PointerMissing),
+        let chunk_only = self.chunk_only();
+        let disk = match read_disk_state(
+            &self.identity,
+            DocumentPick::Document(document_id),
+            chunk_only.as_deref(),
+        ) {
+            Ok(disk) => disk,
             Err(error) => return ExternalSync::Rejected(ExternalRejection::Load(error)),
         };
-        let Some((model, owned_chunks)) = disk.document else {
+        if disk.loaded.is_none() && disk.plan != OpenPlan::FromText {
+            return ExternalSync::Rejected(ExternalRejection::PointerMissing);
+        }
+        let Some(model) = disk.model else {
             return ExternalSync::Rejected(ExternalRejection::Load(
                 WindowSessionLoadError::Document(LoadDocumentError::UnknownDocument {
                     document: document_id,
@@ -1601,11 +2152,27 @@ impl ProjectWindowSession {
             document.saved_revision = document.state.revision();
             self.labeled(discarded, history_label::NONE);
         }
+        // 활성 기본값 세트는 레코드 밖 거울이라 변경 집합에 들지 않습니다. 거울과 그 기준값을 그대로 두어 외부에서 바뀐
+        // `stellar.yaml`을 되쓰지 않습니다(다시 열면 디스크 값을 읽음).
         if let Some(document) = self.document.as_mut() {
-            document.owned_chunks = owned_chunks;
+            document.owned_chunks = disk.owned;
         }
-        self.asset_chunks = std::sync::Arc::new(asset_chunks_of(&disk.loaded));
-        self.loaded = Some(disk.loaded);
+        let reconcile = matches!(disk.source, SourceMode::Text { .. })
+            && matches!(
+                disk.plan,
+                OpenPlan::Forward | OpenPlan::FromText | OpenPlan::Migrate
+            );
+        self.asset_chunks = std::sync::Arc::new(
+            disk.loaded
+                .as_ref()
+                .map(asset_chunks_of)
+                .unwrap_or_default(),
+        );
+        self.loaded = disk.loaded;
+        self.source = disk.source;
+        self.open_plan = disk.plan;
+        // 맞춤 쓰기는 document thread가 아니라 다음 저장(자동 저장 writer)이 합니다(기술 아키텍처 §6.4).
+        self.reconcile_pending = reconcile;
         ExternalSync::Applied {
             generation: self.generation_number(),
             changes,
@@ -1830,6 +2397,12 @@ pub(crate) mod test_fixtures {
 mod stale_tests;
 
 #[cfg(test)]
+mod source_tests;
+
+#[cfg(test)]
+mod source_bench;
+
+#[cfg(test)]
 mod tests {
     use super::test_fixtures::*;
     use super::*;
@@ -1837,6 +2410,11 @@ mod tests {
 
     fn snapshot(session: &ProjectWindowSession) -> String {
         model_snapshot_json(session.document().unwrap().model()).unwrap()
+    }
+
+    /// 저장 결과의 (generation, 새 generation을 썼는지).
+    fn generation_written(outcome: SaveOutcome) -> (u64, bool) {
+        (outcome.generation, outcome.written)
     }
 
     #[test]
@@ -2092,13 +2670,7 @@ mod tests {
 
         // 바뀐 것이 없으면 새 generation을 쓰지 않습니다.
         let current = std::fs::read(project.path().join("design").join("current")).unwrap();
-        assert_eq!(
-            a.save_now().unwrap(),
-            SaveOutcome {
-                generation: 1,
-                written: false
-            }
-        );
+        assert_eq!(generation_written(a.save_now().unwrap()), (1, false));
         assert_eq!(
             std::fs::read(project.path().join("design").join("current")).unwrap(),
             current
@@ -2108,13 +2680,7 @@ mod tests {
             .unwrap();
         b.apply(&rename(b.document().unwrap(), 600, 12, "B 편집"), 0)
             .unwrap();
-        assert_eq!(
-            a.save_now().unwrap(),
-            SaveOutcome {
-                generation: 2,
-                written: true
-            }
-        );
+        assert_eq!(generation_written(a.save_now().unwrap()), (2, true));
         assert_eq!(a.generation_number(), 2);
         assert_eq!(b.generation_number(), 1, "B의 loaded generation은 그대로");
 
@@ -2140,13 +2706,7 @@ mod tests {
         // A: 다시 저장할 것이 없으면 그대로, undo 후 저장하면 generation 3.
         assert!(!a.save_now().unwrap().written);
         assert_eq!(a.undo(), Ok(true));
-        assert_eq!(
-            a.save_now().unwrap(),
-            SaveOutcome {
-                generation: 3,
-                written: true
-            }
-        );
+        assert_eq!(generation_written(a.save_now().unwrap()), (3, true));
         let reopened = ProjectWindowSession::load(identity(project.path()), window(34)).unwrap();
         assert_eq!(name_of(&reopened, 11), "n11");
         assert_eq!(
@@ -2164,13 +2724,7 @@ mod tests {
         a.apply(&rename(a.document().unwrap(), 500, 11, "임시 이름"), 0)
             .unwrap();
         assert!(a.undo().unwrap());
-        assert_eq!(
-            a.save_now().unwrap(),
-            SaveOutcome {
-                generation: 1,
-                written: false
-            }
-        );
+        assert_eq!(generation_written(a.save_now().unwrap()), (1, false));
         assert_eq!(a.document.as_ref().unwrap().saved_revision, a.revision());
         assert!(!a.save_now().unwrap().written);
 
@@ -2195,16 +2749,23 @@ mod tests {
 
         const PROJECT: &str = "STELLAR_TEST_WINDOW_SAVE_PROJECT";
         if let Some(root) = std::env::var_os(PROJECT) {
+            let mode = std::env::var("STELLAR_TEST_SAVE_MODE").unwrap();
+            // 열기의 원본 전환(ADR-0088)은 저장 잠금이 필요합니다. 잠금을 얻을 수 있는 mode에서만 열기가 원본을 맞추므로,
+            // 되돌린 편집이 아무것도 쓰지 않음은 그 mode에서 확인합니다.
             let mut session =
                 ProjectWindowSession::load(identity(root.as_ref()), window(1)).unwrap();
-            assert!(!session.save_now().unwrap().written);
+            if mode == "write" {
+                assert!(!session.save_now().unwrap().wrote_anything());
+            }
             session
                 .apply(&rename(session.document().unwrap(), 500, 11, "앱 변경"), 0)
                 .unwrap();
             assert!(session.undo().unwrap());
-            assert!(!session.save_now().unwrap().written);
+            if mode == "write" {
+                assert!(!session.save_now().unwrap().wrote_anything());
+            }
             assert!(session.redo().unwrap());
-            match std::env::var("STELLAR_TEST_SAVE_MODE").unwrap().as_str() {
+            match mode.as_str() {
                 "write" => {
                     assert!(session.save_now().unwrap().written);
                     assert_eq!(session.generation_number(), 2);
@@ -2385,13 +2946,7 @@ mod tests {
         );
         assert_eq!(session.undo(), Ok(false));
         assert_eq!(session.redo(), Ok(false));
-        assert_eq!(
-            session.save_now().unwrap(),
-            SaveOutcome {
-                generation: 0,
-                written: false
-            }
-        );
+        assert_eq!(generation_written(session.save_now().unwrap()), (0, false));
         assert!(!project.path().join("design").join("current").exists());
     }
 
@@ -2528,8 +3083,9 @@ mod tests {
 
         let project = saved_project("overlay");
         let design = project.path().join("design");
-        let disk_before = tree(&design);
+        // 열기는 기존 chunk 프로젝트를 텍스트 원본으로 옮깁니다(ADR-0088). 그 뒤의 bytes가 기준입니다.
         let mut session = ProjectWindowSession::load(identity(project.path()), window(61)).unwrap();
+        let disk_before = tree(&design);
         let records_before = session.document().unwrap().model().to_records().unwrap();
         let chunks_before = serialize_document(session.document().unwrap().model()).unwrap();
         // 문서 View 3(root 10)의 scene: root 10 아래 11·12 위치를 둔 Frame scene.
@@ -2594,13 +3150,7 @@ mod tests {
             serialize_document(session.document().unwrap().model()).unwrap(),
             chunks_before
         );
-        assert_eq!(
-            session.save_now().unwrap(),
-            SaveOutcome {
-                generation: 1,
-                written: false
-            }
-        );
+        assert_eq!(generation_written(session.save_now().unwrap()), (1, false));
         assert_eq!(tree(&design), disk_before);
 
         // active 탭이 없으면 overlay도 없습니다.
@@ -2620,8 +3170,9 @@ mod tests {
 
         let project = saved_project("camera");
         let design = project.path().join("design");
-        let disk_before = tree(&design);
+        // 열기는 기존 chunk 프로젝트를 텍스트 원본으로 옮깁니다(ADR-0088). 그 뒤의 bytes가 기준입니다.
         let mut session = ProjectWindowSession::load(identity(project.path()), window(51)).unwrap();
+        let disk_before = tree(&design);
         let chunks_before = serialize_document(session.document().unwrap().model()).unwrap();
         let size = Size2::new(800.0, 600.0).unwrap();
 
@@ -2678,13 +3229,7 @@ mod tests {
             serialize_document(session.document().unwrap().model()).unwrap(),
             chunks_before
         );
-        assert_eq!(
-            session.save_now().unwrap(),
-            SaveOutcome {
-                generation: 1,
-                written: false
-            }
-        );
+        assert_eq!(generation_written(session.save_now().unwrap()), (1, false));
         assert_eq!(tree(&design), disk_before, "pan/zoom 후 저장 bytes 동일");
 
         // 이동·확대 오류는 viewport를 바꾸지 않습니다.

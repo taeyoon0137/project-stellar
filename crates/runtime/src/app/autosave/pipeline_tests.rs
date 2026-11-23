@@ -172,7 +172,8 @@ fn stale_autosave_requests_one_alert_and_writes_nothing_before_a_choice() {
         resolved,
         StaleResolved::Saved(SaveOutcome {
             generation: 3,
-            written: true
+            written: true,
+            ..
         })
     ));
     assert!(wait_for(|| status(&app, b) == AutosaveStatus::Idle));
@@ -298,6 +299,34 @@ fn broken_external_generation_reports_a_diagnostic_and_applies_nothing() {
     app.shutdown().unwrap();
 }
 
+/// `.stellar/journal`을 파일로 막은 상태. [`BlockedJournal::restore`]가 되돌립니다.
+pub(crate) struct BlockedJournal {
+    journal: std::path::PathBuf,
+    backup: Option<std::path::PathBuf>,
+}
+
+impl BlockedJournal {
+    pub(crate) fn restore(self) {
+        std::fs::remove_file(&self.journal).unwrap();
+        if let Some(backup) = &self.backup {
+            std::fs::rename(backup, &self.journal).unwrap();
+        }
+    }
+}
+
+/// 텍스트 원본 저장 journal 자리를 파일로 막아 원본 쓰기가 실패하게 합니다.
+pub(crate) fn block_journal(root: &std::path::Path) -> BlockedJournal {
+    let journal = root.join(".stellar").join("journal");
+    let backup = root.join("journal-backup");
+    let moved = std::fs::rename(&journal, &backup).is_ok();
+    std::fs::create_dir_all(journal.parent().unwrap()).unwrap();
+    std::fs::write(&journal, b"blocked").unwrap();
+    BlockedJournal {
+        journal,
+        backup: moved.then_some(backup),
+    }
+}
+
 #[test]
 fn close_flush_returns_a_decision_state_and_never_discards_edits() {
     // XIII.1.6: timeout·failure fixture.
@@ -310,21 +339,17 @@ fn close_flush_returns_a_decision_state_and_never_discards_edits() {
         FlushOutcome::Clean
     );
 
-    // 실패: design/objects를 파일로 막습니다.
+    // 실패: 텍스트 원본 저장 journal(.stellar/journal)을 파일로 막습니다(원본이 Git 원본, ADR-0088).
     edit(&app, a, 700, 11, "닫기 전 편집");
-    let objects = project.path().join("design").join("objects");
-    let backup = project.path().join("objects-backup");
-    std::fs::rename(&objects, &backup).unwrap();
-    std::fs::write(&objects, b"blocked").unwrap();
+    let blocked = block_journal(project.path());
     let outcome = app.flush_for_close(a, Duration::from_secs(5));
     assert!(
-        matches!(&outcome, FlushOutcome::Blocked(FlushBlock::Failed(code)) if code == "write"),
+        matches!(&outcome, FlushOutcome::Blocked(FlushBlock::Failed(code)) if code == "source"),
         "{outcome:?}"
     );
     assert!(!outcome.may_close());
     assert!(dirty(&app, a), "실패해도 편집은 메모리에 남음");
-    std::fs::remove_file(&objects).unwrap();
-    std::fs::rename(&backup, &objects).unwrap();
+    blocked.restore();
 
     // 시간 초과: document thread가 바쁘면 제한 시간 안에 끝나지 않습니다. 넘긴 flush는 취소하지 않고 끝까지
     // 실행되어 편집을 저장합니다(버리지 않음).

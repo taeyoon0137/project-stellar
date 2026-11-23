@@ -1577,9 +1577,10 @@ fn perform_on_thread(
         }
         AppCommand::SaveNow => {
             let outcome = window.save_now().map_err(|error| {
-                let failure = match error {
-                    WindowSessionSaveError::Stale(_) => RequestFailure::SaveStale,
-                    _ => RequestFailure::SaveFailed,
+                let failure = if error.is_stale() {
+                    RequestFailure::SaveStale
+                } else {
+                    RequestFailure::SaveFailed
                 };
                 Failure::new(failure, error.to_string())
             })?;
@@ -1587,7 +1588,7 @@ fn perform_on_thread(
                 request,
                 session,
                 generation: outcome.generation,
-                written: outcome.written,
+                written: outcome.wrote_anything(),
             })
         }
     }
