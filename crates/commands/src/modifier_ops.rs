@@ -382,38 +382,40 @@ pub(crate) fn payload_with(
     write_payload(&mut payload, key, value).then_some(payload)
 }
 
-/// CSS가 한 요소에 효과를 적용하는 고정 순서의 단계(속성 모델 9.1): transform → paint(`box-shadow`·fill·stroke) →
-/// `filter` → `clip-path` → `mask` → `opacity` → `mix-blend-mode`. Stellar 전용 modifier(Boolean·StrokeExpand·
-/// Corner)는 paint 단계로 봅니다.
-fn css_stage(kind: ModifierKind) -> u8 {
+/// 새 modifier를 넣을 때 쓰는 순위(ADR-0115 결정 3). 선언 블록 붙여넣기와 속성 패널이 같은 순위를 씁니다.
+///
+/// - CSS가 한 요소에 효과를 적용하는 고정 순서(속성 모델 9.1)를 따릅니다: transform → paint(`box-shadow`·
+///   background·border) → `filter` → `clip-path` → `mask` → `opacity` → `mix-blend-mode`. 순위가 CSS 단계와 같은
+///   방향으로만 커지므로, CSS 순서를 지키던 stack은 넣은 뒤에도 Web export에서 wrapper가 생기지 않습니다.
+/// - paint 단계 안은 렌더 순서입니다. 도형을 바꾸는 Stellar 전용 modifier(Boolean·StrokeExpand·Corner)가 먼저,
+///   그다음 Fill, Stroke입니다. Shadow는 앞 결과의 그림자라 paint 뒤, Blur 앞(`filter` 목록 순서)입니다.
+fn insert_rank(kind: ModifierKind) -> u8 {
     match kind {
         ModifierKind::Transform => 0,
-        ModifierKind::Fill
-        | ModifierKind::Stroke
-        | ModifierKind::Shadow
-        | ModifierKind::Boolean
-        | ModifierKind::StrokeExpand
-        | ModifierKind::Corner => 1,
-        ModifierKind::Blur => 2,
-        ModifierKind::Clip => 3,
-        ModifierKind::Mask => 4,
-        ModifierKind::Opacity => 5,
-        ModifierKind::Blend => 6,
+        ModifierKind::Boolean | ModifierKind::StrokeExpand | ModifierKind::Corner => 1,
+        ModifierKind::Fill => 2,
+        ModifierKind::Stroke => 3,
+        ModifierKind::Shadow => 4,
+        ModifierKind::Blur => 5,
+        ModifierKind::Clip => 6,
+        ModifierKind::Mask => 7,
+        ModifierKind::Opacity => 8,
+        ModifierKind::Blend => 9,
     }
 }
 
-/// 선언 블록 붙여넣기가 `node`에 새 `kind` modifier를 넣을 순서 key: CSS 고정 순서(속성 모델 9.1)에서 같거나 앞
-/// 단계인 마지막 항목 뒤, 뒤 단계인 첫 항목 앞입니다. 그래서 CSS 순서를 지키던 stack은 넣은 뒤에도 지킵니다.
+/// `node`에 새 `kind` modifier를 넣을 순서 key. 같거나 낮은 순위인 마지막 항목 뒤, 높은 순위인 첫 항목 앞입니다
+/// ([`insert_rank`]). 선언 블록 붙여넣기(`css_value`)와 속성 패널(`inspector`)이 이 함수 하나를 씁니다.
 pub(crate) fn css_insert_order(
     model: &DocumentModel,
     node: StableId,
     kind: ModifierKind,
 ) -> OrderKey {
     let entries: &[ModifierEntry] = model.modifier_stack(node).map_or(&[], |s| s.entries());
-    let stage = css_stage(kind);
+    let rank = insert_rank(kind);
     let split = entries
         .iter()
-        .position(|e| css_stage(e.kind) > stage)
+        .position(|e| insert_rank(e.kind) > rank)
         .unwrap_or(entries.len());
     OrderKey::between(
         split.checked_sub(1).map(|i| &entries[i].order),
@@ -1110,5 +1112,84 @@ mod tests {
             PropertyValue::Bool(true),
         ));
         assert_eq!(&bytes[..2], &0x0023u16.to_le_bytes());
+    }
+
+    /// CSS 고정 단계(속성 모델 9.1, codegen `modifier_plan`과 같은 단계). Shadow는 Frame이 아니면 `filter`입니다.
+    fn css_stage(kind: ModifierKind) -> u8 {
+        match kind {
+            ModifierKind::Transform => 0,
+            ModifierKind::Fill
+            | ModifierKind::Stroke
+            | ModifierKind::Boolean
+            | ModifierKind::StrokeExpand
+            | ModifierKind::Corner => 1,
+            ModifierKind::Shadow | ModifierKind::Blur => 2,
+            ModifierKind::Clip => 3,
+            ModifierKind::Mask => 4,
+            ModifierKind::Opacity => 5,
+            ModifierKind::Blend => 6,
+        }
+    }
+
+    #[test]
+    fn insert_rank_follows_css_stages_and_render_order() {
+        // 순위는 CSS 단계와 같은 방향으로만 커집니다(순위가 낮으면 단계도 같거나 낮음).
+        for a in ModifierKind::ALL {
+            for b in ModifierKind::ALL {
+                if insert_rank(a) < insert_rank(b) {
+                    assert!(css_stage(a) <= css_stage(b), "{a:?} < {b:?}");
+                }
+            }
+        }
+        // paint 단계 안은 렌더 순서: Transform → Fill → Stroke(속성 패널이 쓰던 순서).
+        assert!(insert_rank(ModifierKind::Transform) < insert_rank(ModifierKind::Fill));
+        assert!(insert_rank(ModifierKind::Fill) < insert_rank(ModifierKind::Stroke));
+    }
+
+    #[test]
+    fn insert_order_keeps_a_ranked_stack_ranked() {
+        // 모든 종류를 거꾸로 하나씩 넣어도 stack은 순위 순서가 되고, 같은 순위는 넣은 순서대로 뒤에 붙습니다.
+        let mut state = DocumentState::new(small_model());
+        let mut kinds = ModifierKind::ALL.to_vec();
+        kinds.reverse();
+        kinds.push(ModifierKind::Fill);
+        for (i, kind) in kinds.iter().enumerate() {
+            let order = css_insert_order(state.model(), sid(11), *kind);
+            let mut new = entry(100 + i as u64, 1, *kind);
+            new.order = order;
+            if let ModifierPayload::Mask { source } | ModifierPayload::Clip { source } =
+                &mut new.payload
+            {
+                *source = NodeRef::new(sid(12));
+            }
+            if let ModifierPayload::Boolean { operands, .. } = &mut new.payload {
+                operands.clear();
+            }
+            run(
+                &mut state,
+                Command::InsertModifier(InsertModifier {
+                    node: sid(11),
+                    entry: new,
+                }),
+            )
+            .unwrap_or_else(|e| panic!("{kind:?}: {e:?}"));
+        }
+        let stack = state.model().modifier_stack(sid(11)).unwrap();
+        let ranks: Vec<u8> = stack.entries().iter().map(|e| insert_rank(e.kind)).collect();
+        let mut sorted = ranks.clone();
+        sorted.sort();
+        assert_eq!(ranks, sorted);
+        let fills: Vec<ModifierId> = stack
+            .entries()
+            .iter()
+            .filter(|e| e.kind == ModifierKind::Fill)
+            .map(|e| e.id)
+            .collect();
+        let first_fill = 100 + kinds.iter().position(|k| *k == ModifierKind::Fill).unwrap() as u64;
+        let last = 100 + kinds.len() as u64 - 1;
+        assert_eq!(
+            fills,
+            [ModifierId::new(sid(first_fill)), ModifierId::new(sid(last))]
+        );
     }
 }

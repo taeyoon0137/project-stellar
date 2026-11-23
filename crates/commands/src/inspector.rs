@@ -11,16 +11,15 @@
 //! - 잠긴 node(자신 또는 조상)는 `locked` 행 외에는 읽기 전용이고 편집을 거부합니다(D8, [`NodeAccess`]).
 //!   잠금·흐름 부모는 node마다 한 번 계산해 행 판정에 다시 씁니다.
 //! - 이름·표시·잠금 편집은 Layers와 같은 command(`rename_node`·`set_visibility`·`set_locked`)입니다.
-//! - `fill`·`stroke`는 늘 있는 행입니다. 칠하기가 없으면 `none`이고, 값을 넣으면 modifier를 렌더 순서
-//!   (Transform → Fill → Stroke)에 맞춰 넣고, `none`이면 뺍니다. 선이 없는 node에 `stroke` 색을 넣으면
-//!   `stroke-width`는 CSS 초기값 1px로 시작합니다. 색 기본값은 코어에 두지 않으므로(D7), 선이 없는 node의
+//! - `fill`·`stroke`는 늘 있는 행입니다. 칠하기가 없으면 `none`이고, 값을 넣으면 modifier를 선언 블록 붙여넣기와
+//!   같은 삽입 순위(`modifier_ops::css_insert_order`, Transform → Fill → Stroke)에 맞춰 넣고, `none`이면
+//!   뺍니다. 선이 없는 node에 `stroke` 색을 넣으면 `stroke-width`는 CSS 초기값 1px로 시작합니다. 색 기본값은 코어에 두지 않으므로(D7), 선이 없는 node의
 //!   `stroke-width`만 바꾸거나 색 없는 새 `border`를 넣는 입력은 거부합니다.
 //! - node마다 modifier stack을 한 번만 훑어 요약하고 속성 행은 그 요약에서 읽습니다(속성 수만큼 stack을 다시
 //!   훑거나 복제하지 않음).
 
 use stellar_core_types::color::{Color, ColorSpace};
 use stellar_core_types::ids::StableId;
-use stellar_core_types::order_key::OrderKey;
 use stellar_core_types::property::PropertyKey;
 use stellar_core_types::value::{FiniteF32, Transform2D};
 use stellar_document::frame::{keys as frame_keys, Border, Clipping};
@@ -35,7 +34,9 @@ use crate::change::node_keys;
 use crate::command::Command;
 use crate::css_value::{format, parse, CssGrammar, CssValue, CssValueError};
 use crate::lock::{Blocked, EditIntent, NodeAccess};
-use crate::modifier_ops::{read_payload, InsertModifier, RemoveModifier, SetModifierProperty};
+use crate::modifier_ops::{
+    css_insert_order, read_payload, InsertModifier, RemoveModifier, SetModifierProperty,
+};
 use crate::property::{read_property, PropertyValue, SetProperty};
 
 /// 행 flag.
@@ -731,25 +732,6 @@ fn adjusted(
     })
 }
 
-/// 렌더 순서(Transform* → Fill → Stroke)를 지키는 새 modifier 위치.
-fn paint_order(model: &DocumentModel, id: StableId, kind: ModifierKind) -> OrderKey {
-    let entries: &[ModifierEntry] = model.modifier_stack(id).map_or(&[], |s| s.entries());
-    match kind {
-        ModifierKind::Transform => OrderKey::between(None, entries.first().map(|e| &e.order)),
-        ModifierKind::Fill => {
-            let split = entries
-                .iter()
-                .position(|e| e.kind != ModifierKind::Transform)
-                .unwrap_or(entries.len());
-            OrderKey::between(
-                split.checked_sub(1).map(|i| &entries[i].order),
-                entries.get(split).map(|e| &e.order),
-            )
-        }
-        _ => OrderKey::between(entries.last().map(|e| &e.order), None),
-    }
-}
-
 /// 새 modifier를 넣는 command. ID는 호출자가 준 공급자(`new_id`)에서 받습니다.
 fn insert(
     model: &DocumentModel,
@@ -762,7 +744,7 @@ fn insert(
         node,
         entry: ModifierEntry {
             id: ModifierId::new(new_id()),
-            order: paint_order(model, node, kind),
+            order: css_insert_order(model, node, kind),
             kind,
             enabled: true,
             payload,
