@@ -4,7 +4,7 @@
 
 - WBS: XIII.8.2
 - 작업명: 복구 snapshot과 autosave의 불변 memory snapshot 공유
-- 상태: 완료 (`[x]`) 원장 판정은 통합 때 `generate-ledger`로 정합니다.
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록(ledger-refresh): 행 지시·검증 열을 코드와 테스트로 확인했고 선행이 모두 `[x]`입니다. 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 원장이 근거 커밋을 찾지 못했습니다(window-session-stale lane). 선행 XIII.1.4도 같은 판정으로 `[x]`입니다. 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 완료 (`[x]`) 원장 판정은 통합 때 `generate-ledger`로 정합니다.
 - 선행: XIII.1.4, V.9.2
 - 결정: [ADR-0083](../adr/ADR-0083-window-session-stale-and-external-sync.md)
 - lane: `window-session-stale`
@@ -44,3 +44,9 @@
 ## 남은 위험
 
 - 공유 cache는 (문서, revision) key입니다. revision이 앞으로만 가는 규칙에 기댑니다.
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(XIII.8.2)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `00c83c8b` Feat: 자동 저장과 복구 체크포인트가 같은 불변 snapshot을 공유 (XIII.8.2·XIII.8.1·XIII.8.4·XIII.8.7)
