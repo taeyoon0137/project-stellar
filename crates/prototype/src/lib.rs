@@ -5,6 +5,12 @@
 //! 시계·timing evaluator·tick 처리를 맡습니다. 시스템 시각·파일·네트워크에 접근하지 않습니다(XXX.6.3 inventory). 문서를
 //! 바꾸는 길은 [`edit::PrototypeTransaction`] 하나입니다.
 
+/// 읽기 전용 `PrototypeGraphView` (XXX.2.1).
+pub mod graph;
+
+/// 프로토타입 문서 상태와 원자 transaction (XXX.2.3).
+pub mod edit;
+
 /// 프리뷰 논리 시계 (XXX.3.1).
 pub mod clock;
 
