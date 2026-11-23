@@ -27,11 +27,12 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use stellar_agent_edit::agent_history::{
-    CompletedEdit, EndReason, ProposalId, SessionEndReport, SessionOrigin,
+    CompletedEdit, EndReason, ProposalId, SessionEndReport, SessionError, SessionOrigin,
 };
 use stellar_agent_edit::attached::edit::{decode_proposal, AttachedEditError, DecodedProposal};
 use stellar_agent_edit::lease::{LeaseState, LeaseTargets};
 use stellar_agent_edit::permission::{AgentSessionId, ConnectionApproval};
+use stellar_agent_host::session::SessionEvent;
 use stellar_commands::id::CommandId;
 use stellar_commands::lock::lease::LeaseId;
 use stellar_ops::apply::ApplyRequest;
@@ -88,6 +89,11 @@ pub enum AgentRequest {
         /// 확정할 history 항목 id.
         entry_id: CommandId,
     },
+    /// 결합된 bridge가 연결됨(앱 시작 세션이면 AgentSession `BridgeBound`, ADR-0124 결정 1).
+    Bound {
+        /// 세션.
+        session: AgentSessionId,
+    },
     /// bridge 연결 종료.
     Disconnected {
         /// 세션.
@@ -119,6 +125,12 @@ pub enum AgentReply {
     Completed(CompletedEdit),
     /// 종료 절차(연결 종료에서 앱 시작 세션을 유지하면 `None`).
     Ended(Option<Box<SessionEndReport>>),
+    /// bridge 결합을 기록함. 재연결이면 세션의 진행 중 편집 lease를 함께 돌려줘 앞단이 이어서 쓰게 합니다
+    /// (재연결 유예 안에서 같은 편집을 계속함, ADR-0005 §4.2).
+    Bound {
+        /// 세션의 진행 중 편집 lease(없으면 `None`).
+        lease: Option<LeaseId>,
+    },
 }
 
 /// 에이전트 요청 실패. 어느 경우든 문서는 바뀌지 않았습니다.
@@ -135,6 +147,8 @@ pub enum AgentIoError {
     Invalid(AttachedEditError),
     /// 세션·lease 절차가 거부했습니다.
     Edit(AgentEditError),
+    /// 그 세션의 첫 연결 승인이 아직 없거나 거부됐습니다(XIX.3.3, ADR-0124 결정 3). lease 요청·제안을 받지 않습니다.
+    ConnectionNotApproved(ConnectionApproval),
 }
 
 impl std::fmt::Display for AgentIoError {
@@ -147,6 +161,9 @@ impl std::fmt::Display for AgentIoError {
             }
             AgentIoError::Invalid(e) => write!(f, "{e}"),
             AgentIoError::Edit(e) => write!(f, "{e}"),
+            AgentIoError::ConnectionNotApproved(state) => {
+                write!(f, "에이전트 연결이 승인되지 않았습니다({state:?})")
+            }
         }
     }
 }
@@ -188,6 +205,9 @@ enum Prepared {
     Complete {
         session: AgentSessionId,
         entry_id: CommandId,
+    },
+    Bound {
+        session: AgentSessionId,
     },
     Disconnected {
         session: AgentSessionId,
@@ -233,6 +253,7 @@ fn prepare(request: AgentRequest) -> Result<Prepared, AgentIoError> {
             proposal: decode_proposal(&request).map_err(AgentIoError::Invalid)?,
         },
         AgentRequest::Complete { session, entry_id } => Prepared::Complete { session, entry_id },
+        AgentRequest::Bound { session } => Prepared::Bound { session },
         AgentRequest::Disconnected { session, entry_id } => {
             Prepared::Disconnected { session, entry_id }
         }
@@ -248,9 +269,30 @@ fn prepare(request: AgentRequest) -> Result<Prepared, AgentIoError> {
     })
 }
 
+/// lease 요청·제안 전에 그 세션의 첫 연결 승인을 봅니다(XIX.3.3). 모르는 세션은 세션 절차의 오류로 넘깁니다.
+fn require_connection(
+    window: &AgentWindow<'_>,
+    session: AgentSessionId,
+) -> Result<(), AgentIoError> {
+    match window
+        .agent()
+        .permissions()
+        .connection(&window.permission_key(session))
+    {
+        None | Some(ConnectionApproval::Approved) => Ok(()),
+        Some(state) => Err(AgentIoError::ConnectionNotApproved(state)),
+    }
+}
+
 /// document thread job 안에서 검증된 요청을 처리합니다.
 fn run(window: &mut AgentWindow<'_>, prepared: Prepared) -> Result<AgentReply, AgentIoError> {
     let edit = AgentIoError::Edit;
+    match &prepared {
+        Prepared::BeginEdit { session, .. } | Prepared::Propose { session, .. } => {
+            require_connection(window, *session)?;
+        }
+        _ => {}
+    }
     match prepared {
         Prepared::Start {
             session,
@@ -293,18 +335,54 @@ fn run(window: &mut AgentWindow<'_>, prepared: Prepared) -> Result<AgentReply, A
             .complete(session, entry_id)
             .map(AgentReply::Completed)
             .map_err(edit),
-        Prepared::Disconnected { session, entry_id } => window
-            .on_bridge_disconnected(session, entry_id, monotonic_ms())
-            .map(|report| AgentReply::Ended(report.map(Box::new)))
-            .map_err(edit),
+        Prepared::Bound { session } => {
+            if let Some(host) = window.agent().hosted().host_of(session) {
+                let report = window
+                    .host_event(
+                        host,
+                        SessionEvent::BridgeBound,
+                        CommandId::from_stable_id(crate::agent_session::fresh_id()),
+                        monotonic_ms(),
+                    )
+                    .map_err(edit)?;
+                // 유예가 지난 뒤의 재결합은 같은 세션으로 받지 않고 유예 초과로 끝냅니다(AgentSession 규칙).
+                if let Some(ended) = report.ended {
+                    return Ok(AgentReply::Ended(Some(ended)));
+                }
+            } else if !window.agent().sessions().is_active(session) {
+                return Err(edit(AgentEditError::Session(SessionError::UnknownSession(
+                    session,
+                ))));
+            }
+            Ok(AgentReply::Bound {
+                lease: window.agent().sessions().lease(session),
+            })
+        }
+        Prepared::Disconnected { session, entry_id } => {
+            let now = monotonic_ms();
+            let report = window
+                .on_bridge_disconnected(session, entry_id, now)
+                .map_err(edit)?;
+            // 앱 시작 세션은 유지하고 AgentSession의 재연결 유예를 시작합니다(ADR-0124 결정 1).
+            if report.is_none() {
+                if let Some(host) = window.agent().hosted().host_of(session) {
+                    let _ =
+                        window.host_event(host, SessionEvent::BridgeDisconnected, entry_id, now);
+                }
+            }
+            Ok(AgentReply::Ended(report.map(Box::new)))
+        }
         Prepared::End {
             session,
             reason,
             entry_id,
-        } => window
-            .end(session, reason, entry_id, monotonic_ms())
-            .map(|report| AgentReply::Ended(Some(Box::new(report))))
-            .map_err(edit),
+        } => {
+            let now = monotonic_ms();
+            let report = window.end(session, reason, entry_id, now).map_err(edit)?;
+            // 앱 시작 세션이면 AgentSession 상태도 맞춥니다(ADR-0124 결정 1).
+            window.notify_host_ended(&report, now);
+            Ok(AgentReply::Ended(Some(Box::new(report))))
+        }
     }
 }
 

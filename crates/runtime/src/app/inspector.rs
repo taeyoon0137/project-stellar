@@ -230,16 +230,20 @@ fn edit_property(
                 .begin_scrub(control)
                 .map_err(history_failure)?;
             let document = window.document.as_mut().ok_or_else(stale)?;
-            if let Err(error) = window
+            let changes = match window
                 .history
                 .update_preview(&mut document.state, &transaction)
             {
-                let _ = window.history.cancel_preview(&mut document.state);
-                return Err(history_failure(error));
-            }
+                Ok(changes) => changes,
+                Err(error) => {
+                    let _ = window.history.cancel_preview(&mut document.state);
+                    return Err(history_failure(error));
+                }
+            };
             if phase == PropertyEditPhase::Ended {
+                // 단계마다 시작 상태에서 다시 계산하므로 마지막 change set이 제스처 전체입니다(ADR-0124 결정 4).
                 window
-                    .end_preview(CHANGE_PROPERTY)
+                    .end_preview(CHANGE_PROPERTY, Some((&changes, transaction.origin)))
                     .map_err(history_failure)?;
             }
         }

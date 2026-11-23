@@ -108,6 +108,24 @@ fn base(app: &App) -> ProjectRevision {
     ticket.wait_timeout(WAIT).unwrap().unwrap().unwrap()
 }
 
+/// 사용자가 첫 연결을 승인합니다(앱 UI 경로).
+fn approve_connection(app: &App, session: AgentSessionId) {
+    let mut ticket = app
+        .app
+        .with_agent_edit(app.window, move |agent| {
+            let key = agent.permission_key(session);
+            agent
+                .agent
+                .permissions_mut(UserUiAction::from_user_interface())
+                .respond_connection(&key, true)
+        })
+        .unwrap();
+    assert_eq!(
+        ticket.wait_timeout(WAIT).unwrap().unwrap().unwrap(),
+        Ok(ConnectionApproval::Approved)
+    );
+}
+
 fn revision(app: &App) -> DocumentRevision {
     let mut ticket = app
         .app
@@ -138,6 +156,22 @@ fn io_thread_queues_validated_requests_without_writing_the_document() {
         }),
         Ok(AgentReply::Started(ConnectionApproval::Pending))
     );
+    // 첫 연결 승인 전에는 lease 요청을 받지 않습니다(XIX.3.3, ADR-0124 결정 3).
+    assert_eq!(
+        send(AgentRequest::BeginEdit {
+            session: session(),
+            lease: lease(),
+            targets: LeaseTargets {
+                document: sid(1),
+                targets: vec![sid(11)],
+                externals: Vec::new(),
+            },
+        }),
+        Err(AgentIoError::ConnectionNotApproved(
+            ConnectionApproval::Pending
+        ))
+    );
+    approve_connection(&f, session());
     assert_eq!(
         send(AgentRequest::BeginEdit {
             session: session(),
@@ -391,6 +425,7 @@ fn revert_through_the_runtime_job_is_autosaved() {
         name: "외부".into(),
     })
     .unwrap();
+    approve_connection(&f, session());
     send(AgentRequest::BeginEdit {
         session: session(),
         lease: lease(),
@@ -485,4 +520,125 @@ fn revert_through_the_runtime_job_is_autosaved() {
         names.wait_timeout(WAIT).unwrap().unwrap().unwrap().undo,
         Some("에이전트 변경 되돌리기")
     );
+}
+
+#[test]
+fn large_approved_proposal_is_applied_in_batch_jobs() {
+    // 검증 기준(XXIX.3.4, ADR-0124 결정 6): 큰 제안은 batch 하나가 job 하나로 나뉘어 적용되고, 완료는 history 항목 하나입니다.
+    let f = app("agent-io-batches");
+    let io = f.app.agent_io();
+    let send = |request: AgentRequest| reply(io.submit(f.window, request).unwrap());
+    send(AgentRequest::Start {
+        session: session(),
+        origin: SessionOrigin::ExternalClient,
+        name: "외부".into(),
+    })
+    .unwrap();
+    approve_connection(&f, session());
+    send(AgentRequest::BeginEdit {
+        session: session(),
+        lease: lease(),
+        targets: LeaseTargets {
+            document: sid(1),
+            targets: vec![sid(11)],
+            externals: Vec::new(),
+        },
+    })
+    .unwrap();
+    let ui = UserUiAction::from_user_interface;
+    let mut approved = f
+        .app
+        .with_agent_edit(f.window, move |agent| agent.approve_lease(lease(), ui()))
+        .unwrap();
+    approved
+        .wait_timeout(WAIT)
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let count = 2 * crate::agent_edit::PROPOSAL_BATCH_COMMANDS + 76;
+    let request = ApplyRequest {
+        base_revision: base(&f),
+        document: sid(1),
+        commands: (0..count)
+            .map(|i| CommandInput::Rename {
+                node: sid(11),
+                name: format!("이름 {i}"),
+            })
+            .collect(),
+    };
+    let Ok(AgentReply::Queued(proposal)) = send(AgentRequest::Propose {
+        session: session(),
+        lease: lease(),
+        id: command_id(1),
+        request,
+    }) else {
+        panic!("제안 대기");
+    };
+    let before = revision(&f);
+    // batch 사이에 다른 job이 끼어드는지 봅니다: document thread를 막고 적용(첫 batch job)을 넣은 뒤, 사용자 입력 job과
+    // 그 뒤의 일반 command job을 넣습니다. 입력은 첫 batch보다 먼저, 일반 job은 첫 batch 뒤·둘째 batch 앞에 실행됩니다.
+    let release = block_document_thread(&f.app);
+    let applying = f
+        .app
+        .apply_agent_proposal(f.window, session(), proposal, ui())
+        .unwrap();
+    let window = f.window;
+    let publisher = f.app.job_publisher();
+    let batches_seen = |options: SubmitOptions| {
+        publisher
+            .try_submit(options, move |ctx| {
+                ctx.app_sessions_mut().windows[&window]
+                    .agent
+                    .provenance()
+                    .session_batches(session())
+                    .count()
+            })
+            .unwrap()
+    };
+    let mut between = batches_seen(SubmitOptions::command());
+    let mut input = batches_seen(SubmitOptions::input());
+    release.send(()).unwrap();
+    assert_eq!(input.wait_timeout(WAIT).unwrap(), Some(0), "입력이 먼저");
+    assert_eq!(
+        between.wait_timeout(WAIT).unwrap(),
+        Some(1),
+        "다음 batch는 lane 뒤에 다시 들어가 그 사이 job이 실행됨"
+    );
+    let result = applying.recv_timeout(WAIT).unwrap();
+    assert_eq!(result.error, None);
+    assert_eq!(result.applied.len(), 3, "512 + 512 + 76");
+    assert!(revision(&f) > before);
+    let applied = result.applied.clone();
+    let mut sizes = f
+        .app
+        .with_agent_edit(f.window, move |agent| {
+            applied
+                .iter()
+                .map(|batch| {
+                    agent
+                        .agent()
+                        .provenance()
+                        .get(*batch)
+                        .unwrap()
+                        .record
+                        .forward
+                        .requests
+                        .len()
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    assert_eq!(
+        sizes.wait_timeout(WAIT).unwrap().unwrap().unwrap(),
+        vec![512, 512, 76]
+    );
+    let Ok(AgentReply::Completed(completed)) = send(AgentRequest::Complete {
+        session: session(),
+        entry_id: command_id(2),
+    }) else {
+        panic!("완료");
+    };
+    assert_eq!(completed.batches, 3);
+    assert!(completed.history_sequence.is_some(), "history 항목 하나");
 }

@@ -30,6 +30,9 @@ stellar-git-porcelain = { path = "../git-porcelain" }
 stellar-agent-host = { path = "../agent-host" }
 # 앱 쪽 에이전트 편집 구현(XXIX.3.1, ADR-0112): 창별 권한·lease 요청·출처 색인·종료 절차·되돌리기를 창 history에 연결합니다.
 stellar-agent-edit = { path = "../agent-edit" }
+# attached host trait 구현과 bridge↔app frame 앞단(ADR-0005 §8, ADR-0124).
+stellar-agent-protocol = { path = "../agent-protocol" }
+stellar-local-ipc = { path = "../local-ipc" }
 
 [dev-dependencies]
 stellar-text = { path = "../text", features = ["test-support"] }

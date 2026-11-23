@@ -224,6 +224,19 @@ impl PermissionStore {
         Ok(session.connection)
     }
 
+    /// 사용자가 모드를 낮춰 상한 밖이 된 권한의 확인 상태를 버립니다(agent-host `SessionEffect::RevokePermissions`,
+    /// ADR-0124 결정 1). 대기 중인 요청도 함께 닫혀 다시 요청해야 합니다. 첫 연결 승인과 다른 권한은 그대로입니다.
+    /// 버린 확인 수를 돌려줍니다.
+    pub fn revoke(&mut self, key: &PermissionKey, permissions: &[Permission]) -> usize {
+        let Some(session) = self.sessions.get_mut(key) else {
+            return 0;
+        };
+        permissions
+            .iter()
+            .filter(|permission| session.confirmations.remove(permission).is_some())
+            .count()
+    }
+
     /// 권한 하나의 확인 상태.
     pub fn confirmation(&self, key: &PermissionKey, permission: Permission) -> Confirmation {
         self.sessions

@@ -53,3 +53,34 @@
 ## 근거 커밋
 
 - 이 보고서를 담은 `Task(XIX.6.7)` 커밋(브랜치 `lane/agent-history`).
+
+## 추가 작업: 사용자 편집을 앱 창 색인에 연결 (ADR-0124 결정 4, lane `agent-runtime-2`)
+
+색인은 ADR-0112로 앱 창(`WindowAgentEdit`)이 소유합니다. 이번에는 사용자 편집이 표시된 batch의 "이후 변경됨"을 바로 바꾸게 했습니다.
+
+### 변경 파일
+
+- `crates/runtime/src/agent_observe.rs`·`agent_observe_tests.rs`(신규): 창 관찰 대기열 `AgentWatch`, `drain`, `drain_windows`
+- `crates/runtime/src/window_session.rs`: 문서 기록 함수(`apply`, `apply_grouped`, `insert_grouped_and_select`, `insert_and_select`, `apply_and_select`, 외부 반영)가 change set과 출처를 대기열에 넣음, `end_preview`가 마지막 preview change set을 받음
+- `crates/runtime/src/app/inspector.rs`: 속성 scrub 끝에서 마지막 change set을 `end_preview`에 넘김
+- `crates/runtime/src/app.rs`: 상태 snapshot 게시(`build_state`) 앞에서 `drain_windows`
+- `crates/runtime/src/agent_edit.rs`: 대기열이 쓰는 창 상태 field 공개 범위(`pub(crate)`)
+
+### 구현 요약
+
+- 기록 함수 한 층에서 change set을 모으고, 모든 document thread job 뒤 상태 게시 앞에서 창마다 `observe`에 넘깁니다. 호출 지점마다 관찰을 따로 부르지 않아 빠지는 편집 경로가 없습니다.
+- 표시된 batch가 없으면 쌓지 않습니다(대기열을 비울 때 켜짐 여부를 다시 맞춤).
+- 속성 scrub은 preview 중 쌓지 않고 끝에서 한 번 넣습니다. 매 단계 시작 상태에서 다시 계산하므로 마지막 change set이 제스처 전체입니다. 캔버스 drag는 끝에서 `apply` 한 번이라 같은 경로입니다.
+- Undo·Redo 재생과 에이전트 batch 적용·되돌리기는 지금처럼 그 자리에서 판정하므로 대기열에 넣지 않습니다(두 번 판정하지 않음).
+
+### 검증
+
+| 명령 / test | 결과 |
+|---|---|
+| `cargo test -p stellar-runtime` | 통과 |
+| `user_edits_reach_the_provenance_index_at_state_publication` | 통과(표시 batch 없을 때 대기열 0, 사용자 편집 뒤 이후 변경됨, 되돌리면 검토 대기, 무관한 node는 그대로) |
+| `history_preview_is_observed_once_at_the_end` | 통과(preview 중 대기열 0, 끝에서 1) |
+
+### 남은 위험
+
+- `canvas::select_session`·`canvas::text::edit`처럼 `WindowHistory`를 직접 받는 캔버스 엔진 부품은 창 session 기록 함수를 거치지 않습니다. 지금 앱 경로에서는 쓰이지 않지만, UI 재설계 때 이 부품을 앱 경로에 연결하면 기록 함수 층을 거치게 해야 합니다.

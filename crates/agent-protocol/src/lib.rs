@@ -28,3 +28,6 @@ pub mod outcome;
 
 /// MCP 경로의 자원 상한 (XIX.9.10).
 pub mod limits;
+
+/// 앱 runtime이 구현하는 attached host trait (ADR-0005 §8, ADR-0124).
+pub mod host;

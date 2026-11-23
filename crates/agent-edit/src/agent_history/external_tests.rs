@@ -5,6 +5,7 @@ use crate::agent_history::SessionOrigin;
 use crate::provenance::DisplayState;
 use crate::provenance_fixture::world::{World, L, S};
 use crate::provenance_fixture::*;
+use stellar_ops::commands::agent_external::RecordTarget;
 use stellar_ops::commands::command::Command;
 use stellar_ops::commands::id::CommandOrigin;
 use stellar_ops::commands::request::CommandRequest;
@@ -51,7 +52,6 @@ fn respond(
         incoming,
         &table,
         id(4000),
-        id(4001),
         9_000,
     )
     .unwrap()
@@ -94,7 +94,13 @@ fn non_overlapping_external_change_is_applied_keeping_agent_work() {
     assert!(decision.ended.is_empty());
     assert!(world.sessions.is_active(session(S)), "세션 유지");
     assert_eq!(world.table().len(), 1, "lease 유지");
-    let tx = decision.apply.expect("외부 변경 반영");
+    // 반영은 창 session 경로가 합니다. 여기서는 판정 근거의 분할(창에서 안 바뀐 레코드)을 그 경로 대신 적용합니다.
+    let tx = decision
+        .analysis
+        .partition
+        .applicable
+        .clone()
+        .into_transaction(id(4001), world.history.doc.revision());
     assert_eq!(tx.origin, CommandOrigin::System);
     let applied = world.history.doc.execute_transaction(&tx).unwrap();
     world
@@ -106,7 +112,7 @@ fn non_overlapping_external_change_is_applied_keeping_agent_work() {
         world.provenance.batches()[0].display(),
         DisplayState::PendingReview
     );
-    assert!(decision.divergent.is_empty());
+    assert!(decision.analysis.partition.divergent.is_empty());
 }
 
 #[test]
@@ -139,16 +145,15 @@ fn overlapping_external_change_ends_session_without_deleting_agent_change() {
         world.provenance.shown_nodes().contains(&sid(13)),
         "출처 표시 유지"
     );
-    // 겹친 속성은 semantic conflict 후보, 겹친 레코드는 reconciliation 입력입니다.
-    assert_eq!(decision.divergent, vec![RecordTarget::Node(sid(13))]);
+    // 겹친 속성은 semantic conflict 후보, 겹친 레코드는 reconciliation 입력입니다(판정 근거, 적용은 창 session).
+    assert_eq!(
+        decision.analysis.partition.divergent,
+        vec![RecordTarget::Node(sid(13))]
+    );
     let conflicts = &decision.analysis.conflicts;
     assert_eq!(conflicts.len(), 1, "{conflicts:?}");
     assert_eq!(conflicts[0].object, sid(13));
     assert!(conflicts[0].path.is_some());
-    // 겹치지 않은 외부 변경은 반영합니다.
-    let tx = decision.apply.expect("12 반영");
-    world.history.doc.execute_transaction(&tx).unwrap();
-    assert_eq!(name(&world.history.doc, 12), "external");
     assert_eq!(name(&world.history.doc, 13), "agent");
 }
 

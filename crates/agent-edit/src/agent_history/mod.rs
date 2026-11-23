@@ -89,6 +89,10 @@ pub enum EndReason {
     LeaseConflict,
     /// 사용자의 lease 해제.
     UserReleasedLease,
+    /// CLI가 보고한 사용 한도(앱 시작 세션, ADR-0124 결정 1).
+    UsageLimitReported,
+    /// CLI가 보고한 인증 오류(앱 시작 세션, ADR-0124 결정 1).
+    AuthErrorReported,
 }
 
 impl EndReason {
@@ -103,6 +107,8 @@ impl EndReason {
             EndReason::TrustRevoked => "trust-revoked",
             EndReason::LeaseConflict => "lease-conflict",
             EndReason::UserReleasedLease => "user-released-lease",
+            EndReason::UsageLimitReported => "usage-limit",
+            EndReason::AuthErrorReported => "auth-error",
         }
     }
 }
@@ -240,6 +246,35 @@ pub struct SessionEndReport {
     pub diagnostic: InterruptedAgentTask,
 }
 
+/// 대기 중 제안(앞부분을 나눠 적용했으면 남은 command).
+#[derive(Debug)]
+struct PendingProposal {
+    transaction: CommandTransaction,
+    /// 이미 적용한 batch 수(다음 batch transaction id에 씀).
+    applied_chunks: u32,
+}
+
+/// [`AgentEditSessions::apply_proposal_chunk`] 결과.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChunkApplied {
+    /// 이번에 적용한 batch.
+    pub batch: AgentBatchId,
+    /// 제안에 남은 command 수(0이면 제안이 끝남).
+    pub remaining: usize,
+}
+
+/// 나눠 적용하는 제안의 `index`번째 batch transaction id. 첫 batch는 제안 id 그대로이고, 이후는 마지막 4 byte에
+/// 순번을 더합니다.
+fn chunk_id(id: CommandId, index: u32) -> CommandId {
+    if index == 0 {
+        return id;
+    }
+    let mut bytes = id.to_bytes();
+    let tail = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]).wrapping_add(index);
+    bytes[12..].copy_from_slice(&tail.to_be_bytes());
+    CommandId::from_bytes(bytes)
+}
+
 #[derive(Debug)]
 struct SessionSlot {
     key: PermissionKey,
@@ -247,7 +282,7 @@ struct SessionSlot {
     name: String,
     started_ms: u64,
     lease: Option<LeaseId>,
-    proposals: BTreeMap<ProposalId, CommandTransaction>,
+    proposals: BTreeMap<ProposalId, PendingProposal>,
     next_proposal: u64,
 }
 
@@ -364,7 +399,13 @@ impl AgentEditSessions {
         }
         let proposal = ProposalId(slot.next_proposal);
         slot.next_proposal += 1;
-        slot.proposals.insert(proposal, transaction);
+        slot.proposals.insert(
+            proposal,
+            PendingProposal {
+                transaction,
+                applied_chunks: 0,
+            },
+        );
         Ok(proposal)
     }
 
@@ -381,8 +422,9 @@ impl AgentEditSessions {
             .ok_or(SessionError::UnknownProposal(proposal))
     }
 
-    /// 사용자가 승인한 제안을 lease 판정과 함께 적용하고 출처 색인에 batch로 기록합니다(XIX.5.2, XIX.6.1, XIX.6.7).
+    /// 사용자가 승인한 제안을 lease 판정과 함께 한 batch로 적용하고 출처 색인에 기록합니다(XIX.5.2, XIX.6.1, XIX.6.7).
     /// 적용은 transaction 하나라 전부 적용 또는 전부 미적용입니다. 거부되면 제안은 버리고 문서는 그대로입니다.
+    /// [`Self::apply_proposal_chunk`]의 나누지 않는 경우입니다.
     pub fn apply_proposal(
         &mut self,
         id: AgentSessionId,
@@ -391,18 +433,55 @@ impl AgentEditSessions {
         table: &LeaseTable,
         provenance: &mut AgentChangeProvenance,
     ) -> Result<AgentBatchId, SessionError> {
+        self.apply_proposal_chunk(id, proposal, usize::MAX, state, table, provenance)
+            .map(|chunk| chunk.batch)
+    }
+
+    /// 승인한 제안의 앞 command 최대 `max_commands`개를 한 batch로 적용합니다(XXIX.3.4 큰 batch 분할, ADR-0124 결정 6).
+    ///
+    /// - 한 batch는 transaction 하나라 전부 적용 또는 전부 미적용이고, batch마다 출처 기록이 따로 생깁니다. 완료·종료는
+    ///   진행 중 batch 전체를 history 항목 하나로 확정하므로 Undo 한 번이 제안 전체를 되돌립니다.
+    /// - 남은 command는 같은 제안 id로 대기에 남고([`ChunkApplied::remaining`]), 다음 호출이 이어서 적용합니다. 사용자가
+    ///   그 사이 거부하거나 세션이 끝나면 남은 부분은 버려지고, 이미 적용한 batch는 출처 표시를 유지한 채 남습니다.
+    /// - batch가 거부되면 남은 부분을 버리고 오류입니다. 그 batch는 적용되지 않았고 앞 batch는 그대로입니다.
+    /// - 이어지는 batch의 transaction id는 제안 id에서 batch 순번으로 만듭니다(같은 제안 안에서 겹치지 않음).
+    pub fn apply_proposal_chunk(
+        &mut self,
+        id: AgentSessionId,
+        proposal: ProposalId,
+        max_commands: usize,
+        state: &mut DocumentState,
+        table: &LeaseTable,
+        provenance: &mut AgentChangeProvenance,
+    ) -> Result<ChunkApplied, SessionError> {
         let slot = self.slot(id)?;
         let lease = slot.lease.ok_or(SessionError::NoEdit)?;
-        let transaction = slot
+        let mut pending = slot
             .proposals
             .remove(&proposal)
             .ok_or(SessionError::UnknownProposal(proposal))?;
         let name = slot.name.clone();
-        let transaction = transaction.rebased(state.revision());
-        let applied = apply_approved(state, &transaction, table).map_err(SessionError::Apply)?;
-        provenance
-            .record_batch(id, &name, lease, transaction, applied, state.model())
-            .map_err(SessionError::Provenance)
+        let take = max_commands.max(1).min(pending.transaction.requests.len());
+        let rest = pending.transaction.requests.split_off(take);
+        let chunk = CommandTransaction {
+            id: chunk_id(pending.transaction.id, pending.applied_chunks),
+            origin: pending.transaction.origin,
+            requests: std::mem::take(&mut pending.transaction.requests),
+        }
+        .rebased(state.revision());
+        let applied = apply_approved(state, &chunk, table).map_err(SessionError::Apply)?;
+        let batch = provenance
+            .record_batch(id, &name, lease, chunk, applied, state.model())
+            .map_err(SessionError::Provenance)?;
+        let remaining = rest.len();
+        if remaining > 0 {
+            pending.transaction.requests = rest;
+            pending.applied_chunks = pending.applied_chunks.saturating_add(1);
+            if let Some(slot) = self.sessions.get_mut(&id) {
+                slot.proposals.insert(proposal, pending);
+            }
+        }
+        Ok(ChunkApplied { batch, remaining })
     }
 
     /// 정상 완료(CompleteAgentEdit): 확정되지 않은 batch를 history entry 하나로 확정하고 lease를 해제합니다.
