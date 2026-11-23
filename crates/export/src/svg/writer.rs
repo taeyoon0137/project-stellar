@@ -6,8 +6,11 @@
 //!
 //! - 순회: 최상위 node를 paint 순서로, 각 subtree를 명시적 stack pre-order로 걷습니다(재귀 없음).
 //!   숨긴 node는 subtree째 생략합니다.
-//! - 구조: node마다 `<g id>` 하나(world 좌표, 변환 없음). 그 안에 image 픽셀 → 칠하기 layer(아래 →
-//!   위) → 자식 그룹 순서로 씁니다([`crate::svg::mapping`] 좌표계 규칙).
+//! - 구조: node마다 `<g id>` 하나(world 좌표, 변환 없음). 그 안에 content 고유 모습(image 픽셀, text run
+//!   색으로 칠한 glyph outline) → 칠하기 layer(아래 → 위) → 자식 그룹 순서로 씁니다([`crate::svg::mapping`]
+//!   좌표계 규칙).
+//! - text: 고정 font revision의 glyph run을 outline `<path>`로 씁니다([`crate::svg::text`], XX.3.2).
+//!   `<text>` 요소와 font는 쓰지 않습니다. paint layer는 모든 glyph outline을 이은 기하를 칠합니다.
 //! - clip: node clip stack이 부모 그룹이 이미 건 clip을 앞부분으로 가져야 합니다(아니면
 //!   [`SvgExportError::ClipNotNested`]). 조상 그룹의 clip은 SVG 상속으로 이미 적용되므로 node
 //!   그룹에는 **새로 늘어난 clip만** 겁니다. 늘어난 clip이 둘 이상이면 안쪽 `<clipPath>`가 바로
@@ -24,8 +27,9 @@ use std::rc::Rc;
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::reference::AssetRef;
-use stellar_scene::node::{SceneContent, SceneNode, Visibility};
-use stellar_scene::stack::{ClipShape, PaintLayer, StrokeAlign};
+use stellar_scene::geometry::{FillRule, PathGeometry};
+use stellar_scene::node::{SceneContent, SceneNode, TextLayoutKey, Visibility};
+use stellar_scene::stack::{ClipShape, Paint, PaintLayer, StrokeAlign};
 
 use crate::capture::{ExportAssetSource, ExportCapture, ExportRoot};
 use crate::request::{ExportBackground, ExportFormat};
@@ -36,6 +40,8 @@ use crate::svg::element::{
 use crate::svg::format::{base64_len, write_number, write_numbers, SvgValueError};
 use crate::svg::id::{SvgId, SvgIdAllocator, SvgIdError};
 use crate::svg::mapping::{first_unsupported, node_features, SvgFeature, SvgSupport};
+use crate::svg::text::{text_outlines, TextOutlineError};
+use crate::text::{ExportTextSource, GlyphOutline, GlyphOutlineError, GlyphOutlineKey};
 
 /// 기본 최대 출력 크기(256 MiB).
 pub const DEFAULT_MAX_SVG_BYTES: usize = 256 * 1024 * 1024;
@@ -119,6 +125,20 @@ pub enum SvgExportError {
         /// asset.
         asset: AssetRef,
     },
+    /// 고정 font revision에 text layout glyph run이 없습니다.
+    MissingTextLayout {
+        /// 문제 node.
+        node: StableId,
+        /// layout key.
+        layout: TextLayoutKey,
+    },
+    /// text glyph outline을 만들 수 없습니다.
+    Text {
+        /// 문제 node.
+        node: StableId,
+        /// 원인.
+        error: TextOutlineError,
+    },
     /// node 값 표기 실패(비유한 계산 결과 등).
     Value {
         /// 문제 node.
@@ -159,6 +179,11 @@ impl fmt::Display for SvgExportError {
                 "node {node}의 이미지 {}를 고정 revision에서 찾을 수 없습니다",
                 asset.id()
             ),
+            SvgExportError::MissingTextLayout { node, .. } => write!(
+                f,
+                "node {node}의 text layout을 고정 font revision에서 찾을 수 없습니다"
+            ),
+            SvgExportError::Text { node, error } => write!(f, "node {node}: {error}"),
             SvgExportError::Value { node, error } => write!(f, "node {node}: {error}"),
             SvgExportError::Document(error) => write!(f, "SVG 문서: {error}"),
             SvgExportError::Id(error) => write!(f, "{error}"),
@@ -177,10 +202,12 @@ impl From<SvgIdError> for SvgExportError {
     }
 }
 
-/// capture를 SVG 문서로 씁니다. 이미지 내용은 `assets`에서 고정 asset revision으로 읽습니다.
+/// capture를 SVG 문서로 씁니다. 이미지 내용은 `assets`에서 고정 asset revision으로, text glyph는 `text`에서
+/// 고정 font revision으로 읽습니다.
 pub fn write_svg(
     capture: &ExportCapture,
     assets: &dyn ExportAssetSource,
+    text: &dyn ExportTextSource,
     options: &SvgWriteOptions,
 ) -> Result<SvgDocument, SvgExportError> {
     let requested = capture.request().format();
@@ -190,6 +217,8 @@ pub fn write_svg(
     let mut writer = Writer {
         capture,
         assets,
+        text,
+        outlines: HashMap::new(),
         limit: options.max_output_bytes,
         ids: SvgIdAllocator::new(),
         clip_defs: HashMap::new(),
@@ -262,6 +291,9 @@ enum Step<'a> {
 struct Writer<'a> {
     capture: &'a ExportCapture,
     assets: &'a dyn ExportAssetSource,
+    text: &'a dyn ExportTextSource,
+    /// glyph outline 조회 cache(조회만 하며 출력 순서에 영향 없음).
+    outlines: HashMap<GlyphOutlineKey, Result<GlyphOutline, GlyphOutlineError>>,
     limit: usize,
     ids: SvgIdAllocator,
     /// (chain 안 바로 바깥 정의, clip 값 canonical bytes) → 정의 id.
@@ -375,7 +407,60 @@ impl<'a> Writer<'a> {
         Ok(stack)
     }
 
-    /// image 픽셀과 칠하기 layer를 씁니다.
+    /// text glyph outline을 만들고 run 고유 색 layer를 씁니다. paint layer 기하(모든 glyph)를 돌려줍니다.
+    fn write_text(
+        &mut self,
+        node: &'a SceneNode,
+        layout: TextLayoutKey,
+    ) -> Result<PathGeometry, SvgExportError> {
+        let source = node.source();
+        let glyphs = self.capture.glyph_layout(self.text, layout).ok_or(
+            SvgExportError::MissingTextLayout {
+                node: source,
+                layout,
+            },
+        )?;
+        // command 하나는 출력에 최소 2 byte("Z" + 구분자)이므로 남은 출력 예산의 절반이 command 상한입니다.
+        let budget = self
+            .limit
+            .saturating_sub(self.defs.len().saturating_add(self.body.len()))
+            / 2;
+        let (capture, text, cache) = (self.capture, self.text, &mut self.outlines);
+        let mut lookup = |key: &GlyphOutlineKey| {
+            cache
+                .entry(key.clone())
+                .or_insert_with(|| capture.glyph_outline(text, key))
+                .clone()
+        };
+        let outlines = match text_outlines(&glyphs, &mut lookup, budget) {
+            Ok(outlines) => outlines,
+            Err(TextOutlineError::TooManyCommands { .. }) => {
+                return Err(SvgExportError::OutputTooLarge { limit: self.limit })
+            }
+            Err(error) => {
+                return Err(SvgExportError::Text {
+                    node: source,
+                    error,
+                })
+            }
+        };
+        let transform = node.world_transform();
+        for run in &outlines.runs {
+            if let Some(color) = run.fill {
+                write_fill(
+                    &mut self.body,
+                    &SvgGeometry::Path(&run.geometry, FillRule::NonZero),
+                    &transform,
+                    Paint::Solid(color),
+                )
+                .map_err(value_error(source))?;
+                self.check_size(0)?;
+            }
+        }
+        Ok(outlines.combined)
+    }
+
+    /// content 고유 모습(image 픽셀, text run 색)과 칠하기 layer를 씁니다.
     fn write_content(&mut self, node: &'a SceneNode, id: &SvgId) -> Result<(), SvgExportError> {
         let source = node.source();
         let transform = node.world_transform();
@@ -390,8 +475,16 @@ impl<'a> Writer<'a> {
             write_image(&mut self.body, image, &transform, &encoded)
                 .map_err(value_error(source))?;
         }
-        let Some(geometry) = SvgGeometry::of_content(node.content()) else {
-            return Ok(());
+        let text_geometry = match node.content() {
+            SceneContent::Text(text) => Some(self.write_text(node, text.layout)?),
+            SceneContent::Rect(_) | SceneContent::Path(_) | SceneContent::Image(_) => None,
+        };
+        let geometry = match &text_geometry {
+            Some(glyphs) => SvgGeometry::Path(glyphs, FillRule::NonZero),
+            None => match SvgGeometry::of_content(node.content()) {
+                Some(geometry) => geometry,
+                None => return Ok(()),
+            },
         };
         if geometry.is_empty_path() {
             return Ok(());

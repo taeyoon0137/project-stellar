@@ -21,5 +21,8 @@ pub mod writer;
 /// 부분 래스터화 경계 planner (XX.4.1).
 pub mod raster;
 
+/// Text glyph run → outline path 변환 (XX.3.2).
+pub mod text;
+
 pub use raster::{plan_raster, RasterBoundary, RasterCause, RasterPlan, RasterRegion};
 pub use writer::{write_svg, SvgDocument, SvgExportError, SvgWriteOptions};

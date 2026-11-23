@@ -9,6 +9,9 @@ pub mod request;
 /// 내보내기 입력 고정: scene snapshot·resource revision (XX.1.2).
 pub mod capture;
 
+/// 텍스트 glyph 입력: glyph run과 outline 조회 (XX.3.2).
+pub mod text;
+
 /// SVG 벡터 변환 (XX.3).
 pub mod svg;
 
@@ -23,4 +26,8 @@ pub use capture::{
 pub use request::{
     ExportBackground, ExportFormat, ExportRequest, ExportRequestError, ExportScale, ExportSource,
     OutputPath, TargetProfileKey,
+};
+pub use text::{
+    ExportFontFace, ExportTextSource, GlyphOutline, GlyphOutlineError, GlyphOutlineKey, GlyphRun,
+    GlyphSize, GlyphVariations, PlacedGlyph, TextGlyphLayout,
 };

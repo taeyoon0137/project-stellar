@@ -305,9 +305,9 @@ pub const SVG_MAPPING: [SvgMapping; 34] = [
     ),
     row(
         SvgFeature::TextContent,
-        "Text: SceneContent::Text(TextLayoutKey)",
-        "glyph outline <path> — <text>·font 포함 없음",
-        SvgSupport::Deferred { row: "XX.3.2" },
+        "Text: SceneContent::Text(TextLayoutKey) → 고정 font revision glyph run·outline(ExportTextSource)",
+        "run마다 glyph outline <path d fill=run 색>(non-zero), paint layer는 모든 glyph를 이은 <path> — <text>·font 포함 없음",
+        V,
     ),
     row(
         SvgFeature::ImageContent,
@@ -825,6 +825,7 @@ mod tests {
             SvgFeature::RoundedRectContent,
             SvgFeature::PathContent,
             SvgFeature::EvenOddFill,
+            SvgFeature::TextContent,
             SvgFeature::ImageContent,
             SvgFeature::ImageFitFill,
             SvgFeature::ImageFitContain,
@@ -850,10 +851,6 @@ mod tests {
         assert_eq!(
             non_vector,
             vec![
-                (
-                    SvgFeature::TextContent,
-                    SvgSupport::Deferred { row: "XX.3.2" }
-                ),
                 (
                     SvgFeature::ImageColorSpaceOverride,
                     SvgSupport::Rasterize { row: "XX.4.2" }
@@ -955,10 +952,8 @@ mod tests {
             bounds: fx::rect(0.0, 0.0, 1.0, 1.0),
         }));
         let text_features = features(text);
-        assert_eq!(
-            first_unsupported(&text_features),
-            Some(SvgFeature::TextContent)
-        );
+        assert_eq!(text_features, set(&[SvgFeature::TextContent]));
+        assert_eq!(first_unsupported(&text_features), None);
         assert_eq!(first_unsupported(&set(&[SvgFeature::RectContent])), None);
     }
 

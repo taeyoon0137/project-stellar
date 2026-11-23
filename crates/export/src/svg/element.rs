@@ -35,7 +35,8 @@ pub enum SvgGeometry<'a> {
 }
 
 impl<'a> SvgGeometry<'a> {
-    /// content의 칠하기 기하. Text는 glyph outline(XX.3.2) 전이라 `None`, Image는 배치 상자입니다.
+    /// content의 칠하기 기하. Image는 배치 상자입니다. Text는 glyph outline이 text source에서 오므로
+    /// `None`이고, writer가 outline 기하([`crate::svg::text`])를 넘깁니다.
     pub fn of_content(content: &'a SceneContent) -> Option<SvgGeometry<'a>> {
         match content {
             SceneContent::Rect(rect) => Some(if rect.radii.is_zero() {
