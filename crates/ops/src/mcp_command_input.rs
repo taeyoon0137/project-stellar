@@ -9,12 +9,31 @@
 //!   `schemas/command-transaction.schema.json`을 생성합니다(`cargo xtask generate-command-schema`).
 //! - 해석 규칙은 `stellar apply`(XXIV.4.4) 입력 형식 표와 같습니다. 숫자는 JSON 원문에서 바로 f32로 바꿔
 //!   f64를 거치는 이중 반올림을 피합니다.
+//! - Component Context 편집(`edit-context`, ADR-0099 결정 8)은 연산마다 필드 종류 하나(`create-context-key` …)로
+//!   받습니다([`CONTEXT_FIELD_KINDS`], ADR-0114 결정 3). 결과는 같은 `edit-context` command의 canonical 입력이라 적용
+//!   경로는 다른 closed enum 종류와 하나입니다. scope·owner·값 타입 문장과 리터럴은 텍스트 원본
+//!   (`design/context.stellar.yaml`)과 같은 함수로 읽습니다. 식 필드(`default`·`value`)는 다음 셋 중 하나입니다.
+//!
+//!   | 형식 | 뜻 |
+//!   |---|---|
+//!   | `<타입> <리터럴>` (예: `number 8`, `color #1e90ffff`, `length 12px`) | 리터럴 하나. root id는 key·provision StableId |
+//!   | `context <key StableId>` | 그 key 읽기 하나(provision 값 식 전용, key default는 닫힌 식이어야 함) |
+//!   | `ast <hex>` | canonical AST bytes |
 //!
 //! 이 모듈은 AI·모델·에이전트 코드가 아닙니다. 파일을 읽거나 쓰지 않습니다.
 
 use std::fmt;
 
+use stellar_commands::codec::encode_command;
+use stellar_commands::command::Command;
+use stellar_commands::context::{ContextCommand, ContextEdit};
 use stellar_commands::kind::CommandKind;
+use stellar_document::context::key::ContextKey;
+use stellar_document::context::provision::ContextProvision;
+use stellar_document::expressions::ast::{ExprNode, ExprNodeId, ExpressionAst, ReferenceTarget};
+use stellar_project::document_io::source_v4::context::{
+    ast_expression, literal_expression, parse_owner, parse_scope, parse_type,
+};
 use stellar_storage::hash::ContentHash;
 
 use crate::apply::{CommandInput, ComponentInstanceInsert, ReplaceText, FIELD_KINDS};
@@ -169,6 +188,81 @@ pub const FIELD_SPECS: &[FieldSpec] = &[
         kind: "unset-property",
         fields: &[("node", FieldType::NodeId), ("property", FieldType::Text)],
     },
+    FieldSpec {
+        kind: "create-context-key",
+        fields: &[
+            ("key", FieldType::NodeId),
+            ("name", FieldType::Text),
+            ("scope", FieldType::Text),
+            ("value_type", FieldType::Text),
+            ("default", FieldType::Text),
+        ],
+    },
+    FieldSpec {
+        kind: "rename-context-key",
+        fields: &[("key", FieldType::NodeId), ("name", FieldType::Text)],
+    },
+    FieldSpec {
+        kind: "set-context-key-default",
+        fields: &[
+            ("key", FieldType::NodeId),
+            ("value_type", FieldType::Text),
+            ("default", FieldType::Text),
+        ],
+    },
+    FieldSpec {
+        kind: "delete-context-key",
+        fields: &[("key", FieldType::NodeId)],
+    },
+    FieldSpec {
+        kind: "create-context-provision",
+        fields: &[
+            ("provision", FieldType::NodeId),
+            ("owner", FieldType::Text),
+            ("provider", FieldType::NodeId),
+            ("key", FieldType::NodeId),
+            ("value", FieldType::Text),
+        ],
+    },
+    FieldSpec {
+        kind: "set-context-provision-value",
+        fields: &[("provision", FieldType::NodeId), ("value", FieldType::Text)],
+    },
+    FieldSpec {
+        kind: "delete-context-provision",
+        fields: &[("provision", FieldType::NodeId)],
+    },
+    FieldSpec {
+        kind: "add-context-requirement",
+        fields: &[("component", FieldType::NodeId), ("key", FieldType::NodeId)],
+    },
+    FieldSpec {
+        kind: "remove-context-requirement",
+        fields: &[("component", FieldType::NodeId), ("key", FieldType::NodeId)],
+    },
+    FieldSpec {
+        kind: "add-slot-context-key",
+        fields: &[("slot", FieldType::NodeId), ("key", FieldType::NodeId)],
+    },
+    FieldSpec {
+        kind: "remove-slot-context-key",
+        fields: &[("slot", FieldType::NodeId), ("key", FieldType::NodeId)],
+    },
+];
+
+/// Context 편집 필드 종류([`FIELD_SPECS`] 끝 11개). 모두 `edit-context` command 하나가 됩니다.
+pub const CONTEXT_FIELD_KINDS: [&str; 11] = [
+    "create-context-key",
+    "rename-context-key",
+    "set-context-key-default",
+    "delete-context-key",
+    "create-context-provision",
+    "set-context-provision-value",
+    "delete-context-provision",
+    "add-context-requirement",
+    "remove-context-requirement",
+    "add-slot-context-key",
+    "remove-slot-context-key",
 ];
 
 /// canonical 형식(`kind` + [`CANONICAL_FIELD`])으로만 받는 closed enum 종류 이름(번호 오름차순). 필드 형식이
@@ -305,6 +399,30 @@ impl Reader<'_> {
                     self.at
                 ))
             })
+    }
+
+    /// Context 식 필드(모듈 문서 표). 리터럴과 key 읽기의 root id는 `owner`입니다.
+    fn expression(&self, key: &str, owner: StableId) -> Result<ExpressionAst, CommandFieldError> {
+        let text = self.text(key)?;
+        let bad = |why: String| CommandFieldError::invalid(format!("{}.{key}: {why}", self.at));
+        let (head, rest) = text.split_once(' ').ok_or_else(|| {
+            bad("`<타입> <리터럴>`, `context <key>`, `ast <hex>` 중 하나여야 합니다".into())
+        })?;
+        match head {
+            "ast" => ast_expression(rest).map_err(|e| bad(e.to_string())),
+            "context" => {
+                let read = rest
+                    .parse::<StableId>()
+                    .map_err(|_| bad("context 뒤에는 key StableId가 와야 합니다".into()))?;
+                let root = ExprNodeId::new(owner);
+                ExpressionAst::new(
+                    root,
+                    vec![ExprNode::reference(root, ReferenceTarget::Context(read))],
+                )
+                .map_err(|e| bad(e.to_string()))
+            }
+            kind => literal_expression(owner, kind, rest).map_err(|e| bad(e.to_string())),
+        }
     }
 
     fn hex(&self, key: &str) -> Result<Vec<u8>, CommandFieldError> {
@@ -468,9 +586,95 @@ pub fn command_input(
             node: r.id("node")?,
             property: r.text("property")?.to_string(),
         },
+        kind if CONTEXT_FIELD_KINDS.contains(&kind) => context_input(&r, kind)?,
         _ => unreachable!("FIELD_SPECS의 모든 종류를 위에서 다룹니다"),
     };
     Ok(input)
+}
+
+/// Context 편집 필드 종류를 `edit-context` canonical 입력으로 바꿉니다(ADR-0114 결정 3).
+fn context_input(r: &Reader<'_>, kind: &str) -> Result<CommandInput, CommandFieldError> {
+    let at = r.at;
+    let source =
+        |what: &str, e: &dyn fmt::Display| CommandFieldError::invalid(format!("{at}.{what}: {e}"));
+    let edit = match kind {
+        "create-context-key" => {
+            let key = r.id("key")?;
+            let value_type =
+                parse_type(r.text("value_type")?).map_err(|e| source("value_type", &e))?;
+            let scope = parse_scope(r.text("scope")?).map_err(|e| source("scope", &e))?;
+            ContextEdit::CreateKey(
+                ContextKey::new(
+                    key,
+                    r.text("name")?,
+                    scope,
+                    value_type,
+                    r.expression("default", key)?,
+                )
+                .map_err(|e| source("default", &e))?,
+            )
+        }
+        "rename-context-key" => ContextEdit::RenameKey {
+            key: r.id("key")?,
+            name: r.text("name")?.to_owned(),
+        },
+        "set-context-key-default" => {
+            let key = r.id("key")?;
+            ContextEdit::SetKeyDefault {
+                key,
+                value_type: parse_type(r.text("value_type")?)
+                    .map_err(|e| source("value_type", &e))?,
+                default: r.expression("default", key)?,
+            }
+        }
+        "delete-context-key" => ContextEdit::DeleteKey { key: r.id("key")? },
+        "create-context-provision" => {
+            let provision = r.id("provision")?;
+            let owner = parse_owner(r.text("owner")?).map_err(|e| source("owner", &e))?;
+            ContextEdit::CreateProvision(
+                ContextProvision::new(
+                    provision,
+                    owner,
+                    r.id("provider")?,
+                    r.id("key")?,
+                    r.expression("value", provision)?,
+                )
+                .map_err(|e| source("value", &e))?,
+            )
+        }
+        "set-context-provision-value" => {
+            let provision = r.id("provision")?;
+            ContextEdit::SetProvisionValue {
+                provision,
+                value: r.expression("value", provision)?,
+            }
+        }
+        "delete-context-provision" => ContextEdit::DeleteProvision {
+            provision: r.id("provision")?,
+        },
+        "add-context-requirement" => ContextEdit::AddRequirement {
+            component: r.id("component")?,
+            key: r.id("key")?,
+        },
+        "remove-context-requirement" => ContextEdit::RemoveRequirement {
+            component: r.id("component")?,
+            key: r.id("key")?,
+        },
+        "add-slot-context-key" => ContextEdit::AddSlotKey {
+            slot: r.id("slot")?,
+            key: r.id("key")?,
+        },
+        "remove-slot-context-key" => ContextEdit::RemoveSlotKey {
+            slot: r.id("slot")?,
+            key: r.id("key")?,
+        },
+        _ => unreachable!("CONTEXT_FIELD_KINDS의 모든 종류를 위에서 다룹니다"),
+    };
+    let command = Command::EditContext(Box::new(ContextCommand { edit }));
+    Ok(CommandInput::Canonical {
+        kind: command.kind().name().to_owned(),
+        bytes: encode_command(&command),
+    })
 }
 
 #[cfg(test)]
@@ -554,6 +758,140 @@ mod tests {
             input.to_command(),
             Err(crate::apply::CommandInputError::UnknownKind(_))
         ));
+    }
+
+    fn context_edit(input: CommandInput) -> ContextEdit {
+        match input.to_command().unwrap() {
+            Command::EditContext(command) => command.edit,
+            other => panic!("edit-context가 아님: {other:?}"),
+        }
+    }
+
+    const KEY: &str = "0195c530-3acd-7bc1-8414-c213f61cb101";
+    const PROVISION: &str = "0195c530-3acd-7bc1-8414-c213f61cb102";
+    const VIEW: &str = "0195c530-3acd-7bc1-8414-c213f61cb103";
+    const OTHER: &str = "0195c530-3acd-7bc1-8414-c213f61cb104";
+
+    #[test]
+    fn context_field_kinds_become_one_edit_context_command() {
+        // 검증 기준(XXX.7.8 남은 범위, ADR-0114 결정 3): CLI·MCP 공용 해석이 Context 편집을 받습니다.
+        let create = command_input(
+            &obj(&[
+                ("kind", V::S("create-context-key")),
+                ("key", V::S(KEY)),
+                ("name", V::S("spacing")),
+                ("scope", V::S("project")),
+                ("value_type", V::S("length")),
+                ("default", V::S("length 8px")),
+            ]),
+            "commands[0]",
+        )
+        .unwrap();
+        assert!(matches!(&create, CommandInput::Canonical { kind, .. } if kind == "edit-context"));
+        let ContextEdit::CreateKey(key) = context_edit(create) else {
+            panic!("key 생성");
+        };
+        assert_eq!(key.id(), KEY.parse().unwrap());
+        assert_eq!(key.name(), "spacing");
+        assert_eq!(
+            key.default_expression().ast().root().stable_id(),
+            KEY.parse().unwrap(),
+            "리터럴 root id는 key id"
+        );
+        // provision 값은 다른 key 읽기(`context <key>`)도 받습니다.
+        let provision = command_input(
+            &obj(&[
+                ("kind", V::S("create-context-provision")),
+                ("provision", V::S(PROVISION)),
+                ("owner", V::S(format_view())),
+                ("provider", V::S(NODE)),
+                ("key", V::S(KEY)),
+                ("value", V::S(format_read())),
+            ]),
+            "commands[0]",
+        )
+        .unwrap();
+        let ContextEdit::CreateProvision(provision) = context_edit(provision) else {
+            panic!("provision 생성");
+        };
+        assert_eq!(
+            provision.reads().into_iter().collect::<Vec<_>>(),
+            [OTHER.parse().unwrap()]
+        );
+        for (kind, fields) in [
+            ("rename-context-key", vec![("key", KEY), ("name", "gap")]),
+            ("delete-context-key", vec![("key", KEY)]),
+            ("delete-context-provision", vec![("provision", PROVISION)]),
+            (
+                "add-context-requirement",
+                vec![("component", OTHER), ("key", KEY)],
+            ),
+            (
+                "remove-context-requirement",
+                vec![("component", OTHER), ("key", KEY)],
+            ),
+            ("add-slot-context-key", vec![("slot", OTHER), ("key", KEY)]),
+            (
+                "remove-slot-context-key",
+                vec![("slot", OTHER), ("key", KEY)],
+            ),
+            (
+                "set-context-provision-value",
+                vec![("provision", PROVISION), ("value", "number 2")],
+            ),
+            (
+                "set-context-key-default",
+                vec![
+                    ("key", KEY),
+                    ("value_type", "number"),
+                    ("default", "number 3"),
+                ],
+            ),
+        ] {
+            let mut pairs = vec![("kind", V::S(kind))];
+            pairs.extend(fields.into_iter().map(|(k, v)| (k, V::S(v))));
+            let input = command_input(&obj(&pairs), "commands[0]")
+                .unwrap_or_else(|e| panic!("{kind}: {e}"));
+            let _ = context_edit(input);
+        }
+        // key default가 열린 식(다른 key 읽기)이거나, 형식이 맞지 않는 식·타입·scope는 거부합니다.
+        for (field, value) in [
+            ("default", format_read().to_owned()),
+            ("default", "length".to_owned()),
+            ("default", "ast zz".to_owned()),
+            ("value_type", "pixels".to_owned()),
+            ("scope", "galaxy".to_owned()),
+        ] {
+            let mut pairs: BTreeMap<&'static str, String> = [
+                ("kind", "create-context-key"),
+                ("key", KEY),
+                ("name", "spacing"),
+                ("scope", "project"),
+                ("value_type", "length"),
+                ("default", "length 8px"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k, v.to_owned()))
+            .collect();
+            pairs.insert(field, value.clone());
+            let leaked: Vec<(&'static str, V)> = pairs
+                .into_iter()
+                .map(|(k, v)| (k, V::S(Box::leak(v.into_boxed_str()))))
+                .collect();
+            let error = command_input(&obj(&leaked), "commands[0]").unwrap_err();
+            assert_eq!(
+                error.code, "invalid-transaction",
+                "{field}={value}: {error}"
+            );
+        }
+    }
+
+    fn format_view() -> &'static str {
+        Box::leak(format!("view {VIEW}").into_boxed_str())
+    }
+
+    fn format_read() -> &'static str {
+        Box::leak(format!("context {OTHER}").into_boxed_str())
     }
 
     #[test]

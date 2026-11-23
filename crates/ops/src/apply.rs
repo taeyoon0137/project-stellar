@@ -70,7 +70,7 @@ use crate::core_types::order_key::OrderKey;
 use crate::core_types::reference::ComponentRef;
 use crate::core_types::revision::DocumentRevision;
 use crate::core_types::value::{FiniteF32, Size2, Transform2D, Vec2};
-use crate::diff::{diff_records, DiffReport};
+use crate::diff::{diff_documents, DiffReport, DocumentInput};
 use crate::error::{DocumentReadError, OpenError};
 use crate::lock::{LockError, LockPolicy, SaveLock};
 use crate::revision::ProjectRevision;
@@ -207,8 +207,9 @@ pub struct ComponentInstanceInsert {
     pub position: Vec2,
 }
 
-/// 필드 형식으로 받는 종류 이름.
-pub const FIELD_KINDS: [&str; 14] = [
+/// 필드 형식으로 받는 종류 이름. 끝 11개는 Component Context 편집이며 `edit-context` canonical 입력이 됩니다
+/// (`mcp_command_input::CONTEXT_FIELD_KINDS`, ADR-0114 결정 3).
+pub const FIELD_KINDS: [&str; 25] = [
     "set-visible",
     "set-locked",
     "rename",
@@ -223,6 +224,17 @@ pub const FIELD_KINDS: [&str; 14] = [
     "set-property",
     "set-layout-property",
     "unset-property",
+    "create-context-key",
+    "rename-context-key",
+    "set-context-key-default",
+    "delete-context-key",
+    "create-context-provision",
+    "set-context-provision-value",
+    "delete-context-provision",
+    "add-context-requirement",
+    "remove-context-requirement",
+    "add-slot-context-key",
+    "remove-slot-context-key",
 ];
 
 /// layout longhand 이름을 풉니다. 모르는 이름은 `unknown-property`입니다.
@@ -1062,10 +1074,32 @@ pub fn apply(
         .to_records()
         .map_err(|e| ApplyError::Document(DocumentReadError::Records(e.to_string())))?;
     before.sort_canonical();
+    // 결과 diff는 레코드와 Component Context를 함께 비교합니다(ADR-0114 결정 2). requirement·Slot 공개 목록은 프로젝트
+    // 컴포넌트 library에 그 대상이 있을 때만 diff에 나타납니다. 원본을 읽지 못하면 diff는 문서 범위입니다(저장과 무관).
+    let before_context = model.context().live(&model);
+    let library = crate::component_source::project_library(&snapshot)
+        .ok()
+        .map(|(library, _)| library);
+    let document_diff =
+        |after: &stellar_document::records::DocumentRecords,
+         after_context: &stellar_document::context::set::ContextSet| {
+            diff_documents(
+                &[DocumentInput {
+                    records: &before,
+                    context: &before_context,
+                }],
+                &[DocumentInput {
+                    records: after,
+                    context: after_context,
+                }],
+                library.as_ref(),
+            )
+            .map_err(|e| ApplyError::Projection(e.0))
+        };
     let (commands, origins) = resolve_commands(planned, &snapshot, &model)?;
     if commands.is_empty() {
         // 모든 입력이 이미 같은 값인 `set-property`였습니다. 바꿀 것이 없어 저장하지 않습니다.
-        let diff = diff_records(&[&before], &[&before]).map_err(|e| ApplyError::Projection(e.0))?;
+        let diff = document_diff(&before, &before_context)?;
         return Ok(ApplyOutcome {
             mode,
             base_revision,
@@ -1128,7 +1162,8 @@ pub fn apply(
             ),
         });
     }
-    let diff = diff_records(&[&before], &[&after]).map_err(|e| ApplyError::Projection(e.0))?;
+    let after_context = model.context().live(&model);
+    let diff = document_diff(&after, &after_context)?;
     let selection = prepare_style_defaults(&snapshot, &model, &commands, &origins)?;
 
     if mode == ApplyMode::DryRun {

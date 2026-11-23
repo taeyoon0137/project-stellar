@@ -25,7 +25,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use stellar_document::model::DocumentModel;
-use stellar_document::records::{DocumentRecords, NodePayload};
+use stellar_document::records::NodePayload;
 use stellar_git_porcelain::composer::{
     materialize_source, materialize_sources, resolve_source, ComparisonMode, ComposerSnapshotError,
     ResolvedSource, SourceError, SourceRef, SourceSnapshot,
@@ -46,6 +46,7 @@ use super::document::{project_documents, DocumentMergeError};
 use super::target::{create_branch_worktree, project_location, TargetError, ValidatedTarget};
 use crate::candidate::saved_semantic_snapshot;
 use crate::core_types::ids::StableId;
+use crate::diff::DocumentSource;
 use crate::error::OpenError;
 use crate::lock::{LockError, LockPolicy, SaveLock};
 use crate::revision::ProjectRevision;
@@ -408,10 +409,10 @@ pub fn apply_composition(
 
 /// 문서 레코드가 참조하는 이미지 asset.
 fn referenced_assets<'a>(
-    documents: impl Iterator<Item = &'a DocumentRecords>,
+    documents: impl Iterator<Item = &'a DocumentSource>,
 ) -> BTreeSet<StableId> {
     documents
-        .flat_map(|records| records.nodes.iter())
+        .flat_map(|document| document.records.nodes.iter())
         .filter_map(|node| match &node.payload {
             NodePayload::Image(image) => Some(image.asset.id()),
             _ => None,
@@ -425,7 +426,7 @@ fn write_documents(
     root: &Path,
     expected: Option<ProjectRevision>,
     project_id: StableId,
-    documents: &[DocumentRecords],
+    documents: &[DocumentSource],
     lock: &LockPolicy,
 ) -> Result<(ProjectRevision, ProjectRevision, usize), ComposerApplyError> {
     let root = std::fs::canonicalize(root)
@@ -455,11 +456,12 @@ fn write_documents(
     // 결과가 target 문서와 같으면 쓰지 않습니다.
     let mut current = BTreeMap::new();
     for definition in snapshot.documents() {
-        let mut records = snapshot
-            .document_records(definition.id)
+        let model = snapshot
+            .document_model(definition.id)
             .map_err(|e| ComposerApplyError::Save(e.to_string()))?;
-        records.sort_canonical();
-        current.insert(definition.id, records);
+        let document =
+            DocumentSource::of_model(&model).map_err(|e| ComposerApplyError::Save(e.0))?;
+        current.insert(definition.id, document);
     }
     // 결과가 새로 참조하는 이미지 asset은 target에 그 metadata chunk가 있어야 합니다(target 문서가 이미 참조하던
     // asset은 target 상태 그대로라 따지지 않습니다). 없는 asset을 새로 참조하는 결과는 쓰지 않습니다.
@@ -475,9 +477,9 @@ fn write_documents(
             "target에 없는 이미지 asset을 새로 참조",
         ));
     }
-    let wanted: BTreeMap<StableId, &DocumentRecords> = documents
+    let wanted: BTreeMap<StableId, &DocumentSource> = documents
         .iter()
-        .map(|records| (records.definition.id, records))
+        .map(|document| (document.records.definition.id, document))
         .collect();
     if current.len() == wanted.len()
         && current
@@ -497,13 +499,13 @@ fn write_documents(
             roots.push(*id);
         }
     }
-    // 원본·cache 저장(ADR-0113 결정 3). 레코드 밖 Component Context는 target 문서의 것을 그대로 둡니다.
+    // 원본·cache 저장(ADR-0113 결정 3). Component Context는 병합 결과의 것을 씁니다(ADR-0114).
     let mut models = Vec::with_capacity(roots.len());
     for id in &roots {
-        let (mut model, _) = DocumentModel::from_records(wanted[id].clone())
+        let (mut model, _) = DocumentModel::from_records(wanted[id].records.clone())
             .map_err(|e| ComposerApplyError::Save(format!("{e:?}")))?;
+        model.replace_context(wanted[id].context.clone());
         if let Ok(target) = snapshot.document_model(*id) {
-            model.replace_context(target.context().live(&target));
             model.set_style_defaults(target.style_defaults());
         }
         models.push(model);

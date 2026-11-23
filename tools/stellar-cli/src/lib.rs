@@ -57,6 +57,9 @@ pub mod export_native;
 /// `css`: CSS 선언 블록 복사·붙여넣기 (IX.11.15).
 pub mod css;
 
+/// `context`: Component Context 선언·진단·위치별 해석 조회 (XXX.7.11, ADR-0114).
+pub mod context;
+
 /// `style-defaults`: 기본값 세트 목록·값 표·선택과 값 출처 (SD.5·SD.6, ADR-0086).
 pub mod style_defaults;
 

@@ -26,10 +26,12 @@ use stellar_core_types::ids::StableId;
 /// - 4: ADR-0086 개정이 더한 payload 절(`insert-node` 끝의 선택 layout record 절, `apply-external-snapshot`의
 ///   layout record 변경 tag). 절이나 tag가 없는 command의 bytes는 version 3과 같습니다.
 /// - 5: ADR-0099가 더한 종류(Component Context 편집 `edit-context`).
+/// - 6: ADR-0114가 더한 payload tag(`apply-external-snapshot`의 Context 변경 tag 8). 그 tag가 없는 command의 bytes는
+///   version 5와 같습니다.
 ///
 /// 각 종류가 처음 들어간 버전은 [`CommandKind::codec_version`]입니다. history journal header가 이 값을
 /// 기록하므로 옛 reader는 모르는 종류를 담은 journal의 복원만 포기하고 문서는 건드리지 않습니다.
-pub const COMMAND_CODEC_VERSION: u32 = 5;
+pub const COMMAND_CODEC_VERSION: u32 = 6;
 
 use crate::command::Command;
 use crate::convert::{ConvertFragmentToFrame, ConvertShapeToPath, RestoreNodeRecords};

@@ -19,11 +19,15 @@ use stellar_semantic_merge::model::{ConflictTarget, MergeInput, SemanticConflict
 use stellar_storage::hash::ContentHash;
 
 use crate::core_types::ids::StableId;
-use crate::diff::{diff_snapshots, object_kind_name, DiffPosition, DiffReport};
+use crate::diff::{
+    add_contexts, diff_snapshots, object_kind_name, projectable_context, DiffPosition, DiffReport,
+    DocumentSource,
+};
 use crate::error::{DocumentReadError, OpenError};
 use crate::query::{property_path_label, OpsValue};
 use crate::revision::ProjectRevision;
 use crate::snapshot::{open_snapshot, ProjectSnapshot};
+use stellar_document::context::set::ContextSet;
 
 /// 비교·병합 실패.
 #[derive(Debug)]
@@ -94,32 +98,65 @@ struct Side {
 
 fn open_side(path: &Path, side: &'static str) -> Result<Side, CompareError> {
     let snapshot = open_snapshot(path).map_err(|error| CompareError::Open { side, error })?;
-    let mut builder = document_builder(&snapshot, side)?;
+    let (mut builder, documents) = document_builder(&snapshot, side)?;
     let (library, _) = crate::component_source::project_library(&snapshot)
         .map_err(|error| CompareError::ComponentSource { side, error })?;
     builder
         .add_project_component_library(&library)
         .map_err(|error| CompareError::Projection(error.to_string()))?;
+    add_contexts(
+        &mut builder,
+        documents.iter().map(DocumentSource::input),
+        Some(&library),
+    )
+    .map_err(|error| CompareError::Projection(error.0))?;
     Ok(Side {
         snapshot,
         semantic: builder.finish(),
     })
 }
 
+/// 문서를 넣은 builder와 문서(레코드 + Context). Context는 컴포넌트 library를 넣은 뒤 [`add_contexts`]로 넣습니다
+/// (requirement·Slot 공개 목록이 Component·Slot 객체에 붙음, ADR-0114 결정 2).
 fn document_builder(
     snapshot: &ProjectSnapshot,
     side: &'static str,
-) -> Result<SnapshotBuilder, CompareError> {
+) -> Result<(SnapshotBuilder, Vec<DocumentSource>), CompareError> {
     let mut builder = SnapshotBuilder::new();
+    let mut documents = Vec::new();
     for definition in snapshot.documents() {
-        let records = snapshot
-            .document_records(definition.id)
+        let model = snapshot
+            .document_model(definition.id)
             .map_err(|error| CompareError::Document { side, error })?;
+        let document =
+            DocumentSource::of_model(&model).map_err(|error| CompareError::Projection(error.0))?;
         builder
-            .add_document(&records)
+            .add_document(&document.records)
             .map_err(|error| CompareError::Projection(error.to_string()))?;
+        documents.push(document);
     }
-    Ok(builder)
+    Ok((builder, documents))
+}
+
+/// Context에서 requirement·Slot 공개 목록만 남긴 사본(문서별). 단일 컴포넌트 비교가 그 컴포넌트 객체에 다시 붙입니다.
+fn context_members(documents: &[DocumentSource]) -> Vec<(StableId, ContextSet)> {
+    documents
+        .iter()
+        .filter_map(|document| {
+            let mut members = ContextSet::new();
+            for (component, keys) in document.context.all_requirements() {
+                for key in keys {
+                    members.add_requirement(component, *key);
+                }
+            }
+            for (slot, keys) in document.context.all_slot_keys() {
+                for key in keys {
+                    members.add_slot_key(slot, *key);
+                }
+            }
+            (!members.is_empty()).then_some((document.records.definition.id, members))
+        })
+        .collect()
 }
 
 fn same_project(base: &Side, other: &Side, side: &'static str) -> Result<(), CompareError> {
@@ -178,6 +215,8 @@ pub struct HeadDiffBase {
     project: StableId,
     manifest_hash: ContentHash,
     components: BTreeMap<OsString, (StableId, ContentHash)>,
+    /// 문서별 Context requirement·Slot 공개 목록(단일 컴포넌트 비교용).
+    members: Vec<(StableId, ContextSet)>,
     semantic: SemanticSnapshot,
 }
 
@@ -196,14 +235,24 @@ impl HeadDiffBase {
         let base = head.saved(target.project_id()).map_err(|_| unavailable())?;
         let saved = base.project();
         let mut builder = SnapshotBuilder::new();
+        let mut documents = Vec::new();
         for document in saved.document_ids().map_err(|_| unavailable())? {
             let loaded = saved.load_document(document).map_err(|_| unavailable())?;
-            let records = loaded.model.to_records().map_err(|_| unavailable())?;
-            builder.add_document(&records).map_err(|_| unavailable())?;
+            let document = DocumentSource::of_model(&loaded.model).map_err(|_| unavailable())?;
+            builder
+                .add_document(&document.records)
+                .map_err(|_| unavailable())?;
+            documents.push(document);
         }
         builder
             .add_project_component_library(base.components())
             .map_err(|_| unavailable())?;
+        add_contexts(
+            &mut builder,
+            documents.iter().map(DocumentSource::input),
+            Some(base.components()),
+        )
+        .map_err(|error| CompareError::Projection(error.0))?;
         Ok(Self {
             commit: head.commit().into(),
             root: target.root().into(),
@@ -216,6 +265,7 @@ impl HeadDiffBase {
                     (path.file_name().expect("검증한 원본").into(), (id, hash))
                 })
                 .collect(),
+            members: context_members(&documents),
             semantic: builder.finish(),
         })
     }
@@ -266,7 +316,7 @@ impl HeadDiffBase {
         }
         // 문서는 전체 조립 경로에서만 읽습니다. 위의 단일 파일 경로는 저장 generation의 manifest
         // hash가 HEAD와 같다는 것을 이미 확인했으므로 문서 투영이 HEAD와 같아 다시 읽지 않습니다.
-        let mut working = document_builder(target, "target")?;
+        let (mut working, documents) = document_builder(target, "target")?;
         let (library, files) =
             crate::component_source::project_library(target).map_err(|error| {
                 CompareError::ComponentSource {
@@ -277,6 +327,12 @@ impl HeadDiffBase {
         working
             .add_project_component_library(&library)
             .map_err(|e| CompareError::Projection(e.to_string()))?;
+        add_contexts(
+            &mut working,
+            documents.iter().map(DocumentSource::input),
+            Some(&library),
+        )
+        .map_err(|error| CompareError::Projection(error.0))?;
         let source_hash = source_set_hash(files.into_values()).map_err(|error| {
             CompareError::ComponentSource {
                 side: "target",
@@ -306,6 +362,28 @@ impl HeadDiffBase {
         builder
             .add_project_component_library(&library)
             .map_err(|e| CompareError::Projection(e.to_string()))?;
+        // 문서가 HEAD와 같으므로 문서 Context의 requirement·Slot 공개 목록도 같습니다. 이 컴포넌트 투영에 남은
+        // Component·Slot 객체에 다시 붙여 base와 같은 범위로 비교합니다.
+        // 여러 문서가 같은 컴포넌트·Slot에 항목을 두면 그 객체 하나에 합집합으로 붙습니다(`add_contexts`와 같은 규칙).
+        let mut union = ContextSet::new();
+        for (_, members) in &self.members {
+            let mine = projectable_context(members, Some(&library));
+            for (component, keys) in mine.all_requirements() {
+                for key in keys {
+                    union.add_requirement(component, *key);
+                }
+            }
+            for (slot, keys) in mine.all_slot_keys() {
+                for key in keys {
+                    union.add_slot_key(slot, *key);
+                }
+            }
+        }
+        if let Some((anchor, _)) = self.members.first().filter(|_| !union.is_empty()) {
+            builder
+                .add_context(*anchor, &union)
+                .map_err(|e| CompareError::Projection(e.to_string()))?;
+        }
         let working = builder.finish();
         let mut base = SemanticSnapshot::new();
         for object in self
@@ -625,6 +703,87 @@ mod tests {
         let input = opened.candidate.input();
         assert_ne!(opened.candidate.snapshot(), &input.ours);
         assert_ne!(opened.candidate.snapshot(), &input.theirs);
+    }
+
+    /// seed 문서에 key 하나(이름 `name`)와 View root provision을 더해 `root`에 저장합니다.
+    fn save_with_context(root: &Path, seed: u64, keys: &[(u64, &str)]) {
+        use stellar_document::context::fixtures::{number, number_type};
+        use stellar_document::context::key::{ContextKey, ContextScope};
+        use stellar_document::context::provision::{ContextOwner, ContextProvision};
+        let mut model = random_valid_document(seed);
+        let view = model
+            .definition()
+            .pages
+            .iter()
+            .flat_map(|page| page.views.iter())
+            .next()
+            .expect("View가 있는 seed")
+            .clone();
+        let mut set = stellar_document::context::set::ContextSet::new();
+        for (n, name) in keys {
+            let key = StableId::new_v7(90_000 + n, 0x0c, *n);
+            set.insert_key(
+                ContextKey::new(
+                    key,
+                    *name,
+                    ContextScope::Document(model.document_id()),
+                    number_type(),
+                    number(91_000 + n, 1.0),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            set.insert_provision(
+                ContextProvision::new(
+                    StableId::new_v7(92_000 + n, 0x0c, *n),
+                    ContextOwner::View(view.id),
+                    view.root_frame,
+                    key,
+                    number(93_000 + n, 2.0),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        model.replace_context(set);
+        save_documents(root, &[&model]);
+    }
+
+    #[test]
+    fn project_diff_and_merge_carry_the_document_context() {
+        // 검증 기준(XXX.7.10 남은 범위, ADR-0114 결정 2): `stellar diff`·compare·merge에 Context 변경이 나타납니다.
+        let (_dir, roots, _, _) = three_copies(7);
+        save_with_context(&roots[1], 7, &[(1, "theme")]);
+        let report = semantic_diff_projects(&roots[0], &roots[1]).unwrap().report;
+        let kinds: Vec<Option<&str>> = report
+            .entries
+            .iter()
+            .map(|e| e.object_kind.as_deref())
+            .collect();
+        assert!(kinds.contains(&Some("context-key")), "{kinds:?}");
+        assert!(kinds.contains(&Some("context-provision")), "{kinds:?}");
+        // 두 사본이 서로 다른 key를 더하면 자동 병합 결과에 둘 다 있습니다.
+        save_with_context(&roots[2], 7, &[(2, "spacing")]);
+        let merged = semantic_merge_projects(&roots[0], &roots[1], &roots[2]).unwrap();
+        assert!(merged.is_clean(), "{:?}", merged.conflicts);
+        let added: Vec<StableId> = merged
+            .changes
+            .entries
+            .iter()
+            .filter(|e| e.object_kind.as_deref() == Some("context-key"))
+            .map(|e| e.object)
+            .collect();
+        assert_eq!(
+            added,
+            [
+                StableId::new_v7(90_001, 0x0c, 1),
+                StableId::new_v7(90_002, 0x0c, 2)
+            ]
+        );
+        // 같은 key를 서로 다른 이름으로 더하면 conflict입니다.
+        save_with_context(&roots[2], 7, &[(1, "accent")]);
+        let conflicted = semantic_merge_projects(&roots[0], &roots[1], &roots[2]).unwrap();
+        assert!(!conflicted.is_clean());
     }
 
     #[test]

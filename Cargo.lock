@@ -315,6 +315,7 @@ dependencies = [
  "stellar-layout",
  "stellar-ops",
  "stellar-project",
+ "stellar-prototype",
  "stellar-renderer-core",
  "stellar-runtime",
  "stellar-semantic-diff",

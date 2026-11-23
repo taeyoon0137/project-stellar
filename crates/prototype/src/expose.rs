@@ -8,7 +8,9 @@
 //!   Property 참조로 바꿉니다(없으면 만듭니다). Property 타입은 포트 타입 집합에 있어야 합니다.
 //! - 이벤트 공개([`ExposeRequest::Event`]): semantic action(공개 Event)을 선언하고, 그 이벤트가 나면 action을 emit하는
 //!   transition을 더합니다.
-//! - Context 요구 공개는 ContextRequirement(XXX.7.8)가 생기기 전에는 [`PlanError::Unsupported`]입니다.
+//! - Context 요구 공개([`ExposeRequest::ContextRequirement`]): 컴포넌트 안에서 읽는 key를 공개 인터페이스의
+//!   ContextRequirement(XXX.7.8)로 선언합니다. 이미 선언했으면 [`PlanError::InUse`], 문서에 없는 key면
+//!   [`PlanError::Missing`]입니다(ADR-0114 결정 7).
 //!
 //! nested instance 내부 포트에 직접 잇는 edge는 [`crate::plan::Planner`]가 [`PlanError::NestedInternalPort`]로 거부합니다.
 
@@ -68,10 +70,12 @@ pub enum ExposeRequest {
         /// emit transition id.
         transition: TransitionId,
     },
-    /// Context 요구 공개(XXX.7.8 전까지 지원하지 않음).
+    /// Context 읽기 포트를 공개 ContextRequirement로.
     ContextRequirement {
         /// 컴포넌트.
         component: ComponentRef,
+        /// 선언할 key.
+        key: StableId,
     },
 }
 
@@ -82,6 +86,8 @@ pub enum ExposedItem {
     Property(ComponentPropertyId),
     /// 공개 Event.
     Event(SemanticActionId),
+    /// 공개 ContextRequirement(key).
+    ContextRequirement(StableId),
     /// 그 공개 항목을 읽도록 바뀌는 binding.
     Binding(BindingId),
 }
@@ -254,8 +260,27 @@ pub fn plan_expose(
                 ),
             })
         }
-        ExposeRequest::ContextRequirement { .. } => Err(PlanError::Unsupported(
-            "ContextRequirement(XXX.7.8)가 아직 없습니다",
-        )),
+        ExposeRequest::ContextRequirement { component, key } => {
+            if doc.library.get(*component).is_none() {
+                return Err(PlanError::Missing("컴포넌트"));
+            }
+            if doc.context.key(*key).is_none() {
+                return Err(PlanError::Missing("ContextKey"));
+            }
+            if doc.context.requirements(component.id()).contains(key) {
+                return Err(PlanError::InUse("이미 선언한 ContextRequirement입니다"));
+            }
+            Ok(ExposePlan {
+                preview: vec![ExposedItem::ContextRequirement(*key)],
+                transaction: PrototypeTransaction::new(
+                    "Context 요구 공개",
+                    vec![PrototypeStep::ContextRequirement {
+                        component: *component,
+                        key: *key,
+                        add: true,
+                    }],
+                ),
+            })
+        }
     }
 }

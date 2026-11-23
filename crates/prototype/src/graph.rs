@@ -15,8 +15,11 @@
 //! | Transition | transition id |
 //! | SemanticEmit | semantic action id |
 //! | MotionSpec | MotionSpec id |
+//! | ContextRead | 읽는 ContextKey id(같은 key를 읽는 block은 이 node 하나의 `value`에서 `reference` edge를 받음) |
 //!
-//! Context 읽기 node는 Context 원본(XXX.7.4)이 생기기 전에는 만들지 않습니다.
+//! Context 읽기 node는 expression의 `Context(K)` 참조 block마다 key 단위로 하나입니다(ADR-0114 결정 7). 원본에서 파생된
+//! node라 편집 plan으로 지우지 않습니다. 해석 값은 위치마다 다르므로 projection에 넣지 않습니다(해석은
+//! [`crate::context`]·문서 crate 해석기의 몫).
 //! [`lower_bindings`]·[`lower_transitions`]는 projection에서 원본을 다시 만들어, projection이 원본 의미를 잃지 않는지
 //! 확인하는 데 씁니다.
 
@@ -148,6 +151,11 @@ pub enum NodeDetail {
         /// spec.
         motion: MotionSpecId,
     },
+    /// Context 읽기.
+    ContextRead {
+        /// 읽는 key.
+        key: StableId,
+    },
 }
 
 /// expression block이 속한 원본 식.
@@ -270,6 +278,17 @@ impl Builder {
                 let reference = GraphSocket::new(id, "reference", SocketKey::Single);
                 if let Some(variable) = state_reference(target) {
                     let from = node(variable.stable_id(), PrototypeNodeKind::StateVariable);
+                    self.edge(
+                        GraphSocket::new(from, "value", SocketKey::Single),
+                        reference,
+                    );
+                } else if let ReferenceTarget::Context(key) = target {
+                    let from = node(*key, PrototypeNodeKind::ContextRead);
+                    self.add(
+                        from,
+                        format!("Context {key}"),
+                        NodeDetail::ContextRead { key: *key },
+                    );
                     self.edge(
                         GraphSocket::new(from, "value", SocketKey::Single),
                         reference,

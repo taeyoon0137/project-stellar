@@ -2182,8 +2182,9 @@ impl ProjectWindowSession {
                 }),
             ));
         };
-        let incoming = match model.to_records() {
-            Ok(records) => records,
+        // 레코드와 함께 영속 Context(`design/context.stellar.yaml`·context-set chunk)도 옮깁니다(ADR-0114 결정 1).
+        let incoming = match stellar_ops::diff::DocumentSource::of_model(model) {
+            Ok(document) => document,
             Err(error) => {
                 return ExternalSync::Rejected(ExternalRejection::Records(error.to_string()))
             }
@@ -2191,13 +2192,13 @@ impl ProjectWindowSession {
         self.adopt_external(disk, &incoming, command, true)
     }
 
-    /// 외부 변경 반영 공용 끝부분: `incoming` 문서 레코드를 [`ApplyExternalSnapshot`] transaction 하나로 이 창 history에
-    /// 기록하고(같으면 기록 없음) base를 `disk`로 바꿉니다. `clean`이면 반영 뒤 문서가 디스크와 같다고 기록하고,
-    /// 아니면(reconciliation 결과가 디스크와 다름) 미저장 편집으로 남겨 자동 저장이 씁니다.
+    /// 외부 변경 반영 공용 끝부분: `incoming` 문서(레코드와 Context)를 [`ApplyExternalSnapshot`] transaction 하나로 이 창
+    /// history에 기록하고(같으면 기록 없음) base를 `disk`로 바꿉니다. `clean`이면 반영 뒤 문서가 디스크와 같다고
+    /// 기록하고, 아니면(reconciliation 결과가 디스크와 다름) 미저장 편집으로 남겨 자동 저장이 씁니다.
     fn adopt_external(
         &mut self,
         disk: DiskState,
-        incoming: &DocumentRecords,
+        incoming: &stellar_ops::diff::DocumentSource,
         command: CommandId,
         clean: bool,
     ) -> ExternalSync {
@@ -2205,7 +2206,11 @@ impl ProjectWindowSession {
             .document
             .as_mut()
             .expect("반영 대상 창에는 작업 문서가 있음");
-        let apply = match ApplyExternalSnapshot::between(document.state.model(), incoming) {
+        let apply = match ApplyExternalSnapshot::between_with_context(
+            document.state.model(),
+            &incoming.records,
+            &incoming.context,
+        ) {
             Ok(apply) => apply,
             Err(error) => return ExternalSync::Rejected(ExternalRejection::Snapshot(error)),
         };
@@ -2335,7 +2340,7 @@ impl ProjectWindowSession {
         let merged = crate::reconcile::merge_window(base, self.model_of(), disk.model.as_ref());
         match merged {
             crate::reconcile::WindowMerge::Merged {
-                records,
+                document: records,
                 matches_disk,
             } => {
                 // 활성 기본값 세트는 레코드 밖 거울이라 병합 비교에 들지 않습니다. 창이 세트를 바꿔 아직 쓰지 않았으면

@@ -8,12 +8,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use stellar_core_types::ids::StableId;
+
 use super::{
     topological_ranks, BindingEvaluator, NodeEvalError, NodeValue, ProducerSpec, SchedulerError,
     SourceInputs, UpdateReport,
 };
-use crate::context::ContextRoute;
-use crate::graph::{DependencyGraph, DependencyNode, NodeIndex, ProducerRecord};
+use crate::context::{routes_of, ContextGraph, ContextKeyInput, ContextRoute, ProvisionInput};
+use crate::graph::{
+    ContextProvisionNode, DependencyGraph, DependencyNode, NodeIndex, Producer, ProducerRecord,
+};
 
 /// graph 한 번의 Context 변경.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -24,6 +28,65 @@ pub struct RouteChange {
     pub remove: Vec<DependencyNode>,
     /// 경로표만 바꿀 producer node.
     pub reroute: Vec<(DependencyNode, ContextRoute)>,
+}
+
+impl RouteChange {
+    /// 문서 변경 전후의 graph 입력 차이를 증분 변경으로 만듭니다(XXX.7.6, ADR-0114 결정 5). key·provision producer는
+    /// 새로 생기거나 바뀐 것만 upsert하고 사라진 provision은 지웁니다. 소비 producer는 무효화 조건이 고른 `affected`만
+    /// 경로표를 다시 씁니다(무관한 소비는 평가하지 않음). 사라진 key node는 남겨 둡니다. 그 key를 읽던 소비 binding은 orphan
+    /// validator(VIII.8.1, [`crate::context::ContextBindingWorld`])가 `OrphanedBinding`으로 바꿉니다.
+    pub fn between(
+        before: &ContextGraph,
+        after: &ContextGraph,
+        affected: &BTreeSet<DependencyNode>,
+    ) -> RouteChange {
+        let mut change = RouteChange::default();
+        let old_keys: BTreeMap<StableId, &ContextKeyInput> =
+            before.keys.iter().map(|k| (k.key, k)).collect();
+        for key in &after.keys {
+            if old_keys.get(&key.key) != Some(&key) {
+                change.upsert.push((
+                    ProducerSpec {
+                        node: DependencyNode::ContextKey(key.key),
+                        producer: Producer::ContextDefault(key.key),
+                        value_type: Some(key.value_type),
+                        expression: key.default.clone(),
+                    },
+                    None,
+                ));
+            }
+        }
+        let old: BTreeMap<&ContextProvisionNode, &ProvisionInput> =
+            before.provisions.iter().map(|p| (&p.node, p)).collect();
+        let new: BTreeMap<&ContextProvisionNode, &ProvisionInput> =
+            after.provisions.iter().map(|p| (&p.node, p)).collect();
+        for (node, provision) in &new {
+            if old.get(node) != Some(provision) {
+                change.upsert.push((
+                    ProducerSpec {
+                        node: DependencyNode::ContextProvision((*node).clone()),
+                        producer: Producer::ContextProvision(node.provision),
+                        value_type: Some(provision.value_type),
+                        expression: provision.value.clone(),
+                    },
+                    Some(routes_of(&provision.hops)),
+                ));
+            }
+        }
+        for node in old.keys() {
+            if !new.contains_key(node) {
+                change
+                    .remove
+                    .push(DependencyNode::ContextProvision((*node).clone()));
+            }
+        }
+        for (node, hops) in &after.consumers {
+            if affected.contains(node) {
+                change.reroute.push((node.clone(), routes_of(hops)));
+            }
+        }
+        change
+    }
 }
 
 impl BindingEvaluator {

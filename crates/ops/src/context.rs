@@ -4,8 +4,15 @@
 //!   (공통값 → profile override → variant override → profile × variant, `resolve_for_profile`)로 적용한 ContextSet을
 //!   만듭니다. 같은 구체성 Variant 충돌은 variant resolver의 충돌을 그대로 진단으로 돌려줍니다.
 //! - 조회(인스펙터용)는 문서 crate `context::query`가 정하고, 이 모듈은 열린 프로젝트에서 같은 함수를 부릅니다.
+//! - [`read_context`]: 저장된 프로젝트의 문서 하나에서 Context 선언(key·provision·requirement·Slot 공개 목록)과 validator
+//!   진단을, `site`를 주면 그 위치에서 key마다 해석 값·출처·provider 경로와 Value Binding 선택기 후보를 돌려줍니다
+//!   (`stellar context`, MCP `document.context`, ADR-0114 결정 6). 값·식·타입 문장은 Context 편집 입력과 같은 텍스트
+//!   원본 문법입니다. binding은 아직 문서 원본에 저장되지 않으므로 소비 binding 단위 조회(`inspect_binding`)는 앱
+//!   경로의 몫이고, headless 조회는 위치 단위입니다.
 
 use std::collections::BTreeMap;
+use std::fmt;
+use std::path::Path;
 
 use stellar_document::context::overrides::{
     common_values, provision_of_path, variant_conflicts, variant_values, with_overrides,
@@ -67,6 +74,308 @@ pub fn resolve_context_overrides(
         context,
         origins,
         conflicts: variant_conflicts(variants),
+    })
+}
+
+use stellar_document::context::query::binding_candidates;
+/// 조회 위치(인스턴스 chain + node, ADR-0099 결정 4).
+pub use stellar_document::context::resolve::ContextSite;
+use stellar_document::context::resolve::{
+    ContextEvaluator, ContextOrigin, ContextResolver, NoInputs, ResolveError,
+};
+use stellar_document::context::validate::{validate_context, ContextSeverity};
+use stellar_project::document_io::source_v4::context::{
+    expression_text, owner_text, scope_text, type_name, value_text,
+};
+
+use crate::error::{DocumentReadError, OpenError};
+use crate::revision::ProjectRevision;
+use crate::snapshot::{open_snapshot, ProjectSnapshot};
+
+/// key 한 줄.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextKeyRow {
+    /// key.
+    pub id: StableId,
+    /// 이름.
+    pub name: String,
+    /// scope 문장(`project`·`library <id>`·`document <id>`).
+    pub scope: String,
+    /// 값 타입 문장.
+    pub value_type: String,
+    /// default 식 문장.
+    pub default: String,
+}
+
+/// provision 한 줄.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextProvisionRow {
+    /// provision.
+    pub id: StableId,
+    /// owner 문장(`view <id>`·`component <id>`).
+    pub owner: String,
+    /// provider node.
+    pub provider: StableId,
+    /// key.
+    pub key: StableId,
+    /// 값 식 문장.
+    pub value: String,
+}
+
+/// 진단 한 줄.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextDiagnosticRow {
+    /// 안정 코드(`context.*`).
+    pub code: &'static str,
+    /// 수준(`error`·`orphan`·`warning`·`info`).
+    pub severity: &'static str,
+    /// 설명.
+    pub message: String,
+}
+
+/// 해석 출처.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextSource {
+    /// key default.
+    Default,
+    /// provision.
+    Provision {
+        /// provision.
+        provision: StableId,
+        /// provider node.
+        provider: StableId,
+        /// provider를 펼친 인스턴스 chain.
+        instances: Vec<StableId>,
+    },
+}
+
+impl From<&ContextOrigin> for ContextSource {
+    fn from(origin: &ContextOrigin) -> ContextSource {
+        match origin {
+            ContextOrigin::Default => ContextSource::Default,
+            ContextOrigin::Provision {
+                provision,
+                provider,
+                instances,
+            } => ContextSource::Provision {
+                provision: *provision,
+                provider: *provider,
+                instances: instances.clone(),
+            },
+        }
+    }
+}
+
+/// 위치에서 key 하나의 해석.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextResolutionRow {
+    /// key.
+    pub key: StableId,
+    /// key 이름.
+    pub name: String,
+    /// 해석 값 문장(값 없음·리터럴로 쓰지 않는 타입·평가 실패면 `None`).
+    pub value: Option<String>,
+    /// 평가 실패 원인.
+    pub error: Option<String>,
+    /// 출처.
+    pub source: ContextSource,
+    /// 지나간 위치(소비 지점 → provider, default면 최상위까지).
+    pub path: Vec<ContextSite>,
+    /// Slot 공개 목록 경유.
+    pub via_slots: Vec<StableId>,
+}
+
+/// Value Binding 선택기 후보 한 줄.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextCandidateRow {
+    /// key.
+    pub key: StableId,
+    /// 이름.
+    pub name: String,
+    /// 값 타입 문장.
+    pub value_type: String,
+    /// 소유 정의에 requirement를 더해야 하는지.
+    pub needs_declaration: bool,
+    /// 이 위치의 출처.
+    pub source: ContextSource,
+}
+
+/// 위치 하나의 조회.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextSiteReport {
+    /// 위치.
+    pub site: ContextSite,
+    /// key마다 해석(key 이름·StableId 순).
+    pub resolutions: Vec<ContextResolutionRow>,
+    /// 선택기 후보(이름·StableId 순).
+    pub candidates: Vec<ContextCandidateRow>,
+}
+
+/// 문서 하나의 Context 조회 결과.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextReport {
+    /// 읽은 revision.
+    pub revision: ProjectRevision,
+    /// 문서.
+    pub document: StableId,
+    /// key(StableId 순).
+    pub keys: Vec<ContextKeyRow>,
+    /// provision(StableId 순).
+    pub provisions: Vec<ContextProvisionRow>,
+    /// 컴포넌트 requirement(컴포넌트 StableId 순, key 정렬).
+    pub requirements: Vec<(StableId, Vec<StableId>)>,
+    /// Slot 공개 목록(Slot StableId 순, key 정렬).
+    pub slot_keys: Vec<(StableId, Vec<StableId>)>,
+    /// validator 진단(종류·대상 순).
+    pub diagnostics: Vec<ContextDiagnosticRow>,
+    /// 위치 조회(`site`를 줬을 때만).
+    pub site: Option<ContextSiteReport>,
+}
+
+/// 조회 실패.
+#[derive(Debug)]
+pub enum ContextReadError {
+    /// 프로젝트를 열 수 없습니다.
+    Open(OpenError),
+    /// 문서를 읽을 수 없습니다.
+    Document(DocumentReadError),
+    /// 프로젝트 컴포넌트 원본을 읽을 수 없습니다.
+    Components(crate::text_source::TextSourceOperationError),
+    /// 위치를 해석할 수 없습니다(scene·정의 tree에 없는 node, 잘못된 인스턴스 chain).
+    Site(ResolveError),
+}
+
+impl fmt::Display for ContextReadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ContextReadError::Open(e) => write!(f, "{e}"),
+            ContextReadError::Document(e) => write!(f, "{e}"),
+            ContextReadError::Components(e) => write!(f, "컴포넌트 원본: {e}"),
+            ContextReadError::Site(e) => write!(f, "위치: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ContextReadError {}
+
+fn severity_name(severity: ContextSeverity) -> &'static str {
+    match severity {
+        ContextSeverity::Error => "error",
+        ContextSeverity::Orphan => "orphan",
+        ContextSeverity::Warning => "warning",
+        ContextSeverity::Info => "info",
+    }
+}
+
+/// `path` 프로젝트의 문서 하나를 읽어 [`read_snapshot_context`]를 부릅니다.
+pub fn read_context(
+    path: &Path,
+    document: StableId,
+    site: Option<&ContextSite>,
+) -> Result<ContextReport, ContextReadError> {
+    let snapshot = open_snapshot(path).map_err(ContextReadError::Open)?;
+    read_snapshot_context(&snapshot, document, site)
+}
+
+/// 열린 snapshot의 문서 하나에서 Context를 조회합니다(모듈 문서). 결과는 입력의 함수입니다.
+pub fn read_snapshot_context(
+    snapshot: &ProjectSnapshot,
+    document: StableId,
+    site: Option<&ContextSite>,
+) -> Result<ContextReport, ContextReadError> {
+    let model = snapshot
+        .document_model(document)
+        .map_err(ContextReadError::Document)?;
+    let (library, _) =
+        crate::component_source::project_library(snapshot).map_err(ContextReadError::Components)?;
+    let set = model.context().live(&model);
+    let keys = ContextKeys::new(&set);
+    fn members<'s>(
+        entries: impl Iterator<Item = (StableId, &'s std::collections::BTreeSet<StableId>)>,
+    ) -> Vec<(StableId, Vec<StableId>)> {
+        entries
+            .map(|(owner, keys)| (owner, keys.iter().copied().collect()))
+            .collect()
+    }
+    let diagnostics = validate_context(&model, &library, &keys, &[], &NoInputs)
+        .into_iter()
+        .map(|diagnostic| ContextDiagnosticRow {
+            code: diagnostic.kind.code(),
+            severity: severity_name(diagnostic.severity()),
+            message: diagnostic.kind.to_string(),
+        })
+        .collect();
+    let site = match site {
+        None => None,
+        Some(site) => {
+            let resolver = ContextResolver::with_context(&model, &library, &set);
+            let evaluator = ContextEvaluator::new(&resolver, &keys, &NoInputs);
+            let mut resolutions = Vec::new();
+            let mut ordered: Vec<_> = keys.iter().collect();
+            ordered.sort_by(|a, b| (a.name(), a.id()).cmp(&(b.name(), b.id())));
+            for key in ordered {
+                let resolution = resolver
+                    .resolve(key.id(), site)
+                    .map_err(ContextReadError::Site)?;
+                let (value, error) = match evaluator.value_of(&resolution) {
+                    Ok(value) => (value.as_ref().and_then(value_text), None),
+                    Err(error) => (None, Some(error.to_string())),
+                };
+                resolutions.push(ContextResolutionRow {
+                    key: key.id(),
+                    name: key.name().to_owned(),
+                    value,
+                    error,
+                    source: ContextSource::from(&resolution.origin),
+                    path: resolution.path.clone(),
+                    via_slots: resolution.via_slots.clone(),
+                });
+            }
+            let candidates = binding_candidates(&resolver, &keys, site, None)
+                .map_err(ContextReadError::Site)?
+                .into_iter()
+                .map(|candidate| ContextCandidateRow {
+                    key: candidate.key,
+                    name: candidate.name,
+                    value_type: type_name(candidate.value_type),
+                    needs_declaration: candidate.needs_declaration,
+                    source: ContextSource::from(&candidate.origin),
+                })
+                .collect();
+            Some(ContextSiteReport {
+                site: site.clone(),
+                resolutions,
+                candidates,
+            })
+        }
+    };
+    Ok(ContextReport {
+        revision: snapshot.revision(),
+        document,
+        keys: set
+            .keys()
+            .map(|key| ContextKeyRow {
+                id: key.id(),
+                name: key.name().to_owned(),
+                scope: scope_text(key.scope()),
+                value_type: type_name(key.value_type()),
+                default: expression_text(key.default_expression().ast()),
+            })
+            .collect(),
+        provisions: set
+            .provisions()
+            .map(|provision| ContextProvisionRow {
+                id: provision.id(),
+                owner: owner_text(provision.owner()),
+                provider: provision.provider(),
+                key: provision.key(),
+                value: expression_text(provision.value()),
+            })
+            .collect(),
+        requirements: members(set.all_requirements()),
+        slot_keys: members(set.all_slot_keys()),
+        diagnostics,
+        site,
     })
 }
 

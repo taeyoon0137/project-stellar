@@ -123,7 +123,7 @@ pub struct ContextGraph {
     pub consumers: BTreeMap<DependencyNode, BTreeMap<StableId, ContextHopInfo>>,
 }
 
-fn routes_of(hops: &BTreeMap<StableId, ContextHopInfo>) -> ContextRoute {
+pub(crate) fn routes_of(hops: &BTreeMap<StableId, ContextHopInfo>) -> ContextRoute {
     hops.iter()
         .map(|(key, hop)| (*key, hop.source.node(*key)))
         .collect()

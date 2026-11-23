@@ -529,7 +529,11 @@ pub fn source_semantic(
     })?;
     let mut records = project.document.to_records().map_err(|e| e.to_string())?;
     records.sort_canonical();
-    crate::diff::snapshot_of(&[&records])
+    let context = project.document.context().live(&project.document);
+    crate::diff::snapshot_of(&[crate::diff::DocumentInput {
+        records: &records,
+        context: &context,
+    }])
         .map(Some)
         .map_err(|e| e.0)
 }

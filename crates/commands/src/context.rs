@@ -41,13 +41,13 @@ use crate::command::CommandError;
 use crate::edit::EditContext;
 
 /// Context 값이 바뀌면 그 값을 읽는 속성의 배치·도형·그리기가 모두 바뀔 수 있습니다.
-const CONTEXT_INVALIDATION: InvalidationSet = InvalidationSet::EMPTY
+pub(crate) const CONTEXT_INVALIDATION: InvalidationSet = InvalidationSet::EMPTY
     .with(InvalidationClass::Layout)
     .with(InvalidationClass::Geometry)
     .with(InvalidationClass::Paint);
 
 /// Context 속성 key(semantic 대역 `0xECxx`, ADR-0099 결정 10). change set의 경로로만 씁니다.
-const CONTEXT_KEY_PATH: stellar_core_types::property::PropertyKey =
+pub(crate) const CONTEXT_KEY_PATH: stellar_core_types::property::PropertyKey =
     stellar_core_types::property::PropertyKey(0xEC00);
 
 /// Context 연산 하나.

@@ -90,6 +90,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "apply",
         "<경로> <입력 파일|-> [--dry-run]: CommandTransaction JSON(base revision 포함)을 검증해 세대 전환 저장으로 기록합니다(--dry-run: semantic diff만)",
     ),
+    (
+        "context",
+        "<경로> <문서 id> [--node <node id> [--instances <id,…>]]: 문서 Component Context의 key·provision·requirement·Slot 공개 목록과 진단을, --node를 주면 그 위치의 key별 해석 값·출처·경로와 선택기 후보를 출력합니다",
+    ),
     ("component-source", "create <폴더> <이름> <id> <root-id> | check <폴더> | resize <파일> <원본 hash> <너비> <높이> | set-fill <파일> <원본 hash> <none 또는 색 공간과 RGBA> | add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>: 컴포넌트별 Free Frame 트리"),
     (
         "git",
@@ -211,6 +215,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("style-defaults", crate::style_defaults::run(rest))
     } else if command == "apply" {
         ("apply", crate::apply::run(rest))
+    } else if command == "context" {
+        ("context", crate::context::run(rest))
     } else if command == "validate" {
         ("validate", crate::project_cmds::validate(rest))
     } else if command == "diagnose" {

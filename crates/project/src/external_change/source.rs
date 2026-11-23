@@ -283,8 +283,12 @@ impl TextSourceSession {
             .model()
             .to_records()
             .map_err(|error| TextSessionError::Records(error.to_string()))?;
-        let (document, _) = DocumentModel::from_records(records)
+        let (mut document, _) = DocumentModel::from_records(records)
             .map_err(|error| TextSessionError::Records(error.to_string()))?;
+        // Context는 레코드 밖에 있어 함께 옮깁니다(ADR-0099). 옮기지 않으면 저장이 `design/context.stellar.yaml`을
+        // 지웁니다(ADR-0114 결정 1).
+        let model = self.document.model();
+        document.replace_context(model.context().live(model));
         Ok(TextProject {
             document,
             components: self.components.clone(),
@@ -353,7 +357,13 @@ impl TextSourceSession {
                 })
             }
         };
-        let apply = match ApplyExternalSnapshot::between(self.document.model(), &incoming) {
+        // 레코드와 함께 영속 Context(`design/context.stellar.yaml`)도 옮깁니다(ADR-0114 결정 1).
+        let context = project.document.context().live(&project.document);
+        let apply = match ApplyExternalSnapshot::between_with_context(
+            self.document.model(),
+            &incoming,
+            &context,
+        ) {
             Ok(apply) => apply,
             Err(error) => {
                 return TextExternal::Rejected(SourceDiagnostic {

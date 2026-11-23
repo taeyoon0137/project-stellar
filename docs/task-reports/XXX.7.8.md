@@ -48,3 +48,16 @@
 - 컴포넌트 owner provision의 범위·cycle은 command가 library를 몰라 validator(XXX.7.5)에 맡깁니다.
 - CLI·MCP의 command JSON 입력(`ops::mcp_command_input`)에는 Context 편집을 더하지 않았습니다(소유 밖, 후속).
 - XXX.2.4(포트 공개의 ContextRequirement plan)는 이 command로 연결할 수 있게 되었지만 연결하지 않았습니다(prototype lane 몫).
+
+## 후속 보완 (2026-11-24, Context 제품 경로 연결)
+
+- 결정: ADR-0114 결정 3.
+- CLI·MCP command 입력(`ops::mcp_command_input`, `stellar apply`와 MCP proposal 공용)에 Context 연산마다 필드 종류 하나
+  (`create-context-key`, `rename-context-key`, `set-context-key-default`, `delete-context-key`, `create-context-provision`,
+  `set-context-provision-value`, `delete-context-provision`, `add-context-requirement`, `remove-context-requirement`,
+  `add-slot-context-key`, `remove-slot-context-key`)를 더했습니다. 결과는 `edit-context` canonical 입력 하나입니다. scope·owner·
+  값 타입·리터럴은 텍스트 원본 parser를 그대로 씁니다. command schema를 다시 생성했습니다.
+- `stellar apply`가 Context가 있는 문서를 두 번째 저장할 때 ChunkId 중복으로 실패하던 결함을 고쳤습니다(base context-set
+  pointer 재사용 안 함).
+- 시험: `mcp_command_input::tests::context_field_kinds_become_one_edit_context_command`(11 종류 해석, 열린 식 default·잘못된
+  식·타입·scope 거부), CLI 종단 `tools/stellar-cli/tests/context.rs`(apply dry-run diff, 저장, provision 삭제, 열린 식 거부).

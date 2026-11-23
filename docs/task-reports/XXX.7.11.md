@@ -39,3 +39,15 @@
 ## 남은 위험 / 한계
 
 - CLI·MCP 조회 명령은 binding이 문서 원본에 저장되지 않아 headless에서 소비 binding을 읽을 곳이 없어 미뤘습니다.
+
+## 후속 보완 (2026-11-24, Context 제품 경로 연결)
+
+- 결정: ADR-0114 결정 6.
+- 조회를 headless로 연결했습니다. `stellar_ops::context::read_context`가 문서 하나의 key·provision·requirement·Slot 공개 목록과
+  validator 진단을, 위치를 주면 key별 해석 값·출처(provision·default)·provider 경로·Slot 경유와 Value Binding 선택기 후보를
+  돌려줍니다. 해석·후보·진단은 문서 crate 함수 그대로입니다. CLI `stellar context <경로> <문서 id> [--node <id>
+  [--instances <id,…>]]`와 headless MCP 읽기 tool `document.context`가 같은 함수를 씁니다.
+- 시험: `tools/stellar-cli/tests/context.rs`(선언 조회, View root 위치의 provision 해석·후보, provision 삭제 뒤 default, 없는
+  위치 거부), MCP `headless_tools::every_listed_tool_runs_read_only_through_ops`(파일 쓰기 없음)·catalog golden.
+- 남은 위험: binding이 문서 원본에 저장되지 않아 소비 binding 단위 조회(`inspect_binding`)는 headless에 없습니다(위치 단위
+  조회만). MCP 시험 fixture에는 Context가 있는 프로젝트가 없어 MCP 경로의 값 내용은 CLI 시험으로만 확인했습니다.

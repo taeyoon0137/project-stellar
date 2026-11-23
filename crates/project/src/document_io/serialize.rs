@@ -165,9 +165,8 @@ pub fn context_chunk_id(document: StableId) -> ChunkId {
     derive_chunk_id(ChunkFamily::Context, document, document)
 }
 
-/// `context-set` chunk kind(IX.12.1 예약 `0x8000_0007`, required).
-pub const KIND_CONTEXT_SET: ChunkKindCode =
-    ChunkKindCode(stellar_core_types::reserved::context::CHUNK_KIND_CONTEXT_SET);
+/// `context-set` chunk kind(IX.12.1 예약 `0x8000_0007`, required). storage kind 표(ADR-0114 결정 4)의 값입니다.
+pub use stellar_storage::chunk::kinds::KIND_CONTEXT_SET;
 
 fn chunk(chunk_id: ChunkId, kind: ChunkKindCode, payload: Vec<u8>) -> SerializedChunk {
     SerializedChunk {

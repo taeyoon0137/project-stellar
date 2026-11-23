@@ -4,6 +4,74 @@ use crate::test_support::{file_digest, large_document, save_documents, scaffold_
 use stellar_project::saved_project::SavedProjectLoader;
 use stellar_semantic_diff::value::SemanticValue;
 
+/// `model`에 key 하나를 더한 사본.
+fn with_key(
+    model: &stellar_document::model::DocumentModel,
+    n: u64,
+) -> stellar_document::model::DocumentModel {
+    use stellar_document::context::fixtures::{number, number_type};
+    use stellar_document::context::key::{ContextKey, ContextScope};
+    let mut copy = crate::diff::DocumentSource::of_model(model)
+        .unwrap()
+        .into_model()
+        .unwrap();
+    let mut set = copy.context().clone();
+    set.insert_key(
+        ContextKey::new(
+            StableId::new_v7(95_000 + n, 0x0c, n),
+            format!("k{n}"),
+            ContextScope::Document(copy.document_id()),
+            number_type(),
+            number(96_000 + n, 3.0),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    copy.replace_context(set);
+    copy
+}
+
+#[test]
+fn staging_a_context_change_writes_the_context_chunk() {
+    // 검증 기준(ADR-0114 결정 2): Context가 있는 문서도 stage 왕복을 증명하고, 고른 Context 변경을 index에 씁니다.
+    let dir = TempDir::new("candidate-context");
+    scaffold_project(&dir.path);
+    let model = with_key(&large_document(4), 1);
+    save_documents(&dir.path, &[&model]);
+    let index = SavedProjectLoader::new().open(&dir.path).unwrap();
+    let base = saved_semantic_snapshot(&index).unwrap();
+    let work = TempDir::new("candidate-context-work");
+    scaffold_project(&work.path);
+    save_documents(&work.path, &[&with_key(&model, 2)]);
+    let working = SavedProjectLoader::new().open(&work.path).unwrap();
+    let target = saved_semantic_snapshot(&working).unwrap();
+    let key = StableId::new_v7(95_002, 0x0c, 2);
+    let candidate = build_stage_candidate(
+        &base,
+        &target,
+        &StageSelectionRequest::stage([ChangeId::add(key)]),
+    )
+    .unwrap();
+    let files = serialize_candidate(&index, &candidate).unwrap();
+    assert!(!files.is_empty());
+    for (path, bytes) in &files {
+        let full = dir.path.join(path);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(full, bytes).unwrap();
+    }
+    let staged = SavedProjectLoader::new().open(&dir.path).unwrap();
+    let loaded = staged.load_document(model.document_id()).unwrap().model;
+    assert!(loaded.context().key(key).is_some(), "stage한 key");
+    assert!(loaded
+        .context()
+        .key(StableId::new_v7(95_001, 0x0c, 1))
+        .is_some());
+    assert_eq!(
+        saved_semantic_snapshot(&staged).unwrap(),
+        *candidate.snapshot()
+    );
+}
+
 #[test]
 fn opaque_semantic_field_and_stale_base_are_explicitly_rejected_without_writes() {
     let dir = TempDir::new("candidate-opaque");

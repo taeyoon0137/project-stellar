@@ -26,6 +26,7 @@ stellar-renderer-core = { path = "../../crates/renderer-core", features = ["test
 stellar-target-profile = { path = "../../crates/target-profile" }
 # Component Context 해석(document)과 binding graph(bindings)를 잇는 종단 시험(XXX.7.6·XXX.7.7·XXX.7.13).
 stellar-bindings = { path = "../../crates/bindings" }
+stellar-prototype = { path = "../../crates/prototype" }
 stellar-layout = { path = "../../crates/layout" }
 stellar-export = { path = "../../crates/export" }
 # 초기 릴리스 종단 시나리오(XVI.11, ADR-0111): 앱 runtime·headless ops·외부 library 의존성 모델.

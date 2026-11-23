@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use stellar_document::model::DocumentModel;
-use stellar_document::records::DocumentRecords;
+use stellar_ops::diff::DocumentSource;
 use stellar_project::document_io::load::{load_document, ChunkSource, ChunkSourceError};
 use stellar_project::document_io::manifest::DocumentManifestChunk;
 use stellar_storage::chunk::id::ChunkId;
@@ -89,8 +89,8 @@ impl ExternalConflict {
 pub(crate) enum WindowMerge {
     /// 쓸 수 있는 결과.
     Merged {
-        /// 결과 문서 레코드.
-        records: Box<DocumentRecords>,
+        /// 결과 문서 레코드와 Component Context(ADR-0114 결정 2).
+        document: Box<DocumentSource>,
         /// 결과가 ExternalDisk 문서와 같은지(같으면 반영 뒤 clean).
         matches_disk: bool,
     },
@@ -119,13 +119,13 @@ impl ChunkSource for GenerationChunks<'_> {
     }
 }
 
-/// LoadedBase: `loaded` generation에서 문서 `document`를 다시 읽습니다. current pointer와 관계없이 그 generation의
-/// manifest가 가리키는 chunk만 읽습니다(content-addressed라 불변). 읽지 못하면 이유 문장입니다.
+/// LoadedBase: `loaded` generation에서 문서 `document`(레코드와 Context)를 다시 읽습니다. current pointer와 관계없이
+/// 그 generation의 manifest가 가리키는 chunk만 읽습니다(content-addressed라 불변). 읽지 못하면 이유 문장입니다.
 pub(crate) fn base_records(
     root: &Path,
     loaded: &LoadedGeneration,
     document: StableId,
-) -> Result<DocumentRecords, String> {
+) -> Result<DocumentSource, String> {
     let mut chunks = GenerationChunks {
         store: ChunkStore::new(root),
         pointers: loaded
@@ -146,7 +146,7 @@ pub(crate) fn base_records(
             continue;
         }
         let loaded = load_document(&payload, &mut chunks).map_err(|e| e.to_string())?;
-        return loaded.model.to_records().map_err(|e| e.to_string());
+        return DocumentSource::of_model(&loaded.model).map_err(|e| e.to_string());
     }
     Err("base generation에 이 문서가 없습니다".into())
 }
@@ -154,7 +154,7 @@ pub(crate) fn base_records(
 /// LoadedBase·CurrentMemory·ExternalDisk를 병합합니다(모듈 문서). `base`는 [`base_records`] 결과, `theirs`가 `None`이면
 /// 외부 변경이 문서를 지웠습니다.
 pub(crate) fn merge_window(
-    base: Result<DocumentRecords, String>,
+    base: Result<DocumentSource, String>,
     ours: &DocumentModel,
     theirs: Option<&DocumentModel>,
 ) -> WindowMerge {
@@ -171,19 +171,18 @@ pub(crate) fn merge_window(
     };
     let unsupported =
         |e: String| WindowMerge::Blocked(ExternalConflict::blocked(ReconcileBlock::Unsupported(e)));
-    let ours = match ours.to_records() {
-        Ok(records) => records,
+    let ours = match DocumentSource::of_model(ours) {
+        Ok(document) => document,
         Err(e) => return unsupported(e.to_string()),
     };
-    let mut theirs = match theirs.to_records() {
-        Ok(records) => records,
+    let theirs = match DocumentSource::of_model(theirs) {
+        Ok(document) => document,
         Err(e) => return unsupported(e.to_string()),
     };
-    theirs.sort_canonical();
     match merge_document(&base, &ours, &theirs) {
-        Ok(DocumentMerge::Merged { records, .. }) => WindowMerge::Merged {
-            matches_disk: *records == theirs,
-            records,
+        Ok(DocumentMerge::Merged { document, .. }) => WindowMerge::Merged {
+            matches_disk: *document == theirs,
+            document,
         },
         Ok(DocumentMerge::Conflicted {
             conflicts,

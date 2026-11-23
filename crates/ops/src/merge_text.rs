@@ -218,7 +218,13 @@ fn lossless(
     records: &DocumentRecords,
     name: &'static str,
 ) -> Result<SemanticSnapshot, TextMergeError> {
-    let snapshot = snapshot_of(&[records]).map_err(|e| TextMergeError::Merge(e.0.clone()))?;
+    // Context는 원본 파일 단위 3-way(`three_way`)로 따로 병합하므로 레코드 snapshot에는 넣지 않습니다(병합 경로 하나).
+    let empty = ContextSet::new();
+    let snapshot = snapshot_of(&[crate::diff::DocumentInput {
+        records,
+        context: &empty,
+    }])
+    .map_err(|e| TextMergeError::Merge(e.0.clone()))?;
     let back = stellar_semantic_diff::records::document_records(&snapshot, records.definition.id)
         .map_err(|e| TextMergeError::Merge(e.to_string()))?;
     if &back.records != records {
@@ -257,7 +263,7 @@ impl TextMergeBase {
             other => TextMergeError::Merge(other.to_string()),
         })?;
         let records = match (documents.pop(), documents.is_empty()) {
-            (Some(records), true) if records.definition.id == self.document => records,
+            (Some(source), true) if source.records.definition.id == self.document => source.records,
             _ => return Err(TextMergeError::DocumentMismatch),
         };
         let (mut model, _) = DocumentModel::from_records(records)

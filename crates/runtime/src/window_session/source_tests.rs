@@ -735,3 +735,146 @@ fn save_keeps_the_document_context_in_the_source_and_the_cache() {
         "cache generation의 Context"
     );
 }
+
+/// Context 편집 transaction 하나.
+fn context_edit(
+    doc: &stellar_commands::state::DocumentState,
+    n: u64,
+    edit: stellar_commands::context::ContextEdit,
+) -> CommandTransaction {
+    use stellar_commands::command::Command;
+    use stellar_commands::context::ContextCommand;
+    use stellar_commands::id::CommandOrigin;
+    CommandTransaction::new(command(n), CommandOrigin::User).with_command(
+        doc.revision(),
+        Command::EditContext(Box::new(ContextCommand { edit })),
+    )
+}
+
+/// 밖에서 바꾼 `design/context.stellar.yaml`이 열린 창에 반영되고, 그 창의 다음 저장이 외부 Context를 덮어쓰지
+/// 않습니다(ADR-0114 결정 1). clean 창은 외부 변경을 한 번의 Undo로 되돌릴 수 있고, dirty 창은 겹치지 않는 편집과
+/// 함께 병합합니다.
+#[test]
+fn an_external_context_source_edit_reaches_the_open_window_and_is_not_overwritten() {
+    use stellar_commands::context::ContextEdit;
+    use stellar_document::context::fixtures::{number, number_type};
+    use stellar_document::context::key::{ContextKey, ContextScope};
+
+    let project = saved_project("source-context-sync");
+    let locks = TempDir::new("source-context-sync-locks");
+    let key = |n: u64, name: &str| {
+        ContextKey::new(
+            StableId::new_v7(70_100 + n, 0x0c0d, n),
+            name,
+            ContextScope::Document(sid(1)),
+            number_type(),
+            number(n, 8.0),
+        )
+        .unwrap()
+    };
+    let mut a = open(&project, &locks, 1);
+    let spacing = key(1, "spacing");
+    a.apply(
+        &context_edit(
+            a.document().unwrap(),
+            1,
+            ContextEdit::CreateKey(spacing.clone()),
+        ),
+        0,
+    )
+    .unwrap();
+    assert!(a.save_now().unwrap().written);
+
+    // 외부 writer(편집기·Git)가 원본의 key 이름을 바꿉니다.
+    let mut text = TextSourceSession::open(project.path(), window(77)).unwrap();
+    let tx = context_edit(
+        text.document(),
+        2,
+        ContextEdit::RenameKey {
+            key: spacing.id(),
+            name: "gap".into(),
+        },
+    );
+    text.apply(&tx).unwrap();
+    text.save().unwrap();
+    match a.sync_external(command(3)) {
+        ExternalSync::Applied { changes, .. } => assert!(changes.is_some(), "변경 반영"),
+        other => panic!("{other:?}"),
+    }
+    let name = |s: &ProjectWindowSession, id: StableId| {
+        s.document()
+            .unwrap()
+            .model()
+            .context()
+            .key(id)
+            .map(|k| k.name().to_owned())
+    };
+    assert_eq!(name(&a, spacing.id()).as_deref(), Some("gap"));
+    assert!(!a.has_unsaved_changes());
+    // cache를 원본에 맞춥니다(다음 병합의 base). 저장은 외부가 바꾼 Context 원본을 덮어쓰지 않습니다.
+    a.save_now().unwrap();
+    let reopened = TextSourceSession::open(project.path(), window(80)).unwrap();
+    assert_eq!(
+        reopened
+            .document()
+            .model()
+            .context()
+            .key(spacing.id())
+            .map(|k| k.name()),
+        Some("gap")
+    );
+    let cache = open_snapshot(project.path()).unwrap();
+    assert_eq!(
+        cache
+            .document_model(sid(1))
+            .unwrap()
+            .context()
+            .key(spacing.id())
+            .map(|k| k.name().to_owned())
+            .as_deref(),
+        Some("gap"),
+        "cache generation도 외부 Context"
+    );
+
+    // dirty 창: 창은 새 key를, 외부는 다시 이름을 바꿉니다. 겹치지 않으므로 병합되고 저장이 둘 다 남깁니다.
+    let radius = key(2, "radius");
+    a.apply(
+        &context_edit(
+            a.document().unwrap(),
+            4,
+            ContextEdit::CreateKey(radius.clone()),
+        ),
+        0,
+    )
+    .unwrap();
+    let mut text = TextSourceSession::open(project.path(), window(78)).unwrap();
+    let tx = context_edit(
+        text.document(),
+        5,
+        ContextEdit::RenameKey {
+            key: spacing.id(),
+            name: "space".into(),
+        },
+    );
+    text.apply(&tx).unwrap();
+    text.save().unwrap();
+    match a.sync_external(command(6)) {
+        ExternalSync::Applied { .. } => {}
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        name(&a, spacing.id()).as_deref(),
+        Some("space"),
+        "외부 반영"
+    );
+    assert_eq!(
+        name(&a, radius.id()).as_deref(),
+        Some("radius"),
+        "창 편집 보존"
+    );
+    a.save_now().unwrap();
+    let text = TextSourceSession::open(project.path(), window(79)).unwrap();
+    let saved = text.document().model().context();
+    assert_eq!(saved.key(spacing.id()).map(|k| k.name()), Some("space"));
+    assert_eq!(saved.key(radius.id()).map(|k| k.name()), Some("radius"));
+}
