@@ -204,4 +204,150 @@ fn usage_errors_go_to_stderr_with_exit_64() {
     let output = stellar(&["style-defaults", "bogus"]);
     assert_eq!(output.status.code(), Some(64));
     assert!(output.stdout.is_empty());
+    let output = stellar(&["style-defaults", "set", "x", "css", "--base"]);
+    assert_eq!(output.status.code(), Some(64));
+}
+
+/// 프로젝트 안 모든 일반 파일의 (상대 경로, bytes).
+fn files(root: &std::path::Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                let rel = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                out.insert(rel, std::fs::read(&path).unwrap());
+            }
+        }
+    }
+    out
+}
+
+fn error_code(value: &JsonValue) -> Option<&str> {
+    value.get("error").unwrap().get("code").unwrap().as_str()
+}
+
+#[test]
+fn set_goes_through_the_ops_write_path_and_changes_one_manifest_line() {
+    // IX.11.27·IX.11.29: `set`은 SetStyleDefaults를 ops 쓰기 경로로 적용합니다. base revision이 다르면 거부하고,
+    // 문서 레코드는 그대로이며 프로젝트에서 바뀌는 파일은 stellar.yaml 하나, 그 안의 한 줄입니다.
+    let tmp = TempDir::new("cli-style-defaults-write");
+    let (root, document, frame) = project(&tmp);
+    let path = root.to_str().unwrap();
+    let manifest = root.join("stellar.yaml");
+    let before_files = files(&root);
+    let listed = envelope(&stellar(&["style-defaults", "list", path]), 0);
+    let base = text(result(&listed).get("revision").unwrap(), "token").to_string();
+
+    // base revision 불일치: 아무것도 쓰지 않습니다.
+    let stale = envelope(
+        &stellar(&[
+            "style-defaults",
+            "set",
+            path,
+            "react-native",
+            "--base",
+            "g0",
+        ]),
+        65,
+    );
+    assert_eq!(error_code(&stale), Some("base-revision-mismatch"));
+    assert_eq!(files(&root), before_files);
+
+    // dry-run도 쓰지 않습니다.
+    let dry = envelope(
+        &stellar(&["style-defaults", "set", path, "react-native", "--dry-run"]),
+        0,
+    );
+    assert_eq!(text(result(&dry), "mode"), "dry-run");
+    assert_eq!(files(&root), before_files);
+
+    let set = envelope(
+        &stellar(&[
+            "style-defaults",
+            "set",
+            path,
+            "react-native",
+            "--base",
+            &base,
+        ]),
+        0,
+    );
+    let set = result(&set);
+    assert_eq!(text(set, "mode"), "write");
+    assert_eq!(text(set, "previous"), "css");
+    assert_eq!(text(set.get("base_revision").unwrap(), "token"), base);
+    let after_files = files(&root);
+    let changed: Vec<&String> = after_files
+        .iter()
+        .filter(|(name, bytes)| before_files.get(*name) != Some(*bytes))
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(changed, ["stellar.yaml"], "바뀐 파일");
+    let before = String::from_utf8(before_files["stellar.yaml"].clone()).unwrap();
+    let after = std::fs::read_to_string(&manifest).unwrap();
+    let added: Vec<&str> = after
+        .lines()
+        .filter(|l| !before.lines().any(|b| b == *l))
+        .collect();
+    assert_eq!(added, ["style_defaults: react-native"]);
+    assert_eq!(after.lines().count(), before.lines().count() + 1);
+
+    // 다시 열면 새 세트로 풉니다. resolve와 query node의 layout은 같은 해석입니다.
+    let listed = envelope(&stellar(&["style-defaults", "list", path]), 0);
+    assert_eq!(text(result(&listed), "active"), "react-native");
+    let query = envelope(&stellar(&["query", path, "node", &document, &frame]), 0);
+    let layout = result(&query).get("node").unwrap().get("layout").unwrap();
+    assert_eq!(text(layout, "style_defaults"), "react-native");
+    let resolved = envelope(
+        &stellar(&["style-defaults", "resolve", path, &document, &frame]),
+        0,
+    );
+    assert_eq!(result(&resolved).get("values"), layout.get("values"));
+
+    // 문서 레코드는 그대로라 generation revision도 그대로입니다. 같은 base로 되돌리면 stellar.yaml bytes가
+    // 원래대로입니다.
+    assert_eq!(text(set.get("revision").unwrap(), "token"), base);
+    envelope(
+        &stellar(&["style-defaults", "set", path, "css", "--base", &base]),
+        0,
+    );
+    assert_eq!(std::fs::read_to_string(&manifest).unwrap(), before);
+
+    // 바꿀 것이 없으면 쓰지 않습니다.
+    let unchanged = files(&root);
+    let same = envelope(&stellar(&["style-defaults", "set", path, "css"]), 0);
+    assert_eq!(result(&same).get("changed"), Some(&JsonValue::Bool(false)));
+    assert_eq!(files(&root), unchanged);
+}
+
+#[test]
+fn show_lists_payload_longhands_from_the_registry_table() {
+    let tmp = TempDir::new("cli-style-defaults-payload");
+    let (root, _, _) = project(&tmp);
+    let path = root.to_str().unwrap();
+    let shown = envelope(
+        &stellar(&["style-defaults", "show", path, "react-native"]),
+        0,
+    );
+    let payload = items(result(&shown).get("payload").unwrap());
+    let row = |longhand: &str| {
+        payload
+            .iter()
+            .find(|row| text(row, "longhand") == longhand)
+            .unwrap_or_else(|| panic!("{longhand}"))
+    };
+    assert_eq!(text(row("object-fit"), "value"), "cover");
+    assert_eq!(text(row("object-fit"), "class"), "image");
+    assert_eq!(text(row("font-size"), "value"), "14px");
+    assert_eq!(text(row("line-height"), "value"), "normal");
+    assert_eq!(text(row("background-color"), "key"), "0x0104");
+    assert!(payload.iter().all(|row| text(row, "longhand") != "width"));
 }

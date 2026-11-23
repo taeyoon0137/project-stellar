@@ -84,7 +84,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "style-defaults",
-        "list <경로> | show <경로> [<세트>] | set <경로> <세트> | resolve <경로> <문서 id> <node id>: 기본값 세트 목록·값 표·선택(stellar.yaml 한 줄)과 node layout longhand 값의 출처(explicit·default(<세트>))",
+        "list <경로> | show <경로> [<세트>] | set <경로> <세트> [--base <revision>] [--dry-run] | resolve <경로> <문서 id> <node id>: 기본값 세트 목록·값 표(layout·payload longhand)·선택(SetStyleDefaults를 base revision 검사·저장 잠금으로 적용, stellar.yaml 한 줄)과 node layout longhand 값의 출처(explicit·default(<세트>))",
     ),
     (
         "apply",

@@ -2,7 +2,7 @@
 
 - WBS: IX.11.15
 - 작업명: 선택 node 속성을 CSS 선언 블록으로 복사하고, 선언 블록을 붙여넣어 CommandTransaction 하나로 적용(건너뜀 보고)
-- 상태: 부분 완료 (`[~]`) — 2026-11-23 ledger-refresh 판정: 남은 결함: 선언 붙여넣기·set-property가 새 modifier를 넣는 순서(`modifier_ops::css_insert_order`)와 속성 패널의 순서 규칙(`paint_order`)이 서로 다른 두 규칙입니다. 선행 IX.11.14·IX.11.16은 `[x]`입니다. integration-followups lane이 registry 밖 속성의 선언 블록 경로는 끝냈습니다(아래 "후속 보완"). 이전 기록: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 남은 범위가 있음(아래 본문); 선행 IX.11.14(`[~]`), IX.11.16(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`)
+- 상태: 완료 (`[x]`) — 2026-11-23 style-defaults-finish 재판정: 아래 남은 결함(두 삽입 규칙)이 닫혔습니다("재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 2026-11-23 ledger-refresh 판정: 남은 결함: 선언 붙여넣기·set-property가 새 modifier를 넣는 순서(`modifier_ops::css_insert_order`)와 속성 패널의 순서 규칙(`paint_order`)이 서로 다른 두 규칙입니다. 선행 IX.11.14·IX.11.16은 `[x]`입니다. integration-followups lane이 registry 밖 속성의 선언 블록 경로는 끝냈습니다(아래 "후속 보완"). 이전 기록: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 남은 범위가 있음(아래 본문); 선행 IX.11.14(`[~]`), IX.11.16(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`)
 - 결정: ADR-0075 결정 6
 
 ## 필수 실행 환경
@@ -96,3 +96,21 @@
   경로를 씁니다.
 - 소유 밖 최소 변경: `crates/commands/src/property.rs`의 `blend_mode_from_tag`를 `pub(crate)`로 바꿈(같은 tag 해석을 두 번
   쓰지 않으려고).
+
+## 재판정 (2026-11-23, style-defaults-finish)
+
+- 판정: 완료(`[x]`). ledger-refresh가 남긴 결함은 새 modifier 삽입 순서가 두 규칙이라는 것이었습니다. 이제 선언 블록
+  붙여넣기·`set-property`와 속성 패널이 `modifier_ops::css_insert_order` 하나를 씁니다. 속성 패널의 `paint_order`는
+  지웠습니다(ADR-0115 결정 3, 커밋 `Refactor: 선언 블록 붙여넣기와 속성 패널의 modifier 삽입 순서를 한 규칙으로 합침`).
+- 규칙: Transform → Boolean·StrokeExpand·Corner → Fill → Stroke → Shadow → Blur → Clip → Mask → Opacity → Blend 순위에서
+  같거나 낮은 순위의 마지막 항목 뒤에 넣습니다. 순위는 CSS 고정 단계와 같은 방향으로만 커지고, paint 단계 안은 렌더
+  순서(Fill 아래, Stroke 위)입니다.
+- 확인한 코드 위치: `crates/commands/src/modifier_ops.rs` `insert_rank`·`css_insert_order`, `crates/commands/src/inspector.rs`
+  `insert`, `crates/commands/src/css_value.rs`의 붙여넣기 삽입.
+- 실행한 검증:
+  - `cargo test -p stellar-commands --lib`: 통과(233, 무시 6). 새 test `insert_rank_follows_css_stages_and_render_order`(순위와
+    CSS 단계의 방향, Transform → Fill → Stroke), `insert_order_keeps_a_ranked_stack_ranked`(모든 종류를 거꾸로 넣어도 순위
+    순서, 같은 순위는 넣은 순서). 속성 패널 test `fill_and_stroke_rows_insert_update_and_remove_modifiers_in_render_order`와
+    `css_value` test가 그대로 통과합니다.
+  - `cargo test -p stellar-cli --test css`: 통과.
+- 남은 조건: 없음. 완료 기준(왕복 semantic snapshot 동일, 건너뜀 보고, undo 한 번)은 위 본문과 후속 보완 절 그대로입니다.

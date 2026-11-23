@@ -51,6 +51,8 @@
 - 기본 style 표 step은 `PRODUCT_STEPS`에 등록하지 않았습니다(IX.11.9·IX.11.10과 같은 1→2 묶음).
 - 텍스트 원본의 typography 값 표기(`crates/project/src/document_io/text_codec/document_font.rs`)는 자체 px·수 formatter를 씁니다. `css::value`로 합치는 일은 그 파일 소유 작업입니다(이 lane 소유 밖, 새 이중 경로는 만들지 않음).
 - 기본값 세트(`css::style_defaults`)에 Text 구획 typography longhand 항목이 없습니다. typography는 resource 값이 언제나 명시 값이라 지금은 필요 없습니다.
+  - (2026-11-23 style-defaults-finish 갱신) 세트 표에 typography 일곱 longhand의 `css`·`react-native` 값이 들어갔습니다(IX.11.24, ADR-0115 결정 1). 생략값 test의 CSS initial value와 같고(`font-size`는 UA 16px), conformance fixture(IX.11.31)가 고정합니다.
+  - step 등록 조건은 ADR-0115 결정 5입니다.
 
 ## 남은 위험
 

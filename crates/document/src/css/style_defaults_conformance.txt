@@ -1,0 +1,399 @@
+# 기본값 세트 conformance fixture (IX.11.31, ADR-0115 결정 2).
+#
+# 한 줄: 세트 | 구획 | longhand | 기대값 | 관측값 | 출처
+# - css 관측값: Google Chrome 157.0.8103.79 headless, 저자 스타일 없는 요소의 computedStyleMap 계산값
+#   (style_defaults_conformance.py). 구획 대응 frame=div, text=span, image=img, shape=svg rect(fill-rule은 svg path).
+#   관측값과 기대값이 다른 줄은 출처가 그 이유(stellar-mapping·css-computed·user-agent)를 적습니다.
+# - react-native 관측값은 '-'입니다. 출처 접두사: rn-docs(RN 공식 문서), rn-source(RN 구현 기본값),
+#   yoga(Yoga 동작), inherits(css 값을 물려받음과 그 이유).
+# 기대값을 registry 표(style_defaults.rs)와 비교하는 test: style_defaults::tests::conformance_fixture_matches_tables.
+
+# layout longhand
+css | frame | position | static | static | chrome: div 계산값
+react-native | frame | position | relative | - | rn-docs: Layout Props position 기본값 relative
+css | text | position | static | static | chrome: span 계산값
+react-native | text | position | relative | - | rn-docs: Layout Props position 기본값 relative
+css | image | position | static | static | chrome: img 계산값
+react-native | image | position | relative | - | rn-docs: Layout Props position 기본값 relative
+css | shape | position | static | static | chrome: svg rect 계산값
+react-native | shape | position | relative | - | rn-docs: Layout Props position 기본값 relative
+css | frame | box-sizing | content-box | content-box | chrome: div 계산값
+react-native | frame | box-sizing | border-box | - | rn-docs: Layout Props boxSizing 기본값 border-box
+css | text | box-sizing | content-box | content-box | chrome: span 계산값
+react-native | text | box-sizing | border-box | - | rn-docs: Layout Props boxSizing 기본값 border-box
+css | image | box-sizing | content-box | content-box | chrome: img 계산값
+react-native | image | box-sizing | border-box | - | rn-docs: Layout Props boxSizing 기본값 border-box
+css | shape | box-sizing | content-box | content-box | chrome: svg rect 계산값
+react-native | shape | box-sizing | border-box | - | rn-docs: Layout Props boxSizing 기본값 border-box
+css | frame | top | auto | auto | chrome: div 계산값
+react-native | frame | top | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | top | auto | auto | chrome: span 계산값
+react-native | text | top | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | top | auto | auto | chrome: img 계산값
+react-native | image | top | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | top | auto | auto | chrome: svg rect 계산값
+react-native | shape | top | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | right | auto | auto | chrome: div 계산값
+react-native | frame | right | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | right | auto | auto | chrome: span 계산값
+react-native | text | right | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | right | auto | auto | chrome: img 계산값
+react-native | image | right | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | right | auto | auto | chrome: svg rect 계산값
+react-native | shape | right | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | bottom | auto | auto | chrome: div 계산값
+react-native | frame | bottom | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | bottom | auto | auto | chrome: span 계산값
+react-native | text | bottom | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | bottom | auto | auto | chrome: img 계산값
+react-native | image | bottom | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | bottom | auto | auto | chrome: svg rect 계산값
+react-native | shape | bottom | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | left | auto | auto | chrome: div 계산값
+react-native | frame | left | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | left | auto | auto | chrome: span 계산값
+react-native | text | left | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | left | auto | auto | chrome: img 계산값
+react-native | image | left | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | left | auto | auto | chrome: svg rect 계산값
+react-native | shape | left | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | width | auto | auto | chrome: div 계산값
+react-native | frame | width | auto | - | rn-docs: Layout Props width·height 기본값 auto
+css | text | width | auto | auto | chrome: span 계산값
+react-native | text | width | auto | - | rn-docs: Layout Props width·height 기본값 auto
+css | image | width | auto | auto | chrome: img 계산값
+react-native | image | width | auto | - | rn-docs: Layout Props width·height 기본값 auto
+css | shape | width | auto | auto | chrome: svg rect 계산값
+react-native | shape | width | auto | - | rn-docs: Layout Props width·height 기본값 auto
+css | frame | height | auto | auto | chrome: div 계산값
+react-native | frame | height | auto | - | rn-docs: Layout Props width·height 기본값 auto
+css | text | height | auto | auto | chrome: span 계산값
+react-native | text | height | auto | - | rn-docs: Layout Props width·height 기본값 auto
+css | image | height | auto | auto | chrome: img 계산값
+react-native | image | height | auto | - | rn-docs: Layout Props width·height 기본값 auto
+css | shape | height | auto | auto | chrome: svg rect 계산값
+react-native | shape | height | auto | - | rn-docs: Layout Props width·height 기본값 auto
+css | frame | min-width | auto | auto | chrome: div 계산값
+react-native | frame | min-width | 0px | - | yoga: flex item 자동 최소 크기(min-content)가 없어 0입니다
+css | text | min-width | auto | auto | chrome: span 계산값
+react-native | text | min-width | 0px | - | yoga: flex item 자동 최소 크기(min-content)가 없어 0입니다
+css | image | min-width | auto | auto | chrome: img 계산값
+react-native | image | min-width | 0px | - | yoga: flex item 자동 최소 크기(min-content)가 없어 0입니다
+css | shape | min-width | auto | auto | chrome: svg rect 계산값
+react-native | shape | min-width | 0px | - | yoga: flex item 자동 최소 크기(min-content)가 없어 0입니다
+css | frame | min-height | auto | auto | chrome: div 계산값
+react-native | frame | min-height | 0px | - | yoga: flex item 자동 최소 크기(min-content)가 없어 0입니다
+css | text | min-height | auto | auto | chrome: span 계산값
+react-native | text | min-height | 0px | - | yoga: flex item 자동 최소 크기(min-content)가 없어 0입니다
+css | image | min-height | auto | auto | chrome: img 계산값
+react-native | image | min-height | 0px | - | yoga: flex item 자동 최소 크기(min-content)가 없어 0입니다
+css | shape | min-height | auto | auto | chrome: svg rect 계산값
+react-native | shape | min-height | 0px | - | yoga: flex item 자동 최소 크기(min-content)가 없어 0입니다
+css | frame | max-width | none | none | chrome: div 계산값
+react-native | frame | max-width | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | max-width | none | none | chrome: span 계산값
+react-native | text | max-width | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | max-width | none | none | chrome: img 계산값
+react-native | image | max-width | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | max-width | none | none | chrome: svg rect 계산값
+react-native | shape | max-width | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | max-height | none | none | chrome: div 계산값
+react-native | frame | max-height | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | max-height | none | none | chrome: span 계산값
+react-native | text | max-height | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | max-height | none | none | chrome: img 계산값
+react-native | image | max-height | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | max-height | none | none | chrome: svg rect 계산값
+react-native | shape | max-height | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | aspect-ratio | auto | auto | chrome: div 계산값
+react-native | frame | aspect-ratio | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | aspect-ratio | auto | auto | chrome: span 계산값
+react-native | text | aspect-ratio | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | aspect-ratio | auto | auto | chrome: img 계산값
+react-native | image | aspect-ratio | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | aspect-ratio | auto | auto | chrome: svg rect 계산값
+react-native | shape | aspect-ratio | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | flex-grow | 0 | 0 | chrome: div 계산값
+react-native | frame | flex-grow | 0 | - | rn-docs: Layout Props flexGrow 기본값 0
+css | text | flex-grow | 0 | 0 | chrome: span 계산값
+react-native | text | flex-grow | 0 | - | rn-docs: Layout Props flexGrow 기본값 0
+css | image | flex-grow | 0 | 0 | chrome: img 계산값
+react-native | image | flex-grow | 0 | - | rn-docs: Layout Props flexGrow 기본값 0
+css | shape | flex-grow | 0 | 0 | chrome: svg rect 계산값
+react-native | shape | flex-grow | 0 | - | rn-docs: Layout Props flexGrow 기본값 0
+css | frame | flex-shrink | 1 | 1 | chrome: div 계산값
+react-native | frame | flex-shrink | 0 | - | rn-docs: Layout Props flexShrink 기본값 0
+css | text | flex-shrink | 1 | 1 | chrome: span 계산값
+react-native | text | flex-shrink | 0 | - | rn-docs: Layout Props flexShrink 기본값 0
+css | image | flex-shrink | 1 | 1 | chrome: img 계산값
+react-native | image | flex-shrink | 0 | - | rn-docs: Layout Props flexShrink 기본값 0
+css | shape | flex-shrink | 1 | 1 | chrome: svg rect 계산값
+react-native | shape | flex-shrink | 0 | - | rn-docs: Layout Props flexShrink 기본값 0
+css | frame | flex-basis | auto | auto | chrome: div 계산값
+react-native | frame | flex-basis | auto | - | rn-docs: Layout Props flexBasis 기본값 auto
+css | text | flex-basis | auto | auto | chrome: span 계산값
+react-native | text | flex-basis | auto | - | rn-docs: Layout Props flexBasis 기본값 auto
+css | image | flex-basis | auto | auto | chrome: img 계산값
+react-native | image | flex-basis | auto | - | rn-docs: Layout Props flexBasis 기본값 auto
+css | shape | flex-basis | auto | auto | chrome: svg rect 계산값
+react-native | shape | flex-basis | auto | - | rn-docs: Layout Props flexBasis 기본값 auto
+css | frame | align-self | auto | auto | chrome: div 계산값
+react-native | frame | align-self | auto | - | rn-docs: Layout Props alignSelf 기본값 auto
+css | text | align-self | auto | auto | chrome: span 계산값
+react-native | text | align-self | auto | - | rn-docs: Layout Props alignSelf 기본값 auto
+css | image | align-self | auto | auto | chrome: img 계산값
+react-native | image | align-self | auto | - | rn-docs: Layout Props alignSelf 기본값 auto
+css | shape | align-self | auto | auto | chrome: svg rect 계산값
+react-native | shape | align-self | auto | - | rn-docs: Layout Props alignSelf 기본값 auto
+css | frame | justify-self | auto | auto | chrome: div 계산값
+react-native | frame | justify-self | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | justify-self | auto | auto | chrome: span 계산값
+react-native | text | justify-self | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | justify-self | auto | auto | chrome: img 계산값
+react-native | image | justify-self | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | justify-self | auto | auto | chrome: svg rect 계산값
+react-native | shape | justify-self | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | grid-column-start | auto | auto | chrome: div 계산값
+react-native | frame | grid-column-start | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | grid-column-start | auto | auto | chrome: span 계산값
+react-native | text | grid-column-start | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | grid-column-start | auto | auto | chrome: img 계산값
+react-native | image | grid-column-start | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | grid-column-start | auto | auto | chrome: svg rect 계산값
+react-native | shape | grid-column-start | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | grid-column-end | auto | auto | chrome: div 계산값
+react-native | frame | grid-column-end | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | grid-column-end | auto | auto | chrome: span 계산값
+react-native | text | grid-column-end | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | grid-column-end | auto | auto | chrome: img 계산값
+react-native | image | grid-column-end | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | grid-column-end | auto | auto | chrome: svg rect 계산값
+react-native | shape | grid-column-end | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | grid-row-start | auto | auto | chrome: div 계산값
+react-native | frame | grid-row-start | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | grid-row-start | auto | auto | chrome: span 계산값
+react-native | text | grid-row-start | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | grid-row-start | auto | auto | chrome: img 계산값
+react-native | image | grid-row-start | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | grid-row-start | auto | auto | chrome: svg rect 계산값
+react-native | shape | grid-row-start | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | grid-row-end | auto | auto | chrome: div 계산값
+react-native | frame | grid-row-end | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | grid-row-end | auto | auto | chrome: span 계산값
+react-native | text | grid-row-end | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | grid-row-end | auto | auto | chrome: img 계산값
+react-native | image | grid-row-end | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | grid-row-end | auto | auto | chrome: svg rect 계산값
+react-native | shape | grid-row-end | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | display | block | block | chrome: div 계산값
+react-native | frame | display | flex | - | rn-docs: Layout with Flexbox, View는 언제나 flex container입니다
+css | text | display | block | inline | stellar-mapping: Stellar에는 inline formatting context가 없어 이 종류를 상자 하나로 배치합니다(ADR-0076 결정 3)
+react-native | text | display | block | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | display | block | inline | stellar-mapping: Stellar에는 inline formatting context가 없어 이 종류를 상자 하나로 배치합니다(ADR-0076 결정 3)
+react-native | image | display | block | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | display | block | inline | stellar-mapping: Stellar에는 inline formatting context가 없어 이 종류를 상자 하나로 배치합니다(ADR-0076 결정 3)
+react-native | shape | display | block | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | padding-top | 0px | 0px | chrome: div 계산값
+react-native | frame | padding-top | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | text | padding-top | 0px | 0px | chrome: span 계산값
+react-native | text | padding-top | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | image | padding-top | 0px | 0px | chrome: img 계산값
+react-native | image | padding-top | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | shape | padding-top | 0px | 0px | chrome: svg rect 계산값
+react-native | shape | padding-top | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | frame | padding-right | 0px | 0px | chrome: div 계산값
+react-native | frame | padding-right | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | text | padding-right | 0px | 0px | chrome: span 계산값
+react-native | text | padding-right | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | image | padding-right | 0px | 0px | chrome: img 계산값
+react-native | image | padding-right | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | shape | padding-right | 0px | 0px | chrome: svg rect 계산값
+react-native | shape | padding-right | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | frame | padding-bottom | 0px | 0px | chrome: div 계산값
+react-native | frame | padding-bottom | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | text | padding-bottom | 0px | 0px | chrome: span 계산값
+react-native | text | padding-bottom | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | image | padding-bottom | 0px | 0px | chrome: img 계산값
+react-native | image | padding-bottom | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | shape | padding-bottom | 0px | 0px | chrome: svg rect 계산값
+react-native | shape | padding-bottom | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | frame | padding-left | 0px | 0px | chrome: div 계산값
+react-native | frame | padding-left | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | text | padding-left | 0px | 0px | chrome: span 계산값
+react-native | text | padding-left | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | image | padding-left | 0px | 0px | chrome: img 계산값
+react-native | image | padding-left | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | shape | padding-left | 0px | 0px | chrome: svg rect 계산값
+react-native | shape | padding-left | 0px | - | rn-docs: Layout Props padding 기본값 0
+css | frame | flex-direction | row | row | chrome: div 계산값
+react-native | frame | flex-direction | column | - | rn-docs: Layout Props flexDirection 기본값 column
+css | text | flex-direction | row | row | chrome: span 계산값
+react-native | text | flex-direction | row | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | flex-direction | row | row | chrome: img 계산값
+react-native | image | flex-direction | row | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | flex-direction | row | row | chrome: svg rect 계산값
+react-native | shape | flex-direction | row | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | flex-wrap | nowrap | nowrap | chrome: div 계산값
+react-native | frame | flex-wrap | nowrap | - | rn-docs: Layout Props flexWrap 기본값 nowrap
+css | text | flex-wrap | nowrap | nowrap | chrome: span 계산값
+react-native | text | flex-wrap | nowrap | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | flex-wrap | nowrap | nowrap | chrome: img 계산값
+react-native | image | flex-wrap | nowrap | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | flex-wrap | nowrap | nowrap | chrome: svg rect 계산값
+react-native | shape | flex-wrap | nowrap | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | justify-content | normal | normal | chrome: div 계산값
+react-native | frame | justify-content | normal | - | inherits: RN justifyContent 기본값 flex-start는 flex container에서 CSS normal과 같은 결과입니다
+css | text | justify-content | normal | normal | chrome: span 계산값
+react-native | text | justify-content | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | justify-content | normal | normal | chrome: img 계산값
+react-native | image | justify-content | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | justify-content | normal | normal | chrome: svg rect 계산값
+react-native | shape | justify-content | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | align-content | normal | normal | chrome: div 계산값
+react-native | frame | align-content | flex-start | - | rn-docs: Layout Props alignContent 기본값 flex-start
+css | text | align-content | normal | normal | chrome: span 계산값
+react-native | text | align-content | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | align-content | normal | normal | chrome: img 계산값
+react-native | image | align-content | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | align-content | normal | normal | chrome: svg rect 계산값
+react-native | shape | align-content | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | align-items | normal | normal | chrome: div 계산값
+react-native | frame | align-items | normal | - | inherits: RN alignItems 기본값 stretch는 flex container에서 CSS normal과 같은 결과입니다
+css | text | align-items | normal | normal | chrome: span 계산값
+react-native | text | align-items | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | align-items | normal | normal | chrome: img 계산값
+react-native | image | align-items | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | align-items | normal | normal | chrome: svg rect 계산값
+react-native | shape | align-items | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | justify-items | normal | normal | chrome: div 계산값
+react-native | frame | justify-items | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | justify-items | normal | normal | chrome: span 계산값
+react-native | text | justify-items | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | justify-items | normal | normal | chrome: img 계산값
+react-native | image | justify-items | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | justify-items | normal | normal | chrome: svg rect 계산값
+react-native | shape | justify-items | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | row-gap | normal | normal | chrome: div 계산값
+react-native | frame | row-gap | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | row-gap | normal | normal | chrome: span 계산값
+react-native | text | row-gap | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | row-gap | normal | normal | chrome: img 계산값
+react-native | image | row-gap | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | row-gap | normal | normal | chrome: svg rect 계산값
+react-native | shape | row-gap | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | column-gap | normal | normal | chrome: div 계산값
+react-native | frame | column-gap | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | column-gap | normal | normal | chrome: span 계산값
+react-native | text | column-gap | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | column-gap | normal | normal | chrome: img 계산값
+react-native | image | column-gap | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | column-gap | normal | normal | chrome: svg rect 계산값
+react-native | shape | column-gap | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | grid-template-columns | none | none | chrome: div 계산값
+react-native | frame | grid-template-columns | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | grid-template-columns | none | none | chrome: span 계산값
+react-native | text | grid-template-columns | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | grid-template-columns | none | none | chrome: img 계산값
+react-native | image | grid-template-columns | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | grid-template-columns | none | none | chrome: svg rect 계산값
+react-native | shape | grid-template-columns | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | grid-template-rows | none | none | chrome: div 계산값
+react-native | frame | grid-template-rows | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | grid-template-rows | none | none | chrome: span 계산값
+react-native | text | grid-template-rows | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | grid-template-rows | none | none | chrome: img 계산값
+react-native | image | grid-template-rows | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | grid-template-rows | none | none | chrome: svg rect 계산값
+react-native | shape | grid-template-rows | none | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | grid-auto-columns | auto | auto | chrome: div 계산값
+react-native | frame | grid-auto-columns | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | grid-auto-columns | auto | auto | chrome: span 계산값
+react-native | text | grid-auto-columns | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | grid-auto-columns | auto | auto | chrome: img 계산값
+react-native | image | grid-auto-columns | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | grid-auto-columns | auto | auto | chrome: svg rect 계산값
+react-native | shape | grid-auto-columns | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | grid-auto-rows | auto | auto | chrome: div 계산값
+react-native | frame | grid-auto-rows | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | grid-auto-rows | auto | auto | chrome: span 계산값
+react-native | text | grid-auto-rows | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | grid-auto-rows | auto | auto | chrome: img 계산값
+react-native | image | grid-auto-rows | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | grid-auto-rows | auto | auto | chrome: svg rect 계산값
+react-native | shape | grid-auto-rows | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | grid-auto-flow | row | row | chrome: div 계산값
+react-native | frame | grid-auto-flow | row | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | grid-auto-flow | row | row | chrome: span 계산값
+react-native | text | grid-auto-flow | row | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | image | grid-auto-flow | row | row | chrome: img 계산값
+react-native | image | grid-auto-flow | row | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | grid-auto-flow | row | row | chrome: svg rect 계산값
+react-native | shape | grid-auto-flow | row | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+
+# payload longhand
+css | frame | transform | none | none | chrome: div 계산값
+react-native | frame | transform | none | - | rn-docs: Transforms 기본값 없음(none)
+css | frame | background-color | #00000000 | rgba(0, 0, 0, 0) | chrome: div 계산값
+react-native | frame | background-color | #00000000 | - | rn-docs: View Style Props backgroundColor 기본값 transparent
+css | frame | border-top-left-radius | 0px | 0px | chrome: div 계산값
+react-native | frame | border-top-left-radius | 0px | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | border-top-right-radius | 0px | 0px | chrome: div 계산값
+react-native | frame | border-top-right-radius | 0px | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | border-bottom-right-radius | 0px | 0px | chrome: div 계산값
+react-native | frame | border-bottom-right-radius | 0px | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | border-bottom-left-radius | 0px | 0px | chrome: div 계산값
+react-native | frame | border-bottom-left-radius | 0px | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | frame | border-top-width | 0px | 3px | css-computed: CSS Backgrounds 3의 border-width 계산값은 style이 none이면 0입니다. Chrome Typed OM은 medium(3px)을 그대로 보이고 getComputedStyle은 0px입니다
+react-native | frame | border-top-width | 0px | - | rn-docs: View Style Props borderWidth 기본값 0
+css | frame | border-top-style | none | none | chrome: div 계산값
+react-native | frame | border-top-style | solid | - | rn-source: View 테두리 style 기본값이 실선이라 borderWidth만 주어도 그립니다
+css | frame | border-top-color | #000000 | rgb(0, 0, 0) | chrome: div 계산값
+react-native | frame | border-top-color | #000000 | - | rn-docs: View Style Props borderColor 기본값 black
+css | frame | border-right-width | 0px | 3px | css-computed: CSS Backgrounds 3의 border-width 계산값은 style이 none이면 0입니다. Chrome Typed OM은 medium(3px)을 그대로 보이고 getComputedStyle은 0px입니다
+react-native | frame | border-right-width | 0px | - | rn-docs: View Style Props borderWidth 기본값 0
+css | frame | border-right-style | none | none | chrome: div 계산값
+react-native | frame | border-right-style | solid | - | rn-source: View 테두리 style 기본값이 실선이라 borderWidth만 주어도 그립니다
+css | frame | border-right-color | #000000 | rgb(0, 0, 0) | chrome: div 계산값
+react-native | frame | border-right-color | #000000 | - | rn-docs: View Style Props borderColor 기본값 black
+css | frame | border-bottom-width | 0px | 3px | css-computed: CSS Backgrounds 3의 border-width 계산값은 style이 none이면 0입니다. Chrome Typed OM은 medium(3px)을 그대로 보이고 getComputedStyle은 0px입니다
+react-native | frame | border-bottom-width | 0px | - | rn-docs: View Style Props borderWidth 기본값 0
+css | frame | border-bottom-style | none | none | chrome: div 계산값
+react-native | frame | border-bottom-style | solid | - | rn-source: View 테두리 style 기본값이 실선이라 borderWidth만 주어도 그립니다
+css | frame | border-bottom-color | #000000 | rgb(0, 0, 0) | chrome: div 계산값
+react-native | frame | border-bottom-color | #000000 | - | rn-docs: View Style Props borderColor 기본값 black
+css | frame | border-left-width | 0px | 3px | css-computed: CSS Backgrounds 3의 border-width 계산값은 style이 none이면 0입니다. Chrome Typed OM은 medium(3px)을 그대로 보이고 getComputedStyle은 0px입니다
+react-native | frame | border-left-width | 0px | - | rn-docs: View Style Props borderWidth 기본값 0
+css | frame | border-left-style | none | none | chrome: div 계산값
+react-native | frame | border-left-style | solid | - | rn-source: View 테두리 style 기본값이 실선이라 borderWidth만 주어도 그립니다
+css | frame | border-left-color | #000000 | rgb(0, 0, 0) | chrome: div 계산값
+react-native | frame | border-left-color | #000000 | - | rn-docs: View Style Props borderColor 기본값 black
+css | shape | border-top-left-radius | 0px | 0px | chrome: svg rect 계산값
+react-native | shape | border-top-left-radius | 0px | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | border-top-right-radius | 0px | 0px | chrome: svg rect 계산값
+react-native | shape | border-top-right-radius | 0px | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | border-bottom-right-radius | 0px | 0px | chrome: svg rect 계산값
+react-native | shape | border-bottom-right-radius | 0px | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | border-bottom-left-radius | 0px | 0px | chrome: svg rect 계산값
+react-native | shape | border-bottom-left-radius | 0px | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | stroke-linecap | butt | butt | chrome: svg rect 계산값
+react-native | shape | stroke-linecap | butt | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | shape | fill-rule | nonzero | nonzero | chrome: svg path 계산값
+react-native | shape | fill-rule | nonzero | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | font-family | serif | "Apple SD Gothic Neo" | user-agent: 기본 글꼴은 브라우저·OS 언어 설정이 정합니다(측정 환경은 한국어 시스템 글꼴). 이식 가능한 generic family serif로 둡니다
+react-native | text | font-family | system-ui | - | rn-source: Text 기본 글꼴은 플랫폼 시스템 글꼴입니다
+css | text | font-size | 16px | 16px | chrome: span 계산값
+react-native | text | font-size | 14px | - | rn-source: Text 기본 글자 크기는 14입니다
+css | text | font-weight | 400 | 400 | chrome: span 계산값
+react-native | text | font-weight | 400 | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | font-style | normal | normal | chrome: span 계산값
+react-native | text | font-style | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | font-stretch | 100% | 100% | chrome: span 계산값
+react-native | text | font-stretch | 100% | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | line-height | normal | normal | chrome: span 계산값
+react-native | text | line-height | normal | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
+css | text | letter-spacing | 0px | normal | css-computed: CSS Text 3에서 normal은 0으로 계산합니다. registry 값 문법은 길이만 받습니다
+react-native | text | letter-spacing | 0px | - | rn-docs: Text Style Props letterSpacing 기본값 0
+css | image | object-fit | fill | fill | chrome: img 계산값
+react-native | image | object-fit | cover | - | rn-docs: Image resizeMode 기본값 cover
+css | image | image-rendering | auto | auto | chrome: img 계산값
+react-native | image | image-rendering | auto | - | inherits: RN 문서·Yoga로 확인하지 못해 css 값을 물려받습니다
