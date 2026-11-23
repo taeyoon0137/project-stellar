@@ -532,33 +532,77 @@ fn other_flow_at(
         if descends || Some(row.id) == own_parent {
             return None;
         }
-        // 이 Frame의 자식이 될 때의 배치 문맥: 자식 하나라도 있으면 그 판정, 없으면 컨테이너 display로 판정합니다.
-        let display = resolve(&set, model.payload(row.id)?, model.layout_record(row.id))
-            .map(|l| l.get(LayoutLonghand::Display).value.clone());
-        let flow = match display {
-            Some(LayoutValue::Keyword("flex" | "grid")) => model
-                .children_in_order(row.id)
-                .first()
-                .map(|&c| flow_parent(model, &set, c))
-                .filter(|f| f.is_flow())
-                .unwrap_or(if matches!(display, Some(LayoutValue::Keyword("grid"))) {
-                    FlowParent::Grid
-                } else {
-                    FlowParent::Flex {
-                        row: true,
-                        reverse: false,
-                        wrap_reverse: false,
-                    }
-                }),
-            _ => return None,
-        };
-        let axes = FlowAxes::of(flow)?;
+        let axes = container_axes(model, &set, row.id)?;
         return Some((
             row.id,
             FlowSiblings::read(model, &set, scene, row.id, axes, moving),
         ));
     }
     None
+}
+
+/// Frame `container`의 자식이 될 때의 흐름 축. 흐름 컨테이너가 아니면 `None`입니다.
+///
+/// 자식이 있으면 그 자식의 배치 문맥(`flow_parent`, 기본값 세트 포함)을 그대로 쓰고, 빈 컨테이너면 컨테이너의
+/// `display`·`flex-direction`을 풉니다.
+fn container_axes(model: &DocumentModel, set: &FlatSet, container: StableId) -> Option<FlowAxes> {
+    let layout = resolve(
+        set,
+        model.payload(container)?,
+        model.layout_record(container),
+    )?;
+    let keyword = |longhand| match &layout.get(longhand).value {
+        LayoutValue::Keyword(k) => *k,
+        _ => "",
+    };
+    if let Some(NodePayload::Frame(frame)) = model.payload(container) {
+        if frame.layout_mode.is_some() {
+            return None;
+        }
+    }
+    let display = keyword(LayoutLonghand::Display);
+    if !matches!(display, "flex" | "grid") {
+        return None;
+    }
+    let from_child = model
+        .children_in_order(container)
+        .into_iter()
+        .map(|c| flow_parent(model, set, c))
+        .find(|f| f.is_flow());
+    let flow = from_child.unwrap_or(match display {
+        "grid" => FlowParent::Grid,
+        _ => FlowParent::Flex {
+            row: matches!(
+                keyword(LayoutLonghand::FlexDirection),
+                "row" | "row-reverse"
+            ),
+            reverse: matches!(
+                keyword(LayoutLonghand::FlexDirection),
+                "row-reverse" | "column-reverse"
+            ),
+            wrap_reverse: keyword(LayoutLonghand::FlexWrap) == "wrap-reverse",
+        },
+    });
+    FlowAxes::of(flow)
+}
+
+/// 흐름 컨테이너 `container`에 새 자식을 pointer(world) 자리로 넣을 OrderKey. 흐름 컨테이너가 아니면 `None`입니다
+/// (생성 도구·붙여넣기가 씀).
+pub(crate) fn flow_insert_key(
+    model: &DocumentModel,
+    scene: &CanvasScene,
+    container: StableId,
+    pointer: [f32; 2],
+) -> Option<OrderKey> {
+    let set = model_style_set(model);
+    let axes = container_axes(model, &set, container)?;
+    let siblings = FlowSiblings::read(model, &set, scene, container, axes, StableId::NIL);
+    Some(siblings.slot(pointer).1)
+}
+
+/// `container`가 흐름 컨테이너인지.
+pub(crate) fn is_flow_container(model: &DocumentModel, container: StableId) -> bool {
+    container_axes(model, &model_style_set(model), container).is_some()
 }
 
 #[cfg(test)]

@@ -29,6 +29,8 @@ mod image;
 /// 문서 → 증분 scene source 변환 (XI.2.4, XI.2.5, XII.10.30).
 pub mod scene_source;
 pub use image::image_placement;
+/// Frame·Rectangle·Ellipse·Line·Polygon 생성 도구 (XII.10.26, ADR-0117).
+pub mod create;
 /// 흐름 컨테이너 안 드래그 (XII.10.24, ADR-0117).
 pub mod flow_drag;
 /// 변형 핸들 hit layer (XII.10.8, ADR-0104).
