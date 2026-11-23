@@ -42,6 +42,12 @@ pub mod dirty;
 /// Boolean modifier geometry 평가 (XII.10.30).
 pub mod boolean;
 
+/// 증분 scene build 입력 tree (XI.2.4, XI.2.5).
+pub mod source;
+
+/// dirty subtree만 다시 만드는 증분 scene build (XI.2.5, XI.2.6, XII.3.7).
+pub mod incremental;
+
 /// 축 정렬 bounds와 scene node world bounds (XI.3.1).
 pub mod bounds;
 
