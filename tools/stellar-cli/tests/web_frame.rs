@@ -419,7 +419,7 @@ fn two_instances_follow_one_source_and_keep_distinct_dom_ids() {
             "source_hash",
         )
     };
-    let identity = "transform: \"matrix(1, 0, 0, 1, 0, 0)\"";
+    let identity = "transform: none";
     let hash = rewrite(&|mut text| {
         let inset = text.rfind(identity).unwrap();
         text.replace_range(

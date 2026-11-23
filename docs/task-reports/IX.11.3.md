@@ -2,10 +2,8 @@
 
 - WBS: IX.11.3
 - 작업명: Shape·Path·Text·Image property metadata registry를 Frame registry와 같은 방식으로 두고 CSS 매핑을 채움, snapshot 전용 key를 문서 key로 교체
-- 상태: 부분 완료 (`[~]`) — registry·CSS 매핑·key 할당과 값 하나인 snapshot 경로의 문서 key 교체는 완료했습니다.
-  값 여러 개를 한 경로에 담는 snapshot 투영(Rectangle size·corner radius, Line 끝점, Ellipse·Polygon bounds,
-  Image size)의 longhand 경로 분할은 `crates/semantic-diff/src/build.rs`·`records.rs`(semantic-merge lane 소유)
-  변경이 필요해 하지 않았습니다.
+- 상태: 완료 (`[x]`) — registry·CSS 매핑·key 할당, 값 하나인 snapshot 경로의 문서 key 교체, 값 여러 개를 한
+  경로에 담던 snapshot 투영의 longhand 경로 분할(2026-11-23 integration-followups 보완)까지 끝났습니다.
 - 결정: ADR-0075 결정 4
 
 ## 필수 실행 환경
@@ -69,3 +67,16 @@
   `RECT_CORNER_RADIUS`→`shape_keys::BORDER_RADIUS_LONGHANDS`, `LINE_START`·`LINE_END`→`X1`·`Y1`·`X2`·`Y2`,
   `IMAGE_SIZE`→`image_keys::WIDTH`·`HEIGHT`로 경로를 나누고 옛 snapshot 경로 읽기를 유지합니다. Ellipse·Polygon
   bounds 원점은 위치 longhand가 아니라 기하 offset이므로(속성 모델 12장 Position 행) 크기만 longhand로 나눕니다.
+
+## 후속 보완(2026-11-23, integration-followups)
+
+- `crates/semantic-diff/src/build.rs`·`records.rs`: Rectangle 크기 `RECT_SIZE`→`shape_keys::WIDTH`·`HEIGHT`, 모서리
+  `RECT_CORNER_RADIUS`→`BORDER_RADIUS_LONGHANDS`, Line `LINE_START`·`LINE_END`→`X1`·`Y1`·`X2`·`Y2`, Image
+  `IMAGE_SIZE`→`image_keys::WIDTH`·`HEIGHT`, Ellipse·Polygon bounds 크기→`shape_keys::WIDTH`·`HEIGHT`로 나눴습니다.
+  bounds 원점은 registry key가 없어 `ELLIPSE_BOUNDS`·`POLYGON_BOUNDS` 번호의 `(x, y)` 두 값 경로로 남습니다.
+- 옛 snapshot 전용 경로는 읽지 않습니다. 위 "남은 위험"의 "옛 snapshot 경로 읽기 유지"와 다릅니다. 이 key들은 문서
+  key가 아니고 snapshot은 저장하지 않으므로, 옛 경로가 들어오는 입력이 없습니다. 문서 registry의 묶음 key(Frame
+  크기·모서리, Shadow offset)만 옛 경로를 longhand가 없을 때 읽습니다(ADR-0075 개정).
+- 검증: `build::tests::multi_value_fields_project_to_document_longhand_paths`(random 문서 200개에서 옛 경로 0, longhand
+  값 하나, 원점 두 값), 기존 `projection_round_trips_records`(build→records→build 동일), status·stage test의
+  기대 경로를 `shape_keys::WIDTH`로 갱신. `cargo test -p stellar-semantic-diff` 88 + fuzz 4 passed.

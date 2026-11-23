@@ -105,7 +105,7 @@ fn export_check_and_query_agree_on_values_and_never_touch_the_project() {
         .unwrap();
     let width = properties
         .iter()
-        .find(|p| string(p, "path") == "0x0108")
+        .find(|p| string(p, "path") == "width" && string(p, "key") == "0x0108")
         .unwrap()
         .get("value")
         .unwrap()

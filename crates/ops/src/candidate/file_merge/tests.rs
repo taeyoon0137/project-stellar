@@ -90,7 +90,7 @@ fn adjacent_line_edits_merge_by_property() {
     };
     let text = String::from_utf8(bytes).unwrap();
     assert!(
-        text.contains("Badge") && text.contains("background-color: \"color(srgb 1 0 0)\""),
+        text.contains("Badge") && text.contains("background-color: \"#ff0000\""),
         "{text}"
     );
 }
@@ -147,4 +147,43 @@ fn additions_deletions_and_bad_inputs() {
         ),
         Err(FileMergeError::Decode { side: "base", .. })
     ));
+}
+
+#[test]
+fn different_corners_of_one_frame_merge_without_conflict() {
+    // 같은 Frame의 서로 다른 모서리 longhand는 서로 다른 snapshot 경로라 3-way merge가 conflict 없이
+    // 합칩니다(IX.11.22, ADR-0075 결정 1). 사람·AI가 파일의 한 줄을 고친 경우와 같습니다.
+    let dir = TempDir::new("file-merge-corners");
+    let (relative, path) = card(&dir.path);
+    let base = std::fs::read(&path).unwrap();
+    let text = String::from_utf8(base.clone()).unwrap();
+    let corner = |name: &str, value: &str| {
+        let line = format!("{name}: \"0px\"");
+        assert_eq!(text.matches(&line).count(), 1, "{text}");
+        text.replacen(&line, &format!("{name}: \"{value}\""), 1)
+            .into_bytes()
+    };
+    let ours = corner("border-top-left-radius", "8px");
+    let theirs = corner("border-bottom-right-radius", "4px");
+    let FileMergeOutcome::Merged(merged) =
+        merge_semantic_file(&relative, &base, &ours, &theirs).unwrap()
+    else {
+        panic!("clean merge 기대");
+    };
+    let merged = String::from_utf8(merged).unwrap();
+    assert!(
+        merged.contains("border-top-left-radius: \"8px\"")
+            && merged.contains("border-bottom-right-radius: \"4px\"")
+            && merged.contains("border-top-right-radius: \"0px\""),
+        "{merged}"
+    );
+    // 같은 모서리를 양쪽이 다르게 바꾸면 그 longhand 하나만 conflict입니다.
+    let other = corner("border-top-left-radius", "2px");
+    let FileMergeOutcome::Conflicts(conflicts) =
+        merge_semantic_file(&relative, &base, &ours, &other).unwrap()
+    else {
+        panic!("conflict 기대");
+    };
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].kind, "property-value");
 }

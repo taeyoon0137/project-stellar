@@ -425,14 +425,38 @@ impl From<&SemanticValue> for OpsValue {
     }
 }
 
-/// 속성 경로 표기: key를 4자리 16진수로 `/` 연결하고, tail이 있으면 `[index]` 또는 `{key}`.
+/// 속성 경로 표기: key마다 문서 registry 이름(CSS longhand 또는 Stellar 이름, `css::registry::name_of`)을 `/`로
+/// 연결하고, tail이 있으면 `[index]` 또는 `{key}`입니다. registry에 없는 key(semantic snapshot 전용 `0xE0xx` 등)는
+/// 4자리 16진수입니다(ADR-0075 개정).
 ///
-/// 예: `0x0101/0x0102[3]`. 경로 root(소유 객체)는 표기에 넣지 않습니다.
+/// 예: `border-top-left-radius`, `border[1]`, `0xe001`. 정확한 numeric key는 [`property_key_label`]입니다. 경로
+/// root(소유 객체)는 표기에 넣지 않습니다.
 pub fn property_path_label(path: &PropertyPath) -> String {
+    label(path, |key| {
+        stellar_document::css::registry::name_of(key)
+            .map(str::to_owned)
+            .unwrap_or_else(|| hex_key(key))
+    })
+}
+
+/// 속성 경로의 numeric 표기: key를 4자리 16진수로 `/` 연결합니다(예: `0x0101/0x0102[3]`). JSON 출력의 보조
+/// 필드(`key`)입니다.
+pub fn property_key_label(path: &PropertyPath) -> String {
+    label(path, hex_key)
+}
+
+fn hex_key(key: crate::core_types::property::PropertyKey) -> String {
+    format!("0x{:04x}", key.0)
+}
+
+fn label(
+    path: &PropertyPath,
+    name: impl Fn(crate::core_types::property::PropertyKey) -> String,
+) -> String {
     let mut out = path
         .keys()
         .iter()
-        .map(|key| format!("0x{:04x}", key.0))
+        .map(|key| name(*key))
         .collect::<Vec<_>>()
         .join("/");
     match path.tail() {
@@ -446,8 +470,10 @@ pub fn property_path_label(path: &PropertyPath) -> String {
 /// node 속성 한 개.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodeProperty {
-    /// [`property_path_label`] 표기.
+    /// [`property_path_label`] 표기(registry 이름).
     pub path: String,
+    /// [`property_key_label`] 표기(numeric key, 보조).
+    pub key: String,
     /// 값.
     pub value: OpsValue,
 }
@@ -498,6 +524,7 @@ pub fn node_detail(
         .iter()
         .map(|(path, value)| NodeProperty {
             path: property_path_label(path),
+            key: property_key_label(path),
             value: OpsValue::from(value),
         })
         .collect();

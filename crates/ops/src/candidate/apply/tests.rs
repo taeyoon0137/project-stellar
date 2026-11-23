@@ -25,12 +25,12 @@ fn validated_resolution_is_written_once_and_added() {
     let (git, relative) = width_session(&dir);
     let mut session = ConflictSession::open(&git, &dir.path).unwrap();
     assert!(matches!(
-        apply_session(&git, &DiskFiles, &session),
+        apply_session(&git, &session),
         Err(ApplyError::Plan(PlanError::Blocked { .. }))
     ));
     assert!(!git.calls.borrow().iter().any(|c| c.starts_with("add")));
     session.resolve(0, Resolution::ChooseTheirs).unwrap();
-    let report = apply_session(&git, &DiskFiles, &session).unwrap();
+    let report = apply_session(&git, &session).unwrap();
     assert_eq!(report.written, vec![relative.clone()]);
     assert_eq!(report.added, vec![relative.clone()]);
     assert!(git.entries.borrow().is_empty(), "add 뒤 unmerged 없음");
@@ -70,50 +70,11 @@ fn stale_session_writes_nothing() {
     let path = dir.path.join(&relative);
     std::fs::write(&path, b"changed outside").unwrap();
     assert!(matches!(
-        apply_session(&git, &DiskFiles, &session),
+        apply_session(&git, &session),
         Err(ApplyError::Stale(_))
     ));
     assert_eq!(std::fs::read(&path).unwrap(), b"changed outside");
     assert!(!git.calls.borrow().iter().any(|c| c.starts_with("add")));
-}
-
-/// n번째(0부터) 쓰기·삭제 호출을 실패시키는 파일 시스템.
-struct FaultyFiles {
-    fail: std::collections::BTreeSet<usize>,
-    calls: std::cell::Cell<usize>,
-}
-
-impl FaultyFiles {
-    fn new(fail: &[usize]) -> FaultyFiles {
-        FaultyFiles {
-            fail: fail.iter().copied().collect(),
-            calls: std::cell::Cell::new(0),
-        }
-    }
-
-    fn tick(&self) -> io::Result<()> {
-        let n = self.calls.get();
-        self.calls.set(n + 1);
-        if self.fail.contains(&n) {
-            Err(io::Error::other(format!("주입한 쓰기 실패 {n}")))
-        } else {
-            Ok(())
-        }
-    }
-}
-
-impl TreeFiles for FaultyFiles {
-    fn read(&self, path: &Path) -> io::Result<Option<Vec<u8>>> {
-        DiskFiles.read(path)
-    }
-    fn write(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
-        self.tick()?;
-        DiskFiles.write(path, bytes)
-    }
-    fn remove(&self, path: &Path) -> io::Result<()> {
-        self.tick()?;
-        DiskFiles.remove(path)
-    }
 }
 
 fn copy_tree(from: &Path, to: &Path) {
@@ -184,9 +145,33 @@ fn two_unit_session(dir: &TempDir) -> (MemoryGit, PathBuf) {
     (git, root)
 }
 
+/// journal 작업 디렉터리(`.stellar/journal/`)를 뺀 작업 트리 digest.
+fn tree(root: &Path) -> std::collections::BTreeMap<String, String> {
+    let mut digest = crate::test_support::file_digest(root);
+    digest.retain(|path, _| !path.starts_with(".stellar/journal"));
+    digest
+}
+
+/// `dir`을 읽기 전용으로 바꾸고, 실제로 쓰기가 막히는지(root 권한이 아닌지) 돌려줍니다.
+#[cfg(unix)]
+fn make_read_only(dir: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let probe = dir.join(".probe");
+    let blocked = std::fs::write(&probe, b"x").is_err();
+    let _ = std::fs::remove_file(&probe);
+    blocked
+}
+
+#[cfg(unix)]
+fn make_writable(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
 #[test]
-fn fault_matrix_restores_the_working_tree_and_keeps_conflicts_unresolved() {
-    let dir = TempDir::new("apply-faults");
+fn plan_keeps_generation_write_order_inside_one_journal_transaction() {
+    let dir = TempDir::new("apply-order");
     let (git, root) = two_unit_session(&dir);
     let mut session = ConflictSession::open(&git, &root).unwrap();
     assert_eq!(session.units().len(), 2, "{:?}", session.unsupported());
@@ -195,6 +180,7 @@ fn fault_matrix_restores_the_working_tree_and_keeps_conflicts_unresolved() {
     let writes = plan.writes.len();
     assert!(writes >= 4, "원본 1 + chunk·manifest·current: {writes}");
     // 세대 저장 순서: chunk가 manifest보다, manifest가 current pointer보다 먼저이고 pointer가 마지막입니다.
+    // journal은 입력 순서로 반영하므로 거래 안에서도 같은 순서입니다.
     let order: Vec<&Path> = plan.writes.iter().map(|w| w.path.as_path()).collect();
     assert_eq!(
         order.last(),
@@ -210,63 +196,103 @@ fn fault_matrix_restores_the_working_tree_and_keeps_conflicts_unresolved() {
         .rposition(|p| p.starts_with("design/objects"))
         .unwrap();
     assert!(last_chunk < first_manifest, "{order:?}");
-    let before = crate::test_support::file_digest(&root);
+    let report = apply_session(&git, &session).unwrap();
+    assert_eq!(report.written.len(), writes);
+    assert!(git.entries.borrow().is_empty());
+    let opened = crate::snapshot::open_snapshot(&root).unwrap();
+    assert_eq!(opened.revision().generation(), 3);
+    // 끝난 거래는 journal에 남지 않습니다.
+    assert!(recover_interrupted(&root).unwrap().transactions.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn journal_fault_rolls_back_every_target_and_retry_succeeds() {
+    let dir = TempDir::new("apply-journal-fault");
+    let (git, root) = two_unit_session(&dir);
+    let mut session = ConflictSession::open(&git, &root).unwrap();
+    session.resolve(0, Resolution::ChooseTheirs).unwrap();
+    let before = tree(&root);
     let entries = git.entries.borrow().clone();
-    // 쓰기 i번째 실패: 되돌린 뒤 작업 트리 bytes와 unmerged가 그대로이고 add는 부르지 않습니다.
-    for fail in 0..writes {
-        let files = FaultyFiles::new(&[fail]);
-        match apply_session(&git, &files, &session) {
-            Err(error @ ApplyError::Write { .. }) => {
-                let ApplyError::Write { unrestored, .. } = &error else {
-                    unreachable!()
-                };
-                assert!(unrestored.is_empty(), "{fail}");
-                assert!(error.guidance().contains("unresolved"));
-            }
-            other => panic!("쓰기 {fail} 실패 기대: {other:?}"),
-        }
-        assert_eq!(
-            crate::test_support::file_digest(&root),
-            before,
-            "쓰기 {fail}"
-        );
-        assert_eq!(*git.entries.borrow(), entries);
+    // manifest 반영 단계에서 실패합니다(chunk·컴포넌트 원본은 이미 반영된 뒤).
+    let generations = root.join("design/generations");
+    if !make_read_only(&generations) {
+        make_writable(&generations);
+        eprintln!("권한으로 쓰기를 막을 수 없는 환경(root)이라 건너뜁니다");
+        return;
     }
+    let outcome = apply_session(&git, &session);
+    make_writable(&generations);
+    match outcome {
+        Err(error @ ApplyError::Write { .. }) => {
+            let ApplyError::Write { unrestored, .. } = &error else {
+                unreachable!()
+            };
+            assert!(unrestored.is_empty(), "{error}");
+            assert!(error.guidance().contains("unresolved"));
+        }
+        other => panic!("journal 쓰기 실패 기대: {other:?}"),
+    }
+    // journal이 모든 대상을 앞 세대로 되돌렸고 add는 부르지 않았습니다.
+    assert_eq!(tree(&root), before);
+    assert_eq!(*git.entries.borrow(), entries);
     assert!(!git.calls.borrow().iter().any(|c| c.starts_with("add")));
-    // git add 실패: 모든 쓰기를 되돌리고 unresolved 상태와 안내를 돌려줍니다.
+    // 원인을 없애고 다시 적용하면 두 단위를 모두 씁니다.
+    let report = apply_session(&git, &session).unwrap();
+    assert!(git.entries.borrow().is_empty());
+    assert!(git.entries.borrow().is_empty(), "{:?}", report.added);
+    assert_eq!(
+        crate::snapshot::open_snapshot(&root)
+            .unwrap()
+            .revision()
+            .generation(),
+        3
+    );
+}
+
+#[test]
+fn interrupted_transaction_is_recovered_before_apply() {
+    let dir = TempDir::new("apply-journal-crash");
+    let (git, root) = two_unit_session(&dir);
+    let mut session = ConflictSession::open(&git, &root).unwrap();
+    session.resolve(0, Resolution::ChooseTheirs).unwrap();
+    // 앞 적용이 거래 디렉터리를 만든 직후(manifest 전) 프로세스가 죽은 상태입니다(ADR-0078 복구 규칙: 대상을
+    // 건드리기 전이라 버림). 첫 journal 접근이 journal 디렉터리를 만들도록 빈 복구를 먼저 합니다.
+    assert!(recover_interrupted(&root).unwrap().transactions.is_empty());
+    std::fs::create_dir(root.join(".stellar/journal/tx-crashed")).unwrap();
+    let before = tree(&root);
+    let report = apply_session(&git, &session).unwrap();
+    assert_ne!(tree(&root), before);
+    assert!(git.entries.borrow().is_empty(), "{:?}", report.added);
+    assert!(!root.join(".stellar/journal/tx-crashed").exists());
+    assert!(recover_interrupted(&root).unwrap().transactions.is_empty());
+}
+
+#[test]
+fn add_failure_restores_the_working_tree_with_an_inverse_transaction() {
+    let dir = TempDir::new("apply-add-fault");
+    let (git, root) = two_unit_session(&dir);
+    let mut session = ConflictSession::open(&git, &root).unwrap();
+    session.resolve(0, Resolution::ChooseTheirs).unwrap();
+    let before = tree(&root);
+    let entries = git.entries.borrow().clone();
     let failing = MemoryGit {
         entries: std::cell::RefCell::new(entries.clone()),
         blobs: std::cell::RefCell::new(git.blobs.borrow().clone()),
         add_fails: true,
         ..MemoryGit::default()
     };
-    match apply_session(&failing, &DiskFiles, &session) {
+    match apply_session(&failing, &session) {
         Err(error @ ApplyError::Add { .. }) => {
+            let ApplyError::Add { unrestored, .. } = &error else {
+                unreachable!()
+            };
+            assert!(unrestored.is_empty());
             assert!(error.guidance().contains("commit하지 않았습니다"));
         }
         other => panic!("add 실패 기대: {other:?}"),
     }
-    assert_eq!(crate::test_support::file_digest(&root), before);
+    assert_eq!(tree(&root), before);
     assert_eq!(*failing.entries.borrow(), entries);
-    // 되돌리기마저 실패하면 남은 경로를 안내합니다.
-    let files = FaultyFiles::new(&[1, 2]);
-    match apply_session(&git, &files, &session) {
-        Err(error @ ApplyError::Write { .. }) => {
-            let ApplyError::Write { unrestored, .. } = &error else {
-                unreachable!()
-            };
-            assert_eq!(unrestored.len(), 1);
-            assert!(error.guidance().contains("git checkout --merge"));
-        }
-        other => panic!("{other:?}"),
-    }
-    // 정상 적용은 두 단위를 모두 쓰고 add합니다.
-    assert_eq!(crate::test_support::file_digest(&root), before);
-    let mut fresh = ConflictSession::open(&git, &root).unwrap();
-    fresh.resolve(0, Resolution::ChooseTheirs).unwrap();
-    let report = apply_session(&git, &DiskFiles, &fresh).unwrap();
-    assert_eq!(report.written.len(), writes);
-    assert!(git.entries.borrow().is_empty());
-    let opened = crate::snapshot::open_snapshot(&root).unwrap();
-    assert_eq!(opened.revision().generation(), 3);
+    assert!(recover_interrupted(&root).unwrap().transactions.is_empty());
 }

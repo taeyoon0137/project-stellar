@@ -29,6 +29,7 @@ use super::codec::{
 use super::definition::{ComponentLibrary, ComponentSlotId};
 use super::expansion::SceneIndex;
 use super::instance::{ComponentInstancePayload, InstancePayloadError, SlotOverride};
+use crate::css::bundle::{bundle_key_reference, BundleKeyReference};
 use crate::node_kind::NodeKind;
 use crate::validate::MAX_NODE_DEPTH;
 
@@ -150,6 +151,9 @@ pub enum VariantOverrideError {
         /// patch 경로 root.
         target: StableId,
     },
+    /// property patch가 decode 전용 묶음 key를 가리킵니다(`bundle-key-reference`, ADR-0075 결정 1). 자동 변환하지
+    /// 않습니다. View Variant와 Component variant override가 같은 patch 묶음이라 둘 다 이 검사를 거칩니다.
+    BundleKeyPatch(BundleKeyReference),
     /// slot change 대상이 ComponentInstance가 아닙니다(또는 최종 구조에 없음).
     NotAnInstance {
         /// 대상.
@@ -210,6 +214,9 @@ impl fmt::Display for VariantOverrideError {
             ),
             VariantOverrideError::DanglingPatch { target } => {
                 write!(f, "property patch 대상 {target}가 최종 구조에 없습니다")
+            }
+            VariantOverrideError::BundleKeyPatch(reference) => {
+                write!(f, "property patch {:?}: {reference}", reference.path)
             }
             VariantOverrideError::NotAnInstance { instance } => {
                 write!(
@@ -593,8 +600,11 @@ impl VariantOverrideSet {
             }
         }
 
-        // 3) property patch 대상.
+        // 3) property patch 대상. 묶음 key 참조는 진단합니다(css::bundle, ADR-0075 결정 1).
         for path in self.property_patches.keys() {
+            if let Some(reference) = bundle_key_reference(path) {
+                return Err(VariantOverrideError::BundleKeyPatch(reference));
+            }
             if !tree.live(path.root())? {
                 return Err(VariantOverrideError::DanglingPatch {
                     target: path.root(),
@@ -1100,6 +1110,34 @@ mod tests {
         let index = SceneIndex::build(&columns, &payloads);
         sample()
             .validate_references(&index, stable(10), &library)
+            .unwrap();
+    }
+
+    #[test]
+    fn bundle_key_property_patch_is_diagnosed_not_converted() {
+        // IX.11.22: 묶음 key(Frame size·corner, Shadow offset)를 가리키는 patch는 bundle-key-reference입니다.
+        let library = library();
+        let (columns, payloads) = base();
+        let index = SceneIndex::build(&columns, &payloads);
+        let mut set = sample();
+        let path = PropertyPath::with_keys(stable(30), vec![frame_keys::CORNER_RADIUS]);
+        set.set_property(path.clone(), TypedValue::Number(FiniteF32::ONE));
+        let error = set
+            .validate_references(&index, stable(10), &library)
+            .unwrap_err();
+        let VariantOverrideError::BundleKeyPatch(reference) = &error else {
+            panic!("묶음 key 진단 기대: {error:?}");
+        };
+        assert_eq!(reference.path, path);
+        assert_eq!(reference.code(), crate::css::bundle::BUNDLE_KEY_REFERENCE);
+        assert!(error.to_string().contains("bundle-key-reference"));
+        // longhand key는 통과합니다.
+        let mut set = sample();
+        set.set_property(
+            PropertyPath::with_keys(stable(30), vec![frame_keys::BORDER_TOP_LEFT_RADIUS]),
+            TypedValue::Number(FiniteF32::ONE),
+        );
+        set.validate_references(&index, stable(10), &library)
             .unwrap();
     }
 

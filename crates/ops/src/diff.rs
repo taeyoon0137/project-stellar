@@ -14,7 +14,7 @@ use stellar_semantic_diff::diff::{diff, SemanticDiff};
 use stellar_semantic_diff::snapshot::{ObjectKind, SemanticSnapshot};
 
 use crate::core_types::ids::StableId;
-use crate::query::{property_path_label, OpsValue};
+use crate::query::{property_key_label, property_path_label, OpsValue};
 
 /// semantic snapshot 구성 실패(레코드 불변식 위반).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,8 +64,10 @@ pub struct DiffEntry {
     pub object: StableId,
     /// 대상 객체 종류(추가·삭제 변경에만, 예: `node:frame`).
     pub object_kind: Option<String>,
-    /// 속성 경로([`property_path_label`], 속성 변경에만).
+    /// 속성 경로([`property_path_label`] registry 이름, 속성 변경에만).
     pub path: Option<String>,
+    /// numeric 속성 경로([`property_key_label`], 보조, 속성 변경에만).
+    pub key: Option<String>,
     /// 이전 값(속성 변경, 없으면 추가).
     pub old: Option<OpsValue>,
     /// 이후 값(속성 변경, 없으면 삭제).
@@ -105,6 +107,7 @@ impl From<&SemanticChange> for DiffEntry {
             object: change.object_id(),
             object_kind: None,
             path: None,
+            key: None,
             old: None,
             new: None,
             from: None,
@@ -126,6 +129,7 @@ impl From<&SemanticChange> for DiffEntry {
             | SemanticChange::ComponentInterfaceChange(c)
             | SemanticChange::AssetRefChange(c) => {
                 entry.path = Some(property_path_label(&c.path));
+                entry.key = Some(property_key_label(&c.path));
                 entry.old = c.old.as_ref().map(OpsValue::from);
                 entry.new = c.new.as_ref().map(OpsValue::from);
             }

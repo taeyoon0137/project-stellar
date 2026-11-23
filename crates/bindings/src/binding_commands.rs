@@ -9,6 +9,9 @@
 //!   type mismatch는 적용 전 `validate`에서 거부합니다.
 //! - **구조**: target 속성 하나에 binding 하나(VIII.6.2 [`BindingSet`]), 교체는 같은 target·owner 유지.
 //! - **cycle**: 새 source가 통합 graph에 cycle을 만들면 거부합니다(VIII.6.3).
+//! - **target 경로**: 호출자 검사([`BindingContext::targets`])가 거부한 target은 받지 않습니다. 문서 registry의 묶음
+//!   key(`bundle-key-reference`, ADR-0075 결정 1)가 그 예입니다. bindings는 crate graph상 문서 crate에 의존하지
+//!   않으므로 검사 함수(`stellar_document::css::bundle::bundle_key_reference`)를 호출자가 넘깁니다.
 //!
 //! 참조 타입은 토큰은 registry, binding이 있는 속성은 그 binding의 기대 타입, 나머지(binding 없는 속성·Component
 //! Property·환경 입력)는 호출자 제공자([`BindingContext::others`])로 해석합니다.
@@ -17,6 +20,8 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
+
+use stellar_core_types::property::PropertyPath;
 
 use stellar_expressions::ast::{ExpressionAst, ReferenceTarget};
 use stellar_expressions::typecheck::ReferenceTypes;
@@ -35,6 +40,23 @@ pub struct BindingContext<'a> {
     pub tokens: &'a TokenRegistry,
     /// 토큰·binding 있는 속성 밖의 참조 타입.
     pub others: &'a dyn ReferenceTypes,
+    /// target 속성 경로 검사(문서 registry 쪽 규칙, 호출자 제공).
+    pub targets: &'a dyn TargetCheck,
+}
+
+/// binding target 경로 검사. 문서 쪽 구현은 묶음 key 참조를 `bundle_key_reference`로 진단합니다.
+pub trait TargetCheck {
+    /// `target`을 binding target으로 받을 수 없으면 이유를 돌려줍니다.
+    fn reject_target(&self, target: &PropertyPath) -> Option<TargetRejection>;
+}
+
+/// target 거부 이유.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetRejection {
+    /// 진단 코드(예: `bundle-key-reference`).
+    pub code: &'static str,
+    /// 사람이 읽는 이유.
+    pub message: String,
 }
 
 /// 토큰·binding·호출자 제공자를 합친 참조 타입 view.
@@ -87,6 +109,13 @@ pub enum BindingCommandError {
     Type(BindingTypeError),
     /// 새 source가 cycle을 만듭니다.
     Cycle(BindingCycle),
+    /// target 경로를 호출자 검사가 거부했습니다.
+    Target {
+        /// target.
+        target: PropertyPath,
+        /// 이유.
+        rejection: TargetRejection,
+    },
 }
 
 impl fmt::Display for BindingCommandError {
@@ -95,6 +124,11 @@ impl fmt::Display for BindingCommandError {
             BindingCommandError::Set(error) => write!(f, "{error}"),
             BindingCommandError::Type(error) => write!(f, "{error}"),
             BindingCommandError::Cycle(cycle) => write!(f, "{cycle}"),
+            BindingCommandError::Target { target, rejection } => write!(
+                f,
+                "{}: binding target {target:?}: {}",
+                rejection.code, rejection.message
+            ),
         }
     }
 }
@@ -107,12 +141,18 @@ impl From<BindingSetError> for BindingCommandError {
     }
 }
 
-/// `binding`(적용 후 모습)을 현재 모음에서 검사합니다: cycle(자기 참조 포함) → type.
+/// `binding`(적용 후 모습)을 현재 모음에서 검사합니다: target 경로 → cycle(자기 참조 포함) → type.
 fn check_binding(
     binding: &ValueBinding,
     bindings: &BindingSet,
     context: &BindingContext<'_>,
 ) -> Result<(), BindingCommandError> {
+    if let Some(rejection) = context.targets.reject_target(binding.target()) {
+        return Err(BindingCommandError::Target {
+            target: binding.target().clone(),
+            rejection,
+        });
+    }
     let node = DependencyNode::Property(binding.target().clone());
     let dependencies: BTreeSet<DependencyNode> = binding
         .references()
@@ -302,6 +342,60 @@ mod tests {
         )])
     }
 
+    /// 모든 target을 받는 test 검사.
+    struct AnyTarget;
+
+    impl TargetCheck for AnyTarget {
+        fn reject_target(&self, _: &PropertyPath) -> Option<TargetRejection> {
+            None
+        }
+    }
+
+    /// 문서 묶음 key 검사를 흉내 낸 test 검사: key `PropertyKey(0x0106)`(Frame corner 묶음)을 거부합니다.
+    struct NoBundleKey;
+
+    impl TargetCheck for NoBundleKey {
+        fn reject_target(&self, target: &PropertyPath) -> Option<TargetRejection> {
+            target
+                .keys()
+                .contains(&PropertyKey(0x0106))
+                .then(|| TargetRejection {
+                    code: "bundle-key-reference",
+                    message: "longhand key로 다시 지정하세요".into(),
+                })
+        }
+    }
+
+    #[test]
+    fn rejected_target_fails_validate_before_type_and_cycle() {
+        let tokens = registry();
+        let others = others();
+        let context = BindingContext {
+            tokens: &tokens,
+            others: &others,
+            targets: &NoBundleKey,
+        };
+        let mut set = fixture();
+        let original = set.clone();
+        let target = PropertyPath::new(sid(2_000 + 5)).push(PropertyKey(0x0106));
+        let binding = ValueBinding::new(
+            BindingId::new(sid(4_000 + 5)),
+            target.clone(),
+            reference(600, ReferenceTarget::Property(prop(9))),
+            color_type(),
+            ScopeOwner::Node(NodeRef::new(sid(5_005))),
+        );
+        let command = BindingCommand::Create(binding);
+        let error = command.validate(&set, &context).unwrap_err();
+        assert!(matches!(
+            &error,
+            BindingCommandError::Target { target: t, rejection } if t == &target && rejection.code == "bundle-key-reference"
+        ));
+        assert!(error.to_string().starts_with("bundle-key-reference"));
+        assert_eq!(command.apply(&mut set, &context), Err(error));
+        assert_eq!(set, original, "실패 시 불변");
+    }
+
     fn round_trip(set: &mut BindingSet, context: &BindingContext<'_>, command: BindingCommand) {
         let original = set.clone();
         let inverse = command.apply(set, context).expect("적용");
@@ -320,6 +414,7 @@ mod tests {
         let context = BindingContext {
             tokens: &tokens,
             others: &others,
+            targets: &AnyTarget,
         };
         let mut set = fixture();
         // p2 ← p1(binding 있는 속성은 그 기대 타입으로 type 검사).
@@ -362,6 +457,7 @@ mod tests {
         let context = BindingContext {
             tokens: &tokens,
             others: &others,
+            targets: &AnyTarget,
         };
         let mut set = fixture();
         let original = set.clone();
@@ -414,6 +510,7 @@ mod tests {
         let context = BindingContext {
             tokens: &tokens,
             others: &others,
+            targets: &AnyTarget,
         };
         let mut set = fixture();
         set.insert(binding(

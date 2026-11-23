@@ -2,9 +2,9 @@
 
 - WBS: IX.11.22
 - 작업명: Frame `size`·`corner_radius`, modifier Shadow offset 합성 key를 longhand key로 나누고 옛 key를 묶음 key로 남김
-- 상태: 부분 완료 (`[~]`) — registry·command·묶음 key 진단·decode 동등성은 구현·검증했습니다. semantic snapshot의
-  Shadow offset 경로 교체와 3-way merge 실행 test는 소유 파일 밖(`crates/semantic-diff/src/build.rs`·`records.rs`,
-  `crates/semantic-merge/`)이라 하지 않았습니다.
+- 상태: 완료 (`[x]`) — registry·command·묶음 key 진단·decode 동등성, snapshot의 Shadow offset longhand 투영,
+  서로 다른 모서리·offset 축 3-way merge conflict 0 실행 test, Variant·binding validator의 묶음 key 검사 연결까지
+  끝났습니다(2026-11-23 integration-followups 보완).
 - 결정: ADR-0075 결정 1
 
 ## 필수 실행 환경
@@ -67,3 +67,21 @@
 - 후속: semantic-merge lane이 `build.rs`·`records.rs`에서 Shadow offset을 `SHADOW_OFFSET_X`·`SHADOW_OFFSET_Y`
   두 경로로 투영(옛 snapshot의 0x1092 읽기 유지)하고, 같은 Frame의 서로 다른 모서리를 양쪽에서 바꾼 3-way merge
   conflict 0 test를 추가합니다. bindings·variant validator가 `bundle_key_reference`를 호출합니다.
+
+## 후속 보완(2026-11-23, integration-followups)
+
+- `crates/semantic-diff/src/build.rs`: Shadow offset을 `SHADOW_OFFSET_X`·`SHADOW_OFFSET_Y` 두 경로로 투영합니다.
+  `records.rs`는 두 longhand를 읽고, 옛 묶음 경로(0x1092)는 longhand가 하나도 없을 때만 읽으며 섞이면 거부합니다
+  (Frame 크기·모서리와 같은 규칙, `shadow_offset_reads_longhands_and_old_bundle_only_alone`).
+- 3-way merge 실행 test: `crates/semantic-merge/tests/longhand_merge.rs`(같은 Frame의 TL·BR 모서리, Shadow offset
+  x·y를 양쪽에서 바꾸면 conflict 0, 같은 모서리를 다르게 바꾸면 그 경로 하나만 conflict)와
+  `crates/ops/src/candidate/file_merge/tests.rs::different_corners_of_one_frame_merge_without_conflict`(컴포넌트
+  원본 v4 파일의 모서리 줄을 양쪽에서 고친 병합).
+- 묶음 key 참조 검사 연결: `VariantOverrideSet::validate_references`가 property patch마다 `bundle_key_reference`를
+  불러 `VariantOverrideError::BundleKeyPatch`로 거부합니다. View Variant와 Component variant override는 같은 patch
+  묶음이라 이 한 곳이 둘 다 덮습니다. binding은 crate graph상 bindings가 문서 crate에 의존하지 않으므로
+  `BindingContext::targets`(`TargetCheck`)로 검사를 주입하고 `check_binding`이 type·cycle 전에 부릅니다
+  (`BindingCommandError::Target`). 문서와 bindings를 함께 쓰는 제품 호출자는 아직 없어 그 호출자를 만들 때
+  `bundle_key_reference`를 넘겨야 합니다.
+- 소유 밖 변경: `crates/document/src/component/variant_override.rs`(검사 호출과 오류 variant, test),
+  `crates/semantic-diff/src/stage.rs`·`status.rs`(test 기대 경로만).

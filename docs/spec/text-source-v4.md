@@ -20,13 +20,16 @@
 | 백분율·시간 | `<number>%`, `<number>ms` | `50%` |
 | 수 | 최단 10진(지수 없음) | `0.5` |
 | 정수 | 10진(앞자리 0 없음) | `9` |
-| 색 | `color(srgb r g b)`, `color(display-p3 r g b)`, 알파가 1이 아니면 `/ a` | `color(display-p3 0.25 0.5 1 / 0.75)` |
-| 행렬 | `matrix(a, b, c, d, tx, ty)` | `matrix(1, 0, 0, 1, 12.5, -4)` |
+| 색 | 8비트로 정확한 sRGB는 소문자 `#rrggbb`(알파가 1이 아니면 `#rrggbbaa`), 그 밖은 `color(srgb r g b)`·`color(display-p3 r g b)`, 알파가 1이 아니면 `/ a` | `#ff0000`, `color(display-p3 0.25 0.5 1 / 0.75)` |
+| 행렬 | 단위 행렬은 `none`, 그 밖은 `matrix(a, b, c, d, tx, ty)` | `matrix(1, 0, 0, 1, 12.5, -4)` |
 | 참조 | 소문자 하이픈 UUID, 없으면 `none` | |
 | 참조 목록 | 공백 구분 UUID, 비면 `none` | |
 | 순서 키 | byte당 소문자 hex 두 자리 | `80` |
 
-float은 `f32`가 정확히 왕복하는 최단 표기만 받습니다. `1440.0px`, `01`처럼 같은 값의 다른 표기는 거부합니다.
+값은 문서 CSS 값 formatter·parser(`stellar_document::css::value`, ADR-0075 결정 5)의 정규형입니다. 읽을 때 그 parser로
+해석한 값을 다시 정규형으로 쓴 결과가 입력과 byte 단위로 같아야 합니다. float은 `f32`가 정확히 왕복하는 최단 표기이고
+`-0`은 `0`입니다. `1440.0px`, `01`, `#FF0000`, `#f00`, `red`, `rgb(255, 0, 0)`, 8비트로 정확한 sRGB의 `color(srgb …)`처럼
+같은 값의 다른 표기는 거부합니다.
 
 ## node
 

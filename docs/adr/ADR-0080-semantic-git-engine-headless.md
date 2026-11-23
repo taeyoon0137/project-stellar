@@ -126,3 +126,21 @@ Accepted (2026-11-23). 엔진 우선 방향(2026-11-23, UI는 나중에 다시 �
 ## Migration
 
 - 없음. 기존 runtime staging 호출자는 코드 변경 없이 같은 이름을 씁니다.
+
+## 개정(2026-11-23, integration-followups)
+
+1. **staged 재검증과 `stellar validate`의 문서 판정은 한 함수.** `stellar_ops::validate::validate_records`(문서 레코드와
+   컴포넌트 정의 입력)를 공개하고 `validate_snapshot`과 `GitSession::validate_staged`가 모두 부릅니다. 그래서 문서
+   validator 위반(`document-invalid` 오류), 미해결 참조(`unresolved-reference` 경고), 정의 없는 인스턴스
+   (`missing-component-definition` 경고), 정의 원본 읽기 실패(`component-library-load` 오류) 규칙과 진단 문구가 같습니다.
+   이 개정 전 staged 재검증은 미해결 참조 경고를 내지 않았고, 정의 없는 인스턴스를 문서와 무관한 문구로 냈습니다. staged
+   재검증만의 검사(저장소 loader, 저장 왕복, semantic 무결성, 프로젝트 단위 컴포넌트 원본 `component-library`)는 그대로입니다.
+   정의는 인스턴스가 있는 문서에서만 한 번 읽습니다.
+2. **텍스트 원본 파일은 의미 단위 파일.** `SourceUnit::of_path`가 텍스트 원본 배치(ADR-0077 결정 1)를 generation 묶음에서
+   뺍니다. `design/document.stellar.yaml`, `design/assets/catalog.stellar.yaml`, `design/tokens/<slug>.stellar.yaml`,
+   View 파일 `design/pages/<page>/<view>.stellar.yaml`은 각각 파일 단위이고, View의 분할 Frame 파일
+   (`design/pages/<page>/<view>/**.stellar.yaml`)은 서로 `$ref`로 기대므로 그 View 파일 단위에 묶습니다(단위 ID는 View 파일
+   경로). generation 저장 경로와 배치에 없는 나머지 `design/` 경로는 지금처럼 `Generation`입니다. codec이 실제로 쓰는 모든
+   경로가 파일 단위로 분류되는지 test가 확인합니다. 한계: 페이지 목록(`document.stellar.yaml`)과 View 파일 사이 동반
+   판정(새 View 파일만 stage하는 경우)은 아직 없고, staged 재검증은 아직 generation만 읽어 텍스트 원본 정합을 보지 않습니다.
+   둘 다 텍스트 원본이 기본 저장이 되는 V.10.7 전환 때 검사에 넣습니다.

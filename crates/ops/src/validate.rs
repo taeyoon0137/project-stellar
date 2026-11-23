@@ -7,7 +7,11 @@
 //! |---|---|
 //! | 오류 | 문서 chunk를 읽거나 해석할 수 없음(`document-load`), validator 위반(`document-invalid`) |
 //! | 경고 | 미해결 참조(III.2.4, `unresolved-reference`): 문서는 유효하지만 대상이 없음 |
+//!
+//! 문서 하나의 판정은 [`validate_records`](레코드·컴포넌트 정의 입력)가 합니다. `stellar validate`와 Git commit 전
+//! staged snapshot 재검증(`git::GitSession::validate_staged`)이 같은 함수를 씁니다(ADR-0080 개정).
 
+use stellar_document::records::{DocumentRecords, NodePayload};
 use stellar_document::validate::validate_document;
 
 use crate::core_types::ids::StableId;
@@ -106,6 +110,86 @@ pub fn validate_snapshot_document(
 
 type DefinitionIds = std::collections::BTreeSet<StableId>;
 
+/// [`validate_records`]가 인스턴스 참조를 대조할 컴포넌트 정의.
+#[derive(Debug, Clone, Copy)]
+pub enum Definitions<'a> {
+    /// 읽은 정의 ID.
+    Known(&'a DefinitionIds),
+    /// 정의 원본을 읽지 못함(이유).
+    Failed(&'a str),
+}
+
+/// 문서 레코드 하나를 검증합니다: 문서 validator(VI.10.1) 위반은 `document-invalid` 오류, 미해결 참조는
+/// `unresolved-reference` 경고, 정의가 없는 인스턴스는 `missing-component-definition` 경고, 정의를 읽지 못하면
+/// `component-library-load` 오류입니다. `definitions`는 인스턴스가 있을 때만 한 번 부릅니다.
+pub fn validate_records<'a>(
+    document: StableId,
+    records: &DocumentRecords,
+    definitions: impl FnOnce() -> Definitions<'a>,
+) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    match validate_document(records) {
+        Ok(diagnostics) => {
+            for unresolved in &diagnostics.unresolved {
+                findings.push(Finding {
+                    severity: FindingSeverity::Warning,
+                    code: "unresolved-reference",
+                    document,
+                    message: format!(
+                        "{:?} 참조 {}의 대상이 없습니다(위치 {} {})",
+                        unresolved.expected(),
+                        unresolved.original_id(),
+                        unresolved.location().root(),
+                        property_path_label(unresolved.location()),
+                    ),
+                });
+            }
+        }
+        Err(error) => {
+            for violation in &error.violations {
+                findings.push(Finding {
+                    severity: FindingSeverity::Error,
+                    code: "document-invalid",
+                    document,
+                    message: violation.to_string(),
+                });
+            }
+        }
+    }
+    let mut instances = records
+        .nodes
+        .iter()
+        .filter_map(|n| match &n.payload {
+            NodePayload::ComponentInstance(i) => Some((n.id, i.component().id())),
+            _ => None,
+        })
+        .peekable();
+    if instances.peek().is_none() {
+        return findings;
+    }
+    match definitions() {
+        Definitions::Known(ids) => {
+            for (instance, definition) in instances.filter(|(_, d)| !ids.contains(d)) {
+                findings.push(Finding {
+                    severity: FindingSeverity::Warning,
+                    code: "missing-component-definition",
+                    document,
+                    message: format!(
+                        "인스턴스 {instance}가 참조하는 컴포넌트 정의 {definition}가 없습니다"
+                    ),
+                });
+            }
+        }
+        Definitions::Failed(reason) => findings.push(Finding {
+            severity: FindingSeverity::Error,
+            code: "component-library-load",
+            document,
+            message: reason.to_owned(),
+        }),
+    }
+    findings
+}
+
 fn definition_ids(snapshot: &ProjectSnapshot) -> Result<DefinitionIds, String> {
     // 정의의 원본은 design/components의 텍스트 원본 하나입니다(ADR-0059·ADR-0061). 기존
     // component-library chunk는 정의 출처로 인정하지 않습니다.
@@ -136,62 +220,12 @@ fn validate_with_definitions(
             };
         }
     };
-    match validate_document(&records) {
-        Ok(diagnostics) => {
-            for unresolved in &diagnostics.unresolved {
-                findings.push(Finding {
-                    severity: FindingSeverity::Warning,
-                    code: "unresolved-reference",
-                    document,
-                    message: format!(
-                        "{:?} 참조 {}의 대상이 없습니다(위치 {} {})",
-                        unresolved.expected(),
-                        unresolved.original_id(),
-                        unresolved.location().root(),
-                        property_path_label(unresolved.location()),
-                    ),
-                });
-            }
-        }
-        Err(error) => {
-            for violation in &error.violations {
-                findings.push(Finding {
-                    severity: FindingSeverity::Error,
-                    code: "document-invalid",
-                    document,
-                    message: violation.to_string(),
-                });
-            }
-        }
-    }
-    let instances = records.nodes.iter().filter_map(|n| match &n.payload {
-        stellar_document::records::NodePayload::ComponentInstance(i) => {
-            Some((n.id, i.component().id()))
-        }
-        _ => None,
-    });
-    for (instance, definition) in instances {
+    findings.extend(validate_records(document, &records, || {
         match definitions.get_or_init(|| definition_ids(snapshot)) {
-            Ok(ids) if ids.contains(&definition) => (),
-            Ok(_) => findings.push(Finding {
-                severity: FindingSeverity::Warning,
-                code: "missing-component-definition",
-                document,
-                message: format!(
-                    "인스턴스 {instance}가 참조하는 컴포넌트 정의 {definition}가 없습니다"
-                ),
-            }),
-            Err(e) => {
-                findings.push(Finding {
-                    severity: FindingSeverity::Error,
-                    code: "component-library-load",
-                    document,
-                    message: e.clone(),
-                });
-                break;
-            }
+            Ok(ids) => Definitions::Known(ids),
+            Err(reason) => Definitions::Failed(reason),
         }
-    }
+    }));
     DocumentValidation {
         document,
         node_count: Some(records.nodes.len()),
@@ -305,6 +339,55 @@ mod tests {
             2
         );
         assert_eq!(file_digest(&dir.path), before);
+    }
+
+    #[test]
+    fn record_judgment_reads_definitions_only_for_instances() {
+        use crate::core_types::reference::ComponentRef;
+        use stellar_document::component::instance::ComponentInstancePayload;
+        use stellar_document::records::NodeRecord;
+        let model = random_valid_document(320);
+        let document = model.document_id();
+        let mut records = model.to_records().unwrap();
+        let called = std::cell::Cell::new(0);
+        let empty = DefinitionIds::new();
+        let plain = validate_records(document, &records, || {
+            called.set(called.get() + 1);
+            Definitions::Known(&empty)
+        });
+        assert_eq!(called.get(), 0, "인스턴스가 없으면 정의를 읽지 않음");
+        assert!(plain.iter().all(|f| f.severity == FindingSeverity::Warning));
+        let root = records.definition.pages[0].views[0].root_frame;
+        let definition = StableId::new_v7(910_000, 0, 1);
+        records.nodes.push(NodeRecord {
+            id: StableId::new_v7(910_001, 0, 1),
+            parent: Some(root),
+            order_key: model.next_child_order_key(root),
+            visible: true,
+            locked: false,
+            display_name: "Placed".into(),
+            payload: NodePayload::ComponentInstance(ComponentInstancePayload::new(
+                ComponentRef::new(definition),
+            )),
+        });
+        let missing = validate_records(document, &records, || Definitions::Known(&empty));
+        assert_eq!(
+            missing
+                .iter()
+                .filter(|f| f.code == "missing-component-definition")
+                .count(),
+            1
+        );
+        let known: DefinitionIds = [definition].into();
+        assert!(
+            validate_records(document, &records, || Definitions::Known(&known))
+                .iter()
+                .all(|f| f.code != "missing-component-definition")
+        );
+        let failed = validate_records(document, &records, || Definitions::Failed("깨진 원본"));
+        assert!(failed.iter().any(|f| f.code == "component-library-load"
+            && f.severity == FindingSeverity::Error
+            && f.message == "깨진 원본"));
     }
 
     #[test]

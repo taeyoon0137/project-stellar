@@ -201,7 +201,7 @@ fn boolean_op_from_tag(tag: u8) -> Option<BooleanOp> {
 }
 
 /// blend mode 저장 tag(document `BlendMode` repr과 같은 값).
-fn blend_mode_from_tag(tag: u8) -> Option<BlendMode> {
+pub(crate) fn blend_mode_from_tag(tag: u8) -> Option<BlendMode> {
     [
         BlendMode::Normal,
         BlendMode::Multiply,

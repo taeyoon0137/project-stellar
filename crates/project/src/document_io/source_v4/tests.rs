@@ -240,8 +240,11 @@ fn unknown_keys_values_and_unrepresentable_meaning_are_rejected() {
         // 모르는 값과 canonical이 아닌 숫자 표기.
         text.replacen("\"1440px\"", "\"1440.0px\"", 1),
         text.replacen("\"1440px\"", "\"1440\"", 1),
-        text.replacen("color(srgb 1 0 0)", "#ff0000", 1),
-        text.replacen("color(srgb 1 0 0)", "color(srgb 1 0 0 / 1)", 1),
+        // ADR-0075 정규형이 아닌 색 표기(8비트 정확 sRGB는 `#rrggbb`).
+        text.replacen("\"#ff0000\"", "\"color(srgb 1 0 0)\"", 1),
+        text.replacen("\"#ff0000\"", "\"#FF0000\"", 1),
+        text.replacen("\"#ff0000\"", "\"#f00\"", 1),
+        text.replacen("\"#ff0000\"", "red", 1),
         text.replacen("border-top-style: solid", "border-top-style: dashed", 1),
         // 변마다 다른 테두리는 모델이 표현하지 않습니다.
         text.replacen(

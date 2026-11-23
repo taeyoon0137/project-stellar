@@ -25,16 +25,16 @@ nodes:
       {frame:0x0104}: "color(display-p3 0.25 0.5 1 / 0.75)"
       border-top-width: "1.5px"
       border-top-style: solid
-      border-top-color: "color(srgb 1 0 0)"
+      border-top-color: "#ff0000"
       border-right-width: "1.5px"
       border-right-style: solid
-      border-right-color: "color(srgb 1 0 0)"
+      border-right-color: "#ff0000"
       border-bottom-width: "1.5px"
       border-bottom-style: solid
-      border-bottom-color: "color(srgb 1 0 0)"
+      border-bottom-color: "#ff0000"
       border-left-width: "1.5px"
       border-left-style: solid
-      border-left-color: "color(srgb 1 0 0)"
+      border-left-color: "#ff0000"
       {frame:0x0107}: none
       {frame:0x0108}: "1440px"
       {frame:0x0109}: "900.5px"
@@ -64,7 +64,7 @@ nodes:
         kind: fill
         {modifier:0x1001}: "true"
         {modifier:0x1002}: "40"
-        {modifier:0x1071}: "color(srgb 1 0 0)"
+        {modifier:0x1071}: "#ff0000"
       -
         id: "00000000-0015-7000-8000-000000000015"
         kind: shadow

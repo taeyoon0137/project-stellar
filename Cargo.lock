@@ -498,6 +498,7 @@ dependencies = [
  "stellar-diagnostics",
  "stellar-document",
  "stellar-layout",
+ "stellar-project",
  "stellar-renderer-core",
  "stellar-runtime",
  "stellar-scene",

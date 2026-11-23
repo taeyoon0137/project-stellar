@@ -128,12 +128,15 @@ pub fn os_git_trust(root: &Path) -> GitTrust {
 
 /// Git index에 한 번에 포함하거나 빼는 원본 단위(UX.5.4).
 ///
-/// View 원본이 아직 generation(`design/current`·`design/generations/`·`design/objects/`)인 동안 모든 View는
-/// [`SourceUnit::Generation`] 묶음 하나입니다. 그 밖의 Stellar 파일(컴포넌트 YAML, `stellar.yaml`,
-/// `stellar.lock.yaml`, asset)은 파일 하나가 단위입니다.
+/// generation 저장(`design/current`·`design/generations/`·`design/objects/`)의 모든 View는
+/// [`SourceUnit::Generation`] 묶음 하나입니다. 텍스트 원본(ADR-0077 결정 1)은 의미 단위 파일 하나가 단위입니다:
+/// `design/document.stellar.yaml`(문서·페이지 목록), View 파일 `design/pages/<page>/<view>.stellar.yaml`(그 View의
+/// 분할 Frame 파일 `design/pages/<page>/<view>/**.stellar.yaml`을 함께 묶음), token set `design/tokens/<slug>.stellar.yaml`,
+/// asset catalog `design/assets/catalog.stellar.yaml`, 컴포넌트 `design/components/<이름>.stellar.yaml`(ADR-0080 개정).
+/// 그 밖의 Stellar 파일(`stellar.yaml`, `stellar.lock.yaml`, asset)도 파일 하나가 단위입니다.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SourceUnit {
-    /// `design/components/` 밖의 `design/` 전체(View generation 묶음).
+    /// generation 저장과, 텍스트 원본·컴포넌트가 아닌 나머지 `design/` 경로(View generation 묶음).
     Generation,
     /// Stellar 파일 하나(저장소 root 기준 경로).
     File(GitPath),
@@ -141,6 +144,39 @@ pub enum SourceUnit {
 
 /// 컴포넌트 텍스트 원본 폴더.
 pub const COMPONENTS_DIR: &str = "design/components/";
+
+/// 텍스트 원본 폴더(`design/`).
+const DESIGN_DIR: &str = "design/";
+/// 텍스트 원본 파일 확장자(ADR-0077 결정 1).
+const SOURCE_EXT: &str = ".stellar.yaml";
+
+/// 텍스트 원본 경로(`design/` 아래)의 의미 단위 파일. 원본이 아니면 `None`입니다. View의 분할 Frame 파일은 그
+/// View 파일로 묶습니다(`$ref`로 서로 기대므로 따로 stage하면 원본이 깨짐).
+fn text_source_unit(path: &[u8]) -> Option<GitPath> {
+    use stellar_project::document_io::source_v4::{catalog::CATALOG_PATH, project::DOCUMENT_PATH};
+    let relative = std::str::from_utf8(path.strip_prefix(DESIGN_DIR.as_bytes())?).ok()?;
+    if relative == DOCUMENT_PATH || relative == CATALOG_PATH {
+        return Some(GitPath::from_bytes(path));
+    }
+    if !relative.ends_with(SOURCE_EXT) {
+        return None;
+    }
+    let parts: Vec<&str> = relative.split('/').collect();
+    match parts.as_slice() {
+        ["tokens", name] if name.len() > SOURCE_EXT.len() => Some(GitPath::from_bytes(path)),
+        ["pages", page, view] if !page.is_empty() && view.len() > SOURCE_EXT.len() => {
+            Some(GitPath::from_bytes(path))
+        }
+        ["pages", page, view, rest @ ..]
+            if !page.is_empty() && !view.is_empty() && !rest.is_empty() =>
+        {
+            Some(GitPath::from_bytes(
+                format!("{DESIGN_DIR}pages/{page}/{view}{SOURCE_EXT}").as_bytes(),
+            ))
+        }
+        _ => None,
+    }
+}
 
 impl SourceUnit {
     /// 경로가 속한 원본 단위. non-Stellar 파일은 `None`입니다(raw Git status만).
@@ -150,7 +186,7 @@ impl SourceUnit {
             ProjectFileClass::Stellar(StellarFileKind::Design)
                 if !path.starts_with(COMPONENTS_DIR.as_bytes()) =>
             {
-                Some(SourceUnit::Generation)
+                Some(text_source_unit(path).map_or(SourceUnit::Generation, SourceUnit::File))
             }
             ProjectFileClass::Stellar(_) => Some(SourceUnit::File(GitPath::from_bytes(path))),
         }
@@ -1809,6 +1845,17 @@ impl StagedFinding {
     }
 }
 
+impl From<crate::validate::Finding> for StagedFinding {
+    fn from(finding: crate::validate::Finding) -> StagedFinding {
+        StagedFinding {
+            error: finding.severity == crate::validate::FindingSeverity::Error,
+            code: finding.code,
+            document: Some(finding.document),
+            message: finding.message,
+        }
+    }
+}
+
 /// staged snapshot 재검증 결과.
 #[derive(Debug, Clone)]
 pub struct StagedValidation {
@@ -1879,6 +1926,19 @@ impl GitSession {
                 return Ok(StagedValidation { index, findings });
             }
         };
+        // 컴포넌트 원본은 문서와 별개로 프로젝트 단위 검사이고, 읽은 정의는 문서 판정의 인스턴스 대조에 씁니다.
+        let definitions: Result<BTreeSet<StableId>, String> =
+            match read_project_library(root, ExternalAccess::MetadataOnly) {
+                Ok((library, _)) => Ok(library.iter().map(|e| e.definition().id).collect()),
+                Err(e) => {
+                    findings.push(StagedFinding::error(
+                        "component-library",
+                        None,
+                        e.to_string(),
+                    ));
+                    Err(e.to_string())
+                }
+            };
         let mut records = Vec::new();
         match project.document_ids() {
             Ok(ids) => {
@@ -1886,15 +1946,15 @@ impl GitSession {
                     match project.load_document(id).map(|d| d.model.to_records()) {
                         Ok(Ok(mut r)) => {
                             r.sort_canonical();
-                            if let Err(error) = stellar_document::validate::validate_document(&r) {
-                                for violation in &error.violations {
-                                    findings.push(StagedFinding::error(
-                                        "document-invalid",
-                                        Some(id),
-                                        violation.to_string(),
-                                    ));
-                                }
-                            }
+                            // 문서 판정은 `stellar validate`와 같은 함수입니다(ops::validate, 이중 구현 없음).
+                            findings.extend(
+                                crate::validate::validate_records(id, &r, || match &definitions {
+                                    Ok(ids) => crate::validate::Definitions::Known(ids),
+                                    Err(reason) => crate::validate::Definitions::Failed(reason),
+                                })
+                                .into_iter()
+                                .map(StagedFinding::from),
+                            );
                             records.push(r);
                         }
                         Ok(Err(e)) => findings.push(StagedFinding::error(
@@ -1914,7 +1974,7 @@ impl GitSession {
         }
         match saved_semantic_snapshot(&project) {
             Ok(semantic) => {
-                // 컴포넌트 정의는 문서 snapshot 밖 텍스트 원본이므로 인스턴스의 정의 참조는 아래에서 따로 봅니다.
+                // 컴포넌트 정의는 문서 snapshot 밖 텍스트 원본이므로 인스턴스의 정의 참조는 위의 문서 판정이 봅니다.
                 let instance_targets = component_refs(records.iter());
                 for violation in stellar_semantic_diff::validate::validate_snapshot(&semantic)
                     .into_iter()
@@ -1937,26 +1997,6 @@ impl GitSession {
             }
             Err(e) => findings.push(StagedFinding::error(
                 "storage-roundtrip",
-                None,
-                e.to_string(),
-            )),
-        }
-        match read_project_library(root, ExternalAccess::MetadataOnly) {
-            Ok((library, _)) => {
-                let defs: BTreeSet<StableId> = library.iter().map(|e| e.definition().id).collect();
-                for id in component_refs(records.iter()).difference(&defs) {
-                    findings.push(StagedFinding {
-                        error: false,
-                        code: "missing-component-definition",
-                        document: None,
-                        message: format!(
-                            "staged 인스턴스가 참조하는 컴포넌트 정의 {id}가 없습니다"
-                        ),
-                    });
-                }
-            }
-            Err(e) => findings.push(StagedFinding::error(
-                "component-library",
                 None,
                 e.to_string(),
             )),
@@ -2081,6 +2121,65 @@ mod tests {
             )))
         );
         assert_eq!(SourceUnit::of_path(b"README.md"), None);
+        // 텍스트 원본은 의미 단위 파일이고, View의 분할 Frame 파일은 그 View 파일로 묶습니다.
+        let file = |p: &[u8]| Some(SourceUnit::File(GitPath::from_bytes(p)));
+        for path in [
+            &b"design/document.stellar.yaml"[..],
+            b"design/assets/catalog.stellar.yaml",
+            b"design/tokens/brand.stellar.yaml",
+            b"design/pages/home/main.stellar.yaml",
+        ] {
+            assert_eq!(SourceUnit::of_path(path), file(path));
+        }
+        assert_eq!(
+            SourceUnit::of_path(b"design/pages/home/main/hero.stellar.yaml"),
+            file(b"design/pages/home/main.stellar.yaml")
+        );
+        assert_eq!(
+            SourceUnit::of_path(b"design/pages/home/main/hero/deep.stellar.yaml"),
+            file(b"design/pages/home/main.stellar.yaml")
+        );
+        // 분할 파일 경로는 단위 ID가 아닙니다(View 파일 단위가 대신함).
+        assert!(!SourceUnit::File(GitPath::from_bytes(
+            b"design/pages/home/main/hero.stellar.yaml"
+        ))
+        .is_well_formed());
+        // 원본 배치가 아닌 `design/` 경로는 generation 묶음 그대로입니다.
+        for path in [
+            &b"design/pages/home.stellar.yaml"[..],
+            b"design/tokens/a/b.stellar.yaml",
+            b"design/pages/home/notes.txt",
+            b"design/generations/1/manifest",
+        ] {
+            assert_eq!(
+                SourceUnit::of_path(path),
+                Some(SourceUnit::Generation),
+                "{path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_encoded_text_source_file_is_a_file_unit() {
+        // codec이 실제로 쓰는 경로가 모두 generation 묶음이 아닌 파일 단위입니다(배치 규칙 이중 정의 확인).
+        use stellar_project::document_io::source_v4::project::{encode, TextProject};
+        let model = crate::test_support::large_document(3);
+        let project = TextProject {
+            document: model,
+            components: Default::default(),
+            token_sets: Vec::new(),
+            images: Default::default(),
+        };
+        let encoded = encode(&project).unwrap();
+        assert!(encoded.files.keys().any(|p| p.starts_with("pages/")));
+        for relative in encoded.files.keys() {
+            let path = format!("design/{relative}");
+            let unit = SourceUnit::of_path(path.as_bytes());
+            assert!(
+                matches!(&unit, Some(SourceUnit::File(_))),
+                "{path}: {unit:?}"
+            );
+        }
     }
 
     #[test]

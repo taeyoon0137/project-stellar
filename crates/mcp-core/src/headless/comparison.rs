@@ -185,6 +185,7 @@ fn diff_entry(entry: &DiffEntry) -> JsonValue {
             JsonValue::opt_string(entry.object_kind.as_deref()),
         ),
         ("path", JsonValue::opt_string(entry.path.as_deref())),
+        ("key", JsonValue::opt_string(entry.key.as_deref())),
         ("old", opt_value(entry.old.as_ref())),
         ("new", opt_value(entry.new.as_ref())),
         ("from", diff_position(entry.from.as_ref())),

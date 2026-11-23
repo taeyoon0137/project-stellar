@@ -37,6 +37,7 @@ use stellar_document::modifier::{
     BlendMode, BooleanOp, ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack,
 };
 use stellar_document::node_kind::NodeKind;
+use stellar_document::payload_metadata::{image_keys, shape_keys};
 use stellar_document::record_codec::decode_payload;
 use stellar_document::records::{DocumentRecords, NodePayload, NodeRecord};
 use stellar_document::shape::{
@@ -218,6 +219,42 @@ impl<'a> Reader<'a> {
         Size2::new(w, h).map_err(|e| self.invalid(key, format!("{e:?}")))
     }
 
+    /// longhand `width`·`height` 두 경로에서 크기를 읽습니다.
+    fn size_of(&self, width: PropertyKey, height: PropertyKey) -> Result<Size2, ProjectionError> {
+        let [w] = self.floats(width)?;
+        let [h] = self.floats(height)?;
+        Size2::new(w, h)
+            .map_err(|e| self.invalid(if w < 0.0 { width } else { height }, format!("{e:?}")))
+    }
+
+    /// longhand x·y 두 경로에서 점을 읽습니다.
+    fn vec2_of(&self, x: PropertyKey, y: PropertyKey) -> Result<Vec2, ProjectionError> {
+        let [vx] = self.floats(x)?;
+        let [vy] = self.floats(y)?;
+        Vec2::new(vx, vy).map_err(|e| self.invalid(x, format!("{e:?}")))
+    }
+
+    /// Ellipse·Polygon bounds: 크기는 longhand `width`·`height`, 원점은 snapshot 전용 `origin_key`.
+    fn bounds(&self, origin_key: PropertyKey) -> Result<Rect, ProjectionError> {
+        let origin = self.vec2(origin_key)?;
+        let size = self.size_of(shape_keys::WIDTH, shape_keys::HEIGHT)?;
+        Ok(Rect::new(origin, size))
+    }
+
+    /// TL, TR, BR, BL longhand 네 경로에서 모서리 반경을 읽습니다.
+    fn corners_of(&self, longhands: [PropertyKey; 4]) -> Result<CornerRadius, ProjectionError> {
+        let mut radii = [0.0; 4];
+        for (slot, key) in radii.iter_mut().zip(longhands) {
+            let [value] = self.floats(key)?;
+            if value < 0.0 {
+                return Err(self.invalid(key, "음수 모서리 반경"));
+            }
+            *slot = value;
+        }
+        let [tl, tr, br, bl] = radii;
+        CornerRadius::new(tl, tr, br, bl).map_err(|e| self.invalid(longhands[0], format!("{e:?}")))
+    }
+
     fn frame_size(&self) -> Result<Size2, ProjectionError> {
         use keys::frame;
         if self.get(frame::SIZE).is_some() {
@@ -245,13 +282,6 @@ impl<'a> Reader<'a> {
         Vec2::new(x, y).map_err(|e| self.invalid(key, format!("{e:?}")))
     }
 
-    fn rect(&self, key: PropertyKey) -> Result<Rect, ProjectionError> {
-        let [x, y, w, h] = self.floats(key)?;
-        let origin = Vec2::new(x, y).map_err(|e| self.invalid(key, format!("{e:?}")))?;
-        let size = Size2::new(w, h).map_err(|e| self.invalid(key, format!("{e:?}")))?;
-        Ok(Rect::new(origin, size))
-    }
-
     fn transform(&self, key: PropertyKey) -> Result<Transform2D, ProjectionError> {
         let [a, b, c, d, tx, ty] = self.floats(key)?;
         Transform2D::new(a, b, c, d, tx, ty).map_err(|e| self.invalid(key, format!("{e:?}")))
@@ -273,17 +303,23 @@ impl<'a> Reader<'a> {
             }
             return self.corner_radius(frame::CORNER_RADIUS);
         }
-        let mut radii = [0.0; 4];
-        for (slot, key) in radii.iter_mut().zip(frame::BORDER_RADIUS_LONGHANDS) {
-            let [value] = self.floats(key)?;
-            if value < 0.0 {
-                return Err(self.invalid(key, "음수 모서리 반경"));
+        self.corners_of(frame::BORDER_RADIUS_LONGHANDS)
+    }
+
+    /// Shadow offset: longhand x·y 두 경로. 옛 묶음 경로(0x1092)는 longhand가 하나도 없을 때만 읽습니다(Frame 크기·
+    /// 모서리와 같은 규칙, 섞이면 거부).
+    fn shadow_offset(&self) -> Result<Vec2, ProjectionError> {
+        use keys::modifier as m;
+        if self.get(m::SHADOW_OFFSET).is_some() {
+            if m::SHADOW_OFFSET_LONGHANDS
+                .iter()
+                .any(|&key| self.get(key).is_some())
+            {
+                return Err(self.bad(m::SHADOW_OFFSET));
             }
-            *slot = value;
+            return self.vec2(m::SHADOW_OFFSET);
         }
-        let [tl, tr, br, bl] = radii;
-        CornerRadius::new(tl, tr, br, bl)
-            .map_err(|e| self.invalid(frame::CORNER_RADIUS, format!("{e:?}")))
+        self.vec2_of(m::SHADOW_OFFSET_X, m::SHADOW_OFFSET_Y)
     }
 
     fn small(&self, key: PropertyKey) -> Result<u8, ProjectionError> {
@@ -404,15 +440,15 @@ fn shape_payload(r: &Reader<'_>) -> Result<ShapeGeometry, ProjectionError> {
         .map_err(|e| r.invalid(keys::SHAPE_KIND, format!("{e:?}")))?;
     Ok(match kind {
         ShapeKind::Rectangle => ShapeGeometry::Rectangle(RectangleParams {
-            size: r.size(keys::RECT_SIZE)?,
-            corner_radius: r.corner_radius(keys::RECT_CORNER_RADIUS)?,
+            size: r.size_of(shape_keys::WIDTH, shape_keys::HEIGHT)?,
+            corner_radius: r.corners_of(shape_keys::BORDER_RADIUS_LONGHANDS)?,
         }),
         ShapeKind::Ellipse => ShapeGeometry::Ellipse(EllipseParams {
-            bounds: r.rect(keys::ELLIPSE_BOUNDS)?,
+            bounds: r.bounds(keys::ELLIPSE_BOUNDS)?,
         }),
         ShapeKind::Line => ShapeGeometry::Line(LineParams {
-            start: r.vec2(keys::LINE_START)?,
-            end: r.vec2(keys::LINE_END)?,
+            start: r.vec2_of(shape_keys::X1, shape_keys::Y1)?,
+            end: r.vec2_of(shape_keys::X2, shape_keys::Y2)?,
             cap: match r.uint(keys::LINE_CAP)? {
                 0 => LineCap::Butt,
                 1 => LineCap::Round,
@@ -428,7 +464,7 @@ fn shape_payload(r: &Reader<'_>) -> Result<ShapeGeometry, ProjectionError> {
                 .map_err(|e| r.invalid(keys::POLYGON_ROTATION, format!("{e:?}")))?;
             let [radius] = r.floats::<1>(keys::POLYGON_CORNER_RADIUS)?;
             ShapeGeometry::Polygon(
-                PolygonParams::new(r.rect(keys::POLYGON_BOUNDS)?, sides, rotation, radius)
+                PolygonParams::new(r.bounds(keys::POLYGON_BOUNDS)?, sides, rotation, radius)
                     .map_err(|e| r.invalid(keys::POLYGON_SIDES, format!("{e:?}")))?,
             )
         }
@@ -448,7 +484,7 @@ fn image_payload(r: &Reader<'_>) -> Result<ImagePayload, ProjectionError> {
     };
     Ok(ImagePayload {
         asset: AssetRef::new(r.id(keys::IMAGE_ASSET)?),
-        size: r.size(keys::IMAGE_SIZE)?,
+        size: r.size_of(image_keys::WIDTH, image_keys::HEIGHT)?,
         fit: match r.uint(keys::IMAGE_FIT)? {
             0 => FitMode::Fill,
             1 => FitMode::Contain,
@@ -509,7 +545,7 @@ fn modifier_payload(
         },
         ModifierKind::Shadow => ModifierPayload::Shadow {
             color: color(m::SHADOW_COLOR)?,
-            offset: r.vec2(m::SHADOW_OFFSET)?,
+            offset: r.shadow_offset()?,
             blur: r.finite(m::SHADOW_BLUR)?,
         },
         ModifierKind::Blur => ModifierPayload::Blur {
@@ -755,6 +791,50 @@ mod tests {
     }
 
     #[test]
+    fn shadow_offset_reads_longhands_and_old_bundle_only_alone() {
+        use keys::modifier as m;
+        let px = |v: f32| SemanticValue::Floats(vec![FiniteF32::new(v).unwrap()]);
+        let mut object = SemanticObject::new(
+            sid(60),
+            ObjectKind::Modifier(ModifierKind::Shadow),
+            Origin::Document(sid(1)),
+        );
+        let color = SemanticValue::Typed(TypedValue::Color(
+            Color::new(ColorSpace::Srgb, 0.0, 0.0, 0.0, 0.5).unwrap(),
+        ));
+        for (key, value) in [
+            (m::SHADOW_COLOR, color),
+            (m::SHADOW_BLUR, px(4.0)),
+            (m::SHADOW_OFFSET_X, px(2.0)),
+            (m::SHADOW_OFFSET_Y, px(-3.0)),
+        ] {
+            object.insert_property(object.path(&[key]), value).unwrap();
+        }
+        let offset = |object: &SemanticObject| match modifier_payload(
+            &Reader { object },
+            ModifierKind::Shadow,
+        ) {
+            Ok(ModifierPayload::Shadow { offset, .. }) => Ok((offset.x(), offset.y())),
+            Ok(other) => panic!("{other:?}"),
+            Err(error) => Err(error),
+        };
+        assert_eq!(offset(&object), Ok((2.0, -3.0)));
+        // 옛 묶음 경로와 longhand가 섞이면 거부합니다.
+        let packed = object.path(&[m::SHADOW_OFFSET]);
+        object
+            .insert_property(
+                packed,
+                SemanticValue::Floats(vec![FiniteF32::ONE, FiniteF32::ONE]),
+            )
+            .unwrap();
+        assert!(offset(&object).is_err());
+        for key in m::SHADOW_OFFSET_LONGHANDS {
+            object.remove_property(&object.path(&[key])).unwrap();
+        }
+        assert_eq!(offset(&object), Ok((1.0, 1.0)));
+    }
+
+    #[test]
     fn old_radius_snapshot_restores_only_without_longhands() {
         let records = head_records();
         let mut snapshot = build(&records);
@@ -856,7 +936,7 @@ mod tests {
         // rect 크기 형식 오류.
         let mut broken = snapshot.clone();
         let mut rect = broken.remove(sid(11)).unwrap();
-        rect.set_property(rect.path(&[keys::RECT_SIZE]), SemanticValue::Bool(true))
+        rect.set_property(rect.path(&[shape_keys::WIDTH]), SemanticValue::Bool(true))
             .unwrap();
         broken.insert(rect).unwrap();
         assert_eq!(
@@ -864,7 +944,7 @@ mod tests {
             ProjectionError {
                 object: sid(11),
                 reason: ProjectionFailure::BadProperty {
-                    key: keys::RECT_SIZE
+                    key: shape_keys::WIDTH
                 }
             }
         );
@@ -872,11 +952,8 @@ mod tests {
         let mut broken = snapshot.clone();
         let mut rect = broken.remove(sid(11)).unwrap();
         rect.set_property(
-            rect.path(&[keys::RECT_SIZE]),
-            SemanticValue::Floats(vec![
-                FiniteF32::new(-1.0).unwrap(),
-                FiniteF32::new(1.0).unwrap(),
-            ]),
+            rect.path(&[shape_keys::WIDTH]),
+            SemanticValue::Floats(vec![FiniteF32::new(-1.0).unwrap()]),
         )
         .unwrap();
         broken.insert(rect).unwrap();

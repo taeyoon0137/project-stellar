@@ -76,3 +76,23 @@
   소유 밖). CSS 이름은 `stellar css`와 `stellar_semantic_diff::keys::display_name`으로 얻습니다.
 - `docs/guides/stellar-cli.md`에 `css` 명령 설명을 더하는 일은 문서 소유 범위 밖이라 하지 않았습니다(도움말에는 있음).
 - 셸 클립보드 연결과 MCP 도구 노출은 UI 재설계·agent-protocol-mcp lane 범위입니다.
+
+## 후속 보완(2026-11-23, integration-followups)
+
+- 위 "차이"의 범위 한계를 메웠습니다. `crates/commands/src/css_value.rs`가 속성 패널 행이 없는 registry 속성도 복사·
+  붙여넣습니다: `transform`(선형 부분 `matrix(a, b, c, d, 0, 0)`, Frame은 payload, 그 밖은 위치 Transform modifier),
+  `stroke-linecap`(Line), `image-rendering`(Image), `shadow-color`·`shadow-blur`·`shadow-offset-x`·`shadow-offset-y`,
+  `blur-radius`, `mix-blend-mode`, `opacity`(그 종류의 첫 활성 modifier, 없으면 새로 넣음). 이름·값 문법은 registry
+  항목에서 읽고 값은 registry parser·formatter를 씁니다. CSS longhand inventory에 없는 이름(`shadow-*`, `blur-radius`)은
+  Stellar 전용 표시를 답니다.
+- 새 modifier 순서: CSS 고정 적용 순서(속성 모델 9.1, transform → paint → filter → clip → mask → opacity →
+  mix-blend-mode)에서 같거나 앞 단계인 마지막 항목 뒤에 넣습니다(`modifier_ops::css_insert_order`).
+- `transform`의 이동 성분은 위치(`left`·`top`)라 받지 않습니다(`unsupported-value`). 같은 종류 modifier가 여럿이면 첫 활성
+  하나만 선언으로 나타냅니다. 위치 Transform modifier 앞에 다른 활성 Transform이 있으면 표시 값은 위치 modifier 하나의
+  선형 부분입니다.
+- 검증: `css_value::tests::registry_properties_without_panel_rows_round_trip_through_copy_and_paste`(값을 바꾼 뒤 복사해
+  둔 블록을 붙이면 semantic snapshot이 복사 시점과 같음, 다른 도형에 붙이면 같은 효과 선언, CSS 순서 stack, undo 한 번
+  복원, 이동 성분·종류 밖 거부). `cargo test -p stellar-commands` 162 passed. `stellar apply`의 `set-property`도 같은
+  경로를 씁니다.
+- 소유 밖 최소 변경: `crates/commands/src/property.rs`의 `blend_mode_from_tag`를 `pub(crate)`로 바꿈(같은 tag 해석을 두 번
+  쓰지 않으려고).
