@@ -36,6 +36,23 @@ Accepted (2026-11-23).
      않고 `SkipReason::UnsupportedModifiers`로 남깁니다(근사하지 않음). blend tag는 문서·scene이 같습니다.
    - Frame은 효과 modifier만 가진 stack을 평가합니다. 다른 종류가 있으면 전처럼 skip합니다. Boolean operand의 효과는
      결과에 흡수되어 쓰지 않습니다. 효과 적용 순서는 renderer가 정합니다(ADR-0102 결정 5).
+3. **pass compiler가 효과 pass와 합성 program을 만듭니다(`pass_compiler::effects`).** draw 순서·layer 경계·clip 결정
+   (XI.4.2\~XI.4.4) 뒤, 효과가 필요한 draw와 layer에 graph pass를 더하고 backend가 실행할 값을 `FramePlan`에 붙입니다
+   (`effect_passes`·`draw_effects`·`layer_effects`). 수식과 순서는 ADR-0102 결정 5입니다.
+   - **합성 program**: 모든 draw의 blend mode를 `blend::resolve_or_normal`로 풀고(목록 밖 tag는
+     `render.blend.unsupported_mode` 진단을 `blend_diagnostics`에 남기고 Normal), `composite_program`·`composite_blend_state`로
+     program과 blend state를 정합니다. layer 합성 draw는 경계 node 자기 blend가 Normal이 아니면 그것, 아니면 접힌 blend입니다.
+     layer 합성 draw에는 경계 node 불투명도를 함께 둡니다(접힌 불투명도와 곱함).
+   - **layer blur**: layer pass 뒤 `GaussianBlur` 가로·세로 pass, 부모는 세로 결과를 읽습니다. σ = 반경.
+   - **drop shadow**: shadow가 있는 내용 draw마다 node 자기 내용(shadow 제외)을 그리는 원본 pass 하나, shadow마다 가로(alpha를
+     퍼뜨림)·세로(shadow 색을 곱함) blur pass입니다. target은 내용 draw 바로 아래에 offset만큼 옮긴 결과를 목록 순서(앞이 아래)로
+     합성합니다. σ = blur 반경 / 2. scene의 shadow는 node 자기 내용의 shadow입니다(자식 제외, Frame은 CSS `box-shadow`와 같음).
+   - **clip mask**: clip 방식이 `ClipPlan::Mask`인 draw는 복합 clip coverage(나열한 clip의 곱)를 `R8Unorm`에 그리는 pass를
+     두고 draw가 그것을 곱합니다.
+   - **device 값**: σ·offset은 node local 단위입니다. world → device 선형 부분 `M`으로 offset은 `M·offset`, σ는 축마다
+     `σ·√(a² + c²)`, `σ·√(b² + d²)`입니다. `M·Mᵀ`가 대각(축 정렬, 회전 + 균일 배율)이면 정확하고, 기울임·비균일 회전은 대각
+     성분만 쓰는 근사이며 `render.effect.anisotropic_blur` 진단을 남깁니다. σ가 `MAX_SIGMA`(64)를 넘으면 상한으로 그리고
+     `render.effect.blur_too_large` 진단을 남깁니다. 진단이 있는 plan을 정확해야 하는 곳(내보내기)은 거부합니다.
 
 5. **`stellar export png`와 MCP `document.export_png`(ADR-0103 결정 8을 풂).** 두 경로 모두
    `stellar_ops::export_png::view`의 한 함수(`prepare_view_png`)를 씁니다. 저장 generation의 문서 View → 결정 1의 scene 변환 →
@@ -65,6 +82,8 @@ Accepted (2026-11-23).
 ## Consequences
 
 - 앱 runtime, xtask replay, headless 도구가 같은 변환 함수를 씁니다.
+- frame plan이 효과 pass를 graph에 포함하므로 transient 수명·메모리 계산이 효과 texture를 셉니다. shadow가 있는 draw마다 원본
+  layer 하나와 shadow마다 blur texture 둘이 생깁니다.
 
 ## Compatibility
 
@@ -73,7 +92,9 @@ Accepted (2026-11-23).
 
 ## Performance
 
-- 변환 코드는 그대로 옮겼습니다. 성능 변화는 없습니다.
+- 변환 코드는 그대로 옮겼습니다.
+- pass compiler는 draw마다 합성 program 하나를 풀고(`DrawEffects`, 할당 없음), 효과가 있는 draw·layer에만 pass를 더합니다.
+  효과가 없는 scene의 graph는 이전과 같습니다.
 
 ## Security
 
