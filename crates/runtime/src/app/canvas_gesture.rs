@@ -192,16 +192,9 @@ pub(crate) struct CanvasGestureState {
     deferred: Option<DeferredPick>,
     /// 마지막으로 계산한 선택 상자. scene과 선택이 같으면 다시 계산하지 않습니다(팬·줌 게시).
     items: Option<(Arc<CanvasScene>, Selection, Arc<[CanvasSelectionItem]>)>,
-    /// 창에서 View별로 고른 도구(1 Move ... 10 Zoom). 문서·history에는 기록하지 않습니다.
-    tools: std::collections::BTreeMap<StableId, u8>,
 }
 
 impl CanvasGestureState {
-    pub(crate) fn tool(&self, view: Option<StableId>) -> u8 {
-        view.and_then(|id| self.tools.get(&id).copied())
-            .unwrap_or(1)
-    }
-
     /// 표시한 선택의 상자. scene과 선택이 바뀔 때만 다시 계산합니다.
     pub(crate) fn selection_items(
         &mut self,
@@ -225,27 +218,6 @@ impl CanvasGestureState {
 }
 
 impl AppRuntime {
-    /// 활성 View의 도구를 창 상태에만 기록합니다. 도구 선택은 문서 편집이 아닙니다.
-    pub fn set_canvas_tool(
-        &self,
-        session: WindowSessionHandle,
-        view: StableId,
-        tool: u8,
-    ) -> Result<RequestId, RequestError> {
-        self.submit(move |ctx, request| {
-            let entry = ctx
-                .app_sessions_mut()
-                .windows
-                .get_mut(&session)
-                .ok_or_else(|| unknown_window(session))?;
-            if !(1..=10).contains(&tool) || entry.session.tabs().active_view() != Some(view) {
-                return Err(stale_view());
-            }
-            entry.gesture.tools.insert(view, tool);
-            Ok(RuntimeEvent::WindowViewChanged { request, session })
-        })
-    }
-
     /// 셸이 그린 행에서 고른 선택을 코어 규칙(직계 자식, Shift 넣고 빼기, ⌘ 깊은 선택, 영역)으로 정해 기록합니다.
     pub fn canvas_pick(
         &self,

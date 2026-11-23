@@ -2,7 +2,8 @@ import AppKit
 
 /// 캔버스 도구 집합(툴바 도구 그룹·Insert/View 메뉴·캔버스 단일 키가 공유).
 ///
-/// 선언 순서가 하단 도구 막대와 코어 도구 tag(1부터)의 순서입니다(10종). 선택은 코어의 창별 View 상태에 기록합니다.
+/// 선언 순서가 하단 도구 막대의 순서입니다(10종). 현재 도구는 셸이 보관하고, 포인터 해석(핸들 상자·반경·Line·생성
+/// 클릭)은 코어 `gesture_math`가 계산합니다. 코어 도구 상태 기계(XII.3.6)는 UI 재설계 때 정합니다.
 enum CanvasTool: String, CaseIterable {
     case move
     case frame

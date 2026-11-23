@@ -189,7 +189,7 @@ typedef struct StellarWindowSessionInfo {
     uint8_t window_id[16];    /* 창 편집 session id(UUID 바이트 순서) */
     uint8_t document_id[16];  /* 작업 문서 StableId(없으면 0) */
     uint32_t autosave;        /* STELLAR_AUTOSAVE_* (v3) */
-    uint32_t reserved;        /* 활성 View 도구 tag: 1 Move ... 10 Zoom (기존 reserved 공간) */
+    uint32_t reserved;        /* 0 (v3) */
 } StellarWindowSessionInfo;
 
 /* v1: 좌상단 원점 logical point. world/camera는 CGAffineTransform 순서 (a,b,c,d,tx,ty). */
@@ -497,7 +497,6 @@ typedef struct StellarCanvasSelectionItem { uint8_t id[16]; uint32_t kind, flags
 typedef struct StellarGesturePreview { uint32_t kind; int32_t handle; uint32_t flags; float rect[4], line[4], radii[4], point[2]; } StellarGesturePreview;
 StellarStatus stellar_canvas_gesture_preview(const StellarGesturePreview *input, StellarGesturePreview *output);
 StellarStatus stellar_canvas_arrow_nudge(uint16_t key_code, uint8_t shift, float out_delta[2]);
-StellarStatus stellar_window_canvas_set_tool(uint64_t handle, uint64_t session, const uint8_t view[16], uint8_t tool, uint64_t *out_request);
 typedef struct StellarSnapCandidate { float rect[4]; uint32_t kind; } StellarSnapCandidate;
 typedef struct StellarSnapResult { float rect[4]; float guide_x, guide_y, distance_x, distance_y; uint32_t flags; } StellarSnapResult;
 StellarStatus stellar_canvas_snap(const float rect[4], uint32_t mode, int32_t handle, float scale, float pixel_origin_x, float pixel_origin_y, float pixel_step, uint32_t flags, const StellarSnapCandidate *candidates, size_t count, StellarSnapResult *output);

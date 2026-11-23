@@ -93,39 +93,6 @@ pub unsafe extern "C" fn stellar_canvas_arrow_nudge(
     })
 }
 
-/// 활성 View의 도구를 창 상태에 기록합니다. 1 Move부터 10 Zoom까지입니다.
-/// # Safety
-/// `view`는 16바이트를 읽을 수 있어야 하고 `out_request`는 null이거나 u64를 쓸 수 있어야 합니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_window_canvas_set_tool(
-    handle: u64,
-    session: u64,
-    view: *const [u8; 16],
-    tool: u8,
-    out_request: *mut u64,
-) -> StellarStatus {
-    ffi_guard(move || {
-        if !out_request.is_null() {
-            unsafe { *out_request = 0 };
-        }
-        if view.is_null() {
-            return StellarStatus::NullPointer;
-        }
-        let view = StableId::from_bytes(unsafe { *view });
-        let Ok(mut reg) = registry().lock() else {
-            return StellarStatus::Internal;
-        };
-        let Some(rt) = reg.live.get_mut(&handle) else {
-            return StellarStatus::InvalidHandle;
-        };
-        let result = match rt.app() {
-            Ok(app) => app.set_canvas_tool(WindowSessionHandle(session), view, tool),
-            Err(status) => return status,
-        };
-        unsafe { rt.finish_request(result, out_request) }
-    })
-}
-
 /// 스냅 결과: 조정 상자, 가이드 x/y, 형제 거리 x/y, 표시 bit.
 #[repr(C)]
 pub struct StellarSnapResult {

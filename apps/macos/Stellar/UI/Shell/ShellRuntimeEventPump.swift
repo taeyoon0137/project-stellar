@@ -224,11 +224,6 @@ final class ShellRuntimeEventPump {
                                         delta: delta, flags: flags), completion)
     }
 
-    func setCanvasTool(session: UInt64, view: UUID, tool: UInt8,
-                       completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
-        register(CoreRuntime.setCanvasTool(handle: runtimeHandle, session: session, view: view, tool: tool), completion)
-    }
-
     func renameLayer(session: UInt64, view: UUID, node: UUID, revision: UInt64, name: String,
                      completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.renameLayer(handle: runtimeHandle, session: session, view: view,
