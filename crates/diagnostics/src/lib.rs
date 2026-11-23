@@ -21,6 +21,24 @@ pub mod latency_scenario;
 /// 단계 trace record schema (XI.2.6).
 pub mod trace_schema;
 
+/// 로컬 diagnostic store schema: crash·renderer error·performance·feature failure count (XVI.8.1, ADR-0109).
+pub mod store;
+
+/// 진단 번들 형식, 전송 전 preview와 수동 내보내기 (XVI.8.2, XVI.8.4, ADR-0109).
+pub mod bundle;
+
+/// 금지 필드 scanner (XVI.8.2, ADR-0109).
+pub mod scanner;
+
+/// 텔레메트리 동의 상태 NotAsked·Declined·Granted (XVI.8.3, ADR-0109).
+pub mod consent;
+
+/// 동의에 묶인 전송 대기열과 철회 (XVI.8.4, XVI.8.5, ADR-0109).
+pub mod consent_gate;
+
+/// 진단 schema feature inventory: 꺼진 기능(터미널·MCP·에이전트) field 부재 검사 (XVI.8.6, ADR-0109).
+pub mod store_inventory;
+
 /// 상호작용 성능 예산 reader (XVI.4.1).
 pub mod budget;
 

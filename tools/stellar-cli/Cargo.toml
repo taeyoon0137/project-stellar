@@ -17,6 +17,8 @@ path = "src/main.rs"
 [dependencies]
 # 프로젝트 검사·조회(`inspect`, `query`): probe, snapshot, 문서 트리, node 속성.
 stellar-ops = { path = "../../crates/ops" }
+# 로컬 진단 store·번들·scanner·동의(`diagnostics`, XVI.8).
+stellar-diagnostics = { path = "../../crates/diagnostics" }
 
 [dev-dependencies]
 # 통합 테스트가 저장된 프로젝트 fixture를 만들 때만 씁니다(ops test-support).
