@@ -250,6 +250,19 @@ pub const CONTEXT: ToolDef = ToolDef {
     grant: Permission::Read,
 };
 
+/// 문서 Frame 가이드·레이아웃 그리드와 View 변수·Variant 조회(`stellar guides`, ADR-0126).
+pub const GUIDES: ToolDef = ToolDef {
+    name: "document.guides",
+    title: "Guides and view variables",
+    description: "문서의 Frame 가이드·레이아웃 그리드(텍스트 원본 줄과 Frame 크기로 계산한 트랙)와 View 변수·Variant(값 문장·조건·진단)를 돌려줍니다. node를 주면 그 Frame의 가이드만 돌려줍니다",
+    input_schema: r#"{"type":"object","additionalProperties":false,"required":["document"],"properties":{"document":{"type":"string"},"node":{"type":"string"}}}"#,
+    read_only: true,
+    destructive: false,
+    idempotent: true,
+    availability: Availability::All,
+    grant: Permission::Read,
+};
+
 /// 정의된 문서 tool(고정 순서).
 pub const DOCUMENT_TOOLS: &[ToolDef] = &[
     SEMANTIC_DIFF,
@@ -265,6 +278,7 @@ pub const DOCUMENT_TOOLS: &[ToolDef] = &[
     PROPOSE_CSS_PASTE,
     PASTE_CSS,
     CONTEXT,
+    GUIDES,
 ];
 
 /// 저장 파일 기준 의미 단위 Git 상태(`stellar git status`).
@@ -527,6 +541,7 @@ mod tests {
                 "document.copy_css",
                 "document.propose_css_paste",
                 "document.context",
+                "document.guides",
                 "git.status",
                 "git.semantic_conflicts",
             ]

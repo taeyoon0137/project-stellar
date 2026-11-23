@@ -63,6 +63,9 @@ pub mod css;
 /// `context`: Component Context 선언·진단·위치별 해석 조회 (XXX.7.11, ADR-0114).
 pub mod context;
 
+/// `guides`: Frame 가이드·레이아웃 그리드와 View 변수·Variant 조회 (XII.10.19·XII.10.20·XVI.11.1, ADR-0126).
+pub mod guides;
+
 /// `style-defaults`: 기본값 세트 목록·값 표·선택과 값 출처 (SD.5·SD.6, ADR-0086).
 pub mod style_defaults;
 
