@@ -157,6 +157,10 @@ pub struct DocumentModel {
     /// node별 명시 layout longhand(IX.11.6, ADR-0086). node를 지워도 record는 StableId로 남아 있다가 같은 id의
     /// node가 되돌아오면(삭제 undo) 다시 보입니다. 조회·영속 레코드에는 살아 있는 node의 record만 나옵니다.
     layouts: BTreeMap<StableId, LayoutRecord>,
+    /// 활성 기본값 세트 이름(ADR-0082 결정 4, ADR-0086 결정 10). 원본은 `stellar.yaml`의 `style_defaults`이고,
+    /// 모델은 연 쪽이 넣어 준 값을 거울로 들고 있어 `SetStyleDefaults` command가 undo 한 번으로 되돌아갑니다.
+    /// 영속 레코드([`DocumentModel::to_records`])에는 나오지 않습니다.
+    style_defaults: String,
 }
 
 fn remove_non_node_id(ids: &mut BTreeMap<StableId, usize>, id: StableId) {
@@ -191,7 +195,18 @@ impl DocumentModel {
             modifiers: BTreeMap::new(),
             references: ReferenceIndex::new(),
             layouts: BTreeMap::new(),
+            style_defaults: crate::css::style_defaults::DEFAULT_SET.to_string(),
         }
+    }
+
+    /// 활성 기본값 세트 이름(모델의 거울 값).
+    pub fn style_defaults(&self) -> &str {
+        &self.style_defaults
+    }
+
+    /// 활성 기본값 세트 이름을 바꾸고 이전 이름을 돌려줍니다. 세트가 있는지는 호출자가 확인합니다.
+    pub fn set_style_defaults(&mut self, name: impl Into<String>) -> String {
+        std::mem::replace(&mut self.style_defaults, name.into())
     }
 
     /// 살아 있는 node의 명시 layout record(IX.11.6). 명시 값이 없으면 `None`입니다.

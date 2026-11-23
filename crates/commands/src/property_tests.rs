@@ -44,6 +44,10 @@ fn command_round_trip(kind: CommandKind) -> usize {
             // random document는 인스턴스를 만들지 않으므로 대상 인스턴스를 하나 넣습니다.
             seed_instance(&mut state, &mut ids);
         }
+        if kind == CommandKind::UnsetProperty {
+            // random document에는 명시 layout longhand가 없으므로 하나 둡니다(ADR-0086).
+            seed_layout(&mut state, &mut rng, &mut ids);
+        }
         // 문서마다 여러 후보를 시도해 적용 가능한 command를 찾습니다.
         for _ in 0..8 {
             let Some(command) = generate(kind, state.model(), &mut rng, &mut ids) else {
@@ -118,6 +122,22 @@ fn seed_instance(state: &mut DocumentState, ids: &mut FreshIds) {
     state
         .execute(&CommandRequest::at(state, command))
         .expect("인스턴스 삽입");
+}
+
+/// 명시 layout longhand 하나를 둡니다(UnsetProperty 왕복용).
+fn seed_layout(state: &mut DocumentState, rng: &mut SplitMix64, ids: &mut FreshIds) {
+    for _ in 0..8 {
+        let Some(command) = generate(CommandKind::SetLayoutProperty, state.model(), rng, ids)
+        else {
+            return;
+        };
+        if command.validate(state.model()).is_ok() {
+            state
+                .execute(&CommandRequest::at(state, command))
+                .expect("layout longhand 두기");
+            return;
+        }
+    }
 }
 
 /// 선택 event의 forward/inverse 왕복.
@@ -197,6 +217,9 @@ round_trip_property! {
     apply_external_snapshot_round_trip => Registered::Command(CommandKind::ApplyExternalSnapshot), min 120;
     edit_path_point_round_trip => Registered::Command(CommandKind::EditPathPoint), min 60;
     swap_instance_round_trip => Registered::Command(CommandKind::SwapInstance), min 120;
+    set_style_defaults_round_trip => Registered::Command(CommandKind::SetStyleDefaults), min 120;
+    unset_property_round_trip => Registered::Command(CommandKind::UnsetProperty), min 120;
+    set_layout_property_round_trip => Registered::Command(CommandKind::SetLayoutProperty), min 120;
     set_selection_round_trip => Registered::Selection, min 120;
 }
 

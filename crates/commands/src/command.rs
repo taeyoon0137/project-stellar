@@ -333,6 +333,12 @@ pub enum Command {
     EditPathPoint(crate::path_edit::EditPathPoint),
     /// 인스턴스 교체 (XII.10.35).
     SwapInstance(crate::node_ops::SwapInstance),
+    /// 활성 기본값 세트 변경 (SD.4).
+    SetStyleDefaults(crate::style_defaults::SetStyleDefaults),
+    /// 명시 layout longhand 지우기 (SD.4).
+    UnsetProperty(crate::style_defaults::UnsetProperty),
+    /// 명시 layout longhand 두기 (SD.4).
+    SetLayoutProperty(crate::style_defaults::SetLayoutProperty),
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -380,6 +386,9 @@ impl Command {
             Command::ApplyExternalSnapshot(_) => CommandKind::ApplyExternalSnapshot,
             Command::EditPathPoint(_) => CommandKind::EditPathPoint,
             Command::SwapInstance(_) => CommandKind::SwapInstance,
+            Command::SetStyleDefaults(_) => CommandKind::SetStyleDefaults,
+            Command::UnsetProperty(_) => CommandKind::UnsetProperty,
+            Command::SetLayoutProperty(_) => CommandKind::SetLayoutProperty,
             #[cfg(test)]
             Command::TestProbe(_) => CommandKind::TestProbe,
         }
@@ -411,6 +420,9 @@ impl Command {
             Command::ApplyExternalSnapshot(command) => command.validate(model),
             Command::EditPathPoint(command) => command.validate(model),
             Command::SwapInstance(command) => command.validate(model),
+            Command::SetStyleDefaults(command) => command.validate(model),
+            Command::UnsetProperty(command) => command.validate(model),
+            Command::SetLayoutProperty(command) => command.validate(model),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.validate(model),
         }
@@ -456,6 +468,11 @@ impl Command {
                 command.invert(model).map(Command::RestoreNodeRecords)
             }
             Command::SwapInstance(command) => command.invert(model).map(Command::SwapInstance),
+            Command::SetStyleDefaults(command) => {
+                command.invert(model).map(Command::SetStyleDefaults)
+            }
+            Command::UnsetProperty(command) => command.invert(model),
+            Command::SetLayoutProperty(command) => command.invert(model),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
         }
@@ -487,6 +504,9 @@ impl Command {
             Command::ApplyExternalSnapshot(command) => command.apply(ctx),
             Command::EditPathPoint(command) => command.apply(ctx),
             Command::SwapInstance(command) => command.apply(ctx),
+            Command::SetStyleDefaults(command) => command.apply(ctx),
+            Command::UnsetProperty(command) => command.apply(ctx),
+            Command::SetLayoutProperty(command) => command.apply(ctx),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.apply(ctx),
         }

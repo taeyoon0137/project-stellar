@@ -177,7 +177,11 @@ mod tests {
             .copied()
             .filter(|kind| kind.codec_version() >= 2)
             .collect();
-        assert_eq!(kinds.len(), 10);
+        // ADR-0079 종류 10개와 ADR-0086 종류 3개(codec version 3).
+        assert_eq!(kinds.len(), 13);
+        // UnsetProperty는 명시 layout longhand가 있어야 생성되므로 SetLayoutProperty 뒤에 둡니다.
+        let mut kinds = kinds;
+        kinds.sort_by_key(|kind| *kind == CommandKind::UnsetProperty);
         let mut executed = std::collections::BTreeMap::new();
         let mut stats = FuzzStats::default();
         for seed in 0..80u64 {

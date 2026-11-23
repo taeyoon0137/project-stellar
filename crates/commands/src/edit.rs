@@ -19,6 +19,7 @@ use std::fmt;
 
 use stellar_core_types::{ids::StableId, order_key::OrderKey};
 use stellar_document::definitions::DocumentDefinition;
+use stellar_document::layout_record::LayoutRecord;
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::ModifierStack;
 use stellar_document::records::{NodePayload, NodeRecord};
@@ -48,6 +49,10 @@ enum UndoOp {
     /// stack 교체를 되돌림(`None`이면 stack 제거).
     Stack(StableId, Option<ModifierStack>),
     Definition(Box<DocumentDefinition>),
+    /// layout record 교체를 되돌림(`None`이면 record 제거, ADR-0086).
+    Layout(StableId, Option<LayoutRecord>),
+    /// 활성 기본값 세트 이름 변경을 되돌림(ADR-0086).
+    StyleDefaults(String),
 }
 
 /// rollback 실패: journal 재생 중 모델이 역 primitive를 거부했습니다(내부 불일치 신호).
@@ -300,6 +305,26 @@ impl<'a> EditContext<'a> {
         Ok(previous)
     }
 
+    /// node의 명시 layout record를 교체합니다(빈 record = 제거). 이전 record를 반환합니다(ADR-0086).
+    pub fn set_layout_record(
+        &mut self,
+        record: LayoutRecord,
+    ) -> Result<Option<LayoutRecord>, CommandError> {
+        self.before_primitive()?;
+        let owner = record.node;
+        let previous = self.model.set_layout_record(record)?;
+        self.journal.push(UndoOp::Layout(owner, previous.clone()));
+        Ok(previous)
+    }
+
+    /// 활성 기본값 세트 이름을 바꾸고 이전 이름을 반환합니다(ADR-0086).
+    pub fn set_style_defaults(&mut self, name: String) -> Result<String, CommandError> {
+        self.before_primitive()?;
+        let previous = self.model.set_style_defaults(name);
+        self.journal.push(UndoOp::StyleDefaults(previous.clone()));
+        Ok(previous)
+    }
+
     /// journal을 역순으로 재생해 context를 연 시점의 의미 상태로 되돌립니다.
     ///
     /// 각 역 primitive는 해당 primitive가 성공했던 상태에서 재생되므로 실패하지 않아야
@@ -349,6 +374,12 @@ fn undo(model: &mut DocumentModel, op: UndoOp) -> Result<(), CommandError> {
         }
         UndoOp::Definition(definition) => {
             model.replace_definition(*definition);
+        }
+        UndoOp::Layout(owner, previous) => {
+            model.set_layout_record(previous.unwrap_or_else(|| LayoutRecord::new(owner)))?;
+        }
+        UndoOp::StyleDefaults(name) => {
+            model.set_style_defaults(name);
         }
     }
     Ok(())

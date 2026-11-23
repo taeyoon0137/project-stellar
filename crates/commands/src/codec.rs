@@ -22,10 +22,11 @@ use stellar_core_types::ids::StableId;
 ///
 /// - 1: VII.1.2 ~ `replace-text`(0x0050)까지.
 /// - 2: ADR-0079가 더한 종류(Page·View, 외부 snapshot 반영, Path point, Text 범위 style, 인스턴스 교체).
+/// - 3: ADR-0086이 더한 종류(기본값 세트 변경, layout longhand 지우기·두기).
 ///
 /// 각 종류가 처음 들어간 버전은 [`CommandKind::codec_version`]입니다. history journal header가 이 값을
 /// 기록하므로 옛 reader는 모르는 종류를 담은 journal의 복원만 포기하고 문서는 건드리지 않습니다.
-pub const COMMAND_CODEC_VERSION: u32 = 2;
+pub const COMMAND_CODEC_VERSION: u32 = 3;
 
 use crate::command::Command;
 use crate::convert::{ConvertFragmentToFrame, ConvertShapeToPath, RestoreNodeRecords};
@@ -321,6 +322,9 @@ fn encode_payload(command: &Command, out: &mut Writer) {
         Command::ApplyExternalSnapshot(command) => command.encode_into(out),
         Command::EditPathPoint(command) => command.encode_into(out),
         Command::SwapInstance(command) => command.encode_into(out),
+        Command::SetStyleDefaults(command) => command.encode_into(out),
+        Command::UnsetProperty(command) => command.encode_into(out),
+        Command::SetLayoutProperty(command) => command.encode_into(out),
         #[cfg(test)]
         Command::TestProbe(probe) => {
             out.id(probe.node);
@@ -408,6 +412,17 @@ fn decode_payload(kind: CommandKind, input: &mut Reader<'_>) -> Result<Command, 
         }
         CommandKind::SwapInstance => {
             crate::node_ops::SwapInstance::decode_from(input).map(Command::SwapInstance)
+        }
+        CommandKind::SetStyleDefaults => {
+            crate::style_defaults::SetStyleDefaults::decode_from(input)
+                .map(Command::SetStyleDefaults)
+        }
+        CommandKind::UnsetProperty => {
+            crate::style_defaults::UnsetProperty::decode_from(input).map(Command::UnsetProperty)
+        }
+        CommandKind::SetLayoutProperty => {
+            crate::style_defaults::SetLayoutProperty::decode_from(input)
+                .map(Command::SetLayoutProperty)
         }
         #[cfg(test)]
         CommandKind::TestProbe => Ok(Command::TestProbe(crate::command::TestProbe {

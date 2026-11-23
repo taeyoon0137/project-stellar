@@ -77,6 +77,9 @@ pub mod snapshot_apply;
 /// Path point 편집 command (XII.10.28, ADR-0079).
 pub mod path_edit;
 
+/// 기본값 세트 선택과 명시 layout longhand command (SD.4, ADR-0086).
+pub mod style_defaults;
+
 /// 원본과 독립적인 subtree 클립보드와 Paste 계획.
 pub mod paste;
 

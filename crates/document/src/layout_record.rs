@@ -1385,29 +1385,32 @@ pub fn check_records<'a>(
     violations
 }
 
+/// `payload` node가 `longhand`를 명시 값으로 가질 수 없으면 그 위반을 돌려줍니다.
+pub fn longhand_violation(
+    node: StableId,
+    longhand: LayoutLonghand,
+    payload: &NodePayload,
+) -> Option<LayoutRecordViolation> {
+    if !longhand.applies_to(payload.kind()) {
+        Some(LayoutRecordViolation::NotApplicable { node, longhand })
+    } else if payload_size_keys(payload).is_some()
+        && matches!(longhand, LayoutLonghand::Width | LayoutLonghand::Height)
+    {
+        Some(LayoutRecordViolation::SizeInPayload { node, longhand })
+    } else {
+        None
+    }
+}
+
 /// record 하나를 node payload에 대해 검사합니다.
 pub fn record_violations(
     record: &LayoutRecord,
     payload: &NodePayload,
 ) -> Vec<LayoutRecordViolation> {
-    let mut violations = Vec::new();
-    let has_payload_size = payload_size_keys(payload).is_some();
-    for (longhand, _) in record.iter() {
-        if !longhand.applies_to(payload.kind()) {
-            violations.push(LayoutRecordViolation::NotApplicable {
-                node: record.node,
-                longhand,
-            });
-        } else if has_payload_size
-            && matches!(longhand, LayoutLonghand::Width | LayoutLonghand::Height)
-        {
-            violations.push(LayoutRecordViolation::SizeInPayload {
-                node: record.node,
-                longhand,
-            });
-        }
-    }
-    violations
+    record
+        .iter()
+        .filter_map(|(longhand, _)| longhand_violation(record.node, longhand, payload))
+        .collect()
 }
 
 #[cfg(test)]
