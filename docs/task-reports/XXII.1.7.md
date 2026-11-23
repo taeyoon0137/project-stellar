@@ -67,7 +67,8 @@
 - Context 항목 `context-value-fixed`·`context-value-changing`을 더했습니다.
   - Compose 추적형·비추적형 CompositionLocal은 값 변경 빈도로 고릅니다. `android::context::local_kind`와 test로 대조합니다.
   - 스타일 값·그 밖의 값 항목의 Compose 열은 `composition-local-by-change`로 바꿨습니다.
-- timing function 상태를 adapter 결정과 맞췄습니다.
+- timing function 상태를 ADR-0107 결정 7(adapter 출력 규칙)과 ADR-0094에 맞췄습니다. Apple·Android `MotionSpec` adapter 코드는
+  아직 없어 이 상태는 출력 규칙의 판정입니다.
   - steps: SwiftUI Approximated(`CustomAnimation`), AppKit Native(discrete keyframe), Compose Native(계단 `Easing`).
   - spring: 모든 dialect Approximated(ADR-0094 고정 step 적분과 다름). ADR-0107 결정 7의 spring Native를 대체합니다.
 - CSS 기반 속성 항목은 이 커밋에서 바꾸지 않았습니다(`matrix_css.txt` 불변 test 통과).
