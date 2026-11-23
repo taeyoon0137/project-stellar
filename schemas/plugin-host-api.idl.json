@@ -1,0 +1,326 @@
+{
+  "idl_version": 1,
+  "host_api_version": 1,
+  "description": "Stellar 플러그인 Host API 원본 IDL(ADR-0097 결정 6). Rust·TypeScript binding은 stellar-plugin-bindgen이 이 파일에서 생성합니다.",
+  "types": [
+    {
+      "name": "RpcLimits",
+      "fields": [
+        { "name": "max_message_bytes", "type": "u64" },
+        { "name": "max_batch_items", "type": "u64" },
+        { "name": "max_in_flight", "type": "u64" },
+        { "name": "max_messages_per_second", "type": "u64" },
+        { "name": "chunk_bytes", "type": "u64" }
+      ]
+    },
+    {
+      "name": "HostInfo",
+      "fields": [
+        { "name": "host_api_version", "type": "u64" },
+        { "name": "plugin_id", "type": "string" },
+        { "name": "plugin_version", "type": "string" },
+        { "name": "permissions", "type": "string[]" },
+        { "name": "limits", "type": "RpcLimits" }
+      ]
+    },
+    {
+      "name": "ViewOutline",
+      "fields": [
+        { "name": "id", "type": "id" },
+        { "name": "display_name", "type": "string" },
+        { "name": "root_frame", "type": "id" }
+      ]
+    },
+    {
+      "name": "PageOutline",
+      "fields": [
+        { "name": "id", "type": "id" },
+        { "name": "display_name", "type": "string" },
+        { "name": "views", "type": "ViewOutline[]" }
+      ]
+    },
+    {
+      "name": "DocumentOutline",
+      "fields": [
+        { "name": "id", "type": "id" },
+        { "name": "display_name", "type": "string" },
+        { "name": "pages", "type": "PageOutline[]" }
+      ]
+    },
+    {
+      "name": "ProjectSnapshot",
+      "fields": [
+        { "name": "revision", "type": "revision" },
+        { "name": "documents", "type": "DocumentOutline[]" }
+      ]
+    },
+    {
+      "name": "TreeNode",
+      "fields": [
+        { "name": "id", "type": "id" },
+        { "name": "parent", "type": "id", "optional": true },
+        { "name": "view", "type": "id" },
+        { "name": "depth", "type": "u64" },
+        { "name": "kind", "type": "string" },
+        { "name": "display_name", "type": "string" },
+        { "name": "visible", "type": "bool" },
+        { "name": "locked", "type": "bool" },
+        { "name": "child_count", "type": "u64" }
+      ]
+    },
+    {
+      "name": "TreePage",
+      "fields": [
+        { "name": "revision", "type": "revision" },
+        { "name": "document", "type": "id" },
+        { "name": "total", "type": "u64" },
+        { "name": "offset", "type": "u64" },
+        { "name": "nodes", "type": "TreeNode[]" },
+        { "name": "next_cursor", "type": "string", "optional": true }
+      ]
+    },
+    {
+      "name": "PropertyValue",
+      "fields": [
+        { "name": "type", "type": "string" },
+        { "name": "value", "type": "json" }
+      ]
+    },
+    {
+      "name": "NodeProperty",
+      "fields": [
+        { "name": "path", "type": "string" },
+        { "name": "key", "type": "string" },
+        { "name": "value", "type": "PropertyValue" }
+      ]
+    },
+    {
+      "name": "NodeDetail",
+      "fields": [
+        { "name": "revision", "type": "revision" },
+        { "name": "document", "type": "id" },
+        { "name": "id", "type": "id" },
+        { "name": "parent", "type": "id", "optional": true },
+        { "name": "kind", "type": "string" },
+        { "name": "display_name", "type": "string" },
+        { "name": "visible", "type": "bool" },
+        { "name": "locked", "type": "bool" },
+        { "name": "children", "type": "id[]" },
+        { "name": "properties", "type": "NodeProperty[]" },
+        { "name": "modifier_count", "type": "u64" }
+      ]
+    },
+    {
+      "name": "DefinitionSet",
+      "fields": [
+        { "name": "revision", "type": "revision" },
+        { "name": "chunk_kind", "type": "string" },
+        { "name": "chunk_count", "type": "u64" }
+      ]
+    },
+    {
+      "name": "DiffPosition",
+      "fields": [
+        { "name": "parent", "type": "id", "optional": true },
+        { "name": "order_key_hex", "type": "string", "optional": true }
+      ]
+    },
+    {
+      "name": "DiffEntry",
+      "fields": [
+        { "name": "kind", "type": "string" },
+        { "name": "document", "type": "id", "optional": true },
+        { "name": "component", "type": "id", "optional": true },
+        { "name": "object", "type": "id" },
+        { "name": "object_kind", "type": "string", "optional": true },
+        { "name": "path", "type": "string", "optional": true },
+        { "name": "key", "type": "string", "optional": true },
+        { "name": "old", "type": "PropertyValue", "optional": true },
+        { "name": "new", "type": "PropertyValue", "optional": true },
+        { "name": "from", "type": "DiffPosition", "optional": true },
+        { "name": "to", "type": "DiffPosition", "optional": true }
+      ]
+    },
+    {
+      "name": "ApplyResult",
+      "fields": [
+        { "name": "mode", "type": "string" },
+        { "name": "base_revision", "type": "revision" },
+        { "name": "revision", "type": "revision" },
+        { "name": "document", "type": "id" },
+        { "name": "command_count", "type": "u64" },
+        { "name": "written_chunks", "type": "u64" },
+        { "name": "change_count", "type": "u64" },
+        { "name": "changes", "type": "DiffEntry[]" },
+        { "name": "truncated", "type": "bool" }
+      ]
+    },
+    {
+      "name": "GitHead",
+      "fields": [
+        { "name": "state", "type": "string" },
+        { "name": "branch", "type": "string", "optional": true },
+        { "name": "commit", "type": "string", "optional": true }
+      ]
+    },
+    {
+      "name": "GitChange",
+      "fields": [
+        { "name": "id", "type": "string" },
+        { "name": "area", "type": "string" },
+        { "name": "kind", "type": "string" },
+        { "name": "object", "type": "id" },
+        { "name": "document", "type": "id", "optional": true },
+        { "name": "property", "type": "string", "optional": true }
+      ]
+    },
+    {
+      "name": "GitSemanticPage",
+      "fields": [
+        { "name": "staged_total", "type": "u64" },
+        { "name": "unstaged_total", "type": "u64" },
+        { "name": "changes", "type": "GitChange[]" },
+        { "name": "next_cursor", "type": "string", "optional": true }
+      ]
+    },
+    {
+      "name": "GitStatus",
+      "fields": [
+        { "name": "git_revision", "type": "string" },
+        { "name": "head", "type": "GitHead" },
+        { "name": "semantic", "type": "GitSemanticPage", "optional": true }
+      ]
+    },
+    {
+      "name": "FileContent",
+      "fields": [
+        { "name": "path", "type": "string" },
+        { "name": "text", "type": "string" }
+      ]
+    },
+    {
+      "name": "FileWritten",
+      "fields": [
+        { "name": "path", "type": "string" },
+        { "name": "bytes", "type": "u64" }
+      ]
+    },
+    {
+      "name": "FileList",
+      "fields": [
+        { "name": "paths", "type": "string[]" }
+      ]
+    },
+    {
+      "name": "NetworkResponse",
+      "fields": [
+        { "name": "status", "type": "u64" },
+        { "name": "text", "type": "string" }
+      ]
+    }
+  ],
+  "namespaces": [
+    {
+      "name": "host",
+      "description": "Host 정보. 권한이 필요 없습니다.",
+      "methods": [
+        { "name": "info", "permission": null, "params": [], "result": "HostInfo", "description": "Host API version, 플러그인 id, 유효 권한, RPC 상한." }
+      ]
+    },
+    {
+      "name": "document",
+      "description": "문서 snapshot 읽기.",
+      "methods": [
+        { "name": "read_snapshot", "permission": "document.read", "params": [], "result": "ProjectSnapshot", "description": "프로젝트 revision과 문서·페이지·View 개요(ops::query::project_structure)." }
+      ]
+    },
+    {
+      "name": "query",
+      "description": "문서 projection 조회.",
+      "methods": [
+        {
+          "name": "tree_page",
+          "permission": "document.read",
+          "params": [
+            { "name": "document", "type": "id", "required": true },
+            { "name": "cursor", "type": "string", "required": false },
+            { "name": "limit", "type": "u32", "required": false }
+          ],
+          "result": "TreePage",
+          "description": "문서 트리 page(ops::query::document_tree_page)."
+        },
+        {
+          "name": "node",
+          "permission": "document.read",
+          "params": [
+            { "name": "document", "type": "id", "required": true },
+            { "name": "node", "type": "id", "required": true }
+          ],
+          "result": "NodeDetail",
+          "description": "node 공통 필드와 속성(ops::query::node_detail)."
+        },
+        { "name": "tokens", "permission": "document.read", "params": [], "result": "DefinitionSet", "description": "token 정의 집합(ops::query::tokens)." },
+        { "name": "components", "permission": "document.read", "params": [], "result": "DefinitionSet", "description": "component 정의 집합(ops::query::components)." }
+      ]
+    },
+    {
+      "name": "command",
+      "description": "CommandTransaction 적용.",
+      "methods": [
+        {
+          "name": "apply",
+          "permission": "document.apply",
+          "params": [
+            { "name": "base_revision", "type": "revision", "required": true },
+            { "name": "document", "type": "id", "required": true },
+            { "name": "commands", "type": "json[]", "required": true },
+            { "name": "dry_run", "type": "bool", "required": false }
+          ],
+          "result": "ApplyResult",
+          "description": "stellar apply와 같은 ops::apply::apply. command object는 schemas/command-transaction.schema.json 형식입니다."
+        }
+      ]
+    },
+    {
+      "name": "git",
+      "description": "Git 상태 읽기.",
+      "methods": [
+        {
+          "name": "status",
+          "permission": "git.read",
+          "params": [
+            { "name": "cursor", "type": "string", "required": false },
+            { "name": "limit", "type": "u32", "required": false }
+          ],
+          "result": "GitStatus",
+          "description": "stellar git status와 같은 ops::git::GitSession::status. index를 바꾸지 않습니다."
+        }
+      ]
+    },
+    {
+      "name": "file",
+      "description": "플러그인 namespace 디렉터리(`plugins/<plugin-id>/`) 파일.",
+      "methods": [
+        { "name": "read", "permission": "file", "params": [ { "name": "path", "type": "string", "required": true } ], "result": "FileContent", "description": "UTF-8 텍스트 파일 읽기." },
+        {
+          "name": "write",
+          "permission": "file",
+          "params": [
+            { "name": "path", "type": "string", "required": true },
+            { "name": "text", "type": "string", "required": true }
+          ],
+          "result": "FileWritten",
+          "description": "UTF-8 텍스트 파일 쓰기(임시 파일 뒤 rename)."
+        },
+        { "name": "list", "permission": "file", "params": [], "result": "FileList", "description": "namespace 디렉터리의 파일 목록." }
+      ]
+    },
+    {
+      "name": "network",
+      "description": "network 요청. Host가 제공하는 network port로만 보냅니다.",
+      "methods": [
+        { "name": "fetch", "permission": "network", "params": [ { "name": "url", "type": "string", "required": true } ], "result": "NetworkResponse", "description": "https GET." }
+      ]
+    }
+  ]
+}

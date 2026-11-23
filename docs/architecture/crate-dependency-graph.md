@@ -58,6 +58,7 @@
 | `stellar-cli` | ops, diagnostics |
 | `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, text, ops, git-porcelain |
 | `stellar-ffi` | core-types, runtime |
+| `stellar-plugin-host` | ops, project, storage, git-porcelain |
 
 ## Mermaid
 
@@ -159,6 +160,10 @@ graph TD
   runtime --> git_porcelain
   ffi --> core_types
   ffi --> runtime
+  plugin_host --> ops
+  plugin_host --> project
+  plugin_host --> storage
+  plugin_host --> git_porcelain
 ```
 
 ## 전이 도달 금지(ADR-0005 §8)
