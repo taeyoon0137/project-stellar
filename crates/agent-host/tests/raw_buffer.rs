@@ -28,7 +28,8 @@ fn injected_controls_are_preserved_raw_and_neutralized_for_display() {
         .unwrap()
         .wait();
     let raw = output.raw_bytes();
-    assert!(raw.starts_with(b"\x1b]0;"));
+    // 표준 출력과 표준 오류는 도착 순서대로 섞이므로 맨 앞이 어느 쪽인지는 정해져 있지 않습니다.
+    assert!(raw.windows(4).any(|w| w == b"\x1b]0;"));
     assert!(raw.windows(8).any(|w| w == b"\x1b[?1049h"));
     let shown = output.raw_display_text();
     assert!(
