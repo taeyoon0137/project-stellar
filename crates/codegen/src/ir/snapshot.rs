@@ -25,6 +25,11 @@
 //! motions <n>
 //!   motion <id> owner=<owner> start=<조건> duration=<ms> delay=<ms> timing=<함수> reduced_motion=<instant|play>
 //!     target <path>
+//! contexts keys=<n> provisions=<n> consumptions=<n> slots=<n>
+//!   key <id> <name> default=<expr>
+//!   provision <node> key=<id> depths=[..] value=<expr>
+//!   consume <path> key=<id> from=<provision(node)|default> [slots=[<host><-<instance>,..]]
+//!   slot host=<id> instance=<id> public=[..]
 //! ```
 
 use std::fmt::Write as _;
@@ -43,8 +48,8 @@ use stellar_target_profile::overrides::ValueOrigin;
 use stellar_target_profile::spec::ProfileSpec;
 
 use super::{
-    CodegenIr, IrAction, IrExpr, IrLayout, IrMotionStart, IrOwner, IrTiming, IrTrigger,
-    MappingSubject,
+    CodegenIr, IrAction, IrContextSource, IrExpr, IrLayout, IrMotionStart, IrOwner, IrTiming,
+    IrTrigger, MappingSubject,
 };
 use crate::text::num;
 
@@ -248,6 +253,66 @@ impl CodegenIr {
             for target in &motion.targets {
                 let _ = writeln!(out, "    target {}", path_text(target));
             }
+        }
+        let contexts = &self.contexts;
+        let _ = writeln!(
+            out,
+            "contexts keys={} provisions={} consumptions={} slots={}",
+            contexts.keys.len(),
+            contexts.provisions.len(),
+            contexts.consumptions.len(),
+            contexts.slots.len()
+        );
+        for key in &contexts.keys {
+            let _ = writeln!(
+                out,
+                "  key {} {:?} default={}",
+                key.id,
+                key.name,
+                expr_text(&key.default)
+            );
+        }
+        for provision in &contexts.provisions {
+            let depths: Vec<String> = provision.depths.iter().map(|d| d.to_string()).collect();
+            let _ = writeln!(
+                out,
+                "  provision {} key={} depths=[{}] value={}",
+                provision.node,
+                provision.key,
+                depths.join(","),
+                expr_text(&provision.value)
+            );
+        }
+        for consumption in &contexts.consumptions {
+            let from = match consumption.source {
+                IrContextSource::Provision(node) => format!("provision({node})"),
+                IrContextSource::Default => "default".to_string(),
+            };
+            let _ = write!(
+                out,
+                "  consume {} key={} from={from}",
+                path_text(&consumption.path),
+                consumption.key
+            );
+            if !consumption.slots.is_empty() {
+                let slots: Vec<String> = consumption
+                    .slots
+                    .iter()
+                    .map(|s| format!("{}<-{}", s.host, s.instance))
+                    .collect();
+                let _ = write!(out, " slots=[{}]", slots.join(","));
+            }
+            out.push('\n');
+        }
+        for slot in &contexts.slots {
+            let public: Vec<String> = slot.public_keys.iter().map(|k| k.to_string()).collect();
+            let _ = writeln!(
+                out,
+                "  slot host={} instance={} public=[{}]",
+                slot.host,
+                slot.instance,
+                public.join(",")
+            );
         }
         out
     }

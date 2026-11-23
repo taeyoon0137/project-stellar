@@ -39,6 +39,8 @@
 //! - **상태 머신·motion**(XXII.1.5): 참조 무결성(선언된 상태·action·토큰, View node)만 검사하고 값은 그대로
 //!   보존합니다. 제외 node가 source인 transition과 제외 node 대상은 버리고, 대상이 모두 빠진 motion도 버립니다.
 //!   머신은 소유자 오름차순, motion은 id 오름차순입니다.
+//! - **Context**(XXII.1.6): XXX.7.4 해석기 결과(소비 지점별 출처·slot 경계)를 그대로 보존합니다. adapter는 다시
+//!   해석하지 않습니다([`context`]).
 //!
 //! 같은 입력은 항상 같은 IR과 같은 [`CodegenIr::semantic_snapshot`] 텍스트를 만듭니다(hash 순서·pointer·부동소수
 //! 연산을 쓰지 않음).
@@ -71,6 +73,9 @@ pub mod mapping;
 /// 선언형 상태 머신과 `MotionSpec` (XXII.1.5).
 pub mod behavior;
 
+/// Context 선언·provision·소비 (XXII.1.6).
+pub mod context;
+
 /// semantic snapshot 텍스트와 안정 이름 표기.
 pub mod snapshot;
 
@@ -83,6 +88,10 @@ pub use behavior::{
 };
 pub use binding::ResolvedBinding;
 pub use build::{build_accessibility_ir, build_ir};
+pub use context::{
+    IrContextConsumption, IrContextKey, IrContextProvision, IrContextSource, IrContexts,
+    IrSlotCrossing, IrSlotHost,
+};
 pub use mapping::{CssPropertyUse, IrMapping, MappingSource, MappingSubject};
 
 /// IR을 만들 수 있는 최대 View node 수.
@@ -137,6 +146,8 @@ pub struct CodegenSources<'a> {
     pub machines: &'a [IrStateMachine],
     /// `MotionSpec`(XXII.1.5).
     pub motions: &'a [IrMotion],
+    /// Context 해석 결과(XXII.1.6).
+    pub contexts: &'a IrContexts,
 }
 
 impl fmt::Debug for CodegenSources<'_> {
@@ -315,6 +326,8 @@ pub struct IrTree {
     pub machines: Vec<IrStateMachine>,
     /// `MotionSpec`(id 오름차순, XXII.1.5).
     pub motions: Vec<IrMotion>,
+    /// Context 선언·provision·소비(XXII.1.6).
+    pub contexts: IrContexts,
     index: BTreeMap<StableId, u32>,
 }
 
@@ -548,6 +561,39 @@ pub enum IrError {
         /// 상태 변수.
         state: StableId,
     },
+    /// 표현식이 선언되지 않은 상태 변수를 읽습니다.
+    ExpressionUnknownState(StableId),
+    /// 같은 ContextKey가 두 번 선언되었습니다.
+    DuplicateContextKey(StableId),
+    /// ContextKey 이름이 비었습니다.
+    EmptyContextKeyName(StableId),
+    /// 선언되지 않은 ContextKey를 가리킵니다.
+    UnknownContextKey(StableId),
+    /// Context provision·소비·slot host의 node가 View node가 아닙니다.
+    ContextNodeOutsideView(StableId),
+    /// 같은 node에 같은 key provision이 둘 이상입니다.
+    DuplicateProvision {
+        /// node.
+        node: StableId,
+        /// key.
+        key: StableId,
+    },
+    /// provision 깊이 집합이 비었거나 0을 담습니다.
+    InvalidProvisionDepth {
+        /// node.
+        node: StableId,
+        /// key.
+        key: StableId,
+    },
+    /// 소비 출처 provision이 IR에 없습니다.
+    ContextSourceMissing {
+        /// 소비 node.
+        node: StableId,
+        /// key.
+        key: StableId,
+    },
+    /// 같은 속성 경로의 소비가 둘 이상입니다.
+    DuplicateConsumption(StableId),
 }
 
 impl fmt::Display for IrError {
@@ -643,6 +689,31 @@ impl fmt::Display for IrError {
                 f,
                 "MotionSpec {motion}의 시작 조건이 선언되지 않은 상태 변수 {state}를 씁니다"
             ),
+            IrError::ExpressionUnknownState(id) => {
+                write!(f, "표현식이 선언되지 않은 상태 변수 {id}를 읽습니다")
+            }
+            IrError::DuplicateContextKey(id) => {
+                write!(f, "ContextKey {id}가 두 번 선언되었습니다")
+            }
+            IrError::EmptyContextKeyName(id) => write!(f, "ContextKey {id}의 이름이 비었습니다"),
+            IrError::UnknownContextKey(id) => write!(f, "선언되지 않은 ContextKey {id}"),
+            IrError::ContextNodeOutsideView(id) => {
+                write!(f, "Context 대상 node {id}가 View node가 아닙니다")
+            }
+            IrError::DuplicateProvision { node, key } => {
+                write!(f, "node {node}에 key {key} provision이 둘 이상입니다")
+            }
+            IrError::InvalidProvisionDepth { node, key } => write!(
+                f,
+                "node {node}의 key {key} provision 깊이 집합이 비었거나 0을 담습니다"
+            ),
+            IrError::ContextSourceMissing { node, key } => write!(
+                f,
+                "node {node}의 key {key} 소비 출처 provision이 IR에 없습니다"
+            ),
+            IrError::DuplicateConsumption(id) => {
+                write!(f, "node {id}의 같은 속성에 Context 소비가 둘 이상입니다")
+            }
         }
     }
 }

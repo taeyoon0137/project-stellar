@@ -52,10 +52,108 @@ use stellar_target_profile::spec::{
 use stellar_target_profile::validate::{PropertyCapabilityMap, ViewModel, ViewNode};
 
 use crate::ir::{
-    build_ir, CodegenIr, CodegenSources, CssPropertyUse, IrAction, IrExpr, IrMotion, IrMotionStart,
-    IrOwner, IrReducedMotion, IrSemanticAction, IrStateMachine, IrTiming, IrTransition, IrTrigger,
-    StateDecl, TokenDecl,
+    build_ir, CodegenIr, CodegenSources, CssPropertyUse, IrAction, IrContextConsumption,
+    IrContextKey, IrContextProvision, IrContextSource, IrContexts, IrExpr, IrMotion, IrMotionStart,
+    IrOwner, IrReducedMotion, IrSemanticAction, IrSlotCrossing, IrSlotHost, IrStateMachine,
+    IrTiming, IrTransition, IrTrigger, StateDecl, TokenDecl,
 };
+
+/// ContextKey accent(Color).
+pub const KEY_ACCENT: u8 = 230;
+/// ContextKey density(Number).
+pub const KEY_DENSITY: u8 = 231;
+/// ContextKey label(String).
+pub const KEY_CTX_LABEL: u8 = 232;
+
+/// Context 해석 결과 fixture(XXX.7.4 해석기가 낼 값을 손으로 적음).
+///
+/// - accent: 1이 제공, 6이 token accent로 가림(shadowing). 2는 1, 8은 6에서 받습니다.
+/// - density: 7이 `density * 2`(같은 key 재읽기, 바깥 = default)로 제공. 9가 받습니다.
+/// - label: 11이 깊이가 instance마다 다른 provision(1, 2). 12는 default로 받습니다.
+/// - slot: 16(instance)의 host 17이 Slot 공개 key 없이 accent를 받고, 소비는 slot 경계를 건넙니다.
+pub fn contexts() -> IrContexts {
+    let key = |id: u8, name: &str, default: IrExpr| IrContextKey {
+        id: sid(id),
+        name: name.to_string(),
+        default,
+    };
+    let provision = |node: u8, key: u8, value: IrExpr, depths: &[u32]| IrContextProvision {
+        node: sid(node),
+        key: sid(key),
+        value,
+        depths: depths.to_vec(),
+    };
+    let consume = |node: u8, prop: u32, key: u8, source: IrContextSource| IrContextConsumption {
+        node: sid(node),
+        path: path(node, prop),
+        key: sid(key),
+        source,
+        slots: Vec::new(),
+    };
+    let mut slot_consumer = consume(
+        17,
+        KEY_TEXT_COLOR,
+        KEY_ACCENT,
+        IrContextSource::Provision(sid(1)),
+    );
+    slot_consumer.slots.push(IrSlotCrossing {
+        host: sid(17),
+        instance: sid(16),
+    });
+    IrContexts {
+        keys: vec![
+            key(
+                KEY_ACCENT,
+                "accent",
+                IrExpr::Literal(srgb(0.2, 0.2, 0.2, 1.0)),
+            ),
+            key(KEY_DENSITY, "density", IrExpr::Literal(number(1.0))),
+            key(KEY_CTX_LABEL, "label", IrExpr::Literal(text("기본"))),
+        ],
+        provisions: vec![
+            provision(
+                1,
+                KEY_ACCENT,
+                IrExpr::Literal(srgb(0.0, 0.48, 1.0, 1.0)),
+                &[1],
+            ),
+            provision(6, KEY_ACCENT, IrExpr::Token(sid(TOKEN_ACCENT)), &[2]),
+            provision(
+                7,
+                KEY_DENSITY,
+                IrExpr::Binary {
+                    op: "*",
+                    lhs: Box::new(IrExpr::Context(sid(KEY_DENSITY))),
+                    rhs: Box::new(IrExpr::Literal(number(2.0))),
+                },
+                &[1],
+            ),
+            provision(11, KEY_CTX_LABEL, IrExpr::Literal(text("메모")), &[2, 1]),
+        ],
+        consumptions: vec![
+            consume(
+                2,
+                KEY_TEXT_COLOR,
+                KEY_ACCENT,
+                IrContextSource::Provision(sid(1)),
+            ),
+            consume(8, KEY_FILL, KEY_ACCENT, IrContextSource::Provision(sid(6))),
+            consume(
+                9,
+                KEY_TEXT_COLOR,
+                KEY_DENSITY,
+                IrContextSource::Provision(sid(7)),
+            ),
+            consume(12, KEY_LABEL, KEY_CTX_LABEL, IrContextSource::Default),
+            slot_consumer,
+        ],
+        slots: vec![IrSlotHost {
+            host: sid(17),
+            instance: sid(16),
+            public_keys: Vec::new(),
+        }],
+    }
+}
 
 /// View 소유 id.
 pub const VIEW_OWNER: u8 = 200;
@@ -393,6 +491,8 @@ pub struct Fixture {
     pub machines: Vec<IrStateMachine>,
     /// MotionSpec(XXII.1.5).
     pub motions: Vec<IrMotion>,
+    /// Context 해석 결과(XXII.1.6).
+    pub contexts: IrContexts,
     /// registry catalog.
     pub catalog: RegistryCatalog,
 }
@@ -720,6 +820,7 @@ impl Fixture {
             css_properties: css_properties(),
             machines: machines(),
             motions: motions(),
+            contexts: contexts(),
             catalog: builtin::catalog().expect("catalog"),
         }
     }
@@ -739,6 +840,7 @@ impl Fixture {
             css_properties: &self.css_properties,
             machines: &self.machines,
             motions: &self.motions,
+            contexts: &self.contexts,
         }
     }
 
@@ -796,6 +898,7 @@ pub fn fragment_fixture() -> Fixture {
         css_properties: BTreeMap::new(),
         machines: Vec::new(),
         motions: Vec::new(),
+        contexts: IrContexts::default(),
         catalog: builtin::catalog().expect("catalog"),
     }
 }
@@ -877,6 +980,7 @@ pub fn list_fixture(items: u32) -> Fixture {
         css_properties: BTreeMap::new(),
         machines: Vec::new(),
         motions: Vec::new(),
+        contexts: IrContexts::default(),
         catalog: builtin::catalog().expect("catalog"),
     }
 }

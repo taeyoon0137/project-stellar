@@ -13,6 +13,7 @@ use stellar_target_profile::validate::{validate_profiles, ProfileOutcome, ViewNo
 
 use super::behavior_build;
 use super::mapping;
+use super::IrContexts;
 use super::{
     CodegenIr, CodegenSources, IrAccessibilityEntry, IrError, IrLayout, IrNode, IrProperty,
     IrState, IrTarget, IrToken, IrTree, MAX_IR_NODES,
@@ -236,6 +237,7 @@ pub fn build_ir(
     };
     let machines = behavior_build::machines(sources.machines, &scope)?;
     let motions = behavior_build::motions(sources.motions, &scope)?;
+    let contexts = behavior_build::contexts(sources.contexts, &scope)?;
 
     Ok(CodegenIr {
         target: IrTarget {
@@ -249,6 +251,7 @@ pub fn build_ir(
             tokens,
             machines,
             motions,
+            contexts,
             index: ir_index,
         },
     })
@@ -508,6 +511,7 @@ pub fn build_accessibility_ir(
         tokens: Vec::new(),
         machines: Vec::new(),
         motions: Vec::new(),
+        contexts: IrContexts::default(),
         index,
     })
 }

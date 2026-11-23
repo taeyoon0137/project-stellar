@@ -551,6 +551,7 @@ fn view_without_semantics_or_tokens_still_builds() {
         css_properties: &BTreeMap::new(),
         machines: &[],
         motions: &[],
+        contexts: &IrContexts::default(),
     };
     let catalog = stellar_target_profile::builtin::catalog().expect("catalog");
     let ir = build_ir(&sources, &fx::web_profile(), &catalog).expect("IR");
@@ -908,6 +909,154 @@ fn behavior_reference_errors_are_rejected() {
                 motion: sid(fx::MOTION_GRID),
                 state: sid(245),
             },
+        ),
+    ];
+    for (name, change, expected) in cases {
+        let mut fixture = Fixture::new();
+        change(&mut fixture);
+        assert_eq!(
+            build(&fixture, &fx::web_profile()).unwrap_err(),
+            expected,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn context_resolution_is_kept_per_consumption_without_reinterpretation() {
+    // 검증 기준(XXII.1.6, 해석기 대조 부분 제외): 중첩·shadowing·slot fixture의 소비 지점마다 입력(해석기 결과)의
+    // 출처와 slot 경계가 IR에 그대로 남습니다.
+    let fixture = Fixture::new();
+    let ir = build(&fixture, &fx::web_profile()).expect("IR");
+    let contexts = &ir.contexts;
+    assert_eq!(contexts.keys.len(), 3);
+    for expected in &fixture.contexts.consumptions {
+        let kept = contexts.consumption_of(&expected.path).expect("소비 지점");
+        assert_eq!(kept, expected);
+    }
+    // shadowing: 8은 가까운 6, 2는 바깥 1.
+    let from = |node: u8, key: u32| {
+        contexts
+            .consumption_of(&fx::path(node, key))
+            .expect("소비")
+            .source
+    };
+    assert_eq!(from(8, fx::KEY_FILL), IrContextSource::Provision(sid(6)));
+    assert_eq!(
+        from(2, fx::KEY_TEXT_COLOR),
+        IrContextSource::Provision(sid(1))
+    );
+    assert_eq!(from(12, fx::KEY_LABEL), IrContextSource::Default);
+    let slot = contexts
+        .consumption_of(&fx::path(17, fx::KEY_TEXT_COLOR))
+        .expect("slot 소비");
+    assert_eq!(
+        slot.slots,
+        vec![IrSlotCrossing {
+            host: sid(17),
+            instance: sid(16)
+        }]
+    );
+    // 깊이 집합은 정렬되고 중복이 없습니다.
+    assert_eq!(
+        contexts
+            .provision(sid(11), sid(fx::KEY_CTX_LABEL))
+            .expect("label")
+            .depths,
+        vec![1, 2]
+    );
+    let snapshot = ir.semantic_snapshot();
+    assert!(snapshot.contains("contexts keys=3 provisions=4 consumptions=5 slots=1"));
+    assert!(snapshot.contains("value=(context(00000000-0000-0000-0000-0000000000e7) * 2)"));
+}
+
+#[test]
+fn context_ir_bytes_are_identical_for_the_same_input() {
+    // 검증 기준(XXII.1.6): 같은 입력 IR bytes 동일(입력 순서와 무관).
+    let mut fixture = Fixture::new();
+    let first = build(&fixture, &fx::web_profile())
+        .expect("IR")
+        .semantic_snapshot();
+    fixture.contexts.keys.reverse();
+    fixture.contexts.provisions.reverse();
+    fixture.contexts.consumptions.reverse();
+    assert_eq!(
+        first,
+        build(&fixture, &fx::web_profile())
+            .expect("IR")
+            .semantic_snapshot()
+    );
+}
+
+#[test]
+fn context_reference_errors_are_rejected() {
+    let key = sid(fx::KEY_ACCENT);
+    let cases: Vec<Case> = vec![
+        (
+            "key 중복",
+            Box::new(|f| {
+                let k = f.contexts.keys[0].clone();
+                f.contexts.keys.push(k);
+            }),
+            IrError::DuplicateContextKey(key),
+        ),
+        (
+            "빈 key 이름",
+            Box::new(|f| f.contexts.keys[0].name = " ".to_string()),
+            IrError::EmptyContextKeyName(key),
+        ),
+        (
+            "없는 key provision",
+            Box::new(|f| f.contexts.provisions[0].key = sid(250)),
+            IrError::UnknownContextKey(sid(250)),
+        ),
+        (
+            "식 안 없는 key",
+            Box::new(|f| f.contexts.provisions[0].value = IrExpr::Context(sid(251))),
+            IrError::UnknownContextKey(sid(251)),
+        ),
+        (
+            "식 안 없는 상태",
+            Box::new(|f| f.contexts.provisions[0].value = IrExpr::State(sid(252))),
+            IrError::ExpressionUnknownState(sid(252)),
+        ),
+        (
+            "View 밖 provision",
+            Box::new(|f| f.contexts.provisions[0].node = sid(253)),
+            IrError::ContextNodeOutsideView(sid(253)),
+        ),
+        (
+            "같은 node·key provision 둘",
+            Box::new(|f| {
+                let p = f.contexts.provisions[0].clone();
+                f.contexts.provisions.push(p);
+            }),
+            IrError::DuplicateProvision { node: sid(1), key },
+        ),
+        (
+            "깊이 0",
+            Box::new(|f| f.contexts.provisions[0].depths = vec![0, 1]),
+            IrError::InvalidProvisionDepth { node: sid(1), key },
+        ),
+        (
+            "출처 provision 없음",
+            Box::new(|f| {
+                f.contexts.consumptions[0].source = IrContextSource::Provision(sid(3));
+            }),
+            IrError::ContextSourceMissing { node: sid(2), key },
+        ),
+        (
+            "같은 경로 소비 둘",
+            Box::new(|f| {
+                let c = f.contexts.consumptions[0].clone();
+                f.contexts.consumptions.push(c);
+            }),
+            IrError::DuplicateConsumption(sid(2)),
+        ),
+        (
+            "slot 공개 key 없음",
+            Box::new(|f| f.contexts.slots[0].public_keys.push(sid(254))),
+            IrError::UnknownContextKey(sid(254)),
         ),
     ];
     for (name, change, expected) in cases {
