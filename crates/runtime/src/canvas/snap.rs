@@ -698,5 +698,8 @@ fn union(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     [x0, y0, x1 - x0, y1 - y0]
 }
 
+/// 스마트 가이드·측정 표시 자료(XII.10.16).
+pub mod guides;
+
 #[cfg(test)]
 mod tests;
