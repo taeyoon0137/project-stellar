@@ -1,11 +1,13 @@
-# 작업 보고서: TS-ASSET 텍스트 asset catalog
+# 작업 보고서: V.10.9 텍스트 asset catalog
 
 ## WBS
 
-- WBS: TS-ASSET(신규 행, 계획서 등록은 통합 때)
+- WBS: V.10.9
+- 등록: 2026-11-23 plan-revision이 임시 번호 TS-ASSET를 이 ID로 계획서에 등록하고 보고서를 `docs/task-reports/pending-wbs/TS-ASSET.md`에서 옮김
 - 작업명: 글꼴·이미지·문서 style 표의 텍스트 asset catalog와 참조 전용 문서
-- 상태: 완료 (`[x]`)
-- 구현 커밋: `df80100f`(catalog), `ae935137`(다중 파일 원본에서 문서는 catalog를 참조만 함). 결정: [ADR-0077](../../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md) 결정 1·3.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 계획 1.1의 "올바른 커밋"이 없음: 구현 커밋이 `Feat:`·`Fix:` 제목이라 `Task(<ID>)` 제목 커밋이 없고, 원장이 근거 커밋을 채우지 못합니다; 선행 V.10.4(`[~]`), V.10.8(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`)
+- 선행: V.10.4 `[~]`, V.10.8 `[~]`
+- 구현 커밋: `df80100f`(catalog), `ae935137`(다중 파일 원본에서 문서는 catalog를 참조만 함). 결정: [ADR-0077](../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md) 결정 1·3.
 
 ## 필수 실행 환경
 

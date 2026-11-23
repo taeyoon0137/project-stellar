@@ -1,11 +1,13 @@
-# 작업 보고서: TS-R2 컴포넌트·View Frame codec 쓰기 v4
+# 작업 보고서: V.10.8 컴포넌트·View Frame codec 쓰기 v4
 
 ## WBS
 
-- WBS: TS-R2(신규 행, 계획서 등록은 통합 때)
+- WBS: V.10.8
+- 등록: 2026-11-23 plan-revision이 임시 번호 TS-R2를 이 ID로 계획서에 등록하고 보고서를 `docs/task-reports/pending-wbs/TS-R2.md`에서 옮김
 - 작업명: 컴포넌트·View 원본 쓰기 버전 v4(registry 이름·CSS 값 문법, v1~v3 읽기 전용)
-- 상태: 완료 (`[x]`)
-- 구현 커밋: `58709614`. 결정: [ADR-0077](../../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md) 결정 2. 명세: [`text-source-v4.md`](../../spec/text-source-v4.md).
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 계획 1.1의 "올바른 커밋"이 없음: 구현 커밋이 `Feat:`·`Fix:` 제목이라 `Task(<ID>)` 제목 커밋이 없고, 원장이 근거 커밋을 채우지 못합니다; 선행 IX.11.2(`[~]`), IX.11.3(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`)
+- 선행: V.10.2 `[x]`, IX.11.2 `[~]`, IX.11.3 `[~]`
+- 구현 커밋: `58709614`. 결정: [ADR-0077](../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md) 결정 2. 명세: [`text-source-v4.md`](../spec/text-source-v4.md).
 
 ## 필수 실행 환경
 

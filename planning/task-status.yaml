@@ -2384,6 +2384,33 @@ tasks:
     required_environments:
       - DEV-MAC
       - REF-MAC
+  - id: "V.10.8"
+    title: "컴포넌트·View 원본의 쓰기 버전을 v4로 올립니다(ADR-0077 결정 2, 명세 `docs/spec/text-source-v4.md`). 파일 키는 frame·payload·modifier metadata registry의 `name`을 조회해 쓰고 순서도 registry 순서이며, codec은 registry를 조회만 합니다. 값은 CSS 값 문법(`px`, `deg`, `color()`, `matrix()`, `transparent`)의 최단 왕복 표기만 받고, 묶음 `border`는 CSS longhand 열두 줄로 씁니다. 모든 node 종류와 modifier를 쓰고, View v1·v2와 컴포넌트 v1\\~v3은 읽기 전용입니다."
+    status: reported_done
+    depends_on:
+      - "V.10.2"
+      - "IX.11.2"
+      - "IX.11.3"
+    required_environments:
+      - DEV-MAC
+    report: "docs/task-reports/V.10.8.md"
+  - id: "V.10.9"
+    title: "글꼴·이미지 asset record와 문서별 Text style 표를 텍스트 asset catalog `design/assets/catalog.stellar.yaml` 하나로 옮기고, 다중 파일 원본의 문서·View는 catalog를 참조만 하게 합니다(ADR-0077 결정 1·3). catalog는 이미지 AssetRecord(출처 `none`·`project`·`external <지문> <이름>`), 등록 글꼴(ProjectFontRecord 필드·라이선스·글꼴 파일 AssetRecord), 문서별 Text style 표 전체를 담고, 여러 문서가 등록한 같은 글꼴은 file hash로 한 항목만 둡니다. 읽은 값은 binary record로 다시 인코딩해 원본 bytes와 같을 때만 받습니다."
+    status: reported_done
+    depends_on:
+      - "V.10.4"
+      - "V.10.8"
+    required_environments:
+      - DEV-MAC
+    report: "docs/task-reports/V.10.9.md"
+  - id: "V.10.10"
+    title: "node StableId에서 텍스트 원본 파일과 줄 범위를 찾는 core API(span table)와 CLI `stellar query <design 폴더> --source-span <node>`를 추가합니다(ADR-0077 결정 6). span은 codec이 쓴 텍스트나 디스크 bytes에서 최상위 `nodes` 목록 항목의 줄 범위(1부터, 끝 포함)이고 `$ref` 항목은 건너뜁니다. 없는 node는 종료 코드 66(`source-span-not-found`)입니다. UX WBS UX.7.5(원본 구획)의 코어 부분입니다."
+    status: reported_done
+    depends_on:
+      - "V.10.4"
+    required_environments:
+      - DEV-MAC
+    report: "docs/task-reports/V.10.10.md"
   - id: "VI.1.1"
     title: "`document`에 `ProjectDocumentIndex`, `DocumentDefinition`, `PageDefinition`, `ViewDefinition` 타입을 추가합니다. 각 타입은 고유 StableId와 표시 이름을 가집니다."
     status: verified
@@ -4869,7 +4896,7 @@ tasks:
       - DEV-MAC
     report: "docs/task-reports/IX.11.5.md"
   - id: "IX.11.6"
-    title: "레이아웃 container·item 속성을 CSS longhand로 저장하는 영속 record와 schema version을 정의합니다. 생략값은 CSS initial value입니다. container 저장 위치(Frame payload 확장 또는 `layout_mode` 참조 resource)와 Frame `size` 흡수 방식을 이 작업의 ADR로 정합니다. item longhand(inset, `flex-*`, `align-self`·`justify-self`, `grid-*-start`·`-end`, sizing longhand)는 Frame만이 아니라 상자를 가진 모든 node 종류(Frame, Shape, Path, Text, Image, ComponentInstance)의 자식에 붙습니다. 지금 Frame이 아닌 node에는 위치 필드가 없으므로(`crates/document/src/records.rs` `NodeRecord`, Rectangle은 크기만 가짐) item record 저장 위치(NodeRecord 공통 필드 또는 node별 layout item record)와 Shape·Image payload 크기의 흡수 방식도 같은 ADR로 정합니다. 상자가 없는 Fragment는 item이 아니고 그 자식이 item입니다(아키텍처 §12.4). Ellipse·Polygon `bounds` 원점은 shape local 좌표의 기하 offset으로, Transform modifier 이동 성분은 layout 뒤에 적용하는 시각 변형으로 그대로 두고 위치 longhand로 migration하지 않으며, 새 위치 편집은 item record 위치 longhand를 씁니다(속성 모델 12장 Position 행). longhand key는 ADR-0024 결정 14로 할당하되, `width`·`height`는 IX.11.22(Frame)·IX.11.3(Shape·Image)이 할당한 key를 그대로 쓰고 아직 key가 없는 node 종류에만 새로 할당합니다. schema version 증가는 IX.11.21이 정한 묶음 규칙을 따릅니다."
+    title: "레이아웃 container·item 속성을 CSS longhand로 저장하는 영속 record와 schema version을 정의합니다. record는 명시한 longhand만 담고, 생략한 longhand는 활성 기본값 세트로 풉니다(ADR-0082, IX.11.25. 기본 세트 `css`의 값은 CSS initial value). container 저장 위치(Frame payload 확장 또는 `layout_mode` 참조 resource)와 Frame `size` 흡수 방식을 이 작업의 ADR로 정합니다. item longhand(inset, `flex-*`, `align-self`·`justify-self`, `grid-*-start`·`-end`, sizing longhand)는 Frame만이 아니라 상자를 가진 모든 node 종류(Frame, Shape, Path, Text, Image, ComponentInstance)의 자식에 붙습니다. 지금 Frame이 아닌 node에는 위치 필드가 없으므로(`crates/document/src/records.rs` `NodeRecord`, Rectangle은 크기만 가짐) item record 저장 위치(NodeRecord 공통 필드 또는 node별 layout item record)와 Shape·Image payload 크기의 흡수 방식도 같은 ADR로 정합니다. 상자가 없는 Fragment는 item이 아니고 그 자식이 item입니다(아키텍처 §12.4). Ellipse·Polygon `bounds` 원점은 shape local 좌표의 기하 offset으로, Transform modifier 이동 성분은 layout 뒤에 적용하는 시각 변형으로 그대로 두고 위치 longhand로 migration하지 않으며, 새 위치 편집은 item record 위치 longhand를 씁니다(속성 모델 12장 Position 행). longhand key는 ADR-0024 결정 14로 할당하되, `width`·`height`는 IX.11.22(Frame)·IX.11.3(Shape·Image)이 할당한 key를 그대로 쓰고 아직 key가 없는 node 종류에만 새로 할당합니다. schema version 증가는 IX.11.21이 정한 묶음 규칙을 따릅니다."
     status: not_started
     depends_on:
       - "IX.11.4"
@@ -5052,6 +5079,76 @@ tasks:
     required_environments:
       - DEV-MAC
     report: "docs/task-reports/IX.11.23.md"
+  - id: "IX.11.24"
+    title: "생략값 기본값 세트 표를 속성 registry(ADR-0075)의 longhand별 항목으로 둡니다(ADR-0082 결정 2). 내장 세트는 `css`(CSS initial value에 노드가 대응하는 HTML 요소의 UA stylesheet 값을 더한 값, Frame은 `div`)와 `react-native`(React Native·Yoga의 View·Text·Image 기본 동작을 CSS longhand 값으로 적은 값) 두 개입니다. 확인하지 못한 RN 항목은 `css` 값을 물려받는다고 표에 명시합니다. `docs/spec/style-defaults.md`에 표 전체를 둡니다."
+    status: not_started
+    depends_on:
+      - "IX.11.2"
+      - "IX.11.3"
+      - "IX.11.14"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.11.25"
+    title: "명시하지 않은 longhand를 활성 기본값 세트로 푸는 해석 함수 하나를 만들고 layout·scene·조회·codegen이 모두 이 함수를 쓰게 합니다(ADR-0082 결정 1). 엔진(`crates/layout`, `crates/scene`)의 하드코딩 initial value와 box-sizing 고정을 이 해석으로 옮기고, 엔진은 풀린 값만 입력으로 받습니다. 원본 codec(V.10.8)과 영속 record(IX.11.6)는 명시 값만 기록하고, 생략한 키는 미설정으로 읽습니다. 활성 세트는 열 때와 바꿀 때 `extends` 사슬을 미리 푼 고정 배열로 평탄화합니다."
+    status: not_started
+    depends_on:
+      - "IX.11.24"
+      - "IX.11.6"
+      - "IX.11.4"
+      - "IX.11.5"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.11.26"
+    title: "`stellar.yaml`의 선택 키 `style_defaults: <세트 이름>`과 사용자 세트 파일 `design/style-defaults/<name>.stellar.yaml` codec을 구현합니다(ADR-0082 결정 3·4). 사용자 세트 형식은 `extends: <세트 이름>` 한 줄과 `<css-longhand>: <CSS 값>` 줄이고, 노드 종류 구획(`frame:`·`text:`·`image:`·`shape:`)을 둘 수 있습니다. `extends` 사슬은 내장 세트에서 끝나야 하며 순환, 모르는 longhand, 문법 오류, `var()` 참조를 거부합니다. 키가 없으면 `css`입니다. 기존 텍스트 원본과 같은 크기·깊이 제한과 경로 guard를 적용합니다."
+    status: not_started
+    depends_on:
+      - "IX.11.24"
+      - "V.10.2"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.11.27"
+    title: "영속 command `SetStyleDefaults`(활성 세트 변경)와 `UnsetProperty`(명시 값 지우기)를 persistent-commands 대역 끝 번호(0x0091부터)와 command codec version 3으로 추가합니다(ADR-0082 결정 4·5, Compatibility). 두 command 모두 Undo 한 번으로 되돌아가고, 세트 변경은 Git diff에서 `stellar.yaml` 한 줄입니다."
+    status: not_started
+    depends_on:
+      - "IX.11.25"
+      - "IX.11.26"
+      - "VII.1.6"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.11.28"
+    title: "속성 조회 결과(`stellar query`, MCP 읽기, 속성 탭 snapshot)가 값마다 출처 `explicit` 또는 `default(<세트 이름>)`를 돌려주게 합니다(ADR-0082 결정 5). 출처는 고정 크기 enum이고 세트 이름은 세트 표 index로 줄여 씁니다."
+    status: not_started
+    depends_on:
+      - "IX.11.25"
+      - "IX.11.27"
+      - "XXIV.4.3"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.11.29"
+    title: "CLI `stellar style-defaults`에 `list`(내장·사용자 세트 목록), `show`(평탄화한 세트 표), `set`(`SetStyleDefaults` 적용)을 추가합니다. `set`은 ops 쓰기 경로(base revision 검사, 교차 프로세스 저장 잠금)를 거칩니다."
+    status: not_started
+    depends_on:
+      - "IX.11.26"
+      - "IX.11.27"
+      - "XXIV.4.5"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.11.30"
+    title: "codegen이 대상의 고유 기본값과 활성 세트의 차이를 명시 선언으로 냅니다(ADR-0082 결정 6). Web export에서 세트가 `react-native`이면 내보내는 root 범위에 특이도 0인 기반 규칙 하나(`:where(.<root>, .<root> *) { … }`)를 두어 저자 규칙이 언제나 이기게 합니다. RN 대상 출력에서 세트가 `css`이면 차이 값을 스타일 객체에 명시합니다. 세트와 대상 기본값이 같으면 아무것도 더하지 않습니다."
+    status: not_started
+    depends_on:
+      - "IX.11.25"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.11.31"
+    title: "`css`·`react-native` 세트 conformance fixture를 추가합니다(ADR-0082 Consequences). `css` 세트는 기준 browser 계산값으로, `react-native` 세트는 RN 공식 문서와 Yoga 동작에서 얻은 기대값으로 표를 고정하고, fixture마다 기대값 출처를 기록합니다."
+    status: not_started
+    depends_on:
+      - "IX.11.24"
+      - "IX.11.25"
+      - "IX.11.8"
+    required_environments:
+      - DEV-MAC
   - id: "IX.12.1"
     title: "Component Context 저장에 쓸 numeric 번호와 확장 위치를 예약하는 ADR을 작성하고 registry 예약 상수로 고정합니다. 대상은 ReferenceTarget의 Context tag(현재 tag는 `crates/expressions/src/ast.rs`의 0x01\\~0x04), `ContextKey`·`ContextProvision` record를 담을 chunk kind(현재 `crates/storage/src/chunk/kinds.rs`의 1\\~6이며 모르는 required kind는 V.2.7 규칙으로 오류) 또는 기존 chunk 안의 record kind, ComponentDefinition 공개 인터페이스의 `ContextRequirement` 목록과 Slot의 공개 Context key 목록(ADR-0025 결정 3.11)이 들어갈 확장 위치입니다. 예약 번호는 다른 용도로 쓰지 않습니다. encoder·decoder 동작은 바꾸지 않습니다."
     status: reported_done
