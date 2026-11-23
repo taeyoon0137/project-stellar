@@ -2,8 +2,9 @@
 //!
 //! 같은 값은 항상 같은 문자열이 되도록 표기를 고정합니다.
 //!
-//! - 숫자: `f32` 최단 round-trip 십진 표기(지수 표기 없음). `-0`은 `0`으로 씁니다. 계산 결과가
-//!   유한하지 않으면 [`SvgValueError::NonFinite`]입니다.
+//! - 숫자: `f32` 최단 round-trip 십진 표기(지수 표기 없음). `-0`은 `0`으로 씁니다. 표기 함수는 CSS 값 formatter와
+//!   같은 `stellar_core_types::number`입니다(ADR-0128 결정 4). 계산 결과가 유한하지 않으면
+//!   [`SvgValueError::NonFinite`]입니다.
 //! - 색: sRGB `[0, 1]`은 `rgb(R%,G%,B%)`(SVG 1.1 호환), 그 외는 CSS Color 4 `color(<space> r g b)`.
 //!   알파는 별도 `*-opacity` 속성으로 씁니다(비연관 알파라 그대로 대응합니다).
 //! - 변환: 항등은 생략, 그 외 `matrix(a b c d e f)`.
@@ -61,13 +62,13 @@ pub fn is_safe_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
 }
 
-/// 숫자를 씁니다.
+/// 숫자를 씁니다. 표기는 CSS 값 formatter와 같은 함수(`stellar_core_types::number::write_number`, ADR-0128 결정 4)이고,
+/// SVG profile은 유한하지 않은 값을 오류로 거부합니다.
 pub fn write_number(out: &mut String, value: f32) -> Result<(), SvgValueError> {
     if !value.is_finite() {
         return Err(SvgValueError::NonFinite);
     }
-    let normalized = if value == 0.0 { 0.0 } else { value };
-    out.push_str(&normalized.to_string());
+    stellar_core_types::number::write_number(out, value);
     Ok(())
 }
 

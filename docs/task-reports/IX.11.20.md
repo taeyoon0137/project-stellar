@@ -62,3 +62,41 @@
   - formatter를 한 함수로 모으는 일은 수 표기를 core-types로 옮기는 결정이 필요합니다(ADR-0091 결정 6). 그래서 이 행은 부분
     완료로 남습니다.
   - 종단 test에 `registry_items` 대조를 더하는 일은 integration test 소유 작업입니다.
+
+## 후속 작업 (2026-11-24, `lane/style-apply-revision`, ADR-0128 결정 4·5)
+
+- 수 표기를 한 함수로 합쳤습니다. `stellar_core_types::number::{write_number, format_number}`가 `f32` 최단 왕복 10진
+  표기(지수 없음, `-0`은 `0`)를 쓰고, CSS 값 formatter `css::value::format_number`와 SVG profile
+  `svg::format::write_number`가 이 함수를 부릅니다. export → document 의존은 열지 않았습니다(core-types는 둘 다 이미
+  의존). SVG profile은 유한하지 않은 값 거부만 더합니다. 단위·구분자·색 표기는 profile 규칙이 달라 각자 둡니다.
+- 종단 test에 `registry_items` 대조를 더했습니다. 행마다 원천 항목(범위, 이름)이 registry 편집 항목 하나인지, 그 항목들의
+  CSS 매핑 longhand가 그 행의 `css_longhands`를 모두 덮는지 봅니다.
+- SVG 출력 bytes는 바뀌지 않았습니다(export golden 통과).
+
+### 변경 파일
+
+- `crates/core-types/src/number.rs`(신규), `crates/core-types/src/lib.rs`(mod 등록): 보호 경로, ADR-0128.
+- `crates/document/src/css/value.rs`: `format_number`가 core 함수를 부름(소유 밖, 본문 한 줄).
+- `crates/export/src/svg/format.rs`, `crates/export/src/svg/mapping.rs`(doc 주석).
+- `tests/integration/tests/svg_registry_mapping.rs`: `every_registry_item_exists_and_covers_the_rows_css_longhands`.
+
+### 검증 (`DEV-MAC`)
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-core-types` | 통과 |
+| `cargo test -p stellar-export` | 통과(165, SVG golden bytes 불변) |
+| `cargo test -p stellar-integration-tests --test svg_registry_mapping` | 통과(4) |
+
+### 완료 기준 대비
+
+| 기준 | 상태 |
+|---|---|
+| 매핑 inventory 누락 0 | 이름·원천 항목 대조, 칠하기 longhand 누락 0 |
+| SVG 출력 문자열이 formatter SVG profile 결과와 일치 | SVG profile은 `svg::format` 한 곳이고, 수 표기는 CSS와 같은 core 함수 |
+| 기존 SVG golden bytes 불변 | `cargo test -p stellar-export` |
+| same snapshot byte-identical | 기존 export test |
+
+### 남은 위험 / 한계
+
+- `crates/layout` `declaration_text`의 수 표기는 아직 따로입니다. 같은 core 함수로 옮기는 일은 layout 소유 작업입니다.
