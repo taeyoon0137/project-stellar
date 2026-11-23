@@ -15,7 +15,9 @@ use stellar_ops::diff::DiffReport;
 use stellar_ops::git::{change_id_text, GitError, GitSession, GitStatusReport, StatusRequest};
 use stellar_ops::lock::LockPolicy;
 use stellar_ops::mcp_merge::{semantic_conflicts, SemanticConflictsError};
-use stellar_ops::query::property_path_label;
+use stellar_ops::query::{
+    node_layout, property_path_label, LayoutUnavailable, NodeLayout, QueryError,
+};
 use stellar_ops::revision::ProjectRevision;
 use stellar_ops::text_source::source_span;
 use stellar_ops::web_frame::{export_web_frame_node, HtmlError};
@@ -179,15 +181,51 @@ fn css_failure(error: &CssError) -> RpcError {
     }
 }
 
-/// `document.copy_css`: `stellar css copy`와 같은 [`copy`].
+/// node의 layout longhand 값과 출처(ADR-0082 결정 5). `stellar query --node`의 `node.layout`과 같은 모양입니다.
+fn layout_json(layout: &Result<NodeLayout, LayoutUnavailable>) -> J {
+    match layout {
+        Ok(layout) => J::object(vec![
+            ("style_defaults", J::string(layout.style_defaults.clone())),
+            ("class", J::string(layout.class)),
+            (
+                "values",
+                J::Array(
+                    layout
+                        .values
+                        .iter()
+                        .map(|v| {
+                            J::object(vec![
+                                ("longhand", J::string(v.longhand)),
+                                ("value", J::string(v.value.clone())),
+                                ("source", J::string(layout.source_label(v.source))),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ]),
+        Err(LayoutUnavailable::NoBox) => J::Null,
+        Err(error @ LayoutUnavailable::StyleDefaults { code }) => J::object(vec![(
+            "error",
+            J::object(vec![
+                ("code", J::string(*code)),
+                ("message", J::string(error.message())),
+            ]),
+        )]),
+    }
+}
+
+/// `document.copy_css`: `stellar css copy`와 같은 [`copy`]. `layout`은 세션 snapshot에서 [`node_layout`]으로 푼
+/// layout longhand 값과 출처입니다(`stellar query --node`의 `node.layout`과 같음).
 pub(super) fn copy_css(cached: &CachedRead, args: &J) -> Result<J, RpcError> {
-    let copied = copy(
-        cached.snapshot.root(),
-        arg_id(args, "document")?,
-        arg_id(args, "node")?,
-    )
-    .map_err(|e| css_failure(&e))?;
+    let document = arg_id(args, "document")?;
+    let node = arg_id(args, "node")?;
+    let copied = copy(cached.snapshot.root(), document, node).map_err(|e| css_failure(&e))?;
     ensure_current(cached, copied.revision)?;
+    let layout = node_layout(&cached.snapshot, document, node).map_err(|e| match e {
+        QueryError::UnknownNode { .. } => fail(Kind::NotFound, "문서에 node가 없습니다"),
+        _ => fail(Kind::NotFound, "대상 문서를 읽을 수 없습니다"),
+    })?;
     Ok(J::object(vec![
         ("revision", revision(copied.revision)),
         ("document", id(copied.document)),
@@ -209,6 +247,7 @@ pub(super) fn copy_css(cached: &CachedRead, args: &J) -> Result<J, RpcError> {
                     .collect(),
             ),
         ),
+        ("layout", layout_json(&layout)),
     ]))
 }
 

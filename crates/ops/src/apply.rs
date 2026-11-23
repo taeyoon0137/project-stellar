@@ -25,6 +25,10 @@
 //!    다른 writer가 current pointer를 바꿨으면 optimistic check(V.5.2)가 쓰기 전에 거부합니다
 //!    ([`ApplyError::ConcurrentWrite`]).
 //!
+//! 6. transaction이 활성 기본값 세트(`SetStyleDefaults`, 모델 거울)를 바꿨으면 4번 뒤에 `stellar.yaml` 한 줄 쓰기를
+//!    준비하고(세트 평탄화·연 시점 선택 확인, 실패하면 [`ApplyError::Rejected`]), 쓰기 모드는 generation 저장 뒤에
+//!    그 한 줄을 씁니다(ADR-0087). dry-run은 준비만 합니다.
+//!
 //! 쓰기 모드는 1번 전에 프로젝트별 교차 프로세스 저장 잠금([`crate::lock`], XXIV.4.5)을 잡고 저장을
 //! 마칠 때까지 쥡니다. 잠금을 쥔 동안 같은 잠금을 쓰는 앱 창과 CLI는 들어오지 못하므로, 잠금 안에서 한
 //! generation 비교와 pointer 교체 사이에 다른 저장이 끼어들 수 없습니다.
@@ -53,6 +57,7 @@ use stellar_document::modifier::{
 use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_project::document_io::serialize::serialize_document;
 use stellar_project::identity::parse_project_id;
+use stellar_project::manifest_style_defaults::{prepare_selection, PreparedSelection};
 use stellar_storage::chunk::kinds::{KIND_DOCUMENT_MANIFEST, KIND_VIEW_TREE};
 use stellar_storage::chunk::planner::LogicalChunkState;
 use stellar_storage::generation::loader::LoadedGeneration;
@@ -1070,6 +1075,7 @@ pub fn apply(
         });
     }
     let diff = diff_records(&[&before], &[&after]).map_err(|e| ApplyError::Projection(e.0))?;
+    let selection = prepare_style_defaults(&snapshot, &model, &commands, &origins)?;
 
     if mode == ApplyMode::DryRun {
         return Ok(ApplyOutcome {
@@ -1142,6 +1148,13 @@ pub fn apply(
         },
         None => return Err(ApplyError::Save("저장 결과 generation이 없습니다".into())),
     };
+    if let Some(selection) = selection {
+        selection.commit(snapshot.root()).map_err(|e| {
+            ApplyError::Save(format!(
+                "generation은 저장했지만 stellar.yaml 기본값 세트를 쓰지 못했습니다: {e}"
+            ))
+        })?;
+    }
     Ok(ApplyOutcome {
         mode,
         base_revision,
@@ -1151,6 +1164,32 @@ pub fn apply(
         diff,
         written_chunks,
     })
+}
+
+/// transaction이 모델의 활성 기본값 세트 거울을 바꿨으면 `stellar.yaml` 한 줄 쓰기를 준비합니다(ADR-0087 결정 2).
+/// 세트가 이 프로젝트에서 평탄화되지 않거나 연 뒤 선택이 바뀌었으면 마지막 `SetStyleDefaults` 입력의 거부입니다.
+/// 준비는 파일을 쓰지 않습니다. 쓰기 모드는 generation 저장 뒤에 commit합니다.
+fn prepare_style_defaults(
+    snapshot: &ProjectSnapshot,
+    model: &DocumentModel,
+    commands: &[Command],
+    origins: &[usize],
+) -> Result<Option<PreparedSelection>, ApplyError> {
+    let opened = snapshot.style_defaults_name();
+    if model.style_defaults() == opened {
+        return Ok(None);
+    }
+    let index = commands
+        .iter()
+        .rposition(|c| matches!(c, Command::SetStyleDefaults(_)))
+        .and_then(|i| origins.get(i).copied())
+        .unwrap_or(origins.len());
+    prepare_selection(snapshot.root(), Some(opened), model.style_defaults())
+        .map(Some)
+        .map_err(|e| ApplyError::Rejected {
+            index,
+            reason: e.to_string(),
+        })
 }
 
 #[cfg(test)]

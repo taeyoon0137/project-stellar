@@ -6,7 +6,8 @@ use stellar_ops::core_types::ids::StableId;
 use stellar_ops::diff::{DiffEntry, DiffPosition, DiffReport};
 use stellar_ops::error::{DocumentReadError, OpenError};
 use stellar_ops::query::{
-    DefinitionSet, DocumentOutline, NodeDetail, OpsValue, ProjectStructure, QueryError, TreePage,
+    DefinitionSet, DocumentOutline, LayoutUnavailable, NodeDetail, NodeLayout, OpsValue,
+    ProjectStructure, QueryError, TreePage,
 };
 use stellar_ops::revision::ProjectRevision;
 use stellar_ops::types::RootError;
@@ -181,6 +182,44 @@ pub fn value_inner(value: &OpsValue) -> JsonValue {
     }
 }
 
+/// node의 layout longhand 값과 출처(ADR-0082 결정 5). 상자가 없는 node는 `null`, 세트를 풀지 못하면
+/// `{"error": {code, message}}`입니다. MCP `document.copy_css`의 `layout`과 같은 모양입니다.
+pub fn node_layout(layout: &Result<NodeLayout, LayoutUnavailable>) -> JsonValue {
+    match layout {
+        Ok(layout) => JsonValue::object(vec![
+            (
+                "style_defaults",
+                JsonValue::string(layout.style_defaults.clone()),
+            ),
+            ("class", JsonValue::string(layout.class)),
+            (
+                "values",
+                JsonValue::Array(
+                    layout
+                        .values
+                        .iter()
+                        .map(|v| {
+                            JsonValue::object(vec![
+                                ("longhand", JsonValue::string(v.longhand)),
+                                ("value", JsonValue::string(v.value.clone())),
+                                ("source", JsonValue::string(layout.source_label(v.source))),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ]),
+        Err(LayoutUnavailable::NoBox) => JsonValue::Null,
+        Err(error @ LayoutUnavailable::StyleDefaults { code }) => JsonValue::object(vec![(
+            "error",
+            JsonValue::object(vec![
+                ("code", JsonValue::string(*code)),
+                ("message", JsonValue::string(error.message())),
+            ]),
+        )]),
+    }
+}
+
 /// node 상세.
 pub fn node_detail(detail: &NodeDetail) -> JsonValue {
     JsonValue::object(vec![
@@ -218,6 +257,7 @@ pub fn node_detail(detail: &NodeDetail) -> JsonValue {
                             .collect(),
                     ),
                 ),
+                ("layout", node_layout(&detail.layout)),
             ]),
         ),
     ])

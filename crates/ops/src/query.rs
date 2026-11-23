@@ -4,6 +4,12 @@
 //! token·component 목록을 만듭니다. 결과는 출력 형식과 무관한 Rust 값이며 모두 그 snapshot의
 //! [`ProjectRevision`]을 함께 담습니다. 이 모듈은 파일을 쓰지 않습니다.
 //!
+//! ## layout longhand 값과 출처
+//!
+//! [`node_layout`]은 node의 layout longhand 전부를 활성 기본값 세트로 풀어(문서 crate `style_defaults::resolve`
+//! 하나) 값마다 출처 `explicit` 또는 `default(<세트>)`를 붙입니다(ADR-0082 결정 5, ADR-0087 결정 3). 출처는 고정
+//! 크기 enum [`LayoutSource`]이고 세트 이름은 결과에 한 번만 둡니다. [`node_detail`]도 같은 결과를 담습니다.
+//!
 //! ## 문서 트리 page와 cursor
 //!
 //! - 순서: 정의 순서(페이지 → View)로 각 View root Frame에서 시작하는 깊이 우선 전위 순회.
@@ -17,7 +23,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::str::FromStr;
 
+use stellar_document::css::style_defaults::{resolve, ValueSource};
 use stellar_document::definitions::DocumentDefinition;
+use stellar_document::layout_record::format_value;
 use stellar_document::model::DocumentModel;
 use stellar_semantic_diff::build::project_document_node;
 use stellar_semantic_diff::value::SemanticValue;
@@ -478,6 +486,113 @@ pub struct NodeProperty {
     pub value: OpsValue,
 }
 
+/// layout longhand 값의 출처(ADR-0082 결정 5). 고정 크기이고 세트 이름은 [`NodeLayout::style_defaults`] 하나입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutSource {
+    /// 사용자가 명시한 값(layout record 또는 payload 크기). 세트 값과 같아도 명시입니다.
+    Explicit,
+    /// 활성 기본값 세트의 값.
+    Default,
+}
+
+/// node의 layout longhand 값 하나.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayoutProperty {
+    /// CSS longhand 이름.
+    pub longhand: &'static str,
+    /// 정규 CSS 값 텍스트(`layout_record::format_value`).
+    pub value: String,
+    /// 출처.
+    pub source: LayoutSource,
+}
+
+/// node 하나의 풀린 layout longhand 전체.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeLayout {
+    /// 활성 기본값 세트 이름. `default` 출처의 세트입니다.
+    pub style_defaults: String,
+    /// 기본값 구획 이름(`frame`·`text`·`image`·`shape`).
+    pub class: &'static str,
+    /// longhand 순서(`LayoutLonghand::ALL`)의 값.
+    pub values: Vec<LayoutProperty>,
+}
+
+impl NodeLayout {
+    /// 출처 표기: `explicit` 또는 `default(<세트 이름>)`.
+    pub fn source_label(&self, source: LayoutSource) -> String {
+        match source {
+            LayoutSource::Explicit => "explicit".to_string(),
+            LayoutSource::Default => format!("default({})", self.style_defaults),
+        }
+    }
+}
+
+/// [`node_layout`]을 풀 수 없는 이유.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayoutUnavailable {
+    /// 상자가 없는 node(Fragment)라 layout longhand가 없습니다.
+    NoBox,
+    /// 활성 기본값 세트를 평탄화하지 못했습니다(사용자 세트 파일 오류, 없는 세트, 순환). 자세한 진단은
+    /// `stellar style-defaults show`가 냅니다. 결과에는 프로젝트 문자열 없이 안정 code만 둡니다.
+    StyleDefaults {
+        /// 안정 진단 code(`StyleDefaultsFileError::code`).
+        code: &'static str,
+    },
+}
+
+impl LayoutUnavailable {
+    /// 고정 설명 문구(프로젝트 문자열 없음).
+    pub fn message(&self) -> &'static str {
+        match self {
+            LayoutUnavailable::NoBox => "상자가 없는 node라 layout longhand가 없습니다",
+            LayoutUnavailable::StyleDefaults { .. } => "활성 기본값 세트를 풀 수 없습니다",
+        }
+    }
+}
+
+/// 이미 읽은 문서 모델에서 node의 layout longhand를 snapshot의 활성 세트로 풉니다. node가 없으면 `None`입니다.
+fn resolve_layout(
+    snapshot: &ProjectSnapshot,
+    model: &DocumentModel,
+    node: StableId,
+) -> Option<Result<NodeLayout, LayoutUnavailable>> {
+    let payload = model.payload(node)?;
+    let set = match snapshot.style_defaults() {
+        Ok(set) => set,
+        Err(e) => return Some(Err(LayoutUnavailable::StyleDefaults { code: e.code() })),
+    };
+    let Some(resolved) = resolve(set, payload, model.layout_record(node)) else {
+        return Some(Err(LayoutUnavailable::NoBox));
+    };
+    Some(Ok(NodeLayout {
+        style_defaults: set.name().to_string(),
+        class: resolved.class.name(),
+        values: resolved
+            .values
+            .iter()
+            .map(|v| LayoutProperty {
+                longhand: v.longhand.name(),
+                value: format_value(&v.value),
+                source: match v.source {
+                    ValueSource::Explicit => LayoutSource::Explicit,
+                    ValueSource::Default { .. } => LayoutSource::Default,
+                },
+            })
+            .collect(),
+    }))
+}
+
+/// node 하나의 layout longhand 값과 출처를 조회합니다(ADR-0082 결정 5). 바깥 `Err`는 문서·node 오류이고, 안쪽
+/// `Err`는 이 node에 layout 값을 풀 수 없는 이유입니다.
+pub fn node_layout(
+    snapshot: &ProjectSnapshot,
+    document: StableId,
+    node: StableId,
+) -> Result<Result<NodeLayout, LayoutUnavailable>, QueryError> {
+    let model = snapshot.document_model(document)?;
+    resolve_layout(snapshot, &model, node).ok_or(QueryError::UnknownNode { document, node })
+}
+
 /// node 하나의 공통 필드와 속성.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodeDetail {
@@ -505,6 +620,8 @@ pub struct NodeDetail {
     pub properties: Vec<NodeProperty>,
     /// 이 node가 소유한 modifier 수.
     pub modifier_count: usize,
+    /// layout longhand 값과 출처([`node_layout`]과 같음).
+    pub layout: Result<NodeLayout, LayoutUnavailable>,
 }
 
 /// node 하나의 공통 필드와 속성을 조회합니다.
@@ -549,6 +666,8 @@ pub fn node_detail(
         children: model.children_in_order(node),
         properties,
         modifier_count,
+        layout: resolve_layout(snapshot, &model, node)
+            .ok_or(QueryError::UnknownNode { document, node })?,
     })
 }
 
@@ -927,5 +1046,143 @@ mod tests {
         }
         let counts = document_node_counts(&snapshot).unwrap();
         assert_eq!(counts[&model.document_id()], model.node_count());
+    }
+
+    mod layout_provenance {
+        //! IX.11.28: 값마다 출처 `explicit`·`default(<세트>)`(ADR-0082 결정 5, ADR-0087 결정 3).
+        use super::*;
+        use crate::apply::{apply, ApplyMode, ApplyRequest, CommandInput};
+        use crate::lock::LockPolicy;
+        use stellar_commands::command::Command;
+        use stellar_commands::style_defaults::UnsetProperty;
+        use stellar_document::layout_record::{LayoutLonghand, LayoutRecord};
+        use stellar_project::manifest_style_defaults::set_active;
+
+        /// 저장된 프로젝트, 문서, `display: flex`·`flex-direction: column`을 명시한 root Frame.
+        fn project(tmp: &TempDir) -> (std::path::PathBuf, StableId, StableId) {
+            let root = tmp.path.join("project");
+            std::fs::create_dir_all(&root).unwrap();
+            scaffold_project(&root);
+            let mut model = large_document(4);
+            let frame = model.definition().pages[0].views[0].root_frame;
+            let mut record = LayoutRecord::new(frame);
+            for (longhand, value) in [
+                (LayoutLonghand::Display, "flex"),
+                (LayoutLonghand::FlexDirection, "column"),
+            ] {
+                record
+                    .set(longhand, longhand.parse(value).unwrap())
+                    .unwrap();
+            }
+            model.set_layout_record(record).unwrap();
+            save_documents(&root, &[&model]);
+            (root, model.document_id(), frame)
+        }
+
+        fn source(layout: &NodeLayout, longhand: &str) -> (String, String) {
+            let value = layout
+                .values
+                .iter()
+                .find(|v| v.longhand == longhand)
+                .unwrap();
+            (value.value.clone(), layout.source_label(value.source))
+        }
+
+        #[test]
+        fn values_carry_explicit_or_default_source_of_the_active_set() {
+            let tmp = TempDir::new("query-layout");
+            let (root, document, frame) = project(&tmp);
+            let snapshot = open_snapshot(&root).unwrap();
+            let layout = node_layout(&snapshot, document, frame).unwrap().unwrap();
+            assert_eq!(layout.style_defaults, "css");
+            assert_eq!(layout.class, "frame");
+            assert_eq!(layout.values.len(), LayoutLonghand::ALL.len());
+            assert_eq!(
+                source(&layout, "display"),
+                ("flex".into(), "explicit".into())
+            );
+            assert_eq!(
+                source(&layout, "flex-shrink"),
+                ("1".into(), "default(css)".into())
+            );
+            // payload 크기는 명시 값입니다.
+            assert_eq!(source(&layout, "width").1, "explicit");
+            // node_detail도 같은 결과를 담습니다.
+            let detail = node_detail(&snapshot, document, frame).unwrap();
+            assert_eq!(detail.layout, Ok(layout));
+
+            set_active(&root, "react-native").unwrap();
+            let snapshot = open_snapshot(&root).unwrap();
+            let layout = node_layout(&snapshot, document, frame).unwrap().unwrap();
+            assert_eq!(
+                source(&layout, "flex-shrink"),
+                ("0".into(), "default(react-native)".into())
+            );
+            // 세트 값(column)과 같아도 명시로 남습니다.
+            assert_eq!(
+                source(&layout, "flex-direction"),
+                ("column".into(), "explicit".into())
+            );
+            assert!(matches!(
+                node_layout(&snapshot, document, StableId::new_v7(9, 9, 9)),
+                Err(QueryError::UnknownNode { .. })
+            ));
+        }
+
+        #[test]
+        fn unset_property_turns_the_source_into_the_set_default() {
+            let tmp = TempDir::new("query-layout-unset");
+            let (root, document, frame) = project(&tmp);
+            set_active(&root, "react-native").unwrap();
+            let snapshot = open_snapshot(&root).unwrap();
+            let command = Command::UnsetProperty(UnsetProperty {
+                node: frame,
+                longhand: LayoutLonghand::FlexDirection,
+            });
+            let request = ApplyRequest {
+                base_revision: snapshot.revision(),
+                document,
+                commands: vec![CommandInput::Canonical {
+                    kind: command.kind().name().to_string(),
+                    bytes: stellar_commands::codec::encode_command(&command),
+                }],
+            };
+            let locks = LockPolicy::Required {
+                dir: tmp.path.join("locks"),
+            };
+            apply(&root, &request, ApplyMode::Write, &locks).unwrap();
+            let snapshot = open_snapshot(&root).unwrap();
+            let layout = node_layout(&snapshot, document, frame).unwrap().unwrap();
+            assert_eq!(
+                source(&layout, "flex-direction"),
+                ("column".into(), "default(react-native)".into())
+            );
+            assert_eq!(
+                source(&layout, "display"),
+                ("flex".into(), "explicit".into())
+            );
+        }
+
+        #[test]
+        fn unflattenable_set_is_reported_per_node_without_failing_the_query() {
+            let tmp = TempDir::new("query-layout-broken");
+            let (root, document, frame) = project(&tmp);
+            set_active(&root, "react-native").unwrap();
+            // 매니페스트가 없는 사용자 세트를 고르게 직접 고칩니다.
+            let manifest = root.join(stellar_project::root::MANIFEST_FILE);
+            let text = std::fs::read_to_string(&manifest)
+                .unwrap()
+                .replace("react-native", "missing");
+            std::fs::write(&manifest, text).unwrap();
+            let snapshot = open_snapshot(&root).unwrap();
+            let detail = node_detail(&snapshot, document, frame).unwrap();
+            assert_eq!(
+                detail.layout,
+                Err(LayoutUnavailable::StyleDefaults {
+                    code: "unknown-style-defaults"
+                })
+            );
+            assert!(!detail.properties.is_empty());
+        }
     }
 }

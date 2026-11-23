@@ -6,6 +6,9 @@
 //! - 활성 세트는 매니페스트 키로 고르고 [`active_set`]이 `extends` 사슬을 풀어 평탄화합니다.
 //! - [`set_active`]는 `stellar.yaml`을 읽은 bytes hash가 같을 때만 그 키 한 줄을 바꿔 씁니다. `css`를 고르면 키를
 //!   지웁니다(키가 없으면 `css`). 프로젝트 저장 잠금은 호출자 몫입니다.
+//! - 문서 저장 경로는 [`prepare_selection`]과 [`PreparedSelection::commit`] 두 단계로 같은 한 줄을 씁니다. 문서를
+//!   연 쪽이 [`active_set`]으로 활성 세트를 풀어 `DocumentModel`에 이름을 거울로 넣고, 저장할 때 거울이 바뀌었으면
+//!   generation 저장 전에 준비하고 저장 뒤에 commit합니다(ADR-0087).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -61,6 +64,13 @@ pub enum StyleDefaultsFileError {
     Manifest(ManifestError),
     /// 세트 평탄화 오류(순환, 없는 세트, 이름 …).
     Set(StyleDefaultsError),
+    /// 연 시점 뒤 `stellar.yaml`의 활성 세트가 바뀌었습니다([`prepare_selection`]).
+    Stale {
+        /// 연 시점의 세트 이름.
+        expected: String,
+        /// 지금 매니페스트의 세트 이름.
+        found: String,
+    },
 }
 
 impl fmt::Display for StyleDefaultsFileError {
@@ -71,6 +81,10 @@ impl fmt::Display for StyleDefaultsFileError {
             StyleDefaultsFileError::Format { path, message, .. } => write!(f, "{path}: {message}"),
             StyleDefaultsFileError::Manifest(e) => write!(f, "{MANIFEST_FILE}: {e}"),
             StyleDefaultsFileError::Set(e) => write!(f, "{e}"),
+            StyleDefaultsFileError::Stale { expected, found } => write!(
+                f,
+                "{MANIFEST_FILE}: 활성 기본값 세트가 연 뒤 {expected}에서 {found}로 바뀌었습니다"
+            ),
         }
     }
 }
@@ -86,6 +100,7 @@ impl StyleDefaultsFileError {
             StyleDefaultsFileError::Format { code, .. } => code,
             StyleDefaultsFileError::Manifest(_) => "manifest-invalid",
             StyleDefaultsFileError::Set(e) => e.code(),
+            StyleDefaultsFileError::Stale { .. } => "style-defaults-stale",
         }
     }
 }
@@ -345,7 +360,70 @@ pub fn active_set(root: &Path, manifest: &Manifest) -> Result<FlatSet, StyleDefa
 
 /// `stellar.yaml`의 `style_defaults`를 `name`으로 바꿉니다. 세트가 평탄화되지 않으면(없는 세트, 순환) 바꾸지
 /// 않습니다. 읽은 뒤 파일이 바뀌었으면 쓰지 않고 오류입니다. 이전 선택 이름을 돌려줍니다.
+///
+/// [`prepare_selection`]`(root, None, name)` 뒤 [`PreparedSelection::commit`]과 같습니다.
 pub fn set_active(root: &Path, name: &str) -> Result<String, StyleDefaultsFileError> {
+    prepare_selection(root, None, name)?.commit(root)
+}
+
+/// `stellar.yaml` 활성 세트 선택을 쓰기 전에 검사한 결과(두 단계 쓰기, ADR-0087 결정 2).
+///
+/// 문서를 저장하는 쪽은 generation 저장 전에 [`prepare_selection`]으로 세트가 실제로 평탄화되는지와 매니페스트가
+/// 연 시점의 선택 그대로인지 확인하고, generation 저장이 끝난 뒤 [`PreparedSelection::commit`]으로 한 줄을
+/// 씁니다. commit은 준비할 때 읽은 bytes hash가 그대로일 때만 씁니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedSelection {
+    previous: String,
+    name: String,
+    original_hash: ContentHash,
+    /// 새 `stellar.yaml` bytes. 선택이 같아 쓸 것이 없으면 `None`.
+    written: Option<Vec<u8>>,
+}
+
+impl PreparedSelection {
+    /// 준비할 때 매니페스트가 고른 세트 이름.
+    pub fn previous(&self) -> &str {
+        &self.previous
+    }
+
+    /// 새로 고를 세트 이름.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// `stellar.yaml`을 실제로 바꾸는지(이전 선택과 다름).
+    pub fn changes_file(&self) -> bool {
+        self.written.is_some()
+    }
+
+    /// 준비한 한 줄 변경을 씁니다. 준비한 뒤 `stellar.yaml`이 바뀌었으면 쓰지 않고 I/O 오류입니다. 이전 선택
+    /// 이름을 돌려줍니다. 쓸 것이 없으면 파일을 건드리지 않습니다.
+    pub fn commit(self, root: &Path) -> Result<String, StyleDefaultsFileError> {
+        if let Some(bytes) = &self.written {
+            source_file::write_checked(
+                &root.join(MANIFEST_FILE),
+                bytes,
+                Some(self.original_hash),
+                MAX_INPUT_BYTES as u64,
+            )
+            .map_err(io_error(MANIFEST_FILE))?;
+        }
+        Ok(self.previous)
+    }
+}
+
+/// `stellar.yaml`의 활성 세트를 `name`으로 바꿀 준비를 합니다. 파일은 쓰지 않습니다.
+///
+/// - `stellar.yaml`이 symlink가 아닌 정규 파일이고 매니페스트로 읽혀야 합니다.
+/// - `expected`가 있으면 지금 매니페스트의 선택이 그 이름이어야 합니다. 다르면
+///   [`StyleDefaultsFileError::Stale`]입니다(연 뒤 다른 writer가 세트를 바꿈).
+/// - `name` 세트가 이 프로젝트의 사용자 세트와 함께 평탄화되어야 합니다(없는 세트, 순환, 깊이 초과 거부).
+/// - `css`를 고르면 키를 지웁니다(키가 없으면 `css`). 다른 줄은 그대로입니다.
+pub fn prepare_selection(
+    root: &Path,
+    expected: Option<&str>,
+    name: &str,
+) -> Result<PreparedSelection, StyleDefaultsFileError> {
     let path = root.join(MANIFEST_FILE);
     let meta = std::fs::symlink_metadata(&path).map_err(io_error(MANIFEST_FILE))?;
     if meta.file_type().is_symlink() || !meta.is_file() {
@@ -364,23 +442,27 @@ pub fn set_active(root: &Path, name: &str) -> Result<String, StyleDefaultsFileEr
         error,
     })?;
     let mut manifest = Manifest::from_yaml(&value).map_err(StyleDefaultsFileError::Manifest)?;
+    let previous = active_name(&manifest).to_string();
+    if let Some(expected) = expected {
+        if expected != previous {
+            return Err(StyleDefaultsFileError::Stale {
+                expected: expected.to_string(),
+                found: previous,
+            });
+        }
+    }
     let sets = load_user_sets(root)?;
     flatten_named(name, &sets)?;
-    let previous = active_name(&manifest).to_string();
     manifest.style_defaults = (name != style_defaults::DEFAULT_SET).then(|| name.to_string());
     let written = manifest
         .write()
         .map_err(|e| format_error(MANIFEST_FILE, "manifest-invalid", e.to_string()))?;
-    if written.as_bytes() != bytes.as_slice() {
-        source_file::write_checked(
-            &path,
-            written.as_bytes(),
-            Some(ContentHash::compute(&bytes)),
-            MAX_INPUT_BYTES as u64,
-        )
-        .map_err(io_error(MANIFEST_FILE))?;
-    }
-    Ok(previous)
+    Ok(PreparedSelection {
+        previous,
+        name: name.to_string(),
+        original_hash: ContentHash::compute(&bytes),
+        written: (written.as_bytes() != bytes.as_slice()).then(|| written.into_bytes()),
+    })
 }
 
 #[cfg(test)]
@@ -561,5 +643,152 @@ mod tests {
             before,
             "css는 키를 지움"
         );
+    }
+
+    #[test]
+    fn chains_must_end_in_builtin_and_respect_depth_and_size_limits() {
+        // 검증 기준(IX.11.26): 내장 세트에서 끝나지 않는 사슬, 깊이 상한, 크기 상한.
+        let dir = TestDir::new("style-defaults-limits");
+        project(dir.path(), None);
+        let sets_dir = dir.path().join(STYLE_DEFAULTS_DIR);
+        std::fs::create_dir_all(&sets_dir).unwrap();
+        std::fs::write(sets_dir.join("orphan.stellar.yaml"), "extends: missing\n").unwrap();
+        let sets = load_user_sets(dir.path()).unwrap();
+        assert_eq!(
+            flatten_named("orphan", &sets).unwrap_err().code(),
+            "unknown-style-defaults"
+        );
+        std::fs::remove_file(sets_dir.join("orphan.stellar.yaml")).unwrap();
+
+        // 사용자 세트 MAX_EXTENDS_DEPTH개 사슬은 받고, 하나 더 길면 거부합니다.
+        let depth = style_defaults::MAX_EXTENDS_DEPTH;
+        for i in 0..=depth {
+            let parent = if i == 0 {
+                "css".to_string()
+            } else {
+                format!("s{}", i - 1)
+            };
+            std::fs::write(
+                sets_dir.join(format!("s{i}.stellar.yaml")),
+                format!("extends: {parent}\n"),
+            )
+            .unwrap();
+        }
+        let sets = load_user_sets(dir.path()).unwrap();
+        let deepest_ok = format!("s{}", depth - 1);
+        assert_eq!(
+            flatten_named(&deepest_ok, &sets).unwrap().chain().len(),
+            depth + 1
+        );
+        assert_eq!(
+            flatten_named(&format!("s{depth}"), &sets)
+                .unwrap_err()
+                .code(),
+            "style-defaults-too-deep"
+        );
+        for i in 0..=depth {
+            std::fs::remove_file(sets_dir.join(format!("s{i}.stellar.yaml"))).unwrap();
+        }
+
+        // 제한 loader 입력 상한(1 MiB)을 넘는 파일은 읽기 전에 거부합니다.
+        let mut big = String::from("extends: css\n");
+        big.push_str(&"#".repeat(MAX_INPUT_BYTES));
+        std::fs::write(sets_dir.join("big.stellar.yaml"), big).unwrap();
+        assert_eq!(
+            load_user_sets(dir.path()).unwrap_err().code(),
+            "style-defaults-io"
+        );
+        std::fs::remove_file(sets_dir.join("big.stellar.yaml")).unwrap();
+
+        // 깊이 상한(텍스트 원본과 같은 제한 loader): 중첩이 MAX_NESTING_DEPTH를 넘으면 YAML 단계에서 거부합니다.
+        let nested = |depth: usize| {
+            format!(
+                "extends: css\nframe: {}{}\n",
+                "[".repeat(depth - 1),
+                "]".repeat(depth - 1)
+            )
+        };
+        let too_deep = crate::yaml::loader::MAX_NESTING_DEPTH + 1;
+        std::fs::write(sets_dir.join("nested.stellar.yaml"), nested(too_deep)).unwrap();
+        match load_user_sets(dir.path()).unwrap_err() {
+            StyleDefaultsFileError::Yaml { error, .. } => {
+                assert_eq!(error.kind.code(), "nesting-too-deep")
+            }
+            other => panic!("깊이 상한 거부가 아님: {other:?}"),
+        }
+        // 한도 안의 깊이라도 구획 안에 mapping을 더 두면 값 scalar가 아니라 형식 오류입니다.
+        std::fs::write(
+            sets_dir.join("nested.stellar.yaml"),
+            "extends: css\nframe:\n  display:\n    deeper: flex\n",
+        )
+        .unwrap();
+        assert_eq!(
+            load_user_sets(dir.path()).unwrap_err().code(),
+            "style-defaults-format"
+        );
+        std::fs::remove_file(sets_dir.join("nested.stellar.yaml")).unwrap();
+
+        // symlink 세트 파일은 거부합니다(경로 guard).
+        #[cfg(unix)]
+        {
+            let outside = dir.path().join("outside.yaml");
+            std::fs::write(&outside, "extends: css\n").unwrap();
+            std::os::unix::fs::symlink(&outside, sets_dir.join("link.stellar.yaml")).unwrap();
+            assert_eq!(
+                load_user_sets(dir.path()).unwrap_err().code(),
+                "style-defaults-format"
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_selection_checks_opened_name_and_file_hash() {
+        let dir = TestDir::new("style-defaults-prepare");
+        project(dir.path(), None);
+        let manifest_path = dir.path().join(MANIFEST_FILE);
+        let before = std::fs::read_to_string(&manifest_path).unwrap();
+
+        // 같은 선택이면 쓸 것이 없습니다.
+        let same = prepare_selection(dir.path(), Some("css"), "css").unwrap();
+        assert!(!same.changes_file());
+        assert_eq!(same.commit(dir.path()).unwrap(), "css");
+        assert_eq!(std::fs::read_to_string(&manifest_path).unwrap(), before);
+
+        // 연 시점 이름이 다르면 준비하지 않습니다.
+        assert_eq!(
+            prepare_selection(dir.path(), Some("react-native"), "css")
+                .unwrap_err()
+                .code(),
+            "style-defaults-stale"
+        );
+        // 없는 세트는 준비 단계에서 거부합니다(파일 그대로).
+        assert_eq!(
+            prepare_selection(dir.path(), Some("css"), "missing")
+                .unwrap_err()
+                .code(),
+            "unknown-style-defaults"
+        );
+
+        // 준비는 쓰지 않고, commit이 한 줄을 씁니다.
+        let prepared = prepare_selection(dir.path(), Some("css"), "react-native").unwrap();
+        assert!(prepared.changes_file());
+        assert_eq!(prepared.previous(), "css");
+        assert_eq!(prepared.name(), "react-native");
+        assert_eq!(std::fs::read_to_string(&manifest_path).unwrap(), before);
+        prepared.commit(dir.path()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&manifest_path).unwrap(),
+            format!("{before}style_defaults: react-native\n")
+        );
+
+        // 준비한 뒤 파일이 바뀌면 commit이 쓰지 않습니다.
+        let prepared = prepare_selection(dir.path(), Some("react-native"), "css").unwrap();
+        let edited = format!("{before}style_defaults: react-native\n# 외부 편집\n");
+        std::fs::write(&manifest_path, &edited).unwrap();
+        assert_eq!(
+            prepared.commit(dir.path()).unwrap_err().code(),
+            "style-defaults-io"
+        );
+        assert_eq!(std::fs::read_to_string(&manifest_path).unwrap(), edited);
     }
 }
