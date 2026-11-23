@@ -56,6 +56,9 @@ pub mod server;
 /// 요청 실패의 결과 종류·종료 코드 (XIX.9.9).
 pub mod failure;
 
+/// 호출량 상한 판정 (XIX.9.10).
+pub mod limits;
+
 /// tool 결과 envelope: 프로젝트 문자열은 data로만 (XIX.9.6).
 pub mod result;
 

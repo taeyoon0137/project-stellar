@@ -41,10 +41,10 @@ pub struct ToolDef {
     pub grant: Permission,
 }
 
-/// page 인자 조각(`cursor`, `limit`). `limit` 상한은 mcp-core page 상한과 같아야 합니다(mcp-core 테스트가 확인).
+/// page 인자 조각(`cursor`, `limit`). `limit` 상한은 [`crate::limits::MAX_PAGE_ITEMS`]와 같아야 합니다(test가 확인).
 macro_rules! page_args {
     () => {
-        r#""cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":2000}"#
+        r#""cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":1000}"#
     };
 }
 

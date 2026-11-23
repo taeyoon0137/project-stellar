@@ -25,3 +25,6 @@ pub mod instructions;
 
 /// 결과 종류와 XXIV.1.2 종료 코드 대응 (XIX.9.9).
 pub mod outcome;
+
+/// MCP 경로의 자원 상한 (XIX.9.10).
+pub mod limits;

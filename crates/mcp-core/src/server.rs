@@ -22,6 +22,9 @@
 use std::io::{self, BufRead, Write};
 
 use stellar_agent_protocol::instructions;
+use stellar_agent_protocol::limits;
+
+use crate::failure::{ResultKind, WithDetail};
 
 use crate::framing::{read_frame, write_frame, Frame};
 use crate::json::{self, JsonLimits, JsonValue};
@@ -36,8 +39,8 @@ pub const SERVER_NAME: &str = "stellar-mcp";
 /// 선호 MCP protocol version. 코드에 값을 두지 않고 빌드 시 `config/mcp-protocol.yaml`의 첫
 /// 항목에서 가져옵니다(XIX.1.5).
 pub const PROTOCOL_VERSION: &str = PREFERRED_VERSION;
-/// 수신 메시지 최대 byte 수.
-pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
+/// 수신·송신 메시지 최대 byte 수(XIX.9.10, `stellar_agent_protocol::limits`).
+pub use stellar_agent_protocol::limits::MAX_MESSAGE_BYTES;
 /// 수신 JSON 최대 중첩 깊이.
 pub const MAX_MESSAGE_DEPTH: usize = 64;
 /// 수신 JSON 최대 값 개수([`JsonLimits::max_nodes`]). 크기 상한 안의 작은 값 flood가 메시지 하나로
@@ -61,6 +64,9 @@ pub struct Server {
     phase: Phase,
     protocol: Result<ProtocolConfig, ProtocolConfigError>,
     headless: Option<crate::headless::Headless>,
+    limiter: crate::limits::RateLimiter,
+    deadline: std::time::Duration,
+    max_response: usize,
 }
 
 impl Default for Server {
@@ -79,6 +85,9 @@ impl Server {
             phase: Phase::AwaitingInitialize,
             protocol: ProtocolConfig::builtin(),
             headless: None,
+            limiter: crate::limits::RateLimiter::default(),
+            deadline: limits::CALL_DEADLINE,
+            max_response: MAX_MESSAGE_BYTES,
         }
     }
 
@@ -88,6 +97,9 @@ impl Server {
             phase: Phase::AwaitingInitialize,
             protocol: Ok(config),
             headless: None,
+            limiter: crate::limits::RateLimiter::default(),
+            deadline: limits::CALL_DEADLINE,
+            max_response: MAX_MESSAGE_BYTES,
         }
     }
 
@@ -97,6 +109,20 @@ impl Server {
             headless: Some(backend),
             ..Self::new()
         }
+    }
+
+    /// 호출 대기 상한을 바꿉니다(테스트·실측 전용, 기본 [`limits::CALL_DEADLINE`]).
+    #[doc(hidden)]
+    pub fn with_call_deadline(mut self, deadline: std::time::Duration) -> Self {
+        self.deadline = deadline;
+        self
+    }
+
+    /// 응답 크기 상한을 바꿉니다(테스트 전용, 기본 [`MAX_MESSAGE_BYTES`]).
+    #[doc(hidden)]
+    pub fn with_response_limit(mut self, bytes: usize) -> Self {
+        self.max_response = bytes.min(MAX_MESSAGE_BYTES);
+        self
     }
 
     /// 현재 단계.
@@ -144,17 +170,63 @@ impl Server {
                 None
             }
             Ok(Incoming::Request { id, method, params }) => {
-                Some(match self.request(&method, params.as_ref(), log) {
-                    Ok(result) => response_ok(&id, result),
-                    Err(error) => {
-                        log.warn(&format!(
-                            "request 거부({}): {}",
-                            error.code,
-                            truncate_for_log(&method)
-                        ));
-                        response_err(Some(&id), &error)
+                let started = std::time::Instant::now();
+                let outcome = match self.limiter.admit(&method, started) {
+                    Err(retry_after) => Err(crate::failure::fail(
+                        ResultKind::Busy,
+                        "호출량 상한을 넘었습니다. 잠시 뒤 다시 요청하세요",
+                    )
+                    .with_detail(
+                        "retry_after_ms",
+                        JsonValue::int(i64::try_from(retry_after.as_millis()).unwrap_or(i64::MAX)),
+                    )),
+                    Ok(()) => self.request(&method, params.as_ref(), log).and_then(|result| {
+                        if started.elapsed() > self.deadline {
+                            Err(crate::failure::fail(
+                                ResultKind::Timeout,
+                                "호출 대기 상한을 넘어 결과를 버렸습니다. 범위를 줄여 다시 요청하세요",
+                            ))
+                        } else {
+                            Ok(result)
+                        }
+                    }),
+                };
+                let mut response = self.respond(&id, &method, outcome, log);
+                if json::write(&response).len() + 1 > self.max_response {
+                    let too_large = crate::failure::fail(
+                        ResultKind::TooLarge,
+                        "응답이 메시지 상한(1 MiB)을 넘습니다. 범위를 줄여 다시 요청하세요",
+                    );
+                    response = self.respond(&id, &method, Err(too_large), log);
+                }
+                Some(response)
+            }
+        }
+    }
+
+    /// 결과·실패를 응답으로 만듭니다. `tools/call`의 실행 실패(종류가 있고 protocol 오류가 아닌 실패)는
+    /// `isError` 결과입니다(XIX.9.9).
+    fn respond<L: Write>(
+        &self,
+        id: &crate::jsonrpc::RequestId,
+        method: &str,
+        outcome: Result<JsonValue, RpcError>,
+        log: &mut Logger<L>,
+    ) -> JsonValue {
+        match outcome {
+            Ok(result) => response_ok(id, result),
+            Err(error) => {
+                log.warn(&format!(
+                    "request 거부({}): {}",
+                    error.code,
+                    truncate_for_log(method)
+                ));
+                match crate::failure::kind_of(&error) {
+                    Some(kind) if method == "tools/call" && !kind.is_protocol_error() => {
+                        response_ok(id, crate::result::tool_failure(&error))
                     }
-                })
+                    _ => response_err(Some(id), &error),
+                }
             }
         }
     }
@@ -527,9 +599,8 @@ mod tests {
     #[test]
     fn broken_config_fails_initialize_without_panic() {
         let mut server = Server {
-            phase: Phase::AwaitingInitialize,
             protocol: Err(ProtocolConfigError::Empty),
-            headless: None,
+            ..Server::new()
         };
         let reply = handle(&mut server, INIT).unwrap();
         assert!(reply.contains("-32603"), "{reply}");

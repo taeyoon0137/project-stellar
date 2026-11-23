@@ -24,7 +24,7 @@ use crate::catalog::paging::{self, PageSource};
 use crate::catalog::resources::{self, Backend};
 use crate::catalog::scope::{ApprovedScope, ProjectDocuments, ScopeError, ScopedPayload};
 use crate::catalog::tools::{self, EnabledNamespaces, SEMANTIC_DIFF, VALIDATE_DOCUMENT};
-use crate::failure::{fail, kind_of, ResultKind as Kind, WithDetail};
+use crate::failure::{fail, ResultKind as Kind, WithDetail};
 use crate::json::{self, JsonNumber, JsonValue};
 use crate::jsonrpc::{codes, RpcError};
 
@@ -97,17 +97,9 @@ impl Headless {
         }
     }
 
-    /// 신뢰 snapshot에서 읽기·검증·dry-run tool 하나를 실행합니다. 실행 실패(인자 오류 포함)는 `isError` 결과이고,
-    /// 모르는 tool과 params 형식 오류만 JSON-RPC 오류입니다(XIX.9.9).
+    /// 신뢰 snapshot에서 읽기·검증·dry-run tool 하나를 실행합니다. 실패는 결과 종류를 가진 [`RpcError`]이고,
+    /// 서버가 실행 실패를 `isError` 결과로, 모르는 tool·params 형식 오류를 JSON-RPC 오류로 보냅니다(XIX.9.9).
     pub fn call(&self, params: Option<&JsonValue>) -> Result<JsonValue, RpcError> {
-        self.call_tool(params)
-            .or_else(|error| match kind_of(&error) {
-                Some(kind) if !kind.is_protocol_error() => Ok(crate::result::tool_failure(&error)),
-                _ => Err(error),
-            })
-    }
-
-    fn call_tool(&self, params: Option<&JsonValue>) -> Result<JsonValue, RpcError> {
         self.with_snapshot(|cached| {
             check_fields(params, &["name", "arguments"])?;
             let params = params.ok_or_else(|| malformed("tool 이름이 필요합니다"))?;
@@ -682,6 +674,50 @@ mod tests {
             "연결 사이 cache 공유 없음"
         );
         assert_eq!(file_digest(&fx.temp.path), after_save);
+    }
+
+    /// 서버 한 개를 initialize하고 `tools/call` 응답 하나를 돌려줍니다.
+    fn served_call(server: crate::server::Server) -> JsonValue {
+        let mut server = server;
+        let mut log = crate::log::Logger::new(Vec::new());
+        let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#;
+        server.handle_frame(init.as_bytes(), &mut log).unwrap();
+        server.handle_frame(
+            br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            &mut log,
+        );
+        let call = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"document.validate","arguments":{}}}"#;
+        server.handle_frame(call.as_bytes(), &mut log).unwrap()
+    }
+
+    fn structured_kind(reply: &JsonValue) -> Option<&str> {
+        reply
+            .get("result")
+            .and_then(|r| r.get("structuredContent"))
+            .and_then(|s| s.get("kind"))
+            .and_then(JsonValue::as_str)
+    }
+
+    #[test]
+    fn call_deadline_and_response_limit_turn_results_into_retryable_failures() {
+        // 검증 기준(XIX.9.10): 호출 대기 상한·응답 크기 상한 초과 응답.
+        let fx = Fixture::new();
+        save_documents(&fx.project, &[&large_document(50)]);
+        let ok = served_call(crate::server::Server::headless(fx.backend()));
+        assert_eq!(structured_kind(&ok), Some("ok"));
+        let late = served_call(
+            crate::server::Server::headless(fx.backend())
+                .with_call_deadline(std::time::Duration::ZERO),
+        );
+        assert_eq!(structured_kind(&late), Some("timeout"));
+        assert_eq!(
+            late.get("result").and_then(|r| r.get("isError")),
+            Some(&JsonValue::Bool(true))
+        );
+        let big =
+            served_call(crate::server::Server::headless(fx.backend()).with_response_limit(200));
+        assert_eq!(structured_kind(&big), Some("too-large"));
+        assert!(json::write(&big).len() < 1024, "대체 응답은 작음");
     }
 
     #[test]

@@ -17,13 +17,8 @@ use std::fmt;
 
 use crate::json::{self, JsonNumber, JsonValue};
 
-/// page item 기본 개수.
-pub const DEFAULT_PAGE_ITEMS: usize = 500;
-/// page item 상한.
-pub const MAX_PAGE_ITEMS: usize = 2000;
-/// page 내용 JSON 최대 byte 수. tool 결과는 같은 내용을 `structuredContent`와 직렬화 text block에 두 번 싣으므로
-/// (XIX.9.6) MCP 메시지 상한 1 MiB 안에 escape 여유까지 들어가도록 3/8로 둡니다.
-pub const MAX_PAGE_BYTES: usize = 384 * 1024;
+/// page item 기본 개수·상한·내용 byte 상한(XIX.9.10, `stellar_agent_protocol::limits`).
+pub use stellar_agent_protocol::limits::{DEFAULT_PAGE_ITEMS, MAX_PAGE_BYTES, MAX_PAGE_ITEMS};
 
 /// page로 나눌 수 있는 resource 내용.
 pub trait PageSource {

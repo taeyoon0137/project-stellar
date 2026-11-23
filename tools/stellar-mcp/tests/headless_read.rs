@@ -368,7 +368,7 @@ fn approved_snapshot_lists_only_implemented_resources_and_pages_without_writes()
         Some(&J::int(1))
     );
     assert!(!json::write(&structure).contains(fx.project.to_str().unwrap()));
-    let mut uri = format!("stellar://documents/{document}?limit=2000");
+    let mut uri = format!("stellar://documents/{document}?limit=1000");
     let mut seen = 0;
     loop {
         let body = content(&client.read(&uri), &uri);
@@ -379,7 +379,7 @@ fn approved_snapshot_lists_only_implemented_resources_and_pages_without_writes()
         seen += items.len() as i64;
         match body.get("next_cursor").unwrap().as_str() {
             Some(cursor) => {
-                uri = format!("stellar://documents/{document}?cursor={cursor}&limit=2000")
+                uri = format!("stellar://documents/{document}?cursor={cursor}&limit=1000")
             }
             None => break,
         }
@@ -409,7 +409,7 @@ fn scope_revision_limits_and_write_requests_return_normal_errors() {
     for uri in [
         format!("stellar://projects/{OTHER}/structure"),
         format!("stellar://documents/{OTHER}"),
-        format!("stellar://documents/{document}?limit=2001"),
+        format!("stellar://documents/{document}?limit=1001"),
         format!("stellar://documents/{document}?limit=0"),
         format!("stellar://documents/{document}?project={OTHER}"),
         format!("stellar://documents/{document}?cursor=p1.2.{OTHER}.g0"),
@@ -526,7 +526,7 @@ fn component_pages_cover_large_libraries_and_reject_a_changed_source_cursor() {
             break;
         };
         first_cursor.get_or_insert_with(|| cursor.to_owned());
-        uri = format!("{COMPONENTS}?cursor={cursor}&limit=1600");
+        uri = format!("{COMPONENTS}?cursor={cursor}&limit=1000");
     }
     assert_eq!(seen.len(), 2200);
     let mut bytes = std::fs::read(&first_file).unwrap();

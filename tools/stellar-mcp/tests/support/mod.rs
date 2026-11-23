@@ -2,7 +2,7 @@
 //!
 //! 프로젝트·신뢰 저장소·HOME은 모두 임시 폴더입니다. 실제 `stellar-mcp` 실행 파일을 `--headless`로 띄우고
 //! 한 줄 JSON-RPC로 대화합니다.
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -145,6 +145,20 @@ impl Client {
 
     pub fn send(&mut self, value: J) {
         writeln!(self.input.as_mut().unwrap(), "{}", json::write(&value)).unwrap();
+    }
+
+    /// 준비한 frame bytes를 그대로 보냅니다(응답을 기다리지 않음).
+    pub fn send_raw(&mut self, bytes: &[u8]) {
+        self.input.as_mut().unwrap().write_all(bytes).unwrap();
+    }
+
+    /// 다음 응답 한 줄.
+    pub fn next_reply(&mut self) -> J {
+        let line = self
+            .replies
+            .recv_timeout(Duration::from_secs(30))
+            .expect("stdio 응답 timeout");
+        json::parse(&line, JsonLimits::default()).unwrap()
     }
 
     /// 응답 원문 한 줄.
