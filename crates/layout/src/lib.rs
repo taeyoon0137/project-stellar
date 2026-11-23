@@ -18,6 +18,9 @@ pub mod geometry;
 /// 레이아웃 입력 CSS 값 (ADR-0076).
 pub mod style;
 
+/// 기본값 세트가 푼 선언 목록 → 엔진 입력 (ADR-0082, ADR-0086).
+pub mod declared;
+
 /// 레이아웃 입력 속성 식별자와 dirty class registry (X.1.1, X.1.3).
 pub mod property;
 

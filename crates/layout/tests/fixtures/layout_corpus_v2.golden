@@ -4,8 +4,9 @@
 # 형식: inputs = 입력 canonical bytes hash, 이후 배치 방식별 fixture·box·진단 수와 결과 bytes digest
 #       (primary FNV-1a 64 - check 다항식 hash). 값이 바뀌면 레이아웃 결과 계약이 바뀐 것입니다.
 # v1(Free·Stack·Grid·Overlay·Constraint) → v2 변경 fixture 목록과 이유: docs/task-reports/IX.11.4.md, IX.11.5.md, IX.11.23.md.
+# 2026-11-23: 입력 bytes에 box-sizing(ADR-0086)이 더해져 inputs hash만 바뀌었습니다. 결과 digest는 그대로입니다.
 schema=2
-inputs=7e4bbd5956d64945-110b3f47e63fb177
+inputs=59c0c990360c6f69-1a9f5793e98f844a
 absolute fixtures=50 boxes=235 diagnostics=0 digest=a0abf14654a0ebaa-07f1fabd5e90d47e
 flex fixtures=50 boxes=262 diagnostics=14 digest=477b501ba5d74661-12cde641fdf6b495
 grid fixtures=50 boxes=260 diagnostics=10 digest=0b93ecd43ce5df78-1e551c71958d68d7

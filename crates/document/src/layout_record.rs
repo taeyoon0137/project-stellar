@@ -853,18 +853,39 @@ impl LayoutLonghand {
                 if text == "none" && self.grammar() == G::TrackList {
                     return Ok(LayoutValue::Keyword("none"));
                 }
-                let parts = split_tracks(text)?;
-                if parts.is_empty() {
+                let mut tracks = Vec::new();
+                for part in split_tracks(text)? {
+                    // `repeat(<n>, <track-size>+)`는 펼친 목록이 정규형입니다(정수 반복만 받음).
+                    if let Some(body) = function_body(part, "repeat") {
+                        let (count, inner) = body.split_once(',').ok_or_else(|| {
+                            LayoutValueError::invalid("repeat()에는 반복 수와 track이 필요합니다")
+                        })?;
+                        let count: usize = count.trim().parse().map_err(|_| LayoutValueError {
+                            code: "unsupported-value",
+                            message: "repeat()는 1 이상 정수 반복만 받습니다".into(),
+                        })?;
+                        let inner = split_tracks(inner.trim())?;
+                        if count == 0 || inner.is_empty() || count * inner.len() > MAX_TRACKS {
+                            return Err(LayoutValueError::invalid(
+                                "repeat() 반복 수가 범위 밖입니다",
+                            ));
+                        }
+                        for _ in 0..count {
+                            for item in &inner {
+                                tracks.push(track(item)?);
+                            }
+                        }
+                    } else {
+                        tracks.push(track(part)?);
+                    }
+                    if tracks.len() > MAX_TRACKS {
+                        return Err(LayoutValueError::invalid("track이 너무 많습니다"));
+                    }
+                }
+                if tracks.is_empty() {
                     return Err(LayoutValueError::invalid("track이 비어 있습니다"));
                 }
-                if parts.len() > MAX_TRACKS {
-                    return Err(LayoutValueError::invalid("track이 너무 많습니다"));
-                }
-                parts
-                    .into_iter()
-                    .map(track)
-                    .collect::<Result<Vec<_>, _>>()
-                    .map(LayoutValue::Tracks)
+                Ok(LayoutValue::Tracks(tracks))
             }
         }
     }
@@ -1474,6 +1495,11 @@ mod tests {
                 "1fr minmax(0px, 2fr) fit-content(40%) 100px",
             ),
             (LayoutLonghand::GridTemplateRows, "none", "none"),
+            (
+                LayoutLonghand::GridTemplateRows,
+                "repeat(2, 10px 1fr) auto",
+                "10px 1fr 10px 1fr auto",
+            ),
             (LayoutLonghand::BoxSizing, "border-box", "border-box"),
         ];
         for (longhand, input, canonical) in cases {
@@ -1501,6 +1527,9 @@ mod tests {
             (LayoutLonghand::AspectRatio, "0 / 1"),
             (LayoutLonghand::FlexShrink, "-1"),
             (LayoutLonghand::PaddingTop, "10%"),
+            (LayoutLonghand::GridTemplateRows, "repeat(auto-fill, 10px)"),
+            (LayoutLonghand::GridTemplateRows, "repeat(0, 10px)"),
+            (LayoutLonghand::GridTemplateRows, "repeat(300, 10px)"),
         ];
         for (longhand, input) in cases {
             assert!(longhand.parse(input).is_err(), "{longhand} {input}은 거부");

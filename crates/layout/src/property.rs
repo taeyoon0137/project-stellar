@@ -158,6 +158,8 @@ layout_properties! {
     Content = 40, "content", SelfSize;
     /// local transform (X.2.4).
     Transform = 41, "transform", PaintOnly;
+    /// `box-sizing` (ADR-0086).
+    BoxSizing = 42, "box-sizing", SelfSize;
 }
 
 impl fmt::Display for LayoutProperty {
@@ -294,6 +296,7 @@ pub fn node_properties(node: &LayoutNode) -> Vec<LayoutProperty> {
     let LayoutStyle {
         display: _,
         position: _,
+        box_sizing: _,
         top: _,
         right: _,
         bottom: _,
@@ -354,8 +357,8 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), LAYOUT_PROPERTIES.len());
-        // 엔진 고유 크기 방식·배치 방식 이름이 남지 않았습니다(ADR-0074).
-        for name in names {
+        // 엔진 고유 크기 방식·배치 방식 이름이 남지 않았습니다(ADR-0074). `box-sizing`은 CSS longhand 이름입니다.
+        for name in names.into_iter().filter(|n| *n != "box-sizing") {
             for banned in [
                 "sizing",
                 "hug",

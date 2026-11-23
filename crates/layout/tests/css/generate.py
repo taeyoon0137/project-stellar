@@ -38,6 +38,14 @@ BASE_CSS = (
     ".cb{position:relative;width:%dpx;height:0;}" % ROOT_AVAILABLE_PX
 )
 
+# `--ua-box-sizing`: 요소의 `box-sizing`을 정하지 않아 브라우저 UA 기본값(`content-box`)을 쓰는 page입니다. `css`
+# 기본값 세트(ADR-0082, ADR-0086)가 브라우저 기본값과 같은지 보는 기대값(`expected_ua_box_sizing.json`)을 만듭니다.
+UA_BOX_SIZING_CSS = (
+    "*{margin:0;border:0 solid;padding:0;font-size:0;line-height:0;}"
+    "html,body{margin:0;padding:0;}"
+    ".cb{position:relative;width:%dpx;height:0;}" % ROOT_AVAILABLE_PX
+)
+
 INSET_RE = re.compile(r"^(top|right|bottom|left)$")
 
 
@@ -136,8 +144,8 @@ document.getElementById('out').textContent = JSON.stringify({ua: navigator.userA
 """
 
 
-def build_page(fixtures):
-    parts = ["<!doctype html><html><head><meta charset=utf-8><style>%s</style></head><body>" % BASE_CSS]
+def build_page(fixtures, base_css=BASE_CSS):
+    parts = ["<!doctype html><html><head><meta charset=utf-8><style>%s</style></head><body>" % base_css]
     for fixture in fixtures:
         nodes = {n["id"]: n for n in fixture["nodes"]}
         parts.append('<div class="cb" data-fixture="%s">' % html.escape(fixture["name"]))
@@ -228,12 +236,14 @@ def dump(document):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--chrome", default=os.environ.get("STELLAR_CHROME", DEFAULT_CHROME))
+    parser.add_argument("--ua-box-sizing", action="store_true")
     args = parser.parse_args()
     fixtures = definitions.all_fixtures()
     names = [f["name"] for f in fixtures]
     if len(names) != len(set(names)):
         raise SystemExit("fixture 이름이 중복되었습니다")
-    measured = run_chrome(args.chrome, build_page(fixtures))
+    base_css = UA_BOX_SIZING_CSS if args.ua_box_sizing else BASE_CSS
+    measured = run_chrome(args.chrome, build_page(fixtures, base_css))
     version = browser_version(args.chrome)
     out_fixtures = []
     for fixture in fixtures:
@@ -252,7 +262,9 @@ def main():
         "root_available_px": ROOT_AVAILABLE_PX,
         "fixtures": out_fixtures,
     }
-    target = os.path.join(HERE, "expected.json")
+    target = os.path.join(
+        HERE, "expected_ua_box_sizing.json" if args.ua_box_sizing else "expected.json"
+    )
     with open(target, "w", encoding="utf-8") as f:
         f.write(dump(document))
     counts = {}

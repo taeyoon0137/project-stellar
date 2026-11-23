@@ -280,6 +280,7 @@ dependencies = [
  "stellar-expressions",
  "stellar-git-porcelain",
  "stellar-history",
+ "stellar-layout",
  "stellar-project",
  "stellar-renderer-core",
  "stellar-semantic-diff",

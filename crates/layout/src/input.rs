@@ -500,6 +500,18 @@ pub(crate) fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(
     check_size(id, LayoutProperty::MinHeight, s.min_height)?;
     check_max(id, LayoutProperty::MaxWidth, s.max_width)?;
     check_max(id, LayoutProperty::MaxHeight, s.max_height)?;
+    if s.aspect_ratio.is_some()
+        && s.box_sizing == crate::style::BoxSizing::ContentBox
+        && (top, right, bottom, left) != (0.0, 0.0, 0.0, 0.0)
+    {
+        // CSS는 비율을 box-sizing 상자에 적용합니다. 엔진은 비율 변환을 border box에서 하므로 padding이 있는
+        // content-box 상자는 같은 결과를 보장하지 못합니다.
+        return Err(LayoutError::Unsupported {
+            node: id,
+            property: LayoutProperty::BoxSizing,
+            reason: "padding이 있는 content-box 상자의 aspect-ratio는 아직 지원하지 않습니다",
+        });
+    }
     if let Some(ratio) = s.aspect_ratio {
         for component in [ratio.width, ratio.height] {
             if component.get() <= 0.0 {

@@ -423,6 +423,9 @@ pub(crate) struct Prepared {
     /// `aspect-ratio`(너비, 높이) 1/64 정수 성분.
     pub(crate) ratio: Option<(i64, i64)>,
     pub(crate) padding: Padding,
+    /// `box-sizing: content-box`이면 축별 padding 합, `border-box`이면 0. 길이·백분율 크기(`width`·`height`·
+    /// `min-*`·`max-*`·`flex-basis`)를 border box 크기로 바꿀 때 더합니다(CSS Box Sizing 3 §3).
+    pub(crate) box_extra: [LayoutUnit; 2],
     pub(crate) direction: FlexDirection,
     pub(crate) wrap: FlexWrap,
     pub(crate) justify_content: ContentAlignment,
@@ -551,6 +554,14 @@ pub(crate) fn prepare(node: &LayoutNode) -> Result<Prepared, LayoutError> {
         }
         FlexBasis::Percentage(p) => BasisP::Length(LengthP::Percent(p.raw())),
     };
+    let padding = prepare_padding(id, &s.padding)?;
+    let box_extra = match s.box_sizing {
+        crate::style::BoxSizing::BorderBox => [LayoutUnit::ZERO; 2],
+        crate::style::BoxSizing::ContentBox => [
+            padding.sum(Axis::Horizontal).map_err(at(id))?,
+            padding.sum(Axis::Vertical).map_err(at(id))?,
+        ],
+    };
     Ok(Prepared {
         id,
         display: s.display,
@@ -578,7 +589,8 @@ pub(crate) fn prepare(node: &LayoutNode) -> Result<Prepared, LayoutError> {
             prepare_max(id, LayoutProperty::MaxHeight, s.max_height)?,
         ],
         ratio,
-        padding: prepare_padding(id, &s.padding)?,
+        padding,
+        box_extra,
         direction: s.flex_direction,
         wrap: s.flex_wrap,
         justify_content: s.justify_content,
@@ -900,6 +912,22 @@ impl<'a> Engine<'a> {
         })
     }
 
+    /// 해석한 길이·백분율 크기를 border box 크기로 바꿉니다(`content-box`면 padding을 더함).
+    pub(crate) fn border_box(
+        &self,
+        index: usize,
+        axis: Axis,
+        value: Option<LayoutUnit>,
+    ) -> Result<Option<LayoutUnit>, LayoutError> {
+        let node = &self.nodes[index];
+        value
+            .map(|v| {
+                v.checked_add(node.box_extra[axis.index()])
+                    .map_err(at(node.id))
+            })
+            .transpose()
+    }
+
     /// 축의 선호 크기(`width`·`height`)를 해석합니다. `auto`와 indefinite 백분율·세로 keyword는 `None`.
     pub(crate) fn preferred(
         &mut self,
@@ -911,7 +939,9 @@ impl<'a> Engine<'a> {
         let i = axis.index();
         match self.nodes[index].size[i] {
             SizeP::Auto => Ok(None),
-            SizeP::Length(length) => length.resolve(request.parent[i], id),
+            SizeP::Length(length) => {
+                self.border_box(index, axis, length.resolve(request.parent[i], id)?)
+            }
             keyword @ (SizeP::MinContent | SizeP::MaxContent | SizeP::FitContent) => {
                 if axis == Axis::Horizontal {
                     Ok(Some(self.keyword_width(index, request, keyword)?))
@@ -933,7 +963,9 @@ impl<'a> Engine<'a> {
         let i = axis.index();
         Ok(match self.nodes[index].min[i] {
             SizeP::Auto => LayoutUnit::ZERO,
-            SizeP::Length(length) => length.resolve(request.parent[i], id)?.unwrap_or_default(),
+            SizeP::Length(length) => self
+                .border_box(index, axis, length.resolve(request.parent[i], id)?)?
+                .unwrap_or_default(),
             keyword @ (SizeP::MinContent | SizeP::MaxContent | SizeP::FitContent) => {
                 if axis == Axis::Horizontal {
                     self.keyword_width(index, request, keyword)?
@@ -955,7 +987,9 @@ impl<'a> Engine<'a> {
         let i = axis.index();
         Ok(match self.nodes[index].max[i] {
             MaxP::None => None,
-            MaxP::Length(length) => length.resolve(request.parent[i], id)?,
+            MaxP::Length(length) => {
+                self.border_box(index, axis, length.resolve(request.parent[i], id)?)?
+            }
             MaxP::MinContent => {
                 (axis == Axis::Horizontal).then_some(self.content_widths(index, request)?.0)
             }

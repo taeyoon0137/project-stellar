@@ -24,6 +24,7 @@ stellar-semantic-merge = { path = "../../crates/semantic-merge" }
 stellar-expressions = { path = "../../crates/expressions", features = ["test-support"] }
 stellar-renderer-core = { path = "../../crates/renderer-core", features = ["test-support"] }
 stellar-target-profile = { path = "../../crates/target-profile" }
+stellar-layout = { path = "../../crates/layout" }
 
 [lints]
 workspace = true

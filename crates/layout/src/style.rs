@@ -6,16 +6,22 @@
 //!
 //! # 생략값
 //!
-//! [`LayoutStyle::default`]의 모든 값은 CSS initial value입니다(`flex-shrink: 1`, `align-items: normal`,
-//! `min-width: auto`, `grid-auto-rows: auto` 등). 예외는 하나입니다. `display`의 CSS initial value는 `inline`이지만
-//! Stellar에는 inline formatting context가 없으므로 생략값은 `div`의 UA 기본값인 `block`입니다(ADR-0076 결정 3).
+//! 엔진은 생략값을 풀지 않습니다. 문서 경로는 기본값 세트(ADR-0082, `stellar_document::css::style_defaults`)가
+//! 모든 longhand를 푼 선언 목록을 [`crate::declared::style_from_declarations`]로 넘기고, 그 함수는 longhand 하나라도
+//! 빠지면 거부합니다(ADR-0086 결정 8).
+//!
+//! [`LayoutStyle::default`]는 테스트·fixture·벤치용 생성자입니다. 값은 CSS initial value(`flex-shrink: 1`,
+//! `align-items: normal`, `min-width: auto` 등)이고, 예외는 두 가지입니다. `display`는 `div`의 UA 기본값 `block`이고
+//! (ADR-0076 결정 3), `box-sizing`은 ADR-0076 엔진의 고정 값이던 `border-box`입니다. 그래서 기존 fixture의 뜻이
+//! 바뀌지 않습니다. CSS initial value인 `content-box`는 `css` 기본값 세트가 줍니다.
 //!
 //! # 받아들이는 부분집합
 //!
 //! 여기서 표현할 수 있는 값은 모두 CSS와 같은 결과를 냅니다. CSS가 받지만 엔진이 같은 결과를 보장하지 못하는
 //! 조합은 [`crate::input::LayoutInput::validate`]가 [`crate::error::LayoutError::Unsupported`]로 거부합니다
-//! (grid item의 `baseline` 정렬, grid 안 absolute 자식의 명시 line 배치). 고정 값은 `box-sizing: border-box`,
-//! `margin: 0`, `border: 0`, `direction: ltr`, `writing-mode: horizontal-tb`, `overflow: visible`입니다.
+//! (grid item의 `baseline` 정렬, grid 안 absolute 자식의 명시 line 배치, padding이 있는 `content-box` 상자의
+//! `aspect-ratio`). 고정 값은 `margin: 0`, `border: 0`, `direction: ltr`, `writing-mode: horizontal-tb`,
+//! `overflow: visible`입니다.
 
 use std::fmt;
 
@@ -47,6 +53,17 @@ pub enum Position {
     Relative,
     /// `absolute`: 부모 flow에서 빠지고 부모 padding box를 containing block으로 inset 배치합니다.
     Absolute,
+}
+
+/// `box-sizing` (CSS Box Sizing 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum BoxSizing {
+    /// `content-box`: `width`·`height`·`min-*`·`max-*`·`flex-basis`의 길이·백분율이 content box 크기입니다. border
+    /// box는 거기에 padding을 더한 값입니다(border는 0).
+    ContentBox,
+    /// `border-box`: 그 값이 border box 크기입니다.
+    #[default]
+    BorderBox,
 }
 
 /// `<length-percentage>`.
@@ -389,6 +406,8 @@ pub struct LayoutStyle {
     pub display: Display,
     /// `position`.
     pub position: Position,
+    /// `box-sizing`.
+    pub box_sizing: BoxSizing,
     /// `top`.
     pub top: LengthPercentageAuto,
     /// `right`.
@@ -472,6 +491,7 @@ impl Default for LayoutStyle {
         LayoutStyle {
             display: Display::Block,
             position: Position::Static,
+            box_sizing: BoxSizing::BorderBox,
             top: LengthPercentageAuto::Auto,
             right: LengthPercentageAuto::Auto,
             bottom: LengthPercentageAuto::Auto,
@@ -579,6 +599,15 @@ impl fmt::Display for Display {
             Display::Flex => "flex",
             Display::Grid => "grid",
             Display::None => "none",
+        })
+    }
+}
+
+impl fmt::Display for BoxSizing {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            BoxSizing::ContentBox => "content-box",
+            BoxSizing::BorderBox => "border-box",
         })
     }
 }
@@ -794,7 +823,7 @@ pub fn track_list_css(tracks: &[TrackSize]) -> String {
 }
 
 impl LayoutStyle {
-    /// 생략값(CSS initial value, `display`는 `block`)과 다른 longhand를 `(이름, 값)`으로 돌려줍니다.
+    /// [`LayoutStyle::default`]와 다른 longhand를 `(이름, 값)`으로 돌려줍니다.
     ///
     /// 순서는 고정입니다(이 구조체의 필드 순서). 진단·snapshot 텍스트용이며 저장 형식이 아닙니다.
     pub fn declarations(&self) -> Vec<(&'static str, String)> {
@@ -809,6 +838,7 @@ impl LayoutStyle {
         }
         push!("display", display);
         push!("position", position);
+        push!("box-sizing", box_sizing);
         push!("top", top);
         push!("right", right);
         push!("bottom", bottom);

@@ -587,9 +587,19 @@ pub fn resolve(
     payload: &NodePayload,
     record: Option<&LayoutRecord>,
 ) -> Option<ResolvedLayout> {
-    let kind = payload.kind();
+    resolve_kind(set, payload.kind(), record, payload_size(payload))
+}
+
+/// [`resolve`]의 node 종류·payload 크기 판. `payload_size`는 payload 크기가 `width`·`height` 저장 위치인 종류의
+/// 크기(px)입니다. payload 크기를 희소하게 바꾸는 schema step 전에도 같은 해석을 쓰도록 나눠 둡니다.
+pub fn resolve_kind(
+    set: &FlatSet,
+    kind: NodeKind,
+    record: Option<&LayoutRecord>,
+    payload_size: Option<(f32, f32)>,
+) -> Option<ResolvedLayout> {
     let class = NodeClass::of(kind)?;
-    let size = payload_size(payload);
+    let size = payload_size;
     let values = LayoutLonghand::ALL
         .into_iter()
         .map(|longhand| {
