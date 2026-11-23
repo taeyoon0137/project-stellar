@@ -22,7 +22,7 @@ use stellar_document::component::instance::{ComponentInstancePayload, OverrideKe
 use stellar_document::fragment::FragmentPayload;
 use stellar_document::frame::keys as frame_keys;
 use stellar_document::frame::{Border, Clipping, CornerRadius, FramePayload};
-use stellar_document::image::{CropRect, FitMode, ImagePayload, SamplingMode};
+use stellar_document::image::{CropRect, FitMode, ImagePayload, SamplingMode, IMAGE_PROP_ASSET};
 use stellar_document::modifier::{
     BlendMode, BooleanOp, ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack,
 };
@@ -561,17 +561,31 @@ fn sampling_name(sampling: SamplingMode) -> &'static str {
     }
 }
 
-/// registry 키 뒤의 codec 고유 키.
-const IMAGE_CODEC_KEYS: [&str; 3] = ["asset", "crop", "color-space"];
-
 fn image(payload: &ImagePayload) -> Result<YamlValue, TextSourceError> {
     let mut out = Vec::new();
     for (name, key) in image_lines() {
         let value = match key {
+            IMAGE_PROP_ASSET => css::id(payload.asset.id()),
             image_keys::WIDTH => css::px(payload.size.width()),
             image_keys::HEIGHT => css::px(payload.size.height()),
             image_keys::OBJECT_FIT => fit_name(payload.fit).into(),
             image_keys::IMAGE_RENDERING => sampling_name(payload.sampling).into(),
+            image_keys::IMAGE_CROP => {
+                let (x, y, w, h) = payload.crop.components();
+                format!(
+                    "{} {} {} {}",
+                    css::number(x),
+                    css::number(y),
+                    css::number(w),
+                    css::number(h)
+                )
+            }
+            image_keys::IMAGE_COLOR_SPACE => match payload.color_space_override {
+                None => "none",
+                Some(ColorSpace::Srgb) => "srgb",
+                Some(ColorSpace::DisplayP3) => "display-p3",
+            }
+            .into(),
             other => {
                 return Err(unsupported(format!(
                     "codec이 모르는 Image registry key {other:?}"
@@ -580,33 +594,12 @@ fn image(payload: &ImagePayload) -> Result<YamlValue, TextSourceError> {
         };
         out.push((scalar(name), line(value)));
     }
-    let (x, y, w, h) = payload.crop.components();
-    out.push((scalar("asset"), line(css::id(payload.asset.id()))));
-    out.push((
-        scalar("crop"),
-        line(format!(
-            "{} {} {} {}",
-            css::number(x),
-            css::number(y),
-            css::number(w),
-            css::number(h)
-        )),
-    ));
-    out.push((
-        scalar("color-space"),
-        line(match payload.color_space_override {
-            None => "none",
-            Some(ColorSpace::Srgb) => "srgb",
-            Some(ColorSpace::DisplayP3) => "display-p3",
-        }),
-    ));
     Ok(YamlValue::Mapping(out))
 }
 
 fn parse_image(value: &YamlValue) -> Result<ImagePayload, TextSourceError> {
     let lines = image_lines();
-    let mut names: Vec<&str> = lines.iter().map(|(name, _)| *name).collect();
-    names.extend(IMAGE_CODEC_KEYS);
+    let names: Vec<&str> = lines.iter().map(|(name, _)| *name).collect();
     fields(value, &names)?;
     let by_key = |key: PropertyKey| -> Result<&str, TextSourceError> {
         let (name, _) = lines
@@ -620,7 +613,10 @@ fn parse_image(value: &YamlValue) -> Result<ImagePayload, TextSourceError> {
         css::parse_px(by_key(image_keys::HEIGHT)?)?,
     )
     .map_err(invalid)?;
-    let mut payload = ImagePayload::new(AssetRef::new(css::parse_id(get(value, "asset")?)?), size);
+    let mut payload = ImagePayload::new(
+        AssetRef::new(css::parse_id(by_key(IMAGE_PROP_ASSET)?)?),
+        size,
+    );
     payload.fit = match by_key(image_keys::OBJECT_FIT)? {
         "fill" => FitMode::Fill,
         "contain" => FitMode::Contain,
@@ -633,7 +629,7 @@ fn parse_image(value: &YamlValue) -> Result<ImagePayload, TextSourceError> {
         "pixelated" => SamplingMode::Nearest,
         other => return Err(unsupported(format!("image-rendering {other}"))),
     };
-    let crop: Vec<f32> = get(value, "crop")?
+    let crop: Vec<f32> = by_key(image_keys::IMAGE_CROP)?
         .split(' ')
         .map(css::parse_number)
         .collect::<Result<_, _>>()?;
@@ -641,7 +637,7 @@ fn parse_image(value: &YamlValue) -> Result<ImagePayload, TextSourceError> {
         return Err(invalid("crop은 x y width height입니다"));
     };
     payload.crop = CropRect::from_components(*x, *y, *w, *h).map_err(invalid)?;
-    payload.color_space_override = match get(value, "color-space")? {
+    payload.color_space_override = match by_key(image_keys::IMAGE_COLOR_SPACE)? {
         "none" => None,
         "srgb" => Some(ColorSpace::Srgb),
         "display-p3" => Some(ColorSpace::DisplayP3),
@@ -806,9 +802,8 @@ fn modifier_value(entry: &ModifierEntry, key: PropertyKey) -> Result<String, Tex
         | (modifier_keys::STROKE_COLOR, P::Stroke { color, .. })
         | (modifier_keys::SHADOW_COLOR, P::Shadow { color, .. }) => css::color(*color),
         (modifier_keys::STROKE_WIDTH, P::Stroke { width, .. }) => css::px(width.get()),
-        (modifier_keys::SHADOW_OFFSET, P::Shadow { offset, .. }) => {
-            format!("{} {}", css::px(offset.x()), css::px(offset.y()))
-        }
+        (modifier_keys::SHADOW_OFFSET_X, P::Shadow { offset, .. }) => css::px(offset.x()),
+        (modifier_keys::SHADOW_OFFSET_Y, P::Shadow { offset, .. }) => css::px(offset.y()),
         (modifier_keys::SHADOW_BLUR, P::Shadow { blur, .. }) => css::px(blur.get()),
         (modifier_keys::BLUR_RADIUS, P::Blur { radius }) => css::px(radius.get()),
         (modifier_keys::BLEND_MODE, P::Blend { mode }) => blend_name(*mode).into(),
@@ -922,17 +917,15 @@ fn parse_modifier(value: &YamlValue) -> Result<ModifierEntry, TextSourceError> {
             color: color(modifier_keys::STROKE_COLOR)?,
             width: px(modifier_keys::STROKE_WIDTH)?,
         },
-        ModifierKind::Shadow => {
-            let offset = by_key(modifier_keys::SHADOW_OFFSET)?;
-            let (x, y) = offset
-                .split_once(' ')
-                .ok_or_else(|| invalid("shadow offset은 x y입니다"))?;
-            P::Shadow {
-                color: color(modifier_keys::SHADOW_COLOR)?,
-                offset: Vec2::new(css::parse_px(x)?, css::parse_px(y)?).map_err(invalid)?,
-                blur: px(modifier_keys::SHADOW_BLUR)?,
-            }
-        }
+        ModifierKind::Shadow => P::Shadow {
+            color: color(modifier_keys::SHADOW_COLOR)?,
+            offset: Vec2::new(
+                css::parse_px(by_key(modifier_keys::SHADOW_OFFSET_X)?)?,
+                css::parse_px(by_key(modifier_keys::SHADOW_OFFSET_Y)?)?,
+            )
+            .map_err(invalid)?,
+            blur: px(modifier_keys::SHADOW_BLUR)?,
+        },
         ModifierKind::Blur => P::Blur {
             radius: px(modifier_keys::BLUR_RADIUS)?,
         },

@@ -91,7 +91,7 @@ payload:
 
 ### Image
 
-registry 키 `width`, `height`, `object-fit`(`fill`·`contain`·`cover`·`none`), `image-rendering`(`auto`·`pixelated`) 뒤에 codec 키 `asset`(asset StableId), `crop`(`x y width height`), `color-space`(`none`·`srgb`·`display-p3`)를 씁니다.
+registry 순서대로 `image-asset`(asset StableId), `width`, `height`, `object-fit`(`fill`·`contain`·`cover`·`none`), `image-rendering`(`auto`·`pixelated`), `image-crop`(`x y width height`), `image-color-space`(`none`·`srgb`·`display-p3`)를 씁니다. 모두 registry 이름이며 codec 고유 키는 없습니다.
 
 ### 컴포넌트 인스턴스
 
@@ -123,7 +123,7 @@ payload:
   <registry 키>: <값>
 ```
 
-공통 키 `enabled`·`order` 뒤에 그 종류의 registry 키를 씁니다(지금 이름 예: `fill.color`, `stroke.color`·`stroke.width`, `shadow.color`·`shadow.offset`(`<x>px <y>px`)·`shadow.blur`, `blend.mode`(`normal`·`multiply`·`screen`·`overlay`·`darken`·`lighten`), `boolean.op`(`union`·`subtract`·`intersect`·`exclude`)·`boolean.operands`).
+공통 키 `enabled`·`modifier-order` 뒤에 그 종류의 registry 키를 registry 순서로 씁니다(예: `fill`, `stroke`·`stroke-width`, `shadow-color`·`shadow-blur`·`shadow-offset-x`·`shadow-offset-y`, `mix-blend-mode`(`normal`·`multiply`·`screen`·`overlay`·`darken`·`lighten`), `boolean-operation`(`union`·`subtract`·`intersect`·`exclude`)·`boolean-operands`). 묶음 key(`shadow-offset`)는 decode 전용이라 파일에 쓰지 않습니다(ADR-0075).
 
 ## 단일 View 원본
 

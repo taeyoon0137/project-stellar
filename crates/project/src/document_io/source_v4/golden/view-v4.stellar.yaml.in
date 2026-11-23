@@ -71,8 +71,9 @@ nodes:
         {modifier:0x1001}: "false"
         {modifier:0x1002}: "80"
         {modifier:0x1091}: "color(display-p3 0.25 0.5 1 / 0.75)"
-        {modifier:0x1092}: "2px -3px"
         {modifier:0x1093}: "4.5px"
+        {modifier:0x1094}: "2px"
+        {modifier:0x1095}: "-3px"
       -
         id: "00000000-0016-7000-8000-000000000016"
         kind: clip
@@ -119,13 +120,13 @@ nodes:
     display_name: n14
     kind: image
     payload:
+      {image:0x0601}: "00000000-0050-7000-8000-000000000050"
       {image:0x0602}: "64px"
       {image:0x0603}: "48px"
       {image:0x0604}: contain
       {image:0x0605}: auto
-      asset: "00000000-0050-7000-8000-000000000050"
-      crop: "0 0 1 1"
-      color-space: none
+      {image:0x0606}: "0 0 1 1"
+      {image:0x0607}: none
     modifiers: []
   -
     id: "00000000-000f-7000-8000-00000000000f"

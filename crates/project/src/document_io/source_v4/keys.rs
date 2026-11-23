@@ -95,9 +95,13 @@ pub(crate) fn image_lines() -> Vec<(&'static str, PropertyKey)> {
         .collect()
 }
 
-/// modifier 종류의 registry 항목(공통 항목 포함, registry 순서).
+/// modifier 종류의 registry 항목(공통 항목 포함, registry 순서). 묶음 key(옛 `shadow-offset`)는 decode 전용이라
+/// 파일 줄이 아니며, 나뉜 longhand(`shadow-offset-x`·`shadow-offset-y`)를 씁니다(ADR-0075).
 pub(crate) fn modifier_lines(kind: ModifierKind) -> Vec<&'static ModifierPropertyMetadata> {
     properties_of(kind)
+        .into_iter()
+        .filter(|metadata| !metadata.is_bundle())
+        .collect()
 }
 
 #[cfg(test)]
