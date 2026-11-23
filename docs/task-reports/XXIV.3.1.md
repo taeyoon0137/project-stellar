@@ -2,7 +2,7 @@
 
 - WBS: XXIV.3.1
 - 작업명: lockfile resolve check, project validation, migration-required check를 `stellar ci` 한 명령으로 제공
-- 상태: 부분 완료 (`[~]`) — 구현과 작업 행의 검증 기준은 통과했으나, 선행 XXIV.1.3이 `[~]`입니다(선행 Phase XIV 미완료). 계획서 §1.2 규칙 4에 따라 XXIV.1.3이 `[x]`가 될 때까지 `[~]`로 둡니다.
+- 상태: `[~]` 유지 — 구현 판정 통과, 선행 미충족(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 구현과 작업 행의 검증 기준은 통과했으나, 선행 XXIV.1.3이 `[~]`입니다(선행 Phase XIV 미완료). 계획서 §1.2 규칙 4에 따라 XXIV.1.3이 `[x]`가 될 때까지 `[~]`로 둡니다.
 - 선행: XXIV.1.3(이 lane에서 구현, `[~]`)
 
 ## 필수 실행 환경
@@ -55,3 +55,25 @@
 - **후속(`[x]`로 올리기 위한 남은 일)**: XXIV.1.3이 `[x]`가 된 뒤 이 보고서의 검증 명령을 다시 실행해 `[x]`로 바꿉니다.
 - local override(`local_override`)가 있는 의존성은 lock 비교에서 따로 다루지 않습니다.
 - lock entry가 가리키는 commit이 원격에 실제로 있는지, cache entry hash가 맞는지는 검사하지 않습니다.
+
+## 재판정 (2026-11-23, ledger-verification)
+
+- 판정: `[~]` 유지 — 구현 판정 통과, 선행 미충족.
+- 근거: CI mode 검사(lockfile resolve, project validation, migration-required)는 코드에 있고 invalid project에서 실패합니다. 선행 XXIV.1.3이 `[~]`라 `[~]`를 유지합니다.
+- 판정 기준: 행 지시·검증 열의 불변식을 구현 코드에서 확인했고, 테스트 통과는 보조 근거로만 썼습니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`여야 완료)를 적용했습니다. 기준 커밋은 `main` `ce60bb92`입니다.
+
+### 확인한 코드 위치
+
+- `crates/ops/src/ci.rs` `run_ci`: lockfile(매니페스트와 `stellar.lock.yaml` 대조, resolver·fetch 없음)·validation(`validate.rs`와 같은 validator)·migration(`migrate.rs` 판정) 세 검사가 모두 통과해야 성공이고 파일을 쓰지 않습니다.
+
+### 실행한 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --workspace`(DEV-MAC, 샌드박스 해제) | 테스트 binary 142개 모두 ok, 4136 passed, 0 failed |
+| `cargo test -p stellar-ops` | 51 passed |
+| `cargo test -p stellar-cli` | output_fixtures 26 passed |
+
+### 남은 조건과 finding
+
+- XXIV.1.3이 `[x]`가 되면 코드 변경 없이 다시 판정합니다. XXIV.1.3의 재작성안(위 XXIV.1.3 보고서)과 같은 사슬입니다.
