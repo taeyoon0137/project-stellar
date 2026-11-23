@@ -9,9 +9,13 @@
 //! - 단 key 크기 상한을 넘는 run은 상한 크기 outline을
 //!   [`RunSize::outline_scale`](crate::text::RunSize::outline_scale)배 합니다([`crate::text`] "큰 글자").
 //!   상한 이하 run의 배율은 정확히 1이라 결과가 바뀌지 않습니다.
-//! - run마다 한 path([`RunOutline`])를 만듭니다. run 고유 색(`fill`)이 있으면 그 색으로 칠합니다.
-//! - 모든 run의 path를 이은 [`TextOutlines::combined`]가 Text content의 칠하기 기하입니다. paint layer
-//!   (Fill·Stroke modifier)는 이 기하를 run 색 **위**에 칠합니다(scene builder paint 순서 규칙).
+//! - 모든 run의 path를 순서대로 이은 [`TextOutlines::combined`] 하나만 만듭니다. 이것이 Text content의 칠하기
+//!   기하이고, paint layer(Fill·Stroke modifier)는 이 기하를 run 색 **위**에 칠합니다(scene builder paint 순서 규칙).
+//! - run([`RunOutline`])은 combined 안 command 범위만 가집니다(복제 없음). run 고유 색(`fill`)이 있으면 그 범위를
+//!   그 색으로 칠합니다([`TextOutlines::run_geometry`]는 쓸 때만 잠깐 만드는 복사본).
+//! - 메모리: command 목록은 Text 하나에 [`MAX_TEXT_OUTLINE_COMMANDS`]개까지입니다(호출자가 넘기는 상한과 별개인
+//!   고정 상한). command 하나는 32 byte 이하라 목록은 64 MiB 이하이고, geometry로 옮기는 동안 복사본까지 최대 그
+//!   2배입니다.
 //! - 채우기 규칙은 non-zero입니다(OpenType outline). 서로 겹치는 glyph도 non-zero 합집합이 됩니다.
 //! - 잉크 없는 glyph([`GlyphOutline::Empty`])는 건너뜁니다. outline이 없는 glyph([`GlyphOutline::NoOutline`],
 //!   bitmap emoji 등)는 벡터로 쓸 수 없어 [`TextOutlineError::NoOutline`]으로 멈춥니다(조용히 빼지 않음).
@@ -19,6 +23,7 @@
 //! 같은 key의 outline 조회는 호출자가 cache합니다([`text_outlines`]의 `outline` 인자).
 
 use std::fmt;
+use std::ops::Range;
 
 use stellar_core_types::color::Color;
 use stellar_core_types::value::Vec2;
@@ -28,22 +33,39 @@ use crate::text::{
     ExportFontFace, GlyphOutline, GlyphOutlineError, GlyphOutlineKey, TextGlyphLayout,
 };
 
+/// Text 하나의 outline path command 상한(메모리 기준 고정 상수, 2²¹).
+///
+/// 출력 크기 상한과 별개입니다. 출력 예산이 남아 있어도 command 목록이 이보다 커지면 멈춥니다.
+pub const MAX_TEXT_OUTLINE_COMMANDS: usize = 1 << 21;
+
 /// run 하나의 outline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunOutline {
     /// run 고유 색.
     pub fill: Option<Color>,
-    /// run의 모든 glyph outline(text local 좌표).
-    pub geometry: PathGeometry,
+    /// [`TextOutlines::combined`] 안 이 run의 command 범위. 빈 범위거나 MoveTo로 시작합니다.
+    pub commands: Range<usize>,
 }
 
 /// text layout 전체의 outline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextOutlines {
-    /// run별 outline(그리는 순서). 잉크가 없는 run도 순서를 유지하려고 빈 geometry로 둡니다.
+    /// run별 outline(그리는 순서). 잉크가 없는 run도 순서를 유지하려고 빈 범위로 둡니다.
     pub runs: Vec<RunOutline>,
-    /// 모든 run의 outline(paint layer 기하).
+    /// 모든 run의 outline(node local 좌표, paint layer 기하).
     pub combined: PathGeometry,
+}
+
+impl TextOutlines {
+    /// run의 command(combined의 부분).
+    pub fn run_commands(&self, run: &RunOutline) -> &[PathCommand] {
+        &self.combined.commands()[run.commands.clone()]
+    }
+
+    /// run의 geometry(복사본). 쓸 때만 만들고 바로 버립니다.
+    pub fn run_geometry(&self, run: &RunOutline) -> Result<PathGeometry, TextOutlineError> {
+        geometry(self.run_commands(run).to_vec())
+    }
 }
 
 /// outline 변환 오류.
@@ -156,19 +178,20 @@ fn geometry(commands: Vec<PathCommand>) -> Result<PathGeometry, TextOutlineError
 /// glyph layout을 outline path로 바꿉니다.
 ///
 /// `origin`은 layout 상자 좌상단(node local 좌표, `TextPrimitive::bounds`의 원점)입니다. `outline`은 key의
-/// outline을 돌려줍니다(호출자 cache). `max_commands`는 combined path의 command 상한이며, run path 합도 같은
-/// 상한을 씁니다.
+/// outline을 돌려줍니다(호출자 cache). `max_commands`는 combined path의 command 상한이며
+/// [`MAX_TEXT_OUTLINE_COMMANDS`]보다 크면 그 값으로 줄입니다.
 pub fn text_outlines(
     layout: &TextGlyphLayout,
     origin: Vec2,
     outline: &mut dyn FnMut(&GlyphOutlineKey) -> Result<GlyphOutline, GlyphOutlineError>,
     max_commands: usize,
 ) -> Result<TextOutlines, TextOutlineError> {
-    let mut combined: Vec<PathCommand> = Vec::new();
+    let max_commands = max_commands.min(MAX_TEXT_OUTLINE_COMMANDS);
+    let mut commands: Vec<PathCommand> = Vec::new();
     let mut runs = Vec::with_capacity(layout.runs.len());
     for run in &layout.runs {
         let scale = run.size.outline_scale();
-        let mut commands: Vec<PathCommand> = Vec::new();
+        let start = commands.len();
         for placed in &run.glyphs {
             let key = run.key(placed.glyph);
             let glyph = outline(&key).map_err(|error| TextOutlineError::Outline {
@@ -194,20 +217,14 @@ pub fn text_outlines(
                 }
             }
         }
-        if combined.len().saturating_add(commands.len()) > max_commands {
-            return Err(TextOutlineError::TooManyCommands {
-                limit: max_commands,
-            });
-        }
-        combined.extend_from_slice(&commands);
         runs.push(RunOutline {
             fill: run.fill,
-            geometry: geometry(commands)?,
+            commands: start..commands.len(),
         });
     }
     Ok(TextOutlines {
         runs,
-        combined: geometry(combined)?,
+        combined: geometry(commands)?,
     })
 }
 
@@ -261,6 +278,10 @@ mod tests {
         })
     }
 
+    fn run_geometry(outlines: &TextOutlines, index: usize) -> PathGeometry {
+        outlines.run_geometry(&outlines.runs[index]).unwrap()
+    }
+
     fn points(geometry: &PathGeometry) -> Vec<(f32, f32)> {
         geometry
             .commands()
@@ -292,7 +313,7 @@ mod tests {
         assert_eq!(outlines.runs[0].fill, Some(red));
         assert_eq!(outlines.runs[1].fill, None);
         assert_eq!(
-            points(&outlines.runs[0].geometry),
+            points(&run_geometry(&outlines, 0)),
             vec![
                 (0.0, 6.0),
                 (4.0, 6.0),
@@ -305,17 +326,19 @@ mod tests {
             ]
         );
         assert_eq!(
-            points(&outlines.runs[1].geometry),
+            points(&run_geometry(&outlines, 1)),
             vec![(-1.0, -1.5), (1.0, -1.5), (1.0, 0.5), (-1.0, 0.5)]
         );
-        // combined = run path를 순서대로 이은 것.
-        let mut joined = outlines.runs[0].geometry.commands().to_vec();
-        joined.extend_from_slice(outlines.runs[1].geometry.commands());
+        // combined = run path를 순서대로 이은 것이고, run은 그 안의 범위입니다(복제 없음).
+        assert_eq!(outlines.runs[0].commands, 0..10);
+        assert_eq!(outlines.runs[1].commands, 10..15);
+        let mut joined = outlines.run_commands(&outlines.runs[0]).to_vec();
+        joined.extend_from_slice(outlines.run_commands(&outlines.runs[1]));
         assert_eq!(outlines.combined.commands(), joined.as_slice());
         // layout 상자 원점이 0이 아니면 모든 glyph가 그만큼 옮겨집니다.
         let moved = text_outlines(&layout, fx::p(2.0, -3.0), &mut source, usize::MAX).unwrap();
         assert_eq!(
-            points(&moved.runs[1].geometry),
+            points(&run_geometry(&moved, 1)),
             vec![(1.0, -4.5), (3.0, -4.5), (3.0, -2.5), (1.0, -2.5)]
         );
     }
@@ -386,7 +409,7 @@ mod tests {
         assert!(keys.iter().all(|k| k.size.px() == MAX_GLYPH_PX));
         // 8192 px: 상한 outline(한 변 2048)의 2배 = 같은 glyph를 8192 px로 직접 만든 사각형(한 변 4096).
         assert_eq!(
-            points(&outlines.runs[0].geometry),
+            points(&run_geometry(&outlines, 0)),
             vec![
                 (10.0, -3096.0),
                 (4106.0, -3096.0),
@@ -396,8 +419,33 @@ mod tests {
         );
         // 10,000 px: 배율 2.44140625(정확), 한 변 5000.
         assert_eq!(
-            points(&outlines.runs[1].geometry),
+            points(&run_geometry(&outlines, 1)),
             vec![(0.0, -5000.0), (5000.0, -5000.0), (5000.0, 0.0), (0.0, 0.0)]
+        );
+    }
+
+    #[test]
+    fn command_memory_is_capped_independently_of_the_caller_limit() {
+        // command 하나는 32 byte 이하라 고정 상한의 목록은 64 MiB 이하입니다(모듈 문서 "메모리").
+        assert!(std::mem::size_of::<PathCommand>() <= 32);
+        const { assert!(MAX_TEXT_OUTLINE_COMMANDS * 32 <= 64 * 1024 * 1024) };
+        // 호출자 상한이 고정 상한보다 커도(출력 예산이 넉넉해도) 고정 상한에서 멈춥니다.
+        let glyphs: Vec<(u32, i32, i32)> = (0..MAX_TEXT_OUTLINE_COMMANDS / 5 + 1)
+            .map(|i| (1, (i % 1000) as i32 * 64, 0))
+            .collect();
+        let huge = TextGlyphLayout {
+            runs: vec![run(1, 8.0, None, &glyphs)],
+        };
+        assert_eq!(
+            text_outlines(&huge, Vec2::ZERO, &mut source, usize::MAX),
+            Err(TextOutlineError::TooManyCommands {
+                limit: MAX_TEXT_OUTLINE_COMMANDS
+            })
+        );
+        // 호출자 상한이 더 작으면 그 상한입니다.
+        assert_eq!(
+            text_outlines(&huge, Vec2::ZERO, &mut source, 100),
+            Err(TextOutlineError::TooManyCommands { limit: 100 })
         );
     }
 

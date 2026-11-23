@@ -43,7 +43,7 @@ use crate::svg::element::{
 use crate::svg::format::{base64_len, write_number, write_numbers, SvgValueError};
 use crate::svg::id::{SvgId, SvgIdAllocator, SvgIdError};
 use crate::svg::mapping::{first_unsupported, node_features, SvgFeature, SvgSupport};
-use crate::svg::text::{text_outlines, TextOutlineError};
+use crate::svg::text::{text_outlines, TextOutlineError, MAX_TEXT_OUTLINE_COMMANDS};
 use crate::text::{ExportTextSource, GlyphOutline, GlyphOutlineError, GlyphOutlineKey};
 
 /// 기본 최대 출력 크기(256 MiB).
@@ -433,8 +433,9 @@ impl<'a> Writer<'a> {
                 layout,
             });
         };
-        // command 하나는 출력에 최소 2 byte("Z" + 구분자)이므로 남은 출력 예산의 절반이 command 상한입니다.
-        let budget = self
+        // command 하나는 출력에 최소 2 byte("Z" + 구분자)라 남은 출력 예산의 절반을 넘으면 출력이 상한을 넘습니다.
+        // 메모리 상한은 text_outlines가 따로 겁니다(MAX_TEXT_OUTLINE_COMMANDS).
+        let output_budget = self
             .limit
             .saturating_sub(self.defs.len().saturating_add(self.body.len()))
             / 2;
@@ -453,10 +454,13 @@ impl<'a> Writer<'a> {
                 other => other,
             }
         };
-        let outlines = match text_outlines(&glyphs, primitive.bounds.origin(), &mut lookup, budget)
-        {
+        let origin = primitive.bounds.origin();
+        let outlines = match text_outlines(&glyphs, origin, &mut lookup, output_budget) {
             Ok(outlines) => outlines,
-            Err(TextOutlineError::TooManyCommands { .. }) => {
+            // 출력 예산이 더 작은 상한이었으면 출력 초과, 아니면 메모리 상한 초과(Text 오류)입니다.
+            Err(TextOutlineError::TooManyCommands { .. })
+                if output_budget < MAX_TEXT_OUTLINE_COMMANDS =>
+            {
                 return Err(SvgExportError::OutputTooLarge { limit: self.limit })
             }
             Err(error) => {
@@ -469,9 +473,17 @@ impl<'a> Writer<'a> {
         let transform = node.world_transform();
         for run in &outlines.runs {
             if let Some(color) = run.fill {
+                // run 범위의 복사본은 이 run을 쓰는 동안만 둡니다.
+                let geometry =
+                    outlines
+                        .run_geometry(run)
+                        .map_err(|error| SvgExportError::Text {
+                            node: source,
+                            error,
+                        })?;
                 write_fill(
                     &mut self.body,
-                    &SvgGeometry::Path(&run.geometry, FillRule::NonZero),
+                    &SvgGeometry::Path(&geometry, FillRule::NonZero),
                     &transform,
                     Paint::Solid(color),
                 )

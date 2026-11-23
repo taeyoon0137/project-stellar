@@ -13,6 +13,7 @@ use stellar_scene::builder::{NodeInput, StrokeInput, TextInput};
 use stellar_scene::geometry::PathCommand;
 
 use super::*;
+use crate::svg::text::MAX_TEXT_OUTLINE_COMMANDS;
 use crate::text::{
     AxisTag, ExportFontFace, ExportTextSource, GlyphOutline, GlyphOutlineError, GlyphOutlineKey,
     GlyphRun, GlyphVariations, PlacedGlyph, RunSize, TextGlyphLayout,
@@ -567,6 +568,29 @@ fn text_output_respects_the_size_limit() {
     assert_eq!(
         write_svg(&confirmed(&capture), &assets(), &fonts, &exact).unwrap(),
         full
+    );
+}
+
+#[test]
+fn huge_text_stops_at_the_memory_cap_before_the_output_limit() {
+    // 기본 출력 상한(256 MiB)의 command 예산(약 1.3억 개)보다 메모리 상한(2²¹개)이 먼저 걸립니다.
+    let glyphs: Vec<(u32, f32, f32)> = (0..MAX_TEXT_OUTLINE_COMMANDS / 5 + 1)
+        .map(|i| (1, (i % 100) as f32, 30.0))
+        .collect();
+    let layout = TextGlyphLayout {
+        runs: vec![glyph_run(FONT_A, 20.0, None, None, &glyphs)],
+    };
+    assert_eq!(
+        write_text(
+            &text_capture(text_snapshot(false), 1),
+            &fonts_with(vec![(1, layout)])
+        ),
+        Err(SvgExportError::Text {
+            node: fx::node_id(10),
+            error: TextOutlineError::TooManyCommands {
+                limit: MAX_TEXT_OUTLINE_COMMANDS
+            }
+        })
     );
 }
 

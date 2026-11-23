@@ -39,8 +39,9 @@
   run 고유 색(document text style fill)이 있으면 `<path d fill>`(non-zero)로 쓰고, 모든 run을 이은 path를 paint layer
   (Fill·Stroke modifier) 기하로 그 위에 칠합니다(scene builder paint 순서). 공백 glyph는 건너뜁니다.
 - **거부**: outline이 없는 glyph(bitmap·color 전용)는 `TextOutlineError::NoOutline`, 폰트 없음·손상은 `Outline`, 좌표
-  비유한은 `NonFinite`로 멈춥니다(조용히 빼지 않음). 남은 출력 예산의 절반을 path command 상한으로 써서 거대한 text가
-  메모리를 먼저 쓰지 않고 `OutputTooLarge`가 됩니다.
+  비유한은 `NonFinite`로 멈춥니다(조용히 빼지 않음). path command 상한은 남은 출력 예산의 절반(넘으면 `OutputTooLarge`)과
+  메모리 기준 고정 상한 `MAX_TEXT_OUTLINE_COMMANDS`(Text 하나 2²¹개, 넘으면 `Text { TooManyCommands }`) 중 작은 값입니다
+  (후속 수정 3. 처음 기록은 출력 예산만 써서 메모리 상한 역할을 하지 못했습니다).
 - **결정론**: 같은 key outline은 한 번만 조회합니다(cache는 조회 전용, 출력 순서는 run·glyph 순서).
 - `<text>`·`<tspan>`·SVG font·`@font-face`·font data URI·`<style>`을 만드는 코드가 없습니다.
 
@@ -127,5 +128,27 @@
 |---|---|
 | `cargo test -p stellar-export glyphs_start_at`(수정 전) | 1 failed |
 | `cargo test -p stellar-export` | 94 passed, 0 failed |
+| `cargo clippy -p stellar-export --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-export -- --check` | 통과 |
+
+### 3. text outline command 메모리 상한
+
+`Fix: text outline command에 메모리 기준 상한을 두고 run path 복제 제거` 커밋에서 고쳤습니다.
+
+- **문제**: command 상한이 남은 출력 byte의 절반(command당 최소 2 byte 가정)뿐이라 기본 256 MiB 출력 상한에서 약 1.3억
+  command까지 허용했습니다. command 하나는 최대 28 byte이고 run별 목록과 combined 목록을 따로 두며 geometry로 옮길 때
+  복사도 생겨, 이론상 수 GB를 쓸 수 있었습니다. 구현 요약의 "거대한 text가 메모리를 먼저 쓰지 않고" 문구는 과장이었습니다.
+- **변경**: `MAX_TEXT_OUTLINE_COMMANDS`(2²¹) 고정 상한을 출력 예산과 별개로 겁니다. command 하나는 32 byte 이하(테스트로
+  고정)라 목록은 64 MiB 이하이고 geometry로 옮기는 동안 최대 그 2배입니다. run은 combined 안 command 범위만 가지고(복제
+  없음), run 색 path는 쓸 때만 그 범위를 잠깐 복사합니다. writer는 출력 예산이 더 작은 상한이었으면 `OutputTooLarge`, 메모리
+  상한이었으면 `Text { TooManyCommands }`를 돌려줍니다. 구현 요약 문구도 고쳤습니다. 출력은 바뀌지 않습니다(golden 그대로).
+- **검증**: `command_memory_is_capped_independently_of_the_caller_limit`(호출자 상한이 `usize::MAX`여도 고정 상한에서 멈춤,
+  `PathCommand` 크기 ≤ 32 byte), `huge_text_stops_at_the_memory_cap_before_the_output_limit`(기본 옵션 writer가 2²¹개를 넘는
+  command Text를 메모리 상한 오류로 거부), 기존 `text_output_respects_the_size_limit`(작은 출력 상한은 `OutputTooLarge`),
+  `glyphs_move_to_their_pen_origin`(run 범위와 combined 일치).
+
+| 명령(후속 수정 3) | 결과 |
+|---|---|
+| `cargo test -p stellar-export` | 96 passed, 0 failed |
 | `cargo clippy -p stellar-export --all-targets -- -D warnings` | 경고 0 |
 | `cargo fmt -p stellar-export -- --check` | 통과 |
