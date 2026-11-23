@@ -16,8 +16,9 @@
 //!
 //! - [`SvgSupport::Vector`]: SVG 요소·속성으로 기록합니다.
 //! - [`SvgSupport::Deferred`]: 후속 WBS row가 구현할 때까지 writer가 typed error로 거부합니다.
-//! - [`SvgSupport::Rasterize`]: SVG로 정확히 표현할 수 없어 부분 래스터화(XX.4) 대상입니다.
-//!   부분 래스터화가 구현될 때까지 writer는 거부합니다(조용히 빼거나 근사하지 않습니다).
+//! - [`SvgSupport::Rasterize`]: SVG로 정확히 표현할 수 없어 부분 래스터화(XX.4) 대상입니다. writer는 raster
+//!   경계 planner(XX.4.1)가 고른 최소 영역만 host rasterizer(XX.4.2)로 PNG를 받아 `<image>`로 넣습니다. host가
+//!   rasterizer를 주지 않으면 사전 진단(XX.1.3)이 형식 차단으로 거부합니다(조용히 빼거나 근사하지 않습니다).
 //! - [`SvgSupport::NotInScene`]: scene에 아직 해당 primitive가 없습니다. 대응 SVG 요소만 명시합니다.
 //!
 //! 알파 합성 색공간 차이(Stellar 렌더러는 선형 합성, 일반 SVG 렌더러는 sRGB 합성, 아키텍처 §10.3)는
@@ -396,8 +397,8 @@ pub const SVG_MAPPING: [SvgMapping; 34] = [
     row(
         SvgFeature::OutsideStroke,
         "StrokeAlign::Outside",
-        "stroke-width = 2×폭 + geometry 밖 <mask>",
-        SvgSupport::Deferred { row: "XX.3.4" },
+        "stroke-width = 2×폭 + geometry 밖 <mask maskUnits=userSpaceOnUse>(흰 영역 위 geometry 검정, XX.3.4)",
+        V,
     ),
     row(
         SvgFeature::RoundCap,
@@ -835,6 +836,9 @@ mod tests {
             SvgFeature::SolidFill,
             SvgFeature::CenterStroke,
             SvgFeature::InsideStroke,
+            SvgFeature::OutsideStroke,
+            SvgFeature::GroupOpacity,
+            SvgFeature::TranslucentColor,
             SvgFeature::RectClip,
             SvgFeature::RoundedRectClip,
             SvgFeature::PathClip,
@@ -854,10 +858,6 @@ mod tests {
                 (
                     SvgFeature::ImageColorSpaceOverride,
                     SvgSupport::Rasterize { row: "XX.4.2" }
-                ),
-                (
-                    SvgFeature::OutsideStroke,
-                    SvgSupport::Deferred { row: "XX.3.4" }
                 ),
                 (
                     SvgFeature::DropShadow,

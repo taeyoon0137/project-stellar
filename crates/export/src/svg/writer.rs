@@ -38,7 +38,7 @@ use crate::preflight::ConfirmedExport;
 use crate::request::{ExportBackground, ExportFormat};
 use crate::svg::element::{
     write_background, write_clip_def, write_fill, write_geometry_clip_def, write_group_close,
-    write_group_open, write_image, write_stroke, SvgGeometry,
+    write_group_open, write_image, write_outside_mask_def, write_stroke, StrokeMask, SvgGeometry,
 };
 use crate::svg::format::{base64_len, write_number, write_numbers, SvgValueError};
 use crate::svg::id::{SvgId, SvgIdAllocator, SvgIdError};
@@ -70,6 +70,7 @@ pub struct SvgDocument {
     text: String,
     groups: u64,
     clip_definitions: usize,
+    mask_definitions: usize,
 }
 
 impl SvgDocument {
@@ -96,6 +97,11 @@ impl SvgDocument {
     /// 쓴 `<clipPath>` 정의 수.
     pub const fn clip_definitions(&self) -> usize {
         self.clip_definitions
+    }
+
+    /// 쓴 `<mask>` 정의 수(Outside stroke, XX.3.4).
+    pub const fn mask_definitions(&self) -> usize {
+        self.mask_definitions
     }
 }
 
@@ -231,6 +237,7 @@ pub fn write_svg(
         body: String::new(),
         groups: 0,
         clip_definitions: 0,
+        mask_definitions: 0,
     };
     if let ExportBackground::Solid(color) = capture.request().background() {
         write_background(&mut writer.body, capture.bounds(), color)
@@ -282,6 +289,7 @@ pub fn write_svg(
         text,
         groups: writer.groups,
         clip_definitions: writer.clip_definitions,
+        mask_definitions: writer.mask_definitions,
     })
 }
 
@@ -308,6 +316,7 @@ struct Writer<'a> {
     body: String,
     groups: u64,
     clip_definitions: usize,
+    mask_definitions: usize,
 }
 
 fn value_error(node: StableId) -> impl Fn(SvgValueError) -> SvgExportError {
@@ -530,6 +539,20 @@ impl<'a> Writer<'a> {
             return Ok(());
         }
         let mut own_clip: Option<SvgId> = None;
+        let mut outside_mask: Option<SvgId> = None;
+        // Outside mask 영역은 node의 가장 넓은 Outside stroke를 덮어야 하므로 먼저 구합니다.
+        let widest_outside = node
+            .paint()
+            .get()
+            .layers
+            .iter()
+            .filter_map(|layer| match layer {
+                PaintLayer::Stroke(stroke) if stroke.align() == StrokeAlign::Outside => {
+                    Some(stroke.width())
+                }
+                PaintLayer::Stroke(_) | PaintLayer::Fill(_) => None,
+            })
+            .fold(0.0_f32, f32::max);
         for layer in &node.paint().get().layers {
             match layer {
                 PaintLayer::Fill(paint) => {
@@ -537,7 +560,7 @@ impl<'a> Writer<'a> {
                         .map_err(value_error(source))?;
                 }
                 PaintLayer::Stroke(stroke) => {
-                    let clip = match stroke.align() {
+                    let mask = match stroke.align() {
                         StrokeAlign::Inside => {
                             if own_clip.is_none() {
                                 let clip = self.ids.geometry_clip(id)?;
@@ -546,11 +569,30 @@ impl<'a> Writer<'a> {
                                 self.clip_definitions += 1;
                                 own_clip = Some(clip);
                             }
-                            own_clip.as_ref().map(SvgId::as_str)
+                            own_clip.as_ref().map_or(StrokeMask::None, |clip| {
+                                StrokeMask::InsideClip(clip.as_str())
+                            })
                         }
-                        StrokeAlign::Center | StrokeAlign::Outside => None,
+                        StrokeAlign::Outside => {
+                            if outside_mask.is_none() {
+                                let mask = self.ids.outside_mask(id)?;
+                                write_outside_mask_def(
+                                    &mut self.defs,
+                                    mask.as_str(),
+                                    &geometry,
+                                    widest_outside,
+                                )
+                                .map_err(value_error(source))?;
+                                self.mask_definitions += 1;
+                                outside_mask = Some(mask);
+                            }
+                            outside_mask.as_ref().map_or(StrokeMask::None, |mask| {
+                                StrokeMask::OutsideMask(mask.as_str())
+                            })
+                        }
+                        StrokeAlign::Center => StrokeMask::None,
                     };
-                    write_stroke(&mut self.body, &geometry, &transform, stroke, clip)
+                    write_stroke(&mut self.body, &geometry, &transform, stroke, mask)
                         .map_err(value_error(source))?;
                 }
             }

@@ -9,6 +9,7 @@
 //! | 같은 StableId의 k번째(k ≥ 2) scene node | `n-<uuid>-d<k>` | pre-order 등장 순서. component instance처럼 한 document node가 여러 scene node를 만들 때 |
 //! | scene clip 정의 | `<node id>-c<depth>` | 그 clip을 처음 쓴 node(pre-order)와 clip stack 깊이(1부터) |
 //! | Inside stroke 자기 기하 clip | `<node id>-g` | node당 하나 |
+//! | Outside stroke geometry 밖 mask | `<node id>-m` | node당 하나(XX.3.4) |
 //!
 //! 모든 id는 [`is_safe_id`](XML `ID`·CSS 식별자 공통 부분 집합)를 만족합니다. 형식상 겹칠 수 없지만,
 //! [`SvgIdAllocator`]가 발급한 id를 모두 기억해 중복 발급을 [`SvgIdError::Collision`]으로 거부합니다.
@@ -134,6 +135,11 @@ impl SvgIdAllocator {
     /// `owner` node의 Inside stroke 자기 기하 clip id.
     pub fn geometry_clip(&mut self, owner: &SvgId) -> Result<SvgId, SvgIdError> {
         self.claim(format!("{owner}-g"))
+    }
+
+    /// `owner` node의 Outside stroke mask id.
+    pub fn outside_mask(&mut self, owner: &SvgId) -> Result<SvgId, SvgIdError> {
+        self.claim(format!("{owner}-m"))
     }
 }
 

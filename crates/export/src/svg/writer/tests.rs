@@ -35,6 +35,7 @@ use crate::text::NoText;
 
 /// Text outline 테스트 (XX.3.2).
 mod text;
+mod vector;
 
 const GOLDEN: &str = include_str!("../../../tests/fixtures/basic_view_v1.svg");
 
@@ -439,23 +440,9 @@ fn unsupported_features_stop_with_typed_errors() {
         blend: SceneBlendMode::Multiply,
         ..PaintStack::empty()
     });
-    let mut outside = rect_spec(4, 1, 0.0);
-    outside.paint = PaintStackRef::new(PaintStack {
-        layers: vec![PaintLayer::Stroke(
-            StrokeLayer::new(
-                Paint::Solid(fx::srgb(0.0, 0.0, 0.0, 1.0)),
-                1.0,
-                StrokeAlign::Outside,
-                StrokeCap::Butt,
-            )
-            .unwrap(),
-        )],
-        ..PaintStack::empty()
-    });
     let cases = [
         (shadow, SvgFeature::DropShadow),
         (blend, SvgFeature::BlendMode),
-        (outside, SvgFeature::OutsideStroke),
     ];
     for (spec, feature) in cases {
         let source = spec.source;
