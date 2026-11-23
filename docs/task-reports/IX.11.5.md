@@ -4,7 +4,7 @@
 - 작업명: grid item 생략 정렬 `normal`(stretch)과 `justify-self`·`align-self`, track 최솟값 `auto`(bare `fr` =
   `minmax(auto, <n>fr)`), CSS fr 크기 규칙, Free containing block = padding box와 백분율 기준, anchor 없는 축,
   absolute 자식의 부모 크기 비기여, Overlay 정렬의 CSS 이름과 stretch, `grid-auto-rows` 생략값 결정
-- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 IX.11.1(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`)
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록(ledger-refresh): 이 행의 남은 범위가 없고, `[~]`의 이유였던 선행 사슬(IX.11.22 → IX.11.1)이 풀렸습니다. IX.11.22는 integration-followups lane이 다값 snapshot 경로·Shadow offset 투영·variant validator 연결을 끝내 `[x]`입니다. 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 원장이 근거 커밋을 찾지 못했습니다. 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 선행 IX.11.1(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`)
 - 결정: ADR-0074 결정 5·6, ADR-0076
 - 선행: IX.11.1, X.2.3, X.4.5, X.5.1, X.6.5. 엔진 입력 타입은 `crates/layout` 안에 있어 IX.11.1을 기다리지 않습니다
   (ADR-0076 결정 1).
@@ -192,3 +192,9 @@ dashboard scene(grid root, 열 `minmax(0px, 1fr)` 2개, 행 `max-content` 2개)�
 - 여러 track에 걸친 item 분배의 잔여 subpixel은 앞 track부터 1씩이라 Chromium(float 분배)과 나누어떨어지지 않는
   입력에서 차이가 날 수 있습니다(`distribution` 묶음 범위).
 - `grid-template-areas`, named line, `repeat(auto-fill | auto-fit)`, `dense`는 받지 않습니다.
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(IX.11.5)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `f512d4fe` Feat: 레이아웃 엔진에 CSS Grid를 넣고 Overlay를 한 칸 grid로 대체 (IX.11.5)
