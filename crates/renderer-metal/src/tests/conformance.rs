@@ -188,6 +188,7 @@ fn smoke_fixtures() -> Vec<Fixture> {
                 uv: [0.0, 0.0, 1.0, 1.0],
                 image: std::sync::Arc::new(checker),
                 filter: TextureFilter::Nearest,
+                wrap: stellar_renderer_core::placeholder::TextureWrap::ClampToEdge,
                 opacity: 1.0,
             })),
         Fixture::new("smoke-glyph-p3", Category::Text, 16, 16)
@@ -321,4 +322,19 @@ fn effect_fixtures_match_cpu_reference_per_feature() {
         "effects",
         &stellar_renderer_core::effects::inventory::effect_fixtures(),
     );
+}
+
+#[test]
+fn full_inventory_matches_cpu_reference_on_metal() {
+    // 검증 기준(XI.11.3): inventory 전체(100개 이상)를 Metal로 그려 CPU 기준과 비교하고 reference를 씁니다.
+    if !metal_available() {
+        return;
+    }
+    let fixtures = stellar_renderer_core::effects::inventory::inventory();
+    let report = stellar_renderer_core::effects::inventory::check_inventory(
+        &fixtures,
+        &ToleranceConfig::builtin(),
+    );
+    assert!(report.problems.is_empty(), "{:#?}", report.problems);
+    run_group("inventory", &fixtures);
 }

@@ -763,7 +763,11 @@ impl Recorder {
         pass.steps.push(Step::Texture {
             slot: 0,
             texture: TexRef::Upload(upload),
-            sampler: clamp_sampler(image.filter),
+            sampler: SamplerDesc {
+                filter: image.filter,
+                wrap: image.wrap,
+                mipmaps: false,
+            },
         });
         pass.steps.push(Step::Draw {
             stream: Stream::Textured,

@@ -13,7 +13,7 @@
 //! - **겹침**: [`Coverage::Disjoint`] mesh는 삼각형마다 합성하고(GPU draw 순서와 같음), [`Coverage::Union`]은 pixel마다
 //!   한 번만 합성합니다.
 //! - **이미지**: texture에 올리는 byte([`ImageData::texture_bytes`])를 decode한 값으로 sampling합니다. Nearest는
-//!   `floor(u × w)` texel, Linear는 texel 중심 기준 bilinear(가장자리 clamp)입니다.
+//!   `floor(u × w)` texel, Linear는 texel 중심 기준 bilinear이고 가장자리는 wrap(clamp·repeat)을 따릅니다.
 //! - **glyph**: mask byte / 255를 coverage로 색에 곱합니다.
 //! - **gradient**: pixel 중심의 `t`를 [`GradientRamp::evaluate`]로 정확히 계산합니다(XI.10.3).
 
@@ -21,7 +21,7 @@ use crate::blend::{composite, source_over};
 use crate::color::{decode_pixel, encode_pixel, to_working, ColorSpace, WorkingColor};
 use crate::output_color::OutputColorPlan;
 use crate::pass_compiler::LAYER_FORMAT;
-use crate::placeholder::TextureFilter;
+use crate::placeholder::{TextureFilter, TextureWrap};
 use crate::render_graph::TextureFormat;
 
 use super::artifact::RgbaImage;
@@ -186,8 +186,12 @@ pub(crate) fn sample(
     u: f64,
     v: f64,
     filter: TextureFilter,
+    wrap: TextureWrap,
 ) -> WorkingColor {
-    let clamp = |i: i64, n: u32| i.clamp(0, i64::from(n) - 1) as usize;
+    let clamp = |i: i64, n: u32| match wrap {
+        TextureWrap::ClampToEdge => i.clamp(0, i64::from(n) - 1) as usize,
+        TextureWrap::Repeat => i.rem_euclid(i64::from(n)) as usize,
+    };
     let at = |x: i64, y: i64| texels[clamp(y, height) * width as usize + clamp(x, width)];
     match filter {
         TextureFilter::Nearest => at(
@@ -431,6 +435,7 @@ fn draw_image(canvas: &mut Canvas, image: &ImageOp, plan: &OutputColorPlan) {
             u0 + (u1 - u0) * s,
             v0 + (v1 - v0) * t,
             image.filter,
+            image.wrap,
         );
         canvas.over(x, y, c.scale(image.opacity));
     }
@@ -629,10 +634,37 @@ mod tests {
         let a = WorkingColor::premultiplied([0.0, 0.0, 0.0, 1.0]);
         let b = WorkingColor::premultiplied([1.0, 1.0, 1.0, 1.0]);
         let texels = [a, b];
-        let mid = sample(&texels, 2, 1, 0.5, 0.5, TextureFilter::Linear);
+        let mid = sample(
+            &texels,
+            2,
+            1,
+            0.5,
+            0.5,
+            TextureFilter::Linear,
+            TextureWrap::ClampToEdge,
+        );
         assert!((mid.rgba[0] - 0.5).abs() < 1e-6);
-        let edge = sample(&texels, 2, 1, 0.0, 0.5, TextureFilter::Linear);
+        let edge = sample(
+            &texels,
+            2,
+            1,
+            0.0,
+            0.5,
+            TextureFilter::Linear,
+            TextureWrap::ClampToEdge,
+        );
         assert_eq!(edge, a);
-        assert_eq!(sample(&texels, 2, 1, 0.74, 0.5, TextureFilter::Nearest), b);
+        assert_eq!(
+            sample(
+                &texels,
+                2,
+                1,
+                0.74,
+                0.5,
+                TextureFilter::Nearest,
+                TextureWrap::ClampToEdge
+            ),
+            b
+        );
     }
 }

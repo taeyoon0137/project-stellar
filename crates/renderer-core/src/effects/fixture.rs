@@ -18,7 +18,7 @@ pub use stellar_scene::stack::{SceneBlendMode, StrokeCap};
 use crate::backend::{BackendKind, DeviceCapabilities};
 use crate::color::{encode_pixel, image_texel, ColorSpace, WorkingColor};
 use crate::output_color::{OutputColor, OutputColorPlan};
-use crate::placeholder::TextureFilter;
+use crate::placeholder::{TextureFilter, TextureWrap};
 use crate::render_graph::TextureFormat;
 use crate::stroke::{tessellate_stroke, StrokeStyle};
 use crate::tessellation::{FillMesh, FillStyle, FillTessellator, TessellationError};
@@ -219,8 +219,10 @@ pub struct ImageOp {
     pub uv: [f32; 4],
     /// 이미지.
     pub image: Arc<ImageData>,
-    /// sampling filter(가장자리는 clamp).
+    /// sampling filter.
     pub filter: TextureFilter,
+    /// uv wrap(clamp 또는 repeat).
+    pub wrap: TextureWrap,
     /// 곱할 불투명도.
     pub opacity: f32,
 }
