@@ -2,7 +2,7 @@
 
 - WBS: IX.11.23
 - 작업명: flex item `min-width: auto`·`min-height: auto`를 CSS Flexbox 규칙(콘텐츠 기반 최소 크기)으로 구현
-- 상태: 완료 (상태 표기는 통합 때 ledger가 정합니다)
+- 상태: 완료 (`[x]`)
 - 결정: ADR-0076 결정 6
 - 선행: IX.11.4(이 lane 커밋 `4861c510`), X.7.2, X.7.4
 

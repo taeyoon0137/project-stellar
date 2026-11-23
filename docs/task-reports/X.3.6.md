@@ -2,7 +2,7 @@
 
 - WBS: X.3.6
 - 작업명: baseline alignment hook을 추가하고 Text baseline이 없는 node는 bottom edge fallback을 사용
-- 상태: 완료 (상태 표기는 통합 때 ledger가 정합니다)
+- 상태: 완료 (`[x]`)
 - 결정: ADR-0076 결정 6(X.10.4·X.3.6 항목)
 - 선행: X.3.2(`[x]`), X.10.4(이 lane 커밋 `55a2edb1`, layout 쪽 hook·전파 완료. `stellar-text` 구현체 연결은 X.10.4
   보고서의 남은 항목)

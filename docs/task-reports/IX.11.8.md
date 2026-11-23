@@ -2,7 +2,7 @@
 
 - WBS: IX.11.8
 - 작업명: CSS 레이아웃 적합성 fixture(Flexbox 60, Grid 40, positioning 30 이상, CSS 선언과 기대 border box rect)
-- 상태: 완료 (상태 표기는 통합 때 ledger가 정합니다)
+- 상태: 완료 (`[x]`)
 - 결정: ADR-0076 결정 9
 - 선행: IX.11.4(`4861c510`), IX.11.5(`f512d4fe`), IX.11.23(`83c5ab7b`), X.11.1
 
