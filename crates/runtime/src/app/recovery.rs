@@ -11,18 +11,17 @@ use stellar_commands::selection::Selection;
 use stellar_commands::state::DocumentState;
 use stellar_commands::view_tabs::CanvasViewport;
 use stellar_document::model::DocumentModel;
-use stellar_document::records::DocumentRecords;
 use stellar_history::window::WindowHistory;
 use stellar_project::document_io::load::{load_document, MemoryChunks};
-use stellar_project::document_io::serialize::{
-    manifest_chunk_id, serialize_document, serialize_records,
-};
+use stellar_project::document_io::serialize::{manifest_chunk_id, serialize_document};
 use stellar_project::recovery::RecoverySnapshotStore;
 use stellar_project::recovery_payload::{OpenTab, RecoveryPayload, UnsavedChunk, Viewport};
 use stellar_project::recovery_probe::{assess_snapshot, SnapshotFreshness};
 use stellar_storage::chunk::kinds::KIND_DOCUMENT_MANIFEST;
 use stellar_storage::generation::current::read_current_pointer;
 use stellar_storage::hash::ContentHash;
+#[cfg(test)]
+mod lifecycle_tests;
 #[cfg(test)]
 mod tests;
 mod writer;
@@ -45,9 +44,10 @@ pub enum RecoveryAction {
     /// 복구본을 지웁니다. 다음 열기에 다시 제안하지 않습니다.
     Discard,
 }
+/// 복구 체크포인트 캡처. 문서는 자동 저장과 같은 revision의 불변 snapshot을 함께 씁니다(XIII.8.2).
 #[derive(Debug)]
 struct Capture {
-    records: DocumentRecords,
+    snapshot: Arc<crate::window_session::SharedSnapshot>,
     payload: RecoveryPayload,
 }
 impl Capture {
@@ -62,7 +62,10 @@ impl Capture {
             .position(|t| Some(t.view) == tabs.active_view())
             .unwrap_or(0) as u32;
         Ok(Self {
-            records: document.model().to_records().map_err(io::Error::other)?,
+            snapshot: window
+                .shared_snapshot()
+                .ok_or_else(|| io::Error::other("열린 문서가 없습니다"))?
+                .map_err(io::Error::other)?,
             payload: RecoveryPayload {
                 base_manifest_hash: window.loaded_generation().map(|g| g.manifest_hash),
                 revision: document.revision().0,
@@ -91,15 +94,15 @@ impl Capture {
         id: &ProjectIdentity,
         window: WindowSessionId,
     ) -> io::Result<()> {
-        let serialized = serialize_records(&self.records).map_err(io::Error::other)?;
+        let serialized = self.snapshot.serialized().map_err(io::Error::other)?;
         // 현재 checkout에 원래 chunk가 없어도 이 한 문서의 복구 사본을 만들 수 있게 전부 담습니다.
-        self.payload.unsaved_chunks = std::iter::once(serialized.manifest)
-            .chain(serialized.view_trees)
-            .chain(serialized.subtrees)
+        self.payload.unsaved_chunks = serialized
+            .chunks()
+            .into_iter()
             .map(|c| UnsavedChunk {
                 chunk_id: c.chunk_id,
                 kind: c.kind,
-                payload: c.payload,
+                payload: c.payload.clone(),
             })
             .collect();
         store
@@ -193,23 +196,34 @@ impl RecoveryCandidate {
     }
 }
 impl ProjectSummary {
-    fn recovery_store(&self) -> Result<(ProjectIdentity, RecoverySnapshotStore), String> {
+    /// OS 사용자 데이터의 복구본 저장소 root([`AppRuntime::enable_recovery`]와 같은 위치).
+    fn recovery_root() -> Result<PathBuf, String> {
+        let base = os_user_data_base()
+            .filter(|p| p.is_absolute())
+            .ok_or("사용자 데이터 경로 없음")?;
+        Ok(base.join(stellar_ops::lock::APP_DATA_DIR))
+    }
+    fn recovery_store_in(
+        &self,
+        root: &std::path::Path,
+    ) -> Result<(ProjectIdentity, RecoverySnapshotStore), String> {
         let id = ProjectIdentity::new(self.project_id, &self.root).map_err(|e| e.to_string())?;
         if id.canonical_target() != self.canonical_root {
             return Err("열린 프로젝트 폴더가 바뀌었습니다".into());
         }
-        let base = os_user_data_base()
-            .filter(|p| p.is_absolute())
-            .ok_or("사용자 데이터 경로 없음")?;
-        Ok((
-            id,
-            RecoverySnapshotStore::new(&base.join(stellar_ops::lock::APP_DATA_DIR)),
-        ))
+        Ok((id, RecoverySnapshotStore::new(root)))
     }
     /// 제안할 복구본 하나. V.9.3 규칙(기준 세대 = current, 미저장 revision 있음)을 따르고, 다른 살아 있는
     /// 앱·창이 잠근 복구본과 읽을 수 없는 복구본은 제외합니다. 최근 창부터 고릅니다.
     pub fn recovery_candidate(&self) -> Result<Option<RecoveryCandidate>, String> {
-        let (id, store) = self.recovery_store()?;
+        self.recovery_candidate_in(&Self::recovery_root()?)
+    }
+    /// [`ProjectSummary::recovery_candidate`]를 복구본 저장소 `root`에서 찾습니다.
+    pub(in crate::app) fn recovery_candidate_in(
+        &self,
+        root: &std::path::Path,
+    ) -> Result<Option<RecoveryCandidate>, String> {
+        let (id, store) = self.recovery_store_in(root)?;
         let current = read_current_pointer(id.canonical_target()).ok();
         let sessions = store.list_sessions(&id).map_err(|e| e.to_string())?;
         for name in sessions.into_iter().rev() {
@@ -252,6 +266,7 @@ impl ProjectSummary {
     }
     fn read_recovery(
         &self,
+        root: &std::path::Path,
         candidate: &RecoveryCandidate,
     ) -> Result<
         (
@@ -262,7 +277,7 @@ impl ProjectSummary {
         ),
         String,
     > {
-        let (id, store) = self.recovery_store()?;
+        let (id, store) = self.recovery_store_in(root)?;
         let guard = lock_candidate(&store, &id, candidate.window).map_err(|e| e.to_string())?;
         let bytes = payload_bytes(&store, &id, candidate.window)?;
         if ContentHash::compute(&bytes) != candidate.hash {
@@ -286,7 +301,15 @@ struct PreparedRecovery {
 impl ProjectSummary {
     /// 파일 읽기와 문서 조립은 셸 worker에서 수행합니다.
     fn prepare_recovery(&self, candidate: &RecoveryCandidate) -> Result<PreparedRecovery, String> {
-        let (project, _, lease, payload) = self.read_recovery(candidate)?;
+        self.prepare_recovery_in(&Self::recovery_root()?, candidate)
+    }
+
+    fn prepare_recovery_in(
+        &self,
+        root: &std::path::Path,
+        candidate: &RecoveryCandidate,
+    ) -> Result<PreparedRecovery, String> {
+        let (project, _, lease, payload) = self.read_recovery(root, candidate)?;
         let base = payload
             .base_manifest_hash
             .ok_or("저장된 기준 세대가 없습니다")?;
@@ -306,7 +329,7 @@ impl ProjectSummary {
 
     /// 표시한 것과 같은 bytes인 복구본만 지웁니다. 문서는 조립하지 않습니다.
     fn discard_recovery(&self, candidate: &RecoveryCandidate) -> Result<(), String> {
-        let (id, store, _lease, _) = self.read_recovery(candidate)?;
+        let (id, store, _lease, _) = self.read_recovery(&Self::recovery_root()?, candidate)?;
         store
             .remove_snapshot(&id, candidate.window)
             .map_err(|e| e.to_string())?;

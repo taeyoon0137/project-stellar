@@ -78,7 +78,9 @@ use stellar_history::entry::{HistoryError, HistorySequence};
 use stellar_history::window::WindowHistory;
 use stellar_ops::lock::{default_lock_dir, LockError, SaveLock};
 use stellar_project::document_io::load::{load_document_from_generation, LoadDocumentError};
-use stellar_project::document_io::serialize::{serialize_records, SerializeError};
+use stellar_project::document_io::serialize::{
+    serialize_records, SerializeError, SerializedDocument,
+};
 use stellar_project::identity::ProjectIdentity;
 use stellar_project::manifest::CURRENT_SCHEMA_VERSION;
 use stellar_project::migration::{decide, MigrationPolicy, SchemaDecision};
@@ -230,6 +232,61 @@ impl fmt::Display for WindowSessionSaveError {
 
 impl std::error::Error for WindowSessionSaveError {}
 
+/// 같은 작업 문서 revision의 불변 memory snapshot(XIII.8.2). 자동 저장과 복구 체크포인트가 함께 씁니다.
+///
+/// document thread는 revision마다 레코드를 한 번만 복사하고([`ProjectWindowSession::shared_snapshot`]), chunk
+/// 직렬화는 먼저 필요한 worker가 한 번만 합니다([`SharedSnapshot::serialized`]). 그래서 같은 revision을 자동 저장과
+/// 복구가 모두 기록해도 문서 직렬화는 한 번입니다.
+#[derive(Debug)]
+pub(crate) struct SharedSnapshot {
+    document_id: StableId,
+    revision: DocumentRevision,
+    records: DocumentRecords,
+    serialized: std::sync::OnceLock<Result<SerializedDocument, SerializeError>>,
+    serializations: std::sync::atomic::AtomicUsize,
+}
+
+impl SharedSnapshot {
+    /// 캡처한 revision.
+    #[cfg(test)]
+    pub(crate) fn revision(&self) -> DocumentRevision {
+        self.revision
+    }
+
+    /// 문서 레코드.
+    pub(crate) fn records(&self) -> &DocumentRecords {
+        &self.records
+    }
+
+    /// chunk 직렬화 결과. 처음 부른 thread가 한 번만 직렬화합니다.
+    pub(crate) fn serialized(&self) -> Result<&SerializedDocument, SerializeError> {
+        self.serialized
+            .get_or_init(|| {
+                self.serializations
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                serialize_records(&self.records)
+            })
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+
+    /// 이 snapshot을 직렬화한 횟수(0 또는 1).
+    #[cfg(test)]
+    pub(crate) fn serialization_count(&self) -> usize {
+        self.serializations
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// [`SaveCapture::write_timed`]가 잰 writer 쪽 시간(XIII.1.7).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct SaveTimings {
+    /// 문서 레코드 → chunk 직렬화.
+    pub(crate) serialize: std::time::Duration,
+    /// 계획·잠금·base 검사·chunk 쓰기·current pointer 교체.
+    pub(crate) write: std::time::Duration,
+}
+
 /// 저장 snapshot([`ProjectWindowSession::capture_save`]). document thread에서 문서 레코드와 기준 generation만
 /// 복사해 두고, 직렬화·chunk 쓰기·current pointer 전환은 [`SaveCapture::write`]가 다른 thread에서 합니다(XIII.1.4).
 #[derive(Debug)]
@@ -237,7 +294,7 @@ pub(crate) struct SaveCapture {
     identity: ProjectIdentity,
     base: Option<LoadedGeneration>,
     revision: DocumentRevision,
-    records: DocumentRecords,
+    snapshot: std::sync::Arc<SharedSnapshot>,
     owned_chunks: BTreeSet<ChunkId>,
     image_records:
         std::sync::Arc<std::collections::BTreeMap<StableId, stellar_assets::record::AssetRecord>>,
@@ -255,10 +312,23 @@ pub(crate) struct SaveWritten {
     saved: Option<(LoadedGeneration, BTreeSet<ChunkId>)>,
 }
 
+impl SaveWritten {
+    /// 새 generation을 썼는지.
+    pub(crate) fn wrote(&self) -> bool {
+        self.saved.is_some()
+    }
+}
+
 impl SaveCapture {
     /// 캡처한 revision.
     pub(crate) fn revision(&self) -> DocumentRevision {
         self.revision
+    }
+
+    /// 캡처한 불변 memory snapshot(복구 체크포인트와 공유, XIII.8.2).
+    #[cfg(test)]
+    pub(crate) fn snapshot(&self) -> &std::sync::Arc<SharedSnapshot> {
+        &self.snapshot
     }
 
     /// 직렬화하고 loaded generation 위의 SavePlan을 씁니다. 공용 저장 잠금 안에서 current pointer가 캡처한 기준
@@ -267,10 +337,43 @@ impl SaveCapture {
         self,
         lock_dir: impl FnOnce() -> Result<std::path::PathBuf, LockError>,
     ) -> Result<SaveWritten, WindowSessionSaveError> {
+        self.write_timed(lock_dir).0
+    }
+
+    /// [`SaveCapture::write`]와 같고 직렬화·쓰기 시간을 함께 돌려줍니다(XIII.1.7).
+    pub(crate) fn write_timed(
+        self,
+        lock_dir: impl FnOnce() -> Result<std::path::PathBuf, LockError>,
+    ) -> (Result<SaveWritten, WindowSessionSaveError>, SaveTimings) {
+        let mut timings = SaveTimings::default();
+        let result = self.write_measured(lock_dir, &mut timings);
+        (result, timings)
+    }
+
+    fn write_measured(
+        self,
+        lock_dir: impl FnOnce() -> Result<std::path::PathBuf, LockError>,
+        timings: &mut SaveTimings,
+    ) -> Result<SaveWritten, WindowSessionSaveError> {
         let root = self.identity.canonical_target();
         let base = self.base.as_ref();
-        let serialized =
-            serialize_records(&self.records).map_err(WindowSessionSaveError::Serialize)?;
+        let started = std::time::Instant::now();
+        let serialized = self.snapshot.serialized();
+        timings.serialize = started.elapsed();
+        let started = std::time::Instant::now();
+        let result = self.write_serialized(root, base, serialized, lock_dir);
+        timings.write = started.elapsed();
+        result
+    }
+
+    fn write_serialized(
+        &self,
+        root: &std::path::Path,
+        base: Option<&LoadedGeneration>,
+        serialized: Result<&SerializedDocument, SerializeError>,
+        lock_dir: impl FnOnce() -> Result<std::path::PathBuf, LockError>,
+    ) -> Result<SaveWritten, WindowSessionSaveError> {
+        let serialized = serialized.map_err(WindowSessionSaveError::Serialize)?;
         let document_id = serialized.document_id;
         let new_chunks: BTreeSet<ChunkId> = serialized
             .chunks()
@@ -280,7 +383,8 @@ impl SaveCapture {
         let mut states = serialized.to_dirty_states();
         if !self.image_records.is_empty() {
             let referenced: BTreeSet<_> = self
-                .records
+                .snapshot
+                .records()
                 .nodes
                 .iter()
                 .filter_map(|node| match &node.payload {
@@ -535,6 +639,8 @@ pub struct ProjectWindowSession {
     pub(crate) asset_chunks: std::sync::Arc<std::collections::BTreeMap<StableId, ContentHash>>,
     pub(crate) image_records:
         std::sync::Arc<std::collections::BTreeMap<StableId, stellar_assets::record::AssetRecord>>,
+    /// 마지막으로 만든 불변 memory snapshot(XIII.8.2). 문서·revision이 같으면 다시 씁니다.
+    snapshot_cache: std::sync::Mutex<Option<std::sync::Arc<SharedSnapshot>>>,
 }
 
 /// 읽은 chunk id를 모읍니다.
@@ -671,6 +777,7 @@ impl ProjectWindowSession {
             history_labels: BTreeMap::new(),
             loaded: Some(disk.loaded),
             image_records: Default::default(),
+            snapshot_cache: Default::default(),
         })
     }
 
@@ -685,7 +792,44 @@ impl ProjectWindowSession {
             loaded: None,
             asset_chunks: Default::default(),
             image_records: Default::default(),
+            snapshot_cache: Default::default(),
         }
+    }
+
+    /// 지금 작업 문서 revision의 불변 memory snapshot(XIII.8.2). 같은 문서·revision이면 앞서 만든 것을 돌려주므로
+    /// 자동 저장 캡처와 복구 캡처가 레코드 복사와 직렬화를 나눠 씁니다. 작업 문서가 없으면 빈 문서 오류입니다.
+    pub(crate) fn shared_snapshot(
+        &self,
+    ) -> Option<Result<std::sync::Arc<SharedSnapshot>, stellar_document::model::ModelError>> {
+        let document = self.document.as_ref()?;
+        Some(self.snapshot_of(document))
+    }
+
+    fn snapshot_of(
+        &self,
+        document: &WindowDocument,
+    ) -> Result<std::sync::Arc<SharedSnapshot>, stellar_document::model::ModelError> {
+        let document_id = document.state.model().document_id();
+        let revision = document.state.revision();
+        let mut cache = self
+            .snapshot_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(snapshot) = cache
+            .as_ref()
+            .filter(|s| s.document_id == document_id && s.revision == revision)
+        {
+            return Ok(std::sync::Arc::clone(snapshot));
+        }
+        let snapshot = std::sync::Arc::new(SharedSnapshot {
+            document_id,
+            revision,
+            records: document.state.model().to_records()?,
+            serialized: std::sync::OnceLock::new(),
+            serializations: std::sync::atomic::AtomicUsize::new(0),
+        });
+        *cache = Some(std::sync::Arc::clone(&snapshot));
+        Ok(snapshot)
     }
 
     /// 연 프로젝트.
@@ -1119,16 +1263,14 @@ impl ProjectWindowSession {
                 return Ok(None);
             }
         }
-        let records = document
-            .state
-            .model()
-            .to_records()
+        let snapshot = self
+            .snapshot_of(document)
             .map_err(|error| WindowSessionSaveError::Serialize(SerializeError::Model(error)))?;
         Ok(Some(SaveCapture {
             identity: self.identity.clone(),
             base: base.cloned(),
             revision,
-            records,
+            snapshot,
             owned_chunks: document.owned_chunks.clone(),
             image_records: std::sync::Arc::clone(&self.image_records),
         }))
@@ -1273,16 +1415,14 @@ impl ProjectWindowSession {
             None => (None, BTreeSet::new()),
         };
         let revision = document.state.revision();
-        let records = document
-            .state
-            .model()
-            .to_records()
+        let snapshot = self
+            .snapshot_of(document)
             .map_err(|error| WindowSessionSaveError::Serialize(SerializeError::Model(error)))?;
         let capture = SaveCapture {
             identity: self.identity.clone(),
             base: base.clone(),
             revision,
-            records,
+            snapshot,
             owned_chunks: owned_chunks.clone(),
             image_records: std::sync::Arc::clone(&self.image_records),
         };
