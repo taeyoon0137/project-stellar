@@ -57,7 +57,8 @@ pub fn test_home() -> &'static Path {
             std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
             return home;
         }
-        let home = std::env::temp_dir().join(format!("stellar-e2e-home-{}", std::process::id()));
+        remove_stale_homes();
+        let home = std::env::temp_dir().join(format!("{HOME_PREFIX}{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).expect("테스트 HOME 생성");
         let home = home.canonicalize().expect("테스트 HOME 실제 경로");
@@ -88,6 +89,36 @@ pub fn test_home() -> &'static Path {
         }
         home
     })
+}
+
+/// 테스트 HOME 접두사.
+const HOME_PREFIX: &str = "stellar-e2e-home-";
+
+/// 이 정도 지난 테스트 HOME은 끝난 실행이 남긴 것으로 봅니다. 테스트 binary 하나는 이보다 훨씬 짧게 끝나므로,
+/// 동시에 도는 다른 테스트 프로세스의 HOME을 지우지 않습니다.
+const STALE_HOME_AGE: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// 테스트 HOME은 같은 프로세스의 모든 테스트와 비정상 종료 시나리오의 자식 프로세스가 함께 쓰므로 프로세스 안에서는
+/// 지우지 않습니다(std에는 프로세스 종료 hook이 없음). 대신 새 HOME을 만들 때 오래된 테스트 HOME을 지워 쌓이지 않게 합니다.
+fn remove_stale_homes() {
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let is_home = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(HOME_PREFIX));
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > STALE_HOME_AGE);
+        if is_home && stale && entry.file_type().is_ok_and(|t| t.is_dir()) {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 /// 테스트 HOME의 전역 gitconfig에 한 줄 설정을 더합니다(`git config --global`과 같은 효과).
