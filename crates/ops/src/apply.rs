@@ -465,12 +465,17 @@ enum Planned {
         index: usize,
         node: StableId,
         declaration: String,
+        /// numeric key로 받았으면 그 key. 이름이 node에서 가리키는 key와 같아야 합니다.
+        key: Option<crate::core_types::property::PropertyKey>,
     },
 }
 
-/// `set-property`의 속성을 registry 이름으로 풉니다. numeric key는 registry 이름으로 바꾸고, 묶음 key는
-/// `bundle-key-reference`로 거부합니다(ADR-0075 결정 1).
-fn property_name(property: &str) -> Result<String, String> {
+/// `set-property`의 속성을 registry 이름으로 풉니다. numeric key는 registry 이름으로 바꾸고 그 key를 함께
+/// 돌려줍니다(적용할 때 node 범위와 대조, [`check_numeric_key`]). 묶음 key는 `bundle-key-reference`로
+/// 거부합니다(ADR-0075 결정 1).
+fn property_name(
+    property: &str,
+) -> Result<(String, Option<crate::core_types::property::PropertyKey>), String> {
     use stellar_document::css::{bundle, registry};
     if let Some(hex) = property.strip_prefix("0x") {
         let key = u32::from_str_radix(hex, 16)
@@ -490,7 +495,7 @@ fn property_name(property: &str) -> Result<String, String> {
             ));
         }
         return registry::name_of(key)
-            .map(str::to_owned)
+            .map(|name| (name.to_owned(), Some(key)))
             .ok_or_else(|| format!("unknown-property: registry에 없는 key {property}"));
     }
     if property.is_empty()
@@ -502,18 +507,73 @@ fn property_name(property: &str) -> Result<String, String> {
             "{property:?}는 registry 이름(소문자·숫자·-) 또는 0x key가 아닙니다"
         ));
     }
-    Ok(property.to_owned())
+    Ok((property.to_owned(), None))
 }
 
-/// `set-property` 입력을 선언 한 줄로 바꿉니다. 값은 선언 하나만 담을 수 있습니다.
-fn declaration(property: &str, value: &str) -> Result<String, String> {
-    let name = property_name(property)?;
+/// 이름 `name`이 `payload` node에서 가리키는 registry key. 붙여넣기 경로와 같은 순서로 node payload 범위, 공통
+/// node 범위, modifier 범위에서 찾습니다(예: `width`는 Frame 0x0108·Rectangle 0x0301·Image 0x0602, `transform`은
+/// Frame 0x0102·그 밖 0x1011).
+fn key_on_node(
+    payload: &NodePayload,
+    name: &str,
+) -> Option<crate::core_types::property::PropertyKey> {
+    use stellar_document::css::registry::{key_of, PropertyScope};
+    let scope = match payload {
+        NodePayload::Frame(_) => Some(PropertyScope::Frame),
+        NodePayload::Shape(_) => Some(PropertyScope::Shape),
+        NodePayload::Path(_) => Some(PropertyScope::Path),
+        NodePayload::Text(_) => Some(PropertyScope::Text),
+        NodePayload::Image(_) => Some(PropertyScope::Image),
+        NodePayload::Fragment(_) | NodePayload::ComponentInstance(_) => None,
+    };
+    scope
+        .and_then(|scope| key_of(scope, name))
+        .or_else(|| key_of(PropertyScope::Node, name))
+        .or_else(|| key_of(PropertyScope::Modifier, name))
+}
+
+/// numeric key로 받은 `set-property`가 그 node에서 정확히 그 key를 가리키는지 확인합니다. 이름은 범위 안에서만
+/// 유일하므로(`width`, `transform`) 다른 범위의 key(Frame node에 Shape `0x0301`)를 같은 이름의 다른 속성으로
+/// 바꿔 쓰지 않고 `not-applicable`로 거부합니다.
+fn check_numeric_key(
+    model: &DocumentModel,
+    index: usize,
+    node: StableId,
+    declaration: &str,
+    key: crate::core_types::property::PropertyKey,
+) -> Result<(), ApplyError> {
+    let Some(record) = model.record(node) else {
+        // 없는 node는 붙여넣기 경로가 그 이유로 거부합니다.
+        return Ok(());
+    };
+    let name = declaration.split_once(':').map_or(declaration, |(n, _)| n);
+    let target = key_on_node(&record.payload, name);
+    if target == Some(key) {
+        return Ok(());
+    }
+    Err(ApplyError::InvalidCommand {
+        index,
+        reason: format!(
+            "not-applicable: {:?} node의 {name}는 key {} 입니다(받은 key 0x{:04x})",
+            record.payload.kind(),
+            target.map_or_else(|| "없음".to_owned(), |k| format!("0x{:04x}", k.0)),
+            key.0
+        ),
+    })
+}
+
+/// `set-property` 입력을 선언 한 줄과 numeric key(받았으면)로 바꿉니다. 값은 선언 하나만 담을 수 있습니다.
+fn declaration(
+    property: &str,
+    value: &str,
+) -> Result<(String, Option<crate::core_types::property::PropertyKey>), String> {
+    let (name, key) = property_name(property)?;
     if value.trim().is_empty() || value.contains([';', '{', '}']) {
         return Err(format!(
             "{name}의 값은 비어 있지 않은 CSS 값 하나여야 합니다(;·{{·}} 없음)"
         ));
     }
-    Ok(format!("{name}: {value}"))
+    Ok((format!("{name}: {value}"), key))
 }
 
 /// 프로젝트를 열기 전에 command 수와 형식을 검사합니다.
@@ -545,12 +605,16 @@ fn plan_commands(inputs: &[CommandInput]) -> Result<Vec<Planned>, ApplyError> {
                 node,
                 property,
                 value,
-            } => planned.push(Planned::Property {
-                index,
-                node: *node,
-                declaration: declaration(property, value)
-                    .map_err(|reason| ApplyError::InvalidCommand { index, reason })?,
-            }),
+            } => {
+                let (declaration, key) = declaration(property, value)
+                    .map_err(|reason| ApplyError::InvalidCommand { index, reason })?;
+                planned.push(Planned::Property {
+                    index,
+                    node: *node,
+                    declaration,
+                    key,
+                })
+            }
             _ => planned.push(Planned::Ready {
                 index,
                 command: input.to_command().map_err(|e| match e {
@@ -612,13 +676,20 @@ fn resolve_commands(
                 index,
                 node,
                 declaration,
+                key,
             } => {
                 if scratch.is_none() {
                     let mut state = DocumentState::new(copy_model(model)?);
-                    run(&mut state, index, &commands)?;
+                    // 앞 command의 거부는 그 command를 만든 입력 index로 알립니다.
+                    for (command, origin) in commands.iter().zip(&origins) {
+                        run(&mut state, *origin, std::slice::from_ref(command))?;
+                    }
                     scratch = Some(state);
                 }
                 let state = scratch.as_mut().expect("방금 만듦");
+                if let Some(key) = key {
+                    check_numeric_key(state.model(), index, node, &declaration, key)?;
+                }
                 let pasted = paste_property(state.model(), index, node, &declaration)?;
                 run(state, index, &pasted)?;
                 origins.extend(std::iter::repeat_n(index, pasted.len()));
@@ -1872,6 +1943,11 @@ mod tests {
             (set("width", "1px; height: 2px"), "CSS 값 하나"),
             (set("width", "1em"), "unsupported-unit"),
             (set("Width", "1px"), "registry 이름"),
+            // 이름이 같아도 다른 범위의 key는 이 node의 속성이 아닙니다(Frame에 Shape width, Transform modifier).
+            (set("0x0301", "1px"), "not-applicable"),
+            (set("0x1011", "none"), "not-applicable"),
+            // 값이 이미 같아 command가 없어도 범위 검사는 합니다.
+            (set("0x0301", "321px"), "not-applicable"),
         ] {
             let error = apply(
                 &dir.path,
@@ -1887,6 +1963,15 @@ mod tests {
             assert!(reason.contains(code), "{code}: {reason}");
         }
         assert_eq!(file_digest(&dir.path), before);
+        // Frame 자기 범위의 numeric key는 받습니다(`0x0102` = Frame transform).
+        let frame_transform = apply(
+            &dir.path,
+            &request(vec![set("0x0102", "none")]),
+            ApplyMode::DryRun,
+            &locks(&dir),
+        )
+        .unwrap();
+        assert_eq!(frame_transform.command_count, 0);
     }
 
     #[test]

@@ -186,6 +186,10 @@ Accepted (2026-11-23)
   `0x` key를 받아 이름으로 풀고, 묶음 key는 `bundle-key-reference`로 거부합니다. command는 결정 6의 선언 붙여넣기
   (`paste_declarations`)로 만들고, 앞 command까지 적용한 사본 문서 위에서 계산합니다. 그래서 속성 패널·`stellar css`·
   `apply`가 같은 parser·적용 규칙을 씁니다. 값에 `;`·`{`·`}`가 있으면(선언 둘 이상) 거부합니다.
+  numeric key로 받으면 이름으로 풀기 전에 그 key가 대상 node에서 그 이름이 가리키는 key인지 확인합니다(node payload
+  범위 → 공통 node 범위 → modifier 범위 순, 붙여넣기 경로와 같은 순서). 이름은 범위 안에서만 유일하므로 Frame node에
+  Shape `width`(`0x0301`)나 Transform modifier `transform`(`0x1011`)을 보내면 같은 이름의 다른 속성(`0x0108`,
+  `0x0102`)으로 바꿔 쓰지 않고 `not-applicable`로 거부합니다. 값이 이미 같아 command가 없을 때도 같습니다.
 - 이름은 범위 안에서만 유일합니다(`transform`은 Frame 0x0102와 Transform modifier 0x1011). 이름으로 key를 찾는 경로는
   `css::registry::key_of(scope, name)`·`entry_by_name`처럼 범위를 주고, 범위 없는 `entries_named`는 모든 후보를 돌려
   줍니다. `PropertyNameRegistry`(III.2.1)는 범위마다 하나씩 만듭니다(`css::registry::name_registry(scope)`). 여러 범위를

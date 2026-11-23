@@ -92,7 +92,8 @@ Text 레이어 본문은 `replace-text`(`node`, Unicode scalar 정수 `start`와
 registry 속성 하나는 `set-property`(`node`, `property`, `value`)로 CSS 값 그대로 바꿉니다. `property`는 registry 이름
 (`width`, `background-color`, `border-top-left-radius`) 또는 numeric key(`0x010a`)이고, `value`는 CSS 값 텍스트(`12px`,
 `#ff0000`)입니다. `stellar css paste`와 같은 경로로 command가 되며, 받지 못한 값·속성은 이유 코드(`unsupported-unit`,
-`not-applicable` 등)와 함께, 묶음 key(`0x0101` 등)는 `bundle-key-reference`와 함께 거부합니다.
+`not-applicable` 등)와 함께, 묶음 key(`0x0101` 등)는 `bundle-key-reference`와 함께 거부합니다. numeric key는 그 node의
+속성이어야 합니다. Frame에 Shape의 `0x0301`(`width`)처럼 이름만 같은 다른 범위의 key를 보내면 `not-applicable`입니다.
 
 `query node`의 `properties[].path`와 `semantic-diff`·`apply` 변경 항목의 `path`는 registry 이름(CSS longhand 또는
 Stellar 이름)이고, `key`는 같은 경로의 numeric key(`0x0108`)입니다. registry에 없는 semantic 전용 key(`0xe001` 표시
