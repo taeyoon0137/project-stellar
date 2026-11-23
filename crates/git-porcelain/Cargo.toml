@@ -8,13 +8,16 @@ publish = false
 [dependencies]
 stellar-core-types = { path = "../core-types" }
 
-[dev-dependencies]
-stellar-git-porcelain = { path = ".", features = ["test-support"] }
-
 [features]
 # 테스트 전용 Git fixture harness(`fixture`, XIV.14.1). 기본값은 꺼져 있어 프로덕션 빌드에 포함되지
 # 않습니다. 다른 crate는 `[dev-dependencies]`에서만 켭니다.
 test-support = []
+
+# harness를 crate 밖 소비자처럼 쓰는 시험(XIV.14.1). `cargo test --workspace`에서는 다른 crate의 dev-dependency가
+# feature를 켜고, 단독 실행은 `--features test-support`로 합니다.
+[[test]]
+name = "fixture_harness"
+required-features = ["test-support"]
 
 [lints]
 workspace = true

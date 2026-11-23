@@ -96,7 +96,8 @@
 - 판정: `[~]` 유지 — 판정 보류(Windows 재개 대기, ADR-0006 결정 4). macOS에서 할 수 있는 범위를 더했습니다.
 - 결정: [ADR-0120](../adr/ADR-0120-recovery-probe-git-scenarios-terminal-env.md) 결정 5
 - harness를 crate 밖 소비자처럼 `test-support` feature로 쓰는 시험을 더했습니다(`crates/git-porcelain/tests/fixture_harness.rs`,
-  `Cargo.toml` dev-dependency에 자기 자신을 feature와 함께 등록, resolver 2라 일반 빌드에는 켜지지 않음).
+  `Cargo.toml`의 `[[test]] required-features = ["test-support"]`. `cargo test --workspace`에서는 다른 crate의 dev-dependency가
+  feature를 켜고, 단독 실행은 `--features test-support`).
 - 같은 scenario가 플랫폼과 무관하게 같은 commit ID를 만들 조건을 고정했습니다. Windows 재개 때 CI-WIN에서 같은 golden을
   확인하는 근거입니다.
 - XIV.14.4 branch conflict 시나리오(`tests/integration/tests/git_branch_conflict_resolve.rs`)가 이 harness의 peer clone·push·fetch를 씁니다.
@@ -108,4 +109,4 @@
 
 | 명령 | 결과 |
 |---|---|
-| `cargo test -p stellar-git-porcelain --test fixture_harness` | 0 — 2 passed |
+| `cargo test -p stellar-git-porcelain --features test-support --test fixture_harness` | 0 — 2 passed |

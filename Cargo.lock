@@ -281,7 +281,6 @@ name = "stellar-git-porcelain"
 version = "0.0.0"
 dependencies = [
  "stellar-core-types",
- "stellar-git-porcelain",
 ]
 
 [[package]]

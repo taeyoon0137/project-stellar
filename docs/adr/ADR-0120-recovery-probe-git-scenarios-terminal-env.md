@@ -133,8 +133,8 @@ ADR-0111(종단 시나리오)을 따릅니다.
   따릅니다.
 - Rust API: 위 Consequences의 `stellar-terminal` 변경, `stellar_project::recovery_probe::RecoveryProposal`에 `hash` 필드
   추가, `StaleReason::Discarded` 추가, `stellar_runtime::app::recovery::RecoveryProbe`·`AppRuntime::recovery_probe` 추가.
-- `stellar-git-porcelain`은 자기 자신을 `test-support` feature로 dev-dependency에 둡니다. resolver 2라 일반 빌드에는
-  feature가 켜지지 않습니다.
+- `stellar-git-porcelain`의 harness 통합 시험은 `required-features = ["test-support"]`입니다. 자기 자신 dev-dependency는
+  crate graph 정책이 금지하므로 쓰지 않습니다. 일반 빌드에는 feature가 켜지지 않습니다.
 
 ## Performance
 
