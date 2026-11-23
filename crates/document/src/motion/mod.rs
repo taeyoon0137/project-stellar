@@ -12,6 +12,10 @@ pub mod set;
 /// 대상 해석·보간 끝값 검사·orphan 진단.
 pub mod world;
 
+/// MotionSpec 생성·변경·삭제 command.
+pub mod command;
+
+pub use command::{MotionCommand, MotionCommandError, MotionCommandOutcome};
 pub use set::{MotionSet, MotionSetError};
 pub use spec::{
     is_interpolable, MotionOwner, MotionSpec, MotionSpecError, MotionSpecId, MotionSpecInput,
