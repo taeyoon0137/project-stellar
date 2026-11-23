@@ -66,5 +66,5 @@
 ### 근거 커밋
 
 - `e1b2454f` Feat: 성능 sample analyzer·제외 코드·release gate 추가 (XVI.4.2\~XVI.4.4)
-- XVI.2.5 작업 커밋(`Task(XVI.2.5)`, gate 보강 포함)
+- `c6caa47c` Task(XVI.2.5) 작업 커밋(gate 보강 포함)
 - 이 커밋(`Task(XVI.4.4)`): 보고서 기록.

@@ -68,3 +68,8 @@ release 측정(XVI.2.5 보고서와 같은 실행, 부하 상태)의 cache 관�
 
 - glyph atlas·texture cache의 setup과 hit·miss는 macOS full replay(XVI.2.3)에서 더해야 합니다.
 - cold 첫 interaction 비용을 줄이는 일(문서 열기 때 scene을 미리 만들어 두는 등)은 이 행 밖입니다.
+
+## 근거 커밋
+
+- `c6caa47c` Task(XVI.2.5): 성능 게이트 시나리오 목록과 core replay 시나리오 10개 재생(cache setup 판정·결과 schema v2 포함)
+- `4d48e5d6` Task(XVI.2.6): 이 보고서.
