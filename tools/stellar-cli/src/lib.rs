@@ -33,6 +33,9 @@ pub mod text_source;
 /// `git status|stage|unstage|commit`: 의미 단위 Git 엔진 (ADR-0080).
 pub mod git;
 
+/// `library add|update|fetch|import`: 외부 library 의존성 제품 명령 (ADR-0137).
+pub mod library;
+
 /// 종료 코드 (XXIV.1.2).
 pub mod exit;
 

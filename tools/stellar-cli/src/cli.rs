@@ -104,6 +104,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "status <경로> [--cursor <c>] [--limit <n>] | stage|unstage <경로> <대상>... [--with <대상>]... | commit <경로> -m <메시지>: 신뢰한 프로젝트의 의미 단위 Git 상태·stage·commit(push 없음, 필수 동반 변경은 자동 포함하지 않음)",
     ),
     (
+        "library",
+        "add <경로> <이름> <repository> (--tag|--branch|--commit) <값> [--component <id>]... | update <경로> <이름> [(--tag|--branch|--commit) <값>] [--allow-orphans] [--dry-run] | fetch <경로> | import <경로> <이름> <component id>... [--remove]: 외부 library 의존성을 더하고(library id는 해석한 commit의 project.id), 선택자를 다시 해석해 사용 프로젝트 참조를 검증한 뒤 lock을 갱신하고(끊기는 참조는 --allow-orphans 없이 거부, 실패하면 파일 불변), lock의 library를 공용 cache에 받고, 외부 component 참조를 stellar.yaml에 저장합니다(선택자가 그대로인 의존성은 network 없이 lock commit 사용)",
+    ),
+    (
         "text-source",
         "export <프로젝트> <새 파일> | check <파일> | adopt <프로젝트>: 단일 View 텍스트 원본을 opt-in으로 내보내거나 읽기 전용 검사합니다. adopt는 텍스트 원본이 없는 chunk 프로젝트를 검증된 변환으로 design/ 텍스트 원본(Git 원본)으로 옮깁니다",
     ),
@@ -245,6 +249,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("component-source", crate::component_source::run(rest))
     } else if command == "git" {
         ("git", crate::git::run(rest))
+    } else if command == "library" {
+        ("library", crate::library::run(rest))
     } else if command == "text-source" {
         ("text-source", crate::text_source::run(rest))
     } else if command == "cache" {
