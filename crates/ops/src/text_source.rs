@@ -155,6 +155,114 @@ pub fn export(
     })
 }
 
+/// 다중 파일 원본 export·검사 결과(V.10.4). 경로와 내용은 포함하지 않습니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextProjectOutcome {
+    /// root 문서 StableId.
+    pub document: StableId,
+    /// 파일 수.
+    pub file_count: usize,
+    /// 파일 이름·bytes 집합의 hash.
+    pub source_hash: ContentHash,
+    /// 문서 node 수.
+    pub node_count: usize,
+    /// 컴포넌트 정의 수.
+    pub component_count: usize,
+    /// 이미지 asset record 수.
+    pub image_count: usize,
+}
+
+fn set_hash(files: &std::collections::BTreeMap<String, String>) -> ContentHash {
+    let mut input = Vec::new();
+    for (path, text) in files {
+        for part in [path.as_bytes(), text.as_bytes()] {
+            input.extend_from_slice(&(part.len() as u64).to_le_bytes());
+            input.extend_from_slice(part);
+        }
+    }
+    ContentHash::compute(&input)
+}
+
+fn project_outcome(
+    project: &stellar_project::document_io::source_v4::project::TextProject,
+    files: &std::collections::BTreeMap<String, String>,
+) -> TextProjectOutcome {
+    TextProjectOutcome {
+        document: project.document.document_id(),
+        file_count: files.len(),
+        source_hash: set_hash(files),
+        node_count: project.document.node_count(),
+        component_count: project.components.len(),
+        image_count: project.images.len(),
+    }
+}
+
+/// 저장된 프로젝트 전체(문서·컴포넌트·이미지·Text style 표)를 새 `design` 폴더의 다중 파일 원본으로 내보냅니다.
+///
+/// generation의 모든 chunk를 소비하고, 다시 읽은 의미가 원본과 같을 때만 씁니다. 기본 저장 전환(V.10.7) 전에는
+/// generation이 원본이므로 프로젝트 루트 안으로의 출력은 두 번째 원본이 되어 거부합니다. 원본 generation은 바꾸지
+/// 않습니다.
+pub fn export_project(
+    project: &Path,
+    output: &Path,
+) -> Result<TextProjectOutcome, TextSourceOperationError> {
+    use stellar_project::document_io::source_v4::project as text_project;
+    let snapshot = open_snapshot(project).map_err(TextSourceOperationError::Open)?;
+    if inside_project(project, output)? {
+        return Err(TextSourceOperationError::Unsupported(
+            "프로젝트 루트 안으로 내보내면 generation과 함께 두 번째 원본이 됩니다".into(),
+        ));
+    }
+    let generation = snapshot.generation().ok_or_else(|| {
+        TextSourceOperationError::Unsupported("저장된 generation이 필요합니다".into())
+    })?;
+    if generation.manifest().schema_version != crate::migrate::CURRENT_SCHEMA_VERSION {
+        return Err(TextSourceOperationError::Unsupported(
+            "지원하는 generation 스키마가 필요합니다".into(),
+        ));
+    }
+    let [document] = snapshot.documents() else {
+        return Err(TextSourceOperationError::Unsupported(
+            "정확히 한 문서가 필요합니다".into(),
+        ));
+    };
+    let model = snapshot
+        .document_model(document.id)
+        .map_err(TextSourceOperationError::Document)?;
+    // catalog가 등록 글꼴 record를 담으므로, 단일 View export와 같이 각 글꼴 객체의 hash·크기를 프로젝트
+    // asset 저장소에서 확인한 뒤에만 씁니다(맞지 않는 record를 원본으로 옮기지 않음).
+    stellar_project::fonts::document::verify_document_font_assets(
+        project,
+        &model.definition().text_styles,
+    )
+    .map_err(|error| TextSourceOperationError::Invalid(error.to_string()))?;
+    let (yaml, _) = crate::component_source::project_library(&snapshot)?;
+    let text = text_project::from_saved(generation, model, yaml)?;
+    let encoded = text_project::encode(&text)?;
+    text_project::write_new(output, &encoded)?;
+    Ok(project_outcome(&text, &encoded.files))
+}
+
+/// 다중 파일 원본 `design` 폴더를 읽기 전용으로 검사합니다.
+pub fn check_project(design: &Path) -> Result<TextProjectOutcome, TextSourceOperationError> {
+    use stellar_project::document_io::source_v4::project as text_project;
+    let files = text_project::read_dir(design)?;
+    let project = text_project::decode(&files)?;
+    Ok(project_outcome(&project, &files))
+}
+
+/// 다중 파일 원본에서 node의 파일·줄 범위(TS-MAP).
+pub fn source_span(
+    design: &Path,
+    node: StableId,
+) -> Result<
+    Option<stellar_project::document_io::source_v4::span::SourceSpan>,
+    TextSourceOperationError,
+> {
+    let (_, spans) = stellar_project::document_io::source_v4::project::open_dir(design)?;
+    Ok(spans.get(&node).cloned())
+}
+
 /// 텍스트 원본을 읽기 전용으로 열고 문서 불변식을 검사합니다.
 pub fn check(path: &Path) -> Result<TextSourceOutcome, TextSourceOperationError> {
     let opened = text_source::open(path)?;
@@ -256,5 +364,33 @@ mod tests {
             assert!(!output.exists(), "case {case}");
             assert_eq!(file_digest(&dir.path), before, "case {case}");
         }
+    }
+
+    #[test]
+    fn export_project_rejects_font_records_that_do_not_match_the_asset_store() {
+        use stellar_document::text_styles::{DocumentFontAsset, DocumentTextStyles};
+        // 문서 style 표의 등록 글꼴이 프로젝트 asset 저장소의 객체와 맞지 않으면 catalog로 옮기지 않습니다.
+        let dir = TempDir::new("text-project-fonts");
+        let exports = TempDir::new("text-project-fonts-output");
+        scaffold_project(&dir.path);
+        let mut document = large_document(4);
+        let mut styles = DocumentTextStyles::initial(StableId::new_v7(77, 0, 77));
+        styles.fonts.insert(
+            crate::core_types::font::FontFileHash::from_sha256_digest([7; 32]),
+            DocumentFontAsset {
+                font_record: vec![1, 2, 3],
+                asset_record: vec![4, 5, 6],
+            },
+        );
+        document.replace_text_styles(styles);
+        save_documents(&dir.path, &[&document]);
+        let before = file_digest(&dir.path);
+        let output = exports.path.join("design");
+        assert!(matches!(
+            export_project(&dir.path, &output),
+            Err(TextSourceOperationError::Invalid(_))
+        ));
+        assert!(!output.exists());
+        assert_eq!(file_digest(&dir.path), before);
     }
 }

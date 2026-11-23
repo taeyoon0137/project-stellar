@@ -7,6 +7,8 @@ use stellar_document::shape::{
     EllipseParams, LineCap, LineParams, PolygonParams, RectangleParams, ShapeGeometry,
 };
 
+// 읽기 전용 v2 fixture를 만드는 테스트에서만 씁니다(ADR-0077 결정 2).
+#[cfg_attr(not(test), allow(dead_code))]
 fn modifier(entry: &ModifierEntry) -> Result<YamlValue, TextSourceError> {
     let common = |kind: &str| {
         vec![
@@ -44,6 +46,8 @@ fn modifier(entry: &ModifierEntry) -> Result<YamlValue, TextSourceError> {
     Ok(YamlValue::Mapping(fields))
 }
 
+// 읽기 전용 v2 fixture를 만드는 테스트에서만 씁니다(ADR-0077 결정 2).
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn encode(
     geometry: &ShapeGeometry,
     stack: Option<&ModifierStack>,
@@ -108,6 +112,8 @@ pub(super) fn encode(
 }
 
 /// 로컬 경계의 크기와 왼쪽 위 좌표(이름 오름차순).
+// 읽기 전용 v2 fixture를 만드는 테스트에서만 씁니다(ADR-0077 결정 2).
+#[cfg_attr(not(test), allow(dead_code))]
 fn bounds_fields(bounds: Rect) -> [(&'static str, YamlValue); 4] {
     [
         ("height", scalar(bounds.size().height())),

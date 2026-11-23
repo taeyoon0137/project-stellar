@@ -13,6 +13,11 @@
 //! 3. current pointer → manifest → chunk 존재 순으로 검증하고(V.4.4) DocumentManifest chunk만
 //!    읽습니다(V.6.6 lazy open).
 //! 4. 문서 내용(ViewTree·subtree)은 요청할 때 [`SavedProject::load_document`]로 읽습니다(VI.10.3).
+//! 5. generation schema를 제품 migration 정책([`MigrationPolicy`])으로 판정합니다(IX.11.21). 같은 schema는
+//!    그대로, 낮은 schema는 경로가 있으면 메모리에서만 migration해 읽기 전용으로 열고, 경로가 없거나 높은
+//!    schema는 거부합니다. 열기는 디스크를 쓰지 않고 migration 결과를 자동 commit하지 않습니다. Git
+//!    snapshot(HEAD·Index·commit·merge base)도 이 경로로 열리므로 옛 schema snapshot은 메모리에서 최신
+//!    schema로 맞춰 비교·병합됩니다.
 //!
 //! `.git`은 요구하지 않습니다. materialize된 virtual project(XIV.2.6)에는 `.git`이 없기 때문입니다.
 //!
@@ -64,6 +69,10 @@ use crate::document_io::load::{load_document_from_generation, LoadDocumentError,
 use crate::document_io::manifest::DocumentManifestChunk;
 use crate::identity::parse_project_id;
 use crate::manifest::{Manifest, ManifestError};
+use crate::migration::{
+    decide, InMemoryMigrationError, MigratedGeneration, MigrationPolicy, SchemaDecision,
+    SchemaRejection,
+};
 use crate::probe::read_at_most;
 use crate::root::MANIFEST_FILE;
 use crate::yaml::loader::MAX_INPUT_BYTES;
@@ -121,8 +130,12 @@ pub struct SavedProject {
     pub manifest: Manifest,
     /// 매니페스트의 project id.
     pub project_id: StableId,
-    /// 검증한 current generation(DocumentManifest chunk까지 읽음).
+    /// 검증한 current generation(DocumentManifest chunk까지 읽음). 디스크의 원본 schema 그대로입니다.
     pub generation: LazyGeneration,
+    /// 열기 판정(IX.11.21). [`SchemaDecision::Current`]가 아니면 편집 저장하지 않습니다.
+    pub schema: SchemaDecision,
+    /// 낮은 schema를 메모리에서 migration한 결과. 문서 읽기는 이 결과를 씁니다.
+    pub migrated: Option<MigratedGeneration>,
 }
 
 impl SavedProject {
@@ -133,6 +146,9 @@ impl SavedProject {
 
     /// 저장된 문서 id(DocumentManifest chunk 순서).
     pub fn document_ids(&self) -> Result<Vec<StableId>, LoadDocumentError> {
+        if let Some(migrated) = &self.migrated {
+            return migrated.document_ids();
+        }
         self.generation
             .document_manifest_records()
             .map(|(pointer, payload)| {
@@ -145,6 +161,9 @@ impl SavedProject {
 
     /// 저장된 문서 하나를 디스크 chunk에서 로드합니다(그 문서의 chunk만 읽음).
     pub fn load_document(&self, document: StableId) -> Result<LoadedDocument, LoadDocumentError> {
+        if let Some(migrated) = &self.migrated {
+            return migrated.load_document(document);
+        }
         load_document_from_generation(&self.generation, document, &mut NoopRecorder)
     }
 }
@@ -220,6 +239,10 @@ pub enum SavedProjectError {
     StorageChanged,
     /// 저장소(generation) 열기 실패(V.4.4).
     Storage(LazyLoadError),
+    /// generation schema를 열 수 없음(IX.11.21: 새 버전 또는 migration 경로 없음).
+    Schema(SchemaRejection),
+    /// 낮은 schema의 메모리 migration 실패(디스크는 바뀌지 않음).
+    Migration(InMemoryMigrationError),
 }
 
 impl fmt::Display for SavedProjectError {
@@ -249,6 +272,8 @@ impl fmt::Display for SavedProjectError {
                 f.write_str("저장소가 검사 중 바뀌어 검사한 generation과 다릅니다")
             }
             SavedProjectError::Storage(e) => write!(f, "저장소 열기 실패: {e}"),
+            SavedProjectError::Schema(e) => write!(f, "{e}"),
+            SavedProjectError::Migration(e) => write!(f, "메모리 migration 실패: {e}"),
         }
     }
 }
@@ -260,6 +285,7 @@ impl std::error::Error for SavedProjectError {}
 pub struct SavedProjectLoader {
     links: StorageLinkPolicy,
     limits: StorageReadLimits,
+    migrations: MigrationPolicy,
 }
 
 impl Default for SavedProjectLoader {
@@ -275,6 +301,7 @@ impl SavedProjectLoader {
         SavedProjectLoader {
             links: StorageLinkPolicy::Follow,
             limits: StorageReadLimits::default(),
+            migrations: MigrationPolicy::PRODUCT,
         }
     }
 
@@ -284,12 +311,23 @@ impl SavedProjectLoader {
         SavedProjectLoader {
             links: StorageLinkPolicy::Reject,
             limits: StorageReadLimits::default(),
+            migrations: MigrationPolicy::PRODUCT,
         }
     }
 
     /// 크기 상한을 바꾼 loader.
     pub fn with_limits(self, limits: StorageReadLimits) -> SavedProjectLoader {
         SavedProjectLoader { limits, ..self }
+    }
+
+    /// migration 정책을 바꾼 loader(옛 schema fixture 시험용). 제품 열기는 [`MigrationPolicy::PRODUCT`]입니다.
+    pub fn with_migrations(self, migrations: MigrationPolicy) -> SavedProjectLoader {
+        SavedProjectLoader { migrations, ..self }
+    }
+
+    /// migration 정책.
+    pub fn migrations(&self) -> MigrationPolicy {
+        self.migrations
     }
 
     /// symlink 규칙.
@@ -316,10 +354,21 @@ impl SavedProjectLoader {
         if generation.manifest() != &checked {
             return Err(SavedProjectError::StorageChanged);
         }
+        let schema = decide(generation.manifest().schema_version, &self.migrations);
+        let migrated = match schema {
+            SchemaDecision::Current => None,
+            SchemaDecision::MigrateInMemory { .. } => Some(
+                MigratedGeneration::from_lazy(&generation, &self.migrations)
+                    .map_err(SavedProjectError::Migration)?,
+            ),
+            SchemaDecision::Reject(rejection) => return Err(SavedProjectError::Schema(rejection)),
+        };
         Ok(SavedProject {
             manifest,
             project_id,
             generation,
+            schema,
+            migrated,
         })
     }
 

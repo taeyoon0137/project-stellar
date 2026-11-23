@@ -59,6 +59,16 @@ fn number(text: &str) -> Result<FiniteF32, TextSourceError> {
     FiniteF32::new(value).map_err(invalid)
 }
 
+/// CSS `letter-spacing` 값(`normal`, `px`, `em`).
+pub(crate) fn letter_spacing_text(value: LetterSpacing) -> String {
+    letter_spacing(value)
+}
+
+/// [`letter_spacing_text`]를 읽습니다.
+pub(crate) fn parse_letter_spacing_text(text: &str) -> Result<LetterSpacing, TextSourceError> {
+    parse_letter_spacing(text)
+}
+
 fn letter_spacing(value: LetterSpacing) -> String {
     match value {
         LetterSpacing::Normal => "normal".into(),
@@ -132,7 +142,7 @@ fn parse_families(text: &str) -> Result<Vec<Family>, TextSourceError> {
     }
 }
 
-fn typography(id: StableId, value: &Typography) -> Result<YamlValue, TextSourceError> {
+pub(crate) fn typography(id: StableId, value: &Typography) -> Result<YamlValue, TextSourceError> {
     Ok(mapping([
         ("id", scalar(id)),
         ("font-family", scalar(families(&value.families)?)),
@@ -171,7 +181,9 @@ fn typography(id: StableId, value: &Typography) -> Result<YamlValue, TextSourceE
     ]))
 }
 
-fn parse_typography(value: &YamlValue) -> Result<(StableId, Typography), TextSourceError> {
+pub(crate) fn parse_typography(
+    value: &YamlValue,
+) -> Result<(StableId, Typography), TextSourceError> {
     fields(
         value,
         &[
@@ -227,7 +239,7 @@ fn parse_typography(value: &YamlValue) -> Result<(StableId, Typography), TextSou
     Ok((id, record))
 }
 
-fn paragraph(style: &ParagraphStyle) -> YamlValue {
+pub(crate) fn paragraph(style: &ParagraphStyle) -> YamlValue {
     mapping([
         (
             "line-height",
@@ -257,7 +269,7 @@ fn paragraph(style: &ParagraphStyle) -> YamlValue {
     ])
 }
 
-fn parse_paragraph(value: &YamlValue) -> Result<ParagraphStyle, TextSourceError> {
+pub(crate) fn parse_paragraph(value: &YamlValue) -> Result<ParagraphStyle, TextSourceError> {
     fields(
         value,
         &["line-height", "text-align", "typography", "wrapping"],
@@ -289,6 +301,8 @@ fn parse_paragraph(value: &YamlValue) -> Result<ParagraphStyle, TextSourceError>
     Ok(style)
 }
 
+// 읽기 전용 v2 fixture를 만드는 테스트에서만 씁니다(ADR-0077 결정 2).
+#[cfg_attr(not(test), allow(dead_code))]
 fn run(style: &TextStyle) -> Result<YamlValue, TextSourceError> {
     if !style.features().is_empty() || !style.variations().is_empty() {
         return Err(unsupported("OpenType feature·variation"));
@@ -334,6 +348,8 @@ fn parse_run(value: &YamlValue) -> Result<TextStyle, TextSourceError> {
 }
 
 /// 표 전체를 다시 읽어 비교하므로 이 블록으로 표현할 수 없는 항목은 저장 전에 거부됩니다.
+// 읽기 전용 v2 fixture를 만드는 테스트에서만 씁니다(ADR-0077 결정 2).
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn encode(styles: &DocumentTextStyles) -> Result<YamlValue, TextSourceError> {
     if styles.is_empty() {
         return Ok(scalar("none"));

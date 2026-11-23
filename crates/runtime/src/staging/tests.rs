@@ -274,13 +274,22 @@ fn unsupported_chunks_and_metadata_preserve_every_byte_and_leave_no_candidate() 
             &parent,
             &StageSelectionRequest::stage([]),
         );
+        // 새 schema(case 3)는 제품 open 경로의 migration 판정(IX.11.21)이 먼저 거부합니다.
         assert!(
             matches!(
                 result,
                 Err(PrepareStageError::Storage(
                     CandidateStorageError::Unsupported(_)
                 ))
-            ),
+            ) || (case == 3
+                && matches!(
+                    result,
+                    Err(PrepareStageError::Open(
+                        stellar_project::saved_project::SavedProjectError::Schema(
+                            stellar_project::migration::SchemaRejection::Newer { .. }
+                        )
+                    ))
+                )),
             "case {case}: {result:?}"
         );
         assert_eq!(file_digest(fx.work()), before, "case {case}");

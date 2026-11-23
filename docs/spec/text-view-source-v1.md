@@ -1,4 +1,6 @@
-# 단일 View 텍스트 원본(쓰기 v2)
+# 단일 View 텍스트 원본(v1·v2, 읽기 전용)
+
+> **2026-11-23 개정(ADR-0077):** 쓰기 버전은 v4입니다. 파일 키는 document 속성 registry 이름·순서이고 값은 CSS 문법입니다. 이 문서의 문법은 읽기 전용 옛 버전의 기록이며, v4 문법은 [`text-source-v4.md`](text-source-v4.md)에 있습니다.
 
 [ADR-0059](../adr/ADR-0059-text-source-files-with-chunk-cache.md)의 방향과 [ADR-0061](../adr/ADR-0061-text-source-format-and-layout.md)의 형식 결정을 따르는 opt-in 형식입니다. 문서 하나, 페이지 하나, View 하나와 그 아래 Frame·Fragment·Rectangle·Ellipse·Line·Polygon·Text·컴포넌트 인스턴스 참조를 사람이 읽는 YAML 파일 하나에 보관합니다. 기존 프로젝트의 기본 열기·저장 경로는 세대 기반 chunk 저장을 계속 사용합니다.
 

@@ -24,10 +24,79 @@ pub(crate) fn operation_error(error: &TextSourceOperationError) -> CliError {
     CliError::new(status, code, error.to_string())
 }
 
-/// `text-source export <프로젝트> <새 파일>` 또는 `text-source check <파일>`.
+/// `query <design 폴더> --source-span <node StableId>`: 다중 파일 원본에서 node의 파일·줄 범위(TS-MAP).
+pub fn query_source_span(args: &[String]) -> Result<Success, CliError> {
+    let usage = || CliError::usage("query <design 폴더> --source-span <node StableId>");
+    let [design, flag, node] = args else {
+        return Err(usage());
+    };
+    if flag != "--source-span" {
+        return Err(usage());
+    }
+    let id: stellar_ops::core_types::ids::StableId = node
+        .parse()
+        .map_err(|_| CliError::usage("node는 StableId여야 합니다"))?;
+    let span = text_source::source_span(Path::new(design), id)
+        .map_err(|error| operation_error(&error).with_context(design.clone()))?
+        .ok_or_else(|| {
+            CliError::new(
+                ExitStatus::NoInput,
+                "source-span-not-found",
+                format!("텍스트 원본에 node {id}가 없습니다"),
+            )
+        })?;
+    Ok(Success {
+        result: JsonValue::object(vec![
+            ("node", views::id(id)),
+            ("file", JsonValue::string(span.file)),
+            ("start_line", views::count(span.start_line as usize)),
+            ("end_line", views::count(span.end_line as usize)),
+        ]),
+        diagnostics: Vec::new(),
+    })
+}
+
+fn project_success(
+    operation: &str,
+    outcome: stellar_ops::text_source::TextProjectOutcome,
+) -> Success {
+    Success {
+        result: JsonValue::object(vec![
+            ("operation", JsonValue::string(operation)),
+            ("document", views::id(outcome.document)),
+            ("file_count", views::count(outcome.file_count)),
+            (
+                "source_hash",
+                JsonValue::string(outcome.source_hash.to_string()),
+            ),
+            ("node_count", views::count(outcome.node_count)),
+            ("component_count", views::count(outcome.component_count)),
+            ("image_count", views::count(outcome.image_count)),
+        ]),
+        diagnostics: Vec::new(),
+    }
+}
+
+/// `text-source export <프로젝트> <새 파일>`, `check <파일>`, 다중 파일 원본(V.10.4)
+/// `export-project <프로젝트> <새 design 폴더>`, `check-project <design 폴더>`.
 pub fn run(args: &[String]) -> Result<Success, CliError> {
     if args.iter().any(|arg| arg.starts_with('-')) {
         return Err(CliError::usage("text-source는 옵션을 받지 않습니다"));
+    }
+    match args {
+        [operation, project, output] if operation == "export-project" => {
+            let outcome = text_source::export_project(Path::new(project), Path::new(output))
+                .map_err(|error| {
+                    operation_error(&error).with_context(format!("{project} -> {output}"))
+                })?;
+            return Ok(project_success("export-project", outcome));
+        }
+        [operation, design] if operation == "check-project" => {
+            let outcome = text_source::check_project(Path::new(design))
+                .map_err(|error| operation_error(&error).with_context(design.clone()))?;
+            return Ok(project_success("check-project", outcome));
+        }
+        _ => {}
     }
     let (operation, outcome, context) = match args {
         [operation, project, output] if operation == "export" => (
@@ -40,7 +109,7 @@ pub fn run(args: &[String]) -> Result<Success, CliError> {
         }
         _ => {
             return Err(CliError::usage(
-                "text-source export <프로젝트> <새 파일> | check <파일>",
+                "text-source export <프로젝트> <새 파일> | check <파일> | export-project <프로젝트> <새 design 폴더> | check-project <design 폴더>",
             ))
         }
     };

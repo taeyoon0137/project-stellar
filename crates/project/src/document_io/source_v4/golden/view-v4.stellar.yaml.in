@@ -1,0 +1,150 @@
+schema_version: "4"
+document:
+  id: "00000000-0001-7000-8000-000000000001"
+  display_name: Doc
+  text-styles: none
+page:
+  id: "00000000-0002-7000-8000-000000000002"
+  display_name: Page
+view:
+  id: "00000000-0003-7000-8000-000000000003"
+  display_name: View
+  root_frame: "00000000-000a-7000-8000-00000000000a"
+nodes:
+  -
+    id: "00000000-000a-7000-8000-00000000000a"
+    parent: none
+    order_key: "80"
+    visible: "true"
+    locked: "false"
+    display_name: n10
+    kind: frame
+    payload:
+      {frame:0x0102}: "matrix(1, 0, 0, 1, 12.5, -4)"
+      {frame:0x0103}: frame-bounds
+      {frame:0x0104}: "color(display-p3 0.25 0.5 1 / 0.75)"
+      border-top-width: "1.5px"
+      border-top-style: solid
+      border-top-color: "color(srgb 1 0 0)"
+      border-right-width: "1.5px"
+      border-right-style: solid
+      border-right-color: "color(srgb 1 0 0)"
+      border-bottom-width: "1.5px"
+      border-bottom-style: solid
+      border-bottom-color: "color(srgb 1 0 0)"
+      border-left-width: "1.5px"
+      border-left-style: solid
+      border-left-color: "color(srgb 1 0 0)"
+      {frame:0x0107}: none
+      {frame:0x0108}: "1440px"
+      {frame:0x0109}: "900.5px"
+      {frame:0x010a}: "1px"
+      {frame:0x010b}: "2px"
+      {frame:0x010c}: "3px"
+      {frame:0x010d}: "4px"
+    modifiers: []
+  -
+    id: "00000000-000b-7000-8000-00000000000b"
+    parent: "00000000-000a-7000-8000-00000000000a"
+    order_key: "40"
+    visible: "true"
+    locked: "false"
+    display_name: n11
+    kind: rectangle
+    payload:
+      {rectangle:0x0301}: "10px"
+      {rectangle:0x0302}: "20px"
+      {rectangle:0x0303}: "0px"
+      {rectangle:0x0304}: "0px"
+      {rectangle:0x0305}: "0px"
+      {rectangle:0x0306}: "0px"
+    modifiers:
+      -
+        id: "00000000-0014-7000-8000-000000000014"
+        kind: fill
+        {modifier:0x1001}: "true"
+        {modifier:0x1002}: "40"
+        {modifier:0x1071}: "color(srgb 1 0 0)"
+      -
+        id: "00000000-0015-7000-8000-000000000015"
+        kind: shadow
+        {modifier:0x1001}: "false"
+        {modifier:0x1002}: "80"
+        {modifier:0x1091}: "color(display-p3 0.25 0.5 1 / 0.75)"
+        {modifier:0x1092}: "2px -3px"
+        {modifier:0x1093}: "4.5px"
+      -
+        id: "00000000-0016-7000-8000-000000000016"
+        kind: clip
+        {modifier:0x1001}: "true"
+        {modifier:0x1002}: c0
+        {modifier:0x1061}: "00000000-000d-7000-8000-00000000000d"
+  -
+    id: "00000000-000c-7000-8000-00000000000c"
+    parent: "00000000-000a-7000-8000-00000000000a"
+    order_key: "50"
+    visible: "true"
+    locked: "false"
+    display_name: n12
+    kind: text
+    payload:
+      content: "Hi\n둘"
+      paragraphs:
+        - "0"
+        - "1"
+      style-runs:
+        - "0 2 0"
+    modifiers: []
+  -
+    id: "00000000-000d-7000-8000-00000000000d"
+    parent: "00000000-000a-7000-8000-00000000000a"
+    order_key: "60"
+    visible: "true"
+    locked: "false"
+    display_name: n13
+    kind: path
+    payload:
+      fill-rule: evenodd
+      commands:
+        - "M 00000000-003c-7000-8000-00000000003c 0 0"
+        - "C 00000000-003e-7000-8000-00000000003e 00000000-003f-7000-8000-00000000003f 00000000-003d-7000-8000-00000000003d 1 2 3 4 5 6"
+        - Z
+    modifiers: []
+  -
+    id: "00000000-000e-7000-8000-00000000000e"
+    parent: "00000000-000a-7000-8000-00000000000a"
+    order_key: "70"
+    visible: "true"
+    locked: "false"
+    display_name: n14
+    kind: image
+    payload:
+      {image:0x0602}: "64px"
+      {image:0x0603}: "48px"
+      {image:0x0604}: contain
+      {image:0x0605}: auto
+      asset: "00000000-0050-7000-8000-000000000050"
+      crop: "0 0 1 1"
+      color-space: none
+    modifiers: []
+  -
+    id: "00000000-000f-7000-8000-00000000000f"
+    parent: "00000000-000a-7000-8000-00000000000a"
+    order_key: "78"
+    visible: "true"
+    locked: "false"
+    display_name: n15
+    kind: component-instance
+    payload:
+      component: "00000000-005a-7000-8000-00000000005a"
+      property-overrides:
+        -
+          path: none
+          property: "00000000-005b-7000-8000-00000000005b"
+          type: boolean
+          value: "true"
+      slot-overrides:
+        -
+          slot: "00000000-005c-7000-8000-00000000005c"
+          content: "00000000-005d-7000-8000-00000000005d"
+    modifiers: []

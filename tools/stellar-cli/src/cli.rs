@@ -170,6 +170,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("version", commands::version(rest))
     } else if command == "inspect" {
         ("inspect", commands::inspect(rest))
+    } else if command == "query" && rest.iter().any(|arg| arg == "--source-span") {
+        ("query", crate::text_source::query_source_span(rest))
     } else if command == "query" {
         ("query", commands::query(rest))
     } else if command == "export-web" {

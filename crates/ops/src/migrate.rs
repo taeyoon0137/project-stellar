@@ -4,8 +4,9 @@
 //! 낮으면 등록된 migration 경로(V.8.2)로 새 generation을 만듭니다(V.8.3 runner: 원본 세대 불변,
 //! 중간 실패 시 current 유지). 쓰기는 저장 잠금(XXIV.4.5)을 잡은 뒤 상태를 다시 판정하고 실행합니다.
 //!
-//! 현재 제품 스키마는 1뿐이라 제품 registry([`product_registry`])에는 step이 없습니다. 새 스키마
-//! 버전이 생기면 그 step을 여기 등록합니다. 판정:
+//! 제품 스키마 버전과 제품 registry는 `stellar_project::migration`(IX.11.21)이 정합니다. 이 모듈은
+//! 그 값을 그대로 씁니다. 현재 제품 스키마는 1뿐이라 제품 registry에는 step이 없고, 새 스키마의 step은
+//! 제품 step 표(`stellar_project::migration::PRODUCT_STEPS`)에 등록합니다. 판정:
 //!
 //! | 상태 | 조건 |
 //! |---|---|
@@ -26,12 +27,12 @@ use crate::lock::{LockError, LockPolicy, SaveLock};
 use crate::revision::ProjectRevision;
 use crate::snapshot::{open_snapshot, probe};
 
-/// 이 도구가 쓰고 읽는 generation 스키마 버전.
-pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+/// 이 도구가 쓰고 읽는 generation 스키마 버전(제품 migration registry와 같은 값).
+pub const CURRENT_SCHEMA_VERSION: u32 = stellar_project::migration::PRODUCT_SCHEMA_VERSION;
 
-/// 제품 migration registry(현재 step 없음).
+/// 제품 migration registry(`stellar_project::migration::product_registry`).
 pub fn product_registry() -> MigrationRegistry {
-    MigrationRegistry::new()
+    stellar_project::migration::product_registry()
 }
 
 /// 스키마 상태.

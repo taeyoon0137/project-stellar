@@ -407,7 +407,7 @@ fn two_instances_follow_one_source_and_keep_distinct_dom_ids() {
         "8",
     ]);
     // 위치와 표시 여부는 YAML 원본을 직접 고칩니다(CLI는 root 크기·채우기와 자식 추가만 편집합니다).
-    // 파일에는 root_node가 children보다 먼저 나옵니다.
+    // v4 파일은 node를 StableId 순서로 씁니다. 이 fixture에서는 root(71)가 Inset(72)보다 먼저 나옵니다.
     let rewrite = |edit: &dyn Fn(String) -> String| {
         let text = std::fs::read_to_string(&path).unwrap();
         let edited = edit(text.clone());
@@ -419,12 +419,15 @@ fn two_instances_follow_one_source_and_keep_distinct_dom_ids() {
             "source_hash",
         )
     };
-    let identity = "transform: \"1 0 0 1 0 0\"";
+    let identity = "transform: \"matrix(1, 0, 0, 1, 0, 0)\"";
     let hash = rewrite(&|mut text| {
         let inset = text.rfind(identity).unwrap();
-        text.replace_range(inset..inset + identity.len(), "transform: \"1 0 0 1 2 3\"");
+        text.replace_range(
+            inset..inset + identity.len(),
+            "transform: \"matrix(1, 0, 0, 1, 2, 3)\"",
+        );
         // Root가 캔버스에 있던 좌표는 배치 좌표에 더하지 않습니다.
-        text.replacen(identity, "transform: \"1 0 0 1 40 30\"", 1)
+        text.replacen(identity, "transform: \"matrix(1, 0, 0, 1, 40, 30)\"", 1)
     });
     let frame = component(&["resize", &path, &hash, "90", "60"]);
     let before = file_digest(&dir.path);

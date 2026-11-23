@@ -42,6 +42,9 @@ pub mod text_source;
 
 mod text_codec;
 
+/// 텍스트 원본 쓰기 v4(ADR-0077).
+pub mod source_v4;
+
 /// 문서 chunk payload 스키마 version. chunk pointer(V.3.1)에 기록됩니다.
 pub const DOCUMENT_CHUNK_SCHEMA_VERSION: u32 = 1;
 

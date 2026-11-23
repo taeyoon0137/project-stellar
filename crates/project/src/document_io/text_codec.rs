@@ -25,12 +25,15 @@ use stellar_document::records::{DocumentRecords, NodePayload, NodeRecord};
 use stellar_document::shape::ShapeKind;
 use stellar_document::text::{Paragraph, StyleRun, TextPayload, TextRange};
 use stellar_document::text_styles::DocumentTextStyles;
+#[cfg(test)]
 use stellar_document::validate::validate_document;
 
 use super::text_source::TextSourceError;
-use crate::yaml::{load_restricted, write_canonical_checked, YamlValue};
+#[cfg(test)]
+use crate::yaml::write_canonical_checked;
+use crate::yaml::{load_restricted, YamlValue};
 
-mod document_font;
+pub(crate) mod document_font;
 mod shape;
 
 /// View 원본의 유일한 쓰기 버전.
@@ -160,6 +163,7 @@ pub(super) fn frame(payload: &FramePayload) -> YamlValue {
     ])
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn text_payload(payload: &TextPayload) -> Result<Vec<(YamlValue, YamlValue)>, TextSourceError> {
     // TextRange의 public 필드로 직접 만든 역전 범위도 쓰기 전에 거부합니다.
     if payload
@@ -204,6 +208,7 @@ fn text_payload(payload: &TextPayload) -> Result<Vec<(YamlValue, YamlValue)>, Te
 }
 
 /// Frame·Fragment 레코드. 컴포넌트 원본(v3)과 View 원본(v2)이 공유합니다.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn node(record: &NodeRecord) -> Result<YamlValue, TextSourceError> {
     let (kind, payload) = match &record.payload {
         NodePayload::Frame(value) => ("frame", frame(value)),
@@ -219,6 +224,7 @@ pub(super) fn node(record: &NodeRecord) -> Result<YamlValue, TextSourceError> {
     Ok(node_fields(record, kind, payload))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn order_key(key: &OrderKey) -> YamlValue {
     scalar(
         key.as_bytes()
@@ -228,6 +234,7 @@ fn order_key(key: &OrderKey) -> YamlValue {
     )
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn node_fields(record: &NodeRecord, kind: &str, payload: YamlValue) -> YamlValue {
     mapping([
         ("id", scalar(record.id)),
@@ -242,6 +249,7 @@ fn node_fields(record: &NodeRecord, kind: &str, payload: YamlValue) -> YamlValue
 }
 
 /// 배치 명령의 단일 활성 평행이동만 표현합니다. 다른 modifier를 좌표로 축약하지 않습니다.
+#[cfg_attr(not(test), allow(dead_code))]
 fn placement(stack: Option<&ModifierStack>) -> Result<YamlValue, TextSourceError> {
     let Some(stack) = stack else {
         return Ok(scalar("none"));
@@ -268,6 +276,7 @@ fn placement(stack: Option<&ModifierStack>) -> Result<YamlValue, TextSourceError
     ]))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn view_node(
     record: &NodeRecord,
     stack: Option<&ModifierStack>,
@@ -307,8 +316,14 @@ fn view_node(
     }
 }
 
-/// 지원 범위를 검증한 뒤 결정론적인 제한 YAML(View v2)로 기록합니다.
+/// 지원 범위를 검증한 뒤 결정론적인 제한 YAML(View v4, ADR-0077)로 기록합니다.
 pub fn encode(model: &DocumentModel) -> Result<String, TextSourceError> {
+    super::source_v4::view::encode(model)
+}
+
+/// 읽기 전용 View v2로 기록합니다(v2 읽기 회귀 테스트 전용).
+#[cfg(test)]
+fn encode_v2(model: &DocumentModel) -> Result<String, TextSourceError> {
     let records = model.to_records().map_err(invalid)?;
     validate_document(&records).map_err(invalid)?;
     let definition = &records.definition;
@@ -745,6 +760,10 @@ fn parse_view_node(
 /// `schema_version: "3"`)은 거부합니다.
 pub fn decode(source: &str) -> Result<DocumentModel, TextSourceError> {
     let value = load_restricted(source).map_err(invalid)?;
+    if value.get("schema_version").and_then(YamlValue::as_scalar) == Some(super::source_v4::VERSION)
+    {
+        return super::source_v4::view::decode(&value);
+    }
     fields(
         &value,
         &["schema_version", "document", "page", "view", "nodes"],
@@ -867,11 +886,11 @@ mod tests {
     #[test]
     fn all_supported_properties_round_trip_with_stable_text() {
         let model = model();
-        let first = encode(&model).unwrap();
+        let first = encode_v2(&model).unwrap();
         assert!(first.starts_with("schema_version: \"2\"\n"));
         let decoded = decode(&first).unwrap();
         assert_eq!(decoded.to_records().unwrap(), model.to_records().unwrap());
-        assert_eq!(encode(&decoded).unwrap(), first);
+        assert_eq!(encode_v2(&decoded).unwrap(), first);
         assert!(
             first.find(&sid(10).to_string()).unwrap() < first.rfind(&sid(11).to_string()).unwrap()
         );
@@ -916,7 +935,7 @@ mod tests {
 
     #[test]
     fn border_lines_must_be_both_none_or_both_values() {
-        let source = encode(&model()).unwrap();
+        let source = encode_v2(&model()).unwrap();
         for half in [
             source.replacen(
                 "border-color: \"display-p3 -0.125 1.25 0.1 0.5\"",
@@ -945,7 +964,7 @@ mod tests {
 
     #[test]
     fn legacy_v1_is_read_only_and_redefined_numbers_reject_old_syntax() {
-        let current = encode(&model()).unwrap();
+        let current = encode_v2(&model()).unwrap();
         // 커밋된 v1 문법: 묶음 Frame 값과 문서 style 표 없음.
         let legacy = format!(
             "schema_version: \"1\"\ndocument:\n  id: \"{}\"\n  display_name: Doc\npage:\n  id: \"{}\"\n  display_name: Page\nview:\n  id: \"{}\"\n  display_name: View\n  root_frame: \"{}\"\nnodes:\n  -\n    id: \"{}\"\n    parent: none\n    order_key: \"80\"\n    visible: \"true\"\n    locked: \"false\"\n    display_name: Root\n    kind: frame\n    payload:\n      size: \"10 20\"\n      transform: \"1 0 0 1 0 0\"\n      clipping:\n        kind: frame-bounds\n      background:\n        space: srgb\n        rgba: \"1 0 0 1\"\n      border: none\n      corner_radius: \"1 2 3 4\"\n      layout_mode: none\n",
@@ -956,7 +975,7 @@ mod tests {
             sid(10)
         );
         let opened = decode(&legacy).unwrap();
-        let rewritten = encode(&opened).unwrap();
+        let rewritten = encode_v2(&opened).unwrap();
         assert!(rewritten.starts_with("schema_version: \"2\"\n"));
         assert!(rewritten.contains("      background: \"srgb 1 0 0 1\"\n"));
         assert!(rewritten.contains("  document_font: none\n"));
@@ -976,7 +995,7 @@ mod tests {
 
     #[test]
     fn omitted_unknown_and_invalid_fields_never_default() {
-        let source = encode(&model()).unwrap();
+        let source = encode_v2(&model()).unwrap();
         for changed in [
             source.replacen("layout-mode:", "unknown_property:", 1),
             source.replacen("kind: fragment", "kind: shape", 1),
@@ -1001,7 +1020,7 @@ mod tests {
             .unwrap();
         model.set_modifier_stack(stack).unwrap();
         assert!(matches!(
-            encode(&model),
+            encode_v2(&model),
             Err(TextSourceError::Unsupported(_))
         ));
 
@@ -1013,7 +1032,7 @@ mod tests {
             .unwrap();
         let (model, _) = DocumentModel::from_records(records).unwrap();
         assert!(matches!(
-            encode(&model),
+            encode_v2(&model),
             Err(TextSourceError::Unsupported(_))
         ));
     }
@@ -1026,7 +1045,7 @@ mod tests {
             ComponentRef::new(sid(20)),
         ));
         model.insert_node(node).unwrap();
-        let bare = encode(&model).unwrap();
+        let bare = encode_v2(&model).unwrap();
         assert!(bare.contains("placement: none"));
         assert_eq!(
             decode(&bare).unwrap().to_records().unwrap(),
@@ -1046,7 +1065,7 @@ mod tests {
             })
             .unwrap();
         model.set_modifier_stack(stack.clone()).unwrap();
-        let placed = encode(&model).unwrap();
+        let placed = encode_v2(&model).unwrap();
         assert!(
             placed.contains("        translate-x: \"-4.25\"\n        translate-y: \"0\"\n"),
             "{placed}"
@@ -1082,7 +1101,7 @@ mod tests {
         stack.set_enabled(modifier, false).unwrap();
         model.set_modifier_stack(stack.clone()).unwrap();
         assert!(matches!(
-            encode(&model),
+            encode_v2(&model),
             Err(TextSourceError::Unsupported(_))
         ));
         stack.set_enabled(modifier, true).unwrap();
@@ -1094,7 +1113,7 @@ mod tests {
             .unwrap();
         model.set_modifier_stack(stack.clone()).unwrap();
         assert!(matches!(
-            encode(&model),
+            encode_v2(&model),
             Err(TextSourceError::Unsupported(_))
         ));
         stack
@@ -1102,7 +1121,7 @@ mod tests {
             .unwrap();
         model.set_modifier_stack(stack).unwrap();
         assert!(matches!(
-            encode(&model),
+            encode_v2(&model),
             Err(TextSourceError::Unsupported(_))
         ));
     }
@@ -1126,7 +1145,7 @@ mod tests {
             node.payload = NodePayload::ComponentInstance(instance);
             model.insert_node(node).unwrap();
             assert!(matches!(
-                encode(&model),
+                encode_v2(&model),
                 Err(TextSourceError::Unsupported(_))
             ));
             node = model.remove_leaf(sid(11)).unwrap();
