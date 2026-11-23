@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use stellar_document::records::{DocumentRecords, NodePayload};
+use stellar_document::records::NodePayload;
 use stellar_git_porcelain::composer::{
     materialize_source, materialize_sources, resolve_source, ComparisonMode, ComposerSnapshotError,
     ResolvedSource, SourceError, SourceRef, SourceSnapshot,
@@ -33,7 +33,7 @@ use stellar_git_porcelain::object::ObjectId;
 use stellar_git_porcelain::snapshot::{SnapshotEntry, SnapshotSource};
 use stellar_git_porcelain::trust::GatedGitRunner;
 use stellar_project::document_io::component_source::project_source_index;
-use stellar_project::document_io::serialize::serialize_records;
+use stellar_project::document_io::serialize::{serialize_records_with_context, KIND_CONTEXT_SET};
 use stellar_project::migration::SchemaDecision;
 use stellar_project::path_resolver::ExternalAccess;
 use stellar_project::saved_project::SavedProjectLoader;
@@ -53,6 +53,7 @@ use super::document::{project_documents, DocumentMergeError};
 use super::target::{create_branch_worktree, project_location, TargetError, ValidatedTarget};
 use crate::candidate::saved_semantic_snapshot;
 use crate::core_types::ids::StableId;
+use crate::diff::DocumentSource;
 use crate::error::OpenError;
 use crate::lock::{LockError, LockPolicy, SaveLock};
 use crate::revision::ProjectRevision;
@@ -410,10 +411,10 @@ pub fn apply_composition(
 
 /// 문서 레코드가 참조하는 이미지 asset.
 fn referenced_assets<'a>(
-    documents: impl Iterator<Item = &'a DocumentRecords>,
+    documents: impl Iterator<Item = &'a DocumentSource>,
 ) -> BTreeSet<StableId> {
     documents
-        .flat_map(|records| records.nodes.iter())
+        .flat_map(|document| document.records.nodes.iter())
         .filter_map(|node| match &node.payload {
             NodePayload::Image(image) => Some(image.asset.id()),
             _ => None,
@@ -427,7 +428,7 @@ fn write_documents(
     root: &Path,
     expected: Option<ProjectRevision>,
     project_id: StableId,
-    documents: &[DocumentRecords],
+    documents: &[DocumentSource],
     lock: &LockPolicy,
 ) -> Result<(ProjectRevision, ProjectRevision, usize), ComposerApplyError> {
     let root = std::fs::canonicalize(root)
@@ -462,11 +463,12 @@ fn write_documents(
     // 결과가 target 문서와 같으면 쓰지 않습니다.
     let mut current = BTreeMap::new();
     for definition in snapshot.documents() {
-        let mut records = snapshot
-            .document_records(definition.id)
+        let model = snapshot
+            .document_model(definition.id)
             .map_err(|e| ComposerApplyError::Save(e.to_string()))?;
-        records.sort_canonical();
-        current.insert(definition.id, records);
+        let document =
+            DocumentSource::of_model(&model).map_err(|e| ComposerApplyError::Save(e.0))?;
+        current.insert(definition.id, document);
     }
     // 결과가 새로 참조하는 이미지 asset은 target에 그 metadata chunk가 있어야 합니다(target 문서가 이미 참조하던
     // asset은 target 상태 그대로라 따지지 않습니다). 없는 asset을 새로 참조하는 결과는 쓰지 않습니다.
@@ -482,9 +484,9 @@ fn write_documents(
             "target에 없는 이미지 asset을 새로 참조",
         ));
     }
-    let wanted: BTreeMap<StableId, &DocumentRecords> = documents
+    let wanted: BTreeMap<StableId, &DocumentSource> = documents
         .iter()
-        .map(|records| (records.definition.id, records))
+        .map(|document| (document.records.definition.id, document))
         .collect();
     if current.len() == wanted.len()
         && current
@@ -494,18 +496,23 @@ fn write_documents(
         return Ok((found, found, 0));
     }
 
-    // 문서가 아닌 chunk는 target pointer 재사용, 결과 문서는 모두 다시 직렬화(같은 내용은 재사용됨).
+    // 문서가 아닌 chunk는 target pointer 재사용, 결과 문서(레코드와 Context chunk)는 모두 다시 직렬화(같은 내용은
+    // 재사용됨). Context가 빈 결과 문서는 context-set chunk를 쓰지 않으므로 target의 옛 chunk도 남기지 않습니다.
     let mut states: Vec<LogicalChunkState> = manifest
         .chunk_pointers
         .iter()
-        .filter(|p| p.kind != KIND_DOCUMENT_MANIFEST && p.kind != KIND_VIEW_TREE)
+        .filter(|p| {
+            p.kind != KIND_DOCUMENT_MANIFEST
+                && p.kind != KIND_VIEW_TREE
+                && p.kind != KIND_CONTEXT_SET
+        })
         .map(|p| LogicalChunkState::Clean {
             chunk_id: p.chunk_id,
         })
         .collect();
-    for records in documents {
+    for document in documents {
         states.extend(
-            serialize_records(records)
+            serialize_records_with_context(&document.records, &document.context)
                 .map_err(|e| ComposerApplyError::Save(e.to_string()))?
                 .to_dirty_states(),
         );

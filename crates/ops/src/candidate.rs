@@ -8,11 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use stellar_document::records::DocumentRecords;
-use stellar_project::document_io::serialize::serialize_records;
+use stellar_project::document_io::serialize::serialize_records_with_context;
 use stellar_project::saved_project::SavedProject;
 use stellar_semantic_diff::diff::diff;
-use stellar_semantic_diff::records::document_records;
 use stellar_storage::chunk::envelope::ChunkEnvelope;
 use stellar_storage::chunk::path::ChunkObjectPath;
 use stellar_storage::chunk::pointer::ChunkPointer;
@@ -21,7 +19,7 @@ use stellar_storage::hash::ContentHash;
 use stellar_storage::save::plan::build_save_plan;
 
 use crate::core_types::ids::StableId;
-use crate::diff::snapshot_of;
+use crate::diff::{document_from_snapshot, snapshot_of, DocumentInput, DocumentSource};
 
 pub use stellar_semantic_diff::diff::SemanticDiff;
 pub use stellar_semantic_diff::keys::DISPLAY_NAME;
@@ -58,23 +56,34 @@ fn invalid(error: impl fmt::Display) -> CandidateStorageError {
     CandidateStorageError::Invalid(error.to_string())
 }
 
+/// 저장된 문서마다 영속 레코드와 Context(ADR-0114 결정 2).
 fn records(
     project: &SavedProject,
-) -> Result<BTreeMap<StableId, DocumentRecords>, CandidateStorageError> {
+) -> Result<BTreeMap<StableId, DocumentSource>, CandidateStorageError> {
     let mut records = BTreeMap::new();
     for id in project.document_ids().map_err(invalid)? {
-        let mut record = project
-            .load_document(id)
-            .map_err(invalid)?
-            .model
-            .to_records()
-            .map_err(invalid)?;
-        record.sort_canonical();
-        if records.insert(id, record).is_some() {
+        let model = project.load_document(id).map_err(invalid)?.model;
+        let document = DocumentSource::of_model(&model).map_err(invalid)?;
+        if records.insert(id, document).is_some() {
             return Err(CandidateStorageError::Unsupported("중복 문서 manifest"));
         }
     }
     Ok(records)
+}
+
+/// 문서들의 문서 범위 snapshot.
+fn documents_snapshot(
+    documents: &BTreeMap<StableId, DocumentSource>,
+) -> Result<SemanticSnapshot, CandidateStorageError> {
+    let inputs: Vec<DocumentInput<'_>> = documents.values().map(DocumentSource::input).collect();
+    snapshot_of(&inputs).map_err(invalid)
+}
+
+/// 문서 하나의 chunk(레코드 chunk와 비어 있지 않은 Context의 context-set chunk).
+fn document_chunks(
+    document: &DocumentSource,
+) -> Result<stellar_project::document_io::serialize::SerializedDocument, CandidateStorageError> {
+    serialize_records_with_context(&document.records, &document.context).map_err(invalid)
 }
 
 /// 저장된 파일 → 문서 레코드 → semantic → 문서 레코드 전체 왕복을 증명합니다.
@@ -92,16 +101,16 @@ pub fn saved_semantic_snapshot(
     {
         return Err(CandidateStorageError::Unsupported("root 문서 집합"));
     }
-    let semantic = snapshot_of(&records.values().collect::<Vec<_>>()).map_err(invalid)?;
+    let semantic = documents_snapshot(&records)?;
     let mut pointers = Vec::new();
     for (id, record) in &records {
-        let projected = document_records(&semantic, *id).map_err(invalid)?;
-        if &projected.records != record {
+        let projected = document_from_snapshot(&semantic, *id).map_err(invalid)?;
+        if &projected != record {
             return Err(CandidateStorageError::Unsupported(
                 "문서 semantic 역투영 손실",
             ));
         }
-        for chunk in serialize_records(record).map_err(invalid)?.chunks() {
+        for chunk in document_chunks(record)?.chunks() {
             pointers.push(ChunkPointer {
                 chunk_id: chunk.chunk_id,
                 content_hash: ContentHash::compute(&chunk.payload),
@@ -137,9 +146,13 @@ pub fn serialize_candidate(
         if !documents.contains_key(&id) {
             return Err(CandidateStorageError::Unsupported("문서 추가"));
         }
-        documents.insert(id, projection.records.clone());
+        // 레코드와 Context를 함께 되돌립니다(Context 변경도 stage 대상).
+        documents.insert(
+            id,
+            document_from_snapshot(candidate.snapshot(), id).map_err(invalid)?,
+        );
     }
-    let actual = snapshot_of(&documents.values().collect::<Vec<_>>()).map_err(invalid)?;
+    let actual = documents_snapshot(&documents)?;
     if &actual != candidate.snapshot() {
         return Err(CandidateStorageError::Unsupported(
             "문서 삭제 또는 레코드 밖 semantic 데이터",
@@ -159,11 +172,7 @@ pub fn serialize_candidate(
     };
     let mut states = Vec::new();
     for record in documents.values() {
-        states.extend(
-            serialize_records(record)
-                .map_err(invalid)?
-                .to_dirty_states(),
-        );
+        states.extend(document_chunks(record)?.to_dirty_states());
     }
     let plan = build_save_plan(
         Some(&base),
@@ -211,9 +220,9 @@ pub fn serialize_merged_generation(
     }
     let mut documents = BTreeMap::new();
     for id in ids {
-        documents.insert(id, document_records(merged, id).map_err(invalid)?.records);
+        documents.insert(id, document_from_snapshot(merged, id).map_err(invalid)?);
     }
-    let actual = snapshot_of(&documents.values().collect::<Vec<_>>()).map_err(invalid)?;
+    let actual = documents_snapshot(&documents)?;
     if &actual != merged {
         return Err(CandidateStorageError::Unsupported(
             "문서 레코드 밖 semantic 데이터",
@@ -230,11 +239,7 @@ pub fn serialize_merged_generation(
     };
     let mut states = Vec::new();
     for record in documents.values() {
-        states.extend(
-            serialize_records(record)
-                .map_err(invalid)?
-                .to_dirty_states(),
-        );
+        states.extend(document_chunks(record)?.to_dirty_states());
     }
     let plan = build_save_plan(
         Some(&base),
