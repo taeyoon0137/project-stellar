@@ -6,11 +6,15 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
+use stellar_scene::spatial::SceneSpatialIndex;
+use stellar_scene::visibility::visible_candidates;
 use stellar_scene::SceneSnapshot;
 
 use super::super::tests::{input, random_scene, viewport_with, Rng};
 use super::super::*;
-use crate::test_scene::{group, opaque, rect, rect_clip, snapshot, NodeFx, IDENTITY};
+use crate::test_scene::{
+    group, opaque, path_clip, rect, rect_clip, snapshot, ClipFx, NodeFx, IDENTITY,
+};
 
 /// plan의 비교용 표현(draw·pass·layer·graph 순서). 같은 snapshot의 node는 z로 식별합니다.
 fn fingerprint(plan: &FramePlan) -> String {
@@ -83,22 +87,49 @@ fn node_at<'a>(roots: &'a mut [NodeFx], path: &[usize]) -> &'a mut NodeFx {
     node
 }
 
-/// `scene`에서 `path` 위치 subtree만 `edited`의 같은 위치 subtree로 바꾼 snapshot. 나머지 node는 `scene`과 같은
-/// `Arc`입니다(scene 증분 build가 만드는 공유와 같음).
-fn replaced(scene: &SceneSnapshot, edited: &SceneSnapshot, path: &[usize]) -> SceneSnapshot {
+fn node_in<'s>(scene: &'s SceneSnapshot, path: &[usize]) -> &'s Arc<SceneNode> {
     let (first, rest) = path.split_first().unwrap();
-    let mut node = edited.root(*first).unwrap();
+    let mut node = scene.root(*first).unwrap();
     for index in rest {
         node = node.child(*index).unwrap();
     }
-    scene
+    node
+}
+
+/// `scene`에서 `path` 위치 subtree만 `edited`의 같은 위치 subtree로 바꾼 snapshot. 나머지 node는 `scene`과 같은
+/// `Arc`입니다. 바꾼 subtree 안에서도 값이 그대로인 자손 subtree는 `scene`의 `Arc`를 다시 씁니다(scene 증분
+/// build가 만드는 공유와 같음: 조상 paint만 바뀌면 자식은 같은 `Arc`로 남고 문맥만 달라짐).
+fn replaced(scene: &SceneSnapshot, edited: &SceneSnapshot, path: &[usize]) -> SceneSnapshot {
+    let mut out = scene
         .replace_node(
             scene.document_revision(),
             edited.scene_revision(),
             path,
-            Arc::clone(node),
+            Arc::clone(node_in(edited, path)),
         )
-        .unwrap()
+        .unwrap();
+    let mut pending = vec![path.to_vec()];
+    while let Some(at) = pending.pop() {
+        let count = node_in(&out, &at).child_count();
+        for index in 0..count {
+            let mut child = at.clone();
+            child.push(index);
+            let old = node_in(scene, &child);
+            if **node_in(&out, &child) == **old {
+                out = out
+                    .replace_node(
+                        out.document_revision(),
+                        out.scene_revision(),
+                        &child,
+                        Arc::clone(old),
+                    )
+                    .unwrap();
+            } else {
+                pending.push(child);
+            }
+        }
+    }
+    out
 }
 
 /// node 하나의 내용을 바꿉니다(색·불투명도·위치·숨김 중 하나).
@@ -156,6 +187,166 @@ fn incremental_plans_match_full_compile_on_random_edits() {
     }
     // 무작위 편집이 재사용 경로를 충분히 지납니다.
     assert!(reused > 200, "{reused}");
+}
+
+/// 무작위 clip(사각형·둥근 사각형·path).
+fn random_clip(rng: &mut Rng) -> ClipFx {
+    let x = rng.below(10) as f32;
+    let y = rng.below(10) as f32;
+    let w = (rng.below(8) + 2) as f32;
+    let h = (rng.below(8) + 2) as f32;
+    match rng.below(3) {
+        0 => rect_clip([x, y, w, h]),
+        1 => {
+            let mut clip = rect_clip([x, y, w, h]);
+            clip.radii = [1.0; 4];
+            clip
+        }
+        _ => path_clip(&[[x, y], [x + w, y], [x, y + h]]),
+    }
+}
+
+/// 각 node에 자기 clip을 덧붙이고 조상 clip을 물려받게 합니다(scene에서 Frame clip이 자손에 쌓이는 모양).
+fn with_inherited_clips(roots: &mut [NodeFx], rng: &mut Rng) {
+    fn walk(node: &mut NodeFx, inherited: &[ClipFx], rng: &mut Rng) {
+        let mut own: Vec<ClipFx> = inherited.to_vec();
+        if rng.below(3) == 0 {
+            own.push(random_clip(rng));
+        }
+        node.clips = own.clone();
+        for child in &mut node.children {
+            walk(child, &own, rng);
+        }
+    }
+    for root in roots {
+        walk(root, &[], rng);
+    }
+}
+
+/// 자기 clip 하나를 바꾸고 자손에게 같은 변경을 물려줍니다(조상 clip 편집).
+fn edit_clip(node: &mut NodeFx, rng: &mut Rng) {
+    let depth = node.clips.len();
+    let clip = random_clip(rng);
+    fn walk(node: &mut NodeFx, depth: usize, clip: &ClipFx) {
+        if depth == 0 || node.clips.len() < depth {
+            node.clips.push(clip.clone());
+        } else {
+            node.clips[depth - 1] = clip.clone();
+        }
+        for child in &mut node.children {
+            walk(child, depth, clip);
+        }
+    }
+    walk(node, depth, &clip);
+}
+
+#[test]
+fn incremental_plans_match_full_compile_with_clips_and_visible_lists() {
+    // 조상 clip이 쌓인 scene, 가시 후보 목록, clip 편집에서도 증분 결과가 전체 compile과 같습니다.
+    let viewport = viewport_with(12.0, 12.0, [1.0, 0.0, 0.0, 1.0, -1.0, -1.0]);
+    let mut rng = Rng(0x1ce5_7a11_c11f_0090);
+    let mut reused = 0u64;
+    for round in 0..200 {
+        let boundaries = if round % 2 == 0 {
+            EffectBoundaries::Minimal
+        } else {
+            EffectBoundaries::Conservative
+        };
+        let mut current = random_scene(&mut rng);
+        with_inherited_clips(&mut current, &mut rng);
+        let mut scene = snapshot(&current);
+        let mut compiler = FrameCompiler::new();
+        for step in 0..7 {
+            if step >= 2 {
+                let all = paths(&current);
+                let path = all[rng.below(all.len() as u64) as usize].clone();
+                let mut edited_roots = current.clone();
+                let target = node_at(&mut edited_roots, &path);
+                if rng.below(2) == 0 {
+                    edit_clip(target, &mut rng);
+                } else {
+                    edit(target, &mut rng);
+                }
+                let edited = snapshot(&edited_roots);
+                scene = replaced(&scene, &edited, &path);
+                current = edited_roots;
+            }
+            let index = SceneSpatialIndex::build(&scene);
+            let visible = visible_candidates(&index, &viewport);
+            let mut compile = input(&scene, &viewport, boundaries);
+            compile.visible = Some(&visible);
+            let plan = compiler.compile(&compile).unwrap();
+            assert_eq!(
+                fingerprint(&plan),
+                fingerprint(&compile_frame(&compile).unwrap()),
+                "round {round} step {step}"
+            );
+            reused += compiler.last_reuse().reused_subtrees;
+        }
+    }
+    // 가시 후보가 그대로인 frame에서는 재사용 경로를 지납니다.
+    assert!(reused > 100, "{reused}");
+}
+
+#[test]
+fn shared_child_subtree_is_recollected_when_its_target_context_changes() {
+    // 조상 paint만 바뀌면 scene 증분 build는 자식 subtree를 같은 `Arc`로 둡니다. 그 자식의 draw 구간은 접힌
+    // opacity(Minimal 접기)나 clip 시작 depth(Conservative layer)가 달라졌으므로 재사용하면 안 됩니다.
+    let viewport = viewport_with(40.0, 40.0, IDENTITY);
+    // 바깥 clip은 둥근 사각형(복합 clip)이라 clip 시작 depth에 따라 draw의 clip 계획이 달라집니다.
+    let mut outer = rect_clip([0.0, 0.0, 30.0, 30.0]);
+    outer.radii = [3.0; 4];
+    let inner = rect_clip([0.0, 0.0, 20.5, 20.0]);
+    let tree = |opacity: f32| {
+        vec![group(
+            1,
+            [0.0, 0.0, 30.0, 30.0],
+            vec![group(
+                2,
+                [0.0, 0.0, 20.0, 20.0],
+                vec![
+                    rect(3, [0.0, 0.0, 4.0, 4.0], opaque(1.0, 0.0, 0.0))
+                        .with_clip(outer.clone())
+                        .with_clip(inner.clone()),
+                    rect(4, [10.0, 10.0, 4.0, 4.0], opaque(0.0, 1.0, 0.0))
+                        .with_clip(outer.clone())
+                        .with_clip(inner.clone()),
+                ],
+            )
+            .with_clip(outer.clone())],
+        )
+        .with_clip(outer.clone())
+        .with_opacity(opacity)]
+    };
+    for boundaries in [EffectBoundaries::Minimal, EffectBoundaries::Conservative] {
+        let before = snapshot(&tree(1.0));
+        let mut compiler = FrameCompiler::new();
+        for _ in 0..2 {
+            compiler
+                .compile(&input(&before, &viewport, boundaries))
+                .unwrap();
+        }
+        let after = replaced(&before, &snapshot(&tree(0.5)), &[0]);
+        // 자식 group 2는 이전 snapshot과 같은 `Arc`입니다.
+        assert!(Arc::ptr_eq(
+            node_in(&before, &[0, 0]),
+            node_in(&after, &[0, 0])
+        ));
+        let plan = compiler
+            .compile(&input(&after, &viewport, boundaries))
+            .unwrap();
+        assert_eq!(
+            fingerprint(&plan),
+            full(&after, &viewport, boundaries),
+            "{boundaries:?}"
+        );
+        assert_eq!(compiler.last_reuse().reused_subtrees, 0, "{boundaries:?}");
+        // 같은 문맥의 다음 frame은 다시 재사용합니다.
+        let plan = compiler
+            .compile(&input(&after, &viewport, boundaries))
+            .unwrap();
+        assert_eq!(fingerprint(&plan), full(&after, &viewport, boundaries));
+    }
 }
 
 /// 화면을 채우는 card 50개(card마다 사각형 clip 안 사각형 4개).
