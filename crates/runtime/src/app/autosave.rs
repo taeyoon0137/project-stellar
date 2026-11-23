@@ -207,6 +207,9 @@ pub(crate) struct WindowAutosave {
     stale: Option<StaleResolution>,
     /// 제스처·진행 중인 쓰기 때문에 미룬 외부 변경 반영.
     external_deferred: bool,
+    /// 자동 저장 schedule이 없는 runtime에서 이번 stale 구간의 알림을 이미 꺼냈는지(XII.7.7). stale이 풀리면
+    /// 지웁니다. schedule이 있으면 [`AutosaveSchedule::take_stale_alert`]가 같은 일을 합니다.
+    stale_alert_taken: bool,
     /// 마지막으로 반영을 거부한 외부 변경의 진단(UX.4.4). 다음 정상 반영에서 지웁니다.
     rejection: Option<String>,
     /// 최근 자동 저장 trace(XIII.1.7).
@@ -214,6 +217,12 @@ pub(crate) struct WindowAutosave {
 }
 
 impl WindowAutosave {
+    /// stale을 풀고 다음 stale 구간의 알림을 다시 낼 수 있게 합니다.
+    fn clear_stale(&mut self) {
+        self.stale = None;
+        self.stale_alert_taken = false;
+    }
+
     /// 상태 snapshot에 게시할 자동 저장 상태(자동 저장을 켜지 않았으면 [`AutosaveStatus::Idle`]).
     pub(crate) fn status(&self) -> AutosaveStatus {
         self.schedule
@@ -285,7 +294,7 @@ pub(super) fn observe(ctx: &mut DocumentContext) {
             sync_window(entry);
         }
         if entry.autosave.stale.is_some() && !entry.session.has_unsaved_changes() {
-            entry.autosave.stale = None;
+            entry.autosave.clear_stale();
         }
     }
     let Some(setup) = sessions.autosave.as_ref() else {
@@ -812,10 +821,11 @@ impl AppRuntime {
                 let Some(resolution) = entry.autosave.stale else {
                     continue;
                 };
-                // 자동 저장을 켜지 않은 runtime은 schedule이 없으므로 한 번 꺼내면 지웁니다.
+                // 자동 저장을 켜지 않은 runtime은 schedule이 없으므로 창 표시로 한 번만 꺼냅니다. stale 상태
+                // 자체는 선택·clean 전까지 남습니다(external_status·Git UI 확인이 계속 봄).
                 let alert = match entry.autosave.schedule.as_mut() {
                     Some(schedule) => schedule.take_stale_alert(),
-                    None => std::mem::take(&mut entry.autosave.stale).is_some(),
+                    None => !std::mem::replace(&mut entry.autosave.stale_alert_taken, true),
                 };
                 if alert {
                     alerts.push(StaleAlert {
@@ -847,7 +857,7 @@ impl AppRuntime {
                 .ok_or(StaleResolveError::NotStale)?;
             let resolved = entry.session.resolve_stale(choice);
             if resolved.is_ok() {
-                entry.autosave.stale = None;
+                entry.autosave.clear_stale();
                 entry.autosave.external_deferred = false;
                 if let (Some(schedule), Some(now)) = (entry.autosave.schedule.as_mut(), now) {
                     schedule.observe(

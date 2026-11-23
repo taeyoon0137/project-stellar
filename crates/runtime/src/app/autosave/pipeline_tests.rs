@@ -420,3 +420,63 @@ fn autosave_traces_record_timings_and_results_without_paths_or_names() {
     }
     app.shutdown().unwrap();
 }
+
+#[test]
+fn stale_alert_without_autosave_is_taken_once_and_keeps_the_stale_state() {
+    // XII.7.7: 자동 저장을 켜지 않은 runtime도 알림은 stale 구간마다 한 번이고, 알림을 꺼내도 stale 상태는
+    // 선택 전까지 남아 Git UI 확인·외부 상태가 계속 stale을 봅니다.
+    let project = saved_project("pipeline-alert-no-autosave");
+    let app = AppRuntime::start().unwrap();
+    let owner = open_project(&app, project.path());
+    let (a, _, _) = open_window(&app, owner);
+    let (b, _, _) = open_window(&app, owner);
+    edit(&app, a, 700, 11, "A");
+    edit(&app, b, 800, 12, "B");
+    assert!(matches!(
+        app.flush_for_close(a, Duration::from_secs(5)),
+        FlushOutcome::Saved { generation: 2 }
+    ));
+    app.sync_external_changes(owner).unwrap().wait().unwrap();
+    let stale = Some(StaleResolution::Choose);
+    assert_eq!(
+        alerts(&app),
+        vec![StaleAlert {
+            session: b,
+            resolution: StaleResolution::Choose
+        }]
+    );
+    assert!(alerts(&app).is_empty(), "같은 stale 구간 알림은 한 번");
+    let status = app.external_status(b).unwrap().wait().unwrap().unwrap();
+    assert_eq!(status.stale, stale, "알림을 꺼내도 stale은 남음");
+    assert_eq!(
+        app.git_ui_preflight(b).unwrap().wait().unwrap(),
+        Some(GitUiPreflight::Blocked(FlushBlock::Stale(
+            StaleResolution::Choose
+        )))
+    );
+    // 선택으로 풀리면 다음 stale은 다시 알립니다.
+    assert!(app
+        .resolve_stale(b, StaleSaveChoice::UseLatestDisk)
+        .unwrap()
+        .wait()
+        .unwrap()
+        .is_ok());
+    assert_eq!(
+        app.external_status(b)
+            .unwrap()
+            .wait()
+            .unwrap()
+            .unwrap()
+            .stale,
+        None
+    );
+    edit(&app, a, 701, 11, "A 다시");
+    edit(&app, b, 801, 12, "B 다시");
+    assert!(matches!(
+        app.flush_for_close(a, Duration::from_secs(5)),
+        FlushOutcome::Saved { generation: 3 }
+    ));
+    app.sync_external_changes(owner).unwrap().wait().unwrap();
+    assert_eq!(alerts(&app).len(), 1, "새 stale 구간은 다시 알림");
+    app.shutdown().unwrap();
+}
