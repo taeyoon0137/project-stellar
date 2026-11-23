@@ -30,7 +30,7 @@ use std::rc::Rc;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::reference::AssetRef;
 use stellar_scene::geometry::{FillRule, PathGeometry};
-use stellar_scene::node::{SceneContent, SceneNode, TextLayoutKey, Visibility};
+use stellar_scene::node::{SceneContent, SceneNode, TextLayoutKey, TextPrimitive, Visibility};
 use stellar_scene::stack::{ClipShape, Paint, PaintLayer, StrokeAlign};
 
 use crate::capture::{ExportAssetSource, ExportCapture, ExportRoot};
@@ -414,12 +414,15 @@ impl<'a> Writer<'a> {
     }
 
     /// text glyph outline을 만들고 run 고유 색 layer를 씁니다. paint layer 기하(모든 glyph)를 돌려줍니다.
+    ///
+    /// glyph pen 원점은 layout 상자(`primitive.bounds`, node local) 좌상단 기준이라 상자 원점만큼 옮깁니다.
     fn write_text(
         &mut self,
         node: &'a SceneNode,
-        layout: TextLayoutKey,
+        primitive: &TextPrimitive,
     ) -> Result<PathGeometry, SvgExportError> {
         let source = node.source();
+        let layout = primitive.layout;
         let Some(glyphs) = self.capture.glyph_layout(self.text, layout) else {
             if self.export.omits_text_layout(layout) {
                 // 사용자가 확인한 missing layout: glyph 없이 진행합니다.
@@ -450,7 +453,8 @@ impl<'a> Writer<'a> {
                 other => other,
             }
         };
-        let outlines = match text_outlines(&glyphs, &mut lookup, budget) {
+        let outlines = match text_outlines(&glyphs, primitive.bounds.origin(), &mut lookup, budget)
+        {
             Ok(outlines) => outlines,
             Err(TextOutlineError::TooManyCommands { .. }) => {
                 return Err(SvgExportError::OutputTooLarge { limit: self.limit })
@@ -500,7 +504,7 @@ impl<'a> Writer<'a> {
             }
         }
         let text_geometry = match node.content() {
-            SceneContent::Text(text) => Some(self.write_text(node, text.layout)?),
+            SceneContent::Text(text) => Some(self.write_text(node, text)?),
             SceneContent::Rect(_) | SceneContent::Path(_) | SceneContent::Image(_) => None,
         };
         let geometry = match &text_geometry {

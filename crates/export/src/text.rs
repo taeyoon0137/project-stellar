@@ -21,7 +21,8 @@
 //! ## 좌표
 //!
 //! glyph pen 원점([`PlacedGlyph`])은 text local 좌표(layout 상자 좌상단 기준, y 아래 방향)의 1/64 px 정수입니다
-//! (text `TextUnit`과 같은 격자). outline은 pen 원점 기준 px 좌표(y 아래 방향)이며 renderer outline
+//! (text `TextUnit`과 같은 격자). layout 상자는 scene `TextPrimitive::bounds`(node local)이므로 node local 좌표는
+//! 상자 원점 + pen 원점입니다. outline은 pen 원점 기준 px 좌표(y 아래 방향)이며 renderer outline
 //! (`GlyphImage::Outline`)과 같은 규약입니다.
 //!
 //! ## 큰 글자

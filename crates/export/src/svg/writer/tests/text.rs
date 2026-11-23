@@ -8,7 +8,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use stellar_core_types::value::Size2;
+use stellar_core_types::value::{Rect, Size2};
 use stellar_scene::builder::{NodeInput, StrokeInput, TextInput};
 use stellar_scene::geometry::PathCommand;
 
@@ -508,6 +508,39 @@ fn unavailable_fonts_and_color_glyphs_are_errors() {
         write(&text_capture(text_snapshot(false), 1)),
         Err(SvgExportError::MissingTextLayout { .. })
     ));
+}
+
+/// `snapshot` 첫 root Text의 layout 상자 원점을 `origin`으로 옮긴 snapshot(scene builder는 항상 원점 0).
+fn with_text_box_origin(snapshot: &SceneSnapshot, origin: (f32, f32)) -> SceneSnapshot {
+    let root = snapshot.root(0).unwrap();
+    let mut spec = root.spec();
+    let SceneContent::Text(text) = &mut spec.content else {
+        panic!("Text root");
+    };
+    text.bounds = Rect::new(fx::p(origin.0, origin.1), text.bounds.size());
+    snapshot_of_roots(vec![Arc::new(SceneNode::leaf(spec))])
+}
+
+#[test]
+fn glyphs_start_at_the_layout_box_origin() {
+    // TextPrimitive.bounds는 node local 좌표의 layout 상자이고 glyph pen 원점은 그 좌상단 기준입니다.
+    // 상자 원점이 0이 아니면(codec·직접 생성) glyph를 그만큼 옮깁니다(Image가 bounds를 그대로 쓰는 것과 같은 규약).
+    let fonts = fonts();
+    let moved = with_text_box_origin(&text_snapshot(true), (5.0, 3.0));
+    let document = write_text(&text_capture(moved, 1), &fonts).unwrap();
+    let layer = document
+        .as_str()
+        .lines()
+        .find(|line| line.contains("fill-opacity=\"0.25\""))
+        .unwrap();
+    // 원점 0일 때 "M87 30 L97 30 L97 16 L87 16 Z"인 색 없는 run glyph가 (5, 3)만큼 옮겨집니다.
+    assert!(layer.contains("M92 33 L102 33 L102 19 L92 19 Z"), "{layer}");
+    // 원점 0인 상자는 기존 golden과 byte 단위로 같습니다.
+    let zero = with_text_box_origin(&text_snapshot(true), (0.0, 0.0));
+    assert_eq!(
+        write_text(&text_capture(zero, 1), &fonts).unwrap().as_str(),
+        TEXT_GOLDEN
+    );
 }
 
 #[test]

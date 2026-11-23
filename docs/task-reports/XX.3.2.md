@@ -108,3 +108,24 @@
 | `cargo test -p stellar-export` | 93 passed, 0 failed |
 | `cargo clippy -p stellar-export --all-targets -- -D warnings` | 경고 0 |
 | `cargo fmt -p stellar-export -- --check` | 통과 |
+
+### 2. glyph pen 원점에 layout 상자 원점 반영
+
+`Fix: Text glyph를 layout 상자 원점 기준으로 배치` 커밋에서 고쳤습니다.
+
+- **문제**: glyph pen 원점은 layout 상자 좌상단 기준(`crate::text` 문서 규약)인데 writer는 node world transform만 적용하고
+  `TextPrimitive.bounds`(node local layout 상자)의 원점을 더하지 않았습니다. scene builder는 원점을 항상 0으로 만들어 겉으로
+  드러나지 않았지만, codec이나 직접 만든 primitive는 원점이 0이 아닐 수 있습니다. Image는 `bounds`를 그대로 써서 두 content의
+  규약도 달랐습니다.
+- **변경**: `text_outlines`가 layout 상자 원점(`origin`)을 받아 glyph 이동량에 더합니다. writer는 `primitive.bounds.origin()`을
+  넘깁니다. 원점 0이면 `0 + pen`이 pen과 정확히 같아 출력이 바뀌지 않습니다.
+- **검증**: `glyphs_start_at_the_layout_box_origin`을 먼저 추가해 수정 전 실패(glyph가 원점 0 위치 "M87 30 …"에 남음)를
+  확인했습니다. 수정 후 상자 원점 (5, 3)이면 glyph가 그만큼 옮겨지고("M92 33 …"), 원점 0 상자는 golden과 byte 단위로
+  같습니다. 변환 단위 테스트(`glyphs_move_to_their_pen_origin`)에도 원점 이동 case를 더했습니다.
+
+| 명령(후속 수정 2) | 결과 |
+|---|---|
+| `cargo test -p stellar-export glyphs_start_at`(수정 전) | 1 failed |
+| `cargo test -p stellar-export` | 94 passed, 0 failed |
+| `cargo clippy -p stellar-export --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-export -- --check` | 통과 |

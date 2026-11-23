@@ -3,8 +3,9 @@
 //! 아키텍처 §34 SVG 정책대로 모든 텍스트를 Path로 씁니다. `<text>`·`<tspan>` 요소, font 파일·`@font-face`,
 //! SVG font(`<font>`·`<glyph>`)는 만들지 않습니다.
 //!
-//! - glyph마다 outline([`GlyphOutline::Path`], pen 원점 기준 px)을 pen 원점(1/64 px)만큼 옮겨 text local 좌표
-//!   path로 만듭니다. 크기·variation은 outline key에 이미 들어 있으므로 다시 scale하지 않습니다.
+//! - glyph마다 outline([`GlyphOutline::Path`], pen 원점 기준 px)을 pen 원점(1/64 px, layout 상자 좌상단 기준)과
+//!   layout 상자 원점(`TextPrimitive::bounds`의 원점, node local)만큼 옮겨 node local 좌표 path로 만듭니다.
+//!   크기·variation은 outline key에 이미 들어 있으므로 다시 scale하지 않습니다.
 //! - 단 key 크기 상한을 넘는 run은 상한 크기 outline을
 //!   [`RunSize::outline_scale`](crate::text::RunSize::outline_scale)배 합니다([`crate::text`] "큰 글자").
 //!   상한 이하 run의 배율은 정확히 1이라 결과가 바뀌지 않습니다.
@@ -154,10 +155,12 @@ fn geometry(commands: Vec<PathCommand>) -> Result<PathGeometry, TextOutlineError
 
 /// glyph layout을 outline path로 바꿉니다.
 ///
-/// `outline`은 key의 outline을 돌려줍니다(호출자 cache). `max_commands`는 combined path의 command 상한이며,
-/// run path 합도 같은 상한을 씁니다.
+/// `origin`은 layout 상자 좌상단(node local 좌표, `TextPrimitive::bounds`의 원점)입니다. `outline`은 key의
+/// outline을 돌려줍니다(호출자 cache). `max_commands`는 combined path의 command 상한이며, run path 합도 같은
+/// 상한을 씁니다.
 pub fn text_outlines(
     layout: &TextGlyphLayout,
+    origin: Vec2,
     outline: &mut dyn FnMut(&GlyphOutlineKey) -> Result<GlyphOutline, GlyphOutlineError>,
     max_commands: usize,
 ) -> Result<TextOutlines, TextOutlineError> {
@@ -178,8 +181,8 @@ pub fn text_outlines(
                 GlyphOutline::Path(path) => {
                     let placement = Placement {
                         scale,
-                        dx: px(placed.x),
-                        dy: px(placed.y),
+                        dx: origin.x() + px(placed.x),
+                        dy: origin.y() + px(placed.y),
                     };
                     push_placed(&mut commands, &path, placement, max_commands)?;
                 }
@@ -284,7 +287,7 @@ mod tests {
                 run(1, 4.0, None, &[(1, -64, 32)]),
             ],
         };
-        let outlines = text_outlines(&layout, &mut source, usize::MAX).unwrap();
+        let outlines = text_outlines(&layout, Vec2::ZERO, &mut source, usize::MAX).unwrap();
         assert_eq!(outlines.runs.len(), 2);
         assert_eq!(outlines.runs[0].fill, Some(red));
         assert_eq!(outlines.runs[1].fill, None);
@@ -309,6 +312,12 @@ mod tests {
         let mut joined = outlines.runs[0].geometry.commands().to_vec();
         joined.extend_from_slice(outlines.runs[1].geometry.commands());
         assert_eq!(outlines.combined.commands(), joined.as_slice());
+        // layout 상자 원점이 0이 아니면 모든 glyph가 그만큼 옮겨집니다.
+        let moved = text_outlines(&layout, fx::p(2.0, -3.0), &mut source, usize::MAX).unwrap();
+        assert_eq!(
+            points(&moved.runs[1].geometry),
+            vec![(1.0, -4.5), (3.0, -4.5), (3.0, -2.5), (1.0, -2.5)]
+        );
     }
 
     #[test]
@@ -317,7 +326,7 @@ mod tests {
             runs: vec![run(9, 8.0, None, &[(1, 0, 0)])],
         };
         assert_eq!(
-            text_outlines(&missing, &mut source, usize::MAX),
+            text_outlines(&missing, Vec2::ZERO, &mut source, usize::MAX),
             Err(TextOutlineError::Outline {
                 font: face(9),
                 glyph: 1,
@@ -327,7 +336,7 @@ mod tests {
         let color = TextGlyphLayout {
             runs: vec![run(1, 8.0, None, &[(1, 0, 0), (3, 64, 0)])],
         };
-        let error = text_outlines(&color, &mut source, usize::MAX).unwrap_err();
+        let error = text_outlines(&color, Vec2::ZERO, &mut source, usize::MAX).unwrap_err();
         assert_eq!(
             error,
             TextOutlineError::NoOutline {
@@ -340,14 +349,14 @@ mod tests {
             runs: vec![run(1, 8.0, None, &[(1, 0, 0), (1, 64, 0)])],
         };
         assert_eq!(
-            text_outlines(&many, &mut source, 9),
+            text_outlines(&many, Vec2::ZERO, &mut source, 9),
             Err(TextOutlineError::TooManyCommands { limit: 9 })
         );
-        assert!(text_outlines(&many, &mut source, 10).is_ok());
+        assert!(text_outlines(&many, Vec2::ZERO, &mut source, 10).is_ok());
         let far = TextGlyphLayout {
             runs: vec![run(1, 8.0, None, &[(1, i32::MAX, 0)])],
         };
-        assert!(text_outlines(&far, &mut source, usize::MAX).is_ok());
+        assert!(text_outlines(&far, Vec2::ZERO, &mut source, usize::MAX).is_ok());
         for error in [
             TextOutlineError::NonFinite,
             TextOutlineError::InvalidPath,
@@ -371,7 +380,7 @@ mod tests {
                 run(1, MAX_RUN_PX, None, &[(1, 0, 0)]),
             ],
         };
-        let outlines = text_outlines(&layout, &mut recording, usize::MAX).unwrap();
+        let outlines = text_outlines(&layout, Vec2::ZERO, &mut recording, usize::MAX).unwrap();
         // 두 run 모두 상한 크기 key 하나로 조회합니다.
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().all(|k| k.size.px() == MAX_GLYPH_PX));
@@ -406,7 +415,7 @@ mod tests {
             *seen.entry(key.clone()).or_default() += 1;
             source(key)
         };
-        text_outlines(&layout, &mut counting, usize::MAX).unwrap();
+        text_outlines(&layout, Vec2::ZERO, &mut counting, usize::MAX).unwrap();
         assert_eq!(seen.len(), 2, "variation이 다르면 다른 key");
         let heavy = seen
             .keys()
