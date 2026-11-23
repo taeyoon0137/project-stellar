@@ -134,7 +134,7 @@ impl MergeGit for SystemGit {
     }
 
     fn add(&self, worktree: &Path, paths: &[PathBuf]) -> Result<(), GitPortError> {
-        let mut args = vec![os("add"), os("--")];
+        let mut args = vec![os("add"), os("-A"), os("--")];
         args.extend(paths.iter().map(|p| p.as_os_str()));
         self.run(worktree, &args).map(|_| ())
     }

@@ -18,9 +18,10 @@ mod system_git;
 
 use std::path::{Path, PathBuf};
 
+use stellar_ops::candidate::apply::{apply_session, ApplyError, DiskFiles};
 use stellar_ops::candidate::file_merge::{merge_semantic_file, FileMergeError, FileMergeOutcome};
 use stellar_ops::candidate::install::{install_driver, InstallError};
-use stellar_ops::candidate::session::{parse_resolution, ConflictSession};
+use stellar_ops::candidate::session::{parse_resolution, ConflictSession, PlanError};
 use stellar_ops::trusted::TrustedProject;
 
 use crate::exit::ExitStatus;
@@ -76,19 +77,22 @@ fn trusted_root(path: &str) -> Result<PathBuf, CliError> {
 struct ResolveArgs {
     project: String,
     resolutions: Vec<(usize, String)>,
+    apply: bool,
 }
 
 fn resolve_args(args: &[String]) -> Result<ResolveArgs, CliError> {
     let usage = || {
         CliError::usage(
-            "merge-driver resolve <프로젝트> [--resolve <번호>=<base|ours|theirs|delete|custom:<16진수>>]...",
+            "merge-driver resolve <프로젝트> [--resolve <번호>=<base|ours|theirs|delete|custom:<16진수>>]... [--apply]",
         )
     };
     let mut iter = args.iter();
     let project = iter.next().ok_or_else(usage)?.clone();
     let mut resolutions = Vec::new();
+    let mut apply = false;
     while let Some(flag) = iter.next() {
         match flag.as_str() {
+            "--apply" => apply = true,
             "--resolve" => {
                 let value = iter.next().ok_or_else(usage)?;
                 let (index, action) = value.split_once('=').ok_or_else(usage)?;
@@ -101,6 +105,7 @@ fn resolve_args(args: &[String]) -> Result<ResolveArgs, CliError> {
     Ok(ResolveArgs {
         project,
         resolutions,
+        apply,
     })
 }
 
@@ -191,8 +196,43 @@ fn resolve(args: &[String]) -> Result<Success, CliError> {
             CliError::new(ExitStatus::DataErr, "resolution", format!("{index}: {e}"))
         })?;
     }
+    let mut result = session_json(&session);
+    if args.apply {
+        let report = apply_session(&git, &DiskFiles, &session).map_err(|e| {
+            let (status, code) = match &e {
+                ApplyError::Plan(PlanError::Blocked { .. }) => {
+                    (ExitStatus::Failure, "unresolved-conflicts")
+                }
+                ApplyError::Plan(_) => (ExitStatus::DataErr, "merge-plan"),
+                ApplyError::Stale(_) => (ExitStatus::TempFail, "stale-session"),
+                ApplyError::Git(_) => (ExitStatus::Unavailable, "git"),
+                ApplyError::Write { .. } => (ExitStatus::IoErr, "merge-write"),
+                ApplyError::Add(_) => (ExitStatus::Unavailable, "git-add"),
+            };
+            CliError::new(status, code, e.to_string())
+                .with_result(session_json(&session))
+                .with_context(args.project.clone())
+        })?;
+        let paths = |paths: &[PathBuf]| {
+            JsonValue::Array(
+                paths
+                    .iter()
+                    .map(|p| JsonValue::string(p.to_string_lossy()))
+                    .collect(),
+            )
+        };
+        if let JsonValue::Object(fields) = &mut result {
+            fields.push((
+                "applied".into(),
+                JsonValue::object(vec![
+                    ("written", paths(&report.written)),
+                    ("added", paths(&report.added)),
+                ]),
+            ));
+        }
+    }
     Ok(Success {
-        result: session_json(&session),
+        result,
         diagnostics: Vec::new(),
     })
 }

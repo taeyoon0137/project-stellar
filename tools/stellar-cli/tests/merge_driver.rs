@@ -500,3 +500,143 @@ fn resolve_preview_changes_only_the_candidate() {
     assert_eq!(string(envelope.get("error").unwrap(), "code"), "resolution");
     assert_eq!(tree_and_index(&repo), before);
 }
+
+/// `stellar apply`로 node 이름을 바꿉니다(새 generation 저장).
+fn rename_node(repo: &Repo, node: &str, name: &str) {
+    let token = result(
+        &stellar(&repo.root, &repo.home, &["query", ".", "project"]),
+        0,
+    );
+    let token = string(
+        token.get("result").unwrap().get("revision").unwrap(),
+        "token",
+    )
+    .to_owned();
+    let document = large_document(4).document_id().to_string();
+    let input = format!(
+        r#"{{"format":"stellar-apply","format_version":1,"base_revision":"{token}","document":"{document}","commands":[{{"kind":"rename","node":"{node}","name":"{name}"}}]}}"#
+    );
+    let file = repo.home.join(format!("{name}.json"));
+    fs::write(&file, input).unwrap();
+    result(
+        &stellar(
+            &repo.root,
+            &repo.home,
+            &["apply", ".", file.to_str().unwrap()],
+        ),
+        0,
+    );
+}
+
+fn child_nodes() -> Vec<String> {
+    large_document(4)
+        .to_records()
+        .unwrap()
+        .nodes
+        .iter()
+        .filter(|n| n.parent.is_some())
+        .map(|n| n.id.to_string())
+        .collect()
+}
+
+fn node_name(repo: &Repo, node: &str) -> String {
+    let document = large_document(4).document_id().to_string();
+    let found = result(
+        &stellar(
+            &repo.root,
+            &repo.home,
+            &["query", ".", "node", &document, node],
+        ),
+        0,
+    );
+    string(found.get("result").unwrap().get("node").unwrap(), "name").to_owned()
+}
+
+/// 컴포넌트 폭 conflict와 generation(서로 다른 node 이름 변경) conflict가 함께 있는 merge 상태.
+fn component_and_generation_conflict(label: &str) -> (Repo, Vec<String>) {
+    let repo = Repo::new(label);
+    trust(&repo);
+    result(
+        &stellar(&repo.root, &repo.home, &["merge-driver", "install", "."]),
+        0,
+    );
+    repo.git(&["add", ".gitattributes"]);
+    repo.git(&["commit", "-qm", "install"]);
+    let kids = child_nodes();
+    for (branch, width, node, name) in [
+        ("wide", "144", &kids[0], "ours-name"),
+        ("narrow", "128", &kids[1], "theirs-name"),
+    ] {
+        repo.git(&["switch", "-q", "main"]);
+        repo.git(&["switch", "-qc", branch]);
+        repo.resize(width, "60");
+        rename_node(&repo, node, name);
+        repo.git(&["add", "-A"]);
+        repo.git(&["commit", "-qm", branch]);
+    }
+    repo.git(&["switch", "-q", "wide"]);
+    let merged = repo.git_output(&["merge", "--no-edit", "narrow"]);
+    assert_eq!(merged.status.code(), Some(1));
+    let unmerged = repo.git(&["diff", "--name-only", "--diff-filter=U"]);
+    assert_eq!(unmerged, format!("{}\ndesign/current", repo.file));
+    (repo, kids)
+}
+
+#[test]
+fn resolve_apply_writes_validated_files_and_marks_them_resolved() {
+    let (repo, kids) = component_and_generation_conflict("resolve-apply");
+    let preview = result(
+        &stellar(&repo.root, &repo.home, &["merge-driver", "resolve", "."]),
+        0,
+    );
+    let units = preview.get("result").unwrap().get("units").unwrap();
+    let units = units.as_array().unwrap();
+    assert_eq!(
+        units.iter().map(|u| string(u, "kind")).collect::<Vec<_>>(),
+        ["component-source", "generation"]
+    );
+    // generation 단위: raw 경로 design/current → 문서 객체 전체, 서로 다른 node 이름 변경은 conflict 없음.
+    assert_eq!(string(&units[1], "path"), "design/current");
+    assert!(units[1].get("objects").unwrap().as_i64().unwrap() > 4);
+    assert_eq!(units[1].get("writable"), Some(&JsonValue::Bool(true)));
+
+    let applied = result(
+        &stellar(
+            &repo.root,
+            &repo.home,
+            &[
+                "merge-driver",
+                "resolve",
+                ".",
+                "--resolve",
+                "0=theirs",
+                "--apply",
+            ],
+        ),
+        0,
+    );
+    let added = applied
+        .get("result")
+        .unwrap()
+        .get("applied")
+        .unwrap()
+        .get("added")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert!(added.contains(&repo.file) && added.contains(&"design/current".to_owned()));
+    // unmerged entry가 없어지고 프로젝트가 열리며 두 이름 변경과 theirs 폭이 모두 있습니다.
+    assert!(repo.git(&["ls-files", "-u"]).is_empty());
+    result(&stellar(&repo.root, &repo.home, &["validate", "."]), 0);
+    assert_eq!(node_name(&repo, &kids[0]), "ours-name");
+    assert_eq!(node_name(&repo, &kids[1]), "theirs-name");
+    let text = String::from_utf8(repo.read()).unwrap();
+    assert!(text.contains("width: \"128\""), "{text}");
+    // merge 상태는 유지되고 commit은 사용자가 합니다.
+    assert!(repo.root.join(".git/MERGE_HEAD").exists());
+    repo.git(&["commit", "--no-edit", "-q"]);
+    assert!(repo.git(&["status", "--porcelain"]).is_empty());
+}

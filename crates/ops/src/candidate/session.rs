@@ -511,5 +511,113 @@ impl ConflictSession {
     }
 }
 
+/// 계획한 파일 쓰기 하나(프로젝트 기준 경로, `None` = 삭제).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedWrite {
+    /// 프로젝트 기준 경로.
+    pub path: PathBuf,
+    /// 새 bytes(`None`이면 파일 삭제).
+    pub bytes: Option<Vec<u8>>,
+}
+
+/// 검증한 모든 단위의 쓰기 계획(XIV.12.4). 파일은 아직 쓰지 않았습니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WritePlan {
+    /// 파일 쓰기(경로 순서).
+    pub writes: Vec<PlannedWrite>,
+    /// resolved 처리할 경로(`git add`).
+    pub add: Vec<PathBuf>,
+}
+
+/// 쓰기 계획 실패.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanError {
+    /// 의미 병합 단위가 없음.
+    NothingToWrite,
+    /// 단위가 쓰기 조건(미해결 0, 새 위반 0)을 통과하지 못함.
+    Blocked {
+        /// 단위 경로.
+        path: PathBuf,
+        /// 상태.
+        status: UnitStatus,
+    },
+    /// 결과를 저장 형식으로 쓸 수 없음.
+    Encode {
+        /// 단위 경로.
+        path: PathBuf,
+        /// 원인.
+        reason: String,
+    },
+}
+
+impl fmt::Display for PlanError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PlanError::NothingToWrite => f.write_str("의미 병합할 conflict 단위가 없습니다"),
+            PlanError::Blocked { path, status } => write!(
+                f,
+                "{}: 미해결 conflict {}개, 새 snapshot 위반 {}개",
+                path.display(),
+                status.unresolved,
+                status.violations
+            ),
+            PlanError::Encode { path, reason } => write!(f, "{}: {reason}", path.display()),
+        }
+    }
+}
+
+impl std::error::Error for PlanError {}
+
+impl ConflictSession {
+    /// 모든 단위를 검증하고(XIV.12.3) 쓸 파일을 계획합니다(XIV.12.4). 하나라도 막히면 아무것도 계획하지 않습니다.
+    pub fn plan(&self) -> Result<WritePlan, PlanError> {
+        if self.units.is_empty() {
+            return Err(PlanError::NothingToWrite);
+        }
+        let mut writes = BTreeMap::new();
+        let mut add = Vec::new();
+        for unit in &self.units {
+            let validated = unit.candidate.validate().map_err(|_| PlanError::Blocked {
+                path: unit.path.clone(),
+                status: unit.status(),
+            })?;
+            let encode = |reason: String| PlanError::Encode {
+                path: unit.path.clone(),
+                reason,
+            };
+            match unit.kind {
+                UnitKind::ComponentSource => {
+                    let name = unit.path.file_name().unwrap_or_default();
+                    let bytes = super::component_file::encode_component_candidate(validated, name)
+                        .map_err(|e| encode(e.to_string()))?;
+                    writes.insert(unit.path.clone(), bytes);
+                    add.push(unit.path.clone());
+                }
+                UnitKind::Generation => {
+                    let base = unit
+                        .generation
+                        .as_ref()
+                        .ok_or_else(|| encode("ours 세대가 없음".into()))?;
+                    let files = super::serialize_merged_generation(&base.ours, validated)
+                        .map_err(|e| encode(e.to_string()))?;
+                    for (path, bytes) in files {
+                        add.push(path.clone());
+                        writes.insert(path, Some(bytes));
+                    }
+                }
+            }
+        }
+        add.sort();
+        add.dedup();
+        Ok(WritePlan {
+            writes: writes
+                .into_iter()
+                .map(|(path, bytes)| PlannedWrite { path, bytes })
+                .collect(),
+            add,
+        })
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests;
