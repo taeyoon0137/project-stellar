@@ -11,6 +11,9 @@
 //!    하되(상태 보고·`stellar migrate` 판정용) 문서 내용 읽기를 [`DocumentReadError::Schema`]로 거부합니다.
 //!    이 경로는 읽기 전용이므로 메모리 migration 결과도 쓰지 않습니다.
 //! 5. revision은 열린 generation 번호와 manifest content hash입니다([`crate::revision`]).
+//! 6. 활성 기본값 세트(ADR-0082 결정 4)를 `stellar.yaml` `style_defaults`와 `design/style-defaults/` 사용자 세트로
+//!    한 번 평탄화해 둡니다([`ProjectSnapshot::style_defaults`]). 세트 파일 오류는 열기를 막지 않고 세트를 쓰는
+//!    조회에서만 오류입니다. [`ProjectSnapshot::document_model`]은 연 세트 이름을 모델 거울에 넣습니다(ADR-0087).
 //!
 //! 이 경로는 파일을 만들거나 바꾸지 않습니다. 문서 내용(node 레코드)은 요청할 때
 //! [`ProjectSnapshot::document_records`]로 그 문서의 chunk만 읽습니다. 모든 결과는 열기 시점에
@@ -20,6 +23,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use stellar_document::css::style_defaults::FlatSet;
 use stellar_document::definitions::DocumentDefinition;
 use stellar_document::model::DocumentModel;
 use stellar_document::records::DocumentRecords;
@@ -27,6 +31,7 @@ use stellar_project::document_io::load::LoadDocumentError;
 use stellar_project::document_io::manifest::DocumentManifestChunk;
 use stellar_project::identity::parse_project_id;
 use stellar_project::manifest::Manifest;
+use stellar_project::manifest_style_defaults::{active_name, active_set, StyleDefaultsFileError};
 use stellar_project::migration::{decide, MigratedGeneration, MigrationPolicy, SchemaDecision};
 use stellar_project::probe::{probe_project, ProbeError};
 use stellar_project::root::GitLink;
@@ -64,6 +69,8 @@ pub struct ProjectSnapshot {
     /// 낮은 schema generation을 메모리에서 migration한 결과(디스크는 원본 그대로).
     migrated: Option<MigratedGeneration>,
     schema: SchemaDecision,
+    /// 열 때 평탄화한 활성 기본값 세트(실패하면 그 오류).
+    style_defaults: Result<FlatSet, StyleDefaultsFileError>,
 }
 
 impl ProjectSnapshot {
@@ -112,7 +119,19 @@ impl ProjectSnapshot {
         self.schema
     }
 
-    /// 문서 하나의 런타임 모델을 그 문서의 chunk만 읽어 만듭니다(VI.10.3).
+    /// 열 때 `stellar.yaml`이 고른 활성 기본값 세트 이름(키가 없으면 `css`). 문서 모델 거울의 원본입니다.
+    pub fn style_defaults_name(&self) -> &str {
+        active_name(&self.manifest)
+    }
+
+    /// 열 때 `extends` 사슬을 풀어 평탄화한 활성 기본값 세트(ADR-0082 결정 1·4). 사용자 세트 파일이 잘못됐거나
+    /// 없는 세트를 고르면 그 오류입니다.
+    pub fn style_defaults(&self) -> Result<&FlatSet, &StyleDefaultsFileError> {
+        self.style_defaults.as_ref()
+    }
+
+    /// 문서 하나의 런타임 모델을 그 문서의 chunk만 읽어 만듭니다(VI.10.3). 모델의 활성 세트 거울은
+    /// [`Self::style_defaults_name`]입니다(ADR-0087).
     pub fn document_model(&self, document: StableId) -> Result<DocumentModel, DocumentReadError> {
         if let SchemaDecision::Reject(rejection) = self.schema {
             return Err(DocumentReadError::Schema(rejection));
@@ -136,7 +155,9 @@ impl ProjectSnapshot {
             }
             other => DocumentReadError::Load(other),
         })?;
-        Ok(loaded.model)
+        let mut model = loaded.model;
+        model.set_style_defaults(self.style_defaults_name());
+        Ok(model)
     }
 
     /// 문서 하나의 영속 레코드를 그 문서의 chunk만 읽어 만듭니다(VI.10.3, canonical 정렬).
@@ -275,7 +296,9 @@ pub fn open_snapshot(path: &Path) -> Result<ProjectSnapshot, OpenError> {
         }
     }
 
+    let style_defaults = active_set(&probe.root, &probe.manifest);
     Ok(ProjectSnapshot {
+        style_defaults,
         root: probe.root,
         git_link: probe.git_link,
         manifest: probe.manifest,
@@ -439,5 +462,162 @@ mod tests {
             open_snapshot(&dir.path),
             Err(OpenError::Storage(_))
         ));
+    }
+
+    mod style_defaults_mirror {
+        //! 활성 기본값 세트 거울(ADR-0087): 열 때 모델에 넣고, ops 저장 경로가 바뀐 거울을 `stellar.yaml`에 씁니다.
+        use super::*;
+        use crate::apply::{apply, ApplyError, ApplyMode, ApplyRequest, CommandInput};
+        use crate::lock::LockPolicy;
+        use stellar_commands::command::Command;
+        use stellar_commands::style_defaults::SetStyleDefaults;
+        use stellar_project::manifest_style_defaults::{set_active, STYLE_DEFAULTS_DIR};
+        use stellar_project::root::MANIFEST_FILE;
+
+        fn set_input(name: &str) -> CommandInput {
+            let command = Command::SetStyleDefaults(SetStyleDefaults { name: name.into() });
+            CommandInput::Canonical {
+                kind: command.kind().name().to_string(),
+                bytes: stellar_commands::codec::encode_command(&command),
+            }
+        }
+
+        fn locks(dir: &TempDir) -> LockPolicy {
+            LockPolicy::Required {
+                dir: dir.path.join("user-data-locks"),
+            }
+        }
+
+        fn project(tag: &str) -> (TempDir, std::path::PathBuf, StableId) {
+            let tmp = TempDir::new(tag);
+            let root = tmp.path.join("project");
+            std::fs::create_dir_all(&root).unwrap();
+            scaffold_project(&root);
+            let model = random_valid_document(61);
+            save_documents(&root, &[&model]);
+            (tmp, root, model.document_id())
+        }
+
+        #[test]
+        fn opened_model_mirrors_manifest_set_and_bad_set_files_do_not_block_reads() {
+            let (_tmp, root, document) = project("sd-mirror");
+            let snapshot = open_snapshot(&root).unwrap();
+            assert_eq!(snapshot.style_defaults_name(), "css");
+            assert_eq!(snapshot.style_defaults().unwrap().name(), "css");
+            assert_eq!(
+                snapshot.document_model(document).unwrap().style_defaults(),
+                "css"
+            );
+
+            set_active(&root, "react-native").unwrap();
+            let snapshot = open_snapshot(&root).unwrap();
+            assert_eq!(snapshot.style_defaults_name(), "react-native");
+            assert_eq!(
+                snapshot.style_defaults().unwrap().chain(),
+                ["react-native", "css"]
+            );
+            assert_eq!(
+                snapshot.document_model(document).unwrap().style_defaults(),
+                "react-native"
+            );
+
+            // 잘못된 사용자 세트 파일은 열기·문서 읽기를 막지 않고 세트 조회만 오류입니다.
+            let sets = root.join(STYLE_DEFAULTS_DIR);
+            std::fs::create_dir_all(&sets).unwrap();
+            std::fs::write(
+                sets.join("broken.stellar.yaml"),
+                "extends: css\nfloat: left\n",
+            )
+            .unwrap();
+            let snapshot = open_snapshot(&root).unwrap();
+            assert_eq!(
+                snapshot.style_defaults().unwrap_err().code(),
+                "style-defaults-unknown-longhand"
+            );
+            assert!(snapshot.document_records(document).is_ok());
+        }
+
+        #[test]
+        fn apply_writes_changed_set_as_one_manifest_line_and_reverts_with_one_command() {
+            let (tmp, root, document) = project("sd-apply");
+            let manifest_path = root.join(MANIFEST_FILE);
+            let original = std::fs::read_to_string(&manifest_path).unwrap();
+            let snapshot = open_snapshot(&root).unwrap();
+            let request = ApplyRequest {
+                base_revision: snapshot.revision(),
+                document,
+                commands: vec![set_input("react-native")],
+            };
+
+            // dry-run은 세트를 확인만 하고 쓰지 않습니다.
+            let before = file_digest(&root);
+            apply(&root, &request, ApplyMode::DryRun, &LockPolicy::None).unwrap();
+            assert_eq!(file_digest(&root), before);
+
+            let outcome = apply(&root, &request, ApplyMode::Write, &locks(&tmp)).unwrap();
+            assert_eq!(outcome.command_count, 1);
+            assert_eq!(
+                std::fs::read_to_string(&manifest_path).unwrap(),
+                format!("{original}style_defaults: react-native\n"),
+                "stellar.yaml 한 줄 diff"
+            );
+            let reopened = open_snapshot(&root).unwrap();
+            assert_eq!(reopened.revision(), outcome.revision);
+            assert_eq!(
+                reopened.document_model(document).unwrap().style_defaults(),
+                "react-native"
+            );
+
+            // 이전 이름으로 되돌리는 같은 command 하나가 원래 bytes로 돌려놓습니다(`css`는 키를 지움).
+            let back = ApplyRequest {
+                base_revision: reopened.revision(),
+                document,
+                commands: vec![set_input("css")],
+            };
+            apply(&root, &back, ApplyMode::Write, &locks(&tmp)).unwrap();
+            assert_eq!(std::fs::read_to_string(&manifest_path).unwrap(), original);
+        }
+
+        #[test]
+        fn apply_rejects_sets_the_project_cannot_flatten_without_writing() {
+            let (tmp, root, document) = project("sd-reject");
+            let snapshot = open_snapshot(&root).unwrap();
+            let before = file_digest(&root);
+            for mode in [ApplyMode::DryRun, ApplyMode::Write] {
+                let request = ApplyRequest {
+                    base_revision: snapshot.revision(),
+                    document,
+                    commands: vec![set_input("missing")],
+                };
+                let error = apply(&root, &request, mode, &locks(&tmp)).unwrap_err();
+                assert!(
+                    matches!(error, ApplyError::Rejected { index: 0, .. }),
+                    "{error:?}"
+                );
+                assert_eq!(file_digest(&root), before, "거부하면 아무것도 쓰지 않음");
+            }
+
+            // 사용자 세트는 프로젝트에 파일이 있을 때만 고를 수 있습니다.
+            let sets = root.join(STYLE_DEFAULTS_DIR);
+            std::fs::create_dir_all(&sets).unwrap();
+            std::fs::write(
+                sets.join("compact.stellar.yaml"),
+                "extends: react-native\nrow-gap: 4px\n",
+            )
+            .unwrap();
+            let snapshot = open_snapshot(&root).unwrap();
+            let request = ApplyRequest {
+                base_revision: snapshot.revision(),
+                document,
+                commands: vec![set_input("compact")],
+            };
+            apply(&root, &request, ApplyMode::Write, &locks(&tmp)).unwrap();
+            let reopened = open_snapshot(&root).unwrap();
+            assert_eq!(reopened.style_defaults_name(), "compact");
+            assert_eq!(
+                reopened.style_defaults().unwrap().chain(),
+                ["compact", "react-native", "css"]
+            );
+        }
     }
 }
