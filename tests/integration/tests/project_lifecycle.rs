@@ -150,6 +150,7 @@ fn build_landing(editor: &mut Editor) -> (Timeline, StableId) {
             line(id(17), id(15), key(0x20), "구분선", 80.0),
         ],
         modifier_stacks: vec![bg_stack],
+        layout_records: Vec::new(),
     };
     let changes = editor.apply(
         vec![

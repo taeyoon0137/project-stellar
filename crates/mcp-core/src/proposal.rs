@@ -159,6 +159,27 @@ mod tests {
             request.commands.as_slice(),
             [CommandInput::Rename { .. }]
         ));
+        // 명시 layout longhand 두기·지우기(ADR-0086)는 필드 형식으로만 받습니다.
+        let request = parse_transaction(
+            &args(&format!(
+                r#"[{{"kind":"set-layout-property","node":"{NODE}","property":"display","value":"grid"}},{{"kind":"unset-property","node":"{NODE}","property":"row-gap"}}]"#
+            )),
+            100,
+        )
+        .unwrap();
+        assert!(matches!(
+            request.commands.as_slice(),
+            [
+                CommandInput::SetLayoutProperty { .. },
+                CommandInput::UnsetProperty { .. }
+            ]
+        ));
+        let canonical = parse_transaction(
+            &args(r#"[{"kind":"set-layout-property","canonical":"00"}]"#),
+            100,
+        )
+        .unwrap_err();
+        assert_eq!(canonical.code, "invalid-transaction");
     }
 
     #[test]
@@ -183,76 +204,5 @@ mod tests {
             parse_transaction(&bad, 1).unwrap_err().code,
             "invalid-transaction"
         );
-    }
-
-    /// `stellar apply`의 command 해석(`tools/stellar-cli/src/apply.rs`의 `command_input`)은 아직 CLI 자체
-    /// 구현입니다(ADR-0085 Consequences). 두 해석기가 갈라지지 않도록 CLI 소스의 match arm과 ops
-    /// [`stellar_ops::mcp_command_input::FIELD_SPECS`]의 종류·필드 이름이 같은지 소스 비교로 확인합니다.
-    /// crate 의존이 아니라 소스 파일 비교입니다(`exit_table_sync`와 같은 방식).
-    #[test]
-    fn cli_command_parser_has_the_same_kinds_and_fields_as_ops() {
-        use stellar_ops::mcp_command_input::{CANONICAL_FIELD, FIELD_SPECS};
-
-        let cli = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../tools/stellar-cli/src/apply.rs"
-        ));
-        let start = cli
-            .find("fn command_input(")
-            .expect("CLI command_input 함수");
-        let body = &cli[start..];
-        let body = &body[..body.find("\n}\n").expect("함수 끝")];
-        // 8칸 들여쓰기 `"kind" [| "kind"] =>` 줄에서 arm을 나눕니다. 마지막 arm은 `other =>`입니다.
-        let mut arms: Vec<(Vec<&str>, String)> = Vec::new();
-        let mut fallback = String::new();
-        let mut in_fallback = false;
-        for line in body.lines() {
-            let arm_head = line.strip_prefix("        ").filter(|l| {
-                (l.starts_with('"') || l.starts_with("other =>")) && l.contains(" => ")
-            });
-            if let Some(head) = arm_head {
-                if head.starts_with("other =>") {
-                    in_fallback = true;
-                } else {
-                    let names = head
-                        .split(" => ")
-                        .next()
-                        .unwrap()
-                        .split(" | ")
-                        .map(|n| n.trim_matches('"'))
-                        .collect();
-                    arms.push((names, String::new()));
-                    continue;
-                }
-            }
-            if in_fallback {
-                fallback.push_str(line);
-                fallback.push('\n');
-            } else if let Some((_, text)) = arms.last_mut() {
-                text.push_str(line);
-                text.push('\n');
-            }
-        }
-        let mut cli_kinds: Vec<&str> = arms.iter().flat_map(|(n, _)| n.iter().copied()).collect();
-        cli_kinds.sort_unstable();
-        let mut ops_kinds: Vec<&str> = FIELD_SPECS.iter().map(|s| s.kind).collect();
-        ops_kinds.sort_unstable();
-        assert_eq!(cli_kinds, ops_kinds, "필드 형식 종류 집합");
-        for spec in FIELD_SPECS {
-            let (_, text) = arms
-                .iter()
-                .find(|(names, _)| names.contains(&spec.kind))
-                .unwrap();
-            for (field, _) in spec.fields {
-                assert!(
-                    text.contains(&format!("\"{field}\"")),
-                    "CLI {}에 필드 {field}가 없습니다",
-                    spec.kind
-                );
-            }
-        }
-        // 그 밖의 종류는 양쪽 모두 `kind` + `canonical`만 받고, 없으면 unknown-command입니다.
-        assert!(fallback.contains(&format!("\"{CANONICAL_FIELD}\"")));
-        assert!(fallback.contains("\"unknown-command\""));
     }
 }

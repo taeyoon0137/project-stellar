@@ -160,6 +160,11 @@ pub enum SnapshotError {
         /// 속성 key.
         key: PropertyKey,
     },
+    /// layout record의 소유 node가 문서 node 레코드에 없습니다(ADR-0086).
+    LayoutOwnerMissing {
+        /// 소유 node.
+        node: StableId,
+    },
     /// 컴포넌트 정의 node payload를 해석할 수 없습니다.
     DefinitionPayload {
         /// 정의 node.
@@ -183,6 +188,9 @@ impl fmt::Display for SnapshotError {
             }
             SnapshotError::NonFiniteValue { object, key } => {
                 write!(f, "유한하지 않은 값: 객체 {object}, key 0x{:04X}", key.0)
+            }
+            SnapshotError::LayoutOwnerMissing { node } => {
+                write!(f, "layout record의 node {node}가 문서에 없습니다")
             }
             SnapshotError::DefinitionPayload { node, kind, reason } => write!(
                 f,

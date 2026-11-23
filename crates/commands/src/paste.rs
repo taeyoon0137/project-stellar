@@ -11,7 +11,7 @@ use stellar_document::{model::DocumentModel, modifier::ModifierStack};
 use crate::{
     codec::{decode_command, encode_command, CommandCodecError},
     command::{Command, CommandError},
-    duplicate::{remap_modifier_payload, remap_payload},
+    duplicate::{remap_layout, remap_modifier_payload, remap_payload},
     kind::CommandKind,
     node_ops::{DeleteSubtree, InsertNode},
     tree::path_element_ids,
@@ -25,7 +25,7 @@ pub struct ClipboardSubtree {
 }
 
 impl ClipboardSubtree {
-    /// 문서를 변경하지 않고 subtree와 modifier를 복사합니다. View root는 거부합니다.
+    /// 문서를 변경하지 않고 subtree와 modifier, 명시 layout record를 복사합니다. View root는 거부합니다.
     pub fn capture(model: &DocumentModel, root: StableId) -> Result<Self, CommandError> {
         Ok(Self {
             document: model.document_id(),
@@ -33,7 +33,9 @@ impl ClipboardSubtree {
         })
     }
 
-    /// 버전 header·출처 문서 ID·기존 canonical InsertNode codec을 사용합니다.
+    /// 버전 header·출처 문서 ID·기존 canonical InsertNode codec을 사용합니다. layout record가 없으면 bytes는
+    /// layout record 절이 생기기 전과 같습니다. 절이 있는 데이터를 절을 모르는 옛 앱이 읽으면 InsertNode
+    /// decode가 trailing bytes로 거부합니다(조용히 잃지 않음).
     pub fn encode(&self) -> Vec<u8> {
         let mut bytes = b"STELLAR-CLIP\x01".to_vec();
         bytes.extend_from_slice(&self.document.to_bytes());
@@ -145,6 +147,11 @@ impl ClipboardSubtree {
             }
             *stack = copy;
         }
+        // 명시 layout longhand(ADR-0086)는 값에 id가 없어 소유 node만 새 id로 옮깁니다.
+        for layout in &mut insert.layout_records {
+            *layout = remap_layout(&table, layout);
+        }
+        insert.layout_records.sort_by_key(|layout| layout.node);
         insert.validate(model)?;
         Ok(insert)
     }
@@ -316,6 +323,64 @@ mod tests {
                 root: sid(11)
             })))
             .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod layout_record_tests {
+    //! 클립보드 subtree가 명시 layout record(ADR-0086)를 담고 붙여넣을 때 새 id로 옮기는지.
+    use super::*;
+    use crate::command::test_fixtures::{sid, small_model};
+    use crate::request::CommandRequest;
+    use crate::state::DocumentState;
+    use stellar_core_types::clock::ManualClock;
+    use stellar_document::layout_record::{LayoutLonghand, LayoutRecord};
+
+    #[test]
+    fn clipboard_carries_layout_records_and_remaps_their_owner() {
+        let mut model = small_model();
+        let mut record = LayoutRecord::new(sid(13));
+        record
+            .set(
+                LayoutLonghand::FlexBasis,
+                LayoutLonghand::FlexBasis.parse("50%").unwrap(),
+            )
+            .unwrap();
+        model.set_layout_record(record).unwrap();
+        let clipboard =
+            ClipboardSubtree::decode(&ClipboardSubtree::capture(&model, sid(11)).unwrap().encode())
+                .unwrap();
+        let mut state = DocumentState::new(model);
+        // 원본을 지운 뒤에도 클립보드의 record로 붙여넣습니다.
+        state
+            .execute(&CommandRequest::at(
+                &state,
+                Command::DeleteSubtree(DeleteSubtree { root: sid(11) }),
+            ))
+            .unwrap();
+        let insert = clipboard
+            .plan(
+                state.model(),
+                sid(10),
+                OrderKey::from_bytes(vec![0x30]).unwrap(),
+                &mut StableIdGenerator::new(3),
+                &ManualClock::new(100),
+            )
+            .unwrap();
+        let child = insert.nodes[1].id;
+        assert_ne!(child, sid(13));
+        assert_eq!(insert.layout_records.len(), 1);
+        assert_eq!(insert.layout_records[0].node, child);
+        state
+            .execute(&CommandRequest::at(&state, Command::InsertNode(insert)))
+            .unwrap();
+        assert_eq!(
+            state
+                .model()
+                .layout_record(child)
+                .and_then(|r| r.get(LayoutLonghand::FlexBasis)),
+            Some(&LayoutLonghand::FlexBasis.parse("50%").unwrap())
         );
     }
 }

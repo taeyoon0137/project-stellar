@@ -270,6 +270,7 @@ fn component_library_chunk_round_trips_beside_documents() {
                 rectangle(id(23), id(21), key(0x20), "구분", 400.0, 1.0),
             ],
             modifier_stacks: Vec::new(),
+            layout_records: Vec::new(),
         })],
         "문서 구성",
     );

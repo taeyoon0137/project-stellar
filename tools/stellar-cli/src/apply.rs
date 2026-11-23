@@ -22,10 +22,18 @@
 //! | `move-node` | `node`, `new_parent`, `order_key`(OrderKey bytes 16진수) |
 //! | `insert-component-instance` | `parent`, `component`, `source_hash`(정의 원본 파일 hash), `x`, `y`(유한 f32 JSON 숫자) |
 //! | `set-property` | `node`, `property`(registry 이름 `opacity`·`border-top-left-radius` 또는 numeric key `0x0303`), `value`(CSS 값 텍스트) |
+//! | `set-layout-property` | `node`, `property`(CSS layout longhand 이름 `display`·`padding-top` 등), `value`(CSS 값 텍스트) |
+//! | `unset-property` | `node`, `property`(CSS layout longhand 이름) |
 //! | 그 밖의 closed enum 종류 이름(`insert-node` 등, VII.1.2) | `canonical`(commands canonical bytes 16진수) |
 //!
 //! 모든 object는 표에 있는 key만 가질 수 있습니다. 등록되지 않은 `kind`는 `unknown-command`(65)로
-//! 거부하고 아무것도 쓰지 않습니다. `--dry-run`은 파일을 쓰지 않고 semantic diff만 출력합니다.
+//! 거부하고 아무것도 쓰지 않습니다. `--dry-run`은 파일을 쓰지 않고 semantic diff만 출력합니다. command object
+//! 해석은 MCP proposal과 같은 함수(`stellar_ops::mcp_command_input::command_input`)입니다(ADR-0085 결정 2).
+//!
+//! `set-layout-property`는 node의 명시 layout longhand 하나를 두고, `unset-property`는 지웁니다(ADR-0086). 지운
+//! 뒤의 값은 활성 기본값 세트가 정합니다. 모르는 longhand 이름과 받지 못한 값은 `invalid-transaction`(65), node
+//! 종류에 붙지 않는 longhand와 명시 값이 없는 longhand 지우기는 `rejected-command`입니다. `set-property`도 속성
+//! 패널 행이 없는 CSS layout longhand(`display` 등)를 같은 layout record로 받습니다.
 //!
 //! `insert-component-instance`는 프로젝트 `design/components`의 정의 `component`를 참조하는 인스턴스를
 //! `parent`의 마지막 자식으로 넣고 위치 `(x, y)`를 Transform modifier 하나로 저장합니다. `source_hash`는
@@ -49,12 +57,10 @@
 use std::io::Read;
 use std::path::Path;
 
-use stellar_ops::apply::{
-    apply, ApplyError, ApplyMode, ApplyRequest, CommandInput, ComponentInstanceInsert, MAX_COMMANDS,
-};
+use stellar_ops::apply::{apply, ApplyError, ApplyMode, ApplyRequest, CommandInput, MAX_COMMANDS};
 use stellar_ops::core_types::ids::StableId;
-use stellar_ops::core_types::value::{FiniteF32, Size2, Transform2D, Vec2};
 use stellar_ops::lock::{default_lock_dir, LockPolicy};
+use stellar_ops::mcp_command_input::{command_input as parse_command, CommandFields};
 use stellar_ops::revision::ProjectRevision;
 
 use crate::exit::ExitStatus;
@@ -147,232 +153,40 @@ fn id_field(value: &JsonValue, key: &str, at: &str) -> Result<StableId, CliError
         })
 }
 
-fn bool_field(value: &JsonValue, key: &str, at: &str) -> Result<bool, CliError> {
-    field(value, key, at)?.as_bool().ok_or_else(|| {
-        invalid(
-            "invalid-transaction",
-            format!("{at}.{key}는 bool이어야 합니다"),
-        )
-    })
-}
+/// JSON object를 형식 중립 command 접근자로 씁니다.
+struct Fields<'a>(&'a JsonValue);
 
-fn f32_field(value: &JsonValue, key: &str, at: &str) -> Result<FiniteF32, CliError> {
-    let bad = || {
-        invalid(
-            "invalid-transaction",
-            format!("{at}.{key}는 유한 f32 범위의 JSON 숫자여야 합니다"),
-        )
-    };
-    let JsonValue::Number(number) = field(value, key, at)? else {
-        return Err(bad());
-    };
-    // JSON 원문에서 직접 f32로 변환해 f64를 거치는 이중 반올림을 피합니다.
-    let number = number.as_str().parse::<f32>().map_err(|_| bad())?;
-    FiniteF32::new(number).map_err(|_| bad())
-}
-
-fn hex_field(value: &JsonValue, key: &str, at: &str) -> Result<Vec<u8>, CliError> {
-    let text = text_field(value, key, at)?;
-    let bad = || {
-        invalid(
-            "invalid-transaction",
-            format!("{at}.{key}는 소문자 16진수여야 합니다"),
-        )
-    };
-    if text.len() % 2 != 0
-        || !text
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return Err(bad());
+impl CommandFields for Fields<'_> {
+    fn keys(&self) -> Option<Vec<&str>> {
+        self.0
+            .as_object()
+            .map(|pairs| pairs.iter().map(|(k, _)| k.as_str()).collect())
     }
-    (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).map_err(|_| bad()))
-        .collect()
+    fn text(&self, key: &str) -> Option<&str> {
+        self.0.get(key).and_then(JsonValue::as_str)
+    }
+    fn boolean(&self, key: &str) -> Option<bool> {
+        self.0.get(key).and_then(JsonValue::as_bool)
+    }
+    fn number_text(&self, key: &str) -> Option<&str> {
+        match self.0.get(key) {
+            Some(JsonValue::Number(number)) => Some(number.as_str()),
+            _ => None,
+        }
+    }
+    fn integer(&self, key: &str) -> Option<i64> {
+        self.0.get(key).and_then(JsonValue::as_i64)
+    }
+    fn has(&self, key: &str) -> bool {
+        self.0.get(key).is_some()
+    }
 }
 
+/// command object 하나를 MCP proposal과 같은 공용 해석으로 읽습니다. 진단 코드(`unknown-command`,
+/// `invalid-transaction`)는 그대로 씁니다.
 fn command_input(value: &JsonValue, index: usize) -> Result<CommandInput, CliError> {
-    let at = format!("commands[{index}]");
-    let kind = text_field(value, "kind", &at)?;
-    let input = match kind {
-        "set-visible" => {
-            only_keys(value, &["kind", "node", "visible"], &at)?;
-            CommandInput::SetVisible {
-                node: id_field(value, "node", &at)?,
-                visible: bool_field(value, "visible", &at)?,
-            }
-        }
-        "set-locked" => {
-            only_keys(value, &["kind", "node", "locked"], &at)?;
-            CommandInput::SetLocked {
-                node: id_field(value, "node", &at)?,
-                locked: bool_field(value, "locked", &at)?,
-            }
-        }
-        "rename" => {
-            only_keys(value, &["kind", "node", "name"], &at)?;
-            CommandInput::Rename {
-                node: id_field(value, "node", &at)?,
-                name: text_field(value, "name", &at)?.to_string(),
-            }
-        }
-        "replace-text" => {
-            only_keys(value, &["kind", "node", "start", "end", "text"], &at)?;
-            let index = |key| {
-                field(value, key, &at)?
-                    .as_i64()
-                    .and_then(|n| u32::try_from(n).ok())
-                    .ok_or_else(|| {
-                        invalid(
-                            "invalid-transaction",
-                            format!("{at}.{key}는 음이 아닌 u32 정수여야 합니다"),
-                        )
-                    })
-            };
-            CommandInput::ReplaceText(
-                stellar_ops::apply::ReplaceText::new(
-                    id_field(value, "node", &at)?,
-                    index("start")?,
-                    index("end")?,
-                    text_field(value, "text", &at)?.into(),
-                )
-                .ok_or_else(|| {
-                    invalid(
-                        "invalid-transaction",
-                        "Text 범위의 시작은 끝 이하여야 합니다",
-                    )
-                })?,
-            )
-        }
-        "set-frame-size" => {
-            only_keys(value, &["kind", "node", "width", "height"], &at)?;
-            let size = Size2::new(
-                f32_field(value, "width", &at)?.get(),
-                f32_field(value, "height", &at)?.get(),
-            )
-            .map_err(|error| invalid("invalid-transaction", format!("{at}: {error}")))?;
-            CommandInput::SetFrameSize {
-                node: id_field(value, "node", &at)?,
-                size,
-            }
-        }
-        "set-frame-width" | "set-frame-height" => {
-            let field = if kind == "set-frame-width" {
-                "width"
-            } else {
-                "height"
-            };
-            only_keys(value, &["kind", "node", field], &at)?;
-            let dimension = f32_field(value, field, &at)?;
-            if dimension.get() < 0.0 {
-                return Err(invalid(
-                    "invalid-transaction",
-                    format!("{at}.{field}는 음수일 수 없습니다"),
-                ));
-            }
-            let node = id_field(value, "node", &at)?;
-            if field == "width" {
-                CommandInput::SetFrameWidth {
-                    node,
-                    width: dimension,
-                }
-            } else {
-                CommandInput::SetFrameHeight {
-                    node,
-                    height: dimension,
-                }
-            }
-        }
-        "set-frame-transform" => {
-            only_keys(
-                value,
-                &["kind", "node", "a", "b", "c", "d", "tx", "ty"],
-                &at,
-            )?;
-            let transform = Transform2D::new(
-                f32_field(value, "a", &at)?.get(),
-                f32_field(value, "b", &at)?.get(),
-                f32_field(value, "c", &at)?.get(),
-                f32_field(value, "d", &at)?.get(),
-                f32_field(value, "tx", &at)?.get(),
-                f32_field(value, "ty", &at)?.get(),
-            )
-            .map_err(|error| invalid("invalid-transaction", format!("{at}: {error}")))?;
-            CommandInput::SetFrameTransform {
-                node: id_field(value, "node", &at)?,
-                transform,
-            }
-        }
-        "delete-subtree" => {
-            only_keys(value, &["kind", "root"], &at)?;
-            CommandInput::DeleteSubtree {
-                root: id_field(value, "root", &at)?,
-            }
-        }
-        "move-node" => {
-            only_keys(value, &["kind", "node", "new_parent", "order_key"], &at)?;
-            CommandInput::MoveNode {
-                node: id_field(value, "node", &at)?,
-                new_parent: id_field(value, "new_parent", &at)?,
-                order_key: hex_field(value, "order_key", &at)?,
-            }
-        }
-        "insert-component-instance" => {
-            only_keys(
-                value,
-                &["kind", "parent", "component", "source_hash", "x", "y"],
-                &at,
-            )?;
-            let source_hash = text_field(value, "source_hash", &at)?
-                .parse()
-                .map_err(|_| {
-                    invalid(
-                        "invalid-transaction",
-                        format!("{at}.source_hash는 sha256:<64자리 소문자 16진수>여야 합니다"),
-                    )
-                })?;
-            let position = Vec2::new(
-                f32_field(value, "x", &at)?.get(),
-                f32_field(value, "y", &at)?.get(),
-            )
-            .map_err(|_| {
-                invalid(
-                    "invalid-transaction",
-                    format!("{at}: 위치는 유한해야 합니다"),
-                )
-            })?;
-            CommandInput::InsertComponentInstance(ComponentInstanceInsert {
-                component: id_field(value, "component", &at)?,
-                source_hash,
-                parent: id_field(value, "parent", &at)?,
-                position,
-            })
-        }
-        "set-property" => {
-            only_keys(value, &["kind", "node", "property", "value"], &at)?;
-            CommandInput::SetProperty {
-                node: id_field(value, "node", &at)?,
-                property: text_field(value, "property", &at)?.to_string(),
-                value: text_field(value, "value", &at)?.to_string(),
-            }
-        }
-        other => {
-            if value.get("canonical").is_none() {
-                return Err(CliError::new(
-                    ExitStatus::DataErr,
-                    "unknown-command",
-                    format!("{at}: 알 수 없는 command 종류 {other:?}"),
-                ));
-            }
-            only_keys(value, &["kind", "canonical"], &at)?;
-            CommandInput::Canonical {
-                kind: other.to_string(),
-                bytes: hex_field(value, "canonical", &at)?,
-            }
-        }
-    };
-    Ok(input)
+    parse_command(&Fields(value), &format!("commands[{index}]"))
+        .map_err(|e| CliError::new(ExitStatus::DataErr, e.code, e.message))
 }
 
 /// 입력 JSON을 적용 요청으로 해석합니다.
@@ -536,6 +350,8 @@ pub fn run(args: &[String]) -> Result<Success, CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stellar_ops::apply::ComponentInstanceInsert;
+    use stellar_ops::core_types::value::Vec2;
 
     #[test]
     fn concurrent_write_is_distinguished_from_base_mismatch() {
@@ -654,7 +470,35 @@ mod tests {
                 value: "4px".into(),
             }]
         );
+        // 명시 layout longhand 두기·지우기(ADR-0086).
+        let request = parse(format!(
+            r#"{{"kind":"set-layout-property","node":"{id}","property":"display","value":"flex"}}"#
+        ))
+        .unwrap();
+        assert_eq!(
+            request.commands,
+            [CommandInput::SetLayoutProperty {
+                node: id,
+                property: "display".into(),
+                value: "flex".into(),
+            }]
+        );
+        let request = parse(format!(
+            r#"{{"kind":"unset-property","node":"{id}","property":"display"}}"#
+        ))
+        .unwrap();
+        assert_eq!(
+            request.commands,
+            [CommandInput::UnsetProperty {
+                node: id,
+                property: "display".into(),
+            }]
+        );
         for bad in [
+            format!(
+                r#"{{"kind":"unset-property","node":"{id}","property":"display","value":"flex"}}"#
+            ),
+            format!(r#"{{"kind":"set-layout-property","node":"{id}","property":"display"}}"#),
             format!(r#"{{"kind":"set-property","node":"{id}","property":"width"}}"#),
             format!(r#"{{"kind":"set-property","node":"{id}","property":"width","value":1}}"#),
             format!(

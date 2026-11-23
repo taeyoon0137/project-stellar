@@ -30,8 +30,8 @@ use crate::json::JsonValue as J;
 use crate::jsonrpc::RpcError;
 use crate::proposal::parse_transaction;
 
-/// CSS 선언 블록 최대 byte 수(`stellar css paste` 입력 상한과 같음).
-pub const MAX_DECLARATION_BYTES: usize = 16 * 1024;
+/// CSS 선언 블록 최대 byte 수(`stellar css paste` 입력 상한과 같은 ops 공용 상수).
+pub const MAX_DECLARATION_BYTES: usize = stellar_ops::css::MAX_DECLARATION_BYTES;
 
 fn arg_id(args: &J, key: &str) -> Result<StableId, RpcError> {
     args.get(key)

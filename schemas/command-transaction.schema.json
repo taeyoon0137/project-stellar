@@ -251,10 +251,45 @@
           {
             "type": "object",
             "additionalProperties": false,
+            "required": ["kind", "node", "property", "value"],
+            "properties": {
+              "kind": {
+                "const": "set-layout-property"
+              },
+              "node": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "property": {
+                "$ref": "#/$defs/text"
+              },
+              "value": {
+                "$ref": "#/$defs/text"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "node", "property"],
+            "properties": {
+              "kind": {
+                "const": "unset-property"
+              },
+              "node": {
+                "$ref": "#/$defs/stable-id"
+              },
+              "property": {
+                "$ref": "#/$defs/text"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
             "required": ["kind", "canonical"],
             "properties": {
               "kind": {
-                "enum": ["insert-node", "insert-modifier", "remove-modifier", "move-modifier", "set-modifier-property", "convert-fragment-to-frame", "convert-shape-to-path", "restore-node-records", "duplicate-subtree", "set-text-range-style", "add-page", "remove-page", "rename-page", "add-view", "remove-view", "rename-view", "apply-external-snapshot", "edit-path-point", "swap-instance", "set-style-defaults", "unset-property", "set-layout-property"]
+                "enum": ["insert-node", "insert-modifier", "remove-modifier", "move-modifier", "set-modifier-property", "convert-fragment-to-frame", "convert-shape-to-path", "restore-node-records", "duplicate-subtree", "set-text-range-style", "add-page", "remove-page", "rename-page", "add-view", "remove-view", "rename-view", "apply-external-snapshot", "edit-path-point", "swap-instance", "set-style-defaults"]
               },
               "canonical": {
                 "$ref": "#/$defs/hex"

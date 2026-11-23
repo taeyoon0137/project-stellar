@@ -23,10 +23,12 @@ use stellar_core_types::ids::StableId;
 /// - 1: VII.1.2 ~ `replace-text`(0x0050)까지.
 /// - 2: ADR-0079가 더한 종류(Page·View, 외부 snapshot 반영, Path point, Text 범위 style, 인스턴스 교체).
 /// - 3: ADR-0086이 더한 종류(기본값 세트 변경, layout longhand 지우기·두기).
+/// - 4: ADR-0086 개정이 더한 payload 절(`insert-node` 끝의 선택 layout record 절, `apply-external-snapshot`의
+///   layout record 변경 tag). 절이나 tag가 없는 command의 bytes는 version 3과 같습니다.
 ///
 /// 각 종류가 처음 들어간 버전은 [`CommandKind::codec_version`]입니다. history journal header가 이 값을
 /// 기록하므로 옛 reader는 모르는 종류를 담은 journal의 복원만 포기하고 문서는 건드리지 않습니다.
-pub const COMMAND_CODEC_VERSION: u32 = 3;
+pub const COMMAND_CODEC_VERSION: u32 = 4;
 
 use crate::command::Command;
 use crate::convert::{ConvertFragmentToFrame, ConvertShapeToPath, RestoreNodeRecords};

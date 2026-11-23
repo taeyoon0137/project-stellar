@@ -9,7 +9,8 @@
 //! 합니다. 쌍은 [`DuplicateSubtree::plan`]이 결정적 id 생성기(III.1.2)로 만들 수 있습니다.
 //!
 //! 적용은 재매핑한 레코드로 만든 [`InsertNode`]와 같은 검증·적용 경로를 지나며(부모·OrderKey·깊이·
-//! 참조·modifier 규칙), 역 command는 복제본 root의 [`DeleteSubtree`]입니다.
+//! 참조·modifier·layout record 규칙), 역 command는 복제본 root의 [`DeleteSubtree`]입니다. 복제본은 원본 node의
+//! 명시 layout longhand(ADR-0086)를 그대로 가집니다. 값에는 id가 없으므로 소유 node만 새 id로 바꿉니다.
 
 use std::collections::BTreeSet;
 
@@ -18,6 +19,7 @@ use stellar_core_types::ids::{IdRemapTable, StableId, StableIdGenerator};
 use stellar_core_types::order_key::OrderKey;
 use stellar_core_types::reference::NodeRef;
 use stellar_document::frame::Clipping;
+use stellar_document::layout_record::LayoutRecord;
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{ModifierEntry, ModifierId, ModifierPayload, ModifierStack};
 use stellar_document::records::{NodePayload, NodeRecord};
@@ -134,6 +136,13 @@ pub(crate) fn remap_modifier_payload(
     }
 }
 
+/// layout record를 새 소유 node로 옮깁니다. longhand 값은 id를 담지 않으므로 그대로입니다.
+pub(crate) fn remap_layout(table: &IdRemapTable, record: &LayoutRecord) -> LayoutRecord {
+    let mut copy = record.clone();
+    copy.node = table.remap(record.node);
+    copy
+}
+
 impl DuplicateSubtree {
     /// 결정적 id 생성기로 재매핑 쌍을 만들어 command를 계획합니다(테스트·fuzz용).
     pub fn plan<C: MonotonicClock>(
@@ -205,6 +214,7 @@ impl DuplicateSubtree {
         }
         let mut records = Vec::with_capacity(nodes.len());
         let mut stacks = Vec::new();
+        let mut layouts = Vec::new();
         for (index, id) in nodes.iter().enumerate() {
             let record = model
                 .record(*id)
@@ -243,10 +253,15 @@ impl DuplicateSubtree {
                 }
                 stacks.push(copy);
             }
+            if let Some(layout) = model.layout_record(*id) {
+                layouts.push(remap_layout(&table, layout));
+            }
         }
+        layouts.sort_by_key(|record: &LayoutRecord| record.node);
         Ok(InsertNode {
             nodes: records,
             modifier_stacks: stacks,
+            layout_records: layouts,
         })
     }
 
@@ -413,6 +428,7 @@ mod tests {
             Command::InsertNode(InsertNode {
                 nodes: vec![frame(20, Some(11), 0x40), path_record, clipped],
                 modifier_stacks: vec![stack],
+                layout_records: Vec::new(),
             }),
         )
         .unwrap();
@@ -551,5 +567,77 @@ mod tests {
         let into_self = plan(&state, 20, 0x30);
         run(&mut state, Command::DuplicateSubtree(into_self)).unwrap();
         assert_eq!(node_ids(state.model()).len(), 10);
+    }
+}
+
+#[cfg(test)]
+mod layout_record_tests {
+    //! 복제가 명시 layout record(ADR-0086)를 새 id로 옮기는지.
+    use super::*;
+    use crate::codec::{decode_command, encode_command};
+    use crate::command::test_fixtures::{sid, small_model};
+    use crate::command::Command;
+    use crate::request::CommandRequest;
+    use crate::state::DocumentState;
+    use stellar_core_types::clock::ManualClock;
+    use stellar_document::layout_record::LayoutLonghand;
+
+    #[test]
+    fn duplicate_copies_layout_records_to_the_new_ids() {
+        let mut model = small_model();
+        let mut record = LayoutRecord::new(sid(11));
+        record
+            .set(
+                LayoutLonghand::Display,
+                LayoutLonghand::Display.parse("flex").unwrap(),
+            )
+            .unwrap();
+        model.set_layout_record(record).unwrap();
+        let mut child = LayoutRecord::new(sid(13));
+        child
+            .set(
+                LayoutLonghand::AlignSelf,
+                LayoutLonghand::AlignSelf.parse("center").unwrap(),
+            )
+            .unwrap();
+        model.set_layout_record(child).unwrap();
+        let mut generator = StableIdGenerator::new(9);
+        let clock = ManualClock::new(100);
+        let command = DuplicateSubtree::plan(
+            &model,
+            sid(11),
+            sid(10),
+            OrderKey::from_bytes(vec![0x30]).unwrap(),
+            &mut generator,
+            &clock,
+        )
+        .unwrap();
+        let copy_root = command.copy_root().unwrap();
+        let copy_child = command
+            .remap
+            .iter()
+            .find(|(old, _)| *old == sid(13))
+            .map(|(_, new)| *new)
+            .unwrap();
+        // redo 결정론: command bytes에는 record가 없고 적용 시점의 원본 record에서 만듭니다.
+        let command = Command::DuplicateSubtree(command);
+        assert_eq!(decode_command(&encode_command(&command)).unwrap(), command);
+        let mut state = DocumentState::new(model);
+        let inverse = state
+            .execute(&CommandRequest::at(&state, command))
+            .unwrap()
+            .inverse;
+        let copied = state.model().layout_record(copy_root).unwrap();
+        assert_eq!(
+            copied.get(LayoutLonghand::Display),
+            Some(&LayoutLonghand::Display.parse("flex").unwrap())
+        );
+        assert_eq!(copied.node, copy_root);
+        assert!(state.model().layout_record(copy_child).is_some());
+        // 원본은 그대로입니다.
+        assert!(state.model().layout_record(sid(11)).is_some());
+        state.execute(&CommandRequest::at(&state, inverse)).unwrap();
+        assert!(state.model().layout_record(copy_root).is_none());
+        assert_eq!(state.model().to_records().unwrap().layout_records.len(), 2);
     }
 }

@@ -331,6 +331,7 @@ fn catalog(editor: &mut Editor) {
             vec![Command::InsertNode(InsertNode {
                 nodes,
                 modifier_stacks: stacks,
+                layout_records: Vec::new(),
             })],
             "섹션 삽입",
         );
@@ -752,6 +753,7 @@ fn product_serializer_splits_views_over_approved_threshold() {
         commands.push(Command::InsertNode(InsertNode {
             nodes,
             modifier_stacks: Vec::new(),
+            layout_records: Vec::new(),
         }));
     }
     editor.apply(commands, "큰 View");

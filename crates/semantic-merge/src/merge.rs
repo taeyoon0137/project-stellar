@@ -2367,4 +2367,56 @@ pub(crate) mod tests {
             "owner 객체 conflict면 base 순서"
         );
     }
+
+    /// 명시 layout longhand(ADR-0086)는 longhand마다 속성 하나라 서로 다른 longhand 편집은 합쳐지고, 같은 longhand를
+    /// 다르게 바꾸면 그 속성 하나만 conflict입니다. 한쪽의 지우기(미설정)도 속성 제거로 합쳐집니다.
+    #[test]
+    fn layout_longhands_merge_per_longhand() {
+        use keys::{layout, layout_container};
+        let base = edit(&base(), 11, |o| {
+            set(o, layout_container::DISPLAY, text("flex"));
+            set(o, layout_container::COLUMN_GAP, text("4px"));
+            set(o, layout::FLEX_GROW, text("1"));
+        });
+        let ours = edit(&base, 11, |o| {
+            set(o, layout_container::COLUMN_GAP, text("8px"));
+        });
+        let theirs = edit(&base, 11, |o| {
+            set(o, layout_container::JUSTIFY_CONTENT, text("center"));
+            o.remove_property(&o.path(&[layout::FLEX_GROW])).unwrap();
+        });
+        let result = run(&base, &ours, &theirs);
+        assert!(result.is_clean(), "{:?}", result.conflicts);
+        let merged = result.merged.get(sid(11)).unwrap();
+        let get = |key| merged.property(&merged.path(&[key]));
+        assert_eq!(get(layout_container::DISPLAY), Some(&text("flex")));
+        assert_eq!(get(layout_container::COLUMN_GAP), Some(&text("8px")));
+        assert_eq!(
+            get(layout_container::JUSTIFY_CONTENT),
+            Some(&text("center"))
+        );
+        assert_eq!(get(layout::FLEX_GROW), None);
+
+        let ours = edit(&base, 11, |o| {
+            set(o, layout_container::DISPLAY, text("grid"))
+        });
+        let theirs = edit(&base, 11, |o| {
+            set(o, layout_container::DISPLAY, text("block"))
+        });
+        let result = run(&base, &ours, &theirs);
+        assert_eq!(result.conflicts.len(), 1);
+        assert_eq!(result.conflicts[0].kind, ConflictKind::PropertyValue);
+        assert_eq!(
+            result.conflicts[0].target,
+            ConflictTarget::Property(PropertyPath::with_keys(
+                sid(11),
+                vec![layout_container::DISPLAY]
+            ))
+        );
+        let merged = result.merged.get(sid(11)).unwrap();
+        assert_eq!(
+            merged.property(&merged.path(&[layout_container::DISPLAY])),
+            Some(&text("flex"))
+        );
+    }
 }

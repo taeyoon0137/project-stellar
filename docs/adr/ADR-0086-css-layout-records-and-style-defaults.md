@@ -198,3 +198,82 @@ Accepted (2026-11-23).
     상자에서 다릅니다.
   - 지금까지 문서에서 레이아웃 입력을 만드는 제품 경로가 없었으므로 저장된 결과는 바뀌지 않습니다.
 - Frame 위치·transform 분리(IX.11.9)와 border longhand 분리(IX.11.10)는 IX.11.21 묶음 step으로 넣습니다.
+
+## 개정(2026-11-23, layout-wiring)
+
+Consequences에 적은 한계 가운데 편집·동기화 경로의 것을 닫습니다. 위 본문은 고치지 않고 이 절이 보완합니다.
+
+1. **node 구조 command가 layout record를 옮깁니다.**
+   - `InsertNode`에 `layout_records`(삽입하는 node의 명시 record, 소유 node StableId 순)를 더합니다. 검증은 문서
+     validator와 같은 `layout_record::check_records`입니다. 삽입하지 않는 node의 record, 소유자당 둘 이상, 빈
+     record, node 종류에 붙지 않는 longhand를 거부합니다.
+   - binary 형식에서 record 목록은 payload 끝의 선택 절입니다(record 수 `u32` 1 이상 + 길이 접두 `LayoutRecord`).
+     record가 없으면 절을 쓰지 않아 bytes가 예전과 같습니다. 빈 절과 소유 node가 오름차순이 아닌 절은 거부합니다.
+     같은 순서 규칙을 적용 전 검증에서도 봅니다. 순서가 어긋난 command는 history journal에 쓴 뒤 다시 읽을 수 없기
+     때문입니다.
+   - `DeleteSubtree`의 역 `InsertNode`는 subtree의 record를 담습니다. 그래서 history journal을 저장했다가 다시 연
+     뒤의 삭제 undo도 record를 되살립니다. 결정 5의 "모델이 StableId로 record를 들고 있음"은 같은 session 안에서만
+     성립하기 때문입니다.
+   - 같은 session에서 지운 node와 같은 id를 record 없이 다시 넣으면, 모델에 남은 옛 record를 지웁니다. 삽입한 node의
+     명시 값은 그 `InsertNode`가 정합니다.
+   - `DuplicateSubtree`와 클립보드 붙여넣기(`ClipboardSubtree`)는 원본 record를 복사하고 소유 node만 새 id로
+     바꿉니다. longhand 값에는 id가 없습니다. `DuplicateSubtree` bytes는 바뀌지 않습니다. record는 적용 시점의 원본
+     문서에서 만듭니다(재매핑 쌍과 같은 방식).
+2. **외부 변경 반영(`ApplyExternalSnapshot`, ADR-0079)이 layout record를 반영합니다.**
+   - 변경 단위에 `RecordChange::Layout { node, before, after }`(tag 7)를 더합니다. 빈 record는 `None`입니다.
+   - 이전 값은 모델의 현재 record와 같아야 합니다. 결과 검사는 바뀐 record 목록까지 포함해 전체 validator로 합니다.
+     그래서 지운 node에 record가 남는 변경 집합은 거부됩니다.
+   - 적용 순서는 node 재삽입·제자리 변경·modifier stack 다음입니다. 떼어 냈다 다시 넣은 node는 모델이 들고 있던
+     record를 되찾습니다. 새로 넣은 node에 같은 id의 옛 record가 남아 있고 외부 원본에 record가 없으면 지웁니다.
+   - 이것으로 외부에서 고친 `layout` 줄을 앱이 다음 저장에서 덮어쓰는 문제가 닫힙니다.
+3. **command codec version 4.** 1·2번의 선택 절과 tag가 payload 형식을 바꾸므로 `COMMAND_CODEC_VERSION`을 4로
+   올립니다(ADR-0079의 규칙). 절·tag가 없는 command bytes는 version 3과 같고, version 3 이하 journal은 그대로 읽힙니다.
+   version 3 reader는 header가 4인 journal의 복원을 포기하고 문서는 건드리지 않습니다. 클립보드 형식 header
+   (`STELLAR-CLIP\x01`)는 그대로 둡니다. record 절이 있는 클립보드를 옛 앱이 읽으면 `InsertNode` decode가 trailing
+   bytes로 거부합니다. 클립보드는 저장 포맷이 아니라 조용히 잃지 않는 것으로 충분합니다.
+4. **semantic diff·merge가 layout record를 봅니다.**
+   - 문서 node 객체에 명시 longhand마다 속성 하나를 둡니다. 경로는 `LayoutLonghand::record_key` 하나입니다(item
+     `0x0010`–`0x0025`, Frame container `0x0110`–`0x0121`). 값은 `layout_record::format_value`의 정규 CSS 값 텍스트입니다.
+     텍스트 원본 `layout` 줄과 같은 표기입니다.
+   - 명시하지 않은 longhand는 속성이 없습니다. longhand 하나의 두기·바꾸기·지우기가 따로 diff·stage·병합됩니다.
+     같은 longhand를 양쪽이 다르게 바꾸면 그 속성 하나만 property-value conflict입니다. semantic-merge는 속성 경로
+     단위 규칙을 그대로 쓰므로 코드 변경이 없습니다.
+   - 역투영은 record key 하나인 경로만 layout으로 읽습니다. 값은 `LayoutLonghand::parse`로 읽고, 다시 쓴 표기가 입력과
+     같아야 합니다(같은 값의 다른 표기 거부, ADR-0077 개정 1과 같은 규칙). 소유 node가 없는 record는 snapshot 구성이
+     `LayoutOwnerMissing`으로 거부합니다.
+   - payload 크기 종류의 `width`·`height`는 record에 없으므로 payload 속성 그대로입니다. 같은 값이 두 경로에 생기지
+     않습니다.
+5. **CLI·MCP 편집 입력.**
+   - CommandTransaction JSON 필드 형식에 `set-layout-property`(`node`, `property`, `value`)와 `unset-property`
+     (`node`, `property`)를 더합니다. `property`는 CSS layout longhand 이름이고 값은 `LayoutLonghand::parse`로 읽습니다.
+     문서 없이 `SetLayoutProperty`·`UnsetProperty` command 하나가 됩니다. 모르는 이름·받지 않는 값은 입력 오류,
+     node 종류에 붙지 않는 longhand와 명시 값 없는 지우기는 적용 거부입니다.
+   - 두 종류는 필드 형식 종류가 되었으므로 JSON에서 `canonical` 형식으로는 받지 않습니다(`set-property`와 같은 규칙).
+     schema는 `cargo xtask generate-command-schema`로 다시 만듭니다.
+   - `set-property`와 `stellar css paste`·MCP `document.propose_css_paste`는 같은 `ops::css::paste_plan`을 씁니다.
+     - 속성 패널 행이 선택한 모든 node에 있는 이름은 지금처럼 속성 패널 경로가 받습니다. 예: `left`·`top`(위치
+       transform, IX.11.9 전까지), payload 크기 종류의 `width`·`height`.
+     - 그 밖의 CSS layout longhand 이름은 node의 layout record에 명시 값으로 둡니다. 예: `display`, `padding-*`,
+       `gap`의 longhand, Text·Path·Line·ComponentInstance의 `width`·`height`.
+     - shorthand는 먼저 펼칩니다. 펼친 longhand가 하나라도 record로 가면 longhand마다 나눕니다. 그렇지 않으면 원래
+       선언을 그대로 속성 패널 경로에 넘깁니다. 기존 선언의 결과는 바뀌지 않습니다.
+     - `inset`은 `top`·`left`가 transform, `right`·`bottom`이 record로 나뉩니다. IX.11.9가 위치를 record로 옮기면 하나가
+       됩니다.
+     - 빈 선택과 문서에 없는 레이어는 모든 선언이 record로 가도 속성 패널 경로와 같은 `empty-selection`·
+       `unknown-node` 오류입니다.
+     - 잠금은 `commands::lock`의 `NodeAccess::permits`로 봅니다. record 결과(command·적용·건너뜀)는 속성 패널 경로
+       결과 뒤에 붙습니다.
+   - `stellar css copy`·MCP `document.copy_css`는 같은 이름 규칙으로 명시 record 값을 함께 냅니다. 복사한 블록을 다시
+     붙이면 바꿀 것이 없습니다.
+6. **이중 구현 제거.**
+   - `stellar apply`의 command object 해석은 `stellar_ops::mcp_command_input::command_input` 하나입니다. CLI 자체
+     해석기와, 두 해석기를 소스 비교로 맞추던 mcp-core test를 지웁니다(ADR-0085 Consequences).
+   - 선언 블록 상한은 `ops::css::MAX_DECLARATION_BYTES` 하나입니다. 값은 문서 선언 블록 parser 상한(`MAX_BLOCK_LEN`)과
+     같습니다. CLI `css paste` 입력과 MCP 인자 검사가 이 상수를 씁니다.
+7. **남은 한계.**
+   - View 삭제(`RemoveView`)의 역 `AddView`는 View tree의 record를 담지 않습니다(commands `page_view`). 같은 session
+     undo는 결정 5로 되살아나지만, 저장된 journal로 다시 연 뒤의 View 삭제 undo는 record를 잃습니다.
+   - `stellar query`의 node 속성 목록(`ops::query::node_detail`)은 layout 속성을 내지 않습니다. 출처 열(IX.11.28)과 함께
+     처리합니다.
+   - 컴포넌트 원본·정의 node의 record(ADR-0061 형식 개정)와 `SetStyleDefaults` 거울 연결은 본문 Consequences 그대로
+     남습니다.
