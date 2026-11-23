@@ -67,10 +67,14 @@ fn checked_in_window_session_fixture_converts() {
     let dir = TempDir::new("text-switch-fixture");
     let copy = dir.path.join("project");
     copy_dir(&root, &copy);
-    // 커밋된 fixture는 옛 배치(`design/current` 등, ADR-0122 이전)입니다. 열기 관찰과 같은 migration으로 옮깁니다.
-    let migrated = stellar_project::cache::migrate_layout(&copy).unwrap();
-    assert!(migrated.moved.found);
-    assert!(convert(&copy));
+    // 커밋된 fixture는 Git 원본인 텍스트 원본만 담습니다(ADR-0122 개정 2026-11-24). 옛 배치가 없고, chunk cache는
+    // 원본에서 다시 만듭니다.
+    assert!(!copy.join("design/current").exists());
+    assert!(stellar_project::document_io::session::read_source(&copy)
+        .unwrap()
+        .is_some());
+    stellar_project::cache::rebuild_from_text(&copy).unwrap();
+    assert!(stellar_storage::generation::current::current_pointer_path(&copy).is_file());
 }
 
 fn copy_dir(from: &Path, to: &Path) {

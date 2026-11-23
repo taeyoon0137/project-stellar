@@ -291,8 +291,18 @@ fn context_changed_on_both_sides_goes_to_reconciliation_with_a_conflict_candidat
     incoming.context.add_requirement(sid(950), sid(900));
     let decision = respond(&mut world, &base, &incoming);
     // 에이전트 경로는 문서를 바꾸지 않습니다(ADR-0124). Context가 양쪽에서 갈라진 것을 판정 근거로 냅니다.
-    assert_eq!(world.history.doc.model().context(), &key_renamed(&base, "brand").into_model().unwrap().context().clone());
-    assert_eq!(decision.analysis.partition.divergent, vec![RecordTarget::Context]);
+    assert_eq!(
+        world.history.doc.model().context(),
+        &key_renamed(&base, "brand")
+            .into_model()
+            .unwrap()
+            .context()
+            .clone()
+    );
+    assert_eq!(
+        decision.analysis.partition.divergent,
+        vec![RecordTarget::Context]
+    );
     let conflicts = &decision.analysis.conflicts;
     assert_eq!(conflicts.len(), 1, "{conflicts:?}");
     assert_eq!(conflicts[0].object, sid(900));

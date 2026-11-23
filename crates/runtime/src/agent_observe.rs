@@ -11,12 +11,12 @@
 //! - history preview(속성 scrub)는 preview 중 넣지 않고 끝에서 마지막 change set 하나를 넣습니다. Undo·Redo 재생과 에이전트
 //!   batch 적용은 그 자리에서 `observe`를 부르므로 이 대기열에 넣지 않습니다.
 
-use stellar_ops::diff::DocumentSource;
 use stellar_agent_edit::agent_history::external::respond_to_external;
 use stellar_agent_edit::agent_history::{SessionContext, SessionEndReport};
 use stellar_commands::change::ChangeSet;
 use stellar_commands::id::{CommandId, CommandOrigin};
 use stellar_history::agent::WindowAgentHistory;
+use stellar_ops::diff::DocumentSource;
 
 use crate::agent_edit::{monotonic_ms, AgentWindow, WindowAgentEdit};
 use crate::agent_session::fresh_id;

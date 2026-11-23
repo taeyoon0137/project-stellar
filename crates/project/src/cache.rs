@@ -515,9 +515,15 @@ mod working_tree_tests {
         std::fs::write(dir.join("design/current"), b"legacy pointer").unwrap();
         let error = migrate_working_tree(&dir).unwrap_err();
         assert!(matches!(error, CacheError::LegacyWithoutSource), "{error}");
-        assert!(dir.join("design/current").is_file(), "옛 pointer가 그대로 남음");
+        assert!(
+            dir.join("design/current").is_file(),
+            "옛 pointer가 그대로 남음"
+        );
         assert!(dir.join("design/generations").is_dir());
-        assert!(!dir.join(".stellar/cache/chunks").exists(), "cache로 옮기지 않음");
+        assert!(
+            !dir.join(".stellar/cache/chunks").exists(),
+            "cache로 옮기지 않음"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

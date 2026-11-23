@@ -17,9 +17,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use stellar_project::cache::{
-    collect_garbage, default_retention, rebuild_from_text, CacheError,
-};
+use stellar_project::cache::{collect_garbage, default_retention, rebuild_from_text, CacheError};
 pub use stellar_project::cache::{GcReport, LayoutMigration, Rebuild};
 use stellar_project::document_io::session::observe;
 use stellar_storage::hash::ContentHash;
@@ -100,7 +98,8 @@ fn manifest_count(root: &Path) -> usize {
 /// cache 상태를 읽습니다. 옛 배치가 있으면 열기 관찰처럼 cache 위치로 옮깁니다.
 pub fn status(root: &Path) -> Result<CacheStatus, CacheCommandError> {
     let root = canonical(root)?;
-    let migrated = stellar_project::cache::migrate_working_tree(&root).map_err(CacheCommandError::Cache)?;
+    let migrated =
+        stellar_project::cache::migrate_working_tree(&root).map_err(CacheCommandError::Cache)?;
     let disk = observe(&root).map_err(|e| CacheCommandError::Observe(e.to_string()))?;
     Ok(CacheStatus {
         location: stellar_project::cache::CACHE_RELATIVE,
@@ -148,7 +147,8 @@ pub fn migrate(
 ) -> Result<CacheMigration, CacheCommandError> {
     let root = canonical(root)?;
     let _guard = locked(&root, lock)?;
-    let layout = stellar_project::cache::migrate_working_tree(&root).map_err(CacheCommandError::Cache)?;
+    let layout =
+        stellar_project::cache::migrate_working_tree(&root).map_err(CacheCommandError::Cache)?;
     let untracked = crate::git::GitSession::open_for_os_user(&root)
         .map_err(|e| e.to_string())
         .and_then(|session| session.migrate_cache().map_err(|e| e.to_string()));

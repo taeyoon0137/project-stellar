@@ -2417,13 +2417,12 @@ impl ProjectWindowSession {
         };
         // 외부 변경 관찰값(ADR-0124 결정 5): 병합 결과와 관계없이 lease 겹침을 판정합니다.
         if let (Ok(base), Some(model)) = (&base, disk.model.as_ref()) {
-            self.agent_watch
-                .note_external(|| {
-                    Some((
-                        base.clone(),
-                        stellar_ops::diff::DocumentSource::of_model(model).ok()?,
-                    ))
-                });
+            self.agent_watch.note_external(|| {
+                Some((
+                    base.clone(),
+                    stellar_ops::diff::DocumentSource::of_model(model).ok()?,
+                ))
+            });
         }
         let merged = crate::reconcile::merge_window(base, self.model_of(), disk.model.as_ref());
         match merged {
