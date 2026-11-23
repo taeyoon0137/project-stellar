@@ -37,9 +37,9 @@ use stellar_document::model::DocumentModel;
 use stellar_renderer_core::batching::TargetInfo;
 use stellar_renderer_core::clip_plan::ClipCapabilities;
 use stellar_renderer_core::graph_trace::{
-    compile_frame_traced, RenderGraphCompileTrace, TraceClock,
+    compile_frame_traced_with, RenderGraphCompileTrace, TraceClock,
 };
-use stellar_renderer_core::pass_compiler::{CompileInput, EffectBoundaries};
+use stellar_renderer_core::pass_compiler::{CompileInput, EffectBoundaries, FrameCompiler};
 use stellar_renderer_core::render_graph::{ClearColor, SampleCount, TextureFormat};
 use stellar_runtime::canvas::scene_source::{
     document_scene_source, scene_edits, scene_invalidations, DocumentSceneSource,
@@ -214,6 +214,8 @@ struct Pipeline {
     wall: WallClock,
     scene_traces: Vec<SceneBuildTrace>,
     graph_traces: Vec<RenderGraphCompileTrace>,
+    /// 바뀐 scene 부분만 다시 compile하는 render graph compiler(ADR-0090).
+    compiler: FrameCompiler,
     transactions: u64,
 }
 
@@ -289,6 +291,7 @@ impl Pipeline {
             wall,
             scene_traces: vec![first],
             graph_traces: Vec::new(),
+            compiler: FrameCompiler::new(),
             transactions: 0,
         };
         if matches!(scenario, ReplayScenario::Drag | ReplayScenario::Resize) {
@@ -364,8 +367,14 @@ impl Pipeline {
             format: TextureFormat::Bgra8Unorm,
             samples: SampleCount::X4,
         };
-        compile_frame_traced(&input, surface, &self.wall, &mut self.graph_traces)
-            .map_err(|e| format!("render graph: {e:?}"))?;
+        compile_frame_traced_with(
+            &mut self.compiler,
+            &input,
+            surface,
+            &self.wall,
+            &mut self.graph_traces,
+        )
+        .map_err(|e| format!("render graph: {e:?}"))?;
         Ok(())
     }
 

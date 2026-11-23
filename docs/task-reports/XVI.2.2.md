@@ -63,3 +63,18 @@
 - 재생 layout 변환은 Free node만 다룹니다. 문서 → layout 입력 연결이 생기면 그 경로로 바꿔야 합니다(이중 경로 정리).
 - render graph compile이 증분이 아니라 예산을 넘습니다(renderer-core 후속).
 - 부하가 큰 공유 장비에서 잰 값이라 p99 변동이 큽니다.
+
+## 후속 보완 (2026-11-23, render graph 증분 compile)
+
+- 변경 파일: `tools/xtask/src/replay/runner.rs` — 재생 내내 `FrameCompiler` 하나로 render graph를 compile합니다(ADR-0090 결정 7). 이전에는 frame마다 snapshot 전체를 compile했습니다.
+- 측정(release, 2만 가시 node, 개발 장비 Apple M3 Max, load average 23\~48, 이전 commit build와 번갈아 3회):
+
+  | scenario | render graph p50 이전 → 이후 | T0→T5 p50 이전 → 이후 |
+  |---|---|---|
+  | Pan | 3.34\~3.76ms → 1.14\~1.33ms | 3.48\~3.85ms → 1.18\~1.54ms |
+  | Drag | 3.43\~4.08ms → 0.41\~0.44ms | 3.98\~4.71ms → 0.66\~0.70ms |
+  | Resize | 3.42\~3.90ms → 0.41\~0.45ms | 3.96\~4.43ms → 0.67\~0.78ms |
+
+- 마지막 scene semantic hash는 이전과 같습니다. 세부와 p99는 ADR-0090 Performance입니다.
+- 검증: `cargo test -p xtask replay` 7 passed. `cargo xtask replay run`(release) 3 scenario 결과 JSON 생성, gate 통과.
+- 남은 한계: Pan은 frame마다 viewport가 바뀌어 전체 compile이며 §6.2 Render Graph 목표(0.75ms)를 넘습니다(ADR-0090 Consequences). 기준 장비(M1 16GB) 측정이 남았습니다.
