@@ -164,8 +164,8 @@ pub fn lower_motions(
 ) -> WebMotion {
     let mut out = WebMotion::default();
     let root = element_id(ir.root().id);
-    // (selector) → 항목(입력 순: motion id 순, 대상 순).
-    let mut groups: BTreeMap<String, Vec<Entry>> = BTreeMap::new();
+    // (selector) → (대상 element, Becomes 여부, 항목). 입력 순: motion id 순, 대상 순.
+    let mut groups: BTreeMap<String, (StableId, bool, Vec<Entry>)> = BTreeMap::new();
     let mut order: Vec<String> = Vec::new();
     for motion in &ir.motions {
         let timing_feature = MotionFeature::of_timing(&motion.timing);
@@ -202,28 +202,53 @@ pub fn lower_motions(
                 ));
             }
             let element = element_id(target.root());
-            let selector = match &motion.start {
-                IrMotionStart::Becomes { state, value } => format!(
-                    "#{root}[{}={}] #{element}",
-                    state_attr_name(*state),
-                    css_string(&state_attr_value(value))
-                ),
-                IrMotionStart::Changes { .. } => format!("#{element}"),
+            let (selector, becomes) = match &motion.start {
+                IrMotionStart::Becomes { state, value } => {
+                    let condition = format!(
+                        "#{root}[{}={}]",
+                        state_attr_name(*state),
+                        css_string(&state_attr_value(value))
+                    );
+                    // 상태 속성은 export root에 있으므로 root 자신이 대상이면 자손 결합자를 쓰지 않습니다.
+                    if target.root() == ir.root().id {
+                        (condition, true)
+                    } else {
+                        (format!("{condition} #{element}"), true)
+                    }
+                }
+                IrMotionStart::Changes { .. } => (format!("#{element}"), false),
             };
             if !groups.contains_key(&selector) {
                 order.push(selector.clone());
             }
-            groups.entry(selector).or_default().push(Entry {
-                property,
-                duration: format!("{}ms", num(motion.duration_ms)),
-                delay: format!("{}ms", num(motion.delay_ms)),
-                timing: timing.clone(),
-                play_reduced: motion.reduced_motion == IrReducedMotion::Play,
-            });
+            groups
+                .entry(selector)
+                .or_insert_with(|| (target.root(), becomes, Vec::new()))
+                .2
+                .push(Entry {
+                    property,
+                    duration: format!("{}ms", num(motion.duration_ms)),
+                    delay: format!("{}ms", num(motion.delay_ms)),
+                    timing: timing.clone(),
+                    play_reduced: motion.reduced_motion == IrReducedMotion::Play,
+                });
         }
     }
+    // Becomes 규칙은 specificity가 높아 같은 element의 `Changes` 목록을 가립니다. 그래서 Becomes 규칙에 같은
+    // element의 `Changes` 항목을 앞에 함께 씁니다. 같은 속성이 겹치면 CSS는 목록의 마지막 항목을 쓰므로 그 상태로
+    // 들어갈 때는 Becomes 항목이 이깁니다.
+    let changes: BTreeMap<StableId, Vec<Entry>> = groups
+        .values()
+        .filter(|(_, becomes, _)| !becomes)
+        .map(|(element, _, entries)| (*element, entries.clone()))
+        .collect();
     for selector in order {
-        let entries = &groups[&selector];
+        let (element, becomes, own) = &groups[&selector];
+        let mut entries: Vec<Entry> = Vec::new();
+        if *becomes {
+            entries.extend(changes.get(element).into_iter().flatten().cloned());
+        }
+        entries.extend(own.iter().cloned());
         let all: Vec<&Entry> = entries.iter().collect();
         out.rules.push(CssRule {
             selector: selector.clone(),

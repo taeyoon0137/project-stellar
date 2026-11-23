@@ -181,3 +181,58 @@ fn state_transitions_with_unavailable_references_or_events_are_diagnosed_and_ski
     assert!(!out.script.contains("read.token"));
     assert!(!out.script.contains("\"input\""));
 }
+
+#[test]
+fn becomes_rule_keeps_changes_entries_and_root_target_has_no_descendant_combinator() {
+    // 검증 기준(XXII.2.6): 그 상태로 들어갈 때 같은 element의 `Changes` motion이 Becomes 규칙에 가려지지 않고,
+    // export root가 대상이면 상태 selector가 root 자신을 가리킵니다.
+    let mut fixture = Fixture::new();
+    // grid(Changes, play)를 저장 버튼 배경으로 옮겨 같은 element에 Changes와 Becomes를 둡니다.
+    fixture.motions[0].targets = vec![fx::path(12, fx::KEY_RADIUS)];
+    let ir = fixture.ir(&fx::web_profile());
+    let out = lower_motions(&ir, &property_name, Some(&Linear));
+    let becomes = out
+        .rules
+        .iter()
+        .find(|r| r.selector.contains("[data-s-"))
+        .expect("becomes rule");
+    // Changes 항목이 앞, Becomes 항목이 뒤(겹치는 속성은 마지막 항목이 이김).
+    assert_eq!(
+        becomes.declarations[0].1,
+        "border-top-left-radius, background-color, border-top-left-radius"
+    );
+    assert_eq!(becomes.declarations[1].1, "480ms, 200ms, 200ms");
+    // reduced motion: Becomes(instant)는 빠지고 Changes(play)는 남습니다.
+    let reduced = out
+        .reduced
+        .iter()
+        .find(|r| r.selector == becomes.selector)
+        .expect("reduced rule");
+    assert_eq!(
+        reduced.declarations[0],
+        (
+            "transition-property".to_string(),
+            "border-top-left-radius".to_string()
+        )
+    );
+
+    let mut fixture = Fixture::new();
+    let root = fixture.ir(&fx::web_profile()).root().id;
+    let root_byte = root.to_bytes()[15];
+    fixture.motions[1].targets = vec![fx::path(root_byte, fx::KEY_FILL)];
+    let ir = fixture.ir(&fx::web_profile());
+    let out = lower_motions(&ir, &property_name, Some(&Linear));
+    let selector = &out
+        .rules
+        .iter()
+        .find(|r| r.selector.contains("[data-s-"))
+        .expect("becomes rule")
+        .selector;
+    assert_eq!(
+        selector,
+        &format!(
+            "#{}[data-s-00000000000000000000000000000034=\"true\"]",
+            element_id(root)
+        )
+    );
+}
