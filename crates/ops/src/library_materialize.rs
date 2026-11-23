@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 
 use stellar_dependencies::cache_entry::{EntryReuse, MaterializeError};
 use stellar_dependencies::cache_root::LibraryCacheRoot;
-use stellar_dependencies::candidate_check::CandidateDiagnostic;
+use stellar_dependencies::candidate_check::{check_candidate_usages, CandidateDiagnostic};
 use stellar_dependencies::content_hash::ContentHashText;
 use stellar_dependencies::declaration::{
     CommitId, DependencyDeclaration, LogicalName, RepositoryUrl, SourceKind, VersionSelector,
@@ -52,12 +52,14 @@ use stellar_dependencies::resolver::{
     resolve_dependency_graph, LibraryManifest, LibraryManifestSource, ManifestSourceError,
     ResolveError,
 };
+use stellar_dependencies::resource_diff::{diff_library_snapshots, ChangeKind};
 use stellar_dependencies::selection::{SelectorError, SelectorResolver};
 use stellar_dependencies::validation::validate_declarations;
 use stellar_project::library_entry::ProjectLibraryValidator;
 use stellar_project::library_exports::SourceExports;
 use stellar_project::library_git::SystemGitCommands;
 use stellar_project::library_open::{read_lock, LibraryOpenProblem};
+use stellar_project::library_refs::external_instance_usages;
 use stellar_project::library_resolve::{CachedManifestSource, ManifestEdit, ManifestEditError};
 use stellar_project::lockfile_write::{
     write_resolved_lockfile, LockfileWriteError, LockfileWriteOutcome,
@@ -307,6 +309,51 @@ pub struct AddRequest {
     pub version: VersionSelector,
     /// 함께 저장할 외부 component 참조.
     pub components: BTreeSet<ComponentRef>,
+}
+
+/// `stellar library update` 요청.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateRequest {
+    /// 의존성 이름.
+    pub name: LogicalName,
+    /// 새 선택자(없으면 선언 선택자를 다시 해석: branch 이동 확인).
+    pub version: Option<VersionSelector>,
+    /// orphan 진단이 있어도 적용합니다(사용자 승인).
+    pub allow_orphans: bool,
+    /// 검토만 하고 쓰지 않습니다.
+    pub dry_run: bool,
+}
+
+/// resource diff 개수.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DiffCounts {
+    /// 추가.
+    pub added: usize,
+    /// 삭제.
+    pub removed: usize,
+    /// 변경.
+    pub modified: usize,
+}
+
+/// `stellar library update` 결과.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateReport {
+    /// 의존성 이름.
+    pub name: LogicalName,
+    /// 이전 lock commit(lock이 없었으면 `None`).
+    pub previous: Option<CommitId>,
+    /// 새 commit.
+    pub candidate: CommitId,
+    /// 이전 → 새 snapshot resource diff 개수(이전 snapshot을 cache에서 읽을 수 없으면 `None`).
+    pub diff: Option<DiffCounts>,
+    /// 사용 프로젝트 참조 검증 결과(XV.7.3).
+    pub orphans: Vec<CandidateDiagnostic>,
+    /// 어느 의존성인지 정할 수 없어 검증에서 빠진 instance.
+    pub ambiguous: Vec<StableId>,
+    /// 적용했는지(dry-run이면 `false`).
+    pub applied: bool,
+    /// lock 결과.
+    pub lock: LockReport,
 }
 
 /// `stellar library fetch` 결과.
@@ -650,6 +697,153 @@ pub fn add(
         manifest_written,
         lock_written,
     })
+}
+
+/// 의존성 하나의 선택자를 다시 해석(또는 바꿔)하고, 사용 프로젝트 참조를 후보에 대어 본 뒤 lock·`stellar.yaml`을 갱신합니다.
+///
+/// 다른 의존성은 lock commit을 그대로 씁니다(XV.4.3). orphan 진단이 있으면 `allow_orphans` 없이 거부하고 아무것도 쓰지
+/// 않습니다. `dry_run`이면 검토 결과만 돌려줍니다.
+pub fn update(
+    root: &Path,
+    tools: &mut LibraryTools,
+    request: &UpdateRequest,
+    now_unix_ms: u64,
+) -> Result<UpdateReport, LibraryCommandError> {
+    check_cache_location(tools, root)?;
+    let mut edit = ManifestEdit::open(root).map_err(LibraryCommandError::Manifest)?;
+    let Some(position) = edit
+        .declarations()
+        .iter()
+        .position(|d| d.name == request.name)
+    else {
+        return Err(LibraryCommandError::UnknownDependency {
+            name: request.name.clone(),
+        });
+    };
+    if let Some(version) = &request.version {
+        edit.declarations_mut()[position].version = version.clone();
+    }
+    let declaration = edit.declarations()[position].clone();
+    let previous = read_previous_lock(root)?;
+    let root_path = DependencyPath::from_names(vec![request.name.clone()]);
+    let previous_entry = previous
+        .as_ref()
+        .and_then(|lock| {
+            lock.entries()
+                .iter()
+                .find(|e| e.dependency_path == root_path)
+        })
+        .cloned();
+    let declarations = edit.declarations().to_vec();
+    let mirrors = new_mirrors(tools);
+    let prepared = prepare(
+        tools,
+        &mirrors,
+        &declarations,
+        previous.as_ref(),
+        Some(&declaration),
+        now_unix_ms,
+    )?;
+    let candidate = root_snapshot(&prepared, &request.name)
+        .cloned()
+        .ok_or_else(|| LibraryCommandError::LibraryUnavailable {
+            name: request.name.clone(),
+        })?;
+
+    // 이전 snapshot(있으면)과 resource diff 개수(XV.7.2).
+    let current = previous_entry.as_ref().and_then(|entry| {
+        load_cached_snapshot(
+            tools.cache.store(),
+            SnapshotRequest {
+                repository: &entry.repository,
+                node: &entry.key(),
+                expected_content_hash: Some(&entry.content_hash),
+            },
+            &mut ProjectLibraryValidator::cache_entry(),
+            &mut SourceExports,
+            &SnapshotLimits::default(),
+            now_unix_ms,
+        )
+        .ok()
+    });
+    let diff = current
+        .as_ref()
+        .and_then(|current| diff_library_snapshots(current, &candidate).ok())
+        .map(|diff| {
+            let mut counts = DiffCounts::default();
+            for change in &diff.changes {
+                match change.kind {
+                    ChangeKind::Added => counts.added += 1,
+                    ChangeKind::Removed => counts.removed += 1,
+                    ChangeKind::Modified(_) => counts.modified += 1,
+                }
+            }
+            counts
+        });
+
+    // 사용 프로젝트의 외부 instance·override를 후보에 대어 봅니다(XV.7.3). 출처 판정은 지금 열린 library 기준입니다.
+    let (orphans, ambiguous) =
+        check_project_usages(root, &tools.cache, &request.name, &candidate, now_unix_ms);
+    let applied = !request.dry_run && (orphans.is_empty() || request.allow_orphans);
+    if !request.dry_run && !orphans.is_empty() && !request.allow_orphans {
+        return Err(LibraryCommandError::OrphansBlocked {
+            diagnostics: orphans,
+        });
+    }
+    let (manifest_written, lock_written) = if applied {
+        commit_files(root, &edit, &prepared.lock)?
+    } else {
+        (false, false)
+    };
+    Ok(UpdateReport {
+        name: request.name.clone(),
+        previous: previous_entry.map(|e| e.exact_commit),
+        candidate: candidate.commit().clone(),
+        diff,
+        orphans,
+        ambiguous,
+        applied,
+        lock: LockReport {
+            nodes: prepared.nodes,
+            pinned: prepared.pinned,
+            manifests_from_cache: prepared.manifests_from_cache,
+            manifest_written,
+            lock_written,
+        },
+    })
+}
+
+/// 저장된 모든 문서의 외부 instance 사용을 `dependency`의 후보 snapshot에 대어 봅니다. 출처는 지금 lock과 명령의 cache로 연
+/// library와 저장된 참조로 정합니다(`classify_component`, 진단·사전 검사와 같은 판정).
+fn check_project_usages(
+    root: &Path,
+    cache: &LibraryCache,
+    dependency: &LogicalName,
+    candidate: &LibrarySnapshot,
+    now_unix_ms: u64,
+) -> (Vec<CandidateDiagnostic>, Vec<StableId>) {
+    let Ok(snapshot) = crate::snapshot::open_snapshot(root) else {
+        // 문서를 열 수 없는 프로젝트(문서 없음 포함)는 검증할 사용이 없습니다.
+        return (Vec::new(), Vec::new());
+    };
+    let own = crate::component_source::project_library(&snapshot)
+        .map(|(library, _)| library)
+        .unwrap_or_default();
+    let libraries = crate::library::open_libraries(root, Ok(cache), now_unix_ms).instance();
+    let mut orphans = Vec::new();
+    let mut ambiguous = Vec::new();
+    for definition in snapshot.documents() {
+        let Ok(model) = snapshot.document_model(definition.id) else {
+            continue;
+        };
+        let usages = external_instance_usages(&model, &own, &libraries);
+        let check = check_candidate_usages(dependency, candidate, &usages.instances, &[]);
+        orphans.extend(check.diagnostics().iter().cloned());
+        ambiguous.extend(usages.ambiguous.into_iter().map(|(id, _)| id));
+    }
+    orphans.sort();
+    ambiguous.sort();
+    (orphans, ambiguous)
 }
 
 /// lock의 모든 node를 공용 cache에 받습니다(lock·`stellar.yaml`은 바꾸지 않음). cache에 있는 commit은 Git을 실행하지 않습니다.

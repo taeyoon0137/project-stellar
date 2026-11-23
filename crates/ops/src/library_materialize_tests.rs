@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use stellar_commands::command::Command;
 use stellar_commands::swap::SwapInstance;
 use stellar_dependencies::cache_entry::{EntryReuse, MaterializeError};
+use stellar_dependencies::candidate_check::CandidateIssue;
 use stellar_dependencies::declaration::{LogicalName, RefName, RepositoryUrl, VersionSelector};
 use stellar_dependencies::read_only::LibraryEditRejection;
 use stellar_document::component::definition::{ComponentLibrary, ComponentPropertyId};
@@ -23,6 +24,7 @@ use crate::test_support::TempDir;
 const SPACE: u64 = 7;
 const CARD: u64 = 1;
 const BADGE: u64 = 2;
+const TAG_COMPONENT: u64 = 3;
 const CHIP: u64 = 20;
 const CARD_INSTANCE: u64 = 100;
 const BADGE_INSTANCE: u64 = 101;
@@ -248,6 +250,111 @@ fn add_stores_declaration_and_lock_and_reuses_lock_commits_offline() {
         other => panic!("{other:?}"),
     }
     assert_eq!(env.files(), before);
+}
+
+#[test]
+fn update_reviews_then_applies_and_reapplies_stored_refs_by_stable_id() {
+    let Some(env) = Env::new("lib-update", &[(CARD_INSTANCE, CARD)]) else {
+        return;
+    };
+    let ds = env.repo("ds", 71);
+    let v1 = ds.release(SPACE, defs(&[CARD, BADGE]), "v1");
+    let v2 = ds.release(SPACE, defs(&[CARD, BADGE, TAG_COMPONENT]), "v2");
+    let v3 = ds.release(SPACE, defs(&[BADGE]), "v3");
+    let mut tools = env.tools();
+    add(
+        &env.project,
+        &mut tools,
+        &add_request("ds", &ds, "v1", &[CARD]),
+        1,
+    )
+    .unwrap();
+    let request = |version: &str, allow_orphans: bool, dry_run: bool| UpdateRequest {
+        name: name("ds"),
+        version: Some(tag(version)),
+        allow_orphans,
+        dry_run,
+    };
+
+    // dry-run: 검토만 하고 쓰지 않습니다.
+    let before = env.files();
+    let review = update(&env.project, &mut tools, &request("v2", false, true), 2).unwrap();
+    assert!(!review.applied);
+    assert_eq!(
+        review.previous.as_ref().map(ToString::to_string),
+        Some(v1.clone())
+    );
+    assert_eq!(review.candidate.to_string(), v2);
+    assert_eq!(
+        review.diff,
+        Some(DiffCounts {
+            added: 1,
+            removed: 0,
+            modified: 0
+        })
+    );
+    assert!(review.orphans.is_empty());
+    assert_eq!(env.files(), before, "dry-run은 쓰지 않음");
+
+    // 적용: lock과 stellar.yaml 선택자가 함께 바뀝니다.
+    let applied = update(&env.project, &mut tools, &request("v2", false, false), 3).unwrap();
+    assert!(applied.applied && applied.lock.lock_written && applied.lock.manifest_written);
+    assert_eq!(locked_commit(&env.project, "ds"), v2);
+    assert_eq!(
+        ManifestEdit::open(&env.project).unwrap().declarations()[0].version,
+        tag("v2")
+    );
+    assert_eq!(
+        stored(&env.project, "ds"),
+        [component(CARD)].into(),
+        "저장된 참조 유지"
+    );
+
+    // 열린 library도 새 commit이고, 저장된 Card 참조는 같은 StableId로 새 snapshot에 다시 대어집니다(문서를 다시 쓰지 않음).
+    let reopened = open_libraries(&env.project, Ok(tools.cache()), 4);
+    assert!(reopened.is_complete());
+    assert_eq!(
+        reopened
+            .instance()
+            .snapshots()
+            .next()
+            .unwrap()
+            .commit()
+            .to_string(),
+        v2
+    );
+    assert!(
+        ref_codes(&env, tools.cache()).is_empty(),
+        "v2에도 Card가 있음"
+    );
+
+    // v3는 Card를 지웠습니다: 사용 프로젝트 instance가 끊기므로 승인 없이는 거부합니다.
+    match update(&env.project, &mut tools, &request("v3", false, false), 5) {
+        Err(LibraryCommandError::OrphansBlocked { diagnostics }) => {
+            assert_eq!(diagnostics.len(), 1);
+            assert_eq!(
+                diagnostics[0].issue,
+                CandidateIssue::ComponentRemoved {
+                    instance: sid(SPACE, CARD_INSTANCE)
+                }
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(locked_commit(&env.project, "ds"), v2);
+
+    // 승인(--allow-orphans)하면 적용합니다. 끊긴 참조는 문서 참조 진단으로 남습니다.
+    let forced = update(&env.project, &mut tools, &request("v3", true, false), 6).unwrap();
+    assert!(forced.applied);
+    assert_eq!(forced.orphans.len(), 1);
+    assert_eq!(locked_commit(&env.project, "ds"), v3);
+    assert_eq!(
+        ref_codes(&env, tools.cache()),
+        [(
+            sid(SPACE, CARD_INSTANCE),
+            "library-ref/unresolved".to_string()
+        )]
+    );
 }
 
 #[test]

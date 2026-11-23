@@ -53,6 +53,9 @@ pub mod library;
 /// 외부 library 제품 명령: 의존성 추가·update·cache 받기·외부 component 참조 저장 (XV.4.3·XV.7.4·XV.7.5, ADR-0137).
 pub mod library_materialize;
 
+/// 열린 창의 외부 library 재로드 판정: lock·cache 지문 (XV.7.4, ADR-0137).
+pub mod library_watch;
+
 /// 외부 library 제품 명령 시험 fixture(ADR-0137). 프로덕션 경로에서 쓰지 않습니다.
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
