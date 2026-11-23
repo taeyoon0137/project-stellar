@@ -58,6 +58,9 @@ pub mod external;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod inventory_tests;
+
 /// 세션 출처.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionOrigin {
