@@ -257,6 +257,39 @@ fn driver_rejects_wrong_arguments_and_unsupported_files() {
 }
 
 #[test]
+fn unreadable_side_fails_without_writing_ours() {
+    // 한쪽 bytes를 codec이 읽지 못하면(텍스트 conflict marker 등) driver는 65로 끝나고 %A를 쓰지 않으며 conflict
+    // 기록도 남기지 않습니다.
+    let repo = Repo::new("driver-unreadable");
+    let base = repo.read();
+    let dir = repo.root.join("sides");
+    fs::create_dir(&dir).unwrap();
+    let marker = [b"<".repeat(7), b" ours\n".to_vec(), base.clone()].concat();
+    let (o, a, b) = (dir.join("O"), dir.join("A"), dir.join("B"));
+    fs::write(&o, &base).unwrap();
+    fs::write(&a, &base).unwrap();
+    fs::write(&b, &marker).unwrap();
+    let output = stellar(
+        &repo.root,
+        &repo.home,
+        &[
+            "merge-driver",
+            o.to_str().unwrap(),
+            a.to_str().unwrap(),
+            b.to_str().unwrap(),
+            &repo.file,
+        ],
+    );
+    let envelope = result(&output, 65);
+    assert_eq!(
+        string(envelope.get("error").unwrap(), "code"),
+        "merge-failed"
+    );
+    assert_eq!(fs::read(&a).unwrap(), base, "%A 미변경");
+    assert!(!repo.root.join(".stellar/merge").exists(), "기록 없음");
+}
+
+#[test]
 fn unresolved_conflicts_keep_ours_bytes_and_exit_nonzero() {
     let repo = Repo::new("driver-conflict");
     repo.register_manually();
