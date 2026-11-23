@@ -10,7 +10,9 @@
 //! | texture·sampler 0 | fragment | sampling program의 source(`BindTexture { slot: 0 }`) |
 //!
 //! - 좌표는 attachment pixel 좌표(좌상단 원점, y 아래로)입니다. backend가 clip 좌표로 바꿉니다.
-//! - 색은 premultiplied alpha 선형 값입니다(XI.10.1에서 encode 규칙 고정).
+//! - 색은 working space 값입니다: surface primaries 선형광, premultiplied alpha
+//!   (`stellar_renderer_core::color`, XI.10.1). fragment는 encode하지 않고, attachment format이 저장 방식을
+//!   정합니다(`*UnormSrgb`는 하드웨어 transfer encode, 나머지는 선형 그대로).
 //! - `DrawUniforms { float4 tint; float depth; float pad[3]; }` = 32 byte. clip z = depth.
 //!
 //! | program | vertex layout(stride) | fragment 출력 | texture 0 |

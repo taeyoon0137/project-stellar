@@ -80,6 +80,8 @@ extern "C" {
     pub(crate) static kCGColorSpaceDisplayP3: CFStringRef;
     pub(crate) static kCGColorSpaceExtendedLinearSRGB: CFStringRef;
     pub(crate) static kCGColorSpaceExtendedLinearDisplayP3: CFStringRef;
+    pub(crate) static kCGColorSpaceLinearSRGB: CFStringRef;
+    pub(crate) static kCGColorSpaceLinearDisplayP3: CFStringRef;
     pub(crate) fn CGColorSpaceCreateWithName(name: CFStringRef) -> CGColorSpaceRef;
     pub(crate) fn CGColorSpaceRelease(space: CGColorSpaceRef);
 }
