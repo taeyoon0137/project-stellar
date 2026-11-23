@@ -210,3 +210,53 @@ fn scope_escape_fails_in_preview_and_apply() {
         }))
     ));
 }
+
+#[test]
+fn preview_diff_includes_component_context_changes() {
+    // 검증 기준(XIX.5.3, ADR-0132 결정 5): 미리보기 semantic diff는 레코드 밖 Component Context 변경도 보입니다. 사본이
+    // Context를 옮기므로 레코드 diff만으로는 빈 결과였던 Context command가 diff 항목 하나 이상을 냅니다.
+    use stellar_ops::commands::context::{ContextCommand, ContextEdit};
+    use stellar_ops::commands::document::context::key::{ContextKey, ContextScope};
+    use stellar_ops::commands::document::expressions::ast::{ExprNode, ExprNodeId, ExpressionAst};
+    use stellar_ops::commands::document::expressions::types::{ExpressionType, TypeSpec};
+    use stellar_ops::core_types::typed_value::TypedValue;
+    use stellar_ops::core_types::value::FiniteF32;
+
+    let state = state();
+    let table = table(&state);
+    let expr = ExprNodeId::new(sid(7001));
+    let default = ExpressionAst::new(
+        expr,
+        vec![ExprNode::literal(
+            expr,
+            TypedValue::Number(FiniteF32::new(4.0).unwrap()),
+        )],
+    )
+    .unwrap();
+    let key = ContextKey::new(
+        sid(7000),
+        "spacing".to_string(),
+        ContextScope::Document(sid(1)),
+        TypeSpec::required(ExpressionType::Number),
+        default,
+    )
+    .unwrap();
+    let command = Command::EditContext(Box::new(ContextCommand {
+        edit: ContextEdit::CreateKey(key),
+    }));
+    let transaction = agent_transaction(
+        state.revision(),
+        LeaseId(sid(LEASE)),
+        CommandId::from_stable_id(sid(5001)),
+        vec![command],
+    );
+    let before = records(&state);
+    let preview = preview(&state, &transaction, &table, no_definitions).unwrap();
+    assert_eq!(records(&state), before, "미리보기는 문서를 바꾸지 않습니다");
+    assert!(state.model().context().key(sid(7000)).is_none());
+    assert!(
+        preview.diff.entries.iter().any(|e| e.object == sid(7000)),
+        "{:?}",
+        preview.diff.entries
+    );
+}

@@ -27,6 +27,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use stellar_core_types::ids::StableId;
+use stellar_document::context::set::ContextSet;
 use stellar_document::model::DocumentModel;
 
 use crate::change::{node_keys, ChangeSet};
@@ -805,6 +806,10 @@ pub struct LeasePreview {
     pub before: stellar_document::records::DocumentRecords,
     /// 적용했을 때의 문서 레코드(canonical 순).
     pub after: stellar_document::records::DocumentRecords,
+    /// 적용 전 영속 Component Context(`ContextSet::live`).
+    pub before_context: ContextSet,
+    /// 적용했을 때의 영속 Component Context. Context command(XXX.7.8)의 효과는 레코드가 아니라 여기에 나옵니다.
+    pub after_context: ContextSet,
     /// 적용했을 때의 change set.
     pub changes: ChangeSet,
     /// lease 판정. 위반이어도 미리보기는 만들어 보여 줍니다.
@@ -833,7 +838,9 @@ impl std::error::Error for PreviewError {}
 
 /// transaction을 문서 사본에 적용해 결과와 lease 판정을 만듭니다. `state`는 읽기만 하므로 문서 상태와
 /// revision은 바뀌지 않습니다(XIX.5.3). 시스템·migration 출처는 판정하지 않습니다(`scope`는 `Ok`).
-/// 적용 전 소속은 손대지 않은 `state`로 만듭니다(ADR-0132 결정 1).
+///
+/// 사본은 레코드와 함께 레코드 밖 문서 상태(Component Context, 활성 기본값 세트 이름)도 옮겨, Context command의
+/// 미리보기가 실제 적용과 같습니다. 적용 전 소속은 손대지 않은 `state`로 만듭니다(ADR-0132 결정 1·5).
 pub fn preview(
     state: &DocumentState,
     transaction: &CommandTransaction,
@@ -844,8 +851,11 @@ pub fn preview(
         .to_records()
         .map_err(|e| PreviewError::Copy(e.to_string()))?;
     before.sort_canonical();
-    let (copy, _) = DocumentModel::from_records(before.clone())
+    let (mut copy, _) = DocumentModel::from_records(before.clone())
         .map_err(|e| PreviewError::Copy(format!("{e:?}")))?;
+    copy.replace_context(state.model().context().clone());
+    copy.set_style_defaults(state.model().style_defaults());
+    let before_context = state.model().context().live(state.model());
     let mut scratch = DocumentState::with_revision(copy, state.revision());
     let applied = scratch
         .execute_transaction(transaction)
@@ -857,6 +867,7 @@ pub fn preview(
         }
         None => Ok(()),
     };
+    let after_context = scratch.model().context().live(scratch.model());
     let mut after = scratch
         .model()
         .to_records()
@@ -865,6 +876,8 @@ pub fn preview(
     Ok(LeasePreview {
         before,
         after,
+        before_context,
+        after_context,
         changes: applied.changes,
         scope,
     })
