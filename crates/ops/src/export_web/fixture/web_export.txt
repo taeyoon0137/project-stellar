@@ -1,0 +1,155 @@
+=== index.html
+<!doctype html>
+<!-- stellar:generated 이 파일은 Stellar가 생성합니다. 직접 고친 내용은 다음 생성 때 사라지고 Stellar로 가져오지 않습니다. -->
+<html>
+  <head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="tokens.css">
+    <link rel="stylesheet" href="styles.css">
+    <script type="module" src="state.js"></script>
+    <script type="module" src="tokens.js"></script>
+  </head>
+  <body>
+    <div id="s-00000000000070008000000000000001" aria-hidden="true">
+      <div id="s-00000000000070008000000000000002">&lt;저장 &amp; "확인"&gt;</div>
+      <span>a &lt;/script&gt; b</span>
+      <div id="s-00000000000070008000000000000004"></div>
+    </div>
+  </body>
+</html>
+=== state.js
+// stellar:generated 이 파일은 Stellar가 생성합니다. 직접 고친 내용은 다음 생성 때 사라지고 Stellar로 가져오지 않습니다.
+const root = document.getElementById("s-00000000000070008000000000000001");
+const state = {
+  "00000000000070008000000000000032": false,
+};
+const read = {
+  state: (id) => state[id],
+  equals: (a, b) => JSON.stringify(a) === JSON.stringify(b),
+  clamp: (v, lo, hi) => Math.min(Math.max(v, lo), hi),
+  concat: (...parts) => parts.join(""),
+};
+function text(value) {
+  if (value !== null && typeof value === "object" && value.type === "enum") {
+    return value.enumType + ":" + value.variant;
+  }
+  return String(value);
+}
+function commit(changes) {
+  for (const [id, value] of changes) {
+    state[id] = value;
+    root.setAttribute("data-s-" + id, text(value));
+  }
+}
+for (const id of Object.keys(state)) {
+  root.setAttribute("data-s-" + id, text(state[id]));
+}
+document.getElementById("s-00000000000070008000000000000002").addEventListener("click", () => {
+  if (true) {
+    commit([["00000000000070008000000000000032", true]]);
+    return;
+  }
+});
+=== styles.css
+/* stellar:generated 이 파일은 Stellar가 생성합니다. 직접 고친 내용은 다음 생성 때 사라지고 Stellar로 가져오지 않습니다. */
+@property --context-accent {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #000000;
+}
+#s-00000000000070008000000000000001 {
+  --context-accent: #000000;
+  --context-accent: var(--accent);
+}
+#s-00000000000070008000000000000004 {
+  background-color: var(--context-accent);
+}
+#s-00000000000070008000000000000001[data-s-00000000000070008000000000000032="true"] #s-00000000000070008000000000000002 {
+  transition-property: background-color;
+  transition-duration: 150ms;
+  transition-delay: 0ms;
+  transition-timing-function: linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  #s-00000000000070008000000000000001[data-s-00000000000070008000000000000032="true"] #s-00000000000070008000000000000002 {
+    transition-property: none;
+  }
+}
+#s-00000000000070008000000000000002 {
+  background-color: #ffffff;
+}
+#s-00000000000070008000000000000002:hover {
+  background-color: #eeeeee;
+}
+=== tokens.css
+/* stellar:generated 이 파일은 Stellar가 생성합니다. 직접 고친 내용은 다음 생성 때 사라지고 Stellar로 가져오지 않습니다. */
+@property --radius-lg {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 8px;
+}
+@property --accent {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #0a84ff;
+}
+@property --accent-alias {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #0a84ff;
+}
+@property --motion-scale {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+@property --Space-2 {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 4px;
+}
+@property --viewport-gap {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 10px;
+}
+@property --he-said-\"hi\"-x-y {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 2px;
+}
+:root {
+  --radius-lg: 8px;
+  --accent: #0a84ff;
+  --accent-alias: var(--accent);
+  --motion-scale: 1;
+  --Space-2: 4px;
+  --viewport-gap: 10px;
+  --he-said-\"hi\"-x-y: 2px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --radius-lg: 12px;
+    --accent: #64d2ff;
+  }
+}
+@media (prefers-contrast: more) {
+  :root {
+    --accent: #0040dd;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-scale: 0;
+  }
+}
+@media (prefers-color-scheme: dark) and (prefers-contrast: more) {
+  :root {
+    --accent: #409cff;
+  }
+}
+=== tokens.js
+// stellar:generated 이 파일은 Stellar가 생성합니다. 직접 고친 내용은 다음 생성 때 사라지고 Stellar로 가져오지 않습니다.
+export const tokens = Object.freeze({
+  "--label": "저장",
+});

@@ -22,6 +22,9 @@ pub mod modifier_plan;
 /// 코드 생성 lowering matrix (XXII.1.2, XXII.1.4, XXII.1.7).
 pub mod matrix;
 
+/// 생성 파일 집합과 고정 formatting (XXII.5.1).
+pub mod output;
+
 /// Web adapter (XXII.2).
 pub mod web;
 
