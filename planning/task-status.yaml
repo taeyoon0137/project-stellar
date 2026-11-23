@@ -3469,12 +3469,17 @@ tasks:
     verified_at: "2026-11-14T02:39:40+09:00"
   - id: "VII.6.3"
     title: "command 실행 중 panic·out-of-bounds가 없는 fuzz target을 추가합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "VII.1.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.6.3.md"
+    commit: "5c409d8887ba30e261b8e30a789f428906e2911f"
     report: "docs/task-reports/VII.6.3.md"
+    verified_at: "2026-11-14T02:39:41+09:00"
   - id: "VIII.1.1"
     title: "`ExpressionType`을 TypedValue와 1:1 대응하도록 정의하고 nullable은 일반 타입과 별도 `Optional<T>`로 표현합니다."
     status: verified
@@ -6732,21 +6737,32 @@ tasks:
       - DEV-MAC
   - id: "XII.4.3"
     title: "viewport pan/zoom matrix를 scene camera 입력으로 연결하고 document geometry는 변경하지 않습니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XII.2.5"
       - "XI.2.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.4.3.md"
+    commit: "91833750dd7eefb772333465349862d973700c8d"
     report: "docs/task-reports/XII.4.3.md"
+    verified_at: "2026-11-14T16:51:06+09:00"
   - id: "XII.4.4"
     title: "selection overlay와 handles를 transient scene layer로 렌더합니다."
-    status: blocked
+    status: verified
     depends_on:
       - "XI.3.5"
       - "XII.4.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.4.4.md"
+    commit: "4d54410b6759d8a75ae9afe0bb6b62e2f97cf46e"
+    report: "docs/task-reports/XII.4.4.md"
+    verified_at: "2026-11-14T16:51:07+09:00"
   - id: "XII.5.1"
     title: "macOS 레이어명·검색·일반 필드에 NSTextField/NSTextView를 사용하고 core text engine을 호출하지 않습니다."
     status: verified
@@ -10325,13 +10341,18 @@ tasks:
     verified_at: "2026-11-14T03:30:18+09:00"
   - id: "XIX.1.8"
     title: "앱이 시작한 bridge를 그 세션에만 결합합니다(아키텍처 31.3, ADR-0005 §5). 세션이 끝나면 결합 수단은 무효가 되고, 결합은 권한을 부여하지 않으며 XIX.3 승인을 대체하지 않습니다. 결합 수단과 검증 방법은 Apple 공식 문서와 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIX.1.3"
       - "XVI.7.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.1.8.md"
+    commit: "9218eacd0984332974a4c7605e40ab8a626335c8"
     report: "docs/task-reports/XIX.1.8.md"
+    verified_at: "2026-11-14T12:53:06+09:00"
   - id: "XIX.1.9"
     title: "`stellar-mcp`가 표준 입력 EOF나 부모 프로세스 종료를 감지하면 스스로 종료합니다. 앱은 이를 연결 종료로 처리하고 XIX.1.4를 따릅니다."
     status: verified
@@ -10399,12 +10420,17 @@ tasks:
     verified_at: "2026-11-14T12:53:06+09:00"
   - id: "XIX.2.5"
     title: "모든 MCP payload에서 project content가 agent에 전달되는 범위를 user-approved project/session으로 제한합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIX.1.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.2.5.md"
+    commit: "37fadb2e27cba7097e11a356d392de4c27a36a9e"
     report: "docs/task-reports/XIX.2.5.md"
+    verified_at: "2026-11-14T12:53:06+09:00"
   - id: "XIX.3.1"
     title: "permission을 Read, Propose, Apply, Terminal, FileDelete, GitCommit, GitPush로 정의합니다."
     status: not_started
@@ -11457,23 +11483,33 @@ tasks:
     report: "docs/task-reports/XXIV.4.1.md"
     verified_at: "2026-11-14T03:30:18+09:00"
   - id: "XXIV.4.2"
-    title: "headless 조회·편집 공용 library crate `stellar-ops`(`crates/ops`)를 추가하고 crate graph 정책과 문서에 등록합니다. 의존은 project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics만 허용하고 local-ipc, agent-protocol, mcp-core, agent-host, ffi는 금지합니다. 앱 없이 프로젝트를 열어 revision을 포함한 읽기 전용 snapshot을 반환합니다."
-    status: reported_done
+    title: "headless 조회·편집 공용 library crate `stellar-ops`(`crates/ops`)를 추가하고 crate graph 정책과 문서에 등록합니다. 의존은 ADR-0005 §8 표의 허용 목록인 project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen·accessibility·target-profile(ADR-0049의 `export-web` 연결), git-porcelain(ADR-0080의 `stellar git` 연결)만 허용하고 local-ipc, agent-protocol, mcp-core, agent-host, ffi는 금지합니다. 앱 없이 프로젝트를 열어 revision을 포함한 읽기 전용 snapshot을 반환합니다."
+    status: verified
     depends_on:
       - "XXIV.1.2"
       - "VII.1.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIV.4.2.md"
+    commit: "56c14429e61102963604841aa63cb386b8c3b77f"
     report: "docs/task-reports/XXIV.4.2.md"
+    verified_at: "2026-11-14T12:53:05+09:00"
   - id: "XXIV.4.3"
     title: "`stellar inspect`를 확장하고 `stellar query`를 추가합니다. 프로젝트 구조, 문서 트리(cursor 분할), 노드 속성, 토큰, 컴포넌트를 revision과 함께 JSON으로 출력합니다. XXIV.1.2의 기존 inspect 결과 필드는 호환을 유지합니다. 앱 없이 동작하며 파일을 쓰지 않습니다. `stellar-cli`의 직접 의존을 `stellar-ops`·diagnostics로 줄이고(ADR-0005 §8), crate graph 정책의 `stellar-cli` 허용 의존도 ops·diagnostics로 갱신합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XXIV.4.1"
       - "XXIV.4.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIV.4.3.md"
+    commit: "d9b048c5e68ad53eb64e95240ea01832c0787247"
     report: "docs/task-reports/XXIV.4.3.md"
+    verified_at: "2026-11-14T12:53:05+09:00"
   - id: "XXIV.4.4"
     title: "`stellar apply`를 추가합니다. 파일이나 표준 입력으로 CommandTransaction JSON과 base revision을 받아 closed enum으로 검증한 뒤 세대 전환 저장으로 원자적으로 기록하고, generation metadata에 writer 종류 headless CLI를 남깁니다. `--dry-run`은 semantic diff만 출력합니다. storage는 보호 경로이므로 같은 변경에 ADR을 갱신합니다."
     status: reported_done

@@ -2,7 +2,7 @@
 
 - WBS: XXIV.4.2
 - 작업명: `crates/ops`(`stellar-ops`)를 추가하고 crate graph 정책에 등록, 앱 없이 프로젝트를 열어 revision을 포함한 읽기 전용 snapshot 반환
-- 상태: `[x]` 판정 — 통합 때 계획서 표기를 `[x]`로 바꿉니다(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — crate·정책 등록·snapshot·검증은 끝났으나, 작업 지시의 "crate graph **문서**에 등록"(`docs/architecture/crate-dependency-graph.md`)은 이 lane의 수정 허용 경로 밖이라 반영하지 못했습니다. 반영할 문안은 아래 "남은 위험 / 한계"에 있습니다.
+- 상태: `[x]` 판정 — 계획서 표기를 `[x]`로 바꿨습니다(2026-11-23 재판정, 아래 "재판정" 절. 계획서 반영은 plan-revision). 이전 기록: 부분 완료 (`[~]`) — crate·정책 등록·snapshot·검증은 끝났으나, 작업 지시의 "crate graph **문서**에 등록"(`docs/architecture/crate-dependency-graph.md`)은 이 lane의 수정 허용 경로 밖이라 반영하지 못했습니다. 반영할 문안은 아래 "남은 위험 / 한계"에 있습니다.
 - 선행: XXIV.1.2(`[x]`), VII.1.6(`[x]`)
 
 ## 필수 실행 환경

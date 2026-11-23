@@ -2,7 +2,7 @@
 
 - WBS: XIX.2.5
 - 작업명: 모든 MCP payload에서 agent에 전달되는 프로젝트 내용을 사용자가 승인한 프로젝트·세션으로 제한
-- 상태: `[x]` 판정 — 통합 때 계획서 표기를 `[x]`로 바꿉니다(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 범위 검사(요청 URI·tool 인자·응답 payload)와 cross-project 거부 fixture는 끝났습니다. 작업 지시의 "모든 MCP payload" 중 headless 읽기 backend 일부만 이 검사를 거치고, attached와 나머지 resource·tool 연결은 남았습니다. 아래 "2026-11-15 검토 메모"를 참고합니다.
+- 상태: `[x]` 판정 — 계획서 표기를 `[x]`로 바꿨습니다(2026-11-23 재판정, 아래 "재판정" 절. 계획서 반영은 plan-revision). 이전 기록: 부분 완료 (`[~]`) — 범위 검사(요청 URI·tool 인자·응답 payload)와 cross-project 거부 fixture는 끝났습니다. 작업 지시의 "모든 MCP payload" 중 headless 읽기 backend 일부만 이 검사를 거치고, attached와 나머지 resource·tool 연결은 남았습니다. 아래 "2026-11-15 검토 메모"를 참고합니다.
 - 선행: XIX.1.4(`[x]`)
 
 ## 필수 실행 환경

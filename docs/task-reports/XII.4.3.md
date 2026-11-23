@@ -7,7 +7,7 @@
 
 - WBS: XII.4.3
 - 작업명: viewport pan/zoom matrix를 scene camera 입력으로 연결하고 document geometry는 변경하지 않습니다.
-- 상태: `[x]` 판정 — 통합 때 계획서 표기를 `[x]`로 바꿉니다(2026-11-23 재판정, 아래 "재판정" 절). 이전 기록: 부분 완료 (`[~]`) — 코어 계산·scene layer 생성까지 통합. 실제 CanvasHost 렌더 연결 미완료.
+- 상태: `[x]` 판정 — 계획서 표기를 `[x]`로 바꿨습니다(2026-11-23 재판정, 아래 "재판정" 절. 계획서 반영은 plan-revision). 이전 기록: 부분 완료 (`[~]`) — 코어 계산·scene layer 생성까지 통합. 실제 CanvasHost 렌더 연결 미완료.
 - 선행: XII.2.5 (`[x]`, 이 lane `59f275d`), XI.2.2 (`[x]`)
 
 ## 변경 파일
