@@ -204,5 +204,8 @@ pub mod git_port;
 /// merge driver 저장소 로컬 등록 (XXIV.2.3, ADR-0081).
 pub mod install;
 
+/// Git conflict 세션: unmerged 세 stage → Semantic Merge, raw 경로 ↔ 객체 대응 (XIV.11.3, ADR-0081).
+pub mod session;
+
 #[cfg(test)]
 mod tests;
