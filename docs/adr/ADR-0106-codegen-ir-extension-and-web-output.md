@@ -32,8 +32,9 @@ IR 입력은 지금처럼 codegen 지역 타입입니다(ADR-0049 결정 6). 새
 2. **상태 머신**(`StateMachineDecl`): 소유자, 상태 변수, semantic action, transition(trigger, 조건식, 순서 있는
    action)입니다. 표현식은 닫힌 지역 트리 `IrExpr`(literal, 상태·토큰·속성·Component Property·환경·Context 참조,
    단항·이항 연산 기호, 함수 이름 호출, `if`, `match`)로 받습니다. 연산 기호와 함수 이름은 expressions crate가
-   정한 `symbol()`·`name()` 문자열을 그대로 씁니다. 문서 AST에서 낮추는 일은 ops가 합니다
-   (`stellar_ops::codegen::lower_expression`).
+   정한 `symbol()`·`name()` 문자열을 그대로 씁니다. 문서 AST(`ExpressionAst`)를 낮추려면 expressions 타입을 이름으로
+   써야 하는데 ops는 expressions에 닿지 못합니다(crate 그래프). 그래서 이 낮춤은 문서 → IR 연결(XXII.1.1 재개)이
+   expressions에 닿는 위치에서 합니다. `MotionSpec`은 문서 타입만 쓰므로 ops가 옮깁니다(`stellar_ops::codegen::motion`).
 3. **`MotionSpec`**(`MotionDecl`): 대상 PropertyPath, 시작 조건, 지속 시간, 지연, timing function, reduced motion
    대체 동작을 문서 값 그대로 받습니다. f32는 bit 그대로 보존하고 snapshot에 최단 왕복 표기로 씁니다.
 4. **Context 해석 결과**(`ContextInput`): key(이름, 값 종류, default 값 식), provision(node, key, 값 식, 펼친 트리
@@ -190,6 +191,9 @@ contract가 둘 이상이면 contract 번호 오름차순 첫 contract가 tag를
 ## Consequences
 
 - IR이 상태 머신·motion·Context·토큰 내보내기 정보를 보존하므로 adapter는 문서를 보지 않고 출력합니다.
+- ops는 layout 타입을 이름으로 쓸 수 없어 `build_ir`를 부를 수 없습니다. adapter 입력용 `IrTree::from_nodes`(preorder
+  node 목록 검사, 접근성 entry 없음)로 ops test가 IR을 만듭니다. 전체 IR은 계속 `build_ir`만 만듭니다.
+- `state.js`의 `read`는 상태 값만 제공합니다. 토큰·속성·환경·Context를 읽는 transition은 진단하고 뺍니다.
 - 문서 → IR 입력 연결(XXII.1.1 재개), Context 해석기(XXX.7.4), 토큰 저장 연결이 생기면 같은 입력 타입을 채우면
   됩니다.
 - `@property` 문법 표는 ops에 한 번 더 있고 소스 대조 test로만 같음을 지킵니다. ops가 expressions 타입을 쓸 수
@@ -199,7 +203,9 @@ contract가 둘 이상이면 contract 번호 오름차순 첫 contract가 tag를
 ## Compatibility
 
 - 파일 포맷·FFI 변경 없음. 보호 경로를 바꾸지 않습니다.
-- codegen 공개 API에 입력 필드가 늘어납니다(`CodegenSources`). IR semantic snapshot 머리는 `codegen-ir v3`입니다.
+- codegen 공개 API에 입력 필드가 늘어납니다(`CodegenSources`의 `css_properties`·`machines`·`motions`·`contexts`,
+  `TokenDecl`의 `alias`·`variants`). IR semantic snapshot 머리는 `codegen-ir v3`입니다.
+- 접근성 mapper(XXII.2.4)는 구조(XXII.2.1) 위에서 동작합니다. 기존 golden HTML은 바뀌지 않았습니다.
 
 ## Performance
 
