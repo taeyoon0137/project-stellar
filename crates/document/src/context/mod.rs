@@ -22,6 +22,9 @@ pub mod resolve;
 /// Context validator (XXX.7.5).
 pub mod validate;
 
+/// 무효화 조건과 영향받는 소비 binding (XXX.7.6).
+pub mod invalidate;
+
 /// 시험용 문서·컴포넌트 구성 도우미.
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixtures;
@@ -34,3 +37,6 @@ mod resolve_tests;
 
 #[cfg(test)]
 mod validate_tests;
+
+#[cfg(test)]
+mod invalidate_tests;

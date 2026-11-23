@@ -24,6 +24,8 @@ stellar-semantic-merge = { path = "../../crates/semantic-merge" }
 stellar-expressions = { path = "../../crates/expressions", features = ["test-support"] }
 stellar-renderer-core = { path = "../../crates/renderer-core", features = ["test-support"] }
 stellar-target-profile = { path = "../../crates/target-profile" }
+# Component Context 해석(document)과 binding graph(bindings)를 잇는 종단 시험(XXX.7.6·XXX.7.7·XXX.7.13).
+stellar-bindings = { path = "../../crates/bindings" }
 stellar-layout = { path = "../../crates/layout" }
 stellar-export = { path = "../../crates/export" }
 
