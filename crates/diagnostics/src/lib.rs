@@ -21,6 +21,9 @@ pub mod latency_scenario;
 /// 단계 trace record schema (XI.2.6).
 pub mod trace_schema;
 
+/// 로컬 diagnostic store schema: crash·renderer error·performance·feature failure count (XVI.8.1, ADR-0109).
+pub mod store;
+
 /// 상호작용 성능 예산 reader (XVI.4.1).
 pub mod budget;
 
