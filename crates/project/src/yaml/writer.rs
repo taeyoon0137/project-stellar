@@ -487,6 +487,7 @@ mod tests {
             },
             target_profiles: Vec::new(),
             dependencies: Vec::new(),
+            style_defaults: None,
         }
     }
 
@@ -517,6 +518,7 @@ mod tests {
                 "git@github.com:example/design-system.git",
                 "v2.4.0",
             )],
+            style_defaults: None,
         }
     }
 

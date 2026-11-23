@@ -42,6 +42,7 @@ pub fn default_manifest(project_name: &str, project_id: &str) -> Manifest {
         },
         target_profiles: Vec::new(),
         dependencies: Vec::new(),
+        style_defaults: None,
     }
 }
 

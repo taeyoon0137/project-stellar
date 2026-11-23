@@ -501,6 +501,7 @@ fn model_seeds() -> Vec<Vec<u8>> {
             version: VersionSelector::Tag(RefName::new("v2.4.0").expect("tag")),
             local_override: None,
         }],
+        style_defaults: None,
     };
     let lock = Lockfile {
         schema_version: 1,

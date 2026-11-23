@@ -621,6 +621,7 @@ mod git_clone_tests {
             },
             target_profiles: Vec::new(),
             dependencies: Vec::new(),
+            style_defaults: None,
         };
         write_canonical(&manifest.to_yaml())
     }

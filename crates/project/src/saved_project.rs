@@ -702,6 +702,7 @@ pub(crate) mod tests {
             },
             target_profiles: Vec::new(),
             dependencies: Vec::new(),
+            style_defaults: None,
         };
         std::fs::write(
             root.join(MANIFEST_FILE),

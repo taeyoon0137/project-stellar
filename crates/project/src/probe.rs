@@ -365,6 +365,7 @@ mod tests {
             },
             target_profiles: Vec::new(),
             dependencies: Vec::new(),
+            style_defaults: None,
         }
     }
 
