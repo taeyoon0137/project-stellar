@@ -15,8 +15,8 @@ use crate::json::JsonValue;
 use crate::output::{CliError, Diagnostic, Severity, Success};
 use crate::views;
 
-/// 붙여넣기 입력 상한(byte). core 선언 블록 상한과 같습니다.
-const MAX_INPUT: u64 = 16 * 1024;
+/// 붙여넣기 입력 상한(byte). ops 공용 선언 블록 상한입니다.
+const MAX_INPUT: u64 = stellar_ops::css::MAX_DECLARATION_BYTES as u64;
 
 fn parse_id(value: &str, kind: &str) -> Result<StableId, CliError> {
     value
