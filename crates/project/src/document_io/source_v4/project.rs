@@ -23,6 +23,7 @@ use stellar_assets::record::AssetRecord;
 use stellar_core_types::ids::StableId;
 use stellar_document::component::definition::ComponentLibrary;
 use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
+use stellar_document::layout_record::LayoutRecord;
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::ModifierStack;
 use stellar_document::records::{DocumentRecords, NodePayload, NodeRecord};
@@ -175,12 +176,17 @@ struct ViewLayout<'a> {
     records: &'a BTreeMap<StableId, &'a NodeRecord>,
     children: BTreeMap<StableId, Vec<StableId>>,
     stacks: &'a BTreeMap<StableId, &'a ModifierStack>,
+    layouts: &'a BTreeMap<StableId, &'a LayoutRecord>,
     sizes: BTreeMap<StableId, usize>,
 }
 
 impl ViewLayout<'_> {
     fn node_value(&self, id: StableId) -> Result<YamlValue, TextSourceError> {
-        node::node(self.records[&id], Some(self.stacks.get(&id).copied()))
+        node::node(
+            self.records[&id],
+            Some(self.stacks.get(&id).copied()),
+            self.layouts.get(&id).copied(),
+        )
     }
 
     /// file root `root`가 담는 node(나뉜 하위 Frame과 그 아래는 제외), StableId 순.
@@ -294,6 +300,11 @@ pub fn encode(project: &TextProject) -> Result<EncodedProject, TextSourceError> 
         .iter()
         .map(|stack| (stack.node, stack))
         .collect();
+    let layouts: BTreeMap<StableId, &LayoutRecord> = records
+        .layout_records
+        .iter()
+        .map(|record| (record.node, record))
+        .collect();
     let mut children: BTreeMap<StableId, Vec<StableId>> = BTreeMap::new();
     for record in &records.nodes {
         if let Some(parent) = record.parent {
@@ -302,7 +313,11 @@ pub fn encode(project: &TextProject) -> Result<EncodedProject, TextSourceError> 
     }
     let mut sizes = BTreeMap::new();
     for record in &records.nodes {
-        let value = node::node(record, Some(stacks.get(&record.id).copied()))?;
+        let value = node::node(
+            record,
+            Some(stacks.get(&record.id).copied()),
+            layouts.get(&record.id).copied(),
+        )?;
         let text = write_canonical(&YamlValue::Mapping(vec![(
             scalar("nodes"),
             YamlValue::Sequence(vec![value]),
@@ -313,6 +328,7 @@ pub fn encode(project: &TextProject) -> Result<EncodedProject, TextSourceError> 
         records: &by_id,
         children,
         stacks: &stacks,
+        layouts: &layouts,
         sizes,
     };
 
@@ -500,7 +516,7 @@ impl Reader<'_> {
             if !refs.is_empty() {
                 return Err(invalid("$ref 항목은 node 뒤에 씁니다"));
             }
-            let (record, stack) = node::parse_node(item, true)?;
+            let (record, stack, layout) = node::parse_node(item, true)?;
             if last.is_some_and(|prev| prev >= record.id) {
                 return Err(invalid("node는 StableId 오름차순, 중복 없이 씁니다"));
             }
@@ -509,6 +525,7 @@ impl Reader<'_> {
             parents.push((record.id, record.parent));
             self.records.nodes.push(record);
             self.records.modifier_stacks.extend(stack);
+            self.records.layout_records.extend(layout);
         }
         if !ids.contains(&root) {
             return Err(invalid(format!("{path}: 파일 root node가 없습니다")));

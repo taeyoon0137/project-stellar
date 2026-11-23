@@ -1,0 +1,121 @@
+# 문서 formatter가 쓴 정규 값(layout_record.rs declared_values_fixture_matches_formatter가 생성·검사).
+position: static
+position: relative
+position: absolute
+box-sizing: content-box
+box-sizing: border-box
+top: auto
+top: -12.5px
+top: 50%
+top: 0px
+right: auto
+right: 3px
+bottom: auto
+bottom: -10%
+left: auto
+left: 0.25px
+width: auto
+width: 120px
+width: 50%
+width: min-content
+width: max-content
+width: fit-content
+height: auto
+height: 0.5px
+height: 100%
+min-width: auto
+min-width: 0px
+min-width: 10%
+min-width: min-content
+min-height: auto
+min-height: 0px
+max-width: none
+max-width: 300px
+max-width: 75%
+max-width: max-content
+max-width: fit-content
+max-height: none
+max-height: 1px
+aspect-ratio: auto
+aspect-ratio: 16 / 9
+aspect-ratio: 2 / 1
+aspect-ratio: 0.5 / 1
+flex-grow: 0
+flex-grow: 1
+flex-grow: 2.5
+flex-shrink: 0
+flex-shrink: 1
+flex-basis: auto
+flex-basis: content
+flex-basis: 0px
+flex-basis: 40%
+align-self: auto
+align-self: center
+align-self: baseline
+align-self: stretch
+align-self: flex-end
+justify-self: auto
+justify-self: start
+justify-self: end
+justify-self: normal
+grid-column-start: auto
+grid-column-start: 1
+grid-column-start: -1
+grid-column-start: span 2
+grid-column-end: auto
+grid-column-end: 3
+grid-row-start: auto
+grid-row-start: span 1
+grid-row-end: auto
+grid-row-end: -2
+display: block
+display: flex
+display: grid
+display: none
+padding-top: 0px
+padding-top: 8px
+padding-right: 1.5px
+padding-bottom: 0px
+padding-left: 16px
+flex-direction: row
+flex-direction: row-reverse
+flex-direction: column
+flex-direction: column-reverse
+flex-wrap: nowrap
+flex-wrap: wrap
+flex-wrap: wrap-reverse
+justify-content: normal
+justify-content: flex-start
+justify-content: center
+justify-content: space-between
+justify-content: space-evenly
+align-content: normal
+align-content: flex-start
+align-content: stretch
+align-content: space-around
+align-items: normal
+align-items: stretch
+align-items: center
+align-items: baseline
+justify-items: normal
+justify-items: start
+justify-items: end
+row-gap: normal
+row-gap: 8px
+column-gap: normal
+column-gap: 0px
+column-gap: 12.5px
+grid-template-columns: none
+grid-template-columns: 1fr 2fr
+grid-template-columns: 100px auto min-content max-content
+grid-template-columns: minmax(0px, 1fr) minmax(auto, 200px) minmax(10%, max-content)
+grid-template-columns: fit-content(40%) fit-content(120px)
+grid-template-columns: 25%
+grid-template-rows: none
+grid-template-rows: auto 1fr
+grid-auto-columns: auto
+grid-auto-columns: 1fr
+grid-auto-rows: auto
+grid-auto-rows: minmax(min-content, 1fr) 20px
+grid-auto-flow: row
+grid-auto-flow: column

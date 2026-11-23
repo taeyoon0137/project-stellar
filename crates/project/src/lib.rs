@@ -12,6 +12,9 @@ pub mod manifest_node;
 /// exact commit의 library `stellar.yaml` 읽기 (XV.2.2 resolver 연결).
 pub mod manifest_source;
 
+/// 기본값 세트 선택과 사용자 세트 파일 (SD.3, ADR-0082, ADR-0086).
+pub mod manifest_style_defaults;
+
 /// `stellar.lock.yaml` 잠금 파일 데이터 모델 (IV.1.6).
 pub mod lock;
 

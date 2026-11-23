@@ -122,6 +122,7 @@ pub fn changed_properties(before: &LayoutNode, after: &LayoutNode) -> LayoutProp
     let LayoutStyle {
         display,
         position,
+        box_sizing,
         top,
         right,
         bottom,
@@ -171,6 +172,7 @@ pub fn changed_properties(before: &LayoutNode, after: &LayoutNode) -> LayoutProp
     );
     mark(*display != a.display, P::Display);
     mark(*position != a.position, P::Position);
+    mark(*box_sizing != a.box_sizing, P::BoxSizing);
     mark(*top != a.top, P::Top);
     mark(*right != a.right, P::Right);
     mark(*bottom != a.bottom, P::Bottom);
@@ -1008,6 +1010,10 @@ mod tests {
                 base.clone()
                     .with_transform(Transform2D::new(1.0, 0.0, 0.0, 1.0, 3.0, 0.0).unwrap()),
                 P::Transform,
+            ),
+            (
+                edit(&|s| s.box_sizing = crate::style::BoxSizing::ContentBox),
+                P::BoxSizing,
             ),
         ];
         assert_eq!(cases.len(), LAYOUT_PROPERTIES.len());

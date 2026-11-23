@@ -8,9 +8,9 @@ use stellar_core_types::value::{FiniteF32, Length, Percentage};
 use crate::codec::{Reader, Writer};
 use crate::error::LayoutError;
 use crate::style::{
-    AspectRatio, ContentAlignment, Display, FlexBasis, FlexDirection, FlexWrap, GridAutoFlow,
-    GridLine, ItemAlignment, LayoutStyle, LengthPercentage, LengthPercentageAuto, MaxSize,
-    MaxTrackSize, MinTrackSize, Position, SelfAlignment, Size, TrackSize,
+    AspectRatio, BoxSizing, ContentAlignment, Display, FlexBasis, FlexDirection, FlexWrap,
+    GridAutoFlow, GridLine, ItemAlignment, LayoutStyle, LengthPercentage, LengthPercentageAuto,
+    MaxSize, MaxTrackSize, MinTrackSize, Position, SelfAlignment, Size, TrackSize,
 };
 
 fn malformed(reason: &'static str) -> LayoutError {
@@ -372,6 +372,10 @@ pub(crate) fn encode_style(w: &mut Writer, s: &LayoutStyle) {
     ] {
         write_line(w, line);
     }
+    w.u8(match s.box_sizing {
+        BoxSizing::ContentBox => 0,
+        BoxSizing::BorderBox => 1,
+    });
 }
 
 /// style canonical bytes를 읽습니다(형식·finite 검사만).
@@ -451,9 +455,15 @@ pub(crate) fn decode_style(r: &mut Reader<'_>) -> Result<LayoutStyle, LayoutErro
     let grid_column_end = read_line(r)?;
     let grid_row_start = read_line(r)?;
     let grid_row_end = read_line(r)?;
+    let box_sizing = match r.u8()? {
+        0 => BoxSizing::ContentBox,
+        1 => BoxSizing::BorderBox,
+        _ => return Err(malformed("알 수 없는 box-sizing tag")),
+    };
     Ok(LayoutStyle {
         display,
         position,
+        box_sizing,
         top,
         right,
         bottom,

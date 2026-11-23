@@ -44,6 +44,10 @@ fn command_round_trip(kind: CommandKind) -> usize {
             // random document는 인스턴스를 만들지 않으므로 대상 인스턴스를 하나 넣습니다.
             seed_instance(&mut state, &mut ids);
         }
+        if kind == CommandKind::UnsetProperty {
+            // random document에는 명시 layout longhand가 없으므로 하나 둡니다(ADR-0086).
+            seed_layout(&mut state, &mut rng, &mut ids);
+        }
         // 문서마다 여러 후보를 시도해 적용 가능한 command를 찾습니다.
         for _ in 0..8 {
             let Some(command) = generate(kind, state.model(), &mut rng, &mut ids) else {
@@ -53,12 +57,21 @@ fn command_round_trip(kind: CommandKind) -> usize {
                 continue;
             }
             let before = model_snapshot_json(state.model()).expect("snapshot");
+            // semantic snapshot은 layout record와 활성 기본값 세트를 담지 않으므로 따로 비교합니다(ADR-0086).
+            let before_layout = layout_state(&state);
             let request = CommandRequest::at(&state, command);
             let outcome = state
                 .execute(&request)
                 .unwrap_or_else(|e| panic!("{kind} seed {seed}: validate 통과 후 실행 실패: {e}"));
             validate_document(&state.model().to_records().expect("records"))
                 .unwrap_or_else(|e| panic!("{kind} seed {seed}: forward 후 문서 무효: {e}"));
+            if LAYOUT_KINDS.contains(&kind) {
+                assert_ne!(
+                    layout_state(&state),
+                    before_layout,
+                    "{kind} seed {seed}: forward가 layout record·세트를 바꾸지 않았습니다"
+                );
+            }
             let inverse = CommandRequest::at(&state, outcome.inverse);
             state
                 .execute(&inverse)
@@ -68,11 +81,33 @@ fn command_round_trip(kind: CommandKind) -> usize {
                 before,
                 "{kind} seed {seed}: apply(forward); apply(inverse) ≠ 원본"
             );
+            assert_eq!(
+                layout_state(&state),
+                before_layout,
+                "{kind} seed {seed}: apply(forward); apply(inverse)의 layout record·세트 ≠ 원본"
+            );
             applied += 1;
             break;
         }
     }
     applied
+}
+
+/// 명시 layout longhand·기본값 세트만 바꾸는 종류(forward가 반드시 그 상태를 바꿔야 함).
+const LAYOUT_KINDS: [CommandKind; 3] = [
+    CommandKind::SetStyleDefaults,
+    CommandKind::UnsetProperty,
+    CommandKind::SetLayoutProperty,
+];
+
+/// semantic snapshot 밖의 상태: 영속 layout record와 활성 기본값 세트 이름.
+fn layout_state(
+    state: &DocumentState,
+) -> (Vec<stellar_document::layout_record::LayoutRecord>, String) {
+    (
+        state.model().to_records().expect("records").layout_records,
+        state.model().style_defaults().to_string(),
+    )
 }
 
 /// root 아래에 override 하나를 가진 인스턴스를 넣습니다(SwapInstance 왕복용).
@@ -118,6 +153,22 @@ fn seed_instance(state: &mut DocumentState, ids: &mut FreshIds) {
     state
         .execute(&CommandRequest::at(state, command))
         .expect("인스턴스 삽입");
+}
+
+/// 명시 layout longhand 하나를 둡니다(UnsetProperty 왕복용).
+fn seed_layout(state: &mut DocumentState, rng: &mut SplitMix64, ids: &mut FreshIds) {
+    for _ in 0..8 {
+        let Some(command) = generate(CommandKind::SetLayoutProperty, state.model(), rng, ids)
+        else {
+            return;
+        };
+        if command.validate(state.model()).is_ok() {
+            state
+                .execute(&CommandRequest::at(state, command))
+                .expect("layout longhand 두기");
+            return;
+        }
+    }
 }
 
 /// 선택 event의 forward/inverse 왕복.
@@ -197,6 +248,9 @@ round_trip_property! {
     apply_external_snapshot_round_trip => Registered::Command(CommandKind::ApplyExternalSnapshot), min 120;
     edit_path_point_round_trip => Registered::Command(CommandKind::EditPathPoint), min 60;
     swap_instance_round_trip => Registered::Command(CommandKind::SwapInstance), min 120;
+    set_style_defaults_round_trip => Registered::Command(CommandKind::SetStyleDefaults), min 120;
+    unset_property_round_trip => Registered::Command(CommandKind::UnsetProperty), min 120;
+    set_layout_property_round_trip => Registered::Command(CommandKind::SetLayoutProperty), min 120;
     set_selection_round_trip => Registered::Selection, min 120;
 }
 

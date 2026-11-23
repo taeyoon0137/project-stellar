@@ -78,6 +78,9 @@ pub mod modifier_metadata;
 /// 영속 문서 레코드 (VI.10).
 pub mod records;
 
+/// node별 명시 layout longhand record (IX.11.6, ADR-0086).
+pub mod layout_record;
+
 /// 전체 document validator (VI.10.1).
 pub mod validate;
 

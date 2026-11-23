@@ -20,6 +20,7 @@ use stellar_core_types::order_key::OrderKey;
 
 use crate::definitions::DocumentDefinition;
 use crate::frame::Clipping;
+use crate::layout_record::{record_violations, LayoutRecord};
 use crate::modifier::{validate_modifier_owner, ModifierError, ModifierStack};
 use crate::node_columns::{NodeColumns, NodeFields};
 use crate::records::{DocumentRecords, NodePayload, NodeRecord};
@@ -78,6 +79,13 @@ pub enum ModelError {
         /// 원인.
         error: ModifierError,
     },
+    /// layout record 제약 위반(IX.11.6): node 종류에 붙지 않는 longhand 등.
+    Layout {
+        /// 소유 node.
+        id: StableId,
+        /// 원인.
+        reason: String,
+    },
     /// 내부 불일치: 살아 있지 않은 부모 핸들이나 payload 누락(버그 신호).
     Inconsistent {
         /// 관련 node.
@@ -103,6 +111,7 @@ impl fmt::Display for ModelError {
             ModelError::Modifier { owner, error } => {
                 write!(f, "node {owner}의 modifier stack: {error}")
             }
+            ModelError::Layout { id, reason } => write!(f, "node {id}의 layout record: {reason}"),
             ModelError::Inconsistent { id, reason } => {
                 write!(f, "모델 내부 불일치(node {id}): {reason}")
             }
@@ -145,6 +154,13 @@ pub struct DocumentModel {
     non_node_ids: BTreeMap<StableId, usize>,
     /// 부모별 (OrderKey, StableId) 순서. 직접 삽입한 동순위 형제도 모두 보관합니다.
     children: BTreeMap<StableId, BTreeSet<(OrderKey, StableId)>>,
+    /// node별 명시 layout longhand(IX.11.6, ADR-0086). node를 지워도 record는 StableId로 남아 있다가 같은 id의
+    /// node가 되돌아오면(삭제 undo) 다시 보입니다. 조회·영속 레코드에는 살아 있는 node의 record만 나옵니다.
+    layouts: BTreeMap<StableId, LayoutRecord>,
+    /// 활성 기본값 세트 이름(ADR-0082 결정 4, ADR-0086 결정 10). 원본은 `stellar.yaml`의 `style_defaults`이고,
+    /// 모델은 연 쪽이 넣어 준 값을 거울로 들고 있어 `SetStyleDefaults` command가 undo 한 번으로 되돌아갑니다.
+    /// 영속 레코드([`DocumentModel::to_records`])에는 나오지 않습니다.
+    style_defaults: String,
 }
 
 fn remove_non_node_id(ids: &mut BTreeMap<StableId, usize>, id: StableId) {
@@ -178,7 +194,53 @@ impl DocumentModel {
             payloads: BTreeMap::new(),
             modifiers: BTreeMap::new(),
             references: ReferenceIndex::new(),
+            layouts: BTreeMap::new(),
+            style_defaults: crate::css::style_defaults::DEFAULT_SET.to_string(),
         }
+    }
+
+    /// 활성 기본값 세트 이름(모델의 거울 값).
+    pub fn style_defaults(&self) -> &str {
+        &self.style_defaults
+    }
+
+    /// 활성 기본값 세트 이름을 바꾸고 이전 이름을 돌려줍니다. 세트가 있는지는 호출자가 확인합니다.
+    pub fn set_style_defaults(&mut self, name: impl Into<String>) -> String {
+        std::mem::replace(&mut self.style_defaults, name.into())
+    }
+
+    /// 살아 있는 node의 명시 layout record(IX.11.6). 명시 값이 없으면 `None`입니다.
+    pub fn layout_record(&self, id: StableId) -> Option<&LayoutRecord> {
+        if self.payloads.contains_key(&id) {
+            self.layouts.get(&id)
+        } else {
+            None
+        }
+    }
+
+    /// node의 명시 layout record를 바꾸고 이전 record를 돌려줍니다. 빈 record는 record를 지웁니다.
+    /// node 종류에 붙지 않는 longhand는 거부합니다.
+    pub fn set_layout_record(
+        &mut self,
+        record: LayoutRecord,
+    ) -> Result<Option<LayoutRecord>, ModelError> {
+        let id = record.node;
+        let payload = self
+            .payloads
+            .get(&id)
+            .ok_or(ModelError::UnknownNode { id })?;
+        if let Some(violation) = record_violations(&record, payload).into_iter().next() {
+            return Err(ModelError::Layout {
+                id,
+                reason: violation.to_string(),
+            });
+        }
+        let previous = if record.is_empty() {
+            self.layouts.remove(&id)
+        } else {
+            self.layouts.insert(id, record)
+        };
+        Ok(previous)
     }
 
     /// 문서 스타일 표와 문서에서 점유하는 resource ID를 한 번에 바꿉니다.
@@ -654,6 +716,7 @@ impl DocumentModel {
             definition,
             nodes,
             modifier_stacks,
+            layout_records,
         } = records;
         let roots: Vec<StableId> = definition
             .pages
@@ -705,6 +768,11 @@ impl DocumentModel {
                 .set_modifier_stack(stack)
                 .map_err(LoadModelError::Model)?;
         }
+        for record in layout_records {
+            model
+                .set_layout_record(record)
+                .map_err(LoadModelError::Model)?;
+        }
         Ok((model, diagnostics))
     }
 
@@ -727,6 +795,12 @@ impl DocumentModel {
             records.nodes.push(record);
         }
         records.modifier_stacks = self.modifiers.values().cloned().collect();
+        records.layout_records = self
+            .layouts
+            .values()
+            .filter(|record| self.payloads.contains_key(&record.node))
+            .cloned()
+            .collect();
         records.sort_canonical();
         Ok(records)
     }

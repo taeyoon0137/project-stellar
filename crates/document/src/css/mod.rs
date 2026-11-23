@@ -11,6 +11,7 @@
 //! - [`shorthand`]: shorthand → longhand 확장(IX.11.14).
 //! - [`custom_property`]: 토큰·ContextKey의 CSS custom property 이름과 선언 텍스트(IX.11.16).
 //! - [`declaration`]: 선언 블록 텍스트 해석·정규 출력(IX.11.15).
+//! - [`style_defaults`]: 명시하지 않은 layout longhand를 푸는 기본값 세트(ADR-0082, ADR-0086).
 
 pub mod bundle;
 pub mod custom_property;
@@ -19,6 +20,7 @@ pub mod grammar;
 pub mod mapping;
 pub mod registry;
 pub mod shorthand;
+pub mod style_defaults;
 pub mod value;
 
 /// 예약 번호(IX.12.1)와 실제 `ReferenceTarget` tag 비교. document가 expressions에 의존하므로 여기서 봅니다.

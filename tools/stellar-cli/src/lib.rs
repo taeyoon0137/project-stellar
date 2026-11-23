@@ -48,5 +48,8 @@ pub mod web_frame;
 /// `css`: CSS 선언 블록 복사·붙여넣기 (IX.11.15).
 pub mod css;
 
+/// `style-defaults`: 기본값 세트 목록·값 표·선택과 값 출처 (SD.5·SD.6, ADR-0086).
+pub mod style_defaults;
+
 mod component_source;
 mod merge_driver;

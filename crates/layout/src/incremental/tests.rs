@@ -84,6 +84,13 @@ fn random_edits(model: &LayoutInput, rng: &mut Rng, next_id: &mut u64) -> Vec<La
         2 => {
             let p = rng.length(8).get();
             new.style.padding = Insets::new(p, p / 2.0, p, 0.0).unwrap();
+            // content-box(ADR-0086)에서는 padding이 px 크기 node의 border box도 바꿉니다.
+            if rng.below(2) == 0 {
+                new.style.box_sizing = match new.style.box_sizing {
+                    crate::style::BoxSizing::BorderBox => crate::style::BoxSizing::ContentBox,
+                    crate::style::BoxSizing::ContentBox => crate::style::BoxSizing::BorderBox,
+                };
+            }
         }
         3 => {
             new.style.display = if new.style.display == Display::None {
@@ -765,4 +772,23 @@ fn unexpected_fallback_metric_is_recorded_before_the_assertion() {
     }));
     assert_eq!(outcome.is_err(), cfg!(debug_assertions));
     assert_eq!(session.metrics().unexpected_fallback, 1);
+}
+
+#[test]
+fn content_box_padding_edit_on_fixed_size_node_matches_full_compute() {
+    // `box-sizing: content-box`(ADR-0086)이면 px 크기 node도 padding이 border box 크기를 바꿉니다. 증분 경로가
+    // padding 변경을 자식 제약 변경으로만 보면 자기 크기를 다시 구하지 않습니다.
+    // 10: px block 안 px leaf, 9: px block(자식 배치도 바뀜).
+    for node in [10, 9] {
+        let mut input = modes_document();
+        for n in &mut input.nodes {
+            n.style.box_sizing = crate::style::BoxSizing::ContentBox;
+        }
+        let (mut session, _) = IncrementalLayout::new(input, &DefaultMeasurer).unwrap();
+        let change = edited(&session, node, |n| {
+            n.style.padding = Insets::new(4.0, 6.0, 4.0, 6.0).unwrap();
+        });
+        session.apply(vec![change], &DefaultMeasurer).unwrap();
+        assert_matches_full(&session, &format!("node {node} padding"));
+    }
 }

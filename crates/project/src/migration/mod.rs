@@ -32,6 +32,9 @@ use crate::document_io::manifest::DocumentManifestChunk;
 /// schema version별 고정 payload decoder.
 pub mod decoders;
 
+/// 제품 schema 1→2 묶음 step의 레코드 변환(아직 등록하지 않음, ADR-0086).
+pub mod steps;
+
 /// 이 도구가 쓰고 읽는 제품 generation schema version.
 pub const PRODUCT_SCHEMA_VERSION: u32 = 1;
 

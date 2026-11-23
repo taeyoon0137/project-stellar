@@ -59,6 +59,12 @@ pub enum CommandKind {
     EditPathPoint,
     /// 인스턴스 교체 (XII.10.35, ADR-0079).
     SwapInstance,
+    /// 활성 기본값 세트 변경 (SD.4, ADR-0086).
+    SetStyleDefaults,
+    /// 명시 layout longhand 지우기 (SD.4, ADR-0086).
+    UnsetProperty,
+    /// 명시 layout longhand 두기 (SD.4, ADR-0086).
+    SetLayoutProperty,
     /// 테스트 전용 probe(fault injection). 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe,
@@ -90,6 +96,9 @@ impl CommandKind {
         CommandKind::ApplyExternalSnapshot,
         CommandKind::EditPathPoint,
         CommandKind::SwapInstance,
+        CommandKind::SetStyleDefaults,
+        CommandKind::UnsetProperty,
+        CommandKind::SetLayoutProperty,
     ];
 
     /// 영구 예약 값(유효한 종류가 아님).
@@ -121,6 +130,9 @@ impl CommandKind {
             CommandKind::ApplyExternalSnapshot => 0x0070,
             CommandKind::EditPathPoint => 0x0080,
             CommandKind::SwapInstance => 0x0090,
+            CommandKind::SetStyleDefaults => 0x0091,
+            CommandKind::UnsetProperty => 0x0092,
+            CommandKind::SetLayoutProperty => 0x0093,
             #[cfg(test)]
             CommandKind::TestProbe => 0xFFF0,
         }
@@ -164,6 +176,9 @@ impl CommandKind {
             CommandKind::ApplyExternalSnapshot => "apply-external-snapshot",
             CommandKind::EditPathPoint => "edit-path-point",
             CommandKind::SwapInstance => "swap-instance",
+            CommandKind::SetStyleDefaults => "set-style-defaults",
+            CommandKind::UnsetProperty => "unset-property",
+            CommandKind::SetLayoutProperty => "set-layout-property",
             #[cfg(test)]
             CommandKind::TestProbe => "test-probe",
         }
@@ -198,6 +213,9 @@ impl CommandKind {
             | CommandKind::ApplyExternalSnapshot
             | CommandKind::EditPathPoint
             | CommandKind::SwapInstance => 2,
+            CommandKind::SetStyleDefaults
+            | CommandKind::UnsetProperty
+            | CommandKind::SetLayoutProperty => 3,
             #[cfg(test)]
             CommandKind::TestProbe => 1,
         }
@@ -230,6 +248,9 @@ impl CommandKind {
             CommandKind::ApplyExternalSnapshot => "외부 변경 반영",
             CommandKind::EditPathPoint => "Path point 편집",
             CommandKind::SwapInstance => "인스턴스 교체",
+            CommandKind::SetStyleDefaults => "기본값 세트 변경",
+            CommandKind::UnsetProperty => "속성 초기화",
+            CommandKind::SetLayoutProperty => "레이아웃 속성 변경",
             #[cfg(test)]
             CommandKind::TestProbe => "test probe",
         }
@@ -294,6 +315,9 @@ mod tests {
                 (0x0070, "apply-external-snapshot"),
                 (0x0080, "edit-path-point"),
                 (0x0090, "swap-instance"),
+                (0x0091, "set-style-defaults"),
+                (0x0092, "unset-property"),
+                (0x0093, "set-layout-property"),
             ]
         );
     }

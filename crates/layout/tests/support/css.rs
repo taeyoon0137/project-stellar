@@ -292,6 +292,13 @@ pub fn parse_style(text: &str) -> LayoutStyle {
                     other => panic!("position: {other}"),
                 }
             }
+            "box-sizing" => {
+                style.box_sizing = match value {
+                    "content-box" => stellar_layout::style::BoxSizing::ContentBox,
+                    "border-box" => stellar_layout::style::BoxSizing::BorderBox,
+                    other => panic!("box-sizing: {other}"),
+                }
+            }
             "top" => style.top = inset(value),
             "right" => style.right = inset(value),
             "bottom" => style.bottom = inset(value),

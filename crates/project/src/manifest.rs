@@ -5,6 +5,7 @@
 //! IV.1.2 제한 loader, canonical 기록은 IV.1.5 writer가 담당합니다.
 //!
 //! 필수 최상위 필드: `schema_version`, `project`, `target_profiles`, `dependencies`.
+//! 선택 최상위 필드: `style_defaults`(활성 기본값 세트 이름, ADR-0082 결정 4, ADR-0086). 없으면 `css`입니다.
 //! 알 수 없는 키는 거부합니다(제한 스키마).
 //!
 //! `dependencies` 절의 entry 스키마는 의존성 모델(XV.1.1, `stellar-dependencies`)이 정의합니다:
@@ -82,6 +83,11 @@ pub enum ManifestError {
         /// 상한을 넘은 위치.
         path: String,
     },
+    /// `style_defaults` 값이 세트 이름 형식이 아닙니다.
+    InvalidStyleDefaults {
+        /// 원본 값.
+        value: String,
+    },
 }
 
 impl From<SchemaError> for ManifestError {
@@ -126,6 +132,9 @@ impl std::fmt::Display for ManifestError {
                 write!(f, "잘못된 값({path}): {error}")
             }
             ManifestError::TooDeep { path } => write!(f, "중첩 깊이 상한 초과: {path}"),
+            ManifestError::InvalidStyleDefaults { value } => {
+                write!(f, "style_defaults 값 {value}은 세트 이름 형식이 아닙니다")
+            }
         }
     }
 }
@@ -165,6 +174,8 @@ pub struct Manifest {
     pub target_profiles: Vec<TargetProfile>,
     /// 의존성 선언(저장 순서 보존, XV.1.1 모델).
     pub dependencies: Vec<Dependency>,
+    /// 활성 기본값 세트 이름(`style_defaults`). `None`이면 `css`입니다(ADR-0082 결정 4).
+    pub style_defaults: Option<String>,
 }
 
 impl Manifest {
@@ -197,6 +208,13 @@ impl Manifest {
                 node_to_yaml(&dependencies_to_node(&self.dependencies)),
             ),
         ];
+        let mut top = top;
+        if let Some(name) = &self.style_defaults {
+            top.push((
+                YamlValue::scalar("style_defaults"),
+                YamlValue::scalar(name.clone()),
+            ));
+        }
         YamlValue::Mapping(top)
     }
 
@@ -234,6 +252,7 @@ impl Manifest {
                 "project",
                 "target_profiles",
                 "dependencies",
+                "style_defaults",
             ],
         )?;
 
@@ -241,12 +260,25 @@ impl Manifest {
         let project = parse_project(require(value, "project")?)?;
         let target_profiles = parse_target_profiles(require(value, "target_profiles")?)?;
         let dependencies = parse_dependencies(require(value, "dependencies")?)?;
+        let style_defaults = match value.get("style_defaults") {
+            None => None,
+            Some(node) => {
+                let name = expect_scalar(node, "style_defaults")?;
+                if !stellar_document::css::style_defaults::is_valid_set_name(name) {
+                    return Err(ManifestError::InvalidStyleDefaults {
+                        value: name.to_string(),
+                    });
+                }
+                Some(name.to_string())
+            }
+        };
 
         Ok(Manifest {
             schema_version,
             project,
             target_profiles,
             dependencies,
+            style_defaults,
         })
     }
 }
@@ -474,6 +506,7 @@ mod tests {
             },
             target_profiles: Vec::new(),
             dependencies: Vec::new(),
+            style_defaults: None,
         }
     }
 
@@ -504,6 +537,7 @@ mod tests {
                 "git@github.com:example/design-system.git",
                 "v2.4.0",
             )],
+            style_defaults: None,
         }
     }
 
@@ -662,6 +696,7 @@ mod tests {
             },
             target_profiles: Vec::new(),
             dependencies: vec![dep("design-system")],
+            style_defaults: None,
         };
         // 정상 매니페스트는 기록 후 같은 모델로 다시 열림.
         let text = base.write().unwrap();

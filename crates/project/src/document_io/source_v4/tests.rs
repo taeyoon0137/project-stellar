@@ -290,3 +290,70 @@ fn unrepresentable_typed_values_refuse_to_write() {
         Err(TextSourceError::Unsupported(_))
     ));
 }
+
+#[test]
+fn explicit_layout_longhands_are_written_alone_and_round_trip() {
+    use stellar_document::layout_record::{LayoutLonghand, LayoutRecord};
+    let plain = encode(&golden_model()).unwrap();
+    assert!(
+        !plain.contains("layout:"),
+        "명시 값이 없으면 layout 키를 쓰지 않습니다"
+    );
+    let mut records = golden_model().to_records().unwrap();
+    let mut root = LayoutRecord::new(sid(10));
+    for (longhand, text) in [
+        (LayoutLonghand::Display, "flex"),
+        (LayoutLonghand::FlexDirection, "column"),
+        (LayoutLonghand::RowGap, "8px"),
+    ] {
+        root.set(longhand, longhand.parse(text).unwrap()).unwrap();
+    }
+    records.layout_records.push(root);
+    records.sort_canonical();
+    let model = DocumentModel::from_records(records.clone()).unwrap().0;
+    let text = encode(&model).unwrap();
+    let section =
+        "    layout:\n      display: flex\n      flex-direction: column\n      row-gap: \"8px\"\n";
+    assert!(text.contains(section), "{text}");
+    assert_eq!(text.matches("layout:").count(), 1, "명시한 node 하나만");
+    let decoded = decode(&text).unwrap();
+    assert_eq!(decoded.to_records().unwrap(), records);
+    assert_eq!(encode(&decoded).unwrap(), text);
+    // 순서가 어긋나거나, 모르는 longhand·값, var(), 빈 layout은 거부합니다.
+    for case in [
+        text.replacen(
+            "      display: flex\n      flex-direction: column\n",
+            "      flex-direction: column\n      display: flex\n",
+            1,
+        ),
+        text.replacen("      display: flex\n", "      float: left\n", 1),
+        text.replacen("      display: flex\n", "      display: inline\n", 1),
+        text.replacen("      row-gap: \"8px\"\n", "      row-gap: var(--gap)\n", 1),
+        text.replacen(section, "    layout: {}\n", 1),
+    ] {
+        assert_ne!(case, text);
+        assert!(decode(&case).is_err(), "{case}");
+    }
+}
+
+#[test]
+fn frame_keys_with_css_initial_defaults_may_be_omitted_on_read() {
+    let text = encode(&golden_model()).unwrap();
+    let mut omitted = text.clone();
+    for side in ["top", "right", "bottom", "left"] {
+        for part in ["width", "style", "color"] {
+            let key = format!("      border-{side}-{part}:");
+            let start = omitted.find(&key).unwrap();
+            let end = start + omitted[start..].find('\n').unwrap() + 1;
+            omitted.replace_range(start..end, "");
+        }
+    }
+    let decoded = decode(&omitted).unwrap();
+    let records = decoded.to_records().unwrap();
+    let root = records.nodes.iter().find(|n| n.id == sid(10)).unwrap();
+    let NodePayload::Frame(frame) = &root.payload else {
+        panic!("root는 Frame")
+    };
+    assert_eq!(frame.border, None, "생략한 테두리는 초기값(none)");
+    assert_eq!(frame.size, Size2::new(1440.0, 900.5).unwrap());
+}

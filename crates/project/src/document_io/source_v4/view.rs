@@ -76,7 +76,13 @@ pub(crate) fn encode(model: &DocumentModel) -> Result<String, TextSourceError> {
                 records
                     .nodes
                     .iter()
-                    .map(|record| node::node(record, Some(model.modifier_stack(record.id))))
+                    .map(|record| {
+                        node::node(
+                            record,
+                            Some(model.modifier_stack(record.id)),
+                            model.layout_record(record.id),
+                        )
+                    })
                     .collect::<Result<_, _>>()?,
             ),
         ),
@@ -130,13 +136,14 @@ pub(crate) fn decode(value: &YamlValue) -> Result<DocumentModel, TextSourceError
         .as_sequence()
         .ok_or_else(|| invalid("nodes는 sequence여야 합니다"))?
     {
-        let (record, stack) = node::parse_node(item, true)?;
+        let (record, stack, layout) = node::parse_node(item, true)?;
         if last.is_some_and(|prev| prev >= record.id) {
             return Err(invalid("node는 StableId 오름차순, 중복 없이 씁니다"));
         }
         last = Some(record.id);
         records.nodes.push(record);
         records.modifier_stacks.extend(stack);
+        records.layout_records.extend(layout);
     }
     DocumentModel::from_records(records)
         .map(|(model, _)| model)

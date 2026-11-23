@@ -544,6 +544,74 @@ pub fn generate(
                 payload,
             }))
         }
+        CommandKind::SetStyleDefaults => {
+            let name = if model.style_defaults() == "css" {
+                "react-native"
+            } else {
+                "css"
+            };
+            Some(Command::SetStyleDefaults(
+                crate::style_defaults::SetStyleDefaults { name: name.into() },
+            ))
+        }
+        CommandKind::SetLayoutProperty => {
+            use stellar_document::layout_record::{longhand_violation, LayoutLonghand};
+            let boxed = nodes_where(model, |id| kind_of(model, id) != Some(NodeKind::Fragment));
+            let node = pick(rng, &boxed)?;
+            let payload = model.payload(node)?;
+            let longhands: Vec<LayoutLonghand> = LayoutLonghand::ALL
+                .into_iter()
+                .filter(|l| longhand_violation(node, *l, payload).is_none())
+                .collect();
+            let longhand = pick(rng, &longhands)?;
+            let samples: &[&str] = match longhand.grammar() {
+                stellar_document::layout_record::LayoutGrammar::Keyword(choices) => choices,
+                stellar_document::layout_record::LayoutGrammar::NonNegativeNumber => {
+                    &["0", "1", "2.5"]
+                }
+                stellar_document::layout_record::LayoutGrammar::NonNegativeLength => {
+                    &["0px", "8px"]
+                }
+                stellar_document::layout_record::LayoutGrammar::Gap => &["normal", "4px"],
+                stellar_document::layout_record::LayoutGrammar::GridLine => {
+                    &["auto", "2", "span 2"]
+                }
+                stellar_document::layout_record::LayoutGrammar::AspectRatio => &["auto", "16 / 9"],
+                stellar_document::layout_record::LayoutGrammar::TrackList => &["none", "1fr 100px"],
+                stellar_document::layout_record::LayoutGrammar::AutoTracks => {
+                    &["auto", "minmax(0px, 1fr)"]
+                }
+                stellar_document::layout_record::LayoutGrammar::MaxSize => {
+                    &["none", "50%", "max-content"]
+                }
+                stellar_document::layout_record::LayoutGrammar::FlexBasis => {
+                    &["auto", "content", "10px"]
+                }
+                stellar_document::layout_record::LayoutGrammar::Inset => &["auto", "-4px", "10%"],
+                stellar_document::layout_record::LayoutGrammar::Size => {
+                    &["auto", "20px", "fit-content"]
+                }
+            };
+            let text = samples[rng.below(samples.len() as u64) as usize];
+            Some(Command::SetLayoutProperty(
+                crate::style_defaults::SetLayoutProperty {
+                    node,
+                    longhand,
+                    value: longhand.parse(text).ok()?,
+                },
+            ))
+        }
+        CommandKind::UnsetProperty => {
+            let explicit = nodes_where(model, |id| model.layout_record(id).is_some());
+            let node = pick(rng, &explicit)?;
+            let longhands: Vec<_> = model.layout_record(node)?.iter().map(|(l, _)| l).collect();
+            Some(Command::UnsetProperty(
+                crate::style_defaults::UnsetProperty {
+                    node,
+                    longhand: pick(rng, &longhands)?,
+                },
+            ))
+        }
         CommandKind::EditPathPoint => {
             let paths = nodes_where(model, |id| kind_of(model, id) == Some(NodeKind::Path));
             let node = pick(rng, &paths)?;

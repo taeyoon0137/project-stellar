@@ -1014,6 +1014,21 @@ fx(
     "flex",
     n("root", "display:flex;width:300px;align-items:flex-start", [n("a", "aspect-ratio:4/1", [c("k", 40, 30)])]),
 )
+# box-sizing: content-box (ADR-0086). `css` 기본값 세트의 생략값입니다. 길이·백분율 크기가 content box 크기이고
+# border box는 padding을 더한 값입니다.
+CB = "box-sizing:content-box;"
+fx("block/content-box-width-padding", "block", n("root", "width:200px", [n("a", CB + "width:100px;height:20px;padding:10px 5px"), n("b", CB + "width:50%;height:10px;padding-left:20px")]))
+fx("block/content-box-min-max", "block", n("root", "width:300px", [n("a", CB + "width:10px;min-width:50px;padding:0 10px;height:5px"), n("b", CB + "width:400px;max-width:100px;padding:4px;height:5px"), n("c", CB + "min-height:20px;padding-top:6px;width:10px")]))
+fx("block/content-box-auto-width", "block", n("root", "width:200px", [n("a", CB + "padding:10px", [n("k", "height:10px")]), n("b", CB + "padding:3px", [c("k2", 40, 10)])]))
+fx("block/content-box-parent-percent-child", "block", n("root", "width:200px", [n("p", CB + "width:100px;height:60px;padding:10px", [n("k", "width:50%;height:50%")])]))
+fx("flex/content-box-basis", "flex", n("root", "display:flex;width:400px;height:20px", [n("a", CB + "flex-basis:100px;padding:0 10px"), n("b", CB + "width:50px;padding-left:15px"), n("c", CB + "flex-basis:20%;padding-right:4px")]))
+fx("flex/content-box-grow-shrink", "flex", n("root", "display:flex;width:200px;height:20px", [n("a", CB + "width:100px;padding:0 20px;flex-shrink:1;min-width:0px"), n("b", CB + "width:100px;padding:0 10px;flex-shrink:1;min-width:0px")]))
+fx("flex/content-box-column-height", "flex", n("root", "display:flex;flex-direction:column;width:100px;height:200px", [n("a", CB + "height:40px;padding:5px"), n("b", CB + "flex-grow:1;padding:10px 0")]))
+fx("grid/content-box-item", "grid", n("root", "display:grid;width:200px;grid-template-columns:100px 100px;grid-auto-rows:50px", [n("a", CB + "width:40px;height:20px;padding:5px"), n("b", CB + "justify-self:start;padding:6px", [c("k", 20, 10)])]))
+fx("positioning/content-box-absolute", "positioning", n("root", "width:200px;height:100px", [n("a", CB + "position:absolute;left:10px;top:10px;width:50px;height:30px;padding:5px"), n("b", CB + "position:absolute;right:0px;bottom:0px;width:20%;height:10px;padding:2px")]))
+fx("positioning/content-box-root", "positioning", n("root", CB + "width:100px;height:50px;padding:10px", [n("a", "width:100%;height:100%")]))
+
+
 def all_fixtures():
     return FIXTURES
 

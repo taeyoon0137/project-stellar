@@ -827,6 +827,8 @@ pub fn decode(source: &str) -> Result<DocumentModel, TextSourceError> {
         definition,
         nodes,
         modifier_stacks,
+        // View v1·v2 원본에는 layout record가 없습니다(IX.11.6 이전 형식).
+        layout_records: Vec::new(),
     };
     DocumentModel::from_records(records)
         .map(|(model, _)| model)

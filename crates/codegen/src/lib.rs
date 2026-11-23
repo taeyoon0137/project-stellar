@@ -15,6 +15,9 @@ pub mod text;
 /// adapter 노트가 가리키는 접근성 의미 facet.
 pub mod facet;
 
+/// modifier stack → CSS 고정 적용 순서 선형화 계획 (IX.11.18).
+pub mod modifier_plan;
+
 /// Web adapter (XXII.2).
 pub mod web;
 

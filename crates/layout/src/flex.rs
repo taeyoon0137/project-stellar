@@ -57,6 +57,8 @@ struct Item {
     index: usize,
     slot: usize,
     base: LayoutUnit,
+    /// main 축 padding 합. 축소 비율은 inner flex base size(`base - pad_main`)로 셉니다(CSS Flexbox §9.7).
+    pad_main: LayoutUnit,
     hypothetical: LayoutUnit,
     min_main: LayoutUnit,
     max_main: Option<LayoutUnit>,
@@ -833,7 +835,9 @@ fn base_item(
         None => None,
     };
     let specified = match prepared.basis {
-        BasisP::Length(length) => length.resolve(context.parent[mi], id)?,
+        BasisP::Length(length) => {
+            engine.border_box(child, main, length.resolve(context.parent[mi], id)?)?
+        }
         BasisP::Content => None,
         BasisP::Auto => match prepared.size[mi] {
             SizeP::Auto => None,
@@ -867,6 +871,7 @@ fn base_item(
         index: child,
         slot,
         base,
+        pad_main,
         hypothetical,
         min_main,
         max_main,
@@ -966,9 +971,9 @@ fn resolve_flexible_lengths(
             let weights: Vec<u64> = unfrozen
                 .iter()
                 .map(|&n| {
-                    items[n]
-                        .shrink
-                        .saturating_mul(items[n].base.raw().max(0) as u64)
+                    // scaled flex shrink factor = flex-shrink × inner flex base size.
+                    let inner = i64::from(items[n].base.raw()) - i64::from(items[n].pad_main.raw());
+                    items[n].shrink.saturating_mul(inner.max(0) as u64)
                 })
                 .collect();
             let magnitude = LayoutUnit::ZERO.checked_sub(free).map_err(&err)?;
