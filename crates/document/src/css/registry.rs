@@ -138,11 +138,12 @@ pub fn entry(scope: PropertyScope, key: PropertyKey) -> Option<RegistryEntry> {
         .find(|e| e.scope == scope && e.key == key)
 }
 
-/// `scope`에서 이름이 `name`인 항목.
+/// `scope`에서 이름이 `name`인 편집 항목. 묶음 key는 이름으로 찾지 않습니다. 묶음 key는 이전 command·journal
+/// decode 전용이고 새 편집은 longhand key를 씁니다(ADR-0075 결정 1). 묶음 key는 [`entry`]로 key를 주고 찾습니다.
 pub fn entry_by_name(scope: PropertyScope, name: &str) -> Option<RegistryEntry> {
     entries()
         .into_iter()
-        .find(|e| e.scope == scope && e.name == name)
+        .find(|e| e.scope == scope && e.name == name && e.bundle.is_empty())
 }
 
 /// key의 표시 문자열(범위와 무관하게 key가 유일한 대역 규칙을 씁니다). 모르는 key는 `None`.
@@ -260,6 +261,14 @@ mod tests {
             Some("shadow-offset-x, shadow-offset-y")
         );
         assert_eq!(display_label(PropertyKey(0xFFFF)), None);
+        // 이름으로 찾는 편집 경로는 묶음 key를 고르지 않습니다.
+        assert!(entry_by_name(PropertyScope::Frame, "border-radius").is_none());
+        assert!(entry_by_name(PropertyScope::Frame, "size").is_none());
+        assert!(entry_by_name(PropertyScope::Modifier, "shadow-offset").is_none());
+        assert_eq!(
+            entry_by_name(PropertyScope::Frame, "border-top-left-radius").map(|e| e.key),
+            Some(crate::frame::keys::BORDER_TOP_LEFT_RADIUS)
+        );
     }
 
     #[test]

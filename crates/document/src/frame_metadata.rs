@@ -324,9 +324,10 @@ pub fn frame_field_keys(payload: &FramePayload) -> [PropertyKey; 11] {
     ]
 }
 
-/// Frame 속성 이름을 이름 registry(III.2.1)에 등록합니다.
+/// Frame 속성 이름을 이름 registry(III.2.1)에 등록합니다. 묶음 key는 등록하지 않습니다. 이름으로 key를 찾는
+/// 편집 경로(`key_of("border-radius")`)가 새 편집에 쓰지 않는 묶음 key를 고르지 않게 합니다(ADR-0075 결정 1).
 pub fn register_frame_property_names(registry: &mut PropertyNameRegistry) {
-    for metadata in &FRAME_PROPERTIES {
+    for metadata in FRAME_PROPERTIES.iter().filter(|m| !m.is_bundle()) {
         registry.register(metadata.key, metadata.name);
     }
 }
@@ -451,5 +452,9 @@ mod tests {
         assert_eq!(registry.name_of(keys::CLIPPING), Some("clipping"));
         assert_eq!(registry.key_of("layout-mode"), Some(keys::LAYOUT_MODE));
         assert_eq!(registry.key_of("background-color"), Some(keys::BACKGROUND));
+        // 묶음 key는 이름으로 찾을 수 없습니다(새 편집은 longhand).
+        assert_eq!(registry.key_of("border-radius"), None);
+        assert_eq!(registry.key_of("size"), None);
+        assert_eq!(registry.name_of(keys::CORNER_RADIUS), None);
     }
 }

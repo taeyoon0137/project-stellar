@@ -585,9 +585,10 @@ pub fn modifier_payload_keys(payload: &ModifierPayload) -> Vec<PropertyKey> {
     }
 }
 
-/// modifier 속성 이름을 이름 registry(III.2.1)에 등록합니다.
+/// modifier 속성 이름을 이름 registry(III.2.1)에 등록합니다. 묶음 key(Shadow offset 0x1092)는 등록하지 않습니다
+/// (ADR-0075 결정 1).
 pub fn register_modifier_property_names(registry: &mut PropertyNameRegistry) {
-    for metadata in &MODIFIER_PROPERTIES {
+    for metadata in MODIFIER_PROPERTIES.iter().filter(|m| !m.is_bundle()) {
         registry.register(metadata.key, metadata.name);
     }
 }
@@ -903,6 +904,11 @@ mod tests {
         register_modifier_property_names(&mut registry);
         assert_eq!(registry.name_of(keys::MASK_SOURCE), Some("mask-image"));
         assert_eq!(registry.key_of("opacity"), Some(keys::OPACITY_VALUE));
+        assert_eq!(registry.key_of("shadow-offset"), None, "묶음 key");
+        assert_eq!(
+            registry.key_of("shadow-offset-x"),
+            Some(keys::SHADOW_OFFSET_X)
+        );
         // Frame 속성 key와 충돌하지 않습니다.
         crate::frame_metadata::register_frame_property_names(&mut registry);
         assert_eq!(registry.name_of(keys::ENABLED), Some("enabled"));
