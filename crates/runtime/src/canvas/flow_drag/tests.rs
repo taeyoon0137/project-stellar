@@ -1,6 +1,7 @@
 //! 흐름 drag fixture: flex 가로·세로·wrap, Grid 자동 배치, 끌어내기, 인스턴스 거부, Grid 명시 배치(C6).
 
 use super::*;
+use crate::canvas::scene_layout::CanvasLayout;
 use crate::canvas::transform::fixtures::{
     add_shape, at, canvas_document, history_len, model, open, scene, select,
 };
@@ -70,25 +71,8 @@ fn wrap_and_grid_auto_placement_use_reading_lines() {
     assert_eq!(insertion_index(&cells, grid, [120., 70.]), 5);
 }
 
-#[test]
-fn reflow_preview_moves_siblings_out_of_the_way() {
-    // 같은 크기 항목: 0번을 맨 끝으로 옮기면 1·2가 한 칸씩 앞으로, 0이 마지막 칸에 옵니다.
-    let row = [b(0., 0.), b(30., 0.), b(60., 0.)];
-    let preview = reflow_preview(&row, ROW, 0, 2);
-    assert_eq!(
-        preview,
-        vec![(1, b(0., 0.)), (2, b(30., 0.)), (0, b(60., 0.))]
-    );
-    // wrap: 줄마다 원래 항목 수를 지킵니다.
-    let wrapped = [b(0., 0.), b(30., 0.), b(0., 30.)];
-    let preview = reflow_preview(&wrapped, ROW, 2, 0);
-    assert_eq!(
-        preview,
-        vec![(2, b(0., 0.)), (0, b(30., 0.)), (1, b(0., 30.))]
-    );
-}
-
-/// Frame 11(10,20 100×50)을 `display` 컨테이너로, 그 아래 20×20 Rectangle 30·31·32를 x 0·30·60에 둡니다.
+/// Frame 11(10,20 100×50)을 `display` 컨테이너로, 그 아래 20×20 Rectangle 30·31·32(저장 transform 0,0)를 둡니다.
+/// 흐름 자식이라 화면 위치는 layout 결과(flex 가로: x 10·30·50)입니다.
 fn flow_window(
     tag: &str,
     display: &'static str,
@@ -97,7 +81,7 @@ fn flow_window(
     ProjectWindowSession,
 ) {
     let mut doc = canvas_document();
-    for (id, x) in [(30u64, 0.0f32), (31, 30.0), (32, 60.0)] {
+    for (id, x) in [(30u64, 0.0f32), (31, 0.0), (32, 0.0)] {
         add_shape(
             &mut doc,
             id,
@@ -125,29 +109,44 @@ fn dropping_inside_reorders_with_one_move_node() {
     let (_dir, mut w) = flow_window("flow-reorder", "flex");
     select(&mut w, &[30]);
     let s = scene(&w);
+    let l = CanvasLayout::current(&w).unwrap();
+    assert_eq!(l.world_box(sid(31)), Some([30., 20., 20., 20.]));
     let before = history_len(&w);
-    let drag = FlowDrag::begin(&w, &s, [20., 30.], None).unwrap();
+    let drag = FlowDrag::begin(&w, &s, &l, [20., 30.], None).unwrap();
     // 끄는 동안: 삽입 표시와 preview, 문서·history 불변.
     let revision = w.revision();
     for step in 0..50 {
         let x = 20.0 + step as f32;
-        let _ = drag.update(&w, &s, [x, 30.]);
+        let _ = drag.update(&w, &s, &l, [x, 30.]);
     }
     let FlowUpdate::Inside {
         index,
         marker,
         preview,
-    } = drag.update(&w, &s, [95., 30.])
+        scene: replaced,
+    } = drag.update(&w, &s, &l, [95., 30.])
     else {
         panic!("컨테이너 안")
     };
     assert_eq!(index, 2);
     assert_eq!(marker[2], 0.0, "세로 표시 선");
-    assert_eq!(preview.last().unwrap().0, sid(30));
+    // preview는 실제 layout 결과입니다: 31·32가 한 칸씩 앞으로, 30이 끝(x 50).
+    assert_eq!(
+        preview,
+        vec![
+            (sid(31), [10., 20., 20., 20.]),
+            (sid(32), [30., 20., 20., 20.]),
+            (sid(30), [50., 20., 20., 20.]),
+        ]
+    );
+    // 상자가 바뀐 세 node의 scene 대체 입력이 있습니다(IncrementalScene::set_preview로 그림).
+    assert_eq!(replaced.len(), 3);
     assert_eq!(w.revision(), revision);
     assert_eq!(history_len(&w), before);
     // 놓기: 맨 뒤로.
-    assert!(drag.commit(&mut w, &s, [95., 30.], RequestId(1)).unwrap());
+    assert!(drag
+        .commit(&mut w, &s, &l, [95., 30.], RequestId(1))
+        .unwrap());
     assert_eq!(
         model(&w).children_in_order(sid(11)),
         vec![sid(31), sid(32), sid(30)]
@@ -156,9 +155,12 @@ fn dropping_inside_reorders_with_one_move_node() {
     // 같은 자리에 놓으면 기록하지 않습니다.
     select(&mut w, &[31]);
     let s = scene(&w);
+    let l = CanvasLayout::current(&w).unwrap();
     let after_select = history_len(&w);
-    let drag = FlowDrag::begin(&w, &s, [20., 30.], None).unwrap();
-    assert!(!drag.commit(&mut w, &s, [15., 30.], RequestId(2)).unwrap());
+    let drag = FlowDrag::begin(&w, &s, &l, [20., 30.], None).unwrap();
+    assert!(!drag
+        .commit(&mut w, &s, &l, [15., 30.], RequestId(2))
+        .unwrap());
     assert_eq!(history_len(&w), after_select);
 }
 
@@ -168,10 +170,11 @@ fn dragging_out_reparents_to_a_free_frame_and_rejects_instances() {
     let (_dir, mut w) = flow_window("flow-out", "flex");
     select(&mut w, &[31]);
     let s = scene(&w);
-    let drag = FlowDrag::begin(&w, &s, [50., 30.], None).unwrap();
+    let l = CanvasLayout::current(&w).unwrap();
+    let drag = FlowDrag::begin(&w, &s, &l, [40., 30.], None).unwrap();
     // Frame 12(200,50 60×40)는 자유 배치 Frame입니다.
     assert_eq!(
-        drag.update(&w, &s, [220., 60.]),
+        drag.update(&w, &s, &l, [220., 60.]),
         FlowUpdate::Outside(DropTarget::Parent(sid(12)))
     );
     // 인스턴스 투영 행 위: Frame 12 행을 인스턴스 투영 행으로 바꾼 scene.
@@ -180,16 +183,18 @@ fn dragging_out_reparents_to_a_free_frame_and_rejects_instances() {
         row.instance_frame = true;
     }
     assert_eq!(
-        drag.update(&w, &instance, [220., 60.]),
+        drag.update(&w, &instance, &l, [220., 60.]),
         FlowUpdate::Outside(DropTarget::Rejected("instance-slot"))
     );
     let before = history_len(&w);
     assert!(!drag
-        .commit(&mut w, &instance, [220., 60.], RequestId(3))
+        .commit(&mut w, &instance, &l, [220., 60.], RequestId(3))
         .unwrap());
     assert_eq!(history_len(&w), before);
     // 자유 Frame으로 끌어내기: 부모가 12로 바뀌고 history 1건.
-    assert!(drag.commit(&mut w, &s, [220., 60.], RequestId(4)).unwrap());
+    assert!(drag
+        .commit(&mut w, &s, &l, [220., 60.], RequestId(4))
+        .unwrap());
     assert_eq!(history_len(&w), before + 1);
     assert!(model(&w).children_in_order(sid(12)).contains(&sid(31)));
     assert_eq!(model(&w).children_in_order(sid(11)), vec![sid(30), sid(32)]);
@@ -207,19 +212,23 @@ fn grid_explicit_placement_children_are_rejected_and_skipped() {
     crate::canvas::transform::commit(&mut w, explicit, 0).unwrap();
     select(&mut w, &[31]);
     let s = scene(&w);
+    let l = CanvasLayout::current(&w).unwrap();
     assert_eq!(
-        FlowDrag::begin(&w, &s, [50., 30.], None).unwrap_err(),
+        FlowDrag::begin(&w, &s, &l, [50., 30.], None).unwrap_err(),
         TransformError::Disabled("grid-explicit-placement")
     );
     // 자동 배치 30을 끌면 명시 배치 31은 index 계산에서 빠집니다: 자동 형제는 32 하나.
     select(&mut w, &[30]);
     let s = scene(&w);
-    let drag = FlowDrag::begin(&w, &s, [20., 30.], None).unwrap();
-    let FlowUpdate::Inside { index, .. } = drag.update(&w, &s, [95., 30.]) else {
+    let l = CanvasLayout::current(&w).unwrap();
+    let drag = FlowDrag::begin(&w, &s, &l, [20., 30.], None).unwrap();
+    let FlowUpdate::Inside { index, .. } = drag.update(&w, &s, &l, [105., 65.]) else {
         panic!("컨테이너 안")
     };
     assert_eq!(index, 1);
-    assert!(drag.commit(&mut w, &s, [95., 30.], RequestId(5)).unwrap());
+    assert!(drag
+        .commit(&mut w, &s, &l, [105., 65.], RequestId(5))
+        .unwrap());
     let order = model(&w).children_in_order(sid(11));
     let position = |id| order.iter().position(|&n| n == sid(id)).unwrap();
     assert!(
@@ -233,8 +242,9 @@ fn free_children_are_not_flow_drags() {
     let (_dir, mut w) = open("flow-free", &canvas_document());
     select(&mut w, &[13]);
     let s = scene(&w);
+    let l = CanvasLayout::current(&w).unwrap();
     assert_eq!(
-        FlowDrag::begin(&w, &s, [40., 110.], None).unwrap_err(),
+        FlowDrag::begin(&w, &s, &l, [40., 110.], None).unwrap_err(),
         TransformError::Disabled("not-flow-child")
     );
 }
