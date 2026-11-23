@@ -174,21 +174,31 @@ pub(crate) fn selection_roots(
 }
 
 /// 제품 경로의 새 영속 ID 원천(UUIDv7, OS 난수). 실패하면 NIL을 돌려주고 [`FreshIds::finish`]에서 오류로 바꿉니다.
+///
+/// OS 난수를 한 번에 [`FreshIds::BATCH`]개씩 받아 둡니다. 큰 subtree 붙여넣기처럼 ID가 많이 필요할 때 ID마다 난수
+/// 장치를 여는 비용을 없앱니다(각 ID는 그대로 독립 UUIDv7).
 #[derive(Default)]
 pub struct FreshIds {
     failed: bool,
+    pool: Vec<StableId>,
 }
 
 impl FreshIds {
+    /// 난수를 한 번에 받는 ID 수.
+    pub const BATCH: usize = 256;
+
     /// 새 ID 하나.
     pub fn fresh(&mut self) -> StableId {
-        match stellar_project::new_ids::new_ids::<1>() {
-            Ok([id]) => id,
-            Err(_) => {
-                self.failed = true;
-                StableId::NIL
+        if self.pool.is_empty() {
+            match stellar_project::new_ids::new_ids::<{ FreshIds::BATCH }>() {
+                Ok(ids) => self.pool.extend(ids.into_iter().rev()),
+                Err(_) => {
+                    self.failed = true;
+                    return StableId::NIL;
+                }
             }
         }
+        self.pool.pop().unwrap_or(StableId::NIL)
     }
 
     /// 실패가 있었으면 [`TransformError::Ids`].

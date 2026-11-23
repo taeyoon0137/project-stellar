@@ -29,6 +29,8 @@ mod image;
 /// 문서 → 증분 scene source 변환 (XI.2.4, XI.2.5, XII.10.30).
 pub mod scene_source;
 pub use image::image_placement;
+/// 캔버스 클립보드: 전용 형식과 Text 일반 텍스트 (XII.10.38, ADR-0117).
+pub mod clipboard;
 /// Frame·Rectangle·Ellipse·Line·Polygon 생성 도구 (XII.10.26, ADR-0117).
 pub mod create;
 /// 흐름 컨테이너 안 드래그 (XII.10.24, ADR-0117).
