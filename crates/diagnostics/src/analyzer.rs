@@ -429,4 +429,30 @@ mod tests {
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].metric, GateMetric::CacheSetup);
     }
+
+    #[test]
+    fn thousand_sample_reference_and_limit_boundary() {
+        // 검증 기준(XVI.4.2): 통계 reference fixture(1,000 sample)와 통제 가능 10ms 초과 count 경계.
+        let mut samples: Vec<LatencySample> = (1..=1_000u64)
+            .rev()
+            .map(|us| LatencySample::controllable(us * 1_000))
+            .collect();
+        let stats = analyze(&samples, &budget());
+        assert_eq!(stats.count, 1_000);
+        assert_eq!(stats.p50_nanos, 500_000);
+        assert_eq!(stats.p95_nanos, 950_000);
+        assert_eq!(stats.p99_nanos, 990_000);
+        assert_eq!(stats.max_nanos, 1_000_000);
+        assert_eq!(stats.over_limit, 0);
+        // 10ms와 같은 값은 초과가 아니고 1ns 넘으면 초과입니다.
+        samples.push(LatencySample::controllable(ms(10.0)));
+        assert_eq!(analyze(&samples, &budget()).over_limit, 0);
+        samples.push(LatencySample::controllable(ms(10.0) + 1));
+        let stats = analyze(&samples, &budget());
+        assert_eq!(stats.over_limit, 1);
+        assert_eq!(stats.max_nanos, ms(10.0) + 1);
+        // 입력 순서와 무관합니다.
+        samples.reverse();
+        assert_eq!(analyze(&samples, &budget()), stats);
+    }
 }
