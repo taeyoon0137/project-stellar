@@ -1,4 +1,5 @@
-//! ADR-0059의 단일 의미 단위 파일 I/O. 여러 파일 transaction은 이 API의 범위 밖입니다.
+//! ADR-0059의 단일 의미 단위 파일 I/O. 여러 파일을 한 세대로 저장하는 transaction은
+//! [`crate::journal`](ADR-0078)이 맡습니다.
 
 use std::io;
 use std::path::Path;

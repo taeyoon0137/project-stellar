@@ -15,6 +15,9 @@ pub mod atomic_file;
 /// ADR-0059 단일 텍스트 원본의 제한 읽기·비교 후 원자 저장.
 pub mod source_file;
 
+/// 여러 의미 파일의 원자 저장 journal (V.10.5, ADR-0078).
+pub mod journal;
+
 /// 저장소 파일 접근 guard(보안 감사 STOR, crate 내부 전용).
 mod fs_guard;
 
