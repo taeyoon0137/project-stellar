@@ -982,31 +982,15 @@ const CSS_SOURCES: [&str; 4] = [
 /// react-native 줄 출처 접두사.
 const RN_SOURCES: [&str; 4] = ["rn-docs:", "rn-source:", "yoga:", "inherits:"];
 
-/// 브라우저 계산값 표기(`rgb(0, 0, 0)`, `rgba(0, 0, 0, 0)`)를 registry 색 정규 표기로 바꿉니다. 그 밖은 그대로입니다.
+/// 브라우저 계산값 표기(`rgb(0, 0, 0)`, `rgba(0, 0, 0, 0)`)를 registry 색 정규 표기로 바꿉니다. 색 해석·표기는
+/// registry 값 문법과 같은 [`value::parse_color`]·[`value::format_color`]입니다. 색이 아니면 그대로입니다.
 fn normalize_observed(observed: &str) -> String {
-    let inner = observed
-        .strip_prefix("rgba(")
-        .or_else(|| observed.strip_prefix("rgb("))
-        .and_then(|rest| rest.strip_suffix(')'));
-    let Some(inner) = inner else {
+    if !(observed.starts_with("rgb(") || observed.starts_with("rgba(")) {
         return observed.to_string();
-    };
-    let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
-    let channels: Option<Vec<u8>> = parts.iter().take(3).map(|p| p.parse().ok()).collect();
-    let alpha: Option<f32> = match parts.get(3) {
-        Some(a) => a.parse().ok(),
-        None => Some(1.0),
-    };
-    match (channels, alpha) {
-        (Some(c), Some(a)) if c.len() == 3 && parts.len() <= 4 => {
-            let mut out = format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2]);
-            if a != 1.0 {
-                out.push_str(&format!("{:02x}", (a * 255.0).round() as u8));
-            }
-            out
-        }
-        _ => observed.to_string(),
     }
+    value::parse_color(observed)
+        .map(value::format_color)
+        .unwrap_or_else(|_| observed.to_string())
 }
 
 /// `fixture`를 `css`·`react-native` 평탄화 세트와 비교해 어긋난 점을 돌려줍니다. 빈 목록이면 표와 fixture가
