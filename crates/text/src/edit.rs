@@ -133,12 +133,15 @@ fn scalar_at(text: &str, byte: usize) -> u32 {
     u32::try_from(text[..byte].chars().count()).unwrap_or(u32::MAX)
 }
 
+/// grapheme 경계(scalar offset, 끝 포함). 앞 경계부터 이어 세어 본문 길이에 선형입니다.
 fn grapheme_bounds(text: &str) -> Vec<u32> {
-    let mut bounds: Vec<u32> = text
-        .grapheme_indices(true)
-        .map(|(b, _)| scalar_at(text, b))
-        .collect();
-    bounds.push(scalar_len(text));
+    let mut bounds = Vec::new();
+    let mut at = 0u32;
+    for grapheme in text.graphemes(true) {
+        bounds.push(at);
+        at = at.saturating_add(scalar_len(grapheme));
+    }
+    bounds.push(at);
     bounds
 }
 
@@ -205,8 +208,8 @@ impl TextEditBuffer {
         if self.composition.is_some() {
             return false;
         }
+        let bounds = grapheme_bounds(&self.text);
         let snap = |offset: u32| {
-            let bounds = grapheme_bounds(&self.text);
             let index = bounds.partition_point(|&b| b <= offset);
             bounds[index.saturating_sub(1)]
         };
@@ -369,15 +372,18 @@ impl TextEditBuffer {
         self.move_focus(to, extend)
     }
 
+    /// 단어 조각의 (시작, 끝). 앞 조각부터 이어 세어 본문 길이에 선형입니다.
     fn word_starts(&self) -> Vec<(u32, u32)> {
-        self.text
-            .split_word_bound_indices()
-            .filter(|(_, w)| w.chars().any(char::is_alphanumeric))
-            .map(|(b, w)| {
-                let start = scalar_at(&self.text, b);
-                (start, start + scalar_len(w))
-            })
-            .collect()
+        let mut at = 0u32;
+        let mut words = Vec::new();
+        for word in self.text.split_word_bounds() {
+            let start = at;
+            at = at.saturating_add(scalar_len(word));
+            if word.chars().any(char::is_alphanumeric) {
+                words.push((start, at));
+            }
+        }
+        words
     }
 
     /// 앞 단어 시작으로(⌥←).
@@ -582,7 +588,7 @@ mod tests {
         b.reset_text("ab");
         assert_eq!(b.composition(), None);
         assert_eq!(b.selection(), EditSelection::caret(2));
-        // undo가 지운 "fg"를 되살리면 caret은 되살린 구간 끝입니다.
+        // undo가 지운 "g"를 되살리면 caret은 되살린 구간 끝입니다.
         let mut b = TextEditBuffer::new("abcdef");
         b.set_selection(EditSelection::caret(2));
         b.reset_text("abcdefg");
