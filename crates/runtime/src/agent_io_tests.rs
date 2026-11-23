@@ -354,3 +354,135 @@ fn agent_requests_run_after_user_input() {
     );
     assert!(reply(agent).is_ok());
 }
+
+/// `until`이 참이 될 때까지 최대 [`WAIT`] 기다립니다.
+fn wait_for(mut until: impl FnMut() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + WAIT;
+    while std::time::Instant::now() < deadline {
+        if until() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    until()
+}
+
+#[test]
+fn revert_through_the_runtime_job_is_autosaved() {
+    // 검증 기준(XXIX.3.1 엔진 부분, ADR-0112 결정 4): 앱 사용자 UI의 되돌리기는 job 뒤 상태 게시로 자동 저장 예약에
+    // 들어가 다음 자동 저장에 기록됩니다(자동 저장 경로를 따로 두지 않음).
+    let mut f = app("agent-io-revert-autosave");
+    f.app
+        .enable_autosave_with(stellar_project::autosave::AutosavePolicy {
+            debounce: Duration::from_millis(150),
+            max_delay: Duration::from_millis(1_000),
+            app_deactivate_flush: stellar_project::autosave::FlushPolicy {
+                timeout: Duration::from_millis(500),
+            },
+            window_close_flush: stellar_project::autosave::FlushPolicy {
+                timeout: Duration::from_millis(5_000),
+            },
+        });
+    let io = f.app.agent_io();
+    let send = |request: AgentRequest| reply(io.submit(f.window, request).unwrap());
+    send(AgentRequest::Start {
+        session: session(),
+        origin: SessionOrigin::ExternalClient,
+        name: "외부".into(),
+    })
+    .unwrap();
+    send(AgentRequest::BeginEdit {
+        session: session(),
+        lease: lease(),
+        targets: LeaseTargets {
+            document: sid(1),
+            targets: vec![sid(11)],
+            externals: Vec::new(),
+        },
+    })
+    .unwrap();
+    let ui = UserUiAction::from_user_interface;
+    let mut approved = f
+        .app
+        .with_agent_edit(f.window, move |agent| agent.approve_lease(lease(), ui()))
+        .unwrap();
+    approved
+        .wait_timeout(WAIT)
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let Ok(AgentReply::Queued(proposal)) = send(AgentRequest::Propose {
+        session: session(),
+        lease: lease(),
+        id: command_id(1),
+        request: rename(base(&f), sid(1), 11, "에이전트"),
+    }) else {
+        panic!("제안 대기");
+    };
+    let mut applied = f
+        .app
+        .with_agent_edit(f.window, move |agent| {
+            agent.apply_proposal(session(), proposal, ui())
+        })
+        .unwrap();
+    let batch = applied
+        .wait_timeout(WAIT)
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    send(AgentRequest::Complete {
+        session: session(),
+        entry_id: command_id(2),
+    })
+    .unwrap();
+    let window = f.window;
+    let state = |app: &AppRuntime| app.state().window(window).unwrap().clone();
+    assert!(
+        wait_for(|| !state(&f.app).has_unsaved_changes),
+        "적용한 제안이 먼저 자동 저장됩니다"
+    );
+    let saved = state(&f.app).generation;
+    // 되돌리기 미리보기 승인 → 적용. job이 끝나면 상태 게시가 자동 저장을 예약합니다.
+    let mut reverted = f
+        .app
+        .with_agent_edit(f.window, move |agent| {
+            let preview = agent.preview_revert(
+                stellar_agent_edit::provenance::ProvenanceScope::Batch(batch),
+                &std::collections::BTreeSet::new(),
+                || stellar_ops::validate::Definitions::Failed("정의 없음"),
+            )?;
+            agent.apply_revert(&preview, command_id(3), ui())
+        })
+        .unwrap();
+    reverted
+        .wait_timeout(WAIT)
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let after = state(&f.app);
+    assert!(after.has_unsaved_changes, "되돌리기는 저장 전 변경입니다");
+    assert!(
+        matches!(
+            after.autosave,
+            stellar_project::autosave::schedule::AutosaveStatus::Pending
+                | stellar_project::autosave::schedule::AutosaveStatus::Saving
+        ),
+        "{:?}",
+        after.autosave
+    );
+    assert!(
+        wait_for(|| {
+            let now = state(&f.app);
+            !now.has_unsaved_changes && now.generation > saved
+        }),
+        "되돌리기가 다음 자동 저장에 기록됩니다"
+    );
+    let mut names = f.app.agent_history_names(f.window).unwrap();
+    assert_eq!(
+        names.wait_timeout(WAIT).unwrap().unwrap().unwrap().undo,
+        Some("에이전트 변경 되돌리기")
+    );
+}

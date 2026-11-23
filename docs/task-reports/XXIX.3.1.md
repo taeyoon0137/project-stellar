@@ -60,6 +60,7 @@
 | 에이전트 경로의 출처 표시 정리·되돌리기 호출 0(예외 없이) | `agent_paths_do_not_call_the_app_agent_edit_modules`, `agent_paths_cannot_write_immutable_state` | 통과 |
 | 창 Undo·Redo 뒤 표시 전이 | `completed_group_undo_redo_moves_provenance_and_names`, `user_edit_undo_redo_is_observed_as_changed_later`, `io_thread_queues_validated_requests_without_writing_the_document`(앱 `edit.undo`) | 통과 |
 | 되돌리기 change set이 자동 저장 입력 | `revert_is_one_history_entry_and_feeds_autosave` | 통과(revision 증가, 저장 전 변경) |
+| runtime job으로 한 되돌리기가 실제 자동 저장에 기록 | `agent_io::tests::revert_through_the_runtime_job_is_autosaved` | 통과(상태 게시 뒤 `Pending`, 다음 generation 기록 뒤 clean) |
 | Undo 메뉴 이름 | `completed_group_undo_redo_moves_provenance_and_names`, `ending_and_closing_release_leases_and_permissions` | 통과 |
 | 다른 세션 batch가 같은 속성을 바꾸면 이후 변경됨 | `another_session_batch_on_the_same_property_is_changed_later` | 통과 |
 | 창 닫기 때 lease·권한 해제 | `ending_and_closing_release_leases_and_permissions` | 통과 |
