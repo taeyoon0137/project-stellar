@@ -233,11 +233,11 @@ frame/grid-auto-rows appkit approximated rule=grid-layout template="암시 NSGri
 frame/grid-auto-rows compose approximated rule=grid-layout template="암시 행 track({v})" findings=[]
   암시 행에 grid-template-rows 규칙
 frame/grid-auto-flow swiftui approximated rule=grid-layout template="자동 배치 순서({v})" findings=[]
-  row·column 자동 배치 순서를 칸 좌표로(Native)
+  row·column 자동 배치 순서를 칸 좌표로 냅니다(값은 1:1). 칸 배치는 grid 규칙을 따라 Approximated
 frame/grid-auto-flow appkit approximated rule=grid-layout template="자동 배치 순서({v})" findings=[]
-  row·column 자동 배치 순서를 칸 좌표로(Native)
+  row·column 자동 배치 순서를 칸 좌표로 냅니다(값은 1:1). 칸 배치는 grid 규칙을 따라 Approximated
 frame/grid-auto-flow compose approximated rule=grid-layout template="자동 배치 순서({v})" findings=[]
-  row·column 자동 배치 순서를 칸 좌표로(Native)
+  row·column 자동 배치 순서를 칸 좌표로 냅니다(값은 1:1). 칸 배치는 grid 규칙을 따라 Approximated
 frame/transform swiftui native rule=transform-effect template=".offset(x:y:) + .transformEffect({v})" findings=[]
   layout 뒤 적용, 원점 좌상단. 이동은 `.offset`, 선형 부분은 `.transformEffect`(Native)
 frame/transform appkit unsupported rule=no-output template="" findings=[transform:unsupported]

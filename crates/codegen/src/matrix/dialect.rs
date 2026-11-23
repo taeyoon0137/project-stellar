@@ -398,9 +398,9 @@ pub const DIALECT_TEXTS: &[DialectText] = &[
     text(
         "frame",
         "grid-auto-flow",
-        "row·column 자동 배치 순서를 칸 좌표로(Native)",
-        "row·column 자동 배치 순서를 칸 좌표로(Native)",
-        "row·column 자동 배치 순서를 칸 좌표로(Native)",
+        "row·column 자동 배치 순서를 칸 좌표로 냅니다(값은 1:1). 칸 배치는 grid 규칙을 따라 Approximated",
+        "row·column 자동 배치 순서를 칸 좌표로 냅니다(값은 1:1). 칸 배치는 grid 규칙을 따라 Approximated",
+        "row·column 자동 배치 순서를 칸 좌표로 냅니다(값은 1:1). 칸 배치는 grid 규칙을 따라 Approximated",
     ),
     text(
         "frame",
