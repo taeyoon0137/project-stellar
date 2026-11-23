@@ -2,7 +2,7 @@
 
 - WBS: XXVIII.2.3
 - 작업명: semantic diff/merge conformance corpus와 runner 제공
-- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 계획 1.1의 "올바른 커밋"이 없음: 구현 커밋이 `Feat:`·`Fix:`·`Test:` 제목이라 `Task(<ID>)` 제목 커밋이 없고, 원장(`cargo xtask generate-ledger`)이 근거 커밋과 검증 시각을 채우지 못합니다. 구현·검증과 선행 판정은 `[x]` 조건을 충족합니다. 보고 당시 기록: 완료 (`[x]`)
+- 상태: 완료 (`[x]`) — 2026-11-23 근거 커밋 기록: 구현·검증과 선행 판정은 이미 `[x]` 조건을 충족했고 작업 커밋 제목이 `Task(<ID>)` 형식이 아니어서 `[~]`에 머물렀습니다. 아래 "근거 커밋" 절에 실제 작업 커밋을 적었습니다. 이전 기록: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 계획 1.1의 "올바른 커밋"이 없음: 구현 커밋이 `Feat:`·`Fix:`·`Test:` 제목이라 `Task(<ID>)` 제목 커밋이 없고, 원장(`cargo xtask generate-ledger`)이 근거 커밋과 검증 시각을 채우지 못합니다. 구현·검증과 선행 판정은 `[x]` 조건을 충족합니다. 보고 당시 기록: 완료 (`[x]`)
 - 선행: XXVIII.1.3
 - 결정: [ADR-0081](../adr/ADR-0081-semantic-merge-resolution-and-git-driver.md) 결정 10
 
@@ -51,3 +51,10 @@
 ## 남은 위험 / 한계
 
 - 엔진 규칙을 바꾸면 기대 bytes가 바뀌므로 corpus를 다시 써야 하고, 그 diff가 규칙 변경의 리뷰 근거가 됩니다.
+
+## 근거 커밋 (2026-11-23 기록)
+
+이 행의 작업은 아래 커밋에 있습니다. 이 기록 커밋(`Task(XXVIII.2.3)`)은 원장이 근거 커밋을 찾도록 남긴 것이고 코드 변경은 없습니다.
+
+- `09470c43` Docs: ADR-0081을 구현한 종료 코드·신뢰 조건·resolve 명령에 맞춤
+- `bfae643f` Test: semantic diff·merge conformance corpus와 runner 추가
