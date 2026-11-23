@@ -12,6 +12,7 @@ use stellar_renderer_core::backend::{
     BackendError, CheckedBackend, EncodeOutcome, FrameId, RendererBackend,
 };
 use stellar_renderer_core::effects::artifact::RgbaImage;
+use stellar_renderer_core::effects::compare::{compare, Comparison, ToleranceConfig};
 use stellar_renderer_core::effects::fixture::{
     fill_mesh, p3, solid, srgb, stroke_mesh, Category, Coverage, CoverageMask, Feature, FillRule,
     Fixture, GlyphOp, ImageData, ImageOp, Mesh, Op, PathBuilder,
@@ -79,6 +80,31 @@ impl MetalHarness {
             pixels,
         })
     }
+}
+
+/// GPU image를 fixture CPU 기준과 fixture 허용 오차 class로 비교합니다. 통과하지 못하면 `dir/diff/<name>/`에 diff
+/// artifact를 씁니다(XI.11.2).
+pub(crate) fn check_against_reference(
+    fixture: &Fixture,
+    actual: &RgbaImage,
+    config: &ToleranceConfig,
+    dir: &std::path::Path,
+) -> Comparison {
+    let expected = render_reference(fixture).expect("CPU reference");
+    let tolerance = config.get(fixture.tolerance).unwrap_or_else(|| {
+        panic!(
+            "{}: 허용 오차 class {} 없음",
+            fixture.name, fixture.tolerance
+        )
+    });
+    let comparison = compare(&expected, actual, tolerance).expect("same size");
+    if !comparison.passed() {
+        let written = comparison
+            .write_artifact(&dir.join("diff"), &fixture.name, &expected, actual)
+            .expect("diff artifact");
+        eprintln!("{}: diff artifact {}", fixture.name, written.display());
+    }
+    comparison
 }
 
 /// harness 자체를 검사하는 작은 공통 fixture(분류별 inventory는 XI.11.3).
@@ -182,6 +208,7 @@ fn harness_renders_common_fixtures_to_deterministic_raw_references() {
         return;
     }
     let mut harness = MetalHarness::new();
+    let config = ToleranceConfig::builtin();
     let dir = artifact_dir("harness-smoke");
     for fixture in smoke_fixtures() {
         let first = harness.render(&fixture).expect("render");
@@ -194,25 +221,47 @@ fn harness_renders_common_fixtures_to_deterministic_raw_references() {
         let raw = std::fs::read(&path).expect("read raw");
         assert_eq!(RgbaImage::from_raw(&raw).expect("parse raw"), first);
         assert!(dir.join(format!("{}.png", fixture.name)).exists());
-        // CPU 기준과 같은 그림입니다(정밀 허용 오차 판정은 XI.11.2).
-        let reference = render_reference(&fixture).expect("reference");
-        let worst = first
-            .pixels
-            .iter()
-            .zip(reference.pixels.iter())
-            .map(|(a, b)| a.abs_diff(*b))
-            .max()
-            .unwrap_or(0);
-        let edge_pixels = first
-            .pixels
-            .chunks_exact(4)
-            .zip(reference.pixels.chunks_exact(4))
-            .filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 1))
-            .count();
+        // CPU 기준과 허용 오차(XI.11.2 config) 안입니다.
+        let comparison = check_against_reference(&fixture, &first, &config, &dir);
         assert!(
-            edge_pixels <= (fixture.width * fixture.height / 64) as usize,
-            "{}: CPU 기준과 다른 pixel {edge_pixels}개(최대 차이 {worst})",
-            fixture.name
+            comparison.passed(),
+            "{}: {}",
+            fixture.name,
+            comparison.summary()
         );
     }
+}
+
+#[test]
+fn gpu_image_against_altered_reference_fails_with_located_diff_artifact() {
+    // 검증 기준(XI.11.2): known different fixture 판정과 초과 pixel 위치 diff artifact(GPU 출력).
+    if !metal_available() {
+        return;
+    }
+    let mut harness = MetalHarness::new();
+    let base = Fixture::new("altered-reference", Category::Frame, 16, 16).with(solid(
+        Mesh::rect(4.0, 4.0, 12.0, 12.0),
+        srgb(0.2, 0.4, 0.8, 1.0),
+        Coverage::Disjoint,
+    ));
+    let gpu = harness.render(&base).expect("render");
+    let mut altered = base.clone();
+    altered.ops.push(solid(
+        Mesh::rect(6.0, 6.0, 8.0, 7.0),
+        srgb(1.0, 1.0, 0.0, 1.0),
+        Coverage::Disjoint,
+    ));
+    let config = ToleranceConfig::builtin();
+    let dir = artifact_dir("harness-altered");
+    let comparison = check_against_reference(&altered, &gpu, &config, &dir);
+    assert!(!comparison.passed());
+    let mut located: Vec<(u32, u32)> = comparison.failures.iter().map(|d| (d.x, d.y)).collect();
+    located.sort();
+    assert_eq!(located, vec![(6, 6), (7, 6)]);
+    let report = std::fs::read_to_string(dir.join("diff/altered-reference/failures.txt"))
+        .expect("failures.txt");
+    assert!(report.contains("failure x=6 y=6"), "{report}");
+    assert!(dir.join("diff/altered-reference/diff.png").exists());
+    // 같은 fixture 기준과는 통과합니다(known equal).
+    assert!(check_against_reference(&base, &gpu, &config, &dir).passed());
 }

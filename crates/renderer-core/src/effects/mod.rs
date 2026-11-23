@@ -6,12 +6,16 @@
 //! - [`raster`]: CPU 기준 rasterizer.
 //! - [`lower`]: fixture → render graph + draw command(`RendererBackend` generic).
 //! - [`artifact`]: reference image, raw RGBA·PNG 기록.
+//! - [`compare`]: 채널·structural 허용 오차 비교와 diff artifact.
 
 /// 공통 shader ABI byte 배치.
 pub mod abi;
 
 /// reference image와 raw RGBA·PNG artifact (XI.11.1).
 pub mod artifact;
+
+/// image 비교·허용 오차 config·diff artifact (XI.11.2).
+pub mod compare;
 
 /// fixture용 fill tessellator.
 pub mod fill;
