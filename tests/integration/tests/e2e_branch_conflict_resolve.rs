@@ -165,12 +165,18 @@ fn two_branch_conflict_is_resolved_semantically_and_added() {
         .into_iter()
         .map(|e| e.path)
         .collect();
+    // 앱이 만든 프로젝트는 텍스트 원본이 Git 원본입니다(ADR-0113): View 원본·로컬 cache pointer·컴포넌트 원본.
     assert_eq!(
         unmerged.len(),
-        2,
-        "design/current와 컴포넌트 원본: {unmerged:?}"
+        3,
+        "View 원본·design/current·컴포넌트 원본: {unmerged:?}"
     );
     assert!(unmerged.contains(&Path::new("design/current").to_path_buf()));
+    let view_path = unmerged
+        .iter()
+        .find(|p| p.starts_with("design/pages"))
+        .expect("View 원본 conflict")
+        .clone();
 
     // ── conflict 세션: 단위 두 개, raw·제외 경로 없음.
     let mut session = ConflictSession::open(&port, &root).expect("conflict 세션");
@@ -186,7 +192,8 @@ fn two_branch_conflict_is_resolved_semantically_and_added() {
         session.unsupported()
     );
     let kinds: Vec<_> = session.units().iter().map(|u| u.kind()).collect();
-    assert!(kinds.contains(&UnitKind::Generation) && kinds.contains(&UnitKind::ComponentSource));
+    assert_eq!(kinds.len(), 2, "{kinds:?}");
+    assert!(kinds.contains(&UnitKind::TextSource) && kinds.contains(&UnitKind::ComponentSource));
 
     // semantic conflict는 같은 속성을 다르게 바꾼 두 곳뿐입니다. 이름·배경색은 conflict가 아닙니다.
     let conflicts: Vec<(usize, UnitKind, StableId, String)> = session
@@ -203,14 +210,14 @@ fn two_branch_conflict_is_resolved_semantically_and_added() {
     assert_eq!(conflicts.len(), 2, "{conflicts:?}");
     let doc_conflict = conflicts
         .iter()
-        .find(|c| c.1 == UnitKind::Generation)
+        .find(|c| c.1 == UnitKind::TextSource)
         .expect("문서 conflict");
     assert_eq!((doc_conflict.2, doc_conflict.3.as_str()), (frame, "width"));
     let component_conflict = conflicts
         .iter()
         .find(|c| c.1 == UnitKind::ComponentSource)
         .expect("컴포넌트 conflict");
-    assert_eq!(session.paths_for(frame), vec![Path::new("design/current")]);
+    assert_eq!(session.paths_for(frame), vec![view_path.as_path()]);
     for c in session.conflicts() {
         assert!(
             c.allowed().contains(&"theirs") && c.allowed().contains(&"ours"),
@@ -243,6 +250,7 @@ fn two_branch_conflict_is_resolved_semantically_and_added() {
     assert!(report
         .added
         .contains(&Path::new("design/current").to_path_buf()));
+    assert!(report.added.contains(&view_path));
     assert!(report
         .added
         .iter()

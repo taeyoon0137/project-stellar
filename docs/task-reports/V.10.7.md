@@ -4,10 +4,54 @@
 
 - WBS: V.10.7
 - 작업명: 검증된 변환 경로에서 기본 원본을 텍스트로 전환하고 chunk 저장을 로컬 cache로 내림
-- 상태: 부분 완료 (`[~]`) — 앱 창 session의 열기·저장·자동 저장·stale·외부 변경이 텍스트 원본을 기본으로 쓰고, chunk generation은 stamp 짝으로 관리하는 파생 cache가 되었습니다. 기준 장비(REF-MAC) 실측·예산 판정, cache GC, 새 프로젝트 생성 경로의 첫 commit 원본, chunk의 Git 밖 이동은 하지 않았습니다(아래 차이). 원장 판정은 통합 때 `generate-ledger`로 정합니다.
+- 상태: 부분 완료 (`[~]`) — 앱 창 session의 열기·저장·자동 저장·stale·외부 변경이 텍스트 원본을 기본으로 쓰고, chunk generation은 stamp 짝으로 관리하는 파생 cache가 되었습니다. 2026-11-24 `text-source-everywhere` lane이 CLI·MCP의 읽기·쓰기, semantic Git, 새 프로젝트의 첫 저장을 같은 원본 session으로 옮겼습니다(아래 "후속: CLI·MCP·Git과 첫 저장"). 기준 장비(REF-MAC) 실측·예산 판정, cache GC, chunk의 Git 밖 이동은 하지 않았습니다(아래 차이). 원장 판정은 통합 때 `generate-ledger`로 정합니다.
 - 선행: V.10.6(같은 lane에서 앱 연결을 함께 마침, 보고서 V.10.6)
-- 결정: [ADR-0088](../adr/ADR-0088-text-source-default-and-chunk-cache.md)
-- lane: `text-source-default`
+- 결정: [ADR-0088](../adr/ADR-0088-text-source-default-and-chunk-cache.md), [ADR-0113](../adr/ADR-0113-headless-text-source-everywhere.md)
+- lane: `text-source-default`, `text-source-everywhere`
+
+## 후속: CLI·MCP·Git과 첫 저장 (2026-11-24, ADR-0113)
+
+### 변경 파일
+
+- `crates/project/src/document_io/session.rs`: 열기 계획 관찰 `observe`·`DiskSource`, 원본 revision hash `source_revision`, 검증된 변환 `convert_saved`(앱 창 session의 변환을 옮겨 한 곳으로 둠)
+- `crates/runtime/src/window_session/source.rs`: 변환을 `convert_saved` 호출로 바꿈(같은 판정 한 곳)
+- `crates/ops/src/snapshot.rs`: `open_snapshot`이 같은 열기 계획을 쓰고 FromText면 원본에서 문서를 읽음, 원본 revision, `disk_unchanged`, `source_semantic`
+- `crates/ops/src/snapshot/save.rs`(신규): 원본 → cache → stamp 저장 `save_documents`, 명시적 원본 전환 `adopt`
+- `crates/ops/src/snapshot/text_tests.rs`(신규): ops 시험
+- `crates/ops/src/apply.rs`, `crates/ops/src/merge_apply/composer.rs`: 쓰기를 `save_documents` 하나로
+- `crates/ops/src/trusted.rs`: MCP snapshot 재사용 판정이 원본 bytes도 비교(소유 밖 한 함수, ADR-0113 결정 2)
+- `crates/project/src/create/initial_document.rs`: 새 프로젝트 첫 저장이 원본·cache·stamp를 함께 씀
+- `tools/stellar-cli/src/{text_source,cli}.rs`, `tools/stellar-cli/tests/fixtures/help.txt`: `stellar text-source adopt`
+- `crates/runtime/src/window_session.rs`: dirty 창 reconciliation이 원본 event 뒤 따라온 cache를 병합 base로 씀, 시험 helper `cache_only_rename`(소유 밖, ADR-0113 Consequences)
+- `crates/runtime/src/window_session/source_tests.rs`, `crates/runtime/src/app/autosave/pipeline_tests.rs`, `tests/integration/tests/e2e_new_project_reopen.rs`: "CLI는 generation만 씀"·"최초 commit에 원본 없음" 전제의 기대값 조정(소유 밖)
+
+### 명령과 종료 코드
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-ops --locked --lib snapshot::text_tests` | 0 — 6 passed |
+| `cargo test -p stellar-runtime --locked --lib`(샌드박스 해제) | 0 — 361 passed, 7 ignored |
+| `cargo test -p stellar-integration-tests --locked --test e2e_new_project_reopen`(샌드박스 해제) | 0 — 1 passed |
+| `cargo test -p stellar-project --locked --lib create` | 0 — 23 passed |
+
+### 시험
+
+| 시험 | 확인 |
+|---|---|
+| `a_paired_source_opens_from_the_cache_and_apply_writes_source_cache_and_stamp` | 짝인 원본은 cache에서 열고, `apply`가 View 원본 파일 하나·cache·stamp를 쓰고, 다시 연 revision이 쓰기 결과와 같음 |
+| `a_source_edit_is_read_from_text_changes_the_revision_and_the_next_write_rebuilds_the_cache` | 원본만 바뀌면(Git pull) FromText로 원본에서 읽고 revision이 바뀜, 읽기는 파일을 쓰지 않음, MCP 재사용 판정이 변경을 봄, 옛 revision 쓰기 거부·아무것도 쓰지 않음, 새 revision 쓰기는 cache를 다시 맞춤 |
+| `a_cache_only_write_is_read_forward_and_the_next_write_moves_it_into_the_source` | cache만 쓴 옛 writer 뒤 Forward로 읽고 다음 쓰기가 원본으로 옮김 |
+| `a_broken_source_opens_but_refuses_document_reads_and_writes_with_the_file_name` | 깨진 원본: 열기는 되고 문서 읽기·쓰기는 파일 이름이 든 진단으로 거부, 아무것도 쓰지 않음 |
+| `a_text_only_clone_without_cache_is_read_from_text_and_the_first_write_creates_the_cache` | cache·stamp 없는 clone은 원본에서 읽고 첫 쓰기가 generation 1과 stamp를 만듦 |
+| `a_chunk_project_without_source_stays_chunk_only_on_write` | 원본 없는 chunk 프로젝트의 쓰기는 generation만 쓰고 원본을 만들지 않음 |
+| `editable_project_is_openable_and_original_files_survive_every_outcome`(기존) | 원본을 더한 첫 저장도 생성·commit·열기 통과 |
+| `new_project_edit_save_close_reopen_keeps_semantic_snapshot`(E2E) | 최초 commit이 `design/document.stellar.yaml`을 담음 |
+| `cli_edits_write_the_text_source_and_a_pulled_source_is_read_from_text`(CLI) | `text-source adopt`(revision 그대로, 두 번째는 `text-source-present`), CLI 쓰기가 원본 한 줄 diff, 원본만 바뀌면 `query`가 원본 값과 새 revision |
+
+### 차이(후속)
+
+- cache GC와 chunk의 Git 밖 이동은 하지 않았습니다. storage 경로(보호 경로)·git-porcelain snapshot·앱 창 session·감시·fixture 전체가 바뀌어야 하고 대부분 이 lane 소유 밖입니다. 대신 semantic Git·merge가 원본을 기준으로 보게 해 cache가 commit에 들어가도 원본이 이깁니다(ADR-0113 결정 5·6·7).
+- `[REF-MAC]` 실측은 하지 않았습니다.
 
 ## 필수 실행 환경
 
@@ -83,11 +127,11 @@ DEV-MAC release, 다른 lane이 동시에 돌던 부하 상태입니다. 자세�
 
 - `[REF-MAC]` 실제 통합 T0→T5와 기준 장비 열기·저장 예산 실측을 하지 않았습니다.
 - cache GC: generation이 아직 `design/`에 있어 Git이 추적하므로, 옛 generation을 지우면 추적 파일 삭제가 됩니다. chunk를 Git 밖으로 옮기는 일(ops·CLI·MCP·semantic Git의 원본 전환 뒤)과 함께 연결해야 합니다.
-- 새 프로젝트 생성(`stellar_project::create`)의 최초 commit은 아직 generation만 담습니다. 앱이 처음 열 때 원본으로 옮깁니다. create 경로는 소유 밖입니다.
+- (2026-11-24 해소, ADR-0113 결정 4) 새 프로젝트 생성의 최초 commit이 원본을 담습니다.
 
 ## 남은 위험
 
-- CLI·MCP는 아직 generation만 씁니다. 앱이 닫힌 동안 원본(Git pull)과 generation(CLI)이 함께 바뀌면 원본이 이기고 CLI 편집은 옛 generation에만 남습니다.
+- (2026-11-24 해소, ADR-0113) CLI·MCP도 원본과 cache를 함께 씁니다. 원본 기준 revision이라 Git pull 전 revision으로 쓴 CLI 편집은 거부됩니다.
 - 다른 앱 창의 journal 거래 도중 읽은 clean 창은 일부 파일만 바뀐 상태를 받을 수 있습니다(다음 event에서 맞춰짐).
 - 원본 stale 판정은 판정마다 원본 bytes를 읽고 hash합니다(감시 event·선택 실행 때). 외부 변경 반영은 document thread에서 돌고, 자기 저장 event에도 원본 전체를 한 번 이상 읽고 hash합니다(문서 밖 의미 확인과 stale 판정). 대형 원본에서는 metadata 지문으로 먼저 거르는 개선이 필요합니다.
 

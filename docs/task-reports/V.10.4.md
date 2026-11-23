@@ -4,7 +4,7 @@
 
 - WBS: V.10.4
 - 작업명: 모든 node·modifier·component·token·resource를 텍스트화하고 문서·페이지·View·큰 Frame 파일 참조와 이름/StableId 규칙 완성
-- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 남은 범위가 있음(아래 본문). 보고 당시 기록: 부분 완료 (`[~]`) — 텍스트화·배치·거부 규칙·Git 병합·CLI 검증은 통과했습니다. headless MCP 읽기 비교 테스트는 만들지 않았고, 선행 V.10.3의 상태는 XXIV.1.3 판정(ledger-verification lane)에 따릅니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 남은 범위가 있음(아래 본문). 2026-11-24 `text-source-everywhere` lane이 headless MCP 읽기 비교(원본 값과 MCP 값)를 더했습니다(아래 후속). 컴포넌트 Property·Slot·상태 머신과 표현식 token 쓰기 거부, 공개 포맷 동결 전 검증이 남습니다. 보고 당시 기록: 부분 완료 (`[~]`) — 텍스트화·배치·거부 규칙·Git 병합·CLI 검증은 통과했습니다.
 - 구현 커밋: `58709614`(v4 node·modifier 문법), `df80100f`(catalog), `ae935137`(다중 파일 원본·generation 변환), `07f81702`(전환 준비 corpus). 결정: [ADR-0077](../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md). 명세: [`text-source-v4.md`](../spec/text-source-v4.md).
 
 ## 필수 실행 환경
@@ -54,3 +54,8 @@
 - registry 이름이 공개 포맷 동결 전에 바뀌면 v4 파일 키도 바뀝니다. 그 사이의 v4 파일은 다시 export합니다.
 - registry 순서에서 이웃한 줄을 두 브랜치가 바꾸면 Git 텍스트 충돌입니다(merge driver XXIV.2.1 이후 해결).
 - 큰 문서의 export·check 성능은 측정하지 않았습니다(V.10.7에서 실측).
+
+## 후속: headless MCP 읽기 비교 (2026-11-24, ADR-0113)
+
+- MCP headless가 텍스트 원본 프로젝트를 원본 기준으로 읽습니다. `crates/mcp-core/src/headless/operations.rs`의 `reads_follow_a_source_only_edit_and_source_span_points_into_the_view_file`이 원본만 바꾼 값을 MCP 문서 page가 그대로 돌려주는지 확인합니다(`cargo test -p stellar-mcp-core --locked --lib headless::operations::tests`: 0, 1 passed).
+- 남은 범위: 컴포넌트 Property·Slot·상태 머신, 리터럴이 아닌 token 표현식 쓰기(표현식 텍스트 문법 결정 뒤), 공개 포맷 동결 전 검증.

@@ -58,9 +58,19 @@ impl fmt::Display for InstallError {
 
 impl std::error::Error for InstallError {}
 
-/// 프로젝트 `.gitattributes`에 더하는 줄.
+/// 프로젝트 `.gitattributes`에 더하는 컴포넌트 원본 줄.
 pub fn attributes_line() -> String {
     format!("{COMPONENT_SOURCE_PATTERN} merge={DRIVER_NAME}")
+}
+
+/// 프로젝트 `.gitattributes`에 더하는 줄 전체: 텍스트 원본 경로(ADR-0113 결정 5)와 컴포넌트 원본 줄. 컴포넌트 줄이
+/// 마지막입니다.
+pub fn attributes_lines() -> Vec<String> {
+    crate::merge_text::ATTRIBUTE_PATTERNS
+        .iter()
+        .map(|pattern| format!("{pattern} merge={DRIVER_NAME}"))
+        .chain(std::iter::once(attributes_line()))
+        .collect()
 }
 
 /// driver를 저장소 로컬에 등록합니다. `driver_command`는 Git이 shell로 실행할 명령(`… %O %A %B %P`)입니다.
@@ -90,20 +100,25 @@ pub fn install_driver(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(InstallError::Io(e)),
     };
-    let line = attributes_line();
     let text = existing
         .as_deref()
         .map(String::from_utf8_lossy)
         .unwrap_or_default()
         .into_owned();
-    let present = text.lines().any(|l| l.trim() == line);
+    let missing: Vec<String> = attributes_lines()
+        .into_iter()
+        .filter(|line| !text.lines().any(|l| l.trim() == line))
+        .collect();
+    let present = missing.is_empty();
     if !present {
         let mut next = text.clone();
         if !next.is_empty() && !next.ends_with('\n') {
             next.push('\n');
         }
-        next.push_str(&line);
-        next.push('\n');
+        for line in &missing {
+            next.push_str(line);
+            next.push('\n');
+        }
         let expected = existing.as_deref().map(ContentHash::compute);
         source_file::write_checked(
             &attributes_path,

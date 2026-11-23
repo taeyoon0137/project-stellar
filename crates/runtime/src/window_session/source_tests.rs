@@ -64,28 +64,6 @@ fn text_rename(project: &TempDir, node: u64, name: &str) {
     text.save().unwrap();
 }
 
-/// cache만 바꾸는 외부 writer(`stellar apply`, 아직 generation에 씀).
-fn cli_rename(project: &TempDir, locks: &TempDir, node: u64, name: &str) {
-    let snapshot = open_snapshot(project.path()).unwrap();
-    let request = ApplyRequest {
-        base_revision: snapshot.revision(),
-        document: sid(1),
-        commands: vec![CommandInput::Rename {
-            node: sid(node),
-            name: name.to_string(),
-        }],
-    };
-    apply(
-        project.path(),
-        &request,
-        ApplyMode::Write,
-        &LockPolicy::Required {
-            dir: locks.path().to_path_buf(),
-        },
-    )
-    .unwrap();
-}
-
 #[test]
 fn opening_a_chunk_project_migrates_it_to_the_text_source_once() {
     let project = saved_project("source-migrate");
@@ -178,7 +156,7 @@ fn a_cache_only_write_moves_forward_into_the_source() {
     let project = saved_project("source-forward");
     let locks = TempDir::new("source-forward-locks");
     drop(open(&project, &locks, 1));
-    cli_rename(&project, &locks, 12, "CLI 편집");
+    cache_only_rename(&project, 12, "CLI 편집");
     let a = open(&project, &locks, 2);
     assert_eq!(a.open_plan(), OpenPlan::Forward);
     assert_eq!(name_of(&a, 12), "CLI 편집");
@@ -245,7 +223,7 @@ fn a_clean_window_applies_a_cache_only_write_and_moves_it_into_the_source() {
     let project = saved_project("source-sync-forward");
     let locks = TempDir::new("source-sync-forward-locks");
     let mut a = open(&project, &locks, 1);
-    cli_rename(&project, &locks, 12, "CLI 반영");
+    cache_only_rename(&project, 12, "CLI 반영");
     assert!(matches!(
         a.sync_external(command(1)),
         ExternalSync::Applied { .. }

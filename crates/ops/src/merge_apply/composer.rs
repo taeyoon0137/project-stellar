@@ -24,6 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use stellar_document::model::DocumentModel;
 use stellar_document::records::{DocumentRecords, NodePayload};
 use stellar_git_porcelain::composer::{
     materialize_source, materialize_sources, resolve_source, ComparisonMode, ComposerSnapshotError,
@@ -33,21 +34,13 @@ use stellar_git_porcelain::object::ObjectId;
 use stellar_git_porcelain::snapshot::{SnapshotEntry, SnapshotSource};
 use stellar_git_porcelain::trust::GatedGitRunner;
 use stellar_project::document_io::component_source::project_source_index;
-use stellar_project::document_io::serialize::serialize_records;
 use stellar_project::migration::SchemaDecision;
 use stellar_project::path_resolver::ExternalAccess;
 use stellar_project::saved_project::SavedProjectLoader;
 use stellar_semantic_diff::snapshot::SemanticSnapshot;
 use stellar_semantic_merge::candidate::{CandidateBlocked, CandidateSnapshot};
 use stellar_semantic_merge::model::MergeInput;
-use stellar_storage::chunk::kinds::{KIND_ASSET_METADATA, KIND_DOCUMENT_MANIFEST, KIND_VIEW_TREE};
-use stellar_storage::chunk::planner::LogicalChunkState;
-use stellar_storage::generation::loader::LoadedGeneration;
-use stellar_storage::save::cancel::{run_save, CancelToken, SaveRunError};
-use stellar_storage::save::commit::SavedGenerationState;
-use stellar_storage::save::executor::SaveExecError;
-use stellar_storage::save::optimistic::BaseCheckError;
-use stellar_storage::save::plan::build_save_plan;
+use stellar_storage::chunk::kinds::KIND_ASSET_METADATA;
 
 use super::document::{project_documents, DocumentMergeError};
 use super::target::{create_branch_worktree, project_location, TargetError, ValidatedTarget};
@@ -57,6 +50,7 @@ use crate::error::OpenError;
 use crate::lock::{LockError, LockPolicy, SaveLock};
 use crate::revision::ProjectRevision;
 use crate::snapshot::open_snapshot;
+use crate::snapshot::save::{root_order, save_documents, SaveError};
 
 /// 적용 전 재검사의 기준이 되는 source 기록.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,6 +194,10 @@ fn side_semantic(
         .map_err(|e| project_error(e.to_string()))?;
     if project.project_id != project_id {
         return Err(ComposeError::ProjectMismatch { side });
+    }
+    // 텍스트 원본이 있으면 원본이 Git 원본입니다(ADR-0113 결정 6). cache generation은 project id 확인에만 씁니다.
+    if let Some(semantic) = crate::snapshot::source_semantic(&root).map_err(project_error)? {
+        return Ok((semantic, components));
     }
     let semantic = saved_semantic_snapshot(&project).map_err(|e| project_error(e.to_string()))?;
     Ok((semantic, components))
@@ -454,11 +452,6 @@ fn write_documents(
             "저장된 generation이 없는 target",
         ))?;
     let manifest = generation.manifest();
-    let manifest_hash = found
-        .manifest_hash()
-        .ok_or(ComposerApplyError::Unsupported(
-            "저장된 generation이 없는 target",
-        ))?;
     // 결과가 target 문서와 같으면 쓰지 않습니다.
     let mut current = BTreeMap::new();
     for definition in snapshot.documents() {
@@ -494,27 +487,9 @@ fn write_documents(
         return Ok((found, found, 0));
     }
 
-    // 문서가 아닌 chunk는 target pointer 재사용, 결과 문서는 모두 다시 직렬화(같은 내용은 재사용됨).
-    let mut states: Vec<LogicalChunkState> = manifest
-        .chunk_pointers
-        .iter()
-        .filter(|p| p.kind != KIND_DOCUMENT_MANIFEST && p.kind != KIND_VIEW_TREE)
-        .map(|p| LogicalChunkState::Clean {
-            chunk_id: p.chunk_id,
-        })
-        .collect();
-    for records in documents {
-        states.extend(
-            serialize_records(records)
-                .map_err(|e| ComposerApplyError::Save(e.to_string()))?
-                .to_dirty_states(),
-        );
-    }
     // root 순서: target에 남는 문서는 target 순서, 새 문서는 결과 순서(StableId 오름차순)로 뒤에 둡니다.
-    let mut roots: Vec<StableId> = manifest
-        .root_document_ids
-        .iter()
-        .copied()
+    let mut roots: Vec<StableId> = root_order(&snapshot)
+        .into_iter()
         .filter(|id| wanted.contains_key(id))
         .collect();
     for id in wanted.keys() {
@@ -522,36 +497,21 @@ fn write_documents(
             roots.push(*id);
         }
     }
-    let base = LoadedGeneration {
-        manifest_hash,
-        manifest: manifest.clone(),
-    };
-    let plan = build_save_plan(
-        Some(&base),
-        project_id,
-        manifest.schema_version,
-        &states,
-        roots,
-    )
-    .map_err(|e| ComposerApplyError::Save(e.to_string()))?;
-    let written = plan.dirty_chunks.len();
-    let mut memory = SavedGenerationState::new(Some((manifest.generation, manifest_hash)));
-    run_save(&root, &plan, &mut memory, &CancelToken::new()).map_err(|e| match e {
-        SaveRunError::Exec(SaveExecError::BaseCheck(BaseCheckError::StaleBase { .. })) => {
-            ComposerApplyError::ConcurrentWrite
+    // 원본·cache 저장(ADR-0113 결정 3). 레코드 밖 Component Context는 target 문서의 것을 그대로 둡니다.
+    let mut models = Vec::with_capacity(roots.len());
+    for id in &roots {
+        let (mut model, _) = DocumentModel::from_records(wanted[id].clone())
+            .map_err(|e| ComposerApplyError::Save(format!("{e:?}")))?;
+        if let Ok(target) = snapshot.document_model(*id) {
+            model.replace_context(target.context().live(&target));
+            model.set_style_defaults(target.style_defaults());
         }
+        models.push(model);
+    }
+    let saved = save_documents(&snapshot, roots, models).map_err(|e| match e {
+        SaveError::ConcurrentWrite => ComposerApplyError::ConcurrentWrite,
         other => ComposerApplyError::Save(other.to_string()),
     })?;
-    let revision = match memory.saved() {
-        Some((generation, manifest_hash)) => ProjectRevision::Saved {
-            generation,
-            manifest_hash,
-        },
-        None => {
-            return Err(ComposerApplyError::Save(
-                "저장 결과 generation이 없습니다".into(),
-            ))
-        }
-    };
+    let (revision, written) = (saved.revision, saved.written_chunks);
     Ok((found, revision, written))
 }

@@ -721,6 +721,60 @@ fn read_tree_file_bytes(root: &Path, path: &GitPath, kind: FileModeKind) -> Opti
     }
 }
 
+/// 텍스트 원본 후보 파일 하나: 경로와 새 bytes(`None`이면 지움).
+type TextCandidateFile = (GitPath, Option<Vec<u8>>);
+
+/// index tree(`index_root`)에 텍스트 원본이 있으면 후보 문서를 원본으로 인코딩해 바뀐 파일(`Some`)과 지울 파일
+/// (`None`)을 돌려줍니다(ADR-0113 결정 6). 문서 밖 의미(token·이미지 record·Context)는 index 원본 것을 쓰고, 컴포넌트
+/// 원본 파일은 원본 단위가 다루므로 넣지 않습니다. 원본이 없거나 후보가 문서를 바꾸지 않으면 빈 목록입니다.
+fn text_candidate_files(
+    index_root: &Path,
+    candidate: &CandidateIndexSnapshot,
+) -> Result<Vec<TextCandidateFile>, PrepareStageError> {
+    use stellar_project::document_io::session::{decode_source, read_source, SourceLibrary};
+    let unsupported = |reason: &'static str| {
+        PrepareStageError::Storage(CandidateStorageError::Unsupported(reason))
+    };
+    let Some(files) =
+        read_source(index_root).map_err(|_| unsupported("index 텍스트 원본을 읽을 수 없습니다"))?
+    else {
+        return Ok(Vec::new());
+    };
+    let (model, library) = SourceLibrary::split(
+        decode_source(&files).map_err(|_| unsupported("index 텍스트 원본을 읽을 수 없습니다"))?,
+    );
+    let document = model.document_id();
+    let Some(projection) = candidate
+        .documents()
+        .iter()
+        .find(|projection| projection.records.definition.id == document)
+    else {
+        return Ok(Vec::new());
+    };
+    let (mut next, _) =
+        stellar_document::model::DocumentModel::from_records(projection.records.clone())
+            .map_err(|_| unsupported("후보 문서를 모델로 만들 수 없습니다"))?;
+    next.replace_context(model.context().live(&model));
+    let encoded = stellar_project::document_io::source_v4::project::encode(&library.join(next))
+        .map_err(|_| unsupported("후보 문서를 텍스트 원본으로 쓸 수 없습니다"))?;
+    let path_of = |relative: &str| GitPath::from_bytes(format!("design/{relative}").as_bytes());
+    let mut out = Vec::new();
+    for (relative, text) in &encoded.files {
+        if relative.starts_with("components/") {
+            continue;
+        }
+        if files.files.get(relative) != Some(text) {
+            out.push((path_of(relative), Some(text.clone().into_bytes())));
+        }
+    }
+    for relative in files.files.keys() {
+        if !relative.starts_with("components/") && !encoded.files.contains_key(relative) {
+            out.push((path_of(relative), None));
+        }
+    }
+    Ok(out)
+}
+
 fn prepare_selection(
     git: &GatedGitRunner,
     worktree: &Path,
@@ -935,6 +989,27 @@ fn prepare_selection(
             .unwrap_or(FileModeKind::Regular);
         files.insert(path.clone(), CandidateFile::Bytes { path, kind, bytes });
     }
+    // index에 텍스트 원본이 있으면 원본(Git 원본)도 후보 문서로 다시 씁니다(ADR-0113 결정 6). cache generation만
+    // stage하면 commit의 원본과 cache가 갈라집니다. 컴포넌트 원본은 원본 단위가 따로 다룹니다.
+    if has_changes {
+        for (path, text) in text_candidate_files(base_tree.root(), &semantic)? {
+            match text {
+                Some(bytes) => {
+                    files.insert(
+                        path.clone(),
+                        CandidateFile::Bytes {
+                            path,
+                            kind: FileModeKind::Regular,
+                            bytes,
+                        },
+                    );
+                }
+                None => {
+                    files.remove(&path);
+                }
+            }
+        }
+    }
 
     // 원본 단위: 단위 경로를 원천(stage: 저장된 작업 트리, unstage: HEAD)과 같게 만듭니다.
     if !units.is_empty() {
@@ -1002,6 +1077,17 @@ fn prepare_selection(
     let expected = generation.as_ref().unwrap_or_else(|| semantic.snapshot());
     if saved_semantic_snapshot(&reopened).map_err(PrepareStageError::Storage)? != *expected {
         return Err(PrepareStageError::ReopenMismatch);
+    }
+    // 후보 tree의 텍스트 원본도 같은 의미여야 합니다(ADR-0113 결정 6).
+    if has_changes {
+        let text = crate::snapshot::source_semantic(tree.root()).map_err(|_| {
+            PrepareStageError::Storage(CandidateStorageError::Unsupported(
+                "후보 텍스트 원본을 읽을 수 없습니다",
+            ))
+        })?;
+        if text.is_some_and(|text| text != *expected) {
+            return Err(PrepareStageError::ReopenMismatch);
+        }
     }
     if read_index_snapshot(git, worktree).map_err(PrepareStageError::Git)? != index {
         return Err(PrepareStageError::IndexChanged);
@@ -1508,8 +1594,12 @@ fn unit_statuses(files: &[StellarFileStatus]) -> Vec<UnitStatus> {
     units.into_values().collect()
 }
 
-/// materialize한 tree(또는 작업 트리)의 저장 semantic snapshot. generation이 없으면 빈 snapshot입니다.
+/// materialize한 tree(또는 작업 트리)의 저장 semantic snapshot. 텍스트 원본이 있으면 원본(Git 원본)을 읽고
+/// (ADR-0113 결정 6), 없으면 generation을 읽습니다. 둘 다 없으면 빈 snapshot입니다.
 fn semantic_of(root: &Path, loader: &SavedProjectLoader) -> Result<SemanticSnapshot, String> {
+    if let Some(semantic) = crate::snapshot::source_semantic(root)? {
+        return Ok(semantic);
+    }
     if !root.join("design/current").exists() {
         return Ok(SemanticSnapshot::new());
     }
@@ -1966,7 +2056,25 @@ impl GitSession {
             }
             Err(e) => findings.push(StagedFinding::error("document-load", None, e.to_string())),
         }
-        match saved_semantic_snapshot(&project) {
+        // 텍스트 원본(Git 원본)이 있으면 staged 원본이 읽혀야 합니다(ADR-0113 결정 6). staged cache와 의미가 다르면
+        // 경고입니다: 원본이 이기므로(stamp 없는 clone은 원본에서 읽음) commit은 막지 않습니다.
+        let cache_semantic = saved_semantic_snapshot(&project);
+        match crate::snapshot::source_semantic(root) {
+            Ok(Some(text)) => {
+                if cache_semantic.as_ref().is_ok_and(|cache| *cache != text) {
+                    findings.push(StagedFinding {
+                        error: false,
+                        code: "text-source-cache-differs",
+                        document: None,
+                        message: "staged 텍스트 원본과 staged cache generation의 의미가 다릅니다(원본이 기준)"
+                            .into(),
+                    });
+                }
+            }
+            Ok(None) => {}
+            Err(e) => findings.push(StagedFinding::error("text-source-invalid", None, e)),
+        }
+        match cache_semantic {
             Ok(semantic) => {
                 // 참조 대상이 있는지는 위의 문서 판정(`validate_records`)만 봅니다. 미해결 참조(III.2.4)와 정의 없는
                 // 인스턴스는 `stellar validate`처럼 경고이고, 같은 사실을 semantic 무결성에서 다시 판정해 오류로

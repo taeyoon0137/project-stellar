@@ -760,3 +760,140 @@ pub(super) fn git_semantic_conflicts(cached: &CachedRead) -> Result<J, RpcError>
     }
     Ok(body)
 }
+
+#[cfg(test)]
+mod tests {
+    //! headless MCP 읽기가 텍스트 원본(Git 원본)을 따릅니다(ADR-0113 결정 2): 원본만 바뀐 상태(Git pull)도 snapshot을
+    //! 다시 열어 원본에서 읽고, `document.source_span`이 같은 원본의 줄 범위를 돌려줍니다.
+    use super::super::Headless;
+    use crate::json::{self, JsonValue};
+    use stellar_ops::lock::LockPolicy;
+    use stellar_ops::snapshot::save::adopt;
+    use stellar_ops::test_support::{
+        large_document, project_id, save_documents, scaffold_project, select_trusted_project,
+        FileTrustStore, ProjectIdentity, TempDir,
+    };
+
+    fn text_of(result: &JsonValue, key: &str) -> JsonValue {
+        let text = result.get(key).unwrap().as_array().unwrap()[0]
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        json::parse(text, json::JsonLimits::default()).unwrap()
+    }
+
+    fn source_files(design: &std::path::Path) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut stack = vec![design.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.to_string_lossy().ends_with(".stellar.yaml") {
+                    out.push(
+                        path.strip_prefix(design)
+                            .unwrap()
+                            .to_string_lossy()
+                            .replace('\\', "/"),
+                    );
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn reads_follow_a_source_only_edit_and_source_span_points_into_the_view_file() {
+        let temp = TempDir::new("mcp-text-source");
+        let project = temp.path.join("project");
+        let data = temp.path.join("data");
+        scaffold_project(&project);
+        let model = large_document(4);
+        save_documents(&project, &[&model]);
+        adopt(&project, &LockPolicy::None).unwrap();
+        FileTrustStore::open(&data)
+            .unwrap()
+            .grant(&ProjectIdentity::new(project_id(), &project).unwrap())
+            .unwrap();
+        let backend = Headless::new(select_trusted_project(&project, data).unwrap());
+        let uri = format!("stellar://documents/{}?limit=20", model.document_id());
+        let read = |backend: &Headless| {
+            let result = backend
+                .read(Some(&JsonValue::object(vec![(
+                    "uri",
+                    JsonValue::string(&uri),
+                )])))
+                .unwrap();
+            json::write(&text_of(&result, "contents"))
+        };
+        let before = read(&backend);
+        assert!(!before.contains("pulled"));
+
+        // Git pull처럼 View 원본만 바뀝니다(cache·stamp 그대로).
+        let node = model
+            .to_records()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|n| n.parent.is_some())
+            .unwrap()
+            .id;
+        let design = project.join("design");
+        let view = source_files(&design)
+            .into_iter()
+            .find(|p| p.starts_with("pages/"))
+            .expect("View 파일");
+        let path = design.join(&view);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let empty = r#"display_name: """#;
+        let at = text
+            .find(&format!("id: \"{node}\""))
+            .and_then(|start| text[start..].find(empty).map(|offset| start + offset))
+            .expect("node 이름 줄");
+        let edited = format!(
+            "{}display_name: pulled{}",
+            &text[..at],
+            &text[at + empty.len()..]
+        );
+        std::fs::write(&path, edited).unwrap();
+        let after = read(&backend);
+        assert!(after.contains("pulled"), "원본에서 다시 읽음: {after}");
+        assert_eq!(
+            backend.loads.get().0,
+            2,
+            "원본 변경이 snapshot 재사용을 막음"
+        );
+
+        let called = backend
+            .call(Some(&JsonValue::object(vec![
+                (
+                    "name",
+                    JsonValue::string(crate::catalog::tools::SOURCE_SPAN.name),
+                ),
+                (
+                    "arguments",
+                    JsonValue::object(vec![("node", JsonValue::string(node.to_string()))]),
+                ),
+            ])))
+            .unwrap();
+        let span = text_of(&called, "content");
+        let found = span.get("data").unwrap();
+        assert_eq!(found.get("file").unwrap().as_str(), Some(view.as_str()));
+        let start = found.get("start_line").unwrap().as_i64().unwrap() as usize;
+        let end = found.get("end_line").unwrap().as_i64().unwrap() as usize;
+        let item: Vec<String> = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .skip(start - 1)
+            .take(end - start + 1)
+            .map(str::to_owned)
+            .collect();
+        let item = item.join("\n");
+        assert!(
+            item.contains(&node.to_string()) && item.contains("pulled"),
+            "{item}"
+        );
+    }
+}

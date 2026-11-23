@@ -101,24 +101,24 @@ impl TrustedProject {
         Ok(current)
     }
 
-    /// 신뢰·identity·프로젝트 설정·current pointer가 열린 snapshot과 같은지 확인합니다.
+    /// 신뢰·identity·프로젝트 설정·current pointer·텍스트 원본이 열린 snapshot과 같은지 확인합니다.
     /// `stellar.yaml`은 generation hash에 포함되지 않으므로 매번 probe 전체를 비교합니다.
-    /// 문서 chunk는 다시 읽지 않습니다. 검증한 content-addressed 객체의 불변성을 사용합니다.
+    /// 문서 chunk는 다시 읽지 않습니다. 검증한 content-addressed 객체의 불변성을 사용합니다. 텍스트 원본(Git 원본)은
+    /// 파일 bytes hash를 다시 비교합니다(ADR-0113 결정 2, [`ProjectSnapshot::disk_unchanged`]).
     pub fn snapshot_is_current(
         &self,
         snapshot: &ProjectSnapshot,
     ) -> Result<bool, TrustedReadError> {
         let current = self.checked_probe()?;
-        let hash = match read_current_pointer(&current.root) {
-            Ok(hash) => Some(hash),
-            Err(CurrentPointerError::Missing { .. }) => None,
+        match read_current_pointer(&current.root) {
+            Ok(_) | Err(CurrentPointerError::Missing { .. }) => {}
             Err(_) => return Err(TrustedReadError::Unavailable),
-        };
+        }
         Ok(snapshot.root() == current.root
             && snapshot.project_id() == self.project_id()
             && snapshot.git_link() == current.git_link
             && snapshot.manifest() == &current.manifest
-            && snapshot.revision().manifest_hash() == hash)
+            && snapshot.disk_unchanged())
     }
 
     /// 신뢰와 고정 프로젝트 root를 확인해 현재 Git HEAD를 고릅니다.

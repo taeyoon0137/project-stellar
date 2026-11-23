@@ -129,6 +129,9 @@ pub mod mcp_merge;
 
 /// Component Context override 조립과 조회 (XXX.7.9·XXX.7.11, ADR-0099).
 pub mod context;
+/// 텍스트 원본(View·문서·token·catalog·Context 파일)의 3-way semantic merge (ADR-0113 결정 5).
+pub mod merge_text;
+
 /// 병합 결과 적용: 창 문서 3-way reconciliation과 Merge Composer 결과 target 적용 (XIII.3.4, XXIII.3, ADR-0110).
 pub mod merge_apply;
 

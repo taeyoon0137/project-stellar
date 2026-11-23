@@ -2312,17 +2312,25 @@ impl ProjectWindowSession {
             }
             Err(error) => return ExternalSync::Rejected(ExternalRejection::Load(error)),
         };
-        // LoadedBase: 텍스트 원본에서 연 뒤 cache를 아직 맞춰 쓰지 않았으면 loaded generation은 base가 아닙니다.
-        let base = match &self.loaded {
-            Some(_) if self.reconcile_pending && self.open_plan == OpenPlan::FromText => {
+        // LoadedBase: 텍스트 원본에서 연 뒤 cache를 아직 맞춰 쓰지 않았으면 loaded generation은 base가 아닙니다. 그사이
+        // 다른 writer(CLI·MCP 저장의 cache 단계, ADR-0113 결정 3)가 이 창 base 원본의 cache를 맞춰 썼으면(원본은 base와
+        // 같고 stamp 짝) 그 cache가 base입니다.
+        let caught_up = disk.plan == OpenPlan::Cache && disk.source.base() == self.source.base();
+        let base = match (&self.loaded, &disk.loaded) {
+            (_, Some(cache))
+                if self.reconcile_pending && self.open_plan == OpenPlan::FromText && caught_up =>
+            {
+                crate::reconcile::base_records(self.identity.canonical_target(), cache, document_id)
+            }
+            (Some(_), _) if self.reconcile_pending && self.open_plan == OpenPlan::FromText => {
                 Err("base cache를 아직 원본과 맞추지 않았습니다".to_owned())
             }
-            Some(loaded) => crate::reconcile::base_records(
+            (Some(loaded), _) => crate::reconcile::base_records(
                 self.identity.canonical_target(),
                 loaded,
                 document_id,
             ),
-            None => Err("base generation이 없습니다".to_owned()),
+            (None, _) => Err("base generation이 없습니다".to_owned()),
         };
         let merged = crate::reconcile::merge_window(base, self.model_of(), disk.model.as_ref());
         match merged {
@@ -2548,6 +2556,40 @@ pub(crate) mod test_fixtures {
     /// `stellar.yaml` + `.git` + [`sample_document`]를 저장한 generation 1을 가진 프로젝트.
     pub fn saved_project(tag: &str) -> TempDir {
         saved_project_with(tag, &[&sample_document()])
+    }
+
+    /// 원본을 모르는 옛 writer처럼 current generation(cache)만 다시 씁니다: 문서 1의 `node` 이름을 바꾼 generation.
+    /// CLI·MCP는 원본과 cache를 함께 쓰므로(ADR-0113 결정 3) cache-only 외부 변경은 이 helper로 만듭니다.
+    pub fn cache_only_rename(project: &TempDir, node: u64, name: &str) {
+        let root = project.path();
+        let base = stellar_storage::generation::loader::load_current_generation(root, project_id())
+            .unwrap();
+        let lazy = stellar_storage::generation::lazy::LazyGeneration::open(
+            root,
+            project_id(),
+            &mut stellar_storage::generation::lazy::NoopRecorder,
+        )
+        .unwrap();
+        let mut model = stellar_project::document_io::load::load_document_from_generation(
+            &lazy,
+            sid(1),
+            &mut stellar_storage::generation::lazy::NoopRecorder,
+        )
+        .unwrap()
+        .model;
+        model.set_display_name(sid(node), name.to_string()).unwrap();
+        let states = serialize_document(&model).unwrap().to_dirty_states();
+        let plan = build_save_plan(
+            Some(&base),
+            project_id(),
+            base.manifest.schema_version,
+            &states,
+            base.manifest.root_document_ids.clone(),
+        )
+        .unwrap();
+        let mut memory =
+            SavedGenerationState::new(Some((base.manifest.generation, base.manifest_hash)));
+        run_save(root, &plan, &mut memory, &CancelToken::new()).unwrap();
     }
 
     /// `documents`를 root 문서 순서로 저장한 generation 1을 가진 프로젝트.

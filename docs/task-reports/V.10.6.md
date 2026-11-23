@@ -4,7 +4,7 @@
 
 - WBS: V.10.6
 - 작업명: 텍스트 원본의 감시·외부 변경·저장·재열기 연결
-- 상태: 부분 완료 (`[~]`) — `window-session-stale` lane이 엔진 session 경로를, `text-source-default` lane이 앱 창 session(파일 감시·외부 변경·명령 저장·재열기)과 검증 열의 CLI dry-run→저장→재열기→Git diff 시나리오를 연결했습니다. dirty 창의 자동 병합(행 정의의 "병합")은 XIII.3.4 범위라 편집 보존·대기까지입니다. 원장 판정은 통합 때 `generate-ledger`로 정합니다.
+- 상태: 완료 (`[x]`) — 2026-11-24 `text-source-everywhere` lane: 앱 창 session의 감시·외부 변경·명령 저장·재열기(앞선 lane)에 더해, CLI·MCP의 명령 저장과 재열기가 같은 텍스트 원본 session을 쓰고 검증 열의 CLI dry-run→저장→재열기→Git diff를 실제 `stellar` 명령으로 확인했습니다. dirty 창 병합은 XIII.3.4(ADR-0110)로 들어와 있고, CLI가 원본도 쓰면서 생긴 원본 event·cache event 순서도 병합합니다. 선행 V.10.5의 판정과 원장 상태는 통합 때 `generate-ledger`로 정합니다. 처음 보고 당시: 부분 완료 (`[~]`).
 - 선행: V.10.5, XIII.3.1
 - 결정: [ADR-0083](../adr/ADR-0083-window-session-stale-and-external-sync.md), [ADR-0088](../adr/ADR-0088-text-source-default-and-chunk-cache.md)
 - lane: `window-session-stale`, `text-source-default`
@@ -54,10 +54,26 @@
 
 ## 차이
 
-- 검증 열의 CLI dry-run 단계는 `stellar apply` dry-run(ops `ApplyMode::DryRun`, CLI와 같은 함수)으로 시험합니다. CLI·MCP는 아직 generation(cache)을 읽고 씁니다. 앱이 그 쓰기를 원본으로 옮깁니다(ADR-0088 결정 1).
-- dirty 창의 병합은 XIII.3.4 범위라 대기(편집 보존)까지만 합니다.
+- (2026-11-24 해소) 검증 열의 CLI dry-run 단계를 실제 `stellar` 명령으로 확인했습니다. CLI·MCP도 원본을 읽고 씁니다(ADR-0113).
+- (2026-11-24 기준) dirty 창 병합은 XIII.3.4(ADR-0110)가 연결했습니다.
 
 ## 남은 위험
 
 - 다른 앱 창의 journal 거래 도중 읽은 clean 창은 일부 파일만 바뀐 상태를 받을 수 있습니다(다음 event에서 맞춰짐).
 - 문서 밖 의미(컴포넌트·token·catalog)의 외부 변경은 Undo로 되돌리지 않습니다.
+
+## 후속: CLI 명령 저장·재열기 (2026-11-24, ADR-0113)
+
+- CLI·MCP 쓰기(`stellar apply`·`stellar css paste`·Merge Composer)가 원본 → cache → stamp 순서로 씁니다(`stellar_ops::snapshot::save`). 재열기(`open_snapshot`)는 앱 창과 같은 열기 계획을 씁니다.
+- 열린 dirty 앱 창은 CLI 저장의 원본 event를 먼저 받아 FromText 상태가 된 뒤 cache event를 받습니다. 그 cache가 창 base 원본과 짝이면 병합 base로 씁니다(`crates/runtime/src/window_session.rs` `reconcile_external`, 소유 밖 한 판정).
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-cli --locked --test text_source_git`(샌드박스 해제) | 0 — 3 passed |
+| `cargo test -p stellar-runtime --locked --lib`(샌드박스 해제) | 0 — 361 passed, 7 ignored |
+
+| 시험 | 확인 |
+|---|---|
+| `cli_edits_write_the_text_source_and_a_pulled_source_is_read_from_text` | `stellar apply --dry-run`은 작업 트리를 바꾸지 않음 → `stellar apply`가 View 원본에 쓰고 `git diff -U0`이 이름 줄 하나(삭제 1·추가 1) → 새 프로세스 `stellar query`가 같은 값 → 원본만 바뀌면(Git pull) `query`가 원본 값과 새 revision |
+| `external_change_over_a_dirty_window_is_reconciled_and_autosave_resumes`(runtime) | CLI가 원본·cache를 모두 써도 dirty 창이 두 선택지 없이 병합하고 자동 저장이 재개 |
+| `a_cache_only_write_moves_forward_into_the_source`·`a_clean_window_applies_a_cache_only_write_and_moves_it_into_the_source`(runtime) | cache만 쓰는 옛 writer는 `cache_only_rename` helper로 계속 확인 |

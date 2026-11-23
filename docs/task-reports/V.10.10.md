@@ -5,7 +5,7 @@
 - WBS: V.10.10
 - 등록: 2026-11-23 plan-revision이 임시 번호 TS-MAP를 이 ID로 계획서에 등록하고 보고서를 `docs/task-reports/pending-wbs/TS-MAP.md`에서 옮김
 - 작업명: node StableId → 텍스트 원본 파일·줄 범위 core API와 CLI `stellar query --source-span`
-- 상태: 부분 완료 (`[~]`) — 2026-11-23 plan-revision 계획서 판정: 계획 1.1의 "올바른 커밋"이 없음: 구현 커밋이 `Feat:`·`Fix:` 제목이라 `Task(<ID>)` 제목 커밋이 없고, 원장이 근거 커밋을 채우지 못합니다; 선행 V.10.4(`[~]`)가 `[x]`가 아님(계획 1.2 규칙 4). 보고 당시 기록: 완료 (`[x]`)
+- 상태: 완료 (`[x]`) — 2026-11-24 `text-source-everywhere` lane: core API·CLI(앞선 lane)에 더해 MCP `document.source_span`의 성공 경로를 텍스트 원본 fixture로 확인했고, span이 가리키는 줄의 값이 원본에서 읽은 조회 값과 같습니다. 선행 V.10.4 판정은 통합 때 `generate-ledger`로 정합니다. 처음 보고 당시: 완료 (`[x]`), 2026-11-23 plan-revision 판정: 부분 완료(`Task(V.10.10)` 커밋 없음, 선행 `[~]`).
 - 선행: V.10.4 `[~]`
 - 구현 커밋: `ae935137`(span table), `199fee64`(ops·CLI). 결정: [ADR-0077](../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md) 결정 6.
 
@@ -49,3 +49,13 @@
 ## 남은 위험
 
 - 손으로 고친 파일이 canonical 들여쓰기(`  -`, `    id:`)를 따르지 않으면 그 node의 span을 찾지 못합니다. check는 문법만 보고 줄 형태를 강제하지 않습니다.
+
+## 후속: MCP 성공 경로 (2026-11-24, ADR-0113)
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-mcp-core --locked --lib headless::operations::tests` | 0 — 1 passed |
+
+| 시험 | 확인 |
+|---|---|
+| `reads_follow_a_source_only_edit_and_source_span_points_into_the_view_file`(`crates/mcp-core/src/headless/operations.rs`) | `stellar text-source adopt`와 같은 전환 뒤, View 원본만 바꾸면 MCP 문서 page가 원본 값을 읽고(snapshot 다시 엶), `document.source_span`의 파일이 그 View 파일이고 줄 범위 안에 그 node id와 바뀐 이름이 있음 |
