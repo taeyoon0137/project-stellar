@@ -18,6 +18,13 @@
 //!     mapping <validator|matrix> <subject> <status> rule=<rule> [diagnostic=<code>] [replacement=<subject>] [path=<path>]
 //! accessibility <n>
 //!   [j] node=[i] <role> [label=..] [value=..] [states{..}] [actions{..}]   (깊이마다 두 칸 들여쓰기)
+//! machines <n>
+//!   machine <owner> variables=[..] actions=[<id> <name>,..]
+//!     transition <id> on <event>@<node> | on action(<id>)@<instance> [if <expr>]
+//!       set <state> = <expr> | emit <action>
+//! motions <n>
+//!   motion <id> owner=<owner> start=<조건> duration=<ms> delay=<ms> timing=<함수> reduced_motion=<instant|play>
+//!     target <path>
 //! ```
 
 use std::fmt::Write as _;
@@ -35,7 +42,10 @@ use stellar_target_profile::capability::{CapabilitySubject, ContractCode, Elemen
 use stellar_target_profile::overrides::ValueOrigin;
 use stellar_target_profile::spec::ProfileSpec;
 
-use super::{CodegenIr, IrLayout, MappingSubject};
+use super::{
+    CodegenIr, IrAction, IrExpr, IrLayout, IrMotionStart, IrOwner, IrTiming, IrTrigger,
+    MappingSubject,
+};
 use crate::text::num;
 
 /// snapshot 형식 머리.
@@ -176,7 +186,156 @@ impl CodegenIr {
             }
             out.push('\n');
         }
+        let _ = writeln!(out, "machines {}", self.machines.len());
+        for machine in &self.machines {
+            let variables: Vec<String> = machine.variables.iter().map(|v| v.to_string()).collect();
+            let actions: Vec<String> = machine
+                .actions
+                .iter()
+                .map(|a| format!("{} {:?}", a.id, a.name))
+                .collect();
+            let _ = writeln!(
+                out,
+                "  machine {} variables=[{}] actions=[{}]",
+                owner_text(machine.owner),
+                variables.join(","),
+                actions.join(",")
+            );
+            for transition in &machine.transitions {
+                let _ = write!(out, "    transition {} on ", transition.id);
+                match transition.trigger {
+                    IrTrigger::Event { kind, source } => {
+                        let _ = write!(out, "{kind}@{source}");
+                    }
+                    IrTrigger::NestedAction { instance, action } => {
+                        let _ = write!(out, "action({action})@{instance}");
+                    }
+                }
+                if let Some(condition) = &transition.condition {
+                    let _ = write!(out, " if {}", expr_text(condition));
+                }
+                out.push('\n');
+                for action in &transition.actions {
+                    match action {
+                        IrAction::SetState { variable, value } => {
+                            let _ = writeln!(out, "      set {variable} = {}", expr_text(value));
+                        }
+                        IrAction::Emit { action } => {
+                            let _ = writeln!(out, "      emit {action}");
+                        }
+                    }
+                }
+            }
+        }
+        let _ = writeln!(out, "motions {}", self.motions.len());
+        for motion in &self.motions {
+            let start = match &motion.start {
+                IrMotionStart::Becomes { state, value } => {
+                    format!("becomes({state}={})", value_text(value))
+                }
+                IrMotionStart::Changes { state } => format!("changes({state})"),
+            };
+            let _ = writeln!(
+                out,
+                "  motion {} owner={} start={start} duration={} delay={} timing={} reduced_motion={}",
+                motion.id,
+                owner_text(motion.owner),
+                num(motion.duration_ms),
+                num(motion.delay_ms),
+                timing_text(motion.timing),
+                motion.reduced_motion.name()
+            );
+            for target in &motion.targets {
+                let _ = writeln!(out, "    target {}", path_text(target));
+            }
+        }
         out
+    }
+}
+
+fn owner_text(owner: IrOwner) -> String {
+    match owner {
+        IrOwner::Component(id) => format!("component({id})"),
+        IrOwner::View(id) => format!("view({id})"),
+    }
+}
+
+/// timing function 표기(parameter는 f32 최단 왕복 표기).
+pub fn timing_text(timing: IrTiming) -> String {
+    match timing {
+        IrTiming::Linear => "linear".to_string(),
+        IrTiming::CubicBezier { x1, y1, x2, y2 } => format!(
+            "cubic-bezier({}, {}, {}, {})",
+            num(x1),
+            num(y1),
+            num(x2),
+            num(y2)
+        ),
+        IrTiming::Steps { count, position } => {
+            format!("steps({count}, {})", position.css_name())
+        }
+        IrTiming::Spring {
+            mass,
+            stiffness,
+            damping,
+            initial_velocity,
+        } => format!(
+            "spring(mass={} stiffness={} damping={} velocity={})",
+            num(mass),
+            num(stiffness),
+            num(damping),
+            num(initial_velocity)
+        ),
+    }
+}
+
+/// 표현식 표기(깊이는 IR 상한 이하).
+pub fn expr_text(expr: &IrExpr) -> String {
+    match expr {
+        IrExpr::Literal(value) => value_text(value),
+        IrExpr::Null => "null".to_string(),
+        IrExpr::State(id) => format!("state({id})"),
+        IrExpr::Token(id) => format!("token({id})"),
+        IrExpr::Property(path) => format!("property({})", path_text(path)),
+        IrExpr::ComponentProperty(id) => format!("component_property({id})"),
+        IrExpr::Environment(key) => format!("env({key})"),
+        IrExpr::Context(id) => format!("context({id})"),
+        IrExpr::Unary { op, operand } => format!("({op} {})", expr_text(operand)),
+        IrExpr::Binary { op, lhs, rhs } => {
+            format!("({} {op} {})", expr_text(lhs), expr_text(rhs))
+        }
+        IrExpr::Call { function, args } => {
+            let args: Vec<String> = args.iter().map(expr_text).collect();
+            format!("{function}({})", args.join(", "))
+        }
+        IrExpr::If {
+            condition,
+            then,
+            otherwise,
+        } => format!(
+            "if({}, {}, {})",
+            expr_text(condition),
+            expr_text(then),
+            expr_text(otherwise)
+        ),
+        IrExpr::Match {
+            scrutinee,
+            arms,
+            default,
+        } => {
+            let arms: Vec<String> = arms
+                .iter()
+                .map(|(pattern, result)| {
+                    format!("{} => {}", value_text(pattern), expr_text(result))
+                })
+                .collect();
+            format!(
+                "match({}; {}; _ => {})",
+                expr_text(scrutinee),
+                arms.join("; "),
+                expr_text(default)
+            )
+        }
     }
 }
 

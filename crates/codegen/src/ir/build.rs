@@ -11,6 +11,7 @@ use stellar_target_profile::registry::RegistryCatalog;
 use stellar_target_profile::spec::TargetProfile;
 use stellar_target_profile::validate::{validate_profiles, ProfileOutcome, ViewNode};
 
+use super::behavior_build;
 use super::mapping;
 use super::{
     CodegenIr, CodegenSources, IrAccessibilityEntry, IrError, IrLayout, IrNode, IrProperty,
@@ -227,6 +228,15 @@ pub fn build_ir(
         check_state_references(&entry.semantics, &states)?;
     }
 
+    let scope = Scope {
+        tree: &tree,
+        ir_index: &ir_index,
+        states: &states,
+        tokens: &tokens,
+    };
+    let machines = behavior_build::machines(sources.machines, &scope)?;
+    let motions = behavior_build::motions(sources.motions, &scope)?;
+
     Ok(CodegenIr {
         target: IrTarget {
             profile: profile.clone(),
@@ -237,9 +247,40 @@ pub fn build_ir(
             accessibility,
             states,
             tokens,
+            machines,
+            motions,
             index: ir_index,
         },
     })
+}
+
+/// 참조 무결성 검사에 쓰는 IR 범위.
+pub(crate) struct Scope<'a> {
+    tree: &'a ViewTree,
+    ir_index: &'a BTreeMap<StableId, u32>,
+    states: &'a [IrState],
+    tokens: &'a [IrToken],
+}
+
+impl Scope<'_> {
+    /// node가 IR에 있으면 `Some(true)`, View에는 있지만 제외되었으면 `Some(false)`, View에 없으면 `None`.
+    pub(crate) fn node(&self, id: StableId) -> Option<bool> {
+        if self.ir_index.contains_key(&id) {
+            Some(true)
+        } else if self.tree.index.contains_key(&id) {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn has_state(&self, id: StableId) -> bool {
+        self.states.binary_search_by(|s| s.id.cmp(&id)).is_ok()
+    }
+
+    pub(crate) fn has_token(&self, id: StableId) -> bool {
+        self.tokens.binary_search_by(|t| t.id.cmp(&id)).is_ok()
+    }
 }
 
 /// Fragment를 펼친 IR 자식(StableId, 문서 순서).
@@ -465,6 +506,8 @@ pub fn build_accessibility_ir(
         accessibility,
         states: Vec::new(),
         tokens: Vec::new(),
+        machines: Vec::new(),
+        motions: Vec::new(),
         index,
     })
 }

@@ -2,11 +2,21 @@
 //!
 //! codegen은 문서 crate를 읽지 못하므로(crate 그래프) 이 module이 문서 registry를 codegen 지역 입력으로 옮깁니다.
 //! 새 판정·formatter를 두지 않고 문서 registry와 layout record 이름을 그대로 씁니다.
+//!
+//! - CSS 기반 속성 사용: [`css_property_use`], [`layout_property_use`], [`all_css_subjects`] (XXII.1.2·XXII.1.4).
+//! - `MotionSpec`: [`motion`] (XXII.1.5). 문서 값을 그대로 옮깁니다(f32 bit 보존).
+//! - 상태 머신의 조건식·값 식(`CheckedExpression`)을 [`stellar_codegen::ir::IrExpr`]로 낮추는 일은 expressions
+//!   타입을 이름으로 써야 하므로 ops에서 하지 않습니다(crate 그래프, ADR-0106 Consequences).
 
-use stellar_codegen::ir::CssPropertyUse;
+use stellar_codegen::ir::{
+    CssPropertyUse, IrMotion, IrMotionStart, IrOwner, IrReducedMotion, IrStepPosition, IrTiming,
+};
 use stellar_document::css::mapping::MappingStatus;
 use stellar_document::css::registry::{self, RegistryEntry};
 use stellar_document::layout_record::{LayoutLonghand, LayoutRole};
+use stellar_document::motion::spec::{
+    MotionOwner, MotionSpec, ReducedMotion, StartCondition, StepPosition, TimingFunction,
+};
 use stellar_target_profile::css_matrix::MappingInput;
 
 use crate::core_types::property::PropertyPath;
@@ -69,6 +79,60 @@ pub fn all_css_subjects() -> Vec<CssPropertyUse> {
     out
 }
 
+/// 문서 `MotionSpec` → IR motion. 값은 그대로 옮깁니다.
+pub fn motion(spec: &MotionSpec) -> IrMotion {
+    let owner = match spec.owner() {
+        MotionOwner::Component(component) => IrOwner::Component(component.id()),
+        MotionOwner::View(view) => IrOwner::View(view),
+    };
+    let start = match spec.start() {
+        StartCondition::Becomes { variable, value } => IrMotionStart::Becomes {
+            state: variable.stable_id(),
+            value: value.clone(),
+        },
+        StartCondition::Changes { variable } => IrMotionStart::Changes {
+            state: variable.stable_id(),
+        },
+    };
+    let timing = match spec.timing() {
+        TimingFunction::Linear => IrTiming::Linear,
+        TimingFunction::CubicBezier { x1, y1, x2, y2 } => IrTiming::CubicBezier { x1, y1, x2, y2 },
+        TimingFunction::Steps { count, position } => IrTiming::Steps {
+            count,
+            position: match position {
+                StepPosition::JumpStart => IrStepPosition::JumpStart,
+                StepPosition::JumpEnd => IrStepPosition::JumpEnd,
+                StepPosition::JumpNone => IrStepPosition::JumpNone,
+                StepPosition::JumpBoth => IrStepPosition::JumpBoth,
+            },
+        },
+        TimingFunction::Spring {
+            mass,
+            stiffness,
+            damping,
+            initial_velocity,
+        } => IrTiming::Spring {
+            mass,
+            stiffness,
+            damping,
+            initial_velocity,
+        },
+    };
+    IrMotion {
+        id: spec.id().stable_id(),
+        owner,
+        targets: spec.targets().to_vec(),
+        start,
+        duration_ms: spec.duration_ms(),
+        delay_ms: spec.delay_ms(),
+        timing,
+        reduced_motion: match spec.reduced_motion() {
+            ReducedMotion::Instant => IrReducedMotion::Instant,
+            ReducedMotion::Play => IrReducedMotion::Play,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +176,91 @@ mod tests {
                 css.scope,
                 css.name
             );
+        }
+    }
+
+    #[test]
+    fn motion_spec_values_are_copied_bit_for_bit() {
+        use crate::core_types::ids::StableId;
+        use crate::core_types::typed_value::TypedValue;
+        use stellar_document::component::state_machine::StateVariableId;
+        use stellar_document::motion::spec::{MotionSpecId, MotionSpecInput};
+
+        let id =
+            |n: u8| StableId::from_bytes([0, 0, 0, 0, 0, 0, 0x70, 0, 0x80, 0, 0, 0, 0, 0, 0, n]);
+        let target = PropertyPath::new(id(2)).push(crate::core_types::property::PropertyKey(4));
+        let cases = [
+            (
+                TimingFunction::Spring {
+                    mass: 1.25,
+                    stiffness: 170.0,
+                    damping: 26.0,
+                    initial_velocity: 0.1,
+                },
+                ReducedMotion::Play,
+                StartCondition::Changes {
+                    variable: StateVariableId::new(id(3)),
+                },
+            ),
+            (
+                TimingFunction::Steps {
+                    count: 4,
+                    position: StepPosition::JumpBoth,
+                },
+                ReducedMotion::Instant,
+                StartCondition::Becomes {
+                    variable: StateVariableId::new(id(3)),
+                    value: TypedValue::Boolean(true),
+                },
+            ),
+        ];
+        for (timing, reduced_motion, start) in cases {
+            let spec = MotionSpec::new(MotionSpecInput {
+                id: MotionSpecId::new(id(1)),
+                owner: MotionOwner::View(id(9)),
+                targets: vec![target.clone()],
+                start,
+                duration_ms: 333.3,
+                delay_ms: 0.5,
+                timing,
+                reduced_motion,
+            })
+            .expect("유효한 MotionSpec");
+            let ir = motion(&spec);
+            assert_eq!(ir.id, id(1));
+            assert_eq!(ir.owner, IrOwner::View(id(9)));
+            assert_eq!(ir.targets, vec![target.clone()]);
+            assert_eq!(ir.duration_ms.to_bits(), 333.3f32.to_bits());
+            assert_eq!(ir.delay_ms.to_bits(), 0.5f32.to_bits());
+            match (timing, ir.timing) {
+                (
+                    TimingFunction::Spring {
+                        mass,
+                        stiffness,
+                        damping,
+                        initial_velocity,
+                    },
+                    IrTiming::Spring {
+                        mass: m,
+                        stiffness: k,
+                        damping: c,
+                        initial_velocity: v,
+                    },
+                ) => {
+                    assert_eq!(
+                        [mass, stiffness, damping, initial_velocity].map(f32::to_bits),
+                        [m, k, c, v].map(f32::to_bits)
+                    );
+                    assert_eq!(ir.reduced_motion, IrReducedMotion::Play);
+                }
+                (TimingFunction::Steps { count, .. }, IrTiming::Steps { count: c, position }) => {
+                    assert_eq!(count, c);
+                    assert_eq!(position, IrStepPosition::JumpBoth);
+                    assert_eq!(ir.reduced_motion, IrReducedMotion::Instant);
+                    assert!(matches!(ir.start, IrMotionStart::Becomes { .. }));
+                }
+                other => panic!("timing이 바뀌었습니다: {other:?}"),
+            }
         }
     }
 

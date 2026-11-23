@@ -51,7 +51,120 @@ use stellar_target_profile::spec::{
 };
 use stellar_target_profile::validate::{PropertyCapabilityMap, ViewModel, ViewNode};
 
-use crate::ir::{build_ir, CodegenIr, CodegenSources, CssPropertyUse, StateDecl, TokenDecl};
+use crate::ir::{
+    build_ir, CodegenIr, CodegenSources, CssPropertyUse, IrAction, IrExpr, IrMotion, IrMotionStart,
+    IrOwner, IrReducedMotion, IrSemanticAction, IrStateMachine, IrTiming, IrTransition, IrTrigger,
+    StateDecl, TokenDecl,
+};
+
+/// View 소유 id.
+pub const VIEW_OWNER: u8 = 200;
+/// semantic action "saved".
+pub const ACTION_SAVED: u8 = 201;
+/// MotionSpec: 저장 버튼 배경.
+pub const MOTION_SAVE: u8 = 210;
+/// MotionSpec: grid 배경(ios에서 제외).
+pub const MOTION_GRID: u8 = 211;
+
+/// 저장 버튼 상태 머신: activate@12(저장 중이 아니면) → isSaving = true, emit saved. input@11 → memo = "입력".
+pub fn machines() -> Vec<IrStateMachine> {
+    vec![IrStateMachine {
+        owner: IrOwner::View(sid(VIEW_OWNER)),
+        variables: vec![sid(STATE_SAVING), sid(STATE_MEMO)],
+        actions: vec![IrSemanticAction {
+            id: sid(ACTION_SAVED),
+            name: "saved".to_string(),
+        }],
+        transitions: vec![
+            IrTransition {
+                id: sid(220),
+                trigger: IrTrigger::Event {
+                    kind: "activate",
+                    source: sid(12),
+                },
+                condition: Some(IrExpr::Unary {
+                    op: "not",
+                    operand: Box::new(IrExpr::State(sid(STATE_SAVING))),
+                }),
+                actions: vec![
+                    IrAction::SetState {
+                        variable: sid(STATE_SAVING),
+                        value: IrExpr::Literal(TypedValue::Boolean(true)),
+                    },
+                    IrAction::Emit {
+                        action: sid(ACTION_SAVED),
+                    },
+                ],
+            },
+            IrTransition {
+                id: sid(221),
+                trigger: IrTrigger::Event {
+                    kind: "input",
+                    source: sid(11),
+                },
+                condition: None,
+                actions: vec![IrAction::SetState {
+                    variable: sid(STATE_MEMO),
+                    value: IrExpr::Literal(text("입력")),
+                }],
+            },
+            IrTransition {
+                id: sid(222),
+                trigger: IrTrigger::Event {
+                    kind: "activate",
+                    source: sid(15),
+                },
+                condition: None,
+                actions: vec![IrAction::SetState {
+                    variable: sid(STATE_SAVING),
+                    value: IrExpr::Literal(TypedValue::Boolean(false)),
+                }],
+            },
+        ],
+    }]
+}
+
+/// MotionSpec: 저장 버튼 배경(isSaving becomes true, ease 200ms, reduced instant)과 grid 배경(memo changes, spring,
+/// reduced play; ios에서 대상 제외).
+pub fn motions() -> Vec<IrMotion> {
+    vec![
+        IrMotion {
+            id: sid(MOTION_GRID),
+            owner: IrOwner::View(sid(VIEW_OWNER)),
+            targets: vec![path(13, KEY_FILL)],
+            start: IrMotionStart::Changes {
+                state: sid(STATE_MEMO),
+            },
+            duration_ms: 480.0,
+            delay_ms: 0.0,
+            timing: IrTiming::Spring {
+                mass: 1.0,
+                stiffness: 170.0,
+                damping: 26.0,
+                initial_velocity: 0.0,
+            },
+            reduced_motion: IrReducedMotion::Play,
+        },
+        IrMotion {
+            id: sid(MOTION_SAVE),
+            owner: IrOwner::View(sid(VIEW_OWNER)),
+            targets: vec![path(12, KEY_FILL), path(12, KEY_RADIUS)],
+            start: IrMotionStart::Becomes {
+                state: sid(STATE_SAVING),
+                value: TypedValue::Boolean(true),
+            },
+            duration_ms: 200.0,
+            delay_ms: 16.5,
+            timing: IrTiming::CubicBezier {
+                x1: 0.25,
+                y1: 0.1,
+                x2: 0.25,
+                y2: 1.0,
+            },
+            reduced_motion: IrReducedMotion::Instant,
+        },
+    ]
+}
 use stellar_target_profile::css_matrix::MappingInput;
 
 /// CSS 기반 속성 사용 하나.
@@ -276,6 +389,10 @@ pub struct Fixture {
     pub token_bindings: BTreeMap<PropertyPath, StableId>,
     /// CSS 기반 속성 사용(XXII.1.2).
     pub css_properties: BTreeMap<StableId, Vec<CssPropertyUse>>,
+    /// 상태 머신(XXII.1.5).
+    pub machines: Vec<IrStateMachine>,
+    /// MotionSpec(XXII.1.5).
+    pub motions: Vec<IrMotion>,
     /// registry catalog.
     pub catalog: RegistryCatalog,
 }
@@ -601,6 +718,8 @@ impl Fixture {
             tokens,
             token_bindings,
             css_properties: css_properties(),
+            machines: machines(),
+            motions: motions(),
             catalog: builtin::catalog().expect("catalog"),
         }
     }
@@ -618,6 +737,8 @@ impl Fixture {
             tokens: &self.tokens,
             token_bindings: &self.token_bindings,
             css_properties: &self.css_properties,
+            machines: &self.machines,
+            motions: &self.motions,
         }
     }
 
@@ -673,6 +794,8 @@ pub fn fragment_fixture() -> Fixture {
         tokens: Vec::new(),
         token_bindings: BTreeMap::new(),
         css_properties: BTreeMap::new(),
+        machines: Vec::new(),
+        motions: Vec::new(),
         catalog: builtin::catalog().expect("catalog"),
     }
 }
@@ -752,6 +875,8 @@ pub fn list_fixture(items: u32) -> Fixture {
         tokens: Vec::new(),
         token_bindings: BTreeMap::new(),
         css_properties: BTreeMap::new(),
+        machines: Vec::new(),
+        motions: Vec::new(),
         catalog: builtin::catalog().expect("catalog"),
     }
 }

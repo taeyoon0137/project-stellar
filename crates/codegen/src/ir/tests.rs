@@ -549,6 +549,8 @@ fn view_without_semantics_or_tokens_still_builds() {
         tokens: &[],
         token_bindings: &empty_bindings,
         css_properties: &BTreeMap::new(),
+        machines: &[],
+        motions: &[],
     };
     let catalog = stellar_target_profile::builtin::catalog().expect("catalog");
     let ir = build_ir(&sources, &fx::web_profile(), &catalog).expect("IR");
@@ -745,4 +747,176 @@ fn mapping_diagnostics_are_deterministic_and_reject_unknown_nodes() {
         build(&fixture, &fx::web_profile()).unwrap_err(),
         IrError::CssPropertyOutsideView(sid(250))
     );
+}
+
+#[test]
+fn state_machine_and_motion_are_kept_in_ir_with_exact_parameters() {
+    // 검증 기준(XXII.1.5): semantic snapshot fixture(ir_*.snapshot의 machines·motions 절), timing function과 reduced
+    // motion 대체 동작을 그대로 보존.
+    let fixture = Fixture::new();
+    let ir = build(&fixture, &fx::web_profile()).expect("IR");
+    assert_eq!(ir.machines.len(), 1);
+    assert_eq!(ir.machines[0].transitions.len(), 3);
+    let ids: Vec<StableId> = ir.motions.iter().map(|m| m.id).collect();
+    assert_eq!(ids, [fx::MOTION_SAVE, fx::MOTION_GRID].map(sid));
+    let save = &ir.motions[0];
+    assert_eq!(save.delay_ms.to_bits(), 16.5f32.to_bits());
+    assert_eq!(
+        save.timing,
+        IrTiming::CubicBezier {
+            x1: 0.25,
+            y1: 0.1,
+            x2: 0.25,
+            y2: 1.0
+        }
+    );
+    assert_eq!(save.reduced_motion, IrReducedMotion::Instant);
+    assert_eq!(ir.motions[1].reduced_motion, IrReducedMotion::Play);
+    let snapshot = ir.semantic_snapshot();
+    assert!(snapshot.contains("timing=cubic-bezier(0.25, 0.1, 0.25, 1) reduced_motion=instant"));
+    assert!(snapshot.contains("timing=spring(mass=1 stiffness=170 damping=26 velocity=0)"));
+    assert!(snapshot.contains("if (not state(00000000-0000-0000-0000-000000000034))"));
+    // ios는 13을 제외하므로 13 대상 motion과 15 source transition이 빠집니다.
+    let ios = build(&fixture, &fx::ios_profile()).expect("IR");
+    assert_eq!(ios.motions.len(), 1);
+    assert_eq!(ios.machines[0].transitions.len(), 2);
+}
+
+#[test]
+fn state_machine_and_motion_ir_bytes_are_identical_for_the_same_input() {
+    // 검증 기준(XXII.1.5): 같은 입력 IR bytes 동일. 입력 순서를 바꿔도 같습니다.
+    let mut fixture = Fixture::new();
+    let first = build(&fixture, &fx::web_profile())
+        .expect("IR")
+        .semantic_snapshot();
+    let again = build(&fixture, &fx::web_profile())
+        .expect("IR")
+        .semantic_snapshot();
+    assert_eq!(first, again);
+    fixture.motions.reverse();
+    fixture.machines[0].variables.reverse();
+    fixture.machines[0].actions.reverse();
+    let reordered = build(&fixture, &fx::web_profile())
+        .expect("IR")
+        .semantic_snapshot();
+    assert_eq!(first, reordered);
+}
+
+#[test]
+fn behavior_reference_errors_are_rejected() {
+    let deep = {
+        let mut expr = IrExpr::Literal(TypedValue::Boolean(true));
+        for _ in 0..MAX_EXPR_DEPTH {
+            expr = IrExpr::Unary {
+                op: "not",
+                operand: Box::new(expr),
+            };
+        }
+        expr
+    };
+    let cases: Vec<Case> = vec![
+        (
+            "같은 소유자 두 번",
+            Box::new(|f| {
+                let machine = f.machines[0].clone();
+                f.machines.push(machine);
+            }),
+            IrError::DuplicateMachine(sid(fx::VIEW_OWNER)),
+        ),
+        (
+            "선언 안 된 머신 변수",
+            Box::new(|f| f.machines[0].variables.push(sid(240))),
+            IrError::MachineUnknownState {
+                owner: sid(fx::VIEW_OWNER),
+                state: sid(240),
+            },
+        ),
+        (
+            "머신 변수가 아닌 set",
+            Box::new(|f| {
+                f.machines[0].transitions[1].actions[0] = IrAction::SetState {
+                    variable: sid(fx::STATE_SIZE),
+                    value: IrExpr::Null,
+                };
+            }),
+            IrError::MachineUnknownState {
+                owner: sid(fx::VIEW_OWNER),
+                state: sid(fx::STATE_SIZE),
+            },
+        ),
+        (
+            "선언 안 된 action emit",
+            Box::new(|f| {
+                f.machines[0].transitions[0].actions[1] = IrAction::Emit { action: sid(241) };
+            }),
+            IrError::MachineUnknownAction {
+                transition: sid(220),
+                action: sid(241),
+            },
+        ),
+        (
+            "View 밖 source",
+            Box::new(|f| {
+                f.machines[0].transitions[0].trigger = IrTrigger::Event {
+                    kind: "activate",
+                    source: sid(242),
+                };
+            }),
+            IrError::TransitionOutsideView(sid(242)),
+        ),
+        (
+            "transition id 중복",
+            Box::new(|f| {
+                let t = f.machines[0].transitions[0].clone();
+                f.machines[0].transitions.push(t);
+            }),
+            IrError::DuplicateTransition(sid(220)),
+        ),
+        (
+            "선언 안 된 토큰",
+            Box::new(|f| {
+                f.machines[0].transitions[0].condition = Some(IrExpr::Token(sid(243)));
+            }),
+            IrError::ExpressionUnknownToken(sid(243)),
+        ),
+        (
+            "너무 깊은 식",
+            Box::new(move |f| {
+                f.machines[0].transitions[0].condition = Some(deep.clone());
+            }),
+            IrError::ExpressionTooDeep,
+        ),
+        (
+            "motion id 중복",
+            Box::new(|f| {
+                let m = f.motions[0].clone();
+                f.motions.push(m);
+            }),
+            IrError::DuplicateMotion(sid(fx::MOTION_GRID)),
+        ),
+        (
+            "motion 대상이 View 밖",
+            Box::new(|f| f.motions[0].targets.push(fx::path(244, 1))),
+            IrError::MotionTargetOutsideView(sid(244)),
+        ),
+        (
+            "motion 시작 조건 변수 없음",
+            Box::new(|f| {
+                f.motions[0].start = IrMotionStart::Changes { state: sid(245) };
+            }),
+            IrError::MotionUnknownState {
+                motion: sid(fx::MOTION_GRID),
+                state: sid(245),
+            },
+        ),
+    ];
+    for (name, change, expected) in cases {
+        let mut fixture = Fixture::new();
+        change(&mut fixture);
+        assert_eq!(
+            build(&fixture, &fx::web_profile()).unwrap_err(),
+            expected,
+            "{name}"
+        );
+    }
 }

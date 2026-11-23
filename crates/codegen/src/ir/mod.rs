@@ -18,6 +18,7 @@
 //! | tokens | [`TokenDecl`](token id·이름·해석 값)과 PropertyPath → token binding | VIII.5·VIII.6 |
 //! | 텍스트 | Text node의 해석된 내용 | VI.7 |
 //! | CSS 기반 속성 사용 | [`CssPropertyUse`](node별 registry 항목·매핑 상태) | IX.11 registry |
+//! | 상태 머신·motion | [`IrStateMachine`]·[`IrMotion`](문서 값 그대로, 표현식은 [`IrExpr`]) | IX.5·XXX.1.1 |
 //!
 //! # 변환 규칙
 //!
@@ -35,6 +36,9 @@
 //! - **tokens·state**: 선언 전체를 id 오름차순으로 담습니다. token binding은 IR에 값이 있는 속성에만 붙습니다.
 //! - **mapping 진단**(XXII.1.2): node마다 validator 진단과 CSS 기반 속성 사용의 matrix 판정을 Native까지 모두
 //!   [`IrNode::mappings`]에 남깁니다([`mapping`]).
+//! - **상태 머신·motion**(XXII.1.5): 참조 무결성(선언된 상태·action·토큰, View node)만 검사하고 값은 그대로
+//!   보존합니다. 제외 node가 source인 transition과 제외 node 대상은 버리고, 대상이 모두 빠진 motion도 버립니다.
+//!   머신은 소유자 오름차순, motion은 id 오름차순입니다.
 //!
 //! 같은 입력은 항상 같은 IR과 같은 [`CodegenIr::semantic_snapshot`] 텍스트를 만듭니다(hash 순서·pointer·부동소수
 //! 연산을 쓰지 않음).
@@ -57,11 +61,15 @@ use stellar_target_profile::registry::ProfileRegistryVersion;
 use stellar_target_profile::spec::TargetProfile;
 use stellar_target_profile::validate::{CapabilityFinding, PropertyCapabilityMap, ViewModel};
 
+mod behavior_build;
 mod binding;
 mod build;
 
 /// node별 mapping 진단 (XXII.1.2).
 pub mod mapping;
+
+/// 선언형 상태 머신과 `MotionSpec` (XXII.1.5).
+pub mod behavior;
 
 /// semantic snapshot 텍스트와 안정 이름 표기.
 pub mod snapshot;
@@ -69,6 +77,10 @@ pub mod snapshot;
 #[cfg(test)]
 mod tests;
 
+pub use behavior::{
+    IrAction, IrExpr, IrMotion, IrMotionStart, IrOwner, IrReducedMotion, IrSemanticAction,
+    IrStateMachine, IrStepPosition, IrTiming, IrTransition, IrTrigger, MAX_EXPR_DEPTH,
+};
 pub use binding::ResolvedBinding;
 pub use build::{build_accessibility_ir, build_ir};
 pub use mapping::{CssPropertyUse, IrMapping, MappingSource, MappingSubject};
@@ -121,6 +133,10 @@ pub struct CodegenSources<'a> {
     pub token_bindings: &'a BTreeMap<PropertyPath, StableId>,
     /// node → 그 node가 쓰는 CSS 기반 속성 registry 항목(XXII.1.2).
     pub css_properties: &'a BTreeMap<StableId, Vec<CssPropertyUse>>,
+    /// 선언형 상태 머신(XXII.1.5).
+    pub machines: &'a [IrStateMachine],
+    /// `MotionSpec`(XXII.1.5).
+    pub motions: &'a [IrMotion],
 }
 
 impl fmt::Debug for CodegenSources<'_> {
@@ -261,7 +277,7 @@ pub struct IrToken {
 }
 
 /// 중립 코드 생성 IR.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CodegenIr {
     /// target.
     pub target: IrTarget,
@@ -285,7 +301,7 @@ impl std::ops::DerefMut for CodegenIr {
 
 /// Target Profile과 독립된 IR tree. 접근성 전용 입력은 layout·capability·속성·상태·token을
 /// 만들지 않습니다. 전체 코드 생성에는 `build_ir`가 만든 `CodegenIr`이 필요합니다.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct IrTree {
     /// 시각 node(preorder, `nodes[0]`이 root).
     pub nodes: Vec<IrNode>,
@@ -295,6 +311,10 @@ pub struct IrTree {
     pub states: Vec<IrState>,
     /// token(id 오름차순).
     pub tokens: Vec<IrToken>,
+    /// 상태 머신(소유자 오름차순, XXII.1.5).
+    pub machines: Vec<IrStateMachine>,
+    /// `MotionSpec`(id 오름차순, XXII.1.5).
+    pub motions: Vec<IrMotion>,
     index: BTreeMap<StableId, u32>,
 }
 
@@ -493,6 +513,41 @@ pub enum IrError {
     TokenBindingWithoutValue(StableId),
     /// CSS 기반 속성 사용의 대상이 View node가 아닙니다.
     CssPropertyOutsideView(StableId),
+    /// 같은 소유자의 상태 머신이 둘 이상입니다.
+    DuplicateMachine(StableId),
+    /// 같은 transition id가 두 번 있습니다.
+    DuplicateTransition(StableId),
+    /// 상태 머신이 선언되지 않은 상태 변수를 씁니다.
+    MachineUnknownState {
+        /// 소유자.
+        owner: StableId,
+        /// 상태 변수.
+        state: StableId,
+    },
+    /// transition이 선언되지 않은 semantic action을 emit합니다.
+    MachineUnknownAction {
+        /// transition.
+        transition: StableId,
+        /// action.
+        action: StableId,
+    },
+    /// transition source·instance가 View node가 아닙니다.
+    TransitionOutsideView(StableId),
+    /// 표현식이 선언되지 않은 토큰을 읽습니다.
+    ExpressionUnknownToken(StableId),
+    /// 표현식 깊이가 [`MAX_EXPR_DEPTH`]를 넘습니다.
+    ExpressionTooDeep,
+    /// 같은 MotionSpec id가 두 번 있습니다.
+    DuplicateMotion(StableId),
+    /// MotionSpec 대상이 View node가 아닙니다.
+    MotionTargetOutsideView(StableId),
+    /// MotionSpec 시작 조건이 선언되지 않은 상태 변수를 씁니다.
+    MotionUnknownState {
+        /// motion.
+        motion: StableId,
+        /// 상태 변수.
+        state: StableId,
+    },
 }
 
 impl fmt::Display for IrError {
@@ -559,6 +614,35 @@ impl fmt::Display for IrError {
             IrError::CssPropertyOutsideView(id) => {
                 write!(f, "CSS 기반 속성 사용의 대상 {id}가 View node가 아닙니다")
             }
+            IrError::DuplicateMachine(id) => {
+                write!(f, "소유자 {id}의 상태 머신이 둘 이상입니다")
+            }
+            IrError::DuplicateTransition(id) => write!(f, "transition {id}가 두 번 있습니다"),
+            IrError::MachineUnknownState { owner, state } => write!(
+                f,
+                "소유자 {owner}의 상태 머신이 선언되지 않은 상태 변수 {state}를 씁니다"
+            ),
+            IrError::MachineUnknownAction { transition, action } => write!(
+                f,
+                "transition {transition}이 선언되지 않은 action {action}을 emit합니다"
+            ),
+            IrError::TransitionOutsideView(id) => {
+                write!(f, "transition source {id}가 View node가 아닙니다")
+            }
+            IrError::ExpressionUnknownToken(id) => {
+                write!(f, "표현식이 선언되지 않은 토큰 {id}를 읽습니다")
+            }
+            IrError::ExpressionTooDeep => {
+                write!(f, "표현식 깊이가 IR 상한 {MAX_EXPR_DEPTH}를 넘습니다")
+            }
+            IrError::DuplicateMotion(id) => write!(f, "MotionSpec {id}가 두 번 있습니다"),
+            IrError::MotionTargetOutsideView(id) => {
+                write!(f, "MotionSpec 대상 {id}가 View node가 아닙니다")
+            }
+            IrError::MotionUnknownState { motion, state } => write!(
+                f,
+                "MotionSpec {motion}의 시작 조건이 선언되지 않은 상태 변수 {state}를 씁니다"
+            ),
         }
     }
 }
