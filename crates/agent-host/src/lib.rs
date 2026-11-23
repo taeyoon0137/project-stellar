@@ -29,6 +29,7 @@ pub mod decoder;
 pub mod env;
 pub mod json;
 pub mod output;
+pub mod preflight;
 pub mod process;
 pub mod profile;
 pub mod raw;
