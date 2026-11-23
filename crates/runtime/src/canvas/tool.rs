@@ -161,14 +161,18 @@ impl Modifiers {
     }
 }
 
-/// 도구 기계가 보는 키.
+/// 캔버스가 보는 키.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CanvasKey {
     /// Space.
     Space,
     /// Escape.
     Escape,
-    /// 글자 키(도구 키 판정).
+    /// Return(선택 범위 이동, XII.10.4). 도구 기계는 쓰지 않습니다.
+    Return,
+    /// Tab(형제 순환, XII.10.4). 도구 기계는 쓰지 않습니다.
+    Tab,
+    /// 글자 키(도구 키 판정, ⌘A).
     Character(char),
     /// 그 밖의 키(도구 기계는 쓰지 않음).
     Other,
@@ -342,7 +346,10 @@ impl CanvasToolState {
                             None => ToolEvent::NotConsumed,
                         }
                     }
-                    CanvasKey::Character(_) | CanvasKey::Other => ToolEvent::NotConsumed,
+                    CanvasKey::Character(_)
+                    | CanvasKey::Return
+                    | CanvasKey::Tab
+                    | CanvasKey::Other => ToolEvent::NotConsumed,
                 }
             }
             ToolInput::KeyUp { key, modifiers } => {

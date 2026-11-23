@@ -80,7 +80,9 @@ Accepted (2026-11-23). 계획 XII.10.2(가이드 열린 결정 O10)를 닫고, X
    둡니다. 계획 문구는 `WindowViewState`라고 썼지만 그 타입은 history가 소유하는 commands crate의 선택 상태이고, 도구·
    편집 범위·hover는 history와 무관한 캔버스 개념입니다. commands crate에 캔버스 UI 개념을 넣지 않고, 확정 선택만
    지금처럼 `WindowViewState`에 둡니다. 창 session(`ProjectWindowSession`)이 이 상태를 소유하게 잇는 일은 셸 연결과
-   함께 합니다.
+   함께 합니다. 창 하나의 입력(pointer down·move·up·cancel, 키, 수식키, 초점)은 `canvas::select_session::
+   CanvasSelectSession`이 이 상태와 아래 순수 함수로 차례로 처리하고, 끄는 동안의 문서 편집은 호출자가 그 session의
+   preview로 넣습니다.
 2. **hit 입력.** 선택 함수는 `PointStack`(커서 아래 node, 위에 그린 것부터, 숨김 제외, 잠금 표시 포함)을 받습니다.
    잠기지 않은 node는 narrow-phase hit test(XI.3.4)의 결과이고, 잠긴 node(scene `pointer-events: none`)는 같은 공간
    인덱스 후보를 local hit bounds와 clip으로 판정합니다(겹친 레이어 목록 전용, broad-phase 정밀도). 인스턴스 안 scene

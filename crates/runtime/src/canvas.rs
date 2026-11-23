@@ -44,6 +44,8 @@ pub mod select_gesture;
 pub mod select_hover;
 /// 깊은 선택과 편집 범위 이동 (XII.10.4, ADR-0104).
 pub mod select_navigate;
+/// 창별 캔버스 선택 입력 처리 (ADR-0104).
+pub mod select_session;
 /// select-through와 겹친 레이어 목록 (XII.10.5, ADR-0104).
 pub mod select_through;
 pub(crate) mod shape;
