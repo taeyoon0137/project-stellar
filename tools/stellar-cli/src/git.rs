@@ -509,7 +509,7 @@ pub fn git_error(error: &GitError) -> CliError {
         }
         GitError::EmptySelection => CliError::usage(message),
         GitError::StaleCursor => CliError::new(ExitStatus::TempFail, "stale-cursor", message),
-        GitError::InvalidCursor => CliError::usage(message),
+        GitError::InvalidCursor | GitError::InvalidLimit(_) => CliError::usage(message),
         GitError::InvalidStagedSnapshot(findings) => {
             let mut error = CliError::new(ExitStatus::Failure, "invalid-staged-snapshot", message)
                 .with_result(JsonValue::object(vec![(

@@ -538,6 +538,16 @@ fn status_runs_on_worker_with_real_head_upstream_remote_identity() {
         .entries
         .iter()
         .all(|e| e.kind == SemanticChangeKind::SetProperty));
+    // page 크기 오류는 cursor 오류와 구분합니다.
+    for limit in [0, stellar_ops::git::MAX_STATUS_LIMIT + 1] {
+        assert!(matches!(
+            s.status(&StatusRequest {
+                cursor: None,
+                limit
+            }),
+            Err(GitError::InvalidLimit(l)) if l == limit
+        ));
+    }
     s.stage(vec![GitItem::Change(first.entries[0].id.clone())], vec![])
         .unwrap();
     assert!(matches!(

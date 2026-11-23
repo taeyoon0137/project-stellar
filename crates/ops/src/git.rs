@@ -1118,6 +1118,8 @@ pub enum GitError {
     StaleCursor,
     /// cursor 형식 오류.
     InvalidCursor,
+    /// page 크기가 1..=[`MAX_STATUS_LIMIT`] 밖입니다.
+    InvalidLimit(usize),
     /// staged snapshot이 유효한 Stellar 프로젝트가 아니라 `git commit`을 실행하지 않았습니다(XIV.8.1).
     InvalidStagedSnapshot(Vec<StagedFinding>),
     /// 재검증 뒤 commit 전에 index가 바뀌어 `git commit`을 실행하지 않았습니다.
@@ -1157,6 +1159,9 @@ impl fmt::Display for GitError {
                 f.write_str("status가 바뀌어 cursor를 쓸 수 없습니다. 처음부터 다시 조회하세요")
             }
             Self::InvalidCursor => f.write_str("cursor 형식 오류"),
+            Self::InvalidLimit(limit) => {
+                write!(f, "page 크기 {limit}는 1..={MAX_STATUS_LIMIT}이어야 합니다")
+            }
             Self::InvalidStagedSnapshot(findings) => write!(
                 f,
                 "staged snapshot이 유효한 Stellar 프로젝트가 아닙니다(오류 {}건). commit하지 않았습니다",
@@ -1523,7 +1528,7 @@ impl GitSession {
     /// 저장소 상태와 semantic 변경 page를 읽습니다(읽기 전용, UX.5.1). 앱은 worker에서 부릅니다.
     pub fn status(&self, request: &StatusRequest) -> Result<GitStatusReport, GitError> {
         if request.limit == 0 || request.limit > MAX_STATUS_LIMIT {
-            return Err(GitError::InvalidCursor);
+            return Err(GitError::InvalidLimit(request.limit));
         }
         let report = read_status(&self.git, &self.root, StatusOptions::default())?;
         let operations = read_in_progress_operations(&self.git, &self.root)?;
@@ -1823,12 +1828,6 @@ pub struct CommitOutcome {
     pub revision: ContentHash,
 }
 
-fn sorted(entries: &[SnapshotEntry]) -> Vec<SnapshotEntry> {
-    let mut entries = entries.to_vec();
-    entries.sort_by(|a, b| a.path.cmp(&b.path));
-    entries
-}
-
 impl GitSession {
     /// staged snapshot이 유효한 Stellar 프로젝트인지 전체 validator로 다시 검사합니다(XIV.8.1).
     ///
@@ -1979,14 +1978,23 @@ impl GitSession {
         )))?;
         let committed = read_tree_snapshot(&self.git, &self.root, &SnapshotSource::Head)?;
         let index = read_index_snapshot(&self.git, &self.root)?;
-        let tree = sorted(&committed.entries);
-        let now = sorted(&index.entries);
-        let paths: BTreeSet<&GitPath> = tree.iter().chain(&now).map(|e| &e.path).collect();
-        let staged_remaining = paths
+        // 경로 map으로 대조합니다. generation 묶음의 object가 수천 개여도 항목마다 전체를 훑지 않습니다.
+        let by_path = |entries: &[SnapshotEntry]| -> BTreeMap<GitPath, SnapshotEntry> {
+            entries
+                .iter()
+                .map(|e| (e.path.clone(), e.clone()))
+                .collect()
+        };
+        let tree = by_path(&committed.entries);
+        let now = by_path(&index.entries);
+        let staged_remaining = tree
+            .keys()
+            .chain(now.keys())
+            .collect::<BTreeSet<_>>()
             .into_iter()
-            .filter(|p| tree.iter().find(|e| &e.path == *p) != now.iter().find(|e| &e.path == *p))
+            .filter(|p| tree.get(*p) != now.get(*p))
             .count();
-        let tree_matches_validated = tree == sorted(&validation.index.entries);
+        let tree_matches_validated = tree == by_path(&validation.index.entries);
         let repository = read_repository_status(&self.git, &self.root)?;
         Ok(CommitOutcome {
             previous_head,
