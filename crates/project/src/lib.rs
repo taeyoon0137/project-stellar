@@ -110,3 +110,6 @@ pub mod library_exports;
 
 /// library 의존성 엔진의 시스템 Git·SHA-256 연결 (XV.3).
 pub mod library_git;
+
+/// 프로젝트 열기 때 lock 기준 library 로드와 부분 열기 (XV.5.5).
+pub mod library_open;
