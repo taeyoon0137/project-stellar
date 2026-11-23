@@ -358,3 +358,178 @@ fn hosted_rebind_after_the_session_ended_is_refused_and_unbound() {
     assert!(front.host().bound(late).is_none(), "결합 해제");
     assert!(!job(&f, move |w| w.agent().sessions().is_active(session)));
 }
+
+/// socket 경로 한도(macOS 104 byte) 안의 짧은 임시 디렉터리.
+struct ShortDir(std::path::PathBuf);
+
+impl ShortDir {
+    fn new(tag: &str) -> ShortDir {
+        let path = std::env::temp_dir().join(format!("sfr-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        ShortDir(path)
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for ShortDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// 인증·handshake를 마친 실제 IPC 연결 한 쌍(bridge 쪽 session, 앱 쪽 연결)과 listener.
+fn ipc_pair(
+    tag: &str,
+) -> (
+    ShortDir,
+    stellar_local_ipc::listener::AppListener,
+    stellar_local_ipc::handshake::Session,
+    stellar_local_ipc::listener::AppConnection,
+) {
+    use stellar_local_ipc::auth::PeerPolicy;
+    use stellar_local_ipc::handshake::connect;
+    use stellar_local_ipc::listener::{AppEndpoint, AppListener, ListenerEvent};
+    use stellar_local_ipc::nonce::NonceLedger;
+    use stellar_local_ipc::registry::{InstanceId, Registry};
+
+    let ipc = ShortDir::new(tag);
+    let registry = Registry::at(ipc.path().join("r"), stellar_local_ipc::os::current_uid());
+    let endpoint = AppEndpoint::bind(&registry, InstanceId::from_bytes([7; 8])).unwrap();
+    let address = endpoint.endpoint().clone();
+    let policy = PeerPolicy::for_current_process().unwrap();
+    let listener = AppListener::spawn(endpoint, policy.clone()).unwrap();
+    let bridge = connect(&address, &policy, &mut NonceLedger::new()).unwrap();
+    let connection = match listener.events().recv_timeout(WAIT).unwrap() {
+        ListenerEvent::Connected { connection, .. } => connection,
+        other => panic!("{other:?}"),
+    };
+    (ipc, listener, bridge, connection)
+}
+
+#[test]
+fn connection_monitor_hands_bridge_frames_to_the_front_end() {
+    // 검증 기준(ADR-0132 결정 2): 인증·handshake를 마친 실제 IPC 연결에서 감시 스레드가 frame을 앞단에 넘기고, 응답
+    // frame을 bridge가 받으며, bridge가 끝나면 종료 event 한 번과 외부 클라이언트 종료 절차(lease 0, 세션 끝)가 있습니다.
+    use stellar_local_ipc::session::{CloseCause, ConnectionMonitor, SessionOrigin};
+
+    let f = app("agent-frame-monitor");
+    let (_ipc, _listener, mut bridge, connection) = ipc_pair("i1");
+    let (events, closed) = std::sync::mpsc::channel();
+    let service = FrameConnection::new(
+        f.app.agent_io(),
+        ConnectionBinding::External {
+            window: f.window,
+            name: "외부".to_string(),
+        },
+    )
+    .with_deadline(WAIT);
+    let monitor = ConnectionMonitor::serve(
+        connection,
+        SessionOrigin::External,
+        events,
+        Box::new(service),
+    )
+    .unwrap();
+    // 앞단이 연결마다 세션을 등록합니다.
+    let deadline = std::time::Instant::now() + WAIT;
+    let session = loop {
+        if let Some(id) = job(&f, |w| w.agent().sessions().active_ids().first().copied()) {
+            break id;
+        }
+        assert!(std::time::Instant::now() < deadline, "세션 등록");
+        std::thread::yield_now();
+    };
+    let stream = bridge.stream();
+    stream.set_nonblocking(false).unwrap();
+    stream.set_read_timeout(Some(WAIT)).unwrap();
+    // 첫 연결 승인 전 lease 요청은 거부 응답입니다.
+    write_frame(stream, &begin(1)).unwrap();
+    assert_eq!(
+        read_frame(stream).unwrap(),
+        Frame::Reply {
+            request: 1,
+            result: ResultKind::NotTrusted.name().to_string(),
+            message: "connection-not-approved".to_string(),
+        }
+    );
+    job(&f, move |w| {
+        let key = w.permission_key(session);
+        w.agent
+            .permissions_mut(UserUiAction::from_user_interface())
+            .respond_connection(&key, true)
+            .unwrap();
+    });
+    write_frame(stream, &begin(2)).unwrap();
+    assert_eq!(
+        read_frame(stream).unwrap(),
+        Frame::Reply {
+            request: 2,
+            result: ResultKind::Ok.name().to_string(),
+            message: "lease-requested".to_string(),
+        }
+    );
+    assert!(job(&f, move |w| w
+        .agent()
+        .sessions()
+        .lease(session)
+        .is_some()));
+    // bridge 종료: 종료 event 한 번, 외부 클라이언트 세션은 연결 종료 요청 하나로 끝납니다.
+    drop(bridge);
+    let event = closed.recv_timeout(WAIT).unwrap();
+    assert_eq!(event.cause, CloseCause::PeerClosed);
+    assert_eq!(event.id, monitor.id());
+    let deadline = std::time::Instant::now() + WAIT;
+    while job(&f, move |w| w.agent().sessions().is_active(session)) {
+        assert!(std::time::Instant::now() < deadline, "세션 종료");
+        std::thread::yield_now();
+    }
+    assert!(job(&f, |w| w.agent().lease_table().unwrap().is_empty()));
+    drop(monitor);
+    assert!(
+        closed.recv_timeout(Duration::from_millis(100)).is_err(),
+        "event 1회"
+    );
+}
+
+#[test]
+fn unbound_hosted_connection_is_closed_by_the_app_without_replies() {
+    // 등록되지 않은(끝났거나 없는) 앱 시작 세션의 연결은 결합을 거부하고 frame을 읽지 않은 채 앱 쪽에서 닫습니다.
+    use stellar_local_ipc::session::{CloseCause, ConnectionMonitor, SessionOrigin};
+
+    let f = app("agent-frame-unbound");
+    let (_ipc, _listener, mut bridge, connection) = ipc_pair("i2");
+    let (events, closed) = std::sync::mpsc::channel();
+    let service = FrameConnection::new(
+        f.app.agent_io(),
+        ConnectionBinding::Hosted {
+            window: f.window,
+            session: crate::agent_session::new_edit_session_id(),
+            mode: SessionMode::ReviewThenApply,
+        },
+    )
+    .with_deadline(WAIT);
+    let _monitor = ConnectionMonitor::serve(
+        connection,
+        SessionOrigin::AppStarted,
+        events,
+        Box::new(service),
+    )
+    .unwrap();
+    assert_eq!(
+        closed.recv_timeout(WAIT).unwrap().cause,
+        CloseCause::AppShutdown
+    );
+    let stream = bridge.stream();
+    stream.set_nonblocking(false).unwrap();
+    stream.set_read_timeout(Some(WAIT)).unwrap();
+    assert_eq!(
+        read_frame(stream),
+        Err(FrameError::Closed),
+        "응답 frame 없음"
+    );
+    assert!(job(&f, |w| w.agent().sessions().active_ids().is_empty()));
+}

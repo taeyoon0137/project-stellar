@@ -116,3 +116,31 @@
 | `ancestor_walk_judgement_matches_the_subtree_walk_for_every_case` | 통과: lease 배치 12가지 × command(이름·삭제·이동·추가·여러 command 묶음) × 주체 4가지(사용자, 두 lease, 없는 lease) 1,000건 이상에서 판정 결과·거부 뒤 문서·revision이 옛 판정과 같고, 소속 표가 옛 표의 변경 node 부분과 같음 |
 | 기존 lease test(사용자 편집 matrix, 범위 밖 거부, 새 자손 자동 잠금, 시스템 출처 touched_leases, 미리보기) | 통과 |
 | `occupancy_trace_200k`(release) | 위 표 |
+
+## 추가 작업 2: 연결 감시가 frame을 앞단에 넘기고, bridge 쪽이 frame을 씀 (ADR-0132 결정 2·3, lane `agent-lease-perf`)
+
+위 "남은 위험" 둘째 항목의 엔진 부분입니다.
+
+### 변경 파일
+
+- `crates/local-ipc/src/session.rs`: `FrameService` trait, `ConnectionMonitor::serve`(감시 스레드가 handshake 뒤 연결을 서비스에 넘기고 돌아오면 종료 event 한 번), `CloseCause::of_frame_error`. 기존 `watch`는 그대로입니다. frame 연결은 종료 절차를 서비스가 맡아 `SessionTermination`을 받지 않습니다.
+- `crates/runtime/src/agent_frame.rs`·`agent_frame_tests.rs`: `FrameConnection`(연결마다 앞단 하나, `ConnectionBinding`대로 묶은 뒤 `AgentFrontEnd::serve`), `ConnectionBinding`.
+- `crates/mcp-core/src/attached.rs`·`attached_tests.rs`(신규), `crates/mcp-core/src/lib.rs`(등록): bridge 쪽 `AttachedLink`(요청 frame 쓰기와 같은 id의 응답 하나 읽기, `call_tool`로 MCP tool 결과 만들기), `begin_frame`, `propose_frame`.
+
+### 구현 요약
+
+- 앱: 인증·handshake를 마친 연결을 `ConnectionMonitor::serve`에 `FrameConnection`과 함께 넘기면 감시 스레드가 frame을 읽어 앞단에 넘깁니다. 결합이 거부된 연결(없는 앱 시작 세션 등)은 frame을 읽지 않고 앱 쪽에서 닫습니다(`AppShutdown`). 연결이 끝나면 앞단이 `Disconnected` 하나를 넣어 외부 클라이언트 세션은 종료 절차, 앱 시작 세션은 재연결 유예로 갑니다.
+- bridge: tool 인자는 `parse_begin_agent_edit`·`parse_transaction`(기존 함수)으로 해석하고, command는 `decode_commands` 뒤 commands codec canonical bytes로 싣습니다. 앱 응답의 결과 종류 이름을 ADR-0085 `ResultKind`로 읽어 tool 결과로 바꿉니다. 응답 id 불일치·응답 아닌 frame·모르는 결과 종류는 연결을 더 쓰지 않습니다. 입력 오류와 1 MiB frame 상한 초과는 보내기 전에 거부하고 연결을 유지합니다.
+
+### 검증
+
+| 명령 / test | 결과 |
+|---|---|
+| `cargo test -p stellar-local-ipc --lib session` | 통과: `frame_connection_is_served_and_closes_once`, `malformed_frame_closes_served_connection_as_unexpected_data`, `frame_errors_map_to_close_causes` |
+| `cargo test -p stellar-runtime --lib agent_frame` | 통과: `connection_monitor_hands_bridge_frames_to_the_front_end`(실제 IPC handshake 연결, 승인 전 거부 응답, 승인 뒤 lease 요청 응답, bridge 종료 시 event 1회·세션 종료·lease 0), `unbound_hosted_connection_is_closed_by_the_app_without_replies` |
+| `cargo test -p stellar-mcp-core --lib attached` | 통과: tool 호출 → frame(canonical bytes가 같은 codec으로 같은 command로 읽힘) → 응답 → tool 결과, fail closed, 보내기 전 입력 거부 |
+
+### 남은 위험
+
+- MCP 서버 루프(`server`)·실행 진입점(`entry`)이 attached 모드에서 `AttachedLink::call_tool`로 `tools/call`을 보내고, bridge의 앱 연결 감시(`attach::watch_app_connection`)를 link의 응답 읽기로 바꾸는 일이 남았습니다(XIX.9.4, mcp-core server·entry 소유). 지금 bridge는 frame을 보내지 않으므로 기존 감시가 그대로 맞습니다.
+- 앱 listener 연결 event를 `ConnectionMonitor::serve`·`FrameConnection`에 잇는 앱 수명 코드와 외부 클라이언트가 결합할 창을 고르는 화면은 UI 재설계 뒤입니다.

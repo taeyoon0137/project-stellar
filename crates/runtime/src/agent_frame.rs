@@ -12,6 +12,9 @@
 //!   권한, `Propose`는 `document.propose_commands`입니다(attached에서 proposal은 사용자 승인 대기).
 //! - 연결 종료는 `Disconnected` 요청입니다. [`AgentFrontEnd::serve`]가 연결 하나를 읽고 응답을 씁니다. 연결 하나는 요청을
 //!   하나씩 처리합니다(ADR-0085 `MAX_IN_FLIGHT` 1).
+//! - local-ipc 연결 감시와의 연결(ADR-0132 결정 2): [`FrameConnection`]이 `stellar_local_ipc::session::FrameService`를
+//!   구현합니다. 감시 스레드가 handshake를 마친 연결을 넘기면 연결 하나에 앞단 하나를 두고 창·세션에 묶은 뒤
+//!   [`AgentFrontEnd::serve`]로 끝까지 처리합니다. 연결 종료 절차는 `serve`가 넣는 `Disconnected` 하나입니다.
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -30,6 +33,7 @@ use stellar_agent_protocol::permission::Permission;
 use stellar_commands::id::CommandId;
 use stellar_commands::lock::lease::{ExternalKind, ExternalResource, LeaseId};
 use stellar_local_ipc::frame::{read_frame, write_frame, Frame, FrameError};
+use stellar_local_ipc::session::{CloseCause, ConnectionId, FrameService};
 use stellar_ops::apply::{ApplyRequest, CommandInput};
 use stellar_ops::revision::ProjectRevision;
 
@@ -313,6 +317,99 @@ impl AgentFrontEnd {
             self.settle(connection, converted.lease, reply);
         }
         outcome
+    }
+}
+
+/// frame 연결을 묶을 창·세션(연결 감시에 넘기기 전에 앱이 정함).
+#[derive(Debug, Clone)]
+pub enum ConnectionBinding {
+    /// 외부 MCP client가 띄운 bridge. 연결마다 새 세션을 등록합니다([`AgentFrontEnd::connect_external`]).
+    External {
+        /// 결합 창(첫 연결 승인 화면에서 고른 창).
+        window: WindowSessionHandle,
+        /// 세션 표시 이름(데이터로만 다룸).
+        name: String,
+    },
+    /// 앱이 시작한 세션의 bridge([`AgentFrontEnd::bind_hosted`], XIX.1.8 결합 token을 확인한 연결).
+    Hosted {
+        /// 시작한 창.
+        window: WindowSessionHandle,
+        /// 편집 세션.
+        session: AgentSessionId,
+        /// 세션 모드(상한).
+        mode: SessionMode,
+    },
+}
+
+/// local-ipc 연결 감시가 handshake 뒤 frame을 넘기는 연결 하나의 앞단(ADR-0132 결정 2).
+///
+/// 연결마다 앞단 하나(`AgentIo` 복제로 만든 host 하나)를 둡니다. 연결 상태(결합, 진행 중 lease)는 그 연결에만 있고
+/// 세션·lease·권한 원본은 document thread에 있으므로 연결 사이에 공유할 상태가 없습니다.
+#[derive(Debug)]
+pub struct FrameConnection {
+    front: AgentFrontEnd,
+    binding: ConnectionBinding,
+    deadline: Duration,
+}
+
+impl FrameConnection {
+    /// `io`로 접수하는 연결 앞단. 응답 대기 상한은 ADR-0085 `CALL_DEADLINE`입니다.
+    pub fn new(io: crate::agent_io::AgentIo, binding: ConnectionBinding) -> FrameConnection {
+        FrameConnection {
+            front: AgentFrontEnd::new(AppAgentHost::new(io)),
+            binding,
+            deadline: CALL_DEADLINE,
+        }
+    }
+
+    /// 응답 대기 상한을 바꿉니다(테스트, 최대 `CALL_DEADLINE`).
+    pub fn with_deadline(mut self, deadline: Duration) -> FrameConnection {
+        self.deadline = deadline;
+        self
+    }
+
+    /// 연결을 창·세션에 묶습니다. 거부되면(창 없음, 유예가 지난 세션, busy) 연결을 처리하지 않습니다.
+    fn bind(&mut self, connection: AgentConnection) -> Result<(), HostRefusal> {
+        match self.binding.clone() {
+            ConnectionBinding::External { window, name } => {
+                let (_, ticket) = self.front.connect_external(connection, window, &name)?;
+                match wait_reply(ticket, self.deadline)? {
+                    AgentReply::Started(_) => Ok(()),
+                    _ => Err(HostRefusal::new(ResultKind::Internal, "unexpected-reply")),
+                }
+            }
+            ConnectionBinding::Hosted {
+                window,
+                session,
+                mode,
+            } => match self
+                .front
+                .bind_hosted(connection, window, session, mode, self.deadline)?
+            {
+                AgentReply::Bound { .. } => Ok(()),
+                _ => Err(HostRefusal::new(ResultKind::NotFound, "session-ended")),
+            },
+        }
+    }
+}
+
+impl FrameService for FrameConnection {
+    fn serve(
+        &mut self,
+        connection: ConnectionId,
+        stream: &mut std::os::unix::net::UnixStream,
+    ) -> CloseCause {
+        let connection = AgentConnection(connection.get());
+        if self.bind(connection).is_err() {
+            // 결합하지 못한 연결은 frame을 읽지 않고 앱 쪽에서 닫습니다(fail closed). 외부 클라이언트 세션 등록이
+            // 접수됐으면 같은 연결 종료 요청으로 정리합니다.
+            if self.front.host().bound(connection).is_some() {
+                let _ = self.front.disconnected(connection);
+            }
+            return CloseCause::AppShutdown;
+        }
+        let end = self.front.serve(connection, stream, self.deadline);
+        CloseCause::of_frame_error(&end)
     }
 }
 
