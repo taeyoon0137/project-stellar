@@ -21,7 +21,7 @@
 - `crates/export/src/svg/writer/tests.rs`, `crates/export/src/svg/writer/tests/text.rs` — writer 동작 테스트가 crate 안
   테스트 전용 진행 허가(`ConfirmedExport::assume_confirmed`, `#[cfg(test)]`)를 쓰도록 변경.
 - `crates/export/src/lib.rs` — `preflight` 모듈과 재노출.
-- `docs/task-reports/XX.1.3.md`(신규), 계획서(XX.1.3 `[ ]`→`[x]`).
+- `docs/task-reports/XX.1.3.md`(신규). 계획서 marker는 통합 때 생성합니다.
 
 ## 구현 요약
 
@@ -82,3 +82,19 @@
 - 확인 기록은 메모리 값이며 저장하지 않습니다. 앱이 확인 화면과 진행 사이에 다시 capture하면 다시 확인해야 합니다(scene hash
   비교).
 - 확인 UI 문구·표시 방식은 정하지 않았습니다(진단 `Display`는 한국어 기본 문장만 제공).
+
+## 재적용과 수정 (2026-11-23, `lane/svg-export`)
+
+- 앞 lane 브랜치에 남아 통합되지 않은 이 행과, 그 lane이 커밋하지 않고 남긴 회귀 test를 `edfea9db` 위에 다시 적용했습니다.
+- 결함 수정: 진단이 run마다 첫 glyph 하나로 폰트 유무만 봐서, 뒤 glyph가 outline 없는 color glyph이거나 손상 glyph이면
+  진단을 통과한 내보내기가 writer에서 멈췄습니다. SVG 요청은 vector로 쓸 Text의 glyph key를 모두 조회(같은 key는 한 번)해
+  `GlyphBlocker`(이유 NoOutline·Malformed)로 알리고, 확인해도 진행하지 않습니다(`PreflightRejection::GlyphsBlocked`).
+  PNG 요청은 renderer가 bitmap glyph도 그리므로 폰트 유무만 봅니다.
+- 부분 래스터화 연결(XX.4.2): `PreflightInput::rasterizer`가 렌더를 제공하면 래스터 기능을 형식 차단에서 빼고, 래스터
+  경계 안 Text는 glyph outline 진단을 하지 않습니다.
+- 결정 기록: ADR-0091 결정 2·3.
+
+| 검사(테스트) | 결과 |
+|---|---|
+| 첫 glyph가 정상이어도 뒤 color glyph·손상 glyph를 진단하고, 진단을 통과한 내보내기는 writer가 멈추지 않음(`exports_that_pass_the_preflight_do_not_stop_on_glyphs`, `glyphs_without_outlines_block_svg_but_not_png`) | 통과 |
+| rasterizer가 있으면 shadow 차단 해제, 경계 안 color glyph 차단 없음(`rasterizers_lift_raster_blockers_and_skip_rasterized_glyphs`) | 통과 |

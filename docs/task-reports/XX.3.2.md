@@ -25,7 +25,7 @@
 - `crates/export/src/svg/writer/tests/text.rs`(신규) — 합성 폰트 fixture, golden·외형 테스트, 테스트 rasterizer.
 - `crates/export/tests/fixtures/text_view_v1.svg`(신규) — Text View golden SVG.
 - `crates/export/tests/fixtures/text_view_v1.coverage.txt`(신규) — 외형 golden(pixel 중심 coverage 격자).
-- `docs/task-reports/XX.3.2.md`(신규), 계획서(XX.3.2 `[ ]`→`[x]`).
+- `docs/task-reports/XX.3.2.md`(신규). 계획서 marker는 통합 때 생성합니다.
 
 ## 구현 요약
 
@@ -152,3 +152,18 @@
 | `cargo test -p stellar-export` | 96 passed, 0 failed |
 | `cargo clippy -p stellar-export --all-targets -- -D warnings` | 경고 0 |
 | `cargo fmt -p stellar-export -- --check` | 통과 |
+
+## 재적용과 정리 (2026-11-23, `lane/svg-export`)
+
+- 앞 lane 브랜치에 남아 통합되지 않은 이 행과 후속 수정 3건을 `edfea9db` 위에 다시 적용했습니다. 그 사이 main에 들어온
+  부분 래스터화 planner(XX.4.1)와 mapping CSS longhand(IX.11.20 일부)와 충돌 없이 합쳤습니다(`svg/mod.rs` 모듈 등록만
+  손으로 합침).
+- 이중 구현 제거: `ExportFontFace`가 core-types `FontFileHash`를 담고, export 전용 `AxisTag`를 지워 core-types
+  `OpenTypeTag`를 씁니다(ADR-0091 결정 5). 출력과 golden bytes는 그대로입니다.
+- 사전 진단이 run 첫 glyph만 보던 결함을 고쳤습니다(XX.1.3 보고서 참고).
+- 결정 기록: ADR-0091.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-export --locked` | 통과(최종 결과는 lane 결과 보고 참고) |
+| `cargo clippy -p stellar-export --all-targets --locked -- -D warnings` | 경고 0 |
