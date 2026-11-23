@@ -8,6 +8,9 @@ publish = false
 [dependencies]
 stellar-core-types = { path = "../core-types" }
 
+[dev-dependencies]
+stellar-git-porcelain = { path = ".", features = ["test-support"] }
+
 [features]
 # 테스트 전용 Git fixture harness(`fixture`, XIV.14.1). 기본값은 꺼져 있어 프로덕션 빌드에 포함되지
 # 않습니다. 다른 crate는 `[dev-dependencies]`에서만 켭니다.

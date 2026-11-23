@@ -90,3 +90,22 @@
 ### 남은 조건과 finding
 
 - Windows 재개 때 같은 golden을 Git for Windows로 확인합니다(ADR-0006 목록에 Windows 대기 행으로 넘김).
+
+## 후속 (2026-11-23, lane `recovery-git-terminal`)
+
+- 판정: `[~]` 유지 — 판정 보류(Windows 재개 대기, ADR-0006 결정 4). macOS에서 할 수 있는 범위를 더했습니다.
+- 결정: [ADR-0120](../adr/ADR-0120-recovery-probe-git-scenarios-terminal-env.md) 결정 5
+- harness를 crate 밖 소비자처럼 `test-support` feature로 쓰는 시험을 더했습니다(`crates/git-porcelain/tests/fixture_harness.rs`,
+  `Cargo.toml` dev-dependency에 자기 자신을 feature와 함께 등록, resolver 2라 일반 빌드에는 켜지지 않음).
+- 같은 scenario가 플랫폼과 무관하게 같은 commit ID를 만들 조건을 고정했습니다. Windows 재개 때 CI-WIN에서 같은 golden을
+  확인하는 근거입니다.
+- XIV.14.4 branch conflict 시나리오(`tests/integration/tests/git_branch_conflict_resolve.rs`)가 이 harness의 peer clone·push·fetch를 씁니다.
+
+| 테스트 | 결과 |
+|---|---|
+| `fixture_harness::standard_scenario_tree_has_only_platform_neutral_entries` | 통과 — initial·main·feature commit의 모든 항목이 mode `100644` blob, ASCII 소문자 경로, blob에 CR 없음·LF로 끝남, checkout bytes = blob, golden main·feature 일치 |
+| `fixture_harness::scenario_ids_do_not_depend_on_the_fixture_location` | 통과 — 길이가 다른 root 두 곳에서 같은 scenario ID |
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-git-porcelain --test fixture_harness` | 0 — 2 passed |
