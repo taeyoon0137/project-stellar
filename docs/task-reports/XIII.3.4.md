@@ -33,7 +33,8 @@
 - 세 입력: LoadedBase는 창의 loaded generation에서 그 문서 chunk만 다시 읽고(current와 무관), CurrentMemory는 창 문서,
   ExternalDisk는 열기와 같은 `read_disk_state`. 세 입력 모두 snapshot 무손실 왕복을 확인합니다.
 - 쓸 수 있는 결과: `ApplyExternalSnapshot` transaction 하나로 history에 기록하고 base를 디스크 상태로 바꿉니다.
-  결과가 디스크와 같으면 clean, 다르면 미저장 편집으로 남아 자동 저장이 씁니다. reconciliation 자체는 쓰지 않습니다.
+  결과가 디스크와 같으면 clean, 다르면 미저장 편집으로 남아 자동 저장이 씁니다. 레코드 밖 거울인 활성 기본값 세트를 창이
+  바꿔 아직 쓰지 않았으면 레코드가 같아도 clean으로 두지 않습니다. reconciliation 자체는 쓰지 않습니다.
 - 병합 불가(겹침·결과 위반·base 없음·문서 삭제·무손실 실패): 문서·history 그대로, 이유를 디스크 관찰값과 함께 기록하고
   그 관찰값에 한해 두 선택지(`StaleResolution::Choose`)입니다. 디스크가 다시 바뀌면 다시 병합합니다.
 - runtime → semantic-merge 직접 간선을 두지 않고 기존 runtime → ops 간선의 `merge_apply::document`를 씁니다(ADR-0110 결정 3).
@@ -44,7 +45,7 @@
 |---|---|
 | `cargo test -p stellar-semantic-merge` | 통과(apply 6 포함) |
 | `cargo test -p stellar-ops --lib merge_apply` | 통과(document 4) |
-| `cargo test -p stellar-runtime` | lib 276 통과·4 ignored, 통합 시험·doctest 통과 |
+| `cargo test -p stellar-runtime` | lib 277 통과·4 ignored, 통합 시험·doctest 통과(검토 보완 시험 포함) |
 | `cargo clippy -p stellar-semantic-merge -p stellar-ops -p stellar-runtime --all-targets -- -D warnings` | 경고 0 |
 
 | 검사(완료 기준) | 결과 |
@@ -58,6 +59,7 @@
 | 앱 runtime overlap: 두 선택지 alert 한 번, 자동 저장 쓰기 0, UseCurrentWindow 저장 | 통과 |
 | 양쪽 같은 변경 → 반영 뒤 clean | 통과 |
 | base generation chunk가 없음 → 병합하지 않음(`BaseUnavailable`), 문서 그대로 | 통과 |
+| 창이 기본값 세트만 바꾼 채 외부 writer가 문서를 바꿈 → 레코드는 디스크와 같아도 미저장으로 남고, 저장하면 `stellar.yaml`에 세트 선택이 쓰임(검토 보완) | 통과(`reconcile::tests`) |
 
 ## 차이(작업 지시와 다른 점)
 
