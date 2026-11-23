@@ -122,7 +122,7 @@ pub(crate) fn add_rectangle(
     model.set_modifier_stack(stack).unwrap();
 }
 
-fn set_flags(model: &mut DocumentModel, n: u64, visible: bool, locked: bool) {
+pub(crate) fn set_flags(model: &mut DocumentModel, n: u64, visible: bool, locked: bool) {
     let mut record = model.record(sid(n)).unwrap();
     record.visible = visible;
     record.locked = locked;

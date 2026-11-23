@@ -36,6 +36,8 @@ pub mod select;
 mod select_fixtures;
 /// 깊은 선택과 편집 범위 이동 (XII.10.4, ADR-0104).
 pub mod select_navigate;
+/// select-through와 겹친 레이어 목록 (XII.10.5, ADR-0104).
+pub mod select_through;
 pub(crate) mod shape;
 /// 캔버스 도구 10종과 도구 상태 기계 (XII.10.1, ADR-0104).
 pub mod tool;
