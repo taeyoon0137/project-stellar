@@ -151,7 +151,7 @@ fn value_inner(value: &OpsValue) -> JsonValue {
     }
 }
 
-fn diff_position(position: Option<&DiffPosition>) -> JsonValue {
+pub(super) fn diff_position(position: Option<&DiffPosition>) -> JsonValue {
     match position {
         None => JsonValue::Null,
         Some(p) => JsonValue::object(vec![
@@ -165,7 +165,7 @@ fn diff_position(position: Option<&DiffPosition>) -> JsonValue {
 }
 
 /// 선택 속성 값(`{"type","value"}` 또는 `null`).
-fn opt_value(value: Option<&OpsValue>) -> JsonValue {
+pub(super) fn opt_value(value: Option<&OpsValue>) -> JsonValue {
     value.map_or(JsonValue::Null, |v| {
         JsonValue::object(vec![
             ("type", JsonValue::string(v.type_name())),
@@ -175,7 +175,7 @@ fn opt_value(value: Option<&OpsValue>) -> JsonValue {
 }
 
 /// semantic diff 변경 한 건.
-fn diff_entry(entry: &DiffEntry) -> JsonValue {
+pub(super) fn diff_entry(entry: &DiffEntry) -> JsonValue {
     let mut fields = vec![
         ("kind", JsonValue::string(entry.kind)),
         ("document", opt_id(entry.document)),

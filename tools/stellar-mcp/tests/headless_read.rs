@@ -282,14 +282,23 @@ fn approved_snapshot_lists_only_implemented_resources_and_pages_without_writes()
     client.initialize();
     let list = client.call("resources/list", empty());
     let resources = array(list.get("result").unwrap().get("resources").unwrap());
-    assert_eq!(resources.len(), 2);
-    assert_eq!(resources[1].get("uri").map(text), Some(COMPONENTS));
-    assert_eq!(resources[1].get("name").map(text), Some("components"));
-    assert_eq!(resources[0].get("uri").map(text), Some(STRUCTURE));
+    let names: Vec<&str> = resources
+        .iter()
+        .map(|r| text(r.get("name").unwrap()))
+        .collect();
+    // headless는 정의 중 availability가 All인 고정 URI resource를 모두 제공합니다(XIX.9.3).
     assert_eq!(
-        resources[0].get("name").map(text),
-        Some("project-structure")
+        names,
+        [
+            "project-structure",
+            "components",
+            "tokens",
+            "target-profiles",
+            "git-status"
+        ]
     );
+    assert_eq!(resources[1].get("uri").map(text), Some(COMPONENTS));
+    assert_eq!(resources[0].get("uri").map(text), Some(STRUCTURE));
     let templates = client.call("resources/templates/list", empty());
     let templates = array(
         templates
@@ -313,16 +322,27 @@ fn approved_snapshot_lists_only_implemented_resources_and_pages_without_writes()
     );
     let tools = client.call("tools/list", empty());
     let tools = array(tools.get("result").unwrap().get("tools").unwrap());
-    assert_eq!(tools.len(), 2);
+    let names: Vec<&str> = tools.iter().map(|t| text(t.get("name").unwrap())).collect();
+    // 검증 기준(XIX.9.3): headless tools/list의 쓰기 tool 0.
     assert_eq!(
-        tools[0].get("name").map(text),
-        Some("document.semantic_diff")
+        names,
+        [
+            "document.semantic_diff",
+            "document.validate",
+            "document.propose_commands",
+            "document.source_span",
+            "document.export_web_frame",
+            "document.copy_css",
+            "document.propose_css_paste",
+            "git.status",
+            "git.semantic_conflicts"
+        ]
     );
-    assert_eq!(tools[1].get("name").map(text), Some("document.validate"));
-    assert_eq!(
-        tools[0].get("annotations").unwrap().get("readOnlyHint"),
-        Some(&J::Bool(true))
-    );
+    for tool in tools {
+        let annotations = tool.get("annotations").unwrap();
+        assert_eq!(annotations.get("readOnlyHint"), Some(&J::Bool(true)));
+        assert_eq!(annotations.get("destructiveHint"), Some(&J::Bool(false)));
+    }
     let structure = content(&client.read(STRUCTURE), STRUCTURE);
     let documents = array(structure.get("documents").unwrap());
     assert_eq!(documents.len(), 1);

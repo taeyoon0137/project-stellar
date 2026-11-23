@@ -1,6 +1,16 @@
-//! 고정한 신뢰 프로젝트의 저장 문서 조회·비교·검증 L2 backend (XIX.9.3).
+//! 고정한 신뢰 프로젝트의 읽기·검증·dry-run L2 backend (XIX.9.3, ADR-0005 §3, ADR-0085 결정 1).
+//!
+//! - 실행 인자로 고정한 절대 루트 하나만 다룹니다. tool 인자에 경로·프로젝트를 고르는 key가 없고, 선언되지
+//!   않은 key는 거부합니다.
+//! - 매 요청 진입과 응답 직전에 신뢰·identity·generation을 다시 확인합니다. 신뢰가 철회되면 모든 요청을
+//!   거부합니다.
+//! - 목록은 agent-protocol 정의에서 headless가 제공하는(`Availability::All`) 항목만 고릅니다. 쓰기 tool은
+//!   목록에 없고, 이름으로 불러도 모르는 tool입니다.
+//! - 프로젝트 파일을 만들거나 바꾸지 않습니다. ops의 dry-run·읽기 함수만 부릅니다.
 mod comparison;
 mod components;
+mod operations;
+mod resources_extra;
 mod validation;
 use std::cell::RefCell;
 
@@ -11,9 +21,9 @@ use stellar_ops::snapshot::ProjectSnapshot;
 use stellar_ops::trusted::{TrustedProject, TrustedReadError};
 
 use crate::catalog::paging::{self, PageSource};
-use crate::catalog::resources::{descriptor, resource, template_descriptor};
-use crate::catalog::scope::{ApprovedScope, ProjectDocuments, ScopedPayload};
-use crate::catalog::tools::{self, SEMANTIC_DIFF, VALIDATE_DOCUMENT};
+use crate::catalog::resources::{self, Backend};
+use crate::catalog::scope::{ApprovedScope, ProjectDocuments, ScopeError, ScopedPayload};
+use crate::catalog::tools::{self, EnabledNamespaces, SEMANTIC_DIFF, VALIDATE_DOCUMENT};
 use crate::json::{self, JsonNumber, JsonValue};
 use crate::jsonrpc::{codes, RpcError};
 
@@ -70,80 +80,62 @@ impl Headless {
         })
     }
 
-    /// 구현한 resource·template과 저장 문서 비교·검증 tool을 노출합니다.
+    /// agent-protocol 정의 중 headless가 제공하는 resource·template·tool을 노출합니다.
     pub fn list(&self, method: &str, params: Option<&JsonValue>) -> Result<JsonValue, RpcError> {
         self.check()?;
         check_fields(params, &[])?;
-        if method == "tools/list" {
-            return Ok(JsonValue::object(vec![(
-                "tools",
-                JsonValue::Array(vec![
-                    tools::descriptor(&SEMANTIC_DIFF),
-                    tools::descriptor(&VALIDATE_DOCUMENT),
-                ]),
-            )]));
+        match method {
+            "tools/list" => Ok(tools::tools_list(
+                Backend::Headless,
+                EnabledNamespaces::default(),
+            )),
+            "resources/list" => Ok(resources::resources_list(Backend::Headless)),
+            "resources/templates/list" => Ok(resources::templates_list(Backend::Headless)),
+            _ => Err(invalid("제공하지 않는 목록입니다")),
         }
-        let (field, names): (_, &[&str]) = match method {
-            "resources/list" => ("resources", &["project-structure", "components"]),
-            "resources/templates/list" => (
-                "resourceTemplates",
-                &["document", "components", "component"],
-            ),
-            _ => return Err(invalid("제공하지 않는 목록입니다")),
-        };
-        let describe = if method == "resources/templates/list" {
-            template_descriptor
-        } else {
-            descriptor
-        };
-        Ok(JsonValue::object(vec![(
-            field,
-            JsonValue::Array(
-                names
-                    .iter()
-                    .map(|name| describe(resource(name).expect("catalog resource")))
-                    .collect(),
-            ),
-        )]))
     }
 
-    /// 신뢰 snapshot에서 읽기 전용 tool 한 페이지를 만듭니다.
+    /// 신뢰 snapshot에서 읽기·검증·dry-run tool 하나를 실행합니다.
     pub fn call(&self, params: Option<&JsonValue>) -> Result<JsonValue, RpcError> {
         self.with_snapshot(|cached| {
             check_fields(params, &["name", "arguments"])?;
             let params = params.ok_or_else(|| invalid("tool 이름이 필요합니다"))?;
-            let tool = match params.get("name").and_then(JsonValue::as_str) {
-                Some(name) if name == VALIDATE_DOCUMENT.name => &VALIDATE_DOCUMENT,
-                Some(name) if name == SEMANTIC_DIFF.name => &SEMANTIC_DIFF,
-                _ => return Err(invalid("제공하지 않는 tool입니다")),
-            };
+            let tool = params
+                .get("name")
+                .and_then(JsonValue::as_str)
+                .and_then(tools::tool)
+                .filter(|tool| {
+                    tool.availability.includes(Backend::Headless)
+                        && EnabledNamespaces::default().shows(tool)
+                })
+                .ok_or_else(|| fail(Kind::UnknownTool, "제공하지 않는 tool입니다"))?;
             let empty = JsonValue::Object(Vec::new());
             let args = params.get("arguments").unwrap_or(&empty);
             self.scope
                 .check_tool_arguments(tool, args, &Documents(&cached.snapshot))
-                .map_err(|error| invalid(error.to_string()))?;
-            let request = paging::PageRequest {
-                cursor: args
-                    .get("cursor")
-                    .map(|v| {
-                        v.as_str()
-                            .map(str::to_owned)
-                            .ok_or_else(|| invalid("cursor는 문자열이어야 합니다"))
-                    })
-                    .transpose()?,
-                limit: args
-                    .get("limit")
-                    .map(|v| {
-                        v.as_i64()
-                            .and_then(|n| usize::try_from(n).ok())
-                            .ok_or_else(|| invalid("limit은 양의 정수여야 합니다"))
-                    })
-                    .transpose()?,
-            };
-            let body = if tool.name == SEMANTIC_DIFF.name {
-                comparison::page(&self.project, cached, args, &request)?
-            } else {
-                validation::page(cached, args, &request)?
+                .map_err(|error| scope_failure(&error))?;
+            let request = page_request(args)?;
+            let body = match tool.name {
+                n if n == SEMANTIC_DIFF.name => {
+                    comparison::page(&self.project, cached, args, &request)?
+                }
+                n if n == VALIDATE_DOCUMENT.name => validation::page(cached, args, &request)?,
+                n if n == tools::PROPOSE_COMMANDS.name => {
+                    operations::propose_commands(cached, args)?
+                }
+                n if n == tools::SOURCE_SPAN.name => operations::node_source_span(cached, args)?,
+                n if n == tools::EXPORT_WEB_FRAME.name => {
+                    operations::export_web_frame(cached, args)?
+                }
+                n if n == tools::COPY_CSS.name => operations::copy_css(cached, args)?,
+                n if n == tools::PROPOSE_CSS_PASTE.name => {
+                    operations::propose_css_paste(cached, args)?
+                }
+                n if n == tools::GIT_STATUS.name => operations::git_status(cached, &request)?,
+                n if n == tools::SEMANTIC_CONFLICTS.name => {
+                    operations::git_semantic_conflicts(cached)?
+                }
+                _ => return Err(fail(Kind::Internal, "headless 목록과 구현이 다릅니다")),
             };
             Ok(JsonValue::object(vec![(
                 "content",
@@ -233,6 +225,9 @@ impl Headless {
                 JsonValue::object(structure_fields(&project_structure(snapshot)))
             }
             "components" => components::read(cached, uri)?,
+            "tokens" => resources_extra::read_tokens(cached),
+            "target-profiles" => resources_extra::read_target_profiles(cached),
+            "git-status" => resources_extra::read_git_summary(cached)?,
             "component" => {
                 let component = target
                     .component
@@ -286,14 +281,122 @@ fn invalid(message: impl Into<String>) -> RpcError {
     RpcError::new(codes::INVALID_PARAMS, message)
 }
 
+/// 요청 실패 종류(ADR-0085 결정 7). 오류 `data.kind`로 나갑니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
+    /// 도메인 거부.
+    Rejected,
+    /// 이 backend에 없는 tool.
+    UnknownTool,
+    /// 인자 오류.
+    InvalidArguments,
+    /// revision·cursor 불일치.
+    Stale,
+    /// 응답 상한 초과.
+    TooLarge,
+    /// 대상 없음.
+    NotFound,
+    /// 구성 요소 없음.
+    Unavailable,
+    /// 내부 오류.
+    Internal,
+    /// 신뢰 확인 실패.
+    NotTrusted,
+    /// 승인 범위 밖.
+    OutOfScope,
+}
+
+impl Kind {
+    /// 고정 이름.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Kind::Rejected => "rejected",
+            Kind::UnknownTool => "unknown-tool",
+            Kind::InvalidArguments => "invalid-arguments",
+            Kind::Stale => "stale",
+            Kind::TooLarge => "too-large",
+            Kind::NotFound => "not-found",
+            Kind::Unavailable => "unavailable",
+            Kind::Internal => "internal",
+            Kind::NotTrusted => "not-trusted",
+            Kind::OutOfScope => "out-of-scope",
+        }
+    }
+}
+
+/// 고정 문구와 종류로 요청 실패를 만듭니다. 문구에 프로젝트 문자열을 넣지 않습니다.
+pub(crate) fn fail(kind: Kind, message: &'static str) -> RpcError {
+    let code = match kind {
+        Kind::InvalidArguments | Kind::Stale | Kind::UnknownTool | Kind::OutOfScope => {
+            codes::INVALID_PARAMS
+        }
+        _ => -32000,
+    };
+    RpcError::new(code, message).with_data(JsonValue::object(vec![(
+        "kind",
+        JsonValue::string(kind.name()),
+    )]))
+}
+
+/// 실패 data에 보조 field를 더합니다.
+pub(crate) trait WithDetail {
+    /// `data`에 `key`를 더합니다.
+    fn with_detail(self, key: &str, value: JsonValue) -> Self;
+}
+
+impl WithDetail for RpcError {
+    fn with_detail(mut self, key: &str, value: JsonValue) -> Self {
+        match &mut self.data {
+            Some(JsonValue::Object(fields)) => fields.push((key.to_string(), value)),
+            _ => self.data = Some(JsonValue::object(vec![(key, value)])),
+        }
+        self
+    }
+}
+
+fn scope_failure(error: &ScopeError) -> RpcError {
+    match error {
+        ScopeError::ForeignDocument | ScopeError::ForeignProject | ScopeError::ForeignSession => {
+            fail(Kind::OutOfScope, "승인된 프로젝트·세션 밖의 대상입니다")
+        }
+        _ => fail(
+            Kind::InvalidArguments,
+            "선언되지 않았거나 형식이 틀린 tool 인자입니다",
+        ),
+    }
+}
+
+/// `cursor`·`limit` 인자.
+fn page_request(args: &JsonValue) -> Result<paging::PageRequest, RpcError> {
+    Ok(paging::PageRequest {
+        cursor: args
+            .get("cursor")
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| invalid("cursor는 문자열이어야 합니다"))
+            })
+            .transpose()?,
+        limit: args
+            .get("limit")
+            .map(|v| {
+                v.as_i64()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .ok_or_else(|| invalid("limit은 양의 정수여야 합니다"))
+            })
+            .transpose()?,
+    })
+}
+
 fn read_error(error: TrustedReadError) -> RpcError {
-    RpcError::new(
-        -32000,
-        match error {
-            TrustedReadError::NotTrusted => "프로젝트 읽기 신뢰를 확인할 수 없습니다",
-            TrustedReadError::Unavailable => "프로젝트 snapshot을 읽을 수 없습니다",
-        },
-    )
+    match error {
+        TrustedReadError::NotTrusted => {
+            fail(Kind::NotTrusted, "프로젝트 읽기 신뢰를 확인할 수 없습니다")
+        }
+        TrustedReadError::Unavailable => {
+            fail(Kind::Unavailable, "프로젝트 snapshot을 읽을 수 없습니다")
+        }
+    }
 }
 
 fn check_fields(params: Option<&JsonValue>, allowed: &[&str]) -> Result<(), RpcError> {

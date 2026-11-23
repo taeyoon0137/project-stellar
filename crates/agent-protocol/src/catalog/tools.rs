@@ -51,7 +51,7 @@ macro_rules! page_args {
 /// CSS 선언 블록 붙여넣기 인자 schema.
 macro_rules! css_paste_schema {
     () => {
-        r#"{"type":"object","additionalProperties":false,"required":["base_revision","document","nodes","declarations"],"properties":{"base_revision":{"type":"string"},"document":{"type":"string"},"nodes":{"type":"array","minItems":1,"maxItems":1000,"items":{"type":"string"}},"declarations":{"type":"string","maxLength":65536}}}"#
+        r#"{"type":"object","additionalProperties":false,"required":["base_revision","document","nodes","declarations"],"properties":{"base_revision":{"type":"string"},"document":{"type":"string"},"nodes":{"type":"array","minItems":1,"maxItems":1000,"items":{"type":"string"}},"declarations":{"type":"string","maxLength":16384}}}"#
     };
 }
 
