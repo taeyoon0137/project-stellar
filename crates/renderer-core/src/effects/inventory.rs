@@ -1182,7 +1182,13 @@ fn checker_image(w: u32, h: u32, a: [u8; 4], b: [u8; 4], space: ColorSpace) -> A
         height: h,
         space,
         texels: (0..w * h)
-            .map(|i| if (i % w + i / w).is_multiple_of(2) { a } else { b })
+            .map(|i| {
+                if (i % w + i / w).is_multiple_of(2) {
+                    a
+                } else {
+                    b
+                }
+            })
             .collect(),
     })
 }
