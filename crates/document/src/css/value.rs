@@ -116,13 +116,104 @@ const UNSUPPORTED_UNITS: [&str; 16] = [
 
 /// `text`를 `grammar`로 해석합니다.
 pub fn parse(grammar: CssGrammar, text: &str) -> Result<CssValue, CssValueError> {
+    parse_with(grammar, text, &NoTokens)
+}
+
+/// `var(--name)`의 이름을 문서 토큰으로 푸는 scope(IX.11.16 이름 파생 결과).
+pub trait TokenScope {
+    /// custom property 이름(`--` 포함)의 토큰. 없으면 `None`.
+    fn resolve(&self, name: &str) -> Option<StableId>;
+}
+
+/// 토큰이 없는 scope.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoTokens;
+
+impl TokenScope for NoTokens {
+    fn resolve(&self, _name: &str) -> Option<StableId> {
+        None
+    }
+}
+
+impl TokenScope for std::collections::BTreeMap<String, StableId> {
+    fn resolve(&self, name: &str) -> Option<StableId> {
+        self.get(name).copied()
+    }
+}
+
+/// CSS custom property 이름(`--` + identifier 문자, escape `\` 허용)인지. 파생 규칙은 IX.11.16입니다.
+pub fn is_custom_property_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("--") else {
+        return false;
+    };
+    let mut chars = rest.chars();
+    let mut any = false;
+    while let Some(c) = chars.next() {
+        any = true;
+        match c {
+            '\\' => {
+                if chars.next().is_none() {
+                    return false;
+                }
+            }
+            c if c.is_ascii_alphanumeric() || c == '-' || c == '_' || !c.is_ascii() => {}
+            _ => return false,
+        }
+    }
+    any
+}
+
+/// `var(--name)`을 해석합니다. 이름은 대소문자를 구분합니다. fallback(`var(--a, 1px)`)은 문서 토큰이 항상
+/// 있어야 하므로 받지 않습니다.
+fn parse_var(text: &str, scope: &dyn TokenScope) -> Result<CssValue, CssValueError> {
+    let body = text[4..]
+        .strip_suffix(')')
+        .ok_or_else(|| CssValueError::invalid("var()가 닫히지 않았습니다"))?
+        .trim();
+    if body.contains(',') {
+        return Err(CssValueError::new(
+            "unsupported-value",
+            "var() fallback은 받지 않습니다",
+        ));
+    }
+    if !is_custom_property_name(body) {
+        return Err(CssValueError::invalid(format!(
+            "{body}은 custom property 이름이 아닙니다"
+        )));
+    }
+    match scope.resolve(body) {
+        Some(token) => Ok(CssValue::Var(CssVar {
+            name: body.to_string(),
+            token,
+        })),
+        None => Err(CssValueError::new(
+            "unknown-token",
+            format!("문서에 토큰 {body}이 없습니다"),
+        )),
+    }
+}
+
+/// `text`를 `grammar`로 해석합니다. `var(--name)`은 `scope`로 풉니다.
+pub fn parse_with(
+    grammar: CssGrammar,
+    text: &str,
+    scope: &dyn TokenScope,
+) -> Result<CssValue, CssValueError> {
     if text.len() > MAX_INPUT_LEN {
         return Err(CssValueError::invalid("값이 너무 깁니다"));
     }
     if grammar == CssGrammar::Text {
         return Ok(CssValue::Text(text.to_string()));
     }
-    let lower = text.trim().to_ascii_lowercase();
+    let trimmed = text.trim();
+    if trimmed
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("var("))
+        && grammar != CssGrammar::Bool
+    {
+        return parse_var(trimmed, scope);
+    }
+    let lower = trimmed.to_ascii_lowercase();
     if lower.is_empty() {
         return Err(CssValueError::invalid("값이 비어 있습니다"));
     }
@@ -132,16 +223,10 @@ pub fn parse(grammar: CssGrammar, text: &str) -> Result<CssValue, CssValueError>
             "외부 리소스를 읽는 값은 받지 않습니다",
         ));
     }
-    if let Some(rest) = lower.strip_prefix("var(") {
-        let name = rest
-            .trim_end_matches(')')
-            .split(',')
-            .next()
-            .unwrap_or("")
-            .trim();
+    if lower.contains("var(") {
         return Err(CssValueError::new(
-            "unknown-token",
-            format!("문서에 토큰 {name}이 없습니다"),
+            "unsupported-value",
+            "var()는 값 전체로만 받습니다",
         ));
     }
     if MATH.iter().any(|f| lower.starts_with(f)) {
@@ -215,17 +300,218 @@ pub fn parse(grammar: CssGrammar, text: &str) -> Result<CssValue, CssValueError>
             _ => Err(CssValueError::invalid("true 또는 false를 넣으세요")),
         },
         CssGrammar::Text => unreachable!("앞에서 처리"),
-        CssGrammar::Percentage
-        | CssGrammar::Duration
-        | CssGrammar::Number
-        | CssGrammar::UnitInterval
-        | CssGrammar::Transform => Err(CssValueError::new(
-            "unsupported-value",
-            "이 값 문법은 아직 속성 패널에서 받지 않습니다",
-        )),
+        CssGrammar::Percentage => {
+            let (number, unit) = split_number(&lower)?;
+            match unit {
+                "%" => Ok(CssValue::Percentage(number)),
+                _ => Err(CssValueError::new(
+                    "unsupported-unit",
+                    "백분율은 %로 넣으세요",
+                )),
+            }
+        }
+        CssGrammar::Duration => {
+            let (number, unit) = split_number(&lower)?;
+            let ms = match unit {
+                "ms" => number,
+                "s" => number * 1000.,
+                "" if number == 0.0 => 0.0,
+                _ => {
+                    return Err(CssValueError::new(
+                        "unsupported-unit",
+                        "시간은 ms 또는 s로 넣으세요",
+                    ))
+                }
+            };
+            finite_value(ms).map(CssValue::Duration)
+        }
+        CssGrammar::Number => {
+            let (number, unit) = split_number(&lower)?;
+            if !unit.is_empty() {
+                return Err(CssValueError::new(
+                    "unsupported-unit",
+                    "수에는 단위를 붙이지 않습니다",
+                ));
+            }
+            Ok(CssValue::Number(number))
+        }
+        CssGrammar::UnitInterval => {
+            let (number, unit) = split_number(&lower)?;
+            let value = match unit {
+                "" => number,
+                "%" => number / 100.,
+                _ => {
+                    return Err(CssValueError::new(
+                        "unsupported-unit",
+                        "0–1 수 또는 %를 넣으세요",
+                    ))
+                }
+            };
+            if !(0.0..=1.0).contains(&value) {
+                return Err(CssValueError::invalid("0–1 사이 값을 넣으세요"));
+            }
+            Ok(CssValue::Number(value))
+        }
+        CssGrammar::Transform => parse_transform(&lower).map(CssValue::Transform),
         CssGrammar::Border => parse_border(&lower),
         CssGrammar::Corners => parse_corners(&lower),
     }
+}
+
+fn finite_value(value: f32) -> Result<f32, CssValueError> {
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(CssValueError::invalid("수가 너무 큽니다"))
+    }
+}
+
+/// 행렬 곱 `a ∘ b`(b를 먼저 적용). 성분 순서는 CSS `matrix(a, b, c, d, e, f)`입니다.
+fn compose(a: [f32; 6], b: [f32; 6]) -> [f32; 6] {
+    [
+        a[0] * b[0] + a[2] * b[1],
+        a[1] * b[0] + a[3] * b[1],
+        a[0] * b[2] + a[2] * b[3],
+        a[1] * b[2] + a[3] * b[3],
+        a[0] * b[4] + a[2] * b[5] + a[4],
+        a[1] * b[4] + a[3] * b[5] + a[5],
+    ]
+}
+
+/// transform 함수 인자: `,` 또는 공백으로 나눕니다.
+fn arguments(body: &str) -> Vec<&str> {
+    body.split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|p| !p.is_empty())
+        .collect()
+}
+
+fn unitless(text: &str) -> Result<f32, CssValueError> {
+    let (number, unit) = split_number(text)?;
+    if unit.is_empty() {
+        Ok(number)
+    } else {
+        Err(CssValueError::new(
+            "unsupported-unit",
+            format!("{text}: 단위 없는 수를 넣으세요"),
+        ))
+    }
+}
+
+/// `<transform-list>` 2D 부분집합. 함수는 왼쪽부터 오른쪽으로 곱합니다(CSS: 오른쪽 함수가 먼저 적용).
+/// 직각 배수가 아닌 `rotate()`와 `skew*()`는 플랫폼 의존 초월함수가 필요해 받지 않습니다(속성 모델 15장 O13).
+fn parse_transform(text: &str) -> Result<[f32; 6], CssValueError> {
+    if text == "none" {
+        return Ok(IDENTITY);
+    }
+    let mut matrix = IDENTITY;
+    let mut rest = text.trim();
+    let mut count = 0;
+    while !rest.is_empty() {
+        count += 1;
+        if count > 16 {
+            return Err(CssValueError::invalid("transform 함수가 너무 많습니다"));
+        }
+        let open = rest
+            .find('(')
+            .ok_or_else(|| CssValueError::invalid("transform 함수 이름 뒤에 (가 필요합니다"))?;
+        let close = rest
+            .find(')')
+            .ok_or_else(|| CssValueError::invalid("transform 함수가 닫히지 않았습니다"))?;
+        if close < open {
+            return Err(CssValueError::invalid("transform 괄호 순서가 틀렸습니다"));
+        }
+        let name = rest[..open].trim();
+        let args = arguments(&rest[open + 1..close]);
+        if args.iter().any(|a| a.contains('(')) {
+            return Err(CssValueError::invalid(
+                "transform 인자 안에 함수는 받지 않습니다",
+            ));
+        }
+        let arity = |min: usize, max: usize| -> Result<(), CssValueError> {
+            if (min..=max).contains(&args.len()) {
+                Ok(())
+            } else {
+                Err(CssValueError::invalid(format!(
+                    "{name}()에는 인자를 {min}–{max}개 넣으세요"
+                )))
+            }
+        };
+        let step = match name {
+            "matrix" => {
+                arity(6, 6)?;
+                let mut m = [0f32; 6];
+                for (slot, arg) in m.iter_mut().zip(&args) {
+                    *slot = unitless(arg)?;
+                }
+                m
+            }
+            "translate" | "translatex" | "translatey" => {
+                arity(1, if name == "translate" { 2 } else { 1 })?;
+                let x = parse_length(args[0])?;
+                let y = args
+                    .get(1)
+                    .map(|a| parse_length(a))
+                    .transpose()?
+                    .unwrap_or(0.);
+                match name {
+                    "translatey" => [1., 0., 0., 1., 0., x],
+                    _ => [1., 0., 0., 1., x, y],
+                }
+            }
+            "scale" | "scalex" | "scaley" => {
+                arity(1, if name == "scale" { 2 } else { 1 })?;
+                let sx = unitless(args[0])?;
+                match name {
+                    "scalex" => [sx, 0., 0., 1., 0., 0.],
+                    "scaley" => [1., 0., 0., sx, 0., 0.],
+                    _ => {
+                        let sy = args.get(1).map(|a| unitless(a)).transpose()?.unwrap_or(sx);
+                        [sx, 0., 0., sy, 0., 0.]
+                    }
+                }
+            }
+            "rotate" => {
+                arity(1, 1)?;
+                let degrees = parse_angle(args[0])?;
+                let quarter = degrees / 90.;
+                if quarter.fract() != 0.0 {
+                    return Err(CssValueError::new(
+                        "unsupported-value",
+                        "직각 배수가 아닌 rotate()는 아직 받지 않습니다. matrix()를 쓰세요",
+                    ));
+                }
+                match quarter.rem_euclid(4.) as u8 {
+                    0 => IDENTITY,
+                    1 => [0., 1., -1., 0., 0., 0.],
+                    2 => [-1., 0., 0., -1., 0., 0.],
+                    _ => [0., -1., 1., 0., 0., 0.],
+                }
+            }
+            "skew" | "skewx" | "skewy" | "rotatez" => {
+                return Err(CssValueError::new(
+                    "unsupported-value",
+                    format!("{name}()는 아직 받지 않습니다. matrix()를 쓰세요"),
+                ))
+            }
+            other if other.ends_with("3d") || other.ends_with('z') || other == "perspective" => {
+                return Err(CssValueError::new(
+                    "unsupported-value",
+                    "3D transform은 받지 않습니다",
+                ))
+            }
+            other => {
+                return Err(CssValueError::invalid(format!(
+                    "{other}()는 transform 함수가 아닙니다"
+                )))
+            }
+        };
+        matrix = compose(matrix, step);
+        if matrix.iter().any(|v| !v.is_finite()) {
+            return Err(CssValueError::invalid("transform 값이 너무 큽니다"));
+        }
+        rest = rest[close + 1..].trim_start();
+    }
+    Ok(matrix.map(|v| v + 0.0))
 }
 
 /// 부호·소수·지수가 있는 수와 나머지 단위로 나눕니다.
@@ -660,6 +946,46 @@ pub fn format(value: &CssValue, grammar: CssGrammar) -> String {
     }
 }
 
+/// **테스트 전용** CSS 값 parser fuzz target(IX.11.14). 외부 fuzz 엔진 없이 쓰는 결정론적 harness입니다. 입력
+/// bytes 하나를 UTF-8(손실 허용) 텍스트로 바꿔 registry의 모든 값 문법 parser와 모든 shorthand 확장에 넣고,
+/// 받아들인 값은 정규 텍스트로 다시 쓴 뒤 다시 해석해 같은 값이 나오는지 봅니다. 어떤 입력에도 panic이
+/// 없어야 합니다(거부는 정상). 반환값은 받아들인 해석 수입니다.
+#[cfg(any(test, feature = "test-support"))]
+pub fn fuzz_one(input: &[u8]) -> usize {
+    let text = String::from_utf8_lossy(input);
+    let mut grammars: Vec<CssGrammar> = super::registry::entries()
+        .into_iter()
+        .filter_map(|e| e.css.grammar)
+        .collect();
+    grammars.extend([
+        CssGrammar::Percentage,
+        CssGrammar::Duration,
+        CssGrammar::Number,
+        CssGrammar::Border,
+        CssGrammar::Corners,
+        CssGrammar::Transform,
+    ]);
+    let mut accepted = 0;
+    for grammar in grammars {
+        if let Ok(value) = parse(grammar, &text) {
+            accepted += 1;
+            if grammar != CssGrammar::Text {
+                let canonical = format(&value, grammar);
+                let again = parse(grammar, &canonical).unwrap_or_else(|e| {
+                    panic!("정규 텍스트 재해석 실패 {grammar:?} {canonical:?}: {e}")
+                });
+                assert_eq!(format(&again, grammar), canonical, "{grammar:?}");
+            }
+        }
+    }
+    for (shorthand, _) in super::mapping::CSS_SHORTHANDS {
+        if let Some(Ok(_)) = super::shorthand::expand(shorthand, &text) {
+            accepted += 1;
+        }
+    }
+    accepted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -944,5 +1270,174 @@ mod tests {
         for value in [f32::MAX, f32::MIN, f32::MIN_POSITIVE, 1e-45, 16_777_217.0] {
             assert_eq!(format_number(value).parse::<f32>().unwrap(), value);
         }
+    }
+
+    #[test]
+    fn new_grammars_parse_property_model_input_forms() {
+        // 검증 기준(IX.11.14): 속성 모델 2장의 입력 형태.
+        assert_eq!(ok(CssGrammar::Percentage, "50%"), "50%");
+        assert_eq!(code(CssGrammar::Percentage, "50"), "unsupported-unit");
+        assert_eq!(ok(CssGrammar::Duration, "0.25s"), "250ms");
+        assert_eq!(ok(CssGrammar::Duration, "120MS"), "120ms");
+        assert_eq!(ok(CssGrammar::Duration, "0"), "0ms");
+        assert_eq!(code(CssGrammar::Duration, "3"), "unsupported-unit");
+        assert_eq!(ok(CssGrammar::Number, "1e2"), "100");
+        assert_eq!(code(CssGrammar::Number, "2px"), "unsupported-unit");
+        assert_eq!(ok(CssGrammar::UnitInterval, "50%"), "0.5");
+        assert_eq!(ok(CssGrammar::UnitInterval, ".25"), "0.25");
+        assert_eq!(code(CssGrammar::UnitInterval, "1.5"), "invalid-value");
+        assert_eq!(ok(CssGrammar::Transform, "none"), "none");
+        assert_eq!(
+            ok(CssGrammar::Transform, "translate(10px, -4.5px)"),
+            "matrix(1, 0, 0, 1, 10, -4.5)"
+        );
+        assert_eq!(
+            ok(CssGrammar::Transform, "translate(10px) scale(2)"),
+            "matrix(2, 0, 0, 2, 10, 0)"
+        );
+        assert_eq!(
+            ok(CssGrammar::Transform, "scale(2) translate(10px)"),
+            "matrix(2, 0, 0, 2, 20, 0)"
+        );
+        assert_eq!(
+            ok(CssGrammar::Transform, "rotate(90deg)"),
+            "matrix(0, 1, -1, 0, 0, 0)"
+        );
+        assert_eq!(
+            ok(CssGrammar::Transform, "rotate(0.5turn)"),
+            "matrix(-1, 0, 0, -1, 0, 0)"
+        );
+        assert_eq!(
+            ok(CssGrammar::Transform, "matrix(1 0 0 1 3 4)"),
+            "matrix(1, 0, 0, 1, 3, 4)"
+        );
+        assert_eq!(
+            code(CssGrammar::Transform, "rotate(30deg)"),
+            "unsupported-value"
+        );
+        assert_eq!(
+            code(CssGrammar::Transform, "skew(10deg)"),
+            "unsupported-value"
+        );
+        assert_eq!(
+            code(CssGrammar::Transform, "translate3d(1px, 2px, 3px)"),
+            "unsupported-value"
+        );
+        assert_eq!(
+            code(CssGrammar::Transform, "translate(50%)"),
+            "unsupported-value"
+        );
+        assert_eq!(code(CssGrammar::Transform, "spin(1)"), "invalid-value");
+        assert_eq!(code(CssGrammar::Transform, "matrix(1, 2)"), "invalid-value");
+    }
+
+    #[test]
+    fn var_resolves_through_the_token_scope_and_keeps_case() {
+        use std::collections::BTreeMap;
+        let token = StableId::new_v7(9, 0, 9);
+        let scope: BTreeMap<String, StableId> = [("--Brand-Primary".to_string(), token)].into();
+        let color = CssGrammar::Color { allow_none: false };
+        let value = parse_with(color, " var(--Brand-Primary) ", &scope).unwrap();
+        assert_eq!(
+            value,
+            CssValue::Var(CssVar {
+                name: "--Brand-Primary".into(),
+                token
+            })
+        );
+        assert_eq!(format(&value, color), "var(--Brand-Primary)");
+        let code_with = |text: &str| parse_with(color, text, &scope).unwrap_err().code;
+        assert_eq!(
+            code_with("var(--brand-primary)"),
+            "unknown-token",
+            "대소문자 구분"
+        );
+        assert_eq!(code_with("var(--Brand-Primary, red)"), "unsupported-value");
+        assert_eq!(code_with("var(Brand)"), "invalid-value");
+        assert_eq!(code_with("1px var(--Brand-Primary)"), "unsupported-value");
+        assert!(is_custom_property_name("--a\\.b"));
+        assert!(!is_custom_property_name("--"));
+        assert!(!is_custom_property_name("--a b"));
+    }
+
+    #[test]
+    fn rejected_inputs_cover_every_structured_code() {
+        // 검증 기준(IX.11.14): 거부 입력 fixture(코드 4종 + 형식 오류).
+        let length = crate::css::grammar::LENGTH_SIGNED;
+        assert_eq!(code(length, "1rem"), "unsupported-unit");
+        assert_eq!(code(length, "10vw"), "unsupported-unit");
+        assert_eq!(code(length, "calc(50% + 4px)"), "unsupported-value");
+        assert_eq!(code(length, "clamp(1px, 2px, 3px)"), "unsupported-value");
+        assert_eq!(code(length, "unset"), "unsupported-value");
+        assert_eq!(code(length, "var(--missing)"), "unknown-token");
+        assert_eq!(code(length, "url(x.svg)"), "forbidden-value");
+        assert_eq!(
+            code(
+                CssGrammar::Color { allow_none: false },
+                "image-set(\"a.png\" 1x)"
+            ),
+            "forbidden-value"
+        );
+        assert_eq!(code(length, "@import x"), "forbidden-value");
+        assert_eq!(code(length, "px"), "invalid-value");
+    }
+
+    #[test]
+    fn parser_fuzz_target_never_panics() {
+        // 검증 기준(IX.11.14): parser fuzz target panic 0. 무작위 bytes와 유효 입력 변조를 섞습니다.
+        let corpus = [
+            "320px",
+            "-0",
+            "1.5turn",
+            "#3366FF80",
+            "rgb(51 102 255 / 50%)",
+            "color(display-p3 1 0 0)",
+            "2px solid red",
+            "1px 2px 3px 4px",
+            "translate(10px) scale(2) rotate(90deg)",
+            "matrix(1,0,0,1,0,0)",
+            "50%",
+            "0.25s",
+            "var(--a)",
+            "calc(1px + 2%)",
+            "url(x)",
+            "none",
+            "1 1 0%",
+            "italic 16px/1.5 Inter",
+            "pre-wrap",
+            "1 / span 2",
+            "\"a\" 1fr / 1fr",
+            "1e38px",
+            "1e39",
+            "((((((((((x))))))))))",
+        ];
+        let mut rng = crate::test_support::random_document::SplitMix64::new(0x1114);
+        let mut accepted = 0;
+        for round in 0..6_000u32 {
+            let mut bytes: Vec<u8> = if round % 3 == 0 {
+                (0..rng.below(48)).map(|_| rng.next_u64() as u8).collect()
+            } else {
+                corpus[rng.below(corpus.len() as u64) as usize]
+                    .as_bytes()
+                    .to_vec()
+            };
+            for _ in 0..rng.below(4) {
+                if bytes.is_empty() {
+                    break;
+                }
+                let at = rng.below(bytes.len() as u64) as usize;
+                match rng.below(3) {
+                    0 => bytes[at] = rng.next_u64() as u8,
+                    1 => bytes.truncate(at),
+                    _ => bytes.insert(at, b"()/,%-.e #"[rng.below(10) as usize]),
+                }
+            }
+            accepted += fuzz_one(&bytes);
+        }
+        assert!(
+            accepted > 1_000,
+            "유효 입력도 충분히 지나야 합니다: {accepted}"
+        );
+        assert_eq!(fuzz_one(&vec![b'1'; MAX_INPUT_LEN * 4]), 0, "길이 상한");
     }
 }
