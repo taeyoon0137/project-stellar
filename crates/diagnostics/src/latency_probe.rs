@@ -426,4 +426,64 @@ mod tests {
         assert_eq!(probe.counters().coalesced, 1);
         assert_eq!(probe.counters().completed, 2);
     }
+
+    #[test]
+    fn stages_are_recorded_once_in_order_and_validated() {
+        // 검증 기준(XVI.1.2): 누락 stage를 오류로 표시하는 validator. 실패한 finish는 trace를 진행 중으로 둡니다.
+        let clock = TestClock::default();
+        let mut probe = probe(&clock);
+        let id = probe.begin(dims());
+        clock.advance(10);
+        probe.mark(id, Stage::T1).unwrap();
+        clock.advance(10);
+        probe.mark(id, Stage::T2).unwrap();
+        assert_eq!(
+            probe.finish(id),
+            Err(ProbeError::Trace(TraceError::MissingStage {
+                stage: Stage::T3
+            }))
+        );
+        assert_eq!(probe.in_flight(), 1);
+        assert!(probe.store().is_empty());
+        assert_eq!(
+            probe.mark(id, Stage::T4),
+            Err(ProbeError::Trace(TraceError::SkippedStage {
+                missing: Stage::T3,
+                stage: Stage::T4
+            }))
+        );
+        assert_eq!(
+            probe.mark(id, Stage::T2),
+            Err(ProbeError::Trace(TraceError::Duplicate {
+                stage: Stage::T2
+            }))
+        );
+        // 다른 스레드가 찍은 시각은 감소하면 거부합니다.
+        let early = ProbeStamp(5);
+        assert!(matches!(
+            probe.mark_at(id, Stage::T3, early),
+            Err(ProbeError::Trace(TraceError::OutOfOrder { .. }))
+        ));
+        let stamper = probe.stamper();
+        for stage in [Stage::T3, Stage::T4, Stage::T5] {
+            clock.advance(10);
+            probe.mark_at(id, stage, stamper.stamp()).unwrap();
+        }
+        probe.set_queue_depth(id, 1).unwrap();
+        let done = probe.finish(id).unwrap();
+        assert_eq!(done.logical_latency_nanos(), 50);
+        assert_eq!(done.queue_depth(), Some(1));
+        assert_eq!(probe.in_flight(), 0);
+        assert_eq!(probe.store().len(), 1);
+        // 끝낸 trace는 더 기록할 수 없습니다.
+        assert_eq!(
+            probe.mark(id, Stage::T1),
+            Err(ProbeError::UnknownTrace { id })
+        );
+        // frame 없이 취소된 event는 sample이 아닙니다.
+        let cancelled = probe.begin(dims());
+        probe.cancel(cancelled).unwrap();
+        assert_eq!(probe.counters().cancelled, 1);
+        assert_eq!(probe.store().len(), 1);
+    }
 }

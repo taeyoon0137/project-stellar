@@ -46,3 +46,20 @@
 ## 남은 위험 / 한계
 
 - 앱·GPU 경로가 없어 `[~]`입니다.
+
+## 2026-11-23 interaction-trace 후속: 연결 지점의 stage 기록 (ADR-0096 결정 2)
+
+- 상태는 그대로 부분 완료(`[~]`)입니다. 앱·Metal 경로에서 T1\~T5를 찍는 연결은 UI 재설계 때 합니다.
+- `InteractionProbe::mark`(probe 시계)와 `mark_at`(다른 스레드가 찍은 `ProbeStamp`)으로 T1\~T5를 같은 trace에 기록합니다.
+  `finish`가 validator를 부르고, 빠진 stage가 있으면 오류를 돌려주며 trace는 진행 중으로 남습니다. 통과한 trace만
+  store에 들어갑니다. frame 없이 취소된 event(`cancel`)는 sample이 아닙니다.
+
+| 테스트 | 확인 |
+|---|---|
+| `stages_are_recorded_once_in_order_and_validated` | 누락(T3)·건너뜀·중복·역순 거부, 실패한 finish 뒤 진행 중 유지, 끝낸 trace 기록 거부, 취소는 store 밖 |
+
+### 근거 커밋
+
+- `d25a69c9` Feat: 상호작용 trace T0\~T5 ID·stage·구간·dimension 추가 (XVI.1.1\~XVI.1.4)
+- `2e574ac5` Feat: UI 없이 command·layout·scene·render graph를 재생하는 core replay runner 추가 (XVI.2.2)
+- 이 커밋(`Task(XVI.1.2)`): 연결 지점 probe의 stage 기록 검사.
