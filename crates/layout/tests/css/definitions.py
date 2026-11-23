@@ -991,5 +991,28 @@ fx(
         [n("g", "display:grid;grid-template-columns:30px 30px;align-items:start", [n("g1", "height:20px"), c("g2", 20, 12, 10)]), c("t", 20, 16, 12)],
     ),
 )
+
+# --- aspect-ratio 두 축 indefinite(속성 모델 4.2절 E9 후보) ---
+
+fx(
+    "block/aspect-ratio-both-indefinite-absolute",
+    "block",
+    n("root", "width:300px;height:200px", [n("a", "position:absolute;left:0px;top:0px;aspect-ratio:2/1", [c("k", 40, 10)])]),
+)
+fx(
+    "block/aspect-ratio-both-indefinite-in-flow",
+    "block",
+    n("root", "width:300px", [n("a", "aspect-ratio:3/1", [c("k", 40, 10)])]),
+)
+fx(
+    "flex/aspect-ratio-both-indefinite-item",
+    "flex",
+    n("root", "display:flex;width:300px;align-items:flex-start", [n("a", "aspect-ratio:2/1", [c("k", 40, 10)]), n("b", "width:20px;height:20px")]),
+)
+fx(
+    "flex/aspect-ratio-both-indefinite-tall-content",
+    "flex",
+    n("root", "display:flex;width:300px;align-items:flex-start", [n("a", "aspect-ratio:4/1", [c("k", 40, 30)])]),
+)
 def all_fixtures():
     return FIXTURES

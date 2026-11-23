@@ -182,6 +182,19 @@ fn css_fixtures_match_browser_border_boxes() {
     let mut passed = 0;
     for fixture in fixtures() {
         let outcome = run(&fixture);
+        // 속성 모델 14장 확장(예외 표시 fixture)은 CSS와 다르게 정한 항목이라 일치를 요구하지 않습니다. 예외 표시가
+        // 있는데 일치하면 예외가 더는 필요 없다는 뜻이므로 실패로 알립니다.
+        let exception = fixture.get("exception");
+        if !exception.is_null() {
+            if outcome.mismatches.is_empty() {
+                failed.push(format!(
+                    "{}: 예외({})인데 브라우저와 일치합니다",
+                    outcome.name,
+                    exception.as_str()
+                ));
+            }
+            continue;
+        }
         if outcome.mismatches.is_empty() {
             passed += 1;
         } else {
@@ -199,6 +212,36 @@ fn css_fixtures_match_browser_border_boxes() {
         failed.len(),
         failed.join("\n")
     );
+}
+
+#[test]
+fn required_fixture_categories_exist() {
+    // 계획 IX.11.8이 명시한 범주.
+    let names: Vec<String> = fixtures()
+        .iter()
+        .map(|f| f.get("name").as_str().to_owned())
+        .collect();
+    for required in [
+        "block/aspect-ratio-both-indefinite-absolute",
+        "flex/aspect-ratio-both-indefinite-item",
+        "block/aspect-ratio-content-overflow-min-auto",
+        "flex/negative-free-space-space-around",
+        "flex/negative-free-space-space-evenly",
+        "grid/bare-fr-grows-to-content-min",
+        "grid/fr-sum-below-one-single",
+        "grid/fr-sum-below-one-pair",
+        "grid/fr-sum-below-one-indefinite",
+        "flex/default-align-fit-content-child-not-stretched",
+        "flex/auto-min-content-prevents-shrink",
+        "flex/baseline-mixed-text-image",
+    ] {
+        assert!(names.iter().any(|n| n == required), "{required} 없음");
+    }
+    let distribution = fixtures()
+        .iter()
+        .filter(|f| f.get("bundle").as_str() == "distribution")
+        .count();
+    assert!(distribution >= 5, "{distribution}");
 }
 
 #[test]

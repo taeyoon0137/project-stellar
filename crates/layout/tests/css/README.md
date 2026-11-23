@@ -40,6 +40,20 @@ STELLAR_CHROME=/path/to/chrome python3 crates/layout/tests/css/generate.py
   있으면 `width × height` inline-block 안에 높이 `baseline`인 inline-block을 둬 첫 baseline을 콘텐츠 top에서
   `baseline`에 만듭니다.
 
+## 구성(2026-11-23 생성)
+
+| suite | fixture 수 | 최소(IX.11.8) |
+|---|---|---|
+| `flex` | 102 | 60 |
+| `grid` | 56 | 40 |
+| `positioning` | 33 | 30 |
+| `block` | 10 | — |
+
+필수 범주는 `css_conformance.rs`의 `required_fixture_categories_exist`가 이름으로 검사합니다: 두 축 indefinite
+`aspect-ratio`, 한 축만 definite인 `aspect-ratio` 안 넘치는 콘텐츠(`min-height: 0px` 명시 포함), 음수 남는 공간의
+`space-around`·`space-evenly`, bare `fr`, fr 합 < 1, 기본 flex 안 `fit-content` 자식, flex item 자동 최소 크기, baseline
+없는 node의 아래 변 fallback, `distribution` 묶음 5개 이상.
+
 ## 판정
 
 - `basic` 묶음: 남는 공간과 분배 몫이 1/64 px 격자에서 나누어떨어지는 입력. rect가 1 LayoutUnit 안에서 같아야 합니다.
