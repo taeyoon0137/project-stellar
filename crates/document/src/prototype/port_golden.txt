@@ -54,6 +54,18 @@ frame 0x011e ! port-unmapped-grammar
 frame 0x011f ! port-unmapped-grammar
 frame 0x0120 ! port-unmapped-grammar
 frame 0x0121 grid-auto-flow: enum(row column)
+frame 0x0122 border-top-width: length
+frame 0x0123 border-top-style: enum(none solid)
+frame 0x0124 border-top-color: color
+frame 0x0125 border-right-width: length
+frame 0x0126 border-right-style: enum(none solid)
+frame 0x0127 border-right-color: color
+frame 0x0128 border-bottom-width: length
+frame 0x0129 border-bottom-style: enum(none solid)
+frame 0x012a border-bottom-color: color
+frame 0x012b border-left-width: length
+frame 0x012c border-left-style: enum(none solid)
+frame 0x012d border-left-color: color
 fragment 0x0001 visible: boolean
 fragment 0x0002 ! port-editor-metadata
 fragment 0x0003 ! port-editor-metadata
@@ -149,6 +161,13 @@ text 0x0023 ! port-unmapped-grammar
 text 0x0024 ! port-unmapped-grammar
 text 0x0025 ! port-unmapped-grammar
 text 0x0501 ! port-no-value-grammar
+text 0x0510 font-family: string
+text 0x0511 font-size: length
+text 0x0512 font-weight: number
+text 0x0513 font-style: enum(normal italic oblique)
+text 0x0514 font-stretch: percentage
+text 0x0515 line-height: number
+text 0x0516 letter-spacing: length
 image 0x0001 visible: boolean
 image 0x0002 ! port-editor-metadata
 image 0x0003 ! port-editor-metadata
