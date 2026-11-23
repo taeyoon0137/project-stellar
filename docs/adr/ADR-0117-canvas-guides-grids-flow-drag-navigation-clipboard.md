@@ -197,7 +197,7 @@ C1(눈금자 표현)과 C6(Grid 명시 배치 자식 drag)을 이 ADR에서 닫�
 ### 10. 캔버스 편집 성능 replay (XII.10.43)
 
 1. `canvas::edit_replay`는 2만 가시 node fixture에서 hover, 클릭 선택, 마퀴, 스냅 포함 이동, flex 컨테이너 안 크기
-   조절, 회전, Path point 드래그 scenario를 각 1,000 sample 이상 재생하고 결과 JSON(`stellar.canvas-edit-replay.v1`:
+   조절, 회전, Path point 드래그와 XII.10.37의 팬·줌 scenario를 각 1,000 sample 이상 재생하고 결과 JSON(`stellar.canvas-edit-replay.v1`:
    scenario, sample 수, p50·p99·max µs, 목표·상한, 판정)을 냅니다. hover·클릭 선택·핸들 표시는 목표 5ms·상한 8ms(p99),
    나머지는 Present 예약 10ms 이하(p99)로 판정합니다. 측정 구간은 입력 하나의 코어 처리(hit·선택·preview 계산·확정
    command 계획)입니다.
