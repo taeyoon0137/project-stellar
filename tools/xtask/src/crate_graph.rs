@@ -10,7 +10,10 @@
 //!   `[dev-dependencies]`·`[target.<spec>.*]` 표(inline table 형태 포함)에서 내부 의존을 읽습니다.
 //! - [`reach`]: 모든 표의 직접 edge를 이 정책으로 검사하고, ADR-0005 §8의 전이 도달 금지
 //!   규칙([`reach::FORBIDDEN_REACH`])을 적용합니다.
+//! - [`ai_inventory`]: `stellar` 명령의 도움말 명령과 도달 crate에 AI·MCP·모델·에이전트 관련 이름이 없음을
+//!   검사합니다(XXIV.4.7).
 
+pub mod ai_inventory;
 pub mod manifest;
 pub mod reach;
 

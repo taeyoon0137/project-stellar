@@ -356,7 +356,14 @@ fn cmd_validate_crate_graph(repo_root: &Path) -> Result<(), i32> {
         "io" => internal(&e.message),
         code => policy_err(&[format!("{code}: {}", e.message)]),
     })?;
-    let violations = check_workspace_graph(&graph);
+    let mut violations = check_workspace_graph(&graph);
+    // XXIV.4.7: `stellar` 도움말 명령과 도달 crate의 AI 무관성 inventory.
+    let help_path = repo_root.join(crate::crate_graph::ai_inventory::HELP_FIXTURE);
+    let help = std::fs::read_to_string(&help_path)
+        .map_err(|e| internal(&format!("{}: {e}", help_path.display())))?;
+    violations.extend(crate::crate_graph::ai_inventory::check_cli_ai_inventory(
+        &graph, &help,
+    ));
     if violations.is_empty() {
         Ok(())
     } else {
