@@ -15,7 +15,8 @@
 //!   pass 두 개를 둡니다. target pass는 내용 draw 바로 아래에 shadow 결과를 offset만큼 옮겨 목록 순서(앞이 아래)로 합성합니다
 //!   ([`DrawEffects::shadows`]). σ = blur 반경 / 2(CSS `box-shadow`·`drop-shadow()`).
 //! - **clip mask**: clip 방식이 [`ClipPlan::Mask`]인 draw는 복합 clip coverage(나열한 clip의 곱, 곧 교집합)를 `R8Unorm`
-//!   texture에 그리는 pass([`EffectStep::Mask`])를 두고 draw가 그 texture를 곱합니다([`DrawEffects::mask`]).
+//!   texture에 그리는 pass([`EffectStep::Mask`])를 두고 draw가 그 texture를 곱합니다([`DrawEffects::mask`]). 같은 clip
+//!   stack·같은 복합 clip 목록의 draw는 mask 하나를 같이 씁니다.
 //!
 //! ## device 값
 //!
@@ -25,6 +26,7 @@
 //! 같고, 기울임·비균일 회전은 대각 성분만 쓰는 근사입니다([`DeviceBlur::exact`]가 거짓). σ가
 //! [`MAX_SIGMA`]를 넘으면 상한으로 그리고 [`EffectDiagnostic::BlurTooLarge`]를 남깁니다(근사를 알림).
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use stellar_scene::stack::{Opacity, SceneBlendMode};
@@ -197,6 +199,10 @@ pub(super) struct EffectBuilder<'v> {
     pub(super) layers: Vec<LayerEffects>,
     pub(super) blend_diagnostics: Vec<BlendDiagnostic>,
     pub(super) diagnostics: Vec<EffectDiagnostic>,
+    /// (clip stack 저장소 주소, 복합 clip 목록) → mask. snapshot이 stack을 붙잡은 compile 동안만 씁니다.
+    masks: HashMap<(usize, Arc<[usize]>), ResourceVersion>,
+    /// 이미 read를 건 (pass, mask).
+    mask_reads: HashSet<(PassId, ResourceVersion)>,
 }
 
 impl<'v> EffectBuilder<'v> {
@@ -208,6 +214,8 @@ impl<'v> EffectBuilder<'v> {
             layers: Vec::new(),
             blend_diagnostics: Vec::new(),
             diagnostics: Vec::new(),
+            masks: HashMap::new(),
+            mask_reads: HashSet::new(),
         }
     }
 
@@ -399,18 +407,29 @@ impl<'v> EffectBuilder<'v> {
             }
             let mask = match &draw.clip {
                 ClipPlan::Mask { clips, .. } => {
-                    let node = Arc::clone(draw.source.node());
-                    let mask = self.pass(
-                        builder,
-                        "clip mask",
-                        MASK_FORMAT,
-                        &[],
-                        EffectStep::Mask {
-                            node,
-                            clips: Arc::clone(clips),
-                        },
-                    )?;
-                    builder.read(pass, mask)?;
+                    let node = draw.source.node();
+                    // 같은 clip stack·같은 복합 clip 목록의 draw는 mask 하나를 같이 씁니다(형제 draw가 많아도 texture 하나).
+                    let key = (node.clip().storage_addr(), Arc::clone(clips));
+                    let mask = match self.masks.get(&key) {
+                        Some(mask) => *mask,
+                        None => {
+                            let mask = self.pass(
+                                builder,
+                                "clip mask",
+                                MASK_FORMAT,
+                                &[],
+                                EffectStep::Mask {
+                                    node: Arc::clone(node),
+                                    clips: Arc::clone(clips),
+                                },
+                            )?;
+                            self.masks.insert(key, mask);
+                            mask
+                        }
+                    };
+                    if self.mask_reads.insert((pass, mask)) {
+                        builder.read(pass, mask)?;
+                    }
                     Some(mask)
                 }
                 _ => None,

@@ -237,3 +237,28 @@ fn mask_clip_draws_get_a_mask_pass() {
     assert_eq!(desc.format, MASK_FORMAT);
     assert_eq!(reads(&plan, pass.pass), vec![mask]);
 }
+
+#[test]
+fn draws_with_the_same_clip_stack_share_a_mask() {
+    let rounded = ClipFx {
+        radii: [2.0; 4],
+        ..crate::test_scene::rect_clip([0.0, 0.0, 12.0, 12.0])
+    };
+    let scene =
+        snapshot(&[rect(1, [0.0, 0.0, 16.0, 16.0], opaque(1.0, 0.0, 0.0)).with_clip(rounded)]);
+    let viewport = viewport_with(16.0, 16.0, IDENTITY);
+    let mut no_msaa = input(&scene, &viewport, EffectBoundaries::Minimal);
+    no_msaa.clip_caps.samples = SampleCount::X1;
+    let plan = compile_frame(&no_msaa).unwrap();
+    let draw = transparent(&plan).draws[0].clone();
+    // 같은 node(같은 clip stack 저장소)를 쓰는 draw 둘을 한 pass에 둡니다.
+    let mut second = draw.clone();
+    second.depth = 2;
+    let mut builder = RenderGraphBuilder::new();
+    let pass = builder.pass("test", PassKind::Raster);
+    let mut effects = EffectBuilder::new(&viewport);
+    effects.draws(&mut builder, pass, &[draw, second]).unwrap();
+    assert_eq!(effects.passes.len(), 1, "mask pass 하나");
+    assert_eq!(effects.draws[0].mask, effects.draws[1].mask);
+    assert!(effects.draws[0].mask.is_some());
+}

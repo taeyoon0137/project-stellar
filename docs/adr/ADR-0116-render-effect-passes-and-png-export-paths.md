@@ -53,7 +53,8 @@ Accepted (2026-11-23).
      퍼뜨림)·세로(shadow 색을 곱함) blur pass입니다. target은 내용 draw 바로 아래에 offset만큼 옮긴 결과를 목록 순서(앞이 아래)로
      합성합니다. σ = blur 반경 / 2. scene의 shadow는 node 자기 내용의 shadow입니다(자식 제외, Frame은 CSS `box-shadow`와 같음).
    - **clip mask**: clip 방식이 `ClipPlan::Mask`인 draw는 복합 clip coverage(나열한 clip의 곱)를 `R8Unorm`에 그리는 pass를
-     두고 draw가 그것을 곱합니다.
+     두고 draw가 그것을 곱합니다. 같은 clip stack·같은 복합 clip 목록의 draw는 mask 하나를 같이 씁니다(형제 draw마다 화면 크기
+     texture를 만들지 않음, 2만 node 구간 benchmark가 GPU 메모리 예산 안에 듦).
    - **device 값**: σ·offset은 node local 단위입니다. world → device 선형 부분 `M`으로 offset은 `M·offset`, σ는 축마다
      `σ·√(a² + c²)`, `σ·√(b² + d²)`입니다. `M·Mᵀ`가 대각(축 정렬, 회전 + 균일 배율)이면 정확하고, 기울임·비균일 회전은 대각
      성분만 쓰는 근사이며 `render.effect.anisotropic_blur` 진단을 남깁니다. σ가 `MAX_SIGMA`(64)를 넘으면 상한으로 그리고
