@@ -466,5 +466,11 @@ mod tests {
             "후보 판정 p99 {:?}",
             hits[989]
         );
+        // 선택 중복 제거가 hash 기반이 된 뒤에는 preview 갱신 전체도 같은 기준 안이어야 합니다(ADR-0104 Performance).
+        assert!(
+            updates[989] <= std::time::Duration::from_millis(8),
+            "preview 갱신 p99 {:?}",
+            updates[989]
+        );
     }
 }

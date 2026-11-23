@@ -27,10 +27,26 @@ pub use image::image_placement;
 /// 문서 → 증분 scene source 변환 (XI.2.4, XI.2.5, XII.10.30). 변환은 headless 도구와 같이 쓰도록 scene crate에
 /// 있습니다(ADR-0116 결정 1).
 pub use stellar_scene::document as scene_source;
+/// 캔버스 클립보드: 전용 형식과 Text 일반 텍스트 (XII.10.38, ADR-0117).
+pub mod clipboard;
+/// Frame·Rectangle·Ellipse·Line·Polygon 생성 도구 (XII.10.26, ADR-0117).
+pub mod create;
+/// 캔버스 편집 성능 replay (XII.10.43, ADR-0117).
+pub mod edit_replay;
+/// 흐름 컨테이너 안 드래그 (XII.10.24, ADR-0117).
+pub mod flow_drag;
 /// 변형 핸들 hit layer (XII.10.8, ADR-0104).
 pub mod handles;
 /// 선택 엔진의 hit 입력: 커서 아래 node 목록과 node world 상자 (XII.10.3, XII.10.5).
 pub mod hit;
+/// Frame 레이아웃 그리드 스냅 선·표시와 픽셀 그리드 (XII.10.20, ADR-0117).
+pub mod layout_grid;
+/// 줌·팬 입력을 camera에 연결 (XII.10.37, ADR-0117).
+pub mod navigate;
+/// 기존 Path의 벡터 편집 모드 (XII.10.29, ADR-0117).
+pub mod path_edit;
+/// 눈금자 눈금과 가이드 제스처 (XII.10.19, ADR-0117).
+pub mod ruler;
 /// 캔버스 클릭 선택과 편집 범위 (XII.10.3, ADR-0104).
 pub mod select;
 /// 영역 선택(마퀴) (XII.10.6, ADR-0104).
@@ -55,6 +71,8 @@ pub mod tool;
 pub mod tool_units;
 /// 캔버스 변형·정렬 엔진 (XII.10.9~XII.10.16, XII.10.21, XII.10.23, XII.10.44, ADR-0105).
 pub mod transform;
+/// 스냅·표시 토글과 스냅 일시 해제 수식키 (XII.10.17, ADR-0117).
+pub mod view_options;
 
 /// painter 순서의 사각형 하나. parent는 투명한 Fragment를 펼친 뒤의 가장 가까운 Frame입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
