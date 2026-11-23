@@ -248,3 +248,68 @@ fn free_children_are_not_flow_drags() {
         TransformError::Disabled("not-flow-child")
     );
 }
+
+#[test]
+fn flow_insertion_counts_text_siblings_with_the_published_text_size() {
+    // 흐름 자식 Text는 게시한 행 목록이 layout한 크기로 흐름에 참여하고 world 상자를 냅니다. 그래서 생성 도구의
+    // 삽입 위치가 Text 형제를 셉니다.
+    use stellar_core_types::order_key::OrderKey;
+    use stellar_core_types::text::UserText;
+    use stellar_document::records::NodeRecord;
+    use stellar_document::text::{Paragraph, TextPayload};
+    let (_dir, w) = flow_window("flow-text", "flex");
+    let mut doc = canvas_document();
+    for id in [30u64, 31, 32] {
+        add_shape(
+            &mut doc,
+            id,
+            11,
+            ShapeGeometry::Rectangle(RectangleParams {
+                size: Size2::new(20., 20.).unwrap(),
+                corner_radius: Default::default(),
+            }),
+            at(0.0, 0.0),
+        );
+    }
+    let record = model(&w).layout_record(sid(11)).unwrap().clone();
+    doc.set_layout_record(record).unwrap();
+    // Text 29를 30 앞(맨 앞)에 둡니다.
+    let first = doc.children_in_order(sid(11))[0];
+    let before_first = OrderKey::between(None, order_key(&doc, first).as_ref());
+    doc.insert_node(NodeRecord {
+        id: sid(29),
+        parent: Some(sid(11)),
+        order_key: before_first,
+        visible: true,
+        locked: false,
+        display_name: "label".to_string(),
+        payload: NodePayload::Text(
+            TextPayload::new(UserText::new("ab"), vec![Paragraph { style: 0 }], vec![]).unwrap(),
+        ),
+    })
+    .unwrap();
+    // 행 목록에 Text 29(40×10) 한 행을 둡니다(글꼴 layout 결과 자리).
+    let mut published = (*scene(&w)).clone();
+    let mut row = published.frames[0].clone();
+    row.id = sid(29);
+    row.text_node = true;
+    row.rectangle_shape = false;
+    row.geometry.rect = stellar_core_types::value::Rect::new(
+        stellar_core_types::value::Vec2::ZERO,
+        Size2::new(40., 10.).unwrap(),
+    );
+    published.frames.push(row);
+    let root = sid(10);
+    let layout = CanvasLayout::for_scene(&doc, root, None, &published).unwrap();
+    assert_eq!(layout.world_box(sid(29)), Some([10., 20., 40., 10.]));
+    // 30·31·32는 Text 뒤로 40 밀립니다.
+    assert_eq!(layout.world_box(sid(30)), Some([50., 20., 20., 20.]));
+    // Text 없이 변환하면 Text는 상자 없이 빠집니다(이전 결함의 모양).
+    let bare = CanvasLayout::for_model(&doc, root, None).unwrap();
+    assert_eq!(bare.world_box(sid(29)), None);
+    // 삽입 위치: Text(10..50)와 30(50..70) 사이 pointer는 Text 뒤 index입니다.
+    let key = flow_insert_key(&doc, &published, sid(11), [45., 25.]).unwrap();
+    let text_key = order_key(&doc, sid(29)).unwrap();
+    let rect_key = order_key(&doc, sid(30)).unwrap();
+    assert!(text_key < key && key < rect_key, "{key:?}");
+}

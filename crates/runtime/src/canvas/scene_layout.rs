@@ -8,18 +8,27 @@
 //! 옛 캔버스 행 목록(`CanvasScene`)은 저장 transform으로 그리는 이전 경로로 남아 있습니다. UI를 다시 설계할 때 이
 //! source를 그리는 경로로 바꿉니다.
 
+use std::collections::HashMap;
+
 use stellar_commands::change::ChangeSet;
 use stellar_core_types::ids::StableId;
+use stellar_core_types::value::Size2;
 use stellar_document::component::definition::ComponentLibrary;
 use stellar_document::model::DocumentModel;
+use stellar_document::modifier::ModifierStack;
+use stellar_document::text::TextPayload;
+use stellar_scene::builder::{NodeInput, TextInput};
+use stellar_scene::document::inputs::shape_style;
 use stellar_scene::document::layout::DocumentLayout;
 use stellar_scene::document::{
     document_scene_source, scene_edits, DocumentSceneSource, FlowPreview, SceneSourceOptions,
 };
+use stellar_scene::node::TextLayoutKey;
 use stellar_scene::source::{SceneKey, SourceEdit, SourceError};
 
 use crate::canvas::flow_drag::Box4;
 use crate::canvas::transform::TransformError;
+use crate::canvas::CanvasScene;
 use crate::window_session::ProjectWindowSession;
 
 /// 활성 View 하나의 layout 반영 scene source.
@@ -40,6 +49,48 @@ impl CanvasLayout {
             root,
             SceneSourceOptions {
                 library,
+                ..SceneSourceOptions::default()
+            },
+        )?;
+        Ok(CanvasLayout { source })
+    }
+
+    /// `scene`(게시한 캔버스 행 목록)이 이미 layout한 Text 크기를 Text 입력으로 써서 변환합니다. text layout을 다시
+    /// 하지 않고, Text가 흐름에서 크기를 갖고 world 상자를 냅니다(Text hook이 없으면 Text는 상자 없이 빠짐). 행 목록의
+    /// Text는 줄바꿈 없이 layout한 결과라 줄 너비 인자는 쓰지 않습니다.
+    pub fn for_scene(
+        model: &DocumentModel,
+        root: StableId,
+        library: Option<&ComponentLibrary>,
+        scene: &CanvasScene,
+    ) -> Result<CanvasLayout, SourceError> {
+        let sizes: HashMap<StableId, Size2> = scene
+            .frames
+            .iter()
+            .filter(|row| row.text_node)
+            .map(|row| (row.id, row.geometry.rect.size()))
+            .collect();
+        let mut hook = |id: StableId,
+                        _: &TextPayload,
+                        stack: Option<&ModifierStack>,
+                        locked: bool,
+                        _: Option<f32>|
+         -> Option<TextInput> {
+            let size = *sizes.get(&id)?;
+            let mut node = NodeInput::new(id, shape_style(stack)?.transform);
+            node.locked = locked;
+            Some(TextInput {
+                node,
+                layout: TextLayoutKey::from_bytes(id.to_bytes()),
+                size,
+            })
+        };
+        let source = document_scene_source(
+            model,
+            root,
+            SceneSourceOptions {
+                library,
+                text: Some(&mut hook),
                 ..SceneSourceOptions::default()
             },
         )?;

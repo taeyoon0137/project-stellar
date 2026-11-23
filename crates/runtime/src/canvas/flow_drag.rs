@@ -561,18 +561,19 @@ fn container_axes(model: &DocumentModel, set: &FlatSet, container: StableId) -> 
 /// (생성 도구·붙여넣기가 씀).
 pub(crate) fn flow_insert_key(
     model: &DocumentModel,
-    _scene: &CanvasScene,
+    scene: &CanvasScene,
     container: StableId,
     pointer: [f32; 2],
 ) -> Option<OrderKey> {
     let set = model_style_set(model);
     let axes = container_axes(model, &set, container)?;
-    // 형제 상자는 layout 결과 위치입니다. 이 한 번의 삽입을 위해 컨테이너가 든 View를 변환합니다.
+    // 형제 상자는 layout 결과 위치입니다. 이 한 번의 삽입을 위해 컨테이너가 든 View를 변환합니다. Text 크기는 게시한
+    // 행 목록이 layout한 값을 씁니다.
     let mut root = container;
     while let Some(up) = parent_of(model, root) {
         root = up;
     }
-    let layout = CanvasLayout::for_model(model, root, None).ok()?;
+    let layout = CanvasLayout::for_scene(model, root, None, scene).ok()?;
     let siblings = FlowSiblings::read(model, &set, &layout, container, axes, StableId::NIL);
     Some(siblings.slot(pointer).1)
 }
