@@ -29,7 +29,7 @@ use stellar_document::layout_record::LayoutRecord;
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{ModifierKind, ModifierStack};
 use stellar_document::node_kind::NodeKind;
-use stellar_document::record_codec::{encode_node_record, SubtreeRecords};
+use stellar_document::record_codec::{encode_node_record, SubtreeRecords, SubtreeSections};
 use stellar_document::records::NodeRecord;
 use stellar_document::test_support::random_document::{random_valid_document, SplitMix64};
 use stellar_project::document_io::load::{load_document, MemoryChunks};
@@ -78,6 +78,8 @@ fn policy(threshold_bytes: u64) -> SplitPolicy {
 struct ViewPartition {
     view: StableId,
     records: SubtreeRecords,
+    /// View subtree의 확장 절(가이드·View 변수, ADR-0126). 분할 크기에는 넣지 않고 소유 node가 있는 chunk에 씁니다.
+    sections: SubtreeSections,
     tree: SplitTree,
 }
 
@@ -85,11 +87,11 @@ struct ViewPartition {
 fn partitions(model: &DocumentModel) -> Vec<ViewPartition> {
     let records = model.to_records().expect("레코드");
     records
-        .view_subtrees()
+        .view_subtrees_with_sections()
         .expect("View 분할")
         .into_iter()
-        .filter(|(_, subtree)| !subtree.nodes.is_empty())
-        .map(|(view, subtree)| {
+        .filter(|(_, subtree, _)| !subtree.nodes.is_empty())
+        .map(|(view, subtree, sections)| {
             let stack_bytes: BTreeMap<StableId, u64> = subtree
                 .modifier_stacks
                 .iter()
@@ -118,6 +120,7 @@ fn partitions(model: &DocumentModel) -> Vec<ViewPartition> {
                 view,
                 tree: SplitTree::new(nodes).expect("split tree"),
                 records: subtree,
+                sections,
             }
         })
         .collect()
@@ -177,6 +180,21 @@ fn chunk_model(
                     .filter_map(|n| layout_records.get(n).map(|r| (*r).clone()))
                     .collect(),
             };
+            // 가이드는 소유 node가 있는 chunk, View 변수는 View root chunk의 확장 절입니다(ADR-0126).
+            let sections = SubtreeSections {
+                node_guides: part
+                    .sections
+                    .node_guides
+                    .iter()
+                    .filter(|g| members.contains(&g.owner()))
+                    .cloned()
+                    .collect(),
+                view_variants: if chunk.root == part.records.root {
+                    part.sections.view_variants.clone()
+                } else {
+                    Vec::new()
+                },
+            };
             let payload = subtree.encode();
             let section = if subtree.layout_records.is_empty() {
                 0
@@ -188,6 +206,7 @@ fn chunk_model(
                 chunk.payload_bytes + section,
                 "크기 모델 = 실제 payload 길이"
             );
+            let payload = subtree.encode_with(&sections);
             let chunk_id = subtree_chunk_id(document, chunk.root);
             refs.push(SubtreeRef {
                 root_node: chunk.root,
@@ -629,10 +648,22 @@ fn random_documents_split_resplit_and_merge_round_trip() {
 
         let mut rng = SplitMix64::new(seed ^ 0xC4_0000);
         let mut ids = FreshIds::new(seed ^ 0xC4_0001);
-        for _ in 0..12 {
+        // node 편집 12번. 가이드·View 변수 command(ADR-0126)는 node 크기를 바꾸지 않으므로 적용하되 횟수에 넣지 않습니다(분포 유지).
+        let mut node_edits = 0;
+        for _ in 0..64 {
+            if node_edits == 12 {
+                break;
+            }
             let Some(request) = random_valid_request(&editor.state, &mut rng, &mut ids, 32) else {
+                node_edits += 1;
                 continue;
             };
+            if !matches!(
+                request.command,
+                Command::SetNodeGuides(_) | Command::EditViewVariants(_)
+            ) {
+                node_edits += 1;
+            }
             // 검증을 통과한 후보도 전체 validator가 결과를 거부할 수 있습니다(원자 롤백).
             let before = editor.model().to_records().expect("레코드");
             if editor.try_apply(vec![request.command]).is_err() {
