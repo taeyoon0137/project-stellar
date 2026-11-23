@@ -70,3 +70,11 @@ Accepted (2026-11-14). 제품 소유자가 2026-11-14에 잘 관리되는 MIT·A
 ## Migration
 
 없습니다. 도입 작업이 manifest에 의존을 추가하는 시점부터 적용됩니다.
+
+## 개정(2026-11-23, 통합 판정)
+
+- `libc`·`security-framework` 승인을 거둡니다. 계획 행 XIX.1.6, XIX.1.7, XIX.1.8, XXIX.2.3이 모두 끝났지만 두 crate를 쓰지
+  않았습니다. 상대 자격 증명 조회와 코드 서명 신원 확인은 `crates/local-ipc/src/code_identity.rs`와
+  `crates/agent-host/src/target.rs`가 CoreFoundation·Security framework 함수를 최소 `extern "C"`로 선언해 처리합니다.
+- 나중에 binding crate가 필요해지면 이 ADR 절차로 다시 승인합니다. `config/dependencies.yaml`에서 두 항목을 지웠습니다.
+

@@ -7017,11 +7017,12 @@ tasks:
       - DEV-MAC
   - id: "XII.6.3"
     title: "Clone Project command가 URL과 target folder를 받아 clone-open pipeline을 호출합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IV.6.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.6.3.md"
   - id: "XII.6.4"
     title: "Undo/Redo/Save Now command를 active WindowSession에 연결합니다."
     status: not_started

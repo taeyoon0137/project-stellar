@@ -3,7 +3,7 @@
 ## WBS
 
 - WBS: XII.6.3
-- 상태: 착수 전 (`[ ]`) — 2026-11-23 셸 UI 초기화(ADR-0098)로 Clone Project 화면과 그 검사를 지웠습니다. 코어 clone-open pipeline은 남아 있고, 화면은 UI 재설계 때 다시 만듭니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 셸 UI 초기화(ADR-0098)로 Clone Project 화면과 그 검사를 지웠습니다. 코어 clone-open pipeline은 남아 있고, 화면은 UI 재설계 때 다시 만듭니다.
 - 선행: IV.6.4
 
 ## 변경 파일
