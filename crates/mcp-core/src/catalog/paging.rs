@@ -21,8 +21,9 @@ use crate::json::{self, JsonNumber, JsonValue};
 pub const DEFAULT_PAGE_ITEMS: usize = 500;
 /// page item 상한.
 pub const MAX_PAGE_ITEMS: usize = 2000;
-/// page 내용 JSON 최대 byte 수(MCP 메시지 상한 1 MiB의 절반, envelope·escape 여유).
-pub const MAX_PAGE_BYTES: usize = 512 * 1024;
+/// page 내용 JSON 최대 byte 수. tool 결과는 같은 내용을 `structuredContent`와 직렬화 text block에 두 번 싣으므로
+/// (XIX.9.6) MCP 메시지 상한 1 MiB 안에 escape 여유까지 들어가도록 3/8로 둡니다.
+pub const MAX_PAGE_BYTES: usize = 384 * 1024;
 
 /// page로 나눌 수 있는 resource 내용.
 pub trait PageSource {
@@ -404,7 +405,7 @@ mod tests {
         )
         .unwrap();
         let items = content.get("items").and_then(JsonValue::as_array).unwrap();
-        assert!(items.len() < 100 && items.len() >= 4, "{}", items.len());
+        assert!(items.len() < 100 && items.len() >= 3, "{}", items.len());
         assert!(json::write(&content).len() <= MAX_PAGE_BYTES);
         assert!(next_cursor(&content)
             .unwrap()

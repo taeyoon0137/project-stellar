@@ -53,6 +53,9 @@ pub mod protocol;
 /// MCP stdio 서버 루프 (XIX.1.1).
 pub mod server;
 
+/// tool 결과 envelope: 프로젝트 문자열은 data로만 (XIX.9.6).
+pub mod result;
+
 /// agent command proposal 입력 해석: closed enum command만 (XIX.5.1).
 pub mod proposal;
 

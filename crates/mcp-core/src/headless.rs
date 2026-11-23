@@ -137,13 +137,7 @@ impl Headless {
                 }
                 _ => return Err(fail(Kind::Internal, "headless 목록과 구현이 다릅니다")),
             };
-            Ok(JsonValue::object(vec![(
-                "content",
-                JsonValue::Array(vec![JsonValue::object(vec![
-                    ("type", JsonValue::string("text")),
-                    ("text", JsonValue::string(json::write(&body))),
-                ])]),
-            )]))
+            Ok(crate::result::tool_success(body))
         })
     }
 

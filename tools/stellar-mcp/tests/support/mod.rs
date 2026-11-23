@@ -253,7 +253,12 @@ pub fn tool_body(reply: &J) -> J {
         .unwrap_or_else(|| panic!("tool 실패: {reply:?}"));
     let content = array(result.get("content").unwrap());
     assert_eq!(content.len(), 1);
-    json::parse(text(content[0].get("text").unwrap()), JsonLimits::default()).unwrap()
+    let structured = result.get("structuredContent").unwrap();
+    let serialized =
+        json::parse(text(content[0].get("text").unwrap()), JsonLimits::default()).unwrap();
+    assert_eq!(&serialized, structured, "text block = structuredContent");
+    assert_eq!(structured.get("kind").map(text), Some("ok"));
+    structured.get("data").unwrap().clone()
 }
 
 /// 실패 응답의 종류(`kind`).

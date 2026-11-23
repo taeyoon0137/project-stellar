@@ -457,18 +457,19 @@ fn scope_revision_limits_and_write_requests_return_normal_errors() {
 }
 
 fn tool_page(reply: &J) -> J {
-    let parts = array(
-        reply
-            .get("result")
-            .expect("tool result")
-            .get("content")
-            .unwrap(),
-    );
+    let result = reply.get("result").expect("tool result");
+    let parts = array(result.get("content").unwrap());
     assert_eq!(parts.len(), 1);
     assert_eq!(parts[0].get("type").map(text), Some("text"));
-    let text = text(parts[0].get("text").unwrap());
-    assert!(text.len() <= paging::MAX_PAGE_BYTES);
-    json::parse(text, JsonLimits::default()).unwrap()
+    // XIX.9.6: text block은 structuredContent의 직렬화이고 내용은 data 아래에만 있습니다.
+    let structured = result.get("structuredContent").unwrap();
+    let serialized =
+        json::parse(text(parts[0].get("text").unwrap()), JsonLimits::default()).unwrap();
+    assert_eq!(&serialized, structured);
+    assert_eq!(structured.get("kind").map(text), Some("ok"));
+    let data = structured.get("data").unwrap().clone();
+    assert!(json::write(&data).len() <= paging::MAX_PAGE_BYTES);
+    data
 }
 
 #[test]
@@ -901,7 +902,7 @@ fn head_diff_pages_follow_real_branches_and_preserve_all_inputs() {
     // 긴 문자열도 count limit보다 실제 JSON byte 한도가 먼저 페이지를 끊습니다.
     for node in nodes.iter().take(3) {
         document
-            .set_display_name(node.id, "이름".repeat(38_000))
+            .set_display_name(node.id, "이름".repeat(25_000))
             .unwrap();
     }
     save_documents(&fx.project, &[&document]);
