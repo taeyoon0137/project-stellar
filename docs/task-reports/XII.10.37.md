@@ -25,6 +25,7 @@
 | 명령 | 결과 |
 |---|---|
 | `cargo test -p stellar-runtime --lib canvas::navigate` | 통과(5): 핀치·⌘+스크롤 커서 고정 줌과 상한, 스크롤 팬·Shift 휠 가로 팬·트랙패드 Shift, 관성 유지·새 제스처 뒤 관성 버림, Hand 드래그·Zoom 도구 클릭·Option-클릭·영역·3pt 미만 클릭·smart magnify 번갈기, 입력 연쇄 뒤 save bytes·history·revision 불변 |
+| `cargo test --release -p stellar-runtime --lib canvas::edit_replay::tests::measure_canvas_edit_replay_20k -- --ignored --nocapture` | 통과: `pan` 1,000 sample p99 0.04µs·max 51.8µs, `zoom` p99 0.04µs·max 0.08µs(입력 → viewport → camera 변환, 기준 10ms) |
 
 ## 차이(작업 지시와 다른 점)
 
