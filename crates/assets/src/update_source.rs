@@ -40,10 +40,10 @@
 //!
 //! # command 경계
 //!
-//! 이 모듈은 AssetRecord 참조를 **직접 바꾸지 않습니다.** 반환한 [`AssetRecordUpdate`]를
-//! Phase VII command(validate/apply/invert)가 적용해야 하며, [`AssetRecordUpdate::inverted`]가
-//! undo 값입니다. command 타입은 아직 없으므로(stellar-commands 골격) 연결은 Phase VII
-//! 작업입니다. 이전 content 파일은 지우지 않습니다(undo 대상 — 참조가 끊긴 뒤 GC, XIII.5.6).
+//! 이 모듈은 AssetRecord 참조를 **직접 바꾸지 않습니다.** 반환한 [`AssetRecordUpdate`]는
+//! [`AssetRecordCommand`](crate::record_command::AssetRecordCommand)(validate/apply/inverse)가 적용하며,
+//! [`AssetRecordUpdate::inverted`]가 undo 값입니다. 이전 content 파일은 지우지 않습니다(undo 대상 —
+//! 참조가 끊긴 뒤 GC, XIII.5.6).
 
 use std::fmt;
 use std::io::ErrorKind;
