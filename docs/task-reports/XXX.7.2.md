@@ -2,7 +2,7 @@
 
 - WBS: XXX.7.2
 - 작업명: node에 붙는 provision, 컴포넌트 requirement, Slot 공개 Context key 목록과 저장.
-- 상태: 완료 (`[x]` 후보) — 검증 기준을 채웠습니다. 외부 원본 반영 경로 한계는 아래에 적었습니다.
+- 상태: 부분 완료 (`[~]` 후보) — 행 검증 기준(round-trip, 범위 밖 거부, instance node 허용, Slot 목록 round-trip)은 채웠지만, 앱 창 저장 경로가 Context를 넘기지 않아 저장 시 Context 원본이 지워집니다(아래, 통합 검토에서 확인). 보고 당시 기록: 완료(`[x]` 후보).
 - 결정: ADR-0099 결정 1·2, ADR-0025 결정 3.2·3.3·3.11
 - 선행: XXX.7.1, IX.1.1, IX.2.1, IX.3.1
 
@@ -51,6 +51,12 @@
 
 ## 남은 위험 / 한계
 
+- 앱 창 저장(`stellar_runtime::window_session`)은 `SharedSnapshot`에 레코드만 담아 `serialize_records`와
+  `DocumentModel::from_records` 뒤 텍스트 원본을 인코딩합니다. 그래서 `design/context.stellar.yaml`이 있는 프로젝트를 앱에서
+  저장하면 그 파일이 삭제 변경으로 계획되고 context-set chunk도 빠집니다(손실 저장). generation→텍스트 원본 전환(`convert`)도
+  레코드 사본이라 Context를 옮기지 않습니다. 고치려면 snapshot에 `ContextSet::live` 결과를 함께 담아
+  `serialize_records_with_context`와 `replace_context`로 넘기면 됩니다(runtime, 소유 밖, 통합 전 후속). `stellar apply`(ops)는
+  모델을 `serialize_document`로 쓰므로 Context를 보존합니다.
 - 외부 원본 반영(`ApplyExternalSnapshot`, runtime `sync_external`)은 문서 레코드만 옮기므로 Context 파일을 밖에서 고치면
-  열린 창에 반영되지 않고, 다음 저장이 창의 Context로 덮어쓸 수 있습니다. layout record와 같은 종류의 남은 일입니다(소유 밖).
+  열린 창에 반영되지 않습니다(소유 밖).
 - storage `INITIAL_KINDS`에는 kind 7을 등록하지 않았습니다(보호 경로, ADR-0099 결정 12).

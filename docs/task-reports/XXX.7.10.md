@@ -2,7 +2,7 @@
 
 - WBS: XXX.7.10
 - 작업명: ContextKey·provision·requirement·Slot 공개 목록의 StableId 단위 diff와 전용 merge conflict.
-- 상태: 완료 (`[x]` 후보)
+- 상태: 부분 완료 (`[~]` 후보) — 투영·역투영·전용 conflict와 검증 기준 시험은 있지만 제품 snapshot 조립(`stellar diff`·compare·merge)이 아직 Context를 넣지 않습니다(아래, 통합 검토에서 확인). 보고 당시 기록: 완료(`[x]` 후보).
 - 결정: ADR-0099 결정 10, 아키텍처 27.1
 - 선행: XXX.7.8, XIV.3.7, XIV.10.5
 
@@ -48,5 +48,9 @@
 
 ## 남은 위험 / 한계
 
+- 제품 snapshot 조립(`stellar_ops::diff::snapshot_of`, `stellar_ops::compare`의 `document_builder`·HEAD 쪽 builder)은 레코드만
+  넣고 `SnapshotBuilder::add_context`를 부르지 않습니다. 그래서 지금 `stellar diff`·compare·merge 결과에는 Context 변경이
+  나타나지 않습니다. `add_context`는 Component·Slot 객체를 먼저 요구하므로 컴포넌트 library 투영 뒤에 불러야 합니다(소유 밖,
+  후속).
 - merge 결과를 문서에 쓰는 경로(ops·git 연결)에서 `context_from_snapshot`을 부르는 일은 하지 않았습니다(소유 밖, 후속).
 - 이 lane은 conflict kind 11·12를 더했습니다. 다른 lane이 같은 번호를 쓰면 통합 때 맞춰야 합니다.

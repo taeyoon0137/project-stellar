@@ -183,8 +183,15 @@ binding을 읽을 곳이 없음).
 
 - 긍정: Context 네 요소가 한 resource라 저장·diff·merge·command가 각각 한 경로입니다.
 - 긍정: 해석은 StableId 경로표로 binding graph에 들어가 기존 scheduler·provenance·orphan 경로를 그대로 씁니다.
-- 부정: `DocumentModel` 거울이라 문서 레코드만 다루는 경로(외부 원본 반영 `ApplyExternalSnapshot`)는 Context를 따로 넘겨야
-  합니다.
+- 부정: `DocumentModel` 거울이라 문서 레코드만 다루는 경로는 Context를 따로 넘겨야 합니다. 이 결정 시점에 Context를 넘기지
+  않는 제품 경로는 다음과 같습니다. (1) 창 저장: `stellar_runtime::window_session`의 `SharedSnapshot`이 레코드만 들고
+  `serialize_records`·`from_records`로 chunk와 텍스트 원본을 만들므로, 텍스트 원본에 `context.stellar.yaml`이 있는 프로젝트를
+  앱에서 저장하면 그 파일이 삭제 변경(`plan_changes`)이 되고 context-set chunk도 빠집니다. (2) generation→텍스트 원본 전환
+  (`window_session/source.rs`의 `convert`)도 레코드 사본이라 Context를 옮기지 않습니다. (3) 외부 원본 반영
+  `ApplyExternalSnapshot`. (4) 제품 semantic snapshot 조립(`stellar_ops::diff::snapshot_of`, `stellar_ops::compare`)은
+  `SnapshotBuilder::add_context`를 부르지 않아 `stellar diff`·compare·merge에 Context가 나타나지 않고, merge 결과를 ContextSet으로
+  되돌리는 경로(`context_from_snapshot` 호출)도 없습니다. 모두 이 행들의 소유 밖이라 후속에서 같은 `ContextSet::live`·
+  `serialize_records_with_context`·`add_context`를 잇습니다. 그 전까지 Context를 만드는 제품 입력(CLI·MCP·UI)은 두지 않습니다.
 - 부정: 정의 tree node를 target으로 하는 binding은 binding graph에서 인스턴스마다 다른 값을 갖지 못합니다(기존 binding graph
   한계). 해석기·`ContextEvaluator`는 site별 값을 계산하지만 binding scheduler는 binding당 site 하나를 씁니다.
 
