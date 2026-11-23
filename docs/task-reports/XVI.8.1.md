@@ -2,7 +2,7 @@
 
 - WBS: XVI.8.1
 - 작업명: 로컬 diagnostic store에 app crash, renderer error, performance trace, feature failure count schema 정의
-- 상태: 완료 (`[x]`) — 구현과 검증 기준(schema round-trip)을 끝냈습니다. 선행 XVI.1.5는 원장에서 `[~]`(XVI.1.2 사슬)이라 원장 판정은 통합 때 정합니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 통합 판정: 이 행의 구현은 끝났지만 선행 XVI.1.5이 `[x]`가 아닙니다. 그 조건이 풀리면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`) — 구현과 검증 기준(schema round-trip)을 끝냈습니다. 선행 XVI.1.5는 원장에서 `[~]`(XVI.1.2 사슬)이라 원장 판정은 통합 때 정합니다.
 - 결정: ADR-0109 결정 1\~3
 - 선행: II.3.2, XVI.1.5
 

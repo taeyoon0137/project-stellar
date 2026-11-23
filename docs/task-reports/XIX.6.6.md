@@ -2,7 +2,7 @@
 
 - WBS: XIX.6.6
 - 작업명: Interrupted Agent Task에 session id, duration, error code만 local diagnostic으로 남김
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 통합 판정: 이 행의 구현은 끝났지만 선행 XVI.8.1, XIX.6.4이 `[x]`가 아닙니다. 그 조건이 풀리면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`)
 - 선행: XVI.8.1, XIX.6.4
 - 결정: [ADR-0100](../adr/ADR-0100-agent-change-history-and-revert.md)
 

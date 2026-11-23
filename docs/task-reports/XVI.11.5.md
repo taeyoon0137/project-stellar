@@ -4,7 +4,7 @@
 
 - WBS: XVI.11.5
 - 작업명: 자동 저장 중 비정상 종료→다시 실행→복구 선택→Git 작업 트리 확인 E2E
-- 상태: 완료 (`[x]`) 원장 판정은 통합 때 `generate-ledger`로 정합니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 통합 판정: 이 행의 구현은 끝났지만 선행 XIII.8.7이 `[x]`가 아닙니다. 그 조건이 풀리면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`) 원장 판정은 통합 때 `generate-ledger`로 정합니다.
 - 선행: XIII.8.7
 - 결정: [ADR-0111](../adr/ADR-0111-headless-release-e2e-scenarios.md)
 - lane: `headless-e2e`

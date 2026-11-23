@@ -2,7 +2,7 @@
 
 - WBS: XIX.6.2
 - 작업명: 정상 CompleteAgentEdit에서 변경 그룹을 history entry로 확정하고 lease 해제
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 통합 판정: 이 행의 구현은 끝났지만 선행 XIX.6.1이 `[x]`가 아닙니다. 그 조건이 풀리면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`)
 - 선행: XIX.6.1
 - 결정: [ADR-0100](../adr/ADR-0100-agent-change-history-and-revert.md)
 

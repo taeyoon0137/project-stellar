@@ -6597,35 +6597,59 @@ tasks:
       - DEV-MAC
   - id: "XI.10.1"
     title: "shader 입력 색을 linear working space로 변환하고 output target에 맞춰 encode하는 공통 수식을 문서화·구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.4.2"
       - "XI.8.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.10.1.md"
+    commit: "aabfac6f6dbbdb645b599dd525a176b1ac668631"
+    report: "docs/task-reports/XI.10.1.md"
+    verified_at: "2026-11-23T20:46:14+09:00"
   - id: "XI.10.2"
     title: "alpha compositing과 지원 blend mode의 수식을 고정합니다. 초기 지원 목록 밖 mode는 diagnostic입니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.10.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.10.2.md"
+    commit: "d7078562b1e4919ab9534aaac05e1687ddafd86f"
+    report: "docs/task-reports/XI.10.2.md"
+    verified_at: "2026-11-23T21:05:08+09:00"
   - id: "XI.10.3"
     title: "gradient 렌더링을 구현하고 stop tie-order를 Phase III 규칙대로 적용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.4.3"
       - "XI.10.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.10.3.md"
+    commit: "4af2745b60517a5f8a66614ad88568c35f46488b"
+    report: "docs/task-reports/XI.10.3.md"
+    verified_at: "2026-11-23T21:09:57+09:00"
   - id: "XI.10.4"
     title: "clip, mask, opacity, shadow, blur를 순차적으로 구현하고 각 기능마다 독립 image fixture를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.4.4"
       - "XI.10.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.10.4.md"
+    commit: "66fd908a91f5d381b47405a9a2001b7447ae38b3"
+    report: "docs/task-reports/XI.10.4.md"
+    verified_at: "2026-11-23T21:17:28+09:00"
   - id: "XI.10.5"
     title: "Display P3 surface 지원 여부를 플랫폼 capability로 감지하고 unsupported display에서는 sRGB 변환과 gamut warning을 생성합니다."
     status: verified
@@ -6655,36 +6679,55 @@ tasks:
     verified_at: "2026-11-14T11:44:46+09:00"
   - id: "XI.11.1"
     title: "common scene fixture를 offscreen render해 PNG-like raw RGBA reference를 생성하는 테스트 harness를 Metal backend에 구현합니다. D3D12 backend harness는 Windows 재개 때 XI.9 행과 함께 더합니다(ADR-0006 결정 4). 제품 export 기능은 아닙니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.8.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.11.1.md"
+    commit: "97acb965d7446f30118352072339395f2bb01b09"
+    report: "docs/task-reports/XI.11.1.md"
+    verified_at: "2026-11-23T20:55:12+09:00"
   - id: "XI.11.2"
     title: "image comparison에 per-channel/structural 허용 오차를 config로 정의하고 초과 pixel 위치를 diff artifact로 남깁니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.11.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.11.2.md"
+    commit: "1b178c9b9380b725c6af7f735152fc86602f9dde"
+    report: "docs/task-reports/XI.11.2.md"
+    verified_at: "2026-11-23T20:57:58+09:00"
   - id: "XI.11.3"
     title: "Frame, Shape, Path, Text, Image, Modifier, clip, P3 fixture를 최소 100개 구성합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XI.10.4"
       - "XI.7.4"
       - "XI.6.6"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XI.11.3.md"
   - id: "XI.11.4"
     title: "2만 가시 node scene에서 scene build, render graph encode, submit까지 구간 benchmark를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.2.6"
       - "XI.4.6"
       - "XI.8.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.11.4.md"
+    commit: "b4e356acedcce69773eda479b0e16e54c63dd484"
+    report: "docs/task-reports/XI.11.4.md"
+    verified_at: "2026-11-23T21:27:48+09:00"
   - id: "XI.11.5"
     title: "Present queue depth와 dropped stale frame count를 benchmark 결과에 포함합니다."
     status: verified
@@ -7174,69 +7217,112 @@ tasks:
       - DEV-MAC
   - id: "XII.10.1"
     title: "캔버스 도구 10종(`docs/design/ui/tools_menus.md` 6.2)을 코어 closed enum `CanvasTool`로 정의하고 현재 도구를 WindowViewState에 둡니다. 누르는 동안 Hand(Space), 누르는 동안 깊은 선택(⌘), Escape 복귀 같은 일시 전환을 도구 상태 기계에 넣습니다. 도구 상태는 저장·history 대상이 아닙니다(캔버스 명세 3장)."
-    status: not_started
+    status: verified
     depends_on:
       - "XII.3.6"
       - "VII.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.10.1.md"
+    commit: "da92d87c73786355d778651878c57618d3c47a67"
+    report: "docs/task-reports/XII.10.1.md"
+    verified_at: "2026-11-23T20:44:00+09:00"
   - id: "XII.10.2"
     title: "가이드 열린 결정 O10을 닫는 ADR을 작성합니다. 화살표·Shift-화살표 이동 단위, 키보드 크기 조절 키, 드래그 수식키(Shift·Option·⌘·Space) 의미, 재부모화 방지 수식키, 스냅 허용 오차(화면 pt), 줌 단계와 상하한, 핸들을 숨기는 화면 크기 기준을 캔버스 명세 3·5·7·16장 제안과 비교해 정하고, 확정 수치를 가이드 12장에 기록합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.10.2.md"
+    commit: "854836f85ae1e938e3fb9358a6c4f3ba260defa0"
+    report: "docs/task-reports/XII.10.2.md"
+    verified_at: "2026-11-23T20:42:10+09:00"
   - id: "XII.10.3"
     title: "클릭 선택을 구현합니다. hit test 결과를 현재 편집 범위(Editing Scope)의 직계 자식까지 올려 선택하고, Shift-클릭은 토글 추가, 빈 곳 클릭은 선택 해제, ⌘A는 편집 범위 형제 전체 선택입니다. Escape는 캔버스 명세 3.2절 순서(진행 중 제스처 취소, 그다음 Move가 아닌 도구에서 Move로 복귀, 그다음 편집 범위 한 단계 위, 최상위 편집 범위이면 선택 해제)를 따르며, 이 행은 최상위 편집 범위의 선택 해제를 맡고 편집 범위 한 단계 위는 XII.10.4가 맡습니다. 다중 선택에서 이미 선택된 node를 Option-클릭하면 primary로 지정합니다(캔버스 명세 3.3절, 8장). Fragment는 묶음 단위, ComponentInstance는 한 덩어리로 선택하고 결과는 SetSelection 하나입니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.3.4"
       - "VII.3.2"
       - "XII.10.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.10.3.md"
+    commit: "7632f69a065d1b4a11e12b4257045a72c3a7aa8d"
+    report: "docs/task-reports/XII.10.3.md"
+    verified_at: "2026-11-23T20:50:00+09:00"
   - id: "XII.10.4"
     title: "깊은 선택과 편집 범위 이동을 구현합니다. ⌘-클릭은 가장 깊은 선택 가능 node, 더블클릭·Return은 한 단계 아래, Shift-Return은 부모, Tab·Shift-Tab은 OrderKey 순 형제 이동, Shift-더블클릭은 깊은 node 추가이며, 편집 범위가 최상위가 아니면 Escape는 편집 범위를 한 단계 위로 올립니다(캔버스 명세 3.2절). 편집 범위는 WindowViewState에 두고, 선택이 범위 밖으로 나가면 선택의 가장 가까운 공통 조상으로 다시 맞춥니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XII.10.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.10.4.md"
+    commit: "50d046bda9557bbd03d6770972a0e668d93fb3c9"
+    report: "docs/task-reports/XII.10.4.md"
+    verified_at: "2026-11-23T20:52:04+09:00"
   - id: "XII.10.5"
     title: "select-through 규칙을 구현합니다. pointer down이 현재 선택 bounds 안이면 위에 다른 node가 있어도 드래그는 선택을 옮기고, 움직이지 않고 놓으면 그 위치를 클릭 규칙으로 선택합니다. 잠금·숨김 node는 캔버스 hit에서 통과시키고, 커서 아래 겹친 node 목록(잠금 포함, z 역순)을 문맥 메뉴의 겹친 레이어 고르기 하위 메뉴(Select Overlapping, 캔버스 명세 4.3절)용으로 반환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XII.10.3"
       - "XI.3.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.10.5.md"
+    commit: "2457bffd1fe5db37b1e51ee324316440947cc64e"
+    report: "docs/task-reports/XII.10.5.md"
+    verified_at: "2026-11-23T20:53:30+09:00"
   - id: "XII.10.6"
     title: "영역 선택(마퀴)을 구현합니다. 빈 캔버스나 Root Frame 빈 영역에서 시작하고, 기본은 영역에 걸친 편집 범위 node, Option은 완전히 포함된 node, ⌘는 가장 깊은 node, Shift는 기존 선택에 더하기(AreaSelectionMode Add)입니다. 진행 중 결과는 transient preview이고 pointer up에서 SetSelection 하나만 만듭니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "VII.3.3"
       - "XII.10.3"
       - "XI.3.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.10.6.md"
   - id: "XII.10.7"
     title: "hover 미리보기를 구현합니다. 지금 클릭하면 선택될 node(누른 수식키 반영)의 윤곽을 transient overlay로 그리고, 사이드바 레이어 행 hover와 캔버스 hover를 같은 hover 상태로 동기화합니다. hover는 history·저장 대상이 아닙니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XII.10.3"
       - "XII.4.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.10.7.md"
+    commit: "e5c0e93d5b264baa1f246fb21b1453277bd2e21b"
+    report: "docs/task-reports/XII.10.7.md"
+    verified_at: "2026-11-23T21:01:14+09:00"
   - id: "XII.10.8"
     title: "변형 핸들 hit layer를 구현합니다. 모서리·변 크기 핸들, 모서리 바깥 회전 영역, 모서리 안쪽 반경 핸들, padding·gap 핸들 자리의 우선순위(반경, 크기, padding·gap, 회전, 본체 순)와 작은 선택에서 핸들을 숨기는 규칙을 구현하고, 회전된 node는 local 좌표로 계산합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.3.5"
       - "XII.4.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.10.8.md"
+    commit: "bdff14e3f4f7cde989b47d18d785a9cba8d7cd35"
+    report: "docs/task-reports/XII.10.8.md"
+    verified_at: "2026-11-23T21:04:19+09:00"
   - id: "XII.10.9"
     title: "크기 조절 제스처를 구현합니다. Shift는 비율 유지(비율 고정 속성이 켜져 있으면 일시 해제), Option은 중심 기준, 반대편을 넘으면 뒤집기(Text는 0에서 멈춤), 다중 선택은 선택 bounds 기준 비례 배치입니다. 뒤집기는 node local 축 기준(핸들이 local 좌표, XII.10.8)으로 Frame의 그 축 `scale` 부호를 바꾸고(캔버스 명세 5.6절), `scale` longhand가 없는 node 종류는 XII.10.44가 정한 반전 표현을 씁니다. 저장된 `transform-origin`은 바꾸지 않고, 고정된 반대편 변의 world 위치가 그대로 남도록 위치(위치 지정 자식은 inset, 흐름 자식은 `translate`)를 보정합니다. 흐름 컨테이너 자식도 조절한 축의 `width`·`height`에 px 값만 쓰고 `flex-*`·`align-self`는 바꾸지 않으며, 변 핸들 더블클릭으로 값을 바꾸는 숨은 전환은 두지 않습니다(ADR-0074 결정 4). 크기 longhand는 IX.11.6 영속 record와 IX.11.3 Shape·Image·Text PropertyKey로 씁니다. 속성 이름과 저장 필드 대응은 `docs/design/property_model.md`를 따르며 pointer up에서 CommandTransaction 하나를 확정합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XII.10.8"
       - "XII.3.7"
@@ -7248,18 +7334,20 @@ tasks:
       - "XII.10.44"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.10.9.md"
   - id: "XII.10.10"
     title: "회전 제스처를 구현합니다. pivot은 단일 선택이면 node border box 중심, 다중 선택이면 선택 bounds 중심이고 Shift는 15도 단위입니다. 결과는 `rotate` 편집(`docs/design/property_model.md`)이며 제스처는 저장된 `transform-origin`을 바꾸지 않습니다. 저장된 origin이 pivot과 다르면(IX.11.9 migration 노드의 `0 0` 등) pivot의 world 위치가 그대로 남도록 위치를 보정합니다. 위치 지정 자식은 현재 anchor의 inset, 흐름 자식은 `translate`를 바꿉니다. 다중 선택은 각 node의 위치와 `rotate`를 함께 바꿉니다. 회전 중심 이동 핸들 제공 여부(캔버스 명세 C3)를 이 행에서 정하고, 핸들을 두면 그 핸들만 `transform-origin`을 바꾸며 같은 보정으로 외형을 유지합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XII.10.8"
       - "XII.10.2"
       - "IX.11.9"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.10.10.md"
   - id: "XII.10.11"
     title: "모서리 반경 핸들을 Frame·Rectangle·Polygon에 구현합니다. Frame·Rectangle은 드래그가 네 모서리 동시, Option은 그 모서리만 바꾸고, bounds를 넘는 값은 VI.5.2 평가 규칙으로 표시만 줄이며 저장값은 입력값을 유지합니다. 반경은 4 모서리 `border-*-radius` longhand key로 씁니다. Frame key는 IX.11.22가 `corner_radius`(0x0106)를 나눠 만들고, Rectangle key는 IX.11.3이 만듭니다(ADR-0024 결정 14). Polygon은 모든 꼭짓점에 쓰는 반경 하나만 있으므로(`crates/document/src/shape.rs` `corner_radius: f32`, 속성 모델 6장 `stellar-only`) IX.11.3의 단일 stellar-only key를 바꾸며 Option 개별 편집이 없고, 표시는 Polygon path 평가(VI.5.6) 결과를 따릅니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XII.10.8"
       - "VI.5.2"
@@ -7267,9 +7355,10 @@ tasks:
       - "IX.11.22"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.10.11.md"
   - id: "XII.10.12"
     title: "비례 확대(Scale) 명령을 구현합니다. 크기 조절과 달리 선 두께, 반경, 그림자·블러 반경, 글자 크기(`font-size`, IX.11.11 Typography record)까지 같은 비율로 바꾸고 modifier 값 변경을 같은 CommandTransaction에 넣습니다. 선 두께는 modifier Stroke 두께와 Frame `border-*-width` longhand(IX.11.10)이며, 묶음 key 0x0105를 쓰지 않습니다. Object 메뉴와 인스펙터 비율 입력으로 실행하며, 메뉴 막대 Object 메뉴에 Scale 항목을 추가하고 `docs/design/ui/tools_menus.md` 3.2·6.1절 표와 `ShortcutPolicy`를 함께 갱신합니다. 단일 키 배정은 XII.10.2 ADR이 정합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XII.10.9"
       - "VII.2.6"
@@ -7279,9 +7368,10 @@ tasks:
       - "XII.6.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.10.12.md"
   - id: "XII.10.13"
     title: "이동 드래그를 구현합니다. Shift는 축 고정, Option으로 시작하면 복제 후 복제본 이동(DuplicateSubtree와 이동을 한 transaction), 자유 배치 컨테이너 사이로 끌면 world 위치를 유지한 채 MoveNode로 부모를 바꿉니다. 결과는 위치 longhand 편집(위치 지정 자식은 현재 anchor의 inset, `docs/design/property_model.md` 4.5절·5장·12장)이며 ComponentInstance 안에는 공개 Slot에만 놓입니다. Frame의 위치 longhand는 IX.11.9가 transform에서 분리하고, Frame이 아닌 node의 위치 longhand는 IX.11.6 item record에 있습니다. Ellipse·Polygon `bounds` 원점과 Transform modifier 이동 성분은 바꾸지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XII.10.5"
       - "XII.3.7"
@@ -7291,9 +7381,10 @@ tasks:
       - "IX.11.9"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.10.13.md"
   - id: "XII.10.14"
     title: "키보드 이동·크기 조절을 구현합니다. 화살표와 Shift-화살표는 XII.10.2 단위로 위치 longhand(Frame은 IX.11.9, 그 밖의 node는 IX.11.6 item record)를 바꿔 이동하고, 크기 조절 키는 오른쪽·아래 가장자리를 옮기며, 흐름 컨테이너 자식은 주축 화살표로 흐름 순서를 바꾸고, 선택이 없으면 화살표가 camera를 팬합니다. 키 반복은 VII.4.4 규칙으로 한 entry로 합칩니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XII.10.2"
       - "VII.4.4"
@@ -7302,24 +7393,32 @@ tasks:
       - "IX.11.9"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.10.14.md"
   - id: "XII.10.15"
     title: "스냅 엔진을 코어 순수 함수로 구현합니다. 후보는 가이드, 레이아웃 그리드, 편집 범위 형제·부모의 가장자리와 중심, 같은 간격, 같은 크기, 픽셀 그리드이고 이 순서로 우선하며, 허용 오차는 XII.10.2의 화면 pt 값입니다. 후보 집합은 제스처 시작 때 가시 영역 공간 인덱스에서 한 번 만들고 update마다 재사용하며, 흐름 컨테이너 자식에는 객체 스냅을 적용하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.3.1"
       - "XI.3.2"
       - "XII.10.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.10.15.md"
+    commit: "4b4e9d1d1d686fb48957a00904c6770432ea748f"
+    report: "docs/task-reports/XII.10.15.md"
+    verified_at: "2026-11-23T21:28:47+09:00"
   - id: "XII.10.16"
     title: "스마트 가이드와 측정 overlay를 transient scene layer로 그립니다. 정렬선, 가장자리 거리 수치, 같은 간격·같은 크기 표시, 선택 후 Option-hover 거리 측정을 포함하고, 대비 높이기·투명도 줄이기 ShellTheme 값(XII.9.3, 투명도 줄이기 포함 여부는 가이드 O6으로 XII.9.3이 정함)을 반영합니다. 측정 라벨 glyph 출처와 Text baseline 기준 측정 방법(캔버스 명세 C2, C5)을 이 행에서 정합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XII.10.15"
       - "XII.4.4"
       - "XII.9.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.10.16.md"
   - id: "XII.10.17"
     title: "객체 스냅, 픽셀 그리드 스냅, 스마트 가이드 표시 토글을 View 메뉴 `ShellCommand`로 추가하고 드래그 중 스냅 일시 해제 수식키를 연결합니다. 토글 값은 앱 설정이며 문서·Git에 넣지 않습니다."
     status: not_started
@@ -7352,7 +7451,7 @@ tasks:
       - DEV-MAC
   - id: "XII.10.21"
     title: "정렬 6종, 분배 2종, 행·열 정리(Arrange in Rows and Columns, 선택을 같은 간격 행·열로 재배치하며 흐름 컨테이너를 만들지 않음)를 구현합니다. 단일 선택은 부모 기준, 다중 선택은 선택 bounds 기준이며 primary selection을 기준 객체로 쓸 수 있고, 분배는 가장 바깥 두 객체를 고정합니다. 흐름 밖 node는 위치 longhand(Frame은 IX.11.9, 그 밖의 node는 IX.11.6 item record)를 바꿉니다. 흐름 자식은 캔버스 명세 8장 규칙을 따릅니다. flex 자식의 주축 정렬은 비활성화하고 컨테이너 `justify-content` 안내를 도움말로 보이며, 교차축 정렬은 자식 `align-self`를 바꿉니다. Grid 자식은 `justify-self`·`align-self`를 바꾸고, Overlay 자식의 정렬과 모든 흐름 자식의 분배·행·열 정리는 비활성화합니다. 결과는 CommandTransaction 하나입니다. 메뉴 막대에 없는 행·열 정리는 Object 메뉴에 항목을 추가하고 `docs/design/ui/tools_menus.md` 3.2·6.1절 표와 `ShortcutPolicy`를 함께 갱신합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "VII.1.6"
       - "VII.2.4"
@@ -7364,9 +7463,10 @@ tasks:
       - "XII.6.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.10.21.md"
   - id: "XII.10.23"
     title: "순서와 묶음 명령을 구현합니다. Bring Forward, Send Backward, Bring to Front, Send to Back은 OrderKey를 바꾸는 MoveNode, Group은 Fragment 삽입과 자식 MoveNode, Frame Selection은 Frame 삽입과 자식 MoveNode, Ungroup은 자식을 부모로 옮기고 빈 Fragment를 지우는 CommandTransaction입니다. Frame을 풀 때는 world 위치를 보존하고, 흐름 컨테이너에서 순서 명령이 흐름 순서도 바꾼다는 사실을 도움말과 접근성 알림으로 알립니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.2.1"
       - "VII.2.2"
@@ -7375,6 +7475,12 @@ tasks:
       - "XII.10.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.10.23.md"
+    commit: "b9b0e3e8990f4089d364ad9cd4d52261ba46ec3d"
+    report: "docs/task-reports/XII.10.23.md"
+    verified_at: "2026-11-23T21:31:30+09:00"
   - id: "XII.10.24"
     title: "흐름 컨테이너(flex·grid) 안 드래그를 구현합니다. 끄는 동안 삽입 위치 표시를 그리고 형제를 증분 레이아웃 preview로 비키게 하며, 놓으면 OrderKey를 바꾸는 MoveNode 하나를 만듭니다. 밖으로 끌어내면 대상 부모 규칙으로 옮기고, 흐름에서 빠진 자식(`position: absolute`)은 inset 편집으로 움직이며, ComponentInstance 내부 재정렬은 거부합니다. 흐름 순서는 OrderKey로, inset은 IX.11.6 영속 record 값으로 씁니다. Grid 명시 배치 자식 처리(캔버스 명세 C6)를 이 행에서 정합니다."
     status: not_started
@@ -7542,7 +7648,7 @@ tasks:
       - DEV-MAC
   - id: "XII.10.40"
     title: "한 제스처 한 history 적합성 검사를 추가합니다. 선택하지 않은 node를 눌러 바로 끄는 경우처럼 선택 변경과 편집이 한 제스처에서 일어나면 undo 한 번으로 둘 다 되돌리고, 취소한 제스처·hover·camera·도구 전환·편집 범위 이동은 기록하지 않습니다. `HistoryEntry` 타입은 바꾸지 않습니다. 문서 항목은 이미 `SelectionRestore`(편집 직전·직후 선택)를 담고(`crates/history/src/entry.rs`), `WindowHistory::begin_pointer_gesture`가 제스처 전 선택을 잡아 `end_preview`가 기록합니다(`crates/history/src/window.rs`). preview 중 `record_selection`은 `PreviewActive`로 거부되므로(`crates/history/src/history.rs`), `WindowHistory`에 pointer gesture 안에서 선택을 항목 없이 view에 반영하는 API를 추가합니다. 규칙: 제스처가 문서 항목을 만들면 그 항목의 `SelectionRestore`가 제스처 전·후 선택을 담고 Selection 항목은 만들지 않습니다. 편집 없이 끝나고 선택이 바뀌었으면 Selection 항목 하나를 기록합니다. 취소하면 제스처 전 선택으로 돌리고 기록하지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "VII.4.2"
       - "VII.4.4"
@@ -7552,6 +7658,7 @@ tasks:
       - "XII.10.13"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.10.40.md"
   - id: "XII.10.41"
     title: "키보드만으로 하는 캔버스 편집 경로를 완성합니다. 캔버스 포커스 표시, Tab·Return·Shift-Return 선택 이동, 화살표 이동, 키보드 크기 조절, Insert 메뉴로 화면 가운데 기본 크기 생성, 문맥 메뉴 열기를 제공하고, 핸들로만 할 수 있는 동작이 없도록 각 동작에 메뉴 명령 또는 인스펙터 필드를 연결합니다."
     status: not_started
@@ -7584,7 +7691,7 @@ tasks:
       - DEV-MAC
   - id: "XII.10.44"
     title: "Object ▸ Flip Horizontal·Flip Vertical(`object.flip_*`, `docs/design/ui/tools_menus.md` 3.2·6.1절) 명령을 구현합니다. 반전은 Frame `scale`의 해당 축 부호 반전(예: `scale: -1 1`, 캔버스 명세 5.6절, 속성 모델 5장)이고 저장된 `transform-origin`은 바꾸지 않습니다. 선택 bounds 중심을 지나는 축에 대해 반전되도록 각 node의 위치(위치 지정 자식은 현재 anchor의 inset, 흐름 자식은 `translate`)를 보정합니다. 단일 선택은 그 node bounds 중심 기준이므로 origin이 `50% 50%`인 새 노드는 보정이 없고, migration 노드(`transform-origin: 0 0`)는 bounds 중심 world 위치가 그대로 남도록 보정합니다. 회전된 node(또는 migration 노드의 선형 `transform`)를 node local 축과 world 축 중 어느 축 기준으로 반전할지, 그리고 `scale` longhand가 없는 node 종류(속성 모델 12장 Transform 대상 밖)의 반전 표현(예: Path·Polygon geometry 반전, 표현이 없으면 메뉴 항목 비활성화)을 이 행에서 정해 결정과 근거를 보고서에 기록합니다. 명령 하나는 CommandTransaction 하나입니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "VII.1.6"
       - "VII.2.4"
@@ -7594,6 +7701,7 @@ tasks:
       - "XII.6.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.10.44.md"
   - id: "XIII.1.1"
     title: "`AutosavePolicy`에 debounce, 최대 지연, 앱 비활성화 flush, 창 닫기 flush를 정의하고 값은 `config/performance-budgets.yaml`에서 읽습니다."
     status: verified
@@ -7804,12 +7912,18 @@ tasks:
     verified_at: "2026-11-14T02:08:54+09:00"
   - id: "XIII.3.4"
     title: "Phase XIV Semantic Merge 완료 후 세 snapshot reconciliation을 연결하고 겹치지 않는 변경만 자동 적용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIII.3.2"
       - "XIV.10.9"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.3.4.md"
+    commit: "1ae9c3950fd16a4bd04e51e59d3bc934ec18fde6"
+    report: "docs/task-reports/XIII.3.4.md"
+    verified_at: "2026-11-23T21:00:33+09:00"
   - id: "XIII.3.5"
     title: "잠금된 agent subtree와 외부 변경 충돌 정책은 로드맵 Phase R3에서 연결하며 초기 릴리스에는 agent lock 코드가 비활성임을 검증합니다."
     status: verified
@@ -9968,29 +10082,47 @@ tasks:
       - DEV-MAC
   - id: "XVI.4.7"
     title: "command 검증이 호출마다 다시 만드는 문서 전체 index(`crates/commands/src/tree.rs`의 `id_owners`·`ChildIndex`·`reference_index`, 각 O(N))를 `DocumentModel`이 편집과 함께 증분 유지하는 id 종류·자식·inbound 참조 index로 바꿉니다. RestoreNodeRecords(ConvertShapeToPath·ConvertFragmentToFrame의 undo·redo, VII.2.7)부터 옮기고, 같은 index를 쓰는 다른 command 검증도 옮깁니다. 검사 규칙과 오류 값은 바꾸지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.2.7"
       - "VI.2.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.4.7.md"
+    commit: "0ee4412d57c2f307460837467e12a3e8fb73be53"
+    report: "docs/task-reports/XVI.4.7.md"
+    verified_at: "2026-11-23T20:42:57+09:00"
   - id: "XVI.4.8"
     title: "binding 저장소 조회의 선형 검색을 index로 바꿉니다. `BindingStore`에 token → binding(live·orphan) 역참조 index를 두어 토큰 Delete의 inbound 검사(VIII.5.5 `TokenOrphanPlan::current`)가 모든 binding source를 훑지 않게 하고, orphan target index로 `StoreTypes::reference_type`(VIII.8.2)이 Property 참조마다 하는 orphan 선형 검색을 없앱니다. 판정 결과는 바꾸지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.5.5"
       - "VIII.8.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.4.8.md"
+    commit: "17f7e1bb68686ab84a73f2138b4f44ff9c43b782"
+    report: "docs/task-reports/XVI.4.8.md"
+    verified_at: "2026-11-23T20:48:33+09:00"
   - id: "XVI.4.9"
     title: "토큰·binding·orphan command 검증이 호출마다 다시 만드는 토큰 dependency graph와 통합 binding graph(VIII.5.5·VIII.6.6·VIII.8.4)를 편집과 함께 증분 갱신하도록 바꿉니다. cycle·참조 판정은 바꾸지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.5.5"
       - "VIII.6.6"
       - "VIII.8.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.4.9.md"
+    commit: "63c18f366881894ada139a7b8016eab17b513095"
+    report: "docs/task-reports/XVI.4.9.md"
+    verified_at: "2026-11-23T20:54:23+09:00"
   - id: "XVI.5.1"
     title: "CPU/GPU memory budget provider interface를 정의하고 OS별 available memory 정보를 normalized bucket으로 반환합니다."
     status: verified
@@ -10004,27 +10136,45 @@ tasks:
     verified_at: "2026-11-14T03:30:16+09:00"
   - id: "XVI.5.2"
     title: "cache priority를 Document/CurrentScene(비축출), VisibleGlyph/Geometry, NearViewport, BackgroundThumbnail 순으로 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.6.5"
       - "XI.7.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.5.2.md"
+    commit: "ac01daab0c0fc7d3103a59afd7f7aeb5efc43a58"
+    report: "docs/task-reports/XVI.5.2.md"
+    verified_at: "2026-11-23T21:09:00+09:00"
   - id: "XVI.5.3"
     title: "glyph, tessellation, image mipmap, thumbnail cache가 공통 budget manager에 usage를 등록하게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XVI.5.1"
       - "XVI.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.5.3.md"
+    commit: "ed83f3828d2ccea596980c340f00a17493f22536"
+    report: "docs/task-reports/XVI.5.3.md"
+    verified_at: "2026-11-23T21:10:10+09:00"
   - id: "XVI.5.4"
     title: "memory pressure event에서 낮은 priority부터 증분 eviction하고 단일 UI thread 구간 2ms를 넘지 않게 chunking합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XVI.5.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.5.4.md"
+    commit: "195ae71e836ef71df5c7e7bfef7ee448344ecb71"
+    report: "docs/task-reports/XVI.5.4.md"
+    verified_at: "2026-11-23T21:20:31+09:00"
   - id: "XVI.5.5"
     title: "비활성 document chunk unload와 재로드를 구현합니다. document index와 unsaved dirty chunk는 unload하지 않습니다."
     status: verified
@@ -10041,12 +10191,18 @@ tasks:
     verified_at: "2026-11-14T01:06:37+09:00"
   - id: "XVI.5.6"
     title: "GPU OOM 직전 캐시 purge 후 재시도를 한 번만 수행하고 반복 loop를 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.5.4"
       - "XVI.5.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.5.6.md"
+    commit: "7e1b7e7fc170d08234f80e5d4b2c841c9a07111e"
+    report: "docs/task-reports/XVI.5.6.md"
+    verified_at: "2026-11-23T21:22:20+09:00"
   - id: "XVI.6.1"
     title: "restricted YAML parser fuzz target을 추가합니다."
     status: verified
@@ -10205,48 +10361,54 @@ tasks:
     verified_at: "2026-11-14T03:11:58+09:00"
   - id: "XVI.8.1"
     title: "로컬 diagnostic store에 app crash, renderer error, performance trace, feature failure count schema를 정의합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "II.3.2"
       - "XVI.1.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XVI.8.1.md"
   - id: "XVI.8.2"
     title: "금지 필드 scanner를 구현해 project text/name/path, Git URL/branch/commit, terminal/MCP payload를 진단 번들에서 탐지합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XVI.8.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XVI.8.2.md"
   - id: "XVI.8.3"
     title: "telemetry consent 상태를 NotAsked, Declined, Granted로 정의하고 기본은 NotAsked입니다. 자동 전송은 Granted에서만 가능합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XVI.8.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XVI.8.3.md"
   - id: "XVI.8.4"
     title: "전송 전 payload preview API와 수동 diagnostic bundle export를 구현합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XVI.8.2"
       - "XVI.8.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XVI.8.4.md"
   - id: "XVI.8.5"
     title: "consent revoke 시 queued upload를 폐기하고 이후 전송을 차단합니다. 로컬 diagnostics는 정책에 따라 유지합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XVI.8.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XVI.8.5.md"
   - id: "XVI.8.6"
     title: "터미널·MCP가 초기 출시 feature off인 빌드에서도 해당 payload 필드가 schema에 존재하지 않음을 검사합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XVI.8.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XVI.8.6.md"
   - id: "XVI.9.1"
     title: "Release configuration, bundle identifier, minimum macOS 26, arm64-only 설정을 고정합니다."
     status: verified
@@ -10334,42 +10496,58 @@ tasks:
       - DEV-MAC
   - id: "XVI.11.1"
     title: "새 프로젝트 생성→Frame/Text/Image 추가→Component/Token/Variant 생성→Save→Close→Reopen E2E를 양 플랫폼에 작성합니다."
-    status: not_started
+    status: reported_done
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XVI.11.1.md"
   - id: "XVI.11.2"
     title: "object property partial stage→commit→empty GitHub fixture remote connect→push E2E를 작성합니다. 실제 GitHub 네트워크 대신 local bare remote와 URL validation unit을 분리합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.11.2.md"
+    commit: "97b9746ecb3fe8ebe1e8609906369d8fc5404368"
+    report: "docs/task-reports/XVI.11.2.md"
+    verified_at: "2026-11-23T21:45:50+09:00"
   - id: "XVI.11.3"
     title: "두 branch conflict 생성→Semantic Conflict 해결→git add 상태까지 E2E를 작성합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIV.14.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XVI.11.3.md"
   - id: "XVI.11.4"
     title: "외부 library v1/v2 동시 사용→update→override orphan E2E를 작성합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XV.8.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XVI.11.4.md"
   - id: "XVI.11.5"
     title: "autosave 중 crash→relaunch→recovery 선택→Git working tree 확인 E2E를 작성합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIII.8.7"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XVI.11.5.md"
   - id: "XVI.11.6"
     title: "동일 프로젝트 두 창에서 다른 편집→첫 창 save→두 번째 창 save alert의 두 선택 경로 E2E를 작성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XII.7.7"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.11.6.md"
+    commit: "a477460c59c6dd359ee8aa2981c9ca8344d9893c"
+    report: "docs/task-reports/XVI.11.6.md"
+    verified_at: "2026-11-23T21:45:50+09:00"
   - id: "XVI.11.7"
     title: "reference hardware performance gate를 실행하고 G8 release report를 생성합니다."
     status: not_started
@@ -10989,46 +11167,51 @@ tasks:
       - DEV-MAC
   - id: "XIX.6.1"
     title: "승인 batch마다 inverse transaction을 보존해 변경 단위·세션 단위 되돌리기(XIX.6.8, XIX.6.9)에 씁니다. full document clone은 금지합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIX.5.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.6.1.md"
   - id: "XIX.6.2"
     title: "정상 CompleteAgentEdit에서 변경 그룹을 history entry로 확정하고 lease를 해제합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIX.6.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.6.2.md"
   - id: "XIX.6.3"
     title: "user CancelAgentEdit(현재 세션 중지)는 rollback하지 않고 XIX.6.4 종료 절차를 따릅니다. 중지 후 세션 되돌리기는 종료 절차를 마친 뒤 XIX.6.9 세션 되돌리기 미리보기를 엽니다. 별도 rollback 경로는 두지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIX.6.4"
       - "XIX.6.9"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.6.3.md"
   - id: "XIX.6.4"
     title: "세션 종료(외부 클라이언트의 MCP disconnect, agent process 종료, 사용자 중지, 재연결 유예 초과, 비정상 종료, 신뢰 철회, lease와 겹치는 외부 변경, 사용자의 lease 해제) 시 자동 rollback하지 않습니다. 앱이 시작한 세션은 bridge disconnect·crash 뒤에도 재연결 유예 동안 유지하고 유예를 넘기면 종료합니다(ADR-0005 §4.2). 적용 중인 transaction은 전부 적용 또는 전부 미적용으로 끝내고, 진행 중 작업 그룹을 \"중단됨\" history entry 하나로 확정하며, 적용된 batch의 출처 표시(XIX.6.7)를 유지하고, lease와 session permission을 즉시 해제하며, 미적용 제안은 폐기하고 대기 승인 요청은 거부로 닫습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIX.1.4"
       - "XIX.6.2"
       - "XIX.6.7"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.6.4.md"
   - id: "XIX.6.6"
     title: "Interrupted Agent Task에는 내용 없이 session id, duration, error code만 local diagnostic으로 남깁니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XVI.8.1"
       - "XIX.6.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.6.6.md"
   - id: "XIX.6.7"
     title: "에이전트 변경 출처 색인 `AgentChangeProvenance`를 창 세션 메모리에 정의합니다. 적용된 batch마다 AgentSessionId, CLI가 보고한 세션 표시 이름, batch 순번, history sequence, VII.1.4 결과의 변경 StableId·PropertyPath 집합, 생성·삭제 노드, StableId+PropertyPath별 적용 직후 값 지문, 상태(완료·중단)를 기록합니다. batch command의 origin은 VII.1.1의 FutureAgent를 쓰고 VII 타입은 바꾸지 않습니다. 프로젝트 파일, Git, generation metadata, recovery snapshot, 진단, 텔레메트리에는 넣지 않으며 창을 닫으면 WindowHistory와 함께 버립니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIX.5.5"
       - "VII.1.1"
@@ -11036,9 +11219,10 @@ tasks:
       - "VII.4.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.6.7.md"
   - id: "XIX.6.8"
     title: "변경 단위 되돌리기를 구현합니다. 사용자가 고른 batch 하나의 inverse를 새 User origin CommandTransaction으로 만들어 DocumentThread에 적용하고 \"에이전트 변경 되돌리기\" history entry 하나를 남깁니다(Undo 가능). 전제조건은 StableId+PropertyPath별 현재 값과 적용 직후 값 지문의 일치입니다. 이후 변경된 속성, 에이전트가 만든 노드 아래 이후 추가된 자식·참조, 외부 inbound ref, 이미 삭제된 노드는 충돌로 분류해 기본 제외하고 목록으로 반환합니다. 충돌 항목은 사용자가 명시적으로 고른 경우에만 복원하며, 사용자 콘텐츠가 함께 사라지는 구조 충돌의 기본값은 현재 유지입니다. 승인 전 미리보기는 XIX.5.3 경로를 쓰고, 다른 활성 lease 범위와 겹치면 XIX.4.3에 따라 거부합니다. 결과는 일반 autosave 경로로 저장합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIX.6.7"
       - "XIX.6.1"
@@ -11046,51 +11230,73 @@ tasks:
       - "XIX.5.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.6.8.md"
   - id: "XIX.6.9"
     title: "세션 단위 되돌리기를 구현합니다. 한 AgentSession의 남은 batch를 역순으로 XIX.6.8 규칙에 따라 하나의 CommandTransaction으로 합쳐 되돌리고 history entry 하나를 남깁니다. 전부 성공하거나 전부 미적용입니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIX.6.8"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.6.9.md"
   - id: "XIX.6.10"
     title: "출처 표시 상태 전이를 구현합니다. 사용자가 변경·세션 단위로 \"유지\"를 고르면 문서를 바꾸지 않고 표시만 지웁니다. 표시된 속성을 사용자·다른 세션·외부 변경이 다시 바꾸면 \"이후 변경됨\", 창 Undo로 에이전트 entry를 취소하면 \"실행 취소됨\", 되돌리기를 확정하면 \"되돌림\"이 되고, 그 Undo·Redo에 따라 이전 상태로 돌아갑니다. 이 동작은 사용자 UI 경로에서만 호출할 수 있습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIX.6.8"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.6.10.md"
   - id: "XIX.7.1"
     title: "external change batch를 semantic diff로 계산하고 locked subtree overlap을 판정합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIII.3.4"
       - "XIX.4.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.7.1.md"
+    commit: "0acc8ff98694bfcc8f0f819908cf31ce63300f4e"
+    report: "docs/task-reports/XIX.7.1.md"
+    verified_at: "2026-11-23T21:21:58+09:00"
   - id: "XIX.7.2"
     title: "overlap이면 agent 세션을 XIX.6.4 절차로 끝내고(자동 rollback 없음, lease 해제, 대기 제안 거부), 적용된 agent 변경은 출처 표시를 유지한 로컬 변경으로 XIII.3.4 reconciliation에 넣어 외부 변경을 반영합니다. 의미 충돌은 Semantic Conflict 경로로 보냅니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIX.7.1"
       - "XIX.6.4"
       - "XIII.3.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIX.7.2.md"
   - id: "XIX.7.3"
     title: "non-overlap external change는 agent 작업을 유지한 채 적용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIX.7.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.7.3.md"
+    commit: "fc61872915f8845cfe89f0f97e043a5ea49bd9fc"
+    report: "docs/task-reports/XIX.7.3.md"
+    verified_at: "2026-11-23T21:23:21+09:00"
   - id: "XIX.8.1"
     title: "MCP/agent model에 ShadowWorktree 전용 타입이 없는지 architecture inventory test를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIX.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.8.1.md"
+    commit: "331f6d2dac0d209cc6276db91ceedfc55c5e5221"
+    report: "docs/task-reports/XIX.8.1.md"
+    verified_at: "2026-11-23T21:23:58+09:00"
   - id: "XIX.8.2"
     title: "agent가 terminal에서 직접 파일을 수정하면 일반 외부 파일 변경으로만 처리되고 MCP lease 보호를 우회할 수 있음을 UI 경고 상태로 표현합니다."
     status: not_started
@@ -11242,34 +11448,43 @@ tasks:
     verified_at: "2026-11-23T18:09:03+09:00"
   - id: "XX.2.1"
     title: "offscreen RenderGraph target을 구현해 지정 scale의 RGBA image를 생성합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XX.1.2"
       - "XI.11.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XX.2.1.md"
   - id: "XX.2.2"
     title: "sRGB와 Display P3 output profile/metadata를 기록합니다. unsupported encoder는 오류로 반환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.10.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XX.2.2.md"
+    commit: "faa3fdc245a6c20242ee37e16ac137def75a4ea1"
+    report: "docs/task-reports/XX.2.2.md"
+    verified_at: "2026-11-23T21:22:35+09:00"
   - id: "XX.2.3"
     title: "PNG encoding을 worker에서 실행하고 temp+atomic rename으로 저장합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "V.2.5"
       - "XX.2.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XX.2.3.md"
   - id: "XX.2.4"
     title: "동일 snapshot/options의 decoded pixel output이 양 플랫폼 허용 오차 내 일치하는 golden test를 추가합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XX.2.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XX.2.4.md"
   - id: "XX.3.1"
     title: "Scene primitive→SVG element mapping table을 정의합니다. Frame/Shape/Path/Image/clip/gradient 기본 지원을 명시합니다."
     status: verified
@@ -11618,21 +11833,23 @@ tasks:
       - DEV-MAC
   - id: "XXII.1.2"
     title: "unsupported/approximated/native mapping diagnostic을 IR node별로 보존합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.1.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.1.2.md"
   - id: "XXII.1.3"
     title: "CodegenIR은 one-way이며 generated source parser/import API를 만들지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.1.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.1.3.md"
   - id: "XXII.1.4"
     title: "IX.11.19 capability matrix와 IX.11.18 modifier stack 선형화 계획을 코드 생성용으로 확장합니다. 이 행이 더하는 것은 CSS 기반 속성 registry 항목에 대한 Apple·Android profile의 상태와 lowering 규칙뿐입니다. Context·`MotionSpec` 항목은 XXII.1.7이 더하므로 이 행은 Phase XXX를 기다리지 않습니다. Web의 CSS 속성 매핑과 modifier 선형화는 IX.11.18·IX.11.19 결과를 그대로 쓰고 다시 정의하지 않습니다. 비Web 항목 중 1:1이 아닌 것(modifier 적용 순서, 블렌드 합성 색공간 차이, 자유 배치·constraint, Stellar와 대상 플랫폼의 기본값 차이)은 lowering 규칙과 진단을 한 쌍으로 정의하고, IR lowering은 이 matrix만 참조합니다. 상태 어휘는 IX.10.5의 Native·Approximated·Unsupported·Deprecated이며 Apple·Android 상태는 CSS 매핑 상태에서 유도하지 않고 이 행의 lowering 규칙이 정합니다(ADR-0025 결정 1.3, 4.2)."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.1.2"
       - "IX.11.6"
@@ -11640,39 +11857,44 @@ tasks:
       - "IX.11.19"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.1.4.md"
   - id: "XXII.1.5"
     title: "선언형 상태 머신과 `MotionSpec`을 CodegenIR에 포함합니다. timing function과 reduced motion 대체 동작을 IR에 그대로 보존합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.1.1"
       - "XXX.1.1"
       - "IX.5.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.1.5.md"
   - id: "XXII.1.6"
     title: "Context 선언·provision·소비를 CodegenIR에 포함합니다(ADR-0025 결정 4.1). 소비 지점마다 XXX.7.4 해석기가 정한 값의 출처(provision node 또는 key default)와 slot 경계 정보를 IR에 보존하고, 생성 코드가 다시 해석하지 않게 합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.1.1"
       - "XXX.7.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.1.6.md"
   - id: "XXII.1.7"
     title: "XXII.1.4 matrix에 Context·`MotionSpec` 항목의 Web·Apple·Android profile kind별 상태와 lowering 규칙을 더합니다(ADR-0025 결정 4.2). timing function 종류(spring 등)와 Context 전달 방식처럼 1:1이 아닌 항목은 lowering 규칙과 진단을 한 쌍으로 정의합니다. CSS 기반 속성 항목은 바꾸지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.1.4"
       - "XXII.1.5"
       - "XXII.1.6"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.1.7.md"
   - id: "XXII.2.1"
     title: "Frame/Fragment/Text/Image/Control contract를 HTML semantic structure로 매핑합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.1.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.2.1.md"
   - id: "XXII.2.2"
     title: "IX.11.6 layout record의 CSS 기반 layout 속성을 같은 이름의 CSS 속성(flex, grid, position·inset)으로 출력합니다. 이름·값 형태가 다른 항목은 IX.11.19 matrix와 속성 모델 4장의 변환 규칙으로만 변환하고, 불가능한 constraint는 diagnostic 처리합니다."
     status: reported_done
@@ -11685,12 +11907,13 @@ tasks:
     report: "docs/task-reports/XXII.2.2.md"
   - id: "XXII.2.3"
     title: "token을 CSS custom property 또는 generated constants로 내보냅니다. CSS 이름은 IX.11.16 파생 규칙, 등록 방식은 속성 모델 10장(`inherits: true`, `initial-value`는 기본 환경에서 평가한 literal, 값은 `:root`와 `:root`를 감싼 `@media` 블록에서만 선언)을 따릅니다. 환경 `interaction_state`에 따라 달라지는 값은 토큰 선언에서 빼고 XXII.2.6이 Control 상태 selector로 냅니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IX.11.8"
       - "IX.11.16"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.2.3.md"
   - id: "XXII.2.4"
     title: "accessibility tree를 HTML/ARIA로 매핑합니다."
     status: verified
@@ -11706,7 +11929,7 @@ tasks:
     verified_at: "2026-11-14T16:39:19+09:00"
   - id: "XXII.2.5"
     title: "Context를 Web 출력으로 낮춥니다. CSS로 표현 가능한 스타일 값은 등록된 CSS custom property 상속으로, 그 밖의 값은 생성 코드의 context 구조로 내보냅니다(ADR-0025 결정 4.3). 등록 속성은 토큰과 같은 속성 모델 10장 정책(`inherits: true`)을 씁니다. ContextKey의 CSS 이름은 IX.11.16 파생 규칙으로 만들고, 같은 export scope의 토큰 이름·아래 깊이 이름과 한 이름 공간에서 충돌을 검사·진단합니다. 같은 key를 다시 읽는 provision은 자기 참조 `var()`로 내보내지 않습니다(CSS에서는 cycle이 되어 guaranteed-invalid 값이 됨). 대신 그 key의 provision마다 펼친 트리의 provision 깊이 d(자기를 포함한 조상 provision 수, key default는 0)를 붙인 custom property에 값을 쓰고 key 이름으로 다시 공급하며, 값 식 안의 같은 key 읽기는 깊이 d-1 이름으로 바꿉니다. 같은 provision이 instance 위치마다 다른 깊이를 가져 규칙 하나로 낼 수 없으면 그 key를 생성 코드 context 구조로 내보내고 정보 진단을 냅니다. slot host에서는 Slot이 공개하지 않았고 컴포넌트 안에 provision이 있는 key를 instance 바깥 값으로 다시 공급합니다(ADR-0025 결정 3.11)."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.2.3"
       - "XXII.1.6"
@@ -11715,9 +11938,10 @@ tasks:
       - "XXX.7.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.2.5.md"
   - id: "XXII.2.6"
     title: "상태 머신과 `MotionSpec`을 Web 출력으로 낮춥니다. CSS transition·animation으로 표현 가능한 motion만 CSS로 내보내고, 상태 전환은 생성 코드로 내보냅니다. spring처럼 표현할 수 없는 항목은 근사 또는 미지원 진단을 냅니다. 환경 `interaction_state`에 따라 달라지는 토큰·binding 값은 `:root` 토큰 선언이 아니라(속성 모델 10장) 그 값을 쓰는 Control 요소의 상태 selector(`:hover`·`:focus-visible`·`:active`·`:disabled`)에 해당 속성 선언으로 냅니다. 상태와 selector의 대응은 Control contract 상태(IX.6)로 정합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.1.5"
       - "XXII.1.7"
@@ -11725,21 +11949,24 @@ tasks:
       - "XXII.2.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.2.6.md"
   - id: "XXII.3.1"
     title: "Apple TargetProfile에 맞춰 SwiftUI/AppKit 중 지정된 output dialect로 Control contract를 매핑합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.1.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.3.1.md"
   - id: "XXII.3.2"
     title: "common layout을 platform layout code로 변환하고 unsupported constraint를 diagnostic합니다. 변환과 진단은 XXII.1.4 matrix 규칙만 씁니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.3.1"
       - "XXII.1.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.3.2.md"
   - id: "XXII.3.3"
     title: "accessibility semantics와 color space를 Apple API 표현으로 내보냅니다."
     status: verified
@@ -11756,7 +11983,7 @@ tasks:
     verified_at: "2026-11-14T16:39:19+09:00"
   - id: "XXII.3.4"
     title: "Context를 Apple dialect의 Environment 값으로, 상태 머신과 `MotionSpec`을 dialect의 상태·animation API로 내보냅니다. 표현할 수 없는 항목은 XXII.1.7 규칙에 따라 진단합니다. Environment가 렌더 트리로 전달되므로 slot 삽입 위치에서는 Slot이 공개하지 않은 key를 instance 바깥 값으로 다시 공급합니다(ADR-0025 결정 3.11)."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.3.1"
       - "XXII.1.5"
@@ -11764,24 +11991,27 @@ tasks:
       - "XXII.1.7"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.3.4.md"
   - id: "XXII.4.1"
     title: "Android TargetProfile에 맞춰 Compose output을 생성합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.1.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.4.1.md"
   - id: "XXII.4.2"
     title: "layout, control semantics, accessibility를 Compose API로 매핑합니다. layout 변환과 진단은 XXII.1.4 matrix 규칙만 씁니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IX.8.6"
       - "XXII.1.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.4.2.md"
   - id: "XXII.4.3"
     title: "Context를 CompositionLocal로, 상태 머신과 `MotionSpec`을 Compose 상태·animation API로 내보냅니다. 값 변경 빈도에 따라 추적형과 비추적형 local을 고르는 규칙을 고정합니다. 표현할 수 없는 항목은 XXII.1.7 규칙에 따라 진단합니다. CompositionLocal이 렌더 트리로 전달되므로 slot 삽입 위치에서는 Slot이 공개하지 않은 key를 instance 바깥 값으로 다시 공급합니다(ADR-0025 결정 3.11)."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.4.1"
       - "XXII.1.5"
@@ -11789,18 +12019,21 @@ tasks:
       - "XXII.1.7"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.4.3.md"
   - id: "XXII.5.1"
     title: "생성 파일 순서, 식별자 escape, formatting을 고정합니다."
-    status: not_started
+    status: reported_done
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.5.1.md"
   - id: "XXII.5.2"
     title: "output directory를 temp에 생성 후 atomic replace하거나 generated marker 아래만 수정합니다. 사용자 source를 임의 덮어쓰지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXII.5.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXII.5.2.md"
   - id: "XXII.5.3"
     title: "generated code 수정분을 Stellar로 다시 가져오지 않는 문서·UI 경고를 제공합니다."
     status: not_started
@@ -11901,35 +12134,59 @@ tasks:
     verified_at: "2026-11-23T17:57:57+09:00"
   - id: "XXIII.3.1"
     title: "결과 target을 current worktree, existing worktree, new branch+worktree로 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXIII.2.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIII.3.1.md"
+    commit: "0888744fda22a34b7eead9c3248c40c5e6396a98"
+    report: "docs/task-reports/XXIII.3.1.md"
+    verified_at: "2026-11-23T21:01:47+09:00"
   - id: "XXIII.3.2"
     title: "new branch/worktree 생성은 시스템 Git으로만 실행합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.1.3"
       - "XXIII.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIII.3.2.md"
+    commit: "0ab74aa65e8293fbafd353ad84481448dee0670c"
+    report: "docs/task-reports/XXIII.3.2.md"
+    verified_at: "2026-11-23T21:02:31+09:00"
   - id: "XXIII.3.3"
     title: "C를 target WorkingTree에 generation save하되 merge commit을 자동 생성하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.5.4"
       - "XXIII.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIII.3.3.md"
+    commit: "52a65e7471208ade29dd860fc01d84f7009107cf"
+    report: "docs/task-reports/XXIII.3.3.md"
+    verified_at: "2026-11-23T21:04:04+09:00"
   - id: "XXIII.3.4"
     title: "source가 변한 경우 apply 전에 revision/OID를 재검사하고 stale candidate를 차단합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXIII.1.3"
       - "XXIII.3.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIII.3.4.md"
+    commit: "d258cf68fceb0ec1a2d51a00c3c109ca4c2fd82e"
+    report: "docs/task-reports/XXIII.3.4.md"
+    verified_at: "2026-11-23T21:04:47+09:00"
   - id: "XXIV.1.1"
     title: "`stellar-cli`를 app UI와 분리된 binary로 생성하고 core crate만 사용합니다."
     status: verified
@@ -12796,21 +13053,23 @@ tasks:
       - DEV-MAC
   - id: "XXIX.3.2"
     title: "승인 요청을 ProjectIdentity 단위로 코어에 보관합니다. 첫 응답 하나만 유효하고, 창 닫힘, 응답 기한 초과, 세션 종료 시 거부가 기본입니다. 요청에는 Stellar 코어가 만든 semantic diff·validation·렌더 프리뷰를 승인 근거로 담습니다(XIX.5.3)."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIX.3.1"
       - "XIX.4.1"
       - "XIX.3.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIX.3.2.md"
   - id: "XXIX.3.3"
     title: "에이전트 모드를 XIX.3.1 Read·Propose·Apply 권한 조합의 상한으로 매핑합니다(ADR-0005 §4.5). 모드는 권한을 부여하지 않고 상한으로만 작동하며, ADR-0005 Security 결정에 따라 사용자 UI에서만 바꿉니다. 내장 세션 카탈로그에서 Terminal과 FileDelete 계열 tool을 제외하고 GitCommit·GitPush는 개별 확인으로만 허용합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIX.3.2"
       - "XIX.9.7"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIX.3.3.md"
   - id: "XXIX.3.4"
     title: "앱에 Agent Host·IPC I/O 스레드를 둡니다. 이 스레드는 문서를 쓰지 않습니다. 검증된 Command를 XII.1.2 queue에 사용자 입력보다 낮은 priority로 넣고 넘치면 busy를 반환합니다. lease 대상 계산과 batch 적용은 단일 점유 상한 안에서 나눠 처리하고, 디코드·원문 버퍼링·표시용 텍스트 준비는 이 스레드나 worker에서 합니다."
     status: not_started
@@ -12822,7 +13081,7 @@ tasks:
       - DEV-MAC
   - id: "XXIX.3.5"
     title: "내장 세션 시작 전에 XVI.7.1 capability 검사를 적용해 untrusted 프로젝트에서는 시작하지 않습니다. 사용자가 대상 프로젝트, 실행할 CLI, 모드를 확인하는 시작 확인 데이터를 만들고 확인을 첫 연결 승인으로 기록합니다(아키텍처 31.3). 각 CLI를 처음 쓰기 전과 profile 약관 검토 결과가 바뀐 뒤에는 약관 고지 확인을 요구하고, 그 기록은 OS 사용자 데이터에 둡니다. 세션 중 신뢰가 철회되면 즉시 세션을 중지하고 XIX.6.4 절차를 따릅니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIX.3.2"
       - "XVI.7.1"
@@ -12830,9 +13089,10 @@ tasks:
       - "XXIX.2.7"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIX.3.5.md"
   - id: "XXIX.3.6"
     title: "채팅 item 조립을 구현합니다. 채팅 보기는 문서 상태나 승인 결과의 근거가 아니며, 문서 효과 표시는 Stellar 승인·출처 기록(XXIX.3.2, XIX.6.7)과 일치해야 합니다(아키텍처 31.3~31.5, 31.9). 원문과 채팅 기록은 세션 메모리에만 둡니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIX.2.11"
       - "XXIX.3.2"
@@ -12840,6 +13100,7 @@ tasks:
       - "XIX.6.7"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIX.3.6.md"
   - id: "XXIX.4.1"
     title: "macOS 프로젝트 창에 에이전트 패널 자리를 추가합니다. 캔버스 렌더 경로 밖의 네이티브 chrome에 두고 캔버스 위에 겹쳐 그리지 않으며, 배치와 표시 전환 방식은 HIG를 근거로 정해 보고서에 기록합니다(ADR-0005 §4.5). 패널 열기·닫기·크기 변경 중 캔버스 drawable 크기 전달은 frame 예산 안에서 묶어 처리합니다."
     status: not_started
@@ -12954,12 +13215,13 @@ tasks:
       - DEV-MAC
   - id: "XXIX.6.1"
     title: "테스트 대역(XXIX.2.2) 기반 E2E 시나리오 정의를 공통 fixture로 작성합니다. (1) 세션 시작, 범위 승인, batch 미리보기·적용, 완료, Undo 1회 복원. (2) 세션 중지 후 적용 변경 유지·출처 표시·lease 0·대기 제안 거부, 이어서 변경 단위 되돌리기와 세션 단위 되돌리기. (3) 재연결 중 lease 유지와 유예 초과 시 중단됨 history entry 확정(자동 rollback 없음). (4) 디코드 실패 후 적용 변경 유지와 권한·lease 확대 0."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIX.3.5"
       - "XXIX.2.8"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIX.6.1.md"
   - id: "XXIX.6.2"
     title: "XXIX.6.1 시나리오를 macOS 앱에서 실행하는 E2E를 작성합니다."
     status: not_started
@@ -12982,7 +13244,7 @@ tasks:
       - DEV-MAC
   - id: "XXIX.6.4"
     title: "에이전트 관련 필드(사용자 입력 문장, 채팅 item, 원문 버퍼 내용, CLI 표준 오류, CLI 실행 파일 경로, CLI가 보고한 계정 식별 정보, 세션 결합 수단, IPC 상대 정보, 출처 색인)를 XVI.8.2 금지 필드 scanner corpus와 XVI.8.6 schema inventory에 추가합니다. 진단, recovery snapshot, 텔레메트리에 이 필드가 들어가지 않고 앱 재시작 후 세션과 출처 표시가 복원되지 않음을 검사합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIX.6.2"
       - "XVI.8.2"
@@ -12990,23 +13252,26 @@ tasks:
       - "XIII.8.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIX.6.4.md"
   - id: "XXIX.6.5"
     title: "ADR-0005 §3 변경 불가 경로 inventory test를 추가합니다. 프로젝트 파일 편집이나 에이전트 경로로 XVI.7 프로젝트 신뢰 상태, XIX.3 권한 상태, 에이전트 모드, 에이전트 변경 출처 표시와 되돌리기를 바꾸는 경로가 없어야 합니다(ADR-0005 Security)."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIX.9.7"
       - "XXIX.3.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIX.6.5.md"
   - id: "XXIX.6.6"
     title: "출력 표시 격리 inventory test를 추가합니다. 터미널 경로(XVIII crate)와 다른 crate·셸·FFI에 공급자별 출력 parser가 없고 터미널 출력이 제품 상태로 해석되지 않음, 디코더가 agent-host 안에만 있음, 디코드 결과 타입에서 CommandTransaction·문서 변경·승인 응답으로 가는 경로 0, agent-host에서 commands·document 전이 도달 0을 함께 검사합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIX.3.6"
       - "XVIII.5.1"
       - "XXIX.1.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIX.6.6.md"
   - id: "XXIX.6.7"
     title: "스트리밍 부하 성능 게이트를 추가합니다. 테스트 대역이 최대 속도로 출력하는 동안 캔버스 인터랙션 지연이 6.2~6.4 계약을 지키고, UI 스레드 단일 점유가 2ms 이하이며, 원문 버퍼 상한으로 메모리가 제한되는지 측정합니다."
     status: not_started
@@ -13303,16 +13568,22 @@ tasks:
     report: "docs/task-reports/XXX.6.3.md"
   - id: "XXX.7.1"
     title: "`ContextKey` resource에 StableId, 이름, TypeSpec, 필수 default expression, scope(프로젝트·라이브러리·문서)를 정의합니다. default는 닫힌 식이어야 하며 default 없는 key는 만들 수 없습니다. 참조는 StableId로 합니다. 번호는 IX.12.1 예약 값을 쓰고 나머지 저장 형식은 착수 시 ADR로 고정합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.12.1"
       - "IX.1.2"
       - "VIII.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXX.7.1.md"
+    commit: "76c0d00c38b336f44463c1b4ee4cc8bc223ae268"
+    report: "docs/task-reports/XXX.7.1.md"
+    verified_at: "2026-11-23T20:46:25+09:00"
   - id: "XXX.7.2"
     title: "node에 붙는 `ContextProvision`(provider node StableId, ContextKey ref, value expression), ComponentDefinition 공개 인터페이스의 `ContextRequirement`(ContextKey ref), Slot의 공개 Context key 목록(ADR-0025 결정 3.11)을 정의합니다. provision은 소유 definition·View 안의 node에만 붙고, 자기 트리 안의 ComponentInstance node에는 붙일 수 있습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.7.1"
       - "IX.1.1"
@@ -13320,82 +13591,92 @@ tasks:
       - "IX.3.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.7.2.md"
   - id: "XXX.7.3"
     title: "ReferenceTarget에 Context 종류를 IX.12.1이 예약한 tag로 추가하고 binding dependency graph가 ContextKey와 ContextProvision을 공통 node로 표현하게 합니다. 기존 ReferenceTarget tag(`crates/expressions/src/ast.rs`의 Token·Property·ComponentProperty·Environment)와 bytes는 바꾸지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.7.2"
       - "VIII.6.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.7.3.md"
   - id: "XXX.7.4"
     title: "Context 해석기를 구현합니다. instance expansion view의 펼친 트리에서 소비 지점의 가장 가까운 조상 provision을 쓰고, 없으면 key default를 씁니다. provision 값 식이 같은 key를 읽으면 바깥 조상 값으로 해석합니다. slot 콘텐츠는 작성 scope 기준으로 해석합니다. slot host에 이르면 컴포넌트 내부 조상을 건너뛰고 instance node로 이어 올라가며, Slot 공개 목록에 있는 key만 slot host부터 컴포넌트 내부 조상 provision을 찾습니다(ADR-0025 결정 3.11). 조상 탐색 결과는 runtime index로 캐시합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.7.3"
       - "IX.2.2"
       - "IX.3.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.7.4.md"
   - id: "XXX.7.5"
     title: "Context validator를 구현합니다. ComponentDefinition 안의 선언 없는 소비(그 정의가 작성한 slot 콘텐츠 안의 소비 포함)와 타입 불일치는 오류, 존재하지 않는 key의 provision과 Slot 공개 목록 항목은 orphan, 쓰지 않는 requirement는 경고, default 해석과 shadowing은 정보 진단입니다. 서로 다른 key가 서로를 읽는 cycle은 binding cycle detector로 저장 전 거부합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.7.4"
       - "VIII.6.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.7.5.md"
   - id: "XXX.7.6"
     title: "Context 해석 결과를 바꾸는 변경에서 영향받는 소비 binding만 topological order로 재평가하도록 binding scheduler에 연결합니다. 무효화 조건은 provision 추가·삭제·값 변경, ContextKey default 변경, 소비 node나 그 조상의 reparent·이동·삭제, instance의 ComponentRef 교체, slot 콘텐츠 삽입·삭제·재정렬, Slot 공개 목록 변경, View Variant 구조 patch(node add·delete·move·replace, slot change)의 적용·해제, Fragment 묶기·풀기입니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.7.4"
       - "VIII.6.4"
       - "IX.7.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.7.6.md"
   - id: "XXX.7.7"
     title: "evaluated value provenance chain에 ContextKey와 provision node StableId를 기록합니다. default로 해석된 경우와 slot 공개 목록을 거친 경우도 표시합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.7.4"
       - "VIII.6.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.7.7.md"
   - id: "XXX.7.8"
     title: "ContextKey 생성·rename·default 변경·삭제, provision 생성·값 변경·삭제, requirement 추가·삭제, Slot 공개 목록 추가·삭제 command를 구현합니다. 소비가 있는 key 삭제는 소비 binding을 OrphanedBinding으로 바꾸고, provision만 삭제하면 default로 해석합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.7.5"
       - "VIII.8.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.7.8.md"
   - id: "XXX.7.9"
     title: "View Variant와 Target Profile override가 provision 값을 PropertyPath로 덮어쓰도록 resolver를 연결합니다. 우선순위는 기존 공통값→profile override→variant override 규칙을 따릅니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.7.4"
       - "IX.7.6"
       - "IX.10.7"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.7.9.md"
   - id: "XXX.7.10"
     title: "Semantic Diff·Merge에 Context를 연결합니다. ContextKey·provision·requirement·Slot 공개 목록을 StableId 단위로 diff하고, provision 삭제 대 소비 추가와 key 타입 변경 대 provision 값 변경을 전용 conflict로 분류합니다(아키텍처 27.1)."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.7.8"
       - "XIV.3.7"
       - "XIV.10.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.7.10.md"
   - id: "XXX.7.11"
     title: "인스펙터용 Context 조회 API를 구현합니다. 선택 속성의 binding이 Context 소비이면 key, 해석된 값, 제공한 provision node 경로를 반환하고, Value Binding 선택기 후보로 그 위치에서 소비 가능한 key와 선언 필요 여부를 반환합니다. 실제 UI는 XXX.7.12에서 연결합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.7.7"
       - "XXX.7.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.7.11.md"
   - id: "XXX.7.12"
     title: "macOS 인스펙터에 Context를 연결합니다. Value Binding 선택기에 Context를 연결원 종류 하나로 보여 주고, 제공한 조상 node로 이동하는 동작, ComponentDefinition 인터페이스의 requirement 목록, Slot 공개 목록을 네이티브 컨트롤로 표시합니다. Context를 별도 기능 패널로 나누지 않습니다(아키텍처 14.2)."
     status: not_started
@@ -13407,10 +13688,11 @@ tasks:
       - DEV-MAC
   - id: "XXX.7.13"
     title: "통합 fixture를 만듭니다. 테마 Context가 10단계 nested component를 중간 Property 없이 통과하고, 중간 단계 shadowing, 외부 library key 소비, slot 콘텐츠의 공개·비공개 key 해석을 포함합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXX.7.9"
       - "XXX.7.10"
       - "IX.9.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXX.7.13.md"

@@ -2,7 +2,7 @@
 
 - WBS: XXX.7.3
 - 작업명: `ReferenceTarget::Context`(IX.12.1 예약 tag)와 ContextKey·ContextProvision 공통 graph node.
-- 상태: 완료 (`[x]` 후보)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 통합 판정: 이 행의 구현은 끝났지만 선행 XXX.7.2이 `[x]`가 아닙니다. 그 조건이 풀리면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]` 후보)
 - 결정: ADR-0099 결정 3
 - 선행: XXX.7.2, VIII.6.2
 

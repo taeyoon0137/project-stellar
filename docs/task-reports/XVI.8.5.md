@@ -2,7 +2,7 @@
 
 - WBS: XVI.8.5
 - 작업명: consent revoke 시 queued upload를 폐기하고 이후 전송 차단, 로컬 diagnostics는 정책에 따라 유지
-- 상태: 완료 (`[x]`) — 검증 기준(revoke fixture network request 0)을 끝냈습니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 통합 판정: 이 행의 구현은 끝났지만 선행 XVI.8.4이 `[x]`가 아닙니다. 그 조건이 풀리면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`) — 검증 기준(revoke fixture network request 0)을 끝냈습니다.
 - 결정: ADR-0109 결정 7, 9
 - 선행: XVI.8.4
 

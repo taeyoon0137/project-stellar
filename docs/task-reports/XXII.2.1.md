@@ -4,7 +4,7 @@
 
 - WBS: XXII.2.1
 - 작업명: Frame/Fragment/Text/Image/Control contract를 HTML semantic structure로 매핑
-- 상태: 완료 (`[x]`) — 선행 XXII.1.1이 차단 상태라 원장 표기는 통합 때 정합니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 통합 판정: 이 행의 구현은 끝났지만 선행 XXII.1.1이 `[x]`가 아닙니다. 그 조건이 풀리면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`) — 선행 XXII.1.1이 차단 상태라 원장 표기는 통합 때 정합니다.
 - 결정: ADR-0106 결정 4
 - 선행: XXII.1.1
 

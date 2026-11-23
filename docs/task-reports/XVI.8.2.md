@@ -2,7 +2,7 @@
 
 - WBS: XVI.8.2
 - 작업명: project text/name/path, Git URL/branch/commit, terminal/MCP payload를 진단 번들에서 탐지하는 금지 필드 scanner
-- 상태: 완료 (`[x]`) — 검증 기준(secret corpus 탐지 100%)을 끝냈습니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 통합 판정: 이 행의 구현은 끝났지만 선행 XVI.8.1이 `[x]`가 아닙니다. 그 조건이 풀리면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`) — 검증 기준(secret corpus 탐지 100%)을 끝냈습니다.
 - 결정: ADR-0109 결정 4, 결정 6(번들 형식)
 - 선행: XVI.8.1
 

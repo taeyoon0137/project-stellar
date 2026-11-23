@@ -2,7 +2,7 @@
 
 - WBS: XVI.8.3
 - 작업명: telemetry consent 상태 NotAsked, Declined, Granted 정의(기본 NotAsked), 자동 전송은 Granted에서만
-- 상태: 완료 (`[x]`) — 검증 기준(state transition fixture)을 끝냈습니다.
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 통합 판정: 이 행의 구현은 끝났지만 선행 XVI.8.1이 `[x]`가 아닙니다. 그 조건이 풀리면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`) — 검증 기준(state transition fixture)을 끝냈습니다.
 - 결정: ADR-0109 결정 5
 - 선행: XVI.8.1
 

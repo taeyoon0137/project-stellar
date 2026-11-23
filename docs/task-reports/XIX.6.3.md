@@ -2,7 +2,7 @@
 
 - WBS: XIX.6.3
 - 작업명: user CancelAgentEdit는 rollback 없이 종료 절차, 중지 후 세션 되돌리기 미리보기
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 2026-11-23 통합 판정: 이 행의 구현은 끝났지만 선행 XIX.6.4, XIX.6.9이 `[x]`가 아닙니다. 그 조건이 풀리면 `[x]`. 구현 보고 당시 기록: 완료 (`[x]`)
 - 선행: XIX.6.4, XIX.6.9
 - 결정: [ADR-0100](../adr/ADR-0100-agent-change-history-and-revert.md)
 
