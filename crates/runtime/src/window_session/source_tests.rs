@@ -664,3 +664,39 @@ fn a_library_only_source_change_is_taken_even_by_a_dirty_window() {
     let reopened = open(&project, &locks, 2);
     assert_eq!(reopened.open_plan(), OpenPlan::Cache);
 }
+
+#[test]
+fn a_cache_opened_window_saving_over_a_library_only_change_keeps_its_own_save() {
+    // cache로 연 창은 문서 밖 의미를 모르므로 writer가 디스크 원본에서 읽습니다. 그 사이 token 파일만 바뀌었으면
+    // writer는 디스크 base 위에 쓰고, 창은 그 저장을 자기 저장으로 받아야 합니다(다음 저장이 자기 저장을 stale로
+    // 보지 않음).
+    let project = saved_project("source-cache-library");
+    let locks = TempDir::new("source-cache-library-locks");
+    drop(open(&project, &locks, 1));
+    let mut a = open(&project, &locks, 2);
+    assert_eq!(a.open_plan(), OpenPlan::Cache);
+    a.apply(&rename(a.document().unwrap(), 41, 12, "cache 창 편집"), 0)
+        .unwrap();
+    let (path, content) = token_file(&project);
+    let target = project.path().join("design").join(&path);
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::fs::write(&target, &content).unwrap();
+    // 감시 event가 오기 전에 저장합니다.
+    let outcome = a.save_now().unwrap();
+    assert_eq!(outcome.source_files, 1, "View 파일 하나만 씀");
+    assert!(!a.has_unsaved_changes(), "저장을 반영함");
+    assert_eq!(
+        a.source_base(),
+        Some(&read_source(project.path()).unwrap().unwrap().base),
+        "창의 원본 base가 디스크와 같음"
+    );
+    assert_eq!(a.stale_state().unwrap(), None, "자기 저장은 stale이 아님");
+    a.apply(&rename(a.document().unwrap(), 42, 12, "다음 편집"), 0)
+        .unwrap();
+    assert!(a.save_now().unwrap().wrote_anything(), "다음 저장도 성공");
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        content,
+        "token 파일 그대로"
+    );
+}

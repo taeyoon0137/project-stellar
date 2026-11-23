@@ -425,7 +425,10 @@ impl SaveWritten {
 
 /// writer가 인코딩한 원본.
 struct EncodedSource {
+    /// 쓰기 기대 hash로 삼는 base. 캡처한 base이거나, 문서 밖 의미 파일만 다른 디스크 base입니다.
     capture: TextCapture,
+    /// 캡처할 때의 session base(반영 때 session base와 비교).
+    captured: SourceBase,
     library: std::sync::Arc<SourceLibrary>,
     files: BTreeMap<String, String>,
 }
@@ -503,6 +506,7 @@ impl SaveCapture {
         root: &std::path::Path,
         mut capture: TextCapture,
     ) -> Result<EncodedSource, WindowSessionSaveError> {
+        let captured = capture.base.clone();
         let mut library = match &capture.library {
             Some(library) => std::sync::Arc::clone(library),
             None => {
@@ -549,6 +553,7 @@ impl SaveCapture {
             .files;
         Ok(EncodedSource {
             capture,
+            captured,
             library,
             files,
         })
@@ -653,7 +658,7 @@ impl SaveCapture {
                 saved,
                 text: source.map(|source| TextWritten {
                     after: SourceBase::of(&source.files),
-                    before: source.capture.base,
+                    before: source.captured,
                     library: source.library,
                     files,
                 }),

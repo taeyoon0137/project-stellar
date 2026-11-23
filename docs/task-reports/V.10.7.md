@@ -63,6 +63,7 @@
 | `a_library_only_source_change_is_taken_even_by_a_dirty_window` | token 파일만 외부에서 더해지면 문서 stale이 아니고, dirty 창도 그 의미를 받고 저장을 계속하며 token 파일을 덮어쓰지 않음 |
 | `a_save_that_fails_on_the_source_does_not_leave_the_style_defaults_choice_written` | 기본값 세트를 바꾼 창의 저장이 원본 journal에서 stale로 실패하면 먼저 되쓴 `stellar.yaml`을 앞 bytes로 되돌리고 편집은 dirty로 남김 |
 | `opening_recovers_an_interrupted_source_save_before_reading_the_source` | commit marker 전에 멈춘 원본 저장 거래가 있으면 열기가 원본을 읽기 전에 앞 세대로 되돌리고, 반쯤 쓴 파일을 원본으로 읽지 않음 |
+| `a_cache_opened_window_saving_over_a_library_only_change_keeps_its_own_save` | cache로 연 창이 저장하는 사이 token 파일만 바뀌어도 그 저장을 자기 저장으로 반영하고(clean, base = 디스크), 다음 저장이 stale이 아님 |
 
 시험 조정: 자동 저장·창 닫기 실패 시험은 cache(`design/objects`) 대신 원본 journal(`.stellar/journal`)을 막습니다(cache 실패는 저장 실패가 아님). 열기가 원본을 쓰므로 "pan·zoom·overlay는 bytes를 바꾸지 않음" 시험은 연 뒤의 bytes를 기준으로 잡습니다. 창 열기·zoom 시험은 요청 없는 글꼴 완료 event를 건너뜁니다. 잠금을 얻을 수 없는 fixture mode(`busy`·`missing-home`)는 열기 전환을 못 하므로 되돌린 편집의 쓰기 0 확인을 `write` mode에서만 합니다.
 
@@ -95,3 +96,4 @@ DEV-MAC release, 다른 lane이 동시에 돌던 부하 상태입니다. 자세�
 - 열기가 남은 저장 journal 거래를 복구하지 않고 원본을 읽던 결함을 고쳤습니다. 이제 원본을 읽기 전에 `journal::recover`를 부릅니다(ADR-0088 결정 4).
 - 기본값 세트를 바꾼 저장에서 `stellar.yaml`을 되쓴 뒤 원본 journal이나 chunk 전용 generation 쓰기가 실패하면, 저장은 실패("아무것도 쓰지 않음")로 알리면서 `stellar.yaml`은 바뀐 채 남던 결함을 고쳤습니다. 실패하면 앞 값으로 되돌립니다(ADR-0088 결정 7).
 - 열 때 맞춤 쓰기가 실패하면 `reconcile_pending`을 세워 다음 자동 저장이 다시 맞추게 했습니다. 전에는 다음 편집 전까지 맞추지 않아 ADR의 "다음 저장이 다시 맞춤"과 달랐습니다.
+- cache로 연 창의 writer가 문서 밖 의미 파일만 바뀐 디스크 base 위에 저장하면, 창이 그 저장을 반영하지 않아(캡처 base 비교가 어긋남) dirty와 옛 base가 남고 다음 저장·판정이 자기 저장을 stale로 보던 결함을 고쳤습니다. 반영 비교는 캡처한 session base로 합니다.
