@@ -289,7 +289,7 @@
             "required": ["kind", "canonical"],
             "properties": {
               "kind": {
-                "enum": ["insert-node", "insert-modifier", "remove-modifier", "move-modifier", "set-modifier-property", "convert-fragment-to-frame", "convert-shape-to-path", "restore-node-records", "duplicate-subtree", "set-text-range-style", "add-page", "remove-page", "rename-page", "add-view", "remove-view", "rename-view", "apply-external-snapshot", "edit-path-point", "swap-instance", "set-style-defaults"]
+                "enum": ["insert-node", "insert-modifier", "remove-modifier", "move-modifier", "set-modifier-property", "convert-fragment-to-frame", "convert-shape-to-path", "restore-node-records", "duplicate-subtree", "set-text-range-style", "add-page", "remove-page", "rename-page", "add-view", "remove-view", "rename-view", "apply-external-snapshot", "edit-path-point", "swap-instance", "set-style-defaults", "edit-context"]
               },
               "canonical": {
                 "$ref": "#/$defs/hex"

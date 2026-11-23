@@ -200,6 +200,8 @@ binding을 읽을 곳이 없음).
 - 기존 파일·chunk·AST bytes는 바뀌지 않습니다. Context가 있는 문서만 새 chunk·manifest 선택 절·텍스트 파일을 씁니다.
 - `ReferenceTarget`·`DependencyNode`·`Producer`·`ObjectKind`·`ConflictKind`·`CommandKind`에 variant가 늘어 exhaustive match가
   있는 하위 코드는 갱신이 필요합니다(이 diff에서 갱신).
+- 보호 경로 `schemas/command-transaction.schema.json`은 생성 결과입니다. canonical command 입력의 `kind` enum에
+  `edit-context`가 늘어 `cargo xtask generate-command-schema`로 다시 생성합니다(이 ADR이 그 변경의 근거).
 
 ## Performance
 
