@@ -1,4 +1,4 @@
-//! core replay 테스트 (XI.2.6, XII.3.7, XVI.2.1, XVI.2.2, XXIV.3.3).
+//! core replay 테스트 (XI.2.6, XII.3.7, XVI.2.1, XVI.2.2, XVI.2.5, XVI.2.6, XXIV.3.3).
 
 use super::*;
 use std::path::PathBuf;
@@ -6,6 +6,24 @@ use std::path::PathBuf;
 use stellar_diagnostics::trace_schema::{RENDER_GRAPH_COMPILE, SCENE_BUILD};
 use stellar_renderer_core::graph_trace::RenderGraphCompileTrace;
 use stellar_scene::incremental::SceneBuildTrace;
+
+/// 테스트용 판정 sample 수(CLI 기본은 1,000).
+const SAMPLES: u64 = 12;
+
+/// core replay가 실행할 수 있는 시나리오.
+fn supported() -> Vec<ReplayScenario> {
+    ReplayScenario::ALL
+        .into_iter()
+        .filter(|s| s.core_replay() == CoreReplay::Supported)
+        .collect()
+}
+
+fn replay(
+    scenario: ReplayScenario,
+    fixture: &stellar_bench_fixtures::limits::VisibleFixture,
+) -> ReplayFile {
+    standard_replay(scenario, SMALL, fixture, SAMPLES, CacheState::Warm).unwrap()
+}
 
 /// 테스트용 작은 fixture(가시 node 2,000).
 const SMALL: FixtureSpec = FixtureSpec {
@@ -64,44 +82,189 @@ fn trace_schemas_match_the_emitting_crates() {
 fn replaying_twice_gives_the_same_semantics_and_trace_count() {
     // 검증 기준(XVI.2.2): 동일 replay 두 번 semantic/trace event count 동일.
     let fixture = load_fixture(&SMALL).unwrap();
-    for scenario in ReplayScenario::ALL {
-        let file = standard_replay(scenario, SMALL, &fixture).unwrap();
-        let first = run_replay(&file, &fixture).unwrap();
-        let second = run_replay(&file, &fixture).unwrap();
-        assert_eq!(first.traces.len(), file.events.len());
-        assert_eq!(first.traces.len(), second.traces.len());
-        assert_eq!(first.scene_hash, second.scene_hash, "{scenario:?}");
-        assert_eq!(first.document_revision, second.document_revision);
-        assert_eq!(first.scene_builds, second.scene_builds);
-        assert_eq!(first.graph_compiles, file.events.len());
-        // T0은 ManualClock timeline 시각입니다.
-        for (trace, event) in first.traces.iter().zip(&file.events) {
+    for scenario in supported() {
+        for cache in CACHE_STATES {
+            let file = standard_replay(scenario, SMALL, &fixture, SAMPLES, cache).unwrap();
+            let first = run_replay(&file, &fixture).unwrap();
+            let second = run_replay(&file, &fixture).unwrap();
+            assert_eq!(first.traces.len() + first.setup_events, file.events.len());
+            assert_eq!(first.traces.len(), second.traces.len());
             assert_eq!(
-                trace.stamp(stellar_diagnostics::interaction::Stage::T0),
-                event.at_nanos
+                first.scene_hash, second.scene_hash,
+                "{scenario:?} {cache:?}"
             );
+            assert_eq!(first.document_revision, second.document_revision);
+            assert_eq!(first.scene_builds, second.scene_builds);
+            assert_eq!(first.graph_compiles, file.events.len());
+            // T0은 ManualClock timeline 시각입니다.
+            for (trace, event) in first.traces.iter().zip(&file.events[file.measure_from..]) {
+                assert_eq!(
+                    trace.stamp(stellar_diagnostics::interaction::Stage::T0),
+                    event.at_nanos
+                );
+                assert_eq!(trace.dimensions().kind, scenario.kind());
+                assert_eq!(trace.dimensions().cache, cache);
+            }
         }
     }
+}
+
+#[test]
+fn every_supported_scenario_yields_the_requested_samples() {
+    // 검증 기준(XVI.2.5): 시나리오마다 sample을 요청한 수 이상 만듭니다(CLI 기본 1,000).
+    let fixture = load_fixture(&SMALL).unwrap();
+    let scenarios = supported();
+    assert_eq!(scenarios.len(), 10);
+    for scenario in scenarios {
+        let run = run_replay(&replay(scenario, &fixture), &fixture).unwrap();
+        assert!(
+            run.traces.len() as u64 >= SAMPLES,
+            "{scenario:?}: {}",
+            run.traces.len()
+        );
+    }
+    // 엔진 경로가 이어지지 않은 시나리오는 재생 파일을 만들지 않습니다.
+    for scenario in [
+        ReplayScenario::TextEdit,
+        ReplayScenario::TokenPropagation,
+        ReplayScenario::ComponentUpdate,
+    ] {
+        let err =
+            standard_replay(scenario, SMALL, &fixture, SAMPLES, CacheState::Warm).unwrap_err();
+        assert!(
+            err.contains("core replay가 아직 실행할 수 없습니다"),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn scenarios_exercise_their_engine_paths() {
+    // 검증 기준(XVI.2.5): 시나리오마다 해당 상호작용 경로를 실제로 지납니다.
+    let fixture = load_fixture(&SMALL).unwrap();
+    let run = |scenario| run_replay(&replay(scenario, &fixture), &fixture).unwrap();
+    let pan = run(ReplayScenario::Pan);
+    // pan·zoom·hover·select는 문서를 바꾸지 않고 scene도 다시 만들지 않습니다(첫 build만).
+    for scenario in [
+        ReplayScenario::Pan,
+        ReplayScenario::Zoom,
+        ReplayScenario::Hover,
+        ReplayScenario::Select,
+    ] {
+        let r = run(scenario);
+        assert_eq!(r.document_revision.0, 0, "{scenario:?}");
+        assert_eq!(r.scene_builds, 1, "{scenario:?}");
+        assert_eq!(r.scene_hash, pan.scene_hash, "{scenario:?}");
+    }
+    // 제스처는 preview 뒤 한 번 확정합니다.
+    for scenario in [
+        ReplayScenario::Drag,
+        ReplayScenario::Resize,
+        ReplayScenario::Rotate,
+    ] {
+        let r = run(scenario);
+        assert_eq!(r.document_revision.0, 1, "{scenario:?}");
+        assert!(r.scene_builds > 2, "{scenario:?}: {}", r.scene_builds);
+        assert_ne!(r.scene_hash, pan.scene_hash, "{scenario:?}");
+    }
+    // undo: setup의 편집 SAMPLES개를 모두 되돌려 처음 scene으로 돌아갑니다.
+    let undo = run(ReplayScenario::Undo);
+    assert_eq!(undo.setup_events as u64, 4 * SAMPLES);
+    assert_eq!(undo.document_revision.0, 2 * SAMPLES);
+    assert_eq!(undo.scene_hash, pan.scene_hash);
+    // redo: 다시 적용하면 setup 편집 뒤와 같은 scene입니다(짝수 번 왕복이라 처음 위치).
+    let redo = run(ReplayScenario::Redo);
+    assert_eq!(redo.setup_events as u64, 5 * SAMPLES);
+    assert_eq!(redo.document_revision.0, 3 * SAMPLES);
+    assert_eq!(redo.scene_hash, pan.scene_hash);
+    // variant: 짝수 단계는 card를 숨기고 홀수 단계는 되돌립니다. 문서 revision은 그대로입니다.
+    let variant = run(ReplayScenario::VariantChange);
+    assert_eq!(variant.document_revision.0, 0);
+    assert_eq!(variant.scene_builds as u64, 1 + SAMPLES);
+    // 마지막 단계(홀수)는 Variant 없음이라 처음 scene입니다.
+    assert_eq!(variant.scene_hash, pan.scene_hash);
+    let odd = standard_replay(
+        ReplayScenario::VariantChange,
+        SMALL,
+        &fixture,
+        SAMPLES + 1,
+        CacheState::Warm,
+    )
+    .unwrap();
+    assert_ne!(
+        run_replay(&odd, &fixture).unwrap().scene_hash,
+        pan.scene_hash
+    );
+}
+
+#[test]
+fn cache_setup_matches_observed_hits_and_misses() {
+    // 검증 기준(XVI.2.6): cache setup이 실제 hit/miss count와 일치하고 결과 metadata에 남습니다.
+    let fixture = load_fixture(&SMALL).unwrap();
+    for scenario in supported() {
+        let warm = run_replay(
+            &standard_replay(scenario, SMALL, &fixture, SAMPLES, CacheState::Warm).unwrap(),
+            &fixture,
+        )
+        .unwrap();
+        let cold = run_replay(
+            &standard_replay(scenario, SMALL, &fixture, SAMPLES, CacheState::Cold).unwrap(),
+            &fixture,
+        )
+        .unwrap();
+        assert!(
+            warm.cache_consistent,
+            "{scenario:?} {:?}",
+            warm.cache_observation
+        );
+        assert!(
+            cold.cache_consistent,
+            "{scenario:?} {:?}",
+            cold.cache_observation
+        );
+        assert_eq!(warm.cache_observation.full_builds, 0, "{scenario:?}");
+        let first = cold.cache_observation.first.expect("cold 첫 build");
+        assert!(
+            first.full && first.hits == 0 && first.misses > 0,
+            "{scenario:?}"
+        );
+        // cache 상태는 결과만 바꾸지 scene 의미는 같습니다.
+        assert_eq!(warm.scene_hash, cold.scene_hash, "{scenario:?}");
+        if let Some(first) = warm.cache_observation.first {
+            assert!(first.hits > 0, "{scenario:?}");
+        }
+    }
+    // 선언과 다른 관측은 불일치로 판정합니다: warm 파일을 cold처럼 측정한 결과를 warm으로 판정하면 실패.
+    let file = standard_replay(
+        ReplayScenario::Drag,
+        SMALL,
+        &fixture,
+        SAMPLES,
+        CacheState::Cold,
+    )
+    .unwrap();
+    let cold = run_replay(&file, &fixture).unwrap();
+    assert!(stellar_diagnostics::latency_scenario::check_cache_setup(
+        CacheState::Warm,
+        &cold.cache_observation
+    )
+    .is_err());
 }
 
 #[test]
 fn drag_commits_once_and_previews_keep_the_document_revision() {
     // 검증 기준(XII.3.7): drag 중 document revision 증가 없음, pointer up에서만 확정.
     let fixture = load_fixture(&SMALL).unwrap();
-    let pan = run_replay(
-        &standard_replay(ReplayScenario::Pan, SMALL, &fixture).unwrap(),
-        &fixture,
-    )
-    .unwrap();
-    assert_eq!(pan.document_revision.0, 0);
-    // pan은 scene을 다시 만들지 않습니다(첫 build만).
-    assert_eq!(pan.scene_builds, 1);
     for scenario in [ReplayScenario::Drag, ReplayScenario::Resize] {
-        let file = standard_replay(scenario, SMALL, &fixture).unwrap();
+        let file = replay(scenario, &fixture);
         let run = run_replay(&file, &fixture).unwrap();
         assert_eq!(run.document_revision.0, 1, "{scenario:?}");
         // 첫 build + threshold를 넘은 이동마다 preview 1회 + 확정 1회.
-        assert!(run.scene_builds > 50, "{scenario:?}: {}", run.scene_builds);
+        assert!(
+            run.scene_builds as u64 > SAMPLES / 2,
+            "{scenario:?}: {}",
+            run.scene_builds
+        );
     }
 }
 
@@ -128,13 +291,28 @@ fn result_schema_is_identical_across_runs() {
     };
     let mut shapes = Vec::new();
     for _ in 0..2 {
-        let runs: Vec<ReplayRun> = ReplayScenario::ALL
+        let runs: Vec<ReplayRun> = [ReplayScenario::Pan, ReplayScenario::Drag]
             .iter()
-            .map(|s| run_replay(&standard_replay(*s, SMALL, &fixture).unwrap(), &fixture).unwrap())
+            .map(|s| run_replay(&replay(*s, &fixture), &fixture).unwrap())
             .collect();
         let result = build_result(environment_fixed(), identity, &runs, &budget);
-        assert_eq!(result.scenarios.len(), 3);
-        assert!(result.scenarios.iter().all(|s| s.latency.count == 62));
+        // 실행한 2개 + 없는 required 조합(13 × 2 − 2)은 sample 0개로 들어가 gate에서 실패합니다.
+        assert_eq!(result.scenarios.len(), 26);
+        assert!(result.scenarios[..2]
+            .iter()
+            .all(|s| s.latency.count == SAMPLES + 2));
+        assert!(result.scenarios[2..].iter().all(|s| s.latency.count == 0));
+        assert!(!result.passed());
+        let no_samples = result
+            .violations
+            .iter()
+            .filter(|v| v.metric == stellar_diagnostics::analyzer::GateMetric::NoSamples)
+            .count();
+        assert_eq!(no_samples, 24);
+        // 실행한 시나리오도 sample이 scenario_min_samples보다 적어 실패합니다.
+        assert!(result.violations.iter().any(|v| {
+            v.metric == stellar_diagnostics::analyzer::GateMetric::TooFewSamples && v.scenario < 2
+        }));
         shapes.push(shape(&result.to_json()));
     }
     assert_eq!(shapes[0], shapes[1]);
@@ -146,6 +324,7 @@ fn cli_records_and_runs_replay_files() {
     let dir = std::env::temp_dir().join(format!("stellar-replay-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let replay = dir.join("drag.replay");
+    let suite = dir.join("suite");
     let result = dir.join("result.json");
     let args = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
     run_cli(
@@ -158,12 +337,47 @@ fn cli_records_and_runs_replay_files() {
             "3",
             "--size",
             "2000",
+            "--samples",
+            "5",
+            "--cache",
+            "cold",
         ]),
         &repo_root(),
     )
     .unwrap();
     let text = std::fs::read_to_string(&replay).unwrap();
-    assert!(text.starts_with("stellar-replay v1\nfixture visible-nodes 3 2000\n"));
+    assert!(text.starts_with("stellar-replay v2\nfixture visible-nodes 3 2000\n"));
+    assert!(text.contains("\ncache cold\nmeasure-from 0\n"));
+    // 엔진 경로가 이어지지 않은 시나리오는 사용법 오류입니다.
+    let refused = run_cli(
+        &args(&["record", "text-edit", "--out", replay.to_str().unwrap()]),
+        &repo_root(),
+    )
+    .unwrap_err();
+    assert_eq!(refused.0, 64, "{}", refused.1);
+    run_cli(
+        &args(&[
+            "record-suite",
+            "--dir",
+            suite.to_str().unwrap(),
+            "--seed",
+            "3",
+            "--size",
+            "2000",
+            "--samples",
+            "3",
+        ]),
+        &repo_root(),
+    )
+    .unwrap();
+    let mut names: Vec<String> = std::fs::read_dir(&suite)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 20);
+    assert!(names.contains(&"undo.cold.replay".to_owned()));
+    assert!(!names.iter().any(|n| n.starts_with("text-edit")));
     run_cli(
         &args(&[
             "run",
@@ -187,8 +401,9 @@ fn cli_records_and_runs_replay_files() {
     )
     .unwrap();
     let json = std::fs::read_to_string(&result).unwrap();
-    assert!(json.contains("\"schema\": \"stellar.performance-result.v1\""));
+    assert!(json.contains("\"schema\": \"stellar.performance-result.v2\""));
     assert!(json.contains("\"kind\": \"drag\""));
+    assert!(json.contains("\"cache\": {\"state\": \"cold\""));
     assert!(!json.contains(dir.to_str().unwrap()));
     // 잘못된 인자와 다른 fixture hash는 거부합니다.
     assert_eq!(run_cli(&args(&["spin"]), &repo_root()).unwrap_err().0, 64);

@@ -9,15 +9,18 @@
 //! - fixture는 저장소 밖에서 생성한 synthetic fixture의 이름(닫힌 목록)·seed·규모·content hash입니다. 사용자 문서를
 //!   재생하는 경로는 없습니다.
 //! - JSON key는 [`RESULT_KEYS`]로 고정합니다.
+//! - v2(ADR-0096 결정 5): scenario마다 cache setup(`warm`·`cold`), 측정 구간의 실제 cache hit·miss, setup 일치 여부,
+//!   측정 전 setup event 수를 남깁니다.
 
 use std::fmt;
 use std::fmt::Write as _;
 
 use crate::analyzer::{ExclusionCode, GateViolation, LatencyStats};
-use crate::interaction::{InteractionKind, StageSpan};
+use crate::interaction::{CacheState, InteractionKind, StageSpan};
+use crate::latency_scenario::CacheObservation;
 
 /// 결과 schema 이름과 version.
-pub const RESULT_SCHEMA: &str = "stellar.performance-result.v1";
+pub const RESULT_SCHEMA: &str = "stellar.performance-result.v2";
 
 /// 결과 문자열 오류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +166,14 @@ pub struct ScenarioResult {
     pub traces: u64,
     /// 마지막 scene semantic hash(재생 결정성 비교용).
     pub scene_hash: u128,
+    /// 선언한 cache setup.
+    pub cache: CacheState,
+    /// 측정 구간에서 관측한 cache hit·miss.
+    pub cache_observation: CacheObservation,
+    /// 선언한 setup과 관측이 맞는지.
+    pub cache_consistent: bool,
+    /// 측정 전에 실행한 setup event 수(sample 아님).
+    pub setup_events: u64,
 }
 
 /// 결과 전체.
@@ -209,7 +220,7 @@ impl BuildProfile {
 }
 
 /// JSON에 쓸 수 있는 key 전체(privacy schema).
-pub const RESULT_KEYS: [&str; 40] = [
+pub const RESULT_KEYS: [&str; 50] = [
     "schema",
     "environment",
     "commit",
@@ -250,7 +261,21 @@ pub const RESULT_KEYS: [&str; 40] = [
     "layout",
     "scene",
     "present",
+    "cache",
+    "state",
+    "hits",
+    "misses",
+    "full_builds",
+    "first_hits",
+    "first_misses",
+    "first_full",
+    "consistent",
+    "setup_events",
 ];
+
+fn first<T: fmt::Display>(value: Option<T>) -> String {
+    value.map_or_else(|| "null".to_owned(), |v| v.to_string())
+}
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -299,7 +324,9 @@ impl PerformanceResult {
                 out,
                 "    {{\"kind\": \"{}\", \"required\": {}, \"count\": {}, \"excluded\": {{{}}}, \"p50_ns\": {}, \
                  \"p95_ns\": {}, \"p99_ns\": {}, \"max_ns\": {}, \"over_limit\": {}, \"span_p99_ns\": {{{}}}, \
-                 \"traces\": {}, \"scene_hash\": \"{:032x}\"}}",
+                 \"traces\": {}, \"scene_hash\": \"{:032x}\", \"setup_events\": {}, \"cache\": {{\"state\": \"{}\", \
+                 \"hits\": {}, \"misses\": {}, \"full_builds\": {}, \"first_hits\": {}, \"first_misses\": {}, \
+                 \"first_full\": {}, \"consistent\": {}}}}}",
                 s.kind.name(),
                 s.required,
                 s.latency.count,
@@ -311,7 +338,16 @@ impl PerformanceResult {
                 s.latency.over_limit,
                 spans.join(", "),
                 s.traces,
-                s.scene_hash
+                s.scene_hash,
+                s.setup_events,
+                s.cache.name(),
+                s.cache_observation.hits,
+                s.cache_observation.misses,
+                s.cache_observation.full_builds,
+                first(s.cache_observation.first.map(|b| b.hits)),
+                first(s.cache_observation.first.map(|b| b.misses)),
+                first(s.cache_observation.first.map(|b| b.full)),
+                s.cache_consistent
             );
             let _ = writeln!(
                 out,
@@ -384,6 +420,19 @@ mod tests {
                 span_p99_nanos: [1, 2, 3, 4, 5],
                 traces: 4,
                 scene_hash: 7,
+                cache: CacheState::Cold,
+                cache_observation: CacheObservation {
+                    hits: 0,
+                    misses: 20,
+                    full_builds: 1,
+                    first: Some(crate::latency_scenario::CacheBuild {
+                        hits: 0,
+                        misses: 20,
+                        full: true,
+                    }),
+                },
+                cache_consistent: true,
+                setup_events: 2,
             }],
             violations: vec![GateViolation {
                 scenario: 0,
@@ -424,6 +473,11 @@ mod tests {
         }
         assert!(json.contains("\"commit\": \"0123456789abcdef0123456789abcdef01234567\""));
         assert!(json.contains("\"gate\": {\"pass\": false"));
+        assert!(json.contains("\"schema\": \"stellar.performance-result.v2\""));
+        assert!(json.contains(
+            "\"setup_events\": 2, \"cache\": {\"state\": \"cold\", \"hits\": 0, \"misses\": 20, \"full_builds\": 1, \
+             \"first_hits\": 0, \"first_misses\": 20, \"first_full\": true, \"consistent\": true}"
+        ));
         // 경로·URL·이메일 문자가 없습니다.
         for forbidden in ['/', '\\', '@'] {
             assert!(!json.contains(forbidden), "{forbidden}");

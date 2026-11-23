@@ -15,6 +15,9 @@ pub mod trace_store;
 /// 앱 입력 경로 연결 지점 trace probe (XVI.1.1~XVI.1.5, ADR-0096).
 pub mod latency_probe;
 
+/// 성능 게이트 시나리오 목록과 cache setup 판정 (XVI.2.5, XVI.2.6, ADR-0096).
+pub mod latency_scenario;
+
 /// 단계 trace record schema (XI.2.6).
 pub mod trace_schema;
 

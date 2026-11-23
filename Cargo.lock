@@ -505,6 +505,7 @@ dependencies = [
  "stellar-core-types",
  "stellar-diagnostics",
  "stellar-document",
+ "stellar-history",
  "stellar-layout",
  "stellar-ops",
  "stellar-project",
