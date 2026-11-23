@@ -2196,11 +2196,11 @@ mod tests {
     fn staged_judgment_matches_project_validation() {
         use crate::core_types::reference::{AssetRef, ComponentRef};
         use crate::core_types::value::Size2;
-        use stellar_document::image::ImagePayload;
         use crate::test_support::{
             document_with_unresolved_clips, save_documents, scaffold_project,
         };
         use stellar_document::component::instance::ComponentInstancePayload;
+        use stellar_document::image::ImagePayload;
         use stellar_document::records::NodeRecord;
         use stellar_git_porcelain::fixture::GitFixture;
 
