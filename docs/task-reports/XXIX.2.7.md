@@ -19,7 +19,7 @@
 
 - 순서는 profile 활성 → 실행 대상 신원(XXIX.2.3) → 버전 범위 → 연결 상태(XXIX.2.5)입니다. 앞 단계가 실패하면 뒤 단계와 세션 실행을 하지 않습니다(fail closed).
 - 버전 출력은 4 KiB까지만 보고 첫 `숫자.숫자.숫자`를 씁니다. 종료 코드 0이 아니거나 찾지 못하면 판정 불가로 거부합니다.
-- 통과하면 `PreflightPass`(외부에서 만들 수 없는 증표)를 돌려줍니다. 세션 프로세스는 `PreflightPass::launch`로만 시작할 수 있습니다. launch는 실행 직전 실행 파일 지문을 다시 확인합니다.
+- 통과하면 `PreflightPass`(외부에서 만들 수 없는 증표)를 돌려줍니다. 세션 프로세스는 `PreflightPass::launch`로만 시작할 수 있습니다. `launch`는 증표를 소비하므로 한 번의 확인으로 세션 하나만 시작하고, 새 세션은 확인을 다시 거칩니다. 버전 확인 명령도 실행 직전에 실행 파일 지문을 다시 봅니다. launch는 실행 직전 실행 파일 지문을 다시 확인합니다.
 - 거부 이유는 고정 코드(`profile-inactive`, `target-identity`, `version-undeterminable`, `version-out-of-range`, `not-connected`, `scratch`)이며 내용을 담지 않습니다.
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)

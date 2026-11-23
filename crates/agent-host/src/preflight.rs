@@ -99,8 +99,11 @@ impl PreflightPass {
     }
 
     /// 세션 프로세스를 시작합니다. 사용자가 세션 시작을 명시적으로 확인한 동작에서만 부릅니다.
+    ///
+    /// 통과 증표를 소비합니다. 한 번의 실행 전 확인으로 세션 하나만 시작하며, 새 세션은 실행 전 확인을
+    /// 다시 거칩니다(연결 상태 결과를 캐시하지 않음, 사용자 동작 없는 재시작 없음).
     pub fn launch(
-        &self,
+        self,
         first_message: String,
         mcp: Option<McpServerLaunch>,
         sink: Arc<dyn OutputSink>,
@@ -108,8 +111,8 @@ impl PreflightPass {
         SessionProcess::spawn(SessionLaunch {
             target: &self.target,
             profile: &self.profile,
-            env: self.env.clone(),
-            scratch_base: self.scratch_base.clone(),
+            env: self.env,
+            scratch_base: self.scratch_base,
             mcp,
             first_message,
             sink,
@@ -124,6 +127,11 @@ fn probe_version(
     base: &Path,
 ) -> Result<CliVersion, PreflightRefusal> {
     let scratch = ScratchDir::create(base).map_err(|_| PreflightRefusal::Scratch)?;
+    if !target.still_unchanged() {
+        return Err(PreflightRefusal::Target(
+            TargetError::ChangedSinceConfirmation,
+        ));
+    }
     let outcome = run_capture(
         target.path(),
         &profile.version_command,
