@@ -8,6 +8,7 @@ use std::io;
 
 use stellar_project::document_io::load::LoadDocumentError;
 use stellar_project::manifest::ManifestError;
+use stellar_project::migration::SchemaRejection;
 use stellar_project::root::RootError;
 use stellar_project::yaml::LoaderError;
 use stellar_storage::generation::lazy::LazyLoadError;
@@ -44,6 +45,8 @@ pub enum OpenError {
     Storage(LazyLoadError),
     /// generation의 DocumentManifest chunk를 해석하지 못했습니다(손상, VI.10.2).
     Document(DocumentReadError),
+    /// 낮은 schema generation의 메모리 migration이 실패했습니다(IX.11.21).
+    Migration(String),
 }
 
 impl fmt::Display for OpenError {
@@ -62,6 +65,7 @@ impl fmt::Display for OpenError {
             }
             OpenError::Storage(e) => write!(f, "저장된 generation을 열 수 없습니다: {e}"),
             OpenError::Document(e) => write!(f, "문서 manifest를 해석할 수 없습니다: {e}"),
+            OpenError::Migration(e) => write!(f, "메모리 migration 실패: {e}"),
         }
     }
 }
@@ -80,6 +84,8 @@ pub enum DocumentReadError {
     Load(LoadDocumentError),
     /// 문서 레코드를 만들지 못했습니다(모델 불변식 위반).
     Records(String),
+    /// generation schema를 이 도구가 읽을 수 없습니다(높은 schema·migration 경로 없음, IX.11.21).
+    Schema(SchemaRejection),
 }
 
 impl fmt::Display for DocumentReadError {
@@ -90,6 +96,7 @@ impl fmt::Display for DocumentReadError {
             }
             DocumentReadError::Load(e) => write!(f, "문서를 읽을 수 없습니다: {e}"),
             DocumentReadError::Records(e) => write!(f, "문서 레코드를 만들 수 없습니다: {e}"),
+            DocumentReadError::Schema(e) => write!(f, "{e}"),
         }
     }
 }

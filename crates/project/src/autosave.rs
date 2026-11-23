@@ -32,8 +32,12 @@ use crate::yaml::{load_restricted, scalar, LoaderError, YamlValue};
 
 /// 완료된 document transaction만 만드는 자동 저장 dirty 상태 (XIII.1.2).
 pub mod dirty;
+/// 창 닫기·앱 비활성화 flush 결과와 Git UI 전 확인 (XIII.1.6·XIV.2.8).
+pub mod flush;
 /// debounce·최대 지연·제스처·실패를 반영한 창별 자동 저장 시점 (XIII.1.3·XIII.1.5).
 pub mod schedule;
+/// 자동 저장 trace와 schema (XIII.1.7).
+pub mod trace;
 
 /// `performance-budgets.yaml`에서 자동 저장 값을 담는 절 이름.
 pub const AUTOSAVE_SECTION: &str = "autosave";

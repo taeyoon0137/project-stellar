@@ -25,6 +25,16 @@
 //!   쓰기 표시(`AppShared::autosave_writing`)를 먼저 세우고 가져오기 표시를 확인하며, 가져오기는 가져오기 표시를 먼저
 //!   세우고 쓰기 표시가 내려갈 때까지 기다립니다(둘 다 SeqCst). 쓰기 표시는 결과를 반영해 상태를 게시한 뒤 내립니다.
 //!
+//! - **stale 두 선택지(XII.7.7, ADR-0083)**: stale을 발견하면 자동 저장을 멈추고 알림을 stale 구간마다 한 번만
+//!   요청합니다([`AppRuntime::take_stale_alerts`]). 선택([`AppRuntime::resolve_stale`]) 전에는 쓰지 않습니다.
+//! - **외부 변경 반영(UX.4.1)**: 감시 thread([`external`])가 current pointer 변화를 보면 그 프로젝트 창마다
+//!   [`ProjectWindowSession::sync_external`]을 document thread에서 실행합니다. 제스처 중이면 끝난 뒤(다음 상태
+//!   게시) 다시 실행합니다.
+//! - **창 닫기·Git UI flush(XIII.1.6·XIV.2.8)**: 제한 시간 안의 flush 결과를 창 닫기 결정 상태로 돌려주고
+//!   ([`AppRuntime::flush_for_close`]), Git UI 전에는 저장 여부를 호출자에게 묻습니다([`AppRuntime::git_ui_preflight`]).
+//!   어느 경우도 편집을 자동으로 버리지 않습니다.
+//! - **trace(XIII.1.7)**: 자동 저장마다 revision·캡처·직렬화·쓰기 시간·결과를 창별로 최근 [`TRACE_LIMIT`]개 남깁니다.
+//!
 //! 자동 저장은 [`AppRuntime::enable_autosave`]로 켭니다(네이티브 앱 runtime). 켜지 않은 runtime(테스트, Debug 검사
 //! 실행)은 Save Now로만 저장합니다.
 
@@ -36,11 +46,25 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use stellar_ops::lock::default_lock_dir;
+use stellar_project::autosave::flush::{FlushBlock, FlushOutcome, GitUiChoice, GitUiPreflight};
 use stellar_project::autosave::schedule::{AutosaveDecision, AutosaveSchedule, AutosaveStatus};
+use stellar_project::autosave::trace::{AutosaveTrace, AutosaveTraceResult};
 use stellar_project::autosave::{AutosaveConfigError, AutosavePolicy};
+use stellar_project::window_session::{StaleResolution, StaleSaveChoice};
 
 use crate::command_queue::{CoalesceKey, SubmitOptions};
-use crate::window_session::{SaveCapture, SaveWritten};
+use crate::document_thread::JobTicket;
+use crate::window_session::{
+    ExternalSync, SaveCapture, SaveTimings, SaveWritten, StaleResolveError, StaleResolved,
+};
+
+mod external;
+pub(crate) use external::ExternalWatch;
+#[cfg(test)]
+mod pipeline_tests;
+
+/// 창별로 남기는 최근 자동 저장 trace 수.
+pub const TRACE_LIMIT: usize = 32;
 
 /// 앱 runtime이 쓰는 성능 예산 파일(빌드 시 포함). 자동 저장 값의 원본입니다.
 const BUDGETS: &str = include_str!("../../../../config/performance-budgets.yaml");
@@ -101,29 +125,32 @@ impl AutosaveWake {
 
 type SaveResult = Result<SaveWritten, WindowSessionSaveError>;
 
+/// writer가 끝낸 쓰기 하나(결과와 writer 쪽 시간).
+type SlotResult = (SaveResult, SaveTimings);
+
 /// 진행 중인 쓰기 하나의 결과 자리. writer가 채우고 document thread가 꺼냅니다.
 #[derive(Debug, Default)]
 pub(crate) struct SaveSlot {
-    result: Mutex<Option<SaveResult>>,
+    result: Mutex<Option<SlotResult>>,
     ready: Condvar,
 }
 
 impl SaveSlot {
-    fn lock(&self) -> MutexGuard<'_, Option<SaveResult>> {
+    fn lock(&self) -> MutexGuard<'_, Option<SlotResult>> {
         self.result.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn put(&self, result: SaveResult) {
-        *self.lock() = Some(result);
+    fn put(&self, result: SaveResult, timings: SaveTimings) {
+        *self.lock() = Some((result, timings));
         self.ready.notify_all();
     }
 
-    fn take(&self) -> Option<SaveResult> {
+    fn take(&self) -> Option<SlotResult> {
         self.lock().take()
     }
 
     /// 결과가 올 때까지 `deadline`까지 기다립니다.
-    fn wait_until(&self, deadline: Instant) -> Option<SaveResult> {
+    fn wait_until(&self, deadline: Instant) -> Option<SlotResult> {
         let mut result = self.lock();
         loop {
             if let Some(result) = result.take() {
@@ -151,7 +178,10 @@ struct WriteJob {
 impl Drop for WriteJob {
     fn drop(&mut self) {
         if self.capture.take().is_some() {
-            self.slot.put(Err(WindowSessionSaveError::Interrupted));
+            self.slot.put(
+                Err(WindowSessionSaveError::Interrupted),
+                SaveTimings::default(),
+            );
         }
     }
 }
@@ -171,9 +201,28 @@ pub(crate) struct AutosaveSetup {
 pub(crate) struct WindowAutosave {
     schedule: Option<AutosaveSchedule>,
     in_flight: Option<Arc<SaveSlot>>,
+    /// 진행 중인 쓰기의 캡처 revision과 캡처 시간(trace용).
+    in_flight_capture: Option<(DocumentRevision, Duration)>,
+    /// 마지막으로 발견한 stale의 다음 할 일(두 선택지 또는 reconciliation 대기). clean이 되면 지웁니다.
+    stale: Option<StaleResolution>,
+    /// 제스처·진행 중인 쓰기 때문에 미룬 외부 변경 반영.
+    external_deferred: bool,
+    /// 자동 저장 schedule이 없는 runtime에서 이번 stale 구간의 알림을 이미 꺼냈는지(XII.7.7). stale이 풀리면
+    /// 지웁니다. schedule이 있으면 [`AutosaveSchedule::take_stale_alert`]가 같은 일을 합니다.
+    stale_alert_taken: bool,
+    /// 마지막으로 반영을 거부한 외부 변경의 진단(UX.4.4). 다음 정상 반영에서 지웁니다.
+    rejection: Option<String>,
+    /// 최근 자동 저장 trace(XIII.1.7).
+    traces: std::collections::VecDeque<AutosaveTrace>,
 }
 
 impl WindowAutosave {
+    /// stale을 풀고 다음 stale 구간의 알림을 다시 낼 수 있게 합니다.
+    fn clear_stale(&mut self) {
+        self.stale = None;
+        self.stale_alert_taken = false;
+    }
+
     /// 상태 snapshot에 게시할 자동 저장 상태(자동 저장을 켜지 않았으면 [`AutosaveStatus::Idle`]).
     pub(crate) fn status(&self) -> AutosaveStatus {
         self.schedule
@@ -188,11 +237,17 @@ pub(crate) struct AutosaveClock {
     wake: Arc<AutosaveWake>,
     thread: Option<JoinHandle<()>>,
     writer: Option<JoinHandle<()>>,
+    /// 외부 변경 감시 thread(UX.4.1).
+    external: Option<ExternalWatch>,
 }
 
 impl AutosaveClock {
-    /// 시계 thread를 멈추고 끝날 때까지 기다립니다(대기 중인 condvar만 깨우므로 바로 끝남).
+    /// 외부 변경 감시와 시계 thread를 멈추고 끝날 때까지 기다립니다(대기 중인 condvar·짧은 poll만 깨우므로 바로
+    /// 끝남). 감시를 먼저 멈춰 종료 중에 새 반영 job을 접수하지 않습니다.
     pub(crate) fn stop(&mut self) {
+        if let Some(external) = self.external.as_mut() {
+            external.stop();
+        }
         self.wake.stop();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -230,6 +285,18 @@ fn any_in_flight(sessions: &AppSessions) -> bool {
 /// 모든 창의 상태를 관찰하고 가장 이른 기한을 시계에 알립니다. `build_state`가 창 요약을 만들기 전에 부릅니다.
 pub(super) fn observe(ctx: &mut DocumentContext) {
     let sessions = ctx.app_sessions_mut();
+    // 제스처·쓰기가 끝난 창의 미룬 외부 변경을 먼저 반영합니다(UX.4.1 "제스처가 끝난 뒤 반영").
+    for entry in sessions.windows.values_mut() {
+        if entry.autosave.external_deferred
+            && !gesture_active(&entry.session)
+            && entry.autosave.in_flight.is_none()
+        {
+            sync_window(entry);
+        }
+        if entry.autosave.stale.is_some() && !entry.session.has_unsaved_changes() {
+            entry.autosave.clear_stale();
+        }
+    }
     let Some(setup) = sessions.autosave.as_ref() else {
         return;
     };
@@ -252,11 +319,39 @@ pub(super) fn observe(ctx: &mut DocumentContext) {
         };
         next = Some(next.map_or(due, |current| current.min(due)));
     }
+    if setup.deferred_flush {
+        // 미룬 flush(이미지 가져오기·진행 중 쓰기)는 debounce 기한이 아니라 짧은 재시도 기한을 지킵니다. 그 사이의
+        // 다른 상태 게시(외부 변경 반영 등)가 기한을 debounce로 밀어내지 않게 합니다.
+        let retry = now + IMPORT_DEFER;
+        next = Some(next.map_or(retry, |current| current.min(retry)));
+    }
     setup.wake.arm(next);
 }
 
-/// writer 결과 하나를 창에 반영합니다.
-fn finish(entry: &mut WindowEntry, result: SaveResult, now: Duration) {
+/// writer 결과 하나를 창에 반영하고 trace를 남깁니다.
+fn finish(entry: &mut WindowEntry, (result, timings): SlotResult, now: Duration) {
+    let (revision, capture) = entry
+        .autosave
+        .in_flight_capture
+        .take()
+        .unwrap_or((entry.session.revision(), Duration::ZERO));
+    let trace_result = match &result {
+        Ok(written) if written.wrote() => AutosaveTraceResult::Saved,
+        Ok(_) => AutosaveTraceResult::Unchanged,
+        Err(WindowSessionSaveError::Stale(_)) => AutosaveTraceResult::Stale,
+        Err(WindowSessionSaveError::Interrupted) => AutosaveTraceResult::Interrupted,
+        Err(_) => AutosaveTraceResult::Failed,
+    };
+    record_trace(
+        &mut entry.autosave,
+        AutosaveTrace {
+            dirty_revision: revision,
+            capture,
+            serialize: timings.serialize,
+            write: timings.write,
+            result: trace_result,
+        },
+    );
     let Some(schedule) = entry.autosave.schedule.as_mut() else {
         return;
     };
@@ -265,11 +360,100 @@ fn finish(entry: &mut WindowEntry, result: SaveResult, now: Duration) {
             entry.session.apply_save(written);
             schedule.saved();
         }
-        Err(WindowSessionSaveError::Stale(_)) => schedule.stale(now),
+        Err(WindowSessionSaveError::Stale(_)) => {
+            schedule.stale(now);
+            entry.autosave.stale = Some(stale_resolution(&entry.session));
+        }
         Err(error) => {
             eprintln!("Stellar autosave: {error}");
             schedule.failed(now);
         }
+    }
+}
+
+fn record_trace(autosave: &mut WindowAutosave, trace: AutosaveTrace) {
+    if autosave.traces.len() >= TRACE_LIMIT {
+        autosave.traces.pop_front();
+    }
+    autosave.traces.push_back(trace);
+}
+
+/// 디스크 current를 만든 writer로 정한 다음 할 일. 판정하지 못하면 두 선택지입니다(쓰기를 이미 멈춘 상태).
+fn stale_resolution(window: &ProjectWindowSession) -> StaleResolution {
+    window
+        .stale_state()
+        .ok()
+        .flatten()
+        .map_or(StaleResolution::Choose, |(_, resolution)| resolution)
+}
+
+/// 외부 변경 반영 transaction id: 창 영속 id와 반영 전 revision에서 만듭니다(창마다 revision마다 유일).
+fn external_command_id(window: &ProjectWindowSession) -> stellar_commands::id::CommandId {
+    let mut key = [0; 32];
+    key[..16].copy_from_slice(&window.window().stable_id().to_bytes());
+    key[16..24].copy_from_slice(&window.revision().0.to_le_bytes());
+    key[24..].copy_from_slice(b"external");
+    let digest = stellar_storage::hash::ContentHash::compute(&key);
+    let mut raw = [0; 16];
+    raw.copy_from_slice(&digest.digest()[..16]);
+    stellar_commands::id::CommandId::from_bytes(raw)
+}
+
+/// 창 하나에 디스크의 외부 변경을 반영합니다(UX.4.1). 반영했으면 `true`입니다.
+fn sync_window(entry: &mut WindowEntry) -> bool {
+    if entry.autosave.in_flight.is_some() {
+        // 진행 중인 자기 저장이 곧 base를 바꿉니다. 결과를 반영한 뒤 다시 판단합니다.
+        entry.autosave.external_deferred = true;
+        return false;
+    }
+    let command = external_command_id(&entry.session);
+    match entry.session.sync_external(command) {
+        ExternalSync::Unchanged => {
+            entry.autosave.external_deferred = false;
+            false
+        }
+        ExternalSync::Deferred => {
+            entry.autosave.external_deferred = true;
+            false
+        }
+        ExternalSync::Applied { .. } => {
+            entry.autosave.external_deferred = false;
+            entry.autosave.rejection = None;
+            true
+        }
+        ExternalSync::Stale { resolution, .. } => {
+            // 자동 저장을 멈추고 알림은 stale 구간마다 한 번만(ADR-0083 결정 4).
+            entry.autosave.external_deferred = false;
+            entry.autosave.stale = Some(resolution);
+            if let Some(schedule) = entry.autosave.schedule.as_mut() {
+                schedule.mark_stale();
+            }
+            false
+        }
+        ExternalSync::Rejected(rejection) => {
+            entry.autosave.external_deferred = false;
+            entry.autosave.rejection = Some(rejection.to_string());
+            false
+        }
+    }
+}
+
+/// `project`의 모든 창에 외부 변경을 반영하고, 반영한 창에 요청 없는 표시 변경을 알립니다.
+fn sync_project(ctx: &mut DocumentContext, shared: &AppShared, project: ProjectSessionId) {
+    let sessions = ctx.app_sessions_mut();
+    let mut applied = Vec::new();
+    for (handle, entry) in sessions
+        .windows
+        .iter_mut()
+        .filter(|(_, entry)| entry.project == project)
+    {
+        if sync_window(entry) {
+            applied.push(*handle);
+        }
+    }
+    shared.publish_state(build_state(ctx));
+    for session in applied {
+        shared.push_unsolicited_view_change(session);
     }
 }
 
@@ -329,8 +513,23 @@ fn collect(ctx: &mut DocumentContext, shared: &AppShared) {
         finish(entry, result, now);
         changed = true;
     }
-    if changed {
+    // 진행 중인 쓰기 때문에 미룬 외부 변경을 지금 반영하고 그 창에 표시 변경을 알립니다(UX.4.1). 상태 게시의
+    // 관찰(observe)도 미룬 반영을 실행하지만 표시 변경 event를 낼 수 없어, 쓰기가 끝난 이 자리에서 먼저 합니다.
+    let mut applied = Vec::new();
+    for (handle, entry) in sessions.windows.iter_mut() {
+        if entry.autosave.external_deferred
+            && entry.autosave.in_flight.is_none()
+            && !gesture_active(&entry.session)
+            && sync_window(entry)
+        {
+            applied.push(*handle);
+        }
+    }
+    if changed || !applied.is_empty() {
         shared.publish_state(build_state(ctx));
+    }
+    for session in applied {
+        shared.push_unsolicited_view_change(session);
     }
     shared
         .autosave_writing
@@ -391,11 +590,15 @@ fn run(ctx: &mut DocumentContext, shared: &AppShared, flush: bool) {
             schedule.observe(now, window.revision(), false);
             continue;
         }
-        match window.capture_save() {
+        let started = Instant::now();
+        let captured = window.capture_save();
+        let capture_time = started.elapsed();
+        match captured {
             Ok(Some(capture)) => {
                 schedule.begin_save(capture.revision());
                 let slot = Arc::new(SaveSlot::default());
                 entry.autosave.in_flight = Some(Arc::clone(&slot));
+                entry.autosave.in_flight_capture = Some((capture.revision(), capture_time));
                 if setup
                     .writer
                     .send(WriteJob {
@@ -406,16 +609,18 @@ fn run(ctx: &mut DocumentContext, shared: &AppShared, flush: bool) {
                 {
                     // writer가 없으면 버려진 job이 결과 자리에 중단을 남깁니다.
                     entry.autosave.in_flight = None;
-                    let result = slot
-                        .take()
-                        .unwrap_or(Err(WindowSessionSaveError::Interrupted));
+                    let result = slot.take().unwrap_or((
+                        Err(WindowSessionSaveError::Interrupted),
+                        SaveTimings::default(),
+                    ));
                     finish(entry, result, now);
                 }
             }
             Ok(None) => schedule.observe(now, window.revision(), false),
             Err(error) => {
                 schedule.begin_save(window.revision());
-                finish(entry, Err(error), now);
+                entry.autosave.in_flight_capture = Some((window.revision(), capture_time));
+                finish(entry, (Err(error), SaveTimings::default()), now);
             }
         }
     }
@@ -445,9 +650,13 @@ fn writer_loop(jobs: mpsc::Receiver<WriteJob>, sender: DocumentSender, shared: A
         let Some(capture) = job.capture.take() else {
             continue;
         };
-        let result = std::panic::catch_unwind(AssertUnwindSafe(|| capture.write(default_lock_dir)))
-            .unwrap_or(Err(WindowSessionSaveError::Interrupted));
-        job.slot.put(result);
+        let (result, timings) =
+            std::panic::catch_unwind(AssertUnwindSafe(|| capture.write_timed(default_lock_dir)))
+                .unwrap_or((
+                    Err(WindowSessionSaveError::Interrupted),
+                    SaveTimings::default(),
+                ));
+        job.slot.put(result, timings);
         submit_collect(&sender, &shared);
     }
 }
@@ -552,10 +761,12 @@ impl AppRuntime {
             .spawn(move || clock_loop(clock_wake, sender, shared));
         match thread {
             Ok(thread) => {
+                let external = ExternalWatch::start(self.sender.clone(), Arc::clone(&self.shared));
                 self.autosave = Some(AutosaveClock {
                     wake,
                     thread: Some(thread),
                     writer: Some(writer),
+                    external,
                 })
             }
             Err(error) => eprintln!("Stellar autosave clock: {error}"),
@@ -565,6 +776,10 @@ impl AppRuntime {
     /// 자동 저장 시계를 멈추고 document thread를 종료한 뒤(`timeout`까지), 진행 중인 자동 저장 쓰기가 끝나기를
     /// 기다립니다. 시계를 먼저 멈춰 종료 중에 새 저장을 접수하지 않습니다. document thread가 제때 끝나지 않았으면
     /// writer도 기다리지 않습니다.
+    ///
+    /// 순서는 XII.1.6의 고정 순서([`crate::document_thread::ShutdownStage::ORDER`])를 따릅니다: 셸이 입력을 멈춘 뒤
+    /// (UI stop) 감시·시계가 새 job을 내지 않게 하고 document thread가 남은 command를 실행하며(command drain/cancel),
+    /// 그다음 worker(writer)를 기다립니다(worker stop). 앱 runtime은 render thread를 소유하지 않습니다.
     pub(super) fn stop_with_autosave(
         &mut self,
         timeout: Option<Duration>,
@@ -600,6 +815,310 @@ impl AppRuntime {
                 SubmitError::Stopped => RequestError::Stopped,
             })
     }
+
+    /// document thread에서 `job`을 실행하고 결과 ticket을 돌려줍니다(완료 event 없음).
+    fn job<T: Send + 'static>(
+        &self,
+        job: impl FnOnce(&mut DocumentContext) -> T + Send + 'static,
+    ) -> Result<JobTicket<T>, RequestError> {
+        self.sender.submit(job).map_err(|error| match error {
+            SubmitError::QueueFull { .. } => RequestError::QueueFull,
+            SubmitError::Stopped => RequestError::Stopped,
+        })
+    }
+
+    /// 아직 요청하지 않은 stale 알림을 꺼냅니다(XII.7.7). 한 stale 구간의 알림은 한 번만 나옵니다. 셸은 각 알림의
+    /// [`StaleResolution::choices`]로 두 선택지 시트를 띄우거나, reconciliation 대기를 표시합니다.
+    pub fn take_stale_alerts(&self) -> Result<JobTicket<Vec<StaleAlert>>, RequestError> {
+        self.job(|ctx: &mut DocumentContext| {
+            let mut alerts = Vec::new();
+            for (handle, entry) in ctx.app_sessions_mut().windows.iter_mut() {
+                let Some(resolution) = entry.autosave.stale else {
+                    continue;
+                };
+                // 자동 저장을 켜지 않은 runtime은 schedule이 없으므로 창 표시로 한 번만 꺼냅니다. stale 상태
+                // 자체는 선택·clean 전까지 남습니다(external_status·Git UI 확인이 계속 봄).
+                let alert = match entry.autosave.schedule.as_mut() {
+                    Some(schedule) => schedule.take_stale_alert(),
+                    None => !std::mem::replace(&mut entry.autosave.stale_alert_taken, true),
+                };
+                if alert {
+                    alerts.push(StaleAlert {
+                        session: *handle,
+                        resolution,
+                    });
+                }
+            }
+            alerts
+        })
+    }
+
+    /// stale 창의 사용자 선택을 실행합니다(XII.7.5·XII.7.6). 진행 중인 자동 저장을 먼저 반영한 뒤 선택을 실행하고,
+    /// clean이 되면 자동 저장이 다시 동작합니다. 외부 writer와 겹친 stale은
+    /// [`StaleResolveError::ReconciliationRequired`]입니다. 실패하면 편집·history는 그대로입니다.
+    pub fn resolve_stale(
+        &self,
+        session: WindowSessionHandle,
+        choice: StaleSaveChoice,
+    ) -> Result<JobTicket<Result<StaleResolved, StaleResolveError>>, RequestError> {
+        let shared = Arc::clone(&self.shared);
+        self.job(move |ctx: &mut DocumentContext| {
+            settle(ctx, session).map_err(StaleResolveError::Save)?;
+            let sessions = ctx.app_sessions_mut();
+            let now = sessions.autosave.as_ref().map(|setup| setup.wake.now());
+            let entry = sessions
+                .windows
+                .get_mut(&session)
+                .ok_or(StaleResolveError::NotStale)?;
+            let resolved = entry.session.resolve_stale(choice);
+            if resolved.is_ok() {
+                entry.autosave.clear_stale();
+                entry.autosave.external_deferred = false;
+                if let (Some(schedule), Some(now)) = (entry.autosave.schedule.as_mut(), now) {
+                    schedule.observe(
+                        now,
+                        entry.session.revision(),
+                        entry.session.has_unsaved_changes(),
+                    );
+                }
+            }
+            shared.publish_state(build_state(ctx));
+            if resolved.is_ok() {
+                shared.push_unsolicited_view_change(session);
+            }
+            resolved
+        })
+    }
+
+    /// `project`의 창들에 디스크의 외부 변경을 지금 반영합니다(UX.4.1). 감시 thread가 current pointer 변화마다 같은
+    /// 일을 합니다.
+    pub fn sync_external_changes(
+        &self,
+        project: ProjectSessionId,
+    ) -> Result<JobTicket<()>, RequestError> {
+        let shared = Arc::clone(&self.shared);
+        self.job(move |ctx: &mut DocumentContext| sync_project(ctx, &shared, project))
+    }
+
+    /// 창 하나의 외부 변경 상태(stale·거부 진단·미룸, UX.4.1·UX.4.4). 창이 없으면 `None`.
+    pub fn external_status(
+        &self,
+        session: WindowSessionHandle,
+    ) -> Result<JobTicket<Option<ExternalStatus>>, RequestError> {
+        self.job(move |ctx: &mut DocumentContext| {
+            let entry = ctx.app_sessions().windows.get(&session)?;
+            Some(ExternalStatus {
+                stale: entry.autosave.stale,
+                rejection: entry.autosave.rejection.clone(),
+                deferred: entry.autosave.external_deferred,
+            })
+        })
+    }
+
+    /// 창 하나의 최근 자동 저장 trace(XIII.1.7, 오래된 것부터).
+    pub fn autosave_traces(
+        &self,
+        session: WindowSessionHandle,
+    ) -> Result<JobTicket<Vec<AutosaveTrace>>, RequestError> {
+        self.job(move |ctx: &mut DocumentContext| {
+            ctx.app_sessions()
+                .windows
+                .get(&session)
+                .map(|entry| entry.autosave.traces.iter().copied().collect())
+                .unwrap_or_default()
+        })
+    }
+
+    /// 창 닫기 flush(XIII.1.6): `timeout` 안에 진행 중인 자동 저장을 반영하고 남은 편집을 저장한 뒤, 창 닫기 결정
+    /// 상태를 돌려줍니다. 제한 시간을 넘거나 저장할 수 없으면 [`FlushOutcome::Blocked`]이고 편집은 메모리에
+    /// 남습니다(넘긴 flush job은 그대로 끝까지 실행되며 취소·폐기하지 않습니다).
+    pub fn flush_for_close(&self, session: WindowSessionHandle, timeout: Duration) -> FlushOutcome {
+        let shared = Arc::clone(&self.shared);
+        let ticket = self.job(move |ctx: &mut DocumentContext| {
+            let outcome = flush_window(ctx, session);
+            shared.publish_state(build_state(ctx));
+            outcome
+        });
+        wait_flush(ticket, timeout)
+    }
+
+    /// 앱 비활성화 flush(XIII.1.6)를 제한 시간 안에 끝까지 기다립니다. 창마다 결정 상태를 돌려주며, 제한 시간을
+    /// 넘으면 모든 창이 [`FlushBlock::TimedOut`]입니다. 기다리지 않는 접수만 필요하면
+    /// [`AppRuntime::flush_autosave`]를 씁니다.
+    pub fn flush_for_deactivate(
+        &self,
+        timeout: Duration,
+    ) -> Vec<(WindowSessionHandle, FlushOutcome)> {
+        let state = self.state();
+        let handles: Vec<_> = state.windows.iter().map(|window| window.session).collect();
+        let shared = Arc::clone(&self.shared);
+        let job_handles = handles.clone();
+        let ticket = self.job(move |ctx: &mut DocumentContext| {
+            let outcomes: Vec<_> = job_handles
+                .iter()
+                .map(|session| (*session, flush_window(ctx, *session)))
+                .collect();
+            shared.publish_state(build_state(ctx));
+            outcomes
+        });
+        let timed_out = || {
+            handles
+                .iter()
+                .map(|session| (*session, FlushOutcome::Blocked(FlushBlock::TimedOut)))
+                .collect()
+        };
+        match ticket {
+            Ok(mut ticket) => match ticket.wait_timeout(timeout) {
+                Ok(Some(outcomes)) => outcomes,
+                _ => timed_out(),
+            },
+            Err(_) => timed_out(),
+        }
+    }
+
+    /// Git UI를 열기 전 창의 저장 상태(XIV.2.8). 이 호출은 아무것도 저장하지 않습니다. 창이 없으면 `None`.
+    pub fn git_ui_preflight(
+        &self,
+        session: WindowSessionHandle,
+    ) -> Result<JobTicket<Option<GitUiPreflight>>, RequestError> {
+        self.job(move |ctx: &mut DocumentContext| {
+            ctx.app_sessions().windows.get(&session).map(git_ui_state)
+        })
+    }
+
+    /// Git UI 전 호출자의 선택을 실행합니다(XIV.2.8). [`GitUiChoice::SaveFirst`]는 창 닫기와 같은 flush를 하고,
+    /// [`GitUiChoice::ContinueWithDisk`]는 아무것도 쓰지 않고 지금 상태를 돌려줍니다(메모리 편집 유지). 결과가
+    /// [`GitUiPreflight::Clean`]이면 디스크가 메모리와 같습니다.
+    pub fn prepare_git_ui(
+        &self,
+        session: WindowSessionHandle,
+        choice: GitUiChoice,
+        timeout: Duration,
+    ) -> GitUiPreflight {
+        match choice {
+            GitUiChoice::SaveFirst => match self.flush_for_close(session, timeout) {
+                FlushOutcome::Clean | FlushOutcome::Saved { .. } => GitUiPreflight::Clean,
+                FlushOutcome::Blocked(block) => GitUiPreflight::Blocked(block),
+            },
+            GitUiChoice::ContinueWithDisk => {
+                let ticket = self.git_ui_preflight(session);
+                match ticket.map(|mut ticket| ticket.wait_timeout(timeout)) {
+                    Ok(Ok(Some(Some(state)))) => state,
+                    Ok(Ok(Some(None))) => GitUiPreflight::Clean,
+                    _ => GitUiPreflight::Blocked(FlushBlock::TimedOut),
+                }
+            }
+        }
+    }
+}
+
+/// stale 알림 하나(XII.7.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StaleAlert {
+    /// stale 창.
+    pub session: WindowSessionHandle,
+    /// 두 선택지 또는 reconciliation 대기.
+    pub resolution: StaleResolution,
+}
+
+/// 창 하나의 외부 변경 상태(UX.4.1·UX.4.4).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ExternalStatus {
+    /// stale이면 다음 할 일.
+    pub stale: Option<StaleResolution>,
+    /// 마지막으로 반영을 거부한 외부 변경의 진단(경로·줄·원인을 담을 수 있음).
+    pub rejection: Option<String>,
+    /// 제스처·진행 중인 쓰기 때문에 미룬 반영이 있는지.
+    pub deferred: bool,
+}
+
+/// 저장 실패의 경로 없는 code(셸 표시·trace용).
+fn save_failure_code(error: &WindowSessionSaveError) -> &'static str {
+    match error {
+        WindowSessionSaveError::ImageMetadata => "image-metadata",
+        WindowSessionSaveError::Lock(_) => "lock",
+        WindowSessionSaveError::Stale(_) => "stale",
+        WindowSessionSaveError::Serialize(_) => "serialize",
+        WindowSessionSaveError::Plan(_) => "plan",
+        WindowSessionSaveError::Run(_) => "write",
+        WindowSessionSaveError::Reload(_) => "reload",
+        WindowSessionSaveError::Interrupted => "interrupted",
+        WindowSessionSaveError::Rebase(_) => "rebase",
+    }
+}
+
+fn wait_flush(
+    ticket: Result<JobTicket<FlushOutcome>, RequestError>,
+    timeout: Duration,
+) -> FlushOutcome {
+    match ticket {
+        Ok(mut ticket) => match ticket.wait_timeout(timeout) {
+            Ok(Some(outcome)) => outcome,
+            Ok(None) => FlushOutcome::Blocked(FlushBlock::TimedOut),
+            Err(_) => FlushOutcome::Blocked(FlushBlock::Failed("interrupted".into())),
+        },
+        Err(_) => FlushOutcome::Blocked(FlushBlock::Failed("runtime-stopped".into())),
+    }
+}
+
+/// document thread의 flush 하나(XIII.1.6). 편집을 버리지 않습니다.
+fn flush_window(ctx: &mut DocumentContext, session: WindowSessionHandle) -> FlushOutcome {
+    if let Err(error) = settle(ctx, session) {
+        return FlushOutcome::Blocked(match error {
+            WindowSessionSaveError::Interrupted => FlushBlock::TimedOut,
+            other => FlushBlock::Failed(save_failure_code(&other).into()),
+        });
+    }
+    let sessions = ctx.app_sessions_mut();
+    let now = sessions.autosave.as_ref().map(|setup| setup.wake.now());
+    let Some(entry) = sessions.windows.get_mut(&session) else {
+        return FlushOutcome::Clean;
+    };
+    if !entry.session.has_unsaved_changes() {
+        return FlushOutcome::Clean;
+    }
+    if gesture_active(&entry.session) {
+        return FlushOutcome::Blocked(FlushBlock::GestureInProgress);
+    }
+    match entry.session.save_now() {
+        Ok(outcome) => {
+            if let (Some(schedule), Some(now)) = (entry.autosave.schedule.as_mut(), now) {
+                schedule.observe(now, entry.session.revision(), false);
+            }
+            if outcome.written {
+                FlushOutcome::Saved {
+                    generation: outcome.generation,
+                }
+            } else {
+                FlushOutcome::Clean
+            }
+        }
+        Err(WindowSessionSaveError::Stale(_)) => {
+            let resolution = stale_resolution(&entry.session);
+            entry.autosave.stale = Some(resolution);
+            if let Some(schedule) = entry.autosave.schedule.as_mut() {
+                schedule.mark_stale();
+            }
+            FlushOutcome::Blocked(FlushBlock::Stale(resolution))
+        }
+        Err(error) => FlushOutcome::Blocked(FlushBlock::Failed(save_failure_code(&error).into())),
+    }
+}
+
+/// Git UI 전 상태(XIV.2.8). 쓰지 않습니다.
+fn git_ui_state(entry: &WindowEntry) -> GitUiPreflight {
+    if !entry.session.has_unsaved_changes() {
+        return GitUiPreflight::Clean;
+    }
+    if let Some(resolution) = entry.autosave.stale {
+        return GitUiPreflight::Blocked(FlushBlock::Stale(resolution));
+    }
+    if gesture_active(&entry.session) {
+        return GitUiPreflight::Blocked(FlushBlock::GestureInProgress);
+    }
+    GitUiPreflight::PendingEdits {
+        revision: entry.session.revision(),
+    }
 }
 
 #[cfg(test)]
@@ -622,6 +1141,16 @@ mod tests {
         }
     }
 
+    /// 요청 없는 표시 변경 event(외부 변경 반영)를 건너뛴 다음 완료 event.
+    pub(super) fn next_solicited(app: &AppRuntime) -> RuntimeEvent {
+        loop {
+            let event = next_event(app);
+            if event.request() != RequestId(0) {
+                return event;
+            }
+        }
+    }
+
     fn edit(app: &AppRuntime, session: WindowSessionHandle, command: u64, name: &str) {
         let name = name.to_string();
         let request = app
@@ -633,7 +1162,7 @@ mod tests {
             })
             .unwrap();
         assert!(matches!(
-            next_event(app),
+            next_solicited(app),
             RuntimeEvent::WindowViewChanged { request: got, .. } if got == request
         ));
     }
@@ -807,16 +1336,19 @@ mod tests {
     fn stale_window_stops_autosaving_without_writing() {
         let project = saved_project("autosave-stale");
         let mut app = AppRuntime::start().unwrap();
-        app.enable_autosave_with(policy(40, 5_000));
+        app.enable_autosave_with(policy(60_000, 60_000));
         let owner = open_project(&app, project.path());
         let (a, _, _) = open_window(&app, owner);
         let (b, _, _) = open_window(&app, owner);
-        // A가 먼저 저장합니다.
+        // 두 창 모두 generation 1 위에서 편집합니다. clean 창은 다른 창의 저장을 외부 변경으로 받아들이므로
+        // (UX.4.1) B는 A가 저장하기 전에 편집합니다.
         edit(&app, a, 700, "A");
+        edit(&app, b, 800, "B");
+        // flush는 창 순서대로 캡처하고 writer는 받은 순서대로 쓰므로 A가 먼저 저장합니다.
+        app.flush_autosave().unwrap();
         assert!(wait_for(|| generation(&app, a) == 2));
         let current = std::fs::read(project.path().join("design").join("current")).unwrap();
         // B는 generation 1 위에서 편집했으므로 자동 저장이 stale로 멈추고 디스크를 바꾸지 않습니다.
-        edit(&app, b, 800, "B");
         assert!(wait_for(|| status(&app, b) == AutosaveStatus::Stale));
         edit(&app, b, 801, "B 다시");
         std::thread::sleep(Duration::from_millis(200));
@@ -833,7 +1365,7 @@ mod tests {
         // 창을 닫을 때의 Save Now는 같은 stale을 셸에 돌려줍니다(셸의 닫기 선택 D6).
         let request = app.save_now(b).unwrap();
         assert!(matches!(
-            next_event(&app),
+            next_solicited(&app),
             RuntimeEvent::RequestFailed { request: got, failure: RequestFailure::SaveStale, .. }
                 if got == request
         ));

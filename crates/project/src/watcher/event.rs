@@ -248,7 +248,30 @@ impl FileWatchEvent {
                         .is_some_and(|name| !name.contains('/') && name.ends_with(".stellar.yaml")))
         })
     }
+
+    /// 다중 파일 텍스트 원본(V.10.6)을 다시 확인해야 하는 변경인지.
+    ///
+    /// 프로젝트 `design/` 아래(하위 폴더 포함) `*.stellar.yaml`이나 `design` 폴더 자체를 언급하면 참입니다. 저장
+    /// journal(`.stellar/`)과 chunk 저장소 파일(`*.starchunk` 등)은 해당하지 않습니다. 넘침은 참입니다. 자기 저장도
+    /// 참이지만 session이 파일 hash로 걸러냅니다.
+    pub fn affects_text_source(&self) -> bool {
+        if let FileWatchEvent::Overflow(_) = self {
+            return true;
+        }
+        self.paths().into_iter().any(|path| {
+            path.root().is_project()
+                && (path.relative() == TEXT_SOURCE_DIR
+                    || path
+                        .relative()
+                        .strip_prefix(TEXT_SOURCE_DIR)
+                        .and_then(|rest| rest.strip_prefix('/'))
+                        .is_some_and(|name| name.ends_with(".stellar.yaml")))
+        })
+    }
 }
+
+/// 프로젝트 root 기준 다중 파일 텍스트 원본 폴더(V.10.4).
+pub const TEXT_SOURCE_DIR: &str = "design";
 
 /// 프로젝트 root 기준 컴포넌트 원본 폴더.
 pub const COMPONENT_SOURCE_DIR: &str = "design/components";
@@ -424,6 +447,41 @@ mod tests {
         assert!(
             !FileWatchEvent::Modified(path(1, "design/components/Card.stellar.yaml"))
                 .affects_component_sources()
+        );
+    }
+
+    #[test]
+    fn text_source_changes_are_detected_by_path() {
+        // V.10.6: design/ 아래 텍스트 원본 파일만 다시 확인합니다.
+        for relative in [
+            "design/document.stellar.yaml",
+            "design/pages/home/main.stellar.yaml",
+            "design/pages/home/main/hero.stellar.yaml",
+            "design/assets/catalog.stellar.yaml",
+            "design",
+        ] {
+            assert!(
+                FileWatchEvent::Modified(path(0, relative)).affects_text_source(),
+                "{relative}"
+            );
+        }
+        assert!(FileWatchEvent::Overflow(OverflowReason::EventsDropped).affects_text_source());
+        for relative in [
+            "design/current",
+            "design/objects/91/sha256-91.starchunk",
+            "design/pages/home/main.stellar.yaml.tmp",
+            ".stellar/journal/tx-1/new/0",
+            "document.stellar.yaml",
+            "designs/document.stellar.yaml",
+        ] {
+            assert!(
+                !FileWatchEvent::Modified(path(0, relative)).affects_text_source(),
+                "{relative}"
+            );
+        }
+        assert!(
+            !FileWatchEvent::Modified(path(1, "design/document.stellar.yaml"))
+                .affects_text_source()
         );
     }
 

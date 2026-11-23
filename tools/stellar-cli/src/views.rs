@@ -311,6 +311,16 @@ pub fn open_error(error: &OpenError) -> CliError {
             message: e.to_string(),
         }),
         OpenError::Document(e) => document_error(e),
+        OpenError::Migration(e) => CliError::new(
+            ExitStatus::DataErr,
+            "migration",
+            "옛 schema generation을 메모리에서 migration하지 못했습니다",
+        )
+        .with_diagnostic(Diagnostic {
+            severity: Severity::Error,
+            code: "migration",
+            message: e.clone(),
+        }),
     }
 }
 

@@ -465,6 +465,164 @@ impl WindowDocumentSession {
     }
 }
 
+// --- stale 저장 결과 (XII.7.2, ADR-0083 결정 1·2) ---
+
+/// stale 저장(이 창이 연 뒤 다른 writer가 먼저 저장함)에서 사용자가 고를 수 있는 두 선택지(XII.7.2).
+///
+/// 값은 이 둘뿐입니다. semantic merge·시각 diff 같은 선택지는 두지 않습니다(기술 아키텍처 §22.2). 외부
+/// writer(CLI·MCP·Git·다른 프로세스)가 만든 generation과 로컬 편집이 겹치면 이 두 선택지가 아니라
+/// [`StaleResolution::ReconciliationPending`]입니다(ADR-0083 결정 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum StaleSaveChoice {
+    /// 이 창의 버전으로 저장: 최신 디스크 generation 위에 이 창 문서 전체를 새 generation으로 씁니다(XII.7.5).
+    /// commit 직전 base를 다시 확인하고, 그 사이 다른 저장이 생기면 다시 stale입니다.
+    UseCurrentWindow,
+    /// 디스크 버전 불러오기: 최신 generation을 완전히 검증·로드한 뒤에만 이 창의 미저장 편집과 history를
+    /// 버립니다(XII.7.6). 로드에 실패하면 메모리 편집을 그대로 둡니다.
+    UseLatestDisk,
+}
+
+impl StaleSaveChoice {
+    /// 두 선택지(표시 순서).
+    pub const ALL: [StaleSaveChoice; 2] = [
+        StaleSaveChoice::UseCurrentWindow,
+        StaleSaveChoice::UseLatestDisk,
+    ];
+
+    /// 안정 문자열 code(CLI·MCP·trace).
+    pub fn code(self) -> &'static str {
+        match self {
+            StaleSaveChoice::UseCurrentWindow => "use-current-window",
+            StaleSaveChoice::UseLatestDisk => "use-latest-disk",
+        }
+    }
+
+    /// 안정 숫자 code(셸 경계). 0은 쓰지 않습니다.
+    pub fn wire(self) -> u8 {
+        match self {
+            StaleSaveChoice::UseCurrentWindow => 1,
+            StaleSaveChoice::UseLatestDisk => 2,
+        }
+    }
+
+    /// [`StaleSaveChoice::wire`]의 역. 모르는 값은 `None`입니다.
+    pub fn from_wire(value: u8) -> Option<StaleSaveChoice> {
+        StaleSaveChoice::ALL
+            .into_iter()
+            .find(|choice| choice.wire() == value)
+    }
+
+    /// [`StaleSaveChoice::code`]의 역. 모르는 값은 `None`입니다.
+    pub fn from_code(code: &str) -> Option<StaleSaveChoice> {
+        StaleSaveChoice::ALL
+            .into_iter()
+            .find(|choice| choice.code() == code)
+    }
+}
+
+impl fmt::Display for StaleSaveChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.code())
+    }
+}
+
+/// 디스크 current generation을 만든 writer 출처(ADR-0083 결정 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WriterProvenance {
+    /// 같은 앱 프로세스의 다른 창이 저장했습니다([`record_app_window_save`]가 기록한 generation).
+    AppWindow,
+    /// 앱 창이 기록하지 않은 generation: CLI·MCP·Git·다른 프로세스.
+    External,
+}
+
+impl WriterProvenance {
+    /// 안정 문자열 code.
+    pub fn code(self) -> &'static str {
+        match self {
+            WriterProvenance::AppWindow => "app-window",
+            WriterProvenance::External => "external",
+        }
+    }
+}
+
+/// stale을 발견한 창이 다음에 할 일(셸에 보일 core 결과).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StaleResolution {
+    /// 다른 앱 창이 먼저 저장했습니다. [`StaleSaveChoice::ALL`] 두 선택지를 묻습니다.
+    Choose,
+    /// 외부 writer가 만든 generation과 로컬 편집이 겹칩니다. 두 선택지 대신 semantic reconciliation(XIII.3.4)을
+    /// 기다립니다. 그 연결 전까지 이 상태로 남고 자동 저장도 멈춘 채입니다.
+    ReconciliationPending,
+}
+
+impl StaleResolution {
+    /// writer 출처로 정합니다.
+    pub fn for_writer(writer: WriterProvenance) -> StaleResolution {
+        match writer {
+            WriterProvenance::AppWindow => StaleResolution::Choose,
+            WriterProvenance::External => StaleResolution::ReconciliationPending,
+        }
+    }
+
+    /// 사용자에게 보일 선택지. reconciliation 대기는 비어 있습니다.
+    pub fn choices(self) -> &'static [StaleSaveChoice] {
+        match self {
+            StaleResolution::Choose => &StaleSaveChoice::ALL,
+            StaleResolution::ReconciliationPending => &[],
+        }
+    }
+
+    /// 안정 문자열 code.
+    pub fn code(self) -> &'static str {
+        match self {
+            StaleResolution::Choose => "choose",
+            StaleResolution::ReconciliationPending => "reconciliation-pending",
+        }
+    }
+}
+
+/// 이 프로세스의 앱 창이 쓴 generation 기록 상한(오래된 것부터 버림).
+const APP_WINDOW_SAVE_LIMIT: usize = 4096;
+
+type AppWindowSaves = std::collections::VecDeque<(PathBuf, ContentHash)>;
+
+/// 이 프로세스의 앱 창이 쓴 (프로젝트 root, manifest hash) 기록.
+fn app_window_saves() -> std::sync::MutexGuard<'static, AppWindowSaves> {
+    static SAVES: std::sync::OnceLock<std::sync::Mutex<AppWindowSaves>> =
+        std::sync::OnceLock::new();
+    SAVES
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// 앱 창 저장이 `root`에 `manifest_hash` generation을 썼음을 기록합니다(ADR-0083 결정 2). 저장 잠금 안에서
+/// current pointer를 바꾼 직후 부릅니다.
+pub fn record_app_window_save(root: &Path, manifest_hash: ContentHash) {
+    let mut saves = app_window_saves();
+    let entry = (root.to_path_buf(), manifest_hash);
+    if saves.contains(&entry) {
+        return;
+    }
+    if saves.len() >= APP_WINDOW_SAVE_LIMIT {
+        saves.pop_front();
+    }
+    saves.push_back(entry);
+}
+
+/// `root`의 `manifest_hash` generation을 만든 writer 출처. 이 프로세스의 앱 창이 기록하지 않았으면 외부입니다.
+pub fn writer_provenance(root: &Path, manifest_hash: &ContentHash) -> WriterProvenance {
+    let saves = app_window_saves();
+    if saves
+        .iter()
+        .any(|(saved_root, hash)| saved_root == root && hash == manifest_hash)
+    {
+        WriterProvenance::AppWindow
+    } else {
+        WriterProvenance::External
+    }
+}
+
 /// 읽은 chunk id를 모으는 recorder.
 #[derive(Default)]
 struct ChunkIdRecorder {
@@ -877,5 +1035,60 @@ mod tests {
             ExternalReloadOutcome::Reloaded { generation: 3, .. }
         ));
         assert_eq!(json(session.document().model()), json(&edited));
+    }
+
+    /// XII.7.2 golden: 선택지는 정확히 두 개이고 code·wire 값은 고정입니다. merge 선택지는 없습니다.
+    #[test]
+    fn stale_save_choices_are_exactly_two_with_frozen_codes() {
+        let golden: Vec<(String, u8)> = StaleSaveChoice::ALL
+            .iter()
+            .map(|choice| (choice.to_string(), choice.wire()))
+            .collect();
+        assert_eq!(
+            golden,
+            vec![
+                ("use-current-window".to_string(), 1),
+                ("use-latest-disk".to_string(), 2),
+            ]
+        );
+        for choice in StaleSaveChoice::ALL {
+            assert_eq!(StaleSaveChoice::from_wire(choice.wire()), Some(choice));
+            assert_eq!(StaleSaveChoice::from_code(choice.code()), Some(choice));
+        }
+        for unknown in [0u8, 3, 255] {
+            assert_eq!(StaleSaveChoice::from_wire(unknown), None);
+        }
+        assert_eq!(StaleSaveChoice::from_code("semantic-merge"), None);
+        // match가 두 변형만 다루는지 컴파일러가 확인합니다(변형이 늘면 이 test가 깨짐).
+        let exhaustive = |choice: StaleSaveChoice| match choice {
+            StaleSaveChoice::UseCurrentWindow | StaleSaveChoice::UseLatestDisk => (),
+        };
+        StaleSaveChoice::ALL.into_iter().for_each(exhaustive);
+    }
+
+    /// ADR-0083 결정 2: 앱 창이 쓴 generation만 두 선택지, 그 밖의 writer는 reconciliation 대기입니다.
+    #[test]
+    fn writer_provenance_decides_between_two_choices_and_reconciliation() {
+        let root = Path::new("/stellar-provenance-test/project");
+        let other_root = Path::new("/stellar-provenance-test/other");
+        let hash = ContentHash::compute(b"app window generation");
+        assert_eq!(writer_provenance(root, &hash), WriterProvenance::External);
+        record_app_window_save(root, hash);
+        record_app_window_save(root, hash);
+        assert_eq!(writer_provenance(root, &hash), WriterProvenance::AppWindow);
+        // 같은 hash라도 다른 프로젝트 root는 앱 창 저장이 아닙니다.
+        assert_eq!(
+            writer_provenance(other_root, &hash),
+            WriterProvenance::External
+        );
+        assert_eq!(
+            StaleResolution::for_writer(WriterProvenance::AppWindow).choices(),
+            &StaleSaveChoice::ALL
+        );
+        let pending = StaleResolution::for_writer(WriterProvenance::External);
+        assert_eq!(pending, StaleResolution::ReconciliationPending);
+        assert!(pending.choices().is_empty());
+        assert_eq!(pending.code(), "reconciliation-pending");
+        assert_eq!(WriterProvenance::External.code(), "external");
     }
 }

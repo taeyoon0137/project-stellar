@@ -26,6 +26,9 @@
 //! 초기 릴리스에는 agent lock 상태·feature가 **없으며**, 대기 상태는 위 세 snapshot만 보존하고 외부 변경
 //! 판단은 agent 잠금을 참고하지 않습니다(테스트가 상태 구조와 crate 소스·feature 목록으로 확인).
 
+/// 텍스트 원본 프로젝트의 열기·저장·외부 변경 반영과 깨진 원본 진단 (V.10.6·UX.4.4).
+pub mod source;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

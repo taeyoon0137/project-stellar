@@ -159,6 +159,7 @@ pub use stellar_document::shape::ShapeKind;
 
 /// 지연 자동 저장 트리거와 worker 쓰기(UX.2.11, ADR-0072).
 mod autosave;
+pub use autosave::{ExternalStatus, StaleAlert, TRACE_LIMIT};
 pub use stellar_project::autosave::schedule::AutosaveStatus;
 
 use crate::app_command::AppCommand;
