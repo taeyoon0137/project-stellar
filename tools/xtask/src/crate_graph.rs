@@ -56,7 +56,16 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
             &[core, "stellar-document", "stellar-commands"],
         ),
         ("stellar-renderer-core", &["stellar-scene"]),
-        ("stellar-renderer-metal", &["stellar-renderer-core"]),
+        // PNG 내보내기 Metal offscreen target(ADR-0116 결정 4): export 렌더 계약·scene 값. test는 core-types 값을 씁니다.
+        (
+            "stellar-renderer-metal",
+            &[
+                "stellar-renderer-core",
+                "stellar-export",
+                "stellar-scene",
+                "stellar-core-types",
+            ],
+        ),
         ("stellar-renderer-d3d12", &["stellar-renderer-core"]),
         ("stellar-storage", &[core]),
         ("stellar-assets", &["stellar-storage", core]),

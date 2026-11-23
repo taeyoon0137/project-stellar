@@ -432,7 +432,10 @@ dependencies = [
 name = "stellar-renderer-metal"
 version = "0.0.0"
 dependencies = [
+ "stellar-core-types",
+ "stellar-export",
  "stellar-renderer-core",
+ "stellar-scene",
 ]
 
 [[package]]

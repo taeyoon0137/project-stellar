@@ -5,8 +5,9 @@
 Accepted (2026-11-23).
 
 - ADR-0103 결정 8(CLI·MCP 연결 보류)을 결정 1·5로 풉니다.
+- ADR-0103 결정 2의 "GPU target은 같은 trait을 구현" 후속을 결정 4로 채웁니다.
 - ADR-0019·ADR-0028의 crate 의존 표에 `stellar-scene → stellar-document`, `stellar-scene → stellar-commands`(feature
-  한정)를 더합니다.
+  한정), `stellar-ops → stellar-assets`, `stellar-renderer-metal → stellar-export, stellar-scene`을 더합니다.
 
 ## Context
 
@@ -14,6 +15,10 @@ Accepted (2026-11-23).
   있었습니다. headless 도구(ops·CLI·MCP)는 runtime에 닿지 않으므로(runtime → ops 방향, ADR-0005 §8) PNG 내보내기
   엔진(ADR-0103)을 명령으로 연결하지 못했습니다.
 - 같은 변환을 ops에 다시 만들면 이중 경로입니다(ADR-0103 Alternatives).
+- 문서 Shadow·Blur·Blend·Opacity modifier는 scene에 닿지 않았습니다(도형 modifier 규칙 밖이라 node가 skip됨). scene paint는
+  효과 field를 가졌지만 pass compiler는 layer 경계까지만 만들고 shadow·blur·mask pass와 blend program을 만들지 않았습니다
+  (XI.10.4 보고서 남은 일). `blend::resolve_or_normal`을 부르는 제품 경로가 없었습니다.
+- PNG 내보내기 offscreen target은 CPU 구현뿐이었고, scene → draw command 제품 frame encoder가 없었습니다(ADR-0102 결정 6).
 
 ## Decision
 
@@ -53,7 +58,27 @@ Accepted (2026-11-23).
      `σ·√(a² + c²)`, `σ·√(b² + d²)`입니다. `M·Mᵀ`가 대각(축 정렬, 회전 + 균일 배율)이면 정확하고, 기울임·비균일 회전은 대각
      성분만 쓰는 근사이며 `render.effect.anisotropic_blur` 진단을 남깁니다. σ가 `MAX_SIGMA`(64)를 넘으면 상한으로 그리고
      `render.effect.blur_too_large` 진단을 남깁니다. 진단이 있는 plan을 정확해야 하는 곳(내보내기)은 거부합니다.
-
+4. **scene frame encoder와 Metal offscreen target(XX.2.1).**
+   - `effects::scene::encode_plan`은 frame plan을 적합성 fixture와 같은 그리기 목록(`effects::fixture::Op`)으로 낮춥니다. 그래서
+     scene → pixel 경로가 fixture로 검증한 수식·효과 순서(ADR-0102)를 그대로 쓰고, 같은 목록을 CPU 기준
+     (`effects::raster`)과 GPU lowering(`effects::lower::lower_ops`, 임의 크기·format target)이 실행합니다. main target draw는
+     painter 순서(opaque·transparent 분리는 결과가 같은 GPU 최적화라 합침), layer 합성은 layer pass draw를 담은 `LayerOp`,
+     draw 효과는 `LayerOp` 하나의 순서(내용 → shadow → blur → clip → opacity → blend)입니다. 복합 clip이 여럿이면 layer를 겹쳐
+     교집합으로 만들고 blend는 바깥 layer에서만 합성합니다. shadow offset은 device pixel 정수로 반올림합니다. stroke `Inside`는
+     geometry 안, `Outside`는 경계 상자에서 geometry를 even-odd로 뺀 영역으로 자릅니다. 축 정렬이 아닌 이미지 변환은 미지원
+     오류입니다. shadow·layer blur의 축별 σ를 표현하려고 fixture 모델에 축별 배율을 더했습니다(기본 등방, 기존 fixture 불변).
+   - `stellar_renderer_metal::offscreen_target::MetalOffscreenTarget`이 export `OffscreenTarget`을 구현합니다. capture snapshot
+     → frame plan → encoder → lowering → headless Metal(`Rgba16Float`) → readback입니다. 가장자리 coverage는 축마다 8배
+     supersampling이고 output pixel마다 연관 알파 선형광 값을 상자 평균한 뒤 CPU target과 같은 마지막 단계(비연관 → transfer
+     encode → 8-bit 반올림, 알파 0이면 RGB 0)를 거칩니다. 출력을 128 pixel tile로 나누고 효과가 번지는 거리(shadow offset + 3σ,
+     layer blur 3σ의 경로 합) 이상 여백을 두고 그려 tile 경계가 이어집니다. 효과 근사 진단이 있으면 그리지 않고 실패합니다.
+     selection 내보내기(조상 clip·효과 제외)는 pass compiler가 subtree 시작을 받지 않아 아직 실패입니다.
+   - crate 의존: `stellar-renderer-metal → stellar-export, stellar-scene`(test는 core-types). export·ops·CLI는 GPU backend에
+     의존하지 않으므로 headless 도구는 계속 CPU target을 씁니다(ADR-0005 §8).
+   - golden 대조(XX.2.4): 같은 snapshot·옵션의 두 target PNG를 해석해 연관 알파 값으로 비교합니다. 내부 pixel ±2, 가장자리
+     pixel은 경계를 공유하지 않는 모양 40, 공유하는 모양(배경과 안쪽 테두리, fill과 stroke) 128, 내부 허용치를 넘는 pixel은
+     12% 이하입니다. 공유 경계 차이는 CPU target이 그리기마다 coverage를 곱해 합성해 아래 그리기가 비치는 coverage 합성의
+     성질이고 GPU sample 합성에는 없습니다. CPU target이 그리지 않는 효과는 같은 그리기 목록의 CPU 기준과 ±3으로 비교합니다.
 5. **`stellar export png`와 MCP `document.export_png`(ADR-0103 결정 8을 풂).** 두 경로 모두
    `stellar_ops::export_png::view`의 한 함수(`prepare_view_png`)를 씁니다. 저장 generation의 문서 View → 결정 1의 scene 변환 →
    `IncrementalScene` snapshot → `ExportCapture` → `ExportPreflight` → `ConfirmedExport` → CPU target(`SoftwareTarget`)입니다.
@@ -82,17 +107,25 @@ Accepted (2026-11-23).
 ## Consequences
 
 - 앱 runtime, xtask replay, headless 도구가 같은 변환 함수를 씁니다.
+- 앱이 같은 scene에서 CPU·GPU 어느 target으로도 PNG를 만들 수 있고, 두 결과의 차이가 golden test로 드러납니다.
+- CPU target의 공유 경계 번짐(coverage 합성)은 그대로입니다. 고치려면 CPU target이 sample 합성이나 analytic 합집합 coverage를
+  써야 합니다(export raster 소유 후속).
 - frame plan이 효과 pass를 graph에 포함하므로 transient 수명·메모리 계산이 효과 texture를 셉니다. shadow가 있는 draw마다 원본
   layer 하나와 shadow마다 blur texture 둘이 생깁니다.
 
 ## Compatibility
 
 - 파일 포맷·FFI 변경 없음. 공개 경로 `stellar_runtime::canvas::scene_source`는 re-export로 유지됩니다.
+- 새 공개 API: `stellar_scene::document`, `pass_compiler::effects`, `FramePlan`의 효과 field, `effects::scene`,
+  `effects::lower::{lower_ops, OpsTarget}`, `stellar_renderer_metal::offscreen_target`, `stellar_ops::export_png::view`, MCP
+  `document.export_png`. fixture `ShadowSpec`·`LayerOp`에 축별 배율 field가 생겼습니다(builder는 그대로).
 - crate 의존 표(`tools/xtask/src/crate_graph.rs`, `docs/architecture/crate-dependency-graph.md`)가 바뀌었습니다.
 
 ## Performance
 
 - 변환 코드는 그대로 옮겼습니다.
+- Metal target은 tile마다 supersample target과 효과 layer(`Rgba16Float`, (128 + 2·여백)·8 한 변)를 씁니다. draw마다 효과·clip이
+  있으면 전체 tile 크기 layer를 만듭니다. 내보내기 전용이라 frame 예산(§6.2) 밖이며 실제 시간 측정은 XX.5.3 benchmark 몫입니다.
 - pass compiler는 draw마다 합성 program 하나를 풀고(`DrawEffects`, 할당 없음), 효과가 있는 draw·layer에만 pass를 더합니다.
   효과가 없는 scene의 graph는 이전과 같습니다.
 
