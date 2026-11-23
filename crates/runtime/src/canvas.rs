@@ -36,6 +36,8 @@ pub mod select;
 /// 영역 선택(마퀴) (XII.10.6, ADR-0104).
 pub mod select_area;
 mod select_fixtures;
+/// hover 미리보기 (XII.10.7, ADR-0104).
+pub mod select_hover;
 /// 깊은 선택과 편집 범위 이동 (XII.10.4, ADR-0104).
 pub mod select_navigate;
 /// select-through와 겹친 레이어 목록 (XII.10.5, ADR-0104).
