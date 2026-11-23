@@ -12,7 +12,7 @@
 //! 않습니다(사용자가 결과를 보고 정리).
 //!
 //! 기존 target은 검증 시점의 프로젝트 revision을 기록합니다. 쓰기는 저장 잠금 안에서 그 revision을 다시 비교합니다
-//! (XXIII.3.3).
+//! ([`super::composer`]).
 
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
