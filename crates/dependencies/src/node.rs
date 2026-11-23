@@ -141,6 +141,15 @@ pub enum ValueError {
     InvalidOverridePath,
     /// local override가 사용 프로젝트 root 자신 또는 그 내부를 가리킴.
     OverrideInsideProject,
+    /// component StableId가 canonical 소문자 UUID가 아님(ADR-0137).
+    InvalidComponentId,
+    /// 같은 항목이 두 번 나옴.
+    DuplicateEntry,
+    /// 항목 수 상한 초과.
+    TooManyEntries {
+        /// 허용 최대 항목 수.
+        max: usize,
+    },
 }
 
 impl fmt::Display for ValueError {
@@ -175,6 +184,11 @@ impl fmt::Display for ValueError {
             ValueError::OverrideInsideProject => f.write_str(
                 "local override는 사용 프로젝트 밖의 다른 프로젝트 root를 가리켜야 합니다",
             ),
+            ValueError::InvalidComponentId => {
+                f.write_str("component id는 canonical 소문자 UUID여야 합니다")
+            }
+            ValueError::DuplicateEntry => f.write_str("같은 항목이 두 번 나옵니다"),
+            ValueError::TooManyEntries { max } => write!(f, "항목이 최대 {max}개를 넘습니다"),
         }
     }
 }

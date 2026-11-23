@@ -16,6 +16,9 @@
 //! `Restore`는 `Reset`의 inverse로, 지운 instance 값을 그대로 되돌릴 뿐 library를 바꾸지 않으므로 reset과 같이
 //! 봅니다(update 뒤 orphan이 된 override의 reset도 정확히 undo).
 //!
+//! 외부 판정은 `stellar.yaml`이 저장한 참조가 먼저 정합니다([`classify_component`], ADR-0137 결정 1). 저장된 참조의
+//! library snapshot이 없으면(offline) override 설정은 `LibraryUnavailable`로 거부됩니다.
+//!
 //! 로컬 component와 출처를 정할 수 없는 미해결 component는 library 편집이 아니므로 통과시키고, command 자신의
 //! 검증이 판정합니다. 모호한 component(둘 이상의 직접 의존성이 export)는 거부합니다.
 
@@ -113,7 +116,8 @@ pub fn check_component_edits(
             },
         };
         let external = match classify_component(own, libraries, component) {
-            ComponentOrigin::External(external) => external,
+            // 저장되지 않은 외부 참조도 같은 정책으로 판정합니다(fail closed, ADR-0137 결정 1).
+            ComponentOrigin::External(external) | ComponentOrigin::Undeclared(external) => external,
             ComponentOrigin::Ambiguous(dependencies) => {
                 return Err((
                     position,

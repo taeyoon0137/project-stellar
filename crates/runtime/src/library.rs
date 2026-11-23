@@ -23,7 +23,7 @@ use stellar_document::component::definition::ComponentLibrary;
 use stellar_document::model::DocumentModel;
 use stellar_ops::integrity::diagnostic::Diagnostic;
 use stellar_ops::library::{
-    check_commands, needs_guard, open_libraries, open_libraries_default, LibraryCache,
+    check_commands, has_external, needs_guard, open_libraries, open_libraries_default, LibraryCache,
     LibraryCacheError, LibraryGraphInstance, LibraryGuardRejection, ProductLibraries,
 };
 
@@ -114,7 +114,7 @@ impl WindowLibraries {
         model: &DocumentModel,
         transaction: &CommandTransaction,
     ) -> Result<(), LibraryEditRefused> {
-        if self.instance.snapshots().next().is_none() {
+        if !has_external(&self.instance) {
             return Ok(());
         }
         let commands: Vec<Command> = transaction

@@ -500,6 +500,7 @@ fn model_seeds() -> Vec<Vec<u8>> {
                 .expect("url"),
             version: VersionSelector::Tag(RefName::new("v2.4.0").expect("tag")),
             local_override: None,
+            components: Default::default(),
         }],
         style_defaults: None,
     };

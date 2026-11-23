@@ -70,6 +70,9 @@ pub mod library_snapshot;
 /// 외부 library component·token 참조 (XV.5.2).
 pub mod external_ref;
 
+/// 사용 프로젝트가 저장한 외부 component 참조 표 (XV.5.2, ADR-0137).
+pub mod component_imports;
+
 /// 사용 프로젝트의 library resource 읽기 전용 정책 (XV.5.3).
 pub mod read_only;
 

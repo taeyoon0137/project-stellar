@@ -1,23 +1,27 @@
-//! 사용 프로젝트 instance의 외부 component 해석과 외부 참조 사용 수집 (XV.5.3·XV.7.3, ADR-0119 결정 4·5).
+//! 사용 프로젝트 instance의 외부 component 해석과 외부 참조 사용 수집 (XV.5.2·XV.5.3·XV.7.3, ADR-0119 결정 4·5,
+//! ADR-0137 결정 1).
 //!
-//! 문서 원본은 아직 instance payload에 [`ExternalComponentRef`](선언 이름 + LibraryId)를 저장하지 않습니다(XV.5.2
-//! 차이). instance payload에는 component StableId([`ComponentRef`])만 있습니다. 그래서 사용 프로젝트 instance가
-//! 외부 component를 가리키는지는 다음 규칙 하나로 정합니다([`classify_component`]).
+//! 문서 instance payload에는 component StableId([`ComponentRef`])만 있습니다. instance가 어느 의존성의 component를
+//! 가리키는지는 사용 프로젝트 `stellar.yaml`이 **저장한** 외부 참조(의존성 선언 `components`, [`ComponentImports`])가
+//! 정합니다. [`classify_component`]는 다음 순서로 판정합니다.
 //!
-//! 1. 사용 프로젝트 자신의 ComponentLibrary에 그 component가 있으면 **로컬**입니다.
-//! 2. 아니면 사용 프로젝트가 직접 선언한 의존성(lock root scope)의 snapshot 가운데 그 StableId를 export한 것을
-//!    찾습니다. 정확히 하나면 그 선언 이름·LibraryId로 만든 **외부 참조**입니다.
-//! 3. 둘 이상이면 어느 의존성인지 정할 수 없으므로 **모호**입니다(같은 library의 두 버전을 다른 이름으로 선언한 경우
-//!    등). command 사전 검사는 모호한 대상을 거부합니다(fail closed).
+//! 1. 저장된 참조가 정확히 하나면 그 참조가 가리키는 **외부** component입니다(로컬 정의보다 앞섭니다). 둘 이상의 선언이
+//!    같은 StableId를 저장했으면 **모호**입니다.
+//! 2. 저장된 참조가 없고 사용 프로젝트 자신의 ComponentLibrary에 있으면 **로컬**입니다.
+//! 3. 저장된 참조가 없고 로컬에도 없으면, 직접 선언한 의존성(lock root scope)의 로드된 snapshot 가운데 그 StableId를
+//!    export한 것을 찾습니다. 정확히 하나면 **저장되지 않은 외부 참조**([`ComponentOrigin::Undeclared`])입니다. 이 경우는
+//!    ADR-0137 이전 프로젝트의 호환 읽기이고, 진단(`library-ref/undeclared`)이 `stellar library import`로 참조를 저장하도록
+//!    알립니다. 읽기 전용 사전 검사는 외부와 같이 판정합니다(fail closed). 둘 이상이면 **모호**입니다.
 //! 4. 어디에도 없으면 **미해결**입니다(offline으로 snapshot이 없거나 사라진 component). 이 판정은 library 편집이
 //!    아니므로 문서 command 자신의 검증에 맡깁니다.
 //!
-//! 문서가 외부 참조를 저장하게 되면 2·3단계는 저장된 참조로 바뀌고, 나머지 경로(사전 검사·후보 검증)는 그대로
-//! 씁니다.
+//! 저장된 참조는 snapshot이 없어도(offline·받지 않음) 외부입니다. 그래서 받지 않은 library component의 override 설정은
+//! 사전 검사에서 `LibraryUnavailable`로 거부되고(reset은 허용), 문서 참조 진단은 그 참조를 사용할 수 없다고 냅니다.
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::reference::ComponentRef;
 use stellar_dependencies::candidate_check::{ExternalInstanceUsage, OverrideUsage};
+use stellar_dependencies::component_imports::ComponentImports;
 use stellar_dependencies::declaration::LogicalName;
 use stellar_dependencies::external_ref::ExternalComponentRef;
 use stellar_dependencies::ref_resolution::{LibraryGraphInstance, RefScope};
@@ -33,20 +37,51 @@ use crate::library_exports::value_type_signature;
 pub enum ComponentOrigin {
     /// 사용 프로젝트 자신의 component.
     Local,
-    /// 직접 선언한 의존성 하나가 export한 component.
+    /// `stellar.yaml`이 저장한 외부 참조.
     External(ExternalComponentRef),
-    /// 둘 이상의 직접 의존성이 같은 StableId를 export함(선언 이름 순).
+    /// 저장된 참조는 없지만 직접 선언한 의존성 하나가 export한 component(ADR-0137 이전 프로젝트의 호환 읽기).
+    Undeclared(ExternalComponentRef),
+    /// 둘 이상의 선언이 같은 StableId를 저장했거나, 저장된 참조 없이 둘 이상의 직접 의존성이 export함(선언 이름 순).
     Ambiguous(Vec<LogicalName>),
     /// 로컬에도 로드된 의존성에도 없음.
     Unresolved,
 }
 
-/// `component`의 출처를 정합니다(모듈 문서 규칙).
+impl ComponentOrigin {
+    /// 외부 component 참조(저장됐든 아니든). 로컬·모호·미해결이면 `None`입니다.
+    pub fn external(&self) -> Option<&ExternalComponentRef> {
+        match self {
+            ComponentOrigin::External(r) | ComponentOrigin::Undeclared(r) => Some(r),
+            _ => None,
+        }
+    }
+}
+
+/// `component`의 출처를 정합니다(모듈 문서 규칙). 저장된 참조는 `libraries.imports()`입니다.
 pub fn classify_component(
     own: &ComponentLibrary,
     libraries: &LibraryGraphInstance,
     component: ComponentRef,
 ) -> ComponentOrigin {
+    classify_with(own, libraries.imports(), libraries, component)
+}
+
+/// [`classify_component`]에 저장된 참조 표를 따로 넘깁니다.
+pub fn classify_with(
+    own: &ComponentLibrary,
+    imports: &ComponentImports,
+    libraries: &LibraryGraphInstance,
+    component: ComponentRef,
+) -> ComponentOrigin {
+    match imports.get(component) {
+        [] => {}
+        [stored] => return ComponentOrigin::External(stored.clone()),
+        many => {
+            return ComponentOrigin::Ambiguous(
+                many.iter().map(|r| r.dependency().clone()).collect(),
+            )
+        }
+    }
     if own.get(component).is_some() {
         return ComponentOrigin::Local;
     }
@@ -65,7 +100,7 @@ pub fn classify_component(
     }
     match found.len() {
         0 => ComponentOrigin::Unresolved,
-        1 => ComponentOrigin::External(found.remove(0)),
+        1 => ComponentOrigin::Undeclared(found.remove(0)),
         _ => ComponentOrigin::Ambiguous(found.iter().map(|r| r.dependency().clone()).collect()),
     }
 }
@@ -104,12 +139,18 @@ pub fn external_instance_usages(
         let Some(NodePayload::ComponentInstance(payload)) = model.payload(id) else {
             continue;
         };
-        match classify_component(own, libraries, payload.component()) {
-            ComponentOrigin::External(component) => usages.instances.push(ExternalInstanceUsage {
-                instance: id,
-                component,
-                overrides: override_usages(payload),
-            }),
+        let origin = classify_component(own, libraries, payload.component());
+        if matches!(origin, ComponentOrigin::Undeclared(_)) {
+            usages.undeclared.push(id);
+        }
+        match origin {
+            ComponentOrigin::External(component) | ComponentOrigin::Undeclared(component) => {
+                usages.instances.push(ExternalInstanceUsage {
+                    instance: id,
+                    component,
+                    overrides: override_usages(payload),
+                })
+            }
             ComponentOrigin::Ambiguous(names) => usages.ambiguous.push((id, names)),
             ComponentOrigin::Local | ComponentOrigin::Unresolved => {}
         }
@@ -124,6 +165,8 @@ pub struct ExternalUsages {
     pub instances: Vec<ExternalInstanceUsage>,
     /// 출처를 정할 수 없는 instance와 후보 선언 이름.
     pub ambiguous: Vec<(StableId, Vec<LogicalName>)>,
+    /// `instances` 가운데 `stellar.yaml`에 저장되지 않은 참조로 판정한 instance(instance 순, ADR-0137 결정 1).
+    pub undeclared: Vec<StableId>,
 }
 
 /// 후보 library를 적용하기 전에 사용 프로젝트의 외부 instance·override를 후보에 대어 봅니다(XV.7.3).
@@ -145,3 +188,4 @@ pub fn check_update_candidate(
         usages.ambiguous,
     )
 }
+

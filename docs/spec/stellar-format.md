@@ -624,12 +624,13 @@ document 하나의 매핑·시퀀스·스칼라만 허용합니다. root가 스�
 | `target_profiles` | 예 | 시퀀스 |
 | `target_profiles[i]` | — | 매핑, 키 `id`(필수)·`platform`(필수)·`minimum_os`·`baseline` |
 | `dependencies` | 예 | 매핑, 키 = 의존성 logical name(스칼라) |
-| `dependencies.<name>` | — | 매핑, 키 `source`·`library_id`·`repository`·`version` 필수, `local_override` 선택 |
+| `dependencies.<name>` | — | 매핑, 키 `source`·`library_id`·`repository`·`version` 필수, `local_override`·`components` 선택 |
 | `dependencies.<name>.source` | 예 | 스칼라, `git`만 |
 | `dependencies.<name>.library_id` | 예 | 스칼라, UUID 문자열(§5.1 `StableId` 형식). 라이브러리 프로젝트의 `project.id` |
 | `dependencies.<name>.repository` | 예 | 스칼라, repository URL |
 | `dependencies.<name>.version` | 예 | tag 이름 스칼라, 또는 `tag`·`branch`·`commit` 중 정확히 한 키를 가진 매핑 |
 | `dependencies.<name>.local_override` | 아니오 | 스칼라, 로컬 경로 |
+| `dependencies.<name>.components` | 아니오 | 시퀀스, 사용 프로젝트가 이 의존성에서 쓰는 외부 component StableId(저장된 외부 참조, ADR-0137) |
 
 `dependencies` 절의 형식은 `stellar-dependencies`의 선언 모델(`dependencies::declaration`) 하나이며,
 project crate는 제한 YAML 값을 형식 중립 트리로 1:1 바꿔 그 모델로 검증합니다(ADR-0021,
@@ -645,13 +646,14 @@ project crate는 제한 YAML 값을 형식 중립 트리로 1:1 바꿔 그 모�
 | `commit` | 16진수 40자 또는 64자. 소문자로 정규화 | `InvalidValue`(`InvalidCommitLength`, `InvalidHexDigit`) |
 | `version` 매핑 | 키가 정확히 하나 | `InvalidValue`(`InvalidSelector`), 모르는 키는 `UnknownKey` |
 | `local_override` | 1~4096 byte, 제어 문자·`\` 없음, (선행 `/`를 뗀 뒤) 빈 component·`.` component 없음. `..`은 허용 | `InvalidValue`(`InvalidOverridePath` 등) |
+| `components` 항목 | canonical 소문자 UUID 스칼라, 중복 없음, 최대 4096개. 순서는 StableId 오름차순으로 정규화 | `InvalidValue`(`InvalidComponentId`, `DuplicateEntry`, `TooManyEntries`), 시퀀스가 아니면 `WrongType` |
 
 - 모든 매핑에서 정의되지 않은 키는 `UnknownKey`입니다. 필수 키 누락은 `MissingField`, 종류 불일치는
   `WrongType`, 버전 형식 위반은 `InvalidSchemaVersion`, 값 규칙 위반은 `InvalidValue { path, error }`,
   의존성 절 중첩 깊이가 64를 넘으면 `TooDeep`입니다. 오류 경로는 `dependencies.<name>.<key>` 형태입니다.
 - 키는 어떤 순서로 와도 됩니다. writer는 `schema_version`, `project`(`id`, `name`), `target_profiles`
   (`id`, `platform`, `minimum_os`, `baseline`), `dependencies`(이름: `source`, `library_id`, `repository`,
-  `version`, `local_override`) 순서로 씁니다. tag는 스칼라로, branch·commit은 한 키 매핑으로 씁니다. 입력의
+  `version`, `local_override`, `components`) 순서로 씁니다. `components`는 비어 있으면 쓰지 않습니다. tag는 스칼라로, branch·commit은 한 키 매핑으로 씁니다. 입력의
   `version: {tag: ...}` 매핑은 스칼라 tag로 정규화됩니다. 숫자로 시작하는 스칼라는 인용되므로 canonical 출력은
   `schema_version: "1"`입니다.
 - `library_id` 없는 이전 형식 entry는 `MissingField`(`dependencies.<name>.library_id`)로 거부합니다. 같은

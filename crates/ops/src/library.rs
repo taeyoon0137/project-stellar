@@ -25,7 +25,8 @@
 //! 판정 규칙은 그 함수와 ADR-0119 결정 4 그대로입니다. 바뀌지 않은 override는 요청에 넣지 않습니다(update 뒤 orphan이 된
 //! override가 다른 편집을 막지 않음). nested 경로 override는 외부 component의 직접 property가 아니므로 넣지 않습니다
 //! (ADR-0119 결정 5와 같은 범위). 복제·외부 snapshot 반영·record 복원은 이미 있는 payload를 옮길 뿐이라 검사하지 않습니다.
-//! 로드한 library snapshot이 하나도 없으면 외부 component가 있을 수 없으므로 검사를 건너뜁니다.
+//! 로드한 library snapshot이 하나도 없고 `stellar.yaml`이 저장한 외부 component 참조도 없으면 외부 component가 있을 수
+//! 없으므로 검사를 건너뜁니다([`has_external`]). 저장된 참조가 있으면 snapshot이 없어도(offline) 검사합니다(ADR-0137 결정 1).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -53,7 +54,7 @@ use stellar_integrity::incremental::{origins, Contribution, Footprint, Integrity
 use stellar_integrity::remediation::actions_for;
 use stellar_integrity::sources;
 use stellar_project::library_guard::{check_component_edits, ComponentEdit};
-use stellar_project::library_open::{open_project_libraries, read_lock};
+use stellar_project::library_open::{declared_only, open_project_libraries, read_lock};
 use stellar_storage::hash::ContentHash;
 
 use crate::core_types::ids::StableId;
@@ -315,18 +316,22 @@ impl ProductLibraries {
         self.cache_problem.as_ref()
     }
 
-    /// lock 자체의 문제.
+    /// lock 자체의 문제(lock을 읽지 못했으면 그 문제, 아니면 매니페스트·lock 구조 문제).
     pub fn lock_problem(&self) -> Option<&LibraryOpenProblem> {
-        self.opened
+        self.lock_problem
             .as_ref()
-            .and_then(ProjectLibraries::problem)
-            .or(self.lock_problem.as_ref())
+            .or_else(|| self.opened.as_ref().and_then(ProjectLibraries::problem))
+    }
+
+    /// 외부 component가 있을 수 있는지: 로드한 snapshot이나 저장된 외부 참조가 있음. 없으면 사전 검사·참조 진단을 건너뜁니다.
+    pub fn has_external(&self) -> bool {
+        has_external(&self.instance())
     }
 
     /// 모든 의존성을 사용할 수 있는지.
     pub fn is_complete(&self) -> bool {
         self.cache_problem.is_none()
-            && self.lock_problem.is_none()
+            && self.lock_problem().is_none()
             && self
                 .opened
                 .as_ref()
@@ -344,14 +349,19 @@ impl ProductLibraries {
             .unwrap_or_default();
         let mut contribution = sources::libraries(&unavailable);
         if let Some(problem) = self.lock_problem() {
-            let code = match problem {
-                LibraryOpenProblem::LockUnreadable { .. } => "library-lock/unreadable",
-                LibraryOpenProblem::LockInvalid => "library-lock/invalid",
-                LibraryOpenProblem::LockStructure => "library-lock/structure",
+            let (code, subject) = match problem {
+                LibraryOpenProblem::LockUnreadable { .. } => {
+                    ("library-lock/unreadable", "stellar.lock.yaml")
+                }
+                LibraryOpenProblem::LockInvalid => ("library-lock/invalid", "stellar.lock.yaml"),
+                LibraryOpenProblem::LockStructure => {
+                    ("library-lock/structure", "stellar.lock.yaml")
+                }
+                LibraryOpenProblem::ManifestInvalid => ("library-manifest/invalid", "stellar.yaml"),
             };
             contribution.diagnostics.push(project_diagnostic(
                 code,
-                "stellar.lock.yaml",
+                subject,
                 Severity::Error,
                 problem.to_string(),
             ));
@@ -407,30 +417,25 @@ pub fn now_unix_ms() -> u64 {
 
 /// `project_root`의 lock 기준으로 외부 library를 로드합니다. 실패하지 않습니다.
 ///
-/// lock이 없으면 cache를 건드리지 않습니다. cache를 열지 못했으면 lock에 의존성이 있을 때만 그 문제를 남깁니다.
+/// lock이 없으면 cache를 건드리지 않습니다. cache를 열지 못했으면 lock에 의존성이 있을 때만 그 문제를 남깁니다. 어느
+/// 경우든 `stellar.yaml`이 저장한 외부 component 참조는 [`ProductLibraries::instance`]에 남습니다(ADR-0137 결정 1).
 pub fn open_libraries(
     project_root: &Path,
     cache: Result<&LibraryCache, &LibraryCacheError>,
     now_unix_ms: u64,
 ) -> ProductLibraries {
     match read_lock(project_root) {
-        Ok(None) => return ProductLibraries::none(),
+        Ok(None) => return declared(project_root, None, None),
         Ok(Some(lock)) => {
             if let Err(problem) = cache {
-                return ProductLibraries {
-                    opened: None,
-                    lock_problem: None,
-                    cache_problem: (!lock.entries().is_empty()).then(|| problem.clone()),
-                };
+                return declared(
+                    project_root,
+                    None,
+                    (!lock.entries().is_empty()).then(|| problem.clone()),
+                );
             }
         }
-        Err(problem) => {
-            return ProductLibraries {
-                opened: None,
-                lock_problem: Some(problem),
-                cache_problem: None,
-            }
-        }
+        Err(problem) => return declared(project_root, Some(problem), None),
     }
     let Ok(cache) = cache else {
         unreachable!("cache 오류는 위에서 처리");
@@ -447,10 +452,23 @@ pub fn open_libraries(
     }
 }
 
+/// lock을 쓰지 않은 결과: 저장된 외부 참조만 담습니다.
+fn declared(
+    project_root: &Path,
+    lock_problem: Option<LibraryOpenProblem>,
+    cache_problem: Option<LibraryCacheError>,
+) -> ProductLibraries {
+    ProductLibraries {
+        opened: Some(declared_only(project_root)),
+        lock_problem,
+        cache_problem,
+    }
+}
+
 /// OS 기본 cache([`LibraryCache::os_default`])로 [`open_libraries`]를 부릅니다. lock이 없으면 cache를 열지 않습니다.
 pub fn open_libraries_default(project_root: &Path) -> ProductLibraries {
     if matches!(read_lock(project_root), Ok(None)) {
-        return ProductLibraries::none();
+        return declared(project_root, None, None);
     }
     let cache = LibraryCache::os_default();
     open_libraries(project_root, cache.as_ref(), now_unix_ms())
@@ -550,7 +568,7 @@ pub fn check_commands(
     model: &DocumentModel,
     commands: &[Command],
 ) -> Result<(), (usize, LibraryGuardRejection)> {
-    if libraries.snapshots().next().is_none() {
+    if !has_external(libraries) {
         return Ok(());
     }
     let mut latest = BTreeMap::new();
@@ -589,6 +607,12 @@ pub fn check_commands(
     Ok(())
 }
 
+/// 외부 component가 있을 수 있는지: 로드한 snapshot이 있거나 `stellar.yaml`이 외부 component 참조를 저장함(ADR-0137 결정 1).
+/// 둘 다 없으면 모든 instance가 로컬이거나 미해결이라 사전 검사가 거부할 대상이 없습니다.
+pub fn has_external(libraries: &LibraryGraphInstance) -> bool {
+    libraries.snapshots().next().is_some() || !libraries.imports().is_empty()
+}
+
 /// command 가운데 사전 검사 대상(override를 바꿀 수 있는 instance command)이 있는지. 없으면 library를 열 필요가 없습니다.
 pub fn needs_guard(commands: &[Command]) -> bool {
     commands.iter().any(|command| match command {
@@ -616,7 +640,7 @@ pub fn guard_transaction(
     }
     let libraries = open_libraries_default(root);
     let instance = libraries.instance();
-    if instance.snapshots().next().is_none() {
+    if !has_external(&instance) {
         return Ok(());
     }
     let empty = ComponentLibrary::new();
