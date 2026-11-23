@@ -32,4 +32,5 @@ pub mod output;
 pub mod process;
 pub mod profile;
 pub mod raw;
+pub mod status;
 pub mod target;
