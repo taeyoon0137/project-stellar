@@ -470,7 +470,7 @@ impl std::error::Error for ObserveError {}
 /// 먼저 cache 위치로 옮깁니다(모듈 문서). 옮기지 못하면 원본이 있을 때는 cache 없이 관찰하고(원본이 Git 원본),
 /// 원본이 없으면 cache를 읽을 수 없으므로 [`ObserveError::Pointer`]입니다.
 pub fn observe(root: &Path) -> Result<DiskSource, ObserveError> {
-    let migrated = crate::cache::migrate_layout(root);
+    let migrated = crate::cache::migrate_working_tree(root);
     let text = read_source(root).map_err(ObserveError::Source)?;
     if let (Err(error), None) = (&migrated, &text) {
         return Err(ObserveError::Pointer(CurrentPointerError::Io {

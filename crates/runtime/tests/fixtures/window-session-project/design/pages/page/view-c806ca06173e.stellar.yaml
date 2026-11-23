@@ -1,0 +1,39 @@
+format: stellar-view
+schema_version: "4"
+view:
+  id: "00000000-0004-7000-8000-000000000004"
+  display_name: "둘째 화면"
+  root_frame: "00000000-0014-7000-8000-000000000014"
+nodes:
+  -
+    id: "00000000-0014-7000-8000-000000000014"
+    parent: none
+    order_key: "20"
+    visible: "true"
+    locked: "false"
+    display_name: n20
+    kind: frame
+    payload:
+      transform: none
+      clipping: frame-bounds
+      background-color: transparent
+      border-top-width: medium
+      border-top-style: none
+      border-top-color: currentcolor
+      border-right-width: medium
+      border-right-style: none
+      border-right-color: currentcolor
+      border-bottom-width: medium
+      border-bottom-style: none
+      border-bottom-color: currentcolor
+      border-left-width: medium
+      border-left-style: none
+      border-left-color: currentcolor
+      layout-mode: none
+      width: "0px"
+      height: "0px"
+      border-top-left-radius: "0px"
+      border-top-right-radius: "0px"
+      border-bottom-right-radius: "0px"
+      border-bottom-left-radius: "0px"
+    modifiers: []

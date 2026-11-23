@@ -1427,7 +1427,7 @@ impl GitSession {
     /// 지웁니다. stage·unstage·commit이 먼저 부릅니다. 돌려주는 값은 index에서 뺀 경로입니다.
     pub fn migrate_cache(&self) -> Result<Vec<String>, GitError> {
         self.git.runner()?;
-        stellar_project::cache::migrate_layout(&self.root)
+        stellar_project::cache::migrate_working_tree(&self.root)
             .map_err(|e| GitError::Cache(e.to_string()))?;
         stellar_project::cache::untrack_legacy(&self.git, &self.root)
             .map_err(|e| GitError::Cache(e.to_string()))

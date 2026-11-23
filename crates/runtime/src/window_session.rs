@@ -3364,17 +3364,14 @@ mod tests {
     fn committed_fixture_project_matches_the_sample_project() {
         // 셸 검사(`--window-session-check`)와 FFI 테스트가 복사해 쓰는 저장 프로젝트 fixture입니다. 저장 형식이
         // 바뀌면 `STELLAR_UPDATE_FIXTURES=1 cargo test -p stellar-runtime committed_fixture`로 다시 만듭니다.
-        // fixture는 옛 배치(`design/current` 등, ADR-0122 이전)로 커밋되어 있습니다. 새 저장 결과의 chunk cache
-        // (`.stellar/cache/chunks/`)를 옛 배치 경로로 옮겨 비교하고, 열기는 관찰의 migration이 cache 위치로 옮깁니다.
+        // fixture는 Git이 원본으로 두는 텍스트 원본만 담습니다(ADR-0122 개정 2026-11-24). 저장 프로젝트를 한 번 열어
+        // 텍스트 원본으로 옮긴 뒤, Git 밖 chunk cache(`.stellar/`)를 빼고 비교합니다. 열면 cache를 원본에서 다시 만듭니다.
         let generated = saved_project("fixture");
-        let mut expected = tree(generated.path());
-        let cache = stellar_storage::location::cache_dir(generated.path());
-        for (relative, bytes) in tree(&cache) {
-            let path =
-                std::path::Path::new(stellar_storage::location::CACHE_RELATIVE).join(&relative);
-            let legacy = stellar_storage::location::legacy_relative_path(&path).unwrap();
-            expected.insert(legacy.to_string_lossy().replace('\\', "/"), bytes);
-        }
+        drop(ProjectWindowSession::load(identity(generated.path()), window(4)).unwrap());
+        let expected: std::collections::BTreeMap<String, Vec<u8>> = tree(generated.path())
+            .into_iter()
+            .filter(|(relative, _)| !relative.starts_with(".stellar/"))
+            .collect();
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
             .join("fixtures")

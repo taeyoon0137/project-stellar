@@ -81,6 +81,9 @@ pub enum CacheError {
     Write(String),
     /// Git을 실행할 수 없거나 실패했습니다.
     Git(String),
+    /// 작업 트리에 텍스트 원본 없이 옛 배치만 있습니다. 옮기면 Git에 그 프로젝트의 원본이 남지 않으므로 옮기지
+    /// 않습니다([`migrate_working_tree`]).
+    LegacyWithoutSource,
 }
 
 impl fmt::Display for CacheError {
@@ -91,6 +94,11 @@ impl fmt::Display for CacheError {
             CacheError::Source(error) => write!(f, "텍스트 원본: {error}"),
             CacheError::Write(error) => write!(f, "chunk cache: {error}"),
             CacheError::Git(error) => write!(f, "Git: {error}"),
+            CacheError::LegacyWithoutSource => f.write_str(
+                "텍스트 원본(design/*.stellar.yaml) 없이 예전 저장 배치(design/current)만 있는 프로젝트입니다. \
+                 저장 cache를 Git 밖으로 옮기면 Git에 원본이 남지 않으므로 옮기지 않았습니다. 이 프로젝트는 먼저 \
+                 텍스트 원본으로 바꿔야 합니다",
+            ),
         }
     }
 }
@@ -129,6 +137,24 @@ pub fn migrate_layout(root: &Path) -> Result<LayoutMigration, CacheError> {
         moved,
         stamp_cleared,
     })
+}
+
+/// 작업 트리용 [`migrate_layout`]: 텍스트 원본이 없는데 옛 배치가 있으면 옮기지 않고
+/// [`CacheError::LegacyWithoutSource`]입니다(ADR-0122 개정 2026-11-24). 옛 배치는 그 프로젝트의 유일한 Git 원본일 수
+/// 있어, 옮긴 뒤 `git commit -a` 한 번으로 원본이 Git에서 사라지는 것을 막습니다. Git snapshot을 푼 임시 폴더는
+/// [`migrate_layout`]을 그대로 씁니다(작업 트리가 아님).
+pub fn migrate_working_tree(root: &Path) -> Result<LayoutMigration, CacheError> {
+    let legacy = ["current", "generations", "objects"]
+        .iter()
+        .any(|name| std::fs::symlink_metadata(root.join("design").join(name)).is_ok());
+    if legacy {
+        let text = crate::document_io::session::read_source(root)
+            .map_err(|e| CacheError::Source(e.to_string()))?;
+        if text.is_none() {
+            return Err(CacheError::LegacyWithoutSource);
+        }
+    }
+    migrate_layout(root)
 }
 
 /// `stellar.yaml`의 project id.
@@ -473,5 +499,25 @@ mod tests {
     fn default_retention_reads_the_repository_config() {
         let policy = default_retention();
         assert!(policy.keep_recent_generations >= 1);
+    }
+}
+
+#[cfg(test)]
+mod working_tree_tests {
+    use super::*;
+
+    /// 텍스트 원본 없이 옛 배치만 있으면 옮기지 않고 거부합니다. 옛 파일은 작업 트리에 그대로 남습니다.
+    #[test]
+    fn legacy_layout_without_a_text_source_is_left_in_place() {
+        let dir = std::env::temp_dir().join(format!("stellar-legacy-guard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("design/generations")).unwrap();
+        std::fs::write(dir.join("design/current"), b"legacy pointer").unwrap();
+        let error = migrate_working_tree(&dir).unwrap_err();
+        assert!(matches!(error, CacheError::LegacyWithoutSource), "{error}");
+        assert!(dir.join("design/current").is_file(), "옛 pointer가 그대로 남음");
+        assert!(dir.join("design/generations").is_dir());
+        assert!(!dir.join(".stellar/cache/chunks").exists(), "cache로 옮기지 않음");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

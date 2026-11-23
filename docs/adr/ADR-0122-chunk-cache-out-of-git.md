@@ -181,3 +181,14 @@ rebuild·gc는 저장 잠금 안에서 4번 함수를, migrate는 옛 배치 이
 - 옛 branch를 checkout하면 Git이 옛 배치를 다시 놓고, 다음 관찰이 다시 옮깁니다(같은 chunk는 지우고 pointer는 바꿈, stamp를
   지워 원본 기준으로 읽음).
 - 되돌리기: `.stellar/cache/`를 지우면 다음 열기가 원본에서 cache를 다시 만듭니다.
+
+## 개정(2026-11-24, 통합 판정: 원본 없는 옛 배치 보호)
+
+- 작업 트리에 텍스트 원본 없이 옛 배치(`design/current` 등)만 있으면 옮기지 않습니다(`stellar_project::cache::migrate_working_tree`,
+  `CacheError::LegacyWithoutSource`). 옛 배치는 그 프로젝트의 유일한 Git 원본일 수 있어, 옮긴 뒤 `git commit -a` 한 번으로
+  원본이 Git에서 사라질 수 있기 때문입니다. 열기 관찰, `stellar cache status·migrate`, semantic Git의 cache 이동이 이 함수를
+  씁니다. Git snapshot을 푼 임시 폴더는 작업 트리가 아니므로 `migrate_layout`을 그대로 씁니다.
+- 이런 프로젝트는 지금 열기를 거부하고 이유를 알립니다. 옛 배치를 읽기 전용 사본(`cache::legacy_view`)에서 텍스트 원본으로
+  바꾼 뒤 옮기는 변환 경로가 후속입니다.
+- 저장소의 창 session 시험 fixture(`crates/runtime/tests/fixtures/window-session-project`)는 텍스트 원본만 담도록 다시
+  만들었습니다. 열면 chunk cache를 원본에서 다시 만듭니다.

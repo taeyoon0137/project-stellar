@@ -1,0 +1,12 @@
+format: stellar-document
+schema_version: "4"
+document:
+  id: "00000000-0001-7000-8000-000000000001"
+  display_name: "문서"
+pages:
+  -
+    id: "00000000-0002-7000-8000-000000000002"
+    display_name: "페이지"
+    views:
+      - "pages/page/view-4a5747207bc9.stellar.yaml"
+      - "pages/page/view-c806ca06173e.stellar.yaml"
