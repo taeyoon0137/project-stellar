@@ -24,6 +24,38 @@ pub(crate) fn operation_error(error: &TextSourceOperationError) -> CliError {
     CliError::new(status, code, error.to_string())
 }
 
+/// `query <design 폴더> --source-span <node StableId>`: 다중 파일 원본에서 node의 파일·줄 범위(TS-MAP).
+pub fn query_source_span(args: &[String]) -> Result<Success, CliError> {
+    let usage = || CliError::usage("query <design 폴더> --source-span <node StableId>");
+    let [design, flag, node] = args else {
+        return Err(usage());
+    };
+    if flag != "--source-span" {
+        return Err(usage());
+    }
+    let id: stellar_ops::core_types::ids::StableId = node
+        .parse()
+        .map_err(|_| CliError::usage("node는 StableId여야 합니다"))?;
+    let span = text_source::source_span(Path::new(design), id)
+        .map_err(|error| operation_error(&error).with_context(design.clone()))?
+        .ok_or_else(|| {
+            CliError::new(
+                ExitStatus::NoInput,
+                "source-span-not-found",
+                format!("텍스트 원본에 node {id}가 없습니다"),
+            )
+        })?;
+    Ok(Success {
+        result: JsonValue::object(vec![
+            ("node", views::id(id)),
+            ("file", JsonValue::string(span.file)),
+            ("start_line", views::count(span.start_line as usize)),
+            ("end_line", views::count(span.end_line as usize)),
+        ]),
+        diagnostics: Vec::new(),
+    })
+}
+
 fn project_success(
     operation: &str,
     outcome: stellar_ops::text_source::TextProjectOutcome,

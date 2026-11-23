@@ -244,6 +244,18 @@ pub fn check_project(design: &Path) -> Result<TextProjectOutcome, TextSourceOper
     Ok(project_outcome(&project, &files))
 }
 
+/// 다중 파일 원본에서 node의 파일·줄 범위(TS-MAP).
+pub fn source_span(
+    design: &Path,
+    node: StableId,
+) -> Result<
+    Option<stellar_project::document_io::source_v4::span::SourceSpan>,
+    TextSourceOperationError,
+> {
+    let (_, spans) = stellar_project::document_io::source_v4::project::open_dir(design)?;
+    Ok(spans.get(&node).cloned())
+}
+
 /// 텍스트 원본을 읽기 전용으로 열고 문서 불변식을 검사합니다.
 pub fn check(path: &Path) -> Result<TextSourceOutcome, TextSourceOperationError> {
     let opened = text_source::open(path)?;
