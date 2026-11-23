@@ -1,26 +1,30 @@
 //! migration golden fixture runner (V.8.6) — `cargo xtask test-migrations`.
 //!
 //! 과거 스키마 버전의 fixture 문서를 실제 저장소 파이프라인으로 구성하고,
-//! 등록된 migration 경로로 **최신 스키마**까지 변환한 결과가 기대 snapshot과
-//! 정확히 일치하는지 검사합니다. 새 스키마 버전이 추가될 때마다 과거 fixture는
-//! 그대로 두고 기대 snapshot만 최신 버전으로 갱신합니다.
+//! **제품 migration registry**(`stellar_project::migration::product_registry`, IX.11.21)로 **제품 최신
+//! 스키마**(`PRODUCT_SCHEMA_VERSION`)까지 변환한 결과가 기대 snapshot과 정확히 일치하는지 검사합니다.
+//! storage의 시험용 noop step은 쓰지 않습니다(제품 번호와 섞이지 않게, ADR-0077 결정 4). 새 스키마 버전이
+//! 추가될 때마다 과거 fixture는 그대로 두고 기대 snapshot만 최신 버전으로 갱신합니다. 결과 generation은
+//! 제품 열기 판정(`migration::decide`)이 편집 가능(`Current`)이어야 합니다.
 
 use std::path::PathBuf;
 
 use stellar_core_types::ids::StableId;
+use stellar_project::migration::{
+    decide, product_registry, MigrationPolicy, PRODUCT_SCHEMA_VERSION,
+};
 use stellar_storage::chunk::id::ChunkId;
 use stellar_storage::chunk::kinds::{KIND_DOCUMENT_MANIFEST, KIND_VIEW_TREE};
 use stellar_storage::chunk::planner::LogicalChunkState;
 use stellar_storage::chunk::store::ChunkStore;
 use stellar_storage::generation::loader::load_current_generation;
-use stellar_storage::migration::registry::MigrationRegistry;
-use stellar_storage::migration::runner::{noop_v1_to_v2, run_migration};
+use stellar_storage::migration::runner::run_migration;
 use stellar_storage::save::cancel::{run_save, CancelToken};
 use stellar_storage::save::commit::SavedGenerationState;
 use stellar_storage::save::plan::build_save_plan;
 
-/// 현재 최신 문서 스키마 버전.
-pub const LATEST_SCHEMA: u32 = 2;
+/// 현재 최신 문서 스키마 버전(제품 registry의 목표).
+pub const LATEST_SCHEMA: u32 = PRODUCT_SCHEMA_VERSION;
 
 /// fixture의 논리 chunk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +59,8 @@ pub fn fixtures() -> Vec<MigrationFixture> {
         payload: payload.to_vec(),
     };
     vec![
-        // v1 → v2는 noop: 내용이 그대로 보존되어야 합니다.
+        // schema 1은 지금 제품 최신이고 제품 step이 없습니다: 내용이 그대로 보존되어야 합니다. 첫 제품 step(1 → 2)이
+        // 생기면 이 fixture의 입력은 그대로 두고 기대 chunk만 step 결과로 바꿉니다.
         MigrationFixture {
             name: "v1-minimal",
             from_schema: 1,
@@ -77,13 +82,6 @@ pub fn fixtures() -> Vec<MigrationFixture> {
             ],
         },
     ]
-}
-
-/// 현재 제품이 지원하는 migration registry.
-fn product_registry() -> MigrationRegistry {
-    let mut registry = MigrationRegistry::new();
-    registry.register(noop_v1_to_v2()).expect("등록 충돌 없음");
-    registry
 }
 
 fn stable(ts: u64) -> StableId {
@@ -128,6 +126,12 @@ fn run_fixture(work_root: &std::path::Path, fixture: &MigrationFixture) -> Resul
         .map_err(|e| format!("{}: 결과 로드 실패: {e}", fixture.name))?;
     if loaded.manifest.schema_version != LATEST_SCHEMA {
         return Err(format!("{}: manifest 스키마 불일치", fixture.name));
+    }
+    if !decide(loaded.manifest.schema_version, &MigrationPolicy::PRODUCT).is_editable() {
+        return Err(format!(
+            "{}: 제품 열기 판정이 결과를 편집 가능으로 보지 않습니다",
+            fixture.name
+        ));
     }
     let store = ChunkStore::new(&root);
     let mut actual: Vec<FixtureChunk> = Vec::new();
@@ -195,7 +199,26 @@ mod tests {
         let all = fixtures();
         assert!(!all.is_empty());
         for fixture in &all {
-            assert!(fixture.from_schema < LATEST_SCHEMA, "{}", fixture.name);
+            assert!(
+                (1..=LATEST_SCHEMA).contains(&fixture.from_schema),
+                "{}",
+                fixture.name
+            );
         }
+        // 1부터 최신까지 모든 제품 schema에 fixture가 있습니다(새 schema마다 과거 fixture를 남김).
+        for schema in 1..=LATEST_SCHEMA {
+            assert!(
+                all.iter().any(|f| f.from_schema == schema),
+                "schema {schema}"
+            );
+        }
+    }
+
+    #[test]
+    fn runner_uses_the_product_registry() {
+        // xtask가 자체 registry를 두지 않고 제품 표를 씁니다: 최신까지 경로가 있고, 그 너머는 없습니다.
+        let registry = product_registry();
+        assert!(registry.plan_path(1, LATEST_SCHEMA).is_ok());
+        assert!(registry.plan_path(1, LATEST_SCHEMA + 1).is_err());
     }
 }

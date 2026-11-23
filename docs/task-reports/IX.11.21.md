@@ -4,7 +4,7 @@
 
 - WBS: IX.11.21
 - 작업명: 제품 문서 migration registry를 `crates/project`에 만들고 project 열기에 연결
-- 상태: 부분 완료 (`[~]`) — registry·고정 decoder·열기 판정·메모리 migration은 들어왔습니다. `cargo xtask test-migrations`의 제품 registry 사용과 Semantic Diff·Merge의 옛 schema snapshot fixture는 소유 범위 밖(`tools/xtask`, `crates/semantic-diff`·`semantic-merge`)이라 하지 않았습니다(아래 "차이").
+- 상태: 부분 완료 (`[~]`) — registry·고정 decoder·열기 판정·메모리 migration, `cargo xtask test-migrations`의 제품 registry 사용과 schema 1 전 node 종류 golden(2026-11-23 integration-followups 보완)은 들어왔습니다. 남은 것은 runtime 창 session 열기·ops `open_snapshot`의 판정 연결과 Semantic Diff·Merge의 옛 schema snapshot fixture입니다(아래 "차이", "후속 보완").
 - 구현 커밋: `becdcefe`. 결정: [ADR-0077](../adr/ADR-0077-text-source-full-semantics-and-migration-registry.md) 결정 4.
 
 ## 필수 실행 환경
@@ -55,3 +55,15 @@
 - 제품 step이 아직 없어 메모리 migration은 시험용 정책으로만 실행됩니다. 첫 제품 step(1→2)에서 고정 decoder 사본과 xtask fixture 전환이 함께 필요합니다.
 - `SavedProject.generation`을 직접 읽는 호출자는 옛 schema일 때 원본 bytes를 봅니다. 문서 읽기는 `load_document`·`document_ids`를 써야 합니다.
 - (검토 보완) 앱 창 session 열기(`crates/runtime` `ProjectWindowSession::load`)와 headless 읽기(`crates/ops` `open_snapshot`)는 `SavedProjectLoader`를 거치지 않고 current generation을 직접 열어 schema 판정이 없습니다. 지금은 schema 1뿐이라 도달하지 않지만, 첫 제품 step과 함께 두 경로를 판정에 연결해야 합니다. 편집 열기는 아키텍처 §36·행 정의대로 V.8.4 경로로 디스크에 migration하고 Git commit은 하지 않습니다(ADR-0077 결정 4). 두 파일 모두 이 lane 소유 밖입니다.
+
+## 후속 보완(2026-11-23, integration-followups)
+
+- `tools/xtask/src/migration_fixtures.rs`: 자체 noop registry(`noop_v1_to_v2`, 목표 schema 2)를 지우고
+  `stellar_project::migration::product_registry`와 `PRODUCT_SCHEMA_VERSION`(1)을 씁니다. 결과 generation이 제품 열기
+  판정(`decide`)에서 편집 가능(`Current`)인지도 봅니다. fixture는 1부터 최신까지 모든 제품 schema에 있어야 합니다(test).
+  xtask `Cargo.toml`에 `stellar-project` 한 줄을 더했습니다(xtask는 crate graph 검사 대상 밖).
+- `crates/project/src/migration/decoders.rs`: schema 1 고정 bytes golden에 Ellipse·Line·Polygon·Path·Image·Fragment·
+  ComponentInstance를 더했습니다(`every_other_node_kind_is_frozen_by_schema_1_golden_bytes`). 이제 모든 node 종류의 schema
+  1 bytes가 고정되어, 현재 encoder·decoder가 바뀌면 그 종류의 고정 사본이 필요함을 test가 알립니다.
+- 검증: `cargo test -p stellar-project --lib migration::` 6 passed, `cargo test -p xtask --lib migration_fixtures` 3 passed,
+  `cargo xtask test-migrations` → "migration golden fixture 통과: 2 fixtures".

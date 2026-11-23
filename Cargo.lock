@@ -491,6 +491,7 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "stellar-core-types",
+ "stellar-project",
  "stellar-storage",
  "yaml-rust2",
 ]

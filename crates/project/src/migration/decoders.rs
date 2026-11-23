@@ -310,4 +310,164 @@ mod tests {
             );
         }
     }
+
+    /// schema 1 golden bytes를 만들 나머지 node 종류 payload(Ellipse·Line·Polygon·Path·Image·Fragment·
+    /// ComponentInstance).
+    fn remaining_schema_1_payloads() -> Vec<(&'static str, NodePayload)> {
+        use stellar_core_types::reference::{AssetRef, ComponentRef};
+        use stellar_core_types::typed_value::TypedValue;
+        use stellar_core_types::value::{Angle, Rect, Vec2};
+        use stellar_document::component::definition::{ComponentPropertyId, ComponentSlotId};
+        use stellar_document::component::instance::{
+            ComponentInstancePayload, OverrideKey, SlotOverride,
+        };
+        use stellar_document::fragment::FragmentPayload;
+        use stellar_document::image::{CropRect, FitMode, ImagePayload, SamplingMode};
+        use stellar_document::path::{IdentifiedPath, PathCommand, PathData, WindingRule};
+        use stellar_document::shape::{EllipseParams, LineCap, LineParams, PolygonParams};
+
+        let id = |n: u8| {
+            let mut b = [0; 16];
+            b[15] = n;
+            StableId::from_bytes(b)
+        };
+        let point = |x: f32, y: f32| Vec2::new(x, y).unwrap();
+        let rect = |x, y, w, h| Rect::new(point(x, y), Size2::new(w, h).unwrap());
+        let path = PathData::new(
+            WindingRule::EvenOdd,
+            vec![
+                PathCommand::MoveTo(point(0.0, 0.0)),
+                PathCommand::LineTo(point(5.0, 2.5)),
+                PathCommand::CubicTo {
+                    c1: point(1.0, 2.0),
+                    c2: point(3.0, 4.0),
+                    to: point(5.0, 6.0),
+                },
+                PathCommand::Close,
+            ],
+        )
+        .unwrap();
+        let mut next = 0x40u8;
+        let path = IdentifiedPath::assign(path, &mut || {
+            next += 1;
+            id(next)
+        });
+        let mut instance = ComponentInstancePayload::new(ComponentRef::new(id(0x50)));
+        instance.set_property_override(
+            OverrideKey::direct(ComponentPropertyId::new(id(0x51))),
+            TypedValue::Boolean(true),
+        );
+        instance.set_slot_override(
+            ComponentSlotId::new(id(0x52)),
+            SlotOverride::new(vec![id(0x53)]).unwrap(),
+        );
+        vec![
+            (
+                "ellipse",
+                NodePayload::Shape(ShapeGeometry::Ellipse(EllipseParams {
+                    bounds: rect(1.0, -2.0, 30.0, 20.5),
+                })),
+            ),
+            (
+                "line",
+                NodePayload::Shape(ShapeGeometry::Line(LineParams {
+                    start: point(-1.5, 2.0),
+                    end: point(40.0, 8.25),
+                    cap: LineCap::Round,
+                })),
+            ),
+            (
+                "polygon",
+                NodePayload::Shape(ShapeGeometry::Polygon(
+                    PolygonParams::new(
+                        rect(0.0, 0.0, 64.0, 48.0),
+                        6,
+                        Angle::new(15.0).unwrap(),
+                        2.5,
+                    )
+                    .unwrap(),
+                )),
+            ),
+            ("path", NodePayload::Path(path)),
+            (
+                "image",
+                NodePayload::Image(ImagePayload {
+                    asset: AssetRef::new(id(0x60)),
+                    size: Size2::new(64.0, 48.0).unwrap(),
+                    fit: FitMode::Cover,
+                    crop: CropRect::from_components(0.0, 0.25, 1.0, 0.5).unwrap(),
+                    sampling: SamplingMode::Nearest,
+                    color_space_override: Some(ColorSpace::DisplayP3),
+                }),
+            ),
+            ("fragment", NodePayload::Fragment(FragmentPayload)),
+            (
+                "component-instance",
+                NodePayload::ComponentInstance(instance),
+            ),
+        ]
+    }
+
+    /// 나머지 node 종류의 schema 1 golden bytes(이름 순서는 [`remaining_schema_1_payloads`]와 같음). Shape는
+    /// 종류 tag(Ellipse 2, Line 3, Polygon 4) 뒤 f32 LE 필드, Fragment는 빈 payload입니다. 이 bytes는 고정입니다.
+    const REMAINING_V1_GOLDEN: [(&str, &str); 7] = [
+        ("ellipse", "020000803f000000c00000f0410000a441"),
+        ("line", "030000c0bf00000040000020420000044101"),
+        (
+            "polygon",
+            "0400000000000000000000804200004042060000000000704100002040",
+        ),
+        (
+            "path",
+            concat!(
+                "310000000104000000010000000000000000020000a04000002040030000803f",
+                "0000004000004040000080400000a0400000c040040400000001000000000000",
+                "0000000000000000004101000000000000000000000000000000420300000000",
+                "0000000000000000000000430000000000000000000000000000004400000000",
+                "00000000000000000000004500",
+            ),
+        ),
+        (
+            "image",
+            "00000000000000000000000000000060000080420000404202000000000000803e0000803f0000003f0102",
+        ),
+        ("fragment", ""),
+        (
+            "component-instance",
+            concat!(
+                "0000000000000000000000000000005001000000000000000000000000000000",
+                "0000000000000051020000000101010000000000000000000000000000000000",
+                "00520100000000000000000000000000000000000053",
+            ),
+        ),
+    ];
+
+    #[test]
+    fn every_other_node_kind_is_frozen_by_schema_1_golden_bytes() {
+        // IX.11.21: Frame·Rectangle·Text 밖의 모든 node 종류(Ellipse·Line·Polygon·Path·Image·Fragment·
+        // ComponentInstance)도 schema 1 bytes를 고정합니다. 현재 encoder·decoder가 이 bytes와 달라지면 그 종류의
+        // 고정 사본을 이 모듈에 두어야 합니다.
+        let payloads = remaining_schema_1_payloads();
+        assert_eq!(payloads.len(), REMAINING_V1_GOLDEN.len());
+        for ((name, payload), (golden_name, golden)) in
+            payloads.into_iter().zip(REMAINING_V1_GOLDEN)
+        {
+            assert_eq!(name, golden_name);
+            let bytes = hex(golden);
+            assert_eq!(encode_payload(&payload), bytes, "{name}");
+            assert_eq!(
+                decode_node_payload(1, payload.kind(), &bytes).unwrap(),
+                payload,
+                "{name}"
+            );
+            if !bytes.is_empty() {
+                let mut trailing = bytes.clone();
+                trailing.push(0);
+                assert!(
+                    decode_node_payload(1, payload.kind(), &trailing).is_err(),
+                    "{name}"
+                );
+            }
+        }
+    }
 }

@@ -163,3 +163,7 @@ Accepted (2026-11-23). 엔진 lane `text-source-codec`(V.10.3·V.10.4·IX.11.21�
    명시 export로 만든 v4 파일에 8비트 정확 sRGB의 `color(srgb …)`나 단위 행렬 `matrix(1, 0, 0, 1, 0, 0)`가 있으면 읽기를
    거부하므로 다시 export합니다. 옛 표기를 함께 받으면 같은 값의 bytes가 둘이 되어 결정 2의 결정론적 bytes 규칙이 깨지므로
    받지 않습니다. `schema_version`은 그대로 `"4"`입니다.
+3. **migration fixture runner는 제품 registry.** `cargo xtask test-migrations`는 storage의 시험용 noop step이 아니라
+   `stellar_project::migration::product_registry`로 `PRODUCT_SCHEMA_VERSION`까지 변환하고, 결과가 제품 열기 판정에서
+   편집 가능인지 확인합니다(결정 4의 "제품 step 표만 제품 registry"). schema 1 고정 bytes golden은 모든 node 종류(Frame·
+   Rectangle·Text에 더해 Ellipse·Line·Polygon·Path·Image·Fragment·ComponentInstance)를 덮습니다.
