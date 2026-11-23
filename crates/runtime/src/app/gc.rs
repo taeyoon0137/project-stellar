@@ -7,7 +7,8 @@
 //! - **언제**: 일정 thread(`stellar-idle-gc`)가 [`IdleGcConfig::poll`]마다 background lane에 판정 job 하나를 같은 병합
 //!   key로 보냅니다. job은 document thread에서 프로젝트마다 관찰합니다: 그 프로젝트 창에 저장하지 않은 편집·진행 중인
 //!   제스처가 있거나 자동 저장 쓰기가 진행 중이면(`AppShared::autosave_writing`) 활동으로, cache current pointer가
-//!   바뀌었으면(이 앱이나 CLI·MCP가 저장함) 활동으로 기록합니다. 마지막 활동 뒤 [`IdleGcConfig::idle`]이 지나고 지금
+//!   바뀌었으면(이 앱이나 CLI·MCP가 저장함) 활동으로 기록합니다. 이미지 가져오기 중(`AppShared::importing_image`)도
+//!   바쁜 것으로 봅니다. 마지막 활동 뒤 [`IdleGcConfig::idle`]이 지나고 지금
 //!   바쁘지 않으며 지난 정리 뒤 current가 바뀌었을 때만 정리합니다. 프로젝트를 연 직후는 활동으로 보므로 열자마자
 //!   정리하지 않습니다(V.7.4).
 //! - **저장 잠금과 겹치지 않음**: 정리는 판정 job 안(document thread)에서 합니다. 이 프로세스의 저장(Save Now, 자동
@@ -203,8 +204,10 @@ fn observe(
     schedule
         .projects
         .retain(|id, _| sessions.projects.contains_key(id));
-    // 쓰기 표시는 document thread에서만 세우므로(자동 저장 캡처) 이 job 동안 바뀌지 않습니다.
-    let writing = shared.autosave_writing.load(Ordering::SeqCst);
+    // 쓰기 표시는 document thread에서만 세우므로(자동 저장 캡처) 이 job 동안 바뀌지 않습니다. 이미지 가져오기는 worker가
+    // 프로젝트 asset을 쓰는 동안이라 cache와 겹치지 않지만, 같은 프로젝트 폴더 쓰기이므로 바쁜 것으로 봅니다.
+    let writing = shared.autosave_writing.load(Ordering::SeqCst)
+        || shared.importing_image.load(Ordering::SeqCst);
     let mut collected = false;
     let mut runs = Vec::new();
     for (id, project) in &sessions.projects {
