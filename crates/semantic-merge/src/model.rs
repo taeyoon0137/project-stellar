@@ -70,11 +70,14 @@ pub enum ConflictKind {
     /// 인스턴스 override, 또는 값이 그 Property를 참조하는 binding)을 추가·수정(XIV.10.7, IX.4.6). 대상 =
     /// 컴포넌트의 Property 목록 속성.
     DrillingChainBreak = 9,
+    /// 자동 병합 결과가 snapshot validator(XIV.5.3)를 새로 어김(XIV.10.8). 대상은 위반에 관련된 받아들인
+    /// 변경의 단위이고 candidate는 그 단위의 base 상태를 유지합니다. 되돌릴 변경이 없으면 위반의 대표 대상입니다.
+    InvalidResult = 10,
 }
 
 impl ConflictKind {
     /// 정의된 모든 종류(code 오름차순).
-    pub const ALL: [ConflictKind; 9] = [
+    pub const ALL: [ConflictKind; 10] = [
         ConflictKind::PropertyValue,
         ConflictKind::DeleteVsModify,
         ConflictKind::DeleteVsMove,
@@ -84,6 +87,7 @@ impl ConflictKind {
         ConflictKind::ComponentPropertyRemovedVsOverride,
         ConflictKind::TokenTypeVsValue,
         ConflictKind::DrillingChainBreak,
+        ConflictKind::InvalidResult,
     ];
 
     /// 안정 numeric code.
@@ -110,6 +114,7 @@ impl ConflictKind {
             }
             ConflictKind::TokenTypeVsValue => "token-type-vs-value",
             ConflictKind::DrillingChainBreak => "drilling-chain-break",
+            ConflictKind::InvalidResult => "invalid-result",
         }
     }
 }
@@ -471,6 +476,7 @@ pub(crate) mod tests {
             (7, "component-property-removed-vs-override"),
             (8, "token-type-vs-value"),
             (9, "drilling-chain-break"),
+            (10, "invalid-result"),
         ];
         assert_eq!(ConflictKind::ALL.len(), golden.len());
         for (kind, (code, name)) in ConflictKind::ALL.into_iter().zip(golden) {

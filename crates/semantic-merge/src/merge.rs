@@ -67,7 +67,7 @@ use stellar_semantic_diff::core_types::property::{PropertyKey, PropertyPath};
 use stellar_semantic_diff::diff::{diff, object_provenance, SemanticDiff};
 use stellar_semantic_diff::keys;
 use stellar_semantic_diff::snapshot::{ObjectKind, Origin, SemanticObject, SemanticSnapshot};
-use stellar_semantic_diff::validate::override_member;
+use stellar_semantic_diff::validate::{introduced_violations, override_member, SnapshotViolation};
 use stellar_semantic_diff::value::SemanticValue;
 
 use crate::model::{
@@ -473,6 +473,8 @@ struct Merger<'a> {
     input: &'a MergeInput,
     accepted: Vec<SemanticChange>,
     conflicts: Vec<SemanticConflict>,
+    /// 마지막 [`Merger::settle`]이 계산한 정의 목록 conflict.
+    list_conflicts: Vec<SemanticConflict>,
 }
 
 impl<'a> Merger<'a> {
@@ -905,7 +907,283 @@ fn rekey_independent_insertions(input: &MergeInput, merged: &mut SemanticSnapsho
     }
 }
 
+/// 위반에 관련된 받아들인 변경의 단위(XIV.10.8).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Unit {
+    /// 객체 삭제.
+    Remove(StableId),
+    /// 객체 추가.
+    Add(StableId),
+    /// 객체 위치.
+    Position(StableId),
+    /// 속성 경로.
+    Property(PropertyPath),
+    /// 이 member를 interface 목록(Property·Slot)에서 빼는 변경.
+    InterfaceMember(StableId),
+}
+
+impl Unit {
+    fn matches(&self, change: &SemanticChange) -> bool {
+        let id = change.object_id();
+        match self {
+            Unit::Remove(object) => {
+                id == *object
+                    && matches!(
+                        change.kind(),
+                        SemanticChangeKind::RemoveObject | SemanticChangeKind::RemoveToken
+                    )
+            }
+            Unit::Add(object) => {
+                id == *object
+                    && matches!(
+                        change.kind(),
+                        SemanticChangeKind::AddObject | SemanticChangeKind::AddToken
+                    )
+            }
+            Unit::Position(object) => {
+                id == *object
+                    && matches!(
+                        change.kind(),
+                        SemanticChangeKind::MoveObject | SemanticChangeKind::ReorderObject
+                    )
+            }
+            Unit::Property(path) => change.property_path() == Some(path),
+            Unit::InterfaceMember(member) => {
+                let is_list = change.property_path().is_some_and(|path| {
+                    matches!(
+                        path.keys(),
+                        [keys::COMPONENT_PROPERTIES] | [keys::COMPONENT_SLOTS]
+                    )
+                });
+                is_list
+                    && property_values(change).is_some_and(|(old, new)| {
+                        id_set(old).contains(member) && !id_set(new).contains(member)
+                    })
+            }
+        }
+    }
+
+    /// 되돌린 변경의 conflict 대상.
+    fn target(change: &SemanticChange) -> ConflictTarget {
+        match change.kind() {
+            SemanticChangeKind::AddObject
+            | SemanticChangeKind::RemoveObject
+            | SemanticChangeKind::AddToken
+            | SemanticChangeKind::RemoveToken => ConflictTarget::Object,
+            SemanticChangeKind::MoveObject | SemanticChangeKind::ReorderObject => {
+                ConflictTarget::Position
+            }
+            _ => change
+                .property_path()
+                .map_or(ConflictTarget::Object, |path| {
+                    ConflictTarget::Property(path.clone())
+                }),
+        }
+    }
+}
+
+/// 위반 하나에 관련된 단위(되돌릴 후보)와, 되돌릴 변경이 없을 때 conflict로 남길 대표 `(객체, 대상)`.
+fn violation_units(
+    base: &SemanticSnapshot,
+    violation: &SnapshotViolation,
+) -> (Vec<Unit>, (StableId, ConflictTarget)) {
+    match violation {
+        SnapshotViolation::MissingParent { object, parent } => (
+            vec![
+                Unit::Add(*object),
+                Unit::Position(*object),
+                Unit::Remove(*parent),
+            ],
+            (*object, ConflictTarget::Position),
+        ),
+        SnapshotViolation::ParentCycle { object } => (
+            vec![Unit::Position(*object)],
+            (*object, ConflictTarget::Position),
+        ),
+        SnapshotViolation::DuplicateOrderKey { objects, .. } => (
+            objects
+                .iter()
+                .flat_map(|id| [Unit::Add(*id), Unit::Position(*id)])
+                .collect(),
+            (
+                objects.first().copied().unwrap_or(StableId::NIL),
+                ConflictTarget::Position,
+            ),
+        ),
+        SnapshotViolation::DanglingReference { path, target } => (
+            vec![
+                Unit::Property(path.clone()),
+                Unit::Add(path.root()),
+                Unit::Remove(*target),
+            ],
+            (path.root(), ConflictTarget::Property(path.clone())),
+        ),
+        SnapshotViolation::UnlistedMember {
+            object,
+            owner,
+            list,
+        } => (
+            vec![
+                Unit::Property(PropertyPath::with_keys(*owner, vec![*list])),
+                Unit::Add(*object),
+                Unit::Position(*object),
+            ],
+            (*object, ConflictTarget::Object),
+        ),
+        SnapshotViolation::OrphanRoot { node } => {
+            // node를 root로 가리키던 base 객체(View·컴포넌트)의 삭제·root 변경도 관련 단위입니다.
+            let mut units = vec![Unit::Add(*node), Unit::Position(*node)];
+            for owner in base.objects() {
+                for key in [keys::VIEW_ROOT_FRAME, keys::COMPONENT_ROOT] {
+                    let path = owner.path(&[key]);
+                    if owner.property(&path) == Some(&SemanticValue::Id(*node)) {
+                        units.push(Unit::Remove(owner.id()));
+                        units.push(Unit::Property(path));
+                    }
+                }
+            }
+            (units, (*node, ConflictTarget::Position))
+        }
+        SnapshotViolation::UnknownInterfaceMember { path, member } => (
+            vec![
+                Unit::Property(path.clone()),
+                Unit::Add(path.root()),
+                Unit::InterfaceMember(*member),
+                Unit::Remove(*member),
+            ],
+            (path.root(), ConflictTarget::Property(path.clone())),
+        ),
+    }
+}
+
+/// 대상 하나의 세 상태(base, ours, theirs).
+fn target_states(input: &MergeInput, object: StableId, target: &ConflictTarget) -> [SideState; 3] {
+    [&input.base, &input.ours, &input.theirs].map(|side| match target {
+        ConflictTarget::Object => object_state(side, object),
+        ConflictTarget::Position => position_state(side, object),
+        ConflictTarget::Property(path) => value_state(side, path),
+    })
+}
+
+/// 대상 conflict의 출처(base 객체, 없으면 ours·theirs 순).
+fn target_provenance(input: &MergeInput, object: StableId) -> Provenance {
+    [&input.base, &input.ours, &input.theirs]
+        .into_iter()
+        .find_map(|side| side.get(object))
+        .map_or(Provenance::Project, object_provenance)
+}
+
+impl Merger<'_> {
+    /// 받아들인 변경으로 candidate를 만듭니다: 고아·cycle 되돌리기, 독립 삽입 key 재배정, 정의 목록 정합.
+    /// 정의 목록 conflict는 매번 새로 계산해 `list_conflicts`에 둡니다.
+    fn settle(
+        &mut self,
+        changed_lists: &BTreeSet<PropertyPath>,
+    ) -> Result<SemanticSnapshot, MergeError> {
+        let input = self.input;
+        // 고아를 만든 parent 삭제를 conflict로 되돌리고 다시 적용합니다. 되돌릴 때마다 받아들인
+        // 변경이 줄어들므로 유한 번에 끝납니다.
+        let mut merged = apply(&input.base, &self.accepted).map_err(MergeError::Apply)?;
+        while let Some((parent, orphan)) = self.merge_orphan(&merged) {
+            let before = self.accepted.len();
+            self.accepted.retain(|change| {
+                !(change.object_id() == parent
+                    && matches!(
+                        change.kind(),
+                        SemanticChangeKind::RemoveObject | SemanticChangeKind::RemoveToken
+                    ))
+            });
+            if self.accepted.len() == before {
+                // 삭제가 받아들여진 변경이 아니면(입력 불변식 위반) 더 되돌릴 것이 없습니다.
+                break;
+            }
+            // 다른 쪽이 parent 아래로 옮겨 온 객체면 delete-vs-move, 새로 추가한 객체면
+            // delete-vs-modify(subtree 수정)입니다(XIV.10.5).
+            let kind = if input.base.contains(orphan) {
+                ConflictKind::DeleteVsMove
+            } else {
+                ConflictKind::DeleteVsModify
+            };
+            self.object_conflict(kind, parent);
+            merged = apply(&input.base, &self.accepted).map_err(MergeError::Apply)?;
+        }
+
+        // 서로 다른 객체의 독립 이동이 parent cycle을 만들면 그 이동들을 conflicting-reorder로
+        // 되돌립니다(XIV.10.6). 되돌릴 때마다 받아들인 변경이 줄어 유한 번에 끝납니다.
+        while let Some(cycle) = merge_cycle(&merged, &self.accepted) {
+            let before = self.accepted.len();
+            self.accepted.retain(|change| {
+                !(cycle.contains(&change.object_id())
+                    && change.kind() == SemanticChangeKind::MoveObject)
+            });
+            if self.accepted.len() == before {
+                break;
+            }
+            for id in cycle {
+                self.position_conflict(id);
+            }
+            merged = apply(&input.base, &self.accepted).map_err(MergeError::Apply)?;
+        }
+        rekey_independent_insertions(input, &mut merged);
+
+        // 정의 목록을 candidate 소속 객체와 맞춥니다(SM-1). 객체 존재·위치 결정이 모두 끝난 뒤여야 합니다.
+        let mut conflicts = self.conflicts.clone();
+        let start = conflicts.len();
+        reconcile_member_lists(input, changed_lists, &mut merged, &mut conflicts);
+        self.list_conflicts = conflicts.split_off(start);
+        Ok(merged)
+    }
+
+    /// 새 위반에 관련된 받아들인 변경을 되돌리고 그 단위를 invalid-result conflict로 남깁니다(XIV.10.8).
+    /// 하나라도 되돌렸으면 참입니다. `record_unreverted`가 참이면 되돌릴 변경이 없는 위반을 대표 대상의
+    /// conflict로 남깁니다.
+    fn revert_violations(
+        &mut self,
+        violations: &BTreeSet<SnapshotViolation>,
+        record_unreverted: bool,
+    ) -> bool {
+        let input = self.input;
+        let mut reverted = false;
+        for violation in violations {
+            let (units, primary) = violation_units(&input.base, violation);
+            let (gone, kept): (Vec<SemanticChange>, Vec<SemanticChange>) = self
+                .accepted
+                .drain(..)
+                .partition(|change| units.iter().any(|unit| unit.matches(change)));
+            self.accepted = kept;
+            if gone.is_empty() {
+                if record_unreverted {
+                    self.invalid_conflict(primary.0, primary.1);
+                }
+                continue;
+            }
+            reverted = true;
+            for change in &gone {
+                self.invalid_conflict(change.object_id(), Unit::target(change));
+            }
+        }
+        reverted
+    }
+
+    fn invalid_conflict(&mut self, object: StableId, target: ConflictTarget) {
+        let input = self.input;
+        let [base, ours, theirs] = target_states(input, object, &target);
+        self.conflicts.push(SemanticConflict {
+            kind: ConflictKind::InvalidResult,
+            provenance: target_provenance(input, object),
+            object,
+            target,
+            base,
+            ours,
+            theirs,
+        });
+    }
+}
+
 /// 3-way merge를 실행합니다.
+///
+/// 결과 candidate는 snapshot validator(XIV.5.3)가 세 입력 어디에도 없던 위반을 찾지 못할 때만 clean일 수
+/// 있습니다(XIV.10.8). 새 위반이 있으면 관련 변경을 되돌리고 invalid-result conflict를 남깁니다.
 pub fn merge(input: &MergeInput) -> Result<MergeResult, MergeError> {
     let ours_diff = diff(&input.base, &input.ours);
     let theirs_diff = diff(&input.base, &input.theirs);
@@ -915,6 +1193,7 @@ pub fn merge(input: &MergeInput) -> Result<MergeResult, MergeError> {
         input,
         accepted: Vec::new(),
         conflicts: Vec::new(),
+        list_conflicts: Vec::new(),
     };
     let ids: BTreeSet<StableId> = ours.keys().chain(theirs.keys()).copied().collect();
     for id in ids {
@@ -926,52 +1205,6 @@ pub fn merge(input: &MergeInput) -> Result<MergeResult, MergeError> {
     }
     merger.interface_use_conflicts(&ours_diff, &theirs_diff);
 
-    // 고아를 만든 parent 삭제를 conflict로 되돌리고 다시 적용합니다. 되돌릴 때마다 받아들인
-    // 변경이 줄어들므로 유한 번에 끝납니다.
-    let mut merged = apply(&input.base, &merger.accepted).map_err(MergeError::Apply)?;
-    while let Some((parent, orphan)) = merger.merge_orphan(&merged) {
-        let before = merger.accepted.len();
-        merger.accepted.retain(|change| {
-            !(change.object_id() == parent
-                && matches!(
-                    change.kind(),
-                    SemanticChangeKind::RemoveObject | SemanticChangeKind::RemoveToken
-                ))
-        });
-        if merger.accepted.len() == before {
-            // 삭제가 받아들여진 변경이 아니면(입력 불변식 위반) 더 되돌릴 것이 없습니다.
-            break;
-        }
-        // 다른 쪽이 parent 아래로 옮겨 온 객체면 delete-vs-move, 새로 추가한 객체면
-        // delete-vs-modify(subtree 수정)입니다(XIV.10.5).
-        let kind = if input.base.contains(orphan) {
-            ConflictKind::DeleteVsMove
-        } else {
-            ConflictKind::DeleteVsModify
-        };
-        merger.object_conflict(kind, parent);
-        merged = apply(&input.base, &merger.accepted).map_err(MergeError::Apply)?;
-    }
-
-    // 서로 다른 객체의 독립 이동이 parent cycle을 만들면 그 이동들을 conflicting-reorder로
-    // 되돌립니다(XIV.10.6). 되돌릴 때마다 받아들인 변경이 줄어 유한 번에 끝납니다.
-    while let Some(cycle) = merge_cycle(&merged, &merger.accepted) {
-        let before = merger.accepted.len();
-        merger.accepted.retain(|change| {
-            !(cycle.contains(&change.object_id())
-                && change.kind() == SemanticChangeKind::MoveObject)
-        });
-        if merger.accepted.len() == before {
-            break;
-        }
-        for id in cycle {
-            merger.position_conflict(id);
-        }
-        merged = apply(&input.base, &merger.accepted).map_err(MergeError::Apply)?;
-    }
-    rekey_independent_insertions(input, &mut merged);
-
-    // 정의 목록을 candidate 소속 객체와 맞춥니다(SM-1). 객체 존재·위치 결정이 모두 끝난 뒤여야 합니다.
     // 속성 변경은 base에 있는 같은 정체성 객체에서만 나옵니다.
     let changed_lists: BTreeSet<PropertyPath> = ours_diff
         .iter()
@@ -985,9 +1218,25 @@ pub fn merge(input: &MergeInput) -> Result<MergeResult, MergeError> {
         })
         .cloned()
         .collect();
-    reconcile_member_lists(input, &changed_lists, &mut merged, &mut merger.conflicts);
+    let mut merged = merger.settle(&changed_lists)?;
+
+    // 결과 검증(XIV.10.8): 새 위반에 관련된 변경을 되돌립니다. 되돌릴 때마다 받아들인 변경이 줄어 유한
+    // 번에 끝나고, 더 되돌릴 것이 없으면 남은 위반을 conflict로 기록합니다.
+    let baselines = [&input.base, &input.ours, &input.theirs];
+    loop {
+        let violations = introduced_violations(&merged, &baselines);
+        if violations.is_empty() {
+            break;
+        }
+        if !merger.revert_violations(&violations, false) {
+            merger.revert_violations(&violations, true);
+            break;
+        }
+        merged = merger.settle(&changed_lists)?;
+    }
 
     let mut conflicts = merger.conflicts;
+    conflicts.extend(merger.list_conflicts);
     conflicts.sort_by(|a, b| {
         (a.document(), a.object, &a.target, a.kind).cmp(&(
             b.document(),
@@ -996,6 +1245,7 @@ pub fn merge(input: &MergeInput) -> Result<MergeResult, MergeError> {
             b.kind,
         ))
     });
+    conflicts.dedup();
     let changes = diff(&input.base, &merged);
     Ok(MergeResult {
         merged,
