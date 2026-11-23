@@ -186,6 +186,7 @@ dependencies = [
  "stellar-layout",
  "stellar-project",
  "stellar-renderer-core",
+ "stellar-renderer-metal",
  "stellar-scene",
  "stellar-storage",
 ]

@@ -16,5 +16,8 @@ stellar-assets = { path = "../../crates/assets" }
 stellar-scene = { path = "../../crates/scene" }
 stellar-renderer-core = { path = "../../crates/renderer-core" }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+stellar-renderer-metal = { path = "../../crates/renderer-metal" }
+
 [lints]
 workspace = true
