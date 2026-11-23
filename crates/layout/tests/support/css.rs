@@ -2,6 +2,11 @@
 //!
 //! fixture 정의의 `style` 문자열(`name: value; ...`)을 [`LayoutStyle`]로 바꿉니다. 같은 문자열이 기대값 생성 때
 //! 브라우저 HTML style에 그대로 들어갑니다. 받지 않는 선언은 panic으로 알립니다(fixture 정의 오류).
+//!
+//! 이 parser는 [`LayoutStyle::declaration_text`]의 역함수이기도 합니다. 엔진이 내는 CSS 텍스트를 다시 읽으면 같은
+//! style이 나와야 하고, 다시 쓰면 같은 텍스트여야 합니다([`assert_declaration_text_round_trips`]). 그래서 layout
+//! crate 안의 CSS 텍스트 formatter·parser는 한 쌍이고, 수 표기는 문서 CSS 값 정규형(ADR-0075 결정 5)과 같은
+//! 규칙입니다(ADR-0075 개정: layout은 crate graph상 문서 crate에 의존하지 않으므로 같은 규칙을 왕복 test로 묶음).
 
 use stellar_core_types::value::{FiniteF32, Insets, Length, Percentage};
 use stellar_layout::style::{
@@ -11,9 +16,12 @@ use stellar_layout::style::{
 };
 
 fn number(text: &str) -> f32 {
-    text.trim()
+    let value: f32 = text
+        .trim()
         .parse()
-        .unwrap_or_else(|_| panic!("숫자가 아닙니다: {text}"))
+        .unwrap_or_else(|_| panic!("숫자가 아닙니다: {text}"));
+    assert!(value.is_finite(), "유한한 수가 아닙니다: {text}");
+    value
 }
 
 fn finite(value: f32) -> FiniteF32 {
@@ -396,4 +404,50 @@ pub fn parse_style(text: &str) -> LayoutStyle {
     }
     style.padding = Insets::new(padding[0], padding[1], padding[2], padding[3]).unwrap();
     style
+}
+
+/// 엔진 CSS 텍스트가 이 parser와 한 쌍인지 확인합니다: `declaration_text`를 다시 읽으면 같은 style이고, 다시 쓰면
+/// 같은 텍스트입니다. 수는 ADR-0075 정규형(최단 왕복 10진, 지수 없음, `-0`은 `0`)이어야 합니다.
+pub fn assert_declaration_text_round_trips(style: &LayoutStyle) {
+    let text = style.declaration_text();
+    let reparsed = parse_style(&text);
+    assert_eq!(&reparsed, style, "{text}");
+    assert_eq!(reparsed.declaration_text(), text);
+    for token in text.split(|c: char| c.is_whitespace() || matches!(c, ';' | ',' | '(' | ')')) {
+        let digits = token.trim_end_matches(|c: char| c.is_ascii_alphabetic() || c == '%');
+        if digits.parse::<f32>().is_ok() {
+            assert!(
+                !digits.contains('e') && !digits.starts_with('+') && digits != "-0",
+                "정규형이 아닌 수 표기: {token} in {text}"
+            );
+            let value: f32 = digits.parse().unwrap();
+            assert_eq!(
+                value.to_string(),
+                digits,
+                "최단 왕복 표기가 아닙니다: {text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn engine_declaration_text_round_trips_through_this_parser() {
+    use super::json::parse;
+
+    let fixtures = parse(include_str!("../css/expected.json"));
+    let mut count = 0;
+    for fixture in fixtures.get("fixtures").as_array() {
+        for node in fixture.get("nodes").as_array() {
+            assert_declaration_text_round_trips(&parse_style(node.get("style").as_str()));
+            count += 1;
+        }
+    }
+    assert!(count > 0);
+    // `-0`은 0으로 정규화되어 `0px`로 씁니다(ADR-0075 정규형과 같음).
+    let style = parse_style("width: -0px; flex-grow: 0.1; padding-left: 1440.5px");
+    assert_eq!(
+        style.declaration_text(),
+        "width: 0px; padding-left: 1440.5px; flex-grow: 0.1"
+    );
+    assert_declaration_text_round_trips(&style);
 }

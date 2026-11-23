@@ -147,3 +147,19 @@ Accepted (2026-11-23). 엔진 lane `text-source-codec`(V.10.3·V.10.4·IX.11.21�
 - 기존 프로젝트는 `stellar text-source export-project`로 generation을 다중 파일 원본으로 옮깁니다. 변환은 다시 읽은
   결과의 semantic snapshot이 원본과 같을 때만 성공하며 원본 generation은 바꾸지 않습니다.
 - 단일 View v2·컴포넌트 v3 파일은 다음 실제 편집에서 v4로 바뀝니다.
+
+## 개정(2026-11-23, integration-followups)
+
+1. **CSS 값은 문서 formatter·parser 하나로 씁니다.** 결정 2의 값 문법에서 길이·각도·백분율·시간·수·색·행렬은 codec 자체
+   함수를 두지 않고 `stellar_document::css::value`(ADR-0075 결정 5)의 `format_*`·`parse`를 씁니다. 읽기는 그 parser로
+   해석한 값을 같은 formatter로 다시 쓴 결과가 입력과 byte 단위로 같아야 합니다. 그래서 결정론적 bytes 규칙(같은 값의
+   다른 표기 거부)은 그대로이고, 같은 값의 CSS 텍스트가 속성 패널·`stellar css`·텍스트 원본에서 같습니다.
+   - 색: 8비트로 정확한 sRGB는 소문자 `#rrggbb[aa]`, 그 밖은 `color(srgb …)`·`color(display-p3 …)`입니다. lane 시점의
+     v4는 모든 색을 `color()`로 썼습니다.
+   - 행렬: 단위 행렬은 `none`, 그 밖은 `matrix(a, b, c, d, tx, ty)`입니다.
+   - 수: `-0`은 `0`으로 씁니다. 문서 값 타입(`FiniteF32`)이 이미 `-0`을 `0`으로 정규화하므로 의미 손실은 없습니다.
+   - 참조·참조 목록·순서 키·불리언·정수는 CSS 값이 아니므로 codec 함수를 유지합니다.
+2. **호환성.** v4는 아직 기본 저장 형식이 아니고(결정 5, V.10.7 전) 저장소에 커밋된 v4 파일은 golden뿐입니다. 이 개정 전에
+   명시 export로 만든 v4 파일에 8비트 정확 sRGB의 `color(srgb …)`나 단위 행렬 `matrix(1, 0, 0, 1, 0, 0)`가 있으면 읽기를
+   거부하므로 다시 export합니다. 옛 표기를 함께 받으면 같은 값의 bytes가 둘이 되어 결정 2의 결정론적 bytes 규칙이 깨지므로
+   받지 않습니다. `schema_version`은 그대로 `"4"`입니다.

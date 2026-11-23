@@ -881,6 +881,12 @@ impl LayoutStyle {
     }
 
     /// [`LayoutStyle::declarations`]를 `name: value; ...` 한 줄로 씁니다.
+    ///
+    /// 수 표기는 문서 CSS 값 정규형(`stellar_document::css::value::format_number`, ADR-0075 결정 5)과 같은
+    /// 규칙입니다: f32를 왕복하는 최단 10진, 지수 없음, `-0`은 `0`(값 타입이 `-0`을 `0`으로 정규화). layout은
+    /// crate graph상 core-types에만 의존하므로(ADR-0076) 그 함수를 직접 부르지 않고, 테스트 parser와의 왕복
+    /// test(`tests/support/css.rs`)로 한 쌍임을 고정합니다(ADR-0075 개정). 저장 형식이 아니라 진단·snapshot
+    /// 텍스트입니다.
     pub fn declaration_text(&self) -> String {
         self.declarations()
             .into_iter()
